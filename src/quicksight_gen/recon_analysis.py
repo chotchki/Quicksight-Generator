@@ -22,6 +22,7 @@ from quicksight_gen.models import (
     ResourcePermission,
     SheetDefinition,
 )
+from quicksight_gen.theme import get_preset
 from quicksight_gen.recon_filters import (
     build_payment_recon_controls,
     build_recon_filter_groups,
@@ -155,6 +156,12 @@ def build_recon_analysis(cfg: Config) -> Analysis:
     """Build the Reconciliation Analysis with four sheets."""
     analysis_id = cfg.prefixed("reconciliation-analysis")
     theme_id = cfg.prefixed("theme")
+    preset = get_preset(cfg.theme_preset)
+
+    if preset.analysis_name_prefix:
+        name = f"{preset.analysis_name_prefix} — Reconciliation"
+    else:
+        name = "Reconciliation Analysis"
 
     permissions = None
     if cfg.principal_arn:
@@ -168,7 +175,7 @@ def build_recon_analysis(cfg: Config) -> Analysis:
     return Analysis(
         AwsAccountId=cfg.aws_account_id,
         AnalysisId=analysis_id,
-        Name="Reconciliation Analysis",
+        Name=name,
         ThemeArn=cfg.theme_arn(theme_id),
         Definition=AnalysisDefinition(
             DataSetIdentifierDeclarations=_build_recon_dataset_declarations(cfg),

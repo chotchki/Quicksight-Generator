@@ -67,24 +67,30 @@ for DS_FILE in "$OUT_DIR"/datasets/*.json; do
 done
 
 # ---------------------------------------------------------------------------
-# Analysis
+# Analyses
 # ---------------------------------------------------------------------------
-ANALYSIS_ID=$(jq -r '.AnalysisId' "$OUT_DIR/analysis.json")
-echo "==> Analysis: $ANALYSIS_ID"
-if aws quicksight describe-analysis \
-    --aws-account-id "$AWS_ACCOUNT_ID" \
-    --analysis-id "$ANALYSIS_ID" \
-    --region "$REGION" &>/dev/null; then
-    echo "    Updating existing analysis..."
-    aws quicksight update-analysis \
-        --region "$REGION" \
-        --cli-input-json "file://$OUT_DIR/analysis.json"
-else
-    echo "    Creating new analysis..."
-    aws quicksight create-analysis \
-        --region "$REGION" \
-        --cli-input-json "file://$OUT_DIR/analysis.json"
-fi
+for ANALYSIS_FILE in "$OUT_DIR"/financial-analysis.json "$OUT_DIR"/recon-analysis.json; do
+    if [ ! -f "$ANALYSIS_FILE" ]; then
+        echo "    Skipping $(basename "$ANALYSIS_FILE") (not found)"
+        continue
+    fi
+    ANALYSIS_ID=$(jq -r '.AnalysisId' "$ANALYSIS_FILE")
+    echo "==> Analysis: $ANALYSIS_ID"
+    if aws quicksight describe-analysis \
+        --aws-account-id "$AWS_ACCOUNT_ID" \
+        --analysis-id "$ANALYSIS_ID" \
+        --region "$REGION" &>/dev/null; then
+        echo "    Updating existing analysis..."
+        aws quicksight update-analysis \
+            --region "$REGION" \
+            --cli-input-json "file://$ANALYSIS_FILE"
+    else
+        echo "    Creating new analysis..."
+        aws quicksight create-analysis \
+            --region "$REGION" \
+            --cli-input-json "file://$ANALYSIS_FILE"
+    fi
+done
 
 echo
 echo "Done. Resources deployed to account $AWS_ACCOUNT_ID in $REGION."

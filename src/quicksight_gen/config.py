@@ -21,6 +21,8 @@ class Config:
     resource_prefix: str = "qs-gen"
     principal_arn: str | None = None
     extra_tags: dict[str, str] = field(default_factory=dict)
+    theme_preset: str = "default"
+    demo_database_url: str | None = None
 
     # Derived helpers
     def tags(self) -> list[dict[str, str]]:
@@ -75,6 +77,8 @@ def load_config(path: str | Path | None = None) -> Config:
         "datasource_arn": "QS_GEN_DATASOURCE_ARN",
         "resource_prefix": "QS_GEN_RESOURCE_PREFIX",
         "principal_arn": "QS_GEN_PRINCIPAL_ARN",
+        "theme_preset": "QS_GEN_THEME_PRESET",
+        "demo_database_url": "QS_GEN_DEMO_DATABASE_URL",
     }
     for cfg_key, env_key in env_map.items():
         env_val = os.environ.get(env_key)
@@ -101,4 +105,6 @@ def load_config(path: str | Path | None = None) -> Config:
         resource_prefix=values.get("resource_prefix", "qs-gen"),
         principal_arn=values.get("principal_arn"),
         extra_tags=extra_tags,
+        theme_preset=values.get("theme_preset", "default"),
+        demo_database_url=values.get("demo_database_url"),
     )

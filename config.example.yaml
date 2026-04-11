@@ -12,5 +12,13 @@ datasource_arn: "arn:aws:quicksight:us-east-1:123456789012:datasource/your-datas
 # Prefix for all generated resource IDs (optional, default: qs-gen)
 resource_prefix: "qs-gen"
 
+# Theme preset (optional, default: "default")
+# Available presets: default, sasquatch-bank
+# theme_preset: "sasquatch-bank"
+
 # IAM principal ARN to grant permissions on generated resources (optional)
 # principal_arn: "arn:aws:quicksight:us-east-1:123456789012:user/default/admin"
+
+# PostgreSQL connection URL for the demo apply command (optional)
+# Required only when running: quicksight-gen demo apply
+# demo_database_url: "postgresql://user:pass@localhost:5432/quicksight_demo"

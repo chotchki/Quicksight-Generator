@@ -30,6 +30,7 @@ from quicksight_gen.models import (
     ResourcePermission,
     SheetDefinition,
 )
+from quicksight_gen.theme import get_preset
 from quicksight_gen.visuals import (
     build_exceptions_visuals,
     build_payments_visuals,
@@ -155,6 +156,12 @@ def build_analysis(cfg: Config) -> Analysis:
     """Build the complete Analysis resource with four sheets and visuals."""
     analysis_id = cfg.prefixed("financial-analysis")
     theme_id = cfg.prefixed("theme")
+    preset = get_preset(cfg.theme_preset)
+
+    if preset.analysis_name_prefix:
+        name = f"{preset.analysis_name_prefix} — Financial Reporting"
+    else:
+        name = "Financial Reporting Analysis"
 
     permissions = None
     if cfg.principal_arn:
@@ -168,7 +175,7 @@ def build_analysis(cfg: Config) -> Analysis:
     return Analysis(
         AwsAccountId=cfg.aws_account_id,
         AnalysisId=analysis_id,
-        Name="Financial Reporting Analysis",
+        Name=name,
         ThemeArn=cfg.theme_arn(theme_id),
         Definition=AnalysisDefinition(
             DataSetIdentifierDeclarations=_build_dataset_declarations(cfg),

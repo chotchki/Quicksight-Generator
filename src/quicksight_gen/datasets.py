@@ -123,6 +123,7 @@ def build_sales_dataset(cfg: Config) -> DataSet:
         InputColumn(Name="card_last_four", Type="STRING"),
         InputColumn(Name="reference_id", Type="STRING"),
         InputColumn(Name="metadata", Type="STRING"),
+        InputColumn(Name="external_transaction_id", Type="STRING"),
     ]
     sql = """\
 SELECT
@@ -134,7 +135,8 @@ SELECT
     card_brand,
     card_last_four,
     reference_id,
-    metadata
+    metadata,
+    external_transaction_id
 FROM sales"""
 
     physical, logical = _physical_and_logical(
@@ -167,6 +169,7 @@ def build_settlements_dataset(cfg: Config) -> DataSet:
         InputColumn(Name="settlement_date", Type="DATETIME"),
         InputColumn(Name="settlement_status", Type="STRING"),
         InputColumn(Name="sale_count", Type="INTEGER"),
+        InputColumn(Name="external_transaction_id", Type="STRING"),
     ]
     sql = """\
 SELECT
@@ -176,7 +179,8 @@ SELECT
     settlement_amount,
     settlement_date,
     settlement_status,
-    sale_count
+    sale_count,
+    external_transaction_id
 FROM settlements"""
 
     physical, logical = _physical_and_logical(
@@ -210,6 +214,7 @@ def build_payments_dataset(cfg: Config) -> DataSet:
         InputColumn(Name="payment_status", Type="STRING"),
         InputColumn(Name="is_returned", Type="STRING"),
         InputColumn(Name="return_reason", Type="STRING"),
+        InputColumn(Name="external_transaction_id", Type="STRING"),
     ]
     sql = """\
 SELECT
@@ -220,7 +225,8 @@ SELECT
     payment_date,
     payment_status,
     is_returned,
-    return_reason
+    return_reason,
+    external_transaction_id
 FROM payments"""
 
     physical, logical = _physical_and_logical(
@@ -262,11 +268,10 @@ SELECT
     s.location_id,
     s.amount,
     s.sale_timestamp,
-    DATEDIFF(day, s.sale_timestamp, CURRENT_DATE) AS days_unsettled
+    (CURRENT_DATE - s.sale_timestamp::date) AS days_unsettled
 FROM sales s
 JOIN merchants m ON m.merchant_id = s.merchant_id
-LEFT JOIN settlements st ON st.settlement_id = s.sale_id
-WHERE st.settlement_id IS NULL"""
+WHERE s.settlement_id IS NULL"""
 
     physical, logical = _physical_and_logical(
         cfg, "settlement-exceptions", "Settlement Exceptions", sql, columns
@@ -399,17 +404,17 @@ SELECT
     et.external_amount - COALESCE(SUM(s.amount), 0) AS difference,
     CASE
         WHEN et.external_amount = COALESCE(SUM(s.amount), 0) THEN 'matched'
-        WHEN DATEDIFF(day, et.transaction_date, CURRENT_DATE) > lt.threshold_days THEN 'late'
+        WHEN (CURRENT_DATE - et.transaction_date::date) > lt.threshold_days THEN 'late'
         ELSE 'not_yet_matched'
     END AS match_status,
     COUNT(s.sale_id) AS sale_count,
     et.merchant_id,
     et.transaction_date,
-    DATEDIFF(day, et.transaction_date, CURRENT_DATE) AS days_outstanding,
+    (CURRENT_DATE - et.transaction_date::date) AS days_outstanding,
     lt.threshold_days AS late_threshold,
     lt.description AS late_threshold_description
 FROM external_transactions et
-LEFT JOIN sales s ON s.transaction_id = et.transaction_id
+LEFT JOIN sales s ON s.external_transaction_id = et.transaction_id
 LEFT JOIN late_thresholds lt ON lt.transaction_type = 'sales'
 WHERE et.transaction_type = 'sales'
 GROUP BY et.transaction_id, et.external_system, et.external_amount,
@@ -460,17 +465,17 @@ SELECT
     et.external_amount - COALESCE(SUM(st.settlement_amount), 0) AS difference,
     CASE
         WHEN et.external_amount = COALESCE(SUM(st.settlement_amount), 0) THEN 'matched'
-        WHEN DATEDIFF(day, et.transaction_date, CURRENT_DATE) > lt.threshold_days THEN 'late'
+        WHEN (CURRENT_DATE - et.transaction_date::date) > lt.threshold_days THEN 'late'
         ELSE 'not_yet_matched'
     END AS match_status,
     COUNT(st.settlement_id) AS settlement_count,
     et.merchant_id,
     et.transaction_date,
-    DATEDIFF(day, et.transaction_date, CURRENT_DATE) AS days_outstanding,
+    (CURRENT_DATE - et.transaction_date::date) AS days_outstanding,
     lt.threshold_days AS late_threshold,
     lt.description AS late_threshold_description
 FROM external_transactions et
-LEFT JOIN settlements st ON st.transaction_id = et.transaction_id
+LEFT JOIN settlements st ON st.external_transaction_id = et.transaction_id
 LEFT JOIN late_thresholds lt ON lt.transaction_type = 'settlements'
 WHERE et.transaction_type = 'settlements'
 GROUP BY et.transaction_id, et.external_system, et.external_amount,
@@ -521,17 +526,17 @@ SELECT
     et.external_amount - COALESCE(SUM(p.payment_amount), 0) AS difference,
     CASE
         WHEN et.external_amount = COALESCE(SUM(p.payment_amount), 0) THEN 'matched'
-        WHEN DATEDIFF(day, et.transaction_date, CURRENT_DATE) > lt.threshold_days THEN 'late'
+        WHEN (CURRENT_DATE - et.transaction_date::date) > lt.threshold_days THEN 'late'
         ELSE 'not_yet_matched'
     END AS match_status,
     COUNT(p.payment_id) AS payment_count,
     et.merchant_id,
     et.transaction_date,
-    DATEDIFF(day, et.transaction_date, CURRENT_DATE) AS days_outstanding,
+    (CURRENT_DATE - et.transaction_date::date) AS days_outstanding,
     lt.threshold_days AS late_threshold,
     lt.description AS late_threshold_description
 FROM external_transactions et
-LEFT JOIN payments p ON p.transaction_id = et.transaction_id
+LEFT JOIN payments p ON p.external_transaction_id = et.transaction_id
 LEFT JOIN late_thresholds lt ON lt.transaction_type = 'payments'
 WHERE et.transaction_type = 'payments'
 GROUP BY et.transaction_id, et.external_system, et.external_amount,
