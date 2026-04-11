@@ -8,7 +8,7 @@ Python tool that programmatically generates AWS QuickSight JSON definitions (the
 - **Package manager**: pip / setuptools, venv at `.venv/`
 - **Entry point**: `python -m quicksight_gen` or `quicksight-gen` (installed script)
 - **CLI framework**: Click
-- **Output**: JSON files in `out/` (theme, datasets, two analyses)
+- **Output**: JSON files in `out/` (datasource [demo only], theme, datasets, two analyses)
 
 ## Commands
 
@@ -35,6 +35,7 @@ pytest
 
 ```
 out/
+  datasource.json             # QuickSight data source (demo apply only)
   theme.json                  # Shared blue/grey theme
   financial-analysis.json     # Sales → Settlements → Payments pipeline
   recon-analysis.json         # Reconciliation against external systems
@@ -102,9 +103,9 @@ tests/
 
 ## Architecture Decisions
 
-- All models use Python dataclasses with `to_aws_json()` methods that produce the exact dict shape for AWS CLI `create-theme`, `create-data-set`, `create-analysis`
+- All models use Python dataclasses with `to_aws_json()` methods that produce the exact dict shape for AWS CLI `create-data-source`, `create-theme`, `create-data-set`, `create-analysis`
 - Helper `_strip_nones()` recursively cleans None values from serialized output
-- Config accepts a pre-existing DataSource ARN — this project does not create datasources
+- Config accepts a pre-existing DataSource ARN for production use; for demo mode, `datasource_arn` is auto-derived from `demo_database_url` and a `datasource.json` is generated
 - Datasets use custom SQL queries (PostgreSQL syntax, e.g. `CURRENT_DATE - col::date` instead of `DATEDIFF`)
 - Generated resource IDs use kebab-case with a configurable prefix (default `qs-gen-`)
 - All resources tagged with `ManagedBy: quicksight-gen`; extra tags via `extra_tags` in config

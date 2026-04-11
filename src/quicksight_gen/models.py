@@ -226,6 +226,57 @@ class Theme:
 
 
 # ---------------------------------------------------------------------------
+# DataSource models
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PostgreSqlParameters:
+    Host: str
+    Port: int
+    Database: str
+
+
+@dataclass
+class DataSourceParameters:
+    PostgreSqlParameters: PostgreSqlParameters | None = None
+
+
+@dataclass
+class CredentialPair:
+    Username: str
+    Password: str
+
+
+@dataclass
+class DataSourceCredentials:
+    CredentialPair: CredentialPair | None = None
+
+
+@dataclass
+class SslProperties:
+    DisableSsl: bool = False
+
+
+@dataclass
+class DataSource:
+    AwsAccountId: str
+    DataSourceId: str
+    Name: str
+    Type: str  # POSTGRESQL, MYSQL, etc.
+    DataSourceParameters: DataSourceParameters
+    Credentials: DataSourceCredentials | None = None
+    SslProperties: SslProperties | None = None
+    Permissions: list[ResourcePermission] | None = None
+    Tags: list[Tag] | None = None
+
+    def to_aws_json(self) -> dict[str, Any]:
+        return _strip_nones(asdict(self))
+
+    def to_json_string(self, indent: int = 2) -> str:
+        return json.dumps(self.to_aws_json(), indent=indent)
+
+
+# ---------------------------------------------------------------------------
 # DataSet models
 # ---------------------------------------------------------------------------
 

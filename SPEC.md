@@ -2,7 +2,7 @@ Goal:
 	- [  ] To create one or more AWS Quicksight analyses with a series of tabs to help understand a financial application.
 
 Background:
-	- [  ] This financial application uses a SQL datasource that will be already provided to this project.
+	- [  ] This financial application uses a SQL datasource. For production use, a pre-existing datasource ARN is provided. For demo mode, the project creates a QuickSight data source definition from the demo database connection URL.
 
 	- [  ] This SQL datasource will be accessed using quicksight custom sql data sets that this project will need to create against the data source. Dummy SQL queries are fine for the moment.
 

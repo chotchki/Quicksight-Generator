@@ -67,7 +67,7 @@ All generated resources are tagged with `ManagedBy: quicksight-gen` (additional 
 
 - Python 3.11+
 - An AWS account with QuickSight Enterprise enabled
-- A pre-existing QuickSight datasource connected to your SQL database
+- A pre-existing QuickSight datasource connected to your SQL database (not needed for demo mode)
 
 ### Setup
 
@@ -90,6 +90,9 @@ Edit `config.yaml`:
 ```yaml
 aws_account_id: "123456789012"
 aws_region: "us-east-1"
+
+# ARN of a pre-existing QuickSight datasource.
+# Not required when demo_database_url is set (auto-derived from account/region/prefix).
 datasource_arn: "arn:aws:quicksight:us-east-1:123456789012:datasource/your-datasource-id"
 
 # Optional: prefix for generated resource IDs (default: qs-gen)
@@ -125,6 +128,9 @@ The deploy script is idempotent -- it creates resources on first run and updates
 You can also deploy manually:
 
 ```bash
+# DataSource (only present when generated via demo apply)
+aws quicksight create-data-source --region us-east-1 --cli-input-json file://out/datasource.json
+
 # Theme
 aws quicksight create-theme --region us-east-1 --cli-input-json file://out/theme.json
 
@@ -160,7 +166,9 @@ quicksight-gen demo seed -o demo/seed.sql
 quicksight-gen demo apply -c config.yaml -o out
 ```
 
-The `demo apply` command creates tables, views, and indexes, inserts the sample data, then generates all QuickSight JSON using the `sasquatch-bank` theme preset. Requires `pip install -e ".[demo]"` for the PostgreSQL driver.
+The `demo apply` command creates tables, views, and indexes, inserts the sample data, then generates all QuickSight JSON using the `sasquatch-bank` theme preset. It also generates a `datasource.json` file with the QuickSight data source definition derived from the database URL — no pre-existing `datasource_arn` is needed. Requires `pip install -e ".[demo]"` for the PostgreSQL driver.
+
+Deploy order: datasource → theme → datasets → analyses.
 
 #### What's in the demo data
 
@@ -194,7 +202,7 @@ The Sasquatch Bank preset also renames the analyses to "Sasquatch National Bank 
 pytest
 ```
 
-131 tests covering model serialization, tagging, end-to-end generation, cross-reference validation (dataset ARNs, filter bindings, visual ID uniqueness, sheet ID scoping), reconciliation visuals and filters, explanation coverage (every sheet has a description, every visual has a subtitle), theme presets, demo data generation (determinism, row counts, referential integrity, scenario coverage), and CLI commands.
+Tests covering model serialization (including data source), tagging, end-to-end generation, cross-reference validation (dataset ARNs, filter bindings, visual ID uniqueness, sheet ID scoping), reconciliation visuals and filters, explanation coverage (every sheet has a description, every visual has a subtitle), theme presets, demo data generation (determinism, row counts, referential integrity, scenario coverage), data source builder, and CLI commands.
 
 ## Project structure
 

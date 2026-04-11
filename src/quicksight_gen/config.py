@@ -17,12 +17,25 @@ import yaml
 class Config:
     aws_account_id: str
     aws_region: str
-    datasource_arn: str
+    datasource_arn: str | None = None
     resource_prefix: str = "qs-gen"
     principal_arn: str | None = None
     extra_tags: dict[str, str] = field(default_factory=dict)
     theme_preset: str = "default"
     demo_database_url: str | None = None
+
+    def __post_init__(self) -> None:
+        # If demo_database_url is set but datasource_arn is not, derive it
+        if self.datasource_arn is None and self.demo_database_url is not None:
+            ds_id = self.prefixed("demo-datasource")
+            self.datasource_arn = (
+                f"arn:aws:quicksight:{self.aws_region}:{self.aws_account_id}"
+                f":datasource/{ds_id}"
+            )
+        if self.datasource_arn is None:
+            raise ValueError(
+                "datasource_arn is required unless demo_database_url is set."
+            )
 
     # Derived helpers
     def tags(self) -> list[dict[str, str]]:
@@ -85,8 +98,11 @@ def load_config(path: str | Path | None = None) -> Config:
         if env_val is not None:
             values[cfg_key] = env_val
 
-    # Validate required fields
-    missing = [k for k in ("aws_account_id", "aws_region", "datasource_arn") if k not in values]
+    # Validate required fields (datasource_arn not required when demo_database_url is set)
+    required = ["aws_account_id", "aws_region"]
+    if "demo_database_url" not in values:
+        required.append("datasource_arn")
+    missing = [k for k in required if k not in values]
     if missing:
         raise ValueError(
             f"Missing required configuration: {', '.join(missing)}. "
@@ -101,7 +117,7 @@ def load_config(path: str | Path | None = None) -> Config:
     return Config(
         aws_account_id=values["aws_account_id"],
         aws_region=values["aws_region"],
-        datasource_arn=values["datasource_arn"],
+        datasource_arn=values.get("datasource_arn"),
         resource_prefix=values.get("resource_prefix", "qs-gen"),
         principal_arn=values.get("principal_arn"),
         extra_tags=extra_tags,

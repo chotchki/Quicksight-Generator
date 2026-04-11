@@ -6,7 +6,8 @@
 aws_account_id: "123456789012"
 aws_region: "us-east-1"
 
-# ARN of the pre-existing QuickSight datasource to query against
+# ARN of the pre-existing QuickSight datasource to query against.
+# Not required when demo_database_url is set (auto-derived from account/region/prefix).
 datasource_arn: "arn:aws:quicksight:us-east-1:123456789012:datasource/your-datasource-id"
 
 # Prefix for all generated resource IDs (optional, default: qs-gen)

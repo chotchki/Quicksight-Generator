@@ -13,9 +13,13 @@ from quicksight_gen.models import (
     CategoryFilterConfiguration,
     CategoricalDimensionField,
     ColumnIdentifier,
+    CredentialPair,
     CustomSql,
     DataSet,
     DataSetIdentifierDeclaration,
+    DataSource,
+    DataSourceCredentials,
+    DataSourceParameters,
     DimensionField,
     Filter,
     FilterGroup,
@@ -32,6 +36,7 @@ from quicksight_gen.models import (
     PieChartConfiguration,
     PieChartFieldWells,
     PieChartVisual,
+    PostgreSqlParameters,
     SelectedSheetsFilterScopeConfiguration,
     SheetDefinition,
     SheetVisualScopingConfiguration,
@@ -49,6 +54,7 @@ from quicksight_gen.models import (
 )
 from quicksight_gen.config import Config
 from quicksight_gen.datasets import (
+    build_datasource,
     build_financial_datasets,
     build_recon_datasets,
     build_all_datasets,
@@ -519,3 +525,167 @@ class TestReconDatasetStructure:
         for expected in ("transaction_type", "external_system", "match_status",
                          "days_outstanding", "late_threshold_description"):
             assert expected in col_names, f"Missing column: {expected}"
+
+
+# ---------------------------------------------------------------------------
+# DataSource model tests
+# ---------------------------------------------------------------------------
+
+class TestDataSourceSerialization:
+    def test_postgresql_datasource(self):
+        ds = DataSource(
+            AwsAccountId="123456789012",
+            DataSourceId="test-ds",
+            Name="Test",
+            Type="POSTGRESQL",
+            DataSourceParameters=DataSourceParameters(
+                PostgreSqlParameters=PostgreSqlParameters(
+                    Host="localhost",
+                    Port=5432,
+                    Database="mydb",
+                ),
+            ),
+            Credentials=DataSourceCredentials(
+                CredentialPair=CredentialPair(
+                    Username="user",
+                    Password="pass",
+                ),
+            ),
+        )
+        out = ds.to_aws_json()
+        assert out["Type"] == "POSTGRESQL"
+        pg = out["DataSourceParameters"]["PostgreSqlParameters"]
+        assert pg["Host"] == "localhost"
+        assert pg["Port"] == 5432
+        assert pg["Database"] == "mydb"
+        creds = out["Credentials"]["CredentialPair"]
+        assert creds["Username"] == "user"
+        assert creds["Password"] == "pass"
+
+    def test_none_fields_stripped(self):
+        ds = DataSource(
+            AwsAccountId="123",
+            DataSourceId="ds",
+            Name="Test",
+            Type="POSTGRESQL",
+            DataSourceParameters=DataSourceParameters(
+                PostgreSqlParameters=PostgreSqlParameters(
+                    Host="h", Port=5432, Database="db",
+                ),
+            ),
+        )
+        out = ds.to_aws_json()
+        assert "Credentials" not in out
+        assert "Permissions" not in out
+        assert "Tags" not in out
+
+    def test_tags_included(self):
+        ds = DataSource(
+            AwsAccountId="123",
+            DataSourceId="ds",
+            Name="Test",
+            Type="POSTGRESQL",
+            DataSourceParameters=DataSourceParameters(
+                PostgreSqlParameters=PostgreSqlParameters(
+                    Host="h", Port=5432, Database="db",
+                ),
+            ),
+            Tags=[Tag(Key="ManagedBy", Value="quicksight-gen")],
+        )
+        out = ds.to_aws_json()
+        assert out["Tags"] == [{"Key": "ManagedBy", "Value": "quicksight-gen"}]
+
+
+# ---------------------------------------------------------------------------
+# DataSource builder tests
+# ---------------------------------------------------------------------------
+
+_DEMO_CFG = Config(
+    aws_account_id="111122223333",
+    aws_region="us-west-2",
+    demo_database_url="postgresql://demouser:demopass@db.example.com:5432/quicksight_demo",
+    principal_arn="arn:aws:quicksight:us-west-2:111122223333:user/default/admin",
+)
+
+
+class TestBuildDatasource:
+    def test_parses_url(self):
+        ds = build_datasource(_DEMO_CFG)
+        out = ds.to_aws_json()
+        pg = out["DataSourceParameters"]["PostgreSqlParameters"]
+        assert pg["Host"] == "db.example.com"
+        assert pg["Port"] == 5432
+        assert pg["Database"] == "quicksight_demo"
+        creds = out["Credentials"]["CredentialPair"]
+        assert creds["Username"] == "demouser"
+        assert creds["Password"] == "demopass"
+
+    def test_type_is_postgresql(self):
+        ds = build_datasource(_DEMO_CFG)
+        assert ds.Type == "POSTGRESQL"
+
+    def test_has_managed_by_tag(self):
+        ds = build_datasource(_DEMO_CFG)
+        tag_keys = {t.Key for t in ds.Tags}
+        assert "ManagedBy" in tag_keys
+
+    def test_has_permissions_when_principal_set(self):
+        ds = build_datasource(_DEMO_CFG)
+        assert ds.Permissions is not None
+        assert len(ds.Permissions) == 1
+
+    def test_no_permissions_without_principal(self):
+        cfg = Config(
+            aws_account_id="111122223333",
+            aws_region="us-west-2",
+            demo_database_url="postgresql://u:p@h:5432/db",
+        )
+        ds = build_datasource(cfg)
+        assert ds.Permissions is None
+
+    def test_datasource_id_uses_prefix(self):
+        ds = build_datasource(_DEMO_CFG)
+        assert ds.DataSourceId == "qs-gen-demo-datasource"
+
+    def test_raises_without_demo_url(self):
+        cfg = Config(
+            aws_account_id="123",
+            aws_region="us-east-1",
+            datasource_arn="arn:aws:quicksight:us-east-1:123:datasource/x",
+        )
+        import pytest
+        with pytest.raises(ValueError, match="demo_database_url"):
+            build_datasource(cfg)
+
+
+# ---------------------------------------------------------------------------
+# Config — datasource_arn derivation
+# ---------------------------------------------------------------------------
+
+class TestConfigDatasourceArnDerivation:
+    def test_derived_from_demo_url(self):
+        cfg = Config(
+            aws_account_id="111122223333",
+            aws_region="us-west-2",
+            demo_database_url="postgresql://u:p@h:5432/db",
+        )
+        assert cfg.datasource_arn == (
+            "arn:aws:quicksight:us-west-2:111122223333:datasource/qs-gen-demo-datasource"
+        )
+
+    def test_explicit_arn_takes_precedence(self):
+        cfg = Config(
+            aws_account_id="111122223333",
+            aws_region="us-west-2",
+            datasource_arn="arn:aws:quicksight:us-west-2:111122223333:datasource/custom",
+            demo_database_url="postgresql://u:p@h:5432/db",
+        )
+        assert "custom" in cfg.datasource_arn
+
+    def test_raises_without_arn_or_demo_url(self):
+        import pytest
+        with pytest.raises(ValueError, match="datasource_arn"):
+            Config(
+                aws_account_id="123",
+                aws_region="us-east-1",
+            )

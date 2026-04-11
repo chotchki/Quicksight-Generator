@@ -6,21 +6,77 @@ are placeholders — replace them with real queries against your schema.
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from quicksight_gen.config import Config
 from quicksight_gen.models import (
+    CredentialPair,
     CustomSql,
     DataSet,
     DataSetUsageConfiguration,
+    DataSource,
+    DataSourceCredentials,
+    DataSourceParameters,
     InputColumn,
     LogicalTable,
     LogicalTableSource,
     PhysicalTable,
+    PostgreSqlParameters,
     ResourcePermission,
+    SslProperties,
 )
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+_DATASOURCE_ACTIONS = [
+    "quicksight:DescribeDataSource",
+    "quicksight:DescribeDataSourcePermissions",
+    "quicksight:PassDataSource",
+    "quicksight:UpdateDataSource",
+    "quicksight:DeleteDataSource",
+    "quicksight:UpdateDataSourcePermissions",
+]
+
+
+def build_datasource(cfg: Config) -> DataSource:
+    """Build a QuickSight DataSource from demo_database_url in config."""
+    if not cfg.demo_database_url:
+        raise ValueError("demo_database_url is required to build a datasource")
+
+    parsed = urlparse(cfg.demo_database_url)
+    ds_id = cfg.prefixed("demo-datasource")
+
+    permissions = None
+    if cfg.principal_arn:
+        permissions = [
+            ResourcePermission(Principal=cfg.principal_arn, Actions=_DATASOURCE_ACTIONS)
+        ]
+
+    return DataSource(
+        AwsAccountId=cfg.aws_account_id,
+        DataSourceId=ds_id,
+        Name=f"{cfg.resource_prefix} Demo DataSource",
+        Type="POSTGRESQL",
+        DataSourceParameters=DataSourceParameters(
+            PostgreSqlParameters=PostgreSqlParameters(
+                Host=parsed.hostname or "localhost",
+                Port=parsed.port or 5432,
+                Database=parsed.path.lstrip("/") if parsed.path else "postgres",
+            ),
+        ),
+        Credentials=DataSourceCredentials(
+            CredentialPair=CredentialPair(
+                Username=parsed.username or "",
+                Password=parsed.password or "",
+            ),
+        ),
+        SslProperties=SslProperties(DisableSsl=False),
+        Permissions=permissions,
+        Tags=cfg.tags(),
+    )
+
 
 _DATASET_ACTIONS = [
     "quicksight:DescribeDataSet",

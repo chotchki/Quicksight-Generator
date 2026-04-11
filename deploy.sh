@@ -25,6 +25,28 @@ echo "  Region:  $REGION"
 echo
 
 # ---------------------------------------------------------------------------
+# DataSource (only present when generated via demo apply)
+# ---------------------------------------------------------------------------
+if [ -f "$OUT_DIR/datasource.json" ]; then
+    DS_SOURCE_ID=$(jq -r '.DataSourceId' "$OUT_DIR/datasource.json")
+    echo "==> DataSource: $DS_SOURCE_ID"
+    if aws quicksight describe-data-source \
+        --aws-account-id "$AWS_ACCOUNT_ID" \
+        --data-source-id "$DS_SOURCE_ID" \
+        --region "$REGION" &>/dev/null; then
+        echo "    Updating existing datasource..."
+        aws quicksight update-data-source \
+            --region "$REGION" \
+            --cli-input-json "file://$OUT_DIR/datasource.json"
+    else
+        echo "    Creating new datasource..."
+        aws quicksight create-data-source \
+            --region "$REGION" \
+            --cli-input-json "file://$OUT_DIR/datasource.json"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Theme
 # ---------------------------------------------------------------------------
 THEME_ID=$(jq -r '.ThemeId' "$OUT_DIR/theme.json")

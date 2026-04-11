@@ -9,7 +9,7 @@ import click
 
 from quicksight_gen.analysis import build_analysis
 from quicksight_gen.config import load_config
-from quicksight_gen.datasets import build_all_datasets
+from quicksight_gen.datasets import build_all_datasets, build_datasource
 from quicksight_gen.recon_analysis import build_recon_analysis
 from quicksight_gen.theme import build_theme
 
@@ -192,6 +192,10 @@ def apply(config: str, output_dir: str) -> None:
     cfg.theme_preset = "sasquatch-bank"
     out = Path(output_dir)
 
+    # Data source (uses demo_database_url credentials)
+    datasource = build_datasource(cfg)
+    _write_json(out / "datasource.json", datasource.to_aws_json())
+
     theme = build_theme(cfg)
     _write_json(out / "theme.json", theme.to_aws_json())
 
@@ -205,4 +209,4 @@ def apply(config: str, output_dir: str) -> None:
     recon = build_recon_analysis(cfg)
     _write_json(out / "recon-analysis.json", recon.to_aws_json())
 
-    click.echo(f"\nDone. {1 + len(datasets) + 2} JSON files in {out}/")
+    click.echo(f"\nDone. {2 + len(datasets) + 2} JSON files in {out}/")

@@ -269,8 +269,7 @@ def build_theme(cfg: Config) -> Theme:
             Typography=Typography(
                 FontFamilies=[
                     FontFamily(FontFamily="Amazon Ember"),
-                    FontFamily(FontFamily="Helvetica"),
-                    FontFamily(FontFamily="Arial"),
+                    FontFamily(FontFamily="sans-serif"),
                 ],
             ),
         ),
