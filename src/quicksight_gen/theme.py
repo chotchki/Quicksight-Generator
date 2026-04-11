@@ -217,12 +217,15 @@ def build_theme(cfg: Config) -> Theme:
                 Actions=[
                     "quicksight:DescribeTheme",
                     "quicksight:DescribeThemeAlias",
+                    "quicksight:DescribeThemePermissions",
                     "quicksight:ListThemeAliases",
                     "quicksight:ListThemeVersions",
                     "quicksight:UpdateTheme",
-                    "quicksight:DeleteTheme",
+                    "quicksight:UpdateThemeAlias",
                     "quicksight:UpdateThemePermissions",
-                    "quicksight:DescribeThemePermissions",
+                    "quicksight:DeleteTheme",
+                    "quicksight:DeleteThemeAlias",
+                    "quicksight:CreateThemeAlias",
                 ],
             )
         ]

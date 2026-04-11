@@ -86,6 +86,8 @@ _DATASET_ACTIONS = [
     "quicksight:ListIngestions",
     "quicksight:UpdateDataSet",
     "quicksight:DeleteDataSet",
+    "quicksight:CreateIngestion",
+    "quicksight:CancelIngestion",
     "quicksight:UpdateDataSetPermissions",
 ]
 
