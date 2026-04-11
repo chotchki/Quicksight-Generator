@@ -32,6 +32,7 @@ Output:
 	- [  ] Create something that creates the json that could be imported using the AWS cli to create the described analysis. The thing could be python, terraform, some combination of it.
 
 	- [  ] The customer of these aws quicksight reports doesn’t know what they want so an ability to mutate this project either via you (Claude) OR some level of structured code that generates the quick sight reports will be VERY helpful.
+	- [ ] The customer likely doesn't understand this spec, the quicksight dashboards should include easy to understand explations to help someone understand what each analysis, sheet, visualization does.
 
 	- [  ] Build a consistent theme that looks nice, color theme blues and greys but must be easily read. Apply the theme and reasonable styling to everything produced.
 
