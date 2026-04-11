@@ -23,9 +23,9 @@ Key Domain Models to Understand:
         - Settlements are paid based on the merchant
 
 	- There are unique identifiers for locations, merchants, sales,
-	- The sales, settlements and payments are aggregated in other systems as a series of transactions. Those transactions have unique identifiers and will each contain a certain amount of sales/settlements/payments.
-	- A match is only valid when the aggregation in the other system AND the sales/settlements/payments equal each other.
-	- Something being late may have different static meaning depending on the type of the thing. We should show in the enventual analysis what it is set to but it does not need to be editable in quicksight.
+	- The sales, settlements and payments are aggregated in multiple external systems as a series of transactions. Those transactions have unique identifiers and will each contain a certain amount of sales/settlements/payments. All external system data is accessed through the single configured datasource.
+	- A match is only valid when the aggregation in the external system AND the sales/settlements/payments equal each other exactly. No partial matches — totals must be equal.
+	- Something being late may have different static meaning depending on the type of the thing. We should show in the eventual analysis what it is set to but it does not need to be editable in quicksight. Unmatched items become late based on their type; the analysis should allow filtering by days outstanding so users can focus on the most overdue items.
 
 
 Output:

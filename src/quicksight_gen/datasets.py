@@ -329,11 +329,312 @@ WHERE p.is_returned = 'true'"""
 
 
 # ---------------------------------------------------------------------------
-# Convenience: build all datasets
+# Reconciliation: External transactions
 # ---------------------------------------------------------------------------
 
-def build_all_datasets(cfg: Config) -> list[DataSet]:
-    """Return all six datasets in dependency order."""
+def build_external_transactions_dataset(cfg: Config) -> DataSet:
+    dataset_id = cfg.prefixed("external-transactions-dataset")
+    columns = [
+        InputColumn(Name="transaction_id", Type="STRING"),
+        InputColumn(Name="transaction_type", Type="STRING"),
+        InputColumn(Name="external_system", Type="STRING"),
+        InputColumn(Name="external_amount", Type="DECIMAL"),
+        InputColumn(Name="record_count", Type="INTEGER"),
+        InputColumn(Name="transaction_date", Type="DATETIME"),
+        InputColumn(Name="status", Type="STRING"),
+    ]
+    sql = """\
+SELECT
+    transaction_id,
+    transaction_type,
+    external_system,
+    external_amount,
+    record_count,
+    transaction_date,
+    status
+FROM external_transactions"""
+
+    physical, logical = _physical_and_logical(
+        cfg, "external-transactions", "External Transactions", sql, columns
+    )
+    return DataSet(
+        AwsAccountId=cfg.aws_account_id,
+        DataSetId=dataset_id,
+        Name="External Transactions",
+        PhysicalTableMap=physical,
+        LogicalTableMap=logical,
+        ImportMode="DIRECT_QUERY",
+        DataSetUsageConfiguration=DataSetUsageConfiguration(),
+        Permissions=_permissions(cfg),
+        Tags=cfg.tags(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Reconciliation: Sales reconciliation
+# ---------------------------------------------------------------------------
+
+def build_sales_recon_dataset(cfg: Config) -> DataSet:
+    dataset_id = cfg.prefixed("sales-recon-dataset")
+    columns = [
+        InputColumn(Name="transaction_id", Type="STRING"),
+        InputColumn(Name="external_system", Type="STRING"),
+        InputColumn(Name="external_amount", Type="DECIMAL"),
+        InputColumn(Name="internal_total", Type="DECIMAL"),
+        InputColumn(Name="difference", Type="DECIMAL"),
+        InputColumn(Name="match_status", Type="STRING"),
+        InputColumn(Name="sale_count", Type="INTEGER"),
+        InputColumn(Name="merchant_id", Type="STRING"),
+        InputColumn(Name="transaction_date", Type="DATETIME"),
+        InputColumn(Name="days_outstanding", Type="INTEGER"),
+        InputColumn(Name="late_threshold", Type="INTEGER"),
+        InputColumn(Name="late_threshold_description", Type="STRING"),
+    ]
+    sql = """\
+SELECT
+    et.transaction_id,
+    et.external_system,
+    et.external_amount,
+    COALESCE(SUM(s.amount), 0) AS internal_total,
+    et.external_amount - COALESCE(SUM(s.amount), 0) AS difference,
+    CASE
+        WHEN et.external_amount = COALESCE(SUM(s.amount), 0) THEN 'matched'
+        WHEN DATEDIFF(day, et.transaction_date, CURRENT_DATE) > lt.threshold_days THEN 'late'
+        ELSE 'not_yet_matched'
+    END AS match_status,
+    COUNT(s.sale_id) AS sale_count,
+    et.merchant_id,
+    et.transaction_date,
+    DATEDIFF(day, et.transaction_date, CURRENT_DATE) AS days_outstanding,
+    lt.threshold_days AS late_threshold,
+    lt.description AS late_threshold_description
+FROM external_transactions et
+LEFT JOIN sales s ON s.transaction_id = et.transaction_id
+LEFT JOIN late_thresholds lt ON lt.transaction_type = 'sales'
+WHERE et.transaction_type = 'sales'
+GROUP BY et.transaction_id, et.external_system, et.external_amount,
+         et.merchant_id, et.transaction_date, lt.threshold_days, lt.description"""
+
+    physical, logical = _physical_and_logical(
+        cfg, "sales-recon", "Sales Reconciliation", sql, columns
+    )
+    return DataSet(
+        AwsAccountId=cfg.aws_account_id,
+        DataSetId=dataset_id,
+        Name="Sales Reconciliation",
+        PhysicalTableMap=physical,
+        LogicalTableMap=logical,
+        ImportMode="DIRECT_QUERY",
+        DataSetUsageConfiguration=DataSetUsageConfiguration(),
+        Permissions=_permissions(cfg),
+        Tags=cfg.tags(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Reconciliation: Settlement reconciliation
+# ---------------------------------------------------------------------------
+
+def build_settlement_recon_dataset(cfg: Config) -> DataSet:
+    dataset_id = cfg.prefixed("settlement-recon-dataset")
+    columns = [
+        InputColumn(Name="transaction_id", Type="STRING"),
+        InputColumn(Name="external_system", Type="STRING"),
+        InputColumn(Name="external_amount", Type="DECIMAL"),
+        InputColumn(Name="internal_total", Type="DECIMAL"),
+        InputColumn(Name="difference", Type="DECIMAL"),
+        InputColumn(Name="match_status", Type="STRING"),
+        InputColumn(Name="settlement_count", Type="INTEGER"),
+        InputColumn(Name="merchant_id", Type="STRING"),
+        InputColumn(Name="transaction_date", Type="DATETIME"),
+        InputColumn(Name="days_outstanding", Type="INTEGER"),
+        InputColumn(Name="late_threshold", Type="INTEGER"),
+        InputColumn(Name="late_threshold_description", Type="STRING"),
+    ]
+    sql = """\
+SELECT
+    et.transaction_id,
+    et.external_system,
+    et.external_amount,
+    COALESCE(SUM(st.settlement_amount), 0) AS internal_total,
+    et.external_amount - COALESCE(SUM(st.settlement_amount), 0) AS difference,
+    CASE
+        WHEN et.external_amount = COALESCE(SUM(st.settlement_amount), 0) THEN 'matched'
+        WHEN DATEDIFF(day, et.transaction_date, CURRENT_DATE) > lt.threshold_days THEN 'late'
+        ELSE 'not_yet_matched'
+    END AS match_status,
+    COUNT(st.settlement_id) AS settlement_count,
+    et.merchant_id,
+    et.transaction_date,
+    DATEDIFF(day, et.transaction_date, CURRENT_DATE) AS days_outstanding,
+    lt.threshold_days AS late_threshold,
+    lt.description AS late_threshold_description
+FROM external_transactions et
+LEFT JOIN settlements st ON st.transaction_id = et.transaction_id
+LEFT JOIN late_thresholds lt ON lt.transaction_type = 'settlements'
+WHERE et.transaction_type = 'settlements'
+GROUP BY et.transaction_id, et.external_system, et.external_amount,
+         et.merchant_id, et.transaction_date, lt.threshold_days, lt.description"""
+
+    physical, logical = _physical_and_logical(
+        cfg, "settlement-recon", "Settlement Reconciliation", sql, columns
+    )
+    return DataSet(
+        AwsAccountId=cfg.aws_account_id,
+        DataSetId=dataset_id,
+        Name="Settlement Reconciliation",
+        PhysicalTableMap=physical,
+        LogicalTableMap=logical,
+        ImportMode="DIRECT_QUERY",
+        DataSetUsageConfiguration=DataSetUsageConfiguration(),
+        Permissions=_permissions(cfg),
+        Tags=cfg.tags(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Reconciliation: Payment reconciliation
+# ---------------------------------------------------------------------------
+
+def build_payment_recon_dataset(cfg: Config) -> DataSet:
+    dataset_id = cfg.prefixed("payment-recon-dataset")
+    columns = [
+        InputColumn(Name="transaction_id", Type="STRING"),
+        InputColumn(Name="external_system", Type="STRING"),
+        InputColumn(Name="external_amount", Type="DECIMAL"),
+        InputColumn(Name="internal_total", Type="DECIMAL"),
+        InputColumn(Name="difference", Type="DECIMAL"),
+        InputColumn(Name="match_status", Type="STRING"),
+        InputColumn(Name="payment_count", Type="INTEGER"),
+        InputColumn(Name="merchant_id", Type="STRING"),
+        InputColumn(Name="transaction_date", Type="DATETIME"),
+        InputColumn(Name="days_outstanding", Type="INTEGER"),
+        InputColumn(Name="late_threshold", Type="INTEGER"),
+        InputColumn(Name="late_threshold_description", Type="STRING"),
+    ]
+    sql = """\
+SELECT
+    et.transaction_id,
+    et.external_system,
+    et.external_amount,
+    COALESCE(SUM(p.payment_amount), 0) AS internal_total,
+    et.external_amount - COALESCE(SUM(p.payment_amount), 0) AS difference,
+    CASE
+        WHEN et.external_amount = COALESCE(SUM(p.payment_amount), 0) THEN 'matched'
+        WHEN DATEDIFF(day, et.transaction_date, CURRENT_DATE) > lt.threshold_days THEN 'late'
+        ELSE 'not_yet_matched'
+    END AS match_status,
+    COUNT(p.payment_id) AS payment_count,
+    et.merchant_id,
+    et.transaction_date,
+    DATEDIFF(day, et.transaction_date, CURRENT_DATE) AS days_outstanding,
+    lt.threshold_days AS late_threshold,
+    lt.description AS late_threshold_description
+FROM external_transactions et
+LEFT JOIN payments p ON p.transaction_id = et.transaction_id
+LEFT JOIN late_thresholds lt ON lt.transaction_type = 'payments'
+WHERE et.transaction_type = 'payments'
+GROUP BY et.transaction_id, et.external_system, et.external_amount,
+         et.merchant_id, et.transaction_date, lt.threshold_days, lt.description"""
+
+    physical, logical = _physical_and_logical(
+        cfg, "payment-recon", "Payment Reconciliation", sql, columns
+    )
+    return DataSet(
+        AwsAccountId=cfg.aws_account_id,
+        DataSetId=dataset_id,
+        Name="Payment Reconciliation",
+        PhysicalTableMap=physical,
+        LogicalTableMap=logical,
+        ImportMode="DIRECT_QUERY",
+        DataSetUsageConfiguration=DataSetUsageConfiguration(),
+        Permissions=_permissions(cfg),
+        Tags=cfg.tags(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Reconciliation: Exceptions (late and unmatched across all types)
+# ---------------------------------------------------------------------------
+
+def build_recon_exceptions_dataset(cfg: Config) -> DataSet:
+    dataset_id = cfg.prefixed("recon-exceptions-dataset")
+    columns = [
+        InputColumn(Name="transaction_id", Type="STRING"),
+        InputColumn(Name="transaction_type", Type="STRING"),
+        InputColumn(Name="external_system", Type="STRING"),
+        InputColumn(Name="match_status", Type="STRING"),
+        InputColumn(Name="external_amount", Type="DECIMAL"),
+        InputColumn(Name="internal_total", Type="DECIMAL"),
+        InputColumn(Name="difference", Type="DECIMAL"),
+        InputColumn(Name="days_outstanding", Type="INTEGER"),
+        InputColumn(Name="late_threshold", Type="INTEGER"),
+        InputColumn(Name="late_threshold_description", Type="STRING"),
+        InputColumn(Name="merchant_id", Type="STRING"),
+        InputColumn(Name="transaction_date", Type="DATETIME"),
+    ]
+    sql = """\
+SELECT
+    transaction_id,
+    transaction_type,
+    external_system,
+    match_status,
+    external_amount,
+    internal_total,
+    difference,
+    days_outstanding,
+    late_threshold,
+    late_threshold_description,
+    merchant_id,
+    transaction_date
+FROM (
+    -- Sales reconciliation exceptions
+    SELECT transaction_id, 'sales' AS transaction_type, external_system,
+           match_status, external_amount, internal_total, difference,
+           days_outstanding, late_threshold, late_threshold_description,
+           merchant_id, transaction_date
+    FROM sales_recon_view
+    WHERE match_status <> 'matched'
+    UNION ALL
+    -- Settlement reconciliation exceptions
+    SELECT transaction_id, 'settlements' AS transaction_type, external_system,
+           match_status, external_amount, internal_total, difference,
+           days_outstanding, late_threshold, late_threshold_description,
+           merchant_id, transaction_date
+    FROM settlement_recon_view
+    WHERE match_status <> 'matched'
+    UNION ALL
+    -- Payment reconciliation exceptions
+    SELECT transaction_id, 'payments' AS transaction_type, external_system,
+           match_status, external_amount, internal_total, difference,
+           days_outstanding, late_threshold, late_threshold_description,
+           merchant_id, transaction_date
+    FROM payment_recon_view
+    WHERE match_status <> 'matched'
+) exceptions"""
+
+    physical, logical = _physical_and_logical(
+        cfg, "recon-exceptions", "Reconciliation Exceptions", sql, columns
+    )
+    return DataSet(
+        AwsAccountId=cfg.aws_account_id,
+        DataSetId=dataset_id,
+        Name="Reconciliation Exceptions",
+        PhysicalTableMap=physical,
+        LogicalTableMap=logical,
+        ImportMode="DIRECT_QUERY",
+        DataSetUsageConfiguration=DataSetUsageConfiguration(),
+        Permissions=_permissions(cfg),
+        Tags=cfg.tags(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Convenience: build dataset groups
+# ---------------------------------------------------------------------------
+
+def build_financial_datasets(cfg: Config) -> list[DataSet]:
+    """Return the six financial pipeline datasets."""
     return [
         build_merchants_dataset(cfg),
         build_sales_dataset(cfg),
@@ -342,3 +643,19 @@ def build_all_datasets(cfg: Config) -> list[DataSet]:
         build_settlement_exceptions_dataset(cfg),
         build_payment_returns_dataset(cfg),
     ]
+
+
+def build_recon_datasets(cfg: Config) -> list[DataSet]:
+    """Return the five reconciliation datasets."""
+    return [
+        build_external_transactions_dataset(cfg),
+        build_sales_recon_dataset(cfg),
+        build_settlement_recon_dataset(cfg),
+        build_payment_recon_dataset(cfg),
+        build_recon_exceptions_dataset(cfg),
+    ]
+
+
+def build_all_datasets(cfg: Config) -> list[DataSet]:
+    """Return all eleven datasets (financial + reconciliation)."""
+    return build_financial_datasets(cfg) + build_recon_datasets(cfg)

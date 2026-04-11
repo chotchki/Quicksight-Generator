@@ -38,6 +38,7 @@ from quicksight_gen.models import (
     TableUnaggregatedFieldWells,
     TableVisual,
     Visual,
+    VisualSubtitleLabelOptions,
     VisualTitleLabelOptions,
 )
 
@@ -88,6 +89,13 @@ def _title(text: str) -> VisualTitleLabelOptions:
     )
 
 
+def _subtitle(text: str) -> VisualSubtitleLabelOptions:
+    return VisualSubtitleLabelOptions(
+        Visibility="VISIBLE",
+        FormatText={"PlainText": text},
+    )
+
+
 def _unagg_field(field_id: str, ds: str, col_name: str) -> dict:
     """Build an UnaggregatedField dict for table visuals."""
     return {
@@ -109,6 +117,7 @@ def build_sales_visuals() -> list[Visual]:
         KPIVisual=KPIVisual(
             VisualId="sales-kpi-count",
             Title=_title("Total Sales Count"),
+            Subtitle=_subtitle("Count of all sales in the selected date range"),
             ChartConfiguration=KPIConfiguration(
                 FieldWells=KPIFieldWells(
                     Values=[_measure_count("sales-count", DS_SALES, "sale_id")],
@@ -122,6 +131,7 @@ def build_sales_visuals() -> list[Visual]:
         KPIVisual=KPIVisual(
             VisualId="sales-kpi-amount",
             Title=_title("Total Sales Amount"),
+            Subtitle=_subtitle("Sum of all sale amounts in the selected date range"),
             ChartConfiguration=KPIConfiguration(
                 FieldWells=KPIFieldWells(
                     Values=[_measure_sum("sales-amount", DS_SALES, "amount")],
@@ -135,6 +145,7 @@ def build_sales_visuals() -> list[Visual]:
         BarChartVisual=BarChartVisual(
             VisualId="sales-bar-by-merchant",
             Title=_title("Sales Amount by Merchant"),
+            Subtitle=_subtitle("Which merchants are generating the most sales revenue"),
             ChartConfiguration=BarChartConfiguration(
                 FieldWells=BarChartFieldWells(
                     BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
@@ -153,6 +164,7 @@ def build_sales_visuals() -> list[Visual]:
         BarChartVisual=BarChartVisual(
             VisualId="sales-bar-by-location",
             Title=_title("Sales Amount by Location"),
+            Subtitle=_subtitle("Which locations are generating the most sales revenue"),
             ChartConfiguration=BarChartConfiguration(
                 FieldWells=BarChartFieldWells(
                     BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
@@ -171,6 +183,7 @@ def build_sales_visuals() -> list[Visual]:
         TableVisual=TableVisual(
             VisualId="sales-detail-table",
             Title=_title("Sales Detail"),
+            Subtitle=_subtitle("Individual sale transactions — click column headers to sort"),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
                     TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
@@ -202,6 +215,7 @@ def build_settlements_visuals() -> list[Visual]:
         KPIVisual=KPIVisual(
             VisualId="settlements-kpi-amount",
             Title=_title("Total Settled Amount"),
+            Subtitle=_subtitle("Sum of all settlement amounts in the selected date range"),
             ChartConfiguration=KPIConfiguration(
                 FieldWells=KPIFieldWells(
                     Values=[
@@ -219,6 +233,7 @@ def build_settlements_visuals() -> list[Visual]:
         KPIVisual=KPIVisual(
             VisualId="settlements-kpi-pending",
             Title=_title("Pending Settlements"),
+            Subtitle=_subtitle("Number of settlements that have not yet completed"),
             ChartConfiguration=KPIConfiguration(
                 FieldWells=KPIFieldWells(
                     Values=[
@@ -236,6 +251,7 @@ def build_settlements_visuals() -> list[Visual]:
         BarChartVisual=BarChartVisual(
             VisualId="settlements-bar-by-type",
             Title=_title("Settlement Amount by Merchant Type"),
+            Subtitle=_subtitle("How settlement amounts break down across merchant types"),
             ChartConfiguration=BarChartConfiguration(
                 FieldWells=BarChartFieldWells(
                     BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
@@ -260,6 +276,7 @@ def build_settlements_visuals() -> list[Visual]:
         TableVisual=TableVisual(
             VisualId="settlements-detail-table",
             Title=_title("Settlement Detail"),
+            Subtitle=_subtitle("Each settlement with its status, amount, and sale count"),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
                     TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
@@ -305,6 +322,7 @@ def build_payments_visuals() -> list[Visual]:
         KPIVisual=KPIVisual(
             VisualId="payments-kpi-amount",
             Title=_title("Total Paid Amount"),
+            Subtitle=_subtitle("Sum of all payment amounts to merchants"),
             ChartConfiguration=KPIConfiguration(
                 FieldWells=KPIFieldWells(
                     Values=[
@@ -320,6 +338,7 @@ def build_payments_visuals() -> list[Visual]:
         KPIVisual=KPIVisual(
             VisualId="payments-kpi-returns",
             Title=_title("Returned Payments"),
+            Subtitle=_subtitle("Number of payments that were sent back — see detail table for reasons"),
             ChartConfiguration=KPIConfiguration(
                 FieldWells=KPIFieldWells(
                     Values=[
@@ -335,6 +354,7 @@ def build_payments_visuals() -> list[Visual]:
         PieChartVisual=PieChartVisual(
             VisualId="payments-pie-status",
             Title=_title("Payment Status Breakdown"),
+            Subtitle=_subtitle("Proportion of payments by their current status"),
             ChartConfiguration=PieChartConfiguration(
                 FieldWells=PieChartFieldWells(
                     PieChartAggregatedFieldWells=PieChartAggregatedFieldWells(
@@ -357,6 +377,7 @@ def build_payments_visuals() -> list[Visual]:
         TableVisual=TableVisual(
             VisualId="payments-detail-table",
             Title=_title("Payment Detail"),
+            Subtitle=_subtitle("Each payment with its status and return reason if applicable"),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
                     TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
@@ -403,6 +424,7 @@ def build_exceptions_visuals() -> list[Visual]:
         KPIVisual=KPIVisual(
             VisualId="exceptions-kpi-unsettled",
             Title=_title("Unsettled Sales"),
+            Subtitle=_subtitle("Sales that have not yet been bundled into a settlement"),
             ChartConfiguration=KPIConfiguration(
                 FieldWells=KPIFieldWells(
                     Values=[
@@ -422,6 +444,7 @@ def build_exceptions_visuals() -> list[Visual]:
         KPIVisual=KPIVisual(
             VisualId="exceptions-kpi-returns",
             Title=_title("Returned Payments"),
+            Subtitle=_subtitle("Payments that were sent back — check the table below for details"),
             ChartConfiguration=KPIConfiguration(
                 FieldWells=KPIFieldWells(
                     Values=[
@@ -441,6 +464,7 @@ def build_exceptions_visuals() -> list[Visual]:
         TableVisual=TableVisual(
             VisualId="exceptions-unsettled-table",
             Title=_title("Sales Missing Settlements"),
+            Subtitle=_subtitle("Sales not yet bundled into a settlement — investigate if any are overdue"),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
                     TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
@@ -492,6 +516,7 @@ def build_exceptions_visuals() -> list[Visual]:
         TableVisual=TableVisual(
             VisualId="exceptions-returns-table",
             Title=_title("Returned Payments Detail"),
+            Subtitle=_subtitle("Payments that were returned with the reason for each"),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
                     TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(

@@ -468,10 +468,27 @@ class TimeRangeFilter:
 
 
 @dataclass
+class NumericRangeFilterValue:
+    StaticValue: float | None = None
+
+
+@dataclass
+class NumericRangeFilter:
+    FilterId: str
+    Column: ColumnIdentifier
+    NullOption: str = "NON_NULLS_ONLY"
+    RangeMinimum: NumericRangeFilterValue | None = None
+    RangeMaximum: NumericRangeFilterValue | None = None
+    IncludeMinimum: bool | None = None
+    IncludeMaximum: bool | None = None
+
+
+@dataclass
 class Filter:
     """Union type — set exactly one."""
     CategoryFilter: CategoryFilter | None = None
     TimeRangeFilter: TimeRangeFilter | None = None
+    NumericRangeFilter: NumericRangeFilter | None = None
 
 
 @dataclass
@@ -528,10 +545,22 @@ class FilterDateTimePickerControl:
 
 
 @dataclass
+class FilterSliderControl:
+    FilterControlId: str
+    Title: str
+    SourceFilterId: str
+    MaximumValue: float
+    MinimumValue: float
+    StepSize: float
+    Type: str | None = None  # SINGLE_POINT|RANGE
+
+
+@dataclass
 class FilterControl:
     """Union type — set exactly one."""
     Dropdown: FilterDropDownControl | None = None
     DateTimePicker: FilterDateTimePickerControl | None = None
+    Slider: FilterSliderControl | None = None
 
 
 # ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ import click
 from quicksight_gen.analysis import build_analysis
 from quicksight_gen.config import load_config
 from quicksight_gen.datasets import build_all_datasets
+from quicksight_gen.recon_analysis import build_recon_analysis
 from quicksight_gen.theme import build_theme
 
 
@@ -49,13 +50,17 @@ def generate(config: str, output_dir: str) -> None:
     theme = build_theme(cfg)
     _write_json(out / "theme.json", theme.to_aws_json())
 
-    # Datasets
+    # Datasets (financial + reconciliation)
     datasets = build_all_datasets(cfg)
     for ds in datasets:
         _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
 
-    # Analysis
-    analysis = build_analysis(cfg)
-    _write_json(out / "analysis.json", analysis.to_aws_json())
+    # Financial analysis
+    financial = build_analysis(cfg)
+    _write_json(out / "financial-analysis.json", financial.to_aws_json())
 
-    click.echo(f"\nGenerated {1 + len(datasets) + 1} files in {out}/")
+    # Reconciliation analysis
+    recon = build_recon_analysis(cfg)
+    _write_json(out / "recon-analysis.json", recon.to_aws_json())
+
+    click.echo(f"\nGenerated {1 + len(datasets) + 2} files in {out}/")

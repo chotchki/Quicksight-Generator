@@ -15,7 +15,7 @@ from quicksight_gen.constants import (
     SHEET_SALES,
     SHEET_SETTLEMENTS,
 )
-from quicksight_gen.datasets import build_all_datasets
+from quicksight_gen.datasets import build_financial_datasets
 from quicksight_gen.filters import (
     build_exceptions_controls,
     build_filter_groups,
@@ -57,7 +57,12 @@ def _build_sales_sheet() -> SheetDefinition:
         SheetId=SHEET_SALES,
         Name="Sales Overview",
         Title="Sales Overview",
-        Description="Sales volume and amounts across merchants and locations",
+        Description=(
+            "Shows total sales volume and dollar amounts. Use the filters above "
+            "to narrow by date range, merchant, or location. The bar charts "
+            "highlight which merchants and locations drive the most sales, and "
+            "the detail table at the bottom lists individual transactions."
+        ),
         ContentType="INTERACTIVE",
         Visuals=build_sales_visuals(),
         FilterControls=build_sales_controls(),
@@ -69,7 +74,13 @@ def _build_settlements_sheet() -> SheetDefinition:
         SheetId=SHEET_SETTLEMENTS,
         Name="Settlements",
         Title="Settlements",
-        Description="Settlement status, amounts, and breakdown by merchant type",
+        Description=(
+            "Shows how sales are bundled into settlements for each merchant. "
+            "The KPIs show total settled amounts and pending counts. Use the "
+            "settlement status filter to focus on specific statuses. The bar "
+            "chart breaks down amounts by merchant type, and the detail table "
+            "lists each settlement with its current status."
+        ),
         ContentType="INTERACTIVE",
         Visuals=build_settlements_visuals(),
         FilterControls=build_settlements_controls(),
@@ -81,7 +92,12 @@ def _build_payments_sheet() -> SheetDefinition:
         SheetId=SHEET_PAYMENTS,
         Name="Payments",
         Title="Payments",
-        Description="Payment status, amounts, and returned payments",
+        Description=(
+            "Shows payments made to merchants from settlements. The KPIs show "
+            "total paid amounts and how many payments were returned. The pie "
+            "chart breaks down payment statuses, and the detail table includes "
+            "return reasons for any returned payments."
+        ),
         ContentType="INTERACTIVE",
         Visuals=build_payments_visuals(),
         FilterControls=build_payments_controls(),
@@ -93,7 +109,12 @@ def _build_exceptions_sheet() -> SheetDefinition:
         SheetId=SHEET_EXCEPTIONS,
         Name="Exceptions & Alerts",
         Title="Exceptions & Alerts",
-        Description="Unsettled sales, returned payments, and anomalies",
+        Description=(
+            "Highlights items that need attention: sales that have not been "
+            "settled and payments that were returned. Use this tab to "
+            "investigate overdue settlements and understand why payments "
+            "were sent back."
+        ),
         ContentType="INTERACTIVE",
         Visuals=build_exceptions_visuals(),
         FilterControls=build_exceptions_controls(),
@@ -106,8 +127,8 @@ def _build_exceptions_sheet() -> SheetDefinition:
 
 def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaration]:
     """Map logical dataset identifiers to their ARNs."""
-    datasets = build_all_datasets(cfg)
-    # Order matches build_all_datasets: merchants, sales, settlements,
+    datasets = build_financial_datasets(cfg)
+    # Order matches build_financial_datasets: merchants, sales, settlements,
     # payments, settlement-exceptions, payment-returns
     identifier_names = [
         DS_MERCHANTS,

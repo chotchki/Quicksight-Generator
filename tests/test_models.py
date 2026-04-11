@@ -48,6 +48,16 @@ from quicksight_gen.models import (
     VisualTitleLabelOptions,
 )
 from quicksight_gen.config import Config
+from quicksight_gen.datasets import (
+    build_financial_datasets,
+    build_recon_datasets,
+    build_all_datasets,
+    build_external_transactions_dataset,
+    build_sales_recon_dataset,
+    build_settlement_recon_dataset,
+    build_payment_recon_dataset,
+    build_recon_exceptions_dataset,
+)
 
 
 class TestStripNones:
@@ -411,3 +421,101 @@ class TestConfigTags:
         )
         tags = cfg.tags()
         assert tags[0].Key == "ManagedBy"
+
+
+# ---------------------------------------------------------------------------
+# Dataset builder tests
+# ---------------------------------------------------------------------------
+
+_TEST_CFG = Config(
+    aws_account_id="111122223333",
+    aws_region="us-west-2",
+    datasource_arn="arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds",
+    principal_arn="arn:aws:quicksight:us-west-2:111122223333:user/default/admin",
+)
+
+
+class TestDatasetBuilderCounts:
+    def test_financial_datasets_count(self):
+        assert len(build_financial_datasets(_TEST_CFG)) == 6
+
+    def test_recon_datasets_count(self):
+        assert len(build_recon_datasets(_TEST_CFG)) == 5
+
+    def test_all_datasets_count(self):
+        assert len(build_all_datasets(_TEST_CFG)) == 11
+
+    def test_all_datasets_is_financial_plus_recon(self):
+        all_ds = build_all_datasets(_TEST_CFG)
+        fin_ds = build_financial_datasets(_TEST_CFG)
+        recon_ds = build_recon_datasets(_TEST_CFG)
+        all_ids = [ds.DataSetId for ds in all_ds]
+        fin_ids = [ds.DataSetId for ds in fin_ds]
+        recon_ids = [ds.DataSetId for ds in recon_ds]
+        assert all_ids == fin_ids + recon_ids
+
+    def test_no_duplicate_dataset_ids(self):
+        all_ds = build_all_datasets(_TEST_CFG)
+        ids = [ds.DataSetId for ds in all_ds]
+        assert len(ids) == len(set(ids))
+
+
+class TestReconDatasetStructure:
+    """Verify each reconciliation dataset serializes with the expected shape."""
+
+    def _assert_common(self, ds: DataSet):
+        out = ds.to_aws_json()
+        assert out["AwsAccountId"] == "111122223333"
+        assert "PhysicalTableMap" in out
+        # Has SQL
+        for table in out["PhysicalTableMap"].values():
+            assert "CustomSql" in table
+            assert "test-ds" in table["CustomSql"]["DataSourceArn"]
+        # Has tags
+        tag_keys = {t["Key"] for t in out["Tags"]}
+        assert "ManagedBy" in tag_keys
+        # Has permissions
+        assert "Permissions" in out
+
+    def test_external_transactions(self):
+        ds = build_external_transactions_dataset(_TEST_CFG)
+        assert ds.Name == "External Transactions"
+        self._assert_common(ds)
+        col_names = {c.Name for c in list(ds.PhysicalTableMap.values())[0].CustomSql.Columns}
+        assert "transaction_id" in col_names
+        assert "external_system" in col_names
+        assert "external_amount" in col_names
+
+    def test_sales_recon(self):
+        ds = build_sales_recon_dataset(_TEST_CFG)
+        assert ds.Name == "Sales Reconciliation"
+        self._assert_common(ds)
+        col_names = {c.Name for c in list(ds.PhysicalTableMap.values())[0].CustomSql.Columns}
+        for expected in ("match_status", "difference", "days_outstanding",
+                         "late_threshold", "late_threshold_description"):
+            assert expected in col_names, f"Missing column: {expected}"
+
+    def test_settlement_recon(self):
+        ds = build_settlement_recon_dataset(_TEST_CFG)
+        assert ds.Name == "Settlement Reconciliation"
+        self._assert_common(ds)
+        col_names = {c.Name for c in list(ds.PhysicalTableMap.values())[0].CustomSql.Columns}
+        assert "settlement_count" in col_names
+        assert "match_status" in col_names
+
+    def test_payment_recon(self):
+        ds = build_payment_recon_dataset(_TEST_CFG)
+        assert ds.Name == "Payment Reconciliation"
+        self._assert_common(ds)
+        col_names = {c.Name for c in list(ds.PhysicalTableMap.values())[0].CustomSql.Columns}
+        assert "payment_count" in col_names
+        assert "match_status" in col_names
+
+    def test_recon_exceptions(self):
+        ds = build_recon_exceptions_dataset(_TEST_CFG)
+        assert ds.Name == "Reconciliation Exceptions"
+        self._assert_common(ds)
+        col_names = {c.Name for c in list(ds.PhysicalTableMap.values())[0].CustomSql.Columns}
+        for expected in ("transaction_type", "external_system", "match_status",
+                         "days_outstanding", "late_threshold_description"):
+            assert expected in col_names, f"Missing column: {expected}"
