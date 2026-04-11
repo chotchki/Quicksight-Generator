@@ -23,7 +23,10 @@ from quicksight_gen.models import (
     CategoricalMeasureField,
     ChartAxisLabelOptions,
     ColumnIdentifier,
+    CustomActionFilterOperation,
     DimensionField,
+    FilterOperationSelectedFieldsConfiguration,
+    FilterOperationTargetVisualsConfiguration,
     KPIConfiguration,
     KPIFieldWells,
     KPIVisual,
@@ -34,11 +37,14 @@ from quicksight_gen.models import (
     PieChartConfiguration,
     PieChartFieldWells,
     PieChartVisual,
+    SameSheetTargetVisualConfiguration,
     TableConfiguration,
     TableFieldWells,
     TableUnaggregatedFieldWells,
     TableVisual,
     Visual,
+    VisualCustomAction,
+    VisualCustomActionOperation,
     VisualSubtitleLabelOptions,
     VisualTitleLabelOptions,
 )
@@ -113,6 +119,33 @@ def _axis_label(label: str) -> ChartAxisLabelOptions:
     )
 
 
+def _same_sheet_filter_action(
+    action_id: str,
+    name: str,
+    target_visual_ids: list[str],
+) -> VisualCustomAction:
+    """Build a DATA_POINT_CLICK action that filters target visuals on the same sheet."""
+    return VisualCustomAction(
+        CustomActionId=action_id,
+        Name=name,
+        Trigger="DATA_POINT_CLICK",
+        ActionOperations=[
+            VisualCustomActionOperation(
+                FilterOperation=CustomActionFilterOperation(
+                    SelectedFieldsConfiguration=FilterOperationSelectedFieldsConfiguration(
+                        SelectedFieldOptions="ALL_FIELDS",
+                    ),
+                    TargetVisualsConfiguration=FilterOperationTargetVisualsConfiguration(
+                        SameSheetTargetVisualConfiguration=SameSheetTargetVisualConfiguration(
+                            TargetVisuals=target_visual_ids,
+                        ),
+                    ),
+                ),
+            ),
+        ],
+    )
+
+
 # ---------------------------------------------------------------------------
 # 3a — Reconciliation Overview visuals
 # ---------------------------------------------------------------------------
@@ -183,7 +216,10 @@ def build_recon_overview_visuals() -> list[Visual]:
         PieChartVisual=PieChartVisual(
             VisualId="recon-pie-status",
             Title=_title("Match Status Breakdown"),
-            Subtitle=_subtitle("Proportion of all transactions by match status"),
+            Subtitle=_subtitle(
+                "Proportion of all transactions by match status. "
+                "Click a slice to filter the charts below."
+            ),
             ChartConfiguration=PieChartConfiguration(
                 FieldWells=PieChartFieldWells(
                     PieChartAggregatedFieldWells=PieChartAggregatedFieldWells(
@@ -206,6 +242,13 @@ def build_recon_overview_visuals() -> list[Visual]:
                 CategoryLabelOptions=_axis_label("Match Status"),
                 ValueLabelOptions=_axis_label("Transaction Count"),
             ),
+            Actions=[
+                _same_sheet_filter_action(
+                    "action-recon-filter-by-status",
+                    "Filter by Status",
+                    ["recon-bar-by-type", "recon-bar-by-system"],
+                ),
+            ],
         )
     )
 
@@ -214,7 +257,10 @@ def build_recon_overview_visuals() -> list[Visual]:
         BarChartVisual=BarChartVisual(
             VisualId="recon-bar-by-type",
             Title=_title("Match Status by Type"),
-            Subtitle=_subtitle("Compares how many sales, settlements, and payments are matched, pending, or late"),
+            Subtitle=_subtitle(
+                "Compares how many sales, settlements, and payments are matched, "
+                "pending, or late. Click a bar to filter the system chart."
+            ),
             ChartConfiguration=BarChartConfiguration(
                 FieldWells=BarChartFieldWells(
                     BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
@@ -247,6 +293,13 @@ def build_recon_overview_visuals() -> list[Visual]:
                 ValueLabelOptions=_axis_label("Transaction Count"),
                 ColorLabelOptions=_axis_label("Match Status"),
             ),
+            Actions=[
+                _same_sheet_filter_action(
+                    "action-recon-filter-by-type",
+                    "Filter by Type",
+                    ["recon-bar-by-system"],
+                ),
+            ],
         )
     )
 
@@ -255,7 +308,10 @@ def build_recon_overview_visuals() -> list[Visual]:
         BarChartVisual=BarChartVisual(
             VisualId="recon-bar-by-system",
             Title=_title("Match Status by External System"),
-            Subtitle=_subtitle("Which external systems have the most mismatches"),
+            Subtitle=_subtitle(
+                "Which external systems have the most mismatches. "
+                "Click a bar to filter the type chart."
+            ),
             ChartConfiguration=BarChartConfiguration(
                 FieldWells=BarChartFieldWells(
                     BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
@@ -288,6 +344,13 @@ def build_recon_overview_visuals() -> list[Visual]:
                 ValueLabelOptions=_axis_label("Transaction Count"),
                 ColorLabelOptions=_axis_label("Match Status"),
             ),
+            Actions=[
+                _same_sheet_filter_action(
+                    "action-recon-filter-by-system",
+                    "Filter by System",
+                    ["recon-bar-by-type"],
+                ),
+            ],
         )
     )
 
@@ -351,7 +414,10 @@ def _build_recon_type_visuals(
         BarChartVisual=BarChartVisual(
             VisualId=f"{prefix}-bar-merchant",
             Title=_title(f"{type_label} Match Status by Merchant"),
-            Subtitle=_subtitle(f"Which merchants have {type_label.lower()} reconciliation issues"),
+            Subtitle=_subtitle(
+                f"Which merchants have {type_label.lower()} reconciliation issues. "
+                "Click a bar to filter the detail table."
+            ),
             ChartConfiguration=BarChartConfiguration(
                 FieldWells=BarChartFieldWells(
                     BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
@@ -372,6 +438,13 @@ def _build_recon_type_visuals(
                 ValueLabelOptions=_axis_label("Transaction Count"),
                 ColorLabelOptions=_axis_label("Match Status"),
             ),
+            Actions=[
+                _same_sheet_filter_action(
+                    f"action-{prefix}-filter-by-merchant",
+                    "Filter by Merchant",
+                    [f"{prefix}-detail-table"],
+                ),
+            ],
         )
     )
 

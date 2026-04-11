@@ -394,6 +394,7 @@ class BarChartVisual:
     Title: VisualTitleLabelOptions | None = None
     Subtitle: VisualSubtitleLabelOptions | None = None
     ChartConfiguration: BarChartConfiguration | None = None
+    Actions: list[VisualCustomAction] | None = None
 
 
 # -- Pie chart --
@@ -428,6 +429,7 @@ class PieChartVisual:
     Title: VisualTitleLabelOptions | None = None
     Subtitle: VisualSubtitleLabelOptions | None = None
     ChartConfiguration: PieChartConfiguration | None = None
+    Actions: list[VisualCustomAction] | None = None
 
 
 # -- KPI --
@@ -496,6 +498,65 @@ class TableVisual:
     Title: VisualTitleLabelOptions | None = None
     Subtitle: VisualSubtitleLabelOptions | None = None
     ChartConfiguration: TableConfiguration | None = None
+    Actions: list[VisualCustomAction] | None = None
+
+
+# -- Custom actions (drill-down navigation, filtering) --
+
+@dataclass
+class LocalNavigationConfiguration:
+    TargetSheetId: str
+
+
+@dataclass
+class CustomActionNavigationOperation:
+    LocalNavigationConfiguration: LocalNavigationConfiguration
+
+
+@dataclass
+class CustomActionSetParametersOperation:
+    ParameterValueConfigurations: list[dict[str, Any]]
+
+
+@dataclass
+class SameSheetTargetVisualConfiguration:
+    TargetVisualOptions: str | None = None  # ALL_VISUALS
+    TargetVisuals: list[str] | None = None
+
+
+@dataclass
+class FilterOperationTargetVisualsConfiguration:
+    SameSheetTargetVisualConfiguration: SameSheetTargetVisualConfiguration | None = None
+
+
+@dataclass
+class FilterOperationSelectedFieldsConfiguration:
+    SelectedFieldOptions: str | None = None  # ALL_FIELDS
+    SelectedFields: list[str] | None = None
+    SelectedColumns: list[ColumnIdentifier] | None = None
+
+
+@dataclass
+class CustomActionFilterOperation:
+    SelectedFieldsConfiguration: FilterOperationSelectedFieldsConfiguration
+    TargetVisualsConfiguration: FilterOperationTargetVisualsConfiguration
+
+
+@dataclass
+class VisualCustomActionOperation:
+    """Union type — set exactly one."""
+    NavigationOperation: CustomActionNavigationOperation | None = None
+    SetParametersOperation: CustomActionSetParametersOperation | None = None
+    FilterOperation: CustomActionFilterOperation | None = None
+
+
+@dataclass
+class VisualCustomAction:
+    CustomActionId: str
+    Name: str
+    Trigger: str  # DATA_POINT_CLICK|DATA_POINT_MENU
+    ActionOperations: list[VisualCustomActionOperation]
+    Status: str = "ENABLED"
 
 
 # -- Visual union --
@@ -550,7 +611,7 @@ class DefaultFilterControlConfiguration:
 @dataclass
 class CategoryFilterConfiguration:
     FilterListConfiguration: dict[str, Any] | None = None
-    # FilterListConfiguration: {MatchOperator, CategoryValues, SelectAllOptions}
+    CustomFilterConfiguration: dict[str, Any] | None = None
 
 
 @dataclass
@@ -748,11 +809,24 @@ class DataSetIdentifierDeclaration:
 
 
 @dataclass
+class StringParameterDeclaration:
+    ParameterValueType: str  # SINGLE_VALUED|MULTI_VALUED
+    Name: str
+    DefaultValues: dict[str, Any]
+
+
+@dataclass
+class ParameterDeclaration:
+    """Union type — set exactly one."""
+    StringParameterDeclaration: StringParameterDeclaration | None = None
+
+
+@dataclass
 class AnalysisDefinition:
     DataSetIdentifierDeclarations: list[DataSetIdentifierDeclaration]
     Sheets: list[SheetDefinition] | None = None
     FilterGroups: list[FilterGroup] | None = None
-    ParameterDeclarations: list[dict[str, Any]] | None = None
+    ParameterDeclarations: list[ParameterDeclaration] | None = None
     CalculatedFields: list[dict[str, Any]] | None = None
 
 

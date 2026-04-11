@@ -12,6 +12,8 @@ from quicksight_gen.constants import (
     DS_SALES,
     DS_SETTLEMENTS,
     DS_SETTLEMENT_EXCEPTIONS,
+    SHEET_SALES,
+    SHEET_SETTLEMENTS,
 )
 from quicksight_gen.models import (
     AxisLabelOptions,
@@ -23,10 +25,16 @@ from quicksight_gen.models import (
     CategoricalMeasureField,
     ChartAxisLabelOptions,
     ColumnIdentifier,
+    CustomActionFilterOperation,
+    CustomActionNavigationOperation,
+    CustomActionSetParametersOperation,
     DimensionField,
+    FilterOperationSelectedFieldsConfiguration,
+    FilterOperationTargetVisualsConfiguration,
     KPIConfiguration,
     KPIFieldWells,
     KPIVisual,
+    LocalNavigationConfiguration,
     MeasureField,
     NumericalAggregationFunction,
     NumericalMeasureField,
@@ -34,12 +42,15 @@ from quicksight_gen.models import (
     PieChartConfiguration,
     PieChartFieldWells,
     PieChartVisual,
+    SameSheetTargetVisualConfiguration,
     TableAggregatedFieldWells,
     TableConfiguration,
     TableFieldWells,
     TableUnaggregatedFieldWells,
     TableVisual,
     Visual,
+    VisualCustomAction,
+    VisualCustomActionOperation,
     VisualSubtitleLabelOptions,
     VisualTitleLabelOptions,
 )
@@ -115,6 +126,69 @@ def _unagg_field(field_id: str, ds: str, col_name: str) -> dict:
     }
 
 
+def _drill_down_action(
+    action_id: str,
+    name: str,
+    target_sheet: str,
+    param_name: str,
+    source_field_id: str,
+) -> VisualCustomAction:
+    """Build a DATA_POINT_CLICK action that sets a parameter and navigates."""
+    return VisualCustomAction(
+        CustomActionId=action_id,
+        Name=name,
+        Trigger="DATA_POINT_CLICK",
+        ActionOperations=[
+            VisualCustomActionOperation(
+                NavigationOperation=CustomActionNavigationOperation(
+                    LocalNavigationConfiguration=LocalNavigationConfiguration(
+                        TargetSheetId=target_sheet,
+                    ),
+                ),
+            ),
+            VisualCustomActionOperation(
+                SetParametersOperation=CustomActionSetParametersOperation(
+                    ParameterValueConfigurations=[
+                        {
+                            "DestinationParameterName": param_name,
+                            "Value": {
+                                "SourceField": source_field_id,
+                            },
+                        },
+                    ],
+                ),
+            ),
+        ],
+    )
+
+
+def _same_sheet_filter_action(
+    action_id: str,
+    name: str,
+    target_visual_ids: list[str],
+) -> VisualCustomAction:
+    """Build a DATA_POINT_CLICK action that filters target visuals on the same sheet."""
+    return VisualCustomAction(
+        CustomActionId=action_id,
+        Name=name,
+        Trigger="DATA_POINT_CLICK",
+        ActionOperations=[
+            VisualCustomActionOperation(
+                FilterOperation=CustomActionFilterOperation(
+                    SelectedFieldsConfiguration=FilterOperationSelectedFieldsConfiguration(
+                        SelectedFieldOptions="ALL_FIELDS",
+                    ),
+                    TargetVisualsConfiguration=FilterOperationTargetVisualsConfiguration(
+                        SameSheetTargetVisualConfiguration=SameSheetTargetVisualConfiguration(
+                            TargetVisuals=target_visual_ids,
+                        ),
+                    ),
+                ),
+            ),
+        ],
+    )
+
+
 # ---------------------------------------------------------------------------
 # 7a — Sales Overview visuals
 # ---------------------------------------------------------------------------
@@ -153,7 +227,10 @@ def build_sales_visuals() -> list[Visual]:
         BarChartVisual=BarChartVisual(
             VisualId="sales-bar-by-merchant",
             Title=_title("Sales Amount by Merchant"),
-            Subtitle=_subtitle("Which merchants are generating the most sales revenue"),
+            Subtitle=_subtitle(
+                "Which merchants are generating the most sales revenue. "
+                "Click a bar to filter the detail table."
+            ),
             ChartConfiguration=BarChartConfiguration(
                 FieldWells=BarChartFieldWells(
                     BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
@@ -166,6 +243,13 @@ def build_sales_visuals() -> list[Visual]:
                 CategoryLabelOptions=_axis_label("Merchant"),
                 ValueLabelOptions=_axis_label("Sales Amount ($)"),
             ),
+            Actions=[
+                _same_sheet_filter_action(
+                    "action-sales-filter-by-merchant",
+                    "Filter by Merchant",
+                    ["sales-detail-table"],
+                ),
+            ],
         )
     )
 
@@ -174,7 +258,10 @@ def build_sales_visuals() -> list[Visual]:
         BarChartVisual=BarChartVisual(
             VisualId="sales-bar-by-location",
             Title=_title("Sales Amount by Location"),
-            Subtitle=_subtitle("Which locations are generating the most sales revenue"),
+            Subtitle=_subtitle(
+                "Which locations are generating the most sales revenue. "
+                "Click a bar to filter the detail table."
+            ),
             ChartConfiguration=BarChartConfiguration(
                 FieldWells=BarChartFieldWells(
                     BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
@@ -187,6 +274,13 @@ def build_sales_visuals() -> list[Visual]:
                 CategoryLabelOptions=_axis_label("Location"),
                 ValueLabelOptions=_axis_label("Sales Amount ($)"),
             ),
+            Actions=[
+                _same_sheet_filter_action(
+                    "action-sales-filter-by-location",
+                    "Filter by Location",
+                    ["sales-detail-table"],
+                ),
+            ],
         )
     )
 
@@ -201,6 +295,7 @@ def build_sales_visuals() -> list[Visual]:
                     TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
                         Values=[
                             _unagg_field("tbl-sale-id", DS_SALES, "sale_id"),
+                            _unagg_field("tbl-settlement-id", DS_SALES, "settlement_id"),
                             _unagg_field("tbl-merchant-id", DS_SALES, "merchant_id"),
                             _unagg_field("tbl-location-id", DS_SALES, "location_id"),
                             _unagg_field("tbl-amount", DS_SALES, "amount"),
@@ -263,7 +358,10 @@ def build_settlements_visuals() -> list[Visual]:
         BarChartVisual=BarChartVisual(
             VisualId="settlements-bar-by-type",
             Title=_title("Settlement Amount by Merchant Type"),
-            Subtitle=_subtitle("How settlement amounts break down across merchant types"),
+            Subtitle=_subtitle(
+                "How settlement amounts break down across merchant types. "
+                "Click a bar to filter the detail table."
+            ),
             ChartConfiguration=BarChartConfiguration(
                 FieldWells=BarChartFieldWells(
                     BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
@@ -282,15 +380,25 @@ def build_settlements_visuals() -> list[Visual]:
                 CategoryLabelOptions=_axis_label("Merchant Type"),
                 ValueLabelOptions=_axis_label("Settlement Amount ($)"),
             ),
+            Actions=[
+                _same_sheet_filter_action(
+                    "action-settlements-filter-by-type",
+                    "Filter by Type",
+                    ["settlements-detail-table"],
+                ),
+            ],
         )
     )
 
-    # Table: settlement detail
+    # Table: settlement detail — click a row to drill down to its sales
     table_settlements = Visual(
         TableVisual=TableVisual(
             VisualId="settlements-detail-table",
             Title=_title("Settlement Detail"),
-            Subtitle=_subtitle("Each settlement with its status, amount, and sale count"),
+            Subtitle=_subtitle(
+                "Each settlement with its status, amount, and sale count. "
+                "Click a row to view its sales."
+            ),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
                     TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
@@ -320,6 +428,15 @@ def build_settlements_visuals() -> list[Visual]:
                     )
                 ),
             ),
+            Actions=[
+                _drill_down_action(
+                    "action-settlement-to-sales",
+                    "View Sales",
+                    SHEET_SALES,
+                    "pSettlementId",
+                    "tbl-stl-id",
+                ),
+            ],
         )
     )
 
@@ -368,7 +485,10 @@ def build_payments_visuals() -> list[Visual]:
         PieChartVisual=PieChartVisual(
             VisualId="payments-pie-status",
             Title=_title("Payment Status Breakdown"),
-            Subtitle=_subtitle("Proportion of payments by their current status"),
+            Subtitle=_subtitle(
+                "Proportion of payments by their current status. "
+                "Click a slice to filter the detail table."
+            ),
             ChartConfiguration=PieChartConfiguration(
                 FieldWells=PieChartFieldWells(
                     PieChartAggregatedFieldWells=PieChartAggregatedFieldWells(
@@ -385,15 +505,25 @@ def build_payments_visuals() -> list[Visual]:
                 CategoryLabelOptions=_axis_label("Payment Status"),
                 ValueLabelOptions=_axis_label("Number of Payments"),
             ),
+            Actions=[
+                _same_sheet_filter_action(
+                    "action-payments-filter-by-status",
+                    "Filter by Status",
+                    ["payments-detail-table"],
+                ),
+            ],
         )
     )
 
-    # Table: payment detail
+    # Table: payment detail — click a row to drill down to its settlement
     table_payments = Visual(
         TableVisual=TableVisual(
             VisualId="payments-detail-table",
             Title=_title("Payment Detail"),
-            Subtitle=_subtitle("Each payment with its status and return reason if applicable"),
+            Subtitle=_subtitle(
+                "Each payment with its status and return reason if applicable. "
+                "Click a row to view its settlement."
+            ),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
                     TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
@@ -424,6 +554,15 @@ def build_payments_visuals() -> list[Visual]:
                     )
                 ),
             ),
+            Actions=[
+                _drill_down_action(
+                    "action-payment-to-settlement",
+                    "View Settlement",
+                    SHEET_SETTLEMENTS,
+                    "pSettlementId",
+                    "tbl-pay-stl-id",
+                ),
+            ],
         )
     )
 

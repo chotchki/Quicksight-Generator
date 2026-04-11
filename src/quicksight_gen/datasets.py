@@ -182,6 +182,7 @@ def build_sales_dataset(cfg: Config) -> DataSet:
         InputColumn(Name="reference_id", Type="STRING"),
         InputColumn(Name="metadata", Type="STRING"),
         InputColumn(Name="external_transaction_id", Type="STRING"),
+        InputColumn(Name="settlement_id", Type="STRING"),
     ]
     sql = """\
 SELECT
@@ -194,7 +195,8 @@ SELECT
     card_last_four,
     reference_id,
     metadata,
-    external_transaction_id
+    external_transaction_id,
+    settlement_id
 FROM sales"""
 
     physical, logical = _physical_and_logical(

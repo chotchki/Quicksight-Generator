@@ -26,15 +26,25 @@ from quicksight_gen.filters import (
 from quicksight_gen.models import (
     Analysis,
     AnalysisDefinition,
+    CategoryFilter,
+    CategoryFilterConfiguration,
+    ColumnIdentifier,
     Dashboard,
     DashboardPublishOptions,
     DataSetIdentifierDeclaration,
+    Filter,
+    FilterGroup,
+    FilterScopeConfiguration,
     GridLayoutConfiguration,
     GridLayoutElement,
     Layout,
     LayoutConfiguration,
+    ParameterDeclaration,
     ResourcePermission,
+    SelectedSheetsFilterScopeConfiguration,
     SheetDefinition,
+    SheetVisualScopingConfiguration,
+    StringParameterDeclaration,
 )
 from quicksight_gen.theme import get_preset
 from quicksight_gen.visuals import (
@@ -233,8 +243,76 @@ def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaratio
 # Shared definition
 # ---------------------------------------------------------------------------
 
+def _settlement_id_parameter() -> ParameterDeclaration:
+    """Declare the pSettlementId parameter for drill-down navigation."""
+    return ParameterDeclaration(
+        StringParameterDeclaration=StringParameterDeclaration(
+            ParameterValueType="SINGLE_VALUED",
+            Name="pSettlementId",
+            DefaultValues={"StaticValues": []},
+        ),
+    )
+
+
+def _settlement_id_filter_group(
+    filter_group_id: str,
+    filter_id: str,
+    ds_identifier: str,
+    sheet_id: str,
+) -> FilterGroup:
+    """Build a filter group that filters settlement_id by the pSettlementId parameter."""
+    return FilterGroup(
+        FilterGroupId=filter_group_id,
+        CrossDataset="SINGLE_DATASET",
+        ScopeConfiguration=FilterScopeConfiguration(
+            SelectedSheets=SelectedSheetsFilterScopeConfiguration(
+                SheetVisualScopingConfigurations=[
+                    SheetVisualScopingConfiguration(
+                        SheetId=sheet_id,
+                        Scope="ALL_VISUALS",
+                    ),
+                ],
+            ),
+        ),
+        Status="ENABLED",
+        Filters=[
+            Filter(
+                CategoryFilter=CategoryFilter(
+                    FilterId=filter_id,
+                    Column=ColumnIdentifier(
+                        DataSetIdentifier=ds_identifier,
+                        ColumnName="settlement_id",
+                    ),
+                    Configuration=CategoryFilterConfiguration(
+                        CustomFilterConfiguration={
+                            "MatchOperator": "EQUALS",
+                            "ParameterName": "pSettlementId",
+                            "NullOption": "ALL_VALUES",
+                        },
+                    ),
+                ),
+            ),
+        ],
+    )
+
+
 def _build_financial_definition(cfg: Config) -> AnalysisDefinition:
     """Build the definition shared by both the analysis and dashboard."""
+    drill_down_filters = [
+        _settlement_id_filter_group(
+            "fg-drill-settlement-on-sales",
+            "filter-drill-settlement-on-sales",
+            DS_SALES,
+            SHEET_SALES,
+        ),
+        _settlement_id_filter_group(
+            "fg-drill-settlement-on-settlements",
+            "filter-drill-settlement-on-settlements",
+            DS_SETTLEMENTS,
+            SHEET_SETTLEMENTS,
+        ),
+    ]
+
     return AnalysisDefinition(
         DataSetIdentifierDeclarations=_build_dataset_declarations(cfg),
         Sheets=[
@@ -243,7 +321,8 @@ def _build_financial_definition(cfg: Config) -> AnalysisDefinition:
             _build_payments_sheet(),
             _build_exceptions_sheet(),
         ],
-        FilterGroups=build_filter_groups(),
+        FilterGroups=build_filter_groups() + drill_down_filters,
+        ParameterDeclarations=[_settlement_id_parameter()],
     )
 
 
