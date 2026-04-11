@@ -9,6 +9,7 @@ Background:
 	- [  ] The financial application cares about a series of steps revolving around merchants taking in sales, this application bundles those sales to settle them and then pays those merchants at the end. 
 
 	- [  ] This analysis will want to make queries to support each of those steps, provide controls to filter and easy ways to check if a settlement didn’t happen or payments were returned.
+	- [  ] The financial application needs to ensure the sales, settlement, payments match to other systems. There will be successful matches, not yet matched and late matching which will be exceptions. This should be a separate quicksight analysis from the sales/settlement/payment one.
 
 Key Domain Models to Understand:
 	- Merchants make sales at a location
@@ -22,6 +23,9 @@ Key Domain Models to Understand:
         - Settlements are paid based on the merchant
 
 	- There are unique identifiers for locations, merchants, sales,
+	- The sales, settlements and payments are aggregated in other systems as a series of transactions. Those transactions have unique identifiers and will each contain a certain amount of sales/settlements/payments.
+	- A match is only valid when the aggregation in the other system AND the sales/settlements/payments equal each other.
+	- Something being late may have different static meaning depending on the type of the thing. We should show in the enventual analysis what it is set to but it does not need to be editable in quicksight.
 
 
 Output:
