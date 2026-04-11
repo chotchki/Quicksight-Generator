@@ -64,6 +64,16 @@ class TestGenerateOutput:
         analysis = json.loads((output_dir / "analysis.json").read_text())
         assert "Permissions" in analysis
 
+    def test_all_resources_have_common_tag(self, output_dir: Path):
+        """Every generated resource must have the ManagedBy tag."""
+        for path in output_dir.rglob("*.json"):
+            data = json.loads(path.read_text())
+            assert "Tags" in data, f"{path.name} missing Tags"
+            tag_keys = {t["Key"] for t in data["Tags"]}
+            assert "ManagedBy" in tag_keys, f"{path.name} missing ManagedBy tag"
+            managed = next(t for t in data["Tags"] if t["Key"] == "ManagedBy")
+            assert managed["Value"] == "quicksight-gen"
+
 
 class TestCrossReferences:
     """Validate that all internal references are consistent."""

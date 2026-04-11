@@ -20,8 +20,18 @@ class Config:
     datasource_arn: str
     resource_prefix: str = "qs-gen"
     principal_arn: str | None = None
+    extra_tags: dict[str, str] = field(default_factory=dict)
 
     # Derived helpers
+    def tags(self) -> list[dict[str, str]]:
+        """Return common + extra tags as the AWS Tag list format."""
+        from quicksight_gen.models import Tag
+
+        all_tags = [Tag(Key="ManagedBy", Value="quicksight-gen")]
+        for key, value in self.extra_tags.items():
+            all_tags.append(Tag(Key=key, Value=value))
+        return all_tags
+
     def dataset_arn(self, dataset_id: str) -> str:
         return (
             f"arn:aws:quicksight:{self.aws_region}:{self.aws_account_id}"
@@ -80,10 +90,15 @@ def load_config(path: str | Path | None = None) -> Config:
             f"({', '.join(env_map[k] for k in missing)})."
         )
 
+    # Extra tags: expect a dict under "extra_tags" in the YAML
+    raw_tags = values.get("extra_tags", {})
+    extra_tags = dict(raw_tags) if isinstance(raw_tags, dict) else {}
+
     return Config(
         aws_account_id=values["aws_account_id"],
         aws_region=values["aws_region"],
         datasource_arn=values["datasource_arn"],
         resource_prefix=values.get("resource_prefix", "qs-gen"),
         principal_arn=values.get("principal_arn"),
+        extra_tags=extra_tags,
     )

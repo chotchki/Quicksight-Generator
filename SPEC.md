@@ -30,3 +30,5 @@ Output:
 	- [  ] The customer of these aws quicksight reports doesn’t know what they want so an ability to mutate this project either via you (Claude) OR some level of structured code that generates the quick sight reports will be VERY helpful.
 
 	- [  ] Build a consistent theme that looks nice, color theme blues and greys but must be easily read. Apply the theme and reasonable styling to everything produced.
+
+	- [x] All generated AWS resources (themes, datasets, analyses) must have a common tag (`ManagedBy: quicksight-gen`) so they can be found. Additional tags can be specified via `extra_tags` in config.yaml. The common tag is always applied on top of any other tags.

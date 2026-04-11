@@ -87,6 +87,7 @@ def build_theme(cfg: Config) -> Theme:
         ThemeId=theme_id,
         Name="Financial Reporting Theme",
         BaseThemeId="CLASSIC",
+        Tags=cfg.tags(),
         Configuration=ThemeConfiguration(
             DataColorPalette=DataColorPalette(
                 Colors=DATA_COLOURS,

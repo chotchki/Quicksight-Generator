@@ -196,6 +196,12 @@ class ThemeConfiguration:
 
 
 @dataclass
+class Tag:
+    Key: str
+    Value: str
+
+
+@dataclass
 class ResourcePermission:
     Principal: str
     Actions: list[str]
@@ -209,6 +215,7 @@ class Theme:
     BaseThemeId: str
     Configuration: ThemeConfiguration
     Permissions: list[ResourcePermission] | None = None
+    Tags: list[Tag] | None = None
     VersionDescription: str | None = None
 
     def to_aws_json(self) -> dict[str, Any]:
@@ -272,6 +279,7 @@ class DataSet:
     LogicalTableMap: dict[str, LogicalTable] | None = None
     DataSetUsageConfiguration: DataSetUsageConfiguration | None = None
     Permissions: list[ResourcePermission] | None = None
+    Tags: list[Tag] | None = None
 
     def to_aws_json(self) -> dict[str, Any]:
         return _strip_nones(asdict(self))
@@ -612,6 +620,7 @@ class Analysis:
     Definition: AnalysisDefinition
     ThemeArn: str | None = None
     Permissions: list[ResourcePermission] | None = None
+    Tags: list[Tag] | None = None
 
     def to_aws_json(self) -> dict[str, Any]:
         return _strip_nones(asdict(self))

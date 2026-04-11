@@ -39,6 +39,7 @@ from quicksight_gen.models import (
     TableFieldWells,
     TableUnaggregatedFieldWells,
     TableVisual,
+    Tag,
     Theme,
     ThemeConfiguration,
     DataColorPalette,
@@ -46,6 +47,7 @@ from quicksight_gen.models import (
     Visual,
     VisualTitleLabelOptions,
 )
+from quicksight_gen.config import Config
 
 
 class TestStripNones:
@@ -320,3 +322,92 @@ class TestFilterSerialization:
         cf = out["Filters"][0]["CategoryFilter"]
         assert cf["FilterId"] == "f1"
         assert cf["Configuration"]["FilterListConfiguration"]["MatchOperator"] == "CONTAINS"
+
+
+class TestTagSerialization:
+    def test_tag_in_theme(self):
+        theme = Theme(
+            AwsAccountId="123",
+            ThemeId="t",
+            Name="T",
+            BaseThemeId="CLASSIC",
+            Configuration=ThemeConfiguration(),
+            Tags=[Tag(Key="ManagedBy", Value="quicksight-gen")],
+        )
+        out = theme.to_aws_json()
+        assert out["Tags"] == [{"Key": "ManagedBy", "Value": "quicksight-gen"}]
+
+    def test_tag_in_dataset(self):
+        ds = DataSet(
+            AwsAccountId="123",
+            DataSetId="ds-1",
+            Name="Test",
+            PhysicalTableMap={},
+            Tags=[Tag(Key="ManagedBy", Value="quicksight-gen"), Tag(Key="Env", Value="dev")],
+        )
+        out = ds.to_aws_json()
+        assert len(out["Tags"]) == 2
+        assert out["Tags"][0] == {"Key": "ManagedBy", "Value": "quicksight-gen"}
+        assert out["Tags"][1] == {"Key": "Env", "Value": "dev"}
+
+    def test_tag_in_analysis(self):
+        analysis = Analysis(
+            AwsAccountId="123",
+            AnalysisId="a-1",
+            Name="Test",
+            Definition=AnalysisDefinition(
+                DataSetIdentifierDeclarations=[
+                    DataSetIdentifierDeclaration(Identifier="ds", DataSetArn="arn:x")
+                ],
+            ),
+            Tags=[Tag(Key="ManagedBy", Value="quicksight-gen")],
+        )
+        out = analysis.to_aws_json()
+        assert out["Tags"] == [{"Key": "ManagedBy", "Value": "quicksight-gen"}]
+
+    def test_no_tags_stripped(self):
+        ds = DataSet(
+            AwsAccountId="123",
+            DataSetId="ds-1",
+            Name="Test",
+            PhysicalTableMap={},
+        )
+        out = ds.to_aws_json()
+        assert "Tags" not in out
+
+
+class TestConfigTags:
+    def test_default_common_tag(self):
+        cfg = Config(
+            aws_account_id="123",
+            aws_region="us-east-1",
+            datasource_arn="arn:aws:quicksight:us-east-1:123:datasource/x",
+        )
+        tags = cfg.tags()
+        assert len(tags) == 1
+        assert tags[0].Key == "ManagedBy"
+        assert tags[0].Value == "quicksight-gen"
+
+    def test_extra_tags_merged(self):
+        cfg = Config(
+            aws_account_id="123",
+            aws_region="us-east-1",
+            datasource_arn="arn:aws:quicksight:us-east-1:123:datasource/x",
+            extra_tags={"Environment": "prod", "Team": "finance"},
+        )
+        tags = cfg.tags()
+        assert len(tags) == 3
+        keys = [t.Key for t in tags]
+        assert "ManagedBy" in keys
+        assert "Environment" in keys
+        assert "Team" in keys
+
+    def test_common_tag_always_first(self):
+        cfg = Config(
+            aws_account_id="123",
+            aws_region="us-east-1",
+            datasource_arn="arn:aws:quicksight:us-east-1:123:datasource/x",
+            extra_tags={"Foo": "bar"},
+        )
+        tags = cfg.tags()
+        assert tags[0].Key == "ManagedBy"

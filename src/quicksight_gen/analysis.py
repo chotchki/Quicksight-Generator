@@ -160,4 +160,5 @@ def build_analysis(cfg: Config) -> Analysis:
             FilterGroups=build_filter_groups(),
         ),
         Permissions=permissions,
+        Tags=cfg.tags(),
     )

@@ -103,6 +103,7 @@ FROM merchants"""
         ImportMode="DIRECT_QUERY",
         DataSetUsageConfiguration=DataSetUsageConfiguration(),
         Permissions=_permissions(cfg),
+        Tags=cfg.tags(),
     )
 
 
@@ -148,6 +149,7 @@ FROM sales"""
         ImportMode="DIRECT_QUERY",
         DataSetUsageConfiguration=DataSetUsageConfiguration(),
         Permissions=_permissions(cfg),
+        Tags=cfg.tags(),
     )
 
 
@@ -189,6 +191,7 @@ FROM settlements"""
         ImportMode="DIRECT_QUERY",
         DataSetUsageConfiguration=DataSetUsageConfiguration(),
         Permissions=_permissions(cfg),
+        Tags=cfg.tags(),
     )
 
 
@@ -232,6 +235,7 @@ FROM payments"""
         ImportMode="DIRECT_QUERY",
         DataSetUsageConfiguration=DataSetUsageConfiguration(),
         Permissions=_permissions(cfg),
+        Tags=cfg.tags(),
     )
 
 
@@ -276,6 +280,7 @@ WHERE st.settlement_id IS NULL"""
         ImportMode="DIRECT_QUERY",
         DataSetUsageConfiguration=DataSetUsageConfiguration(),
         Permissions=_permissions(cfg),
+        Tags=cfg.tags(),
     )
 
 
@@ -319,6 +324,7 @@ WHERE p.is_returned = 'true'"""
         ImportMode="DIRECT_QUERY",
         DataSetUsageConfiguration=DataSetUsageConfiguration(),
         Permissions=_permissions(cfg),
+        Tags=cfg.tags(),
     )
 
 
