@@ -343,6 +343,21 @@ class DataSet:
 # Analysis models — Visuals
 # ---------------------------------------------------------------------------
 
+# -- Axis labels (shared by bar, pie, etc.) --
+
+@dataclass
+class AxisLabelOptions:
+    """Label override for a single axis field."""
+    CustomLabel: str | None = None
+
+
+@dataclass
+class ChartAxisLabelOptions:
+    """Axis label options — list of per-field overrides plus visibility."""
+    Visibility: str = "VISIBLE"  # VISIBLE|HIDDEN
+    AxisLabelOptions: list[AxisLabelOptions] | None = None
+
+
 # -- Bar chart --
 
 @dataclass
@@ -368,6 +383,9 @@ class BarChartConfiguration:
     Orientation: str | None = None  # HORIZONTAL|VERTICAL
     BarsArrangement: str | None = None  # CLUSTERED|STACKED|STACKED_PERCENT
     SortConfiguration: BarChartSortConfiguration | None = None
+    CategoryLabelOptions: ChartAxisLabelOptions | None = None
+    ValueLabelOptions: ChartAxisLabelOptions | None = None
+    ColorLabelOptions: ChartAxisLabelOptions | None = None
 
 
 @dataclass
@@ -400,6 +418,8 @@ class DonutOptions:
 class PieChartConfiguration:
     FieldWells: PieChartFieldWells | None = None
     DonutOptions: DonutOptions | None = None
+    CategoryLabelOptions: ChartAxisLabelOptions | None = None
+    ValueLabelOptions: ChartAxisLabelOptions | None = None
 
 
 @dataclass

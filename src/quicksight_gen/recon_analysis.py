@@ -21,6 +21,10 @@ from quicksight_gen.models import (
     Dashboard,
     DashboardPublishOptions,
     DataSetIdentifierDeclaration,
+    GridLayoutConfiguration,
+    GridLayoutElement,
+    Layout,
+    LayoutConfiguration,
     ResourcePermission,
     SheetDefinition,
 )
@@ -51,6 +55,46 @@ _ANALYSIS_ACTIONS = [
 
 
 # ---------------------------------------------------------------------------
+# Layout helpers — QuickSight grid is 36 columns wide
+# ---------------------------------------------------------------------------
+
+_KPI_ROW_SPAN = 6
+_CHART_ROW_SPAN = 12
+_TABLE_ROW_SPAN = 18
+_THIRD = 12  # one-third of 36 columns
+_HALF = 18
+_FULL = 36
+
+
+def _grid_layout(elements: list[GridLayoutElement]) -> list[Layout]:
+    return [Layout(Configuration=LayoutConfiguration(
+        GridLayout=GridLayoutConfiguration(Elements=elements),
+    ))]
+
+
+def _recon_type_layout(prefix: str) -> list[Layout]:
+    """Standard layout for the per-type recon sheets (2 KPIs, bar, table)."""
+    return _grid_layout([
+        GridLayoutElement(
+            ElementId=f"{prefix}-kpi-matched", ElementType="VISUAL",
+            ColumnSpan=_HALF, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
+        ),
+        GridLayoutElement(
+            ElementId=f"{prefix}-kpi-unmatched", ElementType="VISUAL",
+            ColumnSpan=_HALF, RowSpan=_KPI_ROW_SPAN, ColumnIndex=_HALF,
+        ),
+        GridLayoutElement(
+            ElementId=f"{prefix}-bar-merchant", ElementType="VISUAL",
+            ColumnSpan=_FULL, RowSpan=_CHART_ROW_SPAN, ColumnIndex=0,
+        ),
+        GridLayoutElement(
+            ElementId=f"{prefix}-detail-table", ElementType="VISUAL",
+            ColumnSpan=_FULL, RowSpan=_TABLE_ROW_SPAN, ColumnIndex=0,
+        ),
+    ])
+
+
+# ---------------------------------------------------------------------------
 # Sheet builders
 # ---------------------------------------------------------------------------
 
@@ -69,6 +113,32 @@ def _build_recon_overview_sheet() -> SheetDefinition:
         ContentType="INTERACTIVE",
         Visuals=build_recon_overview_visuals(),
         FilterControls=build_recon_overview_controls(),
+        Layouts=_grid_layout([
+            GridLayoutElement(
+                ElementId="recon-kpi-matched", ElementType="VISUAL",
+                ColumnSpan=_THIRD, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
+            ),
+            GridLayoutElement(
+                ElementId="recon-kpi-pending", ElementType="VISUAL",
+                ColumnSpan=_THIRD, RowSpan=_KPI_ROW_SPAN, ColumnIndex=_THIRD,
+            ),
+            GridLayoutElement(
+                ElementId="recon-kpi-late", ElementType="VISUAL",
+                ColumnSpan=_THIRD, RowSpan=_KPI_ROW_SPAN, ColumnIndex=_THIRD * 2,
+            ),
+            GridLayoutElement(
+                ElementId="recon-pie-status", ElementType="VISUAL",
+                ColumnSpan=_FULL, RowSpan=_CHART_ROW_SPAN, ColumnIndex=0,
+            ),
+            GridLayoutElement(
+                ElementId="recon-bar-by-type", ElementType="VISUAL",
+                ColumnSpan=_HALF, RowSpan=_CHART_ROW_SPAN, ColumnIndex=0,
+            ),
+            GridLayoutElement(
+                ElementId="recon-bar-by-system", ElementType="VISUAL",
+                ColumnSpan=_HALF, RowSpan=_CHART_ROW_SPAN, ColumnIndex=_HALF,
+            ),
+        ]),
     )
 
 
@@ -88,6 +158,7 @@ def _build_sales_recon_sheet() -> SheetDefinition:
         ContentType="INTERACTIVE",
         Visuals=build_sales_recon_visuals(),
         FilterControls=build_sales_recon_controls(),
+        Layouts=_recon_type_layout("sales-recon"),
     )
 
 
@@ -105,6 +176,7 @@ def _build_settlement_recon_sheet() -> SheetDefinition:
         ContentType="INTERACTIVE",
         Visuals=build_settlement_recon_visuals(),
         FilterControls=build_settlement_recon_controls(),
+        Layouts=_recon_type_layout("settlement-recon"),
     )
 
 
@@ -122,6 +194,7 @@ def _build_payment_recon_sheet() -> SheetDefinition:
         ContentType="INTERACTIVE",
         Visuals=build_payment_recon_visuals(),
         FilterControls=build_payment_recon_controls(),
+        Layouts=_recon_type_layout("payment-recon"),
     )
 
 

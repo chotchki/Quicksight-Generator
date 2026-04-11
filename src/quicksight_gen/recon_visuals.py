@@ -14,12 +14,14 @@ from quicksight_gen.constants import (
     DS_SETTLEMENT_RECON,
 )
 from quicksight_gen.models import (
+    AxisLabelOptions,
     BarChartAggregatedFieldWells,
     BarChartConfiguration,
     BarChartFieldWells,
     BarChartVisual,
     CategoricalDimensionField,
     CategoricalMeasureField,
+    ChartAxisLabelOptions,
     ColumnIdentifier,
     DimensionField,
     KPIConfiguration,
@@ -103,6 +105,12 @@ def _unagg_field(field_id: str, ds: str, col_name: str) -> dict:
             "ColumnName": col_name,
         },
     }
+
+
+def _axis_label(label: str) -> ChartAxisLabelOptions:
+    return ChartAxisLabelOptions(
+        AxisLabelOptions=[AxisLabelOptions(CustomLabel=label)],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +203,8 @@ def build_recon_overview_visuals() -> list[Visual]:
                         ],
                     )
                 ),
+                CategoryLabelOptions=_axis_label("Match Status"),
+                ValueLabelOptions=_axis_label("Transaction Count"),
             ),
         )
     )
@@ -233,6 +243,9 @@ def build_recon_overview_visuals() -> list[Visual]:
                 ),
                 Orientation="VERTICAL",
                 BarsArrangement="STACKED",
+                CategoryLabelOptions=_axis_label("Transaction Type"),
+                ValueLabelOptions=_axis_label("Transaction Count"),
+                ColorLabelOptions=_axis_label("Match Status"),
             ),
         )
     )
@@ -271,6 +284,9 @@ def build_recon_overview_visuals() -> list[Visual]:
                 ),
                 Orientation="VERTICAL",
                 BarsArrangement="STACKED",
+                CategoryLabelOptions=_axis_label("External System"),
+                ValueLabelOptions=_axis_label("Transaction Count"),
+                ColorLabelOptions=_axis_label("Match Status"),
             ),
         )
     )
@@ -352,6 +368,9 @@ def _build_recon_type_visuals(
                 ),
                 Orientation="HORIZONTAL",
                 BarsArrangement="STACKED",
+                CategoryLabelOptions=_axis_label("Merchant"),
+                ValueLabelOptions=_axis_label("Transaction Count"),
+                ColorLabelOptions=_axis_label("Match Status"),
             ),
         )
     )

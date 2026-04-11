@@ -14,12 +14,14 @@ from quicksight_gen.constants import (
     DS_SETTLEMENT_EXCEPTIONS,
 )
 from quicksight_gen.models import (
+    AxisLabelOptions,
     BarChartAggregatedFieldWells,
     BarChartConfiguration,
     BarChartFieldWells,
     BarChartVisual,
     CategoricalDimensionField,
     CategoricalMeasureField,
+    ChartAxisLabelOptions,
     ColumnIdentifier,
     DimensionField,
     KPIConfiguration,
@@ -96,6 +98,12 @@ def _subtitle(text: str) -> VisualSubtitleLabelOptions:
     )
 
 
+def _axis_label(label: str) -> ChartAxisLabelOptions:
+    return ChartAxisLabelOptions(
+        AxisLabelOptions=[AxisLabelOptions(CustomLabel=label)],
+    )
+
+
 def _unagg_field(field_id: str, ds: str, col_name: str) -> dict:
     """Build an UnaggregatedField dict for table visuals."""
     return {
@@ -155,6 +163,8 @@ def build_sales_visuals() -> list[Visual]:
                 ),
                 Orientation="HORIZONTAL",
                 BarsArrangement="CLUSTERED",
+                CategoryLabelOptions=_axis_label("Merchant"),
+                ValueLabelOptions=_axis_label("Sales Amount ($)"),
             ),
         )
     )
@@ -174,6 +184,8 @@ def build_sales_visuals() -> list[Visual]:
                 ),
                 Orientation="HORIZONTAL",
                 BarsArrangement="CLUSTERED",
+                CategoryLabelOptions=_axis_label("Location"),
+                ValueLabelOptions=_axis_label("Sales Amount ($)"),
             ),
         )
     )
@@ -267,6 +279,8 @@ def build_settlements_visuals() -> list[Visual]:
                 ),
                 Orientation="VERTICAL",
                 BarsArrangement="CLUSTERED",
+                CategoryLabelOptions=_axis_label("Merchant Type"),
+                ValueLabelOptions=_axis_label("Settlement Amount ($)"),
             ),
         )
     )
@@ -368,6 +382,8 @@ def build_payments_visuals() -> list[Visual]:
                         ],
                     )
                 ),
+                CategoryLabelOptions=_axis_label("Payment Status"),
+                ValueLabelOptions=_axis_label("Number of Payments"),
             ),
         )
     )

@@ -29,6 +29,10 @@ from quicksight_gen.models import (
     Dashboard,
     DashboardPublishOptions,
     DataSetIdentifierDeclaration,
+    GridLayoutConfiguration,
+    GridLayoutElement,
+    Layout,
+    LayoutConfiguration,
     ResourcePermission,
     SheetDefinition,
 )
@@ -52,6 +56,61 @@ _ANALYSIS_ACTIONS = [
 
 
 # ---------------------------------------------------------------------------
+# Layout helpers — QuickSight grid is 36 columns wide
+# ---------------------------------------------------------------------------
+
+_KPI_ROW_SPAN = 6
+_CHART_ROW_SPAN = 12
+_TABLE_ROW_SPAN = 18
+_HALF = 18   # half of 36 columns
+_FULL = 36
+
+
+def _grid_layout(elements: list[GridLayoutElement]) -> list[Layout]:
+    return [Layout(Configuration=LayoutConfiguration(
+        GridLayout=GridLayoutConfiguration(Elements=elements),
+    ))]
+
+
+def _kpi_pair(id_left: str, id_right: str) -> list[GridLayoutElement]:
+    return [
+        GridLayoutElement(
+            ElementId=id_left, ElementType="VISUAL",
+            ColumnSpan=_HALF, RowSpan=_KPI_ROW_SPAN,
+            ColumnIndex=0,
+        ),
+        GridLayoutElement(
+            ElementId=id_right, ElementType="VISUAL",
+            ColumnSpan=_HALF, RowSpan=_KPI_ROW_SPAN,
+            ColumnIndex=_HALF,
+        ),
+    ]
+
+
+def _chart_pair(id_left: str, id_right: str) -> list[GridLayoutElement]:
+    return [
+        GridLayoutElement(
+            ElementId=id_left, ElementType="VISUAL",
+            ColumnSpan=_HALF, RowSpan=_CHART_ROW_SPAN,
+            ColumnIndex=0,
+        ),
+        GridLayoutElement(
+            ElementId=id_right, ElementType="VISUAL",
+            ColumnSpan=_HALF, RowSpan=_CHART_ROW_SPAN,
+            ColumnIndex=_HALF,
+        ),
+    ]
+
+
+def _full_width(element_id: str, row_span: int) -> GridLayoutElement:
+    return GridLayoutElement(
+        ElementId=element_id, ElementType="VISUAL",
+        ColumnSpan=_FULL, RowSpan=row_span,
+        ColumnIndex=0,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Sheet builders
 # ---------------------------------------------------------------------------
 
@@ -69,6 +128,11 @@ def _build_sales_sheet() -> SheetDefinition:
         ContentType="INTERACTIVE",
         Visuals=build_sales_visuals(),
         FilterControls=build_sales_controls(),
+        Layouts=_grid_layout(
+            _kpi_pair("sales-kpi-count", "sales-kpi-amount")
+            + _chart_pair("sales-bar-by-merchant", "sales-bar-by-location")
+            + [_full_width("sales-detail-table", _TABLE_ROW_SPAN)]
+        ),
     )
 
 
@@ -87,6 +151,11 @@ def _build_settlements_sheet() -> SheetDefinition:
         ContentType="INTERACTIVE",
         Visuals=build_settlements_visuals(),
         FilterControls=build_settlements_controls(),
+        Layouts=_grid_layout(
+            _kpi_pair("settlements-kpi-amount", "settlements-kpi-pending")
+            + [_full_width("settlements-bar-by-type", _CHART_ROW_SPAN)]
+            + [_full_width("settlements-detail-table", _TABLE_ROW_SPAN)]
+        ),
     )
 
 
@@ -104,6 +173,11 @@ def _build_payments_sheet() -> SheetDefinition:
         ContentType="INTERACTIVE",
         Visuals=build_payments_visuals(),
         FilterControls=build_payments_controls(),
+        Layouts=_grid_layout(
+            _kpi_pair("payments-kpi-amount", "payments-kpi-returns")
+            + [_full_width("payments-pie-status", _CHART_ROW_SPAN)]
+            + [_full_width("payments-detail-table", _TABLE_ROW_SPAN)]
+        ),
     )
 
 
@@ -121,6 +195,11 @@ def _build_exceptions_sheet() -> SheetDefinition:
         ContentType="INTERACTIVE",
         Visuals=build_exceptions_visuals(),
         FilterControls=build_exceptions_controls(),
+        Layouts=_grid_layout(
+            _kpi_pair("exceptions-kpi-unsettled", "exceptions-kpi-returns")
+            + [_full_width("exceptions-unsettled-table", _TABLE_ROW_SPAN)]
+            + [_full_width("exceptions-returns-table", _TABLE_ROW_SPAN)]
+        ),
     )
 
 
