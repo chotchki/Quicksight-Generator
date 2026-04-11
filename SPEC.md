@@ -37,3 +37,5 @@ Output:
 	- [  ] Build a consistent theme that looks nice, color theme blues and greys but must be easily read. Apply the theme and reasonable styling to everything produced.
 
 	- [x] All generated AWS resources (themes, datasets, analyses) must have a common tag (`ManagedBy: quicksight-gen`) so they can be found. Additional tags can be specified via `extra_tags` in config.yaml. The common tag is always applied on top of any other tags.
+
+	- [x] Published dashboards. Each analysis (financial and reconciliation) also produces a published Dashboard resource. Dashboards enable ad-hoc filtering, CSV export, and expanded sheet controls. The dashboard is accessible to the configured `principal_arn`.

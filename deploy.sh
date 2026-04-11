@@ -25,7 +25,28 @@ echo "  Region:  $REGION"
 echo
 
 # ---------------------------------------------------------------------------
-# Analyses (delete first — they reference datasets and themes)
+# Dashboards (delete first — they reference analyses/datasets/themes)
+# ---------------------------------------------------------------------------
+for DASH_FILE in "$OUT_DIR"/financial-dashboard.json "$OUT_DIR"/recon-dashboard.json; do
+    if [ ! -f "$DASH_FILE" ]; then
+        continue
+    fi
+    DASH_ID=$(jq -r '.DashboardId' "$DASH_FILE")
+    echo "==> Dashboard: $DASH_ID"
+    if aws quicksight describe-dashboard \
+        --aws-account-id "$AWS_ACCOUNT_ID" \
+        --dashboard-id "$DASH_ID" \
+        --region "$REGION" &>/dev/null; then
+        echo "    Deleting existing dashboard..."
+        aws quicksight delete-dashboard \
+            --aws-account-id "$AWS_ACCOUNT_ID" \
+            --dashboard-id "$DASH_ID" \
+            --region "$REGION" &>/dev/null || true
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# Analyses (delete — they reference datasets and themes)
 # ---------------------------------------------------------------------------
 for ANALYSIS_FILE in "$OUT_DIR"/financial-analysis.json "$OUT_DIR"/recon-analysis.json; do
     if [ ! -f "$ANALYSIS_FILE" ]; then
@@ -147,5 +168,34 @@ for ANALYSIS_FILE in "$OUT_DIR"/financial-analysis.json "$OUT_DIR"/recon-analysi
         --cli-input-json "file://$ANALYSIS_FILE"
 done
 
+# ---------------------------------------------------------------------------
+# Dashboards (create — after analyses)
+# ---------------------------------------------------------------------------
+DASH_URLS=()
+for DASH_FILE in "$OUT_DIR"/financial-dashboard.json "$OUT_DIR"/recon-dashboard.json; do
+    if [ ! -f "$DASH_FILE" ]; then
+        echo "    Skipping $(basename "$DASH_FILE") (not found)"
+        continue
+    fi
+    DASH_ID=$(jq -r '.DashboardId' "$DASH_FILE")
+    DASH_NAME=$(jq -r '.Name' "$DASH_FILE")
+    echo "==> Creating Dashboard: $DASH_ID"
+    CREATE_RESULT=$(aws quicksight create-dashboard \
+        --region "$REGION" \
+        --cli-input-json "file://$DASH_FILE")
+    DASH_URL=$(echo "$CREATE_RESULT" | jq -r '.Url // empty')
+    if [ -n "$DASH_URL" ]; then
+        DASH_URLS+=("  $DASH_NAME: $DASH_URL")
+    fi
+done
+
 echo
 echo "Done. Resources deployed to account $AWS_ACCOUNT_ID in $REGION."
+
+if [ ${#DASH_URLS[@]} -gt 0 ]; then
+    echo
+    echo "Dashboard links:"
+    for URL_LINE in "${DASH_URLS[@]}"; do
+        echo "$URL_LINE"
+    done
+fi

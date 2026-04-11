@@ -7,10 +7,10 @@ from pathlib import Path
 
 import click
 
-from quicksight_gen.analysis import build_analysis
+from quicksight_gen.analysis import build_analysis, build_financial_dashboard
 from quicksight_gen.config import load_config
 from quicksight_gen.datasets import build_all_datasets, build_datasource
-from quicksight_gen.recon_analysis import build_recon_analysis
+from quicksight_gen.recon_analysis import build_recon_analysis, build_recon_dashboard
 from quicksight_gen.theme import build_theme
 
 
@@ -72,7 +72,14 @@ def generate(config: str, output_dir: str, theme_preset: str | None) -> None:
     recon = build_recon_analysis(cfg)
     _write_json(out / "recon-analysis.json", recon.to_aws_json())
 
-    click.echo(f"\nGenerated {1 + len(datasets) + 2} files in {out}/")
+    # Dashboards (public, link-shareable)
+    fin_dash = build_financial_dashboard(cfg)
+    _write_json(out / "financial-dashboard.json", fin_dash.to_aws_json())
+
+    recon_dash = build_recon_dashboard(cfg)
+    _write_json(out / "recon-dashboard.json", recon_dash.to_aws_json())
+
+    click.echo(f"\nGenerated {1 + len(datasets) + 4} files in {out}/")
 
 
 # ---------------------------------------------------------------------------
@@ -209,4 +216,11 @@ def apply(config: str, output_dir: str) -> None:
     recon = build_recon_analysis(cfg)
     _write_json(out / "recon-analysis.json", recon.to_aws_json())
 
-    click.echo(f"\nDone. {2 + len(datasets) + 2} JSON files in {out}/")
+    # Dashboards (public, link-shareable)
+    fin_dash = build_financial_dashboard(cfg)
+    _write_json(out / "financial-dashboard.json", fin_dash.to_aws_json())
+
+    recon_dash = build_recon_dashboard(cfg)
+    _write_json(out / "recon-dashboard.json", recon_dash.to_aws_json())
+
+    click.echo(f"\nDone. {2 + len(datasets) + 4} JSON files in {out}/")

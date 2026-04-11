@@ -751,3 +751,39 @@ class Analysis:
 
     def to_json_string(self, indent: int = 2) -> str:
         return json.dumps(self.to_aws_json(), indent=indent)
+
+
+# ---------------------------------------------------------------------------
+# Dashboard models
+# ---------------------------------------------------------------------------
+
+@dataclass
+class DashboardPublishOptions:
+    AdHocFilteringOption: dict[str, str] | None = None
+    ExportToCSVOption: dict[str, str] | None = None
+    SheetControlsOption: dict[str, str] | None = None
+
+
+@dataclass
+class LinkSharingConfiguration:
+    Permissions: list[ResourcePermission] | None = None
+
+
+@dataclass
+class Dashboard:
+    AwsAccountId: str
+    DashboardId: str
+    Name: str
+    Definition: AnalysisDefinition
+    ThemeArn: str | None = None
+    Permissions: list[ResourcePermission] | None = None
+    Tags: list[Tag] | None = None
+    VersionDescription: str | None = None
+    DashboardPublishOptions: DashboardPublishOptions | None = None
+    LinkSharingConfiguration: LinkSharingConfiguration | None = None
+
+    def to_aws_json(self) -> dict[str, Any]:
+        return _strip_nones(asdict(self))
+
+    def to_json_string(self, indent: int = 2) -> str:
+        return json.dumps(self.to_aws_json(), indent=indent)

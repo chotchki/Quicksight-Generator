@@ -38,7 +38,9 @@ out/
   datasource.json             # QuickSight data source (demo apply only)
   theme.json                  # Shared blue/grey theme
   financial-analysis.json     # Sales → Settlements → Payments pipeline
+  financial-dashboard.json    # Published dashboard (public link-sharing)
   recon-analysis.json         # Reconciliation against external systems
+  recon-dashboard.json        # Published dashboard (public link-sharing)
   datasets/
     qs-gen-merchants-dataset.json
     qs-gen-sales-dataset.json
