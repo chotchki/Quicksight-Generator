@@ -1,11 +1,11 @@
 """Filter groups and controls for the analysis.
 
 Defines five cross-visual filters with corresponding UI controls:
-- Date range picker      → all tabs
-- Merchant dropdown      → all tabs
-- Location dropdown      → all tabs
-- Settlement status      → Settlements + Exceptions tabs
-- Payment status         → Payments tab
+- Date range picker      -> all tabs
+- Merchant dropdown      -> all tabs
+- Location dropdown      -> all tabs
+- Settlement status      -> Settlements + Exceptions tabs
+- Payment status         -> Payments tab
 """
 
 from __future__ import annotations
@@ -25,8 +25,13 @@ from quicksight_gen.models import (
     CategoryFilter,
     CategoryFilterConfiguration,
     ColumnIdentifier,
+    DefaultDateTimePickerControlOptions,
+    DefaultDropdownControlOptions,
+    DefaultFilterControlConfiguration,
+    DefaultFilterControlOptions,
     Filter,
     FilterControl,
+    FilterCrossSheetControl,
     FilterDateTimePickerControl,
     FilterDropDownControl,
     FilterGroup,
@@ -81,8 +86,14 @@ def _date_range_filter_group() -> FilterGroup:
                     ),
                     NullOption="NON_NULLS_ONLY",
                     TimeGranularity="DAY",
-                    IncludeMinimum=True,
-                    IncludeMaximum=True,
+                    DefaultFilterControlConfiguration=DefaultFilterControlConfiguration(
+                        Title="Date Range",
+                        ControlOptions=DefaultFilterControlOptions(
+                            DefaultDateTimePickerOptions=DefaultDateTimePickerControlOptions(
+                                Type="DATE_RANGE",
+                            ),
+                        ),
+                    ),
                 ),
             ),
         ],
@@ -90,7 +101,7 @@ def _date_range_filter_group() -> FilterGroup:
 
 
 def _merchant_filter_group() -> FilterGroup:
-    """Merchant dropdown filter — all sheets."""
+    """Merchant dropdown filter -- all sheets."""
     return FilterGroup(
         FilterGroupId="fg-merchant",
         CrossDataset="ALL_DATASETS",
@@ -110,6 +121,14 @@ def _merchant_filter_group() -> FilterGroup:
                             "SelectAllOptions": "FILTER_ALL_VALUES",
                         }
                     ),
+                    DefaultFilterControlConfiguration=DefaultFilterControlConfiguration(
+                        Title="Merchant",
+                        ControlOptions=DefaultFilterControlOptions(
+                            DefaultDropdownOptions=DefaultDropdownControlOptions(
+                                Type="MULTI_SELECT",
+                            ),
+                        ),
+                    ),
                 ),
             ),
         ],
@@ -117,7 +136,7 @@ def _merchant_filter_group() -> FilterGroup:
 
 
 def _location_filter_group() -> FilterGroup:
-    """Location dropdown filter — all sheets."""
+    """Location dropdown filter -- all sheets."""
     return FilterGroup(
         FilterGroupId="fg-location",
         CrossDataset="ALL_DATASETS",
@@ -137,6 +156,14 @@ def _location_filter_group() -> FilterGroup:
                             "SelectAllOptions": "FILTER_ALL_VALUES",
                         }
                     ),
+                    DefaultFilterControlConfiguration=DefaultFilterControlConfiguration(
+                        Title="Location",
+                        ControlOptions=DefaultFilterControlOptions(
+                            DefaultDropdownOptions=DefaultDropdownControlOptions(
+                                Type="MULTI_SELECT",
+                            ),
+                        ),
+                    ),
                 ),
             ),
         ],
@@ -144,7 +171,7 @@ def _location_filter_group() -> FilterGroup:
 
 
 def _settlement_status_filter_group() -> FilterGroup:
-    """Settlement status dropdown — Settlements + Exceptions tabs."""
+    """Settlement status dropdown -- Settlements + Exceptions tabs."""
     return FilterGroup(
         FilterGroupId="fg-settlement-status",
         CrossDataset="SINGLE_DATASET",
@@ -166,6 +193,14 @@ def _settlement_status_filter_group() -> FilterGroup:
                             "SelectAllOptions": "FILTER_ALL_VALUES",
                         }
                     ),
+                    DefaultFilterControlConfiguration=DefaultFilterControlConfiguration(
+                        Title="Settlement Status",
+                        ControlOptions=DefaultFilterControlOptions(
+                            DefaultDropdownOptions=DefaultDropdownControlOptions(
+                                Type="MULTI_SELECT",
+                            ),
+                        ),
+                    ),
                 ),
             ),
         ],
@@ -173,7 +208,7 @@ def _settlement_status_filter_group() -> FilterGroup:
 
 
 def _payment_status_filter_group() -> FilterGroup:
-    """Payment status dropdown — Payments tab only."""
+    """Payment status dropdown -- Payments tab only."""
     return FilterGroup(
         FilterGroupId="fg-payment-status",
         CrossDataset="SINGLE_DATASET",
@@ -212,56 +247,51 @@ def build_filter_groups() -> list[FilterGroup]:
 
 # ---------------------------------------------------------------------------
 # Filter controls (UI widgets on sheets)
+#
+# Control IDs must be globally unique across all sheets in an analysis.
+# Each builder takes a sheet prefix to ensure uniqueness.
 # ---------------------------------------------------------------------------
 
-def _date_range_control() -> FilterControl:
+def _date_range_control(sheet: str) -> FilterControl:
     return FilterControl(
-        DateTimePicker=FilterDateTimePickerControl(
-            FilterControlId="ctrl-date-range",
-            Title="Date Range",
+        CrossSheet=FilterCrossSheetControl(
+            FilterControlId=f"ctrl-{sheet}-date-range",
             SourceFilterId="filter-date-range",
-            Type="DATE_RANGE",
         ),
     )
 
 
-def _merchant_control() -> FilterControl:
+def _merchant_control(sheet: str) -> FilterControl:
     return FilterControl(
-        Dropdown=FilterDropDownControl(
-            FilterControlId="ctrl-merchant",
-            Title="Merchant",
+        CrossSheet=FilterCrossSheetControl(
+            FilterControlId=f"ctrl-{sheet}-merchant",
             SourceFilterId="filter-merchant",
-            Type="MULTI_SELECT",
         ),
     )
 
 
-def _location_control() -> FilterControl:
+def _location_control(sheet: str) -> FilterControl:
     return FilterControl(
-        Dropdown=FilterDropDownControl(
-            FilterControlId="ctrl-location",
-            Title="Location",
+        CrossSheet=FilterCrossSheetControl(
+            FilterControlId=f"ctrl-{sheet}-location",
             SourceFilterId="filter-location",
-            Type="MULTI_SELECT",
         ),
     )
 
 
-def _settlement_status_control() -> FilterControl:
+def _settlement_status_control(sheet: str) -> FilterControl:
     return FilterControl(
-        Dropdown=FilterDropDownControl(
-            FilterControlId="ctrl-settlement-status",
-            Title="Settlement Status",
+        CrossSheet=FilterCrossSheetControl(
+            FilterControlId=f"ctrl-{sheet}-settlement-status",
             SourceFilterId="filter-settlement-status",
-            Type="MULTI_SELECT",
         ),
     )
 
 
-def _payment_status_control() -> FilterControl:
+def _payment_status_control(sheet: str) -> FilterControl:
     return FilterControl(
         Dropdown=FilterDropDownControl(
-            FilterControlId="ctrl-payment-status",
+            FilterControlId=f"ctrl-{sheet}-payment-status",
             Title="Payment Status",
             SourceFilterId="filter-payment-status",
             Type="MULTI_SELECT",
@@ -275,34 +305,38 @@ def _payment_status_control() -> FilterControl:
 
 def build_sales_controls() -> list[FilterControl]:
     """Controls for the Sales Overview tab."""
-    return [_date_range_control(), _merchant_control(), _location_control()]
+    return [
+        _date_range_control("sales"),
+        _merchant_control("sales"),
+        _location_control("sales"),
+    ]
 
 
 def build_settlements_controls() -> list[FilterControl]:
     """Controls for the Settlements tab."""
     return [
-        _date_range_control(),
-        _merchant_control(),
-        _location_control(),
-        _settlement_status_control(),
+        _date_range_control("settlements"),
+        _merchant_control("settlements"),
+        _location_control("settlements"),
+        _settlement_status_control("settlements"),
     ]
 
 
 def build_payments_controls() -> list[FilterControl]:
     """Controls for the Payments tab."""
     return [
-        _date_range_control(),
-        _merchant_control(),
-        _location_control(),
-        _payment_status_control(),
+        _date_range_control("payments"),
+        _merchant_control("payments"),
+        _location_control("payments"),
+        _payment_status_control("payments"),
     ]
 
 
 def build_exceptions_controls() -> list[FilterControl]:
     """Controls for the Exceptions & Alerts tab."""
     return [
-        _date_range_control(),
-        _merchant_control(),
-        _location_control(),
-        _settlement_status_control(),
+        _date_range_control("exceptions"),
+        _merchant_control("exceptions"),
+        _location_control("exceptions"),
+        _settlement_status_control("exceptions"),
     ]

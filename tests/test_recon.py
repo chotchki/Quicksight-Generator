@@ -143,7 +143,8 @@ class TestAllReconVisualIdsUnique:
 class TestReconFilterGroups:
     def test_count(self):
         groups = build_recon_filter_groups()
-        assert len(groups) == 6
+        # 5 shared filters + 4 per-sheet days-outstanding filters
+        assert len(groups) == 9
 
     def test_filter_ids_unique(self):
         groups = build_recon_filter_groups()
@@ -181,14 +182,14 @@ class TestReconFilterGroups:
                         f"unknown sheet '{svc['SheetId']}'"
                     )
 
-    def test_has_numeric_range_filter(self):
-        """The days-outstanding filter should use NumericRangeFilter."""
+    def test_has_numeric_range_filters(self):
+        """Each sheet gets its own days-outstanding NumericRangeFilter."""
         groups = build_recon_filter_groups()
-        days_fg = [g for g in groups if g.FilterGroupId == "fg-recon-days-outstanding"]
-        assert len(days_fg) == 1
-        raw = _strip_nones(asdict(days_fg[0]))
-        filter_obj = raw["Filters"][0]
-        assert "NumericRangeFilter" in filter_obj
+        days_fgs = [g for g in groups if "days-outstanding" in g.FilterGroupId]
+        assert len(days_fgs) == 4
+        for fg in days_fgs:
+            raw = _strip_nones(asdict(fg))
+            assert "NumericRangeFilter" in raw["Filters"][0]
 
 
 class TestReconFilterControls:
@@ -231,10 +232,14 @@ class TestReconFilterControls:
                         f"filter groups. Known: {all_filter_ids}"
                     )
 
-    def test_has_slider_control(self):
-        """The days-outstanding control should use a Slider."""
+    def test_has_days_outstanding_control(self):
+        """The days-outstanding control should use a Slider
+        (per-sheet filter, not cross-sheet)."""
         controls = build_recon_overview_controls()
         raw_all = [_strip_nones(asdict(c)) for c in controls]
-        sliders = [r for r in raw_all if "Slider" in r]
-        assert len(sliders) == 1
-        assert sliders[0]["Slider"]["SourceFilterId"] == "filter-recon-days-outstanding"
+        days_ctrls = [
+            r for r in raw_all
+            if "Slider" in r
+            and "days-outstanding" in r["Slider"]["SourceFilterId"]
+        ]
+        assert len(days_ctrls) == 1

@@ -23,14 +23,19 @@ from quicksight_gen.models import (
     CategoryFilter,
     CategoryFilterConfiguration,
     ColumnIdentifier,
+    DefaultDateTimePickerControlOptions,
+    DefaultDropdownControlOptions,
+    DefaultFilterControlConfiguration,
+    DefaultFilterControlOptions,
     Filter,
     FilterControl,
-    FilterDateTimePickerControl,
+    FilterCrossSheetControl,
     FilterDropDownControl,
     FilterGroup,
     FilterScopeConfiguration,
     FilterSliderControl,
     NumericRangeFilter,
+    NumericRangeFilterValue,
     SelectedSheetsFilterScopeConfiguration,
     SheetVisualScopingConfiguration,
     TimeRangeFilter,
@@ -67,7 +72,7 @@ def _selected_sheets_scope(sheet_ids: list[str]) -> FilterScopeConfiguration:
 # ---------------------------------------------------------------------------
 
 def _recon_date_range_filter_group() -> FilterGroup:
-    """Date range filter on transaction_date — all recon sheets."""
+    """Date range filter on transaction_date -- all recon sheets."""
     return FilterGroup(
         FilterGroupId="fg-recon-date-range",
         CrossDataset="ALL_DATASETS",
@@ -83,8 +88,14 @@ def _recon_date_range_filter_group() -> FilterGroup:
                     ),
                     NullOption="NON_NULLS_ONLY",
                     TimeGranularity="DAY",
-                    IncludeMinimum=True,
-                    IncludeMaximum=True,
+                    DefaultFilterControlConfiguration=DefaultFilterControlConfiguration(
+                        Title="Date Range",
+                        ControlOptions=DefaultFilterControlOptions(
+                            DefaultDateTimePickerOptions=DefaultDateTimePickerControlOptions(
+                                Type="DATE_RANGE",
+                            ),
+                        ),
+                    ),
                 ),
             ),
         ],
@@ -92,7 +103,7 @@ def _recon_date_range_filter_group() -> FilterGroup:
 
 
 def _recon_match_status_filter_group() -> FilterGroup:
-    """Match status dropdown — all recon sheets."""
+    """Match status dropdown -- all recon sheets."""
     return FilterGroup(
         FilterGroupId="fg-recon-match-status",
         CrossDataset="ALL_DATASETS",
@@ -112,6 +123,14 @@ def _recon_match_status_filter_group() -> FilterGroup:
                             "SelectAllOptions": "FILTER_ALL_VALUES",
                         }
                     ),
+                    DefaultFilterControlConfiguration=DefaultFilterControlConfiguration(
+                        Title="Match Status",
+                        ControlOptions=DefaultFilterControlOptions(
+                            DefaultDropdownOptions=DefaultDropdownControlOptions(
+                                Type="MULTI_SELECT",
+                            ),
+                        ),
+                    ),
                 ),
             ),
         ],
@@ -119,7 +138,7 @@ def _recon_match_status_filter_group() -> FilterGroup:
 
 
 def _recon_transaction_type_filter_group() -> FilterGroup:
-    """Transaction type dropdown — overview sheet only."""
+    """Transaction type dropdown -- overview sheet only."""
     return FilterGroup(
         FilterGroupId="fg-recon-transaction-type",
         CrossDataset="SINGLE_DATASET",
@@ -146,7 +165,7 @@ def _recon_transaction_type_filter_group() -> FilterGroup:
 
 
 def _recon_external_system_filter_group() -> FilterGroup:
-    """External system dropdown — all recon sheets."""
+    """External system dropdown -- all recon sheets."""
     return FilterGroup(
         FilterGroupId="fg-recon-external-system",
         CrossDataset="ALL_DATASETS",
@@ -166,6 +185,14 @@ def _recon_external_system_filter_group() -> FilterGroup:
                             "SelectAllOptions": "FILTER_ALL_VALUES",
                         }
                     ),
+                    DefaultFilterControlConfiguration=DefaultFilterControlConfiguration(
+                        Title="External System",
+                        ControlOptions=DefaultFilterControlOptions(
+                            DefaultDropdownOptions=DefaultDropdownControlOptions(
+                                Type="MULTI_SELECT",
+                            ),
+                        ),
+                    ),
                 ),
             ),
         ],
@@ -173,7 +200,7 @@ def _recon_external_system_filter_group() -> FilterGroup:
 
 
 def _recon_merchant_filter_group() -> FilterGroup:
-    """Merchant dropdown — all recon sheets."""
+    """Merchant dropdown -- all recon sheets."""
     return FilterGroup(
         FilterGroupId="fg-recon-merchant",
         CrossDataset="ALL_DATASETS",
@@ -193,31 +220,42 @@ def _recon_merchant_filter_group() -> FilterGroup:
                             "SelectAllOptions": "FILTER_ALL_VALUES",
                         }
                     ),
+                    DefaultFilterControlConfiguration=DefaultFilterControlConfiguration(
+                        Title="Merchant",
+                        ControlOptions=DefaultFilterControlOptions(
+                            DefaultDropdownOptions=DefaultDropdownControlOptions(
+                                Type="MULTI_SELECT",
+                            ),
+                        ),
+                    ),
                 ),
             ),
         ],
     )
 
 
-def _recon_days_outstanding_filter_group() -> FilterGroup:
-    """Days outstanding numeric filter — all recon sheets.
+def _recon_days_outstanding_filter_group(sheet_id: str, suffix: str) -> FilterGroup:
+    """Days outstanding numeric filter -- scoped to a single sheet.
 
-    Lets users filter to items that are at least X days overdue.
+    One filter group per sheet avoids the need for DefaultFilterControlConfiguration
+    on NumericRangeFilter (which QuickSight doesn't fully support for cross-sheet).
     """
     return FilterGroup(
-        FilterGroupId="fg-recon-days-outstanding",
+        FilterGroupId=f"fg-recon-days-outstanding-{suffix}",
         CrossDataset="ALL_DATASETS",
-        ScopeConfiguration=_selected_sheets_scope(ALL_RECON_SHEETS),
+        ScopeConfiguration=_selected_sheets_scope([sheet_id]),
         Status="ENABLED",
         Filters=[
             Filter(
                 NumericRangeFilter=NumericRangeFilter(
-                    FilterId="filter-recon-days-outstanding",
+                    FilterId=f"filter-recon-days-outstanding-{suffix}",
                     Column=ColumnIdentifier(
                         DataSetIdentifier=DS_RECON_EXCEPTIONS,
                         ColumnName="days_outstanding",
                     ),
                     NullOption="NON_NULLS_ONLY",
+                    RangeMinimum=NumericRangeFilterValue(StaticValue=0),
+                    RangeMaximum=NumericRangeFilterValue(StaticValue=365),
                     IncludeMinimum=True,
                     IncludeMaximum=True,
                 ),
@@ -234,40 +272,42 @@ def build_recon_filter_groups() -> list[FilterGroup]:
         _recon_transaction_type_filter_group(),
         _recon_external_system_filter_group(),
         _recon_merchant_filter_group(),
-        _recon_days_outstanding_filter_group(),
+        _recon_days_outstanding_filter_group(SHEET_RECON_OVERVIEW, "overview"),
+        _recon_days_outstanding_filter_group(SHEET_SALES_RECON, "sales"),
+        _recon_days_outstanding_filter_group(SHEET_SETTLEMENT_RECON, "settlement"),
+        _recon_days_outstanding_filter_group(SHEET_PAYMENT_RECON, "payment"),
     ]
 
 
 # ---------------------------------------------------------------------------
 # Filter controls (UI widgets on sheets)
+#
+# Control IDs must be globally unique across all sheets in an analysis.
+# Each builder takes a sheet prefix to ensure uniqueness.
 # ---------------------------------------------------------------------------
 
-def _recon_date_range_control() -> FilterControl:
+def _recon_date_range_control(sheet: str) -> FilterControl:
     return FilterControl(
-        DateTimePicker=FilterDateTimePickerControl(
-            FilterControlId="ctrl-recon-date-range",
-            Title="Date Range",
+        CrossSheet=FilterCrossSheetControl(
+            FilterControlId=f"ctrl-{sheet}-date-range",
             SourceFilterId="filter-recon-date-range",
-            Type="DATE_RANGE",
         ),
     )
 
 
-def _recon_match_status_control() -> FilterControl:
+def _recon_match_status_control(sheet: str) -> FilterControl:
     return FilterControl(
-        Dropdown=FilterDropDownControl(
-            FilterControlId="ctrl-recon-match-status",
-            Title="Match Status",
+        CrossSheet=FilterCrossSheetControl(
+            FilterControlId=f"ctrl-{sheet}-match-status",
             SourceFilterId="filter-recon-match-status",
-            Type="MULTI_SELECT",
         ),
     )
 
 
-def _recon_transaction_type_control() -> FilterControl:
+def _recon_transaction_type_control(sheet: str) -> FilterControl:
     return FilterControl(
         Dropdown=FilterDropDownControl(
-            FilterControlId="ctrl-recon-transaction-type",
+            FilterControlId=f"ctrl-{sheet}-transaction-type",
             Title="Transaction Type",
             SourceFilterId="filter-recon-transaction-type",
             Type="MULTI_SELECT",
@@ -275,38 +315,34 @@ def _recon_transaction_type_control() -> FilterControl:
     )
 
 
-def _recon_external_system_control() -> FilterControl:
+def _recon_external_system_control(sheet: str) -> FilterControl:
     return FilterControl(
-        Dropdown=FilterDropDownControl(
-            FilterControlId="ctrl-recon-external-system",
-            Title="External System",
+        CrossSheet=FilterCrossSheetControl(
+            FilterControlId=f"ctrl-{sheet}-external-system",
             SourceFilterId="filter-recon-external-system",
-            Type="MULTI_SELECT",
         ),
     )
 
 
-def _recon_merchant_control() -> FilterControl:
+def _recon_merchant_control(sheet: str) -> FilterControl:
     return FilterControl(
-        Dropdown=FilterDropDownControl(
-            FilterControlId="ctrl-recon-merchant",
-            Title="Merchant",
+        CrossSheet=FilterCrossSheetControl(
+            FilterControlId=f"ctrl-{sheet}-merchant",
             SourceFilterId="filter-recon-merchant",
-            Type="MULTI_SELECT",
         ),
     )
 
 
-def _recon_days_outstanding_control() -> FilterControl:
+def _recon_days_outstanding_control(sheet: str, filter_suffix: str) -> FilterControl:
     return FilterControl(
         Slider=FilterSliderControl(
-            FilterControlId="ctrl-recon-days-outstanding",
+            FilterControlId=f"ctrl-{sheet}-days-outstanding",
             Title="Minimum Days Outstanding",
-            SourceFilterId="filter-recon-days-outstanding",
+            SourceFilterId=f"filter-recon-days-outstanding-{filter_suffix}",
             MinimumValue=0,
             MaximumValue=365,
             StepSize=1,
-            Type="SINGLE_POINT",
+            Type="RANGE",
         ),
     )
 
@@ -318,43 +354,43 @@ def _recon_days_outstanding_control() -> FilterControl:
 def build_recon_overview_controls() -> list[FilterControl]:
     """Controls for the Reconciliation Overview tab."""
     return [
-        _recon_date_range_control(),
-        _recon_match_status_control(),
-        _recon_transaction_type_control(),
-        _recon_external_system_control(),
-        _recon_merchant_control(),
-        _recon_days_outstanding_control(),
+        _recon_date_range_control("recon-overview"),
+        _recon_match_status_control("recon-overview"),
+        _recon_transaction_type_control("recon-overview"),
+        _recon_external_system_control("recon-overview"),
+        _recon_merchant_control("recon-overview"),
+        _recon_days_outstanding_control("recon-overview", "overview"),
     ]
 
 
 def build_sales_recon_controls() -> list[FilterControl]:
     """Controls for the Sales Reconciliation tab."""
     return [
-        _recon_date_range_control(),
-        _recon_match_status_control(),
-        _recon_external_system_control(),
-        _recon_merchant_control(),
-        _recon_days_outstanding_control(),
+        _recon_date_range_control("sales-recon"),
+        _recon_match_status_control("sales-recon"),
+        _recon_external_system_control("sales-recon"),
+        _recon_merchant_control("sales-recon"),
+        _recon_days_outstanding_control("sales-recon", "sales"),
     ]
 
 
 def build_settlement_recon_controls() -> list[FilterControl]:
     """Controls for the Settlement Reconciliation tab."""
     return [
-        _recon_date_range_control(),
-        _recon_match_status_control(),
-        _recon_external_system_control(),
-        _recon_merchant_control(),
-        _recon_days_outstanding_control(),
+        _recon_date_range_control("settlement-recon"),
+        _recon_match_status_control("settlement-recon"),
+        _recon_external_system_control("settlement-recon"),
+        _recon_merchant_control("settlement-recon"),
+        _recon_days_outstanding_control("settlement-recon", "settlement"),
     ]
 
 
 def build_payment_recon_controls() -> list[FilterControl]:
     """Controls for the Payment Reconciliation tab."""
     return [
-        _recon_date_range_control(),
-        _recon_match_status_control(),
-        _recon_external_system_control(),
-        _recon_merchant_control(),
-        _recon_days_outstanding_control(),
+        _recon_date_range_control("payment-recon"),
+        _recon_match_status_control("payment-recon"),
+        _recon_external_system_control("payment-recon"),
+        _recon_merchant_control("payment-recon"),
+        _recon_days_outstanding_control("payment-recon", "payment"),
     ]

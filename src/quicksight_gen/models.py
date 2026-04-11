@@ -494,6 +494,40 @@ class Visual:
 # ---------------------------------------------------------------------------
 
 @dataclass
+class DefaultDateTimePickerControlOptions:
+    Type: str = "DATE_RANGE"  # SINGLE_VALUED|DATE_RANGE
+    CommitMode: str | None = None  # AUTO|MANUAL
+
+
+@dataclass
+class DefaultDropdownControlOptions:
+    Type: str = "MULTI_SELECT"  # MULTI_SELECT|SINGLE_SELECT
+    CommitMode: str | None = None  # AUTO|MANUAL
+
+
+@dataclass
+class DefaultSliderControlOptions:
+    MaximumValue: float
+    MinimumValue: float
+    StepSize: float
+    Type: str = "SINGLE_POINT"  # SINGLE_POINT|RANGE
+
+
+@dataclass
+class DefaultFilterControlOptions:
+    """Union type — set exactly one."""
+    DefaultDateTimePickerOptions: DefaultDateTimePickerControlOptions | None = None
+    DefaultDropdownOptions: DefaultDropdownControlOptions | None = None
+    DefaultSliderOptions: DefaultSliderControlOptions | None = None
+
+
+@dataclass
+class DefaultFilterControlConfiguration:
+    Title: str
+    ControlOptions: DefaultFilterControlOptions
+
+
+@dataclass
 class CategoryFilterConfiguration:
     FilterListConfiguration: dict[str, Any] | None = None
     # FilterListConfiguration: {MatchOperator, CategoryValues, SelectAllOptions}
@@ -504,6 +538,7 @@ class CategoryFilter:
     FilterId: str
     Column: ColumnIdentifier
     Configuration: CategoryFilterConfiguration
+    DefaultFilterControlConfiguration: DefaultFilterControlConfiguration | None = None
 
 
 @dataclass
@@ -516,6 +551,7 @@ class TimeRangeFilter:
     RangeMaximumValue: dict[str, Any] | None = None
     IncludeMinimum: bool | None = None
     IncludeMaximum: bool | None = None
+    DefaultFilterControlConfiguration: DefaultFilterControlConfiguration | None = None
 
 
 @dataclass
@@ -532,6 +568,7 @@ class NumericRangeFilter:
     RangeMaximum: NumericRangeFilterValue | None = None
     IncludeMinimum: bool | None = None
     IncludeMaximum: bool | None = None
+    DefaultFilterControlConfiguration: DefaultFilterControlConfiguration | None = None
 
 
 @dataclass
@@ -607,11 +644,18 @@ class FilterSliderControl:
 
 
 @dataclass
+class FilterCrossSheetControl:
+    FilterControlId: str
+    SourceFilterId: str
+
+
+@dataclass
 class FilterControl:
     """Union type — set exactly one."""
     Dropdown: FilterDropDownControl | None = None
     DateTimePicker: FilterDateTimePickerControl | None = None
     Slider: FilterSliderControl | None = None
+    CrossSheet: FilterCrossSheetControl | None = None
 
 
 # ---------------------------------------------------------------------------

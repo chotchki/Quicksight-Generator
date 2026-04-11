@@ -10,8 +10,8 @@
 #   - AWS CLI v2 configured with appropriate credentials
 #   - QuickSight Enterprise edition enabled in the target account
 #
-# This script is idempotent — it uses create-* on first run and
-# update-* on subsequent runs.
+# This script is idempotent — it deletes existing resources and recreates
+# them on each run to avoid update-command parameter mismatches.
 
 set -euo pipefail
 
@@ -25,75 +25,10 @@ echo "  Region:  $REGION"
 echo
 
 # ---------------------------------------------------------------------------
-# DataSource (only present when generated via demo apply)
-# ---------------------------------------------------------------------------
-if [ -f "$OUT_DIR/datasource.json" ]; then
-    DS_SOURCE_ID=$(jq -r '.DataSourceId' "$OUT_DIR/datasource.json")
-    echo "==> DataSource: $DS_SOURCE_ID"
-    if aws quicksight describe-data-source \
-        --aws-account-id "$AWS_ACCOUNT_ID" \
-        --data-source-id "$DS_SOURCE_ID" \
-        --region "$REGION" &>/dev/null; then
-        echo "    Updating existing datasource..."
-        aws quicksight update-data-source \
-            --region "$REGION" \
-            --cli-input-json "file://$OUT_DIR/datasource.json"
-    else
-        echo "    Creating new datasource..."
-        aws quicksight create-data-source \
-            --region "$REGION" \
-            --cli-input-json "file://$OUT_DIR/datasource.json"
-    fi
-fi
-
-# ---------------------------------------------------------------------------
-# Theme
-# ---------------------------------------------------------------------------
-THEME_ID=$(jq -r '.ThemeId' "$OUT_DIR/theme.json")
-echo "==> Theme: $THEME_ID"
-if aws quicksight describe-theme \
-    --aws-account-id "$AWS_ACCOUNT_ID" \
-    --theme-id "$THEME_ID" \
-    --region "$REGION" &>/dev/null; then
-    echo "    Updating existing theme..."
-    aws quicksight update-theme \
-        --region "$REGION" \
-        --cli-input-json "file://$OUT_DIR/theme.json"
-else
-    echo "    Creating new theme..."
-    aws quicksight create-theme \
-        --region "$REGION" \
-        --cli-input-json "file://$OUT_DIR/theme.json"
-fi
-
-# ---------------------------------------------------------------------------
-# Datasets
-# ---------------------------------------------------------------------------
-for DS_FILE in "$OUT_DIR"/datasets/*.json; do
-    DS_ID=$(jq -r '.DataSetId' "$DS_FILE")
-    echo "==> Dataset: $DS_ID"
-    if aws quicksight describe-data-set \
-        --aws-account-id "$AWS_ACCOUNT_ID" \
-        --data-set-id "$DS_ID" \
-        --region "$REGION" &>/dev/null; then
-        echo "    Updating existing dataset..."
-        aws quicksight update-data-set \
-            --region "$REGION" \
-            --cli-input-json "file://$DS_FILE"
-    else
-        echo "    Creating new dataset..."
-        aws quicksight create-data-set \
-            --region "$REGION" \
-            --cli-input-json "file://$DS_FILE"
-    fi
-done
-
-# ---------------------------------------------------------------------------
-# Analyses
+# Analyses (delete first — they reference datasets and themes)
 # ---------------------------------------------------------------------------
 for ANALYSIS_FILE in "$OUT_DIR"/financial-analysis.json "$OUT_DIR"/recon-analysis.json; do
     if [ ! -f "$ANALYSIS_FILE" ]; then
-        echo "    Skipping $(basename "$ANALYSIS_FILE") (not found)"
         continue
     fi
     ANALYSIS_ID=$(jq -r '.AnalysisId' "$ANALYSIS_FILE")
@@ -102,16 +37,114 @@ for ANALYSIS_FILE in "$OUT_DIR"/financial-analysis.json "$OUT_DIR"/recon-analysi
         --aws-account-id "$AWS_ACCOUNT_ID" \
         --analysis-id "$ANALYSIS_ID" \
         --region "$REGION" &>/dev/null; then
-        echo "    Updating existing analysis..."
-        aws quicksight update-analysis \
+        echo "    Deleting existing analysis..."
+        aws quicksight delete-analysis \
+            --aws-account-id "$AWS_ACCOUNT_ID" \
+            --analysis-id "$ANALYSIS_ID" \
             --region "$REGION" \
-            --cli-input-json "file://$ANALYSIS_FILE"
-    else
-        echo "    Creating new analysis..."
-        aws quicksight create-analysis \
-            --region "$REGION" \
-            --cli-input-json "file://$ANALYSIS_FILE"
+            --force-delete-without-recovery &>/dev/null || true
     fi
+done
+
+# ---------------------------------------------------------------------------
+# Datasets (delete before datasource — they reference it)
+# ---------------------------------------------------------------------------
+for DS_FILE in "$OUT_DIR"/datasets/*.json; do
+    DS_ID=$(jq -r '.DataSetId' "$DS_FILE")
+    echo "==> Dataset: $DS_ID"
+    if aws quicksight describe-data-set \
+        --aws-account-id "$AWS_ACCOUNT_ID" \
+        --data-set-id "$DS_ID" \
+        --region "$REGION" &>/dev/null; then
+        echo "    Deleting existing dataset..."
+        aws quicksight delete-data-set \
+            --aws-account-id "$AWS_ACCOUNT_ID" \
+            --data-set-id "$DS_ID" \
+            --region "$REGION" &>/dev/null || true
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# Theme (delete)
+# ---------------------------------------------------------------------------
+THEME_ID=$(jq -r '.ThemeId' "$OUT_DIR/theme.json")
+echo "==> Theme: $THEME_ID"
+if aws quicksight describe-theme \
+    --aws-account-id "$AWS_ACCOUNT_ID" \
+    --theme-id "$THEME_ID" \
+    --region "$REGION" &>/dev/null; then
+    echo "    Deleting existing theme..."
+    aws quicksight delete-theme \
+        --aws-account-id "$AWS_ACCOUNT_ID" \
+        --theme-id "$THEME_ID" \
+        --region "$REGION" &>/dev/null || true
+fi
+
+# ---------------------------------------------------------------------------
+# DataSource (delete — only present when generated via demo apply)
+# ---------------------------------------------------------------------------
+if [ -f "$OUT_DIR/datasource.json" ]; then
+    DS_SOURCE_ID=$(jq -r '.DataSourceId' "$OUT_DIR/datasource.json")
+    echo "==> DataSource: $DS_SOURCE_ID"
+    if aws quicksight describe-data-source \
+        --aws-account-id "$AWS_ACCOUNT_ID" \
+        --data-source-id "$DS_SOURCE_ID" \
+        --region "$REGION" &>/dev/null; then
+        echo "    Deleting existing datasource..."
+        aws quicksight delete-data-source \
+            --aws-account-id "$AWS_ACCOUNT_ID" \
+            --data-source-id "$DS_SOURCE_ID" \
+            --region "$REGION" &>/dev/null || true
+    fi
+fi
+
+echo
+echo "--- Recreating all resources ---"
+echo
+
+# ---------------------------------------------------------------------------
+# DataSource (create)
+# ---------------------------------------------------------------------------
+if [ -f "$OUT_DIR/datasource.json" ]; then
+    DS_SOURCE_ID=$(jq -r '.DataSourceId' "$OUT_DIR/datasource.json")
+    echo "==> Creating DataSource: $DS_SOURCE_ID"
+    aws quicksight create-data-source \
+        --region "$REGION" \
+        --cli-input-json "file://$OUT_DIR/datasource.json"
+fi
+
+# ---------------------------------------------------------------------------
+# Theme (create)
+# ---------------------------------------------------------------------------
+echo "==> Creating Theme: $THEME_ID"
+aws quicksight create-theme \
+    --region "$REGION" \
+    --cli-input-json "file://$OUT_DIR/theme.json"
+
+# ---------------------------------------------------------------------------
+# Datasets (create)
+# ---------------------------------------------------------------------------
+for DS_FILE in "$OUT_DIR"/datasets/*.json; do
+    DS_ID=$(jq -r '.DataSetId' "$DS_FILE")
+    echo "==> Creating Dataset: $DS_ID"
+    aws quicksight create-data-set \
+        --region "$REGION" \
+        --cli-input-json "file://$DS_FILE"
+done
+
+# ---------------------------------------------------------------------------
+# Analyses (create)
+# ---------------------------------------------------------------------------
+for ANALYSIS_FILE in "$OUT_DIR"/financial-analysis.json "$OUT_DIR"/recon-analysis.json; do
+    if [ ! -f "$ANALYSIS_FILE" ]; then
+        echo "    Skipping $(basename "$ANALYSIS_FILE") (not found)"
+        continue
+    fi
+    ANALYSIS_ID=$(jq -r '.AnalysisId' "$ANALYSIS_FILE")
+    echo "==> Creating Analysis: $ANALYSIS_ID"
+    aws quicksight create-analysis \
+        --region "$REGION" \
+        --cli-input-json "file://$ANALYSIS_FILE"
 done
 
 echo
