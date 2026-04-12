@@ -61,7 +61,7 @@ Key Domain Models to Understand:
         - Cashier
       - Sales are settled to the merchant, the settlement type depends on the merchant type
       - sales could be refunded and should be netted out of a settlement
-      - a refund should be treat like a sale type with a negative amount
+      - a refund should be treated like a sale type with a negative amount
       - sales/refunds know what settlement they belong to if its there, it could be null
     - Settlements
       - bundle sales
@@ -236,45 +236,66 @@ Open Questions:
 Follow-up Questions (round 2):
   - Deploy unification:
     - You're open to folding `deploy.sh` into Python for a single unified interface. Given we're already doing the rename + per-app subcommands, my recommendation is to do it now — a `quicksight-gen deploy [payment-recon|account-recon|--all]` subcommand that can also run in "generate+deploy" mode so iteration doesn't destroy/recreate unchanged resources. Delete `deploy.sh` as part of the migration. Agree, or defer to a later pass?
+      - agreed
     - The existing `deploy.sh` is idempotent via delete-then-create. Do we want the Python replacement to be smarter (update-if-exists via `update-*` API calls) so iteration doesn't lose per-resource history like dashboard versions? Or stick with delete+create for simplicity?
+      - keep to delete plus create, update was a trail of land mines because it seemed to be selected what was allowed to be updated
 
   - Cleanup-by-tag:
     - Scope: do we sweep any QuickSight resource tagged `ManagedBy: quicksight-gen` in the target account/region that is NOT part of the current generate output (i.e., stale names from prior runs)? Or only the specific resource IDs we know about?
+      - any resource. That said when doing this, list what's in scope and asking for confirmation is desired
     - Safeguards: want a `--dry-run` that prints the delete list, and require `--yes` (or an interactive confirm) before actually deleting? Default behavior: interactive confirm unless `--yes`.
+      - lol said the same thing jsut above
     - Should cleanup run automatically before deploy, or is it a separate explicit command (e.g., `quicksight-gen cleanup --dry-run`)?
+      - separate explicit tag, regular deploy should target known resources that should be changed.
 
   - Late-threshold semantics:
     - "Filter on each sheet" for items not progressed for >N days. Does this replace the `late_threshold_days` config entirely (slider-only), or is the config a default value the slider loads with (and the user can override interactively)?
+      - I like the default the user can override
     - Which sheets get this slider on Payment Recon: just Payment Reconciliation (current), or also Sales (sales not yet settled), Settlements (settlements not yet paid), Payments (payments not yet matched)?
+      - all of them
     - Account Recon equivalents — do Balances / Transfers / Transactions also get "stuck longer than N days" sliders, or is "late" meaningful mostly for Payment Recon?
+      - I think those will need sliders, depending on the accounts it gets tricky so I'm keeping it user adjustable for now
 
   - Optional-metadata plumbing (taxes, tips, discount, cashier):
     - Where does the "which optional columns are present + their SQL expressions" live? Options: (a) a declarative list in config.yaml per app (easiest for end-users replacing the SQL); (b) a declarative list in a Python module constant (easier for developers); (c) runtime introspection of the query result (more magic, less explicit). Prefer (a), (b), or (c)?
+      - I'd prefer C if its possible. The fallback would be keep it where the SQL ends up living.
     - Filter-type derivation: number→range filter, string→multi-select filter. Date/timestamp→date-range? Anything else we need to support?
+      - I think that's appropiate
 
   - Per-step mismatch exceptions placement:
     - "Visual / table makes a lot of sense" for sales→settlement and settlement→payment mismatches. Where does it live — (a) a new dedicated "Pipeline Mismatches" tab; (b) additions to the existing "Exceptions & Alerts" tab; (c) inline callouts on each pipeline tab? My gut: (b), so exceptions stay in one place.
+      - I'm shooting for a flow of the end user should work each step because they build but it could be done with B.
     - Same question for "external transactions not tied to a payment" — you said filter on Payment Recon tab. Confirming: the filter is on Payment Reconciliation, not on Exceptions & Alerts?
+      - With the prior decision I would put it all on exceptions and alerts.
 
   - Front sheet content:
     - Instruction text per tab (always shown) — auto-derived from each sheet's existing plain-language description, or hand-written distinct copy for the front sheet? Auto-derive keeps it DRY but may read generic; hand-written is more conversational but is another thing to keep in sync.
+      - Start with auto-derive, will evaluate if hand-written makes more sense
     - Does the front sheet itself need a human-friendly name, or just "Overview" / "Getting Started"?
+      - Getting Started is good
 
   - Demo name/theme rename format:
     - "Prefix with Demo" — concrete format proposal: "Demo — Sasquatch Bank — Payment Reconciliation" and "Demo — Farmers Exchange Bank — Account Reconciliation" (em-dash separator). OK, or different format (colon, parentheses)?
+      - "Demo — Payment Reconciliation" and "Demo — Account Reconciliation", the scenario box on the "Getting Started" page will lay out the rest.
 
   - Account Recon initial scope:
     - For the first Account Recon pass, do we build all 4 tabs (Balances, Transfers, Transactions, Exceptions) as rough layout before iterating, or narrow to 2 (e.g., Balances + Exceptions) to get to visible output faster and then expand? You said "focus on initial layout first before filters/links" — I want to make sure we're aligned on tab count too.
+      - I think we need all 4 as a rough layout first.
 
   - Refund → original sale linkage:
     - Does a refund row carry a `refund_of_sale_id` FK pointing at the original sale so we can show the relationship on detail, or is the link not surfaced at all (refunds are just rows with negative amounts and their own settlement linkage)?
+      - For this, do rows with a negative amount and show the type of sale / refund.
 
   - Parent account drift drill-down:
     - The drift-research flow — concretely, do you envision clicking a parent account row on Balances to drill into a new sheet showing that account's children + transactions for the period? Or click-to-filter staying on the same sheet?
+      - This is where the 4 tab mock up above matters. I think we'll switch sheets and apply filters to narrow it down.
     - The "timeline visual" for troubleshooting when mismatches occurred — lives on the Exceptions tab, or the Transfers tab, or its own sub-view?
+      - Exceptions
 
   - Schema namespacing for demo database:
     - Two apps' tables in the same PostgreSQL schema (`public`) with namespaced table names (`pr_sales`, `ar_accounts`, etc.) to avoid collisions, or separate PG schemas (`payment_recon.*`, `account_recon.*`)? I lean namespaced table prefixes since it's less friction for the shared QuickSight datasource.
+      - same schema, prefixed
 
   - Transfer memo storage:
     - Memo on a `transfers` table (dedicated row per transfer, joined to transactions by `transfer_id`) or denormalized onto each `transactions` row? The former is cleaner; the latter requires the SQL to pick one row's memo consistently. Preference?
+      - I'd do denormalized and pick the memo on the earliest transaction id. Doesn't make sense to have another table with a foreign key for a single attribute.
