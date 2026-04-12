@@ -9,6 +9,9 @@ build/
 # Generated output
 out/
 
+# Local run directory (contains config.yaml with secrets + generated out/)
+run/
+
 # IDE
 .idea/
 .vscode/

@@ -5,7 +5,7 @@ from datetime import date
 
 import pytest
 
-from quicksight_gen.demo_data import (
+from quicksight_gen.payment_recon.demo_data import (
     MERCHANTS,
     generate_demo_sql,
 )

@@ -17,11 +17,14 @@ def output_dir(tmp_path: Path) -> Path:
         "aws_account_id: '111122223333'\n"
         "aws_region: us-west-2\n"
         "datasource_arn: arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds\n"
-        "principal_arn: arn:aws:quicksight:us-west-2:111122223333:user/default/admin\n"
+        "principal_arns:\n"
+        "  - arn:aws:quicksight:us-west-2:111122223333:user/default/admin\n"
     )
     out = tmp_path / "out"
     runner = CliRunner()
-    result = runner.invoke(main, ["generate", "-c", str(config), "-o", str(out)])
+    result = runner.invoke(
+        main, ["generate", "-c", str(config), "-o", str(out), "payment-recon"],
+    )
     assert result.exit_code == 0, result.output
     return out
 
@@ -119,8 +122,11 @@ class TestGenerateOutput:
     def test_theme_file_exists(self, output_dir: Path):
         assert (output_dir / "theme.json").exists()
 
-    def test_financial_analysis_file_exists(self, output_dir: Path):
-        assert (output_dir / "financial-analysis.json").exists()
+    def test_payment_recon_analysis_file_exists(self, output_dir: Path):
+        assert (output_dir / "payment-recon-analysis.json").exists()
+
+    def test_payment_recon_dashboard_file_exists(self, output_dir: Path):
+        assert (output_dir / "payment-recon-dashboard.json").exists()
 
     def test_dataset_files_exist(self, output_dir: Path):
         ds_dir = output_dir / "datasets"
@@ -150,8 +156,8 @@ class TestGenerateOutput:
         assert len(theme["Permissions"]) == 1
         assert "admin" in theme["Permissions"][0]["Principal"]
 
-        analysis = _load(output_dir, "financial-analysis.json")
-        assert "Permissions" in analysis, "financial-analysis.json missing Permissions"
+        analysis = _load(output_dir, "payment-recon-analysis.json")
+        assert "Permissions" in analysis, "payment-recon-analysis.json missing Permissions"
 
     def test_all_resources_have_common_tag(self, output_dir: Path):
         """Every generated resource must have the ManagedBy tag."""
@@ -165,16 +171,16 @@ class TestGenerateOutput:
 
 
 # ---------------------------------------------------------------------------
-# Cross-reference tests — financial analysis
+# Cross-reference tests — payment recon analysis
 # ---------------------------------------------------------------------------
 
-class TestFinancialCrossReferences:
+class TestPaymentReconCrossReferences:
     def test_cross_refs(self, output_dir: Path):
-        analysis = _load(output_dir, "financial-analysis.json")
+        analysis = _load(output_dir, "payment-recon-analysis.json")
         _validate_analysis_cross_refs(analysis, output_dir)
 
     def test_theme_arn_matches_theme(self, output_dir: Path):
-        analysis = _load(output_dir, "financial-analysis.json")
+        analysis = _load(output_dir, "payment-recon-analysis.json")
         theme = _load(output_dir, "theme.json")
         assert theme["ThemeId"] in analysis["ThemeArn"]
 
@@ -185,7 +191,7 @@ class TestFinancialCrossReferences:
 
 class TestExplanations:
     def test_every_sheet_has_description(self, output_dir: Path):
-        analysis = _load(output_dir, "financial-analysis.json")
+        analysis = _load(output_dir, "payment-recon-analysis.json")
         for sheet in analysis["Definition"]["Sheets"]:
             desc = sheet.get("Description", "")
             assert len(desc) > 20, (
@@ -194,7 +200,7 @@ class TestExplanations:
             )
 
     def test_every_visual_has_subtitle(self, output_dir: Path):
-        analysis = _load(output_dir, "financial-analysis.json")
+        analysis = _load(output_dir, "payment-recon-analysis.json")
         for sheet in analysis["Definition"]["Sheets"]:
             for v in sheet.get("Visuals", []):
                 for vtype_name, vtype in v.items():

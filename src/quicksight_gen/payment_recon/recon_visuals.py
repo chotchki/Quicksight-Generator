@@ -6,13 +6,13 @@ table with mutual filtering via the pExternalTransactionId parameter.
 
 from __future__ import annotations
 
-from quicksight_gen.constants import (
+from quicksight_gen.payment_recon.constants import (
     DS_EXTERNAL_TRANSACTIONS,
     DS_PAYMENT_RECON,
     DS_PAYMENTS,
     SHEET_PAYMENT_RECON,
 )
-from quicksight_gen.models import (
+from quicksight_gen.common.models import (
     AxisLabelOptions,
     BarChartAggregatedFieldWells,
     BarChartConfiguration,

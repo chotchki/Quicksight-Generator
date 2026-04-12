@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from quicksight_gen.config import Config
-from quicksight_gen.constants import (
+from quicksight_gen.common.config import Config
+from quicksight_gen.payment_recon.constants import (
     DS_EXTERNAL_TRANSACTIONS,
     DS_MERCHANTS,
     DS_PAYMENT_RECON,
@@ -18,16 +18,16 @@ from quicksight_gen.constants import (
     SHEET_SALES,
     SHEET_SETTLEMENTS,
 )
-from quicksight_gen.datasets import build_financial_datasets, build_recon_datasets
-from quicksight_gen.filters import (
+from quicksight_gen.payment_recon.datasets import build_pipeline_datasets, build_recon_datasets
+from quicksight_gen.payment_recon.filters import (
     build_exceptions_controls,
     build_filter_groups,
     build_payments_controls,
     build_sales_controls,
     build_settlements_controls,
 )
-from quicksight_gen.recon_filters import build_recon_controls, build_recon_filter_groups
-from quicksight_gen.models import (
+from quicksight_gen.payment_recon.recon_filters import build_recon_controls, build_recon_filter_groups
+from quicksight_gen.common.models import (
     Analysis,
     AnalysisDefinition,
     CategoryFilter,
@@ -50,9 +50,9 @@ from quicksight_gen.models import (
     SheetVisualScopingConfiguration,
     StringParameterDeclaration,
 )
-from quicksight_gen.theme import get_preset
-from quicksight_gen.recon_visuals import build_payment_recon_visuals
-from quicksight_gen.visuals import (
+from quicksight_gen.common.theme import get_preset
+from quicksight_gen.payment_recon.recon_visuals import build_payment_recon_visuals
+from quicksight_gen.payment_recon.visuals import (
     build_exceptions_visuals,
     build_payments_visuals,
     build_sales_visuals,
@@ -262,8 +262,8 @@ def _build_payment_recon_sheet() -> SheetDefinition:
 
 def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaration]:
     """Map logical dataset identifiers to their ARNs."""
-    financial_datasets = build_financial_datasets(cfg)
-    financial_names = [
+    pipeline_datasets = build_pipeline_datasets(cfg)
+    pipeline_names = [
         DS_MERCHANTS,
         DS_SALES,
         DS_SETTLEMENTS,
@@ -278,7 +278,7 @@ def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaratio
         DS_PAYMENT_RECON,
     ]
 
-    all_datasets = list(zip(financial_names, financial_datasets)) + list(
+    all_datasets = list(zip(pipeline_names, pipeline_datasets)) + list(
         zip(recon_names, recon_datasets)
     )
     return [
@@ -400,7 +400,7 @@ def _ext_txn_id_filter_group(
     )
 
 
-def _build_financial_definition(cfg: Config) -> AnalysisDefinition:
+def _build_payment_recon_definition(cfg: Config) -> AnalysisDefinition:
     """Build the definition shared by both the analysis and dashboard."""
     drill_down_filters = [
         _settlement_id_filter_group(
@@ -454,11 +454,11 @@ def _build_financial_definition(cfg: Config) -> AnalysisDefinition:
     )
 
 
-def _financial_name(cfg: Config) -> str:
+def _payment_recon_name(cfg: Config) -> str:
     preset = get_preset(cfg.theme_preset)
     if preset.analysis_name_prefix:
-        return f"{preset.analysis_name_prefix} — Financial Reporting"
-    return "Financial Reporting Analysis"
+        return f"{preset.analysis_name_prefix} — Payment Reconciliation"
+    return "Payment Reconciliation"
 
 
 # ---------------------------------------------------------------------------
@@ -480,49 +480,45 @@ _DASHBOARD_ACTIONS = [
 
 def build_analysis(cfg: Config) -> Analysis:
     """Build the complete Analysis resource with four sheets and visuals."""
-    analysis_id = cfg.prefixed("financial-analysis")
+    analysis_id = cfg.prefixed("payment-recon-analysis")
     theme_id = cfg.prefixed("theme")
 
     permissions = None
-    if cfg.principal_arn:
+    if cfg.principal_arns:
         permissions = [
-            ResourcePermission(
-                Principal=cfg.principal_arn,
-                Actions=_ANALYSIS_ACTIONS,
-            )
+            ResourcePermission(Principal=arn, Actions=_ANALYSIS_ACTIONS)
+            for arn in cfg.principal_arns
         ]
 
     return Analysis(
         AwsAccountId=cfg.aws_account_id,
         AnalysisId=analysis_id,
-        Name=_financial_name(cfg),
+        Name=_payment_recon_name(cfg),
         ThemeArn=cfg.theme_arn(theme_id),
-        Definition=_build_financial_definition(cfg),
+        Definition=_build_payment_recon_definition(cfg),
         Permissions=permissions,
         Tags=cfg.tags(),
     )
 
 
-def build_financial_dashboard(cfg: Config) -> Dashboard:
-    """Build a published Dashboard from the financial analysis definition."""
-    dashboard_id = cfg.prefixed("financial-dashboard")
+def build_payment_recon_dashboard(cfg: Config) -> Dashboard:
+    """Build a published Dashboard from the payment recon analysis definition."""
+    dashboard_id = cfg.prefixed("payment-recon-dashboard")
     theme_id = cfg.prefixed("theme")
 
     permissions = None
-    if cfg.principal_arn:
+    if cfg.principal_arns:
         permissions = [
-            ResourcePermission(
-                Principal=cfg.principal_arn,
-                Actions=_DASHBOARD_ACTIONS,
-            )
+            ResourcePermission(Principal=arn, Actions=_DASHBOARD_ACTIONS)
+            for arn in cfg.principal_arns
         ]
 
     return Dashboard(
         AwsAccountId=cfg.aws_account_id,
         DashboardId=dashboard_id,
-        Name=_financial_name(cfg),
+        Name=_payment_recon_name(cfg),
         ThemeArn=cfg.theme_arn(theme_id),
-        Definition=_build_financial_definition(cfg),
+        Definition=_build_payment_recon_definition(cfg),
         Permissions=permissions,
         Tags=cfg.tags(),
         VersionDescription="Generated by quicksight-gen",

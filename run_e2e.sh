@@ -30,11 +30,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ "$SKIP_DEPLOY" = false ]; then
-    echo "==> Regenerating JSON ($CONFIG -> $OUT_DIR)"
-    .venv/bin/quicksight-gen generate -c "$CONFIG" -o "$OUT_DIR"
-
-    echo "==> Deploying to AWS"
-    ./deploy.sh "$OUT_DIR"
+    echo "==> Regenerating and deploying ($CONFIG -> $OUT_DIR)"
+    .venv/bin/quicksight-gen deploy --all --generate -c "$CONFIG" -o "$OUT_DIR"
 fi
 
 echo "==> Running e2e tests"

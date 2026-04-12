@@ -13,11 +13,11 @@ required, no CrossSheet control type needed).
 
 from __future__ import annotations
 
-from quicksight_gen.constants import (
+from quicksight_gen.payment_recon.constants import (
     DS_PAYMENT_RECON,
     SHEET_PAYMENT_RECON,
 )
-from quicksight_gen.models import (
+from quicksight_gen.common.models import (
     CategoryFilter,
     CategoryFilterConfiguration,
     ColumnIdentifier,

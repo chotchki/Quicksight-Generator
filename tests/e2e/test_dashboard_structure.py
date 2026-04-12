@@ -116,7 +116,7 @@ class TestParameters:
 class TestFilterGroups:
     def test_has_filter_groups(self, dashboard_definition):
         groups = dashboard_definition.get("FilterGroups", [])
-        # Financial (5 shared) + 2 settlement drill-down + 4 recon + 2 recon drill-down
+        # Payment Recon (5 shared) + 2 settlement drill-down + 4 recon + 2 recon drill-down
         assert len(groups) >= 10
 
     def test_filter_group_ids_unique(self, dashboard_definition):

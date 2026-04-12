@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from quicksight_gen.config import Config
-from quicksight_gen.theme import (
+from quicksight_gen.common.config import Config
+from quicksight_gen.common.theme import (
     DEFAULT_PRESET,
     PRESETS,
     SASQUATCH_BANK_PRESET,
@@ -45,7 +45,7 @@ class TestPresetRegistry:
 
 class TestDefaultPreset:
     def test_name(self):
-        assert DEFAULT_PRESET.theme_name == "Financial Reporting Theme"
+        assert DEFAULT_PRESET.theme_name == "QuickSight Gen Theme"
 
     def test_no_analysis_prefix(self):
         assert DEFAULT_PRESET.analysis_name_prefix is None
@@ -66,7 +66,7 @@ class TestDefaultPreset:
         data = theme.to_aws_json()
         # Round-trip through JSON to catch serialization issues
         json.loads(json.dumps(data))
-        assert data["Name"] == "Financial Reporting Theme"
+        assert data["Name"] == "QuickSight Gen Theme"
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +78,7 @@ class TestSasquatchBankPreset:
         assert SASQUATCH_BANK_PRESET.theme_name == "Sasquatch National Bank Theme"
 
     def test_analysis_prefix(self):
-        assert SASQUATCH_BANK_PRESET.analysis_name_prefix == "Sasquatch National Bank"
+        assert SASQUATCH_BANK_PRESET.analysis_name_prefix == "Demo"
 
     def test_accent_is_forest_green(self):
         assert SASQUATCH_BANK_PRESET.accent == "#2D6A4F"
@@ -118,14 +118,14 @@ class TestPresetAnalysisNames:
             theme_preset=preset,
         )
 
-    def test_default_financial_name(self):
-        from quicksight_gen.analysis import build_analysis
+    def test_default_payment_recon_name(self):
+        from quicksight_gen.payment_recon.analysis import build_analysis
 
         a = build_analysis(self._cfg())
-        assert a.to_aws_json()["Name"] == "Financial Reporting Analysis"
+        assert a.to_aws_json()["Name"] == "Payment Reconciliation"
 
-    def test_sasquatch_financial_name(self):
-        from quicksight_gen.analysis import build_analysis
+    def test_sasquatch_payment_recon_name(self):
+        from quicksight_gen.payment_recon.analysis import build_analysis
 
         a = build_analysis(self._cfg("sasquatch-bank"))
-        assert a.to_aws_json()["Name"] == "Sasquatch National Bank — Financial Reporting"
+        assert a.to_aws_json()["Name"] == "Demo — Payment Reconciliation"

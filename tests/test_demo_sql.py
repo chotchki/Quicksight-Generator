@@ -8,7 +8,7 @@ import pytest
 from click.testing import CliRunner
 
 from quicksight_gen.cli import main
-from quicksight_gen.demo_data import generate_demo_sql
+from quicksight_gen.payment_recon.demo_data import generate_demo_sql
 
 
 ANCHOR = date(2026, 4, 11)
@@ -103,7 +103,7 @@ class TestDemoSchemaCli:
     def test_writes_schema_file(self, tmp_path):
         out = tmp_path / "schema.sql"
         runner = CliRunner()
-        result = runner.invoke(main, ["demo", "schema", "-o", str(out)])
+        result = runner.invoke(main, ["demo", "schema", "payment-recon", "-o", str(out)])
         assert result.exit_code == 0, result.output
         assert out.exists()
         content = out.read_text()
@@ -114,7 +114,7 @@ class TestDemoSeedCli:
     def test_writes_seed_file(self, tmp_path):
         out = tmp_path / "seed.sql"
         runner = CliRunner()
-        result = runner.invoke(main, ["demo", "seed", "-o", str(out)])
+        result = runner.invoke(main, ["demo", "seed", "payment-recon", "-o", str(out)])
         assert result.exit_code == 0, result.output
         assert out.exists()
         content = out.read_text()
@@ -131,7 +131,7 @@ class TestDemoApplyCli:
             "datasource_arn: arn:aws:quicksight:us-west-2:111122223333:datasource/ds\n"
         )
         runner = CliRunner()
-        result = runner.invoke(main, ["demo", "apply", "-c", str(config)])
+        result = runner.invoke(main, ["demo", "apply", "payment-recon", "-c", str(config)])
         assert result.exit_code != 0
         assert "demo_database_url" in result.output
 
@@ -149,7 +149,8 @@ class TestGenerateThemePresetCli:
         result = runner.invoke(
             main,
             ["generate", "-c", str(config), "-o", str(out),
-             "--theme-preset", "sasquatch-bank"],
+             "--theme-preset", "sasquatch-bank",
+             "payment-recon"],
         )
         assert result.exit_code == 0, result.output
 
@@ -158,5 +159,5 @@ class TestGenerateThemePresetCli:
         theme = json.loads((out / "theme.json").read_text())
         assert theme["Name"] == "Sasquatch National Bank Theme"
 
-        analysis = json.loads((out / "financial-analysis.json").read_text())
-        assert "Sasquatch National Bank" in analysis["Name"]
+        analysis = json.loads((out / "payment-recon-analysis.json").read_text())
+        assert analysis["Name"] == "Demo — Payment Reconciliation"

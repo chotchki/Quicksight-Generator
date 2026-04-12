@@ -48,7 +48,7 @@ IDENTITY_REGION = os.environ.get("QS_E2E_IDENTITY_REGION", "us-east-1")
 @pytest.fixture(scope="session")
 def cfg():
     """Load project config from config.yaml or env vars."""
-    from quicksight_gen.config import load_config
+    from quicksight_gen.common.config import load_config
 
     for candidate in (Path("config.yaml"), Path("run/config.yaml")):
         if candidate.exists():
@@ -91,12 +91,12 @@ def qs_identity_client():
 
 @pytest.fixture(scope="session")
 def dashboard_id(resource_prefix) -> str:
-    return f"{resource_prefix}-financial-dashboard"
+    return f"{resource_prefix}-payment-recon-dashboard"
 
 
 @pytest.fixture(scope="session")
 def analysis_id(resource_prefix) -> str:
-    return f"{resource_prefix}-financial-analysis"
+    return f"{resource_prefix}-payment-recon-analysis"
 
 
 @pytest.fixture(scope="session")

@@ -2,7 +2,7 @@
 
 import json
 
-from quicksight_gen.models import (
+from quicksight_gen.common.models import (
     Analysis,
     AnalysisDefinition,
     BarChartAggregatedFieldWells,
@@ -52,10 +52,10 @@ from quicksight_gen.models import (
     Visual,
     VisualTitleLabelOptions,
 )
-from quicksight_gen.config import Config
-from quicksight_gen.datasets import (
+from quicksight_gen.common.config import Config
+from quicksight_gen.payment_recon.datasets import (
     build_datasource,
-    build_financial_datasets,
+    build_pipeline_datasets,
     build_recon_datasets,
     build_all_datasets,
     build_external_transactions_dataset,
@@ -84,7 +84,7 @@ class TestStripNones:
         visual = Visual(KPIVisual=kpi)
         out = visual.to_aws_json() if hasattr(visual, "to_aws_json") else {}
         # Use the internal helper directly
-        from quicksight_gen.models import _strip_nones, asdict
+        from quicksight_gen.common.models import _strip_nones, asdict
         out = _strip_nones(asdict(visual))
         assert "Subtitle" not in out["KPIVisual"]
         assert "BarChartVisual" not in out
@@ -174,7 +174,7 @@ class TestAnalysisSerialization:
 
 class TestVisualSerialization:
     def test_kpi_visual(self):
-        from quicksight_gen.models import _strip_nones, asdict
+        from quicksight_gen.common.models import _strip_nones, asdict
         kpi = Visual(
             KPIVisual=KPIVisual(
                 VisualId="kpi-1",
@@ -205,7 +205,7 @@ class TestVisualSerialization:
         assert vals[0]["NumericalMeasureField"]["AggregationFunction"]["SimpleNumericalAggregation"] == "SUM"
 
     def test_bar_chart_visual(self):
-        from quicksight_gen.models import _strip_nones, asdict
+        from quicksight_gen.common.models import _strip_nones, asdict
         bar = Visual(
             BarChartVisual=BarChartVisual(
                 VisualId="bar-1",
@@ -236,7 +236,7 @@ class TestVisualSerialization:
         assert cat["CategoricalDimensionField"]["Column"]["ColumnName"] == "merchant"
 
     def test_pie_chart_visual(self):
-        from quicksight_gen.models import _strip_nones, asdict
+        from quicksight_gen.common.models import _strip_nones, asdict
         pie = Visual(
             PieChartVisual=PieChartVisual(
                 VisualId="pie-1",
@@ -263,7 +263,7 @@ class TestVisualSerialization:
         assert "PieChartVisual" in out
 
     def test_table_visual(self):
-        from quicksight_gen.models import _strip_nones, asdict
+        from quicksight_gen.common.models import _strip_nones, asdict
         tbl = Visual(
             TableVisual=TableVisual(
                 VisualId="tbl-1",
@@ -289,7 +289,7 @@ class TestVisualSerialization:
         assert vals[0]["FieldId"] == "f1"
 
     def test_visual_union_only_one_set(self):
-        from quicksight_gen.models import _strip_nones, asdict
+        from quicksight_gen.common.models import _strip_nones, asdict
         v = Visual(KPIVisual=KPIVisual(VisualId="kpi-1"))
         out = _strip_nones(asdict(v))
         assert len(out) == 1
@@ -298,7 +298,7 @@ class TestVisualSerialization:
 
 class TestFilterSerialization:
     def test_category_filter(self):
-        from quicksight_gen.models import _strip_nones, asdict
+        from quicksight_gen.common.models import _strip_nones, asdict
         fg = FilterGroup(
             FilterGroupId="fg-1",
             CrossDataset="SINGLE_DATASET",
@@ -434,13 +434,13 @@ _TEST_CFG = Config(
     aws_account_id="111122223333",
     aws_region="us-west-2",
     datasource_arn="arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds",
-    principal_arn="arn:aws:quicksight:us-west-2:111122223333:user/default/admin",
+    principal_arns=["arn:aws:quicksight:us-west-2:111122223333:user/default/admin"],
 )
 
 
 class TestDatasetBuilderCounts:
-    def test_financial_datasets_count(self):
-        assert len(build_financial_datasets(_TEST_CFG)) == 6
+    def test_pipeline_datasets_count(self):
+        assert len(build_pipeline_datasets(_TEST_CFG)) == 6
 
     def test_recon_datasets_count(self):
         assert len(build_recon_datasets(_TEST_CFG)) == 2
@@ -448,14 +448,14 @@ class TestDatasetBuilderCounts:
     def test_all_datasets_count(self):
         assert len(build_all_datasets(_TEST_CFG)) == 8
 
-    def test_all_datasets_is_financial_plus_recon(self):
+    def test_all_datasets_is_pipeline_plus_recon(self):
         all_ds = build_all_datasets(_TEST_CFG)
-        fin_ds = build_financial_datasets(_TEST_CFG)
+        pipeline_ds = build_pipeline_datasets(_TEST_CFG)
         recon_ds = build_recon_datasets(_TEST_CFG)
         all_ids = [ds.DataSetId for ds in all_ds]
-        fin_ids = [ds.DataSetId for ds in fin_ds]
+        pipeline_ids = [ds.DataSetId for ds in pipeline_ds]
         recon_ids = [ds.DataSetId for ds in recon_ds]
-        assert all_ids == fin_ids + recon_ids
+        assert all_ids == pipeline_ids + recon_ids
 
     def test_no_duplicate_dataset_ids(self):
         all_ds = build_all_datasets(_TEST_CFG)
@@ -575,7 +575,7 @@ _DEMO_CFG = Config(
     aws_account_id="111122223333",
     aws_region="us-west-2",
     demo_database_url="postgresql://demouser:demopass@db.example.com:5432/quicksight_demo",
-    principal_arn="arn:aws:quicksight:us-west-2:111122223333:user/default/admin",
+    principal_arns=["arn:aws:quicksight:us-west-2:111122223333:user/default/admin"],
 )
 
 

@@ -10,7 +10,7 @@ Defines five cross-visual filters with corresponding UI controls:
 
 from __future__ import annotations
 
-from quicksight_gen.constants import (
+from quicksight_gen.payment_recon.constants import (
     DS_PAYMENT_RETURNS,
     DS_PAYMENTS,
     DS_SALES,
@@ -21,7 +21,7 @@ from quicksight_gen.constants import (
     SHEET_SALES,
     SHEET_SETTLEMENTS,
 )
-from quicksight_gen.models import (
+from quicksight_gen.common.models import (
     CategoryFilter,
     CategoryFilterConfiguration,
     ColumnIdentifier,

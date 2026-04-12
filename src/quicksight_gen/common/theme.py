@@ -1,16 +1,16 @@
 """QuickSight theme definition with selectable presets.
 
-The ``default`` preset preserves the original blue/grey professional palette.
-The ``sasquatch-bank`` preset brands the output for the demo scenario:
-Sasquatch National Bank — forest greens, earth tones, and a gold accent.
+The ``default`` preset is a neutral blue/grey professional palette used for
+production dashboards. Demo presets (e.g. ``sasquatch-bank``) brand the output
+for demo scenarios and prefix the analysis name with ``Demo —``.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from quicksight_gen.config import Config
-from quicksight_gen.models import (
+from quicksight_gen.common.config import Config
+from quicksight_gen.common.models import (
     DataColorPalette,
     FontFamily,
     Gutter,
@@ -88,8 +88,8 @@ _WARNING_AMBER = "#E65100"
 _DANGER_RED = "#C62828"
 
 DEFAULT_PRESET = ThemePreset(
-    theme_name="Financial Reporting Theme",
-    version_description="Auto-generated financial reporting theme",
+    theme_name="QuickSight Gen Theme",
+    version_description="Auto-generated dashboard theme",
     analysis_name_prefix=None,
     data_colors=[
         _DARK_BLUE,
@@ -145,7 +145,7 @@ _MEDIUM_WARM_GREY = "#7A7A72"
 SASQUATCH_BANK_PRESET = ThemePreset(
     theme_name="Sasquatch National Bank Theme",
     version_description="Sasquatch National Bank — forest green and gold palette",
-    analysis_name_prefix="Sasquatch National Bank",
+    analysis_name_prefix="Demo",
     data_colors=[
         _FOREST_GREEN,
         _BANK_GOLD,
@@ -210,24 +210,23 @@ def build_theme(cfg: Config) -> Theme:
     theme_id = cfg.prefixed("theme")
 
     permissions = None
-    if cfg.principal_arn:
+    if cfg.principal_arns:
+        theme_actions = [
+            "quicksight:DescribeTheme",
+            "quicksight:DescribeThemeAlias",
+            "quicksight:DescribeThemePermissions",
+            "quicksight:ListThemeAliases",
+            "quicksight:ListThemeVersions",
+            "quicksight:UpdateTheme",
+            "quicksight:UpdateThemeAlias",
+            "quicksight:UpdateThemePermissions",
+            "quicksight:DeleteTheme",
+            "quicksight:DeleteThemeAlias",
+            "quicksight:CreateThemeAlias",
+        ]
         permissions = [
-            ResourcePermission(
-                Principal=cfg.principal_arn,
-                Actions=[
-                    "quicksight:DescribeTheme",
-                    "quicksight:DescribeThemeAlias",
-                    "quicksight:DescribeThemePermissions",
-                    "quicksight:ListThemeAliases",
-                    "quicksight:ListThemeVersions",
-                    "quicksight:UpdateTheme",
-                    "quicksight:UpdateThemeAlias",
-                    "quicksight:UpdateThemePermissions",
-                    "quicksight:DeleteTheme",
-                    "quicksight:DeleteThemeAlias",
-                    "quicksight:CreateThemeAlias",
-                ],
-            )
+            ResourcePermission(Principal=arn, Actions=theme_actions)
+            for arn in cfg.principal_arns
         ]
 
     return Theme(

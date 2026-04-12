@@ -1,0 +1,291 @@
+"""Deploy generated QuickSight JSON to AWS — delete-then-create semantics.
+
+Python port of the original ``deploy.sh``. Uses boto3 directly with
+a tight poll loop for the async CREATE_ANALYSIS / CREATE_DASHBOARD
+workflows. Deletes any existing resource for each ID before creating
+a new one so schema drift never causes update-parameter mismatches.
+"""
+
+from __future__ import annotations
+
+import json
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+import boto3
+import click
+from botocore.exceptions import ClientError
+
+from quicksight_gen.common.config import Config
+
+
+POLL_INTERVAL_SECONDS = 5
+POLL_MAX_ATTEMPTS = 60  # 5 minutes
+
+
+@dataclass
+class AppFiles:
+    """Paths to the analysis/dashboard JSON for a single app."""
+
+    name: str
+    analysis_path: Path
+    dashboard_path: Path
+
+
+def _load_app_files(out_dir: Path, app: str) -> AppFiles | None:
+    analysis_path = out_dir / f"{app}-analysis.json"
+    dashboard_path = out_dir / f"{app}-dashboard.json"
+    if not analysis_path.exists() and not dashboard_path.exists():
+        return None
+    return AppFiles(name=app, analysis_path=analysis_path, dashboard_path=dashboard_path)
+
+
+def _read_json(path: Path) -> dict:
+    return json.loads(path.read_text())
+
+
+def _wait_for_analysis(client, account_id: str, analysis_id: str) -> bool:
+    """Poll describe-analysis until a terminal state. Returns True on success."""
+    for attempt in range(1, POLL_MAX_ATTEMPTS + 1):
+        try:
+            resp = client.describe_analysis(
+                AwsAccountId=account_id, AnalysisId=analysis_id,
+            )
+        except ClientError as exc:
+            click.echo(f"    describe-analysis error: {exc}")
+            return False
+        status = resp.get("Analysis", {}).get("Status", "UNKNOWN")
+        if status in ("CREATION_SUCCESSFUL", "UPDATE_SUCCESSFUL"):
+            click.echo(f"    Status: {status}")
+            return True
+        if status in ("CREATION_FAILED", "UPDATE_FAILED"):
+            click.echo(f"    Status: {status}")
+            for err in resp.get("Analysis", {}).get("Errors", []) or []:
+                click.echo(f"      {err.get('Message', '')}")
+            return False
+        if status == "DELETED":
+            click.echo("    Status: DELETED (unexpected)")
+            return False
+        if attempt % 6 == 0:
+            click.echo(f"    Still waiting... ({status}, {attempt}/{POLL_MAX_ATTEMPTS})")
+        time.sleep(POLL_INTERVAL_SECONDS)
+    click.echo(f"    Timed out waiting for analysis {analysis_id}")
+    return False
+
+
+def _wait_for_dashboard(client, account_id: str, dashboard_id: str) -> bool:
+    """Poll describe-dashboard until a terminal state. Returns True on success."""
+    for attempt in range(1, POLL_MAX_ATTEMPTS + 1):
+        try:
+            resp = client.describe_dashboard(
+                AwsAccountId=account_id, DashboardId=dashboard_id,
+            )
+        except ClientError as exc:
+            click.echo(f"    describe-dashboard error: {exc}")
+            return False
+        status = resp.get("Dashboard", {}).get("Version", {}).get("Status", "UNKNOWN")
+        if status in ("CREATION_SUCCESSFUL", "UPDATE_SUCCESSFUL"):
+            click.echo(f"    Status: {status}")
+            return True
+        if status in ("CREATION_FAILED", "UPDATE_FAILED"):
+            click.echo(f"    Status: {status}")
+            for err in resp.get("Dashboard", {}).get("Version", {}).get("Errors", []) or []:
+                click.echo(f"      {err.get('Message', '')}")
+            return False
+        if attempt % 6 == 0:
+            click.echo(f"    Still waiting... ({status}, {attempt}/{POLL_MAX_ATTEMPTS})")
+        time.sleep(POLL_INTERVAL_SECONDS)
+    click.echo(f"    Timed out waiting for dashboard {dashboard_id}")
+    return False
+
+
+def _resource_exists(describe_fn, **kwargs) -> bool:
+    try:
+        describe_fn(**kwargs)
+        return True
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "ResourceNotFoundException":
+            return False
+        raise
+
+
+def _delete_dashboards(client, account_id: str, apps: list[AppFiles]) -> None:
+    for app in apps:
+        if not app.dashboard_path.exists():
+            continue
+        dash_id = _read_json(app.dashboard_path)["DashboardId"]
+        click.echo(f"==> Dashboard: {dash_id}")
+        if _resource_exists(
+            client.describe_dashboard,
+            AwsAccountId=account_id, DashboardId=dash_id,
+        ):
+            click.echo("    Deleting existing dashboard...")
+            client.delete_dashboard(AwsAccountId=account_id, DashboardId=dash_id)
+
+
+def _delete_analyses(client, account_id: str, apps: list[AppFiles]) -> None:
+    for app in apps:
+        if not app.analysis_path.exists():
+            continue
+        analysis_id = _read_json(app.analysis_path)["AnalysisId"]
+        click.echo(f"==> Analysis: {analysis_id}")
+        if _resource_exists(
+            client.describe_analysis,
+            AwsAccountId=account_id, AnalysisId=analysis_id,
+        ):
+            click.echo("    Deleting existing analysis...")
+            client.delete_analysis(
+                AwsAccountId=account_id,
+                AnalysisId=analysis_id,
+                ForceDeleteWithoutRecovery=True,
+            )
+
+
+def _delete_datasets(client, account_id: str, out_dir: Path) -> None:
+    datasets_dir = out_dir / "datasets"
+    if not datasets_dir.is_dir():
+        return
+    for ds_file in sorted(datasets_dir.glob("*.json")):
+        ds_id = _read_json(ds_file)["DataSetId"]
+        click.echo(f"==> Dataset: {ds_id}")
+        if _resource_exists(
+            client.describe_data_set,
+            AwsAccountId=account_id, DataSetId=ds_id,
+        ):
+            click.echo("    Deleting existing dataset...")
+            client.delete_data_set(AwsAccountId=account_id, DataSetId=ds_id)
+
+
+def _delete_theme(client, account_id: str, theme_path: Path) -> None:
+    if not theme_path.exists():
+        return
+    theme_id = _read_json(theme_path)["ThemeId"]
+    click.echo(f"==> Theme: {theme_id}")
+    if _resource_exists(
+        client.describe_theme, AwsAccountId=account_id, ThemeId=theme_id,
+    ):
+        click.echo("    Deleting existing theme...")
+        client.delete_theme(AwsAccountId=account_id, ThemeId=theme_id)
+
+
+def _delete_datasource(client, account_id: str, datasource_path: Path) -> None:
+    if not datasource_path.exists():
+        return
+    ds_id = _read_json(datasource_path)["DataSourceId"]
+    click.echo(f"==> DataSource: {ds_id}")
+    if _resource_exists(
+        client.describe_data_source,
+        AwsAccountId=account_id, DataSourceId=ds_id,
+    ):
+        click.echo("    Deleting existing datasource...")
+        client.delete_data_source(AwsAccountId=account_id, DataSourceId=ds_id)
+
+
+def _create_datasource(client, datasource_path: Path) -> None:
+    if not datasource_path.exists():
+        return
+    payload = _read_json(datasource_path)
+    click.echo(f"==> Creating DataSource: {payload['DataSourceId']}")
+    client.create_data_source(**payload)
+
+
+def _create_theme(client, theme_path: Path) -> None:
+    payload = _read_json(theme_path)
+    click.echo(f"==> Creating Theme: {payload['ThemeId']}")
+    client.create_theme(**payload)
+
+
+def _create_datasets(client, out_dir: Path) -> None:
+    datasets_dir = out_dir / "datasets"
+    if not datasets_dir.is_dir():
+        return
+    for ds_file in sorted(datasets_dir.glob("*.json")):
+        payload = _read_json(ds_file)
+        click.echo(f"==> Creating Dataset: {payload['DataSetId']}")
+        client.create_data_set(**payload)
+
+
+def _create_analyses(client, apps: list[AppFiles]) -> list[str]:
+    created: list[str] = []
+    for app in apps:
+        if not app.analysis_path.exists():
+            continue
+        payload = _read_json(app.analysis_path)
+        click.echo(f"==> Creating Analysis: {payload['AnalysisId']}")
+        client.create_analysis(**payload)
+        created.append(payload["AnalysisId"])
+    return created
+
+
+def _create_dashboards(client, apps: list[AppFiles]) -> list[str]:
+    created: list[str] = []
+    for app in apps:
+        if not app.dashboard_path.exists():
+            continue
+        payload = _read_json(app.dashboard_path)
+        click.echo(f"==> Creating Dashboard: {payload['DashboardId']}")
+        client.create_dashboard(**payload)
+        created.append(payload["DashboardId"])
+    return created
+
+
+def deploy(cfg: Config, out_dir: Path, app_names: list[str]) -> int:
+    """Deploy one or more apps from ``out_dir``. Returns 0 on success.
+
+    ``app_names`` is a list of kebab-case app keys (e.g. ``["payment-recon"]``)
+    that maps to ``{app}-analysis.json`` / ``{app}-dashboard.json``.
+    Theme / datasets / datasource are shared across apps and deployed
+    from whatever is present in ``out_dir``.
+    """
+    client = boto3.client("quicksight", region_name=cfg.aws_region)
+    account_id = cfg.aws_account_id
+
+    click.echo(f"Deploying QuickSight resources from {out_dir}")
+    click.echo(f"  Account: {account_id}")
+    click.echo(f"  Region:  {cfg.aws_region}\n")
+
+    apps: list[AppFiles] = []
+    for name in app_names:
+        files = _load_app_files(out_dir, name)
+        if files is None:
+            click.echo(f"  (no JSON for {name} in {out_dir}; skipping)")
+            continue
+        apps.append(files)
+
+    theme_path = out_dir / "theme.json"
+    datasource_path = out_dir / "datasource.json"
+
+    # Delete in dependency order
+    _delete_dashboards(client, account_id, apps)
+    _delete_analyses(client, account_id, apps)
+    _delete_datasets(client, account_id, out_dir)
+    _delete_theme(client, account_id, theme_path)
+    _delete_datasource(client, account_id, datasource_path)
+
+    click.echo("\n--- Recreating all resources ---\n")
+
+    _create_datasource(client, datasource_path)
+    _create_theme(client, theme_path)
+    _create_datasets(client, out_dir)
+    analysis_ids = _create_analyses(client, apps)
+    dashboard_ids = _create_dashboards(client, apps)
+
+    click.echo("\n--- Waiting for async resources ---\n")
+
+    failures = 0
+    for aid in analysis_ids:
+        click.echo(f"==> Checking Analysis: {aid}")
+        if not _wait_for_analysis(client, account_id, aid):
+            failures += 1
+    for did in dashboard_ids:
+        click.echo(f"==> Checking Dashboard: {did}")
+        if not _wait_for_dashboard(client, account_id, did):
+            failures += 1
+
+    click.echo()
+    if failures > 0:
+        click.echo(f"Done with {failures} FAILURE(s). Check errors above.")
+        return 1
+    click.echo(f"Done. All resources deployed to {account_id} in {cfg.aws_region}.")
+    return 0

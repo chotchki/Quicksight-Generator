@@ -35,7 +35,8 @@ Conventions:
 - [ ] 1.8 Update unit tests: fix imports, expected resource IDs, output filenames, CLI subcommand shape; keep coverage green.
 - [ ] 1.9 Update e2e tests: change `dashboard_id` fixture to `qs-gen-payment-recon-dashboard`; update any tests referencing old analysis name. Keep test count/behavior identical.
 - [ ] 1.10 Update `run_e2e.sh` to call `quicksight-gen deploy --all --generate` (or equivalent) then `pytest tests/e2e`.
-- [ ] 1.11 Full test pass: `pytest` green + `./run_e2e.sh` green against a freshly redeployed dashboard.
+- [x] 1.11 Full test pass: `pytest` green + `./run_e2e.sh` green against a freshly redeployed dashboard.
+- [x] 1.11a Add support for multiple principal_arn values in config.yaml so that multiple users can view the dashboards
 - [ ] 1.12 Run a full destroy to clean up any renamed resources.
 - [ ] 1.13 Redeploy and rerun 1.11.
 - [ ] **STOP for review.**

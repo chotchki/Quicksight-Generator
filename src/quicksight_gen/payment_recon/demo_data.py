@@ -6,7 +6,7 @@ Produces deterministic SQL INSERT statements for the demo schema
 
 Usage::
 
-    from quicksight_gen.demo_data import generate_demo_sql
+    from quicksight_gen.payment_recon.demo_data import generate_demo_sql
     sql = generate_demo_sql()            # uses today
     sql = generate_demo_sql(date(2026, 1, 15))  # fixed anchor
 """

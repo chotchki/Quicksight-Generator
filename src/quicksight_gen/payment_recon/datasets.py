@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from quicksight_gen.config import Config
-from quicksight_gen.models import (
+from quicksight_gen.common.config import Config
+from quicksight_gen.common.models import (
     CredentialPair,
     CustomSql,
     DataSet,
@@ -49,9 +49,10 @@ def build_datasource(cfg: Config) -> DataSource:
     ds_id = cfg.prefixed("demo-datasource")
 
     permissions = None
-    if cfg.principal_arn:
+    if cfg.principal_arns:
         permissions = [
-            ResourcePermission(Principal=cfg.principal_arn, Actions=_DATASOURCE_ACTIONS)
+            ResourcePermission(Principal=arn, Actions=_DATASOURCE_ACTIONS)
+            for arn in cfg.principal_arns
         ]
 
     return DataSource(
@@ -93,9 +94,12 @@ _DATASET_ACTIONS = [
 
 
 def _permissions(cfg: Config) -> list[ResourcePermission] | None:
-    if cfg.principal_arn is None:
+    if not cfg.principal_arns:
         return None
-    return [ResourcePermission(Principal=cfg.principal_arn, Actions=_DATASET_ACTIONS)]
+    return [
+        ResourcePermission(Principal=arn, Actions=_DATASET_ACTIONS)
+        for arn in cfg.principal_arns
+    ]
 
 
 def _physical_and_logical(
@@ -435,7 +439,7 @@ FROM external_transactions"""
 
 def build_payment_recon_dataset(cfg: Config) -> DataSet:
     dataset_id = cfg.prefixed("payment-recon-dataset")
-    late_days = cfg.late_threshold_days
+    late_days = cfg.late_default_days
     columns = [
         InputColumn(Name="transaction_id", Type="STRING"),
         InputColumn(Name="external_system", Type="STRING"),
@@ -489,8 +493,8 @@ GROUP BY et.transaction_id, et.external_system, et.external_amount,
 # Convenience: build dataset groups
 # ---------------------------------------------------------------------------
 
-def build_financial_datasets(cfg: Config) -> list[DataSet]:
-    """Return the six financial pipeline datasets."""
+def build_pipeline_datasets(cfg: Config) -> list[DataSet]:
+    """Return the six Payment Recon pipeline datasets."""
     return [
         build_merchants_dataset(cfg),
         build_sales_dataset(cfg),
@@ -511,4 +515,4 @@ def build_recon_datasets(cfg: Config) -> list[DataSet]:
 
 def build_all_datasets(cfg: Config) -> list[DataSet]:
     """Return all eleven datasets (financial + reconciliation)."""
-    return build_financial_datasets(cfg) + build_recon_datasets(cfg)
+    return build_pipeline_datasets(cfg) + build_recon_datasets(cfg)
