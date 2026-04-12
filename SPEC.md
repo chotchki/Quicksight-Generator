@@ -162,45 +162,73 @@ Output:
 Open Questions:
   - Code organization / sharing:
     - How far should the refactor go? Candidates: (a) light — keep top-level modules, extract shared helpers; (b) medium — two sibling packages `payment_recon/` and `account_recon/` alongside a `common/` for QuickSight builders, models, config, deploy; (c) heavy — a generic "dashboard" framework the two apps plug into. Preference?
+      - I think the medium may be far enough. The existing python code models the quicksight api well but ends up pretty tightly coupled. The medium approach keeps some commonality which inventing a ton of extra overhead.
     - Should `models.py` (QuickSight dataclasses), theming, tagging, filter-control primitives, and the embed/runner scaffolding be factored into a single shared module both apps import from? Confirmed yes, but what's the import surface — one `common` package, or split (`common.models`, `common.theme`, `common.deploy`)?
+      - It depends how cross dependent they are but if split makes them easier to test/change, I support. Modularity for the sake of modularity has a cost if you go too far, meaning if the caller ends up a bunch of extra layers its not worth it unless each layer adds value.
 
   - CLI & config shape:
     - Does one invocation produce both dashboards, or does each app have its own subcommand (e.g., `quicksight-gen generate payment-recon` / `account-recon` / `--all`)? Same for `demo apply`?
+      - I think subcommand with an all option is wise. As we're going through fearture by feature being able to run small parts to interate quickly is important. This may result in the generate vs deploy needing to get more conjoined so we're not destroying /recreating everything just to test.
     - One `config.yaml` with both apps' settings, or one config per app? How are `principal_arn`, `datasource_arn`, `extra_tags` shared vs. per-app?
+      - All shared, the final deploy is all in one place.
     - Late-threshold was a single int. Domain now says "different definition depending on the step and even on the mentioned types above". What config shape do you want — a nested map keyed by (step, type), or just per-step with a per-type override list?
+      - This may be a filter on each sheet that when set shows items not progress more than for example 2 days.
 
   - Demo data & database:
     - Do both apps share one demo database (tables for both co-existing), or is each demo its own DB with its own `demo_database_url`? If shared, is the datasource one QuickSight data source, or one per app?
+      - database and datasource are shared, tables and above probably won't make sense to for demo's sake
     - Does `quicksight-gen demo apply` now build both schemas and seed data by default, or is that gated per app?
+      - I think the cli should match the decision above (separate apps with an --all). That said if the demo tables are shared, it would make sense to do it all.
     - The front "explanation" sheet: demo-only (gated on `demo apply`) or always when a scenario text is configured? Static text blocks, or any navigation affordances (links/buttons to tabs)?
+      - I think the instruction text probably always makes sense, the scenario block only makes sense in demo mode. Links are fine but the flow should be helpful and conversational. The scenario block should be no more than a paragraph or two of flavor text.
 
   - Payment Recon additions to existing app:
     - Refunds: new column (`sale_type` + signed amount), or just negative `amount` with an implicit type? Does a refund link to the original sale, and do we surface that linkage?
+      - I think a concept of a sale_type and negative amount makes sense. For this perspective, it doesn't help the end user since the important goal is that it is contained in a settlement. That said it may not come at the same time as the sale and thus settlements could be negative, that flows into payments too.
     - Optional sale metadata (taxes, tips, discount, cashier): surface on the Sales Detail table only, expose as filters, or both?
-    - Merchant payment methods: new dimension to filter/group by on Payments / Settlements tabs, or background metadata only?
+      - show on detail, give an on sheet filter for discount and cashier. This is where the optional data part needs to be plumbed through the code so that when the sql query gets reconfigured the developer can note that additional filters should show or not. I think for this optional metadata we can derive the filter type based on if its a number or string.
+    - Merchant payment methods: new dimension to filter/group by on Payments / Settlements tabs, or background metadata only? 
+      - filter yes, group by not as important
     - "External system transactions NOT tied to a payment are a problem" — is this a new exceptions view (dedicated visual/table), or a filter on the existing Payment Reconciliation tab?
+      - I think a filter on the payment reconciliation tab
     - "At each step, a valid match… is NOT subject to time delay — the amount MUST match or it's a problem to be highlighted" — is there a new per-step "mismatch" exception visual (sales→settlement and settlement→payment), or do we rely on the existing exception tables?
+      - I think a visual / table makes a lot of sense. this is where minimizing whitespace will be important so the user doesn't have to scroll forever.
 
   - Account Recon (new app):
     - Proposed tabs (want confirmation before building): (1) Balances — parent/child account balances with stored-vs-computed-from-transactions deltas; (2) Transfers — transfer list, completeness (net-zero check), memo search; (3) Transactions — posted transactions with failures called out; (4) Exceptions — balance mismatches + transfers whose transactions don't net to zero; (5) Payment Reconciliation-style dashboard or nothing similar? Is this breakdown on track?
+      - This breakdown is tracking but I'm certain (see other answers further down), when we get to writing the plan for this we should focus on initial layout first before we spend the time on filters/links since I bet it'll need some interation
     - Transfer integrity: do we assume the source data maintains debit=credit and just report mismatches, or do we need to recompute and flag violations from transaction-level data?
+      - I think the sql query should recompute and expose a mismatch column we then propogate. It will be important for troubleshooting when this occurred since its likely tied to system bugs so we'll need to figure a timeline visual too.
     - Failed individual transactions: is "failed" a status column we expect on `transactions`, or derived from absence of a matching debit/credit entry?
+      - should a status column for a transaction. when that occurs that transaction no longer counts to the transfer sum / match process.
     - Daily balance for parent accounts — is it computed in SQL/view at query time, or precomputed and stored (and the dashboard only reports drift)?
+      - it should be saved daily as a final balance and at query time computed to discover drift. We'll need to figure out a filter / link to a sheet flow to enable research.
     - "More than two transactions may make up a transfer (for example if something fails)" — what shape links transactions to a transfer? A `transfer_id` FK on transactions, or a separate mapping table?
+      - I think a common foreign key, for example the 'transfer_id' would work. The only transfer metadata I'm thinking of is the memo line which could also be on the transaction.
     - Currency/decimal precision: store as `numeric(·,2)` in PG, fine. Anything we need to do in QuickSight beyond `$0.00` display formatting?
+      - That should be fine, the locale is US_en so commas for thousands/millions too. (This is NOT asking for localization/multilanguage)
 
   - Theming & demo branding:
     - Do we add a `farmers-exchange-bank` / `stardew-valley` theme preset for the Account Recon demo? Rough palette guidance (earth tones, valley greens, harvest gold)? Any IP concerns with Stardew Valley naming we should avoid (character names vs. generic valley flavor)?
+      - yes please, those colors work. I'd keep to generic names not explicitly in the game.
     - The existing Sasquatch preset renames the Payment Recon analysis. Does the Farmers preset similarly rename the Account Recon analysis?
+      - I'd keep a rename but use a prefix of "Demo". The new instruction sheet will speak to the scenario.
 
   - Deploy & output:
     - Do we end up with `payment-recon-analysis.json` / `payment-recon-dashboard.json` and `account-recon-analysis.json` / `account-recon-dashboard.json` (renaming the existing `financial-*` files), or keep `financial-*` for Payment Recon and add `account-recon-*` alongside?
+      - I think renaming the files makes sense.
     - Does `deploy.sh` deploy both in one pass, or do we invoke it twice with different inputs? Same `principal_arn` granted on both?
+      - I'll point back to the cli advice further up but we should support individual deploys also an --all. I am open to if it would make more sense to move the deploy.sh into python so as to provide a single unified interface. 
+      - Same principal_arn.
 
   - Tests:
     - Scope: extend the API + browser e2e harness to fully cover Account Recon too (structure, drill-downs, filters), or stand up just the API layer for Account Recon now and defer the browser layer?
+      - When we talk plan, we'll want to do this in phases. I expect we'll migrate the existing app first, fix the tests, iterate on the skeleton of the new app next. E2E tests will be added for the new app once we're settled on more of its layout.
     - `tests/e2e/conftest.py` currently pins to one dashboard ID. Do we want per-app fixtures, or a parametrized suite that runs against both dashboards?
+      - There will be two dashboard IDs, but I'd keep it simple and do two fixtures
     - Unit-test coverage target for Account Recon: same bar as Payment Recon (visuals, filters, cross-references, explanation coverage, demo determinism)?
+      - Yes
 
   - Migration / backward compat:
     - Is this branch intended as a clean break (rename existing files/commands freely), or does it need to preserve the current CLI surface and output filenames for users already deploying Payment Recon?
+      - Clean break, however the deploy process should have a generic function to clean up any resource with the common tag so that I don't have to clean old stuff that's not tracked after rename.
