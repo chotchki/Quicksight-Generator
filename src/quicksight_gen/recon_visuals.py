@@ -1,7 +1,7 @@
-"""Visual builders for the Reconciliation analysis tabs.
+"""Visual builders for the Payment Reconciliation sheet.
 
-Each ``build_*_visuals()`` function returns a list of Visual objects
-for one sheet of the reconciliation analysis.
+Provides KPIs, an external transactions table, and an internal payments
+table with mutual filtering via the pExternalTransactionId parameter.
 """
 
 from __future__ import annotations
@@ -9,9 +9,8 @@ from __future__ import annotations
 from quicksight_gen.constants import (
     DS_EXTERNAL_TRANSACTIONS,
     DS_PAYMENT_RECON,
-    DS_RECON_EXCEPTIONS,
-    DS_SALES_RECON,
-    DS_SETTLEMENT_RECON,
+    DS_PAYMENTS,
+    SHEET_PAYMENT_RECON,
 )
 from quicksight_gen.models import (
     AxisLabelOptions,
@@ -24,19 +23,18 @@ from quicksight_gen.models import (
     ChartAxisLabelOptions,
     ColumnIdentifier,
     CustomActionFilterOperation,
+    CustomActionNavigationOperation,
+    CustomActionSetParametersOperation,
     DimensionField,
     FilterOperationSelectedFieldsConfiguration,
     FilterOperationTargetVisualsConfiguration,
     KPIConfiguration,
     KPIFieldWells,
     KPIVisual,
+    LocalNavigationConfiguration,
     MeasureField,
     NumericalAggregationFunction,
     NumericalMeasureField,
-    PieChartAggregatedFieldWells,
-    PieChartConfiguration,
-    PieChartFieldWells,
-    PieChartVisual,
     SameSheetTargetVisualConfiguration,
     TableConfiguration,
     TableFieldWells,
@@ -51,7 +49,7 @@ from quicksight_gen.models import (
 
 
 # ---------------------------------------------------------------------------
-# Shorthand helpers (same pattern as visuals.py)
+# Shorthand helpers
 # ---------------------------------------------------------------------------
 
 def _col(ds: str, name: str) -> ColumnIdentifier:
@@ -103,6 +101,12 @@ def _subtitle(text: str) -> VisualSubtitleLabelOptions:
     )
 
 
+def _axis_label(label: str) -> ChartAxisLabelOptions:
+    return ChartAxisLabelOptions(
+        AxisLabelOptions=[AxisLabelOptions(CustomLabel=label)],
+    )
+
+
 def _unagg_field(field_id: str, ds: str, col_name: str) -> dict:
     return {
         "FieldId": field_id,
@@ -113,9 +117,40 @@ def _unagg_field(field_id: str, ds: str, col_name: str) -> dict:
     }
 
 
-def _axis_label(label: str) -> ChartAxisLabelOptions:
-    return ChartAxisLabelOptions(
-        AxisLabelOptions=[AxisLabelOptions(CustomLabel=label)],
+def _set_param_action(
+    action_id: str,
+    name: str,
+    param_name: str,
+    source_field_id: str,
+) -> VisualCustomAction:
+    """Build a DATA_POINT_CLICK action that navigates to the recon sheet
+    and sets a parameter. QuickSight requires NavigationOperation before
+    SetParametersOperation, even for same-sheet interactions."""
+    return VisualCustomAction(
+        CustomActionId=action_id,
+        Name=name,
+        Trigger="DATA_POINT_CLICK",
+        ActionOperations=[
+            VisualCustomActionOperation(
+                NavigationOperation=CustomActionNavigationOperation(
+                    LocalNavigationConfiguration=LocalNavigationConfiguration(
+                        TargetSheetId=SHEET_PAYMENT_RECON,
+                    ),
+                ),
+            ),
+            VisualCustomActionOperation(
+                SetParametersOperation=CustomActionSetParametersOperation(
+                    ParameterValueConfigurations=[
+                        {
+                            "DestinationParameterName": param_name,
+                            "Value": {
+                                "SourceField": source_field_id,
+                            },
+                        },
+                    ],
+                ),
+            ),
+        ],
     )
 
 
@@ -147,23 +182,27 @@ def _same_sheet_filter_action(
 
 
 # ---------------------------------------------------------------------------
-# 3a — Reconciliation Overview visuals
+# Payment Reconciliation visuals
 # ---------------------------------------------------------------------------
 
-def build_recon_overview_visuals() -> list[Visual]:
-    # KPI: total matched count
+def build_payment_recon_visuals() -> list[Visual]:
+    """Build visuals for the Payment Reconciliation sheet."""
+
+    # KPI: total matched amount
     kpi_matched = Visual(
         KPIVisual=KPIVisual(
-            VisualId="recon-kpi-matched",
-            Title=_title("Matched"),
-            Subtitle=_subtitle("Transactions where internal and external totals are equal"),
+            VisualId="recon-kpi-matched-amount",
+            Title=_title("Matched Amount"),
+            Subtitle=_subtitle(
+                "Total external transaction amount that matches internal payments"
+            ),
             ChartConfiguration=KPIConfiguration(
                 FieldWells=KPIFieldWells(
                     Values=[
-                        _measure_count(
-                            "recon-matched-count",
-                            DS_RECON_EXCEPTIONS,
-                            "transaction_id",
+                        _measure_sum(
+                            "recon-matched-amt",
+                            DS_PAYMENT_RECON,
+                            "external_amount",
                         )
                     ],
                 ),
@@ -171,19 +210,21 @@ def build_recon_overview_visuals() -> list[Visual]:
         )
     )
 
-    # KPI: total not-yet-matched count
-    kpi_pending = Visual(
+    # KPI: total unmatched amount
+    kpi_unmatched = Visual(
         KPIVisual=KPIVisual(
-            VisualId="recon-kpi-pending",
-            Title=_title("Not Yet Matched"),
-            Subtitle=_subtitle("Transactions still waiting for internal records to match"),
+            VisualId="recon-kpi-unmatched-amount",
+            Title=_title("Unmatched Amount"),
+            Subtitle=_subtitle(
+                "Total external transaction amount not yet matched to internal payments"
+            ),
             ChartConfiguration=KPIConfiguration(
                 FieldWells=KPIFieldWells(
                     Values=[
-                        _measure_count(
-                            "recon-pending-count",
-                            DS_RECON_EXCEPTIONS,
-                            "transaction_id",
+                        _measure_sum(
+                            "recon-unmatched-amt",
+                            DS_PAYMENT_RECON,
+                            "difference",
                         )
                     ],
                 ),
@@ -191,115 +232,25 @@ def build_recon_overview_visuals() -> list[Visual]:
         )
     )
 
-    # KPI: total late count
+    # KPI: late count
     kpi_late = Visual(
         KPIVisual=KPIVisual(
-            VisualId="recon-kpi-late",
-            Title=_title("Late"),
-            Subtitle=_subtitle("Unmatched transactions that have exceeded their late threshold"),
+            VisualId="recon-kpi-late-count",
+            Title=_title("Late Transactions"),
+            Subtitle=_subtitle(
+                "Transactions that have exceeded the late threshold without matching"
+            ),
             ChartConfiguration=KPIConfiguration(
                 FieldWells=KPIFieldWells(
                     Values=[
                         _measure_count(
                             "recon-late-count",
-                            DS_RECON_EXCEPTIONS,
+                            DS_PAYMENT_RECON,
                             "transaction_id",
                         )
                     ],
                 ),
             ),
-        )
-    )
-
-    # Pie chart: match status breakdown
-    pie_status = Visual(
-        PieChartVisual=PieChartVisual(
-            VisualId="recon-pie-status",
-            Title=_title("Match Status Breakdown"),
-            Subtitle=_subtitle(
-                "Proportion of all transactions by match status. "
-                "Click a slice to filter the charts below."
-            ),
-            ChartConfiguration=PieChartConfiguration(
-                FieldWells=PieChartFieldWells(
-                    PieChartAggregatedFieldWells=PieChartAggregatedFieldWells(
-                        Category=[
-                            _dim(
-                                "recon-status-dim",
-                                DS_RECON_EXCEPTIONS,
-                                "match_status",
-                            )
-                        ],
-                        Values=[
-                            _measure_count(
-                                "recon-status-count",
-                                DS_RECON_EXCEPTIONS,
-                                "transaction_id",
-                            )
-                        ],
-                    )
-                ),
-                CategoryLabelOptions=_axis_label("Match Status"),
-                ValueLabelOptions=_axis_label("Transaction Count"),
-            ),
-            Actions=[
-                _same_sheet_filter_action(
-                    "action-recon-filter-by-status",
-                    "Filter by Status",
-                    ["recon-bar-by-type", "recon-bar-by-system"],
-                ),
-            ],
-        )
-    )
-
-    # Bar chart: match status by type
-    bar_by_type = Visual(
-        BarChartVisual=BarChartVisual(
-            VisualId="recon-bar-by-type",
-            Title=_title("Match Status by Type"),
-            Subtitle=_subtitle(
-                "Compares how many sales, settlements, and payments are matched, "
-                "pending, or late. Click a bar to filter the system chart."
-            ),
-            ChartConfiguration=BarChartConfiguration(
-                FieldWells=BarChartFieldWells(
-                    BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
-                        Category=[
-                            _dim(
-                                "recon-type-dim",
-                                DS_RECON_EXCEPTIONS,
-                                "transaction_type",
-                            )
-                        ],
-                        Values=[
-                            _measure_count(
-                                "recon-type-count",
-                                DS_RECON_EXCEPTIONS,
-                                "transaction_id",
-                            )
-                        ],
-                        Colors=[
-                            _dim(
-                                "recon-type-status",
-                                DS_RECON_EXCEPTIONS,
-                                "match_status",
-                            )
-                        ],
-                    )
-                ),
-                Orientation="VERTICAL",
-                BarsArrangement="STACKED",
-                CategoryLabelOptions=_axis_label("Transaction Type"),
-                ValueLabelOptions=_axis_label("Transaction Count"),
-                ColorLabelOptions=_axis_label("Match Status"),
-            ),
-            Actions=[
-                _same_sheet_filter_action(
-                    "action-recon-filter-by-type",
-                    "Filter by Type",
-                    ["recon-bar-by-system"],
-                ),
-            ],
         )
     )
 
@@ -310,7 +261,7 @@ def build_recon_overview_visuals() -> list[Visual]:
             Title=_title("Match Status by External System"),
             Subtitle=_subtitle(
                 "Which external systems have the most mismatches. "
-                "Click a bar to filter the type chart."
+                "Click a bar to filter the tables below."
             ),
             ChartConfiguration=BarChartConfiguration(
                 FieldWells=BarChartFieldWells(
@@ -318,21 +269,21 @@ def build_recon_overview_visuals() -> list[Visual]:
                         Category=[
                             _dim(
                                 "recon-system-dim",
-                                DS_RECON_EXCEPTIONS,
+                                DS_PAYMENT_RECON,
                                 "external_system",
                             )
                         ],
                         Values=[
                             _measure_count(
                                 "recon-system-count",
-                                DS_RECON_EXCEPTIONS,
+                                DS_PAYMENT_RECON,
                                 "transaction_id",
                             )
                         ],
                         Colors=[
                             _dim(
                                 "recon-system-status",
-                                DS_RECON_EXCEPTIONS,
+                                DS_PAYMENT_RECON,
                                 "match_status",
                             )
                         ],
@@ -348,186 +299,148 @@ def build_recon_overview_visuals() -> list[Visual]:
                 _same_sheet_filter_action(
                     "action-recon-filter-by-system",
                     "Filter by System",
-                    ["recon-bar-by-type"],
+                    ["recon-ext-txn-table", "recon-payments-table"],
                 ),
             ],
         )
     )
 
-    return [kpi_matched, kpi_pending, kpi_late, pie_status, bar_by_type, bar_by_system]
-
-
-# ---------------------------------------------------------------------------
-# Helpers for per-type recon sheets (3b, 3c, 3d share the same structure)
-# ---------------------------------------------------------------------------
-
-def _build_recon_type_visuals(
-    prefix: str,
-    ds: str,
-    type_label: str,
-    count_col: str,
-) -> list[Visual]:
-    """Build the standard set of visuals for a per-type reconciliation sheet.
-
-    Args:
-        prefix: unique prefix for visual/field IDs (e.g. "sales-recon")
-        ds: dataset identifier constant
-        type_label: human-readable type name (e.g. "Sales")
-        count_col: column name for the record count (e.g. "sale_count")
-    """
-    # KPI: matched count
-    kpi_matched = Visual(
-        KPIVisual=KPIVisual(
-            VisualId=f"{prefix}-kpi-matched",
-            Title=_title(f"{type_label} Matched"),
-            Subtitle=_subtitle(f"Number of {type_label.lower()} transactions fully reconciled"),
-            ChartConfiguration=KPIConfiguration(
-                FieldWells=KPIFieldWells(
-                    Values=[
-                        _measure_count(f"{prefix}-matched-count", ds, "transaction_id")
-                    ],
-                ),
-            ),
-        )
-    )
-
-    # KPI: unmatched/late count
-    kpi_unmatched = Visual(
-        KPIVisual=KPIVisual(
-            VisualId=f"{prefix}-kpi-unmatched",
-            Title=_title(f"{type_label} Unmatched / Late"),
-            Subtitle=_subtitle(f"Number of {type_label.lower()} transactions not yet matched or overdue"),
-            ChartConfiguration=KPIConfiguration(
-                FieldWells=KPIFieldWells(
-                    Values=[
-                        _measure_count(
-                            f"{prefix}-unmatched-count", ds, "transaction_id"
-                        )
-                    ],
-                ),
-            ),
-        )
-    )
-
-    # Bar chart: match status by merchant
-    bar_merchant = Visual(
-        BarChartVisual=BarChartVisual(
-            VisualId=f"{prefix}-bar-merchant",
-            Title=_title(f"{type_label} Match Status by Merchant"),
-            Subtitle=_subtitle(
-                f"Which merchants have {type_label.lower()} reconciliation issues. "
-                "Click a bar to filter the detail table."
-            ),
-            ChartConfiguration=BarChartConfiguration(
-                FieldWells=BarChartFieldWells(
-                    BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
-                        Category=[_dim(f"{prefix}-merchant-dim", ds, "merchant_id")],
-                        Values=[
-                            _measure_count(
-                                f"{prefix}-merchant-count", ds, "transaction_id"
-                            )
-                        ],
-                        Colors=[
-                            _dim(f"{prefix}-merchant-status", ds, "match_status")
-                        ],
-                    )
-                ),
-                Orientation="HORIZONTAL",
-                BarsArrangement="STACKED",
-                CategoryLabelOptions=_axis_label("Merchant"),
-                ValueLabelOptions=_axis_label("Transaction Count"),
-                ColorLabelOptions=_axis_label("Match Status"),
-            ),
-            Actions=[
-                _same_sheet_filter_action(
-                    f"action-{prefix}-filter-by-merchant",
-                    "Filter by Merchant",
-                    [f"{prefix}-detail-table"],
-                ),
-            ],
-        )
-    )
-
-    # Table: reconciliation detail
-    table_detail = Visual(
+    # Table: external transactions (payment recon aggregated view)
+    table_ext_txns = Visual(
         TableVisual=TableVisual(
-            VisualId=f"{prefix}-detail-table",
-            Title=_title(f"{type_label} Reconciliation Detail"),
+            VisualId="recon-ext-txn-table",
+            Title=_title("External Transactions"),
             Subtitle=_subtitle(
-                f"Each {type_label.lower()} transaction with its match status and difference. "
-                "The 'Late Threshold' column shows the definition of 'late' for this type "
-                "— this is set by the system and cannot be changed here."
+                "Each external transaction with its match status and difference. "
+                "Click a row to filter the payments table below."
             ),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
                     TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
                         Values=[
-                            _unagg_field(f"{prefix}-tbl-txn-id", ds, "transaction_id"),
                             _unagg_field(
-                                f"{prefix}-tbl-ext-sys", ds, "external_system"
+                                "recon-tbl-txn-id",
+                                DS_PAYMENT_RECON,
+                                "transaction_id",
                             ),
                             _unagg_field(
-                                f"{prefix}-tbl-ext-amt", ds, "external_amount"
+                                "recon-tbl-ext-sys",
+                                DS_PAYMENT_RECON,
+                                "external_system",
                             ),
                             _unagg_field(
-                                f"{prefix}-tbl-int-total", ds, "internal_total"
-                            ),
-                            _unagg_field(f"{prefix}-tbl-diff", ds, "difference"),
-                            _unagg_field(
-                                f"{prefix}-tbl-status", ds, "match_status"
+                                "recon-tbl-ext-amt",
+                                DS_PAYMENT_RECON,
+                                "external_amount",
                             ),
                             _unagg_field(
-                                f"{prefix}-tbl-days", ds, "days_outstanding"
+                                "recon-tbl-int-total",
+                                DS_PAYMENT_RECON,
+                                "internal_total",
                             ),
                             _unagg_field(
-                                f"{prefix}-tbl-late-desc",
-                                ds,
-                                "late_threshold_description",
+                                "recon-tbl-diff",
+                                DS_PAYMENT_RECON,
+                                "difference",
+                            ),
+                            _unagg_field(
+                                "recon-tbl-status",
+                                DS_PAYMENT_RECON,
+                                "match_status",
+                            ),
+                            _unagg_field(
+                                "recon-tbl-pay-count",
+                                DS_PAYMENT_RECON,
+                                "payment_count",
+                            ),
+                            _unagg_field(
+                                "recon-tbl-merchant",
+                                DS_PAYMENT_RECON,
+                                "merchant_id",
+                            ),
+                            _unagg_field(
+                                "recon-tbl-days",
+                                DS_PAYMENT_RECON,
+                                "days_outstanding",
                             ),
                         ]
                     )
                 ),
             ),
+            Actions=[
+                _set_param_action(
+                    "action-recon-ext-txn-click",
+                    "Show Payments",
+                    "pExternalTransactionId",
+                    "recon-tbl-txn-id",
+                ),
+            ],
         )
     )
 
-    return [kpi_matched, kpi_unmatched, bar_merchant, table_detail]
-
-
-# ---------------------------------------------------------------------------
-# 3b — Sales Reconciliation visuals
-# ---------------------------------------------------------------------------
-
-def build_sales_recon_visuals() -> list[Visual]:
-    return _build_recon_type_visuals(
-        prefix="sales-recon",
-        ds=DS_SALES_RECON,
-        type_label="Sales",
-        count_col="sale_count",
+    # Table: internal payments linked to external transactions
+    table_payments = Visual(
+        TableVisual=TableVisual(
+            VisualId="recon-payments-table",
+            Title=_title("Internal Payments"),
+            Subtitle=_subtitle(
+                "Payments linked to external transactions. "
+                "Click a row to filter the external transactions table above."
+            ),
+            ChartConfiguration=TableConfiguration(
+                FieldWells=TableFieldWells(
+                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
+                        Values=[
+                            _unagg_field(
+                                "recon-pay-id",
+                                DS_PAYMENTS,
+                                "payment_id",
+                            ),
+                            _unagg_field(
+                                "recon-pay-merchant",
+                                DS_PAYMENTS,
+                                "merchant_id",
+                            ),
+                            _unagg_field(
+                                "recon-pay-amount",
+                                DS_PAYMENTS,
+                                "payment_amount",
+                            ),
+                            _unagg_field(
+                                "recon-pay-date",
+                                DS_PAYMENTS,
+                                "payment_date",
+                            ),
+                            _unagg_field(
+                                "recon-pay-status",
+                                DS_PAYMENTS,
+                                "payment_status",
+                            ),
+                            _unagg_field(
+                                "recon-pay-ext-txn",
+                                DS_PAYMENTS,
+                                "external_transaction_id",
+                            ),
+                        ]
+                    )
+                ),
+            ),
+            Actions=[
+                _set_param_action(
+                    "action-recon-pay-click",
+                    "Show Transaction",
+                    "pExternalTransactionId",
+                    "recon-pay-ext-txn",
+                ),
+            ],
+        )
     )
 
-
-# ---------------------------------------------------------------------------
-# 3c — Settlement Reconciliation visuals
-# ---------------------------------------------------------------------------
-
-def build_settlement_recon_visuals() -> list[Visual]:
-    return _build_recon_type_visuals(
-        prefix="settlement-recon",
-        ds=DS_SETTLEMENT_RECON,
-        type_label="Settlement",
-        count_col="settlement_count",
-    )
-
-
-# ---------------------------------------------------------------------------
-# 3d — Payment Reconciliation visuals
-# ---------------------------------------------------------------------------
-
-def build_payment_recon_visuals() -> list[Visual]:
-    return _build_recon_type_visuals(
-        prefix="payment-recon",
-        ds=DS_PAYMENT_RECON,
-        type_label="Payment",
-        count_col="payment_count",
-    )
+    return [
+        kpi_matched,
+        kpi_unmatched,
+        kpi_late,
+        bar_by_system,
+        table_ext_txns,
+        table_payments,
+    ]

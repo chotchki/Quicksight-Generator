@@ -59,10 +59,7 @@ from quicksight_gen.datasets import (
     build_recon_datasets,
     build_all_datasets,
     build_external_transactions_dataset,
-    build_sales_recon_dataset,
-    build_settlement_recon_dataset,
     build_payment_recon_dataset,
-    build_recon_exceptions_dataset,
 )
 
 
@@ -446,10 +443,10 @@ class TestDatasetBuilderCounts:
         assert len(build_financial_datasets(_TEST_CFG)) == 6
 
     def test_recon_datasets_count(self):
-        assert len(build_recon_datasets(_TEST_CFG)) == 5
+        assert len(build_recon_datasets(_TEST_CFG)) == 2
 
     def test_all_datasets_count(self):
-        assert len(build_all_datasets(_TEST_CFG)) == 11
+        assert len(build_all_datasets(_TEST_CFG)) == 8
 
     def test_all_datasets_is_financial_plus_recon(self):
         all_ds = build_all_datasets(_TEST_CFG)
@@ -492,23 +489,6 @@ class TestReconDatasetStructure:
         assert "external_system" in col_names
         assert "external_amount" in col_names
 
-    def test_sales_recon(self):
-        ds = build_sales_recon_dataset(_TEST_CFG)
-        assert ds.Name == "Sales Reconciliation"
-        self._assert_common(ds)
-        col_names = {c.Name for c in list(ds.PhysicalTableMap.values())[0].CustomSql.Columns}
-        for expected in ("match_status", "difference", "days_outstanding",
-                         "late_threshold", "late_threshold_description"):
-            assert expected in col_names, f"Missing column: {expected}"
-
-    def test_settlement_recon(self):
-        ds = build_settlement_recon_dataset(_TEST_CFG)
-        assert ds.Name == "Settlement Reconciliation"
-        self._assert_common(ds)
-        col_names = {c.Name for c in list(ds.PhysicalTableMap.values())[0].CustomSql.Columns}
-        assert "settlement_count" in col_names
-        assert "match_status" in col_names
-
     def test_payment_recon(self):
         ds = build_payment_recon_dataset(_TEST_CFG)
         assert ds.Name == "Payment Reconciliation"
@@ -516,15 +496,6 @@ class TestReconDatasetStructure:
         col_names = {c.Name for c in list(ds.PhysicalTableMap.values())[0].CustomSql.Columns}
         assert "payment_count" in col_names
         assert "match_status" in col_names
-
-    def test_recon_exceptions(self):
-        ds = build_recon_exceptions_dataset(_TEST_CFG)
-        assert ds.Name == "Reconciliation Exceptions"
-        self._assert_common(ds)
-        col_names = {c.Name for c in list(ds.PhysicalTableMap.values())[0].CustomSql.Columns}
-        for expected in ("transaction_type", "external_system", "match_status",
-                         "days_outstanding", "late_threshold_description"):
-            assert expected in col_names, f"Missing column: {expected}"
 
 
 # ---------------------------------------------------------------------------

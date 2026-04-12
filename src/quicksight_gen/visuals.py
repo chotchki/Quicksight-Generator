@@ -132,12 +132,17 @@ def _drill_down_action(
     target_sheet: str,
     param_name: str,
     source_field_id: str,
+    trigger: str = "DATA_POINT_CLICK",
 ) -> VisualCustomAction:
-    """Build a DATA_POINT_CLICK action that sets a parameter and navigates."""
+    """Build a drill-down action that sets a parameter and navigates.
+
+    Use trigger="DATA_POINT_MENU" for a right-click menu entry when
+    the visual already has a DATA_POINT_CLICK action.
+    """
     return VisualCustomAction(
         CustomActionId=action_id,
         Name=name,
-        Trigger="DATA_POINT_CLICK",
+        Trigger=trigger,
         ActionOperations=[
             VisualCustomActionOperation(
                 NavigationOperation=CustomActionNavigationOperation(

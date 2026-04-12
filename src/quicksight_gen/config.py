@@ -23,6 +23,7 @@ class Config:
     extra_tags: dict[str, str] = field(default_factory=dict)
     theme_preset: str = "default"
     demo_database_url: str | None = None
+    late_threshold_days: int = 30
 
     def __post_init__(self) -> None:
         # If demo_database_url is set but datasource_arn is not, derive it
@@ -92,6 +93,7 @@ def load_config(path: str | Path | None = None) -> Config:
         "principal_arn": "QS_GEN_PRINCIPAL_ARN",
         "theme_preset": "QS_GEN_THEME_PRESET",
         "demo_database_url": "QS_GEN_DEMO_DATABASE_URL",
+        "late_threshold_days": "QS_GEN_LATE_THRESHOLD_DAYS",
     }
     for cfg_key, env_key in env_map.items():
         env_val = os.environ.get(env_key)
@@ -123,4 +125,5 @@ def load_config(path: str | Path | None = None) -> Config:
         extra_tags=extra_tags,
         theme_preset=values.get("theme_preset", "default"),
         demo_database_url=values.get("demo_database_url"),
+        late_threshold_days=int(values.get("late_threshold_days", 30)),
     )

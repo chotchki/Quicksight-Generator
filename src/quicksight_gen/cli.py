@@ -10,7 +10,6 @@ import click
 from quicksight_gen.analysis import build_analysis, build_financial_dashboard
 from quicksight_gen.config import load_config
 from quicksight_gen.datasets import build_all_datasets, build_datasource
-from quicksight_gen.recon_analysis import build_recon_analysis, build_recon_dashboard
 from quicksight_gen.theme import build_theme
 
 
@@ -64,22 +63,15 @@ def generate(config: str, output_dir: str, theme_preset: str | None) -> None:
     for ds in datasets:
         _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
 
-    # Financial analysis
-    financial = build_analysis(cfg)
-    _write_json(out / "financial-analysis.json", financial.to_aws_json())
+    # Analysis (financial + recon consolidated)
+    analysis = build_analysis(cfg)
+    _write_json(out / "financial-analysis.json", analysis.to_aws_json())
 
-    # Reconciliation analysis
-    recon = build_recon_analysis(cfg)
-    _write_json(out / "recon-analysis.json", recon.to_aws_json())
+    # Dashboard
+    dashboard = build_financial_dashboard(cfg)
+    _write_json(out / "financial-dashboard.json", dashboard.to_aws_json())
 
-    # Dashboards (public, link-shareable)
-    fin_dash = build_financial_dashboard(cfg)
-    _write_json(out / "financial-dashboard.json", fin_dash.to_aws_json())
-
-    recon_dash = build_recon_dashboard(cfg)
-    _write_json(out / "recon-dashboard.json", recon_dash.to_aws_json())
-
-    click.echo(f"\nGenerated {1 + len(datasets) + 4} files in {out}/")
+    click.echo(f"\nGenerated {1 + len(datasets) + 2} files in {out}/")
 
 
 # ---------------------------------------------------------------------------
@@ -210,17 +202,10 @@ def apply(config: str, output_dir: str) -> None:
     for ds in datasets:
         _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
 
-    financial = build_analysis(cfg)
-    _write_json(out / "financial-analysis.json", financial.to_aws_json())
+    analysis = build_analysis(cfg)
+    _write_json(out / "financial-analysis.json", analysis.to_aws_json())
 
-    recon = build_recon_analysis(cfg)
-    _write_json(out / "recon-analysis.json", recon.to_aws_json())
+    dashboard = build_financial_dashboard(cfg)
+    _write_json(out / "financial-dashboard.json", dashboard.to_aws_json())
 
-    # Dashboards (public, link-shareable)
-    fin_dash = build_financial_dashboard(cfg)
-    _write_json(out / "financial-dashboard.json", fin_dash.to_aws_json())
-
-    recon_dash = build_recon_dashboard(cfg)
-    _write_json(out / "recon-dashboard.json", recon_dash.to_aws_json())
-
-    click.echo(f"\nDone. {2 + len(datasets) + 4} JSON files in {out}/")
+    click.echo(f"\nDone. {2 + len(datasets) + 2} JSON files in {out}/")

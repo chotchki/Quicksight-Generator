@@ -122,14 +122,11 @@ class TestGenerateOutput:
     def test_financial_analysis_file_exists(self, output_dir: Path):
         assert (output_dir / "financial-analysis.json").exists()
 
-    def test_recon_analysis_file_exists(self, output_dir: Path):
-        assert (output_dir / "recon-analysis.json").exists()
-
     def test_dataset_files_exist(self, output_dir: Path):
         ds_dir = output_dir / "datasets"
         assert ds_dir.exists()
         ds_files = list(ds_dir.glob("*.json"))
-        assert len(ds_files) == 11
+        assert len(ds_files) == 8
 
     def test_all_files_valid_json(self, output_dir: Path):
         for path in output_dir.rglob("*.json"):
@@ -153,9 +150,8 @@ class TestGenerateOutput:
         assert len(theme["Permissions"]) == 1
         assert "admin" in theme["Permissions"][0]["Principal"]
 
-        for name in ("financial-analysis.json", "recon-analysis.json"):
-            analysis = _load(output_dir, name)
-            assert "Permissions" in analysis, f"{name} missing Permissions"
+        analysis = _load(output_dir, "financial-analysis.json")
+        assert "Permissions" in analysis, "financial-analysis.json missing Permissions"
 
     def test_all_resources_have_common_tag(self, output_dir: Path):
         """Every generated resource must have the ManagedBy tag."""
@@ -184,64 +180,30 @@ class TestFinancialCrossReferences:
 
 
 # ---------------------------------------------------------------------------
-# Cross-reference tests — reconciliation analysis
-# ---------------------------------------------------------------------------
-
-class TestReconCrossReferences:
-    def test_cross_refs(self, output_dir: Path):
-        analysis = _load(output_dir, "recon-analysis.json")
-        _validate_analysis_cross_refs(analysis, output_dir)
-
-    def test_theme_arn_matches_theme(self, output_dir: Path):
-        analysis = _load(output_dir, "recon-analysis.json")
-        theme = _load(output_dir, "theme.json")
-        assert theme["ThemeId"] in analysis["ThemeArn"]
-
-    def test_recon_has_four_sheets(self, output_dir: Path):
-        analysis = _load(output_dir, "recon-analysis.json")
-        assert len(analysis["Definition"]["Sheets"]) == 4
-
-    def test_recon_references_only_recon_datasets(self, output_dir: Path):
-        analysis = _load(output_dir, "recon-analysis.json")
-        decls = analysis["Definition"]["DataSetIdentifierDeclarations"]
-        for d in decls:
-            ds_id = d["DataSetArn"].split("/")[-1]
-            assert "recon" in ds_id or "external" in ds_id, (
-                f"Recon analysis references non-recon dataset: {ds_id}"
-            )
-
-
-# ---------------------------------------------------------------------------
-# Explanation coverage tests (Step 6)
+# Explanation coverage tests
 # ---------------------------------------------------------------------------
 
 class TestExplanations:
-    def _all_analyses(self, output_dir: Path) -> list[dict]:
-        return [
-            _load(output_dir, "financial-analysis.json"),
-            _load(output_dir, "recon-analysis.json"),
-        ]
-
     def test_every_sheet_has_description(self, output_dir: Path):
-        for analysis in self._all_analyses(output_dir):
-            for sheet in analysis["Definition"]["Sheets"]:
-                desc = sheet.get("Description", "")
-                assert len(desc) > 20, (
-                    f"Sheet '{sheet.get('Name', sheet['SheetId'])}' in "
-                    f"analysis '{analysis['Name']}' has no meaningful description"
-                )
+        analysis = _load(output_dir, "financial-analysis.json")
+        for sheet in analysis["Definition"]["Sheets"]:
+            desc = sheet.get("Description", "")
+            assert len(desc) > 20, (
+                f"Sheet '{sheet.get('Name', sheet['SheetId'])}' "
+                f"has no meaningful description"
+            )
 
     def test_every_visual_has_subtitle(self, output_dir: Path):
-        for analysis in self._all_analyses(output_dir):
-            for sheet in analysis["Definition"]["Sheets"]:
-                for v in sheet.get("Visuals", []):
-                    for vtype_name, vtype in v.items():
-                        if isinstance(vtype, dict) and "VisualId" in vtype:
-                            subtitle = vtype.get("Subtitle", {})
-                            fmt = subtitle.get("FormatText", {})
-                            text = fmt.get("PlainText", "")
-                            assert len(text) > 10, (
-                                f"Visual '{vtype['VisualId']}' on sheet "
-                                f"'{sheet.get('Name', sheet['SheetId'])}' "
-                                f"has no meaningful subtitle"
-                            )
+        analysis = _load(output_dir, "financial-analysis.json")
+        for sheet in analysis["Definition"]["Sheets"]:
+            for v in sheet.get("Visuals", []):
+                for vtype_name, vtype in v.items():
+                    if isinstance(vtype, dict) and "VisualId" in vtype:
+                        subtitle = vtype.get("Subtitle", {})
+                        fmt = subtitle.get("FormatText", {})
+                        text = fmt.get("PlainText", "")
+                        assert len(text) > 10, (
+                            f"Visual '{vtype['VisualId']}' on sheet "
+                            f"'{sheet.get('Name', sheet['SheetId'])}' "
+                            f"has no meaningful subtitle"
+                        )

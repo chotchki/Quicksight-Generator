@@ -132,7 +132,7 @@ wait_for_dashboard() {
 # ---------------------------------------------------------------------------
 # Dashboards (delete first — they reference analyses/datasets/themes)
 # ---------------------------------------------------------------------------
-for DASH_FILE in "$OUT_DIR"/financial-dashboard.json "$OUT_DIR"/recon-dashboard.json; do
+for DASH_FILE in "$OUT_DIR"/financial-dashboard.json; do
     if [ ! -f "$DASH_FILE" ]; then
         continue
     fi
@@ -153,7 +153,7 @@ done
 # ---------------------------------------------------------------------------
 # Analyses (delete — they reference datasets and themes)
 # ---------------------------------------------------------------------------
-for ANALYSIS_FILE in "$OUT_DIR"/financial-analysis.json "$OUT_DIR"/recon-analysis.json; do
+for ANALYSIS_FILE in "$OUT_DIR"/financial-analysis.json; do
     if [ ! -f "$ANALYSIS_FILE" ]; then
         continue
     fi
@@ -268,7 +268,7 @@ done
 # Analyses (create + wait)
 # ---------------------------------------------------------------------------
 ANALYSIS_IDS=()
-for ANALYSIS_FILE in "$OUT_DIR"/financial-analysis.json "$OUT_DIR"/recon-analysis.json; do
+for ANALYSIS_FILE in "$OUT_DIR"/financial-analysis.json; do
     if [ ! -f "$ANALYSIS_FILE" ]; then
         echo "    Skipping $(basename "$ANALYSIS_FILE") (not found)"
         continue
@@ -285,7 +285,7 @@ done
 # Dashboards (create + wait)
 # ---------------------------------------------------------------------------
 DASHBOARD_IDS=()
-for DASH_FILE in "$OUT_DIR"/financial-dashboard.json "$OUT_DIR"/recon-dashboard.json; do
+for DASH_FILE in "$OUT_DIR"/financial-dashboard.json; do
     if [ ! -f "$DASH_FILE" ]; then
         echo "    Skipping $(basename "$DASH_FILE") (not found)"
         continue

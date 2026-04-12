@@ -124,20 +124,8 @@ class TestPresetAnalysisNames:
         a = build_analysis(self._cfg())
         assert a.to_aws_json()["Name"] == "Financial Reporting Analysis"
 
-    def test_default_recon_name(self):
-        from quicksight_gen.recon_analysis import build_recon_analysis
-
-        a = build_recon_analysis(self._cfg())
-        assert a.to_aws_json()["Name"] == "Reconciliation Analysis"
-
     def test_sasquatch_financial_name(self):
         from quicksight_gen.analysis import build_analysis
 
         a = build_analysis(self._cfg("sasquatch-bank"))
         assert a.to_aws_json()["Name"] == "Sasquatch National Bank — Financial Reporting"
-
-    def test_sasquatch_recon_name(self):
-        from quicksight_gen.recon_analysis import build_recon_analysis
-
-        a = build_recon_analysis(self._cfg("sasquatch-bank"))
-        assert a.to_aws_json()["Name"] == "Sasquatch National Bank — Reconciliation"

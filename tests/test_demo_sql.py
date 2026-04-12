@@ -26,7 +26,6 @@ class TestSchemaSql:
 
     def test_creates_all_tables(self, schema_sql):
         for table in [
-            "late_thresholds",
             "merchants",
             "external_transactions",
             "settlements",
@@ -36,12 +35,7 @@ class TestSchemaSql:
             assert f"CREATE TABLE {table}" in schema_sql
 
     def test_creates_all_views(self, schema_sql):
-        for view in [
-            "sales_recon_view",
-            "settlement_recon_view",
-            "payment_recon_view",
-        ]:
-            assert f"CREATE VIEW {view}" in schema_sql
+        assert "CREATE VIEW payment_recon_view" in schema_sql
 
     def test_drops_before_creates(self, schema_sql):
         # DROP statements appear before CREATE statements
@@ -50,7 +44,7 @@ class TestSchemaSql:
         assert first_drop < first_create
 
     def test_creates_indexes(self, schema_sql):
-        assert schema_sql.count("CREATE INDEX") >= 10
+        assert schema_sql.count("CREATE INDEX") >= 7
 
 
 class TestSeedSql:
@@ -70,14 +64,13 @@ class TestSeedSql:
 
     def test_every_insert_ends_with_semicolon(self, seed_sql):
         inserts = re.findall(r"(INSERT INTO \w+.*?;)", seed_sql, re.DOTALL)
-        assert len(inserts) == 6, f"Expected 6 INSERT blocks, got {len(inserts)}"
+        assert len(inserts) == 5, f"Expected 5 INSERT blocks, got {len(inserts)}"
         for block in inserts:
             assert block.rstrip().endswith(";")
 
     def test_insert_tables_match_schema(self, seed_sql):
         tables = re.findall(r"INSERT INTO (\w+)", seed_sql)
         expected = {
-            "late_thresholds",
             "merchants",
             "external_transactions",
             "settlements",
@@ -94,9 +87,8 @@ class TestSeedSql:
             if table not in positions:
                 positions[table] = m.start()
 
-        # FK order: thresholds, merchants before ext_txns before
+        # FK order: merchants before ext_txns before
         # settlements before sales, payments
-        assert positions["late_thresholds"] < positions["merchants"]
         assert positions["merchants"] < positions["external_transactions"]
         assert positions["external_transactions"] < positions["settlements"]
         assert positions["settlements"] < positions["sales"]

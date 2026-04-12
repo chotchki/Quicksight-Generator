@@ -39,15 +39,6 @@ _MERCHANT_WEIGHTS = [35, 25, 15, 10, 8, 7]
 _CARD_BRANDS = ["Visa", "Mastercard", "Amex", "Discover"]
 _CARD_WEIGHTS = [45, 30, 15, 10]
 
-THRESHOLDS: list[tuple[str, int, str]] = [
-    ("sales", 7,
-     "Sales older than 7 days without a matching external record are considered late"),
-    ("settlements", 14,
-     "Settlements older than 14 days without a matching external record are considered late"),
-    ("payments", 30,
-     "Payments older than 30 days without a matching external record are considered late"),
-]
-
 _RETURNED_PAYMENTS: list[tuple[str, str]] = [
     ("merch-sasquatch", "insufficient_funds"),
     ("merch-sasquatch", "bank_rejected"),
@@ -158,16 +149,12 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
     payments = _generate_payments(rng, settlements)
 
     # -- External transactions + linking --
-    ext_txns = _generate_external_transactions(rng, today, sales, settlements, payments)
+    ext_txns = _generate_external_transactions(rng, today, payments)
 
     # -- Assemble SQL in FK-safe order --
     parts = [
         f"-- Sasquatch National Bank — demo seed data",
         f"-- Anchor date: {today.isoformat()}\n",
-
-        _inserts("late_thresholds",
-                 ["transaction_type", "threshold_days", "description"],
-                 list(THRESHOLDS)),
 
         _inserts("merchants",
                  ["merchant_id", "merchant_name", "merchant_type",
@@ -175,10 +162,10 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
                  merchant_rows),
 
         _inserts("external_transactions",
-                 ["transaction_id", "transaction_type", "external_system",
+                 ["transaction_id", "external_system",
                   "external_amount", "record_count", "transaction_date",
                   "status", "merchant_id"],
-                 [(e["transaction_id"], e["transaction_type"],
+                 [(e["transaction_id"],
                    e["external_system"], e["external_amount"],
                    e["record_count"], e["transaction_date"],
                    e["status"], e["merchant_id"])
@@ -187,21 +174,20 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
         _inserts("settlements",
                  ["settlement_id", "merchant_id", "settlement_type",
                   "settlement_amount", "settlement_date", "settlement_status",
-                  "sale_count", "external_transaction_id"],
+                  "sale_count"],
                  [(s["settlement_id"], s["merchant_id"], s["settlement_type"],
                    s["settlement_amount"], s["settlement_date"],
-                   s["settlement_status"], s["sale_count"], s["ext_txn_id"])
+                   s["settlement_status"], s["sale_count"])
                   for s in settlements]),
 
         _inserts("sales",
                  ["sale_id", "merchant_id", "location_id", "amount",
                   "sale_timestamp", "card_brand", "card_last_four",
-                  "reference_id", "metadata", "settlement_id",
-                  "external_transaction_id"],
+                  "reference_id", "metadata", "settlement_id"],
                  [(s["sale_id"], s["merchant_id"], s["location_id"],
                    s["amount"], s["sale_timestamp"], s["card_brand"],
                    s["card_last_four"], s["reference_id"], s["metadata"],
-                   s["settlement_id"], s["ext_txn_id"])
+                   s["settlement_id"])
                   for s in sales]),
 
         _inserts("payments",
@@ -259,7 +245,6 @@ def _generate_sales(rng: random.Random, today: date) -> list[dict]:
             "reference_id": ref_id,
             "metadata": metadata,
             "settlement_id": None,
-            "ext_txn_id": None,
         })
     return sales
 
@@ -319,7 +304,6 @@ def _generate_settlements(
                 "settlement_date": stl_dt,
                 "settlement_status": status,
                 "sale_count": len(batch),
-                "ext_txn_id": None,
             })
 
             # Link sales → settlement
@@ -369,22 +353,24 @@ def _generate_payments(
 
 
 # ---------------------------------------------------------------------------
-# External transactions
+# External transactions (payments only)
 # ---------------------------------------------------------------------------
 
 def _generate_external_transactions(
     rng: random.Random,
     today: date,
-    sales: list[dict],
-    settlements: list[dict],
     payments: list[dict],
 ) -> list[dict]:
-    """Create ~60 external transactions and link internal records."""
+    """Create ~35 external transactions for payments and link internal records.
+
+    Each external transaction aggregates 1+ payments from the same merchant
+    in the same external system.  Mix of matched, not-yet-matched, and late.
+    """
     ext_txns: list[dict] = []
     ext_idx = 0
+    systems = ["BankSync", "PaymentHub", "ClearSettle"]
 
     def _ext(
-        txn_type: str,
         system: str,
         amount: Decimal,
         txn_date: datetime,
@@ -395,7 +381,6 @@ def _generate_external_transactions(
         ext_idx += 1
         txn = {
             "transaction_id": f"ext-{ext_idx:04d}",
-            "transaction_type": txn_type,
             "external_system": system,
             "external_amount": Decimal(str(amount)).quantize(
                 Decimal("0.01"), rounding=ROUND_HALF_UP),
@@ -407,114 +392,48 @@ def _generate_external_transactions(
         ext_txns.append(txn)
         return txn
 
-    # -- Sales external transactions (20) --
-    _build_sales_ext_txns(rng, today, sales, _ext)
-
-    # -- Settlement external transactions (20) --
-    _build_settlement_ext_txns(rng, today, settlements, _ext)
-
-    # -- Payment external transactions (20) --
-    _build_payment_ext_txns(rng, today, payments, _ext)
-
-    return ext_txns
-
-
-def _build_sales_ext_txns(rng, today, sales, _ext):
-    """20 sales-type external transactions from SquarePay / TaxCloud."""
-    linked = [s for s in sales if s["settlement_id"] is not None]
-    rng.shuffle(linked)
-    pool = list(linked)
-    systems = ["SquarePay", "TaxCloud"]
-
-    for i in range(20):
-        system = systems[i % 2]
-        batch_size = min(rng.randint(3, 8), len(pool))
-        if batch_size == 0:
-            break
-        batch = pool[:batch_size]
-        pool = pool[batch_size:]
-        mid = batch[0]["merchant_id"]
-        total = sum(s["amount"] for s in batch)
-        txn_date = max(s["sale_timestamp"] for s in batch)
-
-        if i < 12:
-            # Matched — external amount equals internal sum
-            ext = _ext("sales", system, total, txn_date, mid, len(batch))
-            for s in batch:
-                s["ext_txn_id"] = ext["transaction_id"]
-        elif i < 17:
-            # Not yet matched — recent, amount slightly off
-            offset = Decimal(str(rng.uniform(10, 80))).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP)
-            _ext("sales", system, total + offset,
-                 _ts(today, rng.randint(0, 5), rng), mid, len(batch))
-        else:
-            # Late — old, bigger mismatch
-            offset = Decimal(str(rng.uniform(50, 200))).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP)
-            _ext("sales", system, total + offset,
-                 _ts(today, rng.randint(15, 60), rng), mid, len(batch))
-
-
-def _build_settlement_ext_txns(rng, today, settlements, _ext):
-    """20 settlement-type external transactions from BankSync / TaxCloud."""
-    pool = list(settlements)
-    rng.shuffle(pool)
-    systems = ["BankSync", "TaxCloud"]
-
-    for i in range(20):
-        if not pool:
-            break
-        system = systems[i % 2]
-        stl = pool.pop(0)
-        total = stl["settlement_amount"]
-        txn_date = stl["settlement_date"]
-        mid = stl["merchant_id"]
-
-        if i < 12:
-            # Matched
-            ext = _ext("settlements", system, total, txn_date, mid, 1)
-            stl["ext_txn_id"] = ext["transaction_id"]
-        elif i < 17:
-            # Not yet matched — recent
-            offset = Decimal(str(rng.uniform(20, 100))).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP)
-            _ext("settlements", system, total + offset,
-                 _ts(today, rng.randint(0, 10), rng), mid, 1)
-        else:
-            # Late — old, big difference
-            offset = Decimal(str(rng.uniform(100, 500))).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP)
-            _ext("settlements", system, total + offset,
-                 _ts(today, rng.randint(20, 60), rng), mid, 1)
-
-
-def _build_payment_ext_txns(rng, today, payments, _ext):
-    """20 payment-type external transactions from BankSync."""
     pool = list(payments)
     rng.shuffle(pool)
 
-    for i in range(20):
+    for i in range(35):
         if not pool:
             break
-        pay = pool.pop(0)
-        total = pay["payment_amount"]
-        txn_date = pay["payment_date"]
-        mid = pay["merchant_id"]
+        system = systems[i % len(systems)]
 
-        if i < 12:
-            # Matched
-            ext = _ext("payments", "BankSync", total, txn_date, mid, 1)
-            pay["ext_txn_id"] = ext["transaction_id"]
-        elif i < 17:
-            # Not yet matched
-            offset = Decimal(str(rng.uniform(5, 50))).quantize(
+        # Batch 1-3 payments from the same merchant
+        pay = pool.pop(0)
+        batch = [pay]
+        mid = pay["merchant_id"]
+        # Try to grab 1-2 more from the same merchant
+        extras_wanted = rng.randint(0, 2)
+        remaining = []
+        for p in pool:
+            if p["merchant_id"] == mid and extras_wanted > 0:
+                batch.append(p)
+                extras_wanted -= 1
+            else:
+                remaining.append(p)
+        pool = remaining
+
+        total = sum(p["payment_amount"] for p in batch)
+        txn_date = max(p["payment_date"] for p in batch)
+
+        if i < 20:
+            # Matched — external amount equals internal sum
+            ext = _ext(system, total, txn_date, mid, len(batch))
+            for p in batch:
+                p["ext_txn_id"] = ext["transaction_id"]
+        elif i < 28:
+            # Not yet matched — recent, amount slightly off
+            offset = Decimal(str(rng.uniform(5, 80))).quantize(
                 Decimal("0.01"), rounding=ROUND_HALF_UP)
-            _ext("payments", "BankSync", total + offset,
-                 _ts(today, rng.randint(0, 20), rng), mid, 1)
+            _ext(system, total + offset,
+                 _ts(today, rng.randint(0, 15), rng), mid, len(batch))
         else:
-            # Late
+            # Late — old, bigger mismatch
             offset = Decimal(str(rng.uniform(50, 300))).quantize(
                 Decimal("0.01"), rounding=ROUND_HALF_UP)
-            _ext("payments", "BankSync", total + offset,
-                 _ts(today, rng.randint(35, 70), rng), mid, 1)
+            _ext(system, total + offset,
+                 _ts(today, rng.randint(35, 70), rng), mid, len(batch))
+
+    return ext_txns

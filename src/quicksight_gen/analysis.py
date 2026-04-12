@@ -4,18 +4,21 @@ from __future__ import annotations
 
 from quicksight_gen.config import Config
 from quicksight_gen.constants import (
+    DS_EXTERNAL_TRANSACTIONS,
     DS_MERCHANTS,
+    DS_PAYMENT_RECON,
     DS_PAYMENT_RETURNS,
     DS_PAYMENTS,
     DS_SALES,
     DS_SETTLEMENT_EXCEPTIONS,
     DS_SETTLEMENTS,
     SHEET_EXCEPTIONS,
+    SHEET_PAYMENT_RECON,
     SHEET_PAYMENTS,
     SHEET_SALES,
     SHEET_SETTLEMENTS,
 )
-from quicksight_gen.datasets import build_financial_datasets
+from quicksight_gen.datasets import build_financial_datasets, build_recon_datasets
 from quicksight_gen.filters import (
     build_exceptions_controls,
     build_filter_groups,
@@ -23,6 +26,7 @@ from quicksight_gen.filters import (
     build_sales_controls,
     build_settlements_controls,
 )
+from quicksight_gen.recon_filters import build_recon_controls, build_recon_filter_groups
 from quicksight_gen.models import (
     Analysis,
     AnalysisDefinition,
@@ -47,6 +51,7 @@ from quicksight_gen.models import (
     StringParameterDeclaration,
 )
 from quicksight_gen.theme import get_preset
+from quicksight_gen.recon_visuals import build_payment_recon_visuals
 from quicksight_gen.visuals import (
     build_exceptions_visuals,
     build_payments_visuals,
@@ -72,6 +77,7 @@ _ANALYSIS_ACTIONS = [
 _KPI_ROW_SPAN = 6
 _CHART_ROW_SPAN = 12
 _TABLE_ROW_SPAN = 18
+_THIRD = 12  # one-third of 36 columns
 _HALF = 18   # half of 36 columns
 _FULL = 36
 
@@ -213,16 +219,51 @@ def _build_exceptions_sheet() -> SheetDefinition:
     )
 
 
+def _build_payment_recon_sheet() -> SheetDefinition:
+    return SheetDefinition(
+        SheetId=SHEET_PAYMENT_RECON,
+        Name="Payment Reconciliation",
+        Title="Payment Reconciliation",
+        Description=(
+            "Compares internal payments against external system transactions. "
+            "The top KPIs show matched and unmatched totals. The external "
+            "transactions table shows each transaction with its match status — "
+            "click a row to see which internal payments are linked. The payments "
+            "table below shows the internal side — click a row to highlight its "
+            "external transaction. Use the filters to narrow by date, status, "
+            "or external system."
+        ),
+        ContentType="INTERACTIVE",
+        Visuals=build_payment_recon_visuals(),
+        FilterControls=build_recon_controls(),
+        Layouts=_grid_layout([
+            GridLayoutElement(
+                ElementId="recon-kpi-matched-amount", ElementType="VISUAL",
+                ColumnSpan=_THIRD, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
+            ),
+            GridLayoutElement(
+                ElementId="recon-kpi-unmatched-amount", ElementType="VISUAL",
+                ColumnSpan=_THIRD, RowSpan=_KPI_ROW_SPAN, ColumnIndex=_THIRD,
+            ),
+            GridLayoutElement(
+                ElementId="recon-kpi-late-count", ElementType="VISUAL",
+                ColumnSpan=_THIRD, RowSpan=_KPI_ROW_SPAN, ColumnIndex=_THIRD * 2,
+            ),
+            _full_width("recon-bar-by-system", _CHART_ROW_SPAN),
+            _full_width("recon-ext-txn-table", _TABLE_ROW_SPAN),
+            _full_width("recon-payments-table", _TABLE_ROW_SPAN),
+        ]),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Dataset identifier declarations
 # ---------------------------------------------------------------------------
 
 def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaration]:
     """Map logical dataset identifiers to their ARNs."""
-    datasets = build_financial_datasets(cfg)
-    # Order matches build_financial_datasets: merchants, sales, settlements,
-    # payments, settlement-exceptions, payment-returns
-    identifier_names = [
+    financial_datasets = build_financial_datasets(cfg)
+    financial_names = [
         DS_MERCHANTS,
         DS_SALES,
         DS_SETTLEMENTS,
@@ -230,12 +271,22 @@ def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaratio
         DS_SETTLEMENT_EXCEPTIONS,
         DS_PAYMENT_RETURNS,
     ]
+
+    recon_datasets = build_recon_datasets(cfg)
+    recon_names = [
+        DS_EXTERNAL_TRANSACTIONS,
+        DS_PAYMENT_RECON,
+    ]
+
+    all_datasets = list(zip(financial_names, financial_datasets)) + list(
+        zip(recon_names, recon_datasets)
+    )
     return [
         DataSetIdentifierDeclaration(
             Identifier=name,
             DataSetArn=cfg.dataset_arn(ds.DataSetId),
         )
-        for name, ds in zip(identifier_names, datasets)
+        for name, ds in all_datasets
     ]
 
 
@@ -249,6 +300,17 @@ def _settlement_id_parameter() -> ParameterDeclaration:
         StringParameterDeclaration=StringParameterDeclaration(
             ParameterValueType="SINGLE_VALUED",
             Name="pSettlementId",
+            DefaultValues={"StaticValues": []},
+        ),
+    )
+
+
+def _external_txn_id_parameter() -> ParameterDeclaration:
+    """Declare the pExternalTransactionId parameter for recon drill-down."""
+    return ParameterDeclaration(
+        StringParameterDeclaration=StringParameterDeclaration(
+            ParameterValueType="SINGLE_VALUED",
+            Name="pExternalTransactionId",
             DefaultValues={"StaticValues": []},
         ),
     )
@@ -296,6 +358,48 @@ def _settlement_id_filter_group(
     )
 
 
+def _ext_txn_id_filter_group(
+    filter_group_id: str,
+    filter_id: str,
+    ds_identifier: str,
+    column_name: str,
+) -> FilterGroup:
+    """Build a filter group that filters by the pExternalTransactionId parameter."""
+    return FilterGroup(
+        FilterGroupId=filter_group_id,
+        CrossDataset="SINGLE_DATASET",
+        ScopeConfiguration=FilterScopeConfiguration(
+            SelectedSheets=SelectedSheetsFilterScopeConfiguration(
+                SheetVisualScopingConfigurations=[
+                    SheetVisualScopingConfiguration(
+                        SheetId=SHEET_PAYMENT_RECON,
+                        Scope="ALL_VISUALS",
+                    ),
+                ],
+            ),
+        ),
+        Status="ENABLED",
+        Filters=[
+            Filter(
+                CategoryFilter=CategoryFilter(
+                    FilterId=filter_id,
+                    Column=ColumnIdentifier(
+                        DataSetIdentifier=ds_identifier,
+                        ColumnName=column_name,
+                    ),
+                    Configuration=CategoryFilterConfiguration(
+                        CustomFilterConfiguration={
+                            "MatchOperator": "EQUALS",
+                            "ParameterName": "pExternalTransactionId",
+                            "NullOption": "ALL_VALUES",
+                        },
+                    ),
+                ),
+            ),
+        ],
+    )
+
+
 def _build_financial_definition(cfg: Config) -> AnalysisDefinition:
     """Build the definition shared by both the analysis and dashboard."""
     drill_down_filters = [
@@ -313,6 +417,21 @@ def _build_financial_definition(cfg: Config) -> AnalysisDefinition:
         ),
     ]
 
+    recon_drill_down_filters = [
+        _ext_txn_id_filter_group(
+            "fg-drill-ext-txn-on-recon",
+            "filter-drill-ext-txn-on-recon",
+            DS_PAYMENT_RECON,
+            "transaction_id",
+        ),
+        _ext_txn_id_filter_group(
+            "fg-drill-ext-txn-on-payments",
+            "filter-drill-ext-txn-on-payments",
+            DS_PAYMENTS,
+            "external_transaction_id",
+        ),
+    ]
+
     return AnalysisDefinition(
         DataSetIdentifierDeclarations=_build_dataset_declarations(cfg),
         Sheets=[
@@ -320,9 +439,18 @@ def _build_financial_definition(cfg: Config) -> AnalysisDefinition:
             _build_settlements_sheet(),
             _build_payments_sheet(),
             _build_exceptions_sheet(),
+            _build_payment_recon_sheet(),
         ],
-        FilterGroups=build_filter_groups() + drill_down_filters,
-        ParameterDeclarations=[_settlement_id_parameter()],
+        FilterGroups=(
+            build_filter_groups()
+            + drill_down_filters
+            + build_recon_filter_groups()
+            + recon_drill_down_filters
+        ),
+        ParameterDeclarations=[
+            _settlement_id_parameter(),
+            _external_txn_id_parameter(),
+        ],
     )
 
 

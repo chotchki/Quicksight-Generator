@@ -1,4 +1,4 @@
-"""Tests for reconciliation visuals and filters (Steps 3 & 4)."""
+"""Tests for Payment Reconciliation visuals and filters."""
 
 from __future__ import annotations
 
@@ -7,28 +7,15 @@ from dataclasses import asdict
 from quicksight_gen.constants import (
     DS_EXTERNAL_TRANSACTIONS,
     DS_PAYMENT_RECON,
-    DS_RECON_EXCEPTIONS,
-    DS_SALES_RECON,
-    DS_SETTLEMENT_RECON,
+    DS_PAYMENTS,
     SHEET_PAYMENT_RECON,
-    SHEET_RECON_OVERVIEW,
-    SHEET_SALES_RECON,
-    SHEET_SETTLEMENT_RECON,
 )
 from quicksight_gen.models import _strip_nones
 from quicksight_gen.recon_filters import (
-    build_payment_recon_controls,
+    build_recon_controls,
     build_recon_filter_groups,
-    build_recon_overview_controls,
-    build_sales_recon_controls,
-    build_settlement_recon_controls,
 )
-from quicksight_gen.recon_visuals import (
-    build_payment_recon_visuals,
-    build_recon_overview_visuals,
-    build_sales_recon_visuals,
-    build_settlement_recon_visuals,
-)
+from quicksight_gen.recon_visuals import build_payment_recon_visuals
 
 
 # ---------------------------------------------------------------------------
@@ -69,49 +56,10 @@ def _collect_dataset_refs(visuals: list) -> set[str]:
 # Visual tests
 # ---------------------------------------------------------------------------
 
-class TestReconOverviewVisuals:
-    def test_count(self):
-        visuals = build_recon_overview_visuals()
-        assert len(visuals) == 6
-
-    def test_ids_unique(self):
-        ids = _collect_visual_ids(build_recon_overview_visuals())
-        assert len(ids) == len(set(ids))
-
-    def test_dataset_refs(self):
-        refs = _collect_dataset_refs(build_recon_overview_visuals())
-        assert refs == {DS_RECON_EXCEPTIONS}
-
-
-class TestSalesReconVisuals:
-    def test_count(self):
-        assert len(build_sales_recon_visuals()) == 4
-
-    def test_ids_unique(self):
-        ids = _collect_visual_ids(build_sales_recon_visuals())
-        assert len(ids) == len(set(ids))
-
-    def test_dataset_refs(self):
-        refs = _collect_dataset_refs(build_sales_recon_visuals())
-        assert refs == {DS_SALES_RECON}
-
-
-class TestSettlementReconVisuals:
-    def test_count(self):
-        assert len(build_settlement_recon_visuals()) == 4
-
-    def test_ids_unique(self):
-        ids = _collect_visual_ids(build_settlement_recon_visuals())
-        assert len(ids) == len(set(ids))
-
-    def test_dataset_refs(self):
-        refs = _collect_dataset_refs(build_settlement_recon_visuals())
-        assert refs == {DS_SETTLEMENT_RECON}
-
-
 class TestPaymentReconVisuals:
     def test_count(self):
-        assert len(build_payment_recon_visuals()) == 4
+        visuals = build_payment_recon_visuals()
+        assert len(visuals) == 6
 
     def test_ids_unique(self):
         ids = _collect_visual_ids(build_payment_recon_visuals())
@@ -119,21 +67,43 @@ class TestPaymentReconVisuals:
 
     def test_dataset_refs(self):
         refs = _collect_dataset_refs(build_payment_recon_visuals())
-        assert refs == {DS_PAYMENT_RECON}
+        assert refs == {DS_PAYMENT_RECON, DS_PAYMENTS}
 
+    def test_has_kpi_visuals(self):
+        visuals = build_payment_recon_visuals()
+        kpis = [v for v in visuals if v.KPIVisual is not None]
+        assert len(kpis) == 3
 
-class TestAllReconVisualIdsUnique:
-    def test_no_duplicates_across_sheets(self):
-        all_ids = (
-            _collect_visual_ids(build_recon_overview_visuals())
-            + _collect_visual_ids(build_sales_recon_visuals())
-            + _collect_visual_ids(build_settlement_recon_visuals())
-            + _collect_visual_ids(build_payment_recon_visuals())
-        )
-        assert len(all_ids) == len(set(all_ids)), (
-            f"Duplicate visual IDs: "
-            f"{[vid for vid in all_ids if all_ids.count(vid) > 1]}"
-        )
+    def test_has_bar_chart(self):
+        visuals = build_payment_recon_visuals()
+        bars = [v for v in visuals if v.BarChartVisual is not None]
+        assert len(bars) == 1
+
+    def test_has_tables(self):
+        visuals = build_payment_recon_visuals()
+        tables = [v for v in visuals if v.TableVisual is not None]
+        assert len(tables) == 2
+
+    def test_bar_chart_has_filter_action(self):
+        visuals = build_payment_recon_visuals()
+        bar = next(v for v in visuals if v.BarChartVisual is not None)
+        assert bar.BarChartVisual.Actions is not None
+        assert len(bar.BarChartVisual.Actions) == 1
+        action = bar.BarChartVisual.Actions[0]
+        assert action.Trigger == "DATA_POINT_CLICK"
+
+    def test_tables_have_param_actions(self):
+        visuals = build_payment_recon_visuals()
+        tables = [v for v in visuals if v.TableVisual is not None]
+        for t in tables:
+            assert t.TableVisual.Actions is not None
+            assert len(t.TableVisual.Actions) == 1
+            ops = t.TableVisual.Actions[0].ActionOperations
+            op_keys = set()
+            for op in ops:
+                op_keys.update(_strip_nones(asdict(op)).keys())
+            assert "NavigationOperation" in op_keys
+            assert "SetParametersOperation" in op_keys
 
 
 # ---------------------------------------------------------------------------
@@ -143,8 +113,7 @@ class TestAllReconVisualIdsUnique:
 class TestReconFilterGroups:
     def test_count(self):
         groups = build_recon_filter_groups()
-        # 5 shared filters + 4 per-sheet days-outstanding filters
-        assert len(groups) == 9
+        assert len(groups) == 4
 
     def test_filter_ids_unique(self):
         groups = build_recon_filter_groups()
@@ -162,13 +131,7 @@ class TestReconFilterGroups:
         fg_ids = [fg.FilterGroupId for fg in groups]
         assert len(fg_ids) == len(set(fg_ids))
 
-    def test_all_scope_sheet_ids_valid(self):
-        valid_sheets = {
-            SHEET_RECON_OVERVIEW,
-            SHEET_SALES_RECON,
-            SHEET_SETTLEMENT_RECON,
-            SHEET_PAYMENT_RECON,
-        }
+    def test_all_scoped_to_payment_recon_sheet(self):
         groups = build_recon_filter_groups()
         for fg in groups:
             raw = _strip_nones(asdict(fg))
@@ -177,33 +140,43 @@ class TestReconFilterGroups:
                 for svc in scope["SelectedSheets"][
                     "SheetVisualScopingConfigurations"
                 ]:
-                    assert svc["SheetId"] in valid_sheets, (
-                        f"Filter group '{fg.FilterGroupId}' references "
-                        f"unknown sheet '{svc['SheetId']}'"
+                    assert svc["SheetId"] == SHEET_PAYMENT_RECON, (
+                        f"Filter group '{fg.FilterGroupId}' scoped to "
+                        f"'{svc['SheetId']}', expected '{SHEET_PAYMENT_RECON}'"
                     )
 
-    def test_has_numeric_range_filters(self):
-        """Each sheet gets its own days-outstanding NumericRangeFilter."""
+    def test_has_numeric_range_filter(self):
         groups = build_recon_filter_groups()
         days_fgs = [g for g in groups if "days-outstanding" in g.FilterGroupId]
-        assert len(days_fgs) == 4
-        for fg in days_fgs:
-            raw = _strip_nones(asdict(fg))
-            assert "NumericRangeFilter" in raw["Filters"][0]
+        assert len(days_fgs) == 1
+        raw = _strip_nones(asdict(days_fgs[0]))
+        assert "NumericRangeFilter" in raw["Filters"][0]
+
+    def test_has_time_range_filter(self):
+        groups = build_recon_filter_groups()
+        date_fgs = [g for g in groups if "date-range" in g.FilterGroupId]
+        assert len(date_fgs) == 1
+
+    def test_has_category_filters(self):
+        groups = build_recon_filter_groups()
+        cat_fgs = [
+            g for g in groups
+            if "match-status" in g.FilterGroupId
+            or "external-system" in g.FilterGroupId
+        ]
+        assert len(cat_fgs) == 2
 
 
 class TestReconFilterControls:
-    def test_overview_controls_count(self):
-        assert len(build_recon_overview_controls()) == 6
+    def test_count(self):
+        controls = build_recon_controls()
+        assert len(controls) == 4
 
-    def test_sales_recon_controls_count(self):
-        assert len(build_sales_recon_controls()) == 5
-
-    def test_settlement_recon_controls_count(self):
-        assert len(build_settlement_recon_controls()) == 5
-
-    def test_payment_recon_controls_count(self):
-        assert len(build_payment_recon_controls()) == 5
+    def test_has_slider_control(self):
+        controls = build_recon_controls()
+        raw_all = [_strip_nones(asdict(c)) for c in controls]
+        sliders = [r for r in raw_all if "Slider" in r]
+        assert len(sliders) == 1
 
     def test_controls_reference_valid_filters(self):
         """Every SourceFilterId in controls must match a filter group filter."""
@@ -216,13 +189,7 @@ class TestReconFilterControls:
                     if isinstance(filter_obj, dict) and "FilterId" in filter_obj:
                         all_filter_ids.add(filter_obj["FilterId"])
 
-        all_controls = (
-            build_recon_overview_controls()
-            + build_sales_recon_controls()
-            + build_settlement_recon_controls()
-            + build_payment_recon_controls()
-        )
-        for ctrl in all_controls:
+        for ctrl in build_recon_controls():
             raw = _strip_nones(asdict(ctrl))
             for ctrl_obj in raw.values():
                 if isinstance(ctrl_obj, dict) and "SourceFilterId" in ctrl_obj:
@@ -231,15 +198,3 @@ class TestReconFilterControls:
                         f"Control references filter '{src}' but it's not in "
                         f"filter groups. Known: {all_filter_ids}"
                     )
-
-    def test_has_days_outstanding_control(self):
-        """The days-outstanding control should use a Slider
-        (per-sheet filter, not cross-sheet)."""
-        controls = build_recon_overview_controls()
-        raw_all = [_strip_nones(asdict(c)) for c in controls]
-        days_ctrls = [
-            r for r in raw_all
-            if "Slider" in r
-            and "days-outstanding" in r["Slider"]["SourceFilterId"]
-        ]
-        assert len(days_ctrls) == 1

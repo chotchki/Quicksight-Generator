@@ -7,7 +7,6 @@ import pytest
 
 from quicksight_gen.demo_data import (
     MERCHANTS,
-    THRESHOLDS,
     generate_demo_sql,
 )
 
@@ -56,9 +55,6 @@ class TestDeterminism:
 # ---------------------------------------------------------------------------
 
 class TestRowCounts:
-    def test_thresholds(self, parsed):
-        assert len(parsed["late_thresholds"]) == 3
-
     def test_merchants(self, parsed):
         assert len(parsed["merchants"]) == 6
 
@@ -76,7 +72,7 @@ class TestRowCounts:
 
     def test_external_transactions_count(self, parsed):
         count = len(parsed["external_transactions"])
-        assert 50 <= count <= 70, f"Expected ~60 ext txns, got {count}"
+        assert 10 <= count <= 35, f"Expected ~15-30 ext txns, got {count}"
 
 
 # ---------------------------------------------------------------------------
@@ -135,20 +131,10 @@ class TestReferentialIntegrity:
 
     def test_ext_txn_merchant_ids_exist(self, parsed):
         merchant_ids = set(self._extract_col(parsed["merchants"], 0))
-        ext_mids = set(self._extract_col(parsed["external_transactions"], 7))
+        # merchant_id is col 6 (transaction_id, external_system,
+        # external_amount, record_count, transaction_date, status, merchant_id)
+        ext_mids = set(self._extract_col(parsed["external_transactions"], 6))
         assert ext_mids.issubset(merchant_ids)
-
-    def test_sales_ext_txn_ids_exist(self, parsed):
-        ext_ids = set(self._extract_col(parsed["external_transactions"], 0))
-        sale_ext = set(self._extract_col(parsed["sales"], 10))
-        non_null = {s for s in sale_ext if s != "NULL"}
-        assert non_null.issubset(ext_ids)
-
-    def test_settlement_ext_txn_ids_exist(self, parsed):
-        ext_ids = set(self._extract_col(parsed["external_transactions"], 0))
-        stl_ext = set(self._extract_col(parsed["settlements"], 7))
-        non_null = {s for s in stl_ext if s != "NULL"}
-        assert non_null.issubset(ext_ids)
 
     def test_payment_ext_txn_ids_exist(self, parsed):
         ext_ids = set(self._extract_col(parsed["external_transactions"], 0))
@@ -183,13 +169,8 @@ class TestScenarioCoverage:
             assert reason in sql, f"Missing return reason: {reason}"
 
     def test_external_systems_present(self, sql):
-        for system in ["SquarePay", "BankSync", "TaxCloud"]:
+        for system in ["BankSync", "PaymentHub", "ClearSettle"]:
             assert system in sql
-
-    def test_all_ext_txn_types_present(self, sql):
-        assert "'sales'" in sql
-        assert "'settlements'" in sql
-        assert "'payments'" in sql
 
     def test_settlement_statuses(self, sql):
         assert "'completed'" in sql
@@ -207,8 +188,3 @@ class TestScenarioCoverage:
     def test_settlement_types(self, sql):
         for stype in ("daily", "weekly", "monthly"):
             assert stype in sql
-
-    def test_late_thresholds(self, parsed):
-        rows = parsed["late_thresholds"]
-        types = {row.split(",")[0].strip().strip("'") for row in rows}
-        assert types == {"sales", "settlements", "payments"}
