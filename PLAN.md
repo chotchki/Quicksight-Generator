@@ -36,7 +36,10 @@ Conventions:
 - [ ] 1.9 Update e2e tests: change `dashboard_id` fixture to `qs-gen-payment-recon-dashboard`; update any tests referencing old analysis name. Keep test count/behavior identical.
 - [ ] 1.10 Update `run_e2e.sh` to call `quicksight-gen deploy --all --generate` (or equivalent) then `pytest tests/e2e`.
 - [ ] 1.11 Full test pass: `pytest` green + `./run_e2e.sh` green against a freshly redeployed dashboard.
+- [ ] 1.12 Run a full destroy to clean up any renamed resources.
+- [ ] 1.13 Redploy and rerun 1.11.
 - [ ] **STOP for review.**
+- [ ] 1.14 git commit, tag 0.3.1
 
 ---
 
@@ -56,6 +59,7 @@ Conventions:
 - [ ] 2.7 Update unit tests: refund math, optional-metadata filter derivation, new exception tables & subtitles, slider presence on each tab, Getting Started tab at index 0, explanation coverage still 100%.
 - [ ] 2.8 Update e2e tests: new dashboard structure (6 tabs now including Getting Started), visual counts, new exception tables assertable, one browser test for the days-outstanding slider filtering a table row count.
 - [ ] **STOP for review.** (Exceptions tab layout and Getting Started link-vs-button flow are the most likely iteration points.)
+- [ ] 2.9 git commit, tag 0.4
 
 ---
 
@@ -82,6 +86,7 @@ Conventions:
 - [ ] 3.7 CLI wiring: implement the `account-recon` branches on `generate`, `demo schema|seed|apply`, `deploy`; `--all` now exercises both apps.
 - [ ] 3.8 Unit tests for AR: visual builders, filter groups, cross-reference validation (dataset ARNs, filter bindings, visual ID uniqueness, sheet ID scoping), explanation coverage, theme preset integration, demo data determinism + row counts + scenario coverage.
 - [ ] **STOP for review.** (Layout iteration expected — filters, drill-downs, and visual choices all deferred to Phase 4.)
+- [ ] 3.9 git commit, tag will depend on where we go or not
 
 ---
 
