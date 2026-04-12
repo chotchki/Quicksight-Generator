@@ -37,7 +37,7 @@ Conventions:
 - [ ] 1.10 Update `run_e2e.sh` to call `quicksight-gen deploy --all --generate` (or equivalent) then `pytest tests/e2e`.
 - [ ] 1.11 Full test pass: `pytest` green + `./run_e2e.sh` green against a freshly redeployed dashboard.
 - [ ] 1.12 Run a full destroy to clean up any renamed resources.
-- [ ] 1.13 Redploy and rerun 1.11.
+- [ ] 1.13 Redeploy and rerun 1.11.
 - [ ] **STOP for review.**
 - [ ] 1.14 git commit, tag 0.3.1
 
