@@ -1,5 +1,5 @@
 Goal: 
-	- To create one or more AWS Quicksight dashboards with a series of tabs to help understand financial applications.
+	- [ ] To create one or more AWS Quicksight dashboards with a series of tabs to help understand financial applications.
 
 Users:
  - There are two users of this code base:
@@ -136,28 +136,28 @@ Demo Scenarios:
     - The memo line on transfers plus the date of the transactions should tell a story
 
 Code Base Guideance:
-  - The exisiting code base has significant value, its not recommended to change the technology selection.
+  - [ ] The exisiting code base has significant value, its not recommended to change the technology selection.
     - aka mainly python that outputs the quicksight json with the shell deploy script
     - the demo datasource is an aws aurora postgresql instance
-  - The final output should be two quicksight databoards using the exisiting config process
-  - The code may need to be restructured to allow for code sharing especially of interating between the quicksight api
-  - A layered testing approach is still critical, the existing test scripts should be reused wherever possible
-  - Theming support is still wanted
+  - [ ] The final output should be two quicksight databoards using the exisiting config process
+  - [ ] The code may need to be restructured to allow for code sharing especially of interating between the quicksight api
+  - [ ] A layered testing approach is still critical, the existing test scripts should be reused wherever possible
+  - [ ] Theming support is still wanted
     
 Output:
-  - The final output should still be quicksight json and be repeated deployable using the deploy script.
+  - [ ] The final output should still be quicksight json and be repeated deployable using the deploy script.
 
-  - If the demo deployment is done, an additional sheet at the front of the dashboard should be added explaining the scenario and what the other sheets are for.
+  - [ ] If the demo deployment is done, an additional sheet at the front of the dashboard should be added explaining the scenario and what the other sheets are for.
 	
-	- All generated AWS resources (themes, datasets, analyses) must have a common tag (`ManagedBy: quicksight-gen`) so they can be found. Additional tags can be specified via `extra_tags` in config.yaml. The common tag is always applied on top of any other tags.
+	- [ ] All generated AWS resources (themes, datasets, analyses) must have a common tag (`ManagedBy: quicksight-gen`) so they can be found. Additional tags can be specified via `extra_tags` in config.yaml. The common tag is always applied on top of any other tags.
 
-	- Published dashboards. Each analysis (financial and reconciliation) also produces a published Dashboard resource. Dashboards enable ad-hoc filtering, CSV export, and expanded sheet controls. The dashboard is accessible to the configured `principal_arn`.
+	- [ ] Published dashboards. Each analysis (financial and reconciliation) also produces a published Dashboard resource. Dashboards enable ad-hoc filtering, CSV export, and expanded sheet controls. The dashboard is accessible to the configured `principal_arn`.
 
-	- Visual layout sizing. KPI visuals use compact grid sizing (half-width, 6 rows) so they don't dominate the page. Charts get moderate height (12 rows), detail tables get the most space (18 rows, full-width). Try to minimize excessive white space.
+	- [ ] Visual layout sizing. KPI visuals use compact grid sizing (half-width, 6 rows) so they don't dominate the page. Charts get moderate height (12 rows), detail tables get the most space (18 rows, full-width). Try to minimize excessive white space.
 
-	- Descriptive axis labels. All bar chart and pie chart axes display human-readable labels (e.g. "Merchant", "Sales Amount ($)", "Match Status") instead of raw column names like `transaction_id (Count)` or `external_system`.
+	- [ ] Descriptive axis labels. All bar chart and pie chart axes display human-readable labels (e.g. "Merchant", "Sales Amount ($)", "Match Status") instead of raw column names like `transaction_id (Count)` or `external_system`.
 
-	- End-to-end test harness. Two-layer validation against a deployed dashboard: API tests (boto3) verify resource health, dashboard structure, and dataset import status; browser tests (Playwright WebKit, headless) load the dashboard via a pre-authenticated embed URL and verify sheet tabs render, per-sheet visual counts, drill-down navigation (Settlements→Sales, Payments→Settlements), Payment Reconciliation mutual table filtering, and date-range filter behavior. Single-command runner (`./run_e2e.sh`) regenerates JSON, redeploys, and runs the tests so iteration is hands-off.
+	- [ ] End-to-end test harness. Two-layer validation against a deployed dashboard: API tests (boto3) verify resource health, dashboard structure, and dataset import status; browser tests (Playwright WebKit, headless) load the dashboard via a pre-authenticated embed URL and verify sheet tabs render, per-sheet visual counts, drill-down navigation (Settlements→Sales, Payments→Settlements), Payment Reconciliation mutual table filtering, and date-range filter behavior. Single-command runner (`./run_e2e.sh`) regenerates JSON, redeploys, and runs the tests so iteration is hands-off.
 
 Open Questions:
   - Code organization / sharing:
