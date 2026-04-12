@@ -158,3 +158,49 @@ Output:
 	- Descriptive axis labels. All bar chart and pie chart axes display human-readable labels (e.g. "Merchant", "Sales Amount ($)", "Match Status") instead of raw column names like `transaction_id (Count)` or `external_system`.
 
 	- End-to-end test harness. Two-layer validation against a deployed dashboard: API tests (boto3) verify resource health, dashboard structure, and dataset import status; browser tests (Playwright WebKit, headless) load the dashboard via a pre-authenticated embed URL and verify sheet tabs render, per-sheet visual counts, drill-down navigation (Settlements→Sales, Payments→Settlements), Payment Reconciliation mutual table filtering, and date-range filter behavior. Single-command runner (`./run_e2e.sh`) regenerates JSON, redeploys, and runs the tests so iteration is hands-off.
+
+Open Questions:
+  - Code organization / sharing:
+    - How far should the refactor go? Candidates: (a) light — keep top-level modules, extract shared helpers; (b) medium — two sibling packages `payment_recon/` and `account_recon/` alongside a `common/` for QuickSight builders, models, config, deploy; (c) heavy — a generic "dashboard" framework the two apps plug into. Preference?
+    - Should `models.py` (QuickSight dataclasses), theming, tagging, filter-control primitives, and the embed/runner scaffolding be factored into a single shared module both apps import from? Confirmed yes, but what's the import surface — one `common` package, or split (`common.models`, `common.theme`, `common.deploy`)?
+
+  - CLI & config shape:
+    - Does one invocation produce both dashboards, or does each app have its own subcommand (e.g., `quicksight-gen generate payment-recon` / `account-recon` / `--all`)? Same for `demo apply`?
+    - One `config.yaml` with both apps' settings, or one config per app? How are `principal_arn`, `datasource_arn`, `extra_tags` shared vs. per-app?
+    - Late-threshold was a single int. Domain now says "different definition depending on the step and even on the mentioned types above". What config shape do you want — a nested map keyed by (step, type), or just per-step with a per-type override list?
+
+  - Demo data & database:
+    - Do both apps share one demo database (tables for both co-existing), or is each demo its own DB with its own `demo_database_url`? If shared, is the datasource one QuickSight data source, or one per app?
+    - Does `quicksight-gen demo apply` now build both schemas and seed data by default, or is that gated per app?
+    - The front "explanation" sheet: demo-only (gated on `demo apply`) or always when a scenario text is configured? Static text blocks, or any navigation affordances (links/buttons to tabs)?
+
+  - Payment Recon additions to existing app:
+    - Refunds: new column (`sale_type` + signed amount), or just negative `amount` with an implicit type? Does a refund link to the original sale, and do we surface that linkage?
+    - Optional sale metadata (taxes, tips, discount, cashier): surface on the Sales Detail table only, expose as filters, or both?
+    - Merchant payment methods: new dimension to filter/group by on Payments / Settlements tabs, or background metadata only?
+    - "External system transactions NOT tied to a payment are a problem" — is this a new exceptions view (dedicated visual/table), or a filter on the existing Payment Reconciliation tab?
+    - "At each step, a valid match… is NOT subject to time delay — the amount MUST match or it's a problem to be highlighted" — is there a new per-step "mismatch" exception visual (sales→settlement and settlement→payment), or do we rely on the existing exception tables?
+
+  - Account Recon (new app):
+    - Proposed tabs (want confirmation before building): (1) Balances — parent/child account balances with stored-vs-computed-from-transactions deltas; (2) Transfers — transfer list, completeness (net-zero check), memo search; (3) Transactions — posted transactions with failures called out; (4) Exceptions — balance mismatches + transfers whose transactions don't net to zero; (5) Payment Reconciliation-style dashboard or nothing similar? Is this breakdown on track?
+    - Transfer integrity: do we assume the source data maintains debit=credit and just report mismatches, or do we need to recompute and flag violations from transaction-level data?
+    - Failed individual transactions: is "failed" a status column we expect on `transactions`, or derived from absence of a matching debit/credit entry?
+    - Daily balance for parent accounts — is it computed in SQL/view at query time, or precomputed and stored (and the dashboard only reports drift)?
+    - "More than two transactions may make up a transfer (for example if something fails)" — what shape links transactions to a transfer? A `transfer_id` FK on transactions, or a separate mapping table?
+    - Currency/decimal precision: store as `numeric(·,2)` in PG, fine. Anything we need to do in QuickSight beyond `$0.00` display formatting?
+
+  - Theming & demo branding:
+    - Do we add a `farmers-exchange-bank` / `stardew-valley` theme preset for the Account Recon demo? Rough palette guidance (earth tones, valley greens, harvest gold)? Any IP concerns with Stardew Valley naming we should avoid (character names vs. generic valley flavor)?
+    - The existing Sasquatch preset renames the Payment Recon analysis. Does the Farmers preset similarly rename the Account Recon analysis?
+
+  - Deploy & output:
+    - Do we end up with `payment-recon-analysis.json` / `payment-recon-dashboard.json` and `account-recon-analysis.json` / `account-recon-dashboard.json` (renaming the existing `financial-*` files), or keep `financial-*` for Payment Recon and add `account-recon-*` alongside?
+    - Does `deploy.sh` deploy both in one pass, or do we invoke it twice with different inputs? Same `principal_arn` granted on both?
+
+  - Tests:
+    - Scope: extend the API + browser e2e harness to fully cover Account Recon too (structure, drill-downs, filters), or stand up just the API layer for Account Recon now and defer the browser layer?
+    - `tests/e2e/conftest.py` currently pins to one dashboard ID. Do we want per-app fixtures, or a parametrized suite that runs against both dashboards?
+    - Unit-test coverage target for Account Recon: same bar as Payment Recon (visuals, filters, cross-references, explanation coverage, demo determinism)?
+
+  - Migration / backward compat:
+    - Is this branch intended as a clean break (rename existing files/commands freely), or does it need to preserve the current CLI surface and output filenames for users already deploying Payment Recon?
