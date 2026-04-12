@@ -206,6 +206,39 @@ pytest
 
 Tests covering model serialization (including data source), tagging, end-to-end generation, cross-reference validation (dataset ARNs, filter bindings, visual ID uniqueness, sheet ID scoping), payment reconciliation visuals and filters, explanation coverage (every sheet has a description, every visual has a subtitle), theme presets, demo data generation (determinism, row counts, referential integrity, scenario coverage), data source builder, and CLI commands.
 
+### End-to-end tests against a deployed dashboard
+
+E2E tests validate the deployed QuickSight resources via boto3 (API layer)
+and via Playwright WebKit (browser layer — sheet tabs, visual rendering).
+They are skipped by default unless `QS_GEN_E2E=1` is set, so a plain
+`pytest` run stays fast and AWS-free.
+
+```bash
+# Install the e2e extras (boto3 + playwright + WebKit browser)
+pip install -e ".[e2e]"
+playwright install webkit
+
+# Run everything: regenerate JSON, deploy to AWS, run all e2e tests
+./run_e2e.sh
+
+# Run only API tests (fast, no browser)
+./run_e2e.sh --skip-deploy api
+
+# Run only browser tests (loads dashboard via embed URL, headless WebKit)
+./run_e2e.sh --skip-deploy browser
+```
+
+Tunables (all optional):
+
+| Env var | Default | Purpose |
+| --- | --- | --- |
+| `QS_E2E_PAGE_TIMEOUT` | `30000` | Page-load / DOM-ready timeout in ms |
+| `QS_E2E_VISUAL_TIMEOUT` | `10000` | Per-visual render timeout in ms |
+| `QS_E2E_USER_ARN` | (project default) | Override the QuickSight user ARN used for embed URL generation |
+| `QS_E2E_IDENTITY_REGION` | `us-east-1` | QuickSight identity region (rarely needs changing) |
+
+Failure screenshots land in `tests/e2e/screenshots/` (gitignored).
+
 ## Project structure
 
 ```
@@ -233,8 +266,20 @@ tests/
     test_theme_presets.py # Theme preset registry and integration tests
     test_demo_data.py    # Demo data generation (determinism, FKs, scenarios)
     test_demo_sql.py     # Schema/seed SQL structure and CLI tests
+    e2e/                 # End-to-end tests (skipped unless QS_GEN_E2E=1)
+        conftest.py             # Skip logic, AWS clients, config loader
+        browser_helpers.py      # Embed URL gen, Playwright WebKit ctx, sheet/visual waits
+        test_deployed_resources.py     # API: resource existence + status
+        test_dashboard_structure.py    # API: sheets, visuals, params, filter groups
+        test_dataset_health.py         # API: import mode + key columns
+        test_dashboard_renders.py      # Browser: dashboard loads, 5 sheet tabs visible
+        test_sheet_visuals.py          # Browser: per-sheet visual count
+        test_drilldown.py              # Browser: cross-sheet drill-down navigation
+        test_recon_mutual_filter.py    # Browser: external→payments mutual filtering
+        test_filters.py                # Browser: date-range filter narrows visuals
 config.example.yaml      # Example configuration
 deploy.sh                # Idempotent AWS CLI deploy script
+run_e2e.sh               # One-shot: regenerate JSON + deploy + run e2e tests
 ```
 
 ## How to customise

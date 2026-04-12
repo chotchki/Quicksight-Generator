@@ -46,3 +46,5 @@ Output:
 	- [x] Visual layout sizing. KPI visuals use compact grid sizing (half-width, 6 rows) so they don't dominate the page. Charts get moderate height (12 rows), detail tables get the most space (18 rows, full-width).
 
 	- [x] Descriptive axis labels. All bar chart and pie chart axes display human-readable labels (e.g. "Merchant", "Sales Amount ($)", "Match Status") instead of raw column names like `transaction_id (Count)` or `external_system`.
+
+	- [x] End-to-end test harness. Two-layer validation against a deployed dashboard: API tests (boto3) verify resource health, dashboard structure, and dataset import status; browser tests (Playwright WebKit, headless) load the dashboard via a pre-authenticated embed URL and verify sheet tabs render, per-sheet visual counts, drill-down navigation (Settlements→Sales, Payments→Settlements), Payment Reconciliation mutual table filtering, and date-range filter behavior. Single-command runner (`./run_e2e.sh`) regenerates JSON, redeploys, and runs the tests so iteration is hands-off.

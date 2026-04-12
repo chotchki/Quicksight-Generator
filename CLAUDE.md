@@ -27,8 +27,13 @@ quicksight-gen demo schema -o demo/schema.sql
 quicksight-gen demo seed -o demo/seed.sql
 quicksight-gen demo apply -c config.yaml -o out/
 
-# Run tests
+# Run unit tests (fast, no AWS)
 pytest
+
+# Run end-to-end tests against a deployed dashboard (requires AWS creds)
+./run_e2e.sh                  # generate + deploy + all e2e
+./run_e2e.sh --skip-deploy api      # API tests only
+./run_e2e.sh --skip-deploy browser  # browser tests only
 ```
 
 ## Generated Output
@@ -77,6 +82,18 @@ tests/
   test_theme_presets.py  # Theme preset registry, serialization, analysis name integration
   test_demo_data.py      # Demo data determinism, row counts, FK integrity, scenarios
   test_demo_sql.py       # Schema/seed SQL structure, CLI command tests
+  e2e/                   # End-to-end tests (skipped unless QS_GEN_E2E=1)
+    conftest.py            # Skip logic, AWS clients, config loader (looks at run/config.yaml)
+    browser_helpers.py     # Embed URL gen, Playwright WebKit ctx, sheet/visual waits
+    test_deployed_resources.py    # API: dashboard/analysis/theme/datasets exist + healthy
+    test_dashboard_structure.py   # API: definition matches expected sheets/visuals/params
+    test_dataset_health.py        # API: import mode + key columns
+    test_dashboard_renders.py     # Browser: page loads, 5 sheet tabs visible
+    test_sheet_visuals.py         # Browser: per-sheet visual count + title spot-checks
+    test_drilldown.py             # Browser: Settlements→Sales, Payments→Settlements
+    test_recon_mutual_filter.py   # Browser: external txn click filters payments table
+    test_filters.py               # Browser: date-range filter narrows Sales Detail
+run_e2e.sh           # One-shot: regenerate JSON + deploy.sh + pytest tests/e2e
 ```
 
 ## Domain Model
@@ -116,3 +133,13 @@ tests/
 - Theme presets: `default` (blue/grey) and `sasquatch-bank` (forest green/bank gold); add new presets to the `PRESETS` dict in `theme.py`
 - Default theme: blues and greys, high contrast, titles >= 16px, body >= 12px
 - The end customer doesn't know exactly what they want — keep the code easy to mutate and iterate on
+
+## E2E Test Conventions
+
+- Two layers: API (boto3) and browser (Playwright WebKit, headless). Both gated behind `QS_GEN_E2E=1`.
+- Embed URL must be generated against the **dashboard region** (not the QuickSight identity region us-east-1) and is **single-use** — fixtures are function-scoped.
+- DOM selectors rely on QuickSight's `data-automation-id` attributes: `analysis_visual`, `analysis_visual_title_label`, `selectedTab_sheet_name`, `sn-table-cell-{row}-{col}`, `date_picker_{0|1}`, `sheet_control_name`. Sheet tabs use `[role="tab"]`.
+- Tab switches are racy: `click_sheet_tab` snapshots prior visual titles and waits for them to disappear before callers query the new sheet.
+- Filter / drill-down assertions poll for the visual state to change (e.g., row count drop) rather than sleeping.
+- Failure screenshots saved to `tests/e2e/screenshots/` (gitignored).
+- Tunables via env vars: `QS_E2E_PAGE_TIMEOUT`, `QS_E2E_VISUAL_TIMEOUT`, `QS_E2E_USER_ARN`, `QS_E2E_IDENTITY_REGION`.

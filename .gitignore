@@ -21,3 +21,4 @@ out/
 .pytest_cache/
 
 config.yaml
+tests/e2e/screenshots/
