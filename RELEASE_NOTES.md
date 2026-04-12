@@ -1,5 +1,39 @@
 # Release Notes
 
+## v0.3.0
+
+### End-to-end test harness
+
+A two-layer e2e harness validates a deployed dashboard, complementing the existing unit suite. Tests are skipped by default unless `QS_GEN_E2E=1` is set, so a plain `pytest` run stays AWS-free.
+
+**API layer (boto3, ~13s):** dashboard / analysis / theme / dataset existence and status, dashboard structure (sheets, visual counts, parameters, filter groups, dataset declarations), dataset import mode and key columns.
+
+**Browser layer (Playwright WebKit headless, ~60s):** dashboard loads via a pre-authenticated embed URL, all 5 sheet tabs render, per-sheet visual counts in the actual DOM, Settlements→Sales and Payments→Settlements drill-down navigation, Payment Reconciliation mutual table filtering (external transaction click filters payments table), and date-range filter behavior (future date range empties Sales Detail).
+
+### One-shot runner
+
+`./run_e2e.sh` regenerates JSON, runs `deploy.sh`, then `pytest tests/e2e` so iteration is hands-off:
+
+```bash
+./run_e2e.sh                       # full cycle
+./run_e2e.sh --skip-deploy api     # skip generate+deploy, API only
+./run_e2e.sh --skip-deploy browser # skip generate+deploy, browser only
+```
+
+### New features
+
+- 33 e2e tests across 8 test files under `tests/e2e/`
+- Tunable timeouts via `QS_E2E_PAGE_TIMEOUT`, `QS_E2E_VISUAL_TIMEOUT` env vars (defaults 30s / 10s)
+- Failure screenshots saved to `tests/e2e/screenshots/` (gitignored)
+- New `e2e` optional dependency group: `pip install -e ".[e2e]"` then `playwright install webkit`
+
+### Notes
+
+- Embed URL must be generated against the **dashboard region**, not the QuickSight identity region (us-east-1). Embed URLs are **single-use** so fixtures are function-scoped.
+- The conftest looks for config at `config.yaml` then `run/config.yaml` then env vars.
+
+---
+
 ## v0.2.0
 
 ### Consolidated single-analysis architecture
