@@ -137,7 +137,7 @@ Demo Scenarios:
 
 Code Base Guideance:
   - [ ] The exisiting code base has significant value, its not recommended to change the technology selection.
-    - aka mainly python that outputs the quicksight json with the shell deploy script
+    - aka Python that emits the QuickSight JSON and a Python `quicksight-gen deploy` command that applies it via boto3
     - the demo datasource is an aws aurora postgresql instance
   - [ ] The final output should be two quicksight databoards using the exisiting config process
   - [ ] The code may need to be restructured to allow for code sharing especially of interating between the quicksight api
@@ -145,13 +145,13 @@ Code Base Guideance:
   - [ ] Theming support is still wanted
     
 Output:
-  - [ ] The final output should still be quicksight json and be repeated deployable using the deploy script.
+  - [ ] The final output should still be quicksight json and be repeatedly deployable via `quicksight-gen deploy`.
 
   - [ ] If the demo deployment is done, an additional sheet at the front of the dashboard should be added explaining the scenario and what the other sheets are for.
 	
 	- [ ] All generated AWS resources (themes, datasets, analyses) must have a common tag (`ManagedBy: quicksight-gen`) so they can be found. Additional tags can be specified via `extra_tags` in config.yaml. The common tag is always applied on top of any other tags.
 
-	- [ ] Published dashboards. Each analysis (financial and reconciliation) also produces a published Dashboard resource. Dashboards enable ad-hoc filtering, CSV export, and expanded sheet controls. The dashboard is accessible to the configured `principal_arn`.
+	- [ ] Published dashboards. Each analysis (Payment Recon and Account Recon) also produces a published Dashboard resource. Dashboards enable ad-hoc filtering, CSV export, and expanded sheet controls. Dashboards are accessible to every configured `principal_arns` entry.
 
 	- [ ] Visual layout sizing. KPI visuals use compact grid sizing (half-width, 6 rows) so they don't dominate the page. Charts get moderate height (12 rows), detail tables get the most space (18 rows, full-width). Try to minimize excessive white space.
 

@@ -7,6 +7,8 @@ Conventions:
 - After each task, run the unit suite; after each phase, run the full e2e suite (unless the phase explicitly hasn't touched deploy yet).
 - Each **STOP** pauses for user review + potential replanning before the next phase.
 - Phase 1 is pure refactor — no user-visible behavior change on Payment Recon.
+- PLAN.md checkboxes are flipped as items complete. SPEC.md checkboxes are **not** touched in flight — they are swept once in Phase 6.3.
+- After each phase's commit + tag, push the branch and the tag.
 
 ## Carried-forward assumptions (from SPEC follow-ups)
 
@@ -21,26 +23,26 @@ Conventions:
 
 ## Phase 1 — Restructure into `payment_recon/` + `common/` (no feature change)
 
-- [ ] 1.1 Create `src/quicksight_gen/common/` and migrate the shared primitives: `models.py`, `theme.py`, `config.py` (update schema for `late_default_days`), `constants.py` (non-app-specific only), `tags.py` (extracted), `deploy.py` (new — see 1.6), `cleanup.py` (new — see 1.7).
-- [ ] 1.2 Create `src/quicksight_gen/payment_recon/` and move the existing app modules into it: `datasets.py`, `visuals.py`, `filters.py`, `analysis.py`, `recon_visuals.py`, `recon_filters.py`, `demo_data.py`, `constants.py` (app-specific sheet IDs).
-- [ ] 1.3 Rename "financial" → "payment-recon" everywhere: output filenames (`payment-recon-analysis.json`, `payment-recon-dashboard.json`), resource IDs, dataset prefixes where applicable, analysis default name ("Payment Reconciliation"; demo: "Demo — Payment Reconciliation").
-- [ ] 1.4 Restructure the Click CLI into subcommands:
+- [x] 1.1 Create `src/quicksight_gen/common/` and migrate the shared primitives: `models.py`, `theme.py`, `config.py` (update schema for `late_default_days`), `constants.py` (non-app-specific only), `tags.py` (extracted), `deploy.py` (new — see 1.6), `cleanup.py` (new — see 1.7).
+- [x] 1.2 Create `src/quicksight_gen/payment_recon/` and move the existing app modules into it: `datasets.py`, `visuals.py`, `filters.py`, `analysis.py`, `recon_visuals.py`, `recon_filters.py`, `demo_data.py`, `constants.py` (app-specific sheet IDs).
+- [x] 1.3 Rename "financial" → "payment-recon" everywhere: output filenames (`payment-recon-analysis.json`, `payment-recon-dashboard.json`), resource IDs, dataset prefixes where applicable, analysis default name ("Payment Reconciliation"; demo: "Demo — Payment Reconciliation").
+- [x] 1.4 Restructure the Click CLI into subcommands:
   - `quicksight-gen generate payment-recon [--theme-preset …]`
   - `quicksight-gen generate --all`
   - `quicksight-gen demo schema|seed|apply payment-recon|--all`
   - Stub `account-recon` subcommand group that raises `NotImplementedError` so test shape is stable.
-- [ ] 1.5 Add `quicksight-gen deploy [payment-recon|account-recon|--all] [--generate] [--yes]`: Python port of `deploy.sh`, delete-then-create semantics (no update), async waiters for analyses/dashboards. `--generate` chains `generate` first so iteration is one command.
-- [ ] 1.6 Add `quicksight-gen cleanup [--dry-run] [--yes]`: lists QuickSight resources in the configured account+region tagged `ManagedBy: quicksight-gen` that are NOT in the current generate output; bulk y/n confirm then deletes. Explicit command only (not chained into `deploy`).
-- [ ] 1.7 Delete `deploy.sh` and `run_e2e.sh`'s shell calls to it; replace with the new Python command.
-- [ ] 1.8 Update unit tests: fix imports, expected resource IDs, output filenames, CLI subcommand shape; keep coverage green.
-- [ ] 1.9 Update e2e tests: change `dashboard_id` fixture to `qs-gen-payment-recon-dashboard`; update any tests referencing old analysis name. Keep test count/behavior identical.
-- [ ] 1.10 Update `run_e2e.sh` to call `quicksight-gen deploy --all --generate` (or equivalent) then `pytest tests/e2e`.
+- [x] 1.5 Add `quicksight-gen deploy [payment-recon|account-recon|--all] [--generate] [--yes]`: Python port of `deploy.sh`, delete-then-create semantics (no update), async waiters for analyses/dashboards. `--generate` chains `generate` first so iteration is one command.
+- [x] 1.6 Add `quicksight-gen cleanup [--dry-run] [--yes]`: lists QuickSight resources in the configured account+region tagged `ManagedBy: quicksight-gen` that are NOT in the current generate output; bulk y/n confirm then deletes. Explicit command only (not chained into `deploy`).
+- [x] 1.7 Delete `deploy.sh` and `run_e2e.sh`'s shell calls to it; replace with the new Python command.
+- [x] 1.8 Update unit tests: fix imports, expected resource IDs, output filenames, CLI subcommand shape; keep coverage green.
+- [x] 1.9 Update e2e tests: change `dashboard_id` fixture to `qs-gen-payment-recon-dashboard`; update any tests referencing old analysis name. Keep test count/behavior identical.
+- [x] 1.10 Update `run_e2e.sh` to call `quicksight-gen deploy --all --generate` (or equivalent) then `pytest tests/e2e`.
 - [x] 1.11 Full test pass: `pytest` green + `./run_e2e.sh` green against a freshly redeployed dashboard.
 - [x] 1.11a Add support for multiple principal_arn values in config.yaml so that multiple users can view the dashboards
-- [ ] 1.12 Run a full destroy to clean up any renamed resources.
-- [ ] 1.13 Redeploy and rerun 1.11.
-- [ ] **STOP for review.**
-- [ ] 1.14 git commit, tag 0.3.1
+- [x] 1.12 Run a full destroy to clean up any renamed resources.
+- [x] 1.13 Redeploy and rerun 1.11.
+- [x] **STOP for review.**
+- [x] 1.14 git commit, tag v0.3.1, push branch + tag
 
 ---
 
@@ -60,7 +62,7 @@ Conventions:
 - [ ] 2.7 Update unit tests: refund math, optional-metadata filter derivation, new exception tables & subtitles, slider presence on each tab, Getting Started tab at index 0, explanation coverage still 100%.
 - [ ] 2.8 Update e2e tests: new dashboard structure (6 tabs now including Getting Started), visual counts, new exception tables assertable, one browser test for the days-outstanding slider filtering a table row count.
 - [ ] **STOP for review.** (Exceptions tab layout and Getting Started link-vs-button flow are the most likely iteration points.)
-- [ ] 2.9 git commit, tag 0.4
+- [ ] 2.9 git commit, tag v0.4.0, push branch + tag
 
 ---
 
@@ -87,7 +89,7 @@ Conventions:
 - [ ] 3.7 CLI wiring: implement the `account-recon` branches on `generate`, `demo schema|seed|apply`, `deploy`; `--all` now exercises both apps.
 - [ ] 3.8 Unit tests for AR: visual builders, filter groups, cross-reference validation (dataset ARNs, filter bindings, visual ID uniqueness, sheet ID scoping), explanation coverage, theme preset integration, demo data determinism + row counts + scenario coverage.
 - [ ] **STOP for review.** (Layout iteration expected — filters, drill-downs, and visual choices all deferred to Phase 4.)
-- [ ] 3.9 git commit, tag will depend on where we go or not
+- [ ] 3.9 git commit, tag (version TBD at phase end), push branch + tag
 
 ---
 
@@ -117,6 +119,6 @@ Conventions:
 
 - [ ] 6.1 README.md: two-app overview, project structure, CLI reference (`generate` / `deploy` / `cleanup` / `demo` with `--all`), demo scenarios, theming presets.
 - [ ] 6.2 CLAUDE.md: new module layout, `common/` API surface, deploy-in-Python note, two-app conventions.
-- [ ] 6.3 SPEC.md: check off delivered items; prune resolved follow-up questions.
+- [ ] 6.3 SPEC.md sweep — the one-time pass for this document: check off every item delivered across Phases 1–5, prune follow-up questions that have been resolved, and reword any lines that drifted from the shipped design. Per the Conventions note above, SPEC boxes are not touched before this step.
 - [ ] 6.4 RELEASE_NOTES.md entry — version TBD at release time (v0.4.0 or v1.0.0 depending on scope feel).
 - [ ] 6.5 Tag and push.
