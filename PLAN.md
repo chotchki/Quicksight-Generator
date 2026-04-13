@@ -41,6 +41,24 @@ Build the building blocks once; every later phase consumes them.
 
 ---
 
+## Phase 1.5 — Pagination-aware row counting
+
+Today's `count_table_rows` counts cells in the DOM, which for QS tables with more than ~30-50 rows is only the visible virtualization window, not the true filter result size. A filter that narrows 200 → 80 rows would show no change under our current helper, passing while the real assertion goes untested. Demo data is small enough that every table currently fits in one window, so the bug hides by accident.
+
+Fix before Phase 2 writes any filter-narrowing test against a table larger than a viewport.
+
+- [ ] 1.5.1 Grow demo data so at least one PR table and one AR table exceed the QS virtualization threshold (~50 rows rendered). Target: Sales detail grows from ~48 to ~120 rows by stretching `_DAYS_OF_HISTORY` in `payment_recon/demo_data.py`; AR Transactions detail grows to ~250 rows by doubling `_SUCCESSFUL_CROSS_SCOPE` / `_SUCCESSFUL_INTERNAL_INTERNAL`. Update the scenario coverage tests in `test_demo_data.py` and any hard-coded count assertions.
+- [ ] 1.5.2 Deploy the expanded demo. Write a throwaway debug test (like the Phase 1 debug file) that dumps the DOM region around a virtualized table's footer — the goal is to find the automation-id / class for the "X-Y of Z" indicator. Candidates to look for: `data-automation-id="visual_count_label"`, a `pagination` class, or an aria-label like "Pagination: rows X through Y of Z".
+- [ ] 1.5.3 Add `count_table_total_rows(page, visual_title)` to `browser_helpers.py`. Reads the pagination indicator text, parses the total, returns it. Raises a clear error if no indicator is found (so callers notice when a small table has no pagination UI and fall back to `count_table_rows` explicitly).
+- [ ] 1.5.4 Add `wait_for_table_total_rows_to_change(page, visual_title, before, timeout_ms)` that polls the pagination indicator rather than DOM cells. Mirrors the existing `wait_for_table_rows_to_change` shape.
+- [ ] 1.5.5 Decision point — two helpers or one? Tables with few rows (< viewport) don't render a pagination indicator, so the total-rows helper has to either error or fall through to DOM count. Settle in 1.5.3: prefer "explicit is better — two helpers, caller picks". Document the rule in CLAUDE.md's E2E Test Conventions.
+- [ ] 1.5.6 Update the 3 existing refactored tests (`test_filters.py`, `test_ar_filters.py`, `test_recon_mutual_filter.py`) to use `count_table_total_rows` where the target table now paginates. Verify green against the live dashboard.
+- [ ] 1.5.7 Commit — `Phase 1.5: pagination-aware row counting`.
+
+**STOP** — if 1.5.2 fails to find a pagination indicator (e.g., QS uses pure virtualization without a visible count), escalate: either find a way to scroll-and-accumulate the total, or revisit whether this matters for the filter assertions Phase 2/3 actually make (inequalities may still hold — a filter that drops below viewport *will* show DOM-count change). The answer affects whether Phase 2 needs a different assertion pattern entirely.
+
+---
+
 ## Phase 2 — Payment Recon filter coverage
 
 Walk every PR filter and verify the visuals it claims to scope. Each `[ ]` is one new test (or one parametrize case).
