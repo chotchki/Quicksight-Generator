@@ -94,17 +94,24 @@ Key Domain Models to Understand:
       - Assume single currency denominated to 2 decimal places (This application does not handle fractional currency, or currency conversions)
     - Accounts
       - May be internal or external
+        - "Internal" and "external" describe this application's reconciliation scope — whether the balance is tracked here — not system ownership. All accounts (internal and external) appear in the same account tables; upstream data feeds populate the rows.
         - External accounts its not this application's job to track their balance (That's for regulators)
         - Internal accounts have a daily final balance
-          - This amount should match net amount of transactions done in a day
+          - Stored balance is fed in from an upstream system; this application does not compute it.
+          - The stored balance should match the net amount of transactions done on the account in a day.
       - Will be linked to a parent account
       - Will have a name
     - Parent accounts
       - May be internal or external 
         - External parent accounts are not the focus of this application (That's for regulators)
       - Have a daily final balance
-        - This is a saved amount and intended to be an aggregation of the children's balances
+        - Stored balance is fed in from an upstream system. Parent-level and child-level feeds may come from different upstream systems, so the two levels can disagree with each other and with the underlying transactions.
+        - The invariant: stored parent balance should equal the aggregation of its children's balances.
       - Will have a name
+    - Reconciliation scope — two independent drift checks are performed:
+      - Child drift: stored child balance ≠ Σ of that child's posted transactions on that day.
+      - Parent drift: stored parent balance ≠ Σ of its children's stored balances on that day.
+      - Each finding points at a different upstream source and is investigated independently; the Exceptions view surfaces both levels side-by-side.
     - Transfers
       - Are the movement of money between accounts
       - Are done via double entry accounting transactions, meaning debits and credits

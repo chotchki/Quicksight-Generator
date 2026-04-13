@@ -100,8 +100,15 @@ Conventions:
 - [ ] 3.6 Getting Started sheet for AR (same pattern as PR: auto-derived instructions + demo scenario block).
 - [ ] 3.7 CLI wiring: implement the `account-recon` branches on `generate`, `demo schema|seed|apply`, `deploy`; `--all` now exercises both apps.
 - [ ] 3.8 Unit tests for AR: visual builders, filter groups, cross-reference validation (dataset ARNs, filter bindings, visual ID uniqueness, sheet ID scoping), explanation coverage, theme preset integration, demo data determinism + row counts + scenario coverage.
-- [ ] **STOP for review.** (Layout iteration expected — filters, drill-downs, and visual choices all deferred to Phase 4.)
-- [ ] 3.9 git commit, tag (version TBD at phase end), push branch + tag
+- [x] **STOP for review.** (Layout iteration expected — filters, drill-downs, and visual choices all deferred to Phase 4.) *Review found: child-account daily balances not stored/reconciled — scope revision follows in 3.10.*
+- [ ] 3.10 Child-account balance reconciliation (scope revision — see SPEC "Reconciliation scope" bullet):
+  - Schema: rename `ar_daily_balances` → `ar_parent_daily_balances`; add `ar_account_daily_balances` (account_id, balance_date, balance) seeded for internal child accounts; add view `ar_account_balance_drift` (stored − running Σ posted transactions per child per day); keep existing parent-level view.
+  - Demo data: generate child daily balances for the 6 internal children across the full window; plant child-level drift on 3–4 (account, days_ago) cells **independently** from the existing parent-level plants so the two drift tables surface different rows.
+  - Datasets: add `qs-gen-ar-account-balance-drift-dataset`; rename `qs-gen-ar-balance-drift-dataset` → `qs-gen-ar-parent-balance-drift-dataset` and the matching `DS_AR_BALANCE_DRIFT` constant for symmetry.
+  - Visuals: on Balances, replace the plain child-accounts directory with a Child Account Balances table fed from the child-drift view (mirrors the parent table). On Exceptions, add a Child Balance Drift table next to the existing Parent Balance Drift (rename existing visual/title for clarity).
+  - Tests: extend row-count and scenario-coverage tests (child-balance rows, both-sign child drift plants); schema SQL for new table + view; updated sheet/visual counts.
+  - Redeploy and spot-check before commit.
+- [ ] 3.11 git commit, tag (version TBD at phase end), push branch + tag
 
 ---
 
