@@ -11,8 +11,6 @@ same-sheet child table).
 
 from __future__ import annotations
 
-from xml.sax.saxutils import escape as _xml_escape
-
 from quicksight_gen.account_recon.constants import (
     DS_AR_ACCOUNT_BALANCE_DRIFT,
     DS_AR_ACCOUNTS,
@@ -43,6 +41,7 @@ from quicksight_gen.account_recon.visuals import (
     build_transactions_visuals,
     build_transfers_visuals,
 )
+from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.models import (
     Analysis,
@@ -157,16 +156,6 @@ def _full_width_text(element_id: str, row_span: int) -> GridLayoutElement:
     )
 
 
-def _half_width_text(
-    element_id: str, row_span: int, column_index: int,
-) -> GridLayoutElement:
-    return GridLayoutElement(
-        ElementId=element_id, ElementType="TEXT_BOX",
-        ColumnSpan=_HALF, RowSpan=row_span,
-        ColumnIndex=column_index,
-    )
-
-
 # ---------------------------------------------------------------------------
 # Sheet descriptions (shared with the Getting Started sheet)
 # ---------------------------------------------------------------------------
@@ -202,37 +191,52 @@ _EXCEPTIONS_DESCRIPTION = (
     "show when each drift feed spiked."
 )
 
-_DEMO_SCENARIO_FLAVOR = (
-    "<text-box>"
-    "Demo scenario — Farmers Exchange Bank. Five parent accounts "
-    "(Big Meadow Checking, Harvest Moon Savings, Orchard Lending Pool, "
-    "Valley Grain Co-op, and Harvest Credit Exchange) move money between "
-    "ten child accounts over a ~40 day window using four transfer types "
-    "(ach, wire, internal, cash). Parent accounts define per-type daily "
-    "outbound limits; a handful of child-day-type cells intentionally "
-    "breach those limits. A handful of transfers have a failed leg, "
-    "another handful are keyed off by a few dollars, three child-days "
-    "land in overdraft, and parent/child stored balances carry disjoint "
-    "planted drift — so each of the five Exceptions tables surfaces its "
-    "own distinct rows."
-    "<br/><br/>"
-    "Data is deterministic — anchor date is the day the seed was generated. "
-    "Explore the date-range, transfer-type, and show-only toggles to see "
-    "how each tab responds."
-    "</text-box>"
-)
+
+# Per-sheet highlights used to build bulleted summaries on the Getting
+# Started tab.
+_BALANCES_BULLETS = [
+    "Parent balances: stored parent vs Σ children's stored balances",
+    "Child balances: stored child vs Σ posted transactions",
+    "Click an account to drill into its transactions",
+]
+
+_TRANSFERS_BULLETS = [
+    "Transfer summary: one row per transfer_id",
+    "Unhealthy transfers (non-zero net or failed legs) surface on Exceptions",
+    "Click a transfer to drill into its underlying transactions",
+]
+
+_TRANSACTIONS_BULLETS = [
+    "Raw ledger — one row per transfer leg",
+    "Filters: date range, transfer type, Show Only Failed toggle",
+    "Failed rows feed the non-zero transfer cases on Exceptions",
+]
+
+_EXCEPTIONS_BULLETS = [
+    "Parent and child balance drift (separate upstream feeds)",
+    "Non-zero transfers, daily limit breaches, and child overdrafts",
+    "Timelines show when each drift feed spiked",
+    "Click any row to drill into the underlying transactions",
+]
 
 
 # ---------------------------------------------------------------------------
 # Text boxes
 # ---------------------------------------------------------------------------
 
-def _text_box(box_id: str, title: str, body: str) -> SheetTextBox:
+def _section_box(
+    box_id: str, title: str, body: str, bullet_items: list[str], accent: str,
+) -> SheetTextBox:
+    """Per-sheet Getting Started block: heading + body paragraph + bullets."""
     return SheetTextBox(
         SheetTextBoxId=box_id,
-        Content=(
-            f"<text-box>{_xml_escape(title)}<br/><br/>"
-            f"{_xml_escape(body)}</text-box>"
+        Content=rt.text_box(
+            rt.heading(title, color=accent),
+            rt.BR,
+            rt.BR,
+            rt.body(body),
+            rt.BR,
+            rt.bullets(bullet_items),
         ),
     )
 
@@ -243,43 +247,95 @@ def _text_box(box_id: str, title: str, body: str) -> SheetTextBox:
 
 def _build_getting_started_sheet(cfg: Config) -> SheetDefinition:
     is_demo = cfg.demo_database_url is not None
+    accent = get_preset(cfg.theme_preset).accent
 
     welcome_box = SheetTextBox(
         SheetTextBoxId="ar-gs-welcome",
-        Content=(
-            "<text-box>"
-            "Account Reconciliation Dashboard"
-            "<br/><br/>"
-            "This dashboard reconciles stored daily balances at both the "
-            "parent- and child-account levels against their respective "
-            "computations, plus transfer-level transactions for a bank's "
-            "double-entry ledger. Use the tabs above to walk from aggregate "
-            "balances down to individual transactions; the Exceptions tab "
-            "pulls the problems together in one place."
-            "</text-box>"
+        Content=rt.text_box(
+            rt.inline(
+                "Account Reconciliation Dashboard",
+                font_size="36px",
+                color=accent,
+            ),
+            rt.BR,
+            rt.BR,
+            rt.body(
+                "Reconcile stored daily balances at the parent- and child-"
+                "account levels against their computed counterparts, plus "
+                "transfer-level transactions for a bank's double-entry "
+                "ledger. Walk from aggregate balances down to individual "
+                "transactions — the Exceptions tab pulls the problems "
+                "together in one place."
+            ),
         ),
     )
 
     text_boxes: list[SheetTextBox] = [welcome_box]
-    layout: list[GridLayoutElement] = [_full_width_text("ar-gs-welcome", 4)]
+    layout: list[GridLayoutElement] = [_full_width_text("ar-gs-welcome", 5)]
 
     if is_demo:
         text_boxes.append(SheetTextBox(
             SheetTextBoxId="ar-gs-demo-flavor",
-            Content=_DEMO_SCENARIO_FLAVOR,
+            Content=rt.text_box(
+                rt.heading(
+                    "Demo scenario — Farmers Exchange Bank",
+                    color=accent,
+                ),
+                rt.BR,
+                rt.BR,
+                rt.body(
+                    "Five parent accounts (Big Meadow Checking, Harvest Moon "
+                    "Savings, Orchard Lending Pool, Valley Grain Co-op, and "
+                    "Harvest Credit Exchange) move money between ten child "
+                    "accounts over a ~40 day window using four transfer "
+                    "types (ach, wire, internal, cash). Parent accounts "
+                    "define per-type daily outbound limits; a handful of "
+                    "child-day-type cells intentionally breach those limits."
+                ),
+                rt.BR,
+                rt.BR,
+                rt.body(
+                    "A handful of transfers have a failed leg, another "
+                    "handful are keyed off by a few dollars, three "
+                    "child-days land in overdraft, and parent/child stored "
+                    "balances carry disjoint planted drift — so each of the "
+                    "five Exceptions tables surfaces its own distinct rows."
+                ),
+                rt.BR,
+                rt.BR,
+                rt.body(
+                    "Data is deterministic — anchor date is the day the "
+                    "seed was generated. Explore the date-range, "
+                    "transfer-type, and show-only toggles to see how each "
+                    "tab responds."
+                ),
+            ),
         ))
-        layout.append(_full_width_text("ar-gs-demo-flavor", 6))
+        layout.append(_full_width_text("ar-gs-demo-flavor", 9))
 
     sheet_blocks = [
-        ("ar-gs-balances", "Balances", _BALANCES_DESCRIPTION),
-        ("ar-gs-transfers", "Transfers", _TRANSFERS_DESCRIPTION),
-        ("ar-gs-transactions", "Transactions", _TRANSACTIONS_DESCRIPTION),
-        ("ar-gs-exceptions", "Exceptions", _EXCEPTIONS_DESCRIPTION),
+        (
+            "ar-gs-balances", "Balances",
+            _BALANCES_DESCRIPTION, _BALANCES_BULLETS,
+        ),
+        (
+            "ar-gs-transfers", "Transfers",
+            _TRANSFERS_DESCRIPTION, _TRANSFERS_BULLETS,
+        ),
+        (
+            "ar-gs-transactions", "Transactions",
+            _TRANSACTIONS_DESCRIPTION, _TRANSACTIONS_BULLETS,
+        ),
+        (
+            "ar-gs-exceptions", "Exceptions",
+            _EXCEPTIONS_DESCRIPTION, _EXCEPTIONS_BULLETS,
+        ),
     ]
-    for i, (box_id, title, body) in enumerate(sheet_blocks):
-        text_boxes.append(_text_box(box_id, title, body))
-        col_index = 0 if i % 2 == 0 else _HALF
-        layout.append(_half_width_text(box_id, row_span=5, column_index=col_index))
+    for box_id, title, body_text, bullet_items in sheet_blocks:
+        text_boxes.append(
+            _section_box(box_id, title, body_text, bullet_items, accent)
+        )
+        layout.append(_full_width_text(box_id, row_span=7))
 
     return SheetDefinition(
         SheetId=SHEET_AR_GETTING_STARTED,

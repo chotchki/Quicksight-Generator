@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from xml.sax.saxutils import escape as _xml_escape
-
+from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
 from quicksight_gen.payment_recon.constants import (
     DS_EXTERNAL_TRANSACTIONS,
@@ -175,21 +174,41 @@ _PAYMENT_RECON_DESCRIPTION = (
     "or external system."
 )
 
-_DEMO_SCENARIO_FLAVOR = (
-    "<text-box>"
-    "Demo scenario — Sasquatch National Bank. The data "
-    "in this dashboard is seeded from six fictional Seattle coffee shops "
-    "(Bigfoot Brews, Sasquatch Sips, Yeti Espresso, Skookum Coffee Co., "
-    "Cryptid Coffee Cart, and Wildman's Roastery). Sales flow into settlements "
-    "which pay out to the merchants; some settlements are intentionally left "
-    "unsettled, a handful of payments are returned, and a few amounts are "
-    "nudged off to populate the Exceptions tab."
-    "<br/><br/>"
-    "Anchor date for relative timestamps is the day the seed was generated. "
-    "Explore the filters and drill-downs — everything you see here was produced "
-    "deterministically from the demo_data.py generator."
-    "</text-box>"
-)
+
+# Per-sheet highlights used to build bulleted summaries on the Getting
+# Started tab. Each list stays scannable — three to four concrete things
+# the reader will find on that sheet.
+_SALES_BULLETS = [
+    "KPIs: total sale count and total amount",
+    "Bar charts by merchant and by location",
+    "Detail table of individual transactions",
+    "Filters: date range, merchant, location",
+]
+
+_SETTLEMENTS_BULLETS = [
+    "KPIs: total settled amount and pending count",
+    "Bar chart breaking down amounts by merchant type",
+    "Detail table listing each settlement with its status",
+    "Filter: settlement status",
+]
+
+_PAYMENTS_BULLETS = [
+    "KPIs: total paid amount and number of returned payments",
+    "Pie chart of payment statuses",
+    "Detail table including return reasons",
+]
+
+_EXCEPTIONS_BULLETS = [
+    "Unsettled sales and returned payments side by side",
+    "Sale↔settlement and settlement↔payment amount mismatches",
+    "Unmatched external-system transactions",
+]
+
+_PAYMENT_RECON_BULLETS = [
+    "KPIs: matched amount, unmatched amount, and late count",
+    "Click an external transaction to filter payments (and vice-versa)",
+    "Filters: date, match status, external system, days outstanding",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -206,82 +225,124 @@ def _text_box_element(
     )
 
 
-def _text_box(box_id: str, title: str, body: str) -> SheetTextBox:
-    """QuickSight's text-box parser requires a single ``<text-box>`` root and
-    XML-escaped entity references. Canonical format confirmed by round-tripping
-    a UI-authored text box via ``describe-analysis-definition``.
-    """
+def _section_box(
+    box_id: str, title: str, body: str, bullet_items: list[str], accent: str,
+) -> SheetTextBox:
+    """Per-sheet Getting Started block: heading + body paragraph + bullets."""
     return SheetTextBox(
         SheetTextBoxId=box_id,
-        Content=(
-            f"<text-box>{_xml_escape(title)}<br/><br/>"
-            f"{_xml_escape(body)}</text-box>"
+        Content=rt.text_box(
+            rt.heading(title, color=accent),
+            rt.BR,
+            rt.BR,
+            rt.body(body),
+            rt.BR,
+            rt.bullets(bullet_items),
         ),
     )
 
 
 def _build_getting_started_sheet(cfg: Config) -> SheetDefinition:
-    """Landing tab that auto-derives a description block per downstream sheet."""
+    """Landing tab with rich-text blocks flowing top-to-bottom."""
     is_demo = cfg.demo_database_url is not None
+    accent = get_preset(cfg.theme_preset).accent
 
-    welcome_html = (
-        "<text-box>"
-        "Payment Reconciliation Dashboard"
-        "<br/><br/>"
-        "This dashboard helps you track sales, settlements, and payments "
-        "through the full reconciliation lifecycle. Use the tabs above to "
-        "explore each stage — the blocks below summarise what each tab covers."
-        "</text-box>"
-    )
     welcome_box = SheetTextBox(
         SheetTextBoxId="gs-welcome",
-        Content=welcome_html,
+        Content=rt.text_box(
+            rt.inline(
+                "Payment Reconciliation Dashboard",
+                font_size="36px",
+                color=accent,
+            ),
+            rt.BR,
+            rt.BR,
+            rt.body(
+                "Track sales, settlements, and payments through the full "
+                "reconciliation lifecycle. Use the tabs above to walk each "
+                "stage — the sections below summarise what each tab covers."
+            ),
+        ),
     )
 
-    legend_html = (
-        "<text-box>"
-        "Clickable cells"
-        "<br/><br/>"
-        "Cells rendered in the theme accent color are interactive. "
-        "Plain accent-colored text means left-click drills to a related "
-        "tab or filters this view. Accent text with a pale tinted "
-        "background means a right-click menu is available — use it to "
-        "drill to a secondary related tab without losing the left-click "
-        "drill on the primary id."
-        "</text-box>"
-    )
     legend_box = SheetTextBox(
         SheetTextBoxId="gs-clickability-legend",
-        Content=legend_html,
+        Content=rt.text_box(
+            rt.heading("Clickable cells", color=accent),
+            rt.BR,
+            rt.BR,
+            rt.body(
+                "Cells rendered in the theme accent color are interactive:"
+            ),
+            rt.bullets([
+                "Plain accent-colored text — left-click drills to a related "
+                "tab or filters this view",
+                "Accent text with a pale tinted background — right-click "
+                "menu for a secondary drill, keeping the left-click action "
+                "free for the primary id",
+            ]),
+        ),
     )
 
     text_boxes: list[SheetTextBox] = [welcome_box, legend_box]
     layout: list[GridLayoutElement] = [
         _text_box_element("gs-welcome", 4),
-        _text_box_element("gs-clickability-legend", 4),
+        _text_box_element("gs-clickability-legend", 6),
     ]
 
     if is_demo:
         text_boxes.append(SheetTextBox(
             SheetTextBoxId="gs-demo-flavor",
-            Content=_DEMO_SCENARIO_FLAVOR,
+            Content=rt.text_box(
+                rt.heading(
+                    "Demo scenario — Sasquatch National Bank",
+                    color=accent,
+                ),
+                rt.BR,
+                rt.BR,
+                rt.body(
+                    "Data is seeded from six fictional Seattle coffee shops "
+                    "(Bigfoot Brews, Sasquatch Sips, Yeti Espresso, Skookum "
+                    "Coffee Co., Cryptid Coffee Cart, and Wildman's Roastery). "
+                    "Sales flow into settlements which pay out to merchants; "
+                    "some settlements are intentionally left unsettled, a "
+                    "handful of payments are returned, and a few amounts are "
+                    "nudged off to populate the Exceptions tab."
+                ),
+                rt.BR,
+                rt.BR,
+                rt.body(
+                    "Anchor date for relative timestamps is the day the seed "
+                    "was generated. Everything here was produced "
+                    "deterministically from demo_data.py — explore the "
+                    "filters and drill-downs freely."
+                ),
+            ),
         ))
-        layout.append(_text_box_element("gs-demo-flavor", 6))
+        layout.append(_text_box_element("gs-demo-flavor", 7))
 
     sheet_blocks = [
-        ("gs-sales", "Sales Overview", _SALES_DESCRIPTION),
-        ("gs-settlements", "Settlements", _SETTLEMENTS_DESCRIPTION),
-        ("gs-payments", "Payments", _PAYMENTS_DESCRIPTION),
-        ("gs-exceptions", "Exceptions & Alerts", _EXCEPTIONS_DESCRIPTION),
-        ("gs-payment-recon", "Payment Reconciliation", _PAYMENT_RECON_DESCRIPTION),
+        ("gs-sales", "Sales Overview", _SALES_DESCRIPTION, _SALES_BULLETS),
+        (
+            "gs-settlements", "Settlements",
+            _SETTLEMENTS_DESCRIPTION, _SETTLEMENTS_BULLETS,
+        ),
+        ("gs-payments", "Payments", _PAYMENTS_DESCRIPTION, _PAYMENTS_BULLETS),
+        (
+            "gs-exceptions", "Exceptions & Alerts",
+            _EXCEPTIONS_DESCRIPTION, _EXCEPTIONS_BULLETS,
+        ),
+        (
+            "gs-payment-recon", "Payment Reconciliation",
+            _PAYMENT_RECON_DESCRIPTION, _PAYMENT_RECON_BULLETS,
+        ),
     ]
 
-    for i, (box_id, title, body) in enumerate(sheet_blocks):
-        text_boxes.append(_text_box(box_id, title, body))
-        col_index = 0 if i % 2 == 0 else _HALF
-        layout.append(_text_box_element(
-            box_id, row_span=5, column_span=_HALF, column_index=col_index,
-        ))
+    for box_id, title, body_text, bullet_items in sheet_blocks:
+        text_boxes.append(
+            _section_box(box_id, title, body_text, bullet_items, accent)
+        )
+        layout.append(_text_box_element(box_id, row_span=7))
 
     return SheetDefinition(
         SheetId=SHEET_GETTING_STARTED,
