@@ -202,6 +202,201 @@ def scroll_visual_into_view(page, visual_title: str, timeout_ms: int) -> None:
     )
 
 
+def count_table_rows(page, visual_title: str) -> int:
+    """Count distinct table rows in the visual whose title matches.
+
+    Returns -1 if no visual with that title is on the page. Returns 0 if
+    the visual is present but empty. Caller is responsible for ensuring
+    the visual is hydrated (use ``scroll_visual_into_view`` for
+    below-the-fold tables).
+    """
+    return page.evaluate(
+        """(title) => {
+            const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
+            for (const v of visuals) {
+                const t = v.querySelector('[data-automation-id="analysis_visual_title_label"]');
+                if (!t || t.innerText.trim() !== title) continue;
+                const rows = new Set();
+                v.querySelectorAll('[data-automation-id^="sn-table-cell-"]').forEach(c => {
+                    const m = c.getAttribute('data-automation-id').match(/sn-table-cell-(\\d+)-/);
+                    if (m) rows.add(m[1]);
+                });
+                return rows.size;
+            }
+            return -1;
+        }""",
+        visual_title,
+    )
+
+
+def count_chart_categories(page, visual_title: str) -> int:
+    """Count distinct categorical entries (bars / slices / legend rows) in
+    a chart visual. Heuristic: counts SVG ``<g class*="bar">`` /
+    ``<path class*="slice">`` plus legend swatches and returns the max.
+
+    QS doesn't expose a single "category count" automation ID, so this is
+    intentionally lenient; use it to assert *change*, not exact value.
+    """
+    return page.evaluate(
+        """(title) => {
+            const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
+            for (const v of visuals) {
+                const t = v.querySelector('[data-automation-id="analysis_visual_title_label"]');
+                if (!t || t.innerText.trim() !== title) continue;
+                const bars = v.querySelectorAll('g[class*="bar"], path[class*="slice"], rect[class*="bar"]').length;
+                const legend = v.querySelectorAll('[class*="legend"] [class*="item"], [data-automation-id*="legend_item"]').length;
+                return Math.max(bars, legend);
+            }
+            return -1;
+        }""",
+        visual_title,
+    )
+
+
+def wait_for_table_rows_to_change(
+    page, visual_title: str, before: int, timeout_ms: int,
+) -> int:
+    """Poll a table visual's row count until it differs from ``before``.
+
+    Returns the new row count. Raises a Playwright timeout if the count
+    never changes. Use this after triggering a filter / drill action so
+    the test doesn't sleep blindly.
+    """
+    page.wait_for_function(
+        """({title, before}) => {
+            const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
+            for (const v of visuals) {
+                const t = v.querySelector('[data-automation-id="analysis_visual_title_label"]');
+                if (!t || t.innerText.trim() !== title) continue;
+                const rows = new Set();
+                v.querySelectorAll('[data-automation-id^="sn-table-cell-"]').forEach(c => {
+                    const m = c.getAttribute('data-automation-id').match(/sn-table-cell-(\\d+)-/);
+                    if (m) rows.add(m[1]);
+                });
+                return rows.size !== before;
+            }
+            return false;
+        }""",
+        arg={"title": visual_title, "before": before},
+        timeout=timeout_ms,
+    )
+    return count_table_rows(page, visual_title)
+
+
+def set_date_range(
+    page, start: str, end: str, timeout_ms: int,
+    picker_indices: tuple[int, int] = (0, 1),
+) -> None:
+    """Fill the two date-range pickers and commit each with Enter.
+
+    ``start`` / ``end`` use QuickSight's accepted text format (``YYYY/MM/DD``).
+    ``picker_indices`` defaults to (0, 1) — the first date-range control on
+    the active sheet. Override when a sheet has multiple ranges.
+    """
+    for picker_index, value in zip(picker_indices, (start, end)):
+        selector = f'[data-automation-id="date_picker_{picker_index}"]'
+        page.wait_for_selector(selector, timeout=timeout_ms, state="visible")
+        page.fill(selector, value)
+        page.press(selector, "Enter")
+
+
+def _open_control_dropdown(page, control_title: str, timeout_ms: int) -> None:
+    """Open the FilterControl popover for the named sheet control.
+
+    QuickSight renders each control as
+    ``[data-automation-id="sheet_control"][data-automation-context="<title>"]``
+    with the value picker at ``sheet_control_value`` (a Material-UI Select
+    combobox). Opens the popover and waits for the listbox to be visible.
+    """
+    card_selector = (
+        f'[data-automation-id="sheet_control"]'
+        f'[data-automation-context="{control_title}"]'
+    )
+    page.wait_for_selector(card_selector, timeout=timeout_ms, state="visible")
+    page.locator(
+        f'{card_selector} [data-automation-id="sheet_control_value"]'
+    ).first.click(timeout=timeout_ms)
+    # MUI mounts the listbox in a portal; aria-haspopup="listbox" expands.
+    page.wait_for_selector(
+        '[role="listbox"] [role="option"]', timeout=timeout_ms, state="visible",
+    )
+
+
+def set_dropdown_value(
+    page, control_title: str, value: str, timeout_ms: int,
+) -> None:
+    """Pick a single value from a SINGLE_SELECT FilterControl by title.
+
+    Opens the dropdown for ``control_title`` and clicks the option whose
+    text equals ``value``. Use ``clear_dropdown`` to reset to "All".
+    """
+    _open_control_dropdown(page, control_title, timeout_ms)
+    page.locator('[role="listbox"] [role="option"]', has_text=value).first.click(
+        timeout=timeout_ms,
+    )
+
+
+def set_multi_select_values(
+    page, control_title: str, values: list[str], timeout_ms: int,
+) -> None:
+    """Pick one or more values from a MULTI_SELECT FilterControl by title.
+
+    Deselects any currently-checked options first (via the option's
+    aria-selected state), then ticks only the requested values. Commits
+    by pressing Escape to dismiss the popover.
+    """
+    _open_control_dropdown(page, control_title, timeout_ms)
+    # Snapshot the labels of currently-selected options so we can deselect
+    # by label (clicking by index is racy — the listbox reorders as items
+    # toggle).
+    selected_labels = page.evaluate(
+        """() => Array.from(
+            document.querySelectorAll(
+                '[role="listbox"] [role="option"][aria-selected="true"]'
+            )
+        ).map(o => o.innerText.trim())"""
+    )
+    targets = set(values)
+    for label in selected_labels:
+        if label in targets:
+            targets.discard(label)
+            continue
+        page.locator(
+            '[role="listbox"] [role="option"]', has_text=label,
+        ).first.click(timeout=timeout_ms)
+    for value in targets:
+        page.locator(
+            '[role="listbox"] [role="option"]', has_text=value,
+        ).first.click(timeout=timeout_ms)
+    page.keyboard.press("Escape")
+
+
+def clear_dropdown(page, control_title: str, timeout_ms: int) -> None:
+    """Reset a FilterControl to its "all values" default.
+
+    Opens the dropdown and clicks the "Select all" / "All" entry. Works
+    for both SINGLE_SELECT and MULTI_SELECT controls — QuickSight uses
+    the same listbox markup for both.
+    """
+    _open_control_dropdown(page, control_title, timeout_ms)
+    # QS labels the clear-all entry "Select all" on multi-select and
+    # "All" on single-select; try the multi-select label first.
+    options = page.locator('[role="listbox"] [role="option"]')
+    for label in ("Select all", "All"):
+        match = options.filter(has_text=label).first
+        if match.count() > 0:
+            match.click(timeout=timeout_ms)
+            page.keyboard.press("Escape")
+            return
+    # Fallback: deselect every selected entry one by one.
+    selected = page.locator(
+        '[role="listbox"] [role="option"][aria-selected="true"]'
+    )
+    for i in range(selected.count()):
+        selected.nth(i).click(timeout=timeout_ms)
+    page.keyboard.press("Escape")
+
+
 def screenshot(page, name: str, subdir: str | None = None) -> Path:
     """Save a screenshot under tests/e2e/screenshots/[subdir/].
 

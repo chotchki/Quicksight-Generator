@@ -23,14 +23,19 @@ Conventions:
 
 Build the building blocks once; every later phase consumes them.
 
-- [ ] 1.1 Add `set_dropdown_value(page, control_title, value, timeout_ms)` to `browser_helpers.py`. Locates the FilterControl by its visible title (`sheet_control_name`), opens the dropdown, clicks the option whose text equals `value`, waits for the control's displayed selection to update.
-- [ ] 1.2 Add `set_multi_select_values(page, control_title, values, timeout_ms)` — same pattern, but tolerates multiple checked entries; deselects whatever's currently selected first so tests start from a clean state.
-- [ ] 1.3 Add `clear_dropdown(page, control_title, timeout_ms)` — picks the "All values" / blank entry so a multi-step test can reset between checks.
-- [ ] 1.4 Generalize the two existing date-range helpers (`_set_date` in `test_filters.py` and `test_ar_filters.py`) into `set_date_range(page, start, end, timeout_ms)` in the helpers module. Delete the per-file copies as part of 1.4.
-- [ ] 1.5 Add `count_table_rows(page, visual_title)` and `count_chart_categories(page, visual_title)` helpers. Both currently live as one-off `page.evaluate` blocks duplicated across filter / drilldown / mutual-filter tests — consolidate.
-- [ ] 1.6 Add `wait_for_visual_to_change(page, visual_title, before_count, timeout_ms)` — polls `count_table_rows` (or chart-category count) for the value to differ from `before_count`. Replaces the inline `page.wait_for_function` blocks. Returns the new count.
-- [ ] 1.7 Run unit tests; smoke-check helpers against a deployed dashboard via a single throwaway test (delete after smoke).
-- [ ] 1.8 Commit — `Phase 1: filter-interaction browser helpers`.
+- [x] 1.1 Add `set_dropdown_value(page, control_title, value, timeout_ms)` to `browser_helpers.py`. Locates the FilterControl by its visible title (`sheet_control_name`), opens the dropdown, clicks the option whose text equals `value`, waits for the control's displayed selection to update.
+- [x] 1.2 Add `set_multi_select_values(page, control_title, values, timeout_ms)` — same pattern, but tolerates multiple checked entries; deselects whatever's currently selected first so tests start from a clean state.
+- [x] 1.3 Add `clear_dropdown(page, control_title, timeout_ms)` — picks the "All values" / blank entry so a multi-step test can reset between checks.
+- [x] 1.4 Generalize the two existing date-range helpers (`_set_date` in `test_filters.py` and `test_ar_filters.py`) into `set_date_range(page, start, end, timeout_ms)` in the helpers module. Delete the per-file copies as part of 1.4.
+- [x] 1.5 Add `count_table_rows(page, visual_title)` and `count_chart_categories(page, visual_title)` helpers. Both currently live as one-off `page.evaluate` blocks duplicated across filter / drilldown / mutual-filter tests — consolidate.
+- [x] 1.6 Add `wait_for_table_rows_to_change(page, visual_title, before, timeout_ms)` — polls `count_table_rows` for the value to differ from `before`. Replaces the inline `page.wait_for_function` blocks. Returns the new count. (Renamed from `wait_for_visual_to_change` since chart-category change polling wasn't needed yet — add later if Phase 2 turns out to need it.)
+- [x] 1.7 Smoke-checked helpers against the live AR Transfers tab — `set_multi_select_values("Transfer Status", ["not_net_zero"])` correctly narrows the Transfer Summary table. Smoke + debug test files deleted.
+- [x] 1.8 Commit — `Phase 1: filter-interaction browser helpers`.
+
+**Notes from Phase 1 implementation:**
+- QS sheet controls live under `[data-automation-id="sheet_control"][data-automation-context="<Title>"]`. The value picker is `[data-automation-id="sheet_control_value"]` (a Material-UI Select combobox). The kebab-menu button (`sheet_control_menu_button`) is *not* the dropdown trigger — clicking it opens an "Options" menu (Reset/Edit), not the value list.
+- Multi-select listbox options reorder on toggle, so the deselect-then-select loop snapshots labels first via JS evaluate, then clicks by `has_text=label` rather than by index.
+- Dropdowns mount in a portal at the document root; `[role="listbox"] [role="option"]` is the right scoping selector.
 
 **STOP** — review helper signatures before any tests are written against them, since the API will be hard to change after 5+ tests use it.
 
