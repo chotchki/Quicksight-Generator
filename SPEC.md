@@ -99,6 +99,7 @@ Key Domain Models to Understand:
         - Internal accounts have a daily final balance
           - Stored balance is fed in from an upstream system; this application does not compute it.
           - The stored balance should match the net amount of transactions done on the account in a day.
+          - A child account's stored balance should not go below 0 on any day — negative-balance days are flagged as overdrafts.
       - Will be linked to a parent account
       - Will have a name
     - Parent accounts
@@ -107,11 +108,16 @@ Key Domain Models to Understand:
       - Have a daily final balance
         - Stored balance is fed in from an upstream system. Parent-level and child-level feeds may come from different upstream systems, so the two levels can disagree with each other and with the underlying transactions.
         - The invariant: stored parent balance should equal the aggregation of its children's balances.
+      - Define per-type daily transfer limits that apply to their child accounts. A child's outbound flow of a given type on a given day that exceeds the parent's limit is flagged.
+        - Limits are populated by an upstream system; this application does not set or compute them.
+        - A given parent may only have limits defined for some types — an undefined type means "no limit enforced by this application".
       - Will have a name
-    - Reconciliation scope — two independent drift checks are performed:
+    - Reconciliation scope — four independent checks are performed:
       - Child drift: stored child balance ≠ Σ of that child's posted transactions on that day.
       - Parent drift: stored parent balance ≠ Σ of its children's stored balances on that day.
-      - Each finding points at a different upstream source and is investigated independently; the Exceptions view surfaces both levels side-by-side.
+      - Child limit breach: Σ |outbound posted transaction amounts of type T| for a child on a day > parent's limit for type T.
+      - Child overdraft: stored child balance < 0 on any day.
+      - Each finding points at a different upstream source and is investigated independently; the Exceptions view surfaces all four side-by-side.
     - Transfers
       - Are the movement of money between accounts
       - Are done via double entry accounting transactions, meaning debits and credits
@@ -123,6 +129,7 @@ Key Domain Models to Understand:
       - Have an amount in money
       - Have a timestamp when posted
       - Could fail individually
+      - Carry a transfer type (e.g., ACH, wire, internal, cash) used for limit-checking. Type is orthogonal to direction (debit/credit).
       - If it affects an internal account the daily balance MUST be updated in lockstep
         
 Demo Scenarios:
