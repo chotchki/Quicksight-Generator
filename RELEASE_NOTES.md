@@ -1,5 +1,33 @@
 # Release Notes
 
+## v1.0.0
+
+### Spec complete — dual-dashboard restructure delivered
+
+v1.0.0 ships the full spec: two independent QuickSight apps (Payment Reconciliation + Account Reconciliation) generated from Python, deployed via boto3, tested at four layers (unit, integration, API e2e, browser e2e). Both apps share one theme, account, datasource, and CLI surface, yet are selectable individually for fast iteration (`--all` exercises both, `payment-recon` / `account-recon` targets one).
+
+### What landed since v0.5.0
+
+- **Account Recon Phase 4** (v0.6.0): multi-select filters per tab (parent/child account, transfer status, transaction status); Show-Only-X SINGLE_SELECT toggles (unhealthy transfers, failed transactions, drift); left-click and right-click drill-downs covering all six user-research flows; Parent Drift Timeline alongside the existing Child Drift Timeline; same-sheet chart filtering on every new chart.
+- **Account Recon Phase 5** (v0.7.0): per-type daily transfer limits (ACH / wire / internal / cash) enforced against parent limits fed upstream, plus child overdraft detection. Exceptions tab grew from 3 independent checks to 5 (parent drift, child drift, non-zero transfers, limit breaches, child overdrafts) laid out as paired half-width tables + two drift timelines for maximum density.
+- **Account Recon browser e2e** (v0.8.0): 16 Playwright tests mirror PR's coverage — dashboard load, per-sheet visual counts, drill-downs (Balances→Txn, Transfers→Txn, Exceptions Breach→Txn), date-range filter narrowing, all five Show-Only-X toggles. Right-click `DATA_POINT_MENU` drill is covered structurally (Playwright menu-select is flaky). Screenshots namespaced per app under `tests/e2e/screenshots/{payment_recon,account_recon}/`.
+- **Rich-text Getting Started sheets** (v1.0.0, Phase 6): both apps' landing tabs use proper typography — 36px welcome, 32px section headings, 20px subheadings, accent-colored links, bulleted per-sheet summaries — via a new `common/rich_text.py` XML composition helper. Theme accent resolves to hex at generate time (QuickSight text parser doesn't accept theme tokens).
+- **Docs refresh** (v1.0.0, Phase 7): README rewritten for the two-app structure; CLAUDE.md updated for the `common/` + per-app module layout; SPEC.md swept — delivered checkboxes flipped, open questions collapsed into a Decisions section.
+
+### Stats
+
+- **~16,030 lines of Python** (10,570 in `src/`, 5,460 in `tests/`) + 485 lines of schema DDL.
+- **254 unit / integration tests**, **75 e2e tests** (329 total), **436 assert statements**.
+- **2 apps** (6 + 5 = 11 sheets), **20 datasets** (11 PR + 9 AR), **3 theme presets**, **1 shared datasource**.
+
+### Notes
+
+- The e2e suite is gated on `QS_GEN_E2E=1` and requires AWS credentials; `pytest` alone runs the 329 fast tests with no AWS dependency.
+- Dataset Direct Query (no SPICE) — seed changes show up immediately after `demo apply`, no refresh step needed.
+- `cleanup --dry-run` / `cleanup --yes` sweeps stale `ManagedBy: quicksight-gen` resources not in current `out/`.
+
+---
+
 ## v0.5.0
 
 ### Account Reconciliation — second app

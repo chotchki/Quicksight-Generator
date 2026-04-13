@@ -1,6 +1,11 @@
 # QuickSight Analysis Generator
 
-Python tool that programmatically generates AWS QuickSight JSON definitions (theme, datasets, analysis, dashboard) importable via the AWS CLI. Designed for easy mutation — change Python code or ask Claude to adjust, re-run, get new JSON.
+Python tool that programmatically generates AWS QuickSight JSON definitions (theme, datasets, analyses, dashboards) and deploys them via boto3. Ships **two independent QuickSight apps** sharing one theme, account, datasource, and CLI surface:
+
+- **Payment Reconciliation** — 6 sheets: Getting Started, Sales, Settlements, Payments, Exceptions, Payment Reconciliation
+- **Account Reconciliation** — 5 sheets: Getting Started, Balances, Transfers, Transactions, Exceptions
+
+The customer doesn't know exactly what they want yet. Everything is generated from code and deployed idempotently (delete-then-create) so a change is one command to roll out.
 
 ## Quick Reference
 
@@ -8,131 +13,181 @@ Python tool that programmatically generates AWS QuickSight JSON definitions (the
 - **Package manager**: pip / setuptools, venv at `.venv/`
 - **Entry point**: `python -m quicksight_gen` or `quicksight-gen` (installed script)
 - **CLI framework**: Click
-- **Output**: JSON files in `out/` (datasource [demo only], theme, datasets, analysis, dashboard)
+- **Output**: JSON files in `out/` (theme, per-app analysis/dashboard, datasets, optional datasource)
 
 ## Commands
 
 ```bash
-# Install dependencies
+# Install dependencies (add [demo] for `demo apply`, which needs psycopg2)
 pip install -e ".[dev]"
+pip install -e ".[demo]"
 
-# Generate all JSON
-quicksight-gen generate -c config.yaml -o out/
+# Generate all JSON (both apps, one theme)
+quicksight-gen generate --all -c config.yaml -o out/
 
-# Generate with a theme preset
-quicksight-gen generate -c config.yaml -o out/ --theme-preset sasquatch-bank
+# Generate a single app
+quicksight-gen generate payment-recon -c config.yaml -o out/
+quicksight-gen generate account-recon -c config.yaml -o out/ --theme-preset farmers-exchange-bank
 
-# Demo: write schema DDL / seed SQL / apply to a database
-quicksight-gen demo schema -o demo/schema.sql
-quicksight-gen demo seed -o demo/seed.sql
-quicksight-gen demo apply -c config.yaml -o out/
+# Deploy to AWS (delete-then-create; polls async resources to terminal state)
+quicksight-gen deploy --all -c config.yaml -o out/
 
-# Run unit tests (fast, no AWS)
-pytest
+# Typical iteration loop: regenerate + deploy in one shot
+quicksight-gen deploy --all --generate -c config.yaml -o out/
 
-# Run end-to-end tests against a deployed dashboard (requires AWS creds)
-./run_e2e.sh                  # generate + deploy + all e2e
-./run_e2e.sh --skip-deploy api      # API tests only
-./run_e2e.sh --skip-deploy browser  # browser tests only
+# Cleanup: delete ManagedBy:quicksight-gen resources not in current out/
+quicksight-gen cleanup --dry-run
+quicksight-gen cleanup --yes
+
+# Demo: schema DDL / seed SQL / apply to a Postgres database
+quicksight-gen demo schema --all -o demo/schema.sql
+quicksight-gen demo seed   --all -o demo/seed.sql
+quicksight-gen demo apply  --all -c config.yaml -o out/
+
+# Tests
+pytest                              # unit + integration, fast, no AWS
+./run_e2e.sh                        # regenerate + deploy both apps + e2e
+./run_e2e.sh --skip-deploy api      # API e2e only
+./run_e2e.sh --skip-deploy browser  # browser e2e only
 ```
+
+`demo apply` is app-scoped: `demo apply payment-recon` generates with the `sasquatch-bank` preset; `demo apply account-recon` uses `farmers-exchange-bank`; `--all` generates both with each app's natural preset. Schema is always loaded in full (both apps share one Postgres DB, `pr_` / `ar_` table prefixes).
 
 ## Generated Output
 
 ```
 out/
-  datasource.json             # QuickSight data source (demo apply only)
-  theme.json                  # Shared blue/grey theme
-  financial-analysis.json     # Consolidated analysis (financial + payment recon)
-  financial-dashboard.json    # Published dashboard (public link-sharing)
+  datasource.json                     # demo apply only
+  theme.json                          # one shared theme
+  payment-recon-analysis.json
+  payment-recon-dashboard.json
+  account-recon-analysis.json
+  account-recon-dashboard.json
   datasets/
-    qs-gen-merchants-dataset.json
+    qs-gen-merchants-dataset.json            # 11 PR datasets
     qs-gen-sales-dataset.json
     qs-gen-settlements-dataset.json
     qs-gen-payments-dataset.json
     qs-gen-settlement-exceptions-dataset.json
     qs-gen-payment-returns-dataset.json
+    qs-gen-sale-settlement-mismatch-dataset.json
+    qs-gen-settlement-payment-mismatch-dataset.json
+    qs-gen-unmatched-external-txns-dataset.json
     qs-gen-external-transactions-dataset.json
     qs-gen-payment-recon-dataset.json
+    qs-gen-ar-parent-accounts-dataset.json   # 9 AR datasets
+    qs-gen-ar-accounts-dataset.json
+    qs-gen-ar-transactions-dataset.json
+    qs-gen-ar-parent-balance-drift-dataset.json
+    qs-gen-ar-account-balance-drift-dataset.json
+    qs-gen-ar-transfer-summary-dataset.json
+    qs-gen-ar-non-zero-transfers-dataset.json
+    qs-gen-ar-limit-breach-dataset.json
+    qs-gen-ar-overdraft-dataset.json
 ```
+
+`generate` (single app) prunes stale dataset JSON that belongs to neither app — so renaming or dropping a dataset doesn't leave an orphan that `deploy` would re-create. The other app's dataset files are preserved.
 
 ## Project Structure
 
 ```
 src/quicksight_gen/
-  __main__.py        # Entry point (delegates to cli.main)
-  cli.py             # Click CLI: generate, demo schema/seed/apply
-  config.py          # Config dataclass (incl. late_threshold_days), loads from YAML or env vars
-  constants.py       # Shared sheet IDs and dataset identifier constants
-  models.py          # Dataclasses mapping to QuickSight API JSON structures
-  theme.py           # Theme presets (default blue/grey + sasquatch-bank green/gold)
-  datasets.py        # All dataset definitions (6 financial + 2 reconciliation)
-  demo_data.py       # Deterministic demo data generator (sasquatch coffee shops)
-  analysis.py        # Consolidated analysis: 5 tabs (Sales, Settlements, Payments, Exceptions, Payment Recon)
-  visuals.py         # Visual definitions for financial analysis tabs (Sales, Settlements, Payments, Exceptions)
-  filters.py         # Filter groups and controls for financial analysis tabs
-  recon_analysis.py  # (Gutted — recon consolidated into analysis.py)
-  recon_visuals.py   # Payment Reconciliation visuals: KPIs, bar chart, dual tables with mutual filtering
-  recon_filters.py   # Payment Reconciliation filters: date range, match status, external system, days outstanding
+  __main__.py            # Entry point (delegates to cli.main)
+  cli.py                 # Click CLI: generate / deploy / cleanup / demo (all with --all or app arg)
+  common/
+    config.py            # Config dataclass + YAML/env loader (principal_arns list, late_default_days, theme_preset)
+    models.py            # Dataclasses mapping to QuickSight API JSON (to_aws_json + _strip_nones)
+    theme.py             # Theme presets (default / sasquatch-bank / farmers-exchange-bank); PRESETS registry
+    deploy.py            # boto3 delete-then-create deploy with async waiters
+    cleanup.py           # Tag-based cleanup of stale resources (ManagedBy:quicksight-gen)
+    clickability.py      # Conditional-format helpers: accent text (left-click) + tint-background (right-click)
+    rich_text.py         # XML composition helpers for SheetTextBox.Content (heading/bullets/link/inline)
+  payment_recon/
+    analysis.py          # 6 sheets, drill-downs, filter groups, dashboard builder
+    visuals.py           # Sales / Settlements / Payments / Exceptions visuals
+    recon_visuals.py     # Payment Reconciliation side-by-side tables + KPIs
+    filters.py           # Pipeline-tab filter groups + controls
+    recon_filters.py     # Payment Reconciliation filters (date, match status, ext system, days outstanding)
+    datasets.py          # 11 custom-SQL datasets
+    demo_data.py         # Sasquatch National Bank demo generator
+    constants.py         # Sheet + dataset identifier constants
+  account_recon/
+    analysis.py          # 5 sheets, drill-downs, filter groups, dashboard builder
+    visuals.py           # Balances / Transfers / Transactions / Exceptions visuals
+    filters.py           # Per-tab filters + Show-Only-X toggles
+    datasets.py          # 9 custom-SQL datasets
+    demo_data.py         # Farmers Exchange Bank demo generator
+    constants.py         # Sheet + dataset identifier constants
 demo/
-  schema.sql         # PostgreSQL DDL for demo database (tables, views, indexes)
+  schema.sql             # Full PostgreSQL DDL (both apps — pr_ and ar_ prefixes)
 tests/
-  test_models.py     # Unit tests for models, tags, config, dataset builders
-  test_generate.py   # Integration tests: full pipeline, cross-refs, explanations
-  test_recon.py      # Unit tests for payment recon visuals and filters
-  test_theme_presets.py  # Theme preset registry, serialization, analysis name integration
-  test_demo_data.py      # Demo data determinism, row counts, FK integrity, scenarios
+  test_models.py         # Models, tags, config, dataset builders
+  test_generate.py       # Full pipeline, cross-refs, explanations (PR)
+  test_account_recon.py  # AR visuals, filters, datasets, analysis wiring
+  test_recon.py          # Payment recon visuals + filters
+  test_theme_presets.py  # Preset registry, serialization, analysis name integration
+  test_demo_data.py      # Demo determinism, row counts, FK integrity, scenario coverage
   test_demo_sql.py       # Schema/seed SQL structure, CLI command tests
-  e2e/                   # End-to-end tests (skipped unless QS_GEN_E2E=1)
-    conftest.py            # Skip logic, AWS clients, config loader (looks at run/config.yaml)
-    browser_helpers.py     # Embed URL gen, Playwright WebKit ctx, sheet/visual waits
-    test_deployed_resources.py    # API: dashboard/analysis/theme/datasets exist + healthy
-    test_dashboard_structure.py   # API: definition matches expected sheets/visuals/params
-    test_dataset_health.py        # API: import mode + key columns
-    test_dashboard_renders.py     # Browser: page loads, 5 sheet tabs visible
-    test_sheet_visuals.py         # Browser: per-sheet visual count + title spot-checks
-    test_drilldown.py             # Browser: Settlements→Sales, Payments→Settlements
-    test_recon_mutual_filter.py   # Browser: external txn click filters payments table
-    test_filters.py               # Browser: date-range filter narrows Sales Detail
-run_e2e.sh           # One-shot: regenerate JSON + deploy.sh + pytest tests/e2e
+  e2e/                   # Two layers (API boto3 + browser Playwright WebKit); gated on QS_GEN_E2E=1
+    conftest.py
+    browser_helpers.py
+    test_deployed_resources.py / test_ar_deployed_resources.py
+    test_dashboard_structure.py / test_ar_dashboard_structure.py
+    test_dataset_health.py     / test_ar_dataset_health.py
+    test_dashboard_renders.py  / test_ar_dashboard_renders.py
+    test_sheet_visuals.py      / test_ar_sheet_visuals.py
+    test_drilldown.py          / test_ar_drilldown.py
+    test_state_toggles.py      / test_ar_state_toggles.py
+    test_filters.py            / test_ar_filters.py
+    test_recon_mutual_filter.py
+scripts/
+  screenshot_getting_started.py   # Ad-hoc: screenshot both Getting Started tabs
+run_e2e.sh
 ```
 
 ## Domain Model
 
-### Financial Pipeline
-**Merchants -> Sales -> Settlements -> Payments**
+### Payment Reconciliation
+**Merchants → Sales → Settlements → Payments → External Transactions**
 
 - Merchants make sales at locations
-- Sales are bundled into settlements (settlement type depends on merchant type)
-- Settlements are paid to merchants
-- Key concerns: unsettled sales (exceptions) and returned payments
+- Sales bundle into settlements (settlement type depends on merchant type)
+- Settlements get paid to merchants as payments
+- Payments leave the internal system, so only payments reconcile against external systems
+- Multiple external systems (BankSync, PaymentHub, ClearSettle) aggregate 1+ internal payments into one external transaction
+- Match is valid only when external total exactly equals sum of linked payments — no partials
+- Match statuses: **matched**, **not_yet_matched**, **late** (threshold: `late_default_days`, default 30 — slider also available)
+- Mutual table filtering on the Payment Reconciliation tab: clicking an external txn filters its payments; clicking a payment filters back
 
-### Payment Reconciliation
-**Internal Payments <-> External System Transactions**
+### Account Reconciliation
+**Parent accounts (with daily balances) → Child accounts → Transfers → Transaction legs (double-entry ledger)**
 
-- Only payments leave the internal system, so only payments reconcile against external systems
-- Multiple external systems (e.g., BankSync, PaymentHub, ClearSettle) aggregate 1+ internal payments into a single external transaction
-- A match is valid only when the external transaction total exactly equals the sum of linked internal payments — no partial matches
-- Match statuses: **matched**, **not_yet_matched**, **late**
-- "Late" threshold is config-driven (`late_threshold_days`, default 30) — users can also use the days-outstanding slider interactively
-- Mutual table filtering: clicking an external transaction filters to its payments; clicking a payment filters back to its transaction
+- Every transfer is a set of transaction legs that must net to zero
+- Daily balance snapshots allow drift detection: recomputed balance vs. stored balance
+- Failed legs, limit breaches (parent daily out-flow cap), and overdrafts (child below zero) populate the Exceptions tab
+- Drift timelines (parent + child) surface systemic issues over time
 
 ## Architecture Decisions
 
-- All models use Python dataclasses with `to_aws_json()` methods that produce the exact dict shape for AWS CLI `create-data-source`, `create-theme`, `create-data-set`, `create-analysis`
+- All models use Python dataclasses with `to_aws_json()` methods that produce the exact dict shape for AWS QuickSight API (`create-analysis`, `create-dashboard`, `create-data-set`, `create-theme`, `create-data-source`)
 - Helper `_strip_nones()` recursively cleans None values from serialized output
-- Config accepts a pre-existing DataSource ARN for production use; for demo mode, `datasource_arn` is auto-derived from `demo_database_url` and a `datasource.json` is generated
-- Datasets use custom SQL queries (PostgreSQL syntax, e.g. `CURRENT_DATE - col::date` instead of `DATEDIFF`)
+- Config accepts a pre-existing DataSource ARN for production use; for demo, `datasource_arn` is auto-derived from `demo_database_url` and `datasource.json` is generated
+- All datasets use custom SQL in PostgreSQL syntax (no SPICE → Direct Query). Seed changes show up immediately after `demo apply` — no refresh step.
 - Generated resource IDs use kebab-case with a configurable prefix (default `qs-gen-`)
-- All resources tagged with `ManagedBy: quicksight-gen`; extra tags via `extra_tags` in config
-- Every sheet has a plain-language description and every visual has a subtitle explaining what it shows — the end customer may not be technical
+- All resources tagged `ManagedBy: quicksight-gen`; `extra_tags` in config are merged in
+- `cleanup` uses that tag to enumerate managed resources and deletes anything not in the current `out/`
+- Every sheet has a plain-language description; every visual has a subtitle — the end customer is not technical. Coverage is enforced in unit + API e2e tests.
+- Clickable cells use `common/clickability.py`: accent-colored text = left-click drill; accent text on pale-tint background = right-click menu drill
 
 ## Conventions
 
 - Type hints throughout
-- One module per concern; recon visuals/filters are in separate modules but consolidated into the single analysis
-- Theme presets: `default` (blue/grey) and `sasquatch-bank` (forest green/bank gold); add new presets to the `PRESETS` dict in `theme.py`
-- Default theme: blues and greys, high contrast, titles >= 16px, body >= 12px
+- **Never hardcode hex colors in analysis code.** Resolve from `get_preset(cfg.theme_preset).<token>` at generate time (accent, primary_fg, link_tint, etc.).
+- One module per concern; `payment_recon/` has `visuals.py` + `recon_visuals.py` and `filters.py` + `recon_filters.py` because the Payment Reconciliation tab is a distinct UX pattern
+- Theme presets live in the `PRESETS` dict in `common/theme.py`; set `analysis_name_prefix="Demo"` on demo presets
+- Default theme: blues and greys, high contrast, titles ≥ 16px, body ≥ 12px
 - The end customer doesn't know exactly what they want — keep the code easy to mutate and iterate on
+- Rich text on Getting Started sheets uses `common/rich_text.py`; theme-accent colors resolve to hex at generate time
 
 ## E2E Test Conventions
 
@@ -142,11 +197,12 @@ run_e2e.sh           # One-shot: regenerate JSON + deploy.sh + pytest tests/e2e
 - Tab switches are racy: `click_sheet_tab` snapshots prior visual titles and waits for them to disappear before callers query the new sheet.
 - Filter / drill-down assertions poll for the visual state to change (e.g., row count drop) rather than sleeping.
 - Below-the-fold tables virtualize their cells — call `scroll_visual_into_view(page, title, timeout_ms)` before asserting on cell content or clicking a row.
-- Failure screenshots saved to `tests/e2e/screenshots/` (gitignored).
+- Failure screenshots saved to `tests/e2e/screenshots/<app>/` (gitignored). Per-app subdirs keep PR and AR screenshots separated.
 - Tunables via env vars: `QS_E2E_PAGE_TIMEOUT`, `QS_E2E_VISUAL_TIMEOUT`, `QS_E2E_USER_ARN`, `QS_E2E_IDENTITY_REGION`.
 
-## Demo data conventions
+## Demo Data Conventions
 
-- Every visual should have non-empty data in the demo. For each new visual that relies on a scenario (drift, unmatched, failed, etc.), add a `TestScenarioCoverage` assertion in `test_demo_data.py` that guarantees ≥N rows of that shape — counts alone don't catch "zero scenario rows slipped through".
+- Every visual should have non-empty data in the demo. For each new visual that relies on a scenario (drift, unmatched, failed, returned, limit-breach, overdraft, etc.), add a `TestScenarioCoverage` assertion in the app's demo-data tests that guarantees ≥N rows of that shape — counts alone don't catch "zero scenario rows slipped through".
 - Generators must stay deterministic (`random.Random(42)`); tests depend on exact output.
 - Write the coverage assertion **before** the visual, not after. It's the fastest way to notice when generator pool-sizing or branching makes a scenario silently vanish.
+- Each app has its own demo persona (Sasquatch National Bank coffee shops; Farmers Exchange Bank parent/child accounts). Don't cross-contaminate — shared schema, disjoint data.

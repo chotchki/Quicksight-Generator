@@ -208,8 +208,8 @@ Conventions:
 
 ## Phase 7 — Docs + release
 
-- [ ] 7.1 README.md: two-app overview, project structure, CLI reference (`generate` / `deploy` / `cleanup` / `demo` with `--all`), demo scenarios, theming presets.
-- [ ] 7.2 CLAUDE.md: new module layout, `common/` API surface, deploy-in-Python note, two-app conventions.
-- [ ] 7.3 SPEC.md sweep — the one-time pass for this document: check off every item delivered across Phases 1–6, prune follow-up questions that have been resolved, and reword any lines that drifted from the shipped design. Per the Conventions note above, SPEC boxes are not touched before this step.
-- [ ] 7.4 RELEASE_NOTES.md entry — version v1.0.0 at release time - include count of lines of code, number of tests/asserts
+- [x] 7.1 README.md: two-app overview, project structure, CLI reference (`generate` / `deploy` / `cleanup` / `demo` with `--all`), demo scenarios, theming presets.
+- [x] 7.2 CLAUDE.md: new module layout, `common/` API surface, deploy-in-Python note, two-app conventions.
+- [x] 7.3 SPEC.md sweep — the one-time pass for this document: check off every item delivered across Phases 1–6, prune follow-up questions that have been resolved, and reword any lines that drifted from the shipped design. Per the Conventions note above, SPEC boxes are not touched before this step.
+- [x] 7.4 RELEASE_NOTES.md entry — version v1.0.0 at release time - include count of lines of code, number of tests/asserts
 - [ ] 7.5 Tag and push, merge to main
