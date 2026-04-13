@@ -1,215 +1,179 @@
-# PLAN — Dual-dashboard restructure + Account Recon
+# PLAN — Filter-propagation browser e2e expansion
 
-Goal: migrate the existing Payment Recon app into a multi-app structure, then add the Account Recon app. Review gates (**STOP**) are placed wherever the spec leaves layout or flow to iteration.
+Goal: prove every filter on every sheet narrows every dependent visual the way a user would expect. Today the browser e2e suite only spot-checks the date-range filter on one table per app; everything else is structural (the filter is wired up in the dashboard JSON) without confirming the data actually moves.
+
+Out of scope: the QuickSight "filter stacking on navigation" UX wart — when a user drills A → B → A, parameter filters set during the first navigation can linger and produce confusing counts. We've checked: there is no toggle in QuickSight's parameter / filter API that auto-clears these. **Document the behavior, do not try to fix it.** Phase 5 covers the doc work.
 
 Conventions:
-- Branch is already isolated; no git gymnastics needed between phases.
-- After each task, run the unit suite; after each phase, run the full e2e suite (unless the phase explicitly hasn't touched deploy yet).
-- Each **STOP** pauses for user review + potential replanning before the next phase.
-- Phase 1 is pure refactor — no user-visible behavior change on Payment Recon.
-- PLAN.md checkboxes are flipped as items complete. SPEC.md checkboxes are **not** touched in flight — they are swept once in Phase 7.3.
-- After each phase's commit + tag, push the branch and the tag.
+- Branch off `main`; one phase = one commit + one tag bump (`v1.1.x` per phase, `v1.1.0` cumulative on the merge).
+- Every new test must be runnable in isolation — no implicit ordering with other filter tests in the same module (each test loads its own embed URL, embed URLs are single-use).
+- After each phase, run the full unit suite + the new-or-touched browser tests. Full e2e (`./run_e2e.sh`) before tagging.
+- Helpers go in `tests/e2e/browser_helpers.py` or a new sibling — never copy DOM-poking JS between test files.
 
-## Carried-forward assumptions (from SPEC follow-ups)
+## Carried-forward assumptions
 
-- Single `late_default_days` config value used as the default for every days-outstanding slider; users override interactively.
-- Optional-sales-metadata columns are declared in a Python constant adjacent to the sales SQL in `payment_recon/datasets.py` (runtime DB introspection ruled out — production `generate` has no DB creds).
-- Non-demo analysis titles: "Payment Reconciliation" and "Account Reconciliation". Demo-themed variants prefix with "Demo — ".
-- Shared PG schema in demo DB; tables prefixed `pr_` (Payment Recon) and `ar_` (Account Recon).
-- `cleanup` gathers all stale tagged resources, prints them, and asks once (y/n) before deleting. `--yes` skips the prompt; `--dry-run` only prints.
-- Getting Started sheet sheet-switch links — if QuickSight text-blocks don't support hyperlinks to sibling sheets, fall back to a small navigation-button visual per target sheet (decide during 2.6).
+- Demo data is deterministic (`random.Random(42)`) so we can hard-code expected before/after row counts when scenario coverage guarantees them. Where exact counts feel brittle, prefer "drops by ≥ N" or "drops to 0" assertions over equality.
+- Multi-select dropdowns and SINGLE_SELECT toggles are reachable via `[data-automation-id="sheet_control_name"]` plus the dropdown's value list; the existing `_sheet_control_titles` helper finds the labels but we'll need a new helper to actually set a value.
+- Cross-sheet filters (date-range, parent-account, child-account, transfer-type) are scoped via `CrossSheet` controls — the same source filter ID drives every tab. Setting once should propagate; we verify on each scoped tab.
+- Navigation-induced filter stacking is observed and reproducible but **not fixable** within QuickSight's API surface (confirmed during v1.0.0 testing). Phase 5 captures it as a known limitation.
 
 ---
 
-## Phase 1 — Restructure into `payment_recon/` + `common/` (no feature change)
+## Phase 1 — Filter-interaction helpers
 
-- [x] 1.1 Create `src/quicksight_gen/common/` and migrate the shared primitives: `models.py`, `theme.py`, `config.py` (update schema for `late_default_days`), `constants.py` (non-app-specific only), `tags.py` (extracted), `deploy.py` (new — see 1.6), `cleanup.py` (new — see 1.7).
-- [x] 1.2 Create `src/quicksight_gen/payment_recon/` and move the existing app modules into it: `datasets.py`, `visuals.py`, `filters.py`, `analysis.py`, `recon_visuals.py`, `recon_filters.py`, `demo_data.py`, `constants.py` (app-specific sheet IDs).
-- [x] 1.3 Rename "financial" → "payment-recon" everywhere: output filenames (`payment-recon-analysis.json`, `payment-recon-dashboard.json`), resource IDs, dataset prefixes where applicable, analysis default name ("Payment Reconciliation"; demo: "Demo — Payment Reconciliation").
-- [x] 1.4 Restructure the Click CLI into subcommands:
-  - `quicksight-gen generate payment-recon [--theme-preset …]`
-  - `quicksight-gen generate --all`
-  - `quicksight-gen demo schema|seed|apply payment-recon|--all`
-  - Stub `account-recon` subcommand group that raises `NotImplementedError` so test shape is stable.
-- [x] 1.5 Add `quicksight-gen deploy [payment-recon|account-recon|--all] [--generate] [--yes]`: Python port of `deploy.sh`, delete-then-create semantics (no update), async waiters for analyses/dashboards. `--generate` chains `generate` first so iteration is one command.
-- [x] 1.6 Add `quicksight-gen cleanup [--dry-run] [--yes]`: lists QuickSight resources in the configured account+region tagged `ManagedBy: quicksight-gen` that are NOT in the current generate output; bulk y/n confirm then deletes. Explicit command only (not chained into `deploy`).
-- [x] 1.7 Delete `deploy.sh` and `run_e2e.sh`'s shell calls to it; replace with the new Python command.
-- [x] 1.8 Update unit tests: fix imports, expected resource IDs, output filenames, CLI subcommand shape; keep coverage green.
-- [x] 1.9 Update e2e tests: change `dashboard_id` fixture to `qs-gen-payment-recon-dashboard`; update any tests referencing old analysis name. Keep test count/behavior identical.
-- [x] 1.10 Update `run_e2e.sh` to call `quicksight-gen deploy --all --generate` (or equivalent) then `pytest tests/e2e`.
-- [x] 1.11 Full test pass: `pytest` green + `./run_e2e.sh` green against a freshly redeployed dashboard.
-- [x] 1.11a Add support for multiple principal_arn values in config.yaml so that multiple users can view the dashboards
-- [x] 1.12 Run a full destroy to clean up any renamed resources.
-- [x] 1.13 Redeploy and rerun 1.11.
-- [x] **STOP for review.**
-- [x] 1.14 git commit, tag v0.3.1, push branch + tag
+Build the building blocks once; every later phase consumes them.
+
+- [ ] 1.1 Add `set_dropdown_value(page, control_title, value, timeout_ms)` to `browser_helpers.py`. Locates the FilterControl by its visible title (`sheet_control_name`), opens the dropdown, clicks the option whose text equals `value`, waits for the control's displayed selection to update.
+- [ ] 1.2 Add `set_multi_select_values(page, control_title, values, timeout_ms)` — same pattern, but tolerates multiple checked entries; deselects whatever's currently selected first so tests start from a clean state.
+- [ ] 1.3 Add `clear_dropdown(page, control_title, timeout_ms)` — picks the "All values" / blank entry so a multi-step test can reset between checks.
+- [ ] 1.4 Generalize the two existing date-range helpers (`_set_date` in `test_filters.py` and `test_ar_filters.py`) into `set_date_range(page, start, end, timeout_ms)` in the helpers module. Delete the per-file copies as part of 1.4.
+- [ ] 1.5 Add `count_table_rows(page, visual_title)` and `count_chart_categories(page, visual_title)` helpers. Both currently live as one-off `page.evaluate` blocks duplicated across filter / drilldown / mutual-filter tests — consolidate.
+- [ ] 1.6 Add `wait_for_visual_to_change(page, visual_title, before_count, timeout_ms)` — polls `count_table_rows` (or chart-category count) for the value to differ from `before_count`. Replaces the inline `page.wait_for_function` blocks. Returns the new count.
+- [ ] 1.7 Run unit tests; smoke-check helpers against a deployed dashboard via a single throwaway test (delete after smoke).
+- [ ] 1.8 Commit — `Phase 1: filter-interaction browser helpers`.
+
+**STOP** — review helper signatures before any tests are written against them, since the API will be hard to change after 5+ tests use it.
 
 ---
 
-## Phase 2 — Payment Recon domain additions
+## Phase 2 — Payment Recon filter coverage
 
-- [x] 2.1 Refund support: add `sale_type` column to `pr_sales` (values `sale`, `refund`), allow negative `amount`. Update demo seed to include refund rows (some timestamped later than the original sale, some not). Sales Detail table displays `sale_type`. Verify settlements/payments can net negative via signed sums.
-- [x] 2.2 Optional sales metadata plumbing: declare taxes / tips / discount_percentage / cashier in a Python constant (`OPTIONAL_SALE_METADATA`) adjacent to the sales SQL, each with its SQL column + data type. Surface them on Sales Detail always. Auto-generate per-sheet filter controls by type (numeric→range, string→multi-select, date/timestamp→date-range).
-- [x] 2.3 Payment methods as a filter: add `payment_method` to the merchants (or sales) schema, expose as a multi-select filter on Settlements and Payments tabs. No group-by.
-- [x] 2.4 Expand Exceptions & Alerts:
-  - Keep the existing unsettled-sales and returned-payments tables.
-  - Add a Sales → Settlement mismatch table (sales linked to a settlement where Σ(linked sales) ≠ settlement amount).
-  - Add a Settlement → Payment mismatch table (settlements linked to a payment where Σ(linked settlements) ≠ payment amount).
-  - Move "external transactions without a payment" from the Payment Reconciliation tab into here.
-  - Layout deliberately compact — minimize whitespace; use half-width / multi-column grids.
-- [x] 2.5 Days-outstanding slider: *shipped then removed in review.* The slider was added per tab per the plan, but the date-range filter already covered the same need. Replaced with **Show-Only-X SINGLE_SELECT toggles** on Sales ("Show Only Unsettled"), Settlements ("Show Only Unpaid"), and Payments ("Show Only Unmatched Externally"). No slider anywhere now.
-- [x] 2.6 "Getting Started" sheet as tab index 0: one auto-derived text block per downstream sheet (sourced from each sheet's existing plain-language description). Demo mode adds a 1–2 paragraph scenario flavor block at the top. Attempt inline hyperlinks; if unsupported, add a small navigation-button visual row. *Note: rich-text formatting deferred to Phase 6 — current blocks are plain text.*
-- [x] 2.7 Update unit tests: refund math, optional-metadata filter derivation, new exception tables & subtitles, toggle presence on each tab, Getting Started tab at index 0, explanation coverage still 100%.
-- [x] 2.8 Update e2e tests: new dashboard structure (6 tabs now including Getting Started), visual counts, new exception tables assertable, one browser test for the state toggles (replacing the slider browser test).
-- [x] **STOP for review.** Review added: right-click drill-down pattern (settlement_id on Sales, external_transaction_id on Payments), side-by-side recon tables, slider → toggle pivot, orphan external transactions in demo data.
-- [x] 2.9 git commit, tag v0.4.0, push branch + tag
+Walk every PR filter and verify the visuals it claims to scope. Each `[ ]` is one new test (or one parametrize case).
 
----
+### Date-range filter (sheets: Sales Overview, Settlements, Payments, Payment Reconciliation, Exceptions, Getting Started — verify scope per-tab)
 
-## Phase 2.5 — Cross-app plumbing (pre-Phase-3 cleanup)
+- [ ] 2.1 On each pipeline sheet, push date range to a future window; assert every table on the sheet drops to 0 (or below the pre-filter count). Parametrized: one test, N sheets.
+- [ ] 2.2 Push date range to a *past* window with no demo data; same assertion. Catches one-sided range bugs.
+- [ ] 2.3 Set date range to the demo's known active window (Feb–Mar 2026 for the seed); confirm Settlements detail row count matches the seeded settlement count from `test_demo_data.py`'s scenario coverage.
 
-*Lessons from Phase 2 review: factor shared primitives into `common/` before Account Recon starts adding drill-downs and browser tests.*
+### Optional-metadata filters (Sales Overview only)
 
-- [x] 2.5.1 Move clickability text-format helpers from `payment_recon/visuals.py` to `common/clickability.py`: `link_text_format(accent)` (plain-accent cell for left-click drill) and `menu_link_text_format(accent, tint)` (accent + pale-tint for right-click drill). Update both payment_recon modules to import from there.
-- [x] 2.5.2 ~~Codify the subtitle phrasing pattern for click targets~~ — skipped. A helper that appends "Click … to …" would force every subtitle through the same mold; current subtitles carry visual-specific context that a formulaic suffix would flatten.
-- [x] 2.5.3 Add `scroll_visual_into_view(page, title, timeout_ms)` to `tests/e2e/browser_helpers.py`. Refactor `test_recon_mutual_filter.py` to use it instead of its inline evaluate block.
-- [x] 2.5.4 Add a `TestScenarioCoverage` pattern note to `CLAUDE.md` under "Project Structure" or a new "Test Conventions" section — seed-data coverage tests go in before visuals, not after. Keep it one paragraph.
-- [x] 2.5.5 Run unit tests + e2e. Commit.
+- [ ] 2.4 Numeric filter (taxes / tips slider) — drag to top of range; assert Sales Detail rows drop and the by-merchant bar chart's category count shrinks. Mirror with a bottom-of-range case.
+- [ ] 2.5 String filter (cashier multi-select) — pick one cashier; assert KPI sums drop and detail table only shows rows for that cashier (sample 3 random cells, confirm cashier column matches).
+- [ ] 2.6 Discount-percentage range — same shape as 2.4.
 
----
+### Payment-method filter (sheets: Settlements, Payments)
 
-## Phase 3 — Account Recon skeleton (all 4 tabs, rough layout)
+- [ ] 2.7 On Settlements, multi-select a single method; assert by-merchant-type bar chart re-renders, settlements table shrinks. Then switch to Payments tab without changing the filter and assert Payments tables also shrink (cross-sheet propagation).
 
-- [x] 3.1 Create `src/quicksight_gen/account_recon/` with `datasets.py`, `visuals.py`, `filters.py`, `analysis.py`, `demo_data.py`, `constants.py`.
-- [x] 3.2 Demo schema (shared PG schema, `ar_` prefixed):
-  - `ar_parent_accounts` (id, name, is_internal)
-  - `ar_accounts` (id, name, is_internal, parent_account_id)
-  - `ar_parent_daily_balances` + `ar_account_daily_balances` (split in 3.10 — two independent stored feeds)
-  - `ar_transactions` (id, account_id, transfer_id, amount, posted_at, status, memo) — memo denormalized; transfers joined via `transfer_id`
-  - Views: `ar_computed_account_daily_balance`, `ar_account_balance_drift`, `ar_computed_parent_daily_balance`, `ar_parent_balance_drift`, `ar_transfer_net_zero`, `ar_transfer_summary`.
-- [x] 3.3 Demo data generator for the Farmers Exchange Bank scenario — generic valley/farm/harvest naming, no trademarked game characters/places. 80/20 success/failure mix. Plant:
-  - balance-drift cases (stored ≠ computed on specific days);
-  - transfers whose net-of-non-failed transactions ≠ 0;
-  - individual failed transactions.
-- [x] 3.4 `farmers-exchange-bank` theme preset: earth tones + valley greens + harvest gold. Applies the "Demo — " prefix to the AR analysis when selected.
-- [x] 3.5 Rough 4-tab layout (date-range filter only; no drill-downs/extra sliders yet):
-  - **Balances** — parent accounts (name, stored daily balance, computed daily balance, drift) + child accounts table.
-  - **Transfers** — transfer list with Σdebit, Σcredit, net, net-zero flag, memo.
-  - **Transactions** — transactions table with status, amount, posted_at, transfer_id, memo; failed rows called out.
-  - **Exceptions** — balance-drift table, non-net-zero transfer table, timeline visual (line/bar by day showing when mismatches occurred).
-- [x] 3.6 Getting Started sheet for AR (same pattern as PR: auto-derived instructions + demo scenario block).
-- [x] 3.7 CLI wiring: implement the `account-recon` branches on `generate`, `demo schema|seed|apply`, `deploy`; `--all` now exercises both apps.
-- [x] 3.8 Unit tests for AR: visual builders, filter groups, cross-reference validation (dataset ARNs, filter bindings, visual ID uniqueness, sheet ID scoping), explanation coverage, theme preset integration, demo data determinism + row counts + scenario coverage.
-- [x] **STOP for review.** (Layout iteration expected — filters, drill-downs, and visual choices all deferred to Phase 4.) *Review found: child-account daily balances not stored/reconciled — scope revision follows in 3.10.*
-- [x] 3.10 Child-account balance reconciliation (scope revision — see SPEC "Reconciliation scope" bullet):
-  - Schema: rename `ar_daily_balances` → `ar_parent_daily_balances`; add `ar_account_daily_balances` (account_id, balance_date, balance) seeded for internal child accounts; add view `ar_account_balance_drift` (stored − running Σ posted transactions per child per day); keep existing parent-level view.
-  - Demo data: generate child daily balances for the 6 internal children across the full window; plant child-level drift on 3–4 (account, days_ago) cells **independently** from the existing parent-level plants so the two drift tables surface different rows.
-  - Datasets: add `qs-gen-ar-account-balance-drift-dataset`; rename `qs-gen-ar-balance-drift-dataset` → `qs-gen-ar-parent-balance-drift-dataset` and the matching `DS_AR_BALANCE_DRIFT` constant for symmetry.
-  - Visuals: on Balances, replace the plain child-accounts directory with a Child Account Balances table fed from the child-drift view (mirrors the parent table). On Exceptions, add a Child Balance Drift table next to the existing Parent Balance Drift (rename existing visual/title for clarity).
-  - Tests: extend row-count and scenario-coverage tests (child-balance rows, both-sign child drift plants); schema SQL for new table + view; updated sheet/visual counts.
-  - Redeploy and spot-check before commit.
-- [x] 3.11 git commit, tag v0.5.0, push branch + tag
+### Days-outstanding slider — *removed in v0.4.0* per RELEASE_NOTES
+
+- [ ] 2.8 Confirm via DOM that no "days outstanding" control is present on any pipeline tab. Belt-and-braces against regression.
+
+### Show-Only-X toggles (Sales / Settlements / Payments)
+
+- [ ] 2.9 Toggle "Show Only Unsettled" on Sales — assert Sales Detail row count equals the count of un-settled sales in the demo (from existing scenario assertions); assert by-merchant bar chart's bars are a subset of pre-toggle bars.
+- [ ] 2.10 Toggle "Show Only Unpaid" on Settlements — same shape.
+- [ ] 2.11 Toggle "Show Only Unmatched Externally" on Payments — same shape.
+- [ ] 2.12 Toggle each, then *clear* it, and assert the row count returns to the pre-toggle baseline. Catches sticky-filter bugs.
+
+### Same-sheet chart-click filtering
+
+- [ ] 2.13 Click a bar in the by-merchant chart on Sales Overview; assert Sales Detail filters to that merchant only. Mirror for Settlements (by-merchant-type) and Payments (status pie slice).
+- [ ] 2.14 Click a *second* bar (different category) — assert the table updates to the new selection (not "merchant A AND merchant B").
+
+### Payment Reconciliation tab (mutual filter — already partially covered)
+
+- [ ] 2.15 The existing `test_recon_mutual_filter.py` only covers external-row → payments-table direction. Add the reverse: click an Internal Payment row, assert the External Transactions table narrows to the linked transaction. Use `scroll_visual_into_view` since the payments table is below the fold post-swap.
+- [ ] 2.16 Click the bar chart's status segment; assert *both* tables filter (the chart action targets both visual IDs).
+
+- [ ] 2.17 Commit — `Phase 2: PR filter-propagation browser e2e`. Tag `v1.1.0-rc1` or just hold to the cumulative `v1.1.0`.
+
+**STOP** — run the new suite end-to-end; if any assertion is brittle (intermittent row-count timing) reformulate before AR work uses the same shape.
 
 ---
 
-## Phase 4 — Account Recon iteration (post-review)
+## Phase 3 — Account Recon filter coverage
 
-*Task list finalized at Phase 3 review. Independent parent/child drift (added in 3.10) reshapes what drill-downs, toggles, and timelines make sense — the skeleton had generic placeholders; this phase turns them into concrete workflows.*
+Same shape as Phase 2; AR has more cross-sheet filter scope so order matters.
 
-- [x] 4.1 Filters:
-  - Parent-account multi-select on Balances, Transactions, Exceptions.
-  - Child-account multi-select on Balances, Transactions, Exceptions.
-  - Transfer-status multi-select on Transfers.
-  - Transaction-status multi-select on Transactions.
-- [x] 4.2 Show-Only-X SINGLE_SELECT toggles (same pattern as PR's Phase 2 pivot — the date-range filter already covers "recency", toggles cover the "narrow to problems" intent):
-  - Transfers: "Show Only Unhealthy" (net-of-non-failed ≠ 0).
-  - Transactions: "Show Only Failed".
-  - Balances parent table: "Show Only Drift".
-  - Balances child table: "Show Only Drift".
-- [x] 4.3 Drill-downs (plain-accent = left-click drill; pale-tint menu-link = right-click `DATA_POINT_MENU` drill, used when a visual already has a left-click target):
-  - Balances child row (left-click on `account_id`) → Transactions filtered by account + date.
-  - Balances parent row (right-click menu on `parent_account_id`) → filters child table on the same sheet to that parent's children.
-  - Transfers row (left-click on `transfer_id`) → Transactions filtered by `transfer_id`.
-  - Exceptions parent-drift row (left-click) → Balances child table filtered to that parent's children + date.
-  - Exceptions child-drift row (left-click) → Transactions filtered by account + date.
-  - Exceptions non-zero-transfer row (left-click) → Transactions filtered by `transfer_id`.
-- [x] 4.4 Visual additions:
-  - **Parent Drift Timeline** on Exceptions, placed alongside the existing Child Drift Timeline — two independent timelines make the two-feed story visible.
-  - **Transfer Status bar chart** on Transfers (healthy / non-zero), with same-sheet click-filter into the transfers table.
-  - **Transactions-by-day line chart** on Transactions grouped by status, with same-sheet click-filter into the detail table.
-- [x] 4.5 Same-sheet chart filtering on every new chart (matches PR's pattern) — clicking a bar/slice filters the detail table on the same sheet.
-- [x] 4.6 Unit tests: new filter groups, drill-down action shapes, visual count updates, toggle presence per tab, cross-reference validation, explanation coverage still 100%.
-- [x] 4.7 API-layer e2e tests for AR: dashboard/analysis/theme/datasets exist, sheet count (5), per-sheet visual counts, parameters, filter groups, dataset import health.
-- [x] 4.8 Redeploy and spot-check.
-- [x] **STOP for review.** Review found: internal↔internal transfers missing from demo, and no visibility of internal/external scope on Transactions or Transfer Summary — fix bundled into 4.10.
-- [x] 4.9 git commit, tag v0.6.0, push branch + tag
-- [x] 4.10 Mid-phase coverage hardening (added during STOP review):
-  - Mix internal↔internal transfers into every bucket of `_generate_transfers` so bugs requiring two tracked balances per transfer can't hide.
-  - Surface `scope` on Transactions and `scope_type` (cross_scope / internal_only) on Transfer Summary; add `has_external_leg` to the `ar_transfer_net_zero` view.
-  - Add `TestScenarioCoverage` assertions for ≥20 cross-scope + ≥15 internal-only + ≥1 internal-only-with-failed-leg transfers.
+### Date-range (sheets: Balances, Transfers, Transactions, Exceptions)
 
----
+- [ ] 3.1 Future window — every detail table on every tab drops to 0. Parametrized.
+- [ ] 3.2 Demo-active window — Transaction Detail row count matches the seed transaction count.
 
-## Phase 5 — Account Recon: per-type daily transfer limits + child overdrafts
+### Parent-account multi-select (cross-tab — Balances, Transfers, Transactions, Exceptions)
 
-*Scope addition made during Phase 4 planning: parents define per-type daily transfer limits that apply to their child accounts; child balances must not go negative. Adds two more independent reconciliation checks alongside parent drift and child drift, for four total on the Exceptions tab. Placed after Phase 4 so the new visuals can reuse the drill-down patterns established there rather than co-inventing them.*
+- [ ] 3.3 Pick one parent on Balances tab; assert child accounts table shows only that parent's children. Switch to Transactions; assert transaction table is filtered to the same parent's accounts (verify by sampling rows).
+- [ ] 3.4 Switch to Exceptions; assert the parent-drift timeline (or table) only shows that parent.
 
-- [x] 5.1 Schema additions:
-  - Add `transfer_type` column to `ar_transactions` (STRING; values `'ach' | 'wire' | 'internal' | 'cash'`). Orthogonal to debit/credit direction.
-  - New table `ar_parent_transfer_limits` (parent_account_id, transfer_type, daily_limit). Upstream-fed; a given parent may have limits defined for only some types — absence means "no limit enforced".
-  - Views:
-    - `ar_child_daily_outbound_by_type` — Σ |amount| per (child account, date, transfer_type) across non-failed transactions on the debit side.
-    - `ar_child_limit_breach` — joins outbound-by-type to parent-limits; emits rows where daily outbound for type T exceeds the parent's limit for T.
-    - `ar_child_overdraft` — rows where the stored child balance < 0 for a given day.
-- [x] 5.2 Demo data generator:
-  - Assign a `transfer_type` to each transfer (weighted mix so all four types have traffic).
-  - Seed `ar_parent_transfer_limits` for each parent on a subset of types (some strict, some lenient, some unlimited — i.e., no row at all for that type).
-  - Plant ≥3 limit-breach cases (child × day × type) **disjoint** from the existing drift plants so each exception table surfaces a different set of rows.
-  - Plant ≥3 overdraft cases (child × day) **disjoint** from the drift and breach plants.
-  - `TestScenarioCoverage` assertions authored **before** the visuals, per the seed-before-visuals rule in `CLAUDE.md`.
-- [x] 5.3 Datasets:
-  - Add `qs-gen-ar-limit-breach-dataset` and `qs-gen-ar-overdraft-dataset`.
-  - Extend `qs-gen-ar-transactions-dataset` with the new `transfer_type` column.
-- [x] 5.4 Visuals on Exceptions tab:
-  - Add Child Limit Breach table (account, date, type, outbound, limit, overage).
-  - Add Child Overdraft table (account, date, stored balance).
-  - KPI row grows from 3 → 5 ("Limit Breach Days", "Overdraft Days"); reflow as one-fifth columns or wrap to a second KPI row depending on readability.
-  - Rework the Exceptions tables from single-column to paired half-width rows for density — four drift/breach/overdraft tables + the two timelines fit in ~half the vertical span.
-- [x] 5.5 Filters:
-  - Transfer-type multi-select on Transactions, Exceptions, and (if meaningful) Transfers.
-  - Show-Only-Overdraft toggle on the Balances child table.
-- [x] 5.6 Getting Started updates:
-  - Rewrite the Exceptions description to cover all four checks (parent drift, child drift, limit breach, overdraft).
-  - Update `_DEMO_SCENARIO_FLAVOR` to mention the limit and overdraft plants.
-- [x] 5.7 Drill-downs:
-  - Limit Breach row (left-click) → Transactions filtered by account + date + type.
-  - Overdraft row (left-click) → Transactions filtered by account + date.
-- [x] 5.8 Tests:
-  - Schema/SQL structure tests for the new table + views.
-  - Demo-data coverage + row-count assertions (breach count ≥3, overdraft count ≥3, per-type traffic, disjointness from existing plants).
-  - Unit tests for new visuals / filters / drill-downs; cross-reference validation; sheet+visual-count updates.
-  - API-layer e2e: new datasets exist, new filter groups present, Exceptions sheet visual count matches.
-- [x] 5.9 Redeploy and spot-check.
-- [x] **STOP for review.**
-- [x] 5.10 git commit, tag v0.7.0, push branch + tag
+### Child-account multi-select (cross-tab)
+
+- [ ] 3.5 Pick one child; assert Transactions tab filters to that child. Confirm Balances tab's child table also reduces.
+- [ ] 3.6 Combine parent + child filters; verify intersection (not union) on Transactions.
+
+### Transfer-type multi-select (cross-tab — Transfers, Transactions, Exceptions)
+
+- [ ] 3.7 Pick "ach" only; assert Transfers summary table only shows ach transfers; Transactions tab shrinks; Exceptions limit-breach table only shows ach breaches.
+
+### Transfer-status multi-select (Transfers tab only — single-dataset scope)
+
+- [ ] 3.8 Pick "not_net_zero"; assert Transfers summary table = the non-zero count. Confirms our v1.0.1 toggle removal didn't break the underlying multi-select.
+- [ ] 3.9 Pick "net_zero"; confirm fully-failed transfers (net=0, all legs failed) appear here — proves the v1.0.1 user concern is addressed at the data level.
+
+### Show-Only-X toggles (Balances, Transactions)
+
+- [ ] 3.10 Toggle each of the four remaining toggles ("Show Only Parent Drift", "Show Only Child Drift", "Show Only Overdraft", "Show Only Failed"); assert table narrows; clear; assert it returns.
+- [ ] 3.11 DOM-check that the Transfers tab has *no* SINGLE_SELECT toggle (regression guard for v1.0.1).
+
+### Same-sheet chart-click filtering
+
+- [ ] 3.12 Click a bar in the AR transfer-status chart; assert summary table narrows to that status.
+- [ ] 3.13 Click a parent-drift point in the Exceptions timeline; assert the parent-drift table below filters to that parent (if action exists; check `analysis.py` and skip with a marker if not wired).
+
+- [ ] 3.14 Commit — `Phase 3: AR filter-propagation browser e2e`.
+
+**STOP** — review intermittency. AR has 5 toggles + 4 cross-sheet filters; if test runtime balloons past ~5 minutes, split the test file along sheet boundaries.
 
 ---
 
-## Phase 6 — AR browser e2e + harness updates
+## Phase 4 — Cross-cutting interactions
 
-- [x] 6.1 Extend `tests/e2e/conftest.py` with a second dashboard fixture (`ar_dashboard_id`); keep the two fixtures independent (no parametrized dual-run). *Done in Phase 4.7 — fixtures already in place when Phase 6 opened.*
-- [x] 6.2 Browser tests for AR: dashboard loads, tab count (5: Getting Started + 4), per-sheet visual counts, drill-downs from 4.3 and 5.7, filter narrowing, Show-Only-X toggles, right-click `DATA_POINT_MENU` drill. *Note: right-click `DATA_POINT_MENU` drill is covered by the API test `test_parent_drill_scoped_to_child_table_only` — Playwright right-click + menu-item-select is flaky enough that a structural assertion is the more stable guard.*
-- [x] 6.3 Update `run_e2e.sh` so the one-shot runner deploys both and runs the full e2e suite. *Already calls `deploy --all --generate`; no change needed.*
-- [x] 6.4 Namespace screenshot output per-app if it reduces noise (`tests/e2e/screenshots/payment_recon/`, `…/account_recon/`).
-- [x] **STOP for review.**
-- [x] 6.5 git commit, tag v0.8.0, push branch + tag
+Filter behavior that crosses the seams between filters, drill-downs, and tabs.
+
+- [ ] 4.1 Set date range on Sales; click a row to drill into Settlements; confirm date range *and* drill-down filter both apply on the destination sheet (intersection, not last-write-wins).
+- [ ] 4.2 Apply Show-Only-Unpaid on Settlements; drill a row into Sales; confirm the destination sheet receives the parameter filter and the source-sheet toggle does not "leak" (toggles are SINGLE_DATASET scoped — verify that contract holds end-to-end).
+- [ ] 4.3 Same shape on AR: set parent filter, drill from Balances to Transactions, confirm intersection.
+
+- [ ] 4.4 Commit — `Phase 4: cross-cutting filter + drilldown interactions`.
 
 ---
 
-## Phase 7 — Docs + release
+## Phase 5 — Document the navigation filter-stacking caveat
 
-- [x] 7.1 README.md: two-app overview, project structure, CLI reference (`generate` / `deploy` / `cleanup` / `demo` with `--all`), demo scenarios, theming presets.
-- [x] 7.2 CLAUDE.md: new module layout, `common/` API surface, deploy-in-Python note, two-app conventions.
-- [x] 7.3 SPEC.md sweep — the one-time pass for this document: check off every item delivered across Phases 1–6, prune follow-up questions that have been resolved, and reword any lines that drifted from the shipped design. Per the Conventions note above, SPEC boxes are not touched before this step.
-- [x] 7.4 RELEASE_NOTES.md entry — version v1.0.0 at release time - include count of lines of code, number of tests/asserts
-- [ ] 7.5 Tag and push, merge to main
+Navigation-driven parameter filters can stack across drill-downs (A → B → A leaves a B-derived filter on A). QuickSight has no API to clear a parameter on tab-switch.
+
+- [ ] 5.1 Reproduce the stacking under test: drill PR Sales → Settlements (sets `pSaleSettlementId`) → click the cross-sheet date filter and return to Sales; assert (or just screenshot for evidence) that the previous parameter is still set. This becomes a *characterization* test, not a failure — mark it `xfail(strict=False)` with a reason citing the limitation.
+- [ ] 5.2 Add a new "Known Limitations" section to README.md describing the stacking behavior and the workaround (refresh the dashboard tab).
+- [ ] 5.3 Add the same caveat to both Getting Started sheets via `common/rich_text.py` — a single bullet under the clickability legend, accent-colored. Update `test_demo_data.py` / generate tests if any "expected text" assertions need to grow.
+
+- [ ] 5.4 Commit — `Phase 5: document QS navigation filter-stacking limitation`.
+
+---
+
+## Phase 6 — Suite-runtime budget + parallelism
+
+After Phases 2–4 the browser suite will roughly triple in size. Make sure `./run_e2e.sh` stays under the team's tolerance (~5 min today, target ≤ 10 min after expansion).
+
+- [ ] 6.1 Time the new suite. If > 10 min, mark the slowest 1/3 of tests with `@pytest.mark.slow` and let `./run_e2e.sh` skip them by default; add `--full` flag to include.
+- [ ] 6.2 Investigate `pytest-xdist` for parallel browser sessions (each test already creates an isolated `webkit_page`, but embed URL fixtures are function-scoped and single-use — should be safe to parallelize at file granularity).
+- [ ] 6.3 If 6.2 lands, document the `-n auto` flag in `run_e2e.sh --help` text and CLAUDE.md.
+
+- [ ] 6.4 Commit — `Phase 6: e2e suite runtime budget`.
+
+---
+
+## Phase 7 — Release v1.1.0
+
+- [ ] 7.1 Update RELEASE_NOTES.md — one entry covering all phases. Stats: count of new tests, runtime delta, filter coverage matrix.
+- [ ] 7.2 Update CLAUDE.md "E2E Test Conventions" with the new helpers and the slow-test marker convention.
+- [ ] 7.3 Tag `v1.1.0`, push branch, push tag, fast-forward main.
+
+---
+
+## Decisions to make in flight (will resolve as we go)
+
+- **How to test multi-select dropdowns reliably.** QuickSight's dropdowns animate; the DOM may show options before they're clickable. If `set_multi_select_values` is flaky we may need an explicit "wait for options menu open" sub-helper. Decide during Phase 1.
+- **Hard-coded counts vs. inequality assertions.** Demo data is deterministic, but plant counts can shift if anyone tweaks `demo_data.py`. Prefer inequalities (`< before`, `== 0`) where the test reads naturally; reserve equality for the handful of cases where the count is the point (e.g., "Show Only Unpaid" should equal `_OFF_AMOUNT_TRANSFERS + _FAILED_LEG_TRANSFERS`).
+- **Parametrize granularity.** Some sheets share filter shapes (date-range across all four AR tabs). Lean on `pytest.mark.parametrize` per filter+sheet pair so failures pinpoint which combination broke; resist combining into a single multi-sheet loop.
+- **Screenshot policy.** Today, only filter tests screenshot. With 30+ new tests, screenshots could explode — only screenshot on the *clearing* assertion (the easy-to-eyeball "should be 0 rows" state) per filter, not every step.
