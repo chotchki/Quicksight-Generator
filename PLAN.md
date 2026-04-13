@@ -70,11 +70,11 @@ Conventions:
 
 *Lessons from Phase 2 review: factor shared primitives into `common/` before Account Recon starts adding drill-downs and browser tests.*
 
-- [ ] 2.5.1 Move clickability text-format helpers from `payment_recon/visuals.py` to `common/clickability.py`: `link_text_format(accent)` (plain-accent cell for left-click drill) and `menu_link_text_format(accent, tint)` (accent + pale-tint for right-click drill). Update both payment_recon modules to import from there.
-- [ ] 2.5.2 Codify the subtitle phrasing pattern for click targets: one-line helper that appends "Click … to …" (left) or "Right-click … for …" (right). Optional — skip if it reduces flexibility.
-- [ ] 2.5.3 Add `scroll_visual_into_view(page, title, timeout_ms)` to `tests/e2e/browser_helpers.py`. Refactor `test_recon_mutual_filter.py` to use it instead of its inline evaluate block.
-- [ ] 2.5.4 Add a `TestScenarioCoverage` pattern note to `CLAUDE.md` under "Project Structure" or a new "Test Conventions" section — seed-data coverage tests go in before visuals, not after. Keep it one paragraph.
-- [ ] 2.5.5 Run unit tests + e2e. Commit.
+- [x] 2.5.1 Move clickability text-format helpers from `payment_recon/visuals.py` to `common/clickability.py`: `link_text_format(accent)` (plain-accent cell for left-click drill) and `menu_link_text_format(accent, tint)` (accent + pale-tint for right-click drill). Update both payment_recon modules to import from there.
+- [x] 2.5.2 ~~Codify the subtitle phrasing pattern for click targets~~ — skipped. A helper that appends "Click … to …" would force every subtitle through the same mold; current subtitles carry visual-specific context that a formulaic suffix would flatten.
+- [x] 2.5.3 Add `scroll_visual_into_view(page, title, timeout_ms)` to `tests/e2e/browser_helpers.py`. Refactor `test_recon_mutual_filter.py` to use it instead of its inline evaluate block.
+- [x] 2.5.4 Add a `TestScenarioCoverage` pattern note to `CLAUDE.md` under "Project Structure" or a new "Test Conventions" section — seed-data coverage tests go in before visuals, not after. Keep it one paragraph.
+- [x] 2.5.5 Run unit tests + e2e. Commit.
 
 ---
 
