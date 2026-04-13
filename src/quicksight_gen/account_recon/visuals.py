@@ -1,8 +1,26 @@
 """Visual builders for Account Recon.
 
-Phase 3 keeps the layout rough: KPIs + tables + a bar chart timeline
-on the Exceptions tab. Drill-downs and chart-filter actions are
-intentionally deferred to Phase 4.
+Phase 4 expands the skeleton from Phase 3:
+
+Drill-downs (pattern mirrors payment_recon):
+  * Balances parent row (right-click) → filters child table on same sheet
+    to that parent's children via ``pArParentAccountId``.
+  * Balances child row (left-click) → Transactions filtered by account.
+  * Transfers row (left-click) → Transactions filtered by transfer_id.
+  * Exceptions parent-drift (left-click) → Balances, child table filtered
+    by parent.
+  * Exceptions child-drift (left-click) → Transactions filtered by account.
+  * Exceptions non-zero-transfer (left-click) → Transactions filtered by
+    transfer_id.
+
+Same-sheet chart-filter actions on every new chart so clicking a bar
+filters the detail table on the same sheet (matches payment_recon).
+
+Visual additions:
+  * Parent Drift Timeline on Exceptions (alongside the existing child
+    timeline — two feeds, two lines).
+  * Transfer Status bar chart on Transfers.
+  * Transactions-by-day grouped bar chart on Transactions.
 """
 
 from __future__ import annotations
@@ -15,6 +33,12 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_PARENT_BALANCE_DRIFT,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
+    SHEET_AR_BALANCES,
+    SHEET_AR_TRANSACTIONS,
+)
+from quicksight_gen.common.clickability import (
+    link_text_format,
+    menu_link_text_format,
 )
 from quicksight_gen.common.models import (
     AxisLabelOptions,
@@ -26,19 +50,28 @@ from quicksight_gen.common.models import (
     CategoricalMeasureField,
     ChartAxisLabelOptions,
     ColumnIdentifier,
+    CustomActionFilterOperation,
+    CustomActionNavigationOperation,
+    CustomActionSetParametersOperation,
     DateDimensionField,
     DimensionField,
+    FilterOperationSelectedFieldsConfiguration,
+    FilterOperationTargetVisualsConfiguration,
     KPIConfiguration,
     KPIFieldWells,
     KPIVisual,
+    LocalNavigationConfiguration,
     MeasureField,
     NumericalAggregationFunction,
     NumericalMeasureField,
+    SameSheetTargetVisualConfiguration,
     TableConfiguration,
     TableFieldWells,
     TableUnaggregatedFieldWells,
     TableVisual,
     Visual,
+    VisualCustomAction,
+    VisualCustomActionOperation,
     VisualSubtitleLabelOptions,
     VisualTitleLabelOptions,
 )
@@ -126,10 +159,83 @@ def _unagg_field(field_id: str, ds: str, col_name: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Balances tab — parent account drift + child account directory
+# Action helpers (mirror payment_recon/visuals.py)
 # ---------------------------------------------------------------------------
 
-def build_balances_visuals() -> list[Visual]:
+def _drill_down_action(
+    action_id: str,
+    name: str,
+    target_sheet: str,
+    param_name: str,
+    source_field_id: str,
+    trigger: str = "DATA_POINT_CLICK",
+) -> VisualCustomAction:
+    """Navigate to another sheet and set a drill-down parameter."""
+    return VisualCustomAction(
+        CustomActionId=action_id,
+        Name=name,
+        Trigger=trigger,
+        ActionOperations=[
+            VisualCustomActionOperation(
+                NavigationOperation=CustomActionNavigationOperation(
+                    LocalNavigationConfiguration=LocalNavigationConfiguration(
+                        TargetSheetId=target_sheet,
+                    ),
+                ),
+            ),
+            VisualCustomActionOperation(
+                SetParametersOperation=CustomActionSetParametersOperation(
+                    ParameterValueConfigurations=[
+                        {
+                            "DestinationParameterName": param_name,
+                            "Value": {"SourceField": source_field_id},
+                        },
+                    ],
+                ),
+            ),
+        ],
+    )
+
+
+def _same_sheet_filter_action(
+    action_id: str,
+    name: str,
+    target_visual_ids: list[str],
+    trigger: str = "DATA_POINT_CLICK",
+) -> VisualCustomAction:
+    """Click filters target visuals on the same sheet via ALL_FIELDS."""
+    return VisualCustomAction(
+        CustomActionId=action_id,
+        Name=name,
+        Trigger=trigger,
+        ActionOperations=[
+            VisualCustomActionOperation(
+                FilterOperation=CustomActionFilterOperation(
+                    SelectedFieldsConfiguration=FilterOperationSelectedFieldsConfiguration(
+                        SelectedFieldOptions="ALL_FIELDS",
+                    ),
+                    TargetVisualsConfiguration=FilterOperationTargetVisualsConfiguration(
+                        SameSheetTargetVisualConfiguration=SameSheetTargetVisualConfiguration(
+                            TargetVisuals=target_visual_ids,
+                        ),
+                    ),
+                ),
+            ),
+        ],
+    )
+
+
+# Drill-down parameter names
+P_AR_ACCOUNT = "pArAccountId"
+P_AR_PARENT = "pArParentAccountId"
+P_AR_TRANSFER = "pArTransferId"
+
+
+# ---------------------------------------------------------------------------
+# Balances tab — parent + child drift tables with drill-downs
+# ---------------------------------------------------------------------------
+
+def build_balances_visuals(link_color: str, link_tint: str) -> list[Visual]:
     kpi_parents = Visual(
         KPIVisual=KPIVisual(
             VisualId="ar-balances-kpi-parents",
@@ -174,8 +280,9 @@ def build_balances_visuals() -> list[Visual]:
             Title=_title("Parent Account Balances"),
             Subtitle=_subtitle(
                 "Each parent account's stored vs computed daily balance. "
-                "Computed = Σ of its children's stored balances. Drift is "
-                "non-zero when the parent feed disagrees with its children."
+                "Computed = Σ of its children's stored balances. Right-click "
+                "a parent_account_id to filter the child table below to "
+                "that parent's children."
             ),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
@@ -214,6 +321,32 @@ def build_balances_visuals() -> list[Visual]:
                     ],
                 },
             ),
+            Actions=[
+                # Navigation is a no-op (target is the current sheet) — AWS
+                # rejects a SetParametersOperation that isn't preceded by a
+                # NavigationOperation, so we include one. The drill-down
+                # filter group ``fg-ar-drill-parent-on-balances-child`` is
+                # scoped to the child table only via SELECTED_VISUALS, so
+                # setting the parameter filters just that visual.
+                _drill_down_action(
+                    "action-ar-balances-filter-children",
+                    "Filter Child Accounts Below",
+                    SHEET_AR_BALANCES,
+                    P_AR_PARENT,
+                    "ar-bal-parent-id",
+                    trigger="DATA_POINT_MENU",
+                ),
+            ],
+            ConditionalFormatting={
+                "ConditionalFormattingOptions": [
+                    menu_link_text_format(
+                        "ar-bal-parent-id",
+                        "parent_account_id",
+                        link_color,
+                        link_tint,
+                    ),
+                ],
+            },
         )
     )
 
@@ -223,9 +356,8 @@ def build_balances_visuals() -> list[Visual]:
             Title=_title("Child Account Balances"),
             Subtitle=_subtitle(
                 "Each child account's stored vs computed daily balance. "
-                "Computed = running Σ of posted transactions. Drift is "
-                "non-zero when the child feed disagrees with the underlying "
-                "transactions."
+                "Computed = running Σ of posted transactions. Left-click an "
+                "account_id to drill into Transactions for that account."
             ),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
@@ -268,6 +400,22 @@ def build_balances_visuals() -> list[Visual]:
                     ],
                 },
             ),
+            Actions=[
+                _drill_down_action(
+                    "action-ar-balances-child-to-txn",
+                    "View Transactions",
+                    SHEET_AR_TRANSACTIONS,
+                    P_AR_ACCOUNT,
+                    "ar-bal-child-id",
+                ),
+            ],
+            ConditionalFormatting={
+                "ConditionalFormattingOptions": [
+                    link_text_format(
+                        "ar-bal-child-id", "account_id", link_color,
+                    ),
+                ],
+            },
         )
     )
 
@@ -275,10 +423,10 @@ def build_balances_visuals() -> list[Visual]:
 
 
 # ---------------------------------------------------------------------------
-# Transfers tab — transfer list with net-zero flag
+# Transfers tab — KPIs, status bar chart, transfer summary with drill-down
 # ---------------------------------------------------------------------------
 
-def build_transfers_visuals() -> list[Visual]:
+def build_transfers_visuals(link_color: str) -> list[Visual]:
     kpi_transfers = Visual(
         KPIVisual=KPIVisual(
             VisualId="ar-transfers-kpi-count",
@@ -320,13 +468,50 @@ def build_transfers_visuals() -> list[Visual]:
         )
     )
 
+    bar_status = Visual(
+        BarChartVisual=BarChartVisual(
+            VisualId="ar-transfers-bar-status",
+            Title=_title("Transfer Status"),
+            Subtitle=_subtitle(
+                "Count of transfers by net-zero status. Click a bar to "
+                "filter the summary table below."
+            ),
+            ChartConfiguration=BarChartConfiguration(
+                FieldWells=BarChartFieldWells(
+                    BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
+                        Category=[_dim("ar-xfr-status-dim",
+                                       DS_AR_TRANSFER_SUMMARY,
+                                       "net_zero_status")],
+                        Values=[_measure_count(
+                            "ar-xfr-status-count",
+                            DS_AR_TRANSFER_SUMMARY,
+                            "transfer_id",
+                        )],
+                    )
+                ),
+                Orientation="HORIZONTAL",
+                BarsArrangement="CLUSTERED",
+                CategoryLabelOptions=_axis_label("Status"),
+                ValueLabelOptions=_axis_label("Transfers"),
+            ),
+            Actions=[
+                _same_sheet_filter_action(
+                    "action-ar-transfers-bar-filter",
+                    "Filter Transfer Summary",
+                    ["ar-transfers-summary-table"],
+                ),
+            ],
+        )
+    )
+
     table_transfers = Visual(
         TableVisual=TableVisual(
             VisualId="ar-transfers-summary-table",
             Title=_title("Transfer Summary"),
             Subtitle=_subtitle(
                 "Every transfer with its net amount, debit/credit totals, "
-                "leg count, and net-zero status. Healthy transfers have net = 0."
+                "leg count, and net-zero status. Left-click a transfer_id "
+                "to drill into Transactions for that transfer."
             ),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
@@ -350,6 +535,9 @@ def build_transfers_visuals() -> list[Visual]:
                             _unagg_field("ar-xfr-status",
                                          DS_AR_TRANSFER_SUMMARY,
                                          "net_zero_status"),
+                            _unagg_field("ar-xfr-scope",
+                                         DS_AR_TRANSFER_SUMMARY,
+                                         "scope_type"),
                             _unagg_field("ar-xfr-failed-legs",
                                          DS_AR_TRANSFER_SUMMARY,
                                          "failed_leg_count"),
@@ -369,14 +557,30 @@ def build_transfers_visuals() -> list[Visual]:
                     ],
                 },
             ),
+            Actions=[
+                _drill_down_action(
+                    "action-ar-transfers-to-txn",
+                    "View Transactions",
+                    SHEET_AR_TRANSACTIONS,
+                    P_AR_TRANSFER,
+                    "ar-xfr-id",
+                ),
+            ],
+            ConditionalFormatting={
+                "ConditionalFormattingOptions": [
+                    link_text_format(
+                        "ar-xfr-id", "transfer_id", link_color,
+                    ),
+                ],
+            },
         )
     )
 
-    return [kpi_transfers, kpi_unhealthy, table_transfers]
+    return [kpi_transfers, kpi_unhealthy, bar_status, table_transfers]
 
 
 # ---------------------------------------------------------------------------
-# Transactions tab — raw ledger with failed-call-out
+# Transactions tab — KPIs, two charts, detail table
 # ---------------------------------------------------------------------------
 
 def build_transactions_visuals() -> list[Visual]:
@@ -427,7 +631,7 @@ def build_transactions_visuals() -> list[Visual]:
             Title=_title("Transactions by Status"),
             Subtitle=_subtitle(
                 "Breakdown of posted / pending / failed transactions. "
-                "Failed slices should be rare."
+                "Click a bar to filter the detail table below."
             ),
             ChartConfiguration=BarChartConfiguration(
                 FieldWells=BarChartFieldWells(
@@ -445,6 +649,54 @@ def build_transactions_visuals() -> list[Visual]:
                 CategoryLabelOptions=_axis_label("Status"),
                 ValueLabelOptions=_axis_label("Transactions"),
             ),
+            Actions=[
+                _same_sheet_filter_action(
+                    "action-ar-txn-bar-filter",
+                    "Filter Transaction Detail",
+                    ["ar-txn-detail-table"],
+                ),
+            ],
+        )
+    )
+
+    # Transactions-by-day: vertical bar chart grouped (clustered) by status.
+    # Rendered as a time series — one cluster per day, coloured by status —
+    # so posted / failed trends are visible alongside the bar-by-status
+    # aggregate totals above.
+    bar_by_day = Visual(
+        BarChartVisual=BarChartVisual(
+            VisualId="ar-txn-bar-by-day",
+            Title=_title("Transactions by Day"),
+            Subtitle=_subtitle(
+                "Daily transaction volume split by status. Click a bar to "
+                "filter the detail table below."
+            ),
+            ChartConfiguration=BarChartConfiguration(
+                FieldWells=BarChartFieldWells(
+                    BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
+                        Category=[_date_dim("ar-txn-day-dim",
+                                            DS_AR_TRANSACTIONS, "posted_at")],
+                        Values=[_measure_count(
+                            "ar-txn-day-count",
+                            DS_AR_TRANSACTIONS, "transaction_id",
+                        )],
+                        Colors=[_dim("ar-txn-day-color",
+                                     DS_AR_TRANSACTIONS, "status")],
+                    )
+                ),
+                Orientation="VERTICAL",
+                BarsArrangement="STACKED",
+                CategoryLabelOptions=_axis_label("Date"),
+                ValueLabelOptions=_axis_label("Transactions"),
+                ColorLabelOptions=_axis_label("Status"),
+            ),
+            Actions=[
+                _same_sheet_filter_action(
+                    "action-ar-txn-day-filter",
+                    "Filter Transaction Detail",
+                    ["ar-txn-detail-table"],
+                ),
+            ],
         )
     )
 
@@ -472,6 +724,8 @@ def build_transactions_visuals() -> list[Visual]:
                             _unagg_field("ar-txn-account",
                                          DS_AR_TRANSACTIONS,
                                          "account_name"),
+                            _unagg_field("ar-txn-scope",
+                                         DS_AR_TRANSACTIONS, "scope"),
                             _unagg_field("ar-txn-amount",
                                          DS_AR_TRANSACTIONS, "amount"),
                             _unagg_field("ar-txn-status",
@@ -497,14 +751,14 @@ def build_transactions_visuals() -> list[Visual]:
         )
     )
 
-    return [kpi_txn_count, kpi_failed, bar_by_status, table_txn]
+    return [kpi_txn_count, kpi_failed, bar_by_status, bar_by_day, table_txn]
 
 
 # ---------------------------------------------------------------------------
-# Exceptions tab — drift + non-zero + timeline
+# Exceptions tab — drift tables, non-zero, two timelines
 # ---------------------------------------------------------------------------
 
-def build_exceptions_visuals() -> list[Visual]:
+def build_exceptions_visuals(link_color: str) -> list[Visual]:
     kpi_parent_drift = Visual(
         KPIVisual=KPIVisual(
             VisualId="ar-exc-kpi-parent-drift",
@@ -576,14 +830,17 @@ def build_exceptions_visuals() -> list[Visual]:
             Title=_title("Parent Balance Drift"),
             Subtitle=_subtitle(
                 "Parent-account days where stored parent balance disagrees "
-                "with the sum of its children's stored balances. Points at "
-                "the parent-balance upstream feed. Drift > 0 means stored "
-                "is higher than the children's sum."
+                "with the sum of its children's stored balances. Left-click "
+                "parent_account_id to drill into Balances with the child "
+                "table filtered to that parent's children."
             ),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
                     TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
                         Values=[
+                            _unagg_field("ar-exc-pdrift-parent-id",
+                                         DS_AR_PARENT_BALANCE_DRIFT,
+                                         "parent_account_id"),
                             _unagg_field("ar-exc-pdrift-parent",
                                          DS_AR_PARENT_BALANCE_DRIFT,
                                          "parent_name"),
@@ -614,6 +871,24 @@ def build_exceptions_visuals() -> list[Visual]:
                     ],
                 },
             ),
+            Actions=[
+                _drill_down_action(
+                    "action-ar-exc-parent-to-balances",
+                    "View Child Balances",
+                    SHEET_AR_BALANCES,
+                    P_AR_PARENT,
+                    "ar-exc-pdrift-parent-id",
+                ),
+            ],
+            ConditionalFormatting={
+                "ConditionalFormattingOptions": [
+                    link_text_format(
+                        "ar-exc-pdrift-parent-id",
+                        "parent_account_id",
+                        link_color,
+                    ),
+                ],
+            },
         )
     )
 
@@ -623,14 +898,16 @@ def build_exceptions_visuals() -> list[Visual]:
             Title=_title("Child Balance Drift"),
             Subtitle=_subtitle(
                 "Child-account days where stored child balance disagrees "
-                "with the running sum of posted transactions. Points at "
-                "the child-balance upstream feed or a missed transaction. "
-                "Drift > 0 means stored is higher than the ledger."
+                "with the running sum of posted transactions. Left-click an "
+                "account_id to drill into Transactions for that account."
             ),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
                     TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
                         Values=[
+                            _unagg_field("ar-exc-cdrift-account-id",
+                                         DS_AR_ACCOUNT_BALANCE_DRIFT,
+                                         "account_id"),
                             _unagg_field("ar-exc-cdrift-account",
                                          DS_AR_ACCOUNT_BALANCE_DRIFT,
                                          "account_name"),
@@ -666,6 +943,24 @@ def build_exceptions_visuals() -> list[Visual]:
                     ],
                 },
             ),
+            Actions=[
+                _drill_down_action(
+                    "action-ar-exc-child-to-txn",
+                    "View Transactions",
+                    SHEET_AR_TRANSACTIONS,
+                    P_AR_ACCOUNT,
+                    "ar-exc-cdrift-account-id",
+                ),
+            ],
+            ConditionalFormatting={
+                "ConditionalFormattingOptions": [
+                    link_text_format(
+                        "ar-exc-cdrift-account-id",
+                        "account_id",
+                        link_color,
+                    ),
+                ],
+            },
         )
     )
 
@@ -675,7 +970,8 @@ def build_exceptions_visuals() -> list[Visual]:
             Title=_title("Non-Zero Transfers"),
             Subtitle=_subtitle(
                 "Transfers where the sum of non-failed legs is not zero. "
-                "Either a counter-leg failed, or the amounts were keyed off."
+                "Left-click a transfer_id to drill into Transactions for "
+                "that transfer."
             ),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
@@ -715,30 +1011,74 @@ def build_exceptions_visuals() -> list[Visual]:
                     ],
                 },
             ),
+            Actions=[
+                _drill_down_action(
+                    "action-ar-exc-nonzero-to-txn",
+                    "View Transactions",
+                    SHEET_AR_TRANSACTIONS,
+                    P_AR_TRANSFER,
+                    "ar-exc-nz-id",
+                ),
+            ],
+            ConditionalFormatting={
+                "ConditionalFormattingOptions": [
+                    link_text_format(
+                        "ar-exc-nz-id", "transfer_id", link_color,
+                    ),
+                ],
+            },
         )
     )
 
-    # Timeline: sum of child-level drift per day. Child drift is closer
-    # to the ledger (and typically finer-grained than parent drift), so
-    # it's the more informative trace to plot. Phase 4 can add a second
-    # series for parent drift if needed.
-    timeline = Visual(
+    # Two timelines — one per drift feed. Two independent feeds (parent
+    # upstream vs child upstream) so the side-by-side plot makes which
+    # feed went off the rails visually legible.
+    timeline_parent = Visual(
         BarChartVisual=BarChartVisual(
-            VisualId="ar-exc-drift-timeline",
-            Title=_title("Child Drift Timeline"),
+            VisualId="ar-exc-parent-drift-timeline",
+            Title=_title("Parent Drift Timeline"),
             Subtitle=_subtitle(
-                "Total child-drift amount per day. Tall bars mark days "
-                "where stored child balances diverged most from the "
-                "posted-transaction ledger."
+                "Total parent-drift amount per day — stored parent balance "
+                "minus Σ of its children's stored balances. Tall bars mark "
+                "days the parent feed was out of step with its children."
             ),
             ChartConfiguration=BarChartConfiguration(
                 FieldWells=BarChartFieldWells(
                     BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
-                        Category=[_date_dim("ar-exc-timeline-dim",
+                        Category=[_date_dim("ar-exc-ptimeline-dim",
+                                            DS_AR_PARENT_BALANCE_DRIFT,
+                                            "balance_date")],
+                        Values=[_measure_sum(
+                            "ar-exc-ptimeline-drift",
+                            DS_AR_PARENT_BALANCE_DRIFT, "drift",
+                        )],
+                    )
+                ),
+                Orientation="VERTICAL",
+                BarsArrangement="CLUSTERED",
+                CategoryLabelOptions=_axis_label("Date"),
+                ValueLabelOptions=_axis_label("Total Drift ($)"),
+            ),
+        )
+    )
+
+    timeline_child = Visual(
+        BarChartVisual=BarChartVisual(
+            VisualId="ar-exc-child-drift-timeline",
+            Title=_title("Child Drift Timeline"),
+            Subtitle=_subtitle(
+                "Total child-drift amount per day — stored child balance "
+                "minus running Σ of posted transactions. Tall bars mark "
+                "days child balances diverged most from the ledger."
+            ),
+            ChartConfiguration=BarChartConfiguration(
+                FieldWells=BarChartFieldWells(
+                    BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
+                        Category=[_date_dim("ar-exc-ctimeline-dim",
                                             DS_AR_ACCOUNT_BALANCE_DRIFT,
                                             "balance_date")],
                         Values=[_measure_sum(
-                            "ar-exc-timeline-drift",
+                            "ar-exc-ctimeline-drift",
                             DS_AR_ACCOUNT_BALANCE_DRIFT, "drift",
                         )],
                     )
@@ -754,5 +1094,5 @@ def build_exceptions_visuals() -> list[Visual]:
     return [
         kpi_parent_drift, kpi_child_drift, kpi_nonzero,
         table_parent_drift, table_child_drift, table_non_zero,
-        timeline,
+        timeline_parent, timeline_child,
     ]

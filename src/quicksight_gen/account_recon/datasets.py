@@ -157,6 +157,7 @@ def build_transactions_dataset(cfg: Config) -> DataSet:
         InputColumn(Name="account_name", Type="STRING"),
         InputColumn(Name="parent_account_id", Type="STRING"),
         InputColumn(Name="parent_name", Type="STRING"),
+        InputColumn(Name="scope", Type="STRING"),
         InputColumn(Name="transfer_id", Type="STRING"),
         InputColumn(Name="amount", Type="DECIMAL"),
         InputColumn(Name="posted_at", Type="DATETIME"),
@@ -171,6 +172,7 @@ SELECT
     a.name          AS account_name,
     a.parent_account_id,
     p.name          AS parent_name,
+    CASE WHEN a.is_internal THEN 'Internal' ELSE 'External' END AS scope,
     t.transfer_id,
     t.amount,
     t.posted_at,
@@ -271,6 +273,7 @@ def build_transfer_summary_dataset(cfg: Config) -> DataSet:
         InputColumn(Name="leg_count", Type="INTEGER"),
         InputColumn(Name="failed_leg_count", Type="INTEGER"),
         InputColumn(Name="net_zero_status", Type="STRING"),
+        InputColumn(Name="scope_type", Type="STRING"),
         InputColumn(Name="memo", Type="STRING"),
     ]
     sql = """\
@@ -283,6 +286,8 @@ SELECT
     leg_count,
     failed_leg_count,
     net_zero_status,
+    CASE WHEN has_external_leg THEN 'cross_scope' ELSE 'internal_only' END
+        AS scope_type,
     memo
 FROM ar_transfer_summary"""
     return _dataset(

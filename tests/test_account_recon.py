@@ -228,6 +228,89 @@ class TestScenarioCoverage:
         for memo_fragment in ("Feed lot settlement", "Grain silo delivery"):
             assert memo_fragment in ar_sql
 
+    def _transfer_legs_by_scope(
+        self, ar_parsed,
+    ) -> dict[str, tuple[int, int]]:
+        """Return {transfer_id: (internal_leg_count, external_leg_count)}.
+
+        Parses account.is_internal from ar_accounts, then groups
+        ar_transactions by transfer_id and counts the legs on each side.
+        Used by the scenario coverage tests for transfer pair-patterns.
+        """
+        internal_by_account: dict[str, bool] = {}
+        for row in ar_parsed["ar_accounts"]:
+            parts = [p.strip() for p in row.split(",")]
+            aid = parts[0].strip("'")
+            is_internal = parts[2].strip().lower() == "true"
+            internal_by_account[aid] = is_internal
+
+        buckets: dict[str, list[bool]] = {}
+        for row in ar_parsed["ar_transactions"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            account_id = parts[1]
+            transfer_id = parts[2]
+            buckets.setdefault(transfer_id, []).append(
+                internal_by_account[account_id]
+            )
+        return {
+            tid: (sum(flags), sum(1 for f in flags if not f))
+            for tid, flags in buckets.items()
+        }
+
+    def test_cross_scope_transfers_exist(self, ar_parsed):
+        """Transfers with one internal leg + one external leg must exist
+        so the dashboard has examples where the external leg doesn't
+        affect any tracked balance."""
+        by_scope = self._transfer_legs_by_scope(ar_parsed)
+        cross_scope = [
+            tid for tid, (i, e) in by_scope.items() if i >= 1 and e >= 1
+        ]
+        assert len(cross_scope) >= 20, (
+            f"Need ≥20 cross-scope transfers, got {len(cross_scope)}"
+        )
+
+    def test_internal_only_transfers_exist(self, ar_parsed):
+        """Transfers where both legs land on internal children must exist
+        so drift bugs that only manifest when one transfer touches two
+        tracked balances are surfaced by the demo data.
+
+        Without these, a query that sums transfer legs by transfer_id
+        instead of by account_id would silently work on cross-scope-only
+        seed data — the bug only shows up when both legs are tracked.
+        """
+        by_scope = self._transfer_legs_by_scope(ar_parsed)
+        internal_only = [
+            tid for tid, (i, e) in by_scope.items() if i >= 2 and e == 0
+        ]
+        assert len(internal_only) >= 15, (
+            f"Need ≥15 internal-internal transfers, got {len(internal_only)}"
+        )
+
+    def test_failed_transfer_pattern_coverage(self, ar_parsed):
+        """Both failed-leg and fully-failed scenarios must include at
+        least one internal-internal instance — otherwise a regression in
+        how failed internal legs affect child balances would slip
+        through the demo."""
+        by_scope = self._transfer_legs_by_scope(ar_parsed)
+        # Pull all transactions grouped by transfer to check statuses.
+        statuses_by_transfer: dict[str, list[str]] = {}
+        for row in ar_parsed["ar_transactions"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            transfer_id = parts[2]
+            status = parts[5]
+            statuses_by_transfer.setdefault(transfer_id, []).append(status)
+
+        internal_only_ids = {
+            tid for tid, (i, e) in by_scope.items() if i >= 2 and e == 0
+        }
+        internal_only_with_any_failed = [
+            tid for tid in internal_only_ids
+            if any(s == "failed" for s in statuses_by_transfer[tid])
+        ]
+        assert len(internal_only_with_any_failed) >= 1, (
+            "Need ≥1 internal-internal transfer with a failed leg"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Seed SQL structure
@@ -457,13 +540,17 @@ class TestSheetLayout:
         self._assert_visual_count(ar_output_dir, SHEET_AR_BALANCES, 4)
 
     def test_transfers_visual_count(self, ar_output_dir):
-        self._assert_visual_count(ar_output_dir, SHEET_AR_TRANSFERS, 3)
+        # Phase 4: added Transfer Status bar chart -> 4
+        self._assert_visual_count(ar_output_dir, SHEET_AR_TRANSFERS, 4)
 
     def test_transactions_visual_count(self, ar_output_dir):
-        self._assert_visual_count(ar_output_dir, SHEET_AR_TRANSACTIONS, 4)
+        # Phase 4: added Transactions-by-day bar chart -> 5
+        self._assert_visual_count(ar_output_dir, SHEET_AR_TRANSACTIONS, 5)
 
     def test_exceptions_visual_count(self, ar_output_dir):
-        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 7)
+        # Phase 4: added Parent Drift Timeline alongside Child Drift
+        # Timeline -> 8.
+        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 8)
 
     def _assert_visual_count(self, out_dir: Path, sheet_id: str, expected: int) -> None:
         analysis = _load(out_dir, "account-recon-analysis.json")
@@ -532,18 +619,56 @@ class TestExplanations:
                         )
 
 
-class TestFilterGroups:
-    """Phase 3 has exactly one filter group: the shared date-range."""
+def _find_visual(analysis: dict, visual_id: str) -> dict:
+    for sheet in analysis["Definition"]["Sheets"]:
+        for v in sheet.get("Visuals", []):
+            for vtype in v.values():
+                if isinstance(vtype, dict) and vtype.get("VisualId") == visual_id:
+                    return vtype
+    raise AssertionError(f"Visual {visual_id} not found")
 
-    def test_single_filter_group(self, ar_output_dir):
+
+def _find_fg(analysis: dict, fg_id: str) -> dict:
+    for fg in analysis["Definition"]["FilterGroups"]:
+        if fg["FilterGroupId"] == fg_id:
+            return fg
+    raise AssertionError(f"Filter group {fg_id} not found")
+
+
+def _find_sheet(analysis: dict, sheet_id: str) -> dict:
+    for s in analysis["Definition"]["Sheets"]:
+        if s["SheetId"] == sheet_id:
+            return s
+    raise AssertionError(f"Sheet {sheet_id} not found")
+
+
+class TestFilterGroups:
+    """Phase 4: shared date-range + 4 multi-selects + 4 Show-Only toggles +
+    3 drill-down parameter filters = 12 filter groups."""
+
+    _EXPECTED_IDS = {
+        "fg-ar-date-range",
+        "fg-ar-parent-account",
+        "fg-ar-child-account",
+        "fg-ar-transfer-status",
+        "fg-ar-transaction-status",
+        "fg-ar-balances-parent-drift",
+        "fg-ar-balances-child-drift",
+        "fg-ar-transfers-unhealthy",
+        "fg-ar-transactions-failed",
+        "fg-ar-drill-account-on-txn",
+        "fg-ar-drill-transfer-on-txn",
+        "fg-ar-drill-parent-on-balances-child",
+    }
+
+    def test_filter_group_ids(self, ar_output_dir):
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
-        fgs = analysis["Definition"]["FilterGroups"]
-        assert len(fgs) == 1
-        assert fgs[0]["FilterGroupId"] == "fg-ar-date-range"
+        ids = {fg["FilterGroupId"] for fg in analysis["Definition"]["FilterGroups"]}
+        assert ids == self._EXPECTED_IDS
 
     def test_date_range_scopes_four_tabs(self, ar_output_dir):
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
-        fg = analysis["Definition"]["FilterGroups"][0]
+        fg = _find_fg(analysis, "fg-ar-date-range")
         scopes = fg["ScopeConfiguration"]["SelectedSheets"][
             "SheetVisualScopingConfigurations"
         ]
@@ -554,6 +679,348 @@ class TestFilterGroups:
             SHEET_AR_TRANSACTIONS,
             SHEET_AR_EXCEPTIONS,
         }
+
+    @pytest.mark.parametrize(
+        "fg_id",
+        ["fg-ar-parent-account", "fg-ar-child-account"],
+    )
+    def test_cross_tab_multi_select_has_default_dropdown(
+        self, ar_output_dir, fg_id: str,
+    ):
+        """Cross-tab (ALL_DATASETS) multi-selects declare a MULTI_SELECT
+        default dropdown so the CrossSheet controls on each tab inherit it."""
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        fg = _find_fg(analysis, fg_id)
+        cf = fg["Filters"][0]["CategoryFilter"]
+        ctrl = (
+            cf["DefaultFilterControlConfiguration"]["ControlOptions"]
+            ["DefaultDropdownOptions"]
+        )
+        assert ctrl["Type"] == "MULTI_SELECT"
+
+    @pytest.mark.parametrize(
+        "fg_id",
+        ["fg-ar-transfer-status", "fg-ar-transaction-status"],
+    )
+    def test_single_dataset_multi_select_omits_default_control(
+        self, ar_output_dir, fg_id: str,
+    ):
+        """SINGLE_DATASET CategoryFilters with a direct (non-CrossSheet)
+        Dropdown on the same sheet must NOT declare
+        DefaultFilterControlConfiguration — AWS rejects CreateAnalysis
+        otherwise (same rule documented in payment_recon/filters.py)."""
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        fg = _find_fg(analysis, fg_id)
+        cf = fg["Filters"][0]["CategoryFilter"]
+        assert "DefaultFilterControlConfiguration" not in cf
+
+    @pytest.mark.parametrize(
+        "fg_id, sheet_id",
+        [
+            ("fg-ar-balances-parent-drift", SHEET_AR_BALANCES),
+            ("fg-ar-balances-child-drift", SHEET_AR_BALANCES),
+            ("fg-ar-transfers-unhealthy", SHEET_AR_TRANSFERS),
+            ("fg-ar-transactions-failed", SHEET_AR_TRANSACTIONS),
+        ],
+    )
+    def test_show_only_toggle_scoped_to_single_sheet(
+        self, ar_output_dir, fg_id: str, sheet_id: str,
+    ):
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        fg = _find_fg(analysis, fg_id)
+        scopes = fg["ScopeConfiguration"]["SelectedSheets"][
+            "SheetVisualScopingConfigurations"
+        ]
+        assert [s["SheetId"] for s in scopes] == [sheet_id]
+        assert fg["CrossDataset"] == "SINGLE_DATASET"
+
+
+class TestParameterDeclarations:
+    """Phase 4 drill-downs rely on three single-valued string parameters."""
+
+    def test_three_parameters(self, ar_output_dir):
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        params = analysis["Definition"]["ParameterDeclarations"]
+        names = {p["StringParameterDeclaration"]["Name"] for p in params}
+        assert names == {
+            "pArAccountId",
+            "pArParentAccountId",
+            "pArTransferId",
+        }
+
+    def test_parameters_single_valued(self, ar_output_dir):
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        for p in analysis["Definition"]["ParameterDeclarations"]:
+            decl = p["StringParameterDeclaration"]
+            assert decl["ParameterValueType"] == "SINGLE_VALUED"
+
+
+class TestDrillDownFilterGroups:
+    """The three drill-down filter groups bind parameters to target columns."""
+
+    def _cfg(self, fg: dict) -> dict:
+        return fg["Filters"][0]["CategoryFilter"]["Configuration"][
+            "CustomFilterConfiguration"
+        ]
+
+    @pytest.mark.parametrize(
+        "fg_id, parameter_name, column_name, sheet_id",
+        [
+            (
+                "fg-ar-drill-account-on-txn",
+                "pArAccountId",
+                "account_id",
+                SHEET_AR_TRANSACTIONS,
+            ),
+            (
+                "fg-ar-drill-transfer-on-txn",
+                "pArTransferId",
+                "transfer_id",
+                SHEET_AR_TRANSACTIONS,
+            ),
+            (
+                "fg-ar-drill-parent-on-balances-child",
+                "pArParentAccountId",
+                "parent_account_id",
+                SHEET_AR_BALANCES,
+            ),
+        ],
+    )
+    def test_drill_filter_binding(
+        self,
+        ar_output_dir,
+        fg_id: str,
+        parameter_name: str,
+        column_name: str,
+        sheet_id: str,
+    ):
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        fg = _find_fg(analysis, fg_id)
+        cfg = self._cfg(fg)
+        assert cfg["MatchOperator"] == "EQUALS"
+        assert cfg["ParameterName"] == parameter_name
+        col = fg["Filters"][0]["CategoryFilter"]["Column"]
+        assert col["ColumnName"] == column_name
+        scopes = fg["ScopeConfiguration"]["SelectedSheets"][
+            "SheetVisualScopingConfigurations"
+        ]
+        assert [s["SheetId"] for s in scopes] == [sheet_id]
+
+    def test_parent_drill_targets_child_table_only(self, ar_output_dir):
+        """The Balances parent-to-child drill must not wipe the parent table;
+        it's scoped to the child table visual only via SELECTED_VISUALS."""
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        fg = _find_fg(analysis, "fg-ar-drill-parent-on-balances-child")
+        scope = fg["ScopeConfiguration"]["SelectedSheets"][
+            "SheetVisualScopingConfigurations"
+        ][0]
+        assert scope["Scope"] == "SELECTED_VISUALS"
+        assert scope["VisualIds"] == ["ar-balances-child-table"]
+
+
+def _drill_nav_target(visual: dict) -> str:
+    for op in visual["Actions"][0]["ActionOperations"]:
+        if "NavigationOperation" in op:
+            return op["NavigationOperation"]["LocalNavigationConfiguration"][
+                "TargetSheetId"
+            ]
+    raise AssertionError("No navigation operation found")
+
+
+def _set_param(visual: dict) -> tuple[str, str]:
+    for op in visual["Actions"][0]["ActionOperations"]:
+        if "SetParametersOperation" in op:
+            pvc = op["SetParametersOperation"][
+                "ParameterValueConfigurations"
+            ][0]
+            return pvc["DestinationParameterName"], pvc["Value"]["SourceField"]
+    raise AssertionError("No set-parameter operation found")
+
+
+def _same_sheet_targets(visual: dict) -> list[str]:
+    filt = visual["Actions"][0]["ActionOperations"][0]["FilterOperation"]
+    return filt["TargetVisualsConfiguration"][
+        "SameSheetTargetVisualConfiguration"
+    ]["TargetVisuals"]
+
+
+class TestVisualActions:
+    """Drill-downs and same-sheet chart filters attach to the right visuals."""
+
+    def test_balances_parent_right_click_sets_parent_parameter(self, ar_output_dir):
+        """Right-click filters the child table on the same sheet via the
+        pArParentAccountId parameter. AWS rejects a SetParametersOperation
+        that isn't preceded by a NavigationOperation, so the action
+        includes a no-op navigation back to the Balances sheet."""
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        v = _find_visual(analysis, "ar-balances-parent-table")
+        action = v["Actions"][0]
+        assert action["Trigger"] == "DATA_POINT_MENU"
+        assert _drill_nav_target(v) == SHEET_AR_BALANCES
+        assert _set_param(v) == ("pArParentAccountId", "ar-bal-parent-id")
+
+    def test_balances_child_drills_to_transactions(self, ar_output_dir):
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        v = _find_visual(analysis, "ar-balances-child-table")
+        assert v["Actions"][0]["Trigger"] == "DATA_POINT_CLICK"
+        assert _drill_nav_target(v) == SHEET_AR_TRANSACTIONS
+        assert _set_param(v) == ("pArAccountId", "ar-bal-child-id")
+
+    def test_transfers_summary_drills_to_transactions(self, ar_output_dir):
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        v = _find_visual(analysis, "ar-transfers-summary-table")
+        assert _drill_nav_target(v) == SHEET_AR_TRANSACTIONS
+        assert _set_param(v) == ("pArTransferId", "ar-xfr-id")
+
+    @pytest.mark.parametrize(
+        "source_visual, target_visual",
+        [
+            ("ar-transfers-bar-status", "ar-transfers-summary-table"),
+            ("ar-txn-bar-by-status", "ar-txn-detail-table"),
+            ("ar-txn-bar-by-day", "ar-txn-detail-table"),
+        ],
+    )
+    def test_chart_filters_same_sheet_table(
+        self, ar_output_dir, source_visual: str, target_visual: str,
+    ):
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        v = _find_visual(analysis, source_visual)
+        assert _same_sheet_targets(v) == [target_visual]
+
+    @pytest.mark.parametrize(
+        "visual_id, target_sheet, parameter_name, source_field",
+        [
+            (
+                "ar-exc-parent-drift-table",
+                SHEET_AR_BALANCES,
+                "pArParentAccountId",
+                "ar-exc-pdrift-parent-id",
+            ),
+            (
+                "ar-exc-child-drift-table",
+                SHEET_AR_TRANSACTIONS,
+                "pArAccountId",
+                "ar-exc-cdrift-account-id",
+            ),
+            (
+                "ar-exc-nonzero-table",
+                SHEET_AR_TRANSACTIONS,
+                "pArTransferId",
+                "ar-exc-nz-id",
+            ),
+        ],
+    )
+    def test_exceptions_tables_drill_to_correct_tab(
+        self,
+        ar_output_dir,
+        visual_id: str,
+        target_sheet: str,
+        parameter_name: str,
+        source_field: str,
+    ):
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        v = _find_visual(analysis, visual_id)
+        assert _drill_nav_target(v) == target_sheet
+        assert _set_param(v) == (parameter_name, source_field)
+
+
+def _cf_cells(visual: dict) -> list[dict]:
+    opts = visual.get("ConditionalFormatting", {}).get(
+        "ConditionalFormattingOptions", []
+    )
+    return [o["Cell"] for o in opts if "Cell" in o]
+
+
+class TestConditionalFormatting:
+    """Drill-source cells are styled so the click affordance is visible."""
+
+    @pytest.mark.parametrize(
+        "visual_id, field_id",
+        [
+            ("ar-balances-child-table", "ar-bal-child-id"),
+            ("ar-transfers-summary-table", "ar-xfr-id"),
+            ("ar-exc-parent-drift-table", "ar-exc-pdrift-parent-id"),
+            ("ar-exc-child-drift-table", "ar-exc-cdrift-account-id"),
+            ("ar-exc-nonzero-table", "ar-exc-nz-id"),
+        ],
+    )
+    def test_left_click_drill_sources_have_link_format(
+        self, ar_output_dir, visual_id: str, field_id: str,
+    ):
+        """Left-click drill-source cells get plain-accent TextColor (no
+        background tint — that's reserved for right-click menu cells)."""
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        v = _find_visual(analysis, visual_id)
+        cells = [c for c in _cf_cells(v) if c["FieldId"] == field_id]
+        assert cells, (
+            f"{visual_id} missing conditional formatting for {field_id}"
+        )
+        tf = cells[0]["TextFormat"]
+        assert "TextColor" in tf
+        assert "BackgroundColor" not in tf
+
+    def test_balances_parent_right_click_uses_menu_format(self, ar_output_dir):
+        """Right-click (DATA_POINT_MENU) cells get an accent+tint style —
+        distinguishing them from the plain-accent left-click cells."""
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        v = _find_visual(analysis, "ar-balances-parent-table")
+        cells = [
+            c for c in _cf_cells(v) if c["FieldId"] == "ar-bal-parent-id"
+        ]
+        assert cells
+        tf = cells[0]["TextFormat"]
+        assert "TextColor" in tf
+        assert "BackgroundColor" in tf
+
+
+class TestShowOnlyToggleControls:
+    """Each Show-Only-X toggle renders as a SINGLE_SELECT dropdown on the
+    right sheet with an explicit 'Show Only …' title."""
+
+    def _single_select_titles(self, sheet: dict) -> dict[str, str]:
+        titles: dict[str, str] = {}
+        for ctrl in sheet.get("FilterControls", []):
+            for ctrl_obj in ctrl.values():
+                if (
+                    isinstance(ctrl_obj, dict)
+                    and ctrl_obj.get("Type") == "SINGLE_SELECT"
+                ):
+                    titles[ctrl_obj["FilterControlId"]] = ctrl_obj["Title"]
+        return titles
+
+    def test_balances_has_both_drift_toggles(self, ar_output_dir):
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        sheet = _find_sheet(analysis, SHEET_AR_BALANCES)
+        titles = self._single_select_titles(sheet)
+        assert titles.get("ctrl-ar-balances-parent-drift") == (
+            "Show Only Parent Drift"
+        )
+        assert titles.get("ctrl-ar-balances-child-drift") == (
+            "Show Only Child Drift"
+        )
+
+    def test_transfers_has_unhealthy_toggle(self, ar_output_dir):
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        sheet = _find_sheet(analysis, SHEET_AR_TRANSFERS)
+        titles = self._single_select_titles(sheet)
+        assert titles.get("ctrl-ar-transfers-unhealthy") == (
+            "Show Only Unhealthy"
+        )
+
+    def test_transactions_has_failed_toggle(self, ar_output_dir):
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        sheet = _find_sheet(analysis, SHEET_AR_TRANSACTIONS)
+        titles = self._single_select_titles(sheet)
+        assert titles.get("ctrl-ar-transactions-failed") == (
+            "Show Only Failed"
+        )
+
+    def test_exceptions_has_no_toggle(self, ar_output_dir):
+        """Exceptions sheet is already the "problems only" sheet — no need
+        for another 'Show Only …' layer."""
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        sheet = _find_sheet(analysis, SHEET_AR_EXCEPTIONS)
+        assert self._single_select_titles(sheet) == {}
 
 
 # ---------------------------------------------------------------------------

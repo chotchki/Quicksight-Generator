@@ -65,10 +65,26 @@ _MEMOS = [
     "Wheat futures settlement",
 ]
 
-_SUCCESSFUL_TRANSFERS = 48
-_FAILED_LEG_TRANSFERS = 4
-_OFF_AMOUNT_TRANSFERS = 4
-_EXTRA_FAILED_TRANSFERS = 4  # all legs failed — show up in failed-txn lists
+# Each bucket is split (cross_scope, internal_internal) so the demo
+# exercises both patterns. Cross-scope transfers (one internal leg, one
+# external) are the common case — the external leg doesn't affect any
+# tracked balance. Internal-internal transfers touch two tracked balances
+# at once; without them, a bug that sums a transfer's legs by transfer_id
+# instead of account_id would never surface.
+_SUCCESSFUL_CROSS_SCOPE = 28
+_SUCCESSFUL_INTERNAL_INTERNAL = 20
+_FAILED_LEG_CROSS_SCOPE = 2
+_FAILED_LEG_INTERNAL_INTERNAL = 2
+_OFF_AMOUNT_CROSS_SCOPE = 2
+_OFF_AMOUNT_INTERNAL_INTERNAL = 2
+_EXTRA_FAILED_CROSS_SCOPE = 2   # all legs failed — show up in failed-txn lists
+_EXTRA_FAILED_INTERNAL_INTERNAL = 2
+_SUCCESSFUL_TRANSFERS = _SUCCESSFUL_CROSS_SCOPE + _SUCCESSFUL_INTERNAL_INTERNAL
+_FAILED_LEG_TRANSFERS = _FAILED_LEG_CROSS_SCOPE + _FAILED_LEG_INTERNAL_INTERNAL
+_OFF_AMOUNT_TRANSFERS = _OFF_AMOUNT_CROSS_SCOPE + _OFF_AMOUNT_INTERNAL_INTERNAL
+_EXTRA_FAILED_TRANSFERS = (
+    _EXTRA_FAILED_CROSS_SCOPE + _EXTRA_FAILED_INTERNAL_INTERNAL
+)
 _TRANSFER_COUNT = (
     _SUCCESSFUL_TRANSFERS
     + _FAILED_LEG_TRANSFERS
@@ -146,13 +162,14 @@ def _ts(base: date, days_ago: int, rng: random.Random) -> datetime:
                     rng.randint(8, 17), rng.randint(0, 59), 0)
 
 
-def _pick_account_pair(
+def _pick_cross_scope_pair(
     rng: random.Random,
 ) -> tuple[str, str]:
     """Return (debit_account_id, credit_account_id) for one transfer.
 
-    Transfers always move money from an internal child account to an
-    external one (or vice versa) so the ledger books look realistic.
+    One leg is an internal child, the other is an external child. The
+    direction is randomized so the "external leg" appears as both the
+    debit and the credit side roughly half the time.
     """
     internal_ids = [a[0] for a in ACCOUNTS
                     if _parent_is_internal(a[2])]
@@ -163,6 +180,24 @@ def _pick_account_pair(
     if rng.random() < 0.5:
         return debit, credit
     return credit, debit
+
+
+def _pick_internal_pair(
+    rng: random.Random,
+) -> tuple[str, str]:
+    """Return (debit_account_id, credit_account_id) for one transfer
+    between two distinct internal children.
+
+    Both legs affect tracked balances — this exercises the case where
+    a single transfer moves two child accounts' running totals in
+    opposite directions.
+    """
+    internal_ids = [a[0] for a in ACCOUNTS
+                    if _parent_is_internal(a[2])]
+    debit = rng.choice(internal_ids)
+    credit_choices = [a for a in internal_ids if a != debit]
+    credit = rng.choice(credit_choices)
+    return debit, credit
 
 
 def _parent_is_internal(parent_id: str) -> bool:
@@ -183,7 +218,9 @@ def _generate_transfers(
 
     Returns a list of transaction dicts. Each transfer emits 2 legs
     with the same ``transfer_id`` but opposite-sign amounts (with
-    intentional deviations for the failure buckets).
+    intentional deviations for the failure buckets). Every bucket
+    splits between cross-scope and internal-internal pair-picking so
+    both patterns exist in the seed.
     """
     transactions: list[dict] = []
     txn_idx = 0
@@ -208,51 +245,87 @@ def _generate_transfers(
             "memo": memo,
         })
 
+    next_tid = [1]
+
+    def _next_id() -> str:
+        tid = f"ar-xfer-{next_tid[0]:04d}"
+        next_tid[0] += 1
+        return tid
+
+    def _emit_pair(
+        debit_acct: str, credit_acct: str,
+        amount: Decimal, credit_amount: Decimal,
+        posted: datetime,
+        debit_status: str, credit_status: str,
+        memo: str,
+    ) -> None:
+        tid = _next_id()
+        _emit(tid, debit_acct, amount, posted, debit_status, memo)
+        _emit(tid, credit_acct, credit_amount, posted, credit_status, memo)
+
+    def _pick(pair_kind: str) -> tuple[str, str]:
+        if pair_kind == "cross":
+            return _pick_cross_scope_pair(rng)
+        return _pick_internal_pair(rng)
+
     # 1. Successful transfers — both legs posted, amounts sum to zero.
-    for i in range(1, _SUCCESSFUL_TRANSFERS + 1):
-        tid = f"ar-xfer-{i:04d}"
-        debit_acct, credit_acct = _pick_account_pair(rng)
-        amount = _money(rng, 100, 9000)
-        posted = _ts(today, rng.randint(1, _DAYS_OF_HISTORY - 1), rng)
-        memo = rng.choice(_MEMOS)
-        _emit(tid, debit_acct, amount, posted, "posted", memo)
-        _emit(tid, credit_acct, -amount, posted, "posted", memo)
+    for pair_kind, count in (
+        ("cross", _SUCCESSFUL_CROSS_SCOPE),
+        ("internal", _SUCCESSFUL_INTERNAL_INTERNAL),
+    ):
+        for _ in range(count):
+            debit_acct, credit_acct = _pick(pair_kind)
+            amount = _money(rng, 100, 9000)
+            posted = _ts(today, rng.randint(1, _DAYS_OF_HISTORY - 1), rng)
+            memo = rng.choice(_MEMOS)
+            _emit_pair(debit_acct, credit_acct,
+                       amount, -amount, posted,
+                       "posted", "posted", memo)
 
     # 2. Failed-leg transfers — debit posts, credit fails. Net non-zero.
-    start = _SUCCESSFUL_TRANSFERS + 1
-    for i in range(start, start + _FAILED_LEG_TRANSFERS):
-        tid = f"ar-xfer-{i:04d}"
-        debit_acct, credit_acct = _pick_account_pair(rng)
-        amount = _money(rng, 200, 4000)
-        posted = _ts(today, rng.randint(2, 20), rng)
-        memo = rng.choice(_MEMOS)
-        _emit(tid, debit_acct, amount, posted, "posted", memo)
-        _emit(tid, credit_acct, -amount, posted, "failed", memo)
+    for pair_kind, count in (
+        ("cross", _FAILED_LEG_CROSS_SCOPE),
+        ("internal", _FAILED_LEG_INTERNAL_INTERNAL),
+    ):
+        for _ in range(count):
+            debit_acct, credit_acct = _pick(pair_kind)
+            amount = _money(rng, 200, 4000)
+            posted = _ts(today, rng.randint(2, 20), rng)
+            memo = rng.choice(_MEMOS)
+            _emit_pair(debit_acct, credit_acct,
+                       amount, -amount, posted,
+                       "posted", "failed", memo)
 
     # 3. Off-amount transfers — both legs posted but amounts don't
     #    balance (manual keying error, rounding, fee drift).
-    start += _FAILED_LEG_TRANSFERS
-    for i in range(start, start + _OFF_AMOUNT_TRANSFERS):
-        tid = f"ar-xfer-{i:04d}"
-        debit_acct, credit_acct = _pick_account_pair(rng)
-        amount = _money(rng, 300, 5000)
-        offset = _money(rng, 2, 25)
-        posted = _ts(today, rng.randint(2, 25), rng)
-        memo = rng.choice(_MEMOS)
-        _emit(tid, debit_acct, amount, posted, "posted", memo)
-        _emit(tid, credit_acct, -(amount + offset), posted, "posted", memo)
+    for pair_kind, count in (
+        ("cross", _OFF_AMOUNT_CROSS_SCOPE),
+        ("internal", _OFF_AMOUNT_INTERNAL_INTERNAL),
+    ):
+        for _ in range(count):
+            debit_acct, credit_acct = _pick(pair_kind)
+            amount = _money(rng, 300, 5000)
+            offset = _money(rng, 2, 25)
+            posted = _ts(today, rng.randint(2, 25), rng)
+            memo = rng.choice(_MEMOS)
+            _emit_pair(debit_acct, credit_acct,
+                       amount, -(amount + offset), posted,
+                       "posted", "posted", memo)
 
     # 4. Fully-failed transfers — both legs failed. Exposes the
     #    failed-transactions list without distorting net.
-    start += _OFF_AMOUNT_TRANSFERS
-    for i in range(start, start + _EXTRA_FAILED_TRANSFERS):
-        tid = f"ar-xfer-{i:04d}"
-        debit_acct, credit_acct = _pick_account_pair(rng)
-        amount = _money(rng, 150, 2500)
-        posted = _ts(today, rng.randint(2, 30), rng)
-        memo = rng.choice(_MEMOS)
-        _emit(tid, debit_acct, amount, posted, "failed", memo)
-        _emit(tid, credit_acct, -amount, posted, "failed", memo)
+    for pair_kind, count in (
+        ("cross", _EXTRA_FAILED_CROSS_SCOPE),
+        ("internal", _EXTRA_FAILED_INTERNAL_INTERNAL),
+    ):
+        for _ in range(count):
+            debit_acct, credit_acct = _pick(pair_kind)
+            amount = _money(rng, 150, 2500)
+            posted = _ts(today, rng.randint(2, 30), rng)
+            memo = rng.choice(_MEMOS)
+            _emit_pair(debit_acct, credit_acct,
+                       amount, -amount, posted,
+                       "failed", "failed", memo)
 
     return transactions
 

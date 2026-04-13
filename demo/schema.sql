@@ -361,7 +361,11 @@ LEFT JOIN ar_computed_parent_daily_balance computed
 
 -- Per-transfer net of non-failed transactions + net-zero flag.
 -- Represents the set of transactions that should balance for each
--- transfer. A healthy transfer has net = 0.
+-- transfer. A healthy transfer has net = 0. ``has_external_leg`` flags
+-- transfers where at least one leg lands on an external account — the
+-- external leg's effect on tracked balances is zero (we don't store
+-- external balances), so a net-zero transfer can still move a tracked
+-- child's running total by its full amount.
 CREATE VIEW ar_transfer_net_zero AS
 SELECT
     t.transfer_id,
@@ -373,12 +377,14 @@ SELECT
              THEN t.amount ELSE 0 END)                            AS total_credit,
     COUNT(*)                                                      AS leg_count,
     SUM(CASE WHEN t.status = 'failed' THEN 1 ELSE 0 END)          AS failed_leg_count,
+    BOOL_OR(NOT a.is_internal)                                    AS has_external_leg,
     CASE
         WHEN SUM(CASE WHEN t.status <> 'failed' THEN t.amount ELSE 0 END) = 0
             THEN 'net_zero'
         ELSE 'not_net_zero'
     END                                                           AS net_zero_status
 FROM ar_transactions t
+JOIN ar_accounts a ON a.account_id = t.account_id
 GROUP BY t.transfer_id;
 
 
@@ -394,6 +400,7 @@ SELECT
     tz.leg_count,
     tz.failed_leg_count,
     tz.net_zero_status,
+    tz.has_external_leg,
     (SELECT memo FROM ar_transactions x
       WHERE x.transfer_id = tz.transfer_id
       ORDER BY x.posted_at, x.transaction_id

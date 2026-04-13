@@ -1,9 +1,10 @@
 """QuickSight Analysis + Dashboard for Account Recon.
 
-Phase 3 layout is intentionally simple: one Getting Started tab +
-Balances / Transfers / Transactions / Exceptions. A single shared
-date-range filter is the only interaction — drill-downs and the
-account/parent multi-selects land in Phase 4.
+Phase 4 layers drill-downs, per-tab filters, and same-sheet chart
+filtering onto the Phase 3 skeleton. Three string parameters
+(``pArAccountId``, ``pArParentAccountId``, ``pArTransferId``) thread the
+drill-downs; each has a matching filter group scoped to its target
+sheet (or the parent's same-sheet child table).
 """
 
 from __future__ import annotations
@@ -42,16 +43,26 @@ from quicksight_gen.common.config import Config
 from quicksight_gen.common.models import (
     Analysis,
     AnalysisDefinition,
+    CategoryFilter,
+    CategoryFilterConfiguration,
+    ColumnIdentifier,
     Dashboard,
     DashboardPublishOptions,
     DataSetIdentifierDeclaration,
+    Filter,
+    FilterGroup,
+    FilterScopeConfiguration,
     GridLayoutConfiguration,
     GridLayoutElement,
     Layout,
     LayoutConfiguration,
+    ParameterDeclaration,
     ResourcePermission,
+    SelectedSheetsFilterScopeConfiguration,
     SheetDefinition,
     SheetTextBox,
+    SheetVisualScopingConfiguration,
+    StringParameterDeclaration,
 )
 from quicksight_gen.common.theme import get_preset
 
@@ -111,6 +122,21 @@ def _kpi_pair(id_left: str, id_right: str) -> list[GridLayoutElement]:
     ]
 
 
+def _chart_pair(id_left: str, id_right: str) -> list[GridLayoutElement]:
+    return [
+        GridLayoutElement(
+            ElementId=id_left, ElementType="VISUAL",
+            ColumnSpan=_HALF, RowSpan=_CHART_ROW_SPAN,
+            ColumnIndex=0,
+        ),
+        GridLayoutElement(
+            ElementId=id_right, ElementType="VISUAL",
+            ColumnSpan=_HALF, RowSpan=_CHART_ROW_SPAN,
+            ColumnIndex=_HALF,
+        ),
+    ]
+
+
 def _full_width_visual(element_id: str, row_span: int) -> GridLayoutElement:
     return GridLayoutElement(
         ElementId=element_id, ElementType="VISUAL",
@@ -165,8 +191,8 @@ _EXCEPTIONS_DESCRIPTION = (
     "is stored parent vs Σ children's stored balances — fingers the "
     "parent-balance upstream feed. Child drift is stored child vs Σ "
     "posted transactions — fingers the child-balance feed or the ledger. "
-    "Non-zero transfers are per-transfer imbalances. The timeline shows "
-    "when child-level drift spiked."
+    "Non-zero transfers are per-transfer imbalances. The timelines show "
+    "when each drift feed spiked."
 )
 
 _DEMO_SCENARIO_FLAVOR = (
@@ -262,14 +288,14 @@ def _build_getting_started_sheet(cfg: Config) -> SheetDefinition:
 # Tab sheets
 # ---------------------------------------------------------------------------
 
-def _build_balances_sheet(cfg: Config) -> SheetDefinition:
+def _build_balances_sheet(cfg: Config, link_color: str, link_tint: str) -> SheetDefinition:
     return SheetDefinition(
         SheetId=SHEET_AR_BALANCES,
         Name="Balances",
         Title="Balances",
         Description=_BALANCES_DESCRIPTION,
         ContentType="INTERACTIVE",
-        Visuals=build_balances_visuals(),
+        Visuals=build_balances_visuals(link_color, link_tint),
         FilterControls=build_balances_controls(cfg),
         Layouts=_grid_layout(
             _kpi_pair("ar-balances-kpi-parents", "ar-balances-kpi-accounts")
@@ -279,17 +305,18 @@ def _build_balances_sheet(cfg: Config) -> SheetDefinition:
     )
 
 
-def _build_transfers_sheet(cfg: Config) -> SheetDefinition:
+def _build_transfers_sheet(cfg: Config, link_color: str) -> SheetDefinition:
     return SheetDefinition(
         SheetId=SHEET_AR_TRANSFERS,
         Name="Transfers",
         Title="Transfers",
         Description=_TRANSFERS_DESCRIPTION,
         ContentType="INTERACTIVE",
-        Visuals=build_transfers_visuals(),
+        Visuals=build_transfers_visuals(link_color),
         FilterControls=build_transfers_controls(cfg),
         Layouts=_grid_layout(
             _kpi_pair("ar-transfers-kpi-count", "ar-transfers-kpi-unhealthy")
+            + [_full_width_visual("ar-transfers-bar-status", _CHART_ROW_SPAN)]
             + [_full_width_visual("ar-transfers-summary-table", _TABLE_ROW_SPAN)]
         ),
     )
@@ -306,14 +333,14 @@ def _build_transactions_sheet(cfg: Config) -> SheetDefinition:
         FilterControls=build_transactions_controls(cfg),
         Layouts=_grid_layout(
             _kpi_pair("ar-txn-kpi-count", "ar-txn-kpi-failed")
-            + [_full_width_visual("ar-txn-bar-by-status", _CHART_ROW_SPAN)]
+            + _chart_pair("ar-txn-bar-by-status", "ar-txn-bar-by-day")
             + [_full_width_visual("ar-txn-detail-table", _TABLE_ROW_SPAN)]
         ),
     )
 
 
-def _build_exceptions_sheet(cfg: Config) -> SheetDefinition:
-    third = _FULL // 3  # 12-wide columns for the 3 KPI row
+def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
+    third = _FULL // 3  # 12-wide columns for 3-across rows
     kpi_row = [
         GridLayoutElement(
             ElementId="ar-exc-kpi-parent-drift", ElementType="VISUAL",
@@ -328,20 +355,38 @@ def _build_exceptions_sheet(cfg: Config) -> SheetDefinition:
             ColumnSpan=third, RowSpan=_KPI_ROW_SPAN, ColumnIndex=third * 2,
         ),
     ]
+    # Three reconciliation problems in a row: parent drift | child drift |
+    # non-zero transfers. Each cell scrolls horizontally within the tile
+    # if the column set outgrows the 12-grid width.
+    table_row = [
+        GridLayoutElement(
+            ElementId="ar-exc-parent-drift-table", ElementType="VISUAL",
+            ColumnSpan=third, RowSpan=_TABLE_ROW_SPAN, ColumnIndex=0,
+        ),
+        GridLayoutElement(
+            ElementId="ar-exc-child-drift-table", ElementType="VISUAL",
+            ColumnSpan=third, RowSpan=_TABLE_ROW_SPAN, ColumnIndex=third,
+        ),
+        GridLayoutElement(
+            ElementId="ar-exc-nonzero-table", ElementType="VISUAL",
+            ColumnSpan=third, RowSpan=_TABLE_ROW_SPAN, ColumnIndex=third * 2,
+        ),
+    ]
     return SheetDefinition(
         SheetId=SHEET_AR_EXCEPTIONS,
         Name="Exceptions",
         Title="Exceptions",
         Description=_EXCEPTIONS_DESCRIPTION,
         ContentType="INTERACTIVE",
-        Visuals=build_exceptions_visuals(),
+        Visuals=build_exceptions_visuals(link_color),
         FilterControls=build_exceptions_controls(cfg),
         Layouts=_grid_layout(
             kpi_row
-            + [_full_width_visual("ar-exc-parent-drift-table", _TABLE_ROW_SPAN)]
-            + [_full_width_visual("ar-exc-child-drift-table", _TABLE_ROW_SPAN)]
-            + [_full_width_visual("ar-exc-nonzero-table", _TABLE_ROW_SPAN)]
-            + [_full_width_visual("ar-exc-drift-timeline", _CHART_ROW_SPAN)]
+            + table_row
+            + _chart_pair(
+                "ar-exc-parent-drift-timeline",
+                "ar-exc-child-drift-timeline",
+            )
         ),
     )
 
@@ -376,20 +421,124 @@ def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaratio
 
 
 # ---------------------------------------------------------------------------
+# Drill-down parameters + filter groups
+# ---------------------------------------------------------------------------
+
+def _ar_string_parameter(name: str) -> ParameterDeclaration:
+    return ParameterDeclaration(
+        StringParameterDeclaration=StringParameterDeclaration(
+            ParameterValueType="SINGLE_VALUED",
+            Name=name,
+            DefaultValues={"StaticValues": []},
+        ),
+    )
+
+
+def _parameter_filter_group(
+    fg_id: str,
+    filter_id: str,
+    dataset_id: str,
+    column_name: str,
+    parameter_name: str,
+    sheet_id: str,
+    visual_ids: list[str] | None = None,
+) -> FilterGroup:
+    """CategoryFilter that binds ``column_name`` to a drill-down parameter.
+
+    When ``visual_ids`` is provided the filter is scoped to just those
+    visuals on the sheet (used for the Balances same-sheet child-table
+    drill). Otherwise it applies to every visual on the sheet.
+    """
+    scoping = SheetVisualScopingConfiguration(
+        SheetId=sheet_id,
+        Scope="SELECTED_VISUALS" if visual_ids else "ALL_VISUALS",
+        VisualIds=visual_ids,
+    )
+    return FilterGroup(
+        FilterGroupId=fg_id,
+        CrossDataset="SINGLE_DATASET",
+        ScopeConfiguration=FilterScopeConfiguration(
+            SelectedSheets=SelectedSheetsFilterScopeConfiguration(
+                SheetVisualScopingConfigurations=[scoping],
+            ),
+        ),
+        Status="ENABLED",
+        Filters=[
+            Filter(
+                CategoryFilter=CategoryFilter(
+                    FilterId=filter_id,
+                    Column=ColumnIdentifier(
+                        DataSetIdentifier=dataset_id,
+                        ColumnName=column_name,
+                    ),
+                    Configuration=CategoryFilterConfiguration(
+                        CustomFilterConfiguration={
+                            "MatchOperator": "EQUALS",
+                            "ParameterName": parameter_name,
+                            "NullOption": "ALL_VALUES",
+                        },
+                    ),
+                ),
+            ),
+        ],
+    )
+
+
+def _build_drill_down_filter_groups() -> list[FilterGroup]:
+    """Three parameter-bound filter groups that implement the Phase 4 drills."""
+    return [
+        _parameter_filter_group(
+            fg_id="fg-ar-drill-account-on-txn",
+            filter_id="filter-ar-drill-account-on-txn",
+            dataset_id=DS_AR_TRANSACTIONS,
+            column_name="account_id",
+            parameter_name="pArAccountId",
+            sheet_id=SHEET_AR_TRANSACTIONS,
+        ),
+        _parameter_filter_group(
+            fg_id="fg-ar-drill-transfer-on-txn",
+            filter_id="filter-ar-drill-transfer-on-txn",
+            dataset_id=DS_AR_TRANSACTIONS,
+            column_name="transfer_id",
+            parameter_name="pArTransferId",
+            sheet_id=SHEET_AR_TRANSACTIONS,
+        ),
+        _parameter_filter_group(
+            fg_id="fg-ar-drill-parent-on-balances-child",
+            filter_id="filter-ar-drill-parent-on-balances-child",
+            dataset_id=DS_AR_ACCOUNT_BALANCE_DRIFT,
+            column_name="parent_account_id",
+            parameter_name="pArParentAccountId",
+            sheet_id=SHEET_AR_BALANCES,
+            visual_ids=["ar-balances-child-table"],
+        ),
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Top-level definition / Analysis / Dashboard
 # ---------------------------------------------------------------------------
 
 def _build_definition(cfg: Config) -> AnalysisDefinition:
+    preset = get_preset(cfg.theme_preset)
+    link_color = preset.accent
+    link_tint = preset.link_tint
+
     return AnalysisDefinition(
         DataSetIdentifierDeclarations=_build_dataset_declarations(cfg),
         Sheets=[
             _build_getting_started_sheet(cfg),
-            _build_balances_sheet(cfg),
-            _build_transfers_sheet(cfg),
+            _build_balances_sheet(cfg, link_color, link_tint),
+            _build_transfers_sheet(cfg, link_color),
             _build_transactions_sheet(cfg),
-            _build_exceptions_sheet(cfg),
+            _build_exceptions_sheet(cfg, link_color),
         ],
-        FilterGroups=build_filter_groups(cfg),
+        FilterGroups=build_filter_groups(cfg) + _build_drill_down_filter_groups(),
+        ParameterDeclarations=[
+            _ar_string_parameter("pArAccountId"),
+            _ar_string_parameter("pArParentAccountId"),
+            _ar_string_parameter("pArTransferId"),
+        ],
     )
 
 

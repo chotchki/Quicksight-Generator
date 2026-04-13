@@ -124,6 +124,31 @@ def dataset_ids(resource_prefix) -> list[str]:
 
 
 @pytest.fixture(scope="session")
+def ar_dashboard_id(resource_prefix) -> str:
+    return f"{resource_prefix}-account-recon-dashboard"
+
+
+@pytest.fixture(scope="session")
+def ar_analysis_id(resource_prefix) -> str:
+    return f"{resource_prefix}-account-recon-analysis"
+
+
+@pytest.fixture(scope="session")
+def ar_dataset_ids(resource_prefix) -> list[str]:
+    """Expected Account Recon dataset IDs."""
+    suffixes = [
+        "ar-parent-accounts-dataset",
+        "ar-accounts-dataset",
+        "ar-transactions-dataset",
+        "ar-parent-balance-drift-dataset",
+        "ar-account-balance-drift-dataset",
+        "ar-transfer-summary-dataset",
+        "ar-non-zero-transfers-dataset",
+    ]
+    return [f"{resource_prefix}-{s}" for s in suffixes]
+
+
+@pytest.fixture(scope="session")
 def page_timeout() -> int:
     return PAGE_TIMEOUT
 
