@@ -21,6 +21,10 @@ from quicksight_gen.payment_recon.constants import (
     SHEET_SETTLEMENTS,
 )
 from quicksight_gen.payment_recon.datasets import OPTIONAL_SALE_METADATA
+from quicksight_gen.common.clickability import (
+    link_text_format,
+    menu_link_text_format,
+)
 from quicksight_gen.common.models import (
     AxisLabelOptions,
     BarChartAggregatedFieldWells,
@@ -171,63 +175,6 @@ def _drill_down_action(
             ),
         ],
     )
-
-
-def _menu_link_text_format(
-    field_id: str,
-    column_name: str,
-    text_color: str,
-    bg_color: str,
-) -> dict:
-    """Conditional-format entry for cells whose click target is a
-    right-click (DATA_POINT_MENU) action rather than the visual's single
-    left-click drill. Renders the accent text color with a pale tint
-    background so users can distinguish right-click targets from
-    plain-accent left-click targets.
-
-    Shares the same always-true sentinel idiom as ``_link_text_format``.
-    """
-    sentinel = "__qsgen_never_matches__"
-    expr = f'{{{column_name}}} <> "{sentinel}"'
-    return {
-        "Cell": {
-            "FieldId": field_id,
-            "TextFormat": {
-                "TextColor": {
-                    "Solid": {"Expression": expr, "Color": text_color},
-                },
-                "BackgroundColor": {
-                    "Solid": {"Expression": expr, "Color": bg_color},
-                },
-            },
-        },
-    }
-
-
-def _link_text_format(field_id: str, column_name: str, color: str) -> dict:
-    """Conditional-format entry that renders a field's cells in ``color``.
-
-    Used to mark drill-source columns so the "clickable" cue is obvious.
-    QuickSight's conditional-formatting expression grammar is
-    undocumented; the idiomatic always-true guard (confirmed via UI
-    round-trip) is ``{col} <> "<sentinel>"`` — comparing the column to a
-    value no row holds. Literal booleans, ``1 = 1``, and self-equality
-    are all rejected.
-    """
-    sentinel = "__qsgen_never_matches__"
-    return {
-        "Cell": {
-            "FieldId": field_id,
-            "TextFormat": {
-                "TextColor": {
-                    "Solid": {
-                        "Expression": f'{{{column_name}}} <> "{sentinel}"',
-                        "Color": color,
-                    },
-                },
-            },
-        },
-    }
 
 
 def _same_sheet_filter_action(
@@ -407,7 +354,7 @@ def build_sales_visuals(link_color: str, link_tint: str) -> list[Visual]:
             ],
             ConditionalFormatting={
                 "ConditionalFormattingOptions": [
-                    _menu_link_text_format(
+                    menu_link_text_format(
                         "tbl-settlement-id",
                         "settlement_id",
                         link_color,
@@ -559,8 +506,8 @@ def build_settlements_visuals(link_color: str, link_tint: str) -> list[Visual]:
             ],
             ConditionalFormatting={
                 "ConditionalFormattingOptions": [
-                    _link_text_format("tbl-stl-id", "settlement_id", link_color),
-                    _menu_link_text_format(
+                    link_text_format("tbl-stl-id", "settlement_id", link_color),
+                    menu_link_text_format(
                         "tbl-stl-payment-id",
                         "payment_id",
                         link_color,
@@ -712,10 +659,10 @@ def build_payments_visuals(link_color: str, link_tint: str) -> list[Visual]:
             ],
             ConditionalFormatting={
                 "ConditionalFormattingOptions": [
-                    _link_text_format(
+                    link_text_format(
                         "tbl-pay-stl-id", "settlement_id", link_color
                     ),
-                    _menu_link_text_format(
+                    menu_link_text_format(
                         "tbl-pay-ext-txn",
                         "external_transaction_id",
                         link_color,

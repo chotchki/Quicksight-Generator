@@ -62,7 +62,19 @@ Conventions:
 - [x] 2.7 Update unit tests: refund math, optional-metadata filter derivation, new exception tables & subtitles, toggle presence on each tab, Getting Started tab at index 0, explanation coverage still 100%.
 - [x] 2.8 Update e2e tests: new dashboard structure (6 tabs now including Getting Started), visual counts, new exception tables assertable, one browser test for the state toggles (replacing the slider browser test).
 - [x] **STOP for review.** Review added: right-click drill-down pattern (settlement_id on Sales, external_transaction_id on Payments), side-by-side recon tables, slider → toggle pivot, orphan external transactions in demo data.
-- [ ] 2.9 git commit, tag v0.4.0, push branch + tag
+- [x] 2.9 git commit, tag v0.4.0, push branch + tag
+
+---
+
+## Phase 2.5 — Cross-app plumbing (pre-Phase-3 cleanup)
+
+*Lessons from Phase 2 review: factor shared primitives into `common/` before Account Recon starts adding drill-downs and browser tests.*
+
+- [ ] 2.5.1 Move clickability text-format helpers from `payment_recon/visuals.py` to `common/clickability.py`: `link_text_format(accent)` (plain-accent cell for left-click drill) and `menu_link_text_format(accent, tint)` (accent + pale-tint for right-click drill). Update both payment_recon modules to import from there.
+- [ ] 2.5.2 Codify the subtitle phrasing pattern for click targets: one-line helper that appends "Click … to …" (left) or "Right-click … for …" (right). Optional — skip if it reduces flexibility.
+- [ ] 2.5.3 Add `scroll_visual_into_view(page, title, timeout_ms)` to `tests/e2e/browser_helpers.py`. Refactor `test_recon_mutual_filter.py` to use it instead of its inline evaluate block.
+- [ ] 2.5.4 Add a `TestScenarioCoverage` pattern note to `CLAUDE.md` under "Project Structure" or a new "Test Conventions" section — seed-data coverage tests go in before visuals, not after. Keep it one paragraph.
+- [ ] 2.5.5 Run unit tests + e2e. Commit.
 
 ---
 

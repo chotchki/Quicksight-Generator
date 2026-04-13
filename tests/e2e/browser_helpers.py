@@ -165,6 +165,43 @@ def get_visual_titles(page) -> list[str]:
     return [t.inner_text().strip() for t in titles if t.inner_text().strip()]
 
 
+def scroll_visual_into_view(page, visual_title: str, timeout_ms: int) -> None:
+    """Scroll the visual with the given title to the viewport center and
+    wait for its first table cell to hydrate.
+
+    QuickSight virtualizes below-the-fold visuals — table cells are absent
+    from the DOM until the visual is on screen. Browser tests that click
+    into such a table must call this first, or the click-target selector
+    will return nothing.
+    """
+    page.evaluate(
+        """(title) => {
+            const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
+            for (const v of visuals) {
+                const t = v.querySelector('[data-automation-id="analysis_visual_title_label"]');
+                if (t && t.innerText.trim() === title) {
+                    v.scrollIntoView({block: 'center'});
+                    return;
+                }
+            }
+        }""",
+        visual_title,
+    )
+    page.wait_for_function(
+        """(title) => {
+            const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
+            for (const v of visuals) {
+                const t = v.querySelector('[data-automation-id="analysis_visual_title_label"]');
+                if (!t || t.innerText.trim() !== title) continue;
+                return v.querySelector('[data-automation-id="sn-table-cell-0-0"]') !== null;
+            }
+            return false;
+        }""",
+        arg=visual_title,
+        timeout=timeout_ms,
+    )
+
+
 def screenshot(page, name: str) -> Path:
     """Save a screenshot under tests/e2e/screenshots/."""
     SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)

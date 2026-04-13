@@ -12,6 +12,7 @@ from quicksight_gen.payment_recon.constants import (
     DS_PAYMENTS,
     SHEET_PAYMENT_RECON,
 )
+from quicksight_gen.common.clickability import link_text_format
 from quicksight_gen.common.models import (
     AxisLabelOptions,
     BarChartAggregatedFieldWells,
@@ -152,32 +153,6 @@ def _set_param_action(
             ),
         ],
     )
-
-
-def _link_text_format(field_id: str, column_name: str, color: str) -> dict:
-    """Conditional-format entry that renders a field's cells in ``color``.
-
-    Used to mark drill-source columns so the "clickable" cue is obvious.
-    QuickSight's conditional-formatting expression grammar is
-    undocumented; the idiomatic always-true guard (confirmed via UI
-    round-trip) is ``{col} <> "<sentinel>"`` — comparing the column to a
-    value no row holds. Literal booleans, ``1 = 1``, and self-equality
-    are all rejected.
-    """
-    sentinel = "__qsgen_never_matches__"
-    return {
-        "Cell": {
-            "FieldId": field_id,
-            "TextFormat": {
-                "TextColor": {
-                    "Solid": {
-                        "Expression": f'{{{column_name}}} <> "{sentinel}"',
-                        "Color": color,
-                    },
-                },
-            },
-        },
-    }
 
 
 def _same_sheet_filter_action(
@@ -409,7 +384,7 @@ def build_payment_recon_visuals(link_color: str) -> list[Visual]:
             ],
             ConditionalFormatting={
                 "ConditionalFormattingOptions": [
-                    _link_text_format(
+                    link_text_format(
                         "recon-tbl-txn-id", "transaction_id", link_color
                     ),
                 ],
@@ -474,7 +449,7 @@ def build_payment_recon_visuals(link_color: str) -> list[Visual]:
             ],
             ConditionalFormatting={
                 "ConditionalFormattingOptions": [
-                    _link_text_format(
+                    link_text_format(
                         "recon-pay-ext-txn",
                         "external_transaction_id",
                         link_color,

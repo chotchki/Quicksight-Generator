@@ -141,5 +141,12 @@ run_e2e.sh           # One-shot: regenerate JSON + deploy.sh + pytest tests/e2e
 - DOM selectors rely on QuickSight's `data-automation-id` attributes: `analysis_visual`, `analysis_visual_title_label`, `selectedTab_sheet_name`, `sn-table-cell-{row}-{col}`, `date_picker_{0|1}`, `sheet_control_name`. Sheet tabs use `[role="tab"]`.
 - Tab switches are racy: `click_sheet_tab` snapshots prior visual titles and waits for them to disappear before callers query the new sheet.
 - Filter / drill-down assertions poll for the visual state to change (e.g., row count drop) rather than sleeping.
+- Below-the-fold tables virtualize their cells — call `scroll_visual_into_view(page, title, timeout_ms)` before asserting on cell content or clicking a row.
 - Failure screenshots saved to `tests/e2e/screenshots/` (gitignored).
 - Tunables via env vars: `QS_E2E_PAGE_TIMEOUT`, `QS_E2E_VISUAL_TIMEOUT`, `QS_E2E_USER_ARN`, `QS_E2E_IDENTITY_REGION`.
+
+## Demo data conventions
+
+- Every visual should have non-empty data in the demo. For each new visual that relies on a scenario (drift, unmatched, failed, etc.), add a `TestScenarioCoverage` assertion in `test_demo_data.py` that guarantees ≥N rows of that shape — counts alone don't catch "zero scenario rows slipped through".
+- Generators must stay deterministic (`random.Random(42)`); tests depend on exact output.
+- Write the coverage assertion **before** the visual, not after. It's the fastest way to notice when generator pool-sizing or branching makes a scenario silently vanish.
