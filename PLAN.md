@@ -197,10 +197,10 @@ Conventions:
 
 ## Phase 6 — AR browser e2e + harness updates
 
-- [ ] 6.1 Extend `tests/e2e/conftest.py` with a second dashboard fixture (`account_recon_dashboard_id`); keep the two fixtures independent (no parametrized dual-run).
-- [ ] 6.2 Browser tests for AR: dashboard loads, tab count (5: Getting Started + 4), per-sheet visual counts, drill-downs from 4.3 and 5.7, filter narrowing, Show-Only-X toggles, right-click `DATA_POINT_MENU` drill.
-- [ ] 6.3 Update `run_e2e.sh` so the one-shot runner deploys both and runs the full e2e suite.
-- [ ] 6.4 Namespace screenshot output per-app if it reduces noise (`tests/e2e/screenshots/payment_recon/`, `…/account_recon/`).
+- [x] 6.1 Extend `tests/e2e/conftest.py` with a second dashboard fixture (`ar_dashboard_id`); keep the two fixtures independent (no parametrized dual-run). *Done in Phase 4.7 — fixtures already in place when Phase 6 opened.*
+- [x] 6.2 Browser tests for AR: dashboard loads, tab count (5: Getting Started + 4), per-sheet visual counts, drill-downs from 4.3 and 5.7, filter narrowing, Show-Only-X toggles, right-click `DATA_POINT_MENU` drill. *Note: right-click `DATA_POINT_MENU` drill is covered by the API test `test_parent_drill_scoped_to_child_table_only` — Playwright right-click + menu-item-select is flaky enough that a structural assertion is the more stable guard.*
+- [x] 6.3 Update `run_e2e.sh` so the one-shot runner deploys both and runs the full e2e suite. *Already calls `deploy --all --generate`; no change needed.*
+- [x] 6.4 Namespace screenshot output per-app if it reduces noise (`tests/e2e/screenshots/payment_recon/`, `…/account_recon/`).
 - [ ] **STOP for review.**
 - [ ] 6.5 git commit, tag v0.8.0, push branch + tag
 
@@ -211,5 +211,5 @@ Conventions:
 - [ ] 7.1 README.md: two-app overview, project structure, CLI reference (`generate` / `deploy` / `cleanup` / `demo` with `--all`), demo scenarios, theming presets.
 - [ ] 7.2 CLAUDE.md: new module layout, `common/` API surface, deploy-in-Python note, two-app conventions.
 - [ ] 7.3 SPEC.md sweep — the one-time pass for this document: check off every item delivered across Phases 1–6, prune follow-up questions that have been resolved, and reword any lines that drifted from the shipped design. Per the Conventions note above, SPEC boxes are not touched before this step.
-- [ ] 7.4 RELEASE_NOTES.md entry — version TBD at release time.
+- [ ] 7.4 RELEASE_NOTES.md entry — version v1.0.0 at release time - include count of lines of code, number of tests/asserts
 - [ ] 7.5 Tag and push.

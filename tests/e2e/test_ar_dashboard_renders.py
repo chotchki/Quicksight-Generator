@@ -1,4 +1,4 @@
-"""Browser test: verify the deployed dashboard loads via embed URL."""
+"""Browser test: verify the deployed Account Recon dashboard loads."""
 
 from __future__ import annotations
 
@@ -15,11 +15,10 @@ from .browser_helpers import (
 
 EXPECTED_SHEETS = {
     "Getting Started",
-    "Sales Overview",
-    "Settlements",
-    "Payments",
-    "Exceptions & Alerts",
-    "Payment Reconciliation",
+    "Balances",
+    "Transfers",
+    "Transactions",
+    "Exceptions",
 }
 
 
@@ -27,17 +26,15 @@ pytestmark = [pytest.mark.e2e, pytest.mark.browser]
 
 
 @pytest.fixture
-def embed_url(qs_client, account_id, dashboard_id) -> str:
-    # Embed URL must be generated against the dashboard's region,
-    # not the QuickSight identity region.
+def embed_url(qs_client, account_id, ar_dashboard_id) -> str:
     return generate_dashboard_embed_url(
         qs_identity_client=qs_client,
         account_id=account_id,
-        dashboard_id=dashboard_id,
+        dashboard_id=ar_dashboard_id,
     )
 
 
-class TestDashboardLoads:
+class TestArDashboardLoads:
     def test_embed_url_generated(self, embed_url):
         assert embed_url.startswith("https://"), (
             f"Embed URL does not look valid: {embed_url[:80]}"
@@ -47,15 +44,15 @@ class TestDashboardLoads:
         with webkit_page(headless=True) as page:
             page.goto(embed_url, timeout=page_timeout)
             wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
-            screenshot(page, "dashboard_initial_load", subdir="payment_recon")
+            screenshot(page, "dashboard_initial_load", subdir="account_recon")
             assert page.title(), "Page has no title — embed likely failed"
 
-    def test_all_six_sheet_tabs_visible(self, embed_url, page_timeout):
+    def test_all_five_sheet_tabs_visible(self, embed_url, page_timeout):
         with webkit_page(headless=True) as page:
             page.goto(embed_url, timeout=page_timeout)
             wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
             tab_names = set(get_sheet_tab_names(page))
             missing = EXPECTED_SHEETS - tab_names
             assert not missing, (
-                f"Missing sheet tabs: {missing}. Found: {sorted(tab_names)}"
+                f"Missing AR sheet tabs: {missing}. Found: {sorted(tab_names)}"
             )

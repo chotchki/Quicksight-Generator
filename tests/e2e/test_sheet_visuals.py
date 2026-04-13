@@ -65,7 +65,11 @@ def test_sheet_renders_expected_visuals(
             page, min_count=expected_count, timeout_ms=page_timeout
         )
 
-        screenshot(page, f"sheet_{sheet_name.replace(' ', '_').replace('&', 'and')}")
+        screenshot(
+            page,
+            f"sheet_{sheet_name.replace(' ', '_').replace('&', 'and')}",
+            subdir="payment_recon",
+        )
 
         assert actual >= expected_count, (
             f"Sheet '{sheet_name}' rendered {actual} visuals, expected {expected_count}. "

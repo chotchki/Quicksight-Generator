@@ -1,4 +1,12 @@
-"""Browser tests: payment recon mutual table filtering."""
+"""Browser tests: AR filter controls narrow the underlying visuals.
+
+We verify the shared date-range filter by pushing it to a future window
+and confirming the Transaction Detail table empties out. The date-range
+filter is bound to ``ar_transactions.posted_at`` with ALL_DATASETS
+cross-dataset scoping, so the Transactions sheet is where the filter
+binding is most direct — a simpler target than the balance-drift views,
+which key off ``balance_date`` and rely on column-name matching.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +16,6 @@ from .browser_helpers import (
     click_sheet_tab,
     generate_dashboard_embed_url,
     screenshot,
-    scroll_visual_into_view,
     wait_for_dashboard_loaded,
     wait_for_visuals_present,
     webkit_page,
@@ -19,16 +26,16 @@ pytestmark = [pytest.mark.e2e, pytest.mark.browser]
 
 
 @pytest.fixture
-def embed_url(qs_client, account_id, dashboard_id) -> str:
+def embed_url(qs_client, account_id, ar_dashboard_id) -> str:
     return generate_dashboard_embed_url(
         qs_identity_client=qs_client,
         account_id=account_id,
-        dashboard_id=dashboard_id,
+        dashboard_id=ar_dashboard_id,
     )
 
 
 def _table_row_count(page, visual_title: str) -> int:
-    """Count distinct rows in the table whose visual title matches."""
+    """Count distinct table rows in the visual with this title."""
     return page.evaluate(
         """(title) => {
             const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
@@ -48,73 +55,59 @@ def _table_row_count(page, visual_title: str) -> int:
     )
 
 
-def _click_first_row_of_visual(page, visual_title: str, timeout_ms: int) -> None:
-    """Click the first cell of the first row of the named visual."""
-    scroll_visual_into_view(page, visual_title, timeout_ms)
-    selector = page.evaluate(
-        """(title) => {
-            const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
-            for (const v of visuals) {
-                const t = v.querySelector('[data-automation-id="analysis_visual_title_label"]');
-                if (!t || t.innerText.trim() !== title) continue;
-                const cell = v.querySelector('[data-automation-id="sn-table-cell-0-0"]');
-                if (cell) {
-                    cell.setAttribute('data-e2e-target', '1');
-                    return true;
-                }
-            }
-            return false;
-        }""",
-        visual_title,
-    )
-    assert selector, f"Could not find first cell of visual {visual_title!r}"
-    page.click('[data-e2e-target="1"]', timeout=timeout_ms)
+def _set_date(page, picker_index: int, value: str, timeout_ms: int) -> None:
+    selector = f'[data-automation-id="date_picker_{picker_index}"]'
+    page.wait_for_selector(selector, timeout=timeout_ms, state="visible")
+    page.fill(selector, value)
+    page.press(selector, "Enter")
 
 
-def test_clicking_external_txn_filters_payments(embed_url, page_timeout):
-    """Clicking an External Transactions row should reduce the Internal Payments row count."""
+def test_date_range_filter_narrows_transactions(embed_url, page_timeout):
+    """Setting the date range to a future window should empty (or
+    significantly reduce) the Transaction Detail table."""
     with webkit_page(headless=True) as page:
         page.goto(embed_url, timeout=page_timeout)
         wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
-        click_sheet_tab(page, "Payment Reconciliation", timeout_ms=page_timeout)
-        wait_for_visuals_present(page, min_count=6, timeout_ms=page_timeout)
+        click_sheet_tab(page, "Transactions", timeout_ms=page_timeout)
+        wait_for_visuals_present(page, min_count=5, timeout_ms=page_timeout)
         page.wait_for_selector(
             '[data-automation-id^="sn-table-cell-0-0"]',
             timeout=page_timeout,
             state="attached",
         )
 
-        before = _table_row_count(page, "Internal Payments")
+        before = _table_row_count(page, "Transaction Detail")
         assert before > 1, (
-            f"Internal Payments table should have multiple rows before filtering, got {before}"
+            f"Transaction Detail should have multiple rows pre-filter, "
+            f"got {before}"
         )
 
-        _click_first_row_of_visual(page, "External Transactions", timeout_ms=page_timeout)
-        # Filter application is async on the client; poll until row count drops
+        _set_date(page, 0, "2099/01/01", timeout_ms=page_timeout)
+        _set_date(page, 1, "2099/12/31", timeout_ms=page_timeout)
+
         page.wait_for_function(
             f"""() => {{
                 const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
                 for (const v of visuals) {{
                     const t = v.querySelector('[data-automation-id="analysis_visual_title_label"]');
-                    if (!t || t.innerText.trim() !== 'Internal Payments') continue;
+                    if (!t || t.innerText.trim() !== 'Transaction Detail') continue;
                     const rows = new Set();
                     v.querySelectorAll('[data-automation-id^="sn-table-cell-"]').forEach(c => {{
                         const m = c.getAttribute('data-automation-id').match(/sn-table-cell-(\\d+)-/);
                         if (m) rows.add(m[1]);
                     }});
-                    return rows.size > 0 && rows.size < {before};
+                    return rows.size < {before};
                 }}
                 return false;
             }}""",
             timeout=page_timeout,
         )
 
-        after = _table_row_count(page, "Internal Payments")
+        after = _table_row_count(page, "Transaction Detail")
         screenshot(
-            page,
-            "recon_mutual_filter_external_to_payments",
-            subdir="payment_recon",
+            page, "filter_date_range_future", subdir="account_recon",
         )
-        assert 0 < after < before, (
-            f"Internal Payments should filter to < {before} rows after click, got {after}"
+        assert after < before, (
+            f"Transaction Detail should shrink from {before} rows "
+            f"after future date range, got {after}"
         )

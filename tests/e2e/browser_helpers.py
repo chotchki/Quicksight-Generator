@@ -202,9 +202,15 @@ def scroll_visual_into_view(page, visual_title: str, timeout_ms: int) -> None:
     )
 
 
-def screenshot(page, name: str) -> Path:
-    """Save a screenshot under tests/e2e/screenshots/."""
-    SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
-    path = SCREENSHOT_DIR / f"{name}.png"
+def screenshot(page, name: str, subdir: str | None = None) -> Path:
+    """Save a screenshot under tests/e2e/screenshots/[subdir/].
+
+    Pass ``subdir`` to namespace outputs per-app (e.g. ``"payment_recon"`` or
+    ``"account_recon"``) so the two apps' screenshots don't overwrite each
+    other when they happen to share a test name.
+    """
+    target_dir = SCREENSHOT_DIR / subdir if subdir else SCREENSHOT_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+    path = target_dir / f"{name}.png"
     page.screenshot(path=str(path), full_page=True)
     return path

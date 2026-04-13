@@ -77,7 +77,7 @@ def test_settlements_to_sales_drilldown(embed_url, page_timeout):
 
         # Sheet should switch to Sales Overview
         _wait_for_sheet(page, "Sales Overview", timeout_ms=page_timeout)
-        screenshot(page, "drilldown_settlements_to_sales")
+        screenshot(page, "drilldown_settlements_to_sales", subdir="payment_recon")
 
         assert _selected_sheet_name(page) == "Sales Overview"
 
@@ -112,5 +112,5 @@ def test_payments_to_settlements_drilldown(embed_url, page_timeout):
             timeout=page_timeout,
         )
         _wait_for_sheet(page, "Settlements", timeout_ms=page_timeout)
-        screenshot(page, "drilldown_payments_to_settlements")
+        screenshot(page, "drilldown_payments_to_settlements", subdir="payment_recon")
         assert _selected_sheet_name(page) == "Settlements"

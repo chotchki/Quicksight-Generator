@@ -103,7 +103,7 @@ def test_date_range_filter_narrows_sales_detail(embed_url, page_timeout):
         )
 
         after = _sales_detail_row_count(page)
-        screenshot(page, "filter_date_range_future")
+        screenshot(page, "filter_date_range_future", subdir="payment_recon")
         assert after < before, (
             f"Sales Detail should filter to < {before} rows after future date range, got {after}"
         )
