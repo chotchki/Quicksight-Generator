@@ -1,10 +1,12 @@
 """QuickSight Analysis + Dashboard for Account Recon.
 
-Phase 4 layers drill-downs, per-tab filters, and same-sheet chart
-filtering onto the Phase 3 skeleton. Three string parameters
-(``pArAccountId``, ``pArParentAccountId``, ``pArTransferId``) thread the
-drill-downs; each has a matching filter group scoped to its target
-sheet (or the parent's same-sheet child table).
+Phase 5 extends the Exceptions tab with two more independent checks —
+per-type daily transfer limit breaches and child overdrafts — plus the
+filters and drill-downs that feed them. Five string parameters
+(``pArAccountId``, ``pArParentAccountId``, ``pArTransferId``,
+``pArActivityDate``, ``pArTransferType``) thread the drill-downs; each
+has a matching filter group scoped to its target sheet (or the parent's
+same-sheet child table).
 """
 
 from __future__ import annotations
@@ -14,7 +16,9 @@ from xml.sax.saxutils import escape as _xml_escape
 from quicksight_gen.account_recon.constants import (
     DS_AR_ACCOUNT_BALANCE_DRIFT,
     DS_AR_ACCOUNTS,
+    DS_AR_LIMIT_BREACH,
     DS_AR_NON_ZERO_TRANSFERS,
+    DS_AR_OVERDRAFT,
     DS_AR_PARENT_ACCOUNTS,
     DS_AR_PARENT_BALANCE_DRIFT,
     DS_AR_TRANSACTIONS,
@@ -187,12 +191,15 @@ _TRANSACTIONS_DESCRIPTION = (
 )
 
 _EXCEPTIONS_DESCRIPTION = (
-    "Three independent reconciliation problems side by side. Parent drift "
+    "Five independent reconciliation problems side by side. Parent drift "
     "is stored parent vs Σ children's stored balances — fingers the "
     "parent-balance upstream feed. Child drift is stored child vs Σ "
     "posted transactions — fingers the child-balance feed or the ledger. "
-    "Non-zero transfers are per-transfer imbalances. The timelines show "
-    "when each drift feed spiked."
+    "Non-zero transfers are per-transfer imbalances. Limit breaches are "
+    "(child, day, type) triples where outbound volume exceeded the "
+    "parent-defined daily transfer limit for that type. Overdrafts are "
+    "child-days where the stored balance went negative. The timelines "
+    "show when each drift feed spiked."
 )
 
 _DEMO_SCENARIO_FLAVOR = (
@@ -200,14 +207,18 @@ _DEMO_SCENARIO_FLAVOR = (
     "Demo scenario — Farmers Exchange Bank. Five parent accounts "
     "(Big Meadow Checking, Harvest Moon Savings, Orchard Lending Pool, "
     "Valley Grain Co-op, and Harvest Credit Exchange) move money between "
-    "ten child accounts over a ~40 day window. A handful of transfers have "
-    "a failed leg, another handful are keyed off by a few dollars. "
-    "Parent and child stored balances are seeded independently — three "
-    "parent-day cells and four child-day cells carry planted drift so "
-    "each Exceptions table surfaces different rows."
+    "ten child accounts over a ~40 day window using four transfer types "
+    "(ach, wire, internal, cash). Parent accounts define per-type daily "
+    "outbound limits; a handful of child-day-type cells intentionally "
+    "breach those limits. A handful of transfers have a failed leg, "
+    "another handful are keyed off by a few dollars, three child-days "
+    "land in overdraft, and parent/child stored balances carry disjoint "
+    "planted drift — so each of the five Exceptions tables surfaces its "
+    "own distinct rows."
     "<br/><br/>"
     "Data is deterministic — anchor date is the day the seed was generated. "
-    "Explore the date-range filter to see how each tab responds."
+    "Explore the date-range, transfer-type, and show-only toggles to see "
+    "how each tab responds."
     "</text-box>"
 )
 
@@ -340,8 +351,18 @@ def _build_transactions_sheet(cfg: Config) -> SheetDefinition:
 
 
 def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
-    third = _FULL // 3  # 12-wide columns for 3-across rows
-    kpi_row = [
+    """Four independent reconciliation checks + two timelines.
+
+    Layout choices:
+      * 5 KPIs wrap into a 3+2 grid (three 12-wide on top, two 18-wide
+        on the second half-row) — keeps every KPI wide enough to read.
+      * Tables are paired half-width (18 cols each) rather than single-
+        column to cram four tables into two rows without each shrinking
+        its internals. Timelines stay in the third row.
+    """
+    third = _FULL // 3  # 12-wide for the three-across KPI row
+
+    kpi_row_a = [
         GridLayoutElement(
             ElementId="ar-exc-kpi-parent-drift", ElementType="VISUAL",
             ColumnSpan=third, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
@@ -355,23 +376,34 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
             ColumnSpan=third, RowSpan=_KPI_ROW_SPAN, ColumnIndex=third * 2,
         ),
     ]
-    # Three reconciliation problems in a row: parent drift | child drift |
-    # non-zero transfers. Each cell scrolls horizontally within the tile
-    # if the column set outgrows the 12-grid width.
-    table_row = [
+    kpi_row_b = _kpi_pair("ar-exc-kpi-breach", "ar-exc-kpi-overdraft")
+
+    # Four exception tables paired half-width for density. Timelines stay
+    # on a later row.
+    table_row_a = [
         GridLayoutElement(
             ElementId="ar-exc-parent-drift-table", ElementType="VISUAL",
-            ColumnSpan=third, RowSpan=_TABLE_ROW_SPAN, ColumnIndex=0,
+            ColumnSpan=_HALF, RowSpan=_TABLE_ROW_SPAN, ColumnIndex=0,
         ),
         GridLayoutElement(
             ElementId="ar-exc-child-drift-table", ElementType="VISUAL",
-            ColumnSpan=third, RowSpan=_TABLE_ROW_SPAN, ColumnIndex=third,
-        ),
-        GridLayoutElement(
-            ElementId="ar-exc-nonzero-table", ElementType="VISUAL",
-            ColumnSpan=third, RowSpan=_TABLE_ROW_SPAN, ColumnIndex=third * 2,
+            ColumnSpan=_HALF, RowSpan=_TABLE_ROW_SPAN, ColumnIndex=_HALF,
         ),
     ]
+    table_row_b = [
+        GridLayoutElement(
+            ElementId="ar-exc-nonzero-table", ElementType="VISUAL",
+            ColumnSpan=_HALF, RowSpan=_TABLE_ROW_SPAN, ColumnIndex=0,
+        ),
+        GridLayoutElement(
+            ElementId="ar-exc-breach-table", ElementType="VISUAL",
+            ColumnSpan=_HALF, RowSpan=_TABLE_ROW_SPAN, ColumnIndex=_HALF,
+        ),
+    ]
+    table_row_c = [
+        _full_width_visual("ar-exc-overdraft-table", _TABLE_ROW_SPAN),
+    ]
+
     return SheetDefinition(
         SheetId=SHEET_AR_EXCEPTIONS,
         Name="Exceptions",
@@ -381,8 +413,11 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
         Visuals=build_exceptions_visuals(link_color),
         FilterControls=build_exceptions_controls(cfg),
         Layouts=_grid_layout(
-            kpi_row
-            + table_row
+            kpi_row_a
+            + kpi_row_b
+            + table_row_a
+            + table_row_b
+            + table_row_c
             + _chart_pair(
                 "ar-exc-parent-drift-timeline",
                 "ar-exc-child-drift-timeline",
@@ -410,6 +445,8 @@ def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaratio
         DS_AR_ACCOUNT_BALANCE_DRIFT,
         DS_AR_TRANSFER_SUMMARY,
         DS_AR_NON_ZERO_TRANSFERS,
+        DS_AR_LIMIT_BREACH,
+        DS_AR_OVERDRAFT,
     ]
     return [
         DataSetIdentifierDeclaration(
@@ -485,7 +522,13 @@ def _parameter_filter_group(
 
 
 def _build_drill_down_filter_groups() -> list[FilterGroup]:
-    """Three parameter-bound filter groups that implement the Phase 4 drills."""
+    """Five parameter-bound filter groups that implement the drills.
+
+    Phase 4 contributed the account/transfer/parent-on-balances trio;
+    Phase 5 adds activity-date and transfer-type bindings on the
+    Transactions sheet so breach/overdraft rows drill to a precise
+    (account, date[, type]) slice.
+    """
     return [
         _parameter_filter_group(
             fg_id="fg-ar-drill-account-on-txn",
@@ -501,6 +544,22 @@ def _build_drill_down_filter_groups() -> list[FilterGroup]:
             dataset_id=DS_AR_TRANSACTIONS,
             column_name="transfer_id",
             parameter_name="pArTransferId",
+            sheet_id=SHEET_AR_TRANSACTIONS,
+        ),
+        _parameter_filter_group(
+            fg_id="fg-ar-drill-activity-date-on-txn",
+            filter_id="filter-ar-drill-activity-date-on-txn",
+            dataset_id=DS_AR_TRANSACTIONS,
+            column_name="posted_date",
+            parameter_name="pArActivityDate",
+            sheet_id=SHEET_AR_TRANSACTIONS,
+        ),
+        _parameter_filter_group(
+            fg_id="fg-ar-drill-transfer-type-on-txn",
+            filter_id="filter-ar-drill-transfer-type-on-txn",
+            dataset_id=DS_AR_TRANSACTIONS,
+            column_name="transfer_type",
+            parameter_name="pArTransferType",
             sheet_id=SHEET_AR_TRANSACTIONS,
         ),
         _parameter_filter_group(
@@ -538,6 +597,8 @@ def _build_definition(cfg: Config) -> AnalysisDefinition:
             _ar_string_parameter("pArAccountId"),
             _ar_string_parameter("pArParentAccountId"),
             _ar_string_parameter("pArTransferId"),
+            _ar_string_parameter("pArActivityDate"),
+            _ar_string_parameter("pArTransferType"),
         ],
     )
 

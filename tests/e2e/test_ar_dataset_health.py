@@ -40,8 +40,9 @@ class TestArDatasetColumns:
             "account_id", "name", "parent_account_id", "scope",
         },
         "ar-transactions-dataset": {
-            "transaction_id", "account_id", "transfer_id",
-            "status", "posted_at", "amount", "is_failed", "scope",
+            "transaction_id", "account_id", "transfer_id", "transfer_type",
+            "status", "posted_at", "posted_date", "amount", "is_failed",
+            "scope",
         },
         "ar-parent-balance-drift-dataset": {
             "parent_account_id", "balance_date",
@@ -50,12 +51,23 @@ class TestArDatasetColumns:
         "ar-account-balance-drift-dataset": {
             "account_id", "parent_account_id", "balance_date",
             "stored_balance", "computed_balance", "drift", "drift_status",
+            "overdraft_status",
         },
         "ar-transfer-summary-dataset": {
             "transfer_id", "net_amount", "net_zero_status", "scope_type",
+            "transfer_type",
         },
         "ar-non-zero-transfers-dataset": {
             "transfer_id", "net_amount", "failed_leg_count",
+        },
+        "ar-limit-breach-dataset": {
+            "account_id", "parent_account_id", "activity_date",
+            "activity_date_str", "transfer_type", "outbound_total",
+            "daily_limit", "overage",
+        },
+        "ar-overdraft-dataset": {
+            "account_id", "parent_account_id", "balance_date",
+            "balance_date_str", "stored_balance",
         },
     }
 

@@ -221,12 +221,16 @@ WHERE p.payment_id IS NULL;
 -- upstream systems, so each drift points at a different source.
 -- ===================================================================
 
+DROP VIEW  IF EXISTS ar_child_overdraft                CASCADE;
+DROP VIEW  IF EXISTS ar_child_limit_breach             CASCADE;
+DROP VIEW  IF EXISTS ar_child_daily_outbound_by_type   CASCADE;
 DROP VIEW  IF EXISTS ar_transfer_summary               CASCADE;
 DROP VIEW  IF EXISTS ar_transfer_net_zero              CASCADE;
 DROP VIEW  IF EXISTS ar_parent_balance_drift           CASCADE;
 DROP VIEW  IF EXISTS ar_account_balance_drift          CASCADE;
 DROP VIEW  IF EXISTS ar_computed_parent_daily_balance  CASCADE;
 DROP VIEW  IF EXISTS ar_computed_account_daily_balance CASCADE;
+DROP TABLE IF EXISTS ar_parent_transfer_limits         CASCADE;
 DROP TABLE IF EXISTS ar_transactions                   CASCADE;
 DROP TABLE IF EXISTS ar_daily_balances                 CASCADE;
 DROP TABLE IF EXISTS ar_parent_daily_balances          CASCADE;
@@ -277,7 +281,19 @@ CREATE TABLE ar_transactions (
     amount         DECIMAL(14,2) NOT NULL,
     posted_at      TIMESTAMP     NOT NULL,
     status         VARCHAR(20)   NOT NULL CHECK (status IN ('posted', 'failed', 'pending')),
+    transfer_type  VARCHAR(20)   NOT NULL CHECK (transfer_type IN ('ach', 'wire', 'internal', 'cash')),
     memo           VARCHAR(255)
+);
+
+-- Parent-defined per-type daily transfer limits. A child account's daily
+-- outbound (debit) total for a given transfer_type may not exceed its
+-- parent's limit for that type. Absence of a row for (parent, type) means
+-- "no limit enforced for that type at this parent".
+CREATE TABLE ar_parent_transfer_limits (
+    parent_account_id VARCHAR(100)  NOT NULL REFERENCES ar_parent_accounts(parent_account_id),
+    transfer_type     VARCHAR(20)   NOT NULL CHECK (transfer_type IN ('ach', 'wire', 'internal', 'cash')),
+    daily_limit       DECIMAL(14,2) NOT NULL,
+    PRIMARY KEY (parent_account_id, transfer_type)
 );
 
 CREATE INDEX idx_ar_accounts_parent               ON ar_accounts(parent_account_id);
@@ -285,6 +301,7 @@ CREATE INDEX idx_ar_txn_account                   ON ar_transactions(account_id)
 CREATE INDEX idx_ar_txn_transfer                  ON ar_transactions(transfer_id);
 CREATE INDEX idx_ar_txn_posted                    ON ar_transactions(posted_at);
 CREATE INDEX idx_ar_txn_status                    ON ar_transactions(status);
+CREATE INDEX idx_ar_txn_transfer_type             ON ar_transactions(transfer_type);
 CREATE INDEX idx_ar_parent_daily_balances_date    ON ar_parent_daily_balances(balance_date);
 CREATE INDEX idx_ar_account_daily_balances_date   ON ar_account_daily_balances(balance_date);
 
@@ -404,5 +421,65 @@ SELECT
     (SELECT memo FROM ar_transactions x
       WHERE x.transfer_id = tz.transfer_id
       ORDER BY x.posted_at, x.transaction_id
-      LIMIT 1)                              AS memo
+      LIMIT 1)                              AS memo,
+    (SELECT transfer_type FROM ar_transactions x
+      WHERE x.transfer_id = tz.transfer_id
+      ORDER BY x.posted_at, x.transaction_id
+      LIMIT 1)                              AS transfer_type
 FROM ar_transfer_net_zero tz;
+
+
+-- Per (child account, date, transfer_type) Σ of outbound (debit) amounts
+-- across non-failed transactions. Only tracked (internal) children
+-- contribute — external children have no stored balance to bound.
+CREATE VIEW ar_child_daily_outbound_by_type AS
+SELECT
+    t.account_id,
+    a.parent_account_id,
+    t.posted_at::date                   AS activity_date,
+    t.transfer_type,
+    SUM(ABS(t.amount))                  AS outbound_total
+FROM ar_transactions t
+JOIN ar_accounts a ON a.account_id = t.account_id
+WHERE t.status <> 'failed'
+  AND t.amount < 0
+  AND a.is_internal = TRUE
+GROUP BY t.account_id, a.parent_account_id, t.posted_at::date, t.transfer_type;
+
+
+-- Child limit breach: daily outbound by type exceeds the parent's
+-- configured daily_limit for that type. Rows are emitted only where a
+-- limit is defined (i.e., parent-limits join matches).
+CREATE VIEW ar_child_limit_breach AS
+SELECT
+    o.account_id,
+    a.name                              AS account_name,
+    o.parent_account_id,
+    pa.name                             AS parent_name,
+    o.activity_date,
+    o.transfer_type,
+    o.outbound_total,
+    l.daily_limit,
+    o.outbound_total - l.daily_limit    AS overage
+FROM ar_child_daily_outbound_by_type o
+JOIN ar_accounts a         ON a.account_id = o.account_id
+JOIN ar_parent_accounts pa ON pa.parent_account_id = o.parent_account_id
+JOIN ar_parent_transfer_limits l
+  ON l.parent_account_id = o.parent_account_id
+ AND l.transfer_type     = o.transfer_type
+WHERE o.outbound_total > l.daily_limit;
+
+
+-- Child overdraft: stored child balance < 0 for a given day.
+CREATE VIEW ar_child_overdraft AS
+SELECT
+    adb.account_id,
+    a.name                              AS account_name,
+    a.parent_account_id,
+    pa.name                             AS parent_name,
+    adb.balance_date,
+    adb.balance                         AS stored_balance
+FROM ar_account_daily_balances adb
+JOIN ar_accounts a         USING (account_id)
+JOIN ar_parent_accounts pa USING (parent_account_id)
+WHERE adb.balance < 0;

@@ -28,7 +28,9 @@ from __future__ import annotations
 from quicksight_gen.account_recon.constants import (
     DS_AR_ACCOUNT_BALANCE_DRIFT,
     DS_AR_ACCOUNTS,
+    DS_AR_LIMIT_BREACH,
     DS_AR_NON_ZERO_TRANSFERS,
+    DS_AR_OVERDRAFT,
     DS_AR_PARENT_ACCOUNTS,
     DS_AR_PARENT_BALANCE_DRIFT,
     DS_AR_TRANSACTIONS,
@@ -229,6 +231,47 @@ def _same_sheet_filter_action(
 P_AR_ACCOUNT = "pArAccountId"
 P_AR_PARENT = "pArParentAccountId"
 P_AR_TRANSFER = "pArTransferId"
+P_AR_ACTIVITY_DATE = "pArActivityDate"
+P_AR_TRANSFER_TYPE = "pArTransferType"
+
+
+def _multi_drill_action(
+    action_id: str,
+    name: str,
+    target_sheet: str,
+    param_sources: list[tuple[str, str]],
+    trigger: str = "DATA_POINT_CLICK",
+) -> VisualCustomAction:
+    """Navigate to another sheet and set several drill-down parameters.
+
+    Each entry in ``param_sources`` is ``(destination_parameter, source_field_id)``
+    and emits one ParameterValueConfiguration.
+    """
+    return VisualCustomAction(
+        CustomActionId=action_id,
+        Name=name,
+        Trigger=trigger,
+        ActionOperations=[
+            VisualCustomActionOperation(
+                NavigationOperation=CustomActionNavigationOperation(
+                    LocalNavigationConfiguration=LocalNavigationConfiguration(
+                        TargetSheetId=target_sheet,
+                    ),
+                ),
+            ),
+            VisualCustomActionOperation(
+                SetParametersOperation=CustomActionSetParametersOperation(
+                    ParameterValueConfigurations=[
+                        {
+                            "DestinationParameterName": param_name,
+                            "Value": {"SourceField": source_field_id},
+                        }
+                        for param_name, source_field_id in param_sources
+                    ],
+                ),
+            ),
+        ],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1091,8 +1134,182 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
         )
     )
 
+    kpi_breach = Visual(
+        KPIVisual=KPIVisual(
+            VisualId="ar-exc-kpi-breach",
+            Title=_title("Limit Breach Days"),
+            Subtitle=_subtitle(
+                "Count of (child, date, transfer_type) combinations where "
+                "daily outbound exceeded the parent's configured limit"
+            ),
+            ChartConfiguration=KPIConfiguration(
+                FieldWells=KPIFieldWells(
+                    Values=[
+                        _measure_count(
+                            "ar-exc-breach-count",
+                            DS_AR_LIMIT_BREACH,
+                            "account_id",
+                        )
+                    ],
+                ),
+            ),
+        )
+    )
+
+    kpi_overdraft = Visual(
+        KPIVisual=KPIVisual(
+            VisualId="ar-exc-kpi-overdraft",
+            Title=_title("Overdraft Days"),
+            Subtitle=_subtitle(
+                "Count of (child, date) cells where stored child balance < 0"
+            ),
+            ChartConfiguration=KPIConfiguration(
+                FieldWells=KPIFieldWells(
+                    Values=[
+                        _measure_count(
+                            "ar-exc-overdraft-count",
+                            DS_AR_OVERDRAFT,
+                            "account_id",
+                        )
+                    ],
+                ),
+            ),
+        )
+    )
+
+    table_breach = Visual(
+        TableVisual=TableVisual(
+            VisualId="ar-exc-breach-table",
+            Title=_title("Child Limit Breach"),
+            Subtitle=_subtitle(
+                "Days a child account's outbound total for one transfer "
+                "type exceeded the parent's configured daily_limit. "
+                "Left-click an account_id to drill into Transactions filtered "
+                "by that account, date, and transfer type."
+            ),
+            ChartConfiguration=TableConfiguration(
+                FieldWells=TableFieldWells(
+                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
+                        Values=[
+                            _unagg_field("ar-exc-br-account-id",
+                                         DS_AR_LIMIT_BREACH, "account_id"),
+                            _unagg_field("ar-exc-br-account",
+                                         DS_AR_LIMIT_BREACH, "account_name"),
+                            _unagg_field("ar-exc-br-parent",
+                                         DS_AR_LIMIT_BREACH, "parent_name"),
+                            _unagg_field("ar-exc-br-date",
+                                         DS_AR_LIMIT_BREACH, "activity_date"),
+                            _unagg_field("ar-exc-br-date-str",
+                                         DS_AR_LIMIT_BREACH,
+                                         "activity_date_str"),
+                            _unagg_field("ar-exc-br-type",
+                                         DS_AR_LIMIT_BREACH, "transfer_type"),
+                            _unagg_field("ar-exc-br-outbound",
+                                         DS_AR_LIMIT_BREACH, "outbound_total"),
+                            _unagg_field("ar-exc-br-limit",
+                                         DS_AR_LIMIT_BREACH, "daily_limit"),
+                            _unagg_field("ar-exc-br-overage",
+                                         DS_AR_LIMIT_BREACH, "overage"),
+                        ],
+                    )
+                ),
+                SortConfiguration={
+                    "RowSort": [
+                        {
+                            "FieldSort": {
+                                "FieldId": "ar-exc-br-date",
+                                "Direction": "DESC",
+                            },
+                        },
+                    ],
+                },
+            ),
+            Actions=[
+                _multi_drill_action(
+                    "action-ar-exc-breach-to-txn",
+                    "View Transactions",
+                    SHEET_AR_TRANSACTIONS,
+                    [
+                        (P_AR_ACCOUNT, "ar-exc-br-account-id"),
+                        (P_AR_ACTIVITY_DATE, "ar-exc-br-date-str"),
+                        (P_AR_TRANSFER_TYPE, "ar-exc-br-type"),
+                    ],
+                ),
+            ],
+            ConditionalFormatting={
+                "ConditionalFormattingOptions": [
+                    link_text_format(
+                        "ar-exc-br-account-id", "account_id", link_color,
+                    ),
+                ],
+            },
+        )
+    )
+
+    table_overdraft = Visual(
+        TableVisual=TableVisual(
+            VisualId="ar-exc-overdraft-table",
+            Title=_title("Child Overdraft"),
+            Subtitle=_subtitle(
+                "Days a child account's stored balance was negative. "
+                "Left-click an account_id to drill into Transactions "
+                "filtered by that account and date."
+            ),
+            ChartConfiguration=TableConfiguration(
+                FieldWells=TableFieldWells(
+                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
+                        Values=[
+                            _unagg_field("ar-exc-od-account-id",
+                                         DS_AR_OVERDRAFT, "account_id"),
+                            _unagg_field("ar-exc-od-account",
+                                         DS_AR_OVERDRAFT, "account_name"),
+                            _unagg_field("ar-exc-od-parent",
+                                         DS_AR_OVERDRAFT, "parent_name"),
+                            _unagg_field("ar-exc-od-date",
+                                         DS_AR_OVERDRAFT, "balance_date"),
+                            _unagg_field("ar-exc-od-date-str",
+                                         DS_AR_OVERDRAFT, "balance_date_str"),
+                            _unagg_field("ar-exc-od-stored",
+                                         DS_AR_OVERDRAFT, "stored_balance"),
+                        ],
+                    )
+                ),
+                SortConfiguration={
+                    "RowSort": [
+                        {
+                            "FieldSort": {
+                                "FieldId": "ar-exc-od-date",
+                                "Direction": "DESC",
+                            },
+                        },
+                    ],
+                },
+            ),
+            Actions=[
+                _multi_drill_action(
+                    "action-ar-exc-overdraft-to-txn",
+                    "View Transactions",
+                    SHEET_AR_TRANSACTIONS,
+                    [
+                        (P_AR_ACCOUNT, "ar-exc-od-account-id"),
+                        (P_AR_ACTIVITY_DATE, "ar-exc-od-date-str"),
+                    ],
+                ),
+            ],
+            ConditionalFormatting={
+                "ConditionalFormattingOptions": [
+                    link_text_format(
+                        "ar-exc-od-account-id", "account_id", link_color,
+                    ),
+                ],
+            },
+        )
+    )
+
     return [
         kpi_parent_drift, kpi_child_drift, kpi_nonzero,
+        kpi_breach, kpi_overdraft,
         table_parent_drift, table_child_drift, table_non_zero,
+        table_breach, table_overdraft,
         timeline_parent, timeline_child,
     ]

@@ -116,33 +116,37 @@ Conventions:
 
 *Task list finalized at Phase 3 review. Independent parent/child drift (added in 3.10) reshapes what drill-downs, toggles, and timelines make sense — the skeleton had generic placeholders; this phase turns them into concrete workflows.*
 
-- [ ] 4.1 Filters:
+- [x] 4.1 Filters:
   - Parent-account multi-select on Balances, Transactions, Exceptions.
   - Child-account multi-select on Balances, Transactions, Exceptions.
   - Transfer-status multi-select on Transfers.
   - Transaction-status multi-select on Transactions.
-- [ ] 4.2 Show-Only-X SINGLE_SELECT toggles (same pattern as PR's Phase 2 pivot — the date-range filter already covers "recency", toggles cover the "narrow to problems" intent):
+- [x] 4.2 Show-Only-X SINGLE_SELECT toggles (same pattern as PR's Phase 2 pivot — the date-range filter already covers "recency", toggles cover the "narrow to problems" intent):
   - Transfers: "Show Only Unhealthy" (net-of-non-failed ≠ 0).
   - Transactions: "Show Only Failed".
   - Balances parent table: "Show Only Drift".
   - Balances child table: "Show Only Drift".
-- [ ] 4.3 Drill-downs (plain-accent = left-click drill; pale-tint menu-link = right-click `DATA_POINT_MENU` drill, used when a visual already has a left-click target):
+- [x] 4.3 Drill-downs (plain-accent = left-click drill; pale-tint menu-link = right-click `DATA_POINT_MENU` drill, used when a visual already has a left-click target):
   - Balances child row (left-click on `account_id`) → Transactions filtered by account + date.
   - Balances parent row (right-click menu on `parent_account_id`) → filters child table on the same sheet to that parent's children.
   - Transfers row (left-click on `transfer_id`) → Transactions filtered by `transfer_id`.
   - Exceptions parent-drift row (left-click) → Balances child table filtered to that parent's children + date.
   - Exceptions child-drift row (left-click) → Transactions filtered by account + date.
   - Exceptions non-zero-transfer row (left-click) → Transactions filtered by `transfer_id`.
-- [ ] 4.4 Visual additions:
+- [x] 4.4 Visual additions:
   - **Parent Drift Timeline** on Exceptions, placed alongside the existing Child Drift Timeline — two independent timelines make the two-feed story visible.
   - **Transfer Status bar chart** on Transfers (healthy / non-zero), with same-sheet click-filter into the transfers table.
   - **Transactions-by-day line chart** on Transactions grouped by status, with same-sheet click-filter into the detail table.
-- [ ] 4.5 Same-sheet chart filtering on every new chart (matches PR's pattern) — clicking a bar/slice filters the detail table on the same sheet.
-- [ ] 4.6 Unit tests: new filter groups, drill-down action shapes, visual count updates, toggle presence per tab, cross-reference validation, explanation coverage still 100%.
-- [ ] 4.7 API-layer e2e tests for AR: dashboard/analysis/theme/datasets exist, sheet count (5), per-sheet visual counts, parameters, filter groups, dataset import health.
-- [ ] 4.8 Redeploy and spot-check.
-- [ ] **STOP for review.**
-- [ ] 4.9 git commit, tag v0.6.0, push branch + tag
+- [x] 4.5 Same-sheet chart filtering on every new chart (matches PR's pattern) — clicking a bar/slice filters the detail table on the same sheet.
+- [x] 4.6 Unit tests: new filter groups, drill-down action shapes, visual count updates, toggle presence per tab, cross-reference validation, explanation coverage still 100%.
+- [x] 4.7 API-layer e2e tests for AR: dashboard/analysis/theme/datasets exist, sheet count (5), per-sheet visual counts, parameters, filter groups, dataset import health.
+- [x] 4.8 Redeploy and spot-check.
+- [x] **STOP for review.** Review found: internal↔internal transfers missing from demo, and no visibility of internal/external scope on Transactions or Transfer Summary — fix bundled into 4.10.
+- [x] 4.9 git commit, tag v0.6.0, push branch + tag
+- [x] 4.10 Mid-phase coverage hardening (added during STOP review):
+  - Mix internal↔internal transfers into every bucket of `_generate_transfers` so bugs requiring two tracked balances per transfer can't hide.
+  - Surface `scope` on Transactions and `scope_type` (cross_scope / internal_only) on Transfer Summary; add `has_external_leg` to the `ar_transfer_net_zero` view.
+  - Add `TestScenarioCoverage` assertions for ≥20 cross-scope + ≥15 internal-only + ≥1 internal-only-with-failed-leg transfers.
 
 ---
 
@@ -150,44 +154,44 @@ Conventions:
 
 *Scope addition made during Phase 4 planning: parents define per-type daily transfer limits that apply to their child accounts; child balances must not go negative. Adds two more independent reconciliation checks alongside parent drift and child drift, for four total on the Exceptions tab. Placed after Phase 4 so the new visuals can reuse the drill-down patterns established there rather than co-inventing them.*
 
-- [ ] 5.1 Schema additions:
+- [x] 5.1 Schema additions:
   - Add `transfer_type` column to `ar_transactions` (STRING; values `'ach' | 'wire' | 'internal' | 'cash'`). Orthogonal to debit/credit direction.
   - New table `ar_parent_transfer_limits` (parent_account_id, transfer_type, daily_limit). Upstream-fed; a given parent may have limits defined for only some types — absence means "no limit enforced".
   - Views:
     - `ar_child_daily_outbound_by_type` — Σ |amount| per (child account, date, transfer_type) across non-failed transactions on the debit side.
     - `ar_child_limit_breach` — joins outbound-by-type to parent-limits; emits rows where daily outbound for type T exceeds the parent's limit for T.
     - `ar_child_overdraft` — rows where the stored child balance < 0 for a given day.
-- [ ] 5.2 Demo data generator:
+- [x] 5.2 Demo data generator:
   - Assign a `transfer_type` to each transfer (weighted mix so all four types have traffic).
   - Seed `ar_parent_transfer_limits` for each parent on a subset of types (some strict, some lenient, some unlimited — i.e., no row at all for that type).
   - Plant ≥3 limit-breach cases (child × day × type) **disjoint** from the existing drift plants so each exception table surfaces a different set of rows.
   - Plant ≥3 overdraft cases (child × day) **disjoint** from the drift and breach plants.
   - `TestScenarioCoverage` assertions authored **before** the visuals, per the seed-before-visuals rule in `CLAUDE.md`.
-- [ ] 5.3 Datasets:
+- [x] 5.3 Datasets:
   - Add `qs-gen-ar-limit-breach-dataset` and `qs-gen-ar-overdraft-dataset`.
   - Extend `qs-gen-ar-transactions-dataset` with the new `transfer_type` column.
-- [ ] 5.4 Visuals on Exceptions tab:
+- [x] 5.4 Visuals on Exceptions tab:
   - Add Child Limit Breach table (account, date, type, outbound, limit, overage).
   - Add Child Overdraft table (account, date, stored balance).
   - KPI row grows from 3 → 5 ("Limit Breach Days", "Overdraft Days"); reflow as one-fifth columns or wrap to a second KPI row depending on readability.
   - Rework the Exceptions tables from single-column to paired half-width rows for density — four drift/breach/overdraft tables + the two timelines fit in ~half the vertical span.
-- [ ] 5.5 Filters:
+- [x] 5.5 Filters:
   - Transfer-type multi-select on Transactions, Exceptions, and (if meaningful) Transfers.
   - Show-Only-Overdraft toggle on the Balances child table.
-- [ ] 5.6 Getting Started updates:
+- [x] 5.6 Getting Started updates:
   - Rewrite the Exceptions description to cover all four checks (parent drift, child drift, limit breach, overdraft).
   - Update `_DEMO_SCENARIO_FLAVOR` to mention the limit and overdraft plants.
-- [ ] 5.7 Drill-downs:
+- [x] 5.7 Drill-downs:
   - Limit Breach row (left-click) → Transactions filtered by account + date + type.
   - Overdraft row (left-click) → Transactions filtered by account + date.
-- [ ] 5.8 Tests:
+- [x] 5.8 Tests:
   - Schema/SQL structure tests for the new table + views.
   - Demo-data coverage + row-count assertions (breach count ≥3, overdraft count ≥3, per-type traffic, disjointness from existing plants).
   - Unit tests for new visuals / filters / drill-downs; cross-reference validation; sheet+visual-count updates.
   - API-layer e2e: new datasets exist, new filter groups present, Exceptions sheet visual count matches.
-- [ ] 5.9 Redeploy and spot-check.
-- [ ] **STOP for review.**
-- [ ] 5.10 git commit, tag v0.7.0, push branch + tag
+- [x] 5.9 Redeploy and spot-check.
+- [x] **STOP for review.**
+- [x] 5.10 git commit, tag v0.7.0, push branch + tag
 
 ---
 

@@ -1,9 +1,9 @@
 """API tests: validate the deployed AR dashboard definition matches expectations.
 
-Phase 4 shape — 5 sheets, per-sheet visual counts, 3 drill-down parameters,
-and 12 filter groups (4 cross-tab + 4 multi-selects + 4 Show-Only toggles +
-3 parameter-bound drill-down filters; they sum to 11 here because the
-multi-select count already includes transfer-status and transaction-status).
+Phase 5 shape — 5 sheets, per-sheet visual counts (Exceptions grows to
+12 with the breach + overdraft additions), 5 drill-down parameters, and
+16 filter groups (shared date-range + 5 multi-selects + 5 Show-Only
+toggles + 5 parameter-bound drill-down filters).
 """
 
 from __future__ import annotations
@@ -61,7 +61,8 @@ class TestVisuals:
         "Balances": 4,
         "Transfers": 4,
         "Transactions": 5,
-        "Exceptions": 8,
+        # Phase 5: 5 KPIs + 5 tables + 2 timelines
+        "Exceptions": 12,
     }
 
     def test_visual_counts_per_sheet(self, ar_dashboard_definition):
@@ -103,7 +104,8 @@ class TestVisuals:
         self, ar_dashboard_definition,
     ):
         """Phase 4 split the single drift table/timeline into parent + child
-        pairs — catch it if either side regresses back to one."""
+        pairs; Phase 5 adds breach and overdraft tables/KPIs. Catch it if
+        any of the five reconciliation checks regresses away."""
         exc_sheet = next(
             s for s in ar_dashboard_definition["Sheets"]
             if s["Name"] == "Exceptions"
@@ -115,6 +117,10 @@ class TestVisuals:
             "ar-exc-parent-drift-timeline",
             "ar-exc-child-drift-timeline",
             "ar-exc-nonzero-table",
+            "ar-exc-breach-table",
+            "ar-exc-overdraft-table",
+            "ar-exc-kpi-breach",
+            "ar-exc-kpi-overdraft",
         ):
             assert expected in ids, (
                 f"Exceptions missing visual '{expected}'"
@@ -140,11 +146,13 @@ class TestParameters:
                     names.add(decl["Name"])
         return names
 
-    def test_three_drill_down_parameters(self, ar_dashboard_definition):
+    def test_five_drill_down_parameters(self, ar_dashboard_definition):
         assert self._names(ar_dashboard_definition) == {
             "pArAccountId",
             "pArParentAccountId",
             "pArTransferId",
+            "pArActivityDate",
+            "pArTransferType",
         }
 
 
@@ -155,13 +163,17 @@ class TestFilterGroups:
         "fg-ar-child-account",
         "fg-ar-transfer-status",
         "fg-ar-transaction-status",
+        "fg-ar-transfer-type",
         "fg-ar-balances-parent-drift",
         "fg-ar-balances-child-drift",
+        "fg-ar-balances-overdraft",
         "fg-ar-transfers-unhealthy",
         "fg-ar-transactions-failed",
         "fg-ar-drill-account-on-txn",
         "fg-ar-drill-transfer-on-txn",
         "fg-ar-drill-parent-on-balances-child",
+        "fg-ar-drill-activity-date-on-txn",
+        "fg-ar-drill-transfer-type-on-txn",
     }
 
     def test_filter_group_ids(self, ar_dashboard_definition):

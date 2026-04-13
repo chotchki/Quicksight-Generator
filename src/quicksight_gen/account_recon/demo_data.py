@@ -1,8 +1,8 @@
 """Demo data for Account Recon — Farmers Exchange Bank.
 
-Deterministic SQL INSERTs for the ``ar_*`` tables. Plants three
-categories of reconciliation issue so the Exceptions tab is always
-populated:
+Deterministic SQL INSERTs for the ``ar_*`` tables. Plants scenarios
+across four independent reconciliation checks so the Exceptions tab is
+always populated:
 
 * Failed-leg transfers — one leg posted, the counter-leg failed; the
   transfer's net-of-non-failed amount is non-zero.
@@ -10,6 +10,9 @@ populated:
   dollars; non-zero net again but via a different mechanism.
 * Balance drift — stored daily balance for a parent account doesn't
   match the sum of posted transactions for its children on that day.
+* Limit breach — daily outbound for one (child, date, transfer_type)
+  cell exceeds the parent's configured daily_limit for that type.
+* Overdraft — stored child balance for a given day is negative.
 
 Naming uses generic valley/farm/harvest vocabulary — no trademarked
 characters or places.
@@ -114,6 +117,73 @@ _CHILD_DRIFT_PLANT: list[tuple[str, int, str]] = [
     ("ar-acc-checking-west", 2,  "-75.00"),
     ("ar-acc-savings-core",  10, "-150.50"),
     ("ar-acc-loans-farm",    20, "450.00"),
+]
+
+
+# Transfer type weights — assigned per transfer. All four types must
+# have non-trivial traffic so the transfer-type filter is exercised.
+_TRANSFER_TYPES: list[tuple[str, int]] = [
+    ("ach",      3),
+    ("wire",     2),
+    ("internal", 3),
+    ("cash",     2),
+]
+
+
+# Parent-defined per-type daily transfer limits. Lenient amounts —
+# normal seed transfers (up to $9,000 each, ≤1-2 per child × day × type)
+# shouldn't accidentally breach these. Planted breaches inject an extra
+# oversized transfer on a specific cell to force the breach.
+#
+# Absence of a row means "no limit enforced" (e.g., loans×wire is
+# unlimited here — wire-out from loans accounts doesn't hit a limit).
+# External parents (coop, exchange) have no rows — their children don't
+# participate in the limit check (outbound view filters internal only).
+_PARENT_LIMITS: list[tuple[str, str, str]] = [
+    # (parent_account_id, transfer_type, daily_limit)
+    ("ar-par-checking", "ach",  "20000.00"),
+    ("ar-par-checking", "wire", "15000.00"),
+    ("ar-par-savings",  "ach",  "12000.00"),
+    ("ar-par-savings",  "wire", "15000.00"),
+    ("ar-par-loans",    "cash", "10000.00"),
+    ("ar-par-loans",    "ach",  "18000.00"),
+]
+
+
+# Limit breach plants: one extra outbound transfer per (child, day,
+# type). Each plant amount is chosen to exceed the corresponding
+# parent-limit entry so the breach view reliably surfaces the cell.
+# Disjoint from _CHILD_DRIFT_PLANT (different cells) — each exception
+# table surfaces a different set of rows.
+_LIMIT_BREACH_PLANT: list[tuple[str, int, str, str, str]] = [
+    # (account_id, days_ago, transfer_type, debit_amount, memo)
+    ("ar-acc-checking-main", 8,  "wire", "22000.00", "Bulk wire payout"),
+    ("ar-acc-savings-op",    12, "ach",  "16000.00", "Oversize ACH batch"),
+    ("ar-acc-loans-equip",   18, "cash", "13000.00", "Large cash disbursement"),
+]
+
+
+# Overdraft plants: one extra outbound transfer per (child, day) that
+# drives the child's running balance negative. The overdraft view picks
+# up every day where stored balance < 0 — after the plant, the child
+# may stay negative for several days until a compensating credit is
+# emitted, which is the realistic operational shape for a short-lived
+# overdraft. Disjoint from drift and breach plant cells.
+_OVERDRAFT_PLANT: list[tuple[str, int, str, str]] = [
+    # (account_id, days_ago, debit_amount, memo)
+    ("ar-acc-checking-west", 6, "35000.00", "Emergency outbound — covered next day"),
+    ("ar-acc-savings-op",    4, "18000.00", "Overnight sweep reversal pending"),
+    ("ar-acc-loans-equip",   9, "28000.00", "Equipment purchase — funding pending"),
+]
+
+
+# External accounts used as counter-legs for planted breach/overdraft
+# transfers. The counter-leg doesn't affect any tracked balance.
+_EXTERNAL_COUNTER_LEG_POOL: list[str] = [
+    "ar-acc-coop-clearing",
+    "ar-acc-coop-settle",
+    "ar-acc-exchange-in",
+    "ar-acc-exchange-out",
 ]
 
 
@@ -231,6 +301,7 @@ def _generate_transfers(
         amount: Decimal,
         posted_at: datetime,
         status: str,
+        transfer_type: str,
         memo: str,
     ) -> None:
         nonlocal txn_idx
@@ -242,6 +313,7 @@ def _generate_transfers(
             "amount": amount,
             "posted_at": posted_at,
             "status": status,
+            "transfer_type": transfer_type,
             "memo": memo,
         })
 
@@ -257,16 +329,24 @@ def _generate_transfers(
         amount: Decimal, credit_amount: Decimal,
         posted: datetime,
         debit_status: str, credit_status: str,
+        transfer_type: str,
         memo: str,
     ) -> None:
         tid = _next_id()
-        _emit(tid, debit_acct, amount, posted, debit_status, memo)
-        _emit(tid, credit_acct, credit_amount, posted, credit_status, memo)
+        _emit(tid, debit_acct, amount, posted, debit_status,
+              transfer_type, memo)
+        _emit(tid, credit_acct, credit_amount, posted, credit_status,
+              transfer_type, memo)
 
     def _pick(pair_kind: str) -> tuple[str, str]:
         if pair_kind == "cross":
             return _pick_cross_scope_pair(rng)
         return _pick_internal_pair(rng)
+
+    type_pool = [t for t, w in _TRANSFER_TYPES for _ in range(w)]
+
+    def _pick_type() -> str:
+        return rng.choice(type_pool)
 
     # 1. Successful transfers — both legs posted, amounts sum to zero.
     for pair_kind, count in (
@@ -280,7 +360,7 @@ def _generate_transfers(
             memo = rng.choice(_MEMOS)
             _emit_pair(debit_acct, credit_acct,
                        amount, -amount, posted,
-                       "posted", "posted", memo)
+                       "posted", "posted", _pick_type(), memo)
 
     # 2. Failed-leg transfers — debit posts, credit fails. Net non-zero.
     for pair_kind, count in (
@@ -294,7 +374,7 @@ def _generate_transfers(
             memo = rng.choice(_MEMOS)
             _emit_pair(debit_acct, credit_acct,
                        amount, -amount, posted,
-                       "posted", "failed", memo)
+                       "posted", "failed", _pick_type(), memo)
 
     # 3. Off-amount transfers — both legs posted but amounts don't
     #    balance (manual keying error, rounding, fee drift).
@@ -310,7 +390,7 @@ def _generate_transfers(
             memo = rng.choice(_MEMOS)
             _emit_pair(debit_acct, credit_acct,
                        amount, -(amount + offset), posted,
-                       "posted", "posted", memo)
+                       "posted", "posted", _pick_type(), memo)
 
     # 4. Fully-failed transfers — both legs failed. Exposes the
     #    failed-transactions list without distorting net.
@@ -325,7 +405,39 @@ def _generate_transfers(
             memo = rng.choice(_MEMOS)
             _emit_pair(debit_acct, credit_acct,
                        amount, -amount, posted,
-                       "failed", "failed", memo)
+                       "failed", "failed", _pick_type(), memo)
+
+    # 5. Planted limit-breach transfers — oversized outbound on a
+    #    specific (child, day, type) cell that exceeds the parent's
+    #    configured daily_limit. Counter-leg lands on an external
+    #    account so it doesn't perturb another tracked child.
+    for i, (acct, days_ago, xtype, amount_str, memo) in enumerate(
+        _LIMIT_BREACH_PLANT,
+    ):
+        amount = Decimal(amount_str)
+        external_leg = _EXTERNAL_COUNTER_LEG_POOL[
+            i % len(_EXTERNAL_COUNTER_LEG_POOL)
+        ]
+        posted = _ts(today, days_ago, rng)
+        _emit_pair(acct, external_leg,
+                   -amount, amount, posted,
+                   "posted", "posted", xtype, memo)
+
+    # 6. Planted overdraft transfers — outbound debit that drives the
+    #    child's running balance below zero for the planted day. Uses
+    #    'internal' transfer_type so it doesn't inflate ach/wire/cash
+    #    outbound totals (keeps breach plants independent).
+    for i, (acct, days_ago, amount_str, memo) in enumerate(
+        _OVERDRAFT_PLANT,
+    ):
+        amount = Decimal(amount_str)
+        external_leg = _EXTERNAL_COUNTER_LEG_POOL[
+            (i + 1) % len(_EXTERNAL_COUNTER_LEG_POOL)
+        ]
+        posted = _ts(today, days_ago, rng)
+        _emit_pair(acct, external_leg,
+                   -amount, amount, posted,
+                   "posted", "posted", "internal", memo)
 
     return transactions
 
@@ -449,10 +561,16 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
 
         _inserts("ar_transactions",
                  ["transaction_id", "account_id", "transfer_id",
-                  "amount", "posted_at", "status", "memo"],
+                  "amount", "posted_at", "status", "transfer_type", "memo"],
                  [(t["transaction_id"], t["account_id"], t["transfer_id"],
-                   t["amount"], t["posted_at"], t["status"], t["memo"])
+                   t["amount"], t["posted_at"], t["status"],
+                   t["transfer_type"], t["memo"])
                   for t in transactions]),
+
+        _inserts("ar_parent_transfer_limits",
+                 ["parent_account_id", "transfer_type", "daily_limit"],
+                 [(pid, xtype, Decimal(lim))
+                  for pid, xtype, lim in _PARENT_LIMITS]),
 
         _inserts("ar_parent_daily_balances",
                  ["parent_account_id", "balance_date", "balance"],

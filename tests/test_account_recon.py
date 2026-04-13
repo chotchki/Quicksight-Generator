@@ -82,8 +82,15 @@ class TestDemoRowCounts:
         assert len(ar_parsed["ar_accounts"]) == len(ACCOUNTS)
 
     def test_transactions(self, ar_parsed):
-        # 60 transfers × 2 legs each = 120 transactions
-        assert len(ar_parsed["ar_transactions"]) == 120
+        # 60 base transfers + 3 planted breach + 3 planted overdraft
+        # = 66 transfers × 2 legs each = 132 transactions
+        assert len(ar_parsed["ar_transactions"]) == 132
+
+    def test_parent_transfer_limits(self, ar_parsed):
+        from quicksight_gen.account_recon.demo_data import _PARENT_LIMITS
+        assert (
+            len(ar_parsed["ar_parent_transfer_limits"]) == len(_PARENT_LIMITS)
+        )
 
     def test_parent_daily_balances(self, ar_parsed):
         # 3 internal parents × 41 days (0..40 inclusive) = 123 rows.
@@ -311,6 +318,149 @@ class TestScenarioCoverage:
             "Need ≥1 internal-internal transfer with a failed leg"
         )
 
+    def test_all_four_transfer_types_present(self, ar_parsed):
+        """All four transfer types must have traffic so the
+        transfer-type filter has something to filter on."""
+        types = {
+            [p.strip().strip("'") for p in row.split(",")][6]
+            for row in ar_parsed["ar_transactions"]
+        }
+        assert types == {"ach", "wire", "internal", "cash"}, (
+            f"Expected all four transfer types, got {types}"
+        )
+
+    def test_parent_limits_seeded(self, ar_parsed):
+        """Parent transfer limits must be seeded — otherwise the
+        limit-breach view has no thresholds to compare against."""
+        from quicksight_gen.account_recon.demo_data import _PARENT_LIMITS
+
+        assert len(_PARENT_LIMITS) >= 3, "Need ≥3 parent limit rows"
+        types = {xtype for _pid, xtype, _lim in _PARENT_LIMITS}
+        assert len(types) >= 2, "Limits must cover ≥2 transfer types"
+        parents = {pid for pid, _x, _l in _PARENT_LIMITS}
+        assert len(parents) >= 2, "Limits must span ≥2 parents"
+
+    def test_limit_breaches_materialize(self, ar_parsed):
+        """Planted breach cells must emerge from running the view
+        logic on the seed data — the query sums outbound |amount| per
+        (child, day, type), joins parent-limits, and keeps rows where
+        total > limit."""
+        from datetime import timedelta
+        from quicksight_gen.account_recon.demo_data import (
+            _LIMIT_BREACH_PLANT,
+            _PARENT_LIMITS,
+        )
+
+        is_internal: dict[str, bool] = {}
+        parent_by_account: dict[str, str] = {}
+        for row in ar_parsed["ar_accounts"]:
+            parts = [p.strip() for p in row.split(",")]
+            aid = parts[0].strip().strip("'")
+            is_internal[aid] = parts[2].strip().lower() == "true"
+            parent_by_account[aid] = parts[3].strip().strip("'")
+
+        totals: dict[tuple[str, str, str], Decimal] = {}
+        for row in ar_parsed["ar_transactions"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            acct = parts[1]
+            amount = Decimal(parts[3])
+            day = parts[4].split(" ")[0]
+            status = parts[5]
+            xtype = parts[6]
+            if status == "failed":
+                continue
+            if amount >= 0:
+                continue
+            if not is_internal.get(acct):
+                continue
+            key = (acct, day, xtype)
+            totals[key] = totals.get(key, Decimal("0")) + abs(amount)
+
+        limit_map = {
+            (pid, xtype): Decimal(lim) for pid, xtype, lim in _PARENT_LIMITS
+        }
+        breaches: set[tuple[str, str, str]] = set()
+        for (acct, day, xtype), outbound in totals.items():
+            parent = parent_by_account[acct]
+            limit = limit_map.get((parent, xtype))
+            if limit is not None and outbound > limit:
+                breaches.add((acct, day, xtype))
+
+        assert len(breaches) >= 3, (
+            f"Expected ≥3 limit-breach cells, got {len(breaches)}"
+        )
+        for acct, days_ago, xtype, _amt, _memo in _LIMIT_BREACH_PLANT:
+            day = (ANCHOR - timedelta(days=days_ago)).isoformat()
+            assert (acct, day, xtype) in breaches, (
+                f"Planted breach ({acct}, {day}, {xtype}) didn't materialize"
+            )
+
+    def test_overdrafts_materialize(self, ar_parsed):
+        """Planted overdraft cells must show up as balance < 0 in
+        ar_account_daily_balances — the ar_child_overdraft view just
+        filters on that condition."""
+        from datetime import timedelta
+        from quicksight_gen.account_recon.demo_data import _OVERDRAFT_PLANT
+
+        balances: dict[tuple[str, str], Decimal] = {}
+        for row in ar_parsed["ar_account_daily_balances"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            balances[(parts[0], parts[1])] = Decimal(parts[2])
+
+        negative = [k for k, v in balances.items() if v < 0]
+        assert len(negative) >= 3, (
+            f"Expected ≥3 overdraft rows, got {len(negative)}"
+        )
+        for acct, days_ago, _amt, _memo in _OVERDRAFT_PLANT:
+            day = (ANCHOR - timedelta(days=days_ago)).isoformat()
+            bal = balances.get((acct, day))
+            assert bal is not None and bal < 0, (
+                f"Planted overdraft cell ({acct}, {day}) is not negative "
+                f"(got {bal})"
+            )
+
+    def test_all_plants_disjoint(self):
+        """Each of the four exception tables must surface a different
+        set of findings — drift, breach, and overdraft plants must not
+        share child×day cells. Otherwise the Exceptions tab would show
+        the same row across multiple tables and obscure the four
+        distinct reconciliation checks."""
+        from quicksight_gen.account_recon.demo_data import (
+            _CHILD_DRIFT_PLANT,
+            _LIMIT_BREACH_PLANT,
+            _OVERDRAFT_PLANT,
+            _PARENT_DRIFT_PLANT,
+        )
+
+        child_cells = {(a, d) for a, d, _ in _CHILD_DRIFT_PLANT}
+        breach_cells = {(a, d) for a, d, _, _, _ in _LIMIT_BREACH_PLANT}
+        overdraft_cells = {(a, d) for a, d, _, _ in _OVERDRAFT_PLANT}
+
+        assert not (child_cells & breach_cells), (
+            "Child drift and limit breach plants share child×day cells"
+        )
+        assert not (child_cells & overdraft_cells), (
+            "Child drift and overdraft plants share child×day cells"
+        )
+        assert not (breach_cells & overdraft_cells), (
+            "Breach and overdraft plants share child×day cells"
+        )
+
+        account_parent = {aid: pid for aid, _n, pid in ACCOUNTS}
+        parent_cells = {(p, d) for p, d, _ in _PARENT_DRIFT_PLANT}
+        breach_parent_cells = {
+            (account_parent[a], d) for a, d, _, _, _ in _LIMIT_BREACH_PLANT
+        }
+        overdraft_parent_cells = {
+            (account_parent[a], d) for a, d, _, _ in _OVERDRAFT_PLANT
+        }
+        assert not (parent_cells & breach_parent_cells), (
+            "Parent drift and breach plants share (parent, day) cells"
+        )
+        assert not (parent_cells & overdraft_parent_cells), (
+            "Parent drift and overdraft plants share (parent, day) cells"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Seed SQL structure
@@ -330,6 +480,7 @@ class TestSeedSqlStructure:
             "ar_parent_accounts",
             "ar_accounts",
             "ar_transactions",
+            "ar_parent_transfer_limits",
             "ar_parent_daily_balances",
             "ar_account_daily_balances",
         }
@@ -349,6 +500,11 @@ class TestSeedSqlStructure:
         assert (
             positions["ar_accounts"]
             < positions["ar_account_daily_balances"]
+        )
+        # ar_parent_transfer_limits FKs to parent_accounts
+        assert (
+            positions["ar_parent_accounts"]
+            < positions["ar_parent_transfer_limits"]
         )
 
 
@@ -370,6 +526,7 @@ class TestSchemaSql:
             "ar_parent_daily_balances",
             "ar_account_daily_balances",
             "ar_transactions",
+            "ar_parent_transfer_limits",
         ):
             assert f"CREATE TABLE {table}" in schema_sql
 
@@ -381,8 +538,25 @@ class TestSchemaSql:
             "ar_parent_balance_drift",
             "ar_transfer_net_zero",
             "ar_transfer_summary",
+            "ar_child_daily_outbound_by_type",
+            "ar_child_limit_breach",
+            "ar_child_overdraft",
         ):
             assert f"CREATE VIEW {view}" in schema_sql
+
+    def test_transaction_transfer_type_column(self, schema_sql):
+        """ar_transactions must carry the transfer_type column (Phase 5)."""
+        assert "transfer_type" in schema_sql
+        # Column appears in the CREATE TABLE ar_transactions block
+        m = re.search(
+            r"CREATE TABLE ar_transactions \((.*?)\);",
+            schema_sql,
+            re.DOTALL,
+        )
+        assert m, "ar_transactions CREATE TABLE missing"
+        assert "transfer_type" in m.group(1), (
+            "ar_transactions.transfer_type column missing"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -433,9 +607,9 @@ class TestGenerateOutput:
     def test_dashboard_file_exists(self, ar_output_dir):
         assert (ar_output_dir / "account-recon-dashboard.json").exists()
 
-    def test_seven_dataset_files(self, ar_output_dir):
+    def test_nine_dataset_files(self, ar_output_dir):
         datasets = list((ar_output_dir / "datasets").glob("qs-gen-ar-*.json"))
-        assert len(datasets) == 7
+        assert len(datasets) == 9
 
     def test_all_files_valid_json(self, ar_output_dir):
         for path in ar_output_dir.rglob("*.json"):
@@ -548,9 +722,9 @@ class TestSheetLayout:
         self._assert_visual_count(ar_output_dir, SHEET_AR_TRANSACTIONS, 5)
 
     def test_exceptions_visual_count(self, ar_output_dir):
-        # Phase 4: added Parent Drift Timeline alongside Child Drift
-        # Timeline -> 8.
-        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 8)
+        # Phase 5: five independent checks (three drift KPIs + breach +
+        # overdraft) → 5 KPIs + 5 tables + 2 timelines = 12.
+        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 12)
 
     def _assert_visual_count(self, out_dir: Path, sheet_id: str, expected: int) -> None:
         analysis = _load(out_dir, "account-recon-analysis.json")
@@ -643,8 +817,8 @@ def _find_sheet(analysis: dict, sheet_id: str) -> dict:
 
 
 class TestFilterGroups:
-    """Phase 4: shared date-range + 4 multi-selects + 4 Show-Only toggles +
-    3 drill-down parameter filters = 12 filter groups."""
+    """Phase 5: shared date-range + 5 multi-selects + 5 Show-Only toggles +
+    5 drill-down parameter filters = 16 filter groups."""
 
     _EXPECTED_IDS = {
         "fg-ar-date-range",
@@ -652,13 +826,17 @@ class TestFilterGroups:
         "fg-ar-child-account",
         "fg-ar-transfer-status",
         "fg-ar-transaction-status",
+        "fg-ar-transfer-type",
         "fg-ar-balances-parent-drift",
         "fg-ar-balances-child-drift",
+        "fg-ar-balances-overdraft",
         "fg-ar-transfers-unhealthy",
         "fg-ar-transactions-failed",
         "fg-ar-drill-account-on-txn",
         "fg-ar-drill-transfer-on-txn",
         "fg-ar-drill-parent-on-balances-child",
+        "fg-ar-drill-activity-date-on-txn",
+        "fg-ar-drill-transfer-type-on-txn",
     }
 
     def test_filter_group_ids(self, ar_output_dir):
@@ -682,7 +860,11 @@ class TestFilterGroups:
 
     @pytest.mark.parametrize(
         "fg_id",
-        ["fg-ar-parent-account", "fg-ar-child-account"],
+        [
+            "fg-ar-parent-account",
+            "fg-ar-child-account",
+            "fg-ar-transfer-type",
+        ],
     )
     def test_cross_tab_multi_select_has_default_dropdown(
         self, ar_output_dir, fg_id: str,
@@ -719,6 +901,7 @@ class TestFilterGroups:
         [
             ("fg-ar-balances-parent-drift", SHEET_AR_BALANCES),
             ("fg-ar-balances-child-drift", SHEET_AR_BALANCES),
+            ("fg-ar-balances-overdraft", SHEET_AR_BALANCES),
             ("fg-ar-transfers-unhealthy", SHEET_AR_TRANSFERS),
             ("fg-ar-transactions-failed", SHEET_AR_TRANSACTIONS),
         ],
@@ -736,9 +919,9 @@ class TestFilterGroups:
 
 
 class TestParameterDeclarations:
-    """Phase 4 drill-downs rely on three single-valued string parameters."""
+    """Phase 5 drill-downs rely on five single-valued string parameters."""
 
-    def test_three_parameters(self, ar_output_dir):
+    def test_five_parameters(self, ar_output_dir):
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
         params = analysis["Definition"]["ParameterDeclarations"]
         names = {p["StringParameterDeclaration"]["Name"] for p in params}
@@ -746,6 +929,8 @@ class TestParameterDeclarations:
             "pArAccountId",
             "pArParentAccountId",
             "pArTransferId",
+            "pArActivityDate",
+            "pArTransferType",
         }
 
     def test_parameters_single_valued(self, ar_output_dir):
@@ -756,7 +941,7 @@ class TestParameterDeclarations:
 
 
 class TestDrillDownFilterGroups:
-    """The three drill-down filter groups bind parameters to target columns."""
+    """The five drill-down filter groups bind parameters to target columns."""
 
     def _cfg(self, fg: dict) -> dict:
         return fg["Filters"][0]["CategoryFilter"]["Configuration"][
@@ -776,6 +961,18 @@ class TestDrillDownFilterGroups:
                 "fg-ar-drill-transfer-on-txn",
                 "pArTransferId",
                 "transfer_id",
+                SHEET_AR_TRANSACTIONS,
+            ),
+            (
+                "fg-ar-drill-activity-date-on-txn",
+                "pArActivityDate",
+                "posted_date",
+                SHEET_AR_TRANSACTIONS,
+            ),
+            (
+                "fg-ar-drill-transfer-type-on-txn",
+                "pArTransferType",
+                "transfer_type",
                 SHEET_AR_TRANSACTIONS,
             ),
             (
@@ -834,6 +1031,20 @@ def _set_param(visual: dict) -> tuple[str, str]:
                 "ParameterValueConfigurations"
             ][0]
             return pvc["DestinationParameterName"], pvc["Value"]["SourceField"]
+    raise AssertionError("No set-parameter operation found")
+
+
+def _set_params_all(visual: dict) -> list[tuple[str, str]]:
+    """Return every (destination_parameter, source_field) emitted by the
+    action's SetParametersOperation, preserving declaration order."""
+    for op in visual["Actions"][0]["ActionOperations"]:
+        if "SetParametersOperation" in op:
+            return [
+                (pvc["DestinationParameterName"], pvc["Value"]["SourceField"])
+                for pvc in op["SetParametersOperation"][
+                    "ParameterValueConfigurations"
+                ]
+            ]
     raise AssertionError("No set-parameter operation found")
 
 
@@ -923,6 +1134,33 @@ class TestVisualActions:
         assert _drill_nav_target(v) == target_sheet
         assert _set_param(v) == (parameter_name, source_field)
 
+    def test_breach_drill_sets_account_date_and_type(self, ar_output_dir):
+        """Limit-breach row → Transactions (account, day, type) slice.
+
+        The breach table's three-parameter drill narrows Transactions to
+        the exact (child, activity_date, transfer_type) that breached the
+        limit — a two-param drill would leave type open and bury the
+        signal in unrelated same-account rows."""
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        v = _find_visual(analysis, "ar-exc-breach-table")
+        assert _drill_nav_target(v) == SHEET_AR_TRANSACTIONS
+        assert _set_params_all(v) == [
+            ("pArAccountId", "ar-exc-br-account-id"),
+            ("pArActivityDate", "ar-exc-br-date-str"),
+            ("pArTransferType", "ar-exc-br-type"),
+        ]
+
+    def test_overdraft_drill_sets_account_and_date(self, ar_output_dir):
+        """Overdraft row → Transactions (account, day). Transfer-type isn't
+        relevant — overdraft is the sum of legs regardless of type."""
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        v = _find_visual(analysis, "ar-exc-overdraft-table")
+        assert _drill_nav_target(v) == SHEET_AR_TRANSACTIONS
+        assert _set_params_all(v) == [
+            ("pArAccountId", "ar-exc-od-account-id"),
+            ("pArActivityDate", "ar-exc-od-date-str"),
+        ]
+
 
 def _cf_cells(visual: dict) -> list[dict]:
     opts = visual.get("ConditionalFormatting", {}).get(
@@ -942,6 +1180,8 @@ class TestConditionalFormatting:
             ("ar-exc-parent-drift-table", "ar-exc-pdrift-parent-id"),
             ("ar-exc-child-drift-table", "ar-exc-cdrift-account-id"),
             ("ar-exc-nonzero-table", "ar-exc-nz-id"),
+            ("ar-exc-breach-table", "ar-exc-br-account-id"),
+            ("ar-exc-overdraft-table", "ar-exc-od-account-id"),
         ],
     )
     def test_left_click_drill_sources_have_link_format(
@@ -988,7 +1228,7 @@ class TestShowOnlyToggleControls:
                     titles[ctrl_obj["FilterControlId"]] = ctrl_obj["Title"]
         return titles
 
-    def test_balances_has_both_drift_toggles(self, ar_output_dir):
+    def test_balances_has_drift_and_overdraft_toggles(self, ar_output_dir):
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
         sheet = _find_sheet(analysis, SHEET_AR_BALANCES)
         titles = self._single_select_titles(sheet)
@@ -997,6 +1237,9 @@ class TestShowOnlyToggleControls:
         )
         assert titles.get("ctrl-ar-balances-child-drift") == (
             "Show Only Child Drift"
+        )
+        assert titles.get("ctrl-ar-balances-overdraft") == (
+            "Show Only Overdraft"
         )
 
     def test_transfers_has_unhealthy_toggle(self, ar_output_dir):
@@ -1021,6 +1264,68 @@ class TestShowOnlyToggleControls:
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
         sheet = _find_sheet(analysis, SHEET_AR_EXCEPTIONS)
         assert self._single_select_titles(sheet) == {}
+
+
+class TestTransferTypeControl:
+    """Phase 5.5 transfer-type filter surfaces as a CrossSheet control on
+    Transfers / Transactions / Exceptions; Balances has no transfer_type
+    column in scope so the control would dangle there."""
+
+    def _cross_sheet_sources(self, sheet: dict) -> set[str]:
+        sources: set[str] = set()
+        for ctrl in sheet.get("FilterControls", []):
+            cs = ctrl.get("CrossSheet")
+            if cs:
+                sources.add(cs["SourceFilterId"])
+        return sources
+
+    @pytest.mark.parametrize(
+        "sheet_id",
+        [SHEET_AR_TRANSFERS, SHEET_AR_TRANSACTIONS, SHEET_AR_EXCEPTIONS],
+    )
+    def test_transfer_type_control_present(self, ar_output_dir, sheet_id: str):
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        sheet = _find_sheet(analysis, sheet_id)
+        assert "filter-ar-transfer-type" in self._cross_sheet_sources(sheet)
+
+    def test_transfer_type_absent_from_balances(self, ar_output_dir):
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        sheet = _find_sheet(analysis, SHEET_AR_BALANCES)
+        assert "filter-ar-transfer-type" not in self._cross_sheet_sources(sheet)
+
+
+class TestPhase5DatasetDeclarations:
+    """The two Phase 5 reconciliation datasets must be declared and backed
+    by generated JSON on disk."""
+
+    @pytest.mark.parametrize(
+        "identifier, id_suffix",
+        [
+            ("ar-limit-breach-ds", "qs-gen-ar-limit-breach-dataset"),
+            ("ar-overdraft-ds", "qs-gen-ar-overdraft-dataset"),
+        ],
+    )
+    def test_declared_and_on_disk(
+        self, ar_output_dir, identifier: str, id_suffix: str,
+    ):
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        decls = analysis["Definition"]["DataSetIdentifierDeclarations"]
+        ids = {d["Identifier"] for d in decls}
+        assert identifier in ids
+        assert (ar_output_dir / "datasets" / f"{id_suffix}.json").exists()
+
+    def test_child_drift_dataset_has_overdraft_status(self, ar_output_dir):
+        """The Show-Only-Overdraft toggle binds to
+        account_balance_drift.overdraft_status — verify the derived column
+        is emitted in the dataset's InputColumns and SELECT."""
+        path = ar_output_dir / "datasets" / (
+            "qs-gen-ar-account-balance-drift-dataset.json"
+        )
+        data = json.loads(path.read_text())
+        table = next(iter(data["PhysicalTableMap"].values()))
+        cols = {c["Name"] for c in table["CustomSql"]["Columns"]}
+        assert "overdraft_status" in cols
+        assert "overdraft_status" in table["CustomSql"]["SqlQuery"]
 
 
 # ---------------------------------------------------------------------------

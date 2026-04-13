@@ -144,6 +144,8 @@ def ar_dataset_ids(resource_prefix) -> list[str]:
         "ar-account-balance-drift-dataset",
         "ar-transfer-summary-dataset",
         "ar-non-zero-transfers-dataset",
+        "ar-limit-breach-dataset",
+        "ar-overdraft-dataset",
     ]
     return [f"{resource_prefix}-{s}" for s in suffixes]
 

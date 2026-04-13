@@ -1,17 +1,20 @@
 """Filter groups + controls for Account Recon.
 
-Phase 4 broadens what Phase 3 shipped (date-range only):
+Phase 5 adds two more filters on top of Phase 4:
 
 Multi-selects (MULTI_SELECT dropdowns):
   - parent-account, child-account — scoped to Balances / Transactions / Exceptions
   - transfer-status                — scoped to Transfers
   - transaction-status             — scoped to Transactions
+  - transfer-type                  — scoped to Transfers / Transactions / Exceptions
+                                     (Phase 5.5 — covers ach/wire/internal/cash)
 
 Show-Only-X toggles (SINGLE_SELECT dropdowns, same pattern as PR's Phase 2
 pivot — the date-range filter already covers "recency"; these narrow the
 rows to "the problematic ones" with a single click):
   - Balances parent table → "Show Only Drift"
   - Balances child table  → "Show Only Drift"
+  - Balances child table  → "Show Only Overdraft" (Phase 5.5 — stored_balance < 0)
   - Transfers             → "Show Only Unhealthy"
   - Transactions          → "Show Only Failed"
 
@@ -63,6 +66,12 @@ _ALL_SHEETS = [
 
 _ACCOUNT_SCOPED_SHEETS = [
     SHEET_AR_BALANCES,
+    SHEET_AR_TRANSACTIONS,
+    SHEET_AR_EXCEPTIONS,
+]
+
+_TRANSFER_TYPE_SCOPED_SHEETS = [
+    SHEET_AR_TRANSFERS,
     SHEET_AR_TRANSACTIONS,
     SHEET_AR_EXCEPTIONS,
 ]
@@ -223,6 +232,24 @@ def _transaction_status_filter_group() -> FilterGroup:
     )
 
 
+def _transfer_type_filter_group() -> FilterGroup:
+    """Cross-tab transfer-type multi-select (Phase 5.5).
+
+    Column exists on transactions, transfer_summary, and limit_breach
+    datasets; QuickSight applies the filter to any visual whose dataset
+    carries the same column name. Balances-only datasets don't have
+    transfer_type so the filter naturally skips them.
+    """
+    return _multi_select_filter_group(
+        fg_id="fg-ar-transfer-type",
+        filter_id="filter-ar-transfer-type",
+        title="Transfer Type",
+        dataset_id=DS_AR_TRANSACTIONS,
+        column_name="transfer_type",
+        sheet_ids=_TRANSFER_TYPE_SCOPED_SHEETS,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Show-Only-X SINGLE_SELECT toggles (Phase 4.2)
 # ---------------------------------------------------------------------------
@@ -292,6 +319,7 @@ def build_filter_groups(cfg: Config) -> list[FilterGroup]:
         _child_account_filter_group(),
         _transfer_status_filter_group(),
         _transaction_status_filter_group(),
+        _transfer_type_filter_group(),
         # Show-Only toggles — one filter group per toggle.
         _state_toggle_filter_group(
             "fg-ar-balances-parent-drift",
@@ -306,6 +334,13 @@ def build_filter_groups(cfg: Config) -> list[FilterGroup]:
             SHEET_AR_BALANCES,
             DS_AR_ACCOUNT_BALANCE_DRIFT,
             "drift_status",
+        ),
+        _state_toggle_filter_group(
+            "fg-ar-balances-overdraft",
+            "filter-ar-balances-overdraft",
+            SHEET_AR_BALANCES,
+            DS_AR_ACCOUNT_BALANCE_DRIFT,
+            "overdraft_status",
         ),
         _state_toggle_filter_group(
             "fg-ar-transfers-unhealthy",
@@ -349,6 +384,10 @@ def _child_account_control(sheet: str) -> FilterControl:
     return _cross_sheet_control(sheet, "child-account", "filter-ar-child-account")
 
 
+def _transfer_type_control(sheet: str) -> FilterControl:
+    return _cross_sheet_control(sheet, "transfer-type", "filter-ar-transfer-type")
+
+
 def build_balances_controls(cfg: Config) -> list[FilterControl]:
     del cfg
     return [
@@ -365,6 +404,11 @@ def build_balances_controls(cfg: Config) -> list[FilterControl]:
             "Show Only Child Drift",
             "filter-ar-balances-child-drift",
         ),
+        _state_toggle_control(
+            "ctrl-ar-balances-overdraft",
+            "Show Only Overdraft",
+            "filter-ar-balances-overdraft",
+        ),
     ]
 
 
@@ -372,6 +416,7 @@ def build_transfers_controls(cfg: Config) -> list[FilterControl]:
     del cfg
     return [
         _date_range_control("transfers"),
+        _transfer_type_control("transfers"),
         FilterControl(
             Dropdown=FilterDropDownControl(
                 FilterControlId="ctrl-ar-transfers-status",
@@ -394,6 +439,7 @@ def build_transactions_controls(cfg: Config) -> list[FilterControl]:
         _date_range_control("transactions"),
         _parent_account_control("transactions"),
         _child_account_control("transactions"),
+        _transfer_type_control("transactions"),
         FilterControl(
             Dropdown=FilterDropDownControl(
                 FilterControlId="ctrl-ar-transactions-status",
@@ -416,4 +462,5 @@ def build_exceptions_controls(cfg: Config) -> list[FilterControl]:
         _date_range_control("exceptions"),
         _parent_account_control("exceptions"),
         _child_account_control("exceptions"),
+        _transfer_type_control("exceptions"),
     ]

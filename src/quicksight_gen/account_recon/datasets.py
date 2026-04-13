@@ -159,8 +159,10 @@ def build_transactions_dataset(cfg: Config) -> DataSet:
         InputColumn(Name="parent_name", Type="STRING"),
         InputColumn(Name="scope", Type="STRING"),
         InputColumn(Name="transfer_id", Type="STRING"),
+        InputColumn(Name="transfer_type", Type="STRING"),
         InputColumn(Name="amount", Type="DECIMAL"),
         InputColumn(Name="posted_at", Type="DATETIME"),
+        InputColumn(Name="posted_date", Type="STRING"),
         InputColumn(Name="status", Type="STRING"),
         InputColumn(Name="is_failed", Type="STRING"),
         InputColumn(Name="memo", Type="STRING"),
@@ -174,8 +176,10 @@ SELECT
     p.name          AS parent_name,
     CASE WHEN a.is_internal THEN 'Internal' ELSE 'External' END AS scope,
     t.transfer_id,
+    t.transfer_type,
     t.amount,
     t.posted_at,
+    TO_CHAR(t.posted_at, 'YYYY-MM-DD') AS posted_date,
     t.status,
     CASE WHEN t.status = 'failed' THEN 'Failed' ELSE 'OK' END AS is_failed,
     t.memo
@@ -238,6 +242,7 @@ def build_account_balance_drift_dataset(cfg: Config) -> DataSet:
         InputColumn(Name="computed_balance", Type="DECIMAL"),
         InputColumn(Name="drift", Type="DECIMAL"),
         InputColumn(Name="drift_status", Type="STRING"),
+        InputColumn(Name="overdraft_status", Type="STRING"),
     ]
     sql = """\
 SELECT
@@ -250,7 +255,9 @@ SELECT
     stored_balance,
     computed_balance,
     drift,
-    CASE WHEN drift = 0 THEN 'in_balance' ELSE 'drift' END AS drift_status
+    CASE WHEN drift = 0 THEN 'in_balance' ELSE 'drift' END AS drift_status,
+    CASE WHEN stored_balance < 0 THEN 'overdraft' ELSE 'ok' END
+        AS overdraft_status
 FROM ar_account_balance_drift"""
     return _dataset(
         cfg, dataset_id, "AR Account Balance Drift",
@@ -274,6 +281,7 @@ def build_transfer_summary_dataset(cfg: Config) -> DataSet:
         InputColumn(Name="failed_leg_count", Type="INTEGER"),
         InputColumn(Name="net_zero_status", Type="STRING"),
         InputColumn(Name="scope_type", Type="STRING"),
+        InputColumn(Name="transfer_type", Type="STRING"),
         InputColumn(Name="memo", Type="STRING"),
     ]
     sql = """\
@@ -288,6 +296,7 @@ SELECT
     net_zero_status,
     CASE WHEN has_external_leg THEN 'cross_scope' ELSE 'internal_only' END
         AS scope_type,
+    transfer_type,
     memo
 FROM ar_transfer_summary"""
     return _dataset(
@@ -331,6 +340,74 @@ WHERE net_zero_status = 'not_net_zero'"""
 
 
 # ---------------------------------------------------------------------------
+# Child limit breach (Phase 5 — per-type daily transfer limit)
+# ---------------------------------------------------------------------------
+
+def build_limit_breach_dataset(cfg: Config) -> DataSet:
+    dataset_id = cfg.prefixed("ar-limit-breach-dataset")
+    columns = [
+        InputColumn(Name="account_id", Type="STRING"),
+        InputColumn(Name="account_name", Type="STRING"),
+        InputColumn(Name="parent_account_id", Type="STRING"),
+        InputColumn(Name="parent_name", Type="STRING"),
+        InputColumn(Name="activity_date", Type="DATETIME"),
+        InputColumn(Name="activity_date_str", Type="STRING"),
+        InputColumn(Name="transfer_type", Type="STRING"),
+        InputColumn(Name="outbound_total", Type="DECIMAL"),
+        InputColumn(Name="daily_limit", Type="DECIMAL"),
+        InputColumn(Name="overage", Type="DECIMAL"),
+    ]
+    sql = """\
+SELECT
+    account_id,
+    account_name,
+    parent_account_id,
+    parent_name,
+    activity_date,
+    TO_CHAR(activity_date, 'YYYY-MM-DD') AS activity_date_str,
+    transfer_type,
+    outbound_total,
+    daily_limit,
+    overage
+FROM ar_child_limit_breach"""
+    return _dataset(
+        cfg, dataset_id, "AR Child Limit Breach",
+        "ar-limit-breach", sql, columns,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Child overdraft (Phase 5 — stored child balance < 0)
+# ---------------------------------------------------------------------------
+
+def build_overdraft_dataset(cfg: Config) -> DataSet:
+    dataset_id = cfg.prefixed("ar-overdraft-dataset")
+    columns = [
+        InputColumn(Name="account_id", Type="STRING"),
+        InputColumn(Name="account_name", Type="STRING"),
+        InputColumn(Name="parent_account_id", Type="STRING"),
+        InputColumn(Name="parent_name", Type="STRING"),
+        InputColumn(Name="balance_date", Type="DATETIME"),
+        InputColumn(Name="balance_date_str", Type="STRING"),
+        InputColumn(Name="stored_balance", Type="DECIMAL"),
+    ]
+    sql = """\
+SELECT
+    account_id,
+    account_name,
+    parent_account_id,
+    parent_name,
+    balance_date,
+    TO_CHAR(balance_date, 'YYYY-MM-DD') AS balance_date_str,
+    stored_balance
+FROM ar_child_overdraft"""
+    return _dataset(
+        cfg, dataset_id, "AR Child Overdraft",
+        "ar-overdraft", sql, columns,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Convenience
 # ---------------------------------------------------------------------------
 
@@ -343,4 +420,6 @@ def build_all_datasets(cfg: Config) -> list[DataSet]:
         build_account_balance_drift_dataset(cfg),
         build_transfer_summary_dataset(cfg),
         build_non_zero_transfers_dataset(cfg),
+        build_limit_breach_dataset(cfg),
+        build_overdraft_dataset(cfg),
     ]
