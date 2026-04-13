@@ -65,4 +65,4 @@ class TestDatasetsExist:
             )
 
     def test_dataset_count(self, qs_client, account_id, dataset_ids):
-        assert len(dataset_ids) == 8
+        assert len(dataset_ids) == 11

@@ -14,6 +14,7 @@ from .browser_helpers import (
 
 
 EXPECTED_SHEETS = {
+    "Getting Started",
     "Sales Overview",
     "Settlements",
     "Payments",
@@ -49,7 +50,7 @@ class TestDashboardLoads:
             screenshot(page, "dashboard_initial_load")
             assert page.title(), "Page has no title — embed likely failed"
 
-    def test_all_five_sheet_tabs_visible(self, embed_url, page_timeout):
+    def test_all_six_sheet_tabs_visible(self, embed_url, page_timeout):
         with webkit_page(headless=True) as page:
             page.goto(embed_url, timeout=page_timeout)
             wait_for_dashboard_loaded(page, timeout_ms=page_timeout)

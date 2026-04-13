@@ -50,10 +50,19 @@ _RETURNED_PAYMENTS: list[tuple[str, str]] = [
 _UNSETTLED_MERCHANTS = {"merch-yeti", "merch-cryptid"}
 _UNSETTLED_COUNT = 10
 _SALE_COUNT = 200
+_REFUND_COUNT = 15
 _METADATA_OPTIONS = [
     "loyalty:gold", "loyalty:silver", "loyalty:bronze",
     "promo:SQUATCH10", "promo:BIGFOOT20", "promo:YETI15",
     "catering:true",
+]
+
+_PAYMENT_METHODS = ["card", "cash", "mobile_wallet", "gift_card"]
+_PAYMENT_METHOD_WEIGHTS = [60, 20, 15, 5]
+
+_CASHIERS = [
+    "Alex Ridgeway", "Jordan Cascade", "Sam Sawyer", "Morgan Elk",
+    "Taylor Creek", "Riley Moss", "Jamie Pine", "Casey Hollow",
 ]
 
 
@@ -139,14 +148,21 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
         created = today - timedelta(days=rng.randint(180, 365))
         merchant_rows.append((mid, name, mtype, loc, created, "active"))
 
-    # -- Sales --
+    # -- Sales (plus refund rows mixed into the pool) --
     sales = _generate_sales(rng, today)
+    refunds = _generate_refunds(rng, sales)
+    sales.extend(refunds)
+    sales.sort(key=lambda s: s["sale_timestamp"])
 
     # -- Settlements (groups of sales; leaves some unsettled) --
     settlements = _generate_settlements(rng, today, sales)
 
     # -- Payments --
-    payments = _generate_payments(rng, settlements)
+    payments = _generate_payments(rng, settlements, sales)
+
+    # -- Inject a handful of reconciliation mismatches so the Exceptions-tab
+    #    mismatch tables are non-empty (SPEC 2.4).
+    _inject_mismatches(rng, settlements, payments)
 
     # -- External transactions + linking --
     ext_txns = _generate_external_transactions(rng, today, payments)
@@ -156,12 +172,12 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
         f"-- Sasquatch National Bank — demo seed data",
         f"-- Anchor date: {today.isoformat()}\n",
 
-        _inserts("merchants",
+        _inserts("pr_merchants",
                  ["merchant_id", "merchant_name", "merchant_type",
                   "location_id", "created_at", "status"],
                  merchant_rows),
 
-        _inserts("external_transactions",
+        _inserts("pr_external_transactions",
                  ["transaction_id", "external_system",
                   "external_amount", "record_count", "transaction_date",
                   "status", "merchant_id"],
@@ -171,7 +187,7 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
                    e["status"], e["merchant_id"])
                   for e in ext_txns]),
 
-        _inserts("settlements",
+        _inserts("pr_settlements",
                  ["settlement_id", "merchant_id", "settlement_type",
                   "settlement_amount", "settlement_date", "settlement_status",
                   "sale_count"],
@@ -180,23 +196,30 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
                    s["settlement_status"], s["sale_count"])
                   for s in settlements]),
 
-        _inserts("sales",
+        _inserts("pr_sales",
                  ["sale_id", "merchant_id", "location_id", "amount",
+                  "sale_type", "payment_method",
                   "sale_timestamp", "card_brand", "card_last_four",
-                  "reference_id", "metadata", "settlement_id"],
+                  "reference_id", "metadata", "settlement_id",
+                  "taxes", "tips", "discount_percentage", "cashier"],
                  [(s["sale_id"], s["merchant_id"], s["location_id"],
-                   s["amount"], s["sale_timestamp"], s["card_brand"],
+                   s["amount"], s["sale_type"], s["payment_method"],
+                   s["sale_timestamp"], s["card_brand"],
                    s["card_last_four"], s["reference_id"], s["metadata"],
-                   s["settlement_id"])
+                   s["settlement_id"],
+                   s["taxes"], s["tips"], s["discount_percentage"],
+                   s["cashier"])
                   for s in sales]),
 
-        _inserts("payments",
+        _inserts("pr_payments",
                  ["payment_id", "settlement_id", "merchant_id",
                   "payment_amount", "payment_date", "payment_status",
-                  "is_returned", "return_reason", "external_transaction_id"],
+                  "is_returned", "return_reason", "external_transaction_id",
+                  "payment_method"],
                  [(p["payment_id"], p["settlement_id"], p["merchant_id"],
                    p["payment_amount"], p["payment_date"], p["payment_status"],
-                   p["is_returned"], p["return_reason"], p["ext_txn_id"])
+                   p["is_returned"], p["return_reason"], p["ext_txn_id"],
+                   p["payment_method"])
                   for p in payments]),
     ]
     return "\n".join(parts) + "\n"
@@ -222,10 +245,14 @@ def _generate_sales(rng: random.Random, today: date) -> list[dict]:
         mid, _, _, loc = MERCHANTS[idx]
         days_ago = rng.randint(0, 89)
 
+        payment_method = rng.choices(
+            _PAYMENT_METHODS, _PAYMENT_METHOD_WEIGHTS
+        )[0]
+
         card_brand = None
         card_last_four = None
         ref_id = None
-        if rng.random() >= 0.15:  # 85% card transactions
+        if payment_method == "card" and rng.random() >= 0.05:
             card_brand = rng.choices(_CARD_BRANDS, _CARD_WEIGHTS)[0]
             card_last_four = f"{rng.randint(0, 9999):04d}"
             ref_id = f"REF-{i + 1:04d}"
@@ -234,19 +261,97 @@ def _generate_sales(rng: random.Random, today: date) -> list[dict]:
         if rng.random() < 0.20:
             metadata = rng.choice(_METADATA_OPTIONS)
 
+        amount = _amount(rng)
+        # Taxes run ~9.5% in Seattle; tips ~15% on ~60% of sales
+        taxes = (amount * Decimal("0.095")).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP)
+        tips = None
+        if rng.random() < 0.60:
+            tip_pct = Decimal(str(rng.uniform(0.10, 0.25))).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP)
+            tips = (amount * tip_pct).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP)
+        discount_pct = None
+        if rng.random() < 0.15:
+            discount_pct = Decimal(str(rng.uniform(5, 25))).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP)
+        cashier = rng.choice(_CASHIERS)
+
         sales.append({
             "sale_id": f"sale-{i + 1:04d}",
             "merchant_id": mid,
             "location_id": loc,
-            "amount": _amount(rng),
+            "amount": amount,
+            "sale_type": "sale",
+            "payment_method": payment_method,
             "sale_timestamp": _ts(today, days_ago, rng),
             "card_brand": card_brand,
             "card_last_four": card_last_four,
             "reference_id": ref_id,
             "metadata": metadata,
             "settlement_id": None,
+            "taxes": taxes,
+            "tips": tips,
+            "discount_percentage": discount_pct,
+            "cashier": cashier,
         })
     return sales
+
+
+def _generate_refunds(
+    rng: random.Random,
+    sales: list[dict],
+) -> list[dict]:
+    """Generate refund rows from a subset of existing sales.
+
+    Refunds are emitted as negative-amount ``sale_type='refund'`` rows that
+    flow back through settlement grouping — settlements containing a refund
+    net lower (or negative) totals via signed sums.
+
+    Most refunds occur after the original sale (0h–5d later); a minority are
+    pre-dated (within 6 hours *before*) to exercise the "some not later"
+    edge case from SPEC 2.1.  Refunds are sourced from merchants that
+    always settle so refund rows reliably reach the payment pipeline.
+    """
+    candidates = [s for s in sales
+                  if s["merchant_id"] not in _UNSETTLED_MERCHANTS]
+    rng.shuffle(candidates)
+    sources = candidates[:_REFUND_COUNT]
+
+    refunds: list[dict] = []
+    for i, orig in enumerate(sources, start=1):
+        if rng.random() < 0.40:
+            factor = Decimal(str(rng.uniform(0.30, 0.80))).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP)
+            refund_amount = (orig["amount"] * factor).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP)
+        else:
+            refund_amount = orig["amount"]
+
+        if rng.random() < 0.15:
+            delta = timedelta(hours=-rng.randint(1, 6))
+        else:
+            delta = timedelta(hours=rng.randint(1, 120))
+
+        refunds.append({
+            "sale_id": f"ref-{i:04d}",
+            "merchant_id": orig["merchant_id"],
+            "location_id": orig["location_id"],
+            "amount": -refund_amount,
+            "sale_type": "refund",
+            "payment_method": orig["payment_method"],
+            "sale_timestamp": orig["sale_timestamp"] + delta,
+            "card_brand": orig["card_brand"],
+            "card_last_four": orig["card_last_four"],
+            "reference_id": f"RFND-{i:04d}" if orig["reference_id"] else None,
+            "metadata": orig["metadata"],
+            "settlement_id": None,
+            "taxes": None,
+            "tips": None,
+            "discount_percentage": None,
+            "cashier": orig["cashier"],
+        })
+    return refunds
 
 
 def _generate_settlements(
@@ -316,8 +421,14 @@ def _generate_settlements(
 def _generate_payments(
     rng: random.Random,
     settlements: list[dict],
+    sales: list[dict],
 ) -> list[dict]:
-    """One payment per non-pending settlement; 5 returns."""
+    """One payment per non-pending settlement; 5 returns.
+
+    ``payment_method`` is copied from the most common method among the
+    settlement's linked sales so it filters consistently on Settlements and
+    Payments tabs.
+    """
     payable = [s for s in settlements if s["settlement_status"] != "pending"]
 
     # Pre-assign returns to specific settlements so every return reason
@@ -330,6 +441,20 @@ def _generate_payments(
             if stl["merchant_id"] == rmid and stl["settlement_id"] not in return_map:
                 return_map[stl["settlement_id"]] = rreason
                 break
+
+    # Map settlement_id → plurality payment_method (ties resolved
+    # deterministically by _PAYMENT_METHODS order).
+    method_by_settlement: dict[str, str] = {}
+    for stl in payable:
+        methods = [s["payment_method"] for s in sales
+                   if s["settlement_id"] == stl["settlement_id"]]
+        if not methods:
+            method_by_settlement[stl["settlement_id"]] = "card"
+            continue
+        counts = {m: methods.count(m) for m in _PAYMENT_METHODS}
+        method_by_settlement[stl["settlement_id"]] = max(
+            _PAYMENT_METHODS, key=lambda m: counts[m]
+        )
 
     payments: list[dict] = []
     for pay_idx, stl in enumerate(payable, start=1):
@@ -347,9 +472,41 @@ def _generate_payments(
             "is_returned": "true" if is_returned else "false",
             "return_reason": return_reason,
             "ext_txn_id": None,
+            "payment_method": method_by_settlement[stl["settlement_id"]],
         })
 
     return payments
+
+
+def _inject_mismatches(
+    rng: random.Random,
+    settlements: list[dict],
+    payments: list[dict],
+) -> None:
+    """Perturb a handful of settlement/payment amounts (SPEC 2.4).
+
+    - Bumps 3 settlement amounts by ±$10 while keeping their payment in
+      sync — surfaces in ``pr_sale_settlement_mismatch``.
+    - Bumps 3 payment amounts by ±$5 while leaving the settlement
+      untouched — surfaces in ``pr_settlement_payment_mismatch``.
+
+    Mutations are in place; caller lists are updated before SQL emission.
+    """
+    pay_by_stl = {p["settlement_id"]: p for p in payments}
+    paid = [s for s in settlements if s["settlement_id"] in pay_by_stl]
+    rng.shuffle(paid)
+
+    for stl in paid[:3]:
+        delta = Decimal(rng.choice(["10.00", "-10.00"]))
+        stl["settlement_amount"] = stl["settlement_amount"] + delta
+        pay_by_stl[stl["settlement_id"]]["payment_amount"] = (
+            stl["settlement_amount"]
+        )
+
+    for stl in paid[3:6]:
+        delta = Decimal(rng.choice(["5.00", "-5.00"]))
+        pay = pay_by_stl[stl["settlement_id"]]
+        pay["payment_amount"] = pay["payment_amount"] + delta
 
 
 # ---------------------------------------------------------------------------
@@ -361,10 +518,20 @@ def _generate_external_transactions(
     today: date,
     payments: list[dict],
 ) -> list[dict]:
-    """Create ~35 external transactions for payments and link internal records.
+    """Create external transactions with a realistic reconciliation mix.
 
-    Each external transaction aggregates 1+ payments from the same merchant
-    in the same external system.  Mix of matched, not-yet-matched, and late.
+    Emits three kinds of rows so every recon visual has data:
+
+    * Balanced matches — most payments get linked to an ext txn whose
+      amount equals the sum of its batch. Match status: *matched*.
+    * Linked but off-by-a-bit — a handful of ext txns are linked to
+      their payment batch but the ext amount deviates slightly. The
+      recon view surfaces these as *not_yet_matched* / *late*.
+    * Orphan unmatched ext txns — no payment references them at all.
+      Populates the "Unmatched External Transactions" exceptions table
+      and appears as *not_yet_matched*/*late* with zero internal total.
+    * Unmatched payments — a few payments never receive an ext txn,
+      powering the Payments "Show Only Unmatched Externally" toggle.
     """
     ext_txns: list[dict] = []
     ext_idx = 0
@@ -395,16 +562,16 @@ def _generate_external_transactions(
     pool = list(payments)
     rng.shuffle(pool)
 
-    for i in range(35):
-        if not pool:
-            break
-        system = systems[i % len(systems)]
+    # Reserve a handful of payments to stay internally-unmatched (no ext txn).
+    reserved_unmatched = [pool.pop() for _ in range(min(4, len(pool)))]
+    del reserved_unmatched  # kept only to exclude from the batching pool
 
-        # Batch 1-3 payments from the same merchant
+    iteration = 0
+    while pool:
+        system = systems[iteration % len(systems)]
         pay = pool.pop(0)
         batch = [pay]
         mid = pay["merchant_id"]
-        # Try to grab 1-2 more from the same merchant
         extras_wanted = rng.randint(0, 2)
         remaining = []
         for p in pool:
@@ -418,22 +585,37 @@ def _generate_external_transactions(
         total = sum(p["payment_amount"] for p in batch)
         txn_date = max(p["payment_date"] for p in batch)
 
-        if i < 20:
-            # Matched — external amount equals internal sum
-            ext = _ext(system, total, txn_date, mid, len(batch))
-            for p in batch:
-                p["ext_txn_id"] = ext["transaction_id"]
-        elif i < 28:
-            # Not yet matched — recent, amount slightly off
-            offset = Decimal(str(rng.uniform(5, 80))).quantize(
+        # Every 6th batch drifts the ext amount so the recon view shows
+        # a linked-but-not-balanced status alongside the matched rows.
+        if iteration > 0 and iteration % 6 == 0:
+            offset = Decimal(str(rng.uniform(5, 40))).quantize(
                 Decimal("0.01"), rounding=ROUND_HALF_UP)
-            _ext(system, total + offset,
-                 _ts(today, rng.randint(0, 15), rng), mid, len(batch))
+            ext_amount = total + offset
         else:
-            # Late — old, bigger mismatch
-            offset = Decimal(str(rng.uniform(50, 300))).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP)
-            _ext(system, total + offset,
-                 _ts(today, rng.randint(35, 70), rng), mid, len(batch))
+            ext_amount = total
+        ext = _ext(system, ext_amount, txn_date, mid, len(batch))
+        for p in batch:
+            p["ext_txn_id"] = ext["transaction_id"]
+        iteration += 1
+
+    # Orphan ext txns: no internal payment references them. Models
+    # duplicate notifications, out-of-order arrivals, or erroneous posts.
+    merchant_ids = [m[0] for m in MERCHANTS]
+    for _ in range(8):
+        _ext(
+            rng.choice(systems),
+            _amount(rng),
+            _ts(today, rng.randint(0, 25), rng),
+            rng.choice(merchant_ids),
+            1,
+        )
+    for _ in range(5):
+        _ext(
+            rng.choice(systems),
+            _amount(rng),
+            _ts(today, rng.randint(35, 80), rng),
+            rng.choice(merchant_ids),
+            1,
+        )
 
     return ext_txns

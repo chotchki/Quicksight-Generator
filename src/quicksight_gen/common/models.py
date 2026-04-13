@@ -499,6 +499,7 @@ class TableVisual:
     Subtitle: VisualSubtitleLabelOptions | None = None
     ChartConfiguration: TableConfiguration | None = None
     Actions: list[VisualCustomAction] | None = None
+    ConditionalFormatting: dict[str, Any] | None = None
 
 
 # -- Custom actions (drill-down navigation, filtering) --
@@ -703,6 +704,11 @@ class FilterDropDownControl:
     Title: str
     SourceFilterId: str
     Type: str | None = None  # MULTI_SELECT|SINGLE_SELECT
+    # FilterSelectableValues shape: {"Values": [str, ...]}. Restricts the
+    # dropdown menu to a fixed list of options instead of auto-populating
+    # from the column. Useful for toggle-like controls where only one
+    # option (e.g. "Unsettled") should be pickable.
+    SelectableValues: dict[str, Any] | None = None
 
 
 @dataclass
@@ -787,6 +793,12 @@ class Layout:
 
 
 @dataclass
+class SheetTextBox:
+    SheetTextBoxId: str
+    Content: str  # rich-text HTML
+
+
+@dataclass
 class SheetDefinition:
     SheetId: str
     Name: str | None = None
@@ -796,6 +808,7 @@ class SheetDefinition:
     Visuals: list[Visual] | None = None
     FilterControls: list[FilterControl] | None = None
     Layouts: list[Layout] | None = None
+    TextBoxes: list[SheetTextBox] | None = None
 
 
 # ---------------------------------------------------------------------------

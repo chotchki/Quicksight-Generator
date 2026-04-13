@@ -28,10 +28,28 @@ class TestDatasetColumns:
 
     EXPECTED_COLUMNS = {
         "merchants-dataset": {"merchant_id", "merchant_name", "merchant_type"},
-        "sales-dataset": {"sale_id", "merchant_id", "amount"},
+        "sales-dataset": {
+            "sale_id", "merchant_id", "amount", "sale_type",
+            "payment_method", "taxes", "tips", "discount_percentage", "cashier",
+        },
         "settlements-dataset": {"settlement_id", "merchant_id", "settlement_status"},
-        "payments-dataset": {"payment_id", "settlement_id", "payment_amount", "external_transaction_id"},
-        "payment-recon-dataset": {"transaction_id", "external_system", "match_status", "days_outstanding"},
+        "payments-dataset": {
+            "payment_id", "settlement_id", "payment_amount",
+            "external_transaction_id", "payment_method",
+        },
+        "payment-recon-dataset": {
+            "transaction_id", "external_system", "match_status", "days_outstanding",
+        },
+        "sale-settlement-mismatch-dataset": {
+            "settlement_id", "settlement_amount", "sales_sum", "difference",
+        },
+        "settlement-payment-mismatch-dataset": {
+            "payment_id", "settlement_id", "payment_amount",
+            "settlement_amount", "difference",
+        },
+        "unmatched-external-txns-dataset": {
+            "transaction_id", "external_system", "external_amount",
+        },
     }
 
     def test_key_columns_present(self, qs_client, account_id, resource_prefix):

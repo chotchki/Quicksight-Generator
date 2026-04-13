@@ -65,7 +65,8 @@ def test_date_range_filter_narrows_sales_detail(embed_url, page_timeout):
     with webkit_page(headless=True) as page:
         page.goto(embed_url, timeout=page_timeout)
         wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
-        # Sales Overview is the default sheet; ensure visuals + table cells
+        # Getting Started is the landing sheet post-Phase 2; explicitly nav
+        click_sheet_tab(page, "Sales Overview", timeout_ms=page_timeout)
         wait_for_visuals_present(page, min_count=5, timeout_ms=page_timeout)
         page.wait_for_selector(
             '[data-automation-id^="sn-table-cell-0-0"]',

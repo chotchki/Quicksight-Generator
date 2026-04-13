@@ -9,12 +9,18 @@ from __future__ import annotations
 from quicksight_gen.payment_recon.constants import (
     DS_PAYMENTS,
     DS_PAYMENT_RETURNS,
+    DS_SALE_SETTLEMENT_MISMATCH,
     DS_SALES,
+    DS_SETTLEMENT_PAYMENT_MISMATCH,
     DS_SETTLEMENTS,
     DS_SETTLEMENT_EXCEPTIONS,
+    DS_UNMATCHED_EXTERNAL_TXNS,
+    SHEET_PAYMENT_RECON,
+    SHEET_PAYMENTS,
     SHEET_SALES,
     SHEET_SETTLEMENTS,
 )
+from quicksight_gen.payment_recon.datasets import OPTIONAL_SALE_METADATA
 from quicksight_gen.common.models import (
     AxisLabelOptions,
     BarChartAggregatedFieldWells,
@@ -167,6 +173,63 @@ def _drill_down_action(
     )
 
 
+def _menu_link_text_format(
+    field_id: str,
+    column_name: str,
+    text_color: str,
+    bg_color: str,
+) -> dict:
+    """Conditional-format entry for cells whose click target is a
+    right-click (DATA_POINT_MENU) action rather than the visual's single
+    left-click drill. Renders the accent text color with a pale tint
+    background so users can distinguish right-click targets from
+    plain-accent left-click targets.
+
+    Shares the same always-true sentinel idiom as ``_link_text_format``.
+    """
+    sentinel = "__qsgen_never_matches__"
+    expr = f'{{{column_name}}} <> "{sentinel}"'
+    return {
+        "Cell": {
+            "FieldId": field_id,
+            "TextFormat": {
+                "TextColor": {
+                    "Solid": {"Expression": expr, "Color": text_color},
+                },
+                "BackgroundColor": {
+                    "Solid": {"Expression": expr, "Color": bg_color},
+                },
+            },
+        },
+    }
+
+
+def _link_text_format(field_id: str, column_name: str, color: str) -> dict:
+    """Conditional-format entry that renders a field's cells in ``color``.
+
+    Used to mark drill-source columns so the "clickable" cue is obvious.
+    QuickSight's conditional-formatting expression grammar is
+    undocumented; the idiomatic always-true guard (confirmed via UI
+    round-trip) is ``{col} <> "<sentinel>"`` — comparing the column to a
+    value no row holds. Literal booleans, ``1 = 1``, and self-equality
+    are all rejected.
+    """
+    sentinel = "__qsgen_never_matches__"
+    return {
+        "Cell": {
+            "FieldId": field_id,
+            "TextFormat": {
+                "TextColor": {
+                    "Solid": {
+                        "Expression": f'{{{column_name}}} <> "{sentinel}"',
+                        "Color": color,
+                    },
+                },
+            },
+        },
+    }
+
+
 def _same_sheet_filter_action(
     action_id: str,
     name: str,
@@ -198,7 +261,7 @@ def _same_sheet_filter_action(
 # 7a — Sales Overview visuals
 # ---------------------------------------------------------------------------
 
-def build_sales_visuals() -> list[Visual]:
+def build_sales_visuals(link_color: str, link_tint: str) -> list[Visual]:
     # KPI: total sales count
     kpi_count = Visual(
         KPIVisual=KPIVisual(
@@ -289,28 +352,69 @@ def build_sales_visuals() -> list[Visual]:
         )
     )
 
-    # Table: recent sales detail
+    # Table: recent sales detail.  Always surfaces the optional metadata
+    # columns per SPEC 2.2 so they appear alongside core fields.
+    base_fields = [
+        _unagg_field("tbl-sale-id", DS_SALES, "sale_id"),
+        _unagg_field("tbl-sale-type", DS_SALES, "sale_type"),
+        _unagg_field("tbl-settlement-id", DS_SALES, "settlement_id"),
+        _unagg_field("tbl-merchant-id", DS_SALES, "merchant_id"),
+        _unagg_field("tbl-location-id", DS_SALES, "location_id"),
+        _unagg_field("tbl-amount", DS_SALES, "amount"),
+        _unagg_field("tbl-payment-method", DS_SALES, "payment_method"),
+        _unagg_field("tbl-timestamp", DS_SALES, "sale_timestamp"),
+        _unagg_field("tbl-card-brand", DS_SALES, "card_brand"),
+        _unagg_field("tbl-ref-id", DS_SALES, "reference_id"),
+    ]
+    optional_fields = [
+        _unagg_field(f"tbl-sales-{col}", DS_SALES, col)
+        for col, _ddl, _qs, _ftype, _label in OPTIONAL_SALE_METADATA
+    ]
     table_sales = Visual(
         TableVisual=TableVisual(
             VisualId="sales-detail-table",
             Title=_title("Sales Detail"),
-            Subtitle=_subtitle("Individual sale transactions — click column headers to sort"),
+            Subtitle=_subtitle(
+                "Individual sale transactions — newest first. Right-click a "
+                "row to open its settlement."
+            ),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
                     TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
-                        Values=[
-                            _unagg_field("tbl-sale-id", DS_SALES, "sale_id"),
-                            _unagg_field("tbl-settlement-id", DS_SALES, "settlement_id"),
-                            _unagg_field("tbl-merchant-id", DS_SALES, "merchant_id"),
-                            _unagg_field("tbl-location-id", DS_SALES, "location_id"),
-                            _unagg_field("tbl-amount", DS_SALES, "amount"),
-                            _unagg_field("tbl-timestamp", DS_SALES, "sale_timestamp"),
-                            _unagg_field("tbl-card-brand", DS_SALES, "card_brand"),
-                            _unagg_field("tbl-ref-id", DS_SALES, "reference_id"),
-                        ]
+                        Values=base_fields + optional_fields,
                     )
                 ),
+                SortConfiguration={
+                    "RowSort": [
+                        {
+                            "FieldSort": {
+                                "FieldId": "tbl-timestamp",
+                                "Direction": "DESC",
+                            },
+                        },
+                    ],
+                },
             ),
+            Actions=[
+                _drill_down_action(
+                    "action-sale-to-settlement",
+                    "View Settlement",
+                    SHEET_SETTLEMENTS,
+                    "pSettlementId",
+                    "tbl-settlement-id",
+                    trigger="DATA_POINT_MENU",
+                ),
+            ],
+            ConditionalFormatting={
+                "ConditionalFormattingOptions": [
+                    _menu_link_text_format(
+                        "tbl-settlement-id",
+                        "settlement_id",
+                        link_color,
+                        link_tint,
+                    ),
+                ],
+            },
         )
     )
 
@@ -321,7 +425,7 @@ def build_sales_visuals() -> list[Visual]:
 # 7b — Settlements visuals
 # ---------------------------------------------------------------------------
 
-def build_settlements_visuals() -> list[Visual]:
+def build_settlements_visuals(link_color: str, link_tint: str) -> list[Visual]:
     # KPI: total settled amount
     kpi_amount = Visual(
         KPIVisual=KPIVisual(
@@ -429,6 +533,9 @@ def build_settlements_visuals() -> list[Visual]:
                             _unagg_field(
                                 "tbl-stl-sale-count", DS_SETTLEMENTS, "sale_count"
                             ),
+                            _unagg_field(
+                                "tbl-stl-payment-id", DS_SETTLEMENTS, "payment_id"
+                            ),
                         ]
                     )
                 ),
@@ -441,7 +548,26 @@ def build_settlements_visuals() -> list[Visual]:
                     "pSettlementId",
                     "tbl-stl-id",
                 ),
+                _drill_down_action(
+                    "action-settlement-to-payment",
+                    "View Payment",
+                    SHEET_PAYMENTS,
+                    "pPaymentId",
+                    "tbl-stl-payment-id",
+                    trigger="DATA_POINT_MENU",
+                ),
             ],
+            ConditionalFormatting={
+                "ConditionalFormattingOptions": [
+                    _link_text_format("tbl-stl-id", "settlement_id", link_color),
+                    _menu_link_text_format(
+                        "tbl-stl-payment-id",
+                        "payment_id",
+                        link_color,
+                        link_tint,
+                    ),
+                ],
+            },
         )
     )
 
@@ -452,7 +578,7 @@ def build_settlements_visuals() -> list[Visual]:
 # 7c — Payments visuals
 # ---------------------------------------------------------------------------
 
-def build_payments_visuals() -> list[Visual]:
+def build_payments_visuals(link_color: str, link_tint: str) -> list[Visual]:
     # KPI: total paid amount
     kpi_amount = Visual(
         KPIVisual=KPIVisual(
@@ -520,14 +646,17 @@ def build_payments_visuals() -> list[Visual]:
         )
     )
 
-    # Table: payment detail — click a row to drill down to its settlement
+    # Table: payment detail — click a row to drill down to its settlement,
+    # or right-click for the Payment Reconciliation drill via
+    # external_transaction_id.
     table_payments = Visual(
         TableVisual=TableVisual(
             VisualId="payments-detail-table",
             Title=_title("Payment Detail"),
             Subtitle=_subtitle(
                 "Each payment with its status and return reason if applicable. "
-                "Click a row to view its settlement."
+                "Click a row to view its settlement; right-click to open "
+                "Payment Reconciliation for its external transaction."
             ),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
@@ -555,6 +684,11 @@ def build_payments_visuals() -> list[Visual]:
                             _unagg_field(
                                 "tbl-pay-reason", DS_PAYMENTS, "return_reason"
                             ),
+                            _unagg_field(
+                                "tbl-pay-ext-txn",
+                                DS_PAYMENTS,
+                                "external_transaction_id",
+                            ),
                         ]
                     )
                 ),
@@ -567,7 +701,28 @@ def build_payments_visuals() -> list[Visual]:
                     "pSettlementId",
                     "tbl-pay-stl-id",
                 ),
+                _drill_down_action(
+                    "action-payment-to-recon",
+                    "View in Reconciliation",
+                    SHEET_PAYMENT_RECON,
+                    "pExternalTransactionId",
+                    "tbl-pay-ext-txn",
+                    trigger="DATA_POINT_MENU",
+                ),
             ],
+            ConditionalFormatting={
+                "ConditionalFormattingOptions": [
+                    _link_text_format(
+                        "tbl-pay-stl-id", "settlement_id", link_color
+                    ),
+                    _menu_link_text_format(
+                        "tbl-pay-ext-txn",
+                        "external_transaction_id",
+                        link_color,
+                        link_tint,
+                    ),
+                ],
+            },
         )
     )
 
@@ -662,7 +817,7 @@ def build_exceptions_visuals() -> list[Visual]:
                             _unagg_field(
                                 "tbl-exc-days",
                                 DS_SETTLEMENT_EXCEPTIONS,
-                                "days_unsettled",
+                                "days_outstanding",
                             ),
                         ]
                     )
@@ -723,4 +878,167 @@ def build_exceptions_visuals() -> list[Visual]:
         )
     )
 
-    return [kpi_unsettled, kpi_returns, table_unsettled, table_returns]
+    # Table: sale ↔ settlement amount mismatch (SPEC 2.4)
+    table_sale_stl_mismatch = Visual(
+        TableVisual=TableVisual(
+            VisualId="exceptions-sale-settlement-mismatch-table",
+            Title=_title("Sales ↔ Settlement Mismatch"),
+            Subtitle=_subtitle(
+                "Settlements whose amount doesn't equal the signed sum of "
+                "their linked sales (refunds + corrections show up here)."
+            ),
+            ChartConfiguration=TableConfiguration(
+                FieldWells=TableFieldWells(
+                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
+                        Values=[
+                            _unagg_field(
+                                "tbl-ss-stl-id",
+                                DS_SALE_SETTLEMENT_MISMATCH,
+                                "settlement_id",
+                            ),
+                            _unagg_field(
+                                "tbl-ss-merchant",
+                                DS_SALE_SETTLEMENT_MISMATCH,
+                                "merchant_id",
+                            ),
+                            _unagg_field(
+                                "tbl-ss-stl-amount",
+                                DS_SALE_SETTLEMENT_MISMATCH,
+                                "settlement_amount",
+                            ),
+                            _unagg_field(
+                                "tbl-ss-sales-sum",
+                                DS_SALE_SETTLEMENT_MISMATCH,
+                                "sales_sum",
+                            ),
+                            _unagg_field(
+                                "tbl-ss-difference",
+                                DS_SALE_SETTLEMENT_MISMATCH,
+                                "difference",
+                            ),
+                            _unagg_field(
+                                "tbl-ss-date",
+                                DS_SALE_SETTLEMENT_MISMATCH,
+                                "settlement_date",
+                            ),
+                        ]
+                    )
+                ),
+            ),
+        )
+    )
+
+    # Table: settlement ↔ payment amount mismatch (SPEC 2.4)
+    table_stl_pay_mismatch = Visual(
+        TableVisual=TableVisual(
+            VisualId="exceptions-settlement-payment-mismatch-table",
+            Title=_title("Settlement ↔ Payment Mismatch"),
+            Subtitle=_subtitle(
+                "Payments whose amount doesn't match their settlement — "
+                "investigate these before reconciling externally."
+            ),
+            ChartConfiguration=TableConfiguration(
+                FieldWells=TableFieldWells(
+                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
+                        Values=[
+                            _unagg_field(
+                                "tbl-sp-pay-id",
+                                DS_SETTLEMENT_PAYMENT_MISMATCH,
+                                "payment_id",
+                            ),
+                            _unagg_field(
+                                "tbl-sp-stl-id",
+                                DS_SETTLEMENT_PAYMENT_MISMATCH,
+                                "settlement_id",
+                            ),
+                            _unagg_field(
+                                "tbl-sp-merchant",
+                                DS_SETTLEMENT_PAYMENT_MISMATCH,
+                                "merchant_id",
+                            ),
+                            _unagg_field(
+                                "tbl-sp-pay-amount",
+                                DS_SETTLEMENT_PAYMENT_MISMATCH,
+                                "payment_amount",
+                            ),
+                            _unagg_field(
+                                "tbl-sp-stl-amount",
+                                DS_SETTLEMENT_PAYMENT_MISMATCH,
+                                "settlement_amount",
+                            ),
+                            _unagg_field(
+                                "tbl-sp-difference",
+                                DS_SETTLEMENT_PAYMENT_MISMATCH,
+                                "difference",
+                            ),
+                            _unagg_field(
+                                "tbl-sp-date",
+                                DS_SETTLEMENT_PAYMENT_MISMATCH,
+                                "payment_date",
+                            ),
+                        ]
+                    )
+                ),
+            ),
+        )
+    )
+
+    # Table: external transactions with no linked payment (moved from recon)
+    table_unmatched_ext = Visual(
+        TableVisual=TableVisual(
+            VisualId="exceptions-unmatched-ext-txn-table",
+            Title=_title("External Transactions Without a Payment"),
+            Subtitle=_subtitle(
+                "External system transactions that have no internal payment "
+                "linked — usually the first thing to investigate."
+            ),
+            ChartConfiguration=TableConfiguration(
+                FieldWells=TableFieldWells(
+                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
+                        Values=[
+                            _unagg_field(
+                                "tbl-ue-txn-id",
+                                DS_UNMATCHED_EXTERNAL_TXNS,
+                                "transaction_id",
+                            ),
+                            _unagg_field(
+                                "tbl-ue-system",
+                                DS_UNMATCHED_EXTERNAL_TXNS,
+                                "external_system",
+                            ),
+                            _unagg_field(
+                                "tbl-ue-merchant",
+                                DS_UNMATCHED_EXTERNAL_TXNS,
+                                "merchant_id",
+                            ),
+                            _unagg_field(
+                                "tbl-ue-amount",
+                                DS_UNMATCHED_EXTERNAL_TXNS,
+                                "external_amount",
+                            ),
+                            _unagg_field(
+                                "tbl-ue-date",
+                                DS_UNMATCHED_EXTERNAL_TXNS,
+                                "transaction_date",
+                            ),
+                            _unagg_field(
+                                "tbl-ue-days",
+                                DS_UNMATCHED_EXTERNAL_TXNS,
+                                "days_outstanding",
+                            ),
+                        ]
+                    )
+                ),
+            ),
+        )
+    )
+
+    return [
+        kpi_unsettled,
+        kpi_returns,
+        table_unsettled,
+        table_returns,
+        table_sale_stl_mismatch,
+        table_stl_pay_mismatch,
+        table_unmatched_ext,
+    ]

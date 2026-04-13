@@ -154,6 +154,32 @@ def _set_param_action(
     )
 
 
+def _link_text_format(field_id: str, column_name: str, color: str) -> dict:
+    """Conditional-format entry that renders a field's cells in ``color``.
+
+    Used to mark drill-source columns so the "clickable" cue is obvious.
+    QuickSight's conditional-formatting expression grammar is
+    undocumented; the idiomatic always-true guard (confirmed via UI
+    round-trip) is ``{col} <> "<sentinel>"`` — comparing the column to a
+    value no row holds. Literal booleans, ``1 = 1``, and self-equality
+    are all rejected.
+    """
+    sentinel = "__qsgen_never_matches__"
+    return {
+        "Cell": {
+            "FieldId": field_id,
+            "TextFormat": {
+                "TextColor": {
+                    "Solid": {
+                        "Expression": f'{{{column_name}}} <> "{sentinel}"',
+                        "Color": color,
+                    },
+                },
+            },
+        },
+    }
+
+
 def _same_sheet_filter_action(
     action_id: str,
     name: str,
@@ -185,8 +211,14 @@ def _same_sheet_filter_action(
 # Payment Reconciliation visuals
 # ---------------------------------------------------------------------------
 
-def build_payment_recon_visuals() -> list[Visual]:
-    """Build visuals for the Payment Reconciliation sheet."""
+def build_payment_recon_visuals(link_color: str) -> list[Visual]:
+    """Build visuals for the Payment Reconciliation sheet.
+
+    ``link_color`` is the theme accent color applied to the two
+    mutual-filter source cells (external transaction id and the
+    payments table's external_transaction_id column), so users see
+    them as clickable.
+    """
 
     # KPI: total matched amount
     kpi_matched = Visual(
@@ -312,7 +344,7 @@ def build_payment_recon_visuals() -> list[Visual]:
             Title=_title("External Transactions"),
             Subtitle=_subtitle(
                 "Each external transaction with its match status and difference. "
-                "Click a row to filter the payments table below."
+                "Click a row to filter the Internal Payments table."
             ),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
@@ -375,6 +407,13 @@ def build_payment_recon_visuals() -> list[Visual]:
                     "recon-tbl-txn-id",
                 ),
             ],
+            ConditionalFormatting={
+                "ConditionalFormattingOptions": [
+                    _link_text_format(
+                        "recon-tbl-txn-id", "transaction_id", link_color
+                    ),
+                ],
+            },
         )
     )
 
@@ -385,7 +424,7 @@ def build_payment_recon_visuals() -> list[Visual]:
             Title=_title("Internal Payments"),
             Subtitle=_subtitle(
                 "Payments linked to external transactions. "
-                "Click a row to filter the external transactions table above."
+                "Click a row to filter the External Transactions table."
             ),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
@@ -433,6 +472,15 @@ def build_payment_recon_visuals() -> list[Visual]:
                     "recon-pay-ext-txn",
                 ),
             ],
+            ConditionalFormatting={
+                "ConditionalFormattingOptions": [
+                    _link_text_format(
+                        "recon-pay-ext-txn",
+                        "external_transaction_id",
+                        link_color,
+                    ),
+                ],
+            },
         )
     )
 

@@ -440,13 +440,15 @@ _TEST_CFG = Config(
 
 class TestDatasetBuilderCounts:
     def test_pipeline_datasets_count(self):
-        assert len(build_pipeline_datasets(_TEST_CFG)) == 6
+        # merchants, sales, settlements, payments, settlement-exceptions,
+        # payment-returns, + 3 new mismatch datasets (SPEC 2.4)
+        assert len(build_pipeline_datasets(_TEST_CFG)) == 9
 
     def test_recon_datasets_count(self):
         assert len(build_recon_datasets(_TEST_CFG)) == 2
 
     def test_all_datasets_count(self):
-        assert len(build_all_datasets(_TEST_CFG)) == 8
+        assert len(build_all_datasets(_TEST_CFG)) == 11
 
     def test_all_datasets_is_pipeline_plus_recon(self):
         all_ds = build_all_datasets(_TEST_CFG)

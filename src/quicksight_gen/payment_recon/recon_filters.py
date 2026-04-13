@@ -1,10 +1,9 @@
 """Filter groups and controls for the Payment Reconciliation sheet.
 
-Defines four single-dataset filters with corresponding UI controls:
+Defines three single-dataset filters with corresponding UI controls:
 - Date range picker        -> recon sheet
 - Match status dropdown    -> recon sheet
 - External system dropdown -> recon sheet
-- Days outstanding slider  -> recon sheet
 
 All filters use SINGLE_DATASET + single-sheet scope so that QuickSight
 treats them as sheet-local controls (no DefaultFilterControlConfiguration
@@ -13,6 +12,7 @@ required, no CrossSheet control type needed).
 
 from __future__ import annotations
 
+from quicksight_gen.common.config import Config
 from quicksight_gen.payment_recon.constants import (
     DS_PAYMENT_RECON,
     SHEET_PAYMENT_RECON,
@@ -27,9 +27,6 @@ from quicksight_gen.common.models import (
     FilterDropDownControl,
     FilterGroup,
     FilterScopeConfiguration,
-    FilterSliderControl,
-    NumericRangeFilter,
-    NumericRangeFilterValue,
     SelectedSheetsFilterScopeConfiguration,
     SheetVisualScopingConfiguration,
     TimeRangeFilter,
@@ -130,39 +127,13 @@ def _recon_external_system_filter_group() -> FilterGroup:
     )
 
 
-def _recon_days_outstanding_filter_group() -> FilterGroup:
-    """Days outstanding numeric slider."""
-    return FilterGroup(
-        FilterGroupId="fg-recon-days-outstanding",
-        CrossDataset="SINGLE_DATASET",
-        ScopeConfiguration=_recon_scope(),
-        Status="ENABLED",
-        Filters=[
-            Filter(
-                NumericRangeFilter=NumericRangeFilter(
-                    FilterId="filter-recon-days-outstanding",
-                    Column=ColumnIdentifier(
-                        DataSetIdentifier=DS_PAYMENT_RECON,
-                        ColumnName="days_outstanding",
-                    ),
-                    NullOption="NON_NULLS_ONLY",
-                    RangeMinimum=NumericRangeFilterValue(StaticValue=0),
-                    RangeMaximum=NumericRangeFilterValue(StaticValue=365),
-                    IncludeMinimum=True,
-                    IncludeMaximum=True,
-                ),
-            ),
-        ],
-    )
-
-
-def build_recon_filter_groups() -> list[FilterGroup]:
+def build_recon_filter_groups(cfg: Config) -> list[FilterGroup]:
     """Return all filter groups for the Payment Reconciliation sheet."""
+    del cfg
     return [
         _recon_date_range_filter_group(),
         _recon_match_status_filter_group(),
         _recon_external_system_filter_group(),
-        _recon_days_outstanding_filter_group(),
     ]
 
 
@@ -170,12 +141,13 @@ def build_recon_filter_groups() -> list[FilterGroup]:
 # Filter controls (UI widgets on the recon sheet)
 # ---------------------------------------------------------------------------
 
-def build_recon_controls() -> list[FilterControl]:
+def build_recon_controls(cfg: Config) -> list[FilterControl]:
     """Controls for the Payment Reconciliation tab.
 
-    Uses direct control types (DateTimePicker, Dropdown, Slider) rather than
+    Uses direct control types (DateTimePicker, Dropdown) rather than
     CrossSheet controls, since all filters are SINGLE_DATASET scoped to one sheet.
     """
+    del cfg  # reserved for future per-config tuning
     return [
         FilterControl(
             DateTimePicker=FilterDateTimePickerControl(
@@ -199,17 +171,6 @@ def build_recon_controls() -> list[FilterControl]:
                 Title="External System",
                 SourceFilterId="filter-recon-external-system",
                 Type="MULTI_SELECT",
-            ),
-        ),
-        FilterControl(
-            Slider=FilterSliderControl(
-                FilterControlId="ctrl-recon-days-outstanding",
-                Title="Minimum Days Outstanding",
-                SourceFilterId="filter-recon-days-outstanding",
-                MinimumValue=0,
-                MaximumValue=365,
-                StepSize=1,
-                Type="RANGE",
             ),
         ),
     ]

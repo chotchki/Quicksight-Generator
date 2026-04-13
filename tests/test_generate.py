@@ -132,7 +132,8 @@ class TestGenerateOutput:
         ds_dir = output_dir / "datasets"
         assert ds_dir.exists()
         ds_files = list(ds_dir.glob("*.json"))
-        assert len(ds_files) == 8
+        # 6 pipeline + 3 new mismatch datasets (SPEC 2.4) + 2 recon
+        assert len(ds_files) == 11
 
     def test_all_files_valid_json(self, output_dir: Path):
         for path in output_dir.rglob("*.json"):
@@ -213,3 +214,202 @@ class TestExplanations:
                             f"'{sheet.get('Name', sheet['SheetId'])}' "
                             f"has no meaningful subtitle"
                         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 additions — layout + filter coverage
+# ---------------------------------------------------------------------------
+
+class TestGettingStartedSheet:
+    """SPEC 2.6: Getting Started is the landing tab."""
+
+    def test_is_tab_index_zero(self, output_dir: Path):
+        analysis = _load(output_dir, "payment-recon-analysis.json")
+        sheets = analysis["Definition"]["Sheets"]
+        assert sheets[0]["SheetId"] == "sheet-getting-started"
+        assert sheets[0]["Name"] == "Getting Started"
+
+    def test_has_text_boxes(self, output_dir: Path):
+        analysis = _load(output_dir, "payment-recon-analysis.json")
+        gs = analysis["Definition"]["Sheets"][0]
+        text_boxes = gs.get("TextBoxes", [])
+        ids = [tb["SheetTextBoxId"] for tb in text_boxes]
+        # Welcome + one block per downstream sheet
+        assert "gs-welcome" in ids
+        for expected in ("gs-sales", "gs-settlements", "gs-payments",
+                         "gs-exceptions", "gs-payment-recon"):
+            assert expected in ids, f"Missing text block {expected}"
+
+    def test_has_no_visuals_or_filters(self, output_dir: Path):
+        """Landing tab is pure text — no visuals, no filter controls."""
+        analysis = _load(output_dir, "payment-recon-analysis.json")
+        gs = analysis["Definition"]["Sheets"][0]
+        assert not gs.get("Visuals"), "Getting Started should have no visuals"
+        assert not gs.get("FilterControls"), (
+            "Getting Started should have no filter controls"
+        )
+
+    def test_non_demo_has_no_demo_flavor(self, output_dir: Path):
+        """Non-demo config should not emit the demo scenario block."""
+        analysis = _load(output_dir, "payment-recon-analysis.json")
+        gs = analysis["Definition"]["Sheets"][0]
+        ids = [tb["SheetTextBoxId"] for tb in gs.get("TextBoxes", [])]
+        assert "gs-demo-flavor" not in ids
+
+
+class TestStateToggles:
+    """Sales, Settlements, and Payments carry Show-Only-X SINGLE_SELECT
+    dropdowns. The earlier days-outstanding slider has been removed from
+    every tab — the date-range filter already covers that use case."""
+
+    _TOGGLES = (
+        # (sheet_id, filter_id, expected title)
+        ("sheet-sales-overview", "filter-sales-unsettled",
+         "Show Only Unsettled"),
+        ("sheet-settlements", "filter-settlements-unpaid",
+         "Show Only Unpaid"),
+        ("sheet-payments", "filter-payments-unmatched",
+         "Show Only Unmatched Externally"),
+    )
+
+    def test_no_days_outstanding_slider(self, output_dir: Path):
+        analysis = _load(output_dir, "payment-recon-analysis.json")
+        for sheet in analysis["Definition"]["Sheets"]:
+            for ctrl in sheet.get("FilterControls", []):
+                slider = ctrl.get("Slider", {})
+                assert "days-outstanding" not in slider.get(
+                    "SourceFilterId", ""
+                ), (
+                    f"Sheet '{sheet['SheetId']}' still has a days-outstanding "
+                    "slider; it should have been removed."
+                )
+        fg_ids = {
+            fg["FilterGroupId"]
+            for fg in analysis["Definition"]["FilterGroups"]
+        }
+        assert not any("days-outstanding" in fg_id for fg_id in fg_ids), (
+            f"Found stale days-outstanding filter groups: {fg_ids}"
+        )
+
+    def test_state_toggle_dropdowns(self, output_dir: Path):
+        """Sales/Settlements/Payments each expose a SINGLE_SELECT dropdown
+        bound to a derived state column."""
+        analysis = _load(output_dir, "payment-recon-analysis.json")
+        sheets_by_id = {
+            s["SheetId"]: s for s in analysis["Definition"]["Sheets"]
+        }
+        for sheet_id, source_id, title in self._TOGGLES:
+            sheet = sheets_by_id[sheet_id]
+            dropdowns = [
+                ctrl["Dropdown"]
+                for ctrl in sheet.get("FilterControls", [])
+                if "Dropdown" in ctrl
+            ]
+            matches = [
+                d for d in dropdowns
+                if d.get("SourceFilterId") == source_id
+            ]
+            assert len(matches) == 1, (
+                f"Sheet '{sheet_id}' missing dropdown for '{source_id}'"
+            )
+            ctrl = matches[0]
+            assert ctrl["Type"] == "SINGLE_SELECT", sheet_id
+            assert ctrl["Title"] == title, sheet_id
+
+
+class TestExceptionTables:
+    """SPEC 2.4: three new mismatch tables on the Exceptions tab."""
+
+    def test_new_tables_present(self, output_dir: Path):
+        analysis = _load(output_dir, "payment-recon-analysis.json")
+        exc_sheet = next(
+            s for s in analysis["Definition"]["Sheets"]
+            if s["SheetId"] == "sheet-exceptions"
+        )
+        visual_ids = [
+            v["TableVisual"]["VisualId"]
+            for v in exc_sheet["Visuals"]
+            if v.get("TableVisual")
+        ]
+        for expected in (
+            "exceptions-sale-settlement-mismatch-table",
+            "exceptions-settlement-payment-mismatch-table",
+            "exceptions-unmatched-ext-txn-table",
+        ):
+            assert expected in visual_ids, f"Missing table {expected}"
+
+    def test_exceptions_visual_count(self, output_dir: Path):
+        analysis = _load(output_dir, "payment-recon-analysis.json")
+        exc_sheet = next(
+            s for s in analysis["Definition"]["Sheets"]
+            if s["SheetId"] == "sheet-exceptions"
+        )
+        # 2 KPIs + 2 original tables + 3 new mismatch tables
+        assert len(exc_sheet["Visuals"]) == 7
+
+
+class TestOptionalMetadataFilters:
+    """SPEC 2.2: auto-generated per-metadata-column filters on the Sales tab."""
+
+    def test_each_metadata_col_has_filter_group(self, output_dir: Path):
+        from quicksight_gen.payment_recon.datasets import OPTIONAL_SALE_METADATA
+
+        analysis = _load(output_dir, "payment-recon-analysis.json")
+        fg_ids = {fg["FilterGroupId"] for fg in analysis["Definition"]["FilterGroups"]}
+        for col, *_ in OPTIONAL_SALE_METADATA:
+            assert f"fg-sales-meta-{col}" in fg_ids, (
+                f"Missing filter group for optional metadata column '{col}'"
+            )
+
+    def test_numeric_col_emits_slider(self, output_dir: Path):
+        """Numeric OPTIONAL_SALE_METADATA cols surface a slider control on Sales."""
+        analysis = _load(output_dir, "payment-recon-analysis.json")
+        sales = next(
+            s for s in analysis["Definition"]["Sheets"]
+            if s["SheetId"] == "sheet-sales-overview"
+        )
+        sliders = [
+            c["Slider"] for c in sales.get("FilterControls", [])
+            if "Slider" in c
+            and c["Slider"].get("SourceFilterId") == "filter-sales-meta-taxes"
+        ]
+        assert len(sliders) == 1, (
+            "Expected a slider for filter-sales-meta-taxes on Sales Overview"
+        )
+
+    def test_string_col_emits_dropdown(self, output_dir: Path):
+        """String OPTIONAL_SALE_METADATA cols surface a multi-select on Sales."""
+        analysis = _load(output_dir, "payment-recon-analysis.json")
+        sales = next(
+            s for s in analysis["Definition"]["Sheets"]
+            if s["SheetId"] == "sheet-sales-overview"
+        )
+        dropdowns = [
+            c["Dropdown"] for c in sales.get("FilterControls", [])
+            if "Dropdown" in c
+            and c["Dropdown"].get("SourceFilterId") == "filter-sales-meta-cashier"
+        ]
+        assert len(dropdowns) == 1, (
+            "Expected a dropdown for filter-sales-meta-cashier on Sales Overview"
+        )
+
+
+class TestPaymentMethodFilter:
+    """SPEC 2.3: payment_method multi-select on Settlements + Payments."""
+
+    def test_filter_group_present(self, output_dir: Path):
+        analysis = _load(output_dir, "payment-recon-analysis.json")
+        fg_ids = {fg["FilterGroupId"] for fg in analysis["Definition"]["FilterGroups"]}
+        assert "fg-payment-method" in fg_ids
+
+    def test_scoped_to_settlements_and_payments(self, output_dir: Path):
+        analysis = _load(output_dir, "payment-recon-analysis.json")
+        fg = next(
+            f for f in analysis["Definition"]["FilterGroups"]
+            if f["FilterGroupId"] == "fg-payment-method"
+        )
+        scopes = fg["ScopeConfiguration"]["SelectedSheets"][
+            "SheetVisualScopingConfigurations"
+        ]
+        sheet_ids = {s["SheetId"] for s in scopes}
+        assert sheet_ids == {"sheet-settlements", "sheet-payments"}

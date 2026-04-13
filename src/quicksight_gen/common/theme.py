@@ -51,6 +51,10 @@ class ThemePreset:
     secondary_fg: str
     accent: str
     accent_fg: str
+    # Pale-accent cell tint used as the background for table cells whose
+    # click target is a DATA_POINT_MENU (right-click) rather than a direct
+    # left-click drill.
+    link_tint: str
     danger: str
     danger_fg: str
     warning: str
@@ -109,6 +113,7 @@ DEFAULT_PRESET = ThemePreset(
     secondary_fg=_DARK_GREY,
     accent=_DARK_BLUE,
     accent_fg=_WHITE,
+    link_tint="#E8EFF9",
     danger=_DANGER_RED,
     danger_fg=_WHITE,
     warning=_WARNING_AMBER,
@@ -164,6 +169,7 @@ SASQUATCH_BANK_PRESET = ThemePreset(
     secondary_fg=_SAGE,
     accent=_FOREST_GREEN,
     accent_fg=_WHITE,
+    link_tint="#E8F1EB",
     danger="#B71C1C",
     danger_fg=_WHITE,
     warning="#BF6D0A",

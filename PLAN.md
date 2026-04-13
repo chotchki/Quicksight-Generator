@@ -48,20 +48,20 @@ Conventions:
 
 ## Phase 2 — Payment Recon domain additions
 
-- [ ] 2.1 Refund support: add `sale_type` column to `pr_sales` (values `sale`, `refund`), allow negative `amount`. Update demo seed to include refund rows (some timestamped later than the original sale, some not). Sales Detail table displays `sale_type`. Verify settlements/payments can net negative via signed sums.
-- [ ] 2.2 Optional sales metadata plumbing: declare taxes / tips / discount_percentage / cashier in a Python constant (`OPTIONAL_SALE_METADATA`) adjacent to the sales SQL, each with its SQL column + data type. Surface them on Sales Detail always. Auto-generate per-sheet filter controls by type (numeric→range, string→multi-select, date/timestamp→date-range).
-- [ ] 2.3 Payment methods as a filter: add `payment_method` to the merchants (or sales) schema, expose as a multi-select filter on Settlements and Payments tabs. No group-by.
-- [ ] 2.4 Expand Exceptions & Alerts:
+- [x] 2.1 Refund support: add `sale_type` column to `pr_sales` (values `sale`, `refund`), allow negative `amount`. Update demo seed to include refund rows (some timestamped later than the original sale, some not). Sales Detail table displays `sale_type`. Verify settlements/payments can net negative via signed sums.
+- [x] 2.2 Optional sales metadata plumbing: declare taxes / tips / discount_percentage / cashier in a Python constant (`OPTIONAL_SALE_METADATA`) adjacent to the sales SQL, each with its SQL column + data type. Surface them on Sales Detail always. Auto-generate per-sheet filter controls by type (numeric→range, string→multi-select, date/timestamp→date-range).
+- [x] 2.3 Payment methods as a filter: add `payment_method` to the merchants (or sales) schema, expose as a multi-select filter on Settlements and Payments tabs. No group-by.
+- [x] 2.4 Expand Exceptions & Alerts:
   - Keep the existing unsettled-sales and returned-payments tables.
   - Add a Sales → Settlement mismatch table (sales linked to a settlement where Σ(linked sales) ≠ settlement amount).
   - Add a Settlement → Payment mismatch table (settlements linked to a payment where Σ(linked settlements) ≠ payment amount).
   - Move "external transactions without a payment" from the Payment Reconciliation tab into here.
   - Layout deliberately compact — minimize whitespace; use half-width / multi-column grids.
-- [ ] 2.5 Days-outstanding slider: config-default-backed slider on Sales, Settlements, Payments, Payment Reconciliation, and Exceptions & Alerts (one per tab, starts at `late_default_days`, user-overridable).
-- [ ] 2.6 "Getting Started" sheet as tab index 0: one auto-derived text block per downstream sheet (sourced from each sheet's existing plain-language description). Demo mode adds a 1–2 paragraph scenario flavor block at the top. Attempt inline hyperlinks; if unsupported, add a small navigation-button visual row.
-- [ ] 2.7 Update unit tests: refund math, optional-metadata filter derivation, new exception tables & subtitles, slider presence on each tab, Getting Started tab at index 0, explanation coverage still 100%.
-- [ ] 2.8 Update e2e tests: new dashboard structure (6 tabs now including Getting Started), visual counts, new exception tables assertable, one browser test for the days-outstanding slider filtering a table row count.
-- [ ] **STOP for review.** (Exceptions tab layout and Getting Started link-vs-button flow are the most likely iteration points.)
+- [x] 2.5 Days-outstanding slider: *shipped then removed in review.* The slider was added per tab per the plan, but the date-range filter already covered the same need. Replaced with **Show-Only-X SINGLE_SELECT toggles** on Sales ("Show Only Unsettled"), Settlements ("Show Only Unpaid"), and Payments ("Show Only Unmatched Externally"). No slider anywhere now.
+- [x] 2.6 "Getting Started" sheet as tab index 0: one auto-derived text block per downstream sheet (sourced from each sheet's existing plain-language description). Demo mode adds a 1–2 paragraph scenario flavor block at the top. Attempt inline hyperlinks; if unsupported, add a small navigation-button visual row. *Note: rich-text formatting deferred to Phase 6 — current blocks are plain text.*
+- [x] 2.7 Update unit tests: refund math, optional-metadata filter derivation, new exception tables & subtitles, toggle presence on each tab, Getting Started tab at index 0, explanation coverage still 100%.
+- [x] 2.8 Update e2e tests: new dashboard structure (6 tabs now including Getting Started), visual counts, new exception tables assertable, one browser test for the state toggles (replacing the slider browser test).
+- [x] **STOP for review.** Review added: right-click drill-down pattern (settlement_id on Sales, external_transaction_id on Payments), side-by-side recon tables, slider → toggle pivot, orphan external transactions in demo data.
 - [ ] 2.9 git commit, tag v0.4.0, push branch + tag
 
 ---

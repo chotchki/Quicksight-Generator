@@ -151,7 +151,7 @@ SELECT
     location_id,
     created_at,
     status
-FROM merchants"""
+FROM pr_merchants"""
 
     physical, logical = _physical_and_logical(
         cfg, "merchants", "Merchants", sql, columns
@@ -173,6 +173,44 @@ FROM merchants"""
 # 5b — Sales
 # ---------------------------------------------------------------------------
 
+# Optional sales metadata columns.
+#
+# These are sourced from the same ``pr_sales`` table in demo mode. Production
+# databases without these columns will generate a SQL error on DIRECT_QUERY —
+# if that becomes a problem we can gate them behind a config flag, but SPEC 2.2
+# opts for a static declaration rather than runtime introspection.
+#
+# Each tuple: (sql_column, sql_ddl_type, qs_type, filter_type, control_label)
+#  - sql_column     — column name in ``pr_sales``
+#  - sql_ddl_type   — PostgreSQL type for the demo schema
+#  - qs_type        — QuickSight InputColumn type (STRING|DECIMAL|DATETIME|INTEGER)
+#  - filter_type    — auto-generated filter style
+#                      (numeric | string | datetime)
+#  - control_label  — human-friendly label for the auto-generated filter
+OPTIONAL_SALE_METADATA: list[tuple[str, str, str, str, str]] = [
+    ("taxes",               "DECIMAL(12,2)", "DECIMAL", "numeric",  "Taxes"),
+    ("tips",                "DECIMAL(12,2)", "DECIMAL", "numeric",  "Tips"),
+    ("discount_percentage", "DECIMAL(5,2)",  "DECIMAL", "numeric",  "Discount %"),
+    ("cashier",             "VARCHAR(100)",  "STRING",  "string",   "Cashier"),
+]
+
+
+def _optional_metadata_columns() -> list[InputColumn]:
+    return [
+        InputColumn(Name=col, Type=qs_type)
+        for col, _ddl, qs_type, _ftype, _label in OPTIONAL_SALE_METADATA
+    ]
+
+
+def _optional_metadata_sql_fields() -> str:
+    """Return a SQL fragment listing the optional columns, comma-prefixed."""
+    if not OPTIONAL_SALE_METADATA:
+        return ""
+    return ",\n    " + ",\n    ".join(
+        col for col, *_ in OPTIONAL_SALE_METADATA
+    )
+
+
 def build_sales_dataset(cfg: Config) -> DataSet:
     dataset_id = cfg.prefixed("sales-dataset")
     columns = [
@@ -180,26 +218,44 @@ def build_sales_dataset(cfg: Config) -> DataSet:
         InputColumn(Name="merchant_id", Type="STRING"),
         InputColumn(Name="location_id", Type="STRING"),
         InputColumn(Name="amount", Type="DECIMAL"),
+        InputColumn(Name="sale_type", Type="STRING"),
+        InputColumn(Name="payment_method", Type="STRING"),
         InputColumn(Name="sale_timestamp", Type="DATETIME"),
         InputColumn(Name="card_brand", Type="STRING"),
         InputColumn(Name="card_last_four", Type="STRING"),
         InputColumn(Name="reference_id", Type="STRING"),
         InputColumn(Name="metadata", Type="STRING"),
         InputColumn(Name="settlement_id", Type="STRING"),
-    ]
-    sql = """\
+        InputColumn(Name="days_outstanding", Type="INTEGER"),
+        InputColumn(Name="settlement_state", Type="STRING"),
+    ] + _optional_metadata_columns()
+    # days_outstanding is meaningful only for unsettled sales — settled sales
+    # collapse to NULL. settlement_state is derived so filters can toggle
+    # unsettled-only without relying on NULL semantics.
+    sql = f"""\
 SELECT
     sale_id,
     merchant_id,
     location_id,
     amount,
+    sale_type,
+    payment_method,
     sale_timestamp,
     card_brand,
     card_last_four,
     reference_id,
     metadata,
-    settlement_id
-FROM sales"""
+    settlement_id,
+    CASE
+        WHEN settlement_id IS NULL
+            THEN (CURRENT_DATE - sale_timestamp::date)
+        ELSE NULL
+    END AS days_outstanding,
+    CASE
+        WHEN settlement_id IS NULL THEN 'Unsettled'
+        ELSE 'Settled'
+    END AS settlement_state{_optional_metadata_sql_fields()}
+FROM pr_sales"""
 
     physical, logical = _physical_and_logical(
         cfg, "sales", "Sales", sql, columns
@@ -231,17 +287,31 @@ def build_settlements_dataset(cfg: Config) -> DataSet:
         InputColumn(Name="settlement_date", Type="DATETIME"),
         InputColumn(Name="settlement_status", Type="STRING"),
         InputColumn(Name="sale_count", Type="INTEGER"),
+        InputColumn(Name="days_outstanding", Type="INTEGER"),
+        InputColumn(Name="payment_id", Type="STRING"),
+        InputColumn(Name="payment_state", Type="STRING"),
     ]
+    # LEFT JOIN pr_payments on settlement_id — demo data emits at most one
+    # payment per settlement (see demo_data.py `pay_by_stl`), so this does
+    # not duplicate settlement rows. payment_state backs the Show-Only-Unpaid
+    # toggle on the Settlements sheet.
     sql = """\
 SELECT
-    settlement_id,
-    merchant_id,
-    settlement_type,
-    settlement_amount,
-    settlement_date,
-    settlement_status,
-    sale_count
-FROM settlements"""
+    s.settlement_id,
+    s.merchant_id,
+    s.settlement_type,
+    s.settlement_amount,
+    s.settlement_date,
+    s.settlement_status,
+    s.sale_count,
+    (CURRENT_DATE - s.settlement_date::date) AS days_outstanding,
+    p.payment_id,
+    CASE
+        WHEN p.payment_id IS NULL THEN 'Unpaid'
+        ELSE 'Paid'
+    END AS payment_state
+FROM pr_settlements s
+LEFT JOIN pr_payments p ON p.settlement_id = s.settlement_id"""
 
     physical, logical = _physical_and_logical(
         cfg, "settlements", "Settlements", sql, columns
@@ -275,7 +345,12 @@ def build_payments_dataset(cfg: Config) -> DataSet:
         InputColumn(Name="is_returned", Type="STRING"),
         InputColumn(Name="return_reason", Type="STRING"),
         InputColumn(Name="external_transaction_id", Type="STRING"),
+        InputColumn(Name="external_match_state", Type="STRING"),
+        InputColumn(Name="payment_method", Type="STRING"),
+        InputColumn(Name="days_outstanding", Type="INTEGER"),
     ]
+    # external_match_state backs the Show-Only-Unmatched-Externally toggle
+    # on the Payments sheet.
     sql = """\
 SELECT
     payment_id,
@@ -286,8 +361,14 @@ SELECT
     payment_status,
     is_returned,
     return_reason,
-    external_transaction_id
-FROM payments"""
+    external_transaction_id,
+    CASE
+        WHEN external_transaction_id IS NULL THEN 'Unmatched'
+        ELSE 'Matched'
+    END AS external_match_state,
+    payment_method,
+    (CURRENT_DATE - payment_date::date) AS days_outstanding
+FROM pr_payments"""
 
     physical, logical = _physical_and_logical(
         cfg, "payments", "Payments", sql, columns
@@ -318,7 +399,7 @@ def build_settlement_exceptions_dataset(cfg: Config) -> DataSet:
         InputColumn(Name="location_id", Type="STRING"),
         InputColumn(Name="amount", Type="DECIMAL"),
         InputColumn(Name="sale_timestamp", Type="DATETIME"),
-        InputColumn(Name="days_unsettled", Type="INTEGER"),
+        InputColumn(Name="days_outstanding", Type="INTEGER"),
     ]
     sql = """\
 SELECT
@@ -328,9 +409,9 @@ SELECT
     s.location_id,
     s.amount,
     s.sale_timestamp,
-    (CURRENT_DATE - s.sale_timestamp::date) AS days_unsettled
-FROM sales s
-JOIN merchants m ON m.merchant_id = s.merchant_id
+    (CURRENT_DATE - s.sale_timestamp::date) AS days_outstanding
+FROM pr_sales s
+JOIN pr_merchants m ON m.merchant_id = s.merchant_id
 WHERE s.settlement_id IS NULL"""
 
     physical, logical = _physical_and_logical(
@@ -373,8 +454,8 @@ SELECT
     p.payment_amount,
     p.payment_date,
     p.return_reason
-FROM payments p
-JOIN merchants m ON m.merchant_id = p.merchant_id
+FROM pr_payments p
+JOIN pr_merchants m ON m.merchant_id = p.merchant_id
 WHERE p.is_returned = 'true'"""
 
     physical, logical = _physical_and_logical(
@@ -384,6 +465,139 @@ WHERE p.is_returned = 'true'"""
         AwsAccountId=cfg.aws_account_id,
         DataSetId=dataset_id,
         Name="Payment Returns",
+        PhysicalTableMap=physical,
+        LogicalTableMap=logical,
+        ImportMode="DIRECT_QUERY",
+        DataSetUsageConfiguration=DataSetUsageConfiguration(),
+        Permissions=_permissions(cfg),
+        Tags=cfg.tags(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# 5g — Sale ↔ Settlement amount mismatches (SPEC 2.4)
+# ---------------------------------------------------------------------------
+
+def build_sale_settlement_mismatch_dataset(cfg: Config) -> DataSet:
+    dataset_id = cfg.prefixed("sale-settlement-mismatch-dataset")
+    columns = [
+        InputColumn(Name="settlement_id", Type="STRING"),
+        InputColumn(Name="merchant_id", Type="STRING"),
+        InputColumn(Name="settlement_amount", Type="DECIMAL"),
+        InputColumn(Name="sales_sum", Type="DECIMAL"),
+        InputColumn(Name="difference", Type="DECIMAL"),
+        InputColumn(Name="sale_count", Type="INTEGER"),
+        InputColumn(Name="settlement_date", Type="DATETIME"),
+        InputColumn(Name="days_outstanding", Type="INTEGER"),
+    ]
+    sql = """\
+SELECT
+    settlement_id,
+    merchant_id,
+    settlement_amount,
+    sales_sum,
+    difference,
+    sale_count,
+    settlement_date,
+    days_outstanding
+FROM pr_sale_settlement_mismatch"""
+
+    physical, logical = _physical_and_logical(
+        cfg, "sale-settlement-mismatch",
+        "Sale ↔ Settlement Mismatch", sql, columns,
+    )
+    return DataSet(
+        AwsAccountId=cfg.aws_account_id,
+        DataSetId=dataset_id,
+        Name="Sale ↔ Settlement Mismatch",
+        PhysicalTableMap=physical,
+        LogicalTableMap=logical,
+        ImportMode="DIRECT_QUERY",
+        DataSetUsageConfiguration=DataSetUsageConfiguration(),
+        Permissions=_permissions(cfg),
+        Tags=cfg.tags(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# 5h — Settlement ↔ Payment amount mismatches (SPEC 2.4)
+# ---------------------------------------------------------------------------
+
+def build_settlement_payment_mismatch_dataset(cfg: Config) -> DataSet:
+    dataset_id = cfg.prefixed("settlement-payment-mismatch-dataset")
+    columns = [
+        InputColumn(Name="payment_id", Type="STRING"),
+        InputColumn(Name="settlement_id", Type="STRING"),
+        InputColumn(Name="merchant_id", Type="STRING"),
+        InputColumn(Name="payment_amount", Type="DECIMAL"),
+        InputColumn(Name="settlement_amount", Type="DECIMAL"),
+        InputColumn(Name="difference", Type="DECIMAL"),
+        InputColumn(Name="payment_date", Type="DATETIME"),
+        InputColumn(Name="days_outstanding", Type="INTEGER"),
+    ]
+    sql = """\
+SELECT
+    payment_id,
+    settlement_id,
+    merchant_id,
+    payment_amount,
+    settlement_amount,
+    difference,
+    payment_date,
+    days_outstanding
+FROM pr_settlement_payment_mismatch"""
+
+    physical, logical = _physical_and_logical(
+        cfg, "settlement-payment-mismatch",
+        "Settlement ↔ Payment Mismatch", sql, columns,
+    )
+    return DataSet(
+        AwsAccountId=cfg.aws_account_id,
+        DataSetId=dataset_id,
+        Name="Settlement ↔ Payment Mismatch",
+        PhysicalTableMap=physical,
+        LogicalTableMap=logical,
+        ImportMode="DIRECT_QUERY",
+        DataSetUsageConfiguration=DataSetUsageConfiguration(),
+        Permissions=_permissions(cfg),
+        Tags=cfg.tags(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# 5i — External transactions without a linked payment (SPEC 2.4)
+# ---------------------------------------------------------------------------
+
+def build_unmatched_external_txns_dataset(cfg: Config) -> DataSet:
+    dataset_id = cfg.prefixed("unmatched-external-txns-dataset")
+    columns = [
+        InputColumn(Name="transaction_id", Type="STRING"),
+        InputColumn(Name="external_system", Type="STRING"),
+        InputColumn(Name="external_amount", Type="DECIMAL"),
+        InputColumn(Name="merchant_id", Type="STRING"),
+        InputColumn(Name="transaction_date", Type="DATETIME"),
+        InputColumn(Name="status", Type="STRING"),
+        InputColumn(Name="days_outstanding", Type="INTEGER"),
+    ]
+    sql = """\
+SELECT
+    transaction_id,
+    external_system,
+    external_amount,
+    merchant_id,
+    transaction_date,
+    status,
+    days_outstanding
+FROM pr_unmatched_external_txns"""
+
+    physical, logical = _physical_and_logical(
+        cfg, "unmatched-external-txns",
+        "Unmatched External Transactions", sql, columns,
+    )
+    return DataSet(
+        AwsAccountId=cfg.aws_account_id,
+        DataSetId=dataset_id,
+        Name="Unmatched External Transactions",
         PhysicalTableMap=physical,
         LogicalTableMap=logical,
         ImportMode="DIRECT_QUERY",
@@ -415,7 +629,7 @@ SELECT
     record_count,
     transaction_date,
     status
-FROM external_transactions"""
+FROM pr_external_transactions"""
 
     physical, logical = _physical_and_logical(
         cfg, "external-transactions", "External Transactions", sql, columns
@@ -468,8 +682,8 @@ SELECT
     et.merchant_id,
     et.transaction_date,
     (CURRENT_DATE - et.transaction_date::date) AS days_outstanding
-FROM external_transactions et
-LEFT JOIN payments p ON p.external_transaction_id = et.transaction_id
+FROM pr_external_transactions et
+LEFT JOIN pr_payments p ON p.external_transaction_id = et.transaction_id
 GROUP BY et.transaction_id, et.external_system, et.external_amount,
          et.merchant_id, et.transaction_date"""
 
@@ -494,7 +708,8 @@ GROUP BY et.transaction_id, et.external_system, et.external_amount,
 # ---------------------------------------------------------------------------
 
 def build_pipeline_datasets(cfg: Config) -> list[DataSet]:
-    """Return the six Payment Recon pipeline datasets."""
+    """Return the pipeline datasets (merchants, sales, settlements, payments,
+    plus the exception-only datasets that back the Exceptions tab)."""
     return [
         build_merchants_dataset(cfg),
         build_sales_dataset(cfg),
@@ -502,6 +717,9 @@ def build_pipeline_datasets(cfg: Config) -> list[DataSet]:
         build_payments_dataset(cfg),
         build_settlement_exceptions_dataset(cfg),
         build_payment_returns_dataset(cfg),
+        build_sale_settlement_mismatch_dataset(cfg),
+        build_settlement_payment_mismatch_dataset(cfg),
+        build_unmatched_external_txns_dataset(cfg),
     ]
 
 
@@ -514,5 +732,5 @@ def build_recon_datasets(cfg: Config) -> list[DataSet]:
 
 
 def build_all_datasets(cfg: Config) -> list[DataSet]:
-    """Return all eleven datasets (financial + reconciliation)."""
+    """Return every dataset used by the Payment Recon analysis."""
     return build_pipeline_datasets(cfg) + build_recon_datasets(cfg)

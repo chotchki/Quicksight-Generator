@@ -26,16 +26,16 @@ class TestSchemaSql:
 
     def test_creates_all_tables(self, schema_sql):
         for table in [
-            "merchants",
-            "external_transactions",
-            "settlements",
-            "sales",
-            "payments",
+            "pr_merchants",
+            "pr_external_transactions",
+            "pr_settlements",
+            "pr_sales",
+            "pr_payments",
         ]:
             assert f"CREATE TABLE {table}" in schema_sql
 
     def test_creates_all_views(self, schema_sql):
-        assert "CREATE VIEW payment_recon_view" in schema_sql
+        assert "CREATE VIEW pr_payment_recon_view" in schema_sql
 
     def test_drops_before_creates(self, schema_sql):
         # DROP statements appear before CREATE statements
@@ -71,11 +71,11 @@ class TestSeedSql:
     def test_insert_tables_match_schema(self, seed_sql):
         tables = re.findall(r"INSERT INTO (\w+)", seed_sql)
         expected = {
-            "merchants",
-            "external_transactions",
-            "settlements",
-            "sales",
-            "payments",
+            "pr_merchants",
+            "pr_external_transactions",
+            "pr_settlements",
+            "pr_sales",
+            "pr_payments",
         }
         assert set(tables) == expected
 
@@ -89,10 +89,10 @@ class TestSeedSql:
 
         # FK order: merchants before ext_txns before
         # settlements before sales, payments
-        assert positions["merchants"] < positions["external_transactions"]
-        assert positions["external_transactions"] < positions["settlements"]
-        assert positions["settlements"] < positions["sales"]
-        assert positions["sales"] < positions["payments"]
+        assert positions["pr_merchants"] < positions["pr_external_transactions"]
+        assert positions["pr_external_transactions"] < positions["pr_settlements"]
+        assert positions["pr_settlements"] < positions["pr_sales"]
+        assert positions["pr_sales"] < positions["pr_payments"]
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +107,7 @@ class TestDemoSchemaCli:
         assert result.exit_code == 0, result.output
         assert out.exists()
         content = out.read_text()
-        assert "CREATE TABLE merchants" in content
+        assert "CREATE TABLE pr_merchants" in content
 
 
 class TestDemoSeedCli:
@@ -118,7 +118,7 @@ class TestDemoSeedCli:
         assert result.exit_code == 0, result.output
         assert out.exists()
         content = out.read_text()
-        assert "INSERT INTO merchants" in content
+        assert "INSERT INTO pr_merchants" in content
         assert "Bigfoot Brews" in content
 
 

@@ -19,13 +19,14 @@ def dashboard_definition(qs_client, account_id, dashboard_id) -> dict:
 
 
 class TestSheets:
-    def test_has_five_sheets(self, dashboard_definition):
+    def test_has_six_sheets(self, dashboard_definition):
         sheets = dashboard_definition["Sheets"]
-        assert len(sheets) == 5
+        assert len(sheets) == 6
 
     def test_sheet_names(self, dashboard_definition):
         names = {s["Name"] for s in dashboard_definition["Sheets"]}
         expected = {
+            "Getting Started",
             "Sales Overview",
             "Settlements",
             "Payments",
@@ -34,8 +35,15 @@ class TestSheets:
         }
         assert names == expected, f"Sheet names mismatch: {names}"
 
-    def test_every_sheet_has_visuals(self, dashboard_definition):
+    def test_getting_started_is_first(self, dashboard_definition):
+        sheets = dashboard_definition["Sheets"]
+        assert sheets[0]["Name"] == "Getting Started"
+
+    def test_every_data_sheet_has_visuals(self, dashboard_definition):
+        """Every sheet except Getting Started must carry visuals."""
         for sheet in dashboard_definition["Sheets"]:
+            if sheet["Name"] == "Getting Started":
+                continue
             visuals = sheet.get("Visuals", [])
             assert len(visuals) > 0, (
                 f"Sheet '{sheet['Name']}' has no visuals"
@@ -54,7 +62,7 @@ class TestVisuals:
         "Sales Overview": 5,
         "Settlements": 4,
         "Payments": 4,
-        "Exceptions & Alerts": 4,
+        "Exceptions & Alerts": 7,
         "Payment Reconciliation": 6,
     }
 
@@ -92,6 +100,23 @@ class TestVisuals:
                             f"Visual '{vtype['VisualId']}' has no subtitle"
                         )
 
+    def test_exceptions_has_new_mismatch_tables(self, dashboard_definition):
+        exc_sheet = next(
+            s for s in dashboard_definition["Sheets"]
+            if s["Name"] == "Exceptions & Alerts"
+        )
+        ids = []
+        for v in exc_sheet.get("Visuals", []):
+            for vtype in v.values():
+                if isinstance(vtype, dict) and "VisualId" in vtype:
+                    ids.append(vtype["VisualId"])
+        for expected in (
+            "exceptions-sale-settlement-mismatch-table",
+            "exceptions-settlement-payment-mismatch-table",
+            "exceptions-unmatched-ext-txn-table",
+        ):
+            assert expected in ids, f"Missing exception table '{expected}'"
+
 
 class TestParameters:
     def test_has_settlement_id_parameter(self, dashboard_definition):
@@ -116,13 +141,40 @@ class TestParameters:
 class TestFilterGroups:
     def test_has_filter_groups(self, dashboard_definition):
         groups = dashboard_definition.get("FilterGroups", [])
-        # Payment Recon (5 shared) + 2 settlement drill-down + 4 recon + 2 recon drill-down
-        assert len(groups) >= 10
+        # core pipeline + 3 state toggles + 4 optional metadata
+        # + settlement/payment drill-downs + 3 recon + 2 recon drill-downs
+        assert len(groups) >= 18
 
     def test_filter_group_ids_unique(self, dashboard_definition):
         groups = dashboard_definition.get("FilterGroups", [])
         ids = [g["FilterGroupId"] for g in groups]
         assert len(ids) == len(set(ids))
+
+    def test_payment_method_filter_present(self, dashboard_definition):
+        groups = dashboard_definition.get("FilterGroups", [])
+        ids = {g["FilterGroupId"] for g in groups}
+        assert "fg-payment-method" in ids
+
+    def test_optional_metadata_filters_present(self, dashboard_definition):
+        groups = dashboard_definition.get("FilterGroups", [])
+        ids = {g["FilterGroupId"] for g in groups}
+        for col in ("taxes", "tips", "discount_percentage", "cashier"):
+            assert f"fg-sales-meta-{col}" in ids, (
+                f"Missing optional metadata filter for '{col}'"
+            )
+
+    def test_state_toggles_and_no_days_outstanding(self, dashboard_definition):
+        """Sales/Settlements/Payments expose a Show-Only-X toggle; no tab
+        should still carry the retired days-outstanding slider."""
+        ids = {g["FilterGroupId"] for g in dashboard_definition.get("FilterGroups", [])}
+        for fg_id in (
+            "fg-sales-unsettled",
+            "fg-settlements-unpaid",
+            "fg-payments-unmatched",
+        ):
+            assert fg_id in ids, f"Missing state toggle filter group '{fg_id}'"
+        stale = [fg_id for fg_id in ids if "days-outstanding" in fg_id]
+        assert not stale, f"Found stale days-outstanding filter groups: {stale}"
 
 
 class TestDatasetDeclarations:

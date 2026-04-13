@@ -50,7 +50,38 @@ def _table_row_count(page, visual_title: str) -> int:
 
 
 def _click_first_row_of_visual(page, visual_title: str, timeout_ms: int) -> None:
-    """Click the first cell of the first row of the named visual."""
+    """Click the first cell of the first row of the named visual.
+
+    Scrolls the target visual into view first — QuickSight virtualizes
+    cells in below-the-fold visuals, so they are absent from the DOM until
+    the visual is on screen.
+    """
+    page.evaluate(
+        """(title) => {
+            const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
+            for (const v of visuals) {
+                const t = v.querySelector('[data-automation-id="analysis_visual_title_label"]');
+                if (t && t.innerText.trim() === title) {
+                    v.scrollIntoView({block: 'center'});
+                    return;
+                }
+            }
+        }""",
+        visual_title,
+    )
+    page.wait_for_function(
+        """(title) => {
+            const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
+            for (const v of visuals) {
+                const t = v.querySelector('[data-automation-id="analysis_visual_title_label"]');
+                if (!t || t.innerText.trim() !== title) continue;
+                return v.querySelector('[data-automation-id="sn-table-cell-0-0"]') !== null;
+            }
+            return false;
+        }""",
+        arg=visual_title,
+        timeout=timeout_ms,
+    )
     selector = page.evaluate(
         """(title) => {
             const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
@@ -59,7 +90,6 @@ def _click_first_row_of_visual(page, visual_title: str, timeout_ms: int) -> None
                 if (!t || t.innerText.trim() !== title) continue;
                 const cell = v.querySelector('[data-automation-id="sn-table-cell-0-0"]');
                 if (cell) {
-                    // Tag it so we can target it from Playwright
                     cell.setAttribute('data-e2e-target', '1');
                     return true;
                 }

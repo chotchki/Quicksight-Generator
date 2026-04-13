@@ -114,6 +114,9 @@ def dataset_ids(resource_prefix) -> list[str]:
         "payments-dataset",
         "settlement-exceptions-dataset",
         "payment-returns-dataset",
+        "sale-settlement-mismatch-dataset",
+        "settlement-payment-mismatch-dataset",
+        "unmatched-external-txns-dataset",
         "external-transactions-dataset",
         "payment-recon-dataset",
     ]
