@@ -1,5 +1,21 @@
 # Release Notes
 
+## v1.0.1
+
+### Post-release polish
+
+Two small UX fixes from first round of v1.0.0 testing:
+
+- **Payment Reconciliation tab — table order swapped.** Internal Payments now renders on the left, External Transactions on the right. Reading flow goes internal → external, matching the rest of the pipeline (sales → settlements → payments → external).
+- **Account Recon Transfers tab — duplicate filter removed.** The "Show Only Unhealthy" SINGLE_SELECT toggle was redundant with the "Transfer Status" multi-select (both filtered on `net_zero_status`). Dropped the toggle; the multi-select stays.
+
+### Notes
+
+- Tests: 253 unit/integration (was 254 — one toggle assertion folded into a no-toggle assertion), 75 e2e — all green.
+- No schema, dataset, or generated-resource ID changes; safe in-place redeploy.
+
+---
+
 ## v1.0.0
 
 ### Spec complete — dual-dashboard restructure delivered

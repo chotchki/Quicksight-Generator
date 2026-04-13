@@ -464,8 +464,8 @@ def _build_payment_recon_sheet(cfg: Config) -> SheetDefinition:
             ),
             _full_width("recon-bar-by-system", _CHART_ROW_SPAN),
         ] + _chart_pair_of_tables(
-            "recon-ext-txn-table",
             "recon-payments-table",
+            "recon-ext-txn-table",
         )),
     )
 

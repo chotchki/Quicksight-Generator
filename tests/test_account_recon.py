@@ -817,8 +817,8 @@ def _find_sheet(analysis: dict, sheet_id: str) -> dict:
 
 
 class TestFilterGroups:
-    """Phase 5: shared date-range + 5 multi-selects + 5 Show-Only toggles +
-    5 drill-down parameter filters = 16 filter groups."""
+    """Phase 5: shared date-range + 5 multi-selects + 4 Show-Only toggles +
+    5 drill-down parameter filters = 15 filter groups."""
 
     _EXPECTED_IDS = {
         "fg-ar-date-range",
@@ -830,7 +830,6 @@ class TestFilterGroups:
         "fg-ar-balances-parent-drift",
         "fg-ar-balances-child-drift",
         "fg-ar-balances-overdraft",
-        "fg-ar-transfers-unhealthy",
         "fg-ar-transactions-failed",
         "fg-ar-drill-account-on-txn",
         "fg-ar-drill-transfer-on-txn",
@@ -902,7 +901,6 @@ class TestFilterGroups:
             ("fg-ar-balances-parent-drift", SHEET_AR_BALANCES),
             ("fg-ar-balances-child-drift", SHEET_AR_BALANCES),
             ("fg-ar-balances-overdraft", SHEET_AR_BALANCES),
-            ("fg-ar-transfers-unhealthy", SHEET_AR_TRANSFERS),
             ("fg-ar-transactions-failed", SHEET_AR_TRANSACTIONS),
         ],
     )
@@ -1242,13 +1240,12 @@ class TestShowOnlyToggleControls:
             "Show Only Overdraft"
         )
 
-    def test_transfers_has_unhealthy_toggle(self, ar_output_dir):
+    def test_transfers_has_no_toggle(self, ar_output_dir):
+        """Transfer Status multi-select already covers net-zero filtering;
+        no separate Show-Only-Unhealthy toggle."""
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
         sheet = _find_sheet(analysis, SHEET_AR_TRANSFERS)
-        titles = self._single_select_titles(sheet)
-        assert titles.get("ctrl-ar-transfers-unhealthy") == (
-            "Show Only Unhealthy"
-        )
+        assert self._single_select_titles(sheet) == {}
 
     def test_transactions_has_failed_toggle(self, ar_output_dir):
         analysis = _load(ar_output_dir, "account-recon-analysis.json")

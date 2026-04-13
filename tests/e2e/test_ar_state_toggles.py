@@ -26,7 +26,6 @@ TOGGLES_BY_TAB = {
         "Show Only Child Drift",
         "Show Only Overdraft",
     ],
-    "Transfers": ["Show Only Unhealthy"],
     "Transactions": ["Show Only Failed"],
 }
 

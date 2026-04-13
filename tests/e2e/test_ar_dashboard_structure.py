@@ -167,7 +167,6 @@ class TestFilterGroups:
         "fg-ar-balances-parent-drift",
         "fg-ar-balances-child-drift",
         "fg-ar-balances-overdraft",
-        "fg-ar-transfers-unhealthy",
         "fg-ar-transactions-failed",
         "fg-ar-drill-account-on-txn",
         "fg-ar-drill-transfer-on-txn",

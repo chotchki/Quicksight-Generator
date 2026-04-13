@@ -15,7 +15,6 @@ rows to "the problematic ones" with a single click):
   - Balances parent table → "Show Only Drift"
   - Balances child table  → "Show Only Drift"
   - Balances child table  → "Show Only Overdraft" (Phase 5.5 — stored_balance < 0)
-  - Transfers             → "Show Only Unhealthy"
   - Transactions          → "Show Only Failed"
 
 Drill-down parameter filters live in ``analysis.py`` alongside the
@@ -343,13 +342,6 @@ def build_filter_groups(cfg: Config) -> list[FilterGroup]:
             "overdraft_status",
         ),
         _state_toggle_filter_group(
-            "fg-ar-transfers-unhealthy",
-            "filter-ar-transfers-unhealthy",
-            SHEET_AR_TRANSFERS,
-            DS_AR_TRANSFER_SUMMARY,
-            "net_zero_status",
-        ),
-        _state_toggle_filter_group(
             "fg-ar-transactions-failed",
             "filter-ar-transactions-failed",
             SHEET_AR_TRANSACTIONS,
@@ -424,11 +416,6 @@ def build_transfers_controls(cfg: Config) -> list[FilterControl]:
                 SourceFilterId="filter-ar-transfer-status",
                 Type="MULTI_SELECT",
             ),
-        ),
-        _state_toggle_control(
-            "ctrl-ar-transfers-unhealthy",
-            "Show Only Unhealthy",
-            "filter-ar-transfers-unhealthy",
         ),
     ]
 
