@@ -80,35 +80,35 @@ Conventions:
 
 ## Phase 3 — Account Recon skeleton (all 4 tabs, rough layout)
 
-- [ ] 3.1 Create `src/quicksight_gen/account_recon/` with `datasets.py`, `visuals.py`, `filters.py`, `analysis.py`, `demo_data.py`, `constants.py`.
-- [ ] 3.2 Demo schema (shared PG schema, `ar_` prefixed):
+- [x] 3.1 Create `src/quicksight_gen/account_recon/` with `datasets.py`, `visuals.py`, `filters.py`, `analysis.py`, `demo_data.py`, `constants.py`.
+- [x] 3.2 Demo schema (shared PG schema, `ar_` prefixed):
   - `ar_parent_accounts` (id, name, is_internal)
   - `ar_accounts` (id, name, is_internal, parent_account_id)
-  - `ar_daily_balances` (account_id or parent_id, date, balance) — stored daily finals for internal accounts + parents
+  - `ar_parent_daily_balances` + `ar_account_daily_balances` (split in 3.10 — two independent stored feeds)
   - `ar_transactions` (id, account_id, transfer_id, amount, posted_at, status, memo) — memo denormalized; transfers joined via `transfer_id`
-  - Views: `ar_computed_parent_daily_balance` (sum of children's transactions per day), `ar_parent_balance_drift` (stored − computed), `ar_transfer_net_zero` (per-`transfer_id` sum of non-failed transactions + net-zero flag), `ar_transfer_summary` (memo picked from the earliest `transaction_id`).
-- [ ] 3.3 Demo data generator for the Farmers Exchange Bank scenario — generic valley/farm/harvest naming, no trademarked game characters/places. 80/20 success/failure mix. Plant:
+  - Views: `ar_computed_account_daily_balance`, `ar_account_balance_drift`, `ar_computed_parent_daily_balance`, `ar_parent_balance_drift`, `ar_transfer_net_zero`, `ar_transfer_summary`.
+- [x] 3.3 Demo data generator for the Farmers Exchange Bank scenario — generic valley/farm/harvest naming, no trademarked game characters/places. 80/20 success/failure mix. Plant:
   - balance-drift cases (stored ≠ computed on specific days);
   - transfers whose net-of-non-failed transactions ≠ 0;
   - individual failed transactions.
-- [ ] 3.4 `farmers-exchange-bank` theme preset: earth tones + valley greens + harvest gold. Applies the "Demo — " prefix to the AR analysis when selected.
-- [ ] 3.5 Rough 4-tab layout (date-range filter only; no drill-downs/extra sliders yet):
+- [x] 3.4 `farmers-exchange-bank` theme preset: earth tones + valley greens + harvest gold. Applies the "Demo — " prefix to the AR analysis when selected.
+- [x] 3.5 Rough 4-tab layout (date-range filter only; no drill-downs/extra sliders yet):
   - **Balances** — parent accounts (name, stored daily balance, computed daily balance, drift) + child accounts table.
   - **Transfers** — transfer list with Σdebit, Σcredit, net, net-zero flag, memo.
   - **Transactions** — transactions table with status, amount, posted_at, transfer_id, memo; failed rows called out.
   - **Exceptions** — balance-drift table, non-net-zero transfer table, timeline visual (line/bar by day showing when mismatches occurred).
-- [ ] 3.6 Getting Started sheet for AR (same pattern as PR: auto-derived instructions + demo scenario block).
-- [ ] 3.7 CLI wiring: implement the `account-recon` branches on `generate`, `demo schema|seed|apply`, `deploy`; `--all` now exercises both apps.
-- [ ] 3.8 Unit tests for AR: visual builders, filter groups, cross-reference validation (dataset ARNs, filter bindings, visual ID uniqueness, sheet ID scoping), explanation coverage, theme preset integration, demo data determinism + row counts + scenario coverage.
+- [x] 3.6 Getting Started sheet for AR (same pattern as PR: auto-derived instructions + demo scenario block).
+- [x] 3.7 CLI wiring: implement the `account-recon` branches on `generate`, `demo schema|seed|apply`, `deploy`; `--all` now exercises both apps.
+- [x] 3.8 Unit tests for AR: visual builders, filter groups, cross-reference validation (dataset ARNs, filter bindings, visual ID uniqueness, sheet ID scoping), explanation coverage, theme preset integration, demo data determinism + row counts + scenario coverage.
 - [x] **STOP for review.** (Layout iteration expected — filters, drill-downs, and visual choices all deferred to Phase 4.) *Review found: child-account daily balances not stored/reconciled — scope revision follows in 3.10.*
-- [ ] 3.10 Child-account balance reconciliation (scope revision — see SPEC "Reconciliation scope" bullet):
+- [x] 3.10 Child-account balance reconciliation (scope revision — see SPEC "Reconciliation scope" bullet):
   - Schema: rename `ar_daily_balances` → `ar_parent_daily_balances`; add `ar_account_daily_balances` (account_id, balance_date, balance) seeded for internal child accounts; add view `ar_account_balance_drift` (stored − running Σ posted transactions per child per day); keep existing parent-level view.
   - Demo data: generate child daily balances for the 6 internal children across the full window; plant child-level drift on 3–4 (account, days_ago) cells **independently** from the existing parent-level plants so the two drift tables surface different rows.
   - Datasets: add `qs-gen-ar-account-balance-drift-dataset`; rename `qs-gen-ar-balance-drift-dataset` → `qs-gen-ar-parent-balance-drift-dataset` and the matching `DS_AR_BALANCE_DRIFT` constant for symmetry.
   - Visuals: on Balances, replace the plain child-accounts directory with a Child Account Balances table fed from the child-drift view (mirrors the parent table). On Exceptions, add a Child Balance Drift table next to the existing Parent Balance Drift (rename existing visual/title for clarity).
   - Tests: extend row-count and scenario-coverage tests (child-balance rows, both-sign child drift plants); schema SQL for new table + view; updated sheet/visual counts.
   - Redeploy and spot-check before commit.
-- [ ] 3.11 git commit, tag (version TBD at phase end), push branch + tag
+- [x] 3.11 git commit, tag v0.5.0, push branch + tag
 
 ---
 

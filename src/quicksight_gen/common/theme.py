@@ -187,9 +187,67 @@ SASQUATCH_BANK_PRESET = ThemePreset(
 # Preset registry
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Farmers Exchange Bank preset — harvest gold, valley green, earth tones
+# ---------------------------------------------------------------------------
+
+# Valley greens (dark → light)
+_VALLEY_DEEP = "#2B4A2E"
+_VALLEY_GREEN = "#4A7C3F"
+_MEADOW = "#7BA96B"
+_PALE_MEADOW = "#D6E6C8"
+
+# Harvest / earth
+_HARVEST_GOLD = "#D4A017"
+_WHEAT = "#E8C77A"
+_SOIL_BROWN = "#6B4423"
+_BARN_RED = "#8B3A2A"
+_CREAM = "#FBF7EE"
+
+# Warm neutrals
+_DARK_EARTH = "#3A2E24"
+_STONE = "#8C7A66"
+
+FARMERS_EXCHANGE_BANK_PRESET = ThemePreset(
+    theme_name="Farmers Exchange Bank Theme",
+    version_description="Farmers Exchange Bank — valley green and harvest gold palette",
+    analysis_name_prefix="Demo",
+    data_colors=[
+        _VALLEY_GREEN,
+        _HARVEST_GOLD,
+        _SOIL_BROWN,
+        _MEADOW,
+        _BARN_RED,
+        _WHEAT,
+        "#5E8B7E",           # pond teal
+        _STONE,
+    ],
+    empty_fill_color="#D8D4CA",
+    gradient=[_PALE_MEADOW, _VALLEY_DEEP],
+    primary_bg=_WHITE,
+    secondary_bg=_CREAM,
+    primary_fg=_DARK_EARTH,
+    secondary_fg=_SOIL_BROWN,
+    accent=_VALLEY_GREEN,
+    accent_fg=_WHITE,
+    link_tint="#EAF2E1",
+    danger=_BARN_RED,
+    danger_fg=_WHITE,
+    warning="#C67D1F",
+    warning_fg=_WHITE,
+    success=_VALLEY_GREEN,
+    success_fg=_WHITE,
+    dimension=_MEADOW,
+    dimension_fg=_WHITE,
+    measure=_VALLEY_DEEP,
+    measure_fg=_WHITE,
+)
+
+
 PRESETS: dict[str, ThemePreset] = {
     "default": DEFAULT_PRESET,
     "sasquatch-bank": SASQUATCH_BANK_PRESET,
+    "farmers-exchange-bank": FARMERS_EXCHANGE_BANK_PRESET,
 }
 
 

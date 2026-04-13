@@ -1,5 +1,40 @@
 # Release Notes
 
+## v0.5.0
+
+### Account Reconciliation — second app
+
+Phase 3 adds a second QuickSight app, Account Reconciliation, alongside the existing Payment Reconciliation dashboard. The AR dashboard covers a bank's double-entry ledger with two independent stored-balance feeds (parent-level and child-level) and reconciles both against the underlying transactions.
+
+### New app
+
+- **Account Reconciliation dashboard** — 5 tabs (Getting Started + Balances, Transfers, Transactions, Exceptions). Shared date-range filter; drill-downs and multi-select filters land in Phase 4.
+- **Two independent drift checks** exposed side-by-side on the Exceptions tab:
+  - Parent drift — stored parent balance vs Σ of its children's stored balances (points at the parent-balance upstream feed).
+  - Child drift — stored child balance vs running Σ of posted transactions (points at the child-balance feed or a ledger miss).
+- **Transfer reconciliation** — transfers are not a table; they're a `transfer_id` grouping of `ar_transactions`. `ar_transfer_summary` surfaces net-zero status and a representative memo per transfer. The Exceptions tab flags transfers whose non-failed legs don't sum to zero (failed counter-leg, keying error, fee drift).
+- **`farmers-exchange-bank` theme preset** — earth tones, valley greens, harvest gold. Applies the "Demo — " analysis name prefix when selected.
+- **Farmers Exchange Bank demo data** — 5 parent accounts (Big Meadow Checking, Harvest Moon Savings, Orchard Lending Pool, Valley Grain Co-op, Harvest Credit Exchange) moving money between 10 child accounts over ~40 days. Planted: 3 parent-day drifts, 4 child-day drifts (disjoint from parent cells), 4 failed-leg transfers, 4 off-amount transfers, 4 fully-failed transfers.
+- **CLI — two-app aware** — `generate account-recon`, `demo schema|seed|apply account-recon`, `deploy account-recon`, and `--all` exercises both apps.
+
+### Scope clarification (SPEC)
+
+"Internal" vs "external" describes **this application's reconciliation scope**, not system ownership. All accounts (internal + external, parent + child) appear in the same tables; external-scope accounts are present but not reconciled (that's regulators' job). Parent-level and child-level stored balances may be fed by different upstream systems, which is why the two drift checks are independent.
+
+### Resources
+
+- Dashboard: `qs-gen-account-recon-dashboard`
+- Analysis: `qs-gen-account-recon-analysis`
+- 7 AR datasets: parent_accounts, accounts, transactions, parent_balance_drift, account_balance_drift, transfer_summary, non_zero_transfers
+- 5 AR tables (`ar_parent_accounts`, `ar_accounts`, `ar_parent_daily_balances`, `ar_account_daily_balances`, `ar_transactions`) + 6 views (`ar_computed_account_daily_balance`, `ar_account_balance_drift`, `ar_computed_parent_daily_balance`, `ar_parent_balance_drift`, `ar_transfer_net_zero`, `ar_transfer_summary`)
+
+### Notes
+
+- AR browser e2e tests and cross-sheet drill-downs deferred to Phase 5.
+- Phase 3 review caught a scope gap — child balances were not reconciled in the initial skeleton. Resolved in Phase 3.10 with an independent `ar_account_daily_balances` feed and a second drift view.
+
+---
+
 ## v0.4.0
 
 ### Payment Reconciliation domain additions

@@ -73,7 +73,7 @@ def generate(
         return
     if all_apps:
         _generate_payment_recon(config, output_dir, theme_preset)
-        _generate_account_recon_stub()
+        _generate_account_recon(config, output_dir, theme_preset)
     else:
         click.echo(ctx.get_help())
         raise click.UsageError("Specify an app (payment-recon, account-recon) or --all.")
@@ -91,8 +91,10 @@ def generate_payment_recon_cmd(ctx: click.Context) -> None:
 @generate.command("account-recon")
 @click.pass_context
 def generate_account_recon_cmd(ctx: click.Context) -> None:
-    """Generate Account Reconciliation JSON (stubbed)."""
-    _generate_account_recon_stub()
+    """Generate Account Reconciliation JSON."""
+    _generate_account_recon(
+        ctx.obj["config"], ctx.obj["output_dir"], ctx.obj["theme_preset"],
+    )
 
 
 def _generate_payment_recon(
@@ -117,8 +119,10 @@ def _generate_payment_recon(
     _write_json(out / "theme.json", theme.to_aws_json())
 
     datasets = build_all_datasets(cfg)
-    expected_dataset_files = {f"{ds.DataSetId}.json" for ds in datasets}
-    _prune_stale_files(out / "datasets", keep=expected_dataset_files)
+    _prune_stale_files(
+        out / "datasets",
+        keep=_all_dataset_filenames(cfg, keep_current=datasets),
+    )
     for ds in datasets:
         _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
 
@@ -131,10 +135,62 @@ def _generate_payment_recon(
     click.echo(f"\nGenerated {1 + len(datasets) + 2} files in {out}/")
 
 
-def _generate_account_recon_stub() -> None:
-    raise NotImplementedError(
-        "Account Recon generation is not yet implemented (Phase 3)."
+def _generate_account_recon(
+    config_path: str, output_dir: str, theme_preset: str | None,
+) -> None:
+    from quicksight_gen.account_recon.analysis import (
+        build_account_recon_dashboard,
+        build_analysis,
     )
+    from quicksight_gen.account_recon.datasets import build_all_datasets
+
+    cfg = load_config(config_path)
+    if theme_preset is not None:
+        cfg.theme_preset = theme_preset
+    out = Path(output_dir)
+    click.echo(
+        f"Account Recon: account={cfg.aws_account_id}, "
+        f"region={cfg.aws_region}"
+    )
+
+    theme = build_theme(cfg)
+    _write_json(out / "theme.json", theme.to_aws_json())
+
+    datasets = build_all_datasets(cfg)
+    _prune_stale_files(
+        out / "datasets",
+        keep=_all_dataset_filenames(cfg, keep_current=datasets),
+    )
+    for ds in datasets:
+        _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
+
+    analysis = build_analysis(cfg)
+    _write_json(out / "account-recon-analysis.json", analysis.to_aws_json())
+
+    dashboard = build_account_recon_dashboard(cfg)
+    _write_json(out / "account-recon-dashboard.json", dashboard.to_aws_json())
+
+    click.echo(f"\nGenerated {1 + len(datasets) + 2} files in {out}/")
+
+
+def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
+    """Expected dataset filenames for both apps combined.
+
+    ``keep_current`` is the list of DataSet models the current generate
+    pass will write — always included. The other app's filenames are
+    included so a single-app generate doesn't prune its sibling's output.
+    """
+    from quicksight_gen.account_recon.datasets import (
+        build_all_datasets as _ar,
+    )
+    from quicksight_gen.payment_recon.datasets import (
+        build_all_datasets as _pr,
+    )
+
+    names: set[str] = {f"{ds.DataSetId}.json" for ds in keep_current}
+    names.update(f"{ds.DataSetId}.json" for ds in _pr(cfg))
+    names.update(f"{ds.DataSetId}.json" for ds in _ar(cfg))
+    return names
 
 
 # ---------------------------------------------------------------------------
@@ -159,11 +215,8 @@ def demo() -> None:
 )
 def demo_schema(app: str | None, all_apps: bool, output: str) -> None:
     """Emit the PostgreSQL DDL for the demo database."""
-    app = _resolve_app(app, all_apps, allow_all=True)
-    if app in ("account-recon",):
-        raise NotImplementedError(
-            "Account Recon schema is not yet implemented (Phase 3)."
-        )
+    _resolve_app(app, all_apps, allow_all=True)
+    # Schema lives in a single file covering both apps (pr_ + ar_ prefixes).
     schema_path = _project_root() / "demo" / "schema.sql"
     if not schema_path.exists():
         raise click.ClickException(f"Schema file not found at {schema_path}")
@@ -184,15 +237,23 @@ def demo_schema(app: str | None, all_apps: bool, output: str) -> None:
 def demo_seed(app: str | None, all_apps: bool, output: str) -> None:
     """Emit INSERT statements with demo data."""
     app = _resolve_app(app, all_apps, allow_all=True)
-    if app == "account-recon":
-        raise NotImplementedError(
-            "Account Recon seed is not yet implemented (Phase 3)."
-        )
-    from quicksight_gen.payment_recon.demo_data import generate_demo_sql
+    from quicksight_gen.account_recon.demo_data import (
+        generate_demo_sql as generate_ar_sql,
+    )
+    from quicksight_gen.payment_recon.demo_data import (
+        generate_demo_sql as generate_pr_sql,
+    )
+
+    if app == "payment-recon":
+        sql = generate_pr_sql()
+    elif app == "account-recon":
+        sql = generate_ar_sql()
+    else:  # all
+        sql = generate_pr_sql() + "\n" + generate_ar_sql()
 
     out = Path(output)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(generate_demo_sql())
+    out.write_text(sql)
     click.echo(f"Wrote seed data to {out}")
 
 
@@ -212,23 +273,38 @@ def demo_seed(app: str | None, all_apps: bool, output: str) -> None:
 def demo_apply(app: str | None, all_apps: bool, config: str, output_dir: str) -> None:
     """Apply schema + seed data to the demo DB and generate QuickSight JSON."""
     app = _resolve_app(app, all_apps, allow_all=True)
-    if app == "account-recon":
-        raise NotImplementedError(
-            "Account Recon apply is not yet implemented (Phase 3)."
-        )
-    _apply_payment_recon(config, output_dir)
+    _apply_demo(config, output_dir, app)
 
 
-def _apply_payment_recon(config_path: str, output_dir: str) -> None:
+def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
+    """Load schema + chosen seed(s) into demo DB, then regenerate JSON.
+
+    ``app`` is one of ``payment-recon``, ``account-recon``, ``all``.
+    Schema is always applied in full — both apps share the DB — so the
+    only thing that varies is which seed SQL gets loaded and which
+    analyses get generated.
+    """
+    from quicksight_gen.account_recon.analysis import (
+        build_account_recon_dashboard,
+        build_analysis as build_ar_analysis,
+    )
+    from quicksight_gen.account_recon.datasets import (
+        build_all_datasets as build_ar_datasets,
+    )
+    from quicksight_gen.account_recon.demo_data import (
+        generate_demo_sql as generate_ar_sql,
+    )
     from quicksight_gen.payment_recon.analysis import (
-        build_analysis,
+        build_analysis as build_pr_analysis,
         build_payment_recon_dashboard,
     )
     from quicksight_gen.payment_recon.datasets import (
-        build_all_datasets,
+        build_all_datasets as build_pr_datasets,
         build_datasource,
     )
-    from quicksight_gen.payment_recon.demo_data import generate_demo_sql
+    from quicksight_gen.payment_recon.demo_data import (
+        generate_demo_sql as generate_pr_sql,
+    )
 
     cfg = load_config(config_path)
     if not cfg.demo_database_url:
@@ -249,7 +325,13 @@ def _apply_payment_recon(config_path: str, output_dir: str) -> None:
     if not schema_path.exists():
         raise click.ClickException(f"Schema file not found at {schema_path}")
     schema_sql = schema_path.read_text()
-    seed_sql = generate_demo_sql()
+
+    seed_parts: list[str] = []
+    if app in ("payment-recon", "all"):
+        seed_parts.append(generate_pr_sql())
+    if app in ("account-recon", "all"):
+        seed_parts.append(generate_ar_sql())
+    seed_sql = "\n".join(seed_parts)
 
     click.echo(f"Connecting to {cfg.demo_database_url.split('@')[-1]}...")
     conn = psycopg2.connect(cfg.demo_database_url)
@@ -267,8 +349,11 @@ def _apply_payment_recon(config_path: str, output_dir: str) -> None:
     finally:
         conn.close()
 
-    click.echo("\nGenerating QuickSight JSON with sasquatch-bank theme...")
-    cfg.theme_preset = "sasquatch-bank"
+    preset = (
+        "farmers-exchange-bank" if app == "account-recon" else "sasquatch-bank"
+    )
+    click.echo(f"\nGenerating QuickSight JSON with {preset} theme...")
+    cfg.theme_preset = preset
     out = Path(output_dir)
 
     datasource = build_datasource(cfg)
@@ -277,17 +362,36 @@ def _apply_payment_recon(config_path: str, output_dir: str) -> None:
     theme = build_theme(cfg)
     _write_json(out / "theme.json", theme.to_aws_json())
 
-    datasets = build_all_datasets(cfg)
-    for ds in datasets:
-        _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
+    json_count = 2  # datasource + theme
+    if app in ("payment-recon", "all"):
+        pr_datasets = build_pr_datasets(cfg)
+        for ds in pr_datasets:
+            _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
+        _write_json(
+            out / "payment-recon-analysis.json",
+            build_pr_analysis(cfg).to_aws_json(),
+        )
+        _write_json(
+            out / "payment-recon-dashboard.json",
+            build_payment_recon_dashboard(cfg).to_aws_json(),
+        )
+        json_count += len(pr_datasets) + 2
 
-    analysis = build_analysis(cfg)
-    _write_json(out / "payment-recon-analysis.json", analysis.to_aws_json())
+    if app in ("account-recon", "all"):
+        ar_datasets = build_ar_datasets(cfg)
+        for ds in ar_datasets:
+            _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
+        _write_json(
+            out / "account-recon-analysis.json",
+            build_ar_analysis(cfg).to_aws_json(),
+        )
+        _write_json(
+            out / "account-recon-dashboard.json",
+            build_account_recon_dashboard(cfg).to_aws_json(),
+        )
+        json_count += len(ar_datasets) + 2
 
-    dashboard = build_payment_recon_dashboard(cfg)
-    _write_json(out / "payment-recon-dashboard.json", dashboard.to_aws_json())
-
-    click.echo(f"\nDone. {2 + len(datasets) + 2} JSON files in {out}/")
+    click.echo(f"\nDone. {json_count} JSON files in {out}/")
 
 
 # ---------------------------------------------------------------------------
@@ -328,18 +432,11 @@ def deploy_cmd(
         if app_name in ("payment-recon", "all"):
             _generate_payment_recon(config, output_dir, theme_preset)
         if app_name in ("account-recon", "all"):
-            if app_name == "all":
-                click.echo("Account Recon: not yet implemented (skipped)")
-            else:
-                _generate_account_recon_stub()
+            _generate_account_recon(config, output_dir, theme_preset)
 
     cfg = load_config(config)
     if app_name == "all":
         targets = list(APPS)
-    elif app_name == "account-recon":
-        raise NotImplementedError(
-            "Account Recon deploy is not yet implemented (Phase 3)."
-        )
     else:
         targets = [app_name]
 
