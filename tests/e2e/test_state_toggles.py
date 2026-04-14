@@ -8,7 +8,9 @@ import pytest
 from .browser_helpers import (
     click_sheet_tab,
     generate_dashboard_embed_url,
+    sheet_control_titles,
     wait_for_dashboard_loaded,
+    wait_for_sheet_controls_present,
     webkit_page,
 )
 
@@ -43,12 +45,6 @@ def embed_url(qs_client, account_id, dashboard_id) -> str:
     )
 
 
-def _sheet_control_titles(page) -> list[str]:
-    """Return the visible titles of filter controls on the active sheet."""
-    els = page.query_selector_all('[data-automation-id="sheet_control_name"]')
-    return [e.inner_text().strip() for e in els if e.inner_text().strip()]
-
-
 def test_toggles_present_and_no_slider(embed_url, page_timeout):
     """Sales/Settlements/Payments each expose their toggle title, and
     no tab should still render the old days-outstanding slider."""
@@ -58,11 +54,8 @@ def test_toggles_present_and_no_slider(embed_url, page_timeout):
 
         for tab, toggle_title in TOGGLE_TABS:
             click_sheet_tab(page, tab, timeout_ms=page_timeout)
-            page.wait_for_selector(
-                '[data-automation-id="sheet_control_name"]',
-                timeout=page_timeout, state="attached",
-            )
-            titles = _sheet_control_titles(page)
+            wait_for_sheet_controls_present(page, timeout_ms=page_timeout)
+            titles = sheet_control_titles(page)
             assert toggle_title in titles, (
                 f"Tab '{tab}' missing toggle '{toggle_title}'. "
                 f"Got titles: {titles}"
@@ -70,11 +63,8 @@ def test_toggles_present_and_no_slider(embed_url, page_timeout):
 
         for tab in ALL_INSPECTED_TABS:
             click_sheet_tab(page, tab, timeout_ms=page_timeout)
-            page.wait_for_selector(
-                '[data-automation-id="sheet_control_name"]',
-                timeout=page_timeout, state="attached",
-            )
-            titles = _sheet_control_titles(page)
+            wait_for_sheet_controls_present(page, timeout_ms=page_timeout)
+            titles = sheet_control_titles(page)
             assert SLIDER_TITLE not in titles, (
                 f"Tab '{tab}' still has the days-outstanding slider. "
                 f"Got titles: {titles}"

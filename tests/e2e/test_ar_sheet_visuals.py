@@ -10,6 +10,7 @@ from .browser_helpers import (
     get_visual_titles,
     screenshot,
     wait_for_dashboard_loaded,
+    wait_for_visual_titles_present,
     wait_for_visuals_present,
     webkit_page,
 )
@@ -118,18 +119,8 @@ def test_sheet_has_expected_titles(
             min_count=len(expected_titles),
             timeout_ms=page_timeout,
         )
-        page.wait_for_function(
-            f"""() => {{
-                const want = new Set({sorted(expected_titles)!r});
-                const have = new Set(
-                    Array.from(document.querySelectorAll(
-                        '[data-automation-id="analysis_visual_title_label"]'
-                    )).map(el => el.innerText.trim()).filter(Boolean)
-                );
-                for (const t of want) {{ if (!have.has(t)) return false; }}
-                return true;
-            }}""",
-            timeout=page_timeout,
+        wait_for_visual_titles_present(
+            page, expected_titles, timeout_ms=page_timeout,
         )
         titles = set(get_visual_titles(page))
         missing = expected_titles - titles

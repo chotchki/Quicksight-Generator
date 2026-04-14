@@ -15,6 +15,7 @@ from .browser_helpers import (
     screenshot,
     set_date_range,
     wait_for_dashboard_loaded,
+    wait_for_table_cells_present,
     wait_for_table_total_rows_to_change,
     wait_for_visuals_present,
     webkit_page,
@@ -84,11 +85,7 @@ def test_date_range_demo_window_preserves_settlements(embed_url, page_timeout):
         wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
         click_sheet_tab(page, "Settlements", timeout_ms=page_timeout)
         wait_for_visuals_present(page, min_count=3, timeout_ms=page_timeout)
-        page.wait_for_selector(
-            '[data-automation-id^="sn-table-cell-0-0"]',
-            timeout=page_timeout,
-            state="attached",
-        )
+        wait_for_table_cells_present(page, timeout_ms=page_timeout)
 
         before = count_table_total_rows(
             page, "Settlement Detail", timeout_ms=page_timeout,

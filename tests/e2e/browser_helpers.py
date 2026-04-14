@@ -147,6 +147,125 @@ def click_sheet_tab(page, name: str, timeout_ms: int) -> None:
         )
 
 
+def selected_sheet_name(page) -> str:
+    """Return the label of the currently active sheet tab, or empty string."""
+    el = page.query_selector('[data-automation-id="selectedTab_sheet_name"]')
+    return el.inner_text().strip() if el else ""
+
+
+def wait_for_sheet_tab(page, name: str, timeout_ms: int) -> None:
+    """Block until the active sheet tab's label equals ``name``.
+
+    Used after a drill-down click to confirm navigation landed on the
+    expected sheet. For deliberate tab switches use ``click_sheet_tab``
+    which also waits for prior-sheet visuals to tear down.
+    """
+    page.wait_for_function(
+        f"""() => {{
+            const el = document.querySelector('[data-automation-id="selectedTab_sheet_name"]');
+            return el && el.innerText.trim() === {name!r};
+        }}""",
+        timeout=timeout_ms,
+    )
+
+
+def wait_for_table_cells_present(page, timeout_ms: int) -> None:
+    """Wait until at least one table cell (row 0, col 0) renders on the
+    active sheet. Useful after tab switches before asserting on row content.
+    """
+    page.wait_for_selector(
+        '[data-automation-id^="sn-table-cell-0-0"]',
+        timeout=timeout_ms,
+        state="attached",
+    )
+
+
+def first_table_cell_text(page, row: int, col: int) -> str:
+    """Return the text of cell ``(row, col)`` in the first detail table on
+    the active sheet. Targets the global ``sn-table-cell-{row}-{col}``
+    automation id — use ``click_first_row_of_visual`` when multiple tables
+    are on the same sheet.
+    """
+    cell = page.query_selector(f'[data-automation-id="sn-table-cell-{row}-{col}"]')
+    assert cell is not None, f"No cell at row={row} col={col}"
+    return cell.inner_text().strip()
+
+
+def click_first_row_of_visual(
+    page, visual_title: str, timeout_ms: int,
+) -> None:
+    """Click the first data cell (row 0, col 0) of the named visual.
+
+    Tags the cell with a unique ``data-e2e-target`` attribute first so the
+    click selector is unambiguous even when multiple tables share the same
+    global ``sn-table-cell-0-0``. Clears the marker after so subsequent
+    calls don't pick up a stale target.
+    """
+    scroll_visual_into_view(page, visual_title, timeout_ms)
+    ok = page.evaluate(
+        """(title) => {
+            const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
+            for (const v of visuals) {
+                const t = v.querySelector('[data-automation-id="analysis_visual_title_label"]');
+                if (!t || t.innerText.trim() !== title) continue;
+                const cell = v.querySelector('[data-automation-id="sn-table-cell-0-0"]');
+                if (cell) {
+                    cell.setAttribute('data-e2e-target', '1');
+                    return true;
+                }
+            }
+            return false;
+        }""",
+        visual_title,
+    )
+    assert ok, f"Could not find first cell of visual {visual_title!r}"
+    page.click('[data-e2e-target="1"]', timeout=timeout_ms)
+    page.evaluate(
+        """() => document.querySelectorAll('[data-e2e-target]').forEach(
+            e => e.removeAttribute('data-e2e-target')
+        )"""
+    )
+
+
+def sheet_control_titles(page) -> list[str]:
+    """Return the visible titles of filter controls on the active sheet."""
+    els = page.query_selector_all('[data-automation-id="sheet_control_name"]')
+    return [e.inner_text().strip() for e in els if e.inner_text().strip()]
+
+
+def wait_for_sheet_controls_present(page, timeout_ms: int) -> None:
+    """Wait until at least one filter control is attached on the active sheet."""
+    page.wait_for_selector(
+        '[data-automation-id="sheet_control_name"]',
+        timeout=timeout_ms,
+        state="attached",
+    )
+
+
+def wait_for_visual_titles_present(
+    page, expected_titles, timeout_ms: int,
+) -> None:
+    """Block until every title in ``expected_titles`` is rendered as an
+    ``analysis_visual_title_label``. Visual containers attach before their
+    title labels hydrate, so a simple container count isn't enough when the
+    test asserts on specific titles.
+    """
+    titles_list = sorted(set(expected_titles))
+    page.wait_for_function(
+        f"""() => {{
+            const want = new Set({titles_list!r});
+            const have = new Set(
+                Array.from(document.querySelectorAll(
+                    '[data-automation-id="analysis_visual_title_label"]'
+                )).map(el => el.innerText.trim()).filter(Boolean)
+            );
+            for (const t of want) {{ if (!have.has(t)) return false; }}
+            return true;
+        }}""",
+        timeout=timeout_ms,
+    )
+
+
 def wait_for_visuals_present(page, min_count: int, timeout_ms: int) -> int:
     """Wait until at least `min_count` visual containers are rendered.
 

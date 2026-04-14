@@ -68,7 +68,7 @@ Phase 2 sub-tasks assert not just on table row counts but on bar-chart category 
 - [x] 1.7.3 Add `read_kpi_value(page, title) -> str` (reads `.visual-x-center` text, falls back to `kpi-display-value`) + `parse_kpi_number(s) -> float` (strips `$`, `%`, `,`; handles `K`/`M`/`B` suffixes). **Done.**
 - [x] 1.7.4 Add `wait_for_kpi_value_to_change(page, title, before, timeout_ms)`. **Done.**
 - [x] 1.7.5 Smoke-check against live PR dashboard. **Done — "Sales Amount by Merchant" → 6 bars; "Total Sales Count" KPI → "215" → 215.0; "Payment Status Breakdown" pie → 2 slices. Probe test deleted.**
-- [ ] 1.7.6 Commit — `Phase 1.7: non-table visual-assertion helpers`.
+- [x] 1.7.6 Commit — `Phase 1.7: non-table visual-assertion helpers`. **Done — bundled into `762b16e` with Phase 2.0–2.3 since they share the PLAN.md edit.**
 
 ---
 
@@ -76,13 +76,15 @@ Phase 2 sub-tasks assert not just on table row counts but on bar-chart category 
 
 Five helpers are duplicated or inline across e2e files. Extract once, delete the copies.
 
-- [ ] 1.8.1 Move `_selected_sheet_name(page)` from `test_drilldown.py` + `test_ar_drilldown.py` into `browser_helpers.py` as `selected_sheet_name`.
-- [ ] 1.8.2 Move `_wait_for_sheet(page, name, timeout_ms)` from both drilldown files into `browser_helpers.py` as `wait_for_sheet_tab`.
-- [ ] 1.8.3 Move `_first_table_cell_text(page, row, col)` from `test_drilldown.py` into `browser_helpers.py`.
-- [ ] 1.8.4 Move `_wait_for_table_cells(page, timeout_ms)` into `browser_helpers.py`; replace the inline `page.wait_for_selector('[data-automation-id^="sn-table-cell-0-0"]', ...)` calls in `test_ar_filters.py`, `test_recon_mutual_filter.py`, and `test_filters.py` with the helper.
-- [ ] 1.8.5 Move `_click_first_row_of_visual(page, title, timeout_ms)` (tag-click-untag dance) from `test_ar_drilldown.py` + `test_recon_mutual_filter.py` into `browser_helpers.py`.
-- [ ] 1.8.6 Delete the per-file copies; run the full e2e suite to verify green.
-- [ ] 1.8.7 Commit — `Phase 1.8: dedup scattered DOM probes into browser_helpers`.
+- [x] 1.8.1 Move `_selected_sheet_name(page)` into `browser_helpers.py` as `selected_sheet_name`.
+- [x] 1.8.2 Move `_wait_for_sheet(page, name, timeout_ms)` into `browser_helpers.py` as `wait_for_sheet_tab`.
+- [x] 1.8.3 Move `_first_table_cell_text(page, row, col)` into `browser_helpers.py`.
+- [x] 1.8.4 Move `_wait_for_table_cells(page, timeout_ms)` into `browser_helpers.py` as `wait_for_table_cells_present`; replaced inline `page.wait_for_selector(...)` calls in three test files.
+- [x] 1.8.5 Move `_click_first_row_of_visual(page, title, timeout_ms)` into `browser_helpers.py` as `click_first_row_of_visual`.
+- [x] 1.8.6 Delete the per-file copies; smoke-ran `test_drilldown.py::test_settlements_to_sales_drilldown` + `test_recon_mutual_filter.py` — green.
+- [x] 1.8.7 STOP re-scan round 2: extracted `sheet_control_titles`, `wait_for_sheet_controls_present` (replaced `_sheet_control_titles` + inline `sheet_control_name` probes in `test_state_toggles.py` / `test_ar_state_toggles.py`), and `wait_for_visual_titles_present` (replaced the want/have `wait_for_function` block in `test_sheet_visuals.py` / `test_ar_sheet_visuals.py`).
+- [x] 1.8.8 Final re-scan: no remaining `wait_for_selector` / `wait_for_function` / `query_selector_all` in test files. Residual `query_selector` calls in `test_drilldown.py` are one-off, test-specific probes.
+- [ ] 1.8.9 Commit — `Phase 1.8: dedup scattered DOM probes into browser_helpers`.
 
 **STOP** — after 1.8 lands, re-scan the e2e suite for remaining duplication (inline `page.evaluate` blocks, repeated `wait_for_selector` patterns, ad-hoc row-click / cell-text probes that slipped past 1.8's enumeration). Capture a short inventory; extract if the count is ≥ 2 sites or the probe is fiddly enough to be worth a named helper. Repeat until the suite is clean before moving to Phase 2.
 

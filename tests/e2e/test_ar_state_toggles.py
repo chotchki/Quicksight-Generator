@@ -12,7 +12,9 @@ import pytest
 from .browser_helpers import (
     click_sheet_tab,
     generate_dashboard_embed_url,
+    sheet_control_titles,
     wait_for_dashboard_loaded,
+    wait_for_sheet_controls_present,
     webkit_page,
 )
 
@@ -39,11 +41,6 @@ def embed_url(qs_client, account_id, ar_dashboard_id) -> str:
     )
 
 
-def _sheet_control_titles(page) -> list[str]:
-    els = page.query_selector_all('[data-automation-id="sheet_control_name"]')
-    return [e.inner_text().strip() for e in els if e.inner_text().strip()]
-
-
 def test_toggles_present_per_tab(embed_url, page_timeout):
     """Each AR pipeline tab shows its expected Show-Only-X toggle(s)."""
     with webkit_page(headless=True) as page:
@@ -52,11 +49,8 @@ def test_toggles_present_per_tab(embed_url, page_timeout):
 
         for tab, expected_toggles in TOGGLES_BY_TAB.items():
             click_sheet_tab(page, tab, timeout_ms=page_timeout)
-            page.wait_for_selector(
-                '[data-automation-id="sheet_control_name"]',
-                timeout=page_timeout, state="attached",
-            )
-            titles = _sheet_control_titles(page)
+            wait_for_sheet_controls_present(page, timeout_ms=page_timeout)
+            titles = sheet_control_titles(page)
             missing = [t for t in expected_toggles if t not in titles]
             assert not missing, (
                 f"Tab '{tab}' missing toggle(s) {missing}. "
