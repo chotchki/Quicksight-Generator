@@ -284,14 +284,19 @@ def get_visual_titles(page) -> list[str]:
     return [t.inner_text().strip() for t in titles if t.inner_text().strip()]
 
 
-def scroll_visual_into_view(page, visual_title: str, timeout_ms: int) -> None:
-    """Scroll the visual with the given title to the viewport center and
-    wait for its first table cell to hydrate.
+def scroll_visual_into_view(
+    page, visual_title: str, timeout_ms: int, *, wait_for_cells: bool = True,
+) -> None:
+    """Scroll the visual with the given title to the viewport center.
 
     QuickSight virtualizes below-the-fold visuals — table cells are absent
     from the DOM until the visual is on screen. Browser tests that click
     into such a table must call this first, or the click-target selector
     will return nothing.
+
+    Pass ``wait_for_cells=False`` for chart visuals (bar / pie / line),
+    which don't render ``sn-table-cell-*`` markers and would otherwise
+    time out.
     """
     page.evaluate(
         """(title) => {
@@ -306,6 +311,9 @@ def scroll_visual_into_view(page, visual_title: str, timeout_ms: int) -> None:
         }""",
         visual_title,
     )
+    if not wait_for_cells:
+        page.wait_for_timeout(800)
+        return
     page.wait_for_function(
         """(title) => {
             const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
@@ -726,6 +734,28 @@ def parse_kpi_number(text: str) -> float:
     return float(s) * multiplier
 
 
+def wait_for_kpi_text_nonempty(
+    page, visual_title: str, timeout_ms: int,
+) -> str:
+    """Poll ``read_kpi_value`` until the KPI is readable, returning its
+    text. Useful pre-filter when the KPI hydrates after the visual
+    mounts but before the test wants to baseline its value.
+    """
+    import time
+    deadline = time.monotonic() + timeout_ms / 1000
+    while time.monotonic() < deadline:
+        try:
+            value = read_kpi_value(page, visual_title)
+            if value:
+                return value
+        except AssertionError:
+            pass
+        page.wait_for_timeout(250)
+    raise TimeoutError(
+        f"{visual_title!r} KPI never became readable within {timeout_ms}ms"
+    )
+
+
 def wait_for_kpi_value_to_change(
     page, visual_title: str, before: str, timeout_ms: int,
 ) -> str:
@@ -822,6 +852,19 @@ def set_slider_range(
         loc.press("Enter", timeout=timeout_ms)
 
 
+# MUI v4 renders some FilterControl options inside ``[role="listbox"]``
+# (most sheet controls) and others directly in the value-menu popover
+# (Show-Only-X single-selects on Settlements/Payments). Match both.
+_OPTION_SELECTOR = (
+    '[role="listbox"] [role="option"], '
+    '[data-automation-id="sheet_control_value-menu"] [role="option"]'
+)
+_SELECTED_OPTION_SELECTOR = (
+    '[role="listbox"] [role="option"][aria-selected="true"], '
+    '[data-automation-id="sheet_control_value-menu"] [role="option"][aria-selected="true"]'
+)
+
+
 def _open_control_dropdown(page, control_title: str, timeout_ms: int) -> None:
     """Open the FilterControl popover for the named sheet control.
 
@@ -835,12 +878,26 @@ def _open_control_dropdown(page, control_title: str, timeout_ms: int) -> None:
         f'[data-automation-context="{control_title}"]'
     )
     page.wait_for_selector(card_selector, timeout=timeout_ms, state="visible")
-    page.locator(
-        f'{card_selector} [data-automation-id="sheet_control_value"]'
-    ).first.click(timeout=timeout_ms)
     # MUI mounts the listbox in a portal; aria-haspopup="listbox" expands.
+    # The first click sometimes no-ops if the sheet just mounted and the
+    # combobox's onClick handler hasn't attached — retry until the listbox
+    # appears or timeout.
+    value_selector = (
+        f'{card_selector} [data-automation-id="sheet_control_value"]'
+    )
+    page.locator(value_selector).first.click(timeout=timeout_ms)
+    # MUI v4 sometimes renders options under role="listbox" inside the menu
+    # popover, but some control instances skip the listbox role and put
+    # options directly in the popover. Match either shape, but scope to
+    # the just-opened control's popover so other (stale) popovers don't
+    # pollute the option set.
+    popover_selector = (
+        f'[data-automation-id="sheet_control_value-menu"]'
+        f'[data-automation-context="{control_title}"]'
+    )
     page.wait_for_selector(
-        '[role="listbox"] [role="option"]', timeout=timeout_ms, state="visible",
+        f'{popover_selector} [role="option"], [role="listbox"] [role="option"]',
+        timeout=timeout_ms, state="visible",
     )
 
 
@@ -856,7 +913,7 @@ def set_dropdown_value(
     """
     _open_control_dropdown(page, control_title, timeout_ms)
     page.locator(
-        '[role="listbox"] [role="option"]', has_text=value,
+        _OPTION_SELECTOR, has_text=value,
     ).first.click(timeout=timeout_ms)
     page.keyboard.press("Escape")
 
@@ -871,9 +928,10 @@ def set_multi_select_values(
     by pressing Escape to dismiss the popover.
     """
     _open_control_dropdown(page, control_title, timeout_ms)
-    # Snapshot the labels of currently-selected options so we can deselect
-    # by label (clicking by index is racy — the listbox reorders as items
-    # toggle).
+    # MULTI_SELECT controls always render in ``[role="listbox"]``;
+    # restrict to that path to avoid duplicate matches from the broader
+    # popover selector used for SINGLE_SELECT Show-Only-X controls.
+    mselect = '[role="listbox"] [role="option"]'
     selected_labels = page.evaluate(
         """() => Array.from(
             document.querySelectorAll(
@@ -886,13 +944,9 @@ def set_multi_select_values(
         if label in targets:
             targets.discard(label)
             continue
-        page.locator(
-            '[role="listbox"] [role="option"]', has_text=label,
-        ).first.click(timeout=timeout_ms)
+        page.locator(mselect, has_text=label).first.click(timeout=timeout_ms)
     for value in targets:
-        page.locator(
-            '[role="listbox"] [role="option"]', has_text=value,
-        ).first.click(timeout=timeout_ms)
+        page.locator(mselect, has_text=value).first.click(timeout=timeout_ms)
     page.keyboard.press("Escape")
 
 
@@ -904,7 +958,7 @@ def clear_dropdown(page, control_title: str, timeout_ms: int) -> None:
     the same listbox markup for both.
     """
     _open_control_dropdown(page, control_title, timeout_ms)
-    options = page.locator('[role="listbox"] [role="option"]')
+    options = page.locator(_OPTION_SELECTOR)
     for label in ("Select all", "All"):
         match = options.filter(has_text=label).first
         if match.count() > 0:

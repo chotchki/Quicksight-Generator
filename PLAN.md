@@ -128,13 +128,13 @@ Walk every PR filter and verify the visuals it claims to scope. Each `[ ]` is on
 
 ### Same-sheet chart-click filtering
 
-- [ ] 2.13 Click a bar in the by-merchant chart on Sales Overview; assert Sales Detail filters to that merchant only. Mirror for Settlements (by-merchant-type) and Payments (status pie slice).
-- [ ] 2.14 Click a *second* bar (different category) — assert the table updates to the new selection (not "merchant A AND merchant B").
+- [ ] 2.13 **Deferred — outstanding e2e limitation.** Click a bar in the by-merchant chart on Sales Overview; assert Sales Detail filters to that merchant only. Mirror for Settlements (by-merchant-type) and Payments (status bar). *Manual keyboard path (Tab×5 → Enter → arrows → Enter) works in the authoring UI but does not trigger the filter action under headless-WebKit Playwright against the embed URL. Pie → bar swap was completed so the path is viable once automation is fixed. Tests exist but are `@pytest.mark.skip`.*
+- [ ] 2.14 **Deferred — same limitation as 2.13.** Click a *second* bar (different category) — assert the table updates to the new selection (not "merchant A AND merchant B").
 
 ### Payment Reconciliation tab (mutual filter — already partially covered)
 
 - [ ] 2.15 The existing `test_recon_mutual_filter.py` only covers external-row → payments-table direction. Add the reverse: click an Internal Payment row, assert the External Transactions table narrows to the linked transaction. Use `scroll_visual_into_view` since the payments table is below the fold post-swap.
-- [ ] 2.16 Click the bar chart's status segment; assert *both* tables filter (the chart action targets both visual IDs).
+- [ ] 2.16 **Deferred — same chart-click limitation as 2.13.** Click the bar chart's status segment; assert *both* tables filter (the chart action targets both visual IDs).
 
 - [ ] 2.17 Commit — `Phase 2: PR filter-propagation browser e2e`. Tag `v1.1.0-rc1` or just hold to the cumulative `v1.1.0`.
 

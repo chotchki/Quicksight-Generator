@@ -1,7 +1,14 @@
-Goal:
+# Next Major Evolution Planning
+  - Rename parent and child accounts to more standard ledger/sub-ledger
+  - Ledger Accounts should also have transfers/transactions that affect the calculated balance
+    - Understanding prior art around ledger/subledger roll up may help with this
+  - Unify the data models, the sales->settlement->payment are still fundamentally transfers/transactions 
+
+# Current Spec
+## Goal:
 	- [x] Create AWS QuickSight dashboards with tabs that help non-technical users understand financial applications. Delivered as two independent dashboards (Payment Reconciliation + Account Reconciliation) sharing one theme, account, datasource, and CLI surface.
 
-Users:
+## Users:
  - Two users of this code base:
   - Developers/Product Owners seeking to customize these financial applications to work with their own existing backends
     - It is important for them to be able to customize the sql queries that feed the data sets and the columns being reported in the final views
@@ -15,7 +22,7 @@ Users:
     - Plain English labels, hint test and even additional text blocks on the screens will be critical for them to adapt to the application
     - These people underderstand accounting VERY well but they are not programmers, they need to know when errors result in things they need to investigate
 
-Background:
+## Background:
   - Two financial reporting applications:
     - "Payment Recon": a series of steps revolving around merchants taking in sales, this application bundles those sales to settle them and then pays those merchants at the end
     - "Account Recon": focused on bank accounts and transfers. It uses double entry accounting for all transactions and needs to maintain an accurate balance and be eventually consistent.
@@ -36,7 +43,7 @@ Background:
       - Do the balances match transactions? If not, what doesn't match?
       - Do the transfers end up consistent (net-zero)? If not, what is out of sync?
 
-Key Domain Models:
+## Key Domain Models:
   - The domain models overlap conceptually but their focus is very different — they are kept distinct to manage complexity.
   - "Payment Recon":
     - Locations
@@ -111,7 +118,7 @@ Key Domain Models:
       - Carry a transfer type (ACH, wire, internal, cash) for limit checking — orthogonal to direction (debit/credit)
       - If they affect an internal account, the daily balance must be updated in lockstep
 
-Demo Scenarios:
+## Demo Scenarios:
   - These reports are hard to understand abstractly; a narrative helps evaluators see the point. Punny, inoffensive theming is encouraged — a dry dashboard gets brighter with a smile.
   - 80/20 success/failure ratio illustrates the tool's value at catching problems.
   - Time-distributed but low-volume.
@@ -120,14 +127,14 @@ Demo Scenarios:
 
   - Account Recon — "Farmers Exchange Bank": a bank in a fictional valley, customers are local farmers, suppliers, and buyers. Transfer memos + transaction dates tell a story. Parents: Big Meadow Checking, Harvest Moon Savings, Orchard Lending Pool, Valley Grain Co-op, Harvest Credit Exchange. (No Stardew Valley character IP — generic valley flavor only.)
 
-Code Base Guidance:
+## Code Base Guidance:
   - [x] Kept the existing tech selection: Python emits QuickSight JSON, boto3 applies it via `quicksight-gen deploy`. Demo datasource is Aurora PostgreSQL.
   - [x] Two dashboards produced via the existing config process.
   - [x] Code restructured — medium refactor: `common/` for shared builders (models, theme, config, deploy, cleanup, clickability, rich_text), two sibling packages `payment_recon/` and `account_recon/`.
   - [x] Layered testing — unit + integration + API e2e + browser e2e. `./run_e2e.sh` wraps the full iteration loop.
   - [x] Theming — `PRESETS` registry in `common/theme.py`; demo presets (`sasquatch-bank`, `farmers-exchange-bank`) carry `analysis_name_prefix="Demo"`.
 
-Output:
+## Output:
   - [x] QuickSight JSON, repeatedly deployable via `quicksight-gen deploy [app|--all]` (delete-then-create, async waiters, idempotent).
 
   - [x] Getting Started sheet on every dashboard: welcome, clickability legend, per-sheet highlights, and (when a demo preset is active) a scenario flavor block. Rich-text composition uses `common/rich_text.py`; accent color resolves from the theme at generate time.
@@ -146,7 +153,7 @@ Output:
 
   - [x] End-to-end test harness. Two-layer validation: API (boto3) verifies resource health, dashboard structure, and dataset import status; browser (Playwright WebKit, headless) loads via pre-authenticated embed URL and verifies sheet tabs, per-sheet visual counts, drill-downs, mutual-filter tables, filters, and toggles. `./run_e2e.sh` regenerates + redeploys + runs the suite.
 
-Decisions Captured (round 1 + 2):
+## Decisions Captured (round 1 + 2):
   - Refactor depth: medium. Two sibling app packages sharing `common/`. Split common by concern (`common.models`, `common.theme`, `common.deploy`, etc.) where it aids testability without adding empty layers.
   - CLI shape: subcommands per app + `--all`. One shared `config.yaml`. `generate`, `deploy` (with `--generate` flag for one-shot iteration), `demo schema|seed|apply`, `cleanup`. `deploy.sh` removed.
   - Deploy strategy: delete-then-create (update API was a minefield of partially-supported fields). `deploy` polls async resources to terminal state.
