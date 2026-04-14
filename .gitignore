@@ -25,3 +25,4 @@ run/
 
 config.yaml
 tests/e2e/screenshots/
+.claude/
