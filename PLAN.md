@@ -142,7 +142,12 @@ Walk every PR filter and verify the visuals it claims to scope. Each `[ ]` is on
 
 ---
 
-## Phase 3 — Account Recon filter coverage
+## Phase 3 — Account Recon filter coverage — **DEFERRED**
+
+Deferred ahead of a major spec revision that will refactor AR heavily;
+re-plan after the revision lands. Existing AR e2e still covers
+rendering + drill-downs, but filter-propagation parity with PR is a
+known gap.
 
 Same shape as Phase 2; AR has more cross-sheet filter scope so order matters.
 
@@ -186,7 +191,11 @@ Same shape as Phase 2; AR has more cross-sheet filter scope so order matters.
 
 ---
 
-## Phase 4 — Cross-cutting interactions
+## Phase 4 — Cross-cutting interactions — **DEFERRED**
+
+Deferred alongside Phase 3; the drill-down + filter intersections here
+depend on AR shapes that the upcoming spec revision will change. Phase 5.1
+still captures the filter-stacking characterization case standalone.
 
 Filter behavior that crosses the seams between filters, drill-downs, and tabs.
 
@@ -212,9 +221,12 @@ Navigation-driven parameter filters can stack across drill-downs (A → B → A 
 
 ## Phase 6 — Suite-runtime budget + parallelism
 
-After Phases 2–4 the browser suite will roughly triple in size. Make sure `./run_e2e.sh` stays under the team's tolerance (~5 min today, target ≤ 10 min after expansion).
+With Phases 3 + 4 deferred the suite doesn't grow enough to warrant
+`@pytest.mark.slow` / `--full` machinery (6.1 skipped). The parallelism
+ceiling measurement is still useful knowledge for when the suite does
+grow.
 
-- [ ] 6.1 Time the new suite. If > 10 min, mark the slowest 1/3 of tests with `@pytest.mark.slow` and let `./run_e2e.sh` skip them by default; add `--full` flag to include.
+- [ ] ~~6.1 Slow-test marker + `--full` flag~~ — skipped; suite runtime fits the budget.
 - [ ] 6.2 Prototype `pytest-xdist` for parallel browser sessions. Each test already creates an isolated `webkit_page`, and embed URLs are function-scoped single-use — so in principle safe to parallelize. Install `pytest-xdist`, run `pytest tests/e2e -n 2` and `-n 4`, compare wall-clock + failure rate against `-n 1` baseline.
 - [ ] 6.3 **Measure the ceiling.** QS embed generation is rate-limited per-account and webkit browser sessions cost ~300 MB RAM each. Record wall-clock for `-n` ∈ {1, 2, 3, 4, 6, 8}, watch for: (a) flakes from embed-URL 429s, (b) Playwright timeouts that correlate with concurrency (suggest CPU/RAM saturation). Pick the highest `-n` where flake rate stays zero; document that as the recommended default.
 - [ ] 6.4 If 6.3 lands a usable `-n`, wire `./run_e2e.sh` to pass it through (add `--parallel N` flag, default from 6.3's measurement). Update `run_e2e.sh --help` and CLAUDE.md's E2E Conventions.
@@ -224,7 +236,7 @@ After Phases 2–4 the browser suite will roughly triple in size. Make sure `./r
 
 ## Phase 7 — Release v1.1.0
 
-- [ ] 7.1 Update RELEASE_NOTES.md — one entry covering all phases. Stats: count of new tests, runtime delta, filter coverage matrix.
+- [ ] 7.1 Update RELEASE_NOTES.md — one entry covering Phases 1–2, 5, 6. Note AR filter-propagation coverage as an explicit known gap pending the spec revision.
 - [ ] 7.2 Update CLAUDE.md "E2E Test Conventions" with the new helpers and the slow-test marker convention.
 - [ ] 7.3 Tag `v1.1.0`, push branch, push tag, fast-forward main.
 
