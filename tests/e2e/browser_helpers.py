@@ -384,12 +384,20 @@ def wait_for_table_total_rows_to_change(
 
 
 def count_chart_categories(page, visual_title: str) -> int:
-    """Count distinct categorical entries (bars / slices / legend rows) in
-    a chart visual. Heuristic: counts SVG ``<g class*="bar">`` /
-    ``<path class*="slice">`` plus legend swatches and returns the max.
+    """Count distinct categorical entries (bars / slices) in a chart.
 
-    QS doesn't expose a single "category count" automation ID, so this is
-    intentionally lenient; use it to assert *change*, not exact value.
+    QS renders charts to ``<canvas>``, so there are no DOM bars/slices to
+    count directly. Two signals we can read:
+
+    1. **Chart aria-label**: QS publishes a screen-reader description like
+       "This is a chart with type Bar chart ... the data for X is Y, the
+       data for Z is W, ...". Counting ``the data for`` occurrences yields
+       the category count reliably (works for bar + line + pie).
+    2. **Legend rows** (``data-automation-id="visual_legend_item_value"``):
+       present on pie/donut charts and any chart with a legend.
+
+    Returns the max of the two signals, or ``-1`` if the visual isn't found.
+    Use to assert *change*, not exact value (chart may hide low-freq series).
     """
     return page.evaluate(
         """(title) => {
@@ -397,13 +405,103 @@ def count_chart_categories(page, visual_title: str) -> int:
             for (const v of visuals) {
                 const t = v.querySelector('[data-automation-id="analysis_visual_title_label"]');
                 if (!t || t.innerText.trim() !== title) continue;
-                const bars = v.querySelectorAll('g[class*="bar"], path[class*="slice"], rect[class*="bar"]').length;
-                const legend = v.querySelectorAll('[class*="legend"] [class*="item"], [data-automation-id*="legend_item"]').length;
-                return Math.max(bars, legend);
+                let aria = 0;
+                for (const e of v.querySelectorAll('[aria-label]')) {
+                    const lbl = e.getAttribute('aria-label') || '';
+                    if (lbl.includes('the data for')) {
+                        aria = Math.max(aria, (lbl.match(/the data for/g) || []).length);
+                    }
+                }
+                const legend = v.querySelectorAll(
+                    '[data-automation-id="visual_legend_item_value"]'
+                ).length;
+                return Math.max(aria, legend);
             }
             return -1;
         }""",
         visual_title,
+    )
+
+
+def wait_for_chart_categories_to_change(
+    page, visual_title: str, before: int, timeout_ms: int,
+) -> int:
+    """Poll ``count_chart_categories`` until the value differs from ``before``.
+    Returns the new count. Mirrors ``wait_for_table_rows_to_change``.
+    """
+    import time
+    deadline = time.monotonic() + timeout_ms / 1000
+    while time.monotonic() < deadline:
+        current = count_chart_categories(page, visual_title)
+        if current != before and current >= 0:
+            return current
+        page.wait_for_timeout(250)
+    raise TimeoutError(
+        f"{visual_title!r} chart category count never changed from {before} "
+        f"within {timeout_ms}ms"
+    )
+
+
+def read_kpi_value(page, visual_title: str) -> str:
+    """Return the displayed big-number text of a KPI visual.
+
+    QS renders the value inside ``.visual-x-center`` (the actual text node).
+    The ``kpi-display-value`` automation-id wraps the container but its
+    innerText sometimes includes the comparison label — prefer the center
+    node and fall back to the automation-id if unavailable.
+
+    Raises ``AssertionError`` if the visual isn't found or has no value.
+    """
+    value = page.evaluate(
+        """(title) => {
+            const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
+            for (const v of visuals) {
+                const t = v.querySelector('[data-automation-id="analysis_visual_title_label"]');
+                if (!t || t.innerText.trim() !== title) continue;
+                const center = v.querySelector('.visual-x-center');
+                if (center && center.innerText.trim()) return center.innerText.trim();
+                const kpi = v.querySelector('[data-automation-id="kpi-display-value"]');
+                if (kpi && kpi.innerText.trim()) return kpi.innerText.trim();
+                return null;
+            }
+            return null;
+        }""",
+        visual_title,
+    )
+    assert value is not None, f"No KPI value found for {visual_title!r}"
+    return value
+
+
+def parse_kpi_number(text: str) -> float:
+    """Strip ``$``, ``%``, ``,`` and ``K``/``M``/``B`` suffixes; return float.
+
+    Handles QS's compact-number formatting: ``$1.2K`` -> 1200.0,
+    ``45.3M`` -> 45_300_000.0. Unsuffixed strings parse straight.
+    """
+    s = text.strip().replace("$", "").replace(",", "").replace("%", "").strip()
+    multiplier = 1.0
+    if s and s[-1] in "KMB":
+        multiplier = {"K": 1e3, "M": 1e6, "B": 1e9}[s[-1]]
+        s = s[:-1]
+    return float(s) * multiplier
+
+
+def wait_for_kpi_value_to_change(
+    page, visual_title: str, before: str, timeout_ms: int,
+) -> str:
+    """Poll ``read_kpi_value`` until the displayed text differs from ``before``.
+    Returns the new value. Raw string comparison — caller parses if needed.
+    """
+    import time
+    deadline = time.monotonic() + timeout_ms / 1000
+    while time.monotonic() < deadline:
+        current = read_kpi_value(page, visual_title)
+        if current != before:
+            return current
+        page.wait_for_timeout(250)
+    raise TimeoutError(
+        f"{visual_title!r} KPI value never changed from {before!r} "
+        f"within {timeout_ms}ms"
     )
 
 

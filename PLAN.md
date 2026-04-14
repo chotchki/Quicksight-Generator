@@ -59,15 +59,49 @@ Fix before Phase 2 writes any filter-narrowing test against a table larger than 
 
 ---
 
+## Phase 1.7 — Non-table visual-assertion helpers
+
+Phase 2 sub-tasks assert not just on table row counts but on bar-chart category counts (2.4, 2.7, 2.9–2.11), KPI value changes (2.5), and chart-click cascades (2.13, 2.14, 2.16). `count_chart_categories` exists from Phase 1.5 but there's no `wait_for_*_to_change` polling pair, and no KPI reader/waiter. Build these once so Phase 2 tests aren't re-inventing DOM probes.
+
+- [x] 1.7.1 Verify `count_chart_categories` handles bar + line + pie/donut. **Done — rewrote the helper. QS renders charts to `<canvas>`, so DOM-bar counting is impossible. Instead: (a) parse QS's screen-reader aria-label ("the data for X is Y, the data for Z is W, …" — count occurrences), (b) fall back to legend rows (`visual_legend_item_value`). Returns max of the two signals. Works for bar/line/pie.**
+- [x] 1.7.2 Add `wait_for_chart_categories_to_change(page, title, before, timeout_ms)` — mirrors `wait_for_table_rows_to_change`. **Done.**
+- [x] 1.7.3 Add `read_kpi_value(page, title) -> str` (reads `.visual-x-center` text, falls back to `kpi-display-value`) + `parse_kpi_number(s) -> float` (strips `$`, `%`, `,`; handles `K`/`M`/`B` suffixes). **Done.**
+- [x] 1.7.4 Add `wait_for_kpi_value_to_change(page, title, before, timeout_ms)`. **Done.**
+- [x] 1.7.5 Smoke-check against live PR dashboard. **Done — "Sales Amount by Merchant" → 6 bars; "Total Sales Count" KPI → "215" → 215.0; "Payment Status Breakdown" pie → 2 slices. Probe test deleted.**
+- [ ] 1.7.6 Commit — `Phase 1.7: non-table visual-assertion helpers`.
+
+---
+
+## Phase 1.8 — Dedup scattered DOM probes
+
+Five helpers are duplicated or inline across e2e files. Extract once, delete the copies.
+
+- [ ] 1.8.1 Move `_selected_sheet_name(page)` from `test_drilldown.py` + `test_ar_drilldown.py` into `browser_helpers.py` as `selected_sheet_name`.
+- [ ] 1.8.2 Move `_wait_for_sheet(page, name, timeout_ms)` from both drilldown files into `browser_helpers.py` as `wait_for_sheet_tab`.
+- [ ] 1.8.3 Move `_first_table_cell_text(page, row, col)` from `test_drilldown.py` into `browser_helpers.py`.
+- [ ] 1.8.4 Move `_wait_for_table_cells(page, timeout_ms)` into `browser_helpers.py`; replace the inline `page.wait_for_selector('[data-automation-id^="sn-table-cell-0-0"]', ...)` calls in `test_ar_filters.py`, `test_recon_mutual_filter.py`, and `test_filters.py` with the helper.
+- [ ] 1.8.5 Move `_click_first_row_of_visual(page, title, timeout_ms)` (tag-click-untag dance) from `test_ar_drilldown.py` + `test_recon_mutual_filter.py` into `browser_helpers.py`.
+- [ ] 1.8.6 Delete the per-file copies; run the full e2e suite to verify green.
+- [ ] 1.8.7 Commit — `Phase 1.8: dedup scattered DOM probes into browser_helpers`.
+
+**STOP** — after 1.8 lands, re-scan the e2e suite for remaining duplication (inline `page.evaluate` blocks, repeated `wait_for_selector` patterns, ad-hoc row-click / cell-text probes that slipped past 1.8's enumeration). Capture a short inventory; extract if the count is ≥ 2 sites or the probe is fiddly enough to be worth a named helper. Repeat until the suite is clean before moving to Phase 2.
+
+---
+
 ## Phase 2 — Payment Recon filter coverage
 
 Walk every PR filter and verify the visuals it claims to scope. Each `[ ]` is one new test (or one parametrize case).
 
 ### Date-range filter (sheets: Sales Overview, Settlements, Payments, Payment Reconciliation, Exceptions, Getting Started — verify scope per-tab)
 
-- [ ] 2.1 On each pipeline sheet, push date range to a future window; assert every table on the sheet drops to 0 (or below the pre-filter count). Parametrized: one test, N sheets.
-- [ ] 2.2 Push date range to a *past* window with no demo data; same assertion. Catches one-sided range bugs.
-- [ ] 2.3 Set date range to the demo's known active window (Feb–Mar 2026 for the seed); confirm Settlements detail row count matches the seeded settlement count from `test_demo_data.py`'s scenario coverage.
+**Bug surfaced during 2.1 prototype:** the single `fg-date-range` filter is a `TimeRangeFilter` on `sale_timestamp` with `CrossDataset="ALL_DATASETS"`, which only propagates when every target dataset has a column named `sale_timestamp`. Settlements (`settlement_date`) and Payments (`payment_date`) don't match, so the control renders but is inert. **Decided: fix with Option 1 — per-sheet date filters keyed to each dataset's native timestamp column.** Predictable mental model: each sheet's date control filters that sheet's data by that sheet's timestamp. Rejected Option 3 (column-to-column mapping) as unverified-API risk plus less predictable stacking semantics.
+
+- [x] 2.0a In `payment_recon/filters.py`, split `fg-date-range` into three sibling filter groups: `fg-sales-date-range` (sale_timestamp / Sales sheet), `fg-settlements-date-range` (settlement_date / Settlements sheet), `fg-payments-date-range` (payment_date / Payments sheet). Keep the Exceptions sheet bound to whichever dataset drives its detail table, or add a fourth filter group if needed. Each with its own `SheetControl` (DateTimePicker) on the appropriate sheet. **Done: 4 per-sheet groups + native DateTimePicker controls replacing the old CrossSheet widget.**
+- [x] 2.0b Update unit tests in `test_recon.py` / `test_generate.py` to expect the split filter groups and per-sheet controls. Regenerate JSON and diff the before/after to confirm only the expected structural change. **Done: 253 unit tests green (no PR unit test asserted on the old `fg-date-range` ID); generated JSON shows `fg-{sales,settlements,payments,exceptions}-date-range` each scoped to its own sheet.**
+- [x] 2.0c Deploy; manually confirm all three date controls filter their sheets. **Done: deployed; parametrized test 2.1 now green across Sales/Settlements/Payments (previously only Sales). Hit one AWS-reject on first deploy — `TimeRangeFilter.DefaultFilterControlConfiguration` is forbidden when a native (non-CrossSheet) control binds the filter on a single sheet; fix was to drop the default config since the sheet's `FilterDateTimePickerControl` already carries widget options.**
+- [x] 2.1 On each pipeline sheet, push date range to a future window; assert every table on the sheet drops to 0 (or below the pre-filter count). Parametrized: one test, N sheets. **Green — `test_date_range_future_empties_pipeline_table[Sales|Settlements|Payments]`.**
+- [x] 2.2 Push date range to a *past* window with no demo data; same assertion. Catches one-sided range bugs. **Green — `test_date_range_past_empties_sales_detail`.**
+- [x] 2.3 Set date range to the demo's known active window (anchor 2026-01-15, sales span ~90 days back); confirm Settlements detail row count is preserved when window covers all data — proves the filter is live but non-destructive on in-window ranges. **Green — `test_date_range_demo_window_preserves_settlements`.** (Reframed from "equals seeded count" since `test_demo_data.py` only guarantees a range 25–50; equality-with-pre-filter-count is a stronger and more portable assertion.)
 
 ### Optional-metadata filters (Sales Overview only)
 

@@ -18,6 +18,7 @@ from quicksight_gen.common.config import Config
 from quicksight_gen.payment_recon.constants import (
     DS_PAYMENTS,
     DS_SALES,
+    DS_SETTLEMENT_EXCEPTIONS,
     DS_SETTLEMENTS,
     SHEET_EXCEPTIONS,
     SHEET_PAYMENTS,
@@ -74,33 +75,38 @@ def _selected_sheets_scope(sheet_ids: list[str]) -> FilterScopeConfiguration:
 # Filter groups
 # ---------------------------------------------------------------------------
 
-def _date_range_filter_group() -> FilterGroup:
-    """Date range filter applied to all sheets via the sale/settlement/payment
-    timestamp columns. Uses a single TimeRangeFilter on the sales dataset;
-    QuickSight propagates across linked datasets when scoped to all sheets."""
+# Per-sheet date-range filters. Each sheet's detail data lives in a
+# different dataset with a different timestamp column, so `ALL_DATASETS`
+# column-name propagation doesn't reach sheets that don't have
+# `sale_timestamp`. Keep one filter group per sheet, bound to that
+# sheet's own native timestamp column — predictable mental model:
+# "the date control on this sheet filters this sheet's data."
+_DATE_RANGE_BINDINGS = [
+    ("sales", SHEET_SALES, DS_SALES, "sale_timestamp"),
+    ("settlements", SHEET_SETTLEMENTS, DS_SETTLEMENTS, "settlement_date"),
+    ("payments", SHEET_PAYMENTS, DS_PAYMENTS, "payment_date"),
+    ("exceptions", SHEET_EXCEPTIONS, DS_SETTLEMENT_EXCEPTIONS, "sale_timestamp"),
+]
+
+
+def _date_range_filter_group(
+    slug: str, sheet_id: str, dataset_id: str, column_name: str,
+) -> FilterGroup:
     return FilterGroup(
-        FilterGroupId="fg-date-range",
-        CrossDataset="ALL_DATASETS",
-        ScopeConfiguration=_selected_sheets_scope(ALL_SHEET_IDS),
+        FilterGroupId=f"fg-{slug}-date-range",
+        CrossDataset="SINGLE_DATASET",
+        ScopeConfiguration=_selected_sheets_scope([sheet_id]),
         Status="ENABLED",
         Filters=[
             Filter(
                 TimeRangeFilter=TimeRangeFilter(
-                    FilterId="filter-date-range",
+                    FilterId=f"filter-{slug}-date-range",
                     Column=ColumnIdentifier(
-                        DataSetIdentifier=DS_SALES,
-                        ColumnName="sale_timestamp",
+                        DataSetIdentifier=dataset_id,
+                        ColumnName=column_name,
                     ),
                     NullOption="NON_NULLS_ONLY",
                     TimeGranularity="DAY",
-                    DefaultFilterControlConfiguration=DefaultFilterControlConfiguration(
-                        Title="Date Range",
-                        ControlOptions=DefaultFilterControlOptions(
-                            DefaultDateTimePickerOptions=DefaultDateTimePickerControlOptions(
-                                Type="DATE_RANGE",
-                            ),
-                        ),
-                    ),
                 ),
             ),
         ],
@@ -404,7 +410,10 @@ def build_filter_groups(cfg: Config) -> list[FilterGroup]:
     """Return all filter groups for the analysis definition."""
     del cfg  # slider default is independent of late_default_days
     groups = [
-        _date_range_filter_group(),
+        *[
+            _date_range_filter_group(slug, sheet_id, ds, col)
+            for slug, sheet_id, ds, col in _DATE_RANGE_BINDINGS
+        ],
         _merchant_filter_group(),
         _location_filter_group(),
         _settlement_status_filter_group(),
@@ -444,10 +453,13 @@ def build_filter_groups(cfg: Config) -> list[FilterGroup]:
 # ---------------------------------------------------------------------------
 
 def _date_range_control(sheet: str) -> FilterControl:
+    """Native date-range picker bound to this sheet's own date filter."""
     return FilterControl(
-        CrossSheet=FilterCrossSheetControl(
+        DateTimePicker=FilterDateTimePickerControl(
             FilterControlId=f"ctrl-{sheet}-date-range",
-            SourceFilterId="filter-date-range",
+            Title="Date Range",
+            SourceFilterId=f"filter-{sheet}-date-range",
+            Type="DATE_RANGE",
         ),
     )
 
