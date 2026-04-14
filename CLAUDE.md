@@ -197,6 +197,7 @@ run_e2e.sh
 - Tab switches are racy: `click_sheet_tab` snapshots prior visual titles and waits for them to disappear before callers query the new sheet.
 - Filter / drill-down assertions poll for the visual state to change (e.g., row count drop) rather than sleeping.
 - Below-the-fold tables virtualize their cells — call `scroll_visual_into_view(page, title, timeout_ms)` before asserting on cell content or clicking a row.
+- QS tables also virtualize vertically (~10 DOM rows at a time, regardless of page size). `count_table_rows` returns only the DOM-visible count, which saturates at ~10. For filter-narrowing assertions where before/after may exceed the viewport, use `count_table_total_rows` + `wait_for_table_total_rows_to_change` — they focus the visual, bump page size to 10000, and scroll-accumulate the true total. Slower (~1–3s); prefer the DOM helpers when the table is small.
 - Failure screenshots saved to `tests/e2e/screenshots/<app>/` (gitignored). Per-app subdirs keep PR and AR screenshots separated.
 - Tunables via env vars: `QS_E2E_PAGE_TIMEOUT`, `QS_E2E_VISUAL_TIMEOUT`, `QS_E2E_USER_ARN`, `QS_E2E_IDENTITY_REGION`.
 

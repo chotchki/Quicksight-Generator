@@ -229,6 +229,160 @@ def count_table_rows(page, visual_title: str) -> int:
     )
 
 
+def count_table_total_rows(page, visual_title: str, timeout_ms: int) -> int:
+    """Return the full (post-filter) row count of a QS table visual.
+
+    QS tables virtualize — ``count_table_rows`` only sees the ~10 rows
+    currently mounted in the DOM. For filter-narrowing assertions where
+    both pre and post totals exceed the viewport, DOM counts stay flat
+    and the assertion silently passes. This helper:
+
+    1. Focuses the visual (click title) to reveal ``simplePagedDisplayNav_*``.
+    2. Sets page size to 10000 so all rows fit on one page.
+    3. Scrolls the inner ``.grid-container`` to the bottom, tracking the
+       highest ``sn-table-cell-N-*`` index seen.
+
+    Use this helper when the table's row count may exceed ~10 and you need
+    a precise total. Prefer ``count_table_rows`` when you already know the
+    table fits in the viewport — it's much faster.
+
+    Raises a timeout if the pagination controls never appear (i.e. the
+    visual isn't actually a paged table).
+    """
+    # Scroll the visual into view. Use scroll_visual_into_view when the
+    # table has data (cells present); otherwise fall back to a plain
+    # element.scrollIntoView, which still positions QS's inner scroll
+    # container correctly even when cells haven't mounted.
+    try:
+        scroll_visual_into_view(page, visual_title, timeout_ms=5000)
+    except Exception:
+        page.evaluate(
+            """(title) => {
+                const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
+                for (const v of visuals) {
+                    const t = v.querySelector('[data-automation-id="analysis_visual_title_label"]');
+                    if (t && t.innerText.trim() === title) {
+                        v.scrollIntoView({block: 'center'});
+                        return;
+                    }
+                }
+            }""",
+            visual_title,
+        )
+        page.wait_for_timeout(2000)
+    # Focus the visual via a JS click dispatched directly on the title
+    # element. Playwright's locator.click() runs actionability checks that
+    # trigger auto-scroll within QS's re-rendering content and race against
+    # "element detached" errors — a raw DOM click avoids all of that and
+    # still reliably reveals simplePagedDisplayNav_*.
+    clicked = page.evaluate(
+        """(title) => {
+            const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
+            for (const v of visuals) {
+                const t = v.querySelector('[data-automation-id="analysis_visual_title_label"]');
+                if (t && t.innerText.trim() === title) {
+                    t.click();
+                    return true;
+                }
+            }
+            return false;
+        }""",
+        visual_title,
+    )
+    assert clicked, f"No visual with title {visual_title!r}"
+    # Brief settle — QS takes a beat to mount the paging controls after focus.
+    page.wait_for_timeout(1500)
+    # If the pagination controls mounted (focus took), bump page size to
+    # 10000 so every row lives on one page. On repeat calls the controls
+    # often don't re-mount (focus already consumed, or lost to a prior
+    # filter interaction) — skip the resize and rely on the page size
+    # set by the first successful call persisting through the session.
+    try:
+        page.wait_for_selector(
+            '[data-automation-id="simplePagedDisplayNav_dropdown_pageSize"]',
+            timeout=3000, state="visible",
+        )
+        page.locator(
+            '[data-automation-id="simplePagedDisplayNav_dropdown_pageSize"]'
+        ).first.click()
+        page.wait_for_selector(
+            '[data-automation-id="simplePagedDisplayNav_menuItem_pageSize_10000"]',
+            timeout=timeout_ms, state="visible",
+        )
+        page.locator(
+            '[data-automation-id="simplePagedDisplayNav_menuItem_pageSize_10000"]'
+        ).first.click()
+        page.wait_for_timeout(500)
+    except Exception:
+        pass
+
+    return page.evaluate(
+        """async (title) => {
+            const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
+            let target = null;
+            for (const v of visuals) {
+                const t = v.querySelector('[data-automation-id="analysis_visual_title_label"]');
+                if (t && t.innerText.trim() === title) { target = v; break; }
+            }
+            if (!target) return -1;
+            const container = target.querySelector('.grid-container');
+            if (!container) return -2;
+            const getMaxRow = () => {
+                let max = -1;
+                target.querySelectorAll('[data-automation-id^="sn-table-cell-"]').forEach(c => {
+                    const m = c.getAttribute('data-automation-id').match(/sn-table-cell-(\\d+)-/);
+                    if (m) {
+                        const n = parseInt(m[1], 10);
+                        if (n > max) max = n;
+                    }
+                });
+                return max;
+            };
+            let max = getMaxRow();
+            let stable = 0;
+            for (let step = 0; step < 500; step++) {
+                const prev = max;
+                container.scrollTop = container.scrollTop + 400;
+                await new Promise(r => setTimeout(r, 120));
+                const now = getMaxRow();
+                if (now > max) max = now;
+                if (container.scrollTop + container.clientHeight >= container.scrollHeight - 1) {
+                    await new Promise(r => setTimeout(r, 400));
+                    max = Math.max(max, getMaxRow());
+                    break;
+                }
+                if (now === prev) { stable++; if (stable > 3) break; }
+                else { stable = 0; }
+            }
+            return max < 0 ? 0 : max + 1;
+        }""",
+        visual_title,
+    )
+
+
+def wait_for_table_total_rows_to_change(
+    page, visual_title: str, before: int, timeout_ms: int,
+) -> int:
+    """Poll a table's total row count (via ``count_table_total_rows``) until
+    it differs from ``before``. Returns the new total.
+
+    Unlike ``wait_for_table_rows_to_change``, this compares *post-filter*
+    totals, not DOM-visible rows — use it when the table may exceed the
+    virtualization window.
+    """
+    import time
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    while time.monotonic() < deadline:
+        current = count_table_total_rows(page, visual_title, timeout_ms=timeout_ms)
+        if current != before:
+            return current
+        page.wait_for_timeout(500)
+    raise TimeoutError(
+        f"{visual_title!r} total row count never changed from {before} "
+        f"within {timeout_ms}ms"
+    )
+
+
 def count_chart_categories(page, visual_title: str) -> int:
     """Count distinct categorical entries (bars / slices / legend rows) in
     a chart visual. Heuristic: counts SVG ``<g class*="bar">`` /

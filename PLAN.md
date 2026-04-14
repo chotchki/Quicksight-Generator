@@ -179,10 +179,10 @@ Navigation-driven parameter filters can stack across drill-downs (A → B → A 
 After Phases 2–4 the browser suite will roughly triple in size. Make sure `./run_e2e.sh` stays under the team's tolerance (~5 min today, target ≤ 10 min after expansion).
 
 - [ ] 6.1 Time the new suite. If > 10 min, mark the slowest 1/3 of tests with `@pytest.mark.slow` and let `./run_e2e.sh` skip them by default; add `--full` flag to include.
-- [ ] 6.2 Investigate `pytest-xdist` for parallel browser sessions (each test already creates an isolated `webkit_page`, but embed URL fixtures are function-scoped and single-use — should be safe to parallelize at file granularity).
-- [ ] 6.3 If 6.2 lands, document the `-n auto` flag in `run_e2e.sh --help` text and CLAUDE.md.
-
-- [ ] 6.4 Commit — `Phase 6: e2e suite runtime budget`.
+- [ ] 6.2 Prototype `pytest-xdist` for parallel browser sessions. Each test already creates an isolated `webkit_page`, and embed URLs are function-scoped single-use — so in principle safe to parallelize. Install `pytest-xdist`, run `pytest tests/e2e -n 2` and `-n 4`, compare wall-clock + failure rate against `-n 1` baseline.
+- [ ] 6.3 **Measure the ceiling.** QS embed generation is rate-limited per-account and webkit browser sessions cost ~300 MB RAM each. Record wall-clock for `-n` ∈ {1, 2, 3, 4, 6, 8}, watch for: (a) flakes from embed-URL 429s, (b) Playwright timeouts that correlate with concurrency (suggest CPU/RAM saturation). Pick the highest `-n` where flake rate stays zero; document that as the recommended default.
+- [ ] 6.4 If 6.3 lands a usable `-n`, wire `./run_e2e.sh` to pass it through (add `--parallel N` flag, default from 6.3's measurement). Update `run_e2e.sh --help` and CLAUDE.md's E2E Conventions.
+- [ ] 6.5 Commit — `Phase 6: e2e suite runtime budget + parallelism`.
 
 ---
 

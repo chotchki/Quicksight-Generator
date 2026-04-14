@@ -12,12 +12,12 @@ import pytest
 
 from .browser_helpers import (
     click_sheet_tab,
-    count_table_rows,
+    count_table_total_rows,
     generate_dashboard_embed_url,
     screenshot,
     set_date_range,
     wait_for_dashboard_loaded,
-    wait_for_table_rows_to_change,
+    wait_for_table_total_rows_to_change,
     wait_for_visuals_present,
     webkit_page,
 )
@@ -49,13 +49,13 @@ def test_date_range_filter_narrows_sales_detail(embed_url, page_timeout):
             state="attached",
         )
 
-        before = count_table_rows(page, "Sales Detail")
+        before = count_table_total_rows(page, "Sales Detail", timeout_ms=page_timeout)
         assert before > 1, (
             f"Sales Detail should have multiple rows before filtering, got {before}"
         )
 
         set_date_range(page, "2099/01/01", "2099/12/31", timeout_ms=page_timeout)
-        after = wait_for_table_rows_to_change(
+        after = wait_for_table_total_rows_to_change(
             page, "Sales Detail", before, timeout_ms=page_timeout,
         )
         screenshot(page, "filter_date_range_future", subdir="payment_recon")

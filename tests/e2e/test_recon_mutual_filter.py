@@ -6,12 +6,12 @@ import pytest
 
 from .browser_helpers import (
     click_sheet_tab,
-    count_table_rows,
+    count_table_total_rows,
     generate_dashboard_embed_url,
     screenshot,
     scroll_visual_into_view,
     wait_for_dashboard_loaded,
-    wait_for_table_rows_to_change,
+    wait_for_table_total_rows_to_change,
     wait_for_visuals_present,
     webkit_page,
 )
@@ -65,13 +65,15 @@ def test_clicking_external_txn_filters_payments(embed_url, page_timeout):
             state="attached",
         )
 
-        before = count_table_rows(page, "Internal Payments")
+        before = count_table_total_rows(
+            page, "Internal Payments", timeout_ms=page_timeout,
+        )
         assert before > 1, (
             f"Internal Payments table should have multiple rows before filtering, got {before}"
         )
 
         _click_first_row_of_visual(page, "External Transactions", timeout_ms=page_timeout)
-        after = wait_for_table_rows_to_change(
+        after = wait_for_table_total_rows_to_change(
             page, "Internal Payments", before, timeout_ms=page_timeout,
         )
         screenshot(
