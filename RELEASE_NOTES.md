@@ -1,5 +1,33 @@
 # Release Notes
 
+## v1.1.0
+
+### Filter-propagation browser e2e expansion
+
+The browser e2e suite previously spot-checked a single date-range filter on one table per app. Every other filter was trusted to work if the dashboard JSON referenced it. v1.1.0 closes that gap on the Payment Recon side, captures one documented QuickSight limitation, and parallelizes the suite so the wider coverage fits the runtime budget.
+
+### What landed
+
+- **Payment Recon filter-propagation coverage** (Phases 1–2):
+  - Shared filter-interaction helpers in `tests/e2e/browser_helpers.py` — `set_dropdown_value`, `set_multi_select_values`, `clear_dropdown`, `set_date_range`, `count_table_rows` / `count_table_total_rows` (pagination-aware), `count_chart_categories` (canvas-aware via aria-label + legend fallback), `read_kpi_value` / `wait_for_kpi_value_to_change`, plus `wait_for_*_to_change` pollers for each.
+  - Split the shared `fg-date-range` filter group into four per-sheet groups (`fg-{sales,settlements,payments,exceptions}-date-range`), each scoped to its sheet's native timestamp column. The old `CrossDataset="ALL_DATASETS"` control rendered but was inert on sheets whose dataset didn't have a `sale_timestamp` column.
+  - New parametrized tests for future-window, past-window, and in-window date filtering on Sales / Settlements / Payments.
+- **Documented QS navigation filter-stacking** (Phase 5): drill-down-set parameters persist across tab-switches (`A → B → A` leaves B-derived filter on A). QuickSight has no API to clear a parameter on nav. Captured as `xfail(strict=False)` in `tests/e2e/test_filter_stacking.py`, documented under "Known limitations" in README, and called out on both Getting Started sheets (accent-colored bullet).
+- **Parallelized e2e suite** (Phase 6): added `pytest-xdist`, default `-n 4` in `run_e2e.sh`, `--parallel N` override. Full 101-item suite drops from ~305s serial to ~133s at `-n 4` and ~81s at `-n 8`; `-n 12` flakes (timing-sensitive date-range narrowing).
+- **Dedup pass** (Phase 1.8): five DOM-probe helpers (`selected_sheet_name`, `wait_for_sheet_tab`, `first_table_cell_text`, `wait_for_table_cells_present`, `click_first_row_of_visual`) plus `sheet_control_titles` / `wait_for_sheet_controls_present` / `wait_for_visual_titles_present` extracted from per-file copies into `browser_helpers.py`.
+
+### Known gap
+
+Account Recon filter-propagation coverage was deferred ahead of a major spec revision that will refactor AR heavily. Existing AR e2e still covers rendering, drill-downs, and Show-Only-X toggles; filter-propagation parity with PR will return after the revision lands.
+
+### Notes
+
+- **253 unit/integration tests**, **101 e2e tests** (94 passed / 6 skipped / 1 xfailed) — all green.
+- No schema, dataset, or generated-resource ID changes beyond the internal split of `fg-date-range` into four per-sheet filter groups. Safe in-place redeploy.
+- `run_e2e.sh --parallel 8` is the recommended stable ceiling on a modern Mac; `--parallel 1` forces serial.
+
+---
+
 ## v1.0.1
 
 ### Post-release polish

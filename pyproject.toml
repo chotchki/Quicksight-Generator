@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quicksight-gen"
-version = "0.3.0"
+version = "1.1.0"
 description = "Programmatic AWS QuickSight analysis generator for financial reporting"
 license = "Unlicense"
 requires-python = ">=3.11"
