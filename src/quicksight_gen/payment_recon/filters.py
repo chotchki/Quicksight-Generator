@@ -248,24 +248,28 @@ def _payment_status_filter_group() -> FilterGroup:
 
 
 def _payment_method_filter_group() -> FilterGroup:
-    """Payment method dropdown -- Settlements + Payments tabs.
+    """Payment method dropdown — Payments tab only.
 
-    Filter column lives on the sales dataset; QuickSight propagates it to
-    settlements and payments through their shared merchant_id joins.
+    ``payment_method`` lives on the sales and payments datasets but *not*
+    settlements (a settlement aggregates sales with mixed methods, so the
+    concept doesn't map to a single row). Previously this filter was scoped
+    to Settlements + Payments with ALL_DATASETS, but the Settlements dataset
+    has no ``payment_method`` column, so the Settlements control rendered
+    inert. Scoped to Payments only with the filter bound to the payments
+    dataset directly — predictable mental model, parallel to the per-sheet
+    date-range fix.
     """
     return FilterGroup(
         FilterGroupId="fg-payment-method",
-        CrossDataset="ALL_DATASETS",
-        ScopeConfiguration=_selected_sheets_scope(
-            [SHEET_SETTLEMENTS, SHEET_PAYMENTS]
-        ),
+        CrossDataset="SINGLE_DATASET",
+        ScopeConfiguration=_selected_sheets_scope([SHEET_PAYMENTS]),
         Status="ENABLED",
         Filters=[
             Filter(
                 CategoryFilter=CategoryFilter(
                     FilterId="filter-payment-method",
                     Column=ColumnIdentifier(
-                        DataSetIdentifier=DS_SALES,
+                        DataSetIdentifier=DS_PAYMENTS,
                         ColumnName="payment_method",
                     ),
                     Configuration=CategoryFilterConfiguration(
@@ -273,14 +277,6 @@ def _payment_method_filter_group() -> FilterGroup:
                             "MatchOperator": "CONTAINS",
                             "SelectAllOptions": "FILTER_ALL_VALUES",
                         }
-                    ),
-                    DefaultFilterControlConfiguration=DefaultFilterControlConfiguration(
-                        Title="Payment Method",
-                        ControlOptions=DefaultFilterControlOptions(
-                            DefaultDropdownOptions=DefaultDropdownControlOptions(
-                                Type="MULTI_SELECT",
-                            ),
-                        ),
                     ),
                 ),
             ),
@@ -504,9 +500,11 @@ def _payment_status_control(sheet: str) -> FilterControl:
 
 def _payment_method_control(sheet: str) -> FilterControl:
     return FilterControl(
-        CrossSheet=FilterCrossSheetControl(
+        Dropdown=FilterDropDownControl(
             FilterControlId=f"ctrl-{sheet}-payment-method",
+            Title="Payment Method",
             SourceFilterId="filter-payment-method",
+            Type="MULTI_SELECT",
         ),
     )
 
@@ -595,7 +593,6 @@ def build_settlements_controls(cfg: Config) -> list[FilterControl]:
         _merchant_control("settlements"),
         _location_control("settlements"),
         _settlement_status_control("settlements"),
-        _payment_method_control("settlements"),
         _state_toggle_control(
             "ctrl-settlements-unpaid",
             "Show Only Unpaid",

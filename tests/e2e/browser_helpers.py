@@ -561,6 +561,44 @@ def wait_for_chart_categories_to_change(
     )
 
 
+def read_visual_column_values(
+    page, visual_title: str, col_index: int,
+) -> list[str]:
+    """Return the text of every visible cell in column ``col_index`` within
+    the table visual whose title matches ``visual_title``.
+
+    Scoped to the specific visual (unlike the global ``sn-table-cell-{r}-{c}``
+    lookup) so sibling tables can't contaminate the result. Caller is
+    responsible for ensuring the visual is hydrated (use
+    ``scroll_visual_into_view`` or ``count_table_total_rows`` first if the
+    table is below-the-fold or paginated beyond the ~10-row viewport).
+    """
+    return page.evaluate(
+        """({title, col}) => {
+            const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
+            for (const v of visuals) {
+                const t = v.querySelector('[data-automation-id="analysis_visual_title_label"]');
+                if (!t || t.innerText.trim() !== title) continue;
+                const out = [];
+                v.querySelectorAll(
+                    `[data-automation-id^="sn-table-cell-"]`
+                ).forEach(c => {
+                    const m = c.getAttribute('data-automation-id').match(
+                        /sn-table-cell-(\\d+)-(\\d+)/
+                    );
+                    if (m && parseInt(m[2]) === col) {
+                        out.push({row: parseInt(m[1]), text: c.innerText.trim()});
+                    }
+                });
+                out.sort((a, b) => a.row - b.row);
+                return out.map(o => o.text);
+            }
+            return null;
+        }""",
+        {"title": visual_title, "col": col_index},
+    ) or []
+
+
 def read_kpi_value(page, visual_title: str) -> str:
     """Return the displayed big-number text of a KPI visual.
 
@@ -671,6 +709,36 @@ def set_date_range(
         page.press(selector, "Enter")
 
 
+def set_slider_range(
+    page, control_title: str, low: int | None, high: int | None,
+    timeout_ms: int,
+) -> None:
+    """Set a RANGE FilterSliderControl's min/max via its backing text inputs.
+
+    QS renders each range slider with two MUI text inputs
+    (``sheet_control_range_slider_min`` / ``_max``) wired to React state.
+    Dragging the thumbs is fragile in Playwright, but filling the inputs
+    and blurring them commits the value reliably. Pass ``None`` to leave
+    a bound untouched.
+    """
+    card_selector = (
+        f'[data-automation-id="sheet_control"]'
+        f'[data-automation-context="{control_title}"]'
+    )
+    page.wait_for_selector(card_selector, timeout=timeout_ms, state="visible")
+    for bound, value in (("min", low), ("max", high)):
+        if value is None:
+            continue
+        selector = (
+            f'{card_selector} '
+            f'[data-automation-id="sheet_control_range_slider_{bound}"]'
+        )
+        loc = page.locator(selector).first
+        loc.click(timeout=timeout_ms)
+        loc.fill(str(value), timeout=timeout_ms)
+        loc.press("Enter", timeout=timeout_ms)
+
+
 def _open_control_dropdown(page, control_title: str, timeout_ms: int) -> None:
     """Open the FilterControl popover for the named sheet control.
 
@@ -700,11 +768,14 @@ def set_dropdown_value(
 
     Opens the dropdown for ``control_title`` and clicks the option whose
     text equals ``value``. Use ``clear_dropdown`` to reset to "All".
+    Dismisses the popover with Escape so subsequent visual interactions
+    aren't blocked by the listbox overlay.
     """
     _open_control_dropdown(page, control_title, timeout_ms)
-    page.locator('[role="listbox"] [role="option"]', has_text=value).first.click(
-        timeout=timeout_ms,
-    )
+    page.locator(
+        '[role="listbox"] [role="option"]', has_text=value,
+    ).first.click(timeout=timeout_ms)
+    page.keyboard.press("Escape")
 
 
 def set_multi_select_values(
@@ -750,8 +821,6 @@ def clear_dropdown(page, control_title: str, timeout_ms: int) -> None:
     the same listbox markup for both.
     """
     _open_control_dropdown(page, control_title, timeout_ms)
-    # QS labels the clear-all entry "Select all" on multi-select and
-    # "All" on single-select; try the multi-select label first.
     options = page.locator('[role="listbox"] [role="option"]')
     for label in ("Select all", "All"):
         match = options.filter(has_text=label).first
@@ -759,13 +828,28 @@ def clear_dropdown(page, control_title: str, timeout_ms: int) -> None:
             match.click(timeout=timeout_ms)
             page.keyboard.press("Escape")
             return
-    # Fallback: deselect every selected entry one by one.
-    selected = page.locator(
-        '[role="listbox"] [role="option"][aria-selected="true"]'
-    )
-    for i in range(selected.count()):
-        selected.nth(i).click(timeout=timeout_ms)
+    # SINGLE_SELECT: no listbox clear-all entry. Close popover and open
+    # the control's options menu (``⋯``), then click its "Clear" item.
     page.keyboard.press("Escape")
+    card_selector = (
+        f'[data-automation-id="sheet_control"]'
+        f'[data-automation-context="{control_title}"]'
+    )
+    page.locator(
+        f'{card_selector} [data-automation-id="sheet_control_menu_button"]'
+    ).first.click(timeout=timeout_ms)
+    page.wait_for_selector(
+        '[role="menu"] [role="menuitem"]', timeout=timeout_ms, state="visible",
+    )
+    items = page.locator('[role="menu"] [role="menuitem"]')
+    for label in ("Clear selection", "Clear", "Reset"):
+        match = items.filter(has_text=label).first
+        if match.count() > 0:
+            match.click(timeout=timeout_ms)
+            return
+    raise AssertionError(
+        f"No Clear/Reset item in options menu for {control_title!r}"
+    )
 
 
 def screenshot(page, name: str, subdir: str | None = None) -> Path:

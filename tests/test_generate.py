@@ -395,21 +395,28 @@ class TestOptionalMetadataFilters:
 
 
 class TestPaymentMethodFilter:
-    """SPEC 2.3: payment_method multi-select on Settlements + Payments."""
+    """payment_method multi-select — Payments tab only (SINGLE_DATASET).
+
+    Previously scoped to Settlements + Payments with ALL_DATASETS on
+    ``sales.payment_method``; the Settlements dataset has no
+    ``payment_method`` column so the Settlements control was inert. Scoped
+    down to Payments only, mirroring the per-sheet date-range fix.
+    """
 
     def test_filter_group_present(self, output_dir: Path):
         analysis = _load(output_dir, "payment-recon-analysis.json")
         fg_ids = {fg["FilterGroupId"] for fg in analysis["Definition"]["FilterGroups"]}
         assert "fg-payment-method" in fg_ids
 
-    def test_scoped_to_settlements_and_payments(self, output_dir: Path):
+    def test_scoped_to_payments_only(self, output_dir: Path):
         analysis = _load(output_dir, "payment-recon-analysis.json")
         fg = next(
             f for f in analysis["Definition"]["FilterGroups"]
             if f["FilterGroupId"] == "fg-payment-method"
         )
+        assert fg["CrossDataset"] == "SINGLE_DATASET"
         scopes = fg["ScopeConfiguration"]["SelectedSheets"][
             "SheetVisualScopingConfigurations"
         ]
         sheet_ids = {s["SheetId"] for s in scopes}
-        assert sheet_ids == {"sheet-settlements", "sheet-payments"}
+        assert sheet_ids == {"sheet-payments"}

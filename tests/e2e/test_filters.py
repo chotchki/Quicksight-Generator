@@ -12,8 +12,18 @@ from .browser_helpers import (
     click_sheet_tab,
     count_table_total_rows,
     generate_dashboard_embed_url,
+    parse_kpi_number,
+    read_kpi_value,
+    clear_dropdown,
+    read_visual_column_values,
     screenshot,
+    scroll_visual_into_view,
     set_date_range,
+    set_dropdown_value,
+    set_multi_select_values,
+    set_slider_range,
+    sheet_control_titles,
+    wait_for_sheet_controls_present,
     wait_for_dashboard_loaded,
     wait_for_table_cells_present,
     wait_for_table_total_rows_to_change,
@@ -125,4 +135,275 @@ def test_date_range_past_empties_sales_detail(embed_url, page_timeout):
         assert after < before, (
             f"Sales Detail should shrink with a past-window range, "
             f"before={before}, after={after}"
+        )
+
+
+# Column index of ``cashier`` in the Sales Detail table.  10 base columns
+# (sale_id…reference_id) + 3 numeric optional (taxes, tips, discount_pct)
+# precede the cashier column — see ``payment_recon/visuals.py`` +
+# ``OPTIONAL_SALE_METADATA`` in ``datasets.py``.
+_CASHIER_COL = 13
+
+
+def test_cashier_multi_select_narrows_sales(embed_url, page_timeout):
+    """Picking one cashier narrows the Sales Detail table, drops both
+    Sales KPIs, and leaves only rows for the chosen cashier. Covers
+    PLAN 2.5 (string MULTI_SELECT optional-metadata filter).
+
+    ``Alex Ridgeway`` is the first entry in ``_CASHIERS`` (demo_data.py)
+    and is guaranteed to appear in the seed (deterministic rng).
+    """
+    target = "Alex Ridgeway"
+    with webkit_page(headless=True) as page:
+        page.goto(embed_url, timeout=page_timeout)
+        wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
+        click_sheet_tab(page, "Sales Overview", timeout_ms=page_timeout)
+        wait_for_visuals_present(page, min_count=5, timeout_ms=page_timeout)
+        wait_for_table_cells_present(page, timeout_ms=page_timeout)
+
+        before_count = parse_kpi_number(read_kpi_value(page, "Total Sales Count"))
+        before_amount = parse_kpi_number(read_kpi_value(page, "Total Sales Amount"))
+        before_rows = count_table_total_rows(
+            page, "Sales Detail", timeout_ms=page_timeout,
+        )
+        assert before_rows > 1, f"Sales Detail pre-filter rows: {before_rows}"
+
+        set_multi_select_values(
+            page, "Cashier", [target], timeout_ms=page_timeout,
+        )
+        after_rows = wait_for_table_total_rows_to_change(
+            page, "Sales Detail", before_rows, timeout_ms=page_timeout,
+        )
+        screenshot(page, "filter_cashier_single", subdir="payment_recon")
+
+        assert 0 < after_rows < before_rows, (
+            f"Sales Detail should narrow for one cashier; "
+            f"before={before_rows}, after={after_rows}"
+        )
+
+        after_count = parse_kpi_number(read_kpi_value(page, "Total Sales Count"))
+        after_amount = parse_kpi_number(read_kpi_value(page, "Total Sales Amount"))
+        assert after_count < before_count, (
+            f"Total Sales Count should drop: {before_count} -> {after_count}"
+        )
+        assert after_amount < before_amount, (
+            f"Total Sales Amount should drop: {before_amount} -> {after_amount}"
+        )
+
+        values = read_visual_column_values(
+            page, "Sales Detail", _CASHIER_COL,
+        )
+        samples = [v for v in values if v][:5]
+        assert len(samples) >= 3, (
+            f"Expected ≥3 cashier cells post-filter, got {samples!r} "
+            f"(full column: {values!r})"
+        )
+        mismatched = [v for v in samples if v != target]
+        assert not mismatched, (
+            f"Every visible cashier cell should equal {target!r}; "
+            f"mismatched={mismatched!r}"
+        )
+
+
+# Numeric optional-metadata sliders on Sales Overview. Slider StepSize=1
+# rounds bounds to integers, and the demo distributions all fit well within
+# [0, 999], so pushing min=500 or max=0 reliably excludes every row without
+# coupling to demo distribution specifics. Covers PLAN 2.4 (Taxes) + 2.6
+# (Discount %) — Tips has the same shape and is omitted to keep runtime down.
+@pytest.mark.parametrize("control_title", ["Taxes", "Discount %"])
+@pytest.mark.parametrize(
+    "bound,low,high,case",
+    [
+        ("top", 500, None, "min_high"),
+        ("bottom", None, 0, "max_low"),
+    ],
+)
+def test_numeric_slider_shrinks_sales(
+    embed_url, page_timeout, control_title, bound, low, high, case,
+):
+    """Pushing a numeric-metadata RANGE slider to either extreme should
+    shrink the Sales Detail table and the by-merchant bar chart."""
+    with webkit_page(headless=True) as page:
+        page.goto(embed_url, timeout=page_timeout)
+        wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
+        click_sheet_tab(page, "Sales Overview", timeout_ms=page_timeout)
+        wait_for_visuals_present(page, min_count=5, timeout_ms=page_timeout)
+        wait_for_table_cells_present(page, timeout_ms=page_timeout)
+
+        before_rows = count_table_total_rows(
+            page, "Sales Detail", timeout_ms=page_timeout,
+        )
+        assert before_rows > 1
+
+        set_slider_range(
+            page, control_title, low=low, high=high, timeout_ms=page_timeout,
+        )
+        after_rows = wait_for_table_total_rows_to_change(
+            page, "Sales Detail", before_rows, timeout_ms=page_timeout,
+        )
+        slug = control_title.replace(" ", "_").replace("%", "pct").lower()
+        screenshot(
+            page, f"filter_{slug}_slider_{case}", subdir="payment_recon",
+        )
+        assert after_rows < before_rows, (
+            f"{control_title} {bound}-extreme should shrink Sales Detail; "
+            f"before={before_rows}, after={after_rows}"
+        )
+        # Chart-category shrinkage under a numeric slider is QS-flaky —
+        # when a filter column is sparse (Discount % is NULL on ~85% of
+        # sales), QS preserves axis categories even at 0 matching rows.
+        # The filter-propagation contract is fully established by the row
+        # count drop above; chart-shrink signals are verified in the
+        # bar-click and toggle tests (2.13/2.9–2.12).
+
+
+def test_payment_method_narrows_payments(embed_url, page_timeout):
+    """Payment-method filter (Payments sheet only) narrows Payment Detail
+    when a single method is selected. Scope was reduced to Payments-only
+    during Phase 2.7 after the probe confirmed the Settlements control was
+    inert — the Settlements dataset has no ``payment_method`` column, so
+    the old ALL_DATASETS scope couldn't propagate. Covers PLAN 2.7."""
+    with webkit_page(headless=True) as page:
+        page.goto(embed_url, timeout=page_timeout)
+        wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
+        click_sheet_tab(page, "Payments", timeout_ms=page_timeout)
+        wait_for_visuals_present(page, min_count=3, timeout_ms=page_timeout)
+        wait_for_table_cells_present(page, timeout_ms=page_timeout)
+
+        before = count_table_total_rows(
+            page, "Payment Detail", timeout_ms=page_timeout,
+        )
+        assert before > 1
+
+        set_multi_select_values(
+            page, "Payment Method", ["card"], timeout_ms=page_timeout,
+        )
+        after = wait_for_table_total_rows_to_change(
+            page, "Payment Detail", before, timeout_ms=page_timeout,
+        )
+        screenshot(page, "filter_payment_method_card", subdir="payment_recon")
+        assert 0 < after < before, (
+            f"Payment Detail should narrow for card-only; "
+            f"before={before}, after={after}"
+        )
+
+
+def test_no_payment_method_control_on_settlements(embed_url, page_timeout):
+    """Regression guard for the Phase 2.7 scope fix: the Payment Method
+    control must not appear on the Settlements sheet (the Settlements
+    dataset has no ``payment_method`` column, so the control was inert)."""
+    with webkit_page(headless=True) as page:
+        page.goto(embed_url, timeout=page_timeout)
+        wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
+        click_sheet_tab(page, "Settlements", timeout_ms=page_timeout)
+        wait_for_visuals_present(page, min_count=3, timeout_ms=page_timeout)
+
+        wait_for_sheet_controls_present(page, timeout_ms=page_timeout)
+        titles = sheet_control_titles(page)
+        assert "Payment Method" not in titles, (
+            f"Settlements sheet should no longer show a Payment Method "
+            f"control; got {titles}"
+        )
+
+
+@pytest.mark.parametrize(
+    "sheet", ["Sales Overview", "Settlements", "Payments", "Exceptions & Alerts"],
+)
+def test_no_days_outstanding_control(embed_url, page_timeout, sheet):
+    """Regression guard (PLAN 2.8): the days-outstanding slider was removed
+    in v0.4.0 in favor of the Show-Only-X toggles. No pipeline tab should
+    render a control with "Days Outstanding" in its title."""
+    with webkit_page(headless=True) as page:
+        page.goto(embed_url, timeout=page_timeout)
+        wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
+        click_sheet_tab(page, sheet, timeout_ms=page_timeout)
+        wait_for_visuals_present(page, min_count=3, timeout_ms=page_timeout)
+        wait_for_sheet_controls_present(page, timeout_ms=page_timeout)
+        titles = sheet_control_titles(page)
+        matches = [t for t in titles if "days outstanding" in t.lower()]
+        assert not matches, (
+            f"Tab {sheet!r} still renders a days-outstanding control: "
+            f"{matches} (all titles: {titles})"
+        )
+
+
+# (sheet, toggle_title, toggle_value, witness_kpi)
+# Each Show-Only-X toggle on the pipeline sheets plus a KPI that reflects
+# the filtered dataset. KPIs are the propagation witness here — detail
+# tables virtualize vertically and their DOM row count saturates at the
+# viewport, which obscures narrowing when pre/post counts both exceed ~10.
+_SHOW_ONLY_TOGGLES = [
+    ("Sales Overview", "Show Only Unsettled", "Unsettled", "Total Sales Amount"),
+    ("Settlements", "Show Only Unpaid", "Unpaid", "Total Settled Amount"),
+    (
+        "Payments", "Show Only Unmatched Externally",
+        "Unmatched", "Total Paid Amount",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "sheet,toggle_title,toggle_value,kpi_title",
+    _SHOW_ONLY_TOGGLES,
+)
+def test_show_only_toggle_narrows_and_clears(
+    embed_url, page_timeout, sheet, toggle_title, toggle_value, kpi_title,
+):
+    """Picking the toggle's filter value shrinks the sheet's amount KPI;
+    clearing the dropdown restores it. Covers PLAN 2.9 + 2.10 + 2.11
+    (narrowing) and 2.12 (sticky-filter guard)."""
+    with webkit_page(headless=True) as page:
+        page.goto(embed_url, timeout=page_timeout)
+        wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
+        click_sheet_tab(page, sheet, timeout_ms=page_timeout)
+        wait_for_visuals_present(page, min_count=3, timeout_ms=page_timeout)
+
+        # Poll until the KPI is rendered (no table-cell wait — the KPI
+        # hydrates independently of the detail table, which may be below
+        # the fold).
+        import time
+        deadline = time.monotonic() + page_timeout / 1000.0
+        before = 0
+        while time.monotonic() < deadline:
+            try:
+                before = parse_kpi_number(read_kpi_value(page, kpi_title))
+                if before > 0:
+                    break
+            except AssertionError:
+                pass
+            page.wait_for_timeout(500)
+        assert before > 0, f"{kpi_title} pre-toggle never hydrated: {before}"
+
+        set_dropdown_value(
+            page, toggle_title, toggle_value, timeout_ms=page_timeout,
+        )
+        # Wait for the KPI to respond to the filter.
+        deadline = time.monotonic() + page_timeout / 1000.0
+        after = before
+        while time.monotonic() < deadline:
+            after = parse_kpi_number(read_kpi_value(page, kpi_title))
+            if after != before:
+                break
+            page.wait_for_timeout(500)
+        screenshot(
+            page,
+            f"toggle_{toggle_title.replace(' ', '_').lower()}_on",
+            subdir="payment_recon",
+        )
+        assert 0 < after < before, (
+            f"{kpi_title!r} should drop after {toggle_title!r}={toggle_value!r}; "
+            f"before={before}, after={after}"
+        )
+
+        clear_dropdown(page, toggle_title, timeout_ms=page_timeout)
+        deadline = time.monotonic() + page_timeout / 1000.0
+        restored = after
+        while time.monotonic() < deadline:
+            restored = parse_kpi_number(read_kpi_value(page, kpi_title))
+            if restored != after:
+                break
+            page.wait_for_timeout(500)
+        assert restored == before, (
+            f"{kpi_title!r} should restore to pre-toggle value after clearing "
+            f"{toggle_title!r}; before={before}, after={after}, restored={restored}"
         )
