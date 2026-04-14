@@ -46,7 +46,8 @@ quicksight-gen demo apply  --all -c config.yaml -o out/
 
 # Tests
 pytest                              # unit + integration, fast, no AWS
-./run_e2e.sh                        # regenerate + deploy both apps + e2e
+./run_e2e.sh                        # regenerate + deploy both apps + e2e (pytest-xdist -n 4)
+./run_e2e.sh --parallel 8           # override worker count (1 = serial; stable ceiling ~8)
 ./run_e2e.sh --skip-deploy api      # API e2e only
 ./run_e2e.sh --skip-deploy browser  # browser e2e only
 ```

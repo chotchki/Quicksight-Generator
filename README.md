@@ -233,7 +233,8 @@ config.example.yaml
 
 ```bash
 pytest                  # unit + integration (fast, no AWS)
-./run_e2e.sh            # regenerate + deploy both apps + e2e (needs AWS)
+./run_e2e.sh            # regenerate + deploy both apps + e2e (pytest-xdist -n 4)
+./run_e2e.sh --parallel 8            # override worker count (1 = serial; stable ceiling ~8)
 ./run_e2e.sh --skip-deploy api       # only API e2e
 ./run_e2e.sh --skip-deploy browser   # only browser e2e
 ```

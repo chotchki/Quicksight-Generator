@@ -24,6 +24,7 @@ dev = [
 ]
 e2e = [
     "pytest>=7.0",
+    "pytest-xdist>=3.5",
     "boto3>=1.34",
     "playwright>=1.40",
 ]
