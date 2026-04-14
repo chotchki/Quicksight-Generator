@@ -247,6 +247,16 @@ Coverage:
 
 E2E tunables (env vars): `QS_E2E_PAGE_TIMEOUT`, `QS_E2E_VISUAL_TIMEOUT`, `QS_E2E_USER_ARN`, `QS_E2E_IDENTITY_REGION`. Failure screenshots land in `tests/e2e/screenshots/<app>/` (gitignored).
 
+## Known limitations
+
+### Drill-down parameters stack across tab-switches
+
+QuickSight has no API to clear a parameter on tab-switch. When a drill-down sets a parameter on its destination sheet (e.g. clicking a `settlement_id` on Settlements navigates to Sales and sets `pSettlementId`), the parameter stays set even after the user tabs away and back — the destination sheet stays filtered to that one value.
+
+**Workaround:** refresh the dashboard tab in the browser to clear all parameter filters.
+
+Captured as an `xfail(strict=False)` characterization test in `tests/e2e/test_filter_stacking.py` so the behavior is documented and would surface if AWS ever fixes it.
+
 ## Customising
 
 ### Change the SQL

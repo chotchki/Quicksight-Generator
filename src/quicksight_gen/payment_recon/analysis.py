@@ -274,12 +274,17 @@ def _build_getting_started_sheet(cfg: Config) -> SheetDefinition:
             rt.body(
                 "Cells rendered in the theme accent color are interactive:"
             ),
-            rt.bullets([
+            rt.bullets_raw([
                 "Plain accent-colored text — left-click drills to a related "
                 "tab or filters this view",
                 "Accent text with a pale tinted background — right-click "
                 "menu for a secondary drill, keeping the left-click action "
                 "free for the primary id",
+                rt.inline(
+                    "Heads-up: drill-down filters stick after you switch "
+                    "tabs. Refresh the dashboard to clear them.",
+                    color=accent,
+                ),
             ]),
         ),
     )

@@ -270,8 +270,27 @@ def _build_getting_started_sheet(cfg: Config) -> SheetDefinition:
         ),
     )
 
-    text_boxes: list[SheetTextBox] = [welcome_box]
-    layout: list[GridLayoutElement] = [_full_width_text("ar-gs-welcome", 5)]
+    tip_box = SheetTextBox(
+        SheetTextBoxId="ar-gs-nav-tip",
+        Content=rt.text_box(
+            rt.heading("Navigation tip", color=accent),
+            rt.BR,
+            rt.BR,
+            rt.bullets_raw([
+                rt.inline(
+                    "Heads-up: drill-down filters stick after you switch "
+                    "tabs. Refresh the dashboard to clear them.",
+                    color=accent,
+                ),
+            ]),
+        ),
+    )
+
+    text_boxes: list[SheetTextBox] = [welcome_box, tip_box]
+    layout: list[GridLayoutElement] = [
+        _full_width_text("ar-gs-welcome", 5),
+        _full_width_text("ar-gs-nav-tip", 4),
+    ]
 
     if is_demo:
         text_boxes.append(SheetTextBox(
