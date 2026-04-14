@@ -48,10 +48,6 @@ from quicksight_gen.common.models import (
     MeasureField,
     NumericalAggregationFunction,
     NumericalMeasureField,
-    PieChartAggregatedFieldWells,
-    PieChartConfiguration,
-    PieChartFieldWells,
-    PieChartVisual,
     SameSheetTargetVisualConfiguration,
     TableAggregatedFieldWells,
     TableConfiguration,
@@ -558,18 +554,20 @@ def build_payments_visuals(link_color: str, link_tint: str) -> list[Visual]:
         )
     )
 
-    # Pie chart: payment status breakdown
-    pie_status = Visual(
-        PieChartVisual=PieChartVisual(
-            VisualId="payments-pie-status",
+    # Bar chart: payment status breakdown (bar over pie/donut because QS
+    # canvas pies don't expose keyboard navigation, which the browser e2e
+    # suite relies on for click-to-filter automation).
+    bar_status = Visual(
+        BarChartVisual=BarChartVisual(
+            VisualId="payments-bar-status",
             Title=_title("Payment Status Breakdown"),
             Subtitle=_subtitle(
-                "Proportion of payments by their current status. "
-                "Click a slice to filter the detail table."
+                "Count of payments by their current status. "
+                "Click a bar to filter the detail table."
             ),
-            ChartConfiguration=PieChartConfiguration(
-                FieldWells=PieChartFieldWells(
-                    PieChartAggregatedFieldWells=PieChartAggregatedFieldWells(
+            ChartConfiguration=BarChartConfiguration(
+                FieldWells=BarChartFieldWells(
+                    BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
                         Category=[
                             _dim("pstatus-dim", DS_PAYMENTS, "payment_status")
                         ],
@@ -580,6 +578,8 @@ def build_payments_visuals(link_color: str, link_tint: str) -> list[Visual]:
                         ],
                     )
                 ),
+                Orientation="VERTICAL",
+                BarsArrangement="CLUSTERED",
                 CategoryLabelOptions=_axis_label("Payment Status"),
                 ValueLabelOptions=_axis_label("Number of Payments"),
             ),
@@ -673,7 +673,7 @@ def build_payments_visuals(link_color: str, link_tint: str) -> list[Visual]:
         )
     )
 
-    return [kpi_amount, kpi_returns, pie_status, table_payments]
+    return [kpi_amount, kpi_returns, bar_status, table_payments]
 
 
 # ---------------------------------------------------------------------------

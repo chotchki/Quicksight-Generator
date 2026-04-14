@@ -194,7 +194,7 @@ _SETTLEMENTS_BULLETS = [
 
 _PAYMENTS_BULLETS = [
     "KPIs: total paid amount and number of returned payments",
-    "Pie chart of payment statuses",
+    "Bar chart of payment statuses",
     "Detail table including return reasons",
 ]
 
@@ -406,7 +406,7 @@ def _build_payments_sheet(cfg: Config) -> SheetDefinition:
         FilterControls=build_payments_controls(cfg),
         Layouts=_grid_layout(
             _kpi_pair("payments-kpi-amount", "payments-kpi-returns")
-            + [_full_width("payments-pie-status", _CHART_ROW_SPAN)]
+            + [_full_width("payments-bar-status", _CHART_ROW_SPAN)]
             + [_full_width("payments-detail-table", _TABLE_ROW_SPAN)]
         ),
     )

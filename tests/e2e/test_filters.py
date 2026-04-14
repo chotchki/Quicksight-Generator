@@ -9,10 +9,12 @@ from __future__ import annotations
 import pytest
 
 from .browser_helpers import (
+    click_chart_bar,
     click_sheet_tab,
     count_table_total_rows,
     generate_dashboard_embed_url,
     parse_kpi_number,
+    read_chart_categories,
     read_kpi_value,
     clear_dropdown,
     read_visual_column_values,
@@ -33,6 +35,29 @@ from .browser_helpers import (
 
 
 pytestmark = [pytest.mark.e2e, pytest.mark.browser]
+
+
+def _scroll_chart_into_view(page, visual_title: str) -> None:
+    """Scroll a chart visual to viewport center (plain JS — no table-cell
+    wait, since charts don't have ``sn-table-cell-*`` markers)."""
+    page.evaluate(
+        """(title) => {
+            const visuals = document.querySelectorAll(
+                '[data-automation-id="analysis_visual"]'
+            );
+            for (const v of visuals) {
+                const t = v.querySelector(
+                    '[data-automation-id="analysis_visual_title_label"]'
+                );
+                if (t && t.innerText.trim() === title) {
+                    v.scrollIntoView({block: 'center'});
+                    return;
+                }
+            }
+        }""",
+        visual_title,
+    )
+    page.wait_for_timeout(800)
 
 
 @pytest.fixture
@@ -406,4 +431,113 @@ def test_show_only_toggle_narrows_and_clears(
         assert restored == before, (
             f"{kpi_title!r} should restore to pre-toggle value after clearing "
             f"{toggle_title!r}; before={before}, after={after}, restored={restored}"
+        )
+
+
+# (sheet, chart_title, detail_table)
+# Bar-chart → detail-table same-sheet filter action. Payments'
+# status breakdown was swapped from pie to bar in this phase so the
+# keyboard-nav path (click_chart_bar) works — QS canvas pies don't
+# expose keyboard navigation.
+_CHART_CLICK_CASES = [
+    ("Sales Overview", "Sales Amount by Merchant", "Sales Detail"),
+    (
+        "Settlements", "Settlement Amount by Merchant Type",
+        "Settlement Detail",
+    ),
+    ("Payments", "Payment Status Breakdown", "Payment Detail"),
+]
+
+
+@pytest.mark.parametrize("sheet,chart,table", _CHART_CLICK_CASES)
+def test_chart_bar_click_filters_detail_table(
+    embed_url, page_timeout, sheet, chart, table,
+):
+    """Clicking a bar in the sheet's categorical chart should narrow the
+    detail table to just that category. Covers PLAN 2.13."""
+    with webkit_page(headless=True) as page:
+        page.goto(embed_url, timeout=page_timeout)
+        wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
+        click_sheet_tab(page, sheet, timeout_ms=page_timeout)
+        wait_for_visuals_present(page, min_count=3, timeout_ms=page_timeout)
+        wait_for_table_cells_present(page, timeout_ms=page_timeout)
+
+        before = count_table_total_rows(page, table, timeout_ms=page_timeout)
+        assert before > 1
+
+        # Scroll the chart back into view (count_table_total_rows put the
+        # detail table on-screen, pushing the chart off the top). Use a
+        # plain JS scroll — scroll_visual_into_view waits for table cells.
+        _scroll_chart_into_view(page, chart)
+        categories = read_chart_categories(page, chart)
+        assert len(categories) >= 2, (
+            f"{chart!r} needs ≥2 categories to test narrowing; got {categories}"
+        )
+        screenshot(
+            page,
+            f"chart_click_{chart.replace(' ', '_').lower()}_before",
+            subdir="payment_recon",
+        )
+        click_chart_bar(page, chart, index=0, timeout_ms=page_timeout)
+        after = wait_for_table_total_rows_to_change(
+            page, table, before, timeout_ms=page_timeout,
+        )
+        screenshot(
+            page,
+            f"chart_click_{chart.replace(' ', '_').lower()}_after",
+            subdir="payment_recon",
+        )
+        assert 0 < after < before, (
+            f"{table!r} should narrow after clicking {chart!r} bar 0; "
+            f"before={before}, after={after}"
+        )
+
+
+@pytest.mark.parametrize("sheet,chart,table", _CHART_CLICK_CASES)
+def test_chart_bar_second_click_replaces_selection(
+    embed_url, page_timeout, sheet, chart, table,
+):
+    """Clicking a *second*, different bar replaces the first selection
+    rather than ANDing it — table shows rows for only the second bar.
+    Covers PLAN 2.14."""
+    with webkit_page(headless=True) as page:
+        page.goto(embed_url, timeout=page_timeout)
+        wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
+        click_sheet_tab(page, sheet, timeout_ms=page_timeout)
+        wait_for_visuals_present(page, min_count=3, timeout_ms=page_timeout)
+        wait_for_table_cells_present(page, timeout_ms=page_timeout)
+
+        before = count_table_total_rows(page, table, timeout_ms=page_timeout)
+
+        _scroll_chart_into_view(page, chart)
+        categories = read_chart_categories(page, chart)
+        assert len(categories) >= 2
+        click_chart_bar(page, chart, index=0, timeout_ms=page_timeout)
+        after_first = wait_for_table_total_rows_to_change(
+            page, table, before, timeout_ms=page_timeout,
+        )
+
+        _scroll_chart_into_view(page, chart)
+        click_chart_bar(page, chart, index=1, timeout_ms=page_timeout)
+        # The row count *usually* changes between categories; if two
+        # categories happen to have the same count we fall through and
+        # rely on the narrowing assertion only.
+        import time
+        deadline = time.monotonic() + page_timeout / 1000.0
+        after_second = after_first
+        while time.monotonic() < deadline:
+            current = count_table_total_rows(
+                page, table, timeout_ms=page_timeout,
+            )
+            if current != after_first:
+                after_second = current
+                break
+            page.wait_for_timeout(500)
+        else:
+            after_second = count_table_total_rows(
+                page, table, timeout_ms=page_timeout,
+            )
+        assert 0 < after_second < before, (
+            f"Second click on {chart!r} should still narrow {table!r}; "
+            f"before={before}, first={after_first}, second={after_second}"
         )

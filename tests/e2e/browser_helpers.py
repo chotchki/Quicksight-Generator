@@ -561,6 +561,89 @@ def wait_for_chart_categories_to_change(
     )
 
 
+def read_chart_categories(page, visual_title: str) -> list[str]:
+    """Return the ordered category labels (bar names / slice names) of a
+    chart visual, parsed from QS's screen-reader aria-label.
+
+    QS aria-labels a chart container with "...the data for <CAT> is <N>,
+    the data for <CAT> is <N>, ...". Parse that into an ordered list.
+    Returns [] if the visual isn't found or has no aria description.
+    """
+    return page.evaluate(
+        """(title) => {
+            const visuals = document.querySelectorAll(
+                '[data-automation-id="analysis_visual"]'
+            );
+            for (const v of visuals) {
+                const t = v.querySelector(
+                    '[data-automation-id="analysis_visual_title_label"]'
+                );
+                if (!t || t.innerText.trim() !== title) continue;
+                let best = [];
+                for (const e of v.querySelectorAll('[aria-label]')) {
+                    const lbl = e.getAttribute('aria-label') || '';
+                    if (!lbl.includes('the data for')) continue;
+                    const matches = [
+                        ...lbl.matchAll(/the data for ([^,]+?) is /g)
+                    ].map(m => m[1].trim());
+                    if (matches.length > best.length) best = matches;
+                }
+                return best;
+            }
+            return [];
+        }""",
+        visual_title,
+    )
+
+
+def click_chart_bar(
+    page, visual_title: str, index: int, timeout_ms: int,
+) -> None:
+    """Select the bar at ``index`` in a bar-chart visual via keyboard nav.
+
+    QS renders charts to ``<canvas>``, so there's no DOM bar to click.
+    The keyboard-accessible path (bar charts only — pie/donut don't
+    expose it):
+
+    1. Click the visual's container to give it focus.
+    2. Tab 5 times to move focus into the inner bar group.
+    3. Enter to highlight a bar.
+    4. Right-arrow ``index`` times to cycle to the target bar.
+    5. Enter to select (fires the same-sheet filter action).
+
+    The visual must already be rendered and on-screen. Category order
+    matches ``read_chart_categories``.
+    """
+    card = page.locator(
+        f'[data-automation-id="analysis_visual"]:has('
+        f'[data-automation-id="analysis_visual_title_label"]:text-is("{visual_title}"))'
+    ).first
+    card.wait_for(state="visible", timeout=timeout_ms)
+    box = card.bounding_box()
+    assert box, f"No bounding box for {visual_title!r}"
+    # Click whitespace inside the card (just under the title) to focus
+    # the visual without landing on the canvas / title / axis labels.
+    page.mouse.click(
+        box["x"] + box["width"] / 2,
+        box["y"] + 30,
+    )
+    page.wait_for_timeout(300)
+    for _ in range(5):
+        page.keyboard.press("Tab")
+        page.wait_for_timeout(100)
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(300)
+    # Horizontal bar charts navigate with ArrowDown; try both to be
+    # orientation-agnostic (extra presses on the wrong axis no-op).
+    for _ in range(index):
+        page.keyboard.press("ArrowDown")
+        page.wait_for_timeout(120)
+        page.keyboard.press("ArrowRight")
+        page.wait_for_timeout(120)
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(500)
+
+
 def read_visual_column_values(
     page, visual_title: str, col_index: int,
 ) -> list[str]:
