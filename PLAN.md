@@ -1,250 +1,201 @@
-# PLAN — Filter-propagation browser e2e expansion
+# PLAN — Phase A: Vocabulary
 
-Goal: prove every filter on every sheet narrows every dependent visual the way a user would expect. Today the browser e2e suite only spot-checks the date-range filter on one table per app; everything else is structural (the filter is wired up in the dashboard JSON) without confirming the data actually moves.
+Goal: rename AR's `parent` / `child` vocabulary to `ledger` / `sub-ledger` across code, SQL, QuickSight labels, and docs; and add an `origin` attribute to transactions as a no-behavior-change tag for later phases to consume. Lowest-risk, highest-clarity phase of the major evolution described in `SPEC.md` — pure rename with a small additive column.
 
-Out of scope: the QuickSight "filter stacking on navigation" UX wart — when a user drills A → B → A, parameter filters set during the first navigation can linger and produce confusing counts. We've checked: there is no toggle in QuickSight's parameter / filter API that auto-clears these. **Document the behavior, do not try to fix it.** Phase 5 covers the doc work.
+Out of scope for Phase A:
+- Ledger-level direct postings (Phase C). Ledger accounts still only aggregate from sub-ledger balances; the drift invariant stays `stored parent balance = Σ children`.
+- Unified `transfer` / `posting` schema (Phase B). PR sales/settlements/payments keep their current shape.
+- Any reconciliation-DSL refactor (Phase D). Today's 9 bespoke exception checks stay as-is, just renamed where they reference parent/child.
+- Wiring `origin` into any filter, visual, or exception check. Column-only addition.
+- Any change to PR. PR has zero occurrences of `parent` / `child`; it is untouched.
 
 Conventions:
-- Branch off `main`; one phase = one commit + one tag bump (`v1.1.x` per phase, `v1.1.0` cumulative on the merge).
-- Every new test must be runnable in isolation — no implicit ordering with other filter tests in the same module (each test loads its own embed URL, embed URLs are single-use).
-- After each phase, run the full unit suite + the new-or-touched browser tests. Full e2e (`./run_e2e.sh`) before tagging.
-- Helpers go in `tests/e2e/browser_helpers.py` or a new sibling — never copy DOM-poking JS between test files.
+- Branch: `phase-a-vocabulary`, cut from `main`. One phase step = one commit; cumulative release at the end.
+- `demo apply` drops-and-creates schema, so there is no migration artifact to ship — rename in `demo/schema.sql` is atomic with the code rename. No backward-compatibility shims.
+- `cleanup --yes` handles stale tagged resources (old dataset IDs) after deploy. Document the one-time cleanup in the release notes.
+- After each phase step, run `pytest`. After A.1–A.5 land, `demo apply` + `deploy --generate` + `./run_e2e.sh` once to catch anything the unit suite missed. Before tagging, run e2e again.
+- Every label change must preserve the sheet's plain-language description and every visual's subtitle (existing coverage tests enforce this).
 
-## Carried-forward assumptions
+## Vocabulary decisions (pin before any code moves)
 
-- Demo data is deterministic (`random.Random(42)`) so we can hard-code expected before/after row counts when scenario coverage guarantees them. Where exact counts feel brittle, prefer "drops by ≥ N" or "drops to 0" assertions over equality.
-- Multi-select dropdowns and SINGLE_SELECT toggles are reachable via `[data-automation-id="sheet_control_name"]` plus the dropdown's value list; the existing `_sheet_control_titles` helper finds the labels but we'll need a new helper to actually set a value.
-- Cross-sheet filters (date-range, parent-account, child-account, transfer-type) are scoped via `CrossSheet` controls — the same source filter ID drives every tab. Setting once should propagate; we verify on each scoped tab.
-- Navigation-induced filter stacking is observed and reproducible but **not fixable** within QuickSight's API surface (confirmed during v1.0.0 testing). Phase 5 captures it as a known limitation.
+These are the canonical renames this plan applies. Deviations get called out in A.0 below.
 
----
+| Old | New | Notes |
+|---|---|---|
+| parent account | ledger account | user-facing + identifier |
+| child account | sub-ledger account | user-facing |
+| child drift | sub-ledger drift | user-facing (SPEC called this out explicitly) |
+| parent drift | ledger drift | user-facing |
+| `ar_parent_accounts` (table) | `ar_ledger_accounts` | |
+| `ar_parent_daily_balances` | `ar_ledger_daily_balances` | |
+| `ar_parent_transfer_limits` | `ar_ledger_transfer_limits` | |
+| `ar_accounts` | `ar_subledger_accounts` | renamed for symmetry; see A.0 to confirm |
+| `parent_account_id` (column) | `ledger_account_id` | |
+| `parent_name` | `ledger_name` | |
+| `account_id` (in ar_subledger_accounts / ar_transactions) | `subledger_account_id` | see A.0 |
+| `ar_computed_parent_daily_balance` (view) | `ar_computed_ledger_daily_balance` | |
+| `ar_computed_account_daily_balance` | `ar_computed_subledger_daily_balance` | |
+| `ar_parent_balance_drift` | `ar_ledger_balance_drift` | |
+| `ar_account_balance_drift` | `ar_subledger_balance_drift` | |
+| `ar_child_daily_outbound_by_type` | `ar_subledger_daily_outbound_by_type` | |
+| `ar_child_limit_breach` | `ar_subledger_limit_breach` | |
+| `ar_child_overdraft` | `ar_subledger_overdraft` | |
+| Dataset IDs `qs-gen-ar-parent-*`, `qs-gen-ar-account-*` | `qs-gen-ar-ledger-*`, `qs-gen-ar-subledger-*` | SPEC says rename freely |
+| Constants `DS_AR_PARENT_*`, `DS_AR_ACCOUNTS`, `DS_AR_ACCOUNT_*` | `DS_AR_LEDGER_*`, `DS_AR_SUBLEDGER_*` | |
+| Parameter `pArParentAccountId` | `pArLedgerAccountId` | drill-down parameter |
+| Filter IDs `filter-ar-parent-*`, `filter-ar-child-*`, `fg-ar-parent-*`, `fg-ar-child-*` | `filter-ar-ledger-*`, `filter-ar-subledger-*`, `fg-ar-ledger-*`, `fg-ar-subledger-*` | |
 
-## Phase 1 — Filter-interaction helpers
-
-Build the building blocks once; every later phase consumes them.
-
-- [x] 1.1 Add `set_dropdown_value(page, control_title, value, timeout_ms)` to `browser_helpers.py`. Locates the FilterControl by its visible title (`sheet_control_name`), opens the dropdown, clicks the option whose text equals `value`, waits for the control's displayed selection to update.
-- [x] 1.2 Add `set_multi_select_values(page, control_title, values, timeout_ms)` — same pattern, but tolerates multiple checked entries; deselects whatever's currently selected first so tests start from a clean state.
-- [x] 1.3 Add `clear_dropdown(page, control_title, timeout_ms)` — picks the "All values" / blank entry so a multi-step test can reset between checks.
-- [x] 1.4 Generalize the two existing date-range helpers (`_set_date` in `test_filters.py` and `test_ar_filters.py`) into `set_date_range(page, start, end, timeout_ms)` in the helpers module. Delete the per-file copies as part of 1.4.
-- [x] 1.5 Add `count_table_rows(page, visual_title)` and `count_chart_categories(page, visual_title)` helpers. Both currently live as one-off `page.evaluate` blocks duplicated across filter / drilldown / mutual-filter tests — consolidate.
-- [x] 1.6 Add `wait_for_table_rows_to_change(page, visual_title, before, timeout_ms)` — polls `count_table_rows` for the value to differ from `before`. Replaces the inline `page.wait_for_function` blocks. Returns the new count. (Renamed from `wait_for_visual_to_change` since chart-category change polling wasn't needed yet — add later if Phase 2 turns out to need it.)
-- [x] 1.7 Smoke-checked helpers against the live AR Transfers tab — `set_multi_select_values("Transfer Status", ["not_net_zero"])` correctly narrows the Transfer Summary table. Smoke + debug test files deleted.
-- [x] 1.8 Commit — `Phase 1: filter-interaction browser helpers`.
-
-**Notes from Phase 1 implementation:**
-- QS sheet controls live under `[data-automation-id="sheet_control"][data-automation-context="<Title>"]`. The value picker is `[data-automation-id="sheet_control_value"]` (a Material-UI Select combobox). The kebab-menu button (`sheet_control_menu_button`) is *not* the dropdown trigger — clicking it opens an "Options" menu (Reset/Edit), not the value list.
-- Multi-select listbox options reorder on toggle, so the deselect-then-select loop snapshots labels first via JS evaluate, then clicks by `has_text=label` rather than by index.
-- Dropdowns mount in a portal at the document root; `[role="listbox"] [role="option"]` is the right scoping selector.
-
-**STOP** — review helper signatures before any tests are written against them, since the API will be hard to change after 5+ tests use it.
-
----
-
-## Phase 1.5 — Pagination-aware row counting
-
-Today's `count_table_rows` counts cells in the DOM, which for QS tables with more than ~30-50 rows is only the visible virtualization window, not the true filter result size. A filter that narrows 200 → 80 rows would show no change under our current helper, passing while the real assertion goes untested. Demo data is small enough that every table currently fits in one window, so the bug hides by accident.
-
-Fix before Phase 2 writes any filter-narrowing test against a table larger than a viewport.
-
-- [ ] 1.5.1 Grow demo data so at least one PR table and one AR table exceed the QS virtualization threshold (~50 rows rendered). Target: Sales detail grows from ~48 to ~120 rows by stretching `_DAYS_OF_HISTORY` in `payment_recon/demo_data.py`; AR Transactions detail grows to ~250 rows by doubling `_SUCCESSFUL_CROSS_SCOPE` / `_SUCCESSFUL_INTERNAL_INTERNAL`. Update the scenario coverage tests in `test_demo_data.py` and any hard-coded count assertions.
-- [ ] 1.5.2 Deploy the expanded demo. Write a throwaway debug test (like the Phase 1 debug file) that dumps the DOM region around a virtualized table's footer — the goal is to find the automation-id / class for the "X-Y of Z" indicator. Candidates to look for: `data-automation-id="visual_count_label"`, a `pagination` class, or an aria-label like "Pagination: rows X through Y of Z".
-- [ ] 1.5.3 Add `count_table_total_rows(page, visual_title)` to `browser_helpers.py`. Reads the pagination indicator text, parses the total, returns it. Raises a clear error if no indicator is found (so callers notice when a small table has no pagination UI and fall back to `count_table_rows` explicitly).
-- [ ] 1.5.4 Add `wait_for_table_total_rows_to_change(page, visual_title, before, timeout_ms)` that polls the pagination indicator rather than DOM cells. Mirrors the existing `wait_for_table_rows_to_change` shape.
-- [ ] 1.5.5 Decision point — two helpers or one? Tables with few rows (< viewport) don't render a pagination indicator, so the total-rows helper has to either error or fall through to DOM count. Settle in 1.5.3: prefer "explicit is better — two helpers, caller picks". Document the rule in CLAUDE.md's E2E Test Conventions.
-- [ ] 1.5.6 Update the 3 existing refactored tests (`test_filters.py`, `test_ar_filters.py`, `test_recon_mutual_filter.py`) to use `count_table_total_rows` where the target table now paginates. Verify green against the live dashboard.
-- [ ] 1.5.7 Commit — `Phase 1.5: pagination-aware row counting`.
-
-**STOP** — if 1.5.2 fails to find a pagination indicator (e.g., QS uses pure virtualization without a visible count), escalate: either find a way to scroll-and-accumulate the total, or revisit whether this matters for the filter assertions Phase 2/3 actually make (inequalities may still hold — a filter that drops below viewport *will* show DOM-count change). The answer affects whether Phase 2 needs a different assertion pattern entirely.
+`origin` attribute (new): added to `ar_transactions` only in Phase A. Schema column `origin VARCHAR(30) NOT NULL DEFAULT 'internal_initiated'`. Permitted values: `'internal_initiated'`, `'external_force_posted'`. Demo data assigns `'internal_initiated'` to ~90% of rows and `'external_force_posted'` to ~10%; generator stays deterministic.
 
 ---
 
-## Phase 1.7 — Non-table visual-assertion helpers
+## Phase A.0 — Pin decisions
 
-Phase 2 sub-tasks assert not just on table row counts but on bar-chart category counts (2.4, 2.7, 2.9–2.11), KPI value changes (2.5), and chart-click cascades (2.13, 2.14, 2.16). `count_chart_categories` exists from Phase 1.5 but there's no `wait_for_*_to_change` polling pair, and no KPI reader/waiter. Build these once so Phase 2 tests aren't re-inventing DOM probes.
+STOP here. Three calls needed before any rename lands, since they cascade.
 
-- [x] 1.7.1 Verify `count_chart_categories` handles bar + line + pie/donut. **Done — rewrote the helper. QS renders charts to `<canvas>`, so DOM-bar counting is impossible. Instead: (a) parse QS's screen-reader aria-label ("the data for X is Y, the data for Z is W, …" — count occurrences), (b) fall back to legend rows (`visual_legend_item_value`). Returns max of the two signals. Works for bar/line/pie.**
-- [x] 1.7.2 Add `wait_for_chart_categories_to_change(page, title, before, timeout_ms)` — mirrors `wait_for_table_rows_to_change`. **Done.**
-- [x] 1.7.3 Add `read_kpi_value(page, title) -> str` (reads `.visual-x-center` text, falls back to `kpi-display-value`) + `parse_kpi_number(s) -> float` (strips `$`, `%`, `,`; handles `K`/`M`/`B` suffixes). **Done.**
-- [x] 1.7.4 Add `wait_for_kpi_value_to_change(page, title, before, timeout_ms)`. **Done.**
-- [x] 1.7.5 Smoke-check against live PR dashboard. **Done — "Sales Amount by Merchant" → 6 bars; "Total Sales Count" KPI → "215" → 215.0; "Payment Status Breakdown" pie → 2 slices. Probe test deleted.**
-- [x] 1.7.6 Commit — `Phase 1.7: non-table visual-assertion helpers`. **Done — bundled into `762b16e` with Phase 2.0–2.3 since they share the PLAN.md edit.**
+- [ ] A.0.1 **Rename `ar_accounts` → `ar_subledger_accounts`, or keep as `ar_accounts`?** The rename is more consistent (and matches the dataset-ID-rename-freely license), but `ar_accounts` is "neutral" and already reads clearly in context. Recommend **rename to `ar_subledger_accounts`** — Phase A is the one window where this cost is close to zero (no saved consumers), and leaving it as the odd one out costs clarity in every future query.
+- [ ] A.0.2 **Rename `account_id` column → `subledger_account_id`, or keep as `account_id`?** Same reasoning. Recommend **keep as `account_id`** — it is the FK *target* column in `ar_subledger_accounts` and the FK *source* column in `ar_transactions`, and renaming it cascades to every SQL projection in every dataset. The long-form name in the table name carries the sub-ledger meaning; inside the table, `account_id` is unambiguous. Revisit in Phase B if the unified transfer schema wants a stricter contract.
+- [ ] A.0.3 **`origin` values: `internal_initiated`/`external_force_posted`, or `internal`/`external`?** SPEC direction B used the long form. Recommend **long form** — the meaningful distinction is about *ordering* and *context*, not source-of-money; a terser `external` would get confused with "external merchant transaction" in PR. Extra bytes are worth the unambiguity.
 
----
-
-## Phase 1.8 — Dedup scattered DOM probes
-
-Five helpers are duplicated or inline across e2e files. Extract once, delete the copies.
-
-- [x] 1.8.1 Move `_selected_sheet_name(page)` into `browser_helpers.py` as `selected_sheet_name`.
-- [x] 1.8.2 Move `_wait_for_sheet(page, name, timeout_ms)` into `browser_helpers.py` as `wait_for_sheet_tab`.
-- [x] 1.8.3 Move `_first_table_cell_text(page, row, col)` into `browser_helpers.py`.
-- [x] 1.8.4 Move `_wait_for_table_cells(page, timeout_ms)` into `browser_helpers.py` as `wait_for_table_cells_present`; replaced inline `page.wait_for_selector(...)` calls in three test files.
-- [x] 1.8.5 Move `_click_first_row_of_visual(page, title, timeout_ms)` into `browser_helpers.py` as `click_first_row_of_visual`.
-- [x] 1.8.6 Delete the per-file copies; smoke-ran `test_drilldown.py::test_settlements_to_sales_drilldown` + `test_recon_mutual_filter.py` — green.
-- [x] 1.8.7 STOP re-scan round 2: extracted `sheet_control_titles`, `wait_for_sheet_controls_present` (replaced `_sheet_control_titles` + inline `sheet_control_name` probes in `test_state_toggles.py` / `test_ar_state_toggles.py`), and `wait_for_visual_titles_present` (replaced the want/have `wait_for_function` block in `test_sheet_visuals.py` / `test_ar_sheet_visuals.py`).
-- [x] 1.8.8 Final re-scan: no remaining `wait_for_selector` / `wait_for_function` / `query_selector_all` in test files. Residual `query_selector` calls in `test_drilldown.py` are one-off, test-specific probes.
-- [ ] 1.8.9 Commit — `Phase 1.8: dedup scattered DOM probes into browser_helpers`.
-
-**STOP** — after 1.8 lands, re-scan the e2e suite for remaining duplication (inline `page.evaluate` blocks, repeated `wait_for_selector` patterns, ad-hoc row-click / cell-text probes that slipped past 1.8's enumeration). Capture a short inventory; extract if the count is ≥ 2 sites or the probe is fiddly enough to be worth a named helper. Repeat until the suite is clean before moving to Phase 2.
+Record the three decisions inline below this section (struck-through `old → new` lines or a short "pinned" note) before starting A.1.
 
 ---
 
-## Phase 2 — Payment Recon filter coverage
+## Phase A.1 — Schema DDL rename
 
-Walk every PR filter and verify the visuals it claims to scope. Each `[ ]` is one new test (or one parametrize case).
+Pure text rename of `demo/schema.sql`. Drop-and-create on `demo apply` means the change is atomic with the Python rename in A.2–A.4; no staged migration needed.
 
-### Date-range filter (sheets: Sales Overview, Settlements, Payments, Payment Reconciliation, Exceptions, Getting Started — verify scope per-tab)
+- [ ] A.1.1 Update the DROP section at the top to reference new names (or both old + new DROP IF EXISTS — safe on fresh DBs, useful if someone has an old schema loaded).
+- [ ] A.1.2 Rename all tables (`ar_parent_accounts`, `ar_parent_daily_balances`, `ar_parent_transfer_limits`, and optionally `ar_accounts` per A.0.1).
+- [ ] A.1.3 Rename all columns (`parent_account_id` → `ledger_account_id`, `parent_name` → `ledger_name`; and optionally `account_id` → `subledger_account_id` per A.0.2).
+- [ ] A.1.4 Rename all views to match (5 views — see vocabulary table).
+- [ ] A.1.5 Rename all indexes (`idx_ar_accounts_parent` → `idx_ar_subledger_accounts_ledger`, `idx_ar_parent_daily_balances_date` → `idx_ar_ledger_daily_balances_date`, etc).
+- [ ] A.1.6 Update every SQL comment that references parent/child vocabulary to the new terms.
+- [ ] A.1.7 Sanity check: `grep -iE 'parent|child' demo/schema.sql` should return only the intentional narrative in view header comments (if any remain), not any identifiers.
+- [ ] A.1.8 Commit — `Phase A.1: schema DDL rename parent/child → ledger/subledger`.
 
-**Bug surfaced during 2.1 prototype:** the single `fg-date-range` filter is a `TimeRangeFilter` on `sale_timestamp` with `CrossDataset="ALL_DATASETS"`, which only propagates when every target dataset has a column named `sale_timestamp`. Settlements (`settlement_date`) and Payments (`payment_date`) don't match, so the control renders but is inert. **Decided: fix with Option 1 — per-sheet date filters keyed to each dataset's native timestamp column.** Predictable mental model: each sheet's date control filters that sheet's data by that sheet's timestamp. Rejected Option 3 (column-to-column mapping) as unverified-API risk plus less predictable stacking semantics.
-
-- [x] 2.0a In `payment_recon/filters.py`, split `fg-date-range` into three sibling filter groups: `fg-sales-date-range` (sale_timestamp / Sales sheet), `fg-settlements-date-range` (settlement_date / Settlements sheet), `fg-payments-date-range` (payment_date / Payments sheet). Keep the Exceptions sheet bound to whichever dataset drives its detail table, or add a fourth filter group if needed. Each with its own `SheetControl` (DateTimePicker) on the appropriate sheet. **Done: 4 per-sheet groups + native DateTimePicker controls replacing the old CrossSheet widget.**
-- [x] 2.0b Update unit tests in `test_recon.py` / `test_generate.py` to expect the split filter groups and per-sheet controls. Regenerate JSON and diff the before/after to confirm only the expected structural change. **Done: 253 unit tests green (no PR unit test asserted on the old `fg-date-range` ID); generated JSON shows `fg-{sales,settlements,payments,exceptions}-date-range` each scoped to its own sheet.**
-- [x] 2.0c Deploy; manually confirm all three date controls filter their sheets. **Done: deployed; parametrized test 2.1 now green across Sales/Settlements/Payments (previously only Sales). Hit one AWS-reject on first deploy — `TimeRangeFilter.DefaultFilterControlConfiguration` is forbidden when a native (non-CrossSheet) control binds the filter on a single sheet; fix was to drop the default config since the sheet's `FilterDateTimePickerControl` already carries widget options.**
-- [x] 2.1 On each pipeline sheet, push date range to a future window; assert every table on the sheet drops to 0 (or below the pre-filter count). Parametrized: one test, N sheets. **Green — `test_date_range_future_empties_pipeline_table[Sales|Settlements|Payments]`.**
-- [x] 2.2 Push date range to a *past* window with no demo data; same assertion. Catches one-sided range bugs. **Green — `test_date_range_past_empties_sales_detail`.**
-- [x] 2.3 Set date range to the demo's known active window (anchor 2026-01-15, sales span ~90 days back); confirm Settlements detail row count is preserved when window covers all data — proves the filter is live but non-destructive on in-window ranges. **Green — `test_date_range_demo_window_preserves_settlements`.** (Reframed from "equals seeded count" since `test_demo_data.py` only guarantees a range 25–50; equality-with-pre-filter-count is a stronger and more portable assertion.)
-
-### Optional-metadata filters (Sales Overview only)
-
-- [ ] 2.4 Numeric filter (taxes / tips slider) — drag to top of range; assert Sales Detail rows drop and the by-merchant bar chart's category count shrinks. Mirror with a bottom-of-range case.
-- [ ] 2.5 String filter (cashier multi-select) — pick one cashier; assert KPI sums drop and detail table only shows rows for that cashier (sample 3 random cells, confirm cashier column matches).
-- [ ] 2.6 Discount-percentage range — same shape as 2.4.
-
-### Payment-method filter (sheets: Settlements, Payments)
-
-- [ ] 2.7 On Settlements, multi-select a single method; assert by-merchant-type bar chart re-renders, settlements table shrinks. Then switch to Payments tab without changing the filter and assert Payments tables also shrink (cross-sheet propagation).
-
-### Days-outstanding slider — *removed in v0.4.0* per RELEASE_NOTES
-
-- [ ] 2.8 Confirm via DOM that no "days outstanding" control is present on any pipeline tab. Belt-and-braces against regression.
-
-### Show-Only-X toggles (Sales / Settlements / Payments)
-
-- [ ] 2.9 Toggle "Show Only Unsettled" on Sales — assert Sales Detail row count equals the count of un-settled sales in the demo (from existing scenario assertions); assert by-merchant bar chart's bars are a subset of pre-toggle bars.
-- [ ] 2.10 Toggle "Show Only Unpaid" on Settlements — same shape.
-- [ ] 2.11 Toggle "Show Only Unmatched Externally" on Payments — same shape.
-- [ ] 2.12 Toggle each, then *clear* it, and assert the row count returns to the pre-toggle baseline. Catches sticky-filter bugs.
-
-### Same-sheet chart-click filtering
-
-- [ ] 2.13 **Deferred — outstanding e2e limitation.** Click a bar in the by-merchant chart on Sales Overview; assert Sales Detail filters to that merchant only. Mirror for Settlements (by-merchant-type) and Payments (status bar). *Manual keyboard path (Tab×5 → Enter → arrows → Enter) works in the authoring UI but does not trigger the filter action under headless-WebKit Playwright against the embed URL. Pie → bar swap was completed so the path is viable once automation is fixed. Tests exist but are `@pytest.mark.skip`.*
-- [ ] 2.14 **Deferred — same limitation as 2.13.** Click a *second* bar (different category) — assert the table updates to the new selection (not "merchant A AND merchant B").
-
-### Payment Reconciliation tab (mutual filter — already partially covered)
-
-- [ ] 2.15 The existing `test_recon_mutual_filter.py` only covers external-row → payments-table direction. Add the reverse: click an Internal Payment row, assert the External Transactions table narrows to the linked transaction. Use `scroll_visual_into_view` since the payments table is below the fold post-swap.
-- [ ] 2.16 **Deferred — same chart-click limitation as 2.13.** Click the bar chart's status segment; assert *both* tables filter (the chart action targets both visual IDs).
-
-- [ ] 2.17 Commit — `Phase 2: PR filter-propagation browser e2e`. Tag `v1.1.0-rc1` or just hold to the cumulative `v1.1.0`.
-
-**STOP** — run the new suite end-to-end; if any assertion is brittle (intermittent row-count timing) reformulate before AR work uses the same shape.
+**STOP** — do not run `demo apply` yet. Code in A.2+ still references the old names; the app will not generate valid JSON until A.2–A.4 land together. Bundle A.1–A.4 into one deploy cycle.
 
 ---
 
-## Phase 3 — Account Recon filter coverage — **DEFERRED**
+## Phase A.2 — Constants + dataset module rename
 
-Deferred ahead of a major spec revision that will refactor AR heavily;
-re-plan after the revision lands. Existing AR e2e still covers
-rendering + drill-downs, but filter-propagation parity with PR is a
-known gap.
+`constants.py` is the lynchpin — almost every other AR module imports from it. Start here so the rest of the rename is a mechanical compile-error-driven walk.
 
-Same shape as Phase 2; AR has more cross-sheet filter scope so order matters.
-
-### Date-range (sheets: Balances, Transfers, Transactions, Exceptions)
-
-- [ ] 3.1 Future window — every detail table on every tab drops to 0. Parametrized.
-- [ ] 3.2 Demo-active window — Transaction Detail row count matches the seed transaction count.
-
-### Parent-account multi-select (cross-tab — Balances, Transfers, Transactions, Exceptions)
-
-- [ ] 3.3 Pick one parent on Balances tab; assert child accounts table shows only that parent's children. Switch to Transactions; assert transaction table is filtered to the same parent's accounts (verify by sampling rows).
-- [ ] 3.4 Switch to Exceptions; assert the parent-drift timeline (or table) only shows that parent.
-
-### Child-account multi-select (cross-tab)
-
-- [ ] 3.5 Pick one child; assert Transactions tab filters to that child. Confirm Balances tab's child table also reduces.
-- [ ] 3.6 Combine parent + child filters; verify intersection (not union) on Transactions.
-
-### Transfer-type multi-select (cross-tab — Transfers, Transactions, Exceptions)
-
-- [ ] 3.7 Pick "ach" only; assert Transfers summary table only shows ach transfers; Transactions tab shrinks; Exceptions limit-breach table only shows ach breaches.
-
-### Transfer-status multi-select (Transfers tab only — single-dataset scope)
-
-- [ ] 3.8 Pick "not_net_zero"; assert Transfers summary table = the non-zero count. Confirms our v1.0.1 toggle removal didn't break the underlying multi-select.
-- [ ] 3.9 Pick "net_zero"; confirm fully-failed transfers (net=0, all legs failed) appear here — proves the v1.0.1 user concern is addressed at the data level.
-
-### Show-Only-X toggles (Balances, Transactions)
-
-- [ ] 3.10 Toggle each of the four remaining toggles ("Show Only Parent Drift", "Show Only Child Drift", "Show Only Overdraft", "Show Only Failed"); assert table narrows; clear; assert it returns.
-- [ ] 3.11 DOM-check that the Transfers tab has *no* SINGLE_SELECT toggle (regression guard for v1.0.1).
-
-### Same-sheet chart-click filtering
-
-- [ ] 3.12 Click a bar in the AR transfer-status chart; assert summary table narrows to that status.
-- [ ] 3.13 Click a parent-drift point in the Exceptions timeline; assert the parent-drift table below filters to that parent (if action exists; check `analysis.py` and skip with a marker if not wired).
-
-- [ ] 3.14 Commit — `Phase 3: AR filter-propagation browser e2e`.
-
-**STOP** — review intermittency. AR has 5 toggles + 4 cross-sheet filters; if test runtime balloons past ~5 minutes, split the test file along sheet boundaries.
+- [ ] A.2.1 Rename constants in `account_recon/constants.py`: `DS_AR_PARENT_ACCOUNTS` → `DS_AR_LEDGER_ACCOUNTS`, `DS_AR_PARENT_BALANCE_DRIFT` → `DS_AR_LEDGER_BALANCE_DRIFT`, `DS_AR_ACCOUNTS` → `DS_AR_SUBLEDGER_ACCOUNTS`, `DS_AR_ACCOUNT_BALANCE_DRIFT` → `DS_AR_SUBLEDGER_BALANCE_DRIFT`. Update the constant values (dataset IDs) accordingly — `qs-gen-ar-ledger-*`, `qs-gen-ar-subledger-*`.
+- [ ] A.2.2 Rename dataset builders in `account_recon/datasets.py` to match (`build_ar_parent_accounts_dataset` → `build_ar_ledger_accounts_dataset`, etc.). Update the SQL each builder emits to reference the new table / column / view names from A.1.
+- [ ] A.2.3 Update each dataset's `columns=[...]` declaration for the renamed columns.
+- [ ] A.2.4 Compile-check: `.venv/bin/python -c "from quicksight_gen.account_recon import datasets, constants"` should succeed.
+- [ ] A.2.5 Commit — `Phase A.2: rename AR constants + dataset builders`.
 
 ---
 
-## Phase 4 — Cross-cutting interactions — **DEFERRED**
+## Phase A.3 — Demo data generator rename
 
-Deferred alongside Phase 3; the drill-down + filter intersections here
-depend on AR shapes that the upcoming spec revision will change. Phase 5.1
-still captures the filter-stacking characterization case standalone.
+`demo_data.py` has 83 occurrences — mostly SQL INSERT generation against the renamed tables/columns, plus internal Python variable names. Rename both.
 
-Filter behavior that crosses the seams between filters, drill-downs, and tabs.
-
-- [ ] 4.1 Set date range on Sales; click a row to drill into Settlements; confirm date range *and* drill-down filter both apply on the destination sheet (intersection, not last-write-wins).
-- [ ] 4.2 Apply Show-Only-Unpaid on Settlements; drill a row into Sales; confirm the destination sheet receives the parameter filter and the source-sheet toggle does not "leak" (toggles are SINGLE_DATASET scoped — verify that contract holds end-to-end).
-- [ ] 4.3 Same shape on AR: set parent filter, drill from Balances to Transactions, confirm intersection.
-
-- [ ] 4.4 Commit — `Phase 4: cross-cutting filter + drilldown interactions`.
+- [ ] A.3.1 Rename INSERT statements and any raw SQL inside `account_recon/demo_data.py` to the new names.
+- [ ] A.3.2 Rename Python-side identifiers: internal function names (`_generate_parent_accounts` → `_generate_ledger_accounts`, etc), variable names (`parent_accounts`, `parent_id`, `child_id`), tuple fields, and docstrings.
+- [ ] A.3.3 Keep determinism (`random.Random(42)`); the output row *values* should be byte-identical to pre-rename (same IDs, same amounts, same dates). Only table/column names in the generated SQL change.
+- [ ] A.3.4 Skim the generated `seed.sql` diff: confirm the only changes are identifier renames, not data shifts. `.venv/bin/quicksight-gen demo seed account-recon -o /tmp/seed-new.sql && diff -u demo/seed.sql /tmp/seed-new.sql | head -50` should show pure text substitutions.
+- [ ] A.3.5 Commit — `Phase A.3: rename AR demo-data generator to ledger/subledger vocabulary`.
 
 ---
 
-## Phase 5 — Document the navigation filter-stacking caveat
+## Phase A.4 — Analysis / visuals / filters rename
 
-Navigation-driven parameter filters can stack across drill-downs (A → B → A leaves a B-derived filter on A). QuickSight has no API to clear a parameter on tab-switch.
+The bulk of the string work: 140 occurrences in `visuals.py`, 45 in `analysis.py`, 39 in `filters.py`. Includes user-facing titles and subtitles — these carry the most behavioral weight because they are what the end customer reads.
 
-- [ ] 5.1 Reproduce the stacking under test: drill PR Sales → Settlements (sets `pSaleSettlementId`) → click the cross-sheet date filter and return to Sales; assert (or just screenshot for evidence) that the previous parameter is still set. This becomes a *characterization* test, not a failure — mark it `xfail(strict=False)` with a reason citing the limitation.
-- [ ] 5.2 Add a new "Known Limitations" section to README.md describing the stacking behavior and the workaround (refresh the dashboard tab).
-- [ ] 5.3 Add the same caveat to both Getting Started sheets via `common/rich_text.py` — a single bullet under the clickability legend, accent-colored. Update `test_demo_data.py` / generate tests if any "expected text" assertions need to grow.
+- [ ] A.4.1 `account_recon/visuals.py`:
+  - Rename visual IDs (`ar-balances-kpi-parents` → `ar-balances-kpi-ledgers`, `ar-balances-parent-table` → `ar-balances-ledger-table`, etc.).
+  - Rename field IDs inside visuals (`ar-bal-parent-id` → `ar-bal-ledger-id`, `ar-bal-parent-name` → `ar-bal-ledger-name`).
+  - Rewrite every `Title=...` and `Subtitle=...` call whose text contains "parent" or "child". Example: `Title("Parent Account Balances")` → `Title("Ledger Account Balances")`; `Subtitle("Each parent account's stored vs computed daily balance. Computed = Σ of its children's stored balances...")` → `Subtitle("Each ledger account's stored vs computed daily balance. Computed = Σ of its sub-ledgers' stored balances...")`.
+  - Rename the drill-down parameter constant at the top of the file (`P_AR_PARENT` → `P_AR_LEDGER`) and its value (`pArParentAccountId` → `pArLedgerAccountId`).
+  - Update the module docstring (lines 1–25) to use new vocabulary.
+- [ ] A.4.2 `account_recon/filters.py`:
+  - Rename filter-group builder functions (`_parent_account_filter_group` → `_ledger_account_filter_group`, `_child_account_filter_group` → `_subledger_account_filter_group`).
+  - Rename `fg_id`, `filter_id`, and `title` values (`fg-ar-parent-account` → `fg-ar-ledger-account`, `filter-ar-parent-account` → `filter-ar-ledger-account`, `"Parent Account"` → `"Ledger Account"`, and the same for child → sub-ledger).
+  - Update Show-Only-X toggle titles if any reference child/parent ("Show Only Drift" does not; "Show Only Overdraft" does not — most toggles are orthogonal).
+- [ ] A.4.3 `account_recon/analysis.py`:
+  - Update any filter-group ID references that match A.4.2's renames.
+  - Rewrite Getting Started rich-text content (if it mentions parent/child) — use `common/rich_text.py` the same way the existing text is authored.
+  - Update every sheet description.
+- [ ] A.4.4 `account_recon/__init__.py`: if it re-exports anything renamed above, update.
+- [ ] A.4.5 `.venv/bin/pytest tests/test_account_recon.py` — will fail, but failures should be mechanical (strings / IDs). Fix the production code if any failure is logic (shouldn't happen), update the test if it's a vocabulary assertion (expected).
+- [ ] A.4.6 Commit — `Phase A.4: rename AR analysis/visuals/filters to ledger/subledger vocabulary`.
 
-- [ ] 5.4 Commit — `Phase 5: document QS navigation filter-stacking limitation`.
-
----
-
-## Phase 6 — Suite-runtime budget + parallelism
-
-With Phases 3 + 4 deferred the suite doesn't grow enough to warrant
-`@pytest.mark.slow` / `--full` machinery (6.1 skipped). The parallelism
-ceiling measurement is still useful knowledge for when the suite does
-grow.
-
-- [ ] ~~6.1 Slow-test marker + `--full` flag~~ — skipped; suite runtime fits the budget.
-- [ ] 6.2 Prototype `pytest-xdist` for parallel browser sessions. Each test already creates an isolated `webkit_page`, and embed URLs are function-scoped single-use — so in principle safe to parallelize. Install `pytest-xdist`, run `pytest tests/e2e -n 2` and `-n 4`, compare wall-clock + failure rate against `-n 1` baseline.
-- [ ] 6.3 **Measure the ceiling.** QS embed generation is rate-limited per-account and webkit browser sessions cost ~300 MB RAM each. Record wall-clock for `-n` ∈ {1, 2, 3, 4, 6, 8}, watch for: (a) flakes from embed-URL 429s, (b) Playwright timeouts that correlate with concurrency (suggest CPU/RAM saturation). Pick the highest `-n` where flake rate stays zero; document that as the recommended default.
-- [ ] 6.4 If 6.3 lands a usable `-n`, wire `./run_e2e.sh` to pass it through (add `--parallel N` flag, default from 6.3's measurement). Update `run_e2e.sh --help` and CLAUDE.md's E2E Conventions.
-- [ ] 6.5 Commit — `Phase 6: e2e suite runtime budget + parallelism`.
-
----
-
-## Phase 7 — Release v1.1.0
-
-- [ ] 7.1 Update RELEASE_NOTES.md — one entry covering Phases 1–2, 5, 6. Note AR filter-propagation coverage as an explicit known gap pending the spec revision.
-- [ ] 7.2 Update CLAUDE.md "E2E Test Conventions" with the new helpers and the slow-test marker convention.
-- [ ] 7.3 Tag `v1.1.0`, push branch, push tag, fast-forward main.
+**STOP** — after A.4, check the Getting Started rich-text content by eye. Customer-facing text is the one place silent vocabulary drift (e.g., "parent" surviving in a text block) would be most visible. Pre-flight that block explicitly.
 
 ---
 
-## Decisions to make in flight (will resolve as we go)
+## Phase A.5 — Tests update
 
-- **How to test multi-select dropdowns reliably.** QuickSight's dropdowns animate; the DOM may show options before they're clickable. If `set_multi_select_values` is flaky we may need an explicit "wait for options menu open" sub-helper. Decide during Phase 1.
-- **Hard-coded counts vs. inequality assertions.** Demo data is deterministic, but plant counts can shift if anyone tweaks `demo_data.py`. Prefer inequalities (`< before`, `== 0`) where the test reads naturally; reserve equality for the handful of cases where the count is the point (e.g., "Show Only Unpaid" should equal `_OFF_AMOUNT_TRANSFERS + _FAILED_LEG_TRANSFERS`).
-- **Parametrize granularity.** Some sheets share filter shapes (date-range across all four AR tabs). Lean on `pytest.mark.parametrize` per filter+sheet pair so failures pinpoint which combination broke; resist combining into a single multi-sheet loop.
-- **Screenshot policy.** Today, only filter tests screenshot. With 30+ new tests, screenshots could explode — only screenshot on the *clearing* assertion (the easy-to-eyeball "should be 0 rows" state) per filter, not every step.
+205 occurrences across 9 test files. Mostly string assertions against IDs, titles, and filter labels; some test data setup referencing old column names.
+
+- [ ] A.5.1 `tests/test_account_recon.py` — update every expected-string assertion, visual ID check, filter title check, dataset ID check. This is the biggest concentration (159 hits).
+- [ ] A.5.2 `tests/test_demo_sql.py` and `tests/test_demo_data.py` — update table/column/view name assertions.
+- [ ] A.5.3 E2E tests under `tests/e2e/`:
+  - `test_ar_dashboard_structure.py` — sheet IDs stay, filter group IDs and parameter IDs change.
+  - `test_ar_dataset_health.py` — dataset IDs change, column names change.
+  - `test_ar_sheet_visuals.py` — visual titles change (user-visible strings).
+  - `test_ar_drilldown.py` — parameter name changes (`pArParentAccountId` → `pArLedgerAccountId`), click-target titles change.
+  - `test_ar_state_toggles.py` — most toggle titles are vocabulary-neutral; sweep anyway.
+  - `test_ar_filters.py` — filter control titles change ("Parent Account" → "Ledger Account").
+  - `browser_helpers.py` and `conftest.py` — 2 hits each; probably variable names in helper fixtures.
+- [ ] A.5.4 Run full unit/integration suite: `.venv/bin/pytest`. Green before moving to A.6.
+- [ ] A.5.5 Commit — `Phase A.5: update tests to ledger/subledger vocabulary`.
+
+---
+
+## Phase A.6 — Add `origin` attribute to transactions
+
+Additive-only. No filter, no visual wiring, no exception check uses it yet. This plants the column so Phase B / Phase D / future e2e coverage has something real to read.
+
+- [ ] A.6.1 `demo/schema.sql`: add `origin VARCHAR(30) NOT NULL DEFAULT 'internal_initiated' CHECK (origin IN ('internal_initiated', 'external_force_posted'))` to `ar_transactions`. Place the column after `transfer_type` for semantic grouping.
+- [ ] A.6.2 `account_recon/demo_data.py`: generator emits `origin` on every transaction. Default `internal_initiated` for ~90%; sprinkle `external_force_posted` on ~10% at a deterministic offset (e.g., "every 10th transaction whose `transaction_id` hashes to an even value"). Add a new `TestScenarioCoverage` assertion in `test_demo_data.py` guaranteeing ≥ N rows of each `origin` value (per the CLAUDE.md convention: "Write the coverage assertion before the visual, not after").
+- [ ] A.6.3 `account_recon/datasets.py`: add `origin` to the `ar_transactions` dataset's `columns=[...]` list and to the dataset's `SELECT` projection. No changes to any other dataset.
+- [ ] A.6.4 Transactions detail visual: add `origin` as a visible column. This is a pure-display tweak — no drill, no filter, no conditional format. Worth doing in A.6 so the column is "real" in the UI, not just schema; also confirms end-to-end wiring works.
+- [ ] A.6.5 `tests/test_demo_data.py` — scenario coverage for origin distribution. `tests/test_account_recon.py` — dataset column contract includes `origin`. Both green.
+- [ ] A.6.6 Commit — `Phase A.6: add origin attribute to transactions (internal_initiated / external_force_posted)`.
+
+**STOP** — confirm before moving on: `origin` is tag-only in Phase A. No filter-control, no exception check, no drill-down targeting. If the idea of wiring it to a filter starts feeling compelling, defer that to a Phase A.6.5 sub-task — but do not expand scope under the "while I'm here" impulse.
+
+---
+
+## Phase A.7 — Docs sweep
+
+Last because earlier phases churn the things the docs reference.
+
+- [ ] A.7.1 `CLAUDE.md` — update the Domain Model → Account Reconciliation section to use ledger/sub-ledger vocabulary. Update the Generated Output dataset list (new IDs). Update the Project Structure section if any file names changed (none expected).
+- [ ] A.7.2 `README.md` — update the "Account Reconciliation — 5 tabs" table, the dataset list, the drift-check descriptions. Preserve the plain-language tone.
+- [ ] A.7.3 `SPEC.md` — this already describes Phase A's intent, but the *current* spec sections above the Suggestions block still use parent/child. Sweep those to the new vocabulary, since they're documenting the as-of-today state which now matches the new names.
+- [ ] A.7.4 `RELEASE_NOTES.md` — draft v1.2.0 entry. Highlight: vocabulary rename (user-visible across every AR tab), `origin` column added for future use, no behavioral changes. Call out the one-time cleanup requirement (stale tagged resources from old dataset IDs).
+- [ ] A.7.5 Search for any stray "parent" / "child" vocabulary in code comments, docstrings, or rich-text blocks: `grep -irE 'parent|child' src/quicksight_gen/account_recon tests demo/schema.sql` should return zero non-intentional hits.
+- [ ] A.7.6 Commit — `Phase A.7: docs sweep for ledger/subledger vocabulary + origin column`.
+
+---
+
+## Phase A.8 — Deploy + e2e verification + release
+
+- [ ] A.8.1 `cd run && ../.venv/bin/quicksight-gen demo apply --all -c config.yaml -o out/` — applies new schema, seeds new data, regenerates JSON.
+- [ ] A.8.2 `.venv/bin/quicksight-gen deploy --all --generate -c run/config.yaml -o run/out/` — deploys updated datasets + analyses + dashboards.
+- [ ] A.8.3 `.venv/bin/quicksight-gen cleanup --dry-run -c run/config.yaml -o run/out/` — confirm the dry-run lists only the old `qs-gen-ar-parent-*` / `qs-gen-ar-account-*` datasets as stale, and nothing else. Then `--yes` to sweep them.
+- [ ] A.8.4 `./run_e2e.sh --parallel 4` — full e2e suite against the redeployed dashboards. Fix any browser tests that the rename missed (most likely: a hard-coded visual title string in a test that A.5.3 didn't catch).
+- [ ] A.8.5 Tag `v1.2.0`, push branch `phase-a-vocabulary`, open PR.
+- [ ] A.8.6 Merge to main (fast-forward preferred — this is a linear rename), push tag.
+
+---
+
+## Decisions to make in flight
+
+- **Origin value strings: `internal_initiated` / `external_force_posted`, or hyphenated per SPEC prose?** Recommend underscore — SQL identifiers, string-column values in a Postgres column will flow through SQL filters and the hyphen form requires quoting in enum-style `CHECK` constraints. User-facing display can still hyphenate via the visual label if desired.
+- **Do we rename `ar_accounts` → `ar_subledger_accounts` or keep as `ar_accounts`?** Decided in A.0.1; default recommendation is rename, but revisit if A.2 surfaces unexpected collateral damage.
+- **Do old dataset JSON files (`qs-gen-ar-parent-accounts-dataset.json`, etc.) get pruned by `generate`?** `generate` already prunes stale dataset JSON that belongs to neither app (per CLAUDE.md). If the prune logic is name-based, it'll handle this automatically on first regenerate; if it's strict whitelist-based, the stale files will need one manual `rm out/datasets/qs-gen-ar-parent*` before redeploy. Verify in A.2 or A.8.
+- **Should the `origin` column value for imported/reconciled rows in Phase B (later) back-fill based on their source system, or stay `internal_initiated` by default?** Out of scope for A, but worth flagging in the A.6 commit message so Phase B sees it.
+
+## Risks
+
+- **E2E label drift**: 7 AR e2e test files assert on user-visible strings (titles, filter labels). Some may miss the rename if the assertion uses a substring match (`"Balances" in title`) rather than equality. Scan for both `==` and `in` / `contains` patterns in A.5.3.
+- **Hard-coded dataset IDs in e2e config or Playwright selectors**: QuickSight DOM has no dataset IDs in the rendered HTML, but e2e API-layer tests assert on dataset ARNs. These are derived from IDs at deploy time, so they will update naturally — but `test_ar_dataset_health.py` is likely the biggest concentration and deserves a careful read.
+- **Rich-text block on Getting Started sheet**: XML-composed. An un-renamed "parent" in a text block won't fail any test but will read wrong. A.4.3's STOP is there to catch this.
+- **External stakeholders' mental model**: if any reviewer is used to reading the old vocabulary in demos or screenshots, flag the rename in the v1.2.0 release notes so the cutover doesn't look like a regression.
