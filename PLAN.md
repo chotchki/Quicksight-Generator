@@ -53,11 +53,14 @@ These are the canonical renames this plan applies. Deviations get called out in 
 
 STOP here. Three calls needed before any rename lands, since they cascade.
 
-- [ ] A.0.1 **Rename `ar_accounts` → `ar_subledger_accounts`, or keep as `ar_accounts`?** The rename is more consistent (and matches the dataset-ID-rename-freely license), but `ar_accounts` is "neutral" and already reads clearly in context. Recommend **rename to `ar_subledger_accounts`** — Phase A is the one window where this cost is close to zero (no saved consumers), and leaving it as the odd one out costs clarity in every future query.
-- [ ] A.0.2 **Rename `account_id` column → `subledger_account_id`, or keep as `account_id`?** Same reasoning. Recommend **keep as `account_id`** — it is the FK *target* column in `ar_subledger_accounts` and the FK *source* column in `ar_transactions`, and renaming it cascades to every SQL projection in every dataset. The long-form name in the table name carries the sub-ledger meaning; inside the table, `account_id` is unambiguous. Revisit in Phase B if the unified transfer schema wants a stricter contract.
-- [ ] A.0.3 **`origin` values: `internal_initiated`/`external_force_posted`, or `internal`/`external`?** SPEC direction B used the long form. Recommend **long form** — the meaningful distinction is about *ordering* and *context*, not source-of-money; a terser `external` would get confused with "external merchant transaction" in PR. Extra bytes are worth the unambiguity.
+- [x] A.0.1 **Rename `ar_accounts` → `ar_subledger_accounts`, or keep as `ar_accounts`?** The rename is more consistent (and matches the dataset-ID-rename-freely license), but `ar_accounts` is "neutral" and already reads clearly in context. Recommend **rename to `ar_subledger_accounts`** — Phase A is the one window where this cost is close to zero (no saved consumers), and leaving it as the odd one out costs clarity in every future query.
+- [x] A.0.2 **Rename `account_id` column → `subledger_account_id`, or keep as `account_id`?** Same reasoning. Recommend **keep as `account_id`** — it is the FK *target* column in `ar_subledger_accounts` and the FK *source* column in `ar_transactions`, and renaming it cascades to every SQL projection in every dataset. The long-form name in the table name carries the sub-ledger meaning; inside the table, `account_id` is unambiguous. Revisit in Phase B if the unified transfer schema wants a stricter contract.
+- [x] A.0.3 **`origin` values: `internal_initiated`/`external_force_posted`, or `internal`/`external`?** SPEC direction B used the long form. Recommend **long form** — the meaningful distinction is about *ordering* and *context*, not source-of-money; a terser `external` would get confused with "external merchant transaction" in PR. Extra bytes are worth the unambiguity.
 
-Record the three decisions inline below this section (struck-through `old → new` lines or a short "pinned" note) before starting A.1.
+**Pinned decisions (2026-04-15):**
+- A.0.1 → **rename** `ar_accounts` → `ar_subledger_accounts`. "Standard vocab is the whole point of phase a."
+- A.0.2 → **rename** column `account_id` → `subledger_account_id` (overrides the plan's recommendation to keep it). User accepts the cascade across every SQL projection: "I am willing to accept the cascade effort if that results in better terminology alignment. That has already proven valuable."
+- A.0.3 → **long form** `internal_initiated` / `external_force_posted`.
 
 ---
 

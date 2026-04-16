@@ -209,170 +209,186 @@ WHERE p.payment_id IS NULL;
 -- Account Reconciliation (ar_ prefix)
 --
 -- Double-entry bank-account model. Two independent drift checks:
---   Child drift  = stored child balance vs running Σ posted txns
---                  (fires when the child-balance upstream feed disagrees
---                  with the underlying transactions)
---   Parent drift = stored parent balance vs Σ children's stored balances
---                  (fires when the parent-balance upstream feed disagrees
---                  with the aggregation of its children — independent of
---                  whether the child feed and the transactions agree)
+--   Sub-ledger drift = stored sub-ledger balance vs running Σ posted txns
+--                      (fires when the sub-ledger-balance upstream feed
+--                      disagrees with the underlying transactions)
+--   Ledger drift     = stored ledger balance vs Σ sub-ledgers' stored balances
+--                      (fires when the ledger-balance upstream feed disagrees
+--                      with the aggregation of its sub-ledgers — independent
+--                      of whether the sub-ledger feed and the transactions
+--                      agree)
 --
--- Parent- and child-level stored balances may come from different
+-- Ledger- and sub-ledger-level stored balances may come from different
 -- upstream systems, so each drift points at a different source.
 -- ===================================================================
 
+-- Drop legacy parent/child-named objects (pre-v1.2.0 installations) so
+-- `demo apply` cleans up before recreating under the new vocabulary.
 DROP VIEW  IF EXISTS ar_child_overdraft                CASCADE;
 DROP VIEW  IF EXISTS ar_child_limit_breach             CASCADE;
 DROP VIEW  IF EXISTS ar_child_daily_outbound_by_type   CASCADE;
-DROP VIEW  IF EXISTS ar_transfer_summary               CASCADE;
-DROP VIEW  IF EXISTS ar_transfer_net_zero              CASCADE;
 DROP VIEW  IF EXISTS ar_parent_balance_drift           CASCADE;
 DROP VIEW  IF EXISTS ar_account_balance_drift          CASCADE;
 DROP VIEW  IF EXISTS ar_computed_parent_daily_balance  CASCADE;
 DROP VIEW  IF EXISTS ar_computed_account_daily_balance CASCADE;
 DROP TABLE IF EXISTS ar_parent_transfer_limits         CASCADE;
-DROP TABLE IF EXISTS ar_transactions                   CASCADE;
-DROP TABLE IF EXISTS ar_daily_balances                 CASCADE;
 DROP TABLE IF EXISTS ar_parent_daily_balances          CASCADE;
 DROP TABLE IF EXISTS ar_account_daily_balances         CASCADE;
 DROP TABLE IF EXISTS ar_accounts                       CASCADE;
 DROP TABLE IF EXISTS ar_parent_accounts                CASCADE;
 
+-- Current-vocabulary drops
+DROP VIEW  IF EXISTS ar_subledger_overdraft              CASCADE;
+DROP VIEW  IF EXISTS ar_subledger_limit_breach           CASCADE;
+DROP VIEW  IF EXISTS ar_subledger_daily_outbound_by_type CASCADE;
+DROP VIEW  IF EXISTS ar_transfer_summary                 CASCADE;
+DROP VIEW  IF EXISTS ar_transfer_net_zero                CASCADE;
+DROP VIEW  IF EXISTS ar_ledger_balance_drift             CASCADE;
+DROP VIEW  IF EXISTS ar_subledger_balance_drift          CASCADE;
+DROP VIEW  IF EXISTS ar_computed_ledger_daily_balance    CASCADE;
+DROP VIEW  IF EXISTS ar_computed_subledger_daily_balance CASCADE;
+DROP TABLE IF EXISTS ar_ledger_transfer_limits           CASCADE;
+DROP TABLE IF EXISTS ar_transactions                     CASCADE;
+DROP TABLE IF EXISTS ar_subledger_daily_balances         CASCADE;
+DROP TABLE IF EXISTS ar_ledger_daily_balances            CASCADE;
+DROP TABLE IF EXISTS ar_subledger_accounts               CASCADE;
+DROP TABLE IF EXISTS ar_ledger_accounts                  CASCADE;
 
-CREATE TABLE ar_parent_accounts (
-    parent_account_id VARCHAR(100) PRIMARY KEY,
+
+CREATE TABLE ar_ledger_accounts (
+    ledger_account_id VARCHAR(100) PRIMARY KEY,
     name              VARCHAR(255) NOT NULL,
     is_internal       BOOLEAN      NOT NULL
 );
 
-CREATE TABLE ar_accounts (
-    account_id        VARCHAR(100) PRIMARY KEY,
-    name              VARCHAR(255) NOT NULL,
-    is_internal       BOOLEAN      NOT NULL,
-    parent_account_id VARCHAR(100) NOT NULL REFERENCES ar_parent_accounts(parent_account_id)
+CREATE TABLE ar_subledger_accounts (
+    subledger_account_id VARCHAR(100) PRIMARY KEY,
+    name                 VARCHAR(255) NOT NULL,
+    is_internal          BOOLEAN      NOT NULL,
+    ledger_account_id    VARCHAR(100) NOT NULL REFERENCES ar_ledger_accounts(ledger_account_id)
 );
 
--- Stored daily final at the parent-account level. Populated by the
--- parent-account upstream feed.
-CREATE TABLE ar_parent_daily_balances (
-    parent_account_id VARCHAR(100)  NOT NULL REFERENCES ar_parent_accounts(parent_account_id),
+-- Stored daily final at the ledger-account level. Populated by the
+-- ledger-account upstream feed.
+CREATE TABLE ar_ledger_daily_balances (
+    ledger_account_id VARCHAR(100)  NOT NULL REFERENCES ar_ledger_accounts(ledger_account_id),
     balance_date      DATE          NOT NULL,
     balance           DECIMAL(14,2) NOT NULL,
-    PRIMARY KEY (parent_account_id, balance_date)
+    PRIMARY KEY (ledger_account_id, balance_date)
 );
 
--- Stored daily final at the child-account level. Populated by the
--- child-account upstream feed — may be a different system from the
--- parent-balance feed, hence the two-level reconciliation.
-CREATE TABLE ar_account_daily_balances (
-    account_id   VARCHAR(100)  NOT NULL REFERENCES ar_accounts(account_id),
-    balance_date DATE          NOT NULL,
-    balance      DECIMAL(14,2) NOT NULL,
-    PRIMARY KEY (account_id, balance_date)
+-- Stored daily final at the sub-ledger-account level. Populated by the
+-- sub-ledger-account upstream feed — may be a different system from the
+-- ledger-balance feed, hence the two-level reconciliation.
+CREATE TABLE ar_subledger_daily_balances (
+    subledger_account_id VARCHAR(100)  NOT NULL REFERENCES ar_subledger_accounts(subledger_account_id),
+    balance_date         DATE          NOT NULL,
+    balance              DECIMAL(14,2) NOT NULL,
+    PRIMARY KEY (subledger_account_id, balance_date)
 );
 
 -- Every transfer is a group of transactions sharing a transfer_id.
 -- memo is denormalized onto each row for simplicity; the summary view
 -- picks a representative memo per transfer.
 CREATE TABLE ar_transactions (
-    transaction_id VARCHAR(100)  PRIMARY KEY,
-    account_id     VARCHAR(100)  NOT NULL REFERENCES ar_accounts(account_id),
-    transfer_id    VARCHAR(100)  NOT NULL,
-    amount         DECIMAL(14,2) NOT NULL,
-    posted_at      TIMESTAMP     NOT NULL,
-    status         VARCHAR(20)   NOT NULL CHECK (status IN ('posted', 'failed', 'pending')),
-    transfer_type  VARCHAR(20)   NOT NULL CHECK (transfer_type IN ('ach', 'wire', 'internal', 'cash')),
-    memo           VARCHAR(255)
+    transaction_id       VARCHAR(100)  PRIMARY KEY,
+    subledger_account_id VARCHAR(100)  NOT NULL REFERENCES ar_subledger_accounts(subledger_account_id),
+    transfer_id          VARCHAR(100)  NOT NULL,
+    amount               DECIMAL(14,2) NOT NULL,
+    posted_at            TIMESTAMP     NOT NULL,
+    status               VARCHAR(20)   NOT NULL CHECK (status IN ('posted', 'failed', 'pending')),
+    transfer_type        VARCHAR(20)   NOT NULL CHECK (transfer_type IN ('ach', 'wire', 'internal', 'cash')),
+    memo                 VARCHAR(255)
 );
 
--- Parent-defined per-type daily transfer limits. A child account's daily
--- outbound (debit) total for a given transfer_type may not exceed its
--- parent's limit for that type. Absence of a row for (parent, type) means
--- "no limit enforced for that type at this parent".
-CREATE TABLE ar_parent_transfer_limits (
-    parent_account_id VARCHAR(100)  NOT NULL REFERENCES ar_parent_accounts(parent_account_id),
+-- Ledger-defined per-type daily transfer limits. A sub-ledger account's
+-- daily outbound (debit) total for a given transfer_type may not exceed
+-- its ledger's limit for that type. Absence of a row for (ledger, type)
+-- means "no limit enforced for that type at this ledger".
+CREATE TABLE ar_ledger_transfer_limits (
+    ledger_account_id VARCHAR(100)  NOT NULL REFERENCES ar_ledger_accounts(ledger_account_id),
     transfer_type     VARCHAR(20)   NOT NULL CHECK (transfer_type IN ('ach', 'wire', 'internal', 'cash')),
     daily_limit       DECIMAL(14,2) NOT NULL,
-    PRIMARY KEY (parent_account_id, transfer_type)
+    PRIMARY KEY (ledger_account_id, transfer_type)
 );
 
-CREATE INDEX idx_ar_accounts_parent               ON ar_accounts(parent_account_id);
-CREATE INDEX idx_ar_txn_account                   ON ar_transactions(account_id);
-CREATE INDEX idx_ar_txn_transfer                  ON ar_transactions(transfer_id);
-CREATE INDEX idx_ar_txn_posted                    ON ar_transactions(posted_at);
-CREATE INDEX idx_ar_txn_status                    ON ar_transactions(status);
-CREATE INDEX idx_ar_txn_transfer_type             ON ar_transactions(transfer_type);
-CREATE INDEX idx_ar_parent_daily_balances_date    ON ar_parent_daily_balances(balance_date);
-CREATE INDEX idx_ar_account_daily_balances_date   ON ar_account_daily_balances(balance_date);
+CREATE INDEX idx_ar_subledger_accounts_ledger      ON ar_subledger_accounts(ledger_account_id);
+CREATE INDEX idx_ar_txn_subledger                  ON ar_transactions(subledger_account_id);
+CREATE INDEX idx_ar_txn_transfer                   ON ar_transactions(transfer_id);
+CREATE INDEX idx_ar_txn_posted                     ON ar_transactions(posted_at);
+CREATE INDEX idx_ar_txn_status                     ON ar_transactions(status);
+CREATE INDEX idx_ar_txn_transfer_type              ON ar_transactions(transfer_type);
+CREATE INDEX idx_ar_ledger_daily_balances_date     ON ar_ledger_daily_balances(balance_date);
+CREATE INDEX idx_ar_subledger_daily_balances_date  ON ar_subledger_daily_balances(balance_date);
 
 
--- Running Σ of posted transactions per child account, up to and
--- including each balance date on which a stored child balance exists.
+-- Running Σ of posted transactions per sub-ledger account, up to and
+-- including each balance date on which a stored sub-ledger balance exists.
 -- Failed/pending transactions are excluded.
-CREATE VIEW ar_computed_account_daily_balance AS
+CREATE VIEW ar_computed_subledger_daily_balance AS
 SELECT
-    adb.account_id,
-    adb.balance_date,
+    sdb.subledger_account_id,
+    sdb.balance_date,
     COALESCE(SUM(t.amount), 0) AS computed_balance
-FROM ar_account_daily_balances adb
+FROM ar_subledger_daily_balances sdb
 LEFT JOIN ar_transactions t
-    ON t.account_id        = adb.account_id
-   AND t.status            = 'posted'
-   AND t.posted_at::date  <= adb.balance_date
-GROUP BY adb.account_id, adb.balance_date;
+    ON t.subledger_account_id = sdb.subledger_account_id
+   AND t.status               = 'posted'
+   AND t.posted_at::date     <= sdb.balance_date
+GROUP BY sdb.subledger_account_id, sdb.balance_date;
 
 
--- Child-level drift: stored − computed for each (account, date).
-CREATE VIEW ar_account_balance_drift AS
+-- Sub-ledger-level drift: stored − computed for each (sub-ledger account, date).
+CREATE VIEW ar_subledger_balance_drift AS
 SELECT
-    stored.account_id,
-    a.name                                    AS account_name,
-    a.parent_account_id,
-    pa.name                                   AS parent_name,
-    CASE WHEN a.is_internal THEN 'Internal' ELSE 'External' END AS scope,
+    stored.subledger_account_id,
+    s.name                                    AS subledger_name,
+    s.ledger_account_id,
+    la.name                                   AS ledger_name,
+    CASE WHEN s.is_internal THEN 'Internal' ELSE 'External' END AS scope,
     stored.balance_date,
     stored.balance                            AS stored_balance,
     COALESCE(computed.computed_balance, 0)    AS computed_balance,
     stored.balance - COALESCE(computed.computed_balance, 0) AS drift
-FROM ar_account_daily_balances stored
-JOIN ar_accounts a        USING (account_id)
-JOIN ar_parent_accounts pa USING (parent_account_id)
-LEFT JOIN ar_computed_account_daily_balance computed
-       ON computed.account_id   = stored.account_id
-      AND computed.balance_date = stored.balance_date;
+FROM ar_subledger_daily_balances stored
+JOIN ar_subledger_accounts s   USING (subledger_account_id)
+JOIN ar_ledger_accounts la     USING (ledger_account_id)
+LEFT JOIN ar_computed_subledger_daily_balance computed
+       ON computed.subledger_account_id = stored.subledger_account_id
+      AND computed.balance_date         = stored.balance_date;
 
 
--- Σ of children's stored balances per parent per day. The parent-level
--- reconciliation invariant: stored parent balance should equal this sum.
-CREATE VIEW ar_computed_parent_daily_balance AS
+-- Σ of sub-ledgers' stored balances per ledger per day. The ledger-level
+-- reconciliation invariant: stored ledger balance should equal this sum.
+CREATE VIEW ar_computed_ledger_daily_balance AS
 SELECT
-    pdb.parent_account_id,
-    pdb.balance_date,
-    COALESCE(SUM(adb.balance), 0) AS computed_balance
-FROM ar_parent_daily_balances pdb
-LEFT JOIN ar_accounts a
-       ON a.parent_account_id = pdb.parent_account_id
-LEFT JOIN ar_account_daily_balances adb
-       ON adb.account_id   = a.account_id
-      AND adb.balance_date = pdb.balance_date
-GROUP BY pdb.parent_account_id, pdb.balance_date;
+    ldb.ledger_account_id,
+    ldb.balance_date,
+    COALESCE(SUM(sdb.balance), 0) AS computed_balance
+FROM ar_ledger_daily_balances ldb
+LEFT JOIN ar_subledger_accounts s
+       ON s.ledger_account_id = ldb.ledger_account_id
+LEFT JOIN ar_subledger_daily_balances sdb
+       ON sdb.subledger_account_id = s.subledger_account_id
+      AND sdb.balance_date         = ldb.balance_date
+GROUP BY ldb.ledger_account_id, ldb.balance_date;
 
 
--- Parent-level drift: stored parent balance vs Σ of children's stored
--- balances. Independent of whether the child drift view shows issues.
-CREATE VIEW ar_parent_balance_drift AS
+-- Ledger-level drift: stored ledger balance vs Σ of sub-ledgers' stored
+-- balances. Independent of whether the sub-ledger drift view shows issues.
+CREATE VIEW ar_ledger_balance_drift AS
 SELECT
-    stored.parent_account_id,
-    pa.name                                  AS parent_name,
-    pa.is_internal,
+    stored.ledger_account_id,
+    la.name                                  AS ledger_name,
+    la.is_internal,
     stored.balance_date,
     stored.balance                           AS stored_balance,
     COALESCE(computed.computed_balance, 0)   AS computed_balance,
     stored.balance - COALESCE(computed.computed_balance, 0) AS drift
-FROM ar_parent_daily_balances stored
-JOIN ar_parent_accounts pa USING (parent_account_id)
-LEFT JOIN ar_computed_parent_daily_balance computed
-       ON computed.parent_account_id = stored.parent_account_id
+FROM ar_ledger_daily_balances stored
+JOIN ar_ledger_accounts la USING (ledger_account_id)
+LEFT JOIN ar_computed_ledger_daily_balance computed
+       ON computed.ledger_account_id = stored.ledger_account_id
       AND computed.balance_date      = stored.balance_date;
 
 
@@ -382,7 +398,7 @@ LEFT JOIN ar_computed_parent_daily_balance computed
 -- transfers where at least one leg lands on an external account — the
 -- external leg's effect on tracked balances is zero (we don't store
 -- external balances), so a net-zero transfer can still move a tracked
--- child's running total by its full amount.
+-- sub-ledger's running total by its full amount.
 CREATE VIEW ar_transfer_net_zero AS
 SELECT
     t.transfer_id,
@@ -394,14 +410,14 @@ SELECT
              THEN t.amount ELSE 0 END)                            AS total_credit,
     COUNT(*)                                                      AS leg_count,
     SUM(CASE WHEN t.status = 'failed' THEN 1 ELSE 0 END)          AS failed_leg_count,
-    BOOL_OR(NOT a.is_internal)                                    AS has_external_leg,
+    BOOL_OR(NOT s.is_internal)                                    AS has_external_leg,
     CASE
         WHEN SUM(CASE WHEN t.status <> 'failed' THEN t.amount ELSE 0 END) = 0
             THEN 'net_zero'
         ELSE 'not_net_zero'
     END                                                           AS net_zero_status
 FROM ar_transactions t
-JOIN ar_accounts a ON a.account_id = t.account_id
+JOIN ar_subledger_accounts s ON s.subledger_account_id = t.subledger_account_id
 GROUP BY t.transfer_id;
 
 
@@ -429,57 +445,58 @@ SELECT
 FROM ar_transfer_net_zero tz;
 
 
--- Per (child account, date, transfer_type) Σ of outbound (debit) amounts
--- across non-failed transactions. Only tracked (internal) children
--- contribute — external children have no stored balance to bound.
-CREATE VIEW ar_child_daily_outbound_by_type AS
+-- Per (sub-ledger account, date, transfer_type) Σ of outbound (debit)
+-- amounts across non-failed transactions. Only tracked (internal)
+-- sub-ledgers contribute — external sub-ledgers have no stored balance
+-- to bound.
+CREATE VIEW ar_subledger_daily_outbound_by_type AS
 SELECT
-    t.account_id,
-    a.parent_account_id,
+    t.subledger_account_id,
+    s.ledger_account_id,
     t.posted_at::date                   AS activity_date,
     t.transfer_type,
     SUM(ABS(t.amount))                  AS outbound_total
 FROM ar_transactions t
-JOIN ar_accounts a ON a.account_id = t.account_id
+JOIN ar_subledger_accounts s ON s.subledger_account_id = t.subledger_account_id
 WHERE t.status <> 'failed'
   AND t.amount < 0
-  AND a.is_internal = TRUE
-GROUP BY t.account_id, a.parent_account_id, t.posted_at::date, t.transfer_type;
+  AND s.is_internal = TRUE
+GROUP BY t.subledger_account_id, s.ledger_account_id, t.posted_at::date, t.transfer_type;
 
 
--- Child limit breach: daily outbound by type exceeds the parent's
+-- Sub-ledger limit breach: daily outbound by type exceeds the ledger's
 -- configured daily_limit for that type. Rows are emitted only where a
--- limit is defined (i.e., parent-limits join matches).
-CREATE VIEW ar_child_limit_breach AS
+-- limit is defined (i.e., ledger-limits join matches).
+CREATE VIEW ar_subledger_limit_breach AS
 SELECT
-    o.account_id,
-    a.name                              AS account_name,
-    o.parent_account_id,
-    pa.name                             AS parent_name,
+    o.subledger_account_id,
+    s.name                              AS subledger_name,
+    o.ledger_account_id,
+    la.name                             AS ledger_name,
     o.activity_date,
     o.transfer_type,
     o.outbound_total,
     l.daily_limit,
     o.outbound_total - l.daily_limit    AS overage
-FROM ar_child_daily_outbound_by_type o
-JOIN ar_accounts a         ON a.account_id = o.account_id
-JOIN ar_parent_accounts pa ON pa.parent_account_id = o.parent_account_id
-JOIN ar_parent_transfer_limits l
-  ON l.parent_account_id = o.parent_account_id
+FROM ar_subledger_daily_outbound_by_type o
+JOIN ar_subledger_accounts s   ON s.subledger_account_id = o.subledger_account_id
+JOIN ar_ledger_accounts la     ON la.ledger_account_id    = o.ledger_account_id
+JOIN ar_ledger_transfer_limits l
+  ON l.ledger_account_id = o.ledger_account_id
  AND l.transfer_type     = o.transfer_type
 WHERE o.outbound_total > l.daily_limit;
 
 
--- Child overdraft: stored child balance < 0 for a given day.
-CREATE VIEW ar_child_overdraft AS
+-- Sub-ledger overdraft: stored sub-ledger balance < 0 for a given day.
+CREATE VIEW ar_subledger_overdraft AS
 SELECT
-    adb.account_id,
-    a.name                              AS account_name,
-    a.parent_account_id,
-    pa.name                             AS parent_name,
-    adb.balance_date,
-    adb.balance                         AS stored_balance
-FROM ar_account_daily_balances adb
-JOIN ar_accounts a         USING (account_id)
-JOIN ar_parent_accounts pa USING (parent_account_id)
-WHERE adb.balance < 0;
+    sdb.subledger_account_id,
+    s.name                              AS subledger_name,
+    s.ledger_account_id,
+    la.name                             AS ledger_name,
+    sdb.balance_date,
+    sdb.balance                         AS stored_balance
+FROM ar_subledger_daily_balances sdb
+JOIN ar_subledger_accounts s   USING (subledger_account_id)
+JOIN ar_ledger_accounts la     USING (ledger_account_id)
+WHERE sdb.balance < 0;
