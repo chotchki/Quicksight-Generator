@@ -310,6 +310,56 @@ CREATE INDEX idx_ar_ledger_daily_balances_date     ON ar_ledger_daily_balances(b
 CREATE INDEX idx_ar_subledger_daily_balances_date  ON ar_subledger_daily_balances(balance_date);
 
 
+-- ===================================================================
+-- Unified transfer + posting (Phase B)
+--
+-- Both apps share these two tables. A transfer is a logical movement
+-- of money; each transfer has one or more postings (double-entry legs)
+-- that must net to zero for a healthy transfer. PR's chain-of-custody
+-- (sale → settlement → payment → external_txn) is modeled as a tree
+-- of transfers linked by parent_transfer_id. AR's existing transfers
+-- map 1:1 onto the unified transfer table.
+--
+-- transfer_type carries app-specific vocabulary:
+--   PR: sale, settlement, payment, external_txn
+--   AR: ach, wire, internal, cash
+-- ===================================================================
+
+CREATE TABLE transfer (
+    transfer_id        VARCHAR(100)   PRIMARY KEY,
+    parent_transfer_id VARCHAR(100)   REFERENCES transfer(transfer_id),
+    transfer_type      VARCHAR(30)    NOT NULL
+        CHECK (transfer_type IN (
+            'sale', 'settlement', 'payment', 'external_txn',
+            'ach', 'wire', 'internal', 'cash'
+        )),
+    origin             VARCHAR(30)    NOT NULL DEFAULT 'internal_initiated'
+        CHECK (origin IN ('internal_initiated', 'external_force_posted')),
+    amount             DECIMAL(14,2)  NOT NULL,
+    status             VARCHAR(20)    NOT NULL DEFAULT 'posted'
+        CHECK (status IN ('posted', 'pending', 'failed', 'settled',
+                          'unsettled', 'returned', 'active', 'completed')),
+    created_at         TIMESTAMP      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    memo               VARCHAR(255),
+    external_system    VARCHAR(100)
+);
+
+CREATE TABLE posting (
+    posting_id           VARCHAR(100)   PRIMARY KEY,
+    transfer_id          VARCHAR(100)   NOT NULL REFERENCES transfer(transfer_id),
+    subledger_account_id VARCHAR(100)   NOT NULL REFERENCES ar_subledger_accounts(subledger_account_id),
+    signed_amount        DECIMAL(14,2)  NOT NULL,
+    posted_at            TIMESTAMP      NOT NULL,
+    status               VARCHAR(20)    NOT NULL DEFAULT 'success'
+        CHECK (status IN ('success', 'failed'))
+);
+
+CREATE INDEX idx_transfer_parent     ON transfer(parent_transfer_id);
+CREATE INDEX idx_transfer_type       ON transfer(transfer_type);
+CREATE INDEX idx_posting_transfer    ON posting(transfer_id);
+CREATE INDEX idx_posting_account     ON posting(subledger_account_id, posted_at);
+
+
 -- Running Σ of successful postings per sub-ledger account, up to and
 -- including each balance date on which a stored sub-ledger balance exists.
 -- Failed postings are excluded.
@@ -484,53 +534,3 @@ FROM ar_subledger_daily_balances sdb
 JOIN ar_subledger_accounts s   USING (subledger_account_id)
 JOIN ar_ledger_accounts la     USING (ledger_account_id)
 WHERE sdb.balance < 0;
-
-
--- ===================================================================
--- Unified transfer + posting (Phase B)
---
--- Both apps share these two tables. A transfer is a logical movement
--- of money; each transfer has one or more postings (double-entry legs)
--- that must net to zero for a healthy transfer. PR's chain-of-custody
--- (sale → settlement → payment → external_txn) is modeled as a tree
--- of transfers linked by parent_transfer_id. AR's existing transfers
--- map 1:1 onto the unified transfer table.
---
--- transfer_type carries app-specific vocabulary:
---   PR: sale, settlement, payment, external_txn
---   AR: ach, wire, internal, cash
--- ===================================================================
-
-CREATE TABLE transfer (
-    transfer_id        VARCHAR(100)   PRIMARY KEY,
-    parent_transfer_id VARCHAR(100)   REFERENCES transfer(transfer_id),
-    transfer_type      VARCHAR(30)    NOT NULL
-        CHECK (transfer_type IN (
-            'sale', 'settlement', 'payment', 'external_txn',
-            'ach', 'wire', 'internal', 'cash'
-        )),
-    origin             VARCHAR(30)    NOT NULL DEFAULT 'internal_initiated'
-        CHECK (origin IN ('internal_initiated', 'external_force_posted')),
-    amount             DECIMAL(14,2)  NOT NULL,
-    status             VARCHAR(20)    NOT NULL DEFAULT 'posted'
-        CHECK (status IN ('posted', 'pending', 'failed', 'settled',
-                          'unsettled', 'returned', 'active', 'completed')),
-    created_at         TIMESTAMP      NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    memo               VARCHAR(255),
-    external_system    VARCHAR(100)
-);
-
-CREATE TABLE posting (
-    posting_id           VARCHAR(100)   PRIMARY KEY,
-    transfer_id          VARCHAR(100)   NOT NULL REFERENCES transfer(transfer_id),
-    subledger_account_id VARCHAR(100)   NOT NULL REFERENCES ar_subledger_accounts(subledger_account_id),
-    signed_amount        DECIMAL(14,2)  NOT NULL,
-    posted_at            TIMESTAMP      NOT NULL,
-    status               VARCHAR(20)    NOT NULL DEFAULT 'success'
-        CHECK (status IN ('success', 'failed'))
-);
-
-CREATE INDEX idx_transfer_parent     ON transfer(parent_transfer_id);
-CREATE INDEX idx_transfer_type       ON transfer(transfer_type);
-CREATE INDEX idx_posting_transfer    ON posting(transfer_id);
-CREATE INDEX idx_posting_account     ON posting(subledger_account_id, posted_at);
