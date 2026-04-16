@@ -1,204 +1,183 @@
-# PLAN — Phase A: Vocabulary
+# PLAN — Phase B: Unified transfer schema + dataset column contracts
 
-Goal: rename AR's `parent` / `child` vocabulary to `ledger` / `sub-ledger` across code, SQL, QuickSight labels, and docs; and add an `origin` attribute to transactions as a no-behavior-change tag for later phases to consume. Lowest-risk, highest-clarity phase of the major evolution described in `SPEC.md` — pure rename with a small additive column.
+Goal: Introduce `transfer` + `posting` as the common schema primitives shared by both apps. Migrate AR onto the unified shape (light — already shaped this way). Migrate PR's sales/settlements/payments/external-txns onto transfer chains via `parent_transfer_id` (heavy lift). Promote each dataset's column list to an explicit contract so the SQL becomes one implementation of a stable interface. Drop legacy AR/PR detail tables once datasets are reading from the unified schema.
 
-Out of scope for Phase A:
-- Ledger-level direct postings (Phase C). Ledger accounts still only aggregate from sub-ledger balances; the drift invariant stays `stored parent balance = Σ children`.
-- Unified `transfer` / `posting` schema (Phase B). PR sales/settlements/payments keep their current shape.
-- Any reconciliation-DSL refactor (Phase D). Today's 9 bespoke exception checks stay as-is, just renamed where they reference parent/child.
-- Wiring `origin` into any filter, visual, or exception check. Column-only addition.
-- Any change to PR. PR has zero occurrences of `parent` / `child`; it is untouched.
+This is the largest phase of the major evolution in `SPEC.md`. Plan to land ~10 commits. Each sub-phase = one commit.
+
+Out of scope for Phase B:
+- Ledger-level direct postings (Phase C). Drift invariant for ledgers stays `Σ sub-ledger balances`.
+- Reconciliation DSL or unified Exceptions tab (Phase D). Today's 9 bespoke checks stay independent — only their underlying SQL changes.
+- Persona dashboard split (Phase E). Both apps continue producing one analysis + one dashboard each.
+- Wiring `origin` into any filter / visual / check (Phase D).
+- UI-level as-of date control (Phase D). Schema carries timestamps; queries continue to use `CURRENT_DATE` for now.
+- Customer-facing column-contract guide / docs aimed at production schemas. The contract is internal to this codebase in Phase B.
 
 Conventions:
-- Branch: `phase-a-vocabulary`, cut from `main`. One phase step = one commit; cumulative release at the end.
-- `demo apply` drops-and-creates schema, so there is no migration artifact to ship — rename in `demo/schema.sql` is atomic with the code rename. No backward-compatibility shims.
-- `cleanup --yes` handles stale tagged resources (old dataset IDs) after deploy. Document the one-time cleanup in the release notes.
-- After each phase step, run `pytest`. After A.1–A.5 land, `demo apply` + `deploy --generate` + `./run_e2e.sh` once to catch anything the unit suite missed. Before tagging, run e2e again.
-- Every label change must preserve the sheet's plain-language description and every visual's subtitle (existing coverage tests enforce this).
-
-## Vocabulary decisions (pin before any code moves)
-
-These are the canonical renames this plan applies. Deviations get called out in A.0 below.
-
-| Old | New | Notes |
-|---|---|---|
-| parent account | ledger account | user-facing + identifier |
-| child account | sub-ledger account | user-facing |
-| child drift | sub-ledger drift | user-facing (SPEC called this out explicitly) |
-| parent drift | ledger drift | user-facing |
-| `ar_parent_accounts` (table) | `ar_ledger_accounts` | |
-| `ar_parent_daily_balances` | `ar_ledger_daily_balances` | |
-| `ar_parent_transfer_limits` | `ar_ledger_transfer_limits` | |
-| `ar_accounts` | `ar_subledger_accounts` | renamed for symmetry; see A.0 to confirm |
-| `parent_account_id` (column) | `ledger_account_id` | |
-| `parent_name` | `ledger_name` | |
-| `account_id` (in ar_subledger_accounts / ar_transactions) | `subledger_account_id` | see A.0 |
-| `ar_computed_parent_daily_balance` (view) | `ar_computed_ledger_daily_balance` | |
-| `ar_computed_account_daily_balance` | `ar_computed_subledger_daily_balance` | |
-| `ar_parent_balance_drift` | `ar_ledger_balance_drift` | |
-| `ar_account_balance_drift` | `ar_subledger_balance_drift` | |
-| `ar_child_daily_outbound_by_type` | `ar_subledger_daily_outbound_by_type` | |
-| `ar_child_limit_breach` | `ar_subledger_limit_breach` | |
-| `ar_child_overdraft` | `ar_subledger_overdraft` | |
-| Dataset IDs `qs-gen-ar-parent-*`, `qs-gen-ar-account-*` | `qs-gen-ar-ledger-*`, `qs-gen-ar-subledger-*` | SPEC says rename freely |
-| Constants `DS_AR_PARENT_*`, `DS_AR_ACCOUNTS`, `DS_AR_ACCOUNT_*` | `DS_AR_LEDGER_*`, `DS_AR_SUBLEDGER_*` | |
-| Parameter `pArParentAccountId` | `pArLedgerAccountId` | drill-down parameter |
-| Filter IDs `filter-ar-parent-*`, `filter-ar-child-*`, `fg-ar-parent-*`, `fg-ar-child-*` | `filter-ar-ledger-*`, `filter-ar-subledger-*`, `fg-ar-ledger-*`, `fg-ar-subledger-*` | |
-
-`origin` attribute (new): added to `ar_transactions` only in Phase A. Schema column `origin VARCHAR(30) NOT NULL DEFAULT 'internal_initiated'`. Permitted values: `'internal_initiated'`, `'external_force_posted'`. Demo data assigns `'internal_initiated'` to ~90% of rows and `'external_force_posted'` to ~10%; generator stays deterministic.
+- Branch: `phase-b-unified-schema`, cut from `main`. One sub-phase = one commit; cumulative release at the end.
+- `demo apply` continues to drop-and-create. No staged migrations or backward-compat shims.
+- `cleanup --yes` after deploy handles stale tagged resources.
+- After each sub-phase, run `.venv/bin/pytest`. After each major checkpoint (B.4, B.6, B.10), run `./run_e2e.sh --parallel 4`.
+- Demo data MUST stay deterministic (`random.Random(42)`); tests depend on byte-identical output where unchanged.
+- Every sheet description and every visual subtitle stays present (existing coverage tests enforce this).
 
 ---
 
-## Phase A.0 — Pin decisions
+## Phase B.0 — Pin decisions
 
-STOP here. Three calls needed before any rename lands, since they cascade.
+STOP here. Big-shape decisions cascade hard.
 
-- [x] A.0.1 **Rename `ar_accounts` → `ar_subledger_accounts`, or keep as `ar_accounts`?** The rename is more consistent (and matches the dataset-ID-rename-freely license), but `ar_accounts` is "neutral" and already reads clearly in context. Recommend **rename to `ar_subledger_accounts`** — Phase A is the one window where this cost is close to zero (no saved consumers), and leaving it as the odd one out costs clarity in every future query.
-- [x] A.0.2 **Rename `account_id` column → `subledger_account_id`, or keep as `account_id`?** Same reasoning. Recommend **keep as `account_id`** — it is the FK *target* column in `ar_subledger_accounts` and the FK *source* column in `ar_transactions`, and renaming it cascades to every SQL projection in every dataset. The long-form name in the table name carries the sub-ledger meaning; inside the table, `account_id` is unambiguous. Revisit in Phase B if the unified transfer schema wants a stricter contract.
-- [x] A.0.3 **`origin` values: `internal_initiated`/`external_force_posted`, or `internal`/`external`?** SPEC direction B used the long form. Recommend **long form** — the meaningful distinction is about *ordering* and *context*, not source-of-money; a terser `external` would get confused with "external merchant transaction" in PR. Extra bytes are worth the unambiguity.
-
-**Pinned decisions (2026-04-15):**
-- A.0.1 → **rename** `ar_accounts` → `ar_subledger_accounts`. "Standard vocab is the whole point of phase a."
-- A.0.2 → **rename** column `account_id` → `subledger_account_id` (overrides the plan's recommendation to keep it). User accepts the cascade across every SQL projection: "I am willing to accept the cascade effort if that results in better terminology alignment. That has already proven valuable."
-- A.0.3 → **long form** `internal_initiated` / `external_force_posted`.
-
----
-
-## Phase A.1 — Schema DDL rename
-
-Pure text rename of `demo/schema.sql`. Drop-and-create on `demo apply` means the change is atomic with the Python rename in A.2–A.4; no staged migration needed.
-
-- [ ] A.1.1 Update the DROP section at the top to reference new names (or both old + new DROP IF EXISTS — safe on fresh DBs, useful if someone has an old schema loaded).
-- [ ] A.1.2 Rename all tables (`ar_parent_accounts`, `ar_parent_daily_balances`, `ar_parent_transfer_limits`, and optionally `ar_accounts` per A.0.1).
-- [ ] A.1.3 Rename all columns (`parent_account_id` → `ledger_account_id`, `parent_name` → `ledger_name`; and optionally `account_id` → `subledger_account_id` per A.0.2).
-- [ ] A.1.4 Rename all views to match (5 views — see vocabulary table).
-- [ ] A.1.5 Rename all indexes (`idx_ar_accounts_parent` → `idx_ar_subledger_accounts_ledger`, `idx_ar_parent_daily_balances_date` → `idx_ar_ledger_daily_balances_date`, etc).
-- [ ] A.1.6 Update every SQL comment that references parent/child vocabulary to the new terms.
-- [ ] A.1.7 Sanity check: `grep -iE 'parent|child' demo/schema.sql` should return only the intentional narrative in view header comments (if any remain), not any identifiers.
-- [ ] A.1.8 Commit — `Phase A.1: schema DDL rename parent/child → ledger/subledger`.
-
-**STOP** — do not run `demo apply` yet. Code in A.2+ still references the old names; the app will not generate valid JSON until A.2–A.4 land together. Bundle A.1–A.4 into one deploy cycle.
+- [ ] B.0.1 **Unified table names: `transfer` + `posting` (no prefix), or `qs_transfer` + `qs_posting`?** Recommend **no prefix** — these are the canonical names. App-specific prefixes (`pr_`, `ar_`) stay only on legacy tables until they're dropped.
+- [ ] B.0.2 **PR sale postings need a counter-account. Introduce per-customer sub-ledgers, or use a single synthetic `pr_external_customer_pool` sub-ledger?** Per-customer modeling is out of Phase B scope. Recommend **single pool sub-ledger** — preserves the unified posting shape (must net to zero) without inventing customer modeling.
+- [ ] B.0.3 **PR chain direction: external_txn is parent (payments are children) or external_txn is child (payments are parent)?** Recommend **external is parent** — matches the container narrative ("an external batch contains payments, which contain settlements, which contain sales"). The "match valid when totals equal" check becomes "Σ child amounts = parent amount" cleanly.
+- [ ] B.0.4 **Old PR/AR detail tables: drop entirely after migration, or keep as views over the unified schema?** Recommend **drop entirely** in B.4 / B.6 once datasets migrate. Demo schema is internal; no callers outside this codebase. Per Phase A's no-shim philosophy.
+- [ ] B.0.5 **Column contract shape: `DatasetContract` dataclass per dataset, or a registry pattern?** Recommend **dataclass per dataset** — simplest, matches existing per-builder module style. Lives next to the SQL implementation in `<app>/datasets.py`.
+- [ ] B.0.6 **`as_of` granularity: timestamp on every row, or rely on existing `posted_at` / daily-balance dates?** Recommend **rely on existing** — postings carry `posted_at`, daily balances carry `as_of_date`. As-of query refactor is deferred to Phase D; schema stays as-is.
+- [ ] B.0.7 **`posting.signed_amount` (single signed column) vs. `posting.amount` + `posting.direction`?** Recommend **signed_amount** — sum-to-zero is one `SUM(signed_amount) = 0`. If a visual wants directional readability, add a SQL view `posting_with_direction` later.
+- [ ] B.0.8 **PR transfer_type values: keep separate (`sale`, `settlement`, `payment`, `external_txn`) or fold into AR's set (`ach`, `wire`, `internal`, `cash`)?** Recommend **separate enum** — they describe different things (PR's value names the chain link; AR's names the rail). `transfer_type` becomes a free string with a per-app vocabulary; CHECK constraint enumerates both sets.
 
 ---
 
-## Phase A.2 — Constants + dataset module rename
+## Phase B.1 — Unified schema definition (additive)
 
-`constants.py` is the lynchpin — almost every other AR module imports from it. Start here so the rest of the rename is a mechanical compile-error-driven walk.
+Add `transfer` and `posting` to `demo/schema.sql` alongside the legacy AR/PR tables. Nothing dropped yet.
 
-- [ ] A.2.1 Rename constants in `account_recon/constants.py`: `DS_AR_PARENT_ACCOUNTS` → `DS_AR_LEDGER_ACCOUNTS`, `DS_AR_PARENT_BALANCE_DRIFT` → `DS_AR_LEDGER_BALANCE_DRIFT`, `DS_AR_ACCOUNTS` → `DS_AR_SUBLEDGER_ACCOUNTS`, `DS_AR_ACCOUNT_BALANCE_DRIFT` → `DS_AR_SUBLEDGER_BALANCE_DRIFT`. Update the constant values (dataset IDs) accordingly — `qs-gen-ar-ledger-*`, `qs-gen-ar-subledger-*`.
-- [ ] A.2.2 Rename dataset builders in `account_recon/datasets.py` to match (`build_ar_parent_accounts_dataset` → `build_ar_ledger_accounts_dataset`, etc.). Update the SQL each builder emits to reference the new table / column / view names from A.1.
-- [ ] A.2.3 Update each dataset's `columns=[...]` declaration for the renamed columns.
-- [ ] A.2.4 Compile-check: `.venv/bin/python -c "from quicksight_gen.account_recon import datasets, constants"` should succeed.
-- [ ] A.2.5 Commit — `Phase A.2: rename AR constants + dataset builders`.
-
----
-
-## Phase A.3 — Demo data generator rename
-
-`demo_data.py` has 83 occurrences — mostly SQL INSERT generation against the renamed tables/columns, plus internal Python variable names. Rename both.
-
-- [ ] A.3.1 Rename INSERT statements and any raw SQL inside `account_recon/demo_data.py` to the new names.
-- [ ] A.3.2 Rename Python-side identifiers: internal function names (`_generate_parent_accounts` → `_generate_ledger_accounts`, etc), variable names (`parent_accounts`, `parent_id`, `child_id`), tuple fields, and docstrings.
-- [ ] A.3.3 Keep determinism (`random.Random(42)`); the output row *values* should be byte-identical to pre-rename (same IDs, same amounts, same dates). Only table/column names in the generated SQL change.
-- [ ] A.3.4 Skim the generated `seed.sql` diff: confirm the only changes are identifier renames, not data shifts. `.venv/bin/quicksight-gen demo seed account-recon -o /tmp/seed-new.sql && diff -u demo/seed.sql /tmp/seed-new.sql | head -50` should show pure text substitutions.
-- [ ] A.3.5 Commit — `Phase A.3: rename AR demo-data generator to ledger/subledger vocabulary`.
+- [ ] B.1.1 Add `transfer` table: `transfer_id PK`, `parent_transfer_id` (nullable FK self-ref), `transfer_type VARCHAR(30)`, `origin VARCHAR(30)` (`internal_initiated` / `external_force_posted`), `amount DECIMAL`, `status VARCHAR(20)`, `created_at TIMESTAMP`, `memo VARCHAR(255)`, `external_system VARCHAR(50)` (nullable).
+- [ ] B.1.2 Add `posting` table: `posting_id PK`, `transfer_id FK → transfer`, `account_id FK → ar_subledger_accounts`, `signed_amount DECIMAL`, `posted_at TIMESTAMP`, `status VARCHAR(20)` (`success` / `failed`).
+- [ ] B.1.3 Add indexes: `posting(transfer_id)`, `transfer(parent_transfer_id)`, `posting(account_id, posted_at)`.
+- [ ] B.1.4 CHECK constraints: `transfer.transfer_type IN (...)` enumerating both AR and PR vocabularies; `transfer.origin IN ('internal_initiated', 'external_force_posted')`; `posting.status IN ('success', 'failed')`.
+- [ ] B.1.5 No data inserted. `demo apply --all` should still succeed against existing legacy tables — empty `transfer` / `posting`.
+- [ ] B.1.6 `pytest` — schema structure tests in `test_demo_sql.py` updated to assert presence of new tables.
+- [ ] B.1.7 Commit — `Phase B.1: define unified transfer + posting schema (additive)`.
 
 ---
 
-## Phase A.4 — Analysis / visuals / filters rename
+## Phase B.2 — Column contract abstraction
 
-The bulk of the string work: 140 occurrences in `visuals.py`, 45 in `analysis.py`, 39 in `filters.py`. Includes user-facing titles and subtitles — these carry the most behavioral weight because they are what the end customer reads.
+Add a `DatasetContract` dataclass and refactor existing dataset builders to consume it. Pure Python refactor — no SQL changes, no schema changes.
 
-- [ ] A.4.1 `account_recon/visuals.py`:
-  - Rename visual IDs (`ar-balances-kpi-parents` → `ar-balances-kpi-ledgers`, `ar-balances-parent-table` → `ar-balances-ledger-table`, etc.).
-  - Rename field IDs inside visuals (`ar-bal-parent-id` → `ar-bal-ledger-id`, `ar-bal-parent-name` → `ar-bal-ledger-name`).
-  - Rewrite every `Title=...` and `Subtitle=...` call whose text contains "parent" or "child". Example: `Title("Parent Account Balances")` → `Title("Ledger Account Balances")`; `Subtitle("Each parent account's stored vs computed daily balance. Computed = Σ of its children's stored balances...")` → `Subtitle("Each ledger account's stored vs computed daily balance. Computed = Σ of its sub-ledgers' stored balances...")`.
-  - Rename the drill-down parameter constant at the top of the file (`P_AR_PARENT` → `P_AR_LEDGER`) and its value (`pArParentAccountId` → `pArLedgerAccountId`).
-  - Update the module docstring (lines 1–25) to use new vocabulary.
-- [ ] A.4.2 `account_recon/filters.py`:
-  - Rename filter-group builder functions (`_parent_account_filter_group` → `_ledger_account_filter_group`, `_child_account_filter_group` → `_subledger_account_filter_group`).
-  - Rename `fg_id`, `filter_id`, and `title` values (`fg-ar-parent-account` → `fg-ar-ledger-account`, `filter-ar-parent-account` → `filter-ar-ledger-account`, `"Parent Account"` → `"Ledger Account"`, and the same for child → sub-ledger).
-  - Update Show-Only-X toggle titles if any reference child/parent ("Show Only Drift" does not; "Show Only Overdraft" does not — most toggles are orthogonal).
-- [ ] A.4.3 `account_recon/analysis.py`:
-  - Update any filter-group ID references that match A.4.2's renames.
-  - Rewrite Getting Started rich-text content (if it mentions parent/child) — use `common/rich_text.py` the same way the existing text is authored.
-  - Update every sheet description.
-- [ ] A.4.4 `account_recon/__init__.py`: if it re-exports anything renamed above, update.
-- [ ] A.4.5 `.venv/bin/pytest tests/test_account_recon.py` — will fail, but failures should be mechanical (strings / IDs). Fix the production code if any failure is logic (shouldn't happen), update the test if it's a vocabulary assertion (expected).
-- [ ] A.4.6 Commit — `Phase A.4: rename AR analysis/visuals/filters to ledger/subledger vocabulary`.
-
-**STOP** — after A.4, check the Getting Started rich-text content by eye. Customer-facing text is the one place silent vocabulary drift (e.g., "parent" surviving in a text block) would be most visible. Pre-flight that block explicitly.
+- [ ] B.2.1 Add `common/dataset_contract.py`: `ColumnSpec(name, type, nullable, notes)` and `DatasetContract(name, description, columns)`.
+- [ ] B.2.2 Add a helper in `common/dataset_contract.py` (or extend `models.py`): `dataset_from_contract(contract, sql, datasource_arn, …) → Dataset`. Replaces the inline `Dataset(...)` construction in each builder.
+- [ ] B.2.3 Refactor every existing dataset builder (11 PR + 9 AR) to declare a `DatasetContract` and call the helper. SQL stays byte-identical; column lists are now contract-derived.
+- [ ] B.2.4 Add `tests/test_dataset_contract.py`: SELECT-clause parser asserts each builder's projected columns match its declared contract.
+- [ ] B.2.5 `pytest` clean — no behavior change, only refactor.
+- [ ] B.2.6 Commit — `Phase B.2: dataset column contract abstraction`.
 
 ---
 
-## Phase A.5 — Tests update
+## Phase B.3 — AR demo writes unified tables (dual-write)
 
-205 occurrences across 9 test files. Mostly string assertions against IDs, titles, and filter labels; some test data setup referencing old column names.
+AR generator emits to BOTH legacy AR tables AND the new `transfer` / `posting` tables, with equivalence asserted by tests. Nothing reads from the unified tables yet — this is the safety phase.
 
-- [ ] A.5.1 `tests/test_account_recon.py` — update every expected-string assertion, visual ID check, filter title check, dataset ID check. This is the biggest concentration (159 hits).
-- [ ] A.5.2 `tests/test_demo_sql.py` and `tests/test_demo_data.py` — update table/column/view name assertions.
-- [ ] A.5.3 E2E tests under `tests/e2e/`:
-  - `test_ar_dashboard_structure.py` — sheet IDs stay, filter group IDs and parameter IDs change.
-  - `test_ar_dataset_health.py` — dataset IDs change, column names change.
-  - `test_ar_sheet_visuals.py` — visual titles change (user-visible strings).
-  - `test_ar_drilldown.py` — parameter name changes (`pArParentAccountId` → `pArLedgerAccountId`), click-target titles change.
-  - `test_ar_state_toggles.py` — most toggle titles are vocabulary-neutral; sweep anyway.
-  - `test_ar_filters.py` — filter control titles change ("Parent Account" → "Ledger Account").
-  - `browser_helpers.py` and `conftest.py` — 2 hits each; probably variable names in helper fixtures.
-- [ ] A.5.4 Run full unit/integration suite: `.venv/bin/pytest`. Green before moving to A.6.
-- [ ] A.5.5 Commit — `Phase A.5: update tests to ledger/subledger vocabulary`.
+- [ ] B.3.1 `account_recon/demo_data.py`: every legacy `ar_transfers` row also produces a `transfer` row (with same id, type, origin, amount, memo, created_at).
+- [ ] B.3.2 Every legacy `ar_transactions` row also produces a `posting` row (signed_amount = `+amount` for credits, `-amount` for debits; status mirrors; account_id mirrors).
+- [ ] B.3.3 Equivalence tests in `tests/test_demo_data.py`:
+  - For each `ar_transfers` row, exactly one `transfer` row with matching fields.
+  - For each `ar_transactions` row, exactly one `posting` with matching account, amount, status.
+  - `Σ posting.signed_amount` per transfer_id = 0 (or matches the legacy "transfer is non-zero" exception case).
+- [ ] B.3.4 `pytest` clean — both old and new tables populated.
+- [ ] B.3.5 Commit — `Phase B.3: AR demo writes to unified transfer + posting (dual-write)`.
 
 ---
 
-## Phase A.6 — Add `origin` attribute to transactions
+## Phase B.4 — AR datasets read from unified schema; legacy AR tables dropped
 
-Additive-only. No filter, no visual wiring, no exception check uses it yet. This plants the column so Phase B / Phase D / future e2e coverage has something real to read.
+Cutover: AR datasets stop reading legacy tables; legacy AR tables removed from `demo/schema.sql`.
 
-- [ ] A.6.1 `demo/schema.sql`: add `origin VARCHAR(30) NOT NULL DEFAULT 'internal_initiated' CHECK (origin IN ('internal_initiated', 'external_force_posted'))` to `ar_transactions`. Place the column after `transfer_type` for semantic grouping.
-- [ ] A.6.2 `account_recon/demo_data.py`: generator emits `origin` on every transaction. Default `internal_initiated` for ~90%; sprinkle `external_force_posted` on ~10% at a deterministic offset (e.g., "every 10th transaction whose `transaction_id` hashes to an even value"). Add a new `TestScenarioCoverage` assertion in `test_demo_data.py` guaranteeing ≥ N rows of each `origin` value (per the CLAUDE.md convention: "Write the coverage assertion before the visual, not after").
-- [ ] A.6.3 `account_recon/datasets.py`: add `origin` to the `ar_transactions` dataset's `columns=[...]` list and to the dataset's `SELECT` projection. No changes to any other dataset.
-- [ ] A.6.4 Transactions detail visual: add `origin` as a visible column. This is a pure-display tweak — no drill, no filter, no conditional format. Worth doing in A.6 so the column is "real" in the UI, not just schema; also confirms end-to-end wiring works.
-- [ ] A.6.5 `tests/test_demo_data.py` — scenario coverage for origin distribution. `tests/test_account_recon.py` — dataset column contract includes `origin`. Both green.
-- [ ] A.6.6 Commit — `Phase A.6: add origin attribute to transactions (internal_initiated / external_force_posted)`.
+- [ ] B.4.1 Rewrite each AR dataset's SQL in `account_recon/datasets.py` to project from `transfer` + `posting` instead of `ar_transfers` + `ar_transactions`. Column contracts (B.2) stay identical — only the implementation changes.
+- [ ] B.4.2 Drop `ar_transfers`, `ar_transactions`, and any AR views built atop them, from `demo/schema.sql`. Update generator to skip those inserts.
+- [ ] B.4.3 Update `tests/test_account_recon.py` SQL assertions for new projections.
+- [ ] B.4.4 `demo apply --all` + `deploy --all --generate -c run/config.yaml -o run/out/` from repo root.
+- [ ] B.4.5 `./run_e2e.sh --parallel 4` — full suite. AR e2e green; PR e2e unaffected (still on legacy tables).
+- [ ] B.4.6 Commit — `Phase B.4: AR datasets read from unified schema; legacy AR txn tables dropped`.
 
-**STOP** — confirm before moving on: `origin` is tag-only in Phase A. No filter-control, no exception check, no drill-down targeting. If the idea of wiring it to a filter starts feeling compelling, defer that to a Phase A.6.5 sub-task — but do not expand scope under the "while I'm here" impulse.
-
----
-
-## Phase A.7 — Docs sweep
-
-Last because earlier phases churn the things the docs reference.
-
-- [ ] A.7.1 `CLAUDE.md` — update the Domain Model → Account Reconciliation section to use ledger/sub-ledger vocabulary. Update the Generated Output dataset list (new IDs). Update the Project Structure section if any file names changed (none expected).
-- [ ] A.7.2 `README.md` — update the "Account Reconciliation — 5 tabs" table, the dataset list, the drift-check descriptions. Preserve the plain-language tone.
-- [ ] A.7.3 `SPEC.md` — this already describes Phase A's intent, but the *current* spec sections above the Suggestions block still use parent/child. Sweep those to the new vocabulary, since they're documenting the as-of-today state which now matches the new names.
-- [ ] A.7.4 `RELEASE_NOTES.md` — draft v1.2.0 entry. Highlight: vocabulary rename (user-visible across every AR tab), `origin` column added for future use, no behavioral changes. Call out the one-time cleanup requirement (stale tagged resources from old dataset IDs).
-- [ ] A.7.5 Search for any stray "parent" / "child" vocabulary in code comments, docstrings, or rich-text blocks: `grep -irE 'parent|child' src/quicksight_gen/account_recon tests demo/schema.sql` should return zero non-intentional hits.
-- [ ] A.7.6 Commit — `Phase A.7: docs sweep for ledger/subledger vocabulary + origin column`.
+CHECKPOINT — AR fully on unified schema. PR untouched.
 
 ---
 
-## Phase A.8 — Deploy + e2e verification + release
+## Phase B.5 — PR demo writes transfer chains (dual-write)
 
-- [ ] A.8.1 `cd run && ../.venv/bin/quicksight-gen demo apply --all -c config.yaml -o out/` — applies new schema, seeds new data, regenerates JSON.
-- [ ] A.8.2 `.venv/bin/quicksight-gen deploy --all --generate -c run/config.yaml -o run/out/` — deploys updated datasets + analyses + dashboards.
-- [ ] A.8.3 `.venv/bin/quicksight-gen cleanup --dry-run -c run/config.yaml -o run/out/` — confirm the dry-run lists only the old `qs-gen-ar-parent-*` / `qs-gen-ar-account-*` datasets as stale, and nothing else. Then `--yes` to sweep them.
-- [ ] A.8.4 `./run_e2e.sh --parallel 4` — full e2e suite against the redeployed dashboards. Fix any browser tests that the rename missed (most likely: a hard-coded visual title string in a test that A.5.3 didn't catch).
-- [ ] A.8.5 Tag `v1.2.0`, push branch `phase-a-vocabulary`, open PR.
-- [ ] A.8.6 Merge to main (fast-forward preferred — this is a linear rename), push tag.
+PR generator emits the chain `external_txn → payment → settlement → sale` as a tree of `transfer` rows linked by `parent_transfer_id`, with two postings per transfer. Legacy PR tables still populated for safety.
+
+- [ ] B.5.1 Add `pr_external_customer_pool` sub-ledger account (single synthetic, per B.0.2) and any merchant-side sub-ledger accounts not already present, into the AR sub-ledger insertions.
+- [ ] B.5.2 For each external_txn row: emit a top-level `transfer` (no parent, transfer_type='external_txn') + 1 posting on the external rail account.
+- [ ] B.5.3 For each payment row: emit a `transfer` with `parent_transfer_id = external_txn.transfer_id` (or NULL for unmatched), transfer_type='payment', + 2 postings (debit merchant ledger account, credit external destination).
+- [ ] B.5.4 For each settlement row: emit a `transfer` with `parent_transfer_id = payment.transfer_id`, transfer_type='settlement', + 2 postings (debit merchant sub-ledger, credit merchant ledger).
+- [ ] B.5.5 For each sale row: emit a `transfer` with `parent_transfer_id = settlement.transfer_id`, transfer_type='sale', + 2 postings (debit `pr_external_customer_pool`, credit merchant sub-ledger).
+- [ ] B.5.6 Map lifecycle status from legacy → unified (`unsettled` sale stays as a sale transfer with no settlement child; `returned` payment maps to a payment transfer with status='failed' and re-issued postings; etc.). Document the mapping in a docstring.
+- [ ] B.5.7 Equivalence tests in `tests/test_demo_data.py` (PR section):
+  - For every legacy PR row, exactly one corresponding `transfer` row with matching amount.
+  - Chain integrity: `Σ child.amount = parent.amount` for matched chains; planted mismatches surface where the legacy tests already detect them.
+  - `Σ posting.signed_amount = 0` per non-failed transfer.
+- [ ] B.5.8 `pytest` clean.
+- [ ] B.5.9 Commit — `Phase B.5: PR demo writes transfer chains to unified schema (dual-write)`.
+
+---
+
+## Phase B.6 — PR datasets read from unified schema; legacy PR tables dropped
+
+Cutover: PR's 11 datasets stop reading legacy tables; legacy PR tables removed.
+
+- [ ] B.6.1 Rewrite each PR dataset's SQL in `payment_recon/datasets.py` to project from `transfer` + `posting`, joining on `transfer_type` and walking `parent_transfer_id` for chain context. Column contracts unchanged where possible — only swap implementations where the contract genuinely needs to evolve.
+- [ ] B.6.2 Re-implement PR exception checks against the unified schema: "settlement_payment_mismatch" becomes "transfers of type=payment whose Σ child amounts ≠ parent amount", etc. Keep the dataset-per-check shape; only the SQL changes.
+- [ ] B.6.3 Drop legacy `pr_sales`, `pr_settlements`, `pr_payments`, `pr_external_transactions`, `pr_merchants` (if no longer needed), and PR views from `demo/schema.sql`. Update generator to skip those inserts.
+- [ ] B.6.4 Update `tests/test_recon.py`, `tests/test_generate.py` for new SQL projections and exception logic.
+- [ ] B.6.5 `demo apply --all` + `deploy --all --generate` + `./run_e2e.sh --parallel 4`. Full PR e2e green.
+- [ ] B.6.6 Commit — `Phase B.6: PR datasets read from unified schema; legacy PR tables dropped`.
+
+CHECKPOINT — both apps on unified schema. One generator path per app. ~20 datasets all on `transfer` + `posting`.
+
+---
+
+## Phase B.7 — Cross-app sanity sweep
+
+The unified schema makes cross-app invariants checkable for the first time. Add a few fast guards.
+
+- [ ] B.7.1 Codebase grep: `grep -rE 'ar_transactions|ar_transfers|pr_sales|pr_settlements|pr_payments|pr_external_transactions' src/ tests/ demo/` should return zero hits outside legacy commit history (i.e. none in current src).
+- [ ] B.7.2 Add cross-app integrity test in `tests/test_demo_data.py`: `Σ posting.signed_amount` across the entire `posting` table is zero (modulo planted mismatch scenarios — list those exclusions explicitly).
+- [ ] B.7.3 Add a test asserting every `transfer.transfer_type` value is in the declared CHECK enum, and every value referenced by a dataset SQL exists in actual data (catches typos in dataset filters).
+- [ ] B.7.4 Commit — `Phase B.7: cross-app integrity sweeps + grep guard`.
+
+---
+
+## Phase B.8 — Docs sweep
+
+Last because earlier phases churn the things docs reference.
+
+- [ ] B.8.1 `CLAUDE.md` — Domain Model section rewritten: both apps share `transfer` + `posting`. PR is now a chain of transfers via `parent_transfer_id`. AR remains double-entry. Update Generated Output dataset list if any datasets renamed.
+- [ ] B.8.2 `CLAUDE.md` — add a Conventions bullet on the column contract: "Each dataset declares a `DatasetContract`; the SQL is one implementation. Tests assert the SQL projection matches the contract."
+- [ ] B.8.3 `README.md` — update both apps' tab descriptions to reflect the unified data model. Update the demo persona writeups (no behavioral change, but vocabulary shifts).
+- [ ] B.8.4 `SPEC.md` — Current Spec section updated to describe the unified schema. Suggestions block stays (it's forward-planning for Phases C–E).
+- [ ] B.8.5 `RELEASE_NOTES.md` — draft v1.3.0 entry. Highlights: unified `transfer` + `posting` schema, dataset column contracts, PR migrated onto transfer chains, no UI changes, one-time cleanup of stale dataset resources.
+- [ ] B.8.6 Final grep sweep: any stale references to `ar_transactions`, `pr_sales`, etc. in docs/comments/docstrings.
+- [ ] B.8.7 Commit — `Phase B.8: docs sweep for unified schema + column contracts`.
+
+---
+
+## Phase B.9 — Deploy + e2e + release
+
+- [ ] B.9.1 `cd run && ../.venv/bin/quicksight-gen demo apply --all -c config.yaml -o out/`
+- [ ] B.9.2 `cd /Users/chotchki/workspace/quicksight && .venv/bin/quicksight-gen deploy --all --generate -c run/config.yaml -o run/out/`
+- [ ] B.9.3 `.venv/bin/quicksight-gen cleanup --dry-run -c run/config.yaml -o run/out/` then `--yes` to sweep stale tagged resources from any renamed datasets.
+- [ ] B.9.4 `./run_e2e.sh --parallel 4` — full suite.
+- [ ] B.9.5 Tag `v1.3.0`, push branch, merge to main (fast-forward), push tag.
 
 ---
 
 ## Decisions to make in flight
 
-- **Origin value strings: `internal_initiated` / `external_force_posted`, or hyphenated per SPEC prose?** Recommend underscore — SQL identifiers, string-column values in a Postgres column will flow through SQL filters and the hyphen form requires quoting in enum-style `CHECK` constraints. User-facing display can still hyphenate via the visual label if desired.
-- **Do we rename `ar_accounts` → `ar_subledger_accounts` or keep as `ar_accounts`?** Decided in A.0.1; default recommendation is rename, but revisit if A.2 surfaces unexpected collateral damage.
-- **Do old dataset JSON files (`qs-gen-ar-parent-accounts-dataset.json`, etc.) get pruned by `generate`?** `generate` already prunes stale dataset JSON that belongs to neither app (per CLAUDE.md). If the prune logic is name-based, it'll handle this automatically on first regenerate; if it's strict whitelist-based, the stale files will need one manual `rm out/datasets/qs-gen-ar-parent*` before redeploy. Verify in A.2 or A.8.
-- **Should the `origin` column value for imported/reconciled rows in Phase B (later) back-fill based on their source system, or stay `internal_initiated` by default?** Out of scope for A, but worth flagging in the A.6 commit message so Phase B sees it.
+- **Dataset rename license**: Phase A used "rename freely" license for dataset IDs. Phase B may want similar for any dataset whose unified-schema implementation makes a different name natural (e.g., `qs-gen-pr-payments-dataset` might become `qs-gen-pr-payment-transfers-dataset`). Cleanup-by-tag handles deploy hygiene.
+- **`parent_transfer_id` of unmatched PR rows**: NULL or self-ref? Recommend NULL — "no parent" is the honest signal. Unmatched-external-txn check looks for top-level transfers with `transfer_type='payment' AND parent_transfer_id IS NULL`.
+- **Legacy `pr_merchants` table**: PR datasets need merchant metadata (name, type, location). Recommend keeping `pr_merchants` (and `pr_locations`) as-is — they're reference tables, not transactional, and joining on them from the unified schema is straightforward. Dropping them just to be uniform adds work without value.
+- **Refunds in PR**: today these are negative-amount sale rows with `sale_type=refund`. Under transfer chains, a refund is either a separate transfer with reversed postings (more correct) or kept as a negative-amount sale transfer (mechanical port). Recommend the negative-amount port for B.5 (preserves test parity); promote to "refund as inverse transfer" in Phase D when the reconciliation frame can express it cleanly.
+- **AR transfer_type for PR-chain postings**: A sale's debit-side posting hits `pr_external_customer_pool` (a sub-ledger). Does that show up in AR exception checks (overdraft, drift)? Audit during B.5 — likely needs an `is_internal` flag on accounts or a sub-ledger exclusion list to keep AR exception scope clean.
+
+---
 
 ## Risks
 
-- **E2E label drift**: 7 AR e2e test files assert on user-visible strings (titles, filter labels). Some may miss the rename if the assertion uses a substring match (`"Balances" in title`) rather than equality. Scan for both `==` and `in` / `contains` patterns in A.5.3.
-- **Hard-coded dataset IDs in e2e config or Playwright selectors**: QuickSight DOM has no dataset IDs in the rendered HTML, but e2e API-layer tests assert on dataset ARNs. These are derived from IDs at deploy time, so they will update naturally — but `test_ar_dataset_health.py` is likely the biggest concentration and deserves a careful read.
-- **Rich-text block on Getting Started sheet**: XML-composed. An un-renamed "parent" in a text block won't fail any test but will read wrong. A.4.3's STOP is there to catch this.
-- **External stakeholders' mental model**: if any reviewer is used to reading the old vocabulary in demos or screenshots, flag the rename in the v1.2.0 release notes so the cutover doesn't look like a regression.
+- **PR exception logic regression**: PR's 5 exception checks are computed off legacy table joins today. After B.6 they're computed off transfer-chain aggregations. Easy to introduce silent off-by-one when summing chain children. Equivalence tests in B.5.7 are the safety net — keep them sharp.
+- **Demo determinism drift**: B.3 and B.5 add new INSERTs interleaved with existing ones. ID generation order matters for `random.Random(42)` byte-identical output. If preserving byte-equivalence on the legacy tables is hard, document the new baseline rather than fight the generator.
+- **Test rewrite scope**: 254 unit/integration tests; many assert on specific SQL substrings. Phase B will invalidate most of those. Plan for focused rewrite per test file, not copy-paste-and-tweak.
+- **`pr_external_customer_pool` leakage**: this synthetic account is a Phase B convenience. If it shows up in user-facing AR visuals (sub-ledger lists, drift charts), filter it out at the dataset level. Audit during B.5/B.6.
+- **Dataset count growth**: the column contract refactor in B.2 might tempt extracting a `contracts/` module. Resist — keep contract + SQL in the same `<app>/datasets.py` file. One file per app is the right granularity.
+- **External stakeholder mental model**: anyone reviewing demo screenshots from before will see different tab counts/labels if the dataset rename license gets used aggressively. Flag in v1.3.0 release notes.
