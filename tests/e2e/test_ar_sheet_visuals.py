@@ -33,10 +33,10 @@ EXPECTED_VISUAL_COUNTS = {
 # just that some sheet has the expected number of visuals.
 EXPECTED_TITLES_PER_SHEET = {
     "Balances": {
-        "Parent Accounts",
-        "Child Accounts",
-        "Parent Account Balances",
-        "Child Account Balances",
+        "Ledger Accounts",
+        "Sub-Ledger Accounts",
+        "Ledger Account Balances",
+        "Sub-Ledger Account Balances",
     },
     "Transfers": {
         "Total Transfers",
@@ -52,10 +52,10 @@ EXPECTED_TITLES_PER_SHEET = {
         "Transaction Detail",
     },
     "Exceptions": {
-        "Parent Balance Drift",
-        "Child Balance Drift",
-        "Child Limit Breach",
-        "Child Overdraft",
+        "Ledger Balance Drift",
+        "Sub-Ledger Balance Drift",
+        "Sub-Ledger Limit Breach",
+        "Sub-Ledger Overdraft",
         "Non-Zero Transfers",
     },
 }

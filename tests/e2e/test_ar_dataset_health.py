@@ -33,23 +33,23 @@ class TestArDatasetColumns:
     """
 
     EXPECTED_COLUMNS = {
-        "ar-parent-accounts-dataset": {
-            "parent_account_id", "name", "scope",
+        "ar-ledger-accounts-dataset": {
+            "ledger_account_id", "name", "scope",
         },
-        "ar-accounts-dataset": {
-            "account_id", "name", "parent_account_id", "scope",
+        "ar-subledger-accounts-dataset": {
+            "subledger_account_id", "name", "ledger_account_id", "scope",
         },
         "ar-transactions-dataset": {
-            "transaction_id", "account_id", "transfer_id", "transfer_type",
-            "status", "posted_at", "posted_date", "amount", "is_failed",
-            "scope",
+            "transaction_id", "subledger_account_id", "transfer_id",
+            "transfer_type", "status", "posted_at", "posted_date", "amount",
+            "is_failed", "scope",
         },
-        "ar-parent-balance-drift-dataset": {
-            "parent_account_id", "balance_date",
+        "ar-ledger-balance-drift-dataset": {
+            "ledger_account_id", "balance_date",
             "stored_balance", "computed_balance", "drift", "drift_status",
         },
-        "ar-account-balance-drift-dataset": {
-            "account_id", "parent_account_id", "balance_date",
+        "ar-subledger-balance-drift-dataset": {
+            "subledger_account_id", "ledger_account_id", "balance_date",
             "stored_balance", "computed_balance", "drift", "drift_status",
             "overdraft_status",
         },
@@ -61,12 +61,12 @@ class TestArDatasetColumns:
             "transfer_id", "net_amount", "failed_leg_count",
         },
         "ar-limit-breach-dataset": {
-            "account_id", "parent_account_id", "activity_date",
+            "subledger_account_id", "ledger_account_id", "activity_date",
             "activity_date_str", "transfer_type", "outbound_total",
             "daily_limit", "overage",
         },
         "ar-overdraft-dataset": {
-            "account_id", "parent_account_id", "balance_date",
+            "subledger_account_id", "ledger_account_id", "balance_date",
             "balance_date_str", "stored_balance",
         },
     }

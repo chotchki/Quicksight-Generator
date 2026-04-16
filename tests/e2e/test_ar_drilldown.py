@@ -34,9 +34,9 @@ def embed_url(qs_client, account_id, ar_dashboard_id) -> str:
     )
 
 
-def test_balances_child_drills_to_transactions(embed_url, page_timeout):
-    """Clicking an account_id in the Child Account Balances table should
-    navigate to Transactions (with pArAccountId set)."""
+def test_balances_subledger_drills_to_transactions(embed_url, page_timeout):
+    """Clicking a subledger_account_id in the Sub-Ledger Account Balances
+    table should navigate to Transactions (with pArSubledgerAccountId set)."""
     with webkit_page(headless=True) as page:
         page.goto(embed_url, timeout=page_timeout)
         wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
@@ -44,11 +44,11 @@ def test_balances_child_drills_to_transactions(embed_url, page_timeout):
         wait_for_visuals_present(page, min_count=4, timeout_ms=page_timeout)
 
         click_first_row_of_visual(
-            page, "Child Account Balances", timeout_ms=page_timeout,
+            page, "Sub-Ledger Account Balances", timeout_ms=page_timeout,
         )
         wait_for_sheet_tab(page, "Transactions", timeout_ms=page_timeout)
         screenshot(
-            page, "drilldown_balances_child_to_txn", subdir="account_recon",
+            page, "drilldown_balances_subledger_to_txn", subdir="account_recon",
         )
         assert selected_sheet_name(page) == "Transactions"
 
@@ -73,8 +73,9 @@ def test_transfer_summary_drills_to_transactions(embed_url, page_timeout):
 
 
 def test_breach_drills_to_transactions(embed_url, page_timeout):
-    """Clicking an account_id in the Child Limit Breach table should drill
-    into Transactions with account + date + transfer_type all set.
+    """Clicking a subledger_account_id in the Sub-Ledger Limit Breach table
+    should drill into Transactions with account + date + transfer_type all
+    set.
 
     The multi-parameter drill-down shape is only here; all other AR drills
     are single-parameter, so this exercises the ``_multi_drill_action`` path
@@ -86,7 +87,7 @@ def test_breach_drills_to_transactions(embed_url, page_timeout):
         wait_for_visuals_present(page, min_count=12, timeout_ms=page_timeout)
 
         click_first_row_of_visual(
-            page, "Child Limit Breach", timeout_ms=page_timeout,
+            page, "Sub-Ledger Limit Breach", timeout_ms=page_timeout,
         )
         wait_for_sheet_tab(page, "Transactions", timeout_ms=page_timeout)
         screenshot(

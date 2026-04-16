@@ -137,11 +137,11 @@ def ar_analysis_id(resource_prefix) -> str:
 def ar_dataset_ids(resource_prefix) -> list[str]:
     """Expected Account Recon dataset IDs."""
     suffixes = [
-        "ar-parent-accounts-dataset",
-        "ar-accounts-dataset",
+        "ar-ledger-accounts-dataset",
+        "ar-subledger-accounts-dataset",
         "ar-transactions-dataset",
-        "ar-parent-balance-drift-dataset",
-        "ar-account-balance-drift-dataset",
+        "ar-ledger-balance-drift-dataset",
+        "ar-subledger-balance-drift-dataset",
         "ar-transfer-summary-dataset",
         "ar-non-zero-transfers-dataset",
         "ar-limit-breach-dataset",

@@ -28,8 +28,8 @@ from quicksight_gen.account_recon.constants import (
     SHEET_AR_TRANSFERS,
 )
 from quicksight_gen.account_recon.demo_data import (
-    ACCOUNTS,
-    PARENT_ACCOUNTS,
+    LEDGER_ACCOUNTS,
+    SUBLEDGER_ACCOUNTS,
     generate_demo_sql,
 )
 from quicksight_gen.cli import main
@@ -75,32 +75,32 @@ class TestDemoDeterminism:
 
 
 class TestDemoRowCounts:
-    def test_parent_accounts(self, ar_parsed):
-        assert len(ar_parsed["ar_parent_accounts"]) == len(PARENT_ACCOUNTS)
+    def test_ledger_accounts(self, ar_parsed):
+        assert len(ar_parsed["ar_ledger_accounts"]) == len(LEDGER_ACCOUNTS)
 
-    def test_accounts(self, ar_parsed):
-        assert len(ar_parsed["ar_accounts"]) == len(ACCOUNTS)
+    def test_subledger_accounts(self, ar_parsed):
+        assert len(ar_parsed["ar_subledger_accounts"]) == len(SUBLEDGER_ACCOUNTS)
 
     def test_transactions(self, ar_parsed):
         # 60 base transfers + 3 planted breach + 3 planted overdraft
         # = 66 transfers × 2 legs each = 132 transactions
         assert len(ar_parsed["ar_transactions"]) == 132
 
-    def test_parent_transfer_limits(self, ar_parsed):
-        from quicksight_gen.account_recon.demo_data import _PARENT_LIMITS
+    def test_ledger_transfer_limits(self, ar_parsed):
+        from quicksight_gen.account_recon.demo_data import _LEDGER_LIMITS
         assert (
-            len(ar_parsed["ar_parent_transfer_limits"]) == len(_PARENT_LIMITS)
+            len(ar_parsed["ar_ledger_transfer_limits"]) == len(_LEDGER_LIMITS)
         )
 
-    def test_parent_daily_balances(self, ar_parsed):
-        # 3 internal parents × 41 days (0..40 inclusive) = 123 rows.
-        # External parents are not reconciled (SPEC "Reconciliation scope").
-        assert len(ar_parsed["ar_parent_daily_balances"]) == 123
+    def test_ledger_daily_balances(self, ar_parsed):
+        # 3 internal ledgers × 41 days (0..40 inclusive) = 123 rows.
+        # External ledgers are not reconciled (SPEC "Reconciliation scope").
+        assert len(ar_parsed["ar_ledger_daily_balances"]) == 123
 
-    def test_account_daily_balances(self, ar_parsed):
-        # 6 internal children × 41 days = 246 rows (the two external
-        # parents' four children are omitted).
-        assert len(ar_parsed["ar_account_daily_balances"]) == 246
+    def test_subledger_daily_balances(self, ar_parsed):
+        # 6 internal sub-ledgers × 41 days = 246 rows (the two external
+        # ledgers' four sub-ledgers are omitted).
+        assert len(ar_parsed["ar_subledger_daily_balances"]) == 246
 
 
 class TestReferentialIntegrity:
@@ -112,27 +112,27 @@ class TestReferentialIntegrity:
             for row in rows
         ]
 
-    def test_account_parent_fk(self, ar_parsed):
-        parent_ids = set(self._col(ar_parsed["ar_parent_accounts"], 0))
-        child_parents = set(self._col(ar_parsed["ar_accounts"], 3))
-        assert child_parents.issubset(parent_ids), (
-            f"Unknown parent_account_ids: {child_parents - parent_ids}"
+    def test_subledger_ledger_fk(self, ar_parsed):
+        ledger_ids = set(self._col(ar_parsed["ar_ledger_accounts"], 0))
+        subledger_ledgers = set(self._col(ar_parsed["ar_subledger_accounts"], 3))
+        assert subledger_ledgers.issubset(ledger_ids), (
+            f"Unknown ledger_account_ids: {subledger_ledgers - ledger_ids}"
         )
 
-    def test_transaction_account_fk(self, ar_parsed):
-        account_ids = set(self._col(ar_parsed["ar_accounts"], 0))
-        txn_accounts = set(self._col(ar_parsed["ar_transactions"], 1))
-        assert txn_accounts.issubset(account_ids)
+    def test_transaction_subledger_fk(self, ar_parsed):
+        subledger_ids = set(self._col(ar_parsed["ar_subledger_accounts"], 0))
+        txn_subledgers = set(self._col(ar_parsed["ar_transactions"], 1))
+        assert txn_subledgers.issubset(subledger_ids)
 
-    def test_parent_daily_balance_fk(self, ar_parsed):
-        parent_ids = set(self._col(ar_parsed["ar_parent_accounts"], 0))
-        bal_parents = set(self._col(ar_parsed["ar_parent_daily_balances"], 0))
-        assert bal_parents.issubset(parent_ids)
+    def test_ledger_daily_balance_fk(self, ar_parsed):
+        ledger_ids = set(self._col(ar_parsed["ar_ledger_accounts"], 0))
+        bal_ledgers = set(self._col(ar_parsed["ar_ledger_daily_balances"], 0))
+        assert bal_ledgers.issubset(ledger_ids)
 
-    def test_account_daily_balance_fk(self, ar_parsed):
-        account_ids = set(self._col(ar_parsed["ar_accounts"], 0))
-        bal_accounts = set(self._col(ar_parsed["ar_account_daily_balances"], 0))
-        assert bal_accounts.issubset(account_ids)
+    def test_subledger_daily_balance_fk(self, ar_parsed):
+        subledger_ids = set(self._col(ar_parsed["ar_subledger_accounts"], 0))
+        bal_subledgers = set(self._col(ar_parsed["ar_subledger_daily_balances"], 0))
+        assert bal_subledgers.issubset(subledger_ids)
 
 
 class TestScenarioCoverage:
@@ -156,77 +156,81 @@ class TestScenarioCoverage:
         }
         assert {"posted", "failed"}.issubset(statuses)
 
-    def test_internal_and_external_parents_exist(self, ar_parsed):
+    def test_internal_and_external_ledgers_exist(self, ar_parsed):
         is_internals = {
             [p.strip() for p in row.split(",")][2].strip().lower()
-            for row in ar_parsed["ar_parent_accounts"]
+            for row in ar_parsed["ar_ledger_accounts"]
         }
         assert {"true", "false"}.issubset(is_internals), (
-            "Need both internal + external parents for scope splits"
+            "Need both internal + external ledgers for scope splits"
         )
 
-    def test_parent_drift_is_planted(self, ar_parsed):
-        """Parent-level drift plants must include both signs and each
-        planted (parent, date) cell must exist in the balances table."""
-        from quicksight_gen.account_recon.demo_data import _PARENT_DRIFT_PLANT
+    def test_ledger_drift_is_planted(self, ar_parsed):
+        """Ledger-level drift plants must include both signs and each
+        planted (ledger, date) cell must exist in the balances table."""
+        from quicksight_gen.account_recon.demo_data import _LEDGER_DRIFT_PLANT
 
-        assert len(_PARENT_DRIFT_PLANT) >= 3, "Need several parent drift cells"
-        deltas = [Decimal(d) for _, _, d in _PARENT_DRIFT_PLANT]
-        assert any(d > 0 for d in deltas), "Need a positive parent drift"
-        assert any(d < 0 for d in deltas), "Need a negative parent drift"
-
-        balance_rows = {
-            tuple(p.strip().strip("'") for p in row.split(",")[:2])
-            for row in ar_parsed["ar_parent_daily_balances"]
-        }
-        from datetime import timedelta
-        for parent_id, days_ago, _ in _PARENT_DRIFT_PLANT:
-            bdate = (ANCHOR - timedelta(days=days_ago)).isoformat()
-            assert (parent_id, bdate) in balance_rows, (
-                f"Missing balance row for planted drift ({parent_id}, {bdate})"
-            )
-
-    def test_child_drift_is_planted(self, ar_parsed):
-        """Child-level drift plants must include both signs and land on
-        internal child accounts with rows in ar_account_daily_balances."""
-        from quicksight_gen.account_recon.demo_data import _CHILD_DRIFT_PLANT
-
-        assert len(_CHILD_DRIFT_PLANT) >= 3, "Need several child drift cells"
-        deltas = [Decimal(d) for _, _, d in _CHILD_DRIFT_PLANT]
-        assert any(d > 0 for d in deltas), "Need a positive child drift"
-        assert any(d < 0 for d in deltas), "Need a negative child drift"
+        assert len(_LEDGER_DRIFT_PLANT) >= 3, "Need several ledger drift cells"
+        deltas = [Decimal(d) for _, _, d in _LEDGER_DRIFT_PLANT]
+        assert any(d > 0 for d in deltas), "Need a positive ledger drift"
+        assert any(d < 0 for d in deltas), "Need a negative ledger drift"
 
         balance_rows = {
             tuple(p.strip().strip("'") for p in row.split(",")[:2])
-            for row in ar_parsed["ar_account_daily_balances"]
+            for row in ar_parsed["ar_ledger_daily_balances"]
         }
         from datetime import timedelta
-        for account_id, days_ago, _ in _CHILD_DRIFT_PLANT:
+        for ledger_id, days_ago, _ in _LEDGER_DRIFT_PLANT:
             bdate = (ANCHOR - timedelta(days=days_ago)).isoformat()
-            assert (account_id, bdate) in balance_rows, (
-                f"Missing balance row for planted drift ({account_id}, {bdate})"
+            assert (ledger_id, bdate) in balance_rows, (
+                f"Missing balance row for planted drift ({ledger_id}, {bdate})"
             )
 
-    def test_parent_and_child_drift_are_independent(self):
-        """Parent-level and child-level drift plants should surface
+    def test_subledger_drift_is_planted(self, ar_parsed):
+        """Sub-ledger drift plants must include both signs and land on
+        internal sub-ledger accounts with rows in
+        ar_subledger_daily_balances."""
+        from quicksight_gen.account_recon.demo_data import _SUBLEDGER_DRIFT_PLANT
+
+        assert len(_SUBLEDGER_DRIFT_PLANT) >= 3, (
+            "Need several sub-ledger drift cells"
+        )
+        deltas = [Decimal(d) for _, _, d in _SUBLEDGER_DRIFT_PLANT]
+        assert any(d > 0 for d in deltas), "Need a positive sub-ledger drift"
+        assert any(d < 0 for d in deltas), "Need a negative sub-ledger drift"
+
+        balance_rows = {
+            tuple(p.strip().strip("'") for p in row.split(",")[:2])
+            for row in ar_parsed["ar_subledger_daily_balances"]
+        }
+        from datetime import timedelta
+        for subledger_id, days_ago, _ in _SUBLEDGER_DRIFT_PLANT:
+            bdate = (ANCHOR - timedelta(days=days_ago)).isoformat()
+            assert (subledger_id, bdate) in balance_rows, (
+                f"Missing balance row for planted drift "
+                f"({subledger_id}, {bdate})"
+            )
+
+    def test_ledger_and_subledger_drift_are_independent(self):
+        """Ledger-level and sub-ledger-level drift plants should surface
         different rows on the Exceptions tab — guard against cell overlap
         that would make them look like the same finding in two places."""
         from quicksight_gen.account_recon.demo_data import (
-            _CHILD_DRIFT_PLANT,
-            _PARENT_DRIFT_PLANT,
+            _LEDGER_DRIFT_PLANT,
+            _SUBLEDGER_DRIFT_PLANT,
+            SUBLEDGER_ACCOUNTS,
         )
-        from quicksight_gen.account_recon.demo_data import ACCOUNTS
 
-        parent_cells = {(p, d) for p, d, _ in _PARENT_DRIFT_PLANT}
-        # Map child accounts back to their parents so we can detect overlap.
-        account_parent = {aid: pid for aid, _n, pid in ACCOUNTS}
-        child_by_parent_day = {
-            (account_parent[aid], d)
-            for aid, d, _ in _CHILD_DRIFT_PLANT
+        ledger_cells = {(p, d) for p, d, _ in _LEDGER_DRIFT_PLANT}
+        # Map sub-ledger accounts back to their ledgers so we can detect overlap.
+        subledger_ledger = {sid: lid for sid, _n, lid in SUBLEDGER_ACCOUNTS}
+        subledger_by_ledger_day = {
+            (subledger_ledger[sid], d)
+            for sid, d, _ in _SUBLEDGER_DRIFT_PLANT
         }
-        assert not (parent_cells & child_by_parent_day), (
-            "Parent and child drift plants collide on the same "
-            "(parent, day) — pick disjoint cells"
+        assert not (ledger_cells & subledger_by_ledger_day), (
+            "Ledger and sub-ledger drift plants collide on the same "
+            "(ledger, day) — pick disjoint cells"
         )
 
     def test_memos_present(self, ar_sql):
@@ -240,24 +244,25 @@ class TestScenarioCoverage:
     ) -> dict[str, tuple[int, int]]:
         """Return {transfer_id: (internal_leg_count, external_leg_count)}.
 
-        Parses account.is_internal from ar_accounts, then groups
-        ar_transactions by transfer_id and counts the legs on each side.
-        Used by the scenario coverage tests for transfer pair-patterns.
+        Parses subledger.is_internal from ar_subledger_accounts, then
+        groups ar_transactions by transfer_id and counts the legs on each
+        side. Used by the scenario coverage tests for transfer
+        pair-patterns.
         """
-        internal_by_account: dict[str, bool] = {}
-        for row in ar_parsed["ar_accounts"]:
+        internal_by_subledger: dict[str, bool] = {}
+        for row in ar_parsed["ar_subledger_accounts"]:
             parts = [p.strip() for p in row.split(",")]
-            aid = parts[0].strip("'")
+            sid = parts[0].strip("'")
             is_internal = parts[2].strip().lower() == "true"
-            internal_by_account[aid] = is_internal
+            internal_by_subledger[sid] = is_internal
 
         buckets: dict[str, list[bool]] = {}
         for row in ar_parsed["ar_transactions"]:
             parts = [p.strip().strip("'") for p in row.split(",")]
-            account_id = parts[1]
+            subledger_id = parts[1]
             transfer_id = parts[2]
             buckets.setdefault(transfer_id, []).append(
-                internal_by_account[account_id]
+                internal_by_subledger[subledger_id]
             )
         return {
             tid: (sum(flags), sum(1 for f in flags if not f))
@@ -277,13 +282,14 @@ class TestScenarioCoverage:
         )
 
     def test_internal_only_transfers_exist(self, ar_parsed):
-        """Transfers where both legs land on internal children must exist
-        so drift bugs that only manifest when one transfer touches two
-        tracked balances are surfaced by the demo data.
+        """Transfers where both legs land on internal sub-ledgers must
+        exist so drift bugs that only manifest when one transfer touches
+        two tracked balances are surfaced by the demo data.
 
         Without these, a query that sums transfer legs by transfer_id
-        instead of by account_id would silently work on cross-scope-only
-        seed data — the bug only shows up when both legs are tracked.
+        instead of by subledger_account_id would silently work on
+        cross-scope-only seed data — the bug only shows up when both
+        legs are tracked.
         """
         by_scope = self._transfer_legs_by_scope(ar_parsed)
         internal_only = [
@@ -296,7 +302,7 @@ class TestScenarioCoverage:
     def test_failed_transfer_pattern_coverage(self, ar_parsed):
         """Both failed-leg and fully-failed scenarios must include at
         least one internal-internal instance — otherwise a regression in
-        how failed internal legs affect child balances would slip
+        how failed internal legs affect sub-ledger balances would slip
         through the demo."""
         by_scope = self._transfer_legs_by_scope(ar_parsed)
         # Pull all transactions grouped by transfer to check statuses.
@@ -329,40 +335,40 @@ class TestScenarioCoverage:
             f"Expected all four transfer types, got {types}"
         )
 
-    def test_parent_limits_seeded(self, ar_parsed):
-        """Parent transfer limits must be seeded — otherwise the
+    def test_ledger_limits_seeded(self, ar_parsed):
+        """Ledger transfer limits must be seeded — otherwise the
         limit-breach view has no thresholds to compare against."""
-        from quicksight_gen.account_recon.demo_data import _PARENT_LIMITS
+        from quicksight_gen.account_recon.demo_data import _LEDGER_LIMITS
 
-        assert len(_PARENT_LIMITS) >= 3, "Need ≥3 parent limit rows"
-        types = {xtype for _pid, xtype, _lim in _PARENT_LIMITS}
+        assert len(_LEDGER_LIMITS) >= 3, "Need ≥3 ledger limit rows"
+        types = {xtype for _lid, xtype, _lim in _LEDGER_LIMITS}
         assert len(types) >= 2, "Limits must cover ≥2 transfer types"
-        parents = {pid for pid, _x, _l in _PARENT_LIMITS}
-        assert len(parents) >= 2, "Limits must span ≥2 parents"
+        ledgers = {lid for lid, _x, _l in _LEDGER_LIMITS}
+        assert len(ledgers) >= 2, "Limits must span ≥2 ledgers"
 
     def test_limit_breaches_materialize(self, ar_parsed):
         """Planted breach cells must emerge from running the view
         logic on the seed data — the query sums outbound |amount| per
-        (child, day, type), joins parent-limits, and keeps rows where
-        total > limit."""
+        (sub-ledger, day, type), joins ledger-limits, and keeps rows
+        where total > limit."""
         from datetime import timedelta
         from quicksight_gen.account_recon.demo_data import (
             _LIMIT_BREACH_PLANT,
-            _PARENT_LIMITS,
+            _LEDGER_LIMITS,
         )
 
         is_internal: dict[str, bool] = {}
-        parent_by_account: dict[str, str] = {}
-        for row in ar_parsed["ar_accounts"]:
+        ledger_by_subledger: dict[str, str] = {}
+        for row in ar_parsed["ar_subledger_accounts"]:
             parts = [p.strip() for p in row.split(",")]
-            aid = parts[0].strip().strip("'")
-            is_internal[aid] = parts[2].strip().lower() == "true"
-            parent_by_account[aid] = parts[3].strip().strip("'")
+            sid = parts[0].strip().strip("'")
+            is_internal[sid] = parts[2].strip().lower() == "true"
+            ledger_by_subledger[sid] = parts[3].strip().strip("'")
 
         totals: dict[tuple[str, str, str], Decimal] = {}
         for row in ar_parsed["ar_transactions"]:
             parts = [p.strip().strip("'") for p in row.split(",")]
-            acct = parts[1]
+            subl = parts[1]
             amount = Decimal(parts[3])
             day = parts[4].split(" ")[0]
             status = parts[5]
@@ -371,39 +377,39 @@ class TestScenarioCoverage:
                 continue
             if amount >= 0:
                 continue
-            if not is_internal.get(acct):
+            if not is_internal.get(subl):
                 continue
-            key = (acct, day, xtype)
+            key = (subl, day, xtype)
             totals[key] = totals.get(key, Decimal("0")) + abs(amount)
 
         limit_map = {
-            (pid, xtype): Decimal(lim) for pid, xtype, lim in _PARENT_LIMITS
+            (lid, xtype): Decimal(lim) for lid, xtype, lim in _LEDGER_LIMITS
         }
         breaches: set[tuple[str, str, str]] = set()
-        for (acct, day, xtype), outbound in totals.items():
-            parent = parent_by_account[acct]
-            limit = limit_map.get((parent, xtype))
+        for (subl, day, xtype), outbound in totals.items():
+            ledger = ledger_by_subledger[subl]
+            limit = limit_map.get((ledger, xtype))
             if limit is not None and outbound > limit:
-                breaches.add((acct, day, xtype))
+                breaches.add((subl, day, xtype))
 
         assert len(breaches) >= 3, (
             f"Expected ≥3 limit-breach cells, got {len(breaches)}"
         )
-        for acct, days_ago, xtype, _amt, _memo in _LIMIT_BREACH_PLANT:
+        for subl, days_ago, xtype, _amt, _memo in _LIMIT_BREACH_PLANT:
             day = (ANCHOR - timedelta(days=days_ago)).isoformat()
-            assert (acct, day, xtype) in breaches, (
-                f"Planted breach ({acct}, {day}, {xtype}) didn't materialize"
+            assert (subl, day, xtype) in breaches, (
+                f"Planted breach ({subl}, {day}, {xtype}) didn't materialize"
             )
 
     def test_overdrafts_materialize(self, ar_parsed):
         """Planted overdraft cells must show up as balance < 0 in
-        ar_account_daily_balances — the ar_child_overdraft view just
-        filters on that condition."""
+        ar_subledger_daily_balances — the ar_subledger_overdraft view
+        just filters on that condition."""
         from datetime import timedelta
         from quicksight_gen.account_recon.demo_data import _OVERDRAFT_PLANT
 
         balances: dict[tuple[str, str], Decimal] = {}
-        for row in ar_parsed["ar_account_daily_balances"]:
+        for row in ar_parsed["ar_subledger_daily_balances"]:
             parts = [p.strip().strip("'") for p in row.split(",")]
             balances[(parts[0], parts[1])] = Decimal(parts[2])
 
@@ -411,54 +417,57 @@ class TestScenarioCoverage:
         assert len(negative) >= 3, (
             f"Expected ≥3 overdraft rows, got {len(negative)}"
         )
-        for acct, days_ago, _amt, _memo in _OVERDRAFT_PLANT:
+        for subl, days_ago, _amt, _memo in _OVERDRAFT_PLANT:
             day = (ANCHOR - timedelta(days=days_ago)).isoformat()
-            bal = balances.get((acct, day))
+            bal = balances.get((subl, day))
             assert bal is not None and bal < 0, (
-                f"Planted overdraft cell ({acct}, {day}) is not negative "
+                f"Planted overdraft cell ({subl}, {day}) is not negative "
                 f"(got {bal})"
             )
 
     def test_all_plants_disjoint(self):
         """Each of the four exception tables must surface a different
         set of findings — drift, breach, and overdraft plants must not
-        share child×day cells. Otherwise the Exceptions tab would show
-        the same row across multiple tables and obscure the four
+        share sub-ledger×day cells. Otherwise the Exceptions tab would
+        show the same row across multiple tables and obscure the four
         distinct reconciliation checks."""
         from quicksight_gen.account_recon.demo_data import (
-            _CHILD_DRIFT_PLANT,
+            _SUBLEDGER_DRIFT_PLANT,
             _LIMIT_BREACH_PLANT,
             _OVERDRAFT_PLANT,
-            _PARENT_DRIFT_PLANT,
+            _LEDGER_DRIFT_PLANT,
+            SUBLEDGER_ACCOUNTS,
         )
 
-        child_cells = {(a, d) for a, d, _ in _CHILD_DRIFT_PLANT}
+        subledger_cells = {(a, d) for a, d, _ in _SUBLEDGER_DRIFT_PLANT}
         breach_cells = {(a, d) for a, d, _, _, _ in _LIMIT_BREACH_PLANT}
         overdraft_cells = {(a, d) for a, d, _, _ in _OVERDRAFT_PLANT}
 
-        assert not (child_cells & breach_cells), (
-            "Child drift and limit breach plants share child×day cells"
+        assert not (subledger_cells & breach_cells), (
+            "Sub-ledger drift and limit breach plants share "
+            "sub-ledger×day cells"
         )
-        assert not (child_cells & overdraft_cells), (
-            "Child drift and overdraft plants share child×day cells"
+        assert not (subledger_cells & overdraft_cells), (
+            "Sub-ledger drift and overdraft plants share "
+            "sub-ledger×day cells"
         )
         assert not (breach_cells & overdraft_cells), (
-            "Breach and overdraft plants share child×day cells"
+            "Breach and overdraft plants share sub-ledger×day cells"
         )
 
-        account_parent = {aid: pid for aid, _n, pid in ACCOUNTS}
-        parent_cells = {(p, d) for p, d, _ in _PARENT_DRIFT_PLANT}
-        breach_parent_cells = {
-            (account_parent[a], d) for a, d, _, _, _ in _LIMIT_BREACH_PLANT
+        subledger_ledger = {sid: lid for sid, _n, lid in SUBLEDGER_ACCOUNTS}
+        ledger_cells = {(p, d) for p, d, _ in _LEDGER_DRIFT_PLANT}
+        breach_ledger_cells = {
+            (subledger_ledger[a], d) for a, d, _, _, _ in _LIMIT_BREACH_PLANT
         }
-        overdraft_parent_cells = {
-            (account_parent[a], d) for a, d, _, _ in _OVERDRAFT_PLANT
+        overdraft_ledger_cells = {
+            (subledger_ledger[a], d) for a, d, _, _ in _OVERDRAFT_PLANT
         }
-        assert not (parent_cells & breach_parent_cells), (
-            "Parent drift and breach plants share (parent, day) cells"
+        assert not (ledger_cells & breach_ledger_cells), (
+            "Ledger drift and breach plants share (ledger, day) cells"
         )
-        assert not (parent_cells & overdraft_parent_cells), (
-            "Parent drift and overdraft plants share (parent, day) cells"
+        assert not (ledger_cells & overdraft_ledger_cells), (
+            "Ledger drift and overdraft plants share (ledger, day) cells"
         )
 
 
@@ -477,34 +486,34 @@ class TestSeedSqlStructure:
     def test_insert_tables_match_schema(self, ar_sql):
         tables = set(re.findall(r"INSERT INTO (ar_\w+)", ar_sql))
         assert tables == {
-            "ar_parent_accounts",
-            "ar_accounts",
+            "ar_ledger_accounts",
+            "ar_subledger_accounts",
             "ar_transactions",
-            "ar_parent_transfer_limits",
-            "ar_parent_daily_balances",
-            "ar_account_daily_balances",
+            "ar_ledger_transfer_limits",
+            "ar_ledger_daily_balances",
+            "ar_subledger_daily_balances",
         }
 
     def test_fk_safe_order(self, ar_sql):
         positions = {}
         for m in re.finditer(r"INSERT INTO (ar_\w+)", ar_sql):
             positions.setdefault(m.group(1), m.start())
-        assert positions["ar_parent_accounts"] < positions["ar_accounts"]
-        assert positions["ar_accounts"] < positions["ar_transactions"]
-        # ar_parent_daily_balances FKs to parent_accounts
+        assert positions["ar_ledger_accounts"] < positions["ar_subledger_accounts"]
+        assert positions["ar_subledger_accounts"] < positions["ar_transactions"]
+        # ar_ledger_daily_balances FKs to ar_ledger_accounts
         assert (
-            positions["ar_parent_accounts"]
-            < positions["ar_parent_daily_balances"]
+            positions["ar_ledger_accounts"]
+            < positions["ar_ledger_daily_balances"]
         )
-        # ar_account_daily_balances FKs to accounts
+        # ar_subledger_daily_balances FKs to ar_subledger_accounts
         assert (
-            positions["ar_accounts"]
-            < positions["ar_account_daily_balances"]
+            positions["ar_subledger_accounts"]
+            < positions["ar_subledger_daily_balances"]
         )
-        # ar_parent_transfer_limits FKs to parent_accounts
+        # ar_ledger_transfer_limits FKs to ar_ledger_accounts
         assert (
-            positions["ar_parent_accounts"]
-            < positions["ar_parent_transfer_limits"]
+            positions["ar_ledger_accounts"]
+            < positions["ar_ledger_transfer_limits"]
         )
 
 
@@ -521,26 +530,26 @@ class TestSchemaSql:
 
     def test_creates_ar_tables(self, schema_sql):
         for table in (
-            "ar_parent_accounts",
-            "ar_accounts",
-            "ar_parent_daily_balances",
-            "ar_account_daily_balances",
+            "ar_ledger_accounts",
+            "ar_subledger_accounts",
+            "ar_ledger_daily_balances",
+            "ar_subledger_daily_balances",
             "ar_transactions",
-            "ar_parent_transfer_limits",
+            "ar_ledger_transfer_limits",
         ):
             assert f"CREATE TABLE {table}" in schema_sql
 
     def test_creates_ar_views(self, schema_sql):
         for view in (
-            "ar_computed_account_daily_balance",
-            "ar_computed_parent_daily_balance",
-            "ar_account_balance_drift",
-            "ar_parent_balance_drift",
+            "ar_computed_subledger_daily_balance",
+            "ar_computed_ledger_daily_balance",
+            "ar_subledger_balance_drift",
+            "ar_ledger_balance_drift",
             "ar_transfer_net_zero",
             "ar_transfer_summary",
-            "ar_child_daily_outbound_by_type",
-            "ar_child_limit_breach",
-            "ar_child_overdraft",
+            "ar_subledger_daily_outbound_by_type",
+            "ar_subledger_limit_breach",
+            "ar_subledger_overdraft",
         ):
             assert f"CREATE VIEW {view}" in schema_sql
 
@@ -822,18 +831,18 @@ class TestFilterGroups:
 
     _EXPECTED_IDS = {
         "fg-ar-date-range",
-        "fg-ar-parent-account",
-        "fg-ar-child-account",
+        "fg-ar-ledger-account",
+        "fg-ar-subledger-account",
         "fg-ar-transfer-status",
         "fg-ar-transaction-status",
         "fg-ar-transfer-type",
-        "fg-ar-balances-parent-drift",
-        "fg-ar-balances-child-drift",
+        "fg-ar-balances-ledger-drift",
+        "fg-ar-balances-subledger-drift",
         "fg-ar-balances-overdraft",
         "fg-ar-transactions-failed",
-        "fg-ar-drill-account-on-txn",
+        "fg-ar-drill-subledger-on-txn",
         "fg-ar-drill-transfer-on-txn",
-        "fg-ar-drill-parent-on-balances-child",
+        "fg-ar-drill-ledger-on-balances-subledger",
         "fg-ar-drill-activity-date-on-txn",
         "fg-ar-drill-transfer-type-on-txn",
     }
@@ -860,8 +869,8 @@ class TestFilterGroups:
     @pytest.mark.parametrize(
         "fg_id",
         [
-            "fg-ar-parent-account",
-            "fg-ar-child-account",
+            "fg-ar-ledger-account",
+            "fg-ar-subledger-account",
             "fg-ar-transfer-type",
         ],
     )
@@ -898,8 +907,8 @@ class TestFilterGroups:
     @pytest.mark.parametrize(
         "fg_id, sheet_id",
         [
-            ("fg-ar-balances-parent-drift", SHEET_AR_BALANCES),
-            ("fg-ar-balances-child-drift", SHEET_AR_BALANCES),
+            ("fg-ar-balances-ledger-drift", SHEET_AR_BALANCES),
+            ("fg-ar-balances-subledger-drift", SHEET_AR_BALANCES),
             ("fg-ar-balances-overdraft", SHEET_AR_BALANCES),
             ("fg-ar-transactions-failed", SHEET_AR_TRANSACTIONS),
         ],
@@ -924,8 +933,8 @@ class TestParameterDeclarations:
         params = analysis["Definition"]["ParameterDeclarations"]
         names = {p["StringParameterDeclaration"]["Name"] for p in params}
         assert names == {
-            "pArAccountId",
-            "pArParentAccountId",
+            "pArSubledgerAccountId",
+            "pArLedgerAccountId",
             "pArTransferId",
             "pArActivityDate",
             "pArTransferType",
@@ -950,9 +959,9 @@ class TestDrillDownFilterGroups:
         "fg_id, parameter_name, column_name, sheet_id",
         [
             (
-                "fg-ar-drill-account-on-txn",
-                "pArAccountId",
-                "account_id",
+                "fg-ar-drill-subledger-on-txn",
+                "pArSubledgerAccountId",
+                "subledger_account_id",
                 SHEET_AR_TRANSACTIONS,
             ),
             (
@@ -974,9 +983,9 @@ class TestDrillDownFilterGroups:
                 SHEET_AR_TRANSACTIONS,
             ),
             (
-                "fg-ar-drill-parent-on-balances-child",
-                "pArParentAccountId",
-                "parent_account_id",
+                "fg-ar-drill-ledger-on-balances-subledger",
+                "pArLedgerAccountId",
+                "ledger_account_id",
                 SHEET_AR_BALANCES,
             ),
         ],
@@ -1001,16 +1010,17 @@ class TestDrillDownFilterGroups:
         ]
         assert [s["SheetId"] for s in scopes] == [sheet_id]
 
-    def test_parent_drill_targets_child_table_only(self, ar_output_dir):
-        """The Balances parent-to-child drill must not wipe the parent table;
-        it's scoped to the child table visual only via SELECTED_VISUALS."""
+    def test_ledger_drill_targets_subledger_table_only(self, ar_output_dir):
+        """The Balances ledger-to-subledger drill must not wipe the ledger
+        table; it's scoped to the sub-ledger table visual only via
+        SELECTED_VISUALS."""
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
-        fg = _find_fg(analysis, "fg-ar-drill-parent-on-balances-child")
+        fg = _find_fg(analysis, "fg-ar-drill-ledger-on-balances-subledger")
         scope = fg["ScopeConfiguration"]["SelectedSheets"][
             "SheetVisualScopingConfigurations"
         ][0]
         assert scope["Scope"] == "SELECTED_VISUALS"
-        assert scope["VisualIds"] == ["ar-balances-child-table"]
+        assert scope["VisualIds"] == ["ar-balances-subledger-table"]
 
 
 def _drill_nav_target(visual: dict) -> str:
@@ -1056,24 +1066,25 @@ def _same_sheet_targets(visual: dict) -> list[str]:
 class TestVisualActions:
     """Drill-downs and same-sheet chart filters attach to the right visuals."""
 
-    def test_balances_parent_right_click_sets_parent_parameter(self, ar_output_dir):
-        """Right-click filters the child table on the same sheet via the
-        pArParentAccountId parameter. AWS rejects a SetParametersOperation
-        that isn't preceded by a NavigationOperation, so the action
-        includes a no-op navigation back to the Balances sheet."""
+    def test_balances_ledger_right_click_sets_ledger_parameter(self, ar_output_dir):
+        """Right-click filters the sub-ledger table on the same sheet via
+        the pArLedgerAccountId parameter. AWS rejects a
+        SetParametersOperation that isn't preceded by a
+        NavigationOperation, so the action includes a no-op navigation
+        back to the Balances sheet."""
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
-        v = _find_visual(analysis, "ar-balances-parent-table")
+        v = _find_visual(analysis, "ar-balances-ledger-table")
         action = v["Actions"][0]
         assert action["Trigger"] == "DATA_POINT_MENU"
         assert _drill_nav_target(v) == SHEET_AR_BALANCES
-        assert _set_param(v) == ("pArParentAccountId", "ar-bal-parent-id")
+        assert _set_param(v) == ("pArLedgerAccountId", "ar-bal-ledger-id")
 
-    def test_balances_child_drills_to_transactions(self, ar_output_dir):
+    def test_balances_subledger_drills_to_transactions(self, ar_output_dir):
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
-        v = _find_visual(analysis, "ar-balances-child-table")
+        v = _find_visual(analysis, "ar-balances-subledger-table")
         assert v["Actions"][0]["Trigger"] == "DATA_POINT_CLICK"
         assert _drill_nav_target(v) == SHEET_AR_TRANSACTIONS
-        assert _set_param(v) == ("pArAccountId", "ar-bal-child-id")
+        assert _set_param(v) == ("pArSubledgerAccountId", "ar-bal-subledger-id")
 
     def test_transfers_summary_drills_to_transactions(self, ar_output_dir):
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
@@ -1100,16 +1111,16 @@ class TestVisualActions:
         "visual_id, target_sheet, parameter_name, source_field",
         [
             (
-                "ar-exc-parent-drift-table",
+                "ar-exc-ledger-drift-table",
                 SHEET_AR_BALANCES,
-                "pArParentAccountId",
-                "ar-exc-pdrift-parent-id",
+                "pArLedgerAccountId",
+                "ar-exc-ldrift-ledger-id",
             ),
             (
-                "ar-exc-child-drift-table",
+                "ar-exc-subledger-drift-table",
                 SHEET_AR_TRANSACTIONS,
-                "pArAccountId",
-                "ar-exc-cdrift-account-id",
+                "pArSubledgerAccountId",
+                "ar-exc-sdrift-subledger-id",
             ),
             (
                 "ar-exc-nonzero-table",
@@ -1132,30 +1143,31 @@ class TestVisualActions:
         assert _drill_nav_target(v) == target_sheet
         assert _set_param(v) == (parameter_name, source_field)
 
-    def test_breach_drill_sets_account_date_and_type(self, ar_output_dir):
-        """Limit-breach row → Transactions (account, day, type) slice.
+    def test_breach_drill_sets_subledger_date_and_type(self, ar_output_dir):
+        """Limit-breach row → Transactions (sub-ledger, day, type) slice.
 
         The breach table's three-parameter drill narrows Transactions to
-        the exact (child, activity_date, transfer_type) that breached the
-        limit — a two-param drill would leave type open and bury the
-        signal in unrelated same-account rows."""
+        the exact (sub-ledger, activity_date, transfer_type) that
+        breached the limit — a two-param drill would leave type open and
+        bury the signal in unrelated same-sub-ledger rows."""
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
         v = _find_visual(analysis, "ar-exc-breach-table")
         assert _drill_nav_target(v) == SHEET_AR_TRANSACTIONS
         assert _set_params_all(v) == [
-            ("pArAccountId", "ar-exc-br-account-id"),
+            ("pArSubledgerAccountId", "ar-exc-br-subledger-id"),
             ("pArActivityDate", "ar-exc-br-date-str"),
             ("pArTransferType", "ar-exc-br-type"),
         ]
 
-    def test_overdraft_drill_sets_account_and_date(self, ar_output_dir):
-        """Overdraft row → Transactions (account, day). Transfer-type isn't
-        relevant — overdraft is the sum of legs regardless of type."""
+    def test_overdraft_drill_sets_subledger_and_date(self, ar_output_dir):
+        """Overdraft row → Transactions (sub-ledger, day). Transfer-type
+        isn't relevant — overdraft is the sum of legs regardless of
+        type."""
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
         v = _find_visual(analysis, "ar-exc-overdraft-table")
         assert _drill_nav_target(v) == SHEET_AR_TRANSACTIONS
         assert _set_params_all(v) == [
-            ("pArAccountId", "ar-exc-od-account-id"),
+            ("pArSubledgerAccountId", "ar-exc-od-subledger-id"),
             ("pArActivityDate", "ar-exc-od-date-str"),
         ]
 
@@ -1173,13 +1185,13 @@ class TestConditionalFormatting:
     @pytest.mark.parametrize(
         "visual_id, field_id",
         [
-            ("ar-balances-child-table", "ar-bal-child-id"),
+            ("ar-balances-subledger-table", "ar-bal-subledger-id"),
             ("ar-transfers-summary-table", "ar-xfr-id"),
-            ("ar-exc-parent-drift-table", "ar-exc-pdrift-parent-id"),
-            ("ar-exc-child-drift-table", "ar-exc-cdrift-account-id"),
+            ("ar-exc-ledger-drift-table", "ar-exc-ldrift-ledger-id"),
+            ("ar-exc-subledger-drift-table", "ar-exc-sdrift-subledger-id"),
             ("ar-exc-nonzero-table", "ar-exc-nz-id"),
-            ("ar-exc-breach-table", "ar-exc-br-account-id"),
-            ("ar-exc-overdraft-table", "ar-exc-od-account-id"),
+            ("ar-exc-breach-table", "ar-exc-br-subledger-id"),
+            ("ar-exc-overdraft-table", "ar-exc-od-subledger-id"),
         ],
     )
     def test_left_click_drill_sources_have_link_format(
@@ -1197,13 +1209,13 @@ class TestConditionalFormatting:
         assert "TextColor" in tf
         assert "BackgroundColor" not in tf
 
-    def test_balances_parent_right_click_uses_menu_format(self, ar_output_dir):
+    def test_balances_ledger_right_click_uses_menu_format(self, ar_output_dir):
         """Right-click (DATA_POINT_MENU) cells get an accent+tint style —
         distinguishing them from the plain-accent left-click cells."""
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
-        v = _find_visual(analysis, "ar-balances-parent-table")
+        v = _find_visual(analysis, "ar-balances-ledger-table")
         cells = [
-            c for c in _cf_cells(v) if c["FieldId"] == "ar-bal-parent-id"
+            c for c in _cf_cells(v) if c["FieldId"] == "ar-bal-ledger-id"
         ]
         assert cells
         tf = cells[0]["TextFormat"]
@@ -1230,11 +1242,11 @@ class TestShowOnlyToggleControls:
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
         sheet = _find_sheet(analysis, SHEET_AR_BALANCES)
         titles = self._single_select_titles(sheet)
-        assert titles.get("ctrl-ar-balances-parent-drift") == (
-            "Show Only Parent Drift"
+        assert titles.get("ctrl-ar-balances-ledger-drift") == (
+            "Show Only Ledger Drift"
         )
-        assert titles.get("ctrl-ar-balances-child-drift") == (
-            "Show Only Child Drift"
+        assert titles.get("ctrl-ar-balances-subledger-drift") == (
+            "Show Only Sub-Ledger Drift"
         )
         assert titles.get("ctrl-ar-balances-overdraft") == (
             "Show Only Overdraft"
@@ -1311,12 +1323,12 @@ class TestPhase5DatasetDeclarations:
         assert identifier in ids
         assert (ar_output_dir / "datasets" / f"{id_suffix}.json").exists()
 
-    def test_child_drift_dataset_has_overdraft_status(self, ar_output_dir):
+    def test_subledger_drift_dataset_has_overdraft_status(self, ar_output_dir):
         """The Show-Only-Overdraft toggle binds to
-        account_balance_drift.overdraft_status — verify the derived column
-        is emitted in the dataset's InputColumns and SELECT."""
+        subledger_balance_drift.overdraft_status — verify the derived
+        column is emitted in the dataset's InputColumns and SELECT."""
         path = ar_output_dir / "datasets" / (
-            "qs-gen-ar-account-balance-drift-dataset.json"
+            "qs-gen-ar-subledger-balance-drift-dataset.json"
         )
         data = json.loads(path.read_text())
         table = next(iter(data["PhysicalTableMap"].values()))
@@ -1415,7 +1427,7 @@ class TestCli:
             main, ["demo", "seed", "account-recon", "-o", str(out)],
         )
         assert result.exit_code == 0, result.output
-        assert "INSERT INTO ar_parent_accounts" in out.read_text()
+        assert "INSERT INTO ar_ledger_accounts" in out.read_text()
 
     def test_demo_seed_all_includes_both(self, tmp_path: Path):
         out = tmp_path / "seed.sql"
@@ -1426,4 +1438,4 @@ class TestCli:
         assert result.exit_code == 0, result.output
         content = out.read_text()
         assert "INSERT INTO pr_merchants" in content
-        assert "INSERT INTO ar_parent_accounts" in content
+        assert "INSERT INTO ar_ledger_accounts" in content

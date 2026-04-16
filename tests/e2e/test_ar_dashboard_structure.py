@@ -103,19 +103,19 @@ class TestVisuals:
     def test_exceptions_has_both_drift_tables_and_timelines(
         self, ar_dashboard_definition,
     ):
-        """Phase 4 split the single drift table/timeline into parent + child
-        pairs; Phase 5 adds breach and overdraft tables/KPIs. Catch it if
-        any of the five reconciliation checks regresses away."""
+        """Phase 4 split the single drift table/timeline into ledger +
+        sub-ledger pairs; Phase 5 adds breach and overdraft tables/KPIs.
+        Catch it if any of the five reconciliation checks regresses away."""
         exc_sheet = next(
             s for s in ar_dashboard_definition["Sheets"]
             if s["Name"] == "Exceptions"
         )
         ids = set(_visual_ids(exc_sheet))
         for expected in (
-            "ar-exc-parent-drift-table",
-            "ar-exc-child-drift-table",
-            "ar-exc-parent-drift-timeline",
-            "ar-exc-child-drift-timeline",
+            "ar-exc-ledger-drift-table",
+            "ar-exc-subledger-drift-table",
+            "ar-exc-ledger-drift-timeline",
+            "ar-exc-subledger-drift-timeline",
             "ar-exc-nonzero-table",
             "ar-exc-breach-table",
             "ar-exc-overdraft-table",
@@ -148,8 +148,8 @@ class TestParameters:
 
     def test_five_drill_down_parameters(self, ar_dashboard_definition):
         assert self._names(ar_dashboard_definition) == {
-            "pArAccountId",
-            "pArParentAccountId",
+            "pArSubledgerAccountId",
+            "pArLedgerAccountId",
             "pArTransferId",
             "pArActivityDate",
             "pArTransferType",
@@ -159,18 +159,18 @@ class TestParameters:
 class TestFilterGroups:
     EXPECTED_IDS = {
         "fg-ar-date-range",
-        "fg-ar-parent-account",
-        "fg-ar-child-account",
+        "fg-ar-ledger-account",
+        "fg-ar-subledger-account",
         "fg-ar-transfer-status",
         "fg-ar-transaction-status",
         "fg-ar-transfer-type",
-        "fg-ar-balances-parent-drift",
-        "fg-ar-balances-child-drift",
+        "fg-ar-balances-ledger-drift",
+        "fg-ar-balances-subledger-drift",
         "fg-ar-balances-overdraft",
         "fg-ar-transactions-failed",
-        "fg-ar-drill-account-on-txn",
+        "fg-ar-drill-subledger-on-txn",
         "fg-ar-drill-transfer-on-txn",
-        "fg-ar-drill-parent-on-balances-child",
+        "fg-ar-drill-ledger-on-balances-subledger",
         "fg-ar-drill-activity-date-on-txn",
         "fg-ar-drill-transfer-type-on-txn",
     }
@@ -185,22 +185,22 @@ class TestFilterGroups:
         ids = [g["FilterGroupId"] for g in groups]
         assert len(ids) == len(set(ids))
 
-    def test_parent_drill_scoped_to_child_table_only(
+    def test_ledger_drill_scoped_to_subledger_table_only(
         self, ar_dashboard_definition,
     ):
-        """Guard against a regression where the parent drill-down filter
-        applies to the parent table itself — which would empty the parent
-        table when a user right-clicks a parent row."""
+        """Guard against a regression where the ledger drill-down filter
+        applies to the ledger table itself — which would empty the ledger
+        table when a user right-clicks a ledger row."""
         groups = ar_dashboard_definition.get("FilterGroups", [])
         fg = next(
             g for g in groups
-            if g["FilterGroupId"] == "fg-ar-drill-parent-on-balances-child"
+            if g["FilterGroupId"] == "fg-ar-drill-ledger-on-balances-subledger"
         )
         scope = fg["ScopeConfiguration"]["SelectedSheets"][
             "SheetVisualScopingConfigurations"
         ][0]
         assert scope["Scope"] == "SELECTED_VISUALS"
-        assert scope["VisualIds"] == ["ar-balances-child-table"]
+        assert scope["VisualIds"] == ["ar-balances-subledger-table"]
 
 
 class TestDatasetDeclarations:

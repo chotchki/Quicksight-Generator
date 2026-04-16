@@ -24,8 +24,8 @@ pytestmark = [pytest.mark.e2e, pytest.mark.browser]
 
 TOGGLES_BY_TAB = {
     "Balances": [
-        "Show Only Parent Drift",
-        "Show Only Child Drift",
+        "Show Only Ledger Drift",
+        "Show Only Sub-Ledger Drift",
         "Show Only Overdraft",
     ],
     "Transactions": ["Show Only Failed"],
