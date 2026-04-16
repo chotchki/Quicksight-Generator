@@ -156,11 +156,11 @@ Last because earlier phases churn the things docs reference.
 
 ## Phase B.9 — Deploy + e2e + release
 
-- [ ] B.9.1 `cd run && ../.venv/bin/quicksight-gen demo apply --all -c config.yaml -o out/`
-- [ ] B.9.2 `cd /Users/chotchki/workspace/quicksight && .venv/bin/quicksight-gen deploy --all --generate -c run/config.yaml -o run/out/`
-- [ ] B.9.3 `.venv/bin/quicksight-gen cleanup --dry-run -c run/config.yaml -o run/out/` then `--yes` to sweep stale tagged resources from any renamed datasets.
-- [ ] B.9.4 `./run_e2e.sh --parallel 4` — full suite.
-- [ ] B.9.5 Tag `v1.3.0`, push branch, merge to main (fast-forward), push tag.
+- [x] B.9.1 `demo apply --all` — schema applied, seed data inserted (both apps).
+- [x] B.9.2 `deploy --all --generate` — all resources CREATION_SUCCESSFUL.
+- [x] B.9.3 `cleanup --dry-run` — no stale resources.
+- [x] B.9.4 `./run_e2e.sh --parallel 4` — 94 passed, 6 skipped, 1 xfailed. Full green.
+- [x] B.9.5 Fixed schema DDL ordering (transfer/posting tables before AR views). Tag + merge.
 
 ---
 
