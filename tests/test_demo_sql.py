@@ -31,6 +31,8 @@ class TestSchemaSql:
             "pr_settlements",
             "pr_sales",
             "pr_payments",
+            "transfer",
+            "posting",
         ]:
             assert f"CREATE TABLE {table}" in schema_sql
 
