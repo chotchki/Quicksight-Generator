@@ -291,21 +291,8 @@ CREATE TABLE ar_subledger_daily_balances (
     PRIMARY KEY (subledger_account_id, balance_date)
 );
 
--- Every transfer is a group of transactions sharing a transfer_id.
--- memo is denormalized onto each row for simplicity; the summary view
--- picks a representative memo per transfer.
-CREATE TABLE ar_transactions (
-    transaction_id       VARCHAR(100)  PRIMARY KEY,
-    subledger_account_id VARCHAR(100)  NOT NULL REFERENCES ar_subledger_accounts(subledger_account_id),
-    transfer_id          VARCHAR(100)  NOT NULL,
-    amount               DECIMAL(14,2) NOT NULL,
-    posted_at            TIMESTAMP     NOT NULL,
-    status               VARCHAR(20)   NOT NULL CHECK (status IN ('posted', 'failed', 'pending')),
-    transfer_type        VARCHAR(20)   NOT NULL CHECK (transfer_type IN ('ach', 'wire', 'internal', 'cash')),
-    origin               VARCHAR(30)   NOT NULL DEFAULT 'internal_initiated'
-                                       CHECK (origin IN ('internal_initiated', 'external_force_posted')),
-    memo                 VARCHAR(255)
-);
+-- ar_transactions is superseded by the unified transfer + posting tables
+-- (Phase B). Legacy DROP IF EXISTS retained for migration safety.
 
 -- Ledger-defined per-type daily transfer limits. A sub-ledger account's
 -- daily outbound (debit) total for a given transfer_type may not exceed
@@ -319,28 +306,23 @@ CREATE TABLE ar_ledger_transfer_limits (
 );
 
 CREATE INDEX idx_ar_subledger_accounts_ledger      ON ar_subledger_accounts(ledger_account_id);
-CREATE INDEX idx_ar_txn_subledger                  ON ar_transactions(subledger_account_id);
-CREATE INDEX idx_ar_txn_transfer                   ON ar_transactions(transfer_id);
-CREATE INDEX idx_ar_txn_posted                     ON ar_transactions(posted_at);
-CREATE INDEX idx_ar_txn_status                     ON ar_transactions(status);
-CREATE INDEX idx_ar_txn_transfer_type              ON ar_transactions(transfer_type);
 CREATE INDEX idx_ar_ledger_daily_balances_date     ON ar_ledger_daily_balances(balance_date);
 CREATE INDEX idx_ar_subledger_daily_balances_date  ON ar_subledger_daily_balances(balance_date);
 
 
--- Running Σ of posted transactions per sub-ledger account, up to and
+-- Running Σ of successful postings per sub-ledger account, up to and
 -- including each balance date on which a stored sub-ledger balance exists.
--- Failed/pending transactions are excluded.
+-- Failed postings are excluded.
 CREATE VIEW ar_computed_subledger_daily_balance AS
 SELECT
     sdb.subledger_account_id,
     sdb.balance_date,
-    COALESCE(SUM(t.amount), 0) AS computed_balance
+    COALESCE(SUM(p.signed_amount), 0) AS computed_balance
 FROM ar_subledger_daily_balances sdb
-LEFT JOIN ar_transactions t
-    ON t.subledger_account_id = sdb.subledger_account_id
-   AND t.status               = 'posted'
-   AND t.posted_at::date     <= sdb.balance_date
+LEFT JOIN posting p
+    ON p.subledger_account_id = sdb.subledger_account_id
+   AND p.status               = 'success'
+   AND p.posted_at::date     <= sdb.balance_date
 GROUP BY sdb.subledger_account_id, sdb.balance_date;
 
 
@@ -398,33 +380,32 @@ LEFT JOIN ar_computed_ledger_daily_balance computed
       AND computed.balance_date      = stored.balance_date;
 
 
--- Per-transfer net of non-failed transactions + net-zero flag.
--- Represents the set of transactions that should balance for each
--- transfer. A healthy transfer has net = 0. ``has_external_leg`` flags
--- transfers where at least one leg lands on an external account — the
--- external leg's effect on tracked balances is zero (we don't store
--- external balances), so a net-zero transfer can still move a tracked
--- sub-ledger's running total by its full amount.
+-- Per-transfer net of non-failed postings + net-zero flag.
+-- A healthy transfer has net = 0. ``has_external_leg`` flags transfers
+-- where at least one leg lands on an external account.
+-- Scoped to AR transfer types only.
 CREATE VIEW ar_transfer_net_zero AS
 SELECT
-    t.transfer_id,
-    MIN(t.posted_at)                                              AS first_posted_at,
-    SUM(CASE WHEN t.status <> 'failed' THEN t.amount ELSE 0 END)  AS net_amount,
-    SUM(CASE WHEN t.amount > 0 AND t.status <> 'failed'
-             THEN t.amount ELSE 0 END)                            AS total_debit,
-    SUM(CASE WHEN t.amount < 0 AND t.status <> 'failed'
-             THEN t.amount ELSE 0 END)                            AS total_credit,
-    COUNT(*)                                                      AS leg_count,
-    SUM(CASE WHEN t.status = 'failed' THEN 1 ELSE 0 END)          AS failed_leg_count,
-    BOOL_OR(NOT s.is_internal)                                    AS has_external_leg,
+    p.transfer_id,
+    MIN(p.posted_at)                                                  AS first_posted_at,
+    SUM(CASE WHEN p.status = 'success' THEN p.signed_amount ELSE 0 END) AS net_amount,
+    SUM(CASE WHEN p.signed_amount > 0 AND p.status = 'success'
+             THEN p.signed_amount ELSE 0 END)                         AS total_debit,
+    SUM(CASE WHEN p.signed_amount < 0 AND p.status = 'success'
+             THEN p.signed_amount ELSE 0 END)                         AS total_credit,
+    COUNT(*)                                                          AS leg_count,
+    SUM(CASE WHEN p.status = 'failed' THEN 1 ELSE 0 END)              AS failed_leg_count,
+    BOOL_OR(NOT s.is_internal)                                        AS has_external_leg,
     CASE
-        WHEN SUM(CASE WHEN t.status <> 'failed' THEN t.amount ELSE 0 END) = 0
+        WHEN SUM(CASE WHEN p.status = 'success' THEN p.signed_amount ELSE 0 END) = 0
             THEN 'net_zero'
         ELSE 'not_net_zero'
-    END                                                           AS net_zero_status
-FROM ar_transactions t
-JOIN ar_subledger_accounts s ON s.subledger_account_id = t.subledger_account_id
-GROUP BY t.transfer_id;
+    END                                                               AS net_zero_status
+FROM posting p
+JOIN transfer xfer ON xfer.transfer_id = p.transfer_id
+JOIN ar_subledger_accounts s ON s.subledger_account_id = p.subledger_account_id
+WHERE xfer.transfer_type IN ('ach', 'wire', 'internal', 'cash')
+GROUP BY p.transfer_id;
 
 
 -- Per-transfer summary with representative memo (from earliest leg)
@@ -440,15 +421,10 @@ SELECT
     tz.failed_leg_count,
     tz.net_zero_status,
     tz.has_external_leg,
-    (SELECT memo FROM ar_transactions x
-      WHERE x.transfer_id = tz.transfer_id
-      ORDER BY x.posted_at, x.transaction_id
-      LIMIT 1)                              AS memo,
-    (SELECT transfer_type FROM ar_transactions x
-      WHERE x.transfer_id = tz.transfer_id
-      ORDER BY x.posted_at, x.transaction_id
-      LIMIT 1)                              AS transfer_type
-FROM ar_transfer_net_zero tz;
+    xfer.memo,
+    xfer.transfer_type
+FROM ar_transfer_net_zero tz
+JOIN transfer xfer ON xfer.transfer_id = tz.transfer_id;
 
 
 -- Per (sub-ledger account, date, transfer_type) Σ of outbound (debit)
@@ -457,17 +433,19 @@ FROM ar_transfer_net_zero tz;
 -- to bound.
 CREATE VIEW ar_subledger_daily_outbound_by_type AS
 SELECT
-    t.subledger_account_id,
+    p.subledger_account_id,
     s.ledger_account_id,
-    t.posted_at::date                   AS activity_date,
-    t.transfer_type,
-    SUM(ABS(t.amount))                  AS outbound_total
-FROM ar_transactions t
-JOIN ar_subledger_accounts s ON s.subledger_account_id = t.subledger_account_id
-WHERE t.status <> 'failed'
-  AND t.amount < 0
+    p.posted_at::date                   AS activity_date,
+    xfer.transfer_type,
+    SUM(ABS(p.signed_amount))           AS outbound_total
+FROM posting p
+JOIN transfer xfer ON xfer.transfer_id = p.transfer_id
+JOIN ar_subledger_accounts s ON s.subledger_account_id = p.subledger_account_id
+WHERE p.status = 'success'
+  AND p.signed_amount < 0
   AND s.is_internal = TRUE
-GROUP BY t.subledger_account_id, s.ledger_account_id, t.posted_at::date, t.transfer_type;
+  AND xfer.transfer_type IN ('ach', 'wire', 'internal', 'cash')
+GROUP BY p.subledger_account_id, s.ledger_account_id, p.posted_at::date, xfer.transfer_type;
 
 
 -- Sub-ledger limit breach: daily outbound by type exceeds the ledger's

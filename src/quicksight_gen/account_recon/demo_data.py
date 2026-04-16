@@ -561,11 +561,14 @@ def _derive_unified_tables(
     for tid, legs in by_transfer.items():
         first = legs[0]
         any_posted = any(leg["status"] == "posted" for leg in legs)
+        any_external = any(
+            leg["origin"] == "external_force_posted" for leg in legs
+        )
         transfer_rows.append((
             tid,
             None,  # parent_transfer_id — AR doesn't chain
             first["transfer_type"],
-            first["origin"],
+            "external_force_posted" if any_external else "internal_initiated",
             abs(first["amount"]),
             "posted" if any_posted else "failed",
             first["posted_at"],
@@ -620,15 +623,6 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
         _inserts("ar_subledger_accounts",
                  ["subledger_account_id", "name", "is_internal", "ledger_account_id"],
                  subledger_rows),
-
-        _inserts("ar_transactions",
-                 ["transaction_id", "subledger_account_id", "transfer_id",
-                  "amount", "posted_at", "status", "transfer_type",
-                  "origin", "memo"],
-                 [(t["transaction_id"], t["subledger_account_id"], t["transfer_id"],
-                   t["amount"], t["posted_at"], t["status"],
-                   t["transfer_type"], t["origin"], t["memo"])
-                  for t in transactions]),
 
         _inserts("ar_ledger_transfer_limits",
                  ["ledger_account_id", "transfer_type", "daily_limit"],

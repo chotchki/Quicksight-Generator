@@ -165,24 +165,26 @@ JOIN ar_ledger_accounts la USING (ledger_account_id)"""
 def build_transactions_dataset(cfg: Config) -> DataSet:
     sql = """\
 SELECT
-    t.transaction_id,
-    t.subledger_account_id,
-    s.name          AS subledger_name,
+    p.posting_id                                                AS transaction_id,
+    p.subledger_account_id,
+    s.name                                                      AS subledger_name,
     s.ledger_account_id,
-    la.name         AS ledger_name,
+    la.name                                                     AS ledger_name,
     CASE WHEN s.is_internal THEN 'Internal' ELSE 'External' END AS scope,
-    t.transfer_id,
-    t.transfer_type,
-    t.origin,
-    t.amount,
-    t.posted_at,
-    TO_CHAR(t.posted_at, 'YYYY-MM-DD') AS posted_date,
-    t.status,
-    CASE WHEN t.status = 'failed' THEN 'Failed' ELSE 'OK' END AS is_failed,
-    t.memo
-FROM ar_transactions t
-JOIN ar_subledger_accounts s ON s.subledger_account_id = t.subledger_account_id
-JOIN ar_ledger_accounts la   ON la.ledger_account_id   = s.ledger_account_id"""
+    p.transfer_id,
+    xfer.transfer_type,
+    xfer.origin,
+    p.signed_amount                                             AS amount,
+    p.posted_at,
+    TO_CHAR(p.posted_at, 'YYYY-MM-DD')                         AS posted_date,
+    p.status,
+    CASE WHEN p.status = 'failed' THEN 'Failed' ELSE 'OK' END  AS is_failed,
+    xfer.memo
+FROM posting p
+JOIN transfer xfer               ON xfer.transfer_id          = p.transfer_id
+JOIN ar_subledger_accounts s     ON s.subledger_account_id    = p.subledger_account_id
+JOIN ar_ledger_accounts la       ON la.ledger_account_id      = s.ledger_account_id
+WHERE xfer.transfer_type IN ('ach', 'wire', 'internal', 'cash')"""
     return build_dataset(
         cfg, cfg.prefixed("ar-transactions-dataset"),
         "AR Transactions", "ar-transactions",

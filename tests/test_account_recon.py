@@ -97,10 +97,13 @@ class TestDemoRowCounts:
     def test_subledger_accounts(self, ar_parsed):
         assert len(ar_parsed["ar_subledger_accounts"]) == len(SUBLEDGER_ACCOUNTS)
 
-    def test_transactions(self, ar_parsed):
+    def test_postings(self, unified_parsed):
         # 60 base transfers + 3 planted breach + 3 planted overdraft
-        # = 66 transfers × 2 legs each = 132 transactions
-        assert len(ar_parsed["ar_transactions"]) == 132
+        # = 66 transfers × 2 legs each = 132 postings
+        assert len(unified_parsed["posting"]) == 132
+
+    def test_transfers(self, unified_parsed):
+        assert len(unified_parsed["transfer"]) == 66
 
     def test_ledger_transfer_limits(self, ar_parsed):
         from quicksight_gen.account_recon.demo_data import _LEDGER_LIMITS
@@ -135,10 +138,10 @@ class TestReferentialIntegrity:
             f"Unknown ledger_account_ids: {subledger_ledgers - ledger_ids}"
         )
 
-    def test_transaction_subledger_fk(self, ar_parsed):
+    def test_posting_subledger_fk(self, ar_parsed, unified_parsed):
         subledger_ids = set(self._col(ar_parsed["ar_subledger_accounts"], 0))
-        txn_subledgers = set(self._col(ar_parsed["ar_transactions"], 1))
-        assert txn_subledgers.issubset(subledger_ids)
+        posting_subledgers = set(self._col(unified_parsed["posting"], 2))
+        assert posting_subledgers.issubset(subledger_ids)
 
     def test_ledger_daily_balance_fk(self, ar_parsed):
         ledger_ids = set(self._col(ar_parsed["ar_ledger_accounts"], 0))
@@ -154,23 +157,23 @@ class TestReferentialIntegrity:
 class TestScenarioCoverage:
     """Guarantees every AR visual has non-empty data out-of-the-box."""
 
-    def test_failed_transactions_exist(self, ar_parsed):
+    def test_failed_postings_exist(self, unified_parsed):
         """Status=failed must be present so the Transactions bar chart and
         the failed-transaction KPI aren't empty."""
         statuses = [
             [p.strip().strip("'") for p in row.split(",")][5]
-            for row in ar_parsed["ar_transactions"]
+            for row in unified_parsed["posting"]
         ]
         failed = sum(1 for s in statuses if s == "failed")
         # 4 failed-leg + 8 all-failed (both legs) = 12
-        assert failed >= 8, f"Only {failed} failed transactions"
+        assert failed >= 8, f"Only {failed} failed postings"
 
-    def test_posted_and_failed_statuses_both_present(self, ar_parsed):
+    def test_success_and_failed_statuses_both_present(self, unified_parsed):
         statuses = {
             [p.strip().strip("'") for p in row.split(",")][5]
-            for row in ar_parsed["ar_transactions"]
+            for row in unified_parsed["posting"]
         }
-        assert {"posted", "failed"}.issubset(statuses)
+        assert {"success", "failed"}.issubset(statuses)
 
     def test_internal_and_external_ledgers_exist(self, ar_parsed):
         is_internals = {
@@ -256,12 +259,12 @@ class TestScenarioCoverage:
             assert memo_fragment in ar_sql
 
     def _transfer_legs_by_scope(
-        self, ar_parsed,
+        self, ar_parsed, unified_parsed,
     ) -> dict[str, tuple[int, int]]:
         """Return {transfer_id: (internal_leg_count, external_leg_count)}.
 
         Parses subledger.is_internal from ar_subledger_accounts, then
-        groups ar_transactions by transfer_id and counts the legs on each
+        groups posting rows by transfer_id and counts the legs on each
         side. Used by the scenario coverage tests for transfer
         pair-patterns.
         """
@@ -273,10 +276,10 @@ class TestScenarioCoverage:
             internal_by_subledger[sid] = is_internal
 
         buckets: dict[str, list[bool]] = {}
-        for row in ar_parsed["ar_transactions"]:
+        for row in unified_parsed["posting"]:
             parts = [p.strip().strip("'") for p in row.split(",")]
-            subledger_id = parts[1]
-            transfer_id = parts[2]
+            transfer_id = parts[1]
+            subledger_id = parts[2]
             buckets.setdefault(transfer_id, []).append(
                 internal_by_subledger[subledger_id]
             )
@@ -285,11 +288,11 @@ class TestScenarioCoverage:
             for tid, flags in buckets.items()
         }
 
-    def test_cross_scope_transfers_exist(self, ar_parsed):
+    def test_cross_scope_transfers_exist(self, ar_parsed, unified_parsed):
         """Transfers with one internal leg + one external leg must exist
         so the dashboard has examples where the external leg doesn't
         affect any tracked balance."""
-        by_scope = self._transfer_legs_by_scope(ar_parsed)
+        by_scope = self._transfer_legs_by_scope(ar_parsed, unified_parsed)
         cross_scope = [
             tid for tid, (i, e) in by_scope.items() if i >= 1 and e >= 1
         ]
@@ -297,7 +300,7 @@ class TestScenarioCoverage:
             f"Need ≥20 cross-scope transfers, got {len(cross_scope)}"
         )
 
-    def test_internal_only_transfers_exist(self, ar_parsed):
+    def test_internal_only_transfers_exist(self, ar_parsed, unified_parsed):
         """Transfers where both legs land on internal sub-ledgers must
         exist so drift bugs that only manifest when one transfer touches
         two tracked balances are surfaced by the demo data.
@@ -307,7 +310,7 @@ class TestScenarioCoverage:
         cross-scope-only seed data — the bug only shows up when both
         legs are tracked.
         """
-        by_scope = self._transfer_legs_by_scope(ar_parsed)
+        by_scope = self._transfer_legs_by_scope(ar_parsed, unified_parsed)
         internal_only = [
             tid for tid, (i, e) in by_scope.items() if i >= 2 and e == 0
         ]
@@ -315,17 +318,16 @@ class TestScenarioCoverage:
             f"Need ≥15 internal-internal transfers, got {len(internal_only)}"
         )
 
-    def test_failed_transfer_pattern_coverage(self, ar_parsed):
+    def test_failed_transfer_pattern_coverage(self, ar_parsed, unified_parsed):
         """Both failed-leg and fully-failed scenarios must include at
         least one internal-internal instance — otherwise a regression in
         how failed internal legs affect sub-ledger balances would slip
         through the demo."""
-        by_scope = self._transfer_legs_by_scope(ar_parsed)
-        # Pull all transactions grouped by transfer to check statuses.
+        by_scope = self._transfer_legs_by_scope(ar_parsed, unified_parsed)
         statuses_by_transfer: dict[str, list[str]] = {}
-        for row in ar_parsed["ar_transactions"]:
+        for row in unified_parsed["posting"]:
             parts = [p.strip().strip("'") for p in row.split(",")]
-            transfer_id = parts[2]
+            transfer_id = parts[1]
             status = parts[5]
             statuses_by_transfer.setdefault(transfer_id, []).append(status)
 
@@ -340,25 +342,24 @@ class TestScenarioCoverage:
             "Need ≥1 internal-internal transfer with a failed leg"
         )
 
-    def test_all_four_transfer_types_present(self, ar_parsed):
+    def test_all_four_transfer_types_present(self, unified_parsed):
         """All four transfer types must have traffic so the
         transfer-type filter has something to filter on."""
         types = {
-            [p.strip().strip("'") for p in row.split(",")][6]
-            for row in ar_parsed["ar_transactions"]
+            [p.strip().strip("'") for p in row.split(",")][2]
+            for row in unified_parsed["transfer"]
         }
         assert types == {"ach", "wire", "internal", "cash"}, (
             f"Expected all four transfer types, got {types}"
         )
 
-    def test_origin_both_values_present(self, ar_parsed):
+    def test_origin_both_values_present(self, unified_parsed):
         """Both origin values must be seeded so the Transaction Detail
-        column never reads as a single-value placeholder. Phase A is
-        tag-only — downstream phases will wire this into filters."""
+        column never reads as a single-value placeholder."""
         origins: list[str] = []
-        for row in ar_parsed["ar_transactions"]:
+        for row in unified_parsed["transfer"]:
             parts = [p.strip().strip("'") for p in row.split(",")]
-            origins.append(parts[7])
+            origins.append(parts[3])
         counts = {
             "internal_initiated": sum(1 for o in origins
                                       if o == "internal_initiated"),
@@ -366,10 +367,10 @@ class TestScenarioCoverage:
                                          if o == "external_force_posted"),
         }
         assert counts["internal_initiated"] >= 10, (
-            f"Need ≥10 internal_initiated rows, got {counts}"
+            f"Need ≥10 internal_initiated transfers, got {counts}"
         )
         assert counts["external_force_posted"] >= 5, (
-            f"Need ≥5 external_force_posted rows, got {counts}"
+            f"Need ≥5 external_force_posted transfers, got {counts}"
         )
         assert set(origins) == {
             "internal_initiated", "external_force_posted",
@@ -386,7 +387,7 @@ class TestScenarioCoverage:
         ledgers = {lid for lid, _x, _l in _LEDGER_LIMITS}
         assert len(ledgers) >= 2, "Limits must span ≥2 ledgers"
 
-    def test_limit_breaches_materialize(self, ar_parsed):
+    def test_limit_breaches_materialize(self, ar_parsed, unified_parsed):
         """Planted breach cells must emerge from running the view
         logic on the seed data — the query sums outbound |amount| per
         (sub-ledger, day, type), joins ledger-limits, and keeps rows
@@ -405,14 +406,19 @@ class TestScenarioCoverage:
             is_internal[sid] = parts[2].strip().lower() == "true"
             ledger_by_subledger[sid] = parts[3].strip().strip("'")
 
-        totals: dict[tuple[str, str, str], Decimal] = {}
-        for row in ar_parsed["ar_transactions"]:
+        transfer_type_by_id: dict[str, str] = {}
+        for row in unified_parsed["transfer"]:
             parts = [p.strip().strip("'") for p in row.split(",")]
-            subl = parts[1]
+            transfer_type_by_id[parts[0]] = parts[2]
+
+        totals: dict[tuple[str, str, str], Decimal] = {}
+        for row in unified_parsed["posting"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            subl = parts[2]
             amount = Decimal(parts[3])
             day = parts[4].split(" ")[0]
             status = parts[5]
-            xtype = parts[6]
+            xtype = transfer_type_by_id[parts[1]]
             if status == "failed":
                 continue
             if amount >= 0:
@@ -523,11 +529,11 @@ class TestUnifiedTables:
         ]
 
     def test_transfer_row_count(self, unified_parsed):
-        """One transfer row per unique transfer_id in ar_transactions."""
+        """66 transfers: 60 base + 3 breach + 3 overdraft."""
         assert len(unified_parsed["transfer"]) == 66
 
     def test_posting_row_count(self, unified_parsed):
-        """One posting per ar_transactions row."""
+        """66 transfers × 2 legs = 132 postings."""
         assert len(unified_parsed["posting"]) == 132
 
     def test_posting_transfer_fk(self, unified_parsed):
@@ -550,22 +556,13 @@ class TestUnifiedTables:
         parents = self._col(unified_parsed["transfer"], 1)
         assert all(p == "NULL" for p in parents)
 
-    def test_transfer_posting_equivalence(self, ar_parsed, unified_parsed):
-        """Every ar_transactions row has a matching posting with same
-        transfer_id, account, and amount."""
-        posting_set = set()
+    def test_posting_fields_populated(self, unified_parsed):
+        """Every posting has non-empty transfer_id, account, and amount."""
         for row in unified_parsed["posting"]:
             parts = [p.strip().strip("'") for p in row.split(",")]
-            posting_set.add((parts[1], parts[2], parts[3]))
-
-        for row in ar_parsed["ar_transactions"]:
-            parts = [p.strip().strip("'") for p in row.split(",")]
-            transfer_id = parts[2]
-            account = parts[1]
-            amount = parts[3]
-            assert (transfer_id, account, amount) in posting_set, (
-                f"Missing posting for txn {parts[0]}"
-            )
+            assert parts[1], "posting.transfer_id empty"
+            assert parts[2], "posting.subledger_account_id empty"
+            assert Decimal(parts[3]), "posting.signed_amount is zero"
 
 
 # ---------------------------------------------------------------------------
@@ -585,7 +582,6 @@ class TestSeedSqlStructure:
         assert tables == {
             "ar_ledger_accounts",
             "ar_subledger_accounts",
-            "ar_transactions",
             "ar_ledger_transfer_limits",
             "ar_ledger_daily_balances",
             "ar_subledger_daily_balances",
@@ -598,7 +594,6 @@ class TestSeedSqlStructure:
         for m in re.finditer(r"INSERT INTO (\w+)", ar_sql):
             positions.setdefault(m.group(1), m.start())
         assert positions["ar_ledger_accounts"] < positions["ar_subledger_accounts"]
-        assert positions["ar_subledger_accounts"] < positions["ar_transactions"]
         assert (
             positions["ar_ledger_accounts"]
             < positions["ar_ledger_daily_balances"]
@@ -633,8 +628,9 @@ class TestSchemaSql:
             "ar_subledger_accounts",
             "ar_ledger_daily_balances",
             "ar_subledger_daily_balances",
-            "ar_transactions",
             "ar_ledger_transfer_limits",
+            "transfer",
+            "posting",
         ):
             assert f"CREATE TABLE {table}" in schema_sql
 
@@ -652,18 +648,16 @@ class TestSchemaSql:
         ):
             assert f"CREATE VIEW {view}" in schema_sql
 
-    def test_transaction_transfer_type_column(self, schema_sql):
-        """ar_transactions must carry the transfer_type column (Phase 5)."""
-        assert "transfer_type" in schema_sql
-        # Column appears in the CREATE TABLE ar_transactions block
+    def test_transfer_type_column(self, schema_sql):
+        """transfer table must carry the transfer_type column."""
         m = re.search(
-            r"CREATE TABLE ar_transactions \((.*?)\);",
+            r"CREATE TABLE transfer \((.*?)\);",
             schema_sql,
             re.DOTALL,
         )
-        assert m, "ar_transactions CREATE TABLE missing"
+        assert m, "transfer CREATE TABLE missing"
         assert "transfer_type" in m.group(1), (
-            "ar_transactions.transfer_type column missing"
+            "transfer.transfer_type column missing"
         )
 
 
@@ -1436,15 +1430,13 @@ class TestPhase5DatasetDeclarations:
         assert "overdraft_status" in table["CustomSql"]["SqlQuery"]
 
     def test_transactions_dataset_projects_origin(self, ar_output_dir):
-        """Phase A.6 adds `origin` to ar_transactions as a tag-only column.
-        The Transactions dataset must expose it so downstream phases can
-        consume it without a schema round-trip."""
+        """The Transactions dataset must expose origin from the transfer table."""
         path = ar_output_dir / "datasets" / "qs-gen-ar-transactions-dataset.json"
         data = json.loads(path.read_text())
         table = next(iter(data["PhysicalTableMap"].values()))
         cols = {c["Name"] for c in table["CustomSql"]["Columns"]}
         assert "origin" in cols
-        assert "t.origin" in table["CustomSql"]["SqlQuery"]
+        assert "xfer.origin" in table["CustomSql"]["SqlQuery"]
 
 
 # ---------------------------------------------------------------------------

@@ -83,12 +83,12 @@ AR generator emits to BOTH legacy AR tables AND the new `transfer` / `posting` t
 
 Cutover: AR datasets stop reading legacy tables; legacy AR tables removed from `demo/schema.sql`.
 
-- [ ] B.4.1 Rewrite each AR dataset's SQL in `account_recon/datasets.py` to project from `transfer` + `posting` instead of `ar_transfers` + `ar_transactions`. Column contracts (B.2) stay identical — only the implementation changes.
-- [ ] B.4.2 Drop `ar_transfers`, `ar_transactions`, and any AR views built atop them, from `demo/schema.sql`. Update generator to skip those inserts.
-- [ ] B.4.3 Update `tests/test_account_recon.py` SQL assertions for new projections.
+- [x] B.4.1 Rewrite each AR dataset's SQL in `account_recon/datasets.py` to project from `transfer` + `posting` instead of `ar_transfers` + `ar_transactions`. Column contracts (B.2) stay identical — only the implementation changes.
+- [x] B.4.2 Drop `ar_transactions` from `demo/schema.sql`. Rewrite AR views (`ar_transfer_summary`, `ar_subledger_daily_outbound_by_type`, `ar_computed_subledger_daily_balance`, `ar_transfer_net_zero`) to use `posting` + `transfer`. Remove `ar_transactions` INSERT from demo_data.py.
+- [x] B.4.3 Update `tests/test_account_recon.py` — all scenario/row-count/FK/schema tests now read from `unified_parsed["posting"]` + `unified_parsed["transfer"]` instead of `ar_parsed["ar_transactions"]`.
 - [ ] B.4.4 `demo apply --all` + `deploy --all --generate -c run/config.yaml -o run/out/` from repo root.
 - [ ] B.4.5 `./run_e2e.sh --parallel 4` — full suite. AR e2e green; PR e2e unaffected (still on legacy tables).
-- [ ] B.4.6 Commit — `Phase B.4: AR datasets read from unified schema; legacy AR txn tables dropped`.
+- [x] B.4.6 Commit — `Phase B.4: AR datasets read from unified schema; legacy AR txn tables dropped`.
 
 CHECKPOINT — AR fully on unified schema. PR untouched.
 
