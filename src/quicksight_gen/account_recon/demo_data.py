@@ -8,14 +8,18 @@ always populated:
   transfer's net-of-non-failed amount is non-zero.
 * Off-amount transfers — both legs posted, amounts differ by a few
   dollars; non-zero net again but via a different mechanism.
-* Balance drift — stored daily balance for a parent account doesn't
-  match the sum of posted transactions for its children on that day.
-* Limit breach — daily outbound for one (child, date, transfer_type)
-  cell exceeds the parent's configured daily_limit for that type.
-* Overdraft — stored child balance for a given day is negative.
+* Balance drift — stored daily balance for a ledger account doesn't
+  match the sum of posted transactions for its sub-ledgers on that day.
+* Limit breach — daily outbound for one (sub-ledger, date, transfer_type)
+  cell exceeds the ledger's configured daily_limit for that type.
+* Overdraft — stored sub-ledger balance for a given day is negative.
 
 Naming uses generic valley/farm/harvest vocabulary — no trademarked
 characters or places.
+
+Sample IDs (``ar-par-*`` / ``ar-acc-*``) predate the ledger/sub-ledger
+rename; kept as opaque strings so the generator's output stays
+byte-identical for the same random seed + anchor date.
 """
 
 from __future__ import annotations
@@ -30,8 +34,8 @@ from typing import Any
 # Static definitions — valley / farm / harvest flavor
 # ---------------------------------------------------------------------------
 
-PARENT_ACCOUNTS: list[tuple[str, str, bool]] = [
-    # (parent_account_id, name, is_internal)
+LEDGER_ACCOUNTS: list[tuple[str, str, bool]] = [
+    # (ledger_account_id, name, is_internal)
     ("ar-par-checking",  "Big Meadow Checking",     True),
     ("ar-par-savings",   "Harvest Moon Savings",    True),
     ("ar-par-loans",     "Orchard Lending Pool",    True),
@@ -39,8 +43,8 @@ PARENT_ACCOUNTS: list[tuple[str, str, bool]] = [
     ("ar-par-exchange",  "Harvest Credit Exchange", False),
 ]
 
-ACCOUNTS: list[tuple[str, str, str]] = [
-    # (account_id, name, parent_account_id)
+SUBLEDGER_ACCOUNTS: list[tuple[str, str, str]] = [
+    # (subledger_account_id, name, ledger_account_id)
     ("ar-acc-checking-main", "Checking – Main Office",       "ar-par-checking"),
     ("ar-acc-checking-west", "Checking – Westfield Branch",  "ar-par-checking"),
     ("ar-acc-savings-core",  "Savings – Core Reserve",       "ar-par-savings"),
@@ -73,7 +77,7 @@ _MEMOS = [
 # external) are the common case — the external leg doesn't affect any
 # tracked balance. Internal-internal transfers touch two tracked balances
 # at once; without them, a bug that sums a transfer's legs by transfer_id
-# instead of account_id would never surface.
+# instead of subledger_account_id would never surface.
 _SUCCESSFUL_CROSS_SCOPE = 28
 _SUCCESSFUL_INTERNAL_INTERNAL = 20
 _FAILED_LEG_CROSS_SCOPE = 2
@@ -98,21 +102,22 @@ _DAYS_OF_HISTORY = 40
 
 # Planted drift cells — kept small so each drift table is readable.
 #
-# Parent and child drift are INDEPENDENT reconciliation problems (see
-# SPEC "Reconciliation scope"). Planting them on different cells keeps
-# the two Exceptions tables surfacing different rows.
+# Ledger and sub-ledger drift are INDEPENDENT reconciliation problems
+# (see SPEC "Reconciliation scope"). Planting them on different cells
+# keeps the two Exceptions tables surfacing different rows.
 #
-# Parent drift: stored parent balance vs Σ children's stored balances.
-_PARENT_DRIFT_PLANT: list[tuple[str, int, str]] = [
-    # (parent_id, days_ago, delta as decimal string)
+# Ledger drift: stored ledger balance vs Σ sub-ledgers' stored balances.
+_LEDGER_DRIFT_PLANT: list[tuple[str, int, str]] = [
+    # (ledger_account_id, days_ago, delta as decimal string)
     ("ar-par-checking", 3,  "125.00"),
     ("ar-par-savings",  7,  "-80.50"),
     ("ar-par-loans",    14, "310.00"),
 ]
 
-# Child drift: stored child balance vs Σ that child's posted transactions.
-_CHILD_DRIFT_PLANT: list[tuple[str, int, str]] = [
-    # (account_id, days_ago, delta as decimal string)
+# Sub-ledger drift: stored sub-ledger balance vs Σ that sub-ledger's
+# posted transactions.
+_SUBLEDGER_DRIFT_PLANT: list[tuple[str, int, str]] = [
+    # (subledger_account_id, days_ago, delta as decimal string)
     ("ar-acc-checking-main", 5,  "200.00"),
     ("ar-acc-checking-west", 2,  "-75.00"),
     ("ar-acc-savings-core",  10, "-150.50"),
@@ -130,17 +135,18 @@ _TRANSFER_TYPES: list[tuple[str, int]] = [
 ]
 
 
-# Parent-defined per-type daily transfer limits. Lenient amounts —
-# normal seed transfers (up to $9,000 each, ≤1-2 per child × day × type)
-# shouldn't accidentally breach these. Planted breaches inject an extra
-# oversized transfer on a specific cell to force the breach.
+# Ledger-defined per-type daily transfer limits. Lenient amounts —
+# normal seed transfers (up to $9,000 each, ≤1-2 per sub-ledger × day ×
+# type) shouldn't accidentally breach these. Planted breaches inject an
+# extra oversized transfer on a specific cell to force the breach.
 #
 # Absence of a row means "no limit enforced" (e.g., loans×wire is
 # unlimited here — wire-out from loans accounts doesn't hit a limit).
-# External parents (coop, exchange) have no rows — their children don't
-# participate in the limit check (outbound view filters internal only).
-_PARENT_LIMITS: list[tuple[str, str, str]] = [
-    # (parent_account_id, transfer_type, daily_limit)
+# External ledgers (coop, exchange) have no rows — their sub-ledgers
+# don't participate in the limit check (outbound view filters internal
+# only).
+_LEDGER_LIMITS: list[tuple[str, str, str]] = [
+    # (ledger_account_id, transfer_type, daily_limit)
     ("ar-par-checking", "ach",  "20000.00"),
     ("ar-par-checking", "wire", "15000.00"),
     ("ar-par-savings",  "ach",  "12000.00"),
@@ -150,35 +156,35 @@ _PARENT_LIMITS: list[tuple[str, str, str]] = [
 ]
 
 
-# Limit breach plants: one extra outbound transfer per (child, day,
+# Limit breach plants: one extra outbound transfer per (sub-ledger, day,
 # type). Each plant amount is chosen to exceed the corresponding
-# parent-limit entry so the breach view reliably surfaces the cell.
-# Disjoint from _CHILD_DRIFT_PLANT (different cells) — each exception
+# ledger-limit entry so the breach view reliably surfaces the cell.
+# Disjoint from _SUBLEDGER_DRIFT_PLANT (different cells) — each exception
 # table surfaces a different set of rows.
 _LIMIT_BREACH_PLANT: list[tuple[str, int, str, str, str]] = [
-    # (account_id, days_ago, transfer_type, debit_amount, memo)
+    # (subledger_account_id, days_ago, transfer_type, debit_amount, memo)
     ("ar-acc-checking-main", 8,  "wire", "22000.00", "Bulk wire payout"),
     ("ar-acc-savings-op",    12, "ach",  "16000.00", "Oversize ACH batch"),
     ("ar-acc-loans-equip",   18, "cash", "13000.00", "Large cash disbursement"),
 ]
 
 
-# Overdraft plants: one extra outbound transfer per (child, day) that
-# drives the child's running balance negative. The overdraft view picks
-# up every day where stored balance < 0 — after the plant, the child
-# may stay negative for several days until a compensating credit is
-# emitted, which is the realistic operational shape for a short-lived
-# overdraft. Disjoint from drift and breach plant cells.
+# Overdraft plants: one extra outbound transfer per (sub-ledger, day)
+# that drives the sub-ledger's running balance negative. The overdraft
+# view picks up every day where stored balance < 0 — after the plant,
+# the sub-ledger may stay negative for several days until a compensating
+# credit is emitted, which is the realistic operational shape for a
+# short-lived overdraft. Disjoint from drift and breach plant cells.
 _OVERDRAFT_PLANT: list[tuple[str, int, str, str]] = [
-    # (account_id, days_ago, debit_amount, memo)
+    # (subledger_account_id, days_ago, debit_amount, memo)
     ("ar-acc-checking-west", 6, "35000.00", "Emergency outbound — covered next day"),
     ("ar-acc-savings-op",    4, "18000.00", "Overnight sweep reversal pending"),
     ("ar-acc-loans-equip",   9, "28000.00", "Equipment purchase — funding pending"),
 ]
 
 
-# External accounts used as counter-legs for planted breach/overdraft
-# transfers. The counter-leg doesn't affect any tracked balance.
+# External sub-ledger accounts used as counter-legs for planted breach/
+# overdraft transfers. The counter-leg doesn't affect any tracked balance.
 _EXTERNAL_COUNTER_LEG_POOL: list[str] = [
     "ar-acc-coop-clearing",
     "ar-acc-coop-settle",
@@ -235,16 +241,16 @@ def _ts(base: date, days_ago: int, rng: random.Random) -> datetime:
 def _pick_cross_scope_pair(
     rng: random.Random,
 ) -> tuple[str, str]:
-    """Return (debit_account_id, credit_account_id) for one transfer.
+    """Return (debit_subledger_id, credit_subledger_id) for one transfer.
 
-    One leg is an internal child, the other is an external child. The
-    direction is randomized so the "external leg" appears as both the
-    debit and the credit side roughly half the time.
+    One leg is an internal sub-ledger, the other is an external
+    sub-ledger. The direction is randomized so the "external leg"
+    appears as both the debit and the credit side roughly half the time.
     """
-    internal_ids = [a[0] for a in ACCOUNTS
-                    if _parent_is_internal(a[2])]
-    external_ids = [a[0] for a in ACCOUNTS
-                    if not _parent_is_internal(a[2])]
+    internal_ids = [s[0] for s in SUBLEDGER_ACCOUNTS
+                    if _ledger_is_internal(s[2])]
+    external_ids = [s[0] for s in SUBLEDGER_ACCOUNTS
+                    if not _ledger_is_internal(s[2])]
     debit = rng.choice(internal_ids)
     credit = rng.choice(external_ids)
     if rng.random() < 0.5:
@@ -255,26 +261,26 @@ def _pick_cross_scope_pair(
 def _pick_internal_pair(
     rng: random.Random,
 ) -> tuple[str, str]:
-    """Return (debit_account_id, credit_account_id) for one transfer
-    between two distinct internal children.
+    """Return (debit_subledger_id, credit_subledger_id) for one transfer
+    between two distinct internal sub-ledgers.
 
     Both legs affect tracked balances — this exercises the case where
-    a single transfer moves two child accounts' running totals in
+    a single transfer moves two sub-ledger accounts' running totals in
     opposite directions.
     """
-    internal_ids = [a[0] for a in ACCOUNTS
-                    if _parent_is_internal(a[2])]
+    internal_ids = [s[0] for s in SUBLEDGER_ACCOUNTS
+                    if _ledger_is_internal(s[2])]
     debit = rng.choice(internal_ids)
-    credit_choices = [a for a in internal_ids if a != debit]
+    credit_choices = [s for s in internal_ids if s != debit]
     credit = rng.choice(credit_choices)
     return debit, credit
 
 
-def _parent_is_internal(parent_id: str) -> bool:
-    for pid, _name, is_internal in PARENT_ACCOUNTS:
-        if pid == parent_id:
+def _ledger_is_internal(ledger_id: str) -> bool:
+    for lid, _name, is_internal in LEDGER_ACCOUNTS:
+        if lid == ledger_id:
             return is_internal
-    raise KeyError(parent_id)
+    raise KeyError(ledger_id)
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +303,7 @@ def _generate_transfers(
 
     def _emit(
         transfer_id: str,
-        account_id: str,
+        subledger_account_id: str,
         amount: Decimal,
         posted_at: datetime,
         status: str,
@@ -308,7 +314,7 @@ def _generate_transfers(
         txn_idx += 1
         transactions.append({
             "transaction_id": f"ar-txn-{txn_idx:05d}",
-            "account_id": account_id,
+            "subledger_account_id": subledger_account_id,
             "transfer_id": transfer_id,
             "amount": amount,
             "posted_at": posted_at,
@@ -408,9 +414,9 @@ def _generate_transfers(
                        "failed", "failed", _pick_type(), memo)
 
     # 5. Planted limit-breach transfers — oversized outbound on a
-    #    specific (child, day, type) cell that exceeds the parent's
+    #    specific (sub-ledger, day, type) cell that exceeds the ledger's
     #    configured daily_limit. Counter-leg lands on an external
-    #    account so it doesn't perturb another tracked child.
+    #    sub-ledger so it doesn't perturb another tracked sub-ledger.
     for i, (acct, days_ago, xtype, amount_str, memo) in enumerate(
         _LIMIT_BREACH_PLANT,
     ):
@@ -424,9 +430,9 @@ def _generate_transfers(
                    "posted", "posted", xtype, memo)
 
     # 6. Planted overdraft transfers — outbound debit that drives the
-    #    child's running balance below zero for the planted day. Uses
-    #    'internal' transfer_type so it doesn't inflate ach/wire/cash
-    #    outbound totals (keeps breach plants independent).
+    #    sub-ledger's running balance below zero for the planted day.
+    #    Uses 'internal' transfer_type so it doesn't inflate
+    #    ach/wire/cash outbound totals (keeps breach plants independent).
     for i, (acct, days_ago, amount_str, memo) in enumerate(
         _OVERDRAFT_PLANT,
     ):
@@ -447,78 +453,79 @@ def _generate_daily_balances(
 ) -> tuple[list[dict], list[dict]]:
     """Compute stored daily balances at both account levels.
 
-    Child balances are the running Σ of posted txns per internal child.
-    Parent balances are Σ of children's stored balances per internal parent.
-    Child-level and parent-level drift are then planted independently —
-    child drift offsets the child stored balance only; parent drift
-    offsets the parent stored balance only.
+    Sub-ledger balances are the running Σ of posted txns per internal
+    sub-ledger. Ledger balances are Σ of sub-ledgers' stored balances
+    per internal ledger. Sub-ledger-level and ledger-level drift are
+    then planted independently — sub-ledger drift offsets the
+    sub-ledger stored balance only; ledger drift offsets the ledger
+    stored balance only.
 
-    Returns ``(account_balance_rows, parent_balance_rows)``. Only
-    internal accounts/parents get stored balance rows (the application
-    does not reconcile external accounts — see SPEC).
+    Returns ``(subledger_balance_rows, ledger_balance_rows)``. Only
+    internal sub-ledgers/ledgers get stored balance rows (the
+    application does not reconcile external accounts — see SPEC).
     """
-    internal_parents = {pid for pid, _n, is_int in PARENT_ACCOUNTS if is_int}
-    internal_children = [
-        (aid, pid) for aid, _n, pid in ACCOUNTS if pid in internal_parents
+    internal_ledgers = {lid for lid, _n, is_int in LEDGER_ACCOUNTS if is_int}
+    internal_subledgers = [
+        (sid, lid) for sid, _n, lid in SUBLEDGER_ACCOUNTS if lid in internal_ledgers
     ]
 
-    # ---- Child-level stored balances ----
-    account_balances: dict[tuple[str, date], Decimal] = {}
-    for account_id, _parent_id in internal_children:
+    # ---- Sub-ledger stored balances ----
+    subledger_balances: dict[tuple[str, date], Decimal] = {}
+    for subledger_account_id, _ledger_id in internal_subledgers:
         running = Decimal("0.00")
         for days_ago in range(_DAYS_OF_HISTORY, -1, -1):
             bdate = today - timedelta(days=days_ago)
             for t in transactions:
                 if (
                     t["status"] == "posted"
-                    and t["account_id"] == account_id
+                    and t["subledger_account_id"] == subledger_account_id
                     and t["posted_at"].date() == bdate
                 ):
                     running += t["amount"]
-            account_balances[(account_id, bdate)] = running
+            subledger_balances[(subledger_account_id, bdate)] = running
 
-    for account_id, days_ago, delta_str in _CHILD_DRIFT_PLANT:
-        key = (account_id, today - timedelta(days=days_ago))
-        if key in account_balances:
-            account_balances[key] += Decimal(delta_str)
+    for subledger_account_id, days_ago, delta_str in _SUBLEDGER_DRIFT_PLANT:
+        key = (subledger_account_id, today - timedelta(days=days_ago))
+        if key in subledger_balances:
+            subledger_balances[key] += Decimal(delta_str)
 
-    # ---- Parent-level stored balances ----
-    # Σ of children's (planted) stored balances per parent per day.
-    parent_balances: dict[tuple[str, date], Decimal] = {}
-    for parent_id in internal_parents:
-        parent_children = [
-            aid for aid, pid in internal_children if pid == parent_id
+    # ---- Ledger stored balances ----
+    # Σ of sub-ledgers' (planted) stored balances per ledger per day.
+    ledger_balances: dict[tuple[str, date], Decimal] = {}
+    for ledger_id in internal_ledgers:
+        ledger_subledgers = [
+            sid for sid, lid in internal_subledgers if lid == ledger_id
         ]
         for days_ago in range(_DAYS_OF_HISTORY, -1, -1):
             bdate = today - timedelta(days=days_ago)
             total = sum(
-                (account_balances[(aid, bdate)] for aid in parent_children),
+                (subledger_balances[(sid, bdate)] for sid in ledger_subledgers),
                 Decimal("0.00"),
             )
-            parent_balances[(parent_id, bdate)] = total
+            ledger_balances[(ledger_id, bdate)] = total
 
-    for parent_id, days_ago, delta_str in _PARENT_DRIFT_PLANT:
-        key = (parent_id, today - timedelta(days=days_ago))
-        if key in parent_balances:
-            parent_balances[key] += Decimal(delta_str)
+    for ledger_id, days_ago, delta_str in _LEDGER_DRIFT_PLANT:
+        key = (ledger_id, today - timedelta(days=days_ago))
+        if key in ledger_balances:
+            ledger_balances[key] += Decimal(delta_str)
 
-    account_rows = [
+    subledger_rows = [
         {
-            "account_id": aid,
+            "subledger_account_id": sid,
             "balance_date": bdate,
             "balance": bal.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
         }
-        for (aid, bdate), bal in sorted(account_balances.items())
+        for (sid, bdate), bal in sorted(subledger_balances.items())
     ]
-    parent_rows = [
+    ledger_rows = [
         {
-            "parent_account_id": pid,
+            "ledger_account_id": lid,
             "balance_date": bdate,
             "balance": bal.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
         }
-        for (pid, bdate), bal in sorted(parent_balances.items())
+        for (lid, bdate), bal in sorted(ledger_balances.items())
     ]
-    return account_rows, parent_rows
+    return subledger_rows, ledger_rows
 
 
 # ---------------------------------------------------------------------------
@@ -533,17 +540,17 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
     rng = random.Random(42)
     today = anchor_date or date.today()
 
-    parent_rows = [
-        (pid, name, is_internal)
-        for pid, name, is_internal in PARENT_ACCOUNTS
+    ledger_rows = [
+        (lid, name, is_internal)
+        for lid, name, is_internal in LEDGER_ACCOUNTS
     ]
-    account_rows = [
-        # is_internal derived from parent
-        (aid, name, _parent_is_internal(pid), pid)
-        for aid, name, pid in ACCOUNTS
+    subledger_rows = [
+        # is_internal derived from the ledger
+        (sid, name, _ledger_is_internal(lid), lid)
+        for sid, name, lid in SUBLEDGER_ACCOUNTS
     ]
     transactions = _generate_transfers(rng, today)
-    account_balances, parent_balances = _generate_daily_balances(
+    subledger_balances, ledger_balances = _generate_daily_balances(
         today, transactions,
     )
 
@@ -551,35 +558,35 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
         f"-- Farmers Exchange Bank — demo seed data",
         f"-- Anchor date: {today.isoformat()}\n",
 
-        _inserts("ar_parent_accounts",
-                 ["parent_account_id", "name", "is_internal"],
-                 parent_rows),
+        _inserts("ar_ledger_accounts",
+                 ["ledger_account_id", "name", "is_internal"],
+                 ledger_rows),
 
-        _inserts("ar_accounts",
-                 ["account_id", "name", "is_internal", "parent_account_id"],
-                 account_rows),
+        _inserts("ar_subledger_accounts",
+                 ["subledger_account_id", "name", "is_internal", "ledger_account_id"],
+                 subledger_rows),
 
         _inserts("ar_transactions",
-                 ["transaction_id", "account_id", "transfer_id",
+                 ["transaction_id", "subledger_account_id", "transfer_id",
                   "amount", "posted_at", "status", "transfer_type", "memo"],
-                 [(t["transaction_id"], t["account_id"], t["transfer_id"],
+                 [(t["transaction_id"], t["subledger_account_id"], t["transfer_id"],
                    t["amount"], t["posted_at"], t["status"],
                    t["transfer_type"], t["memo"])
                   for t in transactions]),
 
-        _inserts("ar_parent_transfer_limits",
-                 ["parent_account_id", "transfer_type", "daily_limit"],
-                 [(pid, xtype, Decimal(lim))
-                  for pid, xtype, lim in _PARENT_LIMITS]),
+        _inserts("ar_ledger_transfer_limits",
+                 ["ledger_account_id", "transfer_type", "daily_limit"],
+                 [(lid, xtype, Decimal(lim))
+                  for lid, xtype, lim in _LEDGER_LIMITS]),
 
-        _inserts("ar_parent_daily_balances",
-                 ["parent_account_id", "balance_date", "balance"],
-                 [(b["parent_account_id"], b["balance_date"], b["balance"])
-                  for b in parent_balances]),
+        _inserts("ar_ledger_daily_balances",
+                 ["ledger_account_id", "balance_date", "balance"],
+                 [(b["ledger_account_id"], b["balance_date"], b["balance"])
+                  for b in ledger_balances]),
 
-        _inserts("ar_account_daily_balances",
-                 ["account_id", "balance_date", "balance"],
-                 [(b["account_id"], b["balance_date"], b["balance"])
-                  for b in account_balances]),
+        _inserts("ar_subledger_daily_balances",
+                 ["subledger_account_id", "balance_date", "balance"],
+                 [(b["subledger_account_id"], b["balance_date"], b["balance"])
+                  for b in subledger_balances]),
     ]
     return "\n".join(parts) + "\n"
