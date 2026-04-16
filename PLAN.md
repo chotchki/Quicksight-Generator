@@ -26,14 +26,14 @@ Conventions:
 
 STOP here. Big-shape decisions cascade hard.
 
-- [ ] B.0.1 **Unified table names: `transfer` + `posting` (no prefix), or `qs_transfer` + `qs_posting`?** Recommend **no prefix** — these are the canonical names. App-specific prefixes (`pr_`, `ar_`) stay only on legacy tables until they're dropped.
-- [ ] B.0.2 **PR sale postings need a counter-account. Introduce per-customer sub-ledgers, or use a single synthetic `pr_external_customer_pool` sub-ledger?** Per-customer modeling is out of Phase B scope. Recommend **single pool sub-ledger** — preserves the unified posting shape (must net to zero) without inventing customer modeling.
-- [ ] B.0.3 **PR chain direction: external_txn is parent (payments are children) or external_txn is child (payments are parent)?** Recommend **external is parent** — matches the container narrative ("an external batch contains payments, which contain settlements, which contain sales"). The "match valid when totals equal" check becomes "Σ child amounts = parent amount" cleanly.
-- [ ] B.0.4 **Old PR/AR detail tables: drop entirely after migration, or keep as views over the unified schema?** Recommend **drop entirely** in B.4 / B.6 once datasets migrate. Demo schema is internal; no callers outside this codebase. Per Phase A's no-shim philosophy.
-- [ ] B.0.5 **Column contract shape: `DatasetContract` dataclass per dataset, or a registry pattern?** Recommend **dataclass per dataset** — simplest, matches existing per-builder module style. Lives next to the SQL implementation in `<app>/datasets.py`.
-- [ ] B.0.6 **`as_of` granularity: timestamp on every row, or rely on existing `posted_at` / daily-balance dates?** Recommend **rely on existing** — postings carry `posted_at`, daily balances carry `as_of_date`. As-of query refactor is deferred to Phase D; schema stays as-is.
-- [ ] B.0.7 **`posting.signed_amount` (single signed column) vs. `posting.amount` + `posting.direction`?** Recommend **signed_amount** — sum-to-zero is one `SUM(signed_amount) = 0`. If a visual wants directional readability, add a SQL view `posting_with_direction` later.
-- [ ] B.0.8 **PR transfer_type values: keep separate (`sale`, `settlement`, `payment`, `external_txn`) or fold into AR's set (`ach`, `wire`, `internal`, `cash`)?** Recommend **separate enum** — they describe different things (PR's value names the chain link; AR's names the rail). `transfer_type` becomes a free string with a per-app vocabulary; CHECK constraint enumerates both sets.
+- [x] B.0.1 **Unified table names: `transfer` + `posting` (no prefix), or prefixed?** → **Configurable prefix** on the unified tables (default empty or derived from `resource_prefix`). Customers will need to fit these into existing databases. App-specific reference tables (`pr_merchants`, `pr_locations`, `ar_ledger_accounts`, etc.) keep their hard-coded `pr_`/`ar_` prefixes for now.
+- [x] B.0.2 **PR sale postings need a counter-account. Introduce per-customer sub-ledgers, or single synthetic pool?** → **Single `pr_external_customer_pool` sub-ledger** as a transition path. Revisiting with per-customer modeling stays in scope for a later phase.
+- [x] B.0.3 **PR chain direction: external_txn is parent or child?** → **External is parent.** Payments are children of external_txns; settlements are children of payments; sales are children of settlements. "Σ child amounts = parent amount" is the generic match check.
+- [x] B.0.4 **Old PR/AR detail tables: drop or keep as views?** → **Drop entirely** after migration. Consistency is most important; no shims.
+- [x] B.0.5 **Column contract shape: dataclass or registry?** → **Dataclass per dataset**, kept simple. Lives next to the SQL in `<app>/datasets.py`.
+- [x] B.0.6 **`as_of` granularity?** → **Rely on existing** `posted_at` / daily-balance dates. As-of query refactor deferred to Phase D.
+- [x] B.0.7 **`posting.signed_amount` vs. amount + direction?** → **signed_amount**. Sum-to-zero is `SUM(signed_amount) = 0`. Direction view can be added later if visuals need it.
+- [x] B.0.8 **PR transfer_type values: keep separate or fold into AR's set?** → **Keep separate.** PR uses chain-link names (`sale`, `settlement`, `payment`, `external_txn`); AR uses rail names (`ach`, `wire`, `internal`, `cash`). `transfer_type` is a free string; CHECK constraint enumerates both vocabularies.
 
 ---
 
