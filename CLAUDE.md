@@ -101,6 +101,7 @@ src/quicksight_gen/
     theme.py             # Theme presets (default / sasquatch-bank / farmers-exchange-bank); PRESETS registry
     deploy.py            # boto3 delete-then-create deploy with async waiters
     cleanup.py           # Tag-based cleanup of stale resources (ManagedBy:quicksight-gen)
+    dataset_contract.py  # ColumnSpec, DatasetContract, build_dataset() — shared dataset constructor
     clickability.py      # Conditional-format helpers: accent text (left-click) + tint-background (right-click)
     rich_text.py         # XML composition helpers for SheetTextBox.Content (heading/bullets/link/inline)
   payment_recon/
@@ -127,7 +128,8 @@ tests/
   test_account_recon.py  # AR visuals, filters, datasets, analysis wiring
   test_recon.py          # Payment recon visuals + filters
   test_theme_presets.py  # Preset registry, serialization, analysis name integration
-  test_demo_data.py      # Demo determinism, row counts, FK integrity, scenario coverage
+  test_dataset_contract.py # DatasetContract basics + per-builder column-match assertions
+  test_demo_data.py      # Demo determinism, row counts, FK integrity, scenario coverage, cross-app integrity
   test_demo_sql.py       # Schema/seed SQL structure, CLI command tests
   e2e/                   # Two layers (API boto3 + browser Playwright WebKit); gated on QS_GEN_E2E=1
     conftest.py
@@ -148,6 +150,15 @@ run_e2e.sh
 
 ## Domain Model
 
+### Unified Schema
+
+Both apps share two core tables:
+
+- **`transfer`** — one row per financial event (sale, settlement, payment, external_txn, ach, wire, internal, cash). Linked via `parent_transfer_id` to form chains (PR) or standalone pairs (AR). Key fields: `transfer_type`, `origin`, `amount`, `status`, `external_system`, `memo`.
+- **`posting`** — one row per ledger leg. FK to `transfer` and `ar_subledger_accounts`. `signed_amount` is positive (debit) or negative (credit). Non-failed postings within a transfer net to zero (except external_txn transfers, which have a single posting).
+
+AR datasets read exclusively from `transfer` + `posting` (the `ar_transactions` table was dropped in Phase B.4). PR datasets still read from legacy `pr_*` tables for domain-specific metadata (card_brand, settlement_type, payment_method, etc.) but also emit to `transfer` + `posting` via dual-write.
+
 ### Payment Reconciliation
 **Merchants → Sales → Settlements → Payments → External Transactions**
 
@@ -159,15 +170,17 @@ run_e2e.sh
 - Match is valid only when external total exactly equals sum of linked payments — no partials
 - Match statuses: **matched**, **not_yet_matched**, **late** (threshold: `late_default_days`, default 30 — slider also available)
 - Mutual table filtering on the Payment Reconciliation tab: clicking an external txn filters its payments; clicking a payment filters back
+- **Transfer chain** (parent → child): `external_txn → payment → settlement → sale`. PR sub-ledger accounts live under `pr-merchant-ledger` in `ar_subledger_accounts` (one per merchant + `pr-external-customer-pool` + `pr-external-rail`).
 
 ### Account Reconciliation
-**Ledger accounts (with daily balances) → Sub-ledger accounts → Transfers → Transaction legs (double-entry ledger)**
+**Ledger accounts (with daily balances) → Sub-ledger accounts → Postings (double-entry ledger)**
 
-- Every transfer is a set of transaction legs that must net to zero
+- Every transfer is a set of posting legs that must net to zero
 - Daily balance snapshots allow drift detection: recomputed balance vs. stored balance
-- Failed legs, limit breaches (ledger daily out-flow cap per sub-ledger/type), and overdrafts (sub-ledger below zero) populate the Exceptions tab
+- Failed postings, limit breaches (ledger daily out-flow cap per sub-ledger/type), and overdrafts (sub-ledger below zero) populate the Exceptions tab
 - Drift timelines (ledger + sub-ledger) surface systemic issues over time
-- Transactions carry an `origin` tag (`internal_initiated` / `external_force_posted`) — additive column in Phase A, consumed by later phases
+- Transfers carry an `origin` tag (`internal_initiated` / `external_force_posted`)
+- AR views filter `WHERE transfer_type IN ('ach', 'wire', 'internal', 'cash')` to exclude PR data
 
 ## Architecture Decisions
 
@@ -190,6 +203,7 @@ run_e2e.sh
 - Default theme: blues and greys, high contrast, titles ≥ 16px, body ≥ 12px
 - The end customer doesn't know exactly what they want — keep the code easy to mutate and iterate on
 - Rich text on Getting Started sheets uses `common/rich_text.py`; theme-accent colors resolve to hex at generate time
+- Each dataset declares a `DatasetContract` (column name + type list) in its `datasets.py`; the SQL query is one implementation. Tests assert the SQL projection matches the contract. `build_dataset()` in `common/dataset_contract.py` is the shared constructor.
 
 ## E2E Test Conventions
 

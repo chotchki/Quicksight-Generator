@@ -3,7 +3,7 @@
 Python tool that programmatically generates AWS QuickSight JSON definitions (theme, datasets, analyses, dashboards) and deploys them via boto3. It currently ships two independent QuickSight apps:
 
 - **Payment Reconciliation** — sales → settlements → payments → external-system matching for a merchant bank.
-- **Account Reconciliation** — stored daily balances, transfers, and transactions for a double-entry ledger.
+- **Account Reconciliation** — stored daily balances, transfers, and postings for a double-entry ledger.
 
 Both apps share one theme, one AWS account, one datasource, and the same CLI surface (`quicksight-gen generate|deploy|demo|cleanup`). Change the Python (or ask Claude), re-run `deploy --generate`, get a new dashboard.
 

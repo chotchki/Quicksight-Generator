@@ -144,13 +144,13 @@ The unified schema makes cross-app invariants checkable for the first time. Add 
 
 Last because earlier phases churn the things docs reference.
 
-- [ ] B.8.1 `CLAUDE.md` — Domain Model section rewritten: both apps share `transfer` + `posting`. PR is now a chain of transfers via `parent_transfer_id`. AR remains double-entry. Update Generated Output dataset list if any datasets renamed.
-- [ ] B.8.2 `CLAUDE.md` — add a Conventions bullet on the column contract: "Each dataset declares a `DatasetContract`; the SQL is one implementation. Tests assert the SQL projection matches the contract."
-- [ ] B.8.3 `README.md` — update both apps' tab descriptions to reflect the unified data model. Update the demo persona writeups (no behavioral change, but vocabulary shifts).
-- [ ] B.8.4 `SPEC.md` — Current Spec section updated to describe the unified schema. Suggestions block stays (it's forward-planning for Phases C–E).
-- [ ] B.8.5 `RELEASE_NOTES.md` — draft v1.3.0 entry. Highlights: unified `transfer` + `posting` schema, dataset column contracts, PR migrated onto transfer chains, no UI changes, one-time cleanup of stale dataset resources.
-- [ ] B.8.6 Final grep sweep: any stale references to `ar_transactions`, `pr_sales`, etc. in docs/comments/docstrings.
-- [ ] B.8.7 Commit — `Phase B.8: docs sweep for unified schema + column contracts`.
+- [x] B.8.1 `CLAUDE.md` — Domain Model rewritten: added "Unified Schema" section describing shared `transfer` + `posting` tables; AR section updated (postings, not transaction legs); PR section updated (transfer chain, sub-ledger accounts).
+- [x] B.8.2 `CLAUDE.md` — added `dataset_contract.py` to project structure and DatasetContract convention bullet.
+- [x] B.8.3 `README.md` — AR description updated ("postings" not "transactions").
+- [~] B.8.4 `SPEC.md` — left as-is; spec uses business-domain language ("transactions") which is correct at the requirements level.
+- [ ] B.8.5 `RELEASE_NOTES.md` — deferred to B.9 (release notes written at tag time).
+- [x] B.8.6 grep sweep: cleaned `ar_transactions` from `filters.py` (B.7), `test_ar_filters.py` (B.7). Remaining `ar_transactions` in schema.sql is the DROP + migration comment (correct).
+- [x] B.8.7 Commit.
 
 ---
 
