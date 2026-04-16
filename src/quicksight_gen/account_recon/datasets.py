@@ -1,9 +1,9 @@
 """QuickSight DataSet definitions for Account Recon.
 
-Seven datasets back the four tabs: two dimension tables (parent_accounts,
-accounts), one fact table (transactions), and four reconciliation views
-(parent_balance_drift, account_balance_drift, transfer_summary,
-non_zero_transfers).
+Nine datasets back the four tabs: two dimension tables (ledger_accounts,
+subledger_accounts), one fact table (transactions), and six reconciliation
+views (ledger_balance_drift, subledger_balance_drift, transfer_summary,
+non_zero_transfers, limit_breach, overdraft).
 """
 
 from __future__ import annotations
@@ -95,53 +95,53 @@ def _dataset(
 
 
 # ---------------------------------------------------------------------------
-# Parent accounts
+# Ledger accounts
 # ---------------------------------------------------------------------------
 
-def build_parent_accounts_dataset(cfg: Config) -> DataSet:
-    dataset_id = cfg.prefixed("ar-parent-accounts-dataset")
+def build_ledger_accounts_dataset(cfg: Config) -> DataSet:
+    dataset_id = cfg.prefixed("ar-ledger-accounts-dataset")
     columns = [
-        InputColumn(Name="parent_account_id", Type="STRING"),
+        InputColumn(Name="ledger_account_id", Type="STRING"),
         InputColumn(Name="name", Type="STRING"),
         InputColumn(Name="scope", Type="STRING"),
     ]
     sql = """\
 SELECT
-    parent_account_id,
+    ledger_account_id,
     name,
     CASE WHEN is_internal THEN 'Internal' ELSE 'External' END AS scope
-FROM ar_parent_accounts"""
+FROM ar_ledger_accounts"""
     return _dataset(
-        cfg, dataset_id, "AR Parent Accounts",
-        "ar-parent-accounts", sql, columns,
+        cfg, dataset_id, "AR Ledger Accounts",
+        "ar-ledger-accounts", sql, columns,
     )
 
 
 # ---------------------------------------------------------------------------
-# Accounts (child accounts joined to parent for display)
+# Sub-ledger accounts (joined to ledger for display)
 # ---------------------------------------------------------------------------
 
-def build_accounts_dataset(cfg: Config) -> DataSet:
-    dataset_id = cfg.prefixed("ar-accounts-dataset")
+def build_subledger_accounts_dataset(cfg: Config) -> DataSet:
+    dataset_id = cfg.prefixed("ar-subledger-accounts-dataset")
     columns = [
-        InputColumn(Name="account_id", Type="STRING"),
+        InputColumn(Name="subledger_account_id", Type="STRING"),
         InputColumn(Name="name", Type="STRING"),
         InputColumn(Name="scope", Type="STRING"),
-        InputColumn(Name="parent_account_id", Type="STRING"),
-        InputColumn(Name="parent_name", Type="STRING"),
+        InputColumn(Name="ledger_account_id", Type="STRING"),
+        InputColumn(Name="ledger_name", Type="STRING"),
     ]
     sql = """\
 SELECT
-    a.account_id,
-    a.name,
-    CASE WHEN a.is_internal THEN 'Internal' ELSE 'External' END AS scope,
-    a.parent_account_id,
-    p.name AS parent_name
-FROM ar_accounts a
-JOIN ar_parent_accounts p USING (parent_account_id)"""
+    s.subledger_account_id,
+    s.name,
+    CASE WHEN s.is_internal THEN 'Internal' ELSE 'External' END AS scope,
+    s.ledger_account_id,
+    la.name AS ledger_name
+FROM ar_subledger_accounts s
+JOIN ar_ledger_accounts la USING (ledger_account_id)"""
     return _dataset(
-        cfg, dataset_id, "AR Accounts",
-        "ar-accounts", sql, columns,
+        cfg, dataset_id, "AR Sub-Ledger Accounts",
+        "ar-subledger-accounts", sql, columns,
     )
 
 
@@ -153,10 +153,10 @@ def build_transactions_dataset(cfg: Config) -> DataSet:
     dataset_id = cfg.prefixed("ar-transactions-dataset")
     columns = [
         InputColumn(Name="transaction_id", Type="STRING"),
-        InputColumn(Name="account_id", Type="STRING"),
-        InputColumn(Name="account_name", Type="STRING"),
-        InputColumn(Name="parent_account_id", Type="STRING"),
-        InputColumn(Name="parent_name", Type="STRING"),
+        InputColumn(Name="subledger_account_id", Type="STRING"),
+        InputColumn(Name="subledger_name", Type="STRING"),
+        InputColumn(Name="ledger_account_id", Type="STRING"),
+        InputColumn(Name="ledger_name", Type="STRING"),
         InputColumn(Name="scope", Type="STRING"),
         InputColumn(Name="transfer_id", Type="STRING"),
         InputColumn(Name="transfer_type", Type="STRING"),
@@ -170,11 +170,11 @@ def build_transactions_dataset(cfg: Config) -> DataSet:
     sql = """\
 SELECT
     t.transaction_id,
-    t.account_id,
-    a.name          AS account_name,
-    a.parent_account_id,
-    p.name          AS parent_name,
-    CASE WHEN a.is_internal THEN 'Internal' ELSE 'External' END AS scope,
+    t.subledger_account_id,
+    s.name          AS subledger_name,
+    s.ledger_account_id,
+    la.name         AS ledger_name,
+    CASE WHEN s.is_internal THEN 'Internal' ELSE 'External' END AS scope,
     t.transfer_id,
     t.transfer_type,
     t.amount,
@@ -184,8 +184,8 @@ SELECT
     CASE WHEN t.status = 'failed' THEN 'Failed' ELSE 'OK' END AS is_failed,
     t.memo
 FROM ar_transactions t
-JOIN ar_accounts a        ON a.account_id = t.account_id
-JOIN ar_parent_accounts p ON p.parent_account_id = a.parent_account_id"""
+JOIN ar_subledger_accounts s ON s.subledger_account_id = t.subledger_account_id
+JOIN ar_ledger_accounts la   ON la.ledger_account_id   = s.ledger_account_id"""
     return _dataset(
         cfg, dataset_id, "AR Transactions",
         "ar-transactions", sql, columns,
@@ -193,14 +193,14 @@ JOIN ar_parent_accounts p ON p.parent_account_id = a.parent_account_id"""
 
 
 # ---------------------------------------------------------------------------
-# Parent balance drift (stored parent vs Σ children's stored balances)
+# Ledger balance drift (stored ledger vs Σ sub-ledgers' stored balances)
 # ---------------------------------------------------------------------------
 
-def build_parent_balance_drift_dataset(cfg: Config) -> DataSet:
-    dataset_id = cfg.prefixed("ar-parent-balance-drift-dataset")
+def build_ledger_balance_drift_dataset(cfg: Config) -> DataSet:
+    dataset_id = cfg.prefixed("ar-ledger-balance-drift-dataset")
     columns = [
-        InputColumn(Name="parent_account_id", Type="STRING"),
-        InputColumn(Name="parent_name", Type="STRING"),
+        InputColumn(Name="ledger_account_id", Type="STRING"),
+        InputColumn(Name="ledger_name", Type="STRING"),
         InputColumn(Name="scope", Type="STRING"),
         InputColumn(Name="balance_date", Type="DATETIME"),
         InputColumn(Name="stored_balance", Type="DECIMAL"),
@@ -210,32 +210,32 @@ def build_parent_balance_drift_dataset(cfg: Config) -> DataSet:
     ]
     sql = """\
 SELECT
-    parent_account_id,
-    parent_name,
+    ledger_account_id,
+    ledger_name,
     CASE WHEN is_internal THEN 'Internal' ELSE 'External' END AS scope,
     balance_date,
     stored_balance,
     computed_balance,
     drift,
     CASE WHEN drift = 0 THEN 'in_balance' ELSE 'drift' END AS drift_status
-FROM ar_parent_balance_drift"""
+FROM ar_ledger_balance_drift"""
     return _dataset(
-        cfg, dataset_id, "AR Parent Balance Drift",
-        "ar-parent-balance-drift", sql, columns,
+        cfg, dataset_id, "AR Ledger Balance Drift",
+        "ar-ledger-balance-drift", sql, columns,
     )
 
 
 # ---------------------------------------------------------------------------
-# Child-account balance drift (stored child vs running Σ posted txns)
+# Sub-ledger balance drift (stored sub-ledger vs running Σ posted txns)
 # ---------------------------------------------------------------------------
 
-def build_account_balance_drift_dataset(cfg: Config) -> DataSet:
-    dataset_id = cfg.prefixed("ar-account-balance-drift-dataset")
+def build_subledger_balance_drift_dataset(cfg: Config) -> DataSet:
+    dataset_id = cfg.prefixed("ar-subledger-balance-drift-dataset")
     columns = [
-        InputColumn(Name="account_id", Type="STRING"),
-        InputColumn(Name="account_name", Type="STRING"),
-        InputColumn(Name="parent_account_id", Type="STRING"),
-        InputColumn(Name="parent_name", Type="STRING"),
+        InputColumn(Name="subledger_account_id", Type="STRING"),
+        InputColumn(Name="subledger_name", Type="STRING"),
+        InputColumn(Name="ledger_account_id", Type="STRING"),
+        InputColumn(Name="ledger_name", Type="STRING"),
         InputColumn(Name="scope", Type="STRING"),
         InputColumn(Name="balance_date", Type="DATETIME"),
         InputColumn(Name="stored_balance", Type="DECIMAL"),
@@ -246,10 +246,10 @@ def build_account_balance_drift_dataset(cfg: Config) -> DataSet:
     ]
     sql = """\
 SELECT
-    account_id,
-    account_name,
-    parent_account_id,
-    parent_name,
+    subledger_account_id,
+    subledger_name,
+    ledger_account_id,
+    ledger_name,
     scope,
     balance_date,
     stored_balance,
@@ -258,10 +258,10 @@ SELECT
     CASE WHEN drift = 0 THEN 'in_balance' ELSE 'drift' END AS drift_status,
     CASE WHEN stored_balance < 0 THEN 'overdraft' ELSE 'ok' END
         AS overdraft_status
-FROM ar_account_balance_drift"""
+FROM ar_subledger_balance_drift"""
     return _dataset(
-        cfg, dataset_id, "AR Account Balance Drift",
-        "ar-account-balance-drift", sql, columns,
+        cfg, dataset_id, "AR Sub-Ledger Balance Drift",
+        "ar-subledger-balance-drift", sql, columns,
     )
 
 
@@ -340,16 +340,16 @@ WHERE net_zero_status = 'not_net_zero'"""
 
 
 # ---------------------------------------------------------------------------
-# Child limit breach (Phase 5 — per-type daily transfer limit)
+# Sub-ledger limit breach (per-type daily transfer limit)
 # ---------------------------------------------------------------------------
 
 def build_limit_breach_dataset(cfg: Config) -> DataSet:
     dataset_id = cfg.prefixed("ar-limit-breach-dataset")
     columns = [
-        InputColumn(Name="account_id", Type="STRING"),
-        InputColumn(Name="account_name", Type="STRING"),
-        InputColumn(Name="parent_account_id", Type="STRING"),
-        InputColumn(Name="parent_name", Type="STRING"),
+        InputColumn(Name="subledger_account_id", Type="STRING"),
+        InputColumn(Name="subledger_name", Type="STRING"),
+        InputColumn(Name="ledger_account_id", Type="STRING"),
+        InputColumn(Name="ledger_name", Type="STRING"),
         InputColumn(Name="activity_date", Type="DATETIME"),
         InputColumn(Name="activity_date_str", Type="STRING"),
         InputColumn(Name="transfer_type", Type="STRING"),
@@ -359,50 +359,50 @@ def build_limit_breach_dataset(cfg: Config) -> DataSet:
     ]
     sql = """\
 SELECT
-    account_id,
-    account_name,
-    parent_account_id,
-    parent_name,
+    subledger_account_id,
+    subledger_name,
+    ledger_account_id,
+    ledger_name,
     activity_date,
     TO_CHAR(activity_date, 'YYYY-MM-DD') AS activity_date_str,
     transfer_type,
     outbound_total,
     daily_limit,
     overage
-FROM ar_child_limit_breach"""
+FROM ar_subledger_limit_breach"""
     return _dataset(
-        cfg, dataset_id, "AR Child Limit Breach",
+        cfg, dataset_id, "AR Sub-Ledger Limit Breach",
         "ar-limit-breach", sql, columns,
     )
 
 
 # ---------------------------------------------------------------------------
-# Child overdraft (Phase 5 — stored child balance < 0)
+# Sub-ledger overdraft (stored sub-ledger balance < 0)
 # ---------------------------------------------------------------------------
 
 def build_overdraft_dataset(cfg: Config) -> DataSet:
     dataset_id = cfg.prefixed("ar-overdraft-dataset")
     columns = [
-        InputColumn(Name="account_id", Type="STRING"),
-        InputColumn(Name="account_name", Type="STRING"),
-        InputColumn(Name="parent_account_id", Type="STRING"),
-        InputColumn(Name="parent_name", Type="STRING"),
+        InputColumn(Name="subledger_account_id", Type="STRING"),
+        InputColumn(Name="subledger_name", Type="STRING"),
+        InputColumn(Name="ledger_account_id", Type="STRING"),
+        InputColumn(Name="ledger_name", Type="STRING"),
         InputColumn(Name="balance_date", Type="DATETIME"),
         InputColumn(Name="balance_date_str", Type="STRING"),
         InputColumn(Name="stored_balance", Type="DECIMAL"),
     ]
     sql = """\
 SELECT
-    account_id,
-    account_name,
-    parent_account_id,
-    parent_name,
+    subledger_account_id,
+    subledger_name,
+    ledger_account_id,
+    ledger_name,
     balance_date,
     TO_CHAR(balance_date, 'YYYY-MM-DD') AS balance_date_str,
     stored_balance
-FROM ar_child_overdraft"""
+FROM ar_subledger_overdraft"""
     return _dataset(
-        cfg, dataset_id, "AR Child Overdraft",
+        cfg, dataset_id, "AR Sub-Ledger Overdraft",
         "ar-overdraft", sql, columns,
     )
 
@@ -413,11 +413,11 @@ FROM ar_child_overdraft"""
 
 def build_all_datasets(cfg: Config) -> list[DataSet]:
     return [
-        build_parent_accounts_dataset(cfg),
-        build_accounts_dataset(cfg),
+        build_ledger_accounts_dataset(cfg),
+        build_subledger_accounts_dataset(cfg),
         build_transactions_dataset(cfg),
-        build_parent_balance_drift_dataset(cfg),
-        build_account_balance_drift_dataset(cfg),
+        build_ledger_balance_drift_dataset(cfg),
+        build_subledger_balance_drift_dataset(cfg),
         build_transfer_summary_dataset(cfg),
         build_non_zero_transfers_dataset(cfg),
         build_limit_breach_dataset(cfg),
