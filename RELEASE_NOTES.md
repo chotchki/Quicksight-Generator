@@ -1,5 +1,32 @@
 # Release Notes
 
+## v1.3.0
+
+### Phase B — Unified transfer schema + dataset column contracts
+
+Both apps now share a common `transfer` + `posting` schema. AR datasets read exclusively from the unified tables; PR emits to them via dual-write (PR datasets still read legacy `pr_*` tables for domain-specific metadata). Every dataset declares an explicit column contract so the SQL is one implementation of a stable interface.
+
+### What landed
+
+- **Unified schema** — `transfer` and `posting` tables added to `demo/schema.sql`. `transfer` carries `transfer_id`, `parent_transfer_id` (self-ref for chains), `transfer_type`, `origin`, `amount`, `status`, `created_at`, `memo`, `external_system`. `posting` carries `posting_id`, `transfer_id` FK, `subledger_account_id` FK, `signed_amount`, `posted_at`, `status`.
+- **AR fully migrated** — all 9 AR dataset SQL queries rewritten to project from `posting` + `transfer`. Legacy `ar_transactions` table dropped; AR views (`ar_transfer_summary`, `ar_subledger_daily_outbound_by_type`, etc.) rewritten to join `posting` + `transfer`. AR demo generator no longer emits `ar_transactions` INSERTs.
+- **PR dual-write** — PR demo generator emits the full transfer chain (`external_txn → payment → settlement → sale`) linked by `parent_transfer_id`, with postings on PR-specific sub-ledger accounts (`pr-sub-{merchant}`, `pr-external-customer-pool`, `pr-external-rail`). Legacy `pr_*` tables still populated and read by PR datasets.
+- **Dataset column contracts** — `DatasetContract` dataclass in `common/dataset_contract.py` with `ColumnSpec(name, type)`. All 20 dataset builders declare contracts; unit tests assert SQL projections match declared contracts.
+- **Cross-app integrity tests** — posting FK integrity across apps, no ID collisions, transfer type enum coverage (all 8 CHECK values present in combined data).
+- **Schema DDL ordering fix** — `transfer` + `posting` tables now created before AR views that reference them.
+
+### Deferred
+
+- **PR dataset cutover (B.6)** — PR datasets need domain-specific metadata (`card_brand`, `cashier`, `settlement_type`, `payment_method`) that lives on legacy `pr_*` tables. Cutover deferred until the customer decides which PR columns they actually need; at that point, extract metadata into slim tables and rewrite PR datasets to join `transfer`/`posting` with metadata.
+
+### Notes
+
+- **301 unit/integration tests** (was 255), **94 e2e tests** — all green.
+- `demo apply --all` and `deploy --all --generate` verified against live AWS. `cleanup --dry-run` shows no stale resources.
+- No dataset ID changes; safe in-place redeploy after `cleanup --yes` from v1.2.0.
+
+---
+
 ## v1.2.0
 
 ### Phase A — Account Recon vocabulary rename + `origin` attribute

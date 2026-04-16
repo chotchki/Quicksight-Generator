@@ -67,6 +67,20 @@
   - **Don't retroactively fill the deferred Phase 3/4 filter-propagation tests before the refactor.** Those tests would assert against AR filter structures that Phase A (vocabulary rename) and Phase B (unified schema) will restructure — you'd write them twice. Better: fold filter-propagation test expansion into the Phase B/D definition of done, so each new/renamed filter in the unified model gets one propagation test as it lands. Same coverage goal, one write instead of two. The existing API and structural e2e layers already catch "dashboard broken" during the refactor — filter-propagation coverage is a narrower gap that closes cleanly after the restructure.
   - **Don't touch the test suite's unit/integration/API/browser layering.** It's the main reason the refactor is tractable. Adapt tests to new vocabulary, but keep the four-layer shape (generated-JSON shape at unit, resource health at API, user-visible behavior at browser).
 
+## Deferred Work
+
+### PR dataset cutover to unified schema (deferred from Phase B.6)
+
+PR datasets currently read from legacy `pr_*` tables (`pr_merchants`, `pr_sales`, `pr_settlements`, `pr_payments`, `pr_external_transactions`). PR demo data dual-writes to both legacy tables and the unified `transfer` + `posting` schema, but PR datasets don't consume the unified tables yet.
+
+**Why deferred:** PR datasets need domain-specific metadata columns (`card_brand`, `cashier`, `merchant_name`, `settlement_type`, `payment_method`, optional sale columns like taxes/tips/discount) that live on the legacy `pr_*` tables. Unlike AR (where the domain model maps 1:1 onto transfer/posting), PR's metadata is too rich to represent on the generic unified schema without bloating it.
+
+**Path forward:** When the customer decides which PR columns they actually need in production, extract only those into slim metadata/reference tables and rewrite PR dataset SQL to join `transfer`/`posting` with the metadata tables. Until then, the legacy tables serve as both the transaction log and the metadata store for PR. The dual-write from B.5 ensures the unified chain model is proven and tested — the cutover is mechanical when the metadata question is answered.
+
+**Affected files:** `src/quicksight_gen/payment_recon/datasets.py` (11 dataset builders), `demo/schema.sql` (PR views), `tests/test_demo_sql.py`, `tests/test_demo_data.py`.
+
+---
+
 # Current Spec
 ## Goal:
 	- [x] Create AWS QuickSight dashboards with tabs that help non-technical users understand financial applications. Delivered as two independent dashboards (Payment Reconciliation + Account Reconciliation) sharing one theme, account, datasource, and CLI surface.

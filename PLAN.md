@@ -41,13 +41,13 @@ STOP here. Big-shape decisions cascade hard.
 
 Add `transfer` and `posting` to `demo/schema.sql` alongside the legacy AR/PR tables. Nothing dropped yet.
 
-- [ ] B.1.1 Add `transfer` table: `transfer_id PK`, `parent_transfer_id` (nullable FK self-ref), `transfer_type VARCHAR(30)`, `origin VARCHAR(30)` (`internal_initiated` / `external_force_posted`), `amount DECIMAL`, `status VARCHAR(20)`, `created_at TIMESTAMP`, `memo VARCHAR(255)`, `external_system VARCHAR(50)` (nullable).
-- [ ] B.1.2 Add `posting` table: `posting_id PK`, `transfer_id FK → transfer`, `account_id FK → ar_subledger_accounts`, `signed_amount DECIMAL`, `posted_at TIMESTAMP`, `status VARCHAR(20)` (`success` / `failed`).
-- [ ] B.1.3 Add indexes: `posting(transfer_id)`, `transfer(parent_transfer_id)`, `posting(account_id, posted_at)`.
-- [ ] B.1.4 CHECK constraints: `transfer.transfer_type IN (...)` enumerating both AR and PR vocabularies; `transfer.origin IN ('internal_initiated', 'external_force_posted')`; `posting.status IN ('success', 'failed')`.
-- [ ] B.1.5 No data inserted. `demo apply --all` should still succeed against existing legacy tables — empty `transfer` / `posting`.
-- [ ] B.1.6 `pytest` — schema structure tests in `test_demo_sql.py` updated to assert presence of new tables.
-- [ ] B.1.7 Commit — `Phase B.1: define unified transfer + posting schema (additive)`.
+- [x] B.1.1 Add `transfer` table: `transfer_id PK`, `parent_transfer_id` (nullable FK self-ref), `transfer_type VARCHAR(30)`, `origin VARCHAR(30)` (`internal_initiated` / `external_force_posted`), `amount DECIMAL`, `status VARCHAR(20)`, `created_at TIMESTAMP`, `memo VARCHAR(255)`, `external_system VARCHAR(50)` (nullable).
+- [x] B.1.2 Add `posting` table: `posting_id PK`, `transfer_id FK → transfer`, `account_id FK → ar_subledger_accounts`, `signed_amount DECIMAL`, `posted_at TIMESTAMP`, `status VARCHAR(20)` (`success` / `failed`).
+- [x] B.1.3 Add indexes: `posting(transfer_id)`, `transfer(parent_transfer_id)`, `posting(account_id, posted_at)`.
+- [x] B.1.4 CHECK constraints: `transfer.transfer_type IN (...)` enumerating both AR and PR vocabularies; `transfer.origin IN ('internal_initiated', 'external_force_posted')`; `posting.status IN ('success', 'failed')`.
+- [x] B.1.5 No data inserted. `demo apply --all` should still succeed against existing legacy tables — empty `transfer` / `posting`.
+- [x] B.1.6 `pytest` — schema structure tests in `test_demo_sql.py` updated to assert presence of new tables.
+- [x] B.1.7 Commit — `Phase B.1: define unified transfer + posting schema (additive)`.
 
 ---
 
@@ -55,12 +55,12 @@ Add `transfer` and `posting` to `demo/schema.sql` alongside the legacy AR/PR tab
 
 Add a `DatasetContract` dataclass and refactor existing dataset builders to consume it. Pure Python refactor — no SQL changes, no schema changes.
 
-- [ ] B.2.1 Add `common/dataset_contract.py`: `ColumnSpec(name, type, nullable, notes)` and `DatasetContract(name, description, columns)`.
-- [ ] B.2.2 Add a helper in `common/dataset_contract.py` (or extend `models.py`): `dataset_from_contract(contract, sql, datasource_arn, …) → Dataset`. Replaces the inline `Dataset(...)` construction in each builder.
-- [ ] B.2.3 Refactor every existing dataset builder (11 PR + 9 AR) to declare a `DatasetContract` and call the helper. SQL stays byte-identical; column lists are now contract-derived.
-- [ ] B.2.4 Add `tests/test_dataset_contract.py`: SELECT-clause parser asserts each builder's projected columns match its declared contract.
-- [ ] B.2.5 `pytest` clean — no behavior change, only refactor.
-- [ ] B.2.6 Commit — `Phase B.2: dataset column contract abstraction`.
+- [x] B.2.1 Add `common/dataset_contract.py`: `ColumnSpec(name, type, nullable, notes)` and `DatasetContract(name, description, columns)`.
+- [x] B.2.2 Add a helper in `common/dataset_contract.py` (or extend `models.py`): `dataset_from_contract(contract, sql, datasource_arn, …) → Dataset`. Replaces the inline `Dataset(...)` construction in each builder.
+- [x] B.2.3 Refactor every existing dataset builder (11 PR + 9 AR) to declare a `DatasetContract` and call the helper. SQL stays byte-identical; column lists are now contract-derived.
+- [x] B.2.4 Add `tests/test_dataset_contract.py`: SELECT-clause parser asserts each builder's projected columns match its declared contract.
+- [x] B.2.5 `pytest` clean — no behavior change, only refactor.
+- [x] B.2.6 Commit — `Phase B.2: dataset column contract abstraction`.
 
 ---
 
@@ -68,14 +68,14 @@ Add a `DatasetContract` dataclass and refactor existing dataset builders to cons
 
 AR generator emits to BOTH legacy AR tables AND the new `transfer` / `posting` tables, with equivalence asserted by tests. Nothing reads from the unified tables yet — this is the safety phase.
 
-- [ ] B.3.1 `account_recon/demo_data.py`: every legacy `ar_transfers` row also produces a `transfer` row (with same id, type, origin, amount, memo, created_at).
-- [ ] B.3.2 Every legacy `ar_transactions` row also produces a `posting` row (signed_amount = `+amount` for credits, `-amount` for debits; status mirrors; account_id mirrors).
-- [ ] B.3.3 Equivalence tests in `tests/test_demo_data.py`:
+- [x] B.3.1 `account_recon/demo_data.py`: every legacy `ar_transfers` row also produces a `transfer` row (with same id, type, origin, amount, memo, created_at).
+- [x] B.3.2 Every legacy `ar_transactions` row also produces a `posting` row (signed_amount = `+amount` for credits, `-amount` for debits; status mirrors; account_id mirrors).
+- [x] B.3.3 Equivalence tests in `tests/test_demo_data.py`:
   - For each `ar_transfers` row, exactly one `transfer` row with matching fields.
   - For each `ar_transactions` row, exactly one `posting` with matching account, amount, status.
   - `Σ posting.signed_amount` per transfer_id = 0 (or matches the legacy "transfer is non-zero" exception case).
-- [ ] B.3.4 `pytest` clean — both old and new tables populated.
-- [ ] B.3.5 Commit — `Phase B.3: AR demo writes to unified transfer + posting (dual-write)`.
+- [x] B.3.4 `pytest` clean — both old and new tables populated.
+- [x] B.3.5 Commit — `Phase B.3: AR demo writes to unified transfer + posting (dual-write)`.
 
 ---
 
@@ -86,8 +86,8 @@ Cutover: AR datasets stop reading legacy tables; legacy AR tables removed from `
 - [x] B.4.1 Rewrite each AR dataset's SQL in `account_recon/datasets.py` to project from `transfer` + `posting` instead of `ar_transfers` + `ar_transactions`. Column contracts (B.2) stay identical — only the implementation changes.
 - [x] B.4.2 Drop `ar_transactions` from `demo/schema.sql`. Rewrite AR views (`ar_transfer_summary`, `ar_subledger_daily_outbound_by_type`, `ar_computed_subledger_daily_balance`, `ar_transfer_net_zero`) to use `posting` + `transfer`. Remove `ar_transactions` INSERT from demo_data.py.
 - [x] B.4.3 Update `tests/test_account_recon.py` — all scenario/row-count/FK/schema tests now read from `unified_parsed["posting"]` + `unified_parsed["transfer"]` instead of `ar_parsed["ar_transactions"]`.
-- [ ] B.4.4 `demo apply --all` + `deploy --all --generate -c run/config.yaml -o run/out/` from repo root.
-- [ ] B.4.5 `./run_e2e.sh --parallel 4` — full suite. AR e2e green; PR e2e unaffected (still on legacy tables).
+- [x] B.4.4 `demo apply --all` + `deploy --all --generate -c run/config.yaml -o run/out/` from repo root.
+- [x] B.4.5 `./run_e2e.sh --parallel 4` — full suite. AR e2e green; PR e2e unaffected (still on legacy tables).
 - [x] B.4.6 Commit — `Phase B.4: AR datasets read from unified schema; legacy AR txn tables dropped`.
 
 CHECKPOINT — AR fully on unified schema. PR untouched.
@@ -121,9 +121,9 @@ PR generator emits the chain `external_txn → payment → settlement → sale` 
 - [x] B.6.1 *Assessed*: PR pipeline datasets (merchants, sales, settlements, payments) require `pr_*` table metadata. Exception/recon views could theoretically migrate but still need `merchant_id` which is on legacy tables.
 - [x] B.6.2 *Assessed*: PR views (`pr_sale_settlement_mismatch`, etc.) use `merchant_id`, `settlement_id`, `payment_id` — foreign keys back to legacy tables. Rewriting these to use transfer chains would require mapping merchant_id through subledger accounts, adding complexity without value until legacy tables are actually dropped.
 - [~] B.6.3 Legacy `pr_*` tables **kept** — still needed for PR dataset metadata. Transfer + posting tables carry the reconciliation model.
-- [ ] B.6.4 No test changes needed — PR datasets unchanged.
-- [ ] B.6.5 `demo apply --all` checkpoint (deferred to B.7).
-- [ ] B.6.6 No commit — skipped.
+- [x] B.6.4 No test changes needed — PR datasets unchanged.
+- [x] B.6.5 `demo apply --all` checkpoint (covered by B.9).
+- [x] B.6.6 No commit — skipped.
 
 CHECKPOINT — AR fully on unified schema. PR emits to unified schema (dual-write) but datasets still read from legacy tables.
 
@@ -148,7 +148,7 @@ Last because earlier phases churn the things docs reference.
 - [x] B.8.2 `CLAUDE.md` — added `dataset_contract.py` to project structure and DatasetContract convention bullet.
 - [x] B.8.3 `README.md` — AR description updated ("postings" not "transactions").
 - [~] B.8.4 `SPEC.md` — left as-is; spec uses business-domain language ("transactions") which is correct at the requirements level.
-- [ ] B.8.5 `RELEASE_NOTES.md` — deferred to B.9 (release notes written at tag time).
+- [x] B.8.5 `RELEASE_NOTES.md` — v1.3.0 entry written.
 - [x] B.8.6 grep sweep: cleaned `ar_transactions` from `filters.py` (B.7), `test_ar_filters.py` (B.7). Remaining `ar_transactions` in schema.sql is the DROP + migration comment (correct).
 - [x] B.8.7 Commit.
 
@@ -182,3 +182,166 @@ Last because earlier phases churn the things docs reference.
 - **`pr_external_customer_pool` leakage**: this synthetic account is a Phase B convenience. If it shows up in user-facing AR visuals (sub-ledger lists, drift charts), filter it out at the dataset level. Audit during B.5/B.6.
 - **Dataset count growth**: the column contract refactor in B.2 might tempt extracting a `contracts/` module. Resist — keep contract + SQL in the same `<app>/datasets.py` file. One file per app is the right granularity.
 - **External stakeholder mental model**: anyone reviewing demo screenshots from before will see different tab counts/labels if the dataset rename license gets used aggressively. Flag in v1.3.0 release notes.
+
+---
+---
+
+# PLAN — Phase C: Ledger-level direct postings
+
+Goal: Drop the "ledger balance = Σ sub-ledger balances" invariant. Replace with the general GL invariant: `stored ledger balance = Σ direct postings to the ledger + Σ sub-ledger stored balances, all evaluated as-of the reporting date`. Every ledger can receive direct postings — no per-ledger "direct-post allowed?" configuration.
+
+This makes the system faithful to real GL behavior: inbound funding batches, clearing-account sweeps, fee assessments, and external-rail debits that hit the ledger before sub-ledger breakdown is known all post at the ledger level.
+
+Out of scope for Phase C:
+- Reconciliation DSL or unified Exceptions tab (Phase D).
+- Wiring `origin` into filters / visuals / checks (Phase D).
+- PR dataset cutover to unified schema (deferred from B.6, tracked in SPEC.md).
+- Persona dashboard split (Phase E).
+
+Conventions:
+- Branch: `phase-c-ledger-postings`, cut from `main`. One sub-phase = one commit.
+- After each sub-phase, run `.venv/bin/pytest`. After C.5 and C.8, run `./run_e2e.sh --parallel 4`.
+- Demo data stays deterministic (`random.Random(42)`).
+
+---
+
+## Phase C.0 — Pin decisions
+
+STOP here. Get alignment before writing code.
+
+- [ ] C.0.1 **Posting target: add `ledger_account_id` to `posting`, or create a unified account table?** Recommend adding a nullable `ledger_account_id FK → ar_ledger_accounts` to `posting`, with a CHECK that exactly one of `subledger_account_id` / `ledger_account_id` is non-NULL. Keeps the schema additive; avoids a full account-model refactor.
+- [ ] C.0.2 **Ledger-level postings: do they belong to transfers?** Recommend yes — every posting is part of a transfer, ledger-level included. A funding-batch transfer has one ledger-level debit posting and N sub-ledger credit postings. Net-zero invariant still applies.
+- [ ] C.0.3 **Does ledger drift change from 2-input to 3-input?** Current: `stored_ledger_balance vs Σ sub-ledger stored_balances`. New: `stored_ledger_balance vs (Σ direct ledger postings + Σ sub-ledger stored_balances)`. This is strictly more informative — a ledger that drifts because of a mis-posted direct posting is caught, whereas today it's invisible.
+- [ ] C.0.4 **Sub-ledger drift: unchanged?** Recommend yes — sub-ledger drift stays `stored sub-ledger balance vs Σ postings to that sub-ledger`. Ledger-level postings don't affect sub-ledger drift.
+- [ ] C.0.5 **Demo scenario types for ledger postings?** Recommend 3 scenarios: (a) inbound funding batch (credit to ledger, debits to sub-ledgers), (b) fee assessment (debit to ledger, no sub-ledger leg — intentional imbalance that creates drift), (c) clearing sweep (debit to ledger, credit to ledger — nets to zero at ledger level).
+- [ ] C.0.6 **New dataset or extend existing?** Recommend extending the `ar_transactions` dataset SQL to include ledger-level postings (with `subledger_name` = NULL or the ledger's own name). The Transactions tab then shows all postings in one table. No new dataset needed.
+- [ ] C.0.7 **Visual changes: new visuals or extend existing?** Recommend no new visuals. Ledger drift timeline already exists on Exceptions. The drift computation changes (3-input), but the visual stays the same. Transactions table gains ledger-level rows. Balances tab may want a "Direct Posting Total" column on the Ledger Balances table.
+
+---
+
+## Phase C.1 — Schema changes (additive)
+
+Add `ledger_account_id` to `posting` table. Nothing reads it yet.
+
+- [ ] C.1.1 Add `ledger_account_id VARCHAR(100) REFERENCES ar_ledger_accounts(ledger_account_id)` (nullable) to `posting` table in `demo/schema.sql`.
+- [ ] C.1.2 Add CHECK constraint: `(subledger_account_id IS NOT NULL) OR (ledger_account_id IS NOT NULL)` — at least one target. Both may be set for postings that hit a sub-ledger (the ledger is derivable from the sub-ledger's FK, but having it explicit simplifies views).
+- [ ] C.1.3 Add index: `posting(ledger_account_id, posted_at)`.
+- [ ] C.1.4 Existing data: all current postings have `subledger_account_id` set, `ledger_account_id` = NULL. No migration needed — additive.
+- [ ] C.1.5 `pytest` clean — schema structure tests updated.
+- [ ] C.1.6 Commit — `Phase C.1: add ledger_account_id to posting table (additive)`.
+
+---
+
+## Phase C.2 — AR demo data: ledger-level postings
+
+Expand the AR demo generator to emit transfers with ledger-level postings. Existing sub-ledger transfers unchanged.
+
+- [ ] C.2.1 Define 3 scenario types in `account_recon/demo_data.py`:
+  - **Funding batch**: transfer with 1 ledger-level credit posting + N sub-ledger debit postings. Represents inbound money arriving at the ledger before being distributed.
+  - **Fee assessment**: transfer with 1 ledger-level debit posting only. Intentionally single-leg — creates a non-zero transfer (already caught by existing exception check) and contributes to ledger drift.
+  - **Clearing sweep**: transfer with 2 ledger-level postings (debit + credit) that net to zero within the same ledger. Represents end-of-day clearing.
+- [ ] C.2.2 Generate ~5 funding batches, ~3 fee assessments, ~2 clearing sweeps across the demo period. Distribute across ledger accounts.
+- [ ] C.2.3 Set `ledger_account_id` on all ledger-level postings. Sub-ledger postings can optionally carry `ledger_account_id` too (derived from their sub-ledger's FK) to simplify view queries.
+- [ ] C.2.4 Update `ar_ledger_daily_balances` seed data to reflect the new direct postings — stored balances must account for both sub-ledger activity AND direct ledger postings for the demo to be consistent.
+- [ ] C.2.5 `pytest` clean — new scenario coverage tests.
+- [ ] C.2.6 Commit — `Phase C.2: AR demo emits ledger-level postings`.
+
+---
+
+## Phase C.3 — Scenario coverage tests
+
+Add demo-data tests asserting ledger-level posting scenarios exist and are well-formed.
+
+- [ ] C.3.1 `TestLedgerPostingScenarios` in `tests/test_demo_data.py`:
+  - At least 5 funding-batch transfers exist (multi-leg, ledger credit + sub-ledger debits).
+  - At least 3 fee-assessment transfers exist (single ledger-level debit).
+  - At least 2 clearing-sweep transfers exist (2 ledger-level legs, nets to zero).
+- [ ] C.3.2 Ledger-level postings have `ledger_account_id` set and `subledger_account_id` is NULL (or set — depends on C.0.2 decision).
+- [ ] C.3.3 Funding-batch transfers: net-zero across all legs (ledger credit = Σ sub-ledger debits).
+- [ ] C.3.4 Fee-assessment transfers: non-zero net (intentional — caught by non-zero transfer check).
+- [ ] C.3.5 All ledger-level postings FK to valid `ar_ledger_accounts`.
+- [ ] C.3.6 `pytest` clean.
+- [ ] C.3.7 Commit — `Phase C.3: ledger-level posting scenario coverage tests`.
+
+---
+
+## Phase C.4 — View + dataset changes
+
+Update AR views and datasets to incorporate ledger-level postings into the drift computation and surface them in the Transactions tab.
+
+- [ ] C.4.1 Rewrite `ar_computed_ledger_daily_balance` view:
+  - Old: `Σ sub-ledger stored balances per ledger per day`.
+  - New: `Σ sub-ledger stored balances + Σ direct ledger postings (non-failed, grouped by posted_at::date)`.
+- [ ] C.4.2 `ar_ledger_balance_drift` view: no structural change (still `stored - computed`), but computed now includes direct postings. Drift will surface ledger-level discrepancies.
+- [ ] C.4.3 Update `ar_transactions` dataset SQL to include ledger-level postings:
+  - LEFT JOIN `ar_subledger_accounts` (nullable for ledger-level postings).
+  - Add `COALESCE(s.name, la.name)` for display name.
+  - Add a `posting_level` computed column: `'Ledger'` if `subledger_account_id IS NULL`, else `'Sub-Ledger'`.
+- [ ] C.4.4 Update `ar_transactions` `DatasetContract` with the new `posting_level` column.
+- [ ] C.4.5 `ar_transfer_net_zero` view: no change needed — already sums all postings per transfer regardless of target account level.
+- [ ] C.4.6 `pytest` clean — dataset contract tests updated.
+- [ ] C.4.7 Commit — `Phase C.4: views + datasets incorporate ledger-level postings`.
+
+---
+
+## Phase C.5 — Visual + filter changes
+
+Surface ledger-level postings in the dashboard. Minimal visual additions.
+
+- [ ] C.5.1 Transactions tab: add `posting_level` column to Transaction Detail table. Enables filtering by "Ledger" vs "Sub-Ledger" level postings.
+- [ ] C.5.2 Optionally add a `posting_level` filter control on the Transactions tab (multi-select dropdown). Allows users to isolate ledger-level activity.
+- [ ] C.5.3 Balances tab: consider adding a "Direct Posting Total" column to the Ledger Balances KPI/table showing Σ of direct ledger postings per day. Assess whether this adds signal or noise.
+- [ ] C.5.4 Getting Started sheet: update AR sheet description to mention ledger-level postings.
+- [ ] C.5.5 Ledger Drift Timeline on Exceptions: no visual change, but drift values will now reflect direct postings. Update subtitle if needed.
+- [ ] C.5.6 `pytest` clean — visual/filter structure tests updated.
+- [ ] C.5.7 Commit — `Phase C.5: surface ledger-level postings in AR visuals`.
+
+---
+
+## Phase C.6 — PR impact assessment
+
+PR sub-ledger accounts (`pr-sub-{merchant}`, `pr-external-customer-pool`, `pr-external-rail`) live under `pr-merchant-ledger`. Ensure ledger-level posting changes don't leak into PR or AR exception scope incorrectly.
+
+- [ ] C.6.1 Verify AR dataset type filter (`WHERE transfer_type IN ('ach', 'wire', 'internal', 'cash')`) still excludes PR data from AR views. Ledger-level postings use AR transfer types only.
+- [ ] C.6.2 Verify `pr-merchant-ledger` does not appear in `ar_ledger_daily_balances` (it shouldn't — it's a PR-only ledger with no stored balance feed).
+- [ ] C.6.3 If `pr-merchant-ledger` IS in `ar_ledger_daily_balances`, add a scope filter or `is_internal` check to AR views to exclude it.
+- [ ] C.6.4 No PR dataset or visual changes expected.
+- [ ] C.6.5 Commit (if changes needed) — `Phase C.6: PR/AR scope isolation for ledger postings`.
+
+---
+
+## Phase C.7 — Docs sweep
+
+- [ ] C.7.1 `CLAUDE.md` — update Domain Model "Unified Schema" section: posting can target ledger OR sub-ledger. Update drift invariant description.
+- [ ] C.7.2 `CLAUDE.md` — update AR section: ledger-level postings, new drift formula.
+- [ ] C.7.3 `README.md` — update AR description if needed.
+- [ ] C.7.4 `SPEC.md` — update Account Recon domain model: ledger accounts receive direct postings; drift invariant changed.
+- [ ] C.7.5 Commit — `Phase C.7: docs sweep for ledger-level postings`.
+
+---
+
+## Phase C.8 — Deploy + e2e + release
+
+- [ ] C.8.1 `demo apply --all` — schema + seed applied.
+- [ ] C.8.2 `deploy --all --generate` — all resources CREATION_SUCCESSFUL.
+- [ ] C.8.3 `cleanup --dry-run` — no stale resources.
+- [ ] C.8.4 `./run_e2e.sh --parallel 4` — full green.
+- [ ] C.8.5 `RELEASE_NOTES.md` — v1.4.0 entry.
+- [ ] C.8.6 Tag v1.4.0, push.
+
+---
+
+## Decisions to make in flight
+
+- **Populate `ledger_account_id` on sub-ledger postings?** Setting it explicitly (derived from the sub-ledger's FK) simplifies view queries (single `WHERE ledger_account_id = X` instead of joining through `ar_subledger_accounts`). Tradeoff: denormalization, but the column is derivable and read-only. Recommend yes for query simplicity.
+- **Fee assessments: truly single-leg?** A single-leg posting violates the net-zero transfer invariant. This is intentional — it creates a visible exception (non-zero transfer) and contributes to drift. If the user wants fees to be "clean" transfers, the counter-leg would post to an external fee-collection account. Defer that complexity; single-leg fee is the simplest way to demonstrate ledger drift caused by direct postings.
+- **New transfer types for ledger-level activity?** Could add `funding_batch`, `fee`, `clearing_sweep` to the `transfer_type` CHECK constraint. These are AR-only types that wouldn't conflict with PR types. Recommend yes — it makes demo data self-documenting and enables future per-type filtering.
+
+---
+
+## Risks
+
+- **Drift computation correctness**: The 3-input drift formula (`stored - (direct postings + sub-ledger sum)`) is more complex than the current 2-input formula. Off-by-one in date grouping or double-counting is the main risk. Mitigate with explicit scenario tests that compute expected drift values.
+- **Sub-ledger posting backfill of `ledger_account_id`**: If C.0.2 decides to populate `ledger_account_id` on sub-ledger postings too, all existing AR and PR demo data generators need updating. The column is nullable so existing data won't break, but views that query `WHERE ledger_account_id = X` would miss old postings without it. Either backfill in the generator or keep views joining through `ar_subledger_accounts`.
+- **AR/PR scope leakage**: PR's `pr-merchant-ledger` is a real ledger account. If it appears in `ar_ledger_daily_balances`, the AR drift views would try to compute drift for it. Ensure the demo data generator does NOT emit stored ledger balances for `pr-merchant-ledger`.
+- **Demo determinism**: Adding ~10 new transfers with ledger-level postings changes the `random.Random(42)` sequence. If ledger-level transfer generation happens before existing transfers in the generator, it shifts all downstream IDs. Insert at the end of the generation sequence to minimize churn.
