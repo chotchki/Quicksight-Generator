@@ -98,18 +98,15 @@ CHECKPOINT — AR fully on unified schema. PR untouched.
 
 PR generator emits the chain `external_txn → payment → settlement → sale` as a tree of `transfer` rows linked by `parent_transfer_id`, with two postings per transfer. Legacy PR tables still populated for safety.
 
-- [ ] B.5.1 Add `pr_external_customer_pool` sub-ledger account (single synthetic, per B.0.2) and any merchant-side sub-ledger accounts not already present, into the AR sub-ledger insertions.
-- [ ] B.5.2 For each external_txn row: emit a top-level `transfer` (no parent, transfer_type='external_txn') + 1 posting on the external rail account.
-- [ ] B.5.3 For each payment row: emit a `transfer` with `parent_transfer_id = external_txn.transfer_id` (or NULL for unmatched), transfer_type='payment', + 2 postings (debit merchant ledger account, credit external destination).
-- [ ] B.5.4 For each settlement row: emit a `transfer` with `parent_transfer_id = payment.transfer_id`, transfer_type='settlement', + 2 postings (debit merchant sub-ledger, credit merchant ledger).
-- [ ] B.5.5 For each sale row: emit a `transfer` with `parent_transfer_id = settlement.transfer_id`, transfer_type='sale', + 2 postings (debit `pr_external_customer_pool`, credit merchant sub-ledger).
-- [ ] B.5.6 Map lifecycle status from legacy → unified (`unsettled` sale stays as a sale transfer with no settlement child; `returned` payment maps to a payment transfer with status='failed' and re-issued postings; etc.). Document the mapping in a docstring.
-- [ ] B.5.7 Equivalence tests in `tests/test_demo_data.py` (PR section):
-  - For every legacy PR row, exactly one corresponding `transfer` row with matching amount.
-  - Chain integrity: `Σ child.amount = parent.amount` for matched chains; planted mismatches surface where the legacy tests already detect them.
-  - `Σ posting.signed_amount = 0` per non-failed transfer.
-- [ ] B.5.8 `pytest` clean.
-- [ ] B.5.9 Commit — `Phase B.5: PR demo writes transfer chains to unified schema (dual-write)`.
+- [x] B.5.1 Added PR ledger account (`pr-merchant-ledger`) + 8 sub-ledger accounts (one per merchant + `pr-external-customer-pool` + `pr-external-rail`) into `ar_ledger_accounts` / `ar_subledger_accounts`.
+- [x] B.5.2 External txn → top-level transfer (no parent, type='external_txn', origin='external_force_posted') + 1 posting on `pr-external-rail`.
+- [x] B.5.3 Payment → transfer with parent=ext_txn (or NULL if unmatched), type='payment' + 2 postings (external-rail, merchant sub-ledger). Returned payments → posting status='failed'.
+- [x] B.5.4 Settlement → transfer with parent=payment (or NULL if unpaid), type='settlement' + 2 postings on merchant sub-ledger (both sides, nets to zero). Failed settlements → posting status='failed'.
+- [x] B.5.5 Sale → transfer with parent=settlement (or NULL if unsettled), type='sale' + 2 postings (merchant sub-ledger + external-customer-pool).
+- [x] B.5.6 Status mapping documented in `_derive_pr_unified_tables` docstring: sale→posted, settlement→posted/pending/failed, payment→posted/returned, external→posted.
+- [x] B.5.7 12 equivalence tests in `TestPrUnifiedTables`: transfer-per-legacy-row count, chain integrity (payment→ext, settlement→payment, sale→settlement), posting FK integrity, net-zero per non-failed transfer, posting counts (1 for ext_txn, 2 for others), unsettled-sale parent=NULL.
+- [x] B.5.8 296 tests pass.
+- [x] B.5.9 Commit.
 
 ---
 

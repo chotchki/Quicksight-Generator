@@ -65,6 +65,24 @@ _CASHIERS = [
     "Taylor Creek", "Riley Moss", "Jamie Pine", "Casey Hollow",
 ]
 
+# ---------------------------------------------------------------------------
+# PR sub-ledger accounts (inserted into ar_ledger_accounts / ar_subledger_accounts)
+# ---------------------------------------------------------------------------
+
+PR_LEDGER_ACCOUNT = ("pr-merchant-ledger", "PR Merchant Ledger", True)
+
+PR_SUBLEDGER_ACCOUNTS: list[tuple[str, str, bool, str]] = [
+    # (subledger_id, name, is_internal, ledger_account_id)
+    *[
+        (f"pr-sub-{mid}", f"PR {mname}", True, "pr-merchant-ledger")
+        for mid, mname, _, _ in MERCHANTS
+    ],
+    ("pr-external-customer-pool", "PR External Customer Pool",
+     False, "pr-merchant-ledger"),
+    ("pr-external-rail", "PR External Payment Rail",
+     False, "pr-merchant-ledger"),
+]
+
 
 # ---------------------------------------------------------------------------
 # SQL formatting helpers
@@ -130,6 +148,146 @@ def _merchant_type(merchant_id: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Unified transfer + posting derivation
+# ---------------------------------------------------------------------------
+
+def _derive_pr_unified_tables(
+    ext_txns: list[dict],
+    payments: list[dict],
+    settlements: list[dict],
+    sales: list[dict],
+) -> tuple[list[tuple], list[tuple]]:
+    """Derive transfer + posting rows from the PR pipeline data.
+
+    Chain direction (parent → child):
+        external_txn → payment → settlement → sale
+
+    Status mapping from legacy → unified:
+        sale:       always 'posted' (sales exist once observed)
+        settlement: 'completed'→'posted', 'pending'→'pending', 'failed'→'failed'
+        payment:    'completed'→'posted', 'returned'→'returned'
+        external:   'processed'→'posted'
+
+    Posting pattern per transfer type:
+        sale:        +amount on merchant sub-ledger, -amount on external-customer-pool
+        settlement:  +amount on merchant sub-ledger, -amount on merchant sub-ledger
+                     (nets to zero — settlement is a grouping record)
+        payment:     +amount on external-rail, -amount on merchant sub-ledger
+        external_txn: single posting on external-rail (external observation, no counter-party)
+
+    Refund sales (negative amount) flow through the same pattern with inverted signs.
+    """
+    transfer_rows: list[tuple] = []
+    posting_rows: list[tuple] = []
+    posting_idx = 0
+
+    def _posting(transfer_id: str, account_id: str, amount: Decimal,
+                 posted_at: datetime, status: str = "success") -> None:
+        nonlocal posting_idx
+        posting_idx += 1
+        posting_rows.append((
+            f"pr-post-{posting_idx:05d}",
+            transfer_id,
+            account_id,
+            amount,
+            posted_at,
+            status,
+        ))
+
+    pay_by_stl: dict[str, dict] = {p["settlement_id"]: p for p in payments}
+    stl_by_id: dict[str, dict] = {s["settlement_id"]: s for s in settlements}
+
+    ext_transfer_ids: dict[str, str] = {}
+    for e in ext_txns:
+        tid = f"pr-xfer-ext-{e['transaction_id']}"
+        ext_transfer_ids[e["transaction_id"]] = tid
+        transfer_rows.append((
+            tid,
+            None,
+            "external_txn",
+            "external_force_posted",
+            e["external_amount"],
+            "posted",
+            e["transaction_date"],
+            None,
+            e["external_system"],
+        ))
+        _posting(tid, "pr-external-rail", -e["external_amount"],
+                 e["transaction_date"])
+
+    pay_transfer_ids: dict[str, str] = {}
+    for p in payments:
+        tid = f"pr-xfer-pay-{p['payment_id']}"
+        pay_transfer_ids[p["payment_id"]] = tid
+        parent = ext_transfer_ids.get(p["ext_txn_id"]) if p["ext_txn_id"] else None
+        status_map = {"completed": "posted", "returned": "returned"}
+        merchant_sub = f"pr-sub-{p['merchant_id']}"
+        transfer_rows.append((
+            tid,
+            parent,
+            "payment",
+            "internal_initiated",
+            abs(p["payment_amount"]),
+            status_map.get(p["payment_status"], "posted"),
+            p["payment_date"],
+            None,
+            None,
+        ))
+        posting_status = "failed" if p["payment_status"] == "returned" else "success"
+        _posting(tid, "pr-external-rail", p["payment_amount"],
+                 p["payment_date"], posting_status)
+        _posting(tid, merchant_sub, -p["payment_amount"],
+                 p["payment_date"], posting_status)
+
+    stl_transfer_ids: dict[str, str] = {}
+    for s in settlements:
+        tid = f"pr-xfer-stl-{s['settlement_id']}"
+        stl_transfer_ids[s["settlement_id"]] = tid
+        pay = pay_by_stl.get(s["settlement_id"])
+        parent = pay_transfer_ids.get(pay["payment_id"]) if pay else None
+        status_map = {"completed": "posted", "pending": "pending", "failed": "failed"}
+        merchant_sub = f"pr-sub-{s['merchant_id']}"
+        transfer_rows.append((
+            tid,
+            parent,
+            "settlement",
+            "internal_initiated",
+            abs(s["settlement_amount"]),
+            status_map.get(s["settlement_status"], "posted"),
+            s["settlement_date"],
+            None,
+            None,
+        ))
+        posting_status = "failed" if s["settlement_status"] == "failed" else "success"
+        _posting(tid, merchant_sub, s["settlement_amount"],
+                 s["settlement_date"], posting_status)
+        _posting(tid, merchant_sub, -s["settlement_amount"],
+                 s["settlement_date"], posting_status)
+
+    for sale in sales:
+        tid = f"pr-xfer-sale-{sale['sale_id']}"
+        parent = stl_transfer_ids.get(sale["settlement_id"]) if sale["settlement_id"] else None
+        merchant_sub = f"pr-sub-{sale['merchant_id']}"
+        transfer_rows.append((
+            tid,
+            parent,
+            "sale",
+            "internal_initiated",
+            abs(sale["amount"]),
+            "posted",
+            sale["sale_timestamp"],
+            None,
+            None,
+        ))
+        _posting(tid, merchant_sub, -sale["amount"],
+                 sale["sale_timestamp"])
+        _posting(tid, "pr-external-customer-pool", sale["amount"],
+                 sale["sale_timestamp"])
+
+    return transfer_rows, posting_rows
+
+
+# ---------------------------------------------------------------------------
 # Main generator
 # ---------------------------------------------------------------------------
 
@@ -167,10 +325,25 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
     # -- External transactions + linking --
     ext_txns = _generate_external_transactions(rng, today, payments)
 
+    # -- Unified transfer + posting tables --
+    transfer_rows, posting_rows = _derive_pr_unified_tables(
+        ext_txns, payments, settlements, sales,
+    )
+
     # -- Assemble SQL in FK-safe order --
+    lid, lname, l_internal = PR_LEDGER_ACCOUNT
     parts = [
         f"-- Sasquatch National Bank — demo seed data",
         f"-- Anchor date: {today.isoformat()}\n",
+
+        _inserts("ar_ledger_accounts",
+                 ["ledger_account_id", "name", "is_internal"],
+                 [(lid, lname, l_internal)]),
+
+        _inserts("ar_subledger_accounts",
+                 ["subledger_account_id", "name", "is_internal",
+                  "ledger_account_id"],
+                 PR_SUBLEDGER_ACCOUNTS),
 
         _inserts("pr_merchants",
                  ["merchant_id", "merchant_name", "merchant_type",
@@ -221,6 +394,17 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
                    p["is_returned"], p["return_reason"], p["ext_txn_id"],
                    p["payment_method"])
                   for p in payments]),
+
+        _inserts("transfer",
+                 ["transfer_id", "parent_transfer_id", "transfer_type",
+                  "origin", "amount", "status", "created_at", "memo",
+                  "external_system"],
+                 transfer_rows),
+
+        _inserts("posting",
+                 ["posting_id", "transfer_id", "subledger_account_id",
+                  "signed_amount", "posted_at", "status"],
+                 posting_rows),
     ]
     return "\n".join(parts) + "\n"
 

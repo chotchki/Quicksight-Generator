@@ -66,18 +66,22 @@ class TestSeedSql:
 
     def test_every_insert_ends_with_semicolon(self, seed_sql):
         inserts = re.findall(r"(INSERT INTO \w+.*?;)", seed_sql, re.DOTALL)
-        assert len(inserts) == 5, f"Expected 5 INSERT blocks, got {len(inserts)}"
+        assert len(inserts) == 9, f"Expected 9 INSERT blocks, got {len(inserts)}"
         for block in inserts:
             assert block.rstrip().endswith(";")
 
     def test_insert_tables_match_schema(self, seed_sql):
         tables = re.findall(r"INSERT INTO (\w+)", seed_sql)
         expected = {
+            "ar_ledger_accounts",
+            "ar_subledger_accounts",
             "pr_merchants",
             "pr_external_transactions",
             "pr_settlements",
             "pr_sales",
             "pr_payments",
+            "transfer",
+            "posting",
         }
         assert set(tables) == expected
 
@@ -89,12 +93,13 @@ class TestSeedSql:
             if table not in positions:
                 positions[table] = m.start()
 
-        # FK order: merchants before ext_txns before
-        # settlements before sales, payments
+        assert positions["ar_ledger_accounts"] < positions["ar_subledger_accounts"]
         assert positions["pr_merchants"] < positions["pr_external_transactions"]
         assert positions["pr_external_transactions"] < positions["pr_settlements"]
         assert positions["pr_settlements"] < positions["pr_sales"]
         assert positions["pr_sales"] < positions["pr_payments"]
+        assert positions["ar_subledger_accounts"] < positions["transfer"]
+        assert positions["transfer"] < positions["posting"]
 
 
 # ---------------------------------------------------------------------------
