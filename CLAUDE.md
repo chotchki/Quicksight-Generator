@@ -76,11 +76,11 @@ out/
     qs-gen-unmatched-external-txns-dataset.json
     qs-gen-external-transactions-dataset.json
     qs-gen-payment-recon-dataset.json
-    qs-gen-ar-parent-accounts-dataset.json   # 9 AR datasets
-    qs-gen-ar-accounts-dataset.json
+    qs-gen-ar-ledger-accounts-dataset.json   # 9 AR datasets
+    qs-gen-ar-subledger-accounts-dataset.json
     qs-gen-ar-transactions-dataset.json
-    qs-gen-ar-parent-balance-drift-dataset.json
-    qs-gen-ar-account-balance-drift-dataset.json
+    qs-gen-ar-ledger-balance-drift-dataset.json
+    qs-gen-ar-subledger-balance-drift-dataset.json
     qs-gen-ar-transfer-summary-dataset.json
     qs-gen-ar-non-zero-transfers-dataset.json
     qs-gen-ar-limit-breach-dataset.json
@@ -161,12 +161,13 @@ run_e2e.sh
 - Mutual table filtering on the Payment Reconciliation tab: clicking an external txn filters its payments; clicking a payment filters back
 
 ### Account Reconciliation
-**Parent accounts (with daily balances) → Child accounts → Transfers → Transaction legs (double-entry ledger)**
+**Ledger accounts (with daily balances) → Sub-ledger accounts → Transfers → Transaction legs (double-entry ledger)**
 
 - Every transfer is a set of transaction legs that must net to zero
 - Daily balance snapshots allow drift detection: recomputed balance vs. stored balance
-- Failed legs, limit breaches (parent daily out-flow cap), and overdrafts (child below zero) populate the Exceptions tab
-- Drift timelines (parent + child) surface systemic issues over time
+- Failed legs, limit breaches (ledger daily out-flow cap per sub-ledger/type), and overdrafts (sub-ledger below zero) populate the Exceptions tab
+- Drift timelines (ledger + sub-ledger) surface systemic issues over time
+- Transactions carry an `origin` tag (`internal_initiated` / `external_force_posted`) — additive column in Phase A, consumed by later phases
 
 ## Architecture Decisions
 
@@ -207,4 +208,4 @@ run_e2e.sh
 - Every visual should have non-empty data in the demo. For each new visual that relies on a scenario (drift, unmatched, failed, returned, limit-breach, overdraft, etc.), add a `TestScenarioCoverage` assertion in the app's demo-data tests that guarantees ≥N rows of that shape — counts alone don't catch "zero scenario rows slipped through".
 - Generators must stay deterministic (`random.Random(42)`); tests depend on exact output.
 - Write the coverage assertion **before** the visual, not after. It's the fastest way to notice when generator pool-sizing or branching makes a scenario silently vanish.
-- Each app has its own demo persona (Sasquatch National Bank coffee shops; Farmers Exchange Bank parent/child accounts). Don't cross-contaminate — shared schema, disjoint data.
+- Each app has its own demo persona (Sasquatch National Bank coffee shops; Farmers Exchange Bank ledger/sub-ledger accounts). Don't cross-contaminate — shared schema, disjoint data.

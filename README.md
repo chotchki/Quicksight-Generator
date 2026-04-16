@@ -29,10 +29,10 @@ The customer for these reports doesn't know exactly what they want yet. Rather t
 | Tab | What it shows |
 |---|---|
 | Getting Started | Landing page — heading + per-sheet highlights; demo scenario block when seeded. |
-| Balances | Parent and child account balance tables. Click an account to drill into its transactions. |
+| Balances | Ledger and sub-ledger account balance tables. Click an account to drill into its transactions. |
 | Transfers | One row per `transfer_id` with net-zero flags. Click to drill into transactions. |
-| Transactions | Raw ledger (one row per leg), filtered by date / type / Show-Only-Failed. |
-| Exceptions | Five independent checks side-by-side: parent drift, child drift, non-zero transfers, daily limit breaches, child overdrafts. Two drift timelines at the bottom. |
+| Transactions | Raw ledger (one row per leg, with an `origin` tag for later filtering), filtered by date / type / Show-Only-Failed. |
+| Exceptions | Five independent checks side-by-side: ledger drift, sub-ledger drift, non-zero transfers, daily limit breaches, sub-ledger overdrafts. Two drift timelines at the bottom. |
 
 ### Shared conventions
 
@@ -143,11 +143,11 @@ out/
     qs-gen-unmatched-external-txns-dataset.json
     qs-gen-external-transactions-dataset.json
     qs-gen-payment-recon-dataset.json
-    qs-gen-ar-parent-accounts-dataset.json     # 9 AR datasets
-    qs-gen-ar-accounts-dataset.json
+    qs-gen-ar-ledger-accounts-dataset.json     # 9 AR datasets
+    qs-gen-ar-subledger-accounts-dataset.json
     qs-gen-ar-transactions-dataset.json
-    qs-gen-ar-parent-balance-drift-dataset.json
-    qs-gen-ar-account-balance-drift-dataset.json
+    qs-gen-ar-ledger-balance-drift-dataset.json
+    qs-gen-ar-subledger-balance-drift-dataset.json
     qs-gen-ar-transfer-summary-dataset.json
     qs-gen-ar-non-zero-transfers-dataset.json
     qs-gen-ar-limit-breach-dataset.json
@@ -175,7 +175,7 @@ Datasets are all Direct Query (no SPICE), so seed changes show up immediately af
 ### Demo scenarios
 
 - **Payment Recon — Sasquatch National Bank.** Six fictional Seattle coffee shops (Bigfoot Brews, Sasquatch Sips, Yeti Espresso, Skookum Coffee Co., Cryptid Coffee Cart, Wildman's Roastery). Sales flow into settlements and payments; planted unsettled sales, returned payments, amount mismatches, and orphan external transactions populate every exception table.
-- **Account Recon — Farmers Exchange Bank.** Five parent accounts (Big Meadow Checking, Harvest Moon Savings, Orchard Lending Pool, Valley Grain Co-op, Harvest Credit Exchange) move money between ten child accounts over ~40 days using four transfer types. Disjoint planted drift, failed legs, limit breaches, and overdrafts keep every Exceptions table populated.
+- **Account Recon — Farmers Exchange Bank.** Five ledger accounts (Big Meadow Checking, Harvest Moon Savings, Orchard Lending Pool, Valley Grain Co-op, Harvest Credit Exchange) move money between ten sub-ledger accounts over ~40 days using four transfer types. Disjoint planted drift, failed legs, limit breaches, and overdrafts keep every Exceptions table populated.
 
 ## Theming
 

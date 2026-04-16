@@ -1,5 +1,33 @@
 # Release Notes
 
+## v1.2.0
+
+### Phase A — Account Recon vocabulary rename + `origin` attribute
+
+Account Reconciliation's internal vocabulary ("parent / child accounts") always read a little structural; the classical accounting pattern is **control account + subsidiary ledger**, and end users are accountants who already think in GL vocabulary. v1.2.0 aligns the code, SQL, QuickSight labels, and docs with that language, and plants an additive `origin` column on transactions for the later phases in the major evolution to consume.
+
+### What landed
+
+- **Vocabulary rename across AR** — user-visible across every AR tab:
+  - Tables/views: `ar_accounts` → `ar_subledger_accounts`; drift/breach/overdraft views reshaped to `ar_subledger_*` / `ar_ledger_*`.
+  - Columns: `account_id` → `subledger_account_id`, `parent_account_id` → `ledger_account_id` (cascades through every SELECT projection and dataset contract).
+  - QuickSight labels: "Parent/Child Account" → "Ledger/Sub-Ledger Account" on every table, KPI, filter, drill-down, and Show-Only-X toggle.
+  - Dataset IDs renamed from `qs-gen-ar-parent-*` / `qs-gen-ar-account-*` → `qs-gen-ar-ledger-*` / `qs-gen-ar-subledger-*`. **One-time cleanup required**: old tagged resources in the target account need `quicksight-gen cleanup --yes` after the v1.2.0 deploy, since dataset IDs are rename-as-delete-plus-create.
+  - Drill-down parameters: `pArAccountId` → `pArSubledgerAccountId`, `pArParentAccountId` → `pArLedgerAccountId`.
+- **`origin` attribute on transactions** — additive, tag-only in v1.2.0:
+  - `ar_transactions.origin VARCHAR(30) NOT NULL DEFAULT 'internal_initiated' CHECK IN ('internal_initiated', 'external_force_posted')`.
+  - Demo generator sprinkles ~10% `external_force_posted` (every 10th emitted leg) for deterministic coverage.
+  - Surfaced as a visible column on Transaction Detail. **No filter, exception check, or drill consumes it yet** — Phase B/D will wire it in.
+
+### Notes
+
+- **255 unit/integration tests** (was 253) — added one scenario-coverage assertion for origin values and one dataset-contract assertion for the `origin` column. E2E verified against a live deploy with `./run_e2e.sh --parallel 4`.
+- No behavioral changes in AR reconciliation logic — only vocabulary and one new column.
+- Payment Recon is untouched: zero references to parent/child existed there.
+- Phase B (unified transfer schema + column contract) will reshape PR's sales/settlements/payments into the same `transfer` primitives AR already uses. See `SPEC.md` "Suggested phasing".
+
+---
+
 ## v1.1.0
 
 ### Filter-propagation browser e2e expansion

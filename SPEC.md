@@ -151,23 +151,23 @@
         - Internal accounts have a daily final balance
           - Stored balance is fed in from an upstream system; this app does not compute it
           - The stored balance should match the net amount of transactions done on the account in a day
-          - A child account's stored balance should not go below 0 on any day — negative-balance days are flagged as overdrafts
-      - Linked to a parent account, have a name
-    - Parent accounts
+          - A sub-ledger account's stored balance should not go below 0 on any day — negative-balance days are flagged as overdrafts
+      - Linked to a ledger account, have a name
+    - Ledger accounts
       - Internal or external (external is out of scope)
       - Daily final balance
-        - Stored balance is fed in from an upstream system; parent-level and child-level feeds may come from different upstream systems, so the two levels can disagree with each other and with the underlying transactions
-        - Invariant: stored parent balance should equal the aggregation of its children's balances
-      - Define per-type daily transfer limits that apply to their child accounts. A child's outbound flow of a given type on a given day that exceeds the parent's limit is flagged.
+        - Stored balance is fed in from an upstream system; ledger-level and sub-ledger-level feeds may come from different upstream systems, so the two levels can disagree with each other and with the underlying transactions
+        - Invariant: stored ledger balance should equal the aggregation of its sub-ledgers' balances
+      - Define per-type daily transfer limits that apply to their sub-ledger accounts. A sub-ledger's outbound flow of a given type on a given day that exceeds the ledger's limit is flagged.
         - Limits are populated by an upstream system
-        - A parent may have limits defined for only some types — undefined means "no limit enforced"
+        - A ledger may have limits defined for only some types — undefined means "no limit enforced"
       - Have a name
     - Reconciliation scope — five independent checks performed side-by-side on the Exceptions tab:
-      - Child drift: stored child balance ≠ Σ of that child's posted transactions on that day
-      - Parent drift: stored parent balance ≠ Σ of its children's stored balances on that day
+      - Sub-ledger drift: stored sub-ledger balance ≠ Σ of that sub-ledger's posted transactions on that day
+      - Ledger drift: stored ledger balance ≠ Σ of its sub-ledgers' stored balances on that day
       - Non-zero transfers: transfers whose posted legs don't net to zero
-      - Child limit breach: Σ |outbound posted amounts of type T| for a child on a day > parent's limit for type T
-      - Child overdraft: stored child balance < 0 on any day
+      - Sub-ledger limit breach: Σ |outbound posted amounts of type T| for a sub-ledger on a day > its ledger's limit for type T
+      - Sub-ledger overdraft: stored sub-ledger balance < 0 on any day
       - Each finding points at a different upstream source and is investigated independently; two drift timelines at the bottom of the Exceptions tab reveal systemic issues
     - Transfers
       - Movement of money between accounts via double-entry debits and credits
@@ -179,6 +179,7 @@
       - Amount, timestamp (posted), may fail individually (status column)
       - Failed transactions don't count toward transfer sum / match
       - Carry a transfer type (ACH, wire, internal, cash) for limit checking — orthogonal to direction (debit/credit)
+      - Carry an `origin` tag (`internal_initiated` / `external_force_posted`) — surfaces whether the row originated from the normal internal flow or was pushed in out-of-band; additive metadata, not consumed by any check in Phase A
       - If they affect an internal account, the daily balance must be updated in lockstep
 
 ## Demo Scenarios:
@@ -188,7 +189,7 @@
 
   - Payment Recon — "Sasquatch National Bank": merchant bank in the Pacific Northwest serving local coffee shops. Morning-focused sales. Optional-metadata and merchant-name variety drives the punny flavor. (Shops: Bigfoot Brews, Sasquatch Sips, Yeti Espresso, Skookum Coffee Co., Cryptid Coffee Cart, Wildman's Roastery.)
 
-  - Account Recon — "Farmers Exchange Bank": a bank in a fictional valley, customers are local farmers, suppliers, and buyers. Transfer memos + transaction dates tell a story. Parents: Big Meadow Checking, Harvest Moon Savings, Orchard Lending Pool, Valley Grain Co-op, Harvest Credit Exchange. (No Stardew Valley character IP — generic valley flavor only.)
+  - Account Recon — "Farmers Exchange Bank": a bank in a fictional valley, customers are local farmers, suppliers, and buyers. Transfer memos + transaction dates tell a story. Ledgers: Big Meadow Checking, Harvest Moon Savings, Orchard Lending Pool, Valley Grain Co-op, Harvest Credit Exchange. (No Stardew Valley character IP — generic valley flavor only.)
 
 ## Code Base Guidance:
   - [x] Kept the existing tech selection: Python emits QuickSight JSON, boto3 applies it via `quicksight-gen deploy`. Demo datasource is Aurora PostgreSQL.
@@ -228,7 +229,7 @@
   - Demo analysis names: "Demo — Payment Reconciliation" / "Demo — Account Reconciliation". Scenario flavor lives in the Getting Started sheet.
   - Account Recon scope: all 4 pipeline tabs (Balances, Transfers, Transactions, Exceptions) rough-laid out first, then filters/links. Grew to 5 with "Getting Started" in front.
   - Refunds: negative amount + `sale_type=refund`. No surfaced FK back to original sale.
-  - Parent-drift drill-down: switch sheets with filters applied, not same-sheet.
+  - Ledger-drift drill-down: switch sheets with filters applied, not same-sheet.
   - Drift timeline: lives on Account Recon Exceptions.
   - Demo DB namespacing: single Postgres schema, table prefixes `pr_` / `ar_`. One QuickSight datasource.
   - Transfer memo: denormalized onto each transaction; earliest transaction's memo wins for display.
