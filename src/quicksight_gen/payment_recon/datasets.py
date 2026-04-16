@@ -9,25 +9,26 @@ from __future__ import annotations
 from urllib.parse import urlparse
 
 from quicksight_gen.common.config import Config
+from quicksight_gen.common.dataset_contract import (
+    ColumnSpec,
+    DatasetContract,
+    build_dataset,
+    dataset_permissions,
+    DATASET_ACTIONS,
+)
 from quicksight_gen.common.models import (
     CredentialPair,
-    CustomSql,
-    DataSet,
-    DataSetUsageConfiguration,
     DataSource,
     DataSourceCredentials,
     DataSourceParameters,
-    InputColumn,
-    LogicalTable,
-    LogicalTableSource,
-    PhysicalTable,
+    DataSet,
     PostgreSqlParameters,
     ResourcePermission,
     SslProperties,
 )
 
 # ---------------------------------------------------------------------------
-# Helpers
+# DataSource builder (PR-specific — datasource is shared but built here)
 # ---------------------------------------------------------------------------
 
 _DATASOURCE_ACTIONS = [
@@ -79,114 +80,16 @@ def build_datasource(cfg: Config) -> DataSource:
     )
 
 
-_DATASET_ACTIONS = [
-    "quicksight:DescribeDataSet",
-    "quicksight:DescribeDataSetPermissions",
-    "quicksight:PassDataSet",
-    "quicksight:DescribeIngestion",
-    "quicksight:ListIngestions",
-    "quicksight:UpdateDataSet",
-    "quicksight:DeleteDataSet",
-    "quicksight:CreateIngestion",
-    "quicksight:CancelIngestion",
-    "quicksight:UpdateDataSetPermissions",
-]
-
-
-def _permissions(cfg: Config) -> list[ResourcePermission] | None:
-    if not cfg.principal_arns:
-        return None
-    return [
-        ResourcePermission(Principal=arn, Actions=_DATASET_ACTIONS)
-        for arn in cfg.principal_arns
-    ]
-
-
-def _physical_and_logical(
-    cfg: Config,
-    table_key: str,
-    sql_name: str,
-    sql_query: str,
-    columns: list[InputColumn],
-) -> tuple[dict[str, PhysicalTable], dict[str, LogicalTable]]:
-    """Build the standard PhysicalTableMap + LogicalTableMap pair."""
-    physical = {
-        table_key: PhysicalTable(
-            CustomSql=CustomSql(
-                Name=sql_name,
-                DataSourceArn=cfg.datasource_arn,
-                SqlQuery=sql_query,
-                Columns=columns,
-            )
-        )
-    }
-    logical = {
-        f"{table_key}-logical": LogicalTable(
-            Alias=sql_name,
-            Source=LogicalTableSource(PhysicalTableId=table_key),
-        )
-    }
-    return physical, logical
-
-
 # ---------------------------------------------------------------------------
-# 5a — Merchants
+# Optional sales metadata
 # ---------------------------------------------------------------------------
 
-def build_merchants_dataset(cfg: Config) -> DataSet:
-    dataset_id = cfg.prefixed("merchants-dataset")
-    columns = [
-        InputColumn(Name="merchant_id", Type="STRING"),
-        InputColumn(Name="merchant_name", Type="STRING"),
-        InputColumn(Name="merchant_type", Type="STRING"),
-        InputColumn(Name="location_id", Type="STRING"),
-        InputColumn(Name="created_at", Type="DATETIME"),
-        InputColumn(Name="status", Type="STRING"),
-    ]
-    sql = """\
-SELECT
-    merchant_id,
-    merchant_name,
-    merchant_type,
-    location_id,
-    created_at,
-    status
-FROM pr_merchants"""
-
-    physical, logical = _physical_and_logical(
-        cfg, "merchants", "Merchants", sql, columns
-    )
-    return DataSet(
-        AwsAccountId=cfg.aws_account_id,
-        DataSetId=dataset_id,
-        Name="Merchants",
-        PhysicalTableMap=physical,
-        LogicalTableMap=logical,
-        ImportMode="DIRECT_QUERY",
-        DataSetUsageConfiguration=DataSetUsageConfiguration(),
-        Permissions=_permissions(cfg),
-        Tags=cfg.tags(),
-    )
-
-
-# ---------------------------------------------------------------------------
-# 5b — Sales
-# ---------------------------------------------------------------------------
-
-# Optional sales metadata columns.
-#
 # These are sourced from the same ``pr_sales`` table in demo mode. Production
 # databases without these columns will generate a SQL error on DIRECT_QUERY —
 # if that becomes a problem we can gate them behind a config flag, but SPEC 2.2
 # opts for a static declaration rather than runtime introspection.
 #
 # Each tuple: (sql_column, sql_ddl_type, qs_type, filter_type, control_label)
-#  - sql_column     — column name in ``pr_sales``
-#  - sql_ddl_type   — PostgreSQL type for the demo schema
-#  - qs_type        — QuickSight InputColumn type (STRING|DECIMAL|DATETIME|INTEGER)
-#  - filter_type    — auto-generated filter style
-#                      (numeric | string | datetime)
-#  - control_label  — human-friendly label for the auto-generated filter
 OPTIONAL_SALE_METADATA: list[tuple[str, str, str, str, str]] = [
     ("taxes",               "DECIMAL(12,2)", "DECIMAL", "numeric",  "Taxes"),
     ("tips",                "DECIMAL(12,2)", "DECIMAL", "numeric",  "Tips"),
@@ -195,9 +98,9 @@ OPTIONAL_SALE_METADATA: list[tuple[str, str, str, str, str]] = [
 ]
 
 
-def _optional_metadata_columns() -> list[InputColumn]:
+def _optional_metadata_columns() -> list[ColumnSpec]:
     return [
-        InputColumn(Name=col, Type=qs_type)
+        ColumnSpec(col, qs_type)
         for col, _ddl, qs_type, _ftype, _label in OPTIONAL_SALE_METADATA
     ]
 
@@ -211,27 +114,161 @@ def _optional_metadata_sql_fields() -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# Contracts
+# ---------------------------------------------------------------------------
+
+MERCHANTS_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("merchant_id", "STRING"),
+    ColumnSpec("merchant_name", "STRING"),
+    ColumnSpec("merchant_type", "STRING"),
+    ColumnSpec("location_id", "STRING"),
+    ColumnSpec("created_at", "DATETIME"),
+    ColumnSpec("status", "STRING"),
+])
+
+SALES_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("sale_id", "STRING"),
+    ColumnSpec("merchant_id", "STRING"),
+    ColumnSpec("location_id", "STRING"),
+    ColumnSpec("amount", "DECIMAL"),
+    ColumnSpec("sale_type", "STRING"),
+    ColumnSpec("payment_method", "STRING"),
+    ColumnSpec("sale_timestamp", "DATETIME"),
+    ColumnSpec("card_brand", "STRING"),
+    ColumnSpec("card_last_four", "STRING"),
+    ColumnSpec("reference_id", "STRING"),
+    ColumnSpec("metadata", "STRING"),
+    ColumnSpec("settlement_id", "STRING"),
+    ColumnSpec("days_outstanding", "INTEGER"),
+    ColumnSpec("settlement_state", "STRING"),
+] + _optional_metadata_columns())
+
+SETTLEMENTS_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("settlement_id", "STRING"),
+    ColumnSpec("merchant_id", "STRING"),
+    ColumnSpec("settlement_type", "STRING"),
+    ColumnSpec("settlement_amount", "DECIMAL"),
+    ColumnSpec("settlement_date", "DATETIME"),
+    ColumnSpec("settlement_status", "STRING"),
+    ColumnSpec("sale_count", "INTEGER"),
+    ColumnSpec("days_outstanding", "INTEGER"),
+    ColumnSpec("payment_id", "STRING"),
+    ColumnSpec("payment_state", "STRING"),
+])
+
+PAYMENTS_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("payment_id", "STRING"),
+    ColumnSpec("settlement_id", "STRING"),
+    ColumnSpec("merchant_id", "STRING"),
+    ColumnSpec("payment_amount", "DECIMAL"),
+    ColumnSpec("payment_date", "DATETIME"),
+    ColumnSpec("payment_status", "STRING"),
+    ColumnSpec("is_returned", "STRING"),
+    ColumnSpec("return_reason", "STRING"),
+    ColumnSpec("external_transaction_id", "STRING"),
+    ColumnSpec("external_match_state", "STRING"),
+    ColumnSpec("payment_method", "STRING"),
+    ColumnSpec("days_outstanding", "INTEGER"),
+])
+
+SETTLEMENT_EXCEPTIONS_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("sale_id", "STRING"),
+    ColumnSpec("merchant_id", "STRING"),
+    ColumnSpec("merchant_name", "STRING"),
+    ColumnSpec("location_id", "STRING"),
+    ColumnSpec("amount", "DECIMAL"),
+    ColumnSpec("sale_timestamp", "DATETIME"),
+    ColumnSpec("days_outstanding", "INTEGER"),
+])
+
+PAYMENT_RETURNS_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("payment_id", "STRING"),
+    ColumnSpec("settlement_id", "STRING"),
+    ColumnSpec("merchant_id", "STRING"),
+    ColumnSpec("merchant_name", "STRING"),
+    ColumnSpec("payment_amount", "DECIMAL"),
+    ColumnSpec("payment_date", "DATETIME"),
+    ColumnSpec("return_reason", "STRING"),
+])
+
+SALE_SETTLEMENT_MISMATCH_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("settlement_id", "STRING"),
+    ColumnSpec("merchant_id", "STRING"),
+    ColumnSpec("settlement_amount", "DECIMAL"),
+    ColumnSpec("sales_sum", "DECIMAL"),
+    ColumnSpec("difference", "DECIMAL"),
+    ColumnSpec("sale_count", "INTEGER"),
+    ColumnSpec("settlement_date", "DATETIME"),
+    ColumnSpec("days_outstanding", "INTEGER"),
+])
+
+SETTLEMENT_PAYMENT_MISMATCH_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("payment_id", "STRING"),
+    ColumnSpec("settlement_id", "STRING"),
+    ColumnSpec("merchant_id", "STRING"),
+    ColumnSpec("payment_amount", "DECIMAL"),
+    ColumnSpec("settlement_amount", "DECIMAL"),
+    ColumnSpec("difference", "DECIMAL"),
+    ColumnSpec("payment_date", "DATETIME"),
+    ColumnSpec("days_outstanding", "INTEGER"),
+])
+
+UNMATCHED_EXTERNAL_TXNS_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("transaction_id", "STRING"),
+    ColumnSpec("external_system", "STRING"),
+    ColumnSpec("external_amount", "DECIMAL"),
+    ColumnSpec("merchant_id", "STRING"),
+    ColumnSpec("transaction_date", "DATETIME"),
+    ColumnSpec("status", "STRING"),
+    ColumnSpec("days_outstanding", "INTEGER"),
+])
+
+EXTERNAL_TRANSACTIONS_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("transaction_id", "STRING"),
+    ColumnSpec("external_system", "STRING"),
+    ColumnSpec("external_amount", "DECIMAL"),
+    ColumnSpec("record_count", "INTEGER"),
+    ColumnSpec("transaction_date", "DATETIME"),
+    ColumnSpec("status", "STRING"),
+])
+
+PAYMENT_RECON_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("transaction_id", "STRING"),
+    ColumnSpec("external_system", "STRING"),
+    ColumnSpec("external_amount", "DECIMAL"),
+    ColumnSpec("internal_total", "DECIMAL"),
+    ColumnSpec("difference", "DECIMAL"),
+    ColumnSpec("match_status", "STRING"),
+    ColumnSpec("payment_count", "INTEGER"),
+    ColumnSpec("merchant_id", "STRING"),
+    ColumnSpec("transaction_date", "DATETIME"),
+    ColumnSpec("days_outstanding", "INTEGER"),
+])
+
+
+# ---------------------------------------------------------------------------
+# Builders
+# ---------------------------------------------------------------------------
+
+def build_merchants_dataset(cfg: Config) -> DataSet:
+    sql = """\
+SELECT
+    merchant_id,
+    merchant_name,
+    merchant_type,
+    location_id,
+    created_at,
+    status
+FROM pr_merchants"""
+    return build_dataset(
+        cfg, cfg.prefixed("merchants-dataset"),
+        "Merchants", "merchants",
+        sql, MERCHANTS_CONTRACT,
+    )
+
+
 def build_sales_dataset(cfg: Config) -> DataSet:
-    dataset_id = cfg.prefixed("sales-dataset")
-    columns = [
-        InputColumn(Name="sale_id", Type="STRING"),
-        InputColumn(Name="merchant_id", Type="STRING"),
-        InputColumn(Name="location_id", Type="STRING"),
-        InputColumn(Name="amount", Type="DECIMAL"),
-        InputColumn(Name="sale_type", Type="STRING"),
-        InputColumn(Name="payment_method", Type="STRING"),
-        InputColumn(Name="sale_timestamp", Type="DATETIME"),
-        InputColumn(Name="card_brand", Type="STRING"),
-        InputColumn(Name="card_last_four", Type="STRING"),
-        InputColumn(Name="reference_id", Type="STRING"),
-        InputColumn(Name="metadata", Type="STRING"),
-        InputColumn(Name="settlement_id", Type="STRING"),
-        InputColumn(Name="days_outstanding", Type="INTEGER"),
-        InputColumn(Name="settlement_state", Type="STRING"),
-    ] + _optional_metadata_columns()
-    # days_outstanding is meaningful only for unsettled sales — settled sales
-    # collapse to NULL. settlement_state is derived so filters can toggle
-    # unsettled-only without relying on NULL semantics.
     sql = f"""\
 SELECT
     sale_id,
@@ -256,45 +293,14 @@ SELECT
         ELSE 'Settled'
     END AS settlement_state{_optional_metadata_sql_fields()}
 FROM pr_sales"""
-
-    physical, logical = _physical_and_logical(
-        cfg, "sales", "Sales", sql, columns
-    )
-    return DataSet(
-        AwsAccountId=cfg.aws_account_id,
-        DataSetId=dataset_id,
-        Name="Sales",
-        PhysicalTableMap=physical,
-        LogicalTableMap=logical,
-        ImportMode="DIRECT_QUERY",
-        DataSetUsageConfiguration=DataSetUsageConfiguration(),
-        Permissions=_permissions(cfg),
-        Tags=cfg.tags(),
+    return build_dataset(
+        cfg, cfg.prefixed("sales-dataset"),
+        "Sales", "sales",
+        sql, SALES_CONTRACT,
     )
 
-
-# ---------------------------------------------------------------------------
-# 5c — Settlements
-# ---------------------------------------------------------------------------
 
 def build_settlements_dataset(cfg: Config) -> DataSet:
-    dataset_id = cfg.prefixed("settlements-dataset")
-    columns = [
-        InputColumn(Name="settlement_id", Type="STRING"),
-        InputColumn(Name="merchant_id", Type="STRING"),
-        InputColumn(Name="settlement_type", Type="STRING"),
-        InputColumn(Name="settlement_amount", Type="DECIMAL"),
-        InputColumn(Name="settlement_date", Type="DATETIME"),
-        InputColumn(Name="settlement_status", Type="STRING"),
-        InputColumn(Name="sale_count", Type="INTEGER"),
-        InputColumn(Name="days_outstanding", Type="INTEGER"),
-        InputColumn(Name="payment_id", Type="STRING"),
-        InputColumn(Name="payment_state", Type="STRING"),
-    ]
-    # LEFT JOIN pr_payments on settlement_id — demo data emits at most one
-    # payment per settlement (see demo_data.py `pay_by_stl`), so this does
-    # not duplicate settlement rows. payment_state backs the Show-Only-Unpaid
-    # toggle on the Settlements sheet.
     sql = """\
 SELECT
     s.settlement_id,
@@ -312,45 +318,14 @@ SELECT
     END AS payment_state
 FROM pr_settlements s
 LEFT JOIN pr_payments p ON p.settlement_id = s.settlement_id"""
-
-    physical, logical = _physical_and_logical(
-        cfg, "settlements", "Settlements", sql, columns
-    )
-    return DataSet(
-        AwsAccountId=cfg.aws_account_id,
-        DataSetId=dataset_id,
-        Name="Settlements",
-        PhysicalTableMap=physical,
-        LogicalTableMap=logical,
-        ImportMode="DIRECT_QUERY",
-        DataSetUsageConfiguration=DataSetUsageConfiguration(),
-        Permissions=_permissions(cfg),
-        Tags=cfg.tags(),
+    return build_dataset(
+        cfg, cfg.prefixed("settlements-dataset"),
+        "Settlements", "settlements",
+        sql, SETTLEMENTS_CONTRACT,
     )
 
-
-# ---------------------------------------------------------------------------
-# 5d — Payments
-# ---------------------------------------------------------------------------
 
 def build_payments_dataset(cfg: Config) -> DataSet:
-    dataset_id = cfg.prefixed("payments-dataset")
-    columns = [
-        InputColumn(Name="payment_id", Type="STRING"),
-        InputColumn(Name="settlement_id", Type="STRING"),
-        InputColumn(Name="merchant_id", Type="STRING"),
-        InputColumn(Name="payment_amount", Type="DECIMAL"),
-        InputColumn(Name="payment_date", Type="DATETIME"),
-        InputColumn(Name="payment_status", Type="STRING"),
-        InputColumn(Name="is_returned", Type="STRING"),
-        InputColumn(Name="return_reason", Type="STRING"),
-        InputColumn(Name="external_transaction_id", Type="STRING"),
-        InputColumn(Name="external_match_state", Type="STRING"),
-        InputColumn(Name="payment_method", Type="STRING"),
-        InputColumn(Name="days_outstanding", Type="INTEGER"),
-    ]
-    # external_match_state backs the Show-Only-Unmatched-Externally toggle
-    # on the Payments sheet.
     sql = """\
 SELECT
     payment_id,
@@ -369,38 +344,14 @@ SELECT
     payment_method,
     (CURRENT_DATE - payment_date::date) AS days_outstanding
 FROM pr_payments"""
-
-    physical, logical = _physical_and_logical(
-        cfg, "payments", "Payments", sql, columns
-    )
-    return DataSet(
-        AwsAccountId=cfg.aws_account_id,
-        DataSetId=dataset_id,
-        Name="Payments",
-        PhysicalTableMap=physical,
-        LogicalTableMap=logical,
-        ImportMode="DIRECT_QUERY",
-        DataSetUsageConfiguration=DataSetUsageConfiguration(),
-        Permissions=_permissions(cfg),
-        Tags=cfg.tags(),
+    return build_dataset(
+        cfg, cfg.prefixed("payments-dataset"),
+        "Payments", "payments",
+        sql, PAYMENTS_CONTRACT,
     )
 
-
-# ---------------------------------------------------------------------------
-# 5e — Settlement exceptions (unsettled sales)
-# ---------------------------------------------------------------------------
 
 def build_settlement_exceptions_dataset(cfg: Config) -> DataSet:
-    dataset_id = cfg.prefixed("settlement-exceptions-dataset")
-    columns = [
-        InputColumn(Name="sale_id", Type="STRING"),
-        InputColumn(Name="merchant_id", Type="STRING"),
-        InputColumn(Name="merchant_name", Type="STRING"),
-        InputColumn(Name="location_id", Type="STRING"),
-        InputColumn(Name="amount", Type="DECIMAL"),
-        InputColumn(Name="sale_timestamp", Type="DATETIME"),
-        InputColumn(Name="days_outstanding", Type="INTEGER"),
-    ]
     sql = """\
 SELECT
     s.sale_id,
@@ -413,38 +364,14 @@ SELECT
 FROM pr_sales s
 JOIN pr_merchants m ON m.merchant_id = s.merchant_id
 WHERE s.settlement_id IS NULL"""
-
-    physical, logical = _physical_and_logical(
-        cfg, "settlement-exceptions", "Settlement Exceptions", sql, columns
-    )
-    return DataSet(
-        AwsAccountId=cfg.aws_account_id,
-        DataSetId=dataset_id,
-        Name="Settlement Exceptions",
-        PhysicalTableMap=physical,
-        LogicalTableMap=logical,
-        ImportMode="DIRECT_QUERY",
-        DataSetUsageConfiguration=DataSetUsageConfiguration(),
-        Permissions=_permissions(cfg),
-        Tags=cfg.tags(),
+    return build_dataset(
+        cfg, cfg.prefixed("settlement-exceptions-dataset"),
+        "Settlement Exceptions", "settlement-exceptions",
+        sql, SETTLEMENT_EXCEPTIONS_CONTRACT,
     )
 
-
-# ---------------------------------------------------------------------------
-# 5f — Payment returns
-# ---------------------------------------------------------------------------
 
 def build_payment_returns_dataset(cfg: Config) -> DataSet:
-    dataset_id = cfg.prefixed("payment-returns-dataset")
-    columns = [
-        InputColumn(Name="payment_id", Type="STRING"),
-        InputColumn(Name="settlement_id", Type="STRING"),
-        InputColumn(Name="merchant_id", Type="STRING"),
-        InputColumn(Name="merchant_name", Type="STRING"),
-        InputColumn(Name="payment_amount", Type="DECIMAL"),
-        InputColumn(Name="payment_date", Type="DATETIME"),
-        InputColumn(Name="return_reason", Type="STRING"),
-    ]
     sql = """\
 SELECT
     p.payment_id,
@@ -457,39 +384,14 @@ SELECT
 FROM pr_payments p
 JOIN pr_merchants m ON m.merchant_id = p.merchant_id
 WHERE p.is_returned = 'true'"""
-
-    physical, logical = _physical_and_logical(
-        cfg, "payment-returns", "Payment Returns", sql, columns
-    )
-    return DataSet(
-        AwsAccountId=cfg.aws_account_id,
-        DataSetId=dataset_id,
-        Name="Payment Returns",
-        PhysicalTableMap=physical,
-        LogicalTableMap=logical,
-        ImportMode="DIRECT_QUERY",
-        DataSetUsageConfiguration=DataSetUsageConfiguration(),
-        Permissions=_permissions(cfg),
-        Tags=cfg.tags(),
+    return build_dataset(
+        cfg, cfg.prefixed("payment-returns-dataset"),
+        "Payment Returns", "payment-returns",
+        sql, PAYMENT_RETURNS_CONTRACT,
     )
 
-
-# ---------------------------------------------------------------------------
-# 5g — Sale ↔ Settlement amount mismatches (SPEC 2.4)
-# ---------------------------------------------------------------------------
 
 def build_sale_settlement_mismatch_dataset(cfg: Config) -> DataSet:
-    dataset_id = cfg.prefixed("sale-settlement-mismatch-dataset")
-    columns = [
-        InputColumn(Name="settlement_id", Type="STRING"),
-        InputColumn(Name="merchant_id", Type="STRING"),
-        InputColumn(Name="settlement_amount", Type="DECIMAL"),
-        InputColumn(Name="sales_sum", Type="DECIMAL"),
-        InputColumn(Name="difference", Type="DECIMAL"),
-        InputColumn(Name="sale_count", Type="INTEGER"),
-        InputColumn(Name="settlement_date", Type="DATETIME"),
-        InputColumn(Name="days_outstanding", Type="INTEGER"),
-    ]
     sql = """\
 SELECT
     settlement_id,
@@ -501,40 +403,14 @@ SELECT
     settlement_date,
     days_outstanding
 FROM pr_sale_settlement_mismatch"""
-
-    physical, logical = _physical_and_logical(
-        cfg, "sale-settlement-mismatch",
-        "Sale ↔ Settlement Mismatch", sql, columns,
-    )
-    return DataSet(
-        AwsAccountId=cfg.aws_account_id,
-        DataSetId=dataset_id,
-        Name="Sale ↔ Settlement Mismatch",
-        PhysicalTableMap=physical,
-        LogicalTableMap=logical,
-        ImportMode="DIRECT_QUERY",
-        DataSetUsageConfiguration=DataSetUsageConfiguration(),
-        Permissions=_permissions(cfg),
-        Tags=cfg.tags(),
+    return build_dataset(
+        cfg, cfg.prefixed("sale-settlement-mismatch-dataset"),
+        "Sale \u2194 Settlement Mismatch", "sale-settlement-mismatch",
+        sql, SALE_SETTLEMENT_MISMATCH_CONTRACT,
     )
 
-
-# ---------------------------------------------------------------------------
-# 5h — Settlement ↔ Payment amount mismatches (SPEC 2.4)
-# ---------------------------------------------------------------------------
 
 def build_settlement_payment_mismatch_dataset(cfg: Config) -> DataSet:
-    dataset_id = cfg.prefixed("settlement-payment-mismatch-dataset")
-    columns = [
-        InputColumn(Name="payment_id", Type="STRING"),
-        InputColumn(Name="settlement_id", Type="STRING"),
-        InputColumn(Name="merchant_id", Type="STRING"),
-        InputColumn(Name="payment_amount", Type="DECIMAL"),
-        InputColumn(Name="settlement_amount", Type="DECIMAL"),
-        InputColumn(Name="difference", Type="DECIMAL"),
-        InputColumn(Name="payment_date", Type="DATETIME"),
-        InputColumn(Name="days_outstanding", Type="INTEGER"),
-    ]
     sql = """\
 SELECT
     payment_id,
@@ -546,39 +422,14 @@ SELECT
     payment_date,
     days_outstanding
 FROM pr_settlement_payment_mismatch"""
-
-    physical, logical = _physical_and_logical(
-        cfg, "settlement-payment-mismatch",
-        "Settlement ↔ Payment Mismatch", sql, columns,
-    )
-    return DataSet(
-        AwsAccountId=cfg.aws_account_id,
-        DataSetId=dataset_id,
-        Name="Settlement ↔ Payment Mismatch",
-        PhysicalTableMap=physical,
-        LogicalTableMap=logical,
-        ImportMode="DIRECT_QUERY",
-        DataSetUsageConfiguration=DataSetUsageConfiguration(),
-        Permissions=_permissions(cfg),
-        Tags=cfg.tags(),
+    return build_dataset(
+        cfg, cfg.prefixed("settlement-payment-mismatch-dataset"),
+        "Settlement \u2194 Payment Mismatch", "settlement-payment-mismatch",
+        sql, SETTLEMENT_PAYMENT_MISMATCH_CONTRACT,
     )
 
-
-# ---------------------------------------------------------------------------
-# 5i — External transactions without a linked payment (SPEC 2.4)
-# ---------------------------------------------------------------------------
 
 def build_unmatched_external_txns_dataset(cfg: Config) -> DataSet:
-    dataset_id = cfg.prefixed("unmatched-external-txns-dataset")
-    columns = [
-        InputColumn(Name="transaction_id", Type="STRING"),
-        InputColumn(Name="external_system", Type="STRING"),
-        InputColumn(Name="external_amount", Type="DECIMAL"),
-        InputColumn(Name="merchant_id", Type="STRING"),
-        InputColumn(Name="transaction_date", Type="DATETIME"),
-        InputColumn(Name="status", Type="STRING"),
-        InputColumn(Name="days_outstanding", Type="INTEGER"),
-    ]
     sql = """\
 SELECT
     transaction_id,
@@ -589,38 +440,14 @@ SELECT
     status,
     days_outstanding
 FROM pr_unmatched_external_txns"""
-
-    physical, logical = _physical_and_logical(
-        cfg, "unmatched-external-txns",
-        "Unmatched External Transactions", sql, columns,
-    )
-    return DataSet(
-        AwsAccountId=cfg.aws_account_id,
-        DataSetId=dataset_id,
-        Name="Unmatched External Transactions",
-        PhysicalTableMap=physical,
-        LogicalTableMap=logical,
-        ImportMode="DIRECT_QUERY",
-        DataSetUsageConfiguration=DataSetUsageConfiguration(),
-        Permissions=_permissions(cfg),
-        Tags=cfg.tags(),
+    return build_dataset(
+        cfg, cfg.prefixed("unmatched-external-txns-dataset"),
+        "Unmatched External Transactions", "unmatched-external-txns",
+        sql, UNMATCHED_EXTERNAL_TXNS_CONTRACT,
     )
 
-
-# ---------------------------------------------------------------------------
-# Reconciliation: External transactions
-# ---------------------------------------------------------------------------
 
 def build_external_transactions_dataset(cfg: Config) -> DataSet:
-    dataset_id = cfg.prefixed("external-transactions-dataset")
-    columns = [
-        InputColumn(Name="transaction_id", Type="STRING"),
-        InputColumn(Name="external_system", Type="STRING"),
-        InputColumn(Name="external_amount", Type="DECIMAL"),
-        InputColumn(Name="record_count", Type="INTEGER"),
-        InputColumn(Name="transaction_date", Type="DATETIME"),
-        InputColumn(Name="status", Type="STRING"),
-    ]
     sql = """\
 SELECT
     transaction_id,
@@ -630,42 +457,15 @@ SELECT
     transaction_date,
     status
 FROM pr_external_transactions"""
-
-    physical, logical = _physical_and_logical(
-        cfg, "external-transactions", "External Transactions", sql, columns
-    )
-    return DataSet(
-        AwsAccountId=cfg.aws_account_id,
-        DataSetId=dataset_id,
-        Name="External Transactions",
-        PhysicalTableMap=physical,
-        LogicalTableMap=logical,
-        ImportMode="DIRECT_QUERY",
-        DataSetUsageConfiguration=DataSetUsageConfiguration(),
-        Permissions=_permissions(cfg),
-        Tags=cfg.tags(),
+    return build_dataset(
+        cfg, cfg.prefixed("external-transactions-dataset"),
+        "External Transactions", "external-transactions",
+        sql, EXTERNAL_TRANSACTIONS_CONTRACT,
     )
 
-
-# ---------------------------------------------------------------------------
-# Reconciliation: Payment reconciliation
-# ---------------------------------------------------------------------------
 
 def build_payment_recon_dataset(cfg: Config) -> DataSet:
-    dataset_id = cfg.prefixed("payment-recon-dataset")
     late_days = cfg.late_default_days
-    columns = [
-        InputColumn(Name="transaction_id", Type="STRING"),
-        InputColumn(Name="external_system", Type="STRING"),
-        InputColumn(Name="external_amount", Type="DECIMAL"),
-        InputColumn(Name="internal_total", Type="DECIMAL"),
-        InputColumn(Name="difference", Type="DECIMAL"),
-        InputColumn(Name="match_status", Type="STRING"),
-        InputColumn(Name="payment_count", Type="INTEGER"),
-        InputColumn(Name="merchant_id", Type="STRING"),
-        InputColumn(Name="transaction_date", Type="DATETIME"),
-        InputColumn(Name="days_outstanding", Type="INTEGER"),
-    ]
     sql = f"""\
 SELECT
     et.transaction_id,
@@ -686,20 +486,10 @@ FROM pr_external_transactions et
 LEFT JOIN pr_payments p ON p.external_transaction_id = et.transaction_id
 GROUP BY et.transaction_id, et.external_system, et.external_amount,
          et.merchant_id, et.transaction_date"""
-
-    physical, logical = _physical_and_logical(
-        cfg, "payment-recon", "Payment Reconciliation", sql, columns
-    )
-    return DataSet(
-        AwsAccountId=cfg.aws_account_id,
-        DataSetId=dataset_id,
-        Name="Payment Reconciliation",
-        PhysicalTableMap=physical,
-        LogicalTableMap=logical,
-        ImportMode="DIRECT_QUERY",
-        DataSetUsageConfiguration=DataSetUsageConfiguration(),
-        Permissions=_permissions(cfg),
-        Tags=cfg.tags(),
+    return build_dataset(
+        cfg, cfg.prefixed("payment-recon-dataset"),
+        "Payment Reconciliation", "payment-recon",
+        sql, PAYMENT_RECON_CONTRACT,
     )
 
 
