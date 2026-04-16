@@ -1,24 +1,24 @@
 """QuickSight Analysis + Dashboard for Account Recon.
 
 Phase 5 extends the Exceptions tab with two more independent checks —
-per-type daily transfer limit breaches and child overdrafts — plus the
-filters and drill-downs that feed them. Five string parameters
-(``pArAccountId``, ``pArParentAccountId``, ``pArTransferId``,
+per-type daily transfer limit breaches and sub-ledger overdrafts — plus
+the filters and drill-downs that feed them. Five string parameters
+(``pArSubledgerAccountId``, ``pArLedgerAccountId``, ``pArTransferId``,
 ``pArActivityDate``, ``pArTransferType``) thread the drill-downs; each
-has a matching filter group scoped to its target sheet (or the parent's
-same-sheet child table).
+has a matching filter group scoped to its target sheet (or the ledger's
+same-sheet sub-ledger table).
 """
 
 from __future__ import annotations
 
 from quicksight_gen.account_recon.constants import (
-    DS_AR_ACCOUNT_BALANCE_DRIFT,
-    DS_AR_ACCOUNTS,
+    DS_AR_LEDGER_ACCOUNTS,
+    DS_AR_LEDGER_BALANCE_DRIFT,
     DS_AR_LIMIT_BREACH,
     DS_AR_NON_ZERO_TRANSFERS,
     DS_AR_OVERDRAFT,
-    DS_AR_PARENT_ACCOUNTS,
-    DS_AR_PARENT_BALANCE_DRIFT,
+    DS_AR_SUBLEDGER_ACCOUNTS,
+    DS_AR_SUBLEDGER_BALANCE_DRIFT,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     SHEET_AR_BALANCES,
@@ -161,10 +161,11 @@ def _full_width_text(element_id: str, row_span: int) -> GridLayoutElement:
 # ---------------------------------------------------------------------------
 
 _BALANCES_DESCRIPTION = (
-    "Stored daily balances at both levels. Parent table compares stored "
-    "parent balance to the sum of its children's stored balances; child "
-    "table compares each child's stored balance to the running sum of "
-    "posted transactions. Drift rows bubble up on the Exceptions tab."
+    "Stored daily balances at both levels. Ledger table compares stored "
+    "ledger balance to the sum of its sub-ledgers' stored balances; "
+    "sub-ledger table compares each sub-ledger's stored balance to the "
+    "running sum of posted transactions. Drift rows bubble up on the "
+    "Exceptions tab."
 )
 
 _TRANSFERS_DESCRIPTION = (
@@ -180,23 +181,23 @@ _TRANSACTIONS_DESCRIPTION = (
 )
 
 _EXCEPTIONS_DESCRIPTION = (
-    "Five independent reconciliation problems side by side. Parent drift "
-    "is stored parent vs Σ children's stored balances — fingers the "
-    "parent-balance upstream feed. Child drift is stored child vs Σ "
-    "posted transactions — fingers the child-balance feed or the ledger. "
-    "Non-zero transfers are per-transfer imbalances. Limit breaches are "
-    "(child, day, type) triples where outbound volume exceeded the "
-    "parent-defined daily transfer limit for that type. Overdrafts are "
-    "child-days where the stored balance went negative. The timelines "
-    "show when each drift feed spiked."
+    "Five independent reconciliation problems side by side. Ledger drift "
+    "is stored ledger vs Σ sub-ledgers' stored balances — fingers the "
+    "ledger-balance upstream feed. Sub-ledger drift is stored sub-ledger "
+    "vs Σ posted transactions — fingers the sub-ledger balance feed or "
+    "the ledger. Non-zero transfers are per-transfer imbalances. Limit "
+    "breaches are (sub-ledger, day, type) triples where outbound volume "
+    "exceeded the ledger-defined daily transfer limit for that type. "
+    "Overdrafts are sub-ledger days where the stored balance went "
+    "negative. The timelines show when each drift feed spiked."
 )
 
 
 # Per-sheet highlights used to build bulleted summaries on the Getting
 # Started tab.
 _BALANCES_BULLETS = [
-    "Parent balances: stored parent vs Σ children's stored balances",
-    "Child balances: stored child vs Σ posted transactions",
+    "Ledger balances: stored ledger vs Σ sub-ledgers' stored balances",
+    "Sub-ledger balances: stored sub-ledger vs Σ posted transactions",
     "Click an account to drill into its transactions",
 ]
 
@@ -213,8 +214,8 @@ _TRANSACTIONS_BULLETS = [
 ]
 
 _EXCEPTIONS_BULLETS = [
-    "Parent and child balance drift (separate upstream feeds)",
-    "Non-zero transfers, daily limit breaches, and child overdrafts",
+    "Ledger and sub-ledger balance drift (separate upstream feeds)",
+    "Non-zero transfers, daily limit breaches, and sub-ledger overdrafts",
     "Timelines show when each drift feed spiked",
     "Click any row to drill into the underlying transactions",
 ]
@@ -260,12 +261,12 @@ def _build_getting_started_sheet(cfg: Config) -> SheetDefinition:
             rt.BR,
             rt.BR,
             rt.body(
-                "Reconcile stored daily balances at the parent- and child-"
-                "account levels against their computed counterparts, plus "
-                "transfer-level transactions for a bank's double-entry "
-                "ledger. Walk from aggregate balances down to individual "
-                "transactions — the Exceptions tab pulls the problems "
-                "together in one place."
+                "Reconcile stored daily balances at the ledger- and "
+                "sub-ledger account levels against their computed "
+                "counterparts, plus transfer-level transactions for a "
+                "bank's double-entry ledger. Walk from aggregate balances "
+                "down to individual transactions — the Exceptions tab "
+                "pulls the problems together in one place."
             ),
         ),
     )
@@ -303,22 +304,25 @@ def _build_getting_started_sheet(cfg: Config) -> SheetDefinition:
                 rt.BR,
                 rt.BR,
                 rt.body(
-                    "Five parent accounts (Big Meadow Checking, Harvest Moon "
-                    "Savings, Orchard Lending Pool, Valley Grain Co-op, and "
-                    "Harvest Credit Exchange) move money between ten child "
-                    "accounts over a ~40 day window using four transfer "
-                    "types (ach, wire, internal, cash). Parent accounts "
-                    "define per-type daily outbound limits; a handful of "
-                    "child-day-type cells intentionally breach those limits."
+                    "Five ledger accounts (Big Meadow Checking, Harvest "
+                    "Moon Savings, Orchard Lending Pool, Valley Grain "
+                    "Co-op, and Harvest Credit Exchange) move money "
+                    "between ten sub-ledger accounts over a ~40 day "
+                    "window using four transfer types (ach, wire, "
+                    "internal, cash). Ledger accounts define per-type "
+                    "daily outbound limits; a handful of "
+                    "sub-ledger-day-type cells intentionally breach those "
+                    "limits."
                 ),
                 rt.BR,
                 rt.BR,
                 rt.body(
                     "A handful of transfers have a failed leg, another "
                     "handful are keyed off by a few dollars, three "
-                    "child-days land in overdraft, and parent/child stored "
-                    "balances carry disjoint planted drift — so each of the "
-                    "five Exceptions tables surfaces its own distinct rows."
+                    "sub-ledger days land in overdraft, and "
+                    "ledger/sub-ledger stored balances carry disjoint "
+                    "planted drift — so each of the five Exceptions "
+                    "tables surfaces its own distinct rows."
                 ),
                 rt.BR,
                 rt.BR,
@@ -384,9 +388,9 @@ def _build_balances_sheet(cfg: Config, link_color: str, link_tint: str) -> Sheet
         Visuals=build_balances_visuals(link_color, link_tint),
         FilterControls=build_balances_controls(cfg),
         Layouts=_grid_layout(
-            _kpi_pair("ar-balances-kpi-parents", "ar-balances-kpi-accounts")
-            + [_full_width_visual("ar-balances-parent-table", _TABLE_ROW_SPAN)]
-            + [_full_width_visual("ar-balances-child-table", _TABLE_ROW_SPAN)]
+            _kpi_pair("ar-balances-kpi-ledgers", "ar-balances-kpi-subledgers")
+            + [_full_width_visual("ar-balances-ledger-table", _TABLE_ROW_SPAN)]
+            + [_full_width_visual("ar-balances-subledger-table", _TABLE_ROW_SPAN)]
         ),
     )
 
@@ -439,11 +443,11 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
 
     kpi_row_a = [
         GridLayoutElement(
-            ElementId="ar-exc-kpi-parent-drift", ElementType="VISUAL",
+            ElementId="ar-exc-kpi-ledger-drift", ElementType="VISUAL",
             ColumnSpan=third, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
         ),
         GridLayoutElement(
-            ElementId="ar-exc-kpi-child-drift", ElementType="VISUAL",
+            ElementId="ar-exc-kpi-subledger-drift", ElementType="VISUAL",
             ColumnSpan=third, RowSpan=_KPI_ROW_SPAN, ColumnIndex=third,
         ),
         GridLayoutElement(
@@ -457,11 +461,11 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
     # on a later row.
     table_row_a = [
         GridLayoutElement(
-            ElementId="ar-exc-parent-drift-table", ElementType="VISUAL",
+            ElementId="ar-exc-ledger-drift-table", ElementType="VISUAL",
             ColumnSpan=_HALF, RowSpan=_TABLE_ROW_SPAN, ColumnIndex=0,
         ),
         GridLayoutElement(
-            ElementId="ar-exc-child-drift-table", ElementType="VISUAL",
+            ElementId="ar-exc-subledger-drift-table", ElementType="VISUAL",
             ColumnSpan=_HALF, RowSpan=_TABLE_ROW_SPAN, ColumnIndex=_HALF,
         ),
     ]
@@ -494,8 +498,8 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
             + table_row_b
             + table_row_c
             + _chart_pair(
-                "ar-exc-parent-drift-timeline",
-                "ar-exc-child-drift-timeline",
+                "ar-exc-ledger-drift-timeline",
+                "ar-exc-subledger-drift-timeline",
             )
         ),
     )
@@ -513,11 +517,11 @@ def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaratio
     """
     datasets = build_all_datasets(cfg)
     names = [
-        DS_AR_PARENT_ACCOUNTS,
-        DS_AR_ACCOUNTS,
+        DS_AR_LEDGER_ACCOUNTS,
+        DS_AR_SUBLEDGER_ACCOUNTS,
         DS_AR_TRANSACTIONS,
-        DS_AR_PARENT_BALANCE_DRIFT,
-        DS_AR_ACCOUNT_BALANCE_DRIFT,
+        DS_AR_LEDGER_BALANCE_DRIFT,
+        DS_AR_SUBLEDGER_BALANCE_DRIFT,
         DS_AR_TRANSFER_SUMMARY,
         DS_AR_NON_ZERO_TRANSFERS,
         DS_AR_LIMIT_BREACH,
@@ -558,8 +562,8 @@ def _parameter_filter_group(
     """CategoryFilter that binds ``column_name`` to a drill-down parameter.
 
     When ``visual_ids`` is provided the filter is scoped to just those
-    visuals on the sheet (used for the Balances same-sheet child-table
-    drill). Otherwise it applies to every visual on the sheet.
+    visuals on the sheet (used for the Balances same-sheet sub-ledger
+    table drill). Otherwise it applies to every visual on the sheet.
     """
     scoping = SheetVisualScopingConfiguration(
         SheetId=sheet_id,
@@ -599,18 +603,18 @@ def _parameter_filter_group(
 def _build_drill_down_filter_groups() -> list[FilterGroup]:
     """Five parameter-bound filter groups that implement the drills.
 
-    Phase 4 contributed the account/transfer/parent-on-balances trio;
+    Phase 4 contributed the sub-ledger/transfer/ledger-on-balances trio;
     Phase 5 adds activity-date and transfer-type bindings on the
     Transactions sheet so breach/overdraft rows drill to a precise
-    (account, date[, type]) slice.
+    (sub-ledger, date[, type]) slice.
     """
     return [
         _parameter_filter_group(
-            fg_id="fg-ar-drill-account-on-txn",
-            filter_id="filter-ar-drill-account-on-txn",
+            fg_id="fg-ar-drill-subledger-on-txn",
+            filter_id="filter-ar-drill-subledger-on-txn",
             dataset_id=DS_AR_TRANSACTIONS,
-            column_name="account_id",
-            parameter_name="pArAccountId",
+            column_name="subledger_account_id",
+            parameter_name="pArSubledgerAccountId",
             sheet_id=SHEET_AR_TRANSACTIONS,
         ),
         _parameter_filter_group(
@@ -638,13 +642,13 @@ def _build_drill_down_filter_groups() -> list[FilterGroup]:
             sheet_id=SHEET_AR_TRANSACTIONS,
         ),
         _parameter_filter_group(
-            fg_id="fg-ar-drill-parent-on-balances-child",
-            filter_id="filter-ar-drill-parent-on-balances-child",
-            dataset_id=DS_AR_ACCOUNT_BALANCE_DRIFT,
-            column_name="parent_account_id",
-            parameter_name="pArParentAccountId",
+            fg_id="fg-ar-drill-ledger-on-balances-subledger",
+            filter_id="filter-ar-drill-ledger-on-balances-subledger",
+            dataset_id=DS_AR_SUBLEDGER_BALANCE_DRIFT,
+            column_name="ledger_account_id",
+            parameter_name="pArLedgerAccountId",
             sheet_id=SHEET_AR_BALANCES,
-            visual_ids=["ar-balances-child-table"],
+            visual_ids=["ar-balances-subledger-table"],
         ),
     ]
 
@@ -669,8 +673,8 @@ def _build_definition(cfg: Config) -> AnalysisDefinition:
         ],
         FilterGroups=build_filter_groups(cfg) + _build_drill_down_filter_groups(),
         ParameterDeclarations=[
-            _ar_string_parameter("pArAccountId"),
-            _ar_string_parameter("pArParentAccountId"),
+            _ar_string_parameter("pArSubledgerAccountId"),
+            _ar_string_parameter("pArLedgerAccountId"),
             _ar_string_parameter("pArTransferId"),
             _ar_string_parameter("pArActivityDate"),
             _ar_string_parameter("pArTransferType"),

@@ -3,19 +3,19 @@
 Phase 5 adds two more filters on top of Phase 4:
 
 Multi-selects (MULTI_SELECT dropdowns):
-  - parent-account, child-account — scoped to Balances / Transactions / Exceptions
-  - transfer-status                — scoped to Transfers
-  - transaction-status             — scoped to Transactions
-  - transfer-type                  — scoped to Transfers / Transactions / Exceptions
-                                     (Phase 5.5 — covers ach/wire/internal/cash)
+  - ledger-account, subledger-account — scoped to Balances / Transactions / Exceptions
+  - transfer-status                    — scoped to Transfers
+  - transaction-status                 — scoped to Transactions
+  - transfer-type                      — scoped to Transfers / Transactions / Exceptions
+                                         (Phase 5.5 — covers ach/wire/internal/cash)
 
 Show-Only-X toggles (SINGLE_SELECT dropdowns, same pattern as PR's Phase 2
 pivot — the date-range filter already covers "recency"; these narrow the
 rows to "the problematic ones" with a single click):
-  - Balances parent table → "Show Only Drift"
-  - Balances child table  → "Show Only Drift"
-  - Balances child table  → "Show Only Overdraft" (Phase 5.5 — stored_balance < 0)
-  - Transactions          → "Show Only Failed"
+  - Balances ledger table    → "Show Only Drift"
+  - Balances sub-ledger table → "Show Only Drift"
+  - Balances sub-ledger table → "Show Only Overdraft" (Phase 5.5 — stored_balance < 0)
+  - Transactions              → "Show Only Failed"
 
 Drill-down parameter filters live in ``analysis.py`` alongside the
 parameter declarations, same as payment_recon.
@@ -24,10 +24,10 @@ parameter declarations, same as payment_recon.
 from __future__ import annotations
 
 from quicksight_gen.account_recon.constants import (
-    DS_AR_ACCOUNT_BALANCE_DRIFT,
-    DS_AR_ACCOUNTS,
-    DS_AR_PARENT_ACCOUNTS,
-    DS_AR_PARENT_BALANCE_DRIFT,
+    DS_AR_LEDGER_ACCOUNTS,
+    DS_AR_LEDGER_BALANCE_DRIFT,
+    DS_AR_SUBLEDGER_ACCOUNTS,
+    DS_AR_SUBLEDGER_BALANCE_DRIFT,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     SHEET_AR_BALANCES,
@@ -185,24 +185,24 @@ def _multi_select_filter_group(
     )
 
 
-def _parent_account_filter_group() -> FilterGroup:
+def _ledger_account_filter_group() -> FilterGroup:
     return _multi_select_filter_group(
-        fg_id="fg-ar-parent-account",
-        filter_id="filter-ar-parent-account",
-        title="Parent Account",
-        dataset_id=DS_AR_PARENT_ACCOUNTS,
-        column_name="parent_account_id",
+        fg_id="fg-ar-ledger-account",
+        filter_id="filter-ar-ledger-account",
+        title="Ledger Account",
+        dataset_id=DS_AR_LEDGER_ACCOUNTS,
+        column_name="ledger_account_id",
         sheet_ids=_ACCOUNT_SCOPED_SHEETS,
     )
 
 
-def _child_account_filter_group() -> FilterGroup:
+def _subledger_account_filter_group() -> FilterGroup:
     return _multi_select_filter_group(
-        fg_id="fg-ar-child-account",
-        filter_id="filter-ar-child-account",
-        title="Child Account",
-        dataset_id=DS_AR_ACCOUNTS,
-        column_name="account_id",
+        fg_id="fg-ar-subledger-account",
+        filter_id="filter-ar-subledger-account",
+        title="Sub-Ledger Account",
+        dataset_id=DS_AR_SUBLEDGER_ACCOUNTS,
+        column_name="subledger_account_id",
         sheet_ids=_ACCOUNT_SCOPED_SHEETS,
     )
 
@@ -314,31 +314,31 @@ def build_filter_groups(cfg: Config) -> list[FilterGroup]:
     del cfg
     return [
         _date_range_filter_group(),
-        _parent_account_filter_group(),
-        _child_account_filter_group(),
+        _ledger_account_filter_group(),
+        _subledger_account_filter_group(),
         _transfer_status_filter_group(),
         _transaction_status_filter_group(),
         _transfer_type_filter_group(),
         # Show-Only toggles — one filter group per toggle.
         _state_toggle_filter_group(
-            "fg-ar-balances-parent-drift",
-            "filter-ar-balances-parent-drift",
+            "fg-ar-balances-ledger-drift",
+            "filter-ar-balances-ledger-drift",
             SHEET_AR_BALANCES,
-            DS_AR_PARENT_BALANCE_DRIFT,
+            DS_AR_LEDGER_BALANCE_DRIFT,
             "drift_status",
         ),
         _state_toggle_filter_group(
-            "fg-ar-balances-child-drift",
-            "filter-ar-balances-child-drift",
+            "fg-ar-balances-subledger-drift",
+            "filter-ar-balances-subledger-drift",
             SHEET_AR_BALANCES,
-            DS_AR_ACCOUNT_BALANCE_DRIFT,
+            DS_AR_SUBLEDGER_BALANCE_DRIFT,
             "drift_status",
         ),
         _state_toggle_filter_group(
             "fg-ar-balances-overdraft",
             "filter-ar-balances-overdraft",
             SHEET_AR_BALANCES,
-            DS_AR_ACCOUNT_BALANCE_DRIFT,
+            DS_AR_SUBLEDGER_BALANCE_DRIFT,
             "overdraft_status",
         ),
         _state_toggle_filter_group(
@@ -368,12 +368,12 @@ def _date_range_control(sheet: str) -> FilterControl:
     return _cross_sheet_control(sheet, "date-range", "filter-ar-date-range")
 
 
-def _parent_account_control(sheet: str) -> FilterControl:
-    return _cross_sheet_control(sheet, "parent-account", "filter-ar-parent-account")
+def _ledger_account_control(sheet: str) -> FilterControl:
+    return _cross_sheet_control(sheet, "ledger-account", "filter-ar-ledger-account")
 
 
-def _child_account_control(sheet: str) -> FilterControl:
-    return _cross_sheet_control(sheet, "child-account", "filter-ar-child-account")
+def _subledger_account_control(sheet: str) -> FilterControl:
+    return _cross_sheet_control(sheet, "subledger-account", "filter-ar-subledger-account")
 
 
 def _transfer_type_control(sheet: str) -> FilterControl:
@@ -384,17 +384,17 @@ def build_balances_controls(cfg: Config) -> list[FilterControl]:
     del cfg
     return [
         _date_range_control("balances"),
-        _parent_account_control("balances"),
-        _child_account_control("balances"),
+        _ledger_account_control("balances"),
+        _subledger_account_control("balances"),
         _state_toggle_control(
-            "ctrl-ar-balances-parent-drift",
-            "Show Only Parent Drift",
-            "filter-ar-balances-parent-drift",
+            "ctrl-ar-balances-ledger-drift",
+            "Show Only Ledger Drift",
+            "filter-ar-balances-ledger-drift",
         ),
         _state_toggle_control(
-            "ctrl-ar-balances-child-drift",
-            "Show Only Child Drift",
-            "filter-ar-balances-child-drift",
+            "ctrl-ar-balances-subledger-drift",
+            "Show Only Sub-Ledger Drift",
+            "filter-ar-balances-subledger-drift",
         ),
         _state_toggle_control(
             "ctrl-ar-balances-overdraft",
@@ -424,8 +424,8 @@ def build_transactions_controls(cfg: Config) -> list[FilterControl]:
     del cfg
     return [
         _date_range_control("transactions"),
-        _parent_account_control("transactions"),
-        _child_account_control("transactions"),
+        _ledger_account_control("transactions"),
+        _subledger_account_control("transactions"),
         _transfer_type_control("transactions"),
         FilterControl(
             Dropdown=FilterDropDownControl(
@@ -447,7 +447,7 @@ def build_exceptions_controls(cfg: Config) -> list[FilterControl]:
     del cfg
     return [
         _date_range_control("exceptions"),
-        _parent_account_control("exceptions"),
-        _child_account_control("exceptions"),
+        _ledger_account_control("exceptions"),
+        _subledger_account_control("exceptions"),
         _transfer_type_control("exceptions"),
     ]

@@ -3,13 +3,15 @@
 Phase 4 expands the skeleton from Phase 3:
 
 Drill-downs (pattern mirrors payment_recon):
-  * Balances parent row (right-click) → filters child table on same sheet
-    to that parent's children via ``pArParentAccountId``.
-  * Balances child row (left-click) → Transactions filtered by account.
+  * Balances ledger row (right-click) → filters sub-ledger table on same
+    sheet to that ledger's sub-ledgers via ``pArLedgerAccountId``.
+  * Balances sub-ledger row (left-click) → Transactions filtered by
+    sub-ledger account.
   * Transfers row (left-click) → Transactions filtered by transfer_id.
-  * Exceptions parent-drift (left-click) → Balances, child table filtered
-    by parent.
-  * Exceptions child-drift (left-click) → Transactions filtered by account.
+  * Exceptions ledger-drift (left-click) → Balances, sub-ledger table
+    filtered by ledger.
+  * Exceptions sub-ledger-drift (left-click) → Transactions filtered by
+    sub-ledger account.
   * Exceptions non-zero-transfer (left-click) → Transactions filtered by
     transfer_id.
 
@@ -17,7 +19,7 @@ Same-sheet chart-filter actions on every new chart so clicking a bar
 filters the detail table on the same sheet (matches payment_recon).
 
 Visual additions:
-  * Parent Drift Timeline on Exceptions (alongside the existing child
+  * Ledger Drift Timeline on Exceptions (alongside the existing sub-ledger
     timeline — two feeds, two lines).
   * Transfer Status bar chart on Transfers.
   * Transactions-by-day grouped bar chart on Transactions.
@@ -26,13 +28,13 @@ Visual additions:
 from __future__ import annotations
 
 from quicksight_gen.account_recon.constants import (
-    DS_AR_ACCOUNT_BALANCE_DRIFT,
-    DS_AR_ACCOUNTS,
+    DS_AR_LEDGER_ACCOUNTS,
+    DS_AR_LEDGER_BALANCE_DRIFT,
     DS_AR_LIMIT_BREACH,
     DS_AR_NON_ZERO_TRANSFERS,
     DS_AR_OVERDRAFT,
-    DS_AR_PARENT_ACCOUNTS,
-    DS_AR_PARENT_BALANCE_DRIFT,
+    DS_AR_SUBLEDGER_ACCOUNTS,
+    DS_AR_SUBLEDGER_BALANCE_DRIFT,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     SHEET_AR_BALANCES,
@@ -228,8 +230,8 @@ def _same_sheet_filter_action(
 
 
 # Drill-down parameter names
-P_AR_ACCOUNT = "pArAccountId"
-P_AR_PARENT = "pArParentAccountId"
+P_AR_SUBLEDGER = "pArSubledgerAccountId"
+P_AR_LEDGER = "pArLedgerAccountId"
 P_AR_TRANSFER = "pArTransferId"
 P_AR_ACTIVITY_DATE = "pArActivityDate"
 P_AR_TRANSFER_TYPE = "pArTransferType"
@@ -275,22 +277,22 @@ def _multi_drill_action(
 
 
 # ---------------------------------------------------------------------------
-# Balances tab — parent + child drift tables with drill-downs
+# Balances tab — ledger + sub-ledger drift tables with drill-downs
 # ---------------------------------------------------------------------------
 
 def build_balances_visuals(link_color: str, link_tint: str) -> list[Visual]:
-    kpi_parents = Visual(
+    kpi_ledgers = Visual(
         KPIVisual=KPIVisual(
-            VisualId="ar-balances-kpi-parents",
-            Title=_title("Parent Accounts"),
-            Subtitle=_subtitle("Count of parent accounts (internal + external)"),
+            VisualId="ar-balances-kpi-ledgers",
+            Title=_title("Ledger Accounts"),
+            Subtitle=_subtitle("Count of ledger accounts (internal + external)"),
             ChartConfiguration=KPIConfiguration(
                 FieldWells=KPIFieldWells(
                     Values=[
                         _measure_count(
-                            "ar-balances-parent-count",
-                            DS_AR_PARENT_ACCOUNTS,
-                            "parent_account_id",
+                            "ar-balances-ledger-count",
+                            DS_AR_LEDGER_ACCOUNTS,
+                            "ledger_account_id",
                         )
                     ],
                 ),
@@ -298,58 +300,60 @@ def build_balances_visuals(link_color: str, link_tint: str) -> list[Visual]:
         )
     )
 
-    kpi_accounts = Visual(
+    kpi_subledgers = Visual(
         KPIVisual=KPIVisual(
-            VisualId="ar-balances-kpi-accounts",
-            Title=_title("Child Accounts"),
-            Subtitle=_subtitle("Count of individual accounts under all parents"),
-            ChartConfiguration=KPIConfiguration(
-                FieldWells=KPIFieldWells(
-                    Values=[
-                        _measure_count(
-                            "ar-balances-account-count",
-                            DS_AR_ACCOUNTS,
-                            "account_id",
-                        )
-                    ],
-                ),
-            ),
-        )
-    )
-
-    table_parents = Visual(
-        TableVisual=TableVisual(
-            VisualId="ar-balances-parent-table",
-            Title=_title("Parent Account Balances"),
+            VisualId="ar-balances-kpi-subledgers",
+            Title=_title("Sub-Ledger Accounts"),
             Subtitle=_subtitle(
-                "Each parent account's stored vs computed daily balance. "
-                "Computed = Σ of its children's stored balances. Right-click "
-                "a parent_account_id to filter the child table below to "
-                "that parent's children."
+                "Count of individual sub-ledger accounts under all ledgers"
+            ),
+            ChartConfiguration=KPIConfiguration(
+                FieldWells=KPIFieldWells(
+                    Values=[
+                        _measure_count(
+                            "ar-balances-subledger-count",
+                            DS_AR_SUBLEDGER_ACCOUNTS,
+                            "subledger_account_id",
+                        )
+                    ],
+                ),
+            ),
+        )
+    )
+
+    table_ledgers = Visual(
+        TableVisual=TableVisual(
+            VisualId="ar-balances-ledger-table",
+            Title=_title("Ledger Account Balances"),
+            Subtitle=_subtitle(
+                "Each ledger account's stored vs computed daily balance. "
+                "Computed = Σ of its sub-ledgers' stored balances. "
+                "Right-click a ledger_account_id to filter the sub-ledger "
+                "table below to that ledger's sub-ledgers."
             ),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
                     TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
                         Values=[
-                            _unagg_field("ar-bal-parent-id",
-                                         DS_AR_PARENT_BALANCE_DRIFT,
-                                         "parent_account_id"),
-                            _unagg_field("ar-bal-parent-name",
-                                         DS_AR_PARENT_BALANCE_DRIFT,
-                                         "parent_name"),
+                            _unagg_field("ar-bal-ledger-id",
+                                         DS_AR_LEDGER_BALANCE_DRIFT,
+                                         "ledger_account_id"),
+                            _unagg_field("ar-bal-ledger-name",
+                                         DS_AR_LEDGER_BALANCE_DRIFT,
+                                         "ledger_name"),
                             _unagg_field("ar-bal-scope",
-                                         DS_AR_PARENT_BALANCE_DRIFT, "scope"),
+                                         DS_AR_LEDGER_BALANCE_DRIFT, "scope"),
                             _unagg_field("ar-bal-date",
-                                         DS_AR_PARENT_BALANCE_DRIFT,
+                                         DS_AR_LEDGER_BALANCE_DRIFT,
                                          "balance_date"),
                             _unagg_field("ar-bal-stored",
-                                         DS_AR_PARENT_BALANCE_DRIFT,
+                                         DS_AR_LEDGER_BALANCE_DRIFT,
                                          "stored_balance"),
                             _unagg_field("ar-bal-computed",
-                                         DS_AR_PARENT_BALANCE_DRIFT,
+                                         DS_AR_LEDGER_BALANCE_DRIFT,
                                          "computed_balance"),
                             _unagg_field("ar-bal-drift",
-                                         DS_AR_PARENT_BALANCE_DRIFT, "drift"),
+                                         DS_AR_LEDGER_BALANCE_DRIFT, "drift"),
                         ],
                     )
                 ),
@@ -368,23 +372,23 @@ def build_balances_visuals(link_color: str, link_tint: str) -> list[Visual]:
                 # Navigation is a no-op (target is the current sheet) — AWS
                 # rejects a SetParametersOperation that isn't preceded by a
                 # NavigationOperation, so we include one. The drill-down
-                # filter group ``fg-ar-drill-parent-on-balances-child`` is
-                # scoped to the child table only via SELECTED_VISUALS, so
+                # filter group ``fg-ar-drill-ledger-on-balances-subledger`` is
+                # scoped to the sub-ledger table only via SELECTED_VISUALS, so
                 # setting the parameter filters just that visual.
                 _drill_down_action(
-                    "action-ar-balances-filter-children",
-                    "Filter Child Accounts Below",
+                    "action-ar-balances-filter-subledgers",
+                    "Filter Sub-Ledger Accounts Below",
                     SHEET_AR_BALANCES,
-                    P_AR_PARENT,
-                    "ar-bal-parent-id",
+                    P_AR_LEDGER,
+                    "ar-bal-ledger-id",
                     trigger="DATA_POINT_MENU",
                 ),
             ],
             ConditionalFormatting={
                 "ConditionalFormattingOptions": [
                     menu_link_text_format(
-                        "ar-bal-parent-id",
-                        "parent_account_id",
+                        "ar-bal-ledger-id",
+                        "ledger_account_id",
                         link_color,
                         link_tint,
                     ),
@@ -393,41 +397,42 @@ def build_balances_visuals(link_color: str, link_tint: str) -> list[Visual]:
         )
     )
 
-    table_children = Visual(
+    table_subledgers = Visual(
         TableVisual=TableVisual(
-            VisualId="ar-balances-child-table",
-            Title=_title("Child Account Balances"),
+            VisualId="ar-balances-subledger-table",
+            Title=_title("Sub-Ledger Account Balances"),
             Subtitle=_subtitle(
-                "Each child account's stored vs computed daily balance. "
-                "Computed = running Σ of posted transactions. Left-click an "
-                "account_id to drill into Transactions for that account."
+                "Each sub-ledger account's stored vs computed daily balance. "
+                "Computed = running Σ of posted transactions. Left-click a "
+                "subledger_account_id to drill into Transactions for that "
+                "sub-ledger."
             ),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
                     TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
                         Values=[
-                            _unagg_field("ar-bal-child-id",
-                                         DS_AR_ACCOUNT_BALANCE_DRIFT,
-                                         "account_id"),
-                            _unagg_field("ar-bal-child-name",
-                                         DS_AR_ACCOUNT_BALANCE_DRIFT,
-                                         "account_name"),
-                            _unagg_field("ar-bal-child-parent",
-                                         DS_AR_ACCOUNT_BALANCE_DRIFT,
-                                         "parent_name"),
-                            _unagg_field("ar-bal-child-scope",
-                                         DS_AR_ACCOUNT_BALANCE_DRIFT, "scope"),
-                            _unagg_field("ar-bal-child-date",
-                                         DS_AR_ACCOUNT_BALANCE_DRIFT,
+                            _unagg_field("ar-bal-subledger-id",
+                                         DS_AR_SUBLEDGER_BALANCE_DRIFT,
+                                         "subledger_account_id"),
+                            _unagg_field("ar-bal-subledger-name",
+                                         DS_AR_SUBLEDGER_BALANCE_DRIFT,
+                                         "subledger_name"),
+                            _unagg_field("ar-bal-subledger-ledger",
+                                         DS_AR_SUBLEDGER_BALANCE_DRIFT,
+                                         "ledger_name"),
+                            _unagg_field("ar-bal-subledger-scope",
+                                         DS_AR_SUBLEDGER_BALANCE_DRIFT, "scope"),
+                            _unagg_field("ar-bal-subledger-date",
+                                         DS_AR_SUBLEDGER_BALANCE_DRIFT,
                                          "balance_date"),
-                            _unagg_field("ar-bal-child-stored",
-                                         DS_AR_ACCOUNT_BALANCE_DRIFT,
+                            _unagg_field("ar-bal-subledger-stored",
+                                         DS_AR_SUBLEDGER_BALANCE_DRIFT,
                                          "stored_balance"),
-                            _unagg_field("ar-bal-child-computed",
-                                         DS_AR_ACCOUNT_BALANCE_DRIFT,
+                            _unagg_field("ar-bal-subledger-computed",
+                                         DS_AR_SUBLEDGER_BALANCE_DRIFT,
                                          "computed_balance"),
-                            _unagg_field("ar-bal-child-drift",
-                                         DS_AR_ACCOUNT_BALANCE_DRIFT,
+                            _unagg_field("ar-bal-subledger-drift",
+                                         DS_AR_SUBLEDGER_BALANCE_DRIFT,
                                          "drift"),
                         ],
                     )
@@ -436,7 +441,7 @@ def build_balances_visuals(link_color: str, link_tint: str) -> list[Visual]:
                     "RowSort": [
                         {
                             "FieldSort": {
-                                "FieldId": "ar-bal-child-date",
+                                "FieldId": "ar-bal-subledger-date",
                                 "Direction": "DESC",
                             },
                         },
@@ -445,24 +450,24 @@ def build_balances_visuals(link_color: str, link_tint: str) -> list[Visual]:
             ),
             Actions=[
                 _drill_down_action(
-                    "action-ar-balances-child-to-txn",
+                    "action-ar-balances-subledger-to-txn",
                     "View Transactions",
                     SHEET_AR_TRANSACTIONS,
-                    P_AR_ACCOUNT,
-                    "ar-bal-child-id",
+                    P_AR_SUBLEDGER,
+                    "ar-bal-subledger-id",
                 ),
             ],
             ConditionalFormatting={
                 "ConditionalFormattingOptions": [
                     link_text_format(
-                        "ar-bal-child-id", "account_id", link_color,
+                        "ar-bal-subledger-id", "subledger_account_id", link_color,
                     ),
                 ],
             },
         )
     )
 
-    return [kpi_parents, kpi_accounts, table_parents, table_children]
+    return [kpi_ledgers, kpi_subledgers, table_ledgers, table_subledgers]
 
 
 # ---------------------------------------------------------------------------
@@ -761,12 +766,12 @@ def build_transactions_visuals() -> list[Visual]:
                             _unagg_field("ar-txn-transfer",
                                          DS_AR_TRANSACTIONS,
                                          "transfer_id"),
-                            _unagg_field("ar-txn-parent",
+                            _unagg_field("ar-txn-ledger",
                                          DS_AR_TRANSACTIONS,
-                                         "parent_name"),
-                            _unagg_field("ar-txn-account",
+                                         "ledger_name"),
+                            _unagg_field("ar-txn-subledger",
                                          DS_AR_TRANSACTIONS,
-                                         "account_name"),
+                                         "subledger_name"),
                             _unagg_field("ar-txn-scope",
                                          DS_AR_TRANSACTIONS, "scope"),
                             _unagg_field("ar-txn-amount",
@@ -802,21 +807,21 @@ def build_transactions_visuals() -> list[Visual]:
 # ---------------------------------------------------------------------------
 
 def build_exceptions_visuals(link_color: str) -> list[Visual]:
-    kpi_parent_drift = Visual(
+    kpi_ledger_drift = Visual(
         KPIVisual=KPIVisual(
-            VisualId="ar-exc-kpi-parent-drift",
-            Title=_title("Parent Drift Days"),
+            VisualId="ar-exc-kpi-ledger-drift",
+            Title=_title("Ledger Drift Days"),
             Subtitle=_subtitle(
-                "Count of (parent, date) combinations where stored parent "
-                "balance ≠ Σ of its children's stored balances"
+                "Count of (ledger, date) combinations where stored ledger "
+                "balance ≠ Σ of its sub-ledgers' stored balances"
             ),
             ChartConfiguration=KPIConfiguration(
                 FieldWells=KPIFieldWells(
                     Values=[
                         _measure_count(
-                            "ar-exc-parent-drift-count",
-                            DS_AR_PARENT_BALANCE_DRIFT,
-                            "parent_account_id",
+                            "ar-exc-ledger-drift-count",
+                            DS_AR_LEDGER_BALANCE_DRIFT,
+                            "ledger_account_id",
                         )
                     ],
                 ),
@@ -824,21 +829,21 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
         )
     )
 
-    kpi_child_drift = Visual(
+    kpi_subledger_drift = Visual(
         KPIVisual=KPIVisual(
-            VisualId="ar-exc-kpi-child-drift",
-            Title=_title("Child Drift Days"),
+            VisualId="ar-exc-kpi-subledger-drift",
+            Title=_title("Sub-Ledger Drift Days"),
             Subtitle=_subtitle(
-                "Count of (child, date) combinations where stored child "
-                "balance ≠ running Σ of posted transactions"
+                "Count of (sub-ledger, date) combinations where stored "
+                "sub-ledger balance ≠ running Σ of posted transactions"
             ),
             ChartConfiguration=KPIConfiguration(
                 FieldWells=KPIFieldWells(
                     Values=[
                         _measure_count(
-                            "ar-exc-child-drift-count",
-                            DS_AR_ACCOUNT_BALANCE_DRIFT,
-                            "account_id",
+                            "ar-exc-subledger-drift-count",
+                            DS_AR_SUBLEDGER_BALANCE_DRIFT,
+                            "subledger_account_id",
                         )
                     ],
                 ),
@@ -867,39 +872,39 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
         )
     )
 
-    table_parent_drift = Visual(
+    table_ledger_drift = Visual(
         TableVisual=TableVisual(
-            VisualId="ar-exc-parent-drift-table",
-            Title=_title("Parent Balance Drift"),
+            VisualId="ar-exc-ledger-drift-table",
+            Title=_title("Ledger Balance Drift"),
             Subtitle=_subtitle(
-                "Parent-account days where stored parent balance disagrees "
-                "with the sum of its children's stored balances. Left-click "
-                "parent_account_id to drill into Balances with the child "
-                "table filtered to that parent's children."
+                "Ledger-account days where stored ledger balance disagrees "
+                "with the sum of its sub-ledgers' stored balances. "
+                "Left-click ledger_account_id to drill into Balances with "
+                "the sub-ledger table filtered to that ledger's sub-ledgers."
             ),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
                     TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
                         Values=[
-                            _unagg_field("ar-exc-pdrift-parent-id",
-                                         DS_AR_PARENT_BALANCE_DRIFT,
-                                         "parent_account_id"),
-                            _unagg_field("ar-exc-pdrift-parent",
-                                         DS_AR_PARENT_BALANCE_DRIFT,
-                                         "parent_name"),
-                            _unagg_field("ar-exc-pdrift-scope",
-                                         DS_AR_PARENT_BALANCE_DRIFT, "scope"),
-                            _unagg_field("ar-exc-pdrift-date",
-                                         DS_AR_PARENT_BALANCE_DRIFT,
+                            _unagg_field("ar-exc-ldrift-ledger-id",
+                                         DS_AR_LEDGER_BALANCE_DRIFT,
+                                         "ledger_account_id"),
+                            _unagg_field("ar-exc-ldrift-ledger",
+                                         DS_AR_LEDGER_BALANCE_DRIFT,
+                                         "ledger_name"),
+                            _unagg_field("ar-exc-ldrift-scope",
+                                         DS_AR_LEDGER_BALANCE_DRIFT, "scope"),
+                            _unagg_field("ar-exc-ldrift-date",
+                                         DS_AR_LEDGER_BALANCE_DRIFT,
                                          "balance_date"),
-                            _unagg_field("ar-exc-pdrift-stored",
-                                         DS_AR_PARENT_BALANCE_DRIFT,
+                            _unagg_field("ar-exc-ldrift-stored",
+                                         DS_AR_LEDGER_BALANCE_DRIFT,
                                          "stored_balance"),
-                            _unagg_field("ar-exc-pdrift-computed",
-                                         DS_AR_PARENT_BALANCE_DRIFT,
+                            _unagg_field("ar-exc-ldrift-computed",
+                                         DS_AR_LEDGER_BALANCE_DRIFT,
                                          "computed_balance"),
-                            _unagg_field("ar-exc-pdrift-amt",
-                                         DS_AR_PARENT_BALANCE_DRIFT, "drift"),
+                            _unagg_field("ar-exc-ldrift-amt",
+                                         DS_AR_LEDGER_BALANCE_DRIFT, "drift"),
                         ],
                     )
                 ),
@@ -907,7 +912,7 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
                     "RowSort": [
                         {
                             "FieldSort": {
-                                "FieldId": "ar-exc-pdrift-date",
+                                "FieldId": "ar-exc-ldrift-date",
                                 "Direction": "DESC",
                             },
                         },
@@ -916,18 +921,18 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
             ),
             Actions=[
                 _drill_down_action(
-                    "action-ar-exc-parent-to-balances",
-                    "View Child Balances",
+                    "action-ar-exc-ledger-to-balances",
+                    "View Sub-Ledger Balances",
                     SHEET_AR_BALANCES,
-                    P_AR_PARENT,
-                    "ar-exc-pdrift-parent-id",
+                    P_AR_LEDGER,
+                    "ar-exc-ldrift-ledger-id",
                 ),
             ],
             ConditionalFormatting={
                 "ConditionalFormattingOptions": [
                     link_text_format(
-                        "ar-exc-pdrift-parent-id",
-                        "parent_account_id",
+                        "ar-exc-ldrift-ledger-id",
+                        "ledger_account_id",
                         link_color,
                     ),
                 ],
@@ -935,42 +940,43 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
         )
     )
 
-    table_child_drift = Visual(
+    table_subledger_drift = Visual(
         TableVisual=TableVisual(
-            VisualId="ar-exc-child-drift-table",
-            Title=_title("Child Balance Drift"),
+            VisualId="ar-exc-subledger-drift-table",
+            Title=_title("Sub-Ledger Balance Drift"),
             Subtitle=_subtitle(
-                "Child-account days where stored child balance disagrees "
-                "with the running sum of posted transactions. Left-click an "
-                "account_id to drill into Transactions for that account."
+                "Sub-ledger account days where stored sub-ledger balance "
+                "disagrees with the running sum of posted transactions. "
+                "Left-click a subledger_account_id to drill into "
+                "Transactions for that sub-ledger."
             ),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
                     TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
                         Values=[
-                            _unagg_field("ar-exc-cdrift-account-id",
-                                         DS_AR_ACCOUNT_BALANCE_DRIFT,
-                                         "account_id"),
-                            _unagg_field("ar-exc-cdrift-account",
-                                         DS_AR_ACCOUNT_BALANCE_DRIFT,
-                                         "account_name"),
-                            _unagg_field("ar-exc-cdrift-parent",
-                                         DS_AR_ACCOUNT_BALANCE_DRIFT,
-                                         "parent_name"),
-                            _unagg_field("ar-exc-cdrift-scope",
-                                         DS_AR_ACCOUNT_BALANCE_DRIFT,
+                            _unagg_field("ar-exc-sdrift-subledger-id",
+                                         DS_AR_SUBLEDGER_BALANCE_DRIFT,
+                                         "subledger_account_id"),
+                            _unagg_field("ar-exc-sdrift-subledger",
+                                         DS_AR_SUBLEDGER_BALANCE_DRIFT,
+                                         "subledger_name"),
+                            _unagg_field("ar-exc-sdrift-ledger",
+                                         DS_AR_SUBLEDGER_BALANCE_DRIFT,
+                                         "ledger_name"),
+                            _unagg_field("ar-exc-sdrift-scope",
+                                         DS_AR_SUBLEDGER_BALANCE_DRIFT,
                                          "scope"),
-                            _unagg_field("ar-exc-cdrift-date",
-                                         DS_AR_ACCOUNT_BALANCE_DRIFT,
+                            _unagg_field("ar-exc-sdrift-date",
+                                         DS_AR_SUBLEDGER_BALANCE_DRIFT,
                                          "balance_date"),
-                            _unagg_field("ar-exc-cdrift-stored",
-                                         DS_AR_ACCOUNT_BALANCE_DRIFT,
+                            _unagg_field("ar-exc-sdrift-stored",
+                                         DS_AR_SUBLEDGER_BALANCE_DRIFT,
                                          "stored_balance"),
-                            _unagg_field("ar-exc-cdrift-computed",
-                                         DS_AR_ACCOUNT_BALANCE_DRIFT,
+                            _unagg_field("ar-exc-sdrift-computed",
+                                         DS_AR_SUBLEDGER_BALANCE_DRIFT,
                                          "computed_balance"),
-                            _unagg_field("ar-exc-cdrift-amt",
-                                         DS_AR_ACCOUNT_BALANCE_DRIFT,
+                            _unagg_field("ar-exc-sdrift-amt",
+                                         DS_AR_SUBLEDGER_BALANCE_DRIFT,
                                          "drift"),
                         ],
                     )
@@ -979,7 +985,7 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
                     "RowSort": [
                         {
                             "FieldSort": {
-                                "FieldId": "ar-exc-cdrift-date",
+                                "FieldId": "ar-exc-sdrift-date",
                                 "Direction": "DESC",
                             },
                         },
@@ -988,18 +994,18 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
             ),
             Actions=[
                 _drill_down_action(
-                    "action-ar-exc-child-to-txn",
+                    "action-ar-exc-subledger-to-txn",
                     "View Transactions",
                     SHEET_AR_TRANSACTIONS,
-                    P_AR_ACCOUNT,
-                    "ar-exc-cdrift-account-id",
+                    P_AR_SUBLEDGER,
+                    "ar-exc-sdrift-subledger-id",
                 ),
             ],
             ConditionalFormatting={
                 "ConditionalFormattingOptions": [
                     link_text_format(
-                        "ar-exc-cdrift-account-id",
-                        "account_id",
+                        "ar-exc-sdrift-subledger-id",
+                        "subledger_account_id",
                         link_color,
                     ),
                 ],
@@ -1073,27 +1079,28 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
         )
     )
 
-    # Two timelines — one per drift feed. Two independent feeds (parent
-    # upstream vs child upstream) so the side-by-side plot makes which
+    # Two timelines — one per drift feed. Two independent feeds (ledger
+    # upstream vs sub-ledger upstream) so the side-by-side plot makes which
     # feed went off the rails visually legible.
-    timeline_parent = Visual(
+    timeline_ledger = Visual(
         BarChartVisual=BarChartVisual(
-            VisualId="ar-exc-parent-drift-timeline",
-            Title=_title("Parent Drift Timeline"),
+            VisualId="ar-exc-ledger-drift-timeline",
+            Title=_title("Ledger Drift Timeline"),
             Subtitle=_subtitle(
-                "Total parent-drift amount per day — stored parent balance "
-                "minus Σ of its children's stored balances. Tall bars mark "
-                "days the parent feed was out of step with its children."
+                "Total ledger-drift amount per day — stored ledger balance "
+                "minus Σ of its sub-ledgers' stored balances. Tall bars "
+                "mark days the ledger feed was out of step with its "
+                "sub-ledgers."
             ),
             ChartConfiguration=BarChartConfiguration(
                 FieldWells=BarChartFieldWells(
                     BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
-                        Category=[_date_dim("ar-exc-ptimeline-dim",
-                                            DS_AR_PARENT_BALANCE_DRIFT,
+                        Category=[_date_dim("ar-exc-ltimeline-dim",
+                                            DS_AR_LEDGER_BALANCE_DRIFT,
                                             "balance_date")],
                         Values=[_measure_sum(
-                            "ar-exc-ptimeline-drift",
-                            DS_AR_PARENT_BALANCE_DRIFT, "drift",
+                            "ar-exc-ltimeline-drift",
+                            DS_AR_LEDGER_BALANCE_DRIFT, "drift",
                         )],
                     )
                 ),
@@ -1105,24 +1112,25 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
         )
     )
 
-    timeline_child = Visual(
+    timeline_subledger = Visual(
         BarChartVisual=BarChartVisual(
-            VisualId="ar-exc-child-drift-timeline",
-            Title=_title("Child Drift Timeline"),
+            VisualId="ar-exc-subledger-drift-timeline",
+            Title=_title("Sub-Ledger Drift Timeline"),
             Subtitle=_subtitle(
-                "Total child-drift amount per day — stored child balance "
-                "minus running Σ of posted transactions. Tall bars mark "
-                "days child balances diverged most from the ledger."
+                "Total sub-ledger drift amount per day — stored sub-ledger "
+                "balance minus running Σ of posted transactions. Tall bars "
+                "mark days sub-ledger balances diverged most from the "
+                "ledger."
             ),
             ChartConfiguration=BarChartConfiguration(
                 FieldWells=BarChartFieldWells(
                     BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
-                        Category=[_date_dim("ar-exc-ctimeline-dim",
-                                            DS_AR_ACCOUNT_BALANCE_DRIFT,
+                        Category=[_date_dim("ar-exc-stimeline-dim",
+                                            DS_AR_SUBLEDGER_BALANCE_DRIFT,
                                             "balance_date")],
                         Values=[_measure_sum(
-                            "ar-exc-ctimeline-drift",
-                            DS_AR_ACCOUNT_BALANCE_DRIFT, "drift",
+                            "ar-exc-stimeline-drift",
+                            DS_AR_SUBLEDGER_BALANCE_DRIFT, "drift",
                         )],
                     )
                 ),
@@ -1139,8 +1147,8 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
             VisualId="ar-exc-kpi-breach",
             Title=_title("Limit Breach Days"),
             Subtitle=_subtitle(
-                "Count of (child, date, transfer_type) combinations where "
-                "daily outbound exceeded the parent's configured limit"
+                "Count of (sub-ledger, date, transfer_type) combinations "
+                "where daily outbound exceeded the ledger's configured limit"
             ),
             ChartConfiguration=KPIConfiguration(
                 FieldWells=KPIFieldWells(
@@ -1148,7 +1156,7 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
                         _measure_count(
                             "ar-exc-breach-count",
                             DS_AR_LIMIT_BREACH,
-                            "account_id",
+                            "subledger_account_id",
                         )
                     ],
                 ),
@@ -1161,7 +1169,8 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
             VisualId="ar-exc-kpi-overdraft",
             Title=_title("Overdraft Days"),
             Subtitle=_subtitle(
-                "Count of (child, date) cells where stored child balance < 0"
+                "Count of (sub-ledger, date) cells where stored sub-ledger "
+                "balance < 0"
             ),
             ChartConfiguration=KPIConfiguration(
                 FieldWells=KPIFieldWells(
@@ -1169,7 +1178,7 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
                         _measure_count(
                             "ar-exc-overdraft-count",
                             DS_AR_OVERDRAFT,
-                            "account_id",
+                            "subledger_account_id",
                         )
                     ],
                 ),
@@ -1180,23 +1189,26 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
     table_breach = Visual(
         TableVisual=TableVisual(
             VisualId="ar-exc-breach-table",
-            Title=_title("Child Limit Breach"),
+            Title=_title("Sub-Ledger Limit Breach"),
             Subtitle=_subtitle(
-                "Days a child account's outbound total for one transfer "
-                "type exceeded the parent's configured daily_limit. "
-                "Left-click an account_id to drill into Transactions filtered "
-                "by that account, date, and transfer type."
+                "Days a sub-ledger account's outbound total for one "
+                "transfer type exceeded the ledger's configured "
+                "daily_limit. Left-click a subledger_account_id to drill "
+                "into Transactions filtered by that sub-ledger, date, and "
+                "transfer type."
             ),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
                     TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
                         Values=[
-                            _unagg_field("ar-exc-br-account-id",
-                                         DS_AR_LIMIT_BREACH, "account_id"),
-                            _unagg_field("ar-exc-br-account",
-                                         DS_AR_LIMIT_BREACH, "account_name"),
-                            _unagg_field("ar-exc-br-parent",
-                                         DS_AR_LIMIT_BREACH, "parent_name"),
+                            _unagg_field("ar-exc-br-subledger-id",
+                                         DS_AR_LIMIT_BREACH,
+                                         "subledger_account_id"),
+                            _unagg_field("ar-exc-br-subledger",
+                                         DS_AR_LIMIT_BREACH,
+                                         "subledger_name"),
+                            _unagg_field("ar-exc-br-ledger",
+                                         DS_AR_LIMIT_BREACH, "ledger_name"),
                             _unagg_field("ar-exc-br-date",
                                          DS_AR_LIMIT_BREACH, "activity_date"),
                             _unagg_field("ar-exc-br-date-str",
@@ -1230,7 +1242,7 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
                     "View Transactions",
                     SHEET_AR_TRANSACTIONS,
                     [
-                        (P_AR_ACCOUNT, "ar-exc-br-account-id"),
+                        (P_AR_SUBLEDGER, "ar-exc-br-subledger-id"),
                         (P_AR_ACTIVITY_DATE, "ar-exc-br-date-str"),
                         (P_AR_TRANSFER_TYPE, "ar-exc-br-type"),
                     ],
@@ -1239,7 +1251,8 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
             ConditionalFormatting={
                 "ConditionalFormattingOptions": [
                     link_text_format(
-                        "ar-exc-br-account-id", "account_id", link_color,
+                        "ar-exc-br-subledger-id", "subledger_account_id",
+                        link_color,
                     ),
                 ],
             },
@@ -1249,22 +1262,23 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
     table_overdraft = Visual(
         TableVisual=TableVisual(
             VisualId="ar-exc-overdraft-table",
-            Title=_title("Child Overdraft"),
+            Title=_title("Sub-Ledger Overdraft"),
             Subtitle=_subtitle(
-                "Days a child account's stored balance was negative. "
-                "Left-click an account_id to drill into Transactions "
-                "filtered by that account and date."
+                "Days a sub-ledger account's stored balance was negative. "
+                "Left-click a subledger_account_id to drill into "
+                "Transactions filtered by that sub-ledger and date."
             ),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
                     TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
                         Values=[
-                            _unagg_field("ar-exc-od-account-id",
-                                         DS_AR_OVERDRAFT, "account_id"),
-                            _unagg_field("ar-exc-od-account",
-                                         DS_AR_OVERDRAFT, "account_name"),
-                            _unagg_field("ar-exc-od-parent",
-                                         DS_AR_OVERDRAFT, "parent_name"),
+                            _unagg_field("ar-exc-od-subledger-id",
+                                         DS_AR_OVERDRAFT,
+                                         "subledger_account_id"),
+                            _unagg_field("ar-exc-od-subledger",
+                                         DS_AR_OVERDRAFT, "subledger_name"),
+                            _unagg_field("ar-exc-od-ledger",
+                                         DS_AR_OVERDRAFT, "ledger_name"),
                             _unagg_field("ar-exc-od-date",
                                          DS_AR_OVERDRAFT, "balance_date"),
                             _unagg_field("ar-exc-od-date-str",
@@ -1291,7 +1305,7 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
                     "View Transactions",
                     SHEET_AR_TRANSACTIONS,
                     [
-                        (P_AR_ACCOUNT, "ar-exc-od-account-id"),
+                        (P_AR_SUBLEDGER, "ar-exc-od-subledger-id"),
                         (P_AR_ACTIVITY_DATE, "ar-exc-od-date-str"),
                     ],
                 ),
@@ -1299,7 +1313,8 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
             ConditionalFormatting={
                 "ConditionalFormattingOptions": [
                     link_text_format(
-                        "ar-exc-od-account-id", "account_id", link_color,
+                        "ar-exc-od-subledger-id", "subledger_account_id",
+                        link_color,
                     ),
                 ],
             },
@@ -1307,9 +1322,9 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
     )
 
     return [
-        kpi_parent_drift, kpi_child_drift, kpi_nonzero,
+        kpi_ledger_drift, kpi_subledger_drift, kpi_nonzero,
         kpi_breach, kpi_overdraft,
-        table_parent_drift, table_child_drift, table_non_zero,
+        table_ledger_drift, table_subledger_drift, table_non_zero,
         table_breach, table_overdraft,
-        timeline_parent, timeline_child,
+        timeline_ledger, timeline_subledger,
     ]
