@@ -2,7 +2,7 @@
 
 We verify the shared date-range filter by pushing it to a future window
 and confirming the Transaction Detail table empties out. The date-range
-filter is bound to ``ar_transactions.posted_at`` with ALL_DATASETS
+filter is bound to ``posting.posted_at`` with ALL_DATASETS
 cross-dataset scoping, so the Transactions sheet is where the filter
 binding is most direct. Phase 3 of PLAN.md expands the matrix.
 """

@@ -6,6 +6,9 @@ from decimal import Decimal
 
 import pytest
 
+from quicksight_gen.account_recon.demo_data import (
+    generate_demo_sql as generate_ar_sql,
+)
 from quicksight_gen.payment_recon.demo_data import (
     MERCHANTS,
     PR_SUBLEDGER_ACCOUNTS,
@@ -426,3 +429,83 @@ class TestPrUnifiedTables:
                     assert parts[1] == "NULL", (
                         f"Unsettled sale {sale_id} should have NULL parent"
                     )
+
+
+# ---------------------------------------------------------------------------
+# Cross-app integrity (B.7)
+# ---------------------------------------------------------------------------
+
+def _parse_inserts(sql: str) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    for m in re.finditer(
+        r"INSERT INTO (\w+) \([^)]+\) VALUES\n(.*?);",
+        sql, re.DOTALL,
+    ):
+        table = m.group(1)
+        body = m.group(2)
+        rows = re.findall(r"\(([^)]+)\)", body)
+        result.setdefault(table, []).extend(rows)
+    return result
+
+
+@pytest.fixture()
+def combined_parsed() -> dict[str, list[str]]:
+    """Parse both PR and AR seeds, merging shared tables."""
+    pr_sql = generate_demo_sql(ANCHOR)
+    ar_sql = generate_ar_sql(ANCHOR)
+    combined = _parse_inserts(pr_sql)
+    ar_parsed = _parse_inserts(ar_sql)
+    for table, rows in ar_parsed.items():
+        combined.setdefault(table, []).extend(rows)
+    return combined
+
+
+class TestCrossAppIntegrity:
+    def _col(self, rows: list[str], idx: int) -> list[str]:
+        return [
+            [p.strip().strip("'") for p in row.split(",")][idx]
+            for row in rows
+        ]
+
+    def test_transfer_types_cover_declared_enum(self, combined_parsed):
+        """Every transfer_type value in data is in the schema CHECK enum."""
+        declared = {
+            "sale", "settlement", "payment", "external_txn",
+            "ach", "wire", "internal", "cash",
+        }
+        actual = set(self._col(combined_parsed["transfer"], 2))
+        assert actual.issubset(declared), (
+            f"Undeclared transfer types: {actual - declared}"
+        )
+        assert len(actual) == len(declared), (
+            f"Missing transfer types in data: {declared - actual}"
+        )
+
+    def test_all_posting_transfer_ids_exist(self, combined_parsed):
+        """Every posting.transfer_id exists in transfer."""
+        transfer_ids = set(self._col(combined_parsed["transfer"], 0))
+        posting_tids = set(self._col(combined_parsed["posting"], 1))
+        assert posting_tids.issubset(transfer_ids)
+
+    def test_all_posting_subledger_ids_exist(self, combined_parsed):
+        """Every posting.subledger_account_id exists in ar_subledger_accounts."""
+        subledger_ids = set(
+            self._col(combined_parsed["ar_subledger_accounts"], 0)
+        )
+        posting_accounts = set(
+            self._col(combined_parsed["posting"], 2)
+        )
+        assert posting_accounts.issubset(subledger_ids), (
+            f"Unknown subledger accounts in postings: "
+            f"{posting_accounts - subledger_ids}"
+        )
+
+    def test_no_transfer_id_collision(self, combined_parsed):
+        """PR and AR transfer IDs must not collide (prefix guarantees)."""
+        ids = self._col(combined_parsed["transfer"], 0)
+        assert len(ids) == len(set(ids)), "Duplicate transfer IDs across apps"
+
+    def test_no_posting_id_collision(self, combined_parsed):
+        """PR and AR posting IDs must not collide."""
+        ids = self._col(combined_parsed["posting"], 0)
+        assert len(ids) == len(set(ids)), "Duplicate posting IDs across apps"

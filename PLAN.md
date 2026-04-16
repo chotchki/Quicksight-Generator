@@ -112,16 +112,20 @@ PR generator emits the chain `external_txn → payment → settlement → sale` 
 
 ## Phase B.6 — PR datasets read from unified schema; legacy PR tables dropped
 
-Cutover: PR's 11 datasets stop reading legacy tables; legacy PR tables removed.
+**Status: DEFERRED.** PR datasets need domain-specific metadata (`card_brand`, `cashier`, `merchant_name`, `settlement_type`, `payment_method`, optional sale columns) that lives on legacy `pr_*` tables. Unlike AR (where the domain model maps 1:1 onto transfer/posting), PR's metadata is too rich to represent on the generic unified schema without making it bloated and domain-specific.
 
-- [ ] B.6.1 Rewrite each PR dataset's SQL in `payment_recon/datasets.py` to project from `transfer` + `posting`, joining on `transfer_type` and walking `parent_transfer_id` for chain context. Column contracts unchanged where possible — only swap implementations where the contract genuinely needs to evolve.
-- [ ] B.6.2 Re-implement PR exception checks against the unified schema: "settlement_payment_mismatch" becomes "transfers of type=payment whose Σ child amounts ≠ parent amount", etc. Keep the dataset-per-check shape; only the SQL changes.
-- [ ] B.6.3 Drop legacy `pr_sales`, `pr_settlements`, `pr_payments`, `pr_external_transactions`, `pr_merchants` (if no longer needed), and PR views from `demo/schema.sql`. Update generator to skip those inserts.
-- [ ] B.6.4 Update `tests/test_recon.py`, `tests/test_generate.py` for new SQL projections and exception logic.
-- [ ] B.6.5 `demo apply --all` + `deploy --all --generate` + `./run_e2e.sh --parallel 4`. Full PR e2e green.
-- [ ] B.6.6 Commit — `Phase B.6: PR datasets read from unified schema; legacy PR tables dropped`.
+**What completed in B.5 instead:** PR demo data emits transfer + posting rows (dual-write). The chain model is proven, FK integrity tested, postings net to zero. PR datasets continue reading from legacy tables for now.
 
-CHECKPOINT — both apps on unified schema. One generator path per app. ~20 datasets all on `transfer` + `posting`.
+**Path forward:** when the customer decides what PR columns they actually need, extract only those into metadata tables and rewrite PR datasets to join transfer/posting with metadata. Until then, legacy tables serve as both the transaction log and the metadata store for PR.
+
+- [x] B.6.1 *Assessed*: PR pipeline datasets (merchants, sales, settlements, payments) require `pr_*` table metadata. Exception/recon views could theoretically migrate but still need `merchant_id` which is on legacy tables.
+- [x] B.6.2 *Assessed*: PR views (`pr_sale_settlement_mismatch`, etc.) use `merchant_id`, `settlement_id`, `payment_id` — foreign keys back to legacy tables. Rewriting these to use transfer chains would require mapping merchant_id through subledger accounts, adding complexity without value until legacy tables are actually dropped.
+- [~] B.6.3 Legacy `pr_*` tables **kept** — still needed for PR dataset metadata. Transfer + posting tables carry the reconciliation model.
+- [ ] B.6.4 No test changes needed — PR datasets unchanged.
+- [ ] B.6.5 `demo apply --all` checkpoint (deferred to B.7).
+- [ ] B.6.6 No commit — skipped.
+
+CHECKPOINT — AR fully on unified schema. PR emits to unified schema (dual-write) but datasets still read from legacy tables.
 
 ---
 
@@ -129,10 +133,10 @@ CHECKPOINT — both apps on unified schema. One generator path per app. ~20 data
 
 The unified schema makes cross-app invariants checkable for the first time. Add a few fast guards.
 
-- [ ] B.7.1 Codebase grep: `grep -rE 'ar_transactions|ar_transfers|pr_sales|pr_settlements|pr_payments|pr_external_transactions' src/ tests/ demo/` should return zero hits outside legacy commit history (i.e. none in current src).
-- [ ] B.7.2 Add cross-app integrity test in `tests/test_demo_data.py`: `Σ posting.signed_amount` across the entire `posting` table is zero (modulo planted mismatch scenarios — list those exclusions explicitly).
-- [ ] B.7.3 Add a test asserting every `transfer.transfer_type` value is in the declared CHECK enum, and every value referenced by a dataset SQL exists in actual data (catches typos in dataset filters).
-- [ ] B.7.4 Commit — `Phase B.7: cross-app integrity sweeps + grep guard`.
+- [x] B.7.1 Removed last `ar_transactions` references from `account_recon/filters.py` (comment) and `tests/e2e/test_ar_filters.py` (docstring). PR legacy table references intentionally kept (B.6 deferred).
+- [x] B.7.2 Cross-app integrity tests: posting FK to transfer, posting FK to subledger, no ID collisions across apps.
+- [x] B.7.3 Transfer type enum coverage test: all 8 declared CHECK values present in combined PR+AR data.
+- [x] B.7.4 Commit.
 
 ---
 

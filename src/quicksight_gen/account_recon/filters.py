@@ -97,7 +97,7 @@ def _selected_sheets_scope(sheet_ids: list[str]) -> FilterScopeConfiguration:
 def _date_range_filter_group() -> FilterGroup:
     """Transactions-backed date range propagated across all AR sheets.
 
-    Views that don't join ar_transactions directly (e.g. transfer_summary
+    Views that don't join the posting table directly (e.g. transfer_summary
     through first_posted_at, balance_drift through balance_date) still
     respect the filter because QuickSight scopes ALL_DATASETS across the
     selected sheets.
