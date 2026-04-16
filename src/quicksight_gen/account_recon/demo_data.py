@@ -540,6 +540,51 @@ def _generate_daily_balances(
 # Main entrypoint
 # ---------------------------------------------------------------------------
 
+def _derive_unified_tables(
+    transactions: list[dict],
+) -> tuple[list[tuple], list[tuple]]:
+    """Derive unified ``transfer`` + ``posting`` rows from AR transactions.
+
+    Groups transactions by transfer_id to produce one transfer row per
+    group. Each transaction maps to one posting row. AR transfers have
+    no chain-of-custody, so parent_transfer_id is always NULL.
+    """
+    from collections import OrderedDict
+
+    by_transfer: OrderedDict[str, list[dict]] = OrderedDict()
+    for t in transactions:
+        by_transfer.setdefault(t["transfer_id"], []).append(t)
+
+    transfer_rows: list[tuple] = []
+    posting_rows: list[tuple] = []
+
+    for tid, legs in by_transfer.items():
+        first = legs[0]
+        any_posted = any(leg["status"] == "posted" for leg in legs)
+        transfer_rows.append((
+            tid,
+            None,  # parent_transfer_id — AR doesn't chain
+            first["transfer_type"],
+            first["origin"],
+            abs(first["amount"]),
+            "posted" if any_posted else "failed",
+            first["posted_at"],
+            first["memo"],
+        ))
+        for leg in legs:
+            status_map = {"posted": "success", "failed": "failed"}
+            posting_rows.append((
+                leg["transaction_id"],
+                tid,
+                leg["subledger_account_id"],
+                leg["amount"],  # already signed
+                leg["posted_at"],
+                status_map.get(leg["status"], "success"),
+            ))
+
+    return transfer_rows, posting_rows
+
+
 def generate_demo_sql(anchor_date: date | None = None) -> str:
     """Return INSERT statements for every ``ar_*`` demo table.
 
@@ -561,6 +606,8 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
     subledger_balances, ledger_balances = _generate_daily_balances(
         today, transactions,
     )
+
+    transfer_rows, posting_rows = _derive_unified_tables(transactions)
 
     parts = [
         f"-- Farmers Exchange Bank — demo seed data",
@@ -597,5 +644,15 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
                  ["subledger_account_id", "balance_date", "balance"],
                  [(b["subledger_account_id"], b["balance_date"], b["balance"])
                   for b in subledger_balances]),
+
+        _inserts("transfer",
+                 ["transfer_id", "parent_transfer_id", "transfer_type",
+                  "origin", "amount", "status", "created_at", "memo"],
+                 transfer_rows),
+
+        _inserts("posting",
+                 ["posting_id", "transfer_id", "subledger_account_id",
+                  "signed_amount", "posted_at", "status"],
+                 posting_rows),
     ]
     return "\n".join(parts) + "\n"

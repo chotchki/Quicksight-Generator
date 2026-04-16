@@ -64,6 +64,22 @@ def ar_parsed(ar_sql: str) -> dict[str, list[str]]:
     return result
 
 
+@pytest.fixture()
+def unified_parsed(ar_sql: str) -> dict[str, list[str]]:
+    """Parse unified transfer + posting tables from the AR seed SQL."""
+    result: dict[str, list[str]] = {}
+    for m in re.finditer(
+        r"INSERT INTO (transfer|posting) \([^)]+\) VALUES\n(.*?);",
+        ar_sql,
+        re.DOTALL,
+    ):
+        table = m.group(1)
+        body = m.group(2)
+        rows = re.findall(r"\(([^)]+)\)", body)
+        result[table] = rows
+    return result
+
+
 class TestDemoDeterminism:
     def test_same_anchor_identical_output(self):
         assert generate_demo_sql(ANCHOR) == generate_demo_sql(ANCHOR)
@@ -496,6 +512,63 @@ class TestScenarioCoverage:
 
 
 # ---------------------------------------------------------------------------
+# Unified transfer + posting (Phase B dual-write)
+# ---------------------------------------------------------------------------
+
+class TestUnifiedTables:
+    def _col(self, rows: list[str], idx: int) -> list[str]:
+        return [
+            [p.strip().strip("'") for p in row.split(",")][idx]
+            for row in rows
+        ]
+
+    def test_transfer_row_count(self, unified_parsed):
+        """One transfer row per unique transfer_id in ar_transactions."""
+        assert len(unified_parsed["transfer"]) == 66
+
+    def test_posting_row_count(self, unified_parsed):
+        """One posting per ar_transactions row."""
+        assert len(unified_parsed["posting"]) == 132
+
+    def test_posting_transfer_fk(self, unified_parsed):
+        """Every posting.transfer_id exists in transfer."""
+        transfer_ids = set(self._col(unified_parsed["transfer"], 0))
+        posting_tids = set(self._col(unified_parsed["posting"], 1))
+        assert posting_tids.issubset(transfer_ids)
+
+    def test_posting_account_fk(self, ar_parsed, unified_parsed):
+        """Every posting.subledger_account_id exists in ar_subledger_accounts."""
+        subledger_ids = {
+            [p.strip().strip("'") for p in row.split(",")][0]
+            for row in ar_parsed["ar_subledger_accounts"]
+        }
+        posting_accounts = set(self._col(unified_parsed["posting"], 2))
+        assert posting_accounts.issubset(subledger_ids)
+
+    def test_ar_transfer_parent_is_null(self, unified_parsed):
+        """AR transfers have no chain — parent_transfer_id should be NULL."""
+        parents = self._col(unified_parsed["transfer"], 1)
+        assert all(p == "NULL" for p in parents)
+
+    def test_transfer_posting_equivalence(self, ar_parsed, unified_parsed):
+        """Every ar_transactions row has a matching posting with same
+        transfer_id, account, and amount."""
+        posting_set = set()
+        for row in unified_parsed["posting"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            posting_set.add((parts[1], parts[2], parts[3]))
+
+        for row in ar_parsed["ar_transactions"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            transfer_id = parts[2]
+            account = parts[1]
+            amount = parts[3]
+            assert (transfer_id, account, amount) in posting_set, (
+                f"Missing posting for txn {parts[0]}"
+            )
+
+
+# ---------------------------------------------------------------------------
 # Seed SQL structure
 # ---------------------------------------------------------------------------
 
@@ -508,7 +581,7 @@ class TestSeedSqlStructure:
             )
 
     def test_insert_tables_match_schema(self, ar_sql):
-        tables = set(re.findall(r"INSERT INTO (ar_\w+)", ar_sql))
+        tables = set(re.findall(r"INSERT INTO (\w+)", ar_sql))
         assert tables == {
             "ar_ledger_accounts",
             "ar_subledger_accounts",
@@ -516,29 +589,31 @@ class TestSeedSqlStructure:
             "ar_ledger_transfer_limits",
             "ar_ledger_daily_balances",
             "ar_subledger_daily_balances",
+            "transfer",
+            "posting",
         }
 
     def test_fk_safe_order(self, ar_sql):
         positions = {}
-        for m in re.finditer(r"INSERT INTO (ar_\w+)", ar_sql):
+        for m in re.finditer(r"INSERT INTO (\w+)", ar_sql):
             positions.setdefault(m.group(1), m.start())
         assert positions["ar_ledger_accounts"] < positions["ar_subledger_accounts"]
         assert positions["ar_subledger_accounts"] < positions["ar_transactions"]
-        # ar_ledger_daily_balances FKs to ar_ledger_accounts
         assert (
             positions["ar_ledger_accounts"]
             < positions["ar_ledger_daily_balances"]
         )
-        # ar_subledger_daily_balances FKs to ar_subledger_accounts
         assert (
             positions["ar_subledger_accounts"]
             < positions["ar_subledger_daily_balances"]
         )
-        # ar_ledger_transfer_limits FKs to ar_ledger_accounts
         assert (
             positions["ar_ledger_accounts"]
             < positions["ar_ledger_transfer_limits"]
         )
+        # Unified tables: transfer before posting, both after ar_subledger_accounts
+        assert positions["ar_subledger_accounts"] < positions["transfer"]
+        assert positions["transfer"] < positions["posting"]
 
 
 # ---------------------------------------------------------------------------
