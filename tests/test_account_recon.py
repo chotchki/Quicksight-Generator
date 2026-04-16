@@ -335,6 +335,30 @@ class TestScenarioCoverage:
             f"Expected all four transfer types, got {types}"
         )
 
+    def test_origin_both_values_present(self, ar_parsed):
+        """Both origin values must be seeded so the Transaction Detail
+        column never reads as a single-value placeholder. Phase A is
+        tag-only — downstream phases will wire this into filters."""
+        origins: list[str] = []
+        for row in ar_parsed["ar_transactions"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            origins.append(parts[7])
+        counts = {
+            "internal_initiated": sum(1 for o in origins
+                                      if o == "internal_initiated"),
+            "external_force_posted": sum(1 for o in origins
+                                         if o == "external_force_posted"),
+        }
+        assert counts["internal_initiated"] >= 10, (
+            f"Need ≥10 internal_initiated rows, got {counts}"
+        )
+        assert counts["external_force_posted"] >= 5, (
+            f"Need ≥5 external_force_posted rows, got {counts}"
+        )
+        assert set(origins) == {
+            "internal_initiated", "external_force_posted",
+        }, f"Unexpected origin values: {set(origins)}"
+
     def test_ledger_limits_seeded(self, ar_parsed):
         """Ledger transfer limits must be seeded — otherwise the
         limit-breach view has no thresholds to compare against."""
@@ -1335,6 +1359,17 @@ class TestPhase5DatasetDeclarations:
         cols = {c["Name"] for c in table["CustomSql"]["Columns"]}
         assert "overdraft_status" in cols
         assert "overdraft_status" in table["CustomSql"]["SqlQuery"]
+
+    def test_transactions_dataset_projects_origin(self, ar_output_dir):
+        """Phase A.6 adds `origin` to ar_transactions as a tag-only column.
+        The Transactions dataset must expose it so downstream phases can
+        consume it without a schema round-trip."""
+        path = ar_output_dir / "datasets" / "qs-gen-ar-transactions-dataset.json"
+        data = json.loads(path.read_text())
+        table = next(iter(data["PhysicalTableMap"].values()))
+        cols = {c["Name"] for c in table["CustomSql"]["Columns"]}
+        assert "origin" in cols
+        assert "t.origin" in table["CustomSql"]["SqlQuery"]
 
 
 # ---------------------------------------------------------------------------

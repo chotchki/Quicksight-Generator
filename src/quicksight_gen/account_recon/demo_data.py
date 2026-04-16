@@ -312,6 +312,13 @@ def _generate_transfers(
     ) -> None:
         nonlocal txn_idx
         txn_idx += 1
+        # ~10% of rows land on external_force_posted — every 10th leg,
+        # deterministic given the emit order. Tag-only in Phase A;
+        # downstream phases will consume it.
+        origin = (
+            "external_force_posted" if txn_idx % 10 == 0
+            else "internal_initiated"
+        )
         transactions.append({
             "transaction_id": f"ar-txn-{txn_idx:05d}",
             "subledger_account_id": subledger_account_id,
@@ -320,6 +327,7 @@ def _generate_transfers(
             "posted_at": posted_at,
             "status": status,
             "transfer_type": transfer_type,
+            "origin": origin,
             "memo": memo,
         })
 
@@ -568,10 +576,11 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
 
         _inserts("ar_transactions",
                  ["transaction_id", "subledger_account_id", "transfer_id",
-                  "amount", "posted_at", "status", "transfer_type", "memo"],
+                  "amount", "posted_at", "status", "transfer_type",
+                  "origin", "memo"],
                  [(t["transaction_id"], t["subledger_account_id"], t["transfer_id"],
                    t["amount"], t["posted_at"], t["status"],
-                   t["transfer_type"], t["memo"])
+                   t["transfer_type"], t["origin"], t["memo"])
                   for t in transactions]),
 
         _inserts("ar_ledger_transfer_limits",

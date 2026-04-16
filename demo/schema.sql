@@ -298,6 +298,8 @@ CREATE TABLE ar_transactions (
     posted_at            TIMESTAMP     NOT NULL,
     status               VARCHAR(20)   NOT NULL CHECK (status IN ('posted', 'failed', 'pending')),
     transfer_type        VARCHAR(20)   NOT NULL CHECK (transfer_type IN ('ach', 'wire', 'internal', 'cash')),
+    origin               VARCHAR(30)   NOT NULL DEFAULT 'internal_initiated'
+                                       CHECK (origin IN ('internal_initiated', 'external_force_posted')),
     memo                 VARCHAR(255)
 );
 

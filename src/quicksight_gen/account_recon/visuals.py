@@ -774,6 +774,8 @@ def build_transactions_visuals() -> list[Visual]:
                                          "subledger_name"),
                             _unagg_field("ar-txn-scope",
                                          DS_AR_TRANSACTIONS, "scope"),
+                            _unagg_field("ar-txn-origin",
+                                         DS_AR_TRANSACTIONS, "origin"),
                             _unagg_field("ar-txn-amount",
                                          DS_AR_TRANSACTIONS, "amount"),
                             _unagg_field("ar-txn-status",
