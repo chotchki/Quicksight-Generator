@@ -98,12 +98,15 @@ class TestDemoRowCounts:
         assert len(ar_parsed["ar_subledger_accounts"]) == len(SUBLEDGER_ACCOUNTS)
 
     def test_postings(self, unified_parsed):
-        # 60 base transfers + 3 planted breach + 3 planted overdraft
-        # = 66 transfers × 2 legs each = 132 postings
-        assert len(unified_parsed["posting"]) == 132
+        # 66 sub-ledger transfers × 2 legs = 132
+        # + 5 funding batches (1 ledger + N sub-ledger legs each)
+        # + 3 fee assessments (1 ledger leg each)
+        # + 2 clearing sweeps (2 ledger legs each)
+        assert len(unified_parsed["posting"]) == 154
 
     def test_transfers(self, unified_parsed):
-        assert len(unified_parsed["transfer"]) == 66
+        # 66 sub-ledger + 5 funding + 3 fee + 2 sweep = 76
+        assert len(unified_parsed["transfer"]) == 76
 
     def test_ledger_transfer_limits(self, ar_parsed):
         from quicksight_gen.account_recon.demo_data import _LEDGER_LIMITS
@@ -141,6 +144,7 @@ class TestReferentialIntegrity:
     def test_posting_subledger_fk(self, ar_parsed, unified_parsed):
         subledger_ids = set(self._col(ar_parsed["ar_subledger_accounts"], 0))
         posting_subledgers = set(self._col(unified_parsed["posting"], 3))
+        posting_subledgers.discard("NULL")  # ledger-level postings have no sub-ledger
         assert posting_subledgers.issubset(subledger_ids)
 
     def test_ledger_daily_balance_fk(self, ar_parsed):
@@ -280,6 +284,8 @@ class TestScenarioCoverage:
             parts = [p.strip().strip("'") for p in row.split(",")]
             transfer_id = parts[1]
             subledger_id = parts[3]
+            if subledger_id == "NULL":
+                continue  # ledger-level posting — no sub-ledger scope
             buckets.setdefault(transfer_id, []).append(
                 internal_by_subledger[subledger_id]
             )
@@ -342,15 +348,17 @@ class TestScenarioCoverage:
             "Need ≥1 internal-internal transfer with a failed leg"
         )
 
-    def test_all_four_transfer_types_present(self, unified_parsed):
-        """All four transfer types must have traffic so the
+    def test_all_transfer_types_present(self, unified_parsed):
+        """All AR transfer types must have traffic so the
         transfer-type filter has something to filter on."""
         types = {
             [p.strip().strip("'") for p in row.split(",")][2]
             for row in unified_parsed["transfer"]
         }
-        assert types == {"ach", "wire", "internal", "cash"}, (
-            f"Expected all four transfer types, got {types}"
+        expected = {"ach", "wire", "internal", "cash",
+                    "funding_batch", "fee", "clearing_sweep"}
+        assert types == expected, (
+            f"Expected all AR transfer types, got {types}"
         )
 
     def test_origin_both_values_present(self, unified_parsed):
@@ -415,6 +423,8 @@ class TestScenarioCoverage:
         for row in unified_parsed["posting"]:
             parts = [p.strip().strip("'") for p in row.split(",")]
             subl = parts[3]
+            if subl == "NULL":
+                continue  # ledger-level posting — no sub-ledger limit
             amount = Decimal(parts[4])
             day = parts[5].split(" ")[0]
             status = parts[6]
@@ -529,12 +539,12 @@ class TestUnifiedTables:
         ]
 
     def test_transfer_row_count(self, unified_parsed):
-        """66 transfers: 60 base + 3 breach + 3 overdraft."""
-        assert len(unified_parsed["transfer"]) == 66
+        """76 transfers: 66 sub-ledger + 5 funding + 3 fee + 2 sweep."""
+        assert len(unified_parsed["transfer"]) == 76
 
     def test_posting_row_count(self, unified_parsed):
-        """66 transfers × 2 legs = 132 postings."""
-        assert len(unified_parsed["posting"]) == 132
+        """154 postings: 132 sub-ledger + ledger-level postings."""
+        assert len(unified_parsed["posting"]) == 154
 
     def test_posting_transfer_fk(self, unified_parsed):
         """Every posting.transfer_id exists in transfer."""
@@ -543,12 +553,13 @@ class TestUnifiedTables:
         assert posting_tids.issubset(transfer_ids)
 
     def test_posting_account_fk(self, ar_parsed, unified_parsed):
-        """Every posting.subledger_account_id exists in ar_subledger_accounts."""
+        """Every posting.subledger_account_id (when set) exists in ar_subledger_accounts."""
         subledger_ids = {
             [p.strip().strip("'") for p in row.split(",")][0]
             for row in ar_parsed["ar_subledger_accounts"]
         }
         posting_accounts = set(self._col(unified_parsed["posting"], 3))
+        posting_accounts.discard("NULL")  # ledger-level postings
         assert posting_accounts.issubset(subledger_ids)
 
     def test_ar_transfer_parent_is_null(self, unified_parsed):
@@ -562,7 +573,6 @@ class TestUnifiedTables:
             parts = [p.strip().strip("'") for p in row.split(",")]
             assert parts[1], "posting.transfer_id empty"
             assert parts[2], "posting.ledger_account_id empty"
-            assert parts[3], "posting.subledger_account_id empty"
             assert Decimal(parts[4]), "posting.signed_amount is zero"
 
 

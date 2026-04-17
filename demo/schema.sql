@@ -331,7 +331,8 @@ CREATE TABLE transfer (
     transfer_type      VARCHAR(30)    NOT NULL
         CHECK (transfer_type IN (
             'sale', 'settlement', 'payment', 'external_txn',
-            'ach', 'wire', 'internal', 'cash'
+            'ach', 'wire', 'internal', 'cash',
+            'funding_batch', 'fee', 'clearing_sweep'
         )),
     origin             VARCHAR(30)    NOT NULL DEFAULT 'internal_initiated'
         CHECK (origin IN ('internal_initiated', 'external_force_posted')),
@@ -456,7 +457,7 @@ SELECT
 FROM posting p
 JOIN transfer xfer ON xfer.transfer_id = p.transfer_id
 JOIN ar_subledger_accounts s ON s.subledger_account_id = p.subledger_account_id
-WHERE xfer.transfer_type IN ('ach', 'wire', 'internal', 'cash')
+WHERE xfer.transfer_type IN ('ach', 'wire', 'internal', 'cash', 'funding_batch', 'fee', 'clearing_sweep')
 GROUP BY p.transfer_id;
 
 
@@ -496,7 +497,7 @@ JOIN ar_subledger_accounts s ON s.subledger_account_id = p.subledger_account_id
 WHERE p.status = 'success'
   AND p.signed_amount < 0
   AND s.is_internal = TRUE
-  AND xfer.transfer_type IN ('ach', 'wire', 'internal', 'cash')
+  AND xfer.transfer_type IN ('ach', 'wire', 'internal', 'cash', 'funding_batch', 'fee', 'clearing_sweep')
 GROUP BY p.subledger_account_id, s.ledger_account_id, p.posted_at::date, xfer.transfer_type;
 
 

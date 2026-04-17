@@ -184,7 +184,7 @@ FROM posting p
 JOIN transfer xfer               ON xfer.transfer_id          = p.transfer_id
 JOIN ar_subledger_accounts s     ON s.subledger_account_id    = p.subledger_account_id
 JOIN ar_ledger_accounts la       ON la.ledger_account_id      = s.ledger_account_id
-WHERE xfer.transfer_type IN ('ach', 'wire', 'internal', 'cash')"""
+WHERE xfer.transfer_type IN ('ach', 'wire', 'internal', 'cash', 'funding_batch', 'fee', 'clearing_sweep')"""
     return build_dataset(
         cfg, cfg.prefixed("ar-transactions-dataset"),
         "AR Transactions", "ar-transactions",
