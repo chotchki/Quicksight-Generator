@@ -249,6 +249,18 @@ def _transfer_type_filter_group() -> FilterGroup:
     )
 
 
+def _posting_level_filter_group() -> FilterGroup:
+    return _multi_select_filter_group(
+        fg_id="fg-ar-posting-level",
+        filter_id="filter-ar-posting-level",
+        title="Posting Level",
+        dataset_id=DS_AR_TRANSACTIONS,
+        column_name="posting_level",
+        sheet_ids=[SHEET_AR_TRANSACTIONS],
+        cross_dataset="SINGLE_DATASET",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Show-Only-X SINGLE_SELECT toggles (Phase 4.2)
 # ---------------------------------------------------------------------------
@@ -319,6 +331,7 @@ def build_filter_groups(cfg: Config) -> list[FilterGroup]:
         _transfer_status_filter_group(),
         _transaction_status_filter_group(),
         _transfer_type_filter_group(),
+        _posting_level_filter_group(),
         # Show-Only toggles — one filter group per toggle.
         _state_toggle_filter_group(
             "fg-ar-balances-ledger-drift",
@@ -427,6 +440,14 @@ def build_transactions_controls(cfg: Config) -> list[FilterControl]:
         _ledger_account_control("transactions"),
         _subledger_account_control("transactions"),
         _transfer_type_control("transactions"),
+        FilterControl(
+            Dropdown=FilterDropDownControl(
+                FilterControlId="ctrl-ar-transactions-posting-level",
+                Title="Posting Level",
+                SourceFilterId="filter-ar-posting-level",
+                Type="MULTI_SELECT",
+            ),
+        ),
         FilterControl(
             Dropdown=FilterDropDownControl(
                 FilterControlId="ctrl-ar-transactions-status",

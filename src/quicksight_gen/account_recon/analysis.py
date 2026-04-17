@@ -175,9 +175,10 @@ _TRANSFERS_DESCRIPTION = (
 )
 
 _TRANSACTIONS_DESCRIPTION = (
-    "Raw transaction ledger — one row per leg. Filter by date to narrow "
-    "the window. Failed rows (status = failed) are the ones that never "
-    "moved money and feed the non-zero transfer cases on Exceptions."
+    "Raw posting ledger — one row per leg. Includes both sub-ledger "
+    "postings and direct ledger postings (funding batches, fees, sweeps). "
+    "Filter by Posting Level to isolate ledger-level activity. Failed "
+    "rows feed the non-zero transfer cases on Exceptions."
 )
 
 _EXCEPTIONS_DESCRIPTION = (
@@ -208,8 +209,9 @@ _TRANSFERS_BULLETS = [
 ]
 
 _TRANSACTIONS_BULLETS = [
-    "Raw ledger — one row per transfer leg",
-    "Filters: date range, transfer type, Show Only Failed toggle",
+    "Raw ledger — one row per posting (sub-ledger and ledger-level)",
+    "Filters: date range, transfer type, posting level, Show Only Failed",
+    "Ledger-level postings: funding batches, fee assessments, clearing sweeps",
     "Failed rows feed the non-zero transfer cases on Exceptions",
 ]
 
