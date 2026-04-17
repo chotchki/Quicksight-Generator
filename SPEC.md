@@ -201,6 +201,7 @@ Track all demo scenarios (both apps) in a structured catalog so that long-form t
       - Sub-ledger limit breach: Σ |outbound posted amounts of type T| for a sub-ledger on a day > its ledger's limit for type T
       - Sub-ledger overdraft: stored sub-ledger balance < 0 on any day
       - Each finding points at a different upstream source and is investigated independently; two drift timelines at the bottom of the Exceptions tab reveal systemic issues
+      - Every check carries `days_outstanding` and `aging_bucket` (5 hardcoded bands: 0-1d, 2-3d, 4-7d, 8-30d, >30d) for time-based urgency triage; aging bar charts visualize the distribution
     - Transfers
       - Movement of money between accounts via double-entry debits and credits
       - Cannot fail in aggregate — money is not destroyed

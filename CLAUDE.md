@@ -103,6 +103,7 @@ src/quicksight_gen/
     cleanup.py           # Tag-based cleanup of stale resources (ManagedBy:quicksight-gen)
     dataset_contract.py  # ColumnSpec, DatasetContract, build_dataset() — shared dataset constructor
     clickability.py      # Conditional-format helpers: accent text (left-click) + tint-background (right-click)
+    aging.py             # Shared aging_bar_visual() — horizontal bar chart by aging bucket (used by both apps)
     rich_text.py         # XML composition helpers for SheetTextBox.Content (heading/bullets/link/inline)
   payment_recon/
     analysis.py          # 6 sheets, drill-downs, filter groups, dashboard builder
@@ -170,6 +171,7 @@ AR datasets read exclusively from `transfer` + `posting` (the `ar_transactions` 
 - Match is valid only when external total exactly equals sum of linked payments — no partials
 - Match statuses: **matched**, **not_yet_matched**, **late** (threshold: `late_default_days`, default 30 — slider also available)
 - Mutual table filtering on the Payment Reconciliation tab: clicking an external txn filters its payments; clicking a payment filters back
+- All 5 PR exception checks and the Payment Recon tab carry `aging_bucket` (same 5-band pattern as AR) with aging bar charts
 - **Transfer chain** (parent → child): `external_txn → payment → settlement → sale`. PR sub-ledger accounts live under `pr-merchant-ledger` in `ar_subledger_accounts` (one per merchant + `pr-external-customer-pool` + `pr-external-rail`).
 
 ### Account Reconciliation
@@ -181,8 +183,10 @@ AR datasets read exclusively from `transfer` + `posting` (the `ar_transactions` 
 - Sub-ledger drift invariant: `stored sub-ledger balance = Σ postings to that sub-ledger` (unaffected by ledger-level postings)
 - Daily balance snapshots allow drift detection: recomputed balance vs. stored balance
 - Failed postings, limit breaches (ledger daily out-flow cap per sub-ledger/type), and overdrafts (sub-ledger below zero) populate the Exceptions tab
+- Every exception check follows a standard visual pattern: KPI count + detail table (with `days_outstanding` and `aging_bucket` columns) + horizontal aging bar chart. Drift checks also have timelines.
+- Aging buckets: 5 hardcoded bands (`1: 0-1 day`, `2: 2-3 days`, `3: 4-7 days`, `4: 8-30 days`, `5: >30 days`) — numeric prefix forces correct sort in QuickSight
 - Drift timelines (ledger + sub-ledger) surface systemic issues over time
-- Transfers carry an `origin` tag (`internal_initiated` / `external_force_posted`)
+- Transfers carry an `origin` tag (`internal_initiated` / `external_force_posted`); origin multi-select filter on Transactions + Exceptions tabs
 - AR views filter `WHERE transfer_type IN ('ach', 'wire', 'internal', 'cash', 'funding_batch', 'fee', 'clearing_sweep')` to exclude PR data
 
 ## Architecture Decisions
