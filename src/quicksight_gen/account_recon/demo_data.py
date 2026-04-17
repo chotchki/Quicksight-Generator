@@ -456,17 +456,160 @@ def _generate_transfers(
     return transactions
 
 
+# ---------------------------------------------------------------------------
+# Ledger-level transfers (funding batches, fees, clearing sweeps)
+# ---------------------------------------------------------------------------
+
+_FUNDING_BATCH_COUNT = 5
+_FEE_ASSESSMENT_COUNT = 3
+_CLEARING_SWEEP_COUNT = 2
+
+_FUNDING_MEMOS = [
+    "Overnight funding batch",
+    "Federal wire settlement",
+    "ACH batch credit",
+    "Clearing house deposit",
+    "Correspondent bank transfer",
+]
+
+_FEE_MEMOS = [
+    "Monthly maintenance fee",
+    "Wire transfer fee",
+    "Overdraft assessment fee",
+]
+
+_SWEEP_MEMOS = [
+    "End-of-day clearing sweep",
+    "Inter-ledger netting",
+]
+
+
+def _generate_ledger_level_transfers(
+    rng: random.Random, today: date,
+) -> tuple[list[tuple], list[tuple]]:
+    """Generate transfers with ledger-level postings.
+
+    Three scenario types:
+    - Funding batch: 1 ledger credit + N sub-ledger debits (money arrives
+      at ledger before distribution).
+    - Fee assessment: 1 ledger debit only (single-leg, intentionally
+      non-zero — exercises non-zero transfer + ledger drift exceptions).
+    - Clearing sweep: 2 ledger postings (debit + credit) that net to zero.
+
+    Returns (transfer_rows, posting_rows) in tuple format matching the
+    existing INSERT column order.
+    """
+    internal_ledgers = [
+        lid for lid, _n, is_int in LEDGER_ACCOUNTS if is_int
+    ]
+    internal_subledgers_by_ledger: dict[str, list[str]] = {}
+    for sid, _n, lid in SUBLEDGER_ACCOUNTS:
+        if _ledger_is_internal(lid):
+            internal_subledgers_by_ledger.setdefault(lid, []).append(sid)
+
+    transfer_rows: list[tuple] = []
+    posting_rows: list[tuple] = []
+    tid_idx = 0
+    post_idx = 0
+
+    def _next_tid() -> str:
+        nonlocal tid_idx
+        tid_idx += 1
+        return f"ar-ledger-xfer-{tid_idx:04d}"
+
+    def _next_post_id() -> str:
+        nonlocal post_idx
+        post_idx += 1
+        return f"ar-ledger-post-{post_idx:05d}"
+
+    # 1. Funding batches — credit to ledger, debits to sub-ledgers
+    for i in range(_FUNDING_BATCH_COUNT):
+        ledger_id = rng.choice(internal_ledgers)
+        subs = internal_subledgers_by_ledger[ledger_id]
+        total = _money(rng, 5000, 25000)
+        posted = _ts(today, rng.randint(1, _DAYS_OF_HISTORY - 1), rng)
+        tid = _next_tid()
+        memo = _FUNDING_MEMOS[i % len(_FUNDING_MEMOS)]
+
+        transfer_rows.append((
+            tid, None, "funding_batch", "internal_initiated",
+            total, "posted", posted, memo,
+        ))
+        # Ledger-level credit (positive = inbound)
+        posting_rows.append((
+            _next_post_id(), tid, ledger_id, None,
+            total, posted, "success",
+        ))
+        # Distribute debits across sub-ledgers
+        remaining = total
+        for j, sub_id in enumerate(subs):
+            if j == len(subs) - 1:
+                share = remaining
+            else:
+                share = _money(rng, float(total) * 0.1, float(total) * 0.5)
+                share = min(share, remaining)
+            remaining -= share
+            posting_rows.append((
+                _next_post_id(), tid, ledger_id, sub_id,
+                -share, posted, "success",
+            ))
+
+    # 2. Fee assessments — single ledger debit (intentionally unbalanced)
+    for i in range(_FEE_ASSESSMENT_COUNT):
+        ledger_id = rng.choice(internal_ledgers)
+        amount = _money(rng, 15, 150)
+        posted = _ts(today, rng.randint(1, _DAYS_OF_HISTORY - 1), rng)
+        tid = _next_tid()
+        memo = _FEE_MEMOS[i % len(_FEE_MEMOS)]
+
+        transfer_rows.append((
+            tid, None, "fee", "internal_initiated",
+            amount, "posted", posted, memo,
+        ))
+        posting_rows.append((
+            _next_post_id(), tid, ledger_id, None,
+            -amount, posted, "success",
+        ))
+
+    # 3. Clearing sweeps — 2 ledger postings that net to zero
+    for i in range(_CLEARING_SWEEP_COUNT):
+        ledger_id = rng.choice(internal_ledgers)
+        amount = _money(rng, 2000, 15000)
+        posted = _ts(today, rng.randint(1, _DAYS_OF_HISTORY - 1), rng)
+        tid = _next_tid()
+        memo = _SWEEP_MEMOS[i % len(_SWEEP_MEMOS)]
+
+        transfer_rows.append((
+            tid, None, "clearing_sweep", "internal_initiated",
+            amount, "posted", posted, memo,
+        ))
+        posting_rows.append((
+            _next_post_id(), tid, ledger_id, None,
+            amount, posted, "success",
+        ))
+        posting_rows.append((
+            _next_post_id(), tid, ledger_id, None,
+            -amount, posted, "success",
+        ))
+
+    return transfer_rows, posting_rows
+
+
 def _generate_daily_balances(
-    today: date, transactions: list[dict],
+    today: date,
+    transactions: list[dict],
+    ledger_posting_rows: list[tuple] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Compute stored daily balances at both account levels.
 
     Sub-ledger balances are the running Σ of posted txns per internal
     sub-ledger. Ledger balances are Σ of sub-ledgers' stored balances
-    per internal ledger. Sub-ledger-level and ledger-level drift are
-    then planted independently — sub-ledger drift offsets the
-    sub-ledger stored balance only; ledger drift offsets the ledger
-    stored balance only.
+    plus Σ of direct ledger postings per internal ledger.
+
+    ``ledger_posting_rows`` are tuples in posting INSERT order:
+    (posting_id, transfer_id, ledger_account_id, subledger_account_id,
+     signed_amount, posted_at, status).  Only rows where
+    subledger_account_id is None count as direct ledger postings.
 
     Returns ``(subledger_balance_rows, ledger_balance_rows)``. Only
     internal sub-ledgers/ledgers get stored balance rows (the
@@ -497,20 +640,41 @@ def _generate_daily_balances(
         if key in subledger_balances:
             subledger_balances[key] += Decimal(delta_str)
 
+    # ---- Direct ledger postings by (ledger, date) ----
+    direct_ledger_totals: dict[tuple[str, date], Decimal] = {}
+    for row in (ledger_posting_rows or []):
+        _pid, _tid, lid, sub_id, amount, posted_at, status = row
+        if sub_id is not None:
+            continue  # sub-ledger posting — already in subledger_balances
+        if status != "success":
+            continue
+        if lid not in internal_ledgers:
+            continue
+        bdate = posted_at.date() if isinstance(posted_at, datetime) else posted_at
+        key = (lid, bdate)
+        direct_ledger_totals[key] = (
+            direct_ledger_totals.get(key, Decimal("0")) + Decimal(str(amount))
+        )
+
     # ---- Ledger stored balances ----
-    # Σ of sub-ledgers' (planted) stored balances per ledger per day.
+    # Σ of sub-ledgers' (planted) stored balances + Σ direct ledger
+    # postings per internal ledger per day.
     ledger_balances: dict[tuple[str, date], Decimal] = {}
     for ledger_id in internal_ledgers:
         ledger_subledgers = [
             sid for sid, lid in internal_subledgers if lid == ledger_id
         ]
+        running_direct = Decimal("0.00")
         for days_ago in range(_DAYS_OF_HISTORY, -1, -1):
             bdate = today - timedelta(days=days_ago)
-            total = sum(
+            sub_total = sum(
                 (subledger_balances[(sid, bdate)] for sid in ledger_subledgers),
                 Decimal("0.00"),
             )
-            ledger_balances[(ledger_id, bdate)] = total
+            running_direct += direct_ledger_totals.get(
+                (ledger_id, bdate), Decimal("0"),
+            )
+            ledger_balances[(ledger_id, bdate)] = sub_total + running_direct
 
     for ledger_id, days_ago, delta_str in _LEDGER_DRIFT_PLANT:
         key = (ledger_id, today - timedelta(days=days_ago))
@@ -555,6 +719,8 @@ def _derive_unified_tables(
     for t in transactions:
         by_transfer.setdefault(t["transfer_id"], []).append(t)
 
+    subledger_to_ledger = {sid: lid for sid, _n, lid in SUBLEDGER_ACCOUNTS}
+
     transfer_rows: list[tuple] = []
     posting_rows: list[tuple] = []
 
@@ -579,6 +745,7 @@ def _derive_unified_tables(
             posting_rows.append((
                 leg["transaction_id"],
                 tid,
+                subledger_to_ledger[leg["subledger_account_id"]],
                 leg["subledger_account_id"],
                 leg["amount"],  # already signed
                 leg["posted_at"],
@@ -606,11 +773,17 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
         for sid, name, lid in SUBLEDGER_ACCOUNTS
     ]
     transactions = _generate_transfers(rng, today)
-    subledger_balances, ledger_balances = _generate_daily_balances(
-        today, transactions,
-    )
-
     transfer_rows, posting_rows = _derive_unified_tables(transactions)
+
+    ledger_xfer_rows, ledger_post_rows = _generate_ledger_level_transfers(
+        rng, today,
+    )
+    transfer_rows.extend(ledger_xfer_rows)
+    posting_rows.extend(ledger_post_rows)
+
+    subledger_balances, ledger_balances = _generate_daily_balances(
+        today, transactions, ledger_posting_rows=ledger_post_rows,
+    )
 
     parts = [
         f"-- Farmers Exchange Bank — demo seed data",
@@ -645,8 +818,9 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
                  transfer_rows),
 
         _inserts("posting",
-                 ["posting_id", "transfer_id", "subledger_account_id",
-                  "signed_amount", "posted_at", "status"],
+                 ["posting_id", "transfer_id", "ledger_account_id",
+                  "subledger_account_id", "signed_amount", "posted_at",
+                  "status"],
                  posting_rows),
     ]
     return "\n".join(parts) + "\n"

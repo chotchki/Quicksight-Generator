@@ -98,12 +98,15 @@ class TestDemoRowCounts:
         assert len(ar_parsed["ar_subledger_accounts"]) == len(SUBLEDGER_ACCOUNTS)
 
     def test_postings(self, unified_parsed):
-        # 60 base transfers + 3 planted breach + 3 planted overdraft
-        # = 66 transfers × 2 legs each = 132 postings
-        assert len(unified_parsed["posting"]) == 132
+        # 66 sub-ledger transfers × 2 legs = 132
+        # + 5 funding batches (1 ledger + N sub-ledger legs each)
+        # + 3 fee assessments (1 ledger leg each)
+        # + 2 clearing sweeps (2 ledger legs each)
+        assert len(unified_parsed["posting"]) == 154
 
     def test_transfers(self, unified_parsed):
-        assert len(unified_parsed["transfer"]) == 66
+        # 66 sub-ledger + 5 funding + 3 fee + 2 sweep = 76
+        assert len(unified_parsed["transfer"]) == 76
 
     def test_ledger_transfer_limits(self, ar_parsed):
         from quicksight_gen.account_recon.demo_data import _LEDGER_LIMITS
@@ -140,7 +143,8 @@ class TestReferentialIntegrity:
 
     def test_posting_subledger_fk(self, ar_parsed, unified_parsed):
         subledger_ids = set(self._col(ar_parsed["ar_subledger_accounts"], 0))
-        posting_subledgers = set(self._col(unified_parsed["posting"], 2))
+        posting_subledgers = set(self._col(unified_parsed["posting"], 3))
+        posting_subledgers.discard("NULL")  # ledger-level postings have no sub-ledger
         assert posting_subledgers.issubset(subledger_ids)
 
     def test_ledger_daily_balance_fk(self, ar_parsed):
@@ -161,7 +165,7 @@ class TestScenarioCoverage:
         """Status=failed must be present so the Transactions bar chart and
         the failed-transaction KPI aren't empty."""
         statuses = [
-            [p.strip().strip("'") for p in row.split(",")][5]
+            [p.strip().strip("'") for p in row.split(",")][6]
             for row in unified_parsed["posting"]
         ]
         failed = sum(1 for s in statuses if s == "failed")
@@ -170,7 +174,7 @@ class TestScenarioCoverage:
 
     def test_success_and_failed_statuses_both_present(self, unified_parsed):
         statuses = {
-            [p.strip().strip("'") for p in row.split(",")][5]
+            [p.strip().strip("'") for p in row.split(",")][6]
             for row in unified_parsed["posting"]
         }
         assert {"success", "failed"}.issubset(statuses)
@@ -279,7 +283,9 @@ class TestScenarioCoverage:
         for row in unified_parsed["posting"]:
             parts = [p.strip().strip("'") for p in row.split(",")]
             transfer_id = parts[1]
-            subledger_id = parts[2]
+            subledger_id = parts[3]
+            if subledger_id == "NULL":
+                continue  # ledger-level posting — no sub-ledger scope
             buckets.setdefault(transfer_id, []).append(
                 internal_by_subledger[subledger_id]
             )
@@ -328,7 +334,7 @@ class TestScenarioCoverage:
         for row in unified_parsed["posting"]:
             parts = [p.strip().strip("'") for p in row.split(",")]
             transfer_id = parts[1]
-            status = parts[5]
+            status = parts[6]
             statuses_by_transfer.setdefault(transfer_id, []).append(status)
 
         internal_only_ids = {
@@ -342,15 +348,17 @@ class TestScenarioCoverage:
             "Need ≥1 internal-internal transfer with a failed leg"
         )
 
-    def test_all_four_transfer_types_present(self, unified_parsed):
-        """All four transfer types must have traffic so the
+    def test_all_transfer_types_present(self, unified_parsed):
+        """All AR transfer types must have traffic so the
         transfer-type filter has something to filter on."""
         types = {
             [p.strip().strip("'") for p in row.split(",")][2]
             for row in unified_parsed["transfer"]
         }
-        assert types == {"ach", "wire", "internal", "cash"}, (
-            f"Expected all four transfer types, got {types}"
+        expected = {"ach", "wire", "internal", "cash",
+                    "funding_batch", "fee", "clearing_sweep"}
+        assert types == expected, (
+            f"Expected all AR transfer types, got {types}"
         )
 
     def test_origin_both_values_present(self, unified_parsed):
@@ -414,10 +422,12 @@ class TestScenarioCoverage:
         totals: dict[tuple[str, str, str], Decimal] = {}
         for row in unified_parsed["posting"]:
             parts = [p.strip().strip("'") for p in row.split(",")]
-            subl = parts[2]
-            amount = Decimal(parts[3])
-            day = parts[4].split(" ")[0]
-            status = parts[5]
+            subl = parts[3]
+            if subl == "NULL":
+                continue  # ledger-level posting — no sub-ledger limit
+            amount = Decimal(parts[4])
+            day = parts[5].split(" ")[0]
+            status = parts[6]
             xtype = transfer_type_by_id[parts[1]]
             if status == "failed":
                 continue
@@ -529,12 +539,12 @@ class TestUnifiedTables:
         ]
 
     def test_transfer_row_count(self, unified_parsed):
-        """66 transfers: 60 base + 3 breach + 3 overdraft."""
-        assert len(unified_parsed["transfer"]) == 66
+        """76 transfers: 66 sub-ledger + 5 funding + 3 fee + 2 sweep."""
+        assert len(unified_parsed["transfer"]) == 76
 
     def test_posting_row_count(self, unified_parsed):
-        """66 transfers × 2 legs = 132 postings."""
-        assert len(unified_parsed["posting"]) == 132
+        """154 postings: 132 sub-ledger + ledger-level postings."""
+        assert len(unified_parsed["posting"]) == 154
 
     def test_posting_transfer_fk(self, unified_parsed):
         """Every posting.transfer_id exists in transfer."""
@@ -543,12 +553,13 @@ class TestUnifiedTables:
         assert posting_tids.issubset(transfer_ids)
 
     def test_posting_account_fk(self, ar_parsed, unified_parsed):
-        """Every posting.subledger_account_id exists in ar_subledger_accounts."""
+        """Every posting.subledger_account_id (when set) exists in ar_subledger_accounts."""
         subledger_ids = {
             [p.strip().strip("'") for p in row.split(",")][0]
             for row in ar_parsed["ar_subledger_accounts"]
         }
-        posting_accounts = set(self._col(unified_parsed["posting"], 2))
+        posting_accounts = set(self._col(unified_parsed["posting"], 3))
+        posting_accounts.discard("NULL")  # ledger-level postings
         assert posting_accounts.issubset(subledger_ids)
 
     def test_ar_transfer_parent_is_null(self, unified_parsed):
@@ -561,8 +572,139 @@ class TestUnifiedTables:
         for row in unified_parsed["posting"]:
             parts = [p.strip().strip("'") for p in row.split(",")]
             assert parts[1], "posting.transfer_id empty"
-            assert parts[2], "posting.subledger_account_id empty"
-            assert Decimal(parts[3]), "posting.signed_amount is zero"
+            assert parts[2], "posting.ledger_account_id empty"
+            assert Decimal(parts[4]), "posting.signed_amount is zero"
+
+
+# ---------------------------------------------------------------------------
+# Ledger-level posting scenario coverage
+# ---------------------------------------------------------------------------
+
+class TestLedgerPostingScenarios:
+    """Assert ledger-level posting scenarios exist and are well-formed."""
+
+    def _parse_postings(self, unified_parsed):
+        """Return list of parsed posting dicts."""
+        results = []
+        for row in unified_parsed["posting"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            results.append({
+                "posting_id": parts[0],
+                "transfer_id": parts[1],
+                "ledger_account_id": parts[2],
+                "subledger_account_id": parts[3] if parts[3] != "NULL" else None,
+                "signed_amount": Decimal(parts[4]),
+                "posted_at": parts[5],
+                "status": parts[6],
+            })
+        return results
+
+    def _parse_transfers(self, unified_parsed):
+        """Return {transfer_id: transfer_type}."""
+        result = {}
+        for row in unified_parsed["transfer"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            result[parts[0]] = parts[2]
+        return result
+
+    def test_funding_batch_count(self, unified_parsed):
+        xfer_types = self._parse_transfers(unified_parsed)
+        funding = [tid for tid, t in xfer_types.items() if t == "funding_batch"]
+        assert len(funding) >= 5, f"Expected >=5 funding batches, got {len(funding)}"
+
+    def test_fee_assessment_count(self, unified_parsed):
+        xfer_types = self._parse_transfers(unified_parsed)
+        fees = [tid for tid, t in xfer_types.items() if t == "fee"]
+        assert len(fees) >= 3, f"Expected >=3 fee assessments, got {len(fees)}"
+
+    def test_clearing_sweep_count(self, unified_parsed):
+        xfer_types = self._parse_transfers(unified_parsed)
+        sweeps = [tid for tid, t in xfer_types.items() if t == "clearing_sweep"]
+        assert len(sweeps) >= 2, f"Expected >=2 clearing sweeps, got {len(sweeps)}"
+
+    def test_ledger_postings_have_no_subledger(self, unified_parsed):
+        """Ledger-level postings (funding/fee/sweep) have subledger_account_id = NULL."""
+        postings = self._parse_postings(unified_parsed)
+        xfer_types = self._parse_transfers(unified_parsed)
+        for p in postings:
+            if p["subledger_account_id"] is None:
+                assert xfer_types[p["transfer_id"]] in (
+                    "funding_batch", "fee", "clearing_sweep",
+                ), f"Non-ledger transfer {p['transfer_id']} has NULL subledger"
+
+    def test_ledger_postings_have_valid_ledger_fk(self, ar_parsed, unified_parsed):
+        """All ledger-level postings FK to valid ar_ledger_accounts."""
+        ledger_ids = set()
+        for row in ar_parsed["ar_ledger_accounts"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            ledger_ids.add(parts[0])
+        postings = self._parse_postings(unified_parsed)
+        for p in postings:
+            if p["subledger_account_id"] is None:
+                assert p["ledger_account_id"] in ledger_ids, (
+                    f"Ledger posting {p['posting_id']} references unknown "
+                    f"ledger {p['ledger_account_id']}"
+                )
+
+    def test_funding_batch_net_zero(self, unified_parsed):
+        """Each funding batch nets to zero across all legs."""
+        postings = self._parse_postings(unified_parsed)
+        xfer_types = self._parse_transfers(unified_parsed)
+        by_xfer: dict[str, Decimal] = {}
+        for p in postings:
+            if xfer_types.get(p["transfer_id"]) == "funding_batch":
+                by_xfer[p["transfer_id"]] = (
+                    by_xfer.get(p["transfer_id"], Decimal("0"))
+                    + p["signed_amount"]
+                )
+        for tid, net in by_xfer.items():
+            assert net == 0, f"Funding batch {tid} net={net}, expected 0"
+
+    def test_fee_assessment_non_zero(self, unified_parsed):
+        """Each fee assessment is single-leg and non-zero."""
+        postings = self._parse_postings(unified_parsed)
+        xfer_types = self._parse_transfers(unified_parsed)
+        by_xfer: dict[str, list] = {}
+        for p in postings:
+            if xfer_types.get(p["transfer_id"]) == "fee":
+                by_xfer.setdefault(p["transfer_id"], []).append(p)
+        for tid, legs in by_xfer.items():
+            assert len(legs) == 1, f"Fee {tid} has {len(legs)} legs, expected 1"
+            assert legs[0]["signed_amount"] != 0, f"Fee {tid} has zero amount"
+
+    def test_clearing_sweep_net_zero(self, unified_parsed):
+        """Each clearing sweep has 2 ledger legs that net to zero."""
+        postings = self._parse_postings(unified_parsed)
+        xfer_types = self._parse_transfers(unified_parsed)
+        by_xfer: dict[str, list] = {}
+        for p in postings:
+            if xfer_types.get(p["transfer_id"]) == "clearing_sweep":
+                by_xfer.setdefault(p["transfer_id"], []).append(p)
+        for tid, legs in by_xfer.items():
+            assert len(legs) == 2, f"Sweep {tid} has {len(legs)} legs, expected 2"
+            net = sum(leg["signed_amount"] for leg in legs)
+            assert net == 0, f"Sweep {tid} net={net}, expected 0"
+            for leg in legs:
+                assert leg["subledger_account_id"] is None, (
+                    f"Sweep {tid} leg has subledger — expected ledger-only"
+                )
+
+    def test_funding_batch_has_mixed_levels(self, unified_parsed):
+        """Each funding batch has both ledger-level and sub-ledger-level legs."""
+        postings = self._parse_postings(unified_parsed)
+        xfer_types = self._parse_transfers(unified_parsed)
+        by_xfer: dict[str, dict[str, int]] = {}
+        for p in postings:
+            if xfer_types.get(p["transfer_id"]) == "funding_batch":
+                tid = p["transfer_id"]
+                by_xfer.setdefault(tid, {"ledger": 0, "subledger": 0})
+                if p["subledger_account_id"] is None:
+                    by_xfer[tid]["ledger"] += 1
+                else:
+                    by_xfer[tid]["subledger"] += 1
+        for tid, counts in by_xfer.items():
+            assert counts["ledger"] >= 1, f"Funding {tid} has no ledger-level legs"
+            assert counts["subledger"] >= 1, f"Funding {tid} has no sub-ledger legs"
 
 
 # ---------------------------------------------------------------------------
@@ -919,8 +1061,8 @@ def _find_sheet(analysis: dict, sheet_id: str) -> dict:
 
 
 class TestFilterGroups:
-    """Phase 5: shared date-range + 5 multi-selects + 4 Show-Only toggles +
-    5 drill-down parameter filters = 15 filter groups."""
+    """Shared date-range + 6 multi-selects + 4 Show-Only toggles +
+    5 drill-down parameter filters = 16 filter groups."""
 
     _EXPECTED_IDS = {
         "fg-ar-date-range",
@@ -929,6 +1071,7 @@ class TestFilterGroups:
         "fg-ar-transfer-status",
         "fg-ar-transaction-status",
         "fg-ar-transfer-type",
+        "fg-ar-posting-level",
         "fg-ar-balances-ledger-drift",
         "fg-ar-balances-subledger-drift",
         "fg-ar-balances-overdraft",

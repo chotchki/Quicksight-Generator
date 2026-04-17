@@ -315,7 +315,7 @@ class TestPrUnifiedTables:
 
     def test_posting_fk_to_subledger(self, parsed):
         subledger_ids = set(self._col(parsed["ar_subledger_accounts"], 0))
-        posting_accounts = set(self._col(parsed["posting"], 2))
+        posting_accounts = set(self._col(parsed["posting"], 3))
         assert posting_accounts.issubset(subledger_ids)
 
     def test_chain_integrity_payment_to_ext(self, parsed):
@@ -361,8 +361,8 @@ class TestPrUnifiedTables:
         for row in parsed["posting"]:
             parts = [p.strip().strip("'") for p in row.split(",")]
             tid = parts[1]
-            amount = Decimal(parts[3])
-            status = parts[5]
+            amount = Decimal(parts[4])
+            status = parts[6]
             postings_by_xfer.setdefault(tid, []).append((amount, status))
 
         for tid, legs in postings_by_xfer.items():
@@ -472,6 +472,7 @@ class TestCrossAppIntegrity:
         declared = {
             "sale", "settlement", "payment", "external_txn",
             "ach", "wire", "internal", "cash",
+            "funding_batch", "fee", "clearing_sweep",
         }
         actual = set(self._col(combined_parsed["transfer"], 2))
         assert actual.issubset(declared), (
@@ -488,13 +489,14 @@ class TestCrossAppIntegrity:
         assert posting_tids.issubset(transfer_ids)
 
     def test_all_posting_subledger_ids_exist(self, combined_parsed):
-        """Every posting.subledger_account_id exists in ar_subledger_accounts."""
+        """Every posting.subledger_account_id (when set) exists in ar_subledger_accounts."""
         subledger_ids = set(
             self._col(combined_parsed["ar_subledger_accounts"], 0)
         )
         posting_accounts = set(
-            self._col(combined_parsed["posting"], 2)
+            self._col(combined_parsed["posting"], 3)
         )
+        posting_accounts.discard("NULL")  # ledger-level postings
         assert posting_accounts.issubset(subledger_ids), (
             f"Unknown subledger accounts in postings: "
             f"{posting_accounts - subledger_ids}"

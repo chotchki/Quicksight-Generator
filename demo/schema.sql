@@ -331,7 +331,8 @@ CREATE TABLE transfer (
     transfer_type      VARCHAR(30)    NOT NULL
         CHECK (transfer_type IN (
             'sale', 'settlement', 'payment', 'external_txn',
-            'ach', 'wire', 'internal', 'cash'
+            'ach', 'wire', 'internal', 'cash',
+            'funding_batch', 'fee', 'clearing_sweep'
         )),
     origin             VARCHAR(30)    NOT NULL DEFAULT 'internal_initiated'
         CHECK (origin IN ('internal_initiated', 'external_force_posted')),
@@ -347,7 +348,8 @@ CREATE TABLE transfer (
 CREATE TABLE posting (
     posting_id           VARCHAR(100)   PRIMARY KEY,
     transfer_id          VARCHAR(100)   NOT NULL REFERENCES transfer(transfer_id),
-    subledger_account_id VARCHAR(100)   NOT NULL REFERENCES ar_subledger_accounts(subledger_account_id),
+    ledger_account_id    VARCHAR(100)   NOT NULL REFERENCES ar_ledger_accounts(ledger_account_id),
+    subledger_account_id VARCHAR(100)   REFERENCES ar_subledger_accounts(subledger_account_id),
     signed_amount        DECIMAL(14,2)  NOT NULL,
     posted_at            TIMESTAMP      NOT NULL,
     status               VARCHAR(20)    NOT NULL DEFAULT 'success'
@@ -357,7 +359,8 @@ CREATE TABLE posting (
 CREATE INDEX idx_transfer_parent     ON transfer(parent_transfer_id);
 CREATE INDEX idx_transfer_type       ON transfer(transfer_type);
 CREATE INDEX idx_posting_transfer    ON posting(transfer_id);
-CREATE INDEX idx_posting_account     ON posting(subledger_account_id, posted_at);
+CREATE INDEX idx_posting_ledger      ON posting(ledger_account_id, posted_at);
+CREATE INDEX idx_posting_subledger   ON posting(subledger_account_id, posted_at);
 
 
 -- Running Σ of successful postings per sub-ledger account, up to and
@@ -396,24 +399,39 @@ LEFT JOIN ar_computed_subledger_daily_balance computed
       AND computed.balance_date         = stored.balance_date;
 
 
--- Σ of sub-ledgers' stored balances per ledger per day. The ledger-level
--- reconciliation invariant: stored ledger balance should equal this sum.
+-- Σ of sub-ledgers' stored balances + Σ direct ledger postings per
+-- ledger per day. The ledger-level reconciliation invariant: stored
+-- ledger balance should equal this computed balance.
 CREATE VIEW ar_computed_ledger_daily_balance AS
 SELECT
     ldb.ledger_account_id,
     ldb.balance_date,
-    COALESCE(SUM(sdb.balance), 0) AS computed_balance
+    COALESCE(sub_totals.sub_balance, 0)
+        + COALESCE(direct_totals.direct_balance, 0) AS computed_balance
 FROM ar_ledger_daily_balances ldb
-LEFT JOIN ar_subledger_accounts s
-       ON s.ledger_account_id = ldb.ledger_account_id
-LEFT JOIN ar_subledger_daily_balances sdb
-       ON sdb.subledger_account_id = s.subledger_account_id
-      AND sdb.balance_date         = ldb.balance_date
-GROUP BY ldb.ledger_account_id, ldb.balance_date;
+LEFT JOIN (
+    SELECT s.ledger_account_id, sdb.balance_date,
+           SUM(sdb.balance) AS sub_balance
+    FROM ar_subledger_daily_balances sdb
+    JOIN ar_subledger_accounts s USING (subledger_account_id)
+    GROUP BY s.ledger_account_id, sdb.balance_date
+) sub_totals
+    ON sub_totals.ledger_account_id = ldb.ledger_account_id
+   AND sub_totals.balance_date      = ldb.balance_date
+LEFT JOIN (
+    SELECT p.ledger_account_id, p.posted_at::date AS balance_date,
+           SUM(p.signed_amount) AS direct_balance
+    FROM posting p
+    WHERE p.subledger_account_id IS NULL
+      AND p.status = 'success'
+    GROUP BY p.ledger_account_id, p.posted_at::date
+) direct_totals
+    ON direct_totals.ledger_account_id = ldb.ledger_account_id
+   AND direct_totals.balance_date      = ldb.balance_date;
 
 
--- Ledger-level drift: stored ledger balance vs Σ of sub-ledgers' stored
--- balances. Independent of whether the sub-ledger drift view shows issues.
+-- Ledger-level drift: stored ledger balance vs (Σ sub-ledger stored
+-- balances + Σ direct ledger postings). Independent of sub-ledger drift.
 CREATE VIEW ar_ledger_balance_drift AS
 SELECT
     stored.ledger_account_id,
@@ -445,7 +463,8 @@ SELECT
              THEN p.signed_amount ELSE 0 END)                         AS total_credit,
     COUNT(*)                                                          AS leg_count,
     SUM(CASE WHEN p.status = 'failed' THEN 1 ELSE 0 END)              AS failed_leg_count,
-    BOOL_OR(NOT s.is_internal)                                        AS has_external_leg,
+    BOOL_OR(CASE WHEN s.is_internal IS NULL THEN FALSE ELSE NOT s.is_internal END)
+                                                                      AS has_external_leg,
     CASE
         WHEN SUM(CASE WHEN p.status = 'success' THEN p.signed_amount ELSE 0 END) = 0
             THEN 'net_zero'
@@ -453,8 +472,8 @@ SELECT
     END                                                               AS net_zero_status
 FROM posting p
 JOIN transfer xfer ON xfer.transfer_id = p.transfer_id
-JOIN ar_subledger_accounts s ON s.subledger_account_id = p.subledger_account_id
-WHERE xfer.transfer_type IN ('ach', 'wire', 'internal', 'cash')
+LEFT JOIN ar_subledger_accounts s ON s.subledger_account_id = p.subledger_account_id
+WHERE xfer.transfer_type IN ('ach', 'wire', 'internal', 'cash', 'funding_batch', 'fee', 'clearing_sweep')
 GROUP BY p.transfer_id;
 
 
@@ -494,7 +513,7 @@ JOIN ar_subledger_accounts s ON s.subledger_account_id = p.subledger_account_id
 WHERE p.status = 'success'
   AND p.signed_amount < 0
   AND s.is_internal = TRUE
-  AND xfer.transfer_type IN ('ach', 'wire', 'internal', 'cash')
+  AND xfer.transfer_type IN ('ach', 'wire', 'internal', 'cash', 'funding_batch', 'fee', 'clearing_sweep')
 GROUP BY p.subledger_account_id, s.ledger_account_id, p.posted_at::date, xfer.transfer_type;
 
 

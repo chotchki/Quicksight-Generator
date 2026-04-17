@@ -168,6 +168,7 @@ class TestFilterGroups:
         "fg-ar-balances-subledger-drift",
         "fg-ar-balances-overdraft",
         "fg-ar-transactions-failed",
+        "fg-ar-posting-level",
         "fg-ar-drill-subledger-on-txn",
         "fg-ar-drill-transfer-on-txn",
         "fg-ar-drill-ledger-on-balances-subledger",
