@@ -323,11 +323,11 @@ PR sub-ledger accounts (`pr-sub-{merchant}`, `pr-external-customer-pool`, `pr-ex
 
 ## Phase C.8 — Deploy + e2e + release
 
-- [ ] C.8.1 `demo apply --all` — schema + seed applied.
-- [ ] C.8.2 `deploy --all --generate` — all resources CREATION_SUCCESSFUL.
-- [ ] C.8.3 `cleanup --dry-run` — no stale resources.
+- [x] C.8.1 `demo apply --all` — schema + seed applied.
+- [x] C.8.2 `deploy --all --generate` — all resources CREATION_SUCCESSFUL.
+- [x] C.8.3 `cleanup --dry-run` — no stale resources.
 - [ ] C.8.4 `./run_e2e.sh --parallel 4` — full green.
-- [ ] C.8.5 `RELEASE_NOTES.md` — v1.4.0 entry.
+- [x] C.8.5 `RELEASE_NOTES.md` — v1.4.0 entry.
 - [ ] C.8.6 Tag v1.4.0, push.
 
 ---

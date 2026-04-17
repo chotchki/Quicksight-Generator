@@ -1,5 +1,30 @@
 # Release Notes
 
+## v1.4.0
+
+### Phase C — Ledger-level direct postings
+
+Ledger accounts can now receive postings directly, not just aggregate sub-ledger balances. The drift invariant changes from 2-input (`stored ledger balance vs Σ sub-ledger balances`) to 3-input (`stored ledger balance vs Σ direct ledger postings + Σ sub-ledger stored balances`), catching discrepancies that were previously invisible.
+
+### What landed
+
+- **Schema changes** — `posting.ledger_account_id NOT NULL` (every posting knows its ledger); `posting.subledger_account_id` now nullable (NULL for ledger-level postings). Three new transfer types: `funding_batch`, `fee`, `clearing_sweep`.
+- **Ledger-level demo scenarios** — 5 funding batches (1 ledger credit + N sub-ledger debits, net zero), 3 fee assessments (single ledger debit, intentionally non-zero — test data for exceptions), 2 clearing sweeps (2 ledger postings, net zero). Daily balance computation updated to incorporate direct postings.
+- **3-input drift formula** — `ar_computed_ledger_daily_balance` view rewritten with subqueries: sub-ledger stored balance total + direct ledger posting total. Sub-ledger drift is unchanged.
+- **Transactions dataset expanded** — `posting_level` column (`'Ledger'` / `'Sub-Ledger'`) added to contract and SQL. JOIN on `posting.ledger_account_id`, LEFT JOIN on sub-ledger. `COALESCE(subledger_name, ledger_name)` for display.
+- **Posting Level filter** — multi-select dropdown on Transactions tab lets users isolate ledger-level vs sub-ledger activity.
+- **AR type filter expanded** — `WHERE transfer_type IN ('ach', 'wire', 'internal', 'cash', 'funding_batch', 'fee', 'clearing_sweep')` across all AR views and datasets.
+- **9 scenario coverage tests** — `TestLedgerPostingScenarios` in `test_account_recon.py` verifying counts, NULL subledger, ledger FK, funding net-zero, fee non-zero, sweep net-zero, mixed-level funding.
+- **PR/AR scope isolation verified** — zero transfer type overlap between apps; `pr-merchant-ledger` absent from `ar_ledger_daily_balances`.
+
+### Notes
+
+- **310 unit/integration tests** (was 301), all green.
+- `demo apply --all` and `deploy --all --generate` verified against live AWS. Both analyses `CREATION_SUCCESSFUL`. `cleanup --dry-run` shows no stale resources.
+- No dataset ID changes from v1.3.0; safe in-place redeploy.
+
+---
+
 ## v1.3.0
 
 ### Phase B — Unified transfer schema + dataset column contracts
