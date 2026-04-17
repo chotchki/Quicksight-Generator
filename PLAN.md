@@ -348,3 +348,229 @@ PR sub-ledger accounts (`pr-sub-{merchant}`, `pr-external-customer-pool`, `pr-ex
 - **Generator backfill scope for `ledger_account_id`**: Both AR and PR demo data generators must populate `ledger_account_id` on every posting (C.1.4). AR postings derive it from the sub-ledger's FK; PR postings derive it from `pr-merchant-ledger`. Must happen in C.1 before any view depends on the column.
 - **AR/PR scope leakage**: PR's `pr-merchant-ledger` is a real ledger account. If it appears in `ar_ledger_daily_balances`, the AR drift views would try to compute drift for it. Ensure the demo data generator does NOT emit stored ledger balances for `pr-merchant-ledger`.
 - **Demo determinism**: Adding ~10 new transfers with ledger-level postings changes the `random.Random(42)` sequence. If ledger-level transfer generation happens before existing transfers in the generator, it shifts all downstream IDs. Insert at the end of the generation sequence to minimize churn.
+
+---
+---
+
+# PLAN — Phase D: Aging, origin wiring, and reconciliation pattern
+
+Goal: Add time-based urgency (aging buckets) to every exception check across both apps. Wire the `origin` attribute (deferred since Phase A) into AR filters and exception awareness. Standardize the visual pattern so every check has KPI + detail table + aging breakdown. Let a `ReconciliationCheck` code abstraction emerge from the work — don't pre-design it.
+
+This phase touches both apps' exception surfaces but does NOT merge the PR Payment Reconciliation tab into the AR Exceptions tab — that's a persona decision for Phase E, informed by the training stories the user is writing in parallel.
+
+Out of scope for Phase D:
+- PR dataset cutover to unified schema (still deferred from B.6, tracked in SPEC.md).
+- Persona dashboard split (Phase E). Both apps keep their current tab structure.
+- Merging PR Payment Recon mutual-filter tables into AR Exceptions. The mutual-filter UX stays; aging is added to it.
+- Training story integration (user working in parallel in `docs/`).
+- As-of date UI control. Schema timestamps support it; queries still use CURRENT_DATE.
+
+Conventions:
+- Branch: `phase-d-aging-origin`, cut from `main`. One sub-phase = one commit; cumulative release at the end.
+- `demo apply` continues to drop-and-create. No staged migrations.
+- `cleanup --yes` after deploy handles stale tagged resources.
+- After each sub-phase, run `.venv/bin/pytest`. After D.5 and D.9, run `./run_e2e.sh --parallel 4`.
+- Demo data MUST stay deterministic (`random.Random(42)`); tests depend on byte-identical output where unchanged.
+- Every sheet description and every visual subtitle stays present.
+
+---
+
+## Current exception check inventory
+
+**Before** writing code, catalog what exists. Each check has a dataset, a KPI visual, and a detail table. Some also have timelines or drill-down actions.
+
+### AR Exceptions (5 checks, all on Exceptions tab)
+| Check | Dataset | Has KPI | Has Table | Has Timeline | Has Aging | Has Drill |
+|-------|---------|---------|-----------|-------------|-----------|-----------|
+| Ledger drift | `ar-ledger-balance-drift` | Yes | Yes | Yes | No | Yes → Balances |
+| Sub-ledger drift | `ar-subledger-balance-drift` | Yes | Yes | Yes | No | Yes → Transactions |
+| Non-zero transfers | `ar-non-zero-transfers` | Yes | Yes | No | No | Yes → Transactions |
+| Limit breach | `ar-limit-breach` | Yes | Yes | No | No | Yes → Transactions (multi-param) |
+| Overdraft | `ar-overdraft` | Yes | Yes | No | No | Yes → Transactions (multi-param) |
+
+### PR Exceptions (5 checks, all on Exceptions & Alerts tab)
+| Check | Dataset | Has KPI | Has Table | Has Timeline | Has Aging | Has Drill |
+|-------|---------|---------|-----------|-------------|-----------|-----------|
+| Unsettled sales | `settlement-exceptions` | Yes | Yes | No | `days_outstanding` | No |
+| Returned payments | `payment-returns` | Yes | Yes | No | `days_outstanding` | No |
+| Sale↔settlement mismatch | `sale-settlement-mismatch` | Yes | Yes | No | `days_outstanding` | No |
+| Settlement↔payment mismatch | `settlement-payment-mismatch` | Yes | Yes | No | `days_outstanding` | No |
+| Unmatched external txns | `unmatched-external-txns` | Yes | Yes | No | `days_outstanding` | No |
+
+### PR Payment Recon (1 special case, own tab)
+| Check | Dataset | Has KPI | Has Mutual Filter | Has Aging | Has Late Logic |
+|-------|---------|---------|-------------------|-----------|----------------|
+| External↔payment match | `payment-recon` | Yes (late count) | Yes (both tables + bar) | `days_outstanding` | `late_default_days` threshold |
+
+---
+
+## Phase D.0 — Pin decisions
+
+STOP here. Get alignment before writing code.
+
+- [x] D.0.1 **Aging bucket boundaries?** → **5 hardcoded buckets:** `0–1 day`, `2–3 days`, `4–7 days`, `8–30 days`, `>30 days`. Configurable boundaries deferred — marginal value for the complexity.
+- [x] D.0.2 **Aging bucket visual: bar chart, or column in existing tables, or both?** → **Both.** `aging_bucket` column in each exception dataset (sortable/filterable in detail tables) AND a horizontal bar chart showing count-by-bucket per check.
+- [x] D.0.3 **Origin wiring scope?** → **(a) + (b):** Origin multi-select filter on Transactions + Exceptions tabs, plus `origin` column on non-zero-transfer and limit-breach detail tables. Option (c) — origin-aware exception awareness (Show-Only toggle, conditional formatting) — deferred to Phase E as a training story. The origin concept will be a key teaching point; don't lose the thread.
+- [x] D.0.4 **ReconciliationCheck abstraction: when to extract?** → **Continuous assessment, not a checkpoint gate.** Think about the pattern after each sub-phase; extract whenever it's obviously right, not at a predetermined stop. D.5 becomes "extract if ready" rather than "stop and decide."
+- [x] D.0.5 **PR Payment Recon: add aging bar chart?** → **Yes.** Aging bar stacked by match_status on the Payment Recon tab. Mutual-filter tables unchanged.
+- [x] D.0.6 **PR exception drill-downs?** → **Yes, if reasonable effort.** Phase E persona work will rework the layout, so keep the drill-down implementation straightforward — don't over-invest in the current tab structure. If any single drill is disproportionately complex (e.g., requires new parameters cascading across 3+ sheets), skip it and note for E.
+- [x] D.0.7 **Do AR exception datasets need `origin`? + Intake feed shape question.** → **Yes, add `origin` to non-zero-transfer and limit-breach datasets.** Skip for drift/overdraft (no meaningful origin on a balance snapshot).
+
+  **On the intake feed question:** This is the right question at the right time. Today we have two layers of contract:
+  - **Dataset column contract** (Phase B) — what the *reporting layer* expects. Defined in `DatasetContract` per dataset. The customer swaps SQL; the column list stays fixed.
+  - **Schema contract** (implicit) — what the *database tables* must contain for the demo SQL to work. Currently implicit in `demo/schema.sql`.
+
+  What's missing is a **third layer: the intake contract** — what an upstream system's feed must provide for the reporting layer to produce meaningful results. For `origin` specifically: the upstream system needs to tag each transfer as `internal_initiated` or `external_force_posted`. If it doesn't, the column defaults to `internal_initiated` and the origin filter/visuals are useless.
+
+  **Recommendation for Phase D:** Don't build the intake contract framework now — that's Phase E/post-E work (it feeds directly into the training stories and the customer onboarding guide). Instead:
+  - Add `origin` to the datasets that can carry it (D.1).
+  - Document in each dataset's contract notes which columns are *feed-dependent* vs *computed*. This is a lightweight annotation, not a new abstraction.
+  - Track "define intake contract per feed" as deferred work in SPEC.md alongside the training story catalog.
+  
+  The training stories the user is writing in `docs/` will naturally define what the intake feeds look like by example — "Farmers Exchange Bank receives an ACH wire from First National, tagged as `external_force_posted`..." That narrative IS the intake contract, told as a story rather than a schema spec.
+
+---
+
+## Phase D.1 — Origin filter wiring (AR)
+
+Wire the `origin` attribute into AR filters and exception detail. Deferred since Phase A — the column exists on `ar-transactions` but has no filter.
+
+- [ ] D.1.1 Add `_origin_filter_group()` in `account_recon/filters.py`: multi-select CategoryFilter on `DS_AR_TRANSACTIONS`, column `origin`, scoped to Transactions + Exceptions tabs (cross-dataset).
+- [ ] D.1.2 Add origin filter control to `build_transactions_controls()` and `build_exceptions_controls()`.
+- [ ] D.1.3 Add `origin` column to non-zero-transfer dataset contract + SQL (join through `transfer.origin`). Add to detail table visual.
+- [ ] D.1.4 Add `origin` column to limit-breach dataset contract + SQL (join through `transfer.origin` via posting). Add to detail table visual.
+- [ ] D.1.5 Update filter group ID expected sets in unit + e2e tests.
+- [ ] D.1.6 `pytest` clean.
+- [ ] D.1.7 Commit — `Phase D.1: wire origin into AR filters and exception detail`.
+
+---
+
+## Phase D.2 — AR exception aging (5 checks)
+
+Add `days_outstanding` and `aging_bucket` computed columns to all 5 AR exception datasets. Add aging bar chart visuals to the Exceptions tab.
+
+- [ ] D.2.1 Add `days_outstanding` and `aging_bucket` columns to `LEDGER_BALANCE_DRIFT_CONTRACT` and dataset SQL: `(CURRENT_DATE - balance_date::date) AS days_outstanding`, plus CASE expression for aging bucket.
+- [ ] D.2.2 Same for `SUBLEDGER_BALANCE_DRIFT_CONTRACT`.
+- [ ] D.2.3 Same for `NON_ZERO_TRANSFERS_CONTRACT` (using `first_posted_at`).
+- [ ] D.2.4 Same for `LIMIT_BREACH_CONTRACT` (using `activity_date`).
+- [ ] D.2.5 Same for `OVERDRAFT_CONTRACT` (using `balance_date`).
+- [ ] D.2.6 Add aging bar chart visual for each check section on the Exceptions tab. Pattern: horizontal bar chart, category = `aging_bucket`, value = COUNT(*), sorted by bucket order. Subtitle explains the bucket boundaries.
+- [ ] D.2.7 Add `aging_bucket` column to each detail table visual (sortable, after the date column).
+- [ ] D.2.8 Update dataset contract tests.
+- [ ] D.2.9 `pytest` clean.
+- [ ] D.2.10 Commit — `Phase D.2: aging buckets on AR exception checks`.
+
+---
+
+## Phase D.3 — PR exception aging (5 checks)
+
+PR exceptions already have `days_outstanding`. Add `aging_bucket` computed column and aging bar chart visuals to the Exceptions & Alerts tab.
+
+- [ ] D.3.1 Add `aging_bucket` CASE column to all 5 PR exception dataset SQLs (using existing `days_outstanding` or computing from the relevant date column).
+- [ ] D.3.2 Update all 5 PR exception `DatasetContract`s with `aging_bucket` column.
+- [ ] D.3.3 Add aging bar chart visual for each check section on the PR Exceptions & Alerts tab. Same pattern as AR (D.2.6).
+- [ ] D.3.4 Add `aging_bucket` column to each PR exception detail table visual.
+- [ ] D.3.5 Update dataset contract tests.
+- [ ] D.3.6 `pytest` clean.
+- [ ] D.3.7 Commit — `Phase D.3: aging buckets on PR exception checks`.
+
+---
+
+## Phase D.4 — PR Payment Recon aging
+
+Add aging bucket breakdown to the Payment Reconciliation tab without disrupting the mutual-filter tables.
+
+- [ ] D.4.1 Add `aging_bucket` CASE column to `PAYMENT_RECON_CONTRACT` and SQL (using `days_outstanding`).
+- [ ] D.4.2 Add aging bar chart on the Payment Recon tab: horizontal bar, category = `aging_bucket`, stacked by `match_status`. Shows at a glance where unmatched external transactions are aging.
+- [ ] D.4.3 Existing `recon-bar-by-system` (match status by external system) and mutual-filter tables unchanged.
+- [ ] D.4.4 Update dataset contract tests.
+- [ ] D.4.5 `pytest` clean.
+- [ ] D.4.6 Commit — `Phase D.4: aging bar chart on PR Payment Recon tab`.
+
+---
+
+## Phase D.5 — ReconciliationCheck pattern extraction (if ready)
+
+Continuous assessment throughout D.1–D.4. By this point, the pattern should either be obvious or clearly not worth extracting. This sub-phase is "extract if ready" — not a gate.
+
+- [ ] D.5.1 Review the shape of each check after D.2–D.4: dataset SQL pattern, contract columns, visual set (KPI + aging bar + detail table + optional timeline), drill-down action pattern.
+- [ ] D.5.2 Expected groupings (may have shifted during implementation):
+  - **"Left ≠ right on a key, with a date"**: drift, non-zero, mismatch.
+  - **"Row matches condition on a key, with a date"**: overdraft, returned payment, limit breach, unsettled sale.
+  - **"Left not paired with right"**: unmatched external txn, payment recon late.
+- [ ] D.5.3 If the pattern is clean: extract a `ReconciliationCheck` helper in `common/` that generates the standard visual set (KPI + aging bar + detail table) from a minimal spec. Refactor AR checks onto it. PR checks stay as-is (legacy tables; refactoring is Phase E).
+- [ ] D.5.4 If the pattern is forced or doesn't cover all shapes: skip extraction, note what didn't fit, move on. The per-check implementations from D.2–D.4 are already consistent — that's sufficient.
+- [ ] D.5.5 `pytest` clean — no behavior change from refactor.
+- [ ] D.5.6 Commit — `Phase D.5: ReconciliationCheck pattern extraction` (or `Phase D.5: assessed, no extraction warranted`).
+
+---
+
+## Phase D.6 — Visual consistency pass
+
+Ensure every exception check across both apps follows the same visual pattern: KPI → aging bar → detail table (→ optional timeline, → optional drill).
+
+- [ ] D.6.1 Audit each check's visual set against the target pattern. Fill gaps:
+  - PR exceptions: add KPIs for the 3 mismatch/unmatched checks if missing (currently only unsettled + returns have KPIs).
+  - AR exceptions: non-zero, limit breach, and overdraft don't have timelines. Assess whether adding timelines (date-aggregated bar chart, same as drift timelines) adds signal. If yes, add; if noise, skip.
+- [ ] D.6.2 Standardize subtitles across all exception visuals — each should explain what the check detects and what action the user should take.
+- [ ] D.6.3 Update Getting Started sheet descriptions for both apps to mention aging.
+- [ ] D.6.4 `pytest` clean.
+- [ ] D.6.5 Commit — `Phase D.6: visual consistency pass across exception checks`.
+
+---
+
+## Phase D.7 — PR exception drill-downs (if D.0.6 approved)
+
+Add click-to-drill actions on PR exception detail tables, matching the AR pattern.
+
+- [ ] D.7.1 Unsettled sale table: click `sale_id` → Sales tab, filtered to that sale (or merchant).
+- [ ] D.7.2 Returned payment table: click `payment_id` → Payments tab, filtered.
+- [ ] D.7.3 Sale↔settlement mismatch: click `settlement_id` → Settlements tab, filtered.
+- [ ] D.7.4 Settlement↔payment mismatch: click `payment_id` → Payments tab, filtered.
+- [ ] D.7.5 Unmatched external txn: click `transaction_id` → Payment Recon tab, sets `pExternalTransactionId`.
+- [ ] D.7.6 Add drill parameter + filter group for each new action.
+- [ ] D.7.7 Update clickability styling on drilled columns (accent text + tint background for right-click, accent text for left-click).
+- [ ] D.7.8 `pytest` clean — visual action/parameter tests updated.
+- [ ] D.7.9 Commit — `Phase D.7: PR exception drill-down actions`.
+
+---
+
+## Phase D.8 — Tests + docs sweep
+
+- [ ] D.8.1 Aging bucket coverage tests in `test_demo_data.py`: assert each exception dataset produces rows in multiple aging buckets (not all in one bucket — demo data should span the demo period enough to cover the full range).
+- [ ] D.8.2 Origin filter coverage: assert `origin` values (`internal_initiated`, `external_force_posted`) appear in the exception datasets that carry it.
+- [ ] D.8.3 `CLAUDE.md` — update AR section: origin filter, aging buckets, exception visual pattern.
+- [ ] D.8.4 `CLAUDE.md` — update PR section: aging buckets on exceptions, drill-down actions.
+- [ ] D.8.5 `SPEC.md` — update reconciliation scope description: aging awareness, origin wiring.
+- [ ] D.8.6 `RELEASE_NOTES.md` — v1.5.0 entry.
+- [ ] D.8.7 `pytest` clean.
+- [ ] D.8.8 Commit — `Phase D.8: tests + docs sweep`.
+
+---
+
+## Phase D.9 — Deploy + e2e + release
+
+- [ ] D.9.1 `demo apply --all` — schema + seed applied.
+- [ ] D.9.2 `deploy --all --generate` — all resources CREATION_SUCCESSFUL.
+- [ ] D.9.3 `cleanup --dry-run` — no stale resources.
+- [ ] D.9.4 `./run_e2e.sh --parallel 4` — full green.
+- [ ] D.9.5 Tag v1.5.0, push.
+
+---
+
+## Decisions to make in flight
+
+- **Aging bucket sort order in bar charts.** QuickSight sorts categories alphabetically by default. `0–1 day` sorts before `2–3 days` which sorts before `>30 days` — might need a sort-order column or explicit category ordering. Investigate during D.2.6.
+- **Aging bucket on transfer-level vs posting-level dates.** Non-zero transfers age from `first_posted_at`; drift ages from `balance_date`; limit breach from `activity_date`. Each check uses its own natural date. Confirm during implementation that these dates produce meaningful aging for the demo data period (~40 days).
+- **ReconciliationCheck: code-only or also visual?** The SPEC describes `(left, right, key, sla)`. That's a data pattern. Should the abstraction also generate the standard visual set (KPI + bar + table)? If yes, it's a bigger but more valuable abstraction. Assess in D.5.
+- **PR mismatch KPIs.** Currently only unsettled sales and returned payments have KPIs on the PR Exceptions tab. The 3 mismatch/unmatched checks have tables but no KPIs. Adding KPIs is straightforward but adds visual density. Assess in D.6.
+
+---
+
+## Risks
+
+- **Aging bucket column adds width to every exception table.** Tables are already wide; one more column per check. Mitigate by placing `aging_bucket` right after the date column and keeping the bucket labels short.
+- **Demo data date range.** The demo spans ~40 days. If most exceptions land in the same aging bucket (because the data is generated uniformly across the period), the aging bar charts won't show a useful distribution. May need to weight demo exception generation toward recent dates to create a realistic aging curve. Assess during D.2 and adjust generator if needed.
+- **Origin on exception datasets requires joining through transfer.** Non-zero transfers already join `ar_transfer_summary` (which has `transfer_type` but not `origin`). Adding `origin` may require joining the `transfer` table into the view or adding `origin` to the `ar_transfer_summary` view. Check view definitions during D.1.
+- **ReconciliationCheck extraction may not be worth it.** The 11 checks have 3 different shapes (left≠right, row-matches-condition, unparied). If the abstraction doesn't cleanly express all three, it's worse than the per-check code. D.5 is explicitly assessment-first — skip extraction if the fit is poor.
+- **PR drill-downs (D.7) add ~5 new parameters and filter groups to the PR analysis.** This is a meaningful structural change. If the user wants to keep PR stable for Phase E persona work, D.7 could be deferred. Ask in D.0.6.
