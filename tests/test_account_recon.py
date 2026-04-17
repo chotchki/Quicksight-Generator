@@ -1072,6 +1072,7 @@ class TestFilterGroups:
         "fg-ar-transaction-status",
         "fg-ar-transfer-type",
         "fg-ar-posting-level",
+        "fg-ar-origin",
         "fg-ar-balances-ledger-drift",
         "fg-ar-balances-subledger-drift",
         "fg-ar-balances-overdraft",

@@ -90,6 +90,7 @@ TRANSFER_SUMMARY_CONTRACT = DatasetContract(columns=[
     ColumnSpec("net_zero_status", "STRING"),
     ColumnSpec("scope_type", "STRING"),
     ColumnSpec("transfer_type", "STRING"),
+    ColumnSpec("origin", "STRING"),
     ColumnSpec("memo", "STRING"),
 ])
 
@@ -101,6 +102,7 @@ NON_ZERO_TRANSFERS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("total_credit", "DECIMAL"),
     ColumnSpec("leg_count", "INTEGER"),
     ColumnSpec("failed_leg_count", "INTEGER"),
+    ColumnSpec("origin", "STRING"),
     ColumnSpec("memo", "STRING"),
 ])
 
@@ -257,6 +259,7 @@ SELECT
     CASE WHEN has_external_leg THEN 'cross_scope' ELSE 'internal_only' END
         AS scope_type,
     transfer_type,
+    origin,
     memo
 FROM ar_transfer_summary"""
     return build_dataset(
@@ -276,6 +279,7 @@ SELECT
     total_credit,
     leg_count,
     failed_leg_count,
+    origin,
     memo
 FROM ar_transfer_summary
 WHERE net_zero_status = 'not_net_zero'"""
