@@ -885,6 +885,11 @@ def build_exceptions_visuals() -> list[Visual]:
                                 "settlement_date",
                             ),
                             _unagg_field(
+                                "tbl-ss-days",
+                                DS_SALE_SETTLEMENT_MISMATCH,
+                                "days_outstanding",
+                            ),
+                            _unagg_field(
                                 "tbl-ss-aging",
                                 DS_SALE_SETTLEMENT_MISMATCH,
                                 "aging_bucket",
@@ -943,6 +948,11 @@ def build_exceptions_visuals() -> list[Visual]:
                                 "tbl-sp-date",
                                 DS_SETTLEMENT_PAYMENT_MISMATCH,
                                 "payment_date",
+                            ),
+                            _unagg_field(
+                                "tbl-sp-days",
+                                DS_SETTLEMENT_PAYMENT_MISMATCH,
+                                "days_outstanding",
                             ),
                             _unagg_field(
                                 "tbl-sp-aging",
