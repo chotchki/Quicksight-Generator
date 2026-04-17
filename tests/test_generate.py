@@ -344,8 +344,8 @@ class TestExceptionTables:
             s for s in analysis["Definition"]["Sheets"]
             if s["SheetId"] == "sheet-exceptions"
         )
-        # 2 KPIs + 2 original tables + 3 new mismatch tables
-        assert len(exc_sheet["Visuals"]) == 7
+        # 2 KPIs + 5 tables + 5 aging bars
+        assert len(exc_sheet["Visuals"]) == 12
 
 
 class TestOptionalMetadataFilters:

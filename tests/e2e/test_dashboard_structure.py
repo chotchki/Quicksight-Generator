@@ -62,7 +62,7 @@ class TestVisuals:
         "Sales Overview": 5,
         "Settlements": 4,
         "Payments": 4,
-        "Exceptions & Alerts": 7,
+        "Exceptions & Alerts": 12,
         "Payment Reconciliation": 6,
     }
 

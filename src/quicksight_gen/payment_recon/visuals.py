@@ -132,6 +132,41 @@ def _unagg_field(field_id: str, ds: str, col_name: str) -> dict:
     }
 
 
+def _aging_bar(
+    visual_id: str,
+    title: str,
+    subtitle: str,
+    dataset_id: str,
+    count_column: str,
+) -> Visual:
+    """Horizontal bar chart showing exception count by aging bucket."""
+    return Visual(
+        BarChartVisual=BarChartVisual(
+            VisualId=visual_id,
+            Title=_title(title),
+            Subtitle=_subtitle(subtitle),
+            ChartConfiguration=BarChartConfiguration(
+                FieldWells=BarChartFieldWells(
+                    BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
+                        Category=[_dim(f"{visual_id}-dim",
+                                       dataset_id,
+                                       "aging_bucket")],
+                        Values=[_measure_count(
+                            f"{visual_id}-count",
+                            dataset_id,
+                            count_column,
+                        )],
+                    )
+                ),
+                Orientation="HORIZONTAL",
+                BarsArrangement="CLUSTERED",
+                CategoryLabelOptions=_axis_label("Age"),
+                ValueLabelOptions=_axis_label("Count"),
+            ),
+        )
+    )
+
+
 def _drill_down_action(
     action_id: str,
     name: str,
@@ -766,6 +801,11 @@ def build_exceptions_visuals() -> list[Visual]:
                                 DS_SETTLEMENT_EXCEPTIONS,
                                 "days_outstanding",
                             ),
+                            _unagg_field(
+                                "tbl-exc-aging",
+                                DS_SETTLEMENT_EXCEPTIONS,
+                                "aging_bucket",
+                            ),
                         ]
                     )
                 ),
@@ -818,6 +858,16 @@ def build_exceptions_visuals() -> list[Visual]:
                                 DS_PAYMENT_RETURNS,
                                 "return_reason",
                             ),
+                            _unagg_field(
+                                "tbl-ret-days",
+                                DS_PAYMENT_RETURNS,
+                                "days_outstanding",
+                            ),
+                            _unagg_field(
+                                "tbl-ret-aging",
+                                DS_PAYMENT_RETURNS,
+                                "aging_bucket",
+                            ),
                         ]
                     )
                 ),
@@ -867,6 +917,11 @@ def build_exceptions_visuals() -> list[Visual]:
                                 "tbl-ss-date",
                                 DS_SALE_SETTLEMENT_MISMATCH,
                                 "settlement_date",
+                            ),
+                            _unagg_field(
+                                "tbl-ss-aging",
+                                DS_SALE_SETTLEMENT_MISMATCH,
+                                "aging_bucket",
                             ),
                         ]
                     )
@@ -923,6 +978,11 @@ def build_exceptions_visuals() -> list[Visual]:
                                 DS_SETTLEMENT_PAYMENT_MISMATCH,
                                 "payment_date",
                             ),
+                            _unagg_field(
+                                "tbl-sp-aging",
+                                DS_SETTLEMENT_PAYMENT_MISMATCH,
+                                "aging_bucket",
+                            ),
                         ]
                     )
                 ),
@@ -973,11 +1033,53 @@ def build_exceptions_visuals() -> list[Visual]:
                                 DS_UNMATCHED_EXTERNAL_TXNS,
                                 "days_outstanding",
                             ),
+                            _unagg_field(
+                                "tbl-ue-aging",
+                                DS_UNMATCHED_EXTERNAL_TXNS,
+                                "aging_bucket",
+                            ),
                         ]
                     )
                 ),
             ),
         )
+    )
+
+    # Aging bar charts — one per exception check.
+    aging_unsettled = _aging_bar(
+        "exceptions-aging-unsettled",
+        "Unsettled Sales by Age",
+        "How long unsettled sales have been outstanding",
+        DS_SETTLEMENT_EXCEPTIONS,
+        "sale_id",
+    )
+    aging_returns = _aging_bar(
+        "exceptions-aging-returns",
+        "Returned Payments by Age",
+        "How long returned payments have been outstanding",
+        DS_PAYMENT_RETURNS,
+        "payment_id",
+    )
+    aging_sale_stl = _aging_bar(
+        "exceptions-aging-sale-stl-mismatch",
+        "Sale ↔ Settlement Mismatch by Age",
+        "How long sale-settlement mismatches have been outstanding",
+        DS_SALE_SETTLEMENT_MISMATCH,
+        "settlement_id",
+    )
+    aging_stl_pay = _aging_bar(
+        "exceptions-aging-stl-pay-mismatch",
+        "Settlement ↔ Payment Mismatch by Age",
+        "How long settlement-payment mismatches have been outstanding",
+        DS_SETTLEMENT_PAYMENT_MISMATCH,
+        "payment_id",
+    )
+    aging_unmatched = _aging_bar(
+        "exceptions-aging-unmatched-ext",
+        "Unmatched External Txns by Age",
+        "How long unmatched external transactions have been outstanding",
+        DS_UNMATCHED_EXTERNAL_TXNS,
+        "transaction_id",
     )
 
     return [
@@ -988,4 +1090,9 @@ def build_exceptions_visuals() -> list[Visual]:
         table_sale_stl_mismatch,
         table_stl_pay_mismatch,
         table_unmatched_ext,
+        aging_unsettled,
+        aging_returns,
+        aging_sale_stl,
+        aging_stl_pay,
+        aging_unmatched,
     ]
