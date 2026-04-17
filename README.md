@@ -1,6 +1,7 @@
 # QuickSight Analysis Generator
 
 [![CI](https://github.com/chotchki/Quicksight-Generator/actions/workflows/ci.yml/badge.svg)](https://github.com/chotchki/Quicksight-Generator/actions/workflows/ci.yml)
+[![Coverage](https://raw.githubusercontent.com/chotchki/Quicksight-Generator/badges/coverage-badge.svg)](https://github.com/chotchki/Quicksight-Generator/actions/workflows/ci.yml)
 
 Python tool that programmatically generates AWS QuickSight JSON definitions (theme, datasets, analyses, dashboards) and deploys them via boto3. It currently ships two independent QuickSight apps:
 

@@ -24,5 +24,41 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
-      - name: Run tests
-        run: pytest
+      - name: Run tests with coverage
+        run: pytest --cov=quicksight_gen --cov-report=xml --cov-report=term
+
+  coverage-badge:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]" genbadge[coverage]
+
+      - name: Generate coverage XML
+        run: pytest --cov=quicksight_gen --cov-report=xml
+
+      - name: Generate badge SVG
+        run: genbadge coverage -i coverage.xml -o coverage-badge.svg
+
+      - name: Push badge to badges branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin badges || true
+          git checkout --orphan badges-tmp
+          git rm -rf .
+          mv coverage-badge.svg .
+          git add coverage-badge.svg
+          git commit -m "Update coverage badge"
+          git push origin badges-tmp:badges --force
