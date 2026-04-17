@@ -17,6 +17,19 @@ from quicksight_gen.common.dataset_contract import (
 from quicksight_gen.common.models import DataSet
 
 
+def _aging_columns(date_expr: str) -> str:
+    """SQL fragment for days_outstanding + aging_bucket from a date expression."""
+    return f"""\
+    (CURRENT_DATE - {date_expr}::date) AS days_outstanding,
+    CASE
+        WHEN (CURRENT_DATE - {date_expr}::date) <= 1 THEN '1: 0-1 day'
+        WHEN (CURRENT_DATE - {date_expr}::date) <= 3 THEN '2: 2-3 days'
+        WHEN (CURRENT_DATE - {date_expr}::date) <= 7 THEN '3: 4-7 days'
+        WHEN (CURRENT_DATE - {date_expr}::date) <= 30 THEN '4: 8-30 days'
+        ELSE '5: >30 days'
+    END AS aging_bucket"""
+
+
 # ---------------------------------------------------------------------------
 # Contracts
 # ---------------------------------------------------------------------------
@@ -63,6 +76,8 @@ LEDGER_BALANCE_DRIFT_CONTRACT = DatasetContract(columns=[
     ColumnSpec("computed_balance", "DECIMAL"),
     ColumnSpec("drift", "DECIMAL"),
     ColumnSpec("drift_status", "STRING"),
+    ColumnSpec("days_outstanding", "INTEGER"),
+    ColumnSpec("aging_bucket", "STRING"),
 ])
 
 SUBLEDGER_BALANCE_DRIFT_CONTRACT = DatasetContract(columns=[
@@ -77,6 +92,8 @@ SUBLEDGER_BALANCE_DRIFT_CONTRACT = DatasetContract(columns=[
     ColumnSpec("drift", "DECIMAL"),
     ColumnSpec("drift_status", "STRING"),
     ColumnSpec("overdraft_status", "STRING"),
+    ColumnSpec("days_outstanding", "INTEGER"),
+    ColumnSpec("aging_bucket", "STRING"),
 ])
 
 TRANSFER_SUMMARY_CONTRACT = DatasetContract(columns=[
@@ -103,6 +120,8 @@ NON_ZERO_TRANSFERS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("leg_count", "INTEGER"),
     ColumnSpec("failed_leg_count", "INTEGER"),
     ColumnSpec("origin", "STRING"),
+    ColumnSpec("days_outstanding", "INTEGER"),
+    ColumnSpec("aging_bucket", "STRING"),
     ColumnSpec("memo", "STRING"),
 ])
 
@@ -117,6 +136,8 @@ LIMIT_BREACH_CONTRACT = DatasetContract(columns=[
     ColumnSpec("outbound_total", "DECIMAL"),
     ColumnSpec("daily_limit", "DECIMAL"),
     ColumnSpec("overage", "DECIMAL"),
+    ColumnSpec("days_outstanding", "INTEGER"),
+    ColumnSpec("aging_bucket", "STRING"),
 ])
 
 OVERDRAFT_CONTRACT = DatasetContract(columns=[
@@ -127,6 +148,8 @@ OVERDRAFT_CONTRACT = DatasetContract(columns=[
     ColumnSpec("balance_date", "DATETIME"),
     ColumnSpec("balance_date_str", "STRING"),
     ColumnSpec("stored_balance", "DECIMAL"),
+    ColumnSpec("days_outstanding", "INTEGER"),
+    ColumnSpec("aging_bucket", "STRING"),
 ])
 
 
@@ -204,7 +227,7 @@ WHERE xfer.transfer_type IN ('ach', 'wire', 'internal', 'cash', 'funding_batch',
 
 
 def build_ledger_balance_drift_dataset(cfg: Config) -> DataSet:
-    sql = """\
+    sql = f"""\
 SELECT
     ledger_account_id,
     ledger_name,
@@ -213,7 +236,8 @@ SELECT
     stored_balance,
     computed_balance,
     drift,
-    CASE WHEN drift = 0 THEN 'in_balance' ELSE 'drift' END AS drift_status
+    CASE WHEN drift = 0 THEN 'in_balance' ELSE 'drift' END AS drift_status,
+{_aging_columns('balance_date')}
 FROM ar_ledger_balance_drift"""
     return build_dataset(
         cfg, cfg.prefixed("ar-ledger-balance-drift-dataset"),
@@ -223,7 +247,7 @@ FROM ar_ledger_balance_drift"""
 
 
 def build_subledger_balance_drift_dataset(cfg: Config) -> DataSet:
-    sql = """\
+    sql = f"""\
 SELECT
     subledger_account_id,
     subledger_name,
@@ -236,7 +260,8 @@ SELECT
     drift,
     CASE WHEN drift = 0 THEN 'in_balance' ELSE 'drift' END AS drift_status,
     CASE WHEN stored_balance < 0 THEN 'overdraft' ELSE 'ok' END
-        AS overdraft_status
+        AS overdraft_status,
+{_aging_columns('balance_date')}
 FROM ar_subledger_balance_drift"""
     return build_dataset(
         cfg, cfg.prefixed("ar-subledger-balance-drift-dataset"),
@@ -270,7 +295,7 @@ FROM ar_transfer_summary"""
 
 
 def build_non_zero_transfers_dataset(cfg: Config) -> DataSet:
-    sql = """\
+    sql = f"""\
 SELECT
     transfer_id,
     first_posted_at,
@@ -280,6 +305,7 @@ SELECT
     leg_count,
     failed_leg_count,
     origin,
+{_aging_columns('first_posted_at')},
     memo
 FROM ar_transfer_summary
 WHERE net_zero_status = 'not_net_zero'"""
@@ -291,7 +317,7 @@ WHERE net_zero_status = 'not_net_zero'"""
 
 
 def build_limit_breach_dataset(cfg: Config) -> DataSet:
-    sql = """\
+    sql = f"""\
 SELECT
     subledger_account_id,
     subledger_name,
@@ -302,7 +328,8 @@ SELECT
     transfer_type,
     outbound_total,
     daily_limit,
-    overage
+    overage,
+{_aging_columns('activity_date')}
 FROM ar_subledger_limit_breach"""
     return build_dataset(
         cfg, cfg.prefixed("ar-limit-breach-dataset"),
@@ -312,7 +339,7 @@ FROM ar_subledger_limit_breach"""
 
 
 def build_overdraft_dataset(cfg: Config) -> DataSet:
-    sql = """\
+    sql = f"""\
 SELECT
     subledger_account_id,
     subledger_name,
@@ -320,7 +347,8 @@ SELECT
     ledger_name,
     balance_date,
     TO_CHAR(balance_date, 'YYYY-MM-DD') AS balance_date_str,
-    stored_balance
+    stored_balance,
+{_aging_columns('balance_date')}
 FROM ar_subledger_overdraft"""
     return build_dataset(
         cfg, cfg.prefixed("ar-overdraft-dataset"),

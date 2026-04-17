@@ -1,9 +1,9 @@
 """API tests: validate the deployed AR dashboard definition matches expectations.
 
-Phase 5 shape — 5 sheets, per-sheet visual counts (Exceptions grows to
-12 with the breach + overdraft additions), 5 drill-down parameters, and
-16 filter groups (shared date-range + 5 multi-selects + 5 Show-Only
-toggles + 5 parameter-bound drill-down filters).
+Phase D shape — 5 sheets, per-sheet visual counts (Exceptions grows to
+17 with 5 aging bar charts), 5 drill-down parameters, and
+17 filter groups (shared date-range + 6 multi-selects + 4 Show-Only
+toggles + 5 parameter-bound drill-down filters + origin).
 """
 
 from __future__ import annotations
@@ -61,8 +61,8 @@ class TestVisuals:
         "Balances": 4,
         "Transfers": 4,
         "Transactions": 5,
-        # Phase 5: 5 KPIs + 5 tables + 2 timelines
-        "Exceptions": 12,
+        # Phase 5: 5 KPIs + 5 tables + 2 timelines + 5 aging bars
+        "Exceptions": 17,
     }
 
     def test_visual_counts_per_sheet(self, ar_dashboard_definition):
@@ -121,6 +121,11 @@ class TestVisuals:
             "ar-exc-overdraft-table",
             "ar-exc-kpi-breach",
             "ar-exc-kpi-overdraft",
+            "ar-exc-aging-ledger-drift",
+            "ar-exc-aging-subledger-drift",
+            "ar-exc-aging-nonzero",
+            "ar-exc-aging-breach",
+            "ar-exc-aging-overdraft",
         ):
             assert expected in ids, (
                 f"Exceptions missing visual '{expected}'"

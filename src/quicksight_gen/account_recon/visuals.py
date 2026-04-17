@@ -162,6 +162,41 @@ def _unagg_field(field_id: str, ds: str, col_name: str) -> dict:
     }
 
 
+def _aging_bar(
+    visual_id: str,
+    title: str,
+    subtitle: str,
+    dataset_id: str,
+    count_column: str,
+) -> Visual:
+    """Horizontal bar chart showing exception count by aging bucket."""
+    return Visual(
+        BarChartVisual=BarChartVisual(
+            VisualId=visual_id,
+            Title=_title(title),
+            Subtitle=_subtitle(subtitle),
+            ChartConfiguration=BarChartConfiguration(
+                FieldWells=BarChartFieldWells(
+                    BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
+                        Category=[_dim(f"{visual_id}-dim",
+                                       dataset_id,
+                                       "aging_bucket")],
+                        Values=[_measure_count(
+                            f"{visual_id}-count",
+                            dataset_id,
+                            count_column,
+                        )],
+                    )
+                ),
+                Orientation="HORIZONTAL",
+                BarsArrangement="CLUSTERED",
+                CategoryLabelOptions=_axis_label("Age"),
+                ValueLabelOptions=_axis_label("Count"),
+            ),
+        )
+    )
+
+
 # ---------------------------------------------------------------------------
 # Action helpers (mirror payment_recon/visuals.py)
 # ---------------------------------------------------------------------------
@@ -910,6 +945,9 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
                                          "computed_balance"),
                             _unagg_field("ar-exc-ldrift-amt",
                                          DS_AR_LEDGER_BALANCE_DRIFT, "drift"),
+                            _unagg_field("ar-exc-ldrift-aging",
+                                         DS_AR_LEDGER_BALANCE_DRIFT,
+                                         "aging_bucket"),
                         ],
                     )
                 ),
@@ -983,6 +1021,9 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
                             _unagg_field("ar-exc-sdrift-amt",
                                          DS_AR_SUBLEDGER_BALANCE_DRIFT,
                                          "drift"),
+                            _unagg_field("ar-exc-sdrift-aging",
+                                         DS_AR_SUBLEDGER_BALANCE_DRIFT,
+                                         "aging_bucket"),
                         ],
                     )
                 ),
@@ -1052,6 +1093,9 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
                             _unagg_field("ar-exc-nz-origin",
                                          DS_AR_NON_ZERO_TRANSFERS,
                                          "origin"),
+                            _unagg_field("ar-exc-nz-aging",
+                                         DS_AR_NON_ZERO_TRANSFERS,
+                                         "aging_bucket"),
                             _unagg_field("ar-exc-nz-memo",
                                          DS_AR_NON_ZERO_TRANSFERS, "memo"),
                         ],
@@ -1230,6 +1274,8 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
                                          DS_AR_LIMIT_BREACH, "daily_limit"),
                             _unagg_field("ar-exc-br-overage",
                                          DS_AR_LIMIT_BREACH, "overage"),
+                            _unagg_field("ar-exc-br-aging",
+                                         DS_AR_LIMIT_BREACH, "aging_bucket"),
                         ],
                     )
                 ),
@@ -1293,6 +1339,8 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
                                          DS_AR_OVERDRAFT, "balance_date_str"),
                             _unagg_field("ar-exc-od-stored",
                                          DS_AR_OVERDRAFT, "stored_balance"),
+                            _unagg_field("ar-exc-od-aging",
+                                         DS_AR_OVERDRAFT, "aging_bucket"),
                         ],
                     )
                 ),
@@ -1329,10 +1377,49 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
         )
     )
 
+    # Aging bar charts — one per exception check.
+    aging_ledger_drift = _aging_bar(
+        "ar-exc-aging-ledger-drift",
+        "Ledger Drift by Age",
+        "How long ledger drift rows have been outstanding",
+        DS_AR_LEDGER_BALANCE_DRIFT,
+        "ledger_account_id",
+    )
+    aging_subledger_drift = _aging_bar(
+        "ar-exc-aging-subledger-drift",
+        "Sub-Ledger Drift by Age",
+        "How long sub-ledger drift rows have been outstanding",
+        DS_AR_SUBLEDGER_BALANCE_DRIFT,
+        "subledger_account_id",
+    )
+    aging_nonzero = _aging_bar(
+        "ar-exc-aging-nonzero",
+        "Non-Zero Transfers by Age",
+        "How long non-zero transfers have been outstanding",
+        DS_AR_NON_ZERO_TRANSFERS,
+        "transfer_id",
+    )
+    aging_breach = _aging_bar(
+        "ar-exc-aging-breach",
+        "Limit Breaches by Age",
+        "How long limit-breach rows have been outstanding",
+        DS_AR_LIMIT_BREACH,
+        "subledger_account_id",
+    )
+    aging_overdraft = _aging_bar(
+        "ar-exc-aging-overdraft",
+        "Overdrafts by Age",
+        "How long overdraft rows have been outstanding",
+        DS_AR_OVERDRAFT,
+        "subledger_account_id",
+    )
+
     return [
         kpi_ledger_drift, kpi_subledger_drift, kpi_nonzero,
         kpi_breach, kpi_overdraft,
         table_ledger_drift, table_subledger_drift, table_non_zero,
         table_breach, table_overdraft,
         timeline_ledger, timeline_subledger,
+        aging_ledger_drift, aging_subledger_drift, aging_nonzero,
+        aging_breach, aging_overdraft,
     ]
