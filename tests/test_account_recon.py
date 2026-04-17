@@ -577,6 +577,137 @@ class TestUnifiedTables:
 
 
 # ---------------------------------------------------------------------------
+# Ledger-level posting scenario coverage
+# ---------------------------------------------------------------------------
+
+class TestLedgerPostingScenarios:
+    """Assert ledger-level posting scenarios exist and are well-formed."""
+
+    def _parse_postings(self, unified_parsed):
+        """Return list of parsed posting dicts."""
+        results = []
+        for row in unified_parsed["posting"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            results.append({
+                "posting_id": parts[0],
+                "transfer_id": parts[1],
+                "ledger_account_id": parts[2],
+                "subledger_account_id": parts[3] if parts[3] != "NULL" else None,
+                "signed_amount": Decimal(parts[4]),
+                "posted_at": parts[5],
+                "status": parts[6],
+            })
+        return results
+
+    def _parse_transfers(self, unified_parsed):
+        """Return {transfer_id: transfer_type}."""
+        result = {}
+        for row in unified_parsed["transfer"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            result[parts[0]] = parts[2]
+        return result
+
+    def test_funding_batch_count(self, unified_parsed):
+        xfer_types = self._parse_transfers(unified_parsed)
+        funding = [tid for tid, t in xfer_types.items() if t == "funding_batch"]
+        assert len(funding) >= 5, f"Expected >=5 funding batches, got {len(funding)}"
+
+    def test_fee_assessment_count(self, unified_parsed):
+        xfer_types = self._parse_transfers(unified_parsed)
+        fees = [tid for tid, t in xfer_types.items() if t == "fee"]
+        assert len(fees) >= 3, f"Expected >=3 fee assessments, got {len(fees)}"
+
+    def test_clearing_sweep_count(self, unified_parsed):
+        xfer_types = self._parse_transfers(unified_parsed)
+        sweeps = [tid for tid, t in xfer_types.items() if t == "clearing_sweep"]
+        assert len(sweeps) >= 2, f"Expected >=2 clearing sweeps, got {len(sweeps)}"
+
+    def test_ledger_postings_have_no_subledger(self, unified_parsed):
+        """Ledger-level postings (funding/fee/sweep) have subledger_account_id = NULL."""
+        postings = self._parse_postings(unified_parsed)
+        xfer_types = self._parse_transfers(unified_parsed)
+        for p in postings:
+            if p["subledger_account_id"] is None:
+                assert xfer_types[p["transfer_id"]] in (
+                    "funding_batch", "fee", "clearing_sweep",
+                ), f"Non-ledger transfer {p['transfer_id']} has NULL subledger"
+
+    def test_ledger_postings_have_valid_ledger_fk(self, ar_parsed, unified_parsed):
+        """All ledger-level postings FK to valid ar_ledger_accounts."""
+        ledger_ids = set()
+        for row in ar_parsed["ar_ledger_accounts"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            ledger_ids.add(parts[0])
+        postings = self._parse_postings(unified_parsed)
+        for p in postings:
+            if p["subledger_account_id"] is None:
+                assert p["ledger_account_id"] in ledger_ids, (
+                    f"Ledger posting {p['posting_id']} references unknown "
+                    f"ledger {p['ledger_account_id']}"
+                )
+
+    def test_funding_batch_net_zero(self, unified_parsed):
+        """Each funding batch nets to zero across all legs."""
+        postings = self._parse_postings(unified_parsed)
+        xfer_types = self._parse_transfers(unified_parsed)
+        by_xfer: dict[str, Decimal] = {}
+        for p in postings:
+            if xfer_types.get(p["transfer_id"]) == "funding_batch":
+                by_xfer[p["transfer_id"]] = (
+                    by_xfer.get(p["transfer_id"], Decimal("0"))
+                    + p["signed_amount"]
+                )
+        for tid, net in by_xfer.items():
+            assert net == 0, f"Funding batch {tid} net={net}, expected 0"
+
+    def test_fee_assessment_non_zero(self, unified_parsed):
+        """Each fee assessment is single-leg and non-zero."""
+        postings = self._parse_postings(unified_parsed)
+        xfer_types = self._parse_transfers(unified_parsed)
+        by_xfer: dict[str, list] = {}
+        for p in postings:
+            if xfer_types.get(p["transfer_id"]) == "fee":
+                by_xfer.setdefault(p["transfer_id"], []).append(p)
+        for tid, legs in by_xfer.items():
+            assert len(legs) == 1, f"Fee {tid} has {len(legs)} legs, expected 1"
+            assert legs[0]["signed_amount"] != 0, f"Fee {tid} has zero amount"
+
+    def test_clearing_sweep_net_zero(self, unified_parsed):
+        """Each clearing sweep has 2 ledger legs that net to zero."""
+        postings = self._parse_postings(unified_parsed)
+        xfer_types = self._parse_transfers(unified_parsed)
+        by_xfer: dict[str, list] = {}
+        for p in postings:
+            if xfer_types.get(p["transfer_id"]) == "clearing_sweep":
+                by_xfer.setdefault(p["transfer_id"], []).append(p)
+        for tid, legs in by_xfer.items():
+            assert len(legs) == 2, f"Sweep {tid} has {len(legs)} legs, expected 2"
+            net = sum(leg["signed_amount"] for leg in legs)
+            assert net == 0, f"Sweep {tid} net={net}, expected 0"
+            for leg in legs:
+                assert leg["subledger_account_id"] is None, (
+                    f"Sweep {tid} leg has subledger — expected ledger-only"
+                )
+
+    def test_funding_batch_has_mixed_levels(self, unified_parsed):
+        """Each funding batch has both ledger-level and sub-ledger-level legs."""
+        postings = self._parse_postings(unified_parsed)
+        xfer_types = self._parse_transfers(unified_parsed)
+        by_xfer: dict[str, dict[str, int]] = {}
+        for p in postings:
+            if xfer_types.get(p["transfer_id"]) == "funding_batch":
+                tid = p["transfer_id"]
+                by_xfer.setdefault(tid, {"ledger": 0, "subledger": 0})
+                if p["subledger_account_id"] is None:
+                    by_xfer[tid]["ledger"] += 1
+                else:
+                    by_xfer[tid]["subledger"] += 1
+        for tid, counts in by_xfer.items():
+            assert counts["ledger"] >= 1, f"Funding {tid} has no ledger-level legs"
+            assert counts["subledger"] >= 1, f"Funding {tid} has no sub-ledger legs"
+
+
+# ---------------------------------------------------------------------------
 # Seed SQL structure
 # ---------------------------------------------------------------------------
 
