@@ -79,6 +79,14 @@ PR datasets currently read from legacy `pr_*` tables (`pr_merchants`, `pr_sales`
 
 **Affected files:** `src/quicksight_gen/payment_recon/datasets.py` (11 dataset builders), `demo/schema.sql` (PR views), `tests/test_demo_sql.py`, `tests/test_demo_data.py`.
 
+### Unified account table (noted from Phase C.0.1)
+
+User prefers a single "here are ALL the accounts" table over the current split (`ar_ledger_accounts` + `ar_subledger_accounts`). Out of scope for Phase C (additive `ledger_account_id` column is sufficient); revisit in a later phase.
+
+### Training documentation / scenario catalog (noted from Phase C.0.5)
+
+Track all demo scenarios (both apps) in a structured catalog so that long-form training documentation can be written post-Phase D. Scenarios to catalog: PR chain (sale → settlement → payment → external_txn), AR sub-ledger transfers (ach/wire/internal/cash), AR exceptions (drift, non-zero, limit breach, overdraft, failed legs), and Phase C additions (funding batch, fee assessment, clearing sweep).
+
 ---
 
 # Current Spec
@@ -167,18 +175,22 @@ PR datasets currently read from legacy `pr_*` tables (`pr_merchants`, `pr_sales`
           - The stored balance should match the net amount of transactions done on the account in a day
           - A sub-ledger account's stored balance should not go below 0 on any day — negative-balance days are flagged as overdrafts
       - Linked to a ledger account, have a name
+    - Postings
+      - Target either a sub-ledger account or a ledger account directly
+      - Ledger-level postings (funding batches, fee assessments, clearing sweeps) have no sub-ledger account
+      - Every posting always knows its ledger account, whether posted at ledger or sub-ledger level
     - Ledger accounts
       - Internal or external (external is out of scope)
       - Daily final balance
         - Stored balance is fed in from an upstream system; ledger-level and sub-ledger-level feeds may come from different upstream systems, so the two levels can disagree with each other and with the underlying transactions
-        - Invariant: stored ledger balance should equal the aggregation of its sub-ledgers' balances
+        - Invariant: stored ledger balance should equal the sum of direct ledger postings plus the aggregation of its sub-ledgers' stored balances
       - Define per-type daily transfer limits that apply to their sub-ledger accounts. A sub-ledger's outbound flow of a given type on a given day that exceeds the ledger's limit is flagged.
         - Limits are populated by an upstream system
         - A ledger may have limits defined for only some types — undefined means "no limit enforced"
       - Have a name
     - Reconciliation scope — five independent checks performed side-by-side on the Exceptions tab:
       - Sub-ledger drift: stored sub-ledger balance ≠ Σ of that sub-ledger's posted transactions on that day
-      - Ledger drift: stored ledger balance ≠ Σ of its sub-ledgers' stored balances on that day
+      - Ledger drift: stored ledger balance ≠ (Σ direct ledger postings + Σ sub-ledgers' stored balances) on that day
       - Non-zero transfers: transfers whose posted legs don't net to zero
       - Sub-ledger limit breach: Σ |outbound posted amounts of type T| for a sub-ledger on a day > its ledger's limit for type T
       - Sub-ledger overdraft: stored sub-ledger balance < 0 on any day

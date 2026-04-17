@@ -154,8 +154,8 @@ run_e2e.sh
 
 Both apps share two core tables:
 
-- **`transfer`** — one row per financial event (sale, settlement, payment, external_txn, ach, wire, internal, cash). Linked via `parent_transfer_id` to form chains (PR) or standalone pairs (AR). Key fields: `transfer_type`, `origin`, `amount`, `status`, `external_system`, `memo`.
-- **`posting`** — one row per ledger leg. FK to `transfer` and `ar_subledger_accounts`. `signed_amount` is positive (debit) or negative (credit). Non-failed postings within a transfer net to zero (except external_txn transfers, which have a single posting).
+- **`transfer`** — one row per financial event (sale, settlement, payment, external_txn, ach, wire, internal, cash, funding_batch, fee, clearing_sweep). Linked via `parent_transfer_id` to form chains (PR) or standalone pairs (AR). Key fields: `transfer_type`, `origin`, `amount`, `status`, `external_system`, `memo`.
+- **`posting`** — one row per ledger leg. FK to `transfer`; `ledger_account_id NOT NULL` (every posting knows its ledger); `subledger_account_id` nullable (NULL for direct ledger postings). `signed_amount` is positive (debit) or negative (credit). Non-failed postings within a transfer net to zero (except external_txn and fee transfers, which are intentionally single-leg).
 
 AR datasets read exclusively from `transfer` + `posting` (the `ar_transactions` table was dropped in Phase B.4). PR datasets still read from legacy `pr_*` tables for domain-specific metadata (card_brand, settlement_type, payment_method, etc.) but also emit to `transfer` + `posting` via dual-write.
 
@@ -176,11 +176,14 @@ AR datasets read exclusively from `transfer` + `posting` (the `ar_transactions` 
 **Ledger accounts (with daily balances) → Sub-ledger accounts → Postings (double-entry ledger)**
 
 - Every transfer is a set of posting legs that must net to zero
+- Postings can target sub-ledger accounts OR ledger accounts directly (funding batches, fee assessments, clearing sweeps)
+- Ledger drift invariant: `stored ledger balance = Σ direct ledger postings + Σ sub-ledger stored balances`
+- Sub-ledger drift invariant: `stored sub-ledger balance = Σ postings to that sub-ledger` (unaffected by ledger-level postings)
 - Daily balance snapshots allow drift detection: recomputed balance vs. stored balance
 - Failed postings, limit breaches (ledger daily out-flow cap per sub-ledger/type), and overdrafts (sub-ledger below zero) populate the Exceptions tab
 - Drift timelines (ledger + sub-ledger) surface systemic issues over time
 - Transfers carry an `origin` tag (`internal_initiated` / `external_force_posted`)
-- AR views filter `WHERE transfer_type IN ('ach', 'wire', 'internal', 'cash')` to exclude PR data
+- AR views filter `WHERE transfer_type IN ('ach', 'wire', 'internal', 'cash', 'funding_batch', 'fee', 'clearing_sweep')` to exclude PR data
 
 ## Architecture Decisions
 
