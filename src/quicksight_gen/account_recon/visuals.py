@@ -40,6 +40,7 @@ from quicksight_gen.account_recon.constants import (
     SHEET_AR_BALANCES,
     SHEET_AR_TRANSACTIONS,
 )
+from quicksight_gen.common.aging import aging_bar_visual
 from quicksight_gen.common.clickability import (
     link_text_format,
     menu_link_text_format,
@@ -160,41 +161,6 @@ def _unagg_field(field_id: str, ds: str, col_name: str) -> dict:
             "ColumnName": col_name,
         },
     }
-
-
-def _aging_bar(
-    visual_id: str,
-    title: str,
-    subtitle: str,
-    dataset_id: str,
-    count_column: str,
-) -> Visual:
-    """Horizontal bar chart showing exception count by aging bucket."""
-    return Visual(
-        BarChartVisual=BarChartVisual(
-            VisualId=visual_id,
-            Title=_title(title),
-            Subtitle=_subtitle(subtitle),
-            ChartConfiguration=BarChartConfiguration(
-                FieldWells=BarChartFieldWells(
-                    BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
-                        Category=[_dim(f"{visual_id}-dim",
-                                       dataset_id,
-                                       "aging_bucket")],
-                        Values=[_measure_count(
-                            f"{visual_id}-count",
-                            dataset_id,
-                            count_column,
-                        )],
-                    )
-                ),
-                Orientation="HORIZONTAL",
-                BarsArrangement="CLUSTERED",
-                CategoryLabelOptions=_axis_label("Age"),
-                ValueLabelOptions=_axis_label("Count"),
-            ),
-        )
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -1378,35 +1344,35 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
     )
 
     # Aging bar charts — one per exception check.
-    aging_ledger_drift = _aging_bar(
+    aging_ledger_drift = aging_bar_visual(
         "ar-exc-aging-ledger-drift",
         "Ledger Drift by Age",
         "How long ledger drift rows have been outstanding",
         DS_AR_LEDGER_BALANCE_DRIFT,
         "ledger_account_id",
     )
-    aging_subledger_drift = _aging_bar(
+    aging_subledger_drift = aging_bar_visual(
         "ar-exc-aging-subledger-drift",
         "Sub-Ledger Drift by Age",
         "How long sub-ledger drift rows have been outstanding",
         DS_AR_SUBLEDGER_BALANCE_DRIFT,
         "subledger_account_id",
     )
-    aging_nonzero = _aging_bar(
+    aging_nonzero = aging_bar_visual(
         "ar-exc-aging-nonzero",
         "Non-Zero Transfers by Age",
         "How long non-zero transfers have been outstanding",
         DS_AR_NON_ZERO_TRANSFERS,
         "transfer_id",
     )
-    aging_breach = _aging_bar(
+    aging_breach = aging_bar_visual(
         "ar-exc-aging-breach",
         "Limit Breaches by Age",
         "How long limit-breach rows have been outstanding",
         DS_AR_LIMIT_BREACH,
         "subledger_account_id",
     )
-    aging_overdraft = _aging_bar(
+    aging_overdraft = aging_bar_visual(
         "ar-exc-aging-overdraft",
         "Overdrafts by Age",
         "How long overdraft rows have been outstanding",

@@ -21,6 +21,7 @@ from quicksight_gen.payment_recon.constants import (
     SHEET_SETTLEMENTS,
 )
 from quicksight_gen.payment_recon.datasets import OPTIONAL_SALE_METADATA
+from quicksight_gen.common.aging import aging_bar_visual
 from quicksight_gen.common.clickability import (
     link_text_format,
     menu_link_text_format,
@@ -130,41 +131,6 @@ def _unagg_field(field_id: str, ds: str, col_name: str) -> dict:
             "ColumnName": col_name,
         },
     }
-
-
-def _aging_bar(
-    visual_id: str,
-    title: str,
-    subtitle: str,
-    dataset_id: str,
-    count_column: str,
-) -> Visual:
-    """Horizontal bar chart showing exception count by aging bucket."""
-    return Visual(
-        BarChartVisual=BarChartVisual(
-            VisualId=visual_id,
-            Title=_title(title),
-            Subtitle=_subtitle(subtitle),
-            ChartConfiguration=BarChartConfiguration(
-                FieldWells=BarChartFieldWells(
-                    BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
-                        Category=[_dim(f"{visual_id}-dim",
-                                       dataset_id,
-                                       "aging_bucket")],
-                        Values=[_measure_count(
-                            f"{visual_id}-count",
-                            dataset_id,
-                            count_column,
-                        )],
-                    )
-                ),
-                Orientation="HORIZONTAL",
-                BarsArrangement="CLUSTERED",
-                CategoryLabelOptions=_axis_label("Age"),
-                ValueLabelOptions=_axis_label("Count"),
-            ),
-        )
-    )
 
 
 def _drill_down_action(
@@ -1046,35 +1012,35 @@ def build_exceptions_visuals() -> list[Visual]:
     )
 
     # Aging bar charts — one per exception check.
-    aging_unsettled = _aging_bar(
+    aging_unsettled = aging_bar_visual(
         "exceptions-aging-unsettled",
         "Unsettled Sales by Age",
         "How long unsettled sales have been outstanding",
         DS_SETTLEMENT_EXCEPTIONS,
         "sale_id",
     )
-    aging_returns = _aging_bar(
+    aging_returns = aging_bar_visual(
         "exceptions-aging-returns",
         "Returned Payments by Age",
         "How long returned payments have been outstanding",
         DS_PAYMENT_RETURNS,
         "payment_id",
     )
-    aging_sale_stl = _aging_bar(
+    aging_sale_stl = aging_bar_visual(
         "exceptions-aging-sale-stl-mismatch",
         "Sale ↔ Settlement Mismatch by Age",
         "How long sale-settlement mismatches have been outstanding",
         DS_SALE_SETTLEMENT_MISMATCH,
         "settlement_id",
     )
-    aging_stl_pay = _aging_bar(
+    aging_stl_pay = aging_bar_visual(
         "exceptions-aging-stl-pay-mismatch",
         "Settlement ↔ Payment Mismatch by Age",
         "How long settlement-payment mismatches have been outstanding",
         DS_SETTLEMENT_PAYMENT_MISMATCH,
         "payment_id",
     )
-    aging_unmatched = _aging_bar(
+    aging_unmatched = aging_bar_visual(
         "exceptions-aging-unmatched-ext",
         "Unmatched External Txns by Age",
         "How long unmatched external transactions have been outstanding",
