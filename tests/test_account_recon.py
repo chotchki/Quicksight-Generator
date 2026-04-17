@@ -968,7 +968,7 @@ class TestSheetLayout:
     def test_exceptions_visual_count(self, ar_output_dir):
         # Phase 5: five independent checks (three drift KPIs + breach +
         # overdraft) → 5 KPIs + 5 tables + 2 timelines = 12.
-        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 12)
+        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 17)
 
     def _assert_visual_count(self, out_dir: Path, sheet_id: str, expected: int) -> None:
         analysis = _load(out_dir, "account-recon-analysis.json")
@@ -1072,6 +1072,7 @@ class TestFilterGroups:
         "fg-ar-transaction-status",
         "fg-ar-transfer-type",
         "fg-ar-posting-level",
+        "fg-ar-origin",
         "fg-ar-balances-ledger-drift",
         "fg-ar-balances-subledger-drift",
         "fg-ar-balances-overdraft",

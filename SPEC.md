@@ -83,6 +83,12 @@ PR datasets currently read from legacy `pr_*` tables (`pr_merchants`, `pr_sales`
 
 User prefers a single "here are ALL the accounts" table over the current split (`ar_ledger_accounts` + `ar_subledger_accounts`). Out of scope for Phase C (additive `ledger_account_id` column is sufficient); revisit in a later phase.
 
+### Intake feed contract (noted from Phase D.0.7)
+
+Dataset column contracts define what the reporting layer expects. The schema defines what the database tables must contain. What's missing is a third layer: **what an upstream system's feed must provide** for the reporting to produce meaningful results. For example, `origin` on `transfer` must be populated by the upstream feed — if it's not, origin-based filtering and exception awareness are useless. The training stories in `docs/` will define intake feeds by example; a formal contract spec can be extracted from those stories post-Phase E.
+
+**Affected files:** `src/quicksight_gen/common/dataset_contract.py` (add feed-dependency annotations), `docs/` (training stories as the narrative form of the contract).
+
 ### Training documentation / scenario catalog (noted from Phase C.0.5)
 
 Track all demo scenarios (both apps) in a structured catalog so that long-form training documentation can be written post-Phase D. Scenarios to catalog: PR chain (sale → settlement → payment → external_txn), AR sub-ledger transfers (ach/wire/internal/cash), AR exceptions (drift, non-zero, limit breach, overdraft, failed legs), and Phase C additions (funding batch, fee assessment, clearing sweep).
@@ -195,6 +201,7 @@ Track all demo scenarios (both apps) in a structured catalog so that long-form t
       - Sub-ledger limit breach: Σ |outbound posted amounts of type T| for a sub-ledger on a day > its ledger's limit for type T
       - Sub-ledger overdraft: stored sub-ledger balance < 0 on any day
       - Each finding points at a different upstream source and is investigated independently; two drift timelines at the bottom of the Exceptions tab reveal systemic issues
+      - Every check carries `days_outstanding` and `aging_bucket` (5 hardcoded bands: 0-1d, 2-3d, 4-7d, 8-30d, >30d) for time-based urgency triage; aging bar charts visualize the distribution
     - Transfers
       - Movement of money between accounts via double-entry debits and credits
       - Cannot fail in aggregate — money is not destroyed

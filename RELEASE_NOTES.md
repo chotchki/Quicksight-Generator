@@ -1,5 +1,33 @@
 # Release Notes
 
+## v1.5.0
+
+### Phase D — Aging buckets, origin wiring, and shared visual pattern
+
+Every exception check across both apps now carries aging information (how long the exception has been outstanding) and follows a consistent visual pattern: KPI count + detail table + horizontal aging bar chart. The `origin` attribute (deferred since Phase A) is wired into AR filters and exception detail.
+
+### What landed
+
+- **Aging buckets** — 5 hardcoded bands (`0-1 day`, `2-3 days`, `4-7 days`, `8-30 days`, `>30 days`) with numeric-prefixed labels for correct QuickSight sort order. `days_outstanding` (INTEGER) + `aging_bucket` (STRING) added to all 11 exception dataset contracts and SQL queries across both apps plus the Payment Recon dataset.
+- **AR exception aging** — 5 aging bar charts added to the Exceptions tab (ledger drift, sub-ledger drift, non-zero transfers, limit breach, overdraft). Detail tables gain `aging_bucket` column. Exceptions tab: 12 → 17 visuals.
+- **PR exception aging** — 5 aging bar charts added to the Exceptions & Alerts tab. Payment returns gains `days_outstanding` (previously missing). Sale-settlement and settlement-payment mismatch tables gain `days_outstanding` column in the visual. Exceptions tab: 7 → 12 visuals.
+- **PR Payment Recon aging** — aging bar chart on the Payment Reconciliation tab. Tab: 6 → 7 visuals.
+- **Origin filter** — multi-select on Transactions + Exceptions tabs. `origin` column added to non-zero-transfer and transfer-summary dataset contracts and SQL.
+- **Shared `aging_bar_visual()`** — extracted to `common/aging.py`, used by all 11 aging bar charts across both apps.
+- **Visual consistency** — all exception detail tables now consistently show `days_outstanding` + `aging_bucket`.
+
+### Deferred
+
+- **PR exception drill-downs (D.7)** — adding drill-down actions to PR exception tables requires new parameters and filter groups; deferred to Phase E which will rework the tab structure.
+- **ReconciliationCheck abstraction (D.5)** — the aging bar helper was extracted; the full check abstraction doesn't cleanly cover all shapes (left≠right, row-matches-condition, unpaired). Per-check implementations are already consistent.
+
+### Notes
+
+- **310 unit/integration tests**, all green.
+- No dataset ID changes from v1.4.0; safe in-place redeploy.
+
+---
+
 ## v1.4.0
 
 ### Phase C — Ledger-level direct postings

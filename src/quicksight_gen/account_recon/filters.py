@@ -261,6 +261,29 @@ def _posting_level_filter_group() -> FilterGroup:
     )
 
 
+_ORIGIN_SCOPED_SHEETS = [
+    SHEET_AR_TRANSACTIONS,
+    SHEET_AR_EXCEPTIONS,
+]
+
+
+def _origin_filter_group() -> FilterGroup:
+    """Cross-tab origin multi-select (Phase D.1).
+
+    Column exists on transactions, transfer_summary, and non_zero_transfers
+    datasets; QuickSight applies the filter to any visual whose dataset
+    carries the same column name.
+    """
+    return _multi_select_filter_group(
+        fg_id="fg-ar-origin",
+        filter_id="filter-ar-origin",
+        title="Origin",
+        dataset_id=DS_AR_TRANSACTIONS,
+        column_name="origin",
+        sheet_ids=_ORIGIN_SCOPED_SHEETS,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Show-Only-X SINGLE_SELECT toggles (Phase 4.2)
 # ---------------------------------------------------------------------------
@@ -332,6 +355,7 @@ def build_filter_groups(cfg: Config) -> list[FilterGroup]:
         _transaction_status_filter_group(),
         _transfer_type_filter_group(),
         _posting_level_filter_group(),
+        _origin_filter_group(),
         # Show-Only toggles — one filter group per toggle.
         _state_toggle_filter_group(
             "fg-ar-balances-ledger-drift",
@@ -393,6 +417,10 @@ def _transfer_type_control(sheet: str) -> FilterControl:
     return _cross_sheet_control(sheet, "transfer-type", "filter-ar-transfer-type")
 
 
+def _origin_control(sheet: str) -> FilterControl:
+    return _cross_sheet_control(sheet, "origin", "filter-ar-origin")
+
+
 def build_balances_controls(cfg: Config) -> list[FilterControl]:
     del cfg
     return [
@@ -440,6 +468,7 @@ def build_transactions_controls(cfg: Config) -> list[FilterControl]:
         _ledger_account_control("transactions"),
         _subledger_account_control("transactions"),
         _transfer_type_control("transactions"),
+        _origin_control("transactions"),
         FilterControl(
             Dropdown=FilterDropDownControl(
                 FilterControlId="ctrl-ar-transactions-posting-level",
@@ -471,4 +500,5 @@ def build_exceptions_controls(cfg: Config) -> list[FilterControl]:
         _ledger_account_control("exceptions"),
         _subledger_account_control("exceptions"),
         _transfer_type_control("exceptions"),
+        _origin_control("exceptions"),
     ]

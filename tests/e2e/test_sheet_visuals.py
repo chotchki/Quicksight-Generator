@@ -18,6 +18,10 @@ from .browser_helpers import (
 
 pytestmark = [pytest.mark.e2e, pytest.mark.browser]
 
+# QuickSight virtualizes below-the-fold visuals. A tall viewport ensures
+# all visuals render in the DOM at once so counting assertions work.
+TALL_VIEWPORT = (1600, 5000)
+
 
 # Visual counts per sheet — these mirror the structural assertions in
 # test_dashboard_structure.py but verify the rendered DOM, not the JSON.
@@ -25,8 +29,8 @@ EXPECTED_VISUAL_COUNTS = {
     "Sales Overview": 5,
     "Settlements": 4,
     "Payments": 4,
-    "Exceptions & Alerts": 7,
-    "Payment Reconciliation": 6,
+    "Exceptions & Alerts": 12,
+    "Payment Reconciliation": 7,
 }
 
 # A title we expect on each sheet — light spot-check that the right
@@ -54,7 +58,7 @@ def test_sheet_renders_expected_visuals(
     embed_url, page_timeout, visual_timeout, sheet_name, expected_count
 ):
     """Navigate to each sheet and verify the expected number of visuals render."""
-    with webkit_page(headless=True) as page:
+    with webkit_page(headless=True, viewport=TALL_VIEWPORT) as page:
         page.goto(embed_url, timeout=page_timeout)
         wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
 

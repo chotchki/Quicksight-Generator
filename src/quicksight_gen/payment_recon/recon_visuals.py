@@ -12,6 +12,7 @@ from quicksight_gen.payment_recon.constants import (
     DS_PAYMENTS,
     SHEET_PAYMENT_RECON,
 )
+from quicksight_gen.common.aging import aging_bar_visual
 from quicksight_gen.common.clickability import link_text_format
 from quicksight_gen.common.models import (
     AxisLabelOptions,
@@ -459,11 +460,21 @@ def build_payment_recon_visuals(link_color: str) -> list[Visual]:
         )
     )
 
+    aging_recon = aging_bar_visual(
+        "recon-aging-bar",
+        "Reconciliation by Age",
+        "How long external transactions have been outstanding "
+        "— older items are more likely to need investigation",
+        DS_PAYMENT_RECON,
+        "transaction_id",
+    )
+
     return [
         kpi_matched,
         kpi_unmatched,
         kpi_late,
         bar_by_system,
+        aging_recon,
         table_ext_txns,
         table_payments,
     ]

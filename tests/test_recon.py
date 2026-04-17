@@ -67,7 +67,7 @@ def _collect_dataset_refs(visuals: list) -> set[str]:
 class TestPaymentReconVisuals:
     def test_count(self):
         visuals = build_payment_recon_visuals("#2E5090")
-        assert len(visuals) == 6
+        assert len(visuals) == 7
 
     def test_ids_unique(self):
         ids = _collect_visual_ids(build_payment_recon_visuals("#2E5090"))
@@ -85,7 +85,7 @@ class TestPaymentReconVisuals:
     def test_has_bar_chart(self):
         visuals = build_payment_recon_visuals("#2E5090")
         bars = [v for v in visuals if v.BarChartVisual is not None]
-        assert len(bars) == 1
+        assert len(bars) == 2
 
     def test_has_tables(self):
         visuals = build_payment_recon_visuals("#2E5090")

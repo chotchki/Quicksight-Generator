@@ -114,6 +114,18 @@ def _optional_metadata_sql_fields() -> str:
     )
 
 
+def _aging_bucket_case(days_expr: str) -> str:
+    """SQL CASE expression for aging_bucket from a days-outstanding expression."""
+    return f"""\
+    CASE
+        WHEN ({days_expr}) <= 1 THEN '1: 0-1 day'
+        WHEN ({days_expr}) <= 3 THEN '2: 2-3 days'
+        WHEN ({days_expr}) <= 7 THEN '3: 4-7 days'
+        WHEN ({days_expr}) <= 30 THEN '4: 8-30 days'
+        ELSE '5: >30 days'
+    END AS aging_bucket"""
+
+
 # ---------------------------------------------------------------------------
 # Contracts
 # ---------------------------------------------------------------------------
@@ -180,6 +192,7 @@ SETTLEMENT_EXCEPTIONS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("amount", "DECIMAL"),
     ColumnSpec("sale_timestamp", "DATETIME"),
     ColumnSpec("days_outstanding", "INTEGER"),
+    ColumnSpec("aging_bucket", "STRING"),
 ])
 
 PAYMENT_RETURNS_CONTRACT = DatasetContract(columns=[
@@ -190,6 +203,8 @@ PAYMENT_RETURNS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("payment_amount", "DECIMAL"),
     ColumnSpec("payment_date", "DATETIME"),
     ColumnSpec("return_reason", "STRING"),
+    ColumnSpec("days_outstanding", "INTEGER"),
+    ColumnSpec("aging_bucket", "STRING"),
 ])
 
 SALE_SETTLEMENT_MISMATCH_CONTRACT = DatasetContract(columns=[
@@ -201,6 +216,7 @@ SALE_SETTLEMENT_MISMATCH_CONTRACT = DatasetContract(columns=[
     ColumnSpec("sale_count", "INTEGER"),
     ColumnSpec("settlement_date", "DATETIME"),
     ColumnSpec("days_outstanding", "INTEGER"),
+    ColumnSpec("aging_bucket", "STRING"),
 ])
 
 SETTLEMENT_PAYMENT_MISMATCH_CONTRACT = DatasetContract(columns=[
@@ -212,6 +228,7 @@ SETTLEMENT_PAYMENT_MISMATCH_CONTRACT = DatasetContract(columns=[
     ColumnSpec("difference", "DECIMAL"),
     ColumnSpec("payment_date", "DATETIME"),
     ColumnSpec("days_outstanding", "INTEGER"),
+    ColumnSpec("aging_bucket", "STRING"),
 ])
 
 UNMATCHED_EXTERNAL_TXNS_CONTRACT = DatasetContract(columns=[
@@ -222,6 +239,7 @@ UNMATCHED_EXTERNAL_TXNS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("transaction_date", "DATETIME"),
     ColumnSpec("status", "STRING"),
     ColumnSpec("days_outstanding", "INTEGER"),
+    ColumnSpec("aging_bucket", "STRING"),
 ])
 
 EXTERNAL_TRANSACTIONS_CONTRACT = DatasetContract(columns=[
@@ -244,6 +262,7 @@ PAYMENT_RECON_CONTRACT = DatasetContract(columns=[
     ColumnSpec("merchant_id", "STRING"),
     ColumnSpec("transaction_date", "DATETIME"),
     ColumnSpec("days_outstanding", "INTEGER"),
+    ColumnSpec("aging_bucket", "STRING"),
 ])
 
 
@@ -352,7 +371,7 @@ FROM pr_payments"""
 
 
 def build_settlement_exceptions_dataset(cfg: Config) -> DataSet:
-    sql = """\
+    sql = f"""\
 SELECT
     s.sale_id,
     s.merchant_id,
@@ -360,7 +379,8 @@ SELECT
     s.location_id,
     s.amount,
     s.sale_timestamp,
-    (CURRENT_DATE - s.sale_timestamp::date) AS days_outstanding
+    (CURRENT_DATE - s.sale_timestamp::date) AS days_outstanding,
+{_aging_bucket_case('CURRENT_DATE - s.sale_timestamp::date')}
 FROM pr_sales s
 JOIN pr_merchants m ON m.merchant_id = s.merchant_id
 WHERE s.settlement_id IS NULL"""
@@ -372,7 +392,7 @@ WHERE s.settlement_id IS NULL"""
 
 
 def build_payment_returns_dataset(cfg: Config) -> DataSet:
-    sql = """\
+    sql = f"""\
 SELECT
     p.payment_id,
     p.settlement_id,
@@ -380,7 +400,9 @@ SELECT
     m.merchant_name,
     p.payment_amount,
     p.payment_date,
-    p.return_reason
+    p.return_reason,
+    (CURRENT_DATE - p.payment_date::date) AS days_outstanding,
+{_aging_bucket_case('CURRENT_DATE - p.payment_date::date')}
 FROM pr_payments p
 JOIN pr_merchants m ON m.merchant_id = p.merchant_id
 WHERE p.is_returned = 'true'"""
@@ -392,7 +414,7 @@ WHERE p.is_returned = 'true'"""
 
 
 def build_sale_settlement_mismatch_dataset(cfg: Config) -> DataSet:
-    sql = """\
+    sql = f"""\
 SELECT
     settlement_id,
     merchant_id,
@@ -401,7 +423,8 @@ SELECT
     difference,
     sale_count,
     settlement_date,
-    days_outstanding
+    days_outstanding,
+{_aging_bucket_case('days_outstanding')}
 FROM pr_sale_settlement_mismatch"""
     return build_dataset(
         cfg, cfg.prefixed("sale-settlement-mismatch-dataset"),
@@ -411,7 +434,7 @@ FROM pr_sale_settlement_mismatch"""
 
 
 def build_settlement_payment_mismatch_dataset(cfg: Config) -> DataSet:
-    sql = """\
+    sql = f"""\
 SELECT
     payment_id,
     settlement_id,
@@ -420,7 +443,8 @@ SELECT
     settlement_amount,
     difference,
     payment_date,
-    days_outstanding
+    days_outstanding,
+{_aging_bucket_case('days_outstanding')}
 FROM pr_settlement_payment_mismatch"""
     return build_dataset(
         cfg, cfg.prefixed("settlement-payment-mismatch-dataset"),
@@ -430,7 +454,7 @@ FROM pr_settlement_payment_mismatch"""
 
 
 def build_unmatched_external_txns_dataset(cfg: Config) -> DataSet:
-    sql = """\
+    sql = f"""\
 SELECT
     transaction_id,
     external_system,
@@ -438,7 +462,8 @@ SELECT
     merchant_id,
     transaction_date,
     status,
-    days_outstanding
+    days_outstanding,
+{_aging_bucket_case('days_outstanding')}
 FROM pr_unmatched_external_txns"""
     return build_dataset(
         cfg, cfg.prefixed("unmatched-external-txns-dataset"),
@@ -481,7 +506,8 @@ SELECT
     COUNT(p.payment_id) AS payment_count,
     et.merchant_id,
     et.transaction_date,
-    (CURRENT_DATE - et.transaction_date::date) AS days_outstanding
+    (CURRENT_DATE - et.transaction_date::date) AS days_outstanding,
+{_aging_bucket_case('CURRENT_DATE - et.transaction_date::date')}
 FROM pr_external_transactions et
 LEFT JOIN pr_payments p ON p.external_transaction_id = et.transaction_id
 GROUP BY et.transaction_id, et.external_system, et.external_amount,

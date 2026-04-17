@@ -21,6 +21,7 @@ from quicksight_gen.payment_recon.constants import (
     SHEET_SETTLEMENTS,
 )
 from quicksight_gen.payment_recon.datasets import OPTIONAL_SALE_METADATA
+from quicksight_gen.common.aging import aging_bar_visual
 from quicksight_gen.common.clickability import (
     link_text_format,
     menu_link_text_format,
@@ -766,6 +767,11 @@ def build_exceptions_visuals() -> list[Visual]:
                                 DS_SETTLEMENT_EXCEPTIONS,
                                 "days_outstanding",
                             ),
+                            _unagg_field(
+                                "tbl-exc-aging",
+                                DS_SETTLEMENT_EXCEPTIONS,
+                                "aging_bucket",
+                            ),
                         ]
                     )
                 ),
@@ -818,6 +824,16 @@ def build_exceptions_visuals() -> list[Visual]:
                                 DS_PAYMENT_RETURNS,
                                 "return_reason",
                             ),
+                            _unagg_field(
+                                "tbl-ret-days",
+                                DS_PAYMENT_RETURNS,
+                                "days_outstanding",
+                            ),
+                            _unagg_field(
+                                "tbl-ret-aging",
+                                DS_PAYMENT_RETURNS,
+                                "aging_bucket",
+                            ),
                         ]
                     )
                 ),
@@ -867,6 +883,16 @@ def build_exceptions_visuals() -> list[Visual]:
                                 "tbl-ss-date",
                                 DS_SALE_SETTLEMENT_MISMATCH,
                                 "settlement_date",
+                            ),
+                            _unagg_field(
+                                "tbl-ss-days",
+                                DS_SALE_SETTLEMENT_MISMATCH,
+                                "days_outstanding",
+                            ),
+                            _unagg_field(
+                                "tbl-ss-aging",
+                                DS_SALE_SETTLEMENT_MISMATCH,
+                                "aging_bucket",
                             ),
                         ]
                     )
@@ -923,6 +949,16 @@ def build_exceptions_visuals() -> list[Visual]:
                                 DS_SETTLEMENT_PAYMENT_MISMATCH,
                                 "payment_date",
                             ),
+                            _unagg_field(
+                                "tbl-sp-days",
+                                DS_SETTLEMENT_PAYMENT_MISMATCH,
+                                "days_outstanding",
+                            ),
+                            _unagg_field(
+                                "tbl-sp-aging",
+                                DS_SETTLEMENT_PAYMENT_MISMATCH,
+                                "aging_bucket",
+                            ),
                         ]
                     )
                 ),
@@ -973,11 +1009,53 @@ def build_exceptions_visuals() -> list[Visual]:
                                 DS_UNMATCHED_EXTERNAL_TXNS,
                                 "days_outstanding",
                             ),
+                            _unagg_field(
+                                "tbl-ue-aging",
+                                DS_UNMATCHED_EXTERNAL_TXNS,
+                                "aging_bucket",
+                            ),
                         ]
                     )
                 ),
             ),
         )
+    )
+
+    # Aging bar charts — one per exception check.
+    aging_unsettled = aging_bar_visual(
+        "exceptions-aging-unsettled",
+        "Unsettled Sales by Age",
+        "How long unsettled sales have been outstanding",
+        DS_SETTLEMENT_EXCEPTIONS,
+        "sale_id",
+    )
+    aging_returns = aging_bar_visual(
+        "exceptions-aging-returns",
+        "Returned Payments by Age",
+        "How long returned payments have been outstanding",
+        DS_PAYMENT_RETURNS,
+        "payment_id",
+    )
+    aging_sale_stl = aging_bar_visual(
+        "exceptions-aging-sale-stl-mismatch",
+        "Sale ↔ Settlement Mismatch by Age",
+        "How long sale-settlement mismatches have been outstanding",
+        DS_SALE_SETTLEMENT_MISMATCH,
+        "settlement_id",
+    )
+    aging_stl_pay = aging_bar_visual(
+        "exceptions-aging-stl-pay-mismatch",
+        "Settlement ↔ Payment Mismatch by Age",
+        "How long settlement-payment mismatches have been outstanding",
+        DS_SETTLEMENT_PAYMENT_MISMATCH,
+        "payment_id",
+    )
+    aging_unmatched = aging_bar_visual(
+        "exceptions-aging-unmatched-ext",
+        "Unmatched External Txns by Age",
+        "How long unmatched external transactions have been outstanding",
+        DS_UNMATCHED_EXTERNAL_TXNS,
+        "transaction_id",
     )
 
     return [
@@ -988,4 +1066,9 @@ def build_exceptions_visuals() -> list[Visual]:
         table_sale_stl_mismatch,
         table_stl_pay_mismatch,
         table_unmatched_ext,
+        aging_unsettled,
+        aging_returns,
+        aging_sale_stl,
+        aging_stl_pay,
+        aging_unmatched,
     ]

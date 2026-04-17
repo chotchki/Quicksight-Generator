@@ -491,7 +491,8 @@ SELECT
     tz.net_zero_status,
     tz.has_external_leg,
     xfer.memo,
-    xfer.transfer_type
+    xfer.transfer_type,
+    xfer.origin
 FROM ar_transfer_net_zero tz
 JOIN transfer xfer ON xfer.transfer_id = tz.transfer_id;
 
