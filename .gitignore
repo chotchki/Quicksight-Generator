@@ -22,6 +22,10 @@ run/
 
 # pytest
 .pytest_cache/
+coverage.xml
+
+# mkdocs
+site/
 
 config.yaml
 tests/e2e/screenshots/

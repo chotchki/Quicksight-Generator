@@ -1,0 +1,25 @@
+site_name: QuickSight Analysis Generator
+site_description: Training materials and documentation for the QuickSight financial reporting dashboards
+repo_url: https://github.com/chotchki/Quicksight-Generator
+repo_name: chotchki/Quicksight-Generator
+
+theme:
+  name: material
+  palette:
+    scheme: default
+    primary: indigo
+    accent: indigo
+  features:
+    - navigation.instant
+    - navigation.sections
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - Training Scenarios:
+    - Account Structure: Training_Story.md
+
+markdown_extensions:
+  - toc:
+      permalink: true
+  - pymdownx.superfences
