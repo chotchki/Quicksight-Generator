@@ -140,7 +140,7 @@ class TestReferentialIntegrity:
 
     def test_posting_subledger_fk(self, ar_parsed, unified_parsed):
         subledger_ids = set(self._col(ar_parsed["ar_subledger_accounts"], 0))
-        posting_subledgers = set(self._col(unified_parsed["posting"], 2))
+        posting_subledgers = set(self._col(unified_parsed["posting"], 3))
         assert posting_subledgers.issubset(subledger_ids)
 
     def test_ledger_daily_balance_fk(self, ar_parsed):
@@ -161,7 +161,7 @@ class TestScenarioCoverage:
         """Status=failed must be present so the Transactions bar chart and
         the failed-transaction KPI aren't empty."""
         statuses = [
-            [p.strip().strip("'") for p in row.split(",")][5]
+            [p.strip().strip("'") for p in row.split(",")][6]
             for row in unified_parsed["posting"]
         ]
         failed = sum(1 for s in statuses if s == "failed")
@@ -170,7 +170,7 @@ class TestScenarioCoverage:
 
     def test_success_and_failed_statuses_both_present(self, unified_parsed):
         statuses = {
-            [p.strip().strip("'") for p in row.split(",")][5]
+            [p.strip().strip("'") for p in row.split(",")][6]
             for row in unified_parsed["posting"]
         }
         assert {"success", "failed"}.issubset(statuses)
@@ -279,7 +279,7 @@ class TestScenarioCoverage:
         for row in unified_parsed["posting"]:
             parts = [p.strip().strip("'") for p in row.split(",")]
             transfer_id = parts[1]
-            subledger_id = parts[2]
+            subledger_id = parts[3]
             buckets.setdefault(transfer_id, []).append(
                 internal_by_subledger[subledger_id]
             )
@@ -328,7 +328,7 @@ class TestScenarioCoverage:
         for row in unified_parsed["posting"]:
             parts = [p.strip().strip("'") for p in row.split(",")]
             transfer_id = parts[1]
-            status = parts[5]
+            status = parts[6]
             statuses_by_transfer.setdefault(transfer_id, []).append(status)
 
         internal_only_ids = {
@@ -414,10 +414,10 @@ class TestScenarioCoverage:
         totals: dict[tuple[str, str, str], Decimal] = {}
         for row in unified_parsed["posting"]:
             parts = [p.strip().strip("'") for p in row.split(",")]
-            subl = parts[2]
-            amount = Decimal(parts[3])
-            day = parts[4].split(" ")[0]
-            status = parts[5]
+            subl = parts[3]
+            amount = Decimal(parts[4])
+            day = parts[5].split(" ")[0]
+            status = parts[6]
             xtype = transfer_type_by_id[parts[1]]
             if status == "failed":
                 continue
@@ -548,7 +548,7 @@ class TestUnifiedTables:
             [p.strip().strip("'") for p in row.split(",")][0]
             for row in ar_parsed["ar_subledger_accounts"]
         }
-        posting_accounts = set(self._col(unified_parsed["posting"], 2))
+        posting_accounts = set(self._col(unified_parsed["posting"], 3))
         assert posting_accounts.issubset(subledger_ids)
 
     def test_ar_transfer_parent_is_null(self, unified_parsed):
@@ -561,8 +561,9 @@ class TestUnifiedTables:
         for row in unified_parsed["posting"]:
             parts = [p.strip().strip("'") for p in row.split(",")]
             assert parts[1], "posting.transfer_id empty"
-            assert parts[2], "posting.subledger_account_id empty"
-            assert Decimal(parts[3]), "posting.signed_amount is zero"
+            assert parts[2], "posting.ledger_account_id empty"
+            assert parts[3], "posting.subledger_account_id empty"
+            assert Decimal(parts[4]), "posting.signed_amount is zero"
 
 
 # ---------------------------------------------------------------------------

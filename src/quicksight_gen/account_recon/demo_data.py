@@ -555,6 +555,8 @@ def _derive_unified_tables(
     for t in transactions:
         by_transfer.setdefault(t["transfer_id"], []).append(t)
 
+    subledger_to_ledger = {sid: lid for sid, _n, lid in SUBLEDGER_ACCOUNTS}
+
     transfer_rows: list[tuple] = []
     posting_rows: list[tuple] = []
 
@@ -579,6 +581,7 @@ def _derive_unified_tables(
             posting_rows.append((
                 leg["transaction_id"],
                 tid,
+                subledger_to_ledger[leg["subledger_account_id"]],
                 leg["subledger_account_id"],
                 leg["amount"],  # already signed
                 leg["posted_at"],
@@ -645,8 +648,9 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
                  transfer_rows),
 
         _inserts("posting",
-                 ["posting_id", "transfer_id", "subledger_account_id",
-                  "signed_amount", "posted_at", "status"],
+                 ["posting_id", "transfer_id", "ledger_account_id",
+                  "subledger_account_id", "signed_amount", "posted_at",
+                  "status"],
                  posting_rows),
     ]
     return "\n".join(parts) + "\n"

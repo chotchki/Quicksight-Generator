@@ -347,7 +347,8 @@ CREATE TABLE transfer (
 CREATE TABLE posting (
     posting_id           VARCHAR(100)   PRIMARY KEY,
     transfer_id          VARCHAR(100)   NOT NULL REFERENCES transfer(transfer_id),
-    subledger_account_id VARCHAR(100)   NOT NULL REFERENCES ar_subledger_accounts(subledger_account_id),
+    ledger_account_id    VARCHAR(100)   NOT NULL REFERENCES ar_ledger_accounts(ledger_account_id),
+    subledger_account_id VARCHAR(100)   REFERENCES ar_subledger_accounts(subledger_account_id),
     signed_amount        DECIMAL(14,2)  NOT NULL,
     posted_at            TIMESTAMP      NOT NULL,
     status               VARCHAR(20)    NOT NULL DEFAULT 'success'
@@ -357,7 +358,8 @@ CREATE TABLE posting (
 CREATE INDEX idx_transfer_parent     ON transfer(parent_transfer_id);
 CREATE INDEX idx_transfer_type       ON transfer(transfer_type);
 CREATE INDEX idx_posting_transfer    ON posting(transfer_id);
-CREATE INDEX idx_posting_account     ON posting(subledger_account_id, posted_at);
+CREATE INDEX idx_posting_ledger      ON posting(ledger_account_id, posted_at);
+CREATE INDEX idx_posting_subledger   ON posting(subledger_account_id, posted_at);
 
 
 -- Running Σ of successful postings per sub-ledger account, up to and

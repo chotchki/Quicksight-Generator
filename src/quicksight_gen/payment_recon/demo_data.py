@@ -188,6 +188,7 @@ def _derive_pr_unified_tables(
         posting_rows.append((
             f"pr-post-{posting_idx:05d}",
             transfer_id,
+            PR_LEDGER_ACCOUNT[0],  # ledger_account_id — always pr-merchant-ledger
             account_id,
             amount,
             posted_at,
@@ -402,8 +403,9 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
                  transfer_rows),
 
         _inserts("posting",
-                 ["posting_id", "transfer_id", "subledger_account_id",
-                  "signed_amount", "posted_at", "status"],
+                 ["posting_id", "transfer_id", "ledger_account_id",
+                  "subledger_account_id", "signed_amount", "posted_at",
+                  "status"],
                  posting_rows),
     ]
     return "\n".join(parts) + "\n"
