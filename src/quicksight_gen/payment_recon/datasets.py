@@ -262,6 +262,7 @@ PAYMENT_RECON_CONTRACT = DatasetContract(columns=[
     ColumnSpec("merchant_id", "STRING"),
     ColumnSpec("transaction_date", "DATETIME"),
     ColumnSpec("days_outstanding", "INTEGER"),
+    ColumnSpec("aging_bucket", "STRING"),
 ])
 
 
@@ -505,7 +506,8 @@ SELECT
     COUNT(p.payment_id) AS payment_count,
     et.merchant_id,
     et.transaction_date,
-    (CURRENT_DATE - et.transaction_date::date) AS days_outstanding
+    (CURRENT_DATE - et.transaction_date::date) AS days_outstanding,
+{_aging_bucket_case('CURRENT_DATE - et.transaction_date::date')}
 FROM pr_external_transactions et
 LEFT JOIN pr_payments p ON p.external_transaction_id = et.transaction_id
 GROUP BY et.transaction_id, et.external_system, et.external_amount,

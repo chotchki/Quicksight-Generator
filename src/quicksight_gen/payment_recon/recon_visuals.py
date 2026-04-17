@@ -459,11 +459,41 @@ def build_payment_recon_visuals(link_color: str) -> list[Visual]:
         )
     )
 
+    aging_recon = Visual(
+        BarChartVisual=BarChartVisual(
+            VisualId="recon-aging-bar",
+            Title=_title("Reconciliation by Age"),
+            Subtitle=_subtitle(
+                "How long external transactions have been outstanding "
+                "— older items are more likely to need investigation"
+            ),
+            ChartConfiguration=BarChartConfiguration(
+                FieldWells=BarChartFieldWells(
+                    BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
+                        Category=[_dim("recon-aging-dim",
+                                       DS_PAYMENT_RECON,
+                                       "aging_bucket")],
+                        Values=[_measure_count(
+                            "recon-aging-count",
+                            DS_PAYMENT_RECON,
+                            "transaction_id",
+                        )],
+                    )
+                ),
+                Orientation="HORIZONTAL",
+                BarsArrangement="CLUSTERED",
+                CategoryLabelOptions=_axis_label("Age"),
+                ValueLabelOptions=_axis_label("Count"),
+            ),
+        )
+    )
+
     return [
         kpi_matched,
         kpi_unmatched,
         kpi_late,
         bar_by_system,
+        aging_recon,
         table_ext_txns,
         table_payments,
     ]

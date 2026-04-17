@@ -63,7 +63,7 @@ class TestVisuals:
         "Settlements": 4,
         "Payments": 4,
         "Exceptions & Alerts": 12,
-        "Payment Reconciliation": 6,
+        "Payment Reconciliation": 7,
     }
 
     def test_visual_counts_per_sheet(self, dashboard_definition):

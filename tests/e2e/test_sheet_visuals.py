@@ -25,8 +25,8 @@ EXPECTED_VISUAL_COUNTS = {
     "Sales Overview": 5,
     "Settlements": 4,
     "Payments": 4,
-    "Exceptions & Alerts": 7,
-    "Payment Reconciliation": 6,
+    "Exceptions & Alerts": 12,
+    "Payment Reconciliation": 7,
 }
 
 # A title we expect on each sheet — light spot-check that the right
