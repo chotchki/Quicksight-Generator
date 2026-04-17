@@ -42,6 +42,7 @@ TRANSACTIONS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("ledger_account_id", "STRING"),
     ColumnSpec("ledger_name", "STRING"),
     ColumnSpec("scope", "STRING"),
+    ColumnSpec("posting_level", "STRING"),
     ColumnSpec("transfer_id", "STRING"),
     ColumnSpec("transfer_type", "STRING"),
     ColumnSpec("origin", "STRING"),
@@ -165,25 +166,33 @@ JOIN ar_ledger_accounts la USING (ledger_account_id)"""
 def build_transactions_dataset(cfg: Config) -> DataSet:
     sql = """\
 SELECT
-    p.posting_id                                                AS transaction_id,
+    p.posting_id                                                         AS transaction_id,
     p.subledger_account_id,
-    s.name                                                      AS subledger_name,
-    s.ledger_account_id,
-    la.name                                                     AS ledger_name,
-    CASE WHEN s.is_internal THEN 'Internal' ELSE 'External' END AS scope,
+    COALESCE(s.name, la.name)                                            AS subledger_name,
+    p.ledger_account_id,
+    la.name                                                              AS ledger_name,
+    CASE
+        WHEN s.subledger_account_id IS NULL THEN 'Ledger'
+        WHEN s.is_internal THEN 'Internal'
+        ELSE 'External'
+    END                                                                  AS scope,
+    CASE
+        WHEN p.subledger_account_id IS NULL THEN 'Ledger'
+        ELSE 'Sub-Ledger'
+    END                                                                  AS posting_level,
     p.transfer_id,
     xfer.transfer_type,
     xfer.origin,
-    p.signed_amount                                             AS amount,
+    p.signed_amount                                                      AS amount,
     p.posted_at,
-    TO_CHAR(p.posted_at, 'YYYY-MM-DD')                         AS posted_date,
+    TO_CHAR(p.posted_at, 'YYYY-MM-DD')                                  AS posted_date,
     p.status,
-    CASE WHEN p.status = 'failed' THEN 'Failed' ELSE 'OK' END  AS is_failed,
+    CASE WHEN p.status = 'failed' THEN 'Failed' ELSE 'OK' END           AS is_failed,
     xfer.memo
 FROM posting p
 JOIN transfer xfer               ON xfer.transfer_id          = p.transfer_id
-JOIN ar_subledger_accounts s     ON s.subledger_account_id    = p.subledger_account_id
-JOIN ar_ledger_accounts la       ON la.ledger_account_id      = s.ledger_account_id
+JOIN ar_ledger_accounts la       ON la.ledger_account_id      = p.ledger_account_id
+LEFT JOIN ar_subledger_accounts s ON s.subledger_account_id   = p.subledger_account_id
 WHERE xfer.transfer_type IN ('ach', 'wire', 'internal', 'cash', 'funding_batch', 'fee', 'clearing_sweep')"""
     return build_dataset(
         cfg, cfg.prefixed("ar-transactions-dataset"),
