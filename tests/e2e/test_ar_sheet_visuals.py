@@ -25,7 +25,7 @@ EXPECTED_VISUAL_COUNTS = {
     "Balances": 4,
     "Transfers": 4,
     "Transactions": 5,
-    "Exceptions": 12,
+    "Exceptions": 17,
 }
 
 
@@ -74,7 +74,7 @@ def embed_url(qs_client, account_id, ar_dashboard_id) -> str:
 # default 1000px viewport QuickSight virtualizes below-the-fold visuals and
 # only 8-ish show up in the DOM. A taller viewport fits them all so the
 # counting assertions below can just wait for the container count.
-TALL_VIEWPORT = (1600, 3200)
+TALL_VIEWPORT = (1600, 5000)
 
 
 @pytest.mark.parametrize(
