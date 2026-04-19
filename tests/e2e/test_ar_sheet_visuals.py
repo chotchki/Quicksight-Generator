@@ -25,7 +25,7 @@ EXPECTED_VISUAL_COUNTS = {
     "Balances": 4,
     "Transfers": 4,
     "Transactions": 5,
-    "Exceptions": 17,
+    "Exceptions": 47,
 }
 
 
@@ -52,11 +52,24 @@ EXPECTED_TITLES_PER_SHEET = {
         "Transaction Detail",
     },
     "Exceptions": {
+        # Cross-check rollups (top of tab)
+        "Two-Sided Post Mismatch",
+        "Accounts Expected Zero at EOD",
+        "Balance Drift Timelines",
+        # Baseline check tables
         "Ledger Balance Drift",
         "Sub-Ledger Balance Drift",
         "Sub-Ledger Limit Breach",
         "Sub-Ledger Overdraft",
         "Non-Zero Transfers",
+        # CMS-specific check tables
+        "Sweep Target Non-Zero EOD",
+        "ACH Origination Settlement Non-Zero EOD",
+        "ACH Sweep Without Fed Confirmation",
+        "Fed Activity Without Internal Post",
+        "Stuck in Internal Transfer Suspense",
+        "Internal Transfer Suspense Non-Zero EOD",
+        "Reversed Transfers Without Credit-Back",
     },
 }
 
@@ -70,11 +83,13 @@ def embed_url(qs_client, account_id, ar_dashboard_id) -> str:
     )
 
 
-# Exceptions packs 12 visuals (5 KPIs + 5 tables + 2 timelines); at the
-# default 1000px viewport QuickSight virtualizes below-the-fold visuals and
-# only 8-ish show up in the DOM. A taller viewport fits them all so the
-# counting assertions below can just wait for the container count.
-TALL_VIEWPORT = (1600, 5000)
+# Exceptions packs 47 visuals (3 rollup KPIs + 1 rollup chart + 14 KPIs +
+# 14 detail tables + 4 drift timelines + 11 aging-bar charts) — at the
+# default 1000px viewport QuickSight virtualizes below-the-fold visuals
+# and only a handful show up in the DOM. A very tall viewport fits them
+# all so the counting assertions below can just wait for the container
+# count.
+TALL_VIEWPORT = (1600, 12000)
 
 
 @pytest.mark.parametrize(

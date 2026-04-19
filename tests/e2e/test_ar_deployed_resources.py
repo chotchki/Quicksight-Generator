@@ -51,5 +51,5 @@ class TestArDatasetsExist:
             )
 
     def test_dataset_count(self, ar_dataset_ids):
-        # Phase 5: added limit-breach and overdraft reconciliation views
-        assert len(ar_dataset_ids) == 9
+        # Phase F: 9 baseline + 9 CMS-specific checks + 3 cross-check rollups
+        assert len(ar_dataset_ids) == 21

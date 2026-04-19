@@ -20,9 +20,10 @@ from .browser_helpers import (
 pytestmark = [pytest.mark.e2e, pytest.mark.browser]
 
 
-# Exceptions packs 12 visuals — use a taller viewport so all of them
-# hydrate and we can target tables at the bottom of the sheet.
-TALL_VIEWPORT = (1600, 3200)
+# Exceptions packs 47 visuals (Phase F restructure) — use a very tall
+# viewport so all of them hydrate and we can target tables anywhere on
+# the sheet.
+TALL_VIEWPORT = (1600, 12000)
 
 
 @pytest.fixture
@@ -84,7 +85,7 @@ def test_breach_drills_to_transactions(embed_url, page_timeout):
         page.goto(embed_url, timeout=page_timeout)
         wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
         click_sheet_tab(page, "Exceptions", timeout_ms=page_timeout)
-        wait_for_visuals_present(page, min_count=12, timeout_ms=page_timeout)
+        wait_for_visuals_present(page, min_count=47, timeout_ms=page_timeout)
 
         click_first_row_of_visual(
             page, "Sub-Ledger Limit Breach", timeout_ms=page_timeout,

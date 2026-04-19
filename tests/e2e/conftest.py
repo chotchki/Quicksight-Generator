@@ -137,6 +137,7 @@ def ar_analysis_id(resource_prefix) -> str:
 def ar_dataset_ids(resource_prefix) -> list[str]:
     """Expected Account Recon dataset IDs."""
     suffixes = [
+        # Baseline (9)
         "ar-ledger-accounts-dataset",
         "ar-subledger-accounts-dataset",
         "ar-transactions-dataset",
@@ -146,6 +147,20 @@ def ar_dataset_ids(resource_prefix) -> list[str]:
         "ar-non-zero-transfers-dataset",
         "ar-limit-breach-dataset",
         "ar-overdraft-dataset",
+        # CMS-specific checks (Phase F, 9)
+        "ar-sweep-target-nonzero-dataset",
+        "ar-concentration-master-sweep-drift-dataset",
+        "ar-ach-orig-settlement-nonzero-dataset",
+        "ar-ach-sweep-no-fed-confirmation-dataset",
+        "ar-fed-card-no-internal-catchup-dataset",
+        "ar-gl-vs-fed-master-drift-dataset",
+        "ar-internal-transfer-stuck-dataset",
+        "ar-internal-transfer-suspense-nonzero-dataset",
+        "ar-internal-reversal-uncredited-dataset",
+        # Cross-check rollups (Phase F, 3)
+        "ar-expected-zero-eod-rollup-dataset",
+        "ar-two-sided-post-mismatch-rollup-dataset",
+        "ar-balance-drift-timelines-rollup-dataset",
     ]
     return [f"{resource_prefix}-{s}" for s in suffixes]
 
