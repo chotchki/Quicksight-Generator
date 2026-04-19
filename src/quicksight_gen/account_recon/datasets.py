@@ -191,6 +191,15 @@ ACH_SWEEP_NO_FED_CONFIRMATION_CONTRACT = DatasetContract(columns=[
     ColumnSpec("aging_bucket", "STRING"),
 ])
 
+FED_CARD_NO_INTERNAL_CATCHUP_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("fed_transfer_id", "STRING"),
+    ColumnSpec("fed_at", "DATETIME"),
+    ColumnSpec("fed_at_str", "STRING"),
+    ColumnSpec("fed_amount", "DECIMAL"),
+    ColumnSpec("days_outstanding", "INTEGER"),
+    ColumnSpec("aging_bucket", "STRING"),
+])
+
 
 # ---------------------------------------------------------------------------
 # Builders
@@ -467,6 +476,23 @@ FROM ar_ach_sweep_no_fed_confirmation"""
     )
 
 
+def build_fed_card_no_internal_catchup_dataset(cfg: Config) -> DataSet:
+    sql = f"""\
+SELECT
+    fed_transfer_id,
+    fed_at,
+    TO_CHAR(fed_at, 'YYYY-MM-DD') AS fed_at_str,
+    fed_amount,
+{_aging_columns('fed_at')}
+FROM ar_fed_card_no_internal_catchup"""
+    return build_dataset(
+        cfg, cfg.prefixed("ar-fed-card-no-internal-catchup-dataset"),
+        "AR Fed Activity Without Internal Catch-Up",
+        "ar-fed-card-no-internal-catchup",
+        sql, FED_CARD_NO_INTERNAL_CATCHUP_CONTRACT,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Convenience
 # ---------------------------------------------------------------------------
@@ -486,4 +512,5 @@ def build_all_datasets(cfg: Config) -> list[DataSet]:
         build_concentration_master_sweep_drift_dataset(cfg),
         build_ach_orig_settlement_nonzero_dataset(cfg),
         build_ach_sweep_no_fed_confirmation_dataset(cfg),
+        build_fed_card_no_internal_catchup_dataset(cfg),
     ]

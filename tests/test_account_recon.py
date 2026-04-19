@@ -609,6 +609,60 @@ class TestScenarioCoverage:
                 f"match expected delta {expected_delta} (got {hit})"
             )
 
+    def test_fed_card_no_internal_catchup_surfaces(self, unified_parsed):
+        """F.5.5: ``_CARD_INTERNAL_MISSING_PLANT`` cells must produce
+        Fed-side card settlement transfers (parent IS NULL, hitting the
+        payment-gateway clearing sub-ledger) with NO SNB internal
+        catch-up child. Without these, the F.5.5 view returns empty."""
+        from datetime import timedelta
+        from quicksight_gen.account_recon.demo_data import (
+            _CARD_INTERNAL_MISSING_PLANT,
+        )
+
+        xfer_types: dict[str, str] = {}
+        xfer_origins: dict[str, str] = {}
+        xfer_dates: dict[str, str] = {}
+        xfer_parents: dict[str, str | None] = {}
+        for row in unified_parsed["transfer"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            tid = parts[0]
+            xfer_parents[tid] = None if parts[1] == "NULL" else parts[1]
+            xfer_types[tid] = parts[2]
+            xfer_origins[tid] = parts[3]
+            xfer_dates[tid] = parts[6][:10]
+
+        fed_card_tids: set[str] = set()
+        for row in unified_parsed["posting"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            tid = parts[1]
+            sub_id = None if parts[3] == "NULL" else parts[3]
+            if (
+                xfer_types.get(tid) == "ach"
+                and xfer_origins.get(tid) == "external_force_posted"
+                and xfer_parents.get(tid) is None
+                and sub_id == "ext-payment-gateway-sub-clearing"
+            ):
+                fed_card_tids.add(tid)
+
+        feds_with_child = {
+            parent for parent in xfer_parents.values()
+            if parent in fed_card_tids
+        }
+        feds_no_child = fed_card_tids - feds_with_child
+        assert feds_no_child, (
+            "Expected ≥1 Fed card observation with no internal catch-up "
+            "child — F.5.5 view will be empty otherwise"
+        )
+
+        fed_dates = {xfer_dates[t] for t in feds_no_child}
+        for days_ago in _CARD_INTERNAL_MISSING_PLANT:
+            bdate = (ANCHOR - timedelta(days=days_ago)).isoformat()
+            assert bdate in fed_dates, (
+                f"Card internal-missing plant day {bdate} "
+                f"(days_ago={days_ago}) must produce a Fed observation "
+                f"without internal catch-up (got {fed_dates})"
+            )
+
     def test_ach_sweep_no_fed_confirmation_surfaces(self, unified_parsed):
         """F.5.4: ``_ACH_FED_CONFIRMATION_MISSING`` cells must produce
         clearing_sweep transfers on gl-1810 with NO Fed confirmation
@@ -1525,9 +1579,9 @@ class TestGenerateOutput:
     def test_dashboard_file_exists(self, ar_output_dir):
         assert (ar_output_dir / "account-recon-dashboard.json").exists()
 
-    def test_thirteen_dataset_files(self, ar_output_dir):
+    def test_fourteen_dataset_files(self, ar_output_dir):
         datasets = list((ar_output_dir / "datasets").glob("qs-gen-ar-*.json"))
-        assert len(datasets) == 13
+        assert len(datasets) == 14
 
     def test_all_files_valid_json(self, ar_output_dir):
         for path in ar_output_dir.rglob("*.json"):
@@ -1648,7 +1702,9 @@ class TestSheetLayout:
         # Phase F.5.3 adds ACH Origination Settlement non-zero EOD
         # (KPI + table + aging bar) → 25. Phase F.5.4 adds ACH internal
         # sweep without Fed confirmation (KPI + table + aging bar) → 28.
-        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 28)
+        # Phase F.5.5 adds Fed activity without internal catch-up
+        # (KPI + table + aging bar) → 31.
+        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 31)
 
     def _assert_visual_count(self, out_dir: Path, sheet_id: str, expected: int) -> None:
         analysis = _load(out_dir, "account-recon-analysis.json")

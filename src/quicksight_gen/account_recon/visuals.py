@@ -39,6 +39,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
     DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
     DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
+    DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     SHEET_AR_BALANCES,
@@ -1743,15 +1744,110 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
         "sweep_transfer_id",
     )
 
+    # F.5.5 Fed activity with no matching internal post — Fed-side card
+    # processor settlement observations with no SNB internal catch-up
+    # child. Money the Fed says cleared, that SNB never recorded.
+    kpi_fed_no_catchup = Visual(
+        KPIVisual=KPIVisual(
+            VisualId="ar-exc-kpi-fed-no-catchup",
+            Title=_title("Fed Activity Without Internal Post"),
+            Subtitle=_subtitle(
+                "Fed-side card processor settlements that posted but have "
+                "no SNB internal catch-up child — Fed says it cleared, "
+                "SNB has no internal record"
+            ),
+            ChartConfiguration=KPIConfiguration(
+                FieldWells=KPIFieldWells(
+                    Values=[
+                        _measure_count(
+                            "ar-exc-fed-no-catchup-count",
+                            DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
+                            "fed_transfer_id",
+                        )
+                    ],
+                ),
+            ),
+        )
+    )
+
+    table_fed_no_catchup = Visual(
+        TableVisual=TableVisual(
+            VisualId="ar-exc-fed-no-catchup-table",
+            Title=_title("Fed Activity Without Internal Post"),
+            Subtitle=_subtitle(
+                "Each row is a Fed-observed card settlement transfer with "
+                "no SNB internal catch-up child. Left-click "
+                "fed_transfer_id to drill into Transactions for that "
+                "transfer."
+            ),
+            ChartConfiguration=TableConfiguration(
+                FieldWells=TableFieldWells(
+                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
+                        Values=[
+                            _unagg_field("ar-exc-fnc-tid",
+                                         DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
+                                         "fed_transfer_id"),
+                            _unagg_field("ar-exc-fnc-at",
+                                         DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
+                                         "fed_at"),
+                            _unagg_field("ar-exc-fnc-amt",
+                                         DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
+                                         "fed_amount"),
+                            _unagg_field("ar-exc-fnc-aging",
+                                         DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
+                                         "aging_bucket"),
+                        ],
+                    )
+                ),
+                SortConfiguration={
+                    "RowSort": [
+                        {
+                            "FieldSort": {
+                                "FieldId": "ar-exc-fnc-at",
+                                "Direction": "DESC",
+                            },
+                        },
+                    ],
+                },
+            ),
+            Actions=[
+                _multi_drill_action(
+                    "action-ar-exc-fed-no-catchup-to-txn",
+                    "View Transactions",
+                    SHEET_AR_TRANSACTIONS,
+                    [
+                        (P_AR_TRANSFER, "ar-exc-fnc-tid"),
+                    ],
+                ),
+            ],
+            ConditionalFormatting={
+                "ConditionalFormattingOptions": [
+                    link_text_format(
+                        "ar-exc-fnc-tid", "fed_transfer_id",
+                        link_color,
+                    ),
+                ],
+            },
+        )
+    )
+
+    aging_fed_no_catchup = aging_bar_visual(
+        "ar-exc-aging-fed-no-catchup",
+        "Fed Activity w/o Internal Post by Age",
+        "How long Fed-observed settlements have been without an SNB internal record",
+        DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
+        "fed_transfer_id",
+    )
+
     return [
         kpi_ledger_drift, kpi_subledger_drift, kpi_nonzero,
         kpi_breach, kpi_overdraft, kpi_sweep_target, kpi_sweep_drift,
-        kpi_ach_orig_nonzero, kpi_ach_sweep_no_fed,
+        kpi_ach_orig_nonzero, kpi_ach_sweep_no_fed, kpi_fed_no_catchup,
         table_ledger_drift, table_subledger_drift, table_non_zero,
         table_breach, table_overdraft, table_sweep_target,
-        table_ach_orig_nonzero, table_ach_sweep_no_fed,
+        table_ach_orig_nonzero, table_ach_sweep_no_fed, table_fed_no_catchup,
         timeline_ledger, timeline_subledger, timeline_sweep_drift,
         aging_ledger_drift, aging_subledger_drift, aging_nonzero,
         aging_breach, aging_overdraft, aging_sweep_target,
-        aging_ach_orig_nonzero, aging_ach_sweep_no_fed,
+        aging_ach_orig_nonzero, aging_ach_sweep_no_fed, aging_fed_no_catchup,
     ]

@@ -238,6 +238,7 @@ DROP TABLE IF EXISTS ar_accounts                       CASCADE;
 DROP TABLE IF EXISTS ar_parent_accounts                CASCADE;
 
 -- Current-vocabulary drops
+DROP VIEW  IF EXISTS ar_fed_card_no_internal_catchup     CASCADE;
 DROP VIEW  IF EXISTS ar_ach_sweep_no_fed_confirmation    CASCADE;
 DROP VIEW  IF EXISTS ar_ach_orig_settlement_nonzero      CASCADE;
 DROP VIEW  IF EXISTS ar_concentration_master_sweep_drift CASCADE;
@@ -663,4 +664,31 @@ WHERE t.transfer_type = 'clearing_sweep'
     WHERE fed.parent_transfer_id = t.transfer_id
       AND fed.transfer_type = 'ach'
       AND fed.origin = 'external_force_posted'
+  );
+
+
+-- Fed activity with no matching internal post (F.5.5).
+-- Card-processor settlements posted by the FRB are observed at SNB as
+-- top-of-chain external_force_posted transfers (parent IS NULL) hitting
+-- the payment-gateway clearing sub-ledger. Each should be followed by an
+-- SNB internal catch-up child (DR gl-1815, CR merchant DDA). This view
+-- surfaces Fed observations with no internal catch-up — money the Fed
+-- says cleared, that SNB never recorded internally.
+CREATE VIEW ar_fed_card_no_internal_catchup AS
+SELECT
+    t.transfer_id                       AS fed_transfer_id,
+    t.created_at                        AS fed_at,
+    t.amount                            AS fed_amount
+FROM transfer t
+WHERE t.transfer_type = 'ach'
+  AND t.origin = 'external_force_posted'
+  AND t.parent_transfer_id IS NULL
+  AND EXISTS (
+    SELECT 1 FROM posting p
+    WHERE p.transfer_id = t.transfer_id
+      AND p.subledger_account_id = 'ext-payment-gateway-sub-clearing'
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM transfer ic
+    WHERE ic.parent_transfer_id = t.transfer_id
   );

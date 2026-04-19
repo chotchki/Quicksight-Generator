@@ -48,6 +48,7 @@ AR_BUILDERS_AND_CONTRACTS = [
     (ar_datasets.build_concentration_master_sweep_drift_dataset, ar_datasets.CONCENTRATION_MASTER_SWEEP_DRIFT_CONTRACT),
     (ar_datasets.build_ach_orig_settlement_nonzero_dataset, ar_datasets.ACH_ORIG_SETTLEMENT_NONZERO_CONTRACT),
     (ar_datasets.build_ach_sweep_no_fed_confirmation_dataset, ar_datasets.ACH_SWEEP_NO_FED_CONFIRMATION_CONTRACT),
+    (ar_datasets.build_fed_card_no_internal_catchup_dataset, ar_datasets.FED_CARD_NO_INTERNAL_CATCHUP_CONTRACT),
 ]
 
 

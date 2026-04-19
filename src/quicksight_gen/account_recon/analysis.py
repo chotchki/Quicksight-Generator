@@ -23,6 +23,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
     DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
     DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
+    DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     SHEET_AR_BALANCES,
@@ -549,6 +550,21 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
         _full_width_visual("ar-exc-aging-ach-sweep-no-fed", _CHART_ROW_SPAN),
     ]
 
+    # F.5.5: Fed activity with no matching internal post — KPI / table /
+    # aging bar stacked full width.
+    fed_no_catchup_row_kpi = [
+        GridLayoutElement(
+            ElementId="ar-exc-kpi-fed-no-catchup", ElementType="VISUAL",
+            ColumnSpan=_FULL, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
+        ),
+    ]
+    fed_no_catchup_table = [
+        _full_width_visual("ar-exc-fed-no-catchup-table", _TABLE_ROW_SPAN),
+    ]
+    fed_no_catchup_aging = [
+        _full_width_visual("ar-exc-aging-fed-no-catchup", _CHART_ROW_SPAN),
+    ]
+
     return SheetDefinition(
         SheetId=SHEET_AR_EXCEPTIONS,
         Name="Exceptions",
@@ -577,6 +593,9 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
             + ach_sweep_no_fed_row_kpi
             + ach_sweep_no_fed_table
             + ach_sweep_no_fed_aging
+            + fed_no_catchup_row_kpi
+            + fed_no_catchup_table
+            + fed_no_catchup_aging
         ),
     )
 
@@ -606,6 +625,7 @@ def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaratio
         DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
         DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
         DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
+        DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
     ]
     return [
         DataSetIdentifierDeclaration(
