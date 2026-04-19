@@ -238,6 +238,7 @@ DROP TABLE IF EXISTS ar_accounts                       CASCADE;
 DROP TABLE IF EXISTS ar_parent_accounts                CASCADE;
 
 -- Current-vocabulary drops
+DROP VIEW  IF EXISTS ar_balance_drift_timelines_rollup   CASCADE;
 DROP VIEW  IF EXISTS ar_two_sided_post_mismatch_rollup   CASCADE;
 DROP VIEW  IF EXISTS ar_expected_zero_eod_rollup         CASCADE;
 DROP VIEW  IF EXISTS ar_internal_reversal_uncredited     CASCADE;
@@ -894,3 +895,26 @@ SELECT
     'SNB internal catch-up'             AS side_missing,
     'Fed activity without internal catch-up' AS source_check
 FROM ar_fed_card_no_internal_catchup;
+
+
+-- Balance drift timelines rollup (F.5.10.c).
+-- Overlays per-day drift from two independent ledger-master flows on
+-- one shared (date, drift $) axis so the eye can compare which feed
+-- spiked on a given day:
+--   F.5.2: Concentration Master sweep drift (gl-1011 vs sub-account
+--          sweep totals — internal sweep leg imbalance)
+--   F.5.6: GL-vs-Fed Master drift (Fed-side card observations vs SNB
+--          internal catch-up totals — external/internal divergence)
+-- Per-check timelines stay below for drill-in detail.
+CREATE VIEW ar_balance_drift_timelines_rollup AS
+SELECT
+    sweep_date                          AS drift_date,
+    drift,
+    'Concentration Master Sweep drift'  AS source_check
+FROM ar_concentration_master_sweep_drift
+UNION ALL
+SELECT
+    movement_date                       AS drift_date,
+    drift,
+    'GL vs Fed Master drift'            AS source_check
+FROM ar_gl_vs_fed_master_drift;

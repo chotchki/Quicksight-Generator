@@ -260,6 +260,12 @@ TWO_SIDED_POST_MISMATCH_ROLLUP_CONTRACT = DatasetContract(columns=[
     ColumnSpec("aging_bucket", "STRING"),
 ])
 
+BALANCE_DRIFT_TIMELINES_ROLLUP_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("drift_date", "DATETIME"),
+    ColumnSpec("drift", "DECIMAL"),
+    ColumnSpec("source_check", "STRING"),
+])
+
 
 # ---------------------------------------------------------------------------
 # Builders
@@ -660,6 +666,21 @@ FROM ar_two_sided_post_mismatch_rollup"""
     )
 
 
+def build_balance_drift_timelines_rollup_dataset(cfg: Config) -> DataSet:
+    sql = """\
+SELECT
+    drift_date,
+    drift,
+    source_check
+FROM ar_balance_drift_timelines_rollup"""
+    return build_dataset(
+        cfg, cfg.prefixed("ar-balance-drift-timelines-rollup-dataset"),
+        "AR Balance Drift Timelines Rollup",
+        "ar-balance-drift-timelines-rollup",
+        sql, BALANCE_DRIFT_TIMELINES_ROLLUP_CONTRACT,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Convenience
 # ---------------------------------------------------------------------------
@@ -686,4 +707,5 @@ def build_all_datasets(cfg: Config) -> list[DataSet]:
         build_internal_reversal_uncredited_dataset(cfg),
         build_expected_zero_eod_rollup_dataset(cfg),
         build_two_sided_post_mismatch_rollup_dataset(cfg),
+        build_balance_drift_timelines_rollup_dataset(cfg),
     ]

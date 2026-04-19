@@ -30,6 +30,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
     DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
     DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+    DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     SHEET_AR_BALANCES,
@@ -671,6 +672,15 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
         ),
     ]
 
+    # F.5.10.c: Balance Drift Timelines rollup — sits at the very top of
+    # the Exceptions sheet so the overlay of F.5.2 + F.5.6 drift series
+    # is the first thing the eye lands on; per-check timelines stay below.
+    drift_timelines_rollup = [
+        _full_width_visual(
+            "ar-exc-drift-timelines-rollup", _CHART_ROW_SPAN,
+        ),
+    ]
+
     return SheetDefinition(
         SheetId=SHEET_AR_EXCEPTIONS,
         Name="Exceptions",
@@ -680,7 +690,8 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
         Visuals=build_exceptions_visuals(link_color),
         FilterControls=build_exceptions_controls(cfg),
         Layouts=_grid_layout(
-            two_sided_rollup_row_kpi
+            drift_timelines_rollup
+            + two_sided_rollup_row_kpi
             + two_sided_rollup_table
             + expected_zero_rollup_row_kpi
             + expected_zero_rollup_table
@@ -752,6 +763,7 @@ def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaratio
         DS_AR_INTERNAL_REVERSAL_UNCREDITED,
         DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
         DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+        DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
     ]
     return [
         DataSetIdentifierDeclaration(

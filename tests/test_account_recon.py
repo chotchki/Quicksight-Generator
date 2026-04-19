@@ -929,6 +929,81 @@ class TestScenarioCoverage:
             "that source check"
         )
 
+    def test_balance_drift_timelines_rollup_surfaces_each_source(
+        self, unified_parsed,
+    ):
+        """F.5.10.c overlays per-day drift from F.5.2 (Concentration
+        Master sweep — clearing_sweep transfer leg imbalance) and F.5.6
+        (GL vs Fed Master — Fed-side card observations vs SNB internal
+        catch-up totals). The overlay is empty unless at least one
+        non-zero drift day exists from each source."""
+        xfer_types: dict[str, str] = {}
+        xfer_origins: dict[str, str] = {}
+        xfer_parents: dict[str, str | None] = {}
+        xfer_amounts: dict[str, Decimal] = {}
+        xfer_dates: dict[str, str] = {}
+        for row in unified_parsed["transfer"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            tid = parts[0]
+            xfer_parents[tid] = None if parts[1] == "NULL" else parts[1]
+            xfer_types[tid] = parts[2]
+            xfer_origins[tid] = parts[3]
+            xfer_amounts[tid] = Decimal(parts[4])
+            xfer_dates[tid] = parts[6][:10]
+
+        sweep_legs: dict[str, list[tuple[str | None, str | None, Decimal]]] = {}
+        fed_card_tids: set[str] = set()
+        for row in unified_parsed["posting"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            tid = parts[1]
+            ledger_id = None if parts[2] == "NULL" else parts[2]
+            sub_id = None if parts[3] == "NULL" else parts[3]
+            signed_amount = Decimal(parts[4])
+            if xfer_types.get(tid) == "clearing_sweep":
+                sweep_legs.setdefault(tid, []).append(
+                    (ledger_id, sub_id, signed_amount),
+                )
+            if (
+                xfer_types.get(tid) == "ach"
+                and xfer_origins.get(tid) == "external_force_posted"
+                and xfer_parents.get(tid) is None
+                and sub_id == "ext-payment-gateway-sub-clearing"
+            ):
+                fed_card_tids.add(tid)
+
+        sweep_drift_days: set[str] = set()
+        for tid, legs in sweep_legs.items():
+            net = sum((amt for _, _, amt in legs), Decimal(0))
+            if net != 0:
+                sweep_drift_days.add(xfer_dates[tid])
+
+        fed_per_day: dict[str, Decimal] = {}
+        internal_per_day: dict[str, Decimal] = {}
+        for tid in fed_card_tids:
+            d = xfer_dates[tid]
+            fed_per_day[d] = fed_per_day.get(d, Decimal(0)) + xfer_amounts[tid]
+        for tid, parent in xfer_parents.items():
+            if parent in fed_card_tids:
+                d = xfer_dates[tid]
+                internal_per_day[d] = (
+                    internal_per_day.get(d, Decimal(0)) + xfer_amounts[tid]
+                )
+        gl_fed_drift_days = {
+            d for d in fed_per_day
+            if fed_per_day[d] - internal_per_day.get(d, Decimal(0)) != 0
+        }
+
+        assert sweep_drift_days, (
+            "F.5.10.c rollup needs at least one non-zero Concentration "
+            "Master sweep drift day (F.5.2 source) — rollup overlay will "
+            "be missing that series"
+        )
+        assert gl_fed_drift_days, (
+            "F.5.10.c rollup needs at least one non-zero GL vs Fed "
+            "Master drift day (F.5.6 source) — rollup overlay will be "
+            "missing that series"
+        )
+
     def test_ach_sweep_no_fed_confirmation_surfaces(self, unified_parsed):
         """F.5.4: ``_ACH_FED_CONFIRMATION_MISSING`` cells must produce
         clearing_sweep transfers on gl-1810 with NO Fed confirmation
@@ -1845,9 +1920,9 @@ class TestGenerateOutput:
     def test_dashboard_file_exists(self, ar_output_dir):
         assert (ar_output_dir / "account-recon-dashboard.json").exists()
 
-    def test_twenty_dataset_files(self, ar_output_dir):
+    def test_twenty_one_dataset_files(self, ar_output_dir):
         datasets = list((ar_output_dir / "datasets").glob("qs-gen-ar-*.json"))
-        assert len(datasets) == 20
+        assert len(datasets) == 21
 
     def test_all_files_valid_json(self, ar_output_dir):
         for path in ar_output_dir.rglob("*.json"):
@@ -1977,8 +2052,9 @@ class TestSheetLayout:
         # not-credited / double spend (KPI + table + aging bar) → 42.
         # Phase F.5.10.a adds Accounts Expected Zero at EOD rollup
         # (KPI + table) → 44. Phase F.5.10.b adds Two-Sided Post Mismatch
-        # rollup (KPI + table) → 46.
-        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 46)
+        # rollup (KPI + table) → 46. Phase F.5.10.c adds Balance Drift
+        # Timelines rollup (single overlay timeline) → 47.
+        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 47)
 
     def _assert_visual_count(self, out_dir: Path, sheet_id: str, expected: int) -> None:
         analysis = _load(out_dir, "account-recon-analysis.json")

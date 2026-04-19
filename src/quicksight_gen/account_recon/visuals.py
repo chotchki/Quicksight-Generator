@@ -43,6 +43,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_GL_VS_FED_MASTER_DRIFT,
     DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
     DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+    DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
     DS_AR_INTERNAL_REVERSAL_UNCREDITED,
     DS_AR_INTERNAL_TRANSFER_STUCK,
     DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
@@ -2359,9 +2360,53 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
         )
     )
 
+    # F.5.10.c Balance Drift Timelines rollup — overlays per-day drift
+    # from F.5.2 (Concentration Master sweep) and F.5.6 (GL vs Fed Master)
+    # on one shared (date, drift $) axis. Two clustered series per day so
+    # the eye can compare which feed spiked when. Per-check timelines stay
+    # below for drill-in detail.
+    timeline_drift_rollup = Visual(
+        BarChartVisual=BarChartVisual(
+            VisualId="ar-exc-drift-timelines-rollup",
+            Title=_title("Balance Drift Timelines"),
+            Subtitle=_subtitle(
+                "Per-day drift from Concentration Master sweep (F.5.2) "
+                "and GL vs Fed Master (F.5.6) on one shared axis. "
+                "Healthy days = 0; clustered bars = days a feed diverged."
+            ),
+            ChartConfiguration=BarChartConfiguration(
+                FieldWells=BarChartFieldWells(
+                    BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
+                        Category=[_date_dim(
+                            "ar-exc-drift-rollup-dim",
+                            DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
+                            "drift_date",
+                        )],
+                        Values=[_measure_sum(
+                            "ar-exc-drift-rollup-val",
+                            DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
+                            "drift",
+                        )],
+                        Colors=[_dim(
+                            "ar-exc-drift-rollup-color",
+                            DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
+                            "source_check",
+                        )],
+                    )
+                ),
+                Orientation="VERTICAL",
+                BarsArrangement="CLUSTERED",
+                CategoryLabelOptions=_axis_label("Date"),
+                ValueLabelOptions=_axis_label("Drift ($)"),
+                ColorLabelOptions=_axis_label("Source"),
+            ),
+        )
+    )
+
     return [
         kpi_two_sided_rollup,
         kpi_expected_zero_rollup,
+        timeline_drift_rollup,
         kpi_ledger_drift, kpi_subledger_drift, kpi_nonzero,
         kpi_breach, kpi_overdraft, kpi_sweep_target, kpi_sweep_drift,
         kpi_ach_orig_nonzero, kpi_ach_sweep_no_fed, kpi_fed_no_catchup,

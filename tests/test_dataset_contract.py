@@ -55,6 +55,7 @@ AR_BUILDERS_AND_CONTRACTS = [
     (ar_datasets.build_internal_reversal_uncredited_dataset, ar_datasets.INTERNAL_REVERSAL_UNCREDITED_CONTRACT),
     (ar_datasets.build_expected_zero_eod_rollup_dataset, ar_datasets.EXPECTED_ZERO_EOD_ROLLUP_CONTRACT),
     (ar_datasets.build_two_sided_post_mismatch_rollup_dataset, ar_datasets.TWO_SIDED_POST_MISMATCH_ROLLUP_CONTRACT),
+    (ar_datasets.build_balance_drift_timelines_rollup_dataset, ar_datasets.BALANCE_DRIFT_TIMELINES_ROLLUP_CONTRACT),
 ]
 
 

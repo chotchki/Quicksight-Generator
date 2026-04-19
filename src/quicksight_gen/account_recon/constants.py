@@ -31,3 +31,4 @@ DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO = "ar-internal-transfer-suspense-nonzer
 DS_AR_INTERNAL_REVERSAL_UNCREDITED = "ar-internal-reversal-uncredited-ds"
 DS_AR_EXPECTED_ZERO_EOD_ROLLUP = "ar-expected-zero-eod-rollup-ds"
 DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP = "ar-two-sided-post-mismatch-rollup-ds"
+DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP = "ar-balance-drift-timelines-rollup-ds"
