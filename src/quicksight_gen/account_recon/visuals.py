@@ -41,6 +41,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
     DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
     DS_AR_GL_VS_FED_MASTER_DRIFT,
+    DS_AR_INTERNAL_REVERSAL_UNCREDITED,
     DS_AR_INTERNAL_TRANSFER_STUCK,
     DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
     DS_AR_TRANSACTIONS,
@@ -2098,19 +2099,124 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
         "balance_date",
     )
 
+    # F.5.9 Internal Transfer Reversal Uncredited / "double spend" — an
+    # on-us transfer reversed where the originator credit-back leg failed
+    # but the suspense leg succeeded. Suspense looks healthy; customer is
+    # short the money. The most damaging silent failure in the cycle.
+    kpi_internal_reversal_uncredited = Visual(
+        KPIVisual=KPIVisual(
+            VisualId="ar-exc-kpi-internal-reversal-uncredited",
+            Title=_title("Reversed Transfers Without Credit-Back"),
+            Subtitle=_subtitle(
+                "Internal transfers reversed where the originator's "
+                "credit-back leg failed but the suspense leg succeeded — "
+                "originator was debited and never refunded"
+            ),
+            ChartConfiguration=KPIConfiguration(
+                FieldWells=KPIFieldWells(
+                    Values=[
+                        _measure_count(
+                            "ar-exc-internal-reversal-uncredited-count",
+                            DS_AR_INTERNAL_REVERSAL_UNCREDITED,
+                            "originate_transfer_id",
+                        )
+                    ],
+                ),
+            ),
+        )
+    )
+
+    table_internal_reversal_uncredited = Visual(
+        TableVisual=TableVisual(
+            VisualId="ar-exc-internal-reversal-uncredited-table",
+            Title=_title("Reversed Transfers Without Credit-Back"),
+            Subtitle=_subtitle(
+                "Each row is an originate transfer whose reversal Step 2 "
+                "had the originator credit-back leg fail. Left-click "
+                "originate_transfer_id to drill into Transactions for "
+                "that originate."
+            ),
+            ChartConfiguration=TableConfiguration(
+                FieldWells=TableFieldWells(
+                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
+                        Values=[
+                            _unagg_field("ar-exc-iru-orig-tid",
+                                         DS_AR_INTERNAL_REVERSAL_UNCREDITED,
+                                         "originate_transfer_id"),
+                            _unagg_field("ar-exc-iru-orig-at",
+                                         DS_AR_INTERNAL_REVERSAL_UNCREDITED,
+                                         "originated_at"),
+                            _unagg_field("ar-exc-iru-amt",
+                                         DS_AR_INTERNAL_REVERSAL_UNCREDITED,
+                                         "originate_amount"),
+                            _unagg_field("ar-exc-iru-rev-tid",
+                                         DS_AR_INTERNAL_REVERSAL_UNCREDITED,
+                                         "reversal_transfer_id"),
+                            _unagg_field("ar-exc-iru-rev-at",
+                                         DS_AR_INTERNAL_REVERSAL_UNCREDITED,
+                                         "reversal_at"),
+                            _unagg_field("ar-exc-iru-aging",
+                                         DS_AR_INTERNAL_REVERSAL_UNCREDITED,
+                                         "aging_bucket"),
+                        ],
+                    )
+                ),
+                SortConfiguration={
+                    "RowSort": [
+                        {
+                            "FieldSort": {
+                                "FieldId": "ar-exc-iru-orig-at",
+                                "Direction": "DESC",
+                            },
+                        },
+                    ],
+                },
+            ),
+            Actions=[
+                _multi_drill_action(
+                    "action-ar-exc-internal-reversal-uncredited-to-txn",
+                    "View Transactions",
+                    SHEET_AR_TRANSACTIONS,
+                    [
+                        (P_AR_TRANSFER, "ar-exc-iru-orig-tid"),
+                    ],
+                ),
+            ],
+            ConditionalFormatting={
+                "ConditionalFormattingOptions": [
+                    link_text_format(
+                        "ar-exc-iru-orig-tid", "originate_transfer_id",
+                        link_color,
+                    ),
+                ],
+            },
+        )
+    )
+
+    aging_internal_reversal_uncredited = aging_bar_visual(
+        "ar-exc-aging-internal-reversal-uncredited",
+        "Reversed Without Credit-Back by Age",
+        "How long uncredited reversals have been outstanding since originate",
+        DS_AR_INTERNAL_REVERSAL_UNCREDITED,
+        "originate_transfer_id",
+    )
+
     return [
         kpi_ledger_drift, kpi_subledger_drift, kpi_nonzero,
         kpi_breach, kpi_overdraft, kpi_sweep_target, kpi_sweep_drift,
         kpi_ach_orig_nonzero, kpi_ach_sweep_no_fed, kpi_fed_no_catchup,
         kpi_gl_fed_drift, kpi_internal_stuck, kpi_internal_suspense_nonzero,
+        kpi_internal_reversal_uncredited,
         table_ledger_drift, table_subledger_drift, table_non_zero,
         table_breach, table_overdraft, table_sweep_target,
         table_ach_orig_nonzero, table_ach_sweep_no_fed, table_fed_no_catchup,
         table_internal_stuck, table_internal_suspense_nonzero,
+        table_internal_reversal_uncredited,
         timeline_ledger, timeline_subledger, timeline_sweep_drift,
         timeline_gl_fed_drift,
         aging_ledger_drift, aging_subledger_drift, aging_nonzero,
         aging_breach, aging_overdraft, aging_sweep_target,
         aging_ach_orig_nonzero, aging_ach_sweep_no_fed, aging_fed_no_catchup,
         aging_internal_stuck, aging_internal_suspense_nonzero,
+        aging_internal_reversal_uncredited,
     ]

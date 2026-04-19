@@ -227,6 +227,17 @@ INTERNAL_TRANSFER_SUSPENSE_NONZERO_CONTRACT = DatasetContract(columns=[
     ColumnSpec("aging_bucket", "STRING"),
 ])
 
+INTERNAL_REVERSAL_UNCREDITED_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("originate_transfer_id", "STRING"),
+    ColumnSpec("originated_at", "DATETIME"),
+    ColumnSpec("originated_at_str", "STRING"),
+    ColumnSpec("originate_amount", "DECIMAL"),
+    ColumnSpec("reversal_transfer_id", "STRING"),
+    ColumnSpec("reversal_at", "DATETIME"),
+    ColumnSpec("days_outstanding", "INTEGER"),
+    ColumnSpec("aging_bucket", "STRING"),
+])
+
 
 # ---------------------------------------------------------------------------
 # Builders
@@ -571,6 +582,25 @@ FROM ar_internal_transfer_suspense_nonzero"""
     )
 
 
+def build_internal_reversal_uncredited_dataset(cfg: Config) -> DataSet:
+    sql = f"""\
+SELECT
+    originate_transfer_id,
+    originated_at,
+    TO_CHAR(originated_at, 'YYYY-MM-DD') AS originated_at_str,
+    originate_amount,
+    reversal_transfer_id,
+    reversal_at,
+{_aging_columns('originated_at')}
+FROM ar_internal_reversal_uncredited"""
+    return build_dataset(
+        cfg, cfg.prefixed("ar-internal-reversal-uncredited-dataset"),
+        "AR Internal Reversal Uncredited",
+        "ar-internal-reversal-uncredited",
+        sql, INTERNAL_REVERSAL_UNCREDITED_CONTRACT,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Convenience
 # ---------------------------------------------------------------------------
@@ -594,4 +624,5 @@ def build_all_datasets(cfg: Config) -> list[DataSet]:
         build_gl_vs_fed_master_drift_dataset(cfg),
         build_internal_transfer_stuck_dataset(cfg),
         build_internal_transfer_suspense_nonzero_dataset(cfg),
+        build_internal_reversal_uncredited_dataset(cfg),
     ]

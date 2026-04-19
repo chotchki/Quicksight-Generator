@@ -719,6 +719,85 @@ class TestScenarioCoverage:
                 f"(got {stuck_dates})"
             )
 
+    def test_internal_reversal_uncredited_surfaces(self, unified_parsed):
+        """F.5.9: ``_INTERNAL_TRANSFER_PLANT`` rows with kind=
+        "reversed_not_credited" must produce a Step 1 originate hitting
+        gl-1830 plus a Step 2 child where (a) the originator-DDA leg
+        failed and (b) the suspense leg posted successfully. Without
+        these, the F.5.9 view returns empty."""
+        from datetime import timedelta
+        from quicksight_gen.account_recon.demo_data import (
+            _INTERNAL_TRANSFER_PLANT,
+        )
+
+        xfer_types: dict[str, str] = {}
+        xfer_origins: dict[str, str] = {}
+        xfer_dates: dict[str, str] = {}
+        xfer_parents: dict[str, str | None] = {}
+        for row in unified_parsed["transfer"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            tid = parts[0]
+            xfer_parents[tid] = None if parts[1] == "NULL" else parts[1]
+            xfer_types[tid] = parts[2]
+            xfer_origins[tid] = parts[3]
+            xfer_dates[tid] = parts[6][:10]
+
+        suspense_originate_tids: set[str] = set()
+        for row in unified_parsed["posting"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            tid = parts[1]
+            ledger_id = None if parts[2] == "NULL" else parts[2]
+            if (
+                xfer_types.get(tid) == "internal"
+                and xfer_origins.get(tid) == "internal_initiated"
+                and xfer_parents.get(tid) is None
+                and ledger_id == "gl-1830-internal-transfer-suspense"
+            ):
+                suspense_originate_tids.add(tid)
+
+        step2_legs: dict[str, list[tuple[str | None, str | None, str]]] = {}
+        for row in unified_parsed["posting"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            tid = parts[1]
+            parent = xfer_parents.get(tid)
+            if parent not in suspense_originate_tids:
+                continue
+            ledger_id = None if parts[2] == "NULL" else parts[2]
+            sub_id = None if parts[3] == "NULL" else parts[3]
+            status = parts[6]
+            step2_legs.setdefault(tid, []).append((ledger_id, sub_id, status))
+
+        uncredited_originates: set[str] = set()
+        for step2_tid, legs in step2_legs.items():
+            has_failed_dda = any(
+                sub_id is not None and status == "failed"
+                for _, sub_id, status in legs
+            )
+            has_success_suspense = any(
+                ledger_id == "gl-1830-internal-transfer-suspense"
+                and sub_id is None
+                and status == "success"
+                for ledger_id, sub_id, status in legs
+            )
+            if has_failed_dda and has_success_suspense:
+                uncredited_originates.add(xfer_parents[step2_tid])
+
+        assert uncredited_originates, (
+            "Expected ≥1 reversed-but-not-credited cycle — F.5.9 view "
+            "will be empty otherwise"
+        )
+
+        uncredited_dates = {xfer_dates[t] for t in uncredited_originates}
+        for _, _, days_ago, kind, _ in _INTERNAL_TRANSFER_PLANT:
+            if kind != "reversed_not_credited":
+                continue
+            bdate = (ANCHOR - timedelta(days=days_ago)).isoformat()
+            assert bdate in uncredited_dates, (
+                f"Reversed-not-credited plant day {bdate} "
+                f"(days_ago={days_ago}) must produce an uncredited "
+                f"reversal cycle (got {uncredited_dates})"
+            )
+
     def test_internal_suspense_nonzero_eod_surfaces(self, ar_parsed):
         """F.5.8: ``_INTERNAL_TRANSFER_PLANT`` rows with kind="stuck"
         leave the gl-1830 ledger stored EOD balance non-zero from the
@@ -1669,9 +1748,9 @@ class TestGenerateOutput:
     def test_dashboard_file_exists(self, ar_output_dir):
         assert (ar_output_dir / "account-recon-dashboard.json").exists()
 
-    def test_seventeen_dataset_files(self, ar_output_dir):
+    def test_eighteen_dataset_files(self, ar_output_dir):
         datasets = list((ar_output_dir / "datasets").glob("qs-gen-ar-*.json"))
-        assert len(datasets) == 17
+        assert len(datasets) == 18
 
     def test_all_files_valid_json(self, ar_output_dir):
         for path in ar_output_dir.rglob("*.json"):
@@ -1797,8 +1876,9 @@ class TestSheetLayout:
         # Master drift (KPI + timeline) → 33. Phase F.5.7 adds Stuck in
         # Internal Transfer Suspense (KPI + table + aging bar) → 36.
         # Phase F.5.8 adds Internal Transfer Suspense non-zero EOD
-        # (KPI + table + aging bar) → 39.
-        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 39)
+        # (KPI + table + aging bar) → 39. Phase F.5.9 adds Reversed-but-
+        # not-credited / double spend (KPI + table + aging bar) → 42.
+        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 42)
 
     def _assert_visual_count(self, out_dir: Path, sheet_id: str, expected: int) -> None:
         analysis = _load(out_dir, "account-recon-analysis.json")

@@ -238,6 +238,7 @@ DROP TABLE IF EXISTS ar_accounts                       CASCADE;
 DROP TABLE IF EXISTS ar_parent_accounts                CASCADE;
 
 -- Current-vocabulary drops
+DROP VIEW  IF EXISTS ar_internal_reversal_uncredited     CASCADE;
 DROP VIEW  IF EXISTS ar_internal_transfer_suspense_nonzero CASCADE;
 DROP VIEW  IF EXISTS ar_internal_transfer_stuck          CASCADE;
 DROP VIEW  IF EXISTS ar_gl_vs_fed_master_drift           CASCADE;
@@ -768,6 +769,43 @@ WHERE t.transfer_type = 'internal'
   AND NOT EXISTS (
     SELECT 1 FROM transfer step2
     WHERE step2.parent_transfer_id = t.transfer_id
+  );
+
+
+-- Internal Transfer Reversal Uncredited / "double spend" (F.5.9).
+-- An on-us internal transfer that was reversed, but the originator's
+-- credit-back leg failed while the suspense leg succeeded. Net result:
+-- originator was debited on Step 1 and never refunded, but suspense
+-- nets to zero so the ledger looks healthy. The customer is short the
+-- money. This is the most damaging silent failure in the cycle.
+CREATE VIEW ar_internal_reversal_uncredited AS
+SELECT
+    orig.transfer_id                    AS originate_transfer_id,
+    orig.created_at                     AS originated_at,
+    orig.amount                         AS originate_amount,
+    step2.transfer_id                   AS reversal_transfer_id,
+    step2.created_at                    AS reversal_at
+FROM transfer orig
+JOIN transfer step2 ON step2.parent_transfer_id = orig.transfer_id
+WHERE orig.transfer_type = 'internal'
+  AND orig.origin = 'internal_initiated'
+  AND orig.parent_transfer_id IS NULL
+  AND EXISTS (
+    SELECT 1 FROM posting p
+    WHERE p.transfer_id = orig.transfer_id
+      AND p.ledger_account_id = 'gl-1830-internal-transfer-suspense'
+  )
+  AND EXISTS (
+    SELECT 1 FROM posting p
+    WHERE p.transfer_id = step2.transfer_id
+      AND p.subledger_account_id IS NOT NULL
+      AND p.status = 'failed'
+  )
+  AND EXISTS (
+    SELECT 1 FROM posting p
+    WHERE p.transfer_id = step2.transfer_id
+      AND p.ledger_account_id = 'gl-1830-internal-transfer-suspense'
+      AND p.status = 'success'
   );
 
 

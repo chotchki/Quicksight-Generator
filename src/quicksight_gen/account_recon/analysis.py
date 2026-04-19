@@ -25,6 +25,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
     DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
     DS_AR_GL_VS_FED_MASTER_DRIFT,
+    DS_AR_INTERNAL_REVERSAL_UNCREDITED,
     DS_AR_INTERNAL_TRANSFER_STUCK,
     DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
     DS_AR_TRANSACTIONS,
@@ -616,6 +617,26 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
         ),
     ]
 
+    # F.5.9: Internal Transfer Reversal Uncredited / "double spend" —
+    # KPI / table / aging bar stacked full width.
+    internal_reversal_uncredited_row_kpi = [
+        GridLayoutElement(
+            ElementId="ar-exc-kpi-internal-reversal-uncredited",
+            ElementType="VISUAL",
+            ColumnSpan=_FULL, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
+        ),
+    ]
+    internal_reversal_uncredited_table = [
+        _full_width_visual(
+            "ar-exc-internal-reversal-uncredited-table", _TABLE_ROW_SPAN,
+        ),
+    ]
+    internal_reversal_uncredited_aging = [
+        _full_width_visual(
+            "ar-exc-aging-internal-reversal-uncredited", _CHART_ROW_SPAN,
+        ),
+    ]
+
     return SheetDefinition(
         SheetId=SHEET_AR_EXCEPTIONS,
         Name="Exceptions",
@@ -654,6 +675,9 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
             + internal_suspense_nonzero_row_kpi
             + internal_suspense_nonzero_table
             + internal_suspense_nonzero_aging
+            + internal_reversal_uncredited_row_kpi
+            + internal_reversal_uncredited_table
+            + internal_reversal_uncredited_aging
         ),
     )
 
@@ -687,6 +711,7 @@ def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaratio
         DS_AR_GL_VS_FED_MASTER_DRIFT,
         DS_AR_INTERNAL_TRANSFER_STUCK,
         DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
+        DS_AR_INTERNAL_REVERSAL_UNCREDITED,
     ]
     return [
         DataSetIdentifierDeclaration(
