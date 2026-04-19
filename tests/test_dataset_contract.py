@@ -51,6 +51,7 @@ AR_BUILDERS_AND_CONTRACTS = [
     (ar_datasets.build_fed_card_no_internal_catchup_dataset, ar_datasets.FED_CARD_NO_INTERNAL_CATCHUP_CONTRACT),
     (ar_datasets.build_gl_vs_fed_master_drift_dataset, ar_datasets.GL_VS_FED_MASTER_DRIFT_CONTRACT),
     (ar_datasets.build_internal_transfer_stuck_dataset, ar_datasets.INTERNAL_TRANSFER_STUCK_CONTRACT),
+    (ar_datasets.build_internal_transfer_suspense_nonzero_dataset, ar_datasets.INTERNAL_TRANSFER_SUSPENSE_NONZERO_CONTRACT),
 ]
 
 

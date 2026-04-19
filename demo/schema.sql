@@ -238,6 +238,7 @@ DROP TABLE IF EXISTS ar_accounts                       CASCADE;
 DROP TABLE IF EXISTS ar_parent_accounts                CASCADE;
 
 -- Current-vocabulary drops
+DROP VIEW  IF EXISTS ar_internal_transfer_suspense_nonzero CASCADE;
 DROP VIEW  IF EXISTS ar_internal_transfer_stuck          CASCADE;
 DROP VIEW  IF EXISTS ar_gl_vs_fed_master_drift           CASCADE;
 DROP VIEW  IF EXISTS ar_fed_card_no_internal_catchup     CASCADE;
@@ -768,3 +769,22 @@ WHERE t.transfer_type = 'internal'
     SELECT 1 FROM transfer step2
     WHERE step2.parent_transfer_id = t.transfer_id
   );
+
+
+-- Internal Transfer Suspense non-zero EOD (F.5.8).
+-- The Internal Transfer Suspense ledger (gl-1830) is a transitory
+-- clearing account: each book-transfer between SNB customer DDAs hits
+-- it on Step 1 (originator → suspense) and clears it on Step 2 (suspense
+-- → recipient). Healthy day: every Step 1 has its Step 2, suspense nets
+-- to zero EOD. Non-zero EOD = at least one Step-1 didn't clear that day.
+-- Ledger-level analog of F.5.7's per-transfer view.
+CREATE VIEW ar_internal_transfer_suspense_nonzero AS
+SELECT
+    ldb.ledger_account_id,
+    la.name                             AS ledger_name,
+    ldb.balance_date,
+    ldb.balance                         AS stored_balance
+FROM ar_ledger_daily_balances ldb
+JOIN ar_ledger_accounts la USING (ledger_account_id)
+WHERE ldb.ledger_account_id = 'gl-1830-internal-transfer-suspense'
+  AND ldb.balance <> 0;

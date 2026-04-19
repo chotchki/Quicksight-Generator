@@ -42,6 +42,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
     DS_AR_GL_VS_FED_MASTER_DRIFT,
     DS_AR_INTERNAL_TRANSFER_STUCK,
+    DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     SHEET_AR_BALANCES,
@@ -1996,19 +1997,120 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
         "originate_transfer_id",
     )
 
+    # F.5.8 Internal Transfer Suspense non-zero EOD — ledger-level view of
+    # gl-1830. Healthy day = every Step 1 had a Step 2; suspense nets to
+    # zero. Non-zero EOD = at least one stuck originate that day.
+    kpi_internal_suspense_nonzero = Visual(
+        KPIVisual=KPIVisual(
+            VisualId="ar-exc-kpi-internal-suspense-nonzero",
+            Title=_title("Internal Transfer Suspense Non-Zero EOD"),
+            Subtitle=_subtitle(
+                "Days the Internal Transfer Suspense ledger (gl-1830) ended "
+                "non-zero — at least one Step 1 originate didn't have a "
+                "Step 2 clearing it that day"
+            ),
+            ChartConfiguration=KPIConfiguration(
+                FieldWells=KPIFieldWells(
+                    Values=[
+                        _measure_count(
+                            "ar-exc-internal-suspense-nonzero-count",
+                            DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
+                            "balance_date",
+                        )
+                    ],
+                ),
+            ),
+        )
+    )
+
+    table_internal_suspense_nonzero = Visual(
+        TableVisual=TableVisual(
+            VisualId="ar-exc-internal-suspense-nonzero-table",
+            Title=_title("Internal Transfer Suspense Non-Zero EOD"),
+            Subtitle=_subtitle(
+                "Days the Internal Transfer Suspense ledger ended non-zero. "
+                "Each row is a date with at least one Step 1 originate that "
+                "didn't clear. Left-click ledger_account_id to drill into "
+                "Transactions for that date."
+            ),
+            ChartConfiguration=TableConfiguration(
+                FieldWells=TableFieldWells(
+                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
+                        Values=[
+                            _unagg_field("ar-exc-its-nz-ledger-id",
+                                         DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
+                                         "ledger_account_id"),
+                            _unagg_field("ar-exc-its-nz-ledger",
+                                         DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
+                                         "ledger_name"),
+                            _unagg_field("ar-exc-its-nz-date",
+                                         DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
+                                         "balance_date"),
+                            _unagg_field("ar-exc-its-nz-date-str",
+                                         DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
+                                         "balance_date_str"),
+                            _unagg_field("ar-exc-its-nz-stored",
+                                         DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
+                                         "stored_balance"),
+                            _unagg_field("ar-exc-its-nz-aging",
+                                         DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
+                                         "aging_bucket"),
+                        ],
+                    )
+                ),
+                SortConfiguration={
+                    "RowSort": [
+                        {
+                            "FieldSort": {
+                                "FieldId": "ar-exc-its-nz-date",
+                                "Direction": "DESC",
+                            },
+                        },
+                    ],
+                },
+            ),
+            Actions=[
+                _multi_drill_action(
+                    "action-ar-exc-its-nz-to-txn",
+                    "View Transactions",
+                    SHEET_AR_TRANSACTIONS,
+                    [
+                        (P_AR_ACTIVITY_DATE, "ar-exc-its-nz-date-str"),
+                    ],
+                ),
+            ],
+            ConditionalFormatting={
+                "ConditionalFormattingOptions": [
+                    link_text_format(
+                        "ar-exc-its-nz-ledger-id", "ledger_account_id",
+                        link_color,
+                    ),
+                ],
+            },
+        )
+    )
+
+    aging_internal_suspense_nonzero = aging_bar_visual(
+        "ar-exc-aging-internal-suspense-nonzero",
+        "Internal Suspense Non-Zero EOD by Age",
+        "How long Internal Transfer Suspense non-zero days have been outstanding",
+        DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
+        "balance_date",
+    )
+
     return [
         kpi_ledger_drift, kpi_subledger_drift, kpi_nonzero,
         kpi_breach, kpi_overdraft, kpi_sweep_target, kpi_sweep_drift,
         kpi_ach_orig_nonzero, kpi_ach_sweep_no_fed, kpi_fed_no_catchup,
-        kpi_gl_fed_drift, kpi_internal_stuck,
+        kpi_gl_fed_drift, kpi_internal_stuck, kpi_internal_suspense_nonzero,
         table_ledger_drift, table_subledger_drift, table_non_zero,
         table_breach, table_overdraft, table_sweep_target,
         table_ach_orig_nonzero, table_ach_sweep_no_fed, table_fed_no_catchup,
-        table_internal_stuck,
+        table_internal_stuck, table_internal_suspense_nonzero,
         timeline_ledger, timeline_subledger, timeline_sweep_drift,
         timeline_gl_fed_drift,
         aging_ledger_drift, aging_subledger_drift, aging_nonzero,
         aging_breach, aging_overdraft, aging_sweep_target,
         aging_ach_orig_nonzero, aging_ach_sweep_no_fed, aging_fed_no_catchup,
-        aging_internal_stuck,
+        aging_internal_stuck, aging_internal_suspense_nonzero,
     ]

@@ -26,6 +26,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
     DS_AR_GL_VS_FED_MASTER_DRIFT,
     DS_AR_INTERNAL_TRANSFER_STUCK,
+    DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     SHEET_AR_BALANCES,
@@ -595,6 +596,26 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
         _full_width_visual("ar-exc-aging-internal-stuck", _CHART_ROW_SPAN),
     ]
 
+    # F.5.8: Internal Transfer Suspense non-zero EOD — KPI / table /
+    # aging bar stacked full width. Mirrors F.5.3 ach-orig shape.
+    internal_suspense_nonzero_row_kpi = [
+        GridLayoutElement(
+            ElementId="ar-exc-kpi-internal-suspense-nonzero",
+            ElementType="VISUAL",
+            ColumnSpan=_FULL, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
+        ),
+    ]
+    internal_suspense_nonzero_table = [
+        _full_width_visual(
+            "ar-exc-internal-suspense-nonzero-table", _TABLE_ROW_SPAN,
+        ),
+    ]
+    internal_suspense_nonzero_aging = [
+        _full_width_visual(
+            "ar-exc-aging-internal-suspense-nonzero", _CHART_ROW_SPAN,
+        ),
+    ]
+
     return SheetDefinition(
         SheetId=SHEET_AR_EXCEPTIONS,
         Name="Exceptions",
@@ -630,6 +651,9 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
             + internal_stuck_row_kpi
             + internal_stuck_table
             + internal_stuck_aging
+            + internal_suspense_nonzero_row_kpi
+            + internal_suspense_nonzero_table
+            + internal_suspense_nonzero_aging
         ),
     )
 
@@ -662,6 +686,7 @@ def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaratio
         DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
         DS_AR_GL_VS_FED_MASTER_DRIFT,
         DS_AR_INTERNAL_TRANSFER_STUCK,
+        DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
     ]
     return [
         DataSetIdentifierDeclaration(

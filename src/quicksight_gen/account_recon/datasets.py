@@ -217,6 +217,16 @@ INTERNAL_TRANSFER_STUCK_CONTRACT = DatasetContract(columns=[
     ColumnSpec("aging_bucket", "STRING"),
 ])
 
+INTERNAL_TRANSFER_SUSPENSE_NONZERO_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("ledger_account_id", "STRING"),
+    ColumnSpec("ledger_name", "STRING"),
+    ColumnSpec("balance_date", "DATETIME"),
+    ColumnSpec("balance_date_str", "STRING"),
+    ColumnSpec("stored_balance", "DECIMAL"),
+    ColumnSpec("days_outstanding", "INTEGER"),
+    ColumnSpec("aging_bucket", "STRING"),
+])
+
 
 # ---------------------------------------------------------------------------
 # Builders
@@ -543,6 +553,24 @@ FROM ar_internal_transfer_stuck"""
     )
 
 
+def build_internal_transfer_suspense_nonzero_dataset(cfg: Config) -> DataSet:
+    sql = f"""\
+SELECT
+    ledger_account_id,
+    ledger_name,
+    balance_date,
+    TO_CHAR(balance_date, 'YYYY-MM-DD') AS balance_date_str,
+    stored_balance,
+{_aging_columns('balance_date')}
+FROM ar_internal_transfer_suspense_nonzero"""
+    return build_dataset(
+        cfg, cfg.prefixed("ar-internal-transfer-suspense-nonzero-dataset"),
+        "AR Internal Transfer Suspense Non-Zero EOD",
+        "ar-internal-transfer-suspense-nonzero",
+        sql, INTERNAL_TRANSFER_SUSPENSE_NONZERO_CONTRACT,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Convenience
 # ---------------------------------------------------------------------------
@@ -565,4 +593,5 @@ def build_all_datasets(cfg: Config) -> list[DataSet]:
         build_fed_card_no_internal_catchup_dataset(cfg),
         build_gl_vs_fed_master_drift_dataset(cfg),
         build_internal_transfer_stuck_dataset(cfg),
+        build_internal_transfer_suspense_nonzero_dataset(cfg),
     ]
