@@ -845,21 +845,25 @@ GROUP BY t.transfer_id;
 -- Healthy days: both sides equal, drift = 0. Drift > 0 means Fed
 -- posted activity that SNB never recorded internally — the GL view
 -- and the Fed master view diverge.
+-- Phase G: reads from shared `transactions`. Per-transfer collapsing
+-- via GROUP BY transfer_id is required because the new schema has one
+-- row per leg; legacy `transfer.amount` was one value per transfer.
 CREATE VIEW ar_gl_vs_fed_master_drift AS
 WITH fed_card_observed AS (
     SELECT
         t.transfer_id,
-        t.created_at::date              AS movement_date,
-        t.amount                        AS fed_amount
-    FROM transfer t
-    WHERE t.transfer_type = 'ach'
-      AND t.origin = 'external_force_posted'
+        MIN(t.balance_date)             AS movement_date,
+        MIN(t.amount)                   AS fed_amount
+    FROM transactions t
+    WHERE t.transfer_type      = 'ach'
+      AND t.origin             = 'external_force_posted'
       AND t.parent_transfer_id IS NULL
       AND EXISTS (
-        SELECT 1 FROM posting p
-        WHERE p.transfer_id = t.transfer_id
-          AND p.subledger_account_id = 'ext-payment-gateway-sub-clearing'
+        SELECT 1 FROM transactions hit
+        WHERE hit.transfer_id = t.transfer_id
+          AND hit.account_id  = 'ext-payment-gateway-sub-clearing'
       )
+    GROUP BY t.transfer_id
 ),
 fed_total AS (
     SELECT
@@ -868,13 +872,21 @@ fed_total AS (
     FROM fed_card_observed
     GROUP BY movement_date
 ),
+internal_per_transfer AS (
+    SELECT
+        ic.transfer_id,
+        MIN(ic.balance_date)            AS movement_date,
+        MIN(ic.amount)                  AS amount
+    FROM transactions ic
+    WHERE ic.parent_transfer_id IN (SELECT transfer_id FROM fed_card_observed)
+    GROUP BY ic.transfer_id
+),
 internal_total AS (
     SELECT
-        ic.created_at::date             AS movement_date,
-        SUM(ic.amount)                  AS internal_total
-    FROM transfer ic
-    WHERE ic.parent_transfer_id IN (SELECT transfer_id FROM fed_card_observed)
-    GROUP BY ic.created_at::date
+        movement_date,
+        SUM(amount)                     AS internal_total
+    FROM internal_per_transfer
+    GROUP BY movement_date
 )
 SELECT
     COALESCE(f.movement_date, i.movement_date) AS movement_date,
