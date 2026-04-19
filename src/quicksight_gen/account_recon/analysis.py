@@ -25,6 +25,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
     DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
     DS_AR_GL_VS_FED_MASTER_DRIFT,
+    DS_AR_INTERNAL_TRANSFER_STUCK,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     SHEET_AR_BALANCES,
@@ -579,6 +580,21 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
         ),
     ]
 
+    # F.5.7: Stuck in Internal Transfer Suspense — KPI / table / aging
+    # bar stacked full width.
+    internal_stuck_row_kpi = [
+        GridLayoutElement(
+            ElementId="ar-exc-kpi-internal-stuck", ElementType="VISUAL",
+            ColumnSpan=_FULL, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
+        ),
+    ]
+    internal_stuck_table = [
+        _full_width_visual("ar-exc-internal-stuck-table", _TABLE_ROW_SPAN),
+    ]
+    internal_stuck_aging = [
+        _full_width_visual("ar-exc-aging-internal-stuck", _CHART_ROW_SPAN),
+    ]
+
     return SheetDefinition(
         SheetId=SHEET_AR_EXCEPTIONS,
         Name="Exceptions",
@@ -611,6 +627,9 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
             + fed_no_catchup_table
             + fed_no_catchup_aging
             + gl_fed_drift_row
+            + internal_stuck_row_kpi
+            + internal_stuck_table
+            + internal_stuck_aging
         ),
     )
 
@@ -642,6 +661,7 @@ def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaratio
         DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
         DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
         DS_AR_GL_VS_FED_MASTER_DRIFT,
+        DS_AR_INTERNAL_TRANSFER_STUCK,
     ]
     return [
         DataSetIdentifierDeclaration(

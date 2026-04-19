@@ -41,6 +41,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
     DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
     DS_AR_GL_VS_FED_MASTER_DRIFT,
+    DS_AR_INTERNAL_TRANSFER_STUCK,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     SHEET_AR_BALANCES,
@@ -1900,17 +1901,114 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
         )
     )
 
+    # F.5.7 Stuck in Internal Transfer Suspense — Step-1 originate
+    # transfers between SNB customer DDAs that hit the suspense ledger
+    # but never had a Step-2 child to clear it. Money sits in suspense
+    # indefinitely; recipient never sees the credit.
+    kpi_internal_stuck = Visual(
+        KPIVisual=KPIVisual(
+            VisualId="ar-exc-kpi-internal-stuck",
+            Title=_title("Stuck in Internal Transfer Suspense"),
+            Subtitle=_subtitle(
+                "Internal book-transfer originates that posted Step 1 "
+                "(suspense debit) but have no Step 2 child clearing the "
+                "suspense — recipient never received the funds"
+            ),
+            ChartConfiguration=KPIConfiguration(
+                FieldWells=KPIFieldWells(
+                    Values=[
+                        _measure_count(
+                            "ar-exc-internal-stuck-count",
+                            DS_AR_INTERNAL_TRANSFER_STUCK,
+                            "originate_transfer_id",
+                        )
+                    ],
+                ),
+            ),
+        )
+    )
+
+    table_internal_stuck = Visual(
+        TableVisual=TableVisual(
+            VisualId="ar-exc-internal-stuck-table",
+            Title=_title("Stuck in Internal Transfer Suspense"),
+            Subtitle=_subtitle(
+                "Each row is a Step-1 originate transfer with no Step-2 "
+                "child. Left-click originate_transfer_id to drill into "
+                "Transactions for that transfer."
+            ),
+            ChartConfiguration=TableConfiguration(
+                FieldWells=TableFieldWells(
+                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
+                        Values=[
+                            _unagg_field("ar-exc-its-tid",
+                                         DS_AR_INTERNAL_TRANSFER_STUCK,
+                                         "originate_transfer_id"),
+                            _unagg_field("ar-exc-its-at",
+                                         DS_AR_INTERNAL_TRANSFER_STUCK,
+                                         "originated_at"),
+                            _unagg_field("ar-exc-its-amt",
+                                         DS_AR_INTERNAL_TRANSFER_STUCK,
+                                         "originate_amount"),
+                            _unagg_field("ar-exc-its-aging",
+                                         DS_AR_INTERNAL_TRANSFER_STUCK,
+                                         "aging_bucket"),
+                        ],
+                    )
+                ),
+                SortConfiguration={
+                    "RowSort": [
+                        {
+                            "FieldSort": {
+                                "FieldId": "ar-exc-its-at",
+                                "Direction": "DESC",
+                            },
+                        },
+                    ],
+                },
+            ),
+            Actions=[
+                _multi_drill_action(
+                    "action-ar-exc-internal-stuck-to-txn",
+                    "View Transactions",
+                    SHEET_AR_TRANSACTIONS,
+                    [
+                        (P_AR_TRANSFER, "ar-exc-its-tid"),
+                    ],
+                ),
+            ],
+            ConditionalFormatting={
+                "ConditionalFormattingOptions": [
+                    link_text_format(
+                        "ar-exc-its-tid", "originate_transfer_id",
+                        link_color,
+                    ),
+                ],
+            },
+        )
+    )
+
+    aging_internal_stuck = aging_bar_visual(
+        "ar-exc-aging-internal-stuck",
+        "Stuck Internal Transfers by Age",
+        "How long Step-1 originates have been waiting for a Step-2 clear",
+        DS_AR_INTERNAL_TRANSFER_STUCK,
+        "originate_transfer_id",
+    )
+
     return [
         kpi_ledger_drift, kpi_subledger_drift, kpi_nonzero,
         kpi_breach, kpi_overdraft, kpi_sweep_target, kpi_sweep_drift,
         kpi_ach_orig_nonzero, kpi_ach_sweep_no_fed, kpi_fed_no_catchup,
-        kpi_gl_fed_drift,
+        kpi_gl_fed_drift, kpi_internal_stuck,
         table_ledger_drift, table_subledger_drift, table_non_zero,
         table_breach, table_overdraft, table_sweep_target,
         table_ach_orig_nonzero, table_ach_sweep_no_fed, table_fed_no_catchup,
+        table_internal_stuck,
         timeline_ledger, timeline_subledger, timeline_sweep_drift,
         timeline_gl_fed_drift,
         aging_ledger_drift, aging_subledger_drift, aging_nonzero,
         aging_breach, aging_overdraft, aging_sweep_target,
         aging_ach_orig_nonzero, aging_ach_sweep_no_fed, aging_fed_no_catchup,
+        aging_internal_stuck,
     ]

@@ -208,6 +208,15 @@ GL_VS_FED_MASTER_DRIFT_CONTRACT = DatasetContract(columns=[
     ColumnSpec("abs_drift", "DECIMAL"),
 ])
 
+INTERNAL_TRANSFER_STUCK_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("originate_transfer_id", "STRING"),
+    ColumnSpec("originated_at", "DATETIME"),
+    ColumnSpec("originated_at_str", "STRING"),
+    ColumnSpec("originate_amount", "DECIMAL"),
+    ColumnSpec("days_outstanding", "INTEGER"),
+    ColumnSpec("aging_bucket", "STRING"),
+])
+
 
 # ---------------------------------------------------------------------------
 # Builders
@@ -517,6 +526,23 @@ FROM ar_gl_vs_fed_master_drift"""
     )
 
 
+def build_internal_transfer_stuck_dataset(cfg: Config) -> DataSet:
+    sql = f"""\
+SELECT
+    originate_transfer_id,
+    originated_at,
+    TO_CHAR(originated_at, 'YYYY-MM-DD') AS originated_at_str,
+    originate_amount,
+{_aging_columns('originated_at')}
+FROM ar_internal_transfer_stuck"""
+    return build_dataset(
+        cfg, cfg.prefixed("ar-internal-transfer-stuck-dataset"),
+        "AR Internal Transfer Stuck in Suspense",
+        "ar-internal-transfer-stuck",
+        sql, INTERNAL_TRANSFER_STUCK_CONTRACT,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Convenience
 # ---------------------------------------------------------------------------
@@ -538,4 +564,5 @@ def build_all_datasets(cfg: Config) -> list[DataSet]:
         build_ach_sweep_no_fed_confirmation_dataset(cfg),
         build_fed_card_no_internal_catchup_dataset(cfg),
         build_gl_vs_fed_master_drift_dataset(cfg),
+        build_internal_transfer_stuck_dataset(cfg),
     ]

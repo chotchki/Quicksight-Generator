@@ -238,6 +238,7 @@ DROP TABLE IF EXISTS ar_accounts                       CASCADE;
 DROP TABLE IF EXISTS ar_parent_accounts                CASCADE;
 
 -- Current-vocabulary drops
+DROP VIEW  IF EXISTS ar_internal_transfer_stuck          CASCADE;
 DROP VIEW  IF EXISTS ar_gl_vs_fed_master_drift           CASCADE;
 DROP VIEW  IF EXISTS ar_fed_card_no_internal_catchup     CASCADE;
 DROP VIEW  IF EXISTS ar_ach_sweep_no_fed_confirmation    CASCADE;
@@ -740,3 +741,30 @@ SELECT
         - COALESCE(i.internal_total, 0)        AS drift
 FROM fed_total f
 FULL OUTER JOIN internal_total i USING (movement_date);
+
+
+-- Stuck in Internal Transfer Suspense (F.5.7).
+-- Internal book-transfers between SNB customer DDAs land in two steps:
+--   Step 1: DR gl-1830 (Internal Transfer Suspense), CR originator DDA
+--   Step 2 (child): DR recipient DDA, CR gl-1830 -- clears the suspense
+-- A "stuck" originate is a Step-1 transfer that posted with no Step-2
+-- child ever appearing. The cash sits in the suspense ledger indefinitely
+-- and the recipient never sees the credit.
+CREATE VIEW ar_internal_transfer_stuck AS
+SELECT
+    t.transfer_id                       AS originate_transfer_id,
+    t.created_at                        AS originated_at,
+    t.amount                            AS originate_amount
+FROM transfer t
+WHERE t.transfer_type = 'internal'
+  AND t.origin = 'internal_initiated'
+  AND t.parent_transfer_id IS NULL
+  AND EXISTS (
+    SELECT 1 FROM posting p
+    WHERE p.transfer_id = t.transfer_id
+      AND p.ledger_account_id = 'gl-1830-internal-transfer-suspense'
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM transfer step2
+    WHERE step2.parent_transfer_id = t.transfer_id
+  );

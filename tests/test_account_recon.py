@@ -663,6 +663,62 @@ class TestScenarioCoverage:
                 f"without internal catch-up (got {fed_dates})"
             )
 
+    def test_internal_transfer_stuck_surfaces(self, unified_parsed):
+        """F.5.7: ``_INTERNAL_TRANSFER_PLANT`` rows with kind="stuck"
+        must produce internal Step-1 originate transfers that hit the
+        Internal Transfer Suspense ledger (gl-1830) but have NO Step-2
+        child. Without these, the F.5.7 view returns empty."""
+        from datetime import timedelta
+        from quicksight_gen.account_recon.demo_data import (
+            _INTERNAL_TRANSFER_PLANT,
+        )
+
+        xfer_types: dict[str, str] = {}
+        xfer_origins: dict[str, str] = {}
+        xfer_dates: dict[str, str] = {}
+        xfer_parents: dict[str, str | None] = {}
+        for row in unified_parsed["transfer"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            tid = parts[0]
+            xfer_parents[tid] = None if parts[1] == "NULL" else parts[1]
+            xfer_types[tid] = parts[2]
+            xfer_origins[tid] = parts[3]
+            xfer_dates[tid] = parts[6][:10]
+
+        suspense_originate_tids: set[str] = set()
+        for row in unified_parsed["posting"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            tid = parts[1]
+            ledger_id = None if parts[2] == "NULL" else parts[2]
+            if (
+                xfer_types.get(tid) == "internal"
+                and xfer_origins.get(tid) == "internal_initiated"
+                and xfer_parents.get(tid) is None
+                and ledger_id == "gl-1830-internal-transfer-suspense"
+            ):
+                suspense_originate_tids.add(tid)
+
+        originates_with_step2 = {
+            parent for parent in xfer_parents.values()
+            if parent in suspense_originate_tids
+        }
+        stuck = suspense_originate_tids - originates_with_step2
+        assert stuck, (
+            "Expected ≥1 internal originate with no Step-2 child — "
+            "F.5.7 view will be empty otherwise"
+        )
+
+        stuck_dates = {xfer_dates[t] for t in stuck}
+        for _, _, days_ago, kind, _ in _INTERNAL_TRANSFER_PLANT:
+            if kind != "stuck":
+                continue
+            bdate = (ANCHOR - timedelta(days=days_ago)).isoformat()
+            assert bdate in stuck_dates, (
+                f"Internal stuck plant day {bdate} (days_ago={days_ago}) "
+                f"must produce a Step-1 originate without Step-2 child "
+                f"(got {stuck_dates})"
+            )
+
     def test_ach_sweep_no_fed_confirmation_surfaces(self, unified_parsed):
         """F.5.4: ``_ACH_FED_CONFIRMATION_MISSING`` cells must produce
         clearing_sweep transfers on gl-1810 with NO Fed confirmation
@@ -1579,9 +1635,9 @@ class TestGenerateOutput:
     def test_dashboard_file_exists(self, ar_output_dir):
         assert (ar_output_dir / "account-recon-dashboard.json").exists()
 
-    def test_fifteen_dataset_files(self, ar_output_dir):
+    def test_sixteen_dataset_files(self, ar_output_dir):
         datasets = list((ar_output_dir / "datasets").glob("qs-gen-ar-*.json"))
-        assert len(datasets) == 15
+        assert len(datasets) == 16
 
     def test_all_files_valid_json(self, ar_output_dir):
         for path in ar_output_dir.rglob("*.json"):
@@ -1704,8 +1760,9 @@ class TestSheetLayout:
         # sweep without Fed confirmation (KPI + table + aging bar) → 28.
         # Phase F.5.5 adds Fed activity without internal catch-up
         # (KPI + table + aging bar) → 31. Phase F.5.6 adds GL-vs-Fed
-        # Master drift (KPI + timeline) → 33.
-        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 33)
+        # Master drift (KPI + timeline) → 33. Phase F.5.7 adds Stuck in
+        # Internal Transfer Suspense (KPI + table + aging bar) → 36.
+        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 36)
 
     def _assert_visual_count(self, out_dir: Path, sheet_id: str, expected: int) -> None:
         analysis = _load(out_dir, "account-recon-analysis.json")
