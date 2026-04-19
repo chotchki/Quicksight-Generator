@@ -227,5 +227,12 @@ What follows are the details of people in the different departments at
 SNB.
   - SNB's General Ledger Reconciliation / Accounting Operations team
     - opens the AR dashboard each morning, scans Exceptions, drills into anything aging past their threshold
+    - a key data sanity check artifact for them is checking an externally generated bank statement against this system's data import
   - SNB's Merchant Support Team
     - opens a dashboard and looks to see all the merchants sales had settled/been paid
+  - SNB's Data Integration Team
+    - creates ETL jobs to populate the data to support this tool. The simpler and fewer the tables are, the easier it is for them to do their job. Their attitude is, what do I have a database server that can do fancy queries for unless I use it?
+  - SNB's Fraud Team
+    - uses the recon tool to search for transactions that break limits set on the accounts
+  - SNB's AML Team
+    - uses the recon tool to detect if transactions/balances are outside of the statistical average and attempts to find patterns

@@ -1,159 +1,364 @@
-# PLAN — Phase F: Cash Management Suite restructure + telling-transfer exception checks
+# PLAN — Phase G: schema flatten + PR/AR data merger
 
-Goal: Restructure the AR demo's ledger / sub-ledger account model from "kind of bank product → branch sub-pool" (legacy abstraction inherited from Phase A) into standard banking "GL control account → per-customer DDA / operational sub-pool", aligned with `docs/Training_Story.md`. Add four new telling-transfer scenarios (ZBA / Cash Concentration sweep, ACH origination sweep, external force-posted card settlement, on-us internal transfer with fail / reversal) and the AR exception checks each one drives.
+Two co-equal goals:
 
-This phase is large because it touches the demo data shape, the plant lists, every test that asserts on display names, and adds ~9 new exception checks. Plan to land ~18 commits across 7 sub-phases.
+1. **Schema flatten.** Collapse the 12-table demo schema down to **two base tables** — `transactions` (one row per money-movement leg) and `daily_balances` (one row per account per day) — so the new "Data Integration Team" persona in `docs/Training_Story.md` has the simplest possible feed contract to populate from upstream systems.
+2. **PR/AR data unification.** Both apps' demo data lands in the SAME `transactions` table (PR-specific metadata in JSONB) and the SAME `daily_balances` table. Today PR reads from `pr_*` legacy tables and AR reads from `transfer`+`posting`+`ar_*`; after Phase G, both share one base layer. This completes the cutover deferred since Phase B and retires the entire `pr_*` table family.
+  - Comment: I like the thought of using a metadata column on transactions to move things are not technically needed for the recon but could be useful for different personas.
 
-Out of scope for Phase F (deferred — own plan):
-- **Schema flattening to ~2 tables (daily_balance + transaction).** Listed in `docs/context.md` as a future technical north star. Doing it concurrently with the structural data restructure would break the test suite as a safety net on two axes simultaneously. Defer to **Phase G** — Phase F must leave the test suite green so the schema migration has a stable jump-off point. Phase F's new SQL should use view abstractions where possible so Phase G can swap underlying tables without touching dataset SQL.
-- PR (Payment Reconciliation) app changes. The new account model and telling transfers are AR-only. PR continues using `pr_*` legacy tables and chain-link transfer types unchanged.
-- Persona dashboard split (originally Phase E in `SPEC.md`) — orthogonal to this work; remains queued.
-- Customer-facing terminology guide / production-schema documentation. Phase F is internal restructure.
+Computed views stay (they're the "fancy queries the database does" the persona explicitly endorses); only the BASE tables flatten and unify. After Phase G, `SPEC.md` gets a fresh rewrite (separate work, not in this plan).
+
+The new persona is the load-bearing motivation:
+
+> SNB's Data Integration Team — creates ETL jobs to populate the data to support this tool. The simpler and fewer the tables are, the easier it is for them to do their job. Their attitude is, what do I have a database server that can do fancy queries for unless I use it?
+
+This dovetails with the existing design memory `project_design_north_stars.md` (CPA-readable + minimum table count, denormalize, don't add tables lightly).
+
+Out of scope for Phase G (own future work):
+- **`SPEC.md` rewrite.** Phase G changes the schema; the SPEC's ground truth shifts hard. Better to do the SPEC rewrite as a single coherent edit *after* G lands, not interleaved with the migration.
+- **Persona dashboard split** (originally Phase E in `SPEC.md`) — orthogonal; remains queued.
+- **PR app exception/visual changes.** Phase G migrates PR's *data layer* but leaves the PR sheet structure and visual catalog unchanged. Any new PR-side checks would be a follow-up phase.
+- **Production SQL example library.** Phase G ships ETL example queries for the new persona, but a full customer-facing customization guide is later.
+  - Comment: Sounds good, I consider this ripe for the training path so the user can know WHY they should populate a column. External systems will be messy so understanding the nuance is key. The tables are going to end up as an API contract.
 
 Conventions:
-- Branch: `phase-f-cms-restructure`, cut from `main`. One sub-phase = one commit; cumulative release at the end.
+- Branch: `phase-g-schema-flatten`, cut from `main` after v2.0.0 is tagged.
+- One sub-phase = one commit. Cumulative release at the end (v3.0.0).
+- **Strangler migration** — add new tables alongside old, dual-write demo data, migrate dataset SQL one at a time, drop old tables only when nothing reads them. Test suite stays GREEN after every commit (no intentional-red windows like Phase F had).
+  - Comment: It is probably worth preplanning re-evaluation gates after each major step. I would not be surprised if things we encountered unexpectedly.
+- `DatasetContract` is the safety net: every dataset declares column-name + type list, and unit tests assert that the SQL projection matches. As long as a rewritten dataset emits the same contract, downstream visuals can't break — so SQL can be rewritten freely against the new tables.
 - `demo apply` continues to drop-and-create. No staged migrations.
-- After each sub-phase: `.venv/bin/pytest`, except where the sub-phase intentionally leaves the test suite red (called out per phase). Test suite restored to green by end of F.3.
-- After F.3, F.4, and F.7: `./run_e2e.sh --parallel 4` (e2e tests). Skip e2e during F.1–F.2.
-- Demo data MUST stay deterministic (`random.Random(42)`); the byte-identical-output expectation gets a one-time break at F.1, then re-locks.
-- Every sheet description and every visual subtitle stays present (existing coverage tests enforce this).
-- All new GL account names, exception check names, and visual subtitles use **standard CPA-readable banking terminology** (`Customer Deposits — DDA Control`, `ACH Origination Settlement`, `Cash Concentration Master`, `Internal Transfer Suspense`, `Card Acquiring Settlement`, etc.). No invented or project-specific names.
+- After each sub-phase: `.venv/bin/pytest`. After every dataset-migration sub-phase: `./run_e2e.sh --skip-deploy api` against the previous deploy is sufficient (browser e2e only at G.14).
+- Demo data MUST stay deterministic (`random.Random(42)`). The dual-write window will break byte-identical-output; re-locks at G.11 when single-write returns.
+- **No new account names, no new exception checks.** Phase G is a pure data-layer migration; the visible dashboards must look identical before and after. Any visible diff is a regression.
+  - Comment: After major steps, I think a full deploy to quicksight, e2e test is important to really validate the step didn't break anything.
+- **Computed views STAY.** Drift, rollups, transfer-net-zero — all the value-add SQL the database performs continues to live in views. Only the bases flatten.
+- **PR and AR are no longer schema-isolated.** Both apps' transactions go into the same `transactions` table; both apps' account snapshots go into the same `daily_balances` table. The `pr_*` table family is fully retired by G.10. AR datasets and PR datasets read from the same base layer — the only thing distinguishing them is which `transfer_type` / `account_type` rows they filter on (and, for PR, what they pull out of the metadata column).
+- **Database portability constraint — system compatibility requires Postgres 17+.** The demo runs PostgreSQL but every SQL feature must stay portable across the dialect that consumes this app. **Use** `TEXT` columns for JSON storage (with `IS JSON` constraint where the dialect supports it), and **only** the SQL/JSON path functions `JSON_VALUE` / `JSON_QUERY` / `JSON_EXISTS` for extraction. **Forbidden:** `JSONB`, `JSON` types, `->>` / `->` / `@>` / `?` operators, GIN indexes on JSON, Postgres extensions (`pg_trgm`, `uuid-ossp`, etc.), array/range column types. PG 17+ provides the portable `JSON_VALUE` syntax that older Postgres lacks.
+- **Re-evaluation gates.** After each major chunk (G.3, G.5, G.8, G.9), STOP for a full deploy + browser e2e gate (its own `G.X.gate` sub-phase). Don't push forward if a gate finds anything unexpected — re-plan first.
 
 ---
 
-## Phase F.0 — Pin decisions
+## Phase G.0 — Pin decisions
 
-STOP here. Big-shape decisions cascade hard.
+STOP here. Several decisions cascade hard across 30+ commits.
 
-- [x] F.0.1 **Old account IDs (`ar-par-checking`, `ar-acc-checking-main`, ...): preserve any?** → **FULL RESET.** Semantic shift (product-category → GL-control + customer-DDA) means old IDs would mislead; byte-identical-demo-output invariant gets a one-time break here, then re-locks.
-- [x] F.0.2 **New ID scheme.** → `gl-<num>-<slug>` for GL control accounts (`gl-2010-dda-control`), `cust-<num>-<slug>` for customer DDAs (`cust-900-0001-bigfoot-brews`), `gl-<num>-sub-<slug>` for operational sub-pools (`gl-1850-sub-bigmeadow-main`). Picked to make the linkage visible to learners.
-- [x] F.0.3 **ZBA operating sub-accounts.** → Per-customer, 1-2 operating sub-accounts each on commercial customers (Big Meadow Dairy, Cascade Timber Mill).
-- [x] F.0.4 **Planted instances per new failure scenario.** → 2-3 of each pattern. Lean count is fine; more change is coming and a couple examples illustrate the pattern.
-- [x] F.0.5 **Retain existing AR exception checks?** → **YES**, all of them. The four telling-transfer scenarios are just the hardest ones; existing checks (failed-leg, off-amount, ledger drift, sub-ledger drift, limit breach, overdraft) stay valid. They get re-pointed at new account IDs in F.2.
-- [x] F.0.6 **Sheet placement.** → Extend existing Exceptions tab.
-- [x] F.0.7 **Consolidate where shape is similar?** → **Both, where feasible.** Per-check detail visuals stay (one teaches one error class clearly); add consolidated rollup visuals on top so users see "this is the same SHAPE of error across multiple accounts." See new F.5.10.
-- [x] F.0.8 **Release version after Phase F.** → v2.0.0 (project's external semver — internal counting is at v5 but external semver is the contract).
----
-
-## Phase F.1 — Restructure ledger + sub-ledger account tables
-
-Replace the product-category abstraction with GL-control + customer-DDA + operational-sub-pool. Breaking change to `LEDGER_ACCOUNTS` and `SUBLEDGER_ACCOUNTS` in `account_recon/demo_data.py`. Tests intentionally red after this commit; restored by end of F.3.
-
-- [x] F.1.1 Replace `LEDGER_ACCOUNTS`. Internal GL control accounts: Cash & Due From FRB, ACH Origination Settlement, Card Acquiring Settlement, Wire Settlement Suspense, Internal Transfer Suspense, Cash Concentration Master, Internal Suspense / Reconciliation, Customer Deposits — DDA Control. External counterparties: Federal Reserve Bank — SNB Master, Payment Gateway Processor, Coffee Shop Supply Co, Valley Grain Co-op, Harvest Credit Exchange.
-- [x] F.1.2 Replace `SUBLEDGER_ACCOUNTS`. Per-customer DDAs (7) under Customer Deposits — DDA Control. Per-customer ZBA operating sub-accounts (1-2 each on commercial customers) under Cash Concentration Master. External counterparty sub-pools (preserve roughly the clearing + settlement / inbound + outbound pattern) under each external counterparty.
-- [x] F.1.3 Update `_ledger_is_internal()` and `_pick_*_pair()` helpers if the contracts change. → No-op; helpers are pure list lookups, contracts unchanged. Noted: `_generate_ledger_level_transfers` funding-batch path now KeyErrors when picking an internal GL with no sub-ledgers (6 of 8) — defer to F.2.5 / F.3.
-- [x] F.1.4 Skip pytest — known red. Just verify the Python parses (`python -c "import quicksight_gen.account_recon.demo_data"`) and `demo schema --all` still emits valid SQL.
-- [x] F.1.5 Commit — `Phase F.1: restructure AR ledger + sub-ledger account model (tests red)`.
-
----
-
-## Phase F.2 — Re-aim plant lists at new account IDs
-
-Mechanical follow-on. All plant constants reference IDs that no longer exist. Tests still red after this commit; restored in F.3.
-
-- [x] F.2.1 `_LEDGER_DRIFT_PLANT` — point at new internal GL control account IDs (e.g., DDA Control, Cash Concentration Master).
-- [x] F.2.2 `_SUBLEDGER_DRIFT_PLANT` — point at new customer DDAs and ZBA sub-accounts.
-- [x] F.2.3 `_LIMIT_BREACH_PLANT` — point at new sub-ledger IDs; revisit transfer types and amounts so the breach narrative still makes sense at the customer-DDA level (e.g., "Bulk wire payout from Big Meadow Dairy DDA").
-- [x] F.2.4 `_OVERDRAFT_PLANT` — point at new customer DDA IDs.
-- [x] F.2.5 `_LEDGER_LIMITS` — re-author for the new ledger structure. Per-customer DDAs probably have their own daily ACH / wire limits; GL control accounts don't have outbound limits in the same sense. Also fixed `_generate_ledger_level_transfers` funding-batch path to filter to ledgers with sub-ledgers (resolves the KeyError noted in F.1.3).
-- [x] F.2.6 `_EXTERNAL_COUNTER_LEG_POOL` — point at new external sub-ledger IDs.
-- [x] F.2.7 Skip pytest — still known red. Verify SQL parses.
-- [x] F.2.8 Commit — `Phase F.2: re-aim plant lists at new account IDs (tests still red)`.
-
----
-
-## Phase F.3 — Update existing tests
-
-Stabilize the test suite against the new account structure. Test suite returns to green by end of this phase.
-
-- [x] F.3.1 `tests/test_demo_data.py` — update `LEDGER_ACCOUNTS` / `SUBLEDGER_ACCOUNTS` count assertions, display-name assertions, FK integrity tests, scenario coverage assertions. → No-op; existing assertions are structure-robust.
-- [x] F.3.2 `tests/test_account_recon.py` — update visual + filter assertions referencing old ledger / sub-ledger names. → 12 assertions updated: posting/balance counts, ledger-limits "≥2 ledgers" relaxed to "≥1" (only DDA Control carries limits in SNB structure). Source-side: dropped parens from sub-ledger names so the test fixture's regex parses cleanly; bumped overdraft plant amounts (account balances are larger under the new structure); rewrote funding-batch sub-ledger split to use proportional weights (avoids 0-amount legs that tripped `posting_fields_populated`).
-- [x] F.3.3 `tests/test_demo_sql.py` — update structural SQL assertions. → No-op; passing.
-- [x] F.3.4 `tests/test_dataset_contract.py` — verify; minimal changes expected since no SQL changed yet. → Passing.
-- [x] F.3.5 `tests/test_models.py`, `tests/test_generate.py`, `tests/test_recon.py`, `tests/test_theme_presets.py` — sweep for stray references. → All passing. Source-side stale strings remain in `account_recon/analysis.py` Getting Started copy and the `farmers-exchange-bank` theme preset name; deferred to F.6.
-- [ ] F.3.6 e2e tests deferred to F.7. Keep `QS_GEN_E2E=0` for the rest of Phase F until F.7.
-- [x] F.3.7 `.venv/bin/pytest` — full unit suite green. → 310 passed, 101 e2e skipped.
-- [x] F.3.8 Commit — `Phase F.3: update unit tests for new AR account structure (tests green)`.
-
----
-
-## Phase F.4 — Add new telling-transfer scenarios to demo data
-
-Plant the four new scenarios from `docs/Training_Story.md`. Each scenario has at least one success cycle and one failure plant. Tests stay green throughout — each sub-phase adds a `TestScenarioCoverage` assertion before the planting code lands (write the assertion first; it's the fastest way to notice if a scenario silently disappears).
-
-- [ ] F.4.1 **ZBA / Cash Concentration sweep cycle.** Daily success: each operating sub-account sweeps to Cash Concentration Master, ending zero. Failure plant (2): one day where an operating sub-account fails to sweep (ends non-zero). Add scenario coverage assertion first.
-- [ ] F.4.2 **ACH origination sweep cycle.** Daily success: ACH Origination Settlement accumulates customer ACH debits, sweeps to FRB Master at EOD, ends zero. Failure plants (2): one day where the sweep posts internally but no Fed confirmation lands; one day where the sweep fails entirely (account ends non-zero).
-- [ ] F.4.3 **External force-posted card settlement.** Success: Card Acquiring Settlement receives daily processor settlements that catch up internally within 1 day. Failure plant (2): Fed posted but internal catch-up never happened (mismatch surfaces).
-- [ ] F.4.4 **On-Us Internal Transfer with fail / reversal.** Success: customer-to-customer internal transfer routes through Internal Transfer Suspense and settles same day. Failure plants: 2 stuck-in-suspense (no settle, no reversal after N days), 1 reversed-but-not-credited (reversal posting missing — double-spend signature).
-- [ ] F.4.5 Add `TestScenarioCoverage` assertion for each pattern in `tests/test_demo_data.py` (one per failure pattern; ≥N rows of that shape — counts alone don't catch silently-missing scenarios).
-- [ ] F.4.6 `.venv/bin/pytest` clean.
-- [ ] F.4.7 `./run_e2e.sh --parallel 4 --skip-deploy api` — confirm dataset health holds with new scenarios. Skip browser e2e (no new visuals yet).
-- [ ] F.4.8 Commit — `Phase F.4: plant four telling-transfer scenarios in AR demo data`.
-
----
-
-## Phase F.5 — New AR exception checks
-
-One commit per check. Each adds: dataset (SQL + DatasetContract), visual (KPI + table + aging bar where applicable), sheet placement (Exceptions tab — see F.0.6), and unit tests. New SQL prefers view abstractions over direct table references where possible (so Phase G schema flattening only needs to update views).
-
-- [ ] F.5.1 **Sweep target non-zero EOD.** Operating sub-accounts that didn't sweep to zero. Visual: KPI count + detail table + aging bar. Commit — `Phase F.5.1: add Sweep target non-zero EOD check`.
-- [ ] F.5.2 **Concentration master vs sub-account sweeps drift.** Sum of sweep credits to Cash Concentration Master vs sum of sweep debits from operating sub-accounts. Adds drift timeline visual. Commit.
-- [ ] F.5.3 **ACH Origination Settlement non-zero EOD.** Sweep account ends day non-zero. Commit.
-- [ ] F.5.4 **Internal sweep posted but no Fed confirmation.** Internal sweep transfer with no matching `external_force_posted` confirmation after N days. Aging-driven. Commit.
-- [ ] F.5.5 **Fed activity with no matching internal post.** Force-posted Fed activity that internal books haven't caught up to. Commit.
-- [ ] F.5.6 **GL-vs-Fed Master drift timeline.** Daily cumulative drift between SNB GL total cash and FRB Master Account balance. Timeline visual. Commit.
-- [ ] F.5.7 **Stuck in Internal Transfer Suspense.** Originated transfers with no settle and no reversal after N days. Aging-driven. Commit.
-- [ ] F.5.8 **Internal Transfer Suspense non-zero EOD.** Suspense account ends day non-zero. Commit.
-- [ ] F.5.9 **Reversed-but-not-credited (double spend).** Original posting + reversal posting where the credit-back to originator is missing. Highest-severity check — flag visually (e.g., red KPI tile, top of Exceptions tab). Commit.
-- [ ] F.5.10 **Consolidated rollup views (per F.0.7 ruling).** Per-check detail visuals from F.5.1–F.5.9 stay as-is. On top of them, add cross-check rollup visuals so users learn to recognize *shape* of error across multiple accounts:
-  - **F.5.10.a "Accounts expected zero at EOD" rollup.** Single table + KPI rolling up F.5.1 (Sweep target), F.5.3 (ACH Origination Settlement), F.5.8 (Internal Transfer Suspense). Columns: account, balance, days_outstanding, aging_bucket, source_check. Ordered by aging. Teaches: same SHAPE — control account that should be zero, isn't.
-  - **F.5.10.b "Two-sided post mismatch" rollup.** Single table + KPI rolling up F.5.4 (internal sweep, no Fed confirmation) + F.5.5 (Fed activity, no internal post). Columns: side_present, side_missing, amount, days_outstanding, aging_bucket, source_check. Teaches: same SHAPE — one half of a two-sided event landed, the other didn't.
-  - **F.5.10.c "Balance drift timelines" rollup.** Single timeline visual overlaying F.5.2 (Concentration Master vs sub-account sweep drift) + F.5.6 (GL vs FRB Master drift). Two series, shared X axis (date), shared Y axis (drift $). Teaches: same SHAPE — two related balances diverging over time.
-  - F.5.9 (reversed-but-not-credited) intentionally stays standalone — different shape (compound posting integrity), top-of-tab severity placement.
-  - Place rollups at the TOP of Exceptions tab; per-check details below. Order signals "look here first for the pattern."
-  - Datasets prefer view abstractions (per F.5 convention) so Phase G doesn't touch them.
-  - One commit per rollup (3 commits total). Commits — `Phase F.5.10.{a,b,c}: add <name> rollup view`.
-- [ ] F.5.11 After all checks + rollups land: `./run_e2e.sh --parallel 4 --skip-deploy api` — confirm new datasets health-check pass.
+- [ ] G.0.1 **Account metadata: denormalized columns vs. sidecar reference table?**
+  - Option A — Pure 2-table: `account_id`, `account_name`, `parent_account_id`, `parent_account_name`, `is_internal`, `account_type` columns on BOTH `transactions` and `daily_balances`. Truly two tables; ETL writes everything from upstream.
+  - Option B — 2 + tiny `accounts` reference: keep account display metadata in a 3rd reference table (rarely changes); `transactions` and `daily_balances` carry only `account_id`. Cleaner normalization, ~3 tables.
+  - **Recommendation:** A. The persona explicitly values "fewer tables"; daily_balances row-per-day-per-account already serves as the implicit account list (every account has a snapshot, even at zero); display-name drift is acceptable (history reflects the name as-of-then).
+  - Answer: Agreed with A, makes it much easier to react and account for changes.
+- [ ] G.0.2 **Ledger / sub-ledger distinction in the flat model.** Today they're separate tables. Flat options:
+  - Option A — Single `account_id` namespace; `parent_account_id` (nullable) marks ledger relationships. A ledger has `parent_account_id IS NULL`; sub-ledgers have it set. Direct ledger postings = `transactions.account_id = <ledger>` and that ledger has `parent_account_id IS NULL`.
+  - Option B — `account_level` enum column (`ledger` / `subledger`) plus `ledger_id` column on subledgers.
+  - **Recommendation:** A. Self-referential FK is the standard accounting hierarchy pattern; one column does both jobs.
+  - Answer:Agree with A but would like to know if the column naming matches the accounting terminology standardization? If so I support.
+  - **Locked:** column name is `control_account_id` (the standard accounting term — the GL summary account that aggregates a subsidiary ledger). Phase G.1 doc + Phase G.12 training material both explain that "control account" = "parent in the FK sense" so a Data Integration Team reader without accounting background can map it.
+- [ ] G.0.3 **PR-specific metadata: column type and extraction syntax?** PR carries `card_brand`, `cashier`, `merchant_type`, `settlement_type`, `payment_method`, optional `taxes/tips/discount` per sale. Options:
+  - Option A — `metadata TEXT` column on `transactions` (with `IS JSON` constraint), queried via SQL/JSON path functions (`JSON_VALUE(metadata, '$.card_brand')`). Portable per the database-portability convention; persona-aligned (database does fancy extraction queries).
+  - Option B — Single sidecar table `transaction_metadata(transaction_id PK, ...)`. SQL stays familiar JOIN. Adds one table.
+  - Option C — Drop PR-specific metadata entirely, fold into `memo` text. Loses filterability.
+  - **Recommendation:** A (TEXT + SQL/JSON path).
+  - Answer: I like option A, but use a text column.
+  - **Locked:** `metadata TEXT` column with `IS JSON` constraint where supported. All extraction goes through `JSON_VALUE` / `JSON_QUERY` / `JSON_EXISTS`. NO Postgres-only operators (`->>`, `@>`) anywhere in dataset SQL or views. The `metadata` text column is the universal "extras" container — used by PR (card_brand, etc.), by AR (limits on ledger rows in `daily_balances`, source provenance on transactions), and by future Phase H consumers.
+- [ ] G.0.4 **Per-ledger transfer limits: separate table vs. inline on accounts row?**
+  - Limits today: `ar_ledger_transfer_limits` (~5 rows total). They're tiny and rarely change. Options:
+    - Keep tiny `account_limits` reference table (3rd or 4th table, depending on G.0.1).
+    - Pack into JSONB on the ledger account row in `daily_balances` (one row per ledger per day already exists).
+    - Drop limits entirely — they're a Phase A artifact and the only check that uses them (Sub-Ledger Limit Breach) could be parameter-driven instead.
+  - **Recommendation (revised after G.0.3):** collapse `account_limits` into `daily_balances.metadata` on the LEDGER row of each day (e.g., `{"limits": {"ach": 100000, "wire": 50000, "internal": 25000}}`). Limits CAN shift daily; daily storage is the natural place. Eliminates the third table — schema lands at TRULY 2 base tables. Limit-breach check joins each transaction's daily aggregate to the relevant ledger's daily_balances row and reads the limit via `JSON_VALUE(db.metadata, '$.limits.' || t.transfer_type)`.
+  - Answer: Limits can shift daily so I think keeping in a json metadata column makes sense (storing as text). I added more training personas that the question reminded me of.
+  - **Locked:** collapse — limits live in `daily_balances.metadata` text column on ledger-account rows. **Net schema: 2 base tables (`transactions` + `daily_balances`).** No `account_limits` reference table.
+- [ ] G.0.5 **Should `daily_balances` carry `computed_balance` too, or compute it in a view?**
+  - Today: `ar_*_daily_balances` stores only the upstream-fed `balance`; computed balances are SQL views over `posting`.
+  - Phase G option: keep `daily_balances` as upstream-fed only (computed stays in views). The drift checks then compare stored vs. view-computed.
+  - **Recommendation:** stored only. Don't bake computation into the table. Persona's "database does the fancy queries" applies — the drift VIEW is exactly that.
+  - Answer: agreed, calculate in views
+- [ ] G.0.6 **Compatibility view layer: build it or skip it?**
+  - Option A — Build `transfer`, `posting`, `ar_ledger_accounts`, `ar_subledger_accounts`, `ar_ledger_daily_balances`, `ar_subledger_daily_balances` as VIEWS over the new tables. Dataset SQL stays untouched during migration; we just swap underlying tables.
+  - Option B — Skip the view layer; rewrite dataset SQL directly against new tables, dataset by dataset.
+  - **Recommendation:** B. Phase F's experience: views-over-views gets confusing fast, and DatasetContract makes per-dataset rewrites safe. Per-dataset commits are also more reviewable than one giant "swap the world" commit. View layer would only make sense if we had to ship the migration in pieces over weeks.
+  - Answer: agreed, clean break
+- [ ] G.0.7 **PR `pr_*` legacy tables: drop in Phase G or defer?**
+  - Phase B left `pr_merchants`, `pr_sales`, `pr_settlements`, `pr_payments`, `pr_external_transactions` as the source-of-truth for PR datasets, with PR demo *also* dual-writing to `transfer`+`posting`. With Phase G's new `transactions` table, PR datasets can finally read from there.
+  - **Recommendation:** drop in Phase G. This is one of the two co-equal goals — the merger only completes when the `pr_*` tables are gone and PR datasets read from the same `transactions` / `daily_balances` AR datasets read from. Phase B's deferred cutover gets done as part of the larger migration. After G.10, there is one base layer for both apps.
+  - Answer: Agreed drop
+- [ ] G.0.8 **`merchants` / `external_systems` reference data: where does it live?**
+  - Today PR has `pr_merchants` (display name + type + location) and `pr_external_transactions` carries `external_system` as a string column.
+  - Options: (a) merchants become accounts (DDA-equivalent) so they appear in `accounts` reference (or denormalized columns); (b) merchants live in a dedicated `pr_merchants` reference table; (c) merchant attributes (name, type) denormalize onto `transactions` rows with merchant involvement.
+  - **Recommendation:** (a). Each merchant already has a corresponding sub-ledger account (`pr-sub-{merchant}` from Phase B); promote that to be the canonical merchant identity. Drop `pr_merchants`. Loss: location_id (which has no current visual / filter consumer). Win: one less table.
+  - Answer: Merchants are just accounts. Sales (aka transactions) should have merchant metadata. This can be used as another check if a settlement miss directed funds 
+  - **Locked:** merchants are accounts (drop `pr_merchants`). Sale transactions carry merchant metadata in the `metadata` text column — `merchant_account_id`, `merchant_name`, `merchant_type` — recorded in Phase G even though the consuming check is Phase H. The "settlement-misdirected-funds" check (compare sale's recorded merchant against settlement's recipient account) is **Phase H scope**, not Phase G. Phase G only records the data; Phase H builds the view + dashboard.
+- [ ] G.0.9 **External counterparties (`Federal Reserve Bank — SNB Master`, processors) in the flat model.** They're already accounts in the AR ledger (`is_internal=FALSE`). No change — they fit the unified model naturally.
+- [ ] G.0.10 **Naming.** `transactions` (plural) vs `transaction` (singular)? `daily_balances` vs `daily_balance` vs just `balances`? Existing tables are mixed (`transfer` singular, `posting` singular, `ar_*_daily_balances` plural). The new persona reads ETL SQL — pick the form that reads best in `INSERT INTO transactions ...` / `SELECT * FROM daily_balances WHERE ...`. **Recommendation:** plural for both (`transactions`, `daily_balances`). The legacy singulars (`transfer`, `posting`) are already inconsistent; pick one rule going forward.
+  - Answer: I'm good with plural.
+- [ ] G.0.11 **Release version after Phase G.** v3.0.0 — schema base tables change is breaking for any external consumer of `demo/schema.sql`. (Customer production schemas aren't affected; they bring their own SQL. But the demo schema is the contract for `demo apply`.)
+  - Answer: v3.0.0 will be well earned here.
+- [ ] G.0.12 **`account_type` enum: separate role from level?** Today `account_type` mixes role (`dda`) and structural level (`ledger`/`subledger`). In the flat model, options:
+  - Option A — `account_type` = product/role only (`dda`, `gl_control`, `merchant_dda`, `external_counterparty`, `concentration_master`, `funds_pool`); structural level comes from `parent_account_id IS NULL` (a top-level account is implicitly a ledger control account).
+  - Option B — keep level baked into `account_type` (`ledger_dda`, `subledger_dda`, etc.) — easier to filter; loses single-source-of-truth for hierarchy.
+  - **Recommendation:** A. Phase G is the cleanup window; structural level should derive from `parent_account_id`, not be denormalized into the type column.
+  - **Locked:** A. The Phase G.1 doc enumerates the canonical `account_type` values.
+- [ ] G.0.13 **Phase H accommodation: which metadata keys to record now even though no Phase G check consumes them?** Phase H scope (per `docs/Training_Story.md` new personas) includes a sales-vs-settlement merchant cross-check, an external bank-statement comparison, fraud limit-search views, and AML statistical-anomaly views. Phase G ships zero new dashboards / checks but should record the metadata Phase H consumers will need:
+  - **Sales transactions:** `metadata.merchant_account_id`, `metadata.merchant_name`, `metadata.merchant_type` (per G.0.8 Locked).
+  - **External-statement-derived rows (Phase H ingest):** land as `transactions` rows with `is_internal=FALSE` account, `metadata.source = 'fed_statement'`, `metadata.statement_line_id` for traceability. No new table.
+  - **Ledger limits:** `daily_balances.metadata.limits.{transfer_type}` on ledger rows (per G.0.4 Locked).
+  - **Source provenance** on every row: `metadata.source` text key (`'core_banking'`, `'fed_statement'`, `'manual_force_post'`, `'sweep_engine'`, etc.) so the AML / Fraud teams can filter on origin.
+  - **Recommendation:** record all of the above in Phase G demo-data generation; document each key in `docs/Schema_v3.md` with WHY (training material angle the user flagged: data team needs to know WHY they should populate a column).
+  - **Locked:** agreed.
 
 ---
 
-## Phase F.6 — Sync other docs
+## Phase G.1 — Write target schema as a doc
 
-- [ ] F.6.1 `README.md` — update example output, customer names, account references.
-- [ ] F.6.2 `SPEC.md` — update domain model section, account hierarchy, exception check list.
-- [ ] F.6.3 `RELEASE_NOTES.md` — add v2.0.0 entry summarizing structural shift + new scenarios + new checks.
-- [ ] F.6.4 `CLAUDE.md` — update domain model section to reference the CMS-based account structure.
-- [ ] F.6.5 Commit — `Phase F.6: sync documentation with restructured account model`.
+Before any code change, write down what we're building so the persona contract is reviewable.
+
+- [ ] G.1.1 New file `docs/Schema_v3.md`. Sections:
+  - **The two base tables:** `transactions`, `daily_balances`. Full column definitions, types (PG 17+ portable types only), nullability, what populates each column, what consumes it. Explicit "system compatibility requires Postgres 17+" note at the top.
+  - **Account hierarchy modeling** (per G.0.2): `control_account_id` self-FK semantics; explain that "control account" = the parent / GL summary account, for readers without an accounting background.
+  - **`account_type` canonical values** (per G.0.12): full enumeration with one-line definitions.
+  - **The `metadata` text column contract** (per G.0.3): TEXT + `IS JSON` constraint; SQL/JSON path extraction syntax; canonical key list per row context (sales rows vs. ledger daily_balances rows vs. external-ingest rows); examples; **WHY each key matters** (data team angle — they need to know why to populate it). Per G.0.13: keys reserved for Phase H consumers are documented with a "Phase H consumer" tag.
+  - **Computed views catalog:** every existing view restated against the new tables (drift checks, rollups, transfer summary, etc.). Persona reads these as templates.
+  - **ETL examples** for the new persona: 5-10 example queries shaped like "to populate `transactions` from your core banking system, run a query shaped like ..." Realistic enough to be cargo-cult-able. Each example explains the WHY of the columns it touches.
+  - **Forbidden SQL patterns:** explicit list of Postgres-only features that must not appear (no `JSONB`, no `->>`, no GIN indexes on JSON, no extensions, no array types).
+- [ ] G.1.2 Commit — `Phase G.1: document target two-table schema and ETL examples`.
 
 ---
 
-## Phase F.7 — Deploy + e2e + release
+## Phase G.2 — Add new base tables alongside old
 
-- [ ] F.7.1 `demo apply --all` — schema + new seed applied to local Postgres.
-- [ ] F.7.2 `deploy --all --generate` — all resources CREATION_SUCCESSFUL.
-- [ ] F.7.3 Update e2e tests (`tests/e2e/test_ar_*.py`) to reference new account names + new exception sheet sections + new visuals.
-- [ ] F.7.4 `cleanup --dry-run` — no stale tagged resources.
-- [ ] F.7.5 `./run_e2e.sh --parallel 4` — full green (API + browser).
-- [ ] F.7.6 Tag v2.0.0, push.
+Schema-only commit. Demo data not yet writing to them; nothing reads from them.
+
+- [ ] G.2.1 Add `transactions` and `daily_balances` to `demo/schema.sql` (TWO base tables only — `account_limits` collapsed into `daily_balances.metadata` per G.0.4). Both tables include a `metadata TEXT` column with `IS JSON` CHECK constraint. Position above the old AR tables so DROP order is clean.
+- [ ] G.2.2 Add indexes the new tables need: B-tree on `transactions(account_id, posted_at)`, `transactions(transfer_id)`, `transactions(transfer_type, status)`, `transactions(control_account_id)`, `daily_balances(account_id, balance_date)`, `daily_balances(control_account_id, balance_date)`. **No** GIN indexes on `metadata`; **no** expression indexes on JSON-path extractions (per portability constraint).
+- [ ] G.2.3 Update `tests/test_demo_sql.py` to assert presence of new tables alongside existing assertions for old.
+- [ ] G.2.4 `.venv/bin/pytest` — green.
+- [ ] G.2.5 Commit — `Phase G.2: add transactions + daily_balances tables to demo schema`.
+
+---
+
+## Phase G.3 — Demo data dual-write into shared base tables
+
+Demo generators populate BOTH old and new tables. The new tables are SHARED — AR and PR demo data write into the SAME `transactions` and `daily_balances` rows. Datasets still read from old. Test suite stays green.
+
+- [ ] G.3.1 `account_recon/demo_data.py` — emit `INSERT INTO transactions` for every posting + `INSERT INTO daily_balances` for every ledger and sub-ledger daily snapshot. Account hierarchy denormalization happens here (parent_account_id, account names, etc.). AR rows tagged with AR-flavored `transfer_type` values (`ach`, `wire`, `internal`, `cash`, `funding_batch`, `fee`, `clearing_sweep`).
+- [ ] G.3.2 `payment_recon/demo_data.py` — emit `INSERT INTO transactions` into the **same** `transactions` table that AR writes to (not a parallel one) for every posting. PR already dual-writes to `transfer`+`posting` from Phase B; extend the same write to the new unified flat table. PR rows carry PR-flavored `transfer_type` values (`sale`, `settlement`, `payment`, `external_txn`) and PR-side metadata (card_brand, settlement_type, etc.) in the JSONB column per G.0.3. Per-merchant `INSERT INTO daily_balances` snapshots also land in the same shared `daily_balances` table.
+- [ ] G.3.3 New scenario-coverage tests in `tests/test_demo_data.py`: assert that every posting in `transfer`+`posting` (across both apps) has a corresponding row in the shared `transactions` table, and that every (account, date) in old daily_balance tables has a matching row in shared `daily_balances`. Catches dual-write drift early. Also assert the table contains BOTH AR-flavored and PR-flavored rows after a full `--all` demo apply (i.e., the merger actually merged).
+- [ ] G.3.4 Ledger daily-limits packed into `daily_balances.metadata` on ledger rows (per G.0.4): each ledger account's daily_balances row carries `{"limits": {...}}` derived from current `_LEDGER_LIMITS` constant. Phase H may make these vary day-to-day; Phase G ships static limits per ledger via the metadata column.
+- [ ] G.3.5 Phase H prep: source provenance (`metadata.source`) and merchant metadata (`metadata.merchant_*` on sales) populated per G.0.13. Coverage tests assert presence on representative rows.
+- [ ] G.3.6 `.venv/bin/pytest` — green.
+- [ ] G.3.7 `demo apply --all` locally — verify both old and new tables populate. Spot-check row counts and a few hand-written reconciliation queries against the new tables (using SQL/JSON path syntax — verify no Postgres-only operators sneak in).
+- [ ] G.3.8 Commit — `Phase G.3: dual-write demo data to new transactions + daily_balances tables`.
+
+---
+
+## Phase G.3.gate — Re-evaluation gate (no commit)
+
+After dual-write goes in but BEFORE any dataset migrates, full deploy + browser e2e — confirms dual-write didn't subtly perturb the existing tables.
+
+- [ ] G.3.gate.1 `quicksight-gen demo apply --all -c run/config.yaml -o run/out/`
+- [ ] G.3.gate.2 `quicksight-gen deploy --all --generate -c run/config.yaml -o run/out/` — all CREATION_SUCCESSFUL.
+- [ ] G.3.gate.3 `./run_e2e.sh --skip-deploy --parallel 4` — full green (API + browser).
+- [ ] G.3.gate.4 Spot-check the rendered AR + PR dashboards in browser; nothing should look different.
+- [ ] G.3.gate.5 STOP. If anything is unexpected, re-plan before proceeding to G.4.
+
+---
+
+## Phase G.4 — Migrate AR balances + accounts datasets
+
+Five datasets that surface raw account / balance data. Lowest risk because the SQL is mostly SELECT. Each commit migrates one dataset; DatasetContract assertion catches column drift.
+
+- [ ] G.4.1 `ar-ledger-accounts-dataset` — was over `ar_ledger_accounts`. Now: `SELECT DISTINCT ledger fields FROM daily_balances WHERE parent_account_id IS NULL` (or read from `account_limits` / from a dedicated computed view). Commit.
+- [ ] G.4.2 `ar-subledger-accounts-dataset` — analogous. Commit.
+- [ ] G.4.3 `ar-ledger-balance-drift-dataset` — view rewrites from `ar_ledger_balance_drift`. The drift VIEW logic stays; only its underlying tables change. Commit.
+- [ ] G.4.4 `ar-subledger-balance-drift-dataset` — analogous. Commit.
+- [ ] G.4.5 `ar-balance-drift-timelines-rollup-dataset` — already a rollup; underlying view definitions update. Commit.
+
+After each: `.venv/bin/pytest` (DatasetContract guard) + `./run_e2e.sh --skip-deploy api` against the prior deploy still passes.
+
+---
+
+## Phase G.5 — Migrate AR transfer / transaction datasets
+
+- [ ] G.5.1 `ar-transactions-dataset`. Commit.
+- [ ] G.5.2 `ar-transfer-summary-dataset`. The `ar_transfer_summary` view rewrites against `transactions` (group by `transfer_id`). Commit.
+- [ ] G.5.3 `ar-non-zero-transfers-dataset` — view rewrites; same group-by-transfer pattern. Commit.
+
+---
+
+## Phase G.5.gate — Re-evaluation gate (no commit)
+
+After AR transfer/transaction datasets migrate. Catches dual-write SQL drift before it propagates to the harder rewrites in G.6/G.7.
+
+- [ ] G.5.gate.1 `demo apply --all` + `deploy --all --generate` — CREATION_SUCCESSFUL.
+- [ ] G.5.gate.2 `./run_e2e.sh --skip-deploy --parallel 4` — full green.
+- [ ] G.5.gate.3 STOP if anything unexpected. Re-plan before G.6.
+
+---
+
+## Phase G.6 — Migrate AR baseline exception checks
+
+- [ ] G.6.1 `ar-limit-breach-dataset` — view rewrites against `transactions` + `daily_balances` (limit lives in `daily_balances.metadata` on the ledger row per G.0.4; extract via `JSON_VALUE(db.metadata, '$.limits.' || t.transfer_type)`). Commit.
+- [ ] G.6.2 `ar-overdraft-dataset` — view rewrites against `daily_balances` (sub-ledger snapshots). Commit.
+
+---
+
+## Phase G.7 — Migrate AR CMS-specific exception checks
+
+Nine datasets from Phase F. Each is a view over today's `transfer`+`posting`+`ar_*_daily_balances`; each gets rewritten over `transactions`+`daily_balances`. Group into commits by dataset; resist the urge to bundle.
+
+- [ ] G.7.1 `ar-sweep-target-nonzero-dataset`. Commit.
+- [ ] G.7.2 `ar-concentration-master-sweep-drift-dataset`. Commit.
+- [ ] G.7.3 `ar-ach-orig-settlement-nonzero-dataset`. Commit.
+- [ ] G.7.4 `ar-ach-sweep-no-fed-confirmation-dataset`. Commit.
+- [ ] G.7.5 `ar-fed-card-no-internal-catchup-dataset`. Commit.
+- [ ] G.7.6 `ar-gl-vs-fed-master-drift-dataset`. Commit.
+- [ ] G.7.7 `ar-internal-transfer-stuck-dataset`. Commit.
+- [ ] G.7.8 `ar-internal-transfer-suspense-nonzero-dataset`. Commit.
+- [ ] G.7.9 `ar-internal-reversal-uncredited-dataset`. Commit.
+
+---
+
+## Phase G.8 — Migrate AR cross-check rollups
+
+Two of three rollups didn't already cover in G.4.5.
+
+- [ ] G.8.1 `ar-expected-zero-eod-rollup-dataset`. Commit.
+- [ ] G.8.2 `ar-two-sided-post-mismatch-rollup-dataset`. Commit.
+
+After G.8: AR side reads zero columns from old `transfer` / `posting` / `ar_*` tables. Sanity-check via grep on `account_recon/datasets.py`.
+
+---
+
+## Phase G.8.gate — Re-evaluation gate (no commit)
+
+AR side fully migrated; PR side still on old tables. This is the largest gate — half the migration is done.
+
+- [ ] G.8.gate.1 `demo apply --all` + `deploy --all --generate` — CREATION_SUCCESSFUL.
+- [ ] G.8.gate.2 `./run_e2e.sh --skip-deploy --parallel 4` — full green.
+- [ ] G.8.gate.3 Manual browser walk-through of all AR sheets — Balances, Transfers, Transactions, Exceptions (all 47 visuals). Compare against the v2.0.0 deploy by eye if possible.
+- [ ] G.8.gate.4 STOP if anything unexpected. PR migration in G.9 is the long tail; entering it with anything unresolved on the AR side compounds risk.
+
+---
+
+## Phase G.9 — Migrate PR datasets to read from the shared base layer
+
+Hardest because of metadata extraction (G.0.3). 11 datasets. The view layer (`pr_payment_recon_view`, `pr_sale_settlement_mismatch`, `pr_settlement_payment_mismatch`, `pr_unmatched_external_txns`) gets rewritten too.
+
+This is the half of the merger that lights up: AR datasets after G.4–G.8 read from `transactions` / `daily_balances`; PR datasets after G.9 read from the **same** `transactions` / `daily_balances`. After G.9, both apps share one base layer. The `pr_*` tables become dead weight ready to drop in G.10.
+
+- [ ] G.9.1 `merchants-dataset` — `SELECT DISTINCT merchant_account_id, merchant_name, merchant_type FROM transactions WHERE metadata ? 'merchant_type'` (or analogous against `daily_balances` for the canonical account list). Commit.
+- [ ] G.9.2 `sales-dataset`. Metadata extraction (`metadata->>'card_brand'`, etc.). Commit.
+- [ ] G.9.3 `settlements-dataset`. Commit.
+- [ ] G.9.4 `payments-dataset`. Commit.
+- [ ] G.9.5 `external-transactions-dataset`. Commit.
+- [ ] G.9.6 `payment-recon-dataset` — the big reconciliation view rewrites entirely against `transactions`. Commit.
+- [ ] G.9.7 `settlement-exceptions-dataset`. Commit.
+- [ ] G.9.8 `payment-returns-dataset`. Commit.
+- [ ] G.9.9 `sale-settlement-mismatch-dataset`. Commit.
+- [ ] G.9.10 `settlement-payment-mismatch-dataset`. Commit.
+- [ ] G.9.11 `unmatched-external-txns-dataset`. Commit.
+
+After G.9: PR side reads zero columns from old `pr_*` tables.
+
+---
+
+## Phase G.9.gate — Re-evaluation gate (no commit)
+
+Both AR and PR fully migrated. Last gate before legacy-table drop in G.10. Highest value gate: this is the moment the merger is real.
+
+- [ ] G.9.gate.1 `demo apply --all` + `deploy --all --generate` — CREATION_SUCCESSFUL.
+- [ ] G.9.gate.2 `./run_e2e.sh --skip-deploy --parallel 4` — full green.
+- [ ] G.9.gate.3 Manual browser walk: AR + PR sheets, including the Payment Reconciliation mutual-filter table.
+- [ ] G.9.gate.4 Confirm via grep: zero references to `pr_*`, `transfer`, `posting`, `ar_ledger_accounts`, `ar_subledger_accounts`, `ar_ledger_daily_balances`, `ar_subledger_daily_balances`, `ar_ledger_transfer_limits` in `src/`, `tests/` (excluding `demo/schema.sql` DROPs and the dual-write code that G.10 removes).
+- [ ] G.9.gate.5 STOP if anything unexpected. Dropping tables in G.10 is irreversible from this branch's perspective.
+
+---
+
+## Phase G.10 — Drop legacy tables
+
+Sanity check via grep first that no dataset SQL or demo data write touches the old tables, then drop.
+
+- [ ] G.10.1 `grep -E "ar_ledger_accounts|ar_subledger_accounts|ar_ledger_daily_balances|ar_subledger_daily_balances|ar_ledger_transfer_limits|^CREATE.*transfer\b|^CREATE.*posting\b|pr_merchants|pr_sales|pr_settlements|pr_payments|pr_external_transactions"` across `src/`, `tests/`, `demo/` — only the DROP statements at the top of `schema.sql` should match.
+- [ ] G.10.2 Update `demo/schema.sql`: remove `CREATE TABLE` for `ar_ledger_accounts`, `ar_subledger_accounts`, `ar_ledger_daily_balances`, `ar_subledger_daily_balances`, `ar_ledger_transfer_limits`, `transfer`, `posting`, all `pr_*` tables. Keep DROP statements at the top (clean re-apply after upgrade). Remove their indexes.
+- [ ] G.10.3 Update demo data generators to single-write only to `transactions` / `daily_balances`. Remove dual-write paths.
+- [ ] G.10.4 Update `tests/test_demo_sql.py` — old-table assertions become "not present"; new-table assertions become primary.
+- [ ] G.10.5 `.venv/bin/pytest` — green.
+- [ ] G.10.6 `demo apply --all` — verify clean apply on a fresh database.
+- [ ] G.10.7 Commit — `Phase G.10: drop legacy AR + PR base tables; PR/AR fully merged into shared transactions + daily_balances`.
+
+---
+
+## Phase G.11 — Re-lock deterministic-output invariants
+
+Single-write reshapes the seed-write order; deterministic-output tests may need fresh expected values.
+
+- [ ] G.11.1 Re-run `tests/test_demo_data.py` determinism assertions; if expected values shifted (likely — write order changed), regenerate and commit the new fixtures.
+- [ ] G.11.2 Verify `random.Random(42)` output is still byte-identical run-to-run on the new path.
+- [ ] G.11.3 Commit — `Phase G.11: re-lock deterministic demo data fixtures after schema flatten`.
+
+---
+
+## Phase G.12 — Update CLAUDE.md, README.md, RELEASE_NOTES.md
+
+- [ ] G.12.1 `CLAUDE.md` — domain model section: replace 4-table-per-app description with 2-table description. Update generated output block (no impact — datasets unchanged). Update the "Architecture Decisions" line about `transfer`+`posting` schema.
+- [ ] G.12.2 `README.md` — project structure block (`demo/schema.sql` description), `Customising → Change the SQL` section (point at the new tables).
+- [ ] G.12.3 `RELEASE_NOTES.md` — add v3.0.0 entry: "schema flatten + PR/AR data merger — 12 tables → **2 base tables** (`transactions` + `daily_balances`); ledger limits collapsed into `daily_balances.metadata`. PR and AR demo data now share the same tables; the `pr_*` legacy table family is fully retired. JSON metadata uses portable `TEXT` + SQL/JSON path syntax (system compatibility requires Postgres 17+). Computed views and dataset contracts unchanged. Dashboards visually identical to v2.x. New `docs/Schema_v3.md` documents the feed contract for the Data Integration Team persona."
+- [ ] G.12.4 Defer `SPEC.md` — per goal note, that gets a separate pass after Phase G.
+- [ ] G.12.5 Commit — `Phase G.12: sync docs to the two-table schema and add v3.0.0 release notes`.
+
+---
+
+## Phase G.13 — Verify ETL example queries
+
+The persona tests Phase G's success: can a Data Integration Team member ETL upstream data into these two tables and have the dashboards work?
+
+- [ ] G.13.1 Working through `docs/Schema_v3.md` example queries by hand against the demo Postgres — every query should run, every result should match what the dashboard shows.
+- [ ] G.13.2 Add a few of those queries as `tests/test_etl_examples.py` so the doc doesn't drift silently.
+- [ ] G.13.3 Commit — `Phase G.13: lock ETL example queries with regression test`.
+
+---
+
+## Phase G.14 — Deploy + e2e + release
+
+- [ ] G.14.1 `demo apply --all` — schema + new seed applied to local Postgres.
+- [ ] G.14.2 `deploy --all --generate` — all resources CREATION_SUCCESSFUL. Same dashboards, same visuals — only the underlying datasets' SQL changed.
+- [ ] G.14.3 `cleanup --dry-run` — no stale tagged resources.
+- [ ] G.14.4 `./run_e2e.sh --parallel 4` — full green (API + browser). Browser e2e is the canary that the visible dashboard didn't regress.
+- [ ] G.14.5 Tag v3.0.0, push.
 
 ---
 
 ## Decisions to make in flight
 
-- **Old PR app references to "Big Meadow Checking" etc.** Quick check during F.3: are there any PR-side references? If so, are they intentional (cross-app demo data) or legacy strays? Clean up if strays.
-- **ZBA sweep amount distribution.** Production ZBA sweeps are usually one large EOD net. For training, smaller more-frequent sweeps may make patterns more visible. Tune during F.4.1.
-- **Aging bucket on suspense scenarios.** Stuck-in-suspense ages from `originated_at`. Reversed-but-not-credited ages from the reversal `posted_at`. Confirm both produce useful aging across the demo's ~40-day window.
-- **Synthetic FRB Master Account in demo data.** The "FRB Master — SNB" needs a representation to support GL-vs-Fed drift checks. Probably a single ledger account with daily balance snapshots generated in parallel to internal activity. Decide structure during F.4.3 / F.5.6.
-- **Dataset consolidation (F.0.7).** If Exceptions tab gets too dense, revisit consolidating shape-similar checks into parametric ones (e.g., one "GL account expected-zero EOD" dataset feeding three separate KPIs).
-- **View abstractions.** Decide during F.5 whether to add SQL views that wrap `transfer` + `posting` joins, so Phase G can flatten the underlying tables without touching dataset SQL. Adds complexity now in exchange for migration ease later.
+- **SQL/JSON path ergonomics.** First few PR dataset rewrites in G.9 will reveal whether `JSON_VALUE(metadata, '$.card_brand')` is acceptable or unbearable in dataset SQL. If unbearable, fall back to a `transaction_metadata` sidecar table (option B from G.0.3) — three-table outcome still a 75% win. Decide by G.9.3.
+- **Dropping merchants → accounts (G.0.8).** First PR dataset rewrite touching merchants (G.9.1) is the test. If `daily_balances WHERE account_type='merchant_dda'` reads naturally, ship; if it requires gymnastics, restore a small `pr_merchants` reference table.
+- **External counterparty representation.** FRB Master Account, processors — they need `daily_balances` rows for the GL-vs-Fed drift check to compute against something. Decide structure during G.3.2 (probably daily snapshots fed in deterministically alongside internal activity).
+- **`computed_balance` view name collisions.** Old views `ar_computed_ledger_daily_balance` / `ar_computed_subledger_daily_balance` either get renamed (collapse into one `computed_daily_balance`) or stay paired. Probably collapse — they're shape-identical now that ledger and sub-ledger live in one table.
+- **`postings_per_transfer` indexed lookup.** Many drift / rollup queries group by `transfer_id`; the new flat table needs an index. Validate during G.6 / G.7 that pagination on the demo size (~3000 rows) doesn't degrade.
+- **PR `is_returned`, `return_reason`, `payment_status`.** PR has several enum-like columns the dashboards filter on. JSONB or first-class columns? For columns with consumers in dataset SQL, first-class is faster and clearer. Probably first-class for any column that appears in a `WHERE` or `GROUP BY` of a current dataset.
 
 ---
 
 ## Risks
 
-- **F.1 break is large and lasts ~3 commits.** Every plant list, every test, every scenario coverage assertion references the old IDs. Test suite is intentionally red between F.1 and F.3.7. Make sure to land F.1 → F.2 → F.3 in close succession; don't leave the branch in red state across days.
-- **e2e tests break for the entire Phase F until F.7.** Unit tests are fixed mid-sequence; e2e depends on deployed dashboards which only get rebuilt at F.7. Keep `QS_GEN_E2E=0` throughout; only re-enable at F.7.
-- **New exception checks may surface OLD planted exceptions in unexpected ways.** Re-aimed `_LIMIT_BREACH_PLANT` (F.2.3) lands on customer DDAs that may also be in on-us-internal-transfer scenarios (F.4.4). Cross-scenario interference could surface a row in two checks. May be acceptable (real banking has multi-fault items); may need separation. Assess during F.4.5.
-- **Dataset count goes from ~9 to ~18 for AR.** Each new dataset is a CREATE_DATASET call during deploy; deploy time grows. F.0.7 consolidation question is the lever to pull if this becomes a problem.
-- **No FEB now → less variety in the demo.** Some existing tests may have implicitly depended on having two distinct `is_internal=True` ledger families. With everything under one bank, generator variety shrinks. Watch for tests that asserted "≥ 2 internal ledger accounts" and similar.
-- **Phase G (schema flattening) is now further away.** This plan locks in the current `transfer` + `posting` + ledger + sub-ledger 4-table schema for another major release. If schema flattening turns out to be more time-sensitive than expected, the trade-off is doing it BEFORE Phase F instead — Phase F's new SQL would then be written directly against the flat schema, skipping the view-abstraction half-step. Check before committing to F.0.
+- **PR dataset rewrites are the long tail (G.9 — 11 commits).** PR has more domain-specific metadata than AR and the chain-of-custody view (`pr_payment_recon_view`) is the most complex SQL in the codebase. Expect this phase to take longer per commit than AR migrations. Don't bundle.
+- **DatasetContract is the safety net — abuse it.** Every dataset migration is a SQL rewrite; the test that asserts "SQL projection matches contract" is the difference between safe and terrifying. If a contract assertion fails, STOP — don't loosen the contract; the new SQL is wrong.
+- **Browser e2e doesn't run until G.14.** Dataset SQL changes go through API e2e (dataset health checks) but visual rendering only validates at the very end. If a dataset's SQL is subtly wrong (e.g., NULL handling differs, ordering changes), it might pass DatasetContract + API health and still render badly. Mitigation: spot-check a couple of dashboards in the browser mid-phase (after G.5 and G.8) using `--skip-deploy browser` against the prior deploy. Won't catch new-SQL regressions but catches dual-write bugs.
+- **Dual-write window inflates demo apply time.** Every posting writes twice during G.3 → G.10. Probably acceptable for the demo's ~few-thousand row scale; if `demo apply` slows past ~30s, batch the new-table inserts.
+- **Determinism re-lock at G.11 is tedious but mechanical.** Don't fight it; just regenerate.
+- **G.10 grep is the load-bearing safety check.** Drop too early and live datasets break in production. The grep has to be thorough — include both source and test files, both SQL and Python identifiers.
+- **Postgres 17+ required for `demo apply`.** Pre-17 Postgres lacks SQL/JSON path syntax (`JSON_VALUE`, etc.). The portability convention forbids the Postgres-only fallbacks (`->>`, etc.). Mitigation: doc loudly in `docs/Schema_v3.md`, `README.md`, and CI; `demo apply` should fail-fast with a helpful error if it detects PG < 17.
+- **JSON metadata extraction is unfamiliar to anyone used to plain columns.** Dataset SQL becomes `JSON_VALUE(metadata, '$.card_brand')` everywhere PR-specific or limit data is read. First few rewrites in G.6 / G.9 will be slow as the muscle memory builds. Mitigation: write a small SQL helper view per metadata-rich entity (e.g., `pr_sales_metadata` view that exposes `card_brand`, `cashier`, etc. as columns over the underlying transactions row) IF the dataset SQL becomes painful — but resist building it preemptively.
+- **Sidecar fallback if SQL/JSON proves unbearable.** Three-table outcome (`transactions` + `daily_balances` + `transaction_metadata` sidecar) is still a 75% reduction from today's 12. Don't let the ideal-2 outcome become an enemy of shipping. Decide by G.9.3 per the in-flight decisions list.
+- **SPEC.md gets messier mid-phase, not cleaner.** Phase G doesn't touch SPEC.md (per Out of Scope) but the SPEC's account-model description gets staler with every commit. Live with it; the rewrite is the next phase.
+
+---
+
+## After Phase G
+
+Once v3.0.0 is tagged:
+
+- **SPEC.md rewrite** — the SPEC has accumulated multi-version cruft (Phase A → Phase F decisions interleaved with current-state). Phase G's stable two-table schema is the right anchor for a clean rewrite. Plan that work as its own phase.
+- **Customer ETL guide / customization handbook** — `docs/Schema_v3.md` is the persona contract; a longer-form customer-facing customization guide (mapping production-system tables → these two tables, common pitfalls, performance tips) is a natural follow-up.
+- **Persona dashboard split** (originally Phase E) — still queued.
