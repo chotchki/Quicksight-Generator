@@ -722,30 +722,31 @@ WHERE sub.control_account_id = 'gl-1850-cash-concentration-master'
 -- operating sub-accounts under that same ledger. Healthy days: legs
 -- balance, drift = 0. Drift rows surface days where the master leg was
 -- keyed off, missing, or extra.
+-- Phase G: reads from shared `transactions`. master_credits = direct
+-- ledger postings (control_account_id IS NULL); subaccount_debits =
+-- postings to sub-ledgers under that ledger (control_account_id =
+-- 'gl-1850-cash-concentration-master').
 CREATE VIEW ar_concentration_master_sweep_drift AS
 WITH master_credits AS (
     SELECT
-        p.posted_at::date                   AS sweep_date,
-        SUM(p.signed_amount)                AS master_total
-    FROM posting p
-    JOIN transfer t USING (transfer_id)
-    WHERE t.transfer_type = 'clearing_sweep'
-      AND p.ledger_account_id = 'gl-1850-cash-concentration-master'
-      AND p.subledger_account_id IS NULL
-      AND p.status = 'success'
-    GROUP BY p.posted_at::date
+        t.balance_date                       AS sweep_date,
+        SUM(t.signed_amount)                 AS master_total
+    FROM transactions t
+    WHERE t.transfer_type      = 'clearing_sweep'
+      AND t.account_id         = 'gl-1850-cash-concentration-master'
+      AND t.control_account_id IS NULL
+      AND t.status             = 'success'
+    GROUP BY t.balance_date
 ),
 subaccount_debits AS (
     SELECT
-        p.posted_at::date                   AS sweep_date,
-        SUM(p.signed_amount)                AS subaccount_total
-    FROM posting p
-    JOIN transfer t USING (transfer_id)
-    JOIN ar_subledger_accounts s USING (subledger_account_id)
-    WHERE t.transfer_type = 'clearing_sweep'
-      AND s.ledger_account_id = 'gl-1850-cash-concentration-master'
-      AND p.status = 'success'
-    GROUP BY p.posted_at::date
+        t.balance_date                       AS sweep_date,
+        SUM(t.signed_amount)                 AS subaccount_total
+    FROM transactions t
+    WHERE t.transfer_type      = 'clearing_sweep'
+      AND t.control_account_id = 'gl-1850-cash-concentration-master'
+      AND t.status             = 'success'
+    GROUP BY t.balance_date
 )
 SELECT
     COALESCE(mc.sweep_date, sd.sweep_date)         AS sweep_date,
