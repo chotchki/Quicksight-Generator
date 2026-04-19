@@ -972,16 +972,18 @@ WHERE orig.transfer_type = 'internal'
 -- → recipient). Healthy day: every Step 1 has its Step 2, suspense nets
 -- to zero EOD. Non-zero EOD = at least one Step-1 didn't clear that day.
 -- Ledger-level analog of F.5.7's per-transfer view.
+-- Phase G: reads from shared `daily_balances`; ledger row identified by
+-- control_account_id IS NULL.
 CREATE VIEW ar_internal_transfer_suspense_nonzero AS
 SELECT
-    ldb.ledger_account_id,
-    la.name                             AS ledger_name,
-    ldb.balance_date,
-    ldb.balance                         AS stored_balance
-FROM ar_ledger_daily_balances ldb
-JOIN ar_ledger_accounts la USING (ledger_account_id)
-WHERE ldb.ledger_account_id = 'gl-1830-internal-transfer-suspense'
-  AND ldb.balance <> 0;
+    db.account_id                       AS ledger_account_id,
+    db.account_name                     AS ledger_name,
+    db.balance_date,
+    db.balance                          AS stored_balance
+FROM daily_balances db
+WHERE db.account_id          = 'gl-1830-internal-transfer-suspense'
+  AND db.control_account_id IS NULL
+  AND db.balance            <> 0;
 
 
 -- F.5.10.a Accounts Expected Zero at EOD rollup.
