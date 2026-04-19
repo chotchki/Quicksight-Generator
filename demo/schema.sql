@@ -785,24 +785,29 @@ WHERE db.account_id          = 'gl-1810-ach-orig-settlement'
 -- This view surfaces sweeps where the internal leg posted but the Fed
 -- confirmation never landed — the bank thinks the cash moved, the FRB
 -- has no record.
+-- Phase G: reads from shared `transactions`. transfer-scoped EXISTS
+-- replaces transfer-table joins. Per-leg posted_at/amount are
+-- consistent across a transfer's rows, so MIN() collapses them.
 CREATE VIEW ar_ach_sweep_no_fed_confirmation AS
 SELECT
     t.transfer_id                       AS sweep_transfer_id,
-    t.created_at                        AS sweep_at,
-    t.amount                            AS sweep_amount
-FROM transfer t
+    MIN(t.posted_at)                    AS sweep_at,
+    MIN(t.amount)                       AS sweep_amount
+FROM transactions t
 WHERE t.transfer_type = 'clearing_sweep'
   AND EXISTS (
-    SELECT 1 FROM posting p
-    WHERE p.transfer_id = t.transfer_id
-      AND p.ledger_account_id = 'gl-1810-ach-orig-settlement'
+    SELECT 1 FROM transactions hit
+    WHERE hit.transfer_id = t.transfer_id
+      AND (hit.account_id         = 'gl-1810-ach-orig-settlement'
+        OR hit.control_account_id = 'gl-1810-ach-orig-settlement')
   )
   AND NOT EXISTS (
-    SELECT 1 FROM transfer fed
+    SELECT 1 FROM transactions fed
     WHERE fed.parent_transfer_id = t.transfer_id
-      AND fed.transfer_type = 'ach'
-      AND fed.origin = 'external_force_posted'
-  );
+      AND fed.transfer_type      = 'ach'
+      AND fed.origin             = 'external_force_posted'
+  )
+GROUP BY t.transfer_id;
 
 
 -- Fed activity with no matching internal post (F.5.5).
