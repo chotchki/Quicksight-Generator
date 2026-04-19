@@ -1354,9 +1354,9 @@ class TestGenerateOutput:
     def test_dashboard_file_exists(self, ar_output_dir):
         assert (ar_output_dir / "account-recon-dashboard.json").exists()
 
-    def test_nine_dataset_files(self, ar_output_dir):
+    def test_ten_dataset_files(self, ar_output_dir):
         datasets = list((ar_output_dir / "datasets").glob("qs-gen-ar-*.json"))
-        assert len(datasets) == 9
+        assert len(datasets) == 10
 
     def test_all_files_valid_json(self, ar_output_dir):
         for path in ar_output_dir.rglob("*.json"):
@@ -1469,9 +1469,11 @@ class TestSheetLayout:
         self._assert_visual_count(ar_output_dir, SHEET_AR_TRANSACTIONS, 5)
 
     def test_exceptions_visual_count(self, ar_output_dir):
-        # Phase 5: five independent checks (three drift KPIs + breach +
-        # overdraft) → 5 KPIs + 5 tables + 2 timelines = 12.
-        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 17)
+        # Phase 5: five baseline checks (three drift KPIs + breach +
+        # overdraft) → 5 KPIs + 5 tables + 2 timelines + 5 aging bars
+        # = 17. Phase F.5.1 adds Sweep target non-zero EOD
+        # (KPI + table + aging bar) → 20.
+        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 20)
 
     def _assert_visual_count(self, out_dir: Path, sheet_id: str, expected: int) -> None:
         analysis = _load(out_dir, "account-recon-analysis.json")

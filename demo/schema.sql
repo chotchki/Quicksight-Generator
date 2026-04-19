@@ -238,6 +238,7 @@ DROP TABLE IF EXISTS ar_accounts                       CASCADE;
 DROP TABLE IF EXISTS ar_parent_accounts                CASCADE;
 
 -- Current-vocabulary drops
+DROP VIEW  IF EXISTS ar_sweep_target_nonzero             CASCADE;
 DROP VIEW  IF EXISTS ar_subledger_overdraft              CASCADE;
 DROP VIEW  IF EXISTS ar_subledger_limit_breach           CASCADE;
 DROP VIEW  IF EXISTS ar_subledger_daily_outbound_by_type CASCADE;
@@ -554,3 +555,23 @@ FROM ar_subledger_daily_balances sdb
 JOIN ar_subledger_accounts s   USING (subledger_account_id)
 JOIN ar_ledger_accounts la     USING (ledger_account_id)
 WHERE sdb.balance < 0;
+
+
+-- Sweep target non-zero EOD: ZBA operating sub-accounts (under Cash
+-- Concentration Master) whose stored EOD balance is not zero. The
+-- training story's invariant is that every operating sub-account sweeps
+-- to zero EOD; non-zero balances mean the sweep failed or was skipped.
+-- F.5.1 surfaces these.
+CREATE VIEW ar_sweep_target_nonzero AS
+SELECT
+    sdb.subledger_account_id,
+    s.name                              AS subledger_name,
+    s.ledger_account_id,
+    la.name                             AS ledger_name,
+    sdb.balance_date,
+    sdb.balance                         AS stored_balance
+FROM ar_subledger_daily_balances sdb
+JOIN ar_subledger_accounts s   USING (subledger_account_id)
+JOIN ar_ledger_accounts la     USING (ledger_account_id)
+WHERE s.ledger_account_id = 'gl-1850-cash-concentration-master'
+  AND sdb.balance <> 0;

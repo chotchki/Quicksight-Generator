@@ -35,6 +35,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_OVERDRAFT,
     DS_AR_SUBLEDGER_ACCOUNTS,
     DS_AR_SUBLEDGER_BALANCE_DRIFT,
+    DS_AR_SWEEP_TARGET_NONZERO,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     SHEET_AR_BALANCES,
@@ -1380,12 +1381,116 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
         "subledger_account_id",
     )
 
+    # F.5.1 Sweep target non-zero EOD — operating sub-accounts under
+    # Cash Concentration Master that didn't sweep to zero EOD.
+    kpi_sweep_target = Visual(
+        KPIVisual=KPIVisual(
+            VisualId="ar-exc-kpi-sweep-target",
+            Title=_title("Sweep Target Non-Zero EOD"),
+            Subtitle=_subtitle(
+                "Operating sub-accounts under Cash Concentration Master "
+                "whose stored EOD balance is not zero — sweep failed or "
+                "was skipped"
+            ),
+            ChartConfiguration=KPIConfiguration(
+                FieldWells=KPIFieldWells(
+                    Values=[
+                        _measure_count(
+                            "ar-exc-sweep-target-count",
+                            DS_AR_SWEEP_TARGET_NONZERO,
+                            "subledger_account_id",
+                        )
+                    ],
+                ),
+            ),
+        )
+    )
+
+    table_sweep_target = Visual(
+        TableVisual=TableVisual(
+            VisualId="ar-exc-sweep-target-table",
+            Title=_title("Sweep Target Non-Zero EOD"),
+            Subtitle=_subtitle(
+                "Days an operating sub-account under Cash Concentration "
+                "Master ended non-zero. Each row is a (sub-account, date) "
+                "the EOD sweep didn't clear. Left-click a "
+                "subledger_account_id to drill into Transactions."
+            ),
+            ChartConfiguration=TableConfiguration(
+                FieldWells=TableFieldWells(
+                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
+                        Values=[
+                            _unagg_field("ar-exc-sw-subledger-id",
+                                         DS_AR_SWEEP_TARGET_NONZERO,
+                                         "subledger_account_id"),
+                            _unagg_field("ar-exc-sw-subledger",
+                                         DS_AR_SWEEP_TARGET_NONZERO,
+                                         "subledger_name"),
+                            _unagg_field("ar-exc-sw-ledger",
+                                         DS_AR_SWEEP_TARGET_NONZERO,
+                                         "ledger_name"),
+                            _unagg_field("ar-exc-sw-date",
+                                         DS_AR_SWEEP_TARGET_NONZERO,
+                                         "balance_date"),
+                            _unagg_field("ar-exc-sw-date-str",
+                                         DS_AR_SWEEP_TARGET_NONZERO,
+                                         "balance_date_str"),
+                            _unagg_field("ar-exc-sw-stored",
+                                         DS_AR_SWEEP_TARGET_NONZERO,
+                                         "stored_balance"),
+                            _unagg_field("ar-exc-sw-aging",
+                                         DS_AR_SWEEP_TARGET_NONZERO,
+                                         "aging_bucket"),
+                        ],
+                    )
+                ),
+                SortConfiguration={
+                    "RowSort": [
+                        {
+                            "FieldSort": {
+                                "FieldId": "ar-exc-sw-date",
+                                "Direction": "DESC",
+                            },
+                        },
+                    ],
+                },
+            ),
+            Actions=[
+                _multi_drill_action(
+                    "action-ar-exc-sweep-target-to-txn",
+                    "View Transactions",
+                    SHEET_AR_TRANSACTIONS,
+                    [
+                        (P_AR_SUBLEDGER, "ar-exc-sw-subledger-id"),
+                        (P_AR_ACTIVITY_DATE, "ar-exc-sw-date-str"),
+                    ],
+                ),
+            ],
+            ConditionalFormatting={
+                "ConditionalFormattingOptions": [
+                    link_text_format(
+                        "ar-exc-sw-subledger-id", "subledger_account_id",
+                        link_color,
+                    ),
+                ],
+            },
+        )
+    )
+
+    aging_sweep_target = aging_bar_visual(
+        "ar-exc-aging-sweep-target",
+        "Sweep Targets by Age",
+        "How long sweep-target non-zero rows have been outstanding",
+        DS_AR_SWEEP_TARGET_NONZERO,
+        "subledger_account_id",
+    )
+
     return [
         kpi_ledger_drift, kpi_subledger_drift, kpi_nonzero,
-        kpi_breach, kpi_overdraft,
+        kpi_breach, kpi_overdraft, kpi_sweep_target,
         table_ledger_drift, table_subledger_drift, table_non_zero,
-        table_breach, table_overdraft,
+        table_breach, table_overdraft, table_sweep_target,
         timeline_ledger, timeline_subledger,
         aging_ledger_drift, aging_subledger_drift, aging_nonzero,
-        aging_breach, aging_overdraft,
+        aging_breach, aging_overdraft, aging_sweep_target,
     ]

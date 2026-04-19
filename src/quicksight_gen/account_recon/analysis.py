@@ -19,6 +19,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_OVERDRAFT,
     DS_AR_SUBLEDGER_ACCOUNTS,
     DS_AR_SUBLEDGER_BALANCE_DRIFT,
+    DS_AR_SWEEP_TARGET_NONZERO,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     SHEET_AR_BALANCES,
@@ -485,6 +486,22 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
         _full_width_visual("ar-exc-overdraft-table", _TABLE_ROW_SPAN),
     ]
 
+    # F.5.1: Sweep target non-zero EOD — KPI on its own row, then full-width
+    # detail table, then full-width aging bar. New checks append to the
+    # bottom of the sheet; F.5.10 will reorganize once all rollups are in.
+    sweep_target_row_kpi = [
+        GridLayoutElement(
+            ElementId="ar-exc-kpi-sweep-target", ElementType="VISUAL",
+            ColumnSpan=_FULL, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
+        ),
+    ]
+    sweep_target_table = [
+        _full_width_visual("ar-exc-sweep-target-table", _TABLE_ROW_SPAN),
+    ]
+    sweep_target_aging = [
+        _full_width_visual("ar-exc-aging-sweep-target", _CHART_ROW_SPAN),
+    ]
+
     return SheetDefinition(
         SheetId=SHEET_AR_EXCEPTIONS,
         Name="Exceptions",
@@ -503,6 +520,9 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
                 "ar-exc-ledger-drift-timeline",
                 "ar-exc-subledger-drift-timeline",
             )
+            + sweep_target_row_kpi
+            + sweep_target_table
+            + sweep_target_aging
         ),
     )
 
@@ -528,6 +548,7 @@ def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaratio
         DS_AR_NON_ZERO_TRANSFERS,
         DS_AR_LIMIT_BREACH,
         DS_AR_OVERDRAFT,
+        DS_AR_SWEEP_TARGET_NONZERO,
     ]
     return [
         DataSetIdentifierDeclaration(

@@ -152,6 +152,18 @@ OVERDRAFT_CONTRACT = DatasetContract(columns=[
     ColumnSpec("aging_bucket", "STRING"),
 ])
 
+SWEEP_TARGET_NONZERO_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("subledger_account_id", "STRING"),
+    ColumnSpec("subledger_name", "STRING"),
+    ColumnSpec("ledger_account_id", "STRING"),
+    ColumnSpec("ledger_name", "STRING"),
+    ColumnSpec("balance_date", "DATETIME"),
+    ColumnSpec("balance_date_str", "STRING"),
+    ColumnSpec("stored_balance", "DECIMAL"),
+    ColumnSpec("days_outstanding", "INTEGER"),
+    ColumnSpec("aging_bucket", "STRING"),
+])
+
 
 # ---------------------------------------------------------------------------
 # Builders
@@ -357,6 +369,25 @@ FROM ar_subledger_overdraft"""
     )
 
 
+def build_sweep_target_nonzero_dataset(cfg: Config) -> DataSet:
+    sql = f"""\
+SELECT
+    subledger_account_id,
+    subledger_name,
+    ledger_account_id,
+    ledger_name,
+    balance_date,
+    TO_CHAR(balance_date, 'YYYY-MM-DD') AS balance_date_str,
+    stored_balance,
+{_aging_columns('balance_date')}
+FROM ar_sweep_target_nonzero"""
+    return build_dataset(
+        cfg, cfg.prefixed("ar-sweep-target-nonzero-dataset"),
+        "AR Sweep Target Non-Zero EOD", "ar-sweep-target-nonzero",
+        sql, SWEEP_TARGET_NONZERO_CONTRACT,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Convenience
 # ---------------------------------------------------------------------------
@@ -372,4 +403,5 @@ def build_all_datasets(cfg: Config) -> list[DataSet]:
         build_non_zero_transfers_dataset(cfg),
         build_limit_breach_dataset(cfg),
         build_overdraft_dataset(cfg),
+        build_sweep_target_nonzero_dataset(cfg),
     ]
