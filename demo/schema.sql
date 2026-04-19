@@ -697,19 +697,23 @@ WHERE sub.control_account_id IS NOT NULL
 -- training story's invariant is that every operating sub-account sweeps
 -- to zero EOD; non-zero balances mean the sweep failed or was skipped.
 -- F.5.1 surfaces these.
+-- Phase G: reads from shared `daily_balances`; ledger_name via self-join
+-- on the corresponding ledger row.
 CREATE VIEW ar_sweep_target_nonzero AS
 SELECT
-    sdb.subledger_account_id,
-    s.name                              AS subledger_name,
-    s.ledger_account_id,
-    la.name                             AS ledger_name,
-    sdb.balance_date,
-    sdb.balance                         AS stored_balance
-FROM ar_subledger_daily_balances sdb
-JOIN ar_subledger_accounts s   USING (subledger_account_id)
-JOIN ar_ledger_accounts la     USING (ledger_account_id)
-WHERE s.ledger_account_id = 'gl-1850-cash-concentration-master'
-  AND sdb.balance <> 0;
+    sub.account_id                       AS subledger_account_id,
+    sub.account_name                     AS subledger_name,
+    sub.control_account_id               AS ledger_account_id,
+    led.account_name                     AS ledger_name,
+    sub.balance_date,
+    sub.balance                          AS stored_balance
+FROM daily_balances sub
+JOIN daily_balances led
+    ON  led.account_id   = sub.control_account_id
+   AND led.balance_date  = sub.balance_date
+WHERE sub.control_account_id = 'gl-1850-cash-concentration-master'
+  AND led.control_account_id IS NULL
+  AND sub.balance <> 0;
 
 
 -- Concentration Master vs sub-account sweep drift (F.5.2).
