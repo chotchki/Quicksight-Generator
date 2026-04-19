@@ -103,13 +103,28 @@ class TestDemoRowCounts:
         #   N is 6 or 7 in the SNB structure depending on which
         #   eligible ledger the batch picks)
         # + 3 fee assessments (1 ledger leg each)
-        # + 2 clearing sweeps (2 ledger legs each)
-        # Total observed under seed=42: 178.
-        assert len(unified_parsed["posting"]) == 178
+        # + 2 inter-ledger clearing sweeps (2 ledger legs each)
+        # + 18 ZBA EOD sweeps × 2 legs each (1 sub-ledger + 1 ledger-direct)
+        # + 2 ZBA fail-plant deposits × 2 legs each
+        # + 132 ACH cycle postings (14 days × 3 originations × 2 legs each
+        #   = 84; 13 EOD sweeps × 2 = 26; 11 Fed confirmations × 2 = 22)
+        # + 36 card settlement postings (10 Fed observations × 2 = 20;
+        #   8 internal catch-ups × 2 legs each = 16)
+        # + 16 on-us internal transfer postings (5 originate × 2 = 10;
+        #   2 success step-2 × 2 = 4; 1 reversal-not-credited × 2 = 2)
+        # Total observed under seed=42: 402.
+        assert len(unified_parsed["posting"]) == 402
 
     def test_transfers(self, unified_parsed):
-        # 66 sub-ledger + 5 funding + 3 fee + 2 sweep = 76
-        assert len(unified_parsed["transfer"]) == 76
+        # 66 sub-ledger + 5 funding + 3 fee + 2 inter-ledger sweep
+        # + 18 ZBA EOD sweep + 2 ZBA fail-plant deposit
+        # + 66 ACH cycle (14×3 originations + 13 EOD sweeps + 11 Fed
+        #   confirmations)
+        # + 18 card settlement (10 Fed observations + 8 internal catch-ups)
+        # + 8 on-us internal transfers (5 originate + 2 success step-2
+        #   + 1 reversal-not-credited step-2)
+        # = 188
+        assert len(unified_parsed["transfer"]) == 188
 
     def test_ledger_transfer_limits(self, ar_parsed):
         from quicksight_gen.account_recon.demo_data import _LEDGER_LIMITS
@@ -492,6 +507,451 @@ class TestScenarioCoverage:
                 f"(got {bal})"
             )
 
+    def test_zba_sweep_cycle_present(self, unified_parsed):
+        """F.4.1: ZBA / Cash Concentration sweep transfers must exist
+        with mixed-level legs (sub-ledger leg zeroes operating account,
+        ledger-direct leg offsets at master). Drives the F.5.1 / F.5.2
+        rollup checks."""
+        from quicksight_gen.account_recon.demo_data import (
+            _ZBA_SWEEP_CUSTOMERS,
+        )
+
+        # Find clearing_sweep transfers with at least one posting
+        # targeting a ZBA operating sub-account.
+        zba_set = set(_ZBA_SWEEP_CUSTOMERS)
+        sweep_xfers: dict[str, set[str | None]] = {}
+        xfer_types: dict[str, str] = {}
+        for row in unified_parsed["transfer"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            xfer_types[parts[0]] = parts[2]
+        for row in unified_parsed["posting"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            tid, sub_id = parts[1], parts[3]
+            if xfer_types.get(tid) == "clearing_sweep":
+                sweep_xfers.setdefault(tid, set()).add(
+                    None if sub_id == "NULL" else sub_id,
+                )
+        zba_sweeps = [
+            tid for tid, subs in sweep_xfers.items()
+            if subs & zba_set and None in subs
+        ]
+        assert len(zba_sweeps) >= 10, (
+            f"Expected ≥10 ZBA sweep transfers (mixed-level), got "
+            f"{len(zba_sweeps)}"
+        )
+
+    def test_zba_sweep_failures_surface(self, ar_parsed):
+        """F.4.1 fail-plant cells must drive the operating sub-account's
+        stored EOD balance non-zero — that's what F.5.1 surfaces. Cells
+        with sweep skipped + a planted deposit will end day at the plant
+        amount (or larger if random activity also hit)."""
+        from datetime import timedelta
+        from quicksight_gen.account_recon.demo_data import (
+            _ZBA_SWEEP_FAIL_PLANT,
+        )
+
+        balances: dict[tuple[str, str], Decimal] = {}
+        for row in ar_parsed["ar_subledger_daily_balances"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            balances[(parts[0], parts[1])] = Decimal(parts[2])
+
+        for sub_id, days_ago in _ZBA_SWEEP_FAIL_PLANT:
+            bdate = (ANCHOR - timedelta(days=days_ago)).isoformat()
+            bal = balances.get((sub_id, bdate))
+            assert bal is not None and bal != 0, (
+                f"ZBA sweep fail plant ({sub_id}, {bdate}) should be "
+                f"non-zero EOD (got {bal})"
+            )
+
+    def test_zba_swept_accounts_zero_on_normal_days(self, ar_parsed):
+        """ZBA-customer operating sub-accounts must be at zero EOD on
+        days that are NOT fail-plant days — confirms the sweep is
+        actually zeroing them out, otherwise F.5.1 would surface
+        false-positive 'all days are non-zero' findings.
+
+        Allows two known exceptions: the fail-plant cells and any
+        sub-ledger drift plant cells that intentionally inject a delta
+        into the stored balance.
+        """
+        from datetime import timedelta
+        from quicksight_gen.account_recon.demo_data import (
+            _ZBA_SWEEP_CUSTOMERS,
+            _ZBA_SWEEP_FAIL_PLANT,
+            _SUBLEDGER_DRIFT_PLANT,
+        )
+
+        skip_cells = {
+            (sub_id, (ANCHOR - timedelta(days=da)).isoformat())
+            for sub_id, da in _ZBA_SWEEP_FAIL_PLANT
+        }
+        skip_cells |= {
+            (sub_id, (ANCHOR - timedelta(days=da)).isoformat())
+            for sub_id, da, _ in _SUBLEDGER_DRIFT_PLANT
+        }
+
+        non_zero_unexpected: list[tuple[str, str, Decimal]] = []
+        for row in ar_parsed["ar_subledger_daily_balances"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            sid, bdate, bal = parts[0], parts[1], Decimal(parts[2])
+            if sid not in _ZBA_SWEEP_CUSTOMERS:
+                continue
+            if (sid, bdate) in skip_cells:
+                continue
+            if bal != 0:
+                non_zero_unexpected.append((sid, bdate, bal))
+        assert not non_zero_unexpected, (
+            f"ZBA accounts unexpectedly non-zero EOD on normal days: "
+            f"{non_zero_unexpected[:5]}"
+        )
+
+    def test_ach_origination_pattern_present(self, unified_parsed):
+        """F.4.2: ACH originations must exist as mixed-level transfers
+        (one customer DDA sub-ledger leg + one gl-1810 ledger-direct leg).
+        Drives the F.5.X ACH-cycle exception checks."""
+        from quicksight_gen.account_recon.demo_data import (
+            _ACH_ORIG_LEDGER,
+        )
+
+        xfer_types: dict[str, str] = {}
+        xfer_origins: dict[str, str] = {}
+        for row in unified_parsed["transfer"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            xfer_types[parts[0]] = parts[2]
+            xfer_origins[parts[0]] = parts[3]
+
+        legs_by_xfer: dict[str, list[tuple[str, str | None]]] = {}
+        for row in unified_parsed["posting"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            tid, lid, sub_id = parts[1], parts[2], parts[3]
+            legs_by_xfer.setdefault(tid, []).append(
+                (lid, None if sub_id == "NULL" else sub_id),
+            )
+
+        ach_originations = [
+            tid for tid, t in xfer_types.items()
+            if t == "ach" and xfer_origins[tid] == "internal_initiated"
+        ]
+        mixed_level = []
+        for tid in ach_originations:
+            legs = legs_by_xfer.get(tid, [])
+            has_sub = any(sub_id is not None for _l, sub_id in legs)
+            has_ledger_direct = any(
+                sub_id is None and lid == _ACH_ORIG_LEDGER
+                for lid, sub_id in legs
+            )
+            if has_sub and has_ledger_direct:
+                mixed_level.append(tid)
+        assert len(mixed_level) >= 30, (
+            f"Expected ≥30 ACH origination transfers (mixed-level w/ "
+            f"gl-1810 leg), got {len(mixed_level)}"
+        )
+
+    def test_ach_sweep_skip_surfaces(self, ar_parsed):
+        """F.4.2 sweep-skip plants must drive gl-1810 stored balance
+        non-zero on plant days — that's what F.5.3 surfaces."""
+        from datetime import timedelta
+        from quicksight_gen.account_recon.demo_data import (
+            _ACH_ORIG_LEDGER,
+            _ACH_SWEEP_SKIP_PLANT,
+        )
+
+        balances: dict[tuple[str, str], Decimal] = {}
+        for row in ar_parsed["ar_ledger_daily_balances"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            balances[(parts[0], parts[1])] = Decimal(parts[2])
+
+        for days_ago in _ACH_SWEEP_SKIP_PLANT:
+            bdate = (ANCHOR - timedelta(days=days_ago)).isoformat()
+            bal = balances.get((_ACH_ORIG_LEDGER, bdate))
+            assert bal is not None and bal != 0, (
+                f"ACH sweep-skip plant ({_ACH_ORIG_LEDGER}, {bdate}) "
+                f"should leave gl-1810 non-zero EOD (got {bal})"
+            )
+
+    def test_ach_fed_confirmation_missing_surfaces(self, unified_parsed):
+        """F.4.2 missing-Fed-confirmation plants must produce an EOD
+        sweep transfer with no child external_force_posted ach transfer
+        — F.5.4 surfaces these by parent_transfer_id absence."""
+        from quicksight_gen.account_recon.demo_data import (
+            _ACH_FED_CONFIRMATION_MISSING,
+        )
+
+        xfer_by_id: dict[str, dict[str, str]] = {}
+        for row in unified_parsed["transfer"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            xfer_by_id[parts[0]] = {
+                "parent": parts[1],
+                "type": parts[2],
+                "origin": parts[3],
+            }
+
+        children_of: dict[str, list[str]] = {}
+        for tid, fields in xfer_by_id.items():
+            parent = fields["parent"]
+            if parent != "NULL":
+                children_of.setdefault(parent, []).append(tid)
+
+        for days_ago in _ACH_FED_CONFIRMATION_MISSING:
+            sweep_tid = f"ar-ach-sweep-{days_ago:02d}"
+            assert sweep_tid in xfer_by_id, (
+                f"Missing-Fed-confirmation plant: expected sweep "
+                f"transfer {sweep_tid} to exist"
+            )
+            child_fed = [
+                cid for cid in children_of.get(sweep_tid, [])
+                if xfer_by_id[cid]["origin"] == "external_force_posted"
+            ]
+            assert not child_fed, (
+                f"Missing-Fed-confirmation plant ({sweep_tid}, days_ago="
+                f"{days_ago}) unexpectedly has Fed children: {child_fed}"
+            )
+
+    def test_ach_fed_confirmation_normal_days_present(self, unified_parsed):
+        """F.4.2 normal days (not in skip or miss-fed plants) must have
+        a Fed confirmation linked back to the EOD sweep — confirms the
+        happy path is actually emitted, otherwise F.5.4 would surface
+        false-positive findings on every sweep."""
+        from quicksight_gen.account_recon.demo_data import (
+            _ACH_ORIG_DAYS,
+            _ACH_SWEEP_SKIP_PLANT,
+            _ACH_FED_CONFIRMATION_MISSING,
+        )
+
+        skipped = set(_ACH_SWEEP_SKIP_PLANT) | set(_ACH_FED_CONFIRMATION_MISSING)
+        xfer_by_id: dict[str, dict[str, str]] = {}
+        for row in unified_parsed["transfer"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            xfer_by_id[parts[0]] = {
+                "parent": parts[1],
+                "type": parts[2],
+                "origin": parts[3],
+            }
+
+        children_of: dict[str, list[str]] = {}
+        for tid, fields in xfer_by_id.items():
+            parent = fields["parent"]
+            if parent != "NULL":
+                children_of.setdefault(parent, []).append(tid)
+
+        normal_days = [d for d in range(1, _ACH_ORIG_DAYS + 1) if d not in skipped]
+        for days_ago in normal_days:
+            sweep_tid = f"ar-ach-sweep-{days_ago:02d}"
+            assert sweep_tid in xfer_by_id, (
+                f"Expected ACH EOD sweep {sweep_tid} on normal day"
+            )
+            child_fed = [
+                cid for cid in children_of.get(sweep_tid, [])
+                if xfer_by_id[cid]["origin"] == "external_force_posted"
+            ]
+            assert child_fed, (
+                f"Normal ACH day (days_ago={days_ago}) missing its Fed "
+                f"confirmation child for sweep {sweep_tid}"
+            )
+
+    def test_card_settlement_pattern_present(self, unified_parsed):
+        """F.4.3: Fed-side card settlement observations and SNB internal
+        catch-ups must exist with the correct parent → child linkage.
+        Drives the F.5.X card-settlement reconciliation checks."""
+        from quicksight_gen.account_recon.demo_data import (
+            _CARD_SETTLEMENT_DAYS,
+            _CARD_INTERNAL_MISSING_PLANT,
+        )
+
+        xfer_by_id: dict[str, dict[str, str]] = {}
+        for row in unified_parsed["transfer"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            xfer_by_id[parts[0]] = {
+                "parent": parts[1],
+                "type": parts[2],
+                "origin": parts[3],
+            }
+
+        fed_observations = [
+            tid for tid in xfer_by_id
+            if tid.startswith("ar-card-fed-")
+        ]
+        catchups = [
+            tid for tid in xfer_by_id
+            if tid.startswith("ar-card-internal-")
+        ]
+
+        assert len(fed_observations) == _CARD_SETTLEMENT_DAYS, (
+            f"Expected {_CARD_SETTLEMENT_DAYS} Fed observation transfers, "
+            f"got {len(fed_observations)}"
+        )
+        expected_catchups = (
+            _CARD_SETTLEMENT_DAYS - len(_CARD_INTERNAL_MISSING_PLANT)
+        )
+        assert len(catchups) == expected_catchups, (
+            f"Expected {expected_catchups} catch-up transfers, "
+            f"got {len(catchups)}"
+        )
+
+        for catchup_tid in catchups:
+            day_part = catchup_tid.split("-")[-1]
+            expected_parent = f"ar-card-fed-{day_part}"
+            assert xfer_by_id[catchup_tid]["parent"] == expected_parent, (
+                f"Catch-up {catchup_tid} parent="
+                f"{xfer_by_id[catchup_tid]['parent']}, expected "
+                f"{expected_parent}"
+            )
+            assert (
+                xfer_by_id[catchup_tid]["origin"] == "external_force_posted"
+            ), f"Catch-up {catchup_tid} origin should be external_force_posted"
+
+    def test_card_internal_missing_surfaces(self, unified_parsed):
+        """F.4.3 missing-internal plants must produce a Fed observation
+        transfer with no child catch-up — F.5.X surfaces these by parent
+        absence."""
+        from quicksight_gen.account_recon.demo_data import (
+            _CARD_INTERNAL_MISSING_PLANT,
+        )
+
+        xfer_by_id: dict[str, str] = {}
+        for row in unified_parsed["transfer"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            xfer_by_id[parts[0]] = parts[1]
+
+        children_of: dict[str, list[str]] = {}
+        for tid, parent in xfer_by_id.items():
+            if parent != "NULL":
+                children_of.setdefault(parent, []).append(tid)
+
+        for days_ago in _CARD_INTERNAL_MISSING_PLANT:
+            fed_tid = f"ar-card-fed-{days_ago:02d}"
+            assert fed_tid in xfer_by_id, (
+                f"Missing-internal plant: expected Fed observation "
+                f"{fed_tid} to exist"
+            )
+            assert not children_of.get(fed_tid), (
+                f"Missing-internal plant ({fed_tid}, days_ago={days_ago}) "
+                f"unexpectedly has children: {children_of.get(fed_tid)}"
+            )
+
+    def test_on_us_transfer_pattern_present(self, unified_parsed):
+        """F.4.4: every plant row in _INTERNAL_TRANSFER_PLANT must produce
+        a Step-1 originate transfer; success / reversal_not_credited
+        plants additionally produce a Step-2 transfer chained back via
+        parent_transfer_id."""
+        from quicksight_gen.account_recon.demo_data import (
+            _INTERNAL_TRANSFER_PLANT,
+        )
+
+        xfer_by_id: dict[str, dict[str, str]] = {}
+        for row in unified_parsed["transfer"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            xfer_by_id[parts[0]] = {
+                "parent": parts[1],
+                "type": parts[2],
+                "origin": parts[3],
+            }
+
+        for plant_idx, (_orig, _recip, _da, kind, _amt) in enumerate(
+            _INTERNAL_TRANSFER_PLANT, 1,
+        ):
+            orig_tid = f"ar-on-us-orig-{plant_idx:02d}"
+            assert orig_tid in xfer_by_id, (
+                f"Missing Step-1 originate transfer {orig_tid}"
+            )
+            assert xfer_by_id[orig_tid]["parent"] == "NULL", (
+                f"Step-1 originate {orig_tid} should have NULL parent"
+            )
+
+            step2_tid = f"ar-on-us-step2-{plant_idx:02d}"
+            if kind == "stuck":
+                assert step2_tid not in xfer_by_id, (
+                    f"Stuck plant {orig_tid} should have no Step-2; got "
+                    f"{step2_tid}"
+                )
+            else:
+                assert step2_tid in xfer_by_id, (
+                    f"Missing Step-2 transfer {step2_tid} for kind={kind}"
+                )
+                assert xfer_by_id[step2_tid]["parent"] == orig_tid, (
+                    f"Step-2 {step2_tid} parent="
+                    f"{xfer_by_id[step2_tid]['parent']}, expected {orig_tid}"
+                )
+
+    def test_on_us_stuck_in_suspense_surfaces(self, unified_parsed):
+        """F.4.4 stuck plants must produce Step-1 originate transfers
+        whose suspense leg posted but with no Step-2 child — that's the
+        precise SQL signature F.5.X uses for "stuck in suspense".
+        (Stored gl-1830 balance reflects stuck plants, but random fee
+        assessments can also touch gl-1830 so we don't pin an exact
+        balance — we check the structural pattern instead.)"""
+        from quicksight_gen.account_recon.demo_data import (
+            _INTERNAL_TRANSFER_PLANT,
+        )
+
+        xfer_by_id: dict[str, str] = {}
+        for row in unified_parsed["transfer"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            xfer_by_id[parts[0]] = parts[1]
+        children_of: dict[str, list[str]] = {}
+        for tid, parent in xfer_by_id.items():
+            if parent != "NULL":
+                children_of.setdefault(parent, []).append(tid)
+
+        for plant_idx, (_o, _r, _da, kind, _amt) in enumerate(
+            _INTERNAL_TRANSFER_PLANT, 1,
+        ):
+            if kind != "stuck":
+                continue
+            orig_tid = f"ar-on-us-orig-{plant_idx:02d}"
+            assert orig_tid in xfer_by_id, (
+                f"Stuck plant {orig_tid} missing"
+            )
+            assert not children_of.get(orig_tid), (
+                f"Stuck plant {orig_tid} unexpectedly has children "
+                f"{children_of.get(orig_tid)}"
+            )
+
+    def test_on_us_reversed_not_credited_pattern(self, unified_parsed):
+        """F.4.4 reversed-not-credited plants: the Step-2 transfer's
+        sub-ledger leg has status='failed' (originator never recovered)
+        while its suspense ledger leg has status='success' — suspense
+        clears but money stays gone. F.5.X "double spend" surfaces."""
+        from quicksight_gen.account_recon.demo_data import (
+            _INTERNAL_TRANSFER_PLANT,
+            _INTERNAL_TRANSFER_SUSPENSE_LEDGER,
+        )
+
+        legs_by_xfer: dict[str, list[tuple]] = {}
+        for row in unified_parsed["posting"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            legs_by_xfer.setdefault(parts[1], []).append(
+                (parts[2], parts[3], parts[6]),  # ledger, sub_id, status
+            )
+
+        rnc_indexes = [
+            i + 1 for i, plant in enumerate(_INTERNAL_TRANSFER_PLANT)
+            if plant[3] == "reversed_not_credited"
+        ]
+        assert rnc_indexes, "Expected at least one reversed_not_credited plant"
+
+        for idx in rnc_indexes:
+            step2_tid = f"ar-on-us-step2-{idx:02d}"
+            legs = legs_by_xfer.get(step2_tid, [])
+            assert len(legs) == 2, (
+                f"Step-2 {step2_tid} expected 2 legs, got {len(legs)}"
+            )
+            sub_legs = [l for l in legs if l[1] != "NULL"]
+            ledger_legs = [
+                l for l in legs
+                if l[1] == "NULL" and l[0] == _INTERNAL_TRANSFER_SUSPENSE_LEDGER
+            ]
+            assert len(sub_legs) == 1, (
+                f"Step-2 {step2_tid} expected 1 sub-ledger leg"
+            )
+            assert sub_legs[0][2] == "failed", (
+                f"Step-2 {step2_tid} sub-ledger leg should be failed, got "
+                f"{sub_legs[0][2]}"
+            )
+            assert len(ledger_legs) == 1 and ledger_legs[0][2] == "success", (
+                f"Step-2 {step2_tid} suspense leg should be success, got "
+                f"{ledger_legs}"
+            )
+
     def test_all_plants_disjoint(self):
         """Each of the four exception tables must surface a different
         set of findings — drift, breach, and overdraft plants must not
@@ -550,14 +1010,21 @@ class TestUnifiedTables:
         ]
 
     def test_transfer_row_count(self, unified_parsed):
-        """76 transfers: 66 sub-ledger + 5 funding + 3 fee + 2 sweep."""
-        assert len(unified_parsed["transfer"]) == 76
+        """188 transfers: 66 sub-ledger + 5 funding + 3 fee + 2 inter-ledger
+        sweep + 18 ZBA EOD sweep + 2 ZBA fail-plant deposit + 66 ACH cycle
+        + 18 card settlement (10 Fed observations + 8 internal catch-ups)
+        + 8 on-us internal (5 originate + 3 step-2)."""
+        assert len(unified_parsed["transfer"]) == 188
 
     def test_posting_row_count(self, unified_parsed):
-        """178 postings: 132 sub-ledger pair legs + 46 ledger-level
-        postings (5 funding batches with 6-7 sub-ledger legs each, 3 fee
-        assessments, 2 clearing sweeps)."""
-        assert len(unified_parsed["posting"]) == 178
+        """402 postings: 132 sub-ledger pair legs + 46 ledger-level postings
+        (5 funding batches with 6-7 sub-ledger legs each, 3 fee assessments,
+        2 inter-ledger clearing sweeps) + 36 ZBA sweep legs (18 sub-ledger
+        + 18 ledger-direct) + 4 ZBA fail-plant deposit legs + 132 ACH cycle
+        legs (84 origination + 26 sweep + 22 Fed confirmation) + 36 card
+        settlement legs (20 Fed observation + 16 internal catch-up)
+        + 16 on-us internal transfer legs."""
+        assert len(unified_parsed["posting"]) == 402
 
     def test_posting_transfer_fk(self, unified_parsed):
         """Every posting.transfer_id exists in transfer."""
@@ -575,10 +1042,19 @@ class TestUnifiedTables:
         posting_accounts.discard("NULL")  # ledger-level postings
         assert posting_accounts.issubset(subledger_ids)
 
-    def test_ar_transfer_parent_is_null(self, unified_parsed):
-        """AR transfers have no chain — parent_transfer_id should be NULL."""
+    def test_ar_transfer_parent_chain_well_formed(self, unified_parsed):
+        """AR transfers may carry parent_transfer_id only for the
+        Fed confirmation pattern (external_force_posted attestations link
+        back to their parent EOD internal sweep, supporting the F.5.4
+        / F.5.5 sweep-vs-confirmation matching). Every non-null parent
+        must reference a known transfer."""
         parents = self._col(unified_parsed["transfer"], 1)
-        assert all(p == "NULL" for p in parents)
+        transfer_ids = set(self._col(unified_parsed["transfer"], 0))
+        non_null = [p for p in parents if p != "NULL"]
+        for p in non_null:
+            assert p in transfer_ids, (
+                f"parent_transfer_id {p} references unknown transfer"
+            )
 
     def test_posting_fields_populated(self, unified_parsed):
         """Every posting has non-empty transfer_id, account, and amount."""
@@ -636,14 +1112,29 @@ class TestLedgerPostingScenarios:
         assert len(sweeps) >= 2, f"Expected >=2 clearing sweeps, got {len(sweeps)}"
 
     def test_ledger_postings_have_no_subledger(self, unified_parsed):
-        """Ledger-level postings (funding/fee/sweep) have subledger_account_id = NULL."""
+        """NULL-subledger postings (ledger-direct legs) are emitted by
+        legitimate ledger-level shapes: funding_batch (ledger credit +
+        sub-ledger debits), fee (single ledger debit), clearing_sweep
+        (inter-ledger or sub-to-master mixed-level). F.4.2 ach scenarios
+        emit ledger-direct legs at gl-1810 (ACH Origination Settlement)
+        and gl-1010 (Cash Due From FRB). F.4.3 ach catch-ups emit
+        ledger-direct at gl-1815 (Card Acquiring Settlement). F.4.4
+        internal transfers emit ledger-direct at gl-1830 (Internal
+        Transfer Suspense) for both originate and step-2 legs. Reject
+        any unexpected transfer_type."""
         postings = self._parse_postings(unified_parsed)
         xfer_types = self._parse_transfers(unified_parsed)
+        allowed = {
+            "funding_batch", "fee", "clearing_sweep",
+            "ach", "internal",
+        }
         for p in postings:
             if p["subledger_account_id"] is None:
-                assert xfer_types[p["transfer_id"]] in (
-                    "funding_batch", "fee", "clearing_sweep",
-                ), f"Non-ledger transfer {p['transfer_id']} has NULL subledger"
+                assert xfer_types[p["transfer_id"]] in allowed, (
+                    f"Transfer {p['transfer_id']} (type="
+                    f"{xfer_types[p['transfer_id']]}) has NULL subledger "
+                    f"posting — not in allowed list"
+                )
 
     def test_ledger_postings_have_valid_ledger_fk(self, ar_parsed, unified_parsed):
         """All ledger-level postings FK to valid ar_ledger_accounts."""
@@ -686,7 +1177,10 @@ class TestLedgerPostingScenarios:
             assert legs[0]["signed_amount"] != 0, f"Fee {tid} has zero amount"
 
     def test_clearing_sweep_net_zero(self, unified_parsed):
-        """Each clearing sweep has 2 ledger legs that net to zero."""
+        """Each clearing sweep has 2 legs that net to zero. Inter-ledger
+        sweeps are ledger-only on both legs; ZBA sweeps are mixed-level
+        (one sub-ledger leg zeroes out an operating sub-account, one
+        ledger-direct leg offsets at the master ledger)."""
         postings = self._parse_postings(unified_parsed)
         xfer_types = self._parse_transfers(unified_parsed)
         by_xfer: dict[str, list] = {}
@@ -697,10 +1191,6 @@ class TestLedgerPostingScenarios:
             assert len(legs) == 2, f"Sweep {tid} has {len(legs)} legs, expected 2"
             net = sum(leg["signed_amount"] for leg in legs)
             assert net == 0, f"Sweep {tid} net={net}, expected 0"
-            for leg in legs:
-                assert leg["subledger_account_id"] is None, (
-                    f"Sweep {tid} leg has subledger — expected ledger-only"
-                )
 
     def test_funding_batch_has_mixed_levels(self, unified_parsed):
         """Each funding batch has both ledger-level and sub-ledger-level legs."""

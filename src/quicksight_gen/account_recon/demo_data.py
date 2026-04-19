@@ -250,6 +250,141 @@ _EXTERNAL_COUNTER_LEG_POOL: list[str] = [
 
 
 # ---------------------------------------------------------------------------
+# Telling-transfer scenarios (Phase F.4) — see docs/Training_Story.md
+# ---------------------------------------------------------------------------
+
+# F.4.1: ZBA / Cash Concentration sweep cycle.
+#
+# Operating sub-accounts under Cash Concentration Master sweep their EOD
+# running balance to the master ledger daily — operating ends day at
+# zero. The training story uses Big Meadow Dairy as the canonical
+# example (multiple operating locations sweep to one master).
+_ZBA_SWEEP_CUSTOMERS: list[str] = [
+    "gl-1850-sub-big-meadow-dairy-main",
+    "gl-1850-sub-big-meadow-dairy-north",
+]
+
+# Cells where the daily sweep is intentionally skipped — the operating
+# sub-account ends day non-zero, surfaced by F.5.1 "Sweep target
+# non-zero EOD". Days_ago picked to land on different aging buckets.
+# Each plant pairs with a guaranteed deposit (see _ZBA_SWEEP_PLANT_AMOUNT)
+# so the EOD balance is reliably non-zero regardless of whether existing
+# random activity touched the cell that day.
+_ZBA_SWEEP_FAIL_PLANT: list[tuple[str, int]] = [
+    # (subledger_account_id, days_ago)
+    ("gl-1850-sub-big-meadow-dairy-main",  3),   # bucket 2 (2-3 days)
+    ("gl-1850-sub-big-meadow-dairy-north", 14),  # bucket 4 (8-30 days)
+]
+
+_ZBA_SWEEP_PLANT_AMOUNT = Decimal("875.00")
+
+
+# F.4.2: ACH origination sweep cycle.
+#
+# Each business day, customers initiate ACH originations — debits land
+# on ACH Origination Settlement (gl-1810), credits on the customer DDA.
+# At EOD the day's net is swept to Cash & Due From FRB (gl-1010),
+# zeroing 1810. A Fed-side confirmation (external_force_posted) attests
+# the FRB master account moved by the same amount.
+_ACH_ORIG_DAYS = 14
+_ACH_ORIG_CUSTOMERS: list[str] = [
+    "cust-900-0001-bigfoot-brews",
+    "cust-900-0002-sasquatch-sips",
+    "cust-900-0003-yeti-espresso",
+    "cust-800-0001-cascade-timber-mill",
+    "cust-800-0002-pinecrest-vineyards",
+    "cust-700-0001-big-meadow-dairy",
+    "cust-700-0002-harvest-moon-bakery",
+]
+_ACH_ORIG_AMOUNTS = [
+    Decimal("450.00"), Decimal("1280.00"), Decimal("675.00"),
+    Decimal("2100.00"), Decimal("890.00"),
+]
+
+# Days where the EOD sweep is intentionally skipped — gl-1810 ends day
+# non-zero. Drives F.5.3 "ACH Origination Settlement non-zero EOD".
+_ACH_SWEEP_SKIP_PLANT: list[int] = [4]   # bucket 3 (4-7 days)
+
+# Days where the EOD sweep posts but the Fed confirmation never lands.
+# Drives F.5.4 "Internal sweep posted but no Fed confirmation".
+_ACH_FED_CONFIRMATION_MISSING: list[int] = [
+    8,    # bucket 4 (8-30 days)
+    12,   # bucket 4 (8-30 days)
+]
+
+_ACH_ORIG_LEDGER = "gl-1810-ach-orig-settlement"
+_FRB_CASH_LEDGER = "gl-1010-cash-due-frb"
+_FRB_EXT_LEDGER = "ext-frb-snb-master"
+_FRB_SUB_OUTBOUND = "ext-frb-sub-outbound"
+_FRB_SUB_INBOUND = "ext-frb-sub-inbound"
+
+
+# F.4.3: External force-posted card settlement.
+#
+# Payment Gateway Processor settles a day's card sales into a merchant's
+# DDA via the Fed master account. The Fed posts first; SNB's books
+# follow with a force-posted internal entry. Two transfers per
+# settlement event:
+#  - Fed-side observation (parent): 2-leg external (DR processor
+#    clearing, CR FRB inbound). origin='external_force_posted'. No
+#    internal balance impact — this is SNB observing the Fed posting.
+#  - SNB internal catch-up (child, parent=Fed observation): mixed-level
+#    (DR gl-1815 ledger-direct, CR merchant DDA sub-ledger).
+#    origin='external_force_posted' (triggered externally).
+_CARD_SETTLEMENT_DAYS = 10
+_CARD_SETTLEMENT_MERCHANTS: list[str] = [
+    "cust-900-0001-bigfoot-brews",
+    "cust-900-0002-sasquatch-sips",
+    "cust-900-0003-yeti-espresso",
+]
+_CARD_SETTLEMENT_AMOUNTS = [
+    Decimal("4200.00"), Decimal("3650.00"), Decimal("5180.00"),
+    Decimal("2890.00"), Decimal("4475.00"),
+]
+
+# Days where Fed posted but SNB internal catch-up never landed —
+# drives the F.5.X "Fed activity with no matching internal post" check.
+_CARD_INTERNAL_MISSING_PLANT: list[int] = [
+    4,    # bucket 3 (4-7 days)
+    9,    # bucket 4 (8-30 days)
+]
+
+_CARD_ACQUIRING_LEDGER = "gl-1815-card-acquiring-settlement"
+_PROCESSOR_EXT_LEDGER = "ext-payment-gateway-processor"
+_PROCESSOR_SUB_CLEARING = "ext-payment-gateway-sub-clearing"
+
+
+# F.4.4: On-Us Internal Transfer with fail / reversal.
+#
+# Originator initiates a transfer to a recipient (both SNB customers).
+# Each event has up to two transfers: Step 1 originate (DR ``gl-1830``
+# Internal Transfer Suspense ledger-direct, CR originator DDA
+# sub-ledger). Step 2 either settles to recipient (DR recipient DDA
+# sub-ledger, CR ``gl-1830`` ledger-direct) or reverses to the
+# originator (DR originator DDA sub-ledger, CR ``gl-1830``).
+#
+# Plant kinds:
+# - ``success``: both steps post; suspense nets to zero, money lands at
+#   recipient.
+# - ``stuck``: only Step 1 posts; no Step 2 — suspense holds non-zero
+#   EOD (F.5.X "Stuck in Internal Transfer Suspense").
+# - ``reversed_not_credited``: Step 2 reversal has the originator's
+#   credit-back leg failed but the suspense leg posted — suspense
+#   clears but originator never recovers their money (F.5.X
+#   "Reversed-but-not-credited / double spend").
+_INTERNAL_TRANSFER_PLANT: list[tuple[str, str, int, str, str]] = [
+    # (originator_id, recipient_id, days_ago, plant_kind, amount_str)
+    ("cust-700-0001-big-meadow-dairy",     "cust-800-0001-cascade-timber-mill",  2,  "success",                "3500.00"),
+    ("cust-700-0002-harvest-moon-bakery",  "cust-800-0002-pinecrest-vineyards",  6,  "success",                "1250.00"),
+    ("cust-800-0001-cascade-timber-mill",  "cust-700-0001-big-meadow-dairy",     11, "stuck",                  "4275.00"),
+    ("cust-800-0002-pinecrest-vineyards",  "cust-700-0002-harvest-moon-bakery",  23, "stuck",                  "1880.00"),
+    ("cust-700-0001-big-meadow-dairy",     "cust-800-0002-pinecrest-vineyards",  17, "reversed_not_credited",  "2940.00"),
+]
+
+_INTERNAL_TRANSFER_SUSPENSE_LEDGER = "gl-1830-internal-transfer-suspense"
+
+
+# ---------------------------------------------------------------------------
 # SQL formatting helpers
 # ---------------------------------------------------------------------------
 
@@ -770,17 +905,460 @@ def _generate_daily_balances(
 
 
 # ---------------------------------------------------------------------------
+# Telling-transfer generators (Phase F.4)
+# ---------------------------------------------------------------------------
+
+_CASH_CONCENTRATION_MASTER_LEDGER = "gl-1850-cash-concentration-master"
+
+
+def _subledger_name(sub_id: str) -> str:
+    for sid, name, _ in SUBLEDGER_ACCOUNTS:
+        if sid == sub_id:
+            return name
+    raise KeyError(sub_id)
+
+
+def _generate_ach_origination_cycle(
+    today: date,
+) -> tuple[list[dict], list[tuple], list[tuple]]:
+    """Generate the ACH origination → EOD sweep → Fed confirmation cycle.
+
+    Daily for ``_ACH_ORIG_DAYS`` business days:
+    - 3 customers each emit one ACH origination — DR ``gl-1810`` ledger-
+      direct, CR customer DDA sub-ledger. Per-day customer set + amount
+      rotate deterministically through the pools.
+    - EOD (18:30): the day's net debit on ``gl-1810`` is swept to
+      ``gl-1010`` by a 2-leg ledger-only ``clearing_sweep`` transfer,
+      zeroing 1810.
+    - EOD+1m (18:31): a Fed-side confirmation (``external_force_posted``,
+      parent = sweep transfer) attests the same amount cleared the FRB
+      master account. Realized as 2 external sub-ledger legs (outbound /
+      inbound) so it nets to zero without touching internal balances.
+
+    Plants:
+    - Days in ``_ACH_SWEEP_SKIP_PLANT`` skip both the EOD sweep and the
+      Fed confirmation — ``gl-1810`` ends day non-zero (F.5.3 surfaces).
+    - Days in ``_ACH_FED_CONFIRMATION_MISSING`` post the EOD sweep but
+      omit the Fed confirmation — internal sweep with no Fed-side
+      attestation (F.5.4 surfaces).
+
+    Returns ``(extra_transactions, extra_postings, extra_transfer_rows)``.
+    Customer DDA legs flow through ``transactions`` (so daily balances
+    pick them up via the existing path); ledger-direct + Fed external
+    legs are crafted directly into ``posting_rows``; EOD-sweep and Fed-
+    confirmation transfer rows are crafted into ``transfer_rows`` (no
+    sub-ledger leg to derive from).
+    """
+    extra_transactions: list[dict] = []
+    extra_postings: list[tuple] = []
+    extra_transfer_rows: list[tuple] = []
+
+    skip_set = set(_ACH_SWEEP_SKIP_PLANT)
+    miss_fed_set = set(_ACH_FED_CONFIRMATION_MISSING)
+
+    for day_idx in range(_ACH_ORIG_DAYS):
+        days_ago = day_idx + 1
+        bdate = today - timedelta(days=days_ago)
+        customers_today = [
+            _ACH_ORIG_CUSTOMERS[(day_idx + k) % len(_ACH_ORIG_CUSTOMERS)]
+            for k in range(3)
+        ]
+        day_total = Decimal("0.00")
+        for orig_idx, cust_id in enumerate(customers_today):
+            amount = _ACH_ORIG_AMOUNTS[
+                (day_idx + orig_idx) % len(_ACH_ORIG_AMOUNTS)
+            ]
+            ts = datetime(bdate.year, bdate.month, bdate.day,
+                          10 + orig_idx, 15, 0)
+            tid = f"ar-ach-orig-{day_idx + 1:02d}-{orig_idx + 1}"
+
+            extra_transactions.append({
+                "transaction_id": f"ar-ach-cust-{day_idx + 1:02d}-{orig_idx + 1}",
+                "subledger_account_id": cust_id,
+                "transfer_id": tid,
+                "amount": -amount,
+                "posted_at": ts,
+                "status": "posted",
+                "transfer_type": "ach",
+                "origin": "internal_initiated",
+                "memo": "ACH origination — supplier payment",
+            })
+            extra_postings.append((
+                f"ar-ach-ledger-{day_idx + 1:02d}-{orig_idx + 1}",
+                tid, _ACH_ORIG_LEDGER, None,
+                amount, ts, "success",
+            ))
+            day_total += amount
+
+        if days_ago in skip_set:
+            continue
+
+        sweep_ts = datetime(bdate.year, bdate.month, bdate.day, 18, 30, 0)
+        sweep_tid = f"ar-ach-sweep-{day_idx + 1:02d}"
+        extra_transfer_rows.append((
+            sweep_tid, None, "clearing_sweep", "internal_initiated",
+            day_total, "posted", sweep_ts,
+            "ACH net settlement to FRB Master",
+        ))
+        extra_postings.append((
+            f"ar-ach-sweep-cash-{day_idx + 1:02d}",
+            sweep_tid, _FRB_CASH_LEDGER, None,
+            day_total, sweep_ts, "success",
+        ))
+        extra_postings.append((
+            f"ar-ach-sweep-orig-{day_idx + 1:02d}",
+            sweep_tid, _ACH_ORIG_LEDGER, None,
+            -day_total, sweep_ts, "success",
+        ))
+
+        if days_ago in miss_fed_set:
+            continue
+
+        fed_ts = datetime(bdate.year, bdate.month, bdate.day, 18, 31, 0)
+        fed_tid = f"ar-ach-fed-{day_idx + 1:02d}"
+        extra_transfer_rows.append((
+            fed_tid, sweep_tid, "ach", "external_force_posted",
+            day_total, "posted", fed_ts,
+            "FRB confirmation — ACH net settlement",
+        ))
+        extra_postings.append((
+            f"ar-ach-fed-out-{day_idx + 1:02d}",
+            fed_tid, _FRB_EXT_LEDGER, _FRB_SUB_OUTBOUND,
+            day_total, fed_ts, "success",
+        ))
+        extra_postings.append((
+            f"ar-ach-fed-in-{day_idx + 1:02d}",
+            fed_tid, _FRB_EXT_LEDGER, _FRB_SUB_INBOUND,
+            -day_total, fed_ts, "success",
+        ))
+
+    return extra_transactions, extra_postings, extra_transfer_rows
+
+
+def _generate_card_settlement_cycle(
+    today: date,
+) -> tuple[list[dict], list[tuple], list[tuple], dict[str, str]]:
+    """Generate Fed-side card settlement + SNB internal catch-up cycle.
+
+    Per day for ``_CARD_SETTLEMENT_DAYS`` business days, one merchant
+    rotates through the pool. Two transfers per settlement event:
+
+    - Fed observation (parent, no parent_transfer_id): 2-leg external
+      transfer DR ``ext-payment-gateway-sub-clearing``,
+      CR ``ext-frb-sub-inbound``. ``origin='external_force_posted'``.
+      No internal balance impact — SNB observing the Fed's posting.
+    - SNB internal catch-up (child, parent = Fed observation): 2-leg
+      mixed-level DR ``gl-1815`` ledger-direct, CR merchant DDA
+      sub-ledger. ``origin='external_force_posted'``.
+
+    Plants:
+    - Days in ``_CARD_INTERNAL_MISSING_PLANT`` skip the SNB catch-up
+      entirely — Fed observation has no child, drives the F.5.X "Fed
+      activity with no matching internal post" check.
+
+    Returns ``(extra_transactions, extra_postings, extra_transfer_rows,
+    parent_map)``. The catch-up's customer DDA leg flows through
+    ``transactions`` (so daily DDA balances pick up the credit and
+    ``_derive_unified_tables`` synthesizes the catch-up transfer row);
+    its ``gl-1815`` ledger-direct leg + both Fed-side legs feed
+    ``extra_postings``; only the Fed observation transfer rows feed
+    ``extra_transfer_rows`` directly. ``parent_map`` carries the
+    catch-up → Fed parent linkage for the derive step.
+    """
+    extra_transactions: list[dict] = []
+    extra_postings: list[tuple] = []
+    extra_transfer_rows: list[tuple] = []
+    parent_map: dict[str, str] = {}
+
+    miss_internal_set = set(_CARD_INTERNAL_MISSING_PLANT)
+
+    for day_idx in range(_CARD_SETTLEMENT_DAYS):
+        days_ago = day_idx + 1
+        bdate = today - timedelta(days=days_ago)
+        merchant_id = _CARD_SETTLEMENT_MERCHANTS[
+            day_idx % len(_CARD_SETTLEMENT_MERCHANTS)
+        ]
+        amount = _CARD_SETTLEMENT_AMOUNTS[
+            day_idx % len(_CARD_SETTLEMENT_AMOUNTS)
+        ]
+
+        fed_ts = datetime(bdate.year, bdate.month, bdate.day, 9, 0, 0)
+        fed_tid = f"ar-card-fed-{day_idx + 1:02d}"
+        extra_transfer_rows.append((
+            fed_tid, None, "ach", "external_force_posted",
+            amount, "posted", fed_ts,
+            "Card processor settlement — Fed posting",
+        ))
+        extra_postings.append((
+            f"ar-card-fed-out-{day_idx + 1:02d}",
+            fed_tid, _PROCESSOR_EXT_LEDGER, _PROCESSOR_SUB_CLEARING,
+            amount, fed_ts, "success",
+        ))
+        extra_postings.append((
+            f"ar-card-fed-in-{day_idx + 1:02d}",
+            fed_tid, _FRB_EXT_LEDGER, _FRB_SUB_INBOUND,
+            -amount, fed_ts, "success",
+        ))
+
+        if days_ago in miss_internal_set:
+            continue
+
+        catchup_ts = datetime(bdate.year, bdate.month, bdate.day, 11, 30, 0)
+        catchup_tid = f"ar-card-internal-{day_idx + 1:02d}"
+        parent_map[catchup_tid] = fed_tid
+
+        extra_postings.append((
+            f"ar-card-internal-ledger-{day_idx + 1:02d}",
+            catchup_tid, _CARD_ACQUIRING_LEDGER, None,
+            amount, catchup_ts, "success",
+        ))
+        extra_transactions.append({
+            "transaction_id": f"ar-card-cust-{day_idx + 1:02d}",
+            "subledger_account_id": merchant_id,
+            "transfer_id": catchup_tid,
+            "amount": -amount,
+            "posted_at": catchup_ts,
+            "status": "posted",
+            "transfer_type": "ach",
+            "origin": "external_force_posted",
+            "memo": "Card settlement — internal catch-up",
+        })
+
+    return extra_transactions, extra_postings, extra_transfer_rows, parent_map
+
+
+def _generate_internal_transfer_cycle(
+    today: date,
+) -> tuple[list[dict], list[tuple], dict[str, str]]:
+    """Generate on-us internal transfer originate / settle / reverse cycle.
+
+    For each row in ``_INTERNAL_TRANSFER_PLANT`` emit Step 1 (originate)
+    and, depending on plant kind, Step 2 (settle, or reversal-not-
+    credited, or no Step 2 at all for ``stuck``):
+
+    - Step 1 originate: DR ``gl-1830`` ledger-direct +amt, CR originator
+      DDA sub-ledger -amt. Both legs posted.
+    - Step 2 settle (success): DR recipient DDA sub-ledger +amt, CR
+      ``gl-1830`` ledger-direct -amt. Both legs posted. parent = Step 1.
+    - Step 2 reversal-not-credited: DR originator DDA sub-ledger +amt
+      with status='failed', CR ``gl-1830`` ledger-direct -amt with
+      status='posted'. Suspense clears but originator never recovers.
+
+    All sub-ledger legs flow through ``transactions`` (so daily
+    balances and transfer derivation pick them up); ledger-direct
+    suspense legs feed ``extra_postings``. Step-2 transfers chain to
+    Step 1 via the returned ``parent_map``.
+
+    Returns ``(extra_transactions, extra_postings, parent_map)``. No
+    ``extra_transfer_rows`` — every transfer here has a sub-ledger leg
+    in ``transactions``, so it is created by ``_derive_unified_tables``.
+    """
+    extra_transactions: list[dict] = []
+    extra_postings: list[tuple] = []
+    parent_map: dict[str, str] = {}
+
+    for plant_idx, (originator, recipient, days_ago, kind, amount_str) in enumerate(
+        _INTERNAL_TRANSFER_PLANT, 1,
+    ):
+        amount = Decimal(amount_str)
+        bdate = today - timedelta(days=days_ago)
+        orig_ts = datetime(bdate.year, bdate.month, bdate.day, 9, 30, 0)
+        step2_ts = datetime(bdate.year, bdate.month, bdate.day, 14, 45, 0)
+
+        orig_tid = f"ar-on-us-orig-{plant_idx:02d}"
+        # Step 1 originate — customer leg through transactions
+        extra_transactions.append({
+            "transaction_id": f"ar-on-us-orig-cust-{plant_idx:02d}",
+            "subledger_account_id": originator,
+            "transfer_id": orig_tid,
+            "amount": -amount,
+            "posted_at": orig_ts,
+            "status": "posted",
+            "transfer_type": "internal",
+            "origin": "internal_initiated",
+            "memo": "On-us transfer — originate",
+        })
+        extra_postings.append((
+            f"ar-on-us-orig-susp-{plant_idx:02d}",
+            orig_tid, _INTERNAL_TRANSFER_SUSPENSE_LEDGER, None,
+            amount, orig_ts, "success",
+        ))
+
+        if kind == "stuck":
+            continue
+
+        step2_tid = f"ar-on-us-step2-{plant_idx:02d}"
+        parent_map[step2_tid] = orig_tid
+
+        if kind == "success":
+            extra_transactions.append({
+                "transaction_id": f"ar-on-us-step2-cust-{plant_idx:02d}",
+                "subledger_account_id": recipient,
+                "transfer_id": step2_tid,
+                "amount": amount,
+                "posted_at": step2_ts,
+                "status": "posted",
+                "transfer_type": "internal",
+                "origin": "internal_initiated",
+                "memo": "On-us transfer — settle to recipient",
+            })
+            extra_postings.append((
+                f"ar-on-us-step2-susp-{plant_idx:02d}",
+                step2_tid, _INTERNAL_TRANSFER_SUSPENSE_LEDGER, None,
+                -amount, step2_ts, "success",
+            ))
+        elif kind == "reversed_not_credited":
+            # Originator credit-back leg fails (status='failed' in
+            # transactions → 'failed' in posting); suspense leg still
+            # posts (success). Net effect: customer stays out, suspense
+            # clears anyway — the F.5.X "double spend" pattern.
+            extra_transactions.append({
+                "transaction_id": f"ar-on-us-step2-cust-{plant_idx:02d}",
+                "subledger_account_id": originator,
+                "transfer_id": step2_tid,
+                "amount": amount,
+                "posted_at": step2_ts,
+                "status": "failed",
+                "transfer_type": "internal",
+                "origin": "internal_initiated",
+                "memo": "On-us transfer — reversal credit-back FAILED",
+            })
+            extra_postings.append((
+                f"ar-on-us-step2-susp-{plant_idx:02d}",
+                step2_tid, _INTERNAL_TRANSFER_SUSPENSE_LEDGER, None,
+                -amount, step2_ts, "success",
+            ))
+        else:
+            raise ValueError(f"Unknown plant kind: {kind}")
+
+    return extra_transactions, extra_postings, parent_map
+
+
+def _generate_zba_sweeps(
+    today: date,
+    transactions: list[dict],
+) -> tuple[list[dict], list[tuple]]:
+    """Generate ZBA / Cash Concentration EOD sweep cycles.
+
+    Each operating sub-account in ``_ZBA_SWEEP_CUSTOMERS`` sweeps its
+    EOD running balance to the Cash Concentration Master ledger daily.
+    The sub-ledger leg is appended to the ``transactions`` stream (so
+    the existing daily balance computation picks it up); the offsetting
+    ledger-direct posting is returned separately to be appended to
+    posting_rows after ``_derive_unified_tables`` runs.
+
+    Failure plants from ``_ZBA_SWEEP_FAIL_PLANT`` are realized in two
+    steps: a guaranteed deposit lands on the plant cell first, then the
+    sweep is intentionally skipped that day — so the operating
+    sub-account's stored balance ends non-zero. F.5.1 surfaces these.
+
+    Returns ``(extra_transactions, ledger_direct_postings)``.
+    """
+    fail_set = {(sid, da) for sid, da in _ZBA_SWEEP_FAIL_PLANT}
+    extra_transactions: list[dict] = []
+    extra_postings: list[tuple] = []
+
+    # ---- Step 1: plant guaranteed deposits on fail-plant days ----
+    # These are 2-leg cross-scope transfers (operating sub-account
+    # debit + external counter-leg credit). Since the sweep is skipped
+    # on these days, the deposits persist to EOD as non-zero balance.
+    for plant_idx, (sub_id, days_ago) in enumerate(_ZBA_SWEEP_FAIL_PLANT, 1):
+        plant_day = today - timedelta(days=days_ago)
+        plant_time = datetime(plant_day.year, plant_day.month, plant_day.day,
+                              14, 30, plant_idx)
+        external_leg = _EXTERNAL_COUNTER_LEG_POOL[
+            plant_idx % len(_EXTERNAL_COUNTER_LEG_POOL)
+        ]
+        tid = f"ar-zba-fail-{plant_idx:02d}"
+        extra_transactions.append({
+            "transaction_id": f"ar-zba-fail-{plant_idx:03d}-a",
+            "subledger_account_id": sub_id,
+            "transfer_id": tid,
+            "amount": _ZBA_SWEEP_PLANT_AMOUNT,
+            "posted_at": plant_time,
+            "status": "posted",
+            "transfer_type": "internal",
+            "origin": "internal_initiated",
+            "memo": "ZBA deposit pending sweep",
+        })
+        extra_transactions.append({
+            "transaction_id": f"ar-zba-fail-{plant_idx:03d}-b",
+            "subledger_account_id": external_leg,
+            "transfer_id": tid,
+            "amount": -_ZBA_SWEEP_PLANT_AMOUNT,
+            "posted_at": plant_time,
+            "status": "posted",
+            "transfer_type": "internal",
+            "origin": "internal_initiated",
+            "memo": "ZBA deposit pending sweep",
+        })
+
+    # ---- Step 2: emit a sweep on every (sub, day) where the post-plant
+    # running balance is non-zero, except fail-plant cells which are
+    # intentionally skipped.
+    all_txns = transactions + extra_transactions
+    sweep_idx = 0
+    for sub_id in _ZBA_SWEEP_CUSTOMERS:
+        running = Decimal("0.00")
+        for days_ago in range(_DAYS_OF_HISTORY, -1, -1):
+            bdate = today - timedelta(days=days_ago)
+            for t in all_txns:
+                if (
+                    t["status"] == "posted"
+                    and t["subledger_account_id"] == sub_id
+                    and t["posted_at"].date() == bdate
+                ):
+                    running += t["amount"]
+            if (sub_id, days_ago) in fail_set:
+                continue  # sweep skipped — balance persists non-zero
+            if running == 0:
+                continue  # nothing to sweep
+            sweep_idx += 1
+            sweep_amount = running
+            sweep_time = datetime(bdate.year, bdate.month, bdate.day,
+                                  18, 0, 0)
+            tid = f"ar-zba-sweep-{sweep_idx:04d}"
+            memo = f"ZBA EOD sweep — {_subledger_name(sub_id)}"
+            extra_transactions.append({
+                "transaction_id": f"ar-zba-sub-{sweep_idx:05d}",
+                "subledger_account_id": sub_id,
+                "transfer_id": tid,
+                "amount": -sweep_amount,
+                "posted_at": sweep_time,
+                "status": "posted",
+                "transfer_type": "clearing_sweep",
+                "origin": "internal_initiated",
+                "memo": memo,
+            })
+            extra_postings.append((
+                f"ar-zba-direct-{sweep_idx:05d}",
+                tid,
+                _CASH_CONCENTRATION_MASTER_LEDGER,
+                None,
+                sweep_amount,
+                sweep_time,
+                "success",
+            ))
+            running = Decimal("0.00")
+
+    return extra_transactions, extra_postings
+
+
+# ---------------------------------------------------------------------------
 # Main entrypoint
 # ---------------------------------------------------------------------------
 
 def _derive_unified_tables(
     transactions: list[dict],
+    parent_map: dict[str, str] | None = None,
 ) -> tuple[list[tuple], list[tuple]]:
     """Derive unified ``transfer`` + ``posting`` rows from AR transactions.
 
     Groups transactions by transfer_id to produce one transfer row per
-    group. Each transaction maps to one posting row. AR transfers have
-    no chain-of-custody, so parent_transfer_id is always NULL.
+    group. Each transaction maps to one posting row. ``parent_map``
+    optionally supplies parent_transfer_id values for transfers that
+    chain (e.g., F.4.3 force-posted catch-ups linking to their Fed
+    observation parent); transfers absent from the map get NULL parent.
     """
     from collections import OrderedDict
 
@@ -789,6 +1367,7 @@ def _derive_unified_tables(
         by_transfer.setdefault(t["transfer_id"], []).append(t)
 
     subledger_to_ledger = {sid: lid for sid, _n, lid in SUBLEDGER_ACCOUNTS}
+    parent_map = parent_map or {}
 
     transfer_rows: list[tuple] = []
     posting_rows: list[tuple] = []
@@ -801,7 +1380,7 @@ def _derive_unified_tables(
         )
         transfer_rows.append((
             tid,
-            None,  # parent_transfer_id — AR doesn't chain
+            parent_map.get(tid),  # NULL unless an explicit parent was supplied
             first["transfer_type"],
             "external_force_posted" if any_external else "internal_initiated",
             abs(first["amount"]),
@@ -842,16 +1421,69 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
         for sid, name, lid in SUBLEDGER_ACCOUNTS
     ]
     transactions = _generate_transfers(rng, today)
-    transfer_rows, posting_rows = _derive_unified_tables(transactions)
+
+    # F.4.1: ZBA / Cash Concentration sweeps. Sub-ledger legs are merged
+    # into transactions (so balance computation picks them up via the
+    # existing path); ledger-direct legs are appended to posting_rows
+    # after derivation and threaded into _generate_daily_balances so they
+    # appear in the master ledger's direct posting totals.
+    zba_extra_txns, zba_ledger_postings = _generate_zba_sweeps(
+        today, transactions,
+    )
+    transactions.extend(zba_extra_txns)
+
+    # F.4.2: ACH origination → EOD sweep → Fed confirmation cycle.
+    # Customer DDA legs flow through transactions; ledger-direct +
+    # external Fed legs feed posting_rows; sweep + Fed transfer rows
+    # feed transfer_rows directly (they have no sub-ledger leg to
+    # derive from).
+    ach_extra_txns, ach_extra_postings, ach_extra_xfers = (
+        _generate_ach_origination_cycle(today)
+    )
+    transactions.extend(ach_extra_txns)
+
+    # F.4.3: External force-posted card settlement cycle. Fed-side
+    # observations are emitted directly (external-only legs); SNB
+    # internal catch-ups are derived from transactions but linked back
+    # to their Fed observation parent via parent_map.
+    card_extra_txns, card_extra_postings, card_fed_xfers, card_parent_map = (
+        _generate_card_settlement_cycle(today)
+    )
+    transactions.extend(card_extra_txns)
+
+    # F.4.4: On-us internal transfer originate / settle / reverse cycle.
+    # Step-2 transfers (settle or reversal-not-credited) chain back to
+    # their Step-1 originate via parent_map; ledger-direct suspense
+    # legs feed posting_rows.
+    onus_extra_txns, onus_extra_postings, onus_parent_map = (
+        _generate_internal_transfer_cycle(today)
+    )
+    transactions.extend(onus_extra_txns)
+
+    combined_parent_map = {**card_parent_map, **onus_parent_map}
+    transfer_rows, posting_rows = _derive_unified_tables(
+        transactions, parent_map=combined_parent_map,
+    )
+    posting_rows.extend(zba_ledger_postings)
+    posting_rows.extend(ach_extra_postings)
+    posting_rows.extend(card_extra_postings)
+    posting_rows.extend(onus_extra_postings)
 
     ledger_xfer_rows, ledger_post_rows = _generate_ledger_level_transfers(
         rng, today,
     )
     transfer_rows.extend(ledger_xfer_rows)
+    transfer_rows.extend(ach_extra_xfers)
+    transfer_rows.extend(card_fed_xfers)
     posting_rows.extend(ledger_post_rows)
 
     subledger_balances, ledger_balances = _generate_daily_balances(
-        today, transactions, ledger_posting_rows=ledger_post_rows,
+        today, transactions,
+        ledger_posting_rows=(
+            ledger_post_rows + zba_ledger_postings
+            + ach_extra_postings + card_extra_postings
+            + onus_extra_postings
+        ),
     )
 
     parts = [
