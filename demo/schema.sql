@@ -459,87 +459,98 @@ CREATE INDEX idx_posting_subledger   ON posting(subledger_account_id, posted_at)
 
 -- Running Σ of successful postings per sub-ledger account, up to and
 -- including each balance date on which a stored sub-ledger balance exists.
--- Failed postings are excluded.
+-- Failed postings are excluded. Phase G: reads from shared base layer.
 CREATE VIEW ar_computed_subledger_daily_balance AS
 SELECT
-    sdb.subledger_account_id,
+    sdb.account_id        AS subledger_account_id,
     sdb.balance_date,
-    COALESCE(SUM(p.signed_amount), 0) AS computed_balance
-FROM ar_subledger_daily_balances sdb
-LEFT JOIN posting p
-    ON p.subledger_account_id = sdb.subledger_account_id
-   AND p.status               = 'success'
-   AND p.posted_at::date     <= sdb.balance_date
-GROUP BY sdb.subledger_account_id, sdb.balance_date;
+    COALESCE(SUM(t.signed_amount), 0) AS computed_balance
+FROM daily_balances sdb
+LEFT JOIN transactions t
+    ON t.account_id     = sdb.account_id
+   AND t.status         = 'success'
+   AND t.balance_date  <= sdb.balance_date
+WHERE sdb.control_account_id IS NOT NULL
+GROUP BY sdb.account_id, sdb.balance_date;
 
 
 -- Sub-ledger-level drift: stored − computed for each (sub-ledger account, date).
+-- Phase G: stored from daily_balances; ledger_name via self-join on the
+-- corresponding ledger row (control_account_id IS NULL).
 CREATE VIEW ar_subledger_balance_drift AS
 SELECT
-    stored.subledger_account_id,
-    s.name                                    AS subledger_name,
-    s.ledger_account_id,
-    la.name                                   AS ledger_name,
-    CASE WHEN s.is_internal THEN 'Internal' ELSE 'External' END AS scope,
+    stored.account_id                                  AS subledger_account_id,
+    stored.account_name                                AS subledger_name,
+    stored.control_account_id                          AS ledger_account_id,
+    led.account_name                                   AS ledger_name,
+    CASE WHEN stored.is_internal THEN 'Internal' ELSE 'External' END AS scope,
     stored.balance_date,
-    stored.balance                            AS stored_balance,
-    COALESCE(computed.computed_balance, 0)    AS computed_balance,
+    stored.balance                                     AS stored_balance,
+    COALESCE(computed.computed_balance, 0)             AS computed_balance,
     stored.balance - COALESCE(computed.computed_balance, 0) AS drift
-FROM ar_subledger_daily_balances stored
-JOIN ar_subledger_accounts s   USING (subledger_account_id)
-JOIN ar_ledger_accounts la     USING (ledger_account_id)
+FROM daily_balances stored
+JOIN daily_balances led
+    ON  led.account_id   = stored.control_account_id
+    AND led.balance_date = stored.balance_date
 LEFT JOIN ar_computed_subledger_daily_balance computed
-       ON computed.subledger_account_id = stored.subledger_account_id
-      AND computed.balance_date         = stored.balance_date;
+       ON computed.subledger_account_id = stored.account_id
+      AND computed.balance_date         = stored.balance_date
+WHERE stored.control_account_id IS NOT NULL
+  AND led.control_account_id    IS NULL;
 
 
 -- Σ of sub-ledgers' stored balances + Σ direct ledger postings per
 -- ledger per day. The ledger-level reconciliation invariant: stored
 -- ledger balance should equal this computed balance.
+-- Phase G: reads from shared base layer.
 CREATE VIEW ar_computed_ledger_daily_balance AS
 SELECT
-    ldb.ledger_account_id,
+    ldb.account_id AS ledger_account_id,
     ldb.balance_date,
     COALESCE(sub_totals.sub_balance, 0)
         + COALESCE(direct_totals.direct_balance, 0) AS computed_balance
-FROM ar_ledger_daily_balances ldb
+FROM daily_balances ldb
 LEFT JOIN (
-    SELECT s.ledger_account_id, sdb.balance_date,
-           SUM(sdb.balance) AS sub_balance
-    FROM ar_subledger_daily_balances sdb
-    JOIN ar_subledger_accounts s USING (subledger_account_id)
-    GROUP BY s.ledger_account_id, sdb.balance_date
+    SELECT control_account_id AS ledger_account_id,
+           balance_date,
+           SUM(balance) AS sub_balance
+    FROM daily_balances
+    WHERE control_account_id IS NOT NULL
+    GROUP BY control_account_id, balance_date
 ) sub_totals
-    ON sub_totals.ledger_account_id = ldb.ledger_account_id
+    ON sub_totals.ledger_account_id = ldb.account_id
    AND sub_totals.balance_date      = ldb.balance_date
 LEFT JOIN (
-    SELECT p.ledger_account_id, p.posted_at::date AS balance_date,
-           SUM(p.signed_amount) AS direct_balance
-    FROM posting p
-    WHERE p.subledger_account_id IS NULL
-      AND p.status = 'success'
-    GROUP BY p.ledger_account_id, p.posted_at::date
+    SELECT account_id AS ledger_account_id,
+           balance_date,
+           SUM(signed_amount) AS direct_balance
+    FROM transactions
+    WHERE control_account_id IS NULL
+      AND status = 'success'
+    GROUP BY account_id, balance_date
 ) direct_totals
-    ON direct_totals.ledger_account_id = ldb.ledger_account_id
-   AND direct_totals.balance_date      = ldb.balance_date;
+    ON direct_totals.ledger_account_id = ldb.account_id
+   AND direct_totals.balance_date      = ldb.balance_date
+WHERE ldb.control_account_id IS NULL;
 
 
 -- Ledger-level drift: stored ledger balance vs (Σ sub-ledger stored
 -- balances + Σ direct ledger postings). Independent of sub-ledger drift.
+-- Phase G: stored from daily_balances ledger rows.
 CREATE VIEW ar_ledger_balance_drift AS
 SELECT
-    stored.ledger_account_id,
-    la.name                                  AS ledger_name,
-    la.is_internal,
+    stored.account_id                                AS ledger_account_id,
+    stored.account_name                              AS ledger_name,
+    stored.is_internal,
     stored.balance_date,
-    stored.balance                           AS stored_balance,
-    COALESCE(computed.computed_balance, 0)   AS computed_balance,
+    stored.balance                                   AS stored_balance,
+    COALESCE(computed.computed_balance, 0)           AS computed_balance,
     stored.balance - COALESCE(computed.computed_balance, 0) AS drift
-FROM ar_ledger_daily_balances stored
-JOIN ar_ledger_accounts la USING (ledger_account_id)
+FROM daily_balances stored
 LEFT JOIN ar_computed_ledger_daily_balance computed
-       ON computed.ledger_account_id = stored.ledger_account_id
-      AND computed.balance_date      = stored.balance_date;
+       ON computed.ledger_account_id = stored.account_id
+      AND computed.balance_date      = stored.balance_date
+WHERE stored.control_account_id IS NULL;
 
 
 -- Per-transfer net of non-failed postings + net-zero flag.
