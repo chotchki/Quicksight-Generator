@@ -2663,13 +2663,15 @@ class TestPhase5DatasetDeclarations:
         assert "overdraft_status" in table["CustomSql"]["SqlQuery"]
 
     def test_transactions_dataset_projects_origin(self, ar_output_dir):
-        """The Transactions dataset must expose origin from the transfer table."""
+        """The Transactions dataset must expose origin (Phase G: from
+        the shared `transactions` table where origin is denormalized
+        per-row)."""
         path = ar_output_dir / "datasets" / "qs-gen-ar-transactions-dataset.json"
         data = json.loads(path.read_text())
         table = next(iter(data["PhysicalTableMap"].values()))
         cols = {c["Name"] for c in table["CustomSql"]["Columns"]}
         assert "origin" in cols
-        assert "xfer.origin" in table["CustomSql"]["SqlQuery"]
+        assert "t.origin" in table["CustomSql"]["SqlQuery"]
 
 
 # ---------------------------------------------------------------------------

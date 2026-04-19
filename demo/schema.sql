@@ -555,35 +555,36 @@ WHERE stored.control_account_id IS NULL;
 
 -- Per-transfer net of non-failed postings + net-zero flag.
 -- A healthy transfer has net = 0. ``has_external_leg`` flags transfers
--- where at least one leg lands on an external account.
+-- where at least one leg lands on an external sub-ledger account.
 -- Scoped to AR transfer types only.
+-- Phase G: reads from shared `transactions`. transfer_type / origin are
+-- denormalized per-row so they group cleanly without a separate join.
 CREATE VIEW ar_transfer_net_zero AS
 SELECT
-    p.transfer_id,
-    MIN(p.posted_at)                                                  AS first_posted_at,
-    SUM(CASE WHEN p.status = 'success' THEN p.signed_amount ELSE 0 END) AS net_amount,
-    SUM(CASE WHEN p.signed_amount > 0 AND p.status = 'success'
-             THEN p.signed_amount ELSE 0 END)                         AS total_debit,
-    SUM(CASE WHEN p.signed_amount < 0 AND p.status = 'success'
-             THEN p.signed_amount ELSE 0 END)                         AS total_credit,
+    t.transfer_id,
+    MIN(t.posted_at)                                                  AS first_posted_at,
+    SUM(CASE WHEN t.status = 'success' THEN t.signed_amount ELSE 0 END) AS net_amount,
+    SUM(CASE WHEN t.signed_amount > 0 AND t.status = 'success'
+             THEN t.signed_amount ELSE 0 END)                         AS total_debit,
+    SUM(CASE WHEN t.signed_amount < 0 AND t.status = 'success'
+             THEN t.signed_amount ELSE 0 END)                         AS total_credit,
     COUNT(*)                                                          AS leg_count,
-    SUM(CASE WHEN p.status = 'failed' THEN 1 ELSE 0 END)              AS failed_leg_count,
-    BOOL_OR(CASE WHEN s.is_internal IS NULL THEN FALSE ELSE NOT s.is_internal END)
-                                                                      AS has_external_leg,
+    SUM(CASE WHEN t.status = 'failed' THEN 1 ELSE 0 END)              AS failed_leg_count,
+    BOOL_OR(t.control_account_id IS NOT NULL AND NOT t.is_internal)   AS has_external_leg,
     CASE
-        WHEN SUM(CASE WHEN p.status = 'success' THEN p.signed_amount ELSE 0 END) = 0
+        WHEN SUM(CASE WHEN t.status = 'success' THEN t.signed_amount ELSE 0 END) = 0
             THEN 'net_zero'
         ELSE 'not_net_zero'
     END                                                               AS net_zero_status
-FROM posting p
-JOIN transfer xfer ON xfer.transfer_id = p.transfer_id
-LEFT JOIN ar_subledger_accounts s ON s.subledger_account_id = p.subledger_account_id
-WHERE xfer.transfer_type IN ('ach', 'wire', 'internal', 'cash', 'funding_batch', 'fee', 'clearing_sweep')
-GROUP BY p.transfer_id;
+FROM transactions t
+WHERE t.transfer_type IN ('ach', 'wire', 'internal', 'cash', 'funding_batch', 'fee', 'clearing_sweep')
+GROUP BY t.transfer_id;
 
 
 -- Per-transfer summary with representative memo (from earliest leg)
 -- for display alongside net totals.
+-- Phase G: memo / transfer_type / origin are denormalized in
+-- `transactions` and constant per transfer_id; MIN picks the value.
 CREATE VIEW ar_transfer_summary AS
 SELECT
     tz.transfer_id,
@@ -595,11 +596,18 @@ SELECT
     tz.failed_leg_count,
     tz.net_zero_status,
     tz.has_external_leg,
-    xfer.memo,
-    xfer.transfer_type,
-    xfer.origin
+    rep.memo,
+    rep.transfer_type,
+    rep.origin
 FROM ar_transfer_net_zero tz
-JOIN transfer xfer ON xfer.transfer_id = tz.transfer_id;
+JOIN (
+    SELECT transfer_id,
+           MIN(transfer_type) AS transfer_type,
+           MIN(origin)        AS origin,
+           MIN(memo)          AS memo
+    FROM transactions
+    GROUP BY transfer_id
+) rep ON rep.transfer_id = tz.transfer_id;
 
 
 -- Per (sub-ledger account, date, transfer_type) Σ of outbound (debit)

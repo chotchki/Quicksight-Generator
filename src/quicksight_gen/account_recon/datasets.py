@@ -308,36 +308,46 @@ WHERE sub.control_account_id IS NOT NULL
 
 
 def build_transactions_dataset(cfg: Config) -> DataSet:
+    # Phase G: reads from shared `transactions`. Ledger-name lookup goes
+    # via the corresponding ledger row in `daily_balances`; external
+    # ledgers (no daily balance rows) return NULL ledger_name — acceptable
+    # since the visual still shows ledger_account_id.
     sql = """\
 SELECT
-    p.posting_id                                                         AS transaction_id,
-    p.subledger_account_id,
-    COALESCE(s.name, la.name)                                            AS subledger_name,
-    p.ledger_account_id,
-    la.name                                                              AS ledger_name,
+    t.transaction_id,
+    CASE WHEN t.control_account_id IS NULL THEN NULL ELSE t.account_id END
+                                                                 AS subledger_account_id,
+    t.account_name                                               AS subledger_name,
+    COALESCE(t.control_account_id, t.account_id)                 AS ledger_account_id,
+    CASE WHEN t.control_account_id IS NULL
+         THEN t.account_name
+         ELSE led.account_name
+    END                                                          AS ledger_name,
     CASE
-        WHEN s.subledger_account_id IS NULL THEN 'Ledger'
-        WHEN s.is_internal THEN 'Internal'
+        WHEN t.control_account_id IS NULL THEN 'Ledger'
+        WHEN t.is_internal THEN 'Internal'
         ELSE 'External'
-    END                                                                  AS scope,
+    END                                                          AS scope,
     CASE
-        WHEN p.subledger_account_id IS NULL THEN 'Ledger'
+        WHEN t.control_account_id IS NULL THEN 'Ledger'
         ELSE 'Sub-Ledger'
-    END                                                                  AS posting_level,
-    p.transfer_id,
-    xfer.transfer_type,
-    xfer.origin,
-    p.signed_amount                                                      AS amount,
-    p.posted_at,
-    TO_CHAR(p.posted_at, 'YYYY-MM-DD')                                  AS posted_date,
-    p.status,
-    CASE WHEN p.status = 'failed' THEN 'Failed' ELSE 'OK' END           AS is_failed,
-    xfer.memo
-FROM posting p
-JOIN transfer xfer               ON xfer.transfer_id          = p.transfer_id
-JOIN ar_ledger_accounts la       ON la.ledger_account_id      = p.ledger_account_id
-LEFT JOIN ar_subledger_accounts s ON s.subledger_account_id   = p.subledger_account_id
-WHERE xfer.transfer_type IN ('ach', 'wire', 'internal', 'cash', 'funding_batch', 'fee', 'clearing_sweep')"""
+    END                                                          AS posting_level,
+    t.transfer_id,
+    t.transfer_type,
+    t.origin,
+    t.signed_amount                                              AS amount,
+    t.posted_at,
+    TO_CHAR(t.posted_at, 'YYYY-MM-DD')                           AS posted_date,
+    t.status,
+    CASE WHEN t.status = 'failed' THEN 'Failed' ELSE 'OK' END    AS is_failed,
+    t.memo
+FROM transactions t
+LEFT JOIN (
+    SELECT DISTINCT account_id, account_name
+    FROM daily_balances
+    WHERE control_account_id IS NULL
+) led ON led.account_id = t.control_account_id
+WHERE t.transfer_type IN ('ach', 'wire', 'internal', 'cash', 'funding_batch', 'fee', 'clearing_sweep')"""
     return build_dataset(
         cfg, cfg.prefixed("ar-transactions-dataset"),
         "AR Transactions", "ar-transactions",
