@@ -1055,6 +1055,8 @@ FROM ar_internal_transfer_suspense_nonzero;
 --          (we have the Fed leg; missing the SNB internal post)
 -- Teaches users to recognize the pattern rather than two separate
 -- checks; per-check tables stay below for drill-in detail.
+-- Phase G: structurally unchanged — UNIONs two already-migrated
+-- check views (G.7.4, G.7.5). Transitively reads from `transactions`.
 CREATE VIEW ar_two_sided_post_mismatch_rollup AS
 SELECT
     sweep_transfer_id                   AS transfer_id,
