@@ -206,6 +206,88 @@ WHERE p.payment_id IS NULL;
 
 
 -- ===================================================================
+-- Shared base layer (Phase G)
+--
+-- Two-table feed contract for both AR and PR.  Every money-movement
+-- leg lands in `transactions`; every (account, date) snapshot lands
+-- in `daily_balances`.  Account name / type / control-account are
+-- denormalized onto every row so common analyst queries need no joins.
+--
+-- The `metadata TEXT` column carries JSON; query it with SQL/JSON
+-- path functions (`JSON_VALUE`, `JSON_QUERY`, `JSON_EXISTS`).  System
+-- compatibility requires PostgreSQL 17+.  Forbidden by portability
+-- constraint: JSONB, `->>` / `->` / `@>` / `?` operators, GIN indexes
+-- on JSON, Postgres extensions, array / range types.
+--
+-- See docs/Schema_v3.md for the full feed contract, canonical
+-- account_type values, metadata key catalog, and ETL examples.
+--
+-- During the strangler migration (G.3 → G.10) the old tables (`ar_*`,
+-- `pr_*`, `transfer`, `posting`) below this section stay populated by
+-- dual-write.  Drop in G.10 once every dataset reads from here.
+-- ===================================================================
+
+DROP TABLE IF EXISTS daily_balances CASCADE;
+DROP TABLE IF EXISTS transactions   CASCADE;
+
+CREATE TABLE transactions (
+    transaction_id      VARCHAR(100)   PRIMARY KEY,
+    transfer_id         VARCHAR(100)   NOT NULL,
+    parent_transfer_id  VARCHAR(100),
+    transfer_type       VARCHAR(30)    NOT NULL
+        CHECK (transfer_type IN (
+            'sale', 'settlement', 'payment', 'external_txn',
+            'ach', 'wire', 'internal', 'cash',
+            'funding_batch', 'fee', 'clearing_sweep'
+        )),
+    origin              VARCHAR(30)    NOT NULL DEFAULT 'internal_initiated'
+        CHECK (origin IN ('internal_initiated', 'external_force_posted')),
+    account_id          VARCHAR(100)   NOT NULL,
+    account_name        VARCHAR(255)   NOT NULL,
+    control_account_id  VARCHAR(100),
+    account_type        VARCHAR(50)    NOT NULL,
+    is_internal         BOOLEAN        NOT NULL,
+    signed_amount       DECIMAL(14,2)  NOT NULL,
+    amount              DECIMAL(14,2)  NOT NULL,
+    status              VARCHAR(20)    NOT NULL DEFAULT 'success'
+        CHECK (status IN ('success', 'failed')),
+    posted_at           TIMESTAMP      NOT NULL,
+    balance_date        DATE           NOT NULL,
+    external_system     VARCHAR(100),
+    memo                VARCHAR(255),
+    metadata            TEXT,
+    CHECK (metadata IS NULL OR metadata IS JSON)
+);
+
+CREATE TABLE daily_balances (
+    account_id          VARCHAR(100)   NOT NULL,
+    account_name        VARCHAR(255)   NOT NULL,
+    control_account_id  VARCHAR(100),
+    account_type        VARCHAR(50)    NOT NULL,
+    is_internal         BOOLEAN        NOT NULL,
+    balance_date        DATE           NOT NULL,
+    balance             DECIMAL(14,2)  NOT NULL,
+    metadata            TEXT,
+    PRIMARY KEY (account_id, balance_date),
+    CHECK (metadata IS NULL OR metadata IS JSON)
+);
+
+-- B-tree only.  No GIN on metadata; no expression indexes on JSON-path
+-- extractions.  If a metadata key needs to be indexed, lift it to a
+-- first-class column instead.  The (account_id, balance_date) lookup
+-- on daily_balances is served by the PK index.
+CREATE INDEX idx_transactions_account_date ON transactions(account_id, posted_at);
+CREATE INDEX idx_transactions_transfer     ON transactions(transfer_id);
+CREATE INDEX idx_transactions_type_status  ON transactions(transfer_type, status);
+CREATE INDEX idx_transactions_control      ON transactions(control_account_id);
+CREATE INDEX idx_transactions_balance_date ON transactions(balance_date);
+CREATE INDEX idx_transactions_parent       ON transactions(parent_transfer_id);
+
+CREATE INDEX idx_daily_balances_date    ON daily_balances(balance_date);
+CREATE INDEX idx_daily_balances_control ON daily_balances(control_account_id, balance_date);
+
+
+-- ===================================================================
 -- Account Reconciliation (ar_ prefix)
 --
 -- Double-entry bank-account model. Two independent drift checks:

@@ -33,6 +33,9 @@ class TestSchemaSql:
             "pr_payments",
             "transfer",
             "posting",
+            # Phase G shared base layer
+            "transactions",
+            "daily_balances",
         ]:
             assert f"CREATE TABLE {table}" in schema_sql
 
@@ -47,6 +50,23 @@ class TestSchemaSql:
 
     def test_creates_indexes(self, schema_sql):
         assert schema_sql.count("CREATE INDEX") >= 7
+
+    def test_shared_base_layer_uses_portable_json(self, schema_sql):
+        # Per Phase G portability constraint: TEXT + IS JSON, no JSONB.
+        # Guards against silent reintroduction of Postgres-only features.
+        for table in ["transactions", "daily_balances"]:
+            block_start = schema_sql.index(f"CREATE TABLE {table}")
+            block_end = schema_sql.index(");", block_start)
+            block = schema_sql[block_start:block_end]
+            assert "metadata            TEXT" in block, (
+                f"{table} should declare metadata as TEXT"
+            )
+            assert "JSONB" not in block, (
+                f"{table} must not use JSONB (portability constraint)"
+            )
+            assert "metadata IS JSON" in block, (
+                f"{table} should constrain metadata with IS JSON"
+            )
 
 
 class TestSeedSql:
