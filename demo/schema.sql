@@ -238,6 +238,7 @@ DROP TABLE IF EXISTS ar_accounts                       CASCADE;
 DROP TABLE IF EXISTS ar_parent_accounts                CASCADE;
 
 -- Current-vocabulary drops
+DROP VIEW  IF EXISTS ar_ach_sweep_no_fed_confirmation    CASCADE;
 DROP VIEW  IF EXISTS ar_ach_orig_settlement_nonzero      CASCADE;
 DROP VIEW  IF EXISTS ar_concentration_master_sweep_drift CASCADE;
 DROP VIEW  IF EXISTS ar_sweep_target_nonzero             CASCADE;
@@ -636,3 +637,30 @@ FROM ar_ledger_daily_balances ldb
 JOIN ar_ledger_accounts la USING (ledger_account_id)
 WHERE ldb.ledger_account_id = 'gl-1810-ach-orig-settlement'
   AND ldb.balance <> 0;
+
+
+-- ACH internal sweep posted but no Fed confirmation (F.5.4).
+-- Each successful internal EOD sweep on gl-1810 (ACH Origination
+-- Settlement) should be followed by a Fed-side confirmation child
+-- transfer attesting the FRB master account moved by the same amount.
+-- This view surfaces sweeps where the internal leg posted but the Fed
+-- confirmation never landed — the bank thinks the cash moved, the FRB
+-- has no record.
+CREATE VIEW ar_ach_sweep_no_fed_confirmation AS
+SELECT
+    t.transfer_id                       AS sweep_transfer_id,
+    t.created_at                        AS sweep_at,
+    t.amount                            AS sweep_amount
+FROM transfer t
+WHERE t.transfer_type = 'clearing_sweep'
+  AND EXISTS (
+    SELECT 1 FROM posting p
+    WHERE p.transfer_id = t.transfer_id
+      AND p.ledger_account_id = 'gl-1810-ach-orig-settlement'
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM transfer fed
+    WHERE fed.parent_transfer_id = t.transfer_id
+      AND fed.transfer_type = 'ach'
+      AND fed.origin = 'external_force_posted'
+  );

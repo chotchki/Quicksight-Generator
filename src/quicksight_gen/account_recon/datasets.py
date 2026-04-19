@@ -182,6 +182,15 @@ ACH_ORIG_SETTLEMENT_NONZERO_CONTRACT = DatasetContract(columns=[
     ColumnSpec("aging_bucket", "STRING"),
 ])
 
+ACH_SWEEP_NO_FED_CONFIRMATION_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("sweep_transfer_id", "STRING"),
+    ColumnSpec("sweep_at", "DATETIME"),
+    ColumnSpec("sweep_at_str", "STRING"),
+    ColumnSpec("sweep_amount", "DECIMAL"),
+    ColumnSpec("days_outstanding", "INTEGER"),
+    ColumnSpec("aging_bucket", "STRING"),
+])
+
 
 # ---------------------------------------------------------------------------
 # Builders
@@ -441,6 +450,23 @@ FROM ar_ach_orig_settlement_nonzero"""
     )
 
 
+def build_ach_sweep_no_fed_confirmation_dataset(cfg: Config) -> DataSet:
+    sql = f"""\
+SELECT
+    sweep_transfer_id,
+    sweep_at,
+    TO_CHAR(sweep_at, 'YYYY-MM-DD') AS sweep_at_str,
+    sweep_amount,
+{_aging_columns('sweep_at')}
+FROM ar_ach_sweep_no_fed_confirmation"""
+    return build_dataset(
+        cfg, cfg.prefixed("ar-ach-sweep-no-fed-confirmation-dataset"),
+        "AR ACH Internal Sweep Without Fed Confirmation",
+        "ar-ach-sweep-no-fed-confirmation",
+        sql, ACH_SWEEP_NO_FED_CONFIRMATION_CONTRACT,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Convenience
 # ---------------------------------------------------------------------------
@@ -459,4 +485,5 @@ def build_all_datasets(cfg: Config) -> list[DataSet]:
         build_sweep_target_nonzero_dataset(cfg),
         build_concentration_master_sweep_drift_dataset(cfg),
         build_ach_orig_settlement_nonzero_dataset(cfg),
+        build_ach_sweep_no_fed_confirmation_dataset(cfg),
     ]

@@ -22,6 +22,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_SWEEP_TARGET_NONZERO,
     DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
     DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
+    DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     SHEET_AR_BALANCES,
@@ -533,6 +534,21 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
         _full_width_visual("ar-exc-aging-ach-orig-nonzero", _CHART_ROW_SPAN),
     ]
 
+    # F.5.4: ACH internal sweep posted but no Fed confirmation — KPI /
+    # table / aging bar stacked full width.
+    ach_sweep_no_fed_row_kpi = [
+        GridLayoutElement(
+            ElementId="ar-exc-kpi-ach-sweep-no-fed", ElementType="VISUAL",
+            ColumnSpan=_FULL, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
+        ),
+    ]
+    ach_sweep_no_fed_table = [
+        _full_width_visual("ar-exc-ach-sweep-no-fed-table", _TABLE_ROW_SPAN),
+    ]
+    ach_sweep_no_fed_aging = [
+        _full_width_visual("ar-exc-aging-ach-sweep-no-fed", _CHART_ROW_SPAN),
+    ]
+
     return SheetDefinition(
         SheetId=SHEET_AR_EXCEPTIONS,
         Name="Exceptions",
@@ -558,6 +574,9 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
             + ach_orig_row_kpi
             + ach_orig_table
             + ach_orig_aging
+            + ach_sweep_no_fed_row_kpi
+            + ach_sweep_no_fed_table
+            + ach_sweep_no_fed_aging
         ),
     )
 
@@ -586,6 +605,7 @@ def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaratio
         DS_AR_SWEEP_TARGET_NONZERO,
         DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
         DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
+        DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
     ]
     return [
         DataSetIdentifierDeclaration(

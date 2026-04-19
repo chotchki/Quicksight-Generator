@@ -38,6 +38,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_SWEEP_TARGET_NONZERO,
     DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
     DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
+    DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     SHEET_AR_BALANCES,
@@ -1647,15 +1648,110 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
         "balance_date",
     )
 
+    # F.5.4 Internal sweep posted but no Fed confirmation — internal EOD
+    # sweep on gl-1810 succeeded but the FRB confirmation child transfer
+    # never landed. Bank thinks the cash moved; Fed has no record.
+    kpi_ach_sweep_no_fed = Visual(
+        KPIVisual=KPIVisual(
+            VisualId="ar-exc-kpi-ach-sweep-no-fed",
+            Title=_title("ACH Sweep Without Fed Confirmation"),
+            Subtitle=_subtitle(
+                "Internal EOD sweeps on ACH Origination Settlement that "
+                "posted but never received the Fed-side confirmation — "
+                "bank moved the cash internally, FRB has no record"
+            ),
+            ChartConfiguration=KPIConfiguration(
+                FieldWells=KPIFieldWells(
+                    Values=[
+                        _measure_count(
+                            "ar-exc-ach-sweep-no-fed-count",
+                            DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
+                            "sweep_transfer_id",
+                        )
+                    ],
+                ),
+            ),
+        )
+    )
+
+    table_ach_sweep_no_fed = Visual(
+        TableVisual=TableVisual(
+            VisualId="ar-exc-ach-sweep-no-fed-table",
+            Title=_title("ACH Sweep Without Fed Confirmation"),
+            Subtitle=_subtitle(
+                "Each row is an internal sweep transfer that posted on "
+                "gl-1810 but has no Fed confirmation child. Left-click "
+                "sweep_transfer_id to drill into Transactions for that "
+                "transfer."
+            ),
+            ChartConfiguration=TableConfiguration(
+                FieldWells=TableFieldWells(
+                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
+                        Values=[
+                            _unagg_field("ar-exc-acsnf-tid",
+                                         DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
+                                         "sweep_transfer_id"),
+                            _unagg_field("ar-exc-acsnf-at",
+                                         DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
+                                         "sweep_at"),
+                            _unagg_field("ar-exc-acsnf-amt",
+                                         DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
+                                         "sweep_amount"),
+                            _unagg_field("ar-exc-acsnf-aging",
+                                         DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
+                                         "aging_bucket"),
+                        ],
+                    )
+                ),
+                SortConfiguration={
+                    "RowSort": [
+                        {
+                            "FieldSort": {
+                                "FieldId": "ar-exc-acsnf-at",
+                                "Direction": "DESC",
+                            },
+                        },
+                    ],
+                },
+            ),
+            Actions=[
+                _multi_drill_action(
+                    "action-ar-exc-ach-sweep-no-fed-to-txn",
+                    "View Transactions",
+                    SHEET_AR_TRANSACTIONS,
+                    [
+                        (P_AR_TRANSFER, "ar-exc-acsnf-tid"),
+                    ],
+                ),
+            ],
+            ConditionalFormatting={
+                "ConditionalFormattingOptions": [
+                    link_text_format(
+                        "ar-exc-acsnf-tid", "sweep_transfer_id",
+                        link_color,
+                    ),
+                ],
+            },
+        )
+    )
+
+    aging_ach_sweep_no_fed = aging_bar_visual(
+        "ar-exc-aging-ach-sweep-no-fed",
+        "ACH Sweep w/o Fed Confirmation by Age",
+        "How long sweeps have been awaiting Fed-side confirmation",
+        DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
+        "sweep_transfer_id",
+    )
+
     return [
         kpi_ledger_drift, kpi_subledger_drift, kpi_nonzero,
         kpi_breach, kpi_overdraft, kpi_sweep_target, kpi_sweep_drift,
-        kpi_ach_orig_nonzero,
+        kpi_ach_orig_nonzero, kpi_ach_sweep_no_fed,
         table_ledger_drift, table_subledger_drift, table_non_zero,
         table_breach, table_overdraft, table_sweep_target,
-        table_ach_orig_nonzero,
+        table_ach_orig_nonzero, table_ach_sweep_no_fed,
         timeline_ledger, timeline_subledger, timeline_sweep_drift,
         aging_ledger_drift, aging_subledger_drift, aging_nonzero,
         aging_breach, aging_overdraft, aging_sweep_target,
-        aging_ach_orig_nonzero,
+        aging_ach_orig_nonzero, aging_ach_sweep_no_fed,
     ]
