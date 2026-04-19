@@ -25,3 +25,4 @@ DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT = "ar-concentration-master-sweep-drift-ds
 DS_AR_ACH_ORIG_SETTLEMENT_NONZERO = "ar-ach-orig-settlement-nonzero-ds"
 DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION = "ar-ach-sweep-no-fed-confirmation-ds"
 DS_AR_FED_CARD_NO_INTERNAL_CATCHUP = "ar-fed-card-no-internal-catchup-ds"
+DS_AR_GL_VS_FED_MASTER_DRIFT = "ar-gl-vs-fed-master-drift-ds"

@@ -1579,9 +1579,9 @@ class TestGenerateOutput:
     def test_dashboard_file_exists(self, ar_output_dir):
         assert (ar_output_dir / "account-recon-dashboard.json").exists()
 
-    def test_fourteen_dataset_files(self, ar_output_dir):
+    def test_fifteen_dataset_files(self, ar_output_dir):
         datasets = list((ar_output_dir / "datasets").glob("qs-gen-ar-*.json"))
-        assert len(datasets) == 14
+        assert len(datasets) == 15
 
     def test_all_files_valid_json(self, ar_output_dir):
         for path in ar_output_dir.rglob("*.json"):
@@ -1703,8 +1703,9 @@ class TestSheetLayout:
         # (KPI + table + aging bar) → 25. Phase F.5.4 adds ACH internal
         # sweep without Fed confirmation (KPI + table + aging bar) → 28.
         # Phase F.5.5 adds Fed activity without internal catch-up
-        # (KPI + table + aging bar) → 31.
-        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 31)
+        # (KPI + table + aging bar) → 31. Phase F.5.6 adds GL-vs-Fed
+        # Master drift (KPI + timeline) → 33.
+        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 33)
 
     def _assert_visual_count(self, out_dir: Path, sheet_id: str, expected: int) -> None:
         analysis = _load(out_dir, "account-recon-analysis.json")

@@ -238,6 +238,7 @@ DROP TABLE IF EXISTS ar_accounts                       CASCADE;
 DROP TABLE IF EXISTS ar_parent_accounts                CASCADE;
 
 -- Current-vocabulary drops
+DROP VIEW  IF EXISTS ar_gl_vs_fed_master_drift           CASCADE;
 DROP VIEW  IF EXISTS ar_fed_card_no_internal_catchup     CASCADE;
 DROP VIEW  IF EXISTS ar_ach_sweep_no_fed_confirmation    CASCADE;
 DROP VIEW  IF EXISTS ar_ach_orig_settlement_nonzero      CASCADE;
@@ -692,3 +693,50 @@ WHERE t.transfer_type = 'ach'
     SELECT 1 FROM transfer ic
     WHERE ic.parent_transfer_id = t.transfer_id
   );
+
+
+-- GL-vs-Fed Master drift timeline (F.5.6).
+-- Per day, totals the Fed-side card processor settlement amounts and
+-- the SNB internal catch-up amounts (children of those Fed transfers).
+-- Healthy days: both sides equal, drift = 0. Drift > 0 means Fed
+-- posted activity that SNB never recorded internally — the GL view
+-- and the Fed master view diverge.
+CREATE VIEW ar_gl_vs_fed_master_drift AS
+WITH fed_card_observed AS (
+    SELECT
+        t.transfer_id,
+        t.created_at::date              AS movement_date,
+        t.amount                        AS fed_amount
+    FROM transfer t
+    WHERE t.transfer_type = 'ach'
+      AND t.origin = 'external_force_posted'
+      AND t.parent_transfer_id IS NULL
+      AND EXISTS (
+        SELECT 1 FROM posting p
+        WHERE p.transfer_id = t.transfer_id
+          AND p.subledger_account_id = 'ext-payment-gateway-sub-clearing'
+      )
+),
+fed_total AS (
+    SELECT
+        movement_date,
+        SUM(fed_amount)                 AS fed_total
+    FROM fed_card_observed
+    GROUP BY movement_date
+),
+internal_total AS (
+    SELECT
+        ic.created_at::date             AS movement_date,
+        SUM(ic.amount)                  AS internal_total
+    FROM transfer ic
+    WHERE ic.parent_transfer_id IN (SELECT transfer_id FROM fed_card_observed)
+    GROUP BY ic.created_at::date
+)
+SELECT
+    COALESCE(f.movement_date, i.movement_date) AS movement_date,
+    COALESCE(f.fed_total, 0)                   AS fed_total,
+    COALESCE(i.internal_total, 0)              AS internal_total,
+    COALESCE(f.fed_total, 0)
+        - COALESCE(i.internal_total, 0)        AS drift
+FROM fed_total f
+FULL OUTER JOIN internal_total i USING (movement_date);

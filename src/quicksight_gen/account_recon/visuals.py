@@ -40,6 +40,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
     DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
     DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
+    DS_AR_GL_VS_FED_MASTER_DRIFT,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     SHEET_AR_BALANCES,
@@ -1839,14 +1840,76 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
         "fed_transfer_id",
     )
 
+    # F.5.6 GL-vs-Fed Master drift timeline — daily diff between Fed-side
+    # card-settlement totals and SNB internal catch-up totals. Healthy
+    # days = 0 (every Fed posting has a matching SNB internal post);
+    # non-zero bars are days the GL view diverged from the Fed view.
+    kpi_gl_fed_drift = Visual(
+        KPIVisual=KPIVisual(
+            VisualId="ar-exc-kpi-gl-fed-drift",
+            Title=_title("GL vs Fed Master Drift Days"),
+            Subtitle=_subtitle(
+                "Days the SNB internal catch-up amount didn't equal the "
+                "Fed-side card settlement amount — GL view and FRB Master "
+                "view diverged"
+            ),
+            ChartConfiguration=KPIConfiguration(
+                FieldWells=KPIFieldWells(
+                    Values=[
+                        _measure_count(
+                            "ar-exc-gl-fed-drift-count",
+                            DS_AR_GL_VS_FED_MASTER_DRIFT,
+                            "movement_date",
+                        )
+                    ],
+                ),
+            ),
+        )
+    )
+
+    timeline_gl_fed_drift = Visual(
+        BarChartVisual=BarChartVisual(
+            VisualId="ar-exc-gl-fed-drift-timeline",
+            Title=_title("GL vs Fed Master Drift Timeline"),
+            Subtitle=_subtitle(
+                "Per-day drift = Σ Fed-side card settlement amounts − "
+                "Σ SNB internal catch-up amounts. Healthy days = 0; "
+                "positive bars are days Fed posted activity that SNB "
+                "never recorded internally."
+            ),
+            ChartConfiguration=BarChartConfiguration(
+                FieldWells=BarChartFieldWells(
+                    BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
+                        Category=[_date_dim(
+                            "ar-exc-gl-fed-drift-dim",
+                            DS_AR_GL_VS_FED_MASTER_DRIFT,
+                            "movement_date",
+                        )],
+                        Values=[_measure_sum(
+                            "ar-exc-gl-fed-drift-val",
+                            DS_AR_GL_VS_FED_MASTER_DRIFT,
+                            "drift",
+                        )],
+                    )
+                ),
+                Orientation="VERTICAL",
+                BarsArrangement="CLUSTERED",
+                CategoryLabelOptions=_axis_label("Date"),
+                ValueLabelOptions=_axis_label("Drift ($)"),
+            ),
+        )
+    )
+
     return [
         kpi_ledger_drift, kpi_subledger_drift, kpi_nonzero,
         kpi_breach, kpi_overdraft, kpi_sweep_target, kpi_sweep_drift,
         kpi_ach_orig_nonzero, kpi_ach_sweep_no_fed, kpi_fed_no_catchup,
+        kpi_gl_fed_drift,
         table_ledger_drift, table_subledger_drift, table_non_zero,
         table_breach, table_overdraft, table_sweep_target,
         table_ach_orig_nonzero, table_ach_sweep_no_fed, table_fed_no_catchup,
         timeline_ledger, timeline_subledger, timeline_sweep_drift,
+        timeline_gl_fed_drift,
         aging_ledger_drift, aging_subledger_drift, aging_nonzero,
         aging_breach, aging_overdraft, aging_sweep_target,
         aging_ach_orig_nonzero, aging_ach_sweep_no_fed, aging_fed_no_catchup,

@@ -24,6 +24,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
     DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
     DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
+    DS_AR_GL_VS_FED_MASTER_DRIFT,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     SHEET_AR_BALANCES,
@@ -565,6 +566,19 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
         _full_width_visual("ar-exc-aging-fed-no-catchup", _CHART_ROW_SPAN),
     ]
 
+    # F.5.6: GL-vs-Fed Master drift — KPI half-width, timeline
+    # half-width on the same row. Mirrors F.5.2 sweep_drift_row shape.
+    gl_fed_drift_row = [
+        GridLayoutElement(
+            ElementId="ar-exc-kpi-gl-fed-drift", ElementType="VISUAL",
+            ColumnSpan=_HALF, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
+        ),
+        GridLayoutElement(
+            ElementId="ar-exc-gl-fed-drift-timeline", ElementType="VISUAL",
+            ColumnSpan=_HALF, RowSpan=_KPI_ROW_SPAN, ColumnIndex=_HALF,
+        ),
+    ]
+
     return SheetDefinition(
         SheetId=SHEET_AR_EXCEPTIONS,
         Name="Exceptions",
@@ -596,6 +610,7 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
             + fed_no_catchup_row_kpi
             + fed_no_catchup_table
             + fed_no_catchup_aging
+            + gl_fed_drift_row
         ),
     )
 
@@ -626,6 +641,7 @@ def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaratio
         DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
         DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
         DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
+        DS_AR_GL_VS_FED_MASTER_DRIFT,
     ]
     return [
         DataSetIdentifierDeclaration(

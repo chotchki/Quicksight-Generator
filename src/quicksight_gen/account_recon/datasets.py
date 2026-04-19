@@ -200,6 +200,14 @@ FED_CARD_NO_INTERNAL_CATCHUP_CONTRACT = DatasetContract(columns=[
     ColumnSpec("aging_bucket", "STRING"),
 ])
 
+GL_VS_FED_MASTER_DRIFT_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("movement_date", "DATETIME"),
+    ColumnSpec("fed_total", "DECIMAL"),
+    ColumnSpec("internal_total", "DECIMAL"),
+    ColumnSpec("drift", "DECIMAL"),
+    ColumnSpec("abs_drift", "DECIMAL"),
+])
+
 
 # ---------------------------------------------------------------------------
 # Builders
@@ -493,6 +501,22 @@ FROM ar_fed_card_no_internal_catchup"""
     )
 
 
+def build_gl_vs_fed_master_drift_dataset(cfg: Config) -> DataSet:
+    sql = """\
+SELECT
+    movement_date,
+    fed_total,
+    internal_total,
+    drift,
+    ABS(drift) AS abs_drift
+FROM ar_gl_vs_fed_master_drift"""
+    return build_dataset(
+        cfg, cfg.prefixed("ar-gl-vs-fed-master-drift-dataset"),
+        "AR GL vs Fed Master Drift", "ar-gl-vs-fed-master-drift",
+        sql, GL_VS_FED_MASTER_DRIFT_CONTRACT,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Convenience
 # ---------------------------------------------------------------------------
@@ -513,4 +537,5 @@ def build_all_datasets(cfg: Config) -> list[DataSet]:
         build_ach_orig_settlement_nonzero_dataset(cfg),
         build_ach_sweep_no_fed_confirmation_dataset(cfg),
         build_fed_card_no_internal_catchup_dataset(cfg),
+        build_gl_vs_fed_master_drift_dataset(cfg),
     ]
