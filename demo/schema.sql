@@ -764,16 +764,18 @@ FULL OUTER JOIN subaccount_debits sd USING (sweep_date);
 -- EOD sweep transfers the day's net to Cash & Due From FRB (gl-1010),
 -- zeroing it out. Days the EOD sweep is skipped or fails leave the ledger
 -- non-zero — surfacing here.
+-- Phase G: reads from shared `daily_balances`; ledger row identified by
+-- control_account_id IS NULL.
 CREATE VIEW ar_ach_orig_settlement_nonzero AS
 SELECT
-    ldb.ledger_account_id,
-    la.name                             AS ledger_name,
-    ldb.balance_date,
-    ldb.balance                         AS stored_balance
-FROM ar_ledger_daily_balances ldb
-JOIN ar_ledger_accounts la USING (ledger_account_id)
-WHERE ldb.ledger_account_id = 'gl-1810-ach-orig-settlement'
-  AND ldb.balance <> 0;
+    db.account_id                       AS ledger_account_id,
+    db.account_name                     AS ledger_name,
+    db.balance_date,
+    db.balance                          AS stored_balance
+FROM daily_balances db
+WHERE db.account_id          = 'gl-1810-ach-orig-settlement'
+  AND db.control_account_id IS NULL
+  AND db.balance            <> 0;
 
 
 -- ACH internal sweep posted but no Fed confirmation (F.5.4).
