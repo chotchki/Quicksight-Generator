@@ -51,14 +51,14 @@ Replace the product-category abstraction with GL-control + customer-DDA + operat
 
 Mechanical follow-on. All plant constants reference IDs that no longer exist. Tests still red after this commit; restored in F.3.
 
-- [ ] F.2.1 `_LEDGER_DRIFT_PLANT` — point at new internal GL control account IDs (e.g., DDA Control, Cash Concentration Master).
-- [ ] F.2.2 `_SUBLEDGER_DRIFT_PLANT` — point at new customer DDAs and ZBA sub-accounts.
-- [ ] F.2.3 `_LIMIT_BREACH_PLANT` — point at new sub-ledger IDs; revisit transfer types and amounts so the breach narrative still makes sense at the customer-DDA level (e.g., "Bulk wire payout from Big Meadow Dairy DDA").
-- [ ] F.2.4 `_OVERDRAFT_PLANT` — point at new customer DDA IDs.
-- [ ] F.2.5 `_LEDGER_LIMITS` — re-author for the new ledger structure. Per-customer DDAs probably have their own daily ACH / wire limits; GL control accounts don't have outbound limits in the same sense.
-- [ ] F.2.6 `_EXTERNAL_COUNTER_LEG_POOL` — point at new external sub-ledger IDs.
-- [ ] F.2.7 Skip pytest — still known red. Verify SQL parses.
-- [ ] F.2.8 Commit — `Phase F.2: re-aim plant lists at new account IDs (tests still red)`.
+- [x] F.2.1 `_LEDGER_DRIFT_PLANT` — point at new internal GL control account IDs (e.g., DDA Control, Cash Concentration Master).
+- [x] F.2.2 `_SUBLEDGER_DRIFT_PLANT` — point at new customer DDAs and ZBA sub-accounts.
+- [x] F.2.3 `_LIMIT_BREACH_PLANT` — point at new sub-ledger IDs; revisit transfer types and amounts so the breach narrative still makes sense at the customer-DDA level (e.g., "Bulk wire payout from Big Meadow Dairy DDA").
+- [x] F.2.4 `_OVERDRAFT_PLANT` — point at new customer DDA IDs.
+- [x] F.2.5 `_LEDGER_LIMITS` — re-author for the new ledger structure. Per-customer DDAs probably have their own daily ACH / wire limits; GL control accounts don't have outbound limits in the same sense. Also fixed `_generate_ledger_level_transfers` funding-batch path to filter to ledgers with sub-ledgers (resolves the KeyError noted in F.1.3).
+- [x] F.2.6 `_EXTERNAL_COUNTER_LEG_POOL` — point at new external sub-ledger IDs.
+- [x] F.2.7 Skip pytest — still known red. Verify SQL parses.
+- [x] F.2.8 Commit — `Phase F.2: re-aim plant lists at new account IDs (tests still red)`.
 
 ---
 
@@ -66,14 +66,14 @@ Mechanical follow-on. All plant constants reference IDs that no longer exist. Te
 
 Stabilize the test suite against the new account structure. Test suite returns to green by end of this phase.
 
-- [ ] F.3.1 `tests/test_demo_data.py` — update `LEDGER_ACCOUNTS` / `SUBLEDGER_ACCOUNTS` count assertions, display-name assertions, FK integrity tests, scenario coverage assertions.
-- [ ] F.3.2 `tests/test_account_recon.py` — update visual + filter assertions referencing old ledger / sub-ledger names.
-- [ ] F.3.3 `tests/test_demo_sql.py` — update structural SQL assertions.
-- [ ] F.3.4 `tests/test_dataset_contract.py` — verify; minimal changes expected since no SQL changed yet.
-- [ ] F.3.5 `tests/test_models.py`, `tests/test_generate.py`, `tests/test_recon.py`, `tests/test_theme_presets.py` — sweep for stray references.
+- [x] F.3.1 `tests/test_demo_data.py` — update `LEDGER_ACCOUNTS` / `SUBLEDGER_ACCOUNTS` count assertions, display-name assertions, FK integrity tests, scenario coverage assertions. → No-op; existing assertions are structure-robust.
+- [x] F.3.2 `tests/test_account_recon.py` — update visual + filter assertions referencing old ledger / sub-ledger names. → 12 assertions updated: posting/balance counts, ledger-limits "≥2 ledgers" relaxed to "≥1" (only DDA Control carries limits in SNB structure). Source-side: dropped parens from sub-ledger names so the test fixture's regex parses cleanly; bumped overdraft plant amounts (account balances are larger under the new structure); rewrote funding-batch sub-ledger split to use proportional weights (avoids 0-amount legs that tripped `posting_fields_populated`).
+- [x] F.3.3 `tests/test_demo_sql.py` — update structural SQL assertions. → No-op; passing.
+- [x] F.3.4 `tests/test_dataset_contract.py` — verify; minimal changes expected since no SQL changed yet. → Passing.
+- [x] F.3.5 `tests/test_models.py`, `tests/test_generate.py`, `tests/test_recon.py`, `tests/test_theme_presets.py` — sweep for stray references. → All passing. Source-side stale strings remain in `account_recon/analysis.py` Getting Started copy and the `farmers-exchange-bank` theme preset name; deferred to F.6.
 - [ ] F.3.6 e2e tests deferred to F.7. Keep `QS_GEN_E2E=0` for the rest of Phase F until F.7.
-- [ ] F.3.7 `.venv/bin/pytest` — full unit suite green.
-- [ ] F.3.8 Commit — `Phase F.3: update unit tests for new AR account structure (tests green)`.
+- [x] F.3.7 `.venv/bin/pytest` — full unit suite green. → 310 passed, 101 e2e skipped.
+- [x] F.3.8 Commit — `Phase F.3: update unit tests for new AR account structure (tests green)`.
 
 ---
 

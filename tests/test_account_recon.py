@@ -99,10 +99,13 @@ class TestDemoRowCounts:
 
     def test_postings(self, unified_parsed):
         # 66 sub-ledger transfers × 2 legs = 132
-        # + 5 funding batches (1 ledger + N sub-ledger legs each)
+        # + 5 funding batches (1 ledger + N sub-ledger legs each;
+        #   N is 6 or 7 in the SNB structure depending on which
+        #   eligible ledger the batch picks)
         # + 3 fee assessments (1 ledger leg each)
         # + 2 clearing sweeps (2 ledger legs each)
-        assert len(unified_parsed["posting"]) == 154
+        # Total observed under seed=42: 178.
+        assert len(unified_parsed["posting"]) == 178
 
     def test_transfers(self, unified_parsed):
         # 66 sub-ledger + 5 funding + 3 fee + 2 sweep = 76
@@ -115,14 +118,16 @@ class TestDemoRowCounts:
         )
 
     def test_ledger_daily_balances(self, ar_parsed):
-        # 3 internal ledgers × 41 days (0..40 inclusive) = 123 rows.
-        # External ledgers are not reconciled (SPEC "Reconciliation scope").
-        assert len(ar_parsed["ar_ledger_daily_balances"]) == 123
+        # 8 internal GL control ledgers × 41 days (0..40 inclusive) = 328 rows.
+        # External counterparty ledgers are not reconciled
+        # (SPEC "Reconciliation scope").
+        assert len(ar_parsed["ar_ledger_daily_balances"]) == 328
 
     def test_subledger_daily_balances(self, ar_parsed):
-        # 6 internal sub-ledgers × 41 days = 246 rows (the two external
-        # ledgers' four sub-ledgers are omitted).
-        assert len(ar_parsed["ar_subledger_daily_balances"]) == 246
+        # 13 internal sub-ledgers (7 customer DDAs + 6 ZBA operating
+        # sub-accounts) × 41 days = 533 rows. External counterparty
+        # sub-pools are omitted.
+        assert len(ar_parsed["ar_subledger_daily_balances"]) == 533
 
 
 class TestReferentialIntegrity:
@@ -386,14 +391,20 @@ class TestScenarioCoverage:
 
     def test_ledger_limits_seeded(self, ar_parsed):
         """Ledger transfer limits must be seeded — otherwise the
-        limit-breach view has no thresholds to compare against."""
+        limit-breach view has no thresholds to compare against.
+
+        In the SNB structure only DDA Control carries enforced limits
+        (other internal GLs are pure-control accounts; ZBA sweeps are
+        uncapped) so the "≥2 ledgers" requirement from the legacy
+        product-category model no longer applies.
+        """
         from quicksight_gen.account_recon.demo_data import _LEDGER_LIMITS
 
         assert len(_LEDGER_LIMITS) >= 3, "Need ≥3 ledger limit rows"
         types = {xtype for _lid, xtype, _lim in _LEDGER_LIMITS}
         assert len(types) >= 2, "Limits must cover ≥2 transfer types"
         ledgers = {lid for lid, _x, _l in _LEDGER_LIMITS}
-        assert len(ledgers) >= 2, "Limits must span ≥2 ledgers"
+        assert len(ledgers) >= 1, "Need ≥1 ledger carrying limits"
 
     def test_limit_breaches_materialize(self, ar_parsed, unified_parsed):
         """Planted breach cells must emerge from running the view
@@ -543,8 +554,10 @@ class TestUnifiedTables:
         assert len(unified_parsed["transfer"]) == 76
 
     def test_posting_row_count(self, unified_parsed):
-        """154 postings: 132 sub-ledger + ledger-level postings."""
-        assert len(unified_parsed["posting"]) == 154
+        """178 postings: 132 sub-ledger pair legs + 46 ledger-level
+        postings (5 funding batches with 6-7 sub-ledger legs each, 3 fee
+        assessments, 2 clearing sweeps)."""
+        assert len(unified_parsed["posting"]) == 178
 
     def test_posting_transfer_fk(self, unified_parsed):
         """Every posting.transfer_id exists in transfer."""

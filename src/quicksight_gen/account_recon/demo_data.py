@@ -78,18 +78,20 @@ SUBLEDGER_ACCOUNTS: list[tuple[str, str, str]] = [
     # sweeps to zero EOD; the master receives the consolidated balance.
     # Big Meadow Dairy and Cascade Timber Mill have multiple operating
     # locations (the primary ZBA scenario customers); the others have one.
-    ("gl-1850-sub-big-meadow-dairy-main",   "Big Meadow Dairy — Operating (Main)",   "gl-1850-cash-concentration-master"),
-    ("gl-1850-sub-big-meadow-dairy-north",  "Big Meadow Dairy — Operating (North)",  "gl-1850-cash-concentration-master"),
-    ("gl-1850-sub-cascade-timber-mill-a",   "Cascade Timber Mill — Operating (Mill A)", "gl-1850-cash-concentration-master"),
-    ("gl-1850-sub-cascade-timber-mill-b",   "Cascade Timber Mill — Operating (Mill B)", "gl-1850-cash-concentration-master"),
-    ("gl-1850-sub-pinecrest-vineyards",     "Pinecrest Vineyards LLC — Operating",   "gl-1850-cash-concentration-master"),
-    ("gl-1850-sub-harvest-moon-bakery",     "Harvest Moon Bakery — Operating",       "gl-1850-cash-concentration-master"),
+    # Names use em-dash separators only — no parentheses or commas (the
+    # test fixtures parse SQL by simple regex/split and would mis-tokenize).
+    ("gl-1850-sub-big-meadow-dairy-main",   "Big Meadow Dairy — Operating Main",      "gl-1850-cash-concentration-master"),
+    ("gl-1850-sub-big-meadow-dairy-north",  "Big Meadow Dairy — Operating North",     "gl-1850-cash-concentration-master"),
+    ("gl-1850-sub-cascade-timber-mill-a",   "Cascade Timber Mill — Operating Mill A", "gl-1850-cash-concentration-master"),
+    ("gl-1850-sub-cascade-timber-mill-b",   "Cascade Timber Mill — Operating Mill B", "gl-1850-cash-concentration-master"),
+    ("gl-1850-sub-pinecrest-vineyards",     "Pinecrest Vineyards LLC — Operating",    "gl-1850-cash-concentration-master"),
+    ("gl-1850-sub-harvest-moon-bakery",     "Harvest Moon Bakery — Operating",        "gl-1850-cash-concentration-master"),
     #
     # External counterparty sub-pools — clearing/settlement or
     # inbound/outbound split per counterparty so cross-scope transfers
     # have realistic counter-leg targets.
-    ("ext-frb-sub-inbound",                 "FRB Master — Inbound (credits to SNB)",  "ext-frb-snb-master"),
-    ("ext-frb-sub-outbound",                "FRB Master — Outbound (debits from SNB)","ext-frb-snb-master"),
+    ("ext-frb-sub-inbound",                 "FRB Master — Inbound",                 "ext-frb-snb-master"),
+    ("ext-frb-sub-outbound",                "FRB Master — Outbound",                "ext-frb-snb-master"),
     ("ext-payment-gateway-sub-clearing",    "Payment Gateway — Clearing",           "ext-payment-gateway-processor"),
     ("ext-payment-gateway-sub-settlement",  "Payment Gateway — Settlement",         "ext-payment-gateway-processor"),
     ("ext-coffee-supply-sub-inbound",       "Coffee Shop Supply Co — Inbound",      "ext-coffee-shop-supply-co"),
@@ -228,9 +230,12 @@ _LIMIT_BREACH_PLANT: list[tuple[str, int, str, str, str]] = [
 # short-lived overdraft. Disjoint from drift and breach plant cells.
 _OVERDRAFT_PLANT: list[tuple[str, int, str, str]] = [
     # (subledger_account_id, days_ago, debit_amount, memo)
-    ("cust-900-0002-sasquatch-sips",      6, "35000.00", "Emergency outbound — covered next day"),
-    ("cust-700-0002-harvest-moon-bakery", 4, "18000.00", "Overnight sweep reversal pending"),
-    ("gl-1850-sub-cascade-timber-mill-a", 9, "28000.00", "Equipment purchase — funding pending"),
+    # Amounts are sized large enough to drive the planted sub-ledger's
+    # running balance below zero given its prior day's stored balance —
+    # otherwise the overdraft check has nothing to surface.
+    ("cust-900-0002-sasquatch-sips",      6, "45000.00", "Emergency outbound — covered next day"),
+    ("cust-700-0002-harvest-moon-bakery", 4, "40000.00", "Overnight sweep reversal pending"),
+    ("gl-1850-sub-cascade-timber-mill-a", 9, "35000.00", "Equipment purchase — funding pending"),
 ]
 
 
@@ -598,15 +603,21 @@ def _generate_ledger_level_transfers(
             _next_post_id(), tid, ledger_id, None,
             total, posted, "success",
         ))
-        # Distribute debits across sub-ledgers
-        remaining = total
-        for j, sub_id in enumerate(subs):
-            if j == len(subs) - 1:
-                share = remaining
-            else:
-                share = _money(rng, float(total) * 0.1, float(total) * 0.5)
-                share = min(share, remaining)
-            remaining -= share
+        # Distribute debits across sub-ledgers using a random
+        # proportional split. Every sub-ledger gets a non-zero share
+        # (the prior cumulative-min approach could exhaust `remaining`
+        # before the last sub-ledgers, leaving them with $0 legs which
+        # tripped posting_fields_populated).
+        weights = [rng.uniform(0.1, 1.0) for _ in subs]
+        total_w = sum(weights)
+        shares: list[Decimal] = [
+            (total * Decimal(str(w / total_w))).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP,
+            )
+            for w in weights[:-1]
+        ]
+        shares.append(total - sum(shares, Decimal("0")))  # last absorbs rounding
+        for sub_id, share in zip(subs, shares):
             posting_rows.append((
                 _next_post_id(), tid, ledger_id, sub_id,
                 -share, posted, "success",
