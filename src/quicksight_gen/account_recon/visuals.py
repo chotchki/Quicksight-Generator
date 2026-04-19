@@ -42,6 +42,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
     DS_AR_GL_VS_FED_MASTER_DRIFT,
     DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
+    DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
     DS_AR_INTERNAL_REVERSAL_UNCREDITED,
     DS_AR_INTERNAL_TRANSFER_STUCK,
     DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
@@ -2280,13 +2281,93 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
         )
     )
 
+    # F.5.10.b Two-Sided Post Mismatch rollup — same SHAPE check across
+    # F.5.4 (SNB sweep posted, missing Fed leg) + F.5.5 (Fed leg posted,
+    # missing SNB internal catch-up). Teaches the pattern (one side of an
+    # expected pair posted, the other missing) rather than two separate
+    # checks. Per-check tables remain below for drill-in detail.
+    kpi_two_sided_rollup = Visual(
+        KPIVisual=KPIVisual(
+            VisualId="ar-exc-kpi-two-sided-rollup",
+            Title=_title("Two-Sided Post Mismatch"),
+            Subtitle=_subtitle(
+                "Total findings where one side of an expected SNB/Fed "
+                "post pair landed but the other side never did"
+            ),
+            ChartConfiguration=KPIConfiguration(
+                FieldWells=KPIFieldWells(
+                    Values=[
+                        _measure_count(
+                            "ar-exc-two-sided-rollup-count",
+                            DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+                            "transfer_id",
+                        )
+                    ],
+                ),
+            ),
+        )
+    )
+
+    table_two_sided_rollup = Visual(
+        TableVisual=TableVisual(
+            VisualId="ar-exc-two-sided-rollup-table",
+            Title=_title("Two-Sided Post Mismatch"),
+            Subtitle=_subtitle(
+                "Each row is a transfer where the side_present leg posted "
+                "but side_missing never did. source_check identifies the "
+                "detection rule; ordered oldest-first by aging."
+            ),
+            ChartConfiguration=TableConfiguration(
+                FieldWells=TableFieldWells(
+                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
+                        Values=[
+                            _unagg_field("ar-exc-tsr-xfer-id",
+                                         DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+                                         "transfer_id"),
+                            _unagg_field("ar-exc-tsr-observed-at",
+                                         DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+                                         "observed_at"),
+                            _unagg_field("ar-exc-tsr-amount",
+                                         DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+                                         "amount"),
+                            _unagg_field("ar-exc-tsr-side-present",
+                                         DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+                                         "side_present"),
+                            _unagg_field("ar-exc-tsr-side-missing",
+                                         DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+                                         "side_missing"),
+                            _unagg_field("ar-exc-tsr-aging",
+                                         DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+                                         "aging_bucket"),
+                            _unagg_field("ar-exc-tsr-source",
+                                         DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+                                         "source_check"),
+                        ],
+                    )
+                ),
+                SortConfiguration={
+                    "RowSort": [
+                        {
+                            "FieldSort": {
+                                "FieldId": "ar-exc-tsr-aging",
+                                "Direction": "DESC",
+                            },
+                        },
+                    ],
+                },
+            ),
+        )
+    )
+
     return [
+        kpi_two_sided_rollup,
         kpi_expected_zero_rollup,
         kpi_ledger_drift, kpi_subledger_drift, kpi_nonzero,
         kpi_breach, kpi_overdraft, kpi_sweep_target, kpi_sweep_drift,
         kpi_ach_orig_nonzero, kpi_ach_sweep_no_fed, kpi_fed_no_catchup,
         kpi_gl_fed_drift, kpi_internal_stuck, kpi_internal_suspense_nonzero,
         kpi_internal_reversal_uncredited,
+        table_two_sided_rollup,
         table_expected_zero_rollup,
         table_ledger_drift, table_subledger_drift, table_non_zero,
         table_breach, table_overdraft, table_sweep_target,

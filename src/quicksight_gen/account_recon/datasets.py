@@ -249,6 +249,17 @@ EXPECTED_ZERO_EOD_ROLLUP_CONTRACT = DatasetContract(columns=[
     ColumnSpec("aging_bucket", "STRING"),
 ])
 
+TWO_SIDED_POST_MISMATCH_ROLLUP_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("transfer_id", "STRING"),
+    ColumnSpec("observed_at", "DATETIME"),
+    ColumnSpec("amount", "DECIMAL"),
+    ColumnSpec("side_present", "STRING"),
+    ColumnSpec("side_missing", "STRING"),
+    ColumnSpec("source_check", "STRING"),
+    ColumnSpec("days_outstanding", "INTEGER"),
+    ColumnSpec("aging_bucket", "STRING"),
+])
+
 
 # ---------------------------------------------------------------------------
 # Builders
@@ -630,6 +641,25 @@ FROM ar_expected_zero_eod_rollup"""
     )
 
 
+def build_two_sided_post_mismatch_rollup_dataset(cfg: Config) -> DataSet:
+    sql = f"""\
+SELECT
+    transfer_id,
+    observed_at,
+    amount,
+    side_present,
+    side_missing,
+    source_check,
+{_aging_columns('observed_at')}
+FROM ar_two_sided_post_mismatch_rollup"""
+    return build_dataset(
+        cfg, cfg.prefixed("ar-two-sided-post-mismatch-rollup-dataset"),
+        "AR Two-Sided Post Mismatch Rollup",
+        "ar-two-sided-post-mismatch-rollup",
+        sql, TWO_SIDED_POST_MISMATCH_ROLLUP_CONTRACT,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Convenience
 # ---------------------------------------------------------------------------
@@ -655,4 +685,5 @@ def build_all_datasets(cfg: Config) -> list[DataSet]:
         build_internal_transfer_suspense_nonzero_dataset(cfg),
         build_internal_reversal_uncredited_dataset(cfg),
         build_expected_zero_eod_rollup_dataset(cfg),
+        build_two_sided_post_mismatch_rollup_dataset(cfg),
     ]

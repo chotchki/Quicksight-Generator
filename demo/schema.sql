@@ -238,6 +238,7 @@ DROP TABLE IF EXISTS ar_accounts                       CASCADE;
 DROP TABLE IF EXISTS ar_parent_accounts                CASCADE;
 
 -- Current-vocabulary drops
+DROP VIEW  IF EXISTS ar_two_sided_post_mismatch_rollup   CASCADE;
 DROP VIEW  IF EXISTS ar_expected_zero_eod_rollup         CASCADE;
 DROP VIEW  IF EXISTS ar_internal_reversal_uncredited     CASCADE;
 DROP VIEW  IF EXISTS ar_internal_transfer_suspense_nonzero CASCADE;
@@ -864,3 +865,32 @@ SELECT
     stored_balance,
     'Internal Transfer Suspense non-zero EOD' AS source_check
 FROM ar_internal_transfer_suspense_nonzero;
+
+
+-- Two-sided post mismatch rollup (F.5.10.b).
+-- Surfaces the same SHAPE of error — one side of an expected pair
+-- posted, the other side missing — across two SNB/Fed flows:
+--   F.5.4: ACH internal sweep posted, no Fed confirmation
+--          (we have the SNB sweep; missing the Fed leg)
+--   F.5.5: Fed card observation posted, no SNB internal catch-up
+--          (we have the Fed leg; missing the SNB internal post)
+-- Teaches users to recognize the pattern rather than two separate
+-- checks; per-check tables stay below for drill-in detail.
+CREATE VIEW ar_two_sided_post_mismatch_rollup AS
+SELECT
+    sweep_transfer_id                   AS transfer_id,
+    sweep_at                            AS observed_at,
+    sweep_amount                        AS amount,
+    'SNB internal sweep'                AS side_present,
+    'Fed confirmation'                  AS side_missing,
+    'ACH internal sweep without Fed confirmation' AS source_check
+FROM ar_ach_sweep_no_fed_confirmation
+UNION ALL
+SELECT
+    fed_transfer_id                     AS transfer_id,
+    fed_at                              AS observed_at,
+    fed_amount                          AS amount,
+    'Fed card observation'              AS side_present,
+    'SNB internal catch-up'             AS side_missing,
+    'Fed activity without internal catch-up' AS source_check
+FROM ar_fed_card_no_internal_catchup;

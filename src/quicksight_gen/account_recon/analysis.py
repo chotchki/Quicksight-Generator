@@ -29,6 +29,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_INTERNAL_TRANSFER_STUCK,
     DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
     DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
+    DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     SHEET_AR_BALANCES,
@@ -654,6 +655,22 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
         ),
     ]
 
+    # F.5.10.b: Two-Sided Post Mismatch rollup — sits above F.5.10.a so
+    # the same-SHAPE pattern across F.5.4 + F.5.5 (one side of an expected
+    # SNB/Fed post pair landed, the other never did) hits the eye first.
+    two_sided_rollup_row_kpi = [
+        GridLayoutElement(
+            ElementId="ar-exc-kpi-two-sided-rollup",
+            ElementType="VISUAL",
+            ColumnSpan=_FULL, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
+        ),
+    ]
+    two_sided_rollup_table = [
+        _full_width_visual(
+            "ar-exc-two-sided-rollup-table", _TABLE_ROW_SPAN,
+        ),
+    ]
+
     return SheetDefinition(
         SheetId=SHEET_AR_EXCEPTIONS,
         Name="Exceptions",
@@ -663,7 +680,9 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
         Visuals=build_exceptions_visuals(link_color),
         FilterControls=build_exceptions_controls(cfg),
         Layouts=_grid_layout(
-            expected_zero_rollup_row_kpi
+            two_sided_rollup_row_kpi
+            + two_sided_rollup_table
+            + expected_zero_rollup_row_kpi
             + expected_zero_rollup_table
             + kpi_row_a
             + kpi_row_b
@@ -732,6 +751,7 @@ def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaratio
         DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
         DS_AR_INTERNAL_REVERSAL_UNCREDITED,
         DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
+        DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
     ]
     return [
         DataSetIdentifierDeclaration(

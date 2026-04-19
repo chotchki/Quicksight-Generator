@@ -874,6 +874,61 @@ class TestScenarioCoverage:
             "that source check"
         )
 
+    def test_two_sided_post_mismatch_rollup_surfaces_each_source(
+        self, unified_parsed,
+    ):
+        """F.5.10.b rollup unions F.5.4 (SNB sweep posted, Fed leg
+        missing) and F.5.5 (Fed leg posted, SNB internal catch-up
+        missing) — the rollup is empty unless at least one row from
+        each source check exists. Confirms the same-SHAPE pattern
+        teaches across both flows."""
+        xfer_types: dict[str, str] = {}
+        xfer_origins: dict[str, str] = {}
+        xfer_parents: dict[str, str | None] = {}
+        for row in unified_parsed["transfer"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            tid = parts[0]
+            xfer_parents[tid] = None if parts[1] == "NULL" else parts[1]
+            xfer_types[tid] = parts[2]
+            xfer_origins[tid] = parts[3]
+
+        ach_sweep_tids: set[str] = set()
+        fed_card_tids: set[str] = set()
+        for row in unified_parsed["posting"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            tid = parts[1]
+            ledger_id = None if parts[2] == "NULL" else parts[2]
+            sub_id = None if parts[3] == "NULL" else parts[3]
+            if (
+                xfer_types.get(tid) == "clearing_sweep"
+                and ledger_id == "gl-1810-ach-orig-settlement"
+            ):
+                ach_sweep_tids.add(tid)
+            if (
+                xfer_types.get(tid) == "ach"
+                and xfer_origins.get(tid) == "external_force_posted"
+                and xfer_parents.get(tid) is None
+                and sub_id == "ext-payment-gateway-sub-clearing"
+            ):
+                fed_card_tids.add(tid)
+
+        children_of = {
+            parent for parent in xfer_parents.values() if parent is not None
+        }
+        sweeps_no_fed = ach_sweep_tids - children_of
+        feds_no_internal = fed_card_tids - children_of
+
+        assert sweeps_no_fed, (
+            "F.5.10.b rollup needs at least one ACH sweep with no Fed "
+            "confirmation (F.5.4 source) — rollup will be missing that "
+            "source check"
+        )
+        assert feds_no_internal, (
+            "F.5.10.b rollup needs at least one Fed observation with no "
+            "internal catch-up (F.5.5 source) — rollup will be missing "
+            "that source check"
+        )
+
     def test_ach_sweep_no_fed_confirmation_surfaces(self, unified_parsed):
         """F.5.4: ``_ACH_FED_CONFIRMATION_MISSING`` cells must produce
         clearing_sweep transfers on gl-1810 with NO Fed confirmation
@@ -1790,9 +1845,9 @@ class TestGenerateOutput:
     def test_dashboard_file_exists(self, ar_output_dir):
         assert (ar_output_dir / "account-recon-dashboard.json").exists()
 
-    def test_nineteen_dataset_files(self, ar_output_dir):
+    def test_twenty_dataset_files(self, ar_output_dir):
         datasets = list((ar_output_dir / "datasets").glob("qs-gen-ar-*.json"))
-        assert len(datasets) == 19
+        assert len(datasets) == 20
 
     def test_all_files_valid_json(self, ar_output_dir):
         for path in ar_output_dir.rglob("*.json"):
@@ -1921,8 +1976,9 @@ class TestSheetLayout:
         # (KPI + table + aging bar) → 39. Phase F.5.9 adds Reversed-but-
         # not-credited / double spend (KPI + table + aging bar) → 42.
         # Phase F.5.10.a adds Accounts Expected Zero at EOD rollup
-        # (KPI + table) → 44.
-        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 44)
+        # (KPI + table) → 44. Phase F.5.10.b adds Two-Sided Post Mismatch
+        # rollup (KPI + table) → 46.
+        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 46)
 
     def _assert_visual_count(self, out_dir: Path, sheet_id: str, expected: int) -> None:
         analysis = _load(out_dir, "account-recon-analysis.json")
