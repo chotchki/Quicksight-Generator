@@ -817,24 +817,26 @@ GROUP BY t.transfer_id;
 -- SNB internal catch-up child (DR gl-1815, CR merchant DDA). This view
 -- surfaces Fed observations with no internal catch-up — money the Fed
 -- says cleared, that SNB never recorded internally.
+-- Phase G: reads from shared `transactions`; MIN() collapses leg rows.
 CREATE VIEW ar_fed_card_no_internal_catchup AS
 SELECT
     t.transfer_id                       AS fed_transfer_id,
-    t.created_at                        AS fed_at,
-    t.amount                            AS fed_amount
-FROM transfer t
-WHERE t.transfer_type = 'ach'
-  AND t.origin = 'external_force_posted'
+    MIN(t.posted_at)                    AS fed_at,
+    MIN(t.amount)                       AS fed_amount
+FROM transactions t
+WHERE t.transfer_type      = 'ach'
+  AND t.origin             = 'external_force_posted'
   AND t.parent_transfer_id IS NULL
   AND EXISTS (
-    SELECT 1 FROM posting p
-    WHERE p.transfer_id = t.transfer_id
-      AND p.subledger_account_id = 'ext-payment-gateway-sub-clearing'
+    SELECT 1 FROM transactions hit
+    WHERE hit.transfer_id = t.transfer_id
+      AND hit.account_id  = 'ext-payment-gateway-sub-clearing'
   )
   AND NOT EXISTS (
-    SELECT 1 FROM transfer ic
+    SELECT 1 FROM transactions ic
     WHERE ic.parent_transfer_id = t.transfer_id
-  );
+  )
+GROUP BY t.transfer_id;
 
 
 -- GL-vs-Fed Master drift timeline (F.5.6).
