@@ -149,22 +149,27 @@ _DAYS_OF_HISTORY = 40
 # (see SPEC "Reconciliation scope"). Planting them on different cells
 # keeps the two Exceptions tables surfacing different rows.
 #
-# Ledger drift: stored ledger balance vs Σ sub-ledgers' stored balances.
+# Ledger drift: stored ledger balance vs Σ sub-ledgers' stored balances
+# + Σ direct ledger postings. Spread across the three ledgers most
+# active in the demo (DDA Control gets customer activity; Cash
+# Concentration Master gets ZBA sweeps; Cash & Due From FRB gets
+# funding batches and cash sweeps).
 _LEDGER_DRIFT_PLANT: list[tuple[str, int, str]] = [
     # (ledger_account_id, days_ago, delta as decimal string)
-    ("ar-par-checking", 3,  "125.00"),
-    ("ar-par-savings",  7,  "-80.50"),
-    ("ar-par-loans",    14, "310.00"),
+    ("gl-2010-dda-control",               3,  "125.00"),
+    ("gl-1850-cash-concentration-master", 7,  "-80.50"),
+    ("gl-1010-cash-due-frb",              14, "310.00"),
 ]
 
 # Sub-ledger drift: stored sub-ledger balance vs Σ that sub-ledger's
-# posted transactions.
+# posted transactions. Mix of customer DDAs and a ZBA operating sub-
+# account so both layers of the new structure surface in the drift view.
 _SUBLEDGER_DRIFT_PLANT: list[tuple[str, int, str]] = [
     # (subledger_account_id, days_ago, delta as decimal string)
-    ("ar-acc-checking-main", 5,  "200.00"),
-    ("ar-acc-checking-west", 2,  "-75.00"),
-    ("ar-acc-savings-core",  10, "-150.50"),
-    ("ar-acc-loans-farm",    20, "450.00"),
+    ("cust-900-0001-bigfoot-brews",        5,  "200.00"),
+    ("cust-700-0001-big-meadow-dairy",     2,  "-75.00"),
+    ("gl-1850-sub-big-meadow-dairy-main",  10, "-150.50"),
+    ("cust-800-0001-cascade-timber-mill",  20, "450.00"),
 ]
 
 
@@ -183,19 +188,22 @@ _TRANSFER_TYPES: list[tuple[str, int]] = [
 # type) shouldn't accidentally breach these. Planted breaches inject an
 # extra oversized transfer on a specific cell to force the breach.
 #
-# Absence of a row means "no limit enforced" (e.g., loans×wire is
-# unlimited here — wire-out from loans accounts doesn't hit a limit).
-# External ledgers (coop, exchange) have no rows — their sub-ledgers
-# don't participate in the limit check (outbound view filters internal
-# only).
+# In the new SNB model, customer DDAs sit under DDA Control and inherit
+# its per-transfer-type daily limits. ZBA sub-accounts under Cash
+# Concentration Master have no enforced limits (sweeps are uncapped in
+# normal operation). GL control accounts without sub-ledgers (suspense,
+# settlement) carry no limits — they're hit by direct ledger postings
+# governed by other controls.
+#
+# Absence of a row means "no limit enforced" (e.g., DDA Control ×
+# internal carries no limit so on-us transfer plants don't accidentally
+# breach). External ledgers have no rows — their sub-pools are filtered
+# out of the limit check (outbound view: internal only).
 _LEDGER_LIMITS: list[tuple[str, str, str]] = [
     # (ledger_account_id, transfer_type, daily_limit)
-    ("ar-par-checking", "ach",  "20000.00"),
-    ("ar-par-checking", "wire", "15000.00"),
-    ("ar-par-savings",  "ach",  "12000.00"),
-    ("ar-par-savings",  "wire", "15000.00"),
-    ("ar-par-loans",    "cash", "10000.00"),
-    ("ar-par-loans",    "ach",  "18000.00"),
+    ("gl-2010-dda-control", "ach",  "12000.00"),
+    ("gl-2010-dda-control", "wire", "15000.00"),
+    ("gl-2010-dda-control", "cash", "10000.00"),
 ]
 
 
@@ -206,9 +214,9 @@ _LEDGER_LIMITS: list[tuple[str, str, str]] = [
 # table surfaces a different set of rows.
 _LIMIT_BREACH_PLANT: list[tuple[str, int, str, str, str]] = [
     # (subledger_account_id, days_ago, transfer_type, debit_amount, memo)
-    ("ar-acc-checking-main", 8,  "wire", "22000.00", "Bulk wire payout"),
-    ("ar-acc-savings-op",    12, "ach",  "16000.00", "Oversize ACH batch"),
-    ("ar-acc-loans-equip",   18, "cash", "13000.00", "Large cash disbursement"),
+    ("cust-900-0001-bigfoot-brews",       8,  "wire", "22000.00", "Bulk wire payout to roaster supplier"),
+    ("cust-800-0002-pinecrest-vineyards", 12, "ach",  "16000.00", "Oversize ACH batch — bottling supplies"),
+    ("cust-700-0001-big-meadow-dairy",    18, "cash", "13000.00", "Large cash disbursement — feed lot payment"),
 ]
 
 
@@ -220,19 +228,19 @@ _LIMIT_BREACH_PLANT: list[tuple[str, int, str, str, str]] = [
 # short-lived overdraft. Disjoint from drift and breach plant cells.
 _OVERDRAFT_PLANT: list[tuple[str, int, str, str]] = [
     # (subledger_account_id, days_ago, debit_amount, memo)
-    ("ar-acc-checking-west", 6, "35000.00", "Emergency outbound — covered next day"),
-    ("ar-acc-savings-op",    4, "18000.00", "Overnight sweep reversal pending"),
-    ("ar-acc-loans-equip",   9, "28000.00", "Equipment purchase — funding pending"),
+    ("cust-900-0002-sasquatch-sips",      6, "35000.00", "Emergency outbound — covered next day"),
+    ("cust-700-0002-harvest-moon-bakery", 4, "18000.00", "Overnight sweep reversal pending"),
+    ("gl-1850-sub-cascade-timber-mill-a", 9, "28000.00", "Equipment purchase — funding pending"),
 ]
 
 
 # External sub-ledger accounts used as counter-legs for planted breach/
 # overdraft transfers. The counter-leg doesn't affect any tracked balance.
 _EXTERNAL_COUNTER_LEG_POOL: list[str] = [
-    "ar-acc-coop-clearing",
-    "ar-acc-coop-settle",
-    "ar-acc-exchange-in",
-    "ar-acc-exchange-out",
+    "ext-valley-grain-sub-clearing",
+    "ext-valley-grain-sub-settlement",
+    "ext-harvest-credit-sub-inbound",
+    "ext-harvest-credit-sub-outbound",
 ]
 
 
@@ -565,9 +573,16 @@ def _generate_ledger_level_transfers(
         post_idx += 1
         return f"ar-ledger-post-{post_idx:05d}"
 
-    # 1. Funding batches — credit to ledger, debits to sub-ledgers
+    # 1. Funding batches — credit to ledger, debits to sub-ledgers.
+    # Only eligible for internal ledgers that actually have sub-ledgers
+    # (DDA Control, Cash Concentration Master in the SNB structure).
+    # Pure-control ledgers (suspense/settlement) get no funding batches.
+    funding_eligible_ledgers = [
+        lid for lid in internal_ledgers
+        if internal_subledgers_by_ledger.get(lid)
+    ]
     for i in range(_FUNDING_BATCH_COUNT):
-        ledger_id = rng.choice(internal_ledgers)
+        ledger_id = rng.choice(funding_eligible_ledgers)
         subs = internal_subledgers_by_ledger[ledger_id]
         total = _money(rng, 5000, 25000)
         posted = _ts(today, rng.randint(1, _DAYS_OF_HISTORY - 1), rng)
