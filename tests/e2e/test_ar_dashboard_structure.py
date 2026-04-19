@@ -61,8 +61,8 @@ class TestVisuals:
         "Balances": 4,
         "Transfers": 4,
         "Transactions": 5,
-        # Phase 5: 5 KPIs + 5 tables + 2 timelines + 5 aging bars
-        "Exceptions": 17,
+        # Phase F.5 grew Exceptions from 17 → 47 visuals
+        "Exceptions": 47,
     }
 
     def test_visual_counts_per_sheet(self, ar_dashboard_definition):

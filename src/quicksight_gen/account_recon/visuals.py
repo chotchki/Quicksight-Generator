@@ -71,6 +71,7 @@ from quicksight_gen.common.models import (
     CustomActionNavigationOperation,
     CustomActionSetParametersOperation,
     DateDimensionField,
+    DateMeasureField,
     DimensionField,
     FilterOperationSelectedFieldsConfiguration,
     FilterOperationTargetVisualsConfiguration,
@@ -138,6 +139,24 @@ def _measure_sum(field_id: str, ds: str, col_name: str) -> MeasureField:
 def _measure_count(field_id: str, ds: str, col_name: str) -> MeasureField:
     return MeasureField(
         CategoricalMeasureField=CategoricalMeasureField(
+            FieldId=field_id,
+            Column=_col(ds, col_name),
+            AggregationFunction="COUNT",
+        )
+    )
+
+
+def _measure_date_count(
+    field_id: str, ds: str, col_name: str,
+) -> MeasureField:
+    """COUNT aggregation over a DATETIME column.
+
+    QuickSight rejects ``CategoricalMeasureField`` on DATETIME columns
+    (those require ``DateMeasureField`` with the same COUNT/DISTINCT_COUNT
+    aggregations).
+    """
+    return MeasureField(
+        DateMeasureField=DateMeasureField(
             FieldId=field_id,
             Column=_col(ds, col_name),
             AggregationFunction="COUNT",
@@ -1512,7 +1531,7 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
             ChartConfiguration=KPIConfiguration(
                 FieldWells=KPIFieldWells(
                     Values=[
-                        _measure_count(
+                        _measure_date_count(
                             "ar-exc-sweep-drift-count",
                             DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
                             "sweep_date",
@@ -1570,7 +1589,7 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
             ChartConfiguration=KPIConfiguration(
                 FieldWells=KPIFieldWells(
                     Values=[
-                        _measure_count(
+                        _measure_date_count(
                             "ar-exc-ach-orig-nonzero-count",
                             DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
                             "balance_date",
@@ -1653,7 +1672,7 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
         "ACH Origination Non-Zero EOD by Age",
         "How long ACH Origination Settlement non-zero days have been outstanding",
         DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
-        "balance_date",
+        "ledger_account_id",
     )
 
     # F.5.4 Internal sweep posted but no Fed confirmation — internal EOD
@@ -1862,7 +1881,7 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
             ChartConfiguration=KPIConfiguration(
                 FieldWells=KPIFieldWells(
                     Values=[
-                        _measure_count(
+                        _measure_date_count(
                             "ar-exc-gl-fed-drift-count",
                             DS_AR_GL_VS_FED_MASTER_DRIFT,
                             "movement_date",
@@ -2016,7 +2035,7 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
             ChartConfiguration=KPIConfiguration(
                 FieldWells=KPIFieldWells(
                     Values=[
-                        _measure_count(
+                        _measure_date_count(
                             "ar-exc-internal-suspense-nonzero-count",
                             DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
                             "balance_date",
@@ -2099,7 +2118,7 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
         "Internal Suspense Non-Zero EOD by Age",
         "How long Internal Transfer Suspense non-zero days have been outstanding",
         DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
-        "balance_date",
+        "ledger_account_id",
     )
 
     # F.5.9 Internal Transfer Reversal Uncredited / "double spend" — an
