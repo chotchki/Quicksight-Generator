@@ -511,3 +511,122 @@ class TestCrossAppIntegrity:
         """PR and AR posting IDs must not collide."""
         ids = self._col(combined_parsed["posting"], 0)
         assert len(ids) == len(set(ids)), "Duplicate posting IDs across apps"
+
+
+# ---------------------------------------------------------------------------
+# Phase G shared base layer — transactions + daily_balances dual-write
+# ---------------------------------------------------------------------------
+
+import json as _json
+
+CANONICAL_ACCOUNT_TYPES = {
+    "gl_control", "dda", "merchant_dda",
+    "external_counter", "concentration_master", "funds_pool",
+}
+
+
+def _last_quoted(row: str) -> str | None:
+    # Returns the last single-quoted SQL literal (handles '' escape).
+    m = re.search(r"'((?:[^']|'')*)'\s*$", row)
+    return m.group(1).replace("''", "'") if m else None
+
+
+class TestSharedBaseLayer:
+    TXN_COLS = [
+        "transaction_id", "transfer_id", "parent_transfer_id",
+        "transfer_type", "origin", "account_id", "account_name",
+        "control_account_id", "account_type", "is_internal",
+        "signed_amount", "amount", "status", "posted_at",
+        "balance_date", "external_system", "memo", "metadata",
+    ]
+
+    def _col_value(self, row: str, name: str) -> str:
+        # Naive comma-split — safe for cols 0..16 (metadata is index 17
+        # and contains JSON commas, so don't index it this way).
+        idx = self.TXN_COLS.index(name)
+        return [p.strip().strip("'") for p in row.split(",")][idx]
+
+    def test_one_transactions_row_per_posting(self, combined_parsed):
+        # Every posting (PR + AR) gets exactly one transactions row.
+        assert (
+            len(combined_parsed["transactions"])
+            == len(combined_parsed["posting"])
+        )
+
+    def test_includes_pr_and_ar_transfer_types(self, combined_parsed):
+        types = {
+            self._col_value(r, "transfer_type")
+            for r in combined_parsed["transactions"]
+        }
+        assert {"sale", "settlement", "payment", "external_txn"}.issubset(types)
+        assert {"ach", "wire", "clearing_sweep"}.issubset(types)
+
+    def test_account_type_values_are_canonical(self, combined_parsed):
+        types = {
+            self._col_value(r, "account_type")
+            for r in combined_parsed["transactions"]
+        }
+        assert types.issubset(CANONICAL_ACCOUNT_TYPES), (
+            f"Unknown account_type values: {types - CANONICAL_ACCOUNT_TYPES}"
+        )
+
+    def test_metadata_carries_source_provenance(self, combined_parsed):
+        # Sample first 50 across both apps; every row must declare source.
+        for row in combined_parsed["transactions"][:50]:
+            raw = _last_quoted(row)
+            assert raw is not None and raw.startswith("{"), (
+                f"Metadata not JSON-quoted: {row[:120]}"
+            )
+            doc = _json.loads(raw)
+            assert "source" in doc, f"Missing source in metadata: {doc}"
+
+    def test_pr_sales_carry_merchant_account_id(self, combined_parsed):
+        # G.3.5 Phase H prep: every PR sale row carries merchant_account_id.
+        sale_rows = [
+            r for r in combined_parsed["transactions"]
+            if self._col_value(r, "transfer_type") == "sale"
+        ]
+        assert sale_rows, "Expected sale rows in shared transactions"
+        for row in sale_rows[:30]:
+            payload = _json.loads(_last_quoted(row))
+            assert "merchant_account_id" in payload, (
+                "Phase H prep: PR sale metadata must carry merchant_account_id"
+            )
+
+    def test_daily_balances_includes_pr_and_ar_accounts(self, combined_parsed):
+        ids = {
+            r.split(",")[0].strip().strip("'")
+            for r in combined_parsed["daily_balances"]
+        }
+        # PR ledger row + per-merchant sub-ledgers
+        assert "pr-merchant-ledger" in ids
+        assert any(i.startswith("pr-sub-merch-") for i in ids)
+        # AR ledger + DDA samples
+        assert any(i.startswith("gl-") for i in ids)
+        assert any(i.startswith("cust-") for i in ids)
+
+    def test_ledger_rows_have_null_control(self, combined_parsed):
+        # control_account_id NULL ⇒ structural ledger row; populated ⇒
+        # sub-ledger row (per G.0.12 control_account_id IS NULL invariant).
+        null_ctrl: set[str] = set()
+        set_ctrl: set[str] = set()
+        for r in combined_parsed["daily_balances"]:
+            parts = [p.strip() for p in r.split(",")]
+            account_id = parts[0].strip("'")
+            control = parts[2]
+            if control == "NULL":
+                null_ctrl.add(account_id)
+            else:
+                set_ctrl.add(account_id)
+        # No account_id is BOTH a ledger and sub-ledger.
+        overlap = null_ctrl & set_ctrl
+        assert not overlap, f"Account both ledger + sub-ledger row: {overlap}"
+        # PR ledger is among the NULL-control set.
+        assert "pr-merchant-ledger" in null_ctrl
+        # No PR sub-ledger appears with NULL control.
+        assert not any(
+            i.startswith("pr-sub-") or i in {
+                "pr-external-customer-pool", "pr-external-rail",
+            }
+            for i in null_ctrl
+        )

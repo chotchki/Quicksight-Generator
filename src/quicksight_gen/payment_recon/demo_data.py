@@ -13,7 +13,9 @@ Usage::
 
 from __future__ import annotations
 
+import json
 import random
+from collections import defaultdict
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
@@ -82,6 +84,45 @@ PR_SUBLEDGER_ACCOUNTS: list[tuple[str, str, bool, str]] = [
     ("pr-external-rail", "PR External Payment Rail",
      False, "pr-merchant-ledger"),
 ]
+
+
+# ---------------------------------------------------------------------------
+# Phase G: shared-base-table denormalization (PR side)
+# ---------------------------------------------------------------------------
+
+# account_type per G.0.12: role only, structural level derives from
+# control_account_id IS NULL.  See docs/Schema_v3.md for canonical values.
+PR_LEDGER_ACCOUNT_TYPES: dict[str, str] = {
+    "pr-merchant-ledger": "gl_control",
+}
+
+
+def _pr_subledger_account_type(sub_id: str) -> str:
+    if sub_id.startswith("pr-sub-merch-"):
+        return "merchant_dda"
+    if sub_id in ("pr-external-customer-pool", "pr-external-rail"):
+        return "external_counter"
+    raise KeyError(f"No account_type rule for sub-ledger {sub_id!r}")
+
+
+def _pr_provenance_source(transfer_type: str, origin: str) -> str:
+    # External-system observations (BankSync / PaymentHub / ClearSettle)
+    # arrive via processor reports; force-posted writes are operator-driven;
+    # everything else flows through core_banking.
+    if transfer_type == "external_txn":
+        return "processor_report"
+    if origin == "external_force_posted":
+        return "manual_force_post"
+    return "core_banking"
+
+
+def _json_metadata(payload: dict) -> str:
+    # sort_keys for byte-identical output across runs.
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True)
+
+
+def _compact(payload: dict) -> dict:
+    return {k: v for k, v in payload.items() if v is not None}
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +197,7 @@ def _derive_pr_unified_tables(
     payments: list[dict],
     settlements: list[dict],
     sales: list[dict],
-) -> tuple[list[tuple], list[tuple]]:
+) -> tuple[list[tuple], list[tuple], dict[str, dict]]:
     """Derive transfer + posting rows from the PR pipeline data.
 
     Chain direction (parent → child):
@@ -176,9 +217,14 @@ def _derive_pr_unified_tables(
         external_txn: single posting on external-rail (external observation, no counter-party)
 
     Refund sales (negative amount) flow through the same pattern with inverted signs.
+
+    Also returns ``transfer_metadata`` — per transfer_id, the rich
+    PR-domain context (card_brand, settlement_type, payment_method, etc.)
+    that flows into the shared `transactions` table's metadata column.
     """
     transfer_rows: list[tuple] = []
     posting_rows: list[tuple] = []
+    transfer_metadata: dict[str, dict] = {}
     posting_idx = 0
 
     def _posting(transfer_id: str, account_id: str, amount: Decimal,
@@ -213,6 +259,12 @@ def _derive_pr_unified_tables(
             None,
             e["external_system"],
         ))
+        transfer_metadata[tid] = _compact({
+            "external_system": e["external_system"],
+            "record_count": e["record_count"],
+            "merchant_id": e["merchant_id"],
+            "external_transaction_id": e["transaction_id"],
+        })
         _posting(tid, "pr-external-rail", -e["external_amount"],
                  e["transaction_date"])
 
@@ -234,6 +286,16 @@ def _derive_pr_unified_tables(
             None,
             None,
         ))
+        transfer_metadata[tid] = _compact({
+            "payment_method": p["payment_method"],
+            "payment_status": p["payment_status"],
+            "is_returned": p["is_returned"],
+            "return_reason": p["return_reason"],
+            "merchant_id": p["merchant_id"],
+            "merchant_account_id": merchant_sub,
+            "settlement_id": p["settlement_id"],
+            "payment_id": p["payment_id"],
+        })
         posting_status = "failed" if p["payment_status"] == "returned" else "success"
         _posting(tid, "pr-external-rail", p["payment_amount"],
                  p["payment_date"], posting_status)
@@ -259,6 +321,14 @@ def _derive_pr_unified_tables(
             None,
             None,
         ))
+        transfer_metadata[tid] = _compact({
+            "settlement_type": s["settlement_type"],
+            "settlement_status": s["settlement_status"],
+            "sale_count": s["sale_count"],
+            "merchant_id": s["merchant_id"],
+            "merchant_account_id": merchant_sub,
+            "settlement_id": s["settlement_id"],
+        })
         posting_status = "failed" if s["settlement_status"] == "failed" else "success"
         _posting(tid, merchant_sub, s["settlement_amount"],
                  s["settlement_date"], posting_status)
@@ -280,12 +350,162 @@ def _derive_pr_unified_tables(
             None,
             None,
         ))
+        transfer_metadata[tid] = _compact({
+            "card_brand": sale["card_brand"],
+            "card_last_four": sale["card_last_four"],
+            "payment_method": sale["payment_method"],
+            "sale_type": sale["sale_type"],
+            "cashier": sale["cashier"],
+            "location_id": sale["location_id"],
+            "settlement_id": sale["settlement_id"],
+            "merchant_id": sale["merchant_id"],
+            "merchant_account_id": merchant_sub,
+            "reference_id": sale["reference_id"],
+            "tags": sale["metadata"],
+            "taxes": float(sale["taxes"]) if sale["taxes"] is not None else None,
+            "tips": float(sale["tips"]) if sale["tips"] is not None else None,
+            "discount_percentage": (
+                float(sale["discount_percentage"])
+                if sale["discount_percentage"] is not None else None
+            ),
+            "sale_id": sale["sale_id"],
+        })
         _posting(tid, merchant_sub, -sale["amount"],
                  sale["sale_timestamp"])
         _posting(tid, "pr-external-customer-pool", sale["amount"],
                  sale["sale_timestamp"])
 
-    return transfer_rows, posting_rows
+    return transfer_rows, posting_rows, transfer_metadata
+
+
+# ---------------------------------------------------------------------------
+# Phase G: shared-base-table derivation (PR side)
+# ---------------------------------------------------------------------------
+
+def _derive_pr_shared_base_tables(
+    transfer_rows: list[tuple],
+    posting_rows: list[tuple],
+    transfer_metadata: dict[str, dict],
+) -> tuple[list[tuple], list[tuple]]:
+    """Phase G dual-write: PR-side `transactions` + `daily_balances` rows.
+
+    Every posting becomes one transactions row with the merchant
+    sub-ledger's name/type/control_account_id denormalized in.  PR-rich
+    metadata (card_brand, settlement_type, payment_method, …) flows in
+    via ``transfer_metadata`` and is wrapped with a `source` provenance
+    key.  Daily balances are running Σ of successful postings per
+    (account, date), spanning the observed posting window.
+    """
+    pr_lid, pr_lname, pr_lint = PR_LEDGER_ACCOUNT
+    pr_ledger_type = PR_LEDGER_ACCOUNT_TYPES[pr_lid]
+    subledger_lookup = {
+        sid: (name, is_int)
+        for sid, name, is_int, _lid in PR_SUBLEDGER_ACCOUNTS
+    }
+    transfer_lookup = {row[0]: row for row in transfer_rows}
+
+    transactions_rows: list[tuple] = []
+    for row in posting_rows:
+        (posting_id, transfer_id, _ledger_id, sub_id,
+         signed_amount, posted_at, status) = row
+        if sub_id is None:
+            raise AssertionError(
+                f"PR posting {posting_id!r} has no sub-ledger; expected one"
+            )
+        xfer = transfer_lookup[transfer_id]
+        (_tid, parent_tid, transfer_type, origin,
+         _amount, _xfer_status, _xfer_posted, memo,
+         external_system) = xfer
+
+        sub_name, is_internal = subledger_lookup[sub_id]
+        balance_date = (
+            posted_at.date() if isinstance(posted_at, datetime) else posted_at
+        )
+        signed = (
+            signed_amount if isinstance(signed_amount, Decimal)
+            else Decimal(str(signed_amount))
+        )
+        meta = {"source": _pr_provenance_source(transfer_type, origin)}
+        meta.update(transfer_metadata.get(transfer_id, {}))
+
+        transactions_rows.append((
+            posting_id,
+            transfer_id,
+            parent_tid,
+            transfer_type,
+            origin,
+            sub_id,
+            sub_name,
+            pr_lid,
+            _pr_subledger_account_type(sub_id),
+            is_internal,
+            signed,
+            abs(signed),
+            status,
+            posted_at,
+            balance_date,
+            external_system,
+            memo,
+            _json_metadata(meta),
+        ))
+
+    # ---- Daily balances: running Σ per (account, day) for the window ----
+    successful = [
+        (sub_id, posted_at, signed_amount)
+        for (_pid, _tid, _lid, sub_id, signed_amount, posted_at, status)
+        in posting_rows
+        if status == "success" and sub_id is not None
+    ]
+    if not successful:
+        return transactions_rows, []
+
+    deltas: dict[tuple[str, date], Decimal] = defaultdict(lambda: Decimal("0"))
+    for sub_id, posted_at, amount in successful:
+        bdate = posted_at.date() if isinstance(posted_at, datetime) else posted_at
+        amt = amount if isinstance(amount, Decimal) else Decimal(str(amount))
+        deltas[(sub_id, bdate)] += amt
+
+    posting_dates = [bdate for (_s, bdate) in deltas.keys()]
+    min_date = min(posting_dates)
+    max_date = max(posting_dates)
+    span = (max_date - min_date).days + 1
+    days = [min_date + timedelta(days=i) for i in range(span)]
+
+    sub_running: dict[str, Decimal] = {
+        sid: Decimal("0") for sid, _n, _i, _l in PR_SUBLEDGER_ACCOUNTS
+    }
+    daily_balance_rows: list[tuple] = []
+    for d in days:
+        for sid, sub_name, sub_internal, _l in PR_SUBLEDGER_ACCOUNTS:
+            sub_running[sid] += deltas.get((sid, d), Decimal("0"))
+            account_type = _pr_subledger_account_type(sid)
+            payload: dict[str, Any] = {"source": "core_banking"}
+            if sid.startswith("pr-sub-"):
+                payload["merchant_id"] = sid.removeprefix("pr-sub-")
+            daily_balance_rows.append((
+                sid,
+                sub_name,
+                pr_lid,
+                account_type,
+                sub_internal,
+                d,
+                sub_running[sid].quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP),
+                _json_metadata(payload),
+            ))
+        ledger_total = sum(sub_running.values(), Decimal("0"))
+        daily_balance_rows.append((
+            pr_lid,
+            pr_lname,
+            None,
+            pr_ledger_type,
+            pr_lint,
+            d,
+            ledger_total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+            _json_metadata({"source": "core_banking"}),
+        ))
+
+    return transactions_rows, daily_balance_rows
 
 
 # ---------------------------------------------------------------------------
@@ -327,8 +547,15 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
     ext_txns = _generate_external_transactions(rng, today, payments)
 
     # -- Unified transfer + posting tables --
-    transfer_rows, posting_rows = _derive_pr_unified_tables(
+    transfer_rows, posting_rows, transfer_metadata = _derive_pr_unified_tables(
         ext_txns, payments, settlements, sales,
+    )
+
+    # -- Phase G dual-write: shared transactions + daily_balances --
+    shared_transaction_rows, shared_daily_balance_rows = (
+        _derive_pr_shared_base_tables(
+            transfer_rows, posting_rows, transfer_metadata,
+        )
     )
 
     # -- Assemble SQL in FK-safe order --
@@ -407,6 +634,20 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
                   "subledger_account_id", "signed_amount", "posted_at",
                   "status"],
                  posting_rows),
+
+        _inserts("transactions",
+                 ["transaction_id", "transfer_id", "parent_transfer_id",
+                  "transfer_type", "origin", "account_id", "account_name",
+                  "control_account_id", "account_type", "is_internal",
+                  "signed_amount", "amount", "status", "posted_at",
+                  "balance_date", "external_system", "memo", "metadata"],
+                 shared_transaction_rows),
+
+        _inserts("daily_balances",
+                 ["account_id", "account_name", "control_account_id",
+                  "account_type", "is_internal", "balance_date", "balance",
+                  "metadata"],
+                 shared_daily_balance_rows),
     ]
     return "\n".join(parts) + "\n"
 

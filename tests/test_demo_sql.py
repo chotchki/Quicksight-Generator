@@ -86,7 +86,7 @@ class TestSeedSql:
 
     def test_every_insert_ends_with_semicolon(self, seed_sql):
         inserts = re.findall(r"(INSERT INTO \w+.*?;)", seed_sql, re.DOTALL)
-        assert len(inserts) == 9, f"Expected 9 INSERT blocks, got {len(inserts)}"
+        assert len(inserts) == 11, f"Expected 11 INSERT blocks, got {len(inserts)}"
         for block in inserts:
             assert block.rstrip().endswith(";")
 
@@ -102,6 +102,8 @@ class TestSeedSql:
             "pr_payments",
             "transfer",
             "posting",
+            "transactions",
+            "daily_balances",
         }
         assert set(tables) == expected
 
@@ -120,6 +122,10 @@ class TestSeedSql:
         assert positions["pr_sales"] < positions["pr_payments"]
         assert positions["ar_subledger_accounts"] < positions["transfer"]
         assert positions["transfer"] < positions["posting"]
+        # Phase G shared base layer follows posting (transactions
+        # references transfer; daily_balances has no FKs but pairs with it).
+        assert positions["posting"] < positions["transactions"]
+        assert positions["transactions"] < positions["daily_balances"]
 
 
 # ---------------------------------------------------------------------------

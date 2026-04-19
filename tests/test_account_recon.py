@@ -1798,6 +1798,9 @@ class TestSeedSqlStructure:
             "ar_subledger_daily_balances",
             "transfer",
             "posting",
+            # Phase G shared base layer (dual-write).
+            "transactions",
+            "daily_balances",
         }
 
     def test_fk_safe_order(self, ar_sql):

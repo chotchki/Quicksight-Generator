@@ -28,6 +28,7 @@ ID scheme:
 
 from __future__ import annotations
 
+import json
 import random
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
@@ -400,6 +401,68 @@ _INTERNAL_TRANSFER_PLANT: list[tuple[str, str, int, str, str]] = [
 ]
 
 _INTERNAL_TRANSFER_SUSPENSE_LEDGER = "gl-1830-internal-transfer-suspense"
+
+
+# ---------------------------------------------------------------------------
+# Phase G: shared-base-table denormalization
+# ---------------------------------------------------------------------------
+
+# account_type per G.0.12: role only, structural level derives from
+# control_account_id IS NULL.  See docs/Schema_v3.md for the canonical
+# value list.
+LEDGER_ACCOUNT_TYPES: dict[str, str] = {
+    "gl-1010-cash-due-frb":               "gl_control",
+    "gl-1810-ach-orig-settlement":        "gl_control",
+    "gl-1815-card-acquiring-settlement":  "gl_control",
+    "gl-1820-wire-settlement-suspense":   "gl_control",
+    "gl-1830-internal-transfer-suspense": "gl_control",
+    "gl-1850-cash-concentration-master":  "concentration_master",
+    "gl-1899-internal-suspense-recon":    "gl_control",
+    "gl-2010-dda-control":                "gl_control",
+    "ext-frb-snb-master":                 "external_counter",
+    "ext-payment-gateway-processor":      "external_counter",
+    "ext-coffee-shop-supply-co":          "external_counter",
+    "ext-valley-grain-coop":              "external_counter",
+    "ext-harvest-credit-exchange":        "external_counter",
+}
+
+
+def _subledger_account_type(sub_id: str) -> str:
+    # cust-900-* are the three coffee retailers shared with PR; they
+    # carry the merchant role from AR's perspective too.
+    if sub_id.startswith("cust-900-"):
+        return "merchant_dda"
+    if sub_id.startswith("cust-"):
+        return "dda"
+    if sub_id.startswith("gl-1850-sub-"):
+        return "concentration_master"
+    if sub_id.startswith("ext-"):
+        return "external_counter"
+    raise KeyError(f"No account_type rule for sub-ledger {sub_id!r}")
+
+
+def _provenance_source(transfer_type: str, origin: str) -> str:
+    if transfer_type == "clearing_sweep":
+        return "sweep_engine"
+    if origin == "external_force_posted":
+        return "manual_force_post"
+    return "core_banking"
+
+
+def _json_metadata(payload: dict) -> str:
+    # sort_keys for deterministic output across runs.
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True)
+
+
+def _ledger_limits_payload(ledger_id: str) -> dict[str, float]:
+    # Per G.0.4 Locked: limits live in daily_balances.metadata on the
+    # ledger row.  Float so JSON serializes without quotes (the consumer
+    # uses JSON_VALUE(... AS NUMERIC)).
+    return {
+        xtype: float(Decimal(amt))
+        for lid, xtype, amt in _LEDGER_LIMITS
+        if lid == ledger_id
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1470,6 +1533,120 @@ def _derive_unified_tables(
     return transfer_rows, posting_rows
 
 
+def _derive_shared_base_tables(
+    transfer_rows: list[tuple],
+    posting_rows: list[tuple],
+    subledger_balances: list[dict],
+    ledger_balances: list[dict],
+) -> tuple[list[tuple], list[tuple]]:
+    """Phase G dual-write: derive `transactions` + `daily_balances` rows.
+
+    Account name / type / control-account are denormalized onto every
+    row so a single SELECT serves common queries without joins.  Source
+    provenance lands in `metadata.source` everywhere; ledger-row limits
+    pack into `metadata.limits` per G.0.4.
+    """
+    ledger_lookup = {
+        lid: (name, is_internal, LEDGER_ACCOUNT_TYPES[lid])
+        for lid, name, is_internal in LEDGER_ACCOUNTS
+    }
+    subledger_lookup = {
+        sid: (name, lid)
+        for sid, name, lid in SUBLEDGER_ACCOUNTS
+    }
+    transfer_lookup = {row[0]: row for row in transfer_rows}
+
+    transactions_rows: list[tuple] = []
+    for row in posting_rows:
+        (posting_id, transfer_id, ledger_id, sub_id,
+         signed_amount, posted_at, status) = row
+        xfer = transfer_lookup[transfer_id]
+        (_tid, parent_tid, transfer_type, origin,
+         _amount, _xfer_status, _xfer_posted, memo) = xfer
+
+        if sub_id is not None:
+            account_id = sub_id
+            sub_name, sub_ledger_id = subledger_lookup[sub_id]
+            account_name = sub_name
+            account_type = _subledger_account_type(sub_id)
+            control_account_id = sub_ledger_id
+            _ln, is_internal, _lt = ledger_lookup[sub_ledger_id]
+        else:
+            account_id = ledger_id
+            ledger_name, is_internal, ledger_type = ledger_lookup[ledger_id]
+            account_name = ledger_name
+            account_type = ledger_type
+            control_account_id = None
+
+        balance_date = (
+            posted_at.date() if isinstance(posted_at, datetime) else posted_at
+        )
+        signed = (
+            signed_amount if isinstance(signed_amount, Decimal)
+            else Decimal(str(signed_amount))
+        )
+        new_status = "success" if status == "success" else "failed"
+        metadata = _json_metadata(
+            {"source": _provenance_source(transfer_type, origin)},
+        )
+
+        transactions_rows.append((
+            posting_id,            # transaction_id (re-uses the leg-unique id)
+            transfer_id,
+            parent_tid,
+            transfer_type,
+            origin,
+            account_id,
+            account_name,
+            control_account_id,
+            account_type,
+            is_internal,
+            signed,
+            abs(signed),
+            new_status,
+            posted_at,
+            balance_date,
+            None,                  # external_system — AR rows have none
+            memo,
+            metadata,
+        ))
+
+    daily_balances_rows: list[tuple] = []
+    for b in subledger_balances:
+        sid = b["subledger_account_id"]
+        sub_name, ledger_id = subledger_lookup[sid]
+        _ln, is_internal, _lt = ledger_lookup[ledger_id]
+        daily_balances_rows.append((
+            sid,
+            sub_name,
+            ledger_id,
+            _subledger_account_type(sid),
+            is_internal,
+            b["balance_date"],
+            b["balance"],
+            _json_metadata({"source": "core_banking"}),
+        ))
+    for b in ledger_balances:
+        lid = b["ledger_account_id"]
+        ledger_name, is_internal, account_type = ledger_lookup[lid]
+        payload: dict[str, Any] = {"source": "core_banking"}
+        limits = _ledger_limits_payload(lid)
+        if limits:
+            payload["limits"] = limits
+        daily_balances_rows.append((
+            lid,
+            ledger_name,
+            None,                  # control_account_id NULL ⇒ ledger-level
+            account_type,
+            is_internal,
+            b["balance_date"],
+            b["balance"],
+            _json_metadata(payload),
+        ))
+
+    return transactions_rows, daily_balances_rows
+
+
 def generate_demo_sql(anchor_date: date | None = None) -> str:
     """Return INSERT statements for every ``ar_*`` demo table.
 
@@ -1553,6 +1730,13 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
         ),
     )
 
+    shared_transaction_rows, shared_daily_balance_rows = (
+        _derive_shared_base_tables(
+            transfer_rows, posting_rows,
+            subledger_balances, ledger_balances,
+        )
+    )
+
     parts = [
         f"-- Sasquatch National Bank — demo seed data",
         f"-- Anchor date: {today.isoformat()}\n",
@@ -1590,5 +1774,19 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
                   "subledger_account_id", "signed_amount", "posted_at",
                   "status"],
                  posting_rows),
+
+        _inserts("transactions",
+                 ["transaction_id", "transfer_id", "parent_transfer_id",
+                  "transfer_type", "origin", "account_id", "account_name",
+                  "control_account_id", "account_type", "is_internal",
+                  "signed_amount", "amount", "status", "posted_at",
+                  "balance_date", "external_system", "memo", "metadata"],
+                 shared_transaction_rows),
+
+        _inserts("daily_balances",
+                 ["account_id", "account_name", "control_account_id",
+                  "account_type", "is_internal", "balance_date", "balance",
+                  "metadata"],
+                 shared_daily_balance_rows),
     ]
     return "\n".join(parts) + "\n"
