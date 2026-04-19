@@ -104,27 +104,29 @@ class TestDemoRowCounts:
         #   eligible ledger the batch picks)
         # + 3 fee assessments (1 ledger leg each)
         # + 2 inter-ledger clearing sweeps (2 ledger legs each)
-        # + 18 ZBA EOD sweeps × 2 legs each (1 sub-ledger + 1 ledger-direct)
+        # + 20 ZBA EOD sweeps × 2 legs each (1 sub-ledger + 1 ledger-direct)
         # + 2 ZBA fail-plant deposits × 2 legs each
+        # + 2 ZBA mismatch-plant deposits × 2 legs each
         # + 132 ACH cycle postings (14 days × 3 originations × 2 legs each
         #   = 84; 13 EOD sweeps × 2 = 26; 11 Fed confirmations × 2 = 22)
         # + 36 card settlement postings (10 Fed observations × 2 = 20;
         #   8 internal catch-ups × 2 legs each = 16)
         # + 16 on-us internal transfer postings (5 originate × 2 = 10;
         #   2 success step-2 × 2 = 4; 1 reversal-not-credited × 2 = 2)
-        # Total observed under seed=42: 402.
-        assert len(unified_parsed["posting"]) == 402
+        # Total observed under seed=42: 410.
+        assert len(unified_parsed["posting"]) == 410
 
     def test_transfers(self, unified_parsed):
         # 66 sub-ledger + 5 funding + 3 fee + 2 inter-ledger sweep
-        # + 18 ZBA EOD sweep + 2 ZBA fail-plant deposit
+        # + 20 ZBA EOD sweep + 2 ZBA fail-plant deposit
+        # + 2 ZBA mismatch-plant deposit
         # + 66 ACH cycle (14×3 originations + 13 EOD sweeps + 11 Fed
         #   confirmations)
         # + 18 card settlement (10 Fed observations + 8 internal catch-ups)
         # + 8 on-us internal transfers (5 originate + 2 success step-2
         #   + 1 reversal-not-credited step-2)
-        # = 188
-        assert len(unified_parsed["transfer"]) == 188
+        # = 192
+        assert len(unified_parsed["transfer"]) == 192
 
     def test_ledger_transfer_limits(self, ar_parsed):
         from quicksight_gen.account_recon.demo_data import _LEDGER_LIMITS
@@ -539,6 +541,73 @@ class TestScenarioCoverage:
             f"Expected ≥10 ZBA sweep transfers (mixed-level), got "
             f"{len(zba_sweeps)}"
         )
+
+    def test_zba_sweep_leg_mismatches_surface(self, unified_parsed):
+        """F.5.2: leg-mismatch plants must produce ``clearing_sweep``
+        transfers whose master ledger-direct leg amount differs from the
+        sub-leg by exactly ``master_delta``. This is what surfaces in
+        ar_concentration_master_sweep_drift as non-zero daily drift."""
+        from datetime import timedelta
+        from quicksight_gen.account_recon.demo_data import (
+            _ZBA_SWEEP_LEG_MISMATCH_PLANT,
+        )
+
+        xfer_types: dict[str, str] = {}
+        xfer_dates: dict[str, str] = {}
+        for row in unified_parsed["transfer"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            xfer_types[parts[0]] = parts[2]
+            # transfer.first_posted_at column index 6
+            xfer_dates[parts[0]] = parts[6][:10]
+
+        legs_by_xfer: dict[str, list[tuple[str | None, str | None, Decimal]]] = {}
+        for row in unified_parsed["posting"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            # posting columns: posting_id, transfer_id, ledger_account_id,
+            # subledger_account_id, signed_amount, posted_at, status
+            tid = parts[1]
+            ledger_id = None if parts[2] == "NULL" else parts[2]
+            sub_id = None if parts[3] == "NULL" else parts[3]
+            amt = Decimal(parts[4])
+            legs_by_xfer.setdefault(tid, []).append((sub_id, ledger_id, amt))
+
+        plant_dates = {
+            (sub_id, (ANCHOR - timedelta(days=da)).isoformat()): Decimal(d)
+            for sub_id, da, d in _ZBA_SWEEP_LEG_MISMATCH_PLANT
+        }
+        matched: list[tuple[str, str, Decimal]] = []
+        for tid, legs in legs_by_xfer.items():
+            if xfer_types.get(tid) != "clearing_sweep":
+                continue
+            sub_legs = [l for l in legs if l[0] is not None]
+            master_legs = [
+                l for l in legs
+                if l[0] is None
+                and l[1] == "gl-1850-cash-concentration-master"
+            ]
+            if len(sub_legs) != 1 or len(master_legs) != 1:
+                continue
+            sub_id, _, sub_amt = sub_legs[0]
+            _, _, master_amt = master_legs[0]
+            net = sub_amt + master_amt
+            if net == 0:
+                continue
+            xfer_date = xfer_dates.get(tid, "")
+            matched.append((sub_id, xfer_date, net))
+
+        for (sub_id, bdate), expected_delta in plant_dates.items():
+            hit = [
+                (sid, bd, n) for sid, bd, n in matched
+                if sid == sub_id and bd == bdate
+            ]
+            assert hit, (
+                f"No mismatched sweep transfer found for plant "
+                f"({sub_id}, {bdate})"
+            )
+            assert any(abs(n - expected_delta) < Decimal("0.01") for *_, n in hit), (
+                f"Sweep leg mismatch for ({sub_id}, {bdate}) does not "
+                f"match expected delta {expected_delta} (got {hit})"
+            )
 
     def test_zba_sweep_failures_surface(self, ar_parsed):
         """F.4.1 fail-plant cells must drive the operating sub-account's
@@ -1010,21 +1079,23 @@ class TestUnifiedTables:
         ]
 
     def test_transfer_row_count(self, unified_parsed):
-        """188 transfers: 66 sub-ledger + 5 funding + 3 fee + 2 inter-ledger
-        sweep + 18 ZBA EOD sweep + 2 ZBA fail-plant deposit + 66 ACH cycle
+        """192 transfers: 66 sub-ledger + 5 funding + 3 fee + 2 inter-ledger
+        sweep + 20 ZBA EOD sweep + 2 ZBA fail-plant deposit
+        + 2 ZBA mismatch-plant deposit + 66 ACH cycle
         + 18 card settlement (10 Fed observations + 8 internal catch-ups)
         + 8 on-us internal (5 originate + 3 step-2)."""
-        assert len(unified_parsed["transfer"]) == 188
+        assert len(unified_parsed["transfer"]) == 192
 
     def test_posting_row_count(self, unified_parsed):
-        """402 postings: 132 sub-ledger pair legs + 46 ledger-level postings
+        """410 postings: 132 sub-ledger pair legs + 46 ledger-level postings
         (5 funding batches with 6-7 sub-ledger legs each, 3 fee assessments,
-        2 inter-ledger clearing sweeps) + 36 ZBA sweep legs (18 sub-ledger
-        + 18 ledger-direct) + 4 ZBA fail-plant deposit legs + 132 ACH cycle
+        2 inter-ledger clearing sweeps) + 40 ZBA sweep legs (20 sub-ledger
+        + 20 ledger-direct) + 4 ZBA fail-plant deposit legs
+        + 4 ZBA mismatch-plant deposit legs + 132 ACH cycle
         legs (84 origination + 26 sweep + 22 Fed confirmation) + 36 card
         settlement legs (20 Fed observation + 16 internal catch-up)
         + 16 on-us internal transfer legs."""
-        assert len(unified_parsed["posting"]) == 402
+        assert len(unified_parsed["posting"]) == 410
 
     def test_posting_transfer_fk(self, unified_parsed):
         """Every posting.transfer_id exists in transfer."""
@@ -1180,7 +1251,21 @@ class TestLedgerPostingScenarios:
         """Each clearing sweep has 2 legs that net to zero. Inter-ledger
         sweeps are ledger-only on both legs; ZBA sweeps are mixed-level
         (one sub-ledger leg zeroes out an operating sub-account, one
-        ledger-direct leg offsets at the master ledger)."""
+        ledger-direct leg offsets at the master ledger).
+
+        F.5.2 mismatch plants intentionally break this invariant on a
+        small fixed set of sweep transfers — the offset surfaces as
+        Concentration Master sweep drift. Those are exempted here.
+        """
+        from datetime import timedelta
+        from quicksight_gen.account_recon.demo_data import (
+            _ZBA_SWEEP_LEG_MISMATCH_PLANT,
+        )
+        plant_dates = {
+            (sub_id, (ANCHOR - timedelta(days=da)).isoformat())
+            for sub_id, da, _ in _ZBA_SWEEP_LEG_MISMATCH_PLANT
+        }
+
         postings = self._parse_postings(unified_parsed)
         xfer_types = self._parse_transfers(unified_parsed)
         by_xfer: dict[str, list] = {}
@@ -1189,6 +1274,11 @@ class TestLedgerPostingScenarios:
                 by_xfer.setdefault(p["transfer_id"], []).append(p)
         for tid, legs in by_xfer.items():
             assert len(legs) == 2, f"Sweep {tid} has {len(legs)} legs, expected 2"
+            sub_legs = [l for l in legs if l["subledger_account_id"]]
+            sub_id = sub_legs[0]["subledger_account_id"] if sub_legs else None
+            day = legs[0]["posted_at"][:10]
+            if sub_id and (sub_id, day) in plant_dates:
+                continue  # planted mismatch — drift surfaces in F.5.2
             net = sum(leg["signed_amount"] for leg in legs)
             assert net == 0, f"Sweep {tid} net={net}, expected 0"
 
@@ -1354,9 +1444,9 @@ class TestGenerateOutput:
     def test_dashboard_file_exists(self, ar_output_dir):
         assert (ar_output_dir / "account-recon-dashboard.json").exists()
 
-    def test_ten_dataset_files(self, ar_output_dir):
+    def test_eleven_dataset_files(self, ar_output_dir):
         datasets = list((ar_output_dir / "datasets").glob("qs-gen-ar-*.json"))
-        assert len(datasets) == 10
+        assert len(datasets) == 11
 
     def test_all_files_valid_json(self, ar_output_dir):
         for path in ar_output_dir.rglob("*.json"):
@@ -1472,8 +1562,9 @@ class TestSheetLayout:
         # Phase 5: five baseline checks (three drift KPIs + breach +
         # overdraft) → 5 KPIs + 5 tables + 2 timelines + 5 aging bars
         # = 17. Phase F.5.1 adds Sweep target non-zero EOD
-        # (KPI + table + aging bar) → 20.
-        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 20)
+        # (KPI + table + aging bar) → 20. Phase F.5.2 adds
+        # Concentration Master sweep drift (KPI + timeline) → 22.
+        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 22)
 
     def _assert_visual_count(self, out_dir: Path, sheet_id: str, expected: int) -> None:
         analysis = _load(out_dir, "account-recon-analysis.json")

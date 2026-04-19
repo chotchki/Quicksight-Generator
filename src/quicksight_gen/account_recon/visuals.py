@@ -36,6 +36,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_SUBLEDGER_ACCOUNTS,
     DS_AR_SUBLEDGER_BALANCE_DRIFT,
     DS_AR_SWEEP_TARGET_NONZERO,
+    DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     SHEET_AR_BALANCES,
@@ -1485,12 +1486,71 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
         "subledger_account_id",
     )
 
+    # F.5.2 Concentration master vs sub-account sweeps drift — daily
+    # difference between sweep credits posted to Cash Concentration Master
+    # and sweep debits drained from operating sub-accounts. KPI counts
+    # drift days; timeline shows when legs went out of step.
+    kpi_sweep_drift = Visual(
+        KPIVisual=KPIVisual(
+            VisualId="ar-exc-kpi-sweep-drift",
+            Title=_title("Concentration Master Sweep Drift Days"),
+            Subtitle=_subtitle(
+                "Days the Cash Concentration Master credits and operating "
+                "sub-account debits from clearing_sweep transfers didn't "
+                "balance — sweep leg keyed off, missing, or extra"
+            ),
+            ChartConfiguration=KPIConfiguration(
+                FieldWells=KPIFieldWells(
+                    Values=[
+                        _measure_count(
+                            "ar-exc-sweep-drift-count",
+                            DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
+                            "sweep_date",
+                        )
+                    ],
+                ),
+            ),
+        )
+    )
+
+    timeline_sweep_drift = Visual(
+        BarChartVisual=BarChartVisual(
+            VisualId="ar-exc-sweep-drift-timeline",
+            Title=_title("Concentration Master Sweep Drift Timeline"),
+            Subtitle=_subtitle(
+                "Per-day drift = Σ Master credits + Σ sub-account debits "
+                "from clearing_sweep transfers. Healthy days = 0; non-zero "
+                "bars are days the sweep legs didn't balance."
+            ),
+            ChartConfiguration=BarChartConfiguration(
+                FieldWells=BarChartFieldWells(
+                    BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
+                        Category=[_date_dim(
+                            "ar-exc-sweep-drift-dim",
+                            DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
+                            "sweep_date",
+                        )],
+                        Values=[_measure_sum(
+                            "ar-exc-sweep-drift-val",
+                            DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
+                            "drift",
+                        )],
+                    )
+                ),
+                Orientation="VERTICAL",
+                BarsArrangement="CLUSTERED",
+                CategoryLabelOptions=_axis_label("Date"),
+                ValueLabelOptions=_axis_label("Drift ($)"),
+            ),
+        )
+    )
+
     return [
         kpi_ledger_drift, kpi_subledger_drift, kpi_nonzero,
-        kpi_breach, kpi_overdraft, kpi_sweep_target,
+        kpi_breach, kpi_overdraft, kpi_sweep_target, kpi_sweep_drift,
         table_ledger_drift, table_subledger_drift, table_non_zero,
         table_breach, table_overdraft, table_sweep_target,
-        timeline_ledger, timeline_subledger,
+        timeline_ledger, timeline_subledger, timeline_sweep_drift,
         aging_ledger_drift, aging_subledger_drift, aging_nonzero,
         aging_breach, aging_overdraft, aging_sweep_target,
     ]

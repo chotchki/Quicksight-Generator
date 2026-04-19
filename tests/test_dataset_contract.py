@@ -45,6 +45,7 @@ AR_BUILDERS_AND_CONTRACTS = [
     (ar_datasets.build_limit_breach_dataset, ar_datasets.LIMIT_BREACH_CONTRACT),
     (ar_datasets.build_overdraft_dataset, ar_datasets.OVERDRAFT_CONTRACT),
     (ar_datasets.build_sweep_target_nonzero_dataset, ar_datasets.SWEEP_TARGET_NONZERO_CONTRACT),
+    (ar_datasets.build_concentration_master_sweep_drift_dataset, ar_datasets.CONCENTRATION_MASTER_SWEEP_DRIFT_CONTRACT),
 ]
 
 

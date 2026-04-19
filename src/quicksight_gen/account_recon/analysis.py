@@ -20,6 +20,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_SUBLEDGER_ACCOUNTS,
     DS_AR_SUBLEDGER_BALANCE_DRIFT,
     DS_AR_SWEEP_TARGET_NONZERO,
+    DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     SHEET_AR_BALANCES,
@@ -502,6 +503,20 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
         _full_width_visual("ar-exc-aging-sweep-target", _CHART_ROW_SPAN),
     ]
 
+    # F.5.2: Concentration Master sweep drift — KPI half-width, timeline
+    # half-width on the same row. Mirrors the existing (ledger-drift,
+    # sub-ledger-drift) timeline pair shape.
+    sweep_drift_row = [
+        GridLayoutElement(
+            ElementId="ar-exc-kpi-sweep-drift", ElementType="VISUAL",
+            ColumnSpan=_HALF, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
+        ),
+        GridLayoutElement(
+            ElementId="ar-exc-sweep-drift-timeline", ElementType="VISUAL",
+            ColumnSpan=_HALF, RowSpan=_KPI_ROW_SPAN, ColumnIndex=_HALF,
+        ),
+    ]
+
     return SheetDefinition(
         SheetId=SHEET_AR_EXCEPTIONS,
         Name="Exceptions",
@@ -523,6 +538,7 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
             + sweep_target_row_kpi
             + sweep_target_table
             + sweep_target_aging
+            + sweep_drift_row
         ),
     )
 
@@ -549,6 +565,7 @@ def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaratio
         DS_AR_LIMIT_BREACH,
         DS_AR_OVERDRAFT,
         DS_AR_SWEEP_TARGET_NONZERO,
+        DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
     ]
     return [
         DataSetIdentifierDeclaration(

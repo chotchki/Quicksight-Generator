@@ -164,6 +164,14 @@ SWEEP_TARGET_NONZERO_CONTRACT = DatasetContract(columns=[
     ColumnSpec("aging_bucket", "STRING"),
 ])
 
+CONCENTRATION_MASTER_SWEEP_DRIFT_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("sweep_date", "DATETIME"),
+    ColumnSpec("master_total", "DECIMAL"),
+    ColumnSpec("subaccount_total", "DECIMAL"),
+    ColumnSpec("drift", "DECIMAL"),
+    ColumnSpec("abs_drift", "DECIMAL"),
+])
+
 
 # ---------------------------------------------------------------------------
 # Builders
@@ -388,6 +396,23 @@ FROM ar_sweep_target_nonzero"""
     )
 
 
+def build_concentration_master_sweep_drift_dataset(cfg: Config) -> DataSet:
+    sql = """\
+SELECT
+    sweep_date,
+    master_total,
+    subaccount_total,
+    drift,
+    ABS(drift) AS abs_drift
+FROM ar_concentration_master_sweep_drift"""
+    return build_dataset(
+        cfg, cfg.prefixed("ar-concentration-master-sweep-drift-dataset"),
+        "AR Concentration Master Sweep Drift",
+        "ar-concentration-master-sweep-drift",
+        sql, CONCENTRATION_MASTER_SWEEP_DRIFT_CONTRACT,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Convenience
 # ---------------------------------------------------------------------------
@@ -404,4 +429,5 @@ def build_all_datasets(cfg: Config) -> list[DataSet]:
         build_limit_breach_dataset(cfg),
         build_overdraft_dataset(cfg),
         build_sweep_target_nonzero_dataset(cfg),
+        build_concentration_master_sweep_drift_dataset(cfg),
     ]

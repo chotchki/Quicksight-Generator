@@ -238,6 +238,7 @@ DROP TABLE IF EXISTS ar_accounts                       CASCADE;
 DROP TABLE IF EXISTS ar_parent_accounts                CASCADE;
 
 -- Current-vocabulary drops
+DROP VIEW  IF EXISTS ar_concentration_master_sweep_drift CASCADE;
 DROP VIEW  IF EXISTS ar_sweep_target_nonzero             CASCADE;
 DROP VIEW  IF EXISTS ar_subledger_overdraft              CASCADE;
 DROP VIEW  IF EXISTS ar_subledger_limit_breach           CASCADE;
@@ -575,3 +576,44 @@ JOIN ar_subledger_accounts s   USING (subledger_account_id)
 JOIN ar_ledger_accounts la     USING (ledger_account_id)
 WHERE s.ledger_account_id = 'gl-1850-cash-concentration-master'
   AND sdb.balance <> 0;
+
+
+-- Concentration Master vs sub-account sweep drift (F.5.2).
+-- Per sweep_date, sums clearing_sweep credits posted directly to the
+-- Cash Concentration Master ledger and clearing_sweep debits across
+-- operating sub-accounts under that same ledger. Healthy days: legs
+-- balance, drift = 0. Drift rows surface days where the master leg was
+-- keyed off, missing, or extra.
+CREATE VIEW ar_concentration_master_sweep_drift AS
+WITH master_credits AS (
+    SELECT
+        p.posted_at::date                   AS sweep_date,
+        SUM(p.signed_amount)                AS master_total
+    FROM posting p
+    JOIN transfer t USING (transfer_id)
+    WHERE t.transfer_type = 'clearing_sweep'
+      AND p.ledger_account_id = 'gl-1850-cash-concentration-master'
+      AND p.subledger_account_id IS NULL
+      AND p.status = 'success'
+    GROUP BY p.posted_at::date
+),
+subaccount_debits AS (
+    SELECT
+        p.posted_at::date                   AS sweep_date,
+        SUM(p.signed_amount)                AS subaccount_total
+    FROM posting p
+    JOIN transfer t USING (transfer_id)
+    JOIN ar_subledger_accounts s USING (subledger_account_id)
+    WHERE t.transfer_type = 'clearing_sweep'
+      AND s.ledger_account_id = 'gl-1850-cash-concentration-master'
+      AND p.status = 'success'
+    GROUP BY p.posted_at::date
+)
+SELECT
+    COALESCE(mc.sweep_date, sd.sweep_date)         AS sweep_date,
+    COALESCE(mc.master_total, 0)                   AS master_total,
+    COALESCE(sd.subaccount_total, 0)               AS subaccount_total,
+    COALESCE(mc.master_total, 0)
+        + COALESCE(sd.subaccount_total, 0)         AS drift
+FROM master_credits mc
+FULL OUTER JOIN subaccount_debits sd USING (sweep_date);

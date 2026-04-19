@@ -279,6 +279,24 @@ _ZBA_SWEEP_FAIL_PLANT: list[tuple[str, int]] = [
 _ZBA_SWEEP_PLANT_AMOUNT = Decimal("875.00")
 
 
+# F.5.2: Sweep leg mismatch plants. On these (sub_id, days_ago) cells the
+# sweep is emitted normally on the sub-ledger side, but the offsetting
+# Cash Concentration Master ledger-direct posting is short (or long) by
+# ``master_delta``. The transfer ends non-zero (also surfaces in the
+# existing non-zero-transfer check) AND the daily sweep aggregate at the
+# Master ledger drifts away from the sub-account aggregate — that's what
+# F.5.2 surfaces as concentration master vs sub-account sweep drift.
+# Mixed signs so the timeline shows both upward and downward spikes.
+_ZBA_SWEEP_LEG_MISMATCH_PLANT: list[tuple[str, int, str]] = [
+    # (subledger_account_id, days_ago, master_leg_delta)
+    # Both sub-accounts must appear in _ZBA_SWEEP_CUSTOMERS so the sweep
+    # is actually emitted; days_ago must be disjoint from F.5.1 fail-plant
+    # cells (otherwise no sweep posts at all).
+    ("gl-1850-sub-big-meadow-dairy-main",  6,  "120.00"),   # master long
+    ("gl-1850-sub-big-meadow-dairy-north", 11, "-95.50"),   # master short
+]
+
+
 # F.4.2: ACH origination sweep cycle.
 #
 # Each business day, customers initiate ACH originations — debits land
@@ -1255,8 +1273,50 @@ def _generate_zba_sweeps(
     Returns ``(extra_transactions, ledger_direct_postings)``.
     """
     fail_set = {(sid, da) for sid, da in _ZBA_SWEEP_FAIL_PLANT}
+    mismatch_map = {
+        (sid, da): Decimal(delta_str)
+        for sid, da, delta_str in _ZBA_SWEEP_LEG_MISMATCH_PLANT
+    }
     extra_transactions: list[dict] = []
     extra_postings: list[tuple] = []
+
+    # ---- Step 0: plant guaranteed deposits on mismatch-plant days so a
+    # sweep is reliably emitted (otherwise random activity may leave
+    # ``running == 0`` and the sweep would be skipped, defeating the
+    # mismatch plant). The mismatch is applied to the master leg of that
+    # day's sweep in step 2.
+    for plant_idx, (sub_id, days_ago, _delta) in enumerate(
+        _ZBA_SWEEP_LEG_MISMATCH_PLANT, 1,
+    ):
+        plant_day = today - timedelta(days=days_ago)
+        plant_time = datetime(plant_day.year, plant_day.month, plant_day.day,
+                              13, 0, plant_idx)
+        external_leg = _EXTERNAL_COUNTER_LEG_POOL[
+            plant_idx % len(_EXTERNAL_COUNTER_LEG_POOL)
+        ]
+        tid = f"ar-zba-mismatch-deposit-{plant_idx:02d}"
+        extra_transactions.append({
+            "transaction_id": f"ar-zba-mismatch-{plant_idx:03d}-a",
+            "subledger_account_id": sub_id,
+            "transfer_id": tid,
+            "amount": _ZBA_SWEEP_PLANT_AMOUNT,
+            "posted_at": plant_time,
+            "status": "posted",
+            "transfer_type": "internal",
+            "origin": "internal_initiated",
+            "memo": "ZBA deposit (mismatch plant)",
+        })
+        extra_transactions.append({
+            "transaction_id": f"ar-zba-mismatch-{plant_idx:03d}-b",
+            "subledger_account_id": external_leg,
+            "transfer_id": tid,
+            "amount": -_ZBA_SWEEP_PLANT_AMOUNT,
+            "posted_at": plant_time,
+            "status": "posted",
+            "transfer_type": "internal",
+            "origin": "internal_initiated",
+            "memo": "ZBA deposit (mismatch plant)",
+        })
 
     # ---- Step 1: plant guaranteed deposits on fail-plant days ----
     # These are 2-leg cross-scope transfers (operating sub-account
@@ -1315,10 +1375,17 @@ def _generate_zba_sweeps(
                 continue  # nothing to sweep
             sweep_idx += 1
             sweep_amount = running
+            master_delta = mismatch_map.get((sub_id, days_ago), Decimal("0"))
+            master_amount = sweep_amount + master_delta
             sweep_time = datetime(bdate.year, bdate.month, bdate.day,
                                   18, 0, 0)
             tid = f"ar-zba-sweep-{sweep_idx:04d}"
             memo = f"ZBA EOD sweep — {_subledger_name(sub_id)}"
+            if master_delta != 0:
+                memo = (
+                    f"{memo} (master leg keyed off by "
+                    f"{master_delta:+,.2f})"
+                )
             extra_transactions.append({
                 "transaction_id": f"ar-zba-sub-{sweep_idx:05d}",
                 "subledger_account_id": sub_id,
@@ -1335,7 +1402,7 @@ def _generate_zba_sweeps(
                 tid,
                 _CASH_CONCENTRATION_MASTER_LEDGER,
                 None,
-                sweep_amount,
+                master_amount,
                 sweep_time,
                 "success",
             ))
