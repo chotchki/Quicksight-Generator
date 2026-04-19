@@ -238,6 +238,7 @@ DROP TABLE IF EXISTS ar_accounts                       CASCADE;
 DROP TABLE IF EXISTS ar_parent_accounts                CASCADE;
 
 -- Current-vocabulary drops
+DROP VIEW  IF EXISTS ar_ach_orig_settlement_nonzero      CASCADE;
 DROP VIEW  IF EXISTS ar_concentration_master_sweep_drift CASCADE;
 DROP VIEW  IF EXISTS ar_sweep_target_nonzero             CASCADE;
 DROP VIEW  IF EXISTS ar_subledger_overdraft              CASCADE;
@@ -617,3 +618,21 @@ SELECT
         + COALESCE(sd.subaccount_total, 0)         AS drift
 FROM master_credits mc
 FULL OUTER JOIN subaccount_debits sd USING (sweep_date);
+
+
+-- ACH Origination Settlement non-zero EOD (F.5.3).
+-- The ACH Origination Settlement ledger (gl-1810) is a transitory clearing
+-- account: per-customer ACH originations debit it during the day, and an
+-- EOD sweep transfers the day's net to Cash & Due From FRB (gl-1010),
+-- zeroing it out. Days the EOD sweep is skipped or fails leave the ledger
+-- non-zero — surfacing here.
+CREATE VIEW ar_ach_orig_settlement_nonzero AS
+SELECT
+    ldb.ledger_account_id,
+    la.name                             AS ledger_name,
+    ldb.balance_date,
+    ldb.balance                         AS stored_balance
+FROM ar_ledger_daily_balances ldb
+JOIN ar_ledger_accounts la USING (ledger_account_id)
+WHERE ldb.ledger_account_id = 'gl-1810-ach-orig-settlement'
+  AND ldb.balance <> 0;

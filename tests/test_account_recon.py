@@ -609,6 +609,37 @@ class TestScenarioCoverage:
                 f"match expected delta {expected_delta} (got {hit})"
             )
 
+    def test_ach_orig_settlement_skip_surfaces(self, ar_parsed):
+        """F.5.3: ``_ACH_SWEEP_SKIP_PLANT`` cells must drive the
+        gl-1810 ledger stored EOD balance non-zero from the plant date
+        forward (the missed sweep accumulates). Without at least one
+        non-zero day, the F.5.3 view returns empty."""
+        from datetime import timedelta
+        from quicksight_gen.account_recon.demo_data import (
+            _ACH_SWEEP_SKIP_PLANT,
+        )
+
+        balances: dict[str, Decimal] = {}
+        for row in ar_parsed["ar_ledger_daily_balances"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            if parts[0] != "gl-1810-ach-orig-settlement":
+                continue
+            balances[parts[1]] = Decimal(parts[2])
+
+        nonzero = [(d, b) for d, b in balances.items() if b != 0]
+        assert nonzero, (
+            "Expected ≥1 non-zero EOD on gl-1810 from "
+            "_ACH_SWEEP_SKIP_PLANT — F.5.3 view will be empty otherwise"
+        )
+
+        for days_ago in _ACH_SWEEP_SKIP_PLANT:
+            bdate = (ANCHOR - timedelta(days=days_ago)).isoformat()
+            bal = balances.get(bdate)
+            assert bal is not None and bal != 0, (
+                f"ACH sweep-skip plant day {bdate} (days_ago={days_ago}) "
+                f"should be non-zero EOD on gl-1810 (got {bal})"
+            )
+
     def test_zba_sweep_failures_surface(self, ar_parsed):
         """F.4.1 fail-plant cells must drive the operating sub-account's
         stored EOD balance non-zero — that's what F.5.1 surfaces. Cells
@@ -1444,9 +1475,9 @@ class TestGenerateOutput:
     def test_dashboard_file_exists(self, ar_output_dir):
         assert (ar_output_dir / "account-recon-dashboard.json").exists()
 
-    def test_eleven_dataset_files(self, ar_output_dir):
+    def test_twelve_dataset_files(self, ar_output_dir):
         datasets = list((ar_output_dir / "datasets").glob("qs-gen-ar-*.json"))
-        assert len(datasets) == 11
+        assert len(datasets) == 12
 
     def test_all_files_valid_json(self, ar_output_dir):
         for path in ar_output_dir.rglob("*.json"):
@@ -1564,7 +1595,9 @@ class TestSheetLayout:
         # = 17. Phase F.5.1 adds Sweep target non-zero EOD
         # (KPI + table + aging bar) → 20. Phase F.5.2 adds
         # Concentration Master sweep drift (KPI + timeline) → 22.
-        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 22)
+        # Phase F.5.3 adds ACH Origination Settlement non-zero EOD
+        # (KPI + table + aging bar) → 25.
+        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 25)
 
     def _assert_visual_count(self, out_dir: Path, sheet_id: str, expected: int) -> None:
         analysis = _load(out_dir, "account-recon-analysis.json")

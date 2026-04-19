@@ -37,6 +37,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_SUBLEDGER_BALANCE_DRIFT,
     DS_AR_SWEEP_TARGET_NONZERO,
     DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
+    DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     SHEET_AR_BALANCES,
@@ -1545,12 +1546,116 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
         )
     )
 
+    # F.5.3 ACH Origination Settlement non-zero EOD — days the gl-1810
+    # ledger ended day non-zero because the EOD sweep to gl-1010 was
+    # skipped or failed entirely.
+    kpi_ach_orig_nonzero = Visual(
+        KPIVisual=KPIVisual(
+            VisualId="ar-exc-kpi-ach-orig-nonzero",
+            Title=_title("ACH Origination Settlement Non-Zero EOD"),
+            Subtitle=_subtitle(
+                "Days the ACH Origination Settlement ledger (gl-1810) ended "
+                "non-zero — internal EOD sweep to Cash & Due From FRB was "
+                "skipped or failed"
+            ),
+            ChartConfiguration=KPIConfiguration(
+                FieldWells=KPIFieldWells(
+                    Values=[
+                        _measure_count(
+                            "ar-exc-ach-orig-nonzero-count",
+                            DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
+                            "balance_date",
+                        )
+                    ],
+                ),
+            ),
+        )
+    )
+
+    table_ach_orig_nonzero = Visual(
+        TableVisual=TableVisual(
+            VisualId="ar-exc-ach-orig-nonzero-table",
+            Title=_title("ACH Origination Settlement Non-Zero EOD"),
+            Subtitle=_subtitle(
+                "Days the ACH Origination Settlement ledger ended non-zero. "
+                "Each row is a date the day's net ACH originations weren't "
+                "swept to Cash & Due From FRB. Left-click ledger_account_id "
+                "to drill into Transactions for that date."
+            ),
+            ChartConfiguration=TableConfiguration(
+                FieldWells=TableFieldWells(
+                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
+                        Values=[
+                            _unagg_field("ar-exc-ach-ledger-id",
+                                         DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
+                                         "ledger_account_id"),
+                            _unagg_field("ar-exc-ach-ledger",
+                                         DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
+                                         "ledger_name"),
+                            _unagg_field("ar-exc-ach-date",
+                                         DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
+                                         "balance_date"),
+                            _unagg_field("ar-exc-ach-date-str",
+                                         DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
+                                         "balance_date_str"),
+                            _unagg_field("ar-exc-ach-stored",
+                                         DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
+                                         "stored_balance"),
+                            _unagg_field("ar-exc-ach-aging",
+                                         DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
+                                         "aging_bucket"),
+                        ],
+                    )
+                ),
+                SortConfiguration={
+                    "RowSort": [
+                        {
+                            "FieldSort": {
+                                "FieldId": "ar-exc-ach-date",
+                                "Direction": "DESC",
+                            },
+                        },
+                    ],
+                },
+            ),
+            Actions=[
+                _multi_drill_action(
+                    "action-ar-exc-ach-orig-to-txn",
+                    "View Transactions",
+                    SHEET_AR_TRANSACTIONS,
+                    [
+                        (P_AR_ACTIVITY_DATE, "ar-exc-ach-date-str"),
+                    ],
+                ),
+            ],
+            ConditionalFormatting={
+                "ConditionalFormattingOptions": [
+                    link_text_format(
+                        "ar-exc-ach-ledger-id", "ledger_account_id",
+                        link_color,
+                    ),
+                ],
+            },
+        )
+    )
+
+    aging_ach_orig_nonzero = aging_bar_visual(
+        "ar-exc-aging-ach-orig-nonzero",
+        "ACH Origination Non-Zero EOD by Age",
+        "How long ACH Origination Settlement non-zero days have been outstanding",
+        DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
+        "balance_date",
+    )
+
     return [
         kpi_ledger_drift, kpi_subledger_drift, kpi_nonzero,
         kpi_breach, kpi_overdraft, kpi_sweep_target, kpi_sweep_drift,
+        kpi_ach_orig_nonzero,
         table_ledger_drift, table_subledger_drift, table_non_zero,
         table_breach, table_overdraft, table_sweep_target,
+        table_ach_orig_nonzero,
         timeline_ledger, timeline_subledger, timeline_sweep_drift,
         aging_ledger_drift, aging_subledger_drift, aging_nonzero,
         aging_breach, aging_overdraft, aging_sweep_target,
+        aging_ach_orig_nonzero,
     ]

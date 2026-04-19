@@ -172,6 +172,16 @@ CONCENTRATION_MASTER_SWEEP_DRIFT_CONTRACT = DatasetContract(columns=[
     ColumnSpec("abs_drift", "DECIMAL"),
 ])
 
+ACH_ORIG_SETTLEMENT_NONZERO_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("ledger_account_id", "STRING"),
+    ColumnSpec("ledger_name", "STRING"),
+    ColumnSpec("balance_date", "DATETIME"),
+    ColumnSpec("balance_date_str", "STRING"),
+    ColumnSpec("stored_balance", "DECIMAL"),
+    ColumnSpec("days_outstanding", "INTEGER"),
+    ColumnSpec("aging_bucket", "STRING"),
+])
+
 
 # ---------------------------------------------------------------------------
 # Builders
@@ -413,6 +423,24 @@ FROM ar_concentration_master_sweep_drift"""
     )
 
 
+def build_ach_orig_settlement_nonzero_dataset(cfg: Config) -> DataSet:
+    sql = f"""\
+SELECT
+    ledger_account_id,
+    ledger_name,
+    balance_date,
+    TO_CHAR(balance_date, 'YYYY-MM-DD') AS balance_date_str,
+    stored_balance,
+{_aging_columns('balance_date')}
+FROM ar_ach_orig_settlement_nonzero"""
+    return build_dataset(
+        cfg, cfg.prefixed("ar-ach-orig-settlement-nonzero-dataset"),
+        "AR ACH Origination Settlement Non-Zero EOD",
+        "ar-ach-orig-settlement-nonzero",
+        sql, ACH_ORIG_SETTLEMENT_NONZERO_CONTRACT,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Convenience
 # ---------------------------------------------------------------------------
@@ -430,4 +458,5 @@ def build_all_datasets(cfg: Config) -> list[DataSet]:
         build_overdraft_dataset(cfg),
         build_sweep_target_nonzero_dataset(cfg),
         build_concentration_master_sweep_drift_dataset(cfg),
+        build_ach_orig_settlement_nonzero_dataset(cfg),
     ]

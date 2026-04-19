@@ -21,6 +21,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_SUBLEDGER_BALANCE_DRIFT,
     DS_AR_SWEEP_TARGET_NONZERO,
     DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
+    DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     SHEET_AR_BALANCES,
@@ -517,6 +518,21 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
         ),
     ]
 
+    # F.5.3: ACH Origination Settlement non-zero EOD — same shape as
+    # F.5.1 (KPI / table / aging bar stacked full width).
+    ach_orig_row_kpi = [
+        GridLayoutElement(
+            ElementId="ar-exc-kpi-ach-orig-nonzero", ElementType="VISUAL",
+            ColumnSpan=_FULL, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
+        ),
+    ]
+    ach_orig_table = [
+        _full_width_visual("ar-exc-ach-orig-nonzero-table", _TABLE_ROW_SPAN),
+    ]
+    ach_orig_aging = [
+        _full_width_visual("ar-exc-aging-ach-orig-nonzero", _CHART_ROW_SPAN),
+    ]
+
     return SheetDefinition(
         SheetId=SHEET_AR_EXCEPTIONS,
         Name="Exceptions",
@@ -539,6 +555,9 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
             + sweep_target_table
             + sweep_target_aging
             + sweep_drift_row
+            + ach_orig_row_kpi
+            + ach_orig_table
+            + ach_orig_aging
         ),
     )
 
@@ -566,6 +585,7 @@ def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaratio
         DS_AR_OVERDRAFT,
         DS_AR_SWEEP_TARGET_NONZERO,
         DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
+        DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
     ]
     return [
         DataSetIdentifierDeclaration(
