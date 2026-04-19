@@ -905,24 +905,27 @@ FULL OUTER JOIN internal_total i USING (movement_date);
 -- A "stuck" originate is a Step-1 transfer that posted with no Step-2
 -- child ever appearing. The cash sits in the suspense ledger indefinitely
 -- and the recipient never sees the credit.
+-- Phase G: reads from shared `transactions`; MIN() collapses leg rows.
 CREATE VIEW ar_internal_transfer_stuck AS
 SELECT
     t.transfer_id                       AS originate_transfer_id,
-    t.created_at                        AS originated_at,
-    t.amount                            AS originate_amount
-FROM transfer t
-WHERE t.transfer_type = 'internal'
-  AND t.origin = 'internal_initiated'
+    MIN(t.posted_at)                    AS originated_at,
+    MIN(t.amount)                       AS originate_amount
+FROM transactions t
+WHERE t.transfer_type      = 'internal'
+  AND t.origin             = 'internal_initiated'
   AND t.parent_transfer_id IS NULL
   AND EXISTS (
-    SELECT 1 FROM posting p
-    WHERE p.transfer_id = t.transfer_id
-      AND p.ledger_account_id = 'gl-1830-internal-transfer-suspense'
+    SELECT 1 FROM transactions hit
+    WHERE hit.transfer_id = t.transfer_id
+      AND (hit.account_id         = 'gl-1830-internal-transfer-suspense'
+        OR hit.control_account_id = 'gl-1830-internal-transfer-suspense')
   )
   AND NOT EXISTS (
-    SELECT 1 FROM transfer step2
+    SELECT 1 FROM transactions step2
     WHERE step2.parent_transfer_id = t.transfer_id
-  );
+  )
+GROUP BY t.transfer_id;
 
 
 -- Internal Transfer Reversal Uncredited / "double spend" (F.5.9).
