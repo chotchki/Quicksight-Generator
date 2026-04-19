@@ -184,12 +184,13 @@ SASQUATCH_BANK_PRESET = ThemePreset(
 
 
 # ---------------------------------------------------------------------------
-# Preset registry
+# Sasquatch National Bank — AR (treasury) preset — valley green, harvest gold
 # ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Farmers Exchange Bank preset — harvest gold, valley green, earth tones
-# ---------------------------------------------------------------------------
+#
+# AR (treasury / GL reconciliation) gets a distinct palette from PR (merchant
+# settlement) so the two operationally different dashboards from the same
+# bank stay visually separable. Palette honors the legacy Farmers Exchange
+# Bank brand absorbed into SNB during the Phase F restructure.
 
 # Valley greens (dark → light)
 _VALLEY_DEEP = "#2B4A2E"
@@ -208,9 +209,9 @@ _CREAM = "#FBF7EE"
 _DARK_EARTH = "#3A2E24"
 _STONE = "#8C7A66"
 
-FARMERS_EXCHANGE_BANK_PRESET = ThemePreset(
-    theme_name="Farmers Exchange Bank Theme",
-    version_description="Farmers Exchange Bank — valley green and harvest gold palette",
+SASQUATCH_BANK_AR_PRESET = ThemePreset(
+    theme_name="Sasquatch National Bank — AR Theme",
+    version_description="Sasquatch National Bank AR — valley green and harvest gold palette",
     analysis_name_prefix="Demo",
     data_colors=[
         _VALLEY_GREEN,
@@ -244,10 +245,14 @@ FARMERS_EXCHANGE_BANK_PRESET = ThemePreset(
 )
 
 
+# ---------------------------------------------------------------------------
+# Preset registry
+# ---------------------------------------------------------------------------
+
 PRESETS: dict[str, ThemePreset] = {
     "default": DEFAULT_PRESET,
     "sasquatch-bank": SASQUATCH_BANK_PRESET,
-    "farmers-exchange-bank": FARMERS_EXCHANGE_BANK_PRESET,
+    "sasquatch-bank-ar": SASQUATCH_BANK_AR_PRESET,
 }
 
 

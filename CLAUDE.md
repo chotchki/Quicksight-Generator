@@ -27,7 +27,7 @@ quicksight-gen generate --all -c config.yaml -o out/
 
 # Generate a single app
 quicksight-gen generate payment-recon -c config.yaml -o out/
-quicksight-gen generate account-recon -c config.yaml -o out/ --theme-preset farmers-exchange-bank
+quicksight-gen generate account-recon -c config.yaml -o out/ --theme-preset sasquatch-bank-ar
 
 # Deploy to AWS (delete-then-create; polls async resources to terminal state)
 quicksight-gen deploy --all -c config.yaml -o out/
@@ -52,7 +52,7 @@ pytest                              # unit + integration, fast, no AWS
 ./run_e2e.sh --skip-deploy browser  # browser e2e only
 ```
 
-`demo apply` is app-scoped: `demo apply payment-recon` generates with the `sasquatch-bank` preset; `demo apply account-recon` uses `farmers-exchange-bank`; `--all` generates both with each app's natural preset. Schema is always loaded in full (both apps share one Postgres DB, `pr_` / `ar_` table prefixes).
+`demo apply` is app-scoped: `demo apply payment-recon` generates with the `sasquatch-bank` preset; `demo apply account-recon` uses `sasquatch-bank-ar`; `--all` generates both with each app's natural preset. Schema is always loaded in full (both apps share one Postgres DB, `pr_` / `ar_` table prefixes).
 
 ## Generated Output
 
@@ -76,7 +76,7 @@ out/
     qs-gen-unmatched-external-txns-dataset.json
     qs-gen-external-transactions-dataset.json
     qs-gen-payment-recon-dataset.json
-    qs-gen-ar-ledger-accounts-dataset.json   # 9 AR datasets
+    qs-gen-ar-ledger-accounts-dataset.json   # 21 AR datasets
     qs-gen-ar-subledger-accounts-dataset.json
     qs-gen-ar-transactions-dataset.json
     qs-gen-ar-ledger-balance-drift-dataset.json
@@ -85,6 +85,18 @@ out/
     qs-gen-ar-non-zero-transfers-dataset.json
     qs-gen-ar-limit-breach-dataset.json
     qs-gen-ar-overdraft-dataset.json
+    qs-gen-ar-sweep-target-nonzero-dataset.json              # 9 CMS-specific checks
+    qs-gen-ar-concentration-master-sweep-drift-dataset.json
+    qs-gen-ar-ach-orig-settlement-nonzero-dataset.json
+    qs-gen-ar-ach-sweep-no-fed-confirmation-dataset.json
+    qs-gen-ar-fed-card-no-internal-catchup-dataset.json
+    qs-gen-ar-gl-vs-fed-master-drift-dataset.json
+    qs-gen-ar-internal-transfer-stuck-dataset.json
+    qs-gen-ar-internal-transfer-suspense-nonzero-dataset.json
+    qs-gen-ar-internal-reversal-uncredited-dataset.json
+    qs-gen-ar-expected-zero-eod-rollup-dataset.json          # 3 cross-check rollups
+    qs-gen-ar-two-sided-post-mismatch-rollup-dataset.json
+    qs-gen-ar-balance-drift-timelines-rollup-dataset.json
 ```
 
 `generate` (single app) prunes stale dataset JSON that belongs to neither app — so renaming or dropping a dataset doesn't leave an orphan that `deploy` would re-create. The other app's dataset files are preserved.
@@ -98,7 +110,7 @@ src/quicksight_gen/
   common/
     config.py            # Config dataclass + YAML/env loader (principal_arns list, late_default_days, theme_preset)
     models.py            # Dataclasses mapping to QuickSight API JSON (to_aws_json + _strip_nones)
-    theme.py             # Theme presets (default / sasquatch-bank / farmers-exchange-bank); PRESETS registry
+    theme.py             # Theme presets (default / sasquatch-bank / sasquatch-bank-ar); PRESETS registry
     deploy.py            # boto3 delete-then-create deploy with async waiters
     cleanup.py           # Tag-based cleanup of stale resources (ManagedBy:quicksight-gen)
     dataset_contract.py  # ColumnSpec, DatasetContract, build_dataset() — shared dataset constructor
@@ -118,8 +130,8 @@ src/quicksight_gen/
     analysis.py          # 5 sheets, drill-downs, filter groups, dashboard builder
     visuals.py           # Balances / Transfers / Transactions / Exceptions visuals
     filters.py           # Per-tab filters + Show-Only-X toggles
-    datasets.py          # 9 custom-SQL datasets
-    demo_data.py         # Farmers Exchange Bank demo generator
+    datasets.py          # 21 custom-SQL datasets (9 baseline + 9 CMS checks + 3 rollups)
+    demo_data.py         # Sasquatch National Bank — CMS treasury demo generator
     constants.py         # Sheet + dataset identifier constants
 demo/
   schema.sql             # Full PostgreSQL DDL (both apps — pr_ and ar_ prefixes)
@@ -178,7 +190,7 @@ AR datasets read exclusively from `transfer` + `posting` (the `ar_transactions` 
 **Ledger accounts (with daily balances) → Sub-ledger accounts → Postings (double-entry ledger)**
 
 - Every transfer is a set of posting legs that must net to zero
-- Postings can target sub-ledger accounts OR ledger accounts directly (funding batches, fee assessments, clearing sweeps)
+- Postings can target sub-ledger accounts OR ledger accounts directly (funding batches, fee assessments, clearing sweeps, all CMS-driven sweeps)
 - Ledger drift invariant: `stored ledger balance = Σ direct ledger postings + Σ sub-ledger stored balances`
 - Sub-ledger drift invariant: `stored sub-ledger balance = Σ postings to that sub-ledger` (unaffected by ledger-level postings)
 - Daily balance snapshots allow drift detection: recomputed balance vs. stored balance
@@ -188,6 +200,15 @@ AR datasets read exclusively from `transfer` + `posting` (the `ar_transactions` 
 - Drift timelines (ledger + sub-ledger) surface systemic issues over time
 - Transfers carry an `origin` tag (`internal_initiated` / `external_force_posted`); origin multi-select filter on Transactions + Exceptions tabs
 - AR views filter `WHERE transfer_type IN ('ach', 'wire', 'internal', 'cash', 'funding_batch', 'fee', 'clearing_sweep')` to exclude PR data
+
+#### CMS structure (Phase F)
+
+Demo persona is **Sasquatch National Bank — Cash Management Suite (CMS)** — same SNB from PR, viewed through treasury after SNB absorbed Farmers Exchange Bank's commercial book.
+
+- **8 internal GL control accounts**: Cash & Due From FRB, ACH Origination Settlement (`gl-1810`), Card Acquiring Settlement, Wire Settlement Suspense, Internal Transfer Suspense (`gl-1830`), Cash Concentration Master (`gl-1850`), Internal Suspense / Reconciliation, Customer Deposits — DDA Control.
+- **7 customer DDAs**: 3 coffee retailers shared with PR (Bigfoot Brews, Sasquatch Sips, Yeti Espresso) + 4 commercial (Cascade Timber Mill, Pinecrest Vineyards, Big Meadow Dairy, Harvest Moon Bakery).
+- **4 telling-transfer flows from CMS**: ZBA / Cash Concentration sweep → Concentration Master; daily ACH origination sweep → FRB Master Account; external force-posted card settlement → Card Acquiring Settlement; on-us internal transfer → Internal Transfer Suspense → destination DDA. Each flow plants both success cycles and characteristic failures.
+- **Exceptions tab structure**: 3 cross-check rollups at the top (expected-zero EOD, two-sided post-mismatch, balance drift timelines) teach error-class recognition; per-check details below let analysts drill the specific row. 14 checks total: 5 baseline (sub-ledger drift, ledger drift, non-zero transfers, limit breach, overdraft) + 9 CMS-specific (sweep target nonzero, concentration master sweep drift, ACH orig settlement nonzero, ACH sweep no Fed confirmation, Fed card no internal catch-up, GL vs FRB master drift, internal transfer stuck, internal transfer suspense nonzero, internal reversal uncredited).
 
 ## Architecture Decisions
 
@@ -229,4 +250,4 @@ AR datasets read exclusively from `transfer` + `posting` (the `ar_transactions` 
 - Every visual should have non-empty data in the demo. For each new visual that relies on a scenario (drift, unmatched, failed, returned, limit-breach, overdraft, etc.), add a `TestScenarioCoverage` assertion in the app's demo-data tests that guarantees ≥N rows of that shape — counts alone don't catch "zero scenario rows slipped through".
 - Generators must stay deterministic (`random.Random(42)`); tests depend on exact output.
 - Write the coverage assertion **before** the visual, not after. It's the fastest way to notice when generator pool-sizing or branching makes a scenario silently vanish.
-- Each app has its own demo persona (Sasquatch National Bank coffee shops; Farmers Exchange Bank ledger/sub-ledger accounts). Don't cross-contaminate — shared schema, disjoint data.
+- Each app has its own demo persona — same Sasquatch National Bank, two operational views: PR is the merchant-acquiring side (coffee-shop settlement); AR is the treasury / CMS side (GL control accounts + customer DDAs absorbed from FEB). Don't cross-contaminate at the persona level — they share schema and three customer DDAs (the coffee retailers) but the rest of the data is disjoint.

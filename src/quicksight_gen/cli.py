@@ -350,7 +350,7 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
         conn.close()
 
     preset = (
-        "farmers-exchange-bank" if app == "account-recon" else "sasquatch-bank"
+        "sasquatch-bank-ar" if app == "account-recon" else "sasquatch-bank"
     )
     click.echo(f"\nGenerating QuickSight JSON with {preset} theme...")
     cfg.theme_preset = preset

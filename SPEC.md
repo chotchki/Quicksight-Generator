@@ -194,14 +194,29 @@ Track all demo scenarios (both apps) in a structured catalog so that long-form t
         - Limits are populated by an upstream system
         - A ledger may have limits defined for only some types — undefined means "no limit enforced"
       - Have a name
-    - Reconciliation scope — five independent checks performed side-by-side on the Exceptions tab:
-      - Sub-ledger drift: stored sub-ledger balance ≠ Σ of that sub-ledger's posted transactions on that day
-      - Ledger drift: stored ledger balance ≠ (Σ direct ledger postings + Σ sub-ledgers' stored balances) on that day
-      - Non-zero transfers: transfers whose posted legs don't net to zero
-      - Sub-ledger limit breach: Σ |outbound posted amounts of type T| for a sub-ledger on a day > its ledger's limit for type T
-      - Sub-ledger overdraft: stored sub-ledger balance < 0 on any day
-      - Each finding points at a different upstream source and is investigated independently; two drift timelines at the bottom of the Exceptions tab reveal systemic issues
-      - Every check carries `days_outstanding` and `aging_bucket` (5 hardcoded bands: 0-1d, 2-3d, 4-7d, 8-30d, >30d) for time-based urgency triage; aging bar charts visualize the distribution
+    - Reconciliation scope — independent checks performed on the Exceptions tab. Three cross-check rollups sit at the top of the tab to teach error-class recognition; the per-check details below let analysts drill into the specific row that's broken:
+      - Cross-check rollups (top of tab):
+        - Expected-zero EOD rollup: union of all checks where a control account or sweep target should be zero at end-of-day but isn't (concentration master sweep drift, ACH origination settlement non-zero, internal transfer suspense non-zero, sweep target non-zero).
+        - Two-sided post-mismatch rollup: union of all checks where one side of a paired posting is missing or stuck (Fed-card no internal catch-up, ACH sweep no Fed confirmation, internal reversal uncredited, internal transfer stuck, GL vs. FRB master drift).
+        - Balance drift timelines rollup: ledger drift + sub-ledger drift over time (systemic issue surfacing).
+      - Baseline checks:
+        - Sub-ledger drift: stored sub-ledger balance ≠ Σ of that sub-ledger's posted transactions on that day
+        - Ledger drift: stored ledger balance ≠ (Σ direct ledger postings + Σ sub-ledgers' stored balances) on that day
+        - Non-zero transfers: transfers whose posted legs don't net to zero
+        - Sub-ledger limit breach: Σ |outbound posted amounts of type T| for a sub-ledger on a day > its ledger's limit for type T
+        - Sub-ledger overdraft: stored sub-ledger balance < 0 on any day
+      - CMS-specific checks (added in Phase F to surface the failure classes the four telling-transfer flows expose):
+        - Sweep target non-zero: ZBA sweep ran but the source account didn't end the day at zero.
+        - Concentration master sweep drift: Cash Concentration Master balance ≠ Σ of inbound sweeps for the day.
+        - ACH origination settlement non-zero: gl-1810 carries a balance after end-of-day Fed settlement.
+        - ACH sweep no Fed confirmation: internal ACH sweep posted but no matching Fed confirmation arrived.
+        - Fed card no internal catch-up: external force-posted card settlement landed but the internal mirror leg never posted.
+        - GL vs. FRB master drift: internal Cash & Due From FRB ≠ external FRB master account view.
+        - Internal transfer stuck: on-us transfer left Internal Transfer Suspense (gl-1830) but the credit leg never posted to the destination DDA.
+        - Internal transfer suspense non-zero: gl-1830 should be zero at end-of-day; carrying a balance flags stuck transfers.
+        - Internal reversal uncredited: a reversal posting debited the source but never credited back the destination.
+      - Each finding points at a different upstream source and is investigated independently; the rollups teach the error class, the per-check details point at the specific row, and the two drift timelines at the bottom reveal systemic issues.
+      - Every check carries `days_outstanding` and `aging_bucket` (5 hardcoded bands: 0-1d, 2-3d, 4-7d, 8-30d, >30d) for time-based urgency triage; aging bar charts visualize the distribution.
     - Transfers
       - Movement of money between accounts via double-entry debits and credits
       - Cannot fail in aggregate — money is not destroyed
@@ -222,14 +237,14 @@ Track all demo scenarios (both apps) in a structured catalog so that long-form t
 
   - Payment Recon — "Sasquatch National Bank": merchant bank in the Pacific Northwest serving local coffee shops. Morning-focused sales. Optional-metadata and merchant-name variety drives the punny flavor. (Shops: Bigfoot Brews, Sasquatch Sips, Yeti Espresso, Skookum Coffee Co., Cryptid Coffee Cart, Wildman's Roastery.)
 
-  - Account Recon — "Farmers Exchange Bank": a bank in a fictional valley, customers are local farmers, suppliers, and buyers. Transfer memos + transaction dates tell a story. Ledgers: Big Meadow Checking, Harvest Moon Savings, Orchard Lending Pool, Valley Grain Co-op, Harvest Credit Exchange. (No Stardew Valley character IP — generic valley flavor only.)
+  - Account Recon — "Sasquatch National Bank — Treasury / GL": same Pacific-Northwest bank from the merchant side, viewed through its Cash Management Suite (CMS) after SNB absorbed Farmers Exchange Bank's commercial book. Eight internal GL control accounts (Cash & Due From FRB, ACH Origination Settlement, Card Acquiring Settlement, Wire Settlement Suspense, Internal Transfer Suspense, Cash Concentration Master, Internal Suspense / Reconciliation, Customer Deposits — DDA Control) sit above per-customer DDAs for the three coffee retailers from PR (Bigfoot Brews, Sasquatch Sips, Yeti Espresso) and four commercial customers (Cascade Timber Mill, Pinecrest Vineyards, Big Meadow Dairy, Harvest Moon Bakery). The CMS drives four telling-transfer flows whose seeded successes and characteristic failures populate every Exceptions check: ZBA / Cash Concentration sweeps to the Concentration Master, daily ACH origination sweeps to the FRB Master Account, external force-posted card settlements landing through Card Acquiring Settlement, and on-us internal transfers routed through Internal Transfer Suspense. Transfer memos + transaction dates tell the story.
 
 ## Code Base Guidance:
   - [x] Kept the existing tech selection: Python emits QuickSight JSON, boto3 applies it via `quicksight-gen deploy`. Demo datasource is Aurora PostgreSQL.
   - [x] Two dashboards produced via the existing config process.
   - [x] Code restructured — medium refactor: `common/` for shared builders (models, theme, config, deploy, cleanup, clickability, rich_text), two sibling packages `payment_recon/` and `account_recon/`.
   - [x] Layered testing — unit + integration + API e2e + browser e2e. `./run_e2e.sh` wraps the full iteration loop.
-  - [x] Theming — `PRESETS` registry in `common/theme.py`; demo presets (`sasquatch-bank`, `farmers-exchange-bank`) carry `analysis_name_prefix="Demo"`.
+  - [x] Theming — `PRESETS` registry in `common/theme.py`; demo presets (`sasquatch-bank`, `sasquatch-bank-ar`) carry `analysis_name_prefix="Demo"`. AR uses a distinct preset (valley green + harvest gold) so the merchant and treasury dashboards from the same bank stay visually separable.
 
 ## Output:
   - [x] QuickSight JSON, repeatedly deployable via `quicksight-gen deploy [app|--all]` (delete-then-create, async waiters, idempotent).

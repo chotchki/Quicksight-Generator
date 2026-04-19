@@ -34,8 +34,8 @@ The customer for these reports doesn't know exactly what they want yet. Rather t
 | Getting Started | Landing page — heading + per-sheet highlights; demo scenario block when seeded. |
 | Balances | Ledger and sub-ledger account balance tables. Click an account to drill into its transactions. |
 | Transfers | One row per `transfer_id` with net-zero flags. Click to drill into transactions. |
-| Transactions | Raw ledger (one row per leg, with an `origin` tag for later filtering), filtered by date / type / Show-Only-Failed. |
-| Exceptions | Five independent checks side-by-side: ledger drift, sub-ledger drift, non-zero transfers, daily limit breaches, sub-ledger overdrafts. Two drift timelines at the bottom. |
+| Transactions | Raw ledger (one row per leg, with an `origin` tag for filtering), filtered by date / type / posting-level / origin / Show-Only-Failed. |
+| Exceptions | Cross-check rollups at the top (expected-zero EOD, two-sided post mismatch, balance-drift timelines), then per-check details: ledger / sub-ledger drift, non-zero transfers, limit breaches, overdrafts, and seven Cash Management Suite checks (ZBA sweep, ACH origination non-zero EOD, missing Fed confirmations, force-posted card without internal catch-up, GL-vs-Fed Master drift, stuck-in-suspense, reversed-but-not-credited). Aging bars on every check. |
 
 ### Shared conventions
 
@@ -78,7 +78,7 @@ datasource_arn: "arn:aws:quicksight:us-east-2:123456789012:datasource/your-datas
 # Optional: prefix for all generated resource IDs (default: qs-gen)
 resource_prefix: "qs-gen"
 
-# Optional: which theme preset to use. One of: default, sasquatch-bank, farmers-exchange-bank
+# Optional: which theme preset to use. One of: default, sasquatch-bank, sasquatch-bank-ar
 theme_preset: "default"
 
 # Optional: IAM principals granted permissions on generated resources.
@@ -146,7 +146,7 @@ out/
     qs-gen-unmatched-external-txns-dataset.json
     qs-gen-external-transactions-dataset.json
     qs-gen-payment-recon-dataset.json
-    qs-gen-ar-ledger-accounts-dataset.json     # 9 AR datasets
+    qs-gen-ar-ledger-accounts-dataset.json     # 21 AR datasets
     qs-gen-ar-subledger-accounts-dataset.json
     qs-gen-ar-transactions-dataset.json
     qs-gen-ar-ledger-balance-drift-dataset.json
@@ -155,6 +155,18 @@ out/
     qs-gen-ar-non-zero-transfers-dataset.json
     qs-gen-ar-limit-breach-dataset.json
     qs-gen-ar-overdraft-dataset.json
+    qs-gen-ar-sweep-target-nonzero-dataset.json
+    qs-gen-ar-concentration-master-sweep-drift-dataset.json
+    qs-gen-ar-ach-orig-settlement-nonzero-dataset.json
+    qs-gen-ar-ach-sweep-no-fed-confirmation-dataset.json
+    qs-gen-ar-fed-card-no-internal-catchup-dataset.json
+    qs-gen-ar-gl-vs-fed-master-drift-dataset.json
+    qs-gen-ar-internal-transfer-stuck-dataset.json
+    qs-gen-ar-internal-transfer-suspense-nonzero-dataset.json
+    qs-gen-ar-internal-reversal-uncredited-dataset.json
+    qs-gen-ar-expected-zero-eod-rollup-dataset.json
+    qs-gen-ar-two-sided-post-mismatch-rollup-dataset.json
+    qs-gen-ar-balance-drift-timelines-rollup-dataset.json
 ```
 
 ## Demo mode
@@ -177,8 +189,8 @@ Datasets are all Direct Query (no SPICE), so seed changes show up immediately af
 
 ### Demo scenarios
 
-- **Payment Recon — Sasquatch National Bank.** Six fictional Seattle coffee shops (Bigfoot Brews, Sasquatch Sips, Yeti Espresso, Skookum Coffee Co., Cryptid Coffee Cart, Wildman's Roastery). Sales flow into settlements and payments; planted unsettled sales, returned payments, amount mismatches, and orphan external transactions populate every exception table.
-- **Account Recon — Farmers Exchange Bank.** Five ledger accounts (Big Meadow Checking, Harvest Moon Savings, Orchard Lending Pool, Valley Grain Co-op, Harvest Credit Exchange) move money between ten sub-ledger accounts over ~40 days using four transfer types. Disjoint planted drift, failed legs, limit breaches, and overdrafts keep every Exceptions table populated.
+- **Payment Recon — Sasquatch National Bank (merchant settlement).** Six fictional Seattle coffee shops (Bigfoot Brews, Sasquatch Sips, Yeti Espresso, Skookum Coffee Co., Cryptid Coffee Cart, Wildman's Roastery). Sales flow into settlements and payments; planted unsettled sales, returned payments, amount mismatches, and orphan external transactions populate every exception table.
+- **Account Recon — Sasquatch National Bank (treasury / GL).** Same bank from the treasury side, after SNB absorbed Farmers Exchange Bank's commercial book. Eight internal GL control accounts (Cash & Due From FRB, ACH Origination Settlement, Card Acquiring Settlement, Wire Settlement Suspense, Internal Transfer Suspense, Cash Concentration Master, Internal Suspense / Reconciliation, Customer Deposits — DDA Control) plus per-customer DDAs for three coffee retailers (Bigfoot Brews, Sasquatch Sips, Yeti Espresso) and four commercial customers (Cascade Timber Mill, Pinecrest Vineyards, Big Meadow Dairy, Harvest Moon Bakery). The Cash Management Suite drives four telling-transfer flows — ZBA / Cash Concentration sweeps, daily ACH origination sweeps to the FRB Master Account, external force-posted card settlements, and on-us internal transfers through Internal Transfer Suspense. Each flow plants both success cycles and characteristic failures so every Exceptions check (including the cross-check rollups) surfaces distinct rows.
 
 ## Theming
 
@@ -186,7 +198,7 @@ Datasets are all Direct Query (no SPICE), so seed changes show up immediately af
 |---|---|---|
 | `default` | Navy / blue / grey | — |
 | `sasquatch-bank` | Forest green + bark brown + bank gold | `Demo — ` |
-| `farmers-exchange-bank` | Valley green + harvest gold + earth | `Demo — ` |
+| `sasquatch-bank-ar` | Valley green + harvest gold + earth | `Demo — ` |
 
 Set `theme_preset:` in `config.yaml` (or pass `--theme-preset` to `generate` / `deploy --generate`). Add a new preset by declaring a `ThemePreset` in `src/quicksight_gen/common/theme.py` and registering it in `PRESETS`.
 
@@ -201,7 +213,7 @@ src/quicksight_gen/
     common/
         config.py       # Config dataclass + YAML/env loader
         models.py       # Dataclasses mapping to QuickSight API JSON
-        theme.py        # Theme presets (default, sasquatch-bank, farmers-exchange-bank)
+        theme.py        # Theme presets (default, sasquatch-bank, sasquatch-bank-ar)
         deploy.py       # Python deploy (delete-then-create, async waiters)
         cleanup.py      # Tag-based cleanup of stale resources
         clickability.py # Conditional-format helpers (plain + menu-link accent styles)
@@ -219,8 +231,8 @@ src/quicksight_gen/
         analysis.py     # 5 sheets, drill-downs, filter groups, dashboard
         visuals.py      # Balances / Transfers / Transactions / Exceptions visuals
         filters.py      # Per-tab filters + Show-Only-X toggles
-        datasets.py     # 9 custom-SQL datasets
-        demo_data.py    # Farmers Exchange Bank demo data generator
+        datasets.py     # 21 custom-SQL datasets
+        demo_data.py    # Sasquatch National Bank — CMS treasury demo data generator
         constants.py    # Sheet + dataset identifier constants
 demo/
     schema.sql          # Full PostgreSQL DDL (both apps)
@@ -244,8 +256,8 @@ pytest                  # unit + integration (fast, no AWS)
 
 Coverage:
 
-- **Unit / integration (254 tests)**: models, tags, config, CLI, demo determinism + FK integrity + scenario coverage, theme preset registry, dataset builders, visual builders, filter groups, cross-reference validation (dataset ARNs, filter bindings, visual ID uniqueness, sheet scoping), explanation coverage, schema + seed SQL structure.
-- **E2E (75 tests)**: two layers gated by `QS_GEN_E2E=1`.
+- **Unit / integration (344 tests)**: models, tags, config, CLI, demo determinism + FK integrity + scenario coverage, theme preset registry, dataset builders, visual builders, filter groups, cross-reference validation (dataset ARNs, filter bindings, visual ID uniqueness, sheet scoping), explanation coverage, schema + seed SQL structure.
+- **E2E (101 tests)**: two layers gated by `QS_GEN_E2E=1`.
   - *API layer (boto3)* — resource existence, status, dashboard structure, dataset import health.
   - *Browser layer (Playwright WebKit, headless)* — dashboard loads via pre-authenticated embed URL, sheet tabs, per-sheet visual counts, drill-downs, mutual-filter reconciliation tables, date-range filter narrowing, Show-Only-X toggles.
 

@@ -194,15 +194,17 @@ _TRANSACTIONS_DESCRIPTION = (
 )
 
 _EXCEPTIONS_DESCRIPTION = (
-    "Five independent reconciliation problems side by side. Ledger drift "
-    "is stored ledger vs Σ sub-ledgers' stored balances — fingers the "
-    "ledger-balance upstream feed. Sub-ledger drift is stored sub-ledger "
-    "vs Σ posted transactions — fingers the sub-ledger balance feed or "
-    "the ledger. Non-zero transfers are per-transfer imbalances. Limit "
-    "breaches are (sub-ledger, day, type) triples where outbound volume "
-    "exceeded the ledger-defined daily transfer limit for that type. "
-    "Overdrafts are sub-ledger days where the stored balance went "
-    "negative. The timelines show when each drift feed spiked."
+    "All reconciliation problems pulled together. Cross-check rollups at "
+    "the top teach the SHAPE of recurring error classes — accounts that "
+    "should be zero at EOD but aren't, two-sided posts where one side "
+    "landed and the other didn't, and balance-drift timelines. Per-check "
+    "details follow: ledger and sub-ledger balance drift, non-zero "
+    "transfers, limit breaches, sub-ledger overdrafts, and Cash "
+    "Management Suite checks (ZBA sweep targets, ACH origination "
+    "non-zero EOD, missing Fed confirmations, force-posted card "
+    "settlements without internal catch-up, GL-vs-Fed Master drift, "
+    "stuck-in-suspense internal transfers, and reversed-but-not-credited "
+    "double spends)."
 )
 
 
@@ -228,10 +230,11 @@ _TRANSACTIONS_BULLETS = [
 ]
 
 _EXCEPTIONS_BULLETS = [
-    "Ledger and sub-ledger balance drift (separate upstream feeds)",
-    "Non-zero transfers, daily limit breaches, and sub-ledger overdrafts",
-    "Timelines show when each drift feed spiked",
-    "Click any row to drill into the underlying transactions",
+    "Top of tab: cross-check rollups by error SHAPE (expected-zero, two-sided mismatch, drift)",
+    "Per-check details: drift, non-zero transfers, limit breaches, overdrafts",
+    "Cash Management Suite checks: ZBA sweep, ACH origination, force-posted card, internal transfer suspense",
+    "Reversed-but-not-credited (double-spend) flagged separately at top",
+    "Aging bars on every check for time-based urgency triage",
 ]
 
 
@@ -312,43 +315,64 @@ def _build_getting_started_sheet(cfg: Config) -> SheetDefinition:
             SheetTextBoxId="ar-gs-demo-flavor",
             Content=rt.text_box(
                 rt.heading(
-                    "Demo scenario — Farmers Exchange Bank",
+                    "Demo scenario — Sasquatch National Bank",
                     color=accent,
                 ),
                 rt.BR,
                 rt.BR,
                 rt.body(
-                    "Five ledger accounts (Big Meadow Checking, Harvest "
-                    "Moon Savings, Orchard Lending Pool, Valley Grain "
-                    "Co-op, and Harvest Credit Exchange) move money "
-                    "between ten sub-ledger accounts over a ~40 day "
-                    "window using four transfer types (ach, wire, "
-                    "internal, cash). Ledger accounts define per-type "
-                    "daily outbound limits; a handful of "
-                    "sub-ledger-day-type cells intentionally breach those "
-                    "limits."
+                    "Sasquatch National Bank (SNB), a Pacific Northwest "
+                    "community bank, recently absorbed Farmers Exchange "
+                    "Bank's commercial book. SNB's general ledger has "
+                    "eight internal control accounts (Cash & Due From "
+                    "FRB, ACH Origination Settlement, Card Acquiring "
+                    "Settlement, Wire Settlement Suspense, Internal "
+                    "Transfer Suspense, Cash Concentration Master, "
+                    "Internal Suspense / Reconciliation, and Customer "
+                    "Deposits — DDA Control) plus per-customer DDAs for "
+                    "three coffee retailers (Bigfoot Brews, Sasquatch "
+                    "Sips, Yeti Espresso) and four commercial customers "
+                    "(Cascade Timber Mill, Pinecrest Vineyards, Big "
+                    "Meadow Dairy, Harvest Moon Bakery)."
                 ),
                 rt.BR,
                 rt.BR,
                 rt.body(
-                    "A handful of transfers have a failed leg, another "
-                    "handful are keyed off by a few dollars, three "
-                    "sub-ledger days land in overdraft, and "
-                    "ledger/sub-ledger stored balances carry disjoint "
-                    "planted drift — so each of the five Exceptions "
-                    "tables surfaces its own distinct rows."
+                    "SNB's Cash Management Suite drives four telling "
+                    "transfer flows: ZBA / Cash Concentration sweeps "
+                    "(operating sub-accounts sweep to the master at "
+                    "EOD), daily ACH origination sweeps to the FRB "
+                    "Master Account, external force-posted card "
+                    "settlements that internal books must catch up to, "
+                    "and on-us internal transfers routed through the "
+                    "Internal Transfer Suspense account. Each flow is "
+                    "planted with both success cycles and characteristic "
+                    "failure modes — sweep target non-zero, missing Fed "
+                    "confirmation, force-post without internal catch-up, "
+                    "stuck-in-suspense, reversed-but-not-credited."
+                ),
+                rt.BR,
+                rt.BR,
+                rt.body(
+                    "Ledger and sub-ledger stored balances also carry "
+                    "disjoint planted drift, plus a handful of off-amount "
+                    "transfers, failed legs, limit breaches, and "
+                    "overdrafts — so every Exceptions check surfaces "
+                    "distinct rows. The Exceptions tab leads with "
+                    "cross-check rollups so you learn to spot the same "
+                    "SHAPE of error across multiple accounts."
                 ),
                 rt.BR,
                 rt.BR,
                 rt.body(
                     "Data is deterministic — anchor date is the day the "
                     "seed was generated. Explore the date-range, "
-                    "transfer-type, and show-only toggles to see how each "
-                    "tab responds."
+                    "transfer-type, posting-level, origin, and "
+                    "show-only toggles to see how each tab responds."
                 ),
             ),
         ))
-        layout.append(_full_width_text("ar-gs-demo-flavor", 9))
+        layout.append(_full_width_text("ar-gs-demo-flavor", 14))
 
     sheet_blocks = [
         (

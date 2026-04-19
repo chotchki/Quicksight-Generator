@@ -2688,10 +2688,10 @@ class TestAnalysisName:
         name = build_analysis(self._cfg("default")).Name
         assert name == "Account Reconciliation"
 
-    def test_farmers_exchange_name(self):
+    def test_sasquatch_bank_ar_name(self):
         from quicksight_gen.account_recon.analysis import build_analysis
 
-        name = build_analysis(self._cfg("farmers-exchange-bank")).Name
+        name = build_analysis(self._cfg("sasquatch-bank-ar")).Name
         assert name == "Demo — Account Reconciliation"
 
 

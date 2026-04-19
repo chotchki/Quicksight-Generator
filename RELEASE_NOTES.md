@@ -1,5 +1,31 @@
 # Release Notes
 
+## v2.0.0
+
+### Phase F — AR restructure into Sasquatch National Bank Cash Management Suite
+
+The AR demo abstraction shifts from "Farmers Exchange Bank — generic valley ledgers" to "Sasquatch National Bank — Cash Management Suite (CMS)". The same Pacific-Northwest bank from the PR side is now viewed through its treasury operations after SNB absorbed FEB's commercial book. The new account topology and four CMS-driven telling-transfer flows expose failure classes the old structure couldn't, and a new layer of cross-check rollups teaches analysts to recognize error *classes* before drilling into individual rows.
+
+### What landed
+
+- **CMS account topology** — eight internal GL control accounts (Cash & Due From FRB, ACH Origination Settlement, Card Acquiring Settlement, Wire Settlement Suspense, Internal Transfer Suspense, Cash Concentration Master, Internal Suspense / Reconciliation, Customer Deposits — DDA Control) sit above seven customer DDAs (three coffee retailers shared with PR plus four commercial customers — Cascade Timber Mill, Pinecrest Vineyards, Big Meadow Dairy, Harvest Moon Bakery).
+- **Four CMS telling-transfer flows** — ZBA / Cash Concentration sweeps, daily ACH origination sweeps to the FRB Master Account, external force-posted card settlements, and on-us internal transfers through Internal Transfer Suspense. Each plants both success cycles and characteristic failures.
+- **9 new CMS-specific exception checks** — sweep-target-nonzero, concentration-master-sweep-drift, ach-orig-settlement-nonzero, ach-sweep-no-fed-confirmation, fed-card-no-internal-catchup, gl-vs-fed-master-drift, internal-transfer-stuck, internal-transfer-suspense-nonzero, internal-reversal-uncredited. Each is a dedicated dataset + KPI + detail table + aging bar following the established Phase D visual pattern.
+- **3 cross-check rollups** at the top of the Exceptions tab — expected-zero EOD rollup, two-sided post-mismatch rollup, and balance drift timelines rollup — teaching error-class recognition before per-check drill-down.
+- **AR dataset count** — 9 → 21 (9 baseline + 9 CMS checks + 3 rollups). Exceptions tab visual count: 17 → 47.
+- **AR theme rename** — `farmers-exchange-bank` preset renamed to `sasquatch-bank-ar`. Palette unchanged (valley green + harvest gold + earth tones); the AR dashboard still reads visually distinct from PR (forest green + bank gold) so users can tell the merchant and treasury views of the same bank apart at a glance.
+- **AR Getting Started rewrite** — the demo flavor block now describes the SNB / CMS structure: 8 GL control accounts, 7 customer DDAs, four telling-transfer flows, and the cross-check rollups.
+- **`CategoricalMeasureField` DATETIME fix** — added `_measure_date_count` helper for `DateMeasureField(COUNT)`; switched four CMS-check KPIs and two aging-bar callers off `balance_date` to ledger-account grouping (`CategoricalMeasureField` rejects DATETIME columns).
+
+### Notes
+
+- **344 unit/integration tests** (was 254), **101 e2e tests** (was 75), all green.
+- Theme rename is backwards-incompatible: existing config files using `theme_preset: farmers-exchange-bank` must be updated to `sasquatch-bank-ar` before redeploy.
+- Dataset IDs added; no existing dataset IDs renamed. Safe in-place redeploy after `cleanup --yes` to remove the dropped `qs-gen-ar-*` resources.
+- `demo apply --all` and `deploy --all --generate` verified against live AWS.
+
+---
+
 ## v1.5.0
 
 ### Phase D — Aging buckets, origin wiring, and shared visual pattern
