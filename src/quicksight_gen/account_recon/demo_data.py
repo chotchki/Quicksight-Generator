@@ -1,8 +1,13 @@
-"""Demo data for Account Recon — Farmers Exchange Bank.
+"""Demo data for Account Recon — Sasquatch National Bank (SNB).
 
-Deterministic SQL INSERTs for the ``ar_*`` tables. Plants scenarios
-across four independent reconciliation checks so the Exceptions tab is
-always populated:
+Deterministic SQL INSERTs for the ``ar_*`` tables. Account model is
+GL-control accounts (numbered per a typical bank chart of accounts) +
+per-customer DDAs + ZBA operating sub-pools, plus external counterparty
+ledgers (Federal Reserve, card processor, suppliers). See
+``docs/Training_Story.md`` for the business framing.
+
+Plants scenarios across the existing reconciliation checks so the
+Exceptions tab is always populated:
 
 * Failed-leg transfers — one leg posted, the counter-leg failed; the
   transfer's net-of-non-failed amount is non-zero.
@@ -14,12 +19,11 @@ always populated:
   cell exceeds the ledger's configured daily_limit for that type.
 * Overdraft — stored sub-ledger balance for a given day is negative.
 
-Naming uses generic valley/farm/harvest vocabulary — no trademarked
-characters or places.
-
-Sample IDs (``ar-par-*`` / ``ar-acc-*``) predate the ledger/sub-ledger
-rename; kept as opaque strings so the generator's output stays
-byte-identical for the same random seed + anchor date.
+ID scheme:
+* ``gl-<num>-<slug>``         GL control accounts       (e.g. ``gl-2010-dda-control``)
+* ``cust-<num>-<slug>``       customer DDAs             (e.g. ``cust-900-0001-bigfoot-brews``)
+* ``gl-<num>-sub-<slug>``     operational sub-pools     (e.g. ``gl-1850-sub-big-meadow-dairy-main``)
+* ``ext-<slug>`` / ``ext-<slug>-sub-<role>``  external counterparties + their sub-pools
 """
 
 from __future__ import annotations
@@ -31,30 +35,69 @@ from typing import Any
 
 
 # ---------------------------------------------------------------------------
-# Static definitions — valley / farm / harvest flavor
+# Static definitions — Sasquatch National Bank chart of accounts
 # ---------------------------------------------------------------------------
 
 LEDGER_ACCOUNTS: list[tuple[str, str, bool]] = [
     # (ledger_account_id, name, is_internal)
-    ("ar-par-checking",  "Big Meadow Checking",     True),
-    ("ar-par-savings",   "Harvest Moon Savings",    True),
-    ("ar-par-loans",     "Orchard Lending Pool",    True),
-    ("ar-par-coop",      "Valley Grain Co-op",      False),
-    ("ar-par-exchange",  "Harvest Credit Exchange", False),
+    # Internal GL control accounts — SNB's chart of accounts.
+    ("gl-1010-cash-due-frb",              "Cash & Due From Federal Reserve",  True),
+    ("gl-1810-ach-orig-settlement",       "ACH Origination Settlement",       True),
+    ("gl-1815-card-acquiring-settlement", "Card Acquiring Settlement",        True),
+    ("gl-1820-wire-settlement-suspense",  "Wire Settlement Suspense",         True),
+    ("gl-1830-internal-transfer-suspense","Internal Transfer Suspense",       True),
+    ("gl-1850-cash-concentration-master", "Cash Concentration Master",        True),
+    ("gl-1899-internal-suspense-recon",   "Internal Suspense / Reconciliation", True),
+    ("gl-2010-dda-control",               "Customer Deposits — DDA Control",  True),
+    # External counterparties — SNB transacts with them but doesn't hold
+    # their accounts. Reconciliation compares SNB's view to the
+    # counterparty's view (Fed statement, processor reports, etc.).
+    ("ext-frb-snb-master",                "Federal Reserve Bank — SNB Master", False),
+    ("ext-payment-gateway-processor",     "Payment Gateway Processor",        False),
+    ("ext-coffee-shop-supply-co",         "Coffee Shop Supply Co",            False),
+    ("ext-valley-grain-coop",             "Valley Grain Co-op",               False),
+    ("ext-harvest-credit-exchange",       "Harvest Credit Exchange",          False),
 ]
 
 SUBLEDGER_ACCOUNTS: list[tuple[str, str, str]] = [
     # (subledger_account_id, name, ledger_account_id)
-    ("ar-acc-checking-main", "Checking – Main Office",       "ar-par-checking"),
-    ("ar-acc-checking-west", "Checking – Westfield Branch",  "ar-par-checking"),
-    ("ar-acc-savings-core",  "Savings – Core Reserve",       "ar-par-savings"),
-    ("ar-acc-savings-op",    "Savings – Operating Surplus",  "ar-par-savings"),
-    ("ar-acc-loans-farm",    "Loans – Farmland Mortgages",   "ar-par-loans"),
-    ("ar-acc-loans-equip",   "Loans – Equipment Financing",  "ar-par-loans"),
-    ("ar-acc-coop-clearing", "Valley Grain Co-op Clearing",  "ar-par-coop"),
-    ("ar-acc-coop-settle",   "Valley Grain Co-op Settlement","ar-par-coop"),
-    ("ar-acc-exchange-in",   "Harvest Exchange Inbound",     "ar-par-exchange"),
-    ("ar-acc-exchange-out",  "Harvest Exchange Outbound",    "ar-par-exchange"),
+    #
+    # Customer DDAs under Customer Deposits — DDA Control.
+    # Account numbers follow SNB's pattern: 900-* merchants, 800-*/700-*
+    # commercial customers (legacy FEB acquisition kept their original
+    # 800/700 numbering ranges).
+    ("cust-900-0001-bigfoot-brews",       "Bigfoot Brews — DDA",              "gl-2010-dda-control"),
+    ("cust-900-0002-sasquatch-sips",      "Sasquatch Sips — DDA",             "gl-2010-dda-control"),
+    ("cust-900-0003-yeti-espresso",       "Yeti Espresso — DDA",              "gl-2010-dda-control"),
+    ("cust-800-0001-cascade-timber-mill", "Cascade Timber Mill — DDA",        "gl-2010-dda-control"),
+    ("cust-800-0002-pinecrest-vineyards", "Pinecrest Vineyards LLC — DDA",    "gl-2010-dda-control"),
+    ("cust-700-0001-big-meadow-dairy",    "Big Meadow Dairy — DDA",           "gl-2010-dda-control"),
+    ("cust-700-0002-harvest-moon-bakery", "Harvest Moon Bakery — DDA",        "gl-2010-dda-control"),
+    #
+    # ZBA operating sub-accounts under Cash Concentration Master. Each
+    # sweeps to zero EOD; the master receives the consolidated balance.
+    # Big Meadow Dairy and Cascade Timber Mill have multiple operating
+    # locations (the primary ZBA scenario customers); the others have one.
+    ("gl-1850-sub-big-meadow-dairy-main",   "Big Meadow Dairy — Operating (Main)",   "gl-1850-cash-concentration-master"),
+    ("gl-1850-sub-big-meadow-dairy-north",  "Big Meadow Dairy — Operating (North)",  "gl-1850-cash-concentration-master"),
+    ("gl-1850-sub-cascade-timber-mill-a",   "Cascade Timber Mill — Operating (Mill A)", "gl-1850-cash-concentration-master"),
+    ("gl-1850-sub-cascade-timber-mill-b",   "Cascade Timber Mill — Operating (Mill B)", "gl-1850-cash-concentration-master"),
+    ("gl-1850-sub-pinecrest-vineyards",     "Pinecrest Vineyards LLC — Operating",   "gl-1850-cash-concentration-master"),
+    ("gl-1850-sub-harvest-moon-bakery",     "Harvest Moon Bakery — Operating",       "gl-1850-cash-concentration-master"),
+    #
+    # External counterparty sub-pools — clearing/settlement or
+    # inbound/outbound split per counterparty so cross-scope transfers
+    # have realistic counter-leg targets.
+    ("ext-frb-sub-inbound",                 "FRB Master — Inbound (credits to SNB)",  "ext-frb-snb-master"),
+    ("ext-frb-sub-outbound",                "FRB Master — Outbound (debits from SNB)","ext-frb-snb-master"),
+    ("ext-payment-gateway-sub-clearing",    "Payment Gateway — Clearing",           "ext-payment-gateway-processor"),
+    ("ext-payment-gateway-sub-settlement",  "Payment Gateway — Settlement",         "ext-payment-gateway-processor"),
+    ("ext-coffee-supply-sub-inbound",       "Coffee Shop Supply Co — Inbound",      "ext-coffee-shop-supply-co"),
+    ("ext-coffee-supply-sub-outbound",      "Coffee Shop Supply Co — Outbound",     "ext-coffee-shop-supply-co"),
+    ("ext-valley-grain-sub-clearing",       "Valley Grain Co-op — Clearing",        "ext-valley-grain-coop"),
+    ("ext-valley-grain-sub-settlement",     "Valley Grain Co-op — Settlement",      "ext-valley-grain-coop"),
+    ("ext-harvest-credit-sub-inbound",      "Harvest Credit Exchange — Inbound",    "ext-harvest-credit-exchange"),
+    ("ext-harvest-credit-sub-outbound",     "Harvest Credit Exchange — Outbound",   "ext-harvest-credit-exchange"),
 ]
 
 _MEMOS = [
@@ -786,7 +829,7 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
     )
 
     parts = [
-        f"-- Farmers Exchange Bank — demo seed data",
+        f"-- Sasquatch National Bank — demo seed data",
         f"-- Anchor date: {today.isoformat()}\n",
 
         _inserts("ar_ledger_accounts",
