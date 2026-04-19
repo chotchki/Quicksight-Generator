@@ -934,35 +934,55 @@ GROUP BY t.transfer_id;
 -- originator was debited on Step 1 and never refunded, but suspense
 -- nets to zero so the ledger looks healthy. The customer is short the
 -- money. This is the most damaging silent failure in the cycle.
+-- Phase G: reads from shared `transactions`. Inline subqueries collapse
+-- per-leg rows to one row per transfer (orig + step2). Sub-ledger
+-- posting is identified by control_account_id IS NOT NULL (per G.0.12).
 CREATE VIEW ar_internal_reversal_uncredited AS
 SELECT
     orig.transfer_id                    AS originate_transfer_id,
-    orig.created_at                     AS originated_at,
-    orig.amount                         AS originate_amount,
+    orig.originated_at,
+    orig.originate_amount,
     step2.transfer_id                   AS reversal_transfer_id,
-    step2.created_at                    AS reversal_at
-FROM transfer orig
-JOIN transfer step2 ON step2.parent_transfer_id = orig.transfer_id
-WHERE orig.transfer_type = 'internal'
-  AND orig.origin = 'internal_initiated'
-  AND orig.parent_transfer_id IS NULL
-  AND EXISTS (
-    SELECT 1 FROM posting p
-    WHERE p.transfer_id = orig.transfer_id
-      AND p.ledger_account_id = 'gl-1830-internal-transfer-suspense'
-  )
-  AND EXISTS (
-    SELECT 1 FROM posting p
-    WHERE p.transfer_id = step2.transfer_id
-      AND p.subledger_account_id IS NOT NULL
-      AND p.status = 'failed'
-  )
-  AND EXISTS (
-    SELECT 1 FROM posting p
-    WHERE p.transfer_id = step2.transfer_id
-      AND p.ledger_account_id = 'gl-1830-internal-transfer-suspense'
-      AND p.status = 'success'
-  );
+    step2.reversal_at
+FROM (
+    SELECT
+        t.transfer_id,
+        MIN(t.posted_at) AS originated_at,
+        MIN(t.amount)    AS originate_amount
+    FROM transactions t
+    WHERE t.transfer_type      = 'internal'
+      AND t.origin             = 'internal_initiated'
+      AND t.parent_transfer_id IS NULL
+      AND EXISTS (
+        SELECT 1 FROM transactions hit
+        WHERE hit.transfer_id = t.transfer_id
+          AND (hit.account_id         = 'gl-1830-internal-transfer-suspense'
+            OR hit.control_account_id = 'gl-1830-internal-transfer-suspense')
+      )
+    GROUP BY t.transfer_id
+) orig
+JOIN (
+    SELECT
+        t.transfer_id,
+        MIN(t.parent_transfer_id) AS parent_transfer_id,
+        MIN(t.posted_at)          AS reversal_at
+    FROM transactions t
+    WHERE t.parent_transfer_id IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM transactions p
+        WHERE p.transfer_id        = t.transfer_id
+          AND p.control_account_id IS NOT NULL
+          AND p.status             = 'failed'
+      )
+      AND EXISTS (
+        SELECT 1 FROM transactions p
+        WHERE p.transfer_id = t.transfer_id
+          AND (p.account_id         = 'gl-1830-internal-transfer-suspense'
+            OR p.control_account_id = 'gl-1830-internal-transfer-suspense')
+          AND p.status      = 'success'
+      )
+    GROUP BY t.transfer_id
+) step2 ON step2.parent_transfer_id = orig.transfer_id;
 
 
 -- Internal Transfer Suspense non-zero EOD (F.5.8).
