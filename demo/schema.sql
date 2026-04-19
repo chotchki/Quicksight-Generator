@@ -614,59 +614,82 @@ JOIN (
 -- amounts across non-failed transactions. Only tracked (internal)
 -- sub-ledgers contribute — external sub-ledgers have no stored balance
 -- to bound.
+-- Phase G: reads from shared `transactions`. is_internal lives on the
+-- transaction row (matches the sub-ledger's own internal flag).
 CREATE VIEW ar_subledger_daily_outbound_by_type AS
 SELECT
-    p.subledger_account_id,
-    s.ledger_account_id,
-    p.posted_at::date                   AS activity_date,
-    xfer.transfer_type,
-    SUM(ABS(p.signed_amount))           AS outbound_total
-FROM posting p
-JOIN transfer xfer ON xfer.transfer_id = p.transfer_id
-JOIN ar_subledger_accounts s ON s.subledger_account_id = p.subledger_account_id
-WHERE p.status = 'success'
-  AND p.signed_amount < 0
-  AND s.is_internal = TRUE
-  AND xfer.transfer_type IN ('ach', 'wire', 'internal', 'cash', 'funding_batch', 'fee', 'clearing_sweep')
-GROUP BY p.subledger_account_id, s.ledger_account_id, p.posted_at::date, xfer.transfer_type;
+    t.account_id          AS subledger_account_id,
+    t.control_account_id  AS ledger_account_id,
+    t.balance_date        AS activity_date,
+    t.transfer_type,
+    SUM(ABS(t.signed_amount)) AS outbound_total
+FROM transactions t
+WHERE t.status               = 'success'
+  AND t.signed_amount        < 0
+  AND t.is_internal          = TRUE
+  AND t.control_account_id  IS NOT NULL
+  AND t.account_id NOT LIKE 'pr-%'
+  AND t.transfer_type IN ('ach', 'wire', 'internal', 'cash', 'funding_batch', 'fee', 'clearing_sweep')
+GROUP BY t.account_id, t.control_account_id, t.balance_date, t.transfer_type;
 
 
 -- Sub-ledger limit breach: daily outbound by type exceeds the ledger's
 -- configured daily_limit for that type. Rows are emitted only where a
--- limit is defined (i.e., ledger-limits join matches).
+-- limit is defined.
+-- Phase G (G.0.4 Locked): per-type limits live in
+-- `daily_balances.metadata.limits` on the ledger row. Extracted via
+-- SQL/JSON `JSON_VALUE` with a runtime-built jsonpath.
 CREATE VIEW ar_subledger_limit_breach AS
 SELECT
     o.subledger_account_id,
-    s.name                              AS subledger_name,
+    sub.account_name                       AS subledger_name,
     o.ledger_account_id,
-    la.name                             AS ledger_name,
+    led.account_name                       AS ledger_name,
     o.activity_date,
     o.transfer_type,
     o.outbound_total,
-    l.daily_limit,
-    o.outbound_total - l.daily_limit    AS overage
+    CAST(JSON_VALUE(led.metadata,
+                    ('$.limits.' || o.transfer_type)::jsonpath)
+         AS DECIMAL(14,2))                 AS daily_limit,
+    o.outbound_total -
+        CAST(JSON_VALUE(led.metadata,
+                        ('$.limits.' || o.transfer_type)::jsonpath)
+             AS DECIMAL(14,2))             AS overage
 FROM ar_subledger_daily_outbound_by_type o
-JOIN ar_subledger_accounts s   ON s.subledger_account_id = o.subledger_account_id
-JOIN ar_ledger_accounts la     ON la.ledger_account_id    = o.ledger_account_id
-JOIN ar_ledger_transfer_limits l
-  ON l.ledger_account_id = o.ledger_account_id
- AND l.transfer_type     = o.transfer_type
-WHERE o.outbound_total > l.daily_limit;
+JOIN daily_balances led
+    ON  led.account_id        = o.ledger_account_id
+    AND led.balance_date      = o.activity_date
+   AND led.control_account_id IS NULL
+JOIN daily_balances sub
+    ON  sub.account_id        = o.subledger_account_id
+   AND sub.balance_date       = o.activity_date
+   AND sub.control_account_id IS NOT NULL
+WHERE JSON_VALUE(led.metadata,
+                 ('$.limits.' || o.transfer_type)::jsonpath) IS NOT NULL
+  AND o.outbound_total > CAST(JSON_VALUE(led.metadata,
+                                         ('$.limits.' || o.transfer_type)::jsonpath)
+                              AS DECIMAL(14,2));
 
 
 -- Sub-ledger overdraft: stored sub-ledger balance < 0 for a given day.
+-- Phase G: reads from shared `daily_balances`; ledger_name via self-join
+-- on the corresponding ledger row.
 CREATE VIEW ar_subledger_overdraft AS
 SELECT
-    sdb.subledger_account_id,
-    s.name                              AS subledger_name,
-    s.ledger_account_id,
-    la.name                             AS ledger_name,
-    sdb.balance_date,
-    sdb.balance                         AS stored_balance
-FROM ar_subledger_daily_balances sdb
-JOIN ar_subledger_accounts s   USING (subledger_account_id)
-JOIN ar_ledger_accounts la     USING (ledger_account_id)
-WHERE sdb.balance < 0;
+    sub.account_id                       AS subledger_account_id,
+    sub.account_name                     AS subledger_name,
+    sub.control_account_id               AS ledger_account_id,
+    led.account_name                     AS ledger_name,
+    sub.balance_date,
+    sub.balance                          AS stored_balance
+FROM daily_balances sub
+JOIN daily_balances led
+    ON  led.account_id   = sub.control_account_id
+   AND led.balance_date  = sub.balance_date
+WHERE sub.control_account_id IS NOT NULL
+  AND led.control_account_id IS NULL
+  AND sub.account_id NOT LIKE 'pr-%'
+  AND sub.balance < 0;
 
 
 -- Sweep target non-zero EOD: ZBA operating sub-accounts (under Cash
