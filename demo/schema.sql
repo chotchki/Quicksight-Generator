@@ -1014,6 +1014,9 @@ WHERE db.account_id          = 'gl-1830-internal-transfer-suspense'
 --   F.5.8: Internal Transfer Suspense ledger (gl-1830)
 -- Teaches users to recognize the pattern across multiple accounts —
 -- per-check tables stay below for drill-in detail.
+-- Phase G: structurally unchanged — UNIONs three already-migrated
+-- check views (G.7.1, G.7.3, G.7.8). Transitively reads from
+-- `daily_balances`.
 CREATE VIEW ar_expected_zero_eod_rollup AS
 SELECT
     subledger_account_id                AS account_id,
