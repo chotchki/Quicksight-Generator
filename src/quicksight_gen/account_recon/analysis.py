@@ -28,6 +28,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_INTERNAL_REVERSAL_UNCREDITED,
     DS_AR_INTERNAL_TRANSFER_STUCK,
     DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
+    DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     SHEET_AR_BALANCES,
@@ -637,6 +638,22 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
         ),
     ]
 
+    # F.5.10.a: Accounts Expected Zero at EOD rollup — placed at the TOP of
+    # the Exceptions sheet so the same-SHAPE pattern across F.5.1, F.5.3,
+    # F.5.8 hits the eye first; per-check tables remain below for drill-in.
+    expected_zero_rollup_row_kpi = [
+        GridLayoutElement(
+            ElementId="ar-exc-kpi-expected-zero-rollup",
+            ElementType="VISUAL",
+            ColumnSpan=_FULL, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
+        ),
+    ]
+    expected_zero_rollup_table = [
+        _full_width_visual(
+            "ar-exc-expected-zero-rollup-table", _TABLE_ROW_SPAN,
+        ),
+    ]
+
     return SheetDefinition(
         SheetId=SHEET_AR_EXCEPTIONS,
         Name="Exceptions",
@@ -646,7 +663,9 @@ def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
         Visuals=build_exceptions_visuals(link_color),
         FilterControls=build_exceptions_controls(cfg),
         Layouts=_grid_layout(
-            kpi_row_a
+            expected_zero_rollup_row_kpi
+            + expected_zero_rollup_table
+            + kpi_row_a
             + kpi_row_b
             + table_row_a
             + table_row_b
@@ -712,6 +731,7 @@ def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaratio
         DS_AR_INTERNAL_TRANSFER_STUCK,
         DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
         DS_AR_INTERNAL_REVERSAL_UNCREDITED,
+        DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
     ]
     return [
         DataSetIdentifierDeclaration(

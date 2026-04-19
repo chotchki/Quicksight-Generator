@@ -238,6 +238,17 @@ INTERNAL_REVERSAL_UNCREDITED_CONTRACT = DatasetContract(columns=[
     ColumnSpec("aging_bucket", "STRING"),
 ])
 
+EXPECTED_ZERO_EOD_ROLLUP_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("account_id", "STRING"),
+    ColumnSpec("account_name", "STRING"),
+    ColumnSpec("account_level", "STRING"),
+    ColumnSpec("balance_date", "DATETIME"),
+    ColumnSpec("stored_balance", "DECIMAL"),
+    ColumnSpec("source_check", "STRING"),
+    ColumnSpec("days_outstanding", "INTEGER"),
+    ColumnSpec("aging_bucket", "STRING"),
+])
+
 
 # ---------------------------------------------------------------------------
 # Builders
@@ -601,6 +612,24 @@ FROM ar_internal_reversal_uncredited"""
     )
 
 
+def build_expected_zero_eod_rollup_dataset(cfg: Config) -> DataSet:
+    sql = f"""\
+SELECT
+    account_id,
+    account_name,
+    account_level,
+    balance_date,
+    stored_balance,
+    source_check,
+{_aging_columns('balance_date')}
+FROM ar_expected_zero_eod_rollup"""
+    return build_dataset(
+        cfg, cfg.prefixed("ar-expected-zero-eod-rollup-dataset"),
+        "AR Expected-Zero EOD Rollup", "ar-expected-zero-eod-rollup",
+        sql, EXPECTED_ZERO_EOD_ROLLUP_CONTRACT,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Convenience
 # ---------------------------------------------------------------------------
@@ -625,4 +654,5 @@ def build_all_datasets(cfg: Config) -> list[DataSet]:
         build_internal_transfer_stuck_dataset(cfg),
         build_internal_transfer_suspense_nonzero_dataset(cfg),
         build_internal_reversal_uncredited_dataset(cfg),
+        build_expected_zero_eod_rollup_dataset(cfg),
     ]

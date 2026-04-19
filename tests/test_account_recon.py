@@ -832,6 +832,48 @@ class TestScenarioCoverage:
                 f"be non-zero EOD on gl-1830 (got {bal})"
             )
 
+    def test_expected_zero_rollup_surfaces_each_source(self, ar_parsed):
+        """F.5.10.a rollup unions F.5.1 (ZBA sweep target), F.5.3
+        (ACH Origination Settlement), and F.5.8 (Internal Transfer
+        Suspense) — the rollup is empty unless at least one row from
+        each source check exists. Confirms the same-SHAPE pattern
+        teaches across all three control accounts."""
+        ledger_balances: dict[tuple[str, str], Decimal] = {}
+        for row in ar_parsed["ar_ledger_daily_balances"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            ledger_balances[(parts[0], parts[1])] = Decimal(parts[2])
+
+        sub_balances: dict[tuple[str, str], Decimal] = {}
+        for row in ar_parsed["ar_subledger_daily_balances"]:
+            parts = [p.strip().strip("'") for p in row.split(",")]
+            sub_balances[(parts[0], parts[1])] = Decimal(parts[2])
+
+        ach_orig_nonzero = any(
+            bal != 0 for (acct, _), bal in ledger_balances.items()
+            if acct == "gl-1810-ach-orig-settlement"
+        )
+        suspense_nonzero = any(
+            bal != 0 for (acct, _), bal in ledger_balances.items()
+            if acct == "gl-1830-internal-transfer-suspense"
+        )
+        sweep_target_nonzero = any(
+            bal != 0 for _, bal in sub_balances.items()
+        )
+
+        assert ach_orig_nonzero, (
+            "F.5.10.a rollup needs at least one non-zero gl-1810 EOD "
+            "(F.5.3 source) — rollup will be missing that source check"
+        )
+        assert suspense_nonzero, (
+            "F.5.10.a rollup needs at least one non-zero gl-1830 EOD "
+            "(F.5.8 source) — rollup will be missing that source check"
+        )
+        assert sweep_target_nonzero, (
+            "F.5.10.a rollup needs at least one non-zero ZBA-target "
+            "sub-ledger EOD (F.5.1 source) — rollup will be missing "
+            "that source check"
+        )
+
     def test_ach_sweep_no_fed_confirmation_surfaces(self, unified_parsed):
         """F.5.4: ``_ACH_FED_CONFIRMATION_MISSING`` cells must produce
         clearing_sweep transfers on gl-1810 with NO Fed confirmation
@@ -1748,9 +1790,9 @@ class TestGenerateOutput:
     def test_dashboard_file_exists(self, ar_output_dir):
         assert (ar_output_dir / "account-recon-dashboard.json").exists()
 
-    def test_eighteen_dataset_files(self, ar_output_dir):
+    def test_nineteen_dataset_files(self, ar_output_dir):
         datasets = list((ar_output_dir / "datasets").glob("qs-gen-ar-*.json"))
-        assert len(datasets) == 18
+        assert len(datasets) == 19
 
     def test_all_files_valid_json(self, ar_output_dir):
         for path in ar_output_dir.rglob("*.json"):
@@ -1878,7 +1920,9 @@ class TestSheetLayout:
         # Phase F.5.8 adds Internal Transfer Suspense non-zero EOD
         # (KPI + table + aging bar) → 39. Phase F.5.9 adds Reversed-but-
         # not-credited / double spend (KPI + table + aging bar) → 42.
-        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 42)
+        # Phase F.5.10.a adds Accounts Expected Zero at EOD rollup
+        # (KPI + table) → 44.
+        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 44)
 
     def _assert_visual_count(self, out_dir: Path, sheet_id: str, expected: int) -> None:
         analysis = _load(out_dir, "account-recon-analysis.json")

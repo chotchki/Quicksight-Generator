@@ -53,6 +53,7 @@ AR_BUILDERS_AND_CONTRACTS = [
     (ar_datasets.build_internal_transfer_stuck_dataset, ar_datasets.INTERNAL_TRANSFER_STUCK_CONTRACT),
     (ar_datasets.build_internal_transfer_suspense_nonzero_dataset, ar_datasets.INTERNAL_TRANSFER_SUSPENSE_NONZERO_CONTRACT),
     (ar_datasets.build_internal_reversal_uncredited_dataset, ar_datasets.INTERNAL_REVERSAL_UNCREDITED_CONTRACT),
+    (ar_datasets.build_expected_zero_eod_rollup_dataset, ar_datasets.EXPECTED_ZERO_EOD_ROLLUP_CONTRACT),
 ]
 
 

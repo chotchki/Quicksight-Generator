@@ -41,6 +41,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
     DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
     DS_AR_GL_VS_FED_MASTER_DRIFT,
+    DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
     DS_AR_INTERNAL_REVERSAL_UNCREDITED,
     DS_AR_INTERNAL_TRANSFER_STUCK,
     DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
@@ -2201,12 +2202,92 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
         "originate_transfer_id",
     )
 
+    # F.5.10.a Accounts Expected Zero at EOD rollup — same SHAPE check
+    # across three control accounts. Teaches users to spot the pattern
+    # (an account that should be zero, isn't) rather than three separate
+    # checks. Per-check tables remain below for drill-in detail.
+    kpi_expected_zero_rollup = Visual(
+        KPIVisual=KPIVisual(
+            VisualId="ar-exc-kpi-expected-zero-rollup",
+            Title=_title("Accounts Expected Zero at EOD"),
+            Subtitle=_subtitle(
+                "Total non-zero EOD findings across Sweep targets, ACH "
+                "Origination Settlement, and Internal Transfer Suspense — "
+                "same SHAPE: a control account that should be zero, isn't"
+            ),
+            ChartConfiguration=KPIConfiguration(
+                FieldWells=KPIFieldWells(
+                    Values=[
+                        _measure_count(
+                            "ar-exc-expected-zero-rollup-count",
+                            DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
+                            "account_id",
+                        )
+                    ],
+                ),
+            ),
+        )
+    )
+
+    table_expected_zero_rollup = Visual(
+        TableVisual=TableVisual(
+            VisualId="ar-exc-expected-zero-rollup-table",
+            Title=_title("Accounts Expected Zero at EOD"),
+            Subtitle=_subtitle(
+                "Every (account, date) where a control account ended day "
+                "non-zero. source_check identifies which detection rule "
+                "fired; ordered oldest-first by aging."
+            ),
+            ChartConfiguration=TableConfiguration(
+                FieldWells=TableFieldWells(
+                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
+                        Values=[
+                            _unagg_field("ar-exc-ezr-acct-id",
+                                         DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
+                                         "account_id"),
+                            _unagg_field("ar-exc-ezr-acct-name",
+                                         DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
+                                         "account_name"),
+                            _unagg_field("ar-exc-ezr-level",
+                                         DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
+                                         "account_level"),
+                            _unagg_field("ar-exc-ezr-date",
+                                         DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
+                                         "balance_date"),
+                            _unagg_field("ar-exc-ezr-balance",
+                                         DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
+                                         "stored_balance"),
+                            _unagg_field("ar-exc-ezr-aging",
+                                         DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
+                                         "aging_bucket"),
+                            _unagg_field("ar-exc-ezr-source",
+                                         DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
+                                         "source_check"),
+                        ],
+                    )
+                ),
+                SortConfiguration={
+                    "RowSort": [
+                        {
+                            "FieldSort": {
+                                "FieldId": "ar-exc-ezr-aging",
+                                "Direction": "DESC",
+                            },
+                        },
+                    ],
+                },
+            ),
+        )
+    )
+
     return [
+        kpi_expected_zero_rollup,
         kpi_ledger_drift, kpi_subledger_drift, kpi_nonzero,
         kpi_breach, kpi_overdraft, kpi_sweep_target, kpi_sweep_drift,
         kpi_ach_orig_nonzero, kpi_ach_sweep_no_fed, kpi_fed_no_catchup,
         kpi_gl_fed_drift, kpi_internal_stuck, kpi_internal_suspense_nonzero,
         kpi_internal_reversal_uncredited,
+        table_expected_zero_rollup,
         table_ledger_drift, table_subledger_drift, table_non_zero,
         table_breach, table_overdraft, table_sweep_target,
         table_ach_orig_nonzero, table_ach_sweep_no_fed, table_fed_no_catchup,

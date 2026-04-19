@@ -238,6 +238,7 @@ DROP TABLE IF EXISTS ar_accounts                       CASCADE;
 DROP TABLE IF EXISTS ar_parent_accounts                CASCADE;
 
 -- Current-vocabulary drops
+DROP VIEW  IF EXISTS ar_expected_zero_eod_rollup         CASCADE;
 DROP VIEW  IF EXISTS ar_internal_reversal_uncredited     CASCADE;
 DROP VIEW  IF EXISTS ar_internal_transfer_suspense_nonzero CASCADE;
 DROP VIEW  IF EXISTS ar_internal_transfer_stuck          CASCADE;
@@ -826,3 +827,40 @@ FROM ar_ledger_daily_balances ldb
 JOIN ar_ledger_accounts la USING (ledger_account_id)
 WHERE ldb.ledger_account_id = 'gl-1830-internal-transfer-suspense'
   AND ldb.balance <> 0;
+
+
+-- F.5.10.a Accounts Expected Zero at EOD rollup.
+-- Same SHAPE check across three control accounts: an account that should
+-- be zero EOD by design, isn't. Rolls up:
+--   F.5.1: Sweep target sub-accounts (under Cash Concentration Master)
+--   F.5.3: ACH Origination Settlement ledger (gl-1810)
+--   F.5.8: Internal Transfer Suspense ledger (gl-1830)
+-- Teaches users to recognize the pattern across multiple accounts —
+-- per-check tables stay below for drill-in detail.
+CREATE VIEW ar_expected_zero_eod_rollup AS
+SELECT
+    subledger_account_id                AS account_id,
+    subledger_name                      AS account_name,
+    'Sub-Ledger'                        AS account_level,
+    balance_date,
+    stored_balance,
+    'Sweep target non-zero EOD'         AS source_check
+FROM ar_sweep_target_nonzero
+UNION ALL
+SELECT
+    ledger_account_id                   AS account_id,
+    ledger_name                         AS account_name,
+    'Ledger'                            AS account_level,
+    balance_date,
+    stored_balance,
+    'ACH Origination Settlement non-zero EOD' AS source_check
+FROM ar_ach_orig_settlement_nonzero
+UNION ALL
+SELECT
+    ledger_account_id                   AS account_id,
+    ledger_name                         AS account_name,
+    'Ledger'                            AS account_level,
+    balance_date,
+    stored_balance,
+    'Internal Transfer Suspense non-zero EOD' AS source_check
+FROM ar_internal_transfer_suspense_nonzero;
