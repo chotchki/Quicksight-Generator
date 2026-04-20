@@ -380,11 +380,11 @@ WHERE t.status               = 'success'
   AND t.signed_amount        < 0
   AND t.is_internal          = TRUE
   AND t.control_account_id  IS NOT NULL
-  -- Phase H tech debt: demo-only PR/AR coexistence filter. Once Phase H
-  -- decouples PR from the AR persona this view becomes unscoped (real
-  -- customer feeds don't have a parallel PR ledger). Grep `pr-%` to find
-  -- and remove. Tracked under "Phase H: remove PR-coexistence filters".
-  AND t.account_id NOT LIKE 'pr-%'
+  -- Mirrors the downstream `ar_subledger_limit_breach` JOIN scope:
+  -- limits are only configured for AR transfer types
+  -- (`ar_ledger_transfer_limits.transfer_type` CHECK above), so PR
+  -- transfer types would drop in the JOIN regardless. Filter is a
+  -- query-planner hint, not an artificial exclusion.
   AND t.transfer_type IN ('ach', 'wire', 'internal', 'cash', 'funding_batch', 'fee', 'clearing_sweep')
 GROUP BY t.account_id, t.control_account_id, t.balance_date, t.transfer_type;
 
@@ -444,11 +444,6 @@ JOIN daily_balances led
    AND led.balance_date  = sub.balance_date
 WHERE sub.control_account_id IS NOT NULL
   AND led.control_account_id IS NULL
-  -- Phase H tech debt: demo-only PR/AR coexistence filter. Once Phase H
-  -- decouples PR from the AR persona this view becomes unscoped (real
-  -- customer feeds don't have a parallel PR ledger). Grep `pr-%` to find
-  -- and remove. Tracked under "Phase H: remove PR-coexistence filters".
-  AND sub.account_id NOT LIKE 'pr-%'
   AND sub.balance < 0;
 
 
