@@ -257,6 +257,43 @@ def demo_seed(app: str | None, all_apps: bool, output: str) -> None:
     click.echo(f"Wrote seed data to {out}")
 
 
+@demo.command("etl-example")
+@click.argument("app", type=APP_CHOICE, required=False)
+@click.option("--all", "all_apps", is_flag=True, help="Emit examples for all apps.")
+@click.option(
+    "--output", "-o",
+    type=click.Path(), default="demo/etl-examples.sql",
+    help="Output path for the ETL examples SQL file.",
+)
+def demo_etl_example(app: str | None, all_apps: bool, output: str) -> None:
+    """Emit canonical INSERT-pattern examples for ETL authors.
+
+    Output is exemplary, not executable against the real demo seed —
+    every pattern uses fixed sentinel IDs (xxx-EXAMPLE-001) so the
+    statements are self-contained. See docs/handbook/etl.md for the
+    walkthroughs that reference this output.
+    """
+    app = _resolve_app(app, all_apps, allow_all=True)
+    from quicksight_gen.account_recon.etl_examples import (
+        generate_etl_examples_sql as generate_ar_examples,
+    )
+    from quicksight_gen.payment_recon.etl_examples import (
+        generate_etl_examples_sql as generate_pr_examples,
+    )
+
+    if app == "payment-recon":
+        sql = generate_pr_examples()
+    elif app == "account-recon":
+        sql = generate_ar_examples()
+    else:  # all
+        sql = generate_pr_examples() + "\n" + generate_ar_examples()
+
+    out = Path(output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(sql)
+    click.echo(f"Wrote ETL examples to {out}")
+
+
 @demo.command("apply")
 @click.argument("app", type=APP_CHOICE, required=False)
 @click.option("--all", "all_apps", is_flag=True, help="Apply for all apps.")

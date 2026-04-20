@@ -385,6 +385,13 @@ WHERE JSON_EXISTS(metadata, '$.merchant_account_id');
 | `settlement_id` | string | Chain to which settlement transferred this sale. |
 | `taxes`, `tips`, `discount_percentage` | string (numeric) | Optional sales metadata. |
 
+#### On `transactions` rows where `transfer_type = 'settlement'` (PR settlement aggregates)
+
+| Key | Type | Why it matters |
+|---|---|---|
+| `settlement_type` | string | `daily` / `weekly` / `monthly` — drives the merchant-cadence pivot on the Settlements sheet and the "is yesterday's batch overdue?" logic in *Did All Merchants Get Paid Yesterday*. |
+| `sale_count` | string (numeric) | How many sales rolled into this settlement. Drives the per-settlement sale-count column and the *Sale ↔ Settlement Mismatch* check's denominator. |
+
 #### On `transactions` rows where `transfer_type = 'payment'` (PR merchant payouts)
 
 | Key | Type | Why it matters |
