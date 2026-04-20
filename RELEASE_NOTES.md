@@ -1,5 +1,68 @@
 # Release Notes
 
+## v3.1.0
+
+### Phase H + Phase I — Handbooks, Daily Statement, sign-convention standardization, PyPI release pipeline
+
+This release rolls up Phase H (handbook suite + walkthrough harness) and the bulk of Phase I (Daily Statement sheet, PR/AR cross-visibility unification, PR sign-convention fix, PyPI release plumbing). Dashboards are visually unchanged from v3.0.0; the seed shifts under the sign-convention fix (re-locked SHA256), and a new per-account Daily Statement sheet is added to the AR analysis. The CLI is now `pip install quicksight-gen` from PyPI on every tagged release, with a sample `out/` bundle attached to the GitHub Release for evaluators.
+
+### What landed
+
+**Handbooks + walkthroughs (Phase H)**
+
+- **MkDocs Material site** (`docs/`) deployed to GitHub Pages — Sasquatch palette + hero, with index pages for the AR Handbook, PR Handbook, Data Integration Handbook, and ETL training suite.
+- **AR Handbook** — one walkthrough per AR Exceptions check (5 baseline + 9 CMS + 3 rollups), each with screenshots, scenario walkthrough, and SQL probe queries.
+- **PR Handbook** — pipeline + matching walkthroughs for every merchant-support workflow (*Where's My Money*, mismatched settlements, unmatched external txns, returns, etc.).
+- **Data Integration Handbook + ETL walkthroughs** — populate-transactions, validate-account-day, prove-ETL-is-working, what-to-do-when-demo-passes-but-prod-fails, add-metadata-key, tag-force-posted, extend-with-new-transfer-type.
+- **`quicksight-gen demo etl-example`** CLI — emits the worked ETL example from `Schema_v3.md` as a runnable SQL script.
+- **Walkthrough screenshot generator** — Playwright e2e harness reused to capture screenshots from the live deployed demo, keeping handbook screenshots in sync with the running dashboard.
+- **`docs/Schema_v3.md` expansion** — per-key WHY narrative for every metadata key, end-to-end ETL examples for piping production data into the two base tables, and a new **Sign convention** subsection reconciling bank's-bookkeeping ("+= debit") and account-holder ("= money IN") readings.
+
+**Daily Statement sheet (Phase I.1, I.2)**
+
+- New **AR per-account daily statement** sheet (Opening Balance / Total Debits / Total Credits / Closing Stored / Drift KPIs + transaction-detail table with counter-leg account name resolution), reachable from any sub-ledger row on the AR Balances tab via right-click drill-down.
+- **Two new datasets** — `ar-daily-statement-summary` (KPI strip) and `ar-daily-statement-transactions` (detail table), both following the greenfield "no artificial filters" convention.
+- **PR KPI semantics regression test** (`tests/e2e/test_pr_kpi_semantics.py`) — locks the SUM-vs-COUNT and absolute-vs-signed semantics on every PR KPI against direct-DB SQL probes.
+- **AR Exceptions KPI semantic coverage tests** — pinned visual-scoped filters on five PR/AR semantically-mismatched KPIs.
+- **`ParameterControl` widgets** for the Daily Statement account picker (replaces `FilterControl` — gives nullable account selection + cleaner tab-load behavior).
+
+**Cross-visibility unification (Phase I.4)**
+
+- **`account_id NOT LIKE 'pr-%'` filters dropped** from `ar_subledger_overdraft` and `ar_subledger_daily_outbound_by_type` — PR merchant DDA rows now surface in AR exception views by intent.
+- **`WHERE transfer_type IN (...)` filter dropped** from `build_ar_transactions_dataset` — PR transfer types (`sale`, `settlement`, `payment`, `external_txn`) now surface in the AR Transactions tab.
+- **`ar_transfer_net_zero` widened to all transfer types**, with `expected_net_zero` flag derived in `ar_transfer_summary` so single-leg PR types (`sale`, `external_txn`) stay out of the AR Non-Zero Transfers KPI scope semantically rather than by hiding them.
+- **Docs reframe** — CLAUDE.md / SPEC.md describe AR as a unified superset; PR is a tightly persona-scoped subset view. The pre-Phase I "PR-coexistence filters" framing is retired.
+
+**PR sign convention standardization (Phase I.5)**
+
+- **PR sale leg flipped to credit `merchant_sub`** (was debiting), aligning with the canonical `signed_amount > 0` = money IN to the account convention. Merchant DDA balances are no longer structurally negative; the drift-check invariant `daily_balances.balance = SUM(signed_amount)` holds across every account_type.
+- **`-t.signed_amount` negation pattern retired** in three PR datasets (`build_sales_dataset`, `build_settlement_exceptions_dataset`, `build_sale_settlement_mismatch_dataset`) and the matching ETL example. PR datasets read the canonical sign directly.
+- **SHA256 re-locked** to `6912a28c8902223a7a552194ee368f1e83df09d6779e5c735321a83c086c1cf0`.
+- **Inverse cross-visibility assertion** — `tests/e2e/test_ar_cross_visibility.py::test_no_merchant_dda_is_structurally_negative` locks the fix (no merchant_dda runs negative across the entire seed window).
+
+**PyPI release pipeline (Phase I.6)**
+
+- **`pip install quicksight-gen`** (or `[demo]` extra) from PyPI on every tagged release.
+- **Tag-triggered release workflow** (`.github/workflows/release.yml`) — six jobs: build, smoke-test wheel, bake sample bundle, publish to TestPyPI, manual-approval gate to PyPI, GitHub Release with sdist + wheel + `out-sample.zip`. Trusted Publisher OIDC; no API tokens in the repo.
+- **`scripts/bake_sample_output.py`** + **`examples/config.yaml`** — produces a 39-file, ~86 KB sample of generated QuickSight JSON evaluators can inspect without running the generator.
+- **`quicksight-gen --version`** flag, dynamic version source-of-truth on `quicksight_gen.__version__`.
+- **README PyPI install snippet + version badge** — leads with the consumer install path before the developer-from-source path.
+
+**CI + tooling**
+
+- **GitHub Actions CI** — unit + integration tests on every push, build badge in README.
+- **Code coverage badge** via pytest-cov + genbadge.
+- **Cross-training handbook whitelabel kit** (`training/`) — strips the Sasquatch persona for licensees who want to fork the handbook structure without the demo branding.
+
+### Notes
+
+- **All 398 unit/integration tests** pass; e2e suite (gated on `QS_GEN_E2E=1`) covers both apps.
+- **Same dataset IDs**, same dashboard IDs — safe in-place redeploy after `cleanup --yes` for any pre-3.1 stale resources.
+- **Seed change**: PR sale leg sign flip changes the seed bytes; SHA256 re-lock applied. Existing demo databases need a re-`apply` to pick up the new seed (otherwise merchant DDA balances will read the old structurally-negative shape).
+- **`pip install quicksight-gen`** lights up on the first published 3.1.0 tag. Source install (`pip install -e .`) continues to work for development.
+
+---
+
 ## v3.0.0
 
 ### Phase G — Schema flatten + PR/AR data merger
