@@ -422,19 +422,25 @@ WHERE t.transfer_type      = 'payment'
 
 
 def build_settlement_exceptions_dataset(cfg: Config) -> DataSet:
+    # Phase G.9.7: reads from shared `transactions`. Unsettled sales =
+    # sale-transfer merchant_dda legs whose metadata.settlement_id is
+    # absent (_compact strips None keys). merchant_name lives in sale
+    # metadata (added in G.9.1) so no merchant join is needed.
     sql = f"""\
 SELECT
-    s.sale_id,
-    s.merchant_id,
-    m.merchant_name,
-    s.location_id,
-    s.amount,
-    s.sale_timestamp,
-    (CURRENT_DATE - s.sale_timestamp::date) AS days_outstanding,
-{_aging_bucket_case('CURRENT_DATE - s.sale_timestamp::date')}
-FROM pr_sales s
-JOIN pr_merchants m ON m.merchant_id = s.merchant_id
-WHERE s.settlement_id IS NULL"""
+    JSON_VALUE(t.metadata, '$.sale_id')                          AS sale_id,
+    JSON_VALUE(t.metadata, '$.merchant_id')                      AS merchant_id,
+    JSON_VALUE(t.metadata, '$.merchant_name')                    AS merchant_name,
+    JSON_VALUE(t.metadata, '$.location_id')                      AS location_id,
+    -t.signed_amount                                             AS amount,
+    t.posted_at                                                  AS sale_timestamp,
+    (CURRENT_DATE - t.posted_at::date)                           AS days_outstanding,
+{_aging_bucket_case('CURRENT_DATE - t.posted_at::date')}
+FROM transactions t
+WHERE t.transfer_type      = 'sale'
+  AND t.account_type       = 'merchant_dda'
+  AND t.control_account_id = 'pr-merchant-ledger'
+  AND JSON_VALUE(t.metadata, '$.settlement_id') IS NULL"""
     return build_dataset(
         cfg, cfg.prefixed("settlement-exceptions-dataset"),
         "Settlement Exceptions", "settlement-exceptions",
