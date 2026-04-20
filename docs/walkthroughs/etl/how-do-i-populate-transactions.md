@@ -151,9 +151,9 @@ Once your projection is wired up:
    the load complete.
 3. **Open the AR Exceptions sheet and the PR Exceptions sheet** —
    if KPIs read 0 with no drilldown rows, your feed landed and
-   the contract holds. If KPIs spike unexpectedly, see the
-   `what-do-i-do-when-demo-passes-but-prod-fails.md` walkthrough
-   (forthcoming) for the symptom-organized debug recipes.
+   the contract holds. If KPIs spike unexpectedly, see
+   [What do I do when the demo passes but my prod data fails?](what-do-i-do-when-demo-passes-but-prod-fails.md)
+   for the symptom-organized debug recipes.
 4. **Iterate on metadata** — once the minimum feed is stable,
    layer in `parent_transfer_id` and the per-`transfer_type`
    metadata keys per the priority order in
@@ -171,10 +171,10 @@ remaining patterns.
 - [How do I prove my ETL is working before going live?](how-do-i-prove-my-etl-is-working.md) —
   the **next step** after writing the projection. Validates the
   invariants the dashboard depends on.
-- `how-do-i-tag-a-force-posted-transfer.md` (forthcoming) —
+- [How do I tag a force-posted external transfer correctly?](how-do-i-tag-a-force-posted-transfer.md) —
   the canonical pattern for Fed-statement ingest, which is the one
   case where `origin = 'external_force_posted'`.
-- `how-do-i-add-a-metadata-key.md` (forthcoming) —
+- [How do I add a metadata key without breaking the dashboards?](how-do-i-add-a-metadata-key.md) —
   the extension contract for when your team needs a new metadata
   field.
 - [Schema_v3 → Getting Started for Data Teams](../../Schema_v3.md#getting-started-for-data-teams) —

@@ -210,17 +210,17 @@ Once your three pre-flight queries all return zero rows:
    the volume looks 10x too high" that no SQL invariant can.
 
 If any pre-flight query is non-empty and you can't trace it, see
-the `what-do-i-do-when-demo-passes-but-prod-fails.md` walkthrough
-(forthcoming) for the symptom-organized debug recipes.
+[What do I do when the demo passes but my prod data fails?](what-do-i-do-when-demo-passes-but-prod-fails.md)
+for the symptom-organized debug recipes.
 
 ## Related walkthroughs
 
 - [How do I populate `transactions` from my core banking system?](how-do-i-populate-transactions.md) —
   the **prior step**: writing the projection these invariants check.
-- `how-do-i-tag-a-force-posted-transfer.md` (forthcoming) —
+- [How do I tag a force-posted external transfer correctly?](how-do-i-tag-a-force-posted-transfer.md) —
   Invariant 1 + Invariant 3 both interact with `origin` and the
   parent chain on Fed-statement ingest.
-- `what-do-i-do-when-demo-passes-but-prod-fails.md` (forthcoming) —
+- [What do I do when the demo passes but my prod data fails?](what-do-i-do-when-demo-passes-but-prod-fails.md) —
   the symptom-organized debug companion when an invariant fails
   and you can't immediately see why.
 - [Schema_v3 → minimum viable feed](../../Schema_v3.md#the-minimum-viable-feed) —
