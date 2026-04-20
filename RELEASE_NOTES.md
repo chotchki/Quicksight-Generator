@@ -1,5 +1,34 @@
 # Release Notes
 
+## v3.0.0
+
+### Phase G — Schema flatten + PR/AR data merger
+
+The 12-table demo schema collapses to **two base tables**: `transactions` (every money-movement leg) and `daily_balances` (per-account end-of-day snapshots). PR and AR demo data now share the same physical tables; the `pr_*` legacy table family and the AR-only `transfer` / `posting` / `ar_*_daily_balances` tables are fully retired. App-specific attributes that used to live in dedicated columns now live in a portable `metadata TEXT` JSON column. Dashboards are visually identical to v2.x — only the underlying dataset SQL changed.
+
+### What landed
+
+- **Two-table feed contract** — `transactions` and `daily_balances` are the entire write surface a Data Integration Team has to populate. Every dataset SQL reads from these two tables plus the AR-only dimension tables (`ar_ledger_accounts`, `ar_subledger_accounts`, `ar_ledger_transfer_limits`). Six canonical `account_type` values (`gl_control`, `dda`, `merchant_dda`, `external_counter`, `concentration_master`, `funds_pool`) discriminate which app a row belongs to.
+- **PR data merged in** — PR's sales / settlements / payments / external transactions / merchants now write to `transactions` + `daily_balances` instead of `pr_sales` / `pr_settlements` / `pr_payments` / `pr_external_transactions` / `pr_merchants`. PR-specific fields (`card_brand`, `cashier`, `settlement_type`, `payment_method`, `is_returned`, `return_reason`, etc.) move into the `metadata` JSON column. All 11 PR datasets rewritten to use `JSON_VALUE(metadata, '$.<key>')`.
+- **AR data merged in** — AR's `transfer` + `posting` + `ar_ledger_daily_balances` + `ar_subledger_daily_balances` collapse into the same two base tables. Per-type ledger transfer limits (one row per ledger×type×day in the old `ar_ledger_transfer_limits` snapshots) collapse into the `daily_balances.metadata` JSON so the limit-breach view stays a single SELECT. All 21 AR datasets and computed views rewritten.
+- **Portable JSON convention** — `metadata TEXT` columns are constrained `IS JSON` and queried only with SQL/JSON path functions (`JSON_VALUE`, `JSON_QUERY`, `JSON_EXISTS`). No JSONB. No `->>` / `->` / `@>` / `?` operators. No GIN indexes on JSON. This is enforced both by code review and by `tests/test_demo_sql.py::TestSchemaSql::test_shared_base_layer_uses_portable_json`.
+- **PostgreSQL 17+ requirement** — the SQL/JSON path functions are PG 17+. Pre-17 Postgres lacks `JSON_VALUE` / `JSON_QUERY` / `JSON_EXISTS` and the portability convention forbids the Postgres-only fallbacks. Documented in `docs/Schema_v3.md`, `README.md`, and `demo/schema.sql`.
+- **`docs/Schema_v3.md`** — new feed contract document for the Data Integration Team persona: column specifications, canonical `account_type` / `transfer_type` values, the `metadata` JSON key catalog per app, and end-to-end ETL examples for piping production data into the two base tables.
+- **Determinism re-locked with SHA256 hash assertion** — `tests/test_demo_data.py::TestDeterminism::test_seed_output_hash_is_locked` and the matching test in `tests/test_account_recon.py` assert the full seed SQL hashes to a known value. Any byte-level drift in the generator fails loudly.
+- **Dataset contract preserved** — every dataset's `DatasetContract` (column name + type list) is unchanged from v2.x; the SQL implementation moved to the new tables but the projection is identical. This is the safety net that kept dashboards visually intact through the migration.
+- **Legacy schema cleanup** — `pr_merchants`, `pr_sales`, `pr_settlements`, `pr_payments`, `pr_external_transactions`, `transfer`, `posting`, `ar_ledger_daily_balances`, `ar_subledger_daily_balances` are dropped. `DROP TABLE IF EXISTS` for each remains in `demo/schema.sql` for upgrade safety from older installations.
+
+### Notes
+
+- **349 unit/integration tests** (was 344), all green. Hash-lock tests added per app; new `TestSharedBaseLayer` class asserts every PR row also satisfies the AR base-layer projection contract.
+- Same dataset IDs, same dashboard IDs — safe in-place redeploy after `cleanup --yes` to remove any pre-v3 stale resources.
+- **Breaking change for self-hosted deployments**: pre-v3 callers that wrote directly to `pr_*` or `ar_*_daily_balances` need to migrate to `transactions` + `daily_balances`. See `docs/Schema_v3.md` for the mapping.
+- **Postgres < 17 is no longer supported** for `demo apply`; production callers using a pre-existing datasource ARN are unaffected as long as that database supports SQL/JSON path syntax.
+- Phase H carries forward two `account_id NOT LIKE 'pr-%'` co-residency safety filters in AR drift / overdraft views — necessary while PR + AR co-reside in the same tables; removed once the dual-persona demo is split.
+- `demo apply --all` and `deploy --all --generate` verified green end-to-end against live AWS.
+
+---
+
 ## v2.0.0
 
 ### Phase F — AR restructure into Sasquatch National Bank Cash Management Suite
