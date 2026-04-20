@@ -136,3 +136,6 @@ chart, and each is a walkthrough below.
 - [Schema v3 — Data Feed Contract](../Schema_v3.md) — column specs,
   metadata keys, and ETL examples for the upstream feeds that populate
   the dashboards.
+- [Data Integration Handbook](etl.md) — the team that populates the
+  data behind every walkthrough on this page. Read it when a drift
+  or missing-row exception traces to the feed rather than the ledger.

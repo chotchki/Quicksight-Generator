@@ -236,3 +236,16 @@ SNB.
     - uses the recon tool to search for transactions that break limits set on the accounts
   - SNB's AML Team
     - uses the recon tool to detect if transactions/balances are outside of the statistical average and attempts to find patterns
+
+## Where to go from here
+
+- [GL Reconciliation Handbook](handbook/ar.md) — the AR dashboard's
+  walkthroughs, organized by exception class. Where the Accounting
+  Operations team works.
+- [Payment Reconciliation Handbook](handbook/pr.md) — the PR
+  dashboard's walkthroughs, organized by operator question. Where
+  the Merchant Support team works.
+- [Data Integration Handbook](handbook/etl.md) — the feed-side
+  walkthroughs: mapping an upstream system into `transactions` and
+  `daily_balances`, validating the load, extending the metadata
+  contract. Where the Data Integration Team works.

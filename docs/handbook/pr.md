@@ -119,3 +119,7 @@ specific check's rows).
 - [Schema v3 — Data Feed Contract](../Schema_v3.md) — column specs,
   metadata keys, and ETL examples for the upstream feeds that populate
   the dashboards.
+- [Data Integration Handbook](etl.md) — the team that populates the
+  data behind every walkthrough on this page. Read it when a missing
+  merchant, unmatched external txn, or broken settlement chain
+  traces to the feed rather than the pipeline.
