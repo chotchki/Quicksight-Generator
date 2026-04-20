@@ -161,7 +161,7 @@ catching a bad overnight batch *before* the merchant calls.
   return rollup.
 - [Why does this settlement look short?](why-does-this-settlement-look-short.md) —
   drill Sale ↔ Settlement Mismatch.
-- [Why is there a payment but no settlement?](why-is-there-a-payment-but-no-settlement.md) —
+- [Why doesn't this payment match the settlement?](why-doesnt-this-payment-match-the-settlement.md) —
   drill Settlement ↔ Payment Mismatch.
 - [Why is this external transaction unmatched?](why-is-this-external-transaction-unmatched.md) —
   drill Unmatched External Transactions.

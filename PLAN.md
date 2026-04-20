@@ -520,9 +520,9 @@ Same skeleton as AR, framed around the operator question rather than the check n
   - `did-all-merchants-get-paid.md`
   - `why-is-this-external-transaction-unmatched.md`
   - Commit: `Phase H.7.A: PR pipeline + matching walkthroughs`.
-- [ ] H.7.2 **Batch B — exceptions** (~4 files):
+- [x] H.7.2 **Batch B — exceptions** (~4 files):
   - `why-does-this-settlement-look-short.md`
-  - `why-is-there-a-payment-but-no-settlement.md`
+  - `why-doesnt-this-payment-match-the-settlement.md` *(renamed from `why-is-there-a-payment-but-no-settlement.md` — original title implied orphan-payment shape, but the underlying check is settlement↔payment **amount mismatch**, not missing-settlement)*
   - `how-much-did-we-return.md`
   - `which-sales-never-made-it-to-settlement.md`
   - Commit: `Phase H.7.B: PR exception walkthroughs`.

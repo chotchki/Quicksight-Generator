@@ -176,8 +176,9 @@ was closed"* (returned payment).
   six merchants for any whose pipeline looks off this morning.
 - [Which sales never made it to settlement?](which-sales-never-made-it-to-settlement.md) —
   the next step when the trail ends at the Sales tab.
-- [Why is there a payment but no settlement?](why-is-there-a-payment-but-no-settlement.md) —
-  the next step when the trail ends at the Settlements tab.
+- [Why doesn't this payment match the settlement?](why-doesnt-this-payment-match-the-settlement.md) —
+  the next step when the trail ends at the Settlements tab with
+  a payment whose amount doesn't agree.
 - [How much did we return last week?](how-much-did-we-return.md) —
   the next step when the trail ends at the Payments tab with a
   `returned` row.
