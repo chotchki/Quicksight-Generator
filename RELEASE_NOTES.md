@@ -24,7 +24,6 @@ The 12-table demo schema collapses to **two base tables**: `transactions` (every
 - Same dataset IDs, same dashboard IDs — safe in-place redeploy after `cleanup --yes` to remove any pre-v3 stale resources.
 - **Breaking change for self-hosted deployments**: pre-v3 callers that wrote directly to `pr_*` or `ar_*_daily_balances` need to migrate to `transactions` + `daily_balances`. See `docs/Schema_v3.md` for the mapping.
 - **Postgres < 17 is no longer supported** for `demo apply`; production callers using a pre-existing datasource ARN are unaffected as long as that database supports SQL/JSON path syntax.
-- Phase H carries forward two `account_id NOT LIKE 'pr-%'` co-residency safety filters in AR drift / overdraft views — necessary while PR + AR co-reside in the same tables; removed once the dual-persona demo is split.
 - `demo apply --all` and `deploy --all --generate` verified green end-to-end against live AWS.
 
 ---

@@ -205,7 +205,7 @@ The legacy 12-table family (`pr_*`, `transfer`, `posting`, `ar_*_daily_balances`
 - Aging buckets: 5 hardcoded bands (`1: 0-1 day`, `2: 2-3 days`, `3: 4-7 days`, `4: 8-30 days`, `5: >30 days`) — numeric prefix forces correct sort in QuickSight
 - Drift timelines (ledger + sub-ledger) surface systemic issues over time
 - Transactions carry an `origin` tag (`internal_initiated` / `external_force_posted`); origin multi-select filter on Transactions + Exceptions tabs
-- AR datasets filter `WHERE transfer_type IN ('ach', 'wire', 'internal', 'cash', 'funding_batch', 'fee', 'clearing_sweep')` to exclude PR transfer types from the shared base tables. Drift / overdraft views also carry `account_id NOT LIKE 'pr-%'` filters as a co-residency safety net (Phase H removes these once the dual-persona demo is split).
+- AR is the unified view of the shared base tables — every `transfer_type` (PR types included) and every `account_id` surfaces in AR datasets and views without artificial exclusion. Single-leg PR types (`sale`, `external_txn`) carry `expected_net_zero = 'not_expected'` on `ar_transfer_summary` so the Non-Zero Transfers KPI excludes them semantically rather than by hiding them. Conversely, PR datasets stay tightly persona-scoped: that's the asymmetry of the unified-AR-superset framing.
 
 #### CMS structure (Phase F)
 

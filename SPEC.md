@@ -92,7 +92,7 @@ Invariants surfaced as exception checks:
 - **Transfer net-zero**: non-failed legs of a non-single-leg transfer sum to zero.
 - **Sub-ledger limit breach**: Σ |outbound posted amounts of type T| for a sub-ledger on a day must not exceed its ledger's configured limit for type T.
 
-Transactions carry `transfer_type` (`ach`, `wire`, `internal`, `cash`, `funding_batch`, `fee`, `clearing_sweep`) for limit checking, and an `origin` tag (`internal_initiated` / `external_force_posted`) that surfaces whether the row originated from the normal internal flow or was pushed in out-of-band. AR datasets filter `WHERE transfer_type IN (...)` to exclude PR transfer types from the shared base tables; drift / overdraft views also carry `account_id NOT LIKE 'pr-%'` filters as a co-residency safety net.
+Transactions carry `transfer_type` (`ach`, `wire`, `internal`, `cash`, `funding_batch`, `fee`, `clearing_sweep`) for limit checking, and an `origin` tag (`internal_initiated` / `external_force_posted`) that surfaces whether the row originated from the normal internal flow or was pushed in out-of-band. AR is the unified view of the shared base tables — PR transfer types and `pr-*` accounts surface in AR datasets and views without artificial exclusion. Single-leg PR types (`sale`, `external_txn`) carry `expected_net_zero = 'not_expected'` on `ar_transfer_summary` so the Non-Zero Transfers KPI excludes them semantically rather than by hiding them.
 
 Transfer memos denormalize onto each transaction; the earliest transaction's memo wins for display.
 
@@ -124,5 +124,4 @@ Tracked for a future phase, not in scope for current work:
 
 - **AR Exceptions layout** is dense (3 rollups + 14 checks + aging bars). The sheet may benefit from a persona-driven redesign rather than additive growth.
 - **PR pipeline tab structure**. Under the shared-base model, Sales / Settlements / Payments are values of `transfer_type`, not separate tables. The current per-step tab structure is preserved from the pre-flatten era; whether tabs should remain entity-shaped or shift to type-filtered views is open.
-- **AR co-residency safety filters** (`account_id NOT LIKE 'pr-%'` in drift / overdraft views) exist because the demo currently runs both personas against one Postgres. They can be removed once the dual-persona demo splits.
 - **Unified account dimension table**. AR currently keeps `ar_ledger_accounts` and `ar_subledger_accounts` separate; a single "all accounts" table would simplify some queries and align with the denormalize-don't-add-tables north star.
