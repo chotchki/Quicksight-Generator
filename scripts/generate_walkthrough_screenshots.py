@@ -53,39 +53,57 @@ SCREENSHOT_VIEWPORT = (1600, 12_000)
 # Per-shot record. ``visual`` is the rendered title; ``title_index`` lets us
 # pick the n-th visual when KPI + table share a title (KPI is index 0,
 # table is index 1, etc., in render order).
+def _shot(visual, slug, step, *, title_index=0, wait_for_cells=False):
+    return {
+        "app": "ar",
+        "dashboard": "account-recon-dashboard",
+        "sheet": "Exceptions",
+        "visual": visual,
+        "title_index": title_index,
+        "slug": slug,
+        "step": step,
+        "wait_for_cells": wait_for_cells,
+    }
+
+
+# SHOTS are listed in TOP-DOWN sheet-layout order so Playwright only ever
+# scrolls in one direction. After Playwright scrolls down to capture a
+# lower visual, QuickSight may unload virtualized higher visuals — making
+# any later "go back up" lookup fail. Top-down avoids that.
 SHOTS: list[dict] = [
-    # Stuck in Internal Transfer Suspense — covers KPI count, detail
-    # table with the two stuck rows, and the aging bar chart.
-    {
-        "app": "ar",
-        "dashboard": "account-recon-dashboard",
-        "sheet": "Exceptions",
-        "visual": "Stuck in Internal Transfer Suspense",
-        "title_index": 0,
-        "slug": "stuck-in-internal-transfer-suspense",
-        "step": "01-kpi",
-        "wait_for_cells": False,
-    },
-    {
-        "app": "ar",
-        "dashboard": "account-recon-dashboard",
-        "sheet": "Exceptions",
-        "visual": "Stuck in Internal Transfer Suspense",
-        "title_index": 1,
-        "slug": "stuck-in-internal-transfer-suspense",
-        "step": "02-table",
-        "wait_for_cells": True,
-    },
-    {
-        "app": "ar",
-        "dashboard": "account-recon-dashboard",
-        "sheet": "Exceptions",
-        "visual": "Stuck Internal Transfers by Age",
-        "title_index": 0,
-        "slug": "stuck-in-internal-transfer-suspense",
-        "step": "03-aging",
-        "wait_for_cells": False,
-    },
+    # Batch B — baseline checks. Layout (top-down): kpi_row_a (Ledger
+    # Drift Days, Sub-Ledger Drift Days, Non-Zero Transfers KPI),
+    # kpi_row_b (Limit Breach Days, Overdraft Days), then 5 tables, then
+    # 5 aging bars. KPI/table titles match for Non-Zero only (KPI=0,
+    # table=1).
+
+    # KPI row a (3 KPIs side-by-side): Ledger Drift, Sub-Ledger Drift, Non-Zero
+    _shot("Ledger Drift Days",            "ledger-drift",            "01-kpi"),
+    _shot("Sub-Ledger Drift Days",        "sub-ledger-drift",        "01-kpi"),
+    _shot("Non-Zero Transfers",           "non-zero-transfers",      "01-kpi", title_index=0),
+    # KPI row b (2 KPIs): Limit Breach, Overdraft
+    _shot("Limit Breach Days",            "sub-ledger-limit-breach", "01-kpi"),
+    _shot("Overdraft Days",               "sub-ledger-overdraft",    "01-kpi"),
+
+    # Tables (paired half-width then full-width Overdraft)
+    _shot("Ledger Balance Drift",         "ledger-drift",            "02-table", wait_for_cells=True),
+    _shot("Sub-Ledger Balance Drift",     "sub-ledger-drift",        "02-table", wait_for_cells=True),
+    _shot("Non-Zero Transfers",           "non-zero-transfers",      "02-table", title_index=1, wait_for_cells=True),
+    _shot("Sub-Ledger Limit Breach",      "sub-ledger-limit-breach", "02-table", wait_for_cells=True),
+    _shot("Sub-Ledger Overdraft",         "sub-ledger-overdraft",    "02-table", wait_for_cells=True),
+
+    # Aging bars (5 in render order — same order as the data feeds)
+    _shot("Ledger Drift by Age",          "ledger-drift",            "03-aging"),
+    _shot("Sub-Ledger Drift by Age",      "sub-ledger-drift",        "03-aging"),
+    _shot("Non-Zero Transfers by Age",    "non-zero-transfers",      "03-aging"),
+    _shot("Limit Breaches by Age",        "sub-ledger-limit-breach", "03-aging"),
+    _shot("Overdrafts by Age",            "sub-ledger-overdraft",    "03-aging"),
+
+    # Stuck in Internal Transfer Suspense (F.5.7) — sits well below the
+    # baseline section. Same shape: KPI + table (shared title) + aging.
+    _shot("Stuck in Internal Transfer Suspense", "stuck-in-internal-transfer-suspense", "01-kpi", title_index=0),
+    _shot("Stuck in Internal Transfer Suspense", "stuck-in-internal-transfer-suspense", "02-table", title_index=1, wait_for_cells=True),
+    _shot("Stuck Internal Transfers by Age",     "stuck-in-internal-transfer-suspense", "03-aging"),
 ]
 
 

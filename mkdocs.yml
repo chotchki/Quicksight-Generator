@@ -22,6 +22,11 @@ nav:
     - Balance Drift Timelines Rollup: walkthroughs/ar/balance-drift-timelines-rollup.md
     - Two-Sided Post Mismatch Rollup: walkthroughs/ar/two-sided-post-mismatch-rollup.md
     - Expected-Zero EOD Rollup: walkthroughs/ar/expected-zero-eod-rollup.md
+    - Sub-Ledger Drift: walkthroughs/ar/sub-ledger-drift.md
+    - Ledger Drift: walkthroughs/ar/ledger-drift.md
+    - Non-Zero Transfers: walkthroughs/ar/non-zero-transfers.md
+    - Sub-Ledger Limit Breach: walkthroughs/ar/sub-ledger-limit-breach.md
+    - Sub-Ledger Overdraft: walkthroughs/ar/sub-ledger-overdraft.md
     - Stuck in Internal Transfer Suspense: walkthroughs/ar/stuck-in-internal-transfer-suspense.md
 
 markdown_extensions:

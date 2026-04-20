@@ -457,11 +457,11 @@ Spike question: can we leverage the e2e Playwright fixtures to generate focused,
 
 15 walkthroughs to produce (the 2 samples are done). Each follows the locked skeleton from H.0.3. Each carries demo-anchored numbers from `account_recon/demo_data.py`. If H.2 went green, each carries inline screenshots toggled via `<details>`.
 
-- [ ] H.4.1 **Batch A — rollups** (2 files):
+- [x] H.4.1 **Batch A — rollups** (2 files):
   - `two-sided-post-mismatch-rollup.md`
   - `balance-drift-timelines-rollup.md`
   - Commit: `Phase H.4.A: AR rollup walkthroughs`.
-- [ ] H.4.2 **Batch B — baseline checks** (5 files):
+- [x] H.4.2 **Batch B — baseline checks** (5 files):
   - `sub-ledger-drift.md`
   - `ledger-drift.md`
   - `non-zero-transfers.md`
@@ -593,6 +593,22 @@ Items deferred from Phase H scope, parked here so they aren't lost. Each is inde
 
 - **AR Exceptions tab redesign.** Sheet is dense (3 rollups + 14 checks + aging bars + 2 drift timelines). Phase H walkthroughs will surface which sections are friction-heavy; that's the input for redesign. Likely shape: per-persona view modes ("morning check" vs. "deep investigation"), or progressive disclosure of CMS-specific checks behind a category toggle.
 - **PR pipeline tab structure.** Under the shared-base model (Phase G), Sales / Settlements / Payments are values of `transfer_type`, not separate entities. Current per-step tab structure is preserved from the pre-flatten era. Operator-question walkthroughs in Phase H may surface whether the per-step tab structure helps or fights merchant-support workflow. Decide redesign based on what those walkthroughs show.
+
+## E2E visual-semantics coverage
+
+Surfaced during Phase H.4.B: the Ledger Drift and Sub-Ledger Drift KPIs on the AR Exceptions sheet were counting *every* `(account, date)` row from the drift datasets, not just the rows where `drift_status = 'drift'`. The bug went unnoticed because:
+
+- The drift datasets are shared with the Balances sheet (where unfiltered counts make sense).
+- API e2e tests assert dataset *health* (rows return, no SPICE errors) but not row *content* — they don't check that the visible KPI count corresponds to anything meaningful from the planted demo scenarios.
+- Browser e2e tests assert visual *presence* (titles render, tables have rows) but not visual *semantics* — they don't assert that the rendered KPI value matches the count of planted exception rows.
+
+The fix landed via two sheet-scoped pinned `CategoryFilter`s on `drift_status='drift'` (see `account_recon/filters.py` and the H.4.B commit). The deeper Phase I work is the test gap:
+
+- **Per-check KPI assertion.** For each AR Exceptions KPI (5 baseline + 9 CMS-specific + 3 rollups), assert the rendered count equals the row count of the underlying dataset filtered to its expected scope (`drift_status='drift'`, `non_failed_imbalance > 0`, etc.). Catch dataset-vs-visual filter drift the moment it ships.
+- **Per-check planted-row sanity.** For checks driven by `_*_PLANT` constants in `account_recon/demo_data.py`, assert the dataset returns the planted rows (and only the planted rows where the check is "1 plant = 1 row"; for sticky-drift / sticky-overdraft checks, assert at least the planted rows are present plus a documented multiplier for day-roll-forward).
+- **Layer choice.** API e2e is the right home — it's faster than browser, runs deterministically off the deployed datasets, and is where dataset health already lives. Browser e2e remains the rendering canary, not the semantics canary.
+
+Inputs: incident debugging notes are in the H.4.B commit; the filter that was missing is the test contract.
 
 ## Schema cleanup carry-over from Phase G
 

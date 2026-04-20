@@ -2237,7 +2237,8 @@ def _find_sheet(analysis: dict, sheet_id: str) -> dict:
 
 class TestFilterGroups:
     """Shared date-range + 6 multi-selects + 4 Show-Only toggles +
-    5 drill-down parameter filters = 16 filter groups."""
+    2 Exceptions-pinned drift filters + 5 drill-down parameter filters
+    = 19 filter groups."""
 
     _EXPECTED_IDS = {
         "fg-ar-date-range",
@@ -2251,6 +2252,8 @@ class TestFilterGroups:
         "fg-ar-balances-ledger-drift",
         "fg-ar-balances-subledger-drift",
         "fg-ar-balances-overdraft",
+        "fg-ar-exceptions-ledger-drift-only",
+        "fg-ar-exceptions-subledger-drift-only",
         "fg-ar-transactions-failed",
         "fg-ar-drill-subledger-on-txn",
         "fg-ar-drill-transfer-on-txn",
