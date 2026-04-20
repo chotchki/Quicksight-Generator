@@ -695,6 +695,13 @@ Inputs: incident debugging notes are in the H.4.B commit; the filter that was mi
 
 - `docs/Schema_v3.md` is the persona contract for the Data Integration Team. A longer-form customer-facing customization guide (mapping production-system tables → the two base tables, common pitfalls, performance tips, replacing dataset SQL while preserving DatasetContract) is a natural follow-up to the demo-side walkthroughs in Phase H. Deliverable shape: a "Customization Handbook" sibling to AR / PR Handbooks.
 
+## Per-account daily statement sheet (AR)
+
+- **New AR sheet:** lets an operator generate a daily statement for any single account — every posting to that account on that day, with stored EOD balance, recomputed balance, and drift. Purpose is *data-feed validation / sanity check*, not customer-facing statements: when the Data Integration Team wants to prove "my feed for account X on day Y reconciles end-to-end," this sheet is the artifact they diff against.
+- Likely shape: parameter controls for `account_id` (single-select) + `balance_date` (single-date). Visuals below: a KPI strip (opening balance, total debits, total credits, closing balance, drift), a transactions detail table (all legs for the account-day, sorted by `posted_at`), and a ledger-vs-recompute pair so the drift invariant is visible row-by-row.
+- Surfaces the three pre-flight invariants from the ETL Handbook's *How do I prove my ETL is working?* walkthrough in visual form — the sheet is what the invariants resolve to for a single account-day slice. Natural companion walkthrough in the Data Integration Handbook once shipped.
+- Rides entirely on the existing two-base-tables schema; no new datasets or SQL shapes. Mostly a new analysis sheet with parameter-driven filters.
+
 ## Persona dashboard split (originally Phase E)
 
 - Still queued. The Phase H walkthroughs (and any layout redesigns from the items above) provide better signal on what a persona-scoped dashboard split should look like.
