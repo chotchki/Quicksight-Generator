@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quicksight-gen"
-version = "1.1.0"
+dynamic = ["version"]
 description = "Programmatic AWS QuickSight analysis generator for financial reporting"
 license = "Unlicense"
 requires-python = ">=3.11"
@@ -39,6 +39,9 @@ quicksight-gen = "quicksight_gen.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "quicksight_gen.__version__"}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

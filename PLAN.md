@@ -912,9 +912,9 @@ Why a standalone phase rather than a sub-step of I.4: the fix touches generator 
 
 ### I.6.A — Version source-of-truth audit + sync
 
-- [ ] **Reconcile version.** `pyproject.toml:7` says `1.1.0`; `RELEASE_NOTES.md` headers go up through v3.0.0 / v2.0.0 / v1.5.0 (apparent multi-track numbering — schema major vs. dashboard feature). Decide on a single track going forward (recommend semver from current tip; the next tag is `v1.6.0` reflecting Phase I work, since v3.0.0 is a schema-internal version that doesn't read as semver to a PyPI consumer).
-- [ ] **Pick a single source of truth.** Either (a) bump `pyproject.toml` manually per release, or (b) read version from `src/quicksight_gen/__init__.py` via `tool.setuptools.dynamic`. Option (b) lets the generator self-report (`quicksight-gen --version`) without drift. Recommend (b).
-- [ ] **Document the bump-then-tag sequence** in CLAUDE.md (release section).
+- [x] **Reconcile version.** Aligned `pyproject.toml` *up* to the RELEASE_NOTES.md track (was 1.1.0, now reads 3.0.0 from the dynamic source) — single-line change vs. renaming a dozen historical RELEASE_NOTES headers. Future bumps proceed from 3.0.0; phase-major (4.0.0) for schema/semantic changes, phase-minor (3.1.0) for additive features.
+- [x] **Single source of truth.** `src/quicksight_gen/__init__.py` carries `__version__`; `pyproject.toml` reads it via `[tool.setuptools.dynamic] version = {attr = "quicksight_gen.__version__"}`. Verified `pip install -e .` + `pip show quicksight-gen` + `import quicksight_gen` all agree.
+- [ ] **Document the bump-then-tag sequence** in CLAUDE.md (release section). *(Deferred to I.6.G alongside the README install snippet.)*
 
 ### I.6.B — Release-readiness audit on `pyproject.toml`
 
