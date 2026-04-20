@@ -170,6 +170,7 @@ CONCENTRATION_MASTER_SWEEP_DRIFT_CONTRACT = DatasetContract(columns=[
     ColumnSpec("subaccount_total", "DECIMAL"),
     ColumnSpec("drift", "DECIMAL"),
     ColumnSpec("abs_drift", "DECIMAL"),
+    ColumnSpec("drift_status", "STRING"),
 ])
 
 ACH_ORIG_SETTLEMENT_NONZERO_CONTRACT = DatasetContract(columns=[
@@ -206,6 +207,7 @@ GL_VS_FED_MASTER_DRIFT_CONTRACT = DatasetContract(columns=[
     ColumnSpec("internal_total", "DECIMAL"),
     ColumnSpec("drift", "DECIMAL"),
     ColumnSpec("abs_drift", "DECIMAL"),
+    ColumnSpec("drift_status", "STRING"),
 ])
 
 INTERNAL_TRANSFER_STUCK_CONTRACT = DatasetContract(columns=[
@@ -512,7 +514,8 @@ SELECT
     master_total,
     subaccount_total,
     drift,
-    ABS(drift) AS abs_drift
+    ABS(drift) AS abs_drift,
+    drift_status
 FROM ar_concentration_master_sweep_drift"""
     return build_dataset(
         cfg, cfg.prefixed("ar-concentration-master-sweep-drift-dataset"),
@@ -581,7 +584,8 @@ SELECT
     fed_total,
     internal_total,
     drift,
-    ABS(drift) AS abs_drift
+    ABS(drift) AS abs_drift,
+    drift_status
 FROM ar_gl_vs_fed_master_drift"""
     return build_dataset(
         cfg, cfg.prefixed("ar-gl-vs-fed-master-drift-dataset"),

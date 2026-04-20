@@ -2254,6 +2254,8 @@ class TestFilterGroups:
         "fg-ar-balances-overdraft",
         "fg-ar-exceptions-ledger-drift-only",
         "fg-ar-exceptions-subledger-drift-only",
+        "fg-ar-exceptions-sweep-drift-only",
+        "fg-ar-exceptions-gl-fed-drift-only",
         "fg-ar-transactions-failed",
         "fg-ar-drill-subledger-on-txn",
         "fg-ar-drill-transfer-on-txn",

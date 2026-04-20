@@ -24,6 +24,8 @@ parameter declarations, same as payment_recon.
 from __future__ import annotations
 
 from quicksight_gen.account_recon.constants import (
+    DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
+    DS_AR_GL_VS_FED_MASTER_DRIFT,
     DS_AR_LEDGER_ACCOUNTS,
     DS_AR_LEDGER_BALANCE_DRIFT,
     DS_AR_SUBLEDGER_ACCOUNTS,
@@ -439,6 +441,25 @@ def build_filter_groups(cfg: Config) -> list[FilterGroup]:
             "filter-ar-exceptions-subledger-drift-only",
             SHEET_AR_EXCEPTIONS,
             DS_AR_SUBLEDGER_BALANCE_DRIFT,
+            "drift_status",
+            "drift",
+        ),
+        # Same fix for the two CMS-side drift datasets: their FULL OUTER
+        # JOIN views emit healthy days too (drift = 0), so the KPI
+        # would otherwise count every day instead of just drift days.
+        _pinned_category_filter_group(
+            "fg-ar-exceptions-sweep-drift-only",
+            "filter-ar-exceptions-sweep-drift-only",
+            SHEET_AR_EXCEPTIONS,
+            DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
+            "drift_status",
+            "drift",
+        ),
+        _pinned_category_filter_group(
+            "fg-ar-exceptions-gl-fed-drift-only",
+            "filter-ar-exceptions-gl-fed-drift-only",
+            SHEET_AR_EXCEPTIONS,
+            DS_AR_GL_VS_FED_MASTER_DRIFT,
             "drift_status",
             "drift",
         ),
