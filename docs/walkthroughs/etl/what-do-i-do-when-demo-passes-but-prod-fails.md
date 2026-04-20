@@ -56,15 +56,22 @@ window.
 
 ### Symptom 2 — "A KPI shows 0 but I know exceptions exist in my data"
 
-**Most likely**: the SQL filter the dataset applies excludes your
-rows. AR datasets carry `WHERE transfer_type IN ('ach', 'wire',
-'internal', 'cash', 'funding_batch', 'fee', 'clearing_sweep')`;
-PR datasets carry their own per-`transfer_type` filters. If your
-ETL writes `transfer_type` values outside the inventory in
-[Schema_v3.md → transfer_type catalog](../../Schema_v3.md#table-1-transactions),
-the rows land but no dataset reads them.
+**Most likely**: a `transfer_type` value in your data isn't in the
+enum the schema accepts, so the row is rejected at insert time
+(the `transactions` CHECK constraint fires) — or, for the AR
+**Non-Zero Transfers** KPI specifically, the row is a single-leg
+PR type (`sale` or `external_txn`), which the view tags
+`expected_net_zero = 'not_expected'` and the KPI excludes by
+intent.
 
-**Check**:
+AR datasets *don't* filter PR data out (Phase I.4 removed the
+artificial `WHERE transfer_type IN (...)` and `account_id NOT
+LIKE 'pr-%'` exclusions). PR transfer types and `pr-*` accounts
+surface in AR datasets and views naturally. The only AR-side
+semantic exclusion that remains is the `expected_net_zero` flag
+on `ar_transfer_summary`.
+
+**Check 1 — values in your data vs the schema enum**:
 
 ```sql
 SELECT transfer_type, COUNT(*)
@@ -74,8 +81,25 @@ GROUP BY transfer_type
 ORDER BY COUNT(*) DESC;
 ```
 
-Compare against the `transfer_type` enum in Schema_v3. Any value
-not in the enum is an orphan from the dataset's perspective.
+Compare against the `transfer_type` enum in
+[Schema_v3.md → transfer_type catalog](../../Schema_v3.md#table-1-transactions).
+Any value not in the enum would have been rejected at insert.
+
+**Check 2 — Non-Zero Transfers KPI specifically**: query the
+view directly to see what's flagged `expected = TRUE`:
+
+```sql
+SELECT transfer_type, expected_net_zero, net_zero_status, COUNT(*)
+FROM ar_transfer_summary
+WHERE -- your scope filter
+GROUP BY transfer_type, expected_net_zero, net_zero_status
+ORDER BY COUNT(*) DESC;
+```
+
+The KPI counts only rows where `expected_net_zero = 'expected'
+AND net_zero_status = 'not_net_zero'`. If your transfers are
+single-leg, they're tagged `not_expected` and skipped — that's
+correct.
 
 ### Symptom 3 — "A visual cell shows N/A or a column is blank"
 

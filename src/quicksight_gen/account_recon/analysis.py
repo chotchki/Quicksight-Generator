@@ -388,6 +388,16 @@ def _build_getting_started_sheet(cfg: Config) -> SheetDefinition:
                 rt.BR,
                 rt.BR,
                 rt.body(
+                    "AR is the unified view of SNB's shared ledger — "
+                    "Payment Reconciliation's merchant DDAs (the same "
+                    "coffee retailers' acquiring side) and external-rail "
+                    "settlement account surface here too, alongside the "
+                    "CMS accounts above. Use the Ledger and Sub-Ledger "
+                    "pickers to scope your view if you want CMS-only."
+                ),
+                rt.BR,
+                rt.BR,
+                rt.body(
                     "Data is deterministic — anchor date is the day the "
                     "seed was generated. Explore the date-range, "
                     "transfer-type, posting-level, origin, and "

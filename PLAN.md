@@ -983,8 +983,8 @@ Items deferred from Phase H + Phase I scope, parked here so they aren't lost. Ea
 
 ## Schema cleanup carry-over from Phase G
 
-- ~~**PR-coexistence filters in AR views**~~ — *superseded by Phase I.4.* The original entry assumed the future was PR/AR *separation* (delete the filters, a single-feed persona has no parallel PR ledger). I.4 flips that: AR is now the superset; PR is a subset view. Artificial filters still come out, but the motivation is cross-visibility, not separation. See `Phase I.4 — PR/AR cross-visibility audit` above.
-- ~~**AR drift views leak benign zero-drift PR rows**~~ — *superseded by Phase I.4.* Same framing shift: filters out with I.4's audit, not as cleanup for a future separation.
+- ~~**PR-coexistence filters in AR views**~~ — *resolved by Phase I.4.B (commits 1–4).* The original entry assumed the future was PR/AR *separation* (delete the filters, a single-feed persona has no parallel PR ledger). I.4 flipped that: AR is the superset; PR is a subset view. The artificial filters were removed in I.4.B commits 1–3; commit 4 updated CLAUDE.md / SPEC.md / RELEASE_NOTES.md to match.
+- ~~**AR drift views leak benign zero-drift PR rows**~~ — *resolved by Phase I.4.B commit 1.* Both `account_id NOT LIKE 'pr-%'` filters dropped from `ar_subledger_overdraft` and `ar_subledger_daily_outbound_by_type`. Drift views now expose merchant DDA rows by intent.
 - [ ] **Unified account dimension table.** AR currently keeps `ar_ledger_accounts` and `ar_subledger_accounts` as separate dimension tables. A single "all accounts" table aligns with the denormalize-don't-add-tables north star and would simplify some queries. Low priority; ship when there's a query that benefits.
 
 ## Customer-facing customization handbook
