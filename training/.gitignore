@@ -1,0 +1,9 @@
+# Output of publish.py — substituted copy, never committed.
+.publish/
+
+# Populated mapping with real-program values; lives locally only.
+# (The tracked template is mapping.yaml.example.)
+/mapping.yaml
+
+# Output of distribute.py — zipped whitelabel kits, built on demand.
+/dist/
