@@ -176,6 +176,18 @@ class TestDemoDeterminism:
         b = generate_demo_sql(date(2026, 6, 1))
         assert a != b
 
+    def test_seed_output_hash_is_locked(self, ar_sql):
+        """Pinned hash so any silent drift in the AR generator is caught.
+
+        When intentionally regenerating (e.g. new metadata key, additional
+        scenario rows), update the hash here in the same commit.
+        """
+        import hashlib
+        digest = hashlib.sha256(ar_sql.encode()).hexdigest()
+        assert digest == (
+            "525554ccfa578914b1fb7b577c82a42691244b39c2747b605640348fc7593cc5"
+        ), f"AR seed drifted; new hash: {digest}"
+
 
 class TestDemoRowCounts:
     def test_ledger_accounts(self, ar_parsed):

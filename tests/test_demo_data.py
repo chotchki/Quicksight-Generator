@@ -134,6 +134,18 @@ class TestDeterminism:
         b = generate_demo_sql(date(2026, 6, 1))
         assert a != b
 
+    def test_seed_output_hash_is_locked(self, sql):
+        """Pinned hash so any silent drift in the PR generator is caught.
+
+        When intentionally regenerating (e.g. new metadata key, additional
+        scenario rows), update the hash here in the same commit.
+        """
+        import hashlib
+        digest = hashlib.sha256(sql.encode()).hexdigest()
+        assert digest == (
+            "5e381191b9aac4e740f37ff6ec8b3427b2971b50bf802d410daa78a312c3ef9f"
+        ), f"PR seed drifted; new hash: {digest}"
+
 
 # ---------------------------------------------------------------------------
 # Row counts (per transfer_type, derived from transactions)
