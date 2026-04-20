@@ -557,32 +557,32 @@ Decisions locked (2026-04-20 conversation):
 
 Reference doc gets training warmth without becoming a tutorial. Markdown only, no code.
 
-- [ ] H.8.5.A.1 New "Getting Started for Data Teams" preamble at the top of `docs/Schema_v3.md` — frames the two-table contract from the ETL author's POV (what columns are mandatory, what's denormalized for query performance, what's metadata vs first-class).
-- [ ] H.8.5.A.2 Add a **Why** column (or sentence per row) to the existing column-spec tables — *"if you skip this, what dashboard breaks?"*. Examples: `parent_transfer_id` skipped → PR pipeline traversal can't link external_txn back to sale; `metadata.card_brand` skipped → Sales tab card-brand pivot empty; `origin = 'external_force_posted'` skipped → AR can't separate operator-initiated drift from fed-forced drift.
-- [ ] H.8.5.A.3 Cross-link forward to the H.8.5.D walkthroughs from each section (placeholder TODOs filled in once D ships).
-- [ ] H.8.5.A.4 `mkdocs build --strict` clean; live serve confirms the new TOC entries render.
-- [ ] H.8.5.A.5 Commit — `Phase H.8.5.A: expand Schema_v3 with per-key WHY narrative`.
+- [x] H.8.5.A.1 New "Getting Started for Data Teams" preamble at the top of `docs/Schema_v3.md` — frames the two-table contract from the ETL author's POV (what columns are mandatory, what's denormalized for query performance, what's metadata vs first-class).
+- [x] H.8.5.A.2 Add a **Why** column (or sentence per row) to the existing column-spec tables — *"if you skip this, what dashboard breaks?"*. Examples: `parent_transfer_id` skipped → PR pipeline traversal can't link external_txn back to sale; `metadata.card_brand` skipped → Sales tab card-brand pivot empty; `origin = 'external_force_posted'` skipped → AR can't separate operator-initiated drift from fed-forced drift.
+- [x] H.8.5.A.3 Cross-link forward to the H.8.5.D walkthroughs from each section (placeholder TODOs filled in once D ships).
+- [x] H.8.5.A.4 `mkdocs build --strict` clean; live serve confirms the new TOC entries render.
+- [x] H.8.5.A.5 Commit — `Phase H.8.5.A: expand Schema_v3 with per-key WHY narrative`.
 
 ### H.8.5.B — `quicksight-gen demo etl-example` CLI command
 
 Exemplary ETL output customers can crib. Reads from the deployed demo Postgres (or stdin SQL dump), emits a small set of canonical INSERT statements demonstrating each metadata-key pattern. Lives next to existing `demo schema` / `demo seed` / `demo apply`.
 
-- [ ] H.8.5.B.1 Design the command surface:
+- [x] H.8.5.B.1 Design the command surface:
   - `quicksight-gen demo etl-example --all -o demo/etl-examples.sql` — emits all examples
   - `quicksight-gen demo etl-example payment-recon` / `account-recon` — app-scoped
   - Examples are SQL fragments with `-- WHY:` comments inline
-- [ ] H.8.5.B.2 Inventory the canonical patterns to emit (3-5 each side):
+- [x] H.8.5.B.2 Inventory the canonical patterns to emit (3-5 each side):
   - PR: sale insert, settlement insert (with parent_transfer_id chain), payment insert, external_txn insert (one-to-many vs one-to-one), return insert (metadata.is_returned / return_reason)
   - AR: customer DDA transfer (internal, two-leg net-zero), force-posted ACH (origin = 'external_force_posted'), sweep (clearing_sweep type, ledger-direct posting), limit-breach setup (daily_balances.metadata limit config), GL drift recompute baseline
-- [ ] H.8.5.B.3 Implement: new `cli.py` subcommand + `etl_examples.py` module per app (mirrors `demo_data.py` structure). Output is plain SQL with comment headers; no DB connection required for `etl-example` (unlike `demo apply`).
-- [ ] H.8.5.B.4 Tests in `tests/test_demo_etl_examples.py`: every emitted INSERT parses; every example references a real column in the schema; comment headers reference real metadata keys.
-- [ ] H.8.5.B.5 Commit — `Phase H.8.5.B: demo etl-example CLI command`.
+- [x] H.8.5.B.3 Implement: new `cli.py` subcommand + `etl_examples.py` module per app (mirrors `demo_data.py` structure). Output is plain SQL with comment headers; no DB connection required for `etl-example` (unlike `demo apply`).
+- [x] H.8.5.B.4 Tests in `tests/test_demo_etl_examples.py`: every emitted INSERT parses; every example references a real column in the schema; comment headers reference real metadata keys.
+- [x] H.8.5.B.5 Commit — `Phase H.8.5.B: demo etl-example CLI command`.
 
 ### H.8.5.C — Walkthrough inventory (dry pass)
 
 Lock the 5-walkthrough list. No commit (planning step, captured in this PLAN).
 
-- [ ] H.8.5.C.1 Walkthrough list (locked):
+- [x] H.8.5.C.1 Walkthrough list (locked):
   1. **How do I populate `transactions` from my core banking system?** — the canonical mapping walkthrough. Maps a hypothetical core-banking source schema → the two-table target. References `etl-example` output.
   2. **How do I prove my ETL is working before going live?** — validation invariants (transfer legs net-to-zero, daily_balance recompute matches stored, no orphan parent_transfer_id chains). Includes pytest-style assertion examples and a "what dashboard you should see" checklist.
   3. **How do I tag a force-posted external transfer correctly?** — the `origin` field + parent_transfer_id chain mechanics. Why force-posted matters for AR exception classification. References AR's GL-vs-Fed-Master-Drift walkthrough as the downstream consumer.
@@ -591,43 +591,43 @@ Lock the 5-walkthrough list. No commit (planning step, captured in this PLAN).
 
 ### H.8.5.D — Write walkthroughs
 
-- [ ] H.8.5.D.1 **Batch 1 — populate + validate** (~2 files, the foundational pair):
+- [x] H.8.5.D.1 **Batch 1 — populate + validate** (~2 files, the foundational pair):
   - `how-do-i-populate-transactions.md`
   - `how-do-i-prove-my-etl-is-working.md`
   - Commit: `Phase H.8.5.D.1: ETL populate + validate walkthroughs`.
-- [ ] H.8.5.D.2 **Batch 2 — extend + debug** (~3 files):
+- [x] H.8.5.D.2 **Batch 2 — extend + debug** (~3 files):
   - `how-do-i-tag-a-force-posted-transfer.md`
   - `how-do-i-add-a-metadata-key.md`
   - `what-do-i-do-when-demo-passes-but-prod-fails.md`
   - Commit: `Phase H.8.5.D.2: ETL extend + debug walkthroughs`.
-- [ ] H.8.5.D.3 Cross-reference pass — every walkthrough links to its 1-2 most-related siblings + the relevant Schema_v3 section + the relevant AR/PR walkthrough that consumes the populated data. Commit.
+- [x] H.8.5.D.3 Cross-reference pass — every walkthrough links to its 1-2 most-related siblings + the relevant Schema_v3 section + the relevant AR/PR walkthrough that consumes the populated data. Commit.
 
 ### H.8.5.E — Data Integration Handbook landing
 
-- [ ] H.8.5.E.1 Build `docs/handbook/etl.md`:
+- [x] H.8.5.E.1 Build `docs/handbook/etl.md`:
   - Hero block (third handbook palette consistent with AR/PR; persona = "Data Integration Team")
   - Preamble: SNB's Data Integration Team owns the upstream → two-table mapping; their attitude (from PLAN line 13) — "what do I have a database server that can do fancy queries for unless I use it?"
   - "The contract" section: pointer to Schema_v3.md as source of truth + summary of the two-table model
   - "The walkthroughs" cards: 5 walkthroughs grouped as Foundational (populate, validate) + Extension (tag, add-key) + Debug (demo-vs-prod)
   - "The exemplary helper" section: pointer to `quicksight-gen demo etl-example` output
   - Footer: Schema_v3 + Training_Story links (same pattern as AR/PR landings)
-- [ ] H.8.5.E.2 Update `mkdocs.yml` nav — third handbook parent with `Overview: handbook/etl.md` first + 5 nested walkthroughs.
-- [ ] H.8.5.E.3 `mkdocs build --strict` clean; live serve confirms `/handbook/etl/` 200, all 5 card links resolve.
-- [ ] H.8.5.E.4 Commit — `Phase H.8.5.E: Data Integration Handbook index page`.
+- [x] H.8.5.E.2 Update `mkdocs.yml` nav — third handbook parent with `Overview: handbook/etl.md` first + 5 nested walkthroughs.
+- [x] H.8.5.E.3 `mkdocs build --strict` clean; live serve confirms `/handbook/etl/` 200, all 5 card links resolve.
+- [x] H.8.5.E.4 Commit — `Phase H.8.5.E: Data Integration Handbook index page`.
 
 ### H.8.5.F — Cross-link cleanup
 
-- [ ] H.8.5.F.1 Update AR + PR handbook landings (`docs/handbook/ar.md`, `docs/handbook/pr.md`) — Reference footers add a third pointer to the Data Integration Handbook ("the team that populates the data behind every walkthrough on this page").
-- [ ] H.8.5.F.2 Update `Training_Story.md` — add a closing pointer to the Data Integration Handbook for readers who came in via the bank narrative and want the populate-the-data view.
-- [ ] H.8.5.F.3 Commit — `Phase H.8.5.F: cross-link Data Integration Handbook from AR/PR/story`.
+- [x] H.8.5.F.1 Update AR + PR handbook landings (`docs/handbook/ar.md`, `docs/handbook/pr.md`) — Reference footers add a third pointer to the Data Integration Handbook ("the team that populates the data behind every walkthrough on this page").
+- [x] H.8.5.F.2 Update `Training_Story.md` — add a closing pointer to the Data Integration Handbook for readers who came in via the bank narrative and want the populate-the-data view.
+- [x] H.8.5.F.3 Commit — `Phase H.8.5.F: cross-link Data Integration Handbook from AR/PR/story`.
 
 ---
 
 ## Phase H.9 — README integration
 
-- [ ] H.9.1 Add a "Demo Docs" section to `README.md` near the top, with one-liner pitches for AR + PR + Data Integration Handbooks and the deployed Pages URL.
-- [ ] H.9.2 Verify `mkdocs.yml` `site_url` is set correctly (matches GitHub Pages deployed URL).
-- [ ] H.9.3 Commit — `Phase H.9: link demo handbooks from README`.
+- [x] H.9.1 Add a "Demo Docs" section to `README.md` near the top, with one-liner pitches for AR + PR + Data Integration Handbooks and the deployed Pages URL.
+- [x] H.9.2 Verify `mkdocs.yml` `site_url` is set correctly (matches GitHub Pages deployed URL).
+- [x] H.9.3 Commit — `Phase H.9: link demo handbooks from README`.
 
 ---
 
