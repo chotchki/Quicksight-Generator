@@ -493,11 +493,12 @@ Spike question: can we leverage the e2e Playwright fixtures to generate focused,
 
 ## Phase H.6 — PR walkthrough inventory + organization
 
-- [ ] H.6.1 Inventory PR exception cases from `payment_recon/demo_data.py` and `payment_recon/datasets.py`:
+- [x] H.6.1 Inventory PR exception cases from `payment_recon/demo_data.py` and `payment_recon/datasets.py`:
   - 5 PR exception checks: settlement exceptions, payment returns, sale↔settlement mismatch, settlement↔payment mismatch, unmatched external txns
   - Payment Reconciliation matching workflow (the side-by-side mutual filter)
   - Pipeline traversal scenarios (Sales → Settlements → Payments → External Txns)
-- [ ] H.6.2 Translate inventory into operator-question format. Draft list (lock in this step):
+  - Plant data: 10 unsettled sales (Yeti + Cryptid), 5 returns (2 Sasquatch / 1 Yeti / 2 Cryptid), 2 failed settlements (stl-0001/0002), 3 sale↔settlement mismatches (±$10), 3 settlement↔payment mismatches (±$5), ~13 orphan ext txns (8 recent / 5 older), 4 unmatched payments. Every 6th batched ext_txn drifts $5–$40.
+- [x] H.6.2 Translate inventory into operator-question format. Draft list (lock in this step):
   - "Where's my money for [merchant X]?" — pipeline traversal
   - "Did all merchants get paid yesterday?" — KPI scan
   - "Why is this external transaction unmatched?" — Payment Recon tab
@@ -505,8 +506,8 @@ Spike question: can we leverage the e2e Playwright fixtures to generate focused,
   - "Why is there a payment but no settlement?" — settlement↔payment mismatch
   - "How much did we return last week?" — payment returns
   - "Which sales never made it to settlement?" — settlement exceptions
-- [ ] H.6.3 Confirm scope: ~7 walkthroughs. Lock list.
-- [ ] H.6.4 No commit (planning step, captured in this PLAN.md).
+- [x] H.6.3 Confirm scope: ~7 walkthroughs. Lock list.
+- [x] H.6.4 No commit (planning step, captured in this PLAN.md).
 
 ---
 
@@ -514,7 +515,7 @@ Spike question: can we leverage the e2e Playwright fixtures to generate focused,
 
 Same skeleton as AR, framed around the operator question rather than the check name. The "Story" section is the merchant's frustration; the "Next step" is the resolution back to the merchant.
 
-- [ ] H.7.1 **Batch A — pipeline + matching** (~3 files):
+- [x] H.7.1 **Batch A — pipeline + matching** (~3 files):
   - `wheres-my-money-for-merchant.md`
   - `did-all-merchants-get-paid.md`
   - `why-is-this-external-transaction-unmatched.md`

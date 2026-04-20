@@ -40,6 +40,10 @@ nav:
     - Stuck in Internal Transfer Suspense: walkthroughs/ar/stuck-in-internal-transfer-suspense.md
     - Internal Transfer Suspense Non-Zero EOD: walkthroughs/ar/internal-transfer-suspense-non-zero.md
     - Reversed Transfers Without Credit-Back: walkthroughs/ar/internal-reversal-uncredited.md
+  - PR Handbook:
+    - Where's My Money for [Merchant]?: walkthroughs/pr/wheres-my-money-for-merchant.md
+    - Did All Merchants Get Paid Yesterday?: walkthroughs/pr/did-all-merchants-get-paid.md
+    - Why Is This External Transaction Unmatched?: walkthroughs/pr/why-is-this-external-transaction-unmatched.md
   - Training Scenarios:
     - Account Structure: Training_Story.md
     - Schema v3 — Data Feed Contract: Schema_v3.md
