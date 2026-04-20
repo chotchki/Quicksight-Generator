@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/chotchki/Quicksight-Generator/actions/workflows/ci.yml/badge.svg)](https://github.com/chotchki/Quicksight-Generator/actions/workflows/ci.yml)
 [![Coverage](https://raw.githubusercontent.com/chotchki/Quicksight-Generator/badges/coverage-badge.svg)](https://github.com/chotchki/Quicksight-Generator/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/quicksight-gen.svg)](https://pypi.org/project/quicksight-gen/)
 
 Python tool that programmatically generates AWS QuickSight JSON definitions (theme, datasets, analyses, dashboards) and deploys them via boto3. It currently ships two independent QuickSight apps:
 
@@ -61,7 +62,23 @@ The customer for these reports doesn't know exactly what they want yet. Rather t
 - An AWS account with QuickSight Enterprise enabled
 - Either a pre-existing QuickSight datasource ARN **or** a PostgreSQL **17+** database URL for demo mode (the schema uses SQL/JSON path syntax)
 
-### Setup
+### Install from PyPI
+
+For consumers — using a pre-existing QuickSight datasource ARN:
+
+```bash
+pip install quicksight-gen
+```
+
+For demo mode (Postgres 17+, requires `psycopg2-binary`):
+
+```bash
+pip install "quicksight-gen[demo]"
+```
+
+### Setup from source
+
+For development on this repo:
 
 ```bash
 python3 -m venv .venv

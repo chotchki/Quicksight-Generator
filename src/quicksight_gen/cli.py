@@ -7,6 +7,7 @@ from pathlib import Path
 
 import click
 
+from quicksight_gen import __version__
 from quicksight_gen.common.config import load_config
 from quicksight_gen.common.theme import build_theme
 
@@ -35,6 +36,7 @@ def _prune_stale_files(directory: Path, *, keep: set[str]) -> None:
 
 
 @click.group()
+@click.version_option(version=__version__, prog_name="quicksight-gen")
 def main() -> None:
     """Generate and deploy AWS QuickSight dashboards."""
 

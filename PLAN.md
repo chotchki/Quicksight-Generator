@@ -954,9 +954,9 @@ Why a standalone phase rather than a sub-step of I.4: the fix touches generator 
 
 ### I.6.G — README + badges
 
-- [ ] Add `## Install` section to `README.md`: `pip install quicksight-gen[demo]` (or omit `[demo]` for production callers with their own datasource ARN).
-- [ ] PyPI version badge alongside the existing CI + coverage badges.
-- [ ] **`quicksight-gen --version` flag.** Click supports this natively; wire it once dynamic versioning lands in I.6.A.
+- [x] **PyPI install snippet** — `## Quick start` now leads with `### Install from PyPI` (consumer path) before `### Setup from source` (developer path). `pip install quicksight-gen` for ARN-only callers, `pip install "quicksight-gen[demo]"` for demo mode.
+- [x] **PyPI version badge** added alongside CI + Coverage. Will read "no releases" until first publish, then live.
+- [x] **`quicksight-gen --version` flag.** Wired via `click.version_option(version=__version__, prog_name="quicksight-gen")`. Reports the dynamic version from `quicksight_gen.__version__`.
 
 ### I.6.H — Sequencing
 
