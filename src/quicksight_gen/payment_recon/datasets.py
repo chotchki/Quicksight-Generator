@@ -526,18 +526,45 @@ WHERE s.settlement_amount <> COALESCE(ss.sales_sum, 0)"""
 
 
 def build_settlement_payment_mismatch_dataset(cfg: Config) -> DataSet:
+    # Phase G.9.10: reads from shared `transactions`. CTEs collapse
+    # settlements (DISTINCT — two zero-netting legs carry identical
+    # metadata) and project payment merchant_dda legs. Mismatch =
+    # payment_amount <> linked settlement_amount.
     sql = f"""\
+WITH settlements AS (
+    SELECT DISTINCT
+        JSON_VALUE(metadata, '$.settlement_id')                         AS settlement_id,
+        CAST(JSON_VALUE(metadata, '$.settlement_amount') AS DECIMAL(12,2)) AS settlement_amount
+    FROM transactions
+    WHERE transfer_type      = 'settlement'
+      AND account_type       = 'merchant_dda'
+      AND control_account_id = 'pr-merchant-ledger'
+),
+payments AS (
+    SELECT
+        JSON_VALUE(metadata, '$.payment_id')                            AS payment_id,
+        JSON_VALUE(metadata, '$.settlement_id')                         AS settlement_id,
+        JSON_VALUE(metadata, '$.merchant_id')                           AS merchant_id,
+        CAST(JSON_VALUE(metadata, '$.payment_amount') AS DECIMAL(12,2)) AS payment_amount,
+        posted_at                                                       AS payment_date
+    FROM transactions
+    WHERE transfer_type      = 'payment'
+      AND account_type       = 'merchant_dda'
+      AND control_account_id = 'pr-merchant-ledger'
+)
 SELECT
-    payment_id,
-    settlement_id,
-    merchant_id,
-    payment_amount,
-    settlement_amount,
-    difference,
-    payment_date,
-    days_outstanding,
-{_aging_bucket_case('days_outstanding')}
-FROM pr_settlement_payment_mismatch"""
+    p.payment_id,
+    p.settlement_id,
+    p.merchant_id,
+    p.payment_amount,
+    s.settlement_amount,
+    p.payment_amount - s.settlement_amount                              AS difference,
+    p.payment_date,
+    (CURRENT_DATE - p.payment_date::date)                               AS days_outstanding,
+{_aging_bucket_case('CURRENT_DATE - p.payment_date::date')}
+FROM payments p
+JOIN settlements s ON s.settlement_id = p.settlement_id
+WHERE p.payment_amount <> s.settlement_amount"""
     return build_dataset(
         cfg, cfg.prefixed("settlement-payment-mismatch-dataset"),
         "Settlement \u2194 Payment Mismatch", "settlement-payment-mismatch",
