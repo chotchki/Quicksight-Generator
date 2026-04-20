@@ -232,7 +232,7 @@ def build_payment_recon_visuals(link_color: str) -> list[Visual]:
                         _measure_sum(
                             "recon-unmatched-amt",
                             DS_PAYMENT_RECON,
-                            "difference",
+                            "external_amount",
                         )
                     ],
                 ),

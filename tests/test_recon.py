@@ -121,7 +121,7 @@ class TestPaymentReconVisuals:
 class TestReconFilterGroups:
     def test_count(self):
         groups = build_recon_filter_groups(_TEST_CFG)
-        assert len(groups) == 3
+        assert len(groups) == 6
 
     def test_filter_ids_unique(self):
         groups = build_recon_filter_groups(_TEST_CFG)

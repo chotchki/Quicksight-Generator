@@ -71,6 +71,58 @@ def _selected_sheets_scope(sheet_ids: list[str]) -> FilterScopeConfiguration:
     )
 
 
+def _visual_scoped_pinned_filter_group(
+    fg_id: str,
+    filter_id: str,
+    sheet_id: str,
+    visual_ids: list[str],
+    dataset_id: str,
+    column_name: str,
+    pinned_values: list[str],
+) -> FilterGroup:
+    """Permanent CategoryFilter pinned to a value list, scoped to one or
+    more named visuals on a sheet.
+
+    Same idea as the AR sheet-pinned drift filter, but narrower: when the
+    cohabiting visuals (detail tables, bar charts) live on the *same*
+    sheet as the KPI being narrowed, sheet scope is too broad. SELECTED_VISUALS
+    + an explicit visual ID list confines the filter to the KPI alone.
+    """
+    return FilterGroup(
+        FilterGroupId=fg_id,
+        CrossDataset="SINGLE_DATASET",
+        ScopeConfiguration=FilterScopeConfiguration(
+            SelectedSheets=SelectedSheetsFilterScopeConfiguration(
+                SheetVisualScopingConfigurations=[
+                    SheetVisualScopingConfiguration(
+                        SheetId=sheet_id,
+                        Scope="SELECTED_VISUALS",
+                        VisualIds=visual_ids,
+                    ),
+                ],
+            ),
+        ),
+        Status="ENABLED",
+        Filters=[
+            Filter(
+                CategoryFilter=CategoryFilter(
+                    FilterId=filter_id,
+                    Column=ColumnIdentifier(
+                        DataSetIdentifier=dataset_id,
+                        ColumnName=column_name,
+                    ),
+                    Configuration=CategoryFilterConfiguration(
+                        FilterListConfiguration={
+                            "MatchOperator": "CONTAINS",
+                            "CategoryValues": pinned_values,
+                        },
+                    ),
+                ),
+            ),
+        ],
+    )
+
+
 # ---------------------------------------------------------------------------
 # Filter groups
 # ---------------------------------------------------------------------------
@@ -435,6 +487,29 @@ def build_filter_groups(cfg: Config) -> list[FilterGroup]:
             SHEET_PAYMENTS,
             DS_PAYMENTS,
             "external_match_state",
+        ),
+        # Visual-scoped KPI fixes: each KPI's subtitle promises a count
+        # of an exception subset, but the underlying dataset feeds detail
+        # tables and bar charts on the same sheet that legitimately want
+        # all rows. Pin the filter to the single KPI visual instead of
+        # the sheet so cohabiting visuals stay unaffected.
+        _visual_scoped_pinned_filter_group(
+            "fg-payments-kpi-returns-only",
+            "filter-payments-kpi-returns-only",
+            SHEET_PAYMENTS,
+            ["payments-kpi-returns"],
+            DS_PAYMENTS,
+            "is_returned",
+            ["true"],
+        ),
+        _visual_scoped_pinned_filter_group(
+            "fg-settlements-kpi-pending-only",
+            "filter-settlements-kpi-pending-only",
+            SHEET_SETTLEMENTS,
+            ["settlements-kpi-pending"],
+            DS_SETTLEMENTS,
+            "settlement_status",
+            ["pending"],
         ),
     ]
     groups.extend(_optional_metadata_filter_groups())
