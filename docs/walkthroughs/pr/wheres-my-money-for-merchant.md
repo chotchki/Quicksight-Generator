@@ -60,45 +60,45 @@ Bigfoot sale older than 2–3 days that's still tagged `Unsettled`
 is a real exception; a Cryptid sale that's still unsettled at day
 14 is just the monthly batch hasn't run yet.
 
-Walk a typical case — pick **Yeti Espresso**:
+Walk a typical case — pick **Yeti Espresso**, tab by tab:
 
-- **Sales tab** with Yeti filtered: ~30 sales over the trailing 90
-  days. A handful at the bottom of the list have
-  `settlement_state = Unsettled` and a populated
-  `days_outstanding`. These are the planted unsettled sales (10
-  total across Yeti + Cryptid).
+**Sales tab** with Yeti filtered: ~30 sales over the trailing 90
+days. A handful at the bottom of the list have
+`settlement_state = Unsettled` and a populated
+`days_outstanding`. These are the planted unsettled sales (10
+total across Yeti + Cryptid).
 
-  <details markdown><summary>Screenshot — Sales filtered to Yeti</summary>
+<details markdown><summary>Screenshot — Sales filtered to Yeti</summary>
 
-  ![Sales tab filtered to Yeti showing unsettled rows at the bottom](../screenshots/pr/wheres-my-money-for-merchant-01-sales.png)
+![Sales tab filtered to Yeti showing unsettled rows at the bottom](../screenshots/pr/wheres-my-money-for-merchant-01-sales.png)
 
-  </details>
+</details>
 
-- **Settlements tab** with Yeti filtered: ~5–6 weekly settlements.
-  Most are `completed` with a `payment_id` populated. A recent
-  settlement (within 2 days) may be `pending` with no payment yet —
-  expected, payment posts 1–5 days after the settlement date.
+**Settlements tab** with Yeti filtered: ~5–6 weekly settlements.
+Most are `completed` with a `payment_id` populated. A recent
+settlement (within 2 days) may be `pending` with no payment yet —
+expected, payment posts 1–5 days after the settlement date.
 
-  <details markdown><summary>Screenshot — Settlements filtered to Yeti</summary>
+<details markdown><summary>Screenshot — Settlements filtered to Yeti</summary>
 
-  ![Settlements tab filtered to Yeti](../screenshots/pr/wheres-my-money-for-merchant-02-settlements.png)
+![Settlements tab filtered to Yeti](../screenshots/pr/wheres-my-money-for-merchant-02-settlements.png)
 
-  </details>
+</details>
 
-- **Payments tab** with Yeti filtered: one payment per non-pending
-  settlement. One payment has `payment_status = returned` with
-  `return_reason = disputed` — that's the planted Yeti return.
+**Payments tab** with Yeti filtered: one payment per non-pending
+settlement. One payment has `payment_status = returned` with
+`return_reason = disputed` — that's the planted Yeti return.
 
-  <details markdown><summary>Screenshot — Payments filtered to Yeti</summary>
+<details markdown><summary>Screenshot — Payments filtered to Yeti</summary>
 
-  ![Payments tab filtered to Yeti showing the disputed return](../screenshots/pr/wheres-my-money-for-merchant-03-payments.png)
+![Payments tab filtered to Yeti showing the disputed return](../screenshots/pr/wheres-my-money-for-merchant-03-payments.png)
 
-  </details>
+</details>
 
-- **Payment Reconciliation tab** with Yeti filtered: each completed
-  payment links to a BankSync / PaymentHub / ClearSettle external
-  transaction. Most show `match_status = matched`; a few may show
-  `not_yet_matched` if the external feed is drifting.
+**Payment Reconciliation tab** with Yeti filtered: each completed
+payment links to a BankSync / PaymentHub / ClearSettle external
+transaction. Most show `match_status = matched`; a few may show
+`not_yet_matched` if the external feed is drifting.
 
 So the answer "where's Yeti's money?" depends on the row: most
 payments completed and reconciled fine; some sales never settled
