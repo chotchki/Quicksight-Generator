@@ -145,7 +145,7 @@ class TestExceptionsKpiScope:
         # the aging bar chart underneath. Subtitle: "Settlements whose
         # amount doesn't equal the signed sum of their linked sales".
         # Semantic scope = settlement-transfer rows where the linked
-        # sales' summed -signed_amount differs from the stored
+        # sales' summed signed_amount differs from the stored
         # settlement_amount.
         from quicksight_gen.payment_recon.datasets import (
             build_sale_settlement_mismatch_dataset,
@@ -163,7 +163,7 @@ WITH settlements AS (
 sale_sums AS (
     SELECT
         JSON_VALUE(metadata, '$.settlement_id') AS settlement_id,
-        SUM(-signed_amount) AS sales_sum
+        SUM(signed_amount) AS sales_sum
     FROM transactions
     WHERE transfer_type = 'sale' AND {_PR_MERCHANT_LEG}
       AND JSON_VALUE(metadata, '$.settlement_id') IS NOT NULL

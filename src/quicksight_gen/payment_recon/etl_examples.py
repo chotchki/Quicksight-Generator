@@ -60,8 +60,10 @@ INSERT INTO transactions (
     'pr-merchant-ledger',
     'merchant_dda',
     TRUE,
-    -- Sales credit the merchant's sub-ledger (negative signed_amount).
-    -42.50,
+    -- Sales credit the merchant's sub-ledger — under the canonical
+    -- sign convention (positive = money IN to the account), the
+    -- merchant_dda leg of a sale is positive.
+    42.50,
     42.50,
     'success',
     TIMESTAMP '2026-04-20 09:15:00',

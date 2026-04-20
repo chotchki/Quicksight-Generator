@@ -143,7 +143,7 @@ class TestDeterminism:
         import hashlib
         digest = hashlib.sha256(sql.encode()).hexdigest()
         assert digest == (
-            "5e381191b9aac4e740f37ff6ec8b3427b2971b50bf802d410daa78a312c3ef9f"
+            "6912a28c8902223a7a552194ee368f1e83df09d6779e5c735321a83c086c1cf0"
         ), f"PR seed drifted; new hash: {digest}"
 
 
@@ -336,27 +336,27 @@ class TestRefunds:
         assert refund_count >= 10, f"Expected ~15 refunds, got {refund_count}"
 
     def test_refund_amounts_are_negative(self, parsed):
-        """Recovered customer-facing amount (-signed_amount on the
-        merchant_dda leg, matching the build_sales_dataset projection) is
-        negative for every refund."""
+        """Under the canonical sign convention, signed_amount on the
+        merchant_dda leg IS the customer-facing amount — negative for
+        every refund, matching the build_sales_dataset projection."""
         for r in _by_type(_pr_rows(parsed), "sale"):
             meta = _metadata(r)
             if meta.get("sale_type") != "refund":
                 continue
             if _val(r, "account_type") != "merchant_dda":
                 continue
-            amount = -Decimal(_val(r, "signed_amount"))
+            amount = Decimal(_val(r, "signed_amount"))
             assert amount < 0, f"Refund customer-facing amount not negative: {amount}"
 
     def test_sale_rows_are_non_negative(self, parsed):
-        """Recovered customer-facing amount is positive for every regular sale."""
+        """Customer-facing amount is positive for every regular sale."""
         for r in _by_type(_pr_rows(parsed), "sale"):
             meta = _metadata(r)
             if meta.get("sale_type") != "sale":
                 continue
             if _val(r, "account_type") != "merchant_dda":
                 continue
-            amount = -Decimal(_val(r, "signed_amount"))
+            amount = Decimal(_val(r, "signed_amount"))
             assert amount > 0, f"Sale customer-facing amount not positive: {amount}"
 
     def test_refunds_flow_into_settlements(self, parsed):

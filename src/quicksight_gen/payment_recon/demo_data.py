@@ -381,9 +381,9 @@ def _derive_pr_unified_tables(
             ),
             "sale_id": sale["sale_id"],
         })
-        _posting(tid, merchant_sub, -sale["amount"],
+        _posting(tid, merchant_sub, sale["amount"],
                  sale["sale_timestamp"])
-        _posting(tid, "pr-external-customer-pool", sale["amount"],
+        _posting(tid, "pr-external-customer-pool", -sale["amount"],
                  sale["sale_timestamp"])
 
     return transfer_rows, posting_rows, transfer_metadata

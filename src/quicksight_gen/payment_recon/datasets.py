@@ -312,15 +312,18 @@ def build_sales_dataset(cfg: Config) -> DataSet:
     # Phase G.9.2: reads from shared `transactions`. PR sale transfers
     # carry one row per posting leg; the merchant_dda leg under the
     # `pr-merchant-ledger` control account is the canonical sale-row
-    # (one per sale). `-signed_amount` recovers the original signed
-    # sale amount (refunds stay negative). PR-domain fields (sale_id,
-    # card_brand, settlement_id, …) come out of the JSON metadata.
+    # (one per sale). Under the canonical sign convention
+    # (`signed_amount > 0` = money IN to the account), a sale credits
+    # the merchant_dda leg, so `signed_amount` is the customer-facing
+    # amount: positive for sales, negative for refunds. PR-domain
+    # fields (sale_id, card_brand, settlement_id, …) come out of the
+    # JSON metadata.
     sql = f"""\
 SELECT
     JSON_VALUE(t.metadata, '$.sale_id')                          AS sale_id,
     JSON_VALUE(t.metadata, '$.merchant_id')                      AS merchant_id,
     JSON_VALUE(t.metadata, '$.location_id')                      AS location_id,
-    -t.signed_amount                                             AS amount,
+    t.signed_amount                                              AS amount,
     JSON_VALUE(t.metadata, '$.sale_type')                        AS sale_type,
     JSON_VALUE(t.metadata, '$.payment_method')                   AS payment_method,
     t.posted_at                                                  AS sale_timestamp,
@@ -433,7 +436,7 @@ SELECT
     JSON_VALUE(t.metadata, '$.merchant_id')                      AS merchant_id,
     JSON_VALUE(t.metadata, '$.merchant_name')                    AS merchant_name,
     JSON_VALUE(t.metadata, '$.location_id')                      AS location_id,
-    -t.signed_amount                                             AS amount,
+    t.signed_amount                                              AS amount,
     t.posted_at                                                  AS sale_timestamp,
     (CURRENT_DATE - t.posted_at::date)                           AS days_outstanding,
 {_aging_bucket_case('CURRENT_DATE - t.posted_at::date')}
@@ -479,9 +482,10 @@ WHERE t.transfer_type      = 'payment'
 def build_sale_settlement_mismatch_dataset(cfg: Config) -> DataSet:
     # Phase G.9.9: reads from shared `transactions`. CTEs collapse
     # settlements (DISTINCT on metadata + posted_at — two zero-netting
-    # legs) and sum the linked sales' merchant_dda legs (-signed_amount
-    # recovers signed sale amount, including refunds). Mismatch = stored
-    # settlement_amount <> sum of linked sale amounts.
+    # legs) and sum the linked sales' merchant_dda legs (signed_amount
+    # is the signed sale amount under the canonical convention: +sale,
+    # -refund). Mismatch = stored settlement_amount <> sum of linked
+    # sale amounts.
     sql = f"""\
 WITH settlements AS (
     SELECT DISTINCT
@@ -498,7 +502,7 @@ WITH settlements AS (
 sale_sums AS (
     SELECT
         JSON_VALUE(metadata, '$.settlement_id')                 AS settlement_id,
-        SUM(-signed_amount)                                     AS sales_sum
+        SUM(signed_amount)                                      AS sales_sum
     FROM transactions
     WHERE transfer_type      = 'sale'
       AND account_type       = 'merchant_dda'
