@@ -41,7 +41,7 @@ Without Fed Confirmation check.
 
 The KPI shows **2** Fed activities without internal posts.
 
-<details><summary>Screenshot — KPI</summary>
+<details markdown><summary>Screenshot — KPI</summary>
 
 ![Fed Activity Without Internal Post KPI showing the count 2](../screenshots/ar/fed-card-no-internal-catchup-01-kpi.png)
 
@@ -62,7 +62,7 @@ pattern.
 The detail table shows both. Columns: `fed_transfer_id`, `fed_at`,
 `fed_amount`, `aging_bucket`. Sorted newest-first.
 
-<details><summary>Screenshot — detail table</summary>
+<details markdown><summary>Screenshot — detail table</summary>
 
 ![Fed Activity Without Internal Post table showing 2 rows](../screenshots/ar/fed-card-no-internal-catchup-02-table.png)
 
@@ -72,7 +72,7 @@ The aging bar chart shows the split: 1 row in bucket 3 (4-7 days)
 for `ar-card-fed-04`, 1 row in bucket 4 (8-30 days) for
 `ar-card-fed-09`.
 
-<details><summary>Screenshot — aging chart</summary>
+<details markdown><summary>Screenshot — aging chart</summary>
 
 ![Fed Activity w/o Internal Post by Age aging bar chart with 1 row each in buckets 3 and 4](../screenshots/ar/fed-card-no-internal-catchup-03-aging.png)
 

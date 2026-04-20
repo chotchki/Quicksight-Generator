@@ -43,7 +43,7 @@ KPIs.
 
 The KPI shows **14** non-zero transfers.
 
-<details><summary>Screenshot — KPI</summary>
+<details markdown><summary>Screenshot — KPI</summary>
 
 ![Non-Zero Transfers KPI showing the count 14](../screenshots/ar/non-zero-transfers-01-kpi.png)
 
@@ -71,7 +71,7 @@ newest-first. From the demo seed:
 | `ar-ledger-xfer-0006` | Apr 1 2026 4:31pm    |           0 |      −116.49 |    −116.49 |                0 |
 | `ar-ledger-xfer-0008` | Mar 15 2026 9:08am   |           0 |       −60.34 |     −60.34 |                0 |
 
-<details><summary>Screenshot — detail table</summary>
+<details markdown><summary>Screenshot — detail table</summary>
 
 ![Non-Zero Transfers table showing 14 rows sorted newest-first](../screenshots/ar/non-zero-transfers-02-table.png)
 
@@ -81,7 +81,7 @@ The aging bar chart distributes the 14 transfers across buckets:
 ~9 in bucket 4 (8-30 days), ~3 in bucket 3 (4-7 days), ~1 each in
 buckets 2 (2-3 days) and 5 (>30 days).
 
-<details><summary>Screenshot — aging chart</summary>
+<details markdown><summary>Screenshot — aging chart</summary>
 
 ![Non-Zero Transfers by Age aging bar chart with bucket 4 (8-30 days) dominant](../screenshots/ar/non-zero-transfers-03-aging.png)
 

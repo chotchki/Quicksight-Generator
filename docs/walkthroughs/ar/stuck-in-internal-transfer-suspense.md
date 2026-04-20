@@ -32,7 +32,7 @@ aging bar chart.
 
 The KPI shows **2** stuck transfers.
 
-<details><summary>Screenshot — KPI</summary>
+<details markdown><summary>Screenshot — KPI</summary>
 
 ![Stuck in Internal Transfer Suspense KPI showing the count 2](../screenshots/ar/stuck-in-internal-transfer-suspense-01-kpi.png)
 
@@ -47,7 +47,7 @@ seed:
 | `ar-on-us-orig-03`    | Apr 8, 2026 9:30am   | 4,275            | 4: 8-30 days  |
 | `ar-on-us-orig-04`    | Mar 27, 2026 9:30am  | 1,880            | 4: 8-30 days  |
 
-<details><summary>Screenshot — detail table</summary>
+<details markdown><summary>Screenshot — detail table</summary>
 
 ![Detail table with two stuck transfer rows totalling $6,155](../screenshots/ar/stuck-in-internal-transfer-suspense-02-table.png)
 
@@ -62,7 +62,7 @@ into Transactions.
 The aging bar chart shows both rows in the **8-30 days** bucket — well
 past the 1-3 day "normal in-flight" window.
 
-<details><summary>Screenshot — aging chart</summary>
+<details markdown><summary>Screenshot — aging chart</summary>
 
 ![Aging bar chart with both rows in the 8-30 days bucket](../screenshots/ar/stuck-in-internal-transfer-suspense-03-aging.png)
 

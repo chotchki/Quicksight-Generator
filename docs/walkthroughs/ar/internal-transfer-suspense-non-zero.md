@@ -40,7 +40,7 @@ above its detail table and aging chart — directly below
 
 The KPI shows **36** suspense non-zero days.
 
-<details><summary>Screenshot — KPI</summary>
+<details markdown><summary>Screenshot — KPI</summary>
 
 ![Internal Transfer Suspense Non-Zero EOD KPI showing the count 36](../screenshots/ar/internal-transfer-suspense-non-zero-01-kpi.png)
 
@@ -59,7 +59,7 @@ balance ≠ 0. Columns: `ledger_account_id`, `ledger_name`,
 `balance_date`, `balance_date_str`, `stored_balance`,
 `aging_bucket`. Sorted newest-first.
 
-<details><summary>Screenshot — detail table</summary>
+<details markdown><summary>Screenshot — detail table</summary>
 
 ![Internal Transfer Suspense Non-Zero EOD table sorted newest-first by balance_date](../screenshots/ar/internal-transfer-suspense-non-zero-02-table.png)
 
@@ -71,7 +71,7 @@ Mar 27 stuck plant first landed and aged into 8-30. Bucket 5
 (>30 days) carries ~6 rows from older background suspense
 activity. Buckets 1-3 carry the most recent days.
 
-<details><summary>Screenshot — aging chart</summary>
+<details markdown><summary>Screenshot — aging chart</summary>
 
 ![Internal Suspense Non-Zero EOD by Age aging bar chart with bucket 4 dominant](../screenshots/ar/internal-transfer-suspense-non-zero-03-aging.png)
 

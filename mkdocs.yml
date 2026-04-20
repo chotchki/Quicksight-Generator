@@ -45,4 +45,5 @@ nav:
 markdown_extensions:
   - toc:
       permalink: true
+  - md_in_html
   - pymdownx.superfences

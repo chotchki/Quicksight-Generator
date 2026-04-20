@@ -39,7 +39,7 @@ Drift Days** in the upper KPI row, next to **Ledger Drift Days** and
 
 The KPI shows **401** sub-ledger drift days.
 
-<details><summary>Screenshot — KPI</summary>
+<details markdown><summary>Screenshot — KPI</summary>
 
 ![Sub-Ledger Drift Days KPI showing the count 401](../screenshots/ar/sub-ledger-drift-01-kpi.png)
 
@@ -63,7 +63,7 @@ computed. Columns: `subledger_account_id`, `subledger_name`,
 `computed_balance`, `drift`, `aging_bucket`. Sorted newest-first by
 date.
 
-<details><summary>Screenshot — detail table</summary>
+<details markdown><summary>Screenshot — detail table</summary>
 
 ![Sub-Ledger Balance Drift table sorted newest-first by balance_date](../screenshots/ar/sub-ledger-drift-02-table.png)
 
@@ -74,7 +74,7 @@ dominates because the older two plants (Mar 30 and Apr 9) have already
 rolled through enough days to push their cells out of the recent
 buckets.
 
-<details><summary>Screenshot — aging chart</summary>
+<details markdown><summary>Screenshot — aging chart</summary>
 
 ![Sub-Ledger Drift by Age aging bar chart with bucket 4 (8-30 days) dominant](../screenshots/ar/sub-ledger-drift-03-aging.png)
 

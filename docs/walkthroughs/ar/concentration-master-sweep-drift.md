@@ -35,7 +35,7 @@ Timeline** half-width on the right.
 
 The KPI shows **18** sweep drift days.
 
-<details><summary>Screenshot — KPI</summary>
+<details markdown><summary>Screenshot — KPI</summary>
 
 ![Concentration Master Sweep Drift Days KPI showing the count 18](../screenshots/ar/concentration-master-sweep-drift-01-kpi.png)
 
@@ -57,7 +57,7 @@ visible bar), the two planted days carry the visible spikes near
 +$120 and −$95.50, and the count of 18 also includes other smaller
 sweep dates that the dataset includes in its scope.
 
-<details><summary>Screenshot — timeline</summary>
+<details markdown><summary>Screenshot — timeline</summary>
 
 ![Concentration Master Sweep Drift Timeline showing two visible spikes](../screenshots/ar/concentration-master-sweep-drift-02-timeline.png)
 

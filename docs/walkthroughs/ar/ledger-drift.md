@@ -38,7 +38,7 @@ Days** sits at the top-left of the upper KPI row, alongside
 
 The KPI shows **141** ledger drift days.
 
-<details><summary>Screenshot — KPI</summary>
+<details markdown><summary>Screenshot — KPI</summary>
 
 ![Ledger Drift Days KPI showing the count 141](../screenshots/ar/ledger-drift-01-kpi.png)
 
@@ -63,7 +63,7 @@ computed. Columns: `ledger_account_id`, `ledger_name`, `scope`,
 `balance_date`, `stored_balance`, `computed_balance`, `drift`,
 `aging_bucket`. Sorted newest-first.
 
-<details><summary>Screenshot — detail table</summary>
+<details markdown><summary>Screenshot — detail table</summary>
 
 ![Ledger Balance Drift table sorted newest-first by balance_date](../screenshots/ar/ledger-drift-02-table.png)
 
@@ -74,7 +74,7 @@ The aging bar chart distributes the 141 days across buckets — bucket
 plants (Apr 5 and Apr 12) have already aged out of the recent
 buckets.
 
-<details><summary>Screenshot — aging chart</summary>
+<details markdown><summary>Screenshot — aging chart</summary>
 
 ![Ledger Drift by Age aging bar chart with bucket 4 (8-30 days) dominant](../screenshots/ar/ledger-drift-03-aging.png)
 

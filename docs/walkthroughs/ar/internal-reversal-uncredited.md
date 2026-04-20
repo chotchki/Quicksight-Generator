@@ -42,7 +42,7 @@ Non-Zero EOD*.
 
 The KPI shows **1** uncredited reversal.
 
-<details><summary>Screenshot — KPI</summary>
+<details markdown><summary>Screenshot — KPI</summary>
 
 ![Reversed Transfers Without Credit-Back KPI showing the count 1](../screenshots/ar/internal-reversal-uncredited-01-kpi.png)
 
@@ -66,7 +66,7 @@ The detail table shows the row. Columns: `originate_transfer_id`,
 `reversal_at`, `aging_bucket`. Sorted newest-first by
 `originated_at`.
 
-<details><summary>Screenshot — detail table</summary>
+<details markdown><summary>Screenshot — detail table</summary>
 
 ![Reversed Transfers Without Credit-Back table showing the single row](../screenshots/ar/internal-reversal-uncredited-02-table.png)
 
@@ -75,7 +75,7 @@ The detail table shows the row. Columns: `originate_transfer_id`,
 The aging bar chart shows a single bar in bucket 4 (8-30 days) —
 the originate is 17 days old.
 
-<details><summary>Screenshot — aging chart</summary>
+<details markdown><summary>Screenshot — aging chart</summary>
 
 ![Reversed Without Credit-Back by Age aging bar chart with 1 row in 8-30 days bucket](../screenshots/ar/internal-reversal-uncredited-03-aging.png)
 

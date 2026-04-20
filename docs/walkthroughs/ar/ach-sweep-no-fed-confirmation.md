@@ -40,7 +40,7 @@ Origination Non-Zero check.
 
 The KPI shows **2** sweeps without Fed confirmation.
 
-<details><summary>Screenshot — KPI</summary>
+<details markdown><summary>Screenshot — KPI</summary>
 
 ![ACH Sweep Without Fed Confirmation KPI showing the count 2](../screenshots/ar/ach-sweep-no-fed-confirmation-01-kpi.png)
 
@@ -57,7 +57,7 @@ Two planted incidents in `_ACH_FED_CONFIRMATION_MISSING` (days_ago
 The detail table shows both. Columns: `sweep_transfer_id`,
 `sweep_at`, `sweep_amount`, `aging_bucket`. Sorted newest-first.
 
-<details><summary>Screenshot — detail table</summary>
+<details markdown><summary>Screenshot — detail table</summary>
 
 ![ACH Sweep Without Fed Confirmation table showing 2 rows](../screenshots/ar/ach-sweep-no-fed-confirmation-02-table.png)
 
@@ -66,7 +66,7 @@ The detail table shows both. Columns: `sweep_transfer_id`,
 The aging bar chart shows both rows in bucket 4 (8-30 days) — by
 design, both plants are inside that range.
 
-<details><summary>Screenshot — aging chart</summary>
+<details markdown><summary>Screenshot — aging chart</summary>
 
 ![ACH Sweep w/o Fed Confirmation by Age aging bar chart with both rows in 8-30 days bucket](../screenshots/ar/ach-sweep-no-fed-confirmation-03-aging.png)
 

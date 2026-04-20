@@ -38,7 +38,7 @@ half-width on the right.
 
 The KPI shows **10** drift days.
 
-<details><summary>Screenshot — KPI</summary>
+<details markdown><summary>Screenshot — KPI</summary>
 
 ![GL vs Fed Master Drift Days KPI showing the count 10](../screenshots/ar/gl-vs-fed-master-drift-01-kpi.png)
 
@@ -57,7 +57,7 @@ Both bars are positive (Fed minus SNB > 0) because the Fed posted
 and SNB didn't catch up — the bank's GL view *understates* what
 the Fed saw by exactly the missing settlement amount.
 
-<details><summary>Screenshot — timeline</summary>
+<details markdown><summary>Screenshot — timeline</summary>
 
 ![GL vs Fed Master Drift Timeline showing two ~3K positive bars in early April](../screenshots/ar/gl-vs-fed-master-drift-02-timeline.png)
 

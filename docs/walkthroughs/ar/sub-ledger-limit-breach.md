@@ -37,7 +37,7 @@ below the upper drift / non-zero KPI row.
 
 The KPI shows **3** limit-breach days.
 
-<details><summary>Screenshot — KPI</summary>
+<details markdown><summary>Screenshot — KPI</summary>
 
 ![Limit Breach Days KPI showing the count 3](../screenshots/ar/sub-ledger-limit-breach-01-kpi.png)
 
@@ -56,7 +56,7 @@ The detail table lists each breach with columns:
 
 All three sub-ledgers roll up to **Customer Deposits — DDA Control**.
 
-<details><summary>Screenshot — detail table</summary>
+<details markdown><summary>Screenshot — detail table</summary>
 
 ![Sub-Ledger Limit Breach table showing 3 breach rows](../screenshots/ar/sub-ledger-limit-breach-02-table.png)
 
@@ -66,7 +66,7 @@ The aging bar chart shows all 3 rows in the **8-30 days** bucket —
 the planted breach dates are 8, 12, and 18 days back, all squarely
 inside that range.
 
-<details><summary>Screenshot — aging chart</summary>
+<details markdown><summary>Screenshot — aging chart</summary>
 
 ![Limit Breaches by Age aging bar chart with all 3 rows in the 8-30 days bucket](../screenshots/ar/sub-ledger-limit-breach-03-aging.png)
 

@@ -36,7 +36,7 @@ EOD**.
 
 The KPI shows **116** sweep-target non-zero days.
 
-<details><summary>Screenshot — KPI</summary>
+<details markdown><summary>Screenshot — KPI</summary>
 
 ![Sweep Target Non-Zero EOD KPI showing the count 116](../screenshots/ar/sweep-target-non-zero-01-kpi.png)
 
@@ -60,7 +60,7 @@ stored balance is non-zero. Columns: `subledger_account_id`,
 `subledger_name`, `ledger_name`, `balance_date`, `balance_date_str`,
 `stored_balance`, `aging_bucket`. Sorted newest-first.
 
-<details><summary>Screenshot — detail table</summary>
+<details markdown><summary>Screenshot — detail table</summary>
 
 ![Sweep Target Non-Zero EOD table sorted newest-first by balance_date](../screenshots/ar/sweep-target-non-zero-02-table.png)
 
@@ -73,7 +73,7 @@ Bucket 3 (4-7 days) and bucket 5 (>30 days) carry smaller counts;
 buckets 1 and 2 hold the most recent sweep-target non-zero days from
 the Apr 16 plant on Operating Main.
 
-<details><summary>Screenshot — aging chart</summary>
+<details markdown><summary>Screenshot — aging chart</summary>
 
 ![Sweep Targets by Age aging bar chart with bucket 4 (8-30 days) dominant](../screenshots/ar/sweep-target-non-zero-03-aging.png)
 

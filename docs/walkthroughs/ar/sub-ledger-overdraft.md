@@ -33,7 +33,7 @@ Days** sits in the second KPI row, next to **Limit Breach Days**.
 
 The KPI shows **231** overdraft days.
 
-<details><summary>Screenshot — KPI</summary>
+<details markdown><summary>Screenshot — KPI</summary>
 
 ![Overdraft Days KPI showing the count 231](../screenshots/ar/sub-ledger-overdraft-01-kpi.png)
 
@@ -55,7 +55,7 @@ balance < 0. Columns: `subledger_account_id`, `subledger_name`,
 `ledger_name`, `balance_date`, `stored_balance`, `aging_bucket`.
 Sorted newest-first.
 
-<details><summary>Screenshot — detail table</summary>
+<details markdown><summary>Screenshot — detail table</summary>
 
 ![Sub-Ledger Overdraft table sorted newest-first by balance_date](../screenshots/ar/sub-ledger-overdraft-02-table.png)
 
@@ -67,7 +67,7 @@ already aged into bucket 4. Bucket 3 (4-7 days) and bucket 5
 (>30 days) carry smaller counts; bucket 1 (0-1 day) and bucket 2
 (2-3 days) hold the most recent overdraft days.
 
-<details><summary>Screenshot — aging chart</summary>
+<details markdown><summary>Screenshot — aging chart</summary>
 
 ![Overdrafts by Age aging bar chart with bucket 4 (8-30 days) dominant](../screenshots/ar/sub-ledger-overdraft-03-aging.png)
 

@@ -34,7 +34,7 @@ above its detail table and aging chart.
 
 The KPI shows **5** ACH origination non-zero days.
 
-<details><summary>Screenshot — KPI</summary>
+<details markdown><summary>Screenshot — KPI</summary>
 
 ![ACH Origination Settlement Non-Zero EOD KPI showing the count 5](../screenshots/ar/ach-origination-non-zero-01-kpi.png)
 
@@ -60,7 +60,7 @@ The detail table shows all five rows. Columns: `ledger_account_id`,
 `ledger_name`, `balance_date`, `balance_date_str`, `stored_balance`,
 `aging_bucket`. Sorted newest-first.
 
-<details><summary>Screenshot — detail table</summary>
+<details markdown><summary>Screenshot — detail table</summary>
 
 ![ACH Origination Settlement Non-Zero EOD table showing 5 rows](../screenshots/ar/ach-origination-non-zero-02-table.png)
 
@@ -71,7 +71,7 @@ The aging bar chart shows the distribution: 1 row in bucket 1
 (Apr 15 + 16). No rows in bucket 4 or 5 yet — the underlying
 incident is only 4 days old.
 
-<details><summary>Screenshot — aging chart</summary>
+<details markdown><summary>Screenshot — aging chart</summary>
 
 ![ACH Origination Non-Zero EOD by Age aging bar chart](../screenshots/ar/ach-origination-non-zero-03-aging.png)
 
