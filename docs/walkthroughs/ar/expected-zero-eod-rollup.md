@@ -29,10 +29,12 @@ carrying a balance?"
 
 ## Where to look
 
-Open the AR dashboard, **Exceptions** sheet. Scroll past the Balance
-Drift Timelines rollup at the top. The Expected-Zero rollup is the
-second block: a KPI ("**Accounts Expected Zero at EOD**") and a detail
-table with the same title.
+Open the AR dashboard, **Exceptions** sheet. The three cross-check
+rollups sit at the top of the sheet in order: Balance Drift Timelines
+(chart), Two-Sided Post Mismatch (KPI + table), Expected-Zero EOD
+(KPI + table). Expected-Zero is the third rollup: a KPI titled
+"**Accounts Expected Zero at EOD**" and a detail table with the same
+title.
 
 ## What you'll see in the demo
 
