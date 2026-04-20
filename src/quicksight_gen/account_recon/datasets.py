@@ -345,6 +345,11 @@ def build_transactions_dataset(cfg: Config) -> DataSet:
     # via the corresponding ledger row in `daily_balances`; external
     # ledgers (no daily balance rows) return NULL ledger_name — acceptable
     # since the visual still shows ledger_account_id.
+    #
+    # I.4.B Commit 2: no transfer_type WHERE filter. Under the unified-AR
+    # framing AR Transactions surfaces every leg in the base table; the
+    # Transfer Type multi-select control on the tab lets analysts narrow
+    # to AR-only transfer types if they want.
     sql = """\
 SELECT
     t.transaction_id,
@@ -379,8 +384,7 @@ LEFT JOIN (
     SELECT DISTINCT account_id, account_name
     FROM daily_balances
     WHERE control_account_id IS NULL
-) led ON led.account_id = t.control_account_id
-WHERE t.transfer_type IN ('ach', 'wire', 'internal', 'cash', 'funding_batch', 'fee', 'clearing_sweep')"""
+) led ON led.account_id = t.control_account_id"""
     return build_dataset(
         cfg, cfg.prefixed("ar-transactions-dataset"),
         "AR Transactions", "ar-transactions",

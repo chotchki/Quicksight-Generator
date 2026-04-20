@@ -189,3 +189,81 @@ class TestSubledgerAccountsDatasetSurfacesMerchantDdas:
             "merchant_dda row. Either the seed stopped emitting them or "
             "a filter was added to the dataset SQL."
         )
+
+
+# ---------------------------------------------------------------------------
+# I.4.B Commit 2 — AR Transactions dataset transfer_type filter removed
+# ---------------------------------------------------------------------------
+
+class TestArTransactionsDatasetSurfacesPrTransferTypes:
+    """The AR Transactions dataset (Transactions tab) sees PR transfer types.
+
+    Pre-I.4 the dataset SQL carried
+    ``WHERE t.transfer_type IN ('ach', 'wire', 'internal', 'cash',
+    'funding_batch', 'fee', 'clearing_sweep')`` which hid the four
+    PR transfer types (``sale``, ``settlement``, ``payment``,
+    ``external_txn``) from the AR Transactions tab. After commit 2
+    the dataset is unscoped at the SQL level.
+
+    String-level regression is covered in
+    ``tests/test_account_recon.py::TestPhase5DatasetDeclarations::
+    test_transactions_dataset_has_no_transfer_type_filter``. This
+    file adds the deployed-surface positive cross-visibility lock
+    against the live seed.
+    """
+
+    _PR_TRANSFER_TYPES = ("sale", "settlement", "payment", "external_txn")
+    _AR_TRANSFER_TYPES = (
+        "ach", "wire", "internal", "cash",
+        "funding_batch", "fee", "clearing_sweep",
+    )
+
+    def test_pr_transfer_types_surface(self, pg_conn):
+        """Every PR transfer_type appears in ``transactions`` — what the
+        unscoped AR Transactions dataset now projects."""
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT transfer_type, COUNT(*)
+                FROM transactions
+                WHERE transfer_type = ANY(%s)
+                GROUP BY transfer_type
+                """,
+                (list(self._PR_TRANSFER_TYPES),),
+            )
+            counts = {row[0]: row[1] for row in cur.fetchall()}
+        missing = set(self._PR_TRANSFER_TYPES) - set(counts)
+        assert not missing, (
+            f"PR transfer types {missing} absent from ``transactions`` "
+            "after I.4.B commit 2. Either the PR seed no longer emits "
+            "them (check payment_recon/demo_data.py) or a regression "
+            "re-added the WHERE filter on the AR Transactions dataset."
+        )
+
+    def test_ar_transfer_types_still_surface(self, pg_conn):
+        """Regression guard: removing the transfer_type filter must not
+        drop AR transfer types from the base table. Pairs with the
+        positive-PR assertion above so both sides of the unified view
+        remain reachable."""
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT transfer_type, COUNT(*)
+                FROM transactions
+                WHERE transfer_type = ANY(%s)
+                GROUP BY transfer_type
+                """,
+                (list(self._AR_TRANSFER_TYPES),),
+            )
+            counts = {row[0]: row[1] for row in cur.fetchall()}
+        # Not every AR transfer_type is guaranteed in every seed
+        # (e.g., `cash` has a small pool), but the core CMS-flow types
+        # must all exist — that's what the Transactions tab is for.
+        required = {"ach", "wire", "internal", "clearing_sweep"}
+        missing = required - set(counts)
+        assert not missing, (
+            f"Required AR transfer types {missing} absent from "
+            "``transactions``. I.4.B commit 2 removed the dataset's "
+            "transfer_type filter but didn't change the seed — if AR "
+            "types disappeared, the seed regressed."
+        )

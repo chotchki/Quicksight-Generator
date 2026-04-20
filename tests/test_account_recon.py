@@ -2969,6 +2969,39 @@ class TestPhase5DatasetDeclarations:
         assert "origin" in cols
         assert "t.origin" in table["CustomSql"]["SqlQuery"]
 
+    def test_transactions_dataset_has_no_transfer_type_filter(
+        self, ar_output_dir,
+    ):
+        """The AR Transactions dataset SQL no longer carries the
+        artificial AR-only transfer_type WHERE clause (I.4.B Commit 2).
+
+        Pre-I.4 the dataset filtered
+        ``WHERE t.transfer_type IN ('ach', 'wire', 'internal', 'cash',
+        'funding_batch', 'fee', 'clearing_sweep')`` which hid PR-side
+        legs (sale / settlement / payment / external_txn) from the
+        Transactions tab. Under the unified-AR framing the dataset is
+        unscoped at the SQL level; the Transfer Type multi-select
+        control on the tab is the analyst-side filter affordance.
+
+        Regression guard: if a future commit re-adds the WHERE filter
+        this assertion breaks loudly.
+        """
+        path = ar_output_dir / "datasets" / "qs-gen-ar-transactions-dataset.json"
+        data = json.loads(path.read_text())
+        table = next(iter(data["PhysicalTableMap"].values()))
+        sql = table["CustomSql"]["SqlQuery"]
+        assert "t.transfer_type IN" not in sql, (
+            "AR Transactions dataset SQL re-acquired a "
+            "`t.transfer_type IN (...)` filter. I.4.B Commit 2 removed "
+            "it; if it came back, audit account_recon/datasets.py edit "
+            "history before re-applying."
+        )
+        assert "transfer_type" in sql, (
+            "AR Transactions dataset no longer projects transfer_type. "
+            "The column is the dataset-side anchor for the Transfer Type "
+            "multi-select control on the Transactions tab."
+        )
+
 
 # ---------------------------------------------------------------------------
 # Analysis name driven by theme preset
