@@ -41,13 +41,14 @@ nav:
     - Internal Transfer Suspense Non-Zero EOD: walkthroughs/ar/internal-transfer-suspense-non-zero.md
     - Reversed Transfers Without Credit-Back: walkthroughs/ar/internal-reversal-uncredited.md
   - PR Handbook:
+    - Overview: handbook/pr.md
     - Where's My Money for [Merchant]?: walkthroughs/pr/wheres-my-money-for-merchant.md
     - Did All Merchants Get Paid Yesterday?: walkthroughs/pr/did-all-merchants-get-paid.md
     - Why Is This External Transaction Unmatched?: walkthroughs/pr/why-is-this-external-transaction-unmatched.md
+    - Which Sales Never Made It to Settlement?: walkthroughs/pr/which-sales-never-made-it-to-settlement.md
     - Why Does This Settlement Look Short?: walkthroughs/pr/why-does-this-settlement-look-short.md
     - Why Doesn't This Payment Match the Settlement?: walkthroughs/pr/why-doesnt-this-payment-match-the-settlement.md
     - How Much Did We Return Last Week?: walkthroughs/pr/how-much-did-we-return.md
-    - Which Sales Never Made It to Settlement?: walkthroughs/pr/which-sales-never-made-it-to-settlement.md
   - Training Scenarios:
     - Account Structure: Training_Story.md
     - Schema v3 — Data Feed Contract: Schema_v3.md

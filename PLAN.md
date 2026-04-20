@@ -532,15 +532,15 @@ Same skeleton as AR, framed around the operator question rather than the check n
 
 ## Phase H.8 — PR Handbook index
 
-- [ ] H.8.1 Build `docs/handbook/pr.md`:
+- [x] H.8.1 Build `docs/handbook/pr.md`:
   - Hero block
   - Preamble: SNB merchant-acquiring side; Merchant Support's reactive posture
   - "Common merchant questions" section: walkthrough cards organized by question topic
   - "Investigating exceptions" section: exception walkthrough cards
   - Footer: same Schema_v3 + Training_Story links
-- [ ] H.8.2 Update `mkdocs.yml` nav — add "PR Handbook" landing + nested walkthroughs.
-- [ ] H.8.3 `mkdocs serve` smoke.
-- [ ] H.8.4 Commit — `Phase H.8: PR Handbook index page`.
+- [x] H.8.2 Update `mkdocs.yml` nav — add "PR Handbook" landing + nested walkthroughs.
+- [x] H.8.3 `mkdocs serve` smoke.
+- [x] H.8.4 Commit — `Phase H.8: PR Handbook index page`.
 
 ---
 
