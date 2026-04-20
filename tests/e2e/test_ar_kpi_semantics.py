@@ -139,14 +139,22 @@ class TestKpiScope:
         assert _count_rows(pg_conn, as_displayed) > 0
 
     def test_non_zero_transfers_kpi_scope(self, pg_conn):
-        # Dataset SQL filters net_zero_status='not_net_zero'; subtitle
-        # promises "transfers whose non-failed legs don't balance out"
-        # i.e. net_amount <> 0 over non-failed legs.
+        # Dataset SQL (I.4.B Commit 3) filters
+        #   net_zero_status='not_net_zero' AND expected_net_zero='expected'
+        # so single-leg PR types (sale, external_txn) — which have
+        # non-zero net by shape, not by exception — don't false-positive
+        # into the KPI. Subtitle promises "transfers whose non-failed
+        # legs don't balance out" i.e. net_amount <> 0 over the
+        # multi-leg-expected scope.
         as_displayed = (
-            "SELECT 1 FROM ar_transfer_summary WHERE net_zero_status = 'not_net_zero'"
+            "SELECT 1 FROM ar_transfer_summary "
+            "WHERE net_zero_status = 'not_net_zero' "
+            "  AND expected_net_zero = 'expected'"
         )
         expected_scope = (
-            "SELECT 1 FROM ar_transfer_summary WHERE net_amount <> 0"
+            "SELECT 1 FROM ar_transfer_summary "
+            "WHERE net_amount <> 0 "
+            "  AND expected_net_zero = 'expected'"
         )
         assert _count_rows(pg_conn, as_displayed) == _count_rows(pg_conn, expected_scope)
         assert _count_rows(pg_conn, as_displayed) > 0

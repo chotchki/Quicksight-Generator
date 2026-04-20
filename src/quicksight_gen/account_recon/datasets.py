@@ -105,6 +105,7 @@ TRANSFER_SUMMARY_CONTRACT = DatasetContract(columns=[
     ColumnSpec("leg_count", "INTEGER"),
     ColumnSpec("failed_leg_count", "INTEGER"),
     ColumnSpec("net_zero_status", "STRING"),
+    ColumnSpec("expected_net_zero", "STRING"),
     ColumnSpec("scope_type", "STRING"),
     ColumnSpec("transfer_type", "STRING"),
     ColumnSpec("origin", "STRING"),
@@ -447,6 +448,7 @@ SELECT
     leg_count,
     failed_leg_count,
     net_zero_status,
+    expected_net_zero,
     CASE WHEN has_external_leg THEN 'cross_scope' ELSE 'internal_only' END
         AS scope_type,
     transfer_type,
@@ -461,6 +463,10 @@ FROM ar_transfer_summary"""
 
 
 def build_non_zero_transfers_dataset(cfg: Config) -> DataSet:
+    # I.4.B Commit 3: filter on `expected_net_zero = 'expected'` so the
+    # Non-Zero Transfers KPI only counts multi-leg transfers whose
+    # non-failed legs don't sum to zero. Single-leg PR types (`sale`,
+    # `external_txn`) have non-zero net by shape, not by exception.
     sql = f"""\
 SELECT
     transfer_id,
@@ -474,7 +480,8 @@ SELECT
 {_aging_columns('first_posted_at')},
     memo
 FROM ar_transfer_summary
-WHERE net_zero_status = 'not_net_zero'"""
+WHERE net_zero_status = 'not_net_zero'
+  AND expected_net_zero = 'expected'"""
     return build_dataset(
         cfg, cfg.prefixed("ar-non-zero-transfers-dataset"),
         "AR Non-Zero Transfers", "ar-non-zero-transfers",

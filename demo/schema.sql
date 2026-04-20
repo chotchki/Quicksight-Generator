@@ -306,9 +306,19 @@ WHERE stored.control_account_id IS NULL;
 
 
 -- Per-transfer net of non-failed postings + net-zero flag.
--- A healthy transfer has net = 0. ``has_external_leg`` flags transfers
--- where at least one leg lands on an external sub-ledger account.
--- Scoped to AR transfer types only.
+-- A healthy multi-leg transfer has net = 0. ``has_external_leg``
+-- flags transfers where at least one leg lands on an external
+-- sub-ledger account.
+--
+-- I.4.B Commit 3: widened to all transfer types under the unified-AR
+-- framing. Single-leg PR transfer types (``sale``, ``external_txn``)
+-- naturally have non-zero ``net_amount`` because they have no
+-- counter-leg in `transactions` — that's not a reconciliation
+-- exception, just the shape of the type. The downstream
+-- ``ar_transfer_summary`` derives an ``expected_net_zero`` flag
+-- from ``transfer_type`` so consumers (e.g., AR Non-Zero Transfers
+-- KPI) can exclude single-leg-expected types from their scope.
+--
 -- Phase G: reads from shared `transactions`. transfer_type / origin are
 -- denormalized per-row so they group cleanly without a separate join.
 CREATE VIEW ar_transfer_net_zero AS
@@ -329,12 +339,22 @@ SELECT
         ELSE 'not_net_zero'
     END                                                               AS net_zero_status
 FROM transactions t
-WHERE t.transfer_type IN ('ach', 'wire', 'internal', 'cash', 'funding_batch', 'fee', 'clearing_sweep')
 GROUP BY t.transfer_id;
 
 
 -- Per-transfer summary with representative memo (from earliest leg)
 -- for display alongside net totals.
+--
+-- I.4.B Commit 3: derives ``expected_net_zero`` from
+-- ``transfer_type``. Multi-leg transfer types (``ach``, ``wire``,
+-- ``internal``, ``cash``, ``funding_batch``, ``fee``,
+-- ``clearing_sweep``, ``payment``, ``settlement``) carry the
+-- expectation that non-failed legs sum to zero. Single-leg types
+-- (``sale``, ``external_txn``) do not — their non-zero net is
+-- structural, not exceptional. Consumers of this view that flag
+-- net-zero violations should filter ``expected_net_zero =
+-- 'expected'`` to avoid single-leg false positives.
+--
 -- Phase G: memo / transfer_type / origin are denormalized in
 -- `transactions` and constant per transfer_id; MIN picks the value.
 CREATE VIEW ar_transfer_summary AS
@@ -348,6 +368,11 @@ SELECT
     tz.failed_leg_count,
     tz.net_zero_status,
     tz.has_external_leg,
+    CASE
+        WHEN rep.transfer_type IN ('sale', 'external_txn')
+            THEN 'not_expected'
+        ELSE 'expected'
+    END                                                               AS expected_net_zero,
     rep.memo,
     rep.transfer_type,
     rep.origin

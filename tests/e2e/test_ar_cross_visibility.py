@@ -267,3 +267,129 @@ class TestArTransactionsDatasetSurfacesPrTransferTypes:
             "transfer_type filter but didn't change the seed — if AR "
             "types disappeared, the seed regressed."
         )
+
+
+# ---------------------------------------------------------------------------
+# I.4.B Commit 3 — ar_transfer_net_zero widened + expected_net_zero flag
+# ---------------------------------------------------------------------------
+
+class TestArTransferSummaryExpectedNetZeroFlag:
+    """``ar_transfer_summary`` exposes ``expected_net_zero`` and the AR
+    Non-Zero Transfers KPI honours it.
+
+    Pre-I.4 ``ar_transfer_net_zero`` carried
+    ``WHERE t.transfer_type IN ('ach', 'wire', 'internal', 'cash',
+    'funding_batch', 'fee', 'clearing_sweep')`` so PR transfers never
+    appeared. After commit 3 the view is widened; ``ar_transfer_summary``
+    derives ``expected_net_zero`` from ``transfer_type`` to keep
+    single-leg PR types (``sale``, ``external_txn``) out of the
+    Non-Zero Transfers KPI scope (their non-zero net is structural,
+    not exceptional).
+    """
+
+    def test_view_definition_has_no_transfer_type_filter(self, pg_conn):
+        definition = _view_definition(pg_conn, "ar_transfer_net_zero")
+        assert "transfer_type IN" not in definition, (
+            "ar_transfer_net_zero view re-acquired a `transfer_type IN "
+            "(...)` filter. I.4.B commit 3 widened the view to all "
+            "transfer types; the AR-only scoping moved to "
+            "ar_transfer_summary's expected_net_zero CASE."
+        )
+
+    def test_summary_view_emits_expected_net_zero_column(self, pg_conn):
+        definition = _view_definition(pg_conn, "ar_transfer_summary")
+        assert "expected_net_zero" in definition, (
+            "ar_transfer_summary no longer derives expected_net_zero. "
+            "The Non-Zero Transfers KPI's dataset SQL filters on it; "
+            "removing the column will break the KPI."
+        )
+
+    def test_pr_transfer_types_present_in_summary(self, pg_conn):
+        """All four PR transfer types now flow through ar_transfer_summary."""
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT transfer_type, COUNT(*)
+                FROM ar_transfer_summary
+                WHERE transfer_type = ANY(%s)
+                GROUP BY transfer_type
+                """,
+                (["sale", "settlement", "payment", "external_txn"],),
+            )
+            counts = {row[0]: row[1] for row in cur.fetchall()}
+        missing = {"sale", "settlement", "payment", "external_txn"} - set(counts)
+        assert not missing, (
+            f"PR transfer types {missing} absent from ar_transfer_summary "
+            "after I.4.B commit 3. View was widened — if PR rows "
+            "disappeared, either the seed stopped emitting them or a "
+            "regression re-added the WHERE filter to ar_transfer_net_zero."
+        )
+
+    def test_single_leg_types_flagged_not_expected(self, pg_conn):
+        """Every ``sale`` and ``external_txn`` row carries
+        ``expected_net_zero = 'not_expected'``. Pins the CASE
+        derivation so a future commit can't silently widen the
+        single-leg list (or worse, drop it entirely)."""
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*)
+                FROM ar_transfer_summary
+                WHERE transfer_type IN ('sale', 'external_txn')
+                  AND expected_net_zero <> 'not_expected'
+                """
+            )
+            misclassified = cur.fetchone()[0]
+        assert misclassified == 0, (
+            f"{misclassified} single-leg transfer rows (sale / "
+            "external_txn) carry expected_net_zero <> 'not_expected'. "
+            "Check the CASE in ar_transfer_summary."
+        )
+
+    def test_multi_leg_types_flagged_expected(self, pg_conn):
+        """Every multi-leg transfer (anything not sale/external_txn)
+        carries ``expected_net_zero = 'expected'``."""
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*)
+                FROM ar_transfer_summary
+                WHERE transfer_type NOT IN ('sale', 'external_txn')
+                  AND expected_net_zero <> 'expected'
+                """
+            )
+            misclassified = cur.fetchone()[0]
+        assert misclassified == 0, (
+            f"{misclassified} multi-leg transfer rows carry "
+            "expected_net_zero <> 'expected'. The CASE in "
+            "ar_transfer_summary defaults to 'expected' for all "
+            "non-single-leg types — this should never fire."
+        )
+
+    def test_non_zero_transfers_kpi_excludes_single_leg_pr(self, pg_conn):
+        """Mirrors the AR Non-Zero Transfers dataset filter:
+        ``WHERE net_zero_status='not_net_zero' AND
+        expected_net_zero='expected'``. Asserts no ``sale`` or
+        ``external_txn`` rows leak into the KPI scope.
+
+        Without the expected_net_zero filter, every PR sale would
+        count as a non-zero transfer (single-leg by shape, not by
+        exception) — flooding the KPI with hundreds of false
+        positives.
+        """
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*)
+                FROM ar_transfer_summary
+                WHERE net_zero_status = 'not_net_zero'
+                  AND expected_net_zero = 'expected'
+                  AND transfer_type IN ('sale', 'external_txn')
+                """
+            )
+            leaked = cur.fetchone()[0]
+        assert leaked == 0, (
+            f"{leaked} single-leg PR transfers leaked into the AR "
+            "Non-Zero Transfers KPI scope. The expected_net_zero "
+            "filter or the CASE classification is broken."
+        )
