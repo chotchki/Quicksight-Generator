@@ -112,11 +112,12 @@ Each tab tells you **which stage owns the stall**:
 - **Stuck on Sales** (`Unsettled` past the merchant's expected
   cadence) → the settlement batch missed the sale. Open the
   *Which Sales Never Made It to Settlement* walkthrough.
-- **Stuck on Settlements** (`failed` or `pending` past the SLA) →
-  the settlement was created but didn't generate a payment. Open
-  the *Why is there a payment but no settlement?* walkthrough — or
-  the *Why does this settlement look short?* one if the amount is
-  off.
+- **Stuck on Settlements** (`failed` or `pending` past the SLA,
+  or settlement amount doesn't match the sales SUM) → open
+  *Why does this settlement look short?* if the dollar amount
+  is wrong, or *Why doesn't this payment match the settlement?*
+  if the settlement looks fine but the payment that came out
+  is the wrong size.
 - **Stuck on Payments** (`returned`) → the payment posted but the
   bank rejected it. Open *How much did we return?* for the
   reason-code breakdown.
@@ -176,6 +177,9 @@ was closed"* (returned payment).
   six merchants for any whose pipeline looks off this morning.
 - [Which sales never made it to settlement?](which-sales-never-made-it-to-settlement.md) —
   the next step when the trail ends at the Sales tab.
+- [Why does this settlement look short?](why-does-this-settlement-look-short.md) —
+  the next step when the trail ends at a settlement whose dollar
+  amount disagrees with its underlying sales.
 - [Why doesn't this payment match the settlement?](why-doesnt-this-payment-match-the-settlement.md) —
   the next step when the trail ends at the Settlements tab with
   a payment whose amount doesn't agree.

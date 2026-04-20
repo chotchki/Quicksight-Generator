@@ -148,6 +148,10 @@ sales total. Investigating now."*
   total is right, but the payment that posted from it is the
   wrong amount. Together the two checks cover both halves of
   "the dollars don't agree across the pipeline."
+- [Did all merchants get paid yesterday?](did-all-merchants-get-paid.md) —
+  the morning-scan view. The Sale ↔ Settlement Mismatch KPI on
+  the Exceptions tab is the same row count this walkthrough
+  drills into.
 - [Where's my money for [merchant]?](wheres-my-money-for-merchant.md) —
   the merchant-first deep-dive. If a merchant calls about a
   short settlement, this walkthrough is the structured trace.
@@ -155,3 +159,7 @@ sales total. Investigating now."*
   late refunds are one cause of sale-settlement drift. If the
   merchant's mismatch lines up with a late refund row, the
   refund is the explanation.
+- [Which sales never made it to settlement?](which-sales-never-made-it-to-settlement.md) —
+  the inverse case: the settlement *didn't* fire at all. Together
+  this check + that one cover both directions of "the settlement
+  and the sales don't agree."

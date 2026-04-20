@@ -152,6 +152,10 @@ table is the whole answer.
   doesn't agree with its sales. Here: the payment doesn't agree
   with its settlement. Together they cover both ways the
   pipeline's dollar-amount invariant can break.
+- [Did all merchants get paid yesterday?](did-all-merchants-get-paid.md) —
+  the morning-scan view. The Settlement ↔ Payment Mismatch KPI
+  on the Exceptions tab is the same row count this walkthrough
+  drills into.
 - [Where's my money for [merchant]?](wheres-my-money-for-merchant.md) —
   the merchant-first deep-dive. If a merchant calls about a
   short payment, this walkthrough is the structured trace.

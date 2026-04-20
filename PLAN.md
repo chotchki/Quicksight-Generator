@@ -526,7 +526,7 @@ Same skeleton as AR, framed around the operator question rather than the check n
   - `how-much-did-we-return.md`
   - `which-sales-never-made-it-to-settlement.md`
   - Commit: `Phase H.7.B: PR exception walkthroughs`.
-- [ ] H.7.3 Cross-reference pass. Commit.
+- [x] H.7.3 Cross-reference pass. Commit.
 
 ---
 
