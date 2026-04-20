@@ -271,15 +271,24 @@ PAYMENT_RECON_CONTRACT = DatasetContract(columns=[
 # ---------------------------------------------------------------------------
 
 def build_merchants_dataset(cfg: Config) -> DataSet:
+    # Phase G.9.1: reads from shared `daily_balances`. PR's merchant
+    # sub-ledger accounts live under the `pr-merchant-ledger` control
+    # account; metadata on each daily row carries the per-merchant
+    # attributes (name, type, location, created_at, status) so DISTINCT
+    # collapses days into one row per merchant. The control_account_id
+    # filter scopes to PR's merchant_dda accounts (AR also has
+    # merchant_dda customer DDAs but under a different control).
     sql = """\
-SELECT
-    merchant_id,
-    merchant_name,
-    merchant_type,
-    location_id,
-    created_at,
-    status
-FROM pr_merchants"""
+SELECT DISTINCT
+    JSON_VALUE(metadata, '$.merchant_id')                   AS merchant_id,
+    JSON_VALUE(metadata, '$.merchant_name')                 AS merchant_name,
+    JSON_VALUE(metadata, '$.merchant_type')                 AS merchant_type,
+    JSON_VALUE(metadata, '$.location_id')                   AS location_id,
+    CAST(JSON_VALUE(metadata, '$.created_at') AS TIMESTAMP) AS created_at,
+    JSON_VALUE(metadata, '$.status')                        AS status
+FROM daily_balances
+WHERE account_type       = 'merchant_dda'
+  AND control_account_id = 'pr-merchant-ledger'"""
     return build_dataset(
         cfg, cfg.prefixed("merchants-dataset"),
         "Merchants", "merchants",

@@ -188,6 +188,10 @@ def _merchant_type(merchant_id: str) -> str:
     return next(m[2] for m in MERCHANTS if m[0] == merchant_id)
 
 
+def _merchant_name(merchant_id: str) -> str:
+    return next(m[1] for m in MERCHANTS if m[0] == merchant_id)
+
+
 # ---------------------------------------------------------------------------
 # Unified transfer + posting derivation
 # ---------------------------------------------------------------------------
@@ -360,6 +364,8 @@ def _derive_pr_unified_tables(
             "settlement_id": sale["settlement_id"],
             "merchant_id": sale["merchant_id"],
             "merchant_account_id": merchant_sub,
+            "merchant_name": _merchant_name(sale["merchant_id"]),
+            "merchant_type": _merchant_type(sale["merchant_id"]),
             "reference_id": sale["reference_id"],
             "tags": sale["metadata"],
             "taxes": float(sale["taxes"]) if sale["taxes"] is not None else None,
@@ -386,6 +392,7 @@ def _derive_pr_shared_base_tables(
     transfer_rows: list[tuple],
     posting_rows: list[tuple],
     transfer_metadata: dict[str, dict],
+    merchant_rows: list[tuple],
 ) -> tuple[list[tuple], list[tuple]]:
     """Phase G dual-write: PR-side `transactions` + `daily_balances` rows.
 
@@ -395,7 +402,24 @@ def _derive_pr_shared_base_tables(
     via ``transfer_metadata`` and is wrapped with a `source` provenance
     key.  Daily balances are running Σ of successful postings per
     (account, date), spanning the observed posting window.
+
+    Merchant sub-ledger daily_balances rows carry the per-merchant
+    attributes (name, type, location, created_at, status) in metadata so
+    the Phase G `merchants-dataset` can read them directly.
     """
+    merchant_attrs: dict[str, dict] = {
+        mid: {
+            "merchant_name": name,
+            "merchant_type": mtype,
+            "location_id": loc,
+            "created_at": (
+                created.isoformat() if isinstance(created, (date, datetime))
+                else created
+            ),
+            "status": status,
+        }
+        for mid, name, mtype, loc, created, status in merchant_rows
+    }
     pr_lid, pr_lname, pr_lint = PR_LEDGER_ACCOUNT
     pr_ledger_type = PR_LEDGER_ACCOUNT_TYPES[pr_lid]
     subledger_lookup = {
@@ -480,8 +504,10 @@ def _derive_pr_shared_base_tables(
             sub_running[sid] += deltas.get((sid, d), Decimal("0"))
             account_type = _pr_subledger_account_type(sid)
             payload: dict[str, Any] = {"source": "core_banking"}
-            if sid.startswith("pr-sub-"):
-                payload["merchant_id"] = sid.removeprefix("pr-sub-")
+            if sid.startswith("pr-sub-merch-"):
+                merchant_id = sid.removeprefix("pr-sub-")
+                payload["merchant_id"] = merchant_id
+                payload.update(merchant_attrs.get(merchant_id, {}))
             daily_balance_rows.append((
                 sid,
                 sub_name,
@@ -554,7 +580,7 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
     # -- Phase G dual-write: shared transactions + daily_balances --
     shared_transaction_rows, shared_daily_balance_rows = (
         _derive_pr_shared_base_tables(
-            transfer_rows, posting_rows, transfer_metadata,
+            transfer_rows, posting_rows, transfer_metadata, merchant_rows,
         )
     )
 
