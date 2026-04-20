@@ -298,6 +298,7 @@ def _derive_pr_unified_tables(
             "is_returned": p["is_returned"],
             "return_reason": p["return_reason"],
             "merchant_id": p["merchant_id"],
+            "merchant_name": _merchant_name(p["merchant_id"]),
             "merchant_account_id": merchant_sub,
             "settlement_id": p["settlement_id"],
             "payment_id": p["payment_id"],

@@ -449,20 +449,25 @@ WHERE t.transfer_type      = 'sale'
 
 
 def build_payment_returns_dataset(cfg: Config) -> DataSet:
+    # Phase G.9.8: reads from shared `transactions`. Returned payments =
+    # payment-transfer merchant_dda legs whose metadata.is_returned='true'.
+    # merchant_name lives in payment metadata so no merchant join needed.
     sql = f"""\
 SELECT
-    p.payment_id,
-    p.settlement_id,
-    p.merchant_id,
-    m.merchant_name,
-    p.payment_amount,
-    p.payment_date,
-    p.return_reason,
-    (CURRENT_DATE - p.payment_date::date) AS days_outstanding,
-{_aging_bucket_case('CURRENT_DATE - p.payment_date::date')}
-FROM pr_payments p
-JOIN pr_merchants m ON m.merchant_id = p.merchant_id
-WHERE p.is_returned = 'true'"""
+    JSON_VALUE(t.metadata, '$.payment_id')                        AS payment_id,
+    JSON_VALUE(t.metadata, '$.settlement_id')                     AS settlement_id,
+    JSON_VALUE(t.metadata, '$.merchant_id')                       AS merchant_id,
+    JSON_VALUE(t.metadata, '$.merchant_name')                     AS merchant_name,
+    CAST(JSON_VALUE(t.metadata, '$.payment_amount') AS DECIMAL(12,2)) AS payment_amount,
+    t.posted_at                                                   AS payment_date,
+    JSON_VALUE(t.metadata, '$.return_reason')                     AS return_reason,
+    (CURRENT_DATE - t.posted_at::date)                            AS days_outstanding,
+{_aging_bucket_case('CURRENT_DATE - t.posted_at::date')}
+FROM transactions t
+WHERE t.transfer_type      = 'payment'
+  AND t.account_type       = 'merchant_dda'
+  AND t.control_account_id = 'pr-merchant-ledger'
+  AND JSON_VALUE(t.metadata, '$.is_returned') = 'true'"""
     return build_dataset(
         cfg, cfg.prefixed("payment-returns-dataset"),
         "Payment Returns", "payment-returns",
