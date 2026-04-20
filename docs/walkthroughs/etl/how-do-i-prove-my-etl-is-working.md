@@ -217,6 +217,10 @@ for the symptom-organized debug recipes.
 
 - [How do I populate `transactions` from my core banking system?](how-do-i-populate-transactions.md) —
   the **prior step**: writing the projection these invariants check.
+- [How do I validate a single account-day after a load?](how-do-i-validate-a-single-account-day.md) —
+  the single-account-day version of these invariants. Once
+  pre-flight passes, this is how you confirm the right thing
+  landed for a specific `(account_id, balance_date)`.
 - [How do I tag a force-posted external transfer correctly?](how-do-i-tag-a-force-posted-transfer.md) —
   Invariant 1 + Invariant 3 both interact with `origin` and the
   parent chain on Fed-statement ingest.

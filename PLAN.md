@@ -717,13 +717,13 @@ New AR sheet for *data-feed validation / sanity check*. Purpose: when the Data I
 
 ### I.2.E — Handbook companion walkthrough
 
-- [ ] **New file:** `docs/walkthroughs/etl/how-do-i-validate-a-single-account-day.md`. Same 7-section locked skeleton as the existing ETL walkthroughs (Story / Question / Where to look / What you'll see / What it means / Drilling in / Next step / Related walkthroughs).
-- [ ] **Story.** Data Integration Team analyst loaded a slice; the dashboard "looks fine" but they want to verify a specific account-day reconciles. Open this sheet with their account_id + date, eyeball the KPI strip, scan the table for unexpected legs, confirm drift is zero.
-- [ ] **Cross-link.** Add to:
-  - `mkdocs.yml` nav under Data Integration Handbook (between *populate* and *validate*).
-  - `docs/handbook/etl.md` cards (third in Foundational group).
-  - `docs/walkthroughs/etl/how-do-i-prove-my-etl-is-working.md` (Related walkthroughs — "single-account-day version of these invariants").
-  - `docs/walkthroughs/etl/what-do-i-do-when-demo-passes-but-prod-fails.md` (Symptom 4 drilldown — "use the daily statement sheet for the offending account-day").
+- [x] **New file:** `docs/walkthroughs/etl/how-do-i-validate-a-single-account-day.md`. Same 7-section locked skeleton as the existing ETL walkthroughs (Story / Question / Where to look / What you'll see / What it means / Drilling in / Next step / Related walkthroughs). → **Done 2026-04-20:** all 8 sections present (the locked skeleton actually has 8 — Related walkthroughs is its own section), tagged *Engineering walkthrough — Data Integration Team. Foundational.* matching the two prior foundational ETL pages.
+- [x] **Story.** Data Integration Team analyst loaded a slice; the dashboard "looks fine" but they want to verify a specific account-day reconciles. Open this sheet with their account_id + date, eyeball the KPI strip, scan the table for unexpected legs, confirm drift is zero. → **Done:** opening reframes "the whole feed *looks* fine" → treasury asks "did `gl-1850` actually reconcile yesterday?" → Daily Statement is the screen that answers it. Three worked examples pinned to `tests/e2e/test_ar_daily_statement.py` (clean=`gl-1010` yesterday; drift=`cust-900-0001-bigfoot-brews` day-5 +$200; overdraft=`cust-900-0002-sasquatch-sips` day-6 -$45k closing).
+- [x] **Cross-link.** Add to: → **Done 2026-04-20**, all four landed; `mkdocs build --strict` clean.
+  - `mkdocs.yml` nav under Data Integration Handbook (between *populate* and *validate*). → between `how-do-i-populate-transactions.md` and `how-do-i-prove-my-etl-is-working.md`.
+  - `docs/handbook/etl.md` cards (third in Foundational group). → third card after populate + prove.
+  - `docs/walkthroughs/etl/how-do-i-prove-my-etl-is-working.md` (Related walkthroughs — "single-account-day version of these invariants"). → inserted as 2nd item.
+  - `docs/walkthroughs/etl/what-do-i-do-when-demo-passes-but-prod-fails.md` (Symptom 4 drilldown — "use the daily statement sheet for the offending account-day"). → appended after the drift-sign explanation in Symptom 4.
 - [x] **Fix broken handbook hero logos.** `docs/handbook/{ar,pr,etl}.md` use `src="../img/snb-wordmark.svg"`, but with MkDocs Material's default `use_directory_urls`, those pages render to `site/handbook/<name>/index.html` — relative path needs to be `../../img/snb-wordmark.svg`. Live site shows broken-image icons in the hero block on all three handbook landing pages (user noticed AR/PR; ETL has the same bug since the page was cribbed from the same template). One-line fix per file. → **Done 2026-04-20:** All three patched, `mkdocs build --strict` rebuilds clean, rendered HTML now reads `src="../../img/snb-wordmark.svg"`. Note: `docs/index.md` was already correct (`src="img/snb-wordmark.svg"` from the site root). Pure HTML `<img>` tags aren't auto-rewritten by MkDocs Material like Markdown `![]()` images are; that's why dashboard screenshots inside walkthroughs (Markdown syntax) survived but the hero wordmark didn't.
 
 ### I.2.F — Sequencing

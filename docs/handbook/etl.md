@@ -63,6 +63,10 @@ catalog, and ETL examples:
     <h3>How do I prove my ETL is working before going live?</h3>
     <p>Three pre-flight invariants (net-to-zero, balance recompute, orphan chains) with copy-paste SQL. Run these before the dashboard sees the data.</p>
   </a>
+  <a class="snb-card" href="../walkthroughs/etl/how-do-i-validate-a-single-account-day/">
+    <h3>How do I validate a single account-day after a load?</h3>
+    <p>Open the Daily Statement sheet on a specific `(account_id, balance_date)` to confirm opening, debits, credits, closing, and zero drift — the per-row companion to the universal pre-flight invariants.</p>
+  </a>
 </div>
 
 ## Extension walkthroughs

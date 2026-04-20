@@ -140,6 +140,15 @@ positive = stored balance is higher than the postings explain
 (missing debit posting, or a credit posting got dropped);
 negative = the opposite.
 
+For an interactive view of the same recompute scoped to one
+account-day, open the AR dashboard's **Daily Statement** sheet
+and pick the offending `(account_id, balance_date)`. The Drift
+KPI shows the same number this query returns, and the
+Transaction Detail table shows every leg the recompute summed —
+side-by-side with the stored opening and closing balances. See
+[How do I validate a single account-day after a load?](how-do-i-validate-a-single-account-day.md)
+for the screen-level walkthrough.
+
 ### Symptom 5 — "PR pipeline drilldown returns nothing for my merchant"
 
 **Most likely**: the `parent_transfer_id` chain has a gap. The
