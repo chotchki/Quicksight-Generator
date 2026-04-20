@@ -940,12 +940,13 @@ Why a standalone phase rather than a sub-step of I.4: the fix touches generator 
 
 ### I.6.E — Release workflow (`.github/workflows/release.yml`)
 
-- [ ] **Trigger.** `on: push: tags: ['v[0-9]+.[0-9]+.[0-9]+']` (excludes pre-release suffixes; add `'v[0-9]+.[0-9]+.[0-9]+-*'` later for rc / beta tags if needed).
-- [ ] **Job: build.** `pypa/build` produces sdist + wheel; uploads as workflow artifact for downstream jobs.
-- [ ] **Job: smoke-against-wheel.** Downloads the wheel artifact, installs it into a fresh venv, runs the unit + integration test subset that doesn't need AWS (`pytest tests/test_models.py tests/test_account_recon.py tests/test_demo_data.py tests/test_demo_sql.py tests/test_recon.py tests/test_generate.py tests/test_theme_presets.py tests/test_dataset_contract.py`). Catches missing package-data — source tests pass but wheel tests fail if a JSON template was forgotten.
-- [ ] **Job: publish-testpypi.** Always on tag; uses Trusted Publisher; environment `testpypi`.
-- [ ] **Job: publish-pypi.** Gated on `testpypi` job success + manual environment approval; uses Trusted Publisher; environment `pypi`.
-- [ ] **Job: github-release.** Uses `softprops/action-gh-release` (or `gh release create`) — uploads sdist + wheel + `out-sample.zip` (pre-baked output for both apps); body extracted from `RELEASE_NOTES.md` for the matching tag (script-extract the section by header match).
+- [x] **Trigger.** `on: push: tags: ['v[0-9]+.[0-9]+.[0-9]+']` (excludes pre-release suffixes; add `'v[0-9]+.[0-9]+.[0-9]+-*'` later for rc / beta tags if needed). Concurrency group keyed on tag prevents overlapping runs.
+- [x] **Job: build.** `pypa/build` produces sdist + wheel; `twine check` confirms long-description renders; tag-vs-`__version__` mismatch fails the job up front. Uploads `dist/` as a workflow artifact.
+- [x] **Job: smoke.** Downloads the wheel artifact, installs into a fresh venv with the test extras, asserts `quicksight-gen --version` echoes the tag, runs the unit + integration test subset (`test_models / test_account_recon / test_demo_data / test_demo_sql / test_recon / test_generate / test_theme_presets / test_dataset_contract`).
+- [x] **Job: bake-sample.** Downloads the wheel, installs into a separate fresh venv, runs `scripts/bake_sample_output.py`, uploads `dist/out-sample.zip` as a workflow artifact for the release job.
+- [x] **Job: publish-testpypi.** Always on tag; environment `testpypi` (Trusted Publisher OIDC); depends on `smoke` + `bake-sample`.
+- [x] **Job: publish-pypi.** Gated on `publish-testpypi` success + manual approval on the `pypi` environment; Trusted Publisher OIDC.
+- [x] **Job: github-release.** `softprops/action-gh-release@v2`; release body extracted from `RELEASE_NOTES.md` via `awk` (matches `## v{tag}` heading, stops at the next `---`); uploads sdist + wheel + `out-sample.zip` with `fail_on_unmatched_files: true`.
 
 ### I.6.F — Sample output bundle
 

@@ -1,0 +1,233 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build sdist + wheel
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install build
+        run: pip install build twine
+
+      - name: Verify tag matches package version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG_VERSION=$(python -c "import tomllib, pathlib; \
+            data = tomllib.loads(pathlib.Path('pyproject.toml').read_text()); \
+            attr = data['tool']['setuptools']['dynamic']['version']['attr']; \
+            mod, var = attr.rsplit('.', 1); \
+            import importlib, sys; sys.path.insert(0, 'src'); \
+            print(getattr(importlib.import_module(mod), var))")
+          echo "tag=${TAG} package=${PKG_VERSION}"
+          if [ "${TAG}" != "${PKG_VERSION}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match package version ${PKG_VERSION}"
+            exit 1
+          fi
+
+      - name: Build sdist + wheel
+        run: python -m build
+
+      - name: Verify long description renders on PyPI
+        run: twine check dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Smoke-test the wheel against the unit + integration suite (no AWS)
+  # ---------------------------------------------------------------------------
+  smoke:
+    name: Smoke test wheel
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Install wheel into fresh venv
+        run: |
+          python -m venv /tmp/qs-smoke
+          /tmp/qs-smoke/bin/pip install --upgrade pip
+          /tmp/qs-smoke/bin/pip install dist/*.whl pytest pytest-cov boto3-stubs[quicksight] psycopg2-binary
+
+      - name: Verify CLI version flag
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          OUT=$(/tmp/qs-smoke/bin/quicksight-gen --version)
+          echo "${OUT}"
+          echo "${OUT}" | grep -q "${TAG}" || { echo "::error::--version output missing tag ${TAG}"; exit 1; }
+
+      - name: Run unit + integration tests against installed wheel
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          /tmp/qs-smoke/bin/pytest \
+            tests/test_models.py \
+            tests/test_account_recon.py \
+            tests/test_demo_data.py \
+            tests/test_demo_sql.py \
+            tests/test_recon.py \
+            tests/test_generate.py \
+            tests/test_theme_presets.py \
+            tests/test_dataset_contract.py
+
+  # ---------------------------------------------------------------------------
+  # Bake the sample out/ bundle from the installed wheel
+  # ---------------------------------------------------------------------------
+  bake-sample:
+    name: Bake sample output bundle
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Install wheel into fresh venv
+        run: |
+          python -m venv /tmp/qs-bake
+          /tmp/qs-bake/bin/pip install --upgrade pip
+          /tmp/qs-bake/bin/pip install dist/*.whl
+
+      - name: Bake out-sample.zip
+        run: /tmp/qs-bake/bin/python scripts/bake_sample_output.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: out-sample
+          path: dist/out-sample.zip
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Publish to TestPyPI (always on tag) — Trusted Publisher OIDC, no tokens
+  # ---------------------------------------------------------------------------
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: [smoke, bake-sample]
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/quicksight-gen
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  # ---------------------------------------------------------------------------
+  # Publish to PyPI (gated on TestPyPI success + manual environment approval)
+  # ---------------------------------------------------------------------------
+  publish-pypi:
+    name: Publish to PyPI
+    needs: publish-testpypi
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/quicksight-gen
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  # ---------------------------------------------------------------------------
+  # GitHub Release with sdist + wheel + sample bundle
+  # ---------------------------------------------------------------------------
+  github-release:
+    name: GitHub Release
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: out-sample
+          path: dist/
+
+      - name: Extract release notes for ${{ github.ref_name }}
+        run: |
+          awk -v tag="${GITHUB_REF_NAME}" '
+            /^## v/ {
+              if (capture) exit
+              if ($0 == "## " tag) { capture = 1; next }
+            }
+            /^---[[:space:]]*$/ { if (capture) exit }
+            capture { print }
+          ' RELEASE_NOTES.md > release-body.md
+          if [ ! -s release-body.md ]; then
+            echo "::warning::No release notes section found for ${GITHUB_REF_NAME} in RELEASE_NOTES.md"
+            echo "Release ${GITHUB_REF_NAME}" > release-body.md
+          fi
+          echo "----- release body preview -----"
+          cat release-body.md
+          echo "--------------------------------"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body_path: release-body.md
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/out-sample.zip
+          fail_on_unmatched_files: true
