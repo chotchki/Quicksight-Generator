@@ -476,18 +476,48 @@ WHERE t.transfer_type      = 'payment'
 
 
 def build_sale_settlement_mismatch_dataset(cfg: Config) -> DataSet:
+    # Phase G.9.9: reads from shared `transactions`. CTEs collapse
+    # settlements (DISTINCT on metadata + posted_at — two zero-netting
+    # legs) and sum the linked sales' merchant_dda legs (-signed_amount
+    # recovers signed sale amount, including refunds). Mismatch = stored
+    # settlement_amount <> sum of linked sale amounts.
     sql = f"""\
+WITH settlements AS (
+    SELECT DISTINCT
+        JSON_VALUE(metadata, '$.settlement_id')                 AS settlement_id,
+        JSON_VALUE(metadata, '$.merchant_id')                   AS merchant_id,
+        CAST(JSON_VALUE(metadata, '$.settlement_amount') AS DECIMAL(12,2)) AS settlement_amount,
+        CAST(JSON_VALUE(metadata, '$.sale_count') AS INTEGER)   AS sale_count,
+        posted_at                                               AS settlement_date
+    FROM transactions
+    WHERE transfer_type      = 'settlement'
+      AND account_type       = 'merchant_dda'
+      AND control_account_id = 'pr-merchant-ledger'
+),
+sale_sums AS (
+    SELECT
+        JSON_VALUE(metadata, '$.settlement_id')                 AS settlement_id,
+        SUM(-signed_amount)                                     AS sales_sum
+    FROM transactions
+    WHERE transfer_type      = 'sale'
+      AND account_type       = 'merchant_dda'
+      AND control_account_id = 'pr-merchant-ledger'
+      AND JSON_VALUE(metadata, '$.settlement_id') IS NOT NULL
+    GROUP BY JSON_VALUE(metadata, '$.settlement_id')
+)
 SELECT
-    settlement_id,
-    merchant_id,
-    settlement_amount,
-    sales_sum,
-    difference,
-    sale_count,
-    settlement_date,
-    days_outstanding,
-{_aging_bucket_case('days_outstanding')}
-FROM pr_sale_settlement_mismatch"""
+    s.settlement_id,
+    s.merchant_id,
+    s.settlement_amount,
+    COALESCE(ss.sales_sum, 0)                                   AS sales_sum,
+    s.settlement_amount - COALESCE(ss.sales_sum, 0)             AS difference,
+    s.sale_count,
+    s.settlement_date,
+    (CURRENT_DATE - s.settlement_date::date)                    AS days_outstanding,
+{_aging_bucket_case('CURRENT_DATE - s.settlement_date::date')}
+FROM settlements s
+LEFT JOIN sale_sums ss ON ss.settlement_id = s.settlement_id
+WHERE s.settlement_amount <> COALESCE(ss.sales_sum, 0)"""
     return build_dataset(
         cfg, cfg.prefixed("sale-settlement-mismatch-dataset"),
         "Sale \u2194 Settlement Mismatch", "sale-settlement-mismatch",
