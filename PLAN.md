@@ -340,25 +340,9 @@ The persona tests Phase G's success: can a Data Integration Team member ETL upst
 
 ---
 
-## Phase H carry-over (tech debt to remove)
+## Phase G carry-over
 
-Demo-coupled compromises taken during Phase G that the cleaner Phase H
-data model removes. Grep targets included for findability.
-
-- **PR-coexistence filters in AR views.** `ar_subledger_overdraft` and
-  `ar_subledger_daily_outbound_by_type` carry an `account_id NOT LIKE
-  'pr-%'` filter. Necessary today because PR + AR co-reside in the same
-  `daily_balances` / `transactions` tables and the entity-scoped views
-  (drift, overdraft) would otherwise surface PR rows in AR exceptions
-  (G.6 leak: 556 spurious overdraft rows). Phase H deletes these — a
-  single-feed real persona has no parallel PR ledger to filter out.
-  Grep: `pr-%` in `demo/schema.sql`. The right replacement is the
-  `account_type` discriminator from G.0.12 (`gl_control`, `dda`, ...),
-  scoped to whatever account_types the AR persona owns.
-- **G.4 drift views leak benign zero-drift PR rows** (744 sub-ledger,
-  93 ledger). Filtered out of Exceptions tab by `drift > 0`; pollutes
-  Balances tab counts. Not fixed in Phase G to avoid more `pr-%`
-  filters. Same Phase H fix as above resolves it.
+Tech debt and follow-ups identified during Phase G have moved to **Phase I (queued)** below — see "Schema cleanup carry-over from Phase G" for PR-coexistence filters in AR views and drift-view PR-row leakage.
 
 ---
 
@@ -379,8 +363,254 @@ data model removes. Grep targets included for findability.
 
 ## After Phase G
 
-Once v3.0.0 is tagged:
+- **SPEC.md rewrite** — DONE in commit `20def68` (v3.0.0 + 1).
+- **Phase H — walkthrough handbook.** Demo-side training docs that double as a dashboard usability audit. Plan below.
+- **Phase I (queued).** Customer ETL guide, persona dashboard split, layout redesigns, schema cleanup. Plan below.
 
-- **SPEC.md rewrite** — the SPEC has accumulated multi-version cruft (Phase A → Phase F decisions interleaved with current-state). Phase G's stable two-table schema is the right anchor for a clean rewrite. Plan that work as its own phase.
-- **Customer ETL guide / customization handbook** — `docs/Schema_v3.md` is the persona contract; a longer-form customer-facing customization guide (mapping production-system tables → these two tables, common pitfalls, performance tips) is a natural follow-up.
-- **Persona dashboard split** (originally Phase E) — still queued.
+---
+
+# PLAN — Phase H: walkthrough handbook
+
+Goal: ship a Sasquatch-themed handbook on the existing GitHub Pages site that walks operators through every exception class on the demo dashboards. Two purposes:
+
+1. **Training material** the user can socialize with real teams (GL Reconciliation for AR; Merchant Support for PR).
+2. **Dashboard usability audit** — any walkthrough that's awkward to write step-by-step is design feedback for Phase I redesigns.
+
+Three deliverables:
+
+1. **AR walkthroughs** — 17 markdown files (3 rollups + 14 per-check), one per visual section on the AR Exceptions sheet. (2 sample walkthroughs already drafted in `docs/AR_Walkthroughs.md`; H.1 splits them into per-file structure.)
+2. **PR walkthroughs** — ~7 markdown files organized by *operator question* rather than check name (Merchant Support is reactive, not monitoring).
+3. **Sasquatch-themed handbook pages** — AR Handbook + PR Handbook index pages with full custom CSS, hero imagery, and palette derived from the existing theme presets.
+
+Plus a **screenshot spike** — leverage the e2e Playwright harness to generate focused screenshots that toggle inline in each walkthrough step.
+
+Conventions (Phase H specific):
+
+- Branch: `phase-h-handbook`, cut from `main` at v3.0.1.
+- Walkthrough commits batched by group (rollups / baseline / CMS for AR; pipeline / exceptions for PR) to keep PR diffs reviewable.
+- Demo numbers in walkthroughs come from `*/demo_data.py` constants — verifiable byte-for-byte against the deployed dashboard.
+- Walkthrough skeleton (locked from H.0): Story → Question → Where to look → What you'll see in the demo → What it means → Drilling in → Next step + cross-references.
+- Each walkthrough cross-references related walkthroughs at the bottom (e.g., Stuck in Suspense ↔ Suspense Non-Zero ↔ Reversal Uncredited).
+- MkDocs Material stays — extend with custom CSS + hero, don't replace.
+- No new tests required for docs-only changes; `mkdocs serve` smoke after each batch is the validation.
+- Release: v3.1.0 (additive — new docs, no schema or behavior change).
+
+---
+
+## Phase H.0 — Pin decisions
+
+- [ ] H.0.1 **Walkthrough doc location.** `docs/walkthroughs/ar/` + `docs/walkthroughs/pr/`. Recommend: locked.
+- [ ] H.0.2 **File naming convention.** Kebab-case slugs from check name (e.g., `stuck-in-internal-transfer-suspense.md`); nav order comes from `mkdocs.yml`, not filenames.
+- [ ] H.0.3 **Skeleton lock.** 7-section template (Story / Question / Where to look / What you'll see in the demo / What it means / Drilling in / Next step) confirmed from sample iteration. Locked.
+- [ ] H.0.4 **Index page count.** Separate AR Handbook + PR Handbook (different personas → different mental models). Locked.
+- [ ] H.0.5 **Sasquatch theming source.** Pull palette from `common/theme.py` `sasquatch-bank` + `sasquatch-bank-ar` presets (single source of truth — same colors the rendered dashboards use).
+- [ ] H.0.6 **Hero imagery concept.** Open. Options: (a) PNW silhouette + Sasquatch icon + abstract dashboard mockup; (b) Sasquatch wordmark + clean palette only; (c) abstract data viz hero. Recommend: start with (b) in H.3.6 mkdocs serve preview, escalate to (a) if it lands flat.
+- [ ] H.0.7 **Screenshot spike scope (per H.2).** Per-step screenshots embedded in walkthroughs as collapsed `<details>` blocks (scannable for repeat readers, one-click reveal for first-timers).
+- [ ] H.0.8 **PR walkthrough operator-question list.** Drafted in H.6.2; review and lock there.
+- [ ] H.0.9 **Release version.** v3.1.0 — additive, no breaking changes.
+- [ ] H.0.10 **GitHub Pages deploy.** Existing CI workflow already builds Pages; verify no permission additions needed for hero images / custom CSS.
+
+---
+
+## Phase H.1 — Restructure docs and migrate existing samples
+
+- [ ] H.1.1 Create `docs/walkthroughs/ar/` and `docs/walkthroughs/pr/`.
+- [ ] H.1.2 Move existing rollup sample to `docs/walkthroughs/ar/expected-zero-eod-rollup.md` (extracted from `docs/AR_Walkthroughs.md`).
+- [ ] H.1.3 Move existing per-check sample to `docs/walkthroughs/ar/stuck-in-internal-transfer-suspense.md`.
+- [ ] H.1.4 Delete `docs/AR_Walkthroughs.md` (content fully migrated to per-file structure).
+- [ ] H.1.5 Update `mkdocs.yml` nav placeholder (final nav lands in H.5).
+- [ ] H.1.6 Commit — `Phase H.1: restructure walkthroughs into per-file layout`.
+
+---
+
+## Phase H.2 — Screenshot spike
+
+Spike question: can we leverage the e2e Playwright fixtures to generate focused, cropped screenshots of individual visuals that walkthroughs can reference inline?
+
+- [ ] H.2.1 Inventory existing helpers: `tests/e2e/browser_helpers.py` already has `scroll_visual_into_view`, sheet/visual selectors, embed-URL fixtures. Most of what's needed is there.
+- [ ] H.2.2 Build `scripts/generate_walkthrough_screenshots.py` that reuses e2e fixtures to:
+  - Open the AR or PR dashboard via embed URL
+  - Switch to a target sheet
+  - Scroll a target visual into view
+  - Screenshot just that visual (use `data-automation-id="analysis_visual"` bounding box)
+  - Save to `docs/walkthroughs/screenshots/<app>/<slug>-<step>.png`
+- [ ] H.2.3 Generate 3-4 screenshots for the existing Stuck in Suspense walkthrough as proof.
+- [ ] H.2.4 Re-render Stuck in Suspense walkthrough with `<details>`-toggled screenshots; eyeball whether the result reads well at full screen and on mobile.
+- [ ] H.2.5 **Gate.** Decide go/no-go on screenshots:
+  - **Go**: H.4 + H.7 produce screenshots alongside text; commit `Phase H.2: walkthrough screenshot generator (e2e harness reuse)`.
+  - **No-go** (too brittle, too noisy, doesn't add value): walkthroughs stay text-only; H.2 effort is the spike's cost; document why in `PLAN.md` decisions log.
+- [ ] H.2.6 If go: settle screenshot freshness policy. Recommend: "screenshots are illustrative; check the dashboard for live values" disclaimer in handbook footer + a regenerate-on-demand script (no CI step). Per-deploy regeneration is too brittle.
+
+---
+
+## Phase H.3 — Sasquatch-themed MkDocs site
+
+- [ ] H.3.1 Pull color tokens from `common/theme.py` `sasquatch-bank-ar` preset (primary, accent, background, link tint). Decide whether AR theme dominates the site or both AR + PR palettes coexist (per "Decisions to make in flight" below).
+- [ ] H.3.2 Custom CSS at `docs/stylesheets/sasquatch.css`. Wire via `mkdocs.yml` `extra_css`. Scope: palette overrides, hero block, walkthrough card grid for handbook index.
+- [ ] H.3.3 Hero imagery (per H.0.6 decision). Land in `docs/img/`. Source: AI-generated or stock; keep file size lean for fast Pages load.
+- [ ] H.3.4 Sasquatch wordmark + favicon in `docs/img/`. Wire via `mkdocs.yml` `theme.logo` / `theme.favicon`.
+- [ ] H.3.5 If hero needs structural change (not just CSS), override the MkDocs Material `home.html` partial under `docs/overrides/`. Resist deeper structural overrides — they're a Material-upgrade liability.
+- [ ] H.3.6 `mkdocs serve` smoke locally — verify everything renders, palette looks right, hero is on-brand, no broken links.
+- [ ] H.3.7 Commit — `Phase H.3: Sasquatch-themed MkDocs site (palette + hero + custom CSS)`.
+
+---
+
+## Phase H.4 — AR walkthroughs
+
+15 walkthroughs to produce (the 2 samples are done). Each follows the locked skeleton from H.0.3. Each carries demo-anchored numbers from `account_recon/demo_data.py`. If H.2 went green, each carries inline screenshots toggled via `<details>`.
+
+- [ ] H.4.1 **Batch A — rollups** (2 files):
+  - `two-sided-post-mismatch-rollup.md`
+  - `balance-drift-timelines-rollup.md`
+  - Commit: `Phase H.4.A: AR rollup walkthroughs`.
+- [ ] H.4.2 **Batch B — baseline checks** (5 files):
+  - `sub-ledger-drift.md`
+  - `ledger-drift.md`
+  - `non-zero-transfers.md`
+  - `sub-ledger-limit-breach.md`
+  - `sub-ledger-overdraft.md`
+  - Commit: `Phase H.4.B: AR baseline check walkthroughs`.
+- [ ] H.4.3 **Batch C — CMS-specific** (8 files; Stuck in Suspense is already done):
+  - `sweep-target-non-zero.md`
+  - `concentration-master-sweep-drift.md`
+  - `ach-origination-non-zero.md`
+  - `ach-sweep-no-fed-confirmation.md`
+  - `fed-card-no-internal-catchup.md`
+  - `gl-vs-fed-master-drift.md`
+  - `internal-transfer-suspense-non-zero.md`
+  - `internal-reversal-uncredited.md`
+  - Commit: `Phase H.4.C: AR CMS-specific check walkthroughs`.
+- [ ] H.4.4 Cross-reference pass: each walkthrough's "Related" footer links neighbor walkthroughs. Commit: `Phase H.4: cross-reference AR walkthroughs`.
+
+---
+
+## Phase H.5 — AR Handbook index
+
+- [ ] H.5.1 Build `docs/handbook/ar.md`:
+  - Hero block (Sasquatch wordmark + headline)
+  - Preamble: SNB persona (cribbed from `Training_Story.md`); GL Recon team's morning routine
+  - "Morning checks" section: 3 rollup walkthrough cards
+  - "When this fires, what to do" section: 14 per-check walkthrough cards grouped by category (baseline / CMS-specific)
+  - Footer: link to `Schema_v3.md` for data feed contract; link to `Training_Story.md` for full bank narrative
+- [ ] H.5.2 Update `mkdocs.yml` nav — add "AR Handbook" landing + nested walkthroughs under it.
+- [ ] H.5.3 `mkdocs serve` smoke locally — verify hero renders, walkthrough cards lay out cleanly, walkthrough links resolve, screenshots load (if H.2 went green).
+- [ ] H.5.4 Commit — `Phase H.5: AR Handbook index page`.
+
+---
+
+## Phase H.6 — PR walkthrough inventory + organization
+
+- [ ] H.6.1 Inventory PR exception cases from `payment_recon/demo_data.py` and `payment_recon/datasets.py`:
+  - 5 PR exception checks: settlement exceptions, payment returns, sale↔settlement mismatch, settlement↔payment mismatch, unmatched external txns
+  - Payment Reconciliation matching workflow (the side-by-side mutual filter)
+  - Pipeline traversal scenarios (Sales → Settlements → Payments → External Txns)
+- [ ] H.6.2 Translate inventory into operator-question format. Draft list (lock in this step):
+  - "Where's my money for [merchant X]?" — pipeline traversal
+  - "Did all merchants get paid yesterday?" — KPI scan
+  - "Why is this external transaction unmatched?" — Payment Recon tab
+  - "Why does this settlement look short?" — sale↔settlement mismatch
+  - "Why is there a payment but no settlement?" — settlement↔payment mismatch
+  - "How much did we return last week?" — payment returns
+  - "Which sales never made it to settlement?" — settlement exceptions
+- [ ] H.6.3 Confirm scope: ~7 walkthroughs. Lock list.
+- [ ] H.6.4 No commit (planning step, captured in this PLAN.md).
+
+---
+
+## Phase H.7 — PR walkthroughs
+
+Same skeleton as AR, framed around the operator question rather than the check name. The "Story" section is the merchant's frustration; the "Next step" is the resolution back to the merchant.
+
+- [ ] H.7.1 **Batch A — pipeline + matching** (~3 files):
+  - `wheres-my-money-for-merchant.md`
+  - `did-all-merchants-get-paid.md`
+  - `why-is-this-external-transaction-unmatched.md`
+  - Commit: `Phase H.7.A: PR pipeline + matching walkthroughs`.
+- [ ] H.7.2 **Batch B — exceptions** (~4 files):
+  - `why-does-this-settlement-look-short.md`
+  - `why-is-there-a-payment-but-no-settlement.md`
+  - `how-much-did-we-return.md`
+  - `which-sales-never-made-it-to-settlement.md`
+  - Commit: `Phase H.7.B: PR exception walkthroughs`.
+- [ ] H.7.3 Cross-reference pass. Commit.
+
+---
+
+## Phase H.8 — PR Handbook index
+
+- [ ] H.8.1 Build `docs/handbook/pr.md`:
+  - Hero block
+  - Preamble: SNB merchant-acquiring side; Merchant Support's reactive posture
+  - "Common merchant questions" section: walkthrough cards organized by question topic
+  - "Investigating exceptions" section: exception walkthrough cards
+  - Footer: same Schema_v3 + Training_Story links
+- [ ] H.8.2 Update `mkdocs.yml` nav — add "PR Handbook" landing + nested walkthroughs.
+- [ ] H.8.3 `mkdocs serve` smoke.
+- [ ] H.8.4 Commit — `Phase H.8: PR Handbook index page`.
+
+---
+
+## Phase H.9 — README integration
+
+- [ ] H.9.1 Add a "Demo Docs" section to `README.md` near the top, with one-liner pitches for AR + PR Handbooks and the deployed Pages URL.
+- [ ] H.9.2 Verify `mkdocs.yml` `site_url` is set correctly (matches GitHub Pages deployed URL).
+- [ ] H.9.3 Commit — `Phase H.9: link demo handbooks from README`.
+
+---
+
+## Phase H.10 — Deploy + ship
+
+- [ ] H.10.1 Push branch; verify GitHub Actions builds Pages successfully.
+- [ ] H.10.2 Browse the deployed site — every walkthrough loads, every link resolves, hero renders, screenshots load (if H.2 went green).
+- [ ] H.10.3 Spot-check one walkthrough end-to-end against the deployed AWS dashboard — every dollar amount + row count matches.
+- [ ] H.10.4 Tag v3.1.0, push tag.
+- [ ] H.10.5 Open PR `phase-h-handbook` → `main`; merge.
+
+---
+
+## Decisions to make in flight
+
+- **Hero imagery realism vs abstraction.** The hero is brand-defining. If wordmark-only feels flat in mkdocs serve preview, escalate to PNW silhouette + Sasquatch icon before committing.
+- **Combined SNB palette vs separate AR / PR palettes.** The two existing themes (`sasquatch-bank` for PR, `sasquatch-bank-ar` for AR) intentionally differ to keep the dashboards visually distinct. If the docs site uses both palettes (one per handbook), it's visually busy; if it uses one shared SNB palette, the dashboards-vs-docs visual link weakens. Recommend: shared SNB-neutral palette with section-accent shifts (AR pages tinted toward AR theme accent, PR pages toward PR accent).
+- **PR walkthroughs may not parallelize cleanly.** "By operator question" framing means some walkthroughs traverse the dashboard differently from others (some walk forward through tabs, some open at Payment Recon and stay there). Skeleton may need flexing per walkthrough rather than rigid templating. Acceptable — don't over-template.
+- **Screenshot freshness policy.** If H.2 ships screenshots, every dashboard change risks stale screenshots. Lean toward "illustrative" disclaimer + on-demand regeneration script rather than per-deploy CI regeneration.
+
+---
+
+## Risks
+
+- **Spike risk on screenshots (H.2).** E2E Playwright fixtures are designed for assertion-driven tests, not screenshot generation. The screenshot path may need new helpers for visual cropping, hover state, focus state. Time-box H.2 to one day; if it doesn't land cleanly, ship walkthroughs text-only and revisit later.
+- **MkDocs custom CSS tax.** Material's customization surface is broad but every override is a maintenance liability when Material upgrades. Keep the custom CSS minimal — palette + hero + maybe a card grid. Resist deeper structural overrides.
+- **Demo numbers drift if seed changes.** Walkthroughs cite specific dollar amounts and row counts from `demo_data.py`. If anyone tweaks the seed, walkthroughs go stale silently. Mitigation: document this risk in `CLAUDE.md` so future generator changes prompt walkthrough re-verification. (A CI test that grep-extracts dollar amounts and asserts they match the seed is brittle; skip.)
+- **Cross-reference link rot.** 17 + 7 = 24 walkthroughs cross-referencing each other can break silently when files rename. Mitigation: MkDocs `markdown_extensions: pymdownx.snippets` + relative links so a broken link fails the build. Also: settle the slug names early (H.1, H.4.1) so renames are rare.
+- **Sample walkthrough numbers may be wrong.** The Stuck in Suspense walkthrough cites `$6,155.00 total` and specific 11-day / 23-day stuck transfers. Verify against actual seed during H.1.3 — if wrong, fix and treat as case study for the demo-numbers-drift risk above.
+
+---
+
+# PLAN — Phase I (queued)
+
+Items deferred from Phase H scope, parked here so they aren't lost. Each is independent and can phase up on its own merit. Inputs from Phase H walkthroughs (which surface dashboard friction concretely) will inform priority and shape.
+
+## Persona-driven dashboard layout redesigns
+
+- **AR Exceptions tab redesign.** Sheet is dense (3 rollups + 14 checks + aging bars + 2 drift timelines). Phase H walkthroughs will surface which sections are friction-heavy; that's the input for redesign. Likely shape: per-persona view modes ("morning check" vs. "deep investigation"), or progressive disclosure of CMS-specific checks behind a category toggle.
+- **PR pipeline tab structure.** Under the shared-base model (Phase G), Sales / Settlements / Payments are values of `transfer_type`, not separate entities. Current per-step tab structure is preserved from the pre-flatten era. Operator-question walkthroughs in Phase H may surface whether the per-step tab structure helps or fights merchant-support workflow. Decide redesign based on what those walkthroughs show.
+
+## Schema cleanup carry-over from Phase G
+
+- **PR-coexistence filters in AR views.** `ar_subledger_overdraft` and `ar_subledger_daily_outbound_by_type` carry an `account_id NOT LIKE 'pr-%'` filter. Necessary today because PR + AR co-reside in the same `daily_balances` / `transactions` tables and the entity-scoped views (drift, overdraft) would otherwise surface PR rows in AR exceptions (G.6 leak: 556 spurious overdraft rows). Phase I deletes these — a single-feed real persona has no parallel PR ledger to filter out. Grep target: `pr-%` in `demo/schema.sql`. The right replacement is the `account_type` discriminator from G.0.12 (`gl_control`, `dda`, …), scoped to whatever account_types the AR persona owns.
+- **AR drift views leak benign zero-drift PR rows** (744 sub-ledger, 93 ledger). Filtered out of Exceptions tab by `drift > 0`; pollutes Balances tab counts. Same Phase I fix as above resolves it.
+- **Unified account dimension table.** AR currently keeps `ar_ledger_accounts` and `ar_subledger_accounts` as separate dimension tables. A single "all accounts" table aligns with the denormalize-don't-add-tables north star and would simplify some queries. Low priority; ship when there's a query that benefits.
+
+## Customer-facing customization handbook
+
+- `docs/Schema_v3.md` is the persona contract for the Data Integration Team. A longer-form customer-facing customization guide (mapping production-system tables → the two base tables, common pitfalls, performance tips, replacing dataset SQL while preserving DatasetContract) is a natural follow-up to the demo-side walkthroughs in Phase H. Deliverable shape: a "Customization Handbook" sibling to AR / PR Handbooks.
+
+## Persona dashboard split (originally Phase E)
+
+- Still queued. The Phase H walkthroughs (and any layout redesigns from the items above) provide better signal on what a persona-scoped dashboard split should look like.
+
+## New Phase I-shaped surfaces (from Training Story personas not yet served)
+
+- **Fraud team surface.** "Search for transactions that break limits set on the accounts" — investigative, not monitoring. Different UX paradigm from PR/AR. Probably its own analysis with a search-driven entry point and ad-hoc filter chips. Needs workflow elicitation before planning visuals.
+- **AML team surface.** "Detect transactions/balances outside statistical average and find patterns." Likely needs QuickSight forecasting / anomaly insights features and visual primitives we don't currently use. Needs workflow elicitation before planning visuals.
