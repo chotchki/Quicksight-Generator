@@ -91,44 +91,52 @@ class TestSchemaViewsAreUnscoped:
 
 
 class TestOverdraftCheckSurfacesPrAccounts:
-    """``ar_subledger_overdraft`` now surfaces PR-side accounts where they apply."""
+    """``ar_subledger_overdraft`` is unscoped (sees all account types) and
+    no merchant_dda runs structurally negative across the seed window.
 
-    def test_merchant_dda_overdrafts_surface(self, pg_conn):
-        """At least one merchant_dda account appears in the overdraft view.
+    The pre-I.4 view filtered ``account_id NOT LIKE 'pr-%'`` so PR
+    accounts were invisible regardless of balance; I.4.B Commit 1 dropped
+    that filter. Removing it briefly exposed a separate generator bug:
+    the PR sale leg debited ``merchant_sub`` when the canonical sign
+    convention says it should credit, so every merchant DDA ran
+    structurally negative for the whole seed window. **Phase I.5 — sign
+    convention standardization** fixed the generator (sale credits
+    merchant_sub; payment debits it). This test now locks both:
+    cross-visibility stays on (the view definition has no pr-% filter,
+    asserted above) AND no merchant_dda is structurally overdrawn.
+    """
 
-        Pre-I.4 the view filtered ``account_id NOT LIKE 'pr-%'`` and PR
-        accounts were invisible regardless of balance. After commit 1 the
-        unified-AR view sees them.
+    def test_no_merchant_dda_is_structurally_negative(self, pg_conn):
+        """Every merchant_dda has at least one balance_date with balance >= 0.
 
-        Note: the seed currently emits payment outflow on merchant_dda
-        accounts without a compensating inbound credit (sale leg debits
-        merchant_sub when convention says it should credit), so every
-        merchant DDA runs structurally negative for the entire seed
-        window. That's a known generator sign-convention bug, tracked
-        in **Phase I.5 — PR sign convention standardization**. For this
-        test it just guarantees the cross-visibility is on. Post-I.5
-        this assertion needs to be reframed to "at least one *planted*
-        PR overdraft scenario surfaces" — see I.5.E.
+        Pre-I.5 the assertion here was the inverse — "at least one
+        merchant_dda surfaces in ar_subledger_overdraft" — which used
+        to pass because every merchant DDA was permanently negative
+        from the sign-convention bug. I.5 standardized the sign
+        convention so sales credit (positive) and payments debit
+        (negative) on merchant_dda accounts; if any merchant_dda
+        never reaches a non-negative balance after I.5, the
+        convention is wrong somewhere in the generator.
         """
         with pg_conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT COUNT(DISTINCT sub.account_id)
-                FROM ar_subledger_overdraft o
-                JOIN daily_balances sub
-                  ON  sub.account_id   = o.subledger_account_id
-                 AND sub.balance_date  = o.balance_date
-                WHERE sub.account_type = 'merchant_dda'
+                SELECT account_id
+                FROM daily_balances
+                WHERE account_type = 'merchant_dda'
+                GROUP BY account_id
+                HAVING MAX(balance) < 0
                 """
             )
-            distinct_merchant_ddas = cur.fetchone()[0]
-        assert distinct_merchant_ddas >= 1, (
-            "Expected at least one merchant_dda account to surface in "
-            "ar_subledger_overdraft after I.4.B commit 1; got 0. Either "
-            "I.5 landed and removed the structural negativity without "
-            "updating this assertion (see I.5.E — needs to switch to a "
-            "planted PR overdraft scenario), or a regression re-added "
-            "the artificial pr-% filter."
+            always_negative = [row[0] for row in cur.fetchall()]
+        assert not always_negative, (
+            f"merchant_dda accounts {always_negative} are structurally "
+            "negative across the entire seed window. Phase I.5 standardized "
+            "the PR sign convention (sales credit merchant_sub, payments "
+            "debit it) — if an account never reaches a non-negative balance, "
+            "either the sale leg in payment_recon/demo_data.py regressed to "
+            "the old debit form or a new PR posting site is using the "
+            "wrong sign."
         )
 
     def test_planted_ar_overdrafts_still_surface(self, pg_conn):
