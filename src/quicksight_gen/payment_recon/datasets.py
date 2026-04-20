@@ -390,24 +390,30 @@ WHERE t.transfer_type      = 'settlement'
 
 
 def build_payments_dataset(cfg: Config) -> DataSet:
+    # Phase G.9.4: reads from shared `transactions`. Payment transfers
+    # have two legs (pr-external-rail external_counter + merchant_dda);
+    # filtering account_type='merchant_dda' picks one row per payment.
     sql = """\
 SELECT
-    payment_id,
-    settlement_id,
-    merchant_id,
-    payment_amount,
-    payment_date,
-    payment_status,
-    is_returned,
-    return_reason,
-    external_transaction_id,
+    JSON_VALUE(t.metadata, '$.payment_id')                          AS payment_id,
+    JSON_VALUE(t.metadata, '$.settlement_id')                       AS settlement_id,
+    JSON_VALUE(t.metadata, '$.merchant_id')                         AS merchant_id,
+    CAST(JSON_VALUE(t.metadata, '$.payment_amount') AS DECIMAL(12,2)) AS payment_amount,
+    t.posted_at                                                     AS payment_date,
+    JSON_VALUE(t.metadata, '$.payment_status')                      AS payment_status,
+    JSON_VALUE(t.metadata, '$.is_returned')                         AS is_returned,
+    JSON_VALUE(t.metadata, '$.return_reason')                       AS return_reason,
+    JSON_VALUE(t.metadata, '$.external_transaction_id')             AS external_transaction_id,
     CASE
-        WHEN external_transaction_id IS NULL THEN 'Unmatched'
+        WHEN JSON_VALUE(t.metadata, '$.external_transaction_id') IS NULL THEN 'Unmatched'
         ELSE 'Matched'
     END AS external_match_state,
-    payment_method,
-    (CURRENT_DATE - payment_date::date) AS days_outstanding
-FROM pr_payments"""
+    JSON_VALUE(t.metadata, '$.payment_method')                      AS payment_method,
+    (CURRENT_DATE - t.posted_at::date)                              AS days_outstanding
+FROM transactions t
+WHERE t.transfer_type      = 'payment'
+  AND t.account_type       = 'merchant_dda'
+  AND t.control_account_id = 'pr-merchant-ledger'"""
     return build_dataset(
         cfg, cfg.prefixed("payments-dataset"),
         "Payments", "payments",

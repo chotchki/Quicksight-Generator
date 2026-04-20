@@ -293,12 +293,14 @@ def _derive_pr_unified_tables(
         transfer_metadata[tid] = _compact({
             "payment_method": p["payment_method"],
             "payment_status": p["payment_status"],
+            "payment_amount": float(p["payment_amount"]),
             "is_returned": p["is_returned"],
             "return_reason": p["return_reason"],
             "merchant_id": p["merchant_id"],
             "merchant_account_id": merchant_sub,
             "settlement_id": p["settlement_id"],
             "payment_id": p["payment_id"],
+            "external_transaction_id": p["ext_txn_id"],
         })
         posting_status = "failed" if p["payment_status"] == "returned" else "success"
         _posting(tid, "pr-external-rail", p["payment_amount"],
