@@ -17,6 +17,7 @@ from quicksight_gen.payment_recon.constants import (
     DS_PAYMENT_RECON,
     SHEET_PAYMENT_RECON,
 )
+from quicksight_gen.payment_recon.filters import _visual_scoped_pinned_filter_group
 from quicksight_gen.common.models import (
     CategoryFilter,
     CategoryFilterConfiguration,
@@ -134,6 +135,36 @@ def build_recon_filter_groups(cfg: Config) -> list[FilterGroup]:
         _recon_date_range_filter_group(),
         _recon_match_status_filter_group(),
         _recon_external_system_filter_group(),
+        # Visual-scoped pinned filters per KPI — the bar chart and
+        # side-by-side tables on this sheet legitimately span all match
+        # statuses, so the fix can't be sheet-wide.
+        _visual_scoped_pinned_filter_group(
+            "fg-recon-kpi-late-only",
+            "filter-recon-kpi-late-only",
+            SHEET_PAYMENT_RECON,
+            ["recon-kpi-late-count"],
+            DS_PAYMENT_RECON,
+            "match_status",
+            ["late"],
+        ),
+        _visual_scoped_pinned_filter_group(
+            "fg-recon-kpi-matched-only",
+            "filter-recon-kpi-matched-only",
+            SHEET_PAYMENT_RECON,
+            ["recon-kpi-matched-amount"],
+            DS_PAYMENT_RECON,
+            "match_status",
+            ["matched"],
+        ),
+        _visual_scoped_pinned_filter_group(
+            "fg-recon-kpi-unmatched-only",
+            "filter-recon-kpi-unmatched-only",
+            SHEET_PAYMENT_RECON,
+            ["recon-kpi-unmatched-amount"],
+            DS_PAYMENT_RECON,
+            "match_status",
+            ["late", "not_yet_matched"],
+        ),
     ]
 
 

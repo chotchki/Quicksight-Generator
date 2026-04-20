@@ -10,6 +10,16 @@ Python tool that programmatically generates AWS QuickSight JSON definitions (the
 
 Both apps share one theme, one AWS account, one datasource, and the same CLI surface (`quicksight-gen generate|deploy|demo|cleanup`). Change the Python (or ask Claude), re-run `deploy --generate`, get a new dashboard.
 
+## Demo Docs
+
+The demo ships with three task-shaped handbooks, one per persona team at Sasquatch National Bank. Deployed to GitHub Pages at **[chotchki.github.io/Quicksight-Generator](https://chotchki.github.io/Quicksight-Generator/)**.
+
+- **[GL Reconciliation Handbook](https://chotchki.github.io/Quicksight-Generator/handbook/ar/)** — how the Accounting Operations team works the AR Exceptions sheet. Morning rollups + per-check drill-downs for 17 exception classes.
+- **[Payment Reconciliation Handbook](https://chotchki.github.io/Quicksight-Generator/handbook/pr/)** — how the Merchant Support team answers "where's my money?" calls. 7 walkthroughs organized by operator question.
+- **[Data Integration Handbook](https://chotchki.github.io/Quicksight-Generator/handbook/etl/)** — how the Data Integration Team maps an upstream system into `transactions` + `daily_balances`, validates the load, and extends the metadata contract. 5 foundational / extension / debug walkthroughs.
+
+Source lives in `docs/`; rebuild locally with `mkdocs serve`.
+
 ## Why this exists
 
 The customer for these reports doesn't know exactly what they want yet. Rather than click through the QuickSight console and lose the work when requirements change, everything is generated from code and deployed idempotently (delete-then-create). Iteration is one command.

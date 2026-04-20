@@ -404,7 +404,7 @@ Conventions (Phase H specific):
 - [ ] H.0.3 **Skeleton lock.** 7-section template (Story / Question / Where to look / What you'll see in the demo / What it means / Drilling in / Next step) confirmed from sample iteration. Locked.
 - [ ] H.0.4 **Index page count.** Separate AR Handbook + PR Handbook (different personas → different mental models). Locked.
 - [ ] H.0.5 **Sasquatch theming source.** Pull palette from `common/theme.py` `sasquatch-bank` + `sasquatch-bank-ar` presets (single source of truth — same colors the rendered dashboards use).
-- [ ] H.0.6 **Hero imagery concept.** Open. Options: (a) PNW silhouette + Sasquatch icon + abstract dashboard mockup; (b) Sasquatch wordmark + clean palette only; (c) abstract data viz hero. Recommend: start with (b) in H.3.6 mkdocs serve preview, escalate to (a) if it lands flat.
+- [x] H.0.6 **Hero imagery concept.** Locked on (b) — Sasquatch wordmark + clean palette only. Wordmark is SVG (text + footprint), no imagery commission. Escalate to (a) only if (b) lands flat after live review.
 - [ ] H.0.7 **Screenshot spike scope (per H.2).** Per-step screenshots embedded in walkthroughs as collapsed `<details>` blocks (scannable for repeat readers, one-click reveal for first-timers).
 - [ ] H.0.8 **PR walkthrough operator-question list.** Drafted in H.6.2; review and lock there.
 - [ ] H.0.9 **Release version.** v3.1.0 — additive, no breaking changes.
@@ -427,31 +427,29 @@ Conventions (Phase H specific):
 
 Spike question: can we leverage the e2e Playwright fixtures to generate focused, cropped screenshots of individual visuals that walkthroughs can reference inline?
 
-- [ ] H.2.1 Inventory existing helpers: `tests/e2e/browser_helpers.py` already has `scroll_visual_into_view`, sheet/visual selectors, embed-URL fixtures. Most of what's needed is there.
-- [ ] H.2.2 Build `scripts/generate_walkthrough_screenshots.py` that reuses e2e fixtures to:
-  - Open the AR or PR dashboard via embed URL
-  - Switch to a target sheet
-  - Scroll a target visual into view
-  - Screenshot just that visual (use `data-automation-id="analysis_visual"` bounding box)
-  - Save to `docs/walkthroughs/screenshots/<app>/<slug>-<step>.png`
-- [ ] H.2.3 Generate 3-4 screenshots for the existing Stuck in Suspense walkthrough as proof.
-- [ ] H.2.4 Re-render Stuck in Suspense walkthrough with `<details>`-toggled screenshots; eyeball whether the result reads well at full screen and on mobile.
-- [ ] H.2.5 **Gate.** Decide go/no-go on screenshots:
-  - **Go**: H.4 + H.7 produce screenshots alongside text; commit `Phase H.2: walkthrough screenshot generator (e2e harness reuse)`.
-  - **No-go** (too brittle, too noisy, doesn't add value): walkthroughs stay text-only; H.2 effort is the spike's cost; document why in `PLAN.md` decisions log.
-- [ ] H.2.6 If go: settle screenshot freshness policy. Recommend: "screenshots are illustrative; check the dashboard for live values" disclaimer in handbook footer + a regenerate-on-demand script (no CI step). Per-deploy regeneration is too brittle.
+- [x] H.2.1 Inventory existing helpers: `tests/e2e/browser_helpers.py` provides `webkit_page`, `generate_dashboard_embed_url`, `wait_for_dashboard_loaded`, `wait_for_visual_titles_present`, `click_sheet_tab`, plus the marker-attribute pattern in `click_first_row_of_visual`. Tall-viewport trick from `test_ar_sheet_visuals.TALL_VIEWPORT` (1600x12000) defeats QuickSight's below-the-fold virtualization.
+- [x] H.2.2 Built `scripts/generate_walkthrough_screenshots.py`. Three iterations to land:
+  - Playwright `locator.has_text` doesn't match QuickSight title labels reliably — use `page.evaluate` with exact `innerText.trim()` match instead.
+  - QuickSight virtualizes below-the-fold visuals; "scroll-then-back-to-top" unloads them again. Solution: tall viewport so everything stays hydrated.
+  - `page.screenshot(clip=...)` fails on 12000-tall viewport ("clipped area outside resulting image"). Solution: marker-attribute the target element + Playwright `locator.screenshot()` for per-element capture.
+- [x] H.2.3 Three shots produced for Stuck in Suspense walkthrough (KPI / table / aging chart). All readable, tightly cropped, ~20-50KB each.
+- [x] H.2.4 Walkthrough updated with `<details>`-toggled screenshots. Each section reads cleanly text-first, screenshots reveal on click. MkDocs Material `<details>` works out of the box.
+- [x] H.2.5 **GO**. Spike succeeded. Commit script + 3 screenshots + updated walkthrough.
+- [x] H.2.6 Freshness policy: screenshots are committed under `docs/walkthroughs/screenshots/`, regenerated on demand via `python scripts/generate_walkthrough_screenshots.py`. Not a CI step. Each walkthrough author runs the script after editing the SHOTS list, eyeballs the output, commits.
+
+**Lesson learned in H.2.4**: writing the existing walkthroughs without screenshots produced a hallucinated table layout (originator/recipient name columns that don't actually exist in the visual). Each H.4 / H.7 walkthrough must be verified against the rendered visual — either by capturing screenshots first and writing prose to match, or by reading the visual's `Values=[...]` block in `*/visuals.py`. Add a "verify column list against visual definition" step to the standard walkthrough authoring checklist.
 
 ---
 
 ## Phase H.3 — Sasquatch-themed MkDocs site
 
-- [ ] H.3.1 Pull color tokens from `common/theme.py` `sasquatch-bank-ar` preset (primary, accent, background, link tint). Decide whether AR theme dominates the site or both AR + PR palettes coexist (per "Decisions to make in flight" below).
-- [ ] H.3.2 Custom CSS at `docs/stylesheets/sasquatch.css`. Wire via `mkdocs.yml` `extra_css`. Scope: palette overrides, hero block, walkthrough card grid for handbook index.
-- [ ] H.3.3 Hero imagery (per H.0.6 decision). Land in `docs/img/`. Source: AI-generated or stock; keep file size lean for fast Pages load.
-- [ ] H.3.4 Sasquatch wordmark + favicon in `docs/img/`. Wire via `mkdocs.yml` `theme.logo` / `theme.favicon`.
-- [ ] H.3.5 If hero needs structural change (not just CSS), override the MkDocs Material `home.html` partial under `docs/overrides/`. Resist deeper structural overrides — they're a Material-upgrade liability.
-- [ ] H.3.6 `mkdocs serve` smoke locally — verify everything renders, palette looks right, hero is on-brand, no broken links.
-- [ ] H.3.7 Commit — `Phase H.3: Sasquatch-themed MkDocs site (palette + hero + custom CSS)`.
+- [x] H.3.1 AR-dominant palette — `sasquatch-bank-ar` tokens mirrored as CSS custom props in `docs/stylesheets/sasquatch.css`. PR palette tokens reserved for per-page accents in H.7.
+- [x] H.3.2 Custom CSS at `docs/stylesheets/sasquatch.css` (palette overrides + hero block + walkthrough card grid). Wired via `mkdocs.yml` `extra_css`. Material `palette: { primary: custom, accent: custom }` so overrides take effect.
+- [x] H.3.3 Hero imagery — option (b) wordmark only (no commissioned art). `docs/img/snb-wordmark.svg` (~820 B), `docs/img/favicon.svg` (~400 B), `docs/img/snb-mark.svg` (~400 B). Negligible Pages payload.
+- [x] H.3.4 Sasquatch wordmark + favicon in `docs/img/`. Wired via `theme.logo: img/snb-mark.svg` and `theme.favicon: img/favicon.svg`.
+- [x] H.3.5 Skipped — CSS-only hero block on `index.md` works without `home.html` override. Revisit only if landing pages need structural change.
+- [x] H.3.6 `mkdocs build --strict` clean; live serve confirms hero, logo, favicon, and CSS all 200; `index.html` carries the hero block with wordmark.
+- [x] H.3.7 Commit — `Phase H.3: Sasquatch-themed MkDocs site (palette + hero + custom CSS)`.
 
 ---
 
@@ -459,18 +457,18 @@ Spike question: can we leverage the e2e Playwright fixtures to generate focused,
 
 15 walkthroughs to produce (the 2 samples are done). Each follows the locked skeleton from H.0.3. Each carries demo-anchored numbers from `account_recon/demo_data.py`. If H.2 went green, each carries inline screenshots toggled via `<details>`.
 
-- [ ] H.4.1 **Batch A — rollups** (2 files):
+- [x] H.4.1 **Batch A — rollups** (2 files):
   - `two-sided-post-mismatch-rollup.md`
   - `balance-drift-timelines-rollup.md`
   - Commit: `Phase H.4.A: AR rollup walkthroughs`.
-- [ ] H.4.2 **Batch B — baseline checks** (5 files):
+- [x] H.4.2 **Batch B — baseline checks** (5 files):
   - `sub-ledger-drift.md`
   - `ledger-drift.md`
   - `non-zero-transfers.md`
   - `sub-ledger-limit-breach.md`
   - `sub-ledger-overdraft.md`
   - Commit: `Phase H.4.B: AR baseline check walkthroughs`.
-- [ ] H.4.3 **Batch C — CMS-specific** (8 files; Stuck in Suspense is already done):
+- [x] H.4.3 **Batch C — CMS-specific** (8 files; Stuck in Suspense is already done):
   - `sweep-target-non-zero.md`
   - `concentration-master-sweep-drift.md`
   - `ach-origination-non-zero.md`
@@ -480,31 +478,27 @@ Spike question: can we leverage the e2e Playwright fixtures to generate focused,
   - `internal-transfer-suspense-non-zero.md`
   - `internal-reversal-uncredited.md`
   - Commit: `Phase H.4.C: AR CMS-specific check walkthroughs`.
-- [ ] H.4.4 Cross-reference pass: each walkthrough's "Related" footer links neighbor walkthroughs. Commit: `Phase H.4: cross-reference AR walkthroughs`.
+- [x] H.4.4 Cross-reference pass: each walkthrough's "Related" footer links neighbor walkthroughs. Replaced 7 `(forthcoming)` placeholders with real links across 4 files; added the missing Related section on `expected-zero-eod-rollup.md`; added the Two-Sided Post Mismatch Rollup link to both per-check ACH/Fed walkthroughs. Commit: `Phase H.4: cross-reference AR walkthroughs`.
 
 ---
 
 ## Phase H.5 — AR Handbook index
 
-- [ ] H.5.1 Build `docs/handbook/ar.md`:
-  - Hero block (Sasquatch wordmark + headline)
-  - Preamble: SNB persona (cribbed from `Training_Story.md`); GL Recon team's morning routine
-  - "Morning checks" section: 3 rollup walkthrough cards
-  - "When this fires, what to do" section: 14 per-check walkthrough cards grouped by category (baseline / CMS-specific)
-  - Footer: link to `Schema_v3.md` for data feed contract; link to `Training_Story.md` for full bank narrative
-- [ ] H.5.2 Update `mkdocs.yml` nav — add "AR Handbook" landing + nested walkthroughs under it.
-- [ ] H.5.3 `mkdocs serve` smoke locally — verify hero renders, walkthrough cards lay out cleanly, walkthrough links resolve, screenshots load (if H.2 went green).
-- [ ] H.5.4 Commit — `Phase H.5: AR Handbook index page`.
+- [x] H.5.1 Built `docs/handbook/ar.md` with the H.3 hero block, "The bank" preamble (cribbed from `Training_Story.md`), "The morning routine" section, three rollup cards under "Morning checks", and 14 per-check cards split into Baseline (5) and CMS-specific (9) groups. Footer references `Training_Story.md` + `Schema_v3.md`.
+- [x] H.5.2 mkdocs.yml nav — collapsed walkthroughs under a single "AR Handbook" parent with `Overview: handbook/ar.md` first; also added `Schema_v3.md` to nav (clears the prior "exists in docs but not in nav" build info).
+- [x] H.5.3 mkdocs build --strict clean; live serve confirms `/handbook/ar/` 200, all 17 card links resolve to walkthrough pages 200, footer `[Account Structure]` / `[Schema v3]` links rewritten to directory URLs and 200.
+- [x] H.5.4 Commit — `Phase H.5: AR Handbook index page`.
 
 ---
 
 ## Phase H.6 — PR walkthrough inventory + organization
 
-- [ ] H.6.1 Inventory PR exception cases from `payment_recon/demo_data.py` and `payment_recon/datasets.py`:
+- [x] H.6.1 Inventory PR exception cases from `payment_recon/demo_data.py` and `payment_recon/datasets.py`:
   - 5 PR exception checks: settlement exceptions, payment returns, sale↔settlement mismatch, settlement↔payment mismatch, unmatched external txns
   - Payment Reconciliation matching workflow (the side-by-side mutual filter)
   - Pipeline traversal scenarios (Sales → Settlements → Payments → External Txns)
-- [ ] H.6.2 Translate inventory into operator-question format. Draft list (lock in this step):
+  - Plant data: 10 unsettled sales (Yeti + Cryptid), 5 returns (2 Sasquatch / 1 Yeti / 2 Cryptid), 2 failed settlements (stl-0001/0002), 3 sale↔settlement mismatches (±$10), 3 settlement↔payment mismatches (±$5), ~13 orphan ext txns (8 recent / 5 older), 4 unmatched payments. Every 6th batched ext_txn drifts $5–$40.
+- [x] H.6.2 Translate inventory into operator-question format. Draft list (lock in this step):
   - "Where's my money for [merchant X]?" — pipeline traversal
   - "Did all merchants get paid yesterday?" — KPI scan
   - "Why is this external transaction unmatched?" — Payment Recon tab
@@ -512,8 +506,8 @@ Spike question: can we leverage the e2e Playwright fixtures to generate focused,
   - "Why is there a payment but no settlement?" — settlement↔payment mismatch
   - "How much did we return last week?" — payment returns
   - "Which sales never made it to settlement?" — settlement exceptions
-- [ ] H.6.3 Confirm scope: ~7 walkthroughs. Lock list.
-- [ ] H.6.4 No commit (planning step, captured in this PLAN.md).
+- [x] H.6.3 Confirm scope: ~7 walkthroughs. Lock list.
+- [x] H.6.4 No commit (planning step, captured in this PLAN.md).
 
 ---
 
@@ -521,40 +515,119 @@ Spike question: can we leverage the e2e Playwright fixtures to generate focused,
 
 Same skeleton as AR, framed around the operator question rather than the check name. The "Story" section is the merchant's frustration; the "Next step" is the resolution back to the merchant.
 
-- [ ] H.7.1 **Batch A — pipeline + matching** (~3 files):
+- [x] H.7.1 **Batch A — pipeline + matching** (~3 files):
   - `wheres-my-money-for-merchant.md`
   - `did-all-merchants-get-paid.md`
   - `why-is-this-external-transaction-unmatched.md`
   - Commit: `Phase H.7.A: PR pipeline + matching walkthroughs`.
-- [ ] H.7.2 **Batch B — exceptions** (~4 files):
+- [x] H.7.2 **Batch B — exceptions** (~4 files):
   - `why-does-this-settlement-look-short.md`
-  - `why-is-there-a-payment-but-no-settlement.md`
+  - `why-doesnt-this-payment-match-the-settlement.md` *(renamed from `why-is-there-a-payment-but-no-settlement.md` — original title implied orphan-payment shape, but the underlying check is settlement↔payment **amount mismatch**, not missing-settlement)*
   - `how-much-did-we-return.md`
   - `which-sales-never-made-it-to-settlement.md`
   - Commit: `Phase H.7.B: PR exception walkthroughs`.
-- [ ] H.7.3 Cross-reference pass. Commit.
+- [x] H.7.3 Cross-reference pass. Commit.
 
 ---
 
 ## Phase H.8 — PR Handbook index
 
-- [ ] H.8.1 Build `docs/handbook/pr.md`:
+- [x] H.8.1 Build `docs/handbook/pr.md`:
   - Hero block
   - Preamble: SNB merchant-acquiring side; Merchant Support's reactive posture
   - "Common merchant questions" section: walkthrough cards organized by question topic
   - "Investigating exceptions" section: exception walkthrough cards
   - Footer: same Schema_v3 + Training_Story links
-- [ ] H.8.2 Update `mkdocs.yml` nav — add "PR Handbook" landing + nested walkthroughs.
-- [ ] H.8.3 `mkdocs serve` smoke.
-- [ ] H.8.4 Commit — `Phase H.8: PR Handbook index page`.
+- [x] H.8.2 Update `mkdocs.yml` nav — add "PR Handbook" landing + nested walkthroughs.
+- [x] H.8.3 `mkdocs serve` smoke.
+- [x] H.8.4 Commit — `Phase H.8: PR Handbook index page`.
+
+---
+
+## Phase H.8.5 — Data Integration Team Handbook
+
+Third handbook, parallel to AR + PR. Audience: SNB's **Data Integration Team** — engineers writing the ETL that populates `transactions` + `daily_balances`. The user flagged this persona repeatedly in Phase G ("data team needs to know **WHY** they should populate a column"). This phase converts `Schema_v3.md` from a contract reference into a training experience and ships an exemplary CLI helper customers can crib from.
+
+Decisions locked (2026-04-20 conversation):
+- 5 walkthroughs (full inventory below)
+- Persona name in hero: **Data Integration Team** (matches AR/PR pattern)
+- New CLI: `quicksight-gen demo etl-example` emits exemplary INSERT statements; walkthroughs reference its output
+
+### H.8.5.A — Schema_v3.md WHY-expansion
+
+Reference doc gets training warmth without becoming a tutorial. Markdown only, no code.
+
+- [x] H.8.5.A.1 New "Getting Started for Data Teams" preamble at the top of `docs/Schema_v3.md` — frames the two-table contract from the ETL author's POV (what columns are mandatory, what's denormalized for query performance, what's metadata vs first-class).
+- [x] H.8.5.A.2 Add a **Why** column (or sentence per row) to the existing column-spec tables — *"if you skip this, what dashboard breaks?"*. Examples: `parent_transfer_id` skipped → PR pipeline traversal can't link external_txn back to sale; `metadata.card_brand` skipped → Sales tab card-brand pivot empty; `origin = 'external_force_posted'` skipped → AR can't separate operator-initiated drift from fed-forced drift.
+- [x] H.8.5.A.3 Cross-link forward to the H.8.5.D walkthroughs from each section (placeholder TODOs filled in once D ships).
+- [x] H.8.5.A.4 `mkdocs build --strict` clean; live serve confirms the new TOC entries render.
+- [x] H.8.5.A.5 Commit — `Phase H.8.5.A: expand Schema_v3 with per-key WHY narrative`.
+
+### H.8.5.B — `quicksight-gen demo etl-example` CLI command
+
+Exemplary ETL output customers can crib. Reads from the deployed demo Postgres (or stdin SQL dump), emits a small set of canonical INSERT statements demonstrating each metadata-key pattern. Lives next to existing `demo schema` / `demo seed` / `demo apply`.
+
+- [x] H.8.5.B.1 Design the command surface:
+  - `quicksight-gen demo etl-example --all -o demo/etl-examples.sql` — emits all examples
+  - `quicksight-gen demo etl-example payment-recon` / `account-recon` — app-scoped
+  - Examples are SQL fragments with `-- WHY:` comments inline
+- [x] H.8.5.B.2 Inventory the canonical patterns to emit (3-5 each side):
+  - PR: sale insert, settlement insert (with parent_transfer_id chain), payment insert, external_txn insert (one-to-many vs one-to-one), return insert (metadata.is_returned / return_reason)
+  - AR: customer DDA transfer (internal, two-leg net-zero), force-posted ACH (origin = 'external_force_posted'), sweep (clearing_sweep type, ledger-direct posting), limit-breach setup (daily_balances.metadata limit config), GL drift recompute baseline
+- [x] H.8.5.B.3 Implement: new `cli.py` subcommand + `etl_examples.py` module per app (mirrors `demo_data.py` structure). Output is plain SQL with comment headers; no DB connection required for `etl-example` (unlike `demo apply`).
+- [x] H.8.5.B.4 Tests in `tests/test_demo_etl_examples.py`: every emitted INSERT parses; every example references a real column in the schema; comment headers reference real metadata keys.
+- [x] H.8.5.B.5 Commit — `Phase H.8.5.B: demo etl-example CLI command`.
+
+### H.8.5.C — Walkthrough inventory (dry pass)
+
+Lock the 5-walkthrough list. No commit (planning step, captured in this PLAN).
+
+- [x] H.8.5.C.1 Walkthrough list (locked):
+  1. **How do I populate `transactions` from my core banking system?** — the canonical mapping walkthrough. Maps a hypothetical core-banking source schema → the two-table target. References `etl-example` output.
+  2. **How do I prove my ETL is working before going live?** — validation invariants (transfer legs net-to-zero, daily_balance recompute matches stored, no orphan parent_transfer_id chains). Includes pytest-style assertion examples and a "what dashboard you should see" checklist.
+  3. **How do I tag a force-posted external transfer correctly?** — the `origin` field + parent_transfer_id chain mechanics. Why force-posted matters for AR exception classification. References AR's GL-vs-Fed-Master-Drift walkthrough as the downstream consumer.
+  4. **How do I add a metadata key without breaking the dashboards?** — extension contract. Schema rules (must be valid JSON, must use SQL/JSON path syntax, no JSONB types), dataset SQL pattern (`JSON_VALUE(metadata, '$.your_key')`), how to add a column to a Pivot/visual without refreshing SPICE (we're direct query).
+  5. **What do I do when the demo passes but my prod data fails?** — debugging recipes. Common-pitfall checklist organized by symptom (KPI shows 0; visual shows N/A; drift KPI fires unexpectedly; date filter excludes everything).
+
+### H.8.5.D — Write walkthroughs
+
+- [x] H.8.5.D.1 **Batch 1 — populate + validate** (~2 files, the foundational pair):
+  - `how-do-i-populate-transactions.md`
+  - `how-do-i-prove-my-etl-is-working.md`
+  - Commit: `Phase H.8.5.D.1: ETL populate + validate walkthroughs`.
+- [x] H.8.5.D.2 **Batch 2 — extend + debug** (~3 files):
+  - `how-do-i-tag-a-force-posted-transfer.md`
+  - `how-do-i-add-a-metadata-key.md`
+  - `what-do-i-do-when-demo-passes-but-prod-fails.md`
+  - Commit: `Phase H.8.5.D.2: ETL extend + debug walkthroughs`.
+- [x] H.8.5.D.3 Cross-reference pass — every walkthrough links to its 1-2 most-related siblings + the relevant Schema_v3 section + the relevant AR/PR walkthrough that consumes the populated data. Commit.
+
+### H.8.5.E — Data Integration Handbook landing
+
+- [x] H.8.5.E.1 Build `docs/handbook/etl.md`:
+  - Hero block (third handbook palette consistent with AR/PR; persona = "Data Integration Team")
+  - Preamble: SNB's Data Integration Team owns the upstream → two-table mapping; their attitude (from PLAN line 13) — "what do I have a database server that can do fancy queries for unless I use it?"
+  - "The contract" section: pointer to Schema_v3.md as source of truth + summary of the two-table model
+  - "The walkthroughs" cards: 5 walkthroughs grouped as Foundational (populate, validate) + Extension (tag, add-key) + Debug (demo-vs-prod)
+  - "The exemplary helper" section: pointer to `quicksight-gen demo etl-example` output
+  - Footer: Schema_v3 + Training_Story links (same pattern as AR/PR landings)
+- [x] H.8.5.E.2 Update `mkdocs.yml` nav — third handbook parent with `Overview: handbook/etl.md` first + 5 nested walkthroughs.
+- [x] H.8.5.E.3 `mkdocs build --strict` clean; live serve confirms `/handbook/etl/` 200, all 5 card links resolve.
+- [x] H.8.5.E.4 Commit — `Phase H.8.5.E: Data Integration Handbook index page`.
+
+### H.8.5.F — Cross-link cleanup
+
+- [x] H.8.5.F.1 Update AR + PR handbook landings (`docs/handbook/ar.md`, `docs/handbook/pr.md`) — Reference footers add a third pointer to the Data Integration Handbook ("the team that populates the data behind every walkthrough on this page").
+- [x] H.8.5.F.2 Update `Training_Story.md` — add a closing pointer to the Data Integration Handbook for readers who came in via the bank narrative and want the populate-the-data view.
+- [x] H.8.5.F.3 Commit — `Phase H.8.5.F: cross-link Data Integration Handbook from AR/PR/story`.
 
 ---
 
 ## Phase H.9 — README integration
 
-- [ ] H.9.1 Add a "Demo Docs" section to `README.md` near the top, with one-liner pitches for AR + PR Handbooks and the deployed Pages URL.
-- [ ] H.9.2 Verify `mkdocs.yml` `site_url` is set correctly (matches GitHub Pages deployed URL).
-- [ ] H.9.3 Commit — `Phase H.9: link demo handbooks from README`.
+- [x] H.9.1 Add a "Demo Docs" section to `README.md` near the top, with one-liner pitches for AR + PR + Data Integration Handbooks and the deployed Pages URL.
+- [x] H.9.2 Verify `mkdocs.yml` `site_url` is set correctly (matches GitHub Pages deployed URL).
+- [x] H.9.3 Commit — `Phase H.9: link demo handbooks from README`.
 
 ---
 
@@ -596,6 +669,22 @@ Items deferred from Phase H scope, parked here so they aren't lost. Each is inde
 - **AR Exceptions tab redesign.** Sheet is dense (3 rollups + 14 checks + aging bars + 2 drift timelines). Phase H walkthroughs will surface which sections are friction-heavy; that's the input for redesign. Likely shape: per-persona view modes ("morning check" vs. "deep investigation"), or progressive disclosure of CMS-specific checks behind a category toggle.
 - **PR pipeline tab structure.** Under the shared-base model (Phase G), Sales / Settlements / Payments are values of `transfer_type`, not separate entities. Current per-step tab structure is preserved from the pre-flatten era. Operator-question walkthroughs in Phase H may surface whether the per-step tab structure helps or fights merchant-support workflow. Decide redesign based on what those walkthroughs show.
 
+## E2E visual-semantics coverage
+
+Surfaced during Phase H.4.B: the Ledger Drift and Sub-Ledger Drift KPIs on the AR Exceptions sheet were counting *every* `(account, date)` row from the drift datasets, not just the rows where `drift_status = 'drift'`. The bug went unnoticed because:
+
+- The drift datasets are shared with the Balances sheet (where unfiltered counts make sense).
+- API e2e tests assert dataset *health* (rows return, no SPICE errors) but not row *content* — they don't check that the visible KPI count corresponds to anything meaningful from the planted demo scenarios.
+- Browser e2e tests assert visual *presence* (titles render, tables have rows) but not visual *semantics* — they don't assert that the rendered KPI value matches the count of planted exception rows.
+
+The fix landed via two sheet-scoped pinned `CategoryFilter`s on `drift_status='drift'` (see `account_recon/filters.py` and the H.4.B commit). The deeper Phase I work is the test gap:
+
+- **Per-check KPI assertion.** For each AR Exceptions KPI (5 baseline + 9 CMS-specific + 3 rollups), assert the rendered count equals the row count of the underlying dataset filtered to its expected scope (`drift_status='drift'`, `non_failed_imbalance > 0`, etc.). Catch dataset-vs-visual filter drift the moment it ships.
+- **Per-check planted-row sanity.** For checks driven by `_*_PLANT` constants in `account_recon/demo_data.py`, assert the dataset returns the planted rows (and only the planted rows where the check is "1 plant = 1 row"; for sticky-drift / sticky-overdraft checks, assert at least the planted rows are present plus a documented multiplier for day-roll-forward).
+- **Layer choice.** API e2e is the right home — it's faster than browser, runs deterministically off the deployed datasets, and is where dataset health already lives. Browser e2e remains the rendering canary, not the semantics canary.
+
+Inputs: incident debugging notes are in the H.4.B commit; the filter that was missing is the test contract.
+
 ## Schema cleanup carry-over from Phase G
 
 - **PR-coexistence filters in AR views.** `ar_subledger_overdraft` and `ar_subledger_daily_outbound_by_type` carry an `account_id NOT LIKE 'pr-%'` filter. Necessary today because PR + AR co-reside in the same `daily_balances` / `transactions` tables and the entity-scoped views (drift, overdraft) would otherwise surface PR rows in AR exceptions (G.6 leak: 556 spurious overdraft rows). Phase I deletes these — a single-feed real persona has no parallel PR ledger to filter out. Grep target: `pr-%` in `demo/schema.sql`. The right replacement is the `account_type` discriminator from G.0.12 (`gl_control`, `dda`, …), scoped to whatever account_types the AR persona owns.
@@ -605,6 +694,13 @@ Items deferred from Phase H scope, parked here so they aren't lost. Each is inde
 ## Customer-facing customization handbook
 
 - `docs/Schema_v3.md` is the persona contract for the Data Integration Team. A longer-form customer-facing customization guide (mapping production-system tables → the two base tables, common pitfalls, performance tips, replacing dataset SQL while preserving DatasetContract) is a natural follow-up to the demo-side walkthroughs in Phase H. Deliverable shape: a "Customization Handbook" sibling to AR / PR Handbooks.
+
+## Per-account daily statement sheet (AR)
+
+- **New AR sheet:** lets an operator generate a daily statement for any single account — every posting to that account on that day, with stored EOD balance, recomputed balance, and drift. Purpose is *data-feed validation / sanity check*, not customer-facing statements: when the Data Integration Team wants to prove "my feed for account X on day Y reconciles end-to-end," this sheet is the artifact they diff against.
+- Likely shape: parameter controls for `account_id` (single-select) + `balance_date` (single-date). Visuals below: a KPI strip (opening balance, total debits, total credits, closing balance, drift), a transactions detail table (all legs for the account-day, sorted by `posted_at`), and a ledger-vs-recompute pair so the drift invariant is visible row-by-row.
+- Surfaces the three pre-flight invariants from the ETL Handbook's *How do I prove my ETL is working?* walkthrough in visual form — the sheet is what the invariants resolve to for a single account-day slice. Natural companion walkthrough in the Data Integration Handbook once shipped.
+- Rides entirely on the existing two-base-tables schema; no new datasets or SQL shapes. Mostly a new analysis sheet with parameter-driven filters.
 
 ## Persona dashboard split (originally Phase E)
 

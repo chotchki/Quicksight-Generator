@@ -513,7 +513,12 @@ SELECT
     COALESCE(mc.master_total, 0)                   AS master_total,
     COALESCE(sd.subaccount_total, 0)               AS subaccount_total,
     COALESCE(mc.master_total, 0)
-        + COALESCE(sd.subaccount_total, 0)         AS drift
+        + COALESCE(sd.subaccount_total, 0)         AS drift,
+    CASE WHEN COALESCE(mc.master_total, 0)
+              + COALESCE(sd.subaccount_total, 0) = 0
+         THEN 'balanced'
+         ELSE 'drift'
+    END                                            AS drift_status
 FROM master_credits mc
 FULL OUTER JOIN subaccount_debits sd USING (sweep_date);
 
@@ -653,7 +658,12 @@ SELECT
     COALESCE(f.fed_total, 0)                   AS fed_total,
     COALESCE(i.internal_total, 0)              AS internal_total,
     COALESCE(f.fed_total, 0)
-        - COALESCE(i.internal_total, 0)        AS drift
+        - COALESCE(i.internal_total, 0)        AS drift,
+    CASE WHEN COALESCE(f.fed_total, 0)
+              - COALESCE(i.internal_total, 0) = 0
+         THEN 'balanced'
+         ELSE 'drift'
+    END                                        AS drift_status
 FROM fed_total f
 FULL OUTER JOIN internal_total i USING (movement_date);
 

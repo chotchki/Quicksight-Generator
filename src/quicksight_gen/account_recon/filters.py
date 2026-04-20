@@ -24,6 +24,8 @@ parameter declarations, same as payment_recon.
 from __future__ import annotations
 
 from quicksight_gen.account_recon.constants import (
+    DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
+    DS_AR_GL_VS_FED_MASTER_DRIFT,
     DS_AR_LEDGER_ACCOUNTS,
     DS_AR_LEDGER_BALANCE_DRIFT,
     DS_AR_SUBLEDGER_ACCOUNTS,
@@ -326,6 +328,47 @@ def _state_toggle_filter_group(
     )
 
 
+def _pinned_category_filter_group(
+    fg_id: str,
+    filter_id: str,
+    sheet_id: str,
+    dataset_id: str,
+    column_name: str,
+    pinned_value: str,
+) -> FilterGroup:
+    """Permanent CategoryFilter pinned to one value, scoped to one sheet.
+
+    No FilterControl — invisible to the user, always applied. Used on
+    the Exceptions sheet to constrain drift datasets to drift_status =
+    'drift' (the dataset feeds both Balances and Exceptions; on
+    Balances all rows are intentional, so the filter must be sheet-
+    scoped, not dataset-wide).
+    """
+    return FilterGroup(
+        FilterGroupId=fg_id,
+        CrossDataset="SINGLE_DATASET",
+        ScopeConfiguration=_selected_sheets_scope([sheet_id]),
+        Status="ENABLED",
+        Filters=[
+            Filter(
+                CategoryFilter=CategoryFilter(
+                    FilterId=filter_id,
+                    Column=ColumnIdentifier(
+                        DataSetIdentifier=dataset_id,
+                        ColumnName=column_name,
+                    ),
+                    Configuration=CategoryFilterConfiguration(
+                        FilterListConfiguration={
+                            "MatchOperator": "CONTAINS",
+                            "CategoryValues": [pinned_value],
+                        },
+                    ),
+                ),
+            ),
+        ],
+    )
+
+
 def _state_toggle_control(
     ctrl_id: str,
     title: str,
@@ -377,6 +420,48 @@ def build_filter_groups(cfg: Config) -> list[FilterGroup]:
             SHEET_AR_BALANCES,
             DS_AR_SUBLEDGER_BALANCE_DRIFT,
             "overdraft_status",
+        ),
+        # Exceptions sheet: pin drift datasets to drift_status='drift'
+        # so the KPI / table / aging visuals count only actual drift
+        # cells. Without these, every (ledger, date) row gets counted —
+        # the KPI subtitle promises "where stored != computed" but the
+        # implementation, absent a filter, returns every cell. Same
+        # dataset feeds the Balances sheet, where all rows are
+        # intentional, so the fix has to be sheet-scoped.
+        _pinned_category_filter_group(
+            "fg-ar-exceptions-ledger-drift-only",
+            "filter-ar-exceptions-ledger-drift-only",
+            SHEET_AR_EXCEPTIONS,
+            DS_AR_LEDGER_BALANCE_DRIFT,
+            "drift_status",
+            "drift",
+        ),
+        _pinned_category_filter_group(
+            "fg-ar-exceptions-subledger-drift-only",
+            "filter-ar-exceptions-subledger-drift-only",
+            SHEET_AR_EXCEPTIONS,
+            DS_AR_SUBLEDGER_BALANCE_DRIFT,
+            "drift_status",
+            "drift",
+        ),
+        # Same fix for the two CMS-side drift datasets: their FULL OUTER
+        # JOIN views emit healthy days too (drift = 0), so the KPI
+        # would otherwise count every day instead of just drift days.
+        _pinned_category_filter_group(
+            "fg-ar-exceptions-sweep-drift-only",
+            "filter-ar-exceptions-sweep-drift-only",
+            SHEET_AR_EXCEPTIONS,
+            DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
+            "drift_status",
+            "drift",
+        ),
+        _pinned_category_filter_group(
+            "fg-ar-exceptions-gl-fed-drift-only",
+            "filter-ar-exceptions-gl-fed-drift-only",
+            SHEET_AR_EXCEPTIONS,
+            DS_AR_GL_VS_FED_MASTER_DRIFT,
+            "drift_status",
+            "drift",
         ),
         _state_toggle_filter_group(
             "fg-ar-transactions-failed",

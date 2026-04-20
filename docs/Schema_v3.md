@@ -23,6 +23,69 @@ reconciliation engine — is **computed views** on top of those two tables.
 
 ---
 
+## Getting Started for Data Teams
+
+You're an SNB Data Integration Team engineer. An upstream feed lands at
+2 AM; by 9 AM the dashboards downstream of you need to be accurate.
+You've inherited this two-table contract from the previous engineer and
+want to know: **which columns must I populate today, and which can wait
+until v2?**
+
+### The minimum viable feed
+
+To see *something* on the dashboard, populate these columns on every row:
+
+- **`transactions` (11 columns)** — `transaction_id`, `transfer_id`,
+  `transfer_type`, `account_id`, `account_name`, `account_type`,
+  `is_internal`, `signed_amount`, `amount`, `posted_at`, `balance_date`.
+- **`daily_balances` (6 columns)** — `account_id`, `account_name`,
+  `account_type`, `is_internal`, `balance_date`, `balance`.
+
+Skip `metadata` entirely on day 1; populate `parent_transfer_id`,
+`origin`, `external_system`, `memo`, `control_account_id` only when
+their downstream consumer demands it. The per-column tables below
+spell out which check breaks if you don't.
+
+### Order of operations for a new feed
+
+1. **Stand up the schema** — `quicksight-gen demo schema -o schema.sql`
+   gives you the canonical DDL. Run it against a dev database.
+2. **Generate exemplary INSERTs** — `quicksight-gen demo etl-example
+   --all -o etl-examples.sql` emits pattern-by-pattern inserts you
+   can crib from.
+3. **Map your upstream feed** — most core-banking systems have a
+   `gl_postings` (or equivalent) detail table; ETL Examples below
+   show the canonical projection. See
+   [How do I populate `transactions` from my core banking system?](walkthroughs/etl/how-do-i-populate-transactions.md).
+4. **Validate locally before going live** — the ledger-drift and
+   net-zero invariants must hold. See
+   [How do I prove my ETL is working before going live?](walkthroughs/etl/how-do-i-prove-my-etl-is-working.md).
+5. **Watch the dashboards** — open the AR Exceptions sheet and the PR
+   Exceptions sheet. If KPIs read 0 with no drilldown rows, the feed
+   landed; if KPIs spike unexpectedly, see
+   [What do I do when the demo passes but my prod data fails?](walkthroughs/etl/what-do-i-do-when-demo-passes-but-prod-fails.md).
+
+### What changes after day 1
+
+The metadata column is where new fields land between schema migrations.
+Once the minimum feed is stable, the order of metadata-key population
+priority is roughly:
+
+1. `source` on every row — Fraud / AML can't filter without it.
+2. `parent_transfer_id` on chained transfers — PR pipeline traversal
+   and AR reversal/stuck checks need it to walk the chain.
+3. `origin = 'external_force_posted'` on Fed / processor force-posts —
+   AR's GL-vs-Fed-Master-Drift check is silent without it.
+4. PR sales metadata (`merchant_account_id`, `card_brand`, `cashier`) —
+   merchant-side analytics + Phase H sale-vs-settlement cross-check.
+5. `daily_balances.metadata.limits` on ledger rows — limit-breach KPI
+   shows 0 without it (no limits configured = nothing to breach).
+
+For each metadata key, the **What breaks if you skip a column** notes
+under the column-spec tables call out the specific failure mode.
+
+---
+
 ## Why this shape
 
 Three audiences shape these tables:
@@ -122,6 +185,44 @@ No GIN indexes on `metadata`. No expression indexes on JSON-path
 extractions. If a metadata key needs to be indexed for performance, lift
 it into a first-class column instead.
 
+### What breaks if you skip a column
+
+The DB constraints catch the obvious ones (PK, NOT NULL). The non-obvious
+failure modes — where a column is *technically* nullable / defaultable
+but downstream code silently misbehaves — are:
+
+- **`parent_transfer_id` left NULL on chained transfers** — PR pipeline
+  traversal can't link `external_txn → payment → settlement → sale`;
+  the **Where's My Money** walkthrough returns nothing for affected
+  merchants. AR's *Stuck in Internal Transfer Suspense* and
+  *Reversed Transfers Without Credit-Back* checks both walk the chain
+  via this FK and miss the entire chain when it's NULL.
+- **`origin` left at its default `internal_initiated` for force-posts** —
+  AR's **GL vs Fed Master Drift** check separates operator-initiated
+  from Fed-forced drift via this column. A Fed force-post tagged
+  `internal_initiated` reads as a normal posting and the drift check
+  under-fires. The check is silent — you only notice when reconciliation
+  shows up off-by-Fed-volume.
+- **`control_account_id` left NULL on a sub-ledger row** — the row is
+  treated as a top-level / ledger account. Sub-ledger drift roll-up to
+  the parent ledger silently drops the row's amount; the Drift KPI
+  reads low.
+- **`status` left at default `success` on a failed leg** — drift math
+  includes the failed amount, drift KPI fires falsely, alert fatigue.
+- **`is_internal` set wrong (e.g., `TRUE` for a Fed account)** — the
+  external-rows scope filter on PR's reconciliation tab pulls Fed rows
+  into the merchant view. *Show Only External* toggles do the wrong
+  thing.
+- **`account_name`, `memo`** — display only; no functional consequence,
+  but tooltips and tables show NULL/empty cells.
+- **`external_system` left NULL for an `external_txn` row** — the PR
+  Payment Reconciliation tab's *External System* filter pivot collapses
+  to "(empty)"; analysts can't slice by clearing system.
+
+If your ETL writes a column and the dashboard goes dark, this list is
+the first place to look — the symptom-to-column mapping is rarely 1:1
+because checks compose.
+
 ---
 
 ## Table 2 — `daily_balances`
@@ -169,6 +270,24 @@ CREATE TABLE daily_balances (
 CREATE INDEX idx_daily_balances_date    ON daily_balances(balance_date);
 CREATE INDEX idx_daily_balances_control ON daily_balances(control_account_id, balance_date);
 ```
+
+### What breaks if you skip a column
+
+- **`balance` populated incorrectly (or the row missing entirely on a
+  given date)** — the drift check has nothing to compare the
+  recomputed balance against. Drift KPI either reads 0 (row missing)
+  or fires for every account that day (stored balance defaults to 0
+  and recomputed balance is the day's net).
+- **`control_account_id` left NULL on a sub-ledger row** — same
+  consequence as on `transactions`: the row is treated as top-level,
+  drift roll-up drops it.
+- **`metadata.limits` not populated on the relevant ledger rows** —
+  the AR limit-breach KPI reads 0 not because nothing breached but
+  because no limits exist to breach. Silent failure — operations
+  thinks the bank's outflow caps are healthy when they're actually
+  unenforced.
+- **Daily snapshots missing for a date** — the drift timeline shows a
+  gap; aging buckets compute against the wrong "as of" date.
 
 ---
 
@@ -265,6 +384,13 @@ WHERE JSON_EXISTS(metadata, '$.merchant_account_id');
 | `merchant_type` | string | Filter / segment by merchant type (`franchise` / `independent` / `cart`). |
 | `settlement_id` | string | Chain to which settlement transferred this sale. |
 | `taxes`, `tips`, `discount_percentage` | string (numeric) | Optional sales metadata. |
+
+#### On `transactions` rows where `transfer_type = 'settlement'` (PR settlement aggregates)
+
+| Key | Type | Why it matters |
+|---|---|---|
+| `settlement_type` | string | `daily` / `weekly` / `monthly` — drives the merchant-cadence pivot on the Settlements sheet and the "is yesterday's batch overdue?" logic in *Did All Merchants Get Paid Yesterday*. |
+| `sale_count` | string (numeric) | How many sales rolled into this settlement. Drives the per-settlement sale-count column and the *Sale ↔ Settlement Mismatch* check's denominator. |
 
 #### On `transactions` rows where `transfer_type = 'payment'` (PR merchant payouts)
 
@@ -532,6 +658,28 @@ SELECT
 FROM fed_feed.statement_lines f
 WHERE f.statement_date = CURRENT_DATE - 1;
 ```
+
+---
+
+## Going deeper — Data Integration Handbook walkthroughs
+
+The walkthroughs below convert this contract into task-shaped guides.
+
+- [How do I populate `transactions` from my core banking system?](walkthroughs/etl/how-do-i-populate-transactions.md) —
+  the canonical mapping walkthrough.
+- [How do I prove my ETL is working before going live?](walkthroughs/etl/how-do-i-prove-my-etl-is-working.md) —
+  pre-deploy validation invariants (net-to-zero, drift recompute,
+  no orphan parent chains) + a "what dashboard you should see"
+  checklist.
+- [How do I tag a force-posted external transfer correctly?](walkthroughs/etl/how-do-i-tag-a-force-posted-transfer.md) —
+  the `origin` field + `parent_transfer_id` chain mechanics.
+- [How do I add a metadata key without breaking the dashboards?](walkthroughs/etl/how-do-i-add-a-metadata-key.md) —
+  the extension contract.
+- [What do I do when the demo passes but my prod data fails?](walkthroughs/etl/what-do-i-do-when-demo-passes-but-prod-fails.md) —
+  symptom-organized debugging recipes.
+
+The full landing page lives at `docs/handbook/etl.md` (lands in
+H.8.5.E).
 
 ---
 
