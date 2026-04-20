@@ -17,10 +17,10 @@ reading a scenario from outside your own track is encouraged.
 
 | Track | Team | Dashboard | Where to start |
 |---|---|---|---|
-| [Accounting](for-accounting/) | GL reconciliation (~4 people) | Account Reconciliation (AR) | [Why this exists](for-accounting/00-why-this-exists.md) → [Dashboard literacy](for-accounting/01-dashboard-literacy.md) → scenarios 1 + 2 |
-| [Customer Service](for-customer-service/) | Merchant support (~2 people) | Payment Reconciliation (PR) | [Why this exists](for-customer-service/00-why-this-exists.md) → [Dashboard literacy](for-accounting/01-dashboard-literacy.md) → scenario 3 |
-| [Developers](for-developers/) | Tool ownership + ETL (~10 people) | Both | [Why this exists](for-developers/00-why-this-exists.md) → the `../quicksight` ETL handbook |
-| [Product Owner](for-product-owner/) | Presenter / train-the-trainer (1 person) | Both | [How to present this](for-product-owner/00-how-to-present-this.md) |
+| [Accounting](for-accounting/) | GL reconciliation| Account Reconciliation (AR) | [Why this exists](for-accounting/00-why-this-exists.md) → [Dashboard literacy](for-accounting/01-dashboard-literacy.md) → scenarios 1 + 2 |
+| [Customer Service](for-customer-service/) | Merchant support| Payment Reconciliation (PR) | [Why this exists](for-customer-service/00-why-this-exists.md) → [Dashboard literacy](for-accounting/01-dashboard-literacy.md) → scenario 3 |
+| [Developers](for-developers/) | Tool ownership + ETL | Both | [Why this exists](for-developers/00-why-this-exists.md) → the `../quicksight` ETL handbook |
+| [Product Owner](for-product-owner/) | Presenter / train-the-trainer | Both | [How to present this](for-product-owner/00-how-to-present-this.md) |
 
 ## Background concepts
 
