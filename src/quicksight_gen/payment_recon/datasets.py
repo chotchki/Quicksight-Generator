@@ -573,17 +573,34 @@ WHERE p.payment_amount <> s.settlement_amount"""
 
 
 def build_unmatched_external_txns_dataset(cfg: Config) -> DataSet:
+    # Phase G.9.11: reads from shared `transactions`. ext_txn legs that
+    # have no linked payment (no payment leg whose metadata names this
+    # external_transaction_id). LEFT JOIN to a payment-per-ext_txn
+    # subquery; WHERE p.ext_txn_id IS NULL surfaces the unmatched.
     sql = f"""\
 SELECT
-    transaction_id,
-    external_system,
-    external_amount,
-    merchant_id,
-    transaction_date,
-    status,
-    days_outstanding,
-{_aging_bucket_case('days_outstanding')}
-FROM pr_unmatched_external_txns"""
+    JSON_VALUE(t.metadata, '$.external_transaction_id')             AS transaction_id,
+    t.external_system                                               AS external_system,
+    t.amount                                                        AS external_amount,
+    JSON_VALUE(t.metadata, '$.merchant_id')                         AS merchant_id,
+    t.posted_at                                                     AS transaction_date,
+    JSON_VALUE(t.metadata, '$.status')                              AS status,
+    (CURRENT_DATE - t.posted_at::date)                              AS days_outstanding,
+{_aging_bucket_case('CURRENT_DATE - t.posted_at::date')}
+FROM transactions t
+LEFT JOIN (
+    SELECT DISTINCT
+        JSON_VALUE(metadata, '$.external_transaction_id')           AS ext_txn_id
+    FROM transactions
+    WHERE transfer_type      = 'payment'
+      AND account_type       = 'merchant_dda'
+      AND control_account_id = 'pr-merchant-ledger'
+      AND JSON_VALUE(metadata, '$.external_transaction_id') IS NOT NULL
+) p ON p.ext_txn_id = JSON_VALUE(t.metadata, '$.external_transaction_id')
+WHERE t.transfer_type      = 'external_txn'
+  AND t.account_type       = 'external_counter'
+  AND t.control_account_id = 'pr-merchant-ledger'
+  AND p.ext_txn_id IS NULL"""
     return build_dataset(
         cfg, cfg.prefixed("unmatched-external-txns-dataset"),
         "Unmatched External Transactions", "unmatched-external-txns",
