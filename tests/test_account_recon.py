@@ -48,36 +48,123 @@ def ar_sql() -> str:
     return generate_demo_sql(ANCHOR)
 
 
+def _parse_balanced_rows(body: str) -> list[str]:
+    """Split a VALUES body into rows respecting nested parens (metadata
+    JSON may contain commas; the row tokenizer must walk parens depth)."""
+    rows: list[str] = []
+    depth = 0
+    start = None
+    for i, ch in enumerate(body):
+        if ch == "(" and depth == 0:
+            start = i
+            depth = 1
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                rows.append(body[start + 1:i])
+    return rows
+
+
 @pytest.fixture()
 def ar_parsed(ar_sql: str) -> dict[str, list[str]]:
-    """Parse ar_sql into table → list of parenthesised value-row strings."""
+    """Parse ar_sql into table → list of parenthesised value-row strings.
+
+    After v3.0.0 the per-scope daily-balance tables are gone; ledger and
+    sub-ledger snapshots both live in the unified ``daily_balances`` table.
+    For backward-compat with v2-era index-based assertions this fixture
+    projects ``ar_ledger_daily_balances`` and ``ar_subledger_daily_balances``
+    from ``daily_balances`` rows (control_account_id NULL = ledger row).
+    """
     result: dict[str, list[str]] = {}
     for m in re.finditer(
-        r"INSERT INTO (ar_\w+) \([^)]+\) VALUES\n(.*?);",
+        r"INSERT INTO (ar_\w+|daily_balances) \([^)]+\) VALUES\n(.*?);",
         ar_sql,
         re.DOTALL,
     ):
         table = m.group(1)
         body = m.group(2)
-        rows = re.findall(r"\(([^)]+)\)", body)
-        result[table] = rows
+        result[table] = re.findall(r"\(([^)]+)\)", body)
+
+    # Project legacy daily-balance projections: account_id, balance_date, balance.
+    # daily_balances cols: account_id 0, account_name 1, control_account_id 2,
+    # account_type 3, is_internal 4, balance_date 5, balance 6, metadata 7.
+    ledger: list[str] = []
+    subledger: list[str] = []
+    for row in result.get("daily_balances", []):
+        parts = [p.strip() for p in row.split(",")]
+        proj = f"{parts[0]}, {parts[5]}, {parts[6]}"
+        if parts[2] == "NULL":
+            ledger.append(proj)
+        else:
+            subledger.append(proj)
+    result["ar_ledger_daily_balances"] = ledger
+    result["ar_subledger_daily_balances"] = subledger
     return result
 
 
 @pytest.fixture()
 def unified_parsed(ar_sql: str) -> dict[str, list[str]]:
-    """Parse unified transfer + posting tables from the AR seed SQL."""
-    result: dict[str, list[str]] = {}
-    for m in re.finditer(
-        r"INSERT INTO (transfer|posting) \([^)]+\) VALUES\n(.*?);",
-        ar_sql,
-        re.DOTALL,
-    ):
-        table = m.group(1)
-        body = m.group(2)
-        rows = re.findall(r"\(([^)]+)\)", body)
-        result[table] = rows
-    return result
+    """Project legacy ``transfer`` + ``posting`` shapes from the unified
+    ``transactions`` table (dropped in v3.0.0).
+
+    Posting projection (cols 0..6): posting_id, transfer_id,
+    ledger_account_id, subledger_account_id, signed_amount, posted_at,
+    status — same indices the v2-era tests reach into.
+
+    Transfer projection (cols 0..6): transfer_id, parent_transfer_id,
+    transfer_type, origin, amount, NULL, first_posted_at — one row per
+    distinct transfer_id, derived from the first posting encountered.
+    """
+    m = re.search(
+        r"INSERT INTO transactions \([^)]+\) VALUES\n(.*?);",
+        ar_sql, re.DOTALL,
+    )
+    if not m:
+        return {"posting": [], "transfer": []}
+    txns = _parse_balanced_rows(m.group(1))
+
+    postings: list[str] = []
+    transfers: list[str] = []
+    seen: set[str] = set()
+    for row in txns:
+        parts = [p.strip() for p in row.split(",")]
+        # transactions cols (index): 0 transaction_id, 1 transfer_id,
+        # 2 parent_transfer_id, 3 transfer_type, 4 origin, 5 account_id,
+        # 6 account_name, 7 control_account_id, 8 account_type, 9 is_internal,
+        # 10 signed_amount, 11 amount, 12 status, 13 posted_at.
+        txn_id = parts[0]
+        xfer_id = parts[1]
+        parent = parts[2]
+        ttype = parts[3]
+        origin = parts[4]
+        account_id = parts[5]
+        control = parts[7]
+        signed = parts[10]
+        amount = parts[11]
+        status = parts[12]
+        posted = parts[13]
+
+        # Direct ledger postings have control_account_id NULL on the row's
+        # account; sub-ledger postings carry control = parent ledger.
+        if control == "NULL":
+            ledger_id = account_id
+            sub_id = "NULL"
+        else:
+            ledger_id = control
+            sub_id = account_id
+        postings.append(
+            f"{txn_id}, {xfer_id}, {ledger_id}, {sub_id}, {signed}, {posted}, {status}"
+        )
+
+        if xfer_id not in seen:
+            seen.add(xfer_id)
+            transfers.append(
+                f"{xfer_id}, {parent}, {ttype}, {origin}, {amount}, NULL, {posted}"
+            )
+
+    return {"posting": postings, "transfer": transfers}
 
 
 class TestDemoDeterminism:
@@ -1794,11 +1881,6 @@ class TestSeedSqlStructure:
             "ar_ledger_accounts",
             "ar_subledger_accounts",
             "ar_ledger_transfer_limits",
-            "ar_ledger_daily_balances",
-            "ar_subledger_daily_balances",
-            "transfer",
-            "posting",
-            # Phase G shared base layer (dual-write).
             "transactions",
             "daily_balances",
         }
@@ -1808,21 +1890,15 @@ class TestSeedSqlStructure:
         for m in re.finditer(r"INSERT INTO (\w+)", ar_sql):
             positions.setdefault(m.group(1), m.start())
         assert positions["ar_ledger_accounts"] < positions["ar_subledger_accounts"]
-        assert (
-            positions["ar_ledger_accounts"]
-            < positions["ar_ledger_daily_balances"]
-        )
-        assert (
-            positions["ar_subledger_accounts"]
-            < positions["ar_subledger_daily_balances"]
-        )
+        assert positions["ar_ledger_accounts"] < positions["daily_balances"]
+        assert positions["ar_subledger_accounts"] < positions["daily_balances"]
         assert (
             positions["ar_ledger_accounts"]
             < positions["ar_ledger_transfer_limits"]
         )
-        # Unified tables: transfer before posting, both after ar_subledger_accounts
-        assert positions["ar_subledger_accounts"] < positions["transfer"]
-        assert positions["transfer"] < positions["posting"]
+        assert positions["ar_subledger_accounts"] < positions["transactions"]
+        # transactions reference ar_subledger_accounts; daily_balances does too.
+        assert positions["transactions"] < positions["daily_balances"]
 
 
 # ---------------------------------------------------------------------------
@@ -1840,11 +1916,9 @@ class TestSchemaSql:
         for table in (
             "ar_ledger_accounts",
             "ar_subledger_accounts",
-            "ar_ledger_daily_balances",
-            "ar_subledger_daily_balances",
             "ar_ledger_transfer_limits",
-            "transfer",
-            "posting",
+            "transactions",
+            "daily_balances",
         ):
             assert f"CREATE TABLE {table}" in schema_sql
 
@@ -1863,15 +1937,15 @@ class TestSchemaSql:
             assert f"CREATE VIEW {view}" in schema_sql
 
     def test_transfer_type_column(self, schema_sql):
-        """transfer table must carry the transfer_type column."""
+        """transactions table must carry the transfer_type column."""
         m = re.search(
-            r"CREATE TABLE transfer \((.*?)\);",
+            r"CREATE TABLE transactions \((.*?)\);",
             schema_sql,
             re.DOTALL,
         )
-        assert m, "transfer CREATE TABLE missing"
+        assert m, "transactions CREATE TABLE missing"
         assert "transfer_type" in m.group(1), (
-            "transfer.transfer_type column missing"
+            "transactions.transfer_type column missing"
         )
 
 
@@ -2774,5 +2848,8 @@ class TestCli:
         )
         assert result.exit_code == 0, result.output
         content = out.read_text()
-        assert "INSERT INTO pr_merchants" in content
-        assert "INSERT INTO ar_ledger_accounts" in content
+        # Both seeds insert into the shared transactions / ar_*_accounts tables;
+        # PR-only ledger marker + AR-only limits table prove --all stitched both.
+        assert "INSERT INTO transactions" in content
+        assert "pr-merchant-ledger" in content  # PR-only ledger account
+        assert "INSERT INTO ar_ledger_transfer_limits" in content  # AR-only

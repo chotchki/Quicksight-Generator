@@ -1,15 +1,20 @@
 -- QuickSight Demo Schema
--- Target: PostgreSQL 12+
+-- Target: PostgreSQL 17+ (SQL/JSON path functions; portable subset only)
 --
 -- Defines the tables and views that the QuickSight dataset SQL queries
 -- run against.  The DROP IF EXISTS cascade at the top makes this script
 -- idempotent — safe to re-run.
 --
--- Tables are prefixed `pr_` (Payment Recon) to share the `public` schema
--- with the Account Recon app's `ar_`-prefixed tables (added in Phase 3).
+-- Both apps (Payment Recon + Account Recon) feed the shared
+-- `transactions` + `daily_balances` base layer.  AR-specific dimension
+-- tables (`ar_ledger_accounts`, `ar_subledger_accounts`,
+-- `ar_ledger_transfer_limits`) carry the canonical account hierarchy
+-- and per-type limit configuration that the views read against.
 
 -- -------------------------------------------------------------------
--- Drop legacy unprefixed objects (pre-v0.4.0 installations)
+-- Drop legacy objects (pre-v3.0.0 installations: unprefixed pre-v0.4
+-- tables, the `pr_*` per-app tables, and the AR-only `transfer` /
+-- `posting` tables that pre-dated the unified base layer).
 -- -------------------------------------------------------------------
 
 DROP VIEW  IF EXISTS payment_recon_view    CASCADE;
@@ -22,10 +27,6 @@ DROP TABLE IF EXISTS external_transactions CASCADE;
 DROP TABLE IF EXISTS merchants             CASCADE;
 DROP TABLE IF EXISTS late_thresholds       CASCADE;
 
--- -------------------------------------------------------------------
--- Drop current prefixed objects (safe to re-run)
--- -------------------------------------------------------------------
-
 DROP VIEW  IF EXISTS pr_payment_recon_view           CASCADE;
 DROP VIEW  IF EXISTS pr_sale_settlement_mismatch     CASCADE;
 DROP VIEW  IF EXISTS pr_settlement_payment_mismatch  CASCADE;
@@ -36,177 +37,9 @@ DROP TABLE IF EXISTS pr_settlements           CASCADE;
 DROP TABLE IF EXISTS pr_external_transactions CASCADE;
 DROP TABLE IF EXISTS pr_merchants             CASCADE;
 
--- -------------------------------------------------------------------
--- Tables
--- -------------------------------------------------------------------
-
-CREATE TABLE pr_merchants (
-    merchant_id   VARCHAR(100) PRIMARY KEY,
-    merchant_name VARCHAR(255) NOT NULL,
-    merchant_type VARCHAR(50)  NOT NULL,   -- franchise | independent | cart
-    location_id   VARCHAR(100) NOT NULL,
-    created_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    status        VARCHAR(50)  NOT NULL DEFAULT 'active'
-);
-
-CREATE TABLE pr_external_transactions (
-    transaction_id   VARCHAR(100)   PRIMARY KEY,
-    external_system  VARCHAR(100)   NOT NULL,
-    external_amount  DECIMAL(12,2)  NOT NULL,
-    record_count     INTEGER        NOT NULL DEFAULT 0,
-    transaction_date TIMESTAMP      NOT NULL,
-    status           VARCHAR(50)    NOT NULL,
-    merchant_id      VARCHAR(100)   NOT NULL REFERENCES pr_merchants(merchant_id)
-);
-
-CREATE TABLE pr_settlements (
-    settlement_id          VARCHAR(100)   PRIMARY KEY,
-    merchant_id            VARCHAR(100)   NOT NULL REFERENCES pr_merchants(merchant_id),
-    settlement_type        VARCHAR(50)    NOT NULL,
-    settlement_amount      DECIMAL(12,2)  NOT NULL,
-    settlement_date        TIMESTAMP      NOT NULL,
-    settlement_status      VARCHAR(50)    NOT NULL,
-    sale_count             INTEGER        NOT NULL DEFAULT 0
-);
-
-CREATE TABLE pr_sales (
-    sale_id                 VARCHAR(100)   PRIMARY KEY,
-    merchant_id             VARCHAR(100)   NOT NULL REFERENCES pr_merchants(merchant_id),
-    location_id             VARCHAR(100)   NOT NULL,
-    amount                  DECIMAL(12,2)  NOT NULL,
-    sale_type               VARCHAR(10)    NOT NULL DEFAULT 'sale'
-        CHECK (sale_type IN ('sale', 'refund')),
-    payment_method          VARCHAR(50)    NOT NULL DEFAULT 'card',
-    sale_timestamp          TIMESTAMP      NOT NULL,
-    card_brand              VARCHAR(50),
-    card_last_four          VARCHAR(4),
-    reference_id            VARCHAR(100),
-    metadata                TEXT,
-    settlement_id           VARCHAR(100)   REFERENCES pr_settlements(settlement_id),
-    -- Optional sales metadata (SPEC 2.2).  Declared adjacent to the sales
-    -- dataset SQL in code; keep this DDL in sync with OPTIONAL_SALE_METADATA.
-    taxes                   DECIMAL(12,2),
-    tips                    DECIMAL(12,2),
-    discount_percentage     DECIMAL(5,2),
-    cashier                 VARCHAR(100)
-);
-
-CREATE TABLE pr_payments (
-    payment_id              VARCHAR(100)   PRIMARY KEY,
-    settlement_id           VARCHAR(100)   NOT NULL REFERENCES pr_settlements(settlement_id),
-    merchant_id             VARCHAR(100)   NOT NULL REFERENCES pr_merchants(merchant_id),
-    payment_amount          DECIMAL(12,2)  NOT NULL,
-    payment_date            TIMESTAMP      NOT NULL,
-    payment_status          VARCHAR(50)    NOT NULL,
-    is_returned             VARCHAR(10)    NOT NULL DEFAULT 'false',
-    return_reason           VARCHAR(255),
-    external_transaction_id VARCHAR(100)   REFERENCES pr_external_transactions(transaction_id),
-    payment_method          VARCHAR(50)    NOT NULL DEFAULT 'card'
-);
-
--- -------------------------------------------------------------------
--- Indexes
--- -------------------------------------------------------------------
-
-CREATE INDEX idx_pr_sales_merchant    ON pr_sales(merchant_id);
-CREATE INDEX idx_pr_sales_location    ON pr_sales(location_id);
-CREATE INDEX idx_pr_sales_timestamp   ON pr_sales(sale_timestamp);
-CREATE INDEX idx_pr_sales_settlement  ON pr_sales(settlement_id);
-
-CREATE INDEX idx_pr_settlements_merchant ON pr_settlements(merchant_id);
-
-CREATE INDEX idx_pr_payments_settlement ON pr_payments(settlement_id);
-CREATE INDEX idx_pr_payments_merchant   ON pr_payments(merchant_id);
-CREATE INDEX idx_pr_payments_ext_txn    ON pr_payments(external_transaction_id);
-
-CREATE INDEX idx_pr_ext_txn_system   ON pr_external_transactions(external_system);
-CREATE INDEX idx_pr_ext_txn_merchant ON pr_external_transactions(merchant_id);
-
--- -------------------------------------------------------------------
--- Reconciliation view
---
--- Compares internal payments against external transaction totals.
--- Referenced by the payment reconciliation dataset.
--- -------------------------------------------------------------------
-
-CREATE VIEW pr_payment_recon_view AS
-SELECT
-    et.transaction_id,
-    et.external_system,
-    et.external_amount,
-    COALESCE(SUM(p.payment_amount), 0)                        AS internal_total,
-    et.external_amount - COALESCE(SUM(p.payment_amount), 0)   AS difference,
-    CASE
-        WHEN et.external_amount = COALESCE(SUM(p.payment_amount), 0)
-            THEN 'matched'
-        WHEN (CURRENT_DATE - et.transaction_date::date) > 30
-            THEN 'late'
-        ELSE 'not_yet_matched'
-    END                                                        AS match_status,
-    COUNT(p.payment_id)                                        AS payment_count,
-    et.merchant_id,
-    et.transaction_date,
-    (CURRENT_DATE - et.transaction_date::date)                 AS days_outstanding
-FROM pr_external_transactions et
-LEFT JOIN pr_payments p      ON p.external_transaction_id = et.transaction_id
-GROUP BY et.transaction_id, et.external_system, et.external_amount,
-         et.merchant_id, et.transaction_date;
-
-
--- -------------------------------------------------------------------
--- Exception views (SPEC 2.4)
--- -------------------------------------------------------------------
-
--- Settlements whose amount doesn't equal the signed sum of their sales
--- (catches refund drift, seed-injected mismatches, and manual corrections).
-CREATE VIEW pr_sale_settlement_mismatch AS
-SELECT
-    s.settlement_id,
-    s.merchant_id,
-    s.settlement_amount,
-    COALESCE(SUM(sl.amount), 0)                               AS sales_sum,
-    s.settlement_amount - COALESCE(SUM(sl.amount), 0)         AS difference,
-    s.sale_count,
-    s.settlement_date,
-    (CURRENT_DATE - s.settlement_date::date)                  AS days_outstanding
-FROM pr_settlements s
-LEFT JOIN pr_sales sl ON sl.settlement_id = s.settlement_id
-GROUP BY s.settlement_id, s.merchant_id, s.settlement_amount,
-         s.sale_count, s.settlement_date
-HAVING s.settlement_amount <> COALESCE(SUM(sl.amount), 0);
-
--- Payments whose amount doesn't match their linked settlement.
-CREATE VIEW pr_settlement_payment_mismatch AS
-SELECT
-    p.payment_id,
-    p.settlement_id,
-    p.merchant_id,
-    p.payment_amount,
-    s.settlement_amount,
-    p.payment_amount - s.settlement_amount                    AS difference,
-    p.payment_date,
-    (CURRENT_DATE - p.payment_date::date)                     AS days_outstanding
-FROM pr_payments p
-JOIN pr_settlements s ON s.settlement_id = p.settlement_id
-WHERE p.payment_amount <> s.settlement_amount;
-
--- External transactions with no internal payment linked.
-CREATE VIEW pr_unmatched_external_txns AS
-SELECT
-    et.transaction_id,
-    et.external_system,
-    et.external_amount,
-    et.merchant_id,
-    et.transaction_date,
-    et.status,
-    (CURRENT_DATE - et.transaction_date::date)                AS days_outstanding
-FROM pr_external_transactions et
-LEFT JOIN pr_payments p ON p.external_transaction_id = et.transaction_id
-WHERE p.payment_id IS NULL;
-
 
 -- ===================================================================
--- Shared base layer (Phase G)
+-- Shared base layer
 --
 -- Two-table feed contract for both AR and PR.  Every money-movement
 -- leg lands in `transactions`; every (account, date) snapshot lands
@@ -221,10 +54,6 @@ WHERE p.payment_id IS NULL;
 --
 -- See docs/Schema_v3.md for the full feed contract, canonical
 -- account_type values, metadata key catalog, and ETL examples.
---
--- During the strangler migration (G.3 → G.10) the old tables (`ar_*`,
--- `pr_*`, `transfer`, `posting`) below this section stay populated by
--- dual-write.  Drop in G.10 once every dataset reads from here.
 -- ===================================================================
 
 DROP TABLE IF EXISTS daily_balances CASCADE;
@@ -366,28 +195,6 @@ CREATE TABLE ar_subledger_accounts (
     ledger_account_id    VARCHAR(100) NOT NULL REFERENCES ar_ledger_accounts(ledger_account_id)
 );
 
--- Stored daily final at the ledger-account level. Populated by the
--- ledger-account upstream feed.
-CREATE TABLE ar_ledger_daily_balances (
-    ledger_account_id VARCHAR(100)  NOT NULL REFERENCES ar_ledger_accounts(ledger_account_id),
-    balance_date      DATE          NOT NULL,
-    balance           DECIMAL(14,2) NOT NULL,
-    PRIMARY KEY (ledger_account_id, balance_date)
-);
-
--- Stored daily final at the sub-ledger-account level. Populated by the
--- sub-ledger-account upstream feed — may be a different system from the
--- ledger-balance feed, hence the two-level reconciliation.
-CREATE TABLE ar_subledger_daily_balances (
-    subledger_account_id VARCHAR(100)  NOT NULL REFERENCES ar_subledger_accounts(subledger_account_id),
-    balance_date         DATE          NOT NULL,
-    balance              DECIMAL(14,2) NOT NULL,
-    PRIMARY KEY (subledger_account_id, balance_date)
-);
-
--- ar_transactions is superseded by the unified transfer + posting tables
--- (Phase B). Legacy DROP IF EXISTS retained for migration safety.
-
 -- Ledger-defined per-type daily transfer limits. A sub-ledger account's
 -- daily outbound (debit) total for a given transfer_type may not exceed
 -- its ledger's limit for that type. Absence of a row for (ledger, type)
@@ -399,62 +206,7 @@ CREATE TABLE ar_ledger_transfer_limits (
     PRIMARY KEY (ledger_account_id, transfer_type)
 );
 
-CREATE INDEX idx_ar_subledger_accounts_ledger      ON ar_subledger_accounts(ledger_account_id);
-CREATE INDEX idx_ar_ledger_daily_balances_date     ON ar_ledger_daily_balances(balance_date);
-CREATE INDEX idx_ar_subledger_daily_balances_date  ON ar_subledger_daily_balances(balance_date);
-
-
--- ===================================================================
--- Unified transfer + posting (Phase B)
---
--- Both apps share these two tables. A transfer is a logical movement
--- of money; each transfer has one or more postings (double-entry legs)
--- that must net to zero for a healthy transfer. PR's chain-of-custody
--- (sale → settlement → payment → external_txn) is modeled as a tree
--- of transfers linked by parent_transfer_id. AR's existing transfers
--- map 1:1 onto the unified transfer table.
---
--- transfer_type carries app-specific vocabulary:
---   PR: sale, settlement, payment, external_txn
---   AR: ach, wire, internal, cash
--- ===================================================================
-
-CREATE TABLE transfer (
-    transfer_id        VARCHAR(100)   PRIMARY KEY,
-    parent_transfer_id VARCHAR(100)   REFERENCES transfer(transfer_id),
-    transfer_type      VARCHAR(30)    NOT NULL
-        CHECK (transfer_type IN (
-            'sale', 'settlement', 'payment', 'external_txn',
-            'ach', 'wire', 'internal', 'cash',
-            'funding_batch', 'fee', 'clearing_sweep'
-        )),
-    origin             VARCHAR(30)    NOT NULL DEFAULT 'internal_initiated'
-        CHECK (origin IN ('internal_initiated', 'external_force_posted')),
-    amount             DECIMAL(14,2)  NOT NULL,
-    status             VARCHAR(20)    NOT NULL DEFAULT 'posted'
-        CHECK (status IN ('posted', 'pending', 'failed', 'settled',
-                          'unsettled', 'returned', 'active', 'completed')),
-    created_at         TIMESTAMP      NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    memo               VARCHAR(255),
-    external_system    VARCHAR(100)
-);
-
-CREATE TABLE posting (
-    posting_id           VARCHAR(100)   PRIMARY KEY,
-    transfer_id          VARCHAR(100)   NOT NULL REFERENCES transfer(transfer_id),
-    ledger_account_id    VARCHAR(100)   NOT NULL REFERENCES ar_ledger_accounts(ledger_account_id),
-    subledger_account_id VARCHAR(100)   REFERENCES ar_subledger_accounts(subledger_account_id),
-    signed_amount        DECIMAL(14,2)  NOT NULL,
-    posted_at            TIMESTAMP      NOT NULL,
-    status               VARCHAR(20)    NOT NULL DEFAULT 'success'
-        CHECK (status IN ('success', 'failed'))
-);
-
-CREATE INDEX idx_transfer_parent     ON transfer(parent_transfer_id);
-CREATE INDEX idx_transfer_type       ON transfer(transfer_type);
-CREATE INDEX idx_posting_transfer    ON posting(transfer_id);
-CREATE INDEX idx_posting_ledger      ON posting(ledger_account_id, posted_at);
-CREATE INDEX idx_posting_subledger   ON posting(subledger_account_id, posted_at);
+CREATE INDEX idx_ar_subledger_accounts_ledger ON ar_subledger_accounts(ledger_account_id);
 
 
 -- Running Σ of successful postings per sub-ledger account, up to and

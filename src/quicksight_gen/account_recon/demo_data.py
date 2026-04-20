@@ -1754,27 +1754,6 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
                  [(lid, xtype, Decimal(lim))
                   for lid, xtype, lim in _LEDGER_LIMITS]),
 
-        _inserts("ar_ledger_daily_balances",
-                 ["ledger_account_id", "balance_date", "balance"],
-                 [(b["ledger_account_id"], b["balance_date"], b["balance"])
-                  for b in ledger_balances]),
-
-        _inserts("ar_subledger_daily_balances",
-                 ["subledger_account_id", "balance_date", "balance"],
-                 [(b["subledger_account_id"], b["balance_date"], b["balance"])
-                  for b in subledger_balances]),
-
-        _inserts("transfer",
-                 ["transfer_id", "parent_transfer_id", "transfer_type",
-                  "origin", "amount", "status", "created_at", "memo"],
-                 transfer_rows),
-
-        _inserts("posting",
-                 ["posting_id", "transfer_id", "ledger_account_id",
-                  "subledger_account_id", "signed_amount", "posted_at",
-                  "status"],
-                 posting_rows),
-
         _inserts("transactions",
                  ["transaction_id", "transfer_id", "parent_transfer_id",
                   "transfer_type", "origin", "account_id", "account_name",

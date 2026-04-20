@@ -582,7 +582,6 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
         ext_txns, payments, settlements, sales,
     )
 
-    # -- Phase G dual-write: shared transactions + daily_balances --
     shared_transaction_rows, shared_daily_balance_rows = (
         _derive_pr_shared_base_tables(
             transfer_rows, posting_rows, transfer_metadata, merchant_rows,
@@ -603,68 +602,6 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
                  ["subledger_account_id", "name", "is_internal",
                   "ledger_account_id"],
                  PR_SUBLEDGER_ACCOUNTS),
-
-        _inserts("pr_merchants",
-                 ["merchant_id", "merchant_name", "merchant_type",
-                  "location_id", "created_at", "status"],
-                 merchant_rows),
-
-        _inserts("pr_external_transactions",
-                 ["transaction_id", "external_system",
-                  "external_amount", "record_count", "transaction_date",
-                  "status", "merchant_id"],
-                 [(e["transaction_id"],
-                   e["external_system"], e["external_amount"],
-                   e["record_count"], e["transaction_date"],
-                   e["status"], e["merchant_id"])
-                  for e in ext_txns]),
-
-        _inserts("pr_settlements",
-                 ["settlement_id", "merchant_id", "settlement_type",
-                  "settlement_amount", "settlement_date", "settlement_status",
-                  "sale_count"],
-                 [(s["settlement_id"], s["merchant_id"], s["settlement_type"],
-                   s["settlement_amount"], s["settlement_date"],
-                   s["settlement_status"], s["sale_count"])
-                  for s in settlements]),
-
-        _inserts("pr_sales",
-                 ["sale_id", "merchant_id", "location_id", "amount",
-                  "sale_type", "payment_method",
-                  "sale_timestamp", "card_brand", "card_last_four",
-                  "reference_id", "metadata", "settlement_id",
-                  "taxes", "tips", "discount_percentage", "cashier"],
-                 [(s["sale_id"], s["merchant_id"], s["location_id"],
-                   s["amount"], s["sale_type"], s["payment_method"],
-                   s["sale_timestamp"], s["card_brand"],
-                   s["card_last_four"], s["reference_id"], s["metadata"],
-                   s["settlement_id"],
-                   s["taxes"], s["tips"], s["discount_percentage"],
-                   s["cashier"])
-                  for s in sales]),
-
-        _inserts("pr_payments",
-                 ["payment_id", "settlement_id", "merchant_id",
-                  "payment_amount", "payment_date", "payment_status",
-                  "is_returned", "return_reason", "external_transaction_id",
-                  "payment_method"],
-                 [(p["payment_id"], p["settlement_id"], p["merchant_id"],
-                   p["payment_amount"], p["payment_date"], p["payment_status"],
-                   p["is_returned"], p["return_reason"], p["ext_txn_id"],
-                   p["payment_method"])
-                  for p in payments]),
-
-        _inserts("transfer",
-                 ["transfer_id", "parent_transfer_id", "transfer_type",
-                  "origin", "amount", "status", "created_at", "memo",
-                  "external_system"],
-                 transfer_rows),
-
-        _inserts("posting",
-                 ["posting_id", "transfer_id", "ledger_account_id",
-                  "subledger_account_id", "signed_amount", "posted_at",
-                  "status"],
-                 posting_rows),
 
         _inserts("transactions",
                  ["transaction_id", "transfer_id", "parent_transfer_id",

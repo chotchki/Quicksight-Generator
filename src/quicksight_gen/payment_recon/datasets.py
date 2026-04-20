@@ -84,10 +84,11 @@ def build_datasource(cfg: Config) -> DataSource:
 # Optional sales metadata
 # ---------------------------------------------------------------------------
 
-# These are sourced from the same ``pr_sales`` table in demo mode. Production
-# databases without these columns will generate a SQL error on DIRECT_QUERY —
-# if that becomes a problem we can gate them behind a config flag, but SPEC 2.2
-# opts for a static declaration rather than runtime introspection.
+# These come from each sale row's JSON ``metadata`` column in demo mode.
+# Production databases whose sale rows don't carry these keys will generate
+# NULLs (JSON_VALUE returns NULL for missing paths) — if that becomes a
+# problem we can gate them behind a config flag, but SPEC 2.2 opts for a
+# static declaration rather than runtime introspection.
 #
 # Each tuple: (sql_column, sql_ddl_type, qs_type, filter_type, control_label)
 OPTIONAL_SALE_METADATA: list[tuple[str, str, str, str, str]] = [
