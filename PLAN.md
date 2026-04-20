@@ -949,8 +949,8 @@ Why a standalone phase rather than a sub-step of I.4: the fix touches generator 
 
 ### I.6.F — Sample output bundle
 
-- [ ] **`scripts/bake_sample_output.py`** — runs `quicksight-gen generate --all` against a checked-in `examples/config.yaml` (no real ARNs, demo-mode wiring), zips `out/`, drops at `dist/out-sample.zip`. Workflow runs this between build and github-release.
-- [ ] Decide whether `examples/config.yaml` ships in the wheel too (probably yes — gives evaluators a known-good starting point).
+- [x] **`scripts/bake_sample_output.py`** — runs `python -m quicksight_gen generate --all` against `examples/config.yaml` into a temp dir, zips to `dist/out-sample.zip` with the `out/` prefix preserved. Local smoke produced 39 entries, 86 KB.
+- [x] **`examples/config.yaml`** — placeholder ARNs (account `111122223333`, region `us-east-1`, theme `sasquatch-bank`); demo URL commented out. Lives at repo root; **does not ship in the wheel** — the sample bundle on each GitHub Release is the artifact evaluators consume, and source-from-GitHub callers find it under `examples/`. Re-evaluate if friction emerges.
 
 ### I.6.G — README + badges
 

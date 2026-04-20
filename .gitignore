@@ -27,6 +27,6 @@ coverage.xml
 # mkdocs
 site/
 
-config.yaml
+/config.yaml
 tests/e2e/screenshots/
 .claude/

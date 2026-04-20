@@ -1,0 +1,36 @@
+# Example QuickSight Generator configuration.
+#
+# All values here are placeholders — they are syntactically valid but do not
+# resolve to any real AWS resource. Use this file as a template:
+#
+#   1. Copy to config.yaml at the root of your working directory.
+#   2. Replace the account ID, region, datasource ARN, and principal ARNs
+#      with values from your AWS account.
+#   3. (Demo mode only) set demo_database_url to a Postgres 17+ connection
+#      string and omit datasource_arn — the generator will derive the ARN.
+#
+# This config is also what bakes the `out-sample.zip` bundle attached to each
+# GitHub Release: a known-good `generate --all` output that evaluators can
+# inspect without installing or running the tool.
+
+aws_account_id: "111122223333"
+aws_region: "us-east-1"
+
+# Pre-existing QuickSight datasource pointing at your warehouse.
+# Required for `deploy`; optional for `generate` (placeholders work fine).
+datasource_arn: "arn:aws:quicksight:us-east-1:111122223333:datasource/example-datasource"
+
+# Prefix for all generated resource IDs (default: qs-gen).
+resource_prefix: "qs-gen"
+
+# Theme preset (one of: default, sasquatch-bank, sasquatch-bank-ar).
+# `generate --all` resolves the AR app to `sasquatch-bank-ar` automatically;
+# this top-level preset applies to PR.
+theme_preset: "sasquatch-bank"
+
+# IAM principals granted permissions on every generated resource.
+principal_arns:
+  - "arn:aws:quicksight:us-east-1:111122223333:user/default/example-user"
+
+# Demo-mode Postgres URL (uncomment to drive `quicksight-gen demo apply`).
+# demo_database_url: "postgresql://user:password@host:5432/dbname"
