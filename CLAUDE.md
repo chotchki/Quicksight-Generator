@@ -227,7 +227,8 @@ Demo persona is **Sasquatch National Bank — Cash Management Suite (CMS)** — 
 - All resources tagged `ManagedBy: quicksight-gen`; `extra_tags` in config are merged in
 - `cleanup` uses that tag to enumerate managed resources and deletes anything not in the current `out/`
 - Every sheet has a plain-language description; every visual has a subtitle — the end customer is not technical. Coverage is enforced in unit + API e2e tests.
-- Clickable cells use `common/clickability.py`: accent-colored text = left-click drill; accent text on pale-tint background = right-click menu drill
+- Clickable cells use `common/clickability.py`: accent-colored text = left-click drill; accent text on pale-tint background = the cell also carries a right-click menu drill (use this style whenever a right-click action exists, even if a left-click is also wired)
+- **Drill direction convention** — left clicks move you LEFT, right clicks move you RIGHT. When wiring a new drill action on a row, pick the trigger by which sheet the drill points to relative to the source: deeper / further-down-the-pipeline / further-right-in-the-tab-order goes on `DATA_POINT_MENU` (right-click); back-toward-source goes on `DATA_POINT_CLICK` (left-click). Call out both clicks in the visual's subtitle when both are wired. Existing wirings that pre-date this rule are not retroactively flipped.
 
 ## Conventions
 

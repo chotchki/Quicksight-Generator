@@ -268,6 +268,37 @@ BALANCE_DRIFT_TIMELINES_ROLLUP_CONTRACT = DatasetContract(columns=[
     ColumnSpec("source_check", "STRING"),
 ])
 
+DAILY_STATEMENT_SUMMARY_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("account_id", "STRING"),
+    ColumnSpec("account_name", "STRING"),
+    ColumnSpec("account_level", "STRING"),
+    ColumnSpec("balance_date", "DATETIME"),
+    ColumnSpec("opening_balance", "DECIMAL"),
+    ColumnSpec("total_debits", "DECIMAL"),
+    ColumnSpec("total_credits", "DECIMAL"),
+    ColumnSpec("closing_balance_stored", "DECIMAL"),
+    ColumnSpec("closing_balance_recomputed", "DECIMAL"),
+    ColumnSpec("drift", "DECIMAL"),
+    ColumnSpec("drift_status", "STRING"),
+    ColumnSpec("leg_count", "INTEGER"),
+])
+
+DAILY_STATEMENT_TRANSACTIONS_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("transaction_id", "STRING"),
+    ColumnSpec("account_id", "STRING"),
+    ColumnSpec("account_name", "STRING"),
+    ColumnSpec("balance_date", "DATETIME"),
+    ColumnSpec("posted_at", "DATETIME"),
+    ColumnSpec("transfer_id", "STRING"),
+    ColumnSpec("transfer_type", "STRING"),
+    ColumnSpec("origin", "STRING"),
+    ColumnSpec("signed_amount", "DECIMAL"),
+    ColumnSpec("direction", "STRING"),
+    ColumnSpec("status", "STRING"),
+    ColumnSpec("memo", "STRING"),
+    ColumnSpec("counter_account_name", "STRING"),
+])
+
 
 # ---------------------------------------------------------------------------
 # Builders
@@ -700,6 +731,103 @@ FROM ar_balance_drift_timelines_rollup"""
     )
 
 
+def build_daily_statement_summary_dataset(cfg: Config) -> DataSet:
+    # One row per (account_id, balance_date) across every account in the
+    # unified base layer (AR and PR alike — I.4 north star: AR is the
+    # superset; a PR merchant DDA surfaces naturally when picked).
+    # `opening_balance` = prior day's stored balance (window LAG).
+    # `closing_balance_recomputed` = opening + Σ non-failed signed_amount
+    # posted on the day. `drift` = stored − recomputed; non-zero drift
+    # is the single invariant the handbook sheet surfaces visually.
+    sql = """\
+WITH account_days AS (
+    SELECT
+        db.account_id,
+        db.account_name,
+        db.control_account_id,
+        db.balance_date,
+        db.balance                                                 AS closing_balance_stored,
+        LAG(db.balance) OVER (
+            PARTITION BY db.account_id ORDER BY db.balance_date
+        )                                                          AS opening_balance
+    FROM daily_balances db
+),
+today_flows AS (
+    SELECT
+        t.account_id,
+        t.balance_date,
+        SUM(CASE WHEN t.signed_amount > 0 THEN t.signed_amount ELSE 0 END)
+                                                                   AS total_debits,
+        SUM(CASE WHEN t.signed_amount < 0 THEN -t.signed_amount ELSE 0 END)
+                                                                   AS total_credits,
+        SUM(t.signed_amount)                                        AS net_flow,
+        COUNT(*)                                                    AS leg_count
+    FROM transactions t
+    WHERE t.status <> 'failed'
+    GROUP BY t.account_id, t.balance_date
+)
+SELECT
+    ad.account_id,
+    ad.account_name,
+    CASE WHEN ad.control_account_id IS NULL
+         THEN 'Ledger' ELSE 'Sub-Ledger' END                       AS account_level,
+    ad.balance_date,
+    COALESCE(ad.opening_balance, 0)                                AS opening_balance,
+    COALESCE(f.total_debits, 0)                                    AS total_debits,
+    COALESCE(f.total_credits, 0)                                   AS total_credits,
+    ad.closing_balance_stored,
+    COALESCE(ad.opening_balance, 0) + COALESCE(f.net_flow, 0)      AS closing_balance_recomputed,
+    ad.closing_balance_stored
+        - (COALESCE(ad.opening_balance, 0) + COALESCE(f.net_flow, 0)) AS drift,
+    CASE WHEN ad.closing_balance_stored
+              - (COALESCE(ad.opening_balance, 0) + COALESCE(f.net_flow, 0)) = 0
+         THEN 'in_balance' ELSE 'drift' END                        AS drift_status,
+    COALESCE(f.leg_count, 0)                                        AS leg_count
+FROM account_days ad
+LEFT JOIN today_flows f
+    ON  f.account_id   = ad.account_id
+    AND f.balance_date = ad.balance_date"""
+    return build_dataset(
+        cfg, cfg.prefixed("ar-daily-statement-summary-dataset"),
+        "AR Daily Statement Summary", "ar-daily-statement-summary",
+        sql, DAILY_STATEMENT_SUMMARY_CONTRACT,
+    )
+
+
+def build_daily_statement_transactions_dataset(cfg: Config) -> DataSet:
+    # One row per leg, across every account-day in the unified base
+    # layer. QS sheet-local filters narrow to the selected
+    # (account_id, balance_date) slice.
+    # `counter_account_name` aggregates the account_names of the other
+    # legs in the same transfer via STRING_AGG (SQL:2008, portable).
+    sql = """\
+SELECT
+    t.transaction_id,
+    t.account_id,
+    t.account_name,
+    t.balance_date,
+    t.posted_at,
+    t.transfer_id,
+    t.transfer_type,
+    t.origin,
+    t.signed_amount,
+    CASE WHEN t.signed_amount > 0 THEN 'Debit' ELSE 'Credit' END   AS direction,
+    t.status,
+    t.memo,
+    (
+        SELECT STRING_AGG(DISTINCT other.account_name, ', ')
+        FROM transactions other
+        WHERE other.transfer_id    = t.transfer_id
+          AND other.transaction_id <> t.transaction_id
+    )                                                              AS counter_account_name
+FROM transactions t"""
+    return build_dataset(
+        cfg, cfg.prefixed("ar-daily-statement-transactions-dataset"),
+        "AR Daily Statement Transactions", "ar-daily-statement-transactions",
+        sql, DAILY_STATEMENT_TRANSACTIONS_CONTRACT,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Convenience
 # ---------------------------------------------------------------------------
@@ -727,4 +855,6 @@ def build_all_datasets(cfg: Config) -> list[DataSet]:
         build_expected_zero_eod_rollup_dataset(cfg),
         build_two_sided_post_mismatch_rollup_dataset(cfg),
         build_balance_drift_timelines_rollup_dataset(cfg),
+        build_daily_statement_summary_dataset(cfg),
+        build_daily_statement_transactions_dataset(cfg),
     ]

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from quicksight_gen.account_recon.constants import (
     DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
+    DS_AR_DAILY_STATEMENT_SUMMARY,
     DS_AR_GL_VS_FED_MASTER_DRIFT,
     DS_AR_LEDGER_ACCOUNTS,
     DS_AR_LEDGER_BALANCE_DRIFT,
@@ -33,6 +34,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     SHEET_AR_BALANCES,
+    SHEET_AR_DAILY_STATEMENT,
     SHEET_AR_EXCEPTIONS,
     SHEET_AR_TRANSACTIONS,
     SHEET_AR_TRANSFERS,
@@ -49,11 +51,16 @@ from quicksight_gen.common.models import (
     Filter,
     FilterControl,
     FilterCrossSheetControl,
+    FilterDateTimePickerControl,
     FilterDropDownControl,
     FilterGroup,
     FilterScopeConfiguration,
+    ParameterControl,
+    ParameterDateTimePickerControl,
+    ParameterDropDownControl,
     SelectedSheetsFilterScopeConfiguration,
     SheetVisualScopingConfiguration,
+    TimeEqualityFilter,
     TimeRangeFilter,
 )
 
@@ -470,6 +477,9 @@ def build_filter_groups(cfg: Config) -> list[FilterGroup]:
             DS_AR_TRANSACTIONS,
             "is_failed",
         ),
+        # Phase I.2 — Daily Statement sheet pickers (account + date)
+        _daily_statement_account_filter_group(),
+        _daily_statement_date_filter_group(),
     ]
 
 
@@ -586,4 +596,121 @@ def build_exceptions_controls(cfg: Config) -> list[FilterControl]:
         _subledger_account_control("exceptions"),
         _transfer_type_control("exceptions"),
         _origin_control("exceptions"),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Daily Statement (Phase I.2) — account + date pickers
+# ---------------------------------------------------------------------------
+
+def _daily_statement_account_filter_group() -> FilterGroup:
+    """Account picker scoped to the Daily Statement sheet.
+
+    Parameter-bound to ``pArDsAccountId`` so both the SINGLE_SELECT
+    dropdown and the right-click drill from the Balances sub-ledger
+    table route through the same parameter. CrossDataset=ALL_DATASETS
+    so the filter applies to both the summary (KPIs) and transactions
+    (detail table) datasets — both expose ``account_id``.
+
+    NullOption is NON_NULLS_ONLY: there is no "all accounts" statement
+    that makes sense (KPIs would aggregate across unrelated accounts).
+    On first load, before the user picks an account or arrives via the
+    right-click drill, every visual renders empty — the controls panel
+    cues the next move.
+    """
+    return FilterGroup(
+        FilterGroupId="fg-ar-ds-account",
+        CrossDataset="ALL_DATASETS",
+        ScopeConfiguration=_selected_sheets_scope([SHEET_AR_DAILY_STATEMENT]),
+        Status="ENABLED",
+        Filters=[
+            Filter(
+                CategoryFilter=CategoryFilter(
+                    FilterId="filter-ar-ds-account",
+                    Column=ColumnIdentifier(
+                        DataSetIdentifier=DS_AR_DAILY_STATEMENT_SUMMARY,
+                        ColumnName="account_id",
+                    ),
+                    Configuration=CategoryFilterConfiguration(
+                        CustomFilterConfiguration={
+                            "MatchOperator": "EQUALS",
+                            "ParameterName": "pArDsAccountId",
+                            "NullOption": "NON_NULLS_ONLY",
+                        },
+                    ),
+                ),
+            ),
+        ],
+    )
+
+
+def _daily_statement_date_filter_group() -> FilterGroup:
+    """Single-day balance_date picker scoped to the Daily Statement sheet.
+
+    Parameter-bound to ``pArDsBalanceDate`` so both the SINGLE_VALUED
+    date picker and the right-click drill from Balances route through
+    the same parameter. The parameter declares a RollingDate default of
+    today, which the picker inherits on first load. SINGLE_VALUED date
+    pickers must pair with TimeEqualityFilter (TimeRangeFilter renders
+    broken in the UI).
+    """
+    return FilterGroup(
+        FilterGroupId="fg-ar-ds-balance-date",
+        CrossDataset="ALL_DATASETS",
+        ScopeConfiguration=_selected_sheets_scope([SHEET_AR_DAILY_STATEMENT]),
+        Status="ENABLED",
+        Filters=[
+            Filter(
+                TimeEqualityFilter=TimeEqualityFilter(
+                    FilterId="filter-ar-ds-balance-date",
+                    Column=ColumnIdentifier(
+                        DataSetIdentifier=DS_AR_DAILY_STATEMENT_SUMMARY,
+                        ColumnName="balance_date",
+                    ),
+                    ParameterName="pArDsBalanceDate",
+                    TimeGranularity="DAY",
+                ),
+            ),
+        ],
+    )
+
+
+def build_daily_statement_parameter_controls(cfg: Config) -> list[ParameterControl]:
+    """Daily Statement sheet pickers — bound to parameters, not filters.
+
+    QuickSight disables a regular FilterControl whose backing filter is
+    parameter-bound (the UI shows "this control was disabled because
+    the filter is using parameters"). The right widget for a parameter-
+    bound filter is a ParameterControl that writes the parameter
+    directly; the filter then responds to the parameter value.
+
+    Account dropdown values come from the daily-statement-summary
+    dataset's ``account_id`` column. The link query bypasses the
+    sheet's own parameter-bound filter, so users see every available
+    account on first load — not the empty slice that would otherwise
+    result from NullOption=NON_NULLS_ONLY.
+    """
+    del cfg
+    return [
+        ParameterControl(
+            Dropdown=ParameterDropDownControl(
+                ParameterControlId="ctrl-ar-ds-account",
+                Title="Account",
+                SourceParameterName="pArDsAccountId",
+                Type="SINGLE_SELECT",
+                SelectableValues={
+                    "LinkToDataSetColumn": {
+                        "DataSetIdentifier": DS_AR_DAILY_STATEMENT_SUMMARY,
+                        "ColumnName": "account_id",
+                    },
+                },
+            ),
+        ),
+        ParameterControl(
+            DateTimePicker=ParameterDateTimePickerControl(
+                ParameterControlId="ctrl-ar-ds-balance-date",
+                Title="Balance Date",
+                SourceParameterName="pArDsBalanceDate",
+            ),
+        ),
     ]

@@ -342,7 +342,7 @@ The persona tests Phase G's success: can a Data Integration Team member ETL upst
 
 ## Phase G carry-over
 
-Tech debt and follow-ups identified during Phase G have moved to **Phase J (queued)** below — see "Schema cleanup carry-over from Phase G" for PR-coexistence filters in AR views and drift-view PR-row leakage.
+Tech debt and follow-ups identified during Phase G have moved forward — see **Phase I.4** below for the PR/AR cross-visibility audit (supersedes the earlier "PR-coexistence filters" cleanup) and **Phase J (queued)** for the remaining schema-level follow-ups.
 
 ---
 
@@ -670,15 +670,15 @@ Two committed deliverables. The PR semantics test is the smaller, mechanical com
 The AR sibling shipped in commit `ddb247a` (29 tests across `TestKpiScope` + `TestPlantedRowsSurface`). PR has the same risk surface — KPI counts that drift from the dataset SQL underneath them — but no test catches it. Mirror the AR pattern.
 
 **Shape.**
-- File location: `tests/e2e/test_pr_kpi_semantics.py`. Same `pg_conn` fixture pattern as AR; same `pytestmark = [pytest.mark.e2e, pytest.mark.api]`.
-- **Class 1 — `TestKpiScope`.** For each PR Exceptions KPI, assert `COUNT(*)` of the dataset SQL (with any sheet-pinned filter applied) equals `COUNT(*)` of the semantic-scope SQL implied by the KPI subtitle. Checks to cover:
+- [ ] File location: `tests/e2e/test_pr_kpi_semantics.py`. Same `pg_conn` fixture pattern as AR; same `pytestmark = [pytest.mark.e2e, pytest.mark.api]`.
+- [ ] **Class 1 — `TestKpiScope`.** For each PR Exceptions KPI, assert `COUNT(*)` of the dataset SQL (with any sheet-pinned filter applied) equals `COUNT(*)` of the semantic-scope SQL implied by the KPI subtitle. Checks to cover:
   - Settlement Exceptions (`qs-gen-settlement-exceptions-dataset`)
   - Payment Returns (`qs-gen-payment-returns-dataset`)
   - Sale-Settlement Mismatch (`qs-gen-sale-settlement-mismatch-dataset`)
   - Settlement-Payment Mismatch (`qs-gen-settlement-payment-mismatch-dataset`)
   - Unmatched External Txns (`qs-gen-unmatched-external-txns-dataset`)
   - Payment Reconciliation tab KPIs that have a semantic scope (e.g., late-match count, days-outstanding strata).
-- **Class 2 — `TestScenarioCoverage`.** PR has no `_PLANT` constants — scenarios emerge from natural generator branching. Asserts here mirror the existing `TestScenarioCoverage` block in `tests/test_demo_data.py` (which already documents min row counts per scenario shape) but run against the deployed Postgres rather than the in-memory generator. Keeps the test file self-contained — don't share fixtures between unit and e2e layers.
+- [ ] **Class 2 — `TestScenarioCoverage`.** PR has no `_PLANT` constants — scenarios emerge from natural generator branching. Asserts here mirror the existing `TestScenarioCoverage` block in `tests/test_demo_data.py` (which already documents min row counts per scenario shape) but run against the deployed Postgres rather than the in-memory generator. Keeps the test file self-contained — don't share fixtures between unit and e2e layers.
 
 **AR equivalent — close it.** The AR semantics test is shipped and stable. Strike the line item from Phase I; the file itself stays as the reference implementation.
 
@@ -690,41 +690,41 @@ New AR sheet for *data-feed validation / sanity check*. Purpose: when the Data I
 
 ### I.2.A — Sheet shape (analysis + visuals)
 
-- **New sheet:** `SHEET_DAILY_STATEMENT = "sheet-daily-statement"` in `account_recon/constants.py`. Seventh sheet on the AR analysis (Getting Started / Balances / Transfers / Transactions / Exceptions / Daily Statement).
-- **Parameter controls** at the top:
+- [x] **New sheet:** `SHEET_DAILY_STATEMENT = "sheet-daily-statement"` in `account_recon/constants.py`. Seventh sheet on the AR analysis (Getting Started / Balances / Transfers / Transactions / Exceptions / Daily Statement).
+- [x] **Parameter controls** at the top:
   - `account_id` — single-select dropdown sourced from `ar_ledger_accounts` ∪ `ar_subledger_accounts` (or the unified account dim if I.2 ships after the unified-dim refactor).
   - `balance_date` — single-date picker, default = max balance_date in `daily_balances` for the selected account.
-- **KPI strip** (5 KPIs in one row): Opening Balance, Total Debits, Total Credits, Closing Balance (stored), Drift (stored − recomputed). Drift KPI uses the conditional-format pattern from AR Exceptions to flash red when non-zero.
-- **Transactions detail table:** every leg posted to the account on `balance_date`, sorted by `posted_at`. Columns: `posted_at`, `transfer_type`, `transfer_id`, `signed_amount`, `running_balance` (window function), `memo`, `metadata` extracts (counter-account from the matching leg, source key).
-- **Ledger-vs-recompute pair:** two side-by-side single-cell visuals — stored EOD balance from `daily_balances`, recomputed `Σ signed_amount` from `transactions` since account inception (or since prior reset). Side-by-side keeps the drift invariant visible row-by-row.
+- [x] **KPI strip** (5 KPIs in one row): Opening Balance, Total Debits, Total Credits, Closing Balance (stored), Drift (stored − recomputed). Drift KPI uses the conditional-format pattern from AR Exceptions to flash red when non-zero.
+- [x] **Transactions detail table:** every leg posted to the account on `balance_date`, sorted by `posted_at`. Columns: `posted_at`, `transfer_type`, `transfer_id`, `signed_amount`, `running_balance` (window function), `memo`, `metadata` extracts (counter-account from the matching leg, source key).
+- [x] **Ledger-vs-recompute pair:** two side-by-side single-cell visuals — stored EOD balance from `daily_balances`, recomputed `Σ signed_amount` from `transactions` since account inception (or since prior reset). Side-by-side keeps the drift invariant visible row-by-row.
 
 ### I.2.B — Datasets
 
-- **No new SQL shapes.** Rides entirely on existing `transactions` + `daily_balances`. Either (a) one new dataset that takes both parameters and returns one row per leg + one summary KPI row, or (b) two narrower datasets (KPI summary; transaction detail). Decide once visuals are scaffolded — split if the SQL grows past ~50 lines.
-- New dataset(s) follow the existing `DatasetContract` pattern in `account_recon/datasets.py`.
+- [x] **No new SQL shapes.** Rides entirely on existing `transactions` + `daily_balances`. Either (a) one new dataset that takes both parameters and returns one row per leg + one summary KPI row, or (b) two narrower datasets (KPI summary; transaction detail). Decide once visuals are scaffolded — split if the SQL grows past ~50 lines.
+- [x] New dataset(s) follow the existing `DatasetContract` pattern in `account_recon/datasets.py`.
 
 ### I.2.C — Test data
 
-- **Inventory existing demo coverage first.** Most account-days already have planted scenarios (drift, overdraft, sweep failures). Pick 3 worked examples for the handbook companion: one clean reconciling day, one drift day, one overdraft day. Add `TestScenarioCoverage` assertions confirming each shape exists in the deployed Postgres (not just the in-memory generator) — the unit-side coverage may not be enough if the new sheet exposes a corner the existing visuals don't.
-- **No new generator scenarios required** unless the inventory step finds a gap. If a gap exists, plant minimally — same `random.Random(42)` determinism rules; re-lock the SHA256 hash in `tests/test_demo_data.py`.
+- [x] **Inventory existing demo coverage first.** Most account-days already have planted scenarios (drift, overdraft, sweep failures). Pick 3 worked examples for the handbook companion: one clean reconciling day, one drift day, one overdraft day. Add `TestScenarioCoverage` assertions confirming each shape exists in the deployed Postgres (not just the in-memory generator) — the unit-side coverage may not be enough if the new sheet exposes a corner the existing visuals don't. → **Done in `tests/e2e/test_ar_daily_statement.py`**: clean=`gl-1010-cash-due-frb` day -1, drift=`cust-900-0001-bigfoot-brews` (+$200 from `_SUBLEDGER_DRIFT_PLANT`), overdraft=`cust-900-0002-sasquatch-sips` ($45k outbound from `_OVERDRAFT_PLANT`).
+- [x] **No new generator scenarios required** unless the inventory step finds a gap. If a gap exists, plant minimally — same `random.Random(42)` determinism rules; re-lock the SHA256 hash in `tests/test_demo_data.py`. → No gap found; existing plants cover all three worked examples.
 
 ### I.2.D — Test scripts at all levels
 
-- **Unit (`tests/test_account_recon.py`).** Sheet present in analysis, parameter controls wired, KPI strip + table + side-by-side visuals exist, dataset references resolve. `tests/test_dataset_contract.py` — new dataset contract(s) match the SQL projection.
-- **API e2e (`tests/e2e/test_ar_deployed_resources.py` + `test_ar_dataset_health.py`).** New dataset deployed; new sheet present in dashboard JSON; parameters declared correctly. New file or block for parameter-driven SQL — assert that running the dataset SQL with substituted parameter values returns expected row shapes (e.g., "for `gl-1850` on the latest balance_date, the leg count from the dataset matches the leg count from a direct `transactions` query with the same filters").
-- **Browser e2e (`tests/e2e/test_ar_sheet_visuals.py` or new `test_ar_daily_statement.py`).** Sheet renders. Default account + date populates KPIs and table. Changing the account parameter updates the visuals (poll for KPI value change). Changing the date updates the table row count. Drift KPI visible on the planted-drift account-day.
-- **Browser e2e — handbook-tracking sheet.** Capture screenshots for the companion walkthrough using the existing `scripts/screenshot_getting_started.py` pattern.
+- [x] **Unit (`tests/test_account_recon.py`).** Sheet present in analysis, parameter controls wired, KPI strip + table + side-by-side visuals exist, dataset references resolve. `tests/test_dataset_contract.py` — new dataset contract(s) match the SQL projection. Also covers the `TestDailyStatementFilters` class locking parameter-bound filter wiring + `ParameterControl` widget choice (added 2026-04-20 after the FilterControl-disabled regression).
+- [x] **API e2e (`tests/e2e/test_ar_deployed_resources.py` + `test_ar_dataset_health.py`).** New dataset deployed; new sheet present in dashboard JSON; parameters declared correctly. New file or block for parameter-driven SQL — assert that running the dataset SQL with substituted parameter values returns expected row shapes (e.g., "for `gl-1850` on the latest balance_date, the leg count from the dataset matches the leg count from a direct `transactions` query with the same filters"). → **Done:** conftest `ar_dataset_ids` includes the 2 new datasets (count=23); `test_ar_dataset_health.py::EXPECTED_COLUMNS` spot-checks summary (12 cols) + transactions (13 cols); `test_ar_dashboard_structure.py` asserts 6 sheets, `Daily Statement` visual count (6), 7 parameter declarations (adds `pArDsAccountId` + `pArDsBalanceDate`), 21 filter groups (adds `fg-ar-ds-account` + `fg-ar-ds-balance-date` + 4 I.3.A KPI-scope groups), 6 visual IDs on the new sheet. Parameter-driven SQL check lives in `tests/e2e/test_ar_daily_statement.py` (same three worked examples as I.2.C, executed directly against deployed Postgres).
+- [x] **Browser e2e (`tests/e2e/test_ar_sheet_visuals.py` or new `test_ar_daily_statement.py`).** Sheet renders. Default account + date populates KPIs and table. Changing the account parameter updates the visuals (poll for KPI value change). Changing the date updates the table row count. Drift KPI visible on the planted-drift account-day. → **Done (basic):** `test_ar_sheet_visuals.py` parametrized over `Daily Statement` covers visual count (6) + 6 expected titles; `test_ar_state_toggles.py` confirms `Account` + `Balance Date` parameter controls render in the sheet-controls panel. **Deferred (richer):** picking an account from the dropdown and asserting drift KPI flips to the planted +$200 — the helpers exist (`set_dropdown_value`, `wait_for_kpi_value_to_change`, `read_kpi_value`) but adds 30+ seconds of browser interaction; defer to I.2.E walkthrough screenshot capture (same flow, different verb).
+- [ ] **Browser e2e — handbook-tracking sheet.** Capture screenshots for the companion walkthrough using the existing `scripts/screenshot_getting_started.py` pattern.
 
 ### I.2.E — Handbook companion walkthrough
 
-- **New file:** `docs/walkthroughs/etl/how-do-i-validate-a-single-account-day.md`. Same 7-section locked skeleton as the existing ETL walkthroughs (Story / Question / Where to look / What you'll see / What it means / Drilling in / Next step / Related walkthroughs).
-- **Story.** Data Integration Team analyst loaded a slice; the dashboard "looks fine" but they want to verify a specific account-day reconciles. Open this sheet with their account_id + date, eyeball the KPI strip, scan the table for unexpected legs, confirm drift is zero.
-- **Cross-link.** Add to:
+- [ ] **New file:** `docs/walkthroughs/etl/how-do-i-validate-a-single-account-day.md`. Same 7-section locked skeleton as the existing ETL walkthroughs (Story / Question / Where to look / What you'll see / What it means / Drilling in / Next step / Related walkthroughs).
+- [ ] **Story.** Data Integration Team analyst loaded a slice; the dashboard "looks fine" but they want to verify a specific account-day reconciles. Open this sheet with their account_id + date, eyeball the KPI strip, scan the table for unexpected legs, confirm drift is zero.
+- [ ] **Cross-link.** Add to:
   - `mkdocs.yml` nav under Data Integration Handbook (between *populate* and *validate*).
   - `docs/handbook/etl.md` cards (third in Foundational group).
   - `docs/walkthroughs/etl/how-do-i-prove-my-etl-is-working.md` (Related walkthroughs — "single-account-day version of these invariants").
   - `docs/walkthroughs/etl/what-do-i-do-when-demo-passes-but-prod-fails.md` (Symptom 4 drilldown — "use the daily statement sheet for the offending account-day").
-- **Fix broken handbook hero logos.** `docs/handbook/{ar,pr,etl}.md` use `src="../img/snb-wordmark.svg"`, but with MkDocs Material's default `use_directory_urls`, those pages render to `site/handbook/<name>/index.html` — relative path needs to be `../../img/snb-wordmark.svg`. Live site shows broken-image icons in the hero block on all three handbook landing pages (user noticed AR/PR; ETL has the same bug since the page was cribbed from the same template). One-line fix per file.
+- [x] **Fix broken handbook hero logos.** `docs/handbook/{ar,pr,etl}.md` use `src="../img/snb-wordmark.svg"`, but with MkDocs Material's default `use_directory_urls`, those pages render to `site/handbook/<name>/index.html` — relative path needs to be `../../img/snb-wordmark.svg`. Live site shows broken-image icons in the hero block on all three handbook landing pages (user noticed AR/PR; ETL has the same bug since the page was cribbed from the same template). One-line fix per file. → **Done 2026-04-20:** All three patched, `mkdocs build --strict` rebuilds clean, rendered HTML now reads `src="../../img/snb-wordmark.svg"`. Note: `docs/index.md` was already correct (`src="img/snb-wordmark.svg"` from the site root). Pure HTML `<img>` tags aren't auto-rewritten by MkDocs Material like Markdown `![]()` images are; that's why dashboard screenshots inside walkthroughs (Markdown syntax) survived but the hero wordmark didn't.
 
 ### I.2.F — Sequencing
 
@@ -736,16 +736,16 @@ Ship the sheet itself first (I.2.A → I.2.D), commit when tests are green, then
 
 ### I.3.A — Two KPI scope failures (same H.4.B bug class as ledger/sub-ledger drift)
 
-- **`test_sweep_drift_kpi_scope`** — `ar_concentration_master_sweep_drift` returns 18 rows total, only 2 have `drift <> 0`. KPI counts all 18; subtitle promises only drift days.
-- **`test_gl_fed_drift_kpi_scope`** — `ar_gl_vs_fed_master_drift` returns 10 rows total, only 2 have `drift <> 0`. Same shape.
+- [x] **`test_sweep_drift_kpi_scope`** — `ar_concentration_master_sweep_drift` returns 18 rows total, only 2 have `drift <> 0`. KPI counts all 18; subtitle promises only drift days.
+- [x] **`test_gl_fed_drift_kpi_scope`** — `ar_gl_vs_fed_master_drift` returns 10 rows total, only 2 have `drift <> 0`. Same shape.
 
 Both are the H.4.B drift-counts bug class: the dataset feeds two sheets (Balances wants every day for the timeline; Exceptions wants only the drift days for the KPI), but the sheet-pinned `CategoryFilter` on `drift_status='drift'` never landed for these two CMS-specific drift checks. The fix that landed in `account_recon/filters.py` for `ledger_drift` / `subledger_drift` should be replicated for these two view names. Targeted, mechanical — same shape as the H.4.B commit. Likely 30 minutes.
 
 ### I.3.B — Three planted-row surface failures (date drift between plant + view)
 
-- **`test_sweep_target_plants_surface`** — planted entry for `gl-1850-sub-big-meadow-dairy-main` on `days_ago=3` (2026-04-17) missing from `ar_sweep_target_nonzero`. Other days for the same account surface fine.
-- **`test_sweep_drift_plants_surface`** — planted sweep-leg-mismatch on `days_ago=6` (2026-04-14) missing from `ar_concentration_master_sweep_drift` drift rows. Drift days observed: 2026-04-08, 2026-04-13.
-- **`test_gl_fed_drift_plants_surface`** — planted gl-vs-fed drift on `days_ago=4` (2026-04-16) missing from drift rows. Drift days observed: 2026-04-10, 2026-04-15.
+- [x] **`test_sweep_target_plants_surface`** — planted entry for `gl-1850-sub-big-meadow-dairy-main` on `days_ago=3` (2026-04-17) missing from `ar_sweep_target_nonzero`. Other days for the same account surface fine.
+- [x] **`test_sweep_drift_plants_surface`** — planted sweep-leg-mismatch on `days_ago=6` (2026-04-14) missing from `ar_concentration_master_sweep_drift` drift rows. Drift days observed: 2026-04-08, 2026-04-13.
+- [x] **`test_gl_fed_drift_plants_surface`** — planted gl-vs-fed drift on `days_ago=4` (2026-04-16) missing from drift rows. Drift days observed: 2026-04-10, 2026-04-15.
 
 All three follow the same shape: one specific planted day from each `_*_PLANT` constant fails to surface, while other planted days from the same constant do surface. Suggests the plants land in `transactions` but a downstream view filter excludes that specific day — most likely a date arithmetic edge case (e.g., view treats `posted_at` as a date in one timezone and the plant computes `days_ago` in another, causing one day to fall outside the view's window).
 
@@ -767,6 +767,61 @@ Investigated 2026-04-20 — both classes resolved without any production code ch
 - **I.3.B (3 planted-row failures): stale seed.** Re-ran `quicksight-gen demo apply --all -c run/config.yaml -o run/out/` (Hypothesis 1) and all 3 surface tests passed. The seed had been applied days earlier; `date.today()` had rolled forward enough that the planted-on-N-days-ago dates no longer matched what the views computed against `balance_date`. No code fix; just an operational reminder that semantics tests want a fresh seed.
 - **I.3.A (2 KPI scope failures): test bug, not code bug.** The H.4.B-pattern visual-scoped pinned filters (`fg-ar-exceptions-sweep-drift-only`, `fg-ar-exceptions-gl-fed-drift-only`) already existed in `account_recon/filters.py:450-465`, scoping the KPIs to `drift_status='drift'`. The tests' `as_displayed` queries didn't model that filter — they counted every row from the view. Fix was a one-line tightening of `as_displayed` in both tests to `WHERE drift_status = 'drift'`, matching what the deployed dashboard actually shows. Test comments updated to remove the stale "as-displayed counts every row" framing.
 
+## I.4 — PR/AR cross-visibility audit (AR = superset of PR)
+
+**North star reset.** AR is the unified view; PR is a tight, persona-scoped subset of it. A user looking at AR should be able to find PR data if they look for it — the current `NOT LIKE 'pr-%'` and `transfer_type IN (AR-only list)` exclusions in AR dataset SQL + schema views artificially hide that data. This directly contradicts the existing queued Phase J entry ("PR-coexistence filters in AR views" — which assumed future *separation*); I.4 flips that to *inclusion* and rewrites the J entry accordingly.
+
+This also affects I.2 design. The Daily Statement sheet is greenfield and should set the example: its two new datasets ship *without* the PR exclusions from the start, so picking a PR merchant DDA in the account dropdown surfaces that account's daily statement naturally. I.2's SQL is written to this rule; I.4 retrofits the rest of AR.
+
+### I.4.A — Scope audit
+
+Grep targets across `src/quicksight_gen/account_recon/datasets.py` and `demo/schema.sql`:
+- `NOT LIKE 'pr-%'`
+- `transfer_type IN (` — check each list for whether it's scoping to a semantic AR subset or artificially excluding PR types
+- `account_type`, `control_account_id` — same classification
+
+Classify each filter:
+- **Artificial.** Filter narrows to AR-only rows to match the pre-unified persona. Remove in I.4.B.
+- **Semantic.** Filter is the visual's legitimate scope (e.g., `ar_concentration_master_sweep_drift` is semantically about the Cash Concentration Master — an AR-only account; the view stays scoped). Keep.
+
+Parallel audit on `src/quicksight_gen/payment_recon/datasets.py` — PR datasets are probably already correctly scoped (deliberate choice of sale/settlement/payment/external_txn). Confirm, don't expand.
+
+**Generator-side observation (surfaced during I.2.C, 2026-04-20):** The ACH-only customer DDAs (`_ACH_ORIG_CUSTOMERS` — yeti-espresso et al.) carry continuously-negative balances because the seed emits ACH outflow legs on the customer DDA with no compensating inbound deposit transactions. This likely inflates the AR overdraft KPI beyond just the planted overdrafts and made these accounts unusable as the "clean reconciling day" worked example for the Daily Statement walkthrough (clean example was rerouted to `gl-1010`). Decide in I.4 whether to plant compensating deposits, narrow the overdraft KPI's scope, or just document the pattern as expected demo behavior.
+
+- [ ] **Audit complete** — every artificial-vs-semantic filter in AR + PR datasets classified; remove-list handed to I.4.B.
+
+### I.4.B — Remove artificial exclusions
+
+- [ ] Drop identified filters from AR datasets + schema views, one commit per coherent group (Balances, Transactions, Transfers).
+- [ ] Each change ships with a test asserting PR rows flow through where expected (e.g., a Balances-level query returns at least one `account_type='merchant_dda'` row).
+- [ ] Re-lock SHA256 if view definitions change and re-applying the demo shifts the seed hash.
+
+### I.4.C — Update existing AR visuals for the widened data
+
+- [ ] Balances tab now surfaces PR merchant DDAs + the PR external-customer pool. May need a default toggle (e.g., "Show Only CMS Accounts" multi-select default) so the AR analyst's morning-check view doesn't shift under them.
+- [ ] Transactions tab now surfaces `sale`, `settlement`, `payment`, `external_txn` transfer types. Transfer Type filter dropdown auto-expands.
+- [ ] Transfers tab now shows PR transfers alongside AR transfers.
+- [ ] Exceptions tab should be unchanged — those checks are semantically AR-only.
+
+### I.4.D — Rewrite Phase J "PR-coexistence filters" entry
+
+The queued J entry currently reads "Phase J deletes these — a single-feed real persona has no parallel PR ledger to filter out." That assumed future PR/AR *separation*. Rewrite to reflect the new direction: PR/AR stay unified; only artificial filters come out; AR remains the superset.
+
+- [ ] **Rewritten** — Phase J entry reflects unified-AR-superset framing.
+
+### I.4.E — Docs + training regression pass
+
+- [ ] `CLAUDE.md` AR domain section gets a "AR is a superset of PR" line.
+- [ ] AR Getting Started flavor text adds one sentence: PR merchant accounts appear in AR as a subset; filter by account type if you want AR-only.
+- [ ] `docs/Schema_v3.md` persona-contract language stays unchanged (it's already tables-are-a-contract flavored).
+- [ ] **Training/handbook regression pass.** Walk the AR + ETL training walkthroughs (`docs/walkthroughs/`) and AR Handbook index; any step that reads "all rows here are AR-only" or sets up screenshots against the narrowed dataset needs a refresh. Screenshots specifically may break (new PR rows in Balances/Transactions tables shift counts, alter sorts). Ship refreshed screenshots + copy edits alongside the audit.
+
+### I.4.F — Sequencing
+
+Sequence I.4 *after* I.2 Daily Statement lands. Rationale: I.2 sets the good example (greenfield datasets with no exclusions); I.4 retrofits existing AR datasets to match. Doing I.4 first would delay the higher-value I.2 work and complicate the Daily Statement's own test inventory.
+
+Estimated 2–4 commits. If I.4.B/C grows past that (because removing exclusions uncovers visual regressions requiring redesign), promote to its own Phase J entry and leave a smaller I.4 behind.
+
 ---
 
 # PLAN — Phase J (queued)
@@ -775,24 +830,24 @@ Items deferred from Phase H + Phase I scope, parked here so they aren't lost. Ea
 
 ## Persona-driven dashboard layout redesigns
 
-- **AR Exceptions tab redesign.** Sheet is dense (3 rollups + 14 checks + aging bars + 2 drift timelines). Phase H walkthroughs surfaced which sections are friction-heavy; that's the input for redesign. Likely shape: per-persona view modes ("morning check" vs. "deep investigation"), or progressive disclosure of CMS-specific checks behind a category toggle.
-- **PR pipeline tab structure.** Under the shared-base model (Phase G), Sales / Settlements / Payments are values of `transfer_type`, not separate entities. Current per-step tab structure is preserved from the pre-flatten era. Operator-question walkthroughs in Phase H may surface whether the per-step tab structure helps or fights merchant-support workflow. Decide redesign based on what those walkthroughs show.
+- [ ] **AR Exceptions tab redesign.** Sheet is dense (3 rollups + 14 checks + aging bars + 2 drift timelines). Phase H walkthroughs surfaced which sections are friction-heavy; that's the input for redesign. Likely shape: per-persona view modes ("morning check" vs. "deep investigation"), or progressive disclosure of CMS-specific checks behind a category toggle.
+- [ ] **PR pipeline tab structure.** Under the shared-base model (Phase G), Sales / Settlements / Payments are values of `transfer_type`, not separate entities. Current per-step tab structure is preserved from the pre-flatten era. Operator-question walkthroughs in Phase H may surface whether the per-step tab structure helps or fights merchant-support workflow. Decide redesign based on what those walkthroughs show.
 
 ## Schema cleanup carry-over from Phase G
 
-- **PR-coexistence filters in AR views.** `ar_subledger_overdraft` and `ar_subledger_daily_outbound_by_type` carry an `account_id NOT LIKE 'pr-%'` filter. Necessary today because PR + AR co-reside in the same `daily_balances` / `transactions` tables and the entity-scoped views (drift, overdraft) would otherwise surface PR rows in AR exceptions (G.6 leak: 556 spurious overdraft rows). Phase J deletes these — a single-feed real persona has no parallel PR ledger to filter out. Grep target: `pr-%` in `demo/schema.sql`. The right replacement is the `account_type` discriminator from G.0.12 (`gl_control`, `dda`, …), scoped to whatever account_types the AR persona owns.
-- **AR drift views leak benign zero-drift PR rows** (744 sub-ledger, 93 ledger). Filtered out of Exceptions tab by `drift > 0`; pollutes Balances tab counts. Same Phase J fix as above resolves it.
-- **Unified account dimension table.** AR currently keeps `ar_ledger_accounts` and `ar_subledger_accounts` as separate dimension tables. A single "all accounts" table aligns with the denormalize-don't-add-tables north star and would simplify some queries. Low priority; ship when there's a query that benefits.
+- ~~**PR-coexistence filters in AR views**~~ — *superseded by Phase I.4.* The original entry assumed the future was PR/AR *separation* (delete the filters, a single-feed persona has no parallel PR ledger). I.4 flips that: AR is now the superset; PR is a subset view. Artificial filters still come out, but the motivation is cross-visibility, not separation. See `Phase I.4 — PR/AR cross-visibility audit` above.
+- ~~**AR drift views leak benign zero-drift PR rows**~~ — *superseded by Phase I.4.* Same framing shift: filters out with I.4's audit, not as cleanup for a future separation.
+- [ ] **Unified account dimension table.** AR currently keeps `ar_ledger_accounts` and `ar_subledger_accounts` as separate dimension tables. A single "all accounts" table aligns with the denormalize-don't-add-tables north star and would simplify some queries. Low priority; ship when there's a query that benefits.
 
 ## Customer-facing customization handbook
 
-- `docs/Schema_v3.md` is the persona contract for the Data Integration Team. A longer-form customer-facing customization guide (mapping production-system tables → the two base tables, common pitfalls, performance tips, replacing dataset SQL while preserving DatasetContract) is a natural follow-up to the demo-side walkthroughs in Phase H. Deliverable shape: a "Customization Handbook" sibling to AR / PR Handbooks.
+- [ ] `docs/Schema_v3.md` is the persona contract for the Data Integration Team. A longer-form customer-facing customization guide (mapping production-system tables → the two base tables, common pitfalls, performance tips, replacing dataset SQL while preserving DatasetContract) is a natural follow-up to the demo-side walkthroughs in Phase H. Deliverable shape: a "Customization Handbook" sibling to AR / PR Handbooks.
 
 ## Persona dashboard split (originally Phase E)
 
-- Still queued. The Phase H walkthroughs and Phase I daily statement sheet (which exposes a per-account workflow that's currently buried inside the AR analysis) provide better signal on what a persona-scoped dashboard split should look like.
+- [ ] Still queued. The Phase H walkthroughs and Phase I daily statement sheet (which exposes a per-account workflow that's currently buried inside the AR analysis) provide better signal on what a persona-scoped dashboard split should look like.
 
 ## New surfaces (from Training Story personas not yet served)
 
-- **Fraud team surface.** "Search for transactions that break limits set on the accounts" — investigative, not monitoring. Different UX paradigm from PR/AR. Probably its own analysis with a search-driven entry point and ad-hoc filter chips. Needs workflow elicitation before planning visuals.
-- **AML team surface.** "Detect transactions/balances outside statistical average and find patterns." Likely needs QuickSight forecasting / anomaly insights features and visual primitives we don't currently use. Needs workflow elicitation before planning visuals.
+- [ ] **Fraud team surface.** "Search for transactions that break limits set on the accounts" — investigative, not monitoring. Different UX paradigm from PR/AR. Probably its own analysis with a search-driven entry point and ad-hoc filter chips. Needs workflow elicitation before planning visuals.
+- [ ] **AML team surface.** "Detect transactions/balances outside statistical average and find patterns." Likely needs QuickSight forecasting / anomaly insights features and visual primitives we don't currently use. Needs workflow elicitation before planning visuals.

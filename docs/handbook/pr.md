@@ -1,5 +1,5 @@
 <div class="snb-hero">
-  <img class="snb-hero__wordmark" src="../img/snb-wordmark.svg" alt="Sasquatch National Bank">
+  <img class="snb-hero__wordmark" src="../../img/snb-wordmark.svg" alt="Sasquatch National Bank">
   <h2>Payment Reconciliation Handbook</h2>
   <p class="snb-hero__tagline">Merchant deposits traced end-to-end for the Payment Recon / Merchant Support team.</p>
 </div>

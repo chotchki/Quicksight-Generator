@@ -12,6 +12,8 @@ same-sheet sub-ledger table).
 from __future__ import annotations
 
 from quicksight_gen.account_recon.constants import (
+    DS_AR_DAILY_STATEMENT_SUMMARY,
+    DS_AR_DAILY_STATEMENT_TRANSACTIONS,
     DS_AR_LEDGER_ACCOUNTS,
     DS_AR_LEDGER_BALANCE_DRIFT,
     DS_AR_LIMIT_BREACH,
@@ -34,6 +36,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     SHEET_AR_BALANCES,
+    SHEET_AR_DAILY_STATEMENT,
     SHEET_AR_EXCEPTIONS,
     SHEET_AR_GETTING_STARTED,
     SHEET_AR_TRANSACTIONS,
@@ -42,6 +45,7 @@ from quicksight_gen.account_recon.constants import (
 from quicksight_gen.account_recon.datasets import build_all_datasets
 from quicksight_gen.account_recon.filters import (
     build_balances_controls,
+    build_daily_statement_parameter_controls,
     build_exceptions_controls,
     build_filter_groups,
     build_transactions_controls,
@@ -49,6 +53,7 @@ from quicksight_gen.account_recon.filters import (
 )
 from quicksight_gen.account_recon.visuals import (
     build_balances_visuals,
+    build_daily_statement_visuals,
     build_exceptions_visuals,
     build_transactions_visuals,
     build_transfers_visuals,
@@ -64,6 +69,8 @@ from quicksight_gen.common.models import (
     Dashboard,
     DashboardPublishOptions,
     DataSetIdentifierDeclaration,
+    DateTimeDefaultValues,
+    DateTimeParameterDeclaration,
     Filter,
     FilterGroup,
     FilterScopeConfiguration,
@@ -207,6 +214,14 @@ _EXCEPTIONS_DESCRIPTION = (
     "double spends)."
 )
 
+_DAILY_STATEMENT_DESCRIPTION = (
+    "Per-account daily statement — pick one account and one day, and "
+    "the sheet walks opening balance, debits, credits, stored closing, "
+    "and drift, plus every posted leg. Drift = stored closing − "
+    "(opening + Σ signed legs); on a clean feed it's zero, so a non-zero "
+    "value is the single visual cue that the feed doesn't reconcile."
+)
+
 
 # Per-sheet highlights used to build bulleted summaries on the Getting
 # Started tab.
@@ -235,6 +250,14 @@ _EXCEPTIONS_BULLETS = [
     "Cash Management Suite checks: ZBA sweep, ACH origination, force-posted card, internal transfer suspense",
     "Reversed-but-not-credited (double-spend) flagged separately at top",
     "Aging bars on every check for time-based urgency triage",
+]
+
+_DAILY_STATEMENT_BULLETS = [
+    "Pick one account + one day via the sheet's filter controls",
+    "Five KPIs: Opening, Debits, Credits, Closing (stored), Drift",
+    "Drift = stored closing − (opening + Σ signed legs); zero on a clean feed",
+    "Detail table: every leg with direction, counter-account, memo, and transfer_id",
+    "Intended as the feed-validation artifact the Data Integration Team can screenshot",
 ]
 
 
@@ -391,6 +414,10 @@ def _build_getting_started_sheet(cfg: Config) -> SheetDefinition:
             "ar-gs-exceptions", "Exceptions",
             _EXCEPTIONS_DESCRIPTION, _EXCEPTIONS_BULLETS,
         ),
+        (
+            "ar-gs-daily-statement", "Daily Statement",
+            _DAILY_STATEMENT_DESCRIPTION, _DAILY_STATEMENT_BULLETS,
+        ),
     ]
     for box_id, title, body_text, bullet_items in sheet_blocks:
         text_boxes.append(
@@ -464,6 +491,44 @@ def _build_transactions_sheet(cfg: Config) -> SheetDefinition:
             + _chart_pair("ar-txn-bar-by-status", "ar-txn-bar-by-day")
             + [_full_width_visual("ar-txn-detail-table", _TABLE_ROW_SPAN)]
         ),
+    )
+
+
+def _build_daily_statement_sheet(cfg: Config) -> SheetDefinition:
+    """Per-(account, day) feed-validation sheet.
+
+    Layout: five KPIs across the top (three 12-wide on row A, two
+    18-wide on row B — matches the Exceptions 3+2 KPI grid), then a
+    full-width transaction table.
+    """
+    third = _FULL // 3
+
+    kpi_row_a = [
+        GridLayoutElement(
+            ElementId="ar-ds-kpi-opening", ElementType="VISUAL",
+            ColumnSpan=third, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
+        ),
+        GridLayoutElement(
+            ElementId="ar-ds-kpi-debits", ElementType="VISUAL",
+            ColumnSpan=third, RowSpan=_KPI_ROW_SPAN, ColumnIndex=third,
+        ),
+        GridLayoutElement(
+            ElementId="ar-ds-kpi-credits", ElementType="VISUAL",
+            ColumnSpan=third, RowSpan=_KPI_ROW_SPAN, ColumnIndex=third * 2,
+        ),
+    ]
+    kpi_row_b = _kpi_pair("ar-ds-kpi-closing", "ar-ds-kpi-drift")
+    table_row = [_full_width_visual("ar-ds-transactions-table", _TABLE_ROW_SPAN)]
+
+    return SheetDefinition(
+        SheetId=SHEET_AR_DAILY_STATEMENT,
+        Name="Daily Statement",
+        Title="Daily Statement",
+        Description=_DAILY_STATEMENT_DESCRIPTION,
+        ContentType="INTERACTIVE",
+        Visuals=build_daily_statement_visuals(),
+        ParameterControls=build_daily_statement_parameter_controls(cfg),
+        Layouts=_grid_layout(kpi_row_a + kpi_row_b + table_row),
     )
 
 
@@ -788,6 +853,8 @@ def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaratio
         DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
         DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
         DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
+        DS_AR_DAILY_STATEMENT_SUMMARY,
+        DS_AR_DAILY_STATEMENT_TRANSACTIONS,
     ]
     return [
         DataSetIdentifierDeclaration(
@@ -808,6 +875,24 @@ def _ar_string_parameter(name: str) -> ParameterDeclaration:
             ParameterValueType="SINGLE_VALUED",
             Name=name,
             DefaultValues={"StaticValues": []},
+        ),
+    )
+
+
+def _ar_balance_date_parameter() -> ParameterDeclaration:
+    """Daily Statement balance-date parameter — defaults to today.
+
+    Bound to ``filter-ar-ds-balance-date`` so the date picker writes
+    through, and to the right-click drill from the Balances sub-ledger
+    table so a row click jumps the sheet to that account-day.
+    """
+    return ParameterDeclaration(
+        DateTimeParameterDeclaration=DateTimeParameterDeclaration(
+            Name="pArDsBalanceDate",
+            TimeGranularity="DAY",
+            DefaultValues=DateTimeDefaultValues(
+                RollingDate={"Expression": "truncDate('DD', now())"},
+            ),
         ),
     )
 
@@ -932,6 +1017,7 @@ def _build_definition(cfg: Config) -> AnalysisDefinition:
             _build_transfers_sheet(cfg, link_color),
             _build_transactions_sheet(cfg),
             _build_exceptions_sheet(cfg, link_color),
+            _build_daily_statement_sheet(cfg),
         ],
         FilterGroups=build_filter_groups(cfg) + _build_drill_down_filter_groups(),
         ParameterDeclarations=[
@@ -940,6 +1026,8 @@ def _build_definition(cfg: Config) -> AnalysisDefinition:
             _ar_string_parameter("pArTransferId"),
             _ar_string_parameter("pArActivityDate"),
             _ar_string_parameter("pArTransferType"),
+            _ar_string_parameter("pArDsAccountId"),
+            _ar_balance_date_parameter(),
         ],
     )
 

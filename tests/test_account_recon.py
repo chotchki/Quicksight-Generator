@@ -22,6 +22,7 @@ from click.testing import CliRunner
 
 from quicksight_gen.account_recon.constants import (
     SHEET_AR_BALANCES,
+    SHEET_AR_DAILY_STATEMENT,
     SHEET_AR_EXCEPTIONS,
     SHEET_AR_GETTING_STARTED,
     SHEET_AR_TRANSACTIONS,
@@ -2011,7 +2012,7 @@ class TestGenerateOutput:
 
     def test_twenty_one_dataset_files(self, ar_output_dir):
         datasets = list((ar_output_dir / "datasets").glob("qs-gen-ar-*.json"))
-        assert len(datasets) == 21
+        assert len(datasets) == 23
 
     def test_all_files_valid_json(self, ar_output_dir):
         for path in ar_output_dir.rglob("*.json"):
@@ -2099,7 +2100,7 @@ class TestSheetLayout:
 
     def test_five_sheets(self, ar_output_dir):
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
-        assert len(analysis["Definition"]["Sheets"]) == 5
+        assert len(analysis["Definition"]["Sheets"]) == 6
 
     def test_sheet_order(self, ar_output_dir):
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
@@ -2110,6 +2111,7 @@ class TestSheetLayout:
             SHEET_AR_TRANSFERS,
             SHEET_AR_TRANSACTIONS,
             SHEET_AR_EXCEPTIONS,
+            SHEET_AR_DAILY_STATEMENT,
         ]
 
     def test_balances_visual_count(self, ar_output_dir):
@@ -2262,6 +2264,8 @@ class TestFilterGroups:
         "fg-ar-drill-ledger-on-balances-subledger",
         "fg-ar-drill-activity-date-on-txn",
         "fg-ar-drill-transfer-type-on-txn",
+        "fg-ar-ds-account",
+        "fg-ar-ds-balance-date",
     }
 
     def test_filter_group_ids(self, ar_output_dir):
@@ -2343,25 +2347,53 @@ class TestFilterGroups:
 
 
 class TestParameterDeclarations:
-    """Phase 5 drill-downs rely on five single-valued string parameters."""
+    """Phase 5 drill-downs use single-valued string parameters; the
+    Daily Statement balance-date drill uses one date-time parameter."""
 
-    def test_five_parameters(self, ar_output_dir):
+    _STRING_PARAMS = {
+        "pArSubledgerAccountId",
+        "pArLedgerAccountId",
+        "pArTransferId",
+        "pArActivityDate",
+        "pArTransferType",
+        "pArDsAccountId",
+    }
+    _DATETIME_PARAMS = {"pArDsBalanceDate"}
+
+    def _split(self, params: list[dict]) -> tuple[list[dict], list[dict]]:
+        return (
+            [p["StringParameterDeclaration"] for p in params if "StringParameterDeclaration" in p],
+            [p["DateTimeParameterDeclaration"] for p in params if "DateTimeParameterDeclaration" in p],
+        )
+
+    def test_string_parameters(self, ar_output_dir):
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
         params = analysis["Definition"]["ParameterDeclarations"]
-        names = {p["StringParameterDeclaration"]["Name"] for p in params}
-        assert names == {
-            "pArSubledgerAccountId",
-            "pArLedgerAccountId",
-            "pArTransferId",
-            "pArActivityDate",
-            "pArTransferType",
-        }
+        string_params, _ = self._split(params)
+        assert {p["Name"] for p in string_params} == self._STRING_PARAMS
 
-    def test_parameters_single_valued(self, ar_output_dir):
+    def test_datetime_parameters(self, ar_output_dir):
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
-        for p in analysis["Definition"]["ParameterDeclarations"]:
-            decl = p["StringParameterDeclaration"]
+        params = analysis["Definition"]["ParameterDeclarations"]
+        _, datetime_params = self._split(params)
+        assert {p["Name"] for p in datetime_params} == self._DATETIME_PARAMS
+
+    def test_string_parameters_single_valued(self, ar_output_dir):
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        params = analysis["Definition"]["ParameterDeclarations"]
+        string_params, _ = self._split(params)
+        for decl in string_params:
             assert decl["ParameterValueType"] == "SINGLE_VALUED"
+
+    def test_balance_date_param_defaults_to_today(self, ar_output_dir):
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        params = analysis["Definition"]["ParameterDeclarations"]
+        _, datetime_params = self._split(params)
+        bal_date = next(p for p in datetime_params if p["Name"] == "pArDsBalanceDate")
+        assert bal_date["TimeGranularity"] == "DAY"
+        assert bal_date["DefaultValues"]["RollingDate"]["Expression"] == (
+            "truncDate('DD', now())"
+        )
 
 
 class TestDrillDownFilterGroups:
@@ -2588,6 +2620,42 @@ class TestVisualActions:
             ("pArActivityDate", "ar-exc-od-date-str"),
         ]
 
+    def test_balances_subledger_right_click_drills_to_daily_statement(
+        self, ar_output_dir,
+    ):
+        """Right-click on a sub-ledger row sets BOTH pArDsAccountId AND
+        pArDsBalanceDate before navigating to Daily Statement — so the
+        destination renders the right account-day with no further
+        clicks. Convention: right-click goes RIGHT (toward more
+        detail); the same cell's left-click still drills to
+        Transactions, asserted separately."""
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        v = _find_visual(analysis, "ar-balances-subledger-table")
+        actions_by_id = {a["CustomActionId"]: a for a in v["Actions"]}
+        action = actions_by_id["action-ar-balances-subledger-to-daily-statement"]
+        assert action["Trigger"] == "DATA_POINT_MENU"
+        nav = next(
+            op["NavigationOperation"]
+            for op in action["ActionOperations"]
+            if "NavigationOperation" in op
+        )
+        assert nav["LocalNavigationConfiguration"]["TargetSheetId"] == (
+            SHEET_AR_DAILY_STATEMENT
+        )
+        set_op = next(
+            op["SetParametersOperation"]
+            for op in action["ActionOperations"]
+            if "SetParametersOperation" in op
+        )
+        pvcs = [
+            (p["DestinationParameterName"], p["Value"]["SourceField"])
+            for p in set_op["ParameterValueConfigurations"]
+        ]
+        assert pvcs == [
+            ("pArDsAccountId", "ar-bal-subledger-id"),
+            ("pArDsBalanceDate", "ar-bal-subledger-date"),
+        ]
+
 
 def _cf_cells(visual: dict) -> list[dict]:
     opts = visual.get("ConditionalFormatting", {}).get(
@@ -2602,7 +2670,6 @@ class TestConditionalFormatting:
     @pytest.mark.parametrize(
         "visual_id, field_id",
         [
-            ("ar-balances-subledger-table", "ar-bal-subledger-id"),
             ("ar-transfers-summary-table", "ar-xfr-id"),
             ("ar-exc-ledger-drift-table", "ar-exc-ldrift-ledger-id"),
             ("ar-exc-subledger-drift-table", "ar-exc-sdrift-subledger-id"),
@@ -2614,8 +2681,9 @@ class TestConditionalFormatting:
     def test_left_click_drill_sources_have_link_format(
         self, ar_output_dir, visual_id: str, field_id: str,
     ):
-        """Left-click drill-source cells get plain-accent TextColor (no
-        background tint — that's reserved for right-click menu cells)."""
+        """Left-click-only drill-source cells get plain-accent TextColor
+        (no background tint — that's reserved for cells that also carry
+        a right-click menu drill)."""
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
         v = _find_visual(analysis, visual_id)
         cells = [c for c in _cf_cells(v) if c["FieldId"] == field_id]
@@ -2626,18 +2694,155 @@ class TestConditionalFormatting:
         assert "TextColor" in tf
         assert "BackgroundColor" not in tf
 
-    def test_balances_ledger_right_click_uses_menu_format(self, ar_output_dir):
-        """Right-click (DATA_POINT_MENU) cells get an accent+tint style —
-        distinguishing them from the plain-accent left-click cells."""
+    @pytest.mark.parametrize(
+        "visual_id, field_id",
+        [
+            # Right-click-only — left-click reserved for same-sheet filter.
+            ("ar-balances-ledger-table", "ar-bal-ledger-id"),
+            # Both clicks — left to Transactions, right to Daily Statement.
+            ("ar-balances-subledger-table", "ar-bal-subledger-id"),
+        ],
+    )
+    def test_right_click_drill_sources_use_menu_format(
+        self, ar_output_dir, visual_id: str, field_id: str,
+    ):
+        """Cells with a right-click (DATA_POINT_MENU) action get accent
+        text + tint background — distinguishes them from plain-accent
+        cells whose only action is a left-click drill."""
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
-        v = _find_visual(analysis, "ar-balances-ledger-table")
-        cells = [
-            c for c in _cf_cells(v) if c["FieldId"] == "ar-bal-ledger-id"
-        ]
+        v = _find_visual(analysis, visual_id)
+        cells = [c for c in _cf_cells(v) if c["FieldId"] == field_id]
         assert cells
         tf = cells[0]["TextFormat"]
         assert "TextColor" in tf
         assert "BackgroundColor" in tf
+
+
+class TestDailyStatementFilters:
+    """The Daily Statement sheet's two pickers (account + day) drive the
+    KPIs and detail table via parameters — both are also written by the
+    right-click drill from the Balances sub-ledger table. These tests
+    pin the exact wiring (parameter name, filter type, NullOption,
+    scope, control type) so a future regeneration that breaks any of
+    them fails loudly here, not silently in the live dashboard."""
+
+    def test_account_filter_parameter_bound_with_no_all_default(
+        self, ar_output_dir,
+    ):
+        """Account picker is a CategoryFilter parameter-bound to
+        pArDsAccountId, with NullOption=NON_NULLS_ONLY so the sheet
+        renders empty until an account is picked. NullOption=ALL_VALUES
+        would aggregate KPIs across every account on first load — a
+        single unified statement that doesn't make business sense."""
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        fg = _find_fg(analysis, "fg-ar-ds-account")
+        cf = fg["Filters"][0]["CategoryFilter"]
+        custom = cf["Configuration"]["CustomFilterConfiguration"]
+        assert custom["MatchOperator"] == "EQUALS"
+        assert custom["ParameterName"] == "pArDsAccountId"
+        assert custom["NullOption"] == "NON_NULLS_ONLY"
+        assert cf["Column"]["ColumnName"] == "account_id"
+
+    def test_balance_date_filter_uses_time_equality_not_range(
+        self, ar_output_dir,
+    ):
+        """The picker is SINGLE_VALUED; a TimeRangeFilter would render
+        the picker broken in the QuickSight UI (silently — no error at
+        deploy time). Lock the filter type so a future swap to
+        TimeRangeFilter is caught here."""
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        fg = _find_fg(analysis, "fg-ar-ds-balance-date")
+        f = fg["Filters"][0]
+        assert "TimeEqualityFilter" in f
+        assert "TimeRangeFilter" not in f
+        teq = f["TimeEqualityFilter"]
+        assert teq["ParameterName"] == "pArDsBalanceDate"
+        assert teq["TimeGranularity"] == "DAY"
+        assert teq["Column"]["ColumnName"] == "balance_date"
+
+    @pytest.mark.parametrize(
+        "fg_id",
+        ["fg-ar-ds-account", "fg-ar-ds-balance-date"],
+    )
+    def test_filter_scoped_to_daily_statement_only(
+        self, ar_output_dir, fg_id: str,
+    ):
+        """Both filters are sheet-scoped to Daily Statement — wider
+        scope would leak the per-day picker onto Balances/Transactions
+        and surprise users on those tabs."""
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        fg = _find_fg(analysis, fg_id)
+        scopes = fg["ScopeConfiguration"]["SelectedSheets"][
+            "SheetVisualScopingConfigurations"
+        ]
+        assert [s["SheetId"] for s in scopes] == [SHEET_AR_DAILY_STATEMENT]
+        assert all(s["Scope"] == "ALL_VISUALS" for s in scopes)
+
+    @pytest.mark.parametrize(
+        "fg_id",
+        ["fg-ar-ds-account", "fg-ar-ds-balance-date"],
+    )
+    def test_filter_uses_all_datasets_so_summary_and_detail_both_filter(
+        self, ar_output_dir, fg_id: str,
+    ):
+        """CrossDataset=ALL_DATASETS so the picker filters BOTH the
+        summary (KPIs) and transactions (detail table) datasets — both
+        expose account_id / balance_date, but a SINGLE_DATASET scope
+        would only filter the dataset whose ColumnIdentifier names it."""
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        fg = _find_fg(analysis, fg_id)
+        assert fg["CrossDataset"] == "ALL_DATASETS"
+
+    def _ds_parameter_controls(self, analysis: dict) -> dict[str, dict]:
+        sheet = _find_sheet(analysis, SHEET_AR_DAILY_STATEMENT)
+        controls: dict[str, dict] = {}
+        for ctrl in sheet.get("ParameterControls", []):
+            for body in ctrl.values():
+                if isinstance(body, dict) and "ParameterControlId" in body:
+                    controls[body["ParameterControlId"]] = body
+        return controls
+
+    def test_sheet_uses_parameter_controls_not_filter_controls(
+        self, ar_output_dir,
+    ):
+        """A FilterControl whose backing filter is parameter-bound shows
+        up disabled in the UI ("this control was disabled because the
+        filter is using parameters"). The widgets must be ParameterControls
+        so the user can drive the parameter directly."""
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        sheet = _find_sheet(analysis, SHEET_AR_DAILY_STATEMENT)
+        assert sheet.get("FilterControls") in (None, []), (
+            "Daily Statement must not declare FilterControls — the "
+            "parameter-bound filters disable them in the UI"
+        )
+        assert len(sheet.get("ParameterControls", [])) == 2
+
+    def test_account_control_is_dropdown_bound_to_account_parameter(
+        self, ar_output_dir,
+    ):
+        """SINGLE_SELECT dropdown that writes pArDsAccountId. Values are
+        sourced via LinkToDataSetColumn from the daily-statement-summary
+        dataset's account_id column — the link query bypasses the
+        sheet's own parameter-bound filter, so users see every account
+        rather than the empty NON_NULLS_ONLY slice."""
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        ctrl = self._ds_parameter_controls(analysis)["ctrl-ar-ds-account"]
+        assert ctrl["Type"] == "SINGLE_SELECT"
+        assert ctrl["SourceParameterName"] == "pArDsAccountId"
+        link = ctrl["SelectableValues"]["LinkToDataSetColumn"]
+        assert link["ColumnName"] == "account_id"
+
+    def test_balance_date_control_is_picker_bound_to_date_parameter(
+        self, ar_output_dir,
+    ):
+        """ParameterDateTimePickerControl (no Type field — the parameter
+        decides single vs. multi). The parameter is single-valued and
+        defaults to today's date."""
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        ctrl = self._ds_parameter_controls(analysis)[
+            "ctrl-ar-ds-balance-date"
+        ]
+        assert ctrl["SourceParameterName"] == "pArDsBalanceDate"
 
 
 class TestShowOnlyToggleControls:

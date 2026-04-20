@@ -26,6 +26,10 @@ EXPECTED_VISUAL_COUNTS = {
     "Transfers": 4,
     "Transactions": 5,
     "Exceptions": 47,
+    # Phase I.2 — Daily Statement: 5 KPIs + 1 transaction-detail table.
+    # KPIs render empty until the user picks an account, but the visual
+    # containers are in the DOM.
+    "Daily Statement": 6,
 }
 
 
@@ -70,6 +74,14 @@ EXPECTED_TITLES_PER_SHEET = {
         "Stuck in Internal Transfer Suspense",
         "Internal Transfer Suspense Non-Zero EOD",
         "Reversed Transfers Without Credit-Back",
+    },
+    "Daily Statement": {
+        "Opening Balance",
+        "Total Debits",
+        "Total Credits",
+        "Closing Balance (Stored)",
+        "Drift",
+        "Transaction Detail",
     },
 }
 

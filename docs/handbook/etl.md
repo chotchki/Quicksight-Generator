@@ -1,5 +1,5 @@
 <div class="snb-hero">
-  <img class="snb-hero__wordmark" src="../img/snb-wordmark.svg" alt="Sasquatch National Bank">
+  <img class="snb-hero__wordmark" src="../../img/snb-wordmark.svg" alt="Sasquatch National Bank">
   <h2>Data Integration Handbook</h2>
   <p class="snb-hero__tagline">Upstream-to-two-tables mapping and validation for the Data Integration Team.</p>
 </div>

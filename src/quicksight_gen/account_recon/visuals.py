@@ -28,6 +28,8 @@ Visual additions:
 from __future__ import annotations
 
 from quicksight_gen.account_recon.constants import (
+    DS_AR_DAILY_STATEMENT_SUMMARY,
+    DS_AR_DAILY_STATEMENT_TRANSACTIONS,
     DS_AR_LEDGER_ACCOUNTS,
     DS_AR_LEDGER_BALANCE_DRIFT,
     DS_AR_LIMIT_BREACH,
@@ -50,6 +52,7 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     SHEET_AR_BALANCES,
+    SHEET_AR_DAILY_STATEMENT,
     SHEET_AR_TRANSACTIONS,
 )
 from quicksight_gen.common.aging import aging_bar_visual
@@ -436,8 +439,9 @@ def build_balances_visuals(link_color: str, link_tint: str) -> list[Visual]:
             Subtitle=_subtitle(
                 "Each sub-ledger account's stored vs computed daily balance. "
                 "Computed = running Σ of posted transactions. Left-click a "
-                "subledger_account_id to drill into Transactions for that "
-                "sub-ledger."
+                "subledger_account_id to drill left into Transactions for "
+                "that sub-ledger; right-click to drill right into the Daily "
+                "Statement for that account-day."
             ),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
@@ -488,11 +492,24 @@ def build_balances_visuals(link_color: str, link_tint: str) -> list[Visual]:
                     P_AR_SUBLEDGER,
                     "ar-bal-subledger-id",
                 ),
+                _multi_drill_action(
+                    "action-ar-balances-subledger-to-daily-statement",
+                    "View Daily Statement",
+                    SHEET_AR_DAILY_STATEMENT,
+                    [
+                        ("pArDsAccountId", "ar-bal-subledger-id"),
+                        ("pArDsBalanceDate", "ar-bal-subledger-date"),
+                    ],
+                    trigger="DATA_POINT_MENU",
+                ),
             ],
             ConditionalFormatting={
                 "ConditionalFormattingOptions": [
-                    link_text_format(
-                        "ar-bal-subledger-id", "subledger_account_id", link_color,
+                    menu_link_text_format(
+                        "ar-bal-subledger-id",
+                        "subledger_account_id",
+                        link_color,
+                        link_tint,
                     ),
                 ],
             },
@@ -2445,4 +2462,196 @@ def build_exceptions_visuals(link_color: str) -> list[Visual]:
         aging_ach_orig_nonzero, aging_ach_sweep_no_fed, aging_fed_no_catchup,
         aging_internal_stuck, aging_internal_suspense_nonzero,
         aging_internal_reversal_uncredited,
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Daily Statement tab — per-(account, day) feed-validation artifact
+# ---------------------------------------------------------------------------
+
+def build_daily_statement_visuals() -> list[Visual]:
+    """Per-account daily statement sheet.
+
+    Users pick one account and one day via sheet-level filter controls;
+    the five KPIs + transaction table narrow to that slice. Summary
+    columns are per-row constants after the filter resolves, so SUM is
+    just "read the single row's value" — cheapest aggregation that
+    QuickSight renders on a KPI visual.
+    """
+
+    kpi_opening = Visual(
+        KPIVisual=KPIVisual(
+            VisualId="ar-ds-kpi-opening",
+            Title=_title("Opening Balance"),
+            Subtitle=_subtitle(
+                "Stored end-of-day balance on the prior business day — "
+                "the starting point the day's posting activity walks from"
+            ),
+            ChartConfiguration=KPIConfiguration(
+                FieldWells=KPIFieldWells(
+                    Values=[
+                        _measure_sum(
+                            "ar-ds-opening-val",
+                            DS_AR_DAILY_STATEMENT_SUMMARY,
+                            "opening_balance",
+                        )
+                    ],
+                ),
+            ),
+        )
+    )
+
+    kpi_debits = Visual(
+        KPIVisual=KPIVisual(
+            VisualId="ar-ds-kpi-debits",
+            Title=_title("Total Debits"),
+            Subtitle=_subtitle(
+                "Sum of positive signed_amount legs posted on the day "
+                "(non-failed). Matches the Dr column on a statement."
+            ),
+            ChartConfiguration=KPIConfiguration(
+                FieldWells=KPIFieldWells(
+                    Values=[
+                        _measure_sum(
+                            "ar-ds-debits-val",
+                            DS_AR_DAILY_STATEMENT_SUMMARY,
+                            "total_debits",
+                        )
+                    ],
+                ),
+            ),
+        )
+    )
+
+    kpi_credits = Visual(
+        KPIVisual=KPIVisual(
+            VisualId="ar-ds-kpi-credits",
+            Title=_title("Total Credits"),
+            Subtitle=_subtitle(
+                "Sum of negative signed_amount legs posted on the day "
+                "(absolute value, non-failed). Matches the Cr column."
+            ),
+            ChartConfiguration=KPIConfiguration(
+                FieldWells=KPIFieldWells(
+                    Values=[
+                        _measure_sum(
+                            "ar-ds-credits-val",
+                            DS_AR_DAILY_STATEMENT_SUMMARY,
+                            "total_credits",
+                        )
+                    ],
+                ),
+            ),
+        )
+    )
+
+    kpi_closing = Visual(
+        KPIVisual=KPIVisual(
+            VisualId="ar-ds-kpi-closing",
+            Title=_title("Closing Balance (Stored)"),
+            Subtitle=_subtitle(
+                "Stored end-of-day balance from daily_balances — what "
+                "the feed asserts the account ended the day at"
+            ),
+            ChartConfiguration=KPIConfiguration(
+                FieldWells=KPIFieldWells(
+                    Values=[
+                        _measure_sum(
+                            "ar-ds-closing-val",
+                            DS_AR_DAILY_STATEMENT_SUMMARY,
+                            "closing_balance_stored",
+                        )
+                    ],
+                ),
+            ),
+        )
+    )
+
+    kpi_drift = Visual(
+        KPIVisual=KPIVisual(
+            VisualId="ar-ds-kpi-drift",
+            Title=_title("Drift"),
+            Subtitle=_subtitle(
+                "Stored closing − (opening + Σ signed legs). Zero on a "
+                "clean feed; any non-zero value means the feed's balance "
+                "doesn't match its own posting activity."
+            ),
+            ChartConfiguration=KPIConfiguration(
+                FieldWells=KPIFieldWells(
+                    Values=[
+                        _measure_sum(
+                            "ar-ds-drift-val",
+                            DS_AR_DAILY_STATEMENT_SUMMARY,
+                            "drift",
+                        )
+                    ],
+                ),
+            ),
+        )
+    )
+
+    transactions_table = Visual(
+        TableVisual=TableVisual(
+            VisualId="ar-ds-transactions-table",
+            Title=_title("Transaction Detail"),
+            Subtitle=_subtitle(
+                "Every leg posted to the selected account on the selected "
+                "day. counter_account_name shows the other side(s) of each "
+                "transfer — the offsetting legs keyed against this account."
+            ),
+            ChartConfiguration=TableConfiguration(
+                FieldWells=TableFieldWells(
+                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
+                        Values=[
+                            _unagg_field("ar-ds-txn-posted-at",
+                                         DS_AR_DAILY_STATEMENT_TRANSACTIONS,
+                                         "posted_at"),
+                            _unagg_field("ar-ds-txn-type",
+                                         DS_AR_DAILY_STATEMENT_TRANSACTIONS,
+                                         "transfer_type"),
+                            _unagg_field("ar-ds-txn-origin",
+                                         DS_AR_DAILY_STATEMENT_TRANSACTIONS,
+                                         "origin"),
+                            _unagg_field("ar-ds-txn-direction",
+                                         DS_AR_DAILY_STATEMENT_TRANSACTIONS,
+                                         "direction"),
+                            _unagg_field("ar-ds-txn-signed-amount",
+                                         DS_AR_DAILY_STATEMENT_TRANSACTIONS,
+                                         "signed_amount"),
+                            _unagg_field("ar-ds-txn-counter",
+                                         DS_AR_DAILY_STATEMENT_TRANSACTIONS,
+                                         "counter_account_name"),
+                            _unagg_field("ar-ds-txn-transfer-id",
+                                         DS_AR_DAILY_STATEMENT_TRANSACTIONS,
+                                         "transfer_id"),
+                            _unagg_field("ar-ds-txn-status",
+                                         DS_AR_DAILY_STATEMENT_TRANSACTIONS,
+                                         "status"),
+                            _unagg_field("ar-ds-txn-memo",
+                                         DS_AR_DAILY_STATEMENT_TRANSACTIONS,
+                                         "memo"),
+                        ],
+                    )
+                ),
+                SortConfiguration={
+                    "RowSort": [
+                        {
+                            "FieldSort": {
+                                "FieldId": "ar-ds-txn-posted-at",
+                                "Direction": "ASC",
+                            },
+                        },
+                    ],
+                },
+            ),
+        )
+    )
+
+    return [
+        kpi_opening,
+        kpi_debits,
+        kpi_credits,
+        kpi_closing,
+        kpi_drift,
+        transactions_table,
     ]

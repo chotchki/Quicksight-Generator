@@ -4,6 +4,10 @@ Phase D shape — 5 sheets, per-sheet visual counts (Exceptions grows to
 17 with 5 aging bar charts), 5 drill-down parameters, and
 17 filter groups (shared date-range + 6 multi-selects + 4 Show-Only
 toggles + 5 parameter-bound drill-down filters + origin).
+
+Phase I.2 added the Daily Statement sheet — 6 visuals (5 KPI + 1 table),
+2 sheet-pinned filter groups (account + balance_date), 2 new parameters
+(`pArDsAccountId`, `pArDsBalanceDate`).
 """
 
 from __future__ import annotations
@@ -39,10 +43,11 @@ class TestSheets:
         "Transfers",
         "Transactions",
         "Exceptions",
+        "Daily Statement",
     ]
 
-    def test_has_five_sheets(self, ar_dashboard_definition):
-        assert len(ar_dashboard_definition["Sheets"]) == 5
+    def test_has_six_sheets(self, ar_dashboard_definition):
+        assert len(ar_dashboard_definition["Sheets"]) == 6
 
     def test_sheet_order(self, ar_dashboard_definition):
         names = [s["Name"] for s in ar_dashboard_definition["Sheets"]]
@@ -63,6 +68,9 @@ class TestVisuals:
         "Transactions": 5,
         # Phase F.5 grew Exceptions from 17 → 47 visuals
         "Exceptions": 47,
+        # Phase I.2 — 5 KPIs (opening / debits / credits / closing / drift)
+        # + 1 transaction-detail table
+        "Daily Statement": 6,
     }
 
     def test_visual_counts_per_sheet(self, ar_dashboard_definition):
@@ -141,6 +149,30 @@ class TestVisuals:
         assert "ar-txn-bar-by-status" in ids
         assert "ar-txn-bar-by-day" in ids
 
+    def test_daily_statement_has_kpi_strip_and_table(
+        self, ar_dashboard_definition,
+    ):
+        """Phase I.2 — Daily Statement sheet must surface all 5 KPIs and
+        the transaction-detail table, in stable IDs the handbook walkthrough
+        will reference. A regression that drops any one of these would break
+        the walkthrough's screenshot anchors."""
+        ds_sheet = next(
+            s for s in ar_dashboard_definition["Sheets"]
+            if s["Name"] == "Daily Statement"
+        )
+        ids = set(_visual_ids(ds_sheet))
+        for expected in (
+            "ar-ds-kpi-opening",
+            "ar-ds-kpi-debits",
+            "ar-ds-kpi-credits",
+            "ar-ds-kpi-closing",
+            "ar-ds-kpi-drift",
+            "ar-ds-transactions-table",
+        ):
+            assert expected in ids, (
+                f"Daily Statement missing visual '{expected}'"
+            )
+
 
 class TestParameters:
     def _names(self, definition: dict) -> set[str]:
@@ -151,13 +183,18 @@ class TestParameters:
                     names.add(decl["Name"])
         return names
 
-    def test_five_drill_down_parameters(self, ar_dashboard_definition):
+    def test_drill_down_parameters(self, ar_dashboard_definition):
+        # 5 drill-down parameters (Phase D) + 2 Daily Statement
+        # parameters (Phase I.2). pArDsBalanceDate is a DateTime
+        # parameter; the rest are String parameters.
         assert self._names(ar_dashboard_definition) == {
             "pArSubledgerAccountId",
             "pArLedgerAccountId",
             "pArTransferId",
             "pArActivityDate",
             "pArTransferType",
+            "pArDsAccountId",
+            "pArDsBalanceDate",
         }
 
 
@@ -180,6 +217,15 @@ class TestFilterGroups:
         "fg-ar-drill-ledger-on-balances-subledger",
         "fg-ar-drill-activity-date-on-txn",
         "fg-ar-drill-transfer-type-on-txn",
+        # Phase I.3.A — Exceptions KPI scope fixes (drift-only narrowing
+        # for KPIs that share datasets with Balances timelines)
+        "fg-ar-exceptions-ledger-drift-only",
+        "fg-ar-exceptions-subledger-drift-only",
+        "fg-ar-exceptions-sweep-drift-only",
+        "fg-ar-exceptions-gl-fed-drift-only",
+        # Phase I.2 — Daily Statement sheet pickers (parameter-bound)
+        "fg-ar-ds-account",
+        "fg-ar-ds-balance-date",
     }
 
     def test_filter_group_ids(self, ar_dashboard_definition):

@@ -1,8 +1,9 @@
-"""Browser tests: AR Show-Only-X toggles are present on each pipeline tab.
+"""Browser tests: AR sheet-level controls are present on each pipeline tab.
 
-Mirrors ``test_state_toggles.py`` for the AR dashboard. All five toggles
-(three drift/overdraft on Balances, one on Transfers, one on Transactions)
-are sheet-level controls — verify each renders on the right sheet.
+Mirrors ``test_state_toggles.py`` for the AR dashboard. Covers Show-Only-X
+filter toggles (Balances + Transactions) and Phase I.2's Daily Statement
+parameter pickers (Account + Balance Date) — both surface through the same
+sheet-controls panel, so a single helper checks them by title.
 """
 
 from __future__ import annotations
@@ -29,6 +30,9 @@ TOGGLES_BY_TAB = {
         "Show Only Overdraft",
     ],
     "Transactions": ["Show Only Failed"],
+    # Phase I.2 — Daily Statement controls are ParameterControls (not
+    # FilterControls). They surface in the same sheet-controls panel.
+    "Daily Statement": ["Account", "Balance Date"],
 }
 
 

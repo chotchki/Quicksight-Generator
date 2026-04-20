@@ -69,6 +69,23 @@ class TestArDatasetColumns:
             "subledger_account_id", "ledger_account_id", "balance_date",
             "balance_date_str", "stored_balance",
         },
+        # Phase I.2 — Daily Statement. Both datasets are unparameterized at
+        # SQL level; QS sheet-local filters narrow by `pArDsAccountId` /
+        # `pArDsBalanceDate`, so the column names below have to match what
+        # the filters reference (account_id, balance_date) AND what the
+        # KPI/table visuals display (opening_balance, drift, etc.).
+        "ar-daily-statement-summary-dataset": {
+            "account_id", "account_name", "account_level", "balance_date",
+            "opening_balance", "total_debits", "total_credits",
+            "closing_balance_stored", "closing_balance_recomputed",
+            "drift", "drift_status", "leg_count",
+        },
+        "ar-daily-statement-transactions-dataset": {
+            "transaction_id", "account_id", "account_name", "balance_date",
+            "posted_at", "transfer_id", "transfer_type", "origin",
+            "signed_amount", "direction", "status", "memo",
+            "counter_account_name",
+        },
     }
 
     def test_key_columns_present(

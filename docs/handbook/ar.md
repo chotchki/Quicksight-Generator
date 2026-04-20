@@ -1,5 +1,5 @@
 <div class="snb-hero">
-  <img class="snb-hero__wordmark" src="../img/snb-wordmark.svg" alt="Sasquatch National Bank">
+  <img class="snb-hero__wordmark" src="../../img/snb-wordmark.svg" alt="Sasquatch National Bank">
   <h2>GL Reconciliation Handbook</h2>
   <p class="snb-hero__tagline">Morning checks and triage walkthroughs for the Treasury / GL Recon team.</p>
 </div>

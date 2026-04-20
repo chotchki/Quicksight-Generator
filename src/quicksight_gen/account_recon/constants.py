@@ -9,6 +9,7 @@ SHEET_AR_BALANCES = "ar-sheet-balances"
 SHEET_AR_TRANSFERS = "ar-sheet-transfers"
 SHEET_AR_TRANSACTIONS = "ar-sheet-transactions"
 SHEET_AR_EXCEPTIONS = "ar-sheet-exceptions"
+SHEET_AR_DAILY_STATEMENT = "ar-sheet-daily-statement"
 
 # Datasets
 DS_AR_LEDGER_ACCOUNTS = "ar-ledger-accounts-ds"
@@ -32,3 +33,5 @@ DS_AR_INTERNAL_REVERSAL_UNCREDITED = "ar-internal-reversal-uncredited-ds"
 DS_AR_EXPECTED_ZERO_EOD_ROLLUP = "ar-expected-zero-eod-rollup-ds"
 DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP = "ar-two-sided-post-mismatch-rollup-ds"
 DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP = "ar-balance-drift-timelines-rollup-ds"
+DS_AR_DAILY_STATEMENT_SUMMARY = "ar-daily-statement-summary-ds"
+DS_AR_DAILY_STATEMENT_TRANSACTIONS = "ar-daily-statement-transactions-ds"

@@ -637,6 +637,17 @@ class TimeRangeFilter:
 
 
 @dataclass
+class TimeEqualityFilter:
+    FilterId: str
+    Column: ColumnIdentifier
+    Value: str | None = None  # ISO datetime; pair with TimeGranularity
+    ParameterName: str | None = None
+    TimeGranularity: str | None = None
+    RollingDate: dict[str, Any] | None = None
+    DefaultFilterControlConfiguration: DefaultFilterControlConfiguration | None = None
+
+
+@dataclass
 class NumericRangeFilterValue:
     StaticValue: float | None = None
 
@@ -658,6 +669,7 @@ class Filter:
     """Union type — set exactly one."""
     CategoryFilter: CategoryFilter | None = None
     TimeRangeFilter: TimeRangeFilter | None = None
+    TimeEqualityFilter: TimeEqualityFilter | None = None
     NumericRangeFilter: NumericRangeFilter | None = None
 
 
@@ -746,6 +758,45 @@ class FilterControl:
 
 
 # ---------------------------------------------------------------------------
+# Analysis models — Parameter controls
+#
+# QuickSight disables a regular FilterControl whose backing filter is
+# parameter-bound (CustomFilterConfiguration with ParameterName) — the UI
+# shows "this control was disabled because the filter is using
+# parameters". The right widget for that case is a ParameterControl
+# bound directly to the parameter; the parameter-bound filter then
+# responds to the parameter value the control writes.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ParameterDropDownControl:
+    ParameterControlId: str
+    Title: str
+    SourceParameterName: str
+    Type: str | None = None  # SINGLE_SELECT|MULTI_SELECT
+    # ParameterSelectableValues shape: either {"Values": [str, ...]}
+    # for a static list or {"LinkToDataSetColumn": {"DataSetIdentifier",
+    # "ColumnName"}} for an auto-populated list. The link query bypasses
+    # the sheet's parameter-bound filter so users see every available
+    # option, not the filtered slice.
+    SelectableValues: dict[str, Any] | None = None
+
+
+@dataclass
+class ParameterDateTimePickerControl:
+    ParameterControlId: str
+    Title: str
+    SourceParameterName: str
+
+
+@dataclass
+class ParameterControl:
+    """Union type — set exactly one."""
+    Dropdown: ParameterDropDownControl | None = None
+    DateTimePicker: ParameterDateTimePickerControl | None = None
+
+
+# ---------------------------------------------------------------------------
 # Analysis models — Sheet & Layout
 # ---------------------------------------------------------------------------
 
@@ -807,6 +858,7 @@ class SheetDefinition:
     ContentType: str = "INTERACTIVE"  # INTERACTIVE|PAGINATED
     Visuals: list[Visual] | None = None
     FilterControls: list[FilterControl] | None = None
+    ParameterControls: list[ParameterControl] | None = None
     Layouts: list[Layout] | None = None
     TextBoxes: list[SheetTextBox] | None = None
 
@@ -829,9 +881,25 @@ class StringParameterDeclaration:
 
 
 @dataclass
+class DateTimeDefaultValues:
+    StaticValues: list[str] | None = None
+    DynamicValue: dict[str, Any] | None = None
+    RollingDate: dict[str, Any] | None = None
+
+
+@dataclass
+class DateTimeParameterDeclaration:
+    Name: str
+    TimeGranularity: str | None = None
+    DefaultValues: DateTimeDefaultValues | None = None
+    ValueWhenUnset: dict[str, Any] | None = None
+
+
+@dataclass
 class ParameterDeclaration:
     """Union type — set exactly one."""
     StringParameterDeclaration: StringParameterDeclaration | None = None
+    DateTimeParameterDeclaration: DateTimeParameterDeclaration | None = None
 
 
 @dataclass

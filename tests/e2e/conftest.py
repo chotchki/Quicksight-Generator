@@ -161,6 +161,9 @@ def ar_dataset_ids(resource_prefix) -> list[str]:
         "ar-expected-zero-eod-rollup-dataset",
         "ar-two-sided-post-mismatch-rollup-dataset",
         "ar-balance-drift-timelines-rollup-dataset",
+        # Daily Statement (Phase I.2, 2)
+        "ar-daily-statement-summary-dataset",
+        "ar-daily-statement-transactions-dataset",
     ]
     return [f"{resource_prefix}-{s}" for s in suffixes]
 
