@@ -49,6 +49,13 @@ nav:
     - Why Does This Settlement Look Short?: walkthroughs/pr/why-does-this-settlement-look-short.md
     - Why Doesn't This Payment Match the Settlement?: walkthroughs/pr/why-doesnt-this-payment-match-the-settlement.md
     - How Much Did We Return Last Week?: walkthroughs/pr/how-much-did-we-return.md
+  - Data Integration Handbook:
+    - Overview: handbook/etl.md
+    - How do I populate transactions?: walkthroughs/etl/how-do-i-populate-transactions.md
+    - How do I prove my ETL is working?: walkthroughs/etl/how-do-i-prove-my-etl-is-working.md
+    - How do I tag a force-posted transfer?: walkthroughs/etl/how-do-i-tag-a-force-posted-transfer.md
+    - How do I add a metadata key?: walkthroughs/etl/how-do-i-add-a-metadata-key.md
+    - What to do when demo passes but prod fails?: walkthroughs/etl/what-do-i-do-when-demo-passes-but-prod-fails.md
   - Training Scenarios:
     - Account Structure: Training_Story.md
     - Schema v3 — Data Feed Contract: Schema_v3.md
