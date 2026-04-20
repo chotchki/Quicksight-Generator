@@ -105,13 +105,24 @@ def _optional_metadata_columns() -> list[ColumnSpec]:
     ]
 
 
-def _optional_metadata_sql_fields() -> str:
-    """Return a SQL fragment listing the optional columns, comma-prefixed."""
+def _optional_metadata_sql_fields(metadata_expr: str = "metadata") -> str:
+    """Return a SQL fragment for the optional fields, comma-prefixed.
+
+    Each field is extracted from the JSON metadata column via JSON_VALUE
+    and cast to its declared SQL type when numeric. ``metadata_expr`` lets
+    callers pass an alias-qualified expression (e.g. ``t.metadata``).
+    """
     if not OPTIONAL_SALE_METADATA:
         return ""
-    return ",\n    " + ",\n    ".join(
-        col for col, *_ in OPTIONAL_SALE_METADATA
-    )
+    parts: list[str] = []
+    for col, ddl_type, _qs, _ftype, _label in OPTIONAL_SALE_METADATA:
+        if ddl_type.startswith("DECIMAL"):
+            parts.append(
+                f"CAST(JSON_VALUE({metadata_expr}, '$.{col}') AS {ddl_type}) AS {col}"
+            )
+        else:
+            parts.append(f"JSON_VALUE({metadata_expr}, '$.{col}') AS {col}")
+    return ",\n    " + ",\n    ".join(parts)
 
 
 def _aging_bucket_case(days_expr: str) -> str:
@@ -297,30 +308,39 @@ WHERE account_type       = 'merchant_dda'
 
 
 def build_sales_dataset(cfg: Config) -> DataSet:
+    # Phase G.9.2: reads from shared `transactions`. PR sale transfers
+    # carry one row per posting leg; the merchant_dda leg under the
+    # `pr-merchant-ledger` control account is the canonical sale-row
+    # (one per sale). `-signed_amount` recovers the original signed
+    # sale amount (refunds stay negative). PR-domain fields (sale_id,
+    # card_brand, settlement_id, …) come out of the JSON metadata.
     sql = f"""\
 SELECT
-    sale_id,
-    merchant_id,
-    location_id,
-    amount,
-    sale_type,
-    payment_method,
-    sale_timestamp,
-    card_brand,
-    card_last_four,
-    reference_id,
-    metadata,
-    settlement_id,
+    JSON_VALUE(t.metadata, '$.sale_id')                          AS sale_id,
+    JSON_VALUE(t.metadata, '$.merchant_id')                      AS merchant_id,
+    JSON_VALUE(t.metadata, '$.location_id')                      AS location_id,
+    -t.signed_amount                                             AS amount,
+    JSON_VALUE(t.metadata, '$.sale_type')                        AS sale_type,
+    JSON_VALUE(t.metadata, '$.payment_method')                   AS payment_method,
+    t.posted_at                                                  AS sale_timestamp,
+    JSON_VALUE(t.metadata, '$.card_brand')                       AS card_brand,
+    JSON_VALUE(t.metadata, '$.card_last_four')                   AS card_last_four,
+    JSON_VALUE(t.metadata, '$.reference_id')                     AS reference_id,
+    JSON_VALUE(t.metadata, '$.tags')                             AS metadata,
+    JSON_VALUE(t.metadata, '$.settlement_id')                    AS settlement_id,
     CASE
-        WHEN settlement_id IS NULL
-            THEN (CURRENT_DATE - sale_timestamp::date)
+        WHEN JSON_VALUE(t.metadata, '$.settlement_id') IS NULL
+            THEN (CURRENT_DATE - t.posted_at::date)
         ELSE NULL
     END AS days_outstanding,
     CASE
-        WHEN settlement_id IS NULL THEN 'Unsettled'
+        WHEN JSON_VALUE(t.metadata, '$.settlement_id') IS NULL THEN 'Unsettled'
         ELSE 'Settled'
-    END AS settlement_state{_optional_metadata_sql_fields()}
-FROM pr_sales"""
+    END AS settlement_state{_optional_metadata_sql_fields('t.metadata')}
+FROM transactions t
+WHERE t.transfer_type      = 'sale'
+  AND t.account_type       = 'merchant_dda'
+  AND t.control_account_id = 'pr-merchant-ledger'"""
     return build_dataset(
         cfg, cfg.prefixed("sales-dataset"),
         "Sales", "sales",
