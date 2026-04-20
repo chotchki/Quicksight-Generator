@@ -524,15 +524,22 @@ FROM pr_unmatched_external_txns"""
 
 
 def build_external_transactions_dataset(cfg: Config) -> DataSet:
+    # Phase G.9.5: reads from shared `transactions`. ext_txn transfers
+    # have one external_counter leg on pr-external-rail; the
+    # processor-side status ('processed') lives in metadata, not in the
+    # transfer/posting status (which is 'success' / 'failed').
     sql = """\
 SELECT
-    transaction_id,
-    external_system,
-    external_amount,
-    record_count,
-    transaction_date,
-    status
-FROM pr_external_transactions"""
+    JSON_VALUE(t.metadata, '$.external_transaction_id')            AS transaction_id,
+    t.external_system                                              AS external_system,
+    t.amount                                                       AS external_amount,
+    CAST(JSON_VALUE(t.metadata, '$.record_count') AS INTEGER)      AS record_count,
+    t.posted_at                                                    AS transaction_date,
+    JSON_VALUE(t.metadata, '$.status')                             AS status
+FROM transactions t
+WHERE t.transfer_type      = 'external_txn'
+  AND t.account_type       = 'external_counter'
+  AND t.control_account_id = 'pr-merchant-ledger'"""
     return build_dataset(
         cfg, cfg.prefixed("external-transactions-dataset"),
         "External Transactions", "external-transactions",

@@ -268,6 +268,7 @@ def _derive_pr_unified_tables(
             "record_count": e["record_count"],
             "merchant_id": e["merchant_id"],
             "external_transaction_id": e["transaction_id"],
+            "status": e["status"],
         })
         _posting(tid, "pr-external-rail", -e["external_amount"],
                  e["transaction_date"])
