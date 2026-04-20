@@ -136,7 +136,7 @@ outbound they've ever originated, that's a different conversation
   shape of investigation: pick the sub-ledger, drill into
   Transactions, look at the legs that drove the breach. Lives in
   the same KPI row.
-- *Internal Transfer Suspense Non-Zero EOD* (forthcoming) —
+- [Internal Transfer Suspense Non-Zero EOD](internal-transfer-suspense-non-zero.md) —
   unrelated check but an analogous "this account is doing something
   the system says it shouldn't" pattern; sometimes a stuck transfer
   inflates a sub-ledger's apparent outbound and looks like a limit

@@ -99,12 +99,12 @@ manual intervention.
 
 ## Related walkthroughs
 
-- *ACH Sweep No Fed Confirmation* (forthcoming) — per-check view of
-  the SNB-side of the pair. Drill target for "side_present = SNB
-  internal sweep" rows.
-- *Fed Card No Internal Catch-Up* (forthcoming) — per-check view of
-  the Fed-side of the pair. Drill target for "side_present = Fed card
-  observation" rows.
+- [ACH Sweep Without Fed Confirmation](ach-sweep-no-fed-confirmation.md) —
+  per-check view of the SNB-side of the pair. Drill target for
+  "side_present = SNB internal sweep" rows.
+- [Fed Activity Without Internal Post](fed-card-no-internal-catchup.md) —
+  per-check view of the Fed-side of the pair. Drill target for
+  "side_present = Fed card observation" rows.
 - [Balance Drift Timelines Rollup](balance-drift-timelines-rollup.md) —
   same Fed-vs-internal divergence, but viewed as per-day drift dollars
   instead of unmatched transfer count.

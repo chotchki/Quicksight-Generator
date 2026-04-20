@@ -76,3 +76,27 @@ non-zero: triage by source — sweep target failures usually go to the
 ZBA admin team, ACH non-zero EOD goes to ACH Operations, suspense
 non-zero goes to Internal Transfer Operations. Use the per-check
 sections to pull the specific account / transfer ID for the handoff.
+
+## Related walkthroughs
+
+- [Sweep Target Non-Zero EOD](sweep-target-non-zero.md) — per-check
+  view of operating sub-accounts that failed to sweep clean. One
+  source of rows in this rollup.
+- [ACH Origination Settlement Non-Zero EOD](ach-origination-non-zero.md) —
+  per-check view of `gl-1810` carrying balance overnight. Another
+  source of rows.
+- [Internal Transfer Suspense Non-Zero EOD](internal-transfer-suspense-non-zero.md) —
+  per-check view of `gl-1830` carrying balance overnight (typically
+  from stuck on-us transfers). Third source of rows.
+- [Stuck in Internal Transfer Suspense](stuck-in-internal-transfer-suspense.md) —
+  per-transfer view of the originating incidents that drive the
+  Internal Transfer Suspense rows here.
+- [Two-Sided Post Mismatch Rollup](two-sided-post-mismatch-rollup.md) —
+  the next rollup down. Different shape (paired-but-half-posted
+  rather than expected-zero-but-non-zero), but the same triage
+  pattern: rollup tells you *something* is wrong; per-check rows
+  below tell you *who to call*.
+- [Balance Drift Timelines Rollup](balance-drift-timelines-rollup.md) —
+  the third rollup at the top. Different invariant class (two-sided
+  drift over time) but co-located with this one in the morning
+  three-rollup scan.

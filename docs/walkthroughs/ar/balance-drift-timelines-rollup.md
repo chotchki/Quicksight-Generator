@@ -106,8 +106,9 @@ and move on. If one or both series have non-zero days:
 - [Two-Sided Post Mismatch Rollup](two-sided-post-mismatch-rollup.md) —
   the GL-vs-Fed-Master spikes here are the per-day-dollar view of
   what shows up there as per-transfer count.
-- *Concentration Master Sweep Drift* (forthcoming) — per-check
-  timeline for the sweep-leg-mismatch series, with the underlying
-  transfer rows.
-- *GL vs Fed Master Drift* (forthcoming) — per-check timeline for
-  the Fed-vs-internal series, with the underlying observation rows.
+- [Concentration Master Sweep Drift](concentration-master-sweep-drift.md) —
+  per-check timeline for the sweep-leg-mismatch series, with the
+  underlying transfer rows.
+- [GL vs Fed Master Drift](gl-vs-fed-master-drift.md) — per-check
+  timeline for the Fed-vs-internal series, with the underlying
+  observation rows.

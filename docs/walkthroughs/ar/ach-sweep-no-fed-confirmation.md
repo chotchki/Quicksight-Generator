@@ -147,6 +147,10 @@ here contributes one drift day to that chart.
   posted, SNB never matched it. Together this check + that one
   cover both directions of a "two-sided post mismatch" pattern,
   rolled up at the top of the Exceptions sheet.
+- [Two-Sided Post Mismatch Rollup](two-sided-post-mismatch-rollup.md) —
+  the rollup that unions this check with *Fed Activity Without
+  Internal Post*. Each row here contributes one "side_present =
+  SNB internal sweep" row there.
 - [GL vs Fed Master Drift](gl-vs-fed-master-drift.md) — the
   cumulative-drift roll-up of the same SNB-vs-Fed reconciliation.
   Days here become drift bars there.

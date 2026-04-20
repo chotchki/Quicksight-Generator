@@ -102,5 +102,5 @@ held that long without resolution is a regulatory issue.
 ## Related walkthroughs
 
 - [Expected-Zero EOD Rollup](expected-zero-eod-rollup.md) — these stuck transfers also surface in the Expected-Zero rollup as residual `gl-1830` balance.
-- *Internal Transfer Suspense Non-Zero EOD* (forthcoming) — the account-level view: the same money seen as "suspense holding $6,155 overnight" instead of "two specific transfers stuck".
-- *Internal Reversal Uncredited* (forthcoming) — the related failure mode: Step 2 *did* fire, but as a reversal rather than the destination credit, and the originator never got their money back.
+- [Internal Transfer Suspense Non-Zero EOD](internal-transfer-suspense-non-zero.md) — the account-level view: the same money seen as "suspense holding $6,155 overnight" instead of "two specific transfers stuck".
+- [Reversed Transfers Without Credit-Back](internal-reversal-uncredited.md) — the related failure mode: Step 2 *did* fire, but as a reversal rather than the destination credit, and the originator never got their money back.

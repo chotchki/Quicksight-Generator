@@ -478,7 +478,7 @@ Spike question: can we leverage the e2e Playwright fixtures to generate focused,
   - `internal-transfer-suspense-non-zero.md`
   - `internal-reversal-uncredited.md`
   - Commit: `Phase H.4.C: AR CMS-specific check walkthroughs`.
-- [ ] H.4.4 Cross-reference pass: each walkthrough's "Related" footer links neighbor walkthroughs. Commit: `Phase H.4: cross-reference AR walkthroughs`.
+- [x] H.4.4 Cross-reference pass: each walkthrough's "Related" footer links neighbor walkthroughs. Replaced 7 `(forthcoming)` placeholders with real links across 4 files; added the missing Related section on `expected-zero-eod-rollup.md`; added the Two-Sided Post Mismatch Rollup link to both per-check ACH/Fed walkthroughs. Commit: `Phase H.4: cross-reference AR walkthroughs`.
 
 ---
 

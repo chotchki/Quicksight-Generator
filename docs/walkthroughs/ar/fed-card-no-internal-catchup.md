@@ -154,6 +154,10 @@ drift day there.
   pattern. There: SNB posted internally, Fed never confirmed.
   Here: Fed posted, SNB never caught up. The two checks together
   cover both directions of the SNB-vs-Fed reconciliation gap.
+- [Two-Sided Post Mismatch Rollup](two-sided-post-mismatch-rollup.md) —
+  the rollup that unions this check with *ACH Sweep Without Fed
+  Confirmation*. Each row here contributes one "side_present =
+  Fed card observation" row there.
 - [GL vs Fed Master Drift](gl-vs-fed-master-drift.md) — the
   cumulative drift between the SNB internal view and the Fed
   view of the FRB master account. Days here contribute to the
