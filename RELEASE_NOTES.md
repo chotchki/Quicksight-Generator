@@ -1,10 +1,10 @@
 # Release Notes
 
-## v3.1.0
+## v3.2.0
 
 ### Phase H + Phase I — Handbooks, Daily Statement, sign-convention standardization, PyPI release pipeline
 
-This release rolls up Phase H (handbook suite + walkthrough harness) and the bulk of Phase I (Daily Statement sheet, PR/AR cross-visibility unification, PR sign-convention fix, PyPI release plumbing). Dashboards are visually unchanged from v3.0.0; the seed shifts under the sign-convention fix (re-locked SHA256), and a new per-account Daily Statement sheet is added to the AR analysis. The CLI is now `pip install quicksight-gen` from PyPI on every tagged release, with a sample `out/` bundle attached to the GitHub Release for evaluators.
+This release rolls up Phase H (handbook suite + walkthrough harness) and the bulk of Phase I (Daily Statement sheet, PR/AR cross-visibility unification, PR sign-convention fix, PyPI release plumbing). Dashboards are visually unchanged from v3.0.0; the seed shifts under the sign-convention fix (re-locked SHA256), and a new per-account Daily Statement sheet is added to the AR analysis. The CLI is now `pip install quicksight-gen` from PyPI on every tagged release, with a sample `out/` bundle attached to the GitHub Release for evaluators. (Version skips 3.1.0 — that tag was created during the Phase H merge before the release pipeline existed and never produced a PyPI artifact; left untouched on its original commit for history.)
 
 ### What landed
 
