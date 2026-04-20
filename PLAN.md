@@ -760,6 +760,13 @@ Resolution either lands the missing filter (I.3.A pattern, narrows the dataset S
 
 Sequence I.3 *before* I.2 — the daily statement sheet's API e2e tests will hit the same dataset views and the same date-arithmetic surface. Fixing the underlying drift before adding new tests on top of it avoids piling new failures on a leaky foundation.
 
+### I.3.D — Resolution
+
+Investigated 2026-04-20 — both classes resolved without any production code change.
+
+- **I.3.B (3 planted-row failures): stale seed.** Re-ran `quicksight-gen demo apply --all -c run/config.yaml -o run/out/` (Hypothesis 1) and all 3 surface tests passed. The seed had been applied days earlier; `date.today()` had rolled forward enough that the planted-on-N-days-ago dates no longer matched what the views computed against `balance_date`. No code fix; just an operational reminder that semantics tests want a fresh seed.
+- **I.3.A (2 KPI scope failures): test bug, not code bug.** The H.4.B-pattern visual-scoped pinned filters (`fg-ar-exceptions-sweep-drift-only`, `fg-ar-exceptions-gl-fed-drift-only`) already existed in `account_recon/filters.py:450-465`, scoping the KPIs to `drift_status='drift'`. The tests' `as_displayed` queries didn't model that filter — they counted every row from the view. Fix was a one-line tightening of `as_displayed` in both tests to `WHERE drift_status = 'drift'`, matching what the deployed dashboard actually shows. Test comments updated to remove the stale "as-displayed counts every row" framing.
+
 ---
 
 # PLAN — Phase J (queued)

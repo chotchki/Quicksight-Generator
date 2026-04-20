@@ -180,10 +180,14 @@ class TestKpiScope:
         # Subtitle: "Days the Cash Concentration Master credits and
         # operating sub-account debits ... didn't balance" — semantic
         # scope is drift <> 0. View emits a row per sweep_date including
-        # healthy days; KPI as-displayed counts every row, so equality
-        # here also doubles as a guard against the same drift-counting
-        # bug class as the ledger/subledger drift fix.
-        as_displayed = "SELECT 1 FROM ar_concentration_master_sweep_drift"
+        # healthy days; the visual-scoped pinned filter
+        # (fg-ar-exceptions-sweep-drift-only) restricts the KPI to
+        # drift_status='drift'. Equality here pins both the filter wiring
+        # and the underlying drift_status derivation.
+        as_displayed = (
+            "SELECT 1 FROM ar_concentration_master_sweep_drift "
+            "WHERE drift_status = 'drift'"
+        )
         expected_scope = (
             "SELECT 1 FROM ar_concentration_master_sweep_drift WHERE drift <> 0"
         )
@@ -234,9 +238,14 @@ class TestKpiScope:
 
     def test_gl_fed_drift_kpi_scope(self, pg_conn):
         # Subtitle: "Days ... didn't equal" — semantic scope is drift <> 0.
-        # Same exposure as sweep_drift: view returns all movement_dates,
-        # KPI counts them all unfiltered. Equality here pins the scope.
-        as_displayed = "SELECT 1 FROM ar_gl_vs_fed_master_drift"
+        # Same wiring as sweep_drift: view returns all movement_dates and
+        # the visual-scoped pinned filter (fg-ar-exceptions-gl-fed-drift-only)
+        # restricts the KPI to drift_status='drift'. Equality here pins
+        # both the filter wiring and the drift_status derivation.
+        as_displayed = (
+            "SELECT 1 FROM ar_gl_vs_fed_master_drift "
+            "WHERE drift_status = 'drift'"
+        )
         expected_scope = (
             "SELECT 1 FROM ar_gl_vs_fed_master_drift WHERE drift <> 0"
         )
