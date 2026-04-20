@@ -548,28 +548,46 @@ WHERE t.transfer_type      = 'external_txn'
 
 
 def build_payment_recon_dataset(cfg: Config) -> DataSet:
+    # Phase G.9.6: reads from shared `transactions`. Aggregates ext_txn
+    # rows joined with their payments by metadata.external_transaction_id.
+    # Inner subquery collapses payment legs to one row per payment so SUM
+    # totals the same set the legacy SQL did.
     late_days = cfg.late_default_days
     sql = f"""\
 SELECT
-    et.transaction_id,
+    JSON_VALUE(et.metadata, '$.external_transaction_id')             AS transaction_id,
     et.external_system,
-    et.external_amount,
-    COALESCE(SUM(p.payment_amount), 0) AS internal_total,
-    et.external_amount - COALESCE(SUM(p.payment_amount), 0) AS difference,
+    et.amount                                                        AS external_amount,
+    COALESCE(SUM(p.payment_amount), 0)                               AS internal_total,
+    et.amount - COALESCE(SUM(p.payment_amount), 0)                   AS difference,
     CASE
-        WHEN et.external_amount = COALESCE(SUM(p.payment_amount), 0) THEN 'matched'
-        WHEN (CURRENT_DATE - et.transaction_date::date) > {late_days} THEN 'late'
+        WHEN et.amount = COALESCE(SUM(p.payment_amount), 0) THEN 'matched'
+        WHEN (CURRENT_DATE - et.posted_at::date) > {late_days} THEN 'late'
         ELSE 'not_yet_matched'
-    END AS match_status,
-    COUNT(p.payment_id) AS payment_count,
-    et.merchant_id,
-    et.transaction_date,
-    (CURRENT_DATE - et.transaction_date::date) AS days_outstanding,
-{_aging_bucket_case('CURRENT_DATE - et.transaction_date::date')}
-FROM pr_external_transactions et
-LEFT JOIN pr_payments p ON p.external_transaction_id = et.transaction_id
-GROUP BY et.transaction_id, et.external_system, et.external_amount,
-         et.merchant_id, et.transaction_date"""
+    END                                                              AS match_status,
+    COUNT(p.payment_id)                                              AS payment_count,
+    JSON_VALUE(et.metadata, '$.merchant_id')                         AS merchant_id,
+    et.posted_at                                                     AS transaction_date,
+    (CURRENT_DATE - et.posted_at::date)                              AS days_outstanding,
+{_aging_bucket_case('CURRENT_DATE - et.posted_at::date')}
+FROM transactions et
+LEFT JOIN (
+    SELECT
+        JSON_VALUE(metadata, '$.payment_id')                         AS payment_id,
+        JSON_VALUE(metadata, '$.external_transaction_id')            AS ext_txn_id,
+        CAST(JSON_VALUE(metadata, '$.payment_amount') AS DECIMAL(12,2)) AS payment_amount
+    FROM transactions
+    WHERE transfer_type      = 'payment'
+      AND account_type       = 'merchant_dda'
+      AND control_account_id = 'pr-merchant-ledger'
+) p ON p.ext_txn_id = JSON_VALUE(et.metadata, '$.external_transaction_id')
+WHERE et.transfer_type      = 'external_txn'
+  AND et.account_type       = 'external_counter'
+  AND et.control_account_id = 'pr-merchant-ledger'
+GROUP BY JSON_VALUE(et.metadata, '$.external_transaction_id'),
+         et.external_system, et.amount,
+         JSON_VALUE(et.metadata, '$.merchant_id'),
+         et.posted_at"""
     return build_dataset(
         cfg, cfg.prefixed("payment-recon-dataset"),
         "Payment Reconciliation", "payment-recon",
