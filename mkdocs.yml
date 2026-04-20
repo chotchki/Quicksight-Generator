@@ -18,6 +18,9 @@ nav:
   - Home: index.md
   - Training Scenarios:
     - Account Structure: Training_Story.md
+  - AR Walkthroughs:
+    - Expected-Zero EOD Rollup: walkthroughs/ar/expected-zero-eod-rollup.md
+    - Stuck in Internal Transfer Suspense: walkthroughs/ar/stuck-in-internal-transfer-suspense.md
 
 markdown_extensions:
   - toc:
