@@ -349,23 +349,39 @@ WHERE t.transfer_type      = 'sale'
 
 
 def build_settlements_dataset(cfg: Config) -> DataSet:
+    # Phase G.9.3: reads from shared `transactions`. Settlement transfers
+    # have two zero-netting postings on the merchant_dda leg; DISTINCT
+    # collapses to one row per settlement (both legs carry identical
+    # metadata + posted_at). LEFT JOIN to a payment-per-settlement
+    # subquery wires payment_id / payment_state.
     sql = """\
-SELECT
-    s.settlement_id,
-    s.merchant_id,
-    s.settlement_type,
-    s.settlement_amount,
-    s.settlement_date,
-    s.settlement_status,
-    s.sale_count,
-    (CURRENT_DATE - s.settlement_date::date) AS days_outstanding,
+SELECT DISTINCT
+    JSON_VALUE(t.metadata, '$.settlement_id')                    AS settlement_id,
+    JSON_VALUE(t.metadata, '$.merchant_id')                      AS merchant_id,
+    JSON_VALUE(t.metadata, '$.settlement_type')                  AS settlement_type,
+    CAST(JSON_VALUE(t.metadata, '$.settlement_amount') AS DECIMAL(12,2)) AS settlement_amount,
+    t.posted_at                                                  AS settlement_date,
+    JSON_VALUE(t.metadata, '$.settlement_status')                AS settlement_status,
+    CAST(JSON_VALUE(t.metadata, '$.sale_count') AS INTEGER)      AS sale_count,
+    (CURRENT_DATE - t.posted_at::date)                           AS days_outstanding,
     p.payment_id,
     CASE
         WHEN p.payment_id IS NULL THEN 'Unpaid'
         ELSE 'Paid'
     END AS payment_state
-FROM pr_settlements s
-LEFT JOIN pr_payments p ON p.settlement_id = s.settlement_id"""
+FROM transactions t
+LEFT JOIN (
+    SELECT DISTINCT
+        JSON_VALUE(metadata, '$.settlement_id') AS settlement_id,
+        JSON_VALUE(metadata, '$.payment_id')    AS payment_id
+    FROM transactions
+    WHERE transfer_type      = 'payment'
+      AND account_type       = 'merchant_dda'
+      AND control_account_id = 'pr-merchant-ledger'
+) p ON p.settlement_id = JSON_VALUE(t.metadata, '$.settlement_id')
+WHERE t.transfer_type      = 'settlement'
+  AND t.account_type       = 'merchant_dda'
+  AND t.control_account_id = 'pr-merchant-ledger'"""
     return build_dataset(
         cfg, cfg.prefixed("settlements-dataset"),
         "Settlements", "settlements",

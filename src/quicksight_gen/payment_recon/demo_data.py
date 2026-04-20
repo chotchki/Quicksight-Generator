@@ -328,6 +328,7 @@ def _derive_pr_unified_tables(
         transfer_metadata[tid] = _compact({
             "settlement_type": s["settlement_type"],
             "settlement_status": s["settlement_status"],
+            "settlement_amount": float(s["settlement_amount"]),
             "sale_count": s["sale_count"],
             "merchant_id": s["merchant_id"],
             "merchant_account_id": merchant_sub,
