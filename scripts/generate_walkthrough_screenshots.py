@@ -99,11 +99,54 @@ SHOTS: list[dict] = [
     _shot("Limit Breaches by Age",        "sub-ledger-limit-breach", "03-aging"),
     _shot("Overdrafts by Age",            "sub-ledger-overdraft",    "03-aging"),
 
+    # Batch C — CMS-specific checks. Layout walks down the sheet from
+    # F.5.1 to F.5.9 in order. Most checks share titles between KPI and
+    # table (idx 0 = KPI, idx 1 = table); F.5.2 and F.5.6 are KPI +
+    # timeline pairs (separate titles, no shared-title indexing needed).
+
+    # F.5.1 Sweep target non-zero EOD: KPI / table / aging stacked.
+    _shot("Sweep Target Non-Zero EOD",          "sweep-target-non-zero",            "01-kpi",   title_index=0),
+    _shot("Sweep Target Non-Zero EOD",          "sweep-target-non-zero",            "02-table", title_index=1, wait_for_cells=True),
+    _shot("Sweep Targets by Age",               "sweep-target-non-zero",            "03-aging"),
+
+    # F.5.2 Concentration master sweep drift: half-width KPI + timeline.
+    _shot("Concentration Master Sweep Drift Days",     "concentration-master-sweep-drift", "01-kpi"),
+    _shot("Concentration Master Sweep Drift Timeline", "concentration-master-sweep-drift", "02-timeline"),
+
+    # F.5.3 ACH Origination Settlement non-zero EOD: KPI / table / aging.
+    _shot("ACH Origination Settlement Non-Zero EOD", "ach-origination-non-zero", "01-kpi",   title_index=0),
+    _shot("ACH Origination Settlement Non-Zero EOD", "ach-origination-non-zero", "02-table", title_index=1, wait_for_cells=True),
+    _shot("ACH Origination Non-Zero EOD by Age",     "ach-origination-non-zero", "03-aging"),
+
+    # F.5.4 ACH sweep without Fed confirmation: KPI / table / aging.
+    _shot("ACH Sweep Without Fed Confirmation",      "ach-sweep-no-fed-confirmation", "01-kpi",   title_index=0),
+    _shot("ACH Sweep Without Fed Confirmation",      "ach-sweep-no-fed-confirmation", "02-table", title_index=1, wait_for_cells=True),
+    _shot("ACH Sweep w/o Fed Confirmation by Age",   "ach-sweep-no-fed-confirmation", "03-aging"),
+
+    # F.5.5 Fed activity without internal post: KPI / table / aging.
+    _shot("Fed Activity Without Internal Post",      "fed-card-no-internal-catchup", "01-kpi",   title_index=0),
+    _shot("Fed Activity Without Internal Post",      "fed-card-no-internal-catchup", "02-table", title_index=1, wait_for_cells=True),
+    _shot("Fed Activity w/o Internal Post by Age",   "fed-card-no-internal-catchup", "03-aging"),
+
+    # F.5.6 GL vs Fed Master drift: half-width KPI + timeline.
+    _shot("GL vs Fed Master Drift Days",     "gl-vs-fed-master-drift", "01-kpi"),
+    _shot("GL vs Fed Master Drift Timeline", "gl-vs-fed-master-drift", "02-timeline"),
+
     # Stuck in Internal Transfer Suspense (F.5.7) — sits well below the
     # baseline section. Same shape: KPI + table (shared title) + aging.
     _shot("Stuck in Internal Transfer Suspense", "stuck-in-internal-transfer-suspense", "01-kpi", title_index=0),
     _shot("Stuck in Internal Transfer Suspense", "stuck-in-internal-transfer-suspense", "02-table", title_index=1, wait_for_cells=True),
     _shot("Stuck Internal Transfers by Age",     "stuck-in-internal-transfer-suspense", "03-aging"),
+
+    # F.5.8 Internal Transfer Suspense non-zero EOD: KPI / table / aging.
+    _shot("Internal Transfer Suspense Non-Zero EOD", "internal-transfer-suspense-non-zero", "01-kpi",   title_index=0),
+    _shot("Internal Transfer Suspense Non-Zero EOD", "internal-transfer-suspense-non-zero", "02-table", title_index=1, wait_for_cells=True),
+    _shot("Internal Suspense Non-Zero EOD by Age",   "internal-transfer-suspense-non-zero", "03-aging"),
+
+    # F.5.9 Reversed transfers without credit-back: KPI / table / aging.
+    _shot("Reversed Transfers Without Credit-Back", "internal-reversal-uncredited", "01-kpi",   title_index=0),
+    _shot("Reversed Transfers Without Credit-Back", "internal-reversal-uncredited", "02-table", title_index=1, wait_for_cells=True),
+    _shot("Reversed Without Credit-Back by Age",    "internal-reversal-uncredited", "03-aging"),
 ]
 
 

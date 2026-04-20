@@ -468,7 +468,7 @@ Spike question: can we leverage the e2e Playwright fixtures to generate focused,
   - `sub-ledger-limit-breach.md`
   - `sub-ledger-overdraft.md`
   - Commit: `Phase H.4.B: AR baseline check walkthroughs`.
-- [ ] H.4.3 **Batch C — CMS-specific** (8 files; Stuck in Suspense is already done):
+- [x] H.4.3 **Batch C — CMS-specific** (8 files; Stuck in Suspense is already done):
   - `sweep-target-non-zero.md`
   - `concentration-master-sweep-drift.md`
   - `ach-origination-non-zero.md`
