@@ -1,5 +1,13 @@
 # Release Notes
 
+## v3.2.1
+
+### Fix — wheel ships demo schema
+
+The v3.2.0 wheel didn't include `demo/schema.sql`, so `quicksight-gen demo schema` (and `demo apply`) failed against an installed wheel with `Schema file not found`. Patch release moves the schema into the package as `quicksight_gen/demo/schema.sql` (declared as `package-data`) and routes both CLI sites + the `TestSchemaSql` fixtures through a new `quicksight_gen.demo.generate_schema_sql()` helper. No behavior change for source checkouts.
+
+---
+
 ## v3.2.0
 
 ### Phase H + Phase I — Handbooks, Daily Statement, sign-convention standardization, PyPI release pipeline

@@ -201,9 +201,10 @@ out/
 A deterministic demo generator seeds both apps end-to-end so you can see them work without wiring up real data.
 
 ```bash
-# Emit SQL only (no DB connection needed)
-quicksight-gen demo schema --all -o demo/schema.sql
-quicksight-gen demo seed   --all -o demo/seed.sql
+# Emit SQL only (no DB connection needed) — schema ships in the wheel,
+# `demo schema` writes a copy out for inspection or hand-loading.
+quicksight-gen demo schema --all -o /tmp/schema.sql
+quicksight-gen demo seed   --all -o /tmp/seed.sql
 
 # Apply schema + seed to PostgreSQL, then generate QuickSight JSON
 # Requires: demo_database_url in config.yaml and `pip install -e ".[demo]"`
@@ -263,8 +264,8 @@ src/quicksight_gen/
         datasets.py     # 21 custom-SQL datasets
         demo_data.py    # Sasquatch National Bank — CMS treasury demo data generator
         constants.py    # Sheet + dataset identifier constants
-demo/
-    schema.sql          # Full PostgreSQL DDL — shared `transactions` + `daily_balances` base layer + AR dimension tables
+    demo/
+        schema.sql      # Full PostgreSQL DDL — shared `transactions` + `daily_balances` base layer + AR dimension tables; emitted by `demo schema`
 docs/
     Schema_v3.md        # Data Integration Team feed contract: column specs, metadata keys, ETL examples
 tests/

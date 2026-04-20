@@ -910,7 +910,7 @@ Why a standalone phase rather than a sub-step of I.4: the fix touches generator 
 - [x] **URLs.** `[project.urls]` carries Homepage + Documentation (mkdocs site), Source, Issues, Changelog (RELEASE_NOTES.md on main).
 - [x] **README rendering.** `readme = "README.md"`; `twine check dist/*` PASSED for both wheel + sdist.
 - [x] **Keywords.** `quicksight`, `aws`, `dashboards`, `reconciliation`, `analytics`, `finance`.
-- [x] **Package data.** Wheel ships `quicksight_gen/` only (no tests, no demo, no docs). Sdist ships README + LICENSE + pyproject + src/ (43 files) + tests/ (11 files). `demo/schema.sql` does NOT ship in the wheel — users who need it can run `quicksight-gen demo schema --all -o my-schema.sql` (it's generated, not source-tracked at install time anyway).
+- [x] **Package data.** Wheel ships `quicksight_gen/` (including `quicksight_gen/demo/schema.sql`, declared via `[tool.setuptools.package-data]`). Sdist ships README + LICENSE + pyproject + src/ + tests/. `quicksight-gen demo schema --all -o <path>` reads the schema through `quicksight_gen.demo.generate_schema_sql()` (`importlib.resources` lookup) so it works against an installed wheel. *(Originally claimed `demo schema` "generated" the SQL; it actually ships the static file via package-data — corrected in v3.2.1.)*
 
 ### I.6.C — Local build + smoke test
 

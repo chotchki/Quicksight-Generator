@@ -40,8 +40,9 @@ quicksight-gen cleanup --dry-run
 quicksight-gen cleanup --yes
 
 # Demo: schema DDL / seed SQL / apply to a Postgres database
-quicksight-gen demo schema --all -o demo/schema.sql
-quicksight-gen demo seed   --all -o demo/seed.sql
+# (schema ships with the wheel — `demo schema` writes a copy out for inspection.)
+quicksight-gen demo schema --all -o /tmp/schema.sql
+quicksight-gen demo seed   --all -o /tmp/seed.sql
 quicksight-gen demo apply  --all -c config.yaml -o out/
 
 # Tests

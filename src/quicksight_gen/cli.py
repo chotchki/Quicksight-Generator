@@ -218,13 +218,13 @@ def demo() -> None:
 def demo_schema(app: str | None, all_apps: bool, output: str) -> None:
     """Emit the PostgreSQL DDL for the demo database."""
     _resolve_app(app, all_apps, allow_all=True)
-    # Schema lives in a single file covering both apps (pr_ + ar_ prefixes).
-    schema_path = _project_root() / "demo" / "schema.sql"
-    if not schema_path.exists():
-        raise click.ClickException(f"Schema file not found at {schema_path}")
+    # Schema lives in a single file covering both apps; both apps share
+    # the `transactions` + `daily_balances` base tables.
+    from quicksight_gen.demo import generate_schema_sql
+
     out = Path(output)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(schema_path.read_text())
+    out.write_text(generate_schema_sql())
     click.echo(f"Wrote schema to {out}")
 
 
@@ -360,10 +360,8 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
             "Install it with: pip install 'quicksight-gen[demo]'"
         )
 
-    schema_path = _project_root() / "demo" / "schema.sql"
-    if not schema_path.exists():
-        raise click.ClickException(f"Schema file not found at {schema_path}")
-    schema_sql = schema_path.read_text()
+    from quicksight_gen.demo import generate_schema_sql
+    schema_sql = generate_schema_sql()
 
     seed_parts: list[str] = []
     if app in ("payment-recon", "all"):
@@ -529,5 +527,3 @@ def _resolve_app(app: str | None, all_apps: bool, *, allow_all: bool) -> str:
     return app
 
 
-def _project_root() -> Path:
-    return Path(__file__).resolve().parent.parent.parent

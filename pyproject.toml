@@ -70,6 +70,9 @@ quicksight-gen = "quicksight_gen.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"quicksight_gen.demo" = ["*.sql"]
+
 [tool.setuptools.dynamic]
 version = {attr = "quicksight_gen.__version__"}
 

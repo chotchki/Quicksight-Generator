@@ -1915,15 +1915,15 @@ class TestSeedSqlStructure:
 
 
 # ---------------------------------------------------------------------------
-# Schema SQL (checks the shared demo/schema.sql file)
+# Schema SQL (checks the shared schema shipped with the package)
 # ---------------------------------------------------------------------------
 
 class TestSchemaSql:
     @pytest.fixture()
     def schema_sql(self) -> str:
-        return (
-            Path(__file__).resolve().parent.parent / "demo" / "schema.sql"
-        ).read_text()
+        from quicksight_gen.demo import generate_schema_sql
+
+        return generate_schema_sql()
 
     def test_creates_ar_tables(self, schema_sql):
         for table in (

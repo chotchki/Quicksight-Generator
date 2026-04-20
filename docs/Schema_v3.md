@@ -706,9 +706,9 @@ H.8.5.E).
 
 ## Forbidden SQL patterns
 
-Anything in this list MUST NOT appear in `demo/schema.sql`, dataset SQL,
-or computed view bodies. The dialect compatibility constraint is a hard
-wall.
+Anything in this list MUST NOT appear in the demo schema (emitted by
+`quicksight-gen demo schema --all`), dataset SQL, or computed view
+bodies. The dialect compatibility constraint is a hard wall.
 
 | Forbidden | Use instead |
 |---|---|

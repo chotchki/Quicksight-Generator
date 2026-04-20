@@ -46,7 +46,6 @@ from tests.test_demo_data import (
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DOC_PATH = REPO_ROOT / "docs" / "Schema_v3.md"
-SCHEMA_PATH = REPO_ROOT / "demo" / "schema.sql"
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +326,8 @@ class TestForbiddenSqlPatterns:
         # SQL strings as triple-quoted Python literals).  Source-text
         # scanning sidesteps Config plumbing and catches both the
         # query SQL and any inline expression SQL.
-        chunks = [SCHEMA_PATH.read_text()]
+        from quicksight_gen.demo import generate_schema_sql
+        chunks = [generate_schema_sql()]
         for mod in (ar_datasets, pr_datasets):
             chunks.append(Path(mod.__file__).read_text())
         return "\n".join(chunks)

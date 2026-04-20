@@ -2,7 +2,6 @@
 
 import re
 from datetime import date
-from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
@@ -21,8 +20,9 @@ ANCHOR = date(2026, 4, 11)
 class TestSchemaSql:
     @pytest.fixture()
     def schema_sql(self) -> str:
-        schema_path = Path(__file__).resolve().parent.parent / "demo" / "schema.sql"
-        return schema_path.read_text()
+        from quicksight_gen.demo import generate_schema_sql
+
+        return generate_schema_sql()
 
     def test_creates_all_tables(self, schema_sql):
         for table in [

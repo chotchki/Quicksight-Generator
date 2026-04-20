@@ -1,8 +1,9 @@
 """Demo data generation — sasquatch coffee shops in Seattle.
 
 Produces deterministic SQL INSERT statements for the demo schema
-(``demo/schema.sql``).  All dates are relative to an anchor date
-(default: today) so the data always looks fresh.
+(see ``quicksight_gen.demo.generate_schema_sql``).  All dates are
+relative to an anchor date (default: today) so the data always
+looks fresh.
 
 Usage::
 
