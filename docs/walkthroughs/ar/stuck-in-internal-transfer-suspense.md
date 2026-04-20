@@ -30,15 +30,43 @@ aging bar chart.
 
 ## What you'll see in the demo
 
-The KPI shows **2** stuck transfers. The detail table:
+The KPI shows **2** stuck transfers.
 
-| originator                   | recipient                  | originated | days stuck | amount   |
-|------------------------------|----------------------------|------------|------------|----------|
-| Cascade Timber Mill          | Big Meadow Dairy           | T-11       | 11         | $4,275.00 |
-| Pinecrest Vineyards LLC      | Harvest Moon Bakery        | T-23       | 23         | $1,880.00 |
+<details><summary>Screenshot — KPI</summary>
+
+![Stuck in Internal Transfer Suspense KPI showing the count 2](../screenshots/ar/stuck-in-internal-transfer-suspense-01-kpi.png)
+
+</details>
+
+The detail table has four columns: `originate_transfer_id`,
+`originated_at`, `originate_amount`, and `aging_bucket`. From the demo
+seed:
+
+| originate_transfer_id | originated_at        | originate_amount | aging_bucket  |
+|-----------------------|----------------------|------------------|---------------|
+| `ar-on-us-orig-03`    | Apr 8, 2026 9:30am   | 4,275            | 4: 8-30 days  |
+| `ar-on-us-orig-04`    | Mar 27, 2026 9:30am  | 1,880            | 4: 8-30 days  |
+
+<details><summary>Screenshot — detail table</summary>
+
+![Detail table with two stuck transfer rows totalling $6,155](../screenshots/ar/stuck-in-internal-transfer-suspense-02-table.png)
+
+</details>
+
+The two rows correspond to the planted scenarios in
+`_INTERNAL_TRANSFER_PLANT` (Cascade Timber Mill → Big Meadow Dairy and
+Pinecrest Vineyards LLC → Harvest Moon Bakery) — the originator and
+recipient names aren't in this table; you'll see them when you drill
+into Transactions.
 
 The aging bar chart shows both rows in the **8-30 days** bucket — well
 past the 1-3 day "normal in-flight" window.
+
+<details><summary>Screenshot — aging chart</summary>
+
+![Aging bar chart with both rows in the 8-30 days bucket](../screenshots/ar/stuck-in-internal-transfer-suspense-03-aging.png)
+
+</details>
 
 ## What it means
 
@@ -51,20 +79,22 @@ recipient may be calling about a missing payment.
 
 ## Drilling in
 
-Click the row in the detail table. The drill switches to the
-**Transactions** sheet filtered to that `transfer_id`, showing the
-Step 1 originate posting (debit suspense, credit originator DDA) with
-no matching Step 2. The absence of Step 2 is the diagnosis — the
-internal transfer system stopped halfway.
+Click the `originate_transfer_id` value in a row of the detail table.
+The drill switches to the **Transactions** sheet filtered to that
+transfer ID, showing the Step 1 originate posting (debit suspense,
+credit originator DDA) with no matching Step 2. The absence of Step 2
+is the diagnosis — the internal transfer system stopped halfway. The
+Transactions sheet also shows the originator's `account_name`, which
+the rollup table doesn't carry.
 
 ## Next step
 
 Stuck-in-suspense rows always go to **Internal Transfer Operations**.
-Hand off the `transfer_id` (visible on the drilled Transactions sheet)
-plus the originator name and amount. They check the transfer system
-log for why Step 2 didn't fire — common causes are recipient account
-flagged for review, intra-day system restart that lost the in-flight
-state, or a NSF check that didn't trigger the reversal path.
+Hand off the `originate_transfer_id` plus the originator name (from
+the drilled Transactions sheet) and amount. They check the transfer
+system log for why Step 2 didn't fire — common causes are recipient
+account flagged for review, intra-day system restart that lost the
+in-flight state, or a NSF check that didn't trigger the reversal path.
 
 After 30 days, stuck transfers escalate to legal / compliance — money
 held that long without resolution is a regulatory issue.

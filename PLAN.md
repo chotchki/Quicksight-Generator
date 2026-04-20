@@ -427,19 +427,17 @@ Conventions (Phase H specific):
 
 Spike question: can we leverage the e2e Playwright fixtures to generate focused, cropped screenshots of individual visuals that walkthroughs can reference inline?
 
-- [ ] H.2.1 Inventory existing helpers: `tests/e2e/browser_helpers.py` already has `scroll_visual_into_view`, sheet/visual selectors, embed-URL fixtures. Most of what's needed is there.
-- [ ] H.2.2 Build `scripts/generate_walkthrough_screenshots.py` that reuses e2e fixtures to:
-  - Open the AR or PR dashboard via embed URL
-  - Switch to a target sheet
-  - Scroll a target visual into view
-  - Screenshot just that visual (use `data-automation-id="analysis_visual"` bounding box)
-  - Save to `docs/walkthroughs/screenshots/<app>/<slug>-<step>.png`
-- [ ] H.2.3 Generate 3-4 screenshots for the existing Stuck in Suspense walkthrough as proof.
-- [ ] H.2.4 Re-render Stuck in Suspense walkthrough with `<details>`-toggled screenshots; eyeball whether the result reads well at full screen and on mobile.
-- [ ] H.2.5 **Gate.** Decide go/no-go on screenshots:
-  - **Go**: H.4 + H.7 produce screenshots alongside text; commit `Phase H.2: walkthrough screenshot generator (e2e harness reuse)`.
-  - **No-go** (too brittle, too noisy, doesn't add value): walkthroughs stay text-only; H.2 effort is the spike's cost; document why in `PLAN.md` decisions log.
-- [ ] H.2.6 If go: settle screenshot freshness policy. Recommend: "screenshots are illustrative; check the dashboard for live values" disclaimer in handbook footer + a regenerate-on-demand script (no CI step). Per-deploy regeneration is too brittle.
+- [x] H.2.1 Inventory existing helpers: `tests/e2e/browser_helpers.py` provides `webkit_page`, `generate_dashboard_embed_url`, `wait_for_dashboard_loaded`, `wait_for_visual_titles_present`, `click_sheet_tab`, plus the marker-attribute pattern in `click_first_row_of_visual`. Tall-viewport trick from `test_ar_sheet_visuals.TALL_VIEWPORT` (1600x12000) defeats QuickSight's below-the-fold virtualization.
+- [x] H.2.2 Built `scripts/generate_walkthrough_screenshots.py`. Three iterations to land:
+  - Playwright `locator.has_text` doesn't match QuickSight title labels reliably — use `page.evaluate` with exact `innerText.trim()` match instead.
+  - QuickSight virtualizes below-the-fold visuals; "scroll-then-back-to-top" unloads them again. Solution: tall viewport so everything stays hydrated.
+  - `page.screenshot(clip=...)` fails on 12000-tall viewport ("clipped area outside resulting image"). Solution: marker-attribute the target element + Playwright `locator.screenshot()` for per-element capture.
+- [x] H.2.3 Three shots produced for Stuck in Suspense walkthrough (KPI / table / aging chart). All readable, tightly cropped, ~20-50KB each.
+- [x] H.2.4 Walkthrough updated with `<details>`-toggled screenshots. Each section reads cleanly text-first, screenshots reveal on click. MkDocs Material `<details>` works out of the box.
+- [x] H.2.5 **GO**. Spike succeeded. Commit script + 3 screenshots + updated walkthrough.
+- [x] H.2.6 Freshness policy: screenshots are committed under `docs/walkthroughs/screenshots/`, regenerated on demand via `python scripts/generate_walkthrough_screenshots.py`. Not a CI step. Each walkthrough author runs the script after editing the SHOTS list, eyeballs the output, commits.
+
+**Lesson learned in H.2.4**: writing the existing walkthroughs without screenshots produced a hallucinated table layout (originator/recipient name columns that don't actually exist in the visual). Each H.4 / H.7 walkthrough must be verified against the rendered visual — either by capturing screenshots first and writing prose to match, or by reading the visual's `Values=[...]` block in `*/visuals.py`. Add a "verify column list against visual definition" step to the standard walkthrough authoring checklist.
 
 ---
 
