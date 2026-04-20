@@ -811,8 +811,7 @@ Parallel audit on `src/quicksight_gen/payment_recon/datasets.py` — PR datasets
 
 - [ ] Drop identified filters from AR datasets + schema views, one commit per coherent group (Balances, Transactions, Transfers). Four concrete commits:
   - **Commit 1 (schema views, both `pr-%` filters):** remove `account_id NOT LIKE 'pr-%'` from `ar_subledger_daily_outbound_by_type` (line 387) and `ar_subledger_overdraft` (line 451). Drop the in-line comments. Re-apply demo. SHA256 lock unaffected (views aren't generator output — confirmed 2026-04-20).
-  - **Commit 1 — discovered downstream effect (2026-04-20):** Removing the overdraft filter exposes **556 PR merchant DDA overdraft rows** (6 accounts × ~92 days each) plus 2 days from `pr-external-rail`. Root cause is a generator bug: the PR seed plants `payment` outflow legs on merchant_dda accounts but no compensating inbound credit (the `external_txn → payment → settlement → sale` chain credits the external pool, not the merchant DDA). Same shape as the `_ACH_ORIG_CUSTOMERS` continuously-negative pattern flagged in I.4.A. **Decision needed before committing:** (a) land commit 1 with the noise + open Commit 1.5 to fix the PR seed first, OR (b) revert and fix the PR seed first, then re-land commit 1 cleanly. Planted AR overdraft scenarios (cust-900-0002, cust-700-0002, gl-1850-sub-cascade) verified to still surface correctly.
-  - **Commit 1.5 (PR seed fix — fold compensating credits into merchant_dda + ACH-only customer DDA accounts):** new sub-step. Plant inbound credits on merchant DDAs at the same magnitude as the `payment` outflow so the merchant_dda balance reflects "received settlement, paid out, ended at zero" rather than "paid out, no credit ever". Same fix for `_ACH_ORIG_CUSTOMERS`. Determinism: re-lock SHA256 in `tests/test_demo_data.py`.
+  - **Commit 1 — discovered downstream effect (2026-04-20):** Removing the overdraft filter exposes **556 PR merchant DDA overdraft rows** (6 accounts × ~92 days each) plus 2 days from `pr-external-rail`. Root cause is a generator sign-convention bug: the PR sale leg debits merchant_sub (`-sale["amount"]`) when under the "positive signed_amount = money IN" convention used by AR + the schema docs, it should credit. Net effect: merchant_dda accounts never receive positive signed_amount → structurally negative. **Decision (2026-04-20):** land Commit 1 with the noise (cross-visibility test acknowledges it as known generator behavior); the underlying sign convention fix is large enough to deserve its own phase — see **Phase I.5 — PR sign convention standardization** below. Planted AR overdraft scenarios (cust-900-0002, cust-700-0002, gl-1850-sub-cascade) verified to still surface correctly.
   - **Commit 2 (AR Transactions dataset transfer-type filter):** remove `WHERE t.transfer_type IN (...)` from `build_ar_transactions_dataset` SQL (line 383). PR transfer types now appear in the AR Transactions tab. May need a Transactions tab UI affordance (default-on Transfer Type filter chip set to AR-only? or just trust the analyst?). Decide during the commit.
   - **Commit 3 (`ar_transfer_net_zero` view: cross-app net-zero with single-leg exemption):** widen the view's source filter to all transfer types, but add an `expected_net_zero` BOOLEAN column derived from a CASE on `transfer_type` (FALSE for `sale`, `external_txn`; TRUE for everything else, since `payment` and `settlement` are multi-leg). Update `ar_transfer_summary` to carry `expected_net_zero` through. Update the AR Non-Zero Transfers KPI's pinned filter to `expected_net_zero = TRUE AND net_zero_status = 'not_net_zero'`. Verify the KPI count doesn't shift (clean PR transfers should still net to zero; planted PR mismatches surface in PR's own checks, not AR's).
   - **Commit 4 (CLAUDE.md + SPEC.md + RELEASE_NOTES.md doc updates):** strike the "AR datasets filter `WHERE transfer_type IN (...)` to exclude PR transfer types" sentence (CLAUDE.md:208), the AR co-residency safety filters bullet (SPEC.md:127), and the Phase H carry-forward note (RELEASE_NOTES.md:27). Replace with the unified-AR-superset framing.
@@ -844,6 +843,64 @@ The queued J entry currently reads "Phase J deletes these — a single-feed real
 Sequence I.4 *after* I.2 Daily Statement lands. Rationale: I.2 sets the good example (greenfield datasets with no exclusions); I.4 retrofits existing AR datasets to match. Doing I.4 first would delay the higher-value I.2 work and complicate the Daily Statement's own test inventory.
 
 Estimated 2–4 commits. If I.4.B/C grows past that (because removing exclusions uncovers visual regressions requiring redesign), promote to its own Phase J entry and leave a smaller I.4 behind.
+
+## I.5 — PR sign convention standardization (merchant_dda balance reflects actual flow)
+
+**North star.** PR merchant_dda accounts should follow the same sign convention as the rest of the codebase: `signed_amount > 0` = money IN to the account; `signed_amount < 0` = money OUT; `daily_balances.balance = SUM(signed_amount)` reflects what the merchant actually has on hand. Surfaced during I.4.B Commit 1 — the PR generator emits `payment` outflow legs on merchant_dda accounts but no compensating inbound, because the sale leg also debits merchant_sub (backwards from convention). This forces PR datasets to negate signed_amount in 6+ places (`-t.signed_amount AS amount`) to recover positive display values. I.5 fixes both: align the seed signs AND retire the negation pattern in PR datasets.
+
+Why a standalone phase rather than a sub-step of I.4: the fix touches generator + datasets + tests + likely visuals; SHA256 re-lock will shift many PR e2e expectations; the diff is broad enough to deserve its own commit cadence and review surface. I.4 stays focused on filter removal; I.5 owns the sign convention.
+
+### I.5.A — Audit current PR sign usage
+
+- [ ] **Generator inventory.** Map every place merchant_sub or other PR sub-ledger accounts get a signed_amount written in `src/quicksight_gen/payment_recon/demo_data.py`:
+  - sale leg (`_derive_pr_unified_tables` ~line 384-387): currently merchant_sub `-sale["amount"]`, customer pool `+sale["amount"]`. **Backwards.**
+  - settlement leg (~line 314-345): self-cancelling pair on merchant_sub. Decide whether to keep self-cancelling or model the actual settlement → merchant payout movement.
+  - payment leg (~line 280-311): merchant_sub `-payment_amount`, external rail `+payment_amount`. **Correct under target convention** (payment is money out).
+  - Any other PR-side `_posting` calls touching merchant_sub or `pr-external-*`.
+- [ ] **Dataset inventory.** Map every place PR datasets read signed_amount with negation in `src/quicksight_gen/payment_recon/datasets.py`. Known starting set (verify line numbers post-I.4.B): ~323, 436, 502, 553, 595, 665. For each, classify whether the negation is recovering "absolute display amount" (replace with `t.amount`) or carries semantic intent ("amount the merchant lost on this leg" — keep but rewrite intent into a column alias).
+- [ ] **Test inventory.** Grep PR tests (`tests/test_demo_data.py`, `tests/test_payment_recon.py`, `tests/e2e/test_*.py` for PR) for hardcoded signed_amount expectations. Catalog every assertion that pins a specific value or sign.
+- [ ] **`_ACH_ORIG_CUSTOMERS` parallel check.** The continuously-negative ACH-only customer DDAs surfaced in I.4.A have a related but distinct shape (AR-side seed, not PR). Decide whether they get folded into I.5.B or stay AR-side.
+- [ ] **Document the target convention** in CLAUDE.md / SPEC.md so the rule is one place: `signed_amount > 0` = money IN; `signed_amount < 0` = money OUT; `amount` = absolute. PR merchant_dda follows this rule like every other account type.
+
+### I.5.B — Generator-side sign correction
+
+- [ ] **Sale leg flip.** `payment_recon/demo_data.py` ~line 384-387: merchant_sub `+sale["amount"]`, `pr-external-customer-pool` `-sale["amount"]`. Single primary edit.
+- [ ] **Settlement leg revisit.** Currently self-cancelling on merchant_sub. Either keep (settlement is a logical grouping, no money actually moves) or model the merchant payout (settlement_amount credits merchant_sub, debits the bank's settlement holding account). Pick based on whether downstream visuals need the settlement-as-payout signal.
+- [ ] **Payment leg verify.** Should remain unchanged; under the new convention `merchant_sub -payment_amount` (money out) is correct.
+- [ ] **Determinism.** Re-lock SHA256 in `tests/test_demo_data.py::TestDeterminism::test_seed_output_hash_is_locked` (PR seed). AR seed unchanged at this stage.
+- [ ] **Sign-convention contract test.** New PR test: every merchant_dda account has at least one positive-signed_amount day in the seed (sale credits the account). Pins the convention so a future regression breaks loudly.
+- [ ] **Balance-coherence test.** Optional but worth adding: assert that for any merchant_dda, `daily_balances.balance` for the last seed date is within "one settlement cycle" of zero (sales come in, payments go out, residual ≈ in-flight settlement). Defines the structural expectation.
+
+### I.5.C — Dataset cleanup (retire `-t.signed_amount` pattern)
+
+- [ ] For each location identified in I.5.A's dataset inventory, replace `-t.signed_amount AS amount` (or `SUM(-signed_amount)`) with `t.amount` (or `SUM(amount)`) where the goal is absolute display value.
+- [ ] Where a dataset reads multiple legs and needs to distinguish in-vs-out, switch to `t.signed_amount` directly under the new convention (positive = in) — usually clearer than negation.
+- [ ] Update DatasetContract column types if needed (most are already DECIMAL — no change expected).
+- [ ] Update `tests/test_dataset_contract.py` per-builder assertions if column expectations shift.
+
+### I.5.D — Test re-lock and fallout
+
+- [ ] Re-run unit + AR e2e tests after I.5.B; expect SHA256 fail on PR seed → re-lock as the intentional change.
+- [ ] Re-run PR e2e tests; expect drift in:
+  - PR sale visuals (totals may flip sign in unfixed display paths)
+  - PR merchant balance KPIs (now non-negative)
+  - PR Settlement / Payment Mismatch checks (likely unchanged — they read on transfer_id grouping, not per-leg sign)
+  - Any test that hardcoded a negative signed_amount value
+- [ ] Update assertions; document which were "wrong because of the bug, now correct" vs. "broke because they assumed the buggy convention." Keep a one-paragraph note in the commit body so the diff is self-documenting.
+
+### I.5.E — Cross-visibility regression update
+
+- [ ] `tests/e2e/test_ar_cross_visibility.py::test_merchant_dda_overdrafts_surface` currently passes because *every* merchant_dda is structurally negative (known bug). Post-I.5.B, that bug is gone — the assertion as-written would silently pass on zero merchant_dda overdrafts.
+- [ ] Either: plant an explicit PR overdraft scenario in `payment_recon/demo_data.py` (one merchant whose payments exceed sales for a settlement cycle) and pin the test to that scenario, OR: drop the test assertion and replace with "no merchant_dda should be structurally negative for the entire seed window" (the inverse — locking the fix).
+- [ ] Update test docstrings to remove "I.4.B Commit 1.5" references; replace with "Phase I.5 — sign convention standardization."
+
+### I.5.F — Docs + sequencing
+
+- [ ] CLAUDE.md domain section gets the canonical sign convention statement (one line: `signed_amount > 0` = IN, `< 0` = OUT, applies to all account types including merchant_dda).
+- [ ] `docs/Schema_v3.md` per-column note for `signed_amount` already says positive=debit; reconcile language so "positive=debit" and "positive=money IN" don't read as conflicting (they're the same statement from different perspectives — bank's view vs. account's view; clarify in one place).
+- [ ] PR Handbook spot-check: any walkthrough that talked about "merchant balance is structurally negative" gets updated.
+- [ ] **Sequence I.5 after I.4 ships.** I.4 makes the cross-visibility lock visible (the test currently relies on the bug); I.5 fixes the bug and updates the test. Doing them out of order means re-locking SHA256 twice and writing a temporary cross-visibility assertion.
+- [ ] Estimated 4–6 commits across I.5.B/C/D. Promote to its own phase if it grows further.
 
 ---
 

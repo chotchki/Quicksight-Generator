@@ -101,12 +101,14 @@ class TestOverdraftCheckSurfacesPrAccounts:
         unified-AR view sees them.
 
         Note: the seed currently emits payment outflow on merchant_dda
-        accounts without a compensating inbound credit, so every merchant
-        DDA runs structurally negative for the entire seed window. That's
-        a known generator bug (tracked in I.4.B Commit 1.5 — "PR seed
-        fix"); for this test it just guarantees the cross-visibility is
-        on. Once the generator is fixed this assertion stays valid as
-        long as *any* merchant DDA goes negative on *any* day.
+        accounts without a compensating inbound credit (sale leg debits
+        merchant_sub when convention says it should credit), so every
+        merchant DDA runs structurally negative for the entire seed
+        window. That's a known generator sign-convention bug, tracked
+        in **Phase I.5 — PR sign convention standardization**. For this
+        test it just guarantees the cross-visibility is on. Post-I.5
+        this assertion needs to be reframed to "at least one *planted*
+        PR overdraft scenario surfaces" — see I.5.E.
         """
         with pg_conn.cursor() as cur:
             cur.execute(
@@ -123,9 +125,10 @@ class TestOverdraftCheckSurfacesPrAccounts:
         assert distinct_merchant_ddas >= 1, (
             "Expected at least one merchant_dda account to surface in "
             "ar_subledger_overdraft after I.4.B commit 1; got 0. Either "
-            "the PR seed no longer plants any negative-balance merchant "
-            "DDA day (commit 1.5 may have over-corrected) or a regression "
-            "re-added the artificial pr-% filter."
+            "I.5 landed and removed the structural negativity without "
+            "updating this assertion (see I.5.E — needs to switch to a "
+            "planted PR overdraft scenario), or a regression re-added "
+            "the artificial pr-% filter."
         )
 
     def test_planted_ar_overdrafts_still_surface(self, pg_conn):
