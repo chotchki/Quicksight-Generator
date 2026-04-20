@@ -854,55 +854,43 @@ Why a standalone phase rather than a sub-step of I.4: the fix touches generator 
 
 ### I.5.A — Audit current PR sign usage
 
-- [ ] **Generator inventory.** Map every place merchant_sub or other PR sub-ledger accounts get a signed_amount written in `src/quicksight_gen/payment_recon/demo_data.py`:
-  - sale leg (`_derive_pr_unified_tables` ~line 384-387): currently merchant_sub `-sale["amount"]`, customer pool `+sale["amount"]`. **Backwards.**
-  - settlement leg (~line 314-345): self-cancelling pair on merchant_sub. Decide whether to keep self-cancelling or model the actual settlement → merchant payout movement.
-  - payment leg (~line 280-311): merchant_sub `-payment_amount`, external rail `+payment_amount`. **Correct under target convention** (payment is money out).
-  - Any other PR-side `_posting` calls touching merchant_sub or `pr-external-*`.
-- [ ] **Dataset inventory.** Map every place PR datasets read signed_amount with negation in `src/quicksight_gen/payment_recon/datasets.py`. Known starting set (verify line numbers post-I.4.B): ~323, 436, 502, 553, 595, 665. For each, classify whether the negation is recovering "absolute display amount" (replace with `t.amount`) or carries semantic intent ("amount the merchant lost on this leg" — keep but rewrite intent into a column alias).
-- [ ] **Test inventory.** Grep PR tests (`tests/test_demo_data.py`, `tests/test_payment_recon.py`, `tests/e2e/test_*.py` for PR) for hardcoded signed_amount expectations. Catalog every assertion that pins a specific value or sign.
-- [ ] **`_ACH_ORIG_CUSTOMERS` parallel check.** The continuously-negative ACH-only customer DDAs surfaced in I.4.A have a related but distinct shape (AR-side seed, not PR). Decide whether they get folded into I.5.B or stay AR-side.
-- [ ] **Document the target convention** in CLAUDE.md / SPEC.md so the rule is one place: `signed_amount > 0` = money IN; `signed_amount < 0` = money OUT; `amount` = absolute. PR merchant_dda follows this rule like every other account type.
+- [x] **Generator inventory.** Mapped (2026-04-20). Sale leg at `demo_data.py:384-387` was the bug; settlement leg kept self-cancelling (logical grouping, no money actually moves; the payment leg already does the cash-out movement); payment leg unchanged (correct under the new convention). No other PR-side `_posting` sites touched merchant_sub or `pr-external-*` with a wrong sign.
+- [x] **Dataset inventory.** Mapped (2026-04-20). Three sites carried `-t.signed_amount` or `SUM(-signed_amount)` in `payment_recon/datasets.py`: `build_sales_dataset` (~L323), `build_settlement_exceptions_dataset` (~L436), `build_sale_settlement_mismatch_dataset` (~L501). All three were "absolute display value" recoveries — none carried semantic intent — so all three retire to plain `t.signed_amount` / `SUM(signed_amount)` after the generator flip.
+- [x] **Test inventory.** Mapped (2026-04-20). Two PR tests negated signed_amount on the read path: `tests/test_demo_data.py` recovery in two scenario tests (L348, L359) and `tests/e2e/test_pr_kpi_semantics.py` (L148 comment + L166 SUM probe). Both updated in I.5.B+C+D bundle commit.
+- [x] **`_ACH_ORIG_CUSTOMERS` parallel check.** Decided (2026-04-20) it's a SEPARATE issue — not a sign convention bug, but a missing-counter-flow seed shape (customer DDAs only see ACH outflow with no inbound). Stays AR-side; out of scope for I.5.
+- [x] **Document the target convention.** Done in I.5.F.
 
 ### I.5.B — Generator-side sign correction
 
-- [ ] **Sale leg flip.** `payment_recon/demo_data.py` ~line 384-387: merchant_sub `+sale["amount"]`, `pr-external-customer-pool` `-sale["amount"]`. Single primary edit.
-- [ ] **Settlement leg revisit.** Currently self-cancelling on merchant_sub. Either keep (settlement is a logical grouping, no money actually moves) or model the merchant payout (settlement_amount credits merchant_sub, debits the bank's settlement holding account). Pick based on whether downstream visuals need the settlement-as-payout signal.
-- [ ] **Payment leg verify.** Should remain unchanged; under the new convention `merchant_sub -payment_amount` (money out) is correct.
-- [ ] **Determinism.** Re-lock SHA256 in `tests/test_demo_data.py::TestDeterminism::test_seed_output_hash_is_locked` (PR seed). AR seed unchanged at this stage.
-- [ ] **Sign-convention contract test.** New PR test: every merchant_dda account has at least one positive-signed_amount day in the seed (sale credits the account). Pins the convention so a future regression breaks loudly.
-- [ ] **Balance-coherence test.** Optional but worth adding: assert that for any merchant_dda, `daily_balances.balance` for the last seed date is within "one settlement cycle" of zero (sales come in, payments go out, residual ≈ in-flight settlement). Defines the structural expectation.
+- [x] **Sale leg flip.** Done in commit c121869 (I.5.B+C+D bundle). `demo_data.py:384-387` now emits merchant_sub `+sale["amount"]`, `pr-external-customer-pool` `-sale["amount"]`.
+- [x] **Settlement leg revisit.** Decided (2026-04-20) to keep self-cancelling — settlement is a logical grouping in this model; the payment leg already moves the money. No change to demo_data.py here.
+- [x] **Payment leg verify.** Verified unchanged; merchant_sub `-payment_amount` is correct under the new convention.
+- [x] **Determinism.** SHA256 re-locked to `6912a28c8902223a7a552194ee368f1e83df09d6779e5c735321a83c086c1cf0` in `tests/test_demo_data.py::TestDeterminism::test_seed_output_hash_is_locked`. AR seed unchanged at this stage.
+- [ ] **Sign-convention contract test.** Deferred — the new I.5.E inverse assertion (no merchant_dda is structurally negative for the seed window) achieves the same regression guard one level up. Reopen if a future regression slips through that gap.
+- [ ] **Balance-coherence test.** Deferred — same gap is covered by I.5.E.
 
 ### I.5.C — Dataset cleanup (retire `-t.signed_amount` pattern)
 
-- [ ] For each location identified in I.5.A's dataset inventory, replace `-t.signed_amount AS amount` (or `SUM(-signed_amount)`) with `t.amount` (or `SUM(amount)`) where the goal is absolute display value.
-- [ ] Where a dataset reads multiple legs and needs to distinguish in-vs-out, switch to `t.signed_amount` directly under the new convention (positive = in) — usually clearer than negation.
-- [ ] Update DatasetContract column types if needed (most are already DECIMAL — no change expected).
-- [ ] Update `tests/test_dataset_contract.py` per-builder assertions if column expectations shift.
+- [x] Retired in commit c121869: 3 sites in `payment_recon/datasets.py` (`build_sales_dataset`, `build_settlement_exceptions_dataset`, `build_sale_settlement_mismatch_dataset`) and the matching ETL example in `payment_recon/etl_examples.py` (Pattern 1 sale).
+- [x] DatasetContract types unchanged — all three sites kept DECIMAL.
+- [x] `tests/test_dataset_contract.py` unchanged — column expectations didn't shift.
 
 ### I.5.D — Test re-lock and fallout
 
-- [ ] Re-run unit + AR e2e tests after I.5.B; expect SHA256 fail on PR seed → re-lock as the intentional change.
-- [ ] Re-run PR e2e tests; expect drift in:
-  - PR sale visuals (totals may flip sign in unfixed display paths)
-  - PR merchant balance KPIs (now non-negative)
-  - PR Settlement / Payment Mismatch checks (likely unchanged — they read on transfer_id grouping, not per-leg sign)
-  - Any test that hardcoded a negative signed_amount value
-- [ ] Update assertions; document which were "wrong because of the bug, now correct" vs. "broke because they assumed the buggy convention." Keep a one-paragraph note in the commit body so the diff is self-documenting.
+- [x] Done in commit c121869. SHA256 re-locked. PR e2e tests: `tests/e2e/test_pr_kpi_semantics.py` had one SUM probe + one comment to flip; both updated. Unit tests: 398 pass. PR Settlement / Payment Mismatch checks — unchanged as predicted (read on transfer_id grouping, not per-leg sign). No other test required a hardcoded-value flip.
 
 ### I.5.E — Cross-visibility regression update
 
-- [ ] `tests/e2e/test_ar_cross_visibility.py::test_merchant_dda_overdrafts_surface` currently passes because *every* merchant_dda is structurally negative (known bug). Post-I.5.B, that bug is gone — the assertion as-written would silently pass on zero merchant_dda overdrafts.
-- [ ] Either: plant an explicit PR overdraft scenario in `payment_recon/demo_data.py` (one merchant whose payments exceed sales for a settlement cycle) and pin the test to that scenario, OR: drop the test assertion and replace with "no merchant_dda should be structurally negative for the entire seed window" (the inverse — locking the fix).
-- [ ] Update test docstrings to remove "I.4.B Commit 1.5" references; replace with "Phase I.5 — sign convention standardization."
+- [x] Done in commit 4bb6122. `test_merchant_dda_overdrafts_surface` rewritten as `test_no_merchant_dda_is_structurally_negative` (inverse assertion — locks the I.5 fix). Cross-visibility itself stays locked by the view-definition test in the sibling class.
+- [x] Test docstrings updated to reference "Phase I.5 — sign convention standardization."
 
 ### I.5.F — Docs + sequencing
 
-- [ ] CLAUDE.md domain section gets the canonical sign convention statement (one line: `signed_amount > 0` = IN, `< 0` = OUT, applies to all account types including merchant_dda).
-- [ ] `docs/Schema_v3.md` per-column note for `signed_amount` already says positive=debit; reconcile language so "positive=debit" and "positive=money IN" don't read as conflicting (they're the same statement from different perspectives — bank's view vs. account's view; clarify in one place).
-- [ ] PR Handbook spot-check: any walkthrough that talked about "merchant balance is structurally negative" gets updated.
-- [ ] **Sequence I.5 after I.4 ships.** I.4 makes the cross-visibility lock visible (the test currently relies on the bug); I.5 fixes the bug and updates the test. Doing them out of order means re-locking SHA256 twice and writing a temporary cross-visibility assertion.
-- [ ] Estimated 4–6 commits across I.5.B/C/D. Promote to its own phase if it grows further.
+- [x] CLAUDE.md: added a **Sign convention** paragraph immediately after the shared base layer table bullets — `signed_amount > 0` = money IN, `< 0` = OUT, `daily_balances.balance = SUM(signed_amount)`, applies to every account_type including merchant_dda. Inline parenthetical on the `transactions` bullet now uses the same account-holder phrasing.
+- [x] `docs/Schema_v3.md`: column-spec entry updated; new **Sign convention** subsection right after Indexes reconciles the bank's-bookkeeping reading ("+= debit") with the account-holder reading ("= money IN") — same statement, opposite ends of the double-entry. ETL walkthrough `how-do-i-populate-transactions.md:133` got the same treatment.
+- [x] PR Handbook spot-check: no "merchant balance is structurally negative" language existed in PR walkthroughs (grep confirmed). No edits needed.
+- [x] Sequencing held — I.5 followed I.4 as planned.
+- [x] Final cadence: 3 commits (I.5.B+C+D bundle, I.5.E, I.5.F docs), well under the 4–6 estimate.
 
 ## I.6 — Release to PyPI + GitHub release artifacts
 

@@ -128,7 +128,7 @@ when summed by `transfer_id` (excluding `failed` rows). Transfer chains
 | `control_account_id` | VARCHAR(100) | NULL | ETL — parent / GL summary account; NULL for top-level | hierarchy queries |
 | `account_type` | VARCHAR(50) | NOT NULL | ETL — see canonical values | filters |
 | `is_internal` | BOOLEAN | NOT NULL | ETL | scope filters |
-| `signed_amount` | DECIMAL(14,2) | NOT NULL | ETL — `+` debit, `−` credit | net-zero check, drift |
+| `signed_amount` | DECIMAL(14,2) | NOT NULL | ETL — `+` = money IN to account (`debit` in bank's bookkeeping); `−` = money OUT (`credit`). See **Sign convention** below. | net-zero check, drift |
 | `amount` | DECIMAL(14,2) | NOT NULL | ETL — `ABS(signed_amount)` | display, filters |
 | `status` | VARCHAR(20) | NOT NULL | ETL — `success` / `failed` | exclude failed from balance math |
 | `posted_at` | TIMESTAMP | NOT NULL | ETL | timeline, ordering |
@@ -184,6 +184,27 @@ CREATE INDEX idx_transactions_parent       ON transactions(parent_transfer_id);
 No GIN indexes on `metadata`. No expression indexes on JSON-path
 extractions. If a metadata key needs to be indexed for performance, lift
 it into a first-class column instead.
+
+### Sign convention
+
+`signed_amount > 0` means money flowing **into** the account named by
+`account_id`; `signed_amount < 0` means money flowing **out**. The
+invariant is mechanical — `daily_balances.balance` for any account-day
+equals the cumulative `SUM(signed_amount)` over all success rows up to
+and including that day, and the drift-check views rely on it. Every
+`account_type` follows this rule, `merchant_dda` included: a sale
+credits the merchant's sub-ledger (positive), a payment debits it
+(negative).
+
+Readers coming from bank's-bookkeeping literature will see the same
+convention phrased as "+= debit, −= credit" — that's a general-ledger
+perspective where positive increases assets / decreases liabilities. The
+two readings are the same statement from opposite ends of the double-
+entry: a +$100 row on a customer DDA is a "debit" to the GL and "money
+IN" to the depositor, simultaneously. The code uses the account-holder
+view throughout (KPI math, drift checks, dataset SQL), so when a
+walkthrough or dashboard element says "Debit", read it as the bank's-
+bookkeeping label for "positive `signed_amount`".
 
 ### What breaks if you skip a column
 

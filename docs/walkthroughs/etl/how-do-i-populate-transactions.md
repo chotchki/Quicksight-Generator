@@ -130,7 +130,11 @@ A few things to note about this projection:
   not `success` MUST be `failed` (no third state) — the drift
   check and net-zero check both `WHERE status = 'success'` to
   exclude rejected legs.
-- **`signed_amount`** is `+` for debits, `−` for credits. If your
+- **`signed_amount`** is `+` for money flowing INTO the account
+  (a `debit` in bank's-bookkeeping terms), `−` for money flowing
+  OUT (a `credit`). `daily_balances.balance` for any account-day
+  equals `SUM(signed_amount)` up to that day, so getting this
+  sign right is what makes the drift check honest. If your
   upstream uses the opposite sign convention, flip it here, not
   later in a view. Every check assumes our sign convention.
 - **`metadata`** carries `source` on every row from this projection
