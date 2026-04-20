@@ -21,9 +21,8 @@ extra_css:
 
 nav:
   - Home: index.md
-  - Training Scenarios:
-    - Account Structure: Training_Story.md
-  - AR Walkthroughs:
+  - AR Handbook:
+    - Overview: handbook/ar.md
     - Balance Drift Timelines Rollup: walkthroughs/ar/balance-drift-timelines-rollup.md
     - Two-Sided Post Mismatch Rollup: walkthroughs/ar/two-sided-post-mismatch-rollup.md
     - Expected-Zero EOD Rollup: walkthroughs/ar/expected-zero-eod-rollup.md
@@ -41,6 +40,9 @@ nav:
     - Stuck in Internal Transfer Suspense: walkthroughs/ar/stuck-in-internal-transfer-suspense.md
     - Internal Transfer Suspense Non-Zero EOD: walkthroughs/ar/internal-transfer-suspense-non-zero.md
     - Reversed Transfers Without Credit-Back: walkthroughs/ar/internal-reversal-uncredited.md
+  - Training Scenarios:
+    - Account Structure: Training_Story.md
+    - Schema v3 — Data Feed Contract: Schema_v3.md
 
 markdown_extensions:
   - toc:

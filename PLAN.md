@@ -484,15 +484,10 @@ Spike question: can we leverage the e2e Playwright fixtures to generate focused,
 
 ## Phase H.5 — AR Handbook index
 
-- [ ] H.5.1 Build `docs/handbook/ar.md`:
-  - Hero block (Sasquatch wordmark + headline)
-  - Preamble: SNB persona (cribbed from `Training_Story.md`); GL Recon team's morning routine
-  - "Morning checks" section: 3 rollup walkthrough cards
-  - "When this fires, what to do" section: 14 per-check walkthrough cards grouped by category (baseline / CMS-specific)
-  - Footer: link to `Schema_v3.md` for data feed contract; link to `Training_Story.md` for full bank narrative
-- [ ] H.5.2 Update `mkdocs.yml` nav — add "AR Handbook" landing + nested walkthroughs under it.
-- [ ] H.5.3 `mkdocs serve` smoke locally — verify hero renders, walkthrough cards lay out cleanly, walkthrough links resolve, screenshots load (if H.2 went green).
-- [ ] H.5.4 Commit — `Phase H.5: AR Handbook index page`.
+- [x] H.5.1 Built `docs/handbook/ar.md` with the H.3 hero block, "The bank" preamble (cribbed from `Training_Story.md`), "The morning routine" section, three rollup cards under "Morning checks", and 14 per-check cards split into Baseline (5) and CMS-specific (9) groups. Footer references `Training_Story.md` + `Schema_v3.md`.
+- [x] H.5.2 mkdocs.yml nav — collapsed walkthroughs under a single "AR Handbook" parent with `Overview: handbook/ar.md` first; also added `Schema_v3.md` to nav (clears the prior "exists in docs but not in nav" build info).
+- [x] H.5.3 mkdocs build --strict clean; live serve confirms `/handbook/ar/` 200, all 17 card links resolve to walkthrough pages 200, footer `[Account Structure]` / `[Schema v3]` links rewritten to directory URLs and 200.
+- [x] H.5.4 Commit — `Phase H.5: AR Handbook index page`.
 
 ---
 
