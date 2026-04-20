@@ -918,18 +918,18 @@ Why a standalone phase rather than a sub-step of I.4: the fix touches generator 
 
 ### I.6.B — Release-readiness audit on `pyproject.toml`
 
-- [ ] **Classifiers.** Add `Topic`, `Intended Audience`, `Programming Language :: Python :: 3.11/3.12/3.13`, `License :: Public Domain`, `Operating System`, `Development Status`. Currently zero classifiers.
-- [ ] **URLs.** Add `[project.urls]` for Homepage, Source, Issues, Changelog, Documentation (the GitHub Pages site).
-- [ ] **README rendering.** Confirm `README.md` is referenced as `readme = "README.md"` in `[project]` and renders cleanly on PyPI (their renderer is stricter than GitHub's — test in I.6.C).
-- [ ] **Keywords.** Add a small set: `quicksight`, `aws`, `dashboards`, `reconciliation`, `analytics`.
-- [ ] **Package data.** Audit what ships in the wheel vs sdist. Confirm `tests/`, `demo/seed.sql`, `out/`, `run/` are excluded from wheel; decide whether `demo/schema.sql` ships (probably yes — it's the schema contract, useful as a reference even without `demo apply`).
+- [x] **Classifiers.** Added Development Status (Beta), Intended Audience (Developers + Financial), OS Independent, Python 3 / 3.11 / 3.12 / 3.13, Topic Office/Business/Financial/Accounting + Code Generators. License classifier omitted in favor of SPDX `license = "Unlicense"` (PEP 639).
+- [x] **URLs.** `[project.urls]` carries Homepage + Documentation (mkdocs site), Source, Issues, Changelog (RELEASE_NOTES.md on main).
+- [x] **README rendering.** `readme = "README.md"`; `twine check dist/*` PASSED for both wheel + sdist.
+- [x] **Keywords.** `quicksight`, `aws`, `dashboards`, `reconciliation`, `analytics`, `finance`.
+- [x] **Package data.** Wheel ships `quicksight_gen/` only (no tests, no demo, no docs). Sdist ships README + LICENSE + pyproject + src/ (43 files) + tests/ (11 files). `demo/schema.sql` does NOT ship in the wheel — users who need it can run `quicksight-gen demo schema --all -o my-schema.sql` (it's generated, not source-tracked at install time anyway).
 
 ### I.6.C — Local build + smoke test
 
-- [ ] **`python -m build`.** Produces `dist/quicksight_gen-*.whl` + `*.tar.gz`. Add `build` to `[project.optional-dependencies].dev` if not already present.
-- [ ] **Fresh-venv install.** `python -m venv /tmp/qs-smoke && /tmp/qs-smoke/bin/pip install dist/quicksight_gen-*.whl[demo]`. Verify `quicksight-gen --help` shows all subcommands and `quicksight-gen --version` prints the right number.
-- [ ] **`generate --all` smoke.** Run against a sample config; confirm output matches a checked-in golden (or at least is non-empty + deserializable JSON). Catches missing package-data files.
-- [ ] **`twine check dist/*`.** Validates the long-description renders on PyPI.
+- [x] **`python -m build`.** Produces `dist/quicksight_gen-3.0.0.tar.gz` + `quicksight_gen-3.0.0-py3-none-any.whl`. `build` + `twine` added to `[project.optional-dependencies].dev`.
+- [x] **Fresh-venv install.** `/tmp/qs-smoke` venv installs the wheel cleanly; `quicksight-gen --help` shows all 4 subcommands (cleanup, demo, deploy, generate). `--version` flag deferred to I.6.G alongside the README badge.
+- [x] **`generate --all` smoke.** Against a minimal config (no real ARNs), the wheel-installed CLI produces all 39 expected output files (theme + 4 analysis/dashboard JSONs + 34 datasets). Confirms no package-data files were forgotten.
+- [x] **`twine check dist/*`.** PASSED for both wheel + sdist (long-description renders on PyPI).
 
 ### I.6.D — PyPI account + trusted publishing setup
 
