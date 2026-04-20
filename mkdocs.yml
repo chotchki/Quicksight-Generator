@@ -5,14 +5,19 @@ repo_name: chotchki/Quicksight-Generator
 
 theme:
   name: material
+  logo: img/snb-mark.svg
+  favicon: img/favicon.svg
   palette:
     scheme: default
-    primary: indigo
-    accent: indigo
+    primary: custom
+    accent: custom
   features:
     - navigation.instant
     - navigation.sections
     - content.code.copy
+
+extra_css:
+  - stylesheets/sasquatch.css
 
 nav:
   - Home: index.md

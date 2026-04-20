@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 110" aria-label="Sasquatch National Bank">
+  <g transform="translate(10 16) scale(1.1)" fill="#4A7C3F">
+    <ellipse cx="32" cy="46" rx="20" ry="18"/>
+    <ellipse cx="11" cy="22" rx="6" ry="7"/>
+    <ellipse cx="22" cy="13" rx="5" ry="6"/>
+    <ellipse cx="33" cy="9" rx="4.5" ry="5.5"/>
+    <ellipse cx="44" cy="13" rx="4.2" ry="5"/>
+    <ellipse cx="53" cy="20" rx="3.8" ry="4.5"/>
+  </g>
+  <text x="105" y="56"
+        font-family="Georgia, 'Times New Roman', serif"
+        font-size="40" font-weight="700" fill="#2B4A2E"
+        letter-spacing="2">SASQUATCH</text>
+  <text x="107" y="88"
+        font-family="Georgia, 'Times New Roman', serif"
+        font-size="19" font-weight="400" fill="#6B4423"
+        letter-spacing="7">NATIONAL BANK</text>
+</svg>

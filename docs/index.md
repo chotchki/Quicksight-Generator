@@ -1,3 +1,9 @@
+<div class="snb-hero">
+  <img class="snb-hero__wordmark" src="img/snb-wordmark.svg" alt="Sasquatch National Bank">
+  <h2>Reconciliation Handbook</h2>
+  <p class="snb-hero__tagline">Operator walkthroughs for the Treasury and Merchant Services dashboards.</p>
+</div>
+
 # QuickSight Analysis Generator
 
 Programmatic AWS QuickSight analysis generator for financial reporting.

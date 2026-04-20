@@ -404,7 +404,7 @@ Conventions (Phase H specific):
 - [ ] H.0.3 **Skeleton lock.** 7-section template (Story / Question / Where to look / What you'll see in the demo / What it means / Drilling in / Next step) confirmed from sample iteration. Locked.
 - [ ] H.0.4 **Index page count.** Separate AR Handbook + PR Handbook (different personas → different mental models). Locked.
 - [ ] H.0.5 **Sasquatch theming source.** Pull palette from `common/theme.py` `sasquatch-bank` + `sasquatch-bank-ar` presets (single source of truth — same colors the rendered dashboards use).
-- [ ] H.0.6 **Hero imagery concept.** Open. Options: (a) PNW silhouette + Sasquatch icon + abstract dashboard mockup; (b) Sasquatch wordmark + clean palette only; (c) abstract data viz hero. Recommend: start with (b) in H.3.6 mkdocs serve preview, escalate to (a) if it lands flat.
+- [x] H.0.6 **Hero imagery concept.** Locked on (b) — Sasquatch wordmark + clean palette only. Wordmark is SVG (text + footprint), no imagery commission. Escalate to (a) only if (b) lands flat after live review.
 - [ ] H.0.7 **Screenshot spike scope (per H.2).** Per-step screenshots embedded in walkthroughs as collapsed `<details>` blocks (scannable for repeat readers, one-click reveal for first-timers).
 - [ ] H.0.8 **PR walkthrough operator-question list.** Drafted in H.6.2; review and lock there.
 - [ ] H.0.9 **Release version.** v3.1.0 — additive, no breaking changes.
@@ -443,13 +443,13 @@ Spike question: can we leverage the e2e Playwright fixtures to generate focused,
 
 ## Phase H.3 — Sasquatch-themed MkDocs site
 
-- [ ] H.3.1 Pull color tokens from `common/theme.py` `sasquatch-bank-ar` preset (primary, accent, background, link tint). Decide whether AR theme dominates the site or both AR + PR palettes coexist (per "Decisions to make in flight" below).
-- [ ] H.3.2 Custom CSS at `docs/stylesheets/sasquatch.css`. Wire via `mkdocs.yml` `extra_css`. Scope: palette overrides, hero block, walkthrough card grid for handbook index.
-- [ ] H.3.3 Hero imagery (per H.0.6 decision). Land in `docs/img/`. Source: AI-generated or stock; keep file size lean for fast Pages load.
-- [ ] H.3.4 Sasquatch wordmark + favicon in `docs/img/`. Wire via `mkdocs.yml` `theme.logo` / `theme.favicon`.
-- [ ] H.3.5 If hero needs structural change (not just CSS), override the MkDocs Material `home.html` partial under `docs/overrides/`. Resist deeper structural overrides — they're a Material-upgrade liability.
-- [ ] H.3.6 `mkdocs serve` smoke locally — verify everything renders, palette looks right, hero is on-brand, no broken links.
-- [ ] H.3.7 Commit — `Phase H.3: Sasquatch-themed MkDocs site (palette + hero + custom CSS)`.
+- [x] H.3.1 AR-dominant palette — `sasquatch-bank-ar` tokens mirrored as CSS custom props in `docs/stylesheets/sasquatch.css`. PR palette tokens reserved for per-page accents in H.7.
+- [x] H.3.2 Custom CSS at `docs/stylesheets/sasquatch.css` (palette overrides + hero block + walkthrough card grid). Wired via `mkdocs.yml` `extra_css`. Material `palette: { primary: custom, accent: custom }` so overrides take effect.
+- [x] H.3.3 Hero imagery — option (b) wordmark only (no commissioned art). `docs/img/snb-wordmark.svg` (~820 B), `docs/img/favicon.svg` (~400 B), `docs/img/snb-mark.svg` (~400 B). Negligible Pages payload.
+- [x] H.3.4 Sasquatch wordmark + favicon in `docs/img/`. Wired via `theme.logo: img/snb-mark.svg` and `theme.favicon: img/favicon.svg`.
+- [x] H.3.5 Skipped — CSS-only hero block on `index.md` works without `home.html` override. Revisit only if landing pages need structural change.
+- [x] H.3.6 `mkdocs build --strict` clean; live serve confirms hero, logo, favicon, and CSS all 200; `index.html` carries the hero block with wordmark.
+- [x] H.3.7 Commit — `Phase H.3: Sasquatch-themed MkDocs site (palette + hero + custom CSS)`.
 
 ---
 

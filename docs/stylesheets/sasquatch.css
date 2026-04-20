@@ -1,0 +1,140 @@
+/*
+ * Sasquatch National Bank — site palette overrides.
+ *
+ * Palette tokens mirror src/quicksight_gen/common/theme.py
+ * (SASQUATCH_BANK_AR_PRESET). Keep these in sync if the preset moves.
+ */
+
+:root {
+  /* AR — valley green / harvest gold / earth */
+  --snb-valley-deep: #2B4A2E;
+  --snb-valley-green: #4A7C3F;
+  --snb-meadow: #7BA96B;
+  --snb-pale-meadow: #D6E6C8;
+  --snb-harvest-gold: #D4A017;
+  --snb-wheat: #E8C77A;
+  --snb-soil-brown: #6B4423;
+  --snb-barn-red: #8B3A2A;
+  --snb-cream: #FBF7EE;
+  --snb-dark-earth: #3A2E24;
+  --snb-stone: #8C7A66;
+  --snb-link-tint: #EAF2E1;
+
+  /* PR — forest greens (used on PR walkthroughs in H.7) */
+  --snb-pr-forest: #2D6A4F;
+  --snb-pr-bank-gold: #C49A2A;
+}
+
+/* MkDocs Material custom palette overrides — applied when
+ * mkdocs.yml uses palette: { primary: custom, accent: custom }. */
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color:        var(--snb-valley-deep);
+  --md-primary-fg-color--light: var(--snb-valley-green);
+  --md-primary-fg-color--dark:  #1f3621;
+  --md-primary-bg-color:        #ffffff;
+  --md-primary-bg-color--light: var(--snb-cream);
+
+  --md-accent-fg-color:         var(--snb-harvest-gold);
+  --md-accent-fg-color--transparent: rgba(212, 160, 23, 0.1);
+  --md-accent-bg-color:         #ffffff;
+
+  --md-typeset-a-color:         var(--snb-valley-green);
+}
+
+/* Header accents */
+.md-header {
+  background-color: var(--snb-valley-deep);
+}
+.md-tabs {
+  background-color: var(--snb-valley-green);
+}
+
+/* Site logo sizing */
+.md-header__button.md-logo img,
+.md-header__button.md-logo svg {
+  height: 1.6rem;
+  width: auto;
+}
+
+/*
+ * Hero block — used on index.md and the (future) handbook landing pages.
+ * Markup: <div class="snb-hero"> ... </div>
+ */
+.snb-hero {
+  background: linear-gradient(135deg, var(--snb-cream) 0%, var(--snb-pale-meadow) 100%);
+  border-left: 6px solid var(--snb-valley-green);
+  border-radius: 4px;
+  padding: 2.4rem 2rem;
+  margin: 1.2rem 0 2rem;
+  text-align: center;
+}
+.snb-hero img.snb-hero__wordmark {
+  max-width: min(420px, 80%);
+  height: auto;
+  margin-bottom: 1rem;
+}
+.snb-hero h1,
+.snb-hero h2 {
+  color: var(--snb-valley-deep);
+  margin: 0.2rem 0;
+  border-bottom: none;
+}
+.snb-hero p.snb-hero__tagline {
+  color: var(--snb-soil-brown);
+  font-size: 1.1rem;
+  margin: 0.4rem 0 0;
+}
+
+/*
+ * Walkthrough card grid — used on the handbook landing pages (H.5).
+ * Markup:
+ *   <div class="snb-card-grid">
+ *     <a class="snb-card" href="...">
+ *       <h3>Title</h3>
+ *       <p>Tagline / question this walkthrough answers.</p>
+ *     </a>
+ *   </div>
+ */
+.snb-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+.snb-card {
+  display: block;
+  padding: 1rem 1.2rem;
+  border: 1px solid var(--snb-pale-meadow);
+  border-left: 4px solid var(--snb-valley-green);
+  border-radius: 4px;
+  background-color: #ffffff;
+  color: var(--snb-dark-earth);
+  text-decoration: none;
+  transition: box-shadow 120ms ease, transform 120ms ease;
+}
+.snb-card:hover {
+  box-shadow: 0 4px 12px rgba(43, 74, 46, 0.12);
+  transform: translateY(-1px);
+  text-decoration: none;
+}
+.snb-card h3 {
+  color: var(--snb-valley-deep);
+  margin: 0 0 0.4rem;
+  font-size: 1.05rem;
+}
+.snb-card p {
+  margin: 0;
+  color: var(--snb-soil-brown);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+/* Section labels above card groups (e.g., "Morning checks") */
+.snb-section-label {
+  color: var(--snb-soil-brown);
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin: 1.6rem 0 0.4rem;
+}
