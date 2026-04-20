@@ -181,3 +181,6 @@ remaining patterns.
   the persona-oriented intro to the contract.
 - [Schema_v3 → ETL examples](../../Schema_v3.md#etl-examples) —
   the canonical SQL templates this walkthrough references.
+- [Where's my money for merchant?](../pr/wheres-my-money-for-merchant.md) —
+  a **downstream consumer** walkthrough: what an analyst does with
+  the `transactions` rows your projection lands.

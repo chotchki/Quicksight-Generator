@@ -51,19 +51,19 @@ spell out which check breaks if you don't.
 1. **Stand up the schema** — `quicksight-gen demo schema -o schema.sql`
    gives you the canonical DDL. Run it against a dev database.
 2. **Generate exemplary INSERTs** — `quicksight-gen demo etl-example
-   --all -o etl-examples.sql` (lands in Phase H.8.5.B) emits
-   pattern-by-pattern inserts you can crib from.
+   --all -o etl-examples.sql` emits pattern-by-pattern inserts you
+   can crib from.
 3. **Map your upstream feed** — most core-banking systems have a
    `gl_postings` (or equivalent) detail table; ETL Examples below
-   show the canonical projection. Plan walkthrough: *How do I populate
-   `transactions` from my core banking system?* (TODO — lands in H.8.5.D)
+   show the canonical projection. See
+   [How do I populate `transactions` from my core banking system?](walkthroughs/etl/how-do-i-populate-transactions.md).
 4. **Validate locally before going live** — the ledger-drift and
-   net-zero invariants must hold. Plan walkthrough: *How do I prove
-   my ETL is working before going live?* (TODO — lands in H.8.5.D)
+   net-zero invariants must hold. See
+   [How do I prove my ETL is working before going live?](walkthroughs/etl/how-do-i-prove-my-etl-is-working.md).
 5. **Watch the dashboards** — open the AR Exceptions sheet and the PR
    Exceptions sheet. If KPIs read 0 with no drilldown rows, the feed
-   landed; if KPIs spike unexpectedly, see the debug walkthrough
-   (TODO — lands in H.8.5.D).
+   landed; if KPIs spike unexpectedly, see
+   [What do I do when the demo passes but my prod data fails?](walkthroughs/etl/what-do-i-do-when-demo-passes-but-prod-fails.md).
 
 ### What changes after day 1
 
@@ -664,19 +664,19 @@ WHERE f.statement_date = CURRENT_DATE - 1;
 ## Going deeper — Data Integration Handbook walkthroughs
 
 The walkthroughs below convert this contract into task-shaped guides.
-*All links are TODOs that resolve when Phase H.8.5.D ships.*
 
-- **How do I populate `transactions` from my core banking system?** —
-  the canonical mapping walkthrough. (TODO)
-- **How do I prove my ETL is working before going live?** — pre-deploy
-  validation invariants (net-to-zero, drift recompute, no orphan
-  parent chains) + a "what dashboard you should see" checklist. (TODO)
-- **How do I tag a force-posted external transfer correctly?** — the
-  `origin` field + `parent_transfer_id` chain mechanics. (TODO)
-- **How do I add a metadata key without breaking the dashboards?** —
-  the extension contract. (TODO)
-- **What do I do when the demo passes but my prod data fails?** —
-  symptom-organized debugging recipes. (TODO)
+- [How do I populate `transactions` from my core banking system?](walkthroughs/etl/how-do-i-populate-transactions.md) —
+  the canonical mapping walkthrough.
+- [How do I prove my ETL is working before going live?](walkthroughs/etl/how-do-i-prove-my-etl-is-working.md) —
+  pre-deploy validation invariants (net-to-zero, drift recompute,
+  no orphan parent chains) + a "what dashboard you should see"
+  checklist.
+- [How do I tag a force-posted external transfer correctly?](walkthroughs/etl/how-do-i-tag-a-force-posted-transfer.md) —
+  the `origin` field + `parent_transfer_id` chain mechanics.
+- [How do I add a metadata key without breaking the dashboards?](walkthroughs/etl/how-do-i-add-a-metadata-key.md) —
+  the extension contract.
+- [What do I do when the demo passes but my prod data fails?](walkthroughs/etl/what-do-i-do-when-demo-passes-but-prod-fails.md) —
+  symptom-organized debugging recipes.
 
 The full landing page lives at `docs/handbook/etl.md` (lands in
 H.8.5.E).

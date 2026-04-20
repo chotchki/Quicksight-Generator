@@ -187,3 +187,7 @@ Once the key is producing, consuming, and rendering:
 - [Schema_v3 → metadata catalog](../../Schema_v3.md#table-1-transactions) —
   the per-`transfer_type` key inventory and its forbidden-syntax
   rules.
+- [How much did we return?](../pr/how-much-did-we-return.md) —
+  a **downstream consumer** example: PR's returned-payment KPI
+  reads `metadata.is_returned`, the same metadata-key pattern a
+  new addition follows.

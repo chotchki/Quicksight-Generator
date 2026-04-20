@@ -244,3 +244,8 @@ Once you've identified the root cause:
 - [Schema_v3 → minimum viable feed](../../Schema_v3.md#the-minimum-viable-feed) —
   the column-by-column failure modes are the source-of-truth for
   the symptoms above.
+- [Where's my money for merchant?](../pr/wheres-my-money-for-merchant.md) —
+  the analyst-side traversal that depends on Symptom 5's
+  `parent_transfer_id` chain being intact.
+- [AR Exceptions: Ledger Drift](../ar/ledger-drift.md) —
+  the analyst-side view of Symptom 4's drift KPI spike.
