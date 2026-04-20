@@ -820,6 +820,8 @@ Parallel audit on `src/quicksight_gen/payment_recon/datasets.py` — PR datasets
 
 ### I.4.C — Update existing AR visuals for the widened data
 
+**Deferred until after I.5 (2026-04-20).** The widening exposes ~556 PR merchant_dda overdraft rows from the I.5 sign-convention bug; once I.5 fixes the seed, that noise disappears and the per-tab UX impact may be small enough to need no chips at all. No active analyst is on the dashboard right now — re-evaluate after I.5 ships.
+
 - [ ] Balances tab now surfaces PR merchant DDAs + the PR external-customer pool. May need a default toggle (e.g., "Show Only CMS Accounts" multi-select default) so the AR analyst's morning-check view doesn't shift under them.
 - [ ] Transactions tab now surfaces `sale`, `settlement`, `payment`, `external_txn` transfer types. Transfer Type filter dropdown auto-expands.
 - [ ] Transfers tab now shows PR transfers alongside AR transfers.
@@ -901,6 +903,72 @@ Why a standalone phase rather than a sub-step of I.4: the fix touches generator 
 - [ ] PR Handbook spot-check: any walkthrough that talked about "merchant balance is structurally negative" gets updated.
 - [ ] **Sequence I.5 after I.4 ships.** I.4 makes the cross-visibility lock visible (the test currently relies on the bug); I.5 fixes the bug and updates the test. Doing them out of order means re-locking SHA256 twice and writing a temporary cross-visibility assertion.
 - [ ] Estimated 4–6 commits across I.5.B/C/D. Promote to its own phase if it grows further.
+
+## I.6 — Release to PyPI + GitHub release artifacts
+
+**North star.** `pip install quicksight-gen[demo]` works from PyPI on any tagged release. A GitHub Release page accompanies each tag with the wheel, sdist, and a pre-baked sample `out/` bundle so evaluators can inspect generated QuickSight JSON without running the generator. Tag-triggered workflow does the build, smoke-test against the wheel, publish, and release-notes draft.
+
+**Why now.** The repo is past v3.0.0 in RELEASE_NOTES (Phase G shipped) but `pyproject.toml` still says `1.1.0`. Anyone who wants to use the tool today has to clone + `pip install -e .` — there's no `pip install`-from-PyPI path. Setting up the release pipeline now establishes the cadence; later phases can ship with a single tag push.
+
+### I.6.A — Version source-of-truth audit + sync
+
+- [ ] **Reconcile version.** `pyproject.toml:7` says `1.1.0`; `RELEASE_NOTES.md` headers go up through v3.0.0 / v2.0.0 / v1.5.0 (apparent multi-track numbering — schema major vs. dashboard feature). Decide on a single track going forward (recommend semver from current tip; the next tag is `v1.6.0` reflecting Phase I work, since v3.0.0 is a schema-internal version that doesn't read as semver to a PyPI consumer).
+- [ ] **Pick a single source of truth.** Either (a) bump `pyproject.toml` manually per release, or (b) read version from `src/quicksight_gen/__init__.py` via `tool.setuptools.dynamic`. Option (b) lets the generator self-report (`quicksight-gen --version`) without drift. Recommend (b).
+- [ ] **Document the bump-then-tag sequence** in CLAUDE.md (release section).
+
+### I.6.B — Release-readiness audit on `pyproject.toml`
+
+- [ ] **Classifiers.** Add `Topic`, `Intended Audience`, `Programming Language :: Python :: 3.11/3.12/3.13`, `License :: Public Domain`, `Operating System`, `Development Status`. Currently zero classifiers.
+- [ ] **URLs.** Add `[project.urls]` for Homepage, Source, Issues, Changelog, Documentation (the GitHub Pages site).
+- [ ] **README rendering.** Confirm `README.md` is referenced as `readme = "README.md"` in `[project]` and renders cleanly on PyPI (their renderer is stricter than GitHub's — test in I.6.C).
+- [ ] **Keywords.** Add a small set: `quicksight`, `aws`, `dashboards`, `reconciliation`, `analytics`.
+- [ ] **Package data.** Audit what ships in the wheel vs sdist. Confirm `tests/`, `demo/seed.sql`, `out/`, `run/` are excluded from wheel; decide whether `demo/schema.sql` ships (probably yes — it's the schema contract, useful as a reference even without `demo apply`).
+
+### I.6.C — Local build + smoke test
+
+- [ ] **`python -m build`.** Produces `dist/quicksight_gen-*.whl` + `*.tar.gz`. Add `build` to `[project.optional-dependencies].dev` if not already present.
+- [ ] **Fresh-venv install.** `python -m venv /tmp/qs-smoke && /tmp/qs-smoke/bin/pip install dist/quicksight_gen-*.whl[demo]`. Verify `quicksight-gen --help` shows all subcommands and `quicksight-gen --version` prints the right number.
+- [ ] **`generate --all` smoke.** Run against a sample config; confirm output matches a checked-in golden (or at least is non-empty + deserializable JSON). Catches missing package-data files.
+- [ ] **`twine check dist/*`.** Validates the long-description renders on PyPI.
+
+### I.6.D — PyPI account + trusted publishing setup
+
+- [ ] **TestPyPI first.** Register `quicksight-gen` name on TestPyPI; configure a Trusted Publisher pointing at `Quicksight-Generator` repo + `release.yml` workflow + `testpypi` environment. **User action** — not a code commit.
+- [ ] **PyPI.** Same pattern; second Trusted Publisher entry pointing at `pypi` environment. **User action.**
+- [ ] **GitHub Environments.** Create `testpypi` + `pypi` environments under repo Settings → Environments. PyPI gets a manual approval gate for the first ~3 releases (drop later once the workflow is trusted).
+- [ ] **No API tokens in repo secrets.** Trusted publishing uses OIDC; the workflow exchanges a short-lived token for an upload token at runtime.
+
+### I.6.E — Release workflow (`.github/workflows/release.yml`)
+
+- [ ] **Trigger.** `on: push: tags: ['v[0-9]+.[0-9]+.[0-9]+']` (excludes pre-release suffixes; add `'v[0-9]+.[0-9]+.[0-9]+-*'` later for rc / beta tags if needed).
+- [ ] **Job: build.** `pypa/build` produces sdist + wheel; uploads as workflow artifact for downstream jobs.
+- [ ] **Job: smoke-against-wheel.** Downloads the wheel artifact, installs it into a fresh venv, runs the unit + integration test subset that doesn't need AWS (`pytest tests/test_models.py tests/test_account_recon.py tests/test_demo_data.py tests/test_demo_sql.py tests/test_recon.py tests/test_generate.py tests/test_theme_presets.py tests/test_dataset_contract.py`). Catches missing package-data — source tests pass but wheel tests fail if a JSON template was forgotten.
+- [ ] **Job: publish-testpypi.** Always on tag; uses Trusted Publisher; environment `testpypi`.
+- [ ] **Job: publish-pypi.** Gated on `testpypi` job success + manual environment approval; uses Trusted Publisher; environment `pypi`.
+- [ ] **Job: github-release.** Uses `softprops/action-gh-release` (or `gh release create`) — uploads sdist + wheel + `out-sample.zip` (pre-baked output for both apps); body extracted from `RELEASE_NOTES.md` for the matching tag (script-extract the section by header match).
+
+### I.6.F — Sample output bundle
+
+- [ ] **`scripts/bake_sample_output.py`** — runs `quicksight-gen generate --all` against a checked-in `examples/config.yaml` (no real ARNs, demo-mode wiring), zips `out/`, drops at `dist/out-sample.zip`. Workflow runs this between build and github-release.
+- [ ] Decide whether `examples/config.yaml` ships in the wheel too (probably yes — gives evaluators a known-good starting point).
+
+### I.6.G — README + badges
+
+- [ ] Add `## Install` section to `README.md`: `pip install quicksight-gen[demo]` (or omit `[demo]` for production callers with their own datasource ARN).
+- [ ] PyPI version badge alongside the existing CI + coverage badges.
+- [ ] **`quicksight-gen --version` flag.** Click supports this natively; wire it once dynamic versioning lands in I.6.A.
+
+### I.6.H — Sequencing
+
+- [ ] **Independent of I.4 / I.5.** Release plumbing doesn't touch dataset semantics; can land in parallel. But the *first* published tag should follow a clean version — preferably after I.5 ships and the SHA256 hash re-lock is done, so the published artifact corresponds to a coherent state.
+- [ ] **First release flow.** v1.6.0-test1 → TestPyPI only → manual install verify → v1.6.0 → PyPI + GitHub Release. Validates the pipeline before the real cut.
+- [ ] **Estimated 6–8 commits.** Sub-phases A/B/C are doc/config commits; E is the workflow commit; F is one script + workflow wiring. D is user-only setup. G is a doc commit.
+
+### I.6.I — Open questions
+
+- [ ] **Pre-release channel.** Do branch builds publish to TestPyPI automatically (e.g., on push to a `release/*` branch with a `v1.6.0-rc1`-style tag), or only formal tags? Recommend formal-tags-only initially; revisit if the cadence picks up.
+- [ ] **Package name on PyPI.** `quicksight-gen` is the natural name (matches `[project].name`) — verify availability on PyPI before I.6.D registration. If taken, fall back to `quicksight-generator` or namespaced (`anthropic-quicksight-gen` style) — bigger renames flow back through `[project.scripts]` and `__init__.py`.
+- [ ] **License clarity.** `Unlicense` is public domain; PyPI accepts it. Confirm the `LICENSE` file at repo root matches and is included in the wheel (`tool.setuptools.license-files` defaults usually pick it up).
 
 ---
 
