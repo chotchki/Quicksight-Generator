@@ -52,7 +52,7 @@ pytest                              # unit + integration, fast, no AWS
 ./run_e2e.sh --skip-deploy browser  # browser e2e only
 ```
 
-`demo apply` is app-scoped: `demo apply payment-recon` generates with the `sasquatch-bank` preset; `demo apply account-recon` uses `sasquatch-bank-ar`; `--all` generates both with each app's natural preset. Schema is always loaded in full (both apps share one Postgres DB, `pr_` / `ar_` table prefixes).
+`demo apply` is app-scoped: `demo apply payment-recon` generates with the `sasquatch-bank` preset; `demo apply account-recon` uses `sasquatch-bank-ar`; `--all` generates both with each app's natural preset. Schema is always loaded in full — both apps feed the same `transactions` + `daily_balances` base tables, plus AR-only dimension tables (`ar_ledger_accounts`, `ar_subledger_accounts`, `ar_ledger_transfer_limits`).
 
 ## Generated Output
 
@@ -134,7 +134,9 @@ src/quicksight_gen/
     demo_data.py         # Sasquatch National Bank — CMS treasury demo generator
     constants.py         # Sheet + dataset identifier constants
 demo/
-  schema.sql             # Full PostgreSQL DDL (both apps — pr_ and ar_ prefixes)
+  schema.sql             # Full PostgreSQL DDL — shared `transactions` + `daily_balances` base layer + AR dimension tables
+docs/
+  Schema_v3.md           # Data Integration Team feed contract: column specs, metadata keys, ETL examples
 tests/
   test_models.py         # Models, tags, config, dataset builders
   test_generate.py       # Full pipeline, cross-refs, explanations (PR)
@@ -142,7 +144,7 @@ tests/
   test_recon.py          # Payment recon visuals + filters
   test_theme_presets.py  # Preset registry, serialization, analysis name integration
   test_dataset_contract.py # DatasetContract basics + per-builder column-match assertions
-  test_demo_data.py      # Demo determinism, row counts, FK integrity, scenario coverage, cross-app integrity
+  test_demo_data.py      # Demo determinism (SHA256 hash lock), row counts, FK integrity, scenario coverage, cross-app integrity, shared base layer projection
   test_demo_sql.py       # Schema/seed SQL structure, CLI command tests
   e2e/                   # Two layers (API boto3 + browser Playwright WebKit); gated on QS_GEN_E2E=1
     conftest.py
@@ -163,14 +165,18 @@ run_e2e.sh
 
 ## Domain Model
 
-### Unified Schema
+### Shared base layer (v3.0.0)
 
-Both apps share two core tables:
+Both apps feed two base tables. PR and AR share the same physical schema; the `account_type` column discriminates which app a row belongs to. See `docs/Schema_v3.md` for the full feed contract.
 
-- **`transfer`** — one row per financial event (sale, settlement, payment, external_txn, ach, wire, internal, cash, funding_batch, fee, clearing_sweep). Linked via `parent_transfer_id` to form chains (PR) or standalone pairs (AR). Key fields: `transfer_type`, `origin`, `amount`, `status`, `external_system`, `memo`.
-- **`posting`** — one row per ledger leg. FK to `transfer`; `ledger_account_id NOT NULL` (every posting knows its ledger); `subledger_account_id` nullable (NULL for direct ledger postings). `signed_amount` is positive (debit) or negative (credit). Non-failed postings within a transfer net to zero (except external_txn and fee transfers, which are intentionally single-leg).
+- **`transactions`** — one row per money-movement leg. Carries `transaction_id` PK, `transfer_id` (groups legs of one financial event), `parent_transfer_id` (chains transfers — used by PR for `external_txn → payment → settlement → sale`), `transfer_type`, `origin`, `account_id`, denormalized account fields (`account_name`, `account_type`, `control_account_id`, `is_internal`), `signed_amount` (positive=debit, negative=credit), `amount` (absolute), `status`, `posted_at`, `balance_date`, `external_system`, `memo`, and a `metadata TEXT` column constrained `IS JSON` for app-specific keys (`card_brand`, `cashier`, `settlement_type`, etc.). Non-failed legs of a non-single-leg transfer net to zero.
+- **`daily_balances`** — one row per `(account_id, balance_date)`. Carries the same denormalized account fields as `transactions` plus `balance` (stored end-of-day) and a `metadata TEXT` JSON column (used by AR to attach per-day limit configuration so the limit-breach view stays a single SELECT).
 
-AR datasets read exclusively from `transfer` + `posting` (the `ar_transactions` table was dropped in Phase B.4). PR datasets still read from legacy `pr_*` tables for domain-specific metadata (card_brand, settlement_type, payment_method, etc.) but also emit to `transfer` + `posting` via dual-write.
+Six canonical `account_type` values: `gl_control` (AR GL control accounts), `dda` (AR customer demand-deposit accounts), `merchant_dda` (PR merchant accounts), `external_counter` (FRB Master, processors), `concentration_master` (the cash concentration target), `funds_pool` (PR external customer pool / external rail). `control_account_id` is a self-referential FK; PR sub-ledger accounts roll up to the synthetic `pr-merchant-ledger` control row.
+
+JSON metadata uses portable SQL/JSON path syntax (`JSON_VALUE`, `JSON_QUERY`, `JSON_EXISTS`) — no JSONB, no `->>` / `->` / `@>` / `?` operators, no GIN indexes on JSON. PostgreSQL 17+ required for `demo apply`. AR computed views (`ar_computed_ledger_daily_balance`, `ar_subledger_overdraft`, `ar_subledger_daily_outbound_by_type`, etc.) read from these two base tables and the AR-only dimension tables.
+
+The legacy 12-table family (`pr_*`, `transfer`, `posting`, `ar_*_daily_balances`) was dropped in Phase G.10 and never recreated — `DROP TABLE IF EXISTS` lines remain in `schema.sql` for upgrade safety.
 
 ### Payment Reconciliation
 **Merchants → Sales → Settlements → Payments → External Transactions**
@@ -184,22 +190,22 @@ AR datasets read exclusively from `transfer` + `posting` (the `ar_transactions` 
 - Match statuses: **matched**, **not_yet_matched**, **late** (threshold: `late_default_days`, default 30 — slider also available)
 - Mutual table filtering on the Payment Reconciliation tab: clicking an external txn filters its payments; clicking a payment filters back
 - All 5 PR exception checks and the Payment Recon tab carry `aging_bucket` (same 5-band pattern as AR) with aging bar charts
-- **Transfer chain** (parent → child): `external_txn → payment → settlement → sale`. PR sub-ledger accounts live under `pr-merchant-ledger` in `ar_subledger_accounts` (one per merchant + `pr-external-customer-pool` + `pr-external-rail`).
+- **Transfer chain** (parent → child): `external_txn → payment → settlement → sale`, linked by `parent_transfer_id` in `transactions`. PR account rows in `transactions` / `daily_balances` use `account_type IN ('gl_control', 'merchant_dda', 'external_counter')`; merchant sub-ledgers and the external customer pool / external rail roll up to the synthetic `pr-merchant-ledger` control account. PR-specific metadata (`card_brand`, `cashier`, `settlement_type`, `payment_method`, `is_returned`, `return_reason`, etc.) lives in the `metadata` JSON column and is read via `JSON_VALUE(metadata, '$.<key>')`.
 
 ### Account Reconciliation
-**Ledger accounts (with daily balances) → Sub-ledger accounts → Postings (double-entry ledger)**
+**Ledger accounts (with daily balances) → Sub-ledger accounts → Transactions (double-entry ledger)**
 
-- Every transfer is a set of posting legs that must net to zero
-- Postings can target sub-ledger accounts OR ledger accounts directly (funding batches, fee assessments, clearing sweeps, all CMS-driven sweeps)
+- Every transfer is a set of `transactions` legs (grouped by `transfer_id`) that must net to zero
+- Legs can target sub-ledger accounts OR ledger control accounts directly (funding batches, fee assessments, clearing sweeps, all CMS-driven sweeps); the `account_id` and `control_account_id` columns express the hierarchy
 - Ledger drift invariant: `stored ledger balance = Σ direct ledger postings + Σ sub-ledger stored balances`
 - Sub-ledger drift invariant: `stored sub-ledger balance = Σ postings to that sub-ledger` (unaffected by ledger-level postings)
-- Daily balance snapshots allow drift detection: recomputed balance vs. stored balance
-- Failed postings, limit breaches (ledger daily out-flow cap per sub-ledger/type), and overdrafts (sub-ledger below zero) populate the Exceptions tab
+- Daily balance snapshots in `daily_balances` allow drift detection: recomputed balance vs. stored balance
+- Failed legs, limit breaches (ledger daily out-flow cap per sub-ledger/type, configured in `ar_ledger_transfer_limits` and surfaced through the `daily_balances.metadata` JSON), and overdrafts (sub-ledger below zero) populate the Exceptions tab
 - Every exception check follows a standard visual pattern: KPI count + detail table (with `days_outstanding` and `aging_bucket` columns) + horizontal aging bar chart. Drift checks also have timelines.
 - Aging buckets: 5 hardcoded bands (`1: 0-1 day`, `2: 2-3 days`, `3: 4-7 days`, `4: 8-30 days`, `5: >30 days`) — numeric prefix forces correct sort in QuickSight
 - Drift timelines (ledger + sub-ledger) surface systemic issues over time
-- Transfers carry an `origin` tag (`internal_initiated` / `external_force_posted`); origin multi-select filter on Transactions + Exceptions tabs
-- AR views filter `WHERE transfer_type IN ('ach', 'wire', 'internal', 'cash', 'funding_batch', 'fee', 'clearing_sweep')` to exclude PR data
+- Transactions carry an `origin` tag (`internal_initiated` / `external_force_posted`); origin multi-select filter on Transactions + Exceptions tabs
+- AR datasets filter `WHERE transfer_type IN ('ach', 'wire', 'internal', 'cash', 'funding_batch', 'fee', 'clearing_sweep')` to exclude PR transfer types from the shared base tables. Drift / overdraft views also carry `account_id NOT LIKE 'pr-%'` filters as a co-residency safety net (Phase H removes these once the dual-persona demo is split).
 
 #### CMS structure (Phase F)
 
@@ -216,6 +222,7 @@ Demo persona is **Sasquatch National Bank — Cash Management Suite (CMS)** — 
 - Helper `_strip_nones()` recursively cleans None values from serialized output
 - Config accepts a pre-existing DataSource ARN for production use; for demo, `datasource_arn` is auto-derived from `demo_database_url` and `datasource.json` is generated
 - All datasets use custom SQL in PostgreSQL syntax (no SPICE → Direct Query). Seed changes show up immediately after `demo apply` — no refresh step.
+- SQL is constrained to a portable subset: SQL/JSON path syntax (`JSON_VALUE`, `JSON_QUERY`, `JSON_EXISTS`); no JSONB, no `->>` / `->` / `@>` / `?` operators, no GIN indexes on JSON, no Postgres extensions, no array / range types. PostgreSQL 17+ required for `demo apply`.
 - Generated resource IDs use kebab-case with a configurable prefix (default `qs-gen-`)
 - All resources tagged `ManagedBy: quicksight-gen`; `extra_tags` in config are merged in
 - `cleanup` uses that tag to enumerate managed resources and deletes anything not in the current `out/`
@@ -250,4 +257,5 @@ Demo persona is **Sasquatch National Bank — Cash Management Suite (CMS)** — 
 - Every visual should have non-empty data in the demo. For each new visual that relies on a scenario (drift, unmatched, failed, returned, limit-breach, overdraft, etc.), add a `TestScenarioCoverage` assertion in the app's demo-data tests that guarantees ≥N rows of that shape — counts alone don't catch "zero scenario rows slipped through".
 - Generators must stay deterministic (`random.Random(42)`); tests depend on exact output.
 - Write the coverage assertion **before** the visual, not after. It's the fastest way to notice when generator pool-sizing or branching makes a scenario silently vanish.
-- Each app has its own demo persona — same Sasquatch National Bank, two operational views: PR is the merchant-acquiring side (coffee-shop settlement); AR is the treasury / CMS side (GL control accounts + customer DDAs absorbed from FEB). Don't cross-contaminate at the persona level — they share schema and three customer DDAs (the coffee retailers) but the rest of the data is disjoint.
+- Each app has its own demo persona — same Sasquatch National Bank, two operational views: PR is the merchant-acquiring side (coffee-shop settlement); AR is the treasury / CMS side (GL control accounts + customer DDAs absorbed from FEB). Don't cross-contaminate at the persona level — they share base tables and three customer DDAs (the coffee retailers) but the rest of the data is disjoint, separated by `account_type` / `transfer_type`.
+- Determinism is locked by a SHA256 hash assertion on the full seed SQL output (`tests/test_demo_data.py::TestDeterminism::test_seed_output_hash_is_locked` per app). Any generator change that shifts a single byte fails that test loudly — re-lock by pasting the new hash into the assertion when the change is intentional.

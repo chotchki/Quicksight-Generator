@@ -340,6 +340,28 @@ The persona tests Phase G's success: can a Data Integration Team member ETL upst
 
 ---
 
+## Phase H carry-over (tech debt to remove)
+
+Demo-coupled compromises taken during Phase G that the cleaner Phase H
+data model removes. Grep targets included for findability.
+
+- **PR-coexistence filters in AR views.** `ar_subledger_overdraft` and
+  `ar_subledger_daily_outbound_by_type` carry an `account_id NOT LIKE
+  'pr-%'` filter. Necessary today because PR + AR co-reside in the same
+  `daily_balances` / `transactions` tables and the entity-scoped views
+  (drift, overdraft) would otherwise surface PR rows in AR exceptions
+  (G.6 leak: 556 spurious overdraft rows). Phase H deletes these — a
+  single-feed real persona has no parallel PR ledger to filter out.
+  Grep: `pr-%` in `demo/schema.sql`. The right replacement is the
+  `account_type` discriminator from G.0.12 (`gl_control`, `dda`, ...),
+  scoped to whatever account_types the AR persona owns.
+- **G.4 drift views leak benign zero-drift PR rows** (744 sub-ledger,
+  93 ledger). Filtered out of Exceptions tab by `drift > 0`; pollutes
+  Balances tab counts. Not fixed in Phase G to avoid more `pr-%`
+  filters. Same Phase H fix as above resolves it.
+
+---
+
 ## Risks
 
 - **PR dataset rewrites are the long tail (G.9 — 11 commits).** PR has more domain-specific metadata than AR and the chain-of-custody view (`pr_payment_recon_view`) is the most complex SQL in the codebase. Expect this phase to take longer per commit than AR migrations. Don't bundle.

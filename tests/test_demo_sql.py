@@ -26,18 +26,30 @@ class TestSchemaSql:
 
     def test_creates_all_tables(self, schema_sql):
         for table in [
-            "pr_merchants",
-            "pr_external_transactions",
-            "pr_settlements",
-            "pr_sales",
-            "pr_payments",
-            "transfer",
-            "posting",
+            "transactions",
+            "daily_balances",
+            "ar_ledger_accounts",
+            "ar_subledger_accounts",
+            "ar_ledger_transfer_limits",
         ]:
             assert f"CREATE TABLE {table}" in schema_sql
 
-    def test_creates_all_views(self, schema_sql):
-        assert "CREATE VIEW pr_payment_recon_view" in schema_sql
+    def test_legacy_tables_dropped_not_created(self, schema_sql):
+        # v3.0.0 drop: per-app PR tables and the AR-only transfer/posting
+        # tables are now dead.  Their DROP IF EXISTS stays for upgrade
+        # safety, but the CREATE TABLE must not come back.
+        for table in [
+            "pr_merchants", "pr_external_transactions", "pr_settlements",
+            "pr_sales", "pr_payments",
+            "transfer", "posting",
+            "ar_ledger_daily_balances", "ar_subledger_daily_balances",
+        ]:
+            assert f"CREATE TABLE {table}" not in schema_sql, (
+                f"{table} was dropped in v3.0.0 — should not be re-created"
+            )
+            assert f"DROP TABLE IF EXISTS {table}" in schema_sql, (
+                f"{table} drop must remain for upgrade safety"
+            )
 
     def test_drops_before_creates(self, schema_sql):
         # DROP statements appear before CREATE statements
@@ -47,6 +59,23 @@ class TestSchemaSql:
 
     def test_creates_indexes(self, schema_sql):
         assert schema_sql.count("CREATE INDEX") >= 7
+
+    def test_shared_base_layer_uses_portable_json(self, schema_sql):
+        # Per Phase G portability constraint: TEXT + IS JSON, no JSONB.
+        # Guards against silent reintroduction of Postgres-only features.
+        for table in ["transactions", "daily_balances"]:
+            block_start = schema_sql.index(f"CREATE TABLE {table}")
+            block_end = schema_sql.index(");", block_start)
+            block = schema_sql[block_start:block_end]
+            assert "metadata            TEXT" in block, (
+                f"{table} should declare metadata as TEXT"
+            )
+            assert "JSONB" not in block, (
+                f"{table} must not use JSONB (portability constraint)"
+            )
+            assert "metadata IS JSON" in block, (
+                f"{table} should constrain metadata with IS JSON"
+            )
 
 
 class TestSeedSql:
@@ -66,7 +95,7 @@ class TestSeedSql:
 
     def test_every_insert_ends_with_semicolon(self, seed_sql):
         inserts = re.findall(r"(INSERT INTO \w+.*?;)", seed_sql, re.DOTALL)
-        assert len(inserts) == 9, f"Expected 9 INSERT blocks, got {len(inserts)}"
+        assert len(inserts) == 4, f"Expected 4 INSERT blocks, got {len(inserts)}"
         for block in inserts:
             assert block.rstrip().endswith(";")
 
@@ -75,13 +104,8 @@ class TestSeedSql:
         expected = {
             "ar_ledger_accounts",
             "ar_subledger_accounts",
-            "pr_merchants",
-            "pr_external_transactions",
-            "pr_settlements",
-            "pr_sales",
-            "pr_payments",
-            "transfer",
-            "posting",
+            "transactions",
+            "daily_balances",
         }
         assert set(tables) == expected
 
@@ -94,12 +118,9 @@ class TestSeedSql:
                 positions[table] = m.start()
 
         assert positions["ar_ledger_accounts"] < positions["ar_subledger_accounts"]
-        assert positions["pr_merchants"] < positions["pr_external_transactions"]
-        assert positions["pr_external_transactions"] < positions["pr_settlements"]
-        assert positions["pr_settlements"] < positions["pr_sales"]
-        assert positions["pr_sales"] < positions["pr_payments"]
-        assert positions["ar_subledger_accounts"] < positions["transfer"]
-        assert positions["transfer"] < positions["posting"]
+        # transactions / daily_balances reference the account dimension tables.
+        assert positions["ar_subledger_accounts"] < positions["transactions"]
+        assert positions["transactions"] < positions["daily_balances"]
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +135,7 @@ class TestDemoSchemaCli:
         assert result.exit_code == 0, result.output
         assert out.exists()
         content = out.read_text()
-        assert "CREATE TABLE pr_merchants" in content
+        assert "CREATE TABLE transactions" in content
 
 
 class TestDemoSeedCli:
@@ -125,7 +146,7 @@ class TestDemoSeedCli:
         assert result.exit_code == 0, result.output
         assert out.exists()
         content = out.read_text()
-        assert "INSERT INTO pr_merchants" in content
+        assert "INSERT INTO transactions" in content
         assert "Bigfoot Brews" in content
 
 

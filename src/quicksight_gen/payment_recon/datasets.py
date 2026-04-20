@@ -84,10 +84,11 @@ def build_datasource(cfg: Config) -> DataSource:
 # Optional sales metadata
 # ---------------------------------------------------------------------------
 
-# These are sourced from the same ``pr_sales`` table in demo mode. Production
-# databases without these columns will generate a SQL error on DIRECT_QUERY —
-# if that becomes a problem we can gate them behind a config flag, but SPEC 2.2
-# opts for a static declaration rather than runtime introspection.
+# These come from each sale row's JSON ``metadata`` column in demo mode.
+# Production databases whose sale rows don't carry these keys will generate
+# NULLs (JSON_VALUE returns NULL for missing paths) — if that becomes a
+# problem we can gate them behind a config flag, but SPEC 2.2 opts for a
+# static declaration rather than runtime introspection.
 #
 # Each tuple: (sql_column, sql_ddl_type, qs_type, filter_type, control_label)
 OPTIONAL_SALE_METADATA: list[tuple[str, str, str, str, str]] = [
@@ -105,13 +106,24 @@ def _optional_metadata_columns() -> list[ColumnSpec]:
     ]
 
 
-def _optional_metadata_sql_fields() -> str:
-    """Return a SQL fragment listing the optional columns, comma-prefixed."""
+def _optional_metadata_sql_fields(metadata_expr: str = "metadata") -> str:
+    """Return a SQL fragment for the optional fields, comma-prefixed.
+
+    Each field is extracted from the JSON metadata column via JSON_VALUE
+    and cast to its declared SQL type when numeric. ``metadata_expr`` lets
+    callers pass an alias-qualified expression (e.g. ``t.metadata``).
+    """
     if not OPTIONAL_SALE_METADATA:
         return ""
-    return ",\n    " + ",\n    ".join(
-        col for col, *_ in OPTIONAL_SALE_METADATA
-    )
+    parts: list[str] = []
+    for col, ddl_type, _qs, _ftype, _label in OPTIONAL_SALE_METADATA:
+        if ddl_type.startswith("DECIMAL"):
+            parts.append(
+                f"CAST(JSON_VALUE({metadata_expr}, '$.{col}') AS {ddl_type}) AS {col}"
+            )
+        else:
+            parts.append(f"JSON_VALUE({metadata_expr}, '$.{col}') AS {col}")
+    return ",\n    " + ",\n    ".join(parts)
 
 
 def _aging_bucket_case(days_expr: str) -> str:
@@ -271,15 +283,24 @@ PAYMENT_RECON_CONTRACT = DatasetContract(columns=[
 # ---------------------------------------------------------------------------
 
 def build_merchants_dataset(cfg: Config) -> DataSet:
+    # Phase G.9.1: reads from shared `daily_balances`. PR's merchant
+    # sub-ledger accounts live under the `pr-merchant-ledger` control
+    # account; metadata on each daily row carries the per-merchant
+    # attributes (name, type, location, created_at, status) so DISTINCT
+    # collapses days into one row per merchant. The control_account_id
+    # filter scopes to PR's merchant_dda accounts (AR also has
+    # merchant_dda customer DDAs but under a different control).
     sql = """\
-SELECT
-    merchant_id,
-    merchant_name,
-    merchant_type,
-    location_id,
-    created_at,
-    status
-FROM pr_merchants"""
+SELECT DISTINCT
+    JSON_VALUE(metadata, '$.merchant_id')                   AS merchant_id,
+    JSON_VALUE(metadata, '$.merchant_name')                 AS merchant_name,
+    JSON_VALUE(metadata, '$.merchant_type')                 AS merchant_type,
+    JSON_VALUE(metadata, '$.location_id')                   AS location_id,
+    CAST(JSON_VALUE(metadata, '$.created_at') AS TIMESTAMP) AS created_at,
+    JSON_VALUE(metadata, '$.status')                        AS status
+FROM daily_balances
+WHERE account_type       = 'merchant_dda'
+  AND control_account_id = 'pr-merchant-ledger'"""
     return build_dataset(
         cfg, cfg.prefixed("merchants-dataset"),
         "Merchants", "merchants",
@@ -288,30 +309,39 @@ FROM pr_merchants"""
 
 
 def build_sales_dataset(cfg: Config) -> DataSet:
+    # Phase G.9.2: reads from shared `transactions`. PR sale transfers
+    # carry one row per posting leg; the merchant_dda leg under the
+    # `pr-merchant-ledger` control account is the canonical sale-row
+    # (one per sale). `-signed_amount` recovers the original signed
+    # sale amount (refunds stay negative). PR-domain fields (sale_id,
+    # card_brand, settlement_id, …) come out of the JSON metadata.
     sql = f"""\
 SELECT
-    sale_id,
-    merchant_id,
-    location_id,
-    amount,
-    sale_type,
-    payment_method,
-    sale_timestamp,
-    card_brand,
-    card_last_four,
-    reference_id,
-    metadata,
-    settlement_id,
+    JSON_VALUE(t.metadata, '$.sale_id')                          AS sale_id,
+    JSON_VALUE(t.metadata, '$.merchant_id')                      AS merchant_id,
+    JSON_VALUE(t.metadata, '$.location_id')                      AS location_id,
+    -t.signed_amount                                             AS amount,
+    JSON_VALUE(t.metadata, '$.sale_type')                        AS sale_type,
+    JSON_VALUE(t.metadata, '$.payment_method')                   AS payment_method,
+    t.posted_at                                                  AS sale_timestamp,
+    JSON_VALUE(t.metadata, '$.card_brand')                       AS card_brand,
+    JSON_VALUE(t.metadata, '$.card_last_four')                   AS card_last_four,
+    JSON_VALUE(t.metadata, '$.reference_id')                     AS reference_id,
+    JSON_VALUE(t.metadata, '$.tags')                             AS metadata,
+    JSON_VALUE(t.metadata, '$.settlement_id')                    AS settlement_id,
     CASE
-        WHEN settlement_id IS NULL
-            THEN (CURRENT_DATE - sale_timestamp::date)
+        WHEN JSON_VALUE(t.metadata, '$.settlement_id') IS NULL
+            THEN (CURRENT_DATE - t.posted_at::date)
         ELSE NULL
     END AS days_outstanding,
     CASE
-        WHEN settlement_id IS NULL THEN 'Unsettled'
+        WHEN JSON_VALUE(t.metadata, '$.settlement_id') IS NULL THEN 'Unsettled'
         ELSE 'Settled'
-    END AS settlement_state{_optional_metadata_sql_fields()}
-FROM pr_sales"""
+    END AS settlement_state{_optional_metadata_sql_fields('t.metadata')}
+FROM transactions t
+WHERE t.transfer_type      = 'sale'
+  AND t.account_type       = 'merchant_dda'
+  AND t.control_account_id = 'pr-merchant-ledger'"""
     return build_dataset(
         cfg, cfg.prefixed("sales-dataset"),
         "Sales", "sales",
@@ -320,23 +350,39 @@ FROM pr_sales"""
 
 
 def build_settlements_dataset(cfg: Config) -> DataSet:
+    # Phase G.9.3: reads from shared `transactions`. Settlement transfers
+    # have two zero-netting postings on the merchant_dda leg; DISTINCT
+    # collapses to one row per settlement (both legs carry identical
+    # metadata + posted_at). LEFT JOIN to a payment-per-settlement
+    # subquery wires payment_id / payment_state.
     sql = """\
-SELECT
-    s.settlement_id,
-    s.merchant_id,
-    s.settlement_type,
-    s.settlement_amount,
-    s.settlement_date,
-    s.settlement_status,
-    s.sale_count,
-    (CURRENT_DATE - s.settlement_date::date) AS days_outstanding,
+SELECT DISTINCT
+    JSON_VALUE(t.metadata, '$.settlement_id')                    AS settlement_id,
+    JSON_VALUE(t.metadata, '$.merchant_id')                      AS merchant_id,
+    JSON_VALUE(t.metadata, '$.settlement_type')                  AS settlement_type,
+    CAST(JSON_VALUE(t.metadata, '$.settlement_amount') AS DECIMAL(12,2)) AS settlement_amount,
+    t.posted_at                                                  AS settlement_date,
+    JSON_VALUE(t.metadata, '$.settlement_status')                AS settlement_status,
+    CAST(JSON_VALUE(t.metadata, '$.sale_count') AS INTEGER)      AS sale_count,
+    (CURRENT_DATE - t.posted_at::date)                           AS days_outstanding,
     p.payment_id,
     CASE
         WHEN p.payment_id IS NULL THEN 'Unpaid'
         ELSE 'Paid'
     END AS payment_state
-FROM pr_settlements s
-LEFT JOIN pr_payments p ON p.settlement_id = s.settlement_id"""
+FROM transactions t
+LEFT JOIN (
+    SELECT DISTINCT
+        JSON_VALUE(metadata, '$.settlement_id') AS settlement_id,
+        JSON_VALUE(metadata, '$.payment_id')    AS payment_id
+    FROM transactions
+    WHERE transfer_type      = 'payment'
+      AND account_type       = 'merchant_dda'
+      AND control_account_id = 'pr-merchant-ledger'
+) p ON p.settlement_id = JSON_VALUE(t.metadata, '$.settlement_id')
+WHERE t.transfer_type      = 'settlement'
+  AND t.account_type       = 'merchant_dda'
+  AND t.control_account_id = 'pr-merchant-ledger'"""
     return build_dataset(
         cfg, cfg.prefixed("settlements-dataset"),
         "Settlements", "settlements",
@@ -345,24 +391,30 @@ LEFT JOIN pr_payments p ON p.settlement_id = s.settlement_id"""
 
 
 def build_payments_dataset(cfg: Config) -> DataSet:
+    # Phase G.9.4: reads from shared `transactions`. Payment transfers
+    # have two legs (pr-external-rail external_counter + merchant_dda);
+    # filtering account_type='merchant_dda' picks one row per payment.
     sql = """\
 SELECT
-    payment_id,
-    settlement_id,
-    merchant_id,
-    payment_amount,
-    payment_date,
-    payment_status,
-    is_returned,
-    return_reason,
-    external_transaction_id,
+    JSON_VALUE(t.metadata, '$.payment_id')                          AS payment_id,
+    JSON_VALUE(t.metadata, '$.settlement_id')                       AS settlement_id,
+    JSON_VALUE(t.metadata, '$.merchant_id')                         AS merchant_id,
+    CAST(JSON_VALUE(t.metadata, '$.payment_amount') AS DECIMAL(12,2)) AS payment_amount,
+    t.posted_at                                                     AS payment_date,
+    JSON_VALUE(t.metadata, '$.payment_status')                      AS payment_status,
+    JSON_VALUE(t.metadata, '$.is_returned')                         AS is_returned,
+    JSON_VALUE(t.metadata, '$.return_reason')                       AS return_reason,
+    JSON_VALUE(t.metadata, '$.external_transaction_id')             AS external_transaction_id,
     CASE
-        WHEN external_transaction_id IS NULL THEN 'Unmatched'
+        WHEN JSON_VALUE(t.metadata, '$.external_transaction_id') IS NULL THEN 'Unmatched'
         ELSE 'Matched'
     END AS external_match_state,
-    payment_method,
-    (CURRENT_DATE - payment_date::date) AS days_outstanding
-FROM pr_payments"""
+    JSON_VALUE(t.metadata, '$.payment_method')                      AS payment_method,
+    (CURRENT_DATE - t.posted_at::date)                              AS days_outstanding
+FROM transactions t
+WHERE t.transfer_type      = 'payment'
+  AND t.account_type       = 'merchant_dda'
+  AND t.control_account_id = 'pr-merchant-ledger'"""
     return build_dataset(
         cfg, cfg.prefixed("payments-dataset"),
         "Payments", "payments",
@@ -371,19 +423,25 @@ FROM pr_payments"""
 
 
 def build_settlement_exceptions_dataset(cfg: Config) -> DataSet:
+    # Phase G.9.7: reads from shared `transactions`. Unsettled sales =
+    # sale-transfer merchant_dda legs whose metadata.settlement_id is
+    # absent (_compact strips None keys). merchant_name lives in sale
+    # metadata (added in G.9.1) so no merchant join is needed.
     sql = f"""\
 SELECT
-    s.sale_id,
-    s.merchant_id,
-    m.merchant_name,
-    s.location_id,
-    s.amount,
-    s.sale_timestamp,
-    (CURRENT_DATE - s.sale_timestamp::date) AS days_outstanding,
-{_aging_bucket_case('CURRENT_DATE - s.sale_timestamp::date')}
-FROM pr_sales s
-JOIN pr_merchants m ON m.merchant_id = s.merchant_id
-WHERE s.settlement_id IS NULL"""
+    JSON_VALUE(t.metadata, '$.sale_id')                          AS sale_id,
+    JSON_VALUE(t.metadata, '$.merchant_id')                      AS merchant_id,
+    JSON_VALUE(t.metadata, '$.merchant_name')                    AS merchant_name,
+    JSON_VALUE(t.metadata, '$.location_id')                      AS location_id,
+    -t.signed_amount                                             AS amount,
+    t.posted_at                                                  AS sale_timestamp,
+    (CURRENT_DATE - t.posted_at::date)                           AS days_outstanding,
+{_aging_bucket_case('CURRENT_DATE - t.posted_at::date')}
+FROM transactions t
+WHERE t.transfer_type      = 'sale'
+  AND t.account_type       = 'merchant_dda'
+  AND t.control_account_id = 'pr-merchant-ledger'
+  AND JSON_VALUE(t.metadata, '$.settlement_id') IS NULL"""
     return build_dataset(
         cfg, cfg.prefixed("settlement-exceptions-dataset"),
         "Settlement Exceptions", "settlement-exceptions",
@@ -392,20 +450,25 @@ WHERE s.settlement_id IS NULL"""
 
 
 def build_payment_returns_dataset(cfg: Config) -> DataSet:
+    # Phase G.9.8: reads from shared `transactions`. Returned payments =
+    # payment-transfer merchant_dda legs whose metadata.is_returned='true'.
+    # merchant_name lives in payment metadata so no merchant join needed.
     sql = f"""\
 SELECT
-    p.payment_id,
-    p.settlement_id,
-    p.merchant_id,
-    m.merchant_name,
-    p.payment_amount,
-    p.payment_date,
-    p.return_reason,
-    (CURRENT_DATE - p.payment_date::date) AS days_outstanding,
-{_aging_bucket_case('CURRENT_DATE - p.payment_date::date')}
-FROM pr_payments p
-JOIN pr_merchants m ON m.merchant_id = p.merchant_id
-WHERE p.is_returned = 'true'"""
+    JSON_VALUE(t.metadata, '$.payment_id')                        AS payment_id,
+    JSON_VALUE(t.metadata, '$.settlement_id')                     AS settlement_id,
+    JSON_VALUE(t.metadata, '$.merchant_id')                       AS merchant_id,
+    JSON_VALUE(t.metadata, '$.merchant_name')                     AS merchant_name,
+    CAST(JSON_VALUE(t.metadata, '$.payment_amount') AS DECIMAL(12,2)) AS payment_amount,
+    t.posted_at                                                   AS payment_date,
+    JSON_VALUE(t.metadata, '$.return_reason')                     AS return_reason,
+    (CURRENT_DATE - t.posted_at::date)                            AS days_outstanding,
+{_aging_bucket_case('CURRENT_DATE - t.posted_at::date')}
+FROM transactions t
+WHERE t.transfer_type      = 'payment'
+  AND t.account_type       = 'merchant_dda'
+  AND t.control_account_id = 'pr-merchant-ledger'
+  AND JSON_VALUE(t.metadata, '$.is_returned') = 'true'"""
     return build_dataset(
         cfg, cfg.prefixed("payment-returns-dataset"),
         "Payment Returns", "payment-returns",
@@ -414,18 +477,48 @@ WHERE p.is_returned = 'true'"""
 
 
 def build_sale_settlement_mismatch_dataset(cfg: Config) -> DataSet:
+    # Phase G.9.9: reads from shared `transactions`. CTEs collapse
+    # settlements (DISTINCT on metadata + posted_at — two zero-netting
+    # legs) and sum the linked sales' merchant_dda legs (-signed_amount
+    # recovers signed sale amount, including refunds). Mismatch = stored
+    # settlement_amount <> sum of linked sale amounts.
     sql = f"""\
+WITH settlements AS (
+    SELECT DISTINCT
+        JSON_VALUE(metadata, '$.settlement_id')                 AS settlement_id,
+        JSON_VALUE(metadata, '$.merchant_id')                   AS merchant_id,
+        CAST(JSON_VALUE(metadata, '$.settlement_amount') AS DECIMAL(12,2)) AS settlement_amount,
+        CAST(JSON_VALUE(metadata, '$.sale_count') AS INTEGER)   AS sale_count,
+        posted_at                                               AS settlement_date
+    FROM transactions
+    WHERE transfer_type      = 'settlement'
+      AND account_type       = 'merchant_dda'
+      AND control_account_id = 'pr-merchant-ledger'
+),
+sale_sums AS (
+    SELECT
+        JSON_VALUE(metadata, '$.settlement_id')                 AS settlement_id,
+        SUM(-signed_amount)                                     AS sales_sum
+    FROM transactions
+    WHERE transfer_type      = 'sale'
+      AND account_type       = 'merchant_dda'
+      AND control_account_id = 'pr-merchant-ledger'
+      AND JSON_VALUE(metadata, '$.settlement_id') IS NOT NULL
+    GROUP BY JSON_VALUE(metadata, '$.settlement_id')
+)
 SELECT
-    settlement_id,
-    merchant_id,
-    settlement_amount,
-    sales_sum,
-    difference,
-    sale_count,
-    settlement_date,
-    days_outstanding,
-{_aging_bucket_case('days_outstanding')}
-FROM pr_sale_settlement_mismatch"""
+    s.settlement_id,
+    s.merchant_id,
+    s.settlement_amount,
+    COALESCE(ss.sales_sum, 0)                                   AS sales_sum,
+    s.settlement_amount - COALESCE(ss.sales_sum, 0)             AS difference,
+    s.sale_count,
+    s.settlement_date,
+    (CURRENT_DATE - s.settlement_date::date)                    AS days_outstanding,
+{_aging_bucket_case('CURRENT_DATE - s.settlement_date::date')}
+FROM settlements s
+LEFT JOIN sale_sums ss ON ss.settlement_id = s.settlement_id
+WHERE s.settlement_amount <> COALESCE(ss.sales_sum, 0)"""
     return build_dataset(
         cfg, cfg.prefixed("sale-settlement-mismatch-dataset"),
         "Sale \u2194 Settlement Mismatch", "sale-settlement-mismatch",
@@ -434,18 +527,45 @@ FROM pr_sale_settlement_mismatch"""
 
 
 def build_settlement_payment_mismatch_dataset(cfg: Config) -> DataSet:
+    # Phase G.9.10: reads from shared `transactions`. CTEs collapse
+    # settlements (DISTINCT — two zero-netting legs carry identical
+    # metadata) and project payment merchant_dda legs. Mismatch =
+    # payment_amount <> linked settlement_amount.
     sql = f"""\
+WITH settlements AS (
+    SELECT DISTINCT
+        JSON_VALUE(metadata, '$.settlement_id')                         AS settlement_id,
+        CAST(JSON_VALUE(metadata, '$.settlement_amount') AS DECIMAL(12,2)) AS settlement_amount
+    FROM transactions
+    WHERE transfer_type      = 'settlement'
+      AND account_type       = 'merchant_dda'
+      AND control_account_id = 'pr-merchant-ledger'
+),
+payments AS (
+    SELECT
+        JSON_VALUE(metadata, '$.payment_id')                            AS payment_id,
+        JSON_VALUE(metadata, '$.settlement_id')                         AS settlement_id,
+        JSON_VALUE(metadata, '$.merchant_id')                           AS merchant_id,
+        CAST(JSON_VALUE(metadata, '$.payment_amount') AS DECIMAL(12,2)) AS payment_amount,
+        posted_at                                                       AS payment_date
+    FROM transactions
+    WHERE transfer_type      = 'payment'
+      AND account_type       = 'merchant_dda'
+      AND control_account_id = 'pr-merchant-ledger'
+)
 SELECT
-    payment_id,
-    settlement_id,
-    merchant_id,
-    payment_amount,
-    settlement_amount,
-    difference,
-    payment_date,
-    days_outstanding,
-{_aging_bucket_case('days_outstanding')}
-FROM pr_settlement_payment_mismatch"""
+    p.payment_id,
+    p.settlement_id,
+    p.merchant_id,
+    p.payment_amount,
+    s.settlement_amount,
+    p.payment_amount - s.settlement_amount                              AS difference,
+    p.payment_date,
+    (CURRENT_DATE - p.payment_date::date)                               AS days_outstanding,
+{_aging_bucket_case('CURRENT_DATE - p.payment_date::date')}
+FROM payments p
+JOIN settlements s ON s.settlement_id = p.settlement_id
+WHERE p.payment_amount <> s.settlement_amount"""
     return build_dataset(
         cfg, cfg.prefixed("settlement-payment-mismatch-dataset"),
         "Settlement \u2194 Payment Mismatch", "settlement-payment-mismatch",
@@ -454,17 +574,34 @@ FROM pr_settlement_payment_mismatch"""
 
 
 def build_unmatched_external_txns_dataset(cfg: Config) -> DataSet:
+    # Phase G.9.11: reads from shared `transactions`. ext_txn legs that
+    # have no linked payment (no payment leg whose metadata names this
+    # external_transaction_id). LEFT JOIN to a payment-per-ext_txn
+    # subquery; WHERE p.ext_txn_id IS NULL surfaces the unmatched.
     sql = f"""\
 SELECT
-    transaction_id,
-    external_system,
-    external_amount,
-    merchant_id,
-    transaction_date,
-    status,
-    days_outstanding,
-{_aging_bucket_case('days_outstanding')}
-FROM pr_unmatched_external_txns"""
+    JSON_VALUE(t.metadata, '$.external_transaction_id')             AS transaction_id,
+    t.external_system                                               AS external_system,
+    t.amount                                                        AS external_amount,
+    JSON_VALUE(t.metadata, '$.merchant_id')                         AS merchant_id,
+    t.posted_at                                                     AS transaction_date,
+    JSON_VALUE(t.metadata, '$.status')                              AS status,
+    (CURRENT_DATE - t.posted_at::date)                              AS days_outstanding,
+{_aging_bucket_case('CURRENT_DATE - t.posted_at::date')}
+FROM transactions t
+LEFT JOIN (
+    SELECT DISTINCT
+        JSON_VALUE(metadata, '$.external_transaction_id')           AS ext_txn_id
+    FROM transactions
+    WHERE transfer_type      = 'payment'
+      AND account_type       = 'merchant_dda'
+      AND control_account_id = 'pr-merchant-ledger'
+      AND JSON_VALUE(metadata, '$.external_transaction_id') IS NOT NULL
+) p ON p.ext_txn_id = JSON_VALUE(t.metadata, '$.external_transaction_id')
+WHERE t.transfer_type      = 'external_txn'
+  AND t.account_type       = 'external_counter'
+  AND t.control_account_id = 'pr-merchant-ledger'
+  AND p.ext_txn_id IS NULL"""
     return build_dataset(
         cfg, cfg.prefixed("unmatched-external-txns-dataset"),
         "Unmatched External Transactions", "unmatched-external-txns",
@@ -473,15 +610,22 @@ FROM pr_unmatched_external_txns"""
 
 
 def build_external_transactions_dataset(cfg: Config) -> DataSet:
+    # Phase G.9.5: reads from shared `transactions`. ext_txn transfers
+    # have one external_counter leg on pr-external-rail; the
+    # processor-side status ('processed') lives in metadata, not in the
+    # transfer/posting status (which is 'success' / 'failed').
     sql = """\
 SELECT
-    transaction_id,
-    external_system,
-    external_amount,
-    record_count,
-    transaction_date,
-    status
-FROM pr_external_transactions"""
+    JSON_VALUE(t.metadata, '$.external_transaction_id')            AS transaction_id,
+    t.external_system                                              AS external_system,
+    t.amount                                                       AS external_amount,
+    CAST(JSON_VALUE(t.metadata, '$.record_count') AS INTEGER)      AS record_count,
+    t.posted_at                                                    AS transaction_date,
+    JSON_VALUE(t.metadata, '$.status')                             AS status
+FROM transactions t
+WHERE t.transfer_type      = 'external_txn'
+  AND t.account_type       = 'external_counter'
+  AND t.control_account_id = 'pr-merchant-ledger'"""
     return build_dataset(
         cfg, cfg.prefixed("external-transactions-dataset"),
         "External Transactions", "external-transactions",
@@ -490,28 +634,46 @@ FROM pr_external_transactions"""
 
 
 def build_payment_recon_dataset(cfg: Config) -> DataSet:
+    # Phase G.9.6: reads from shared `transactions`. Aggregates ext_txn
+    # rows joined with their payments by metadata.external_transaction_id.
+    # Inner subquery collapses payment legs to one row per payment so SUM
+    # totals the same set the legacy SQL did.
     late_days = cfg.late_default_days
     sql = f"""\
 SELECT
-    et.transaction_id,
+    JSON_VALUE(et.metadata, '$.external_transaction_id')             AS transaction_id,
     et.external_system,
-    et.external_amount,
-    COALESCE(SUM(p.payment_amount), 0) AS internal_total,
-    et.external_amount - COALESCE(SUM(p.payment_amount), 0) AS difference,
+    et.amount                                                        AS external_amount,
+    COALESCE(SUM(p.payment_amount), 0)                               AS internal_total,
+    et.amount - COALESCE(SUM(p.payment_amount), 0)                   AS difference,
     CASE
-        WHEN et.external_amount = COALESCE(SUM(p.payment_amount), 0) THEN 'matched'
-        WHEN (CURRENT_DATE - et.transaction_date::date) > {late_days} THEN 'late'
+        WHEN et.amount = COALESCE(SUM(p.payment_amount), 0) THEN 'matched'
+        WHEN (CURRENT_DATE - et.posted_at::date) > {late_days} THEN 'late'
         ELSE 'not_yet_matched'
-    END AS match_status,
-    COUNT(p.payment_id) AS payment_count,
-    et.merchant_id,
-    et.transaction_date,
-    (CURRENT_DATE - et.transaction_date::date) AS days_outstanding,
-{_aging_bucket_case('CURRENT_DATE - et.transaction_date::date')}
-FROM pr_external_transactions et
-LEFT JOIN pr_payments p ON p.external_transaction_id = et.transaction_id
-GROUP BY et.transaction_id, et.external_system, et.external_amount,
-         et.merchant_id, et.transaction_date"""
+    END                                                              AS match_status,
+    COUNT(p.payment_id)                                              AS payment_count,
+    JSON_VALUE(et.metadata, '$.merchant_id')                         AS merchant_id,
+    et.posted_at                                                     AS transaction_date,
+    (CURRENT_DATE - et.posted_at::date)                              AS days_outstanding,
+{_aging_bucket_case('CURRENT_DATE - et.posted_at::date')}
+FROM transactions et
+LEFT JOIN (
+    SELECT
+        JSON_VALUE(metadata, '$.payment_id')                         AS payment_id,
+        JSON_VALUE(metadata, '$.external_transaction_id')            AS ext_txn_id,
+        CAST(JSON_VALUE(metadata, '$.payment_amount') AS DECIMAL(12,2)) AS payment_amount
+    FROM transactions
+    WHERE transfer_type      = 'payment'
+      AND account_type       = 'merchant_dda'
+      AND control_account_id = 'pr-merchant-ledger'
+) p ON p.ext_txn_id = JSON_VALUE(et.metadata, '$.external_transaction_id')
+WHERE et.transfer_type      = 'external_txn'
+  AND et.account_type       = 'external_counter'
+  AND et.control_account_id = 'pr-merchant-ledger'
+GROUP BY JSON_VALUE(et.metadata, '$.external_transaction_id'),
+         et.external_system, et.amount,
+         JSON_VALUE(et.metadata, '$.merchant_id'),
+         et.posted_at"""
     return build_dataset(
         cfg, cfg.prefixed("payment-recon-dataset"),
         "Payment Reconciliation", "payment-recon",
