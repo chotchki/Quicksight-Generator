@@ -50,6 +50,7 @@ SUBLEDGER_ACCOUNTS_CONTRACT = DatasetContract(columns=[
 
 TRANSACTIONS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("transaction_id", "STRING"),
+    ColumnSpec("account_id", "STRING"),
     ColumnSpec("subledger_account_id", "STRING"),
     ColumnSpec("subledger_name", "STRING"),
     ColumnSpec("ledger_account_id", "STRING"),
@@ -126,121 +127,6 @@ NON_ZERO_TRANSFERS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("memo", "STRING"),
 ])
 
-LIMIT_BREACH_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("subledger_account_id", "STRING"),
-    ColumnSpec("subledger_name", "STRING"),
-    ColumnSpec("ledger_account_id", "STRING"),
-    ColumnSpec("ledger_name", "STRING"),
-    ColumnSpec("activity_date", "DATETIME"),
-    ColumnSpec("activity_date_str", "STRING"),
-    ColumnSpec("transfer_type", "STRING"),
-    ColumnSpec("outbound_total", "DECIMAL"),
-    ColumnSpec("daily_limit", "DECIMAL"),
-    ColumnSpec("overage", "DECIMAL"),
-    ColumnSpec("days_outstanding", "INTEGER"),
-    ColumnSpec("aging_bucket", "STRING"),
-])
-
-OVERDRAFT_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("subledger_account_id", "STRING"),
-    ColumnSpec("subledger_name", "STRING"),
-    ColumnSpec("ledger_account_id", "STRING"),
-    ColumnSpec("ledger_name", "STRING"),
-    ColumnSpec("balance_date", "DATETIME"),
-    ColumnSpec("balance_date_str", "STRING"),
-    ColumnSpec("stored_balance", "DECIMAL"),
-    ColumnSpec("days_outstanding", "INTEGER"),
-    ColumnSpec("aging_bucket", "STRING"),
-])
-
-SWEEP_TARGET_NONZERO_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("subledger_account_id", "STRING"),
-    ColumnSpec("subledger_name", "STRING"),
-    ColumnSpec("ledger_account_id", "STRING"),
-    ColumnSpec("ledger_name", "STRING"),
-    ColumnSpec("balance_date", "DATETIME"),
-    ColumnSpec("balance_date_str", "STRING"),
-    ColumnSpec("stored_balance", "DECIMAL"),
-    ColumnSpec("days_outstanding", "INTEGER"),
-    ColumnSpec("aging_bucket", "STRING"),
-])
-
-CONCENTRATION_MASTER_SWEEP_DRIFT_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("sweep_date", "DATETIME"),
-    ColumnSpec("master_total", "DECIMAL"),
-    ColumnSpec("subaccount_total", "DECIMAL"),
-    ColumnSpec("drift", "DECIMAL"),
-    ColumnSpec("abs_drift", "DECIMAL"),
-    ColumnSpec("drift_status", "STRING"),
-])
-
-ACH_ORIG_SETTLEMENT_NONZERO_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("ledger_account_id", "STRING"),
-    ColumnSpec("ledger_name", "STRING"),
-    ColumnSpec("balance_date", "DATETIME"),
-    ColumnSpec("balance_date_str", "STRING"),
-    ColumnSpec("stored_balance", "DECIMAL"),
-    ColumnSpec("days_outstanding", "INTEGER"),
-    ColumnSpec("aging_bucket", "STRING"),
-])
-
-ACH_SWEEP_NO_FED_CONFIRMATION_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("sweep_transfer_id", "STRING"),
-    ColumnSpec("sweep_at", "DATETIME"),
-    ColumnSpec("sweep_at_str", "STRING"),
-    ColumnSpec("sweep_amount", "DECIMAL"),
-    ColumnSpec("days_outstanding", "INTEGER"),
-    ColumnSpec("aging_bucket", "STRING"),
-])
-
-FED_CARD_NO_INTERNAL_CATCHUP_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("fed_transfer_id", "STRING"),
-    ColumnSpec("fed_at", "DATETIME"),
-    ColumnSpec("fed_at_str", "STRING"),
-    ColumnSpec("fed_amount", "DECIMAL"),
-    ColumnSpec("days_outstanding", "INTEGER"),
-    ColumnSpec("aging_bucket", "STRING"),
-])
-
-GL_VS_FED_MASTER_DRIFT_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("movement_date", "DATETIME"),
-    ColumnSpec("fed_total", "DECIMAL"),
-    ColumnSpec("internal_total", "DECIMAL"),
-    ColumnSpec("drift", "DECIMAL"),
-    ColumnSpec("abs_drift", "DECIMAL"),
-    ColumnSpec("drift_status", "STRING"),
-])
-
-INTERNAL_TRANSFER_STUCK_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("originate_transfer_id", "STRING"),
-    ColumnSpec("originated_at", "DATETIME"),
-    ColumnSpec("originated_at_str", "STRING"),
-    ColumnSpec("originate_amount", "DECIMAL"),
-    ColumnSpec("days_outstanding", "INTEGER"),
-    ColumnSpec("aging_bucket", "STRING"),
-])
-
-INTERNAL_TRANSFER_SUSPENSE_NONZERO_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("ledger_account_id", "STRING"),
-    ColumnSpec("ledger_name", "STRING"),
-    ColumnSpec("balance_date", "DATETIME"),
-    ColumnSpec("balance_date_str", "STRING"),
-    ColumnSpec("stored_balance", "DECIMAL"),
-    ColumnSpec("days_outstanding", "INTEGER"),
-    ColumnSpec("aging_bucket", "STRING"),
-])
-
-INTERNAL_REVERSAL_UNCREDITED_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("originate_transfer_id", "STRING"),
-    ColumnSpec("originated_at", "DATETIME"),
-    ColumnSpec("originated_at_str", "STRING"),
-    ColumnSpec("originate_amount", "DECIMAL"),
-    ColumnSpec("reversal_transfer_id", "STRING"),
-    ColumnSpec("reversal_at", "DATETIME"),
-    ColumnSpec("days_outstanding", "INTEGER"),
-    ColumnSpec("aging_bucket", "STRING"),
-])
-
 EXPECTED_ZERO_EOD_ROLLUP_CONTRACT = DatasetContract(columns=[
     ColumnSpec("account_id", "STRING"),
     ColumnSpec("account_name", "STRING"),
@@ -300,6 +186,24 @@ DAILY_STATEMENT_TRANSACTIONS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("counter_account_name", "STRING"),
 ])
 
+UNIFIED_EXCEPTIONS_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("check_type", "STRING"),
+    ColumnSpec("severity", "STRING"),
+    ColumnSpec("severity_rank", "INTEGER"),
+    ColumnSpec("exception_date", "DATETIME"),
+    ColumnSpec("days_outstanding", "INTEGER"),
+    ColumnSpec("aging_bucket", "STRING"),
+    ColumnSpec("account_id", "STRING"),
+    ColumnSpec("account_name", "STRING"),
+    ColumnSpec("account_level", "STRING"),
+    ColumnSpec("ledger_account_id", "STRING"),
+    ColumnSpec("ledger_name", "STRING"),
+    ColumnSpec("transfer_id", "STRING"),
+    ColumnSpec("transfer_type", "STRING"),
+    ColumnSpec("primary_amount", "DECIMAL"),
+    ColumnSpec("secondary_amount", "DECIMAL"),
+])
+
 
 # ---------------------------------------------------------------------------
 # Builders
@@ -354,6 +258,7 @@ def build_transactions_dataset(cfg: Config) -> DataSet:
     sql = """\
 SELECT
     t.transaction_id,
+    t.account_id                                                 AS account_id,
     CASE WHEN t.control_account_id IS NULL THEN NULL ELSE t.account_id END
                                                                  AS subledger_account_id,
     t.account_name                                               AS subledger_name,
@@ -486,207 +391,6 @@ WHERE net_zero_status = 'not_net_zero'
         cfg, cfg.prefixed("ar-non-zero-transfers-dataset"),
         "AR Non-Zero Transfers", "ar-non-zero-transfers",
         sql, NON_ZERO_TRANSFERS_CONTRACT,
-    )
-
-
-def build_limit_breach_dataset(cfg: Config) -> DataSet:
-    sql = f"""\
-SELECT
-    subledger_account_id,
-    subledger_name,
-    ledger_account_id,
-    ledger_name,
-    activity_date,
-    TO_CHAR(activity_date, 'YYYY-MM-DD') AS activity_date_str,
-    transfer_type,
-    outbound_total,
-    daily_limit,
-    overage,
-{_aging_columns('activity_date')}
-FROM ar_subledger_limit_breach"""
-    return build_dataset(
-        cfg, cfg.prefixed("ar-limit-breach-dataset"),
-        "AR Sub-Ledger Limit Breach", "ar-limit-breach",
-        sql, LIMIT_BREACH_CONTRACT,
-    )
-
-
-def build_overdraft_dataset(cfg: Config) -> DataSet:
-    sql = f"""\
-SELECT
-    subledger_account_id,
-    subledger_name,
-    ledger_account_id,
-    ledger_name,
-    balance_date,
-    TO_CHAR(balance_date, 'YYYY-MM-DD') AS balance_date_str,
-    stored_balance,
-{_aging_columns('balance_date')}
-FROM ar_subledger_overdraft"""
-    return build_dataset(
-        cfg, cfg.prefixed("ar-overdraft-dataset"),
-        "AR Sub-Ledger Overdraft", "ar-overdraft",
-        sql, OVERDRAFT_CONTRACT,
-    )
-
-
-def build_sweep_target_nonzero_dataset(cfg: Config) -> DataSet:
-    sql = f"""\
-SELECT
-    subledger_account_id,
-    subledger_name,
-    ledger_account_id,
-    ledger_name,
-    balance_date,
-    TO_CHAR(balance_date, 'YYYY-MM-DD') AS balance_date_str,
-    stored_balance,
-{_aging_columns('balance_date')}
-FROM ar_sweep_target_nonzero"""
-    return build_dataset(
-        cfg, cfg.prefixed("ar-sweep-target-nonzero-dataset"),
-        "AR Sweep Target Non-Zero EOD", "ar-sweep-target-nonzero",
-        sql, SWEEP_TARGET_NONZERO_CONTRACT,
-    )
-
-
-def build_concentration_master_sweep_drift_dataset(cfg: Config) -> DataSet:
-    sql = """\
-SELECT
-    sweep_date,
-    master_total,
-    subaccount_total,
-    drift,
-    ABS(drift) AS abs_drift,
-    drift_status
-FROM ar_concentration_master_sweep_drift"""
-    return build_dataset(
-        cfg, cfg.prefixed("ar-concentration-master-sweep-drift-dataset"),
-        "AR Concentration Master Sweep Drift",
-        "ar-concentration-master-sweep-drift",
-        sql, CONCENTRATION_MASTER_SWEEP_DRIFT_CONTRACT,
-    )
-
-
-def build_ach_orig_settlement_nonzero_dataset(cfg: Config) -> DataSet:
-    sql = f"""\
-SELECT
-    ledger_account_id,
-    ledger_name,
-    balance_date,
-    TO_CHAR(balance_date, 'YYYY-MM-DD') AS balance_date_str,
-    stored_balance,
-{_aging_columns('balance_date')}
-FROM ar_ach_orig_settlement_nonzero"""
-    return build_dataset(
-        cfg, cfg.prefixed("ar-ach-orig-settlement-nonzero-dataset"),
-        "AR ACH Origination Settlement Non-Zero EOD",
-        "ar-ach-orig-settlement-nonzero",
-        sql, ACH_ORIG_SETTLEMENT_NONZERO_CONTRACT,
-    )
-
-
-def build_ach_sweep_no_fed_confirmation_dataset(cfg: Config) -> DataSet:
-    sql = f"""\
-SELECT
-    sweep_transfer_id,
-    sweep_at,
-    TO_CHAR(sweep_at, 'YYYY-MM-DD') AS sweep_at_str,
-    sweep_amount,
-{_aging_columns('sweep_at')}
-FROM ar_ach_sweep_no_fed_confirmation"""
-    return build_dataset(
-        cfg, cfg.prefixed("ar-ach-sweep-no-fed-confirmation-dataset"),
-        "AR ACH Internal Sweep Without Fed Confirmation",
-        "ar-ach-sweep-no-fed-confirmation",
-        sql, ACH_SWEEP_NO_FED_CONFIRMATION_CONTRACT,
-    )
-
-
-def build_fed_card_no_internal_catchup_dataset(cfg: Config) -> DataSet:
-    sql = f"""\
-SELECT
-    fed_transfer_id,
-    fed_at,
-    TO_CHAR(fed_at, 'YYYY-MM-DD') AS fed_at_str,
-    fed_amount,
-{_aging_columns('fed_at')}
-FROM ar_fed_card_no_internal_catchup"""
-    return build_dataset(
-        cfg, cfg.prefixed("ar-fed-card-no-internal-catchup-dataset"),
-        "AR Fed Activity Without Internal Catch-Up",
-        "ar-fed-card-no-internal-catchup",
-        sql, FED_CARD_NO_INTERNAL_CATCHUP_CONTRACT,
-    )
-
-
-def build_gl_vs_fed_master_drift_dataset(cfg: Config) -> DataSet:
-    sql = """\
-SELECT
-    movement_date,
-    fed_total,
-    internal_total,
-    drift,
-    ABS(drift) AS abs_drift,
-    drift_status
-FROM ar_gl_vs_fed_master_drift"""
-    return build_dataset(
-        cfg, cfg.prefixed("ar-gl-vs-fed-master-drift-dataset"),
-        "AR GL vs Fed Master Drift", "ar-gl-vs-fed-master-drift",
-        sql, GL_VS_FED_MASTER_DRIFT_CONTRACT,
-    )
-
-
-def build_internal_transfer_stuck_dataset(cfg: Config) -> DataSet:
-    sql = f"""\
-SELECT
-    originate_transfer_id,
-    originated_at,
-    TO_CHAR(originated_at, 'YYYY-MM-DD') AS originated_at_str,
-    originate_amount,
-{_aging_columns('originated_at')}
-FROM ar_internal_transfer_stuck"""
-    return build_dataset(
-        cfg, cfg.prefixed("ar-internal-transfer-stuck-dataset"),
-        "AR Internal Transfer Stuck in Suspense",
-        "ar-internal-transfer-stuck",
-        sql, INTERNAL_TRANSFER_STUCK_CONTRACT,
-    )
-
-
-def build_internal_transfer_suspense_nonzero_dataset(cfg: Config) -> DataSet:
-    sql = f"""\
-SELECT
-    ledger_account_id,
-    ledger_name,
-    balance_date,
-    TO_CHAR(balance_date, 'YYYY-MM-DD') AS balance_date_str,
-    stored_balance,
-{_aging_columns('balance_date')}
-FROM ar_internal_transfer_suspense_nonzero"""
-    return build_dataset(
-        cfg, cfg.prefixed("ar-internal-transfer-suspense-nonzero-dataset"),
-        "AR Internal Transfer Suspense Non-Zero EOD",
-        "ar-internal-transfer-suspense-nonzero",
-        sql, INTERNAL_TRANSFER_SUSPENSE_NONZERO_CONTRACT,
-    )
-
-
-def build_internal_reversal_uncredited_dataset(cfg: Config) -> DataSet:
-    sql = f"""\
-SELECT
-    originate_transfer_id,
-    originated_at,
-    TO_CHAR(originated_at, 'YYYY-MM-DD') AS originated_at_str,
-    originate_amount,
-    reversal_transfer_id,
-    reversal_at,
-{_aging_columns('originated_at')}
-FROM ar_internal_reversal_uncredited"""
-    return build_dataset(
-        cfg, cfg.prefixed("ar-internal-reversal-uncredited-dataset"),
-        "AR Internal Reversal Uncredited",
-        "ar-internal-reversal-uncredited",
-        sql, INTERNAL_REVERSAL_UNCREDITED_CONTRACT,
     )
 
 
@@ -839,6 +543,265 @@ FROM transactions t"""
     )
 
 
+def build_ar_unified_exceptions_dataset(cfg: Config) -> DataSet:
+    # Phase K.1.1: UNION ALL of the 14 per-check exception views, one row
+    # per actual exception (drift checks filtered to drift_status = 'drift';
+    # non-zero transfers filtered to expected multi-leg shape). Adds three
+    # synthesized columns the per-check datasets don't carry:
+    #   - check_type: which check produced the row (drives KPI tile + filter)
+    #   - severity / severity_rank: drift|overdraft → red(1), expected-zero
+    #     → orange(2), limit-breach → amber(3), other → yellow(4). Rank
+    #     is the integer the table sorts on.
+    #   - exception_date: harmonized from each view's native date column
+    #     (balance_date, sweep_date, originated_at, etc.) so days_outstanding
+    #     + aging_bucket can be computed once per row from a single source.
+    # account_id / account_name / transfer_id / transfer_type are NULLed
+    # where the underlying check doesn't have them (system-level aggregates
+    # like Concentration Master Sweep Drift). primary_amount is the headline
+    # dollar value; secondary_amount is the supporting figure (e.g.,
+    # daily_limit alongside overage) where one exists.
+    blocks = [
+        # ---- Baseline checks (5) ----
+        f"""SELECT
+    'Sub-Ledger Drift'    AS check_type,
+    'red'                 AS severity,
+    1                     AS severity_rank,
+    balance_date          AS exception_date,
+{_aging_columns('balance_date')},
+    subledger_account_id  AS account_id,
+    subledger_name        AS account_name,
+    'Sub-Ledger'          AS account_level,
+    ledger_account_id,
+    ledger_name,
+    NULL::TEXT            AS transfer_id,
+    NULL::TEXT            AS transfer_type,
+    drift                 AS primary_amount,
+    stored_balance        AS secondary_amount
+FROM ar_subledger_balance_drift
+WHERE drift <> 0""",
+        f"""SELECT
+    'Ledger Drift'        AS check_type,
+    'red'                 AS severity,
+    1                     AS severity_rank,
+    balance_date          AS exception_date,
+{_aging_columns('balance_date')},
+    ledger_account_id     AS account_id,
+    ledger_name           AS account_name,
+    'Ledger'              AS account_level,
+    ledger_account_id,
+    ledger_name,
+    NULL::TEXT            AS transfer_id,
+    NULL::TEXT            AS transfer_type,
+    drift                 AS primary_amount,
+    stored_balance        AS secondary_amount
+FROM ar_ledger_balance_drift
+WHERE drift <> 0""",
+        f"""SELECT
+    'Non-Zero Transfer'   AS check_type,
+    'yellow'              AS severity,
+    4                     AS severity_rank,
+    first_posted_at       AS exception_date,
+{_aging_columns('first_posted_at')},
+    NULL::TEXT            AS account_id,
+    NULL::TEXT            AS account_name,
+    'System'              AS account_level,
+    NULL::TEXT            AS ledger_account_id,
+    NULL::TEXT            AS ledger_name,
+    transfer_id,
+    transfer_type,
+    net_amount            AS primary_amount,
+    NULL::NUMERIC         AS secondary_amount
+FROM ar_transfer_summary
+WHERE net_zero_status = 'not_net_zero'
+  AND expected_net_zero = 'expected'""",
+        f"""SELECT
+    'Sub-Ledger Limit Breach' AS check_type,
+    'amber'                   AS severity,
+    3                         AS severity_rank,
+    activity_date             AS exception_date,
+{_aging_columns('activity_date')},
+    subledger_account_id      AS account_id,
+    subledger_name            AS account_name,
+    'Sub-Ledger'              AS account_level,
+    ledger_account_id,
+    ledger_name,
+    NULL::TEXT                AS transfer_id,
+    transfer_type,
+    overage                   AS primary_amount,
+    daily_limit               AS secondary_amount
+FROM ar_subledger_limit_breach""",
+        f"""SELECT
+    'Sub-Ledger Overdraft' AS check_type,
+    'red'                  AS severity,
+    1                      AS severity_rank,
+    balance_date           AS exception_date,
+{_aging_columns('balance_date')},
+    subledger_account_id   AS account_id,
+    subledger_name         AS account_name,
+    'Sub-Ledger'           AS account_level,
+    ledger_account_id,
+    ledger_name,
+    NULL::TEXT             AS transfer_id,
+    NULL::TEXT             AS transfer_type,
+    stored_balance         AS primary_amount,
+    NULL::NUMERIC          AS secondary_amount
+FROM ar_subledger_overdraft""",
+        # ---- CMS-specific checks (9) ----
+        f"""SELECT
+    'Sweep Target Non-Zero EOD' AS check_type,
+    'orange'                    AS severity,
+    2                           AS severity_rank,
+    balance_date                AS exception_date,
+{_aging_columns('balance_date')},
+    subledger_account_id        AS account_id,
+    subledger_name              AS account_name,
+    'Sub-Ledger'                AS account_level,
+    ledger_account_id,
+    ledger_name,
+    NULL::TEXT                  AS transfer_id,
+    NULL::TEXT                  AS transfer_type,
+    stored_balance              AS primary_amount,
+    NULL::NUMERIC               AS secondary_amount
+FROM ar_sweep_target_nonzero""",
+        f"""SELECT
+    'Concentration Master Sweep Drift' AS check_type,
+    'red'                              AS severity,
+    1                                  AS severity_rank,
+    sweep_date                         AS exception_date,
+{_aging_columns('sweep_date')},
+    NULL::TEXT                         AS account_id,
+    NULL::TEXT                         AS account_name,
+    'System'                           AS account_level,
+    NULL::TEXT                         AS ledger_account_id,
+    NULL::TEXT                         AS ledger_name,
+    NULL::TEXT                         AS transfer_id,
+    NULL::TEXT                         AS transfer_type,
+    drift                              AS primary_amount,
+    master_total                       AS secondary_amount
+FROM ar_concentration_master_sweep_drift
+WHERE drift_status = 'drift'""",
+        f"""SELECT
+    'ACH Origination Settlement Non-Zero EOD' AS check_type,
+    'orange'                                  AS severity,
+    2                                         AS severity_rank,
+    balance_date                              AS exception_date,
+{_aging_columns('balance_date')},
+    ledger_account_id                         AS account_id,
+    ledger_name                               AS account_name,
+    'Ledger'                                  AS account_level,
+    ledger_account_id,
+    ledger_name,
+    NULL::TEXT                                AS transfer_id,
+    NULL::TEXT                                AS transfer_type,
+    stored_balance                            AS primary_amount,
+    NULL::NUMERIC                             AS secondary_amount
+FROM ar_ach_orig_settlement_nonzero""",
+        f"""SELECT
+    'ACH Sweep Without Fed Confirmation' AS check_type,
+    'yellow'                             AS severity,
+    4                                    AS severity_rank,
+    sweep_at                             AS exception_date,
+{_aging_columns('sweep_at')},
+    NULL::TEXT                           AS account_id,
+    NULL::TEXT                           AS account_name,
+    'System'                             AS account_level,
+    NULL::TEXT                           AS ledger_account_id,
+    NULL::TEXT                           AS ledger_name,
+    sweep_transfer_id                    AS transfer_id,
+    NULL::TEXT                           AS transfer_type,
+    sweep_amount                         AS primary_amount,
+    NULL::NUMERIC                        AS secondary_amount
+FROM ar_ach_sweep_no_fed_confirmation""",
+        f"""SELECT
+    'Fed Activity Without Internal Catch-Up' AS check_type,
+    'yellow'                                 AS severity,
+    4                                        AS severity_rank,
+    fed_at                                   AS exception_date,
+{_aging_columns('fed_at')},
+    NULL::TEXT                               AS account_id,
+    NULL::TEXT                               AS account_name,
+    'System'                                 AS account_level,
+    NULL::TEXT                               AS ledger_account_id,
+    NULL::TEXT                               AS ledger_name,
+    fed_transfer_id                          AS transfer_id,
+    NULL::TEXT                               AS transfer_type,
+    fed_amount                               AS primary_amount,
+    NULL::NUMERIC                            AS secondary_amount
+FROM ar_fed_card_no_internal_catchup""",
+        f"""SELECT
+    'GL vs Fed Master Drift' AS check_type,
+    'red'                    AS severity,
+    1                        AS severity_rank,
+    movement_date            AS exception_date,
+{_aging_columns('movement_date')},
+    NULL::TEXT               AS account_id,
+    NULL::TEXT               AS account_name,
+    'System'                 AS account_level,
+    NULL::TEXT               AS ledger_account_id,
+    NULL::TEXT               AS ledger_name,
+    NULL::TEXT               AS transfer_id,
+    NULL::TEXT               AS transfer_type,
+    drift                    AS primary_amount,
+    fed_total                AS secondary_amount
+FROM ar_gl_vs_fed_master_drift
+WHERE drift_status = 'drift'""",
+        f"""SELECT
+    'Internal Transfer Stuck in Suspense' AS check_type,
+    'yellow'                              AS severity,
+    4                                     AS severity_rank,
+    originated_at                         AS exception_date,
+{_aging_columns('originated_at')},
+    NULL::TEXT                            AS account_id,
+    NULL::TEXT                            AS account_name,
+    'System'                              AS account_level,
+    NULL::TEXT                            AS ledger_account_id,
+    NULL::TEXT                            AS ledger_name,
+    originate_transfer_id                 AS transfer_id,
+    NULL::TEXT                            AS transfer_type,
+    originate_amount                      AS primary_amount,
+    NULL::NUMERIC                         AS secondary_amount
+FROM ar_internal_transfer_stuck""",
+        f"""SELECT
+    'Internal Transfer Suspense Non-Zero EOD' AS check_type,
+    'orange'                                  AS severity,
+    2                                         AS severity_rank,
+    balance_date                              AS exception_date,
+{_aging_columns('balance_date')},
+    ledger_account_id                         AS account_id,
+    ledger_name                               AS account_name,
+    'Ledger'                                  AS account_level,
+    ledger_account_id,
+    ledger_name,
+    NULL::TEXT                                AS transfer_id,
+    NULL::TEXT                                AS transfer_type,
+    stored_balance                            AS primary_amount,
+    NULL::NUMERIC                             AS secondary_amount
+FROM ar_internal_transfer_suspense_nonzero""",
+        f"""SELECT
+    'Internal Reversal Uncredited' AS check_type,
+    'yellow'                       AS severity,
+    4                              AS severity_rank,
+    originated_at                  AS exception_date,
+{_aging_columns('originated_at')},
+    NULL::TEXT                     AS account_id,
+    NULL::TEXT                     AS account_name,
+    'System'                       AS account_level,
+    NULL::TEXT                     AS ledger_account_id,
+    NULL::TEXT                     AS ledger_name,
+    originate_transfer_id          AS transfer_id,
+    NULL::TEXT                     AS transfer_type,
+    originate_amount               AS primary_amount,
+    NULL::NUMERIC                  AS secondary_amount
+FROM ar_internal_reversal_uncredited""",
+    ]
+    sql = "\nUNION ALL\n".join(blocks)
+    return build_dataset(
+        cfg, cfg.prefixed("ar-unified-exceptions-dataset"),
+        "AR Unified Exceptions", "ar-unified-exceptions",
+        sql, UNIFIED_EXCEPTIONS_CONTRACT,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Convenience
 # ---------------------------------------------------------------------------
@@ -852,20 +815,10 @@ def build_all_datasets(cfg: Config) -> list[DataSet]:
         build_subledger_balance_drift_dataset(cfg),
         build_transfer_summary_dataset(cfg),
         build_non_zero_transfers_dataset(cfg),
-        build_limit_breach_dataset(cfg),
-        build_overdraft_dataset(cfg),
-        build_sweep_target_nonzero_dataset(cfg),
-        build_concentration_master_sweep_drift_dataset(cfg),
-        build_ach_orig_settlement_nonzero_dataset(cfg),
-        build_ach_sweep_no_fed_confirmation_dataset(cfg),
-        build_fed_card_no_internal_catchup_dataset(cfg),
-        build_gl_vs_fed_master_drift_dataset(cfg),
-        build_internal_transfer_stuck_dataset(cfg),
-        build_internal_transfer_suspense_nonzero_dataset(cfg),
-        build_internal_reversal_uncredited_dataset(cfg),
         build_expected_zero_eod_rollup_dataset(cfg),
         build_two_sided_post_mismatch_rollup_dataset(cfg),
         build_balance_drift_timelines_rollup_dataset(cfg),
         build_daily_statement_summary_dataset(cfg),
         build_daily_statement_transactions_dataset(cfg),
+        build_ar_unified_exceptions_dataset(cfg),
     ]

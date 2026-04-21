@@ -28,34 +28,23 @@ Visual additions:
 from __future__ import annotations
 
 from quicksight_gen.account_recon.constants import (
+    DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
     DS_AR_DAILY_STATEMENT_SUMMARY,
     DS_AR_DAILY_STATEMENT_TRANSACTIONS,
+    DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
     DS_AR_LEDGER_ACCOUNTS,
     DS_AR_LEDGER_BALANCE_DRIFT,
-    DS_AR_LIMIT_BREACH,
     DS_AR_NON_ZERO_TRANSFERS,
-    DS_AR_OVERDRAFT,
     DS_AR_SUBLEDGER_ACCOUNTS,
     DS_AR_SUBLEDGER_BALANCE_DRIFT,
-    DS_AR_SWEEP_TARGET_NONZERO,
-    DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
-    DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
-    DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
-    DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
-    DS_AR_GL_VS_FED_MASTER_DRIFT,
-    DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
-    DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
-    DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
-    DS_AR_INTERNAL_REVERSAL_UNCREDITED,
-    DS_AR_INTERNAL_TRANSFER_STUCK,
-    DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
+    DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+    DS_AR_UNIFIED_EXCEPTIONS,
     SHEET_AR_BALANCES,
     SHEET_AR_DAILY_STATEMENT,
     SHEET_AR_TRANSACTIONS,
 )
-from quicksight_gen.common.aging import aging_bar_visual
 from quicksight_gen.common.clickability import (
     link_text_format,
     menu_link_text_format,
@@ -270,6 +259,7 @@ P_AR_LEDGER = "pArLedgerAccountId"
 P_AR_TRANSFER = "pArTransferId"
 P_AR_ACTIVITY_DATE = "pArActivityDate"
 P_AR_TRANSFER_TYPE = "pArTransferType"
+P_AR_ACCOUNT = "pArAccountId"
 
 
 def _multi_drill_action(
@@ -857,1615 +847,6 @@ def build_transactions_visuals() -> list[Visual]:
 
 
 # ---------------------------------------------------------------------------
-# Exceptions tab — drift tables, non-zero, two timelines
-# ---------------------------------------------------------------------------
-
-def build_exceptions_visuals(link_color: str) -> list[Visual]:
-    kpi_ledger_drift = Visual(
-        KPIVisual=KPIVisual(
-            VisualId="ar-exc-kpi-ledger-drift",
-            Title=_title("Ledger Drift Days"),
-            Subtitle=_subtitle(
-                "Count of (ledger, date) combinations where stored ledger "
-                "balance ≠ Σ of its sub-ledgers' stored balances"
-            ),
-            ChartConfiguration=KPIConfiguration(
-                FieldWells=KPIFieldWells(
-                    Values=[
-                        _measure_count(
-                            "ar-exc-ledger-drift-count",
-                            DS_AR_LEDGER_BALANCE_DRIFT,
-                            "ledger_account_id",
-                        )
-                    ],
-                ),
-            ),
-        )
-    )
-
-    kpi_subledger_drift = Visual(
-        KPIVisual=KPIVisual(
-            VisualId="ar-exc-kpi-subledger-drift",
-            Title=_title("Sub-Ledger Drift Days"),
-            Subtitle=_subtitle(
-                "Count of (sub-ledger, date) combinations where stored "
-                "sub-ledger balance ≠ running Σ of posted transactions"
-            ),
-            ChartConfiguration=KPIConfiguration(
-                FieldWells=KPIFieldWells(
-                    Values=[
-                        _measure_count(
-                            "ar-exc-subledger-drift-count",
-                            DS_AR_SUBLEDGER_BALANCE_DRIFT,
-                            "subledger_account_id",
-                        )
-                    ],
-                ),
-            ),
-        )
-    )
-
-    kpi_nonzero = Visual(
-        KPIVisual=KPIVisual(
-            VisualId="ar-exc-kpi-nonzero",
-            Title=_title("Non-Zero Transfers"),
-            Subtitle=_subtitle(
-                "Transfers whose non-failed legs don't balance out"
-            ),
-            ChartConfiguration=KPIConfiguration(
-                FieldWells=KPIFieldWells(
-                    Values=[
-                        _measure_count(
-                            "ar-exc-nonzero-count",
-                            DS_AR_NON_ZERO_TRANSFERS,
-                            "transfer_id",
-                        )
-                    ],
-                ),
-            ),
-        )
-    )
-
-    table_ledger_drift = Visual(
-        TableVisual=TableVisual(
-            VisualId="ar-exc-ledger-drift-table",
-            Title=_title("Ledger Balance Drift"),
-            Subtitle=_subtitle(
-                "Ledger-account days where stored ledger balance disagrees "
-                "with the sum of its sub-ledgers' stored balances. "
-                "Left-click ledger_account_id to drill into Balances with "
-                "the sub-ledger table filtered to that ledger's sub-ledgers."
-            ),
-            ChartConfiguration=TableConfiguration(
-                FieldWells=TableFieldWells(
-                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
-                        Values=[
-                            _unagg_field("ar-exc-ldrift-ledger-id",
-                                         DS_AR_LEDGER_BALANCE_DRIFT,
-                                         "ledger_account_id"),
-                            _unagg_field("ar-exc-ldrift-ledger",
-                                         DS_AR_LEDGER_BALANCE_DRIFT,
-                                         "ledger_name"),
-                            _unagg_field("ar-exc-ldrift-scope",
-                                         DS_AR_LEDGER_BALANCE_DRIFT, "scope"),
-                            _unagg_field("ar-exc-ldrift-date",
-                                         DS_AR_LEDGER_BALANCE_DRIFT,
-                                         "balance_date"),
-                            _unagg_field("ar-exc-ldrift-stored",
-                                         DS_AR_LEDGER_BALANCE_DRIFT,
-                                         "stored_balance"),
-                            _unagg_field("ar-exc-ldrift-computed",
-                                         DS_AR_LEDGER_BALANCE_DRIFT,
-                                         "computed_balance"),
-                            _unagg_field("ar-exc-ldrift-amt",
-                                         DS_AR_LEDGER_BALANCE_DRIFT, "drift"),
-                            _unagg_field("ar-exc-ldrift-aging",
-                                         DS_AR_LEDGER_BALANCE_DRIFT,
-                                         "aging_bucket"),
-                        ],
-                    )
-                ),
-                SortConfiguration={
-                    "RowSort": [
-                        {
-                            "FieldSort": {
-                                "FieldId": "ar-exc-ldrift-date",
-                                "Direction": "DESC",
-                            },
-                        },
-                    ],
-                },
-            ),
-            Actions=[
-                _drill_down_action(
-                    "action-ar-exc-ledger-to-balances",
-                    "View Sub-Ledger Balances",
-                    SHEET_AR_BALANCES,
-                    P_AR_LEDGER,
-                    "ar-exc-ldrift-ledger-id",
-                ),
-            ],
-            ConditionalFormatting={
-                "ConditionalFormattingOptions": [
-                    link_text_format(
-                        "ar-exc-ldrift-ledger-id",
-                        "ledger_account_id",
-                        link_color,
-                    ),
-                ],
-            },
-        )
-    )
-
-    table_subledger_drift = Visual(
-        TableVisual=TableVisual(
-            VisualId="ar-exc-subledger-drift-table",
-            Title=_title("Sub-Ledger Balance Drift"),
-            Subtitle=_subtitle(
-                "Sub-ledger account days where stored sub-ledger balance "
-                "disagrees with the running sum of posted transactions. "
-                "Left-click a subledger_account_id to drill into "
-                "Transactions for that sub-ledger."
-            ),
-            ChartConfiguration=TableConfiguration(
-                FieldWells=TableFieldWells(
-                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
-                        Values=[
-                            _unagg_field("ar-exc-sdrift-subledger-id",
-                                         DS_AR_SUBLEDGER_BALANCE_DRIFT,
-                                         "subledger_account_id"),
-                            _unagg_field("ar-exc-sdrift-subledger",
-                                         DS_AR_SUBLEDGER_BALANCE_DRIFT,
-                                         "subledger_name"),
-                            _unagg_field("ar-exc-sdrift-ledger",
-                                         DS_AR_SUBLEDGER_BALANCE_DRIFT,
-                                         "ledger_name"),
-                            _unagg_field("ar-exc-sdrift-scope",
-                                         DS_AR_SUBLEDGER_BALANCE_DRIFT,
-                                         "scope"),
-                            _unagg_field("ar-exc-sdrift-date",
-                                         DS_AR_SUBLEDGER_BALANCE_DRIFT,
-                                         "balance_date"),
-                            _unagg_field("ar-exc-sdrift-stored",
-                                         DS_AR_SUBLEDGER_BALANCE_DRIFT,
-                                         "stored_balance"),
-                            _unagg_field("ar-exc-sdrift-computed",
-                                         DS_AR_SUBLEDGER_BALANCE_DRIFT,
-                                         "computed_balance"),
-                            _unagg_field("ar-exc-sdrift-amt",
-                                         DS_AR_SUBLEDGER_BALANCE_DRIFT,
-                                         "drift"),
-                            _unagg_field("ar-exc-sdrift-aging",
-                                         DS_AR_SUBLEDGER_BALANCE_DRIFT,
-                                         "aging_bucket"),
-                        ],
-                    )
-                ),
-                SortConfiguration={
-                    "RowSort": [
-                        {
-                            "FieldSort": {
-                                "FieldId": "ar-exc-sdrift-date",
-                                "Direction": "DESC",
-                            },
-                        },
-                    ],
-                },
-            ),
-            Actions=[
-                _drill_down_action(
-                    "action-ar-exc-subledger-to-txn",
-                    "View Transactions",
-                    SHEET_AR_TRANSACTIONS,
-                    P_AR_SUBLEDGER,
-                    "ar-exc-sdrift-subledger-id",
-                ),
-            ],
-            ConditionalFormatting={
-                "ConditionalFormattingOptions": [
-                    link_text_format(
-                        "ar-exc-sdrift-subledger-id",
-                        "subledger_account_id",
-                        link_color,
-                    ),
-                ],
-            },
-        )
-    )
-
-    table_non_zero = Visual(
-        TableVisual=TableVisual(
-            VisualId="ar-exc-nonzero-table",
-            Title=_title("Non-Zero Transfers"),
-            Subtitle=_subtitle(
-                "Transfers where the sum of non-failed legs is not zero. "
-                "Left-click a transfer_id to drill into Transactions for "
-                "that transfer."
-            ),
-            ChartConfiguration=TableConfiguration(
-                FieldWells=TableFieldWells(
-                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
-                        Values=[
-                            _unagg_field("ar-exc-nz-id",
-                                         DS_AR_NON_ZERO_TRANSFERS,
-                                         "transfer_id"),
-                            _unagg_field("ar-exc-nz-posted",
-                                         DS_AR_NON_ZERO_TRANSFERS,
-                                         "first_posted_at"),
-                            _unagg_field("ar-exc-nz-debit",
-                                         DS_AR_NON_ZERO_TRANSFERS,
-                                         "total_debit"),
-                            _unagg_field("ar-exc-nz-credit",
-                                         DS_AR_NON_ZERO_TRANSFERS,
-                                         "total_credit"),
-                            _unagg_field("ar-exc-nz-net",
-                                         DS_AR_NON_ZERO_TRANSFERS,
-                                         "net_amount"),
-                            _unagg_field("ar-exc-nz-failed",
-                                         DS_AR_NON_ZERO_TRANSFERS,
-                                         "failed_leg_count"),
-                            _unagg_field("ar-exc-nz-origin",
-                                         DS_AR_NON_ZERO_TRANSFERS,
-                                         "origin"),
-                            _unagg_field("ar-exc-nz-aging",
-                                         DS_AR_NON_ZERO_TRANSFERS,
-                                         "aging_bucket"),
-                            _unagg_field("ar-exc-nz-memo",
-                                         DS_AR_NON_ZERO_TRANSFERS, "memo"),
-                        ],
-                    )
-                ),
-                SortConfiguration={
-                    "RowSort": [
-                        {
-                            "FieldSort": {
-                                "FieldId": "ar-exc-nz-posted",
-                                "Direction": "DESC",
-                            },
-                        },
-                    ],
-                },
-            ),
-            Actions=[
-                _drill_down_action(
-                    "action-ar-exc-nonzero-to-txn",
-                    "View Transactions",
-                    SHEET_AR_TRANSACTIONS,
-                    P_AR_TRANSFER,
-                    "ar-exc-nz-id",
-                ),
-            ],
-            ConditionalFormatting={
-                "ConditionalFormattingOptions": [
-                    link_text_format(
-                        "ar-exc-nz-id", "transfer_id", link_color,
-                    ),
-                ],
-            },
-        )
-    )
-
-    # Two timelines — one per drift feed. Two independent feeds (ledger
-    # upstream vs sub-ledger upstream) so the side-by-side plot makes which
-    # feed went off the rails visually legible.
-    timeline_ledger = Visual(
-        BarChartVisual=BarChartVisual(
-            VisualId="ar-exc-ledger-drift-timeline",
-            Title=_title("Ledger Drift Timeline"),
-            Subtitle=_subtitle(
-                "Total ledger-drift amount per day — stored ledger balance "
-                "minus Σ of its sub-ledgers' stored balances. Tall bars "
-                "mark days the ledger feed was out of step with its "
-                "sub-ledgers."
-            ),
-            ChartConfiguration=BarChartConfiguration(
-                FieldWells=BarChartFieldWells(
-                    BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
-                        Category=[_date_dim("ar-exc-ltimeline-dim",
-                                            DS_AR_LEDGER_BALANCE_DRIFT,
-                                            "balance_date")],
-                        Values=[_measure_sum(
-                            "ar-exc-ltimeline-drift",
-                            DS_AR_LEDGER_BALANCE_DRIFT, "drift",
-                        )],
-                    )
-                ),
-                Orientation="VERTICAL",
-                BarsArrangement="CLUSTERED",
-                CategoryLabelOptions=_axis_label("Date"),
-                ValueLabelOptions=_axis_label("Total Drift ($)"),
-            ),
-        )
-    )
-
-    timeline_subledger = Visual(
-        BarChartVisual=BarChartVisual(
-            VisualId="ar-exc-subledger-drift-timeline",
-            Title=_title("Sub-Ledger Drift Timeline"),
-            Subtitle=_subtitle(
-                "Total sub-ledger drift amount per day — stored sub-ledger "
-                "balance minus running Σ of posted transactions. Tall bars "
-                "mark days sub-ledger balances diverged most from the "
-                "ledger."
-            ),
-            ChartConfiguration=BarChartConfiguration(
-                FieldWells=BarChartFieldWells(
-                    BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
-                        Category=[_date_dim("ar-exc-stimeline-dim",
-                                            DS_AR_SUBLEDGER_BALANCE_DRIFT,
-                                            "balance_date")],
-                        Values=[_measure_sum(
-                            "ar-exc-stimeline-drift",
-                            DS_AR_SUBLEDGER_BALANCE_DRIFT, "drift",
-                        )],
-                    )
-                ),
-                Orientation="VERTICAL",
-                BarsArrangement="CLUSTERED",
-                CategoryLabelOptions=_axis_label("Date"),
-                ValueLabelOptions=_axis_label("Total Drift ($)"),
-            ),
-        )
-    )
-
-    kpi_breach = Visual(
-        KPIVisual=KPIVisual(
-            VisualId="ar-exc-kpi-breach",
-            Title=_title("Limit Breach Days"),
-            Subtitle=_subtitle(
-                "Count of (sub-ledger, date, transfer_type) combinations "
-                "where daily outbound exceeded the ledger's configured limit"
-            ),
-            ChartConfiguration=KPIConfiguration(
-                FieldWells=KPIFieldWells(
-                    Values=[
-                        _measure_count(
-                            "ar-exc-breach-count",
-                            DS_AR_LIMIT_BREACH,
-                            "subledger_account_id",
-                        )
-                    ],
-                ),
-            ),
-        )
-    )
-
-    kpi_overdraft = Visual(
-        KPIVisual=KPIVisual(
-            VisualId="ar-exc-kpi-overdraft",
-            Title=_title("Overdraft Days"),
-            Subtitle=_subtitle(
-                "Count of (sub-ledger, date) cells where stored sub-ledger "
-                "balance < 0"
-            ),
-            ChartConfiguration=KPIConfiguration(
-                FieldWells=KPIFieldWells(
-                    Values=[
-                        _measure_count(
-                            "ar-exc-overdraft-count",
-                            DS_AR_OVERDRAFT,
-                            "subledger_account_id",
-                        )
-                    ],
-                ),
-            ),
-        )
-    )
-
-    table_breach = Visual(
-        TableVisual=TableVisual(
-            VisualId="ar-exc-breach-table",
-            Title=_title("Sub-Ledger Limit Breach"),
-            Subtitle=_subtitle(
-                "Days a sub-ledger account's outbound total for one "
-                "transfer type exceeded the ledger's configured "
-                "daily_limit. Left-click a subledger_account_id to drill "
-                "into Transactions filtered by that sub-ledger, date, and "
-                "transfer type."
-            ),
-            ChartConfiguration=TableConfiguration(
-                FieldWells=TableFieldWells(
-                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
-                        Values=[
-                            _unagg_field("ar-exc-br-subledger-id",
-                                         DS_AR_LIMIT_BREACH,
-                                         "subledger_account_id"),
-                            _unagg_field("ar-exc-br-subledger",
-                                         DS_AR_LIMIT_BREACH,
-                                         "subledger_name"),
-                            _unagg_field("ar-exc-br-ledger",
-                                         DS_AR_LIMIT_BREACH, "ledger_name"),
-                            _unagg_field("ar-exc-br-date",
-                                         DS_AR_LIMIT_BREACH, "activity_date"),
-                            _unagg_field("ar-exc-br-date-str",
-                                         DS_AR_LIMIT_BREACH,
-                                         "activity_date_str"),
-                            _unagg_field("ar-exc-br-type",
-                                         DS_AR_LIMIT_BREACH, "transfer_type"),
-                            _unagg_field("ar-exc-br-outbound",
-                                         DS_AR_LIMIT_BREACH, "outbound_total"),
-                            _unagg_field("ar-exc-br-limit",
-                                         DS_AR_LIMIT_BREACH, "daily_limit"),
-                            _unagg_field("ar-exc-br-overage",
-                                         DS_AR_LIMIT_BREACH, "overage"),
-                            _unagg_field("ar-exc-br-aging",
-                                         DS_AR_LIMIT_BREACH, "aging_bucket"),
-                        ],
-                    )
-                ),
-                SortConfiguration={
-                    "RowSort": [
-                        {
-                            "FieldSort": {
-                                "FieldId": "ar-exc-br-date",
-                                "Direction": "DESC",
-                            },
-                        },
-                    ],
-                },
-            ),
-            Actions=[
-                _multi_drill_action(
-                    "action-ar-exc-breach-to-txn",
-                    "View Transactions",
-                    SHEET_AR_TRANSACTIONS,
-                    [
-                        (P_AR_SUBLEDGER, "ar-exc-br-subledger-id"),
-                        (P_AR_ACTIVITY_DATE, "ar-exc-br-date-str"),
-                        (P_AR_TRANSFER_TYPE, "ar-exc-br-type"),
-                    ],
-                ),
-            ],
-            ConditionalFormatting={
-                "ConditionalFormattingOptions": [
-                    link_text_format(
-                        "ar-exc-br-subledger-id", "subledger_account_id",
-                        link_color,
-                    ),
-                ],
-            },
-        )
-    )
-
-    table_overdraft = Visual(
-        TableVisual=TableVisual(
-            VisualId="ar-exc-overdraft-table",
-            Title=_title("Sub-Ledger Overdraft"),
-            Subtitle=_subtitle(
-                "Days a sub-ledger account's stored balance was negative. "
-                "Left-click a subledger_account_id to drill into "
-                "Transactions filtered by that sub-ledger and date."
-            ),
-            ChartConfiguration=TableConfiguration(
-                FieldWells=TableFieldWells(
-                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
-                        Values=[
-                            _unagg_field("ar-exc-od-subledger-id",
-                                         DS_AR_OVERDRAFT,
-                                         "subledger_account_id"),
-                            _unagg_field("ar-exc-od-subledger",
-                                         DS_AR_OVERDRAFT, "subledger_name"),
-                            _unagg_field("ar-exc-od-ledger",
-                                         DS_AR_OVERDRAFT, "ledger_name"),
-                            _unagg_field("ar-exc-od-date",
-                                         DS_AR_OVERDRAFT, "balance_date"),
-                            _unagg_field("ar-exc-od-date-str",
-                                         DS_AR_OVERDRAFT, "balance_date_str"),
-                            _unagg_field("ar-exc-od-stored",
-                                         DS_AR_OVERDRAFT, "stored_balance"),
-                            _unagg_field("ar-exc-od-aging",
-                                         DS_AR_OVERDRAFT, "aging_bucket"),
-                        ],
-                    )
-                ),
-                SortConfiguration={
-                    "RowSort": [
-                        {
-                            "FieldSort": {
-                                "FieldId": "ar-exc-od-date",
-                                "Direction": "DESC",
-                            },
-                        },
-                    ],
-                },
-            ),
-            Actions=[
-                _multi_drill_action(
-                    "action-ar-exc-overdraft-to-txn",
-                    "View Transactions",
-                    SHEET_AR_TRANSACTIONS,
-                    [
-                        (P_AR_SUBLEDGER, "ar-exc-od-subledger-id"),
-                        (P_AR_ACTIVITY_DATE, "ar-exc-od-date-str"),
-                    ],
-                ),
-            ],
-            ConditionalFormatting={
-                "ConditionalFormattingOptions": [
-                    link_text_format(
-                        "ar-exc-od-subledger-id", "subledger_account_id",
-                        link_color,
-                    ),
-                ],
-            },
-        )
-    )
-
-    # Aging bar charts — one per exception check.
-    aging_ledger_drift = aging_bar_visual(
-        "ar-exc-aging-ledger-drift",
-        "Ledger Drift by Age",
-        "How long ledger drift rows have been outstanding",
-        DS_AR_LEDGER_BALANCE_DRIFT,
-        "ledger_account_id",
-    )
-    aging_subledger_drift = aging_bar_visual(
-        "ar-exc-aging-subledger-drift",
-        "Sub-Ledger Drift by Age",
-        "How long sub-ledger drift rows have been outstanding",
-        DS_AR_SUBLEDGER_BALANCE_DRIFT,
-        "subledger_account_id",
-    )
-    aging_nonzero = aging_bar_visual(
-        "ar-exc-aging-nonzero",
-        "Non-Zero Transfers by Age",
-        "How long non-zero transfers have been outstanding",
-        DS_AR_NON_ZERO_TRANSFERS,
-        "transfer_id",
-    )
-    aging_breach = aging_bar_visual(
-        "ar-exc-aging-breach",
-        "Limit Breaches by Age",
-        "How long limit-breach rows have been outstanding",
-        DS_AR_LIMIT_BREACH,
-        "subledger_account_id",
-    )
-    aging_overdraft = aging_bar_visual(
-        "ar-exc-aging-overdraft",
-        "Overdrafts by Age",
-        "How long overdraft rows have been outstanding",
-        DS_AR_OVERDRAFT,
-        "subledger_account_id",
-    )
-
-    # F.5.1 Sweep target non-zero EOD — operating sub-accounts under
-    # Cash Concentration Master that didn't sweep to zero EOD.
-    kpi_sweep_target = Visual(
-        KPIVisual=KPIVisual(
-            VisualId="ar-exc-kpi-sweep-target",
-            Title=_title("Sweep Target Non-Zero EOD"),
-            Subtitle=_subtitle(
-                "Operating sub-accounts under Cash Concentration Master "
-                "whose stored EOD balance is not zero — sweep failed or "
-                "was skipped"
-            ),
-            ChartConfiguration=KPIConfiguration(
-                FieldWells=KPIFieldWells(
-                    Values=[
-                        _measure_count(
-                            "ar-exc-sweep-target-count",
-                            DS_AR_SWEEP_TARGET_NONZERO,
-                            "subledger_account_id",
-                        )
-                    ],
-                ),
-            ),
-        )
-    )
-
-    table_sweep_target = Visual(
-        TableVisual=TableVisual(
-            VisualId="ar-exc-sweep-target-table",
-            Title=_title("Sweep Target Non-Zero EOD"),
-            Subtitle=_subtitle(
-                "Days an operating sub-account under Cash Concentration "
-                "Master ended non-zero. Each row is a (sub-account, date) "
-                "the EOD sweep didn't clear. Left-click a "
-                "subledger_account_id to drill into Transactions."
-            ),
-            ChartConfiguration=TableConfiguration(
-                FieldWells=TableFieldWells(
-                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
-                        Values=[
-                            _unagg_field("ar-exc-sw-subledger-id",
-                                         DS_AR_SWEEP_TARGET_NONZERO,
-                                         "subledger_account_id"),
-                            _unagg_field("ar-exc-sw-subledger",
-                                         DS_AR_SWEEP_TARGET_NONZERO,
-                                         "subledger_name"),
-                            _unagg_field("ar-exc-sw-ledger",
-                                         DS_AR_SWEEP_TARGET_NONZERO,
-                                         "ledger_name"),
-                            _unagg_field("ar-exc-sw-date",
-                                         DS_AR_SWEEP_TARGET_NONZERO,
-                                         "balance_date"),
-                            _unagg_field("ar-exc-sw-date-str",
-                                         DS_AR_SWEEP_TARGET_NONZERO,
-                                         "balance_date_str"),
-                            _unagg_field("ar-exc-sw-stored",
-                                         DS_AR_SWEEP_TARGET_NONZERO,
-                                         "stored_balance"),
-                            _unagg_field("ar-exc-sw-aging",
-                                         DS_AR_SWEEP_TARGET_NONZERO,
-                                         "aging_bucket"),
-                        ],
-                    )
-                ),
-                SortConfiguration={
-                    "RowSort": [
-                        {
-                            "FieldSort": {
-                                "FieldId": "ar-exc-sw-date",
-                                "Direction": "DESC",
-                            },
-                        },
-                    ],
-                },
-            ),
-            Actions=[
-                _multi_drill_action(
-                    "action-ar-exc-sweep-target-to-txn",
-                    "View Transactions",
-                    SHEET_AR_TRANSACTIONS,
-                    [
-                        (P_AR_SUBLEDGER, "ar-exc-sw-subledger-id"),
-                        (P_AR_ACTIVITY_DATE, "ar-exc-sw-date-str"),
-                    ],
-                ),
-            ],
-            ConditionalFormatting={
-                "ConditionalFormattingOptions": [
-                    link_text_format(
-                        "ar-exc-sw-subledger-id", "subledger_account_id",
-                        link_color,
-                    ),
-                ],
-            },
-        )
-    )
-
-    aging_sweep_target = aging_bar_visual(
-        "ar-exc-aging-sweep-target",
-        "Sweep Targets by Age",
-        "How long sweep-target non-zero rows have been outstanding",
-        DS_AR_SWEEP_TARGET_NONZERO,
-        "subledger_account_id",
-    )
-
-    # F.5.2 Concentration master vs sub-account sweeps drift — daily
-    # difference between sweep credits posted to Cash Concentration Master
-    # and sweep debits drained from operating sub-accounts. KPI counts
-    # drift days; timeline shows when legs went out of step.
-    kpi_sweep_drift = Visual(
-        KPIVisual=KPIVisual(
-            VisualId="ar-exc-kpi-sweep-drift",
-            Title=_title("Concentration Master Sweep Drift Days"),
-            Subtitle=_subtitle(
-                "Days the Cash Concentration Master credits and operating "
-                "sub-account debits from clearing_sweep transfers didn't "
-                "balance — sweep leg keyed off, missing, or extra"
-            ),
-            ChartConfiguration=KPIConfiguration(
-                FieldWells=KPIFieldWells(
-                    Values=[
-                        _measure_date_count(
-                            "ar-exc-sweep-drift-count",
-                            DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
-                            "sweep_date",
-                        )
-                    ],
-                ),
-            ),
-        )
-    )
-
-    timeline_sweep_drift = Visual(
-        BarChartVisual=BarChartVisual(
-            VisualId="ar-exc-sweep-drift-timeline",
-            Title=_title("Concentration Master Sweep Drift Timeline"),
-            Subtitle=_subtitle(
-                "Per-day drift = Σ Master credits + Σ sub-account debits "
-                "from clearing_sweep transfers. Healthy days = 0; non-zero "
-                "bars are days the sweep legs didn't balance."
-            ),
-            ChartConfiguration=BarChartConfiguration(
-                FieldWells=BarChartFieldWells(
-                    BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
-                        Category=[_date_dim(
-                            "ar-exc-sweep-drift-dim",
-                            DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
-                            "sweep_date",
-                        )],
-                        Values=[_measure_sum(
-                            "ar-exc-sweep-drift-val",
-                            DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
-                            "drift",
-                        )],
-                    )
-                ),
-                Orientation="VERTICAL",
-                BarsArrangement="CLUSTERED",
-                CategoryLabelOptions=_axis_label("Date"),
-                ValueLabelOptions=_axis_label("Drift ($)"),
-            ),
-        )
-    )
-
-    # F.5.3 ACH Origination Settlement non-zero EOD — days the gl-1810
-    # ledger ended day non-zero because the EOD sweep to gl-1010 was
-    # skipped or failed entirely.
-    kpi_ach_orig_nonzero = Visual(
-        KPIVisual=KPIVisual(
-            VisualId="ar-exc-kpi-ach-orig-nonzero",
-            Title=_title("ACH Origination Settlement Non-Zero EOD"),
-            Subtitle=_subtitle(
-                "Days the ACH Origination Settlement ledger (gl-1810) ended "
-                "non-zero — internal EOD sweep to Cash & Due From FRB was "
-                "skipped or failed"
-            ),
-            ChartConfiguration=KPIConfiguration(
-                FieldWells=KPIFieldWells(
-                    Values=[
-                        _measure_date_count(
-                            "ar-exc-ach-orig-nonzero-count",
-                            DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
-                            "balance_date",
-                        )
-                    ],
-                ),
-            ),
-        )
-    )
-
-    table_ach_orig_nonzero = Visual(
-        TableVisual=TableVisual(
-            VisualId="ar-exc-ach-orig-nonzero-table",
-            Title=_title("ACH Origination Settlement Non-Zero EOD"),
-            Subtitle=_subtitle(
-                "Days the ACH Origination Settlement ledger ended non-zero. "
-                "Each row is a date the day's net ACH originations weren't "
-                "swept to Cash & Due From FRB. Left-click ledger_account_id "
-                "to drill into Transactions for that date."
-            ),
-            ChartConfiguration=TableConfiguration(
-                FieldWells=TableFieldWells(
-                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
-                        Values=[
-                            _unagg_field("ar-exc-ach-ledger-id",
-                                         DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
-                                         "ledger_account_id"),
-                            _unagg_field("ar-exc-ach-ledger",
-                                         DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
-                                         "ledger_name"),
-                            _unagg_field("ar-exc-ach-date",
-                                         DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
-                                         "balance_date"),
-                            _unagg_field("ar-exc-ach-date-str",
-                                         DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
-                                         "balance_date_str"),
-                            _unagg_field("ar-exc-ach-stored",
-                                         DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
-                                         "stored_balance"),
-                            _unagg_field("ar-exc-ach-aging",
-                                         DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
-                                         "aging_bucket"),
-                        ],
-                    )
-                ),
-                SortConfiguration={
-                    "RowSort": [
-                        {
-                            "FieldSort": {
-                                "FieldId": "ar-exc-ach-date",
-                                "Direction": "DESC",
-                            },
-                        },
-                    ],
-                },
-            ),
-            Actions=[
-                _multi_drill_action(
-                    "action-ar-exc-ach-orig-to-txn",
-                    "View Transactions",
-                    SHEET_AR_TRANSACTIONS,
-                    [
-                        (P_AR_ACTIVITY_DATE, "ar-exc-ach-date-str"),
-                    ],
-                ),
-            ],
-            ConditionalFormatting={
-                "ConditionalFormattingOptions": [
-                    link_text_format(
-                        "ar-exc-ach-ledger-id", "ledger_account_id",
-                        link_color,
-                    ),
-                ],
-            },
-        )
-    )
-
-    aging_ach_orig_nonzero = aging_bar_visual(
-        "ar-exc-aging-ach-orig-nonzero",
-        "ACH Origination Non-Zero EOD by Age",
-        "How long ACH Origination Settlement non-zero days have been outstanding",
-        DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
-        "ledger_account_id",
-    )
-
-    # F.5.4 Internal sweep posted but no Fed confirmation — internal EOD
-    # sweep on gl-1810 succeeded but the FRB confirmation child transfer
-    # never landed. Bank thinks the cash moved; Fed has no record.
-    kpi_ach_sweep_no_fed = Visual(
-        KPIVisual=KPIVisual(
-            VisualId="ar-exc-kpi-ach-sweep-no-fed",
-            Title=_title("ACH Sweep Without Fed Confirmation"),
-            Subtitle=_subtitle(
-                "Internal EOD sweeps on ACH Origination Settlement that "
-                "posted but never received the Fed-side confirmation — "
-                "bank moved the cash internally, FRB has no record"
-            ),
-            ChartConfiguration=KPIConfiguration(
-                FieldWells=KPIFieldWells(
-                    Values=[
-                        _measure_count(
-                            "ar-exc-ach-sweep-no-fed-count",
-                            DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
-                            "sweep_transfer_id",
-                        )
-                    ],
-                ),
-            ),
-        )
-    )
-
-    table_ach_sweep_no_fed = Visual(
-        TableVisual=TableVisual(
-            VisualId="ar-exc-ach-sweep-no-fed-table",
-            Title=_title("ACH Sweep Without Fed Confirmation"),
-            Subtitle=_subtitle(
-                "Each row is an internal sweep transfer that posted on "
-                "gl-1810 but has no Fed confirmation child. Left-click "
-                "sweep_transfer_id to drill into Transactions for that "
-                "transfer."
-            ),
-            ChartConfiguration=TableConfiguration(
-                FieldWells=TableFieldWells(
-                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
-                        Values=[
-                            _unagg_field("ar-exc-acsnf-tid",
-                                         DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
-                                         "sweep_transfer_id"),
-                            _unagg_field("ar-exc-acsnf-at",
-                                         DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
-                                         "sweep_at"),
-                            _unagg_field("ar-exc-acsnf-amt",
-                                         DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
-                                         "sweep_amount"),
-                            _unagg_field("ar-exc-acsnf-aging",
-                                         DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
-                                         "aging_bucket"),
-                        ],
-                    )
-                ),
-                SortConfiguration={
-                    "RowSort": [
-                        {
-                            "FieldSort": {
-                                "FieldId": "ar-exc-acsnf-at",
-                                "Direction": "DESC",
-                            },
-                        },
-                    ],
-                },
-            ),
-            Actions=[
-                _multi_drill_action(
-                    "action-ar-exc-ach-sweep-no-fed-to-txn",
-                    "View Transactions",
-                    SHEET_AR_TRANSACTIONS,
-                    [
-                        (P_AR_TRANSFER, "ar-exc-acsnf-tid"),
-                    ],
-                ),
-            ],
-            ConditionalFormatting={
-                "ConditionalFormattingOptions": [
-                    link_text_format(
-                        "ar-exc-acsnf-tid", "sweep_transfer_id",
-                        link_color,
-                    ),
-                ],
-            },
-        )
-    )
-
-    aging_ach_sweep_no_fed = aging_bar_visual(
-        "ar-exc-aging-ach-sweep-no-fed",
-        "ACH Sweep w/o Fed Confirmation by Age",
-        "How long sweeps have been awaiting Fed-side confirmation",
-        DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
-        "sweep_transfer_id",
-    )
-
-    # F.5.5 Fed activity with no matching internal post — Fed-side card
-    # processor settlement observations with no SNB internal catch-up
-    # child. Money the Fed says cleared, that SNB never recorded.
-    kpi_fed_no_catchup = Visual(
-        KPIVisual=KPIVisual(
-            VisualId="ar-exc-kpi-fed-no-catchup",
-            Title=_title("Fed Activity Without Internal Post"),
-            Subtitle=_subtitle(
-                "Fed-side card processor settlements that posted but have "
-                "no SNB internal catch-up child — Fed says it cleared, "
-                "SNB has no internal record"
-            ),
-            ChartConfiguration=KPIConfiguration(
-                FieldWells=KPIFieldWells(
-                    Values=[
-                        _measure_count(
-                            "ar-exc-fed-no-catchup-count",
-                            DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
-                            "fed_transfer_id",
-                        )
-                    ],
-                ),
-            ),
-        )
-    )
-
-    table_fed_no_catchup = Visual(
-        TableVisual=TableVisual(
-            VisualId="ar-exc-fed-no-catchup-table",
-            Title=_title("Fed Activity Without Internal Post"),
-            Subtitle=_subtitle(
-                "Each row is a Fed-observed card settlement transfer with "
-                "no SNB internal catch-up child. Left-click "
-                "fed_transfer_id to drill into Transactions for that "
-                "transfer."
-            ),
-            ChartConfiguration=TableConfiguration(
-                FieldWells=TableFieldWells(
-                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
-                        Values=[
-                            _unagg_field("ar-exc-fnc-tid",
-                                         DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
-                                         "fed_transfer_id"),
-                            _unagg_field("ar-exc-fnc-at",
-                                         DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
-                                         "fed_at"),
-                            _unagg_field("ar-exc-fnc-amt",
-                                         DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
-                                         "fed_amount"),
-                            _unagg_field("ar-exc-fnc-aging",
-                                         DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
-                                         "aging_bucket"),
-                        ],
-                    )
-                ),
-                SortConfiguration={
-                    "RowSort": [
-                        {
-                            "FieldSort": {
-                                "FieldId": "ar-exc-fnc-at",
-                                "Direction": "DESC",
-                            },
-                        },
-                    ],
-                },
-            ),
-            Actions=[
-                _multi_drill_action(
-                    "action-ar-exc-fed-no-catchup-to-txn",
-                    "View Transactions",
-                    SHEET_AR_TRANSACTIONS,
-                    [
-                        (P_AR_TRANSFER, "ar-exc-fnc-tid"),
-                    ],
-                ),
-            ],
-            ConditionalFormatting={
-                "ConditionalFormattingOptions": [
-                    link_text_format(
-                        "ar-exc-fnc-tid", "fed_transfer_id",
-                        link_color,
-                    ),
-                ],
-            },
-        )
-    )
-
-    aging_fed_no_catchup = aging_bar_visual(
-        "ar-exc-aging-fed-no-catchup",
-        "Fed Activity w/o Internal Post by Age",
-        "How long Fed-observed settlements have been without an SNB internal record",
-        DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
-        "fed_transfer_id",
-    )
-
-    # F.5.6 GL-vs-Fed Master drift timeline — daily diff between Fed-side
-    # card-settlement totals and SNB internal catch-up totals. Healthy
-    # days = 0 (every Fed posting has a matching SNB internal post);
-    # non-zero bars are days the GL view diverged from the Fed view.
-    kpi_gl_fed_drift = Visual(
-        KPIVisual=KPIVisual(
-            VisualId="ar-exc-kpi-gl-fed-drift",
-            Title=_title("GL vs Fed Master Drift Days"),
-            Subtitle=_subtitle(
-                "Days the SNB internal catch-up amount didn't equal the "
-                "Fed-side card settlement amount — GL view and FRB Master "
-                "view diverged"
-            ),
-            ChartConfiguration=KPIConfiguration(
-                FieldWells=KPIFieldWells(
-                    Values=[
-                        _measure_date_count(
-                            "ar-exc-gl-fed-drift-count",
-                            DS_AR_GL_VS_FED_MASTER_DRIFT,
-                            "movement_date",
-                        )
-                    ],
-                ),
-            ),
-        )
-    )
-
-    timeline_gl_fed_drift = Visual(
-        BarChartVisual=BarChartVisual(
-            VisualId="ar-exc-gl-fed-drift-timeline",
-            Title=_title("GL vs Fed Master Drift Timeline"),
-            Subtitle=_subtitle(
-                "Per-day drift = Σ Fed-side card settlement amounts − "
-                "Σ SNB internal catch-up amounts. Healthy days = 0; "
-                "positive bars are days Fed posted activity that SNB "
-                "never recorded internally."
-            ),
-            ChartConfiguration=BarChartConfiguration(
-                FieldWells=BarChartFieldWells(
-                    BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
-                        Category=[_date_dim(
-                            "ar-exc-gl-fed-drift-dim",
-                            DS_AR_GL_VS_FED_MASTER_DRIFT,
-                            "movement_date",
-                        )],
-                        Values=[_measure_sum(
-                            "ar-exc-gl-fed-drift-val",
-                            DS_AR_GL_VS_FED_MASTER_DRIFT,
-                            "drift",
-                        )],
-                    )
-                ),
-                Orientation="VERTICAL",
-                BarsArrangement="CLUSTERED",
-                CategoryLabelOptions=_axis_label("Date"),
-                ValueLabelOptions=_axis_label("Drift ($)"),
-            ),
-        )
-    )
-
-    # F.5.7 Stuck in Internal Transfer Suspense — Step-1 originate
-    # transfers between SNB customer DDAs that hit the suspense ledger
-    # but never had a Step-2 child to clear it. Money sits in suspense
-    # indefinitely; recipient never sees the credit.
-    kpi_internal_stuck = Visual(
-        KPIVisual=KPIVisual(
-            VisualId="ar-exc-kpi-internal-stuck",
-            Title=_title("Stuck in Internal Transfer Suspense"),
-            Subtitle=_subtitle(
-                "Internal book-transfer originates that posted Step 1 "
-                "(suspense debit) but have no Step 2 child clearing the "
-                "suspense — recipient never received the funds"
-            ),
-            ChartConfiguration=KPIConfiguration(
-                FieldWells=KPIFieldWells(
-                    Values=[
-                        _measure_count(
-                            "ar-exc-internal-stuck-count",
-                            DS_AR_INTERNAL_TRANSFER_STUCK,
-                            "originate_transfer_id",
-                        )
-                    ],
-                ),
-            ),
-        )
-    )
-
-    table_internal_stuck = Visual(
-        TableVisual=TableVisual(
-            VisualId="ar-exc-internal-stuck-table",
-            Title=_title("Stuck in Internal Transfer Suspense"),
-            Subtitle=_subtitle(
-                "Each row is a Step-1 originate transfer with no Step-2 "
-                "child. Left-click originate_transfer_id to drill into "
-                "Transactions for that transfer."
-            ),
-            ChartConfiguration=TableConfiguration(
-                FieldWells=TableFieldWells(
-                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
-                        Values=[
-                            _unagg_field("ar-exc-its-tid",
-                                         DS_AR_INTERNAL_TRANSFER_STUCK,
-                                         "originate_transfer_id"),
-                            _unagg_field("ar-exc-its-at",
-                                         DS_AR_INTERNAL_TRANSFER_STUCK,
-                                         "originated_at"),
-                            _unagg_field("ar-exc-its-amt",
-                                         DS_AR_INTERNAL_TRANSFER_STUCK,
-                                         "originate_amount"),
-                            _unagg_field("ar-exc-its-aging",
-                                         DS_AR_INTERNAL_TRANSFER_STUCK,
-                                         "aging_bucket"),
-                        ],
-                    )
-                ),
-                SortConfiguration={
-                    "RowSort": [
-                        {
-                            "FieldSort": {
-                                "FieldId": "ar-exc-its-at",
-                                "Direction": "DESC",
-                            },
-                        },
-                    ],
-                },
-            ),
-            Actions=[
-                _multi_drill_action(
-                    "action-ar-exc-internal-stuck-to-txn",
-                    "View Transactions",
-                    SHEET_AR_TRANSACTIONS,
-                    [
-                        (P_AR_TRANSFER, "ar-exc-its-tid"),
-                    ],
-                ),
-            ],
-            ConditionalFormatting={
-                "ConditionalFormattingOptions": [
-                    link_text_format(
-                        "ar-exc-its-tid", "originate_transfer_id",
-                        link_color,
-                    ),
-                ],
-            },
-        )
-    )
-
-    aging_internal_stuck = aging_bar_visual(
-        "ar-exc-aging-internal-stuck",
-        "Stuck Internal Transfers by Age",
-        "How long Step-1 originates have been waiting for a Step-2 clear",
-        DS_AR_INTERNAL_TRANSFER_STUCK,
-        "originate_transfer_id",
-    )
-
-    # F.5.8 Internal Transfer Suspense non-zero EOD — ledger-level view of
-    # gl-1830. Healthy day = every Step 1 had a Step 2; suspense nets to
-    # zero. Non-zero EOD = at least one stuck originate that day.
-    kpi_internal_suspense_nonzero = Visual(
-        KPIVisual=KPIVisual(
-            VisualId="ar-exc-kpi-internal-suspense-nonzero",
-            Title=_title("Internal Transfer Suspense Non-Zero EOD"),
-            Subtitle=_subtitle(
-                "Days the Internal Transfer Suspense ledger (gl-1830) ended "
-                "non-zero — at least one Step 1 originate didn't have a "
-                "Step 2 clearing it that day"
-            ),
-            ChartConfiguration=KPIConfiguration(
-                FieldWells=KPIFieldWells(
-                    Values=[
-                        _measure_date_count(
-                            "ar-exc-internal-suspense-nonzero-count",
-                            DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
-                            "balance_date",
-                        )
-                    ],
-                ),
-            ),
-        )
-    )
-
-    table_internal_suspense_nonzero = Visual(
-        TableVisual=TableVisual(
-            VisualId="ar-exc-internal-suspense-nonzero-table",
-            Title=_title("Internal Transfer Suspense Non-Zero EOD"),
-            Subtitle=_subtitle(
-                "Days the Internal Transfer Suspense ledger ended non-zero. "
-                "Each row is a date with at least one Step 1 originate that "
-                "didn't clear. Left-click ledger_account_id to drill into "
-                "Transactions for that date."
-            ),
-            ChartConfiguration=TableConfiguration(
-                FieldWells=TableFieldWells(
-                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
-                        Values=[
-                            _unagg_field("ar-exc-its-nz-ledger-id",
-                                         DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
-                                         "ledger_account_id"),
-                            _unagg_field("ar-exc-its-nz-ledger",
-                                         DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
-                                         "ledger_name"),
-                            _unagg_field("ar-exc-its-nz-date",
-                                         DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
-                                         "balance_date"),
-                            _unagg_field("ar-exc-its-nz-date-str",
-                                         DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
-                                         "balance_date_str"),
-                            _unagg_field("ar-exc-its-nz-stored",
-                                         DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
-                                         "stored_balance"),
-                            _unagg_field("ar-exc-its-nz-aging",
-                                         DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
-                                         "aging_bucket"),
-                        ],
-                    )
-                ),
-                SortConfiguration={
-                    "RowSort": [
-                        {
-                            "FieldSort": {
-                                "FieldId": "ar-exc-its-nz-date",
-                                "Direction": "DESC",
-                            },
-                        },
-                    ],
-                },
-            ),
-            Actions=[
-                _multi_drill_action(
-                    "action-ar-exc-its-nz-to-txn",
-                    "View Transactions",
-                    SHEET_AR_TRANSACTIONS,
-                    [
-                        (P_AR_ACTIVITY_DATE, "ar-exc-its-nz-date-str"),
-                    ],
-                ),
-            ],
-            ConditionalFormatting={
-                "ConditionalFormattingOptions": [
-                    link_text_format(
-                        "ar-exc-its-nz-ledger-id", "ledger_account_id",
-                        link_color,
-                    ),
-                ],
-            },
-        )
-    )
-
-    aging_internal_suspense_nonzero = aging_bar_visual(
-        "ar-exc-aging-internal-suspense-nonzero",
-        "Internal Suspense Non-Zero EOD by Age",
-        "How long Internal Transfer Suspense non-zero days have been outstanding",
-        DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
-        "ledger_account_id",
-    )
-
-    # F.5.9 Internal Transfer Reversal Uncredited / "double spend" — an
-    # on-us transfer reversed where the originator credit-back leg failed
-    # but the suspense leg succeeded. Suspense looks healthy; customer is
-    # short the money. The most damaging silent failure in the cycle.
-    kpi_internal_reversal_uncredited = Visual(
-        KPIVisual=KPIVisual(
-            VisualId="ar-exc-kpi-internal-reversal-uncredited",
-            Title=_title("Reversed Transfers Without Credit-Back"),
-            Subtitle=_subtitle(
-                "Internal transfers reversed where the originator's "
-                "credit-back leg failed but the suspense leg succeeded — "
-                "originator was debited and never refunded"
-            ),
-            ChartConfiguration=KPIConfiguration(
-                FieldWells=KPIFieldWells(
-                    Values=[
-                        _measure_count(
-                            "ar-exc-internal-reversal-uncredited-count",
-                            DS_AR_INTERNAL_REVERSAL_UNCREDITED,
-                            "originate_transfer_id",
-                        )
-                    ],
-                ),
-            ),
-        )
-    )
-
-    table_internal_reversal_uncredited = Visual(
-        TableVisual=TableVisual(
-            VisualId="ar-exc-internal-reversal-uncredited-table",
-            Title=_title("Reversed Transfers Without Credit-Back"),
-            Subtitle=_subtitle(
-                "Each row is an originate transfer whose reversal Step 2 "
-                "had the originator credit-back leg fail. Left-click "
-                "originate_transfer_id to drill into Transactions for "
-                "that originate."
-            ),
-            ChartConfiguration=TableConfiguration(
-                FieldWells=TableFieldWells(
-                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
-                        Values=[
-                            _unagg_field("ar-exc-iru-orig-tid",
-                                         DS_AR_INTERNAL_REVERSAL_UNCREDITED,
-                                         "originate_transfer_id"),
-                            _unagg_field("ar-exc-iru-orig-at",
-                                         DS_AR_INTERNAL_REVERSAL_UNCREDITED,
-                                         "originated_at"),
-                            _unagg_field("ar-exc-iru-amt",
-                                         DS_AR_INTERNAL_REVERSAL_UNCREDITED,
-                                         "originate_amount"),
-                            _unagg_field("ar-exc-iru-rev-tid",
-                                         DS_AR_INTERNAL_REVERSAL_UNCREDITED,
-                                         "reversal_transfer_id"),
-                            _unagg_field("ar-exc-iru-rev-at",
-                                         DS_AR_INTERNAL_REVERSAL_UNCREDITED,
-                                         "reversal_at"),
-                            _unagg_field("ar-exc-iru-aging",
-                                         DS_AR_INTERNAL_REVERSAL_UNCREDITED,
-                                         "aging_bucket"),
-                        ],
-                    )
-                ),
-                SortConfiguration={
-                    "RowSort": [
-                        {
-                            "FieldSort": {
-                                "FieldId": "ar-exc-iru-orig-at",
-                                "Direction": "DESC",
-                            },
-                        },
-                    ],
-                },
-            ),
-            Actions=[
-                _multi_drill_action(
-                    "action-ar-exc-internal-reversal-uncredited-to-txn",
-                    "View Transactions",
-                    SHEET_AR_TRANSACTIONS,
-                    [
-                        (P_AR_TRANSFER, "ar-exc-iru-orig-tid"),
-                    ],
-                ),
-            ],
-            ConditionalFormatting={
-                "ConditionalFormattingOptions": [
-                    link_text_format(
-                        "ar-exc-iru-orig-tid", "originate_transfer_id",
-                        link_color,
-                    ),
-                ],
-            },
-        )
-    )
-
-    aging_internal_reversal_uncredited = aging_bar_visual(
-        "ar-exc-aging-internal-reversal-uncredited",
-        "Reversed Without Credit-Back by Age",
-        "How long uncredited reversals have been outstanding since originate",
-        DS_AR_INTERNAL_REVERSAL_UNCREDITED,
-        "originate_transfer_id",
-    )
-
-    # F.5.10.a Accounts Expected Zero at EOD rollup — same SHAPE check
-    # across three control accounts. Teaches users to spot the pattern
-    # (an account that should be zero, isn't) rather than three separate
-    # checks. Per-check tables remain below for drill-in detail.
-    kpi_expected_zero_rollup = Visual(
-        KPIVisual=KPIVisual(
-            VisualId="ar-exc-kpi-expected-zero-rollup",
-            Title=_title("Accounts Expected Zero at EOD"),
-            Subtitle=_subtitle(
-                "Total non-zero EOD findings across Sweep targets, ACH "
-                "Origination Settlement, and Internal Transfer Suspense — "
-                "same SHAPE: a control account that should be zero, isn't"
-            ),
-            ChartConfiguration=KPIConfiguration(
-                FieldWells=KPIFieldWells(
-                    Values=[
-                        _measure_count(
-                            "ar-exc-expected-zero-rollup-count",
-                            DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
-                            "account_id",
-                        )
-                    ],
-                ),
-            ),
-        )
-    )
-
-    table_expected_zero_rollup = Visual(
-        TableVisual=TableVisual(
-            VisualId="ar-exc-expected-zero-rollup-table",
-            Title=_title("Accounts Expected Zero at EOD"),
-            Subtitle=_subtitle(
-                "Every (account, date) where a control account ended day "
-                "non-zero. source_check identifies which detection rule "
-                "fired; ordered oldest-first by aging."
-            ),
-            ChartConfiguration=TableConfiguration(
-                FieldWells=TableFieldWells(
-                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
-                        Values=[
-                            _unagg_field("ar-exc-ezr-acct-id",
-                                         DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
-                                         "account_id"),
-                            _unagg_field("ar-exc-ezr-acct-name",
-                                         DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
-                                         "account_name"),
-                            _unagg_field("ar-exc-ezr-level",
-                                         DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
-                                         "account_level"),
-                            _unagg_field("ar-exc-ezr-date",
-                                         DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
-                                         "balance_date"),
-                            _unagg_field("ar-exc-ezr-balance",
-                                         DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
-                                         "stored_balance"),
-                            _unagg_field("ar-exc-ezr-aging",
-                                         DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
-                                         "aging_bucket"),
-                            _unagg_field("ar-exc-ezr-source",
-                                         DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
-                                         "source_check"),
-                        ],
-                    )
-                ),
-                SortConfiguration={
-                    "RowSort": [
-                        {
-                            "FieldSort": {
-                                "FieldId": "ar-exc-ezr-aging",
-                                "Direction": "DESC",
-                            },
-                        },
-                    ],
-                },
-            ),
-        )
-    )
-
-    # F.5.10.b Two-Sided Post Mismatch rollup — same SHAPE check across
-    # F.5.4 (SNB sweep posted, missing Fed leg) + F.5.5 (Fed leg posted,
-    # missing SNB internal catch-up). Teaches the pattern (one side of an
-    # expected pair posted, the other missing) rather than two separate
-    # checks. Per-check tables remain below for drill-in detail.
-    kpi_two_sided_rollup = Visual(
-        KPIVisual=KPIVisual(
-            VisualId="ar-exc-kpi-two-sided-rollup",
-            Title=_title("Two-Sided Post Mismatch"),
-            Subtitle=_subtitle(
-                "Total findings where one side of an expected SNB/Fed "
-                "post pair landed but the other side never did"
-            ),
-            ChartConfiguration=KPIConfiguration(
-                FieldWells=KPIFieldWells(
-                    Values=[
-                        _measure_count(
-                            "ar-exc-two-sided-rollup-count",
-                            DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
-                            "transfer_id",
-                        )
-                    ],
-                ),
-            ),
-        )
-    )
-
-    table_two_sided_rollup = Visual(
-        TableVisual=TableVisual(
-            VisualId="ar-exc-two-sided-rollup-table",
-            Title=_title("Two-Sided Post Mismatch"),
-            Subtitle=_subtitle(
-                "Each row is a transfer where the side_present leg posted "
-                "but side_missing never did. source_check identifies the "
-                "detection rule; ordered oldest-first by aging."
-            ),
-            ChartConfiguration=TableConfiguration(
-                FieldWells=TableFieldWells(
-                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
-                        Values=[
-                            _unagg_field("ar-exc-tsr-xfer-id",
-                                         DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
-                                         "transfer_id"),
-                            _unagg_field("ar-exc-tsr-observed-at",
-                                         DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
-                                         "observed_at"),
-                            _unagg_field("ar-exc-tsr-amount",
-                                         DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
-                                         "amount"),
-                            _unagg_field("ar-exc-tsr-side-present",
-                                         DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
-                                         "side_present"),
-                            _unagg_field("ar-exc-tsr-side-missing",
-                                         DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
-                                         "side_missing"),
-                            _unagg_field("ar-exc-tsr-aging",
-                                         DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
-                                         "aging_bucket"),
-                            _unagg_field("ar-exc-tsr-source",
-                                         DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
-                                         "source_check"),
-                        ],
-                    )
-                ),
-                SortConfiguration={
-                    "RowSort": [
-                        {
-                            "FieldSort": {
-                                "FieldId": "ar-exc-tsr-aging",
-                                "Direction": "DESC",
-                            },
-                        },
-                    ],
-                },
-            ),
-        )
-    )
-
-    # F.5.10.c Balance Drift Timelines rollup — overlays per-day drift
-    # from F.5.2 (Concentration Master sweep) and F.5.6 (GL vs Fed Master)
-    # on one shared (date, drift $) axis. Two clustered series per day so
-    # the eye can compare which feed spiked when. Per-check timelines stay
-    # below for drill-in detail.
-    timeline_drift_rollup = Visual(
-        BarChartVisual=BarChartVisual(
-            VisualId="ar-exc-drift-timelines-rollup",
-            Title=_title("Balance Drift Timelines"),
-            Subtitle=_subtitle(
-                "Per-day drift from Concentration Master sweep (F.5.2) "
-                "and GL vs Fed Master (F.5.6) on one shared axis. "
-                "Healthy days = 0; clustered bars = days a feed diverged."
-            ),
-            ChartConfiguration=BarChartConfiguration(
-                FieldWells=BarChartFieldWells(
-                    BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
-                        Category=[_date_dim(
-                            "ar-exc-drift-rollup-dim",
-                            DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
-                            "drift_date",
-                        )],
-                        Values=[_measure_sum(
-                            "ar-exc-drift-rollup-val",
-                            DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
-                            "drift",
-                        )],
-                        Colors=[_dim(
-                            "ar-exc-drift-rollup-color",
-                            DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
-                            "source_check",
-                        )],
-                    )
-                ),
-                Orientation="VERTICAL",
-                BarsArrangement="CLUSTERED",
-                CategoryLabelOptions=_axis_label("Date"),
-                ValueLabelOptions=_axis_label("Drift ($)"),
-                ColorLabelOptions=_axis_label("Source"),
-            ),
-        )
-    )
-
-    return [
-        kpi_two_sided_rollup,
-        kpi_expected_zero_rollup,
-        timeline_drift_rollup,
-        kpi_ledger_drift, kpi_subledger_drift, kpi_nonzero,
-        kpi_breach, kpi_overdraft, kpi_sweep_target, kpi_sweep_drift,
-        kpi_ach_orig_nonzero, kpi_ach_sweep_no_fed, kpi_fed_no_catchup,
-        kpi_gl_fed_drift, kpi_internal_stuck, kpi_internal_suspense_nonzero,
-        kpi_internal_reversal_uncredited,
-        table_two_sided_rollup,
-        table_expected_zero_rollup,
-        table_ledger_drift, table_subledger_drift, table_non_zero,
-        table_breach, table_overdraft, table_sweep_target,
-        table_ach_orig_nonzero, table_ach_sweep_no_fed, table_fed_no_catchup,
-        table_internal_stuck, table_internal_suspense_nonzero,
-        table_internal_reversal_uncredited,
-        timeline_ledger, timeline_subledger, timeline_sweep_drift,
-        timeline_gl_fed_drift,
-        aging_ledger_drift, aging_subledger_drift, aging_nonzero,
-        aging_breach, aging_overdraft, aging_sweep_target,
-        aging_ach_orig_nonzero, aging_ach_sweep_no_fed, aging_fed_no_catchup,
-        aging_internal_stuck, aging_internal_suspense_nonzero,
-        aging_internal_reversal_uncredited,
-    ]
-
-
-# ---------------------------------------------------------------------------
 # Daily Statement tab — per-(account, day) feed-validation artifact
 # ---------------------------------------------------------------------------
 
@@ -2654,4 +1035,491 @@ def build_daily_statement_visuals() -> list[Visual]:
         kpi_closing,
         kpi_drift,
         transactions_table,
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Today's Exceptions tab (Phase K.1.2) — unified exceptions table
+# ---------------------------------------------------------------------------
+
+def build_todays_exceptions_visuals(
+    link_color: str, link_tint: str,
+) -> list[Visual]:
+    """KPI + breakdown bar + unified exceptions table.
+
+    The legacy Exceptions sheet bundles 14 separate per-check blocks; this
+    sheet replaces them with one harmonized view fed by the
+    ``ar_unified_exceptions`` dataset (UNION ALL across the 14 underlying
+    exception views). The bar chart on top shows count per check_type
+    coloured by severity, providing the "14 count tiles" affordance from
+    K.1.2 in a single visual that QuickSight's grid actually renders well.
+    Click a bar to filter the table to that check_type; click a row in the
+    table to drill into Transactions for that transfer_id (left-click) or
+    that account-day slice (right-click). The two system-level drift checks
+    (``concentration_master_sweep_drift``, ``gl_vs_fed_master_drift``)
+    don't carry either, so they remain visible but un-drillable.
+    """
+    kpi_total = Visual(
+        KPIVisual=KPIVisual(
+            VisualId="ar-todays-exc-kpi-total",
+            Title=_title("Total Exceptions"),
+            Subtitle=_subtitle(
+                "Count of open exception rows across all 14 reconciliation "
+                "checks. Use the breakdown below to triage by check type "
+                "and severity."
+            ),
+            ChartConfiguration=KPIConfiguration(
+                FieldWells=KPIFieldWells(
+                    Values=[
+                        _measure_count(
+                            "ar-todays-exc-total-count",
+                            DS_AR_UNIFIED_EXCEPTIONS,
+                            "check_type",
+                        )
+                    ],
+                ),
+            ),
+        )
+    )
+
+    breakdown_bar = Visual(
+        BarChartVisual=BarChartVisual(
+            VisualId="ar-todays-exc-breakdown",
+            Title=_title("Exceptions by Check"),
+            Subtitle=_subtitle(
+                "Count of open exceptions per check type, coloured by "
+                "severity (red = drift / overdraft, orange = expected-zero, "
+                "amber = limit-breach, yellow = other). Click a bar to "
+                "filter the table below to that check type."
+            ),
+            ChartConfiguration=BarChartConfiguration(
+                FieldWells=BarChartFieldWells(
+                    BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
+                        Category=[_dim("ar-todays-exc-check-dim",
+                                       DS_AR_UNIFIED_EXCEPTIONS,
+                                       "check_type")],
+                        Values=[_measure_count(
+                            "ar-todays-exc-check-count",
+                            DS_AR_UNIFIED_EXCEPTIONS,
+                            "check_type",
+                        )],
+                        Colors=[_dim("ar-todays-exc-severity-color",
+                                     DS_AR_UNIFIED_EXCEPTIONS,
+                                     "severity")],
+                    )
+                ),
+                Orientation="HORIZONTAL",
+                BarsArrangement="STACKED",
+                CategoryLabelOptions=_axis_label("Check"),
+                ValueLabelOptions=_axis_label("Exceptions"),
+                ColorLabelOptions=_axis_label("Severity"),
+            ),
+            Actions=[
+                _same_sheet_filter_action(
+                    "action-ar-todays-exc-bar-filter",
+                    "Filter Exceptions Table",
+                    ["ar-todays-exc-table"],
+                ),
+            ],
+        )
+    )
+
+    unified_table = Visual(
+        TableVisual=TableVisual(
+            VisualId="ar-todays-exc-table",
+            Title=_title("Open Exceptions"),
+            Subtitle=_subtitle(
+                "Every open exception row across all 14 checks, sorted by "
+                "severity then aging. Left-click a transfer_id to drill into "
+                "Transactions for that transfer; right-click an account_id "
+                "to drill into Transactions for that account-day. The two "
+                "system-level drift rollups (concentration master sweep, GL "
+                "vs Fed master) carry neither value — investigate them on "
+                "the Trends sheet."
+            ),
+            ChartConfiguration=TableConfiguration(
+                FieldWells=TableFieldWells(
+                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
+                        Values=[
+                            _unagg_field("ar-todays-exc-check",
+                                         DS_AR_UNIFIED_EXCEPTIONS,
+                                         "check_type"),
+                            _unagg_field("ar-todays-exc-severity",
+                                         DS_AR_UNIFIED_EXCEPTIONS,
+                                         "severity"),
+                            _unagg_field("ar-todays-exc-date",
+                                         DS_AR_UNIFIED_EXCEPTIONS,
+                                         "exception_date"),
+                            _unagg_field("ar-todays-exc-age",
+                                         DS_AR_UNIFIED_EXCEPTIONS,
+                                         "aging_bucket"),
+                            _unagg_field("ar-todays-exc-days",
+                                         DS_AR_UNIFIED_EXCEPTIONS,
+                                         "days_outstanding"),
+                            _unagg_field("ar-todays-exc-account",
+                                         DS_AR_UNIFIED_EXCEPTIONS,
+                                         "account_id"),
+                            _unagg_field("ar-todays-exc-account-name",
+                                         DS_AR_UNIFIED_EXCEPTIONS,
+                                         "account_name"),
+                            _unagg_field("ar-todays-exc-account-level",
+                                         DS_AR_UNIFIED_EXCEPTIONS,
+                                         "account_level"),
+                            _unagg_field("ar-todays-exc-ledger",
+                                         DS_AR_UNIFIED_EXCEPTIONS,
+                                         "ledger_name"),
+                            _unagg_field("ar-todays-exc-transfer-id",
+                                         DS_AR_UNIFIED_EXCEPTIONS,
+                                         "transfer_id"),
+                            _unagg_field("ar-todays-exc-transfer-type",
+                                         DS_AR_UNIFIED_EXCEPTIONS,
+                                         "transfer_type"),
+                            _unagg_field("ar-todays-exc-primary",
+                                         DS_AR_UNIFIED_EXCEPTIONS,
+                                         "primary_amount"),
+                            _unagg_field("ar-todays-exc-secondary",
+                                         DS_AR_UNIFIED_EXCEPTIONS,
+                                         "secondary_amount"),
+                        ],
+                    )
+                ),
+                SortConfiguration={
+                    "RowSort": [
+                        {
+                            "FieldSort": {
+                                "FieldId": "ar-todays-exc-severity",
+                                "Direction": "ASC",
+                            },
+                        },
+                        {
+                            "FieldSort": {
+                                "FieldId": "ar-todays-exc-days",
+                                "Direction": "DESC",
+                            },
+                        },
+                    ],
+                },
+            ),
+            Actions=[
+                _drill_down_action(
+                    "action-ar-todays-exc-to-txn",
+                    "View Transactions",
+                    SHEET_AR_TRANSACTIONS,
+                    P_AR_TRANSFER,
+                    "ar-todays-exc-transfer-id",
+                ),
+                _multi_drill_action(
+                    "action-ar-todays-exc-to-txn-by-account",
+                    "View Transactions for Account-Day",
+                    SHEET_AR_TRANSACTIONS,
+                    [
+                        (P_AR_ACCOUNT, "ar-todays-exc-account"),
+                        (P_AR_ACTIVITY_DATE, "ar-todays-exc-date"),
+                    ],
+                    trigger="DATA_POINT_MENU",
+                ),
+            ],
+            ConditionalFormatting={
+                "ConditionalFormattingOptions": [
+                    link_text_format(
+                        "ar-todays-exc-transfer-id",
+                        "transfer_id",
+                        link_color,
+                    ),
+                    menu_link_text_format(
+                        "ar-todays-exc-account",
+                        "account_id",
+                        link_color,
+                        link_tint,
+                    ),
+                ],
+            },
+        )
+    )
+
+    return [kpi_total, breakdown_bar, unified_table]
+
+
+# ---------------------------------------------------------------------------
+# Exceptions Trends tab (Phase K.1.3) — cross-check rollups + aging matrix
+# + per-check daily trend lines, all derived from the unified-exceptions
+# dataset where applicable, with the rollup datasets feeding the same-shape
+# aggregations they always did.
+# ---------------------------------------------------------------------------
+
+def build_exceptions_trends_visuals() -> list[Visual]:
+    """Trend / rollup view paired with Today's Exceptions.
+
+    Layout (top → bottom):
+      * Drift Timelines rollup (overlay of CMS + GL/Fed drift series).
+      * Two-Sided Post Mismatch rollup (KPI + table).
+      * Accounts Expected Zero at EOD rollup (KPI + table).
+      * Aging matrix — count of unified exceptions per (aging bucket,
+        check type), so the eye picks up which checks accumulate stale
+        rows.
+      * Per-check daily trend — count of unified exceptions per day,
+        coloured by check type, so spikes line up across checks.
+    """
+    timeline_drift_rollup = Visual(
+        BarChartVisual=BarChartVisual(
+            VisualId="ar-exc-drift-timelines-rollup",
+            Title=_title("Balance Drift Timelines"),
+            Subtitle=_subtitle(
+                "Per-day drift from Concentration Master sweep and GL vs "
+                "Fed Master on one shared axis. Healthy days = 0; "
+                "clustered bars = days a feed diverged."
+            ),
+            ChartConfiguration=BarChartConfiguration(
+                FieldWells=BarChartFieldWells(
+                    BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
+                        Category=[_date_dim(
+                            "ar-exc-drift-rollup-dim",
+                            DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
+                            "drift_date",
+                        )],
+                        Values=[_measure_sum(
+                            "ar-exc-drift-rollup-val",
+                            DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
+                            "drift",
+                        )],
+                        Colors=[_dim(
+                            "ar-exc-drift-rollup-color",
+                            DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
+                            "source_check",
+                        )],
+                    )
+                ),
+                Orientation="VERTICAL",
+                BarsArrangement="CLUSTERED",
+                CategoryLabelOptions=_axis_label("Date"),
+                ValueLabelOptions=_axis_label("Drift ($)"),
+                ColorLabelOptions=_axis_label("Source"),
+            ),
+        )
+    )
+
+    kpi_two_sided_rollup = Visual(
+        KPIVisual=KPIVisual(
+            VisualId="ar-exc-kpi-two-sided-rollup",
+            Title=_title("Two-Sided Post Mismatch"),
+            Subtitle=_subtitle(
+                "Total findings where one side of an expected SNB/Fed "
+                "post pair landed but the other side never did"
+            ),
+            ChartConfiguration=KPIConfiguration(
+                FieldWells=KPIFieldWells(
+                    Values=[
+                        _measure_count(
+                            "ar-exc-two-sided-rollup-count",
+                            DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+                            "transfer_id",
+                        )
+                    ],
+                ),
+            ),
+        )
+    )
+
+    table_two_sided_rollup = Visual(
+        TableVisual=TableVisual(
+            VisualId="ar-exc-two-sided-rollup-table",
+            Title=_title("Two-Sided Post Mismatch"),
+            Subtitle=_subtitle(
+                "Each row is a transfer where the side_present leg posted "
+                "but side_missing never did. source_check identifies the "
+                "detection rule; ordered oldest-first by aging."
+            ),
+            ChartConfiguration=TableConfiguration(
+                FieldWells=TableFieldWells(
+                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
+                        Values=[
+                            _unagg_field("ar-exc-tsr-xfer-id",
+                                         DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+                                         "transfer_id"),
+                            _unagg_field("ar-exc-tsr-observed-at",
+                                         DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+                                         "observed_at"),
+                            _unagg_field("ar-exc-tsr-amount",
+                                         DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+                                         "amount"),
+                            _unagg_field("ar-exc-tsr-side-present",
+                                         DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+                                         "side_present"),
+                            _unagg_field("ar-exc-tsr-side-missing",
+                                         DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+                                         "side_missing"),
+                            _unagg_field("ar-exc-tsr-aging",
+                                         DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+                                         "aging_bucket"),
+                            _unagg_field("ar-exc-tsr-source",
+                                         DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+                                         "source_check"),
+                        ],
+                    )
+                ),
+                SortConfiguration={
+                    "RowSort": [
+                        {
+                            "FieldSort": {
+                                "FieldId": "ar-exc-tsr-aging",
+                                "Direction": "DESC",
+                            },
+                        },
+                    ],
+                },
+            ),
+        )
+    )
+
+    kpi_expected_zero_rollup = Visual(
+        KPIVisual=KPIVisual(
+            VisualId="ar-exc-kpi-expected-zero-rollup",
+            Title=_title("Accounts Expected Zero at EOD"),
+            Subtitle=_subtitle(
+                "Total non-zero EOD findings across Sweep targets, ACH "
+                "Origination Settlement, and Internal Transfer Suspense — "
+                "same SHAPE: a control account that should be zero, isn't"
+            ),
+            ChartConfiguration=KPIConfiguration(
+                FieldWells=KPIFieldWells(
+                    Values=[
+                        _measure_count(
+                            "ar-exc-expected-zero-rollup-count",
+                            DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
+                            "account_id",
+                        )
+                    ],
+                ),
+            ),
+        )
+    )
+
+    table_expected_zero_rollup = Visual(
+        TableVisual=TableVisual(
+            VisualId="ar-exc-expected-zero-rollup-table",
+            Title=_title("Accounts Expected Zero at EOD"),
+            Subtitle=_subtitle(
+                "Every (account, date) where a control account ended day "
+                "non-zero. source_check identifies which detection rule "
+                "fired; ordered oldest-first by aging."
+            ),
+            ChartConfiguration=TableConfiguration(
+                FieldWells=TableFieldWells(
+                    TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
+                        Values=[
+                            _unagg_field("ar-exc-ezr-acct-id",
+                                         DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
+                                         "account_id"),
+                            _unagg_field("ar-exc-ezr-acct-name",
+                                         DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
+                                         "account_name"),
+                            _unagg_field("ar-exc-ezr-level",
+                                         DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
+                                         "account_level"),
+                            _unagg_field("ar-exc-ezr-date",
+                                         DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
+                                         "balance_date"),
+                            _unagg_field("ar-exc-ezr-balance",
+                                         DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
+                                         "stored_balance"),
+                            _unagg_field("ar-exc-ezr-aging",
+                                         DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
+                                         "aging_bucket"),
+                            _unagg_field("ar-exc-ezr-source",
+                                         DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
+                                         "source_check"),
+                        ],
+                    )
+                ),
+                SortConfiguration={
+                    "RowSort": [
+                        {
+                            "FieldSort": {
+                                "FieldId": "ar-exc-ezr-aging",
+                                "Direction": "DESC",
+                            },
+                        },
+                    ],
+                },
+            ),
+        )
+    )
+
+    aging_matrix = Visual(
+        BarChartVisual=BarChartVisual(
+            VisualId="ar-exc-trends-aging-matrix",
+            Title=_title("Aging by Check"),
+            Subtitle=_subtitle(
+                "Count of open exceptions per aging bucket, stacked by "
+                "check type — concentration of stale (8-30, >30) bars "
+                "marks checks that are falling behind."
+            ),
+            ChartConfiguration=BarChartConfiguration(
+                FieldWells=BarChartFieldWells(
+                    BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
+                        Category=[_dim("ar-exc-trends-aging-dim",
+                                       DS_AR_UNIFIED_EXCEPTIONS,
+                                       "aging_bucket")],
+                        Values=[_measure_count(
+                            "ar-exc-trends-aging-count",
+                            DS_AR_UNIFIED_EXCEPTIONS,
+                            "check_type",
+                        )],
+                        Colors=[_dim("ar-exc-trends-aging-color",
+                                     DS_AR_UNIFIED_EXCEPTIONS,
+                                     "check_type")],
+                    )
+                ),
+                Orientation="HORIZONTAL",
+                BarsArrangement="STACKED",
+                CategoryLabelOptions=_axis_label("Aging Bucket"),
+                ValueLabelOptions=_axis_label("Exceptions"),
+                ColorLabelOptions=_axis_label("Check"),
+            ),
+        )
+    )
+
+    per_check_trend = Visual(
+        BarChartVisual=BarChartVisual(
+            VisualId="ar-exc-trends-per-check",
+            Title=_title("Exceptions per Check, by Day"),
+            Subtitle=_subtitle(
+                "Daily count of open exception rows, stacked by check "
+                "type. Use the date-range filter to widen or narrow the "
+                "window; spikes that line up across checks usually point "
+                "to a single upstream feed event."
+            ),
+            ChartConfiguration=BarChartConfiguration(
+                FieldWells=BarChartFieldWells(
+                    BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
+                        Category=[_date_dim("ar-exc-trends-perchk-dim",
+                                            DS_AR_UNIFIED_EXCEPTIONS,
+                                            "exception_date")],
+                        Values=[_measure_count(
+                            "ar-exc-trends-perchk-count",
+                            DS_AR_UNIFIED_EXCEPTIONS,
+                            "check_type",
+                        )],
+                        Colors=[_dim("ar-exc-trends-perchk-color",
+                                     DS_AR_UNIFIED_EXCEPTIONS,
+                                     "check_type")],
+                    )
+                ),
+                Orientation="VERTICAL",
+                BarsArrangement="STACKED",
+                CategoryLabelOptions=_axis_label("Date"),
+                ValueLabelOptions=_axis_label("Exceptions"),
+                ColorLabelOptions=_axis_label("Check"),
+            ),
+        )
+    )
+
+    return [
+        timeline_drift_rollup,
+        kpi_two_sided_rollup,
+        table_two_sided_rollup,
+        kpi_expected_zero_rollup,
+        table_expected_zero_rollup,
+        aging_matrix,
+        per_check_trend,
     ]

@@ -227,6 +227,62 @@ def click_first_row_of_visual(
     )
 
 
+def right_click_first_row_of_visual(
+    page, visual_title: str, timeout_ms: int,
+) -> None:
+    """Right-click the first data cell of the named visual.
+
+    Mirror of ``click_first_row_of_visual`` but dispatches a contextmenu
+    event so QuickSight opens the visual's DATA_POINT_MENU drill list.
+    Tags the cell with ``data-e2e-target`` first so the click target is
+    unambiguous when multiple tables share the same global cell selectors.
+    """
+    scroll_visual_into_view(page, visual_title, timeout_ms)
+    ok = page.evaluate(
+        """(title) => {
+            const visuals = document.querySelectorAll('[data-automation-id="analysis_visual"]');
+            for (const v of visuals) {
+                const t = v.querySelector('[data-automation-id="analysis_visual_title_label"]');
+                if (!t || t.innerText.trim() !== title) continue;
+                const cell = v.querySelector('[data-automation-id="sn-table-cell-0-0"]');
+                if (cell) {
+                    cell.setAttribute('data-e2e-target', '1');
+                    return true;
+                }
+            }
+            return false;
+        }""",
+        visual_title,
+    )
+    assert ok, f"Could not find first cell of visual {visual_title!r}"
+    page.locator('[data-e2e-target="1"]').first.click(
+        button="right", timeout=timeout_ms,
+    )
+    page.wait_for_timeout(800)
+    page.evaluate(
+        """() => document.querySelectorAll('[data-e2e-target]').forEach(
+            e => e.removeAttribute('data-e2e-target')
+        )"""
+    )
+
+
+def click_context_menu_item(page, item_text: str, timeout_ms: int) -> None:
+    """Click an entry in QuickSight's data-point context menu by visible text.
+
+    QS's right-click menu mounts as a portal with each entry as a
+    ``[role="menuitem"]``. The drill action's `Name` parameter from the
+    Python builder appears verbatim as the menu item's text.
+    """
+    page.wait_for_selector(
+        '[role="menu"] [role="menuitem"]',
+        timeout=timeout_ms,
+        state="visible",
+    )
+    page.locator(
+        '[role="menu"] [role="menuitem"]', has_text=item_text,
+    ).first.click(timeout=timeout_ms)
+
+
 def sheet_control_titles(page) -> list[str]:
     """Return the visible titles of filter controls on the active sheet."""
     els = page.query_selector_all('[data-automation-id="sheet_control_name"]')
@@ -242,6 +298,22 @@ def wait_for_sheet_controls_present(page, timeout_ms: int) -> None:
     )
 
 
+def _retry_on_playwright_timeout(call, *, timeout_ms: int):
+    """Run ``call()``; if Playwright's wait timed out, retry once with the
+    same budget. Aurora Serverless v2 cold-start can stall the first SELECT
+    for ~30s — the conftest warm-up fixture covers session start, but ad-hoc
+    reruns and idle-between-sheets gaps can still hit a cold cluster. One
+    retry survives that window without papering over genuine render bugs
+    (which fail twice).
+    """
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    try:
+        return call()
+    except PlaywrightTimeoutError:
+        return call()
+
+
 def wait_for_visual_titles_present(
     page, expected_titles, timeout_ms: int,
 ) -> None:
@@ -251,18 +323,19 @@ def wait_for_visual_titles_present(
     test asserts on specific titles.
     """
     titles_list = sorted(set(expected_titles))
-    page.wait_for_function(
-        f"""() => {{
-            const want = new Set({titles_list!r});
-            const have = new Set(
-                Array.from(document.querySelectorAll(
-                    '[data-automation-id="analysis_visual_title_label"]'
-                )).map(el => el.innerText.trim()).filter(Boolean)
-            );
-            for (const t of want) {{ if (!have.has(t)) return false; }}
-            return true;
-        }}""",
-        timeout=timeout_ms,
+    script = f"""() => {{
+        const want = new Set({titles_list!r});
+        const have = new Set(
+            Array.from(document.querySelectorAll(
+                '[data-automation-id="analysis_visual_title_label"]'
+            )).map(el => el.innerText.trim()).filter(Boolean)
+        );
+        for (const t of want) {{ if (!have.has(t)) return false; }}
+        return true;
+    }}"""
+    _retry_on_playwright_timeout(
+        lambda: page.wait_for_function(script, timeout=timeout_ms),
+        timeout_ms=timeout_ms,
     )
 
 
@@ -271,9 +344,10 @@ def wait_for_visuals_present(page, min_count: int, timeout_ms: int) -> int:
 
     Returns the actual count observed.
     """
-    page.wait_for_function(
-        f"""() => document.querySelectorAll('{VISUAL_SELECTOR}').length >= {min_count}""",
-        timeout=timeout_ms,
+    script = f"""() => document.querySelectorAll('{VISUAL_SELECTOR}').length >= {min_count}"""
+    _retry_on_playwright_timeout(
+        lambda: page.wait_for_function(script, timeout=timeout_ms),
+        timeout_ms=timeout_ms,
     )
     return len(page.query_selector_all(VISUAL_SELECTOR))
 

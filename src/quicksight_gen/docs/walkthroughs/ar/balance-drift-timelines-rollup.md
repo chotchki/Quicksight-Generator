@@ -1,6 +1,6 @@
 # Balance Drift Timelines Rollup
 
-*Rollup-level walkthrough — Account Reconciliation Exceptions sheet.*
+*Rollup-level walkthrough — Account Reconciliation Exceptions Trends sheet.*
 
 ## The story
 
@@ -23,7 +23,7 @@ color on the rollup chart.
 
 The Balance Drift Timelines rollup overlays both checks on a single
 date axis. It's the first thing an operator sees on the Exceptions
-sheet because drift over time is the strongest "something is
+Trends sheet because drift over time is the strongest "something is
 systemically wrong" signal — a single bad day is investigable, but a
 multi-day pattern is a process problem.
 
@@ -34,7 +34,9 @@ drift away from zero — and if so, which one?"
 
 ## Where to look
 
-Open the AR dashboard, **Exceptions** sheet. The Balance Drift
+Open the AR dashboard, **Exceptions Trends** sheet (the sister sheet
+to Today's Exceptions — Today's Exceptions is the row-level operational
+view; Trends is the over-time / rollup view). The Balance Drift
 Timelines rollup is the very first visual at the top — a clustered
 vertical bar chart titled "**Balance Drift Timelines**" with two color
 series.
@@ -77,15 +79,27 @@ Each series points at a different operational owner:
 ## Drilling in
 
 This rollup is a chart, not a row table — there's no row-click drill
-target. Use it to *see the pattern*; then scroll down the Exceptions
-sheet to the per-check timeline that owns the spike:
+target. Use it to *see the pattern*; then switch to the **Today's
+Exceptions** sheet and set **Check Type** in the Controls strip to the
+specific check that owns the spike:
 
-- *Concentration Master Sweep Drift* (per-check timeline below) —
-  same date axis, but only the sweep-leg-mismatch series. Each
-  non-zero day links to the underlying clearing-sweep transfer.
-- *GL vs Fed Master Drift* (per-check timeline below) — same date
-  axis, but only the GL-vs-Fed series. Each non-zero day links to
-  the Fed observation transfer that lacks an internal catch-up.
+- **Concentration Master Sweep drift** spike → Check Type
+  `Concentration Master Sweep Drift`. The Open Exceptions table will
+  list each non-zero drift date with the dollar drift amount.
+- **GL vs Fed Master drift** spike → Check Type
+  `GL vs Fed Master Drift`. Same shape — one row per drift date with
+  the dollar amount.
+
+For the per-check view of the *underlying transfers* (not the daily
+aggregate) cross-check via Check Type `Non-Zero Transfer` for the
+sweep series, or `Fed Activity Without Internal Catch-Up` for the
+GL/Fed series. Both of those carry the per-transfer IDs that are
+clickable to drill down to the Transactions sheet.
+
+The Trends sheet itself also carries an **Aging Matrix** and a
+**Per-Check Daily Trend** below this rollup — useful for spotting
+whether the spike is part of a broader staleness pattern or limited
+to one check.
 
 ## Next step
 
@@ -93,8 +107,9 @@ If both series are flat at zero across the visible window: log clean
 and move on. If one or both series have non-zero days:
 
 - **One isolated spike on one series** → likely a single bad post.
-  Drill the per-check timeline, fix the offending transfer, and
-  expect the next day to return to zero.
+  Switch to Today's Exceptions, filter by Check Type to the owning
+  check, fix the offending transfer, and expect the next day to
+  return to zero.
 - **Multiple spikes on one series** → process problem. Escalate to
   the owning team (ZBA Admin or Card Operations) to trace why their
   posting path is dropping legs.
@@ -104,11 +119,16 @@ and move on. If one or both series have non-zero days:
 ## Related walkthroughs
 
 - [Two-Sided Post Mismatch Rollup](two-sided-post-mismatch-rollup.md) —
-  the GL-vs-Fed-Master spikes here are the per-day-dollar view of
-  what shows up there as per-transfer count.
+  the next rollup down on the Trends sheet. The GL-vs-Fed-Master
+  spikes here are the per-day-dollar view of what shows up there as
+  per-transfer count.
 - [Concentration Master Sweep Drift](concentration-master-sweep-drift.md) —
-  per-check timeline for the sweep-leg-mismatch series, with the
-  underlying transfer rows.
+  per-check view in Today's Exceptions for the sweep-leg-mismatch
+  series.
 - [GL vs Fed Master Drift](gl-vs-fed-master-drift.md) — per-check
-  timeline for the Fed-vs-internal series, with the underlying
-  observation rows.
+  view in Today's Exceptions for the Fed-vs-internal series.
+- [Expected-Zero EOD Rollup](expected-zero-eod-rollup.md) — third
+  rollup on the Trends sheet. Different invariant class
+  (control-account-should-be-zero) but the same morning-scan idiom:
+  rollup tells you something's wrong, per-check rows tell you who
+  to call.

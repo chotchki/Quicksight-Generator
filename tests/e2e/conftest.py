@@ -135,9 +135,16 @@ def ar_analysis_id(resource_prefix) -> str:
 
 @pytest.fixture(scope="session")
 def ar_dataset_ids(resource_prefix) -> list[str]:
-    """Expected Account Recon dataset IDs."""
+    """Expected Account Recon dataset IDs.
+
+    Phase K.1.4 collapsed the 14-check exception inventory into a single
+    unified-exceptions dataset; the per-check datasets (limit-breach,
+    overdraft, 9 CMS-specific checks) were dropped. non-zero-transfers
+    survives because the Transfers tab still uses it for the Unhealthy
+    KPI.
+    """
     suffixes = [
-        # Baseline (9)
+        # Baseline (7)
         "ar-ledger-accounts-dataset",
         "ar-subledger-accounts-dataset",
         "ar-transactions-dataset",
@@ -145,18 +152,6 @@ def ar_dataset_ids(resource_prefix) -> list[str]:
         "ar-subledger-balance-drift-dataset",
         "ar-transfer-summary-dataset",
         "ar-non-zero-transfers-dataset",
-        "ar-limit-breach-dataset",
-        "ar-overdraft-dataset",
-        # CMS-specific checks (Phase F, 9)
-        "ar-sweep-target-nonzero-dataset",
-        "ar-concentration-master-sweep-drift-dataset",
-        "ar-ach-orig-settlement-nonzero-dataset",
-        "ar-ach-sweep-no-fed-confirmation-dataset",
-        "ar-fed-card-no-internal-catchup-dataset",
-        "ar-gl-vs-fed-master-drift-dataset",
-        "ar-internal-transfer-stuck-dataset",
-        "ar-internal-transfer-suspense-nonzero-dataset",
-        "ar-internal-reversal-uncredited-dataset",
         # Cross-check rollups (Phase F, 3)
         "ar-expected-zero-eod-rollup-dataset",
         "ar-two-sided-post-mismatch-rollup-dataset",
@@ -164,6 +159,8 @@ def ar_dataset_ids(resource_prefix) -> list[str]:
         # Daily Statement (Phase I.2, 2)
         "ar-daily-statement-summary-dataset",
         "ar-daily-statement-transactions-dataset",
+        # Unified exceptions (Phase K.1.1, 1)
+        "ar-unified-exceptions-dataset",
     ]
     return [f"{resource_prefix}-{s}" for s in suffixes]
 
@@ -176,3 +173,51 @@ def page_timeout() -> int:
 @pytest.fixture(scope="session")
 def visual_timeout() -> int:
     return VISUAL_TIMEOUT
+
+
+# Aurora Serverless v2 scales to zero when idle. The first SELECT after
+# a cold start can take 20-30s while the cluster warms up — long enough
+# that browser e2e helpers that wait ~30s for visuals to hydrate will
+# time out on the first sheet they touch. Warm the cluster once at session
+# start by issuing the heaviest queries directly via psycopg2, so the
+# subsequent dashboard renders hit a hot cluster. Pairs with the retry
+# wrapper in browser_helpers.py for ad-hoc reruns where this fixture
+# isn't covering us.
+_WARMUP_QUERIES = (
+    "SELECT 1",
+    "SELECT COUNT(*) FROM transactions",
+    "SELECT COUNT(*) FROM daily_balances",
+    "SELECT COUNT(*) FROM ar_subledger_balance_drift",
+    "SELECT COUNT(*) FROM ar_ledger_balance_drift",
+    "SELECT COUNT(*) FROM ar_transfer_summary",
+    "SELECT COUNT(*) FROM ar_subledger_overdraft",
+    "SELECT COUNT(*) FROM ar_subledger_limit_breach",
+    "SELECT COUNT(*) FROM ar_expected_zero_eod_rollup",
+    "SELECT COUNT(*) FROM ar_two_sided_post_mismatch_rollup",
+    "SELECT COUNT(*) FROM ar_balance_drift_timelines_rollup",
+)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def warm_aurora(cfg):
+    """Pre-warm Aurora before any e2e visual hits the dashboard."""
+    if not cfg.demo_database_url:
+        return
+    try:
+        import psycopg2
+    except ImportError:
+        return
+    try:
+        conn = psycopg2.connect(cfg.demo_database_url, connect_timeout=60)
+    except Exception:
+        return
+    try:
+        with conn.cursor() as cur:
+            for sql in _WARMUP_QUERIES:
+                try:
+                    cur.execute(sql)
+                    cur.fetchall()
+                except Exception:
+                    pass
+    finally:
+        conn.close()

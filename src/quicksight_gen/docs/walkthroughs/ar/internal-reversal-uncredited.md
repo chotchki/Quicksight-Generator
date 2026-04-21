@@ -1,6 +1,6 @@
 # Reversed Transfers Without Credit-Back
 
-*Per-check walkthrough — Account Reconciliation Exceptions sheet.*
+*Per-check walkthrough — Account Reconciliation Today's Exceptions sheet.*
 
 ## The story
 
@@ -32,61 +32,59 @@ refunding the customer?"
 
 ## Where to look
 
-Open the AR dashboard, **Exceptions** sheet. In the CMS-specific
-section, the **Reversed Transfers Without Credit-Back** KPI sits
-above its detail table and aging chart — at the bottom of the
-per-check stack, directly below *Internal Transfer Suspense
-Non-Zero EOD*.
+Open the AR dashboard, **Today's Exceptions** sheet. In the Controls
+strip at the top of the sheet, set **Check Type** to
+`Internal Reversal Uncredited`. The **Total Exceptions** KPI
+recounts to just this check's rows, the **Exceptions by Check**
+breakdown bar collapses to a single yellow bar, and the **Open
+Exceptions** table below shows every row for this check — one row
+per originate whose reversal cleared suspense but didn't credit
+the originator.
+
+<details markdown><summary>Screenshot — Open Exceptions filtered to this check</summary>
+
+![Open Exceptions table filtered to Internal Reversal Uncredited, single row for the planted uncredited reversal](../screenshots/ar/todays-exceptions-filtered-internal-reversal-uncredited.png)
+
+</details>
 
 ## What you'll see in the demo
 
-The KPI shows **1** uncredited reversal.
+One row, the single planted incident. Key columns to read:
 
-<details markdown><summary>Screenshot — KPI</summary>
-
-![Reversed Transfers Without Credit-Back KPI showing the count 1](../screenshots/ar/internal-reversal-uncredited-01-kpi.png)
-
-</details>
+| column            | value for this check                                                          |
+|-------------------|-------------------------------------------------------------------------------|
+| `account_id`      | blank — this check is a per-transfer system check, not per-account            |
+| `account_level`   | `System`                                                                      |
+| `transfer_id`     | the *originate* transfer (e.g. `ar-on-us-orig-05`) — not the reversal itself  |
+| `primary_amount`  | `originate_amount` — the dollars the originator was debited and never refunded |
+| `secondary_amount`| blank                                                                         |
 
 The single planted incident in `_INTERNAL_TRANSFER_PLANT`
-(`reversed_not_credited`, days_ago=17) is the seed:
+(`reversed_not_credited`, days_ago=17):
 
-| originate_transfer_id | originated_at       | originate_amount | reversal_transfer_id | reversal_at         | aging        |
-|-----------------------|---------------------|-----------------:|----------------------|---------------------|--------------|
-| `ar-on-us-orig-05`    | Apr 2 2026 9:30am   |            2,940 | `ar-on-us-step2-05`  | Apr 2 2026 2:45pm   | 4: 8-30 days |
+| transfer_id        | originated_at       | originate_amount | aging        |
+|--------------------|---------------------|-----------------:|--------------|
+| `ar-on-us-orig-05` | Apr 2 2026 9:30am   |            2,940 | 4: 8-30 days |
 
 The originator (`cust-700-0001-big-meadow-dairy`) was debited
-$2,940 at originate; suspense held the funds; the reversal Step 2
-cleared suspense (suspense leg `success`) but the credit-back to
-the originator failed (status `failed`). Big Meadow Dairy is out
-$2,940 with no offsetting credit on their DDA.
+$2,940 at originate; suspense held the funds; the reversal
+(`ar-on-us-step2-05`) cleared suspense (suspense leg `success`)
+but the credit-back to the originator failed (status `failed`).
+Big Meadow Dairy is out $2,940 with no offsetting credit on their
+DDA.
 
-The detail table shows the row. Columns: `originate_transfer_id`,
-`originated_at`, `originate_amount`, `reversal_transfer_id`,
-`reversal_at`, `aging_bucket`. Sorted newest-first by
-`originated_at`.
-
-<details markdown><summary>Screenshot — detail table</summary>
-
-![Reversed Transfers Without Credit-Back table showing the single row](../screenshots/ar/internal-reversal-uncredited-02-table.png)
-
-</details>
-
-The aging bar chart shows a single bar in bucket 4 (8-30 days) —
-the originate is 17 days old.
-
-<details markdown><summary>Screenshot — aging chart</summary>
-
-![Reversed Without Credit-Back by Age aging bar chart with 1 row in 8-30 days bucket](../screenshots/ar/internal-reversal-uncredited-03-aging.png)
-
-</details>
+The unified table doesn't carry the reversal_transfer_id column
+directly — only the originate side. To see the broken reversal
+itself, drill from the originate and then walk to the reversal
+manually (the reversal ID follows the convention
+`ar-on-us-step2-XX` where `XX` matches the originate's
+`ar-on-us-orig-XX` suffix).
 
 ## What it means
 
-Each row says: on `originated_at`, the on-us transfer
-`originate_transfer_id` debited the originator for
-`originate_amount` and parked the funds on `gl-1830`. On
-`reversal_at`, the reversal `reversal_transfer_id` cleared
+Each row says: on `exception_date`, the on-us transfer
+`transfer_id` debited the originator for `primary_amount` and
+parked the funds on `gl-1830`. Some time later, a reversal cleared
 `gl-1830` (suspense leg posted), but the originator's credit-back
 leg failed — so the originator never got their money back.
 
@@ -118,23 +116,26 @@ customer relationship damage is done.
 
 ## Drilling in
 
-Click `originate_transfer_id` in any row. The drill switches to
-the **Transactions** sheet filtered to the originate transfer,
-showing the Step 1 legs (debit originator DDA, credit suspense)
-that posted normally.
+The `transfer_id` cell renders as accent-colored text — that tint
+is the dashboard's cue that the cell is clickable. **Left-click**
+the `transfer_id` value (the originate). The drill switches to the
+**Transactions** sheet filtered to the originate transfer, showing
+the Step 1 legs (debit originator DDA, credit suspense) that
+posted normally.
 
 To see the broken reversal itself, walk back to the **Transactions**
-sheet and filter `transfer_id = <reversal_transfer_id>` (the
-`ar-on-us-step2-XX` value from the row). You'll see two legs on
-that transfer: the suspense-clear leg with `status='success'` and
-the originator credit-back leg with `status='failed'`. That's the
-asymmetry — the same transfer has one succeeded leg and one failed
-leg, which is also why this row surfaces in **Non-Zero Transfers**
-(failed_leg_count > 0).
+sheet and filter `transfer_id = <reversal_transfer_id>` — the
+`ar-on-us-step2-XX` value matching the originate's suffix. You'll
+see two legs on that transfer: the suspense-clear leg with
+`status='success'` and the originator credit-back leg with
+`status='failed'`. That's the asymmetry — the same transfer has one
+succeeded leg and one failed leg, which is also why this incident
+surfaces as a **Non-Zero Transfer** row (failed_leg_count > 0) for
+the reversal transfer ID.
 
 To confirm the customer impact, switch to the **Balances** sheet
 and look at the originator's DDA running balance — it shows the
-Step 1 debit but no offsetting credit on `reversal_at`.
+Step 1 debit but no offsetting credit on the reversal date.
 
 ## Next step
 
@@ -144,7 +145,7 @@ other on-us-transfer checks, the customer is already short their
 money:
 
 - **Bucket 1-2 (0-3 days)** → manually post the originator
-  credit-back leg. The amount is `originate_amount`; the target
+  credit-back leg. The amount is `primary_amount`; the target
   account is the originator DDA (visible in the originate
   transfer's Step 1 debit leg). If the original credit-back
   failed for a recoverable reason (transient hold lifted), retry
@@ -158,7 +159,7 @@ money:
   thing that ends up in regulatory complaints if the customer
   finds it before the bank does.
 
-The dollar exposure is in the `originate_amount` column — that's
+The dollar exposure is in the `primary_amount` column — that's
 the exact amount the originator is short.
 
 ## Related walkthroughs

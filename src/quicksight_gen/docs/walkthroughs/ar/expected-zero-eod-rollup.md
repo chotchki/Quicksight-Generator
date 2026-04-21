@@ -1,6 +1,6 @@
 # Expected-Zero EOD Rollup
 
-*Rollup-level walkthrough — Account Reconciliation Exceptions sheet.*
+*Rollup-level walkthrough — Account Reconciliation Exceptions Trends sheet.*
 
 ## The story
 
@@ -29,12 +29,12 @@ carrying a balance?"
 
 ## Where to look
 
-Open the AR dashboard, **Exceptions** sheet. The three cross-check
-rollups sit at the top of the sheet in order: Balance Drift Timelines
-(chart), Two-Sided Post Mismatch (KPI + table), Expected-Zero EOD
-(KPI + table). Expected-Zero is the third rollup: a KPI titled
-"**Accounts Expected Zero at EOD**" and a detail table with the same
-title.
+Open the AR dashboard, **Exceptions Trends** sheet (the sister sheet
+to Today's Exceptions). The three cross-check rollups sit at the top
+of the sheet in order: Balance Drift Timelines (chart), Two-Sided
+Post Mismatch (KPI + table), Expected-Zero EOD (KPI + table).
+Expected-Zero is the third rollup: a KPI titled "**Accounts Expected
+Zero at EOD**" and a detail table with the same title.
 
 ## What you'll see in the demo
 
@@ -59,15 +59,27 @@ This rollup tells you the *shape* of what's wrong — money sitting
 where it shouldn't — but not yet the *why*. Different sources point at
 different upstream owners (sweep automation, internal transfer system,
 ZBA configuration). The rollup's job is to make you stop and look; the
-per-check details below tell you who to call.
+per-check views tell you who to call.
 
 ## Drilling in
 
-The detail table's `source check` column names the per-check view that
-owns each row. Scroll down the Exceptions sheet to that section
-(Sweep Target Non-Zero EOD, ACH Origination Settlement Non-Zero EOD,
-Internal Transfer Suspense Non-Zero EOD) for the row-level context the
-upstream team needs.
+The detail table's `source_check` column names the per-check view that
+owns each row. Switch to the **Today's Exceptions** sheet and set
+**Check Type** in the Controls strip to that check name:
+
+- `source_check = "sweep_target_nonzero"` → set Check Type to
+  `Sweep Target Non-Zero EOD`. The Open Exceptions table will list
+  each operating sub-account that didn't sweep clean; right-click
+  the `account_id` cell for the per-account-day Transactions drill.
+- `source_check = "ach_orig_settlement_nonzero"` → set Check Type to
+  `ACH Origination Settlement Non-Zero EOD`. Same row shape — `gl-1810`
+  carrying balance overnight, right-click drill on `account_id`.
+- `source_check = "internal_transfer_suspense_nonzero"` → set Check
+  Type to `Internal Transfer Suspense Non-Zero EOD`. `gl-1830` carrying
+  the stuck-transfer residual, right-click drill on `account_id`.
+
+The per-check view is what the upstream team needs (the specific
+account / date / dollars) to start the work.
 
 ## Next step
 
@@ -75,7 +87,8 @@ If the count is 0: log the morning check as clean and move on. If
 non-zero: triage by source — sweep target failures usually go to the
 ZBA admin team, ACH non-zero EOD goes to ACH Operations, suspense
 non-zero goes to Internal Transfer Operations. Use the per-check
-sections to pull the specific account / transfer ID for the handoff.
+views in Today's Exceptions to pull the specific account / transfer
+ID for the handoff.
 
 ## Related walkthroughs
 
@@ -92,11 +105,11 @@ sections to pull the specific account / transfer ID for the handoff.
   per-transfer view of the originating incidents that drive the
   Internal Transfer Suspense rows here.
 - [Two-Sided Post Mismatch Rollup](two-sided-post-mismatch-rollup.md) —
-  the next rollup down. Different shape (paired-but-half-posted
-  rather than expected-zero-but-non-zero), but the same triage
-  pattern: rollup tells you *something* is wrong; per-check rows
-  below tell you *who to call*.
+  the rollup above this one on the Trends sheet. Different shape
+  (paired-but-half-posted rather than expected-zero-but-non-zero), but
+  the same triage idiom: rollup tells you *something* is wrong;
+  per-check view in Today's Exceptions tells you *who to call*.
 - [Balance Drift Timelines Rollup](balance-drift-timelines-rollup.md) —
-  the third rollup at the top. Different invariant class (two-sided
-  drift over time) but co-located with this one in the morning
-  three-rollup scan.
+  the first rollup at the top of the Trends sheet. Different invariant
+  class (two-sided drift over time) but co-located with this one in
+  the morning three-rollup scan.

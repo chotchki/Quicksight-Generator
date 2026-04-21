@@ -20,12 +20,6 @@ from .browser_helpers import (
 pytestmark = [pytest.mark.e2e, pytest.mark.browser]
 
 
-# Exceptions packs 47 visuals (Phase F restructure) — use a very tall
-# viewport so all of them hydrate and we can target tables anywhere on
-# the sheet.
-TALL_VIEWPORT = (1600, 12000)
-
-
 @pytest.fixture
 def embed_url(qs_client, account_id, ar_dashboard_id) -> str:
     return generate_dashboard_embed_url(
@@ -73,25 +67,25 @@ def test_transfer_summary_drills_to_transactions(embed_url, page_timeout):
         assert selected_sheet_name(page) == "Transactions"
 
 
-def test_breach_drills_to_transactions(embed_url, page_timeout):
-    """Clicking a subledger_account_id in the Sub-Ledger Limit Breach table
-    should drill into Transactions with account + date + transfer_type all
-    set.
+def test_todays_exceptions_table_drills_to_transactions(
+    embed_url, page_timeout,
+):
+    """Clicking a transfer_id in the Open Exceptions table on Today's
+    Exceptions should drill into Transactions (with pArTransferId set).
 
-    The multi-parameter drill-down shape is only here; all other AR drills
-    are single-parameter, so this exercises the ``_multi_drill_action`` path
-    that Phase 5.7 introduced."""
-    with webkit_page(headless=True, viewport=TALL_VIEWPORT) as page:
+    Phase K.1.2 replaces the per-check drill paths from the legacy
+    Exceptions sheet with this single drill from the unified table."""
+    with webkit_page(headless=True) as page:
         page.goto(embed_url, timeout=page_timeout)
         wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
-        click_sheet_tab(page, "Exceptions", timeout_ms=page_timeout)
-        wait_for_visuals_present(page, min_count=47, timeout_ms=page_timeout)
+        click_sheet_tab(page, "Today's Exceptions", timeout_ms=page_timeout)
+        wait_for_visuals_present(page, min_count=3, timeout_ms=page_timeout)
 
         click_first_row_of_visual(
-            page, "Sub-Ledger Limit Breach", timeout_ms=page_timeout,
+            page, "Open Exceptions", timeout_ms=page_timeout,
         )
         wait_for_sheet_tab(page, "Transactions", timeout_ms=page_timeout)
         screenshot(
-            page, "drilldown_breach_to_txn", subdir="account_recon",
+            page, "drilldown_todays_exc_to_txn", subdir="account_recon",
         )
         assert selected_sheet_name(page) == "Transactions"

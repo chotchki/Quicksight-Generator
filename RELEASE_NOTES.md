@@ -1,5 +1,54 @@
 # Release Notes
 
+## v3.5.0
+
+### Phase K.1 — AR Exceptions split + handbook rewrite + MIT relicense
+
+This release rolls up Phase K.1 (the AR Exceptions density refactor and full AR Handbook rewrite) and a project-level relicense from the Unlicense to the MIT License. Dashboards: the AR Exceptions tab is gone, replaced by **Today's Exceptions** (unified-table operational view) and **Exceptions Trends** (rollups + aging matrix + per-check daily trend). Handbook: every per-check walkthrough rewrites against the new sheets. License: MIT replaces the Unlicense for clearer downstream usability.
+
+### What landed
+
+**AR Exceptions workflow split (K.1.0 – K.1.5)**
+
+- **`ar_unified_exceptions` dataset** — UNION ALL across 14 per-check views with a `check_type` discriminator, severity-coloured tagging (`drift` / `overdraft` → red, `expected-zero` → orange, `limit-breach` → amber, others → yellow), and harmonized columns (`account_id`, `account_name`, `account_type`, `posted_at`, `balance_date`, `days_outstanding`, `aging_bucket`, `primary_amount`, `secondary_amount`). Wide+NULL projection — every check's specific column is first-class, NULL-filled where not applicable. Locked by `DatasetContract`.
+- **Today's Exceptions sheet** — replaces the per-check KPI/table/aging blocks with one severity-coloured KPI strip + Check Type / Account / Aging / Transfer Type / Origin sheet controls + one *Open Exceptions* unified table sorted by severity then aging. Drill: right-click `account_id` → "View Transactions for Account-Day"; left-click `transfer_id` → Transactions sheet scoped to that transfer.
+- **Exceptions Trends sheet** — new sheet hosting the 3 cross-check rollups (Balance Drift Timelines, Two-Sided Post Mismatch, Expected-Zero EOD), an aging matrix (5 buckets × 14 check types), and per-check daily trend lines.
+- **Drill-scoping fix** — new `pArAccountId` parameter + `account_id`-bound filter group on the Transactions sheet; the unified Open Exceptions table writes both `pArAccountId` and `pArActivityDate` on right-click. Two system-aggregate checks (Concentration Master Sweep Drift, GL vs Fed Master Drift) carry neither `account_id` nor `transfer_id` and are intentionally un-drillable; reader cross-checks via the per-transfer companion check.
+- **E2E coverage** — new parametrized `tests/e2e/test_ar_todays_exc_drill.py` over the 12 covered check_types (filter unified table to that check_type, dispatch matching click idiom, assert post-drill Transactions row count strictly less than baseline). Two new browser helpers (`right_click_first_row_of_visual`, `click_context_menu_item`) carry the right-click + menu-pick pattern.
+- **Aurora warm-up + retry** — autouse session fixture issues `SELECT 1` + `COUNT(*)` against base tables; `_retry_on_playwright_timeout` wrapper survives one cold-start window for `wait_for_visual_titles_present` / `wait_for_visuals_present`.
+- **Per-app dataset scoping in deploy** — `quicksight-gen deploy account-recon` (or `payment-recon`) no longer recreates the other app's datasets. `_dataset_ids_for_apps()` derives per-app DataSetIds from each loaded analysis's `Definition.DataSetIdentifierDeclarations`; deletes/creates skip files whose ID isn't in the allowed set. Guard test `tests/test_deploy.py::TestDatasetIdsForApps`.
+
+**AR Handbook rewrite (K.1.6)**
+
+- **17 walkthroughs rewritten** against the new sheets — 14 per-check (sub-ledger drift, ledger drift, non-zero transfers, sub-ledger limit breach, sub-ledger overdraft, sweep target non-zero EOD, concentration master sweep drift, ACH origination settlement non-zero EOD, ACH sweep without Fed confirmation, Fed activity without internal catch-up, GL vs Fed master drift, stuck in internal transfer suspense, internal transfer suspense non-zero EOD, internal reversal uncredited) + 3 rollups (balance drift timelines, two-sided post mismatch, expected-zero EOD). Each per-check walkthrough opens with a column-mapping table for the unified schema and routes drill instructions through the actual cell hints (pale-green `account_id` tint = right-click cue; accent-coloured `transfer_id` text = left-click cue). Three checks (Fed Activity Without Internal Catch-Up, Internal Transfer Stuck in Suspense, Internal Reversal Uncredited) had handbook-card titles that diverged from the dataset literal an operator sets as a Check Type filter; walkthroughs use the dataset literal so reader filter setting matches the screenshot.
+- **22 fresh screenshots** captured — 3 shared Today's Exceptions (overview / breakdown bar / unified table) + 5 Trends (drift timelines / two-sided rollup / expected-zero rollup / aging matrix / per-check daily trend) + 14 per-check filtered Open Exceptions tables. Capture script (`scripts/generate_walkthrough_screenshots.py`) extended with `mode="full_sheet"` (clip from y=0 to lowest visual on the active sheet) and `_set_check_type_filter` (handles MUI listbox virtualization + prefix-collision-safe `^…$`-anchored regex deselection).
+- **Handbook + training prose updated** — `handbook/ar.md` morning routine rewritten as a three-paragraph flow naming the two new sheets and the unified table; `Training_Story.md` GL Recon persona description updated to reference the new sheets.
+- **mkdocs nav switched to horizontal tabs** — `navigation.tabs` added to Material features. The five handbooks (AR / PR / Data Integration / Customization / Training) render as tabs at the top of the page; left sidebar shrinks to the current handbook's entries (17 max for AR vs ~50 across all handbooks before). Fixed one nav label drift: "Fed Activity Without Internal Post" → "Fed Activity Without Internal Catch-Up" (matches dataset literal and walkthrough H1).
+- **40 orphan PNGs deleted** — old per-check `<check>-01-kpi.png` / `<check>-02-table.png` / `<check>-03-aging.png` family removed from `src/quicksight_gen/docs/walkthroughs/screenshots/ar/` after the unified-table template made them obsolete.
+
+**Relicense (K.1.7)**
+
+- **MIT License replaces the Unlicense.** `LICENSE` rewritten to standard MIT text (Copyright © 2026 Christopher Hotchkiss). `pyproject.toml` `license = "Unlicense"` → `license = "MIT"`. Audit clean: only two runtime deps (`click` BSD-3-Clause, `pyyaml` MIT) and all optional deps (`psycopg2-binary`, `boto3`, `pytest`, `mkdocs-material`, `playwright`) are MIT-compatible; no source files carry headers needing update.
+- **Beta tag removed.** `Development Status :: 4 - Beta` → `Development Status :: 5 - Production/Stable`. The project has been on a tagged-release PyPI cadence since v3.2.0 (Phase I.6) and the API surface has stabilized — beta no longer reflects reality.
+
+---
+
+## v3.4.0
+
+### Ship docs + training kit in the wheel; add export commands
+
+The wheel now bundles the full `docs/` + `training/` trees as `package-data`, and two new CLI commands (`quicksight-gen export-docs` and `quicksight-gen export-training`) write those bundles out into a target directory. Lets a `pip install quicksight-gen` user pull the handbooks and training scenarios down to disk without cloning the repo. No behavior change for source checkouts.
+
+---
+
+## v3.3.0
+
+### Customization Handbook complete
+
+Adds the full **Customization Handbook** (`handbook/customization.md` + `walkthroughs/customization/*.md`) — eight walkthroughs covering the database mapping, dataset-SQL swap, brand reskin, AWS deploy configuration, first-deploy walkthrough, app-specific metadata key extension, canonical-value extension, and customization testing. The handbook is wired into the docs site nav and the wheel's bundled docs. Phase J close-out — no analysis or dataset changes; this release ships the docs work entirely.
+
+---
+
 ## v3.2.2
 
 ### Refactor — schema is the interface contract, not a demo artifact

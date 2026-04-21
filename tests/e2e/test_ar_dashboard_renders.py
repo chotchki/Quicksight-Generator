@@ -18,7 +18,9 @@ EXPECTED_SHEETS = {
     "Balances",
     "Transfers",
     "Transactions",
-    "Exceptions",
+    "Today's Exceptions",
+    "Exceptions Trends",
+    "Daily Statement",
 }
 
 
@@ -47,7 +49,7 @@ class TestArDashboardLoads:
             screenshot(page, "dashboard_initial_load", subdir="account_recon")
             assert page.title(), "Page has no title — embed likely failed"
 
-    def test_all_five_sheet_tabs_visible(self, embed_url, page_timeout):
+    def test_all_seven_sheet_tabs_visible(self, embed_url, page_timeout):
         with webkit_page(headless=True) as page:
             page.goto(embed_url, timeout=page_timeout)
             wait_for_dashboard_loaded(page, timeout_ms=page_timeout)

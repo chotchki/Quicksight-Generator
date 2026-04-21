@@ -23,8 +23,9 @@ from click.testing import CliRunner
 from quicksight_gen.account_recon.constants import (
     SHEET_AR_BALANCES,
     SHEET_AR_DAILY_STATEMENT,
-    SHEET_AR_EXCEPTIONS,
+    SHEET_AR_EXCEPTIONS_TRENDS,
     SHEET_AR_GETTING_STARTED,
+    SHEET_AR_TODAYS_EXCEPTIONS,
     SHEET_AR_TRANSACTIONS,
     SHEET_AR_TRANSFERS,
 )
@@ -2010,9 +2011,9 @@ class TestGenerateOutput:
     def test_dashboard_file_exists(self, ar_output_dir):
         assert (ar_output_dir / "account-recon-dashboard.json").exists()
 
-    def test_twenty_one_dataset_files(self, ar_output_dir):
+    def test_thirteen_dataset_files(self, ar_output_dir):
         datasets = list((ar_output_dir / "datasets").glob("qs-gen-ar-*.json"))
-        assert len(datasets) == 23
+        assert len(datasets) == 13
 
     def test_all_files_valid_json(self, ar_output_dir):
         for path in ar_output_dir.rglob("*.json"):
@@ -2096,11 +2097,13 @@ class TestCrossReferences:
 
 
 class TestSheetLayout:
-    """Phase 3: five sheets, Getting Started at index 0, expected visual counts."""
+    """Phase K.1.3: Today's Exceptions + Exceptions Trends slot between
+    Transactions and the legacy Exceptions sheet (legacy stays until
+    K.1.4 drops the per-check blocks)."""
 
-    def test_five_sheets(self, ar_output_dir):
+    def test_eight_sheets(self, ar_output_dir):
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
-        assert len(analysis["Definition"]["Sheets"]) == 6
+        assert len(analysis["Definition"]["Sheets"]) == 7
 
     def test_sheet_order(self, ar_output_dir):
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
@@ -2110,7 +2113,8 @@ class TestSheetLayout:
             SHEET_AR_BALANCES,
             SHEET_AR_TRANSFERS,
             SHEET_AR_TRANSACTIONS,
-            SHEET_AR_EXCEPTIONS,
+            SHEET_AR_TODAYS_EXCEPTIONS,
+            SHEET_AR_EXCEPTIONS_TRENDS,
             SHEET_AR_DAILY_STATEMENT,
         ]
 
@@ -2125,27 +2129,15 @@ class TestSheetLayout:
         # Phase 4: added Transactions-by-day bar chart -> 5
         self._assert_visual_count(ar_output_dir, SHEET_AR_TRANSACTIONS, 5)
 
-    def test_exceptions_visual_count(self, ar_output_dir):
-        # Phase 5: five baseline checks (three drift KPIs + breach +
-        # overdraft) → 5 KPIs + 5 tables + 2 timelines + 5 aging bars
-        # = 17. Phase F.5.1 adds Sweep target non-zero EOD
-        # (KPI + table + aging bar) → 20. Phase F.5.2 adds
-        # Concentration Master sweep drift (KPI + timeline) → 22.
-        # Phase F.5.3 adds ACH Origination Settlement non-zero EOD
-        # (KPI + table + aging bar) → 25. Phase F.5.4 adds ACH internal
-        # sweep without Fed confirmation (KPI + table + aging bar) → 28.
-        # Phase F.5.5 adds Fed activity without internal catch-up
-        # (KPI + table + aging bar) → 31. Phase F.5.6 adds GL-vs-Fed
-        # Master drift (KPI + timeline) → 33. Phase F.5.7 adds Stuck in
-        # Internal Transfer Suspense (KPI + table + aging bar) → 36.
-        # Phase F.5.8 adds Internal Transfer Suspense non-zero EOD
-        # (KPI + table + aging bar) → 39. Phase F.5.9 adds Reversed-but-
-        # not-credited / double spend (KPI + table + aging bar) → 42.
-        # Phase F.5.10.a adds Accounts Expected Zero at EOD rollup
-        # (KPI + table) → 44. Phase F.5.10.b adds Two-Sided Post Mismatch
-        # rollup (KPI + table) → 46. Phase F.5.10.c adds Balance Drift
-        # Timelines rollup (single overlay timeline) → 47.
-        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS, 47)
+    def test_todays_exceptions_visual_count(self, ar_output_dir):
+        # Phase K.1.2: total KPI + breakdown bar + unified table = 3.
+        self._assert_visual_count(ar_output_dir, SHEET_AR_TODAYS_EXCEPTIONS, 3)
+
+    def test_exceptions_trends_visual_count(self, ar_output_dir):
+        # Phase K.1.3: 3 rollups moved off legacy Exceptions (drift
+        # timelines + 2 KPI/table pairs = 5) + 2 new unified-dataset
+        # trend visuals (aging matrix, per-check trend) = 7.
+        self._assert_visual_count(ar_output_dir, SHEET_AR_EXCEPTIONS_TRENDS, 7)
 
     def _assert_visual_count(self, out_dir: Path, sheet_id: str, expected: int) -> None:
         analysis = _load(out_dir, "account-recon-analysis.json")
@@ -2172,7 +2164,8 @@ class TestGettingStartedSheet:
             "ar-gs-balances",
             "ar-gs-transfers",
             "ar-gs-transactions",
-            "ar-gs-exceptions",
+            "ar-gs-todays-exceptions",
+            "ar-gs-exceptions-trends",
         ):
             assert expected in ids, f"Missing text block {expected}"
 
@@ -2238,9 +2231,9 @@ def _find_sheet(analysis: dict, sheet_id: str) -> dict:
 
 
 class TestFilterGroups:
-    """Shared date-range + 6 multi-selects + 4 Show-Only toggles +
-    2 Exceptions-pinned drift filters + 5 drill-down parameter filters
-    = 19 filter groups."""
+    """Shared date-range + 6 multi-selects + 3 Show-Only toggles +
+    5 drill-down parameter filters + Daily Statement (account/date) +
+    Today's Exceptions (check-type/account/aging) filter groups."""
 
     _EXPECTED_IDS = {
         "fg-ar-date-range",
@@ -2254,18 +2247,18 @@ class TestFilterGroups:
         "fg-ar-balances-ledger-drift",
         "fg-ar-balances-subledger-drift",
         "fg-ar-balances-overdraft",
-        "fg-ar-exceptions-ledger-drift-only",
-        "fg-ar-exceptions-subledger-drift-only",
-        "fg-ar-exceptions-sweep-drift-only",
-        "fg-ar-exceptions-gl-fed-drift-only",
         "fg-ar-transactions-failed",
         "fg-ar-drill-subledger-on-txn",
         "fg-ar-drill-transfer-on-txn",
         "fg-ar-drill-ledger-on-balances-subledger",
         "fg-ar-drill-activity-date-on-txn",
         "fg-ar-drill-transfer-type-on-txn",
+        "fg-ar-drill-account-on-txn",
         "fg-ar-ds-account",
         "fg-ar-ds-balance-date",
+        "fg-ar-todays-exc-check-type",
+        "fg-ar-todays-exc-account",
+        "fg-ar-todays-exc-aging",
     }
 
     def test_filter_group_ids(self, ar_output_dir):
@@ -2273,7 +2266,7 @@ class TestFilterGroups:
         ids = {fg["FilterGroupId"] for fg in analysis["Definition"]["FilterGroups"]}
         assert ids == self._EXPECTED_IDS
 
-    def test_date_range_scopes_four_tabs(self, ar_output_dir):
+    def test_date_range_scopes_five_tabs(self, ar_output_dir):
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
         fg = _find_fg(analysis, "fg-ar-date-range")
         scopes = fg["ScopeConfiguration"]["SelectedSheets"][
@@ -2284,7 +2277,8 @@ class TestFilterGroups:
             SHEET_AR_BALANCES,
             SHEET_AR_TRANSFERS,
             SHEET_AR_TRANSACTIONS,
-            SHEET_AR_EXCEPTIONS,
+            SHEET_AR_TODAYS_EXCEPTIONS,
+            SHEET_AR_EXCEPTIONS_TRENDS,
         }
 
     @pytest.mark.parametrize(
@@ -2346,6 +2340,96 @@ class TestFilterGroups:
         assert fg["CrossDataset"] == "SINGLE_DATASET"
 
 
+_FILTER_TYPE_KEYS = (
+    "CategoryFilter",
+    "TimeRangeFilter",
+    "TimeEqualityFilter",
+    "NumericRangeFilter",
+)
+_DIRECT_CONTROL_KEYS = ("Dropdown", "DateTimePicker", "Slider", "List", "TextField",
+                        "RelativeDateTime")
+
+
+def _filter_inner(f: dict) -> tuple[str, dict]:
+    for k in _FILTER_TYPE_KEYS:
+        if k in f:
+            return k, f[k]
+    raise AssertionError(f"Unknown filter shape: {list(f.keys())}")
+
+
+def _sheet_count(fg: dict) -> int:
+    scope = fg["ScopeConfiguration"].get("SelectedSheets")
+    if scope is None:
+        return 0
+    return len({s["SheetId"] for s in scope["SheetVisualScopingConfigurations"]})
+
+
+class TestFilterControlRule:
+    """Guard the AWS rule that broke three K.1 deploy attempts:
+
+    * Multi-sheet filter (>1 sheet in scope) MUST carry
+      ``DefaultFilterControlConfiguration``; every bound FilterControl
+      MUST be ``CrossSheet`` (inherits the default).
+    * Single-sheet filter MUST NOT carry
+      ``DefaultFilterControlConfiguration``; every bound FilterControl
+      MUST be a direct widget (Dropdown / DateTimePicker / Slider /...)
+      that specifies its own spec.
+
+    Walks every FilterGroup + every sheet's FilterControls in the
+    generated analysis and asserts the rule by inspection.
+    """
+
+    def test_filter_default_control_matches_sheet_count(self, ar_output_dir):
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        for fg in analysis["Definition"]["FilterGroups"]:
+            n = _sheet_count(fg)
+            for f in fg["Filters"]:
+                key, body = _filter_inner(f)
+                has_default = "DefaultFilterControlConfiguration" in body
+                fid = body["FilterId"]
+                if n > 1:
+                    assert has_default, (
+                        f"Multi-sheet filter '{fid}' ({key}, {n} sheets) "
+                        f"missing DefaultFilterControlConfiguration"
+                    )
+                else:
+                    assert not has_default, (
+                        f"Single-sheet filter '{fid}' ({key}) must not "
+                        f"carry DefaultFilterControlConfiguration"
+                    )
+
+    def test_control_kind_matches_source_filter_sheet_count(self, ar_output_dir):
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        sheet_count_by_filter: dict[str, int] = {}
+        for fg in analysis["Definition"]["FilterGroups"]:
+            n = _sheet_count(fg)
+            for f in fg["Filters"]:
+                _, body = _filter_inner(f)
+                sheet_count_by_filter[body["FilterId"]] = n
+
+        for sheet in analysis["Definition"]["Sheets"]:
+            for ctrl in sheet.get("FilterControls", []):
+                kind, body = next(iter(ctrl.items()))
+                src = body["SourceFilterId"]
+                n = sheet_count_by_filter.get(src)
+                assert n is not None, (
+                    f"Control '{body.get('FilterControlId')}' references "
+                    f"unknown filter '{src}'"
+                )
+                if n > 1:
+                    assert kind == "CrossSheet", (
+                        f"Control '{body.get('FilterControlId')}' bound to "
+                        f"multi-sheet filter '{src}' must be CrossSheet, "
+                        f"got {kind}"
+                    )
+                else:
+                    assert kind in _DIRECT_CONTROL_KEYS, (
+                        f"Control '{body.get('FilterControlId')}' bound to "
+                        f"single-sheet filter '{src}' must be a direct "
+                        f"widget, got {kind}"
+                    )
+
+
 class TestParameterDeclarations:
     """Phase 5 drill-downs use single-valued string parameters; the
     Daily Statement balance-date drill uses one date-time parameter."""
@@ -2356,6 +2440,7 @@ class TestParameterDeclarations:
         "pArTransferId",
         "pArActivityDate",
         "pArTransferType",
+        "pArAccountId",
         "pArDsAccountId",
     }
     _DATETIME_PARAMS = {"pArDsBalanceDate"}
@@ -2556,70 +2641,6 @@ class TestVisualActions:
         v = _find_visual(analysis, source_visual)
         assert _same_sheet_targets(v) == [target_visual]
 
-    @pytest.mark.parametrize(
-        "visual_id, target_sheet, parameter_name, source_field",
-        [
-            (
-                "ar-exc-ledger-drift-table",
-                SHEET_AR_BALANCES,
-                "pArLedgerAccountId",
-                "ar-exc-ldrift-ledger-id",
-            ),
-            (
-                "ar-exc-subledger-drift-table",
-                SHEET_AR_TRANSACTIONS,
-                "pArSubledgerAccountId",
-                "ar-exc-sdrift-subledger-id",
-            ),
-            (
-                "ar-exc-nonzero-table",
-                SHEET_AR_TRANSACTIONS,
-                "pArTransferId",
-                "ar-exc-nz-id",
-            ),
-        ],
-    )
-    def test_exceptions_tables_drill_to_correct_tab(
-        self,
-        ar_output_dir,
-        visual_id: str,
-        target_sheet: str,
-        parameter_name: str,
-        source_field: str,
-    ):
-        analysis = _load(ar_output_dir, "account-recon-analysis.json")
-        v = _find_visual(analysis, visual_id)
-        assert _drill_nav_target(v) == target_sheet
-        assert _set_param(v) == (parameter_name, source_field)
-
-    def test_breach_drill_sets_subledger_date_and_type(self, ar_output_dir):
-        """Limit-breach row → Transactions (sub-ledger, day, type) slice.
-
-        The breach table's three-parameter drill narrows Transactions to
-        the exact (sub-ledger, activity_date, transfer_type) that
-        breached the limit — a two-param drill would leave type open and
-        bury the signal in unrelated same-sub-ledger rows."""
-        analysis = _load(ar_output_dir, "account-recon-analysis.json")
-        v = _find_visual(analysis, "ar-exc-breach-table")
-        assert _drill_nav_target(v) == SHEET_AR_TRANSACTIONS
-        assert _set_params_all(v) == [
-            ("pArSubledgerAccountId", "ar-exc-br-subledger-id"),
-            ("pArActivityDate", "ar-exc-br-date-str"),
-            ("pArTransferType", "ar-exc-br-type"),
-        ]
-
-    def test_overdraft_drill_sets_subledger_and_date(self, ar_output_dir):
-        """Overdraft row → Transactions (sub-ledger, day). Transfer-type
-        isn't relevant — overdraft is the sum of legs regardless of
-        type."""
-        analysis = _load(ar_output_dir, "account-recon-analysis.json")
-        v = _find_visual(analysis, "ar-exc-overdraft-table")
-        assert _drill_nav_target(v) == SHEET_AR_TRANSACTIONS
-        assert _set_params_all(v) == [
-            ("pArSubledgerAccountId", "ar-exc-od-subledger-id"),
-            ("pArActivityDate", "ar-exc-od-date-str"),
-        ]
-
     def test_balances_subledger_right_click_drills_to_daily_statement(
         self, ar_output_dir,
     ):
@@ -2671,11 +2692,6 @@ class TestConditionalFormatting:
         "visual_id, field_id",
         [
             ("ar-transfers-summary-table", "ar-xfr-id"),
-            ("ar-exc-ledger-drift-table", "ar-exc-ldrift-ledger-id"),
-            ("ar-exc-subledger-drift-table", "ar-exc-sdrift-subledger-id"),
-            ("ar-exc-nonzero-table", "ar-exc-nz-id"),
-            ("ar-exc-breach-table", "ar-exc-br-subledger-id"),
-            ("ar-exc-overdraft-table", "ar-exc-od-subledger-id"),
         ],
     )
     def test_left_click_drill_sources_have_link_format(
@@ -2889,18 +2905,11 @@ class TestShowOnlyToggleControls:
             "Show Only Failed"
         )
 
-    def test_exceptions_has_no_toggle(self, ar_output_dir):
-        """Exceptions sheet is already the "problems only" sheet — no need
-        for another 'Show Only …' layer."""
-        analysis = _load(ar_output_dir, "account-recon-analysis.json")
-        sheet = _find_sheet(analysis, SHEET_AR_EXCEPTIONS)
-        assert self._single_select_titles(sheet) == {}
-
 
 class TestTransferTypeControl:
     """Phase 5.5 transfer-type filter surfaces as a CrossSheet control on
-    Transfers / Transactions / Exceptions; Balances has no transfer_type
-    column in scope so the control would dangle there."""
+    Transfers / Transactions; Balances has no transfer_type column in
+    scope so the control would dangle there."""
 
     def _cross_sheet_sources(self, sheet: dict) -> set[str]:
         sources: set[str] = set()
@@ -2912,7 +2921,7 @@ class TestTransferTypeControl:
 
     @pytest.mark.parametrize(
         "sheet_id",
-        [SHEET_AR_TRANSFERS, SHEET_AR_TRANSACTIONS, SHEET_AR_EXCEPTIONS],
+        [SHEET_AR_TRANSFERS, SHEET_AR_TRANSACTIONS],
     )
     def test_transfer_type_control_present(self, ar_output_dir, sheet_id: str):
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
@@ -2926,25 +2935,6 @@ class TestTransferTypeControl:
 
 
 class TestPhase5DatasetDeclarations:
-    """The two Phase 5 reconciliation datasets must be declared and backed
-    by generated JSON on disk."""
-
-    @pytest.mark.parametrize(
-        "identifier, id_suffix",
-        [
-            ("ar-limit-breach-ds", "qs-gen-ar-limit-breach-dataset"),
-            ("ar-overdraft-ds", "qs-gen-ar-overdraft-dataset"),
-        ],
-    )
-    def test_declared_and_on_disk(
-        self, ar_output_dir, identifier: str, id_suffix: str,
-    ):
-        analysis = _load(ar_output_dir, "account-recon-analysis.json")
-        decls = analysis["Definition"]["DataSetIdentifierDeclarations"]
-        ids = {d["Identifier"] for d in decls}
-        assert identifier in ids
-        assert (ar_output_dir / "datasets" / f"{id_suffix}.json").exists()
-
     def test_subledger_drift_dataset_has_overdraft_status(self, ar_output_dir):
         """The Show-Only-Overdraft toggle binds to
         subledger_balance_drift.overdraft_status — verify the derived

@@ -7,7 +7,7 @@ name = "quicksight-gen"
 dynamic = ["version"]
 description = "Programmatic AWS QuickSight analysis generator for financial reporting"
 readme = "README.md"
-license = "Unlicense"
+license = "MIT"
 requires-python = ">=3.11"
 keywords = [
     "quicksight",
@@ -18,7 +18,7 @@ keywords = [
     "finance",
 ]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Intended Audience :: Financial and Insurance Industry",
     "Operating System :: OS Independent",

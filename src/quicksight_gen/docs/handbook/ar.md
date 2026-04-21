@@ -31,16 +31,22 @@ telling-transfer cycles): see [Account Structure](../Training_Story.md).
 
 ## The morning routine
 
-Open the AR dashboard and switch to the **Exceptions** sheet. Three
-rollups sit at the top of the page in order — Balance Drift Timelines,
-Two-Sided Post Mismatch, Expected-Zero EOD. Read them first; they
-answer "did *anything* break overnight?" Each rollup is a different
-*shape* of break, so a clean morning means all three KPIs are zero or
-all three timelines are flat.
+Open the AR dashboard. The Exceptions surface is split across two
+sheets: **Today's Exceptions** (the row-level operational view) and
+**Exceptions Trends** (the rollup / time-series view).
 
-If a rollup fires, scroll down to the per-check sections that own the
-rows. Each per-check has its own KPI / detail table / aging bar
-chart, and each is a walkthrough below.
+Start on **Today's Exceptions**. The big-number KPI answers "did
+anything break overnight?" — zero is a clean morning. The *Exceptions
+by Check* breakdown bar shows which checks contributed; the *Open
+Exceptions* table lists every exception row across all 14 checks and
+narrows when you set the **Check Type** sheet control.
+
+If the KPI is non-zero, glance at **Exceptions Trends** to read the
+three rollups (Balance Drift Timelines, Two-Sided Post Mismatch,
+Expected-Zero EOD) — each is a different *shape* of break, so reading
+them first trains your eye on the error class. Then come back, set
+**Check Type** to the check that fired, and drill the row. Each
+per-check walkthrough below describes column meanings and drill paths.
 
 ## Morning checks — the three rollups
 

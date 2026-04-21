@@ -317,6 +317,89 @@ class TestStateToggles:
             assert ctrl["Title"] == title, sheet_id
 
 
+_FILTER_TYPE_KEYS = (
+    "CategoryFilter",
+    "TimeRangeFilter",
+    "TimeEqualityFilter",
+    "NumericRangeFilter",
+)
+_DIRECT_CONTROL_KEYS = ("Dropdown", "DateTimePicker", "Slider", "List", "TextField",
+                        "RelativeDateTime")
+
+
+def _filter_inner(f: dict) -> tuple[str, dict]:
+    for k in _FILTER_TYPE_KEYS:
+        if k in f:
+            return k, f[k]
+    raise AssertionError(f"Unknown filter shape: {list(f.keys())}")
+
+
+def _sheet_count(fg: dict) -> int:
+    scope = fg["ScopeConfiguration"].get("SelectedSheets")
+    if scope is None:
+        return 0
+    return len({s["SheetId"] for s in scope["SheetVisualScopingConfigurations"]})
+
+
+class TestFilterControlRule:
+    """Same guard as ``test_account_recon.TestFilterControlRule`` but
+    walks the PR analysis. Multi-sheet filter ⇒ DefaultFilterControl
+    + CrossSheet controls; single-sheet filter ⇒ no DefaultFilterControl
+    + direct widget controls. Three K.1 deploy attempts failed before
+    this rule was correctly enforced; this catches regressions at unit
+    speed instead of at deploy time."""
+
+    def test_filter_default_control_matches_sheet_count(self, output_dir: Path):
+        analysis = _load(output_dir, "payment-recon-analysis.json")
+        for fg in analysis["Definition"]["FilterGroups"]:
+            n = _sheet_count(fg)
+            for f in fg["Filters"]:
+                key, body = _filter_inner(f)
+                has_default = "DefaultFilterControlConfiguration" in body
+                fid = body["FilterId"]
+                if n > 1:
+                    assert has_default, (
+                        f"Multi-sheet filter '{fid}' ({key}, {n} sheets) "
+                        f"missing DefaultFilterControlConfiguration"
+                    )
+                else:
+                    assert not has_default, (
+                        f"Single-sheet filter '{fid}' ({key}) must not "
+                        f"carry DefaultFilterControlConfiguration"
+                    )
+
+    def test_control_kind_matches_source_filter_sheet_count(self, output_dir: Path):
+        analysis = _load(output_dir, "payment-recon-analysis.json")
+        sheet_count_by_filter: dict[str, int] = {}
+        for fg in analysis["Definition"]["FilterGroups"]:
+            n = _sheet_count(fg)
+            for f in fg["Filters"]:
+                _, body = _filter_inner(f)
+                sheet_count_by_filter[body["FilterId"]] = n
+
+        for sheet in analysis["Definition"]["Sheets"]:
+            for ctrl in sheet.get("FilterControls", []):
+                kind, body = next(iter(ctrl.items()))
+                src = body["SourceFilterId"]
+                n = sheet_count_by_filter.get(src)
+                assert n is not None, (
+                    f"Control '{body.get('FilterControlId')}' references "
+                    f"unknown filter '{src}'"
+                )
+                if n > 1:
+                    assert kind == "CrossSheet", (
+                        f"Control '{body.get('FilterControlId')}' bound to "
+                        f"multi-sheet filter '{src}' must be CrossSheet, "
+                        f"got {kind}"
+                    )
+                else:
+                    assert kind in _DIRECT_CONTROL_KEYS, (
+                        f"Control '{body.get('FilterControlId')}' bound to "
+                        f"single-sheet filter '{src}' must be a direct "
+                        f"widget, got {kind}"
+                    )
+
+
 class TestExceptionTables:
     """SPEC 2.4: three new mismatch tables on the Exceptions tab."""
 

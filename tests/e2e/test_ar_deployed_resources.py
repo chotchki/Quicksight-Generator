@@ -51,6 +51,7 @@ class TestArDatasetsExist:
             )
 
     def test_dataset_count(self, ar_dataset_ids):
-        # Phase F: 9 baseline + 9 CMS-specific checks + 3 cross-check rollups.
-        # Phase I.2: + 2 Daily Statement (summary + transactions).
-        assert len(ar_dataset_ids) == 23
+        # Phase K.1.4: 7 baseline + 3 cross-check rollups + 2 Daily
+        # Statement + 1 unified-exceptions = 13. The 11 per-check
+        # exception datasets folded into the unified view.
+        assert len(ar_dataset_ids) == 13

@@ -1,6 +1,6 @@
 # Sub-Ledger Drift
 
-*Per-check walkthrough — Account Reconciliation Exceptions sheet.*
+*Per-check walkthrough — Account Reconciliation Today's Exceptions sheet.*
 
 ## The story
 
@@ -29,94 +29,93 @@ match what their posting history adds up to?"
 
 ## Where to look
 
-Open the AR dashboard, **Exceptions** sheet. Scroll past the rollups
-(Balance Drift Timelines, Two-Sided Post Mismatch, Expected-Zero EOD)
-to the baseline-checks block. Look for the KPI titled **Sub-Ledger
-Drift Days** in the upper KPI row, next to **Ledger Drift Days** and
-**Non-Zero Transfers**.
+Open the AR dashboard, **Today's Exceptions** sheet. In the Controls
+strip at the top of the sheet, set **Check Type** to
+`Sub-Ledger Drift`. The **Total Exceptions** KPI recounts to just
+this check's rows, the **Exceptions by Check** breakdown bar collapses
+to a single red bar, and the **Open Exceptions** table below shows
+every row for this check — one row per (sub-ledger, date) cell where
+the stored balance disagrees with the posted computed balance.
+
+<details markdown><summary>Screenshot — Open Exceptions filtered to this check</summary>
+
+![Open Exceptions table filtered to Sub-Ledger Drift, hundreds of rows across the four planted drift incidents](../screenshots/ar/todays-exceptions-filtered-sub-ledger-drift.png)
+
+</details>
 
 ## What you'll see in the demo
 
-The KPI shows **401** sub-ledger drift days.
+Several hundred rows — drift persists day over day, so one planted
+incident contributes one row per day since. Key columns to read:
 
-<details markdown><summary>Screenshot — KPI</summary>
+| column            | value for this check                                                                |
+|-------------------|-------------------------------------------------------------------------------------|
+| `account_id`      | the sub-ledger that's drifting (e.g. `cust-bigfoot-brews`, `gl-1850-sub-big-meadow-dairy-main`) |
+| `account_name`    | the sub-ledger's display name                                                       |
+| `account_level`   | `Sub-Ledger`                                                                        |
+| `ledger_name`     | the parent control ledger (e.g. "Customer Deposits — DDA Control", "Cash Concentration Master") |
+| `transfer_id`     | blank — drift is a balance shape, not a single-transfer shape                       |
+| `primary_amount`  | `drift` — the dollar gap (stored − computed); sign tells you the direction          |
+| `secondary_amount`| `stored_balance` — the stored EOD number the feed asserted                          |
 
-![Sub-Ledger Drift Days KPI showing the count 401](../screenshots/ar/sub-ledger-drift-01-kpi.png)
+Four planted incidents in `_SUBLEDGER_DRIFT_PLANT` drive the entire
+count:
 
-</details>
+| sub-ledger                              | incident day | drift       |
+|-----------------------------------------|--------------|-------------|
+| Big Meadow Dairy — DDA                  | Apr 17 2026  | −$75.00     |
+| Bigfoot Brews — DDA                     | Apr 14 2026  | +$200.00    |
+| Big Meadow Dairy — ZBA Operating (main) | Apr 9 2026   | −$150.50    |
+| Cascade Timber Mill — DDA               | Mar 30 2026  | +$450.00    |
 
-The number is large because drift persists day-to-day. Four planted
-sub-ledger drift incidents in `_SUBLEDGER_DRIFT_PLANT`, each landing
-on a specific day and then rolling forward through every subsequent
-day's stored balance, account for the full count. The four incidents:
-
-| sub-ledger                              | started     | delta       |
-|-----------------------------------------|-------------|-------------|
-| Big Meadow Dairy — DDA                  | Apr 17 2026 | −$75.00     |
-| Bigfoot Brews — DDA                     | Apr 14 2026 | +$200.00    |
-| Big Meadow Dairy — ZBA Operating (main) | Apr 9 2026  | −$150.50    |
-| Cascade Timber Mill — DDA               | Mar 30 2026 | +$450.00    |
-
-The detail table lists every (sub-ledger, date) cell where stored ≠
-computed. Columns: `subledger_account_id`, `subledger_name`,
-`ledger_name`, `scope`, `balance_date`, `stored_balance`,
-`computed_balance`, `drift`, `aging_bucket`. Sorted newest-first by
-date.
-
-<details markdown><summary>Screenshot — detail table</summary>
-
-![Sub-Ledger Balance Drift table sorted newest-first by balance_date](../screenshots/ar/sub-ledger-drift-02-table.png)
-
-</details>
-
-The aging bar chart shows the count by bucket. Bucket 4 (8-30 days)
-dominates because the older two plants (Mar 30 and Apr 9) have already
-rolled through enough days to push their cells out of the recent
-buckets.
-
-<details markdown><summary>Screenshot — aging chart</summary>
-
-![Sub-Ledger Drift by Age aging bar chart with bucket 4 (8-30 days) dominant](../screenshots/ar/sub-ledger-drift-03-aging.png)
-
-</details>
+Each planted incident keeps its same dollar `drift` value every day
+afterward — same dollars rolling forward — so the count per incident
+equals "days since the incident day."
 
 ## What it means
 
 Each row is one (sub-ledger, date) cell where the upstream-fed stored
 balance disagrees with the running sum of postings to that sub-ledger.
-The `drift` column is the dollar gap: positive means stored is higher
+`primary_amount` is the dollar gap: positive means stored is higher
 than postings explain (a posting is missing, or a stored credit
 landed without a backing transaction); negative means stored is lower
 than postings explain (a posting is duplicated, or a stored debit
 landed without a backing transaction).
 
-The drift amount is the same on every consecutive day after the
-incident — same dollars rolling forward. A large bucket-4 count with
-just a few distinct dollar amounts means the *number of underlying
-incidents* is small; what's growing is days-since-restated. Sort the
-table by `subledger_account_id` mentally: cells with the same
-`drift` value on consecutive dates trace back to one event.
+Because the gap rolls forward day-after-day, the same dollar amount
+appearing on consecutive dates for the same `account_id` traces back
+to a *single* event. A handful of distinct drift amounts across
+hundreds of rows means the number of underlying incidents is small;
+what's growing is days-since-restated.
 
 ## Drilling in
 
-Click a `subledger_account_id` value in any row of the detail table.
-The drill switches to the **Transactions** sheet, filtered to that
-sub-ledger. The recompute is straightforward there: sum the postings
-forward from a known-good day; the day the sum stops matching stored
-is the day the incident landed.
+The `account_id` cell renders with a pale-green background — that
+tint is the dashboard's cue that a right-click menu is available.
+**Right-click** any `account_id` value and choose
+**View Transactions for Account-Day** from the context menu.
+QuickSight switches to the **Transactions** sheet and filters to
+every posting that touched that sub-ledger on that specific date —
+the day's individual debits and credits.
 
-If a sub-ledger appears with `drift` constant across multiple dates,
-look at the date *before* the first drift day — the upstream feed
-either reported a balance that doesn't reflect that day's postings,
-or a posting landed without updating stored. The Transactions sheet
-shows both sides.
+To trace the drift back to its origin, right-click the *oldest* row
+for a given `account_id` first: that's the earliest day the gap
+appeared. Walk to the day *before* that one — the posting that
+explains the jump either landed without updating stored, or the
+stored balance moved without a posting. The Transactions sheet shows
+both sides.
+
+The `transfer_id` column is left blank for this check because no
+single transfer represents the drift — the residual is a balance-shape
+disagreement across the account's full posting history. The
+account-day scope is the meaningful one.
 
 ## Next step
 
 Sub-ledger drift goes to whichever team owns the upstream feed for
-that account class:
+that sub-ledger's account class:
 
-- **Customer DDA drift** (Bigfoot Brews, Big Meadow Dairy, etc.) →
+- **Customer DDA drift** (`cust-bigfoot-brews`, `cust-big-meadow-dairy`, etc.) →
   **Core Banking Operations**. Their daily customer-balance feed is
   the source of truth for `stored_balance` on cust-* rows.
 - **ZBA operating sub-account drift** (`gl-1850-sub-*` rows) → **ZBA
@@ -124,24 +123,23 @@ that account class:
   postings and the stored balance for these; if they disagree, the
   engine emitted one without the other.
 
-Hand off the sub-ledger ID, the first drift date, and the constant
-drift dollar amount. The owning team restates the stored balance to
-match the computed balance for that day forward, or finds and posts
-the missing transaction — both paths zero out the drift on the next
-day's snapshot.
+Hand off the `account_id`, the first (oldest) drift date, and the
+constant drift dollar amount. The owning team restates stored to
+match computed for that day forward, or finds and posts the missing
+transaction — both paths zero out the drift on the next day's
+snapshot.
 
-Old drift (bucket 5: >30 days) usually means the operational fix is
-beyond the live feed window and needs an explicit prior-period
-adjustment journal entry.
+Old drift (`aging_bucket` = 5: >30 days) usually means the
+operational fix is beyond the live feed window and needs an explicit
+prior-period adjustment journal entry.
 
 ## Related walkthroughs
 
 - [Ledger Drift](ledger-drift.md) — the corresponding check at the
-  ledger level: stored ledger balance vs Σ of its sub-ledgers'
-  stored balances. Sub-ledger drift here can also surface as ledger
-  drift there if the sub-ledger rolls up to a control account.
+  ledger level: stored ledger balance vs Σ of its sub-ledgers' stored
+  balances. Sub-ledger drift here can also surface as ledger drift
+  there if the sub-ledger rolls up to a control account.
 - [Balance Drift Timelines Rollup](balance-drift-timelines-rollup.md) —
-  not directly related (that rollup tracks two-sided invariant drift,
-  not sub-ledger feed drift) but lives nearby on the sheet and is
-  often confused; the rollup teaches "are SNB↔Fed totals matching?",
-  this check teaches "is stored sub-ledger ≡ posted sub-ledger?".
+  the Trends-sheet rollup of the same invariant. Read there for "is
+  this a one-day blip or is it building?"; read here for the row-level
+  account-day cells.

@@ -142,12 +142,41 @@ def _delete_analyses(client, account_id: str, apps: list[AppFiles]) -> None:
             )
 
 
-def _delete_datasets(client, account_id: str, out_dir: Path) -> None:
+def _dataset_ids_for_apps(apps: list[AppFiles]) -> set[str]:
+    """Derive the DataSetIds each app's analysis references.
+
+    Walks ``Definition.DataSetIdentifierDeclarations`` on every analysis and
+    pulls the trailing segment of each ``DataSetArn``
+    (``arn:...:dataset/<id>``). Used to scope the dataset delete-then-create
+    so that ``deploy <single-app>`` doesn't recreate the *other* app's
+    datasets and leave that app's analysis with stale internal references.
+    """
+    ids: set[str] = set()
+    for app in apps:
+        if not app.analysis_path.exists():
+            continue
+        decls = (
+            _read_json(app.analysis_path)
+            .get("Definition", {})
+            .get("DataSetIdentifierDeclarations", [])
+        )
+        for decl in decls:
+            arn = decl.get("DataSetArn", "")
+            if "/" in arn:
+                ids.add(arn.rsplit("/", 1)[-1])
+    return ids
+
+
+def _delete_datasets(
+    client, account_id: str, out_dir: Path, allowed_ids: set[str] | None,
+) -> None:
     datasets_dir = out_dir / "datasets"
     if not datasets_dir.is_dir():
         return
     for ds_file in sorted(datasets_dir.glob("*.json")):
         ds_id = _read_json(ds_file)["DataSetId"]
+        if allowed_ids is not None and ds_id not in allowed_ids:
+            continue
         click.echo(f"==> Dataset: {ds_id}")
         if _resource_exists(
             client.describe_data_set,
@@ -196,12 +225,16 @@ def _create_theme(client, theme_path: Path) -> None:
     client.create_theme(**payload)
 
 
-def _create_datasets(client, out_dir: Path) -> None:
+def _create_datasets(
+    client, out_dir: Path, allowed_ids: set[str] | None,
+) -> None:
     datasets_dir = out_dir / "datasets"
     if not datasets_dir.is_dir():
         return
     for ds_file in sorted(datasets_dir.glob("*.json")):
         payload = _read_json(ds_file)
+        if allowed_ids is not None and payload["DataSetId"] not in allowed_ids:
+            continue
         click.echo(f"==> Creating Dataset: {payload['DataSetId']}")
         client.create_data_set(**payload)
 
@@ -256,10 +289,18 @@ def deploy(cfg: Config, out_dir: Path, app_names: list[str]) -> int:
     theme_path = out_dir / "theme.json"
     datasource_path = out_dir / "datasource.json"
 
+    # Scope dataset delete-then-create to the apps actually being deployed.
+    # `deploy account-recon` previously delete-then-created every dataset
+    # file in out_dir/datasets/ (including PR's), leaving the *other* app's
+    # analysis with stale internal refs even though the ARNs survived.
+    # Allowed-set is derived from each loaded analysis's
+    # DataSetIdentifierDeclarations.
+    allowed_dataset_ids = _dataset_ids_for_apps(apps)
+
     # Delete in dependency order
     _delete_dashboards(client, account_id, apps)
     _delete_analyses(client, account_id, apps)
-    _delete_datasets(client, account_id, out_dir)
+    _delete_datasets(client, account_id, out_dir, allowed_dataset_ids)
     _delete_theme(client, account_id, theme_path)
     _delete_datasource(client, account_id, datasource_path)
 
@@ -267,7 +308,7 @@ def deploy(cfg: Config, out_dir: Path, app_names: list[str]) -> int:
 
     _create_datasource(client, datasource_path)
     _create_theme(client, theme_path)
-    _create_datasets(client, out_dir)
+    _create_datasets(client, out_dir, allowed_dataset_ids)
     analysis_ids = _create_analyses(client, apps)
     dashboard_ids = _create_dashboards(client, apps)
 

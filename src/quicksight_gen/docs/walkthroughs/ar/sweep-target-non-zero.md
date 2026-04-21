@@ -1,6 +1,6 @@
 # Sweep Target Non-Zero EOD
 
-*Per-check walkthrough — Account Reconciliation Exceptions sheet.*
+*Per-check walkthrough — Account Reconciliation Today's Exceptions sheet.*
 
 ## The story
 
@@ -27,75 +27,65 @@ non-zero?"
 
 ## Where to look
 
-Open the AR dashboard, **Exceptions** sheet. Scroll past the baseline
-checks (drift, non-zero, breach, overdraft) to the CMS-specific
-section. The first KPI in that section is **Sweep Target Non-Zero
-EOD**.
+Open the AR dashboard, **Today's Exceptions** sheet. In the Controls
+strip at the top of the sheet, set **Check Type** to
+`Sweep Target Non-Zero EOD`. The **Total Exceptions** KPI recounts
+to just this check's rows, the **Exceptions by Check** breakdown bar
+collapses to a single orange bar, and the **Open Exceptions** table
+below shows every row for this check — one row per
+(sub-account, date) cell where stored balance is non-zero.
+
+<details markdown><summary>Screenshot — Open Exceptions filtered to this check</summary>
+
+![Open Exceptions table filtered to Sweep Target Non-Zero EOD, rows rolling forward from the two planted sweep-fail incidents](../screenshots/ar/todays-exceptions-filtered-sweep-target-non-zero.png)
+
+</details>
 
 ## What you'll see in the demo
 
-The KPI shows **116** sweep-target non-zero days.
+Many rows — sweep-target non-zero is sticky, so two planted
+incidents contribute one row per day since each. Key columns to
+read:
 
-<details markdown><summary>Screenshot — KPI</summary>
-
-![Sweep Target Non-Zero EOD KPI showing the count 116](../screenshots/ar/sweep-target-non-zero-01-kpi.png)
-
-</details>
+| column            | value for this check                                                |
+|-------------------|---------------------------------------------------------------------|
+| `account_id`      | the sub-account that didn't sweep (e.g. `gl-1850-sub-big-meadow-dairy-main`) |
+| `account_name`    | the sub-account's display name                                      |
+| `account_level`   | `Sub-Ledger`                                                        |
+| `transfer_id`     | blank — sweep-fail is an EOD-balance shape, not a transfer shape    |
+| `primary_amount`  | `stored_balance` — the non-zero EOD dollar amount                   |
+| `secondary_amount`| blank                                                               |
 
 Two planted sweep-fail incidents in `_ZBA_SWEEP_FAIL_PLANT` are the
 seed:
 
-| sub-account                              | sweep skipped | residual            |
-|------------------------------------------|---------------|--------------------:|
-| Big Meadow Dairy — Operating Main        | Apr 16 2026   | $875.00 (1 day ago) |
-| Big Meadow Dairy — Operating North       | Apr 5 2026    | $875.00 (14 days ago) |
+| sub-account                          | sweep skipped | residual              |
+|--------------------------------------|---------------|----------------------:|
+| Big Meadow Dairy — Operating Main    | Apr 16 2026   | $875.00 (1 day ago)   |
+| Big Meadow Dairy — Operating North   | Apr 5 2026    | $875.00 (14 days ago) |
 
 Both plants land a guaranteed $875 deposit on the skip day so the
 EOD balance reliably ends non-zero. Once a skip lands, that
 sub-account stays non-zero every subsequent day — driving the count
 up quickly.
 
-The detail table lists every (sub-account, date) cell where the
-stored balance is non-zero. Columns: `subledger_account_id`,
-`subledger_name`, `ledger_name`, `balance_date`, `balance_date_str`,
-`stored_balance`, `aging_bucket`. Sorted newest-first.
-
-<details markdown><summary>Screenshot — detail table</summary>
-
-![Sweep Target Non-Zero EOD table sorted newest-first by balance_date](../screenshots/ar/sweep-target-non-zero-02-table.png)
-
-</details>
-
-The aging bar chart shows bucket 4 (8-30 days) carrying the dominant
-share — the older Apr 5 plant on Big Meadow Dairy — Operating North
-has aged through buckets 1, 2, 3 into 4 and is the bulk of the count.
-Bucket 3 (4-7 days) and bucket 5 (>30 days) carry smaller counts;
-buckets 1 and 2 hold the most recent sweep-target non-zero days from
-the Apr 16 plant on Operating Main.
-
-<details markdown><summary>Screenshot — aging chart</summary>
-
-![Sweep Targets by Age aging bar chart with bucket 4 (8-30 days) dominant](../screenshots/ar/sweep-target-non-zero-03-aging.png)
-
-</details>
-
 ## What it means
 
-Each row says: on `balance_date`, sub-account `subledger_name` ended
-the day with `stored_balance` dollars (non-zero). The row recurs
+Each row says: on `exception_date`, sub-account `account_name` ended
+the day with `primary_amount` dollars (non-zero). The row recurs
 every day the sub-account stays non-zero — so a single skipped sweep
 14 days back shows up as 14 rows, each carrying the same
-`stored_balance`.
+`primary_amount`.
 
 A few patterns to watch for:
 
-- **Same `stored_balance` across consecutive days** for one
+- **Same `primary_amount` across consecutive days** for one
   sub-account means no posting activity in between — the sweep just
   hasn't fired again to clear it.
-- **`stored_balance` drifting up day over day** means the sub-account
+- **`primary_amount` drifting up day over day** means the sub-account
   is continuing to receive deposits without sweeping — the daily
   sweep is still broken, not just back-stuck on one missed cycle.
-- **`stored_balance` near zero but non-zero** (a few cents to a few
+- **`primary_amount` near zero but non-zero** (a few cents to a few
   dollars) usually means the sweep ran but rounded oddly, or a late
   posting landed after the sweep fired.
 
@@ -107,16 +97,22 @@ per-account issue.
 
 ## Drilling in
 
-Click a `subledger_account_id` value in any row. The drill switches
-to the **Transactions** sheet filtered to that sub-account and date.
+The `account_id` cell renders with a pale-green background — that
+tint is the dashboard's cue that a right-click menu is available.
+**Right-click** any `account_id` value and choose
+**View Transactions for Account-Day** from the context menu.
+QuickSight switches to the **Transactions** sheet and filters to
+every posting that touched that sub-account on that specific date.
 On a normal day you'd see the day's deposit credit followed by the
 EOD sweep debit netting back to zero. On a sweep-skip day the EOD
 sweep debit is missing — the deposit credit sits alone with no
 offsetting drain.
 
-Then walk forward day by day in the Transactions sheet to find the
-day a corrective sweep actually drains the account back to zero. If
-no corrective sweep ever lands, the sub-account stays non-zero
+To trace the residual back, right-click the *oldest* row for a
+given `account_id` first — that's the original skip day. Walk
+forward day by day in the Transactions sheet to find the day a
+corrective sweep actually drains the account back to zero. If no
+corrective sweep ever lands, the sub-account stays non-zero
 indefinitely.
 
 ## Next step
@@ -137,11 +133,10 @@ Operations**:
   schedule for that account and confirm it's still configured.
 
 Pair the investigation with **Concentration Master Sweep Drift** —
-the F.5.2 check next to this one — which measures whether the
-Master account credits actually equal the operating sub-account
-debits on the days a sweep *did* fire. The two checks together
-cover both "sweep didn't fire" and "sweep fired but the legs
-disagreed."
+the companion check that measures whether the Master account
+credits actually equal the operating sub-account debits on the days
+a sweep *did* fire. The two checks together cover both "sweep
+didn't fire" and "sweep fired but the legs disagreed."
 
 ## Related walkthroughs
 

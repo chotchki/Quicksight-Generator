@@ -1,6 +1,6 @@
-# Fed Activity Without Internal Post
+# Fed Activity Without Internal Catch-Up
 
-*Per-check walkthrough — Account Reconciliation Exceptions sheet.*
+*Per-check walkthrough — Account Reconciliation Today's Exceptions sheet.*
 
 ## The story
 
@@ -32,59 +32,53 @@ catch-up entry actually post?"
 
 ## Where to look
 
-Open the AR dashboard, **Exceptions** sheet. In the CMS-specific
-section, the **Fed Activity Without Internal Post** KPI sits above
-its detail table and aging chart — directly below the ACH Sweep
-Without Fed Confirmation check.
+Open the AR dashboard, **Today's Exceptions** sheet. In the Controls
+strip at the top of the sheet, set **Check Type** to
+`Fed Activity Without Internal Catch-Up`. The **Total Exceptions**
+KPI recounts to just this check's rows, the **Exceptions by Check**
+breakdown bar collapses to a single yellow bar, and the **Open
+Exceptions** table below shows every row for this check — one row
+per Fed-observed settlement transfer with no SNB internal catch-up.
+
+<details markdown><summary>Screenshot — Open Exceptions filtered to this check</summary>
+
+![Open Exceptions table filtered to Fed Activity Without Internal Catch-Up, two rows for the planted unmatched Fed settlements](../screenshots/ar/todays-exceptions-filtered-fed-card-no-internal-catchup.png)
+
+</details>
 
 ## What you'll see in the demo
 
-The KPI shows **2** Fed activities without internal posts.
+Two rows, one per planted unmatched Fed settlement. Key columns to
+read:
 
-<details markdown><summary>Screenshot — KPI</summary>
-
-![Fed Activity Without Internal Post KPI showing the count 2](../screenshots/ar/fed-card-no-internal-catchup-01-kpi.png)
-
-</details>
+| column            | value for this check                                                  |
+|-------------------|-----------------------------------------------------------------------|
+| `account_id`      | blank — this check is a per-transfer system check, not per-account    |
+| `account_level`   | `System`                                                              |
+| `transfer_id`     | the Fed-side observation transfer (e.g. `ar-card-fed-04`)             |
+| `primary_amount`  | `fed_amount` — the dollars the Fed posted for                         |
+| `secondary_amount`| blank                                                                 |
 
 Two planted incidents in `_CARD_INTERNAL_MISSING_PLANT` (days_ago
 = 4 and 9) are the seed:
 
-| fed_transfer_id  | fed_at              | fed_amount | aging        |
+| transfer_id      | fed_at              | fed_amount | aging        |
 |------------------|---------------------|-----------:|--------------|
 | `ar-card-fed-04` | Apr 15 2026 9:00am  |      2,890 | 3: 4-7 days  |
 | `ar-card-fed-09` | Apr 10 2026 9:00am  |      2,890 | 4: 8-30 days |
 
 Both planted Fed observations are for the same $2,890 amount —
 that's a coincidence of the demo amount pool, not a real-world
-pattern.
-
-The detail table shows both. Columns: `fed_transfer_id`, `fed_at`,
-`fed_amount`, `aging_bucket`. Sorted newest-first.
-
-<details markdown><summary>Screenshot — detail table</summary>
-
-![Fed Activity Without Internal Post table showing 2 rows](../screenshots/ar/fed-card-no-internal-catchup-02-table.png)
-
-</details>
-
-The aging bar chart shows the split: 1 row in bucket 3 (4-7 days)
-for `ar-card-fed-04`, 1 row in bucket 4 (8-30 days) for
-`ar-card-fed-09`.
-
-<details markdown><summary>Screenshot — aging chart</summary>
-
-![Fed Activity w/o Internal Post by Age aging bar chart with 1 row each in buckets 3 and 4](../screenshots/ar/fed-card-no-internal-catchup-03-aging.png)
-
-</details>
+pattern. Like the ACH sweep check, this one doesn't roll forward
+day-over-day: one missing catch-up = one row.
 
 ## What it means
 
-Each row says: on `fed_at`, the Fed-side card settlement transfer
-`fed_transfer_id` posted for `fed_amount` dollars on the FRB
-master account, but no SNB internal catch-up child transfer ever
-landed. The Fed says the cash cleared; the bank's own books don't
-record it.
+Each row says: on `exception_date`, the Fed-side card settlement
+transfer `transfer_id` posted for `primary_amount` dollars on the
+FRB master account, but no SNB internal catch-up child transfer
+ever landed. The Fed says the cash cleared; the bank's own books
+don't record it.
 
 A few patterns that produce this:
 
@@ -107,9 +101,11 @@ deliberately wasn't generated.
 
 ## Drilling in
 
-Click `fed_transfer_id` in any row. The drill switches to the
-**Transactions** sheet filtered to that one transfer, showing the
-Fed-side observation legs — typically a debit on
+The `transfer_id` cell renders as accent-colored text — that tint
+is the dashboard's cue that the cell is clickable. **Left-click**
+any `transfer_id` value. The drill switches to the **Transactions**
+sheet filtered to that one transfer, showing the Fed-side
+observation legs — typically a debit on
 `ext-payment-gateway-sub-clearing` and a credit on the FRB
 inbound rail. The internal catch-up child transfer (parent =
 this transfer ID) never landed, so it doesn't appear in the
@@ -130,7 +126,7 @@ Fed-without-internal rows go to **Card Acquiring Operations**:
   automation simply hasn't run yet (some settlement classes are
   intra-day, not real-time) or whether it's actually skipped.
 - **Bucket 3-4 (4-30 days)** → manually post the internal
-  catch-up entry. The amount is `fed_amount`; the merchant DDA
+  catch-up entry. The amount is `primary_amount`; the merchant DDA
   is identifiable from the Fed observation's metadata.
 - **Bucket 5 (>30 days)** → escalate. A month-old gap usually
   means the Fed and SNB views of card acquiring revenue have
@@ -143,9 +139,9 @@ DDA via the Fed-side leg directly, depending on how the
 settlement rail is wired. Confirm before contacting the merchant —
 they may not have noticed anything wrong.
 
-Pair with **GL vs Fed Master Drift** (F.5.6) which shows the
-cumulative drift this check contributes to — each row here is a
-drift day there.
+Pair with **GL vs Fed Master Drift** which shows the cumulative
+drift this check contributes to — each row here is a drift day
+there.
 
 ## Related walkthroughs
 
@@ -155,9 +151,9 @@ drift day there.
   Here: Fed posted, SNB never caught up. The two checks together
   cover both directions of the SNB-vs-Fed reconciliation gap.
 - [Two-Sided Post Mismatch Rollup](two-sided-post-mismatch-rollup.md) —
-  the rollup that unions this check with *ACH Sweep Without Fed
-  Confirmation*. Each row here contributes one "side_present =
-  Fed card observation" row there.
+  the Trends-sheet rollup that unions this check with *ACH Sweep
+  Without Fed Confirmation*. Each row here contributes one
+  "side_present = Fed card observation" row there.
 - [GL vs Fed Master Drift](gl-vs-fed-master-drift.md) — the
   cumulative drift between the SNB internal view and the Fed
   view of the FRB master account. Days here contribute to the

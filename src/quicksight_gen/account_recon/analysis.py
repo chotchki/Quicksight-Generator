@@ -12,33 +12,24 @@ same-sheet sub-ledger table).
 from __future__ import annotations
 
 from quicksight_gen.account_recon.constants import (
+    DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
     DS_AR_DAILY_STATEMENT_SUMMARY,
     DS_AR_DAILY_STATEMENT_TRANSACTIONS,
+    DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
     DS_AR_LEDGER_ACCOUNTS,
     DS_AR_LEDGER_BALANCE_DRIFT,
-    DS_AR_LIMIT_BREACH,
     DS_AR_NON_ZERO_TRANSFERS,
-    DS_AR_OVERDRAFT,
     DS_AR_SUBLEDGER_ACCOUNTS,
     DS_AR_SUBLEDGER_BALANCE_DRIFT,
-    DS_AR_SWEEP_TARGET_NONZERO,
-    DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
-    DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
-    DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
-    DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
-    DS_AR_GL_VS_FED_MASTER_DRIFT,
-    DS_AR_INTERNAL_REVERSAL_UNCREDITED,
-    DS_AR_INTERNAL_TRANSFER_STUCK,
-    DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
-    DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
-    DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
-    DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
+    DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+    DS_AR_UNIFIED_EXCEPTIONS,
     SHEET_AR_BALANCES,
     SHEET_AR_DAILY_STATEMENT,
-    SHEET_AR_EXCEPTIONS,
+    SHEET_AR_EXCEPTIONS_TRENDS,
     SHEET_AR_GETTING_STARTED,
+    SHEET_AR_TODAYS_EXCEPTIONS,
     SHEET_AR_TRANSACTIONS,
     SHEET_AR_TRANSFERS,
 )
@@ -46,15 +37,17 @@ from quicksight_gen.account_recon.datasets import build_all_datasets
 from quicksight_gen.account_recon.filters import (
     build_balances_controls,
     build_daily_statement_parameter_controls,
-    build_exceptions_controls,
+    build_exceptions_trends_controls,
     build_filter_groups,
+    build_todays_exceptions_controls,
     build_transactions_controls,
     build_transfers_controls,
 )
 from quicksight_gen.account_recon.visuals import (
     build_balances_visuals,
     build_daily_statement_visuals,
-    build_exceptions_visuals,
+    build_exceptions_trends_visuals,
+    build_todays_exceptions_visuals,
     build_transactions_visuals,
     build_transfers_visuals,
 )
@@ -200,18 +193,22 @@ _TRANSACTIONS_DESCRIPTION = (
     "rows feed the non-zero transfer cases on Exceptions."
 )
 
-_EXCEPTIONS_DESCRIPTION = (
-    "All reconciliation problems pulled together. Cross-check rollups at "
-    "the top teach the SHAPE of recurring error classes — accounts that "
-    "should be zero at EOD but aren't, two-sided posts where one side "
-    "landed and the other didn't, and balance-drift timelines. Per-check "
-    "details follow: ledger and sub-ledger balance drift, non-zero "
-    "transfers, limit breaches, sub-ledger overdrafts, and Cash "
-    "Management Suite checks (ZBA sweep targets, ACH origination "
-    "non-zero EOD, missing Fed confirmations, force-posted card "
-    "settlements without internal catch-up, GL-vs-Fed Master drift, "
-    "stuck-in-suspense internal transfers, and reversed-but-not-credited "
-    "double spends)."
+_TODAYS_EXCEPTIONS_DESCRIPTION = (
+    "The 9am scan — every open exception across all 14 reconciliation "
+    "checks in one unified table, sorted by severity then aging. Top KPI "
+    "tracks total open count; the breakdown bar shows distribution by "
+    "check type, coloured by severity. Filter by check, account, or age "
+    "bucket; left-click a transfer_id to drill into Transactions."
+)
+
+_EXCEPTIONS_TRENDS_DESCRIPTION = (
+    "The trend / rollup view paired with Today's Exceptions. Cross-check "
+    "rollups at the top teach the SHAPE of recurring error classes — "
+    "balance drift over time, two-sided posts where one side landed and "
+    "the other didn't, control accounts that should be zero at EOD but "
+    "aren't. Below: an aging-by-check matrix and a daily per-check trend "
+    "so spikes line up across checks. Filters carry over from Today's "
+    "Exceptions."
 )
 
 _DAILY_STATEMENT_DESCRIPTION = (
@@ -244,12 +241,18 @@ _TRANSACTIONS_BULLETS = [
     "Failed rows feed the non-zero transfer cases on Exceptions",
 ]
 
-_EXCEPTIONS_BULLETS = [
-    "Top of tab: cross-check rollups by error SHAPE (expected-zero, two-sided mismatch, drift)",
-    "Per-check details: drift, non-zero transfers, limit breaches, overdrafts",
-    "Cash Management Suite checks: ZBA sweep, ACH origination, force-posted card, internal transfer suspense",
-    "Reversed-but-not-credited (double-spend) flagged separately at top",
-    "Aging bars on every check for time-based urgency triage",
+_TODAYS_EXCEPTIONS_BULLETS = [
+    "Total open count + breakdown by check (coloured by severity)",
+    "Unified table — every open exception, sorted severity then aging",
+    "Filter by check, account, or aging bucket",
+    "Left-click a transfer_id to drill into Transactions",
+]
+
+_EXCEPTIONS_TRENDS_BULLETS = [
+    "Drift Timelines rollup (CMS sweep + GL/Fed Master on one axis)",
+    "Two-Sided Post Mismatch + Accounts Expected Zero rollups (KPI + table)",
+    "Aging-by-Check matrix and per-check daily trend",
+    "Filters propagate to/from Today's Exceptions",
 ]
 
 _DAILY_STATEMENT_BULLETS = [
@@ -421,8 +424,12 @@ def _build_getting_started_sheet(cfg: Config) -> SheetDefinition:
             _TRANSACTIONS_DESCRIPTION, _TRANSACTIONS_BULLETS,
         ),
         (
-            "ar-gs-exceptions", "Exceptions",
-            _EXCEPTIONS_DESCRIPTION, _EXCEPTIONS_BULLETS,
+            "ar-gs-todays-exceptions", "Today's Exceptions",
+            _TODAYS_EXCEPTIONS_DESCRIPTION, _TODAYS_EXCEPTIONS_BULLETS,
+        ),
+        (
+            "ar-gs-exceptions-trends", "Exceptions Trends",
+            _EXCEPTIONS_TRENDS_DESCRIPTION, _EXCEPTIONS_TRENDS_BULLETS,
         ),
         (
             "ar-gs-daily-statement", "Daily Statement",
@@ -542,290 +549,58 @@ def _build_daily_statement_sheet(cfg: Config) -> SheetDefinition:
     )
 
 
-def _build_exceptions_sheet(cfg: Config, link_color: str) -> SheetDefinition:
-    """Four independent reconciliation checks + two timelines.
+def _build_todays_exceptions_sheet(
+    cfg: Config, link_color: str, link_tint: str,
+) -> SheetDefinition:
+    """Phase K.1.2 — unified exception triage surface.
 
-    Layout choices:
-      * 5 KPIs wrap into a 3+2 grid (three 12-wide on top, two 18-wide
-        on the second half-row) — keeps every KPI wide enough to read.
-      * Tables are paired half-width (18 cols each) rather than single-
-        column to cram four tables into two rows without each shrinking
-        its internals. Timelines stay in the third row.
+    Layout: total-count KPI (full width), severity-coloured breakdown
+    bar (full width), unified detail table (full width). The legacy
+    Exceptions sheet stays in place until K.1.4 drops the per-check
+    blocks.
     """
-    third = _FULL // 3  # 12-wide for the three-across KPI row
-
-    kpi_row_a = [
-        GridLayoutElement(
-            ElementId="ar-exc-kpi-ledger-drift", ElementType="VISUAL",
-            ColumnSpan=third, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
-        ),
-        GridLayoutElement(
-            ElementId="ar-exc-kpi-subledger-drift", ElementType="VISUAL",
-            ColumnSpan=third, RowSpan=_KPI_ROW_SPAN, ColumnIndex=third,
-        ),
-        GridLayoutElement(
-            ElementId="ar-exc-kpi-nonzero", ElementType="VISUAL",
-            ColumnSpan=third, RowSpan=_KPI_ROW_SPAN, ColumnIndex=third * 2,
-        ),
-    ]
-    kpi_row_b = _kpi_pair("ar-exc-kpi-breach", "ar-exc-kpi-overdraft")
-
-    # Four exception tables paired half-width for density. Timelines stay
-    # on a later row.
-    table_row_a = [
-        GridLayoutElement(
-            ElementId="ar-exc-ledger-drift-table", ElementType="VISUAL",
-            ColumnSpan=_HALF, RowSpan=_TABLE_ROW_SPAN, ColumnIndex=0,
-        ),
-        GridLayoutElement(
-            ElementId="ar-exc-subledger-drift-table", ElementType="VISUAL",
-            ColumnSpan=_HALF, RowSpan=_TABLE_ROW_SPAN, ColumnIndex=_HALF,
-        ),
-    ]
-    table_row_b = [
-        GridLayoutElement(
-            ElementId="ar-exc-nonzero-table", ElementType="VISUAL",
-            ColumnSpan=_HALF, RowSpan=_TABLE_ROW_SPAN, ColumnIndex=0,
-        ),
-        GridLayoutElement(
-            ElementId="ar-exc-breach-table", ElementType="VISUAL",
-            ColumnSpan=_HALF, RowSpan=_TABLE_ROW_SPAN, ColumnIndex=_HALF,
-        ),
-    ]
-    table_row_c = [
-        _full_width_visual("ar-exc-overdraft-table", _TABLE_ROW_SPAN),
-    ]
-
-    # F.5.1: Sweep target non-zero EOD — KPI on its own row, then full-width
-    # detail table, then full-width aging bar. New checks append to the
-    # bottom of the sheet; F.5.10 will reorganize once all rollups are in.
-    sweep_target_row_kpi = [
-        GridLayoutElement(
-            ElementId="ar-exc-kpi-sweep-target", ElementType="VISUAL",
-            ColumnSpan=_FULL, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
-        ),
-    ]
-    sweep_target_table = [
-        _full_width_visual("ar-exc-sweep-target-table", _TABLE_ROW_SPAN),
-    ]
-    sweep_target_aging = [
-        _full_width_visual("ar-exc-aging-sweep-target", _CHART_ROW_SPAN),
-    ]
-
-    # F.5.2: Concentration Master sweep drift — KPI half-width, timeline
-    # half-width on the same row. Mirrors the existing (ledger-drift,
-    # sub-ledger-drift) timeline pair shape.
-    sweep_drift_row = [
-        GridLayoutElement(
-            ElementId="ar-exc-kpi-sweep-drift", ElementType="VISUAL",
-            ColumnSpan=_HALF, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
-        ),
-        GridLayoutElement(
-            ElementId="ar-exc-sweep-drift-timeline", ElementType="VISUAL",
-            ColumnSpan=_HALF, RowSpan=_KPI_ROW_SPAN, ColumnIndex=_HALF,
-        ),
-    ]
-
-    # F.5.3: ACH Origination Settlement non-zero EOD — same shape as
-    # F.5.1 (KPI / table / aging bar stacked full width).
-    ach_orig_row_kpi = [
-        GridLayoutElement(
-            ElementId="ar-exc-kpi-ach-orig-nonzero", ElementType="VISUAL",
-            ColumnSpan=_FULL, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
-        ),
-    ]
-    ach_orig_table = [
-        _full_width_visual("ar-exc-ach-orig-nonzero-table", _TABLE_ROW_SPAN),
-    ]
-    ach_orig_aging = [
-        _full_width_visual("ar-exc-aging-ach-orig-nonzero", _CHART_ROW_SPAN),
-    ]
-
-    # F.5.4: ACH internal sweep posted but no Fed confirmation — KPI /
-    # table / aging bar stacked full width.
-    ach_sweep_no_fed_row_kpi = [
-        GridLayoutElement(
-            ElementId="ar-exc-kpi-ach-sweep-no-fed", ElementType="VISUAL",
-            ColumnSpan=_FULL, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
-        ),
-    ]
-    ach_sweep_no_fed_table = [
-        _full_width_visual("ar-exc-ach-sweep-no-fed-table", _TABLE_ROW_SPAN),
-    ]
-    ach_sweep_no_fed_aging = [
-        _full_width_visual("ar-exc-aging-ach-sweep-no-fed", _CHART_ROW_SPAN),
-    ]
-
-    # F.5.5: Fed activity with no matching internal post — KPI / table /
-    # aging bar stacked full width.
-    fed_no_catchup_row_kpi = [
-        GridLayoutElement(
-            ElementId="ar-exc-kpi-fed-no-catchup", ElementType="VISUAL",
-            ColumnSpan=_FULL, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
-        ),
-    ]
-    fed_no_catchup_table = [
-        _full_width_visual("ar-exc-fed-no-catchup-table", _TABLE_ROW_SPAN),
-    ]
-    fed_no_catchup_aging = [
-        _full_width_visual("ar-exc-aging-fed-no-catchup", _CHART_ROW_SPAN),
-    ]
-
-    # F.5.6: GL-vs-Fed Master drift — KPI half-width, timeline
-    # half-width on the same row. Mirrors F.5.2 sweep_drift_row shape.
-    gl_fed_drift_row = [
-        GridLayoutElement(
-            ElementId="ar-exc-kpi-gl-fed-drift", ElementType="VISUAL",
-            ColumnSpan=_HALF, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
-        ),
-        GridLayoutElement(
-            ElementId="ar-exc-gl-fed-drift-timeline", ElementType="VISUAL",
-            ColumnSpan=_HALF, RowSpan=_KPI_ROW_SPAN, ColumnIndex=_HALF,
-        ),
-    ]
-
-    # F.5.7: Stuck in Internal Transfer Suspense — KPI / table / aging
-    # bar stacked full width.
-    internal_stuck_row_kpi = [
-        GridLayoutElement(
-            ElementId="ar-exc-kpi-internal-stuck", ElementType="VISUAL",
-            ColumnSpan=_FULL, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
-        ),
-    ]
-    internal_stuck_table = [
-        _full_width_visual("ar-exc-internal-stuck-table", _TABLE_ROW_SPAN),
-    ]
-    internal_stuck_aging = [
-        _full_width_visual("ar-exc-aging-internal-stuck", _CHART_ROW_SPAN),
-    ]
-
-    # F.5.8: Internal Transfer Suspense non-zero EOD — KPI / table /
-    # aging bar stacked full width. Mirrors F.5.3 ach-orig shape.
-    internal_suspense_nonzero_row_kpi = [
-        GridLayoutElement(
-            ElementId="ar-exc-kpi-internal-suspense-nonzero",
-            ElementType="VISUAL",
-            ColumnSpan=_FULL, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
-        ),
-    ]
-    internal_suspense_nonzero_table = [
-        _full_width_visual(
-            "ar-exc-internal-suspense-nonzero-table", _TABLE_ROW_SPAN,
-        ),
-    ]
-    internal_suspense_nonzero_aging = [
-        _full_width_visual(
-            "ar-exc-aging-internal-suspense-nonzero", _CHART_ROW_SPAN,
-        ),
-    ]
-
-    # F.5.9: Internal Transfer Reversal Uncredited / "double spend" —
-    # KPI / table / aging bar stacked full width.
-    internal_reversal_uncredited_row_kpi = [
-        GridLayoutElement(
-            ElementId="ar-exc-kpi-internal-reversal-uncredited",
-            ElementType="VISUAL",
-            ColumnSpan=_FULL, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
-        ),
-    ]
-    internal_reversal_uncredited_table = [
-        _full_width_visual(
-            "ar-exc-internal-reversal-uncredited-table", _TABLE_ROW_SPAN,
-        ),
-    ]
-    internal_reversal_uncredited_aging = [
-        _full_width_visual(
-            "ar-exc-aging-internal-reversal-uncredited", _CHART_ROW_SPAN,
-        ),
-    ]
-
-    # F.5.10.a: Accounts Expected Zero at EOD rollup — placed at the TOP of
-    # the Exceptions sheet so the same-SHAPE pattern across F.5.1, F.5.3,
-    # F.5.8 hits the eye first; per-check tables remain below for drill-in.
-    expected_zero_rollup_row_kpi = [
-        GridLayoutElement(
-            ElementId="ar-exc-kpi-expected-zero-rollup",
-            ElementType="VISUAL",
-            ColumnSpan=_FULL, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
-        ),
-    ]
-    expected_zero_rollup_table = [
-        _full_width_visual(
-            "ar-exc-expected-zero-rollup-table", _TABLE_ROW_SPAN,
-        ),
-    ]
-
-    # F.5.10.b: Two-Sided Post Mismatch rollup — sits above F.5.10.a so
-    # the same-SHAPE pattern across F.5.4 + F.5.5 (one side of an expected
-    # SNB/Fed post pair landed, the other never did) hits the eye first.
-    two_sided_rollup_row_kpi = [
-        GridLayoutElement(
-            ElementId="ar-exc-kpi-two-sided-rollup",
-            ElementType="VISUAL",
-            ColumnSpan=_FULL, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
-        ),
-    ]
-    two_sided_rollup_table = [
-        _full_width_visual(
-            "ar-exc-two-sided-rollup-table", _TABLE_ROW_SPAN,
-        ),
-    ]
-
-    # F.5.10.c: Balance Drift Timelines rollup — sits at the very top of
-    # the Exceptions sheet so the overlay of F.5.2 + F.5.6 drift series
-    # is the first thing the eye lands on; per-check timelines stay below.
-    drift_timelines_rollup = [
-        _full_width_visual(
-            "ar-exc-drift-timelines-rollup", _CHART_ROW_SPAN,
-        ),
-    ]
-
     return SheetDefinition(
-        SheetId=SHEET_AR_EXCEPTIONS,
-        Name="Exceptions",
-        Title="Exceptions",
-        Description=_EXCEPTIONS_DESCRIPTION,
+        SheetId=SHEET_AR_TODAYS_EXCEPTIONS,
+        Name="Today's Exceptions",
+        Title="Today's Exceptions",
+        Description=_TODAYS_EXCEPTIONS_DESCRIPTION,
         ContentType="INTERACTIVE",
-        Visuals=build_exceptions_visuals(link_color),
-        FilterControls=build_exceptions_controls(cfg),
+        Visuals=build_todays_exceptions_visuals(link_color, link_tint),
+        FilterControls=build_todays_exceptions_controls(cfg),
         Layouts=_grid_layout(
-            drift_timelines_rollup
-            + two_sided_rollup_row_kpi
-            + two_sided_rollup_table
-            + expected_zero_rollup_row_kpi
-            + expected_zero_rollup_table
-            + kpi_row_a
-            + kpi_row_b
-            + table_row_a
-            + table_row_b
-            + table_row_c
-            + _chart_pair(
-                "ar-exc-ledger-drift-timeline",
-                "ar-exc-subledger-drift-timeline",
-            )
-            + sweep_target_row_kpi
-            + sweep_target_table
-            + sweep_target_aging
-            + sweep_drift_row
-            + ach_orig_row_kpi
-            + ach_orig_table
-            + ach_orig_aging
-            + ach_sweep_no_fed_row_kpi
-            + ach_sweep_no_fed_table
-            + ach_sweep_no_fed_aging
-            + fed_no_catchup_row_kpi
-            + fed_no_catchup_table
-            + fed_no_catchup_aging
-            + gl_fed_drift_row
-            + internal_stuck_row_kpi
-            + internal_stuck_table
-            + internal_stuck_aging
-            + internal_suspense_nonzero_row_kpi
-            + internal_suspense_nonzero_table
-            + internal_suspense_nonzero_aging
-            + internal_reversal_uncredited_row_kpi
-            + internal_reversal_uncredited_table
-            + internal_reversal_uncredited_aging
+            [_full_width_visual("ar-todays-exc-kpi-total", _KPI_ROW_SPAN)]
+            + [_full_width_visual("ar-todays-exc-breakdown", _CHART_ROW_SPAN)]
+            + [_full_width_visual("ar-todays-exc-table", _TABLE_ROW_SPAN)]
+        ),
+    )
+
+
+def _build_exceptions_trends_sheet(cfg: Config) -> SheetDefinition:
+    """Phase K.1.3 — trend / rollup view paired with Today's Exceptions.
+
+    Layout (top → bottom, all full width):
+      * Drift Timelines rollup (clustered bar)
+      * Two-Sided Post Mismatch — KPI then table
+      * Accounts Expected Zero at EOD — KPI then table
+      * Aging-by-Check matrix (stacked bar)
+      * Per-check daily trend (stacked bar)
+    """
+    return SheetDefinition(
+        SheetId=SHEET_AR_EXCEPTIONS_TRENDS,
+        Name="Exceptions Trends",
+        Title="Exceptions Trends",
+        Description=_EXCEPTIONS_TRENDS_DESCRIPTION,
+        ContentType="INTERACTIVE",
+        Visuals=build_exceptions_trends_visuals(),
+        FilterControls=build_exceptions_trends_controls(cfg),
+        Layouts=_grid_layout(
+            [_full_width_visual("ar-exc-drift-timelines-rollup", _CHART_ROW_SPAN)]
+            + [_full_width_visual("ar-exc-kpi-two-sided-rollup", _KPI_ROW_SPAN)]
+            + [_full_width_visual("ar-exc-two-sided-rollup-table", _TABLE_ROW_SPAN)]
+            + [_full_width_visual("ar-exc-kpi-expected-zero-rollup", _KPI_ROW_SPAN)]
+            + [_full_width_visual("ar-exc-expected-zero-rollup-table", _TABLE_ROW_SPAN)]
+            + [_full_width_visual("ar-exc-trends-aging-matrix", _CHART_ROW_SPAN)]
+            + [_full_width_visual("ar-exc-trends-per-check", _CHART_ROW_SPAN)]
         ),
     )
 
@@ -849,22 +624,12 @@ def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaratio
         DS_AR_SUBLEDGER_BALANCE_DRIFT,
         DS_AR_TRANSFER_SUMMARY,
         DS_AR_NON_ZERO_TRANSFERS,
-        DS_AR_LIMIT_BREACH,
-        DS_AR_OVERDRAFT,
-        DS_AR_SWEEP_TARGET_NONZERO,
-        DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
-        DS_AR_ACH_ORIG_SETTLEMENT_NONZERO,
-        DS_AR_ACH_SWEEP_NO_FED_CONFIRMATION,
-        DS_AR_FED_CARD_NO_INTERNAL_CATCHUP,
-        DS_AR_GL_VS_FED_MASTER_DRIFT,
-        DS_AR_INTERNAL_TRANSFER_STUCK,
-        DS_AR_INTERNAL_TRANSFER_SUSPENSE_NONZERO,
-        DS_AR_INTERNAL_REVERSAL_UNCREDITED,
         DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
         DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
         DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
         DS_AR_DAILY_STATEMENT_SUMMARY,
         DS_AR_DAILY_STATEMENT_TRANSACTIONS,
+        DS_AR_UNIFIED_EXCEPTIONS,
     ]
     return [
         DataSetIdentifierDeclaration(
@@ -999,6 +764,14 @@ def _build_drill_down_filter_groups() -> list[FilterGroup]:
             sheet_id=SHEET_AR_TRANSACTIONS,
         ),
         _parameter_filter_group(
+            fg_id="fg-ar-drill-account-on-txn",
+            filter_id="filter-ar-drill-account-on-txn",
+            dataset_id=DS_AR_TRANSACTIONS,
+            column_name="account_id",
+            parameter_name="pArAccountId",
+            sheet_id=SHEET_AR_TRANSACTIONS,
+        ),
+        _parameter_filter_group(
             fg_id="fg-ar-drill-ledger-on-balances-subledger",
             filter_id="filter-ar-drill-ledger-on-balances-subledger",
             dataset_id=DS_AR_SUBLEDGER_BALANCE_DRIFT,
@@ -1026,7 +799,8 @@ def _build_definition(cfg: Config) -> AnalysisDefinition:
             _build_balances_sheet(cfg, link_color, link_tint),
             _build_transfers_sheet(cfg, link_color),
             _build_transactions_sheet(cfg),
-            _build_exceptions_sheet(cfg, link_color),
+            _build_todays_exceptions_sheet(cfg, link_color, link_tint),
+            _build_exceptions_trends_sheet(cfg),
             _build_daily_statement_sheet(cfg),
         ],
         FilterGroups=build_filter_groups(cfg) + _build_drill_down_filter_groups(),
@@ -1036,6 +810,7 @@ def _build_definition(cfg: Config) -> AnalysisDefinition:
             _ar_string_parameter("pArTransferId"),
             _ar_string_parameter("pArActivityDate"),
             _ar_string_parameter("pArTransferType"),
+            _ar_string_parameter("pArAccountId"),
             _ar_string_parameter("pArDsAccountId"),
             _ar_balance_date_parameter(),
         ],

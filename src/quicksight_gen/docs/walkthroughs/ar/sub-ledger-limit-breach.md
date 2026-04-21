@@ -1,6 +1,6 @@
 # Sub-Ledger Limit Breach
 
-*Per-check walkthrough — Account Reconciliation Exceptions sheet.*
+*Per-check walkthrough — Account Reconciliation Today's Exceptions sheet.*
 
 ## The story
 
@@ -29,55 +29,53 @@ yesterday — by ACH, wire, or cash?"
 
 ## Where to look
 
-Open the AR dashboard, **Exceptions** sheet. The KPI **Limit Breach
-Days** sits in the second KPI row (with **Overdraft Days**), just
-below the upper drift / non-zero KPI row.
+Open the AR dashboard, **Today's Exceptions** sheet. In the Controls
+strip at the top of the sheet, set **Check Type** to
+`Sub-Ledger Limit Breach`. The **Total Exceptions** KPI recounts to
+just this check's rows, the **Exceptions by Check** breakdown bar
+collapses to a single amber bar, and the **Open Exceptions** table
+below shows every row for this check — one row per
+(sub-ledger, day, transfer_type) breach.
+
+<details markdown><summary>Screenshot — Open Exceptions filtered to this check</summary>
+
+![Open Exceptions table filtered to Sub-Ledger Limit Breach, three rows across the three planted breaches](../screenshots/ar/todays-exceptions-filtered-sub-ledger-limit-breach.png)
+
+</details>
 
 ## What you'll see in the demo
 
-The KPI shows **3** limit-breach days.
+Three rows, one per planted breach. Key columns to read:
 
-<details markdown><summary>Screenshot — KPI</summary>
+| column            | value for this check                                                    |
+|-------------------|-------------------------------------------------------------------------|
+| `account_id`      | the sub-ledger that breached (e.g. `cust-bigfoot-brews`)                |
+| `account_name`    | the customer DDA name                                                   |
+| `account_level`   | `Sub-Ledger`                                                            |
+| `transfer_id`     | blank — breach is a (sub-ledger, day, type) aggregate, not one transfer |
+| `transfer_type`   | `ach` / `wire` / `cash` — the outbound channel that was over limit     |
+| `primary_amount`  | `overage` — dollars by which outbound exceeded the policy limit         |
+| `secondary_amount`| `daily_limit` — the policy ceiling for that (ledger, type)              |
 
-![Limit Breach Days KPI showing the count 3](../screenshots/ar/sub-ledger-limit-breach-01-kpi.png)
+Three planted breaches in `_LIMIT_BREACH_PLANT` account for all
+three rows:
 
-</details>
-
-The detail table lists each breach with columns:
-`subledger_account_id`, `subledger_name`, `ledger_name`,
-`activity_date`, `transfer_type`, `outbound_total`, `daily_limit`,
-`overage`, `aging_bucket`. From the demo seed (`_LIMIT_BREACH_PLANT`):
-
-| subledger              | date        | type | outbound | limit  | overage |
-|------------------------|-------------|------|---------:|-------:|--------:|
-| Bigfoot Brews — DDA    | Apr 11 2026 | wire |  ~22,000 | 15,000 |  ~7,000 |
-| Pinecrest Vineyards LLC — DDA | Apr 7 2026 | ach |  ~16,000 | 12,000 |  ~4,000 |
-| Big Meadow Dairy — DDA | Apr 1 2026  | cash |  ~13,000 | 10,000 |  ~3,000 |
+| sub-ledger                    | date        | type | outbound  | limit  | overage |
+|-------------------------------|-------------|------|----------:|-------:|--------:|
+| Bigfoot Brews — DDA           | Apr 11 2026 | wire |  ~$22,000 | $15,000 |  ~$7,000 |
+| Pinecrest Vineyards LLC — DDA | Apr 7 2026  | ach  |  ~$16,000 | $12,000 |  ~$4,000 |
+| Big Meadow Dairy — DDA        | Apr 1 2026  | cash |  ~$13,000 | $10,000 |  ~$3,000 |
 
 All three sub-ledgers roll up to **Customer Deposits — DDA Control**.
-
-<details markdown><summary>Screenshot — detail table</summary>
-
-![Sub-Ledger Limit Breach table showing 3 breach rows](../screenshots/ar/sub-ledger-limit-breach-02-table.png)
-
-</details>
-
-The aging bar chart shows all 3 rows in the **8-30 days** bucket —
-the planted breach dates are 8, 12, and 18 days back, all squarely
-inside that range.
-
-<details markdown><summary>Screenshot — aging chart</summary>
-
-![Limit Breaches by Age aging bar chart with all 3 rows in the 8-30 days bucket](../screenshots/ar/sub-ledger-limit-breach-03-aging.png)
-
-</details>
+Unlike drift/overdraft/sweep, breaches don't roll forward
+day-over-day — one breach is one row, always.
 
 ## What it means
 
-Each row says: on `activity_date`, sub-ledger `subledger_name`
+Each row says: on `exception_date`, sub-ledger `account_name`
 originated `outbound_total` dollars of `transfer_type` outbound, and
 that exceeded the policy limit for that ledger / type combination by
-`overage` dollars.
+`primary_amount` (overage) dollars.
 
 Limit breaches don't necessarily mean fraud or error — large
 legitimate transactions happen, and policy is intentionally a soft
@@ -96,18 +94,25 @@ a human can.
 
 ## Drilling in
 
-Click a `subledger_account_id` value. The drill switches to the
-**Transactions** sheet filtered to that sub-ledger, that date, and
-that transfer type — exactly the legs that made up the
-`outbound_total` figure. From there you can see the individual
-transfers (often one big transfer plus several smaller ones, or one
-unusually large single transfer that single-handedly tripped the
-limit).
+The `account_id` cell renders with a pale-green background — that
+tint is the dashboard's cue that a right-click menu is available.
+**Right-click** any `account_id` value and choose
+**View Transactions for Account-Day** from the context menu.
+QuickSight switches to the **Transactions** sheet and filters to
+every posting that touched that sub-ledger on that date — exactly
+the legs that made up the `outbound_total` figure.
 
-Look at the `account_name` and `memo` columns on the drilled rows —
-together with the customer relationship context, that's enough to
-classify the breach as routine-large-transfer vs.
-needs-investigation.
+From there you can see the individual transfers (often one big
+transfer plus several smaller ones, or one unusually large single
+transfer that single-handedly tripped the limit). Look at the
+`account_name` of the counterparty and the `memo` column — together
+with the customer relationship context, that's enough to classify
+the breach as routine-large-transfer vs. needs-investigation.
+
+The `transfer_id` column is blank because a breach is a daily
+aggregate across potentially many transfers of the same type, not a
+single transfer. Filter by `transfer_type` in Transactions if you
+want to narrow to just the channel that breached.
 
 ## Next step
 
@@ -116,7 +121,7 @@ Hand off:
 
 - The sub-ledger ID + customer name
 - The activity date and transfer type
-- The `outbound_total`, `daily_limit`, and `overage` figures
+- The outbound total, daily limit, and overage figures
 - A pointer to the underlying transfers from the drill
 
 Compliance decides whether the breach is approved, investigated, or
@@ -134,8 +139,7 @@ outbound they've ever originated, that's a different conversation
 - [Sub-Ledger Overdraft](sub-ledger-overdraft.md) — different
   invariant (negative balance, not exceeding policy) but the same
   shape of investigation: pick the sub-ledger, drill into
-  Transactions, look at the legs that drove the breach. Lives in
-  the same KPI row.
+  Transactions, look at the legs that drove the breach.
 - [Internal Transfer Suspense Non-Zero EOD](internal-transfer-suspense-non-zero.md) —
   unrelated check but an analogous "this account is doing something
   the system says it shouldn't" pattern; sometimes a stuck transfer

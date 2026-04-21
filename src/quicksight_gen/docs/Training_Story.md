@@ -180,10 +180,12 @@ credited (double spend).
 
 ## Mapping to AR exception checks
 
-Each telling transfer maps to one or more AR exception checks. All
-follow the existing AR visual pattern: KPI count + detail table (with
-`days_outstanding` and `aging_bucket`) + horizontal aging bar. Drift
-checks add a timeline.
+Each telling transfer maps to one or more AR exception checks. Every
+check surfaces as rows in the unified *Open Exceptions* table on the
+**Today's Exceptions** sheet (with `days_outstanding` and
+`aging_bucket` columns); the **Exceptions Trends** sheet adds an aging
+matrix + per-check daily counts across all checks, plus drift
+timelines for the drift checks.
 
 | Telling transfer | New / existing AR exception check |
 |---|---|
@@ -226,7 +228,7 @@ The training scenarios play out from September 2025 through December
 What follows are the details of people in the different departments at
 SNB.
   - SNB's General Ledger Reconciliation / Accounting Operations team
-    - opens the AR dashboard each morning, scans Exceptions, drills into anything aging past their threshold
+    - opens the AR dashboard each morning, scans **Today's Exceptions** for the day's totals, glances **Exceptions Trends** for the shape of any breaks, drills into anything aging past their threshold
     - a key data sanity check artifact for them is checking an externally generated bank statement against this system's data import
   - SNB's Merchant Support Team
     - opens a dashboard and looks to see all the merchants sales had settled/been paid
@@ -234,9 +236,15 @@ SNB.
     - creates ETL jobs to populate the data to support this tool. The simpler and fewer the tables are, the easier it is for them to do their job. Their attitude is, what do I have a database server that can do fancy queries for unless I use it?
   - SNB's Fraud Team
     - uses the recon tool to search for transactions that break limits set on the accounts
-  - SNB's AML Team
+  - SNB's Investigation/AML Team
     - uses the recon tool to detect if transactions/balances are outside of the statistical average and attempts to find patterns
     - They are looking for a dashboard that shows: for transfers between different subledger accounts, are there transfers inside a couple day sliding window that sum to amounts that 2 std deviations higher than other transfers?
+  - SNB's Executive Management
+    - Looking for transaction statistics and trends.
+    - For all the data in the system, how much money is moving over time?
+    - How many accounts do we have open?
+    - How many accounts have activity?
+    - Any other useful stats
 
 ## Where to go from here
 

@@ -42,22 +42,12 @@ AR_BUILDERS_AND_CONTRACTS = [
     (ar_datasets.build_subledger_balance_drift_dataset, ar_datasets.SUBLEDGER_BALANCE_DRIFT_CONTRACT),
     (ar_datasets.build_transfer_summary_dataset, ar_datasets.TRANSFER_SUMMARY_CONTRACT),
     (ar_datasets.build_non_zero_transfers_dataset, ar_datasets.NON_ZERO_TRANSFERS_CONTRACT),
-    (ar_datasets.build_limit_breach_dataset, ar_datasets.LIMIT_BREACH_CONTRACT),
-    (ar_datasets.build_overdraft_dataset, ar_datasets.OVERDRAFT_CONTRACT),
-    (ar_datasets.build_sweep_target_nonzero_dataset, ar_datasets.SWEEP_TARGET_NONZERO_CONTRACT),
-    (ar_datasets.build_concentration_master_sweep_drift_dataset, ar_datasets.CONCENTRATION_MASTER_SWEEP_DRIFT_CONTRACT),
-    (ar_datasets.build_ach_orig_settlement_nonzero_dataset, ar_datasets.ACH_ORIG_SETTLEMENT_NONZERO_CONTRACT),
-    (ar_datasets.build_ach_sweep_no_fed_confirmation_dataset, ar_datasets.ACH_SWEEP_NO_FED_CONFIRMATION_CONTRACT),
-    (ar_datasets.build_fed_card_no_internal_catchup_dataset, ar_datasets.FED_CARD_NO_INTERNAL_CATCHUP_CONTRACT),
-    (ar_datasets.build_gl_vs_fed_master_drift_dataset, ar_datasets.GL_VS_FED_MASTER_DRIFT_CONTRACT),
-    (ar_datasets.build_internal_transfer_stuck_dataset, ar_datasets.INTERNAL_TRANSFER_STUCK_CONTRACT),
-    (ar_datasets.build_internal_transfer_suspense_nonzero_dataset, ar_datasets.INTERNAL_TRANSFER_SUSPENSE_NONZERO_CONTRACT),
-    (ar_datasets.build_internal_reversal_uncredited_dataset, ar_datasets.INTERNAL_REVERSAL_UNCREDITED_CONTRACT),
     (ar_datasets.build_expected_zero_eod_rollup_dataset, ar_datasets.EXPECTED_ZERO_EOD_ROLLUP_CONTRACT),
     (ar_datasets.build_two_sided_post_mismatch_rollup_dataset, ar_datasets.TWO_SIDED_POST_MISMATCH_ROLLUP_CONTRACT),
     (ar_datasets.build_balance_drift_timelines_rollup_dataset, ar_datasets.BALANCE_DRIFT_TIMELINES_ROLLUP_CONTRACT),
     (ar_datasets.build_daily_statement_summary_dataset, ar_datasets.DAILY_STATEMENT_SUMMARY_CONTRACT),
     (ar_datasets.build_daily_statement_transactions_dataset, ar_datasets.DAILY_STATEMENT_TRANSACTIONS_CONTRACT),
+    (ar_datasets.build_ar_unified_exceptions_dataset, ar_datasets.UNIFIED_EXCEPTIONS_CONTRACT),
 ]
 
 

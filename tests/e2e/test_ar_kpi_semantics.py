@@ -1,15 +1,23 @@
-"""Postgres-direct semantics tests for AR Exceptions KPIs.
+"""Postgres-direct semantics tests for the views feeding AR exceptions.
+
+Phase K.1 collapsed the per-check KPI surface into a single unified
+exceptions dataset (UNION ALL over the 14 underlying views). The views
+themselves still drive the dashboard — Today's Exceptions reads them
+through ``ar_unified_exceptions``; Exceptions Trends reads the rollup
+views directly. These tests pin the upstream contracts so a regression
+in any view immediately breaks here, before it silently drops rows from
+the unified surface.
 
 Two contracts per check:
 
-1. KPI scope: the dataset SQL the KPI counts (with any sheet-pinned
-   filter applied) returns the same number of rows as the semantic
-   scope implied by the KPI subtitle. Catches dataset-vs-visual filter
-   drift the moment it ships (the H.4.B drift-counts bug class).
+1. View scope: the view's row set matches the semantic scope its name
+   promises (e.g., ar_subledger_overdraft has WHERE balance < 0 baked
+   in, so as_displayed == expected_scope). Catches a regression that
+   widens or narrows the view definition.
 
 2. Planted-row sanity: each ``_*_PLANT`` constant in
    ``account_recon/demo_data.py`` produces at least its planted rows
-   in the corresponding dataset. For "1 plant = 1 row" checks (limit
+   in the corresponding view. For "1 plant = 1 row" checks (limit
    breach, sweep-leg-mismatch, plant-keyed transfers) assert exact
    equality. For sticky scenarios (overdraft, sweep-target / suspense
    non-zero EOD, ACH-orig non-zero) assert ``>= planted_count`` since a
@@ -106,12 +114,12 @@ _AR_TXN_TYPES = "('ach', 'wire', 'internal', 'cash', 'funding_batch', 'fee', 'cl
 # ---------------------------------------------------------------------------
 
 class TestKpiScope:
-    """Each KPI's row count must equal its semantic scope row count.
+    """Each view's row count must equal its semantic scope row count.
 
-    The H.4.B regression: drift KPIs counted every (account, date) row
-    instead of drift_status='drift' rows, because the dataset feeds two
-    sheets and was unfiltered. Sheet-pinned CategoryFilter on
-    drift_status='drift' fixed it. These tests pin the contract.
+    Drift views (ar_*_drift) emit healthy + unhealthy rows; consumers
+    filter to drift_status='drift'. These tests pin both shapes (view
+    SQL and the canonical drift filter) so a regression in either shows
+    up immediately.
     """
 
     def test_ledger_drift_kpi_counts_drift_only(self, pg_conn):
@@ -185,13 +193,10 @@ class TestKpiScope:
         assert _count_rows(pg_conn, as_displayed) > 0
 
     def test_sweep_drift_kpi_scope(self, pg_conn):
-        # Subtitle: "Days the Cash Concentration Master credits and
-        # operating sub-account debits ... didn't balance" — semantic
-        # scope is drift <> 0. View emits a row per sweep_date including
-        # healthy days; the visual-scoped pinned filter
-        # (fg-ar-exceptions-sweep-drift-only) restricts the KPI to
-        # drift_status='drift'. Equality here pins both the filter wiring
-        # and the underlying drift_status derivation.
+        # Semantic scope is drift <> 0. View emits a row per sweep_date
+        # including healthy days; drift_status='drift' is the canonical
+        # filter applied wherever this view is consumed. Equality here
+        # pins the drift_status derivation against drift <> 0.
         as_displayed = (
             "SELECT 1 FROM ar_concentration_master_sweep_drift "
             "WHERE drift_status = 'drift'"
@@ -245,11 +250,10 @@ class TestKpiScope:
         assert _count_rows(pg_conn, as_displayed) > 0
 
     def test_gl_fed_drift_kpi_scope(self, pg_conn):
-        # Subtitle: "Days ... didn't equal" — semantic scope is drift <> 0.
-        # Same wiring as sweep_drift: view returns all movement_dates and
-        # the visual-scoped pinned filter (fg-ar-exceptions-gl-fed-drift-only)
-        # restricts the KPI to drift_status='drift'. Equality here pins
-        # both the filter wiring and the drift_status derivation.
+        # Semantic scope is drift <> 0. Same shape as sweep_drift: view
+        # returns all movement_dates and drift_status='drift' is the
+        # canonical filter wherever this view is consumed. Equality here
+        # pins the drift_status derivation against drift <> 0.
         as_displayed = (
             "SELECT 1 FROM ar_gl_vs_fed_master_drift "
             "WHERE drift_status = 'drift'"

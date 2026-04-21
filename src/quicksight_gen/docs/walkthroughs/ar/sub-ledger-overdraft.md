@@ -1,6 +1,6 @@
 # Sub-Ledger Overdraft
 
-*Per-check walkthrough — Account Reconciliation Exceptions sheet.*
+*Per-check walkthrough — Account Reconciliation Today's Exceptions sheet.*
 
 ## The story
 
@@ -26,69 +26,66 @@ balance — and if so, for how long has it been negative?"
 
 ## Where to look
 
-Open the AR dashboard, **Exceptions** sheet. The KPI **Overdraft
-Days** sits in the second KPI row, next to **Limit Breach Days**.
+Open the AR dashboard, **Today's Exceptions** sheet. In the Controls
+strip at the top of the sheet, set **Check Type** to
+`Sub-Ledger Overdraft`. The **Total Exceptions** KPI recounts to
+just this check's rows, the **Exceptions by Check** breakdown bar
+collapses to a single red bar, and the **Open Exceptions** table
+below shows every row for this check — one row per
+(sub-ledger, date) cell where stored balance < 0.
+
+<details markdown><summary>Screenshot — Open Exceptions filtered to this check</summary>
+
+![Open Exceptions table filtered to Sub-Ledger Overdraft, hundreds of rows across the three planted overdraft incidents](../screenshots/ar/todays-exceptions-filtered-sub-ledger-overdraft.png)
+
+</details>
 
 ## What you'll see in the demo
 
-The KPI shows **231** overdraft days.
+Several hundred rows — overdraft persists day over day, so one
+planted incident contributes one row per day since. Key columns to
+read:
 
-<details markdown><summary>Screenshot — KPI</summary>
-
-![Overdraft Days KPI showing the count 231](../screenshots/ar/sub-ledger-overdraft-01-kpi.png)
-
-</details>
+| column            | value for this check                                             |
+|-------------------|------------------------------------------------------------------|
+| `account_id`      | the sub-ledger that's overdrawn (e.g. `cust-harvest-moon-bakery`) |
+| `account_name`    | the sub-ledger's display name                                    |
+| `account_level`   | `Sub-Ledger`                                                     |
+| `transfer_id`     | blank — overdraft is an EOD-balance shape, not a transfer shape  |
+| `primary_amount`  | `stored_balance` — the negative EOD dollar amount                |
+| `secondary_amount`| blank                                                            |
 
 Three planted overdraft incidents in `_OVERDRAFT_PLANT` account for
 the count. Each lands a single oversized outbound on a specific day,
 driving that sub-ledger negative; the account then stays negative
 for several days until a compensating credit lands:
 
-| sub-ledger                                  | started     | drove negative |
-|---------------------------------------------|-------------|---------------:|
-| Harvest Moon Bakery — DDA                   | Apr 15 2026 |        $40,000 outbound |
-| Sasquatch Sips — DDA                        | Apr 13 2026 |        $45,000 outbound |
-| Cascade Timber Mill — ZBA Operating (a)     | Apr 10 2026 |        $35,000 outbound |
+| sub-ledger                              | started     | drove negative    |
+|-----------------------------------------|-------------|------------------:|
+| Harvest Moon Bakery — DDA               | Apr 15 2026 | $40,000 outbound  |
+| Sasquatch Sips — DDA                    | Apr 13 2026 | $45,000 outbound  |
+| Cascade Timber Mill — ZBA Operating (a) | Apr 10 2026 | $35,000 outbound  |
 
-The detail table lists every (sub-ledger, date) cell where stored
-balance < 0. Columns: `subledger_account_id`, `subledger_name`,
-`ledger_name`, `balance_date`, `stored_balance`, `aging_bucket`.
-Sorted newest-first.
-
-<details markdown><summary>Screenshot — detail table</summary>
-
-![Sub-Ledger Overdraft table sorted newest-first by balance_date](../screenshots/ar/sub-ledger-overdraft-02-table.png)
-
-</details>
-
-The aging bar chart shows bucket 4 (8-30 days) carrying the largest
-share of the count — the older two plants (Apr 10 and Apr 13)
-already aged into bucket 4. Bucket 3 (4-7 days) and bucket 5
-(>30 days) carry smaller counts; bucket 1 (0-1 day) and bucket 2
-(2-3 days) hold the most recent overdraft days.
-
-<details markdown><summary>Screenshot — aging chart</summary>
-
-![Overdrafts by Age aging bar chart with bucket 4 (8-30 days) dominant](../screenshots/ar/sub-ledger-overdraft-03-aging.png)
-
-</details>
+Each planted incident keeps a similar (negative) `stored_balance`
+every day afterward — same dollars rolling forward — so the count
+per incident equals "days the account stayed negative."
 
 ## What it means
 
-Each row says: on `balance_date`, sub-ledger `subledger_name` ended
-the day with `stored_balance` dollars (negative). The row recurs
+Each row says: on `exception_date`, sub-ledger `account_name` ended
+the day with `primary_amount` dollars (negative). The row recurs
 every day the account stays negative — so a single overdraft
 incident that lasted 12 days shows up as 12 rows.
 
 A few patterns to watch for:
 
-- **Same `stored_balance` across consecutive days** for one
+- **Same `primary_amount` across consecutive days** for one
   sub-ledger means no posting activity in between — the account is
   just sitting in overdraft, untouched.
-- **`stored_balance` getting more negative day over day** means the
+- **`primary_amount` getting more negative day over day** means the
   account is continuing to send money out without funding — that's
   much more concerning than a flat overdraft.
-- **`stored_balance` swinging back toward zero day over day** means
+- **`primary_amount` swinging back toward zero day over day** means
   partial cover is landing but isn't yet enough — the customer is
   catching up.
 
@@ -100,16 +97,22 @@ sweep is supposed to fund it before it originates.
 
 ## Drilling in
 
-Click a `subledger_account_id` value in any row. The drill switches
-to the **Transactions** sheet filtered to that sub-ledger and date.
+The `account_id` cell renders with a pale-green background — that
+tint is the dashboard's cue that a right-click menu is available.
+**Right-click** any `account_id` value and choose
+**View Transactions for Account-Day** from the context menu.
+QuickSight switches to the **Transactions** sheet and filters to
+every posting that touched that sub-ledger on that specific date.
 The transfer that crossed the account into negative territory is
 typically the largest debit on the day; identifying it is usually
 a one-row scan.
 
-Then walk forward day by day in the Transactions sheet to find the
-posting that brings the balance back above zero (a credit large
-enough to net the running balance positive). The day before that
-credit is the last overdraft day for the incident.
+To trace the overdraft back to its origin, right-click the *oldest*
+row for a given `account_id` first. From there, walk forward day by
+day in the Transactions sheet to find the posting that brings the
+balance back above zero (a credit large enough to net the running
+balance positive). The day before that credit is the last overdraft
+day for the incident.
 
 ## Next step
 
@@ -131,17 +134,18 @@ Triage by sub-ledger type:
   negative is a structural issue that often signals a posting class
   is being misrouted.
 
-Old overdrafts (bucket 5: >30 days) are escalation candidates —
-both because the operational fix window is closing and because
-30+ days uncovered overdraft on a customer DDA can have regulatory
-implications (Reg E timing, customer-notification requirements).
+Old overdrafts (`aging_bucket` = 5: >30 days) are escalation
+candidates — both because the operational fix window is closing and
+because 30+ days uncovered overdraft on a customer DDA can have
+regulatory implications (Reg E timing, customer-notification
+requirements).
 
 ## Related walkthroughs
 
 - [Sub-Ledger Limit Breach](sub-ledger-limit-breach.md) — different
   invariant (exceeding policy, not going negative) but very similar
   drill flow (pick a sub-ledger, drill into Transactions, find the
-  driving leg). Lives in the same KPI row.
+  driving leg).
 - [Sub-Ledger Drift](sub-ledger-drift.md) — also a sub-ledger-level
   EOD-balance check; drift looks at stored vs computed mismatch,
   overdraft looks at stored < 0. The two checks are independent —

@@ -24,18 +24,18 @@ parameter declarations, same as payment_recon.
 from __future__ import annotations
 
 from quicksight_gen.account_recon.constants import (
-    DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
     DS_AR_DAILY_STATEMENT_SUMMARY,
-    DS_AR_GL_VS_FED_MASTER_DRIFT,
     DS_AR_LEDGER_ACCOUNTS,
     DS_AR_LEDGER_BALANCE_DRIFT,
     DS_AR_SUBLEDGER_ACCOUNTS,
     DS_AR_SUBLEDGER_BALANCE_DRIFT,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
+    DS_AR_UNIFIED_EXCEPTIONS,
     SHEET_AR_BALANCES,
     SHEET_AR_DAILY_STATEMENT,
-    SHEET_AR_EXCEPTIONS,
+    SHEET_AR_EXCEPTIONS_TRENDS,
+    SHEET_AR_TODAYS_EXCEPTIONS,
     SHEET_AR_TRANSACTIONS,
     SHEET_AR_TRANSFERS,
 )
@@ -69,19 +69,20 @@ _ALL_SHEETS = [
     SHEET_AR_BALANCES,
     SHEET_AR_TRANSFERS,
     SHEET_AR_TRANSACTIONS,
-    SHEET_AR_EXCEPTIONS,
+    SHEET_AR_TODAYS_EXCEPTIONS,
+    SHEET_AR_EXCEPTIONS_TRENDS,
 ]
 
 _ACCOUNT_SCOPED_SHEETS = [
     SHEET_AR_BALANCES,
     SHEET_AR_TRANSACTIONS,
-    SHEET_AR_EXCEPTIONS,
 ]
 
 _TRANSFER_TYPE_SCOPED_SHEETS = [
     SHEET_AR_TRANSFERS,
     SHEET_AR_TRANSACTIONS,
-    SHEET_AR_EXCEPTIONS,
+    SHEET_AR_TODAYS_EXCEPTIONS,
+    SHEET_AR_EXCEPTIONS_TRENDS,
 ]
 
 
@@ -153,13 +154,13 @@ def _multi_select_filter_group(
     sheet_ids: list[str],
     cross_dataset: str = "ALL_DATASETS",
 ) -> FilterGroup:
-    # AWS rejects DefaultFilterControlConfiguration on a CategoryFilter
-    # that's SINGLE_DATASET + single-sheet and already has a direct
-    # (non-CrossSheet) Dropdown control bound to it (same rule as
-    # payment_recon). Those filters get their widget config from the
-    # sheet's direct FilterControls list instead.
+    # AWS rule: multi-sheet filters MUST carry
+    # DefaultFilterControlConfiguration (so CrossSheet controls on the
+    # other sheets have widget specs to inherit). Single-sheet filters
+    # MUST NOT carry it — the sheet's direct FilterControls list provides
+    # the widget. cross_dataset doesn't change either rule.
     default_control = None
-    if cross_dataset != "SINGLE_DATASET":
+    if len(sheet_ids) > 1:
         default_control = DefaultFilterControlConfiguration(
             Title=title,
             ControlOptions=DefaultFilterControlOptions(
@@ -272,7 +273,6 @@ def _posting_level_filter_group() -> FilterGroup:
 
 _ORIGIN_SCOPED_SHEETS = [
     SHEET_AR_TRANSACTIONS,
-    SHEET_AR_EXCEPTIONS,
 ]
 
 
@@ -335,47 +335,6 @@ def _state_toggle_filter_group(
     )
 
 
-def _pinned_category_filter_group(
-    fg_id: str,
-    filter_id: str,
-    sheet_id: str,
-    dataset_id: str,
-    column_name: str,
-    pinned_value: str,
-) -> FilterGroup:
-    """Permanent CategoryFilter pinned to one value, scoped to one sheet.
-
-    No FilterControl — invisible to the user, always applied. Used on
-    the Exceptions sheet to constrain drift datasets to drift_status =
-    'drift' (the dataset feeds both Balances and Exceptions; on
-    Balances all rows are intentional, so the filter must be sheet-
-    scoped, not dataset-wide).
-    """
-    return FilterGroup(
-        FilterGroupId=fg_id,
-        CrossDataset="SINGLE_DATASET",
-        ScopeConfiguration=_selected_sheets_scope([sheet_id]),
-        Status="ENABLED",
-        Filters=[
-            Filter(
-                CategoryFilter=CategoryFilter(
-                    FilterId=filter_id,
-                    Column=ColumnIdentifier(
-                        DataSetIdentifier=dataset_id,
-                        ColumnName=column_name,
-                    ),
-                    Configuration=CategoryFilterConfiguration(
-                        FilterListConfiguration={
-                            "MatchOperator": "CONTAINS",
-                            "CategoryValues": [pinned_value],
-                        },
-                    ),
-                ),
-            ),
-        ],
-    )
-
-
 def _state_toggle_control(
     ctrl_id: str,
     title: str,
@@ -394,6 +353,54 @@ def _state_toggle_control(
 # ---------------------------------------------------------------------------
 # Top-level assembly
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Today's Exceptions (Phase K.1.2) — sheet-scoped pickers on the unified
+# exceptions dataset. SINGLE_DATASET so QuickSight accepts the per-sheet
+# Dropdown control wired in build_todays_exceptions_controls.
+# ---------------------------------------------------------------------------
+
+_UNIFIED_EXCEPTIONS_SHEETS = [
+    SHEET_AR_TODAYS_EXCEPTIONS,
+    SHEET_AR_EXCEPTIONS_TRENDS,
+]
+
+
+def _todays_exceptions_check_type_filter_group() -> FilterGroup:
+    return _multi_select_filter_group(
+        fg_id="fg-ar-todays-exc-check-type",
+        filter_id="filter-ar-todays-exc-check-type",
+        title="Check Type",
+        dataset_id=DS_AR_UNIFIED_EXCEPTIONS,
+        column_name="check_type",
+        sheet_ids=_UNIFIED_EXCEPTIONS_SHEETS,
+        cross_dataset="SINGLE_DATASET",
+    )
+
+
+def _todays_exceptions_account_filter_group() -> FilterGroup:
+    return _multi_select_filter_group(
+        fg_id="fg-ar-todays-exc-account",
+        filter_id="filter-ar-todays-exc-account",
+        title="Account",
+        dataset_id=DS_AR_UNIFIED_EXCEPTIONS,
+        column_name="account_id",
+        sheet_ids=_UNIFIED_EXCEPTIONS_SHEETS,
+        cross_dataset="SINGLE_DATASET",
+    )
+
+
+def _todays_exceptions_aging_filter_group() -> FilterGroup:
+    return _multi_select_filter_group(
+        fg_id="fg-ar-todays-exc-aging",
+        filter_id="filter-ar-todays-exc-aging",
+        title="Aging Bucket",
+        dataset_id=DS_AR_UNIFIED_EXCEPTIONS,
+        column_name="aging_bucket",
+        sheet_ids=_UNIFIED_EXCEPTIONS_SHEETS,
+        cross_dataset="SINGLE_DATASET",
+    )
+
 
 def build_filter_groups(cfg: Config) -> list[FilterGroup]:
     del cfg
@@ -428,48 +435,6 @@ def build_filter_groups(cfg: Config) -> list[FilterGroup]:
             DS_AR_SUBLEDGER_BALANCE_DRIFT,
             "overdraft_status",
         ),
-        # Exceptions sheet: pin drift datasets to drift_status='drift'
-        # so the KPI / table / aging visuals count only actual drift
-        # cells. Without these, every (ledger, date) row gets counted —
-        # the KPI subtitle promises "where stored != computed" but the
-        # implementation, absent a filter, returns every cell. Same
-        # dataset feeds the Balances sheet, where all rows are
-        # intentional, so the fix has to be sheet-scoped.
-        _pinned_category_filter_group(
-            "fg-ar-exceptions-ledger-drift-only",
-            "filter-ar-exceptions-ledger-drift-only",
-            SHEET_AR_EXCEPTIONS,
-            DS_AR_LEDGER_BALANCE_DRIFT,
-            "drift_status",
-            "drift",
-        ),
-        _pinned_category_filter_group(
-            "fg-ar-exceptions-subledger-drift-only",
-            "filter-ar-exceptions-subledger-drift-only",
-            SHEET_AR_EXCEPTIONS,
-            DS_AR_SUBLEDGER_BALANCE_DRIFT,
-            "drift_status",
-            "drift",
-        ),
-        # Same fix for the two CMS-side drift datasets: their FULL OUTER
-        # JOIN views emit healthy days too (drift = 0), so the KPI
-        # would otherwise count every day instead of just drift days.
-        _pinned_category_filter_group(
-            "fg-ar-exceptions-sweep-drift-only",
-            "filter-ar-exceptions-sweep-drift-only",
-            SHEET_AR_EXCEPTIONS,
-            DS_AR_CONCENTRATION_MASTER_SWEEP_DRIFT,
-            "drift_status",
-            "drift",
-        ),
-        _pinned_category_filter_group(
-            "fg-ar-exceptions-gl-fed-drift-only",
-            "filter-ar-exceptions-gl-fed-drift-only",
-            SHEET_AR_EXCEPTIONS,
-            DS_AR_GL_VS_FED_MASTER_DRIFT,
-            "drift_status",
-            "drift",
-        ),
         _state_toggle_filter_group(
             "fg-ar-transactions-failed",
             "filter-ar-transactions-failed",
@@ -480,6 +445,10 @@ def build_filter_groups(cfg: Config) -> list[FilterGroup]:
         # Phase I.2 — Daily Statement sheet pickers (account + date)
         _daily_statement_account_filter_group(),
         _daily_statement_date_filter_group(),
+        # Phase K.1.2 — Today's Exceptions sheet pickers
+        _todays_exceptions_check_type_filter_group(),
+        _todays_exceptions_account_filter_group(),
+        _todays_exceptions_aging_filter_group(),
     ]
 
 
@@ -513,7 +482,21 @@ def _transfer_type_control(sheet: str) -> FilterControl:
 
 
 def _origin_control(sheet: str) -> FilterControl:
-    return _cross_sheet_control(sheet, "origin", "filter-ar-origin")
+    # Single-sheet filter (Transactions only after Phase K.1 dropped the
+    # legacy Exceptions sheet) → use a direct Dropdown rather than a
+    # CrossSheet control. AWS rejects CrossSheet controls bound to
+    # filters whose scope is a single sheet without
+    # DefaultFilterControlConfiguration on the filter, and it rejects
+    # DefaultFilterControlConfiguration on a single-sheet filter — the
+    # only consistent shape is a direct Dropdown.
+    return FilterControl(
+        Dropdown=FilterDropDownControl(
+            FilterControlId=f"ctrl-ar-{sheet}-origin",
+            Title="Origin",
+            SourceFilterId="filter-ar-origin",
+            Type="MULTI_SELECT",
+        ),
+    )
 
 
 def build_balances_controls(cfg: Config) -> list[FilterControl]:
@@ -588,14 +571,52 @@ def build_transactions_controls(cfg: Config) -> list[FilterControl]:
     ]
 
 
-def build_exceptions_controls(cfg: Config) -> list[FilterControl]:
+def build_todays_exceptions_controls(cfg: Config) -> list[FilterControl]:
+    """Sheet-scoped pickers + cross-sheet date / transfer-type carryover.
+
+    All five controls are CrossSheet — the underlying filter groups are
+    scoped to both Today's Exceptions and Exceptions Trends, and AWS
+    requires every control bound to a multi-sheet filter (with
+    DefaultFilterControlConfiguration) to inherit that default rather
+    than redefine its own widget.
+    """
     del cfg
     return [
-        _date_range_control("exceptions"),
-        _ledger_account_control("exceptions"),
-        _subledger_account_control("exceptions"),
-        _transfer_type_control("exceptions"),
-        _origin_control("exceptions"),
+        _date_range_control("todays-exc"),
+        _transfer_type_control("todays-exc"),
+        _cross_sheet_control(
+            "todays-exc", "check-type", "filter-ar-todays-exc-check-type",
+        ),
+        _cross_sheet_control(
+            "todays-exc", "account", "filter-ar-todays-exc-account",
+        ),
+        _cross_sheet_control(
+            "todays-exc", "aging", "filter-ar-todays-exc-aging",
+        ),
+    ]
+
+
+def build_exceptions_trends_controls(cfg: Config) -> list[FilterControl]:
+    """Trend-sheet pickers — same set as Today's Exceptions but as
+    CrossSheet controls, so a pick on either sheet propagates.
+
+    Date range and transfer type are already CrossSheet (shared across
+    all AR tabs); the three unified-dataset filters are also CrossSheet
+    here because the underlying filter groups are scoped to both sheets.
+    """
+    del cfg
+    return [
+        _date_range_control("exc-trends"),
+        _transfer_type_control("exc-trends"),
+        _cross_sheet_control(
+            "exc-trends", "check-type", "filter-ar-todays-exc-check-type",
+        ),
+        _cross_sheet_control(
+            "exc-trends", "account", "filter-ar-todays-exc-account",
+        ),
+        _cross_sheet_control(
+            "exc-trends", "aging", "filter-ar-todays-exc-aging",
+        ),
     ]
 
 

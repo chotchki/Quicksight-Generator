@@ -1,6 +1,6 @@
 # Two-Sided Post Mismatch Rollup
 
-*Rollup-level walkthrough — Account Reconciliation Exceptions sheet.*
+*Rollup-level walkthrough — Account Reconciliation Exceptions Trends sheet.*
 
 ## The story
 
@@ -37,11 +37,11 @@ the other didn't?"
 
 ## Where to look
 
-Open the AR dashboard, **Exceptions** sheet. The Two-Sided Post
-Mismatch rollup is the second block from the top — between the Balance
-Drift Timelines chart at the very top and the Expected-Zero EOD rollup
-below it. Look for a KPI titled "**Two-Sided Post Mismatch**" and a
-detail table with the same title.
+Open the AR dashboard, **Exceptions Trends** sheet (the sister sheet
+to Today's Exceptions). The Two-Sided Post Mismatch rollup is the
+second block from the top — between the Balance Drift Timelines chart
+above and the Expected-Zero EOD rollup below. Look for a KPI titled
+"**Two-Sided Post Mismatch**" and a detail table with the same title.
 
 ## What you'll see in the demo
 
@@ -72,17 +72,25 @@ fired.
 
 The two source checks point at *different* upstream owners even though
 the rollup's KPI counts them together. The point of the rollup is
-pattern recognition (one-sided posts) — the per-check tables below tell
-you which queue the work goes to.
+pattern recognition (one-sided posts) — the per-check view tells you
+which queue the work goes to.
 
 ## Drilling in
 
-The detail table's `source check` column names the per-check view that
-owns each row. Scroll down the Exceptions sheet to that section
-(*ACH Sweep No Fed Confirmation* or *Fed Card No Internal Catch-Up*)
-for the row-level context the upstream team needs — including the
-matching transfer ID on the side that *did* post, so they can confirm
-the divergence on both books.
+The detail table's `source_check` column names the per-check view
+that owns each row. Switch to the **Today's Exceptions** sheet and
+set **Check Type** in the Controls strip to that check name:
+
+- `source_check = "ach_sweep_no_fed_confirmation"` → set Check Type to
+  `ACH Sweep Without Fed Confirmation`. The per-transfer row carries
+  the SNB sweep transfer ID; left-click it to drill into Transactions.
+- `source_check = "fed_card_no_internal_catchup"` → set Check Type to
+  `Fed Activity Without Internal Catch-Up`. The per-transfer row
+  carries the Fed observation transfer ID; left-click drills the same
+  way.
+
+The per-check view is where the upstream team gets the single transfer
+ID and timestamp they need to confirm the divergence on both books.
 
 ## Next step
 
@@ -102,9 +110,14 @@ manual intervention.
 - [ACH Sweep Without Fed Confirmation](ach-sweep-no-fed-confirmation.md) —
   per-check view of the SNB-side of the pair. Drill target for
   "side_present = SNB internal sweep" rows.
-- [Fed Activity Without Internal Post](fed-card-no-internal-catchup.md) —
+- [Fed Activity Without Internal Catch-Up](fed-card-no-internal-catchup.md) —
   per-check view of the Fed-side of the pair. Drill target for
   "side_present = Fed card observation" rows.
 - [Balance Drift Timelines Rollup](balance-drift-timelines-rollup.md) —
-  same Fed-vs-internal divergence, but viewed as per-day drift dollars
-  instead of unmatched transfer count.
+  rollup above this one on the Trends sheet. Same Fed-vs-internal
+  divergence, but viewed as per-day drift dollars instead of
+  unmatched transfer count.
+- [Expected-Zero EOD Rollup](expected-zero-eod-rollup.md) — rollup
+  below this one on the Trends sheet. Different shape (control account
+  carrying balance overnight rather than paired-but-half-posted) but
+  the same triage idiom.

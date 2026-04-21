@@ -1,13 +1,11 @@
 """API tests: validate the deployed AR dashboard definition matches expectations.
 
-Phase D shape — 5 sheets, per-sheet visual counts (Exceptions grows to
-17 with 5 aging bar charts), 5 drill-down parameters, and
-17 filter groups (shared date-range + 6 multi-selects + 4 Show-Only
-toggles + 5 parameter-bound drill-down filters + origin).
-
-Phase I.2 added the Daily Statement sheet — 6 visuals (5 KPI + 1 table),
-2 sheet-pinned filter groups (account + balance_date), 2 new parameters
-(`pArDsAccountId`, `pArDsBalanceDate`).
+Phase K.1 reshaped Exceptions: the legacy single-sheet check inventory
+(47 visuals across 14 per-check blocks) was replaced by Today's
+Exceptions (3 visuals: total KPI + breakdown + unified table) and
+Exceptions Trends (7 visuals: drift timelines + KPI/table rollup pairs +
+aging matrix + per-check trend). The four sheet-pinned drift-only
+filter groups went away with the per-check KPIs.
 """
 
 from __future__ import annotations
@@ -42,12 +40,13 @@ class TestSheets:
         "Balances",
         "Transfers",
         "Transactions",
-        "Exceptions",
+        "Today's Exceptions",
+        "Exceptions Trends",
         "Daily Statement",
     ]
 
-    def test_has_six_sheets(self, ar_dashboard_definition):
-        assert len(ar_dashboard_definition["Sheets"]) == 6
+    def test_has_seven_sheets(self, ar_dashboard_definition):
+        assert len(ar_dashboard_definition["Sheets"]) == 7
 
     def test_sheet_order(self, ar_dashboard_definition):
         names = [s["Name"] for s in ar_dashboard_definition["Sheets"]]
@@ -66,8 +65,11 @@ class TestVisuals:
         "Balances": 4,
         "Transfers": 4,
         "Transactions": 5,
-        # Phase F.5 grew Exceptions from 17 → 47 visuals
-        "Exceptions": 47,
+        # Phase K.1.2 — total KPI + breakdown bar + unified table
+        "Today's Exceptions": 3,
+        # Phase K.1.3 — drift timelines (1) + 2 KPI/table rollup pairs (4)
+        # + aging matrix + per-check trend = 7
+        "Exceptions Trends": 7,
         # Phase I.2 — 5 KPIs (opening / debits / credits / closing / drift)
         # + 1 transaction-detail table
         "Daily Statement": 6,
@@ -107,37 +109,6 @@ class TestVisuals:
                     assert len(text) > 10, (
                         f"Visual '{vtype['VisualId']}' missing subtitle"
                     )
-
-    def test_exceptions_has_both_drift_tables_and_timelines(
-        self, ar_dashboard_definition,
-    ):
-        """Phase 4 split the single drift table/timeline into ledger +
-        sub-ledger pairs; Phase 5 adds breach and overdraft tables/KPIs.
-        Catch it if any of the five reconciliation checks regresses away."""
-        exc_sheet = next(
-            s for s in ar_dashboard_definition["Sheets"]
-            if s["Name"] == "Exceptions"
-        )
-        ids = set(_visual_ids(exc_sheet))
-        for expected in (
-            "ar-exc-ledger-drift-table",
-            "ar-exc-subledger-drift-table",
-            "ar-exc-ledger-drift-timeline",
-            "ar-exc-subledger-drift-timeline",
-            "ar-exc-nonzero-table",
-            "ar-exc-breach-table",
-            "ar-exc-overdraft-table",
-            "ar-exc-kpi-breach",
-            "ar-exc-kpi-overdraft",
-            "ar-exc-aging-ledger-drift",
-            "ar-exc-aging-subledger-drift",
-            "ar-exc-aging-nonzero",
-            "ar-exc-aging-breach",
-            "ar-exc-aging-overdraft",
-        ):
-            assert expected in ids, (
-                f"Exceptions missing visual '{expected}'"
-            )
 
     def test_transactions_has_bar_by_day(self, ar_dashboard_definition):
         """Phase 4 added the Transactions-by-day chart alongside by-status."""
@@ -217,15 +188,14 @@ class TestFilterGroups:
         "fg-ar-drill-ledger-on-balances-subledger",
         "fg-ar-drill-activity-date-on-txn",
         "fg-ar-drill-transfer-type-on-txn",
-        # Phase I.3.A — Exceptions KPI scope fixes (drift-only narrowing
-        # for KPIs that share datasets with Balances timelines)
-        "fg-ar-exceptions-ledger-drift-only",
-        "fg-ar-exceptions-subledger-drift-only",
-        "fg-ar-exceptions-sweep-drift-only",
-        "fg-ar-exceptions-gl-fed-drift-only",
         # Phase I.2 — Daily Statement sheet pickers (parameter-bound)
         "fg-ar-ds-account",
         "fg-ar-ds-balance-date",
+        # Phase K.1.2 — Today's Exceptions multi-selects on the unified
+        # exceptions dataset (check-type / account / aging bucket)
+        "fg-ar-todays-exc-check-type",
+        "fg-ar-todays-exc-account",
+        "fg-ar-todays-exc-aging",
     }
 
     def test_filter_group_ids(self, ar_dashboard_definition):

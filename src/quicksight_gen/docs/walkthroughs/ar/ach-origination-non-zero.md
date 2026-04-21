@@ -1,6 +1,6 @@
 # ACH Origination Settlement Non-Zero EOD
 
-*Per-check walkthrough — Account Reconciliation Exceptions sheet.*
+*Per-check walkthrough — Account Reconciliation Today's Exceptions sheet.*
 
 ## The story
 
@@ -26,61 +26,53 @@ i.e., did the EOD sweep to FRB actually fire?"
 
 ## Where to look
 
-Open the AR dashboard, **Exceptions** sheet. In the CMS-specific
-section, the **ACH Origination Settlement Non-Zero EOD** KPI sits
-above its detail table and aging chart.
+Open the AR dashboard, **Today's Exceptions** sheet. In the Controls
+strip at the top of the sheet, set **Check Type** to
+`ACH Origination Settlement Non-Zero EOD`. The **Total Exceptions**
+KPI recounts to just this check's rows, the **Exceptions by Check**
+breakdown bar collapses to a single orange bar, and the **Open
+Exceptions** table below shows every row for this check — one row
+per non-zero EOD day.
+
+<details markdown><summary>Screenshot — Open Exceptions filtered to this check</summary>
+
+![Open Exceptions table filtered to ACH Origination Settlement Non-Zero EOD, five rows of stored_balance $3,440](../screenshots/ar/todays-exceptions-filtered-ach-origination-non-zero.png)
+
+</details>
 
 ## What you'll see in the demo
 
-The KPI shows **5** ACH origination non-zero days.
+Five rows, one per day the residual has been sitting there. Key
+columns to read:
 
-<details markdown><summary>Screenshot — KPI</summary>
-
-![ACH Origination Settlement Non-Zero EOD KPI showing the count 5](../screenshots/ar/ach-origination-non-zero-01-kpi.png)
-
-</details>
+| column          | value for this check                                          |
+|-----------------|---------------------------------------------------------------|
+| `account_id`    | `gl-1810` on every row (the ACH Origination Settlement ledger) |
+| `account_name`  | "ACH Origination Settlement"                                   |
+| `account_level` | `Ledger`                                                       |
+| `transfer_id`   | blank — this check is an EOD-balance shape, not a single-transfer shape |
+| `primary_amount`| `stored_balance` — the non-zero EOD dollar amount             |
 
 One planted skip in `_ACH_SWEEP_SKIP_PLANT` (days_ago=4 → Apr 15
 2026) is the seed:
 
-| date        | stored_balance | aging        |
-|-------------|---------------:|--------------|
-| Apr 19 2026 |          3,440 | 1: 0-1 day   |
-| Apr 18 2026 |          3,440 | 2: 2-3 days  |
-| Apr 17 2026 |          3,440 | 2: 2-3 days  |
-| Apr 16 2026 |          3,440 | 3: 4-7 days  |
-| Apr 15 2026 |          3,440 | 3: 4-7 days  |
+| exception_date | primary_amount | aging_bucket |
+|----------------|---------------:|--------------|
+| Apr 19 2026    |          3,440 | 1: 0-1 day   |
+| Apr 18 2026    |          3,440 | 2: 2-3 days  |
+| Apr 17 2026    |          3,440 | 2: 2-3 days  |
+| Apr 16 2026    |          3,440 | 3: 4-7 days  |
+| Apr 15 2026    |          3,440 | 3: 4-7 days  |
 
 The Apr 15 skip left $3,440 of net ACH originations parked on
 gl-1810. Each subsequent day's normal sweep only swept that day's
 net (back to zero), so gl-1810 stays at $3,440 EOD every day
 since.
 
-The detail table shows all five rows. Columns: `ledger_account_id`,
-`ledger_name`, `balance_date`, `balance_date_str`, `stored_balance`,
-`aging_bucket`. Sorted newest-first.
-
-<details markdown><summary>Screenshot — detail table</summary>
-
-![ACH Origination Settlement Non-Zero EOD table showing 5 rows](../screenshots/ar/ach-origination-non-zero-02-table.png)
-
-</details>
-
-The aging bar chart shows the distribution: 1 row in bucket 1
-(today), 2 rows in bucket 2 (Apr 17 + 18), 2 rows in bucket 3
-(Apr 15 + 16). No rows in bucket 4 or 5 yet — the underlying
-incident is only 4 days old.
-
-<details markdown><summary>Screenshot — aging chart</summary>
-
-![ACH Origination Non-Zero EOD by Age aging bar chart](../screenshots/ar/ach-origination-non-zero-03-aging.png)
-
-</details>
-
 ## What it means
 
-Each row says: at end of day on `balance_date`, gl-1810's stored
-balance was `stored_balance` dollars (non-zero). The constant
+Each row says: at end of day on `exception_date`, gl-1810's stored
+balance was `primary_amount` dollars (non-zero). The constant
 $3,440 across all five rows is the smoking gun — that's the same
 unswept net from a single missed cycle four days ago, sitting
 there ever since.
@@ -101,15 +93,24 @@ up but isn't fully done.
 
 ## Drilling in
 
-Click `ledger_account_id` on any row. The drill switches to the
-**Transactions** sheet filtered to that date, showing every
-posting that touched gl-1810 that day — the day's individual ACH
-origination debits, plus (if it fired) the EOD sweep credit.
+The `account_id` cell renders with a pale-green background — that
+tint is the dashboard's cue that a right-click menu is available.
+**Right-click** any `account_id` value and choose
+**View Transactions for Account-Day** from the context menu.
+QuickSight switches to the **Transactions** sheet and filters to
+every posting that touched gl-1810 on that specific date — the
+day's individual ACH origination debits, plus (if it fired) the
+EOD sweep credit.
 
 On the skip day (Apr 15), the EOD sweep credit will be missing.
 Walking forward to the day before the residual finally clears
 shows the corrective sweep — typically tagged differently from
 normal nightly sweeps because it's an off-cycle correction.
+
+The `transfer_id` column is left blank for this check because no
+single transfer represents the non-zero balance — the residual is
+the net of many postings across the day. The account-day scope is
+the meaningful one.
 
 ## Next step
 
@@ -125,10 +126,10 @@ ACH origination non-zero rows go to **ACH Operations**:
   account suggests nobody is monitoring this ledger; the
   operational gap matters more than the dollar amount.
 
-Pair this check with **ACH Sweep Without Fed Confirmation**
-(F.5.4 next to it). Both check the ACH origination cycle; this
-one catches "internal sweep didn't post," the other catches
-"internal sweep posted but Fed never confirmed."
+Pair this check with **ACH Sweep Without Fed Confirmation**. Both
+check the ACH origination cycle; this one catches "internal sweep
+didn't post," the other catches "internal sweep posted but Fed
+never confirmed."
 
 ## Related walkthroughs
 

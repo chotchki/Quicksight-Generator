@@ -1,6 +1,6 @@
 # Concentration Master Sweep Drift
 
-*Per-check walkthrough — Account Reconciliation Exceptions sheet.*
+*Per-check walkthrough — Account Reconciliation Today's Exceptions sheet.*
 
 ## The story
 
@@ -26,48 +26,49 @@ master credits and operating sub-account debits actually balance?"
 
 ## Where to look
 
-Open the AR dashboard, **Exceptions** sheet. In the CMS-specific
-section, the **Concentration Master Sweep Drift Days** KPI sits
-half-width on the left, with the **Concentration Master Sweep Drift
-Timeline** half-width on the right.
+Open the AR dashboard, **Today's Exceptions** sheet. In the Controls
+strip at the top of the sheet, set **Check Type** to
+`Concentration Master Sweep Drift`. The **Total Exceptions** KPI
+recounts to just this check's rows, the **Exceptions by Check**
+breakdown bar collapses to a single red bar, and the **Open
+Exceptions** table below shows every row for this check — one row
+per sweep date where master credits ≠ sub-account debits.
+
+<details markdown><summary>Screenshot — Open Exceptions filtered to this check</summary>
+
+![Open Exceptions table filtered to Concentration Master Sweep Drift, rows for the planted leg-mismatch sweep dates](../screenshots/ar/todays-exceptions-filtered-concentration-master-sweep-drift.png)
+
+</details>
 
 ## What you'll see in the demo
 
-The KPI shows **18** sweep drift days.
+A handful of rows — one per sweep date where the master and
+sub-account legs disagreed. Key columns to read:
 
-<details markdown><summary>Screenshot — KPI</summary>
-
-![Concentration Master Sweep Drift Days KPI showing the count 18](../screenshots/ar/concentration-master-sweep-drift-01-kpi.png)
-
-</details>
+| column            | value for this check                                                |
+|-------------------|---------------------------------------------------------------------|
+| `account_id`      | blank — sweep drift is a system-level cycle aggregate, not per-account |
+| `account_level`   | `System`                                                            |
+| `transfer_id`     | blank — drift is the residual of *all* sweep transfers on a date    |
+| `primary_amount`  | `drift` — `master_total + subaccount_total`; sign tells direction    |
+| `secondary_amount`| `master_total` — the sum of master-side credits on that date         |
 
 Two planted leg-mismatch incidents in `_ZBA_SWEEP_LEG_MISMATCH_PLANT`
-are the visible spikes on the timeline:
+are the visible drift dates:
 
-| sub-account                          | sweep date  | master leg delta |
-|--------------------------------------|-------------|-----------------:|
-| Big Meadow Dairy — Operating Main    | Apr 13 2026 |       **+$120** (master long) |
-| Big Meadow Dairy — Operating North   | Apr 8 2026  |     **−$95.50** (master short) |
+| sub-account                          | sweep date  | drift                          |
+|--------------------------------------|-------------|--------------------------------|
+| Big Meadow Dairy — Operating Main    | Apr 13 2026 | **+$120.00** (master long)     |
+| Big Meadow Dairy — Operating North   | Apr 8 2026  | **−$95.50** (master short)     |
 
-Mixed signs are intentional so the timeline shows both upward and
-downward spikes — drift in either direction is a problem.
-
-The timeline shows daily drift bars: most days net to zero (no
-visible bar), the two planted days carry the visible spikes near
-+$120 and −$95.50, and the count of 18 also includes other smaller
-sweep dates that the dataset includes in its scope.
-
-<details markdown><summary>Screenshot — timeline</summary>
-
-![Concentration Master Sweep Drift Timeline showing two visible spikes](../screenshots/ar/concentration-master-sweep-drift-02-timeline.png)
-
-</details>
+Mixed signs are intentional so the picture shows both directions —
+drift in either direction is a problem.
 
 ## What it means
 
-Each timeline bar is a sweep date with `drift =
-master_total + subaccount_total`. (Master credits are positive,
-sub-account debits are negative; a balanced day sums to zero.)
+Each row is a sweep date with `drift = master_total + subaccount_total`.
+(Master credits are positive, sub-account debits are negative; a
+balanced day sums to zero — and balanced days don't appear here.)
 
 The two error patterns:
 
@@ -87,18 +88,25 @@ side computes net-of-fees and the other doesn't.
 
 ## Drilling in
 
-There's no left-click drill on this visual — the timeline is a
-diagnostic surface, not a per-row drill target. To investigate a
-specific drift date, switch to the **Transactions** sheet manually,
-filter to `transfer_type = clearing_sweep` and the drift date, and
-read the sweep transfers' legs side by side. The transfer with the
-non-zero net is the sweep leg that mismatched.
+This check is a system-level aggregate — `account_id` and
+`transfer_id` are both blank, so neither the right-click
+account-day drill nor the left-click transfer drill applies on
+these rows directly. To investigate a specific drift date:
 
-The companion **Non-Zero Transfers** check on the baseline section
-also surfaces these drift days at the per-transfer level — the
-planted Apr 13 and Apr 8 sweep dates show up as `ar-zba-sweep-0004`
-and `ar-zba-sweep-0017` in that table. Drilling from Non-Zero
-Transfers gets you straight to the offending leg.
+1. Note the `exception_date` for the row.
+2. Set **Check Type** to `Non-Zero Transfer`. The same incidents
+   surface there at the per-transfer level — the planted Apr 13
+   and Apr 8 sweep dates show up as `ar-zba-sweep-0004` and
+   `ar-zba-sweep-0017` (small non-zero amounts on rows with
+   `transfer_type = clearing_sweep`).
+3. Left-click the `transfer_id` of the offending sweep transfer to
+   land on the **Transactions** sheet filtered to that one
+   transfer's legs. The leg with the wrong amount is the source
+   of the drift.
+
+For a broader view of how this check trends over time, switch to
+the **Exceptions Trends** sheet and read the *Concentration Master
+Sweep Drift Timeline* under the Balance Drift Timelines rollup.
 
 ## Next step
 
@@ -107,9 +115,9 @@ same team as Sweep Target Non-Zero. Hand off:
 
 - The drift date and direction (master long or short)
 - The amount of drift
-- The sub-account whose sweep was involved
-- A pointer to the sweep transfer ID from the Non-Zero Transfers
-  drill
+- The sub-account whose sweep was involved (visible after drilling
+  through Non-Zero Transfer to the underlying transfer)
+- A pointer to the sweep transfer ID
 
 Sweep drift is a structural integrity issue — a single mis-amounted
 sweep is rare; recurring drift on the same sub-account or same date
@@ -125,6 +133,9 @@ the team that owns the sweep automation, not Treasury Operations.
   on day N+1 catch-up sweep).
 - [Non-Zero Transfers](non-zero-transfers.md) — the
   transfer-level view of the same incidents. Drift days here
-  correspond to specific `transfer_id`s with non-zero net there.
-  Drift gives you the daily summary; non-zero transfers gives you
-  the per-transfer drill point.
+  correspond to specific `transfer_id`s with non-zero net there;
+  drilling individual drift days starts there.
+- [Balance Drift Timelines Rollup](balance-drift-timelines-rollup.md) —
+  the Trends-sheet rollup that includes the Concentration Master
+  Sweep Drift Timeline alongside Ledger / Sub-Ledger / GL-vs-Fed
+  drift timelines.

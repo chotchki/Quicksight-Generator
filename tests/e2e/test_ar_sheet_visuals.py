@@ -25,7 +25,11 @@ EXPECTED_VISUAL_COUNTS = {
     "Balances": 4,
     "Transfers": 4,
     "Transactions": 5,
-    "Exceptions": 47,
+    # Phase K.1.2 — total KPI + breakdown bar + unified table
+    "Today's Exceptions": 3,
+    # Phase K.1.3 — drift timelines + 2 KPI/table rollup pairs + aging
+    # matrix + per-check trend = 7
+    "Exceptions Trends": 7,
     # Phase I.2 — Daily Statement: 5 KPIs + 1 transaction-detail table.
     # KPIs render empty until the user picks an account, but the visual
     # containers are in the DOM.
@@ -55,25 +59,17 @@ EXPECTED_TITLES_PER_SHEET = {
         "Transactions by Day",
         "Transaction Detail",
     },
-    "Exceptions": {
-        # Cross-check rollups (top of tab)
+    "Today's Exceptions": {
+        "Total Exceptions",
+        "Exceptions by Check",
+        "Open Exceptions",
+    },
+    "Exceptions Trends": {
+        "Balance Drift Timelines",
         "Two-Sided Post Mismatch",
         "Accounts Expected Zero at EOD",
-        "Balance Drift Timelines",
-        # Baseline check tables
-        "Ledger Balance Drift",
-        "Sub-Ledger Balance Drift",
-        "Sub-Ledger Limit Breach",
-        "Sub-Ledger Overdraft",
-        "Non-Zero Transfers",
-        # CMS-specific check tables
-        "Sweep Target Non-Zero EOD",
-        "ACH Origination Settlement Non-Zero EOD",
-        "ACH Sweep Without Fed Confirmation",
-        "Fed Activity Without Internal Post",
-        "Stuck in Internal Transfer Suspense",
-        "Internal Transfer Suspense Non-Zero EOD",
-        "Reversed Transfers Without Credit-Back",
+        "Aging by Check",
+        "Exceptions per Check, by Day",
     },
     "Daily Statement": {
         "Opening Balance",
@@ -95,13 +91,11 @@ def embed_url(qs_client, account_id, ar_dashboard_id) -> str:
     )
 
 
-# Exceptions packs 47 visuals (3 rollup KPIs + 1 rollup chart + 14 KPIs +
-# 14 detail tables + 4 drift timelines + 11 aging-bar charts) — at the
-# default 1000px viewport QuickSight virtualizes below-the-fold visuals
-# and only a handful show up in the DOM. A very tall viewport fits them
-# all so the counting assertions below can just wait for the container
-# count.
-TALL_VIEWPORT = (1600, 12000)
+# Exceptions Trends stacks 7 visuals full-width — at the default 1000px
+# viewport QuickSight virtualizes below-the-fold visuals and only a few
+# show up in the DOM. A taller viewport fits them all so the counting
+# assertions below can just wait for the container count.
+TALL_VIEWPORT = (1600, 4000)
 
 
 @pytest.mark.parametrize(
