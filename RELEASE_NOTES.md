@@ -1,5 +1,18 @@
 # Release Notes
 
+## v3.5.1
+
+### CI fix — boto3 in dev extras + workflow permissions
+
+Re-cut of v3.5.0 (rejected at the PyPI approval gate) with two follow-up fixes that landed against `main` after the v3.5.0 tag was pushed.
+
+- **`boto3>=1.34` added to `[project.optional-dependencies] dev`** in `pyproject.toml`. `tests/test_deploy.py` imports `quicksight_gen.common.deploy`, which has a module-level `import boto3`; the dev install previously only pulled `boto3-stubs` (type stubs, not the runtime package), so `pip install -e ".[dev]" && pytest` failed at collection time on a clean machine. Local `.venv` had boto3 from past `deploy` runs and masked the gap; CI on the v3.5.0 commit caught it.
+- **Workflow-level `permissions: contents: read`** added to `.github/workflows/ci.yml` and `.github/workflows/release.yml` to satisfy CodeQL `actions/missing-workflow-permissions` findings (alerts #1–4). Per-job overrides on `coverage-badge` (`contents: write`), `publish-testpypi` / `publish-pypi` (`id-token: write`), and `github-release` (`contents: write`) are unchanged — they replace the workflow default for jobs that need elevated access.
+
+No analysis, dataset, or handbook changes.
+
+---
+
 ## v3.5.0
 
 ### Phase K.1 — AR Exceptions split + handbook rewrite + MIT relicense
