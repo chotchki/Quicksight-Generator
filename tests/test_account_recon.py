@@ -1921,7 +1921,7 @@ class TestSeedSqlStructure:
 class TestSchemaSql:
     @pytest.fixture()
     def schema_sql(self) -> str:
-        from quicksight_gen.demo import generate_schema_sql
+        from quicksight_gen.schema import generate_schema_sql
 
         return generate_schema_sql()
 

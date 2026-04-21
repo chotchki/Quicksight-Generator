@@ -264,8 +264,8 @@ src/quicksight_gen/
         datasets.py     # 21 custom-SQL datasets
         demo_data.py    # Sasquatch National Bank — CMS treasury demo data generator
         constants.py    # Sheet + dataset identifier constants
-    demo/
-        schema.sql      # Full PostgreSQL DDL — shared `transactions` + `daily_balances` base layer + AR dimension tables; emitted by `demo schema`
+    schema.py           # `generate_schema_sql()` — reads the canonical DDL
+    schema.sql          # Canonical PostgreSQL DDL (interface contract for ETL); shared `transactions` + `daily_balances` base layer + AR dimension tables
 docs/
     Schema_v3.md        # Data Integration Team feed contract: column specs, metadata keys, ETL examples
 tests/

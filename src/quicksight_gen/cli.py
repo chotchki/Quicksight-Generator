@@ -218,9 +218,9 @@ def demo() -> None:
 def demo_schema(app: str | None, all_apps: bool, output: str) -> None:
     """Emit the PostgreSQL DDL for the demo database."""
     _resolve_app(app, all_apps, allow_all=True)
-    # Schema lives in a single file covering both apps; both apps share
-    # the `transactions` + `daily_balances` base tables.
-    from quicksight_gen.demo import generate_schema_sql
+    # Schema covers both apps — they share the `transactions` +
+    # `daily_balances` base tables and AR-only dimension tables.
+    from quicksight_gen.schema import generate_schema_sql
 
     out = Path(output)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -360,7 +360,7 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
             "Install it with: pip install 'quicksight-gen[demo]'"
         )
 
-    from quicksight_gen.demo import generate_schema_sql
+    from quicksight_gen.schema import generate_schema_sql
     schema_sql = generate_schema_sql()
 
     seed_parts: list[str] = []

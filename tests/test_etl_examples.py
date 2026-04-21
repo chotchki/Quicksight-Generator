@@ -326,7 +326,7 @@ class TestForbiddenSqlPatterns:
         # SQL strings as triple-quoted Python literals).  Source-text
         # scanning sidesteps Config plumbing and catches both the
         # query SQL and any inline expression SQL.
-        from quicksight_gen.demo import generate_schema_sql
+        from quicksight_gen.schema import generate_schema_sql
         chunks = [generate_schema_sql()]
         for mod in (ar_datasets, pr_datasets):
             chunks.append(Path(mod.__file__).read_text())

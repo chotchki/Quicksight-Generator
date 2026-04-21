@@ -35,7 +35,7 @@ Datasets are custom-SQL, direct query (no SPICE) — seed changes show up immedi
 
 ### Shared base layer
 
-Both apps feed two physical tables, defined in `src/quicksight_gen/demo/schema.sql` (emitted by `quicksight-gen demo schema`) and documented as a feed contract in `docs/Schema_v3.md`:
+Both apps feed two physical tables, defined in `src/quicksight_gen/schema.sql` (emitted by `quicksight-gen demo schema`, exposed as `quicksight_gen.schema.generate_schema_sql()`) and documented as a feed contract in `docs/Schema_v3.md`:
 
 - **`transactions`** — one row per money-movement leg. Carries `transaction_id` PK, `transfer_id` (groups legs of one financial event), `parent_transfer_id` (chains transfers — used by PR for `external_txn → payment → settlement → sale`), `transfer_type`, `origin`, `account_id`, denormalized account fields (`account_name`, `account_type`, `control_account_id`, `is_internal`), `signed_amount` (positive = debit, negative = credit), `amount` (absolute), `status`, `posted_at`, `balance_date`, `external_system`, `memo`, and a `metadata TEXT` column constrained `IS JSON` for app-specific keys.
 - **`daily_balances`** — one row per `(account_id, balance_date)`. Carries the same denormalized account fields as `transactions` plus `balance` (stored end-of-day) and a `metadata TEXT` JSON column. AR attaches per-day limit configuration here so the limit-breach view stays a single SELECT.

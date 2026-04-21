@@ -1,5 +1,13 @@
 # Release Notes
 
+## v3.2.2
+
+### Refactor — schema is the interface contract, not a demo artifact
+
+Renames `quicksight_gen/demo/schema.sql` → `quicksight_gen/schema.sql` and the helper module `quicksight_gen.demo` → `quicksight_gen.schema`. The DDL is what production ETL writes against; the "demo" namespace was a misleading hangover from when the file lived under a top-level `demo/` directory beside the seed generators. The `quicksight-gen demo schema` CLI command is unchanged. Importers should switch from `from quicksight_gen.demo import generate_schema_sql` to `from quicksight_gen.schema import generate_schema_sql`.
+
+---
+
 ## v3.2.1
 
 ### Fix — wheel ships demo schema
