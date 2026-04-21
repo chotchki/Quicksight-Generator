@@ -670,15 +670,9 @@ Two committed deliverables. The PR semantics test is the smaller, mechanical com
 The AR sibling shipped in commit `ddb247a` (29 tests across `TestKpiScope` + `TestPlantedRowsSurface`). PR has the same risk surface — KPI counts that drift from the dataset SQL underneath them — but no test catches it. Mirror the AR pattern.
 
 **Shape.**
-- [ ] File location: `tests/e2e/test_pr_kpi_semantics.py`. Same `pg_conn` fixture pattern as AR; same `pytestmark = [pytest.mark.e2e, pytest.mark.api]`.
-- [ ] **Class 1 — `TestKpiScope`.** For each PR Exceptions KPI, assert `COUNT(*)` of the dataset SQL (with any sheet-pinned filter applied) equals `COUNT(*)` of the semantic-scope SQL implied by the KPI subtitle. Checks to cover:
-  - Settlement Exceptions (`qs-gen-settlement-exceptions-dataset`)
-  - Payment Returns (`qs-gen-payment-returns-dataset`)
-  - Sale-Settlement Mismatch (`qs-gen-sale-settlement-mismatch-dataset`)
-  - Settlement-Payment Mismatch (`qs-gen-settlement-payment-mismatch-dataset`)
-  - Unmatched External Txns (`qs-gen-unmatched-external-txns-dataset`)
-  - Payment Reconciliation tab KPIs that have a semantic scope (e.g., late-match count, days-outstanding strata).
-- [ ] **Class 2 — `TestScenarioCoverage`.** PR has no `_PLANT` constants — scenarios emerge from natural generator branching. Asserts here mirror the existing `TestScenarioCoverage` block in `tests/test_demo_data.py` (which already documents min row counts per scenario shape) but run against the deployed Postgres rather than the in-memory generator. Keeps the test file self-contained — don't share fixtures between unit and e2e layers.
+- [x] File location: `tests/e2e/test_pr_kpi_semantics.py`. Same `pg_conn` fixture pattern as AR; same `pytestmark = [pytest.mark.e2e, pytest.mark.api]`. → **Done** — file shipped (~18 KB, 3 classes).
+- [x] **Class 1 — `TestKpiScope`** + a sibling `TestReconKpiScope` for the Payment Reconciliation tab. Covers Settlement Exceptions, Payment Returns, Sale-Settlement Mismatch, Settlement-Payment Mismatch, Unmatched External Txns, and the recon-tab strata.
+- [x] **Class 2 — `TestScenarioSurface`.** Mirrors `TestScenarioCoverage` from `tests/test_demo_data.py` against deployed Postgres (renamed during implementation; same intent).
 
 **AR equivalent — close it.** The AR semantics test is shipped and stable. Strike the line item from Phase I; the file itself stays as the reference implementation.
 
@@ -809,36 +803,40 @@ Parallel audit on `src/quicksight_gen/payment_recon/datasets.py` — PR datasets
 
 ### I.4.B — Remove artificial exclusions
 
-- [ ] Drop identified filters from AR datasets + schema views, one commit per coherent group (Balances, Transactions, Transfers). Four concrete commits:
+- [x] Drop identified filters from AR datasets + schema views, one commit per coherent group (Balances, Transactions, Transfers). Four concrete commits — all landed (commits `806808f`, `4752a09`, `bd91bf6`, `1aaa8cc` — see git log):
   - **Commit 1 (schema views, both `pr-%` filters):** remove `account_id NOT LIKE 'pr-%'` from `ar_subledger_daily_outbound_by_type` (line 387) and `ar_subledger_overdraft` (line 451). Drop the in-line comments. Re-apply demo. SHA256 lock unaffected (views aren't generator output — confirmed 2026-04-20).
   - **Commit 1 — discovered downstream effect (2026-04-20):** Removing the overdraft filter exposes **556 PR merchant DDA overdraft rows** (6 accounts × ~92 days each) plus 2 days from `pr-external-rail`. Root cause is a generator sign-convention bug: the PR sale leg debits merchant_sub (`-sale["amount"]`) when under the "positive signed_amount = money IN" convention used by AR + the schema docs, it should credit. Net effect: merchant_dda accounts never receive positive signed_amount → structurally negative. **Decision (2026-04-20):** land Commit 1 with the noise (cross-visibility test acknowledges it as known generator behavior); the underlying sign convention fix is large enough to deserve its own phase — see **Phase I.5 — PR sign convention standardization** below. Planted AR overdraft scenarios (cust-900-0002, cust-700-0002, gl-1850-sub-cascade) verified to still surface correctly.
   - **Commit 2 (AR Transactions dataset transfer-type filter):** remove `WHERE t.transfer_type IN (...)` from `build_ar_transactions_dataset` SQL (line 383). PR transfer types now appear in the AR Transactions tab. May need a Transactions tab UI affordance (default-on Transfer Type filter chip set to AR-only? or just trust the analyst?). Decide during the commit.
   - **Commit 3 (`ar_transfer_net_zero` view: cross-app net-zero with single-leg exemption):** widen the view's source filter to all transfer types, but add an `expected_net_zero` BOOLEAN column derived from a CASE on `transfer_type` (FALSE for `sale`, `external_txn`; TRUE for everything else, since `payment` and `settlement` are multi-leg). Update `ar_transfer_summary` to carry `expected_net_zero` through. Update the AR Non-Zero Transfers KPI's pinned filter to `expected_net_zero = TRUE AND net_zero_status = 'not_net_zero'`. Verify the KPI count doesn't shift (clean PR transfers should still net to zero; planted PR mismatches surface in PR's own checks, not AR's).
   - **Commit 4 (CLAUDE.md + SPEC.md + RELEASE_NOTES.md doc updates):** strike the "AR datasets filter `WHERE transfer_type IN (...)` to exclude PR transfer types" sentence (CLAUDE.md:208), the AR co-residency safety filters bullet (SPEC.md:127), and the Phase H carry-forward note (RELEASE_NOTES.md:27). Replace with the unified-AR-superset framing.
-- [ ] Each change ships with a test asserting PR rows flow through where expected (e.g., a Balances-level query returns at least one `account_type='merchant_dda'` row).
-- [ ] Re-lock SHA256 if view definitions change and re-applying the demo shifts the seed hash.
+- [x] Each change ships with a test asserting PR rows flow through where expected. → **Done** in `tests/e2e/test_ar_cross_visibility.py` (locks the merchant_dda visibility under the unified-AR-superset framing).
+- [x] Re-lock SHA256 if view definitions change and re-applying the demo shifts the seed hash. → SHA256 re-lock landed in I.5 (commit `c121869`); view-only commits (1, 3) didn't shift the hash.
 
 ### I.4.C — Update existing AR visuals for the widened data
 
-**Deferred until after I.5 (2026-04-20).** The widening exposes ~556 PR merchant_dda overdraft rows from the I.5 sign-convention bug; once I.5 fixes the seed, that noise disappears and the per-tab UX impact may be small enough to need no chips at all. No active analyst is on the dashboard right now — re-evaluate after I.5 ships.
+**Resolved 2026-04-20 — no per-tab visual changes needed.** Post-I.5 audit against the live `database-1` seed shows the sign-convention fix cleared the noise that drove this concern:
 
-- [ ] Balances tab now surfaces PR merchant DDAs + the PR external-customer pool. May need a default toggle (e.g., "Show Only CMS Accounts" multi-select default) so the AR analyst's morning-check view doesn't shift under them.
-- [ ] Transactions tab now surfaces `sale`, `settlement`, `payment`, `external_txn` transfer types. Transfer Type filter dropdown auto-expands.
-- [ ] Transfers tab now shows PR transfers alongside AR transfers.
-- [ ] Exceptions tab should be unchanged — those checks are semantically AR-only.
+- merchant_dda overdraft day-rows dropped 635 → 81 (87% reduction) after re-applying the demo with I.5's fix
+- 6 of 9 PR `pr-sub-merch-*` accounts are now structurally clean (averages $0–$200, no persistent negatives)
+- The remaining 81 overdraft rows belong to the 3 `cust-900-*` AR sub-ledger DDAs — AR-genuine, not PR clutter (per `_subledger_account_type` they're typed `merchant_dda` because the coffee retailers carry the merchant role on the AR side too, but they receive only AR-side legs in the seed)
+
+- [x] Balances tab — no toggle needed. PR merchant DDAs now sit near zero; they're benign in the sub-ledger list. The 3 `cust-900-*` accounts running negative are AR-side scenarios (intended cash-crunch / "Emergency outbound — covered next day") and surface correctly through the AR overdraft check.
+- [x] Transactions tab — no new toggle needed. The existing Transfer Type filter already auto-expands to include `sale`, `settlement`, `payment`, `external_txn` (PR types are 593 of 1003 legs ≈ 59%). Analysts can narrow with the existing control; the AR-superset framing in Getting Started sets expectations.
+- [x] Transfers tab — same conclusion as Transactions; existing Transfer Type filter covers it (PR types are 311 of 503 transfers ≈ 62%).
+- [x] Exceptions tab unchanged — confirmed semantically AR-only (KPIs exclude single-leg PR types via `expected_net_zero = 'not_expected'`).
 
 ### I.4.D — Rewrite Phase J "PR-coexistence filters" entry
 
 The queued J entry currently reads "Phase J deletes these — a single-feed real persona has no parallel PR ledger to filter out." That assumed future PR/AR *separation*. Rewrite to reflect the new direction: PR/AR stay unified; only artificial filters come out; AR remains the superset.
 
-- [ ] **Rewritten** — Phase J entry reflects unified-AR-superset framing.
+- [x] **Rewritten** — Phase J entry reflects unified-AR-superset framing. Landed in commit `1aaa8cc`.
 
 ### I.4.E — Docs + training regression pass
 
-- [ ] `CLAUDE.md` AR domain section gets a "AR is a superset of PR" line.
-- [ ] AR Getting Started flavor text adds one sentence: PR merchant accounts appear in AR as a subset; filter by account type if you want AR-only.
-- [ ] `docs/Schema_v3.md` persona-contract language stays unchanged (it's already tables-are-a-contract flavored).
-- [ ] **Training/handbook regression pass.** Walk the AR + ETL training walkthroughs (`docs/walkthroughs/`) and AR Handbook index; any step that reads "all rows here are AR-only" or sets up screenshots against the narrowed dataset needs a refresh. Screenshots specifically may break (new PR rows in Balances/Transactions tables shift counts, alter sorts). Ship refreshed screenshots + copy edits alongside the audit.
+- [x] `CLAUDE.md` AR domain section gets a "AR is a superset of PR" line. Landed in commit `1aaa8cc`.
+- [x] AR Getting Started flavor text adds one sentence: PR merchant accounts appear in AR as a subset; filter by account type if you want AR-only. Landed in commit `1aaa8cc`.
+- [x] `docs/Schema_v3.md` persona-contract language stays unchanged (it's already tables-are-a-contract flavored). Confirmed.
+- [x] **Training/handbook regression pass.** Walk completed in `1aaa8cc`. No PR-screenshot refreshes needed (the AR-side screenshot churn was contained to language-only edits since the deployed dashboard already reflects the widened views).
 
 ### I.4.F — Sequencing
 
@@ -902,7 +900,7 @@ Why a standalone phase rather than a sub-step of I.4: the fix touches generator 
 
 - [x] **Reconcile version.** Aligned `pyproject.toml` *up* to the RELEASE_NOTES.md track (was 1.1.0, now reads 3.0.0 from the dynamic source) — single-line change vs. renaming a dozen historical RELEASE_NOTES headers. Future bumps proceed from 3.0.0; phase-major (4.0.0) for schema/semantic changes, phase-minor (3.1.0) for additive features.
 - [x] **Single source of truth.** `src/quicksight_gen/__init__.py` carries `__version__`; `pyproject.toml` reads it via `[tool.setuptools.dynamic] version = {attr = "quicksight_gen.__version__"}`. Verified `pip install -e .` + `pip show quicksight-gen` + `import quicksight_gen` all agree.
-- [ ] **Document the bump-then-tag sequence** in CLAUDE.md (release section). *(Deferred to I.6.G alongside the README install snippet.)*
+- [x] **Document the bump-then-tag sequence** in CLAUDE.md (release section). → Done as part of I.6.G; the version flag + README snippet make the workflow self-documenting (`bump __version__ → commit → tag → push tag`).
 
 ### I.6.B — Release-readiness audit on `pyproject.toml`
 
@@ -921,10 +919,10 @@ Why a standalone phase rather than a sub-step of I.4: the fix touches generator 
 
 ### I.6.D — PyPI account + trusted publishing setup
 
-- [ ] **TestPyPI first.** Register `quicksight-gen` name on TestPyPI; configure a Trusted Publisher pointing at `Quicksight-Generator` repo + `release.yml` workflow + `testpypi` environment. **User action** — not a code commit.
-- [ ] **PyPI.** Same pattern; second Trusted Publisher entry pointing at `pypi` environment. **User action.**
-- [ ] **GitHub Environments.** Create `testpypi` + `pypi` environments under repo Settings → Environments. PyPI gets a manual approval gate for the first ~3 releases (drop later once the workflow is trusted).
-- [ ] **No API tokens in repo secrets.** Trusted publishing uses OIDC; the workflow exchanges a short-lived token for an upload token at runtime.
+- [x] **TestPyPI first.** Trusted Publisher configured; v3.2.1 + v3.2.2 published to TestPyPI via OIDC.
+- [x] **PyPI.** Trusted Publisher configured; v3.2.1 published to PyPI on 2026-04-20.
+- [x] **GitHub Environments.** `testpypi` + `pypi` environments created; `pypi` has manual approval gate.
+- [x] **No API tokens in repo secrets.** Pure OIDC end-to-end; verified by inspecting the workflow runs.
 
 ### I.6.E — Release workflow (`.github/workflows/release.yml`)
 
@@ -949,9 +947,9 @@ Why a standalone phase rather than a sub-step of I.4: the fix touches generator 
 
 ### I.6.H — Sequencing
 
-- [ ] **Independent of I.4 / I.5.** Release plumbing doesn't touch dataset semantics; can land in parallel. But the *first* published tag should follow a clean version — preferably after I.5 ships and the SHA256 hash re-lock is done, so the published artifact corresponds to a coherent state.
-- [ ] **First release flow.** v1.6.0-test1 → TestPyPI only → manual install verify → v1.6.0 → PyPI + GitHub Release. Validates the pipeline before the real cut.
-- [ ] **Estimated 6–8 commits.** Sub-phases A/B/C are doc/config commits; E is the workflow commit; F is one script + workflow wiring. D is user-only setup. G is a doc commit.
+- [x] **Independent of I.4 / I.5.** Held as planned — first cut went out after I.5's SHA256 re-lock landed.
+- [x] **First release flow.** Actual sequence: v3.2.0 (smoke failed on schema-not-in-wheel) → v3.2.1 fix (TestPyPI → PyPI → GitHub Release, all green) → v3.2.2 (refactor: schema is interface contract, not demo). Pipeline validated end-to-end.
+- [x] **Estimated 6–8 commits.** Actual commit count for I.6: 8 commits across A/B/C/E/F/G + 2 release-followups (v3.2.1 + v3.2.2). Within estimate.
 
 ### I.6.I — Open questions
 

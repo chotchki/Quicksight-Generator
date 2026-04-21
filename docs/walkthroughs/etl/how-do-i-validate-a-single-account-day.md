@@ -77,6 +77,8 @@ You should see:
 - **Transaction Detail** table — at least one leg, every leg
   has a `counter_account_name` filled in (no NULLs).
 
+![Daily Statement clean reconciling day for gl-1010-cash-due-frb showing Opening 40,090 / Debits 2,405 / Closing 42,495 / Drift 0 with a single ACH sweep leg](../screenshots/ar/daily-statement-01-clean.png)
+
 This is what every account-day in your slice should look like
 when the projection is clean.
 
@@ -97,6 +99,8 @@ You should see:
   drift isn't *in* a leg; it's the absence of a leg that should
   have been there (or the presence of a balance row that
   shouldn't have been bumped).
+
+![Daily Statement drift day for cust-900-0001-bigfoot-brews showing a single ACH credit and a non-zero Drift KPI of 200](../screenshots/ar/daily-statement-02-drift.png)
 
 This is the planted `_SUBLEDGER_DRIFT_PLANT` scenario — the
 demo seeds a $200 unexplained delta into the bigfoot-brews
@@ -121,6 +125,8 @@ You should see:
   and the stored balance reflects it correctly.
 - **Transaction Detail** table includes the offending outbound
   leg (memo: "Emergency outbound — covered next day").
+
+![Daily Statement overdraft day for cust-900-0002-sasquatch-sips showing a -83,260.03 closing balance, Drift 0, and the 45,000 emergency outbound leg in the detail table](../screenshots/ar/daily-statement-03-overdraft.png)
 
 This is the planted `_OVERDRAFT_PLANT` scenario. The
 distinction between Example 2 and Example 3 is the load-bearing
