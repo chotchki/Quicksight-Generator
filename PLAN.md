@@ -993,20 +993,45 @@ Why a standalone phase rather than a sub-step of I.4: the fix touches generator 
 
 **Sequencing.** Independent of Phase K persona work — the contract surfaces this handbook documents are exactly the ones that *don't* churn under persona additions, so writing now doesn't create rework risk. Estimated 1 overview + 8 walkthroughs ≈ 9 commits, mostly prose.
 
-# PLAN — Phase K (queued)
+# PLAN — Phase K: persona-driven layout work
 
-Items deferred from Phase H + Phase I scope, parked here so they aren't lost. Each is independent and can phase up on its own merit. Inputs from Phase I (the daily statement sheet, in particular) may further inform priority.
+## AR Exceptions redesign + AML app
 
-## Persona-driven dashboard layout redesigns
+**Audience.** Two unrelated persona splits surfaced from the Training Story conversations and the post-Phase-G/H walkthrough load:
 
-- [ ] **AR Exceptions tab redesign.** Sheet is dense (3 rollups + 14 checks + aging bars + 2 drift timelines). Phase H walkthroughs surfaced which sections are friction-heavy; that's the input for redesign. Likely shape: per-persona view modes ("morning check" vs. "deep investigation"), or progressive disclosure of CMS-specific checks behind a category toggle.
-- [ ] **PR pipeline tab structure.** Under the shared-base model (Phase G), Sales / Settlements / Payments are values of `transfer_type`, not separate entities. Current per-step tab structure is preserved from the pre-flatten era. Operator-question walkthroughs in Phase H may surface whether the per-step tab structure helps or fights merchant-support workflow. Decide redesign based on what those walkthroughs show.
+- **GL Reconciliation / Accounting Operations** (existing AR persona) — the AR Exceptions tab has accumulated 3 rollups + 14 per-check blocks + aging bars on a single sheet. User flagged 2026-04-19 as density-overloaded. Fix: split by *workflow*, not by persona — every check serves the same persona; the cut is acute drill-now vs trend analysis.
+- **AML Team** (new, not currently served) — three known question shapes that all need their own surface. Different cadence (potentially intraday) and a different visual repertoire from AR (statistical / graph / fanout, not double-entry math). Lives in a new `aml_recon` app, mirroring the existing PR + AR pattern.
 
-## Persona dashboard split (originally Phase E)
+**Explicitly NOT in Phase K:**
 
-- [ ] Still queued. The Phase H walkthroughs and Phase I daily statement sheet (which exposes a per-account workflow that's currently buried inside the AR analysis) provide better signal on what a persona-scoped dashboard split should look like.
+- *Fraud as a separate surface.* Fraud team is a stakeholder of the existing limit-breach check (and any similar limit-style checks that emerge); not a separate persona/tab/app. When K.1 lands, limit-breach becomes one of the rows in the unified Today's Exceptions table — Fraud just reads that.
+- *PR pipeline tab restructure.* The shared-base model exposes Sales / Settlements / Payments as values of `transfer_type`, but the current per-step tab structure works for Merchant Support's workflow. Re-evaluate later if walkthroughs surface friction.
+- *Bank Statement Reconciliation tab.* Already exists as the Daily Statement sheet (`ar-gs-daily-statement`); the AR-vs-PDF comparison is a manual eyeball workflow, no new dashboard surface needed.
 
-## New surfaces (from Training Story personas not yet served)
+**Architectural note.** Surface area expansion is expected — Phase K adds Today's Exceptions + Trends sheets to AR (split from existing Exceptions), plus a new `aml_recon` app. Tag-based cleanup, idempotent deploy, and the per-app analyses pattern already support this without rework.
 
-- [ ] **Fraud team surface.** "Search for transactions that break limits set on the accounts" — investigative, not monitoring. Different UX paradigm from PR/AR. Probably its own analysis with a search-driven entry point and ad-hoc filter chips. Needs workflow elicitation before planning visuals.
-- [ ] **AML team surface.** "Detect transactions/balances outside statistical average and find patterns." Likely needs QuickSight forecasting / anomaly insights features and visual primitives we don't currently use. Needs workflow elicitation before planning visuals.
+## K.1 — AR Exceptions workflow split
+
+Goal: replace the single dense Exceptions tab with two sheets — *Today's Exceptions* (the 9am scan, unified table) and *Exceptions Trends* (the weekly/monthly look, rollups + aging + per-check trend lines).
+
+- [ ] **K.1.0 — Pin the unified-exceptions schema decision.** Wide schema with NULLs (every check's specific column present, NULLed for non-applicable rows) vs JSON `details` column (per-check specifics in JSON). Recommendation: wide+NULL — QuickSight handles NULLs in tables fine and the schema stays readable. Confirm before K.1.1.
+- [ ] **K.1.1 — `ar_unified_exceptions` dataset.** New dataset SQL that UNION ALLs across the 14 exception views, adds a `check_type` discriminator column and a computed `severity` column (`drift` / `overdraft` → red, `expected-zero` → orange, `limit-breach` → amber, others → yellow). Harmonize common columns (account_id, account_name, account_type, posted_at, balance_date, days_outstanding, aging_bucket). Declare a `DatasetContract`; lock with the existing contract test pattern.
+- [ ] **K.1.2 — `Today's Exceptions` sheet.** Replace the existing Exceptions sheet's per-check blocks. Layout: KPI strip at top (14 count tiles, severity-colored, click-to-scope) → filter controls (check_type, account, age bucket, transfer_type, origin) → ONE unified table sorted by severity then aging. Drill: row → AR Transactions sheet scoped to `transfer_id`.
+- [ ] **K.1.3 — `Exceptions Trends` sheet.** New sheet. Move the 3 cross-check rollups here (expected-zero EOD, two-sided post-mismatch, balance drift timelines). Add a stacked aging chart (5 buckets × 14 check types) and per-check trend lines (count over time).
+- [ ] **K.1.4 — Drop the legacy per-check blocks.** Once Today's Exceptions + Trends are wired and tested, remove the 14 per-check KPI+table+aging blocks from the analysis builder and their generation paths if no longer referenced. Tag-based cleanup picks up any orphaned datasets on next deploy.
+- [ ] **K.1.5 — Browser e2e for the new sheets.** Add `tests/e2e/test_ar_todays_exceptions.py` and `test_ar_exceptions_trends.py`: KPI tile click filters the unified table; severity sort works; drill to Transactions scopes correctly; trends sheet renders rollups + timelines.
+- [ ] **K.1.6 — Update AR Handbook walkthroughs.** The 14 existing per-check walkthroughs reference the old Exceptions tab structure. Update navigation references and screenshots to the new Today's Exceptions + Trends layout.
+
+## K.2 — AML app
+
+Goal: new `quicksight_gen.aml_recon` app (third app alongside PR + AR), mirroring the existing two-app pattern. Reads from the same `transactions` + `daily_balances` base tables — no schema changes. Build feasibility-driven, not equally-weighted.
+
+- [ ] **K.2.0 — App skeleton.** New `src/quicksight_gen/aml_recon/` package mirroring `account_recon/` layout (`analysis.py`, `visuals.py`, `filters.py`, `datasets.py`, `demo_data.py`, `constants.py`, `etl_examples.py`). Wire into CLI (`generate`, `deploy`, `demo apply` accept `aml-recon` as a third app). New theme preset `sasquatch-bank-aml`. Empty Getting Started sheet + 3 stub sheets.
+- [ ] **K.2.1 — Person-to-person fanout sheet.** Easiest: straight aggregation. Dataset: COUNT DISTINCT senders + SUM(amount) per recipient sub-ledger over a chosen window. Visual: KPI (total recipients with N+ distinct senders) + ranked table sorted by fanout count. Filter: window length, fanout threshold.
+- [ ] **K.2.2 — Sliding-window statistical anomaly sheet.** Moderate: WINDOW functions + std-dev. Dataset: rolling SUM(amount) per sender→recipient pair over a 2-day window, with a population baseline mean + std-dev computed across the same window family; flag rows where window sum > mean + 2σ. Visual: distribution plot + flagged-rows table. Filter: σ threshold (default 2), window length (default 2 days).
+- [ ] **K.2.3 — Money-trail provenance sheet.** Hardest: graph traversal. Dataset: recursive CTE walking up/down `parent_transfer_id` chains starting from a chosen transfer_id; emit one row per hop with depth + cumulative amount. Visual: chained tables (start → parents → children) plus a Sankey-style summary if QuickSight supports it; otherwise a flat hop-by-hop table. Filter: starting transfer_id, max hops.
+- [ ] **K.2.4 — AML demo data extension.** Plant scenario rows exercising each sheet: a fanout cluster (10+ senders → 1 recipient), a 2σ-anomalous window pair, and a 4-hop transfer chain. Add `TestScenarioCoverage` assertions in `test_aml_demo_data.py`. Re-lock the per-app SHA256 hash.
+- [ ] **K.2.5 — Browser e2e for AML.** `tests/e2e/test_aml_*.py` mirroring AR's coverage shape. Sheet visuals render, filters scope correctly, drill-downs land.
+- [ ] **K.2.6 — AML Handbook section.** New `docs/handbook/aml.md` + `docs/walkthroughs/aml/*.md`. Three walkthroughs minimum, one per sheet's core question. Add to `mkdocs.yml` nav after PR.
+
+**Sequencing.** K.1 first (the AR Exceptions density is a current pain point; refactor unblocks user testing of the existing dashboard). K.2 after K.1 ships — the new app is greenfield with no in-flight users to disrupt. Within K.2, sub-steps are ordered fanout → sliding window → provenance, easiest first; ship each sheet incrementally so the app becomes usable after K.2.1, not only at K.2.3.
