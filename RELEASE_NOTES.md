@@ -1,5 +1,16 @@
 # Release Notes
 
+## v3.5.2
+
+### Release pipeline — SLSA build provenance + Node 24 actions
+
+Supply-chain hardening for the release workflow. No analysis, dataset, or handbook changes.
+
+- **SLSA build provenance attestations.** The release workflow's build job now runs `actions/attest-build-provenance@v4` against every artifact in `dist/`. Each release tag publishes a signed Sigstore attestation tying the wheel + sdist back to the exact commit, workflow run, and runner identity that produced them; visible at <https://github.com/chotchki/Quicksight-Generator/attestations>. Build job grants `id-token: write` + `attestations: write`; rest of the workflow keeps `contents: read` default.
+- **All `actions/*` steps moved to latest majors** — `checkout` v4→v6, `setup-python` v5→v6, `upload-artifact` v4→v7, `download-artifact` v4→v8, `upload-pages-artifact` v3→v5, `deploy-pages` v4→v5. Clears the Node.js 20 deprecation warning ahead of the September 2026 runner removal. `softprops/action-gh-release` also bumped v2→v3.
+
+---
+
 ## v3.5.1
 
 ### CI fix — boto3 in dev extras + workflow permissions
