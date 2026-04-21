@@ -61,6 +61,10 @@ nav:
   - Customization Handbook:
     - Overview: handbook/customization.md
     - How do I map my database to the two base tables?: walkthroughs/customization/how-do-i-map-my-database.md
+    - How do I swap the SQL behind a dataset?: walkthroughs/customization/how-do-i-swap-dataset-sql.md
+    - How do I reskin the dashboards for my brand?: walkthroughs/customization/how-do-i-reskin-the-dashboards.md
+    - How do I configure the deploy for my AWS account?: walkthroughs/customization/how-do-i-configure-the-deploy.md
+    - How do I run my first deploy?: walkthroughs/customization/how-do-i-run-my-first-deploy.md
   - Training Scenarios:
     - Account Structure: Training_Story.md
     - Schema v3 — Data Feed Contract: Schema_v3.md
