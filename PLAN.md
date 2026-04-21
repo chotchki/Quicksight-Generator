@@ -953,13 +953,47 @@ Why a standalone phase rather than a sub-step of I.4: the fix touches generator 
 
 ### I.6.I — Open questions
 
-- [ ] **Pre-release channel.** Do branch builds publish to TestPyPI automatically (e.g., on push to a `release/*` branch with a `v1.6.0-rc1`-style tag), or only formal tags? Recommend formal-tags-only initially; revisit if the cadence picks up.
-- [ ] **Package name on PyPI.** `quicksight-gen` is the natural name (matches `[project].name`) — verify availability on PyPI before I.6.D registration. If taken, fall back to `quicksight-generator` or namespaced (`anthropic-quicksight-gen` style) — bigger renames flow back through `[project.scripts]` and `__init__.py`.
-- [ ] **License clarity.** `Unlicense` is public domain; PyPI accepts it. Confirm the `LICENSE` file at repo root matches and is included in the wheel (`tool.setuptools.license-files` defaults usually pick it up).
+- [x] **Pre-release channel.** Do branch builds publish to TestPyPI automatically (e.g., on push to a `release/*` branch with a `v1.6.0-rc1`-style tag), or only formal tags? Recommend formal-tags-only initially; revisit if the cadence picks up.
+- [x] **Package name on PyPI.** `quicksight-gen` is the natural name (matches `[project].name`) — verify availability on PyPI before I.6.D registration. If taken, fall back to `quicksight-generator` or namespaced (`anthropic-quicksight-gen` style) — bigger renames flow back through `[project.scripts]` and `__init__.py`.
+- [x] **License clarity.** `Unlicense` is public domain; PyPI accepts it. Confirm the `LICENSE` file at repo root matches and is included in the wheel (`tool.setuptools.license-files` defaults usually pick it up).
+
+## Schema cleanup carry-over from Phase G
+
+-- [x] ~~**PR-coexistence filters in AR views**~~ — *resolved by Phase I.4.B (commits 1–4).* The original entry assumed the future was PR/AR *separation* (delete the filters, a single-feed persona has no parallel PR ledger). I.4 flipped that: AR is the superset; PR is a subset view. The artificial filters were removed in I.4.B commits 1–3; commit 4 updated CLAUDE.md / SPEC.md / RELEASE_NOTES.md to match.
+- ~~**AR drift views leak benign zero-drift PR rows**~~ — *resolved by Phase I.4.B commit 1.* Both `account_id NOT LIKE 'pr-%'` filters dropped from `ar_subledger_overdraft` and `ar_subledger_daily_outbound_by_type`. Drift views now expose merchant DDA rows by intent.
+- [x] **Unified account dimension table.** AR currently keeps `ar_ledger_accounts` and `ar_subledger_accounts` as separate dimension tables. A single "all accounts" table aligns with the denormalize-don't-add-tables north star and would simplify some queries. Low priority; ship when there's a query that benefits.
 
 ---
 
 # PLAN — Phase J (queued)
+
+## Customer-facing customization handbook
+
+- [ ] `docs/Schema_v3.md` is the persona contract for the Data Integration Team. A longer-form customer-facing customization guide (mapping production-system tables → the two base tables, common pitfalls, performance tips, replacing dataset SQL while preserving DatasetContract) is a natural follow-up to the demo-side walkthroughs in Phase H. Deliverable shape: a "Customization Handbook" sibling to AR / PR Handbooks.
+
+### Outline (drafted 2026-04-20 for review)
+
+**Audience.** Developers / product owners reshaping the product onto their own backend — *not* the Data Integration ETL engineer (that's the existing Data Integration Handbook). Per SPEC.md "Users" section.
+
+**Anchored at the contract level — explicitly NOT covering:** per-visual customization (visuals will rework under Phase K persona redesigns), per-dataset SQL enumeration (32+ datasets and growing), per-sheet layout (likely to split per-persona). The handbook documents stable surfaces: the two-table contract, the DatasetContract pattern, metadata JSON, theme presets, config + CLI.
+
+**Placement.** `docs/handbook/customization.md` (overview) + `docs/walkthroughs/customization/*.md` per topic. Add fourth handbook section to `mkdocs.yml` nav after Data Integration.
+
+**Walkthroughs:**
+
+- [x] **J.0 — Handbook overview page.** `docs/handbook/customization.md` + `mkdocs.yml` nav entry. Audience framing, "what stays stable across persona changes" intro, card grid linking to J.1–J.8.
+- [x] **J.1 — How do I map my production database to the two base tables?** Pattern-level mapping (not per-system enumeration); cross-link to `walkthroughs/etl/how-do-i-populate-transactions.md` for the ETL-engineer view.
+- [ ] **J.2 — How do I swap the SQL behind a dataset without breaking the visuals?** DatasetContract (column name + type list) is the binding contract; show the contract test that locks projection-vs-contract; point at `common/dataset_contract.py`.
+- [ ] **J.3 — How do I reskin the dashboards for my brand?** Theme preset pattern (`common/theme.py` PRESETS registry), color tokens (accent / primary_fg / link_tint), `analysis_name_prefix` for demo-vs-prod naming.
+- [ ] **J.4 — How do I configure the deploy for my AWS account?** `config.yaml` fields (account / region / resource_prefix / principal_arns / extra_tags / theme_preset / late_default_days), production `datasource_arn` vs demo `demo_database_url`, env-var override pattern (`QS_GEN_*`).
+- [ ] **J.5 — How do I run my first deploy?** `quicksight-gen deploy --all --generate`, idempotent delete-then-create, `cleanup --dry-run` before `--yes`, `ManagedBy` tagging.
+- [ ] **J.6 — How do I add an app-specific metadata key?** Cross-link to `walkthroughs/etl/how-do-i-add-a-metadata-key.md` (the ETL angle is identical — same `JSON_VALUE` pattern); customization angle adds: where to read it in dataset SQL, when to surface as a column vs filter.
+- [ ] **J.7 — How do I extend the schema with a new transfer_type or account_type value?** Conventions for adding to the canonical value lists; downstream impact (filter dropdowns auto-expand, no new tables needed).
+- [ ] **J.8 — How do I run the test suite against my customized dataset SQL?** pytest layout, `DatasetContract` assertions, when to add an e2e test vs a unit test.
+
+**Sequencing.** Independent of Phase K persona work — the contract surfaces this handbook documents are exactly the ones that *don't* churn under persona additions, so writing now doesn't create rework risk. Estimated 1 overview + 8 walkthroughs ≈ 9 commits, mostly prose.
+
+# PLAN — Phase K (queued)
 
 Items deferred from Phase H + Phase I scope, parked here so they aren't lost. Each is independent and can phase up on its own merit. Inputs from Phase I (the daily statement sheet, in particular) may further inform priority.
 
@@ -967,16 +1001,6 @@ Items deferred from Phase H + Phase I scope, parked here so they aren't lost. Ea
 
 - [ ] **AR Exceptions tab redesign.** Sheet is dense (3 rollups + 14 checks + aging bars + 2 drift timelines). Phase H walkthroughs surfaced which sections are friction-heavy; that's the input for redesign. Likely shape: per-persona view modes ("morning check" vs. "deep investigation"), or progressive disclosure of CMS-specific checks behind a category toggle.
 - [ ] **PR pipeline tab structure.** Under the shared-base model (Phase G), Sales / Settlements / Payments are values of `transfer_type`, not separate entities. Current per-step tab structure is preserved from the pre-flatten era. Operator-question walkthroughs in Phase H may surface whether the per-step tab structure helps or fights merchant-support workflow. Decide redesign based on what those walkthroughs show.
-
-## Schema cleanup carry-over from Phase G
-
-- ~~**PR-coexistence filters in AR views**~~ — *resolved by Phase I.4.B (commits 1–4).* The original entry assumed the future was PR/AR *separation* (delete the filters, a single-feed persona has no parallel PR ledger). I.4 flipped that: AR is the superset; PR is a subset view. The artificial filters were removed in I.4.B commits 1–3; commit 4 updated CLAUDE.md / SPEC.md / RELEASE_NOTES.md to match.
-- ~~**AR drift views leak benign zero-drift PR rows**~~ — *resolved by Phase I.4.B commit 1.* Both `account_id NOT LIKE 'pr-%'` filters dropped from `ar_subledger_overdraft` and `ar_subledger_daily_outbound_by_type`. Drift views now expose merchant DDA rows by intent.
-- [ ] **Unified account dimension table.** AR currently keeps `ar_ledger_accounts` and `ar_subledger_accounts` as separate dimension tables. A single "all accounts" table aligns with the denormalize-don't-add-tables north star and would simplify some queries. Low priority; ship when there's a query that benefits.
-
-## Customer-facing customization handbook
-
-- [ ] `docs/Schema_v3.md` is the persona contract for the Data Integration Team. A longer-form customer-facing customization guide (mapping production-system tables → the two base tables, common pitfalls, performance tips, replacing dataset SQL while preserving DatasetContract) is a natural follow-up to the demo-side walkthroughs in Phase H. Deliverable shape: a "Customization Handbook" sibling to AR / PR Handbooks.
 
 ## Persona dashboard split (originally Phase E)
 

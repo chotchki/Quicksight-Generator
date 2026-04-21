@@ -58,6 +58,9 @@ nav:
     - How do I tag a force-posted transfer?: walkthroughs/etl/how-do-i-tag-a-force-posted-transfer.md
     - How do I add a metadata key?: walkthroughs/etl/how-do-i-add-a-metadata-key.md
     - What to do when demo passes but prod fails?: walkthroughs/etl/what-do-i-do-when-demo-passes-but-prod-fails.md
+  - Customization Handbook:
+    - Overview: handbook/customization.md
+    - How do I map my database to the two base tables?: walkthroughs/customization/how-do-i-map-my-database.md
   - Training Scenarios:
     - Account Structure: Training_Story.md
     - Schema v3 — Data Feed Contract: Schema_v3.md
