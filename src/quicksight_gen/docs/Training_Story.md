@@ -236,6 +236,7 @@ SNB.
     - uses the recon tool to search for transactions that break limits set on the accounts
   - SNB's AML Team
     - uses the recon tool to detect if transactions/balances are outside of the statistical average and attempts to find patterns
+    - They are looking for a dashboard that shows: for transfers between different subledger accounts, are there transfers inside a couple day sliding window that sum to amounts that 2 std deviations higher than other transfers?
 
 ## Where to go from here
 

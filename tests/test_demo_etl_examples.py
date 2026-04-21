@@ -26,7 +26,7 @@ from quicksight_gen.payment_recon.etl_examples import (
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCHEMA_DOC = REPO_ROOT / "docs" / "Schema_v3.md"
+SCHEMA_DOC = REPO_ROOT / "src" / "quicksight_gen" / "docs" / "Schema_v3.md"
 
 
 # ---------------------------------------------------------------------------

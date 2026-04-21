@@ -45,7 +45,7 @@ from tests.test_demo_data import (
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DOC_PATH = REPO_ROOT / "docs" / "Schema_v3.md"
+DOC_PATH = REPO_ROOT / "src" / "quicksight_gen" / "docs" / "Schema_v3.md"
 
 
 # ---------------------------------------------------------------------------

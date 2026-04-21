@@ -19,7 +19,7 @@ The demo ships with three task-shaped handbooks, one per persona team at Sasquat
 - **[Payment Reconciliation Handbook](https://chotchki.github.io/Quicksight-Generator/handbook/pr/)** — how the Merchant Support team answers "where's my money?" calls. 7 walkthroughs organized by operator question.
 - **[Data Integration Handbook](https://chotchki.github.io/Quicksight-Generator/handbook/etl/)** — how the Data Integration Team maps an upstream system into `transactions` + `daily_balances`, validates the load, and extends the metadata contract. 5 foundational / extension / debug walkthroughs.
 
-Source lives in `docs/`; rebuild locally with `mkdocs serve`.
+Source lives in `src/quicksight_gen/docs/` (shipped with the wheel — extract with `quicksight-gen export docs -o ./somewhere/`); rebuild locally with `mkdocs serve`.
 
 ## Why this exists
 
@@ -211,7 +211,7 @@ quicksight-gen demo seed   --all -o /tmp/seed.sql
 quicksight-gen demo apply --all -c config.yaml -o out/
 ```
 
-`demo apply` creates tables + views, inserts the sample data, writes a `datasource.json` derived from the database URL, and generates all QuickSight JSON. Both apps feed two shared base tables — `transactions` (every money-movement leg) and `daily_balances` (per-account end-of-day snapshots) — plus AR-only dimension tables (`ar_ledger_accounts`, `ar_subledger_accounts`, `ar_ledger_transfer_limits`). The `account_type` and `transfer_type` columns discriminate which app a row belongs to. See [`docs/Schema_v3.md`](docs/Schema_v3.md) for the full feed contract, canonical type values, metadata key catalog, and ETL examples for piping production data into the same shape.
+`demo apply` creates tables + views, inserts the sample data, writes a `datasource.json` derived from the database URL, and generates all QuickSight JSON. Both apps feed two shared base tables — `transactions` (every money-movement leg) and `daily_balances` (per-account end-of-day snapshots) — plus AR-only dimension tables (`ar_ledger_accounts`, `ar_subledger_accounts`, `ar_ledger_transfer_limits`). The `account_type` and `transfer_type` columns discriminate which app a row belongs to. See [`Schema_v3.md`](src/quicksight_gen/docs/Schema_v3.md) for the full feed contract, canonical type values, metadata key catalog, and ETL examples for piping production data into the same shape.
 
 **PostgreSQL 17+ is required** for `demo apply`: the schema uses SQL/JSON path syntax (`JSON_VALUE`, `JSON_QUERY`, `JSON_EXISTS`) for the `metadata TEXT` columns, and the portable subset forbids the Postgres-only `->>` / `->` / `@>` / `?` operators and JSONB.
 
@@ -266,8 +266,9 @@ src/quicksight_gen/
         constants.py    # Sheet + dataset identifier constants
     schema.py           # `generate_schema_sql()` — reads the canonical DDL
     schema.sql          # Canonical PostgreSQL DDL (interface contract for ETL); shared `transactions` + `daily_balances` base layer + AR dimension tables
-docs/
-    Schema_v3.md        # Data Integration Team feed contract: column specs, metadata keys, ETL examples
+    whitelabel.py       # String-substitution engine for `quicksight-gen export training --mapping`
+    docs/               # mkdocs site source — handbook/, walkthroughs/, Schema_v3.md, Training_Story.md (extract via `quicksight-gen export docs`)
+    training/           # Whitelabel handbook kit — handbook/, mapping.yaml.example (extract via `quicksight-gen export training`)
 tests/
     test_models.py, test_generate.py, test_recon.py, test_account_recon.py,
     test_theme_presets.py, test_demo_data.py, test_demo_sql.py
@@ -311,7 +312,7 @@ Captured as an `xfail(strict=False)` characterization test in `tests/e2e/test_fi
 
 Edit the dataset builders in `<app>/datasets.py`. Each dataset has a `sql` string and a `DatasetContract` (column name + type list) — unit tests assert the SQL projection matches the contract, so the contract is the safety net when rewriting.
 
-The dataset SQL reads from two shared base tables (`transactions`, `daily_balances`) plus the AR-only dimension tables. To wire your production data in, ETL into the same shape: see [`docs/Schema_v3.md`](docs/Schema_v3.md) for column specifications, the canonical `account_type` / `transfer_type` values, the JSON metadata key catalog, and end-to-end ETL examples.
+The dataset SQL reads from two shared base tables (`transactions`, `daily_balances`) plus the AR-only dimension tables. To wire your production data in, ETL into the same shape: see [`Schema_v3.md`](src/quicksight_gen/docs/Schema_v3.md) for column specifications, the canonical `account_type` / `transfer_type` values, the JSON metadata key catalog, and end-to-end ETL examples.
 
 ### Add a visual or tab
 

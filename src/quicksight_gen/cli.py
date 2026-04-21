@@ -512,6 +512,108 @@ def cleanup_cmd(config: str, output_dir: str, dry_run: bool, yes: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Export (bundled docs + training kit)
+# ---------------------------------------------------------------------------
+
+@main.group()
+def export() -> None:
+    """Extract bundled documentation and training material."""
+
+
+def _bundled_dir(name: str) -> Path:
+    """Return a real Path to a bundled package data directory."""
+    from importlib.resources import as_file, files
+
+    traversable = files("quicksight_gen") / name
+    # as_file() materializes to a real Path even when imported from a zip.
+    # Closing the context manager when the wheel is on-disk is a no-op.
+    with as_file(traversable) as path:
+        if not path.is_dir():
+            raise click.ClickException(
+                f"Bundled '{name}/' directory not found in installed package."
+            )
+        return path
+
+
+def _copy_tree(src: Path, dst: Path) -> int:
+    import shutil
+
+    shutil.copytree(src, dst, dirs_exist_ok=True)
+    return sum(1 for p in dst.rglob("*") if p.is_file())
+
+
+@export.command("docs")
+@click.option(
+    "--output", "-o",
+    type=click.Path(), required=True,
+    help="Target directory; created if missing, merged into if existing.",
+)
+def export_docs_cmd(output: str) -> None:
+    """Copy the operator + engineering handbooks (mkdocs source) to a folder."""
+    src = _bundled_dir("docs")
+    dst = Path(output)
+    count = _copy_tree(src, dst)
+    click.echo(f"Wrote {count} documentation files to {dst}")
+
+
+@export.command("training")
+@click.option(
+    "--output", "-o",
+    type=click.Path(), required=True,
+    help="Target directory; created if missing, replaced if existing.",
+)
+@click.option(
+    "--mapping",
+    type=click.Path(exists=True),
+    help="Optional whitelabel mapping file (YAML subset). "
+         "When set, applies branding substitutions to every shipped file.",
+)
+@click.option("--dry-run", "-n", is_flag=True, help="Report what would happen; write nothing.")
+def export_training_cmd(output: str, mapping: str | None, dry_run: bool) -> None:
+    """Copy the training handbook to a folder, optionally whitelabeled.
+
+    Without --mapping, ships the canonical Sasquatch-named copy. With
+    --mapping pointing at a populated mapping.yaml (see the bundled
+    mapping.yaml.example for the template), every occurrence of the
+    canonical strings is rewritten to your organization's names.
+    """
+    from quicksight_gen.whitelabel import apply_whitelabel, parse_mapping
+
+    src = _bundled_dir("training") / "handbook"
+    dst = Path(output)
+
+    subs: dict[str, str] = {}
+    if mapping:
+        subs = parse_mapping(Path(mapping))
+        if not subs:
+            click.echo(
+                f"WARNING: No non-empty substitutions in {mapping}; "
+                "output will match source verbatim.",
+                err=True,
+            )
+
+    result = apply_whitelabel(src, dst, subs, dry_run=dry_run)
+
+    verb = "Would write" if dry_run else "Wrote"
+    click.echo(
+        f"{verb} {result.files_processed} files, "
+        f"{result.total_substitutions} substitutions, to {dst}"
+    )
+
+    if result.leftovers:
+        click.echo(
+            "\nWARNING: Possible untranslated canonical strings remain:",
+            err=True,
+        )
+        for rel, pat in result.leftovers:
+            click.echo(f"  {rel}  matches /{pat}/", err=True)
+        click.echo(
+            "Update the mapping and re-run, or accept if intentional.",
+            err=True,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

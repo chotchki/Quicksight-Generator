@@ -71,7 +71,18 @@ quicksight-gen = "quicksight_gen.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-quicksight_gen = ["schema.sql"]
+quicksight_gen = [
+    "schema.sql",
+    "docs/**/*.md",
+    "docs/**/*.svg",
+    "docs/**/*.png",
+    "docs/**/*.css",
+    "docs/**/*.yaml",
+    "docs/**/*.yml",
+    "training/**/*.md",
+    "training/**/*.py",
+    "training/**/*.example",
+]
 
 [tool.setuptools.dynamic]
 version = {attr = "quicksight_gen.__version__"}

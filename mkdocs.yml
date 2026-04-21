@@ -3,6 +3,7 @@ site_description: Training materials and documentation for the QuickSight financ
 site_url: https://chotchki.github.io/Quicksight-Generator/
 repo_url: https://github.com/chotchki/Quicksight-Generator
 repo_name: chotchki/Quicksight-Generator
+docs_dir: src/quicksight_gen/docs
 
 theme:
   name: material
