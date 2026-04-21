@@ -987,9 +987,9 @@ Why a standalone phase rather than a sub-step of I.4: the fix touches generator 
 - [x] **J.3 — How do I reskin the dashboards for my brand?** Theme preset pattern (`common/theme.py` PRESETS registry), color tokens (accent / primary_fg / link_tint), `analysis_name_prefix` for demo-vs-prod naming.
 - [x] **J.4 — How do I configure the deploy for my AWS account?** `config.yaml` fields (account / region / resource_prefix / principal_arns / extra_tags / theme_preset / late_default_days), production `datasource_arn` vs demo `demo_database_url`, env-var override pattern (`QS_GEN_*`).
 - [x] **J.5 — How do I run my first deploy?** `quicksight-gen deploy --all --generate`, idempotent delete-then-create, `cleanup --dry-run` before `--yes`, `ManagedBy` tagging.
-- [ ] **J.6 — How do I add an app-specific metadata key?** Cross-link to `walkthroughs/etl/how-do-i-add-a-metadata-key.md` (the ETL angle is identical — same `JSON_VALUE` pattern); customization angle adds: where to read it in dataset SQL, when to surface as a column vs filter.
-- [ ] **J.7 — How do I extend the schema with a new transfer_type or account_type value?** Conventions for adding to the canonical value lists; downstream impact (filter dropdowns auto-expand, no new tables needed).
-- [ ] **J.8 — How do I run the test suite against my customized dataset SQL?** pytest layout, `DatasetContract` assertions, when to add an e2e test vs a unit test.
+- [x] **J.6 — How do I add an app-specific metadata key?** Cross-link to `walkthroughs/etl/how-do-i-add-a-metadata-key.md` (the ETL angle is identical — same `JSON_VALUE` pattern); customization angle adds: where to read it in dataset SQL, when to surface as a column vs filter.
+- [x] **J.7 — How do I extend the schema with a new transfer_type or account_type value?** Conventions for adding to the canonical value lists; downstream impact (filter dropdowns auto-expand, no new tables needed).
+- [x] **J.8 — How do I run the test suite against my customized dataset SQL?** pytest layout, `DatasetContract` assertions, when to add an e2e test vs a unit test.
 
 **Sequencing.** Independent of Phase K persona work — the contract surfaces this handbook documents are exactly the ones that *don't* churn under persona additions, so writing now doesn't create rework risk. Estimated 1 overview + 8 walkthroughs ≈ 9 commits, mostly prose.
 

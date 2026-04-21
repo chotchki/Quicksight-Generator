@@ -65,6 +65,9 @@ nav:
     - How do I reskin the dashboards for my brand?: walkthroughs/customization/how-do-i-reskin-the-dashboards.md
     - How do I configure the deploy for my AWS account?: walkthroughs/customization/how-do-i-configure-the-deploy.md
     - How do I run my first deploy?: walkthroughs/customization/how-do-i-run-my-first-deploy.md
+    - How do I add an app-specific metadata key?: walkthroughs/customization/how-do-i-add-a-metadata-key.md
+    - How do I extend canonical values?: walkthroughs/customization/how-do-i-extend-canonical-values.md
+    - How do I test my customization?: walkthroughs/customization/how-do-i-test-my-customization.md
   - Training Scenarios:
     - Account Structure: Training_Story.md
     - Schema v3 — Data Feed Contract: Schema_v3.md
