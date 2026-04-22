@@ -11,6 +11,9 @@ from quicksight_gen.payment_recon.constants import (
     FG_PR_SETTLEMENTS_UNPAID,
     P_PR_EXTERNAL_TXN,
     P_PR_SETTLEMENT,
+    V_PR_EXC_SALE_SETTLEMENT_MISMATCH_TABLE,
+    V_PR_EXC_SETTLEMENT_PAYMENT_MISMATCH_TABLE,
+    V_PR_EXC_UNMATCHED_EXT_TXN_TABLE,
     SalesMeta,
 )
 
@@ -121,9 +124,9 @@ class TestVisuals:
                 if isinstance(vtype, dict) and "VisualId" in vtype:
                     ids.append(vtype["VisualId"])
         for expected in (
-            "exceptions-sale-settlement-mismatch-table",
-            "exceptions-settlement-payment-mismatch-table",
-            "exceptions-unmatched-ext-txn-table",
+            V_PR_EXC_SALE_SETTLEMENT_MISMATCH_TABLE,
+            V_PR_EXC_SETTLEMENT_PAYMENT_MISMATCH_TABLE,
+            V_PR_EXC_UNMATCHED_EXT_TXN_TABLE,
         ):
             assert expected in ids, f"Missing exception table '{expected}'"
 

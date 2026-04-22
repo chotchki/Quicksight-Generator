@@ -22,6 +22,9 @@ from quicksight_gen.payment_recon.constants import (
     FG_PR_RECON_KPI_UNMATCHED_ONLY,
     FG_PR_RECON_MATCH_STATUS,
     SHEET_PAYMENT_RECON,
+    V_PR_RECON_KPI_LATE_COUNT,
+    V_PR_RECON_KPI_MATCHED_AMOUNT,
+    V_PR_RECON_KPI_UNMATCHED_AMOUNT,
 )
 from quicksight_gen.payment_recon.filters import _visual_scoped_pinned_filter_group
 from quicksight_gen.common.models import (
@@ -148,7 +151,7 @@ def build_recon_filter_groups(cfg: Config) -> list[FilterGroup]:
             FG_PR_RECON_KPI_LATE_ONLY,
             "filter-recon-kpi-late-only",
             SHEET_PAYMENT_RECON,
-            ["recon-kpi-late-count"],
+            [V_PR_RECON_KPI_LATE_COUNT],
             DS_PAYMENT_RECON,
             "match_status",
             ["late"],
@@ -157,7 +160,7 @@ def build_recon_filter_groups(cfg: Config) -> list[FilterGroup]:
             FG_PR_RECON_KPI_MATCHED_ONLY,
             "filter-recon-kpi-matched-only",
             SHEET_PAYMENT_RECON,
-            ["recon-kpi-matched-amount"],
+            [V_PR_RECON_KPI_MATCHED_AMOUNT],
             DS_PAYMENT_RECON,
             "match_status",
             ["matched"],
@@ -166,7 +169,7 @@ def build_recon_filter_groups(cfg: Config) -> list[FilterGroup]:
             FG_PR_RECON_KPI_UNMATCHED_ONLY,
             "filter-recon-kpi-unmatched-only",
             SHEET_PAYMENT_RECON,
-            ["recon-kpi-unmatched-amount"],
+            [V_PR_RECON_KPI_UNMATCHED_AMOUNT],
             DS_PAYMENT_RECON,
             "match_status",
             ["late", "not_yet_matched"],

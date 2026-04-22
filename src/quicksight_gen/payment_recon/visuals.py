@@ -22,6 +22,31 @@ from quicksight_gen.payment_recon.constants import (
     SHEET_PAYMENTS,
     SHEET_SALES,
     SHEET_SETTLEMENTS,
+    V_PR_EXC_AGING_RETURNS,
+    V_PR_EXC_AGING_SALE_STL_MISMATCH,
+    V_PR_EXC_AGING_STL_PAY_MISMATCH,
+    V_PR_EXC_AGING_UNMATCHED_EXT,
+    V_PR_EXC_AGING_UNSETTLED,
+    V_PR_EXC_KPI_RETURNS,
+    V_PR_EXC_KPI_UNSETTLED,
+    V_PR_EXC_RETURNS_TABLE,
+    V_PR_EXC_SALE_SETTLEMENT_MISMATCH_TABLE,
+    V_PR_EXC_SETTLEMENT_PAYMENT_MISMATCH_TABLE,
+    V_PR_EXC_UNMATCHED_EXT_TXN_TABLE,
+    V_PR_EXC_UNSETTLED_TABLE,
+    V_PR_PAYMENTS_BAR_STATUS,
+    V_PR_PAYMENTS_DETAIL_TABLE,
+    V_PR_PAYMENTS_KPI_AMOUNT,
+    V_PR_PAYMENTS_KPI_RETURNS,
+    V_PR_SALES_BAR_BY_LOCATION,
+    V_PR_SALES_BAR_BY_MERCHANT,
+    V_PR_SALES_DETAIL_TABLE,
+    V_PR_SALES_KPI_AMOUNT,
+    V_PR_SALES_KPI_COUNT,
+    V_PR_SETTLEMENTS_BAR_BY_TYPE,
+    V_PR_SETTLEMENTS_DETAIL_TABLE,
+    V_PR_SETTLEMENTS_KPI_AMOUNT,
+    V_PR_SETTLEMENTS_KPI_PENDING,
 )
 from quicksight_gen.payment_recon.datasets import OPTIONAL_SALE_METADATA
 from quicksight_gen.common.aging import aging_bar_visual
@@ -172,7 +197,7 @@ def build_sales_visuals(link_color: str, link_tint: str) -> list[Visual]:
     # KPI: total sales count
     kpi_count = Visual(
         KPIVisual=KPIVisual(
-            VisualId="sales-kpi-count",
+            VisualId=V_PR_SALES_KPI_COUNT,
             Title=_title("Total Sales Count"),
             Subtitle=_subtitle("Count of all sales in the selected date range"),
             ChartConfiguration=KPIConfiguration(
@@ -186,7 +211,7 @@ def build_sales_visuals(link_color: str, link_tint: str) -> list[Visual]:
     # KPI: total sales amount
     kpi_amount = Visual(
         KPIVisual=KPIVisual(
-            VisualId="sales-kpi-amount",
+            VisualId=V_PR_SALES_KPI_AMOUNT,
             Title=_title("Total Sales Amount"),
             Subtitle=_subtitle("Sum of all sale amounts in the selected date range"),
             ChartConfiguration=KPIConfiguration(
@@ -200,7 +225,7 @@ def build_sales_visuals(link_color: str, link_tint: str) -> list[Visual]:
     # Bar chart: sales amount by merchant
     bar_merchant = Visual(
         BarChartVisual=BarChartVisual(
-            VisualId="sales-bar-by-merchant",
+            VisualId=V_PR_SALES_BAR_BY_MERCHANT,
             Title=_title("Sales Amount by Merchant"),
             Subtitle=_subtitle(
                 "Which merchants are generating the most sales revenue. "
@@ -222,7 +247,7 @@ def build_sales_visuals(link_color: str, link_tint: str) -> list[Visual]:
                 _same_sheet_filter_action(
                     "action-sales-filter-by-merchant",
                     "Filter by Merchant",
-                    ["sales-detail-table"],
+                    [V_PR_SALES_DETAIL_TABLE],
                 ),
             ],
         )
@@ -231,7 +256,7 @@ def build_sales_visuals(link_color: str, link_tint: str) -> list[Visual]:
     # Bar chart: sales amount by location
     bar_location = Visual(
         BarChartVisual=BarChartVisual(
-            VisualId="sales-bar-by-location",
+            VisualId=V_PR_SALES_BAR_BY_LOCATION,
             Title=_title("Sales Amount by Location"),
             Subtitle=_subtitle(
                 "Which locations are generating the most sales revenue. "
@@ -253,7 +278,7 @@ def build_sales_visuals(link_color: str, link_tint: str) -> list[Visual]:
                 _same_sheet_filter_action(
                     "action-sales-filter-by-location",
                     "Filter by Location",
-                    ["sales-detail-table"],
+                    [V_PR_SALES_DETAIL_TABLE],
                 ),
             ],
         )
@@ -279,7 +304,7 @@ def build_sales_visuals(link_color: str, link_tint: str) -> list[Visual]:
     ]
     table_sales = Visual(
         TableVisual=TableVisual(
-            VisualId="sales-detail-table",
+            VisualId=V_PR_SALES_DETAIL_TABLE,
             Title=_title("Sales Detail"),
             Subtitle=_subtitle(
                 "Individual sale transactions — newest first. Right-click a "
@@ -338,7 +363,7 @@ def build_settlements_visuals(link_color: str, link_tint: str) -> list[Visual]:
     # KPI: total settled amount
     kpi_amount = Visual(
         KPIVisual=KPIVisual(
-            VisualId="settlements-kpi-amount",
+            VisualId=V_PR_SETTLEMENTS_KPI_AMOUNT,
             Title=_title("Total Settled Amount"),
             Subtitle=_subtitle("Sum of all settlement amounts in the selected date range"),
             ChartConfiguration=KPIConfiguration(
@@ -356,7 +381,7 @@ def build_settlements_visuals(link_color: str, link_tint: str) -> list[Visual]:
     # KPI: count of pending settlements
     kpi_pending = Visual(
         KPIVisual=KPIVisual(
-            VisualId="settlements-kpi-pending",
+            VisualId=V_PR_SETTLEMENTS_KPI_PENDING,
             Title=_title("Pending Settlements"),
             Subtitle=_subtitle("Number of settlements that have not yet completed"),
             ChartConfiguration=KPIConfiguration(
@@ -374,7 +399,7 @@ def build_settlements_visuals(link_color: str, link_tint: str) -> list[Visual]:
     # Bar chart: settlement amounts by merchant type
     bar_type = Visual(
         BarChartVisual=BarChartVisual(
-            VisualId="settlements-bar-by-type",
+            VisualId=V_PR_SETTLEMENTS_BAR_BY_TYPE,
             Title=_title("Settlement Amount by Merchant Type"),
             Subtitle=_subtitle(
                 "How settlement amounts break down across merchant types. "
@@ -402,7 +427,7 @@ def build_settlements_visuals(link_color: str, link_tint: str) -> list[Visual]:
                 _same_sheet_filter_action(
                     "action-settlements-filter-by-type",
                     "Filter by Type",
-                    ["settlements-detail-table"],
+                    [V_PR_SETTLEMENTS_DETAIL_TABLE],
                 ),
             ],
         )
@@ -411,7 +436,7 @@ def build_settlements_visuals(link_color: str, link_tint: str) -> list[Visual]:
     # Table: settlement detail — click a row to drill down to its sales
     table_settlements = Visual(
         TableVisual=TableVisual(
-            VisualId="settlements-detail-table",
+            VisualId=V_PR_SETTLEMENTS_DETAIL_TABLE,
             Title=_title("Settlement Detail"),
             Subtitle=_subtitle(
                 "Each settlement with its status, amount, and sale count. "
@@ -495,7 +520,7 @@ def build_payments_visuals(link_color: str, link_tint: str) -> list[Visual]:
     # KPI: total paid amount
     kpi_amount = Visual(
         KPIVisual=KPIVisual(
-            VisualId="payments-kpi-amount",
+            VisualId=V_PR_PAYMENTS_KPI_AMOUNT,
             Title=_title("Total Paid Amount"),
             Subtitle=_subtitle("Sum of all payment amounts to merchants"),
             ChartConfiguration=KPIConfiguration(
@@ -511,7 +536,7 @@ def build_payments_visuals(link_color: str, link_tint: str) -> list[Visual]:
     # KPI: count of returned payments
     kpi_returns = Visual(
         KPIVisual=KPIVisual(
-            VisualId="payments-kpi-returns",
+            VisualId=V_PR_PAYMENTS_KPI_RETURNS,
             Title=_title("Returned Payments"),
             Subtitle=_subtitle("Number of payments that were sent back — see detail table for reasons"),
             ChartConfiguration=KPIConfiguration(
@@ -529,7 +554,7 @@ def build_payments_visuals(link_color: str, link_tint: str) -> list[Visual]:
     # suite relies on for click-to-filter automation).
     bar_status = Visual(
         BarChartVisual=BarChartVisual(
-            VisualId="payments-bar-status",
+            VisualId=V_PR_PAYMENTS_BAR_STATUS,
             Title=_title("Payment Status Breakdown"),
             Subtitle=_subtitle(
                 "Count of payments by their current status. "
@@ -557,7 +582,7 @@ def build_payments_visuals(link_color: str, link_tint: str) -> list[Visual]:
                 _same_sheet_filter_action(
                     "action-payments-filter-by-status",
                     "Filter by Status",
-                    ["payments-detail-table"],
+                    [V_PR_PAYMENTS_DETAIL_TABLE],
                 ),
             ],
         )
@@ -568,7 +593,7 @@ def build_payments_visuals(link_color: str, link_tint: str) -> list[Visual]:
     # external_transaction_id.
     table_payments = Visual(
         TableVisual=TableVisual(
-            VisualId="payments-detail-table",
+            VisualId=V_PR_PAYMENTS_DETAIL_TABLE,
             Title=_title("Payment Detail"),
             Subtitle=_subtitle(
                 "Each payment with its status and return reason if applicable. "
@@ -659,7 +684,7 @@ def build_exceptions_visuals() -> list[Visual]:
     # KPI: count of unsettled sales
     kpi_unsettled = Visual(
         KPIVisual=KPIVisual(
-            VisualId="exceptions-kpi-unsettled",
+            VisualId=V_PR_EXC_KPI_UNSETTLED,
             Title=_title("Unsettled Sales"),
             Subtitle=_subtitle("Sales that have not yet been bundled into a settlement"),
             ChartConfiguration=KPIConfiguration(
@@ -679,7 +704,7 @@ def build_exceptions_visuals() -> list[Visual]:
     # KPI: count of returned payments
     kpi_returns = Visual(
         KPIVisual=KPIVisual(
-            VisualId="exceptions-kpi-returns",
+            VisualId=V_PR_EXC_KPI_RETURNS,
             Title=_title("Returned Payments"),
             Subtitle=_subtitle("Payments that were sent back — check the table below for details"),
             ChartConfiguration=KPIConfiguration(
@@ -699,7 +724,7 @@ def build_exceptions_visuals() -> list[Visual]:
     # Table: unsettled sales
     table_unsettled = Visual(
         TableVisual=TableVisual(
-            VisualId="exceptions-unsettled-table",
+            VisualId=V_PR_EXC_UNSETTLED_TABLE,
             Title=_title("Sales Missing Settlements"),
             Subtitle=_subtitle("Sales not yet bundled into a settlement — investigate if any are overdue"),
             ChartConfiguration=TableConfiguration(
@@ -756,7 +781,7 @@ def build_exceptions_visuals() -> list[Visual]:
     # Table: returned payments
     table_returns = Visual(
         TableVisual=TableVisual(
-            VisualId="exceptions-returns-table",
+            VisualId=V_PR_EXC_RETURNS_TABLE,
             Title=_title("Returned Payments Detail"),
             Subtitle=_subtitle("Payments that were returned with the reason for each"),
             ChartConfiguration=TableConfiguration(
@@ -818,7 +843,7 @@ def build_exceptions_visuals() -> list[Visual]:
     # Table: sale ↔ settlement amount mismatch (SPEC 2.4)
     table_sale_stl_mismatch = Visual(
         TableVisual=TableVisual(
-            VisualId="exceptions-sale-settlement-mismatch-table",
+            VisualId=V_PR_EXC_SALE_SETTLEMENT_MISMATCH_TABLE,
             Title=_title("Sales ↔ Settlement Mismatch"),
             Subtitle=_subtitle(
                 "Settlements whose amount doesn't equal the signed sum of "
@@ -878,7 +903,7 @@ def build_exceptions_visuals() -> list[Visual]:
     # Table: settlement ↔ payment amount mismatch (SPEC 2.4)
     table_stl_pay_mismatch = Visual(
         TableVisual=TableVisual(
-            VisualId="exceptions-settlement-payment-mismatch-table",
+            VisualId=V_PR_EXC_SETTLEMENT_PAYMENT_MISMATCH_TABLE,
             Title=_title("Settlement ↔ Payment Mismatch"),
             Subtitle=_subtitle(
                 "Payments whose amount doesn't match their settlement — "
@@ -943,7 +968,7 @@ def build_exceptions_visuals() -> list[Visual]:
     # Table: external transactions with no linked payment (moved from recon)
     table_unmatched_ext = Visual(
         TableVisual=TableVisual(
-            VisualId="exceptions-unmatched-ext-txn-table",
+            VisualId=V_PR_EXC_UNMATCHED_EXT_TXN_TABLE,
             Title=_title("External Transactions Without a Payment"),
             Subtitle=_subtitle(
                 "External system transactions that have no internal payment "
@@ -997,35 +1022,35 @@ def build_exceptions_visuals() -> list[Visual]:
 
     # Aging bar charts — one per exception check.
     aging_unsettled = aging_bar_visual(
-        "exceptions-aging-unsettled",
+        V_PR_EXC_AGING_UNSETTLED,
         "Unsettled Sales by Age",
         "How long unsettled sales have been outstanding",
         DS_SETTLEMENT_EXCEPTIONS,
         "sale_id",
     )
     aging_returns = aging_bar_visual(
-        "exceptions-aging-returns",
+        V_PR_EXC_AGING_RETURNS,
         "Returned Payments by Age",
         "How long returned payments have been outstanding",
         DS_PAYMENT_RETURNS,
         "payment_id",
     )
     aging_sale_stl = aging_bar_visual(
-        "exceptions-aging-sale-stl-mismatch",
+        V_PR_EXC_AGING_SALE_STL_MISMATCH,
         "Sale ↔ Settlement Mismatch by Age",
         "How long sale-settlement mismatches have been outstanding",
         DS_SALE_SETTLEMENT_MISMATCH,
         "settlement_id",
     )
     aging_stl_pay = aging_bar_visual(
-        "exceptions-aging-stl-pay-mismatch",
+        V_PR_EXC_AGING_STL_PAY_MISMATCH,
         "Settlement ↔ Payment Mismatch by Age",
         "How long settlement-payment mismatches have been outstanding",
         DS_SETTLEMENT_PAYMENT_MISMATCH,
         "payment_id",
     )
     aging_unmatched = aging_bar_visual(
-        "exceptions-aging-unmatched-ext",
+        V_PR_EXC_AGING_UNMATCHED_EXT,
         "Unmatched External Txns by Age",
         "How long unmatched external transactions have been outstanding",
         DS_UNMATCHED_EXTERNAL_TXNS,

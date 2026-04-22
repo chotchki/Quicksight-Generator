@@ -114,3 +114,86 @@ ALL_P_AR: tuple[DrillParam, ...] = (
     P_AR_DS_ACCOUNT,
     P_AR_DS_BALANCE_DATE,
 )
+
+# ---------------------------------------------------------------------------
+# Visual IDs
+#
+# Promoted to constants so a typo in a FilterGroup's VisualId scope or a
+# drill action's target visual fails at the import line, not silently
+# in the deployed dashboard. Visual IDs flow into
+# ``SheetVisualScopingConfigurations.VisualIds`` and a typo there
+# silently widens the filter's scope to ALL_VISUALS without raising.
+# ---------------------------------------------------------------------------
+
+# Balances sheet
+V_AR_BALANCES_KPI_LEDGERS = "ar-balances-kpi-ledgers"
+V_AR_BALANCES_KPI_SUBLEDGERS = "ar-balances-kpi-subledgers"
+V_AR_BALANCES_LEDGER_TABLE = "ar-balances-ledger-table"
+V_AR_BALANCES_SUBLEDGER_TABLE = "ar-balances-subledger-table"
+
+# Transfers sheet
+V_AR_TRANSFERS_KPI_COUNT = "ar-transfers-kpi-count"
+V_AR_TRANSFERS_KPI_UNHEALTHY = "ar-transfers-kpi-unhealthy"
+V_AR_TRANSFERS_BAR_STATUS = "ar-transfers-bar-status"
+V_AR_TRANSFERS_SUMMARY_TABLE = "ar-transfers-summary-table"
+
+# Transactions sheet
+V_AR_TXN_KPI_COUNT = "ar-txn-kpi-count"
+V_AR_TXN_KPI_FAILED = "ar-txn-kpi-failed"
+V_AR_TXN_BAR_BY_STATUS = "ar-txn-bar-by-status"
+V_AR_TXN_BAR_BY_DAY = "ar-txn-bar-by-day"
+V_AR_TXN_DETAIL_TABLE = "ar-txn-detail-table"
+
+# Daily Statement sheet
+V_AR_DS_KPI_OPENING = "ar-ds-kpi-opening"
+V_AR_DS_KPI_DEBITS = "ar-ds-kpi-debits"
+V_AR_DS_KPI_CREDITS = "ar-ds-kpi-credits"
+V_AR_DS_KPI_CLOSING = "ar-ds-kpi-closing"
+V_AR_DS_KPI_DRIFT = "ar-ds-kpi-drift"
+V_AR_DS_TRANSACTIONS_TABLE = "ar-ds-transactions-table"
+
+# Today's Exceptions sheet
+V_AR_TODAYS_EXC_KPI_TOTAL = "ar-todays-exc-kpi-total"
+V_AR_TODAYS_EXC_BREAKDOWN = "ar-todays-exc-breakdown"
+V_AR_TODAYS_EXC_TABLE = "ar-todays-exc-table"
+
+# Exceptions Trends sheet
+V_AR_EXC_DRIFT_TIMELINES_ROLLUP = "ar-exc-drift-timelines-rollup"
+V_AR_EXC_KPI_TWO_SIDED_ROLLUP = "ar-exc-kpi-two-sided-rollup"
+V_AR_EXC_TWO_SIDED_ROLLUP_TABLE = "ar-exc-two-sided-rollup-table"
+V_AR_EXC_KPI_EXPECTED_ZERO_ROLLUP = "ar-exc-kpi-expected-zero-rollup"
+V_AR_EXC_EXPECTED_ZERO_ROLLUP_TABLE = "ar-exc-expected-zero-rollup-table"
+V_AR_EXC_TRENDS_AGING_MATRIX = "ar-exc-trends-aging-matrix"
+V_AR_EXC_TRENDS_PER_CHECK = "ar-exc-trends-per-check"
+
+ALL_V_AR: frozenset[str] = frozenset({
+    V_AR_BALANCES_KPI_LEDGERS,
+    V_AR_BALANCES_KPI_SUBLEDGERS,
+    V_AR_BALANCES_LEDGER_TABLE,
+    V_AR_BALANCES_SUBLEDGER_TABLE,
+    V_AR_TRANSFERS_KPI_COUNT,
+    V_AR_TRANSFERS_KPI_UNHEALTHY,
+    V_AR_TRANSFERS_BAR_STATUS,
+    V_AR_TRANSFERS_SUMMARY_TABLE,
+    V_AR_TXN_KPI_COUNT,
+    V_AR_TXN_KPI_FAILED,
+    V_AR_TXN_BAR_BY_STATUS,
+    V_AR_TXN_BAR_BY_DAY,
+    V_AR_TXN_DETAIL_TABLE,
+    V_AR_DS_KPI_OPENING,
+    V_AR_DS_KPI_DEBITS,
+    V_AR_DS_KPI_CREDITS,
+    V_AR_DS_KPI_CLOSING,
+    V_AR_DS_KPI_DRIFT,
+    V_AR_DS_TRANSACTIONS_TABLE,
+    V_AR_TODAYS_EXC_KPI_TOTAL,
+    V_AR_TODAYS_EXC_BREAKDOWN,
+    V_AR_TODAYS_EXC_TABLE,
+    V_AR_EXC_DRIFT_TIMELINES_ROLLUP,
+    V_AR_EXC_KPI_TWO_SIDED_ROLLUP,
+    V_AR_EXC_TWO_SIDED_ROLLUP_TABLE,
+    V_AR_EXC_KPI_EXPECTED_ZERO_ROLLUP,
+    V_AR_EXC_EXPECTED_ZERO_ROLLUP_TABLE,
+    V_AR_EXC_TRENDS_AGING_MATRIX,
+    V_AR_EXC_TRENDS_PER_CHECK,
+})

@@ -48,6 +48,35 @@ from quicksight_gen.account_recon.constants import (
     SHEET_AR_TODAYS_EXCEPTIONS,
     SHEET_AR_TRANSACTIONS,
     SHEET_AR_TRANSFERS,
+    V_AR_BALANCES_KPI_LEDGERS,
+    V_AR_BALANCES_KPI_SUBLEDGERS,
+    V_AR_BALANCES_LEDGER_TABLE,
+    V_AR_BALANCES_SUBLEDGER_TABLE,
+    V_AR_DS_KPI_CLOSING,
+    V_AR_DS_KPI_CREDITS,
+    V_AR_DS_KPI_DEBITS,
+    V_AR_DS_KPI_DRIFT,
+    V_AR_DS_KPI_OPENING,
+    V_AR_DS_TRANSACTIONS_TABLE,
+    V_AR_EXC_DRIFT_TIMELINES_ROLLUP,
+    V_AR_EXC_EXPECTED_ZERO_ROLLUP_TABLE,
+    V_AR_EXC_KPI_EXPECTED_ZERO_ROLLUP,
+    V_AR_EXC_KPI_TWO_SIDED_ROLLUP,
+    V_AR_EXC_TRENDS_AGING_MATRIX,
+    V_AR_EXC_TRENDS_PER_CHECK,
+    V_AR_EXC_TWO_SIDED_ROLLUP_TABLE,
+    V_AR_TODAYS_EXC_BREAKDOWN,
+    V_AR_TODAYS_EXC_KPI_TOTAL,
+    V_AR_TODAYS_EXC_TABLE,
+    V_AR_TRANSFERS_BAR_STATUS,
+    V_AR_TRANSFERS_KPI_COUNT,
+    V_AR_TRANSFERS_KPI_UNHEALTHY,
+    V_AR_TRANSFERS_SUMMARY_TABLE,
+    V_AR_TXN_BAR_BY_DAY,
+    V_AR_TXN_BAR_BY_STATUS,
+    V_AR_TXN_DETAIL_TABLE,
+    V_AR_TXN_KPI_COUNT,
+    V_AR_TXN_KPI_FAILED,
 )
 from quicksight_gen.account_recon.datasets import build_all_datasets
 from quicksight_gen.account_recon.filters import (
@@ -487,9 +516,9 @@ def _build_balances_sheet(cfg: Config, link_color: str, link_tint: str) -> Sheet
         Visuals=build_balances_visuals(link_color, link_tint),
         FilterControls=build_balances_controls(cfg),
         Layouts=_grid_layout(
-            _kpi_pair("ar-balances-kpi-ledgers", "ar-balances-kpi-subledgers")
-            + [_full_width_visual("ar-balances-ledger-table", _TABLE_ROW_SPAN)]
-            + [_full_width_visual("ar-balances-subledger-table", _TABLE_ROW_SPAN)]
+            _kpi_pair(V_AR_BALANCES_KPI_LEDGERS, V_AR_BALANCES_KPI_SUBLEDGERS)
+            + [_full_width_visual(V_AR_BALANCES_LEDGER_TABLE, _TABLE_ROW_SPAN)]
+            + [_full_width_visual(V_AR_BALANCES_SUBLEDGER_TABLE, _TABLE_ROW_SPAN)]
         ),
     )
 
@@ -504,9 +533,9 @@ def _build_transfers_sheet(cfg: Config, link_color: str) -> SheetDefinition:
         Visuals=build_transfers_visuals(link_color),
         FilterControls=build_transfers_controls(cfg),
         Layouts=_grid_layout(
-            _kpi_pair("ar-transfers-kpi-count", "ar-transfers-kpi-unhealthy")
-            + [_full_width_visual("ar-transfers-bar-status", _CHART_ROW_SPAN)]
-            + [_full_width_visual("ar-transfers-summary-table", _TABLE_ROW_SPAN)]
+            _kpi_pair(V_AR_TRANSFERS_KPI_COUNT, V_AR_TRANSFERS_KPI_UNHEALTHY)
+            + [_full_width_visual(V_AR_TRANSFERS_BAR_STATUS, _CHART_ROW_SPAN)]
+            + [_full_width_visual(V_AR_TRANSFERS_SUMMARY_TABLE, _TABLE_ROW_SPAN)]
         ),
     )
 
@@ -521,9 +550,9 @@ def _build_transactions_sheet(cfg: Config) -> SheetDefinition:
         Visuals=build_transactions_visuals(),
         FilterControls=build_transactions_controls(cfg),
         Layouts=_grid_layout(
-            _kpi_pair("ar-txn-kpi-count", "ar-txn-kpi-failed")
-            + _chart_pair("ar-txn-bar-by-status", "ar-txn-bar-by-day")
-            + [_full_width_visual("ar-txn-detail-table", _TABLE_ROW_SPAN)]
+            _kpi_pair(V_AR_TXN_KPI_COUNT, V_AR_TXN_KPI_FAILED)
+            + _chart_pair(V_AR_TXN_BAR_BY_STATUS, V_AR_TXN_BAR_BY_DAY)
+            + [_full_width_visual(V_AR_TXN_DETAIL_TABLE, _TABLE_ROW_SPAN)]
         ),
     )
 
@@ -539,20 +568,20 @@ def _build_daily_statement_sheet(cfg: Config) -> SheetDefinition:
 
     kpi_row_a = [
         GridLayoutElement(
-            ElementId="ar-ds-kpi-opening", ElementType="VISUAL",
+            ElementId=V_AR_DS_KPI_OPENING, ElementType="VISUAL",
             ColumnSpan=third, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
         ),
         GridLayoutElement(
-            ElementId="ar-ds-kpi-debits", ElementType="VISUAL",
+            ElementId=V_AR_DS_KPI_DEBITS, ElementType="VISUAL",
             ColumnSpan=third, RowSpan=_KPI_ROW_SPAN, ColumnIndex=third,
         ),
         GridLayoutElement(
-            ElementId="ar-ds-kpi-credits", ElementType="VISUAL",
+            ElementId=V_AR_DS_KPI_CREDITS, ElementType="VISUAL",
             ColumnSpan=third, RowSpan=_KPI_ROW_SPAN, ColumnIndex=third * 2,
         ),
     ]
-    kpi_row_b = _kpi_pair("ar-ds-kpi-closing", "ar-ds-kpi-drift")
-    table_row = [_full_width_visual("ar-ds-transactions-table", _TABLE_ROW_SPAN)]
+    kpi_row_b = _kpi_pair(V_AR_DS_KPI_CLOSING, V_AR_DS_KPI_DRIFT)
+    table_row = [_full_width_visual(V_AR_DS_TRANSACTIONS_TABLE, _TABLE_ROW_SPAN)]
 
     return SheetDefinition(
         SheetId=SHEET_AR_DAILY_STATEMENT,
@@ -585,9 +614,9 @@ def _build_todays_exceptions_sheet(
         Visuals=build_todays_exceptions_visuals(link_color, link_tint),
         FilterControls=build_todays_exceptions_controls(cfg),
         Layouts=_grid_layout(
-            [_full_width_visual("ar-todays-exc-kpi-total", _KPI_ROW_SPAN)]
-            + [_full_width_visual("ar-todays-exc-breakdown", _CHART_ROW_SPAN)]
-            + [_full_width_visual("ar-todays-exc-table", _TABLE_ROW_SPAN)]
+            [_full_width_visual(V_AR_TODAYS_EXC_KPI_TOTAL, _KPI_ROW_SPAN)]
+            + [_full_width_visual(V_AR_TODAYS_EXC_BREAKDOWN, _CHART_ROW_SPAN)]
+            + [_full_width_visual(V_AR_TODAYS_EXC_TABLE, _TABLE_ROW_SPAN)]
         ),
     )
 
@@ -611,13 +640,13 @@ def _build_exceptions_trends_sheet(cfg: Config) -> SheetDefinition:
         Visuals=build_exceptions_trends_visuals(),
         FilterControls=build_exceptions_trends_controls(cfg),
         Layouts=_grid_layout(
-            [_full_width_visual("ar-exc-drift-timelines-rollup", _CHART_ROW_SPAN)]
-            + [_full_width_visual("ar-exc-kpi-two-sided-rollup", _KPI_ROW_SPAN)]
-            + [_full_width_visual("ar-exc-two-sided-rollup-table", _TABLE_ROW_SPAN)]
-            + [_full_width_visual("ar-exc-kpi-expected-zero-rollup", _KPI_ROW_SPAN)]
-            + [_full_width_visual("ar-exc-expected-zero-rollup-table", _TABLE_ROW_SPAN)]
-            + [_full_width_visual("ar-exc-trends-aging-matrix", _CHART_ROW_SPAN)]
-            + [_full_width_visual("ar-exc-trends-per-check", _CHART_ROW_SPAN)]
+            [_full_width_visual(V_AR_EXC_DRIFT_TIMELINES_ROLLUP, _CHART_ROW_SPAN)]
+            + [_full_width_visual(V_AR_EXC_KPI_TWO_SIDED_ROLLUP, _KPI_ROW_SPAN)]
+            + [_full_width_visual(V_AR_EXC_TWO_SIDED_ROLLUP_TABLE, _TABLE_ROW_SPAN)]
+            + [_full_width_visual(V_AR_EXC_KPI_EXPECTED_ZERO_ROLLUP, _KPI_ROW_SPAN)]
+            + [_full_width_visual(V_AR_EXC_EXPECTED_ZERO_ROLLUP_TABLE, _TABLE_ROW_SPAN)]
+            + [_full_width_visual(V_AR_EXC_TRENDS_AGING_MATRIX, _CHART_ROW_SPAN)]
+            + [_full_width_visual(V_AR_EXC_TRENDS_PER_CHECK, _CHART_ROW_SPAN)]
         ),
     )
 
@@ -833,7 +862,7 @@ _DRILL_SPECS: list[_DrillFilterSpec] = [
         dataset_id=DS_AR_SUBLEDGER_BALANCE_DRIFT,
         column_name="ledger_account_id",
         sheet_id=SHEET_AR_BALANCES,
-        visual_ids=("ar-balances-subledger-table",),
+        visual_ids=(V_AR_BALANCES_SUBLEDGER_TABLE,),
     ),
 ]
 

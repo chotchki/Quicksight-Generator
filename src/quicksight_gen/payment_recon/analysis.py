@@ -26,6 +26,32 @@ from quicksight_gen.payment_recon.constants import (
     SHEET_PAYMENTS,
     SHEET_SALES,
     SHEET_SETTLEMENTS,
+    V_PR_EXC_KPI_RETURNS,
+    V_PR_EXC_KPI_UNSETTLED,
+    V_PR_EXC_RETURNS_TABLE,
+    V_PR_EXC_SALE_SETTLEMENT_MISMATCH_TABLE,
+    V_PR_EXC_SETTLEMENT_PAYMENT_MISMATCH_TABLE,
+    V_PR_EXC_UNMATCHED_EXT_TXN_TABLE,
+    V_PR_EXC_UNSETTLED_TABLE,
+    V_PR_PAYMENTS_BAR_STATUS,
+    V_PR_PAYMENTS_DETAIL_TABLE,
+    V_PR_PAYMENTS_KPI_AMOUNT,
+    V_PR_PAYMENTS_KPI_RETURNS,
+    V_PR_RECON_BAR_BY_SYSTEM,
+    V_PR_RECON_EXT_TXN_TABLE,
+    V_PR_RECON_KPI_LATE_COUNT,
+    V_PR_RECON_KPI_MATCHED_AMOUNT,
+    V_PR_RECON_KPI_UNMATCHED_AMOUNT,
+    V_PR_RECON_PAYMENTS_TABLE,
+    V_PR_SALES_BAR_BY_LOCATION,
+    V_PR_SALES_BAR_BY_MERCHANT,
+    V_PR_SALES_DETAIL_TABLE,
+    V_PR_SALES_KPI_AMOUNT,
+    V_PR_SALES_KPI_COUNT,
+    V_PR_SETTLEMENTS_BAR_BY_TYPE,
+    V_PR_SETTLEMENTS_DETAIL_TABLE,
+    V_PR_SETTLEMENTS_KPI_AMOUNT,
+    V_PR_SETTLEMENTS_KPI_PENDING,
 )
 from quicksight_gen.payment_recon.datasets import build_pipeline_datasets, build_recon_datasets
 from quicksight_gen.payment_recon.filters import (
@@ -378,9 +404,9 @@ def _build_sales_sheet(cfg: Config) -> SheetDefinition:
         Visuals=build_sales_visuals(preset.accent, preset.link_tint),
         FilterControls=build_sales_controls(cfg),
         Layouts=_grid_layout(
-            _kpi_pair("sales-kpi-count", "sales-kpi-amount")
-            + _chart_pair("sales-bar-by-merchant", "sales-bar-by-location")
-            + [_full_width("sales-detail-table", _TABLE_ROW_SPAN)]
+            _kpi_pair(V_PR_SALES_KPI_COUNT, V_PR_SALES_KPI_AMOUNT)
+            + _chart_pair(V_PR_SALES_BAR_BY_MERCHANT, V_PR_SALES_BAR_BY_LOCATION)
+            + [_full_width(V_PR_SALES_DETAIL_TABLE, _TABLE_ROW_SPAN)]
         ),
     )
 
@@ -396,9 +422,9 @@ def _build_settlements_sheet(cfg: Config) -> SheetDefinition:
         Visuals=build_settlements_visuals(preset.accent, preset.link_tint),
         FilterControls=build_settlements_controls(cfg),
         Layouts=_grid_layout(
-            _kpi_pair("settlements-kpi-amount", "settlements-kpi-pending")
-            + [_full_width("settlements-bar-by-type", _CHART_ROW_SPAN)]
-            + [_full_width("settlements-detail-table", _TABLE_ROW_SPAN)]
+            _kpi_pair(V_PR_SETTLEMENTS_KPI_AMOUNT, V_PR_SETTLEMENTS_KPI_PENDING)
+            + [_full_width(V_PR_SETTLEMENTS_BAR_BY_TYPE, _CHART_ROW_SPAN)]
+            + [_full_width(V_PR_SETTLEMENTS_DETAIL_TABLE, _TABLE_ROW_SPAN)]
         ),
     )
 
@@ -414,9 +440,9 @@ def _build_payments_sheet(cfg: Config) -> SheetDefinition:
         Visuals=build_payments_visuals(preset.accent, preset.link_tint),
         FilterControls=build_payments_controls(cfg),
         Layouts=_grid_layout(
-            _kpi_pair("payments-kpi-amount", "payments-kpi-returns")
-            + [_full_width("payments-bar-status", _CHART_ROW_SPAN)]
-            + [_full_width("payments-detail-table", _TABLE_ROW_SPAN)]
+            _kpi_pair(V_PR_PAYMENTS_KPI_AMOUNT, V_PR_PAYMENTS_KPI_RETURNS)
+            + [_full_width(V_PR_PAYMENTS_BAR_STATUS, _CHART_ROW_SPAN)]
+            + [_full_width(V_PR_PAYMENTS_DETAIL_TABLE, _TABLE_ROW_SPAN)]
         ),
     )
 
@@ -431,17 +457,17 @@ def _build_exceptions_sheet(cfg: Config) -> SheetDefinition:
         Visuals=build_exceptions_visuals(),
         FilterControls=build_exceptions_controls(cfg),
         Layouts=_grid_layout(
-            _kpi_pair("exceptions-kpi-unsettled", "exceptions-kpi-returns")
+            _kpi_pair(V_PR_EXC_KPI_UNSETTLED, V_PR_EXC_KPI_RETURNS)
             + _chart_pair(
-                "exceptions-unsettled-table",
-                "exceptions-returns-table",
+                V_PR_EXC_UNSETTLED_TABLE,
+                V_PR_EXC_RETURNS_TABLE,
             )
             + _chart_pair(
-                "exceptions-sale-settlement-mismatch-table",
-                "exceptions-settlement-payment-mismatch-table",
+                V_PR_EXC_SALE_SETTLEMENT_MISMATCH_TABLE,
+                V_PR_EXC_SETTLEMENT_PAYMENT_MISMATCH_TABLE,
             )
             + [_full_width(
-                "exceptions-unmatched-ext-txn-table",
+                V_PR_EXC_UNMATCHED_EXT_TXN_TABLE,
                 _CHART_ROW_SPAN,
             )]
         ),
@@ -460,21 +486,21 @@ def _build_payment_recon_sheet(cfg: Config) -> SheetDefinition:
         FilterControls=build_recon_controls(cfg),
         Layouts=_grid_layout([
             GridLayoutElement(
-                ElementId="recon-kpi-matched-amount", ElementType="VISUAL",
+                ElementId=V_PR_RECON_KPI_MATCHED_AMOUNT, ElementType="VISUAL",
                 ColumnSpan=_THIRD, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
             ),
             GridLayoutElement(
-                ElementId="recon-kpi-unmatched-amount", ElementType="VISUAL",
+                ElementId=V_PR_RECON_KPI_UNMATCHED_AMOUNT, ElementType="VISUAL",
                 ColumnSpan=_THIRD, RowSpan=_KPI_ROW_SPAN, ColumnIndex=_THIRD,
             ),
             GridLayoutElement(
-                ElementId="recon-kpi-late-count", ElementType="VISUAL",
+                ElementId=V_PR_RECON_KPI_LATE_COUNT, ElementType="VISUAL",
                 ColumnSpan=_THIRD, RowSpan=_KPI_ROW_SPAN, ColumnIndex=_THIRD * 2,
             ),
-            _full_width("recon-bar-by-system", _CHART_ROW_SPAN),
+            _full_width(V_PR_RECON_BAR_BY_SYSTEM, _CHART_ROW_SPAN),
         ] + _chart_pair_of_tables(
-            "recon-payments-table",
-            "recon-ext-txn-table",
+            V_PR_RECON_PAYMENTS_TABLE,
+            V_PR_RECON_EXT_TXN_TABLE,
         )),
     )
 

@@ -213,3 +213,91 @@ def all_fg_pr_ids() -> frozenset[str]:
         *(SalesMeta(col).fg_id for col, *_ in OPTIONAL_SALE_METADATA),
         *(b.fg_id for b in PR_DRILL_BINDINGS),
     })
+
+
+# ---------------------------------------------------------------------------
+# Visual IDs
+#
+# Promoted to constants so a typo in a FilterGroup's VisualId scope or a
+# drill action's target visual fails at the import line, not silently
+# in the deployed dashboard. Visual IDs flow into
+# ``SheetVisualScopingConfigurations.VisualIds`` and a typo there
+# silently widens the filter's scope to ALL_VISUALS without raising.
+# ---------------------------------------------------------------------------
+
+# Sales sheet
+V_PR_SALES_KPI_COUNT = "sales-kpi-count"
+V_PR_SALES_KPI_AMOUNT = "sales-kpi-amount"
+V_PR_SALES_BAR_BY_MERCHANT = "sales-bar-by-merchant"
+V_PR_SALES_BAR_BY_LOCATION = "sales-bar-by-location"
+V_PR_SALES_DETAIL_TABLE = "sales-detail-table"
+
+# Settlements sheet
+V_PR_SETTLEMENTS_KPI_AMOUNT = "settlements-kpi-amount"
+V_PR_SETTLEMENTS_KPI_PENDING = "settlements-kpi-pending"
+V_PR_SETTLEMENTS_BAR_BY_TYPE = "settlements-bar-by-type"
+V_PR_SETTLEMENTS_DETAIL_TABLE = "settlements-detail-table"
+
+# Payments sheet
+V_PR_PAYMENTS_KPI_AMOUNT = "payments-kpi-amount"
+V_PR_PAYMENTS_KPI_RETURNS = "payments-kpi-returns"
+V_PR_PAYMENTS_BAR_STATUS = "payments-bar-status"
+V_PR_PAYMENTS_DETAIL_TABLE = "payments-detail-table"
+
+# Exceptions sheet
+V_PR_EXC_KPI_UNSETTLED = "exceptions-kpi-unsettled"
+V_PR_EXC_KPI_RETURNS = "exceptions-kpi-returns"
+V_PR_EXC_UNSETTLED_TABLE = "exceptions-unsettled-table"
+V_PR_EXC_RETURNS_TABLE = "exceptions-returns-table"
+V_PR_EXC_SALE_SETTLEMENT_MISMATCH_TABLE = "exceptions-sale-settlement-mismatch-table"
+V_PR_EXC_SETTLEMENT_PAYMENT_MISMATCH_TABLE = "exceptions-settlement-payment-mismatch-table"
+V_PR_EXC_UNMATCHED_EXT_TXN_TABLE = "exceptions-unmatched-ext-txn-table"
+V_PR_EXC_AGING_UNSETTLED = "exceptions-aging-unsettled"
+V_PR_EXC_AGING_RETURNS = "exceptions-aging-returns"
+V_PR_EXC_AGING_SALE_STL_MISMATCH = "exceptions-aging-sale-stl-mismatch"
+V_PR_EXC_AGING_STL_PAY_MISMATCH = "exceptions-aging-stl-pay-mismatch"
+V_PR_EXC_AGING_UNMATCHED_EXT = "exceptions-aging-unmatched-ext"
+
+# Payment Reconciliation sheet
+V_PR_RECON_KPI_MATCHED_AMOUNT = "recon-kpi-matched-amount"
+V_PR_RECON_KPI_UNMATCHED_AMOUNT = "recon-kpi-unmatched-amount"
+V_PR_RECON_KPI_LATE_COUNT = "recon-kpi-late-count"
+V_PR_RECON_BAR_BY_SYSTEM = "recon-bar-by-system"
+V_PR_RECON_EXT_TXN_TABLE = "recon-ext-txn-table"
+V_PR_RECON_PAYMENTS_TABLE = "recon-payments-table"
+V_PR_RECON_AGING_BAR = "recon-aging-bar"
+
+ALL_V_PR: frozenset[str] = frozenset({
+    V_PR_SALES_KPI_COUNT,
+    V_PR_SALES_KPI_AMOUNT,
+    V_PR_SALES_BAR_BY_MERCHANT,
+    V_PR_SALES_BAR_BY_LOCATION,
+    V_PR_SALES_DETAIL_TABLE,
+    V_PR_SETTLEMENTS_KPI_AMOUNT,
+    V_PR_SETTLEMENTS_KPI_PENDING,
+    V_PR_SETTLEMENTS_BAR_BY_TYPE,
+    V_PR_SETTLEMENTS_DETAIL_TABLE,
+    V_PR_PAYMENTS_KPI_AMOUNT,
+    V_PR_PAYMENTS_KPI_RETURNS,
+    V_PR_PAYMENTS_BAR_STATUS,
+    V_PR_PAYMENTS_DETAIL_TABLE,
+    V_PR_EXC_KPI_UNSETTLED,
+    V_PR_EXC_KPI_RETURNS,
+    V_PR_EXC_UNSETTLED_TABLE,
+    V_PR_EXC_RETURNS_TABLE,
+    V_PR_EXC_SALE_SETTLEMENT_MISMATCH_TABLE,
+    V_PR_EXC_SETTLEMENT_PAYMENT_MISMATCH_TABLE,
+    V_PR_EXC_UNMATCHED_EXT_TXN_TABLE,
+    V_PR_EXC_AGING_UNSETTLED,
+    V_PR_EXC_AGING_RETURNS,
+    V_PR_EXC_AGING_SALE_STL_MISMATCH,
+    V_PR_EXC_AGING_STL_PAY_MISMATCH,
+    V_PR_EXC_AGING_UNMATCHED_EXT,
+    V_PR_RECON_KPI_MATCHED_AMOUNT,
+    V_PR_RECON_KPI_UNMATCHED_AMOUNT,
+    V_PR_RECON_KPI_LATE_COUNT,
+    V_PR_RECON_BAR_BY_SYSTEM,
+    V_PR_RECON_EXT_TXN_TABLE,
+    V_PR_RECON_PAYMENTS_TABLE,
+    V_PR_RECON_AGING_BAR,
+})

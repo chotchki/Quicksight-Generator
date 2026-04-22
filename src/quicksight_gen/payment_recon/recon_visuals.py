@@ -10,9 +10,16 @@ from quicksight_gen.payment_recon.constants import (
     DS_EXTERNAL_TRANSACTIONS,
     DS_PAYMENT_RECON,
     DS_PAYMENTS,
+    P_PR_EXTERNAL_TXN,
     SHEET_PAYMENT_RECON,
+    V_PR_RECON_AGING_BAR,
+    V_PR_RECON_BAR_BY_SYSTEM,
+    V_PR_RECON_EXT_TXN_TABLE,
+    V_PR_RECON_KPI_LATE_COUNT,
+    V_PR_RECON_KPI_MATCHED_AMOUNT,
+    V_PR_RECON_KPI_UNMATCHED_AMOUNT,
+    V_PR_RECON_PAYMENTS_TABLE,
 )
-from quicksight_gen.payment_recon.visuals import P_PR_EXTERNAL_TXN
 from quicksight_gen.common.aging import aging_bar_visual
 from quicksight_gen.common.clickability import link_text_format
 from quicksight_gen.common.drill import cross_sheet_drill, field_source
@@ -161,7 +168,7 @@ def build_payment_recon_visuals(link_color: str) -> list[Visual]:
     # KPI: total matched amount
     kpi_matched = Visual(
         KPIVisual=KPIVisual(
-            VisualId="recon-kpi-matched-amount",
+            VisualId=V_PR_RECON_KPI_MATCHED_AMOUNT,
             Title=_title("Matched Amount"),
             Subtitle=_subtitle(
                 "Total external transaction amount that matches internal payments"
@@ -183,7 +190,7 @@ def build_payment_recon_visuals(link_color: str) -> list[Visual]:
     # KPI: total unmatched amount
     kpi_unmatched = Visual(
         KPIVisual=KPIVisual(
-            VisualId="recon-kpi-unmatched-amount",
+            VisualId=V_PR_RECON_KPI_UNMATCHED_AMOUNT,
             Title=_title("Unmatched Amount"),
             Subtitle=_subtitle(
                 "Total external transaction amount not yet matched to internal payments"
@@ -205,7 +212,7 @@ def build_payment_recon_visuals(link_color: str) -> list[Visual]:
     # KPI: late count
     kpi_late = Visual(
         KPIVisual=KPIVisual(
-            VisualId="recon-kpi-late-count",
+            VisualId=V_PR_RECON_KPI_LATE_COUNT,
             Title=_title("Late Transactions"),
             Subtitle=_subtitle(
                 "Transactions that have exceeded the late threshold without matching"
@@ -227,7 +234,7 @@ def build_payment_recon_visuals(link_color: str) -> list[Visual]:
     # Bar chart: match status by external system
     bar_by_system = Visual(
         BarChartVisual=BarChartVisual(
-            VisualId="recon-bar-by-system",
+            VisualId=V_PR_RECON_BAR_BY_SYSTEM,
             Title=_title("Match Status by External System"),
             Subtitle=_subtitle(
                 "Which external systems have the most mismatches. "
@@ -269,7 +276,7 @@ def build_payment_recon_visuals(link_color: str) -> list[Visual]:
                 _same_sheet_filter_action(
                     "action-recon-filter-by-system",
                     "Filter by System",
-                    ["recon-ext-txn-table", "recon-payments-table"],
+                    [V_PR_RECON_EXT_TXN_TABLE, V_PR_RECON_PAYMENTS_TABLE],
                 ),
             ],
         )
@@ -278,7 +285,7 @@ def build_payment_recon_visuals(link_color: str) -> list[Visual]:
     # Table: external transactions (payment recon aggregated view)
     table_ext_txns = Visual(
         TableVisual=TableVisual(
-            VisualId="recon-ext-txn-table",
+            VisualId=V_PR_RECON_EXT_TXN_TABLE,
             Title=_title("External Transactions"),
             Subtitle=_subtitle(
                 "Each external transaction with its match status and difference. "
@@ -362,7 +369,7 @@ def build_payment_recon_visuals(link_color: str) -> list[Visual]:
     # Table: internal payments linked to external transactions
     table_payments = Visual(
         TableVisual=TableVisual(
-            VisualId="recon-payments-table",
+            VisualId=V_PR_RECON_PAYMENTS_TABLE,
             Title=_title("Internal Payments"),
             Subtitle=_subtitle(
                 "Payments linked to external transactions. "
@@ -431,7 +438,7 @@ def build_payment_recon_visuals(link_color: str) -> list[Visual]:
     )
 
     aging_recon = aging_bar_visual(
-        "recon-aging-bar",
+        V_PR_RECON_AGING_BAR,
         "Reconciliation by Age",
         "How long external transactions have been outstanding "
         "— older items are more likely to need investigation",

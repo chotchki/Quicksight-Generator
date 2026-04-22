@@ -56,6 +56,14 @@ from quicksight_gen.account_recon.constants import (
     SHEET_AR_TODAYS_EXCEPTIONS,
     SHEET_AR_TRANSACTIONS,
     SHEET_AR_TRANSFERS,
+    V_AR_BALANCES_LEDGER_TABLE,
+    V_AR_BALANCES_SUBLEDGER_TABLE,
+    V_AR_TODAYS_EXC_TABLE,
+    V_AR_TRANSFERS_BAR_STATUS,
+    V_AR_TRANSFERS_SUMMARY_TABLE,
+    V_AR_TXN_BAR_BY_DAY,
+    V_AR_TXN_BAR_BY_STATUS,
+    V_AR_TXN_DETAIL_TABLE,
 )
 from quicksight_gen.account_recon.demo_data import (
     LEDGER_ACCOUNTS,
@@ -2597,7 +2605,7 @@ class TestDrillDownFilterGroups:
             "SheetVisualScopingConfigurations"
         ][0]
         assert scope["Scope"] == "SELECTED_VISUALS"
-        assert scope["VisualIds"] == ["ar-balances-subledger-table"]
+        assert scope["VisualIds"] == [V_AR_BALANCES_SUBLEDGER_TABLE]
 
 
 def _drill_nav_target(visual: dict) -> str:
@@ -2650,7 +2658,7 @@ class TestVisualActions:
         NavigationOperation, so the action includes a no-op navigation
         back to the Balances sheet."""
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
-        v = _find_visual(analysis, "ar-balances-ledger-table")
+        v = _find_visual(analysis, V_AR_BALANCES_LEDGER_TABLE)
         action = v["Actions"][0]
         assert action["Trigger"] == "DATA_POINT_MENU"
         assert _drill_nav_target(v) == SHEET_AR_BALANCES
@@ -2658,23 +2666,23 @@ class TestVisualActions:
 
     def test_balances_subledger_drills_to_transactions(self, ar_output_dir):
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
-        v = _find_visual(analysis, "ar-balances-subledger-table")
+        v = _find_visual(analysis, V_AR_BALANCES_SUBLEDGER_TABLE)
         assert v["Actions"][0]["Trigger"] == "DATA_POINT_CLICK"
         assert _drill_nav_target(v) == SHEET_AR_TRANSACTIONS
         assert _set_param(v) == (P_AR_SUBLEDGER.name, "ar-bal-subledger-id")
 
     def test_transfers_summary_drills_to_transactions(self, ar_output_dir):
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
-        v = _find_visual(analysis, "ar-transfers-summary-table")
+        v = _find_visual(analysis, V_AR_TRANSFERS_SUMMARY_TABLE)
         assert _drill_nav_target(v) == SHEET_AR_TRANSACTIONS
         assert _set_param(v) == (P_AR_TRANSFER.name, "ar-xfr-id")
 
     @pytest.mark.parametrize(
         "source_visual, target_visual",
         [
-            ("ar-transfers-bar-status", "ar-transfers-summary-table"),
-            ("ar-txn-bar-by-status", "ar-txn-detail-table"),
-            ("ar-txn-bar-by-day", "ar-txn-detail-table"),
+            (V_AR_TRANSFERS_BAR_STATUS, V_AR_TRANSFERS_SUMMARY_TABLE),
+            (V_AR_TXN_BAR_BY_STATUS, V_AR_TXN_DETAIL_TABLE),
+            (V_AR_TXN_BAR_BY_DAY, V_AR_TXN_DETAIL_TABLE),
         ],
     )
     def test_chart_filters_same_sheet_table(
@@ -2694,7 +2702,7 @@ class TestVisualActions:
         detail); the same cell's left-click still drills to
         Transactions, asserted separately."""
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
-        v = _find_visual(analysis, "ar-balances-subledger-table")
+        v = _find_visual(analysis, V_AR_BALANCES_SUBLEDGER_TABLE)
         actions_by_id = {a["CustomActionId"]: a for a in v["Actions"]}
         action = actions_by_id["action-ar-balances-subledger-to-daily-statement"]
         assert action["Trigger"] == "DATA_POINT_MENU"
@@ -2743,22 +2751,22 @@ class TestTransactionsDrillStaleParamHygiene:
         "visual_id, action_id, source_writes",
         [
             (
-                "ar-balances-subledger-table",
+                V_AR_BALANCES_SUBLEDGER_TABLE,
                 "action-ar-balances-subledger-to-txn",
                 {P_AR_SUBLEDGER.name: "ar-bal-subledger-id"},
             ),
             (
-                "ar-transfers-summary-table",
+                V_AR_TRANSFERS_SUMMARY_TABLE,
                 "action-ar-transfers-to-txn",
                 {P_AR_TRANSFER.name: "ar-xfr-id"},
             ),
             (
-                "ar-todays-exc-table",
+                V_AR_TODAYS_EXC_TABLE,
                 "action-ar-todays-exc-to-txn",
                 {P_AR_TRANSFER.name: "ar-todays-exc-transfer-id"},
             ),
             (
-                "ar-todays-exc-table",
+                V_AR_TODAYS_EXC_TABLE,
                 "action-ar-todays-exc-to-txn-by-account",
                 {
                     P_AR_ACCOUNT.name: "ar-todays-exc-account",
@@ -2848,7 +2856,7 @@ class TestConditionalFormatting:
     @pytest.mark.parametrize(
         "visual_id, field_id",
         [
-            ("ar-transfers-summary-table", "ar-xfr-id"),
+            (V_AR_TRANSFERS_SUMMARY_TABLE, "ar-xfr-id"),
         ],
     )
     def test_left_click_drill_sources_have_link_format(
@@ -2871,9 +2879,9 @@ class TestConditionalFormatting:
         "visual_id, field_id",
         [
             # Right-click-only — left-click reserved for same-sheet filter.
-            ("ar-balances-ledger-table", "ar-bal-ledger-id"),
+            (V_AR_BALANCES_LEDGER_TABLE, "ar-bal-ledger-id"),
             # Both clicks — left to Transactions, right to Daily Statement.
-            ("ar-balances-subledger-table", "ar-bal-subledger-id"),
+            (V_AR_BALANCES_SUBLEDGER_TABLE, "ar-bal-subledger-id"),
         ],
     )
     def test_right_click_drill_sources_use_menu_format(

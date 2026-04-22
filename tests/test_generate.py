@@ -7,6 +7,11 @@ import pytest
 from click.testing import CliRunner
 
 from quicksight_gen.cli import main
+from quicksight_gen.payment_recon.constants import (
+    V_PR_EXC_SALE_SETTLEMENT_MISMATCH_TABLE,
+    V_PR_EXC_SETTLEMENT_PAYMENT_MISMATCH_TABLE,
+    V_PR_EXC_UNMATCHED_EXT_TXN_TABLE,
+)
 
 
 @pytest.fixture()
@@ -415,9 +420,9 @@ class TestExceptionTables:
             if v.get("TableVisual")
         ]
         for expected in (
-            "exceptions-sale-settlement-mismatch-table",
-            "exceptions-settlement-payment-mismatch-table",
-            "exceptions-unmatched-ext-txn-table",
+            V_PR_EXC_SALE_SETTLEMENT_MISMATCH_TABLE,
+            V_PR_EXC_SETTLEMENT_PAYMENT_MISMATCH_TABLE,
+            V_PR_EXC_UNMATCHED_EXT_TXN_TABLE,
         ):
             assert expected in visual_ids, f"Missing table {expected}"
 

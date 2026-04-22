@@ -16,6 +16,15 @@ from quicksight_gen.account_recon.constants import (
     ALL_FG_AR_IDS,
     ALL_P_AR,
     FG_AR_DRILL_LEDGER_ON_BALANCES_SUBLEDGER,
+    V_AR_BALANCES_SUBLEDGER_TABLE,
+    V_AR_DS_KPI_CLOSING,
+    V_AR_DS_KPI_CREDITS,
+    V_AR_DS_KPI_DEBITS,
+    V_AR_DS_KPI_DRIFT,
+    V_AR_DS_KPI_OPENING,
+    V_AR_DS_TRANSACTIONS_TABLE,
+    V_AR_TXN_BAR_BY_DAY,
+    V_AR_TXN_BAR_BY_STATUS,
 )
 
 
@@ -123,8 +132,8 @@ class TestVisuals:
             if s["Name"] == "Transactions"
         )
         ids = set(_visual_ids(txn_sheet))
-        assert "ar-txn-bar-by-status" in ids
-        assert "ar-txn-bar-by-day" in ids
+        assert V_AR_TXN_BAR_BY_STATUS in ids
+        assert V_AR_TXN_BAR_BY_DAY in ids
 
     def test_daily_statement_has_kpi_strip_and_table(
         self, ar_dashboard_definition,
@@ -139,12 +148,12 @@ class TestVisuals:
         )
         ids = set(_visual_ids(ds_sheet))
         for expected in (
-            "ar-ds-kpi-opening",
-            "ar-ds-kpi-debits",
-            "ar-ds-kpi-credits",
-            "ar-ds-kpi-closing",
-            "ar-ds-kpi-drift",
-            "ar-ds-transactions-table",
+            V_AR_DS_KPI_OPENING,
+            V_AR_DS_KPI_DEBITS,
+            V_AR_DS_KPI_CREDITS,
+            V_AR_DS_KPI_CLOSING,
+            V_AR_DS_KPI_DRIFT,
+            V_AR_DS_TRANSACTIONS_TABLE,
         ):
             assert expected in ids, (
                 f"Daily Statement missing visual '{expected}'"
@@ -193,7 +202,7 @@ class TestFilterGroups:
             "SheetVisualScopingConfigurations"
         ][0]
         assert scope["Scope"] == "SELECTED_VISUALS"
-        assert scope["VisualIds"] == ["ar-balances-subledger-table"]
+        assert scope["VisualIds"] == [V_AR_BALANCES_SUBLEDGER_TABLE]
 
 
 class TestDatasetDeclarations:

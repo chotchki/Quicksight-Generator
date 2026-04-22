@@ -52,6 +52,35 @@ from quicksight_gen.account_recon.constants import (
     SHEET_AR_BALANCES,
     SHEET_AR_DAILY_STATEMENT,
     SHEET_AR_TRANSACTIONS,
+    V_AR_BALANCES_KPI_LEDGERS,
+    V_AR_BALANCES_KPI_SUBLEDGERS,
+    V_AR_BALANCES_LEDGER_TABLE,
+    V_AR_BALANCES_SUBLEDGER_TABLE,
+    V_AR_DS_KPI_CLOSING,
+    V_AR_DS_KPI_CREDITS,
+    V_AR_DS_KPI_DEBITS,
+    V_AR_DS_KPI_DRIFT,
+    V_AR_DS_KPI_OPENING,
+    V_AR_DS_TRANSACTIONS_TABLE,
+    V_AR_EXC_DRIFT_TIMELINES_ROLLUP,
+    V_AR_EXC_EXPECTED_ZERO_ROLLUP_TABLE,
+    V_AR_EXC_KPI_EXPECTED_ZERO_ROLLUP,
+    V_AR_EXC_KPI_TWO_SIDED_ROLLUP,
+    V_AR_EXC_TRENDS_AGING_MATRIX,
+    V_AR_EXC_TRENDS_PER_CHECK,
+    V_AR_EXC_TWO_SIDED_ROLLUP_TABLE,
+    V_AR_TODAYS_EXC_BREAKDOWN,
+    V_AR_TODAYS_EXC_KPI_TOTAL,
+    V_AR_TODAYS_EXC_TABLE,
+    V_AR_TRANSFERS_BAR_STATUS,
+    V_AR_TRANSFERS_KPI_COUNT,
+    V_AR_TRANSFERS_KPI_UNHEALTHY,
+    V_AR_TRANSFERS_SUMMARY_TABLE,
+    V_AR_TXN_BAR_BY_DAY,
+    V_AR_TXN_BAR_BY_STATUS,
+    V_AR_TXN_DETAIL_TABLE,
+    V_AR_TXN_KPI_COUNT,
+    V_AR_TXN_KPI_FAILED,
 )
 from quicksight_gen.common.clickability import (
     link_text_format,
@@ -282,7 +311,7 @@ def _ar_drill_to_transactions(
 def build_balances_visuals(link_color: str, link_tint: str) -> list[Visual]:
     kpi_ledgers = Visual(
         KPIVisual=KPIVisual(
-            VisualId="ar-balances-kpi-ledgers",
+            VisualId=V_AR_BALANCES_KPI_LEDGERS,
             Title=_title("Ledger Accounts"),
             Subtitle=_subtitle("Count of ledger accounts (internal + external)"),
             ChartConfiguration=KPIConfiguration(
@@ -301,7 +330,7 @@ def build_balances_visuals(link_color: str, link_tint: str) -> list[Visual]:
 
     kpi_subledgers = Visual(
         KPIVisual=KPIVisual(
-            VisualId="ar-balances-kpi-subledgers",
+            VisualId=V_AR_BALANCES_KPI_SUBLEDGERS,
             Title=_title("Sub-Ledger Accounts"),
             Subtitle=_subtitle(
                 "Count of individual sub-ledger accounts under all ledgers"
@@ -322,7 +351,7 @@ def build_balances_visuals(link_color: str, link_tint: str) -> list[Visual]:
 
     table_ledgers = Visual(
         TableVisual=TableVisual(
-            VisualId="ar-balances-ledger-table",
+            VisualId=V_AR_BALANCES_LEDGER_TABLE,
             Title=_title("Ledger Account Balances"),
             Subtitle=_subtitle(
                 "Each ledger account's stored vs computed daily balance. "
@@ -403,7 +432,7 @@ def build_balances_visuals(link_color: str, link_tint: str) -> list[Visual]:
 
     table_subledgers = Visual(
         TableVisual=TableVisual(
-            VisualId="ar-balances-subledger-table",
+            VisualId=V_AR_BALANCES_SUBLEDGER_TABLE,
             Title=_title("Sub-Ledger Account Balances"),
             Subtitle=_subtitle(
                 "Each sub-ledger account's stored vs computed daily balance. "
@@ -507,7 +536,7 @@ def build_balances_visuals(link_color: str, link_tint: str) -> list[Visual]:
 def build_transfers_visuals(link_color: str) -> list[Visual]:
     kpi_transfers = Visual(
         KPIVisual=KPIVisual(
-            VisualId="ar-transfers-kpi-count",
+            VisualId=V_AR_TRANSFERS_KPI_COUNT,
             Title=_title("Total Transfers"),
             Subtitle=_subtitle("Count of transfers across all statuses"),
             ChartConfiguration=KPIConfiguration(
@@ -526,7 +555,7 @@ def build_transfers_visuals(link_color: str) -> list[Visual]:
 
     kpi_unhealthy = Visual(
         KPIVisual=KPIVisual(
-            VisualId="ar-transfers-kpi-unhealthy",
+            VisualId=V_AR_TRANSFERS_KPI_UNHEALTHY,
             Title=_title("Non-Zero Transfers"),
             Subtitle=_subtitle(
                 "Transfers whose non-failed legs don't sum to zero — the "
@@ -548,7 +577,7 @@ def build_transfers_visuals(link_color: str) -> list[Visual]:
 
     bar_status = Visual(
         BarChartVisual=BarChartVisual(
-            VisualId="ar-transfers-bar-status",
+            VisualId=V_AR_TRANSFERS_BAR_STATUS,
             Title=_title("Transfer Status"),
             Subtitle=_subtitle(
                 "Count of transfers by net-zero status. Click a bar to "
@@ -576,7 +605,7 @@ def build_transfers_visuals(link_color: str) -> list[Visual]:
                 _same_sheet_filter_action(
                     "action-ar-transfers-bar-filter",
                     "Filter Transfer Summary",
-                    ["ar-transfers-summary-table"],
+                    [V_AR_TRANSFERS_SUMMARY_TABLE],
                 ),
             ],
         )
@@ -584,7 +613,7 @@ def build_transfers_visuals(link_color: str) -> list[Visual]:
 
     table_transfers = Visual(
         TableVisual=TableVisual(
-            VisualId="ar-transfers-summary-table",
+            VisualId=V_AR_TRANSFERS_SUMMARY_TABLE,
             Title=_title("Transfer Summary"),
             Subtitle=_subtitle(
                 "Every transfer with its net amount, debit/credit totals, "
@@ -668,7 +697,7 @@ def build_transfers_visuals(link_color: str) -> list[Visual]:
 def build_transactions_visuals() -> list[Visual]:
     kpi_txn_count = Visual(
         KPIVisual=KPIVisual(
-            VisualId="ar-txn-kpi-count",
+            VisualId=V_AR_TXN_KPI_COUNT,
             Title=_title("Total Transactions"),
             Subtitle=_subtitle("Count of all transactions (all statuses)"),
             ChartConfiguration=KPIConfiguration(
@@ -687,7 +716,7 @@ def build_transactions_visuals() -> list[Visual]:
 
     kpi_failed = Visual(
         KPIVisual=KPIVisual(
-            VisualId="ar-txn-kpi-failed",
+            VisualId=V_AR_TXN_KPI_FAILED,
             Title=_title("Failed Transactions"),
             Subtitle=_subtitle(
                 "Transactions that did not post — money never moved. "
@@ -709,7 +738,7 @@ def build_transactions_visuals() -> list[Visual]:
 
     bar_by_status = Visual(
         BarChartVisual=BarChartVisual(
-            VisualId="ar-txn-bar-by-status",
+            VisualId=V_AR_TXN_BAR_BY_STATUS,
             Title=_title("Transactions by Status"),
             Subtitle=_subtitle(
                 "Breakdown of posted / pending / failed transactions. "
@@ -735,7 +764,7 @@ def build_transactions_visuals() -> list[Visual]:
                 _same_sheet_filter_action(
                     "action-ar-txn-bar-filter",
                     "Filter Transaction Detail",
-                    ["ar-txn-detail-table"],
+                    [V_AR_TXN_DETAIL_TABLE],
                 ),
             ],
         )
@@ -747,7 +776,7 @@ def build_transactions_visuals() -> list[Visual]:
     # aggregate totals above.
     bar_by_day = Visual(
         BarChartVisual=BarChartVisual(
-            VisualId="ar-txn-bar-by-day",
+            VisualId=V_AR_TXN_BAR_BY_DAY,
             Title=_title("Transactions by Day"),
             Subtitle=_subtitle(
                 "Daily transaction volume split by status. Click a bar to "
@@ -776,7 +805,7 @@ def build_transactions_visuals() -> list[Visual]:
                 _same_sheet_filter_action(
                     "action-ar-txn-day-filter",
                     "Filter Transaction Detail",
-                    ["ar-txn-detail-table"],
+                    [V_AR_TXN_DETAIL_TABLE],
                 ),
             ],
         )
@@ -784,7 +813,7 @@ def build_transactions_visuals() -> list[Visual]:
 
     table_txn = Visual(
         TableVisual=TableVisual(
-            VisualId="ar-txn-detail-table",
+            VisualId=V_AR_TXN_DETAIL_TABLE,
             Title=_title("Transaction Detail"),
             Subtitle=_subtitle(
                 "Every leg of every transfer — newest first. Failed rows "
@@ -859,7 +888,7 @@ def build_daily_statement_visuals() -> list[Visual]:
 
     kpi_opening = Visual(
         KPIVisual=KPIVisual(
-            VisualId="ar-ds-kpi-opening",
+            VisualId=V_AR_DS_KPI_OPENING,
             Title=_title("Opening Balance"),
             Subtitle=_subtitle(
                 "Stored end-of-day balance on the prior business day — "
@@ -881,7 +910,7 @@ def build_daily_statement_visuals() -> list[Visual]:
 
     kpi_debits = Visual(
         KPIVisual=KPIVisual(
-            VisualId="ar-ds-kpi-debits",
+            VisualId=V_AR_DS_KPI_DEBITS,
             Title=_title("Total Debits"),
             Subtitle=_subtitle(
                 "Sum of positive signed_amount legs posted on the day "
@@ -903,7 +932,7 @@ def build_daily_statement_visuals() -> list[Visual]:
 
     kpi_credits = Visual(
         KPIVisual=KPIVisual(
-            VisualId="ar-ds-kpi-credits",
+            VisualId=V_AR_DS_KPI_CREDITS,
             Title=_title("Total Credits"),
             Subtitle=_subtitle(
                 "Sum of negative signed_amount legs posted on the day "
@@ -925,7 +954,7 @@ def build_daily_statement_visuals() -> list[Visual]:
 
     kpi_closing = Visual(
         KPIVisual=KPIVisual(
-            VisualId="ar-ds-kpi-closing",
+            VisualId=V_AR_DS_KPI_CLOSING,
             Title=_title("Closing Balance (Stored)"),
             Subtitle=_subtitle(
                 "Stored end-of-day balance from daily_balances — what "
@@ -947,7 +976,7 @@ def build_daily_statement_visuals() -> list[Visual]:
 
     kpi_drift = Visual(
         KPIVisual=KPIVisual(
-            VisualId="ar-ds-kpi-drift",
+            VisualId=V_AR_DS_KPI_DRIFT,
             Title=_title("Drift"),
             Subtitle=_subtitle(
                 "Stored closing − (opening + Σ signed legs). Zero on a "
@@ -970,7 +999,7 @@ def build_daily_statement_visuals() -> list[Visual]:
 
     transactions_table = Visual(
         TableVisual=TableVisual(
-            VisualId="ar-ds-transactions-table",
+            VisualId=V_AR_DS_TRANSACTIONS_TABLE,
             Title=_title("Transaction Detail"),
             Subtitle=_subtitle(
                 "Every leg posted to the selected account on the selected "
@@ -1058,7 +1087,7 @@ def build_todays_exceptions_visuals(
     """
     kpi_total = Visual(
         KPIVisual=KPIVisual(
-            VisualId="ar-todays-exc-kpi-total",
+            VisualId=V_AR_TODAYS_EXC_KPI_TOTAL,
             Title=_title("Total Exceptions"),
             Subtitle=_subtitle(
                 "Count of open exception rows across all 14 reconciliation "
@@ -1081,7 +1110,7 @@ def build_todays_exceptions_visuals(
 
     breakdown_bar = Visual(
         BarChartVisual=BarChartVisual(
-            VisualId="ar-todays-exc-breakdown",
+            VisualId=V_AR_TODAYS_EXC_BREAKDOWN,
             Title=_title("Exceptions by Check"),
             Subtitle=_subtitle(
                 "Count of open exceptions per check type, coloured by "
@@ -1115,7 +1144,7 @@ def build_todays_exceptions_visuals(
                 _same_sheet_filter_action(
                     "action-ar-todays-exc-bar-filter",
                     "Filter Exceptions Table",
-                    ["ar-todays-exc-table"],
+                    [V_AR_TODAYS_EXC_TABLE],
                 ),
             ],
         )
@@ -1123,7 +1152,7 @@ def build_todays_exceptions_visuals(
 
     unified_table = Visual(
         TableVisual=TableVisual(
-            VisualId="ar-todays-exc-table",
+            VisualId=V_AR_TODAYS_EXC_TABLE,
             Title=_title("Open Exceptions"),
             Subtitle=_subtitle(
                 "Every open exception row across all 14 checks, sorted by "
@@ -1275,7 +1304,7 @@ def build_exceptions_trends_visuals() -> list[Visual]:
     """
     timeline_drift_rollup = Visual(
         BarChartVisual=BarChartVisual(
-            VisualId="ar-exc-drift-timelines-rollup",
+            VisualId=V_AR_EXC_DRIFT_TIMELINES_ROLLUP,
             Title=_title("Balance Drift Timelines"),
             Subtitle=_subtitle(
                 "Per-day drift from Concentration Master sweep and GL vs "
@@ -1313,7 +1342,7 @@ def build_exceptions_trends_visuals() -> list[Visual]:
 
     kpi_two_sided_rollup = Visual(
         KPIVisual=KPIVisual(
-            VisualId="ar-exc-kpi-two-sided-rollup",
+            VisualId=V_AR_EXC_KPI_TWO_SIDED_ROLLUP,
             Title=_title("Two-Sided Post Mismatch"),
             Subtitle=_subtitle(
                 "Total findings where one side of an expected SNB/Fed "
@@ -1335,7 +1364,7 @@ def build_exceptions_trends_visuals() -> list[Visual]:
 
     table_two_sided_rollup = Visual(
         TableVisual=TableVisual(
-            VisualId="ar-exc-two-sided-rollup-table",
+            VisualId=V_AR_EXC_TWO_SIDED_ROLLUP_TABLE,
             Title=_title("Two-Sided Post Mismatch"),
             Subtitle=_subtitle(
                 "Each row is a transfer where the side_present leg posted "
@@ -1386,7 +1415,7 @@ def build_exceptions_trends_visuals() -> list[Visual]:
 
     kpi_expected_zero_rollup = Visual(
         KPIVisual=KPIVisual(
-            VisualId="ar-exc-kpi-expected-zero-rollup",
+            VisualId=V_AR_EXC_KPI_EXPECTED_ZERO_ROLLUP,
             Title=_title("Accounts Expected Zero at EOD"),
             Subtitle=_subtitle(
                 "Total non-zero EOD findings across Sweep targets, ACH "
@@ -1409,7 +1438,7 @@ def build_exceptions_trends_visuals() -> list[Visual]:
 
     table_expected_zero_rollup = Visual(
         TableVisual=TableVisual(
-            VisualId="ar-exc-expected-zero-rollup-table",
+            VisualId=V_AR_EXC_EXPECTED_ZERO_ROLLUP_TABLE,
             Title=_title("Accounts Expected Zero at EOD"),
             Subtitle=_subtitle(
                 "Every (account, date) where a control account ended day "
@@ -1460,7 +1489,7 @@ def build_exceptions_trends_visuals() -> list[Visual]:
 
     aging_matrix = Visual(
         BarChartVisual=BarChartVisual(
-            VisualId="ar-exc-trends-aging-matrix",
+            VisualId=V_AR_EXC_TRENDS_AGING_MATRIX,
             Title=_title("Aging by Check"),
             Subtitle=_subtitle(
                 "Count of open exceptions per aging bucket, stacked by "
@@ -1494,7 +1523,7 @@ def build_exceptions_trends_visuals() -> list[Visual]:
 
     per_check_trend = Visual(
         BarChartVisual=BarChartVisual(
-            VisualId="ar-exc-trends-per-check",
+            VisualId=V_AR_EXC_TRENDS_PER_CHECK,
             Title=_title("Exceptions per Check, by Day"),
             Subtitle=_subtitle(
                 "Daily count of open exception rows, stacked by check "
