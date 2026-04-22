@@ -15,6 +15,7 @@ Defines the cross-visual filters with corresponding UI controls:
 from __future__ import annotations
 
 from quicksight_gen.common.config import Config
+from quicksight_gen.common.ids import FilterGroupId, SheetId, VisualId
 from quicksight_gen.payment_recon.constants import (
     DS_PAYMENTS,
     DS_SALES,
@@ -71,7 +72,7 @@ from quicksight_gen.common.models import (
 ALL_SHEET_IDS = [SHEET_SALES, SHEET_SETTLEMENTS, SHEET_PAYMENTS, SHEET_EXCEPTIONS]
 
 
-def _selected_sheets_scope(sheet_ids: list[str]) -> FilterScopeConfiguration:
+def _selected_sheets_scope(sheet_ids: list[SheetId]) -> FilterScopeConfiguration:
     return FilterScopeConfiguration(
         SelectedSheets=SelectedSheetsFilterScopeConfiguration(
             SheetVisualScopingConfigurations=[
@@ -86,10 +87,10 @@ def _selected_sheets_scope(sheet_ids: list[str]) -> FilterScopeConfiguration:
 
 
 def _visual_scoped_pinned_filter_group(
-    fg_id: str,
+    fg_id: FilterGroupId,
     filter_id: str,
-    sheet_id: str,
-    visual_ids: list[str],
+    sheet_id: SheetId,
+    visual_ids: list[VisualId],
     dataset_id: str,
     column_name: str,
     pinned_values: list[str],
@@ -355,9 +356,9 @@ def _payment_method_filter_group() -> FilterGroup:
 # ---------------------------------------------------------------------------
 
 def _state_toggle_filter_group(
-    fg_id: str,
+    fg_id: FilterGroupId,
     filter_id: str,
-    sheet_id: str,
+    sheet_id: SheetId,
     dataset_id: str,
     column_name: str,
 ) -> FilterGroup:

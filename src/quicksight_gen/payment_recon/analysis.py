@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
+from quicksight_gen.common.ids import VisualId
 from quicksight_gen.payment_recon.constants import (
     DS_EXTERNAL_TRANSACTIONS,
     DS_MERCHANTS,
@@ -124,7 +125,7 @@ def _grid_layout(elements: list[GridLayoutElement]) -> list[Layout]:
     ))]
 
 
-def _kpi_pair(id_left: str, id_right: str) -> list[GridLayoutElement]:
+def _kpi_pair(id_left: VisualId, id_right: VisualId) -> list[GridLayoutElement]:
     return [
         GridLayoutElement(
             ElementId=id_left, ElementType="VISUAL",
@@ -139,7 +140,7 @@ def _kpi_pair(id_left: str, id_right: str) -> list[GridLayoutElement]:
     ]
 
 
-def _chart_pair(id_left: str, id_right: str) -> list[GridLayoutElement]:
+def _chart_pair(id_left: VisualId, id_right: VisualId) -> list[GridLayoutElement]:
     return [
         GridLayoutElement(
             ElementId=id_left, ElementType="VISUAL",
@@ -154,7 +155,7 @@ def _chart_pair(id_left: str, id_right: str) -> list[GridLayoutElement]:
     ]
 
 
-def _full_width(element_id: str, row_span: int) -> GridLayoutElement:
+def _full_width(element_id: VisualId, row_span: int) -> GridLayoutElement:
     return GridLayoutElement(
         ElementId=element_id, ElementType="VISUAL",
         ColumnSpan=_FULL, RowSpan=row_span,
@@ -505,7 +506,7 @@ def _build_payment_recon_sheet(cfg: Config) -> SheetDefinition:
     )
 
 
-def _chart_pair_of_tables(id_left: str, id_right: str) -> list[GridLayoutElement]:
+def _chart_pair_of_tables(id_left: VisualId, id_right: VisualId) -> list[GridLayoutElement]:
     """Side-by-side table pair — taller row span than the chart pair so the
     tables surface more rows without scrolling."""
     return [

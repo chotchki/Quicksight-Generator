@@ -59,6 +59,7 @@ from quicksight_gen.account_recon.constants import (
     SHEET_AR_TRANSFERS,
 )
 from quicksight_gen.common.config import Config
+from quicksight_gen.common.ids import FilterGroupId, SheetId
 from quicksight_gen.common.models import (
     CategoryFilter,
     CategoryFilterConfiguration,
@@ -105,7 +106,7 @@ _TRANSFER_TYPE_SCOPED_SHEETS = [
 ]
 
 
-def _selected_sheets_scope(sheet_ids: list[str]) -> FilterScopeConfiguration:
+def _selected_sheets_scope(sheet_ids: list[SheetId]) -> FilterScopeConfiguration:
     return FilterScopeConfiguration(
         SelectedSheets=SelectedSheetsFilterScopeConfiguration(
             SheetVisualScopingConfigurations=[
@@ -317,9 +318,9 @@ def _origin_filter_group() -> FilterGroup:
 # ---------------------------------------------------------------------------
 
 def _state_toggle_filter_group(
-    fg_id: str,
+    fg_id: FilterGroupId,
     filter_id: str,
-    sheet_id: str,
+    sheet_id: SheetId,
     dataset_id: str,
     column_name: str,
 ) -> FilterGroup:
@@ -475,7 +476,7 @@ def build_filter_groups(cfg: Config) -> list[FilterGroup]:
 # Per-sheet filter controls
 # ---------------------------------------------------------------------------
 
-def _cross_sheet_control(sheet: str, name: str, source_filter_id: str) -> FilterControl:
+def _cross_sheet_control(sheet: SheetId, name: str, source_filter_id: str) -> FilterControl:
     return FilterControl(
         CrossSheet=FilterCrossSheetControl(
             FilterControlId=f"ctrl-ar-{sheet}-{name}",
@@ -484,23 +485,23 @@ def _cross_sheet_control(sheet: str, name: str, source_filter_id: str) -> Filter
     )
 
 
-def _date_range_control(sheet: str) -> FilterControl:
+def _date_range_control(sheet: SheetId) -> FilterControl:
     return _cross_sheet_control(sheet, "date-range", "filter-ar-date-range")
 
 
-def _ledger_account_control(sheet: str) -> FilterControl:
+def _ledger_account_control(sheet: SheetId) -> FilterControl:
     return _cross_sheet_control(sheet, "ledger-account", "filter-ar-ledger-account")
 
 
-def _subledger_account_control(sheet: str) -> FilterControl:
+def _subledger_account_control(sheet: SheetId) -> FilterControl:
     return _cross_sheet_control(sheet, "subledger-account", "filter-ar-subledger-account")
 
 
-def _transfer_type_control(sheet: str) -> FilterControl:
+def _transfer_type_control(sheet: SheetId) -> FilterControl:
     return _cross_sheet_control(sheet, "transfer-type", "filter-ar-transfer-type")
 
 
-def _origin_control(sheet: str) -> FilterControl:
+def _origin_control(sheet: SheetId) -> FilterControl:
     # Single-sheet filter (Transactions only after Phase K.1 dropped the
     # legacy Exceptions sheet) → use a direct Dropdown rather than a
     # CrossSheet control. AWS rejects CrossSheet controls bound to

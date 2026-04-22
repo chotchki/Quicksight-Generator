@@ -97,6 +97,7 @@ from quicksight_gen.account_recon.visuals import (
     build_transfers_visuals,
 )
 from quicksight_gen.common.drill import DrillParam
+from quicksight_gen.common.ids import FilterGroupId, SheetId, VisualId
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.models import (
@@ -168,7 +169,7 @@ def _grid_layout(elements: list[GridLayoutElement]) -> list[Layout]:
     ))]
 
 
-def _kpi_pair(id_left: str, id_right: str) -> list[GridLayoutElement]:
+def _kpi_pair(id_left: VisualId, id_right: VisualId) -> list[GridLayoutElement]:
     return [
         GridLayoutElement(
             ElementId=id_left, ElementType="VISUAL",
@@ -183,7 +184,7 @@ def _kpi_pair(id_left: str, id_right: str) -> list[GridLayoutElement]:
     ]
 
 
-def _chart_pair(id_left: str, id_right: str) -> list[GridLayoutElement]:
+def _chart_pair(id_left: VisualId, id_right: VisualId) -> list[GridLayoutElement]:
     return [
         GridLayoutElement(
             ElementId=id_left, ElementType="VISUAL",
@@ -198,7 +199,7 @@ def _chart_pair(id_left: str, id_right: str) -> list[GridLayoutElement]:
     ]
 
 
-def _full_width_visual(element_id: str, row_span: int) -> GridLayoutElement:
+def _full_width_visual(element_id: VisualId, row_span: int) -> GridLayoutElement:
     return GridLayoutElement(
         ElementId=element_id, ElementType="VISUAL",
         ColumnSpan=_FULL, RowSpan=row_span,
@@ -793,13 +794,13 @@ class _DrillFilterSpec:
     ``parameter`` field to the typed ``DrillParam`` defined in
     ``visuals.py`` so the parameter name + shape come from one place.
     """
-    fg_id: str
+    fg_id: FilterGroupId
     filter_id: str
     parameter: DrillParam
     dataset_id: str
     column_name: str
-    sheet_id: str
-    visual_ids: tuple[str, ...] | None = None
+    sheet_id: SheetId
+    visual_ids: tuple[VisualId, ...] | None = None
 
     @property
     def parameter_name(self) -> str:

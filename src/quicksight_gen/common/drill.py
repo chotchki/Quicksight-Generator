@@ -47,6 +47,7 @@ from quicksight_gen.common.dataset_contract import (
     ColumnShape,
     get_contract,
 )
+from quicksight_gen.common.ids import ParameterName, SheetId
 from quicksight_gen.common.models import (
     CustomActionNavigationOperation,
     CustomActionSetParametersOperation,
@@ -70,7 +71,7 @@ class DrillParam:
     refuses to write a source field whose shape differs.
     """
 
-    name: str
+    name: ParameterName
     shape: ColumnShape
 
 
@@ -201,7 +202,7 @@ def set_drill_parameters(
 def cross_sheet_drill(
     action_id: str,
     name: str,
-    target_sheet: str,
+    target_sheet: SheetId,
     writes: list[DrillWrite],
     trigger: str = "DATA_POINT_CLICK",
 ) -> VisualCustomAction:
