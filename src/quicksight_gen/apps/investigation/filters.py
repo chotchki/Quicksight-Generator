@@ -12,29 +12,45 @@ filter is scoped SELECTED_VISUALS to exclude the distribution bar
 chart — the chart's job is to show the full population so analysts can
 see where the threshold cutoff lies in the shape.
 
-K.4.5 will add the Money Trail sheet's controls.
+K.4.5 ships the Money Trail sheet's filter groups + controls: a chain
+root dropdown (auto-populated from the matview's distinct
+``root_transfer_id`` values, parameter-bound CategoryFilter), a max-hops
+slider (NumericRangeFilter on ``depth``), and a min-hop-amount slider
+(NumericRangeFilter on ``hop_amount``). All three filters scope
+ALL_VISUALS — both the Sankey and the hop-by-hop table reflect the
+same chain selection so the visual + table can be read together.
 """
 
 from __future__ import annotations
 
 from quicksight_gen.apps.investigation.constants import (
     CF_INV_FANOUT_DISTINCT_SENDERS,
+    DS_INV_MONEY_TRAIL,
     DS_INV_RECIPIENT_FANOUT,
     DS_INV_VOLUME_ANOMALIES,
     FG_INV_ANOMALIES_SIGMA,
     FG_INV_ANOMALIES_WINDOW,
     FG_INV_FANOUT_THRESHOLD,
     FG_INV_FANOUT_WINDOW,
+    FG_INV_MONEY_TRAIL_AMOUNT,
+    FG_INV_MONEY_TRAIL_HOPS,
+    FG_INV_MONEY_TRAIL_ROOT,
     P_INV_ANOMALIES_SIGMA,
     P_INV_FANOUT_THRESHOLD,
+    P_INV_MONEY_TRAIL_MAX_HOPS,
+    P_INV_MONEY_TRAIL_MIN_AMOUNT,
+    P_INV_MONEY_TRAIL_ROOT,
     SHEET_INV_ANOMALIES,
     SHEET_INV_FANOUT,
+    SHEET_INV_MONEY_TRAIL,
     V_INV_ANOMALIES_KPI_FLAGGED,
     V_INV_ANOMALIES_TABLE,
 )
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.ids import SheetId
 from quicksight_gen.common.models import (
+    CategoryFilter,
+    CategoryFilterConfiguration,
     ColumnIdentifier,
     Filter,
     FilterControl,
@@ -46,9 +62,11 @@ from quicksight_gen.common.models import (
     NumericRangeFilterValue,
     ParameterControl,
     ParameterDeclaration,
+    ParameterDropDownControl,
     ParameterSliderControl,
     SelectedSheetsFilterScopeConfiguration,
     SheetVisualScopingConfiguration,
+    StringParameterDeclaration,
     TimeRangeFilter,
 )
 
@@ -72,6 +90,26 @@ DEFAULT_ANOMALIES_SIGMA = 2
 SIGMA_SLIDER_MIN = 1
 SIGMA_SLIDER_MAX = 4
 
+# Money Trail defaults. Max hops default of 5 covers the four-hop PR
+# chain (`external_txn → payment → settlement → sale`) with one hop of
+# headroom; analysts drag higher to inspect synthetic deep chains.
+# Slider 1–10: anything beyond 10 means the matview's recursive walk
+# went pathological and the analyst should be looking at the data
+# integrity question, not the trail itself.
+DEFAULT_MONEY_TRAIL_MAX_HOPS = 5
+HOPS_SLIDER_MIN = 1
+HOPS_SLIDER_MAX = 10
+
+# Min hop amount default of 0 keeps every edge visible by default.
+# Slider 0–1000 in $-units handles the demo seed range; chains above
+# that get cut off at 1000 (analysts can re-render with a larger filter
+# if they need to triage micro-edges that fell below the slider's
+# bottom). Stored as integer because there's no DecimalParameter type;
+# rounding to dollars is fine for triage UX.
+DEFAULT_MONEY_TRAIL_MIN_AMOUNT = 0
+AMOUNT_SLIDER_MIN = 0
+AMOUNT_SLIDER_MAX = 1000
+
 # Filter / control IDs — kept as module-level constants so analysis.py
 # can wire parameter declarations against the same names.
 FILTER_INV_FANOUT_WINDOW = "filter-inv-fanout-window"
@@ -83,6 +121,13 @@ FILTER_INV_ANOMALIES_WINDOW = "filter-inv-anomalies-window"
 FILTER_INV_ANOMALIES_SIGMA = "filter-inv-anomalies-sigma"
 CTRL_INV_ANOMALIES_WINDOW = "ctrl-inv-anomalies-window"
 CTRL_INV_ANOMALIES_SIGMA = "ctrl-inv-anomalies-sigma"
+
+FILTER_INV_MONEY_TRAIL_ROOT = "filter-inv-money-trail-root"
+FILTER_INV_MONEY_TRAIL_HOPS = "filter-inv-money-trail-hops"
+FILTER_INV_MONEY_TRAIL_AMOUNT = "filter-inv-money-trail-amount"
+CTRL_INV_MONEY_TRAIL_ROOT = "ctrl-inv-money-trail-root"
+CTRL_INV_MONEY_TRAIL_HOPS = "ctrl-inv-money-trail-hops"
+CTRL_INV_MONEY_TRAIL_AMOUNT = "ctrl-inv-money-trail-amount"
 
 
 def _selected_sheets_scope(sheet_ids: list[SheetId]) -> FilterScopeConfiguration:
@@ -256,6 +301,103 @@ def _anomalies_sigma_filter_group() -> FilterGroup:
     )
 
 
+def _money_trail_root_filter_group() -> FilterGroup:
+    """Chain root filter on ``root_transfer_id`` for the Money Trail sheet.
+
+    Bound to ``pInvMoneyTrailRoot`` (string param) via
+    CustomFilterConfiguration with MatchOperator=EQUALS — the dropdown
+    control writes a single root_transfer_id and the filter narrows to
+    that one chain. ALL_VISUALS scope so both the Sankey and the
+    hop-by-hop table share the same chain.
+    """
+    return FilterGroup(
+        FilterGroupId=FG_INV_MONEY_TRAIL_ROOT,
+        CrossDataset=FilterGroup.SINGLE_DATASET,
+        ScopeConfiguration=_selected_sheets_scope([SHEET_INV_MONEY_TRAIL]),
+        Status=FilterGroup.ENABLED,
+        Filters=[
+            Filter(
+                CategoryFilter=CategoryFilter(
+                    FilterId=FILTER_INV_MONEY_TRAIL_ROOT,
+                    Column=ColumnIdentifier(
+                        DataSetIdentifier=DS_INV_MONEY_TRAIL,
+                        ColumnName="root_transfer_id",
+                    ),
+                    Configuration=CategoryFilterConfiguration(
+                        CustomFilterConfiguration={
+                            "MatchOperator": "EQUALS",
+                            "ParameterName": P_INV_MONEY_TRAIL_ROOT,
+                            "NullOption": "NON_NULLS_ONLY",
+                        },
+                    ),
+                ),
+            ),
+        ],
+    )
+
+
+def _money_trail_hops_filter_group() -> FilterGroup:
+    """Max-hops filter on ``depth`` for the Money Trail sheet.
+
+    Min-only (RangeMaximum bound, not minimum) — analysts care about
+    "show me hops up to depth N", not a band of depths. IncludeMaximum
+    so a slider value of 5 means "depth ≤ 5 surfaces".
+    """
+    return FilterGroup(
+        FilterGroupId=FG_INV_MONEY_TRAIL_HOPS,
+        CrossDataset=FilterGroup.SINGLE_DATASET,
+        ScopeConfiguration=_selected_sheets_scope([SHEET_INV_MONEY_TRAIL]),
+        Status=FilterGroup.ENABLED,
+        Filters=[
+            Filter(
+                NumericRangeFilter=NumericRangeFilter(
+                    FilterId=FILTER_INV_MONEY_TRAIL_HOPS,
+                    Column=ColumnIdentifier(
+                        DataSetIdentifier=DS_INV_MONEY_TRAIL,
+                        ColumnName="depth",
+                    ),
+                    NullOption="NON_NULLS_ONLY",
+                    RangeMaximum=NumericRangeFilterValue(
+                        Parameter=P_INV_MONEY_TRAIL_MAX_HOPS,
+                    ),
+                    IncludeMaximum=True,
+                ),
+            ),
+        ],
+    )
+
+
+def _money_trail_amount_filter_group() -> FilterGroup:
+    """Min-hop-amount filter on ``hop_amount`` for the Money Trail sheet.
+
+    Min-only — drops noise edges below the slider value so analysts can
+    focus on the meaningful flows. IncludeMinimum so a slider value of
+    100 means "hop_amount ≥ 100 surfaces".
+    """
+    return FilterGroup(
+        FilterGroupId=FG_INV_MONEY_TRAIL_AMOUNT,
+        CrossDataset=FilterGroup.SINGLE_DATASET,
+        ScopeConfiguration=_selected_sheets_scope([SHEET_INV_MONEY_TRAIL]),
+        Status=FilterGroup.ENABLED,
+        Filters=[
+            Filter(
+                NumericRangeFilter=NumericRangeFilter(
+                    FilterId=FILTER_INV_MONEY_TRAIL_AMOUNT,
+                    Column=ColumnIdentifier(
+                        DataSetIdentifier=DS_INV_MONEY_TRAIL,
+                        ColumnName="hop_amount",
+                    ),
+                    NullOption="NON_NULLS_ONLY",
+                    RangeMinimum=NumericRangeFilterValue(
+                        Parameter=P_INV_MONEY_TRAIL_MIN_AMOUNT,
+                    ),
+                    IncludeMinimum=True,
+                ),
+            ),
+        ],
+    )
+
+
 def build_filter_groups(cfg: Config) -> list[FilterGroup]:
     del cfg
     return [
@@ -263,6 +405,9 @@ def build_filter_groups(cfg: Config) -> list[FilterGroup]:
         _fanout_threshold_filter_group(),
         _anomalies_window_filter_group(),
         _anomalies_sigma_filter_group(),
+        _money_trail_root_filter_group(),
+        _money_trail_hops_filter_group(),
+        _money_trail_amount_filter_group(),
     ]
 
 
@@ -285,6 +430,30 @@ def build_parameter_declarations(cfg: Config) -> list[ParameterDeclaration]:
                 ParameterValueType="SINGLE_VALUED",
                 Name=P_INV_ANOMALIES_SIGMA,
                 DefaultValues={"StaticValues": [DEFAULT_ANOMALIES_SIGMA]},
+            ),
+        ),
+        ParameterDeclaration(
+            StringParameterDeclaration=StringParameterDeclaration(
+                ParameterValueType="SINGLE_VALUED",
+                Name=P_INV_MONEY_TRAIL_ROOT,
+                # No default — the dropdown control auto-populates from
+                # the matview's distinct root_transfer_id values and
+                # picks the first row on first render.
+                DefaultValues={"StaticValues": []},
+            ),
+        ),
+        ParameterDeclaration(
+            IntegerParameterDeclaration=IntegerParameterDeclaration(
+                ParameterValueType="SINGLE_VALUED",
+                Name=P_INV_MONEY_TRAIL_MAX_HOPS,
+                DefaultValues={"StaticValues": [DEFAULT_MONEY_TRAIL_MAX_HOPS]},
+            ),
+        ),
+        ParameterDeclaration(
+            IntegerParameterDeclaration=IntegerParameterDeclaration(
+                ParameterValueType="SINGLE_VALUED",
+                Name=P_INV_MONEY_TRAIL_MIN_AMOUNT,
+                DefaultValues={"StaticValues": [DEFAULT_MONEY_TRAIL_MIN_AMOUNT]},
             ),
         ),
     ]
@@ -365,3 +534,71 @@ def build_anomalies_filter_controls(cfg: Config) -> list[FilterControl]:
 def build_anomalies_parameter_controls(cfg: Config) -> list[ParameterControl]:
     del cfg
     return [_sigma_slider_control()]
+
+
+def _money_trail_root_control() -> ParameterControl:
+    """Dropdown auto-populated from the matview's distinct chain roots.
+
+    LinkToDataSetColumn populates the dropdown options from every
+    distinct ``root_transfer_id`` in the matview, bypassing the
+    parameter-bound CategoryFilter so the dropdown list itself isn't
+    narrowed by the current selection (otherwise the user could only
+    ever pick the chain they already have selected).
+    """
+    return ParameterControl(
+        Dropdown=ParameterDropDownControl(
+            ParameterControlId=CTRL_INV_MONEY_TRAIL_ROOT,
+            Title="Chain root transfer",
+            SourceParameterName=P_INV_MONEY_TRAIL_ROOT,
+            Type="SINGLE_SELECT",
+            SelectableValues={
+                "LinkToDataSetColumn": {
+                    "DataSetIdentifier": DS_INV_MONEY_TRAIL,
+                    "ColumnName": "root_transfer_id",
+                },
+            },
+        ),
+    )
+
+
+def _money_trail_hops_control() -> ParameterControl:
+    return ParameterControl(
+        Slider=ParameterSliderControl(
+            ParameterControlId=CTRL_INV_MONEY_TRAIL_HOPS,
+            Title="Max hops",
+            SourceParameterName=P_INV_MONEY_TRAIL_MAX_HOPS,
+            MinimumValue=HOPS_SLIDER_MIN,
+            MaximumValue=HOPS_SLIDER_MAX,
+            StepSize=1,
+        ),
+    )
+
+
+def _money_trail_amount_control() -> ParameterControl:
+    return ParameterControl(
+        Slider=ParameterSliderControl(
+            ParameterControlId=CTRL_INV_MONEY_TRAIL_AMOUNT,
+            Title="Min hop amount ($)",
+            SourceParameterName=P_INV_MONEY_TRAIL_MIN_AMOUNT,
+            MinimumValue=AMOUNT_SLIDER_MIN,
+            MaximumValue=AMOUNT_SLIDER_MAX,
+            StepSize=10,
+        ),
+    )
+
+
+def build_money_trail_filter_controls(cfg: Config) -> list[FilterControl]:
+    del cfg
+    # No FilterControl widgets — the chain root, max hops, and min
+    # amount are all parameter-bound, so they live in
+    # build_money_trail_parameter_controls instead.
+    return []
+
+
+def build_money_trail_parameter_controls(cfg: Config) -> list[ParameterControl]:
+    del cfg
+    return [
+        _money_trail_root_control(),
+        _money_trail_hops_control(),
+        _money_trail_amount_control(),
+    ]

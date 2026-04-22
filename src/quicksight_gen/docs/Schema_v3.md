@@ -559,8 +559,8 @@ the current shape; Phase G rewrites each in turn.
 
 ## Materialized views
 
-Two views in the schema are materialized rather than recomputed on every
-read:
+Three views in the schema are materialized rather than recomputed on
+every read:
 
 - **`ar_unified_exceptions`** — feeds the AR Today's Exceptions sheet.
   Replaces a 14-block `UNION ALL` composed at dataset-load time. The
@@ -573,22 +573,30 @@ read:
   pair-windows, exposed as a per-row z-score. The window function +
   population scan combined wedged Direct Query at realistic
   transaction volumes.
+- **`inv_money_trail_edges`** — feeds the Investigation Money Trail
+  sheet. Walks `parent_transfer_id` chains via `WITH RECURSIVE`,
+  emitting one row per multi-leg edge with the chain root, depth, and
+  the source × target leg pair joined to the underlying transactions.
+  Direct Query can't run a recursive CTE inside a custom-SQL dataset —
+  materialization is the only way to expose chain-walking results to
+  the visuals.
 
-Both materialize the same trade: a one-line REFRESH at ETL time in
-exchange for instant dashboard load.
+All three materialize the same trade: a one-line REFRESH at ETL time
+in exchange for instant dashboard load.
 
 ### The refresh contract
 
-Neither matview is auto-refreshed. After every ETL load, run:
+None of the matviews are auto-refreshed. After every ETL load, run:
 
 ```sql
 REFRESH MATERIALIZED VIEW ar_unified_exceptions;
 REFRESH MATERIALIZED VIEW inv_pair_rolling_anomalies;
+REFRESH MATERIALIZED VIEW inv_money_trail_edges;
 ```
 
-The demo's `quicksight-gen demo apply` command issues both REFRESHes
-automatically after seeding; production ETL pipelines must do the
-same. Daily ETL → daily REFRESH is the expected cadence.
+The demo's `quicksight-gen demo apply` command issues all three
+REFRESHes automatically after seeding; production ETL pipelines must
+do the same. Daily ETL → daily REFRESH is the expected cadence.
 
 ### Aging-column timing semantics
 

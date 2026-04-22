@@ -14,13 +14,18 @@ distribution bar chart, and ranked table of flagged pair-windows. The
 distribution chart is intentionally NOT gated by the σ filter (it shows
 the full population so the slider's cutoff is meaningful).
 
-K.4.5 will add visuals for the Money Trail sheet.
+K.4.5 ships the Money Trail sheet — Sankey diagram (chain root →
+intermediate accounts → terminal accounts, weighted by SUM(hop_amount))
+beside a hop-by-hop detail table sorted by depth ascending. Both
+visuals read the matview-backed money-trail dataset, scoped to one
+chain via the chain-root parameter.
 """
 
 from __future__ import annotations
 
 from quicksight_gen.apps.investigation.constants import (
     CF_INV_FANOUT_DISTINCT_SENDERS,
+    DS_INV_MONEY_TRAIL,
     DS_INV_RECIPIENT_FANOUT,
     DS_INV_VOLUME_ANOMALIES,
     V_INV_ANOMALIES_DISTRIBUTION,
@@ -30,6 +35,8 @@ from quicksight_gen.apps.investigation.constants import (
     V_INV_FANOUT_KPI_RECIPIENTS,
     V_INV_FANOUT_KPI_SENDERS,
     V_INV_FANOUT_TABLE,
+    V_INV_MONEY_TRAIL_SANKEY,
+    V_INV_MONEY_TRAIL_TABLE,
 )
 from quicksight_gen.common.models import (
     BarChartAggregatedFieldWells,
@@ -48,6 +55,11 @@ from quicksight_gen.common.models import (
     MeasureField,
     NumericalAggregationFunction,
     NumericalMeasureField,
+    SankeyDiagramAggregatedFieldWells,
+    SankeyDiagramChartConfiguration,
+    SankeyDiagramFieldWells,
+    SankeyDiagramSortConfiguration,
+    SankeyDiagramVisual,
     TableAggregatedFieldWells,
     TableConfiguration,
     TableFieldWells,
@@ -151,6 +163,7 @@ def _subtitle(text: str) -> VisualSubtitleLabelOptions:
 
 _DS_FANOUT = DS_INV_RECIPIENT_FANOUT
 _DS_ANOMALIES = DS_INV_VOLUME_ANOMALIES
+_DS_MONEY_TRAIL = DS_INV_MONEY_TRAIL
 
 
 def _kpi_recipients() -> Visual:
@@ -456,4 +469,157 @@ def build_anomalies_visuals() -> list[Visual]:
         _kpi_anomalies_flagged(),
         _distribution_chart(),
         _anomalies_table(),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Money Trail visuals (K.4.5)
+# ---------------------------------------------------------------------------
+
+# Sankey items-limit shape: cap distinct source / destination nodes the
+# diagram renders. Set generously here — the chain root filter narrows
+# to one chain, so the realistic cap is "chain depth" not "every account
+# in the system". 50 covers the deepest chain we expect (PR's 4-hop
+# `external_txn → payment → settlement → sale` × any synthetic chain
+# extensions in the demo seed) with comfortable headroom.
+_SANKEY_NODE_CAP = 50
+
+
+def _money_trail_sankey() -> Visual:
+    """Chain-walking Sankey: source_account → target_account, weight = SUM(hop_amount).
+
+    Filters narrow to a single chain via the chain-root parameter, so
+    the diagram renders one connected provenance flow. Each edge in the
+    matview becomes a Sankey ribbon weighted by the leg's hop amount.
+
+    Multi-leg-only semantics flow through from the matview: single-leg
+    transfers (sales, raw external arrivals) appear as chain members
+    (visible in the depth column on the table) but don't contribute
+    visible Sankey ribbons. To inspect them, drill from the table row
+    into AR Transactions filtered to the transfer_id.
+    """
+    return Visual(
+        SankeyDiagramVisual=SankeyDiagramVisual(
+            VisualId=V_INV_MONEY_TRAIL_SANKEY,
+            Title=_title("Money Trail — Chain Sankey"),
+            Subtitle=_subtitle(
+                "Source account → target account ribbons for the selected "
+                "chain. Ribbon thickness = SUM(hop_amount). Single-leg "
+                "transfers don't render here — see the detail table for "
+                "every chain member."
+            ),
+            ChartConfiguration=SankeyDiagramChartConfiguration(
+                FieldWells=SankeyDiagramFieldWells(
+                    SankeyDiagramAggregatedFieldWells=SankeyDiagramAggregatedFieldWells(
+                        Source=[
+                            _dim(_DS_MONEY_TRAIL,
+                                 "inv-money-trail-sankey-source",
+                                 "source_account_name"),
+                        ],
+                        Destination=[
+                            _dim(_DS_MONEY_TRAIL,
+                                 "inv-money-trail-sankey-target",
+                                 "target_account_name"),
+                        ],
+                        Weight=[
+                            _measure_sum(
+                                _DS_MONEY_TRAIL,
+                                "inv-money-trail-sankey-weight",
+                                "hop_amount",
+                            ),
+                        ],
+                    ),
+                ),
+                SortConfiguration=SankeyDiagramSortConfiguration(
+                    WeightSort=[
+                        {
+                            "FieldSort": {
+                                "FieldId": "inv-money-trail-sankey-weight",
+                                "Direction": "DESC",
+                            },
+                        },
+                    ],
+                    SourceItemsLimit={
+                        "ItemsLimit": _SANKEY_NODE_CAP,
+                        "OtherCategories": "INCLUDE",
+                    },
+                    DestinationItemsLimit={
+                        "ItemsLimit": _SANKEY_NODE_CAP,
+                        "OtherCategories": "INCLUDE",
+                    },
+                ),
+            ),
+        ),
+    )
+
+
+def _money_trail_table() -> Visual:
+    """Hop-by-hop detail table for the selected chain.
+
+    Beside the Sankey for legibility — surfaces depth, transfer_id,
+    transfer_type, posted_at, and amount per hop. Sorted by depth ASC so
+    the chain reads top-to-bottom from root → leaf. Aggregates to
+    (depth, transfer_id, source, target) grain to collapse leg pairs
+    that share the same source/target into one row.
+    """
+    return Visual(
+        TableVisual=TableVisual(
+            VisualId=V_INV_MONEY_TRAIL_TABLE,
+            Title=_title("Money Trail — Hop-by-Hop"),
+            Subtitle=_subtitle(
+                "Every edge in the selected chain, ordered root → leaf "
+                "by depth. Drill a row into AR Transactions for the "
+                "underlying transaction legs."
+            ),
+            ChartConfiguration=TableConfiguration(
+                FieldWells=TableFieldWells(
+                    TableAggregatedFieldWells=TableAggregatedFieldWells(
+                        GroupBy=[
+                            _dim(_DS_MONEY_TRAIL,
+                                 "inv-money-trail-tbl-depth",
+                                 "depth"),
+                            _dim(_DS_MONEY_TRAIL,
+                                 "inv-money-trail-tbl-transfer-id",
+                                 "transfer_id"),
+                            _dim(_DS_MONEY_TRAIL,
+                                 "inv-money-trail-tbl-transfer-type",
+                                 "transfer_type"),
+                            _dim(_DS_MONEY_TRAIL,
+                                 "inv-money-trail-tbl-source-name",
+                                 "source_account_name"),
+                            _dim(_DS_MONEY_TRAIL,
+                                 "inv-money-trail-tbl-target-name",
+                                 "target_account_name"),
+                            _date_dim(_DS_MONEY_TRAIL,
+                                      "inv-money-trail-tbl-posted-at",
+                                      "posted_at"),
+                        ],
+                        Values=[
+                            _measure_sum(
+                                _DS_MONEY_TRAIL,
+                                "inv-money-trail-tbl-amount",
+                                "hop_amount",
+                            ),
+                        ],
+                    ),
+                ),
+                SortConfiguration={
+                    "RowSort": [
+                        {
+                            "FieldSort": {
+                                "FieldId": "inv-money-trail-tbl-depth",
+                                "Direction": "ASC",
+                            },
+                        },
+                    ],
+                },
+            ),
+        ),
+    )
+
+
+def build_money_trail_visuals() -> list[Visual]:
+    return [
+        _money_trail_sankey(),
+        _money_trail_table(),
     ]

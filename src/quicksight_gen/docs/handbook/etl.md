@@ -80,17 +80,20 @@ See [Lateness as data](../Schema_v3.md#lateness-as-data) for the
 default formula, the `is_late` predicate SQL, and the
 multi-leg tie-breaker query.
 
-Two materialized views sit on top of these tables —
-`ar_unified_exceptions` (feeds the AR Today's Exceptions sheet) and
+Three materialized views sit on top of these tables —
+`ar_unified_exceptions` (feeds the AR Today's Exceptions sheet),
 `inv_pair_rolling_anomalies` (feeds the Investigation Volume Anomalies
-sheet). Neither is auto-refreshed: every ETL load must run
+sheet), and `inv_money_trail_edges` (feeds the Investigation Money
+Trail sheet — recursive walk over `parent_transfer_id`). None are
+auto-refreshed: every ETL load must run
 ```sql
 REFRESH MATERIALIZED VIEW ar_unified_exceptions;
 REFRESH MATERIALIZED VIEW inv_pair_rolling_anomalies;
+REFRESH MATERIALIZED VIEW inv_money_trail_edges;
 ```
-afterward, or the operator-facing aging / anomaly columns will lag.
-See [Materialized views](../Schema_v3.md#materialized-views) for the
-full refresh contract.
+afterward, or the operator-facing aging / anomaly / chain columns will
+lag. See [Materialized views](../Schema_v3.md#materialized-views) for
+the full refresh contract.
 
 ## Foundational walkthroughs
 
