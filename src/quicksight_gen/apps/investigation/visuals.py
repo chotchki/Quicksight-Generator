@@ -54,6 +54,7 @@ from quicksight_gen.common.models import (
     KPIVisual,
     MeasureField,
     NumericalAggregationFunction,
+    NumericalDimensionField,
     NumericalMeasureField,
     SankeyDiagramAggregatedFieldWells,
     SankeyDiagramChartConfiguration,
@@ -89,6 +90,14 @@ def _dim(ds: str, field_id: str, col_name: str) -> DimensionField:
 def _date_dim(ds: str, field_id: str, col_name: str) -> DimensionField:
     return DimensionField(
         DateDimensionField=DateDimensionField(
+            FieldId=field_id, Column=_col(ds, col_name),
+        ),
+    )
+
+
+def _num_dim(ds: str, field_id: str, col_name: str) -> DimensionField:
+    return DimensionField(
+        NumericalDimensionField=NumericalDimensionField(
             FieldId=field_id, Column=_col(ds, col_name),
         ),
     )
@@ -242,10 +251,6 @@ def _recipient_table() -> Visual:
     columns. The threshold filter narrows the underlying rows to those
     whose recipient meets the slider's current value, so every recipient
     in the table is "interesting" by definition.
-
-    K.4.7 wires a per-row drill into AR Transactions filtered to the
-    recipient's account_id — that's why the dataset stays at the legs
-    grain underneath.
     """
     return Visual(
         TableVisual=TableVisual(
@@ -568,16 +573,15 @@ def _money_trail_table() -> Visual:
             Title=_title("Money Trail — Hop-by-Hop"),
             Subtitle=_subtitle(
                 "Every edge in the selected chain, ordered root → leaf "
-                "by depth. Drill a row into AR Transactions for the "
-                "underlying transaction legs."
+                "by depth."
             ),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
                     TableAggregatedFieldWells=TableAggregatedFieldWells(
                         GroupBy=[
-                            _dim(_DS_MONEY_TRAIL,
-                                 "inv-money-trail-tbl-depth",
-                                 "depth"),
+                            _num_dim(_DS_MONEY_TRAIL,
+                                     "inv-money-trail-tbl-depth",
+                                     "depth"),
                             _dim(_DS_MONEY_TRAIL,
                                  "inv-money-trail-tbl-transfer-id",
                                  "transfer_id"),
