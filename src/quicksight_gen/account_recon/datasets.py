@@ -29,6 +29,7 @@ from quicksight_gen.common.dataset_contract import (
     ColumnSpec,
     DatasetContract,
     build_dataset,
+    register_contract,
 )
 from quicksight_gen.common.models import DataSet
 
@@ -626,3 +627,28 @@ def build_all_datasets(cfg: Config) -> list[DataSet]:
         build_daily_statement_transactions_dataset(cfg),
         build_ar_unified_exceptions_dataset(cfg),
     ]
+
+
+# K.2: register every contract at module import so visuals can resolve
+# drill source-field shapes without depending on dataset construction
+# order. ``build_dataset()`` re-registers each contract too — idempotent
+# for the same (visual_identifier, contract) pair.
+_CONTRACT_REGISTRATIONS: tuple[tuple[str, DatasetContract], ...] = (
+    (DS_AR_LEDGER_ACCOUNTS, LEDGER_ACCOUNTS_CONTRACT),
+    (DS_AR_SUBLEDGER_ACCOUNTS, SUBLEDGER_ACCOUNTS_CONTRACT),
+    (DS_AR_TRANSACTIONS, TRANSACTIONS_CONTRACT),
+    (DS_AR_LEDGER_BALANCE_DRIFT, LEDGER_BALANCE_DRIFT_CONTRACT),
+    (DS_AR_SUBLEDGER_BALANCE_DRIFT, SUBLEDGER_BALANCE_DRIFT_CONTRACT),
+    (DS_AR_TRANSFER_SUMMARY, TRANSFER_SUMMARY_CONTRACT),
+    (DS_AR_NON_ZERO_TRANSFERS, NON_ZERO_TRANSFERS_CONTRACT),
+    (DS_AR_EXPECTED_ZERO_EOD_ROLLUP, EXPECTED_ZERO_EOD_ROLLUP_CONTRACT),
+    (DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+     TWO_SIDED_POST_MISMATCH_ROLLUP_CONTRACT),
+    (DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
+     BALANCE_DRIFT_TIMELINES_ROLLUP_CONTRACT),
+    (DS_AR_DAILY_STATEMENT_SUMMARY, DAILY_STATEMENT_SUMMARY_CONTRACT),
+    (DS_AR_DAILY_STATEMENT_TRANSACTIONS, DAILY_STATEMENT_TRANSACTIONS_CONTRACT),
+    (DS_AR_UNIFIED_EXCEPTIONS, UNIFIED_EXCEPTIONS_CONTRACT),
+)
+for _vid, _contract in _CONTRACT_REGISTRATIONS:
+    register_contract(_vid, _contract)

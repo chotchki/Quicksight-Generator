@@ -155,8 +155,8 @@ class TestParameters:
         return names
 
     def test_drill_down_parameters(self, ar_dashboard_definition):
-        # 5 drill-down parameters (Phase D) + 2 Daily Statement
-        # parameters (Phase I.2). pArDsBalanceDate is a DateTime
+        # 6 drill-down parameters (Phase D + K.2 pArAccountId) + 2 Daily
+        # Statement parameters (Phase I.2). pArDsBalanceDate is a DateTime
         # parameter; the rest are String parameters.
         assert self._names(ar_dashboard_definition) == {
             "pArSubledgerAccountId",
@@ -164,6 +164,7 @@ class TestParameters:
             "pArTransferId",
             "pArActivityDate",
             "pArTransferType",
+            "pArAccountId",
             "pArDsAccountId",
             "pArDsBalanceDate",
         }
@@ -188,6 +189,9 @@ class TestFilterGroups:
         "fg-ar-drill-ledger-on-balances-subledger",
         "fg-ar-drill-activity-date-on-txn",
         "fg-ar-drill-transfer-type-on-txn",
+        # K.2 — pArAccountId-driven drill into Transactions, used by
+        # the Today's Exceptions account-day right-click action.
+        "fg-ar-drill-account-on-txn",
         # Phase I.2 — Daily Statement sheet pickers (parameter-bound)
         "fg-ar-ds-account",
         "fg-ar-ds-balance-date",

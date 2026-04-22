@@ -28,6 +28,7 @@ from quicksight_gen.common.dataset_contract import (
     DatasetContract,
     build_dataset,
     dataset_permissions,
+    register_contract,
     DATASET_ACTIONS,
 )
 from quicksight_gen.common.models import (
@@ -742,3 +743,24 @@ def build_recon_datasets(cfg: Config) -> list[DataSet]:
 def build_all_datasets(cfg: Config) -> list[DataSet]:
     """Return every dataset used by the Payment Recon analysis."""
     return build_pipeline_datasets(cfg) + build_recon_datasets(cfg)
+
+
+# K.2: register every contract at module import so visuals can resolve
+# drill source-field shapes without depending on dataset construction
+# order. ``build_dataset()`` re-registers each contract too — idempotent
+# for the same (visual_identifier, contract) pair.
+_CONTRACT_REGISTRATIONS: tuple[tuple[str, DatasetContract], ...] = (
+    (DS_MERCHANTS, MERCHANTS_CONTRACT),
+    (DS_SALES, SALES_CONTRACT),
+    (DS_SETTLEMENTS, SETTLEMENTS_CONTRACT),
+    (DS_PAYMENTS, PAYMENTS_CONTRACT),
+    (DS_SETTLEMENT_EXCEPTIONS, SETTLEMENT_EXCEPTIONS_CONTRACT),
+    (DS_PAYMENT_RETURNS, PAYMENT_RETURNS_CONTRACT),
+    (DS_SALE_SETTLEMENT_MISMATCH, SALE_SETTLEMENT_MISMATCH_CONTRACT),
+    (DS_SETTLEMENT_PAYMENT_MISMATCH, SETTLEMENT_PAYMENT_MISMATCH_CONTRACT),
+    (DS_UNMATCHED_EXTERNAL_TXNS, UNMATCHED_EXTERNAL_TXNS_CONTRACT),
+    (DS_EXTERNAL_TRANSACTIONS, EXTERNAL_TRANSACTIONS_CONTRACT),
+    (DS_PAYMENT_RECON, PAYMENT_RECON_CONTRACT),
+)
+for _vid, _contract in _CONTRACT_REGISTRATIONS:
+    register_contract(_vid, _contract)
