@@ -223,7 +223,7 @@ class TestDemoDeterminism:
         import hashlib
         digest = hashlib.sha256(ar_sql.encode()).hexdigest()
         assert digest == (
-            "525554ccfa578914b1fb7b577c82a42691244b39c2747b605640348fc7593cc5"
+            "eaa28998c56f77286538549c8ebda9ae09db1e24ff7450c9d4bf0c0693aaa24d"
         ), f"AR seed drifted; new hash: {digest}"
 
 
@@ -1678,6 +1678,105 @@ class TestScenarioCoverage:
         assert not (ledger_cells & overdraft_ledger_cells), (
             "Ledger drift and overdraft plants share (ledger, day) cells"
         )
+
+
+# ---------------------------------------------------------------------------
+# Lateness column population (K.3.1)
+# ---------------------------------------------------------------------------
+
+class TestExpectedCompleteAt:
+    """Per-rail `expected_complete_at` population on AR transactions.
+
+    The column is optional — most rows are NULL and downstream views fall
+    back to `posted_at + INTERVAL '1 day'` via COALESCE.  This suite
+    enforces the rail-specific values the demo plants so the data-driven
+    `is_late` predicate has a realistic mix to fire against.
+    """
+
+    # transactions cols (from the INSERT in account_recon/demo_data.py):
+    #  0 transaction_id, 1 transfer_id, 2 parent_transfer_id,
+    #  3 transfer_type, 4 origin, 5 account_id, 6 account_name,
+    #  7 control_account_id, 8 account_type, 9 is_internal,
+    # 10 signed_amount, 11 amount, 12 status, 13 posted_at,
+    # 14 expected_complete_at, 15 balance_date, 16 external_system,
+    # 17 memo, 18 metadata
+    _COLS = {
+        "transfer_type": 3,
+        "posted_at": 13,
+        "expected_complete_at": 14,
+    }
+
+    def _val(self, row: str, col: str) -> str:
+        return [p.strip().strip("'") for p in row.split(",")][self._COLS[col]]
+
+    def _txn_rows(self, ar_sql: str) -> list[str]:
+        m = re.search(
+            r"INSERT INTO transactions \([^)]+\) VALUES\n(.*?);",
+            ar_sql, re.DOTALL,
+        )
+        return _parse_balanced_rows(m.group(1)) if m else []
+
+    def _rows_by_type(self, ar_sql: str, ttype: str) -> list[str]:
+        return [
+            r for r in self._txn_rows(ar_sql)
+            if self._val(r, "transfer_type") == ttype
+        ]
+
+    def test_wire_transfers_populated_same_hour(self, ar_sql):
+        from datetime import datetime, timedelta
+        wires = self._rows_by_type(ar_sql, "wire")
+        # AR demo doesn't currently emit wire rows; assert behavior is correct
+        # IF any are present (defensive: if a future scenario adds them, this
+        # check fires immediately rather than silently passing).
+        for r in wires:
+            posted = datetime.fromisoformat(self._val(r, "posted_at"))
+            expected = self._val(r, "expected_complete_at")
+            assert expected != "NULL"
+            assert datetime.fromisoformat(expected) == posted + timedelta(hours=1)
+
+    def test_ach_transfers_populated_t_plus_2(self, ar_sql):
+        from datetime import datetime, timedelta
+        achs = self._rows_by_type(ar_sql, "ach")
+        assert achs, "No ach rows in AR demo — generator regression?"
+        for r in achs:
+            posted = datetime.fromisoformat(self._val(r, "posted_at"))
+            expected = self._val(r, "expected_complete_at")
+            assert expected != "NULL", (
+                f"ach leg missing expected_complete_at: {r[:80]}"
+            )
+            assert datetime.fromisoformat(expected) == posted + timedelta(days=2), (
+                f"ach expected_complete_at != posted + T+2 in row: {r[:80]}"
+            )
+
+    def test_internal_transfers_populated_same_hour(self, ar_sql):
+        from datetime import datetime, timedelta
+        internals = self._rows_by_type(ar_sql, "internal")
+        assert internals, "No internal rows in AR demo — generator regression?"
+        for r in internals:
+            posted = datetime.fromisoformat(self._val(r, "posted_at"))
+            expected = self._val(r, "expected_complete_at")
+            assert expected != "NULL", (
+                f"internal leg missing expected_complete_at: {r[:80]}"
+            )
+            assert datetime.fromisoformat(expected) == posted + timedelta(hours=1)
+
+    def test_clearing_sweep_left_null(self, ar_sql):
+        for r in self._rows_by_type(ar_sql, "clearing_sweep"):
+            assert self._val(r, "expected_complete_at") == "NULL", (
+                f"clearing_sweep should leave expected_complete_at NULL: {r[:80]}"
+            )
+
+    def test_fee_left_null(self, ar_sql):
+        for r in self._rows_by_type(ar_sql, "fee"):
+            assert self._val(r, "expected_complete_at") == "NULL", (
+                f"fee should leave expected_complete_at NULL: {r[:80]}"
+            )
+
+    def test_funding_batch_left_null(self, ar_sql):
+        for r in self._rows_by_type(ar_sql, "funding_batch"):
+            assert self._val(r, "expected_complete_at") == "NULL", (
+                f"funding_batch should leave expected_complete_at NULL: {r[:80]}"
+            )
 
 
 # ---------------------------------------------------------------------------

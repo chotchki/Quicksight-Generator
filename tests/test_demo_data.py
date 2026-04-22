@@ -9,7 +9,7 @@ and recover legacy fields from each row's JSON metadata.
 
 import json
 import re
-from datetime import date
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -35,7 +35,8 @@ TXN_COLS = [
     "transfer_type", "origin", "account_id", "account_name",
     "control_account_id", "account_type", "is_internal",
     "signed_amount", "amount", "status", "posted_at",
-    "balance_date", "external_system", "memo", "metadata",
+    "expected_complete_at", "balance_date", "external_system",
+    "memo", "metadata",
 ]
 _COL_IDX = {c: i for i, c in enumerate(TXN_COLS)}
 
@@ -143,7 +144,7 @@ class TestDeterminism:
         import hashlib
         digest = hashlib.sha256(sql.encode()).hexdigest()
         assert digest == (
-            "6912a28c8902223a7a552194ee368f1e83df09d6779e5c735321a83c086c1cf0"
+            "7e5b4123aee9f7830647c88159329b015515a2a1f28d7d4f626f6d27cfd6be18"
         ), f"PR seed drifted; new hash: {digest}"
 
 
@@ -318,6 +319,78 @@ class TestScenarioCoverage:
         assert len(unmatched) >= 2, (
             f"Need unmatched payments for Payments toggle, got {len(unmatched)}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Lateness column population (K.3.1)
+# ---------------------------------------------------------------------------
+
+class TestExpectedCompleteAt:
+    """Per-rail `expected_complete_at` population on PR transactions.
+
+    The column is optional — most rows are NULL and downstream views fall
+    back to `posted_at + INTERVAL '1 day'` via COALESCE.  This suite
+    enforces the rail-specific values the demo plants so the data-driven
+    `is_late` predicate has a realistic mix to fire against.
+    """
+
+    def test_card_payments_populated_t_plus_3(self, parsed):
+        card_payment_legs = [
+            r for r in _by_type(_pr_rows(parsed), "payment")
+            if _metadata(r).get("payment_method") == "card"
+        ]
+        assert card_payment_legs, (
+            "No card payments in demo seed — generator regression?"
+        )
+        for r in card_payment_legs:
+            posted = datetime.fromisoformat(_val(r, "posted_at"))
+            expected = _val(r, "expected_complete_at")
+            assert expected != "NULL", (
+                f"Card payment leg missing expected_complete_at: {r[:80]}"
+            )
+            parsed_expected = datetime.fromisoformat(expected)
+            assert parsed_expected == posted + timedelta(days=3), (
+                f"Card payment expected_complete_at != posted + T+3 "
+                f"({parsed_expected} vs {posted + timedelta(days=3)})"
+            )
+
+    def test_external_txns_populated_same_hour(self, parsed):
+        ext_legs = _by_type(_pr_rows(parsed), "external_txn")
+        assert ext_legs, "No external_txn rows — generator regression?"
+        for r in ext_legs:
+            posted = datetime.fromisoformat(_val(r, "posted_at"))
+            expected = _val(r, "expected_complete_at")
+            assert expected != "NULL", (
+                f"external_txn leg missing expected_complete_at: {r[:80]}"
+            )
+            parsed_expected = datetime.fromisoformat(expected)
+            assert parsed_expected == posted + timedelta(hours=1), (
+                f"external_txn expected_complete_at != posted + 1h "
+                f"({parsed_expected} vs {posted + timedelta(hours=1)})"
+            )
+
+    def test_sales_left_null(self, parsed):
+        for r in _by_type(_pr_rows(parsed), "sale"):
+            assert _val(r, "expected_complete_at") == "NULL", (
+                f"sale leg should leave expected_complete_at NULL: {r[:80]}"
+            )
+
+    def test_settlements_left_null(self, parsed):
+        for r in _by_type(_pr_rows(parsed), "settlement"):
+            assert _val(r, "expected_complete_at") == "NULL", (
+                f"settlement leg should leave expected_complete_at NULL: {r[:80]}"
+            )
+
+    def test_non_card_payments_left_null(self, parsed):
+        non_card = [
+            r for r in _by_type(_pr_rows(parsed), "payment")
+            if _metadata(r).get("payment_method") != "card"
+        ]
+        for r in non_card:
+            assert _val(r, "expected_complete_at") == "NULL", (
+                f"non-card payment should leave expected_complete_at NULL: "
+                f"method={_metadata(r).get('payment_method')!r}"
+            )
 
 
 # ---------------------------------------------------------------------------

@@ -449,6 +449,23 @@ def _provenance_source(transfer_type: str, origin: str) -> str:
     return "core_banking"
 
 
+def _ar_expected_complete_at(
+    transfer_type: str,
+    posted_at: datetime,
+) -> datetime | None:
+    # Per-rail settlement window. NULL falls back to one-day default
+    # via COALESCE(expected_complete_at, posted_at + INTERVAL '1 day').
+    # - wire → same-hour (Fed wire instant)
+    # - ach → T+2 (ACH settlement window)
+    # - internal → same-hour (intra-bank instant)
+    # - clearing_sweep / funding_batch / fee / cash → NULL (default applies)
+    if transfer_type in ("wire", "internal"):
+        return posted_at + timedelta(hours=1)
+    if transfer_type == "ach":
+        return posted_at + timedelta(days=2)
+    return None
+
+
 def _json_metadata(payload: dict) -> str:
     # sort_keys for deterministic output across runs.
     return json.dumps(payload, separators=(",", ":"), sort_keys=True)
@@ -1589,6 +1606,7 @@ def _derive_shared_base_tables(
         metadata = _json_metadata(
             {"source": _provenance_source(transfer_type, origin)},
         )
+        expected_complete_at = _ar_expected_complete_at(transfer_type, posted_at)
 
         transactions_rows.append((
             posting_id,            # transaction_id (re-uses the leg-unique id)
@@ -1605,6 +1623,7 @@ def _derive_shared_base_tables(
             abs(signed),
             new_status,
             posted_at,
+            expected_complete_at,
             balance_date,
             None,                  # external_system — AR rows have none
             memo,
@@ -1759,7 +1778,8 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
                   "transfer_type", "origin", "account_id", "account_name",
                   "control_account_id", "account_type", "is_internal",
                   "signed_amount", "amount", "status", "posted_at",
-                  "balance_date", "external_system", "memo", "metadata"],
+                  "expected_complete_at", "balance_date", "external_system",
+                  "memo", "metadata"],
                  shared_transaction_rows),
 
         _inserts("daily_balances",

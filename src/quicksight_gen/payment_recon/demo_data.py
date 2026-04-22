@@ -117,6 +117,23 @@ def _pr_provenance_source(transfer_type: str, origin: str) -> str:
     return "core_banking"
 
 
+def _pr_expected_complete_at(
+    transfer_type: str,
+    metadata: dict,
+    posted_at: datetime,
+) -> datetime | None:
+    # Per-rail settlement window. NULL falls back to one-day default
+    # via COALESCE(expected_complete_at, posted_at + INTERVAL '1 day').
+    # - card payments → T+3 (acquirer batch settlement)
+    # - external_txn → same-hour (rail observations of already-settled events)
+    # - settlements / sales / non-card payments → NULL (default applies)
+    if transfer_type == "payment" and metadata.get("payment_method") == "card":
+        return posted_at + timedelta(days=3)
+    if transfer_type == "external_txn":
+        return posted_at + timedelta(hours=1)
+    return None
+
+
 def _json_metadata(payload: dict) -> str:
     # sort_keys for byte-identical output across runs.
     return json.dumps(payload, separators=(",", ":"), sort_keys=True)
@@ -457,6 +474,9 @@ def _derive_pr_shared_base_tables(
         )
         meta = {"source": _pr_provenance_source(transfer_type, origin)}
         meta.update(transfer_metadata.get(transfer_id, {}))
+        expected_complete_at = _pr_expected_complete_at(
+            transfer_type, meta, posted_at,
+        )
 
         transactions_rows.append((
             posting_id,
@@ -473,6 +493,7 @@ def _derive_pr_shared_base_tables(
             abs(signed),
             status,
             posted_at,
+            expected_complete_at,
             balance_date,
             external_system,
             memo,
@@ -609,7 +630,8 @@ def generate_demo_sql(anchor_date: date | None = None) -> str:
                   "transfer_type", "origin", "account_id", "account_name",
                   "control_account_id", "account_type", "is_internal",
                   "signed_amount", "amount", "status", "posted_at",
-                  "balance_date", "external_system", "memo", "metadata"],
+                  "expected_complete_at", "balance_date", "external_system",
+                  "memo", "metadata"],
                  shared_transaction_rows),
 
         _inserts("daily_balances",
