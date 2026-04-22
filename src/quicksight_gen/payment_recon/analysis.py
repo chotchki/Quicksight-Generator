@@ -128,12 +128,12 @@ def _grid_layout(elements: list[GridLayoutElement]) -> list[Layout]:
 def _kpi_pair(id_left: VisualId, id_right: VisualId) -> list[GridLayoutElement]:
     return [
         GridLayoutElement(
-            ElementId=id_left, ElementType="VISUAL",
+            ElementId=id_left, ElementType=GridLayoutElement.VISUAL,
             ColumnSpan=_HALF, RowSpan=_KPI_ROW_SPAN,
             ColumnIndex=0,
         ),
         GridLayoutElement(
-            ElementId=id_right, ElementType="VISUAL",
+            ElementId=id_right, ElementType=GridLayoutElement.VISUAL,
             ColumnSpan=_HALF, RowSpan=_KPI_ROW_SPAN,
             ColumnIndex=_HALF,
         ),
@@ -143,12 +143,12 @@ def _kpi_pair(id_left: VisualId, id_right: VisualId) -> list[GridLayoutElement]:
 def _chart_pair(id_left: VisualId, id_right: VisualId) -> list[GridLayoutElement]:
     return [
         GridLayoutElement(
-            ElementId=id_left, ElementType="VISUAL",
+            ElementId=id_left, ElementType=GridLayoutElement.VISUAL,
             ColumnSpan=_HALF, RowSpan=_CHART_ROW_SPAN,
             ColumnIndex=0,
         ),
         GridLayoutElement(
-            ElementId=id_right, ElementType="VISUAL",
+            ElementId=id_right, ElementType=GridLayoutElement.VISUAL,
             ColumnSpan=_HALF, RowSpan=_CHART_ROW_SPAN,
             ColumnIndex=_HALF,
         ),
@@ -157,7 +157,7 @@ def _chart_pair(id_left: VisualId, id_right: VisualId) -> list[GridLayoutElement
 
 def _full_width(element_id: VisualId, row_span: int) -> GridLayoutElement:
     return GridLayoutElement(
-        ElementId=element_id, ElementType="VISUAL",
+        ElementId=element_id, ElementType=GridLayoutElement.VISUAL,
         ColumnSpan=_FULL, RowSpan=row_span,
         ColumnIndex=0,
     )
@@ -250,7 +250,7 @@ def _text_box_element(
     box_id: str, row_span: int, column_span: int = _FULL, column_index: int = 0,
 ) -> GridLayoutElement:
     return GridLayoutElement(
-        ElementId=box_id, ElementType="TEXT_BOX",
+        ElementId=box_id, ElementType=GridLayoutElement.TEXT_BOX,
         ColumnSpan=column_span, RowSpan=row_span,
         ColumnIndex=column_index,
     )
@@ -487,15 +487,15 @@ def _build_payment_recon_sheet(cfg: Config) -> SheetDefinition:
         FilterControls=build_recon_controls(cfg),
         Layouts=_grid_layout([
             GridLayoutElement(
-                ElementId=V_PR_RECON_KPI_MATCHED_AMOUNT, ElementType="VISUAL",
+                ElementId=V_PR_RECON_KPI_MATCHED_AMOUNT, ElementType=GridLayoutElement.VISUAL,
                 ColumnSpan=_THIRD, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
             ),
             GridLayoutElement(
-                ElementId=V_PR_RECON_KPI_UNMATCHED_AMOUNT, ElementType="VISUAL",
+                ElementId=V_PR_RECON_KPI_UNMATCHED_AMOUNT, ElementType=GridLayoutElement.VISUAL,
                 ColumnSpan=_THIRD, RowSpan=_KPI_ROW_SPAN, ColumnIndex=_THIRD,
             ),
             GridLayoutElement(
-                ElementId=V_PR_RECON_KPI_LATE_COUNT, ElementType="VISUAL",
+                ElementId=V_PR_RECON_KPI_LATE_COUNT, ElementType=GridLayoutElement.VISUAL,
                 ColumnSpan=_THIRD, RowSpan=_KPI_ROW_SPAN, ColumnIndex=_THIRD * 2,
             ),
             _full_width(V_PR_RECON_BAR_BY_SYSTEM, _CHART_ROW_SPAN),
@@ -511,12 +511,12 @@ def _chart_pair_of_tables(id_left: VisualId, id_right: VisualId) -> list[GridLay
     tables surface more rows without scrolling."""
     return [
         GridLayoutElement(
-            ElementId=id_left, ElementType="VISUAL",
+            ElementId=id_left, ElementType=GridLayoutElement.VISUAL,
             ColumnSpan=_HALF, RowSpan=_TABLE_ROW_SPAN,
             ColumnIndex=0,
         ),
         GridLayoutElement(
-            ElementId=id_right, ElementType="VISUAL",
+            ElementId=id_right, ElementType=GridLayoutElement.VISUAL,
             ColumnSpan=_HALF, RowSpan=_TABLE_ROW_SPAN,
             ColumnIndex=_HALF,
         ),
@@ -610,18 +610,18 @@ def _settlement_id_filter_group(
     """Build a filter group that filters settlement_id by the pSettlementId parameter."""
     return FilterGroup(
         FilterGroupId=filter_group_id,
-        CrossDataset="SINGLE_DATASET",
+        CrossDataset=FilterGroup.SINGLE_DATASET,
         ScopeConfiguration=FilterScopeConfiguration(
             SelectedSheets=SelectedSheetsFilterScopeConfiguration(
                 SheetVisualScopingConfigurations=[
                     SheetVisualScopingConfiguration(
                         SheetId=sheet_id,
-                        Scope="ALL_VISUALS",
+                        Scope=SheetVisualScopingConfiguration.ALL_VISUALS,
                     ),
                 ],
             ),
         ),
-        Status="ENABLED",
+        Status=FilterGroup.ENABLED,
         Filters=[
             Filter(
                 CategoryFilter=CategoryFilter(
@@ -652,18 +652,18 @@ def _payment_id_filter_group(
     """Filter Payments-sheet visuals to the pPaymentId parameter."""
     return FilterGroup(
         FilterGroupId=filter_group_id,
-        CrossDataset="SINGLE_DATASET",
+        CrossDataset=FilterGroup.SINGLE_DATASET,
         ScopeConfiguration=FilterScopeConfiguration(
             SelectedSheets=SelectedSheetsFilterScopeConfiguration(
                 SheetVisualScopingConfigurations=[
                     SheetVisualScopingConfiguration(
                         SheetId=sheet_id,
-                        Scope="ALL_VISUALS",
+                        Scope=SheetVisualScopingConfiguration.ALL_VISUALS,
                     ),
                 ],
             ),
         ),
-        Status="ENABLED",
+        Status=FilterGroup.ENABLED,
         Filters=[
             Filter(
                 CategoryFilter=CategoryFilter(
@@ -694,18 +694,18 @@ def _ext_txn_id_filter_group(
     """Build a filter group that filters by the pExternalTransactionId parameter."""
     return FilterGroup(
         FilterGroupId=filter_group_id,
-        CrossDataset="SINGLE_DATASET",
+        CrossDataset=FilterGroup.SINGLE_DATASET,
         ScopeConfiguration=FilterScopeConfiguration(
             SelectedSheets=SelectedSheetsFilterScopeConfiguration(
                 SheetVisualScopingConfigurations=[
                     SheetVisualScopingConfiguration(
                         SheetId=SHEET_PAYMENT_RECON,
-                        Scope="ALL_VISUALS",
+                        Scope=SheetVisualScopingConfiguration.ALL_VISUALS,
                     ),
                 ],
             ),
         ),
-        Status="ENABLED",
+        Status=FilterGroup.ENABLED,
         Filters=[
             Filter(
                 CategoryFilter=CategoryFilter(

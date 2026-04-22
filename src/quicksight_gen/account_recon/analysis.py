@@ -172,12 +172,12 @@ def _grid_layout(elements: list[GridLayoutElement]) -> list[Layout]:
 def _kpi_pair(id_left: VisualId, id_right: VisualId) -> list[GridLayoutElement]:
     return [
         GridLayoutElement(
-            ElementId=id_left, ElementType="VISUAL",
+            ElementId=id_left, ElementType=GridLayoutElement.VISUAL,
             ColumnSpan=_HALF, RowSpan=_KPI_ROW_SPAN,
             ColumnIndex=0,
         ),
         GridLayoutElement(
-            ElementId=id_right, ElementType="VISUAL",
+            ElementId=id_right, ElementType=GridLayoutElement.VISUAL,
             ColumnSpan=_HALF, RowSpan=_KPI_ROW_SPAN,
             ColumnIndex=_HALF,
         ),
@@ -187,12 +187,12 @@ def _kpi_pair(id_left: VisualId, id_right: VisualId) -> list[GridLayoutElement]:
 def _chart_pair(id_left: VisualId, id_right: VisualId) -> list[GridLayoutElement]:
     return [
         GridLayoutElement(
-            ElementId=id_left, ElementType="VISUAL",
+            ElementId=id_left, ElementType=GridLayoutElement.VISUAL,
             ColumnSpan=_HALF, RowSpan=_CHART_ROW_SPAN,
             ColumnIndex=0,
         ),
         GridLayoutElement(
-            ElementId=id_right, ElementType="VISUAL",
+            ElementId=id_right, ElementType=GridLayoutElement.VISUAL,
             ColumnSpan=_HALF, RowSpan=_CHART_ROW_SPAN,
             ColumnIndex=_HALF,
         ),
@@ -201,7 +201,7 @@ def _chart_pair(id_left: VisualId, id_right: VisualId) -> list[GridLayoutElement
 
 def _full_width_visual(element_id: VisualId, row_span: int) -> GridLayoutElement:
     return GridLayoutElement(
-        ElementId=element_id, ElementType="VISUAL",
+        ElementId=element_id, ElementType=GridLayoutElement.VISUAL,
         ColumnSpan=_FULL, RowSpan=row_span,
         ColumnIndex=0,
     )
@@ -209,7 +209,7 @@ def _full_width_visual(element_id: VisualId, row_span: int) -> GridLayoutElement
 
 def _full_width_text(element_id: str, row_span: int) -> GridLayoutElement:
     return GridLayoutElement(
-        ElementId=element_id, ElementType="TEXT_BOX",
+        ElementId=element_id, ElementType=GridLayoutElement.TEXT_BOX,
         ColumnSpan=_FULL, RowSpan=row_span,
         ColumnIndex=0,
     )
@@ -569,15 +569,15 @@ def _build_daily_statement_sheet(cfg: Config) -> SheetDefinition:
 
     kpi_row_a = [
         GridLayoutElement(
-            ElementId=V_AR_DS_KPI_OPENING, ElementType="VISUAL",
+            ElementId=V_AR_DS_KPI_OPENING, ElementType=GridLayoutElement.VISUAL,
             ColumnSpan=third, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
         ),
         GridLayoutElement(
-            ElementId=V_AR_DS_KPI_DEBITS, ElementType="VISUAL",
+            ElementId=V_AR_DS_KPI_DEBITS, ElementType=GridLayoutElement.VISUAL,
             ColumnSpan=third, RowSpan=_KPI_ROW_SPAN, ColumnIndex=third,
         ),
         GridLayoutElement(
-            ElementId=V_AR_DS_KPI_CREDITS, ElementType="VISUAL",
+            ElementId=V_AR_DS_KPI_CREDITS, ElementType=GridLayoutElement.VISUAL,
             ColumnSpan=third, RowSpan=_KPI_ROW_SPAN, ColumnIndex=third * 2,
         ),
     ]
@@ -916,18 +916,22 @@ def _calc_field_pass_filter_group(spec: _DrillFilterSpec) -> FilterGroup:
     """
     scoping = SheetVisualScopingConfiguration(
         SheetId=spec.sheet_id,
-        Scope="SELECTED_VISUALS" if spec.visual_ids else "ALL_VISUALS",
+        Scope=(
+            SheetVisualScopingConfiguration.SELECTED_VISUALS
+            if spec.visual_ids
+            else SheetVisualScopingConfiguration.ALL_VISUALS
+        ),
         VisualIds=list(spec.visual_ids) if spec.visual_ids else None,
     )
     return FilterGroup(
         FilterGroupId=spec.fg_id,
-        CrossDataset="SINGLE_DATASET",
+        CrossDataset=FilterGroup.SINGLE_DATASET,
         ScopeConfiguration=FilterScopeConfiguration(
             SelectedSheets=SelectedSheetsFilterScopeConfiguration(
                 SheetVisualScopingConfigurations=[scoping],
             ),
         ),
-        Status="ENABLED",
+        Status=FilterGroup.ENABLED,
         Filters=[
             Filter(
                 CategoryFilter=CategoryFilter(

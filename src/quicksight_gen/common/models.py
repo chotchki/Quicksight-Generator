@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field, asdict
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar, Literal
 
 
 # ---------------------------------------------------------------------------
@@ -553,11 +553,19 @@ class VisualCustomActionOperation:
 
 @dataclass
 class VisualCustomAction:
+    # Trigger constants — prefer VisualCustomAction.DATA_POINT_CLICK
+    # over the bare string literal at call sites.
+    DATA_POINT_CLICK: ClassVar[Literal["DATA_POINT_CLICK"]] = "DATA_POINT_CLICK"
+    DATA_POINT_MENU: ClassVar[Literal["DATA_POINT_MENU"]] = "DATA_POINT_MENU"
+    # Status constants.
+    ENABLED: ClassVar[Literal["ENABLED"]] = "ENABLED"
+    DISABLED: ClassVar[Literal["DISABLED"]] = "DISABLED"
+
     CustomActionId: str
     Name: str
-    Trigger: str  # DATA_POINT_CLICK|DATA_POINT_MENU
+    Trigger: Literal["DATA_POINT_CLICK", "DATA_POINT_MENU"]
     ActionOperations: list[VisualCustomActionOperation]
-    Status: str = "ENABLED"
+    Status: Literal["ENABLED", "DISABLED"] = "ENABLED"
 
 
 # -- Visual union --
@@ -676,8 +684,13 @@ class Filter:
 
 @dataclass
 class SheetVisualScopingConfiguration:
+    # Scope constants — prefer SheetVisualScopingConfiguration.ALL_VISUALS
+    # over the bare string literal at call sites.
+    ALL_VISUALS: ClassVar[Literal["ALL_VISUALS"]] = "ALL_VISUALS"
+    SELECTED_VISUALS: ClassVar[Literal["SELECTED_VISUALS"]] = "SELECTED_VISUALS"
+
     SheetId: str
-    Scope: str  # ALL_VISUALS|SELECTED_VISUALS
+    Scope: Literal["ALL_VISUALS", "SELECTED_VISUALS"]
     VisualIds: list[str] | None = None
 
 
@@ -700,11 +713,19 @@ class FilterScopeConfiguration:
 
 @dataclass
 class FilterGroup:
+    # CrossDataset constants — prefer FilterGroup.SINGLE_DATASET over the
+    # bare string literal at call sites.
+    SINGLE_DATASET: ClassVar[Literal["SINGLE_DATASET"]] = "SINGLE_DATASET"
+    ALL_DATASETS: ClassVar[Literal["ALL_DATASETS"]] = "ALL_DATASETS"
+    # Status constants.
+    ENABLED: ClassVar[Literal["ENABLED"]] = "ENABLED"
+    DISABLED: ClassVar[Literal["DISABLED"]] = "DISABLED"
+
     FilterGroupId: str
     Filters: list[Filter]
     ScopeConfiguration: FilterScopeConfiguration
-    CrossDataset: str = "SINGLE_DATASET"  # ALL_DATASETS|SINGLE_DATASET
-    Status: str | None = None  # ENABLED|DISABLED
+    CrossDataset: Literal["SINGLE_DATASET", "ALL_DATASETS"] = "SINGLE_DATASET"
+    Status: Literal["ENABLED", "DISABLED"] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -803,8 +824,18 @@ class ParameterControl:
 
 @dataclass
 class FreeFormLayoutElement:
+    # ElementType constants — prefer FreeFormLayoutElement.VISUAL over
+    # the bare string literal at call sites.
+    VISUAL: ClassVar[Literal["VISUAL"]] = "VISUAL"
+    FILTER_CONTROL: ClassVar[Literal["FILTER_CONTROL"]] = "FILTER_CONTROL"
+    PARAMETER_CONTROL: ClassVar[Literal["PARAMETER_CONTROL"]] = "PARAMETER_CONTROL"
+    TEXT_BOX: ClassVar[Literal["TEXT_BOX"]] = "TEXT_BOX"
+    IMAGE: ClassVar[Literal["IMAGE"]] = "IMAGE"
+
     ElementId: str
-    ElementType: str  # VISUAL|FILTER_CONTROL|PARAMETER_CONTROL|TEXT_BOX|IMAGE
+    ElementType: Literal[
+        "VISUAL", "FILTER_CONTROL", "PARAMETER_CONTROL", "TEXT_BOX", "IMAGE"
+    ]
     XAxisLocation: str  # pixels as string
     YAxisLocation: str
     Width: str
@@ -819,8 +850,18 @@ class FreeFormLayoutConfiguration:
 
 @dataclass
 class GridLayoutElement:
+    # ElementType constants — prefer GridLayoutElement.VISUAL over the
+    # bare string literal at call sites.
+    VISUAL: ClassVar[Literal["VISUAL"]] = "VISUAL"
+    FILTER_CONTROL: ClassVar[Literal["FILTER_CONTROL"]] = "FILTER_CONTROL"
+    PARAMETER_CONTROL: ClassVar[Literal["PARAMETER_CONTROL"]] = "PARAMETER_CONTROL"
+    TEXT_BOX: ClassVar[Literal["TEXT_BOX"]] = "TEXT_BOX"
+    IMAGE: ClassVar[Literal["IMAGE"]] = "IMAGE"
+
     ElementId: str
-    ElementType: str  # VISUAL|FILTER_CONTROL|PARAMETER_CONTROL
+    ElementType: Literal[
+        "VISUAL", "FILTER_CONTROL", "PARAMETER_CONTROL", "TEXT_BOX", "IMAGE"
+    ]
     ColumnSpan: int
     RowSpan: int
     ColumnIndex: int | None = None

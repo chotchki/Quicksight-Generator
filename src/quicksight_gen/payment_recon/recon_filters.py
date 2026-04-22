@@ -49,7 +49,7 @@ def _recon_scope() -> FilterScopeConfiguration:
             SheetVisualScopingConfigurations=[
                 SheetVisualScopingConfiguration(
                     SheetId=SHEET_PAYMENT_RECON,
-                    Scope="ALL_VISUALS",
+                    Scope=SheetVisualScopingConfiguration.ALL_VISUALS,
                 ),
             ]
         ),
@@ -64,9 +64,9 @@ def _recon_date_range_filter_group() -> FilterGroup:
     """Date range filter on transaction_date."""
     return FilterGroup(
         FilterGroupId=FG_PR_RECON_DATE_RANGE,
-        CrossDataset="SINGLE_DATASET",
+        CrossDataset=FilterGroup.SINGLE_DATASET,
         ScopeConfiguration=_recon_scope(),
-        Status="ENABLED",
+        Status=FilterGroup.ENABLED,
         Filters=[
             Filter(
                 TimeRangeFilter=TimeRangeFilter(
@@ -87,9 +87,9 @@ def _recon_match_status_filter_group() -> FilterGroup:
     """Match status dropdown."""
     return FilterGroup(
         FilterGroupId=FG_PR_RECON_MATCH_STATUS,
-        CrossDataset="SINGLE_DATASET",
+        CrossDataset=FilterGroup.SINGLE_DATASET,
         ScopeConfiguration=_recon_scope(),
-        Status="ENABLED",
+        Status=FilterGroup.ENABLED,
         Filters=[
             Filter(
                 CategoryFilter=CategoryFilter(
@@ -114,9 +114,9 @@ def _recon_external_system_filter_group() -> FilterGroup:
     """External system dropdown."""
     return FilterGroup(
         FilterGroupId=FG_PR_RECON_EXTERNAL_SYSTEM,
-        CrossDataset="SINGLE_DATASET",
+        CrossDataset=FilterGroup.SINGLE_DATASET,
         ScopeConfiguration=_recon_scope(),
-        Status="ENABLED",
+        Status=FilterGroup.ENABLED,
         Filters=[
             Filter(
                 CategoryFilter=CategoryFilter(

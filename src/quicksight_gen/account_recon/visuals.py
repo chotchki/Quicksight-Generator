@@ -27,6 +27,8 @@ Visual additions:
 
 from __future__ import annotations
 
+from typing import Literal
+
 from quicksight_gen.account_recon.constants import (
     DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
     DS_AR_DAILY_STATEMENT_SUMMARY,
@@ -235,7 +237,7 @@ def _same_sheet_filter_action(
     action_id: str,
     name: str,
     target_visual_ids: list[str],
-    trigger: str = "DATA_POINT_CLICK",
+    trigger: Literal["DATA_POINT_CLICK", "DATA_POINT_MENU"] = VisualCustomAction.DATA_POINT_CLICK,
 ) -> VisualCustomAction:
     """Click filters target visuals on the same sheet via ALL_FIELDS."""
     return VisualCustomAction(

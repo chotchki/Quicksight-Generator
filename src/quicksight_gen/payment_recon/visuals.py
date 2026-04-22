@@ -171,7 +171,7 @@ def _same_sheet_filter_action(
     return VisualCustomAction(
         CustomActionId=action_id,
         Name=name,
-        Trigger="DATA_POINT_CLICK",
+        Trigger=VisualCustomAction.DATA_POINT_CLICK,
         ActionOperations=[
             VisualCustomActionOperation(
                 FilterOperation=CustomActionFilterOperation(

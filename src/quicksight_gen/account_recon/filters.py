@@ -23,6 +23,8 @@ parameter declarations, same as payment_recon.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from quicksight_gen.account_recon.constants import (
     DS_AR_DAILY_STATEMENT_SUMMARY,
     DS_AR_LEDGER_ACCOUNTS,
@@ -112,7 +114,7 @@ def _selected_sheets_scope(sheet_ids: list[SheetId]) -> FilterScopeConfiguration
             SheetVisualScopingConfigurations=[
                 SheetVisualScopingConfiguration(
                     SheetId=sid,
-                    Scope="ALL_VISUALS",
+                    Scope=SheetVisualScopingConfiguration.ALL_VISUALS,
                 )
                 for sid in sheet_ids
             ]
@@ -134,9 +136,9 @@ def _date_range_filter_group() -> FilterGroup:
     """
     return FilterGroup(
         FilterGroupId=FG_AR_DATE_RANGE,
-        CrossDataset="ALL_DATASETS",
+        CrossDataset=FilterGroup.ALL_DATASETS,
         ScopeConfiguration=_selected_sheets_scope(_ALL_SHEETS),
-        Status="ENABLED",
+        Status=FilterGroup.ENABLED,
         Filters=[
             Filter(
                 TimeRangeFilter=TimeRangeFilter(
@@ -172,7 +174,7 @@ def _multi_select_filter_group(
     dataset_id: str,
     column_name: str,
     sheet_ids: list[str],
-    cross_dataset: str = "ALL_DATASETS",
+    cross_dataset: Literal["SINGLE_DATASET", "ALL_DATASETS"] = FilterGroup.ALL_DATASETS,
 ) -> FilterGroup:
     # AWS rule: multi-sheet filters MUST carry
     # DefaultFilterControlConfiguration (so CrossSheet controls on the
@@ -193,7 +195,7 @@ def _multi_select_filter_group(
         FilterGroupId=fg_id,
         CrossDataset=cross_dataset,
         ScopeConfiguration=_selected_sheets_scope(sheet_ids),
-        Status="ENABLED",
+        Status=FilterGroup.ENABLED,
         Filters=[
             Filter(
                 CategoryFilter=CategoryFilter(
@@ -332,9 +334,9 @@ def _state_toggle_filter_group(
     """
     return FilterGroup(
         FilterGroupId=fg_id,
-        CrossDataset="SINGLE_DATASET",
+        CrossDataset=FilterGroup.SINGLE_DATASET,
         ScopeConfiguration=_selected_sheets_scope([sheet_id]),
-        Status="ENABLED",
+        Status=FilterGroup.ENABLED,
         Filters=[
             Filter(
                 CategoryFilter=CategoryFilter(
@@ -661,9 +663,9 @@ def _daily_statement_account_filter_group() -> FilterGroup:
     """
     return FilterGroup(
         FilterGroupId=FG_AR_DS_ACCOUNT,
-        CrossDataset="ALL_DATASETS",
+        CrossDataset=FilterGroup.ALL_DATASETS,
         ScopeConfiguration=_selected_sheets_scope([SHEET_AR_DAILY_STATEMENT]),
-        Status="ENABLED",
+        Status=FilterGroup.ENABLED,
         Filters=[
             Filter(
                 CategoryFilter=CategoryFilter(
@@ -697,9 +699,9 @@ def _daily_statement_date_filter_group() -> FilterGroup:
     """
     return FilterGroup(
         FilterGroupId=FG_AR_DS_BALANCE_DATE,
-        CrossDataset="ALL_DATASETS",
+        CrossDataset=FilterGroup.ALL_DATASETS,
         ScopeConfiguration=_selected_sheets_scope([SHEET_AR_DAILY_STATEMENT]),
-        Status="ENABLED",
+        Status=FilterGroup.ENABLED,
         Filters=[
             Filter(
                 TimeEqualityFilter=TimeEqualityFilter(

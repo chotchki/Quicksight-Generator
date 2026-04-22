@@ -78,7 +78,7 @@ def _selected_sheets_scope(sheet_ids: list[SheetId]) -> FilterScopeConfiguration
             SheetVisualScopingConfigurations=[
                 SheetVisualScopingConfiguration(
                     SheetId=sid,
-                    Scope="ALL_VISUALS",
+                    Scope=SheetVisualScopingConfiguration.ALL_VISUALS,
                 )
                 for sid in sheet_ids
             ]
@@ -105,19 +105,19 @@ def _visual_scoped_pinned_filter_group(
     """
     return FilterGroup(
         FilterGroupId=fg_id,
-        CrossDataset="SINGLE_DATASET",
+        CrossDataset=FilterGroup.SINGLE_DATASET,
         ScopeConfiguration=FilterScopeConfiguration(
             SelectedSheets=SelectedSheetsFilterScopeConfiguration(
                 SheetVisualScopingConfigurations=[
                     SheetVisualScopingConfiguration(
                         SheetId=sheet_id,
-                        Scope="SELECTED_VISUALS",
+                        Scope=SheetVisualScopingConfiguration.SELECTED_VISUALS,
                         VisualIds=visual_ids,
                     ),
                 ],
             ),
         ),
-        Status="ENABLED",
+        Status=FilterGroup.ENABLED,
         Filters=[
             Filter(
                 CategoryFilter=CategoryFilter(
@@ -161,9 +161,9 @@ def _date_range_filter_group(
 ) -> FilterGroup:
     return FilterGroup(
         FilterGroupId=spec.fg_id,
-        CrossDataset="SINGLE_DATASET",
+        CrossDataset=FilterGroup.SINGLE_DATASET,
         ScopeConfiguration=_selected_sheets_scope([sheet_id]),
-        Status="ENABLED",
+        Status=FilterGroup.ENABLED,
         Filters=[
             Filter(
                 TimeRangeFilter=TimeRangeFilter(
@@ -184,9 +184,9 @@ def _merchant_filter_group() -> FilterGroup:
     """Merchant dropdown filter -- all sheets."""
     return FilterGroup(
         FilterGroupId=FG_PR_MERCHANT,
-        CrossDataset="ALL_DATASETS",
+        CrossDataset=FilterGroup.ALL_DATASETS,
         ScopeConfiguration=_selected_sheets_scope(ALL_SHEET_IDS),
-        Status="ENABLED",
+        Status=FilterGroup.ENABLED,
         Filters=[
             Filter(
                 CategoryFilter=CategoryFilter(
@@ -219,9 +219,9 @@ def _location_filter_group() -> FilterGroup:
     """Location dropdown filter -- all sheets."""
     return FilterGroup(
         FilterGroupId=FG_PR_LOCATION,
-        CrossDataset="ALL_DATASETS",
+        CrossDataset=FilterGroup.ALL_DATASETS,
         ScopeConfiguration=_selected_sheets_scope(ALL_SHEET_IDS),
-        Status="ENABLED",
+        Status=FilterGroup.ENABLED,
         Filters=[
             Filter(
                 CategoryFilter=CategoryFilter(
@@ -254,11 +254,11 @@ def _settlement_status_filter_group() -> FilterGroup:
     """Settlement status dropdown -- Settlements + Exceptions tabs."""
     return FilterGroup(
         FilterGroupId=FG_PR_SETTLEMENT_STATUS,
-        CrossDataset="SINGLE_DATASET",
+        CrossDataset=FilterGroup.SINGLE_DATASET,
         ScopeConfiguration=_selected_sheets_scope(
             [SHEET_SETTLEMENTS, SHEET_EXCEPTIONS]
         ),
-        Status="ENABLED",
+        Status=FilterGroup.ENABLED,
         Filters=[
             Filter(
                 CategoryFilter=CategoryFilter(
@@ -291,9 +291,9 @@ def _payment_status_filter_group() -> FilterGroup:
     """Payment status dropdown -- Payments tab only."""
     return FilterGroup(
         FilterGroupId=FG_PR_PAYMENT_STATUS,
-        CrossDataset="SINGLE_DATASET",
+        CrossDataset=FilterGroup.SINGLE_DATASET,
         ScopeConfiguration=_selected_sheets_scope([SHEET_PAYMENTS]),
-        Status="ENABLED",
+        Status=FilterGroup.ENABLED,
         Filters=[
             Filter(
                 CategoryFilter=CategoryFilter(
@@ -328,9 +328,9 @@ def _payment_method_filter_group() -> FilterGroup:
     """
     return FilterGroup(
         FilterGroupId=FG_PR_PAYMENT_METHOD,
-        CrossDataset="SINGLE_DATASET",
+        CrossDataset=FilterGroup.SINGLE_DATASET,
         ScopeConfiguration=_selected_sheets_scope([SHEET_PAYMENTS]),
-        Status="ENABLED",
+        Status=FilterGroup.ENABLED,
         Filters=[
             Filter(
                 CategoryFilter=CategoryFilter(
@@ -368,9 +368,9 @@ def _state_toggle_filter_group(
     """
     return FilterGroup(
         FilterGroupId=fg_id,
-        CrossDataset="SINGLE_DATASET",
+        CrossDataset=FilterGroup.SINGLE_DATASET,
         ScopeConfiguration=_selected_sheets_scope([sheet_id]),
-        Status="ENABLED",
+        Status=FilterGroup.ENABLED,
         Filters=[
             Filter(
                 CategoryFilter=CategoryFilter(
@@ -455,9 +455,9 @@ def _optional_metadata_filter_group(
 
     return FilterGroup(
         FilterGroupId=fg_id,
-        CrossDataset="SINGLE_DATASET",
+        CrossDataset=FilterGroup.SINGLE_DATASET,
         ScopeConfiguration=_selected_sheets_scope(sheet_ids),
-        Status="ENABLED",
+        Status=FilterGroup.ENABLED,
         Filters=[filter_obj],
     )
 

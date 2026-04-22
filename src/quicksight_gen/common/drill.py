@@ -41,7 +41,7 @@ Usage::
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Union
+from typing import Literal, Union
 
 from quicksight_gen.common.dataset_contract import (
     ColumnShape,
@@ -204,7 +204,7 @@ def cross_sheet_drill(
     name: str,
     target_sheet: SheetId,
     writes: list[DrillWrite],
-    trigger: str = "DATA_POINT_CLICK",
+    trigger: Literal["DATA_POINT_CLICK", "DATA_POINT_MENU"] = VisualCustomAction.DATA_POINT_CLICK,
 ) -> VisualCustomAction:
     """Build a NavigationOperation + SetParametersOperation drill.
 
