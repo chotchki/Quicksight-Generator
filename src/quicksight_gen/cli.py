@@ -465,6 +465,7 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
             cur.execute(seed_sql)
             click.echo("  Refreshing materialized views...")
             cur.execute("REFRESH MATERIALIZED VIEW ar_unified_exceptions;")
+            cur.execute("REFRESH MATERIALIZED VIEW inv_pair_rolling_anomalies;")
         conn.commit()
         click.echo("  Database ready.")
     except Exception:

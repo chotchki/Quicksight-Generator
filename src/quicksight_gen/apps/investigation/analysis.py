@@ -4,8 +4,13 @@ K.4.3 lands the Recipient Fanout sheet: dataset declaration, the
 analysis-level ``recipient_distinct_sender_count`` calc field that
 backs the threshold filter, three KPIs + a ranked table, a date-range
 window filter, and a slider-bound integer parameter for the fanout
-threshold. The Volume Anomalies and Money Trail sheets remain as
-stubs until K.4.4 / K.4.5.
+threshold.
+
+K.4.4 lands the Volume Anomalies sheet: rolling 2-day SUM matview
+(``inv_pair_rolling_anomalies``) computed at refresh time, KPI flagged
+count, σ-bucket distribution chart (intentionally NOT gated by the
+σ filter — its job is to show the full population), and ranked table of
+flagged windows. The Money Trail sheet remains a stub until K.4.5.
 """
 
 from __future__ import annotations
@@ -13,10 +18,14 @@ from __future__ import annotations
 from quicksight_gen.apps.investigation.constants import (
     CF_INV_FANOUT_DISTINCT_SENDERS,
     DS_INV_RECIPIENT_FANOUT,
+    DS_INV_VOLUME_ANOMALIES,
     SHEET_INV_ANOMALIES,
     SHEET_INV_FANOUT,
     SHEET_INV_GETTING_STARTED,
     SHEET_INV_MONEY_TRAIL,
+    V_INV_ANOMALIES_DISTRIBUTION,
+    V_INV_ANOMALIES_KPI_FLAGGED,
+    V_INV_ANOMALIES_TABLE,
     V_INV_FANOUT_KPI_AMOUNT,
     V_INV_FANOUT_KPI_RECIPIENTS,
     V_INV_FANOUT_KPI_SENDERS,
@@ -24,12 +33,17 @@ from quicksight_gen.apps.investigation.constants import (
 )
 from quicksight_gen.apps.investigation.datasets import build_all_datasets
 from quicksight_gen.apps.investigation.filters import (
+    build_anomalies_filter_controls,
+    build_anomalies_parameter_controls,
     build_fanout_filter_controls,
     build_fanout_parameter_controls,
     build_filter_groups,
     build_parameter_declarations,
 )
-from quicksight_gen.apps.investigation.visuals import build_fanout_visuals
+from quicksight_gen.apps.investigation.visuals import (
+    build_anomalies_visuals,
+    build_fanout_visuals,
+)
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.ids import VisualId
@@ -130,12 +144,13 @@ _FANOUT_DESCRIPTION = (
     "into Account Reconciliation Transactions for the recipient."
 )
 
-_ANOMALY_BODY = (
-    "Which sender → recipient pair just spiked? Rolling SUM(amount) per "
-    "pair over a sliding window, compared against the population mean + "
-    "standard deviation across pairs. Rows above mean + Nσ are flagged. "
-    "Distribution plot + flagged-rows table; cross-app drill into the "
-    "underlying transactions for the pair × window."
+_ANOMALY_DESCRIPTION = (
+    "Which sender → recipient pair just spiked above its baseline? "
+    "Rolling 2-day SUM per pair vs. the population mean + standard "
+    "deviation. Drag the σ slider to flag the tail. The distribution "
+    "chart shows the full population — your slider cutoff against that "
+    "shape — while the KPI + table show only flagged windows. K.4.7 "
+    "wires per-row drill into Account Reconciliation Transactions."
 )
 
 _MONEY_TRAIL_BODY = (
@@ -187,7 +202,7 @@ def _build_getting_started_sheet(cfg: Config) -> SheetDefinition:
                 "Recipient Fanout — who is receiving money from too many "
                 "distinct senders? (live)",
                 "Volume Anomalies — which sender → recipient pair just "
-                "spiked above the rolling baseline? (lands in K.4.4)",
+                "spiked above the rolling baseline? (live)",
                 "Money Trail — where did this transfer originate and "
                 "where does it go? (lands in K.4.5)",
             ]),
@@ -239,6 +254,46 @@ def _build_recipient_fanout_sheet(cfg: Config) -> SheetDefinition:
             )
             + [_full_width_visual(V_INV_FANOUT_TABLE, _TABLE_ROW_SPAN)]
         ),
+    )
+
+
+def _build_volume_anomalies_sheet(cfg: Config) -> SheetDefinition:
+    """Volume Anomalies — flagged-count KPI + distribution + ranked table.
+
+    Layout:
+      * Row 1: KPI flagged count (¼ width-ish) + distribution bar chart
+        side-by-side. KPI is third-width, chart takes the remaining
+        two-thirds so its bucket bars have room.
+      * Row 2: full-width flagged table sorted by z_score desc.
+    Date-range filter widget + σ slider live in the sheet's controls
+    panel. The σ filter is scoped SELECTED_VISUALS in filters.py so the
+    distribution chart sees the full population while KPI + table see
+    only the cutoff tail.
+    """
+    layout_elements = [
+        GridLayoutElement(
+            ElementId=V_INV_ANOMALIES_KPI_FLAGGED,
+            ElementType=GridLayoutElement.VISUAL,
+            ColumnSpan=_THIRD, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
+        ),
+        GridLayoutElement(
+            ElementId=V_INV_ANOMALIES_DISTRIBUTION,
+            ElementType=GridLayoutElement.VISUAL,
+            ColumnSpan=_THIRD * 2, RowSpan=_KPI_ROW_SPAN * 2,
+            ColumnIndex=_THIRD,
+        ),
+        _full_width_visual(V_INV_ANOMALIES_TABLE, _TABLE_ROW_SPAN),
+    ]
+    return SheetDefinition(
+        SheetId=SHEET_INV_ANOMALIES,
+        Name="Volume Anomalies",
+        Title="Volume Anomalies",
+        Description=_ANOMALY_DESCRIPTION,
+        ContentType="INTERACTIVE",
+        Visuals=build_anomalies_visuals(),
+        FilterControls=build_anomalies_filter_controls(cfg),
+        ParameterControls=build_anomalies_parameter_controls(cfg),
+        Layouts=_grid_layout(layout_elements),
     )
 
 
@@ -308,6 +363,7 @@ def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaratio
     datasets = build_all_datasets(cfg)
     names = [
         DS_INV_RECIPIENT_FANOUT,
+        DS_INV_VOLUME_ANOMALIES,
     ]
     return [
         DataSetIdentifierDeclaration(
@@ -329,10 +385,7 @@ def _build_definition(cfg: Config) -> AnalysisDefinition:
         Sheets=[
             _build_getting_started_sheet(cfg),
             _build_recipient_fanout_sheet(cfg),
-            _build_stub_sheet(
-                SHEET_INV_ANOMALIES, "Volume Anomalies",
-                _ANOMALY_BODY, "K.4.4", accent,
-            ),
+            _build_volume_anomalies_sheet(cfg),
             _build_stub_sheet(
                 SHEET_INV_MONEY_TRAIL, "Money Trail",
                 _MONEY_TRAIL_BODY, "K.4.5", accent,

@@ -1353,3 +1353,127 @@ SELECT
     originate_amount               AS primary_amount,
     NULL::NUMERIC                  AS secondary_amount
 FROM ar_internal_reversal_uncredited;
+
+
+-- Investigation: pair-grain rolling-window anomaly matview (Phase K.4.4).
+-- Volume Anomalies sheet flags (sender, recipient) pairs whose 2-day
+-- rolling SUM crosses the σ-threshold parameter. Computing the rolling
+-- window + population z-score on every dataset load was slow enough at
+-- realistic transaction volumes to wedge QuickSight Direct Query, so
+-- the work happens at refresh time instead.
+--
+-- Window semantics: for each (sender, recipient) day with activity, the
+-- row's window covers [posted_day - 1, posted_day] (today + yesterday).
+-- The 2-day length is hardcoded for K.4.4 — a window-length slider is
+-- a future enhancement that would require either multiple matviews or a
+-- generate_series scan at dataset time.
+--
+-- Recipient filter mirrors the recipient-fanout dataset: only `dda` and
+-- `merchant_dda` recipients qualify, so administrative sweeps into GL
+-- control / concentration master accounts don't dominate the population
+-- distribution and crowd out genuine signal.
+--
+-- IMPORTANT — refresh contract: this matview is NOT auto-refreshed.
+-- Operators must run
+--     REFRESH MATERIALIZED VIEW inv_pair_rolling_anomalies;
+-- after each ETL load (the demo's `quicksight-gen demo apply` does
+-- this automatically).
+DROP MATERIALIZED VIEW IF EXISTS inv_pair_rolling_anomalies;
+CREATE MATERIALIZED VIEW inv_pair_rolling_anomalies AS
+WITH pair_legs AS (
+    SELECT
+        recipient.account_id          AS recipient_account_id,
+        recipient.account_name        AS recipient_account_name,
+        recipient.account_type        AS recipient_account_type,
+        sender.account_id             AS sender_account_id,
+        sender.account_name           AS sender_account_name,
+        sender.account_type           AS sender_account_type,
+        recipient.posted_at::date     AS posted_day,
+        recipient.transfer_id,
+        recipient.signed_amount       AS amount
+    FROM transactions recipient
+    JOIN transactions sender
+      ON sender.transfer_id = recipient.transfer_id
+     AND sender.signed_amount < 0
+    WHERE recipient.signed_amount > 0
+      AND recipient.status = 'success'
+      AND sender.status = 'success'
+      AND recipient.account_type IN ('dda', 'merchant_dda')
+),
+pair_daily AS (
+    -- Collapse to one row per (pair, day) before windowing so the
+    -- rolling SUM ranges over distinct days rather than individual legs.
+    SELECT
+        recipient_account_id,
+        recipient_account_name,
+        recipient_account_type,
+        sender_account_id,
+        sender_account_name,
+        sender_account_type,
+        posted_day,
+        SUM(amount)                 AS day_sum,
+        COUNT(DISTINCT transfer_id) AS day_transfer_count
+    FROM pair_legs
+    GROUP BY
+        recipient_account_id, recipient_account_name, recipient_account_type,
+        sender_account_id, sender_account_name, sender_account_type,
+        posted_day
+),
+pair_windows AS (
+    -- Rolling 2-day SUM per pair, anchored on each active day. RANGE
+    -- INTERVAL handles sparse days correctly: a pair with activity on
+    -- day N but not N-1 gets a 1-day window — semantically a single
+    -- spike — rather than a phantom zero contribution.
+    SELECT
+        recipient_account_id,
+        recipient_account_name,
+        recipient_account_type,
+        sender_account_id,
+        sender_account_name,
+        sender_account_type,
+        posted_day,
+        SUM(day_sum) OVER w            AS window_sum,
+        SUM(day_transfer_count) OVER w AS transfer_count
+    FROM pair_daily
+    WINDOW w AS (
+        PARTITION BY recipient_account_id, sender_account_id
+        ORDER BY posted_day
+        RANGE BETWEEN INTERVAL '1 day' PRECEDING AND CURRENT ROW
+    )
+),
+population AS (
+    -- Single-row scalar: mean + sample stddev across every pair-window.
+    -- Sample stddev (STDDEV_SAMP) matches the analyst convention of
+    -- "this window vs. the rest of the population".
+    SELECT
+        AVG(window_sum)::NUMERIC                       AS pop_mean,
+        COALESCE(STDDEV_SAMP(window_sum), 0)::NUMERIC  AS pop_stddev
+    FROM pair_windows
+)
+SELECT
+    pw.recipient_account_id,
+    pw.recipient_account_name,
+    pw.recipient_account_type,
+    pw.sender_account_id,
+    pw.sender_account_name,
+    pw.sender_account_type,
+    (pw.posted_day - INTERVAL '1 day')::TIMESTAMP   AS window_start,
+    pw.posted_day::TIMESTAMP                        AS window_end,
+    pw.window_sum,
+    pw.transfer_count,
+    pop.pop_mean,
+    pop.pop_stddev,
+    CASE
+        WHEN pop.pop_stddev = 0 THEN 0
+        ELSE (pw.window_sum - pop.pop_mean) / pop.pop_stddev
+    END                                             AS z_score,
+    CASE
+        WHEN pop.pop_stddev = 0 THEN '0-1 sigma'
+        WHEN ABS((pw.window_sum - pop.pop_mean) / pop.pop_stddev) < 1 THEN '0-1 sigma'
+        WHEN ABS((pw.window_sum - pop.pop_mean) / pop.pop_stddev) < 2 THEN '1-2 sigma'
+        WHEN ABS((pw.window_sum - pop.pop_mean) / pop.pop_stddev) < 3 THEN '2-3 sigma'
+        WHEN ABS((pw.window_sum - pop.pop_mean) / pop.pop_stddev) < 4 THEN '3-4 sigma'
+        ELSE '4+ sigma'
+    END                                             AS z_bucket
+FROM pair_windows pw
+CROSS JOIN population pop;
