@@ -20,10 +20,22 @@ from quicksight_gen.payment_recon.constants import (
     DS_SALES,
     DS_SETTLEMENT_EXCEPTIONS,
     DS_SETTLEMENTS,
+    FG_PR_LOCATION,
+    FG_PR_MERCHANT,
+    FG_PR_PAYMENT_METHOD,
+    FG_PR_PAYMENT_STATUS,
+    FG_PR_PAYMENTS_KPI_RETURNS_ONLY,
+    FG_PR_PAYMENTS_UNMATCHED,
+    FG_PR_SALES_UNSETTLED,
+    FG_PR_SETTLEMENT_STATUS,
+    FG_PR_SETTLEMENTS_KPI_PENDING_ONLY,
+    FG_PR_SETTLEMENTS_UNPAID,
     SHEET_EXCEPTIONS,
     SHEET_PAYMENTS,
     SHEET_SALES,
     SHEET_SETTLEMENTS,
+    SalesMeta,
+    SheetDateRange,
 )
 from quicksight_gen.payment_recon.datasets import OPTIONAL_SALE_METADATA
 from quicksight_gen.common.models import (
@@ -133,26 +145,26 @@ def _visual_scoped_pinned_filter_group(
 # `sale_timestamp`. Keep one filter group per sheet, bound to that
 # sheet's own native timestamp column — predictable mental model:
 # "the date control on this sheet filters this sheet's data."
-_DATE_RANGE_BINDINGS = [
-    ("sales", SHEET_SALES, DS_SALES, "sale_timestamp"),
-    ("settlements", SHEET_SETTLEMENTS, DS_SETTLEMENTS, "settlement_date"),
-    ("payments", SHEET_PAYMENTS, DS_PAYMENTS, "payment_date"),
-    ("exceptions", SHEET_EXCEPTIONS, DS_SETTLEMENT_EXCEPTIONS, "sale_timestamp"),
+_DATE_RANGE_BINDINGS: list[tuple[SheetDateRange, str, str, str]] = [
+    (SheetDateRange("sales"), SHEET_SALES, DS_SALES, "sale_timestamp"),
+    (SheetDateRange("settlements"), SHEET_SETTLEMENTS, DS_SETTLEMENTS, "settlement_date"),
+    (SheetDateRange("payments"), SHEET_PAYMENTS, DS_PAYMENTS, "payment_date"),
+    (SheetDateRange("exceptions"), SHEET_EXCEPTIONS, DS_SETTLEMENT_EXCEPTIONS, "sale_timestamp"),
 ]
 
 
 def _date_range_filter_group(
-    slug: str, sheet_id: str, dataset_id: str, column_name: str,
+    spec: SheetDateRange, sheet_id: str, dataset_id: str, column_name: str,
 ) -> FilterGroup:
     return FilterGroup(
-        FilterGroupId=f"fg-{slug}-date-range",
+        FilterGroupId=spec.fg_id,
         CrossDataset="SINGLE_DATASET",
         ScopeConfiguration=_selected_sheets_scope([sheet_id]),
         Status="ENABLED",
         Filters=[
             Filter(
                 TimeRangeFilter=TimeRangeFilter(
-                    FilterId=f"filter-{slug}-date-range",
+                    FilterId=spec.filter_id,
                     Column=ColumnIdentifier(
                         DataSetIdentifier=dataset_id,
                         ColumnName=column_name,
@@ -168,7 +180,7 @@ def _date_range_filter_group(
 def _merchant_filter_group() -> FilterGroup:
     """Merchant dropdown filter -- all sheets."""
     return FilterGroup(
-        FilterGroupId="fg-merchant",
+        FilterGroupId=FG_PR_MERCHANT,
         CrossDataset="ALL_DATASETS",
         ScopeConfiguration=_selected_sheets_scope(ALL_SHEET_IDS),
         Status="ENABLED",
@@ -203,7 +215,7 @@ def _merchant_filter_group() -> FilterGroup:
 def _location_filter_group() -> FilterGroup:
     """Location dropdown filter -- all sheets."""
     return FilterGroup(
-        FilterGroupId="fg-location",
+        FilterGroupId=FG_PR_LOCATION,
         CrossDataset="ALL_DATASETS",
         ScopeConfiguration=_selected_sheets_scope(ALL_SHEET_IDS),
         Status="ENABLED",
@@ -238,7 +250,7 @@ def _location_filter_group() -> FilterGroup:
 def _settlement_status_filter_group() -> FilterGroup:
     """Settlement status dropdown -- Settlements + Exceptions tabs."""
     return FilterGroup(
-        FilterGroupId="fg-settlement-status",
+        FilterGroupId=FG_PR_SETTLEMENT_STATUS,
         CrossDataset="SINGLE_DATASET",
         ScopeConfiguration=_selected_sheets_scope(
             [SHEET_SETTLEMENTS, SHEET_EXCEPTIONS]
@@ -275,7 +287,7 @@ def _settlement_status_filter_group() -> FilterGroup:
 def _payment_status_filter_group() -> FilterGroup:
     """Payment status dropdown -- Payments tab only."""
     return FilterGroup(
-        FilterGroupId="fg-payment-status",
+        FilterGroupId=FG_PR_PAYMENT_STATUS,
         CrossDataset="SINGLE_DATASET",
         ScopeConfiguration=_selected_sheets_scope([SHEET_PAYMENTS]),
         Status="ENABLED",
@@ -312,7 +324,7 @@ def _payment_method_filter_group() -> FilterGroup:
     date-range fix.
     """
     return FilterGroup(
-        FilterGroupId="fg-payment-method",
+        FilterGroupId=FG_PR_PAYMENT_METHOD,
         CrossDataset="SINGLE_DATASET",
         ScopeConfiguration=_selected_sheets_scope([SHEET_PAYMENTS]),
         Status="ENABLED",
@@ -398,8 +410,9 @@ def _optional_metadata_filter_group(
     filter on a single sheet.
     """
     del label  # widget label lives on the direct FilterControl
-    fg_id = f"fg-sales-meta-{col}"
-    f_id = f"filter-sales-meta-{col}"
+    spec = SalesMeta(col)
+    fg_id = spec.fg_id
+    f_id = spec.filter_id
     column = ColumnIdentifier(DataSetIdentifier=DS_SALES, ColumnName=col)
 
     if ftype == "numeric":
@@ -459,8 +472,8 @@ def build_filter_groups(cfg: Config) -> list[FilterGroup]:
     del cfg  # slider default is independent of late_default_days
     groups = [
         *[
-            _date_range_filter_group(slug, sheet_id, ds, col)
-            for slug, sheet_id, ds, col in _DATE_RANGE_BINDINGS
+            _date_range_filter_group(spec, sheet_id, ds, col)
+            for spec, sheet_id, ds, col in _DATE_RANGE_BINDINGS
         ],
         _merchant_filter_group(),
         _location_filter_group(),
@@ -468,21 +481,21 @@ def build_filter_groups(cfg: Config) -> list[FilterGroup]:
         _payment_status_filter_group(),
         _payment_method_filter_group(),
         _state_toggle_filter_group(
-            "fg-sales-unsettled",
+            FG_PR_SALES_UNSETTLED,
             "filter-sales-unsettled",
             SHEET_SALES,
             DS_SALES,
             "settlement_state",
         ),
         _state_toggle_filter_group(
-            "fg-settlements-unpaid",
+            FG_PR_SETTLEMENTS_UNPAID,
             "filter-settlements-unpaid",
             SHEET_SETTLEMENTS,
             DS_SETTLEMENTS,
             "payment_state",
         ),
         _state_toggle_filter_group(
-            "fg-payments-unmatched",
+            FG_PR_PAYMENTS_UNMATCHED,
             "filter-payments-unmatched",
             SHEET_PAYMENTS,
             DS_PAYMENTS,
@@ -494,7 +507,7 @@ def build_filter_groups(cfg: Config) -> list[FilterGroup]:
         # all rows. Pin the filter to the single KPI visual instead of
         # the sheet so cohabiting visuals stay unaffected.
         _visual_scoped_pinned_filter_group(
-            "fg-payments-kpi-returns-only",
+            FG_PR_PAYMENTS_KPI_RETURNS_ONLY,
             "filter-payments-kpi-returns-only",
             SHEET_PAYMENTS,
             ["payments-kpi-returns"],
@@ -503,7 +516,7 @@ def build_filter_groups(cfg: Config) -> list[FilterGroup]:
             ["true"],
         ),
         _visual_scoped_pinned_filter_group(
-            "fg-settlements-kpi-pending-only",
+            FG_PR_SETTLEMENTS_KPI_PENDING_ONLY,
             "filter-settlements-kpi-pending-only",
             SHEET_SETTLEMENTS,
             ["settlements-kpi-pending"],
@@ -524,12 +537,17 @@ def build_filter_groups(cfg: Config) -> list[FilterGroup]:
 # ---------------------------------------------------------------------------
 
 def _date_range_control(sheet: str) -> FilterControl:
-    """Native date-range picker bound to this sheet's own date filter."""
+    """Native date-range picker bound to this sheet's own date filter.
+
+    ``sheet`` is the slug carried by ``SheetDateRange`` (sales /
+    settlements / payments / exceptions). The control's source filter
+    id is read off the spec so a slug rename only happens in one place.
+    """
     return FilterControl(
         DateTimePicker=FilterDateTimePickerControl(
             FilterControlId=f"ctrl-{sheet}-date-range",
             Title="Date Range",
-            SourceFilterId=f"filter-{sheet}-date-range",
+            SourceFilterId=SheetDateRange(sheet).filter_id,
             Type="DATE_RANGE",
         ),
     )
@@ -606,7 +624,7 @@ def _optional_metadata_controls(sheet: str) -> list[FilterControl]:
     """Return controls for every optional-metadata column on the sales sheet."""
     controls: list[FilterControl] = []
     for col, _ddl, _qs, ftype, label in OPTIONAL_SALE_METADATA:
-        source_id = f"filter-sales-meta-{col}"
+        source_id = SalesMeta(col).filter_id
         ctrl_id = f"ctrl-{sheet}-meta-{col}"
         if ftype == "numeric":
             controls.append(FilterControl(

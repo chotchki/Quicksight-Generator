@@ -12,6 +12,11 @@ from __future__ import annotations
 
 import pytest
 
+from quicksight_gen.account_recon.constants import (
+    ALL_FG_AR_IDS,
+    FG_AR_DRILL_LEDGER_ON_BALANCES_SUBLEDGER,
+)
+
 
 pytestmark = [pytest.mark.e2e, pytest.mark.api]
 
@@ -171,41 +176,10 @@ class TestParameters:
 
 
 class TestFilterGroups:
-    EXPECTED_IDS = {
-        "fg-ar-date-range",
-        "fg-ar-ledger-account",
-        "fg-ar-subledger-account",
-        "fg-ar-transfer-status",
-        "fg-ar-transaction-status",
-        "fg-ar-transfer-type",
-        "fg-ar-balances-ledger-drift",
-        "fg-ar-balances-subledger-drift",
-        "fg-ar-balances-overdraft",
-        "fg-ar-transactions-failed",
-        "fg-ar-posting-level",
-        "fg-ar-origin",
-        "fg-ar-drill-subledger-on-txn",
-        "fg-ar-drill-transfer-on-txn",
-        "fg-ar-drill-ledger-on-balances-subledger",
-        "fg-ar-drill-activity-date-on-txn",
-        "fg-ar-drill-transfer-type-on-txn",
-        # K.2 — pArAccountId-driven drill into Transactions, used by
-        # the Today's Exceptions account-day right-click action.
-        "fg-ar-drill-account-on-txn",
-        # Phase I.2 — Daily Statement sheet pickers (parameter-bound)
-        "fg-ar-ds-account",
-        "fg-ar-ds-balance-date",
-        # Phase K.1.2 — Today's Exceptions multi-selects on the unified
-        # exceptions dataset (check-type / account / aging bucket)
-        "fg-ar-todays-exc-check-type",
-        "fg-ar-todays-exc-account",
-        "fg-ar-todays-exc-aging",
-    }
-
     def test_filter_group_ids(self, ar_dashboard_definition):
         groups = ar_dashboard_definition.get("FilterGroups", [])
         ids = {g["FilterGroupId"] for g in groups}
-        assert ids == self.EXPECTED_IDS
+        assert ids == ALL_FG_AR_IDS
 
     def test_filter_group_ids_unique(self, ar_dashboard_definition):
         groups = ar_dashboard_definition.get("FilterGroups", [])
@@ -221,7 +195,7 @@ class TestFilterGroups:
         groups = ar_dashboard_definition.get("FilterGroups", [])
         fg = next(
             g for g in groups
-            if g["FilterGroupId"] == "fg-ar-drill-ledger-on-balances-subledger"
+            if g["FilterGroupId"] == FG_AR_DRILL_LEDGER_ON_BALANCES_SUBLEDGER
         )
         scope = fg["ScopeConfiguration"]["SelectedSheets"][
             "SheetVisualScopingConfigurations"

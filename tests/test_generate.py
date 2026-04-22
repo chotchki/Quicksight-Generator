@@ -435,17 +435,20 @@ class TestOptionalMetadataFilters:
     """SPEC 2.2: auto-generated per-metadata-column filters on the Sales tab."""
 
     def test_each_metadata_col_has_filter_group(self, output_dir: Path):
+        from quicksight_gen.payment_recon.constants import SalesMeta
         from quicksight_gen.payment_recon.datasets import OPTIONAL_SALE_METADATA
 
         analysis = _load(output_dir, "payment-recon-analysis.json")
         fg_ids = {fg["FilterGroupId"] for fg in analysis["Definition"]["FilterGroups"]}
         for col, *_ in OPTIONAL_SALE_METADATA:
-            assert f"fg-sales-meta-{col}" in fg_ids, (
+            assert SalesMeta(col).fg_id in fg_ids, (
                 f"Missing filter group for optional metadata column '{col}'"
             )
 
     def test_numeric_col_emits_slider(self, output_dir: Path):
         """Numeric OPTIONAL_SALE_METADATA cols surface a slider control on Sales."""
+        from quicksight_gen.payment_recon.constants import SalesMeta
+
         analysis = _load(output_dir, "payment-recon-analysis.json")
         sales = next(
             s for s in analysis["Definition"]["Sheets"]
@@ -454,7 +457,7 @@ class TestOptionalMetadataFilters:
         sliders = [
             c["Slider"] for c in sales.get("FilterControls", [])
             if "Slider" in c
-            and c["Slider"].get("SourceFilterId") == "filter-sales-meta-taxes"
+            and c["Slider"].get("SourceFilterId") == SalesMeta("taxes").filter_id
         ]
         assert len(sliders) == 1, (
             "Expected a slider for filter-sales-meta-taxes on Sales Overview"
@@ -462,6 +465,8 @@ class TestOptionalMetadataFilters:
 
     def test_string_col_emits_dropdown(self, output_dir: Path):
         """String OPTIONAL_SALE_METADATA cols surface a multi-select on Sales."""
+        from quicksight_gen.payment_recon.constants import SalesMeta
+
         analysis = _load(output_dir, "payment-recon-analysis.json")
         sales = next(
             s for s in analysis["Definition"]["Sheets"]
@@ -470,7 +475,7 @@ class TestOptionalMetadataFilters:
         dropdowns = [
             c["Dropdown"] for c in sales.get("FilterControls", [])
             if "Dropdown" in c
-            and c["Dropdown"].get("SourceFilterId") == "filter-sales-meta-cashier"
+            and c["Dropdown"].get("SourceFilterId") == SalesMeta("cashier").filter_id
         ]
         assert len(dropdowns) == 1, (
             "Expected a dropdown for filter-sales-meta-cashier on Sales Overview"
@@ -487,15 +492,19 @@ class TestPaymentMethodFilter:
     """
 
     def test_filter_group_present(self, output_dir: Path):
+        from quicksight_gen.payment_recon.constants import FG_PR_PAYMENT_METHOD
+
         analysis = _load(output_dir, "payment-recon-analysis.json")
         fg_ids = {fg["FilterGroupId"] for fg in analysis["Definition"]["FilterGroups"]}
-        assert "fg-payment-method" in fg_ids
+        assert FG_PR_PAYMENT_METHOD in fg_ids
 
     def test_scoped_to_payments_only(self, output_dir: Path):
+        from quicksight_gen.payment_recon.constants import FG_PR_PAYMENT_METHOD
+
         analysis = _load(output_dir, "payment-recon-analysis.json")
         fg = next(
             f for f in analysis["Definition"]["FilterGroups"]
-            if f["FilterGroupId"] == "fg-payment-method"
+            if f["FilterGroupId"] == FG_PR_PAYMENT_METHOD
         )
         assert fg["CrossDataset"] == "SINGLE_DATASET"
         scopes = fg["ScopeConfiguration"]["SelectedSheets"][

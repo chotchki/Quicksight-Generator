@@ -27,6 +27,12 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_TRANSFER_SUMMARY,
     DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
     DS_AR_UNIFIED_EXCEPTIONS,
+    FG_AR_DRILL_ACCOUNT_ON_TXN,
+    FG_AR_DRILL_ACTIVITY_DATE_ON_TXN,
+    FG_AR_DRILL_LEDGER_ON_BALANCES_SUBLEDGER,
+    FG_AR_DRILL_SUBLEDGER_ON_TXN,
+    FG_AR_DRILL_TRANSFER_ON_TXN,
+    FG_AR_DRILL_TRANSFER_TYPE_ON_TXN,
     SHEET_AR_BALANCES,
     SHEET_AR_DAILY_STATEMENT,
     SHEET_AR_EXCEPTIONS_TRENDS,
@@ -779,7 +785,7 @@ class _DrillFilterSpec:
 
 _DRILL_SPECS: list[_DrillFilterSpec] = [
     _DrillFilterSpec(
-        fg_id="fg-ar-drill-subledger-on-txn",
+        fg_id=FG_AR_DRILL_SUBLEDGER_ON_TXN,
         filter_id="filter-ar-drill-subledger-on-txn",
         parameter=P_AR_SUBLEDGER,
         dataset_id=DS_AR_TRANSACTIONS,
@@ -787,7 +793,7 @@ _DRILL_SPECS: list[_DrillFilterSpec] = [
         sheet_id=SHEET_AR_TRANSACTIONS,
     ),
     _DrillFilterSpec(
-        fg_id="fg-ar-drill-transfer-on-txn",
+        fg_id=FG_AR_DRILL_TRANSFER_ON_TXN,
         filter_id="filter-ar-drill-transfer-on-txn",
         parameter=P_AR_TRANSFER,
         dataset_id=DS_AR_TRANSACTIONS,
@@ -795,7 +801,7 @@ _DRILL_SPECS: list[_DrillFilterSpec] = [
         sheet_id=SHEET_AR_TRANSACTIONS,
     ),
     _DrillFilterSpec(
-        fg_id="fg-ar-drill-activity-date-on-txn",
+        fg_id=FG_AR_DRILL_ACTIVITY_DATE_ON_TXN,
         filter_id="filter-ar-drill-activity-date-on-txn",
         parameter=P_AR_ACTIVITY_DATE,
         dataset_id=DS_AR_TRANSACTIONS,
@@ -803,7 +809,7 @@ _DRILL_SPECS: list[_DrillFilterSpec] = [
         sheet_id=SHEET_AR_TRANSACTIONS,
     ),
     _DrillFilterSpec(
-        fg_id="fg-ar-drill-transfer-type-on-txn",
+        fg_id=FG_AR_DRILL_TRANSFER_TYPE_ON_TXN,
         filter_id="filter-ar-drill-transfer-type-on-txn",
         parameter=P_AR_TRANSFER_TYPE,
         dataset_id=DS_AR_TRANSACTIONS,
@@ -811,7 +817,7 @@ _DRILL_SPECS: list[_DrillFilterSpec] = [
         sheet_id=SHEET_AR_TRANSACTIONS,
     ),
     _DrillFilterSpec(
-        fg_id="fg-ar-drill-account-on-txn",
+        fg_id=FG_AR_DRILL_ACCOUNT_ON_TXN,
         filter_id="filter-ar-drill-account-on-txn",
         parameter=P_AR_ACCOUNT,
         dataset_id=DS_AR_TRANSACTIONS,
@@ -819,7 +825,7 @@ _DRILL_SPECS: list[_DrillFilterSpec] = [
         sheet_id=SHEET_AR_TRANSACTIONS,
     ),
     _DrillFilterSpec(
-        fg_id="fg-ar-drill-ledger-on-balances-subledger",
+        fg_id=FG_AR_DRILL_LEDGER_ON_BALANCES_SUBLEDGER,
         filter_id="filter-ar-drill-ledger-on-balances-subledger",
         parameter=P_AR_LEDGER,
         dataset_id=DS_AR_SUBLEDGER_BALANCE_DRIFT,

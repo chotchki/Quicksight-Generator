@@ -1,4 +1,4 @@
-"""Shared IDs for Account Recon sheets and datasets.
+"""Shared IDs for Account Recon sheets, datasets, and filter groups.
 
 Extracted to avoid circular imports between analysis.py and visuals.py.
 """
@@ -26,3 +26,56 @@ DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP = "ar-balance-drift-timelines-rollup-ds"
 DS_AR_DAILY_STATEMENT_SUMMARY = "ar-daily-statement-summary-ds"
 DS_AR_DAILY_STATEMENT_TRANSACTIONS = "ar-daily-statement-transactions-ds"
 DS_AR_UNIFIED_EXCEPTIONS = "ar-unified-exceptions-ds"
+
+# Filter groups
+FG_AR_DATE_RANGE = "fg-ar-date-range"
+FG_AR_LEDGER_ACCOUNT = "fg-ar-ledger-account"
+FG_AR_SUBLEDGER_ACCOUNT = "fg-ar-subledger-account"
+FG_AR_TRANSFER_STATUS = "fg-ar-transfer-status"
+FG_AR_TRANSACTION_STATUS = "fg-ar-transaction-status"
+FG_AR_TRANSFER_TYPE = "fg-ar-transfer-type"
+FG_AR_POSTING_LEVEL = "fg-ar-posting-level"
+FG_AR_ORIGIN = "fg-ar-origin"
+FG_AR_BALANCES_LEDGER_DRIFT = "fg-ar-balances-ledger-drift"
+FG_AR_BALANCES_SUBLEDGER_DRIFT = "fg-ar-balances-subledger-drift"
+FG_AR_BALANCES_OVERDRAFT = "fg-ar-balances-overdraft"
+FG_AR_TRANSACTIONS_FAILED = "fg-ar-transactions-failed"
+FG_AR_DRILL_SUBLEDGER_ON_TXN = "fg-ar-drill-subledger-on-txn"
+FG_AR_DRILL_TRANSFER_ON_TXN = "fg-ar-drill-transfer-on-txn"
+FG_AR_DRILL_LEDGER_ON_BALANCES_SUBLEDGER = "fg-ar-drill-ledger-on-balances-subledger"
+FG_AR_DRILL_ACTIVITY_DATE_ON_TXN = "fg-ar-drill-activity-date-on-txn"
+FG_AR_DRILL_TRANSFER_TYPE_ON_TXN = "fg-ar-drill-transfer-type-on-txn"
+FG_AR_DRILL_ACCOUNT_ON_TXN = "fg-ar-drill-account-on-txn"
+FG_AR_DS_ACCOUNT = "fg-ar-ds-account"
+FG_AR_DS_BALANCE_DATE = "fg-ar-ds-balance-date"
+FG_AR_TODAYS_EXC_CHECK_TYPE = "fg-ar-todays-exc-check-type"
+FG_AR_TODAYS_EXC_ACCOUNT = "fg-ar-todays-exc-account"
+FG_AR_TODAYS_EXC_AGING = "fg-ar-todays-exc-aging"
+
+# Source of truth for tests asserting "every filter group is registered here".
+# Add new FG_AR_* constants and remember to extend this set.
+ALL_FG_AR_IDS: frozenset[str] = frozenset({
+    FG_AR_DATE_RANGE,
+    FG_AR_LEDGER_ACCOUNT,
+    FG_AR_SUBLEDGER_ACCOUNT,
+    FG_AR_TRANSFER_STATUS,
+    FG_AR_TRANSACTION_STATUS,
+    FG_AR_TRANSFER_TYPE,
+    FG_AR_POSTING_LEVEL,
+    FG_AR_ORIGIN,
+    FG_AR_BALANCES_LEDGER_DRIFT,
+    FG_AR_BALANCES_SUBLEDGER_DRIFT,
+    FG_AR_BALANCES_OVERDRAFT,
+    FG_AR_TRANSACTIONS_FAILED,
+    FG_AR_DRILL_SUBLEDGER_ON_TXN,
+    FG_AR_DRILL_TRANSFER_ON_TXN,
+    FG_AR_DRILL_LEDGER_ON_BALANCES_SUBLEDGER,
+    FG_AR_DRILL_ACTIVITY_DATE_ON_TXN,
+    FG_AR_DRILL_TRANSFER_TYPE_ON_TXN,
+    FG_AR_DRILL_ACCOUNT_ON_TXN,
+    FG_AR_DS_ACCOUNT,
+    FG_AR_DS_BALANCE_DATE,
+    FG_AR_TODAYS_EXC_CHECK_TYPE,
+    FG_AR_TODAYS_EXC_ACCOUNT,
+    FG_AR_TODAYS_EXC_AGING,
+})

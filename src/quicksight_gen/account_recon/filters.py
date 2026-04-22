@@ -32,6 +32,23 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     DS_AR_UNIFIED_EXCEPTIONS,
+    FG_AR_BALANCES_LEDGER_DRIFT,
+    FG_AR_BALANCES_OVERDRAFT,
+    FG_AR_BALANCES_SUBLEDGER_DRIFT,
+    FG_AR_DATE_RANGE,
+    FG_AR_DS_ACCOUNT,
+    FG_AR_DS_BALANCE_DATE,
+    FG_AR_LEDGER_ACCOUNT,
+    FG_AR_ORIGIN,
+    FG_AR_POSTING_LEVEL,
+    FG_AR_SUBLEDGER_ACCOUNT,
+    FG_AR_TODAYS_EXC_ACCOUNT,
+    FG_AR_TODAYS_EXC_AGING,
+    FG_AR_TODAYS_EXC_CHECK_TYPE,
+    FG_AR_TRANSACTION_STATUS,
+    FG_AR_TRANSACTIONS_FAILED,
+    FG_AR_TRANSFER_STATUS,
+    FG_AR_TRANSFER_TYPE,
     SHEET_AR_BALANCES,
     SHEET_AR_DAILY_STATEMENT,
     SHEET_AR_EXCEPTIONS_TRENDS,
@@ -113,7 +130,7 @@ def _date_range_filter_group() -> FilterGroup:
     selected sheets.
     """
     return FilterGroup(
-        FilterGroupId="fg-ar-date-range",
+        FilterGroupId=FG_AR_DATE_RANGE,
         CrossDataset="ALL_DATASETS",
         ScopeConfiguration=_selected_sheets_scope(_ALL_SHEETS),
         Status="ENABLED",
@@ -197,7 +214,7 @@ def _multi_select_filter_group(
 
 def _ledger_account_filter_group() -> FilterGroup:
     return _multi_select_filter_group(
-        fg_id="fg-ar-ledger-account",
+        fg_id=FG_AR_LEDGER_ACCOUNT,
         filter_id="filter-ar-ledger-account",
         title="Ledger Account",
         dataset_id=DS_AR_LEDGER_ACCOUNTS,
@@ -208,7 +225,7 @@ def _ledger_account_filter_group() -> FilterGroup:
 
 def _subledger_account_filter_group() -> FilterGroup:
     return _multi_select_filter_group(
-        fg_id="fg-ar-subledger-account",
+        fg_id=FG_AR_SUBLEDGER_ACCOUNT,
         filter_id="filter-ar-subledger-account",
         title="Sub-Ledger Account",
         dataset_id=DS_AR_SUBLEDGER_ACCOUNTS,
@@ -219,7 +236,7 @@ def _subledger_account_filter_group() -> FilterGroup:
 
 def _transfer_status_filter_group() -> FilterGroup:
     return _multi_select_filter_group(
-        fg_id="fg-ar-transfer-status",
+        fg_id=FG_AR_TRANSFER_STATUS,
         filter_id="filter-ar-transfer-status",
         title="Transfer Status",
         dataset_id=DS_AR_TRANSFER_SUMMARY,
@@ -231,7 +248,7 @@ def _transfer_status_filter_group() -> FilterGroup:
 
 def _transaction_status_filter_group() -> FilterGroup:
     return _multi_select_filter_group(
-        fg_id="fg-ar-transaction-status",
+        fg_id=FG_AR_TRANSACTION_STATUS,
         filter_id="filter-ar-transaction-status",
         title="Transaction Status",
         dataset_id=DS_AR_TRANSACTIONS,
@@ -250,7 +267,7 @@ def _transfer_type_filter_group() -> FilterGroup:
     transfer_type so the filter naturally skips them.
     """
     return _multi_select_filter_group(
-        fg_id="fg-ar-transfer-type",
+        fg_id=FG_AR_TRANSFER_TYPE,
         filter_id="filter-ar-transfer-type",
         title="Transfer Type",
         dataset_id=DS_AR_TRANSACTIONS,
@@ -261,7 +278,7 @@ def _transfer_type_filter_group() -> FilterGroup:
 
 def _posting_level_filter_group() -> FilterGroup:
     return _multi_select_filter_group(
-        fg_id="fg-ar-posting-level",
+        fg_id=FG_AR_POSTING_LEVEL,
         filter_id="filter-ar-posting-level",
         title="Posting Level",
         dataset_id=DS_AR_TRANSACTIONS,
@@ -284,7 +301,7 @@ def _origin_filter_group() -> FilterGroup:
     carries the same column name.
     """
     return _multi_select_filter_group(
-        fg_id="fg-ar-origin",
+        fg_id=FG_AR_ORIGIN,
         filter_id="filter-ar-origin",
         title="Origin",
         dataset_id=DS_AR_TRANSACTIONS,
@@ -368,7 +385,7 @@ _UNIFIED_EXCEPTIONS_SHEETS = [
 
 def _todays_exceptions_check_type_filter_group() -> FilterGroup:
     return _multi_select_filter_group(
-        fg_id="fg-ar-todays-exc-check-type",
+        fg_id=FG_AR_TODAYS_EXC_CHECK_TYPE,
         filter_id="filter-ar-todays-exc-check-type",
         title="Check Type",
         dataset_id=DS_AR_UNIFIED_EXCEPTIONS,
@@ -380,7 +397,7 @@ def _todays_exceptions_check_type_filter_group() -> FilterGroup:
 
 def _todays_exceptions_account_filter_group() -> FilterGroup:
     return _multi_select_filter_group(
-        fg_id="fg-ar-todays-exc-account",
+        fg_id=FG_AR_TODAYS_EXC_ACCOUNT,
         filter_id="filter-ar-todays-exc-account",
         title="Account",
         dataset_id=DS_AR_UNIFIED_EXCEPTIONS,
@@ -392,7 +409,7 @@ def _todays_exceptions_account_filter_group() -> FilterGroup:
 
 def _todays_exceptions_aging_filter_group() -> FilterGroup:
     return _multi_select_filter_group(
-        fg_id="fg-ar-todays-exc-aging",
+        fg_id=FG_AR_TODAYS_EXC_AGING,
         filter_id="filter-ar-todays-exc-aging",
         title="Aging Bucket",
         dataset_id=DS_AR_UNIFIED_EXCEPTIONS,
@@ -415,28 +432,28 @@ def build_filter_groups(cfg: Config) -> list[FilterGroup]:
         _origin_filter_group(),
         # Show-Only toggles — one filter group per toggle.
         _state_toggle_filter_group(
-            "fg-ar-balances-ledger-drift",
+            FG_AR_BALANCES_LEDGER_DRIFT,
             "filter-ar-balances-ledger-drift",
             SHEET_AR_BALANCES,
             DS_AR_LEDGER_BALANCE_DRIFT,
             "drift_status",
         ),
         _state_toggle_filter_group(
-            "fg-ar-balances-subledger-drift",
+            FG_AR_BALANCES_SUBLEDGER_DRIFT,
             "filter-ar-balances-subledger-drift",
             SHEET_AR_BALANCES,
             DS_AR_SUBLEDGER_BALANCE_DRIFT,
             "drift_status",
         ),
         _state_toggle_filter_group(
-            "fg-ar-balances-overdraft",
+            FG_AR_BALANCES_OVERDRAFT,
             "filter-ar-balances-overdraft",
             SHEET_AR_BALANCES,
             DS_AR_SUBLEDGER_BALANCE_DRIFT,
             "overdraft_status",
         ),
         _state_toggle_filter_group(
-            "fg-ar-transactions-failed",
+            FG_AR_TRANSACTIONS_FAILED,
             "filter-ar-transactions-failed",
             SHEET_AR_TRANSACTIONS,
             DS_AR_TRANSACTIONS,
@@ -640,7 +657,7 @@ def _daily_statement_account_filter_group() -> FilterGroup:
     cues the next move.
     """
     return FilterGroup(
-        FilterGroupId="fg-ar-ds-account",
+        FilterGroupId=FG_AR_DS_ACCOUNT,
         CrossDataset="ALL_DATASETS",
         ScopeConfiguration=_selected_sheets_scope([SHEET_AR_DAILY_STATEMENT]),
         Status="ENABLED",
@@ -676,7 +693,7 @@ def _daily_statement_date_filter_group() -> FilterGroup:
     broken in the UI).
     """
     return FilterGroup(
-        FilterGroupId="fg-ar-ds-balance-date",
+        FilterGroupId=FG_AR_DS_BALANCE_DATE,
         CrossDataset="ALL_DATASETS",
         ScopeConfiguration=_selected_sheets_scope([SHEET_AR_DAILY_STATEMENT]),
         Status="ENABLED",

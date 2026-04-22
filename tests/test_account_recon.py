@@ -21,6 +21,25 @@ import pytest
 from click.testing import CliRunner
 
 from quicksight_gen.account_recon.constants import (
+    ALL_FG_AR_IDS,
+    FG_AR_BALANCES_LEDGER_DRIFT,
+    FG_AR_BALANCES_OVERDRAFT,
+    FG_AR_BALANCES_SUBLEDGER_DRIFT,
+    FG_AR_DATE_RANGE,
+    FG_AR_DRILL_ACCOUNT_ON_TXN,
+    FG_AR_DRILL_ACTIVITY_DATE_ON_TXN,
+    FG_AR_DRILL_LEDGER_ON_BALANCES_SUBLEDGER,
+    FG_AR_DRILL_SUBLEDGER_ON_TXN,
+    FG_AR_DRILL_TRANSFER_ON_TXN,
+    FG_AR_DRILL_TRANSFER_TYPE_ON_TXN,
+    FG_AR_DS_ACCOUNT,
+    FG_AR_DS_BALANCE_DATE,
+    FG_AR_LEDGER_ACCOUNT,
+    FG_AR_SUBLEDGER_ACCOUNT,
+    FG_AR_TRANSACTION_STATUS,
+    FG_AR_TRANSACTIONS_FAILED,
+    FG_AR_TRANSFER_STATUS,
+    FG_AR_TRANSFER_TYPE,
     SHEET_AR_BALANCES,
     SHEET_AR_DAILY_STATEMENT,
     SHEET_AR_EXCEPTIONS_TRENDS,
@@ -2235,40 +2254,14 @@ class TestFilterGroups:
     5 drill-down parameter filters + Daily Statement (account/date) +
     Today's Exceptions (check-type/account/aging) filter groups."""
 
-    _EXPECTED_IDS = {
-        "fg-ar-date-range",
-        "fg-ar-ledger-account",
-        "fg-ar-subledger-account",
-        "fg-ar-transfer-status",
-        "fg-ar-transaction-status",
-        "fg-ar-transfer-type",
-        "fg-ar-posting-level",
-        "fg-ar-origin",
-        "fg-ar-balances-ledger-drift",
-        "fg-ar-balances-subledger-drift",
-        "fg-ar-balances-overdraft",
-        "fg-ar-transactions-failed",
-        "fg-ar-drill-subledger-on-txn",
-        "fg-ar-drill-transfer-on-txn",
-        "fg-ar-drill-ledger-on-balances-subledger",
-        "fg-ar-drill-activity-date-on-txn",
-        "fg-ar-drill-transfer-type-on-txn",
-        "fg-ar-drill-account-on-txn",
-        "fg-ar-ds-account",
-        "fg-ar-ds-balance-date",
-        "fg-ar-todays-exc-check-type",
-        "fg-ar-todays-exc-account",
-        "fg-ar-todays-exc-aging",
-    }
-
     def test_filter_group_ids(self, ar_output_dir):
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
         ids = {fg["FilterGroupId"] for fg in analysis["Definition"]["FilterGroups"]}
-        assert ids == self._EXPECTED_IDS
+        assert ids == ALL_FG_AR_IDS
 
     def test_date_range_scopes_five_tabs(self, ar_output_dir):
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
-        fg = _find_fg(analysis, "fg-ar-date-range")
+        fg = _find_fg(analysis, FG_AR_DATE_RANGE)
         scopes = fg["ScopeConfiguration"]["SelectedSheets"][
             "SheetVisualScopingConfigurations"
         ]
@@ -2284,9 +2277,9 @@ class TestFilterGroups:
     @pytest.mark.parametrize(
         "fg_id",
         [
-            "fg-ar-ledger-account",
-            "fg-ar-subledger-account",
-            "fg-ar-transfer-type",
+            FG_AR_LEDGER_ACCOUNT,
+            FG_AR_SUBLEDGER_ACCOUNT,
+            FG_AR_TRANSFER_TYPE,
         ],
     )
     def test_cross_tab_multi_select_has_default_dropdown(
@@ -2305,7 +2298,7 @@ class TestFilterGroups:
 
     @pytest.mark.parametrize(
         "fg_id",
-        ["fg-ar-transfer-status", "fg-ar-transaction-status"],
+        [FG_AR_TRANSFER_STATUS, FG_AR_TRANSACTION_STATUS],
     )
     def test_single_dataset_multi_select_omits_default_control(
         self, ar_output_dir, fg_id: str,
@@ -2322,10 +2315,10 @@ class TestFilterGroups:
     @pytest.mark.parametrize(
         "fg_id, sheet_id",
         [
-            ("fg-ar-balances-ledger-drift", SHEET_AR_BALANCES),
-            ("fg-ar-balances-subledger-drift", SHEET_AR_BALANCES),
-            ("fg-ar-balances-overdraft", SHEET_AR_BALANCES),
-            ("fg-ar-transactions-failed", SHEET_AR_TRANSACTIONS),
+            (FG_AR_BALANCES_LEDGER_DRIFT, SHEET_AR_BALANCES),
+            (FG_AR_BALANCES_SUBLEDGER_DRIFT, SHEET_AR_BALANCES),
+            (FG_AR_BALANCES_OVERDRAFT, SHEET_AR_BALANCES),
+            (FG_AR_TRANSACTIONS_FAILED, SHEET_AR_TRANSACTIONS),
         ],
     )
     def test_show_only_toggle_scoped_to_single_sheet(
@@ -2496,42 +2489,42 @@ class TestDrillDownFilterGroups:
         "fg_id, parameter_name, column_name, sheet_id, calc_field_name",
         [
             (
-                "fg-ar-drill-subledger-on-txn",
+                FG_AR_DRILL_SUBLEDGER_ON_TXN,
                 "pArSubledgerAccountId",
                 "subledger_account_id",
                 SHEET_AR_TRANSACTIONS,
                 "_drill_pass_pArSubledgerAccountId_on_txn",
             ),
             (
-                "fg-ar-drill-transfer-on-txn",
+                FG_AR_DRILL_TRANSFER_ON_TXN,
                 "pArTransferId",
                 "transfer_id",
                 SHEET_AR_TRANSACTIONS,
                 "_drill_pass_pArTransferId_on_txn",
             ),
             (
-                "fg-ar-drill-activity-date-on-txn",
+                FG_AR_DRILL_ACTIVITY_DATE_ON_TXN,
                 "pArActivityDate",
                 "posted_date",
                 SHEET_AR_TRANSACTIONS,
                 "_drill_pass_pArActivityDate_on_txn",
             ),
             (
-                "fg-ar-drill-transfer-type-on-txn",
+                FG_AR_DRILL_TRANSFER_TYPE_ON_TXN,
                 "pArTransferType",
                 "transfer_type",
                 SHEET_AR_TRANSACTIONS,
                 "_drill_pass_pArTransferType_on_txn",
             ),
             (
-                "fg-ar-drill-account-on-txn",
+                FG_AR_DRILL_ACCOUNT_ON_TXN,
                 "pArAccountId",
                 "account_id",
                 SHEET_AR_TRANSACTIONS,
                 "_drill_pass_pArAccountId_on_txn",
             ),
             (
-                "fg-ar-drill-ledger-on-balances-subledger",
+                FG_AR_DRILL_LEDGER_ON_BALANCES_SUBLEDGER,
                 "pArLedgerAccountId",
                 "ledger_account_id",
                 SHEET_AR_BALANCES,
@@ -2598,7 +2591,7 @@ class TestDrillDownFilterGroups:
         table; it's scoped to the sub-ledger table visual only via
         SELECTED_VISUALS."""
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
-        fg = _find_fg(analysis, "fg-ar-drill-ledger-on-balances-subledger")
+        fg = _find_fg(analysis, FG_AR_DRILL_LEDGER_ON_BALANCES_SUBLEDGER)
         scope = fg["ScopeConfiguration"]["SelectedSheets"][
             "SheetVisualScopingConfigurations"
         ][0]
@@ -2914,7 +2907,7 @@ class TestDailyStatementFilters:
         would aggregate KPIs across every account on first load — a
         single unified statement that doesn't make business sense."""
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
-        fg = _find_fg(analysis, "fg-ar-ds-account")
+        fg = _find_fg(analysis, FG_AR_DS_ACCOUNT)
         cf = fg["Filters"][0]["CategoryFilter"]
         custom = cf["Configuration"]["CustomFilterConfiguration"]
         assert custom["MatchOperator"] == "EQUALS"
@@ -2930,7 +2923,7 @@ class TestDailyStatementFilters:
         deploy time). Lock the filter type so a future swap to
         TimeRangeFilter is caught here."""
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
-        fg = _find_fg(analysis, "fg-ar-ds-balance-date")
+        fg = _find_fg(analysis, FG_AR_DS_BALANCE_DATE)
         f = fg["Filters"][0]
         assert "TimeEqualityFilter" in f
         assert "TimeRangeFilter" not in f
@@ -2941,7 +2934,7 @@ class TestDailyStatementFilters:
 
     @pytest.mark.parametrize(
         "fg_id",
-        ["fg-ar-ds-account", "fg-ar-ds-balance-date"],
+        [FG_AR_DS_ACCOUNT, FG_AR_DS_BALANCE_DATE],
     )
     def test_filter_scoped_to_daily_statement_only(
         self, ar_output_dir, fg_id: str,
@@ -2959,7 +2952,7 @@ class TestDailyStatementFilters:
 
     @pytest.mark.parametrize(
         "fg_id",
-        ["fg-ar-ds-account", "fg-ar-ds-balance-date"],
+        [FG_AR_DS_ACCOUNT, FG_AR_DS_BALANCE_DATE],
     )
     def test_filter_uses_all_datasets_so_summary_and_detail_both_filter(
         self, ar_output_dir, fg_id: str,

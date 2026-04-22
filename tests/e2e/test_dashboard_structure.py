@@ -4,6 +4,14 @@ from __future__ import annotations
 
 import pytest
 
+from quicksight_gen.payment_recon.constants import (
+    FG_PR_PAYMENT_METHOD,
+    FG_PR_PAYMENTS_UNMATCHED,
+    FG_PR_SALES_UNSETTLED,
+    FG_PR_SETTLEMENTS_UNPAID,
+    SalesMeta,
+)
+
 
 pytestmark = [pytest.mark.e2e, pytest.mark.api]
 
@@ -153,13 +161,14 @@ class TestFilterGroups:
     def test_payment_method_filter_present(self, dashboard_definition):
         groups = dashboard_definition.get("FilterGroups", [])
         ids = {g["FilterGroupId"] for g in groups}
-        assert "fg-payment-method" in ids
+        assert FG_PR_PAYMENT_METHOD in ids
 
     def test_optional_metadata_filters_present(self, dashboard_definition):
         groups = dashboard_definition.get("FilterGroups", [])
         ids = {g["FilterGroupId"] for g in groups}
         for col in ("taxes", "tips", "discount_percentage", "cashier"):
-            assert f"fg-sales-meta-{col}" in ids, (
+            fg_id = SalesMeta(col).fg_id
+            assert fg_id in ids, (
                 f"Missing optional metadata filter for '{col}'"
             )
 
@@ -168,9 +177,9 @@ class TestFilterGroups:
         should still carry the retired days-outstanding slider."""
         ids = {g["FilterGroupId"] for g in dashboard_definition.get("FilterGroups", [])}
         for fg_id in (
-            "fg-sales-unsettled",
-            "fg-settlements-unpaid",
-            "fg-payments-unmatched",
+            FG_PR_SALES_UNSETTLED,
+            FG_PR_SETTLEMENTS_UNPAID,
+            FG_PR_PAYMENTS_UNMATCHED,
         ):
             assert fg_id in ids, f"Missing state toggle filter group '{fg_id}'"
         stale = [fg_id for fg_id in ids if "days-outstanding" in fg_id]

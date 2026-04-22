@@ -16,6 +16,7 @@ from quicksight_gen.payment_recon.constants import (
     DS_SETTLEMENT_PAYMENT_MISMATCH,
     DS_SETTLEMENTS,
     DS_UNMATCHED_EXTERNAL_TXNS,
+    DrillBinding,
     SHEET_EXCEPTIONS,
     SHEET_GETTING_STARTED,
     SHEET_PAYMENT_RECON,
@@ -698,22 +699,28 @@ def _ext_txn_id_filter_group(
 
 def _build_payment_recon_definition(cfg: Config) -> AnalysisDefinition:
     """Build the definition shared by both the analysis and dashboard."""
+    settle_on_sales = DrillBinding("settlement", "sales")
+    settle_on_settlements = DrillBinding("settlement", "settlements")
+    payment_on_payments = DrillBinding("payment", "payments")
+    ext_on_recon = DrillBinding("ext-txn", "recon")
+    ext_on_payments = DrillBinding("ext-txn", "payments")
+
     drill_down_filters = [
         _settlement_id_filter_group(
-            "fg-drill-settlement-on-sales",
-            "filter-drill-settlement-on-sales",
+            settle_on_sales.fg_id,
+            settle_on_sales.filter_id,
             DS_SALES,
             SHEET_SALES,
         ),
         _settlement_id_filter_group(
-            "fg-drill-settlement-on-settlements",
-            "filter-drill-settlement-on-settlements",
+            settle_on_settlements.fg_id,
+            settle_on_settlements.filter_id,
             DS_SETTLEMENTS,
             SHEET_SETTLEMENTS,
         ),
         _payment_id_filter_group(
-            "fg-drill-payment-on-payments",
-            "filter-drill-payment-on-payments",
+            payment_on_payments.fg_id,
+            payment_on_payments.filter_id,
             DS_PAYMENTS,
             SHEET_PAYMENTS,
         ),
@@ -721,14 +728,14 @@ def _build_payment_recon_definition(cfg: Config) -> AnalysisDefinition:
 
     recon_drill_down_filters = [
         _ext_txn_id_filter_group(
-            "fg-drill-ext-txn-on-recon",
-            "filter-drill-ext-txn-on-recon",
+            ext_on_recon.fg_id,
+            ext_on_recon.filter_id,
             DS_PAYMENT_RECON,
             "transaction_id",
         ),
         _ext_txn_id_filter_group(
-            "fg-drill-ext-txn-on-payments",
-            "filter-drill-ext-txn-on-payments",
+            ext_on_payments.fg_id,
+            ext_on_payments.filter_id,
             DS_PAYMENTS,
             "external_transaction_id",
         ),

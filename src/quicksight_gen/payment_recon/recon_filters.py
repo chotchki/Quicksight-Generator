@@ -15,6 +15,12 @@ from __future__ import annotations
 from quicksight_gen.common.config import Config
 from quicksight_gen.payment_recon.constants import (
     DS_PAYMENT_RECON,
+    FG_PR_RECON_DATE_RANGE,
+    FG_PR_RECON_EXTERNAL_SYSTEM,
+    FG_PR_RECON_KPI_LATE_ONLY,
+    FG_PR_RECON_KPI_MATCHED_ONLY,
+    FG_PR_RECON_KPI_UNMATCHED_ONLY,
+    FG_PR_RECON_MATCH_STATUS,
     SHEET_PAYMENT_RECON,
 )
 from quicksight_gen.payment_recon.filters import _visual_scoped_pinned_filter_group
@@ -54,7 +60,7 @@ def _recon_scope() -> FilterScopeConfiguration:
 def _recon_date_range_filter_group() -> FilterGroup:
     """Date range filter on transaction_date."""
     return FilterGroup(
-        FilterGroupId="fg-recon-date-range",
+        FilterGroupId=FG_PR_RECON_DATE_RANGE,
         CrossDataset="SINGLE_DATASET",
         ScopeConfiguration=_recon_scope(),
         Status="ENABLED",
@@ -77,7 +83,7 @@ def _recon_date_range_filter_group() -> FilterGroup:
 def _recon_match_status_filter_group() -> FilterGroup:
     """Match status dropdown."""
     return FilterGroup(
-        FilterGroupId="fg-recon-match-status",
+        FilterGroupId=FG_PR_RECON_MATCH_STATUS,
         CrossDataset="SINGLE_DATASET",
         ScopeConfiguration=_recon_scope(),
         Status="ENABLED",
@@ -104,7 +110,7 @@ def _recon_match_status_filter_group() -> FilterGroup:
 def _recon_external_system_filter_group() -> FilterGroup:
     """External system dropdown."""
     return FilterGroup(
-        FilterGroupId="fg-recon-external-system",
+        FilterGroupId=FG_PR_RECON_EXTERNAL_SYSTEM,
         CrossDataset="SINGLE_DATASET",
         ScopeConfiguration=_recon_scope(),
         Status="ENABLED",
@@ -139,7 +145,7 @@ def build_recon_filter_groups(cfg: Config) -> list[FilterGroup]:
         # side-by-side tables on this sheet legitimately span all match
         # statuses, so the fix can't be sheet-wide.
         _visual_scoped_pinned_filter_group(
-            "fg-recon-kpi-late-only",
+            FG_PR_RECON_KPI_LATE_ONLY,
             "filter-recon-kpi-late-only",
             SHEET_PAYMENT_RECON,
             ["recon-kpi-late-count"],
@@ -148,7 +154,7 @@ def build_recon_filter_groups(cfg: Config) -> list[FilterGroup]:
             ["late"],
         ),
         _visual_scoped_pinned_filter_group(
-            "fg-recon-kpi-matched-only",
+            FG_PR_RECON_KPI_MATCHED_ONLY,
             "filter-recon-kpi-matched-only",
             SHEET_PAYMENT_RECON,
             ["recon-kpi-matched-amount"],
@@ -157,7 +163,7 @@ def build_recon_filter_groups(cfg: Config) -> list[FilterGroup]:
             ["matched"],
         ),
         _visual_scoped_pinned_filter_group(
-            "fg-recon-kpi-unmatched-only",
+            FG_PR_RECON_KPI_UNMATCHED_ONLY,
             "filter-recon-kpi-unmatched-only",
             SHEET_PAYMENT_RECON,
             ["recon-kpi-unmatched-amount"],
