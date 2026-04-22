@@ -246,6 +246,70 @@ SASQUATCH_BANK_AR_PRESET = ThemePreset(
 
 
 # ---------------------------------------------------------------------------
+# Sasquatch National Bank — Investigation preset — slate blue, amber alert
+# ---------------------------------------------------------------------------
+#
+# Investigation (compliance / AML) gets a distinct palette from PR (forest
+# green) and AR (valley green) because the operational mode is different:
+# investigation is an alert/triage surface, so the palette leans cooler with
+# warm-amber accents reserved for flagged rows.
+
+# Slate blues (dark → light)
+_SLATE_DEEP = "#1F2A44"
+_SLATE_BLUE = "#36507A"
+_HARBOR = "#5B7AA6"
+_MIST = "#A6BBD9"
+_PALE_HARBOR = "#D9E2F0"
+
+# Alert tones
+_ALERT_AMBER = "#D97A1F"
+_DEEP_AMBER = "#A65A14"
+_SIGNAL_RED = "#A33038"
+
+# Neutrals
+_GRAPHITE = "#2A2E36"
+_SLATE_GREY = "#646A78"
+_PARCHMENT_COOL = "#F4F5F8"
+
+SASQUATCH_BANK_INVESTIGATION_PRESET = ThemePreset(
+    theme_name="Sasquatch National Bank — Investigation Theme",
+    version_description=(
+        "Sasquatch National Bank Investigation — slate blue with amber alert palette"
+    ),
+    analysis_name_prefix="Demo",
+    data_colors=[
+        _SLATE_BLUE,
+        _ALERT_AMBER,
+        _HARBOR,
+        _DEEP_AMBER,
+        "#5E8B7E",       # pond teal
+        _MIST,
+        "#6B4C8A",       # plum
+        _SLATE_GREY,
+    ],
+    empty_fill_color="#D6D9E0",
+    gradient=[_PALE_HARBOR, _SLATE_DEEP],
+    primary_bg=_WHITE,
+    secondary_bg=_PARCHMENT_COOL,
+    primary_fg=_GRAPHITE,
+    secondary_fg=_SLATE_GREY,
+    accent=_SLATE_BLUE,
+    accent_fg=_WHITE,
+    link_tint="#E5ECF5",
+    danger=_SIGNAL_RED,
+    danger_fg=_WHITE,
+    warning=_ALERT_AMBER,
+    warning_fg=_WHITE,
+    success="#3A7B53",
+    success_fg=_WHITE,
+    dimension=_HARBOR,
+    dimension_fg=_WHITE,
+    measure=_SLATE_DEEP,
+    measure_fg=_WHITE,
+)
+
+
+# ---------------------------------------------------------------------------
 # Preset registry
 # ---------------------------------------------------------------------------
 
@@ -253,6 +317,7 @@ PRESETS: dict[str, ThemePreset] = {
     "default": DEFAULT_PRESET,
     "sasquatch-bank": SASQUATCH_BANK_PRESET,
     "sasquatch-bank-ar": SASQUATCH_BANK_AR_PRESET,
+    "sasquatch-bank-investigation": SASQUATCH_BANK_INVESTIGATION_PRESET,
 }
 
 

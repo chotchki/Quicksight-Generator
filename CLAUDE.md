@@ -1,9 +1,10 @@
 # QuickSight Analysis Generator
 
-Python tool that programmatically generates AWS QuickSight JSON definitions (theme, datasets, analyses, dashboards) and deploys them via boto3. Ships **two independent QuickSight apps** sharing one theme, account, datasource, and CLI surface:
+Python tool that programmatically generates AWS QuickSight JSON definitions (theme, datasets, analyses, dashboards) and deploys them via boto3. Ships **three independent QuickSight apps** sharing one theme registry, account, datasource, and CLI surface:
 
 - **Payment Reconciliation** — 6 sheets: Getting Started, Sales, Settlements, Payments, Exceptions, Payment Reconciliation
 - **Account Reconciliation** — 5 sheets: Getting Started, Balances, Transfers, Transactions, Exceptions
+- **Investigation** — 4 sheets: Getting Started, Recipient Fanout, Volume Anomalies, Money Trail. *K.4.2 skeleton only — visuals land in K.4.3 / K.4.4 / K.4.5; demo seed in K.4.6.*
 
 The customer doesn't know exactly what they want yet. Everything is generated from code and deployed idempotently (delete-then-create) so a change is one command to roll out.
 
@@ -53,7 +54,7 @@ pytest                              # unit + integration, fast, no AWS
 ./run_e2e.sh --skip-deploy browser  # browser e2e only
 ```
 
-`demo apply` is app-scoped: `demo apply payment-recon` generates with the `sasquatch-bank` preset; `demo apply account-recon` uses `sasquatch-bank-ar`; `--all` generates both with each app's natural preset. Schema is always loaded in full — both apps feed the same `transactions` + `daily_balances` base tables, plus AR-only dimension tables (`ar_ledger_accounts`, `ar_subledger_accounts`, `ar_ledger_transfer_limits`).
+`demo apply` is app-scoped: `demo apply payment-recon` generates with the `sasquatch-bank` preset; `demo apply account-recon` uses `sasquatch-bank-ar`; `demo apply investigation` uses `sasquatch-bank-investigation`; `--all` generates all three with each app's natural preset. Schema is always loaded in full — all three apps feed the same `transactions` + `daily_balances` base tables, plus AR-only dimension tables (`ar_ledger_accounts`, `ar_subledger_accounts`, `ar_ledger_transfer_limits`). Investigation reads the shared base tables only — no investigation-specific schema.
 
 ## Generated Output
 
@@ -111,7 +112,7 @@ src/quicksight_gen/
   common/
     config.py            # Config dataclass + YAML/env loader (principal_arns list, theme_preset)
     models.py            # Dataclasses mapping to QuickSight API JSON (to_aws_json + _strip_nones)
-    theme.py             # Theme presets (default / sasquatch-bank / sasquatch-bank-ar); PRESETS registry
+    theme.py             # Theme presets (default / sasquatch-bank / sasquatch-bank-ar / sasquatch-bank-investigation); PRESETS registry
     deploy.py            # boto3 delete-then-create deploy with async waiters
     cleanup.py           # Tag-based cleanup of stale resources (ManagedBy:quicksight-gen)
     dataset_contract.py  # ColumnSpec, DatasetContract, build_dataset() — shared dataset constructor
@@ -135,6 +136,14 @@ src/quicksight_gen/
       datasets.py          # 21 custom-SQL datasets (9 baseline + 9 CMS checks + 3 rollups)
       demo_data.py         # Sasquatch National Bank — CMS treasury demo generator
       constants.py         # Sheet + dataset identifier constants
+    investigation/         # K.4.2 skeleton — sheets land in K.4.3 / K.4.4 / K.4.5
+      analysis.py          # 4 sheets: Getting Started + Recipient Fanout / Volume Anomalies / Money Trail stubs
+      visuals.py           # placeholder
+      filters.py           # placeholder (no filter groups yet)
+      datasets.py          # placeholder (no datasets yet)
+      demo_data.py         # placeholder (K.4.6 plants scenarios)
+      etl_examples.py      # placeholder (no app-specific ETL keys; PR/AR examples cover the shape)
+      constants.py         # SheetId constants
 demo/
   schema.sql             # Full PostgreSQL DDL — shared `transactions` + `daily_balances` base layer + AR dimension tables
 docs/
