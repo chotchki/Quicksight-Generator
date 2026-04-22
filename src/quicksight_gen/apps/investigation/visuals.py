@@ -23,6 +23,7 @@ chain via the chain-root parameter.
 
 from __future__ import annotations
 
+from quicksight_gen.apps.account_recon.constants import P_AR_ACCOUNT, P_AR_TRANSFER
 from quicksight_gen.apps.investigation.constants import (
     CF_INV_FANOUT_DISTINCT_SENDERS,
     DS_INV_MONEY_TRAIL,
@@ -38,6 +39,8 @@ from quicksight_gen.apps.investigation.constants import (
     V_INV_MONEY_TRAIL_SANKEY,
     V_INV_MONEY_TRAIL_TABLE,
 )
+from quicksight_gen.common.config import Config
+from quicksight_gen.common.drill import cross_app_drill, url_column
 from quicksight_gen.common.models import (
     BarChartAggregatedFieldWells,
     BarChartConfiguration,
@@ -167,6 +170,44 @@ def _subtitle(text: str) -> VisualSubtitleLabelOptions:
 
 
 # ---------------------------------------------------------------------------
+# Cross-app drill targets (K.4.7) — Investigation rows drill into AR
+# Transactions via URL-action deep-links. PR drill is deferred: the K.4.6
+# seed plants only ach_transfer / wire chains, so no money-trail edge
+# crosses external_txn / payment / settlement territory yet. When richer
+# scenarios land, add a second cross_app_drill targeting PR's pSettlement
+# / pPayment / pExternalTransaction params (will need their own
+# transfer-id-shaped variants since PR's id params are typed by ID kind,
+# not raw transfer_id).
+# ---------------------------------------------------------------------------
+
+_AR_DASHBOARD_SUFFIX = "account-recon-dashboard"
+
+
+def _drill_ar_transactions_by_account(
+    cfg: Config, action_id: str, source_dataset_id: str, source_column: str,
+):
+    return cross_app_drill(
+        action_id=action_id,
+        name="View in AR Transactions",
+        target_dashboard_id=cfg.prefixed(_AR_DASHBOARD_SUFFIX),
+        region=cfg.aws_region,
+        writes=[(P_AR_ACCOUNT, url_column(source_dataset_id, source_column))],
+    )
+
+
+def _drill_ar_transactions_by_transfer(
+    cfg: Config, action_id: str, source_dataset_id: str,
+):
+    return cross_app_drill(
+        action_id=action_id,
+        name="View this transfer in AR Transactions",
+        target_dashboard_id=cfg.prefixed(_AR_DASHBOARD_SUFFIX),
+        region=cfg.aws_region,
+        writes=[(P_AR_TRANSFER, url_column(source_dataset_id, "transfer_id"))],
+    )
+
+
+# ---------------------------------------------------------------------------
 # Recipient Fanout visuals
 # ---------------------------------------------------------------------------
 
@@ -244,7 +285,7 @@ def _kpi_amount() -> Visual:
     )
 
 
-def _recipient_table() -> Visual:
+def _recipient_table(cfg: Config) -> Visual:
     """One row per qualifying recipient, sorted by distinct sender count.
 
     Aggregated to recipient grain via GroupBy on the recipient identity
@@ -252,7 +293,7 @@ def _recipient_table() -> Visual:
     whose recipient meets the slider's current value, so every recipient
     in the table is "interesting" by definition.
 
-    K.4.7 wires a per-row drill into AR Transactions filtered to the
+    K.4.7 wires a right-click drill into AR Transactions filtered to the
     recipient's account_id — that's why the dataset stays at the legs
     grain underneath.
     """
@@ -262,8 +303,17 @@ def _recipient_table() -> Visual:
             Title=_title("Recipient Fanout — Ranked"),
             Subtitle=_subtitle(
                 "One row per recipient. Ranked by distinct sender count "
-                "(highest = widest funnel)."
+                "(highest = widest funnel). Right-click → View in AR "
+                "Transactions to drill the recipient's full ledger."
             ),
+            Actions=[
+                _drill_ar_transactions_by_account(
+                    cfg,
+                    action_id="inv-fanout-tbl-drill-ar",
+                    source_dataset_id=DS_INV_RECIPIENT_FANOUT,
+                    source_column="recipient_account_id",
+                ),
+            ],
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
                     TableAggregatedFieldWells=TableAggregatedFieldWells(
@@ -312,12 +362,12 @@ def _recipient_table() -> Visual:
     )
 
 
-def build_fanout_visuals() -> list[Visual]:
+def build_fanout_visuals(cfg: Config) -> list[Visual]:
     return [
         _kpi_recipients(),
         _kpi_senders(),
         _kpi_amount(),
-        _recipient_table(),
+        _recipient_table(cfg),
     ]
 
 
@@ -404,12 +454,17 @@ def _distribution_chart() -> Visual:
     )
 
 
-def _anomalies_table() -> Visual:
+def _anomalies_table(cfg: Config) -> Visual:
     """Flagged windows ranked by σ desc.
 
     Table aggregates to (sender, recipient, window_end) grain — one row
     per flagged window. The σ filter is wired to this visual via the
     SELECTED_VISUALS scope, so dragging the slider narrows the rows.
+
+    K.4.7 right-click drill into AR Transactions writes the recipient's
+    account_id only; the analyst can re-narrow by date in AR using its
+    existing date controls. Date passing is deferred until VOLUME_ANOMALIES
+    surfaces a YYYY-MM-DD text column compatible with pArActivityDate.
     """
     return Visual(
         TableVisual=TableVisual(
@@ -417,8 +472,18 @@ def _anomalies_table() -> Visual:
             Title=_title("Flagged Pair-Windows — Ranked"),
             Subtitle=_subtitle(
                 "One row per flagged 2-day window. Ranked by z-score "
-                "(highest = furthest from the population mean)."
+                "(highest = furthest from the population mean). "
+                "Right-click → View in AR Transactions to drill the "
+                "recipient's full ledger."
             ),
+            Actions=[
+                _drill_ar_transactions_by_account(
+                    cfg,
+                    action_id="inv-anomalies-tbl-drill-ar",
+                    source_dataset_id=DS_INV_VOLUME_ANOMALIES,
+                    source_column="recipient_account_id",
+                ),
+            ],
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
                     TableAggregatedFieldWells=TableAggregatedFieldWells(
@@ -473,11 +538,11 @@ def _anomalies_table() -> Visual:
     )
 
 
-def build_anomalies_visuals() -> list[Visual]:
+def build_anomalies_visuals(cfg: Config) -> list[Visual]:
     return [
         _kpi_anomalies_flagged(),
         _distribution_chart(),
-        _anomalies_table(),
+        _anomalies_table(cfg),
     ]
 
 
@@ -562,7 +627,7 @@ def _money_trail_sankey() -> Visual:
     )
 
 
-def _money_trail_table() -> Visual:
+def _money_trail_table(cfg: Config) -> Visual:
     """Hop-by-hop detail table for the selected chain.
 
     Beside the Sankey for legibility — surfaces depth, transfer_id,
@@ -570,6 +635,9 @@ def _money_trail_table() -> Visual:
     the chain reads top-to-bottom from root → leaf. Aggregates to
     (depth, transfer_id, source, target) grain to collapse leg pairs
     that share the same source/target into one row.
+
+    K.4.7 right-click drill into AR Transactions writes the hop's
+    transfer_id. PR drill is deferred — see the cross-app section above.
     """
     return Visual(
         TableVisual=TableVisual(
@@ -577,9 +645,16 @@ def _money_trail_table() -> Visual:
             Title=_title("Money Trail — Hop-by-Hop"),
             Subtitle=_subtitle(
                 "Every edge in the selected chain, ordered root → leaf "
-                "by depth. Drill a row into AR Transactions for the "
-                "underlying transaction legs."
+                "by depth. Right-click → View this transfer in AR "
+                "Transactions to see the underlying legs."
             ),
+            Actions=[
+                _drill_ar_transactions_by_transfer(
+                    cfg,
+                    action_id="inv-money-trail-tbl-drill-ar",
+                    source_dataset_id=DS_INV_MONEY_TRAIL,
+                ),
+            ],
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
                     TableAggregatedFieldWells=TableAggregatedFieldWells(
@@ -627,8 +702,8 @@ def _money_trail_table() -> Visual:
     )
 
 
-def build_money_trail_visuals() -> list[Visual]:
+def build_money_trail_visuals(cfg: Config) -> list[Visual]:
     return [
         _money_trail_sankey(),
-        _money_trail_table(),
+        _money_trail_table(cfg),
     ]

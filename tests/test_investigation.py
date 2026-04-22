@@ -833,6 +833,91 @@ def test_money_trail_sheet_serializes_to_aws_json():
 
 
 # ---------------------------------------------------------------------------
+# K.4.7 — Cross-app URL drills (Investigation → AR)
+#
+# The URL template is an empirical contract with QuickSight — we landed on
+# it after user-driven UI testing showed that ``/account/{alias}/`` and
+# ``/sheets/{sheet_id}`` path components break the ``<<column>>``
+# substitution. Lock the exact form so a well-meaning refactor doesn't
+# silently regress to a URL that QS won't substitute. (Type system can't
+# catch this — it's a runtime contract with an external system.)
+# ---------------------------------------------------------------------------
+
+def _table_with_url_drill(analysis, sheet_id: str, visual_id: str):
+    sheet = next(
+        s for s in analysis.Definition.Sheets if s.SheetId == sheet_id
+    )
+    visual = next(
+        v.TableVisual for v in sheet.Visuals
+        if v.TableVisual and v.TableVisual.VisualId == visual_id
+    )
+    actions = visual.Actions or []
+    url_actions = [
+        a for a in actions
+        if any(op.URLOperation for op in a.ActionOperations)
+    ]
+    assert len(url_actions) == 1, (
+        f"Expected exactly one URL drill on {visual_id!r}, got "
+        f"{len(url_actions)}."
+    )
+    return url_actions[0]
+
+
+def test_fanout_table_url_drill_substitutes_recipient_account_id():
+    analysis = build_analysis(_TEST_CFG)
+    action = _table_with_url_drill(
+        analysis, SHEET_INV_FANOUT, V_INV_FANOUT_TABLE,
+    )
+    assert action.CustomActionId == "inv-fanout-tbl-drill-ar"
+    # Right-click + new tab per K.4.7 convention (drills moving deeper /
+    # cross-analysis live on DATA_POINT_MENU, opened in a new tab so the
+    # source investigation stays available).
+    assert action.Trigger == "DATA_POINT_MENU"
+    url_op = action.ActionOperations[0].URLOperation
+    assert url_op.URLTarget == "NEW_TAB"
+    # Exact URL form — empirically the only shape that QS substitutes
+    # cleanly. Don't add /account/{alias}/ or /sheets/{sheet_id}/ here;
+    # both broke substitution in K.4.7 hand-built samples.
+    assert url_op.URLTemplate == (
+        "https://us-west-2.quicksight.aws.amazon.com/sn/dashboards/"
+        "qs-gen-account-recon-dashboard"
+        "#p.pArAccountId=<<recipient_account_id>>"
+    )
+
+
+def test_anomalies_table_url_drill_substitutes_recipient_account_id():
+    analysis = build_analysis(_TEST_CFG)
+    action = _table_with_url_drill(
+        analysis, SHEET_INV_ANOMALIES, V_INV_ANOMALIES_TABLE,
+    )
+    assert action.CustomActionId == "inv-anomalies-tbl-drill-ar"
+    assert action.Trigger == "DATA_POINT_MENU"
+    url_op = action.ActionOperations[0].URLOperation
+    assert url_op.URLTarget == "NEW_TAB"
+    assert url_op.URLTemplate == (
+        "https://us-west-2.quicksight.aws.amazon.com/sn/dashboards/"
+        "qs-gen-account-recon-dashboard"
+        "#p.pArAccountId=<<recipient_account_id>>"
+    )
+
+
+def test_money_trail_table_url_drill_substitutes_transfer_id():
+    analysis = build_analysis(_TEST_CFG)
+    action = _table_with_url_drill(
+        analysis, SHEET_INV_MONEY_TRAIL, V_INV_MONEY_TRAIL_TABLE,
+    )
+    assert action.CustomActionId == "inv-money-trail-tbl-drill-ar"
+    assert action.Trigger == "DATA_POINT_MENU"
+    url_op = action.ActionOperations[0].URLOperation
+    assert url_op.URLTarget == "NEW_TAB"
+    assert url_op.URLTemplate == (
+        "https://us-west-2.quicksight.aws.amazon.com/sn/dashboards/"
+        "qs-gen-account-recon-dashboard"
+        "#p.pArTransferId=<<transfer_id>>"
+    )
+
+
+# ---------------------------------------------------------------------------
 # CLI wiring
 # ---------------------------------------------------------------------------
 

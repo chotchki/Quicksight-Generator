@@ -584,11 +584,18 @@ class CustomActionFilterOperation:
 
 
 @dataclass
+class CustomActionURLOperation:
+    URLTemplate: str
+    URLTarget: str = "SAME_TAB"  # NEW_TAB|NEW_WINDOW|SAME_TAB
+
+
+@dataclass
 class VisualCustomActionOperation:
     """Union type — set exactly one."""
     NavigationOperation: CustomActionNavigationOperation | None = None
     SetParametersOperation: CustomActionSetParametersOperation | None = None
     FilterOperation: CustomActionFilterOperation | None = None
+    URLOperation: CustomActionURLOperation | None = None
 
 
 @dataclass
