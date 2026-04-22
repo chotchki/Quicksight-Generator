@@ -166,6 +166,35 @@ def ar_dataset_ids(resource_prefix) -> list[str]:
 
 
 @pytest.fixture(scope="session")
+def inv_dashboard_id(resource_prefix) -> str:
+    return f"{resource_prefix}-investigation-dashboard"
+
+
+@pytest.fixture(scope="session")
+def inv_analysis_id(resource_prefix) -> str:
+    return f"{resource_prefix}-investigation-analysis"
+
+
+@pytest.fixture(scope="session")
+def inv_dataset_ids(resource_prefix) -> list[str]:
+    """Expected Investigation dataset IDs.
+
+    K.4.3 ships recipient-fanout. K.4.4 adds volume-anomalies (rolling
+    z-score matview). K.4.5 adds money-trail (recursive-CTE matview).
+    K.4.8 adds account-network (second wrapper over the K.4.5 matview)
+    and a narrow accounts dataset feeding only the anchor dropdown.
+    """
+    suffixes = [
+        "inv-recipient-fanout-dataset",
+        "inv-volume-anomalies-dataset",
+        "inv-money-trail-dataset",
+        "inv-account-network-dataset",
+        "inv-anetwork-accounts-dataset",
+    ]
+    return [f"{resource_prefix}-{s}" for s in suffixes]
+
+
+@pytest.fixture(scope="session")
 def page_timeout() -> int:
     return PAGE_TIMEOUT
 
@@ -196,6 +225,10 @@ _WARMUP_QUERIES = (
     "SELECT COUNT(*) FROM ar_two_sided_post_mismatch_rollup",
     "SELECT COUNT(*) FROM ar_balance_drift_timelines_rollup",
     "SELECT COUNT(*) FROM ar_unified_exceptions",
+    # Investigation matviews — heavier to refresh than to read but the
+    # first SELECT after Aurora cold-starts still pays the warm-up tax.
+    "SELECT COUNT(*) FROM inv_pair_rolling_anomalies",
+    "SELECT COUNT(*) FROM inv_money_trail_edges",
 )
 
 
