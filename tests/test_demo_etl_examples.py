@@ -16,11 +16,11 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from quicksight_gen.account_recon.etl_examples import (
+from quicksight_gen.apps.account_recon.etl_examples import (
     generate_etl_examples_sql as generate_ar_examples,
 )
 from quicksight_gen.cli import main
-from quicksight_gen.payment_recon.etl_examples import (
+from quicksight_gen.apps.payment_recon.etl_examples import (
     generate_etl_examples_sql as generate_pr_examples,
 )
 

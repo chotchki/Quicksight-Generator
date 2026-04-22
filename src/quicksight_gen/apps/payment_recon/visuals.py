@@ -6,7 +6,7 @@ ready to be placed on a sheet.
 
 from __future__ import annotations
 
-from quicksight_gen.payment_recon.constants import (
+from quicksight_gen.apps.payment_recon.constants import (
     DS_PAYMENTS,
     DS_PAYMENT_RETURNS,
     DS_SALE_SETTLEMENT_MISMATCH,
@@ -48,7 +48,7 @@ from quicksight_gen.payment_recon.constants import (
     V_PR_SETTLEMENTS_KPI_AMOUNT,
     V_PR_SETTLEMENTS_KPI_PENDING,
 )
-from quicksight_gen.payment_recon.datasets import OPTIONAL_SALE_METADATA
+from quicksight_gen.apps.payment_recon.datasets import OPTIONAL_SALE_METADATA
 from quicksight_gen.common.aging import aging_bar_visual
 from quicksight_gen.common.clickability import (
     link_text_format,

@@ -40,8 +40,8 @@ Three reference points:
 - **`docs/Schema_v3.md` → metadata catalog tables** — the existing
   per-`transfer_type` key inventory. New keys should slot into the
   same shape (key name, type, what it drives).
-- **`src/quicksight_gen/payment_recon/datasets.py`** and
-  **`src/quicksight_gen/account_recon/datasets.py`** — the SQL
+- **`src/quicksight_gen/apps/payment_recon/datasets.py`** and
+  **`src/quicksight_gen/apps/account_recon/datasets.py`** — the SQL
   patterns. Every metadata extraction looks like
   `JSON_VALUE(metadata, '$.<key>') AS <alias>`; new keys follow
   the same shape.
@@ -64,7 +64,7 @@ literal in the INSERT. The matching dataset SQL:
 
 ```bash
 grep -n "JSON_VALUE(metadata, '\\$.card_brand')" \
-     src/quicksight_gen/payment_recon/datasets.py
+     src/quicksight_gen/apps/payment_recon/datasets.py
 ```
 
 shows the consumer side: `JSON_VALUE(metadata, '$.card_brand') AS

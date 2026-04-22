@@ -53,7 +53,7 @@ def drill_values(cfg) -> dict:
     if not cfg.demo_database_url:
         pytest.skip("demo_database_url required to look up drill values")
     import psycopg2
-    from quicksight_gen.account_recon.datasets import (
+    from quicksight_gen.apps.account_recon.datasets import (
         build_ar_unified_exceptions_dataset,
     )
 

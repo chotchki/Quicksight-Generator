@@ -186,8 +186,8 @@ A few tokens to know about beyond the obvious accent:
   "Demo — Account Reconciliation" and visually distinguish demo
   vs production analyses in the QuickSight authoring UI. The
   resolution lives in `_analysis_name()` at
-  `account_recon/analysis.py:1045` and the equivalent in
-  `payment_recon/analysis.py`.
+  `apps/account_recon/analysis.py:1045` and the equivalent in
+  `apps/payment_recon/analysis.py`.
 - **`data_colors`** — the eight-color series palette. First
   three are most prominent (single-series KPIs, two-series bar
   charts, three-segment stacked charts). Pick three brand

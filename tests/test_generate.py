@@ -7,7 +7,7 @@ import pytest
 from click.testing import CliRunner
 
 from quicksight_gen.cli import main
-from quicksight_gen.payment_recon.constants import (
+from quicksight_gen.apps.payment_recon.constants import (
     V_PR_EXC_SALE_SETTLEMENT_MISMATCH_TABLE,
     V_PR_EXC_SETTLEMENT_PAYMENT_MISMATCH_TABLE,
     V_PR_EXC_UNMATCHED_EXT_TXN_TABLE,
@@ -440,8 +440,8 @@ class TestOptionalMetadataFilters:
     """SPEC 2.2: auto-generated per-metadata-column filters on the Sales tab."""
 
     def test_each_metadata_col_has_filter_group(self, output_dir: Path):
-        from quicksight_gen.payment_recon.constants import SalesMeta
-        from quicksight_gen.payment_recon.datasets import OPTIONAL_SALE_METADATA
+        from quicksight_gen.apps.payment_recon.constants import SalesMeta
+        from quicksight_gen.apps.payment_recon.datasets import OPTIONAL_SALE_METADATA
 
         analysis = _load(output_dir, "payment-recon-analysis.json")
         fg_ids = {fg["FilterGroupId"] for fg in analysis["Definition"]["FilterGroups"]}
@@ -452,7 +452,7 @@ class TestOptionalMetadataFilters:
 
     def test_numeric_col_emits_slider(self, output_dir: Path):
         """Numeric OPTIONAL_SALE_METADATA cols surface a slider control on Sales."""
-        from quicksight_gen.payment_recon.constants import SalesMeta
+        from quicksight_gen.apps.payment_recon.constants import SalesMeta
 
         analysis = _load(output_dir, "payment-recon-analysis.json")
         sales = next(
@@ -470,7 +470,7 @@ class TestOptionalMetadataFilters:
 
     def test_string_col_emits_dropdown(self, output_dir: Path):
         """String OPTIONAL_SALE_METADATA cols surface a multi-select on Sales."""
-        from quicksight_gen.payment_recon.constants import SalesMeta
+        from quicksight_gen.apps.payment_recon.constants import SalesMeta
 
         analysis = _load(output_dir, "payment-recon-analysis.json")
         sales = next(
@@ -497,14 +497,14 @@ class TestPaymentMethodFilter:
     """
 
     def test_filter_group_present(self, output_dir: Path):
-        from quicksight_gen.payment_recon.constants import FG_PR_PAYMENT_METHOD
+        from quicksight_gen.apps.payment_recon.constants import FG_PR_PAYMENT_METHOD
 
         analysis = _load(output_dir, "payment-recon-analysis.json")
         fg_ids = {fg["FilterGroupId"] for fg in analysis["Definition"]["FilterGroups"]}
         assert FG_PR_PAYMENT_METHOD in fg_ids
 
     def test_scoped_to_payments_only(self, output_dir: Path):
-        from quicksight_gen.payment_recon.constants import FG_PR_PAYMENT_METHOD
+        from quicksight_gen.apps.payment_recon.constants import FG_PR_PAYMENT_METHOD
 
         analysis = _load(output_dir, "payment-recon-analysis.json")
         fg = next(

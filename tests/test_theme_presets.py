@@ -119,13 +119,13 @@ class TestPresetAnalysisNames:
         )
 
     def test_default_payment_recon_name(self):
-        from quicksight_gen.payment_recon.analysis import build_analysis
+        from quicksight_gen.apps.payment_recon.analysis import build_analysis
 
         a = build_analysis(self._cfg())
         assert a.to_aws_json()["Name"] == "Payment Reconciliation"
 
     def test_sasquatch_payment_recon_name(self):
-        from quicksight_gen.payment_recon.analysis import build_analysis
+        from quicksight_gen.apps.payment_recon.analysis import build_analysis
 
         a = build_analysis(self._cfg("sasquatch-bank"))
         assert a.to_aws_json()["Name"] == "Demo — Payment Reconciliation"

@@ -52,7 +52,7 @@ new persona work or dashboard redesigns:
   Fraud and AML surfaces) lands. Document those once they
   stabilize.
 - **Per-dataset SQL enumeration.** Each dataset's SQL is in
-  `payment_recon/datasets.py` or `account_recon/datasets.py`;
+  `apps/payment_recon/datasets.py` or `apps/account_recon/datasets.py`;
   read it as the source of truth. The pattern for *replacing*
   it is documented here once.
 - **Per-sheet layout.** Sheet structure is part of the active

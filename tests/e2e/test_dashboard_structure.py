@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from quicksight_gen.payment_recon.constants import (
+from quicksight_gen.apps.payment_recon.constants import (
     FG_PR_PAYMENT_METHOD,
     FG_PR_PAYMENTS_UNMATCHED,
     FG_PR_SALES_UNSETTLED,

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.ids import FilterGroupId, SheetId, VisualId
-from quicksight_gen.payment_recon.constants import (
+from quicksight_gen.apps.payment_recon.constants import (
     DS_PAYMENTS,
     DS_SALES,
     DS_SETTLEMENT_EXCEPTIONS,
@@ -40,7 +40,7 @@ from quicksight_gen.payment_recon.constants import (
     SalesMeta,
     SheetDateRange,
 )
-from quicksight_gen.payment_recon.datasets import OPTIONAL_SALE_METADATA
+from quicksight_gen.apps.payment_recon.datasets import OPTIONAL_SALE_METADATA
 from quicksight_gen.common.models import (
     CategoryFilter,
     CategoryFilterConfiguration,

@@ -13,7 +13,7 @@ required, no CrossSheet control type needed).
 from __future__ import annotations
 
 from quicksight_gen.common.config import Config
-from quicksight_gen.payment_recon.constants import (
+from quicksight_gen.apps.payment_recon.constants import (
     DS_PAYMENT_RECON,
     FG_PR_RECON_DATE_RANGE,
     FG_PR_RECON_EXTERNAL_SYSTEM,
@@ -26,7 +26,7 @@ from quicksight_gen.payment_recon.constants import (
     V_PR_RECON_KPI_MATCHED_AMOUNT,
     V_PR_RECON_KPI_UNMATCHED_AMOUNT,
 )
-from quicksight_gen.payment_recon.filters import _visual_scoped_pinned_filter_group
+from quicksight_gen.apps.payment_recon.filters import _visual_scoped_pinned_filter_group
 from quicksight_gen.common.models import (
     CategoryFilter,
     CategoryFilterConfiguration,

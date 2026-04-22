@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from quicksight_gen.account_recon.constants import (
+from quicksight_gen.apps.account_recon.constants import (
     DS_AR_DAILY_STATEMENT_SUMMARY,
     DS_AR_LEDGER_ACCOUNTS,
     DS_AR_LEDGER_BALANCE_DRIFT,

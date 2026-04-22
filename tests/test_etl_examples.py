@@ -27,12 +27,12 @@ from pathlib import Path
 
 import pytest
 
-from quicksight_gen.account_recon import datasets as ar_datasets
-from quicksight_gen.account_recon.demo_data import (
+from quicksight_gen.apps.account_recon import datasets as ar_datasets
+from quicksight_gen.apps.account_recon.demo_data import (
     generate_demo_sql as generate_ar_sql,
 )
-from quicksight_gen.payment_recon import datasets as pr_datasets
-from quicksight_gen.payment_recon.demo_data import generate_demo_sql
+from quicksight_gen.apps.payment_recon import datasets as pr_datasets
+from quicksight_gen.apps.payment_recon.demo_data import generate_demo_sql
 
 from tests.test_demo_data import (
     ANCHOR,

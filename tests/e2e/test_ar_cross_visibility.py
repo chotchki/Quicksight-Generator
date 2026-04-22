@@ -146,7 +146,7 @@ class TestOverdraftCheckSurfacesPrAccounts:
         the planted AR scenarios — they're the load-bearing demo signal
         for the AR Sub-Ledger Overdraft KPI.
         """
-        from quicksight_gen.account_recon.demo_data import _OVERDRAFT_PLANT
+        from quicksight_gen.apps.account_recon.demo_data import _OVERDRAFT_PLANT
 
         planted_account_ids = {acct for acct, *_ in _OVERDRAFT_PLANT}
         with pg_conn.cursor() as cur:

@@ -245,22 +245,23 @@ src/quicksight_gen/
         cleanup.py      # Tag-based cleanup of stale resources
         clickability.py # Conditional-format helpers (plain + menu-link accent styles)
         rich_text.py    # XML helpers for SheetTextBox.Content (heading/bullets/…)
-    payment_recon/
-        analysis.py     # 6 sheets, drill-downs, filter groups, dashboard
-        visuals.py      # Sales / Settlements / Payments / Exceptions visuals
-        recon_visuals.py# Payment Reconciliation side-by-side tables + KPIs
-        filters.py      # Pipeline-tab filter groups + controls
-        recon_filters.py# Payment Reconciliation filters
-        datasets.py     # 11 custom-SQL datasets
-        demo_data.py    # Sasquatch Bank demo data generator
-        constants.py    # Sheet + dataset identifier constants
-    account_recon/
-        analysis.py     # 5 sheets, drill-downs, filter groups, dashboard
-        visuals.py      # Balances / Transfers / Transactions / Exceptions visuals
-        filters.py      # Per-tab filters + Show-Only-X toggles
-        datasets.py     # 21 custom-SQL datasets
-        demo_data.py    # Sasquatch National Bank — CMS treasury demo data generator
-        constants.py    # Sheet + dataset identifier constants
+    apps/
+        payment_recon/
+            analysis.py     # 6 sheets, drill-downs, filter groups, dashboard
+            visuals.py      # Sales / Settlements / Payments / Exceptions visuals
+            recon_visuals.py# Payment Reconciliation side-by-side tables + KPIs
+            filters.py      # Pipeline-tab filter groups + controls
+            recon_filters.py# Payment Reconciliation filters
+            datasets.py     # 11 custom-SQL datasets
+            demo_data.py    # Sasquatch Bank demo data generator
+            constants.py    # Sheet + dataset identifier constants
+        account_recon/
+            analysis.py     # 5 sheets, drill-downs, filter groups, dashboard
+            visuals.py      # Balances / Transfers / Transactions / Exceptions visuals
+            filters.py      # Per-tab filters + Show-Only-X toggles
+            datasets.py     # 21 custom-SQL datasets
+            demo_data.py    # Sasquatch National Bank — CMS treasury demo data generator
+            constants.py    # Sheet + dataset identifier constants
     schema.py           # `generate_schema_sql()` — reads the canonical DDL
     schema.sql          # Canonical PostgreSQL DDL (interface contract for ETL); shared `transactions` + `daily_balances` base layer + AR dimension tables
     docs/               # mkdocs site source — handbook/, walkthroughs/, Schema_v3.md, Training_Story.md (extract via `quicksight-gen export docs`)

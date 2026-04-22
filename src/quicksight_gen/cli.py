@@ -105,11 +105,11 @@ def generate_account_recon_cmd(ctx: click.Context) -> None:
 def _generate_payment_recon(
     config_path: str, output_dir: str, theme_preset: str | None,
 ) -> None:
-    from quicksight_gen.payment_recon.analysis import (
+    from quicksight_gen.apps.payment_recon.analysis import (
         build_analysis,
         build_payment_recon_dashboard,
     )
-    from quicksight_gen.payment_recon.datasets import build_all_datasets
+    from quicksight_gen.apps.payment_recon.datasets import build_all_datasets
 
     cfg = load_config(config_path)
     if theme_preset is not None:
@@ -143,11 +143,11 @@ def _generate_payment_recon(
 def _generate_account_recon(
     config_path: str, output_dir: str, theme_preset: str | None,
 ) -> None:
-    from quicksight_gen.account_recon.analysis import (
+    from quicksight_gen.apps.account_recon.analysis import (
         build_account_recon_dashboard,
         build_analysis,
     )
-    from quicksight_gen.account_recon.datasets import build_all_datasets
+    from quicksight_gen.apps.account_recon.datasets import build_all_datasets
 
     cfg = load_config(config_path)
     if theme_preset is not None:
@@ -185,10 +185,10 @@ def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
     pass will write — always included. The other app's filenames are
     included so a single-app generate doesn't prune its sibling's output.
     """
-    from quicksight_gen.account_recon.datasets import (
+    from quicksight_gen.apps.account_recon.datasets import (
         build_all_datasets as _ar,
     )
-    from quicksight_gen.payment_recon.datasets import (
+    from quicksight_gen.apps.payment_recon.datasets import (
         build_all_datasets as _pr,
     )
 
@@ -242,10 +242,10 @@ def demo_schema(app: str | None, all_apps: bool, output: str) -> None:
 def demo_seed(app: str | None, all_apps: bool, output: str) -> None:
     """Emit INSERT statements with demo data."""
     app = _resolve_app(app, all_apps, allow_all=True)
-    from quicksight_gen.account_recon.demo_data import (
+    from quicksight_gen.apps.account_recon.demo_data import (
         generate_demo_sql as generate_ar_sql,
     )
-    from quicksight_gen.payment_recon.demo_data import (
+    from quicksight_gen.apps.payment_recon.demo_data import (
         generate_demo_sql as generate_pr_sql,
     )
 
@@ -279,10 +279,10 @@ def demo_etl_example(app: str | None, all_apps: bool, output: str) -> None:
     walkthroughs that reference this output.
     """
     app = _resolve_app(app, all_apps, allow_all=True)
-    from quicksight_gen.account_recon.etl_examples import (
+    from quicksight_gen.apps.account_recon.etl_examples import (
         generate_etl_examples_sql as generate_ar_examples,
     )
-    from quicksight_gen.payment_recon.etl_examples import (
+    from quicksight_gen.apps.payment_recon.etl_examples import (
         generate_etl_examples_sql as generate_pr_examples,
     )
 
@@ -326,25 +326,25 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     only thing that varies is which seed SQL gets loaded and which
     analyses get generated.
     """
-    from quicksight_gen.account_recon.analysis import (
+    from quicksight_gen.apps.account_recon.analysis import (
         build_account_recon_dashboard,
         build_analysis as build_ar_analysis,
     )
-    from quicksight_gen.account_recon.datasets import (
+    from quicksight_gen.apps.account_recon.datasets import (
         build_all_datasets as build_ar_datasets,
     )
-    from quicksight_gen.account_recon.demo_data import (
+    from quicksight_gen.apps.account_recon.demo_data import (
         generate_demo_sql as generate_ar_sql,
     )
-    from quicksight_gen.payment_recon.analysis import (
+    from quicksight_gen.apps.payment_recon.analysis import (
         build_analysis as build_pr_analysis,
         build_payment_recon_dashboard,
     )
-    from quicksight_gen.payment_recon.datasets import (
+    from quicksight_gen.apps.payment_recon.datasets import (
         build_all_datasets as build_pr_datasets,
         build_datasource,
     )
-    from quicksight_gen.payment_recon.demo_data import (
+    from quicksight_gen.apps.payment_recon.demo_data import (
         generate_demo_sql as generate_pr_sql,
     )
 

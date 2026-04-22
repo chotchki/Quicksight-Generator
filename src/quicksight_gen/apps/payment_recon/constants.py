@@ -213,7 +213,7 @@ def all_fg_pr_ids() -> frozenset[FilterGroupId]:
     ``OPTIONAL_SALE_METADATA`` which lives in datasets.py (would be a
     circular import at module load).
     """
-    from quicksight_gen.payment_recon.datasets import OPTIONAL_SALE_METADATA
+    from quicksight_gen.apps.payment_recon.datasets import OPTIONAL_SALE_METADATA
     return frozenset({
         *_STATIC_FG_PR_IDS,
         *(SheetDateRange(slug).fg_id for slug in PR_DATE_RANGE_SHEET_SLUGS),

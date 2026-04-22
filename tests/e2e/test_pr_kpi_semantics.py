@@ -105,7 +105,7 @@ class TestExceptionsKpiScope:
         # that have not yet been bundled into a settlement". Semantic
         # scope = sale-transfer merchant_dda legs whose metadata.settlement_id
         # is NULL.
-        from quicksight_gen.payment_recon.datasets import (
+        from quicksight_gen.apps.payment_recon.datasets import (
             build_settlement_exceptions_dataset,
         )
 
@@ -126,7 +126,7 @@ class TestExceptionsKpiScope:
         # KPI counts payment_id from payment-returns. Subtitle: "Payments
         # that were sent back". Semantic scope = payment-transfer
         # merchant_dda legs with metadata.is_returned='true'.
-        from quicksight_gen.payment_recon.datasets import (
+        from quicksight_gen.apps.payment_recon.datasets import (
             build_payment_returns_dataset,
         )
 
@@ -147,7 +147,7 @@ class TestExceptionsKpiScope:
         # Semantic scope = settlement-transfer rows where the linked
         # sales' summed signed_amount differs from the stored
         # settlement_amount.
-        from quicksight_gen.payment_recon.datasets import (
+        from quicksight_gen.apps.payment_recon.datasets import (
             build_sale_settlement_mismatch_dataset,
         )
 
@@ -183,7 +183,7 @@ WHERE s.settlement_amount <> COALESCE(ss.sales_sum, 0)"""
         # doesn't match their settlement". Semantic scope = payment
         # rows whose payment_amount differs from the linked
         # settlement_amount.
-        from quicksight_gen.payment_recon.datasets import (
+        from quicksight_gen.apps.payment_recon.datasets import (
             build_settlement_payment_mismatch_dataset,
         )
 
@@ -216,7 +216,7 @@ WHERE p.payment_amount <> s.settlement_amount"""
         # that have no internal payment linked". Semantic scope = ext_txn
         # rows whose metadata.external_transaction_id isn't named by any
         # payment leg.
-        from quicksight_gen.payment_recon.datasets import (
+        from quicksight_gen.apps.payment_recon.datasets import (
             build_unmatched_external_txns_dataset,
         )
 
@@ -254,7 +254,7 @@ class TestReconKpiScope:
     def test_late_count_scope(self, pg_conn, cfg):
         # Pinned filter: match_status = 'late'. Subtitle: "Transactions
         # that have exceeded the late threshold without matching".
-        from quicksight_gen.payment_recon.datasets import (
+        from quicksight_gen.apps.payment_recon.datasets import (
             build_payment_recon_dataset,
         )
 
@@ -285,7 +285,7 @@ class TestReconKpiScope:
         # external transaction amount that matches internal payments".
         # Semantic = sum(external_amount) where ext_amount equals sum
         # of linked payment amounts.
-        from quicksight_gen.payment_recon.datasets import (
+        from quicksight_gen.apps.payment_recon.datasets import (
             build_payment_recon_dataset,
         )
 
@@ -311,7 +311,7 @@ class TestReconKpiScope:
         # Subtitle: "Total external transaction amount not yet matched".
         # Semantic = ext_txns where ext_amount differs from the summed
         # linked payment amounts (equivalently: NOT matched).
-        from quicksight_gen.payment_recon.datasets import (
+        from quicksight_gen.apps.payment_recon.datasets import (
             build_payment_recon_dataset,
         )
 
@@ -349,7 +349,7 @@ class TestScenarioSurface:
     """
 
     def test_unsettled_sales_floor(self, pg_conn, cfg):
-        from quicksight_gen.payment_recon.datasets import (
+        from quicksight_gen.apps.payment_recon.datasets import (
             build_settlement_exceptions_dataset,
         )
 
@@ -358,7 +358,7 @@ class TestScenarioSurface:
         assert _count_rows(pg_conn, sql) >= 8
 
     def test_returned_payment_reasons_surface(self, pg_conn, cfg):
-        from quicksight_gen.payment_recon.datasets import (
+        from quicksight_gen.apps.payment_recon.datasets import (
             build_payment_returns_dataset,
         )
 
@@ -384,7 +384,7 @@ class TestScenarioSurface:
         )
 
     def test_orphan_external_txns_floor(self, pg_conn, cfg):
-        from quicksight_gen.payment_recon.datasets import (
+        from quicksight_gen.apps.payment_recon.datasets import (
             build_unmatched_external_txns_dataset,
         )
 
@@ -393,7 +393,7 @@ class TestScenarioSurface:
         assert _count_rows(pg_conn, sql) >= 8
 
     def test_external_systems_present(self, pg_conn, cfg):
-        from quicksight_gen.payment_recon.datasets import (
+        from quicksight_gen.apps.payment_recon.datasets import (
             build_payment_recon_dataset,
         )
 
@@ -412,7 +412,7 @@ class TestScenarioSurface:
         # refunds reduce settlement totals — the most common cause
         # of sale-settlement mismatch in the demo. Floor: at least
         # one refund-driven mismatch surfaces in the deployed dataset.
-        from quicksight_gen.payment_recon.datasets import (
+        from quicksight_gen.apps.payment_recon.datasets import (
             build_sale_settlement_mismatch_dataset,
         )
 
