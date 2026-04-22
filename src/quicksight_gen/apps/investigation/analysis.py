@@ -17,19 +17,35 @@ K.4.5 lands the Money Trail sheet: matview-backed recursive-CTE walk
 one row per multi-leg edge, a chain-root dropdown bound to a string
 parameter, max-hops + min-hop-amount sliders, and a Sankey diagram +
 hop-by-hop detail table laid out side-by-side.
+
+K.4.8 lands the Account Network sheet: a second view over the K.4.5
+matview, account-anchored instead of chain-rooted. Anchor dropdown +
+min-amount slider + analysis-level ``is_anchor_edge`` calc field
+(true when source OR target equals the anchor) feed a Sankey of every
+edge touching the anchor and a touching-edges table.
 """
 
 from __future__ import annotations
 
 from quicksight_gen.apps.investigation.constants import (
+    CF_INV_ANETWORK_COUNTERPARTY_DISPLAY,
+    CF_INV_ANETWORK_IS_ANCHOR_EDGE,
+    CF_INV_ANETWORK_IS_INBOUND_EDGE,
+    CF_INV_ANETWORK_IS_OUTBOUND_EDGE,
     CF_INV_FANOUT_DISTINCT_SENDERS,
+    DS_INV_ACCOUNT_NETWORK,
+    DS_INV_ANETWORK_ACCOUNTS,
     DS_INV_MONEY_TRAIL,
     DS_INV_RECIPIENT_FANOUT,
     DS_INV_VOLUME_ANOMALIES,
+    SHEET_INV_ACCOUNT_NETWORK,
     SHEET_INV_ANOMALIES,
     SHEET_INV_FANOUT,
     SHEET_INV_GETTING_STARTED,
     SHEET_INV_MONEY_TRAIL,
+    V_INV_ANETWORK_SANKEY_INBOUND,
+    V_INV_ANETWORK_SANKEY_OUTBOUND,
+    V_INV_ANETWORK_TABLE,
     V_INV_ANOMALIES_DISTRIBUTION,
     V_INV_ANOMALIES_KPI_FLAGGED,
     V_INV_ANOMALIES_TABLE,
@@ -42,6 +58,8 @@ from quicksight_gen.apps.investigation.constants import (
 )
 from quicksight_gen.apps.investigation.datasets import build_all_datasets
 from quicksight_gen.apps.investigation.filters import (
+    build_account_network_filter_controls,
+    build_account_network_parameter_controls,
     build_anomalies_filter_controls,
     build_anomalies_parameter_controls,
     build_fanout_filter_controls,
@@ -52,6 +70,7 @@ from quicksight_gen.apps.investigation.filters import (
     build_parameter_declarations,
 )
 from quicksight_gen.apps.investigation.visuals import (
+    build_account_network_visuals,
     build_anomalies_visuals,
     build_fanout_visuals,
     build_money_trail_visuals,
@@ -152,8 +171,7 @@ def _kpi_triple(
 _FANOUT_DESCRIPTION = (
     "Who is receiving money from an unusual number of distinct senders? "
     "Drag the slider to set the minimum sender count; the table ranks "
-    "qualifying recipients by funnel width. K.4.7 wires per-row drill "
-    "into Account Reconciliation Transactions for the recipient."
+    "qualifying recipients by funnel width."
 )
 
 _ANOMALY_DESCRIPTION = (
@@ -161,8 +179,7 @@ _ANOMALY_DESCRIPTION = (
     "Rolling 2-day SUM per pair vs. the population mean + standard "
     "deviation. Drag the σ slider to flag the tail. The distribution "
     "chart shows the full population — your slider cutoff against that "
-    "shape — while the KPI + table show only flagged windows. K.4.7 "
-    "wires per-row drill into Account Reconciliation Transactions."
+    "shape — while the KPI + table show only flagged windows."
 )
 
 _MONEY_TRAIL_DESCRIPTION = (
@@ -171,10 +188,21 @@ _MONEY_TRAIL_DESCRIPTION = (
     "chain's source-to-target ribbons, and the hop-by-hop table beside "
     "it lists every edge ordered by depth. Single-leg transfers (sales, "
     "raw external arrivals) appear as chain members but don't contribute "
-    "Sankey ribbons; drill them from the table into AR Transactions. "
-    "K.4.7 wires per-edge cross-app drill into Payment Reconciliation "
-    "when the chain crosses external_txn / payment / settlement, "
-    "otherwise into AR Transactions."
+    "Sankey ribbons."
+)
+
+_ACCOUNT_NETWORK_DESCRIPTION = (
+    "Who does this account exchange money with? Pick an anchor account "
+    "from the dropdown — the LEFT Sankey shows counterparties sending "
+    "money INTO the anchor; the RIGHT Sankey shows the anchor sending "
+    "money OUT to counterparties; the anchor visually meets in the "
+    "middle. The table below lists every touching edge ordered by "
+    "amount. Right-click any row and pick \"Walk to other account on "
+    "this edge\" — the anchor moves to the counterparty and the chart "
+    "re-renders. The dropdown widget above may briefly lag behind a "
+    "walk; trust the chart, not the control text. Same matview as "
+    "Money Trail, viewed account-centrically rather than chain-"
+    "centrically."
 )
 
 
@@ -219,6 +247,8 @@ def _build_getting_started_sheet(cfg: Config) -> SheetDefinition:
                 "spiked above the rolling baseline? (live)",
                 "Money Trail — where did this transfer originate and "
                 "where does it go? (live)",
+                "Account Network — who does this account exchange money "
+                "with, on either side? (live)",
             ]),
         ),
     )
@@ -311,6 +341,52 @@ def _build_volume_anomalies_sheet(cfg: Config) -> SheetDefinition:
     )
 
 
+def _build_account_network_sheet(cfg: Config) -> SheetDefinition:
+    """Account Network — two Sankeys on top + touching-edges table below.
+
+    Layout encodes direction in geometry: the inbound Sankey on the
+    LEFT shows counterparties → anchor; the outbound Sankey on the
+    RIGHT shows anchor → counterparties. The anchor node sits at the
+    inner edge of each, visually meeting in the middle. The
+    touching-edges table sits full-width below for the unambiguous
+    walk-the-flow drill (the Sankeys' built-in right-click drill isn't
+    functional in QuickSight in practice).
+
+    Anchor dropdown + min-amount slider live in the parameter
+    controls panel.
+    """
+    sankey_height = _TABLE_ROW_SPAN
+    half_width = _FULL // 2
+    layout_elements = [
+        GridLayoutElement(
+            ElementId=V_INV_ANETWORK_SANKEY_INBOUND,
+            ElementType=GridLayoutElement.VISUAL,
+            ColumnSpan=half_width,
+            RowSpan=sankey_height,
+            ColumnIndex=0,
+        ),
+        GridLayoutElement(
+            ElementId=V_INV_ANETWORK_SANKEY_OUTBOUND,
+            ElementType=GridLayoutElement.VISUAL,
+            ColumnSpan=half_width,
+            RowSpan=sankey_height,
+            ColumnIndex=half_width,
+        ),
+        _full_width_visual(V_INV_ANETWORK_TABLE, _TABLE_ROW_SPAN),
+    ]
+    return SheetDefinition(
+        SheetId=SHEET_INV_ACCOUNT_NETWORK,
+        Name="Account Network",
+        Title="Account Network",
+        Description=_ACCOUNT_NETWORK_DESCRIPTION,
+        ContentType="INTERACTIVE",
+        Visuals=build_account_network_visuals(),
+        FilterControls=build_account_network_filter_controls(cfg),
+        ParameterControls=build_account_network_parameter_controls(cfg),
+        Layouts=_grid_layout(layout_elements),
+    )
+
+
 def _build_money_trail_sheet(cfg: Config) -> SheetDefinition:
     """Money Trail — Sankey + hop-by-hop detail table side-by-side.
 
@@ -364,6 +440,26 @@ def _build_calculated_fields() -> list[dict]:
     a recipient carries the same value. The threshold NumericRangeFilter
     references this calc field as its column, so dragging the slider
     narrows visuals to recipients whose count crosses the threshold.
+
+    ``is_anchor_edge`` returns ``'yes'`` when the row's source OR target
+    display equals the ``pInvANetworkAnchor`` parameter, ``'no'``
+    otherwise. Used by the touching-edges table's filter so the table
+    shows every edge involving the anchor across both directions.
+
+    ``is_inbound_edge`` and ``is_outbound_edge`` are direction-specific
+    siblings — one matches when the TARGET is the anchor (money
+    flowing IN), the other when the SOURCE is the anchor (money
+    flowing OUT). Each scoped to its own Sankey so the layout itself
+    encodes direction (left = inbound, right = outbound) rather than
+    asking the analyst to read it off a node's position inside a
+    single combined Sankey.
+
+    ``counterparty_display`` returns the display label of whichever side
+    of the edge ISN'T the current anchor. Used by the table's single
+    "Walk to other account" drill so the walk is unambiguous (the
+    Sankeys no longer carry walk actions — direction is now in the
+    layout, and QuickSight's Sankey right-click drill isn't functional
+    in practice).
     """
     return [
         {
@@ -372,6 +468,39 @@ def _build_calculated_fields() -> list[dict]:
             "Expression": (
                 "distinct_count({sender_account_id}, "
                 "[{recipient_account_id}])"
+            ),
+        },
+        {
+            "Name": CF_INV_ANETWORK_IS_ANCHOR_EDGE,
+            "DataSetIdentifier": DS_INV_ACCOUNT_NETWORK,
+            "Expression": (
+                "ifelse({source_display} = ${pInvANetworkAnchor} "
+                "OR {target_display} = ${pInvANetworkAnchor}, "
+                "'yes', 'no')"
+            ),
+        },
+        {
+            "Name": CF_INV_ANETWORK_IS_INBOUND_EDGE,
+            "DataSetIdentifier": DS_INV_ACCOUNT_NETWORK,
+            "Expression": (
+                "ifelse({target_display} = ${pInvANetworkAnchor}, "
+                "'yes', 'no')"
+            ),
+        },
+        {
+            "Name": CF_INV_ANETWORK_IS_OUTBOUND_EDGE,
+            "DataSetIdentifier": DS_INV_ACCOUNT_NETWORK,
+            "Expression": (
+                "ifelse({source_display} = ${pInvANetworkAnchor}, "
+                "'yes', 'no')"
+            ),
+        },
+        {
+            "Name": CF_INV_ANETWORK_COUNTERPARTY_DISPLAY,
+            "DataSetIdentifier": DS_INV_ACCOUNT_NETWORK,
+            "Expression": (
+                "ifelse({source_display} = ${pInvANetworkAnchor}, "
+                "{target_display}, {source_display})"
             ),
         },
     ]
@@ -392,6 +521,8 @@ def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaratio
         DS_INV_RECIPIENT_FANOUT,
         DS_INV_VOLUME_ANOMALIES,
         DS_INV_MONEY_TRAIL,
+        DS_INV_ACCOUNT_NETWORK,
+        DS_INV_ANETWORK_ACCOUNTS,
     ]
     return [
         DataSetIdentifierDeclaration(
@@ -414,6 +545,7 @@ def _build_definition(cfg: Config) -> AnalysisDefinition:
             _build_recipient_fanout_sheet(cfg),
             _build_volume_anomalies_sheet(cfg),
             _build_money_trail_sheet(cfg),
+            _build_account_network_sheet(cfg),
         ],
         FilterGroups=build_filter_groups(cfg),
         CalculatedFields=_build_calculated_fields(),

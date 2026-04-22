@@ -845,6 +845,12 @@ class ParameterDropDownControl:
     # the sheet's parameter-bound filter so users see every available
     # option, not the filtered slice.
     SelectableValues: dict[str, Any] | None = None
+    # DropDownControlDisplayOptions shape: e.g.
+    #   {"SelectAllOptions": {"Visibility": "HIDDEN"}}
+    # to suppress the "Select all" entry. Useful for SINGLE_SELECT
+    # dropdowns where empty/All semantics don't apply (e.g., a Sankey
+    # anchor that needs exactly one value to render).
+    DisplayOptions: dict[str, Any] | None = None
 
 
 @dataclass

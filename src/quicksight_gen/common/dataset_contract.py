@@ -60,6 +60,15 @@ class ColumnShape(Enum):
     ACCOUNT_ID = "account_id"
     SUBLEDGER_ACCOUNT_ID = "subledger_account_id"
     LEDGER_ACCOUNT_ID = "ledger_account_id"
+    # Concatenated display label, e.g. ``"Sasquatch Sips (gl-1850)"``.
+    # Used as a single-string surrogate that is both human-readable
+    # AND uniquely keyed (the embedded id disambiguates name
+    # collisions). Wired to the K.4.8 Account Network anchor parameter
+    # so the Sankey can self-walk: clicking a node delivers the node's
+    # display label, the calc field compares displays, the dropdown
+    # shows the same labels. Not assignable to ACCOUNT_ID because the
+    # id-only consumer can't parse the label back out.
+    ACCOUNT_DISPLAY = "account_display"
 
     # Transfer identifiers
     TRANSFER_ID = "transfer_id"
