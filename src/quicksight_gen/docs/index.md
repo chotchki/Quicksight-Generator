@@ -7,8 +7,8 @@
 # QuickSight Analysis Generator
 
 Programmatic AWS QuickSight analysis generator for financial reporting.
-Ships two independent dashboards sharing one theme, account, datasource,
-and CLI surface.
+Ships three independent dashboards sharing one theme, account,
+datasource, and CLI surface.
 
 ## Operator handbooks
 
@@ -20,6 +20,9 @@ For the day-to-day users of the deployed dashboards.
 - [Payment Reconciliation Handbook](handbook/pr.md) — sales,
   settlements, payments, and external-system matching for a merchant
   bank's payments team.
+- [Investigation Handbook](handbook/investigation.md) — recipient
+  fanout, volume anomalies, money-trail provenance, and account-network
+  graphs for a bank's compliance / AML triage team.
 
 ## Engineering handbooks
 

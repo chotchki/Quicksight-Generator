@@ -52,6 +52,12 @@ nav:
     - Why Does This Settlement Look Short?: walkthroughs/pr/why-does-this-settlement-look-short.md
     - Why Doesn't This Payment Match the Settlement?: walkthroughs/pr/why-doesnt-this-payment-match-the-settlement.md
     - How Much Did We Return Last Week?: walkthroughs/pr/how-much-did-we-return.md
+  - Investigation Handbook:
+    - Overview: handbook/investigation.md
+    - Who's Getting Money from Too Many Senders?: walkthroughs/investigation/who-is-getting-money-from-too-many-senders.md
+    - Which Sender → Recipient Pair Just Spiked?: walkthroughs/investigation/which-pair-just-spiked.md
+    - Where Did This Transfer Actually Originate?: walkthroughs/investigation/where-did-this-transfer-originate.md
+    - What Does This Account's Money Network Look Like?: walkthroughs/investigation/what-does-this-accounts-money-network-look-like.md
   - Data Integration Handbook:
     - Overview: handbook/etl.md
     - How do I populate transactions?: walkthroughs/etl/how-do-i-populate-transactions.md
