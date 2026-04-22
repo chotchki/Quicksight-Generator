@@ -17,6 +17,11 @@ import pytest
 from quicksight_gen.apps.account_recon.demo_data import (
     generate_demo_sql as generate_ar_sql,
 )
+from quicksight_gen.apps.investigation.demo_data import (
+    INV_LEDGER_ACCOUNTS,
+    INV_SUBLEDGER_ACCOUNTS,
+    generate_demo_sql as generate_inv_sql,
+)
 from quicksight_gen.apps.payment_recon.demo_data import (
     MERCHANTS,
     PR_SUBLEDGER_ACCOUNTS,
@@ -539,13 +544,21 @@ class TestPrChainIntegrity:
 
 @pytest.fixture()
 def combined_parsed() -> dict[str, list[str]]:
-    """Parse both PR and AR seeds into one merged dict."""
-    pr_sql = generate_demo_sql(ANCHOR)
-    ar_sql = generate_ar_sql(ANCHOR)
-    combined = _parse_inserts(pr_sql)
-    for table, rows in _parse_inserts(ar_sql).items():
-        combined.setdefault(table, []).extend(rows)
+    """Parse PR + AR + investigation seeds into one merged dict."""
+    combined = _parse_inserts(generate_demo_sql(ANCHOR))
+    for src in (generate_ar_sql(ANCHOR), generate_inv_sql(ANCHOR)):
+        for table, rows in _parse_inserts(src).items():
+            combined.setdefault(table, []).extend(rows)
     return combined
+
+
+def _xid_app(xid: str) -> str:
+    """Classify a transfer_id by its app prefix."""
+    if xid.startswith("pr-"):
+        return "pr"
+    if xid.startswith("inv-"):
+        return "inv"
+    return "ar"
 
 
 class TestCrossAppIntegrity:
@@ -583,19 +596,17 @@ class TestCrossAppIntegrity:
             )
 
     def test_no_transfer_id_collision(self, combined_parsed):
-        """PR and AR transfer IDs must not collide (prefix guarantees)."""
-        # Transfer IDs are only unique per-(transfer_id, posting), so dedupe.
+        """PR / AR / investigation transfer IDs must not collide."""
         ids_by_app: dict[str, set[str]] = {}
         for r in combined_parsed["transactions"]:
             xid = _val(r, "transfer_id")
-            prefix = "pr" if xid.startswith("pr-") else "ar"
-            ids_by_app.setdefault(prefix, set()).add(xid)
-        # Both apps must contribute at least one transfer.
-        assert ids_by_app.get("pr"), "No PR transfers"
-        assert ids_by_app.get("ar"), "No AR transfers"
-        # No ID belongs to both apps.
-        overlap = ids_by_app["pr"] & ids_by_app["ar"]
-        assert not overlap, f"Transfer IDs collide across apps: {overlap}"
+            ids_by_app.setdefault(_xid_app(xid), set()).add(xid)
+        for app in ("pr", "ar", "inv"):
+            assert ids_by_app.get(app), f"No {app.upper()} transfers"
+        # Pairwise disjoint.
+        for a, b in (("pr", "ar"), ("pr", "inv"), ("ar", "inv")):
+            overlap = ids_by_app[a] & ids_by_app[b]
+            assert not overlap, f"Transfer IDs collide across {a}/{b}: {overlap}"
 
     def test_no_transaction_id_collision(self, combined_parsed):
         """transaction_id must be globally unique."""
@@ -686,3 +697,205 @@ class TestSharedBaseLayer:
             }
             for i in null_ctrl
         )
+
+
+# ---------------------------------------------------------------------------
+# Investigation seed (K.4.6)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def inv_sql() -> str:
+    return generate_inv_sql(ANCHOR)
+
+
+@pytest.fixture()
+def inv_parsed(inv_sql: str) -> dict[str, list[str]]:
+    return _parse_inserts(inv_sql)
+
+
+def _inv_rows(parsed: dict[str, list[str]]) -> list[str]:
+    """Investigation transactions rows: those whose transfer_id has the
+    `inv-` prefix."""
+    return [
+        r for r in parsed["transactions"]
+        if _val(r, "transfer_id").startswith("inv-")
+    ]
+
+
+class TestInvestigationDeterminism:
+    def test_same_anchor_produces_identical_output(self):
+        a = generate_inv_sql(ANCHOR)
+        b = generate_inv_sql(ANCHOR)
+        assert a == b
+
+    def test_different_anchor_produces_different_dates(self):
+        a = generate_inv_sql(date(2026, 1, 1))
+        b = generate_inv_sql(date(2026, 6, 1))
+        assert a != b
+
+    def test_seed_output_hash_is_locked(self, inv_sql):
+        """Pin the investigation seed hash so silent generator drift fails
+        loudly.  Update the hash in the same commit when the change is
+        intentional."""
+        import hashlib
+        digest = hashlib.sha256(inv_sql.encode()).hexdigest()
+        assert digest == (
+            "50787ad3e9ebec05877b6fd211241cc7a08370b1f482b9c52612c271adaa0804"
+        ), f"investigation seed drifted; new hash: {digest}"
+
+
+class TestInvestigationAccounts:
+    def test_ledger_accounts_inserted(self, inv_parsed):
+        ids = {_row_parts(r)[0] for r in inv_parsed["ar_ledger_accounts"]}
+        for lid, _, _ in INV_LEDGER_ACCOUNTS:
+            assert lid in ids, f"Missing investigation ledger: {lid}"
+
+    def test_subledger_accounts_inserted(self, inv_parsed):
+        ids = {_row_parts(r)[0] for r in inv_parsed["ar_subledger_accounts"]}
+        for sid, *_ in INV_SUBLEDGER_ACCOUNTS:
+            assert sid in ids, f"Missing investigation sub-ledger: {sid}"
+
+    def test_no_daily_balances_rows(self, inv_parsed):
+        """Investigation seed deliberately writes nothing to daily_balances.
+        AR drift checks pivot on stored balance rows, so absent rows can't
+        trigger false positives on investigation accounts."""
+        assert "daily_balances" not in inv_parsed
+
+    def test_subledger_account_types_canonical(self, inv_parsed):
+        """Every investigation transactions row's account_type is in the
+        canonical set."""
+        types = {_val(r, "account_type") for r in _inv_rows(inv_parsed)}
+        assert types.issubset(CANONICAL_ACCOUNT_TYPES), (
+            f"Non-canonical account_type in investigation rows: "
+            f"{types - CANONICAL_ACCOUNT_TYPES}"
+        )
+
+    def test_every_row_carries_source_provenance(self, inv_parsed):
+        for r in _inv_rows(inv_parsed):
+            doc = _metadata(r)
+            assert doc, f"Metadata not JSON-quoted: {r[:120]}"
+            assert "source" in doc, f"Missing source in metadata: {doc}"
+
+
+class TestInvestigationScenarios:
+    """K.4.6: each visual must have non-empty data."""
+
+    def test_fanout_has_twelve_distinct_senders(self, inv_parsed):
+        """K.4.3: the recipient (juniper) must receive from 12+ distinct
+        external sender accounts to exceed the default 5-sender threshold."""
+        juniper = "cust-900-0007-juniper-ridge-llc"
+        senders: set[str] = set()
+        # For each fanout transfer the sender leg has signed_amount < 0
+        # and is a depositor; the credit leg lands on juniper.
+        fanout_xfers = {
+            _val(r, "transfer_id") for r in _inv_rows(inv_parsed)
+            if _val(r, "transfer_id").startswith("inv-fanout-")
+            and _val(r, "account_id") == juniper
+        }
+        assert len(fanout_xfers) >= 12, (
+            f"Expected 12+ fanout transfers into juniper, got {len(fanout_xfers)}"
+        )
+        for r in _inv_rows(inv_parsed):
+            xid = _val(r, "transfer_id")
+            if xid in fanout_xfers and _val(r, "account_id") != juniper:
+                senders.add(_val(r, "account_id"))
+        assert len(senders) >= 12, (
+            f"Need 12 distinct senders for K.4.3 fanout, got {len(senders)}"
+        )
+        # Every fanout sender must be an individual depositor.
+        for s in senders:
+            assert s.startswith("ext-individual-depositors-"), (
+                f"Unexpected fanout sender: {s}"
+            )
+
+    def test_anomaly_has_baseline_plus_spike(self, inv_parsed):
+        """K.4.4: 8 baseline cascadia→juniper wires + 1 spike day."""
+        cascadia = "ext-cascadia-trust-bank-sub-ops"
+        anomaly_credit_legs = [
+            r for r in _inv_rows(inv_parsed)
+            if _val(r, "transfer_id").startswith("inv-anomaly-")
+            and _val(r, "account_id") == "cust-900-0007-juniper-ridge-llc"
+        ]
+        assert len(anomaly_credit_legs) == 9, (
+            f"Expected 9 anomaly credit legs (8 base + 1 spike), "
+            f"got {len(anomaly_credit_legs)}"
+        )
+        amounts = [Decimal(_val(r, "amount")) for r in anomaly_credit_legs]
+        assert max(amounts) >= Decimal("25000"), (
+            f"Spike must be ≥$25,000 to clear 2σ comfortably; max={max(amounts)}"
+        )
+        assert min(amounts) <= Decimal("700"), (
+            f"Baseline must include sub-$700 wires; min={min(amounts)}"
+        )
+        # Source side is always cascadia.
+        for r in _inv_rows(inv_parsed):
+            xid = _val(r, "transfer_id")
+            if not xid.startswith("inv-anomaly-"):
+                continue
+            if Decimal(_val(r, "signed_amount")) < 0:
+                assert _val(r, "account_id") == cascadia, (
+                    f"Anomaly debit leg not from cascadia: {_val(r, 'account_id')}"
+                )
+
+    def test_money_trail_chain_links_four_hops(self, inv_parsed):
+        """K.4.5: 4-hop chain via parent_transfer_id."""
+        chain_xfers = {
+            _val(r, "transfer_id"): _val(r, "parent_transfer_id")
+            for r in _inv_rows(inv_parsed)
+            if _val(r, "transfer_id").startswith("inv-trail-")
+        }
+        assert set(chain_xfers.keys()) == {
+            "inv-trail-root-001",
+            "inv-trail-hop-002",
+            "inv-trail-hop-003",
+            "inv-trail-hop-004",
+        }, f"Chain has unexpected transfers: {chain_xfers.keys()}"
+        # Linkage: root has no parent; each subsequent hop points to its parent.
+        assert chain_xfers["inv-trail-root-001"] == "NULL"
+        assert chain_xfers["inv-trail-hop-002"] == "inv-trail-root-001"
+        assert chain_xfers["inv-trail-hop-003"] == "inv-trail-hop-002"
+        assert chain_xfers["inv-trail-hop-004"] == "inv-trail-hop-003"
+
+    def test_money_trail_each_hop_has_two_legs(self, inv_parsed):
+        """The matview source × target leg JOIN requires multi-leg transfers."""
+        legs_by_xfer: dict[str, int] = {}
+        for r in _inv_rows(inv_parsed):
+            xid = _val(r, "transfer_id")
+            if not xid.startswith("inv-trail-"):
+                continue
+            legs_by_xfer[xid] = legs_by_xfer.get(xid, 0) + 1
+        for xid, n in legs_by_xfer.items():
+            assert n == 2, f"Chain hop {xid} should have 2 legs, got {n}"
+
+    def test_money_trail_terminates_at_shell_c(self, inv_parsed):
+        """The chain ends at shell-company-c (no further hop)."""
+        shell_c = "cust-700-0012-shell-company-c"
+        # shell_c must appear as a credit (signed > 0) leg on hop-004.
+        terminating = [
+            r for r in _inv_rows(inv_parsed)
+            if _val(r, "transfer_id") == "inv-trail-hop-004"
+            and _val(r, "account_id") == shell_c
+        ]
+        assert len(terminating) == 1
+        assert Decimal(terminating[0].split(",")[10].strip()) > 0, (
+            "shell_c leg on terminal hop should be the credit leg"
+        )
+
+    def test_all_investigation_transfers_are_multi_leg(self, inv_parsed):
+        """Every investigation transfer is 2-leg multi-leg — single-leg
+        transfers don't surface as visible edges in the money-trail matview
+        and don't pair-up in the anomaly matview."""
+        legs_by_xfer: dict[str, int] = {}
+        for r in _inv_rows(inv_parsed):
+            xid = _val(r, "transfer_id")
+            legs_by_xfer[xid] = legs_by_xfer.get(xid, 0) + 1
+        offenders = {x: n for x, n in legs_by_xfer.items() if n != 2}
+        assert not offenders, f"Non-2-leg investigation transfers: {offenders}"
+
+    def test_all_legs_succeed(self, inv_parsed):
+        """Investigation seed plants signal scenarios — no failed legs (which
+        would be filtered out of all three matviews)."""
+        for r in _inv_rows(inv_parsed):
+            assert _val(r, "status") == "success", (
+                f"Non-success investigation leg: {r[:120]}"
+            )
