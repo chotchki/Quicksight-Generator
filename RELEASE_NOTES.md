@@ -1,5 +1,56 @@
 # Release Notes
 
+## v3.8.0
+
+### Phase K.3 — Lateness as a data column, not an operator threshold
+
+Replaces the operator-applied "is this row past N days?" pattern with a per-leg `expected_complete_at` timestamp on `transactions` and a downstream `is_late` boolean predicate. PR's `late_default_days` config knob (and its slider) retire — the data answers, the slider only ever existed because the data didn't. AR gains an explicit Lateness picker on the Today's Exceptions and Trends sheets; the unified table surfaces `is_late` per row. Schema change is additive — the new column is NULLABLE with a `posted_at + INTERVAL '1 day'` COALESCE fallback, so existing ETL keeps working unchanged.
+
+### What landed
+
+**Schema + portability + ETL contract (K.3.0)**
+
+- `transactions` gains `expected_complete_at TIMESTAMP NULL`. Not added to `daily_balances` — those are point-in-time snapshots; lateness is per-leg. The default formula `COALESCE(expected_complete_at, posted_at + INTERVAL '1 day')` is portable across the project's target RDBMS family (no JSONB, no Postgres-specific operators).
+- New "Lateness as data" section in `docs/Schema_v3.md` documents the column as optional, the default formula, the `is_late` predicate SQL, and the multi-leg tie-breaker rule (the **earliest debit leg's** `expected_complete_at` becomes the transfer-level deadline).
+- New "Optional: `expected_complete_at` (lateness)" section in `docs/handbook/etl.md` for the ETL team, with an "adopt one rail at a time" framing.
+
+**Demo generators populate `expected_complete_at` per rail (K.3.1)**
+
+- PR generator: card payments → T+3, external_txn rows → +1 hour (rail observations expected to settle almost immediately), sales / settlements / non-card payments → NULL (default applies).
+- AR generator: instant rails (Fed wires, on-us internal) → same-day; ACH → T+2; non-rail-bound legs → NULL.
+- Per-app SHA256 seed-hash assertions re-locked. New `TestExpectedCompleteAt` coverage classes pin the rail-specific values per generator.
+
+**Datasets surface `is_late` + `expected_complete_at` (K.3.2)**
+
+- `is_late STRING` (`"Late" / "On Time"` — labeled to match the codebase's `is_failed` / `is_returned` STRING convention so QS filter controls stay simple) and `expected_complete_at DATETIME` columns added to `ar_unified_exceptions` and the relevant per-check views, plus PR's exception + recon datasets. `DatasetContract` entries updated so the contract test catches projection drift.
+- The `is_late` predicate is `CURRENT_TIMESTAMP > COALESCE(expected_complete_at, posted_at + INTERVAL '1 day')`. PR's recon dataset now derives `match_status` from the same predicate (`'matched'` / `'late'` / `'not_yet_matched'`) instead of the operator-threshold `(CURRENT_DATE - posted_at::date) > late_default_days` it used through K.2a.
+- Shared `_lateness_columns()` helper in `payment_recon/datasets.py` keeps the SQL fragment in one place across the 6 PR datasets that surface lateness.
+
+**KPIs / filters / visuals consume `is_late` (K.3.3)**
+
+- AR Today's Exceptions + Trends sheets gain a Lateness picker (new `fg-ar-todays-exc-is-late` filter group + cross-sheet controls on both sheets). The unified Open Exceptions table surfaces `is_late` between `aging_bucket` and `account_id`.
+- PR Late Transactions KPI subtitle updated to "Unmatched transactions past their expected completion time (per-row `is_late = 'Late'`)". The visual-pinned `match_status='late'` filter stays — it's the unmatched-AND-late semantic, which is the more actionable ops view than `is_late='Late'` alone (matched-but-late rows already resolved).
+- `cfg.late_default_days` field + `QS_GEN_LATE_DEFAULT_DAYS` env var fully retired across `Config`, `README.md`, `docs/walkthroughs/customization/how-do-i-configure-the-deploy.md`, `CLAUDE.md`, and `SPEC.md`. Per the project's "no backward-compat shims" rule, no fallback / no flag — the deprecated knob is just gone.
+
+**Handbook + walkthrough updates (K.3.4)**
+
+- PR walkthrough `why-is-this-external-transaction-unmatched` rewritten to drop the hardcoded 30-day matching-window framing. Demo-data and "what it means" sections now reflect that with the rail-hour deadline (`expected_complete_at = posted_at + 1 hour` for external_txn), almost every unmatched external row is `match_status = 'late'`; orphan-recent vs orphan-late are reframed as aging buckets (urgency tiers) rather than match_status tiers.
+- Customization handbook gains an "Optional ETL extensions" section introducing `expected_complete_at` (with the +1-day fallback) alongside the existing `metadata` extension, linking out to the schema's "Lateness as data" + the ETL handbook.
+- AR + PR handbook Reference lists add Lateness-as-data cross-links to `Schema_v3.md`, with one-sentence framing for each app.
+
+### Conventions
+
+- Same theme as K.2 / K.2a: invariants encoded in the data shape itself rather than an operator-applied threshold. K.2 caught wrong-shape source-field bindings at the wiring line; K.2a caught wrong-kind-of-identifier mis-bindings at the same line; K.3 removes a whole class of "did the operator pick the right N?" inconsistency by moving the threshold into the row.
+- The `is_late` column is STRING (`"Late" / "On Time"`), not BOOLEAN — matches the existing `is_failed` / `is_returned` STRING convention so QuickSight `CategoryFilter` controls stay uniform across the codebase.
+
+### Migration
+
+- **ETL teams**: `expected_complete_at` is fully optional. Every existing feed keeps working — when the column is NULL, the COALESCE fallback uses `posted_at + INTERVAL '1 day'`, which matches the conservative-default `is_late` semantic. Adopt rail-by-rail when convenient (the ETL handbook section recommends starting with whichever rail your team gets the most "is this really late or just slow?" questions about).
+- **Dataset SQL consumers**: 6 PR datasets and `ar_unified_exceptions` gained `is_late` + `expected_complete_at` columns. Downstream consumers parsing `DatasetContract` will see new entries; existing column reads are unchanged.
+- **`late_default_days` users**: the field is removed from `Config`. If you set it in `config.yaml` or via `QS_GEN_LATE_DEFAULT_DAYS`, that key is now ignored (and YAML loaders will not raise — it's just a silent no-op key). The slider on the PR Payment Reconciliation tab is gone; lateness comes from the data.
+
+---
+
 ## v3.7.0
 
 ### Phase K.2a — Identifier scatter cleanup (typed constants for opaque IDs)
