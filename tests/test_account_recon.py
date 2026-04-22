@@ -2482,67 +2482,116 @@ class TestParameterDeclarations:
 
 
 class TestDrillDownFilterGroups:
-    """The five drill-down filter groups bind parameters to target columns."""
+    """Six drill filter groups, all using the calc-field PASS shape.
 
-    def _cfg(self, fg: dict) -> dict:
-        return fg["Filters"][0]["CategoryFilter"]["Configuration"][
-            "CustomFilterConfiguration"
-        ]
+    Each spec produces (a) a calc field that returns 'PASS' when the
+    bound parameter equals the K.2 sentinel ``__ALL__`` or matches the
+    target column, and (b) a static-literal CategoryValue=PASS filter
+    over that calc field. Parameter-bound filter shapes were retired
+    in K.2 because they silently match the literal empty string when
+    the param is empty, suppressing every row.
+    """
 
     @pytest.mark.parametrize(
-        "fg_id, parameter_name, column_name, sheet_id",
+        "fg_id, parameter_name, column_name, sheet_id, calc_field_name",
         [
             (
                 "fg-ar-drill-subledger-on-txn",
                 "pArSubledgerAccountId",
                 "subledger_account_id",
                 SHEET_AR_TRANSACTIONS,
+                "_drill_pass_pArSubledgerAccountId_on_txn",
             ),
             (
                 "fg-ar-drill-transfer-on-txn",
                 "pArTransferId",
                 "transfer_id",
                 SHEET_AR_TRANSACTIONS,
+                "_drill_pass_pArTransferId_on_txn",
             ),
             (
                 "fg-ar-drill-activity-date-on-txn",
                 "pArActivityDate",
                 "posted_date",
                 SHEET_AR_TRANSACTIONS,
+                "_drill_pass_pArActivityDate_on_txn",
             ),
             (
                 "fg-ar-drill-transfer-type-on-txn",
                 "pArTransferType",
                 "transfer_type",
                 SHEET_AR_TRANSACTIONS,
+                "_drill_pass_pArTransferType_on_txn",
+            ),
+            (
+                "fg-ar-drill-account-on-txn",
+                "pArAccountId",
+                "account_id",
+                SHEET_AR_TRANSACTIONS,
+                "_drill_pass_pArAccountId_on_txn",
             ),
             (
                 "fg-ar-drill-ledger-on-balances-subledger",
                 "pArLedgerAccountId",
                 "ledger_account_id",
                 SHEET_AR_BALANCES,
+                "_drill_pass_pArLedgerAccountId_on_balances_subledger",
             ),
         ],
     )
-    def test_drill_filter_binding(
+    def test_drill_uses_calc_field_pass_shape(
         self,
         ar_output_dir,
         fg_id: str,
         parameter_name: str,
         column_name: str,
         sheet_id: str,
+        calc_field_name: str,
     ):
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
+
+        # Calc field must exist and reference both the param and the
+        # target column. Sentinel must appear so the no-narrowing
+        # branch is wired.
+        calc_fields = analysis["Definition"].get("CalculatedFields", [])
+        calc = next(
+            (c for c in calc_fields if c["Name"] == calc_field_name),
+            None,
+        )
+        assert calc is not None, (
+            f"Expected calc field {calc_field_name} in the analysis definition"
+        )
+        expr = calc["Expression"]
+        assert f"${{{parameter_name}}}" in expr
+        assert f"{{{column_name}}}" in expr
+        assert "'PASS'" in expr
+        assert "'__ALL__'" in expr
+
+        # Filter group must reference the calc field with a literal
+        # CategoryValue=PASS — never a ParameterName binding.
         fg = _find_fg(analysis, fg_id)
-        cfg = self._cfg(fg)
+        filt = fg["Filters"][0]["CategoryFilter"]
+        assert filt["Column"]["ColumnName"] == calc_field_name
+        cfg = filt["Configuration"]["CustomFilterConfiguration"]
         assert cfg["MatchOperator"] == "EQUALS"
-        assert cfg["ParameterName"] == parameter_name
-        col = fg["Filters"][0]["CategoryFilter"]["Column"]
-        assert col["ColumnName"] == column_name
+        assert cfg["CategoryValue"] == "PASS"
+        assert "ParameterName" not in cfg
+
+        # Sheet scope must match the spec's intended target.
         scopes = fg["ScopeConfiguration"]["SelectedSheets"][
             "SheetVisualScopingConfigurations"
         ]
         assert [s["SheetId"] for s in scopes] == [sheet_id]
+
+        # Parameter must declare the sentinel as its default so the
+        # never-touched state passes through the calc field as ALL.
+        params = analysis["Definition"]["ParameterDeclarations"]
+        param = next(
+            p["StringParameterDeclaration"]
+            for p in params
+            if p.get("StringParameterDeclaration", {}).get("Name") == parameter_name
+        )
+        assert param["DefaultValues"]["StaticValues"] == ["__ALL__"]
 
     def test_ledger_drill_targets_subledger_table_only(self, ar_output_dir):
         """The Balances ledger-to-subledger drill must not wipe the ledger

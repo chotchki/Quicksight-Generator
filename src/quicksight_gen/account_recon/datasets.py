@@ -191,6 +191,13 @@ UNIFIED_EXCEPTIONS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("severity", "STRING"),
     ColumnSpec("severity_rank", "INTEGER"),
     ColumnSpec("exception_date", "DATETIME"),
+    # YYYY-MM-DD text rendering of exception_date. Used as the
+    # SourceField for the "View Transactions for Account-Day" drill
+    # so the destination's posted_date filter (also TO_CHAR-formatted
+    # YYYY-MM-DD text) matches. Binding a DATETIME column to a
+    # SINGLE_VALUED string parameter produces a full timestamp string
+    # ("2026-04-07 00:00:00.000") that never matches.
+    ColumnSpec("exception_date_str", "STRING"),
     ColumnSpec("days_outstanding", "INTEGER"),
     ColumnSpec("aging_bucket", "STRING"),
     ColumnSpec("account_id", "STRING"),
@@ -544,257 +551,18 @@ FROM transactions t"""
 
 
 def build_ar_unified_exceptions_dataset(cfg: Config) -> DataSet:
-    # Phase K.1.1: UNION ALL of the 14 per-check exception views, one row
-    # per actual exception (drift checks filtered to drift_status = 'drift';
-    # non-zero transfers filtered to expected multi-leg shape). Adds three
-    # synthesized columns the per-check datasets don't carry:
-    #   - check_type: which check produced the row (drives KPI tile + filter)
-    #   - severity / severity_rank: drift|overdraft → red(1), expected-zero
-    #     → orange(2), limit-breach → amber(3), other → yellow(4). Rank
-    #     is the integer the table sorts on.
-    #   - exception_date: harmonized from each view's native date column
-    #     (balance_date, sweep_date, originated_at, etc.) so days_outstanding
-    #     + aging_bucket can be computed once per row from a single source.
-    # account_id / account_name / transfer_id / transfer_type are NULLed
-    # where the underlying check doesn't have them (system-level aggregates
-    # like Concentration Master Sweep Drift). primary_amount is the headline
-    # dollar value; secondary_amount is the supporting figure (e.g.,
-    # daily_limit alongside overage) where one exists.
-    blocks = [
-        # ---- Baseline checks (5) ----
-        f"""SELECT
-    'Sub-Ledger Drift'    AS check_type,
-    'red'                 AS severity,
-    1                     AS severity_rank,
-    balance_date          AS exception_date,
-{_aging_columns('balance_date')},
-    subledger_account_id  AS account_id,
-    subledger_name        AS account_name,
-    'Sub-Ledger'          AS account_level,
-    ledger_account_id,
-    ledger_name,
-    NULL::TEXT            AS transfer_id,
-    NULL::TEXT            AS transfer_type,
-    drift                 AS primary_amount,
-    stored_balance        AS secondary_amount
-FROM ar_subledger_balance_drift
-WHERE drift <> 0""",
-        f"""SELECT
-    'Ledger Drift'        AS check_type,
-    'red'                 AS severity,
-    1                     AS severity_rank,
-    balance_date          AS exception_date,
-{_aging_columns('balance_date')},
-    ledger_account_id     AS account_id,
-    ledger_name           AS account_name,
-    'Ledger'              AS account_level,
-    ledger_account_id,
-    ledger_name,
-    NULL::TEXT            AS transfer_id,
-    NULL::TEXT            AS transfer_type,
-    drift                 AS primary_amount,
-    stored_balance        AS secondary_amount
-FROM ar_ledger_balance_drift
-WHERE drift <> 0""",
-        f"""SELECT
-    'Non-Zero Transfer'   AS check_type,
-    'yellow'              AS severity,
-    4                     AS severity_rank,
-    first_posted_at       AS exception_date,
-{_aging_columns('first_posted_at')},
-    NULL::TEXT            AS account_id,
-    NULL::TEXT            AS account_name,
-    'System'              AS account_level,
-    NULL::TEXT            AS ledger_account_id,
-    NULL::TEXT            AS ledger_name,
-    transfer_id,
-    transfer_type,
-    net_amount            AS primary_amount,
-    NULL::NUMERIC         AS secondary_amount
-FROM ar_transfer_summary
-WHERE net_zero_status = 'not_net_zero'
-  AND expected_net_zero = 'expected'""",
-        f"""SELECT
-    'Sub-Ledger Limit Breach' AS check_type,
-    'amber'                   AS severity,
-    3                         AS severity_rank,
-    activity_date             AS exception_date,
-{_aging_columns('activity_date')},
-    subledger_account_id      AS account_id,
-    subledger_name            AS account_name,
-    'Sub-Ledger'              AS account_level,
-    ledger_account_id,
-    ledger_name,
-    NULL::TEXT                AS transfer_id,
-    transfer_type,
-    overage                   AS primary_amount,
-    daily_limit               AS secondary_amount
-FROM ar_subledger_limit_breach""",
-        f"""SELECT
-    'Sub-Ledger Overdraft' AS check_type,
-    'red'                  AS severity,
-    1                      AS severity_rank,
-    balance_date           AS exception_date,
-{_aging_columns('balance_date')},
-    subledger_account_id   AS account_id,
-    subledger_name         AS account_name,
-    'Sub-Ledger'           AS account_level,
-    ledger_account_id,
-    ledger_name,
-    NULL::TEXT             AS transfer_id,
-    NULL::TEXT             AS transfer_type,
-    stored_balance         AS primary_amount,
-    NULL::NUMERIC          AS secondary_amount
-FROM ar_subledger_overdraft""",
-        # ---- CMS-specific checks (9) ----
-        f"""SELECT
-    'Sweep Target Non-Zero EOD' AS check_type,
-    'orange'                    AS severity,
-    2                           AS severity_rank,
-    balance_date                AS exception_date,
-{_aging_columns('balance_date')},
-    subledger_account_id        AS account_id,
-    subledger_name              AS account_name,
-    'Sub-Ledger'                AS account_level,
-    ledger_account_id,
-    ledger_name,
-    NULL::TEXT                  AS transfer_id,
-    NULL::TEXT                  AS transfer_type,
-    stored_balance              AS primary_amount,
-    NULL::NUMERIC               AS secondary_amount
-FROM ar_sweep_target_nonzero""",
-        f"""SELECT
-    'Concentration Master Sweep Drift' AS check_type,
-    'red'                              AS severity,
-    1                                  AS severity_rank,
-    sweep_date                         AS exception_date,
-{_aging_columns('sweep_date')},
-    NULL::TEXT                         AS account_id,
-    NULL::TEXT                         AS account_name,
-    'System'                           AS account_level,
-    NULL::TEXT                         AS ledger_account_id,
-    NULL::TEXT                         AS ledger_name,
-    NULL::TEXT                         AS transfer_id,
-    NULL::TEXT                         AS transfer_type,
-    drift                              AS primary_amount,
-    master_total                       AS secondary_amount
-FROM ar_concentration_master_sweep_drift
-WHERE drift_status = 'drift'""",
-        f"""SELECT
-    'ACH Origination Settlement Non-Zero EOD' AS check_type,
-    'orange'                                  AS severity,
-    2                                         AS severity_rank,
-    balance_date                              AS exception_date,
-{_aging_columns('balance_date')},
-    ledger_account_id                         AS account_id,
-    ledger_name                               AS account_name,
-    'Ledger'                                  AS account_level,
-    ledger_account_id,
-    ledger_name,
-    NULL::TEXT                                AS transfer_id,
-    NULL::TEXT                                AS transfer_type,
-    stored_balance                            AS primary_amount,
-    NULL::NUMERIC                             AS secondary_amount
-FROM ar_ach_orig_settlement_nonzero""",
-        f"""SELECT
-    'ACH Sweep Without Fed Confirmation' AS check_type,
-    'yellow'                             AS severity,
-    4                                    AS severity_rank,
-    sweep_at                             AS exception_date,
-{_aging_columns('sweep_at')},
-    NULL::TEXT                           AS account_id,
-    NULL::TEXT                           AS account_name,
-    'System'                             AS account_level,
-    NULL::TEXT                           AS ledger_account_id,
-    NULL::TEXT                           AS ledger_name,
-    sweep_transfer_id                    AS transfer_id,
-    NULL::TEXT                           AS transfer_type,
-    sweep_amount                         AS primary_amount,
-    NULL::NUMERIC                        AS secondary_amount
-FROM ar_ach_sweep_no_fed_confirmation""",
-        f"""SELECT
-    'Fed Activity Without Internal Catch-Up' AS check_type,
-    'yellow'                                 AS severity,
-    4                                        AS severity_rank,
-    fed_at                                   AS exception_date,
-{_aging_columns('fed_at')},
-    NULL::TEXT                               AS account_id,
-    NULL::TEXT                               AS account_name,
-    'System'                                 AS account_level,
-    NULL::TEXT                               AS ledger_account_id,
-    NULL::TEXT                               AS ledger_name,
-    fed_transfer_id                          AS transfer_id,
-    NULL::TEXT                               AS transfer_type,
-    fed_amount                               AS primary_amount,
-    NULL::NUMERIC                            AS secondary_amount
-FROM ar_fed_card_no_internal_catchup""",
-        f"""SELECT
-    'GL vs Fed Master Drift' AS check_type,
-    'red'                    AS severity,
-    1                        AS severity_rank,
-    movement_date            AS exception_date,
-{_aging_columns('movement_date')},
-    NULL::TEXT               AS account_id,
-    NULL::TEXT               AS account_name,
-    'System'                 AS account_level,
-    NULL::TEXT               AS ledger_account_id,
-    NULL::TEXT               AS ledger_name,
-    NULL::TEXT               AS transfer_id,
-    NULL::TEXT               AS transfer_type,
-    drift                    AS primary_amount,
-    fed_total                AS secondary_amount
-FROM ar_gl_vs_fed_master_drift
-WHERE drift_status = 'drift'""",
-        f"""SELECT
-    'Internal Transfer Stuck in Suspense' AS check_type,
-    'yellow'                              AS severity,
-    4                                     AS severity_rank,
-    originated_at                         AS exception_date,
-{_aging_columns('originated_at')},
-    NULL::TEXT                            AS account_id,
-    NULL::TEXT                            AS account_name,
-    'System'                              AS account_level,
-    NULL::TEXT                            AS ledger_account_id,
-    NULL::TEXT                            AS ledger_name,
-    originate_transfer_id                 AS transfer_id,
-    NULL::TEXT                            AS transfer_type,
-    originate_amount                      AS primary_amount,
-    NULL::NUMERIC                         AS secondary_amount
-FROM ar_internal_transfer_stuck""",
-        f"""SELECT
-    'Internal Transfer Suspense Non-Zero EOD' AS check_type,
-    'orange'                                  AS severity,
-    2                                         AS severity_rank,
-    balance_date                              AS exception_date,
-{_aging_columns('balance_date')},
-    ledger_account_id                         AS account_id,
-    ledger_name                               AS account_name,
-    'Ledger'                                  AS account_level,
-    ledger_account_id,
-    ledger_name,
-    NULL::TEXT                                AS transfer_id,
-    NULL::TEXT                                AS transfer_type,
-    stored_balance                            AS primary_amount,
-    NULL::NUMERIC                             AS secondary_amount
-FROM ar_internal_transfer_suspense_nonzero""",
-        f"""SELECT
-    'Internal Reversal Uncredited' AS check_type,
-    'yellow'                       AS severity,
-    4                              AS severity_rank,
-    originated_at                  AS exception_date,
-{_aging_columns('originated_at')},
-    NULL::TEXT                     AS account_id,
-    NULL::TEXT                     AS account_name,
-    'System'                       AS account_level,
-    NULL::TEXT                     AS ledger_account_id,
-    NULL::TEXT                     AS ledger_name,
-    originate_transfer_id          AS transfer_id,
-    NULL::TEXT                     AS transfer_type,
-    originate_amount               AS primary_amount,
-    NULL::NUMERIC                  AS secondary_amount
-FROM ar_internal_reversal_uncredited""",
-    ]
-    sql = "\nUNION ALL\n".join(blocks)
+    # The 14-block UNION ALL that produces these rows lives in schema.sql
+    # as the `ar_unified_exceptions` materialized view. The full plan
+    # (14 per-check views, each scanning `transactions` and/or
+    # `daily_balances`) was too heavy for QuickSight Direct Query — the
+    # Today's Exceptions sheet wouldn't render. Materializing makes load
+    # instant. Operators must REFRESH MATERIALIZED VIEW after each ETL
+    # load (the demo's `quicksight-gen demo apply` does this
+    # automatically). See schema.sql for the matview definition.
+    sql = (
+        "SELECT *, TO_CHAR(exception_date, 'YYYY-MM-DD') AS exception_date_str "
+        "FROM ar_unified_exceptions"
+    )
     return build_dataset(
         cfg, cfg.prefixed("ar-unified-exceptions-dataset"),
         "AR Unified Exceptions", "ar-unified-exceptions",

@@ -11,6 +11,8 @@ same-sheet sub-ledger table).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from quicksight_gen.account_recon.constants import (
     DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
     DS_AR_DAILY_STATEMENT_SUMMARY,
@@ -644,14 +646,48 @@ def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaratio
 # Drill-down parameters + filter groups
 # ---------------------------------------------------------------------------
 
-def _ar_string_parameter(name: str) -> ParameterDeclaration:
+# Phase K.2 sentinel — see _build_drill_helper_calculated_fields below
+# for usage. Picked to be obviously synthetic and unable to collide with
+# any real account/transfer/date string in the data.
+_DRILL_RESET_SENTINEL = "__ALL__"
+
+
+def _ar_string_parameter(
+    name: str, default_value: str | None = None,
+) -> ParameterDeclaration:
+    """Declare a SINGLE_VALUED string param.
+
+    ``default_value`` lets a parameter declare the K.2 reset sentinel
+    as its untouched-state default — needed for any param whose
+    destination filter uses the calc-field PASS shape, since both the
+    "never-touched" state and the "drill reset" path must produce the
+    sentinel value the calc field recognizes.
+    """
+    static_values = [default_value] if default_value is not None else []
     return ParameterDeclaration(
         StringParameterDeclaration=StringParameterDeclaration(
             ParameterValueType="SINGLE_VALUED",
             Name=name,
-            DefaultValues={"StaticValues": []},
+            DefaultValues={"StaticValues": static_values},
         ),
     )
+
+
+def _drill_param_declaration(name: str) -> ParameterDeclaration:
+    """Declare a drill-down string param that defaults to the sentinel.
+
+    Raises if ``name`` is not a drill parameter — the sentinel default
+    is only meaningful for params consumed by calc-field PASS filters,
+    so declaring a non-drill parameter through this helper would be a
+    programming error.
+    """
+    if name not in _DRILL_PARAMS_WITH_SENTINEL_DEFAULT:
+        raise ValueError(
+            f"{name!r} is not a drill parameter (known: "
+            f"{sorted(_DRILL_PARAMS_WITH_SENTINEL_DEFAULT)}). Declare it "
+            f"via _ar_string_parameter if it's a plain string param."
+        )
+    return _ar_string_parameter(name, default_value=_DRILL_RESET_SENTINEL)
 
 
 def _ar_balance_date_parameter() -> ParameterDeclaration:
@@ -672,28 +708,168 @@ def _ar_balance_date_parameter() -> ParameterDeclaration:
     )
 
 
-def _parameter_filter_group(
-    fg_id: str,
-    filter_id: str,
-    dataset_id: str,
-    column_name: str,
-    parameter_name: str,
-    sheet_id: str,
-    visual_ids: list[str] | None = None,
-) -> FilterGroup:
-    """CategoryFilter that binds ``column_name`` to a drill-down parameter.
+# Phase K.2 — calc-field-based "pass" filter for every cross-sheet drill.
+#
+# Background: parameter-bound CategoryFilters (CustomFilterConfiguration
+# { MatchOperator: EQUALS, ParameterName, NullOption: ALL_VALUES }) do
+# NOT actually treat an empty SINGLE_VALUED string param as "match all"
+# at runtime. They match the literal empty string instead, suppressing
+# every row. Because of that, a drill that wrote only some params would
+# leave the others at empty/stale, and the destination would silently
+# narrow to nothing. The K.2 spike confirmed this against pArTransferId.
+#
+# The fix: move the parameter test into a calculated-field expression
+# that returns 'PASS' when the param equals a sentinel value (or the
+# column matches the param). The filter group statically requires the
+# calc field equal 'PASS' — no parameter binding on the filter shape
+# itself. The parameter declares the sentinel as its default so a
+# never-touched fresh-load state passes through too. A drill action
+# that wants to clear the param writes the sentinel explicitly.
+#
+# Why a sentinel ("__ALL__") instead of testing for empty/null in the
+# calc field: the spike's empty/null path worked via URL fragment but
+# failed via SetParametersOperation with every value-shape variant
+# tried (IncludeNullValue:True+StringValues:[], StringValues:[""],
+# coalesce(${p},'')=''). The drill-action code path apparently
+# doesn't deliver the parameter value to the calc field in a form
+# that simplifies to NULL/'' the way URL-fragment does. A real-string
+# sentinel sidesteps the question entirely — every code path can
+# write the literal "__ALL__" with confidence.
 
-    When ``visual_ids`` is provided the filter is scoped to just those
-    visuals on the sheet (used for the Balances same-sheet sub-ledger
-    table drill). Otherwise it applies to every visual on the sheet.
+
+@dataclass(frozen=True)
+class _DrillFilterSpec:
+    """Single source of truth for one cross-sheet drill parameter.
+
+    Used to derive both the calc-field declaration (which encodes the
+    pass logic) and the FilterGroup that scopes the calc field to a
+    sheet (and optionally specific visuals). Keeping all three pieces
+    here in one record makes it impossible to forget the filter when
+    adding a calc field, or vice versa.
+    """
+    fg_id: str
+    filter_id: str
+    parameter_name: str
+    dataset_id: str
+    column_name: str
+    sheet_id: str
+    visual_ids: tuple[str, ...] | None = None
+
+    @property
+    def calc_field_name(self) -> str:
+        # ``_drill_pass_<paramName>_on_<dataset_short>``. The dataset
+        # short is the part of fg_id after "on-" so a sheet-restricted
+        # variant (e.g. "balances-subledger") gets a distinct name.
+        on_suffix = self.fg_id.split("on-", 1)[-1].replace("-", "_")
+        return f"_drill_pass_{self.parameter_name}_on_{on_suffix}"
+
+
+_DRILL_SPECS: list[_DrillFilterSpec] = [
+    _DrillFilterSpec(
+        fg_id="fg-ar-drill-subledger-on-txn",
+        filter_id="filter-ar-drill-subledger-on-txn",
+        parameter_name="pArSubledgerAccountId",
+        dataset_id=DS_AR_TRANSACTIONS,
+        column_name="subledger_account_id",
+        sheet_id=SHEET_AR_TRANSACTIONS,
+    ),
+    _DrillFilterSpec(
+        fg_id="fg-ar-drill-transfer-on-txn",
+        filter_id="filter-ar-drill-transfer-on-txn",
+        parameter_name="pArTransferId",
+        dataset_id=DS_AR_TRANSACTIONS,
+        column_name="transfer_id",
+        sheet_id=SHEET_AR_TRANSACTIONS,
+    ),
+    _DrillFilterSpec(
+        fg_id="fg-ar-drill-activity-date-on-txn",
+        filter_id="filter-ar-drill-activity-date-on-txn",
+        parameter_name="pArActivityDate",
+        dataset_id=DS_AR_TRANSACTIONS,
+        column_name="posted_date",
+        sheet_id=SHEET_AR_TRANSACTIONS,
+    ),
+    _DrillFilterSpec(
+        fg_id="fg-ar-drill-transfer-type-on-txn",
+        filter_id="filter-ar-drill-transfer-type-on-txn",
+        parameter_name="pArTransferType",
+        dataset_id=DS_AR_TRANSACTIONS,
+        column_name="transfer_type",
+        sheet_id=SHEET_AR_TRANSACTIONS,
+    ),
+    _DrillFilterSpec(
+        fg_id="fg-ar-drill-account-on-txn",
+        filter_id="filter-ar-drill-account-on-txn",
+        parameter_name="pArAccountId",
+        dataset_id=DS_AR_TRANSACTIONS,
+        column_name="account_id",
+        sheet_id=SHEET_AR_TRANSACTIONS,
+    ),
+    _DrillFilterSpec(
+        fg_id="fg-ar-drill-ledger-on-balances-subledger",
+        filter_id="filter-ar-drill-ledger-on-balances-subledger",
+        parameter_name="pArLedgerAccountId",
+        dataset_id=DS_AR_SUBLEDGER_BALANCE_DRIFT,
+        column_name="ledger_account_id",
+        sheet_id=SHEET_AR_BALANCES,
+        visual_ids=("ar-balances-subledger-table",),
+    ),
+]
+
+# Set of parameter names whose declarations need to default to the
+# sentinel — derived from the spec list so a new drill doesn't get
+# silently left out of the parameter declarations.
+_DRILL_PARAMS_WITH_SENTINEL_DEFAULT = frozenset(
+    spec.parameter_name for spec in _DRILL_SPECS
+)
+
+
+def _build_drill_helper_calculated_fields() -> list[dict]:
+    """Calc fields backing every drill filter.
+
+    Each spec produces ``ifelse(${param} = '__ALL__', 'PASS',
+    ifelse({column} = ${param}, 'PASS', 'FAIL'))``. The destination
+    filter group requires the calc field equal 'PASS', so the sentinel
+    short-circuits to a no-op and any other value narrows to matches.
+    """
+    return [
+        {
+            "Name": spec.calc_field_name,
+            "DataSetIdentifier": spec.dataset_id,
+            "Expression": (
+                f"ifelse("
+                f"${{{spec.parameter_name}}} = '{_DRILL_RESET_SENTINEL}', "
+                f"'PASS', "
+                f"ifelse({{{spec.column_name}}} = ${{{spec.parameter_name}}}, "
+                f"'PASS', 'FAIL')"
+                f")"
+            ),
+        }
+        for spec in _DRILL_SPECS
+    ]
+
+
+def _calc_field_pass_filter_group(spec: _DrillFilterSpec) -> FilterGroup:
+    """FilterGroup that statically requires ``calc_field == 'PASS'``.
+
+    The parameter test lives entirely in the calc field expression.
+    The filter shape itself is purely static — a literal CategoryValue
+    of "PASS" — so it never trips the empty-string-narrows-to-nothing
+    behavior of parameter-bound CustomFilterConfiguration.
+
+    Why ``CustomFilterConfiguration`` with a literal value rather than
+    ``FilterListConfiguration`` / ``CustomFilterListConfiguration``:
+    both list shapes reject EQUALS at the API (only CONTAINS /
+    DOES_NOT_CONTAIN). The single-value Custom variant is the only
+    shape that supports exact equality on a string column.
     """
     scoping = SheetVisualScopingConfiguration(
-        SheetId=sheet_id,
-        Scope="SELECTED_VISUALS" if visual_ids else "ALL_VISUALS",
-        VisualIds=visual_ids,
+        SheetId=spec.sheet_id,
+        Scope="SELECTED_VISUALS" if spec.visual_ids else "ALL_VISUALS",
+        VisualIds=list(spec.visual_ids) if spec.visual_ids else None,
     )
     return FilterGroup(
-        FilterGroupId=fg_id,
+        FilterGroupId=spec.fg_id,
         CrossDataset="SINGLE_DATASET",
         ScopeConfiguration=FilterScopeConfiguration(
             SelectedSheets=SelectedSheetsFilterScopeConfiguration(
@@ -704,16 +880,16 @@ def _parameter_filter_group(
         Filters=[
             Filter(
                 CategoryFilter=CategoryFilter(
-                    FilterId=filter_id,
+                    FilterId=spec.filter_id,
                     Column=ColumnIdentifier(
-                        DataSetIdentifier=dataset_id,
-                        ColumnName=column_name,
+                        DataSetIdentifier=spec.dataset_id,
+                        ColumnName=spec.calc_field_name,
                     ),
                     Configuration=CategoryFilterConfiguration(
                         CustomFilterConfiguration={
                             "MatchOperator": "EQUALS",
-                            "ParameterName": parameter_name,
-                            "NullOption": "ALL_VALUES",
+                            "CategoryValue": "PASS",
+                            "NullOption": "NON_NULLS_ONLY",
                         },
                     ),
                 ),
@@ -723,64 +899,8 @@ def _parameter_filter_group(
 
 
 def _build_drill_down_filter_groups() -> list[FilterGroup]:
-    """Five parameter-bound filter groups that implement the drills.
-
-    Phase 4 contributed the sub-ledger/transfer/ledger-on-balances trio;
-    Phase 5 adds activity-date and transfer-type bindings on the
-    Transactions sheet so breach/overdraft rows drill to a precise
-    (sub-ledger, date[, type]) slice.
-    """
-    return [
-        _parameter_filter_group(
-            fg_id="fg-ar-drill-subledger-on-txn",
-            filter_id="filter-ar-drill-subledger-on-txn",
-            dataset_id=DS_AR_TRANSACTIONS,
-            column_name="subledger_account_id",
-            parameter_name="pArSubledgerAccountId",
-            sheet_id=SHEET_AR_TRANSACTIONS,
-        ),
-        _parameter_filter_group(
-            fg_id="fg-ar-drill-transfer-on-txn",
-            filter_id="filter-ar-drill-transfer-on-txn",
-            dataset_id=DS_AR_TRANSACTIONS,
-            column_name="transfer_id",
-            parameter_name="pArTransferId",
-            sheet_id=SHEET_AR_TRANSACTIONS,
-        ),
-        _parameter_filter_group(
-            fg_id="fg-ar-drill-activity-date-on-txn",
-            filter_id="filter-ar-drill-activity-date-on-txn",
-            dataset_id=DS_AR_TRANSACTIONS,
-            column_name="posted_date",
-            parameter_name="pArActivityDate",
-            sheet_id=SHEET_AR_TRANSACTIONS,
-        ),
-        _parameter_filter_group(
-            fg_id="fg-ar-drill-transfer-type-on-txn",
-            filter_id="filter-ar-drill-transfer-type-on-txn",
-            dataset_id=DS_AR_TRANSACTIONS,
-            column_name="transfer_type",
-            parameter_name="pArTransferType",
-            sheet_id=SHEET_AR_TRANSACTIONS,
-        ),
-        _parameter_filter_group(
-            fg_id="fg-ar-drill-account-on-txn",
-            filter_id="filter-ar-drill-account-on-txn",
-            dataset_id=DS_AR_TRANSACTIONS,
-            column_name="account_id",
-            parameter_name="pArAccountId",
-            sheet_id=SHEET_AR_TRANSACTIONS,
-        ),
-        _parameter_filter_group(
-            fg_id="fg-ar-drill-ledger-on-balances-subledger",
-            filter_id="filter-ar-drill-ledger-on-balances-subledger",
-            dataset_id=DS_AR_SUBLEDGER_BALANCE_DRIFT,
-            column_name="ledger_account_id",
-            parameter_name="pArLedgerAccountId",
-            sheet_id=SHEET_AR_BALANCES,
-            visual_ids=["ar-balances-subledger-table"],
-        ),
-    ]
+    """Six calc-field-pass filter groups, one per drill parameter."""
+    return [_calc_field_pass_filter_group(spec) for spec in _DRILL_SPECS]
 
 
 # ---------------------------------------------------------------------------
@@ -804,13 +924,21 @@ def _build_definition(cfg: Config) -> AnalysisDefinition:
             _build_daily_statement_sheet(cfg),
         ],
         FilterGroups=build_filter_groups(cfg) + _build_drill_down_filter_groups(),
+        CalculatedFields=_build_drill_helper_calculated_fields(),
+        # Every drill parameter defaults to the sentinel so a
+        # fresh-load (untouched) state passes through the calc-field
+        # PASS filter as a no-op. Membership in
+        # _DRILL_PARAMS_WITH_SENTINEL_DEFAULT is derived from
+        # _DRILL_SPECS so adding a drill spec automatically wires the
+        # default — no chance of declaring a calc field whose param
+        # has a missing/empty default.
         ParameterDeclarations=[
-            _ar_string_parameter("pArSubledgerAccountId"),
-            _ar_string_parameter("pArLedgerAccountId"),
-            _ar_string_parameter("pArTransferId"),
-            _ar_string_parameter("pArActivityDate"),
-            _ar_string_parameter("pArTransferType"),
-            _ar_string_parameter("pArAccountId"),
+            _drill_param_declaration("pArSubledgerAccountId"),
+            _drill_param_declaration("pArLedgerAccountId"),
+            _drill_param_declaration("pArTransferId"),
+            _drill_param_declaration("pArActivityDate"),
+            _drill_param_declaration("pArTransferType"),
+            _drill_param_declaration("pArAccountId"),
             _ar_string_parameter("pArDsAccountId"),
             _ar_balance_date_parameter(),
         ],

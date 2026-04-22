@@ -843,7 +843,9 @@ def build_transactions_visuals() -> list[Visual]:
         )
     )
 
-    return [kpi_txn_count, kpi_failed, bar_by_status, bar_by_day, table_txn]
+    return [
+        kpi_txn_count, kpi_failed, bar_by_status, bar_by_day, table_txn,
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1147,9 +1149,14 @@ def build_todays_exceptions_visuals(
                             _unagg_field("ar-todays-exc-severity",
                                          DS_AR_UNIFIED_EXCEPTIONS,
                                          "severity"),
+                            # K.2: bind the FieldId to the YYYY-MM-DD
+                            # string projection (not the DATETIME
+                            # exception_date) so the drill SourceField
+                            # writes pArActivityDate in a format the
+                            # destination's posted_date filter can match.
                             _unagg_field("ar-todays-exc-date",
                                          DS_AR_UNIFIED_EXCEPTIONS,
-                                         "exception_date"),
+                                         "exception_date_str"),
                             _unagg_field("ar-todays-exc-age",
                                          DS_AR_UNIFIED_EXCEPTIONS,
                                          "aging_bucket"),
@@ -1208,15 +1215,71 @@ def build_todays_exceptions_visuals(
                     P_AR_TRANSFER,
                     "ar-todays-exc-transfer-id",
                 ),
-                _multi_drill_action(
-                    "action-ar-todays-exc-to-txn-by-account",
-                    "View Transactions for Account-Day",
-                    SHEET_AR_TRANSACTIONS,
-                    [
-                        (P_AR_ACCOUNT, "ar-todays-exc-account"),
-                        (P_AR_ACTIVITY_DATE, "ar-todays-exc-date"),
+                # K.2 spike validation (a): focused test of the
+                # SetParametersOperation code path with the calc-field
+                # destination filter. This drill writes:
+                #   - account, date via SourceField (required for drill
+                #     semantics — these stay parameter-bound on the
+                #     destination for now)
+                #   - pArTransferId via IncludeNullValue+empty (the only
+                #     destination filter that has been rewired to the
+                #     calc-field PASS shape; we test that an empty write
+                #     here propagates as ALL on Transactions).
+                # If validation passes, extend the calc-field shape to
+                # the other destination filters and add their empty
+                # writes here too.
+                VisualCustomAction(
+                    CustomActionId="action-ar-todays-exc-to-txn-by-account",
+                    Name="View Transactions for Account-Day",
+                    Trigger="DATA_POINT_MENU",
+                    ActionOperations=[
+                        VisualCustomActionOperation(
+                            NavigationOperation=CustomActionNavigationOperation(
+                                LocalNavigationConfiguration=LocalNavigationConfiguration(
+                                    TargetSheetId=SHEET_AR_TRANSACTIONS,
+                                ),
+                            ),
+                        ),
+                        VisualCustomActionOperation(
+                            SetParametersOperation=CustomActionSetParametersOperation(
+                                ParameterValueConfigurations=[
+                                    {
+                                        "DestinationParameterName": P_AR_ACCOUNT,
+                                        "Value": {"SourceField": "ar-todays-exc-account"},
+                                    },
+                                    {
+                                        "DestinationParameterName": P_AR_ACTIVITY_DATE,
+                                        "Value": {"SourceField": "ar-todays-exc-date"},
+                                    },
+                                    {
+                                        # K.2 sentinel reset — write
+                                        # "__ALL__" to clear any
+                                        # prior pArTransferId value.
+                                        # The destination calc-field
+                                        # filter recognizes the
+                                        # sentinel and lets every row
+                                        # pass. Both empty-string and
+                                        # IncludeNullValue:True+empty
+                                        # were tried first via this
+                                        # same drill and produced 0
+                                        # rows on Transactions (drill-
+                                        # action code path delivers
+                                        # them as something the calc
+                                        # field can't simplify to "no
+                                        # filter").
+                                        "DestinationParameterName": P_AR_TRANSFER,
+                                        "Value": {
+                                            "CustomValuesConfiguration": {
+                                                "CustomValues": {
+                                                    "StringValues": ["__ALL__"],
+                                                },
+                                            },
+                                        },
+                                    },
+                                ],
+                            ),
+                        ),
                     ],
-                    trigger="DATA_POINT_MENU",
                 ),
             ],
             ConditionalFormatting={

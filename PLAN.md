@@ -83,7 +83,8 @@ User flagged this as needing an early spike — there's real uncertainty in whet
 - [ ] **K.2.2 — Build `cross_sheet_drill()` helper in `common/`.** Signature: `cross_sheet_drill(action_name: str, target_sheet_id: str, set_params: dict[str, ColumnRef | str], trigger=DATA_POINT_CLICK) -> VisualCustomAction`. Resolves `SHEET_PARAMS[target_sheet_id]`, emits one `SetParameterValueConfiguration` per param (caller's value where supplied; default per K.2.0/K.2.1 outcome elsewhere). Wraps in the existing `CustomActionNavigationOperation` shape so callers swap in mechanically.
 - [ ] **K.2.3 — Migrate all drill sites to `cross_sheet_drill()`.** ~20 sites estimated (every DATA_POINT_CLICK + DATA_POINT_MENU navigation across PR + AR). Mechanical refactor — call the helper instead of building `SetParametersOperation` lists by hand. Existing unit tests in `test_account_recon.py` / `test_recon.py` should still pass; if any break it's because they were asserting the old narrow-write shape — update the assertions.
 - [ ] **K.2.4 — Browser e2e for stale-param hygiene.** New `tests/e2e/test_cross_sheet_param_hygiene.py` (one representative test per source→destination sheet pair, not one per drill — combinatorial otherwise). Pattern: pre-condition the destination sheet with a known stale param via direct visit, drill from the source, assert the destination row count matches the unfiltered baseline (for the params the drill defaults). Tests gated under `QS_GEN_E2E=1` like the rest of the e2e suite.
-- [ ] **K.2.5 — Release as v3.5.3 (patch).** No schema change, no user-facing dashboard change, no handbook change — drill behavior just becomes more reliable. RELEASE_NOTES.md entry frames it as a UX correctness fix.
+- [ ] **K.2.5 — Release as v3.6.0 (minor).** Drill behavior becomes more reliable AND the schema gains the `ar_unified_exceptions` materialized view (K.2.0 follow-on — see below). Bump is minor not patch because operators must add a `REFRESH MATERIALIZED VIEW` step to their ETL pipeline. RELEASE_NOTES.md frames it as a UX correctness fix + a schema-level performance change with an operator-facing refresh contract.
+- [ ] **K.2.6 — Document the matview refresh contract.** During K.2.0 spike, the Today's Exceptions sheet wouldn't render the 14-block UNION ALL via Direct Query — converted `ar_unified_exceptions` to a `MATERIALIZED VIEW` in `schema.sql` so load is instant. `demo apply` now runs `REFRESH MATERIALIZED VIEW ar_unified_exceptions;` after seed insert. **Operator-facing:** production ETL must run the same REFRESH after each load; `days_outstanding` and `aging_bucket` are computed at refresh time so daily refreshes naturally keep aging accurate. Update `docs/Schema_v3.md` with a "Materialized views" section listing `ar_unified_exceptions`, the refresh requirement, and the timing semantics for the aging columns. Cross-link from the AR handbook's Exceptions overview.
 
 ## K.3 — Lateness as a data column, not an operator threshold
 
@@ -96,10 +97,11 @@ Today: PR has `late_default_days` (default 30) as a config knob + slider; AR doe
 - [ ] **K.3.2 — Datasets surface `is_late` + `expected_complete_at`.** Add `is_late BOOLEAN` and `expected_complete_at TIMESTAMP` columns to `ar_unified_exceptions` and the relevant per-check views; same in PR's exception datasets. The `is_late` predicate is `CURRENT_TIMESTAMP > COALESCE(expected_complete_at, posted_at + INTERVAL '1 day')`. Update `DatasetContract` entries. SQL projections that today use `(CURRENT_DATE - posted_at::date) > N` switch to `is_late = true`.
 - [ ] **K.3.3 — KPIs / filters / visuals consume `is_late`.** PR Payment Reconciliation tab's "Late Payments" KPI uses `is_late` instead of `late_default_days` slider math. Today's Exceptions sheet adds an `is_late` filter control (toggle: All / Late only / On-time only). Decide what happens to `late_default_days` config: probably retire (the data answers; the slider only ever existed because the data didn't). If kept for back-compat it lives on as a fallback in views that don't surface `is_late`.
 - [ ] **K.3.4 — Handbook updates.** PR + AR walkthroughs update language: "rows where `days_outstanding > N`" → "rows where `is_late = true`". `handbook/customization.md` adds a section on the `expected_complete_at` ETL contract. `Schema_v3.md` already updated in K.3.0 with the column spec; cross-link from the AR/PR walkthrough overviews.
-- [ ] **K.3.5 — Release as v3.6.0 (minor).** Additive schema change — the column is NULLABLE with a default formula, so all existing SQL keeps working with the COALESCE semantics. Bump is minor not patch because the dataset contract gains a column (consumers parsing the contract may notice). RELEASE_NOTES.md describes the new column, the data-driven `is_late` predicate, and the `late_default_days` deprecation (or retention if K.3.3 keeps it).
+- [ ] **K.3.5 — Release as v3.7.0 (minor).** Additive schema change — the column is NULLABLE with a default formula, so all existing SQL keeps working with the COALESCE semantics. Bump is minor not patch because the dataset contract gains a column (consumers parsing the contract may notice). RELEASE_NOTES.md describes the new column, the data-driven `is_late` predicate, and the `late_default_days` deprecation (or retention if K.3.3 keeps it).
 
 ## K.4 — Investigative app (AML + general)
 (Note before we start on this, that this is broader than just AML — call it the investigative app)
+(Another note, just like the exception views, I expect this module to require some materialized views for its worst queries)
 
 Goal: new `quicksight_gen.aml_recon` app (third app alongside PR + AR), mirroring the existing two-app pattern. Reads from the same `transactions` + `daily_balances` base tables — no schema changes (assuming K.3 has shipped, the new lateness column is already there for free). Build feasibility-driven, not equally-weighted.
 
@@ -120,9 +122,11 @@ Goal: new `quicksight_gen.aml_recon` app (third app alongside PR + AR), mirrorin
 
 ## Audit Enhancements
 - How can someone show the state of the system durably?
+  - This could be columns on the daily statement, show the percentage of each transaction row that matches perfectly to its other legs
   - This is to support reporting to auditors/regulators
   - should not use the pixel perfect report feature (costs too much money)
   - may just be we add to the training material to pdf print certain tabs to start
+  - 
 
 ## New Persona
 See Training_Story.md, the executives want data!
@@ -135,3 +139,13 @@ See Training_Story.md, the executives want data!
 ## Data Evaluation / Test Enhancements
 - Could given a postgresql database connection evaluate a dataset to see if it already has all the exception cases in it? report out on the command line some stats?
 - We should include a database warm command with the testing commands
+
+## App Info Tab
+- The last sheet in each analysis should have the following technical information to help with troubleshooting
+  - Should be added as something for the technical teams to know about in the handbook
+- The version of the quicksight-gen app used to generate it
+  - So version mismatches are detectable
+- The most recent date of the transaction and daily balance tables
+  - So the ETL jobs can be troubleshooted
+- The most recent timestamp materialized views were updated
+  - Since that could be the source of data mismatch problems
