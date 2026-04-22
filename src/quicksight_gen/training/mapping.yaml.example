@@ -14,6 +14,11 @@
 #
 # See translation-notes.md at the repo root for the rationale behind
 # each mapping.
+#
+# AUTO-DERIVED FROM common/persona.py — do not edit by hand. Add new
+# strings to ``SNB_PERSONA`` and re-run the parity test (which prints
+# the regenerated YAML body when it diverges).
+
 
 # --- Institution identity ---
 institution:
