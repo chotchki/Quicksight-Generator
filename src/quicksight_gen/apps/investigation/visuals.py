@@ -21,22 +21,46 @@ visuals read the matview-backed money-trail dataset, scoped to one
 chain via the chain-root parameter.
 
 K.4.8 ships the Account Network sheet — same matview as Money Trail,
-viewed account-centrically. The Sankey shows every edge touching the
-anchor account (anchor sits in the middle, inbound counterparties on
-the left, outbound on the right) and the touching-edges table lists
-every edge for the anchor across the full window. Filter narrows via
-the analysis-level ``is_anchor_edge`` calc field set by K.4.8c.
+viewed account-centrically. Two Sankeys side-by-side encode direction
+in geometry: the LEFT Sankey shows inbound edges (counterparties →
+anchor, filter ``is_inbound_edge='yes'``); the RIGHT Sankey shows
+outbound edges (anchor → counterparties, filter
+``is_outbound_edge='yes'``); the anchor visually meets in the middle.
+A full-width touching-edges table sits below.
+
+Three walk-the-flow drills, all writing the clicked counterparty
+into ``pInvANetworkAnchor`` so the whole sheet re-renders around the
+new anchor:
+
+- **Inbound Sankey** (left-click): reads the SOURCE side — that's
+  the counterparty when the target is filtered to the anchor.
+- **Outbound Sankey** (left-click): reads the TARGET side — that's
+  the counterparty when the source is filtered to the anchor.
+- **Touching-edges table** (right-click menu): reads the analysis-
+  level ``counterparty_display`` calc field — works on both
+  directions in one table since the calc field always picks the
+  side opposite the anchor.
+
+Sankey actions use ``DATA_POINT_CLICK`` (left-click) because
+QuickSight's Sankey ``DATA_POINT_MENU`` (right-click) drill isn't
+reliable in practice; the table action stays on right-click so left-
+click on a row keeps QuickSight's default cross-visual highlight
+behaviour.
 """
 
 from __future__ import annotations
 
 from quicksight_gen.apps.investigation.constants import (
+    CF_INV_ANETWORK_COUNTERPARTY_DISPLAY,
     CF_INV_FANOUT_DISTINCT_SENDERS,
     DS_INV_ACCOUNT_NETWORK,
     DS_INV_MONEY_TRAIL,
     DS_INV_RECIPIENT_FANOUT,
     DS_INV_VOLUME_ANOMALIES,
-    V_INV_ANETWORK_SANKEY,
+    P_INV_ANETWORK_ANCHOR,
+    SHEET_INV_ACCOUNT_NETWORK,
+    V_INV_ANETWORK_SANKEY_INBOUND,
+    V_INV_ANETWORK_SANKEY_OUTBOUND,
     V_INV_ANETWORK_TABLE,
     V_INV_ANOMALIES_DISTRIBUTION,
     V_INV_ANOMALIES_KPI_FLAGGED,
@@ -47,6 +71,12 @@ from quicksight_gen.apps.investigation.constants import (
     V_INV_FANOUT_TABLE,
     V_INV_MONEY_TRAIL_SANKEY,
     V_INV_MONEY_TRAIL_TABLE,
+)
+from quicksight_gen.common.dataset_contract import ColumnShape
+from quicksight_gen.common.drill import (
+    DrillParam,
+    DrillSourceField,
+    cross_sheet_drill,
 )
 from quicksight_gen.common.models import (
     BarChartAggregatedFieldWells,
@@ -650,44 +680,136 @@ def build_money_trail_visuals() -> list[Visual]:
 _ANETWORK_NODE_CAP = 50
 
 
-def _account_network_sankey() -> Visual:
-    """Account-anchored Sankey: source → target ribbons touching the anchor.
+# Typed wrapper for the anchor parameter — display-shaped because the
+# K.4.8f display-column trick stores ``"name (id)"`` in the parameter
+# rather than a raw account_id. Walking actions write source_display
+# or target_display field values into this parameter; the drill helper
+# refuses any source field whose contract shape isn't ACCOUNT_DISPLAY.
+_P_ANETWORK_ANCHOR_DRILL = DrillParam(
+    P_INV_ANETWORK_ANCHOR, ColumnShape.ACCOUNT_DISPLAY,
+)
 
-    The anchor filter (CategoryFilter on the ``is_anchor_edge`` calc
-    field) narrows the dataset to edges whose source OR target equals
-    the anchor account. The Sankey then renders those edges naturally:
-    ribbons going INTO the anchor land on the right side of the anchor
-    node, ribbons going OUT of the anchor leave from its left side, so
-    the diagram self-organizes into a left-counterparties / anchor /
-    right-counterparties layout. Weight = SUM(hop_amount).
+
+def _table_walk_action(
+    *,
+    counterparty_field_id: str,
+    action_id_prefix: str,
+) -> list:
+    """Table-flavour walk: a single, unambiguous "Walk to other account".
+
+    The table can carry the analysis-level ``counterparty_display``
+    calc field as a GroupBy column — calc-field references are allowed
+    in table field wells. With that field in scope, one drill action
+    that reads ``counterparty_display`` always picks the side that
+    ISN'T the current anchor: no no-op trap.
+
+    DrillSourceField is constructed directly (not via ``field_source``)
+    because calc fields don't live in the dataset contract — they live
+    on the analysis. The shape is hand-asserted as ACCOUNT_DISPLAY
+    because the calc field's expression projects whichever of
+    source_display / target_display isn't the anchor; both inputs are
+    ACCOUNT_DISPLAY so the projection is too.
+    """
+    return [
+        cross_sheet_drill(
+            action_id=f"{action_id_prefix}-walk-counterparty",
+            name="Walk to other account on this edge",
+            target_sheet=SHEET_INV_ACCOUNT_NETWORK,
+            writes=[
+                (_P_ANETWORK_ANCHOR_DRILL, DrillSourceField(
+                    field_id=counterparty_field_id,
+                    shape=ColumnShape.ACCOUNT_DISPLAY,
+                )),
+            ],
+            trigger="DATA_POINT_MENU",
+        ),
+    ]
+
+
+def _sankey_walk_action(
+    *,
+    counterparty_field_id: str,
+    action_id: str,
+) -> list:
+    """Sankey-flavour walk: a single left-click action.
+
+    Each directional Sankey filters to one side equalling the anchor
+    (inbound: target=anchor, outbound: source=anchor). That makes the
+    OTHER side unambiguous — it's always the counterparty. So one
+    action per Sankey reading from the counterparty field is enough,
+    and DATA_POINT_CLICK (left-click) gives the analyst the same
+    ergonomics as clicking a row in the table beside it.
+
+    DrillSourceField is constructed by hand because the Sankey
+    field-well dimension isn't resolved through the dataset contract
+    in the typed helper — but the source_display / target_display
+    columns ARE tagged ACCOUNT_DISPLAY in the dataset contract, so
+    this parallels what ``field_source`` would resolve to.
+    """
+    return [
+        cross_sheet_drill(
+            action_id=action_id,
+            name="Walk to this counterparty",
+            target_sheet=SHEET_INV_ACCOUNT_NETWORK,
+            writes=[
+                (_P_ANETWORK_ANCHOR_DRILL, DrillSourceField(
+                    field_id=counterparty_field_id,
+                    shape=ColumnShape.ACCOUNT_DISPLAY,
+                )),
+            ],
+            trigger="DATA_POINT_CLICK",
+        ),
+    ]
+
+
+def _directional_sankey(
+    *,
+    visual_id,
+    title: str,
+    subtitle: str,
+    source_field_id: str,
+    target_field_id: str,
+    weight_field_id: str,
+    counterparty_field_id: str,
+    action_id: str,
+) -> Visual:
+    """Build one direction-scoped Sankey for the Account Network sheet.
+
+    Both Sankeys share the same field-well shape (source_display →
+    target_display, weight = SUM(hop_amount)) — the directional
+    filter group does the inbound vs outbound narrowing at the
+    analysis level, not in the visual definition. So this helper
+    parameterizes the labels, field ids, and which field-well-id is
+    the counterparty side (source for inbound, target for outbound).
+
+    Single left-click action wired off the counterparty side: clicking
+    anywhere on the Sankey writes that side's value into the anchor
+    parameter, re-rendering both Sankeys + the table around the new
+    anchor. Right-click drill on Sankeys is unreliable in practice;
+    left-click is the path that works.
     """
     return Visual(
         SankeyDiagramVisual=SankeyDiagramVisual(
-            VisualId=V_INV_ANETWORK_SANKEY,
-            Title=_title("Account Network — Anchor Sankey"),
-            Subtitle=_subtitle(
-                "Every edge touching the anchor account, in either "
-                "direction. Inbound counterparties feed the anchor "
-                "node from the left; outbound counterparties leave "
-                "from the right. Ribbon thickness = SUM(hop_amount)."
-            ),
+            VisualId=visual_id,
+            Title=_title(title),
+            Subtitle=_subtitle(subtitle),
             ChartConfiguration=SankeyDiagramChartConfiguration(
                 FieldWells=SankeyDiagramFieldWells(
                     SankeyDiagramAggregatedFieldWells=SankeyDiagramAggregatedFieldWells(
                         Source=[
                             _dim(_DS_ACCOUNT_NETWORK,
-                                 "inv-anetwork-sankey-source",
-                                 "source_account_name"),
+                                 source_field_id,
+                                 "source_display"),
                         ],
                         Destination=[
                             _dim(_DS_ACCOUNT_NETWORK,
-                                 "inv-anetwork-sankey-target",
-                                 "target_account_name"),
+                                 target_field_id,
+                                 "target_display"),
                         ],
                         Weight=[
                             _measure_sum(
                                 _DS_ACCOUNT_NETWORK,
-                                "inv-anetwork-sankey-weight",
+                                weight_field_id,
                                 "hop_amount",
                             ),
                         ],
@@ -697,7 +819,7 @@ def _account_network_sankey() -> Visual:
                     WeightSort=[
                         {
                             "FieldSort": {
-                                "FieldId": "inv-anetwork-sankey-weight",
+                                "FieldId": weight_field_id,
                                 "Direction": "DESC",
                             },
                         },
@@ -712,7 +834,68 @@ def _account_network_sankey() -> Visual:
                     },
                 ),
             ),
+            Actions=_sankey_walk_action(
+                counterparty_field_id=counterparty_field_id,
+                action_id=action_id,
+            ),
         ),
+    )
+
+
+def _account_network_sankey_inbound() -> Visual:
+    """Left-side Sankey — counterparties → anchor.
+
+    Filter (set in filters.py, scoped to this visual only) narrows to
+    rows where ``target_display = anchor``. The anchor appears as a
+    single target node on the right side of this Sankey; counterparty
+    sources fan in from the left. Visually, the anchor sits at the
+    inner edge — meeting the outbound Sankey's anchor (which is on
+    its left edge) when the two are laid out side-by-side.
+
+    Left-click action reads the SOURCE field — the counterparty side
+    on this direction.
+    """
+    return _directional_sankey(
+        visual_id=V_INV_ANETWORK_SANKEY_INBOUND,
+        title="Inbound — counterparties → anchor",
+        subtitle=(
+            "Counterparties sending money INTO the anchor account. "
+            "Ribbon thickness = SUM(hop_amount). Left-click any source "
+            "node (or its ribbon) to walk the anchor over to that "
+            "counterparty."
+        ),
+        source_field_id="inv-anetwork-sankey-in-source",
+        target_field_id="inv-anetwork-sankey-in-target",
+        weight_field_id="inv-anetwork-sankey-in-weight",
+        counterparty_field_id="inv-anetwork-sankey-in-source",
+        action_id="action-anetwork-sankey-inbound-walk",
+    )
+
+
+def _account_network_sankey_outbound() -> Visual:
+    """Right-side Sankey — anchor → counterparties.
+
+    Filter narrows to rows where ``source_display = anchor``. The
+    anchor appears as a single source node on the left side of this
+    Sankey; counterparty targets fan out to the right.
+
+    Left-click action reads the TARGET field — the counterparty side
+    on this direction.
+    """
+    return _directional_sankey(
+        visual_id=V_INV_ANETWORK_SANKEY_OUTBOUND,
+        title="Outbound — anchor → counterparties",
+        subtitle=(
+            "Counterparties receiving money FROM the anchor account. "
+            "Ribbon thickness = SUM(hop_amount). Left-click any target "
+            "node (or its ribbon) to walk the anchor over to that "
+            "counterparty."
+        ),
+        source_field_id="inv-anetwork-sankey-out-source",
+        target_field_id="inv-anetwork-sankey-out-target",
+        weight_field_id="inv-anetwork-sankey-out-weight",
+        counterparty_field_id="inv-anetwork-sankey-out-target",
+        action_id="action-anetwork-sankey-outbound-walk",
     )
 
 
@@ -720,18 +903,31 @@ def _account_network_table() -> Visual:
     """Touching-edges table: every edge involving the anchor account.
 
     Sorted by amount DESC so the largest flows surface first — analysts
-    triage by size, not by chain order. Same group-by columns as the
-    Money Trail table so the two sheets feel consistent; depth surfaces
-    here too because the matview rows still carry it (one anchor's
-    edges may live at different depths in different chains).
+    triage by size, not by chain order. Filter (set in filters.py,
+    scoped to this visual only) is the broader ``is_anchor_edge``
+    predicate so the table covers BOTH directions; the inbound and
+    outbound Sankeys above each show only one direction's slice.
+
+    Source / target columns use the ``"name (id)"`` display strings so
+    the row reads cleanly. The ``counterparty_display`` calc field is
+    pulled into the field wells (and shown in the table) so the single
+    right-click action ("Walk to other account on this edge") can
+    SourceField off it — this picks the side of the edge that ISN'T
+    the current anchor in one click.
     """
     return Visual(
         TableVisual=TableVisual(
             VisualId=V_INV_ANETWORK_TABLE,
             Title=_title("Account Network — Touching Edges"),
             Subtitle=_subtitle(
-                "Every edge involving the anchor account, ordered by "
-                "amount descending."
+                "Every edge involving the anchor account in either "
+                "direction, ordered by amount descending. The "
+                "Counterparty column shows the side that isn't the "
+                "current anchor — right-click any row and pick \"Walk "
+                "to other account on this edge\" to make that "
+                "counterparty the new anchor. The dropdown above may "
+                "take a moment to catch up; trust the data, not the "
+                "control text."
             ),
             ChartConfiguration=TableConfiguration(
                 FieldWells=TableFieldWells(
@@ -744,11 +940,14 @@ def _account_network_table() -> Visual:
                                  "inv-anetwork-tbl-transfer-type",
                                  "transfer_type"),
                             _dim(_DS_ACCOUNT_NETWORK,
-                                 "inv-anetwork-tbl-source-name",
-                                 "source_account_name"),
+                                 "inv-anetwork-tbl-source-display",
+                                 "source_display"),
                             _dim(_DS_ACCOUNT_NETWORK,
-                                 "inv-anetwork-tbl-target-name",
-                                 "target_account_name"),
+                                 "inv-anetwork-tbl-target-display",
+                                 "target_display"),
+                            _dim(_DS_ACCOUNT_NETWORK,
+                                 "inv-anetwork-tbl-counterparty",
+                                 CF_INV_ANETWORK_COUNTERPARTY_DISPLAY),
                             _num_dim(_DS_ACCOUNT_NETWORK,
                                      "inv-anetwork-tbl-depth",
                                      "depth"),
@@ -776,12 +975,17 @@ def _account_network_table() -> Visual:
                     ],
                 },
             ),
+            Actions=_table_walk_action(
+                counterparty_field_id="inv-anetwork-tbl-counterparty",
+                action_id_prefix="action-anetwork-table",
+            ),
         ),
     )
 
 
 def build_account_network_visuals() -> list[Visual]:
     return [
-        _account_network_sankey(),
+        _account_network_sankey_inbound(),
+        _account_network_sankey_outbound(),
         _account_network_table(),
     ]

@@ -30,14 +30,20 @@ from quicksight_gen.apps.investigation.analysis import (
     build_investigation_dashboard,
 )
 from quicksight_gen.apps.investigation.constants import (
+    CF_INV_ANETWORK_COUNTERPARTY_DISPLAY,
     CF_INV_ANETWORK_IS_ANCHOR_EDGE,
+    CF_INV_ANETWORK_IS_INBOUND_EDGE,
+    CF_INV_ANETWORK_IS_OUTBOUND_EDGE,
     CF_INV_FANOUT_DISTINCT_SENDERS,
     DS_INV_ACCOUNT_NETWORK,
+    DS_INV_ANETWORK_ACCOUNTS,
     DS_INV_MONEY_TRAIL,
     DS_INV_RECIPIENT_FANOUT,
     DS_INV_VOLUME_ANOMALIES,
     FG_INV_ANETWORK_AMOUNT,
     FG_INV_ANETWORK_ANCHOR,
+    FG_INV_ANETWORK_INBOUND,
+    FG_INV_ANETWORK_OUTBOUND,
     FG_INV_ANOMALIES_SIGMA,
     FG_INV_ANOMALIES_WINDOW,
     FG_INV_FANOUT_THRESHOLD,
@@ -57,7 +63,8 @@ from quicksight_gen.apps.investigation.constants import (
     SHEET_INV_FANOUT,
     SHEET_INV_GETTING_STARTED,
     SHEET_INV_MONEY_TRAIL,
-    V_INV_ANETWORK_SANKEY,
+    V_INV_ANETWORK_SANKEY_INBOUND,
+    V_INV_ANETWORK_SANKEY_OUTBOUND,
     V_INV_ANETWORK_TABLE,
     V_INV_ANOMALIES_DISTRIBUTION,
     V_INV_ANOMALIES_KPI_FLAGGED,
@@ -186,14 +193,15 @@ def test_demo_sql_is_a_string():
 def test_investigation_datasets_in_expected_order():
     """K.4.3 dataset first, K.4.4 matview-backed dataset second, K.4.5
     money-trail matview dataset third, K.4.8 account-network wrapper
-    fourth. Order matters — analysis.py's DataSetIdentifierDeclarations
-    zip relies on it."""
+    fourth, K.4.8k narrow accounts dataset fifth. Order matters —
+    analysis.py's DataSetIdentifierDeclarations zip relies on it."""
     datasets = build_all_datasets(_TEST_CFG)
-    assert len(datasets) == 4
+    assert len(datasets) == 5
     assert datasets[0].DataSetId == _TEST_CFG.prefixed("inv-recipient-fanout-dataset")
     assert datasets[1].DataSetId == _TEST_CFG.prefixed("inv-volume-anomalies-dataset")
     assert datasets[2].DataSetId == _TEST_CFG.prefixed("inv-money-trail-dataset")
     assert datasets[3].DataSetId == _TEST_CFG.prefixed("inv-account-network-dataset")
+    assert datasets[4].DataSetId == _TEST_CFG.prefixed("inv-anetwork-accounts-dataset")
 
 
 def test_investigation_datasets_declared_in_analysis():
@@ -204,6 +212,7 @@ def test_investigation_datasets_declared_in_analysis():
         DS_INV_VOLUME_ANOMALIES,
         DS_INV_MONEY_TRAIL,
         DS_INV_ACCOUNT_NETWORK,
+        DS_INV_ANETWORK_ACCOUNTS,
     ]
 
 
@@ -234,8 +243,9 @@ def test_recipient_fanout_sql_filters_recipient_to_dda_types():
 def test_filter_groups_in_expected_order():
     """Two K.4.3 fanout filter groups, then two K.4.4 anomalies filter
     groups, then three K.4.5 money-trail filter groups (root / hops /
-    amount), then two K.4.8 account-network filter groups (anchor /
-    amount). Order is stable so the deployed Definition diff is readable."""
+    amount), then four K.4.8 account-network filter groups (anchor /
+    inbound / outbound / amount). Order is stable so the deployed
+    Definition diff is readable."""
     groups = build_filter_groups(_TEST_CFG)
     ids = [g.FilterGroupId for g in groups]
     assert ids == [
@@ -247,6 +257,8 @@ def test_filter_groups_in_expected_order():
         FG_INV_MONEY_TRAIL_HOPS,
         FG_INV_MONEY_TRAIL_AMOUNT,
         FG_INV_ANETWORK_ANCHOR,
+        FG_INV_ANETWORK_INBOUND,
+        FG_INV_ANETWORK_OUTBOUND,
         FG_INV_ANETWORK_AMOUNT,
     ]
 
@@ -401,13 +413,14 @@ def test_fanout_sheet_serializes_to_aws_json():
     assert len(fanout["Visuals"]) == 4
     assert len(fanout["FilterControls"]) == 1
     assert len(fanout["ParameterControls"]) == 1
-    # Top-level: 9 filter groups (2 fanout + 2 anomalies + 3 money trail
-    # + 2 account network), 2 calc fields (fanout distinct count +
-    # account-network is_anchor_edge), 7 parameters (fanout threshold
-    # + sigma + money-trail root/hops/amount + account-network
-    # anchor/min-amount).
-    assert len(j["Definition"]["FilterGroups"]) == 9
-    assert len(j["Definition"]["CalculatedFields"]) == 2
+    # Top-level: 11 filter groups (2 fanout + 2 anomalies + 3 money trail
+    # + 4 account network: anchor/inbound/outbound/amount), 5 calc fields
+    # (fanout distinct count + account-network is_anchor_edge +
+    # is_inbound_edge + is_outbound_edge + counterparty_display), 7
+    # parameters (fanout threshold + sigma + money-trail root/hops/amount
+    # + account-network anchor/min-amount).
+    assert len(j["Definition"]["FilterGroups"]) == 11
+    assert len(j["Definition"]["CalculatedFields"]) == 5
     assert len(j["Definition"]["ParameterDeclarations"]) == 7
 
 
@@ -600,6 +613,10 @@ def test_money_trail_contract_exposes_chain_columns():
     assert "hop_amount" in names
     assert "posted_at" in names
     assert "transfer_type" in names
+    # K.4.8f walking-friendly display labels: name (id) — both human-
+    # readable AND uniquely keyed.
+    assert "source_display" in names
+    assert "target_display" in names
 
 
 def test_money_trail_dataset_reads_from_matview():
@@ -867,10 +884,13 @@ def test_money_trail_sheet_serializes_to_aws_json():
 
 def test_account_network_dataset_reuses_money_trail_matview():
     """K.4.8 wraps the same matview as K.4.5 — second dataset
-    registration so account-centric filters live independently."""
+    registration so account-centric filters live independently. SQL
+    adds the source_display / target_display walking labels."""
     ds = build_all_datasets(_TEST_CFG)[3]
     sql = next(iter(ds.PhysicalTableMap.values())).CustomSql.SqlQuery
-    assert sql == "SELECT * FROM inv_money_trail_edges"
+    assert "FROM inv_money_trail_edges" in sql
+    assert "AS source_display" in sql
+    assert "AS target_display" in sql
 
 
 def test_anchor_calc_field_is_ifelse_on_anchor_param():
@@ -885,8 +905,10 @@ def test_anchor_calc_field_is_ifelse_on_anchor_param():
     assert is_anchor["DataSetIdentifier"] == DS_INV_ACCOUNT_NETWORK
     expr = is_anchor["Expression"]
     assert "ifelse" in expr
-    assert "{source_account_id} = ${pInvANetworkAnchor}" in expr
-    assert "{target_account_id} = ${pInvANetworkAnchor}" in expr
+    # Walks compare display strings so a Sankey click delivers the
+    # exact value the dropdown stores.
+    assert "{source_display} = ${pInvANetworkAnchor}" in expr
+    assert "{target_display} = ${pInvANetworkAnchor}" in expr
     assert "OR" in expr
     assert "'yes'" in expr
     assert "'no'" in expr
@@ -902,7 +924,7 @@ def test_anchor_filter_matches_calc_field_on_yes():
     assert cf.Column.DataSetIdentifier == DS_INV_ACCOUNT_NETWORK
     assert cf.Column.ColumnName == CF_INV_ANETWORK_IS_ANCHOR_EDGE
     config = cf.Configuration.FilterListConfiguration
-    assert config["MatchOperator"] == "EQUALS"
+    assert config["MatchOperator"] == "CONTAINS"
     assert config["CategoryValues"] == ["yes"]
 
 
@@ -921,21 +943,80 @@ def test_anetwork_amount_filter_drops_noise_edges_via_parameter():
     assert nrf.IncludeMinimum is True
 
 
-def test_anetwork_filters_are_all_visuals_scope():
-    """Both K.4.8 filters scope ALL_VISUALS so the Sankey + table agree."""
+def test_anetwork_amount_filter_is_all_visuals_scope():
+    """The amount filter applies to all three visuals on the sheet
+    (both Sankeys + table)."""
     groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
-    for fg_id in (FG_INV_ANETWORK_ANCHOR, FG_INV_ANETWORK_AMOUNT):
-        sc = groups[fg_id].ScopeConfiguration
-        configs = sc.SelectedSheets.SheetVisualScopingConfigurations
-        assert len(configs) == 1
-        assert configs[0].SheetId == SHEET_INV_ACCOUNT_NETWORK
-        assert configs[0].Scope == SheetVisualScopingConfiguration.ALL_VISUALS
+    sc = groups[FG_INV_ANETWORK_AMOUNT].ScopeConfiguration
+    configs = sc.SelectedSheets.SheetVisualScopingConfigurations
+    assert len(configs) == 1
+    assert configs[0].SheetId == SHEET_INV_ACCOUNT_NETWORK
+    assert configs[0].Scope == SheetVisualScopingConfiguration.ALL_VISUALS
 
 
-def test_anetwork_anchor_dropdown_links_to_source_account_id():
-    """Dropdown auto-populates from the matview's distinct
-    source_account_id values via LinkToDataSetColumn — analysts see
-    every account that has ever sent in the matview."""
+def test_anetwork_anchor_filter_is_table_only():
+    """K.4.8i: anchor filter (is_anchor_edge='yes') is scoped to the
+    touching-edges table only. The two Sankeys each carry their own
+    direction-specific filter (is_inbound_edge / is_outbound_edge) so
+    the layout itself encodes direction."""
+    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    sc = groups[FG_INV_ANETWORK_ANCHOR].ScopeConfiguration
+    configs = sc.SelectedSheets.SheetVisualScopingConfigurations
+    assert len(configs) == 1
+    assert configs[0].SheetId == SHEET_INV_ACCOUNT_NETWORK
+    assert configs[0].Scope == SheetVisualScopingConfiguration.SELECTED_VISUALS
+    assert configs[0].VisualIds == [V_INV_ANETWORK_TABLE]
+
+
+def test_anetwork_inbound_filter_is_inbound_sankey_only():
+    """K.4.8i: inbound filter scoped to the inbound Sankey only."""
+    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    sc = groups[FG_INV_ANETWORK_INBOUND].ScopeConfiguration
+    configs = sc.SelectedSheets.SheetVisualScopingConfigurations
+    assert len(configs) == 1
+    assert configs[0].SheetId == SHEET_INV_ACCOUNT_NETWORK
+    assert configs[0].Scope == SheetVisualScopingConfiguration.SELECTED_VISUALS
+    assert configs[0].VisualIds == [V_INV_ANETWORK_SANKEY_INBOUND]
+
+
+def test_anetwork_outbound_filter_is_outbound_sankey_only():
+    """K.4.8i: outbound filter scoped to the outbound Sankey only."""
+    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    sc = groups[FG_INV_ANETWORK_OUTBOUND].ScopeConfiguration
+    configs = sc.SelectedSheets.SheetVisualScopingConfigurations
+    assert len(configs) == 1
+    assert configs[0].SheetId == SHEET_INV_ACCOUNT_NETWORK
+    assert configs[0].Scope == SheetVisualScopingConfiguration.SELECTED_VISUALS
+    assert configs[0].VisualIds == [V_INV_ANETWORK_SANKEY_OUTBOUND]
+
+
+def test_anetwork_directional_filters_are_category_filters_on_calc_fields():
+    """K.4.8i: each directional Sankey's filter is a CategoryFilter
+    matching the calc field to 'yes' — the standard pattern for using
+    a calc field as a boolean filter."""
+    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    for fg_id, expected_col in (
+        (FG_INV_ANETWORK_INBOUND, CF_INV_ANETWORK_IS_INBOUND_EDGE),
+        (FG_INV_ANETWORK_OUTBOUND, CF_INV_ANETWORK_IS_OUTBOUND_EDGE),
+    ):
+        cf = groups[fg_id].Filters[0].CategoryFilter
+        assert cf is not None
+        assert cf.Column.ColumnName == expected_col
+        assert cf.Column.DataSetIdentifier == DS_INV_ACCOUNT_NETWORK
+        flc = cf.Configuration.FilterListConfiguration
+        assert flc["MatchOperator"] == "CONTAINS"
+        assert flc["CategoryValues"] == ["yes"]
+
+
+def test_anetwork_anchor_dropdown_links_to_narrow_accounts_dataset():
+    """K.4.8k — dropdown auto-populates from the narrow accounts
+    dataset's distinct ``source_display`` values, NOT the main Account
+    Network dataset. The narrow dataset pushes DISTINCT inside its
+    SELECT so PG dedupes (id, name) pairs before computing the concat;
+    pointing the dropdown at the main wrapper forces O(matview rows)
+    work and times out as the matview grows. SelectAll stays HIDDEN
+    so QuickSight lands on the first row instead of an empty/All
+    state that would render two blank Sankeys."""
     pc = build_account_network_parameter_controls(_TEST_CFG)
     # 2 controls: anchor dropdown, min-amount slider.
     assert len(pc) == 2
@@ -944,8 +1025,11 @@ def test_anetwork_anchor_dropdown_links_to_source_account_id():
     assert dropdown.SourceParameterName == P_INV_ANETWORK_ANCHOR
     assert dropdown.Type == "SINGLE_SELECT"
     link = dropdown.SelectableValues["LinkToDataSetColumn"]
-    assert link["DataSetIdentifier"] == DS_INV_ACCOUNT_NETWORK
-    assert link["ColumnName"] == "source_account_id"
+    assert link["DataSetIdentifier"] == DS_INV_ANETWORK_ACCOUNTS
+    assert link["ColumnName"] == "source_display"
+    assert dropdown.DisplayOptions == {
+        "SelectAllOptions": {"Visibility": "HIDDEN"},
+    }
 
 
 def test_anetwork_amount_slider_binds_to_parameter():
@@ -964,7 +1048,10 @@ def test_account_network_sheet_has_no_filter_controls():
     assert fc == []
 
 
-def test_account_network_sheet_has_sankey_and_table():
+def test_account_network_sheet_has_two_sankeys_and_table():
+    """K.4.8i: layout is inbound Sankey | outbound Sankey side-by-side
+    on top, full-width touching-edges table below. The anchor visually
+    meets in the middle of the row."""
     analysis = build_analysis(_TEST_CFG)
     sheet = next(
         s for s in analysis.Definition.Sheets
@@ -980,40 +1067,39 @@ def test_account_network_sheet_has_sankey_and_table():
         else:
             visual_ids.append(None)
     assert visual_ids == [
-        V_INV_ANETWORK_SANKEY,
+        V_INV_ANETWORK_SANKEY_INBOUND,
+        V_INV_ANETWORK_SANKEY_OUTBOUND,
         V_INV_ANETWORK_TABLE,
     ]
 
 
-def test_account_network_sankey_field_wells_use_account_names_and_sum_hop_amount():
-    """Same field-well shape as Money Trail's Sankey, sourced from the
-    K.4.8 dataset wrapper."""
-    analysis = build_analysis(_TEST_CFG)
-    sheet = next(
-        s for s in analysis.Definition.Sheets
-        if s.SheetId == SHEET_INV_ACCOUNT_NETWORK
-    )
-    sankey = next(
-        v.SankeyDiagramVisual for v in sheet.Visuals if v.SankeyDiagramVisual
-    )
-    fw = sankey.ChartConfiguration.FieldWells.SankeyDiagramAggregatedFieldWells
-    src = [
-        d.CategoricalDimensionField.Column.ColumnName
-        for d in fw.Source if d.CategoricalDimensionField
-    ]
-    dst = [
-        d.CategoricalDimensionField.Column.ColumnName
-        for d in fw.Destination if d.CategoricalDimensionField
-    ]
-    assert src == ["source_account_name"]
-    assert dst == ["target_account_name"]
-    weight = fw.Weight[0].NumericalMeasureField
-    assert weight.Column.ColumnName == "hop_amount"
-    assert weight.AggregationFunction.SimpleNumericalAggregation == "SUM"
-    # Confirm sankey is sourced from the K.4.8 dataset, not K.4.5.
-    assert fw.Source[0].CategoricalDimensionField.Column.DataSetIdentifier == (
-        DS_INV_ACCOUNT_NETWORK
-    )
+def test_account_network_sankeys_field_wells_use_account_names_and_sum_hop_amount():
+    """K.4.8i: both directional Sankeys carry the same field-well shape
+    (source_display → target_display, weight = SUM(hop_amount)),
+    sourced from the K.4.8 dataset wrapper. Direction encoding lives
+    in the per-Sankey filter, not the field wells."""
+    inbound, outbound, _ = _account_network_visuals()
+    for sankey in (inbound, outbound):
+        fw = sankey.ChartConfiguration.FieldWells.SankeyDiagramAggregatedFieldWells
+        src = [
+            d.CategoricalDimensionField.Column.ColumnName
+            for d in fw.Source if d.CategoricalDimensionField
+        ]
+        dst = [
+            d.CategoricalDimensionField.Column.ColumnName
+            for d in fw.Destination if d.CategoricalDimensionField
+        ]
+        # K.4.8f switched the field wells from raw _name to _display so a
+        # Sankey click delivers the exact value the dropdown stores.
+        assert src == ["source_display"]
+        assert dst == ["target_display"]
+        weight = fw.Weight[0].NumericalMeasureField
+        assert weight.Column.ColumnName == "hop_amount"
+        assert weight.AggregationFunction.SimpleNumericalAggregation == "SUM"
+        # Confirm sankey is sourced from the K.4.8 dataset, not K.4.5.
+        assert fw.Source[0].CategoricalDimensionField.Column.DataSetIdentifier == (
+            DS_INV_ACCOUNT_NETWORK
+        )
 
 
 def test_account_network_sheet_serializes_to_aws_json():
@@ -1022,10 +1108,183 @@ def test_account_network_sheet_serializes_to_aws_json():
         s for s in j["Definition"]["Sheets"]
         if s["SheetId"] == SHEET_INV_ACCOUNT_NETWORK
     )
-    assert len(sheet["Visuals"]) == 2
+    # K.4.8i: 3 visuals — inbound Sankey | outbound Sankey | table.
+    assert len(sheet["Visuals"]) == 3
     assert sheet.get("FilterControls", []) == []
     # 2 parameter controls (anchor dropdown + amount slider).
     assert len(sheet["ParameterControls"]) == 2
+
+
+def _account_network_visuals():
+    """Helper: returns (inbound_sankey, outbound_sankey, table) from
+    the deployed Account Network sheet — mirrors the K.4.8i layout."""
+    analysis = build_analysis(_TEST_CFG)
+    sheet = next(
+        s for s in analysis.Definition.Sheets
+        if s.SheetId == SHEET_INV_ACCOUNT_NETWORK
+    )
+    sankeys_by_id = {
+        v.SankeyDiagramVisual.VisualId: v.SankeyDiagramVisual
+        for v in sheet.Visuals if v.SankeyDiagramVisual
+    }
+    inbound = sankeys_by_id[V_INV_ANETWORK_SANKEY_INBOUND]
+    outbound = sankeys_by_id[V_INV_ANETWORK_SANKEY_OUTBOUND]
+    table = next(
+        v.TableVisual for v in sheet.Visuals if v.TableVisual
+    )
+    return inbound, outbound, table
+
+
+def test_anetwork_inbound_sankey_left_click_walks_to_source_counterparty():
+    """K.4.8i: inbound Sankey wires a single DATA_POINT_CLICK (left-
+    click) action that reads the SOURCE field — the counterparty
+    side when the target is the anchor — and writes it into the
+    anchor parameter."""
+    inbound, _, _ = _account_network_visuals()
+    actions = inbound.Actions
+    assert actions is not None
+    assert len(actions) == 1
+    walk = actions[0]
+    assert walk.Name == "Walk to this counterparty"
+    assert walk.Trigger == "DATA_POINT_CLICK"
+    nav = walk.ActionOperations[0].NavigationOperation
+    assert nav is not None
+    assert nav.LocalNavigationConfiguration.TargetSheetId == (
+        SHEET_INV_ACCOUNT_NETWORK
+    )
+    set_params = walk.ActionOperations[1].SetParametersOperation
+    cfg = set_params.ParameterValueConfigurations
+    assert len(cfg) == 1
+    assert cfg[0]["DestinationParameterName"] == P_INV_ANETWORK_ANCHOR
+    assert cfg[0]["Value"]["SourceField"] == "inv-anetwork-sankey-in-source"
+
+
+def test_anetwork_outbound_sankey_left_click_walks_to_target_counterparty():
+    """K.4.8i: outbound Sankey wires a single DATA_POINT_CLICK (left-
+    click) action that reads the TARGET field — the counterparty
+    side when the source is the anchor — and writes it into the
+    anchor parameter."""
+    _, outbound, _ = _account_network_visuals()
+    actions = outbound.Actions
+    assert actions is not None
+    assert len(actions) == 1
+    walk = actions[0]
+    assert walk.Name == "Walk to this counterparty"
+    assert walk.Trigger == "DATA_POINT_CLICK"
+    nav = walk.ActionOperations[0].NavigationOperation
+    assert nav is not None
+    assert nav.LocalNavigationConfiguration.TargetSheetId == (
+        SHEET_INV_ACCOUNT_NETWORK
+    )
+    set_params = walk.ActionOperations[1].SetParametersOperation
+    cfg = set_params.ParameterValueConfigurations
+    assert len(cfg) == 1
+    assert cfg[0]["DestinationParameterName"] == P_INV_ANETWORK_ANCHOR
+    assert cfg[0]["Value"]["SourceField"] == "inv-anetwork-sankey-out-target"
+
+
+def test_anetwork_table_wires_single_counterparty_walk_action():
+    """K.4.8f-3: Table carries a single, unambiguous "Walk to other
+    account on this edge" action that SourceFields off the analysis-
+    level counterparty_display calc field — that field always projects
+    the side that ISN'T the current anchor, so the walk can never be a
+    no-op."""
+    _, _, table = _account_network_visuals()
+    actions = table.Actions
+    assert actions is not None
+    assert len(actions) == 1
+    walk = actions[0]
+    assert walk.Name == "Walk to other account on this edge"
+    assert walk.Trigger == "DATA_POINT_MENU"
+    set_params = walk.ActionOperations[1].SetParametersOperation
+    cfg = set_params.ParameterValueConfigurations
+    assert len(cfg) == 1
+    assert cfg[0]["DestinationParameterName"] == P_INV_ANETWORK_ANCHOR
+    assert cfg[0]["Value"]["SourceField"] == "inv-anetwork-tbl-counterparty"
+
+
+def test_anetwork_table_columns_use_display_strings():
+    """Table source / target columns are the display strings AND the
+    counterparty_display calc field is exposed as a column so the
+    single-action walk has a SourceField to read off."""
+    _, _, table = _account_network_visuals()
+    fields = table.ChartConfiguration.FieldWells.TableAggregatedFieldWells
+    cols = []
+    for d in fields.GroupBy:
+        if d.CategoricalDimensionField:
+            cols.append(d.CategoricalDimensionField.Column.ColumnName)
+    assert "source_display" in cols
+    assert "target_display" in cols
+    assert CF_INV_ANETWORK_COUNTERPARTY_DISPLAY in cols
+    # And the raw _name columns are gone — display replaces them.
+    assert "source_account_name" not in cols
+    assert "target_account_name" not in cols
+
+
+def test_counterparty_calc_field_picks_other_side_of_edge():
+    """K.4.8f-3: counterparty_display returns target_display when the
+    source IS the anchor, otherwise source_display. The single-action
+    table walk reads from this field so it always picks the side that
+    isn't the current anchor."""
+    analysis = build_analysis(_TEST_CFG)
+    calc_fields = {
+        cf["Name"]: cf for cf in analysis.Definition.CalculatedFields
+    }
+    counterparty = calc_fields[CF_INV_ANETWORK_COUNTERPARTY_DISPLAY]
+    assert counterparty["DataSetIdentifier"] == DS_INV_ACCOUNT_NETWORK
+    expr = counterparty["Expression"]
+    assert "ifelse" in expr
+    assert "{source_display} = ${pInvANetworkAnchor}" in expr
+    # If the source is the anchor, project the target; else the source.
+    assert "{target_display}" in expr
+    assert "{source_display}" in expr
+
+
+def test_inbound_edge_calc_field_matches_target_to_anchor():
+    """K.4.8i: is_inbound_edge = 'yes' when the edge's TARGET equals the
+    anchor (the anchor received the money). The inbound Sankey's filter
+    matches this calc field to 'yes'."""
+    analysis = build_analysis(_TEST_CFG)
+    calc_fields = {
+        cf["Name"]: cf for cf in analysis.Definition.CalculatedFields
+    }
+    inbound = calc_fields[CF_INV_ANETWORK_IS_INBOUND_EDGE]
+    assert inbound["DataSetIdentifier"] == DS_INV_ACCOUNT_NETWORK
+    expr = inbound["Expression"]
+    assert "ifelse" in expr
+    assert "{target_display} = ${pInvANetworkAnchor}" in expr
+    assert "'yes'" in expr
+    assert "'no'" in expr
+
+
+def test_outbound_edge_calc_field_matches_source_to_anchor():
+    """K.4.8i: is_outbound_edge = 'yes' when the edge's SOURCE equals
+    the anchor (the anchor sent the money). The outbound Sankey's
+    filter matches this calc field to 'yes'."""
+    analysis = build_analysis(_TEST_CFG)
+    calc_fields = {
+        cf["Name"]: cf for cf in analysis.Definition.CalculatedFields
+    }
+    outbound = calc_fields[CF_INV_ANETWORK_IS_OUTBOUND_EDGE]
+    assert outbound["DataSetIdentifier"] == DS_INV_ACCOUNT_NETWORK
+    expr = outbound["Expression"]
+    assert "ifelse" in expr
+    assert "{source_display} = ${pInvANetworkAnchor}" in expr
+    assert "'yes'" in expr
+    assert "'no'" in expr
+
+
+def test_money_trail_root_dropdown_hides_select_all():
+    """K.4.8f: Money Trail chain-root dropdown also hides SelectAll —
+    a Sankey with no chain root selected renders blank, so 'All' is
+    misleading. SelectAll HIDDEN forces QS to land on the first row."""
+    pc = build_money_trail_parameter_controls(_TEST_CFG)
+    dropdown = pc[0].Dropdown
+    assert dropdown is not None
+    assert dropdown.SourceParameterName == P_INV_MONEY_TRAIL_ROOT
+    assert dropdown.DisplayOptions == {
+        "SelectAllOptions": {"Visibility": "HIDDEN"},
+    }
 
 
 # ---------------------------------------------------------------------------

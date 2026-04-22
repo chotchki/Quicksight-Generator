@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from quicksight_gen.apps.investigation.constants import (
     DS_INV_ACCOUNT_NETWORK,
+    DS_INV_ANETWORK_ACCOUNTS,
     DS_INV_MONEY_TRAIL,
     DS_INV_RECIPIENT_FANOUT,
     DS_INV_VOLUME_ANOMALIES,
@@ -103,7 +104,48 @@ MONEY_TRAIL_CONTRACT = DatasetContract(columns=[
     ColumnSpec("hop_amount", "DECIMAL"),
     ColumnSpec("posted_at", "DATETIME"),
     ColumnSpec("transfer_type", "STRING"),
+    # Concatenated display labels, computed in the dataset SQL (see
+    # MONEY_TRAIL_BASE_SQL). Used by the Account Network sheet as the
+    # walk-the-flow anchor — they're both human-readable AND uniquely
+    # keyed (embedded account_id disambiguates name collisions). Money
+    # Trail doesn't read these but they project cleanly through its
+    # own dataset wrapper and stay zero-cost at query time.
+    ColumnSpec("source_display", "STRING", shape=ColumnShape.ACCOUNT_DISPLAY),
+    ColumnSpec("target_display", "STRING", shape=ColumnShape.ACCOUNT_DISPLAY),
 ])
+
+
+# Both money-trail-shaped datasets project the same matview; the
+# wrapper computes the display columns inline so the matview stays a
+# pure shape over base tables.
+MONEY_TRAIL_BASE_SQL = """\
+SELECT
+    *,
+    source_account_name || ' (' || source_account_id || ')' AS source_display,
+    target_account_name || ' (' || target_account_id || ')' AS target_display
+FROM inv_money_trail_edges
+"""
+
+
+# K.4.8k — narrow dataset feeding only the anchor-account dropdown.
+# Single column ``source_display`` (the same concatenated label the
+# Account Network dataset uses) so the anchor parameter, the calc
+# fields, and the dropdown population all speak the same string. The
+# DISTINCT happens INSIDE the SELECT so PG dedupes the (id, name) pairs
+# before computing the per-row concat — O(distinct accounts) instead
+# of O(matview rows). At dataset-load time the planner gets one column
+# of ~tens of values; the dropdown loads instantly.
+ANETWORK_ACCOUNTS_CONTRACT = DatasetContract(columns=[
+    ColumnSpec(
+        "source_display", "STRING", shape=ColumnShape.ACCOUNT_DISPLAY,
+    ),
+])
+
+ANETWORK_ACCOUNTS_SQL = """\
+SELECT DISTINCT
+    source_account_name || ' (' || source_account_id || ')' AS source_display
+FROM inv_money_trail_edges
+"""
 
 
 def build_recipient_fanout_dataset(cfg: Config) -> DataSet:
@@ -193,7 +235,7 @@ def build_money_trail_dataset(cfg: Config) -> DataSet:
     - ``NumericRangeFilter`` on ``hop_amount`` bound to
       ``pInvMoneyTrailMinAmount`` — drops noise edges.
     """
-    sql = "SELECT * FROM inv_money_trail_edges"
+    sql = MONEY_TRAIL_BASE_SQL
     return build_dataset(
         cfg,
         cfg.prefixed("inv-money-trail-dataset"),
@@ -214,7 +256,7 @@ def build_account_network_dataset(cfg: Config) -> DataSet:
     chain-root filters. Contract is identical because the underlying
     rows are.
     """
-    sql = "SELECT * FROM inv_money_trail_edges"
+    sql = MONEY_TRAIL_BASE_SQL
     return build_dataset(
         cfg,
         cfg.prefixed("inv-account-network-dataset"),
@@ -226,12 +268,38 @@ def build_account_network_dataset(cfg: Config) -> DataSet:
     )
 
 
+def build_account_network_accounts_dataset(cfg: Config) -> DataSet:
+    """Narrow accounts dataset feeding the K.4.8 anchor dropdown only.
+
+    Single column ``source_display`` distinct'd over the matview so
+    QuickSight's dropdown can ``SELECT DISTINCT source_display FROM ...``
+    in O(distinct accounts) work instead of O(matview rows). Originally
+    the dropdown pointed at the full Account Network dataset; that
+    dataset wraps the matview with a per-row concat that the dropdown's
+    DISTINCT couldn't push past, so the dropdown started timing out as
+    the matview grew. This dataset puts the DISTINCT inside the SELECT
+    so PG dedupes the (id, name) pairs before concatenating.
+
+    Reuses ``inv_money_trail_edges`` — no new matview needed.
+    """
+    return build_dataset(
+        cfg,
+        cfg.prefixed("inv-anetwork-accounts-dataset"),
+        "Investigation Account Network — Accounts",
+        "inv-anetwork-accounts",
+        ANETWORK_ACCOUNTS_SQL,
+        ANETWORK_ACCOUNTS_CONTRACT,
+        visual_identifier=DS_INV_ANETWORK_ACCOUNTS,
+    )
+
+
 def build_all_datasets(cfg: Config) -> list[DataSet]:
     return [
         build_recipient_fanout_dataset(cfg),
         build_volume_anomalies_dataset(cfg),
         build_money_trail_dataset(cfg),
         build_account_network_dataset(cfg),
+        build_account_network_accounts_dataset(cfg),
     ]
 
 
@@ -243,6 +311,7 @@ _CONTRACT_REGISTRATIONS: tuple[tuple[str, DatasetContract], ...] = (
     (DS_INV_VOLUME_ANOMALIES, VOLUME_ANOMALIES_CONTRACT),
     (DS_INV_MONEY_TRAIL, MONEY_TRAIL_CONTRACT),
     (DS_INV_ACCOUNT_NETWORK, MONEY_TRAIL_CONTRACT),
+    (DS_INV_ANETWORK_ACCOUNTS, ANETWORK_ACCOUNTS_CONTRACT),
 )
 for _vid, _contract in _CONTRACT_REGISTRATIONS:
     register_contract(_vid, _contract)

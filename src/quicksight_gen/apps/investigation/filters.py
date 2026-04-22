@@ -22,26 +22,35 @@ same chain selection so the visual + table can be read together.
 
 K.4.8 ships the Account Network sheet's filter groups + controls: an
 anchor-account dropdown (auto-populated from the matview's distinct
-``source_account_id`` values, bound to ``pInvANetworkAnchor``), and a
-min-amount slider (same shape as Money Trail's amount slider). The
-anchor filter narrows via the analysis-level ``is_anchor_edge`` calc
-field — true when the edge's source OR target equals the anchor — so
-the analyst sees every edge touching that account on either side. Both
-filters scope ALL_VISUALS so the Sankey and the touching-edges table
-share the same selection.
+``source_display`` values, bound to ``pInvANetworkAnchor``), and a
+min-amount slider. Three direction-scoped filters pin each visual to
+its semantic slice:
+
+- ``is_inbound_edge`` (target = anchor) → inbound Sankey only
+- ``is_outbound_edge`` (source = anchor) → outbound Sankey only
+- ``is_anchor_edge`` (source OR target = anchor) → touching-edges
+  table only
+
+The amount slider stays ALL_VISUALS so the three visuals share a
+single noise floor.
 """
 
 from __future__ import annotations
 
 from quicksight_gen.apps.investigation.constants import (
     CF_INV_ANETWORK_IS_ANCHOR_EDGE,
+    CF_INV_ANETWORK_IS_INBOUND_EDGE,
+    CF_INV_ANETWORK_IS_OUTBOUND_EDGE,
     CF_INV_FANOUT_DISTINCT_SENDERS,
     DS_INV_ACCOUNT_NETWORK,
+    DS_INV_ANETWORK_ACCOUNTS,
     DS_INV_MONEY_TRAIL,
     DS_INV_RECIPIENT_FANOUT,
     DS_INV_VOLUME_ANOMALIES,
     FG_INV_ANETWORK_AMOUNT,
     FG_INV_ANETWORK_ANCHOR,
+    FG_INV_ANETWORK_INBOUND,
+    FG_INV_ANETWORK_OUTBOUND,
     FG_INV_ANOMALIES_SIGMA,
     FG_INV_ANOMALIES_WINDOW,
     FG_INV_FANOUT_THRESHOLD,
@@ -60,6 +69,9 @@ from quicksight_gen.apps.investigation.constants import (
     SHEET_INV_ANOMALIES,
     SHEET_INV_FANOUT,
     SHEET_INV_MONEY_TRAIL,
+    V_INV_ANETWORK_SANKEY_INBOUND,
+    V_INV_ANETWORK_SANKEY_OUTBOUND,
+    V_INV_ANETWORK_TABLE,
     V_INV_ANOMALIES_KPI_FLAGGED,
     V_INV_ANOMALIES_TABLE,
 )
@@ -147,6 +159,8 @@ CTRL_INV_MONEY_TRAIL_HOPS = "ctrl-inv-money-trail-hops"
 CTRL_INV_MONEY_TRAIL_AMOUNT = "ctrl-inv-money-trail-amount"
 
 FILTER_INV_ANETWORK_ANCHOR = "filter-inv-anetwork-anchor"
+FILTER_INV_ANETWORK_INBOUND = "filter-inv-anetwork-inbound"
+FILTER_INV_ANETWORK_OUTBOUND = "filter-inv-anetwork-outbound"
 FILTER_INV_ANETWORK_AMOUNT = "filter-inv-anetwork-amount"
 CTRL_INV_ANETWORK_ANCHOR = "ctrl-inv-anetwork-anchor"
 CTRL_INV_ANETWORK_AMOUNT = "ctrl-inv-anetwork-amount"
@@ -421,18 +435,21 @@ def _money_trail_amount_filter_group() -> FilterGroup:
 
 
 def _anetwork_anchor_filter_group() -> FilterGroup:
-    """Anchor-account filter on the ``is_anchor_edge`` calc field.
+    """Touching-edges filter on the ``is_anchor_edge`` calc field.
 
-    The calc field returns ``'yes'`` when the edge's source OR target
-    equals ``pInvANetworkAnchor`` and ``'no'`` otherwise — a single
-    column over which a CategoryFilter can express the source-OR-target
-    semantics in one filter rather than two. ALL_VISUALS scope so the
-    Sankey and the touching-edges table reflect the same selection.
+    Calc field returns ``'yes'`` when source OR target equals the
+    anchor — single-column expression so one CategoryFilter covers
+    "any edge touching the anchor". Scoped to the table only; the two
+    Sankeys carry their own direction-specific filters so each renders
+    only one direction's edges (the layout itself encodes direction).
     """
     return FilterGroup(
         FilterGroupId=FG_INV_ANETWORK_ANCHOR,
         CrossDataset=FilterGroup.SINGLE_DATASET,
-        ScopeConfiguration=_selected_sheets_scope([SHEET_INV_ACCOUNT_NETWORK]),
+        ScopeConfiguration=_selected_visuals_scope(
+            SHEET_INV_ACCOUNT_NETWORK,
+            [V_INV_ANETWORK_TABLE],
+        ),
         Status=FilterGroup.ENABLED,
         Filters=[
             Filter(
@@ -444,7 +461,78 @@ def _anetwork_anchor_filter_group() -> FilterGroup:
                     ),
                     Configuration=CategoryFilterConfiguration(
                         FilterListConfiguration={
-                            "MatchOperator": "EQUALS",
+                            "MatchOperator": "CONTAINS",
+                            "CategoryValues": ["yes"],
+                        },
+                    ),
+                ),
+            ),
+        ],
+    )
+
+
+def _anetwork_inbound_filter_group() -> FilterGroup:
+    """Inbound-Sankey filter on the ``is_inbound_edge`` calc field.
+
+    Scoped to the inbound Sankey only — the visual on the left side
+    of the row that shows counterparties sending money INTO the anchor.
+    Calc field is 'yes' when the edge's TARGET equals the anchor.
+    """
+    return FilterGroup(
+        FilterGroupId=FG_INV_ANETWORK_INBOUND,
+        CrossDataset=FilterGroup.SINGLE_DATASET,
+        ScopeConfiguration=_selected_visuals_scope(
+            SHEET_INV_ACCOUNT_NETWORK,
+            [V_INV_ANETWORK_SANKEY_INBOUND],
+        ),
+        Status=FilterGroup.ENABLED,
+        Filters=[
+            Filter(
+                CategoryFilter=CategoryFilter(
+                    FilterId=FILTER_INV_ANETWORK_INBOUND,
+                    Column=ColumnIdentifier(
+                        DataSetIdentifier=DS_INV_ACCOUNT_NETWORK,
+                        ColumnName=CF_INV_ANETWORK_IS_INBOUND_EDGE,
+                    ),
+                    Configuration=CategoryFilterConfiguration(
+                        FilterListConfiguration={
+                            "MatchOperator": "CONTAINS",
+                            "CategoryValues": ["yes"],
+                        },
+                    ),
+                ),
+            ),
+        ],
+    )
+
+
+def _anetwork_outbound_filter_group() -> FilterGroup:
+    """Outbound-Sankey filter on the ``is_outbound_edge`` calc field.
+
+    Scoped to the outbound Sankey only — the visual on the right side
+    of the row that shows the anchor sending money OUT to
+    counterparties. Calc field is 'yes' when the edge's SOURCE equals
+    the anchor.
+    """
+    return FilterGroup(
+        FilterGroupId=FG_INV_ANETWORK_OUTBOUND,
+        CrossDataset=FilterGroup.SINGLE_DATASET,
+        ScopeConfiguration=_selected_visuals_scope(
+            SHEET_INV_ACCOUNT_NETWORK,
+            [V_INV_ANETWORK_SANKEY_OUTBOUND],
+        ),
+        Status=FilterGroup.ENABLED,
+        Filters=[
+            Filter(
+                CategoryFilter=CategoryFilter(
+                    FilterId=FILTER_INV_ANETWORK_OUTBOUND,
+                    Column=ColumnIdentifier(
+                        DataSetIdentifier=DS_INV_ACCOUNT_NETWORK,
+                        ColumnName=CF_INV_ANETWORK_IS_OUTBOUND_EDGE,
+                    ),
+                    Configuration=CategoryFilterConfiguration(
+                        FilterListConfiguration={
+                            "MatchOperator": "CONTAINS",
                             "CategoryValues": ["yes"],
                         },
                     ),
@@ -496,6 +584,8 @@ def build_filter_groups(cfg: Config) -> list[FilterGroup]:
         _money_trail_hops_filter_group(),
         _money_trail_amount_filter_group(),
         _anetwork_anchor_filter_group(),
+        _anetwork_inbound_filter_group(),
+        _anetwork_outbound_filter_group(),
         _anetwork_amount_filter_group(),
     ]
 
@@ -526,8 +616,10 @@ def build_parameter_declarations(cfg: Config) -> list[ParameterDeclaration]:
                 ParameterValueType="SINGLE_VALUED",
                 Name=P_INV_MONEY_TRAIL_ROOT,
                 # No default — the dropdown control auto-populates from
-                # the matview's distinct root_transfer_id values and
-                # picks the first row on first render.
+                # the matview's distinct root_transfer_id values, and
+                # SelectAll is HIDDEN so QuickSight lands on the first
+                # available chain on first paint (instead of an empty
+                # "All" state that would render a blank Sankey).
                 DefaultValues={"StaticValues": []},
             ),
         ),
@@ -550,8 +642,12 @@ def build_parameter_declarations(cfg: Config) -> list[ParameterDeclaration]:
                 ParameterValueType="SINGLE_VALUED",
                 Name=P_INV_ANETWORK_ANCHOR,
                 # No default — the dropdown auto-populates from the
-                # matview's distinct source_account_id values; the
-                # analyst picks the anchor on first render.
+                # matview's distinct source_display values, and
+                # SelectAll is HIDDEN so QuickSight lands on the first
+                # available anchor on first paint (instead of an empty
+                # "All" state that would render two blank Sankeys).
+                # Walk-the-flow drill (K.4.8f) on the touching-edges
+                # table overwrites this value to the row's counterparty.
                 DefaultValues={"StaticValues": []},
             ),
         ),
@@ -650,6 +746,11 @@ def _money_trail_root_control() -> ParameterControl:
     parameter-bound CategoryFilter so the dropdown list itself isn't
     narrowed by the current selection (otherwise the user could only
     ever pick the chain they already have selected).
+
+    SelectAll is HIDDEN: with no chain root the parameter-bound
+    CategoryFilter passes nothing and the Sankey is blank — "All"
+    semantics don't apply for a chain-rooted view, so removing the
+    entry forces the dropdown to land on a real chain on first paint.
     """
     return ParameterControl(
         Dropdown=ParameterDropDownControl(
@@ -662,6 +763,9 @@ def _money_trail_root_control() -> ParameterControl:
                     "DataSetIdentifier": DS_INV_MONEY_TRAIL,
                     "ColumnName": "root_transfer_id",
                 },
+            },
+            DisplayOptions={
+                "SelectAllOptions": {"Visibility": "HIDDEN"},
             },
         ),
     )
@@ -713,12 +817,28 @@ def build_money_trail_parameter_controls(cfg: Config) -> list[ParameterControl]:
 def _anetwork_anchor_control() -> ParameterControl:
     """Dropdown auto-populated from the matview's distinct source accounts.
 
-    Uses ``source_account_id`` as the dropdown population — every
-    account that ever sent in the matview shows up. Target-only
-    accounts (pure sinks that never sent) won't appear, but those are
-    rare in real flows and the rare ones can be reached by picking
-    an account that paid them. Cleaner than UNION-ing source + target
-    in a separate dataset.
+    Uses ``source_display`` (concatenated ``name (id)`` — see the
+    Account Network dataset SQL) as both the dropdown population AND
+    the parameter value. Target-only accounts (pure sinks that never
+    sent) won't appear, but those are rare in real flows and the rare
+    ones can be reached by picking an account that paid them. Cleaner
+    than UNION-ing source + target in a separate dataset.
+
+    Population dataset is the K.4.8k narrow accounts dataset, NOT the
+    main Account Network dataset. The main dataset wraps the matview
+    with a per-row concat; QuickSight's dropdown ``SELECT DISTINCT
+    source_display`` against it forces the planner to compute the
+    concat over every matview row before dedupe — fast at demo scale,
+    slow enough to time out the dropdown as the matview grows. The
+    narrow dataset pushes the DISTINCT inside its SELECT so PG dedupes
+    the (id, name) pairs first. Same column name, same value space —
+    only the cardinality the planner walks is different.
+
+    SelectAll is HIDDEN: with no anchor the calc fields never match
+    and both Sankeys plus the table render blank — an "All accounts"
+    view of a network this dense doesn't render meaningfully, so
+    removing the entry forces the dropdown to land on a real anchor
+    on first paint.
     """
     return ParameterControl(
         Dropdown=ParameterDropDownControl(
@@ -728,9 +848,12 @@ def _anetwork_anchor_control() -> ParameterControl:
             Type="SINGLE_SELECT",
             SelectableValues={
                 "LinkToDataSetColumn": {
-                    "DataSetIdentifier": DS_INV_ACCOUNT_NETWORK,
-                    "ColumnName": "source_account_id",
+                    "DataSetIdentifier": DS_INV_ANETWORK_ACCOUNTS,
+                    "ColumnName": "source_display",
                 },
+            },
+            DisplayOptions={
+                "SelectAllOptions": {"Visibility": "HIDDEN"},
             },
         ),
     )
