@@ -12,8 +12,10 @@ from quicksight_gen.payment_recon.constants import (
     DS_PAYMENTS,
     SHEET_PAYMENT_RECON,
 )
+from quicksight_gen.payment_recon.visuals import P_PR_EXTERNAL_TXN
 from quicksight_gen.common.aging import aging_bar_visual
 from quicksight_gen.common.clickability import link_text_format
+from quicksight_gen.common.drill import cross_sheet_drill, field_source
 from quicksight_gen.common.models import (
     AxisLabelOptions,
     BarChartAggregatedFieldWells,
@@ -25,15 +27,12 @@ from quicksight_gen.common.models import (
     ChartAxisLabelOptions,
     ColumnIdentifier,
     CustomActionFilterOperation,
-    CustomActionNavigationOperation,
-    CustomActionSetParametersOperation,
     DimensionField,
     FilterOperationSelectedFieldsConfiguration,
     FilterOperationTargetVisualsConfiguration,
     KPIConfiguration,
     KPIFieldWells,
     KPIVisual,
-    LocalNavigationConfiguration,
     MeasureField,
     NumericalAggregationFunction,
     NumericalMeasureField,
@@ -117,43 +116,6 @@ def _unagg_field(field_id: str, ds: str, col_name: str) -> dict:
             "ColumnName": col_name,
         },
     }
-
-
-def _set_param_action(
-    action_id: str,
-    name: str,
-    param_name: str,
-    source_field_id: str,
-) -> VisualCustomAction:
-    """Build a DATA_POINT_CLICK action that navigates to the recon sheet
-    and sets a parameter. QuickSight requires NavigationOperation before
-    SetParametersOperation, even for same-sheet interactions."""
-    return VisualCustomAction(
-        CustomActionId=action_id,
-        Name=name,
-        Trigger="DATA_POINT_CLICK",
-        ActionOperations=[
-            VisualCustomActionOperation(
-                NavigationOperation=CustomActionNavigationOperation(
-                    LocalNavigationConfiguration=LocalNavigationConfiguration(
-                        TargetSheetId=SHEET_PAYMENT_RECON,
-                    ),
-                ),
-            ),
-            VisualCustomActionOperation(
-                SetParametersOperation=CustomActionSetParametersOperation(
-                    ParameterValueConfigurations=[
-                        {
-                            "DestinationParameterName": param_name,
-                            "Value": {
-                                "SourceField": source_field_id,
-                            },
-                        },
-                    ],
-                ),
-            ),
-        ],
-    )
 
 
 def _same_sheet_filter_action(
@@ -376,11 +338,15 @@ def build_payment_recon_visuals(link_color: str) -> list[Visual]:
                 ),
             ),
             Actions=[
-                _set_param_action(
-                    "action-recon-ext-txn-click",
-                    "Show Payments",
-                    "pExternalTransactionId",
-                    "recon-tbl-txn-id",
+                cross_sheet_drill(
+                    action_id="action-recon-ext-txn-click",
+                    name="Show Payments",
+                    target_sheet=SHEET_PAYMENT_RECON,
+                    writes=[
+                        (P_PR_EXTERNAL_TXN, field_source(
+                            "recon-tbl-txn-id", DS_PAYMENT_RECON,
+                            "transaction_id")),
+                    ],
                 ),
             ],
             ConditionalFormatting={
@@ -441,11 +407,15 @@ def build_payment_recon_visuals(link_color: str) -> list[Visual]:
                 ),
             ),
             Actions=[
-                _set_param_action(
-                    "action-recon-pay-click",
-                    "Show Transaction",
-                    "pExternalTransactionId",
-                    "recon-pay-ext-txn",
+                cross_sheet_drill(
+                    action_id="action-recon-pay-click",
+                    name="Show Transaction",
+                    target_sheet=SHEET_PAYMENT_RECON,
+                    writes=[
+                        (P_PR_EXTERNAL_TXN, field_source(
+                            "recon-pay-ext-txn", DS_PAYMENTS,
+                            "external_transaction_id")),
+                    ],
                 ),
             ],
             ConditionalFormatting={

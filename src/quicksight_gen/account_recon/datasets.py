@@ -8,11 +8,28 @@ non_zero_transfers, limit_breach, overdraft).
 
 from __future__ import annotations
 
+from quicksight_gen.account_recon.constants import (
+    DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
+    DS_AR_DAILY_STATEMENT_SUMMARY,
+    DS_AR_DAILY_STATEMENT_TRANSACTIONS,
+    DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
+    DS_AR_LEDGER_ACCOUNTS,
+    DS_AR_LEDGER_BALANCE_DRIFT,
+    DS_AR_NON_ZERO_TRANSFERS,
+    DS_AR_SUBLEDGER_ACCOUNTS,
+    DS_AR_SUBLEDGER_BALANCE_DRIFT,
+    DS_AR_TRANSACTIONS,
+    DS_AR_TRANSFER_SUMMARY,
+    DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+    DS_AR_UNIFIED_EXCEPTIONS,
+)
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.dataset_contract import (
+    ColumnShape,
     ColumnSpec,
     DatasetContract,
     build_dataset,
+    register_contract,
 )
 from quicksight_gen.common.models import DataSet
 
@@ -50,29 +67,32 @@ SUBLEDGER_ACCOUNTS_CONTRACT = DatasetContract(columns=[
 
 TRANSACTIONS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("transaction_id", "STRING"),
-    ColumnSpec("account_id", "STRING"),
-    ColumnSpec("subledger_account_id", "STRING"),
+    ColumnSpec("account_id", "STRING", shape=ColumnShape.ACCOUNT_ID),
+    ColumnSpec("subledger_account_id", "STRING",
+               shape=ColumnShape.SUBLEDGER_ACCOUNT_ID),
     ColumnSpec("subledger_name", "STRING"),
-    ColumnSpec("ledger_account_id", "STRING"),
+    ColumnSpec("ledger_account_id", "STRING",
+               shape=ColumnShape.LEDGER_ACCOUNT_ID),
     ColumnSpec("ledger_name", "STRING"),
     ColumnSpec("scope", "STRING"),
     ColumnSpec("posting_level", "STRING"),
-    ColumnSpec("transfer_id", "STRING"),
-    ColumnSpec("transfer_type", "STRING"),
+    ColumnSpec("transfer_id", "STRING", shape=ColumnShape.TRANSFER_ID),
+    ColumnSpec("transfer_type", "STRING", shape=ColumnShape.TRANSFER_TYPE),
     ColumnSpec("origin", "STRING"),
     ColumnSpec("amount", "DECIMAL"),
     ColumnSpec("posted_at", "DATETIME"),
-    ColumnSpec("posted_date", "STRING"),
+    ColumnSpec("posted_date", "STRING", shape=ColumnShape.DATE_YYYY_MM_DD_TEXT),
     ColumnSpec("status", "STRING"),
     ColumnSpec("is_failed", "STRING"),
     ColumnSpec("memo", "STRING"),
 ])
 
 LEDGER_BALANCE_DRIFT_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("ledger_account_id", "STRING"),
+    ColumnSpec("ledger_account_id", "STRING",
+               shape=ColumnShape.LEDGER_ACCOUNT_ID),
     ColumnSpec("ledger_name", "STRING"),
     ColumnSpec("scope", "STRING"),
-    ColumnSpec("balance_date", "DATETIME"),
+    ColumnSpec("balance_date", "DATETIME", shape=ColumnShape.DATETIME_DAY),
     ColumnSpec("stored_balance", "DECIMAL"),
     ColumnSpec("computed_balance", "DECIMAL"),
     ColumnSpec("drift", "DECIMAL"),
@@ -82,12 +102,14 @@ LEDGER_BALANCE_DRIFT_CONTRACT = DatasetContract(columns=[
 ])
 
 SUBLEDGER_BALANCE_DRIFT_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("subledger_account_id", "STRING"),
+    ColumnSpec("subledger_account_id", "STRING",
+               shape=ColumnShape.SUBLEDGER_ACCOUNT_ID),
     ColumnSpec("subledger_name", "STRING"),
-    ColumnSpec("ledger_account_id", "STRING"),
+    ColumnSpec("ledger_account_id", "STRING",
+               shape=ColumnShape.LEDGER_ACCOUNT_ID),
     ColumnSpec("ledger_name", "STRING"),
     ColumnSpec("scope", "STRING"),
-    ColumnSpec("balance_date", "DATETIME"),
+    ColumnSpec("balance_date", "DATETIME", shape=ColumnShape.DATETIME_DAY),
     ColumnSpec("stored_balance", "DECIMAL"),
     ColumnSpec("computed_balance", "DECIMAL"),
     ColumnSpec("drift", "DECIMAL"),
@@ -98,7 +120,7 @@ SUBLEDGER_BALANCE_DRIFT_CONTRACT = DatasetContract(columns=[
 ])
 
 TRANSFER_SUMMARY_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("transfer_id", "STRING"),
+    ColumnSpec("transfer_id", "STRING", shape=ColumnShape.TRANSFER_ID),
     ColumnSpec("first_posted_at", "DATETIME"),
     ColumnSpec("net_amount", "DECIMAL"),
     ColumnSpec("total_debit", "DECIMAL"),
@@ -108,13 +130,13 @@ TRANSFER_SUMMARY_CONTRACT = DatasetContract(columns=[
     ColumnSpec("net_zero_status", "STRING"),
     ColumnSpec("expected_net_zero", "STRING"),
     ColumnSpec("scope_type", "STRING"),
-    ColumnSpec("transfer_type", "STRING"),
+    ColumnSpec("transfer_type", "STRING", shape=ColumnShape.TRANSFER_TYPE),
     ColumnSpec("origin", "STRING"),
     ColumnSpec("memo", "STRING"),
 ])
 
 NON_ZERO_TRANSFERS_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("transfer_id", "STRING"),
+    ColumnSpec("transfer_id", "STRING", shape=ColumnShape.TRANSFER_ID),
     ColumnSpec("first_posted_at", "DATETIME"),
     ColumnSpec("net_amount", "DECIMAL"),
     ColumnSpec("total_debit", "DECIMAL"),
@@ -191,15 +213,24 @@ UNIFIED_EXCEPTIONS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("severity", "STRING"),
     ColumnSpec("severity_rank", "INTEGER"),
     ColumnSpec("exception_date", "DATETIME"),
+    # YYYY-MM-DD text rendering of exception_date. Used as the
+    # SourceField for the "View Transactions for Account-Day" drill
+    # so the destination's posted_date filter (also TO_CHAR-formatted
+    # YYYY-MM-DD text) matches. Binding a DATETIME column to a
+    # SINGLE_VALUED string parameter produces a full timestamp string
+    # ("2026-04-07 00:00:00.000") that never matches.
+    ColumnSpec("exception_date_str", "STRING",
+               shape=ColumnShape.DATE_YYYY_MM_DD_TEXT),
     ColumnSpec("days_outstanding", "INTEGER"),
     ColumnSpec("aging_bucket", "STRING"),
-    ColumnSpec("account_id", "STRING"),
+    ColumnSpec("account_id", "STRING", shape=ColumnShape.ACCOUNT_ID),
     ColumnSpec("account_name", "STRING"),
     ColumnSpec("account_level", "STRING"),
-    ColumnSpec("ledger_account_id", "STRING"),
+    ColumnSpec("ledger_account_id", "STRING",
+               shape=ColumnShape.LEDGER_ACCOUNT_ID),
     ColumnSpec("ledger_name", "STRING"),
-    ColumnSpec("transfer_id", "STRING"),
-    ColumnSpec("transfer_type", "STRING"),
+    ColumnSpec("transfer_id", "STRING", shape=ColumnShape.TRANSFER_ID),
+    ColumnSpec("transfer_type", "STRING", shape=ColumnShape.TRANSFER_TYPE),
     ColumnSpec("primary_amount", "DECIMAL"),
     ColumnSpec("secondary_amount", "DECIMAL"),
 ])
@@ -221,6 +252,7 @@ WHERE control_account_id IS NULL"""
         cfg, cfg.prefixed("ar-ledger-accounts-dataset"),
         "AR Ledger Accounts", "ar-ledger-accounts",
         sql, LEDGER_ACCOUNTS_CONTRACT,
+        visual_identifier=DS_AR_LEDGER_ACCOUNTS,
     )
 
 
@@ -242,6 +274,7 @@ WHERE sub.control_account_id IS NOT NULL
         cfg, cfg.prefixed("ar-subledger-accounts-dataset"),
         "AR Sub-Ledger Accounts", "ar-subledger-accounts",
         sql, SUBLEDGER_ACCOUNTS_CONTRACT,
+        visual_identifier=DS_AR_SUBLEDGER_ACCOUNTS,
     )
 
 
@@ -295,6 +328,7 @@ LEFT JOIN (
         cfg, cfg.prefixed("ar-transactions-dataset"),
         "AR Transactions", "ar-transactions",
         sql, TRANSACTIONS_CONTRACT,
+        visual_identifier=DS_AR_TRANSACTIONS,
     )
 
 
@@ -315,6 +349,7 @@ FROM ar_ledger_balance_drift"""
         cfg, cfg.prefixed("ar-ledger-balance-drift-dataset"),
         "AR Ledger Balance Drift", "ar-ledger-balance-drift",
         sql, LEDGER_BALANCE_DRIFT_CONTRACT,
+        visual_identifier=DS_AR_LEDGER_BALANCE_DRIFT,
     )
 
 
@@ -339,6 +374,7 @@ FROM ar_subledger_balance_drift"""
         cfg, cfg.prefixed("ar-subledger-balance-drift-dataset"),
         "AR Sub-Ledger Balance Drift", "ar-subledger-balance-drift",
         sql, SUBLEDGER_BALANCE_DRIFT_CONTRACT,
+        visual_identifier=DS_AR_SUBLEDGER_BALANCE_DRIFT,
     )
 
 
@@ -364,6 +400,7 @@ FROM ar_transfer_summary"""
         cfg, cfg.prefixed("ar-transfer-summary-dataset"),
         "AR Transfer Summary", "ar-transfer-summary",
         sql, TRANSFER_SUMMARY_CONTRACT,
+        visual_identifier=DS_AR_TRANSFER_SUMMARY,
     )
 
 
@@ -391,6 +428,7 @@ WHERE net_zero_status = 'not_net_zero'
         cfg, cfg.prefixed("ar-non-zero-transfers-dataset"),
         "AR Non-Zero Transfers", "ar-non-zero-transfers",
         sql, NON_ZERO_TRANSFERS_CONTRACT,
+        visual_identifier=DS_AR_NON_ZERO_TRANSFERS,
     )
 
 
@@ -409,6 +447,7 @@ FROM ar_expected_zero_eod_rollup"""
         cfg, cfg.prefixed("ar-expected-zero-eod-rollup-dataset"),
         "AR Expected-Zero EOD Rollup", "ar-expected-zero-eod-rollup",
         sql, EXPECTED_ZERO_EOD_ROLLUP_CONTRACT,
+        visual_identifier=DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
     )
 
 
@@ -428,6 +467,7 @@ FROM ar_two_sided_post_mismatch_rollup"""
         "AR Two-Sided Post Mismatch Rollup",
         "ar-two-sided-post-mismatch-rollup",
         sql, TWO_SIDED_POST_MISMATCH_ROLLUP_CONTRACT,
+        visual_identifier=DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
     )
 
 
@@ -443,6 +483,7 @@ FROM ar_balance_drift_timelines_rollup"""
         "AR Balance Drift Timelines Rollup",
         "ar-balance-drift-timelines-rollup",
         sql, BALANCE_DRIFT_TIMELINES_ROLLUP_CONTRACT,
+        visual_identifier=DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
     )
 
 
@@ -506,6 +547,7 @@ LEFT JOIN today_flows f
         cfg, cfg.prefixed("ar-daily-statement-summary-dataset"),
         "AR Daily Statement Summary", "ar-daily-statement-summary",
         sql, DAILY_STATEMENT_SUMMARY_CONTRACT,
+        visual_identifier=DS_AR_DAILY_STATEMENT_SUMMARY,
     )
 
 
@@ -540,265 +582,28 @@ FROM transactions t"""
         cfg, cfg.prefixed("ar-daily-statement-transactions-dataset"),
         "AR Daily Statement Transactions", "ar-daily-statement-transactions",
         sql, DAILY_STATEMENT_TRANSACTIONS_CONTRACT,
+        visual_identifier=DS_AR_DAILY_STATEMENT_TRANSACTIONS,
     )
 
 
 def build_ar_unified_exceptions_dataset(cfg: Config) -> DataSet:
-    # Phase K.1.1: UNION ALL of the 14 per-check exception views, one row
-    # per actual exception (drift checks filtered to drift_status = 'drift';
-    # non-zero transfers filtered to expected multi-leg shape). Adds three
-    # synthesized columns the per-check datasets don't carry:
-    #   - check_type: which check produced the row (drives KPI tile + filter)
-    #   - severity / severity_rank: drift|overdraft → red(1), expected-zero
-    #     → orange(2), limit-breach → amber(3), other → yellow(4). Rank
-    #     is the integer the table sorts on.
-    #   - exception_date: harmonized from each view's native date column
-    #     (balance_date, sweep_date, originated_at, etc.) so days_outstanding
-    #     + aging_bucket can be computed once per row from a single source.
-    # account_id / account_name / transfer_id / transfer_type are NULLed
-    # where the underlying check doesn't have them (system-level aggregates
-    # like Concentration Master Sweep Drift). primary_amount is the headline
-    # dollar value; secondary_amount is the supporting figure (e.g.,
-    # daily_limit alongside overage) where one exists.
-    blocks = [
-        # ---- Baseline checks (5) ----
-        f"""SELECT
-    'Sub-Ledger Drift'    AS check_type,
-    'red'                 AS severity,
-    1                     AS severity_rank,
-    balance_date          AS exception_date,
-{_aging_columns('balance_date')},
-    subledger_account_id  AS account_id,
-    subledger_name        AS account_name,
-    'Sub-Ledger'          AS account_level,
-    ledger_account_id,
-    ledger_name,
-    NULL::TEXT            AS transfer_id,
-    NULL::TEXT            AS transfer_type,
-    drift                 AS primary_amount,
-    stored_balance        AS secondary_amount
-FROM ar_subledger_balance_drift
-WHERE drift <> 0""",
-        f"""SELECT
-    'Ledger Drift'        AS check_type,
-    'red'                 AS severity,
-    1                     AS severity_rank,
-    balance_date          AS exception_date,
-{_aging_columns('balance_date')},
-    ledger_account_id     AS account_id,
-    ledger_name           AS account_name,
-    'Ledger'              AS account_level,
-    ledger_account_id,
-    ledger_name,
-    NULL::TEXT            AS transfer_id,
-    NULL::TEXT            AS transfer_type,
-    drift                 AS primary_amount,
-    stored_balance        AS secondary_amount
-FROM ar_ledger_balance_drift
-WHERE drift <> 0""",
-        f"""SELECT
-    'Non-Zero Transfer'   AS check_type,
-    'yellow'              AS severity,
-    4                     AS severity_rank,
-    first_posted_at       AS exception_date,
-{_aging_columns('first_posted_at')},
-    NULL::TEXT            AS account_id,
-    NULL::TEXT            AS account_name,
-    'System'              AS account_level,
-    NULL::TEXT            AS ledger_account_id,
-    NULL::TEXT            AS ledger_name,
-    transfer_id,
-    transfer_type,
-    net_amount            AS primary_amount,
-    NULL::NUMERIC         AS secondary_amount
-FROM ar_transfer_summary
-WHERE net_zero_status = 'not_net_zero'
-  AND expected_net_zero = 'expected'""",
-        f"""SELECT
-    'Sub-Ledger Limit Breach' AS check_type,
-    'amber'                   AS severity,
-    3                         AS severity_rank,
-    activity_date             AS exception_date,
-{_aging_columns('activity_date')},
-    subledger_account_id      AS account_id,
-    subledger_name            AS account_name,
-    'Sub-Ledger'              AS account_level,
-    ledger_account_id,
-    ledger_name,
-    NULL::TEXT                AS transfer_id,
-    transfer_type,
-    overage                   AS primary_amount,
-    daily_limit               AS secondary_amount
-FROM ar_subledger_limit_breach""",
-        f"""SELECT
-    'Sub-Ledger Overdraft' AS check_type,
-    'red'                  AS severity,
-    1                      AS severity_rank,
-    balance_date           AS exception_date,
-{_aging_columns('balance_date')},
-    subledger_account_id   AS account_id,
-    subledger_name         AS account_name,
-    'Sub-Ledger'           AS account_level,
-    ledger_account_id,
-    ledger_name,
-    NULL::TEXT             AS transfer_id,
-    NULL::TEXT             AS transfer_type,
-    stored_balance         AS primary_amount,
-    NULL::NUMERIC          AS secondary_amount
-FROM ar_subledger_overdraft""",
-        # ---- CMS-specific checks (9) ----
-        f"""SELECT
-    'Sweep Target Non-Zero EOD' AS check_type,
-    'orange'                    AS severity,
-    2                           AS severity_rank,
-    balance_date                AS exception_date,
-{_aging_columns('balance_date')},
-    subledger_account_id        AS account_id,
-    subledger_name              AS account_name,
-    'Sub-Ledger'                AS account_level,
-    ledger_account_id,
-    ledger_name,
-    NULL::TEXT                  AS transfer_id,
-    NULL::TEXT                  AS transfer_type,
-    stored_balance              AS primary_amount,
-    NULL::NUMERIC               AS secondary_amount
-FROM ar_sweep_target_nonzero""",
-        f"""SELECT
-    'Concentration Master Sweep Drift' AS check_type,
-    'red'                              AS severity,
-    1                                  AS severity_rank,
-    sweep_date                         AS exception_date,
-{_aging_columns('sweep_date')},
-    NULL::TEXT                         AS account_id,
-    NULL::TEXT                         AS account_name,
-    'System'                           AS account_level,
-    NULL::TEXT                         AS ledger_account_id,
-    NULL::TEXT                         AS ledger_name,
-    NULL::TEXT                         AS transfer_id,
-    NULL::TEXT                         AS transfer_type,
-    drift                              AS primary_amount,
-    master_total                       AS secondary_amount
-FROM ar_concentration_master_sweep_drift
-WHERE drift_status = 'drift'""",
-        f"""SELECT
-    'ACH Origination Settlement Non-Zero EOD' AS check_type,
-    'orange'                                  AS severity,
-    2                                         AS severity_rank,
-    balance_date                              AS exception_date,
-{_aging_columns('balance_date')},
-    ledger_account_id                         AS account_id,
-    ledger_name                               AS account_name,
-    'Ledger'                                  AS account_level,
-    ledger_account_id,
-    ledger_name,
-    NULL::TEXT                                AS transfer_id,
-    NULL::TEXT                                AS transfer_type,
-    stored_balance                            AS primary_amount,
-    NULL::NUMERIC                             AS secondary_amount
-FROM ar_ach_orig_settlement_nonzero""",
-        f"""SELECT
-    'ACH Sweep Without Fed Confirmation' AS check_type,
-    'yellow'                             AS severity,
-    4                                    AS severity_rank,
-    sweep_at                             AS exception_date,
-{_aging_columns('sweep_at')},
-    NULL::TEXT                           AS account_id,
-    NULL::TEXT                           AS account_name,
-    'System'                             AS account_level,
-    NULL::TEXT                           AS ledger_account_id,
-    NULL::TEXT                           AS ledger_name,
-    sweep_transfer_id                    AS transfer_id,
-    NULL::TEXT                           AS transfer_type,
-    sweep_amount                         AS primary_amount,
-    NULL::NUMERIC                        AS secondary_amount
-FROM ar_ach_sweep_no_fed_confirmation""",
-        f"""SELECT
-    'Fed Activity Without Internal Catch-Up' AS check_type,
-    'yellow'                                 AS severity,
-    4                                        AS severity_rank,
-    fed_at                                   AS exception_date,
-{_aging_columns('fed_at')},
-    NULL::TEXT                               AS account_id,
-    NULL::TEXT                               AS account_name,
-    'System'                                 AS account_level,
-    NULL::TEXT                               AS ledger_account_id,
-    NULL::TEXT                               AS ledger_name,
-    fed_transfer_id                          AS transfer_id,
-    NULL::TEXT                               AS transfer_type,
-    fed_amount                               AS primary_amount,
-    NULL::NUMERIC                            AS secondary_amount
-FROM ar_fed_card_no_internal_catchup""",
-        f"""SELECT
-    'GL vs Fed Master Drift' AS check_type,
-    'red'                    AS severity,
-    1                        AS severity_rank,
-    movement_date            AS exception_date,
-{_aging_columns('movement_date')},
-    NULL::TEXT               AS account_id,
-    NULL::TEXT               AS account_name,
-    'System'                 AS account_level,
-    NULL::TEXT               AS ledger_account_id,
-    NULL::TEXT               AS ledger_name,
-    NULL::TEXT               AS transfer_id,
-    NULL::TEXT               AS transfer_type,
-    drift                    AS primary_amount,
-    fed_total                AS secondary_amount
-FROM ar_gl_vs_fed_master_drift
-WHERE drift_status = 'drift'""",
-        f"""SELECT
-    'Internal Transfer Stuck in Suspense' AS check_type,
-    'yellow'                              AS severity,
-    4                                     AS severity_rank,
-    originated_at                         AS exception_date,
-{_aging_columns('originated_at')},
-    NULL::TEXT                            AS account_id,
-    NULL::TEXT                            AS account_name,
-    'System'                              AS account_level,
-    NULL::TEXT                            AS ledger_account_id,
-    NULL::TEXT                            AS ledger_name,
-    originate_transfer_id                 AS transfer_id,
-    NULL::TEXT                            AS transfer_type,
-    originate_amount                      AS primary_amount,
-    NULL::NUMERIC                         AS secondary_amount
-FROM ar_internal_transfer_stuck""",
-        f"""SELECT
-    'Internal Transfer Suspense Non-Zero EOD' AS check_type,
-    'orange'                                  AS severity,
-    2                                         AS severity_rank,
-    balance_date                              AS exception_date,
-{_aging_columns('balance_date')},
-    ledger_account_id                         AS account_id,
-    ledger_name                               AS account_name,
-    'Ledger'                                  AS account_level,
-    ledger_account_id,
-    ledger_name,
-    NULL::TEXT                                AS transfer_id,
-    NULL::TEXT                                AS transfer_type,
-    stored_balance                            AS primary_amount,
-    NULL::NUMERIC                             AS secondary_amount
-FROM ar_internal_transfer_suspense_nonzero""",
-        f"""SELECT
-    'Internal Reversal Uncredited' AS check_type,
-    'yellow'                       AS severity,
-    4                              AS severity_rank,
-    originated_at                  AS exception_date,
-{_aging_columns('originated_at')},
-    NULL::TEXT                     AS account_id,
-    NULL::TEXT                     AS account_name,
-    'System'                       AS account_level,
-    NULL::TEXT                     AS ledger_account_id,
-    NULL::TEXT                     AS ledger_name,
-    originate_transfer_id          AS transfer_id,
-    NULL::TEXT                     AS transfer_type,
-    originate_amount               AS primary_amount,
-    NULL::NUMERIC                  AS secondary_amount
-FROM ar_internal_reversal_uncredited""",
-    ]
-    sql = "\nUNION ALL\n".join(blocks)
+    # The 14-block UNION ALL that produces these rows lives in schema.sql
+    # as the `ar_unified_exceptions` materialized view. The full plan
+    # (14 per-check views, each scanning `transactions` and/or
+    # `daily_balances`) was too heavy for QuickSight Direct Query — the
+    # Today's Exceptions sheet wouldn't render. Materializing makes load
+    # instant. Operators must REFRESH MATERIALIZED VIEW after each ETL
+    # load (the demo's `quicksight-gen demo apply` does this
+    # automatically). See schema.sql for the matview definition.
+    sql = (
+        "SELECT *, TO_CHAR(exception_date, 'YYYY-MM-DD') AS exception_date_str "
+        "FROM ar_unified_exceptions"
+    )
     return build_dataset(
         cfg, cfg.prefixed("ar-unified-exceptions-dataset"),
         "AR Unified Exceptions", "ar-unified-exceptions",
         sql, UNIFIED_EXCEPTIONS_CONTRACT,
+        visual_identifier=DS_AR_UNIFIED_EXCEPTIONS,
     )
 
 
@@ -822,3 +627,28 @@ def build_all_datasets(cfg: Config) -> list[DataSet]:
         build_daily_statement_transactions_dataset(cfg),
         build_ar_unified_exceptions_dataset(cfg),
     ]
+
+
+# K.2: register every contract at module import so visuals can resolve
+# drill source-field shapes without depending on dataset construction
+# order. ``build_dataset()`` re-registers each contract too — idempotent
+# for the same (visual_identifier, contract) pair.
+_CONTRACT_REGISTRATIONS: tuple[tuple[str, DatasetContract], ...] = (
+    (DS_AR_LEDGER_ACCOUNTS, LEDGER_ACCOUNTS_CONTRACT),
+    (DS_AR_SUBLEDGER_ACCOUNTS, SUBLEDGER_ACCOUNTS_CONTRACT),
+    (DS_AR_TRANSACTIONS, TRANSACTIONS_CONTRACT),
+    (DS_AR_LEDGER_BALANCE_DRIFT, LEDGER_BALANCE_DRIFT_CONTRACT),
+    (DS_AR_SUBLEDGER_BALANCE_DRIFT, SUBLEDGER_BALANCE_DRIFT_CONTRACT),
+    (DS_AR_TRANSFER_SUMMARY, TRANSFER_SUMMARY_CONTRACT),
+    (DS_AR_NON_ZERO_TRANSFERS, NON_ZERO_TRANSFERS_CONTRACT),
+    (DS_AR_EXPECTED_ZERO_EOD_ROLLUP, EXPECTED_ZERO_EOD_ROLLUP_CONTRACT),
+    (DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+     TWO_SIDED_POST_MISMATCH_ROLLUP_CONTRACT),
+    (DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
+     BALANCE_DRIFT_TIMELINES_ROLLUP_CONTRACT),
+    (DS_AR_DAILY_STATEMENT_SUMMARY, DAILY_STATEMENT_SUMMARY_CONTRACT),
+    (DS_AR_DAILY_STATEMENT_TRANSACTIONS, DAILY_STATEMENT_TRANSACTIONS_CONTRACT),
+    (DS_AR_UNIFIED_EXCEPTIONS, UNIFIED_EXCEPTIONS_CONTRACT),
+)
+for _vid, _contract in _CONTRACT_REGISTRATIONS:
+    register_contract(_vid, _contract)

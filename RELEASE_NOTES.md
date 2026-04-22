@@ -1,5 +1,44 @@
 # Release Notes
 
+## v3.6.0
+
+### Phase K.2 — Cross-sheet navigation parameter hygiene
+
+This release closes a class of cross-sheet drill bugs where a destination sheet would silently render zero rows. Two underlying causes: (1) parameter-bound `CategoryFilter`s match the literal empty string when a parameter is at its sentinel default, suppressing every row; (2) drill source-field shapes coerced through `SINGLE_VALUED` string parameters could end up textually incompatible with the destination column they were meant to filter. K.2 makes both classes unrepresentable at the wiring site.
+
+### What landed
+
+**Calc-field PASS drill shape (K.2.1)**
+
+- All six AR cross-sheet drill `FilterGroup`s switched from parameter-bound `CategoryFilter`s to a calc-field PASS shape: a per-drill calculated field returns `'PASS'` when the parameter is at its `__ALL__` sentinel OR when the row's column matches the parameter, and the filter retains only `'PASS'` rows. Removes the empty-string-match suppression that had every drill destination silently rendering zero rows when invoked from a non-defaulted source.
+- `_DRILL_SPECS` becomes the single source of truth driving both the calc-field declarations and the matching `FilterGroup`s. `_drill_param_declaration()` raises if a name isn't in the derived sentinel-default set, so an incompatible declaration can't be silently constructed.
+
+**Typed cross-sheet drill helpers (K.2.2)**
+
+- New `common/drill.py` introduces `ColumnShape` (DATE_YYYY_MM_DD_TEXT, DATETIME_DAY, ACCOUNT_ID, SUBLEDGER_ACCOUNT_ID, LEDGER_ACCOUNT_ID, TRANSFER_ID, TRANSFER_TYPE), `DrillParam` (param + expected shape), `DrillSourceField` (source field + actual shape), and `cross_sheet_drill()` which refuses construction when the source-field shape can't assign to the destination param's expected shape. `SUBLEDGER_ACCOUNT_ID` and `LEDGER_ACCOUNT_ID` widen to `ACCOUNT_ID`; date encodings explicitly do not widen — that's the K.2 bug class (DATETIME silently coerced to a timestamp text that never matched a `TO_CHAR`'d YYYY-MM-DD column). The check fires at the wiring line, not in a downstream output-walking test.
+- `build_dataset()` now takes a `visual_identifier` and registers each contract in a module-level registry, letting `field_source(visual_identifier, column_name)` resolve column shapes from the contract instead of duplicating shape annotations at every call site. Both `payment_recon/datasets.py` and `account_recon/datasets.py` register their full contract sets at import time so the registry is populated regardless of construction order.
+
+**Drill-site migration + stale-param hygiene (K.2.3)**
+
+- All 7 PR drill sites and all 6 AR drill sites migrated to `cross_sheet_drill()`. The 4 AR drills targeting the Transactions sheet flow through a new `_ar_drill_to_transactions()` helper that auto-resets every PASS-filtered param the caller doesn't explicitly write — closes a stale-param leak where a prior drill's value would silently narrow Transactions to zero rows. A `tests/test_account_recon.py::TestTransactionsDrillStaleParamHygiene` guard pins the helper's auto-reset set to `analysis._DRILL_SPECS` so a new drill spec can't bypass it.
+- New `pArAccountId` parameter + `fg-ar-drill-account-on-txn` filter group added on the Transactions sheet for the K.1 Today's Exceptions account-day right-click drill (the K.1 spike landed these but the e2e dashboard-structure fixtures were never updated; synced here).
+- New `tests/e2e/test_ar_cross_sheet_param_hygiene.py` (297 LoC) covers the full param-reset + PASS-filter behavior end-to-end against the deployed dashboard.
+
+**Schema + Today's Exceptions drill bug fix**
+
+- `ar_unified_exceptions` becomes a **MATERIALIZED VIEW** in `schema.sql`. The 14-block `UNION ALL` was too heavy for QuickSight Direct Query and the Today's Exceptions sheet wouldn't render. Operators must `REFRESH MATERIALIZED VIEW ar_unified_exceptions` after each ETL load; `demo apply` does this automatically.
+- The Today's Exceptions account-day drill bound `exception_date` (DATETIME) to `pArActivityDate` (SINGLE_VALUED string), which QuickSight coerced to `"2026-04-07 00:00:00.000"`. The destination's `posted_date` filter compared that against `TO_CHAR(..., 'YYYY-MM-DD')` strings — never matched. Added an `exception_date_str` column to the unified exceptions projection (`DATE_YYYY_MM_DD_TEXT`) and switched the drill `SourceField` `FieldId` to bind that column instead. The K.2.2 type system would have caught this wiring at construction time.
+
+**Conventions**
+
+- `CLAUDE.md` gains a Conventions rule: **encode invariants in the type system, not in validation tests.** Typed wrappers + `__post_init__` validation + typed constructors that fail at the buggy line are preferred over post-hoc tests that walk generated output.
+
+### Known issues
+
+- 5 PR `FilterControl` dropdown e2e tests (`test_cashier_multi_select_narrows_sales`, `test_payment_method_narrows_payments`, three `test_show_only_toggle_narrows_and_clears` parametrize cases) time out in `_open_control_dropdown`. Pre-existing — failing on `v3.5.2` and on every K.2 commit, both serial and `--parallel 4`. Not a K.2 regression. Logged under `PLAN.md` Phase L Backlog > Test Reliability with the failing test ids, the broken selector, and a diagnostic path. Net e2e: 156 / 161.
+
+---
+
 ## v3.5.2
 
 ### Release pipeline — SLSA build provenance + Node 24 actions

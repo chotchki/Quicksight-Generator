@@ -195,6 +195,7 @@ _WARMUP_QUERIES = (
     "SELECT COUNT(*) FROM ar_expected_zero_eod_rollup",
     "SELECT COUNT(*) FROM ar_two_sided_post_mismatch_rollup",
     "SELECT COUNT(*) FROM ar_balance_drift_timelines_rollup",
+    "SELECT COUNT(*) FROM ar_unified_exceptions",
 )
 
 

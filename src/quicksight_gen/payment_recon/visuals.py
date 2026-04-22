@@ -26,6 +26,12 @@ from quicksight_gen.common.clickability import (
     link_text_format,
     menu_link_text_format,
 )
+from quicksight_gen.common.dataset_contract import ColumnShape
+from quicksight_gen.common.drill import (
+    DrillParam,
+    cross_sheet_drill,
+    field_source,
+)
 from quicksight_gen.common.models import (
     AxisLabelOptions,
     BarChartAggregatedFieldWells,
@@ -37,15 +43,12 @@ from quicksight_gen.common.models import (
     ChartAxisLabelOptions,
     ColumnIdentifier,
     CustomActionFilterOperation,
-    CustomActionNavigationOperation,
-    CustomActionSetParametersOperation,
     DimensionField,
     FilterOperationSelectedFieldsConfiguration,
     FilterOperationTargetVisualsConfiguration,
     KPIConfiguration,
     KPIFieldWells,
     KPIVisual,
-    LocalNavigationConfiguration,
     MeasureField,
     NumericalAggregationFunction,
     NumericalMeasureField,
@@ -61,6 +64,15 @@ from quicksight_gen.common.models import (
     VisualSubtitleLabelOptions,
     VisualTitleLabelOptions,
 )
+
+
+# K.2: typed PR drill parameters. Same pattern as account_recon —
+# the parameter name + shape are colocated so cross_sheet_drill can
+# refuse a wiring whose source-field shape doesn't match.
+P_PR_SETTLEMENT = DrillParam("pSettlementId", ColumnShape.SETTLEMENT_ID)
+P_PR_PAYMENT = DrillParam("pPaymentId", ColumnShape.PAYMENT_ID)
+P_PR_EXTERNAL_TXN = DrillParam("pExternalTransactionId",
+                               ColumnShape.EXTERNAL_TXN_ID)
 
 
 # ---------------------------------------------------------------------------
@@ -131,47 +143,6 @@ def _unagg_field(field_id: str, ds: str, col_name: str) -> dict:
             "ColumnName": col_name,
         },
     }
-
-
-def _drill_down_action(
-    action_id: str,
-    name: str,
-    target_sheet: str,
-    param_name: str,
-    source_field_id: str,
-    trigger: str = "DATA_POINT_CLICK",
-) -> VisualCustomAction:
-    """Build a drill-down action that sets a parameter and navigates.
-
-    Use trigger="DATA_POINT_MENU" for a right-click menu entry when
-    the visual already has a DATA_POINT_CLICK action.
-    """
-    return VisualCustomAction(
-        CustomActionId=action_id,
-        Name=name,
-        Trigger=trigger,
-        ActionOperations=[
-            VisualCustomActionOperation(
-                NavigationOperation=CustomActionNavigationOperation(
-                    LocalNavigationConfiguration=LocalNavigationConfiguration(
-                        TargetSheetId=target_sheet,
-                    ),
-                ),
-            ),
-            VisualCustomActionOperation(
-                SetParametersOperation=CustomActionSetParametersOperation(
-                    ParameterValueConfigurations=[
-                        {
-                            "DestinationParameterName": param_name,
-                            "Value": {
-                                "SourceField": source_field_id,
-                            },
-                        },
-                    ],
-                ),
-            ),
-        ],
-    )
 
 
 def _same_sheet_filter_action(
@@ -340,12 +311,14 @@ def build_sales_visuals(link_color: str, link_tint: str) -> list[Visual]:
                 },
             ),
             Actions=[
-                _drill_down_action(
-                    "action-sale-to-settlement",
-                    "View Settlement",
-                    SHEET_SETTLEMENTS,
-                    "pSettlementId",
-                    "tbl-settlement-id",
+                cross_sheet_drill(
+                    action_id="action-sale-to-settlement",
+                    name="View Settlement",
+                    target_sheet=SHEET_SETTLEMENTS,
+                    writes=[
+                        (P_PR_SETTLEMENT, field_source(
+                            "tbl-settlement-id", DS_SALES, "settlement_id")),
+                    ],
                     trigger="DATA_POINT_MENU",
                 ),
             ],
@@ -485,19 +458,23 @@ def build_settlements_visuals(link_color: str, link_tint: str) -> list[Visual]:
                 ),
             ),
             Actions=[
-                _drill_down_action(
-                    "action-settlement-to-sales",
-                    "View Sales",
-                    SHEET_SALES,
-                    "pSettlementId",
-                    "tbl-stl-id",
+                cross_sheet_drill(
+                    action_id="action-settlement-to-sales",
+                    name="View Sales",
+                    target_sheet=SHEET_SALES,
+                    writes=[
+                        (P_PR_SETTLEMENT, field_source(
+                            "tbl-stl-id", DS_SETTLEMENTS, "settlement_id")),
+                    ],
                 ),
-                _drill_down_action(
-                    "action-settlement-to-payment",
-                    "View Payment",
-                    SHEET_PAYMENTS,
-                    "pPaymentId",
-                    "tbl-stl-payment-id",
+                cross_sheet_drill(
+                    action_id="action-settlement-to-payment",
+                    name="View Payment",
+                    target_sheet=SHEET_PAYMENTS,
+                    writes=[
+                        (P_PR_PAYMENT, field_source(
+                            "tbl-stl-payment-id", DS_SETTLEMENTS, "payment_id")),
+                    ],
                     trigger="DATA_POINT_MENU",
                 ),
             ],
@@ -642,19 +619,24 @@ def build_payments_visuals(link_color: str, link_tint: str) -> list[Visual]:
                 ),
             ),
             Actions=[
-                _drill_down_action(
-                    "action-payment-to-settlement",
-                    "View Settlement",
-                    SHEET_SETTLEMENTS,
-                    "pSettlementId",
-                    "tbl-pay-stl-id",
+                cross_sheet_drill(
+                    action_id="action-payment-to-settlement",
+                    name="View Settlement",
+                    target_sheet=SHEET_SETTLEMENTS,
+                    writes=[
+                        (P_PR_SETTLEMENT, field_source(
+                            "tbl-pay-stl-id", DS_PAYMENTS, "settlement_id")),
+                    ],
                 ),
-                _drill_down_action(
-                    "action-payment-to-recon",
-                    "View in Reconciliation",
-                    SHEET_PAYMENT_RECON,
-                    "pExternalTransactionId",
-                    "tbl-pay-ext-txn",
+                cross_sheet_drill(
+                    action_id="action-payment-to-recon",
+                    name="View in Reconciliation",
+                    target_sheet=SHEET_PAYMENT_RECON,
+                    writes=[
+                        (P_PR_EXTERNAL_TXN, field_source(
+                            "tbl-pay-ext-txn", DS_PAYMENTS,
+                            "external_transaction_id")),
+                    ],
                     trigger="DATA_POINT_MENU",
                 ),
             ],

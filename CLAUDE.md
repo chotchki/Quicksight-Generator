@@ -243,6 +243,7 @@ Demo persona is **Sasquatch National Bank — Cash Management Suite (CMS)** — 
 - The end customer doesn't know exactly what they want — keep the code easy to mutate and iterate on
 - Rich text on Getting Started sheets uses `common/rich_text.py`; theme-accent colors resolve to hex at generate time
 - Each dataset declares a `DatasetContract` (column name + type list) in its `datasets.py`; the SQL query is one implementation. Tests assert the SQL projection matches the contract. `build_dataset()` in `common/dataset_contract.py` is the shared constructor.
+- **Encode invariants in the type system, not in validation tests.** When a class of bug can be made unrepresentable through typed wrappers, dataclass `__post_init__` validation, or typed constructor functions that fail at the wiring site, prefer that over a separate test that walks the generated output and asserts shape. Type-encoded invariants fail at the buggy line; output-walking tests fail in a far-off file with output that requires triangulation back to the wiring site. End-to-end behavioral tests (e2e) are still the right tool for "does the deployed thing actually render?" — the rule is specifically about correctness invariants of constructed objects (drill action shape compatibility, parameter/column-type matching, etc.).
 
 ## E2E Test Conventions
 

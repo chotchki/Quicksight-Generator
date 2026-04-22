@@ -888,3 +888,376 @@ SELECT
     drift,
     'GL vs Fed Master drift'            AS source_check
 FROM ar_gl_vs_fed_master_drift;
+
+
+-- Unified exceptions materialized view (Phase K.2 follow-on).
+-- Today's Exceptions tab feeds from this single object instead of a
+-- 14-block UNION ALL composed at dataset-load time. The transitive
+-- read graph (14 per-check views, each scanning `transactions` and/or
+-- `daily_balances`) was too heavy for QuickSight Direct Query — the
+-- sheet wouldn't render. Materializing makes load instant.
+--
+-- IMPORTANT — refresh contract: this matview is NOT auto-refreshed.
+-- Operators must run
+--     REFRESH MATERIALIZED VIEW ar_unified_exceptions;
+-- after each ETL load (the demo's `quicksight-gen demo apply` does
+-- this automatically). `days_outstanding` and `aging_bucket` are
+-- computed from CURRENT_DATE at refresh time, so a daily refresh
+-- naturally keeps aging accurate.
+DROP MATERIALIZED VIEW IF EXISTS ar_unified_exceptions;
+CREATE MATERIALIZED VIEW ar_unified_exceptions AS
+-- Sub-Ledger Drift
+SELECT
+    'Sub-Ledger Drift'    AS check_type,
+    'red'                 AS severity,
+    1                     AS severity_rank,
+    balance_date          AS exception_date,
+    (CURRENT_DATE - balance_date::date) AS days_outstanding,
+    CASE
+        WHEN (CURRENT_DATE - balance_date::date) <= 1 THEN '1: 0-1 day'
+        WHEN (CURRENT_DATE - balance_date::date) <= 3 THEN '2: 2-3 days'
+        WHEN (CURRENT_DATE - balance_date::date) <= 7 THEN '3: 4-7 days'
+        WHEN (CURRENT_DATE - balance_date::date) <= 30 THEN '4: 8-30 days'
+        ELSE '5: >30 days'
+    END                   AS aging_bucket,
+    subledger_account_id  AS account_id,
+    subledger_name        AS account_name,
+    'Sub-Ledger'          AS account_level,
+    ledger_account_id,
+    ledger_name,
+    NULL::TEXT            AS transfer_id,
+    NULL::TEXT            AS transfer_type,
+    drift                 AS primary_amount,
+    stored_balance        AS secondary_amount
+FROM ar_subledger_balance_drift
+WHERE drift <> 0
+UNION ALL
+-- Ledger Drift
+SELECT
+    'Ledger Drift'        AS check_type,
+    'red'                 AS severity,
+    1                     AS severity_rank,
+    balance_date          AS exception_date,
+    (CURRENT_DATE - balance_date::date) AS days_outstanding,
+    CASE
+        WHEN (CURRENT_DATE - balance_date::date) <= 1 THEN '1: 0-1 day'
+        WHEN (CURRENT_DATE - balance_date::date) <= 3 THEN '2: 2-3 days'
+        WHEN (CURRENT_DATE - balance_date::date) <= 7 THEN '3: 4-7 days'
+        WHEN (CURRENT_DATE - balance_date::date) <= 30 THEN '4: 8-30 days'
+        ELSE '5: >30 days'
+    END                   AS aging_bucket,
+    ledger_account_id     AS account_id,
+    ledger_name           AS account_name,
+    'Ledger'              AS account_level,
+    ledger_account_id,
+    ledger_name,
+    NULL::TEXT            AS transfer_id,
+    NULL::TEXT            AS transfer_type,
+    drift                 AS primary_amount,
+    stored_balance        AS secondary_amount
+FROM ar_ledger_balance_drift
+WHERE drift <> 0
+UNION ALL
+-- Non-Zero Transfer
+SELECT
+    'Non-Zero Transfer'   AS check_type,
+    'yellow'              AS severity,
+    4                     AS severity_rank,
+    first_posted_at       AS exception_date,
+    (CURRENT_DATE - first_posted_at::date) AS days_outstanding,
+    CASE
+        WHEN (CURRENT_DATE - first_posted_at::date) <= 1 THEN '1: 0-1 day'
+        WHEN (CURRENT_DATE - first_posted_at::date) <= 3 THEN '2: 2-3 days'
+        WHEN (CURRENT_DATE - first_posted_at::date) <= 7 THEN '3: 4-7 days'
+        WHEN (CURRENT_DATE - first_posted_at::date) <= 30 THEN '4: 8-30 days'
+        ELSE '5: >30 days'
+    END                   AS aging_bucket,
+    NULL::TEXT            AS account_id,
+    NULL::TEXT            AS account_name,
+    'System'              AS account_level,
+    NULL::TEXT            AS ledger_account_id,
+    NULL::TEXT            AS ledger_name,
+    transfer_id,
+    transfer_type,
+    net_amount            AS primary_amount,
+    NULL::NUMERIC         AS secondary_amount
+FROM ar_transfer_summary
+WHERE net_zero_status = 'not_net_zero'
+  AND expected_net_zero = 'expected'
+UNION ALL
+-- Sub-Ledger Limit Breach
+SELECT
+    'Sub-Ledger Limit Breach' AS check_type,
+    'amber'                   AS severity,
+    3                         AS severity_rank,
+    activity_date             AS exception_date,
+    (CURRENT_DATE - activity_date::date) AS days_outstanding,
+    CASE
+        WHEN (CURRENT_DATE - activity_date::date) <= 1 THEN '1: 0-1 day'
+        WHEN (CURRENT_DATE - activity_date::date) <= 3 THEN '2: 2-3 days'
+        WHEN (CURRENT_DATE - activity_date::date) <= 7 THEN '3: 4-7 days'
+        WHEN (CURRENT_DATE - activity_date::date) <= 30 THEN '4: 8-30 days'
+        ELSE '5: >30 days'
+    END                       AS aging_bucket,
+    subledger_account_id      AS account_id,
+    subledger_name            AS account_name,
+    'Sub-Ledger'              AS account_level,
+    ledger_account_id,
+    ledger_name,
+    NULL::TEXT                AS transfer_id,
+    transfer_type,
+    overage                   AS primary_amount,
+    daily_limit               AS secondary_amount
+FROM ar_subledger_limit_breach
+UNION ALL
+-- Sub-Ledger Overdraft
+SELECT
+    'Sub-Ledger Overdraft' AS check_type,
+    'red'                  AS severity,
+    1                      AS severity_rank,
+    balance_date           AS exception_date,
+    (CURRENT_DATE - balance_date::date) AS days_outstanding,
+    CASE
+        WHEN (CURRENT_DATE - balance_date::date) <= 1 THEN '1: 0-1 day'
+        WHEN (CURRENT_DATE - balance_date::date) <= 3 THEN '2: 2-3 days'
+        WHEN (CURRENT_DATE - balance_date::date) <= 7 THEN '3: 4-7 days'
+        WHEN (CURRENT_DATE - balance_date::date) <= 30 THEN '4: 8-30 days'
+        ELSE '5: >30 days'
+    END                    AS aging_bucket,
+    subledger_account_id   AS account_id,
+    subledger_name         AS account_name,
+    'Sub-Ledger'           AS account_level,
+    ledger_account_id,
+    ledger_name,
+    NULL::TEXT             AS transfer_id,
+    NULL::TEXT             AS transfer_type,
+    stored_balance         AS primary_amount,
+    NULL::NUMERIC          AS secondary_amount
+FROM ar_subledger_overdraft
+UNION ALL
+-- Sweep Target Non-Zero EOD
+SELECT
+    'Sweep Target Non-Zero EOD' AS check_type,
+    'orange'                    AS severity,
+    2                           AS severity_rank,
+    balance_date                AS exception_date,
+    (CURRENT_DATE - balance_date::date) AS days_outstanding,
+    CASE
+        WHEN (CURRENT_DATE - balance_date::date) <= 1 THEN '1: 0-1 day'
+        WHEN (CURRENT_DATE - balance_date::date) <= 3 THEN '2: 2-3 days'
+        WHEN (CURRENT_DATE - balance_date::date) <= 7 THEN '3: 4-7 days'
+        WHEN (CURRENT_DATE - balance_date::date) <= 30 THEN '4: 8-30 days'
+        ELSE '5: >30 days'
+    END                         AS aging_bucket,
+    subledger_account_id        AS account_id,
+    subledger_name              AS account_name,
+    'Sub-Ledger'                AS account_level,
+    ledger_account_id,
+    ledger_name,
+    NULL::TEXT                  AS transfer_id,
+    NULL::TEXT                  AS transfer_type,
+    stored_balance              AS primary_amount,
+    NULL::NUMERIC               AS secondary_amount
+FROM ar_sweep_target_nonzero
+UNION ALL
+-- Concentration Master Sweep Drift
+SELECT
+    'Concentration Master Sweep Drift' AS check_type,
+    'red'                              AS severity,
+    1                                  AS severity_rank,
+    sweep_date                         AS exception_date,
+    (CURRENT_DATE - sweep_date::date) AS days_outstanding,
+    CASE
+        WHEN (CURRENT_DATE - sweep_date::date) <= 1 THEN '1: 0-1 day'
+        WHEN (CURRENT_DATE - sweep_date::date) <= 3 THEN '2: 2-3 days'
+        WHEN (CURRENT_DATE - sweep_date::date) <= 7 THEN '3: 4-7 days'
+        WHEN (CURRENT_DATE - sweep_date::date) <= 30 THEN '4: 8-30 days'
+        ELSE '5: >30 days'
+    END                                AS aging_bucket,
+    NULL::TEXT                         AS account_id,
+    NULL::TEXT                         AS account_name,
+    'System'                           AS account_level,
+    NULL::TEXT                         AS ledger_account_id,
+    NULL::TEXT                         AS ledger_name,
+    NULL::TEXT                         AS transfer_id,
+    NULL::TEXT                         AS transfer_type,
+    drift                              AS primary_amount,
+    master_total                       AS secondary_amount
+FROM ar_concentration_master_sweep_drift
+WHERE drift_status = 'drift'
+UNION ALL
+-- ACH Origination Settlement Non-Zero EOD
+SELECT
+    'ACH Origination Settlement Non-Zero EOD' AS check_type,
+    'orange'                                  AS severity,
+    2                                         AS severity_rank,
+    balance_date                              AS exception_date,
+    (CURRENT_DATE - balance_date::date) AS days_outstanding,
+    CASE
+        WHEN (CURRENT_DATE - balance_date::date) <= 1 THEN '1: 0-1 day'
+        WHEN (CURRENT_DATE - balance_date::date) <= 3 THEN '2: 2-3 days'
+        WHEN (CURRENT_DATE - balance_date::date) <= 7 THEN '3: 4-7 days'
+        WHEN (CURRENT_DATE - balance_date::date) <= 30 THEN '4: 8-30 days'
+        ELSE '5: >30 days'
+    END                                       AS aging_bucket,
+    ledger_account_id                         AS account_id,
+    ledger_name                               AS account_name,
+    'Ledger'                                  AS account_level,
+    ledger_account_id,
+    ledger_name,
+    NULL::TEXT                                AS transfer_id,
+    NULL::TEXT                                AS transfer_type,
+    stored_balance                            AS primary_amount,
+    NULL::NUMERIC                             AS secondary_amount
+FROM ar_ach_orig_settlement_nonzero
+UNION ALL
+-- ACH Sweep Without Fed Confirmation
+SELECT
+    'ACH Sweep Without Fed Confirmation' AS check_type,
+    'yellow'                             AS severity,
+    4                                    AS severity_rank,
+    sweep_at                             AS exception_date,
+    (CURRENT_DATE - sweep_at::date) AS days_outstanding,
+    CASE
+        WHEN (CURRENT_DATE - sweep_at::date) <= 1 THEN '1: 0-1 day'
+        WHEN (CURRENT_DATE - sweep_at::date) <= 3 THEN '2: 2-3 days'
+        WHEN (CURRENT_DATE - sweep_at::date) <= 7 THEN '3: 4-7 days'
+        WHEN (CURRENT_DATE - sweep_at::date) <= 30 THEN '4: 8-30 days'
+        ELSE '5: >30 days'
+    END                                  AS aging_bucket,
+    NULL::TEXT                           AS account_id,
+    NULL::TEXT                           AS account_name,
+    'System'                             AS account_level,
+    NULL::TEXT                           AS ledger_account_id,
+    NULL::TEXT                           AS ledger_name,
+    sweep_transfer_id                    AS transfer_id,
+    NULL::TEXT                           AS transfer_type,
+    sweep_amount                         AS primary_amount,
+    NULL::NUMERIC                        AS secondary_amount
+FROM ar_ach_sweep_no_fed_confirmation
+UNION ALL
+-- Fed Activity Without Internal Catch-Up
+SELECT
+    'Fed Activity Without Internal Catch-Up' AS check_type,
+    'yellow'                                 AS severity,
+    4                                        AS severity_rank,
+    fed_at                                   AS exception_date,
+    (CURRENT_DATE - fed_at::date) AS days_outstanding,
+    CASE
+        WHEN (CURRENT_DATE - fed_at::date) <= 1 THEN '1: 0-1 day'
+        WHEN (CURRENT_DATE - fed_at::date) <= 3 THEN '2: 2-3 days'
+        WHEN (CURRENT_DATE - fed_at::date) <= 7 THEN '3: 4-7 days'
+        WHEN (CURRENT_DATE - fed_at::date) <= 30 THEN '4: 8-30 days'
+        ELSE '5: >30 days'
+    END                                      AS aging_bucket,
+    NULL::TEXT                               AS account_id,
+    NULL::TEXT                               AS account_name,
+    'System'                                 AS account_level,
+    NULL::TEXT                               AS ledger_account_id,
+    NULL::TEXT                               AS ledger_name,
+    fed_transfer_id                          AS transfer_id,
+    NULL::TEXT                               AS transfer_type,
+    fed_amount                               AS primary_amount,
+    NULL::NUMERIC                            AS secondary_amount
+FROM ar_fed_card_no_internal_catchup
+UNION ALL
+-- GL vs Fed Master Drift
+SELECT
+    'GL vs Fed Master Drift' AS check_type,
+    'red'                    AS severity,
+    1                        AS severity_rank,
+    movement_date            AS exception_date,
+    (CURRENT_DATE - movement_date::date) AS days_outstanding,
+    CASE
+        WHEN (CURRENT_DATE - movement_date::date) <= 1 THEN '1: 0-1 day'
+        WHEN (CURRENT_DATE - movement_date::date) <= 3 THEN '2: 2-3 days'
+        WHEN (CURRENT_DATE - movement_date::date) <= 7 THEN '3: 4-7 days'
+        WHEN (CURRENT_DATE - movement_date::date) <= 30 THEN '4: 8-30 days'
+        ELSE '5: >30 days'
+    END                      AS aging_bucket,
+    NULL::TEXT               AS account_id,
+    NULL::TEXT               AS account_name,
+    'System'                 AS account_level,
+    NULL::TEXT               AS ledger_account_id,
+    NULL::TEXT               AS ledger_name,
+    NULL::TEXT               AS transfer_id,
+    NULL::TEXT               AS transfer_type,
+    drift                    AS primary_amount,
+    fed_total                AS secondary_amount
+FROM ar_gl_vs_fed_master_drift
+WHERE drift_status = 'drift'
+UNION ALL
+-- Internal Transfer Stuck in Suspense
+SELECT
+    'Internal Transfer Stuck in Suspense' AS check_type,
+    'yellow'                              AS severity,
+    4                                     AS severity_rank,
+    originated_at                         AS exception_date,
+    (CURRENT_DATE - originated_at::date) AS days_outstanding,
+    CASE
+        WHEN (CURRENT_DATE - originated_at::date) <= 1 THEN '1: 0-1 day'
+        WHEN (CURRENT_DATE - originated_at::date) <= 3 THEN '2: 2-3 days'
+        WHEN (CURRENT_DATE - originated_at::date) <= 7 THEN '3: 4-7 days'
+        WHEN (CURRENT_DATE - originated_at::date) <= 30 THEN '4: 8-30 days'
+        ELSE '5: >30 days'
+    END                                   AS aging_bucket,
+    NULL::TEXT                            AS account_id,
+    NULL::TEXT                            AS account_name,
+    'System'                              AS account_level,
+    NULL::TEXT                            AS ledger_account_id,
+    NULL::TEXT                            AS ledger_name,
+    originate_transfer_id                 AS transfer_id,
+    NULL::TEXT                            AS transfer_type,
+    originate_amount                      AS primary_amount,
+    NULL::NUMERIC                         AS secondary_amount
+FROM ar_internal_transfer_stuck
+UNION ALL
+-- Internal Transfer Suspense Non-Zero EOD
+SELECT
+    'Internal Transfer Suspense Non-Zero EOD' AS check_type,
+    'orange'                                  AS severity,
+    2                                         AS severity_rank,
+    balance_date                              AS exception_date,
+    (CURRENT_DATE - balance_date::date) AS days_outstanding,
+    CASE
+        WHEN (CURRENT_DATE - balance_date::date) <= 1 THEN '1: 0-1 day'
+        WHEN (CURRENT_DATE - balance_date::date) <= 3 THEN '2: 2-3 days'
+        WHEN (CURRENT_DATE - balance_date::date) <= 7 THEN '3: 4-7 days'
+        WHEN (CURRENT_DATE - balance_date::date) <= 30 THEN '4: 8-30 days'
+        ELSE '5: >30 days'
+    END                                       AS aging_bucket,
+    ledger_account_id                         AS account_id,
+    ledger_name                               AS account_name,
+    'Ledger'                                  AS account_level,
+    ledger_account_id,
+    ledger_name,
+    NULL::TEXT                                AS transfer_id,
+    NULL::TEXT                                AS transfer_type,
+    stored_balance                            AS primary_amount,
+    NULL::NUMERIC                             AS secondary_amount
+FROM ar_internal_transfer_suspense_nonzero
+UNION ALL
+-- Internal Reversal Uncredited
+SELECT
+    'Internal Reversal Uncredited' AS check_type,
+    'yellow'                       AS severity,
+    4                              AS severity_rank,
+    originated_at                  AS exception_date,
+    (CURRENT_DATE - originated_at::date) AS days_outstanding,
+    CASE
+        WHEN (CURRENT_DATE - originated_at::date) <= 1 THEN '1: 0-1 day'
+        WHEN (CURRENT_DATE - originated_at::date) <= 3 THEN '2: 2-3 days'
+        WHEN (CURRENT_DATE - originated_at::date) <= 7 THEN '3: 4-7 days'
+        WHEN (CURRENT_DATE - originated_at::date) <= 30 THEN '4: 8-30 days'
+        ELSE '5: >30 days'
+    END                            AS aging_bucket,
+    NULL::TEXT                     AS account_id,
+    NULL::TEXT                     AS account_name,
+    'System'                       AS account_level,
+    NULL::TEXT                     AS ledger_account_id,
+    NULL::TEXT                     AS ledger_name,
+    originate_transfer_id          AS transfer_id,
+    NULL::TEXT                     AS transfer_type,
+    originate_amount               AS primary_amount,
+    NULL::NUMERIC                  AS secondary_amount
+FROM ar_internal_reversal_uncredited;

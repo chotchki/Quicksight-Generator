@@ -378,6 +378,8 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
             cur.execute(schema_sql)
             click.echo("  Inserting seed data...")
             cur.execute(seed_sql)
+            click.echo("  Refreshing materialized views...")
+            cur.execute("REFRESH MATERIALIZED VIEW ar_unified_exceptions;")
         conn.commit()
         click.echo("  Database ready.")
     except Exception:

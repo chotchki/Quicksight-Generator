@@ -8,12 +8,27 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
+from quicksight_gen.payment_recon.constants import (
+    DS_EXTERNAL_TRANSACTIONS,
+    DS_MERCHANTS,
+    DS_PAYMENT_RECON,
+    DS_PAYMENT_RETURNS,
+    DS_PAYMENTS,
+    DS_SALE_SETTLEMENT_MISMATCH,
+    DS_SALES,
+    DS_SETTLEMENT_EXCEPTIONS,
+    DS_SETTLEMENT_PAYMENT_MISMATCH,
+    DS_SETTLEMENTS,
+    DS_UNMATCHED_EXTERNAL_TXNS,
+)
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.dataset_contract import (
+    ColumnShape,
     ColumnSpec,
     DatasetContract,
     build_dataset,
     dataset_permissions,
+    register_contract,
     DATASET_ACTIONS,
 )
 from quicksight_gen.common.models import (
@@ -163,13 +178,13 @@ SALES_CONTRACT = DatasetContract(columns=[
     ColumnSpec("card_last_four", "STRING"),
     ColumnSpec("reference_id", "STRING"),
     ColumnSpec("metadata", "STRING"),
-    ColumnSpec("settlement_id", "STRING"),
+    ColumnSpec("settlement_id", "STRING", shape=ColumnShape.SETTLEMENT_ID),
     ColumnSpec("days_outstanding", "INTEGER"),
     ColumnSpec("settlement_state", "STRING"),
 ] + _optional_metadata_columns())
 
 SETTLEMENTS_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("settlement_id", "STRING"),
+    ColumnSpec("settlement_id", "STRING", shape=ColumnShape.SETTLEMENT_ID),
     ColumnSpec("merchant_id", "STRING"),
     ColumnSpec("settlement_type", "STRING"),
     ColumnSpec("settlement_amount", "DECIMAL"),
@@ -177,20 +192,21 @@ SETTLEMENTS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("settlement_status", "STRING"),
     ColumnSpec("sale_count", "INTEGER"),
     ColumnSpec("days_outstanding", "INTEGER"),
-    ColumnSpec("payment_id", "STRING"),
+    ColumnSpec("payment_id", "STRING", shape=ColumnShape.PAYMENT_ID),
     ColumnSpec("payment_state", "STRING"),
 ])
 
 PAYMENTS_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("payment_id", "STRING"),
-    ColumnSpec("settlement_id", "STRING"),
+    ColumnSpec("payment_id", "STRING", shape=ColumnShape.PAYMENT_ID),
+    ColumnSpec("settlement_id", "STRING", shape=ColumnShape.SETTLEMENT_ID),
     ColumnSpec("merchant_id", "STRING"),
     ColumnSpec("payment_amount", "DECIMAL"),
     ColumnSpec("payment_date", "DATETIME"),
     ColumnSpec("payment_status", "STRING"),
     ColumnSpec("is_returned", "STRING"),
     ColumnSpec("return_reason", "STRING"),
-    ColumnSpec("external_transaction_id", "STRING"),
+    ColumnSpec("external_transaction_id", "STRING",
+               shape=ColumnShape.EXTERNAL_TXN_ID),
     ColumnSpec("external_match_state", "STRING"),
     ColumnSpec("payment_method", "STRING"),
     ColumnSpec("days_outstanding", "INTEGER"),
@@ -264,7 +280,7 @@ EXTERNAL_TRANSACTIONS_CONTRACT = DatasetContract(columns=[
 ])
 
 PAYMENT_RECON_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("transaction_id", "STRING"),
+    ColumnSpec("transaction_id", "STRING", shape=ColumnShape.EXTERNAL_TXN_ID),
     ColumnSpec("external_system", "STRING"),
     ColumnSpec("external_amount", "DECIMAL"),
     ColumnSpec("internal_total", "DECIMAL"),
@@ -305,6 +321,7 @@ WHERE account_type       = 'merchant_dda'
         cfg, cfg.prefixed("merchants-dataset"),
         "Merchants", "merchants",
         sql, MERCHANTS_CONTRACT,
+        visual_identifier=DS_MERCHANTS,
     )
 
 
@@ -349,6 +366,7 @@ WHERE t.transfer_type      = 'sale'
         cfg, cfg.prefixed("sales-dataset"),
         "Sales", "sales",
         sql, SALES_CONTRACT,
+        visual_identifier=DS_SALES,
     )
 
 
@@ -390,6 +408,7 @@ WHERE t.transfer_type      = 'settlement'
         cfg, cfg.prefixed("settlements-dataset"),
         "Settlements", "settlements",
         sql, SETTLEMENTS_CONTRACT,
+        visual_identifier=DS_SETTLEMENTS,
     )
 
 
@@ -422,6 +441,7 @@ WHERE t.transfer_type      = 'payment'
         cfg, cfg.prefixed("payments-dataset"),
         "Payments", "payments",
         sql, PAYMENTS_CONTRACT,
+        visual_identifier=DS_PAYMENTS,
     )
 
 
@@ -449,6 +469,7 @@ WHERE t.transfer_type      = 'sale'
         cfg, cfg.prefixed("settlement-exceptions-dataset"),
         "Settlement Exceptions", "settlement-exceptions",
         sql, SETTLEMENT_EXCEPTIONS_CONTRACT,
+        visual_identifier=DS_SETTLEMENT_EXCEPTIONS,
     )
 
 
@@ -476,6 +497,7 @@ WHERE t.transfer_type      = 'payment'
         cfg, cfg.prefixed("payment-returns-dataset"),
         "Payment Returns", "payment-returns",
         sql, PAYMENT_RETURNS_CONTRACT,
+        visual_identifier=DS_PAYMENT_RETURNS,
     )
 
 
@@ -527,6 +549,7 @@ WHERE s.settlement_amount <> COALESCE(ss.sales_sum, 0)"""
         cfg, cfg.prefixed("sale-settlement-mismatch-dataset"),
         "Sale \u2194 Settlement Mismatch", "sale-settlement-mismatch",
         sql, SALE_SETTLEMENT_MISMATCH_CONTRACT,
+        visual_identifier=DS_SALE_SETTLEMENT_MISMATCH,
     )
 
 
@@ -574,6 +597,7 @@ WHERE p.payment_amount <> s.settlement_amount"""
         cfg, cfg.prefixed("settlement-payment-mismatch-dataset"),
         "Settlement \u2194 Payment Mismatch", "settlement-payment-mismatch",
         sql, SETTLEMENT_PAYMENT_MISMATCH_CONTRACT,
+        visual_identifier=DS_SETTLEMENT_PAYMENT_MISMATCH,
     )
 
 
@@ -610,6 +634,7 @@ WHERE t.transfer_type      = 'external_txn'
         cfg, cfg.prefixed("unmatched-external-txns-dataset"),
         "Unmatched External Transactions", "unmatched-external-txns",
         sql, UNMATCHED_EXTERNAL_TXNS_CONTRACT,
+        visual_identifier=DS_UNMATCHED_EXTERNAL_TXNS,
     )
 
 
@@ -634,6 +659,7 @@ WHERE t.transfer_type      = 'external_txn'
         cfg, cfg.prefixed("external-transactions-dataset"),
         "External Transactions", "external-transactions",
         sql, EXTERNAL_TRANSACTIONS_CONTRACT,
+        visual_identifier=DS_EXTERNAL_TRANSACTIONS,
     )
 
 
@@ -682,6 +708,7 @@ GROUP BY JSON_VALUE(et.metadata, '$.external_transaction_id'),
         cfg, cfg.prefixed("payment-recon-dataset"),
         "Payment Reconciliation", "payment-recon",
         sql, PAYMENT_RECON_CONTRACT,
+        visual_identifier=DS_PAYMENT_RECON,
     )
 
 
@@ -716,3 +743,24 @@ def build_recon_datasets(cfg: Config) -> list[DataSet]:
 def build_all_datasets(cfg: Config) -> list[DataSet]:
     """Return every dataset used by the Payment Recon analysis."""
     return build_pipeline_datasets(cfg) + build_recon_datasets(cfg)
+
+
+# K.2: register every contract at module import so visuals can resolve
+# drill source-field shapes without depending on dataset construction
+# order. ``build_dataset()`` re-registers each contract too — idempotent
+# for the same (visual_identifier, contract) pair.
+_CONTRACT_REGISTRATIONS: tuple[tuple[str, DatasetContract], ...] = (
+    (DS_MERCHANTS, MERCHANTS_CONTRACT),
+    (DS_SALES, SALES_CONTRACT),
+    (DS_SETTLEMENTS, SETTLEMENTS_CONTRACT),
+    (DS_PAYMENTS, PAYMENTS_CONTRACT),
+    (DS_SETTLEMENT_EXCEPTIONS, SETTLEMENT_EXCEPTIONS_CONTRACT),
+    (DS_PAYMENT_RETURNS, PAYMENT_RETURNS_CONTRACT),
+    (DS_SALE_SETTLEMENT_MISMATCH, SALE_SETTLEMENT_MISMATCH_CONTRACT),
+    (DS_SETTLEMENT_PAYMENT_MISMATCH, SETTLEMENT_PAYMENT_MISMATCH_CONTRACT),
+    (DS_UNMATCHED_EXTERNAL_TXNS, UNMATCHED_EXTERNAL_TXNS_CONTRACT),
+    (DS_EXTERNAL_TRANSACTIONS, EXTERNAL_TRANSACTIONS_CONTRACT),
+    (DS_PAYMENT_RECON, PAYMENT_RECON_CONTRACT),
+)
+for _vid, _contract in _CONTRACT_REGISTRATIONS:
+    register_contract(_vid, _contract)

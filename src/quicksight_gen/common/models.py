@@ -612,6 +612,7 @@ class DefaultFilterControlConfiguration:
 @dataclass
 class CategoryFilterConfiguration:
     FilterListConfiguration: dict[str, Any] | None = None
+    CustomFilterListConfiguration: dict[str, Any] | None = None
     CustomFilterConfiguration: dict[str, Any] | None = None
 
 
