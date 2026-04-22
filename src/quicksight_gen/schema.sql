@@ -928,6 +928,12 @@ SELECT
         WHEN (CURRENT_DATE - balance_date::date) <= 30 THEN '4: 8-30 days'
         ELSE '5: >30 days'
     END                   AS aging_bucket,
+    balance_date::TIMESTAMP + INTERVAL '1 day'                       AS expected_complete_at,
+    CASE
+        WHEN CURRENT_TIMESTAMP > balance_date::TIMESTAMP + INTERVAL '1 day'
+            THEN 'Late'
+        ELSE 'On Time'
+    END                   AS is_late,
     subledger_account_id  AS account_id,
     subledger_name        AS account_name,
     'Sub-Ledger'          AS account_level,
@@ -954,6 +960,12 @@ SELECT
         WHEN (CURRENT_DATE - balance_date::date) <= 30 THEN '4: 8-30 days'
         ELSE '5: >30 days'
     END                   AS aging_bucket,
+    balance_date::TIMESTAMP + INTERVAL '1 day'                       AS expected_complete_at,
+    CASE
+        WHEN CURRENT_TIMESTAMP > balance_date::TIMESTAMP + INTERVAL '1 day'
+            THEN 'Late'
+        ELSE 'On Time'
+    END                   AS is_late,
     ledger_account_id     AS account_id,
     ledger_name           AS account_name,
     'Ledger'              AS account_level,
@@ -980,6 +992,12 @@ SELECT
         WHEN (CURRENT_DATE - first_posted_at::date) <= 30 THEN '4: 8-30 days'
         ELSE '5: >30 days'
     END                   AS aging_bucket,
+    first_posted_at::TIMESTAMP + INTERVAL '1 day'                    AS expected_complete_at,
+    CASE
+        WHEN CURRENT_TIMESTAMP > first_posted_at::TIMESTAMP + INTERVAL '1 day'
+            THEN 'Late'
+        ELSE 'On Time'
+    END                   AS is_late,
     NULL::TEXT            AS account_id,
     NULL::TEXT            AS account_name,
     'System'              AS account_level,
@@ -1007,6 +1025,12 @@ SELECT
         WHEN (CURRENT_DATE - activity_date::date) <= 30 THEN '4: 8-30 days'
         ELSE '5: >30 days'
     END                       AS aging_bucket,
+    activity_date::TIMESTAMP + INTERVAL '1 day'                      AS expected_complete_at,
+    CASE
+        WHEN CURRENT_TIMESTAMP > activity_date::TIMESTAMP + INTERVAL '1 day'
+            THEN 'Late'
+        ELSE 'On Time'
+    END                       AS is_late,
     subledger_account_id      AS account_id,
     subledger_name            AS account_name,
     'Sub-Ledger'              AS account_level,
@@ -1032,6 +1056,12 @@ SELECT
         WHEN (CURRENT_DATE - balance_date::date) <= 30 THEN '4: 8-30 days'
         ELSE '5: >30 days'
     END                    AS aging_bucket,
+    balance_date::TIMESTAMP + INTERVAL '1 day'                       AS expected_complete_at,
+    CASE
+        WHEN CURRENT_TIMESTAMP > balance_date::TIMESTAMP + INTERVAL '1 day'
+            THEN 'Late'
+        ELSE 'On Time'
+    END                    AS is_late,
     subledger_account_id   AS account_id,
     subledger_name         AS account_name,
     'Sub-Ledger'           AS account_level,
@@ -1057,6 +1087,12 @@ SELECT
         WHEN (CURRENT_DATE - balance_date::date) <= 30 THEN '4: 8-30 days'
         ELSE '5: >30 days'
     END                         AS aging_bucket,
+    balance_date::TIMESTAMP + INTERVAL '1 day'                       AS expected_complete_at,
+    CASE
+        WHEN CURRENT_TIMESTAMP > balance_date::TIMESTAMP + INTERVAL '1 day'
+            THEN 'Late'
+        ELSE 'On Time'
+    END                         AS is_late,
     subledger_account_id        AS account_id,
     subledger_name              AS account_name,
     'Sub-Ledger'                AS account_level,
@@ -1082,6 +1118,12 @@ SELECT
         WHEN (CURRENT_DATE - sweep_date::date) <= 30 THEN '4: 8-30 days'
         ELSE '5: >30 days'
     END                                AS aging_bucket,
+    sweep_date::TIMESTAMP + INTERVAL '1 day'                         AS expected_complete_at,
+    CASE
+        WHEN CURRENT_TIMESTAMP > sweep_date::TIMESTAMP + INTERVAL '1 day'
+            THEN 'Late'
+        ELSE 'On Time'
+    END                                AS is_late,
     NULL::TEXT                         AS account_id,
     NULL::TEXT                         AS account_name,
     'System'                           AS account_level,
@@ -1108,6 +1150,12 @@ SELECT
         WHEN (CURRENT_DATE - balance_date::date) <= 30 THEN '4: 8-30 days'
         ELSE '5: >30 days'
     END                                       AS aging_bucket,
+    balance_date::TIMESTAMP + INTERVAL '1 day'                       AS expected_complete_at,
+    CASE
+        WHEN CURRENT_TIMESTAMP > balance_date::TIMESTAMP + INTERVAL '1 day'
+            THEN 'Late'
+        ELSE 'On Time'
+    END                                       AS is_late,
     ledger_account_id                         AS account_id,
     ledger_name                               AS account_name,
     'Ledger'                                  AS account_level,
@@ -1133,6 +1181,12 @@ SELECT
         WHEN (CURRENT_DATE - sweep_at::date) <= 30 THEN '4: 8-30 days'
         ELSE '5: >30 days'
     END                                  AS aging_bucket,
+    sweep_at::TIMESTAMP + INTERVAL '1 day'                           AS expected_complete_at,
+    CASE
+        WHEN CURRENT_TIMESTAMP > sweep_at::TIMESTAMP + INTERVAL '1 day'
+            THEN 'Late'
+        ELSE 'On Time'
+    END                                  AS is_late,
     NULL::TEXT                           AS account_id,
     NULL::TEXT                           AS account_name,
     'System'                             AS account_level,
@@ -1158,6 +1212,12 @@ SELECT
         WHEN (CURRENT_DATE - fed_at::date) <= 30 THEN '4: 8-30 days'
         ELSE '5: >30 days'
     END                                      AS aging_bucket,
+    fed_at::TIMESTAMP + INTERVAL '1 day'                             AS expected_complete_at,
+    CASE
+        WHEN CURRENT_TIMESTAMP > fed_at::TIMESTAMP + INTERVAL '1 day'
+            THEN 'Late'
+        ELSE 'On Time'
+    END                                      AS is_late,
     NULL::TEXT                               AS account_id,
     NULL::TEXT                               AS account_name,
     'System'                                 AS account_level,
@@ -1183,6 +1243,12 @@ SELECT
         WHEN (CURRENT_DATE - movement_date::date) <= 30 THEN '4: 8-30 days'
         ELSE '5: >30 days'
     END                      AS aging_bucket,
+    movement_date::TIMESTAMP + INTERVAL '1 day'                      AS expected_complete_at,
+    CASE
+        WHEN CURRENT_TIMESTAMP > movement_date::TIMESTAMP + INTERVAL '1 day'
+            THEN 'Late'
+        ELSE 'On Time'
+    END                      AS is_late,
     NULL::TEXT               AS account_id,
     NULL::TEXT               AS account_name,
     'System'                 AS account_level,
@@ -1209,6 +1275,12 @@ SELECT
         WHEN (CURRENT_DATE - originated_at::date) <= 30 THEN '4: 8-30 days'
         ELSE '5: >30 days'
     END                                   AS aging_bucket,
+    originated_at::TIMESTAMP + INTERVAL '1 day'                      AS expected_complete_at,
+    CASE
+        WHEN CURRENT_TIMESTAMP > originated_at::TIMESTAMP + INTERVAL '1 day'
+            THEN 'Late'
+        ELSE 'On Time'
+    END                                   AS is_late,
     NULL::TEXT                            AS account_id,
     NULL::TEXT                            AS account_name,
     'System'                              AS account_level,
@@ -1234,6 +1306,12 @@ SELECT
         WHEN (CURRENT_DATE - balance_date::date) <= 30 THEN '4: 8-30 days'
         ELSE '5: >30 days'
     END                                       AS aging_bucket,
+    balance_date::TIMESTAMP + INTERVAL '1 day'                       AS expected_complete_at,
+    CASE
+        WHEN CURRENT_TIMESTAMP > balance_date::TIMESTAMP + INTERVAL '1 day'
+            THEN 'Late'
+        ELSE 'On Time'
+    END                                       AS is_late,
     ledger_account_id                         AS account_id,
     ledger_name                               AS account_name,
     'Ledger'                                  AS account_level,
@@ -1259,6 +1337,12 @@ SELECT
         WHEN (CURRENT_DATE - originated_at::date) <= 30 THEN '4: 8-30 days'
         ELSE '5: >30 days'
     END                            AS aging_bucket,
+    originated_at::TIMESTAMP + INTERVAL '1 day'                      AS expected_complete_at,
+    CASE
+        WHEN CURRENT_TIMESTAMP > originated_at::TIMESTAMP + INTERVAL '1 day'
+            THEN 'Late'
+        ELSE 'On Time'
+    END                            AS is_late,
     NULL::TEXT                     AS account_id,
     NULL::TEXT                     AS account_name,
     'System'                       AS account_level,

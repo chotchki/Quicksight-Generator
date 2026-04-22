@@ -153,6 +153,26 @@ def _aging_bucket_case(days_expr: str) -> str:
     END AS aging_bucket"""
 
 
+def _lateness_columns(date_expr: str) -> str:
+    """SQL fragment for expected_complete_at + is_late from a date expression.
+
+    K.3.2: lateness becomes a data column, not an operator threshold. The
+    fallback formula `<date_expr> + INTERVAL '1 day'` mirrors the COALESCE
+    default used by ``transactions.expected_complete_at`` consumers — for
+    derived datasets that sit on top of views/matviews the per-leg column
+    isn't available, so the per-row reference date plus one day is the
+    expected completion proxy. ``is_late`` is labeled (Late / On Time) to
+    match the codebase's `is_failed` / `is_returned` STRING convention,
+    keeping QS filter controls simple."""
+    return f"""\
+    ({date_expr})::TIMESTAMP + INTERVAL '1 day'                  AS expected_complete_at,
+    CASE
+        WHEN CURRENT_TIMESTAMP > ({date_expr})::TIMESTAMP + INTERVAL '1 day'
+            THEN 'Late'
+        ELSE 'On Time'
+    END                                                          AS is_late"""
+
+
 # ---------------------------------------------------------------------------
 # Contracts
 # ---------------------------------------------------------------------------
@@ -221,6 +241,8 @@ SETTLEMENT_EXCEPTIONS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("sale_timestamp", "DATETIME"),
     ColumnSpec("days_outstanding", "INTEGER"),
     ColumnSpec("aging_bucket", "STRING"),
+    ColumnSpec("expected_complete_at", "DATETIME"),
+    ColumnSpec("is_late", "STRING"),
 ])
 
 PAYMENT_RETURNS_CONTRACT = DatasetContract(columns=[
@@ -233,6 +255,8 @@ PAYMENT_RETURNS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("return_reason", "STRING"),
     ColumnSpec("days_outstanding", "INTEGER"),
     ColumnSpec("aging_bucket", "STRING"),
+    ColumnSpec("expected_complete_at", "DATETIME"),
+    ColumnSpec("is_late", "STRING"),
 ])
 
 SALE_SETTLEMENT_MISMATCH_CONTRACT = DatasetContract(columns=[
@@ -245,6 +269,8 @@ SALE_SETTLEMENT_MISMATCH_CONTRACT = DatasetContract(columns=[
     ColumnSpec("settlement_date", "DATETIME"),
     ColumnSpec("days_outstanding", "INTEGER"),
     ColumnSpec("aging_bucket", "STRING"),
+    ColumnSpec("expected_complete_at", "DATETIME"),
+    ColumnSpec("is_late", "STRING"),
 ])
 
 SETTLEMENT_PAYMENT_MISMATCH_CONTRACT = DatasetContract(columns=[
@@ -257,6 +283,8 @@ SETTLEMENT_PAYMENT_MISMATCH_CONTRACT = DatasetContract(columns=[
     ColumnSpec("payment_date", "DATETIME"),
     ColumnSpec("days_outstanding", "INTEGER"),
     ColumnSpec("aging_bucket", "STRING"),
+    ColumnSpec("expected_complete_at", "DATETIME"),
+    ColumnSpec("is_late", "STRING"),
 ])
 
 UNMATCHED_EXTERNAL_TXNS_CONTRACT = DatasetContract(columns=[
@@ -268,6 +296,8 @@ UNMATCHED_EXTERNAL_TXNS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("status", "STRING"),
     ColumnSpec("days_outstanding", "INTEGER"),
     ColumnSpec("aging_bucket", "STRING"),
+    ColumnSpec("expected_complete_at", "DATETIME"),
+    ColumnSpec("is_late", "STRING"),
 ])
 
 EXTERNAL_TRANSACTIONS_CONTRACT = DatasetContract(columns=[
@@ -291,6 +321,8 @@ PAYMENT_RECON_CONTRACT = DatasetContract(columns=[
     ColumnSpec("transaction_date", "DATETIME"),
     ColumnSpec("days_outstanding", "INTEGER"),
     ColumnSpec("aging_bucket", "STRING"),
+    ColumnSpec("expected_complete_at", "DATETIME"),
+    ColumnSpec("is_late", "STRING"),
 ])
 
 
@@ -459,7 +491,8 @@ SELECT
     t.signed_amount                                              AS amount,
     t.posted_at                                                  AS sale_timestamp,
     (CURRENT_DATE - t.posted_at::date)                           AS days_outstanding,
-{_aging_bucket_case('CURRENT_DATE - t.posted_at::date')}
+{_aging_bucket_case('CURRENT_DATE - t.posted_at::date')},
+{_lateness_columns('t.posted_at')}
 FROM transactions t
 WHERE t.transfer_type      = 'sale'
   AND t.account_type       = 'merchant_dda'
@@ -487,7 +520,8 @@ SELECT
     t.posted_at                                                   AS payment_date,
     JSON_VALUE(t.metadata, '$.return_reason')                     AS return_reason,
     (CURRENT_DATE - t.posted_at::date)                            AS days_outstanding,
-{_aging_bucket_case('CURRENT_DATE - t.posted_at::date')}
+{_aging_bucket_case('CURRENT_DATE - t.posted_at::date')},
+{_lateness_columns('t.posted_at')}
 FROM transactions t
 WHERE t.transfer_type      = 'payment'
   AND t.account_type       = 'merchant_dda'
@@ -541,7 +575,8 @@ SELECT
     s.sale_count,
     s.settlement_date,
     (CURRENT_DATE - s.settlement_date::date)                    AS days_outstanding,
-{_aging_bucket_case('CURRENT_DATE - s.settlement_date::date')}
+{_aging_bucket_case('CURRENT_DATE - s.settlement_date::date')},
+{_lateness_columns('s.settlement_date')}
 FROM settlements s
 LEFT JOIN sale_sums ss ON ss.settlement_id = s.settlement_id
 WHERE s.settlement_amount <> COALESCE(ss.sales_sum, 0)"""
@@ -589,7 +624,8 @@ SELECT
     p.payment_amount - s.settlement_amount                              AS difference,
     p.payment_date,
     (CURRENT_DATE - p.payment_date::date)                               AS days_outstanding,
-{_aging_bucket_case('CURRENT_DATE - p.payment_date::date')}
+{_aging_bucket_case('CURRENT_DATE - p.payment_date::date')},
+{_lateness_columns('p.payment_date')}
 FROM payments p
 JOIN settlements s ON s.settlement_id = p.settlement_id
 WHERE p.payment_amount <> s.settlement_amount"""
@@ -615,7 +651,15 @@ SELECT
     t.posted_at                                                     AS transaction_date,
     JSON_VALUE(t.metadata, '$.status')                              AS status,
     (CURRENT_DATE - t.posted_at::date)                              AS days_outstanding,
-{_aging_bucket_case('CURRENT_DATE - t.posted_at::date')}
+{_aging_bucket_case('CURRENT_DATE - t.posted_at::date')},
+    COALESCE(t.expected_complete_at,
+             t.posted_at + INTERVAL '1 day')                         AS expected_complete_at,
+    CASE
+        WHEN CURRENT_TIMESTAMP > COALESCE(t.expected_complete_at,
+                                          t.posted_at + INTERVAL '1 day')
+            THEN 'Late'
+        ELSE 'On Time'
+    END                                                              AS is_late
 FROM transactions t
 LEFT JOIN (
     SELECT DISTINCT
@@ -668,7 +712,13 @@ def build_payment_recon_dataset(cfg: Config) -> DataSet:
     # rows joined with their payments by metadata.external_transaction_id.
     # Inner subquery collapses payment legs to one row per payment so SUM
     # totals the same set the legacy SQL did.
-    late_days = cfg.late_default_days
+    #
+    # K.3.2: match_status switched from the operator-threshold pattern
+    # `(CURRENT_DATE - posted_at::date) > late_default_days` to the
+    # data-driven is_late predicate against the row's
+    # `expected_complete_at` (with the standard +1-day fallback). The
+    # cfg.late_default_days knob is no longer interpolated here — the
+    # K.3.3 follow-up retires the slider entirely.
     sql = f"""\
 SELECT
     JSON_VALUE(et.metadata, '$.external_transaction_id')             AS transaction_id,
@@ -678,14 +728,24 @@ SELECT
     et.amount - COALESCE(SUM(p.payment_amount), 0)                   AS difference,
     CASE
         WHEN et.amount = COALESCE(SUM(p.payment_amount), 0) THEN 'matched'
-        WHEN (CURRENT_DATE - et.posted_at::date) > {late_days} THEN 'late'
+        WHEN CURRENT_TIMESTAMP > COALESCE(et.expected_complete_at,
+                                          et.posted_at + INTERVAL '1 day')
+            THEN 'late'
         ELSE 'not_yet_matched'
     END                                                              AS match_status,
     COUNT(p.payment_id)                                              AS payment_count,
     JSON_VALUE(et.metadata, '$.merchant_id')                         AS merchant_id,
     et.posted_at                                                     AS transaction_date,
     (CURRENT_DATE - et.posted_at::date)                              AS days_outstanding,
-{_aging_bucket_case('CURRENT_DATE - et.posted_at::date')}
+{_aging_bucket_case('CURRENT_DATE - et.posted_at::date')},
+    COALESCE(et.expected_complete_at,
+             et.posted_at + INTERVAL '1 day')                         AS expected_complete_at,
+    CASE
+        WHEN CURRENT_TIMESTAMP > COALESCE(et.expected_complete_at,
+                                          et.posted_at + INTERVAL '1 day')
+            THEN 'Late'
+        ELSE 'On Time'
+    END                                                              AS is_late
 FROM transactions et
 LEFT JOIN (
     SELECT
@@ -703,7 +763,7 @@ WHERE et.transfer_type      = 'external_txn'
 GROUP BY JSON_VALUE(et.metadata, '$.external_transaction_id'),
          et.external_system, et.amount,
          JSON_VALUE(et.metadata, '$.merchant_id'),
-         et.posted_at"""
+         et.posted_at, et.expected_complete_at"""
     return build_dataset(
         cfg, cfg.prefixed("payment-recon-dataset"),
         "Payment Reconciliation", "payment-recon",

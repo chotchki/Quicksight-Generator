@@ -47,6 +47,25 @@ def _aging_columns(date_expr: str) -> str:
     END AS aging_bucket"""
 
 
+def _lateness_columns(date_expr: str) -> str:
+    """SQL fragment for expected_complete_at + is_late from a date expression.
+
+    K.3.2: lateness becomes a data column. AR datasets sit on top of views/
+    matviews that don't propagate the per-leg ``transactions.expected_complete_at``,
+    so the per-row reference date plus one day is the expected-completion
+    fallback (the same default formula consumers use elsewhere).
+    ``is_late`` returns the labeled values 'Late' / 'On Time' to match the
+    codebase's `is_failed` STRING convention and keep QS filter controls
+    tractable."""
+    return f"""\
+    ({date_expr})::TIMESTAMP + INTERVAL '1 day'                  AS expected_complete_at,
+    CASE
+        WHEN CURRENT_TIMESTAMP > ({date_expr})::TIMESTAMP + INTERVAL '1 day'
+            THEN 'Late'
+        ELSE 'On Time'
+    END                                                          AS is_late"""
+
+
 # ---------------------------------------------------------------------------
 # Contracts
 # ---------------------------------------------------------------------------
@@ -99,6 +118,8 @@ LEDGER_BALANCE_DRIFT_CONTRACT = DatasetContract(columns=[
     ColumnSpec("drift_status", "STRING"),
     ColumnSpec("days_outstanding", "INTEGER"),
     ColumnSpec("aging_bucket", "STRING"),
+    ColumnSpec("expected_complete_at", "DATETIME"),
+    ColumnSpec("is_late", "STRING"),
 ])
 
 SUBLEDGER_BALANCE_DRIFT_CONTRACT = DatasetContract(columns=[
@@ -117,6 +138,8 @@ SUBLEDGER_BALANCE_DRIFT_CONTRACT = DatasetContract(columns=[
     ColumnSpec("overdraft_status", "STRING"),
     ColumnSpec("days_outstanding", "INTEGER"),
     ColumnSpec("aging_bucket", "STRING"),
+    ColumnSpec("expected_complete_at", "DATETIME"),
+    ColumnSpec("is_late", "STRING"),
 ])
 
 TRANSFER_SUMMARY_CONTRACT = DatasetContract(columns=[
@@ -146,6 +169,8 @@ NON_ZERO_TRANSFERS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("origin", "STRING"),
     ColumnSpec("days_outstanding", "INTEGER"),
     ColumnSpec("aging_bucket", "STRING"),
+    ColumnSpec("expected_complete_at", "DATETIME"),
+    ColumnSpec("is_late", "STRING"),
     ColumnSpec("memo", "STRING"),
 ])
 
@@ -158,6 +183,8 @@ EXPECTED_ZERO_EOD_ROLLUP_CONTRACT = DatasetContract(columns=[
     ColumnSpec("source_check", "STRING"),
     ColumnSpec("days_outstanding", "INTEGER"),
     ColumnSpec("aging_bucket", "STRING"),
+    ColumnSpec("expected_complete_at", "DATETIME"),
+    ColumnSpec("is_late", "STRING"),
 ])
 
 TWO_SIDED_POST_MISMATCH_ROLLUP_CONTRACT = DatasetContract(columns=[
@@ -169,6 +196,8 @@ TWO_SIDED_POST_MISMATCH_ROLLUP_CONTRACT = DatasetContract(columns=[
     ColumnSpec("source_check", "STRING"),
     ColumnSpec("days_outstanding", "INTEGER"),
     ColumnSpec("aging_bucket", "STRING"),
+    ColumnSpec("expected_complete_at", "DATETIME"),
+    ColumnSpec("is_late", "STRING"),
 ])
 
 BALANCE_DRIFT_TIMELINES_ROLLUP_CONTRACT = DatasetContract(columns=[
@@ -223,6 +252,8 @@ UNIFIED_EXCEPTIONS_CONTRACT = DatasetContract(columns=[
                shape=ColumnShape.DATE_YYYY_MM_DD_TEXT),
     ColumnSpec("days_outstanding", "INTEGER"),
     ColumnSpec("aging_bucket", "STRING"),
+    ColumnSpec("expected_complete_at", "DATETIME"),
+    ColumnSpec("is_late", "STRING"),
     ColumnSpec("account_id", "STRING", shape=ColumnShape.ACCOUNT_ID),
     ColumnSpec("account_name", "STRING"),
     ColumnSpec("account_level", "STRING"),
@@ -343,7 +374,8 @@ SELECT
     computed_balance,
     drift,
     CASE WHEN drift = 0 THEN 'in_balance' ELSE 'drift' END AS drift_status,
-{_aging_columns('balance_date')}
+{_aging_columns('balance_date')},
+{_lateness_columns('balance_date')}
 FROM ar_ledger_balance_drift"""
     return build_dataset(
         cfg, cfg.prefixed("ar-ledger-balance-drift-dataset"),
@@ -368,7 +400,8 @@ SELECT
     CASE WHEN drift = 0 THEN 'in_balance' ELSE 'drift' END AS drift_status,
     CASE WHEN stored_balance < 0 THEN 'overdraft' ELSE 'ok' END
         AS overdraft_status,
-{_aging_columns('balance_date')}
+{_aging_columns('balance_date')},
+{_lateness_columns('balance_date')}
 FROM ar_subledger_balance_drift"""
     return build_dataset(
         cfg, cfg.prefixed("ar-subledger-balance-drift-dataset"),
@@ -420,6 +453,7 @@ SELECT
     failed_leg_count,
     origin,
 {_aging_columns('first_posted_at')},
+{_lateness_columns('first_posted_at')},
     memo
 FROM ar_transfer_summary
 WHERE net_zero_status = 'not_net_zero'
@@ -441,7 +475,8 @@ SELECT
     balance_date,
     stored_balance,
     source_check,
-{_aging_columns('balance_date')}
+{_aging_columns('balance_date')},
+{_lateness_columns('balance_date')}
 FROM ar_expected_zero_eod_rollup"""
     return build_dataset(
         cfg, cfg.prefixed("ar-expected-zero-eod-rollup-dataset"),
@@ -460,7 +495,8 @@ SELECT
     side_present,
     side_missing,
     source_check,
-{_aging_columns('observed_at')}
+{_aging_columns('observed_at')},
+{_lateness_columns('observed_at')}
 FROM ar_two_sided_post_mismatch_rollup"""
     return build_dataset(
         cfg, cfg.prefixed("ar-two-sided-post-mismatch-rollup-dataset"),
