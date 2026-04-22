@@ -9,7 +9,10 @@ import pytest
 from click.testing import CliRunner
 
 from quicksight_gen.cli import main
-from quicksight_gen.whitelabel import apply_whitelabel, parse_mapping
+from quicksight_gen.cli import (
+    _apply_whitelabel as apply_whitelabel,
+    _parse_mapping as parse_mapping,
+)
 
 
 def test_bundled_docs_directory_exists():

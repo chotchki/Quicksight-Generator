@@ -263,7 +263,6 @@ src/quicksight_gen/
         constants.py    # Sheet + dataset identifier constants
     schema.py           # `generate_schema_sql()` — reads the canonical DDL
     schema.sql          # Canonical PostgreSQL DDL (interface contract for ETL); shared `transactions` + `daily_balances` base layer + AR dimension tables
-    whitelabel.py       # String-substitution engine for `quicksight-gen export training --mapping`
     docs/               # mkdocs site source — handbook/, walkthroughs/, Schema_v3.md, Training_Story.md (extract via `quicksight-gen export docs`)
     training/           # Whitelabel handbook kit — handbook/, mapping.yaml.example (extract via `quicksight-gen export training`)
 tests/
