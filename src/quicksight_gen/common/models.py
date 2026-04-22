@@ -658,7 +658,9 @@ class TimeEqualityFilter:
 
 @dataclass
 class NumericRangeFilterValue:
+    """Set exactly one — a literal bound or a parameter binding."""
     StaticValue: float | None = None
+    Parameter: str | None = None  # name of an IntegerParameter / DecimalParameter
 
 
 @dataclass
@@ -812,10 +814,21 @@ class ParameterDateTimePickerControl:
 
 
 @dataclass
+class ParameterSliderControl:
+    ParameterControlId: str
+    Title: str
+    SourceParameterName: str
+    MinimumValue: float
+    MaximumValue: float
+    StepSize: float
+
+
+@dataclass
 class ParameterControl:
     """Union type — set exactly one."""
     Dropdown: ParameterDropDownControl | None = None
     DateTimePicker: ParameterDateTimePickerControl | None = None
+    Slider: ParameterSliderControl | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -923,6 +936,13 @@ class StringParameterDeclaration:
 
 
 @dataclass
+class IntegerParameterDeclaration:
+    ParameterValueType: str  # SINGLE_VALUED|MULTI_VALUED
+    Name: str
+    DefaultValues: dict[str, Any]  # {"StaticValues": [int]}
+
+
+@dataclass
 class DateTimeDefaultValues:
     StaticValues: list[str] | None = None
     DynamicValue: dict[str, Any] | None = None
@@ -941,6 +961,7 @@ class DateTimeParameterDeclaration:
 class ParameterDeclaration:
     """Union type — set exactly one."""
     StringParameterDeclaration: StringParameterDeclaration | None = None
+    IntegerParameterDeclaration: IntegerParameterDeclaration | None = None
     DateTimeParameterDeclaration: DateTimeParameterDeclaration | None = None
 
 

@@ -11,6 +11,7 @@ import pytest
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.dataset_contract import ColumnSpec, DatasetContract
 from quicksight_gen.apps.account_recon import datasets as ar_datasets
+from quicksight_gen.apps.investigation import datasets as inv_datasets
 from quicksight_gen.apps.payment_recon import datasets as pr_datasets
 
 
@@ -87,6 +88,28 @@ class TestPrContracts:
         "builder,contract",
         PR_BUILDERS_AND_CONTRACTS,
         ids=[c.columns[0].name for _, c in PR_BUILDERS_AND_CONTRACTS],
+    )
+    def test_columns_match_contract(self, cfg, builder, contract):
+        ds = builder(cfg)
+        actual = _extract_column_names(ds)
+        assert actual == contract.column_names
+
+
+# ---------------------------------------------------------------------------
+# Investigation contracts
+# ---------------------------------------------------------------------------
+
+INV_BUILDERS_AND_CONTRACTS = [
+    (inv_datasets.build_recipient_fanout_dataset,
+     inv_datasets.RECIPIENT_FANOUT_CONTRACT),
+]
+
+
+class TestInvContracts:
+    @pytest.mark.parametrize(
+        "builder,contract",
+        INV_BUILDERS_AND_CONTRACTS,
+        ids=[c.columns[0].name for _, c in INV_BUILDERS_AND_CONTRACTS],
     )
     def test_columns_match_contract(self, cfg, builder, contract):
         ds = builder(cfg)
