@@ -54,6 +54,7 @@ from quicksight_gen.common.models import (
     KPIVisual,
     MeasureField,
     NumericalAggregationFunction,
+    NumericalDimensionField,
     NumericalMeasureField,
     SankeyDiagramAggregatedFieldWells,
     SankeyDiagramChartConfiguration,
@@ -89,6 +90,14 @@ def _dim(ds: str, field_id: str, col_name: str) -> DimensionField:
 def _date_dim(ds: str, field_id: str, col_name: str) -> DimensionField:
     return DimensionField(
         DateDimensionField=DateDimensionField(
+            FieldId=field_id, Column=_col(ds, col_name),
+        ),
+    )
+
+
+def _num_dim(ds: str, field_id: str, col_name: str) -> DimensionField:
+    return DimensionField(
+        NumericalDimensionField=NumericalDimensionField(
             FieldId=field_id, Column=_col(ds, col_name),
         ),
     )
@@ -575,9 +584,9 @@ def _money_trail_table() -> Visual:
                 FieldWells=TableFieldWells(
                     TableAggregatedFieldWells=TableAggregatedFieldWells(
                         GroupBy=[
-                            _dim(_DS_MONEY_TRAIL,
-                                 "inv-money-trail-tbl-depth",
-                                 "depth"),
+                            _num_dim(_DS_MONEY_TRAIL,
+                                     "inv-money-trail-tbl-depth",
+                                     "depth"),
                             _dim(_DS_MONEY_TRAIL,
                                  "inv-money-trail-tbl-transfer-id",
                                  "transfer_id"),

@@ -797,6 +797,8 @@ def test_money_trail_table_sorted_by_depth_asc_with_full_chain_grain():
             group_by_cols.append(d.CategoricalDimensionField.Column.ColumnName)
         elif d.DateDimensionField:
             group_by_cols.append(d.DateDimensionField.Column.ColumnName)
+        elif d.NumericalDimensionField:
+            group_by_cols.append(d.NumericalDimensionField.Column.ColumnName)
     assert group_by_cols == [
         "depth",
         "transfer_id",
