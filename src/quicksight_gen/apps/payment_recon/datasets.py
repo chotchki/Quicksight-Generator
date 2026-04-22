@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from quicksight_gen.payment_recon.constants import (
+from quicksight_gen.apps.payment_recon.constants import (
     DS_EXTERNAL_TRANSACTIONS,
     DS_MERCHANTS,
     DS_PAYMENT_RECON,

@@ -38,7 +38,7 @@ from e2e.browser_helpers import (  # noqa: E402
     webkit_page,
 )
 
-from quicksight_gen.account_recon.demo_data import (  # noqa: E402
+from quicksight_gen.apps.account_recon.demo_data import (  # noqa: E402
     _OVERDRAFT_PLANT,
     _SUBLEDGER_DRIFT_PLANT,
 )

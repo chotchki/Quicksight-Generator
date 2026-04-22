@@ -8,7 +8,7 @@ non_zero_transfers, limit_breach, overdraft).
 
 from __future__ import annotations
 
-from quicksight_gen.account_recon.constants import (
+from quicksight_gen.apps.account_recon.constants import (
     DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
     DS_AR_DAILY_STATEMENT_SUMMARY,
     DS_AR_DAILY_STATEMENT_TRANSACTIONS,

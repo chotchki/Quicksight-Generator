@@ -44,7 +44,7 @@ Three reference points:
   the per-`transfer_type` metadata key inventory and the
   `account_type` table (`gl_control`, `dda`, `merchant_dda`,
   `external_counter`, `concentration_master`, `funds_pool`).
-- **`src/quicksight_gen/account_recon/filters.py:243`** — the
+- **`src/quicksight_gen/apps/account_recon/filters.py:243`** — the
   `_transfer_type_filter_group()` definition. Notice it
   doesn't enumerate values; QuickSight populates the dropdown
   from distinct values in the `transfer_type` column at query
@@ -134,7 +134,7 @@ A few patterns to know once the basic addition works:
 QuickSight's multi-select filter doesn't enumerate values in
 its config — it reads them from the dataset's column at query
 time. The wiring in
-`src/quicksight_gen/account_recon/filters.py:251-258` looks
+`src/quicksight_gen/apps/account_recon/filters.py:251-258` looks
 like:
 
 ```python
@@ -222,8 +222,8 @@ Once your new canonical value is wired:
    clause, the contract test for *that* dataset will catch
    any column-shape drift.
 2. **Seed a few demo rows for the new type.** Add a
-   generator branch in `payment_recon/demo_data.py` or
-   `account_recon/demo_data.py` that emits a handful of
+   generator branch in `apps/payment_recon/demo_data.py` or
+   `apps/account_recon/demo_data.py` that emits a handful of
    `transfer_type = 'repo'` rows. The
    `TestScenarioCoverage` pattern in the demo-data tests
    (see CLAUDE.md "Demo Data Conventions") makes this a

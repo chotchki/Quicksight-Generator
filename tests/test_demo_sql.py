@@ -7,7 +7,7 @@ import pytest
 from click.testing import CliRunner
 
 from quicksight_gen.cli import main
-from quicksight_gen.payment_recon.demo_data import generate_demo_sql
+from quicksight_gen.apps.payment_recon.demo_data import generate_demo_sql
 
 
 ANCHOR = date(2026, 4, 11)

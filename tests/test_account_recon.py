@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from quicksight_gen.account_recon.constants import (
+from quicksight_gen.apps.account_recon.constants import (
     ALL_FG_AR_IDS,
     ALL_P_AR,
     FG_AR_BALANCES_LEDGER_DRIFT,
@@ -66,7 +66,7 @@ from quicksight_gen.account_recon.constants import (
     V_AR_TXN_BAR_BY_STATUS,
     V_AR_TXN_DETAIL_TABLE,
 )
-from quicksight_gen.account_recon.demo_data import (
+from quicksight_gen.apps.account_recon.demo_data import (
     LEDGER_ACCOUNTS,
     SUBLEDGER_ACCOUNTS,
     generate_demo_sql,
@@ -267,7 +267,7 @@ class TestDemoRowCounts:
         assert len(unified_parsed["transfer"]) == 192
 
     def test_ledger_transfer_limits(self, ar_parsed):
-        from quicksight_gen.account_recon.demo_data import _LEDGER_LIMITS
+        from quicksight_gen.apps.account_recon.demo_data import _LEDGER_LIMITS
         assert (
             len(ar_parsed["ar_ledger_transfer_limits"]) == len(_LEDGER_LIMITS)
         )
@@ -351,7 +351,7 @@ class TestScenarioCoverage:
     def test_ledger_drift_is_planted(self, ar_parsed):
         """Ledger-level drift plants must include both signs and each
         planted (ledger, date) cell must exist in the balances table."""
-        from quicksight_gen.account_recon.demo_data import _LEDGER_DRIFT_PLANT
+        from quicksight_gen.apps.account_recon.demo_data import _LEDGER_DRIFT_PLANT
 
         assert len(_LEDGER_DRIFT_PLANT) >= 3, "Need several ledger drift cells"
         deltas = [Decimal(d) for _, _, d in _LEDGER_DRIFT_PLANT]
@@ -373,7 +373,7 @@ class TestScenarioCoverage:
         """Sub-ledger drift plants must include both signs and land on
         internal sub-ledger accounts with rows in
         ar_subledger_daily_balances."""
-        from quicksight_gen.account_recon.demo_data import _SUBLEDGER_DRIFT_PLANT
+        from quicksight_gen.apps.account_recon.demo_data import _SUBLEDGER_DRIFT_PLANT
 
         assert len(_SUBLEDGER_DRIFT_PLANT) >= 3, (
             "Need several sub-ledger drift cells"
@@ -398,7 +398,7 @@ class TestScenarioCoverage:
         """Ledger-level and sub-ledger-level drift plants should surface
         different rows on the Exceptions tab — guard against cell overlap
         that would make them look like the same finding in two places."""
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _LEDGER_DRIFT_PLANT,
             _SUBLEDGER_DRIFT_PLANT,
             SUBLEDGER_ACCOUNTS,
@@ -553,7 +553,7 @@ class TestScenarioCoverage:
         uncapped) so the "≥2 ledgers" requirement from the legacy
         product-category model no longer applies.
         """
-        from quicksight_gen.account_recon.demo_data import _LEDGER_LIMITS
+        from quicksight_gen.apps.account_recon.demo_data import _LEDGER_LIMITS
 
         assert len(_LEDGER_LIMITS) >= 3, "Need ≥3 ledger limit rows"
         types = {xtype for _lid, xtype, _lim in _LEDGER_LIMITS}
@@ -567,7 +567,7 @@ class TestScenarioCoverage:
         (sub-ledger, day, type), joins ledger-limits, and keeps rows
         where total > limit."""
         from datetime import timedelta
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _LIMIT_BREACH_PLANT,
             _LEDGER_LIMITS,
         )
@@ -628,7 +628,7 @@ class TestScenarioCoverage:
         ar_subledger_daily_balances — the ar_subledger_overdraft view
         just filters on that condition."""
         from datetime import timedelta
-        from quicksight_gen.account_recon.demo_data import _OVERDRAFT_PLANT
+        from quicksight_gen.apps.account_recon.demo_data import _OVERDRAFT_PLANT
 
         balances: dict[tuple[str, str], Decimal] = {}
         for row in ar_parsed["ar_subledger_daily_balances"]:
@@ -652,7 +652,7 @@ class TestScenarioCoverage:
         with mixed-level legs (sub-ledger leg zeroes operating account,
         ledger-direct leg offsets at master). Drives the F.5.1 / F.5.2
         rollup checks."""
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _ZBA_SWEEP_CUSTOMERS,
         )
 
@@ -686,7 +686,7 @@ class TestScenarioCoverage:
         sub-leg by exactly ``master_delta``. This is what surfaces in
         ar_concentration_master_sweep_drift as non-zero daily drift."""
         from datetime import timedelta
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _ZBA_SWEEP_LEG_MISMATCH_PLANT,
         )
 
@@ -753,7 +753,7 @@ class TestScenarioCoverage:
         payment-gateway clearing sub-ledger) with NO SNB internal
         catch-up child. Without these, the F.5.5 view returns empty."""
         from datetime import timedelta
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _CARD_INTERNAL_MISSING_PLANT,
         )
 
@@ -807,7 +807,7 @@ class TestScenarioCoverage:
         Internal Transfer Suspense ledger (gl-1830) but have NO Step-2
         child. Without these, the F.5.7 view returns empty."""
         from datetime import timedelta
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _INTERNAL_TRANSFER_PLANT,
         )
 
@@ -864,7 +864,7 @@ class TestScenarioCoverage:
         failed and (b) the suspense leg posted successfully. Without
         these, the F.5.9 view returns empty."""
         from datetime import timedelta
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _INTERNAL_TRANSFER_PLANT,
         )
 
@@ -942,7 +942,7 @@ class TestScenarioCoverage:
         plant date forward (each stuck originate accumulates). Without
         at least one non-zero day, the F.5.8 view returns empty."""
         from datetime import timedelta
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _INTERNAL_TRANSFER_PLANT,
         )
 
@@ -1147,7 +1147,7 @@ class TestScenarioCoverage:
         clearing_sweep transfers on gl-1810 with NO Fed confirmation
         child transfer. Without these, the F.5.4 view returns empty."""
         from datetime import timedelta
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _ACH_FED_CONFIRMATION_MISSING,
         )
 
@@ -1198,7 +1198,7 @@ class TestScenarioCoverage:
         forward (the missed sweep accumulates). Without at least one
         non-zero day, the F.5.3 view returns empty."""
         from datetime import timedelta
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _ACH_SWEEP_SKIP_PLANT,
         )
 
@@ -1229,7 +1229,7 @@ class TestScenarioCoverage:
         with sweep skipped + a planted deposit will end day at the plant
         amount (or larger if random activity also hit)."""
         from datetime import timedelta
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _ZBA_SWEEP_FAIL_PLANT,
         )
 
@@ -1257,7 +1257,7 @@ class TestScenarioCoverage:
         into the stored balance.
         """
         from datetime import timedelta
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _ZBA_SWEEP_CUSTOMERS,
             _ZBA_SWEEP_FAIL_PLANT,
             _SUBLEDGER_DRIFT_PLANT,
@@ -1291,7 +1291,7 @@ class TestScenarioCoverage:
         """F.4.2: ACH originations must exist as mixed-level transfers
         (one customer DDA sub-ledger leg + one gl-1810 ledger-direct leg).
         Drives the F.5.X ACH-cycle exception checks."""
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _ACH_ORIG_LEDGER,
         )
 
@@ -1333,7 +1333,7 @@ class TestScenarioCoverage:
         """F.4.2 sweep-skip plants must drive gl-1810 stored balance
         non-zero on plant days — that's what F.5.3 surfaces."""
         from datetime import timedelta
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _ACH_ORIG_LEDGER,
             _ACH_SWEEP_SKIP_PLANT,
         )
@@ -1355,7 +1355,7 @@ class TestScenarioCoverage:
         """F.4.2 missing-Fed-confirmation plants must produce an EOD
         sweep transfer with no child external_force_posted ach transfer
         — F.5.4 surfaces these by parent_transfer_id absence."""
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _ACH_FED_CONFIRMATION_MISSING,
         )
 
@@ -1394,7 +1394,7 @@ class TestScenarioCoverage:
         a Fed confirmation linked back to the EOD sweep — confirms the
         happy path is actually emitted, otherwise F.5.4 would surface
         false-positive findings on every sweep."""
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _ACH_ORIG_DAYS,
             _ACH_SWEEP_SKIP_PLANT,
             _ACH_FED_CONFIRMATION_MISSING,
@@ -1435,7 +1435,7 @@ class TestScenarioCoverage:
         """F.4.3: Fed-side card settlement observations and SNB internal
         catch-ups must exist with the correct parent → child linkage.
         Drives the F.5.X card-settlement reconciliation checks."""
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _CARD_SETTLEMENT_DAYS,
             _CARD_INTERNAL_MISSING_PLANT,
         )
@@ -1486,7 +1486,7 @@ class TestScenarioCoverage:
         """F.4.3 missing-internal plants must produce a Fed observation
         transfer with no child catch-up — F.5.X surfaces these by parent
         absence."""
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _CARD_INTERNAL_MISSING_PLANT,
         )
 
@@ -1516,7 +1516,7 @@ class TestScenarioCoverage:
         a Step-1 originate transfer; success / reversal_not_credited
         plants additionally produce a Step-2 transfer chained back via
         parent_transfer_id."""
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _INTERNAL_TRANSFER_PLANT,
         )
 
@@ -1562,7 +1562,7 @@ class TestScenarioCoverage:
         (Stored gl-1830 balance reflects stuck plants, but random fee
         assessments can also touch gl-1830 so we don't pin an exact
         balance — we check the structural pattern instead.)"""
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _INTERNAL_TRANSFER_PLANT,
         )
 
@@ -1594,7 +1594,7 @@ class TestScenarioCoverage:
         sub-ledger leg has status='failed' (originator never recovered)
         while its suspense ledger leg has status='success' — suspense
         clears but money stays gone. F.5.X "double spend" surfaces."""
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _INTERNAL_TRANSFER_PLANT,
             _INTERNAL_TRANSFER_SUSPENSE_LEDGER,
         )
@@ -1641,7 +1641,7 @@ class TestScenarioCoverage:
         share sub-ledger×day cells. Otherwise the Exceptions tab would
         show the same row across multiple tables and obscure the four
         distinct reconciliation checks."""
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _SUBLEDGER_DRIFT_PLANT,
             _LIMIT_BREACH_PLANT,
             _OVERDRAFT_PLANT,
@@ -1971,7 +1971,7 @@ class TestLedgerPostingScenarios:
         Concentration Master sweep drift. Those are exempted here.
         """
         from datetime import timedelta
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _ZBA_SWEEP_LEG_MISMATCH_PLANT,
         )
         plant_dates = {
@@ -2926,8 +2926,8 @@ class TestTransactionsDrillStaleParamHygiene:
         the helper has to know about it — otherwise drills that don't
         explicitly write the new param leave it stale on the destination
         sheet (the K.2 bug class) and silently ship that way."""
-        from quicksight_gen.account_recon import analysis as ar_analysis
-        from quicksight_gen.account_recon.visuals import (
+        from quicksight_gen.apps.account_recon import analysis as ar_analysis
+        from quicksight_gen.apps.account_recon.visuals import (
             _AR_TXN_PASS_FILTERED_PARAMS,
         )
 
@@ -3272,13 +3272,13 @@ class TestAnalysisName:
         )
 
     def test_default_name(self):
-        from quicksight_gen.account_recon.analysis import build_analysis
+        from quicksight_gen.apps.account_recon.analysis import build_analysis
 
         name = build_analysis(self._cfg("default")).Name
         assert name == "Account Reconciliation"
 
     def test_sasquatch_bank_ar_name(self):
-        from quicksight_gen.account_recon.analysis import build_analysis
+        from quicksight_gen.apps.account_recon.analysis import build_analysis
 
         name = build_analysis(self._cfg("sasquatch-bank-ar")).Name
         assert name == "Demo — Account Reconciliation"

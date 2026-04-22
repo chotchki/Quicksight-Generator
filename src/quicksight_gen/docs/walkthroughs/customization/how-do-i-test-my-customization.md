@@ -189,7 +189,7 @@ test. Pattern:
 import pytest
 import psycopg2
 from quicksight_gen.common.config import load_config
-from quicksight_gen.account_recon.datasets import build_overdraft_dataset
+from quicksight_gen.apps.account_recon.datasets import build_overdraft_dataset
 
 
 @pytest.mark.skipif(

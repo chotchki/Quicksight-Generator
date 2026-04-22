@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from quicksight_gen.account_recon.constants import (
+from quicksight_gen.apps.account_recon.constants import (
     DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
     DS_AR_DAILY_STATEMENT_SUMMARY,
     DS_AR_DAILY_STATEMENT_TRANSACTIONS,
@@ -78,8 +78,8 @@ from quicksight_gen.account_recon.constants import (
     V_AR_TXN_KPI_COUNT,
     V_AR_TXN_KPI_FAILED,
 )
-from quicksight_gen.account_recon.datasets import build_all_datasets
-from quicksight_gen.account_recon.filters import (
+from quicksight_gen.apps.account_recon.datasets import build_all_datasets
+from quicksight_gen.apps.account_recon.filters import (
     build_balances_controls,
     build_daily_statement_parameter_controls,
     build_exceptions_trends_controls,
@@ -88,7 +88,7 @@ from quicksight_gen.account_recon.filters import (
     build_transactions_controls,
     build_transfers_controls,
 )
-from quicksight_gen.account_recon.visuals import (
+from quicksight_gen.apps.account_recon.visuals import (
     build_balances_visuals,
     build_daily_statement_visuals,
     build_exceptions_trends_visuals,

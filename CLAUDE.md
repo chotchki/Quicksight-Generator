@@ -118,22 +118,23 @@ src/quicksight_gen/
     clickability.py      # Conditional-format helpers: accent text (left-click) + tint-background (right-click)
     aging.py             # Shared aging_bar_visual() — horizontal bar chart by aging bucket (used by both apps)
     rich_text.py         # XML composition helpers for SheetTextBox.Content (heading/bullets/link/inline)
-  payment_recon/
-    analysis.py          # 6 sheets, drill-downs, filter groups, dashboard builder
-    visuals.py           # Sales / Settlements / Payments / Exceptions visuals
-    recon_visuals.py     # Payment Reconciliation side-by-side tables + KPIs
-    filters.py           # Pipeline-tab filter groups + controls
-    recon_filters.py     # Payment Reconciliation filters (date, match status, ext system, days outstanding)
-    datasets.py          # 11 custom-SQL datasets
-    demo_data.py         # Sasquatch National Bank demo generator
-    constants.py         # Sheet + dataset identifier constants
-  account_recon/
-    analysis.py          # 5 sheets, drill-downs, filter groups, dashboard builder
-    visuals.py           # Balances / Transfers / Transactions / Exceptions visuals
-    filters.py           # Per-tab filters + Show-Only-X toggles
-    datasets.py          # 21 custom-SQL datasets (9 baseline + 9 CMS checks + 3 rollups)
-    demo_data.py         # Sasquatch National Bank — CMS treasury demo generator
-    constants.py         # Sheet + dataset identifier constants
+  apps/
+    payment_recon/
+      analysis.py          # 6 sheets, drill-downs, filter groups, dashboard builder
+      visuals.py           # Sales / Settlements / Payments / Exceptions visuals
+      recon_visuals.py     # Payment Reconciliation side-by-side tables + KPIs
+      filters.py           # Pipeline-tab filter groups + controls
+      recon_filters.py     # Payment Reconciliation filters (date, match status, ext system, days outstanding)
+      datasets.py          # 11 custom-SQL datasets
+      demo_data.py         # Sasquatch National Bank demo generator
+      constants.py         # Sheet + dataset identifier constants
+    account_recon/
+      analysis.py          # 5 sheets, drill-downs, filter groups, dashboard builder
+      visuals.py           # Balances / Transfers / Transactions / Exceptions visuals
+      filters.py           # Per-tab filters + Show-Only-X toggles
+      datasets.py          # 21 custom-SQL datasets (9 baseline + 9 CMS checks + 3 rollups)
+      demo_data.py         # Sasquatch National Bank — CMS treasury demo generator
+      constants.py         # Sheet + dataset identifier constants
 demo/
   schema.sql             # Full PostgreSQL DDL — shared `transactions` + `daily_balances` base layer + AR dimension tables
 docs/
@@ -237,7 +238,7 @@ Demo persona is **Sasquatch National Bank — Cash Management Suite (CMS)** — 
 
 - Type hints throughout
 - **Never hardcode hex colors in analysis code.** Resolve from `get_preset(cfg.theme_preset).<token>` at generate time (accent, primary_fg, link_tint, etc.).
-- One module per concern; `payment_recon/` has `visuals.py` + `recon_visuals.py` and `filters.py` + `recon_filters.py` because the Payment Reconciliation tab is a distinct UX pattern
+- One module per concern; `apps/payment_recon/` has `visuals.py` + `recon_visuals.py` and `filters.py` + `recon_filters.py` because the Payment Reconciliation tab is a distinct UX pattern
 - Theme presets live in the `PRESETS` dict in `common/theme.py`; set `analysis_name_prefix="Demo"` on demo presets
 - Default theme: blues and greys, high contrast, titles ≥ 16px, body ≥ 12px
 - The end customer doesn't know exactly what they want — keep the code easy to mutate and iterate on

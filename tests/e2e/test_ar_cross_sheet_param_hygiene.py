@@ -33,7 +33,7 @@ from urllib.parse import quote
 
 import pytest
 
-from quicksight_gen.account_recon.constants import (
+from quicksight_gen.apps.account_recon.constants import (
     P_AR_ACCOUNT,
     P_AR_ACTIVITY_DATE,
     P_AR_TRANSFER,

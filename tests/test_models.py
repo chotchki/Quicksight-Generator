@@ -53,7 +53,7 @@ from quicksight_gen.common.models import (
     VisualTitleLabelOptions,
 )
 from quicksight_gen.common.config import Config
-from quicksight_gen.payment_recon.datasets import (
+from quicksight_gen.apps.payment_recon.datasets import (
     build_datasource,
     build_pipeline_datasets,
     build_recon_datasets,

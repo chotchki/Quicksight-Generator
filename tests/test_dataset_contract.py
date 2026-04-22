@@ -10,8 +10,8 @@ import pytest
 
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.dataset_contract import ColumnSpec, DatasetContract
-from quicksight_gen.account_recon import datasets as ar_datasets
-from quicksight_gen.payment_recon import datasets as pr_datasets
+from quicksight_gen.apps.account_recon import datasets as ar_datasets
+from quicksight_gen.apps.payment_recon import datasets as pr_datasets
 
 
 @pytest.fixture()

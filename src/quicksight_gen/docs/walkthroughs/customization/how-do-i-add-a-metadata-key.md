@@ -39,8 +39,8 @@ Three reference points:
   the producer side. Read this first if you're not yet certain
   the key is being written. The dashboard read pattern below
   assumes the data is already there.
-- **`src/quicksight_gen/payment_recon/datasets.py`** /
-  **`src/quicksight_gen/account_recon/datasets.py`** — the
+- **`src/quicksight_gen/apps/payment_recon/datasets.py`** /
+  **`src/quicksight_gen/apps/account_recon/datasets.py`** — the
   dataset SQL files. Every existing `JSON_VALUE` extraction is
   a model for the one you're adding. Grep for
   `JSON_VALUE(metadata` to see them.
@@ -52,7 +52,7 @@ Three reference points:
 ## What you'll see in the demo
 
 An existing dataset reads PR sales metadata. Open
-`payment_recon/datasets.py` and grep for `JSON_VALUE(metadata`:
+`apps/payment_recon/datasets.py` and grep for `JSON_VALUE(metadata`:
 
 ```sql
 SELECT

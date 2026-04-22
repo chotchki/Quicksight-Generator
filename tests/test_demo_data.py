@@ -14,10 +14,10 @@ from decimal import Decimal
 
 import pytest
 
-from quicksight_gen.account_recon.demo_data import (
+from quicksight_gen.apps.account_recon.demo_data import (
     generate_demo_sql as generate_ar_sql,
 )
-from quicksight_gen.payment_recon.demo_data import (
+from quicksight_gen.apps.payment_recon.demo_data import (
     MERCHANTS,
     PR_SUBLEDGER_ACCOUNTS,
     generate_demo_sql,

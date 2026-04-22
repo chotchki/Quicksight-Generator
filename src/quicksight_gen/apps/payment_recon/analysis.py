@@ -5,7 +5,7 @@ from __future__ import annotations
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.ids import VisualId
-from quicksight_gen.payment_recon.constants import (
+from quicksight_gen.apps.payment_recon.constants import (
     DS_EXTERNAL_TRANSACTIONS,
     DS_MERCHANTS,
     DS_PAYMENT_RECON,
@@ -54,15 +54,15 @@ from quicksight_gen.payment_recon.constants import (
     V_PR_SETTLEMENTS_KPI_AMOUNT,
     V_PR_SETTLEMENTS_KPI_PENDING,
 )
-from quicksight_gen.payment_recon.datasets import build_pipeline_datasets, build_recon_datasets
-from quicksight_gen.payment_recon.filters import (
+from quicksight_gen.apps.payment_recon.datasets import build_pipeline_datasets, build_recon_datasets
+from quicksight_gen.apps.payment_recon.filters import (
     build_exceptions_controls,
     build_filter_groups,
     build_payments_controls,
     build_sales_controls,
     build_settlements_controls,
 )
-from quicksight_gen.payment_recon.recon_filters import build_recon_controls, build_recon_filter_groups
+from quicksight_gen.apps.payment_recon.recon_filters import build_recon_controls, build_recon_filter_groups
 from quicksight_gen.common.models import (
     Analysis,
     AnalysisDefinition,
@@ -88,8 +88,8 @@ from quicksight_gen.common.models import (
     StringParameterDeclaration,
 )
 from quicksight_gen.common.theme import get_preset
-from quicksight_gen.payment_recon.recon_visuals import build_payment_recon_visuals
-from quicksight_gen.payment_recon.visuals import (
+from quicksight_gen.apps.payment_recon.recon_visuals import build_payment_recon_visuals
+from quicksight_gen.apps.payment_recon.visuals import (
     build_exceptions_visuals,
     build_payments_visuals,
     build_sales_visuals,

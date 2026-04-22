@@ -551,8 +551,8 @@ guarded by its `DatasetContract`):
 | `pr_unmatched_external_txns` | `pr_external_transactions`, `pr_payments` | `transactions` |
 
 The actual SQL for each migrated view lives in
-`src/quicksight_gen/account_recon/datasets.py` and
-`src/quicksight_gen/payment_recon/datasets.py`. See those files for
+`src/quicksight_gen/apps/account_recon/datasets.py` and
+`src/quicksight_gen/apps/payment_recon/datasets.py`. See those files for
 the current shape; Phase G rewrites each in turn.
 
 ---

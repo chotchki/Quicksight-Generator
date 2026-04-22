@@ -44,8 +44,8 @@ Three reference points:
   declares one. The `build_dataset()` function takes the SQL
   and the contract together and produces the QuickSight DataSet
   JSON.
-- **`src/quicksight_gen/account_recon/datasets.py`** /
-  **`payment_recon/datasets.py`** — every dataset's contract
+- **`src/quicksight_gen/apps/account_recon/datasets.py`** /
+  **`apps/payment_recon/datasets.py`** — every dataset's contract
   declaration sits next to its `build_*_dataset()` function.
   Read the contract first; it's the interface. Read the SQL
   second; it's the default implementation.
@@ -58,7 +58,7 @@ Three reference points:
 ## What you'll see in the demo
 
 Pick the sub-ledger overdraft dataset as the worked example.
-Its contract sits at `account_recon/datasets.py:144`:
+Its contract sits at `apps/account_recon/datasets.py:144`:
 
 ```python
 OVERDRAFT_CONTRACT = DatasetContract(columns=[
@@ -170,7 +170,7 @@ config. This is a contract change, not a SQL swap:
 3. Run the contract test — it goes green again because contract
    and projection agree.
 4. Add the column to the visual that displays it (in
-   `account_recon/visuals.py`'s overdraft table builder).
+   `apps/account_recon/visuals.py`'s overdraft table builder).
 
 The contract test catches step 1 + step 2 drift. The visual
 edit (step 4) is the actual UX work.

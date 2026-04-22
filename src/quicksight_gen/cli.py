@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import re
+import shutil
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import click
@@ -102,11 +105,11 @@ def generate_account_recon_cmd(ctx: click.Context) -> None:
 def _generate_payment_recon(
     config_path: str, output_dir: str, theme_preset: str | None,
 ) -> None:
-    from quicksight_gen.payment_recon.analysis import (
+    from quicksight_gen.apps.payment_recon.analysis import (
         build_analysis,
         build_payment_recon_dashboard,
     )
-    from quicksight_gen.payment_recon.datasets import build_all_datasets
+    from quicksight_gen.apps.payment_recon.datasets import build_all_datasets
 
     cfg = load_config(config_path)
     if theme_preset is not None:
@@ -140,11 +143,11 @@ def _generate_payment_recon(
 def _generate_account_recon(
     config_path: str, output_dir: str, theme_preset: str | None,
 ) -> None:
-    from quicksight_gen.account_recon.analysis import (
+    from quicksight_gen.apps.account_recon.analysis import (
         build_account_recon_dashboard,
         build_analysis,
     )
-    from quicksight_gen.account_recon.datasets import build_all_datasets
+    from quicksight_gen.apps.account_recon.datasets import build_all_datasets
 
     cfg = load_config(config_path)
     if theme_preset is not None:
@@ -182,10 +185,10 @@ def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
     pass will write — always included. The other app's filenames are
     included so a single-app generate doesn't prune its sibling's output.
     """
-    from quicksight_gen.account_recon.datasets import (
+    from quicksight_gen.apps.account_recon.datasets import (
         build_all_datasets as _ar,
     )
-    from quicksight_gen.payment_recon.datasets import (
+    from quicksight_gen.apps.payment_recon.datasets import (
         build_all_datasets as _pr,
     )
 
@@ -239,10 +242,10 @@ def demo_schema(app: str | None, all_apps: bool, output: str) -> None:
 def demo_seed(app: str | None, all_apps: bool, output: str) -> None:
     """Emit INSERT statements with demo data."""
     app = _resolve_app(app, all_apps, allow_all=True)
-    from quicksight_gen.account_recon.demo_data import (
+    from quicksight_gen.apps.account_recon.demo_data import (
         generate_demo_sql as generate_ar_sql,
     )
-    from quicksight_gen.payment_recon.demo_data import (
+    from quicksight_gen.apps.payment_recon.demo_data import (
         generate_demo_sql as generate_pr_sql,
     )
 
@@ -276,10 +279,10 @@ def demo_etl_example(app: str | None, all_apps: bool, output: str) -> None:
     walkthroughs that reference this output.
     """
     app = _resolve_app(app, all_apps, allow_all=True)
-    from quicksight_gen.account_recon.etl_examples import (
+    from quicksight_gen.apps.account_recon.etl_examples import (
         generate_etl_examples_sql as generate_ar_examples,
     )
-    from quicksight_gen.payment_recon.etl_examples import (
+    from quicksight_gen.apps.payment_recon.etl_examples import (
         generate_etl_examples_sql as generate_pr_examples,
     )
 
@@ -323,25 +326,25 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     only thing that varies is which seed SQL gets loaded and which
     analyses get generated.
     """
-    from quicksight_gen.account_recon.analysis import (
+    from quicksight_gen.apps.account_recon.analysis import (
         build_account_recon_dashboard,
         build_analysis as build_ar_analysis,
     )
-    from quicksight_gen.account_recon.datasets import (
+    from quicksight_gen.apps.account_recon.datasets import (
         build_all_datasets as build_ar_datasets,
     )
-    from quicksight_gen.account_recon.demo_data import (
+    from quicksight_gen.apps.account_recon.demo_data import (
         generate_demo_sql as generate_ar_sql,
     )
-    from quicksight_gen.payment_recon.analysis import (
+    from quicksight_gen.apps.payment_recon.analysis import (
         build_analysis as build_pr_analysis,
         build_payment_recon_dashboard,
     )
-    from quicksight_gen.payment_recon.datasets import (
+    from quicksight_gen.apps.payment_recon.datasets import (
         build_all_datasets as build_pr_datasets,
         build_datasource,
     )
-    from quicksight_gen.payment_recon.demo_data import (
+    from quicksight_gen.apps.payment_recon.demo_data import (
         generate_demo_sql as generate_pr_sql,
     )
 
@@ -538,10 +541,127 @@ def _bundled_dir(name: str) -> Path:
 
 
 def _copy_tree(src: Path, dst: Path) -> int:
-    import shutil
-
     shutil.copytree(src, dst, dirs_exist_ok=True)
     return sum(1 for p in dst.rglob("*") if p.is_file())
+
+
+# -- Whitelabel substitution (used by `export training --mapping`) ----------
+#
+# Phase L will likely replace this with template-rendered docs (persona-typed
+# Jinja or similar) so canonical strings stop being load-bearing. Until then,
+# this is a small string-substitution pipeline scoped to one command.
+
+_WHITELABEL_LEAF_RE = re.compile(r'^\s*(?:"([^"]+)"|([^:\s][^:]*?))\s*:\s*(.*?)\s*$')
+
+_WHITELABEL_LEFTOVER_PATTERNS = [
+    r"Sasquatch", r"\bSNB\b", r"Bigfoot", r"Big Meadow",
+    r"Cascade Timber", r"Pinecrest", r"Harvest Moon",
+]
+
+
+@dataclass
+class _WhitelabelResult:
+    files_processed: int = 0
+    total_substitutions: int = 0
+    leftovers: list[tuple[str, str]] = field(default_factory=list)
+    per_file: list[tuple[str, int]] = field(default_factory=list)
+
+
+def _parse_mapping(path: Path) -> dict[str, str]:
+    """Parse the YAML-subset mapping file used by `export training`.
+
+    Supported syntax: ``key: value`` or ``"key with spaces": "value"`` per
+    line; ``#`` comments; nested group headers ignored; empty values skipped.
+    """
+    subs: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        raw = raw_line.rstrip("\n")
+        stripped = raw.lstrip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        idx = raw.find(" #")
+        if idx >= 0:
+            raw = raw[:idx]
+        m = _WHITELABEL_LEAF_RE.match(raw)
+        if not m:
+            continue
+        key = m.group(1) or m.group(2)
+        val = m.group(3).strip()
+        if not val:
+            continue
+        if (val.startswith('"') and val.endswith('"')) or \
+           (val.startswith("'") and val.endswith("'")):
+            val = val[1:-1]
+        if not val:
+            continue
+        subs[key] = val
+    return subs
+
+
+def _apply_whitelabel(
+    source: Path,
+    output: Path,
+    mapping: dict[str, str] | None = None,
+    *,
+    dry_run: bool = False,
+) -> _WhitelabelResult:
+    """Copy ``source`` to ``output`` applying string substitutions.
+
+    Longest keys substitute first so prefixes (e.g. ``SNB`` inside
+    ``Sasquatch National Bank``) don't get rewritten in the wrong order.
+    Returns counts plus a list of files where canonical SNB-pattern strings
+    survived the rewrite (suggests a missing mapping entry).
+    """
+    if not source.is_dir():
+        raise FileNotFoundError(f"Source directory not found: {source}")
+
+    subs = mapping or {}
+    ordered_keys = sorted(subs.keys(), key=len, reverse=True)
+    result = _WhitelabelResult()
+
+    if not dry_run:
+        if output.exists():
+            shutil.rmtree(output)
+        output.mkdir(parents=True, exist_ok=True)
+
+    for src_file in sorted(source.rglob("*")):
+        if not src_file.is_file():
+            continue
+        rel = src_file.relative_to(source)
+        try:
+            content = src_file.read_text(encoding="utf-8")
+            is_text = True
+        except UnicodeDecodeError:
+            content = ""
+            is_text = False
+
+        file_subs = 0
+        if is_text:
+            for key in ordered_keys:
+                hits = content.count(key)
+                if hits:
+                    content = content.replace(key, subs[key])
+                    file_subs += hits
+
+        result.files_processed += 1
+        result.total_substitutions += file_subs
+        result.per_file.append((str(rel), file_subs))
+
+        if not dry_run:
+            dst = output / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if is_text:
+                dst.write_text(content, encoding="utf-8")
+            else:
+                shutil.copy2(src_file, dst)
+
+        if is_text:
+            for pat in _WHITELABEL_LEFTOVER_PATTERNS:
+                if re.search(pat, content):
+                    result.leftovers.append((str(rel), pat))
+                    break
+
+    return result
 
 
 @export.command("docs")
@@ -579,14 +699,12 @@ def export_training_cmd(output: str, mapping: str | None, dry_run: bool) -> None
     mapping.yaml.example for the template), every occurrence of the
     canonical strings is rewritten to your organization's names.
     """
-    from quicksight_gen.whitelabel import apply_whitelabel, parse_mapping
-
     src = _bundled_dir("training") / "handbook"
     dst = Path(output)
 
     subs: dict[str, str] = {}
     if mapping:
-        subs = parse_mapping(Path(mapping))
+        subs = _parse_mapping(Path(mapping))
         if not subs:
             click.echo(
                 f"WARNING: No non-empty substitutions in {mapping}; "
@@ -594,7 +712,7 @@ def export_training_cmd(output: str, mapping: str | None, dry_run: bool) -> None
                 err=True,
             )
 
-    result = apply_whitelabel(src, dst, subs, dry_run=dry_run)
+    result = _apply_whitelabel(src, dst, subs, dry_run=dry_run)
 
     verb = "Would write" if dry_run else "Wrote"
     click.echo(

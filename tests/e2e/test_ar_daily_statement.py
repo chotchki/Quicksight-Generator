@@ -146,7 +146,7 @@ def _summary_row(conn: "PgConnection", account_id: str, balance_date: date):
 def _drift_plant_for(account_id: str) -> tuple[int, Decimal]:
     """Return ``(days_ago, planted_delta)`` for ``account_id`` from
     ``_SUBLEDGER_DRIFT_PLANT``. Raises if the account isn't planted."""
-    from quicksight_gen.account_recon.demo_data import _SUBLEDGER_DRIFT_PLANT
+    from quicksight_gen.apps.account_recon.demo_data import _SUBLEDGER_DRIFT_PLANT
 
     for sid, days_ago, delta_str in _SUBLEDGER_DRIFT_PLANT:
         if sid == account_id:
@@ -159,7 +159,7 @@ def _drift_plant_for(account_id: str) -> tuple[int, Decimal]:
 
 def _overdraft_plant_for(account_id: str) -> int:
     """Return ``days_ago`` for ``account_id`` from ``_OVERDRAFT_PLANT``."""
-    from quicksight_gen.account_recon.demo_data import _OVERDRAFT_PLANT
+    from quicksight_gen.apps.account_recon.demo_data import _OVERDRAFT_PLANT
 
     for sid, days_ago, _amt, _memo in _OVERDRAFT_PLANT:
         if sid == account_id:

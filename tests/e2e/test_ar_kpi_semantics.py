@@ -72,7 +72,7 @@ def _count_rows(conn: "PgConnection", sql: str) -> int:
 
 def _planted_count(check_name: str) -> int:
     """Return the size of the ``_*_PLANT`` constant driving ``check_name``."""
-    from quicksight_gen.account_recon import demo_data as dd
+    from quicksight_gen.apps.account_recon import demo_data as dd
 
     plants = {
         "ledger_drift": len(dd._LEDGER_DRIFT_PLANT),
@@ -332,7 +332,7 @@ class TestPlantedRowsSurface:
     """Each ``_*_PLANT`` constant must materialize through the deployed view."""
 
     def test_ledger_drift_plants_surface(self, pg_conn):
-        from quicksight_gen.account_recon.demo_data import _LEDGER_DRIFT_PLANT
+        from quicksight_gen.apps.account_recon.demo_data import _LEDGER_DRIFT_PLANT
 
         with pg_conn.cursor() as cur:
             cur.execute(
@@ -348,7 +348,7 @@ class TestPlantedRowsSurface:
             )
 
     def test_subledger_drift_plants_surface(self, pg_conn):
-        from quicksight_gen.account_recon.demo_data import _SUBLEDGER_DRIFT_PLANT
+        from quicksight_gen.apps.account_recon.demo_data import _SUBLEDGER_DRIFT_PLANT
 
         with pg_conn.cursor() as cur:
             cur.execute(
@@ -373,7 +373,7 @@ class TestPlantedRowsSurface:
         )
 
     def test_overdraft_plants_surface(self, pg_conn):
-        from quicksight_gen.account_recon.demo_data import _OVERDRAFT_PLANT
+        from quicksight_gen.apps.account_recon.demo_data import _OVERDRAFT_PLANT
 
         # Sticky: each plant inflates into N daily rows (sub-ledger stays
         # negative for several days). Assert >= planted_count and confirm
@@ -393,7 +393,7 @@ class TestPlantedRowsSurface:
         assert len(cells) >= _planted_count("overdraft")
 
     def test_sweep_target_plants_surface(self, pg_conn):
-        from quicksight_gen.account_recon.demo_data import _ZBA_SWEEP_FAIL_PLANT
+        from quicksight_gen.apps.account_recon.demo_data import _ZBA_SWEEP_FAIL_PLANT
 
         # Sticky: a skipped sweep leaves the operating sub-account
         # non-zero from that day forward until the next clean sweep.
@@ -412,7 +412,7 @@ class TestPlantedRowsSurface:
         assert len(cells) >= _planted_count("sweep_target")
 
     def test_sweep_drift_plants_surface(self, pg_conn):
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _ZBA_SWEEP_LEG_MISMATCH_PLANT,
         )
 
@@ -436,7 +436,7 @@ class TestPlantedRowsSurface:
         )
 
     def test_ach_orig_nonzero_plants_surface(self, pg_conn):
-        from quicksight_gen.account_recon.demo_data import _ACH_SWEEP_SKIP_PLANT
+        from quicksight_gen.apps.account_recon.demo_data import _ACH_SWEEP_SKIP_PLANT
 
         # Sticky: a skipped EOD sweep leaves gl-1810 non-zero from that
         # day forward until the next clean sweep zeroes it.
@@ -478,7 +478,7 @@ class TestPlantedRowsSurface:
     def test_gl_fed_drift_plants_surface(self, pg_conn):
         # Drift days = days where Fed posted but SNB didn't catch up.
         # _CARD_INTERNAL_MISSING_PLANT drives those days.
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _CARD_INTERNAL_MISSING_PLANT,
         )
 
@@ -511,7 +511,7 @@ class TestPlantedRowsSurface:
         )
 
     def test_internal_suspense_nonzero_plants_surface(self, pg_conn):
-        from quicksight_gen.account_recon.demo_data import (
+        from quicksight_gen.apps.account_recon.demo_data import (
             _INTERNAL_TRANSFER_PLANT,
         )
 

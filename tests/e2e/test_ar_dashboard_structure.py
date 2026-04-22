@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from quicksight_gen.account_recon.constants import (
+from quicksight_gen.apps.account_recon.constants import (
     ALL_FG_AR_IDS,
     ALL_P_AR,
     FG_AR_DRILL_LEDGER_ON_BALANCES_SUBLEDGER,
