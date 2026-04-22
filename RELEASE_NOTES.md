@@ -1,5 +1,104 @@
 # Release Notes
 
+## v4.0.0
+
+### Phase K.4 — Investigation app + `apps/` namespace re-org (major)
+
+Adds a third independent QuickSight app — **Investigation**, the AML / compliance triage surface — alongside Payment Reconciliation and Account Reconciliation. Reads from the same shared `transactions` + `daily_balances` base tables (no schema change), backed by two new materialized views that pre-compute rolling-window pair statistics and recursive chain walks.
+
+The major bump is earned by two breaking changes that ride along with the new app:
+
+- The `payment_recon/` and `account_recon/` packages moved into a new `apps/` namespace (`quicksight_gen.apps.payment_recon` / `quicksight_gen.apps.account_recon`). Per the project's "no backward-compat shims" rule, no compatibility re-exports — external callers update their imports.
+- The `quicksight_gen.training.distribute` and `quicksight_gen.training.publish` modules (superseded by `quicksight-gen export training` + `whitelabel.py` in v3.4.0 but never deleted) are gone. The `training/` tree is now pure content.
+
+### What landed
+
+**Re-org under `apps/` namespace + obsolete-script cleanup (K.4.1)**
+
+- `src/quicksight_gen/payment_recon/` → `src/quicksight_gen/apps/payment_recon/`.
+- `src/quicksight_gen/account_recon/` → `src/quicksight_gen/apps/account_recon/`.
+- Every import across src + tests + scripts updated to `quicksight_gen.apps.{payment_recon,account_recon}`.
+- `src/quicksight_gen/training/distribute.py` (handbook zipper — replaced by `export training`'s folder copy) and `src/quicksight_gen/training/publish.py` (string substitution — duplicated by `whitelabel.py`) deleted. `training/` is now pure content (handbook/, QUICKSTART.md, mapping.yaml.example).
+- `src/quicksight_gen/docs/` (operator handbook, mkdocs source) and `src/quicksight_gen/training/` (audience-organized cross-training, whitelabel-able) stay separate trees with separate export paths. Merging the two is queued in Backlog under "Docs/Training Tree Merge"; today's split is the right call until K.4.x lands more targeted training examples.
+
+**Investigation app skeleton + theme preset (K.4.2)**
+
+- New `src/quicksight_gen/apps/investigation/` package mirroring `account_recon/`'s layout (`analysis.py`, `visuals.py`, `filters.py`, `datasets.py`, `demo_data.py`, `constants.py`, `etl_examples.py`).
+- Wired into the CLI: `generate`, `deploy`, `demo apply` / `seed` / `etl-example` all accept `investigation` as a third app key; `--all` includes it.
+- New `sasquatch-bank-investigation` theme preset (slate blue + amber alert palette).
+- Five sheets: Getting Started + Recipient Fanout / Volume Anomalies / Money Trail / Account Network.
+
+**Recipient Fanout sheet (K.4.3)**
+
+- New `inv-recipient-fanout-dataset` (one row per (recipient leg, sender leg) pair sharing a `transfer_id`); recipient pool filtered to customer DDAs + merchant DDAs only so administrative sweeps don't dominate the ranking.
+- Threshold filter is the analysis-level windowed calc field `recipient_distinct_sender_count = distinctCount({sender_account_id}, [{recipient_account_id}])`, gated by a `NumericRangeFilter` whose minimum is bound to a `pInvFanoutThreshold` integer parameter (slider 1–20, step 1, default 5).
+- Three KPIs (qualifying recipients / distinct senders / total inbound) + recipient-grain ranked table sorted by distinct sender count desc.
+
+**Volume Anomalies sheet (K.4.4)**
+
+- New materialized view `inv_pair_rolling_anomalies` computes per-(sender, recipient) rolling 2-day SUM (`RANGE BETWEEN INTERVAL '1 day' PRECEDING AND CURRENT ROW` partitioned by sender+recipient) plus the population mean + sample standard deviation across all pair-windows; per-row z-score and 5-band z-bucket label projected at refresh time.
+- σ threshold (`pInvAnomaliesSigma` integer parameter, default 2, slider 1–4 step 1) bound to a `NumericRangeFilter` on `z_score`, scoped `SELECTED_VISUALS` to KPI + table only — the distribution chart sees the full population so the cutoff lands in context.
+- Visuals: KPI flagged-pair count + vertical bar chart (X = z_bucket, Y = COUNT) + table grouped to (sender, recipient, window_end) sorted by z_score desc.
+
+**Money Trail sheet (K.4.5)**
+
+- New materialized view `inv_money_trail_edges` walks `parent_transfer_id` chains via `WITH RECURSIVE`, flattened to one row per multi-leg edge with chain root, depth from root, source × target leg pair, and `source_display` / `target_display` strings (`name (id)`) for unambiguous dropdowns and tables.
+- Visuals: native QuickSight Sankey as the headline + hop-by-hop detail table beside it. Filters: chain-root dropdown, max-hops slider, min-hop-amount slider.
+- Single-leg PR transfers (`sale`, `external_txn`) appear in the table but don't draw Sankey ribbons — the matview projects multi-leg edges only.
+
+**Investigation demo data + cross-app scenario coverage (K.4.6)**
+
+- New `apps/investigation/demo_data.py` plants three converging scenarios on a single anchor account (Juniper Ridge LLC, `cust-900-0007-juniper-ridge-llc`):
+  - Fanout cluster — 12 individual depositors × 2 ACH transfers each → Juniper.
+  - Anomaly pair — Cascadia Trust Bank — Operations → Juniper, 8 baseline routine wires + 1 spike day ($25,000 wire vs ~$300–$700 baseline).
+  - Money trail — 4-hop layering chain rooted on a Cascadia wire, fanning through Juniper into three shell DDAs (Shell A → B → C).
+- Investigation registers its own internal ledger (`inv-customer-deposits-watch`) + two external ledgers so `demo seed investigation` is FK-safe standalone. Same Sasquatch National Bank persona — the Compliance / Investigation team is the third operational view of the same bank.
+- `TestScenarioCoverage` assertions in `tests/test_investigation_demo_data.py`; per-app SHA256 seed hash locked.
+
+**Cross-app drill plumbing — investigated, dropped (K.4.7)**
+
+- Built `CustomActionURLOperation` model + `cross_app_drill()` URL-deep-link helper, wired three deferred Investigation → AR Transactions drills, proved the URL form `https://{region}.quicksight.aws.amazon.com/sn/dashboards/{id}/sheets/{sheet_id}#p.<param>=<<column>>` substitutes cleanly. Then **dropped the feature** — QuickSight doesn't sync sheet parameter controls to URL-set values: data filters correctly, but the on-screen control widgets continue to show "All". Same defect affects QS's own intra-product Navigation Action with parameters.
+- Re-entry conditions documented in PLAN.md "QuickSight URL-parameter control sync — known platform limitation". The dropped K.4.7 code is recoverable from git history if a future static-link or non-parameterized URL feature wants it.
+
+**Account Network sheet (K.4.8)**
+
+- Second view over the K.4.5 matview, account-anchored instead of chain-rooted. Two side-by-side directional Sankeys (inbound on the left, outbound on the right, anchor visually meeting in the middle) + full-width touching-edges table below.
+- Anchor parameter (`pInvANetworkAnchor`) backed by a small dedicated dataset wrapper (`inv-anetwork-accounts-ds`) that pre-deduplicates display strings, so the dropdown opens fast on a large matview.
+- Walk-the-flow drill: right-click any table row → "Walk to other account on this edge" overwrites the anchor with the counterparty side; left-click any node in either directional Sankey performs the same walk (each directional Sankey has only one possible walk target). Per the K.4.7 control-sync defect, the dropdown widget may briefly lag behind a walk — sheet description tells analysts "trust the chart, not the control text".
+
+**Browser e2e for Investigation (K.4.9)**
+
+- 28 new tests across 6 modules in `tests/e2e/` mirroring AR's coverage shape, plus `inv_dashboard_id` / `inv_analysis_id` / `inv_dataset_ids` fixtures and matview warmups in the session-scoped Aurora pre-warm.
+- API + browser layers cover: dashboard / analysis / 5-dataset existence, sheet structure (5 sheets with descriptions, per-sheet visual counts, K.4.8 directional-Sankey invariant — both inbound + outbound titles must surface), embed URL, sheet-tab smoke, and per-sheet visual rendering with TALL_VIEWPORT (1600×4000) for the Account Network's stacked layout.
+- Three tests deferred for DOM follow-up (skipped with documented reasons): URL-hash parameter pre-seeding breaks dashboard loading, and the walk-the-flow drill needs a more reliable witness than touching-edges row count. The skipped surface is filter / drill propagation; the structural + render surface is fully covered.
+
+**Investigation handbook + walkthroughs (K.4.10)**
+
+- New `docs/handbook/investigation.md` plus four walkthroughs in `docs/walkthroughs/investigation/`, one per sheet's core question:
+  - Who's getting money from too many senders? (Recipient Fanout)
+  - Which sender → recipient pair just spiked? (Volume Anomalies)
+  - Where did this transfer actually originate? (Money Trail)
+  - What does this account's money network look like? (Account Network)
+- Frames Investigation as **question-shaped** — pick the sheet whose question matches yours, no fixed reading order — vs. PR's pipeline-staged flow and AR's morning rotation.
+- Every "Drilling in" section names the next sheet (intra-app) plus AR Transactions / PR pipeline tabs (cross-app at the row-evidence stage). `mkdocs.yml` nav extended with an Investigation Handbook block after PR; `docs/index.md` updated to count three apps.
+
+### Conventions
+
+- Investigation reads the shared base tables only — no investigation-specific schema, no app-specific dimension tables. Persona consistency: same Sasquatch National Bank, three operational views (Merchant Support / Treasury / Compliance).
+- Sankey visuals use QuickSight's native `SankeyDiagramVisual` — feasibility validated in K.4.0's spike before any other K.4 code shipped.
+- The two new matviews follow the same refresh contract as `ar_unified_exceptions`: declare `MATERIALIZED` in `schema.sql`, add `REFRESH MATERIALIZED VIEW <name>;` to the `demo apply` block in `cli.py`, document under [Materialized views](src/quicksight_gen/docs/Schema_v3.md#materialized-views) in Schema_v3.
+
+### Migration
+
+- **External callers importing `quicksight_gen.payment_recon.*` or `quicksight_gen.account_recon.*`**: update to `quicksight_gen.apps.payment_recon.*` and `quicksight_gen.apps.account_recon.*`. No compatibility re-exports — the old paths raise `ModuleNotFoundError`. Internal CLI / generate / deploy entry points are unchanged at the user-visible layer.
+- **External callers importing `quicksight_gen.training.distribute` or `quicksight_gen.training.publish`**: both modules are deleted. Replacement is `quicksight-gen export training` (folder copy + whitelabel substitution in one step), which has been the supported path since v3.4.0.
+- **ETL teams**: two new materialized views (`inv_pair_rolling_anomalies`, `inv_money_trail_edges`) join the existing `ar_unified_exceptions` under the same REFRESH contract. After every ETL load, run all three `REFRESH MATERIALIZED VIEW` statements — see [Materialized views](src/quicksight_gen/docs/Schema_v3.md#materialized-views) for the full contract. Skipping a refresh means anomaly z-scores and chain edges lag the source data; no data integrity loss, just stale operator-facing columns.
+- **Deploy teams**: `quicksight-gen deploy` now manages a third dashboard (`qs-gen-investigation-dashboard`) + analysis + 5 Investigation datasets. `quicksight-gen cleanup` enumerates them under the same `ManagedBy:quicksight-gen` tag. `quicksight-gen demo apply --all` now seeds + refreshes Investigation alongside PR + AR.
+- **Theme consumers**: a new `sasquatch-bank-investigation` preset is registered in `common/theme.py`. Existing PR (`sasquatch-bank`) + AR (`sasquatch-bank-ar`) presets unchanged.
+- **No cross-app drill paths exist between Investigation and PR/AR.** K.4.7 dropped the URL-deep-link approach because QuickSight doesn't sync sheet parameter controls to URL-set values. Investigators leave the dashboard for AR Transactions / PR pipeline tabs by manually navigating; the Investigation handbook's "Drilling in" sections name the destination tab + filter explicitly to keep the path obvious.
+
+---
+
 ## v3.8.0
 
 ### Phase K.3 — Lateness as a data column, not an operator threshold
