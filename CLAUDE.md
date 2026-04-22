@@ -4,7 +4,7 @@ Python tool that programmatically generates AWS QuickSight JSON definitions (the
 
 - **Payment Reconciliation** — 6 sheets: Getting Started, Sales, Settlements, Payments, Exceptions, Payment Reconciliation
 - **Account Reconciliation** — 5 sheets: Getting Started, Balances, Transfers, Transactions, Exceptions
-- **Investigation** — 4 sheets: Getting Started, Recipient Fanout, Volume Anomalies, Money Trail. *K.4.2 skeleton only — visuals land in K.4.3 / K.4.4 / K.4.5; demo seed in K.4.6.*
+- **Investigation** — 5 sheets: Getting Started, Recipient Fanout, Volume Anomalies, Money Trail, Account Network
 
 The customer doesn't know exactly what they want yet. Everything is generated from code and deployed idempotently (delete-then-create) so a change is one command to roll out.
 
@@ -23,7 +23,7 @@ The customer doesn't know exactly what they want yet. Everything is generated fr
 pip install -e ".[dev]"
 pip install -e ".[demo]"
 
-# Generate all JSON (both apps, one theme)
+# Generate all JSON (all three apps, one theme)
 quicksight-gen generate --all -c config.yaml -o out/
 
 # Generate a single app
@@ -48,7 +48,7 @@ quicksight-gen demo apply  --all -c config.yaml -o out/
 
 # Tests
 pytest                              # unit + integration, fast, no AWS
-./run_e2e.sh                        # regenerate + deploy both apps + e2e (pytest-xdist -n 4)
+./run_e2e.sh                        # regenerate + deploy all three apps + e2e (pytest-xdist -n 4)
 ./run_e2e.sh --parallel 8           # override worker count (1 = serial; stable ceiling ~8)
 ./run_e2e.sh --skip-deploy api      # API e2e only
 ./run_e2e.sh --skip-deploy browser  # browser e2e only
@@ -66,6 +66,8 @@ out/
   payment-recon-dashboard.json
   account-recon-analysis.json
   account-recon-dashboard.json
+  investigation-analysis.json
+  investigation-dashboard.json
   datasets/
     qs-gen-merchants-dataset.json            # 11 PR datasets
     qs-gen-sales-dataset.json
@@ -99,9 +101,14 @@ out/
     qs-gen-ar-expected-zero-eod-rollup-dataset.json          # 3 cross-check rollups
     qs-gen-ar-two-sided-post-mismatch-rollup-dataset.json
     qs-gen-ar-balance-drift-timelines-rollup-dataset.json
+    qs-gen-inv-recipient-fanout-dataset.json                 # 5 Investigation datasets
+    qs-gen-inv-volume-anomalies-dataset.json
+    qs-gen-inv-money-trail-dataset.json
+    qs-gen-inv-account-network-dataset.json
+    qs-gen-inv-anetwork-accounts-dataset.json                # narrow dropdown source
 ```
 
-`generate` (single app) prunes stale dataset JSON that belongs to neither app — so renaming or dropping a dataset doesn't leave an orphan that `deploy` would re-create. The other app's dataset files are preserved.
+`generate` (single app) prunes stale dataset JSON belonging to neither of the other two apps — so renaming or dropping a dataset doesn't leave an orphan that `deploy` would re-create. The other apps' dataset files are preserved.
 
 ## Project Structure
 
@@ -136,23 +143,24 @@ src/quicksight_gen/
       datasets.py          # 21 custom-SQL datasets (9 baseline + 9 CMS checks + 3 rollups)
       demo_data.py         # Sasquatch National Bank — CMS treasury demo generator
       constants.py         # Sheet + dataset identifier constants
-    investigation/         # K.4.2 skeleton — sheets land in K.4.3 / K.4.4 / K.4.5
-      analysis.py          # 4 sheets: Getting Started + Recipient Fanout / Volume Anomalies / Money Trail stubs
-      visuals.py           # placeholder
-      filters.py           # placeholder (no filter groups yet)
-      datasets.py          # placeholder (no datasets yet)
-      demo_data.py         # placeholder (K.4.6 plants scenarios)
+    investigation/
+      analysis.py          # 5 sheets: Getting Started + Recipient Fanout / Volume Anomalies / Money Trail / Account Network
+      visuals.py           # KPIs + ranked tables + σ distribution + 3 Sankeys (chain + inbound + outbound) + touching-edges table
+      filters.py           # 11 filter groups + parameter declarations + slider/dropdown controls (date / threshold / σ / chain root / max hops / min amount / anchor)
+      datasets.py          # 5 custom-SQL datasets — fanout + anomalies (matview) + money trail (matview) + account network (matview wrapper) + accounts dropdown source
+      demo_data.py         # Sasquatch Bank — Compliance / AML demo (12-depositor fanout cluster + Cascadia $25K spike + 4-hop layering chain through three shells)
       etl_examples.py      # placeholder (no app-specific ETL keys; PR/AR examples cover the shape)
-      constants.py         # SheetId constants
-demo/
-  schema.sql             # Full PostgreSQL DDL — shared `transactions` + `daily_balances` base layer + AR dimension tables
-docs/
-  Schema_v3.md           # Data Integration Team feed contract: column specs, metadata keys, ETL examples
+      constants.py         # SheetId / VisualId / FilterGroupId / ParameterName + ALL_FG_INV_IDS / ALL_P_INV aggregates
+  schema.py              # `generate_schema_sql()` — reads the canonical DDL from the package data file
+  schema.sql             # Full PostgreSQL DDL — shared `transactions` + `daily_balances` base layer + AR dimension tables + AR + Investigation matviews
+  docs/                  # mkdocs site source (handbook/, walkthroughs/, Schema_v3.md, Training_Story.md); extract via `quicksight-gen export docs`
+  training/              # Whitelabel handbook kit; extract via `quicksight-gen export training`
 tests/
   test_models.py         # Models, tags, config, dataset builders
   test_generate.py       # Full pipeline, cross-refs, explanations (PR)
   test_account_recon.py  # AR visuals, filters, datasets, analysis wiring
   test_recon.py          # Payment recon visuals + filters
+  test_investigation.py  # Investigation visuals + filters + datasets + matview SQL + sheet wiring + walk-the-flow drill shape + demo scenario coverage
   test_theme_presets.py  # Preset registry, serialization, analysis name integration
   test_dataset_contract.py # DatasetContract basics + per-builder column-match assertions
   test_demo_data.py      # Demo determinism (SHA256 hash lock), row counts, FK integrity, scenario coverage, cross-app integrity, shared base layer projection
@@ -160,14 +168,14 @@ tests/
   e2e/                   # Two layers (API boto3 + browser Playwright WebKit); gated on QS_GEN_E2E=1
     conftest.py
     browser_helpers.py
-    test_deployed_resources.py / test_ar_deployed_resources.py
-    test_dashboard_structure.py / test_ar_dashboard_structure.py
-    test_dataset_health.py     / test_ar_dataset_health.py
-    test_dashboard_renders.py  / test_ar_dashboard_renders.py
-    test_sheet_visuals.py      / test_ar_sheet_visuals.py
-    test_drilldown.py          / test_ar_drilldown.py
-    test_state_toggles.py      / test_ar_state_toggles.py
-    test_filters.py            / test_ar_filters.py
+    test_deployed_resources.py    / test_ar_deployed_resources.py    / test_inv_deployed_resources.py
+    test_dashboard_structure.py   / test_ar_dashboard_structure.py   / test_inv_dashboard_structure.py
+    test_dataset_health.py        / test_ar_dataset_health.py
+    test_dashboard_renders.py     / test_ar_dashboard_renders.py     / test_inv_dashboard_renders.py
+    test_sheet_visuals.py         / test_ar_sheet_visuals.py         / test_inv_sheet_visuals.py
+    test_drilldown.py             / test_ar_drilldown.py             / test_inv_drilldown.py
+    test_state_toggles.py         / test_ar_state_toggles.py
+    test_filters.py               / test_ar_filters.py               / test_inv_filters.py
     test_recon_mutual_filter.py
 scripts/
   screenshot_getting_started.py   # Ad-hoc: screenshot both Getting Started tabs
@@ -178,7 +186,7 @@ run_e2e.sh
 
 ### Shared base layer (v3.0.0)
 
-Both apps feed two base tables. PR and AR share the same physical schema; the `account_type` column discriminates which app a row belongs to. See `docs/Schema_v3.md` for the full feed contract.
+All three apps feed two base tables. PR + AR + Investigation share the same physical schema; the `account_type` column discriminates which app a row belongs to (Investigation reads `dda` + `external_counter` rows by way of its planted scenario subset). See `docs/Schema_v3.md` for the full feed contract.
 
 - **`transactions`** — one row per money-movement leg. Carries `transaction_id` PK, `transfer_id` (groups legs of one financial event), `parent_transfer_id` (chains transfers — used by PR for `external_txn → payment → settlement → sale`), `transfer_type`, `origin`, `account_id`, denormalized account fields (`account_name`, `account_type`, `control_account_id`, `is_internal`), `signed_amount` (positive = money IN to the account, negative = money OUT), `amount` (absolute), `status`, `posted_at`, `balance_date`, `external_system`, `memo`, and a `metadata TEXT` column constrained `IS JSON` for app-specific keys (`card_brand`, `cashier`, `settlement_type`, etc.). Non-failed legs of a non-single-leg transfer net to zero.
 - **`daily_balances`** — one row per `(account_id, balance_date)`. Carries the same denormalized account fields as `transactions` plus `balance` (stored end-of-day) and a `metadata TEXT` JSON column (used by AR to attach per-day limit configuration so the limit-breach view stays a single SELECT).
@@ -229,6 +237,16 @@ Demo persona is **Sasquatch National Bank — Cash Management Suite (CMS)** — 
 - **4 telling-transfer flows from CMS**: ZBA / Cash Concentration sweep → Concentration Master; daily ACH origination sweep → FRB Master Account; external force-posted card settlement → Card Acquiring Settlement; on-us internal transfer → Internal Transfer Suspense → destination DDA. Each flow plants both success cycles and characteristic failures.
 - **Exceptions tab structure**: 3 cross-check rollups at the top (expected-zero EOD, two-sided post-mismatch, balance drift timelines) teach error-class recognition; per-check details below let analysts drill the specific row. 14 checks total: 5 baseline (sub-ledger drift, ledger drift, non-zero transfers, limit breach, overdraft) + 9 CMS-specific (sweep target nonzero, concentration master sweep drift, ACH orig settlement nonzero, ACH sweep no Fed confirmation, Fed card no internal catch-up, GL vs FRB master drift, internal transfer stuck, internal transfer suspense nonzero, internal reversal uncredited).
 
+### Investigation
+**Question-shaped: Recipient Fanout / Volume Anomalies / Money Trail / Account Network**
+
+- Reads from the same shared `transactions` base table; no investigation-specific schema, no app-specific dimension tables.
+- Two materialized views back the heavier sheets: `inv_pair_rolling_anomalies` (Volume Anomalies — rolling 2-day SUM per (sender, recipient) pair + population mean / sample stddev → per-row z-score + 5-band bucket) and `inv_money_trail_edges` (Money Trail + Account Network — `WITH RECURSIVE` walk over `parent_transfer_id` flattened to one row per multi-leg edge with chain root + depth + `source_display` / `target_display` strings). Both **do not auto-refresh** — every ETL load must run `REFRESH MATERIALIZED VIEW` on each, same contract as `ar_unified_exceptions`.
+- The Account Network sheet's anchor dropdown is backed by a small dedicated dataset (`inv-anetwork-accounts-ds`) that pre-deduplicates `name (id)` display strings — querying the K.4.5 matview directly for distinct anchors forces the planner to compute the concat per row before dedupe (O(matview rows)); the small-dataset wrapper does it once per distinct account.
+- Walk-the-flow drills (Account Network): right-click any touching-edges table row OR left-click any directional Sankey node overwrites the `pInvANetworkAnchor` parameter with the counterparty side. Per the QuickSight URL-parameter control sync limitation (see PLAN.md tech debt), the dropdown widget may briefly lag; sheet description tells analysts "trust the chart, not the control text".
+- Cross-app drills (Investigation → AR/PR) were investigated and **dropped** in K.4.7 — QuickSight doesn't sync sheet parameter controls to URL-set values. Investigation stays a self-contained app; analysts leave for AR Transactions / PR pipeline tabs by manually navigating.
+- Demo persona: **Sasquatch National Bank — Compliance / Investigation team**. Three converging scenarios on a single anchor (Juniper Ridge LLC, `cust-900-0007-juniper-ridge-llc`) — a fanout cluster (12 individual depositors), an anomaly pair (Cascadia Trust Bank — Operations $25K spike vs $300–$700 baseline), and a 4-hop layering chain (Cascadia → Juniper → Shell A → Shell B → Shell C with $250 residue per hop).
+
 ## Architecture Decisions
 
 - All models use Python dataclasses with `to_aws_json()` methods that produce the exact dict shape for AWS QuickSight API (`create-analysis`, `create-dashboard`, `create-data-set`, `create-theme`, `create-data-source`)
@@ -272,5 +290,5 @@ Demo persona is **Sasquatch National Bank — Cash Management Suite (CMS)** — 
 - Every visual should have non-empty data in the demo. For each new visual that relies on a scenario (drift, unmatched, failed, returned, limit-breach, overdraft, etc.), add a `TestScenarioCoverage` assertion in the app's demo-data tests that guarantees ≥N rows of that shape — counts alone don't catch "zero scenario rows slipped through".
 - Generators must stay deterministic (`random.Random(42)`); tests depend on exact output.
 - Write the coverage assertion **before** the visual, not after. It's the fastest way to notice when generator pool-sizing or branching makes a scenario silently vanish.
-- Each app has its own demo persona — same Sasquatch National Bank, two operational views: PR is the merchant-acquiring side (coffee-shop settlement); AR is the treasury / CMS side (GL control accounts + customer DDAs absorbed from FEB). Don't cross-contaminate at the persona level — they share base tables and three customer DDAs (the coffee retailers) but the rest of the data is disjoint, separated by `account_type` / `transfer_type`.
+- Each app has its own demo persona — same Sasquatch National Bank, three operational views: PR is the merchant-acquiring side (coffee-shop settlement); AR is the treasury / CMS side (GL control accounts + customer DDAs absorbed from FEB); Investigation is the Compliance / AML side (Juniper Ridge LLC convergence anchor + 12 individual depositors + Cascadia Trust Bank ops + 3 shell DDAs). Don't cross-contaminate at the persona level — PR and AR share base tables and three customer DDAs (the coffee retailers) but the rest of the data is disjoint, separated by `account_type` / `transfer_type`. Investigation registers its own internal + external ledger sub-tree (`inv-customer-deposits-watch` + `ext-individual-depositors` + `ext-cascadia-trust-bank`) so `demo seed investigation` is FK-safe standalone.
 - Determinism is locked by a SHA256 hash assertion on the full seed SQL output (`tests/test_demo_data.py::TestDeterminism::test_seed_output_hash_is_locked` per app). Any generator change that shifts a single byte fails that test loudly — re-lock by pasting the new hash into the assertion when the change is intentional.

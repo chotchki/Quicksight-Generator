@@ -8,16 +8,17 @@ Python tool that programmatically generates AWS QuickSight JSON definitions (the
 
 - **Payment Reconciliation** — sales → settlements → payments → external-system matching for a merchant bank.
 - **Account Reconciliation** — stored daily balances, transfers, and postings for a double-entry ledger.
-- **Investigation** — compliance / AML triage: recipient fanout, volume anomalies, and money-trail provenance over the shared base ledger. *(K.4.2 skeleton — sheets land in K.4.3 / K.4.4 / K.4.5.)*
+- **Investigation** — compliance / AML triage: recipient fanout, volume anomalies, money-trail provenance, and account-network graphs over the shared base ledger.
 
 All three apps share one theme registry, one AWS account, one datasource, and the same CLI surface (`quicksight-gen generate|deploy|demo|cleanup`). Change the Python (or ask Claude), re-run `deploy --generate`, get a new dashboard.
 
 ## Demo Docs
 
-The demo ships with three task-shaped handbooks, one per persona team at Sasquatch National Bank. Deployed to GitHub Pages at **[chotchki.github.io/Quicksight-Generator](https://chotchki.github.io/Quicksight-Generator/)**.
+The demo ships with four task-shaped handbooks, one per persona team at Sasquatch National Bank. Deployed to GitHub Pages at **[chotchki.github.io/Quicksight-Generator](https://chotchki.github.io/Quicksight-Generator/)**.
 
 - **[GL Reconciliation Handbook](https://chotchki.github.io/Quicksight-Generator/handbook/ar/)** — how the Accounting Operations team works the AR Exceptions sheet. Morning rollups + per-check drill-downs for 17 exception classes.
 - **[Payment Reconciliation Handbook](https://chotchki.github.io/Quicksight-Generator/handbook/pr/)** — how the Merchant Support team answers "where's my money?" calls. 7 walkthroughs organized by operator question.
+- **[Investigation Handbook](https://chotchki.github.io/Quicksight-Generator/handbook/investigation/)** — how the Compliance / Investigation team triages AML cases. 4 walkthroughs, one per sheet's question — the app is question-shaped rather than pipeline-staged or rotation-driven.
 - **[Data Integration Handbook](https://chotchki.github.io/Quicksight-Generator/handbook/etl/)** — how the Data Integration Team maps an upstream system into `transactions` + `daily_balances`, validates the load, and extends the metadata contract. 5 foundational / extension / debug walkthroughs.
 
 Source lives in `src/quicksight_gen/docs/` (shipped with the wheel — extract with `quicksight-gen export docs -o ./somewhere/`); rebuild locally with `mkdocs serve`.
@@ -49,14 +50,15 @@ The customer for these reports doesn't know exactly what they want yet. Rather t
 | Transactions | Raw ledger (one row per leg, with an `origin` tag for filtering), filtered by date / type / posting-level / origin / Show-Only-Failed. |
 | Exceptions | Cross-check rollups at the top (expected-zero EOD, two-sided post mismatch, balance-drift timelines), then per-check details: ledger / sub-ledger drift, non-zero transfers, limit breaches, overdrafts, and seven Cash Management Suite checks (ZBA sweep, ACH origination non-zero EOD, missing Fed confirmations, force-posted card without internal catch-up, GL-vs-Fed Master drift, stuck-in-suspense, reversed-but-not-credited). Aging bars on every check. |
 
-### Investigation — 4 tabs *(K.4.2 skeleton — visuals incoming)*
+### Investigation — 5 tabs
 
 | Tab | What it shows |
 |---|---|
-| Getting Started | Landing page — heading + roadmap of the three question-shaped sheets below. |
-| Recipient Fanout | *(K.4.3)* Who is receiving money from too many distinct senders? KPI + ranked table; cross-app drill into AR Transactions for the recipient. |
-| Volume Anomalies | *(K.4.4)* Which sender → recipient pair just spiked above its rolling baseline? Distribution + flagged-rows table; cross-app drill into the underlying transactions for the pair × window. |
-| Money Trail | *(K.4.5)* Where did this transfer originate, and where does it go? Recursive walk up/down the `parent_transfer_id` chain; Sankey + hop-by-hop table; cross-app drill into PR Payment Reconciliation or AR Transactions depending on the edge. |
+| Getting Started | Landing page — heading + roadmap of the four question-shaped sheets below. |
+| Recipient Fanout | Who is receiving money from too many distinct senders? 3 KPIs (qualifying recipients / distinct senders / total inbound) + ranked table; threshold slider sets where "too many" starts. |
+| Volume Anomalies | Which sender → recipient pair just spiked above its rolling baseline? Backed by `inv_pair_rolling_anomalies` matview (rolling 2-day SUM per pair + population z-score). KPI flagged-pair count + σ distribution chart + ranked table; σ slider gates KPI + table while the chart shows the full population. |
+| Money Trail | Where did this transfer originate, and where does it go? Backed by `inv_money_trail_edges` matview (recursive `WITH RECURSIVE` walk over `parent_transfer_id` flattened to one row per multi-leg edge). Sankey as the headline + hop-by-hop table beside it; chain-root dropdown + max-hops + min-hop-amount controls. |
+| Account Network | What does this account's money network look like, on either side? Same matview, account-anchored. Two side-by-side directional Sankeys (inbound on the left, outbound on the right, anchor visually meeting in the middle) + touching-edges table. Walk-the-flow drill: right-click any table row or left-click any Sankey node to walk the anchor to the counterparty and re-render around the new center. |
 
 ### Shared conventions
 
@@ -115,7 +117,8 @@ datasource_arn: "arn:aws:quicksight:us-east-2:123456789012:datasource/your-datas
 # Optional: prefix for all generated resource IDs (default: qs-gen)
 resource_prefix: "qs-gen"
 
-# Optional: which theme preset to use. One of: default, sasquatch-bank, sasquatch-bank-ar
+# Optional: which theme preset to use. One of: default, sasquatch-bank,
+# sasquatch-bank-ar, sasquatch-bank-investigation
 theme_preset: "default"
 
 # Optional: IAM principals granted permissions on generated resources.
@@ -169,7 +172,7 @@ out/
   payment-recon-dashboard.json
   account-recon-analysis.json
   account-recon-dashboard.json
-  investigation-analysis.json            # K.4.2 skeleton (no datasets yet)
+  investigation-analysis.json
   investigation-dashboard.json
   datasource.json                        # demo apply only
   datasets/
@@ -205,11 +208,16 @@ out/
     qs-gen-ar-expected-zero-eod-rollup-dataset.json
     qs-gen-ar-two-sided-post-mismatch-rollup-dataset.json
     qs-gen-ar-balance-drift-timelines-rollup-dataset.json
+    qs-gen-inv-recipient-fanout-dataset.json   # 5 Investigation datasets
+    qs-gen-inv-volume-anomalies-dataset.json
+    qs-gen-inv-money-trail-dataset.json
+    qs-gen-inv-account-network-dataset.json
+    qs-gen-inv-anetwork-accounts-dataset.json
 ```
 
 ## Demo mode
 
-A deterministic demo generator seeds all three apps end-to-end so you can see them work without wiring up real data. Investigation rides on the shared `transactions` + `daily_balances` base tables; its scenario-shaped seed lands in K.4.6.
+A deterministic demo generator seeds all three apps end-to-end so you can see them work without wiring up real data. Investigation rides on the shared `transactions` + `daily_balances` base tables — no investigation-specific schema; its scenario seed plants the fanout / anomaly / chain-walk shapes that drive each sheet.
 
 ```bash
 # Emit SQL only (no DB connection needed) — schema ships in the wheel,
@@ -232,6 +240,7 @@ Datasets are all Direct Query (no SPICE), so seed changes show up immediately af
 
 - **Payment Recon — Sasquatch National Bank (merchant settlement).** Six fictional Seattle coffee shops (Bigfoot Brews, Sasquatch Sips, Yeti Espresso, Skookum Coffee Co., Cryptid Coffee Cart, Wildman's Roastery). Sales flow into settlements and payments; planted unsettled sales, returned payments, amount mismatches, and orphan external transactions populate every exception table.
 - **Account Recon — Sasquatch National Bank (treasury / GL).** Same bank from the treasury side, after SNB absorbed Farmers Exchange Bank's commercial book. Eight internal GL control accounts (Cash & Due From FRB, ACH Origination Settlement, Card Acquiring Settlement, Wire Settlement Suspense, Internal Transfer Suspense, Cash Concentration Master, Internal Suspense / Reconciliation, Customer Deposits — DDA Control) plus per-customer DDAs for three coffee retailers (Bigfoot Brews, Sasquatch Sips, Yeti Espresso) and four commercial customers (Cascade Timber Mill, Pinecrest Vineyards, Big Meadow Dairy, Harvest Moon Bakery). The Cash Management Suite drives four telling-transfer flows — ZBA / Cash Concentration sweeps, daily ACH origination sweeps to the FRB Master Account, external force-posted card settlements, and on-us internal transfers through Internal Transfer Suspense. Each flow plants both success cycles and characteristic failures so every Exceptions check (including the cross-check rollups) surfaces distinct rows.
+- **Investigation — Sasquatch National Bank (compliance / AML).** Three converging scenarios on a single anchor account, **Juniper Ridge LLC**, so every Investigation sheet has a non-empty answer and the sheets connect: a fanout cluster (12 individual depositors × 2 ACH transfers each → Juniper, drives Recipient Fanout past the default 5-sender threshold), an anomaly pair (Cascadia Trust Bank — Operations wires Juniper $300–$700 routine amounts for 8 days then a single $25,000 spike, drives Volume Anomalies past the default 2σ threshold), and a 4-hop layering chain (Cascadia → Juniper → Shell A → Shell B → Shell C with $250 residue per hop, drives Money Trail with a non-trivial Sankey). Account Network anchored on Juniper shows the full picture — depositor inbounds on the left, shell outbounds on the right.
 
 ## Theming
 
@@ -240,6 +249,7 @@ Datasets are all Direct Query (no SPICE), so seed changes show up immediately af
 | `default` | Navy / blue / grey | — |
 | `sasquatch-bank` | Forest green + bark brown + bank gold | `Demo — ` |
 | `sasquatch-bank-ar` | Valley green + harvest gold + earth | `Demo — ` |
+| `sasquatch-bank-investigation` | Slate blue + amber alert | `Demo — ` |
 
 Set `theme_preset:` in `config.yaml` (or pass `--theme-preset` to `generate` / `deploy --generate`). Add a new preset by declaring a `ThemePreset` in `src/quicksight_gen/common/theme.py` and registering it in `PRESETS`.
 
@@ -276,21 +286,21 @@ src/quicksight_gen/
             datasets.py     # 21 custom-SQL datasets
             demo_data.py    # Sasquatch National Bank — CMS treasury demo data generator
             constants.py    # Sheet + dataset identifier constants
-        investigation/      # K.4.2 skeleton — sheets land in K.4.3 / K.4.4 / K.4.5
-            analysis.py     # 4 sheets: Getting Started + 3 stubs (Fanout / Anomalies / Money Trail)
-            visuals.py      # placeholder
-            filters.py      # placeholder (no filter groups yet)
-            datasets.py     # placeholder (no datasets yet)
-            demo_data.py    # placeholder (K.4.6 plants scenarios)
-            etl_examples.py # placeholder (no app-specific ETL keys)
-            constants.py    # SheetId constants
+        investigation/
+            analysis.py     # 5 sheets: Getting Started + Fanout / Anomalies / Money Trail / Account Network
+            visuals.py      # KPIs + ranked tables + σ distribution + 3 Sankeys (chain, inbound, outbound)
+            filters.py      # 11 filter groups + parameter declarations + slider/dropdown controls
+            datasets.py     # 5 custom-SQL datasets (3 over base tables + 2 over investigation matviews)
+            demo_data.py    # Sasquatch Bank — Compliance / AML demo (fanout / anomaly / chain scenarios)
+            etl_examples.py # placeholder (no app-specific ETL keys; PR/AR examples cover the shape)
+            constants.py    # SheetId / VisualId / FilterGroupId / ParameterName + ALL_FG_INV_IDS / ALL_P_INV
     schema.py           # `generate_schema_sql()` — reads the canonical DDL
     schema.sql          # Canonical PostgreSQL DDL (interface contract for ETL); shared `transactions` + `daily_balances` base layer + AR dimension tables
     docs/               # mkdocs site source — handbook/, walkthroughs/, Schema_v3.md, Training_Story.md (extract via `quicksight-gen export docs`)
     training/           # Whitelabel handbook kit — handbook/, mapping.yaml.example (extract via `quicksight-gen export training`)
 tests/
     test_models.py, test_generate.py, test_recon.py, test_account_recon.py,
-    test_theme_presets.py, test_demo_data.py, test_demo_sql.py
+    test_investigation.py, test_theme_presets.py, test_demo_data.py, test_demo_sql.py
     e2e/                # Two-layer e2e (API + browser); skipped unless QS_GEN_E2E=1
 run_e2e.sh              # One-shot: generate + deploy + e2e
 config.example.yaml
@@ -300,7 +310,7 @@ config.example.yaml
 
 ```bash
 pytest                  # unit + integration (fast, no AWS)
-./run_e2e.sh            # regenerate + deploy both apps + e2e (pytest-xdist -n 4)
+./run_e2e.sh            # regenerate + deploy all three apps + e2e (pytest-xdist -n 4)
 ./run_e2e.sh --parallel 8            # override worker count (1 = serial; stable ceiling ~8)
 ./run_e2e.sh --skip-deploy api       # only API e2e
 ./run_e2e.sh --skip-deploy browser   # only browser e2e
@@ -308,10 +318,10 @@ pytest                  # unit + integration (fast, no AWS)
 
 Coverage:
 
-- **Unit / integration (344 tests)**: models, tags, config, CLI, demo determinism + FK integrity + scenario coverage, theme preset registry, dataset builders, visual builders, filter groups, cross-reference validation (dataset ARNs, filter bindings, visual ID uniqueness, sheet scoping), explanation coverage, schema + seed SQL structure.
-- **E2E (101 tests)**: two layers gated by `QS_GEN_E2E=1`.
-  - *API layer (boto3)* — resource existence, status, dashboard structure, dataset import health.
-  - *Browser layer (Playwright WebKit, headless)* — dashboard loads via pre-authenticated embed URL, sheet tabs, per-sheet visual counts, drill-downs, mutual-filter reconciliation tables, date-range filter narrowing, Show-Only-X toggles.
+- **Unit / integration**: models, tags, config, CLI, demo determinism + FK integrity + scenario coverage (per-app SHA256 seed-hash locks), theme preset registry, dataset builders, visual builders, filter groups, cross-reference validation (dataset ARNs, filter bindings, visual ID uniqueness, sheet scoping), explanation coverage, schema + seed SQL structure.
+- **E2E**: two layers gated by `QS_GEN_E2E=1`.
+  - *API layer (boto3)* — resource existence, status, dashboard structure (per-sheet visual counts, parameter / filter-group source-of-truth checks), dataset import health.
+  - *Browser layer (Playwright WebKit, headless)* — dashboard loads via pre-authenticated embed URL, sheet tabs, per-sheet visual counts + spot-checked titles, drill-downs, mutual-filter reconciliation tables, date-range filter narrowing, Show-Only-X toggles, Investigation slider + dropdown filters.
 
 E2E tunables (env vars): `QS_E2E_PAGE_TIMEOUT`, `QS_E2E_VISUAL_TIMEOUT`, `QS_E2E_USER_ARN`, `QS_E2E_IDENTITY_REGION`. Failure screenshots land in `tests/e2e/screenshots/<app>/` (gitignored).
 
