@@ -15,7 +15,7 @@ from quicksight_gen.common.config import load_config
 from quicksight_gen.common.theme import build_theme
 
 
-APPS = ("payment-recon", "account-recon")
+APPS = ("payment-recon", "account-recon", "investigation")
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -79,9 +79,12 @@ def generate(
     if all_apps:
         _generate_payment_recon(config, output_dir, theme_preset)
         _generate_account_recon(config, output_dir, theme_preset)
+        _generate_investigation(config, output_dir, theme_preset)
     else:
         click.echo(ctx.get_help())
-        raise click.UsageError("Specify an app (payment-recon, account-recon) or --all.")
+        raise click.UsageError(
+            "Specify an app (payment-recon, account-recon, investigation) or --all."
+        )
 
 
 @generate.command("payment-recon")
@@ -98,6 +101,15 @@ def generate_payment_recon_cmd(ctx: click.Context) -> None:
 def generate_account_recon_cmd(ctx: click.Context) -> None:
     """Generate Account Reconciliation JSON."""
     _generate_account_recon(
+        ctx.obj["config"], ctx.obj["output_dir"], ctx.obj["theme_preset"],
+    )
+
+
+@generate.command("investigation")
+@click.pass_context
+def generate_investigation_cmd(ctx: click.Context) -> None:
+    """Generate Investigation JSON."""
+    _generate_investigation(
         ctx.obj["config"], ctx.obj["output_dir"], ctx.obj["theme_preset"],
     )
 
@@ -178,6 +190,44 @@ def _generate_account_recon(
     click.echo(f"\nGenerated {1 + len(datasets) + 2} files in {out}/")
 
 
+def _generate_investigation(
+    config_path: str, output_dir: str, theme_preset: str | None,
+) -> None:
+    from quicksight_gen.apps.investigation.analysis import (
+        build_analysis,
+        build_investigation_dashboard,
+    )
+    from quicksight_gen.apps.investigation.datasets import build_all_datasets
+
+    cfg = load_config(config_path)
+    if theme_preset is not None:
+        cfg.theme_preset = theme_preset
+    out = Path(output_dir)
+    click.echo(
+        f"Investigation: account={cfg.aws_account_id}, "
+        f"region={cfg.aws_region}"
+    )
+
+    theme = build_theme(cfg)
+    _write_json(out / "theme.json", theme.to_aws_json())
+
+    datasets = build_all_datasets(cfg)
+    _prune_stale_files(
+        out / "datasets",
+        keep=_all_dataset_filenames(cfg, keep_current=datasets),
+    )
+    for ds in datasets:
+        _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
+
+    analysis = build_analysis(cfg)
+    _write_json(out / "investigation-analysis.json", analysis.to_aws_json())
+
+    dashboard = build_investigation_dashboard(cfg)
+    _write_json(out / "investigation-dashboard.json", dashboard.to_aws_json())
+
+    click.echo(f"\nGenerated {1 + len(datasets) + 2} files in {out}/")
+
+
 def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
     """Expected dataset filenames for both apps combined.
 
@@ -188,6 +238,9 @@ def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
     from quicksight_gen.apps.account_recon.datasets import (
         build_all_datasets as _ar,
     )
+    from quicksight_gen.apps.investigation.datasets import (
+        build_all_datasets as _inv,
+    )
     from quicksight_gen.apps.payment_recon.datasets import (
         build_all_datasets as _pr,
     )
@@ -195,6 +248,7 @@ def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
     names: set[str] = {f"{ds.DataSetId}.json" for ds in keep_current}
     names.update(f"{ds.DataSetId}.json" for ds in _pr(cfg))
     names.update(f"{ds.DataSetId}.json" for ds in _ar(cfg))
+    names.update(f"{ds.DataSetId}.json" for ds in _inv(cfg))
     return names
 
 
@@ -202,7 +256,7 @@ def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
 # Demo
 # ---------------------------------------------------------------------------
 
-APP_CHOICE = click.Choice(["payment-recon", "account-recon"])
+APP_CHOICE = click.Choice(["payment-recon", "account-recon", "investigation"])
 
 
 @main.group()
@@ -249,12 +303,18 @@ def demo_seed(app: str | None, all_apps: bool, output: str) -> None:
         generate_demo_sql as generate_pr_sql,
     )
 
+    from quicksight_gen.apps.investigation.demo_data import (
+        generate_demo_sql as generate_inv_sql,
+    )
+
     if app == "payment-recon":
         sql = generate_pr_sql()
     elif app == "account-recon":
         sql = generate_ar_sql()
+    elif app == "investigation":
+        sql = generate_inv_sql()
     else:  # all
-        sql = generate_pr_sql() + "\n" + generate_ar_sql()
+        sql = generate_pr_sql() + "\n" + generate_ar_sql() + "\n" + generate_inv_sql()
 
     out = Path(output)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -286,12 +346,22 @@ def demo_etl_example(app: str | None, all_apps: bool, output: str) -> None:
         generate_etl_examples_sql as generate_pr_examples,
     )
 
+    from quicksight_gen.apps.investigation.etl_examples import (
+        generate_etl_examples_sql as generate_inv_examples,
+    )
+
     if app == "payment-recon":
         sql = generate_pr_examples()
     elif app == "account-recon":
         sql = generate_ar_examples()
+    elif app == "investigation":
+        sql = generate_inv_examples()
     else:  # all
-        sql = generate_pr_examples() + "\n" + generate_ar_examples()
+        sql = (
+            generate_pr_examples() + "\n"
+            + generate_ar_examples() + "\n"
+            + generate_inv_examples()
+        )
 
     out = Path(output)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -336,6 +406,16 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     from quicksight_gen.apps.account_recon.demo_data import (
         generate_demo_sql as generate_ar_sql,
     )
+    from quicksight_gen.apps.investigation.analysis import (
+        build_analysis as build_inv_analysis,
+        build_investigation_dashboard,
+    )
+    from quicksight_gen.apps.investigation.datasets import (
+        build_all_datasets as build_inv_datasets,
+    )
+    from quicksight_gen.apps.investigation.demo_data import (
+        generate_demo_sql as generate_inv_sql,
+    )
     from quicksight_gen.apps.payment_recon.analysis import (
         build_analysis as build_pr_analysis,
         build_payment_recon_dashboard,
@@ -371,6 +451,8 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
         seed_parts.append(generate_pr_sql())
     if app in ("account-recon", "all"):
         seed_parts.append(generate_ar_sql())
+    if app in ("investigation", "all"):
+        seed_parts.append(generate_inv_sql())
     seed_sql = "\n".join(seed_parts)
 
     click.echo(f"Connecting to {cfg.demo_database_url.split('@')[-1]}...")
@@ -391,9 +473,10 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     finally:
         conn.close()
 
-    preset = (
-        "sasquatch-bank-ar" if app == "account-recon" else "sasquatch-bank"
-    )
+    preset = {
+        "account-recon": "sasquatch-bank-ar",
+        "investigation": "sasquatch-bank-investigation",
+    }.get(app, "sasquatch-bank")
     click.echo(f"\nGenerating QuickSight JSON with {preset} theme...")
     cfg.theme_preset = preset
     out = Path(output_dir)
@@ -432,6 +515,20 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
             build_account_recon_dashboard(cfg).to_aws_json(),
         )
         json_count += len(ar_datasets) + 2
+
+    if app in ("investigation", "all"):
+        inv_datasets = build_inv_datasets(cfg)
+        for ds in inv_datasets:
+            _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
+        _write_json(
+            out / "investigation-analysis.json",
+            build_inv_analysis(cfg).to_aws_json(),
+        )
+        _write_json(
+            out / "investigation-dashboard.json",
+            build_investigation_dashboard(cfg).to_aws_json(),
+        )
+        json_count += len(inv_datasets) + 2
 
     click.echo(f"\nDone. {json_count} JSON files in {out}/")
 
@@ -475,6 +572,8 @@ def deploy_cmd(
             _generate_payment_recon(config, output_dir, theme_preset)
         if app_name in ("account-recon", "all"):
             _generate_account_recon(config, output_dir, theme_preset)
+        if app_name in ("investigation", "all"):
+            _generate_investigation(config, output_dir, theme_preset)
 
     cfg = load_config(config)
     if app_name == "all":
@@ -745,7 +844,9 @@ def _resolve_app(app: str | None, all_apps: bool, *, allow_all: bool) -> str:
             raise click.UsageError("--all is not supported for this command.")
         return "all"
     if app is None:
-        raise click.UsageError("Specify an app (payment-recon, account-recon) or --all.")
+        raise click.UsageError(
+            "Specify an app (payment-recon, account-recon, investigation) or --all."
+        )
     return app
 
 

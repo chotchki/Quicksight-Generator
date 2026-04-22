@@ -4,12 +4,13 @@
 [![Coverage](https://raw.githubusercontent.com/chotchki/Quicksight-Generator/badges/coverage-badge.svg)](https://github.com/chotchki/Quicksight-Generator/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/quicksight-gen.svg)](https://pypi.org/project/quicksight-gen/)
 
-Python tool that programmatically generates AWS QuickSight JSON definitions (theme, datasets, analyses, dashboards) and deploys them via boto3. It currently ships two independent QuickSight apps:
+Python tool that programmatically generates AWS QuickSight JSON definitions (theme, datasets, analyses, dashboards) and deploys them via boto3. It currently ships three independent QuickSight apps:
 
 - **Payment Reconciliation** — sales → settlements → payments → external-system matching for a merchant bank.
 - **Account Reconciliation** — stored daily balances, transfers, and postings for a double-entry ledger.
+- **Investigation** — compliance / AML triage: recipient fanout, volume anomalies, and money-trail provenance over the shared base ledger. *(K.4.2 skeleton — sheets land in K.4.3 / K.4.4 / K.4.5.)*
 
-Both apps share one theme, one AWS account, one datasource, and the same CLI surface (`quicksight-gen generate|deploy|demo|cleanup`). Change the Python (or ask Claude), re-run `deploy --generate`, get a new dashboard.
+All three apps share one theme registry, one AWS account, one datasource, and the same CLI surface (`quicksight-gen generate|deploy|demo|cleanup`). Change the Python (or ask Claude), re-run `deploy --generate`, get a new dashboard.
 
 ## Demo Docs
 
@@ -25,7 +26,7 @@ Source lives in `src/quicksight_gen/docs/` (shipped with the wheel — extract w
 
 The customer for these reports doesn't know exactly what they want yet. Rather than click through the QuickSight console and lose the work when requirements change, everything is generated from code and deployed idempotently (delete-then-create). Iteration is one command.
 
-## The two apps
+## The three apps
 
 ### Payment Reconciliation — 6 tabs
 
@@ -47,6 +48,15 @@ The customer for these reports doesn't know exactly what they want yet. Rather t
 | Transfers | One row per `transfer_id` with net-zero flags. Click to drill into transactions. |
 | Transactions | Raw ledger (one row per leg, with an `origin` tag for filtering), filtered by date / type / posting-level / origin / Show-Only-Failed. |
 | Exceptions | Cross-check rollups at the top (expected-zero EOD, two-sided post mismatch, balance-drift timelines), then per-check details: ledger / sub-ledger drift, non-zero transfers, limit breaches, overdrafts, and seven Cash Management Suite checks (ZBA sweep, ACH origination non-zero EOD, missing Fed confirmations, force-posted card without internal catch-up, GL-vs-Fed Master drift, stuck-in-suspense, reversed-but-not-credited). Aging bars on every check. |
+
+### Investigation — 4 tabs *(K.4.2 skeleton — visuals incoming)*
+
+| Tab | What it shows |
+|---|---|
+| Getting Started | Landing page — heading + roadmap of the three question-shaped sheets below. |
+| Recipient Fanout | *(K.4.3)* Who is receiving money from too many distinct senders? KPI + ranked table; cross-app drill into AR Transactions for the recipient. |
+| Volume Anomalies | *(K.4.4)* Which sender → recipient pair just spiked above its rolling baseline? Distribution + flagged-rows table; cross-app drill into the underlying transactions for the pair × window. |
+| Money Trail | *(K.4.5)* Where did this transfer originate, and where does it go? Recursive walk up/down the `parent_transfer_id` chain; Sankey + hop-by-hop table; cross-app drill into PR Payment Reconciliation or AR Transactions depending on the edge. |
 
 ### Shared conventions
 
@@ -127,7 +137,7 @@ All values can also be set via `QS_GEN_`-prefixed environment variables (e.g. `Q
 ### Generate and deploy
 
 ```bash
-# Generate both apps' JSON
+# Generate all three apps' JSON
 quicksight-gen generate --all -c config.yaml -o out/
 
 # Deploy everything (delete-then-create, idempotent)
@@ -137,8 +147,10 @@ quicksight-gen deploy --all -c config.yaml -o out/
 quicksight-gen deploy --all --generate -c config.yaml -o out/
 
 # Deploy a single app
-quicksight-gen generate payment-recon -c config.yaml -o out/
-quicksight-gen deploy  payment-recon -c config.yaml -o out/
+quicksight-gen generate payment-recon  -c config.yaml -o out/
+quicksight-gen generate account-recon  -c config.yaml -o out/
+quicksight-gen generate investigation  -c config.yaml -o out/
+quicksight-gen deploy   payment-recon  -c config.yaml -o out/
 ```
 
 `deploy` polls async resources (analyses, dashboards) until they reach a terminal state. Resources with the `ManagedBy: quicksight-gen` tag that aren't in the current output aren't touched — clean those up explicitly:
@@ -157,6 +169,8 @@ out/
   payment-recon-dashboard.json
   account-recon-analysis.json
   account-recon-dashboard.json
+  investigation-analysis.json            # K.4.2 skeleton (no datasets yet)
+  investigation-dashboard.json
   datasource.json                        # demo apply only
   datasets/
     qs-gen-merchants-dataset.json              # 11 PR datasets
@@ -195,7 +209,7 @@ out/
 
 ## Demo mode
 
-A deterministic demo generator seeds both apps end-to-end so you can see them work without wiring up real data.
+A deterministic demo generator seeds all three apps end-to-end so you can see them work without wiring up real data. Investigation rides on the shared `transactions` + `daily_balances` base tables; its scenario-shaped seed lands in K.4.6.
 
 ```bash
 # Emit SQL only (no DB connection needed) — schema ships in the wheel,
@@ -240,7 +254,7 @@ src/quicksight_gen/
     common/
         config.py       # Config dataclass + YAML/env loader
         models.py       # Dataclasses mapping to QuickSight API JSON
-        theme.py        # Theme presets (default, sasquatch-bank, sasquatch-bank-ar)
+        theme.py        # Theme presets (default, sasquatch-bank, sasquatch-bank-ar, sasquatch-bank-investigation)
         deploy.py       # Python deploy (delete-then-create, async waiters)
         cleanup.py      # Tag-based cleanup of stale resources
         clickability.py # Conditional-format helpers (plain + menu-link accent styles)
@@ -262,6 +276,14 @@ src/quicksight_gen/
             datasets.py     # 21 custom-SQL datasets
             demo_data.py    # Sasquatch National Bank — CMS treasury demo data generator
             constants.py    # Sheet + dataset identifier constants
+        investigation/      # K.4.2 skeleton — sheets land in K.4.3 / K.4.4 / K.4.5
+            analysis.py     # 4 sheets: Getting Started + 3 stubs (Fanout / Anomalies / Money Trail)
+            visuals.py      # placeholder
+            filters.py      # placeholder (no filter groups yet)
+            datasets.py     # placeholder (no datasets yet)
+            demo_data.py    # placeholder (K.4.6 plants scenarios)
+            etl_examples.py # placeholder (no app-specific ETL keys)
+            constants.py    # SheetId constants
     schema.py           # `generate_schema_sql()` — reads the canonical DDL
     schema.sql          # Canonical PostgreSQL DDL (interface contract for ETL); shared `transactions` + `daily_balances` base layer + AR dimension tables
     docs/               # mkdocs site source — handbook/, walkthroughs/, Schema_v3.md, Training_Story.md (extract via `quicksight-gen export docs`)
