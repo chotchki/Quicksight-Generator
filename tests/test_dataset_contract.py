@@ -188,21 +188,13 @@ class TestPaymentReconLateness:
             "(CURRENT_TIMESTAMP > COALESCE(expected_complete_at, ...))"
         )
 
-    def test_match_status_does_not_use_late_default_days(self, cfg):
-        # Operator-threshold pattern retired in K.3.2 in favor of data-driven
-        # is_late. The cfg field may still exist (deprecation in K.3.3) but
-        # the SQL projection must not reference it.
-        cfg_high = Config(
-            aws_account_id="111122223333",
-            aws_region="us-east-2",
-            datasource_arn="arn:aws:quicksight:us-east-2:111122223333:datasource/ds",
-            late_default_days=999,
-        )
-        ds = pr_datasets.build_payment_recon_dataset(cfg_high)
+    def test_match_status_does_not_reference_retired_late_default_days(self, cfg):
+        # K.3.3 retired cfg.late_default_days entirely. The SQL must not
+        # mention the old config field name as a stale reference.
+        ds = pr_datasets.build_payment_recon_dataset(cfg)
         sql = next(iter(ds.PhysicalTableMap.values())).CustomSql.SqlQuery
-        assert "999" not in sql, (
-            "match_status CASE should no longer interpolate "
-            "cfg.late_default_days into the SQL"
+        assert "late_default_days" not in sql, (
+            "match_status CASE should no longer reference late_default_days"
         )
 
 

@@ -1189,6 +1189,11 @@ def build_todays_exceptions_visuals(
                             _unagg_field("ar-todays-exc-days",
                                          DS_AR_UNIFIED_EXCEPTIONS,
                                          "days_outstanding"),
+                            # K.3.3: data-driven Late / On Time label,
+                            # derived from each row's expected_complete_at.
+                            _unagg_field("ar-todays-exc-is-late",
+                                         DS_AR_UNIFIED_EXCEPTIONS,
+                                         "is_late"),
                             _unagg_field("ar-todays-exc-account",
                                          DS_AR_UNIFIED_EXCEPTIONS,
                                          "account_id"),

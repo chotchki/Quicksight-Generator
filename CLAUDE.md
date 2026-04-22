@@ -109,7 +109,7 @@ src/quicksight_gen/
   __main__.py            # Entry point (delegates to cli.main)
   cli.py                 # Click CLI: generate / deploy / cleanup / demo (all with --all or app arg)
   common/
-    config.py            # Config dataclass + YAML/env loader (principal_arns list, late_default_days, theme_preset)
+    config.py            # Config dataclass + YAML/env loader (principal_arns list, theme_preset)
     models.py            # Dataclasses mapping to QuickSight API JSON (to_aws_json + _strip_nones)
     theme.py             # Theme presets (default / sasquatch-bank / sasquatch-bank-ar); PRESETS registry
     deploy.py            # boto3 delete-then-create deploy with async waiters
@@ -190,7 +190,7 @@ The legacy 12-table family (`pr_*`, `transfer`, `posting`, `ar_*_daily_balances`
 - Payments leave the internal system, so only payments reconcile against external systems
 - Multiple external systems (BankSync, PaymentHub, ClearSettle) aggregate 1+ internal payments into one external transaction
 - Match is valid only when external total exactly equals sum of linked payments — no partials
-- Match statuses: **matched**, **not_yet_matched**, **late** (threshold: `late_default_days`, default 30 — slider also available)
+- Match statuses: **matched**, **not_yet_matched**, **late** (data-driven: `late` ↔ `CURRENT_TIMESTAMP > COALESCE(expected_complete_at, posted_at + INTERVAL '1 day')`; the per-row `is_late` column carries the same predicate as a `'Late'` / `'On Time'` label)
 - Mutual table filtering on the Payment Reconciliation tab: clicking an external txn filters its payments; clicking a payment filters back
 - All 5 PR exception checks and the Payment Recon tab carry `aging_bucket` (same 5-band pattern as AR) with aging bar charts
 - **Transfer chain** (parent → child): `external_txn → payment → settlement → sale`, linked by `parent_transfer_id` in `transactions`. PR account rows in `transactions` / `daily_balances` use `account_type IN ('gl_control', 'merchant_dda', 'external_counter')`; merchant sub-ledgers and the external customer pool / external rail roll up to the synthetic `pr-merchant-ledger` control account. PR-specific metadata (`card_brand`, `cashier`, `settlement_type`, `payment_method`, `is_returned`, `return_reason`, etc.) lives in the `metadata` JSON column and is read via `JSON_VALUE(metadata, '$.<key>')`.

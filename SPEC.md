@@ -65,7 +65,7 @@ Pipeline: **Sales → Settlements → Payments → External Transactions**, plus
 - Payments leave the internal system; only payments reconcile against external systems
 - Multiple external systems (BankSync, PaymentHub, ClearSettle) aggregate 1+ internal payments into one external transaction
 - A match is valid only when the external total equals the sum of linked payments — no partials
-- Match statuses: `matched`, `not_yet_matched`, `late` (threshold: `late_default_days`, default 30; user-adjustable per-tab slider)
+- Match statuses: `matched`, `not_yet_matched`, `late` (data-driven; `late` ↔ `CURRENT_TIMESTAMP > COALESCE(expected_complete_at, posted_at + INTERVAL '1 day')`; v3.8.0 retired the legacy `late_default_days` slider in favour of a per-row `is_late` column)
 - Side-by-side mutual filtering on the Payment Reconciliation tab: clicking an external txn filters its payments; clicking a payment filters back
 - All 5 PR exception checks plus the Payment Recon tab carry `aging_bucket` (5 hardcoded bands) with horizontal aging bar charts
 

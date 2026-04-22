@@ -117,10 +117,14 @@ Each field, what it controls, and what breaks if you set it wrong:
   ownership (`Owner: gl-recon`), or environment
   (`Environment: prod`). The deploy refreshes tags on every
   run.
-- **`late_default_days`** (default 30) — initial value for the
-  PR Late-Threshold slider on the Settlements / Payments
-  pipeline tabs. Customer-facing; pick the number of days your
-  bank's payment ops considers "late by default."
+
+> **Note (v3.8.0):** the prior `late_default_days` knob is gone.
+> Lateness is now data-driven — each transaction row carries an
+> optional `expected_complete_at` timestamp, and the generated
+> SQL surfaces an `is_late` column that flips when
+> `CURRENT_TIMESTAMP > COALESCE(expected_complete_at,
+> posted_at + INTERVAL '1 day')`. See the ETL handbook section
+> on `expected_complete_at` for the population contract.
 
 ### Demo-only
 
@@ -149,7 +153,6 @@ The mapping (from `config.py:90-98`):
 | `principal_arns`    | `QS_GEN_PRINCIPAL_ARNS` (CSV)    |
 | `theme_preset`      | `QS_GEN_THEME_PRESET`            |
 | `demo_database_url` | `QS_GEN_DEMO_DATABASE_URL`       |
-| `late_default_days` | `QS_GEN_LATE_DEFAULT_DAYS`       |
 
 CI pattern: commit `examples/config.yaml` as the staging
 template, override `QS_GEN_AWS_ACCOUNT_ID` /

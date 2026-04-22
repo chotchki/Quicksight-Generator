@@ -472,7 +472,7 @@ def _optional_metadata_filter_groups() -> list[FilterGroup]:
 
 def build_filter_groups(cfg: Config) -> list[FilterGroup]:
     """Return all filter groups for the analysis definition."""
-    del cfg  # slider default is independent of late_default_days
+    del cfg
     groups = [
         *[
             _date_range_filter_group(spec, sheet_id, ds, col)

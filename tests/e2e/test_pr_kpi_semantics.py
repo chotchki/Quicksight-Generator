@@ -273,12 +273,11 @@ class TestReconKpiScope:
         assert _count_rows(pg_conn, as_displayed) == _count_rows(pg_conn, expected_scope)
         # Floor: late demo data exists. The seed plants stale ext_txns
         # (TestScenarioCoverage::test_orphan_external_txns_exist >= 8);
-        # any orphan older than late_default_days qualifies.
-        late_days = cfg.late_default_days
+        # any orphan past its expected_complete_at qualifies under the
+        # K.3.2+ data-driven is_late predicate.
         assert _count_rows(pg_conn, as_displayed) > 0, (
-            f"Late KPI is empty — no orphan ext_txns older than "
-            f"late_default_days={late_days}. Either the demo's clock "
-            f"shifted or the late threshold widened past the demo span."
+            "Late KPI is empty — no orphan ext_txns past their "
+            "expected_complete_at. Demo clock may have shifted."
         )
 
     def test_matched_amount_scope(self, pg_conn, cfg):

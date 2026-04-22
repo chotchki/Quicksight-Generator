@@ -215,7 +215,8 @@ def build_payment_recon_visuals(link_color: str) -> list[Visual]:
             VisualId=V_PR_RECON_KPI_LATE_COUNT,
             Title=_title("Late Transactions"),
             Subtitle=_subtitle(
-                "Transactions that have exceeded the late threshold without matching"
+                "Unmatched transactions past their expected completion time "
+                "(per-row is_late = 'Late')"
             ),
             ChartConfiguration=KPIConfiguration(
                 FieldWells=KPIFieldWells(

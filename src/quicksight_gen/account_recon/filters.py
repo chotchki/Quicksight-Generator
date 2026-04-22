@@ -47,6 +47,7 @@ from quicksight_gen.account_recon.constants import (
     FG_AR_TODAYS_EXC_ACCOUNT,
     FG_AR_TODAYS_EXC_AGING,
     FG_AR_TODAYS_EXC_CHECK_TYPE,
+    FG_AR_TODAYS_EXC_IS_LATE,
     FG_AR_TRANSACTION_STATUS,
     FG_AR_TRANSACTIONS_FAILED,
     FG_AR_TRANSFER_STATUS,
@@ -424,6 +425,22 @@ def _todays_exceptions_aging_filter_group() -> FilterGroup:
     )
 
 
+def _todays_exceptions_is_late_filter_group() -> FilterGroup:
+    # K.3.3: surfaces the data-driven is_late predicate as a sheet-scoped
+    # picker (Late / On Time). Lets ops triage by lateness without
+    # eyeballing days_outstanding against a mental threshold — the
+    # `expected_complete_at` ETL column tells the answer per row.
+    return _multi_select_filter_group(
+        fg_id=FG_AR_TODAYS_EXC_IS_LATE,
+        filter_id="filter-ar-todays-exc-is-late",
+        title="Lateness",
+        dataset_id=DS_AR_UNIFIED_EXCEPTIONS,
+        column_name="is_late",
+        sheet_ids=_UNIFIED_EXCEPTIONS_SHEETS,
+        cross_dataset="SINGLE_DATASET",
+    )
+
+
 def build_filter_groups(cfg: Config) -> list[FilterGroup]:
     del cfg
     return [
@@ -471,6 +488,8 @@ def build_filter_groups(cfg: Config) -> list[FilterGroup]:
         _todays_exceptions_check_type_filter_group(),
         _todays_exceptions_account_filter_group(),
         _todays_exceptions_aging_filter_group(),
+        # Phase K.3.3 — data-driven Lateness picker (Late / On Time)
+        _todays_exceptions_is_late_filter_group(),
     ]
 
 
@@ -615,6 +634,9 @@ def build_todays_exceptions_controls(cfg: Config) -> list[FilterControl]:
         _cross_sheet_control(
             "todays-exc", "aging", "filter-ar-todays-exc-aging",
         ),
+        _cross_sheet_control(
+            "todays-exc", "is-late", "filter-ar-todays-exc-is-late",
+        ),
     ]
 
 
@@ -638,6 +660,9 @@ def build_exceptions_trends_controls(cfg: Config) -> list[FilterControl]:
         ),
         _cross_sheet_control(
             "exc-trends", "aging", "filter-ar-todays-exc-aging",
+        ),
+        _cross_sheet_control(
+            "exc-trends", "is-late", "filter-ar-todays-exc-is-late",
         ),
     ]
 

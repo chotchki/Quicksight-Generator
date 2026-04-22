@@ -37,6 +37,7 @@ from quicksight_gen.account_recon.constants import (
     FG_AR_DS_BALANCE_DATE,
     FG_AR_LEDGER_ACCOUNT,
     FG_AR_SUBLEDGER_ACCOUNT,
+    FG_AR_TODAYS_EXC_IS_LATE,
     FG_AR_TRANSACTION_STATUS,
     FG_AR_TRANSACTIONS_FAILED,
     FG_AR_TRANSFER_STATUS,
@@ -3362,3 +3363,66 @@ class TestCli:
         assert "INSERT INTO transactions" in content
         assert "pr-merchant-ledger" in content  # PR-only ledger account
         assert "INSERT INTO ar_ledger_transfer_limits" in content  # AR-only
+
+
+# ---------------------------------------------------------------------------
+# K.3.3 — is_late picker + table column on Today's Exceptions / Trends
+# ---------------------------------------------------------------------------
+
+class TestTodaysExceptionsLatenessFilter:
+    """K.3.3 wires a Lateness picker (Late / On Time) into both unified-
+    exceptions sheets, and surfaces the is_late column in the table so
+    operators can read what the picker filters on."""
+
+    def test_filter_group_registered(self, ar_output_dir):
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        fg = _find_fg(analysis, FG_AR_TODAYS_EXC_IS_LATE)
+        cf = fg["Filters"][0]["CategoryFilter"]
+        assert cf["Column"]["ColumnName"] == "is_late"
+
+    def test_filter_group_scoped_to_both_sheets(self, ar_output_dir):
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        fg = _find_fg(analysis, FG_AR_TODAYS_EXC_IS_LATE)
+        scopes = fg["ScopeConfiguration"]["SelectedSheets"][
+            "SheetVisualScopingConfigurations"
+        ]
+        sheet_ids = {s["SheetId"] for s in scopes}
+        assert sheet_ids == {
+            SHEET_AR_TODAYS_EXCEPTIONS,
+            SHEET_AR_EXCEPTIONS_TRENDS,
+        }
+
+    @pytest.mark.parametrize(
+        "sheet_id, ctrl_id",
+        [
+            (SHEET_AR_TODAYS_EXCEPTIONS, "ctrl-ar-todays-exc-is-late"),
+            (SHEET_AR_EXCEPTIONS_TRENDS, "ctrl-ar-exc-trends-is-late"),
+        ],
+    )
+    def test_control_present_on_sheet(
+        self, ar_output_dir, sheet_id: str, ctrl_id: str,
+    ):
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        sheet = _find_sheet(analysis, sheet_id)
+        ctrl_ids = []
+        for ctrl in sheet.get("FilterControls", []):
+            for body in ctrl.values():
+                if isinstance(body, dict) and "FilterControlId" in body:
+                    ctrl_ids.append(body["FilterControlId"])
+        assert ctrl_id in ctrl_ids, (
+            f"Sheet {sheet_id} missing Lateness control {ctrl_id}; "
+            f"controls present: {ctrl_ids}"
+        )
+
+    def test_unified_table_surfaces_is_late_column(self, ar_output_dir):
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        v = _find_visual(analysis, V_AR_TODAYS_EXC_TABLE)
+        unagg = (
+            v["ChartConfiguration"]["FieldWells"]
+             ["TableUnaggregatedFieldWells"]["Values"]
+        )
+        col_names = [f["Column"]["ColumnName"] for f in unagg]
+        assert "is_late" in col_names, (
+            f"Today's Exceptions table missing is_late column; "
+            f"present columns: {col_names}"
+        )

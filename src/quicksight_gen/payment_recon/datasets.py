@@ -716,9 +716,10 @@ def build_payment_recon_dataset(cfg: Config) -> DataSet:
     # K.3.2: match_status switched from the operator-threshold pattern
     # `(CURRENT_DATE - posted_at::date) > late_default_days` to the
     # data-driven is_late predicate against the row's
-    # `expected_complete_at` (with the standard +1-day fallback). The
-    # cfg.late_default_days knob is no longer interpolated here — the
-    # K.3.3 follow-up retires the slider entirely.
+    # `expected_complete_at` (with the standard +1-day fallback).
+    # K.3.3 retired the `cfg.late_default_days` config knob entirely
+    # — the data answers, the slider only ever existed because the
+    # data didn't.
     sql = f"""\
 SELECT
     JSON_VALUE(et.metadata, '$.external_transaction_id')             AS transaction_id,

@@ -113,9 +113,6 @@ theme_preset: "default"
 principal_arns:
   - "arn:aws:quicksight:us-east-1:123456789012:user/default/admin"
 
-# Optional: default value for any "late" / "days outstanding" filter (default: 30)
-late_default_days: 30
-
 # Optional: additional tags on every generated resource
 extra_tags:
   Environment: production

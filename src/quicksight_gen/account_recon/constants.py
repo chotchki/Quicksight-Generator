@@ -61,6 +61,7 @@ FG_AR_DS_BALANCE_DATE = FilterGroupId("fg-ar-ds-balance-date")
 FG_AR_TODAYS_EXC_CHECK_TYPE = FilterGroupId("fg-ar-todays-exc-check-type")
 FG_AR_TODAYS_EXC_ACCOUNT = FilterGroupId("fg-ar-todays-exc-account")
 FG_AR_TODAYS_EXC_AGING = FilterGroupId("fg-ar-todays-exc-aging")
+FG_AR_TODAYS_EXC_IS_LATE = FilterGroupId("fg-ar-todays-exc-is-late")
 
 # Source of truth for tests asserting "every filter group is registered here".
 # Add new FG_AR_* constants and remember to extend this set.
@@ -88,6 +89,7 @@ ALL_FG_AR_IDS: frozenset[FilterGroupId] = frozenset({
     FG_AR_TODAYS_EXC_CHECK_TYPE,
     FG_AR_TODAYS_EXC_ACCOUNT,
     FG_AR_TODAYS_EXC_AGING,
+    FG_AR_TODAYS_EXC_IS_LATE,
 })
 
 # ---------------------------------------------------------------------------
