@@ -76,7 +76,20 @@ See Training_Story.md, the executives want data!
 
 ## Tech Debt
 - Are there more invariants that are better encoded into the type system? K.2 did this for drill-param shape compatibility (`common/drill.py`: `ColumnShape` + `DrillParam` + `DrillSourceField` + `cross_sheet_drill()` refuse mismatched wirings at construction time) and codified the rule in `CLAUDE.md`. Plenty of stringly-typed wiring still elsewhere — sheet IDs, parameter names, filter group IDs, dataset identifiers, calc-field expressions referencing column names — each is a candidate for the same treatment when the next bug class motivates it.
-- The api approach still feels very constant heavy. I feel like we could move towards a builder pattern and greatly reduce the effort required.
+
+# Evolving the app
+- The code base's approach still feels very constant heavy. I feel like we could move towards a builder pattern and greatly reduce the effort required.
   - Basically it feels like due to the hierchical nature of the Dasboards, we should be able to "build" up a tree structure that auto derives its IDs based off the title with separators, maybe first character of each title word separated by hyphens.
+  - Example Structure (not complete):
+    - App
+      - Dashboard
+        - Analysis
+          - Sheet
+            - Parameters
+            - Filters
+            - Visuals
+          - Cross Sheet Filters
   - we can then pass the built objects to builds for actions/cross-sheet filters/etc instead of maintaining a huge list of constants
-  -
+  - when we're ready to produce the json the tree and can recursively walk itself, calling the existing lower level classes and then producing final json
+  - Would also allow for even stronger typing
+  - This would be in common and the apps continue to be an opinionated implementation of this
