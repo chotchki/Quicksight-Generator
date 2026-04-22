@@ -1477,3 +1477,87 @@ SELECT
     END                                             AS z_bucket
 FROM pair_windows pw
 CROSS JOIN population pop;
+
+
+-- Investigation: money-trail recursive-CTE matview (Phase K.4.5).
+-- Money Trail sheet walks `parent_transfer_id` chains from a given root,
+-- flattening each hop to a (source_account, target_account, hop_amount)
+-- edge so a Sankey can render the chain. Computing the recursive walk +
+-- leg pairing on every dataset query was a non-starter for QuickSight
+-- Direct Query at chain depths > 2, so the work happens at refresh time
+-- and the dataset is a thin SELECT * with parameter-bound filters.
+--
+-- Two-step structure:
+--   1. WITH RECURSIVE walks `parent_transfer_id` from each root (transfer
+--      with NULL parent) down through descendants, tagging every member
+--      with its `root_transfer_id` and `depth`.
+--   2. Each chain member is then joined back to `transactions` and split
+--      into source-leg (signed_amount < 0) × target-leg (signed_amount > 0)
+--      pairs sharing the transfer_id, producing one row per edge.
+--
+-- Multi-leg-only semantics: single-leg transfers (sale records, the
+-- inflow-only `external_txn` arrival rows) have no source or no target
+-- leg by themselves and are dropped from the trail. They still appear
+-- as chain members (counted by depth) — they just don't contribute
+-- visible edges. The chain ancestry is preserved because the recursive
+-- walk operates on `transfer_id` / `parent_transfer_id` directly, not
+-- on legs. To inspect a single-leg member, drill from the row into
+-- AR Transactions filtered to that transfer_id.
+--
+-- IMPORTANT — refresh contract: this matview is NOT auto-refreshed.
+-- Operators must run
+--     REFRESH MATERIALIZED VIEW inv_money_trail_edges;
+-- after each ETL load (the demo's `quicksight-gen demo apply` does
+-- this automatically, alongside the ar_unified_exceptions and
+-- inv_pair_rolling_anomalies refreshes).
+DROP MATERIALIZED VIEW IF EXISTS inv_money_trail_edges;
+CREATE MATERIALIZED VIEW inv_money_trail_edges AS
+WITH RECURSIVE
+distinct_transfers AS (
+    -- One row per transfer_id with its parent. transactions has one row
+    -- per leg, so we deduplicate before walking — the parent linkage is
+    -- transfer-level, not leg-level.
+    SELECT DISTINCT transfer_id, parent_transfer_id
+    FROM transactions
+),
+chain AS (
+    -- Roots: transfers with no parent. Each root labels itself.
+    SELECT
+        transfer_id,
+        transfer_id AS root_transfer_id,
+        0           AS depth
+    FROM distinct_transfers
+    WHERE parent_transfer_id IS NULL
+
+    UNION ALL
+
+    -- Descendants inherit the root and bump depth.
+    SELECT
+        d.transfer_id,
+        c.root_transfer_id,
+        c.depth + 1
+    FROM distinct_transfers d
+    JOIN chain c ON d.parent_transfer_id = c.transfer_id
+)
+SELECT
+    c.root_transfer_id,
+    c.transfer_id,
+    c.depth,
+    src.account_id           AS source_account_id,
+    src.account_name         AS source_account_name,
+    src.account_type         AS source_account_type,
+    tgt.account_id           AS target_account_id,
+    tgt.account_name         AS target_account_name,
+    tgt.account_type         AS target_account_type,
+    tgt.signed_amount        AS hop_amount,
+    tgt.posted_at            AS posted_at,
+    tgt.transfer_type        AS transfer_type
+FROM chain c
+JOIN transactions tgt
+  ON tgt.transfer_id = c.transfer_id
+ AND tgt.signed_amount > 0
+ AND tgt.status = 'success'
+JOIN transactions src
+  ON src.transfer_id = c.transfer_id
+ AND src.signed_amount < 0
+ AND src.status = 'success';

@@ -502,6 +502,46 @@ class TableVisual:
     ConditionalFormatting: dict[str, Any] | None = None
 
 
+# -- Sankey diagram --
+
+@dataclass
+class SankeyDiagramAggregatedFieldWells:
+    Source: list[DimensionField] | None = None
+    Destination: list[DimensionField] | None = None
+    Weight: list[MeasureField] | None = None
+
+
+@dataclass
+class SankeyDiagramFieldWells:
+    SankeyDiagramAggregatedFieldWells: SankeyDiagramAggregatedFieldWells | None = None
+
+
+@dataclass
+class SankeyDiagramSortConfiguration:
+    # ItemsLimitConfiguration shape: {"ItemsLimit": int, "OtherCategories": "INCLUDE"|"EXCLUDE"}.
+    # Caps how many distinct source / destination nodes the diagram
+    # renders; over-cap entries roll up into "Other" or get dropped.
+    WeightSort: list[dict[str, Any]] | None = None
+    SourceItemsLimit: dict[str, Any] | None = None
+    DestinationItemsLimit: dict[str, Any] | None = None
+
+
+@dataclass
+class SankeyDiagramChartConfiguration:
+    FieldWells: SankeyDiagramFieldWells | None = None
+    SortConfiguration: SankeyDiagramSortConfiguration | None = None
+    DataLabels: dict[str, Any] | None = None
+
+
+@dataclass
+class SankeyDiagramVisual:
+    VisualId: str
+    Title: VisualTitleLabelOptions | None = None
+    Subtitle: VisualSubtitleLabelOptions | None = None
+    ChartConfiguration: SankeyDiagramChartConfiguration | None = None
+    Actions: list[VisualCustomAction] | None = None
+
+
 # -- Custom actions (drill-down navigation, filtering) --
 
 @dataclass
@@ -577,6 +617,7 @@ class Visual:
     PieChartVisual: PieChartVisual | None = None
     KPIVisual: KPIVisual | None = None
     TableVisual: TableVisual | None = None
+    SankeyDiagramVisual: SankeyDiagramVisual | None = None
 
 
 # ---------------------------------------------------------------------------

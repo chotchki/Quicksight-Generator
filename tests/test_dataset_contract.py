@@ -104,6 +104,8 @@ INV_BUILDERS_AND_CONTRACTS = [
      inv_datasets.RECIPIENT_FANOUT_CONTRACT),
     (inv_datasets.build_volume_anomalies_dataset,
      inv_datasets.VOLUME_ANOMALIES_CONTRACT),
+    (inv_datasets.build_money_trail_dataset,
+     inv_datasets.MONEY_TRAIL_CONTRACT),
 ]
 
 

@@ -10,13 +10,20 @@ K.4.4 lands the Volume Anomalies sheet: rolling 2-day SUM matview
 (``inv_pair_rolling_anomalies``) computed at refresh time, KPI flagged
 count, σ-bucket distribution chart (intentionally NOT gated by the
 σ filter — its job is to show the full population), and ranked table of
-flagged windows. The Money Trail sheet remains a stub until K.4.5.
+flagged windows.
+
+K.4.5 lands the Money Trail sheet: matview-backed recursive-CTE walk
+(``inv_money_trail_edges``) that flattens parent_transfer_id chains to
+one row per multi-leg edge, a chain-root dropdown bound to a string
+parameter, max-hops + min-hop-amount sliders, and a Sankey diagram +
+hop-by-hop detail table laid out side-by-side.
 """
 
 from __future__ import annotations
 
 from quicksight_gen.apps.investigation.constants import (
     CF_INV_FANOUT_DISTINCT_SENDERS,
+    DS_INV_MONEY_TRAIL,
     DS_INV_RECIPIENT_FANOUT,
     DS_INV_VOLUME_ANOMALIES,
     SHEET_INV_ANOMALIES,
@@ -30,6 +37,8 @@ from quicksight_gen.apps.investigation.constants import (
     V_INV_FANOUT_KPI_RECIPIENTS,
     V_INV_FANOUT_KPI_SENDERS,
     V_INV_FANOUT_TABLE,
+    V_INV_MONEY_TRAIL_SANKEY,
+    V_INV_MONEY_TRAIL_TABLE,
 )
 from quicksight_gen.apps.investigation.datasets import build_all_datasets
 from quicksight_gen.apps.investigation.filters import (
@@ -38,11 +47,14 @@ from quicksight_gen.apps.investigation.filters import (
     build_fanout_filter_controls,
     build_fanout_parameter_controls,
     build_filter_groups,
+    build_money_trail_filter_controls,
+    build_money_trail_parameter_controls,
     build_parameter_declarations,
 )
 from quicksight_gen.apps.investigation.visuals import (
     build_anomalies_visuals,
     build_fanout_visuals,
+    build_money_trail_visuals,
 )
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
@@ -153,14 +165,16 @@ _ANOMALY_DESCRIPTION = (
     "wires per-row drill into Account Reconciliation Transactions."
 )
 
-_MONEY_TRAIL_BODY = (
+_MONEY_TRAIL_DESCRIPTION = (
     "Where did this transfer actually originate, and where does it go? "
-    "Recursive walk up and down the parent_transfer_id chain from a "
-    "selected transfer_id, flattened to one row per edge. Sankey is the "
-    "headline visual; hop-by-hop detail table sits beside it. Cross-app "
-    "drill into Payment Reconciliation if the chain crosses an "
-    "external_txn / payment / settlement edge; otherwise into AR "
-    "Transactions."
+    "Pick a chain root from the dropdown — the Sankey renders that "
+    "chain's source-to-target ribbons, and the hop-by-hop table beside "
+    "it lists every edge ordered by depth. Single-leg transfers (sales, "
+    "raw external arrivals) appear as chain members but don't contribute "
+    "Sankey ribbons; drill them from the table into AR Transactions. "
+    "K.4.7 wires per-edge cross-app drill into Payment Reconciliation "
+    "when the chain crosses external_txn / payment / settlement, "
+    "otherwise into AR Transactions."
 )
 
 
@@ -204,7 +218,7 @@ def _build_getting_started_sheet(cfg: Config) -> SheetDefinition:
                 "Volume Anomalies — which sender → recipient pair just "
                 "spiked above the rolling baseline? (live)",
                 "Money Trail — where did this transfer originate and "
-                "where does it go? (lands in K.4.5)",
+                "where does it go? (live)",
             ]),
         ),
     )
@@ -297,31 +311,44 @@ def _build_volume_anomalies_sheet(cfg: Config) -> SheetDefinition:
     )
 
 
-def _build_stub_sheet(
-    sheet_id: str, title: str, body: str, lands_in: str, accent: str,
-) -> SheetDefinition:
-    """Skeleton sheet — single text-box describing what's coming."""
-    box_id = f"{sheet_id}-stub"
-    box = SheetTextBox(
-        SheetTextBoxId=box_id,
-        Content=rt.text_box(
-            rt.heading(title, color=accent),
-            rt.BR,
-            rt.BR,
-            rt.body(body),
-            rt.BR,
-            rt.BR,
-            rt.inline(f"Visuals land in {lands_in}.", color=accent),
+def _build_money_trail_sheet(cfg: Config) -> SheetDefinition:
+    """Money Trail — Sankey + hop-by-hop detail table side-by-side.
+
+    Layout:
+      * Row 1: Sankey on the left (⅔ width), table on the right (⅓
+        width). The Sankey is the headline; the table is reference for
+        edges the diagram hides plus the canonical surface for drill
+        into AR Transactions / PR Payment Reconciliation (K.4.7).
+    Chain-root dropdown + max-hops slider + min-hop-amount slider live
+    in the parameter controls panel.
+    """
+    sankey_height = _TABLE_ROW_SPAN
+    layout_elements = [
+        GridLayoutElement(
+            ElementId=V_INV_MONEY_TRAIL_SANKEY,
+            ElementType=GridLayoutElement.VISUAL,
+            ColumnSpan=_THIRD * 2,
+            RowSpan=sankey_height,
+            ColumnIndex=0,
         ),
-    )
+        GridLayoutElement(
+            ElementId=V_INV_MONEY_TRAIL_TABLE,
+            ElementType=GridLayoutElement.VISUAL,
+            ColumnSpan=_THIRD,
+            RowSpan=sankey_height,
+            ColumnIndex=_THIRD * 2,
+        ),
+    ]
     return SheetDefinition(
-        SheetId=sheet_id,
-        Name=title,
-        Title=title,
-        Description=f"Skeleton sheet — full visuals land in {lands_in}.",
+        SheetId=SHEET_INV_MONEY_TRAIL,
+        Name="Money Trail",
+        Title="Money Trail",
+        Description=_MONEY_TRAIL_DESCRIPTION,
         ContentType="INTERACTIVE",
-        TextBoxes=[box],
-        Layouts=_grid_layout([_full_width_text(box_id, row_span=10)]),
+        Visuals=build_money_trail_visuals(),
+        FilterControls=build_money_trail_filter_controls(cfg),
+        ParameterControls=build_money_trail_parameter_controls(cfg),
+        Layouts=_grid_layout(layout_elements),
     )
 
 
@@ -364,6 +391,7 @@ def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaratio
     names = [
         DS_INV_RECIPIENT_FANOUT,
         DS_INV_VOLUME_ANOMALIES,
+        DS_INV_MONEY_TRAIL,
     ]
     return [
         DataSetIdentifierDeclaration(
@@ -379,17 +407,13 @@ def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaratio
 # ---------------------------------------------------------------------------
 
 def _build_definition(cfg: Config) -> AnalysisDefinition:
-    accent = get_preset(cfg.theme_preset).accent
     return AnalysisDefinition(
         DataSetIdentifierDeclarations=_build_dataset_declarations(cfg),
         Sheets=[
             _build_getting_started_sheet(cfg),
             _build_recipient_fanout_sheet(cfg),
             _build_volume_anomalies_sheet(cfg),
-            _build_stub_sheet(
-                SHEET_INV_MONEY_TRAIL, "Money Trail",
-                _MONEY_TRAIL_BODY, "K.4.5", accent,
-            ),
+            _build_money_trail_sheet(cfg),
         ],
         FilterGroups=build_filter_groups(cfg),
         CalculatedFields=_build_calculated_fields(),

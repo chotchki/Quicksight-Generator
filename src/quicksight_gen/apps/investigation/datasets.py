@@ -2,18 +2,21 @@
 
 K.4.3 ships the recipient-fanout dataset. K.4.4 adds the rolling-window
 anomaly dataset (read from the ``inv_pair_rolling_anomalies`` matview).
-K.4.5 will add the money-trail recursive-CTE dataset.
+K.4.5 adds the money-trail dataset (read from the
+``inv_money_trail_edges`` matview, which precomputes the
+``WITH RECURSIVE`` walk over ``parent_transfer_id``).
 
 All datasets read the shared `transactions` + `daily_balances` base
-tables — Investigation has no app-specific schema. The K.4.4 matview
-is computed at refresh time, not dataset time, because the rolling
-window + population z-score were too heavy for QuickSight Direct Query
-at realistic transaction volumes.
+tables — Investigation has no app-specific schema. The K.4.4 + K.4.5
+matviews are computed at refresh time, not dataset time, because the
+rolling-window z-score and the recursive chain walk were both too heavy
+for QuickSight Direct Query at realistic transaction volumes.
 """
 
 from __future__ import annotations
 
 from quicksight_gen.apps.investigation.constants import (
+    DS_INV_MONEY_TRAIL,
     DS_INV_RECIPIENT_FANOUT,
     DS_INV_VOLUME_ANOMALIES,
 )
@@ -72,6 +75,30 @@ VOLUME_ANOMALIES_CONTRACT = DatasetContract(columns=[
     ColumnSpec("pop_stddev", "DECIMAL"),
     ColumnSpec("z_score", "DECIMAL"),
     ColumnSpec("z_bucket", "STRING"),
+])
+
+
+# One row per (chain root, transfer, source-leg × target-leg) edge in the
+# precomputed money-trail matview. ``root_transfer_id`` is the chain's
+# top-most transfer (no parent); ``transfer_id`` is the transfer this
+# edge belongs to; ``depth`` is the hop's distance from the root (0 =
+# root). Edges include only multi-leg transfers — single-leg sales /
+# external arrivals appear as chain members in the recursive walk but
+# don't surface as visible edges. See ``schema.sql`` for the recursive
+# CTE shape and the multi-leg-only rationale.
+MONEY_TRAIL_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("root_transfer_id", "STRING", shape=ColumnShape.TRANSFER_ID),
+    ColumnSpec("transfer_id", "STRING", shape=ColumnShape.TRANSFER_ID),
+    ColumnSpec("depth", "INTEGER"),
+    ColumnSpec("source_account_id", "STRING", shape=ColumnShape.ACCOUNT_ID),
+    ColumnSpec("source_account_name", "STRING"),
+    ColumnSpec("source_account_type", "STRING"),
+    ColumnSpec("target_account_id", "STRING", shape=ColumnShape.ACCOUNT_ID),
+    ColumnSpec("target_account_name", "STRING"),
+    ColumnSpec("target_account_type", "STRING"),
+    ColumnSpec("hop_amount", "DECIMAL"),
+    ColumnSpec("posted_at", "DATETIME"),
+    ColumnSpec("transfer_type", "STRING"),
 ])
 
 
@@ -149,10 +176,36 @@ def build_volume_anomalies_dataset(cfg: Config) -> DataSet:
     )
 
 
+def build_money_trail_dataset(cfg: Config) -> DataSet:
+    """Per-edge money trail rows sourced from the recursive-CTE matview.
+
+    The dataset is a thin SELECT over ``inv_money_trail_edges``; the
+    recursive walk happens at refresh time. Visuals filter via:
+
+    - ``CategoryFilter`` on ``root_transfer_id`` bound to
+      ``pInvMoneyTrailRoot`` — narrows to a single chain.
+    - ``NumericRangeFilter`` on ``depth`` bound to
+      ``pInvMoneyTrailMaxHops`` — caps chain depth.
+    - ``NumericRangeFilter`` on ``hop_amount`` bound to
+      ``pInvMoneyTrailMinAmount`` — drops noise edges.
+    """
+    sql = "SELECT * FROM inv_money_trail_edges"
+    return build_dataset(
+        cfg,
+        cfg.prefixed("inv-money-trail-dataset"),
+        "Investigation Money Trail",
+        "inv-money-trail",
+        sql,
+        MONEY_TRAIL_CONTRACT,
+        visual_identifier=DS_INV_MONEY_TRAIL,
+    )
+
+
 def build_all_datasets(cfg: Config) -> list[DataSet]:
     return [
         build_recipient_fanout_dataset(cfg),
         build_volume_anomalies_dataset(cfg),
+        build_money_trail_dataset(cfg),
     ]
 
 
@@ -162,6 +215,7 @@ def build_all_datasets(cfg: Config) -> list[DataSet]:
 _CONTRACT_REGISTRATIONS: tuple[tuple[str, DatasetContract], ...] = (
     (DS_INV_RECIPIENT_FANOUT, RECIPIENT_FANOUT_CONTRACT),
     (DS_INV_VOLUME_ANOMALIES, VOLUME_ANOMALIES_CONTRACT),
+    (DS_INV_MONEY_TRAIL, MONEY_TRAIL_CONTRACT),
 )
 for _vid, _contract in _CONTRACT_REGISTRATIONS:
     register_contract(_vid, _contract)
