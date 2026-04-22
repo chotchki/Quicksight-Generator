@@ -46,6 +46,12 @@ from quicksight_gen.account_recon.filters import (
     build_transfers_controls,
 )
 from quicksight_gen.account_recon.visuals import (
+    P_AR_ACCOUNT,
+    P_AR_ACTIVITY_DATE,
+    P_AR_LEDGER,
+    P_AR_SUBLEDGER,
+    P_AR_TRANSFER,
+    P_AR_TRANSFER_TYPE,
     build_balances_visuals,
     build_daily_statement_visuals,
     build_exceptions_trends_visuals,
@@ -53,6 +59,7 @@ from quicksight_gen.account_recon.visuals import (
     build_transactions_visuals,
     build_transfers_visuals,
 )
+from quicksight_gen.common.drill import DrillParam
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.models import (
@@ -745,15 +752,21 @@ class _DrillFilterSpec:
     pass logic) and the FilterGroup that scopes the calc field to a
     sheet (and optionally specific visuals). Keeping all three pieces
     here in one record makes it impossible to forget the filter when
-    adding a calc field, or vice versa.
+    adding a calc field, or vice versa. K.2 cleanup wired the
+    ``parameter`` field to the typed ``DrillParam`` defined in
+    ``visuals.py`` so the parameter name + shape come from one place.
     """
     fg_id: str
     filter_id: str
-    parameter_name: str
+    parameter: DrillParam
     dataset_id: str
     column_name: str
     sheet_id: str
     visual_ids: tuple[str, ...] | None = None
+
+    @property
+    def parameter_name(self) -> str:
+        return self.parameter.name
 
     @property
     def calc_field_name(self) -> str:
@@ -768,7 +781,7 @@ _DRILL_SPECS: list[_DrillFilterSpec] = [
     _DrillFilterSpec(
         fg_id="fg-ar-drill-subledger-on-txn",
         filter_id="filter-ar-drill-subledger-on-txn",
-        parameter_name="pArSubledgerAccountId",
+        parameter=P_AR_SUBLEDGER,
         dataset_id=DS_AR_TRANSACTIONS,
         column_name="subledger_account_id",
         sheet_id=SHEET_AR_TRANSACTIONS,
@@ -776,7 +789,7 @@ _DRILL_SPECS: list[_DrillFilterSpec] = [
     _DrillFilterSpec(
         fg_id="fg-ar-drill-transfer-on-txn",
         filter_id="filter-ar-drill-transfer-on-txn",
-        parameter_name="pArTransferId",
+        parameter=P_AR_TRANSFER,
         dataset_id=DS_AR_TRANSACTIONS,
         column_name="transfer_id",
         sheet_id=SHEET_AR_TRANSACTIONS,
@@ -784,7 +797,7 @@ _DRILL_SPECS: list[_DrillFilterSpec] = [
     _DrillFilterSpec(
         fg_id="fg-ar-drill-activity-date-on-txn",
         filter_id="filter-ar-drill-activity-date-on-txn",
-        parameter_name="pArActivityDate",
+        parameter=P_AR_ACTIVITY_DATE,
         dataset_id=DS_AR_TRANSACTIONS,
         column_name="posted_date",
         sheet_id=SHEET_AR_TRANSACTIONS,
@@ -792,7 +805,7 @@ _DRILL_SPECS: list[_DrillFilterSpec] = [
     _DrillFilterSpec(
         fg_id="fg-ar-drill-transfer-type-on-txn",
         filter_id="filter-ar-drill-transfer-type-on-txn",
-        parameter_name="pArTransferType",
+        parameter=P_AR_TRANSFER_TYPE,
         dataset_id=DS_AR_TRANSACTIONS,
         column_name="transfer_type",
         sheet_id=SHEET_AR_TRANSACTIONS,
@@ -800,7 +813,7 @@ _DRILL_SPECS: list[_DrillFilterSpec] = [
     _DrillFilterSpec(
         fg_id="fg-ar-drill-account-on-txn",
         filter_id="filter-ar-drill-account-on-txn",
-        parameter_name="pArAccountId",
+        parameter=P_AR_ACCOUNT,
         dataset_id=DS_AR_TRANSACTIONS,
         column_name="account_id",
         sheet_id=SHEET_AR_TRANSACTIONS,
@@ -808,7 +821,7 @@ _DRILL_SPECS: list[_DrillFilterSpec] = [
     _DrillFilterSpec(
         fg_id="fg-ar-drill-ledger-on-balances-subledger",
         filter_id="filter-ar-drill-ledger-on-balances-subledger",
-        parameter_name="pArLedgerAccountId",
+        parameter=P_AR_LEDGER,
         dataset_id=DS_AR_SUBLEDGER_BALANCE_DRIFT,
         column_name="ledger_account_id",
         sheet_id=SHEET_AR_BALANCES,

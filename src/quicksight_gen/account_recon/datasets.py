@@ -8,8 +8,24 @@ non_zero_transfers, limit_breach, overdraft).
 
 from __future__ import annotations
 
+from quicksight_gen.account_recon.constants import (
+    DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
+    DS_AR_DAILY_STATEMENT_SUMMARY,
+    DS_AR_DAILY_STATEMENT_TRANSACTIONS,
+    DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
+    DS_AR_LEDGER_ACCOUNTS,
+    DS_AR_LEDGER_BALANCE_DRIFT,
+    DS_AR_NON_ZERO_TRANSFERS,
+    DS_AR_SUBLEDGER_ACCOUNTS,
+    DS_AR_SUBLEDGER_BALANCE_DRIFT,
+    DS_AR_TRANSACTIONS,
+    DS_AR_TRANSFER_SUMMARY,
+    DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+    DS_AR_UNIFIED_EXCEPTIONS,
+)
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.dataset_contract import (
+    ColumnShape,
     ColumnSpec,
     DatasetContract,
     build_dataset,
@@ -50,29 +66,32 @@ SUBLEDGER_ACCOUNTS_CONTRACT = DatasetContract(columns=[
 
 TRANSACTIONS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("transaction_id", "STRING"),
-    ColumnSpec("account_id", "STRING"),
-    ColumnSpec("subledger_account_id", "STRING"),
+    ColumnSpec("account_id", "STRING", shape=ColumnShape.ACCOUNT_ID),
+    ColumnSpec("subledger_account_id", "STRING",
+               shape=ColumnShape.SUBLEDGER_ACCOUNT_ID),
     ColumnSpec("subledger_name", "STRING"),
-    ColumnSpec("ledger_account_id", "STRING"),
+    ColumnSpec("ledger_account_id", "STRING",
+               shape=ColumnShape.LEDGER_ACCOUNT_ID),
     ColumnSpec("ledger_name", "STRING"),
     ColumnSpec("scope", "STRING"),
     ColumnSpec("posting_level", "STRING"),
-    ColumnSpec("transfer_id", "STRING"),
-    ColumnSpec("transfer_type", "STRING"),
+    ColumnSpec("transfer_id", "STRING", shape=ColumnShape.TRANSFER_ID),
+    ColumnSpec("transfer_type", "STRING", shape=ColumnShape.TRANSFER_TYPE),
     ColumnSpec("origin", "STRING"),
     ColumnSpec("amount", "DECIMAL"),
     ColumnSpec("posted_at", "DATETIME"),
-    ColumnSpec("posted_date", "STRING"),
+    ColumnSpec("posted_date", "STRING", shape=ColumnShape.DATE_YYYY_MM_DD_TEXT),
     ColumnSpec("status", "STRING"),
     ColumnSpec("is_failed", "STRING"),
     ColumnSpec("memo", "STRING"),
 ])
 
 LEDGER_BALANCE_DRIFT_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("ledger_account_id", "STRING"),
+    ColumnSpec("ledger_account_id", "STRING",
+               shape=ColumnShape.LEDGER_ACCOUNT_ID),
     ColumnSpec("ledger_name", "STRING"),
     ColumnSpec("scope", "STRING"),
-    ColumnSpec("balance_date", "DATETIME"),
+    ColumnSpec("balance_date", "DATETIME", shape=ColumnShape.DATETIME_DAY),
     ColumnSpec("stored_balance", "DECIMAL"),
     ColumnSpec("computed_balance", "DECIMAL"),
     ColumnSpec("drift", "DECIMAL"),
@@ -82,12 +101,14 @@ LEDGER_BALANCE_DRIFT_CONTRACT = DatasetContract(columns=[
 ])
 
 SUBLEDGER_BALANCE_DRIFT_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("subledger_account_id", "STRING"),
+    ColumnSpec("subledger_account_id", "STRING",
+               shape=ColumnShape.SUBLEDGER_ACCOUNT_ID),
     ColumnSpec("subledger_name", "STRING"),
-    ColumnSpec("ledger_account_id", "STRING"),
+    ColumnSpec("ledger_account_id", "STRING",
+               shape=ColumnShape.LEDGER_ACCOUNT_ID),
     ColumnSpec("ledger_name", "STRING"),
     ColumnSpec("scope", "STRING"),
-    ColumnSpec("balance_date", "DATETIME"),
+    ColumnSpec("balance_date", "DATETIME", shape=ColumnShape.DATETIME_DAY),
     ColumnSpec("stored_balance", "DECIMAL"),
     ColumnSpec("computed_balance", "DECIMAL"),
     ColumnSpec("drift", "DECIMAL"),
@@ -98,7 +119,7 @@ SUBLEDGER_BALANCE_DRIFT_CONTRACT = DatasetContract(columns=[
 ])
 
 TRANSFER_SUMMARY_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("transfer_id", "STRING"),
+    ColumnSpec("transfer_id", "STRING", shape=ColumnShape.TRANSFER_ID),
     ColumnSpec("first_posted_at", "DATETIME"),
     ColumnSpec("net_amount", "DECIMAL"),
     ColumnSpec("total_debit", "DECIMAL"),
@@ -108,13 +129,13 @@ TRANSFER_SUMMARY_CONTRACT = DatasetContract(columns=[
     ColumnSpec("net_zero_status", "STRING"),
     ColumnSpec("expected_net_zero", "STRING"),
     ColumnSpec("scope_type", "STRING"),
-    ColumnSpec("transfer_type", "STRING"),
+    ColumnSpec("transfer_type", "STRING", shape=ColumnShape.TRANSFER_TYPE),
     ColumnSpec("origin", "STRING"),
     ColumnSpec("memo", "STRING"),
 ])
 
 NON_ZERO_TRANSFERS_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("transfer_id", "STRING"),
+    ColumnSpec("transfer_id", "STRING", shape=ColumnShape.TRANSFER_ID),
     ColumnSpec("first_posted_at", "DATETIME"),
     ColumnSpec("net_amount", "DECIMAL"),
     ColumnSpec("total_debit", "DECIMAL"),
@@ -197,16 +218,18 @@ UNIFIED_EXCEPTIONS_CONTRACT = DatasetContract(columns=[
     # YYYY-MM-DD text) matches. Binding a DATETIME column to a
     # SINGLE_VALUED string parameter produces a full timestamp string
     # ("2026-04-07 00:00:00.000") that never matches.
-    ColumnSpec("exception_date_str", "STRING"),
+    ColumnSpec("exception_date_str", "STRING",
+               shape=ColumnShape.DATE_YYYY_MM_DD_TEXT),
     ColumnSpec("days_outstanding", "INTEGER"),
     ColumnSpec("aging_bucket", "STRING"),
-    ColumnSpec("account_id", "STRING"),
+    ColumnSpec("account_id", "STRING", shape=ColumnShape.ACCOUNT_ID),
     ColumnSpec("account_name", "STRING"),
     ColumnSpec("account_level", "STRING"),
-    ColumnSpec("ledger_account_id", "STRING"),
+    ColumnSpec("ledger_account_id", "STRING",
+               shape=ColumnShape.LEDGER_ACCOUNT_ID),
     ColumnSpec("ledger_name", "STRING"),
-    ColumnSpec("transfer_id", "STRING"),
-    ColumnSpec("transfer_type", "STRING"),
+    ColumnSpec("transfer_id", "STRING", shape=ColumnShape.TRANSFER_ID),
+    ColumnSpec("transfer_type", "STRING", shape=ColumnShape.TRANSFER_TYPE),
     ColumnSpec("primary_amount", "DECIMAL"),
     ColumnSpec("secondary_amount", "DECIMAL"),
 ])
@@ -228,6 +251,7 @@ WHERE control_account_id IS NULL"""
         cfg, cfg.prefixed("ar-ledger-accounts-dataset"),
         "AR Ledger Accounts", "ar-ledger-accounts",
         sql, LEDGER_ACCOUNTS_CONTRACT,
+        visual_identifier=DS_AR_LEDGER_ACCOUNTS,
     )
 
 
@@ -249,6 +273,7 @@ WHERE sub.control_account_id IS NOT NULL
         cfg, cfg.prefixed("ar-subledger-accounts-dataset"),
         "AR Sub-Ledger Accounts", "ar-subledger-accounts",
         sql, SUBLEDGER_ACCOUNTS_CONTRACT,
+        visual_identifier=DS_AR_SUBLEDGER_ACCOUNTS,
     )
 
 
@@ -302,6 +327,7 @@ LEFT JOIN (
         cfg, cfg.prefixed("ar-transactions-dataset"),
         "AR Transactions", "ar-transactions",
         sql, TRANSACTIONS_CONTRACT,
+        visual_identifier=DS_AR_TRANSACTIONS,
     )
 
 
@@ -322,6 +348,7 @@ FROM ar_ledger_balance_drift"""
         cfg, cfg.prefixed("ar-ledger-balance-drift-dataset"),
         "AR Ledger Balance Drift", "ar-ledger-balance-drift",
         sql, LEDGER_BALANCE_DRIFT_CONTRACT,
+        visual_identifier=DS_AR_LEDGER_BALANCE_DRIFT,
     )
 
 
@@ -346,6 +373,7 @@ FROM ar_subledger_balance_drift"""
         cfg, cfg.prefixed("ar-subledger-balance-drift-dataset"),
         "AR Sub-Ledger Balance Drift", "ar-subledger-balance-drift",
         sql, SUBLEDGER_BALANCE_DRIFT_CONTRACT,
+        visual_identifier=DS_AR_SUBLEDGER_BALANCE_DRIFT,
     )
 
 
@@ -371,6 +399,7 @@ FROM ar_transfer_summary"""
         cfg, cfg.prefixed("ar-transfer-summary-dataset"),
         "AR Transfer Summary", "ar-transfer-summary",
         sql, TRANSFER_SUMMARY_CONTRACT,
+        visual_identifier=DS_AR_TRANSFER_SUMMARY,
     )
 
 
@@ -398,6 +427,7 @@ WHERE net_zero_status = 'not_net_zero'
         cfg, cfg.prefixed("ar-non-zero-transfers-dataset"),
         "AR Non-Zero Transfers", "ar-non-zero-transfers",
         sql, NON_ZERO_TRANSFERS_CONTRACT,
+        visual_identifier=DS_AR_NON_ZERO_TRANSFERS,
     )
 
 
@@ -416,6 +446,7 @@ FROM ar_expected_zero_eod_rollup"""
         cfg, cfg.prefixed("ar-expected-zero-eod-rollup-dataset"),
         "AR Expected-Zero EOD Rollup", "ar-expected-zero-eod-rollup",
         sql, EXPECTED_ZERO_EOD_ROLLUP_CONTRACT,
+        visual_identifier=DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
     )
 
 
@@ -435,6 +466,7 @@ FROM ar_two_sided_post_mismatch_rollup"""
         "AR Two-Sided Post Mismatch Rollup",
         "ar-two-sided-post-mismatch-rollup",
         sql, TWO_SIDED_POST_MISMATCH_ROLLUP_CONTRACT,
+        visual_identifier=DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
     )
 
 
@@ -450,6 +482,7 @@ FROM ar_balance_drift_timelines_rollup"""
         "AR Balance Drift Timelines Rollup",
         "ar-balance-drift-timelines-rollup",
         sql, BALANCE_DRIFT_TIMELINES_ROLLUP_CONTRACT,
+        visual_identifier=DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
     )
 
 
@@ -513,6 +546,7 @@ LEFT JOIN today_flows f
         cfg, cfg.prefixed("ar-daily-statement-summary-dataset"),
         "AR Daily Statement Summary", "ar-daily-statement-summary",
         sql, DAILY_STATEMENT_SUMMARY_CONTRACT,
+        visual_identifier=DS_AR_DAILY_STATEMENT_SUMMARY,
     )
 
 
@@ -547,6 +581,7 @@ FROM transactions t"""
         cfg, cfg.prefixed("ar-daily-statement-transactions-dataset"),
         "AR Daily Statement Transactions", "ar-daily-statement-transactions",
         sql, DAILY_STATEMENT_TRANSACTIONS_CONTRACT,
+        visual_identifier=DS_AR_DAILY_STATEMENT_TRANSACTIONS,
     )
 
 
@@ -567,6 +602,7 @@ def build_ar_unified_exceptions_dataset(cfg: Config) -> DataSet:
         cfg, cfg.prefixed("ar-unified-exceptions-dataset"),
         "AR Unified Exceptions", "ar-unified-exceptions",
         sql, UNIFIED_EXCEPTIONS_CONTRACT,
+        visual_identifier=DS_AR_UNIFIED_EXCEPTIONS,
     )
 
 

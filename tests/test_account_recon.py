@@ -2727,6 +2727,120 @@ class TestVisualActions:
         ]
 
 
+class TestTransactionsDrillStaleParamHygiene:
+    """Every drill that targets SHEET_AR_TRANSACTIONS must write all five
+    PASS-filtered params — explicit SourceField for the parameters the
+    drill narrows on, sentinel reset for the rest. K.2 bug class: an
+    omitted param inherits its prior-drill value and silently narrows
+    the destination to zero rows. The ``_ar_drill_to_transactions``
+    helper enforces this, but these tests pin the contract at the
+    output level so a regression that bypasses the helper is caught
+    here, not in the live dashboard."""
+
+    EXPECTED_PARAMS = {
+        "pArSubledgerAccountId",
+        "pArTransferId",
+        "pArActivityDate",
+        "pArTransferType",
+        "pArAccountId",
+    }
+
+    @pytest.mark.parametrize(
+        "visual_id, action_id, source_writes",
+        [
+            (
+                "ar-balances-subledger-table",
+                "action-ar-balances-subledger-to-txn",
+                {"pArSubledgerAccountId": "ar-bal-subledger-id"},
+            ),
+            (
+                "ar-transfers-summary-table",
+                "action-ar-transfers-to-txn",
+                {"pArTransferId": "ar-xfr-id"},
+            ),
+            (
+                "ar-todays-exc-table",
+                "action-ar-todays-exc-to-txn",
+                {"pArTransferId": "ar-todays-exc-transfer-id"},
+            ),
+            (
+                "ar-todays-exc-table",
+                "action-ar-todays-exc-to-txn-by-account",
+                {
+                    "pArAccountId": "ar-todays-exc-account",
+                    "pArActivityDate": "ar-todays-exc-date",
+                },
+            ),
+        ],
+    )
+    def test_drill_writes_every_pass_filtered_param(
+        self,
+        ar_output_dir,
+        visual_id: str,
+        action_id: str,
+        source_writes: dict[str, str],
+    ):
+        analysis = _load(ar_output_dir, "account-recon-analysis.json")
+        v = _find_visual(analysis, visual_id)
+        actions_by_id = {a["CustomActionId"]: a for a in v["Actions"]}
+        action = actions_by_id[action_id]
+
+        set_op = next(
+            op["SetParametersOperation"]
+            for op in action["ActionOperations"]
+            if "SetParametersOperation" in op
+        )
+        pvcs = set_op["ParameterValueConfigurations"]
+
+        # Every PASS-filtered Transactions param must appear exactly once.
+        written = [pvc["DestinationParameterName"] for pvc in pvcs]
+        assert set(written) == self.EXPECTED_PARAMS, (
+            f"{action_id}: expected to write {self.EXPECTED_PARAMS}, "
+            f"got {set(written)}"
+        )
+        assert len(written) == len(set(written)), (
+            f"{action_id}: duplicate destination parameter writes: {written}"
+        )
+
+        # Each named source param resolves to its explicit field id;
+        # every other param resolves to the sentinel reset shape.
+        by_param = {pvc["DestinationParameterName"]: pvc for pvc in pvcs}
+        for param, expected_field in source_writes.items():
+            assert by_param[param]["Value"]["SourceField"] == expected_field
+        for param in self.EXPECTED_PARAMS - source_writes.keys():
+            value = by_param[param]["Value"]
+            assert "CustomValuesConfiguration" in value, (
+                f"{action_id}: param {param!r} should be sentinel-reset "
+                f"but is {value!r}"
+            )
+            assert value["CustomValuesConfiguration"]["CustomValues"][
+                "StringValues"
+            ] == ["__ALL__"]
+
+    def test_helper_param_set_matches_analysis_drill_specs(self):
+        """``_AR_TXN_PASS_FILTERED_PARAMS`` (the helper's auto-reset set)
+        must mirror the SHEET_AR_TRANSACTIONS specs in
+        ``analysis._DRILL_SPECS``. If a new drill spec is added there,
+        the helper has to know about it — otherwise drills that don't
+        explicitly write the new param leave it stale on the destination
+        sheet (the K.2 bug class) and silently ship that way."""
+        from quicksight_gen.account_recon import analysis as ar_analysis
+        from quicksight_gen.account_recon.visuals import (
+            _AR_TXN_PASS_FILTERED_PARAMS,
+        )
+
+        spec_param_names = {
+            spec.parameter.name
+            for spec in ar_analysis._DRILL_SPECS
+            if spec.sheet_id == SHEET_AR_TRANSACTIONS
+        }
+        helper_param_names = {p.name for p in _AR_TXN_PASS_FILTERED_PARAMS}
+        assert helper_param_names == spec_param_names, (
+            "Helper auto-reset set drifted from analysis._DRILL_SPECS — "
+            f"helper has {helper_param_names}, specs have {spec_param_names}"
+        )
+
+
 def _cf_cells(visual: dict) -> list[dict]:
     opts = visual.get("ConditionalFormatting", {}).get(
         "ConditionalFormattingOptions", []

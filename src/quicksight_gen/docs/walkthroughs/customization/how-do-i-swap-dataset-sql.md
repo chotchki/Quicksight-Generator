@@ -101,6 +101,7 @@ WHERE bank_unit = 'snb'                      -- your scope filter
         cfg, cfg.prefixed("ar-overdraft-dataset"),
         "AR Sub-Ledger Overdraft", "ar-overdraft",
         sql, OVERDRAFT_CONTRACT,
+        visual_identifier=DS_AR_OVERDRAFT,
     )
 ```
 

@@ -49,6 +49,14 @@ from quicksight_gen.common.clickability import (
     link_text_format,
     menu_link_text_format,
 )
+from quicksight_gen.common.dataset_contract import ColumnShape
+from quicksight_gen.common.drill import (
+    DrillParam,
+    DrillResetSentinel,
+    DrillWrite,
+    cross_sheet_drill,
+    field_source,
+)
 from quicksight_gen.common.models import (
     AxisLabelOptions,
     BarChartAggregatedFieldWells,
@@ -60,8 +68,6 @@ from quicksight_gen.common.models import (
     ChartAxisLabelOptions,
     ColumnIdentifier,
     CustomActionFilterOperation,
-    CustomActionNavigationOperation,
-    CustomActionSetParametersOperation,
     DateDimensionField,
     DateMeasureField,
     DimensionField,
@@ -70,7 +76,6 @@ from quicksight_gen.common.models import (
     KPIConfiguration,
     KPIFieldWells,
     KPIVisual,
-    LocalNavigationConfiguration,
     MeasureField,
     NumericalAggregationFunction,
     NumericalMeasureField,
@@ -190,41 +195,6 @@ def _unagg_field(field_id: str, ds: str, col_name: str) -> dict:
 # Action helpers (mirror payment_recon/visuals.py)
 # ---------------------------------------------------------------------------
 
-def _drill_down_action(
-    action_id: str,
-    name: str,
-    target_sheet: str,
-    param_name: str,
-    source_field_id: str,
-    trigger: str = "DATA_POINT_CLICK",
-) -> VisualCustomAction:
-    """Navigate to another sheet and set a drill-down parameter."""
-    return VisualCustomAction(
-        CustomActionId=action_id,
-        Name=name,
-        Trigger=trigger,
-        ActionOperations=[
-            VisualCustomActionOperation(
-                NavigationOperation=CustomActionNavigationOperation(
-                    LocalNavigationConfiguration=LocalNavigationConfiguration(
-                        TargetSheetId=target_sheet,
-                    ),
-                ),
-            ),
-            VisualCustomActionOperation(
-                SetParametersOperation=CustomActionSetParametersOperation(
-                    ParameterValueConfigurations=[
-                        {
-                            "DestinationParameterName": param_name,
-                            "Value": {"SourceField": source_field_id},
-                        },
-                    ],
-                ),
-            ),
-        ],
-    )
-
-
 def _same_sheet_filter_action(
     action_id: str,
     name: str,
@@ -253,51 +223,66 @@ def _same_sheet_filter_action(
     )
 
 
-# Drill-down parameter names
-P_AR_SUBLEDGER = "pArSubledgerAccountId"
-P_AR_LEDGER = "pArLedgerAccountId"
-P_AR_TRANSFER = "pArTransferId"
-P_AR_ACTIVITY_DATE = "pArActivityDate"
-P_AR_TRANSFER_TYPE = "pArTransferType"
-P_AR_ACCOUNT = "pArAccountId"
+# K.2: typed drill parameters. Each carries the parameter's expected
+# value shape so cross_sheet_drill() can refuse a wiring whose source
+# field shape doesn't match. Constructing the destination's value via
+# field_source(...) reads the column's shape from the dataset
+# contract, so the only place a shape can be wrong is the contract
+# itself — which the dataset health tests cover.
+P_AR_SUBLEDGER = DrillParam("pArSubledgerAccountId",
+                            ColumnShape.SUBLEDGER_ACCOUNT_ID)
+P_AR_LEDGER = DrillParam("pArLedgerAccountId", ColumnShape.LEDGER_ACCOUNT_ID)
+P_AR_TRANSFER = DrillParam("pArTransferId", ColumnShape.TRANSFER_ID)
+P_AR_ACTIVITY_DATE = DrillParam("pArActivityDate",
+                                ColumnShape.DATE_YYYY_MM_DD_TEXT)
+P_AR_TRANSFER_TYPE = DrillParam("pArTransferType", ColumnShape.TRANSFER_TYPE)
+P_AR_ACCOUNT = DrillParam("pArAccountId", ColumnShape.ACCOUNT_ID)
+P_AR_DS_ACCOUNT = DrillParam("pArDsAccountId", ColumnShape.ACCOUNT_ID)
+P_AR_DS_BALANCE_DATE = DrillParam("pArDsBalanceDate", ColumnShape.DATETIME_DAY)
 
 
-def _multi_drill_action(
+# K.2: SHEET_AR_TRANSACTIONS PASS-filtered params. Every drill that
+# targets the Transactions sheet must write all five — explicit
+# SourceField for the parameters that should narrow, DrillResetSentinel
+# for the rest. Leaving any one stale lets a prior drill's value leak
+# through and silently narrow the destination to zero rows (the K.2
+# bug class). Mirrors the SHEET_AR_TRANSACTIONS specs in
+# ``analysis._DRILL_SPECS``; ``test_drill_specs_match_helper_param_set``
+# guards against drift between the two.
+_AR_TXN_PASS_FILTERED_PARAMS: tuple[DrillParam, ...] = (
+    P_AR_SUBLEDGER,
+    P_AR_TRANSFER,
+    P_AR_ACTIVITY_DATE,
+    P_AR_TRANSFER_TYPE,
+    P_AR_ACCOUNT,
+)
+
+
+def _ar_drill_to_transactions(
     action_id: str,
     name: str,
-    target_sheet: str,
-    param_sources: list[tuple[str, str]],
+    writes: list[DrillWrite],
     trigger: str = "DATA_POINT_CLICK",
 ) -> VisualCustomAction:
-    """Navigate to another sheet and set several drill-down parameters.
+    """Cross-sheet drill into Transactions with full stale-param coverage.
 
-    Each entry in ``param_sources`` is ``(destination_parameter, source_field_id)``
-    and emits one ParameterValueConfiguration.
+    Caller specifies only the parameters that should narrow the
+    destination. Every other ``_AR_TXN_PASS_FILTERED_PARAMS`` entry the
+    caller doesn't write is auto-reset to the sentinel — so a prior
+    drill's value can't leak through and quietly narrow Transactions to
+    zero rows.
     """
-    return VisualCustomAction(
-        CustomActionId=action_id,
-        Name=name,
-        Trigger=trigger,
-        ActionOperations=[
-            VisualCustomActionOperation(
-                NavigationOperation=CustomActionNavigationOperation(
-                    LocalNavigationConfiguration=LocalNavigationConfiguration(
-                        TargetSheetId=target_sheet,
-                    ),
-                ),
-            ),
-            VisualCustomActionOperation(
-                SetParametersOperation=CustomActionSetParametersOperation(
-                    ParameterValueConfigurations=[
-                        {
-                            "DestinationParameterName": param_name,
-                            "Value": {"SourceField": source_field_id},
-                        }
-                        for param_name, source_field_id in param_sources
-                    ],
-                ),
-            ),
-        ],
+    written = {param.name for param, _ in writes}
+    full_writes = list(writes)
+    for param in _AR_TXN_PASS_FILTERED_PARAMS:
+        if param.name not in written:
+            full_writes.append((param, DrillResetSentinel()))
+    return cross_sheet_drill(
+        action_id=action_id,
+        name=name,
+        target_sheet=SHEET_AR_TRANSACTIONS,
+        writes=full_writes,
+        trigger=trigger,
     )
 
 
@@ -400,12 +385,17 @@ def build_balances_visuals(link_color: str, link_tint: str) -> list[Visual]:
                 # filter group ``fg-ar-drill-ledger-on-balances-subledger`` is
                 # scoped to the sub-ledger table only via SELECTED_VISUALS, so
                 # setting the parameter filters just that visual.
-                _drill_down_action(
-                    "action-ar-balances-filter-subledgers",
-                    "Filter Sub-Ledger Accounts Below",
-                    SHEET_AR_BALANCES,
-                    P_AR_LEDGER,
-                    "ar-bal-ledger-id",
+                cross_sheet_drill(
+                    action_id="action-ar-balances-filter-subledgers",
+                    name="Filter Sub-Ledger Accounts Below",
+                    target_sheet=SHEET_AR_BALANCES,
+                    writes=[
+                        (P_AR_LEDGER, field_source(
+                            "ar-bal-ledger-id",
+                            DS_AR_LEDGER_BALANCE_DRIFT,
+                            "ledger_account_id",
+                        )),
+                    ],
                     trigger="DATA_POINT_MENU",
                 ),
             ],
@@ -475,20 +465,32 @@ def build_balances_visuals(link_color: str, link_tint: str) -> list[Visual]:
                 },
             ),
             Actions=[
-                _drill_down_action(
-                    "action-ar-balances-subledger-to-txn",
-                    "View Transactions",
-                    SHEET_AR_TRANSACTIONS,
-                    P_AR_SUBLEDGER,
-                    "ar-bal-subledger-id",
+                _ar_drill_to_transactions(
+                    action_id="action-ar-balances-subledger-to-txn",
+                    name="View Transactions",
+                    writes=[
+                        (P_AR_SUBLEDGER, field_source(
+                            "ar-bal-subledger-id",
+                            DS_AR_SUBLEDGER_BALANCE_DRIFT,
+                            "subledger_account_id",
+                        )),
+                    ],
                 ),
-                _multi_drill_action(
-                    "action-ar-balances-subledger-to-daily-statement",
-                    "View Daily Statement",
-                    SHEET_AR_DAILY_STATEMENT,
-                    [
-                        ("pArDsAccountId", "ar-bal-subledger-id"),
-                        ("pArDsBalanceDate", "ar-bal-subledger-date"),
+                cross_sheet_drill(
+                    action_id="action-ar-balances-subledger-to-daily-statement",
+                    name="View Daily Statement",
+                    target_sheet=SHEET_AR_DAILY_STATEMENT,
+                    writes=[
+                        (P_AR_DS_ACCOUNT, field_source(
+                            "ar-bal-subledger-id",
+                            DS_AR_SUBLEDGER_BALANCE_DRIFT,
+                            "subledger_account_id",
+                        )),
+                        (P_AR_DS_BALANCE_DATE, field_source(
+                            "ar-bal-subledger-date",
+                            DS_AR_SUBLEDGER_BALANCE_DRIFT,
+                            "balance_date",
+                        )),
                     ],
                     trigger="DATA_POINT_MENU",
                 ),
@@ -645,12 +647,16 @@ def build_transfers_visuals(link_color: str) -> list[Visual]:
                 },
             ),
             Actions=[
-                _drill_down_action(
-                    "action-ar-transfers-to-txn",
-                    "View Transactions",
-                    SHEET_AR_TRANSACTIONS,
-                    P_AR_TRANSFER,
-                    "ar-xfr-id",
+                _ar_drill_to_transactions(
+                    action_id="action-ar-transfers-to-txn",
+                    name="View Transactions",
+                    writes=[
+                        (P_AR_TRANSFER, field_source(
+                            "ar-xfr-id",
+                            DS_AR_TRANSFER_SUMMARY,
+                            "transfer_id",
+                        )),
+                    ],
                 ),
             ],
             ConditionalFormatting={
@@ -1208,78 +1214,33 @@ def build_todays_exceptions_visuals(
                 },
             ),
             Actions=[
-                _drill_down_action(
-                    "action-ar-todays-exc-to-txn",
-                    "View Transactions",
-                    SHEET_AR_TRANSACTIONS,
-                    P_AR_TRANSFER,
-                    "ar-todays-exc-transfer-id",
-                ),
-                # K.2 spike validation (a): focused test of the
-                # SetParametersOperation code path with the calc-field
-                # destination filter. This drill writes:
-                #   - account, date via SourceField (required for drill
-                #     semantics — these stay parameter-bound on the
-                #     destination for now)
-                #   - pArTransferId via IncludeNullValue+empty (the only
-                #     destination filter that has been rewired to the
-                #     calc-field PASS shape; we test that an empty write
-                #     here propagates as ALL on Transactions).
-                # If validation passes, extend the calc-field shape to
-                # the other destination filters and add their empty
-                # writes here too.
-                VisualCustomAction(
-                    CustomActionId="action-ar-todays-exc-to-txn-by-account",
-                    Name="View Transactions for Account-Day",
-                    Trigger="DATA_POINT_MENU",
-                    ActionOperations=[
-                        VisualCustomActionOperation(
-                            NavigationOperation=CustomActionNavigationOperation(
-                                LocalNavigationConfiguration=LocalNavigationConfiguration(
-                                    TargetSheetId=SHEET_AR_TRANSACTIONS,
-                                ),
-                            ),
-                        ),
-                        VisualCustomActionOperation(
-                            SetParametersOperation=CustomActionSetParametersOperation(
-                                ParameterValueConfigurations=[
-                                    {
-                                        "DestinationParameterName": P_AR_ACCOUNT,
-                                        "Value": {"SourceField": "ar-todays-exc-account"},
-                                    },
-                                    {
-                                        "DestinationParameterName": P_AR_ACTIVITY_DATE,
-                                        "Value": {"SourceField": "ar-todays-exc-date"},
-                                    },
-                                    {
-                                        # K.2 sentinel reset — write
-                                        # "__ALL__" to clear any
-                                        # prior pArTransferId value.
-                                        # The destination calc-field
-                                        # filter recognizes the
-                                        # sentinel and lets every row
-                                        # pass. Both empty-string and
-                                        # IncludeNullValue:True+empty
-                                        # were tried first via this
-                                        # same drill and produced 0
-                                        # rows on Transactions (drill-
-                                        # action code path delivers
-                                        # them as something the calc
-                                        # field can't simplify to "no
-                                        # filter").
-                                        "DestinationParameterName": P_AR_TRANSFER,
-                                        "Value": {
-                                            "CustomValuesConfiguration": {
-                                                "CustomValues": {
-                                                    "StringValues": ["__ALL__"],
-                                                },
-                                            },
-                                        },
-                                    },
-                                ],
-                            ),
-                        ),
+                _ar_drill_to_transactions(
+                    action_id="action-ar-todays-exc-to-txn",
+                    name="View Transactions",
+                    writes=[
+                        (P_AR_TRANSFER, field_source(
+                            "ar-todays-exc-transfer-id",
+                            DS_AR_UNIFIED_EXCEPTIONS,
+                            "transfer_id",
+                        )),
                     ],
+                ),
+                _ar_drill_to_transactions(
+                    action_id="action-ar-todays-exc-to-txn-by-account",
+                    name="View Transactions for Account-Day",
+                    writes=[
+                        (P_AR_ACCOUNT, field_source(
+                            "ar-todays-exc-account",
+                            DS_AR_UNIFIED_EXCEPTIONS,
+                            "account_id",
+                        )),
+                        (P_AR_ACTIVITY_DATE, field_source(
+                            "ar-todays-exc-date",
+                            DS_AR_UNIFIED_EXCEPTIONS,
+                            "exception_date_str",
+                        )),
+                    ],
+                    trigger="DATA_POINT_MENU",
                 ),
             ],
             ConditionalFormatting={

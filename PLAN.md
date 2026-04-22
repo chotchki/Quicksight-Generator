@@ -149,3 +149,7 @@ See Training_Story.md, the executives want data!
   - So the ETL jobs can be troubleshooted
 - The most recent timestamp materialized views were updated
   - Since that could be the source of data mismatch problems
+
+## Tech Debt
+- Are there invariants that are better encoded into the type system than how they are now?
+- A lot of the strings linking things together would be better this way
