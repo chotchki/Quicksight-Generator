@@ -498,6 +498,61 @@ the current shape; Phase G rewrites each in turn.
 
 ---
 
+## Materialized views
+
+One view in the schema is materialized rather than recomputed on every
+read: **`ar_unified_exceptions`**. The Today's Exceptions sheet feeds
+from this single object instead of a 14-block `UNION ALL` composed at
+dataset-load time. The transitive read graph (14 per-check views, each
+scanning `transactions` and/or `daily_balances`) was too heavy for
+QuickSight Direct Query — without materialization the sheet would not
+render. Materializing makes load instant.
+
+### The refresh contract
+
+`ar_unified_exceptions` is **not** auto-refreshed. After every ETL
+load, run:
+
+```sql
+REFRESH MATERIALIZED VIEW ar_unified_exceptions;
+```
+
+The demo's `quicksight-gen demo apply` command issues this REFRESH
+automatically after seeding; production ETL pipelines must do the
+same. Daily ETL → daily REFRESH is the expected cadence.
+
+### Aging-column timing semantics
+
+Two columns on the matview are computed from `CURRENT_DATE` at
+**refresh time**, not at query time:
+
+- `days_outstanding` — `(CURRENT_DATE - exception_date::date)`
+- `aging_bucket` — derived from `days_outstanding` (5 fixed bands:
+  `1: 0-1 day`, `2: 2-3 days`, `3: 4-7 days`, `4: 8-30 days`,
+  `5: >30 days`).
+
+This means: if you skip a day's REFRESH, the dashboard's aging
+columns **lag** by however many days the matview is stale. A daily
+refresh tied to your ETL load keeps the aging accurate by construction.
+A weekly refresh against a daily-loaded base would underreport every
+row's age by up to six days; the underlying `exception_date` is still
+correct, but the analyst-facing "how old is this break" will not be.
+
+If your ETL load fails or is skipped, REFRESH the matview anyway so
+aging stays calibrated against the dashboard's view of "today" — the
+underlying check rows are unchanged but their age advances.
+
+### Adding new materialized views
+
+When a future check view's read cost crosses the same threshold,
+materialize it under the same contract: declare it `MATERIALIZED`
+in `schema.sql`, add the `REFRESH MATERIALIZED VIEW <name>;` line to
+the `demo apply` block in `cli.py`, document it under this section
+with its own refresh-cadence semantics, and announce the operator-
+facing change in the release notes.
+
+---
+
 ## ETL examples
 
 These templates show how a Data Integration Team member populates the

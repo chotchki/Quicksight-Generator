@@ -1,5 +1,18 @@
 # Release Notes
 
+## v3.6.1
+
+### Docs — `ar_unified_exceptions` matview refresh contract
+
+Re-cut of v3.6.0 with the operator-facing matview refresh contract written down. v3.6.0 shipped the conversion of `ar_unified_exceptions` to a `MATERIALIZED VIEW` (so the Today's Exceptions sheet renders under QuickSight Direct Query) and wired the refresh into `quicksight-gen demo apply` — but `docs/Schema_v3.md` did not mention the matview, so production ETL teams had no canonical reference for the refresh requirement. v3.6.1 adds it.
+
+- **New "Materialized views" section in `docs/Schema_v3.md`** — sits between *Computed views catalogue* and *ETL examples*. Lists `ar_unified_exceptions`, the `REFRESH MATERIALIZED VIEW` requirement after each ETL load, the timing semantics for `days_outstanding` / `aging_bucket` (computed at refresh time, not query time — skipping a refresh lags the analyst-facing aging), and a "when to materialize" rule for future check views that cross the same read-cost threshold.
+- **`docs/handbook/etl.md` cross-link** — *The contract* section now mentions the matview + REFRESH requirement and links to the Schema_v3 section. ETL team members reading the contract overview now see the requirement before they design their pipeline.
+
+No code changes. No analysis, dataset, schema, or runtime behavior changes — `demo apply` was already running the REFRESH; this release just documents it for non-demo operators.
+
+---
+
 ## v3.6.0
 
 ### Phase K.2 — Cross-sheet navigation parameter hygiene

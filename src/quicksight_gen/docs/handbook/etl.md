@@ -50,6 +50,14 @@ catalog, and ETL examples:
   source-of-truth document. Read the *Getting Started for Data
   Teams* preamble first.
 
+One materialized view sits on top of these tables —
+`ar_unified_exceptions`, which feeds the AR Today's Exceptions
+sheet. It is **not** auto-refreshed: every ETL load must run
+`REFRESH MATERIALIZED VIEW ar_unified_exceptions;` afterward, or
+the operator-facing `days_outstanding` and `aging_bucket` columns
+will lag. See [Materialized views](../Schema_v3.md#materialized-views)
+for the full refresh contract.
+
 ## Foundational walkthroughs
 
 <p class="snb-section-label">Start here — populate and validate the feed</p>
