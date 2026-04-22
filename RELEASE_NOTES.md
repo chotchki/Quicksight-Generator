@@ -1,5 +1,52 @@
 # Release Notes
 
+## v3.7.0
+
+### Phase K.2a — Identifier scatter cleanup (typed constants for opaque IDs)
+
+K.2 closed a class of cross-sheet drill bugs by encoding source-field / parameter shapes in the type system. K.2a applies the same approach to the rest of the identifier surface — filter group IDs, visual IDs, parameter names, demo-persona whitelabel strings, and the AWS enum-like fields (`ElementType`, `CrossDataset`, `Status`, `Scope`, `Trigger`). Before K.2a, these all appeared as bare string literals scattered across 12+ files each, with test fixtures hand-maintained against the literals from production code. A typo or rename in one place silently broke the binding without raising at deploy. After K.2a, every kind of identifier has a typed constant; mypy / pyright catches the wrong-kind-of-string at the call site instead of leaving it for a deploy-time visual mis-scope.
+
+No analysis, dataset, schema, or runtime behavior change — type-system-only refactor.
+
+### What landed
+
+**Filter group ID constants (K.2a.1)**
+
+- All 118 `fg-ar-*` / `fg-pr-*` literals promoted to `FG_*` module-level constants in `account_recon/constants.py` + `payment_recon/constants.py`. e2e existence tests now import `ALL_FG_AR_IDS` / `ALL_FG_PR_IDS` frozensets from the constants module instead of hand-maintaining `EXPECTED_IDS` against the production literals — adding a new filter group can no longer silently de-sync the test fixture.
+
+**PR drill parameter constants (K.2a.2)**
+
+- Added `P_PR_SETTLEMENT` / `P_PR_PAYMENT` / `P_PR_EXTERNAL_TXN` to `payment_recon/constants.py` mirroring AR's `P_AR_*`. Replaces ~75 plain-string occurrences of `pSettlementId` / `pPaymentId` / `pExternalTransactionId` across `payment_recon/analysis.py` + `recon_visuals.py` + tests.
+
+**Visual ID constants (K.2a.3)**
+
+- Largest mechanical sweep: all 314 visual ID literals are now `V_*` constants. `visuals.py` defines visuals via the constants; `analysis.py` `FilterGroup` scopes reference via the constants; e2e existence checks reference via the constants. Catches the K.2a-shaped silent bug — visual IDs flow into `SheetVisualScopingConfigurations.VisualIds`, where a typo silently widens scope (no error, just a filter that fails to apply to the expected visual).
+
+**`NewType` wrappers in `common/ids.py` (K.2a.4)**
+
+- New `common/ids.py` defines `SheetId`, `VisualId`, `FilterGroupId`, `ParameterName` as `NewType("...", str)`. The `*_ID` constants in both apps' `constants.py` are declared as the corresponding NewType, and function signatures across `analysis.py` / `filters.py` annotate accordingly. Same shape K.2 used for `ColumnShape` — wrong-kind-of-string fails at the call site, not in a deploy-time scope assertion.
+
+**`DemoPersona` dataclass + auto-derived `mapping.yaml.example` (K.2a.5)**
+
+- New `common/persona.py` introduces `DemoPersona` (a frozen dataclass with `institution`, `stakeholders`, `gl_accounts`, `account_labels`, `merchants`, `flavor`, `intentional_non_mappings` tuples) and a `SNB_PERSONA` instance — the single source of truth for whitelabel-substitutable strings ("Sasquatch National Bank", "Federal Reserve Bank", the `gl-1010` family, "Margaret Hollowcreek", etc.).
+- `training/mapping.yaml.example` is now auto-derived via `derive_mapping_yaml_text(persona)`. A new `tests/test_persona.py::test_shipped_yaml_matches_derived` parity test fails loudly (printing the regenerated body) when the dataclass and the shipped YAML diverge — so a merchant rename in `demo_data.py` can no longer silently de-sync the publish-time substitution template. Connects to the post-K re-skinnable demo plan: the same `DemoPersona` instance the demo generators consumed at hash-lock time is what the substitution layer rewrites for the publish target, *after* the SHA256 seed-hash check.
+- The follow-up of refactoring both `demo_data.py` modules to consume `DemoPersona` at every literal site is incremental and deferred — the SHA256 hash assertions need to stay green and that's a careful per-call refactor. The dataclass alone serves as source of truth for *what's substitutable*.
+
+**AWS enum-like strings → `Literal` + class constants (K.2a.5b)**
+
+- `ElementType`, `CrossDataset`, `Status`, `Scope`, `Trigger` were typed as bare `str` on the bearing dataclasses (`GridLayoutElement`, `FreeFormLayoutElement`, `FilterGroup`, `SheetVisualScopingConfiguration`, `VisualCustomAction`). A typo like `ElementType="VISULA"` survived to deploy time. The annotations are now `Literal[...]` so a typo fails under static analysis, and each bearing class now exposes `ClassVar` constants (`GridLayoutElement.VISUAL`, `FilterGroup.SINGLE_DATASET`, `SheetVisualScopingConfiguration.ALL_VISUALS`, `VisualCustomAction.DATA_POINT_CLICK` / `.ENABLED`) so call sites are IDE-discoverable.
+- Swept all ~75 internal call sites to use the constants. Runtime is unchanged (Literal is a type-checker construct; ClassVar values resolve to the same string).
+
+### Conventions
+
+- Same theme as K.2: invariants encoded in the type system rather than in post-hoc validation tests. K.2 caught a wrong-shape source-field binding at the wiring line; K.2a catches a wrong-kind-of-identifier (visual ID where a sheet ID was expected) at the same line. The `DemoPersona` parity test is the one exception — encoded as a test rather than a type because the YAML is a serialized projection and "byte-equal" is the actual invariant; the test prints the regenerated body so the fix is paste-ready.
+
+### Migration
+
+- No migration needed for end users. The new constants module + `DemoPersona` dataclass are additive; no existing call site signature changed at runtime. Downstream consumers that import from the per-app `constants.py` modules will see new exported names but no removals.
+
+---
+
 ## v3.6.1
 
 ### Docs — `ar_unified_exceptions` matview refresh contract

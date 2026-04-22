@@ -1,28 +1,6 @@
 # PLAN — Phase K: persona-driven layout work
 
-K.1 + K.2 (+ v3.6.1 doc patch) shipped — see `PLAN_ARCHIVE.md` for the rolled-up summaries and `RELEASE_NOTES.md` for the per-version detail.
-
-## K.2a — Identifier scatter cleanup (typed constants for opaque IDs)
-
-Goal: opaque identifier strings — filter group IDs, visual IDs, parameter names, action IDs — appear as bare string literals in 12+ files each, with test fixtures hand-maintained against the literals from production code. A rename or typo in one file silently breaks the binding without raising at deploy. K.2 proved this pattern hurts (drill param shape coercion); K.2a applies the constants-then-typed-wrappers approach to the rest of the identifier surface.
-
-Survey (excluding docs / SQL / release notes where the strings are correct as content):
-
-| Category | Occurrences | Files | Constants today? |
-|---|---|---|---|
-| Filter group IDs (`fg-ar-*`, `fg-pr-*`) | 118 | 10 | None — all string literals; tests hand-maintain `EXPECTED_IDS` against production literals. |
-| Visual IDs (`ar-balances-subledger-table` etc.) | 314 | 12 | None — sheet IDs + dataset IDs are constants in `constants.py` but visual IDs are inline in `visuals.py`. Visual IDs flow into FilterGroup scopes, where a typo silently mis-scopes a filter without raising at deploy. |
-| Parameter names (`pAr*`, `pSettlementId` etc.) | 86 | 10 | AR side has `P_AR_*` (33 references) but plain strings still appear 75 times incl. tests; PR side has none for `pSettlementId` / `pPaymentId` / `pExternalTransactionId`. |
-| Action IDs (`action-*`) | 18 | 3 | None — defer; small surface, mostly visual-local. |
-
-Out of scope for K.2a (different bug class — round-trip through SQL `CHECK` constraints + handbook prose; defer to K.2b if motivated): domain-value literals like `'sale'` / `'gl_control'` / `'Sub-Ledger Drift'`.
-
-- [ ] **K.2a.1 — Filter group ID constants.** Promote all `fg-ar-*` and `fg-pr-*` strings to `FG_*` constants in `account_recon/constants.py` + `payment_recon/constants.py`. Replace literals at definition sites (`filters.py`) + references (`analysis.py`). e2e tests: import an `ALL_FG_IDS` frozenset from constants and assert against that instead of hand-maintained `EXPECTED_IDS`. Smallest scope (118 occurrences, zero constants today), biggest win-per-line.
-- [ ] **K.2a.2 — PR parameter name constants.** Add `P_PR_SETTLEMENT_ID` / `P_PR_PAYMENT_ID` / `P_PR_EXTERNAL_TXN_ID` to `payment_recon/constants.py` mirroring `P_AR_*`. Replace plain strings in `payment_recon/analysis.py` + `recon_visuals.py` + tests.
-- [ ] **K.2a.3 — Visual ID constants.** Largest mechanical sweep (314 occurrences). Promote every visual ID to a `V_*` constant in the per-app `constants.py`. `visuals.py` defines via constant; `analysis.py` FilterGroup scopes reference via constant; e2e tests reference via constant for existence checks. Catches the silent FilterGroup-scope-typo class — visual IDs flow into `SheetVisualScopingConfigurations.VisualIds` and a typo there silently widens scope without erroring.
-- [ ] **K.2a.4 — NewType wrappers in `common/`.** Once strings are constants, wrap them in `NewType`: `SheetId = NewType("SheetId", str)`, `VisualId = NewType("VisualId", str)`, `FilterGroupId = NewType("FilterGroupId", str)`, `ParameterName = NewType("ParameterName", str)`. Update constants module to declare each constant as the NewType. Function signatures across `analysis.py` / `filters.py` / `visuals.py` annotate accordingly. mypy then catches the wrong-kind-of-string at the call site, the same way K.2's `ColumnShape` catches wrong-shape-of-source-field.
-- [ ] **K.2a.5 — Demo-persona strings → typed constants → derived `mapping.yaml.example`.** Today `mapping.yaml.example` hand-enumerates SNB demo strings (institution name, "Fed", `gl-1010` family, account labels, merchant names, flavor terms like "Margaret Hollowcreek") whose source-side spelling lives as bare literals across `account_recon/demo_data.py` + `payment_recon/demo_data.py` + `schema.sql` comments + `docs/handbook/*.md` + `training/handbook/scenarios/*.md`. A rename in one place silently de-syncs the publish-time substitution map. Land a `common/persona.py` (or `demo/persona.py`) module with a `DemoPersona` dataclass exposing each identifier as a named attribute (`institution_name`, `gl_accounts: dict[str, GLAccount]`, `merchants: dict[str, Merchant]`, etc.); demo generators read from the dataclass instead of inline strings. Then auto-derive `mapping.yaml.example` from the dataclass at build time — the YAML becomes a *snapshot of the keys*, not a hand-maintained list. Connects to `project_post_k_reskinnable_demo` (apply-time string replace happens after hash check, before DB apply); the same `DemoPersona` instance the demo generators already consumed at hash-lock time is the one the substitution layer rewrites for the publish target.
-- [ ] **K.2a.6 — Release as v3.7.0 (minor).** Mechanical refactor — no analysis, dataset, or runtime behavior change. Bump is minor not patch because the public-facing constants module + `DemoPersona` dataclass gain a lot of new names; downstream consumers pinning a specific version may notice.
+K.1 + K.2 (+ v3.6.1 doc patch) + K.2a shipped — see `PLAN_ARCHIVE.md` for the rolled-up summaries and `RELEASE_NOTES.md` for the per-version detail.
 
 ## K.3 — Lateness as a data column, not an operator threshold
 
