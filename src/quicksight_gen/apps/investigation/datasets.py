@@ -4,7 +4,10 @@ K.4.3 ships the recipient-fanout dataset. K.4.4 adds the rolling-window
 anomaly dataset (read from the ``inv_pair_rolling_anomalies`` matview).
 K.4.5 adds the money-trail dataset (read from the
 ``inv_money_trail_edges`` matview, which precomputes the
-``WITH RECURSIVE`` walk over ``parent_transfer_id``).
+``WITH RECURSIVE`` walk over ``parent_transfer_id``). K.4.8 wraps the
+same matview as a second dataset so the account-centric filters
+(anchor account, min amount) don't cross-contaminate K.4.5's
+chain-rooted filters.
 
 All datasets read the shared `transactions` + `daily_balances` base
 tables — Investigation has no app-specific schema. The K.4.4 + K.4.5
@@ -16,6 +19,7 @@ for QuickSight Direct Query at realistic transaction volumes.
 from __future__ import annotations
 
 from quicksight_gen.apps.investigation.constants import (
+    DS_INV_ACCOUNT_NETWORK,
     DS_INV_MONEY_TRAIL,
     DS_INV_RECIPIENT_FANOUT,
     DS_INV_VOLUME_ANOMALIES,
@@ -201,11 +205,33 @@ def build_money_trail_dataset(cfg: Config) -> DataSet:
     )
 
 
+def build_account_network_dataset(cfg: Config) -> DataSet:
+    """Per-edge account-network rows — same matview as money trail.
+
+    Reuses ``inv_money_trail_edges``; a second dataset registration so
+    the account-centric calc field (``is_anchor_edge``) and filters
+    (anchor account, min amount) live independently of the K.4.5
+    chain-root filters. Contract is identical because the underlying
+    rows are.
+    """
+    sql = "SELECT * FROM inv_money_trail_edges"
+    return build_dataset(
+        cfg,
+        cfg.prefixed("inv-account-network-dataset"),
+        "Investigation Account Network",
+        "inv-account-network",
+        sql,
+        MONEY_TRAIL_CONTRACT,
+        visual_identifier=DS_INV_ACCOUNT_NETWORK,
+    )
+
+
 def build_all_datasets(cfg: Config) -> list[DataSet]:
     return [
         build_recipient_fanout_dataset(cfg),
         build_volume_anomalies_dataset(cfg),
         build_money_trail_dataset(cfg),
+        build_account_network_dataset(cfg),
     ]
 
 
@@ -216,6 +242,7 @@ _CONTRACT_REGISTRATIONS: tuple[tuple[str, DatasetContract], ...] = (
     (DS_INV_RECIPIENT_FANOUT, RECIPIENT_FANOUT_CONTRACT),
     (DS_INV_VOLUME_ANOMALIES, VOLUME_ANOMALIES_CONTRACT),
     (DS_INV_MONEY_TRAIL, MONEY_TRAIL_CONTRACT),
+    (DS_INV_ACCOUNT_NETWORK, MONEY_TRAIL_CONTRACT),
 )
 for _vid, _contract in _CONTRACT_REGISTRATIONS:
     register_contract(_vid, _contract)

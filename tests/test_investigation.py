@@ -30,10 +30,14 @@ from quicksight_gen.apps.investigation.analysis import (
     build_investigation_dashboard,
 )
 from quicksight_gen.apps.investigation.constants import (
+    CF_INV_ANETWORK_IS_ANCHOR_EDGE,
     CF_INV_FANOUT_DISTINCT_SENDERS,
+    DS_INV_ACCOUNT_NETWORK,
     DS_INV_MONEY_TRAIL,
     DS_INV_RECIPIENT_FANOUT,
     DS_INV_VOLUME_ANOMALIES,
+    FG_INV_ANETWORK_AMOUNT,
+    FG_INV_ANETWORK_ANCHOR,
     FG_INV_ANOMALIES_SIGMA,
     FG_INV_ANOMALIES_WINDOW,
     FG_INV_FANOUT_THRESHOLD,
@@ -41,15 +45,20 @@ from quicksight_gen.apps.investigation.constants import (
     FG_INV_MONEY_TRAIL_AMOUNT,
     FG_INV_MONEY_TRAIL_HOPS,
     FG_INV_MONEY_TRAIL_ROOT,
+    P_INV_ANETWORK_ANCHOR,
+    P_INV_ANETWORK_MIN_AMOUNT,
     P_INV_ANOMALIES_SIGMA,
     P_INV_FANOUT_THRESHOLD,
     P_INV_MONEY_TRAIL_MAX_HOPS,
     P_INV_MONEY_TRAIL_MIN_AMOUNT,
     P_INV_MONEY_TRAIL_ROOT,
+    SHEET_INV_ACCOUNT_NETWORK,
     SHEET_INV_ANOMALIES,
     SHEET_INV_FANOUT,
     SHEET_INV_GETTING_STARTED,
     SHEET_INV_MONEY_TRAIL,
+    V_INV_ANETWORK_SANKEY,
+    V_INV_ANETWORK_TABLE,
     V_INV_ANOMALIES_DISTRIBUTION,
     V_INV_ANOMALIES_KPI_FLAGGED,
     V_INV_ANOMALIES_TABLE,
@@ -80,6 +89,8 @@ from quicksight_gen.apps.investigation.filters import (
     SIGMA_SLIDER_MIN,
     SLIDER_MAX,
     SLIDER_MIN,
+    build_account_network_filter_controls,
+    build_account_network_parameter_controls,
     build_anomalies_filter_controls,
     build_anomalies_parameter_controls,
     build_fanout_filter_controls,
@@ -122,7 +133,7 @@ def test_investigation_theme_preset_registered():
 # Top-level shape
 # ---------------------------------------------------------------------------
 
-def test_analysis_has_four_sheets_in_expected_order():
+def test_analysis_has_five_sheets_in_expected_order():
     analysis = build_analysis(_TEST_CFG)
     sheet_ids = [s.SheetId for s in analysis.Definition.Sheets]
     assert sheet_ids == [
@@ -130,6 +141,7 @@ def test_analysis_has_four_sheets_in_expected_order():
         SHEET_INV_FANOUT,
         SHEET_INV_ANOMALIES,
         SHEET_INV_MONEY_TRAIL,
+        SHEET_INV_ACCOUNT_NETWORK,
     ]
 
 
@@ -157,7 +169,7 @@ def test_analysis_serializes_to_aws_json():
     """to_aws_json() must succeed end-to-end — no None-strip crashes."""
     j = build_analysis(_TEST_CFG).to_aws_json()
     assert j["AnalysisId"] == _TEST_CFG.prefixed("investigation-analysis")
-    assert len(j["Definition"]["Sheets"]) == 4
+    assert len(j["Definition"]["Sheets"]) == 5
 
 
 def test_demo_sql_is_a_string():
@@ -173,13 +185,15 @@ def test_demo_sql_is_a_string():
 
 def test_investigation_datasets_in_expected_order():
     """K.4.3 dataset first, K.4.4 matview-backed dataset second, K.4.5
-    money-trail matview dataset third. Order matters — analysis.py's
-    DataSetIdentifierDeclarations zip relies on it."""
+    money-trail matview dataset third, K.4.8 account-network wrapper
+    fourth. Order matters — analysis.py's DataSetIdentifierDeclarations
+    zip relies on it."""
     datasets = build_all_datasets(_TEST_CFG)
-    assert len(datasets) == 3
+    assert len(datasets) == 4
     assert datasets[0].DataSetId == _TEST_CFG.prefixed("inv-recipient-fanout-dataset")
     assert datasets[1].DataSetId == _TEST_CFG.prefixed("inv-volume-anomalies-dataset")
     assert datasets[2].DataSetId == _TEST_CFG.prefixed("inv-money-trail-dataset")
+    assert datasets[3].DataSetId == _TEST_CFG.prefixed("inv-account-network-dataset")
 
 
 def test_investigation_datasets_declared_in_analysis():
@@ -189,6 +203,7 @@ def test_investigation_datasets_declared_in_analysis():
         DS_INV_RECIPIENT_FANOUT,
         DS_INV_VOLUME_ANOMALIES,
         DS_INV_MONEY_TRAIL,
+        DS_INV_ACCOUNT_NETWORK,
     ]
 
 
@@ -219,6 +234,7 @@ def test_recipient_fanout_sql_filters_recipient_to_dda_types():
 def test_filter_groups_in_expected_order():
     """Two K.4.3 fanout filter groups, then two K.4.4 anomalies filter
     groups, then three K.4.5 money-trail filter groups (root / hops /
+    amount), then two K.4.8 account-network filter groups (anchor /
     amount). Order is stable so the deployed Definition diff is readable."""
     groups = build_filter_groups(_TEST_CFG)
     ids = [g.FilterGroupId for g in groups]
@@ -230,6 +246,8 @@ def test_filter_groups_in_expected_order():
         FG_INV_MONEY_TRAIL_ROOT,
         FG_INV_MONEY_TRAIL_HOPS,
         FG_INV_MONEY_TRAIL_AMOUNT,
+        FG_INV_ANETWORK_ANCHOR,
+        FG_INV_ANETWORK_AMOUNT,
     ]
 
 
@@ -257,10 +275,11 @@ def test_window_filter_is_a_time_range_on_posted_at():
 
 
 def test_parameter_declarations_carry_both_thresholds():
-    """Five parameters: K.4.3 fanout threshold, K.4.4 sigma threshold,
-    K.4.5 money-trail root (string) + max-hops + min-amount (integers)."""
+    """Seven parameters: K.4.3 fanout threshold, K.4.4 sigma threshold,
+    K.4.5 money-trail root (string) + max-hops + min-amount (integers),
+    K.4.8 account-network anchor (string) + min-amount (integer)."""
     decls = build_parameter_declarations(_TEST_CFG)
-    assert len(decls) == 5
+    assert len(decls) == 7
     int_by_name = {
         d.IntegerParameterDeclaration.Name: d.IntegerParameterDeclaration
         for d in decls if d.IntegerParameterDeclaration
@@ -277,6 +296,10 @@ def test_parameter_declarations_carry_both_thresholds():
     assert int_by_name[P_INV_MONEY_TRAIL_MIN_AMOUNT].DefaultValues == {
         "StaticValues": [DEFAULT_MONEY_TRAIL_MIN_AMOUNT],
     }
+    # K.4.8 anchor amount slider reuses Money Trail's default of 0.
+    assert int_by_name[P_INV_ANETWORK_MIN_AMOUNT].DefaultValues == {
+        "StaticValues": [DEFAULT_MONEY_TRAIL_MIN_AMOUNT],
+    }
     str_by_name = {
         d.StringParameterDeclaration.Name: d.StringParameterDeclaration
         for d in decls if d.StringParameterDeclaration
@@ -284,6 +307,10 @@ def test_parameter_declarations_carry_both_thresholds():
     # No default — the dropdown auto-populates from the matview's
     # distinct root_transfer_id values.
     assert str_by_name[P_INV_MONEY_TRAIL_ROOT].DefaultValues == {
+        "StaticValues": [],
+    }
+    # No default — analyst picks the anchor on first render.
+    assert str_by_name[P_INV_ANETWORK_ANCHOR].DefaultValues == {
         "StaticValues": [],
     }
 
@@ -374,12 +401,14 @@ def test_fanout_sheet_serializes_to_aws_json():
     assert len(fanout["Visuals"]) == 4
     assert len(fanout["FilterControls"]) == 1
     assert len(fanout["ParameterControls"]) == 1
-    # Top-level: 7 filter groups (2 fanout + 2 anomalies + 3 money trail),
-    # 1 calc field (fanout distinct count), 5 parameters (fanout threshold
-    # + sigma + money-trail root/hops/amount).
-    assert len(j["Definition"]["FilterGroups"]) == 7
-    assert len(j["Definition"]["CalculatedFields"]) == 1
-    assert len(j["Definition"]["ParameterDeclarations"]) == 5
+    # Top-level: 9 filter groups (2 fanout + 2 anomalies + 3 money trail
+    # + 2 account network), 2 calc fields (fanout distinct count +
+    # account-network is_anchor_edge), 7 parameters (fanout threshold
+    # + sigma + money-trail root/hops/amount + account-network
+    # anchor/min-amount).
+    assert len(j["Definition"]["FilterGroups"]) == 9
+    assert len(j["Definition"]["CalculatedFields"]) == 2
+    assert len(j["Definition"]["ParameterDeclarations"]) == 7
 
 
 # ---------------------------------------------------------------------------
@@ -830,6 +859,173 @@ def test_money_trail_sheet_serializes_to_aws_json():
         v for v in sheet["Visuals"] if "SankeyDiagramVisual" in v
     )
     assert sankey["SankeyDiagramVisual"]["VisualId"] == V_INV_MONEY_TRAIL_SANKEY
+
+
+# ---------------------------------------------------------------------------
+# K.4.8 — Account Network sheet
+# ---------------------------------------------------------------------------
+
+def test_account_network_dataset_reuses_money_trail_matview():
+    """K.4.8 wraps the same matview as K.4.5 — second dataset
+    registration so account-centric filters live independently."""
+    ds = build_all_datasets(_TEST_CFG)[3]
+    sql = next(iter(ds.PhysicalTableMap.values())).CustomSql.SqlQuery
+    assert sql == "SELECT * FROM inv_money_trail_edges"
+
+
+def test_anchor_calc_field_is_ifelse_on_anchor_param():
+    """``is_anchor_edge`` returns 'yes' when source OR target equals
+    pInvANetworkAnchor — single-column expression so the K.4.8 filter
+    stays a single CategoryFilter rather than two."""
+    analysis = build_analysis(_TEST_CFG)
+    calc_fields = {
+        cf["Name"]: cf for cf in analysis.Definition.CalculatedFields
+    }
+    is_anchor = calc_fields[CF_INV_ANETWORK_IS_ANCHOR_EDGE]
+    assert is_anchor["DataSetIdentifier"] == DS_INV_ACCOUNT_NETWORK
+    expr = is_anchor["Expression"]
+    assert "ifelse" in expr
+    assert "{source_account_id} = ${pInvANetworkAnchor}" in expr
+    assert "{target_account_id} = ${pInvANetworkAnchor}" in expr
+    assert "OR" in expr
+    assert "'yes'" in expr
+    assert "'no'" in expr
+
+
+def test_anchor_filter_matches_calc_field_on_yes():
+    """Anchor filter is a CategoryFilter on the calc field equal to
+    'yes' — narrows visuals to edges touching the anchor account."""
+    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    anchor = groups[FG_INV_ANETWORK_ANCHOR]
+    cf = anchor.Filters[0].CategoryFilter
+    assert cf is not None
+    assert cf.Column.DataSetIdentifier == DS_INV_ACCOUNT_NETWORK
+    assert cf.Column.ColumnName == CF_INV_ANETWORK_IS_ANCHOR_EDGE
+    config = cf.Configuration.FilterListConfiguration
+    assert config["MatchOperator"] == "EQUALS"
+    assert config["CategoryValues"] == ["yes"]
+
+
+def test_anetwork_amount_filter_drops_noise_edges_via_parameter():
+    """Min-amount filter on hop_amount bound to pInvANetworkMinAmount;
+    same NumericRangeFilter shape as the money-trail amount slider."""
+    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    amount = groups[FG_INV_ANETWORK_AMOUNT]
+    nrf = amount.Filters[0].NumericRangeFilter
+    assert nrf is not None
+    assert nrf.Column.ColumnName == "hop_amount"
+    assert nrf.Column.DataSetIdentifier == DS_INV_ACCOUNT_NETWORK
+    assert nrf.RangeMinimum is not None
+    assert nrf.RangeMinimum.Parameter == P_INV_ANETWORK_MIN_AMOUNT
+    assert nrf.RangeMaximum is None
+    assert nrf.IncludeMinimum is True
+
+
+def test_anetwork_filters_are_all_visuals_scope():
+    """Both K.4.8 filters scope ALL_VISUALS so the Sankey + table agree."""
+    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    for fg_id in (FG_INV_ANETWORK_ANCHOR, FG_INV_ANETWORK_AMOUNT):
+        sc = groups[fg_id].ScopeConfiguration
+        configs = sc.SelectedSheets.SheetVisualScopingConfigurations
+        assert len(configs) == 1
+        assert configs[0].SheetId == SHEET_INV_ACCOUNT_NETWORK
+        assert configs[0].Scope == SheetVisualScopingConfiguration.ALL_VISUALS
+
+
+def test_anetwork_anchor_dropdown_links_to_source_account_id():
+    """Dropdown auto-populates from the matview's distinct
+    source_account_id values via LinkToDataSetColumn — analysts see
+    every account that has ever sent in the matview."""
+    pc = build_account_network_parameter_controls(_TEST_CFG)
+    # 2 controls: anchor dropdown, min-amount slider.
+    assert len(pc) == 2
+    dropdown = pc[0].Dropdown
+    assert dropdown is not None
+    assert dropdown.SourceParameterName == P_INV_ANETWORK_ANCHOR
+    assert dropdown.Type == "SINGLE_SELECT"
+    link = dropdown.SelectableValues["LinkToDataSetColumn"]
+    assert link["DataSetIdentifier"] == DS_INV_ACCOUNT_NETWORK
+    assert link["ColumnName"] == "source_account_id"
+
+
+def test_anetwork_amount_slider_binds_to_parameter():
+    pc = build_account_network_parameter_controls(_TEST_CFG)
+    amount_slider = pc[1].Slider
+    assert amount_slider is not None
+    assert amount_slider.SourceParameterName == P_INV_ANETWORK_MIN_AMOUNT
+    assert amount_slider.MinimumValue == AMOUNT_SLIDER_MIN
+    assert amount_slider.MaximumValue == AMOUNT_SLIDER_MAX
+    assert amount_slider.StepSize == 10
+
+
+def test_account_network_sheet_has_no_filter_controls():
+    """All filters parameter-bound; ParameterControls only."""
+    fc = build_account_network_filter_controls(_TEST_CFG)
+    assert fc == []
+
+
+def test_account_network_sheet_has_sankey_and_table():
+    analysis = build_analysis(_TEST_CFG)
+    sheet = next(
+        s for s in analysis.Definition.Sheets
+        if s.SheetId == SHEET_INV_ACCOUNT_NETWORK
+    )
+    assert sheet.Visuals is not None
+    visual_ids = []
+    for v in sheet.Visuals:
+        if v.SankeyDiagramVisual:
+            visual_ids.append(v.SankeyDiagramVisual.VisualId)
+        elif v.TableVisual:
+            visual_ids.append(v.TableVisual.VisualId)
+        else:
+            visual_ids.append(None)
+    assert visual_ids == [
+        V_INV_ANETWORK_SANKEY,
+        V_INV_ANETWORK_TABLE,
+    ]
+
+
+def test_account_network_sankey_field_wells_use_account_names_and_sum_hop_amount():
+    """Same field-well shape as Money Trail's Sankey, sourced from the
+    K.4.8 dataset wrapper."""
+    analysis = build_analysis(_TEST_CFG)
+    sheet = next(
+        s for s in analysis.Definition.Sheets
+        if s.SheetId == SHEET_INV_ACCOUNT_NETWORK
+    )
+    sankey = next(
+        v.SankeyDiagramVisual for v in sheet.Visuals if v.SankeyDiagramVisual
+    )
+    fw = sankey.ChartConfiguration.FieldWells.SankeyDiagramAggregatedFieldWells
+    src = [
+        d.CategoricalDimensionField.Column.ColumnName
+        for d in fw.Source if d.CategoricalDimensionField
+    ]
+    dst = [
+        d.CategoricalDimensionField.Column.ColumnName
+        for d in fw.Destination if d.CategoricalDimensionField
+    ]
+    assert src == ["source_account_name"]
+    assert dst == ["target_account_name"]
+    weight = fw.Weight[0].NumericalMeasureField
+    assert weight.Column.ColumnName == "hop_amount"
+    assert weight.AggregationFunction.SimpleNumericalAggregation == "SUM"
+    # Confirm sankey is sourced from the K.4.8 dataset, not K.4.5.
+    assert fw.Source[0].CategoricalDimensionField.Column.DataSetIdentifier == (
+        DS_INV_ACCOUNT_NETWORK
+    )
+
+
+def test_account_network_sheet_serializes_to_aws_json():
+    j = build_analysis(_TEST_CFG).to_aws_json()
+    sheet = next(
+        s for s in j["Definition"]["Sheets"]
+        if s["SheetId"] == SHEET_INV_ACCOUNT_NETWORK
+    )
+    assert len(sheet["Visuals"]) == 2
+    assert sheet.get("FilterControls", []) == []
+    # 2 parameter controls (anchor dropdown + amount slider).
+    assert len(sheet["ParameterControls"]) == 2
 
 
 # ---------------------------------------------------------------------------

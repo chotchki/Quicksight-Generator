@@ -19,15 +19,25 @@ intermediate accounts → terminal accounts, weighted by SUM(hop_amount))
 beside a hop-by-hop detail table sorted by depth ascending. Both
 visuals read the matview-backed money-trail dataset, scoped to one
 chain via the chain-root parameter.
+
+K.4.8 ships the Account Network sheet — same matview as Money Trail,
+viewed account-centrically. The Sankey shows every edge touching the
+anchor account (anchor sits in the middle, inbound counterparties on
+the left, outbound on the right) and the touching-edges table lists
+every edge for the anchor across the full window. Filter narrows via
+the analysis-level ``is_anchor_edge`` calc field set by K.4.8c.
 """
 
 from __future__ import annotations
 
 from quicksight_gen.apps.investigation.constants import (
     CF_INV_FANOUT_DISTINCT_SENDERS,
+    DS_INV_ACCOUNT_NETWORK,
     DS_INV_MONEY_TRAIL,
     DS_INV_RECIPIENT_FANOUT,
     DS_INV_VOLUME_ANOMALIES,
+    V_INV_ANETWORK_SANKEY,
+    V_INV_ANETWORK_TABLE,
     V_INV_ANOMALIES_DISTRIBUTION,
     V_INV_ANOMALIES_KPI_FLAGGED,
     V_INV_ANOMALIES_TABLE,
@@ -173,6 +183,7 @@ def _subtitle(text: str) -> VisualSubtitleLabelOptions:
 _DS_FANOUT = DS_INV_RECIPIENT_FANOUT
 _DS_ANOMALIES = DS_INV_VOLUME_ANOMALIES
 _DS_MONEY_TRAIL = DS_INV_MONEY_TRAIL
+_DS_ACCOUNT_NETWORK = DS_INV_ACCOUNT_NETWORK
 
 
 def _kpi_recipients() -> Visual:
@@ -626,4 +637,151 @@ def build_money_trail_visuals() -> list[Visual]:
     return [
         _money_trail_sankey(),
         _money_trail_table(),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Account Network visuals (K.4.8)
+# ---------------------------------------------------------------------------
+
+# Same items-limit reasoning as Money Trail's Sankey — the anchor
+# filter narrows to one account's edges, so the realistic cap is "edge
+# count for that anchor", not the whole matview.
+_ANETWORK_NODE_CAP = 50
+
+
+def _account_network_sankey() -> Visual:
+    """Account-anchored Sankey: source → target ribbons touching the anchor.
+
+    The anchor filter (CategoryFilter on the ``is_anchor_edge`` calc
+    field) narrows the dataset to edges whose source OR target equals
+    the anchor account. The Sankey then renders those edges naturally:
+    ribbons going INTO the anchor land on the right side of the anchor
+    node, ribbons going OUT of the anchor leave from its left side, so
+    the diagram self-organizes into a left-counterparties / anchor /
+    right-counterparties layout. Weight = SUM(hop_amount).
+    """
+    return Visual(
+        SankeyDiagramVisual=SankeyDiagramVisual(
+            VisualId=V_INV_ANETWORK_SANKEY,
+            Title=_title("Account Network — Anchor Sankey"),
+            Subtitle=_subtitle(
+                "Every edge touching the anchor account, in either "
+                "direction. Inbound counterparties feed the anchor "
+                "node from the left; outbound counterparties leave "
+                "from the right. Ribbon thickness = SUM(hop_amount)."
+            ),
+            ChartConfiguration=SankeyDiagramChartConfiguration(
+                FieldWells=SankeyDiagramFieldWells(
+                    SankeyDiagramAggregatedFieldWells=SankeyDiagramAggregatedFieldWells(
+                        Source=[
+                            _dim(_DS_ACCOUNT_NETWORK,
+                                 "inv-anetwork-sankey-source",
+                                 "source_account_name"),
+                        ],
+                        Destination=[
+                            _dim(_DS_ACCOUNT_NETWORK,
+                                 "inv-anetwork-sankey-target",
+                                 "target_account_name"),
+                        ],
+                        Weight=[
+                            _measure_sum(
+                                _DS_ACCOUNT_NETWORK,
+                                "inv-anetwork-sankey-weight",
+                                "hop_amount",
+                            ),
+                        ],
+                    ),
+                ),
+                SortConfiguration=SankeyDiagramSortConfiguration(
+                    WeightSort=[
+                        {
+                            "FieldSort": {
+                                "FieldId": "inv-anetwork-sankey-weight",
+                                "Direction": "DESC",
+                            },
+                        },
+                    ],
+                    SourceItemsLimit={
+                        "ItemsLimit": _ANETWORK_NODE_CAP,
+                        "OtherCategories": "INCLUDE",
+                    },
+                    DestinationItemsLimit={
+                        "ItemsLimit": _ANETWORK_NODE_CAP,
+                        "OtherCategories": "INCLUDE",
+                    },
+                ),
+            ),
+        ),
+    )
+
+
+def _account_network_table() -> Visual:
+    """Touching-edges table: every edge involving the anchor account.
+
+    Sorted by amount DESC so the largest flows surface first — analysts
+    triage by size, not by chain order. Same group-by columns as the
+    Money Trail table so the two sheets feel consistent; depth surfaces
+    here too because the matview rows still carry it (one anchor's
+    edges may live at different depths in different chains).
+    """
+    return Visual(
+        TableVisual=TableVisual(
+            VisualId=V_INV_ANETWORK_TABLE,
+            Title=_title("Account Network — Touching Edges"),
+            Subtitle=_subtitle(
+                "Every edge involving the anchor account, ordered by "
+                "amount descending."
+            ),
+            ChartConfiguration=TableConfiguration(
+                FieldWells=TableFieldWells(
+                    TableAggregatedFieldWells=TableAggregatedFieldWells(
+                        GroupBy=[
+                            _dim(_DS_ACCOUNT_NETWORK,
+                                 "inv-anetwork-tbl-transfer-id",
+                                 "transfer_id"),
+                            _dim(_DS_ACCOUNT_NETWORK,
+                                 "inv-anetwork-tbl-transfer-type",
+                                 "transfer_type"),
+                            _dim(_DS_ACCOUNT_NETWORK,
+                                 "inv-anetwork-tbl-source-name",
+                                 "source_account_name"),
+                            _dim(_DS_ACCOUNT_NETWORK,
+                                 "inv-anetwork-tbl-target-name",
+                                 "target_account_name"),
+                            _num_dim(_DS_ACCOUNT_NETWORK,
+                                     "inv-anetwork-tbl-depth",
+                                     "depth"),
+                            _date_dim(_DS_ACCOUNT_NETWORK,
+                                      "inv-anetwork-tbl-posted-at",
+                                      "posted_at"),
+                        ],
+                        Values=[
+                            _measure_sum(
+                                _DS_ACCOUNT_NETWORK,
+                                "inv-anetwork-tbl-amount",
+                                "hop_amount",
+                            ),
+                        ],
+                    ),
+                ),
+                SortConfiguration={
+                    "RowSort": [
+                        {
+                            "FieldSort": {
+                                "FieldId": "inv-anetwork-tbl-amount",
+                                "Direction": "DESC",
+                            },
+                        },
+                    ],
+                },
+            ),
+        ),
+    )
+
+
+def build_account_network_visuals() -> list[Visual]:
+    return [
+        _account_network_sankey(),
+        _account_network_table(),
     ]

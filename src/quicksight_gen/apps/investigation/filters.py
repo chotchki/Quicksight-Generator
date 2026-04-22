@@ -19,15 +19,29 @@ slider (NumericRangeFilter on ``depth``), and a min-hop-amount slider
 (NumericRangeFilter on ``hop_amount``). All three filters scope
 ALL_VISUALS — both the Sankey and the hop-by-hop table reflect the
 same chain selection so the visual + table can be read together.
+
+K.4.8 ships the Account Network sheet's filter groups + controls: an
+anchor-account dropdown (auto-populated from the matview's distinct
+``source_account_id`` values, bound to ``pInvANetworkAnchor``), and a
+min-amount slider (same shape as Money Trail's amount slider). The
+anchor filter narrows via the analysis-level ``is_anchor_edge`` calc
+field — true when the edge's source OR target equals the anchor — so
+the analyst sees every edge touching that account on either side. Both
+filters scope ALL_VISUALS so the Sankey and the touching-edges table
+share the same selection.
 """
 
 from __future__ import annotations
 
 from quicksight_gen.apps.investigation.constants import (
+    CF_INV_ANETWORK_IS_ANCHOR_EDGE,
     CF_INV_FANOUT_DISTINCT_SENDERS,
+    DS_INV_ACCOUNT_NETWORK,
     DS_INV_MONEY_TRAIL,
     DS_INV_RECIPIENT_FANOUT,
     DS_INV_VOLUME_ANOMALIES,
+    FG_INV_ANETWORK_AMOUNT,
+    FG_INV_ANETWORK_ANCHOR,
     FG_INV_ANOMALIES_SIGMA,
     FG_INV_ANOMALIES_WINDOW,
     FG_INV_FANOUT_THRESHOLD,
@@ -35,11 +49,14 @@ from quicksight_gen.apps.investigation.constants import (
     FG_INV_MONEY_TRAIL_AMOUNT,
     FG_INV_MONEY_TRAIL_HOPS,
     FG_INV_MONEY_TRAIL_ROOT,
+    P_INV_ANETWORK_ANCHOR,
+    P_INV_ANETWORK_MIN_AMOUNT,
     P_INV_ANOMALIES_SIGMA,
     P_INV_FANOUT_THRESHOLD,
     P_INV_MONEY_TRAIL_MAX_HOPS,
     P_INV_MONEY_TRAIL_MIN_AMOUNT,
     P_INV_MONEY_TRAIL_ROOT,
+    SHEET_INV_ACCOUNT_NETWORK,
     SHEET_INV_ANOMALIES,
     SHEET_INV_FANOUT,
     SHEET_INV_MONEY_TRAIL,
@@ -128,6 +145,11 @@ FILTER_INV_MONEY_TRAIL_AMOUNT = "filter-inv-money-trail-amount"
 CTRL_INV_MONEY_TRAIL_ROOT = "ctrl-inv-money-trail-root"
 CTRL_INV_MONEY_TRAIL_HOPS = "ctrl-inv-money-trail-hops"
 CTRL_INV_MONEY_TRAIL_AMOUNT = "ctrl-inv-money-trail-amount"
+
+FILTER_INV_ANETWORK_ANCHOR = "filter-inv-anetwork-anchor"
+FILTER_INV_ANETWORK_AMOUNT = "filter-inv-anetwork-amount"
+CTRL_INV_ANETWORK_ANCHOR = "ctrl-inv-anetwork-anchor"
+CTRL_INV_ANETWORK_AMOUNT = "ctrl-inv-anetwork-amount"
 
 
 def _selected_sheets_scope(sheet_ids: list[SheetId]) -> FilterScopeConfiguration:
@@ -398,6 +420,71 @@ def _money_trail_amount_filter_group() -> FilterGroup:
     )
 
 
+def _anetwork_anchor_filter_group() -> FilterGroup:
+    """Anchor-account filter on the ``is_anchor_edge`` calc field.
+
+    The calc field returns ``'yes'`` when the edge's source OR target
+    equals ``pInvANetworkAnchor`` and ``'no'`` otherwise — a single
+    column over which a CategoryFilter can express the source-OR-target
+    semantics in one filter rather than two. ALL_VISUALS scope so the
+    Sankey and the touching-edges table reflect the same selection.
+    """
+    return FilterGroup(
+        FilterGroupId=FG_INV_ANETWORK_ANCHOR,
+        CrossDataset=FilterGroup.SINGLE_DATASET,
+        ScopeConfiguration=_selected_sheets_scope([SHEET_INV_ACCOUNT_NETWORK]),
+        Status=FilterGroup.ENABLED,
+        Filters=[
+            Filter(
+                CategoryFilter=CategoryFilter(
+                    FilterId=FILTER_INV_ANETWORK_ANCHOR,
+                    Column=ColumnIdentifier(
+                        DataSetIdentifier=DS_INV_ACCOUNT_NETWORK,
+                        ColumnName=CF_INV_ANETWORK_IS_ANCHOR_EDGE,
+                    ),
+                    Configuration=CategoryFilterConfiguration(
+                        FilterListConfiguration={
+                            "MatchOperator": "EQUALS",
+                            "CategoryValues": ["yes"],
+                        },
+                    ),
+                ),
+            ),
+        ],
+    )
+
+
+def _anetwork_amount_filter_group() -> FilterGroup:
+    """Min-amount filter on ``hop_amount`` for the Account Network sheet.
+
+    Same shape as the Money Trail amount slider — drops noise edges
+    below the slider value. ALL_VISUALS so the Sankey and the table
+    agree.
+    """
+    return FilterGroup(
+        FilterGroupId=FG_INV_ANETWORK_AMOUNT,
+        CrossDataset=FilterGroup.SINGLE_DATASET,
+        ScopeConfiguration=_selected_sheets_scope([SHEET_INV_ACCOUNT_NETWORK]),
+        Status=FilterGroup.ENABLED,
+        Filters=[
+            Filter(
+                NumericRangeFilter=NumericRangeFilter(
+                    FilterId=FILTER_INV_ANETWORK_AMOUNT,
+                    Column=ColumnIdentifier(
+                        DataSetIdentifier=DS_INV_ACCOUNT_NETWORK,
+                        ColumnName="hop_amount",
+                    ),
+                    NullOption="NON_NULLS_ONLY",
+                    RangeMinimum=NumericRangeFilterValue(
+                        Parameter=P_INV_ANETWORK_MIN_AMOUNT,
+                    ),
+                    IncludeMinimum=True,
+                ),
+            ),
+        ],
+    )
+
+
 def build_filter_groups(cfg: Config) -> list[FilterGroup]:
     del cfg
     return [
@@ -408,6 +495,8 @@ def build_filter_groups(cfg: Config) -> list[FilterGroup]:
         _money_trail_root_filter_group(),
         _money_trail_hops_filter_group(),
         _money_trail_amount_filter_group(),
+        _anetwork_anchor_filter_group(),
+        _anetwork_amount_filter_group(),
     ]
 
 
@@ -453,6 +542,23 @@ def build_parameter_declarations(cfg: Config) -> list[ParameterDeclaration]:
             IntegerParameterDeclaration=IntegerParameterDeclaration(
                 ParameterValueType="SINGLE_VALUED",
                 Name=P_INV_MONEY_TRAIL_MIN_AMOUNT,
+                DefaultValues={"StaticValues": [DEFAULT_MONEY_TRAIL_MIN_AMOUNT]},
+            ),
+        ),
+        ParameterDeclaration(
+            StringParameterDeclaration=StringParameterDeclaration(
+                ParameterValueType="SINGLE_VALUED",
+                Name=P_INV_ANETWORK_ANCHOR,
+                # No default — the dropdown auto-populates from the
+                # matview's distinct source_account_id values; the
+                # analyst picks the anchor on first render.
+                DefaultValues={"StaticValues": []},
+            ),
+        ),
+        ParameterDeclaration(
+            IntegerParameterDeclaration=IntegerParameterDeclaration(
+                ParameterValueType="SINGLE_VALUED",
+                Name=P_INV_ANETWORK_MIN_AMOUNT,
                 DefaultValues={"StaticValues": [DEFAULT_MONEY_TRAIL_MIN_AMOUNT]},
             ),
         ),
@@ -601,4 +707,57 @@ def build_money_trail_parameter_controls(cfg: Config) -> list[ParameterControl]:
         _money_trail_root_control(),
         _money_trail_hops_control(),
         _money_trail_amount_control(),
+    ]
+
+
+def _anetwork_anchor_control() -> ParameterControl:
+    """Dropdown auto-populated from the matview's distinct source accounts.
+
+    Uses ``source_account_id`` as the dropdown population — every
+    account that ever sent in the matview shows up. Target-only
+    accounts (pure sinks that never sent) won't appear, but those are
+    rare in real flows and the rare ones can be reached by picking
+    an account that paid them. Cleaner than UNION-ing source + target
+    in a separate dataset.
+    """
+    return ParameterControl(
+        Dropdown=ParameterDropDownControl(
+            ParameterControlId=CTRL_INV_ANETWORK_ANCHOR,
+            Title="Anchor account",
+            SourceParameterName=P_INV_ANETWORK_ANCHOR,
+            Type="SINGLE_SELECT",
+            SelectableValues={
+                "LinkToDataSetColumn": {
+                    "DataSetIdentifier": DS_INV_ACCOUNT_NETWORK,
+                    "ColumnName": "source_account_id",
+                },
+            },
+        ),
+    )
+
+
+def _anetwork_amount_control() -> ParameterControl:
+    return ParameterControl(
+        Slider=ParameterSliderControl(
+            ParameterControlId=CTRL_INV_ANETWORK_AMOUNT,
+            Title="Min hop amount ($)",
+            SourceParameterName=P_INV_ANETWORK_MIN_AMOUNT,
+            MinimumValue=AMOUNT_SLIDER_MIN,
+            MaximumValue=AMOUNT_SLIDER_MAX,
+            StepSize=10,
+        ),
+    )
+
+
+def build_account_network_filter_controls(cfg: Config) -> list[FilterControl]:
+    del cfg
+    # All filters are parameter-bound — no FilterControl widgets.
+    return []
+
+
+def build_account_network_parameter_controls(cfg: Config) -> list[ParameterControl]:
+    del cfg
+    return [
+        _anetwork_anchor_control(),
+        _anetwork_amount_control(),
     ]
