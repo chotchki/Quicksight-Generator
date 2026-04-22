@@ -4,8 +4,12 @@ K.4.2 shipped the skeleton (4 sheets, no datasets / filters / visuals).
 K.4.3 lands the Recipient Fanout sheet — recipient-fanout dataset +
 contract, two filter groups (window date-range + threshold on the
 analysis-level distinct-sender calc field), an integer parameter +
-slider control, three KPIs, and a recipient-grain ranked table. Volume
-Anomalies / Money Trail remain stubs until K.4.4 / K.4.5.
+slider control, three KPIs, and a recipient-grain ranked table.
+K.4.4 lands the Volume Anomalies sheet — pair-grain matview-backed
+dataset, two filter groups (window date-range + σ threshold on z_score,
+the latter scoped SELECTED_VISUALS to exclude the distribution chart),
+an integer σ parameter + slider, and three visuals (KPI + distribution
+bar + flagged table). Money Trail remains a stub until K.4.5.
 """
 
 from __future__ import annotations
@@ -21,13 +25,20 @@ from quicksight_gen.apps.investigation.analysis import (
 from quicksight_gen.apps.investigation.constants import (
     CF_INV_FANOUT_DISTINCT_SENDERS,
     DS_INV_RECIPIENT_FANOUT,
+    DS_INV_VOLUME_ANOMALIES,
+    FG_INV_ANOMALIES_SIGMA,
+    FG_INV_ANOMALIES_WINDOW,
     FG_INV_FANOUT_THRESHOLD,
     FG_INV_FANOUT_WINDOW,
+    P_INV_ANOMALIES_SIGMA,
     P_INV_FANOUT_THRESHOLD,
     SHEET_INV_ANOMALIES,
     SHEET_INV_FANOUT,
     SHEET_INV_GETTING_STARTED,
     SHEET_INV_MONEY_TRAIL,
+    V_INV_ANOMALIES_DISTRIBUTION,
+    V_INV_ANOMALIES_KPI_FLAGGED,
+    V_INV_ANOMALIES_TABLE,
     V_INV_FANOUT_KPI_AMOUNT,
     V_INV_FANOUT_KPI_RECIPIENTS,
     V_INV_FANOUT_KPI_SENDERS,
@@ -35,13 +46,19 @@ from quicksight_gen.apps.investigation.constants import (
 )
 from quicksight_gen.apps.investigation.datasets import (
     RECIPIENT_FANOUT_CONTRACT,
+    VOLUME_ANOMALIES_CONTRACT,
     build_all_datasets,
 )
 from quicksight_gen.apps.investigation.demo_data import generate_demo_sql
 from quicksight_gen.apps.investigation.filters import (
+    DEFAULT_ANOMALIES_SIGMA,
     DEFAULT_FANOUT_THRESHOLD,
+    SIGMA_SLIDER_MAX,
+    SIGMA_SLIDER_MIN,
     SLIDER_MAX,
     SLIDER_MIN,
+    build_anomalies_filter_controls,
+    build_anomalies_parameter_controls,
     build_fanout_filter_controls,
     build_fanout_parameter_controls,
     build_filter_groups,
@@ -49,6 +66,7 @@ from quicksight_gen.apps.investigation.filters import (
 )
 from quicksight_gen.cli import main
 from quicksight_gen.common.config import Config
+from quicksight_gen.common.models import SheetVisualScopingConfiguration
 from quicksight_gen.common.theme import PRESETS, get_preset
 
 
@@ -111,12 +129,11 @@ def test_every_sheet_has_a_description():
 
 
 def test_remaining_stub_sheets_reference_their_future_phase():
-    """Volume Anomalies + Money Trail still name K.4.4 / K.4.5 in their
-    descriptions so deployed-skeleton viewers know what's next.
-    Recipient Fanout no longer needs the cue — it's live as of K.4.3."""
+    """Money Trail still names K.4.5 in its description so deployed-
+    skeleton viewers know what's next. Recipient Fanout (K.4.3) and
+    Volume Anomalies (K.4.4) are live and no longer need the cue."""
     analysis = build_analysis(_TEST_CFG)
     stubs = {s.SheetId: s for s in analysis.Definition.Sheets}
-    assert "K.4.4" in stubs[SHEET_INV_ANOMALIES].Description
     assert "K.4.5" in stubs[SHEET_INV_MONEY_TRAIL].Description
 
 
@@ -138,16 +155,23 @@ def test_demo_sql_is_a_string():
 # K.4.3 — Recipient Fanout dataset
 # ---------------------------------------------------------------------------
 
-def test_recipient_fanout_dataset_is_only_dataset():
+def test_investigation_datasets_in_expected_order():
+    """K.4.3 dataset first, K.4.4 matview-backed dataset second. Order
+    matters — analysis.py's DataSetIdentifierDeclarations zip relies on
+    it."""
     datasets = build_all_datasets(_TEST_CFG)
-    assert len(datasets) == 1
+    assert len(datasets) == 2
     assert datasets[0].DataSetId == _TEST_CFG.prefixed("inv-recipient-fanout-dataset")
+    assert datasets[1].DataSetId == _TEST_CFG.prefixed("inv-volume-anomalies-dataset")
 
 
-def test_recipient_fanout_dataset_declared_in_analysis():
+def test_investigation_datasets_declared_in_analysis():
     analysis = build_analysis(_TEST_CFG)
     decls = analysis.Definition.DataSetIdentifierDeclarations
-    assert [d.Identifier for d in decls] == [DS_INV_RECIPIENT_FANOUT]
+    assert [d.Identifier for d in decls] == [
+        DS_INV_RECIPIENT_FANOUT,
+        DS_INV_VOLUME_ANOMALIES,
+    ]
 
 
 def test_recipient_fanout_contract_columns():
@@ -174,10 +198,17 @@ def test_recipient_fanout_sql_filters_recipient_to_dda_types():
 # K.4.3 — Filter groups + parameter
 # ---------------------------------------------------------------------------
 
-def test_filter_groups_window_and_threshold():
+def test_filter_groups_in_expected_order():
+    """Two K.4.3 fanout filter groups, then two K.4.4 anomalies filter
+    groups. Order is stable so the deployed Definition diff is readable."""
     groups = build_filter_groups(_TEST_CFG)
     ids = [g.FilterGroupId for g in groups]
-    assert ids == [FG_INV_FANOUT_WINDOW, FG_INV_FANOUT_THRESHOLD]
+    assert ids == [
+        FG_INV_FANOUT_WINDOW,
+        FG_INV_FANOUT_THRESHOLD,
+        FG_INV_ANOMALIES_WINDOW,
+        FG_INV_ANOMALIES_SIGMA,
+    ]
 
 
 def test_threshold_filter_is_parameter_bound_on_calc_field():
@@ -203,13 +234,19 @@ def test_window_filter_is_a_time_range_on_posted_at():
     assert trf.Column.DataSetIdentifier == DS_INV_RECIPIENT_FANOUT
 
 
-def test_threshold_parameter_declaration_defaults_to_constant():
+def test_parameter_declarations_carry_both_thresholds():
     decls = build_parameter_declarations(_TEST_CFG)
-    assert len(decls) == 1
-    integer = decls[0].IntegerParameterDeclaration
-    assert integer is not None
-    assert integer.Name == P_INV_FANOUT_THRESHOLD
-    assert integer.DefaultValues == {"StaticValues": [DEFAULT_FANOUT_THRESHOLD]}
+    assert len(decls) == 2
+    by_name = {
+        d.IntegerParameterDeclaration.Name: d.IntegerParameterDeclaration
+        for d in decls if d.IntegerParameterDeclaration
+    }
+    assert by_name[P_INV_FANOUT_THRESHOLD].DefaultValues == {
+        "StaticValues": [DEFAULT_FANOUT_THRESHOLD],
+    }
+    assert by_name[P_INV_ANOMALIES_SIGMA].DefaultValues == {
+        "StaticValues": [DEFAULT_ANOMALIES_SIGMA],
+    }
 
 
 def test_fanout_sheet_carries_window_filter_and_threshold_slider():
@@ -298,9 +335,175 @@ def test_fanout_sheet_serializes_to_aws_json():
     assert len(fanout["Visuals"]) == 4
     assert len(fanout["FilterControls"]) == 1
     assert len(fanout["ParameterControls"]) == 1
-    assert len(j["Definition"]["FilterGroups"]) == 2
+    # Top-level: 4 filter groups (2 fanout + 2 anomalies), 1 calc field
+    # (fanout distinct count), 2 parameters (fanout threshold + sigma).
+    assert len(j["Definition"]["FilterGroups"]) == 4
     assert len(j["Definition"]["CalculatedFields"]) == 1
-    assert len(j["Definition"]["ParameterDeclarations"]) == 1
+    assert len(j["Definition"]["ParameterDeclarations"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# K.4.4 — Volume Anomalies dataset + matview wiring
+# ---------------------------------------------------------------------------
+
+def test_volume_anomalies_contract_exposes_z_score_and_bucket():
+    names = VOLUME_ANOMALIES_CONTRACT.column_names
+    # Pair identity
+    assert "sender_account_id" in names
+    assert "recipient_account_id" in names
+    # Window bounds
+    assert "window_start" in names
+    assert "window_end" in names
+    # Aggregates + population stats
+    assert "window_sum" in names
+    assert "transfer_count" in names
+    assert "pop_mean" in names
+    assert "pop_stddev" in names
+    # Anomaly scoring
+    assert "z_score" in names
+    assert "z_bucket" in names
+
+
+def test_volume_anomalies_dataset_reads_from_matview():
+    """Dataset is a thin SELECT over the matview — no inline windowing
+    or population-stat math at dataset time. The whole point of the
+    matview is to keep that work out of QuickSight Direct Query."""
+    datasets = build_all_datasets(_TEST_CFG)
+    anomalies = datasets[1]
+    sql = next(iter(anomalies.PhysicalTableMap.values())).CustomSql.SqlQuery
+    assert "FROM inv_pair_rolling_anomalies" in sql
+    # Don't reach back into transactions / daily_balances at dataset load.
+    assert "transactions" not in sql
+    assert "OVER" not in sql
+    assert "STDDEV" not in sql.upper()
+
+
+# ---------------------------------------------------------------------------
+# K.4.4 — Anomalies filter groups + parameter
+# ---------------------------------------------------------------------------
+
+def test_anomalies_window_filter_is_a_time_range_on_window_end():
+    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    window = groups[FG_INV_ANOMALIES_WINDOW]
+    trf = window.Filters[0].TimeRangeFilter
+    assert trf is not None
+    assert trf.Column.ColumnName == "window_end"
+    assert trf.Column.DataSetIdentifier == DS_INV_VOLUME_ANOMALIES
+
+
+def test_sigma_filter_is_parameter_bound_on_z_score():
+    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    sigma = groups[FG_INV_ANOMALIES_SIGMA]
+    nrf = sigma.Filters[0].NumericRangeFilter
+    assert nrf is not None
+    assert nrf.Column.ColumnName == "z_score"
+    assert nrf.RangeMinimum is not None
+    assert nrf.RangeMinimum.Parameter == P_INV_ANOMALIES_SIGMA
+    assert nrf.RangeMaximum is None
+    assert nrf.IncludeMinimum is True
+
+
+def test_sigma_filter_is_scoped_to_kpi_and_table_only():
+    """Distribution chart MUST see the full population — its scope
+    deliberately excludes the chart visual id. Otherwise the analyst
+    loses the reference frame for where the slider cutoff lies."""
+    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    sigma = groups[FG_INV_ANOMALIES_SIGMA]
+    sheet_scopes = (
+        sigma.ScopeConfiguration.SelectedSheets.SheetVisualScopingConfigurations
+    )
+    assert len(sheet_scopes) == 1
+    scope = sheet_scopes[0]
+    assert scope.SheetId == SHEET_INV_ANOMALIES
+    assert scope.Scope == SheetVisualScopingConfiguration.SELECTED_VISUALS
+    assert set(scope.VisualIds) == {
+        V_INV_ANOMALIES_KPI_FLAGGED, V_INV_ANOMALIES_TABLE,
+    }
+    assert V_INV_ANOMALIES_DISTRIBUTION not in scope.VisualIds
+
+
+def test_anomalies_window_filter_is_all_visuals_scope():
+    """Window filter applies to every visual on the sheet — both the
+    KPI/table and the distribution chart should respect the date range."""
+    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    window = groups[FG_INV_ANOMALIES_WINDOW]
+    sheet_scopes = (
+        window.ScopeConfiguration.SelectedSheets.SheetVisualScopingConfigurations
+    )
+    assert len(sheet_scopes) == 1
+    assert sheet_scopes[0].Scope == SheetVisualScopingConfiguration.ALL_VISUALS
+
+
+def test_anomalies_sheet_carries_window_filter_and_sigma_slider():
+    fc = build_anomalies_filter_controls(_TEST_CFG)
+    pc = build_anomalies_parameter_controls(_TEST_CFG)
+    assert len(fc) == 1
+    assert fc[0].DateTimePicker is not None
+    assert len(pc) == 1
+    slider = pc[0].Slider
+    assert slider is not None
+    assert slider.SourceParameterName == P_INV_ANOMALIES_SIGMA
+    assert slider.MinimumValue == SIGMA_SLIDER_MIN
+    assert slider.MaximumValue == SIGMA_SLIDER_MAX
+    assert slider.StepSize == 1
+
+
+# ---------------------------------------------------------------------------
+# K.4.4 — Volume Anomalies sheet visuals + layout
+# ---------------------------------------------------------------------------
+
+def test_anomalies_sheet_has_kpi_distribution_and_table():
+    analysis = build_analysis(_TEST_CFG)
+    sheet = next(
+        s for s in analysis.Definition.Sheets
+        if s.SheetId == SHEET_INV_ANOMALIES
+    )
+    assert sheet.Visuals is not None
+    visual_ids = []
+    for v in sheet.Visuals:
+        if v.KPIVisual:
+            visual_ids.append(v.KPIVisual.VisualId)
+        elif v.BarChartVisual:
+            visual_ids.append(v.BarChartVisual.VisualId)
+        elif v.TableVisual:
+            visual_ids.append(v.TableVisual.VisualId)
+        else:
+            visual_ids.append(None)
+    assert visual_ids == [
+        V_INV_ANOMALIES_KPI_FLAGGED,
+        V_INV_ANOMALIES_DISTRIBUTION,
+        V_INV_ANOMALIES_TABLE,
+    ]
+
+
+def test_distribution_chart_categorises_by_z_bucket():
+    """Distribution chart's X-axis is the z-bucket dimension (e.g.
+    '0-1 sigma', '1-2 sigma', ...). The Y-axis counts pair-window rows."""
+    analysis = build_analysis(_TEST_CFG)
+    sheet = next(
+        s for s in analysis.Definition.Sheets
+        if s.SheetId == SHEET_INV_ANOMALIES
+    )
+    chart = next(v.BarChartVisual for v in sheet.Visuals if v.BarChartVisual)
+    fields = chart.ChartConfiguration.FieldWells.BarChartAggregatedFieldWells
+    cat_cols = [
+        d.CategoricalDimensionField.Column.ColumnName
+        for d in fields.Category if d.CategoricalDimensionField
+    ]
+    assert cat_cols == ["z_bucket"]
+    assert len(fields.Values) == 1
+
+
+def test_anomalies_table_sorted_by_z_score_desc():
+    analysis = build_analysis(_TEST_CFG)
+    sheet = next(
+        s for s in analysis.Definition.Sheets
+        if s.SheetId == SHEET_INV_ANOMALIES
+    )
+    table = next(v.TableVisual for v in sheet.Visuals if v.TableVisual)
+    sort = table.ChartConfiguration.SortConfiguration["RowSort"][0]["FieldSort"]
+    assert sort["FieldId"] == "inv-anomalies-tbl-z-score"
+    assert sort["Direction"] == "DESC"
 
 
 # ---------------------------------------------------------------------------

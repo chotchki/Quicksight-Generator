@@ -559,31 +559,41 @@ the current shape; Phase G rewrites each in turn.
 
 ## Materialized views
 
-One view in the schema is materialized rather than recomputed on every
-read: **`ar_unified_exceptions`**. The Today's Exceptions sheet feeds
-from this single object instead of a 14-block `UNION ALL` composed at
-dataset-load time. The transitive read graph (14 per-check views, each
-scanning `transactions` and/or `daily_balances`) was too heavy for
-QuickSight Direct Query — without materialization the sheet would not
-render. Materializing makes load instant.
+Two views in the schema are materialized rather than recomputed on every
+read:
+
+- **`ar_unified_exceptions`** — feeds the AR Today's Exceptions sheet.
+  Replaces a 14-block `UNION ALL` composed at dataset-load time. The
+  transitive read graph (14 per-check views, each scanning
+  `transactions` and/or `daily_balances`) was too heavy for QuickSight
+  Direct Query — without materialization the sheet would not render.
+- **`inv_pair_rolling_anomalies`** — feeds the Investigation Volume
+  Anomalies sheet. Computes a 2-day rolling SUM per (sender, recipient)
+  pair plus the population mean / standard deviation across all
+  pair-windows, exposed as a per-row z-score. The window function +
+  population scan combined wedged Direct Query at realistic
+  transaction volumes.
+
+Both materialize the same trade: a one-line REFRESH at ETL time in
+exchange for instant dashboard load.
 
 ### The refresh contract
 
-`ar_unified_exceptions` is **not** auto-refreshed. After every ETL
-load, run:
+Neither matview is auto-refreshed. After every ETL load, run:
 
 ```sql
 REFRESH MATERIALIZED VIEW ar_unified_exceptions;
+REFRESH MATERIALIZED VIEW inv_pair_rolling_anomalies;
 ```
 
-The demo's `quicksight-gen demo apply` command issues this REFRESH
+The demo's `quicksight-gen demo apply` command issues both REFRESHes
 automatically after seeding; production ETL pipelines must do the
 same. Daily ETL → daily REFRESH is the expected cadence.
 
 ### Aging-column timing semantics
 
-Two columns on the matview are computed from `CURRENT_DATE` at
-**refresh time**, not at query time:
+Two columns on `ar_unified_exceptions` are computed from `CURRENT_DATE`
+at **refresh time**, not at query time:
 
 - `days_outstanding` — `(CURRENT_DATE - exception_date::date)`
 - `aging_bucket` — derived from `days_outstanding` (5 fixed bands:

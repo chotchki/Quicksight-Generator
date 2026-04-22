@@ -102,6 +102,8 @@ class TestPrContracts:
 INV_BUILDERS_AND_CONTRACTS = [
     (inv_datasets.build_recipient_fanout_dataset,
      inv_datasets.RECIPIENT_FANOUT_CONTRACT),
+    (inv_datasets.build_volume_anomalies_dataset,
+     inv_datasets.VOLUME_ANOMALIES_CONTRACT),
 ]
 
 

@@ -9,8 +9,12 @@ filter group on the analysis-level ``recipient_distinct_sender_count``
 calc field — so they show only recipients whose fanout meets the
 slider's current value.
 
-K.4.4 / K.4.5 add visuals for the Volume Anomalies and Money Trail
-sheets.
+K.4.4 ships the Volume Anomalies sheet — KPI flagged count, σ-bucket
+distribution bar chart, and ranked table of flagged pair-windows. The
+distribution chart is intentionally NOT gated by the σ filter (it shows
+the full population so the slider's cutoff is meaningful).
+
+K.4.5 will add visuals for the Money Trail sheet.
 """
 
 from __future__ import annotations
@@ -18,15 +22,25 @@ from __future__ import annotations
 from quicksight_gen.apps.investigation.constants import (
     CF_INV_FANOUT_DISTINCT_SENDERS,
     DS_INV_RECIPIENT_FANOUT,
+    DS_INV_VOLUME_ANOMALIES,
+    V_INV_ANOMALIES_DISTRIBUTION,
+    V_INV_ANOMALIES_KPI_FLAGGED,
+    V_INV_ANOMALIES_TABLE,
     V_INV_FANOUT_KPI_AMOUNT,
     V_INV_FANOUT_KPI_RECIPIENTS,
     V_INV_FANOUT_KPI_SENDERS,
     V_INV_FANOUT_TABLE,
 )
 from quicksight_gen.common.models import (
+    BarChartAggregatedFieldWells,
+    BarChartConfiguration,
+    BarChartFieldWells,
+    BarChartSortConfiguration,
+    BarChartVisual,
     CategoricalDimensionField,
     CategoricalMeasureField,
     ColumnIdentifier,
+    DateDimensionField,
     DimensionField,
     KPIConfiguration,
     KPIFieldWells,
@@ -48,35 +62,51 @@ from quicksight_gen.common.models import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _col(name: str) -> ColumnIdentifier:
-    return ColumnIdentifier(
-        DataSetIdentifier=DS_INV_RECIPIENT_FANOUT, ColumnName=name,
-    )
+def _col(ds: str, name: str) -> ColumnIdentifier:
+    return ColumnIdentifier(DataSetIdentifier=ds, ColumnName=name)
 
 
-def _dim(field_id: str, col_name: str) -> DimensionField:
+def _dim(ds: str, field_id: str, col_name: str) -> DimensionField:
     return DimensionField(
         CategoricalDimensionField=CategoricalDimensionField(
-            FieldId=field_id, Column=_col(col_name),
+            FieldId=field_id, Column=_col(ds, col_name),
         ),
     )
 
 
-def _measure_distinct(field_id: str, col_name: str) -> MeasureField:
+def _date_dim(ds: str, field_id: str, col_name: str) -> DimensionField:
+    return DimensionField(
+        DateDimensionField=DateDimensionField(
+            FieldId=field_id, Column=_col(ds, col_name),
+        ),
+    )
+
+
+def _measure_distinct(ds: str, field_id: str, col_name: str) -> MeasureField:
     return MeasureField(
         CategoricalMeasureField=CategoricalMeasureField(
             FieldId=field_id,
-            Column=_col(col_name),
+            Column=_col(ds, col_name),
             AggregationFunction="DISTINCT_COUNT",
         ),
     )
 
 
-def _measure_sum(field_id: str, col_name: str) -> MeasureField:
+def _measure_count(ds: str, field_id: str, col_name: str) -> MeasureField:
+    return MeasureField(
+        CategoricalMeasureField=CategoricalMeasureField(
+            FieldId=field_id,
+            Column=_col(ds, col_name),
+            AggregationFunction="COUNT",
+        ),
+    )
+
+
+def _measure_sum(ds: str, field_id: str, col_name: str) -> MeasureField:
     return MeasureField(
         NumericalMeasureField=NumericalMeasureField(
             FieldId=field_id,
-            Column=_col(col_name),
+            Column=_col(ds, col_name),
             AggregationFunction=NumericalAggregationFunction(
                 SimpleNumericalAggregation="SUM",
             ),
@@ -84,17 +114,18 @@ def _measure_sum(field_id: str, col_name: str) -> MeasureField:
     )
 
 
-def _measure_max(field_id: str, col_name: str) -> MeasureField:
-    """MAX of an analysis-level windowed-aggregate calc field.
+def _measure_max(ds: str, field_id: str, col_name: str) -> MeasureField:
+    """MAX aggregation over a numeric column.
 
-    The fanout calc field returns the same value on every row of a
-    recipient (it's a partitioned distinct count), so MAX per recipient
-    surfaces that row-constant value once in the aggregated table.
+    For the fanout calc field this surfaces the row-constant
+    distinct-sender value once per recipient. For z_score it surfaces
+    the worst-case σ in a window-pair group (when the table aggregates
+    multiple rows for one pair, MAX picks the most-anomalous window).
     """
     return MeasureField(
         NumericalMeasureField=NumericalMeasureField(
             FieldId=field_id,
-            Column=_col(col_name),
+            Column=_col(ds, col_name),
             AggregationFunction=NumericalAggregationFunction(
                 SimpleNumericalAggregation="MAX",
             ),
@@ -118,6 +149,10 @@ def _subtitle(text: str) -> VisualSubtitleLabelOptions:
 # Recipient Fanout visuals
 # ---------------------------------------------------------------------------
 
+_DS_FANOUT = DS_INV_RECIPIENT_FANOUT
+_DS_ANOMALIES = DS_INV_VOLUME_ANOMALIES
+
+
 def _kpi_recipients() -> Visual:
     return Visual(
         KPIVisual=KPIVisual(
@@ -130,6 +165,7 @@ def _kpi_recipients() -> Visual:
                 FieldWells=KPIFieldWells(
                     Values=[
                         _measure_distinct(
+                            _DS_FANOUT,
                             "inv-fanout-kpi-recipients-val",
                             "recipient_account_id",
                         ),
@@ -152,6 +188,7 @@ def _kpi_senders() -> Visual:
                 FieldWells=KPIFieldWells(
                     Values=[
                         _measure_distinct(
+                            _DS_FANOUT,
                             "inv-fanout-kpi-senders-val",
                             "sender_account_id",
                         ),
@@ -174,7 +211,9 @@ def _kpi_amount() -> Visual:
                 FieldWells=KPIFieldWells(
                     Values=[
                         _measure_sum(
-                            "inv-fanout-kpi-amount-val", "amount",
+                            _DS_FANOUT,
+                            "inv-fanout-kpi-amount-val",
+                            "amount",
                         ),
                     ],
                 ),
@@ -207,24 +246,31 @@ def _recipient_table() -> Visual:
                 FieldWells=TableFieldWells(
                     TableAggregatedFieldWells=TableAggregatedFieldWells(
                         GroupBy=[
-                            _dim("inv-fanout-tbl-recipient-id",
+                            _dim(_DS_FANOUT,
+                                 "inv-fanout-tbl-recipient-id",
                                  "recipient_account_id"),
-                            _dim("inv-fanout-tbl-recipient-name",
+                            _dim(_DS_FANOUT,
+                                 "inv-fanout-tbl-recipient-name",
                                  "recipient_account_name"),
-                            _dim("inv-fanout-tbl-recipient-type",
+                            _dim(_DS_FANOUT,
+                                 "inv-fanout-tbl-recipient-type",
                                  "recipient_account_type"),
                         ],
                         Values=[
                             _measure_max(
+                                _DS_FANOUT,
                                 "inv-fanout-tbl-distinct-senders",
                                 CF_INV_FANOUT_DISTINCT_SENDERS,
                             ),
                             _measure_distinct(
+                                _DS_FANOUT,
                                 "inv-fanout-tbl-transfer-count",
                                 "transfer_id",
                             ),
                             _measure_sum(
-                                "inv-fanout-tbl-amount-total", "amount",
+                                _DS_FANOUT,
+                                "inv-fanout-tbl-amount-total",
+                                "amount",
                             ),
                         ],
                     ),
@@ -250,4 +296,164 @@ def build_fanout_visuals() -> list[Visual]:
         _kpi_senders(),
         _kpi_amount(),
         _recipient_table(),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Volume Anomalies visuals (K.4.4)
+# ---------------------------------------------------------------------------
+
+def _kpi_anomalies_flagged() -> Visual:
+    """Count of pair-windows surviving the σ filter.
+
+    Sigma threshold filter is scoped to KPI + table only (not the
+    distribution chart), so this KPI updates as the analyst drags the
+    slider while the chart stays anchored.
+    """
+    return Visual(
+        KPIVisual=KPIVisual(
+            VisualId=V_INV_ANOMALIES_KPI_FLAGGED,
+            Title=_title("Flagged Pair-Windows"),
+            Subtitle=_subtitle(
+                "Pair-windows whose 2-day rolling SUM clears the σ threshold."
+            ),
+            ChartConfiguration=KPIConfiguration(
+                FieldWells=KPIFieldWells(
+                    Values=[
+                        _measure_count(
+                            _DS_ANOMALIES,
+                            "inv-anomalies-kpi-flagged-val",
+                            "recipient_account_id",
+                        ),
+                    ],
+                ),
+            ),
+        ),
+    )
+
+
+def _distribution_chart() -> Visual:
+    """σ-bucket distribution across the full population.
+
+    Intentionally not gated by the σ filter (see filters.py — the filter
+    group is scoped SELECTED_VISUALS to exclude this visual). The chart
+    is the analyst's reference frame: see where 2σ vs. 4σ falls in the
+    overall shape before deciding where to set the slider.
+    """
+    return Visual(
+        BarChartVisual=BarChartVisual(
+            VisualId=V_INV_ANOMALIES_DISTRIBUTION,
+            Title=_title("Pair-Window σ Distribution"),
+            Subtitle=_subtitle(
+                "Pair-windows bucketed by |z-score| against the population "
+                "mean. Chart is intentionally NOT filtered by the σ slider."
+            ),
+            ChartConfiguration=BarChartConfiguration(
+                FieldWells=BarChartFieldWells(
+                    BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
+                        Category=[
+                            _dim(_DS_ANOMALIES,
+                                 "inv-anomalies-dist-bucket",
+                                 "z_bucket"),
+                        ],
+                        Values=[
+                            _measure_count(
+                                _DS_ANOMALIES,
+                                "inv-anomalies-dist-count",
+                                "recipient_account_id",
+                            ),
+                        ],
+                    ),
+                ),
+                Orientation="VERTICAL",
+                BarsArrangement="CLUSTERED",
+                SortConfiguration=BarChartSortConfiguration(
+                    CategorySort=[
+                        {
+                            "FieldSort": {
+                                "FieldId": "inv-anomalies-dist-bucket",
+                                "Direction": "ASC",
+                            },
+                        },
+                    ],
+                ),
+            ),
+        ),
+    )
+
+
+def _anomalies_table() -> Visual:
+    """Flagged windows ranked by σ desc.
+
+    Table aggregates to (sender, recipient, window_end) grain — one row
+    per flagged window. The σ filter is wired to this visual via the
+    SELECTED_VISUALS scope, so dragging the slider narrows the rows.
+    """
+    return Visual(
+        TableVisual=TableVisual(
+            VisualId=V_INV_ANOMALIES_TABLE,
+            Title=_title("Flagged Pair-Windows — Ranked"),
+            Subtitle=_subtitle(
+                "One row per flagged 2-day window. Ranked by z-score "
+                "(highest = furthest from the population mean)."
+            ),
+            ChartConfiguration=TableConfiguration(
+                FieldWells=TableFieldWells(
+                    TableAggregatedFieldWells=TableAggregatedFieldWells(
+                        GroupBy=[
+                            _dim(_DS_ANOMALIES,
+                                 "inv-anomalies-tbl-recipient-id",
+                                 "recipient_account_id"),
+                            _dim(_DS_ANOMALIES,
+                                 "inv-anomalies-tbl-recipient-name",
+                                 "recipient_account_name"),
+                            _dim(_DS_ANOMALIES,
+                                 "inv-anomalies-tbl-sender-id",
+                                 "sender_account_id"),
+                            _dim(_DS_ANOMALIES,
+                                 "inv-anomalies-tbl-sender-name",
+                                 "sender_account_name"),
+                            _date_dim(_DS_ANOMALIES,
+                                      "inv-anomalies-tbl-window-end",
+                                      "window_end"),
+                        ],
+                        Values=[
+                            _measure_max(
+                                _DS_ANOMALIES,
+                                "inv-anomalies-tbl-z-score",
+                                "z_score",
+                            ),
+                            _measure_max(
+                                _DS_ANOMALIES,
+                                "inv-anomalies-tbl-window-sum",
+                                "window_sum",
+                            ),
+                            _measure_max(
+                                _DS_ANOMALIES,
+                                "inv-anomalies-tbl-transfer-count",
+                                "transfer_count",
+                            ),
+                        ],
+                    ),
+                ),
+                SortConfiguration={
+                    "RowSort": [
+                        {
+                            "FieldSort": {
+                                "FieldId": "inv-anomalies-tbl-z-score",
+                                "Direction": "DESC",
+                            },
+                        },
+                    ],
+                },
+            ),
+        ),
+    )
+
+
+def build_anomalies_visuals() -> list[Visual]:
+    return [
+        _kpi_anomalies_flagged(),
+        _distribution_chart(),
+        _anomalies_table(),
     ]
