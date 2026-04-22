@@ -118,7 +118,12 @@ specific check's rows).
   accounts, and money flows behind every walkthrough on this page.
 - [Schema v3 — Data Feed Contract](../Schema_v3.md) — column specs,
   metadata keys, and ETL examples for the upstream feeds that populate
-  the dashboards.
+  the dashboards. The
+  [Lateness as data](../Schema_v3.md#lateness-as-data) section is the
+  contract behind the Late Transactions KPI on the Payment
+  Reconciliation tab — `match_status='late'` derives from each row's
+  `expected_complete_at`, set per rail (cards: T+3; external_txn:
+  same-hour) by the demo generator.
 - [Data Integration Handbook](etl.md) — the team that populates the
   data behind every walkthrough on this page. Read it when a missing
   merchant, unmatched external txn, or broken settlement chain

@@ -48,25 +48,33 @@ its source.
 ## What you'll see in the demo
 
 The demo has roughly 60–70 external transactions. Most are
-`matched`. Three populations land as `not_yet_matched` or `late`:
+`matched`. The remainder split across three populations, almost
+all of which carry `match_status = 'late'` because the demo
+plants `expected_complete_at = posted_at + 1 hour` on every
+external_txn row — rail observations are expected to match
+almost immediately, so any unmatched external row aged more
+than an hour is already past its `is_late` deadline:
 
 - **Drifted batches.** Every 6th aggregated external transaction
   in the demo gets its `external_amount` bumped by a random
-  $5–$40. The internal payments that compose it are correct; the
-  external row's amount is off by the bump. These show up as
-  `not_yet_matched` (within 30 days) or `late` (older), with
+  $5–$40. The internal payments that compose it are correct;
+  the external row's amount is off by the bump. These show
   `internal_total` non-zero but unequal to `external_amount`.
 - **Orphan recent ext txns.** 8 external transactions in the
   demo have no SNB payment referencing them at all — random
-  merchants, aged 0–25 days. Match status is
-  `not_yet_matched` (or `late` if pushed past 30 days),
-  `internal_total = 0`, `payment_count = 0`.
+  merchants, aged 0–25 days. `internal_total = 0`,
+  `payment_count = 0`. Old enough that the rail-hour deadline
+  has fired, but recent enough that an operator should still
+  wait a cycle before declaring fraud.
 - **Orphan older ext txns.** 5 external transactions aged 35–80
-  days, same shape — orphans, but old enough that all of them
-  are `late`.
+  days, same shape — orphans, old enough that they need
+  manual workoff, not waiting.
 
 Total non-matched rows in the demo: ~13 orphans plus a handful of
-drifted-amount rows.
+drifted-amount rows. The `not_yet_matched` status is now a
+narrow transient — only the freshest rows that haven't crossed
+their per-row `expected_complete_at` yet — so most ops time on
+this tab is spent on `late` rows.
 
 <details markdown><summary>Screenshot — KPI strip with match-status counts</summary>
 
@@ -93,30 +101,40 @@ eye that the SUM doesn't match the external amount.
 </details>
 
 The aging bar chart at the bottom of the tab shows the age
-distribution of unmatched rows — bucket 4 (`8-30 days`) and bucket
-5 (`>30 days`) carry the late ones; bucket 1–3 carry the recent
-ones that are still inside the 30-day matching window.
+distribution of unmatched rows — orphan-recent populations
+sit in buckets 1–3 (`0-7 days`); orphan-older + drifted
+populations sit in buckets 4–5 (`8+ days`). Aging buckets are
+independent of `is_late` (which fires at the rail-hour deadline);
+read them as urgency tiers, not status indicators.
 
 ## What it means
 
-Each non-`matched` row is one of three patterns:
+Each non-`matched` row is one of two patterns, sliced by age:
 
 - **Drifted amount** (`internal_total` ≠ 0, ≠ `external_amount`)
   → SNB sent the payment(s); the external system reported a
   different aggregate. Could be a fee taken at the external
   system, a reversal applied on their side, or a flat reporting
-  bug. Investigate by walking the linked payments and confirming
-  their sum, then contacting the external system.
-- **Orphan recent** (`internal_total = 0`, age `<30` days) → no
+  bug. Recent rows (buckets 1–3) — investigate by walking the
+  linked payments and confirming their sum, then contacting the
+  external system. Old rows (buckets 4–5) — escalate; a 30+ day
+  drift usually means the external system has already moved on
+  and may not be able to re-issue the report.
+- **Orphan** (`internal_total = 0`, `payment_count = 0`) → no
   SNB payment claims this external row. Either the external
   system reported a transaction SNB never originated (fraud,
-  duplicate notification, or a different originator), or SNB has
-  a payment in flight that hasn't yet posted with the external
-  reference attached. Wait one cycle, then escalate.
-- **Orphan late** (`internal_total = 0`, age `>30` days) → same
-  as orphan recent but past the matching window. These will not
-  resolve themselves; they need to be either matched manually or
-  written off as a non-SNB transaction.
+  duplicate notification, or a different originator), or — for
+  the freshest rows only — SNB has a payment in flight that
+  hasn't yet posted with the external reference attached. Recent
+  rows (buckets 1–3) — wait one cycle, then escalate if still
+  orphan. Old rows (buckets 4–5) — write off or open a manual
+  reconciliation ticket.
+
+Both patterns surface as `match_status = 'late'` once the row
+crosses its own `expected_complete_at` deadline (1 hour after
+posting in the demo's external_txn rail). The rare
+`not_yet_matched` row is the very recent window before that
+deadline; it doesn't need investigation, just one more cycle.
 
 ## Drilling in
 
@@ -146,20 +164,24 @@ payments.
 
 ## Next step
 
-Unmatched-external rows go to **Reconciliation Operations**:
+Unmatched-external rows go to **Reconciliation Operations** —
+prioritize by aging bucket, since `match_status='late'` covers
+nearly all of them:
 
-- **Drifted amount, recent** → contact the external system, ask
-  them to verify the aggregate they reported. Most resolve as a
-  fee or a small operational adjustment they neglected to
+- **Drifted amount, buckets 1–3 (≤7 days)** → contact the
+  external system, ask them to verify the aggregate they
+  reported. Most resolve as a fee or a small operational
+  adjustment they neglected to report.
+- **Drifted amount, buckets 4–5 (8+ days)** → same, but
+  escalate. A 30+ day drift usually means the external system
+  has already moved on and may not be able to re-issue the
   report.
-- **Drifted amount, late** → same, but escalate. A 30+ day drift
-  usually means the external system has already moved on and
-  may not be able to re-issue the report.
-- **Orphan, recent** → wait one cycle (24h). Most orphans are
-  duplicate notifications that get superseded.
-- **Orphan, late** → write off or open a manual reconciliation
-  ticket. The external system's transaction did not originate
-  from SNB; it's either a different originator or fraud.
+- **Orphan, buckets 1–3 (≤7 days)** → wait one cycle (24h).
+  Most orphans are duplicate notifications that get superseded.
+- **Orphan, buckets 4–5 (8+ days)** → write off or open a
+  manual reconciliation ticket. The external system's
+  transaction did not originate from SNB; it's either a
+  different originator or fraud.
 
 Customer-facing: orphan transactions don't usually involve a
 specific merchant call, since by definition no SNB payment is

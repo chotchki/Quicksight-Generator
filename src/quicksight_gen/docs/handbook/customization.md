@@ -111,6 +111,28 @@ new persona work or dashboard redesigns:
   </a>
 </div>
 
+## Optional ETL extensions
+
+A small set of feed columns are *optional* — leave them NULL and
+the downstream views fall back to a sensible default; populate
+them when you can give the dashboard rail-accurate signal:
+
+- **`expected_complete_at`** (TIMESTAMP on `transactions`) — when
+  your ETL knows the rail's settlement window (instant: same-day;
+  ACH: T+2; cards: T+3), set it per leg. The dashboard's
+  data-driven `is_late` predicate fires off this column with a
+  `posted_at + INTERVAL '1 day'` fallback when it's NULL. Adopt
+  one rail at a time; until then, every row uses the one-day
+  default. Full contract: [Lateness as data](../Schema_v3.md#lateness-as-data)
+  in the schema doc, plus the
+  [`expected_complete_at` ETL section](etl.md#optional-expected_complete_at-lateness)
+  in the ETL handbook.
+- **`metadata`** (JSON TEXT on `transactions` and
+  `daily_balances`) — the per-app extension column. Add
+  app-specific keys without schema migrations; the
+  *How do I add an app-specific metadata key?* walkthrough above
+  is the read/write contract.
+
 ## Reference
 
 - [Schema v3 — Data Feed Contract](../Schema_v3.md) — the column
