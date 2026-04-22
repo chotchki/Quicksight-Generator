@@ -81,6 +81,14 @@ CREATE TABLE transactions (
     status              VARCHAR(20)    NOT NULL DEFAULT 'success'
         CHECK (status IN ('success', 'failed')),
     posted_at           TIMESTAMP      NOT NULL,
+    -- Optional. When the rail's settlement window is known, populate
+    -- with the expected completion timestamp (instant rails: same-day;
+    -- ACH: T+2; cards: T+3). When NULL, downstream views treat the row
+    -- as "expected to settle within one day" via
+    -- COALESCE(expected_complete_at, posted_at + INTERVAL '1 day').
+    -- For multi-leg transfers, the earliest debit leg's
+    -- expected_complete_at is the transfer-level expected completion.
+    expected_complete_at TIMESTAMP,
     balance_date        DATE           NOT NULL,
     external_system     VARCHAR(100),
     memo                VARCHAR(255),

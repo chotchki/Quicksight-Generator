@@ -132,6 +132,7 @@ when summed by `transfer_id` (excluding `failed` rows). Transfer chains
 | `amount` | DECIMAL(14,2) | NOT NULL | ETL — `ABS(signed_amount)` | display, filters |
 | `status` | VARCHAR(20) | NOT NULL | ETL — `success` / `failed` | exclude failed from balance math |
 | `posted_at` | TIMESTAMP | NOT NULL | ETL | timeline, ordering |
+| `expected_complete_at` | TIMESTAMP | NULL | ETL — when the rail's settlement window is known (instant: same-day; ACH: T+2; cards: T+3); NULL falls back to `posted_at + INTERVAL '1 day'` | data-driven `is_late` predicate (see **Lateness as data**) |
 | `balance_date` | DATE | NOT NULL | ETL — `DATE(posted_at)`, denormalized | fast date filters |
 | `external_system` | VARCHAR(100) | NULL | ETL — for external rows (`BankSync`, `PaymentHub`, etc.) | PR external txns |
 | `memo` | VARCHAR(255) | NULL | ETL | display |
@@ -162,6 +163,7 @@ CREATE TABLE transactions (
     status              VARCHAR(20)    NOT NULL DEFAULT 'success'
         CHECK (status IN ('success', 'failed')),
     posted_at           TIMESTAMP      NOT NULL,
+    expected_complete_at TIMESTAMP,
     balance_date        DATE           NOT NULL,
     external_system     VARCHAR(100),
     memo                VARCHAR(255),
@@ -205,6 +207,63 @@ IN" to the depositor, simultaneously. The code uses the account-holder
 view throughout (KPI math, drift checks, dataset SQL), so when a
 walkthrough or dashboard element says "Debit", read it as the bank's-
 bookkeeping label for "positive `signed_amount`".
+
+### Lateness as data
+
+`expected_complete_at` lets the ETL declare per-leg when a transaction
+is supposed to have settled. Downstream views compute lateness as a
+data-driven boolean — operators stop eyeballing `days_outstanding` and
+applying their own day threshold, and the same predicate fires
+identically across every dashboard.
+
+**Default formula** — when `expected_complete_at` is NULL, downstream
+SQL falls back to `posted_at + INTERVAL '1 day'`:
+
+```sql
+COALESCE(expected_complete_at, posted_at + INTERVAL '1 day')
+```
+
+**`is_late` predicate** — every exception view that surfaces lateness
+projects this column:
+
+```sql
+CURRENT_TIMESTAMP > COALESCE(expected_complete_at, posted_at + INTERVAL '1 day') AS is_late
+```
+
+**Multi-leg tie-breaker** — a transfer is a set of legs grouped by
+`transfer_id`. To collapse leg-level `expected_complete_at` to a single
+transfer-level value, take the **earliest debit leg's**
+`expected_complete_at`. Debit (money OUT, `signed_amount < 0`) is the
+side that initiates the rail; the credit catches up. The earliest debit
+is the one that started the clock, so it's the one whose deadline
+governs the whole transfer:
+
+```sql
+SELECT
+    transfer_id,
+    MIN(COALESCE(expected_complete_at, posted_at + INTERVAL '1 day'))
+        FILTER (WHERE signed_amount < 0) AS transfer_expected_complete_at
+FROM transactions
+WHERE status = 'success'
+GROUP BY transfer_id;
+```
+
+**When to populate** — set `expected_complete_at` whenever your ETL
+knows the rail's settlement window. Suggested values by rail:
+
+- **Instant rails** (Fed wire confirmation, on-us internal transfer
+  credit) — same hour or same day.
+- **ACH** — `posted_at + INTERVAL '2 days'` (T+2 settlement).
+- **Cards** (acquirer batch settlement) — `posted_at + INTERVAL '3 days'`
+  (T+3 settlement).
+- **Other / unknown** — leave NULL; the COALESCE default treats the row
+  as "expected to settle within one day", which is the conservative
+  choice for surfacing rather than hiding overdue rows.
+
+The column is optional. ETL teams can adopt incrementally — existing
+feeds that don't populate the column keep working under the COALESCE
+default, and rails get the more accurate per-row deadline as the team
+gets to them.
 
 ### What breaks if you skip a column
 

@@ -50,6 +50,36 @@ catalog, and ETL examples:
   source-of-truth document. Read the *Getting Started for Data
   Teams* preamble first.
 
+### Optional: `expected_complete_at` (lateness)
+
+`transactions` carries an optional `expected_complete_at TIMESTAMP`
+column. Populate it when your ETL knows the rail's settlement
+window — instant rails (Fed wire, on-us internal) same-day, ACH
+T+2, cards T+3. When NULL, downstream views fall back to
+`posted_at + INTERVAL '1 day'` via COALESCE, so omitting the
+column is safe.
+
+Why bother populating it? The `is_late` predicate that the
+Exceptions sheets project — and the *Late Payments* KPI on the PR
+Payment Reconciliation tab — fires off the same COALESCE
+expression. A populated `expected_complete_at` gives the analyst a
+per-rail-accurate deadline; an unpopulated one falls back to the
+conservative one-day default (which over-fires, surfacing things
+that aren't really late yet, rather than hiding overdue rows).
+Adopt incrementally: pick the rail your team gets the most
+"is this really late or just slow?" questions about, populate that
+one first, leave the rest NULL.
+
+For multi-leg transfers, downstream views collapse to the
+**earliest debit leg's** `expected_complete_at` as the
+transfer-level deadline. You don't need to denormalize this across
+all legs of a transfer — just populate the leg(s) you have rail
+data for, and the views work the join.
+
+See [Lateness as data](../Schema_v3.md#lateness-as-data) for the
+default formula, the `is_late` predicate SQL, and the
+multi-leg tie-breaker query.
+
 One materialized view sits on top of these tables —
 `ar_unified_exceptions`, which feeds the AR Today's Exceptions
 sheet. It is **not** auto-refreshed: every ETL load must run

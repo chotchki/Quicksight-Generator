@@ -234,6 +234,7 @@ SNB.
     - opens a dashboard and looks to see all the merchants sales had settled/been paid
   - SNB's Data Integration Team
     - creates ETL jobs to populate the data to support this tool. The simpler and fewer the tables are, the easier it is for them to do their job. Their attitude is, what do I have a database server that can do fancy queries for unless I use it?
+    - populates the optional `expected_complete_at` column on `transactions` per rail (instant: same-day; ACH: T+2; cards: T+3) so the dashboard's `is_late` predicate fires off rail-accurate deadlines instead of a one-day default — adopted incrementally, one rail at a time
   - SNB's Fraud Team
     - uses the recon tool to search for transactions that break limits set on the accounts
   - SNB's Investigation/AML Team
