@@ -1,4 +1,5 @@
-"""Shared constants for sheet IDs, dataset identifiers, and filter groups.
+"""Shared constants for sheet IDs, dataset identifiers, filter groups,
+and drill parameters.
 
 Extracted to avoid circular imports between analysis.py and visuals.py.
 """
@@ -6,6 +7,9 @@ Extracted to avoid circular imports between analysis.py and visuals.py.
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+from quicksight_gen.common.dataset_contract import ColumnShape
+from quicksight_gen.common.drill import DrillParam
 
 # ---------------------------------------------------------------------------
 # Sheet IDs
@@ -162,6 +166,26 @@ PR_DRILL_BINDINGS: tuple[DrillBinding, ...] = (
     DrillBinding("payment", "payments"),
     DrillBinding("ext-txn", "recon"),
     DrillBinding("ext-txn", "payments"),
+)
+
+
+# ---------------------------------------------------------------------------
+# Drill / cross-sheet parameters
+#
+# Same pattern as account_recon — the parameter name + shape are
+# colocated so cross_sheet_drill can refuse a wiring whose source-field
+# shape doesn't match. Read ``.name`` when you need the bare string.
+# ---------------------------------------------------------------------------
+
+P_PR_SETTLEMENT = DrillParam("pSettlementId", ColumnShape.SETTLEMENT_ID)
+P_PR_PAYMENT = DrillParam("pPaymentId", ColumnShape.PAYMENT_ID)
+P_PR_EXTERNAL_TXN = DrillParam("pExternalTransactionId",
+                               ColumnShape.EXTERNAL_TXN_ID)
+
+ALL_P_PR: tuple[DrillParam, ...] = (
+    P_PR_SETTLEMENT,
+    P_PR_PAYMENT,
+    P_PR_EXTERNAL_TXN,
 )
 
 

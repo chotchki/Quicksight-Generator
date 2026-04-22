@@ -1,7 +1,11 @@
-"""Shared IDs for Account Recon sheets, datasets, and filter groups.
+"""Shared IDs for Account Recon sheets, datasets, filter groups, and
+drill parameters.
 
 Extracted to avoid circular imports between analysis.py and visuals.py.
 """
+
+from quicksight_gen.common.dataset_contract import ColumnShape
+from quicksight_gen.common.drill import DrillParam
 
 # Sheets
 SHEET_AR_GETTING_STARTED = "ar-sheet-getting-started"
@@ -79,3 +83,34 @@ ALL_FG_AR_IDS: frozenset[str] = frozenset({
     FG_AR_TODAYS_EXC_ACCOUNT,
     FG_AR_TODAYS_EXC_AGING,
 })
+
+# ---------------------------------------------------------------------------
+# Drill / cross-sheet parameters
+#
+# Each ``DrillParam`` colocates the QuickSight parameter name with the
+# expected value shape so ``cross_sheet_drill`` can refuse a wiring
+# whose source-field shape doesn't match. Read ``.name`` when you need
+# the bare string for a CategoryFilter, parameter declaration, etc.
+# ---------------------------------------------------------------------------
+
+P_AR_SUBLEDGER = DrillParam("pArSubledgerAccountId",
+                            ColumnShape.SUBLEDGER_ACCOUNT_ID)
+P_AR_LEDGER = DrillParam("pArLedgerAccountId", ColumnShape.LEDGER_ACCOUNT_ID)
+P_AR_TRANSFER = DrillParam("pArTransferId", ColumnShape.TRANSFER_ID)
+P_AR_ACTIVITY_DATE = DrillParam("pArActivityDate",
+                                ColumnShape.DATE_YYYY_MM_DD_TEXT)
+P_AR_TRANSFER_TYPE = DrillParam("pArTransferType", ColumnShape.TRANSFER_TYPE)
+P_AR_ACCOUNT = DrillParam("pArAccountId", ColumnShape.ACCOUNT_ID)
+P_AR_DS_ACCOUNT = DrillParam("pArDsAccountId", ColumnShape.ACCOUNT_ID)
+P_AR_DS_BALANCE_DATE = DrillParam("pArDsBalanceDate", ColumnShape.DATETIME_DAY)
+
+ALL_P_AR: tuple[DrillParam, ...] = (
+    P_AR_SUBLEDGER,
+    P_AR_LEDGER,
+    P_AR_TRANSFER,
+    P_AR_ACTIVITY_DATE,
+    P_AR_TRANSFER_TYPE,
+    P_AR_ACCOUNT,
+    P_AR_DS_ACCOUNT,
+    P_AR_DS_BALANCE_DATE,
+)

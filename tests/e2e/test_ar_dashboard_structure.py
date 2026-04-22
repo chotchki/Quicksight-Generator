@@ -14,6 +14,7 @@ import pytest
 
 from quicksight_gen.account_recon.constants import (
     ALL_FG_AR_IDS,
+    ALL_P_AR,
     FG_AR_DRILL_LEDGER_ON_BALANCES_SUBLEDGER,
 )
 
@@ -163,16 +164,7 @@ class TestParameters:
         # 6 drill-down parameters (Phase D + K.2 pArAccountId) + 2 Daily
         # Statement parameters (Phase I.2). pArDsBalanceDate is a DateTime
         # parameter; the rest are String parameters.
-        assert self._names(ar_dashboard_definition) == {
-            "pArSubledgerAccountId",
-            "pArLedgerAccountId",
-            "pArTransferId",
-            "pArActivityDate",
-            "pArTransferType",
-            "pArAccountId",
-            "pArDsAccountId",
-            "pArDsBalanceDate",
-        }
+        assert self._names(ar_dashboard_definition) == {p.name for p in ALL_P_AR}
 
 
 class TestFilterGroups:

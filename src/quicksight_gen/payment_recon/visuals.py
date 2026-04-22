@@ -15,6 +15,9 @@ from quicksight_gen.payment_recon.constants import (
     DS_SETTLEMENTS,
     DS_SETTLEMENT_EXCEPTIONS,
     DS_UNMATCHED_EXTERNAL_TXNS,
+    P_PR_EXTERNAL_TXN,
+    P_PR_PAYMENT,
+    P_PR_SETTLEMENT,
     SHEET_PAYMENT_RECON,
     SHEET_PAYMENTS,
     SHEET_SALES,
@@ -26,9 +29,7 @@ from quicksight_gen.common.clickability import (
     link_text_format,
     menu_link_text_format,
 )
-from quicksight_gen.common.dataset_contract import ColumnShape
 from quicksight_gen.common.drill import (
-    DrillParam,
     cross_sheet_drill,
     field_source,
 )
@@ -64,15 +65,6 @@ from quicksight_gen.common.models import (
     VisualSubtitleLabelOptions,
     VisualTitleLabelOptions,
 )
-
-
-# K.2: typed PR drill parameters. Same pattern as account_recon —
-# the parameter name + shape are colocated so cross_sheet_drill can
-# refuse a wiring whose source-field shape doesn't match.
-P_PR_SETTLEMENT = DrillParam("pSettlementId", ColumnShape.SETTLEMENT_ID)
-P_PR_PAYMENT = DrillParam("pPaymentId", ColumnShape.PAYMENT_ID)
-P_PR_EXTERNAL_TXN = DrillParam("pExternalTransactionId",
-                               ColumnShape.EXTERNAL_TXN_ID)
 
 
 # ---------------------------------------------------------------------------

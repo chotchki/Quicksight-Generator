@@ -33,6 +33,14 @@ from quicksight_gen.account_recon.constants import (
     FG_AR_DRILL_SUBLEDGER_ON_TXN,
     FG_AR_DRILL_TRANSFER_ON_TXN,
     FG_AR_DRILL_TRANSFER_TYPE_ON_TXN,
+    P_AR_ACCOUNT,
+    P_AR_ACTIVITY_DATE,
+    P_AR_DS_ACCOUNT,
+    P_AR_DS_BALANCE_DATE,
+    P_AR_LEDGER,
+    P_AR_SUBLEDGER,
+    P_AR_TRANSFER,
+    P_AR_TRANSFER_TYPE,
     SHEET_AR_BALANCES,
     SHEET_AR_DAILY_STATEMENT,
     SHEET_AR_EXCEPTIONS_TRENDS,
@@ -52,12 +60,6 @@ from quicksight_gen.account_recon.filters import (
     build_transfers_controls,
 )
 from quicksight_gen.account_recon.visuals import (
-    P_AR_ACCOUNT,
-    P_AR_ACTIVITY_DATE,
-    P_AR_LEDGER,
-    P_AR_SUBLEDGER,
-    P_AR_TRANSFER,
-    P_AR_TRANSFER_TYPE,
     build_balances_visuals,
     build_daily_statement_visuals,
     build_exceptions_trends_visuals,
@@ -712,7 +714,7 @@ def _ar_balance_date_parameter() -> ParameterDeclaration:
     """
     return ParameterDeclaration(
         DateTimeParameterDeclaration=DateTimeParameterDeclaration(
-            Name="pArDsBalanceDate",
+            Name=P_AR_DS_BALANCE_DATE.name,
             TimeGranularity="DAY",
             DefaultValues=DateTimeDefaultValues(
                 RollingDate={"Expression": "truncDate('DD', now())"},
@@ -952,13 +954,13 @@ def _build_definition(cfg: Config) -> AnalysisDefinition:
         # default — no chance of declaring a calc field whose param
         # has a missing/empty default.
         ParameterDeclarations=[
-            _drill_param_declaration("pArSubledgerAccountId"),
-            _drill_param_declaration("pArLedgerAccountId"),
-            _drill_param_declaration("pArTransferId"),
-            _drill_param_declaration("pArActivityDate"),
-            _drill_param_declaration("pArTransferType"),
-            _drill_param_declaration("pArAccountId"),
-            _ar_string_parameter("pArDsAccountId"),
+            _drill_param_declaration(P_AR_SUBLEDGER.name),
+            _drill_param_declaration(P_AR_LEDGER.name),
+            _drill_param_declaration(P_AR_TRANSFER.name),
+            _drill_param_declaration(P_AR_ACTIVITY_DATE.name),
+            _drill_param_declaration(P_AR_TRANSFER_TYPE.name),
+            _drill_param_declaration(P_AR_ACCOUNT.name),
+            _ar_string_parameter(P_AR_DS_ACCOUNT.name),
             _ar_balance_date_parameter(),
         ],
     )

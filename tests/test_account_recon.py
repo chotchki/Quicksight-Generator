@@ -22,6 +22,7 @@ from click.testing import CliRunner
 
 from quicksight_gen.account_recon.constants import (
     ALL_FG_AR_IDS,
+    ALL_P_AR,
     FG_AR_BALANCES_LEDGER_DRIFT,
     FG_AR_BALANCES_OVERDRAFT,
     FG_AR_BALANCES_SUBLEDGER_DRIFT,
@@ -40,6 +41,14 @@ from quicksight_gen.account_recon.constants import (
     FG_AR_TRANSACTIONS_FAILED,
     FG_AR_TRANSFER_STATUS,
     FG_AR_TRANSFER_TYPE,
+    P_AR_ACCOUNT,
+    P_AR_ACTIVITY_DATE,
+    P_AR_DS_ACCOUNT,
+    P_AR_DS_BALANCE_DATE,
+    P_AR_LEDGER,
+    P_AR_SUBLEDGER,
+    P_AR_TRANSFER,
+    P_AR_TRANSFER_TYPE,
     SHEET_AR_BALANCES,
     SHEET_AR_DAILY_STATEMENT,
     SHEET_AR_EXCEPTIONS_TRENDS,
@@ -2427,16 +2436,8 @@ class TestParameterDeclarations:
     """Phase 5 drill-downs use single-valued string parameters; the
     Daily Statement balance-date drill uses one date-time parameter."""
 
-    _STRING_PARAMS = {
-        "pArSubledgerAccountId",
-        "pArLedgerAccountId",
-        "pArTransferId",
-        "pArActivityDate",
-        "pArTransferType",
-        "pArAccountId",
-        "pArDsAccountId",
-    }
-    _DATETIME_PARAMS = {"pArDsBalanceDate"}
+    _STRING_PARAMS = {p.name for p in ALL_P_AR if p is not P_AR_DS_BALANCE_DATE}
+    _DATETIME_PARAMS = {P_AR_DS_BALANCE_DATE.name}
 
     def _split(self, params: list[dict]) -> tuple[list[dict], list[dict]]:
         return (
@@ -2467,7 +2468,7 @@ class TestParameterDeclarations:
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
         params = analysis["Definition"]["ParameterDeclarations"]
         _, datetime_params = self._split(params)
-        bal_date = next(p for p in datetime_params if p["Name"] == "pArDsBalanceDate")
+        bal_date = next(p for p in datetime_params if p["Name"] == P_AR_DS_BALANCE_DATE.name)
         assert bal_date["TimeGranularity"] == "DAY"
         assert bal_date["DefaultValues"]["RollingDate"]["Expression"] == (
             "truncDate('DD', now())"
@@ -2490,45 +2491,45 @@ class TestDrillDownFilterGroups:
         [
             (
                 FG_AR_DRILL_SUBLEDGER_ON_TXN,
-                "pArSubledgerAccountId",
+                P_AR_SUBLEDGER.name,
                 "subledger_account_id",
                 SHEET_AR_TRANSACTIONS,
-                "_drill_pass_pArSubledgerAccountId_on_txn",
+                f"_drill_pass_{P_AR_SUBLEDGER.name}_on_txn",
             ),
             (
                 FG_AR_DRILL_TRANSFER_ON_TXN,
-                "pArTransferId",
+                P_AR_TRANSFER.name,
                 "transfer_id",
                 SHEET_AR_TRANSACTIONS,
-                "_drill_pass_pArTransferId_on_txn",
+                f"_drill_pass_{P_AR_TRANSFER.name}_on_txn",
             ),
             (
                 FG_AR_DRILL_ACTIVITY_DATE_ON_TXN,
-                "pArActivityDate",
+                P_AR_ACTIVITY_DATE.name,
                 "posted_date",
                 SHEET_AR_TRANSACTIONS,
-                "_drill_pass_pArActivityDate_on_txn",
+                f"_drill_pass_{P_AR_ACTIVITY_DATE.name}_on_txn",
             ),
             (
                 FG_AR_DRILL_TRANSFER_TYPE_ON_TXN,
-                "pArTransferType",
+                P_AR_TRANSFER_TYPE.name,
                 "transfer_type",
                 SHEET_AR_TRANSACTIONS,
-                "_drill_pass_pArTransferType_on_txn",
+                f"_drill_pass_{P_AR_TRANSFER_TYPE.name}_on_txn",
             ),
             (
                 FG_AR_DRILL_ACCOUNT_ON_TXN,
-                "pArAccountId",
+                P_AR_ACCOUNT.name,
                 "account_id",
                 SHEET_AR_TRANSACTIONS,
-                "_drill_pass_pArAccountId_on_txn",
+                f"_drill_pass_{P_AR_ACCOUNT.name}_on_txn",
             ),
             (
                 FG_AR_DRILL_LEDGER_ON_BALANCES_SUBLEDGER,
-                "pArLedgerAccountId",
+                P_AR_LEDGER.name,
                 "ledger_account_id",
                 SHEET_AR_BALANCES,
-                "_drill_pass_pArLedgerAccountId_on_balances_subledger",
+                f"_drill_pass_{P_AR_LEDGER.name}_on_balances_subledger",
             ),
         ],
     )
@@ -2653,20 +2654,20 @@ class TestVisualActions:
         action = v["Actions"][0]
         assert action["Trigger"] == "DATA_POINT_MENU"
         assert _drill_nav_target(v) == SHEET_AR_BALANCES
-        assert _set_param(v) == ("pArLedgerAccountId", "ar-bal-ledger-id")
+        assert _set_param(v) == (P_AR_LEDGER.name, "ar-bal-ledger-id")
 
     def test_balances_subledger_drills_to_transactions(self, ar_output_dir):
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
         v = _find_visual(analysis, "ar-balances-subledger-table")
         assert v["Actions"][0]["Trigger"] == "DATA_POINT_CLICK"
         assert _drill_nav_target(v) == SHEET_AR_TRANSACTIONS
-        assert _set_param(v) == ("pArSubledgerAccountId", "ar-bal-subledger-id")
+        assert _set_param(v) == (P_AR_SUBLEDGER.name, "ar-bal-subledger-id")
 
     def test_transfers_summary_drills_to_transactions(self, ar_output_dir):
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
         v = _find_visual(analysis, "ar-transfers-summary-table")
         assert _drill_nav_target(v) == SHEET_AR_TRANSACTIONS
-        assert _set_param(v) == ("pArTransferId", "ar-xfr-id")
+        assert _set_param(v) == (P_AR_TRANSFER.name, "ar-xfr-id")
 
     @pytest.mark.parametrize(
         "source_visual, target_visual",
@@ -2715,8 +2716,8 @@ class TestVisualActions:
             for p in set_op["ParameterValueConfigurations"]
         ]
         assert pvcs == [
-            ("pArDsAccountId", "ar-bal-subledger-id"),
-            ("pArDsBalanceDate", "ar-bal-subledger-date"),
+            (P_AR_DS_ACCOUNT.name, "ar-bal-subledger-id"),
+            (P_AR_DS_BALANCE_DATE.name, "ar-bal-subledger-date"),
         ]
 
 
@@ -2731,11 +2732,11 @@ class TestTransactionsDrillStaleParamHygiene:
     here, not in the live dashboard."""
 
     EXPECTED_PARAMS = {
-        "pArSubledgerAccountId",
-        "pArTransferId",
-        "pArActivityDate",
-        "pArTransferType",
-        "pArAccountId",
+        P_AR_SUBLEDGER.name,
+        P_AR_TRANSFER.name,
+        P_AR_ACTIVITY_DATE.name,
+        P_AR_TRANSFER_TYPE.name,
+        P_AR_ACCOUNT.name,
     }
 
     @pytest.mark.parametrize(
@@ -2744,24 +2745,24 @@ class TestTransactionsDrillStaleParamHygiene:
             (
                 "ar-balances-subledger-table",
                 "action-ar-balances-subledger-to-txn",
-                {"pArSubledgerAccountId": "ar-bal-subledger-id"},
+                {P_AR_SUBLEDGER.name: "ar-bal-subledger-id"},
             ),
             (
                 "ar-transfers-summary-table",
                 "action-ar-transfers-to-txn",
-                {"pArTransferId": "ar-xfr-id"},
+                {P_AR_TRANSFER.name: "ar-xfr-id"},
             ),
             (
                 "ar-todays-exc-table",
                 "action-ar-todays-exc-to-txn",
-                {"pArTransferId": "ar-todays-exc-transfer-id"},
+                {P_AR_TRANSFER.name: "ar-todays-exc-transfer-id"},
             ),
             (
                 "ar-todays-exc-table",
                 "action-ar-todays-exc-to-txn-by-account",
                 {
-                    "pArAccountId": "ar-todays-exc-account",
-                    "pArActivityDate": "ar-todays-exc-date",
+                    P_AR_ACCOUNT.name: "ar-todays-exc-account",
+                    P_AR_ACTIVITY_DATE.name: "ar-todays-exc-date",
                 },
             ),
         ],
@@ -2911,7 +2912,7 @@ class TestDailyStatementFilters:
         cf = fg["Filters"][0]["CategoryFilter"]
         custom = cf["Configuration"]["CustomFilterConfiguration"]
         assert custom["MatchOperator"] == "EQUALS"
-        assert custom["ParameterName"] == "pArDsAccountId"
+        assert custom["ParameterName"] == P_AR_DS_ACCOUNT.name
         assert custom["NullOption"] == "NON_NULLS_ONLY"
         assert cf["Column"]["ColumnName"] == "account_id"
 
@@ -2928,7 +2929,7 @@ class TestDailyStatementFilters:
         assert "TimeEqualityFilter" in f
         assert "TimeRangeFilter" not in f
         teq = f["TimeEqualityFilter"]
-        assert teq["ParameterName"] == "pArDsBalanceDate"
+        assert teq["ParameterName"] == P_AR_DS_BALANCE_DATE.name
         assert teq["TimeGranularity"] == "DAY"
         assert teq["Column"]["ColumnName"] == "balance_date"
 
@@ -3000,7 +3001,7 @@ class TestDailyStatementFilters:
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
         ctrl = self._ds_parameter_controls(analysis)["ctrl-ar-ds-account"]
         assert ctrl["Type"] == "SINGLE_SELECT"
-        assert ctrl["SourceParameterName"] == "pArDsAccountId"
+        assert ctrl["SourceParameterName"] == P_AR_DS_ACCOUNT.name
         link = ctrl["SelectableValues"]["LinkToDataSetColumn"]
         assert link["ColumnName"] == "account_id"
 
@@ -3014,7 +3015,7 @@ class TestDailyStatementFilters:
         ctrl = self._ds_parameter_controls(analysis)[
             "ctrl-ar-ds-balance-date"
         ]
-        assert ctrl["SourceParameterName"] == "pArDsBalanceDate"
+        assert ctrl["SourceParameterName"] == P_AR_DS_BALANCE_DATE.name
 
 
 class TestShowOnlyToggleControls:

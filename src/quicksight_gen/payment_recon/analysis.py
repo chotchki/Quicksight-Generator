@@ -17,6 +17,9 @@ from quicksight_gen.payment_recon.constants import (
     DS_SETTLEMENTS,
     DS_UNMATCHED_EXTERNAL_TXNS,
     DrillBinding,
+    P_PR_EXTERNAL_TXN,
+    P_PR_PAYMENT,
+    P_PR_SETTLEMENT,
     SHEET_EXCEPTIONS,
     SHEET_GETTING_STARTED,
     SHEET_PAYMENT_RECON,
@@ -542,7 +545,7 @@ def _settlement_id_parameter() -> ParameterDeclaration:
     return ParameterDeclaration(
         StringParameterDeclaration=StringParameterDeclaration(
             ParameterValueType="SINGLE_VALUED",
-            Name="pSettlementId",
+            Name=P_PR_SETTLEMENT.name,
             DefaultValues={"StaticValues": []},
         ),
     )
@@ -554,7 +557,7 @@ def _payment_id_parameter() -> ParameterDeclaration:
     return ParameterDeclaration(
         StringParameterDeclaration=StringParameterDeclaration(
             ParameterValueType="SINGLE_VALUED",
-            Name="pPaymentId",
+            Name=P_PR_PAYMENT.name,
             DefaultValues={"StaticValues": []},
         ),
     )
@@ -565,7 +568,7 @@ def _external_txn_id_parameter() -> ParameterDeclaration:
     return ParameterDeclaration(
         StringParameterDeclaration=StringParameterDeclaration(
             ParameterValueType="SINGLE_VALUED",
-            Name="pExternalTransactionId",
+            Name=P_PR_EXTERNAL_TXN.name,
             DefaultValues={"StaticValues": []},
         ),
     )
@@ -603,7 +606,7 @@ def _settlement_id_filter_group(
                     Configuration=CategoryFilterConfiguration(
                         CustomFilterConfiguration={
                             "MatchOperator": "EQUALS",
-                            "ParameterName": "pSettlementId",
+                            "ParameterName": P_PR_SETTLEMENT.name,
                             "NullOption": "ALL_VALUES",
                         },
                     ),
@@ -645,7 +648,7 @@ def _payment_id_filter_group(
                     Configuration=CategoryFilterConfiguration(
                         CustomFilterConfiguration={
                             "MatchOperator": "EQUALS",
-                            "ParameterName": "pPaymentId",
+                            "ParameterName": P_PR_PAYMENT.name,
                             "NullOption": "ALL_VALUES",
                         },
                     ),
@@ -687,7 +690,7 @@ def _ext_txn_id_filter_group(
                     Configuration=CategoryFilterConfiguration(
                         CustomFilterConfiguration={
                             "MatchOperator": "EQUALS",
-                            "ParameterName": "pExternalTransactionId",
+                            "ParameterName": P_PR_EXTERNAL_TXN.name,
                             "NullOption": "ALL_VALUES",
                         },
                     ),

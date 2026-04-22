@@ -49,6 +49,8 @@ from quicksight_gen.account_recon.constants import (
     FG_AR_TRANSACTIONS_FAILED,
     FG_AR_TRANSFER_STATUS,
     FG_AR_TRANSFER_TYPE,
+    P_AR_DS_ACCOUNT,
+    P_AR_DS_BALANCE_DATE,
     SHEET_AR_BALANCES,
     SHEET_AR_DAILY_STATEMENT,
     SHEET_AR_EXCEPTIONS_TRENDS,
@@ -672,7 +674,7 @@ def _daily_statement_account_filter_group() -> FilterGroup:
                     Configuration=CategoryFilterConfiguration(
                         CustomFilterConfiguration={
                             "MatchOperator": "EQUALS",
-                            "ParameterName": "pArDsAccountId",
+                            "ParameterName": P_AR_DS_ACCOUNT.name,
                             "NullOption": "NON_NULLS_ONLY",
                         },
                     ),
@@ -705,7 +707,7 @@ def _daily_statement_date_filter_group() -> FilterGroup:
                         DataSetIdentifier=DS_AR_DAILY_STATEMENT_SUMMARY,
                         ColumnName="balance_date",
                     ),
-                    ParameterName="pArDsBalanceDate",
+                    ParameterName=P_AR_DS_BALANCE_DATE.name,
                     TimeGranularity="DAY",
                 ),
             ),
@@ -734,7 +736,7 @@ def build_daily_statement_parameter_controls(cfg: Config) -> list[ParameterContr
             Dropdown=ParameterDropDownControl(
                 ParameterControlId="ctrl-ar-ds-account",
                 Title="Account",
-                SourceParameterName="pArDsAccountId",
+                SourceParameterName=P_AR_DS_ACCOUNT.name,
                 Type="SINGLE_SELECT",
                 SelectableValues={
                     "LinkToDataSetColumn": {
@@ -748,7 +750,7 @@ def build_daily_statement_parameter_controls(cfg: Config) -> list[ParameterContr
             DateTimePicker=ParameterDateTimePickerControl(
                 ParameterControlId="ctrl-ar-ds-balance-date",
                 Title="Balance Date",
-                SourceParameterName="pArDsBalanceDate",
+                SourceParameterName=P_AR_DS_BALANCE_DATE.name,
             ),
         ),
     ]

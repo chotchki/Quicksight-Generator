@@ -9,6 +9,8 @@ from quicksight_gen.payment_recon.constants import (
     FG_PR_PAYMENTS_UNMATCHED,
     FG_PR_SALES_UNSETTLED,
     FG_PR_SETTLEMENTS_UNPAID,
+    P_PR_EXTERNAL_TXN,
+    P_PR_SETTLEMENT,
     SalesMeta,
 )
 
@@ -134,7 +136,7 @@ class TestParameters:
             for decl in p.values():
                 if isinstance(decl, dict) and "Name" in decl:
                     names.add(decl["Name"])
-        assert "pSettlementId" in names
+        assert P_PR_SETTLEMENT.name in names
 
     def test_has_external_txn_id_parameter(self, dashboard_definition):
         params = dashboard_definition.get("ParameterDeclarations", [])
@@ -143,7 +145,7 @@ class TestParameters:
             for decl in p.values():
                 if isinstance(decl, dict) and "Name" in decl:
                     names.add(decl["Name"])
-        assert "pExternalTransactionId" in names
+        assert P_PR_EXTERNAL_TXN.name in names
 
 
 class TestFilterGroups:

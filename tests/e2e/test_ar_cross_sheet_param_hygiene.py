@@ -33,6 +33,12 @@ from urllib.parse import quote
 
 import pytest
 
+from quicksight_gen.account_recon.constants import (
+    P_AR_ACCOUNT,
+    P_AR_ACTIVITY_DATE,
+    P_AR_TRANSFER,
+)
+
 from .browser_helpers import (
     click_sheet_tab,
     count_table_total_rows,
@@ -184,8 +190,8 @@ def test_account_day_baseline(
     count = _count_with_params(
         qs_client, account_id, ar_dashboard_id, page_timeout,
         params={
-            "pArAccountId": hygiene_values["account_id"],
-            "pArActivityDate": hygiene_values["activity_date"],
+            P_AR_ACCOUNT.name: hygiene_values["account_id"],
+            P_AR_ACTIVITY_DATE.name: hygiene_values["activity_date"],
         },
         screenshot_name="cross_sheet_hygiene_baseline_account_day",
     )
@@ -213,17 +219,17 @@ def test_stale_pArTransferId_suppresses_account_day(
     baseline = _count_with_params(
         qs_client, account_id, ar_dashboard_id, page_timeout,
         params={
-            "pArAccountId": hygiene_values["account_id"],
-            "pArActivityDate": hygiene_values["activity_date"],
+            P_AR_ACCOUNT.name: hygiene_values["account_id"],
+            P_AR_ACTIVITY_DATE.name: hygiene_values["activity_date"],
         },
         screenshot_name="cross_sheet_hygiene_paired_baseline",
     )
     leaked = _count_with_params(
         qs_client, account_id, ar_dashboard_id, page_timeout,
         params={
-            "pArAccountId": hygiene_values["account_id"],
-            "pArActivityDate": hygiene_values["activity_date"],
-            "pArTransferId": hygiene_values["unrelated_transfer_id"],
+            P_AR_ACCOUNT.name: hygiene_values["account_id"],
+            P_AR_ACTIVITY_DATE.name: hygiene_values["activity_date"],
+            P_AR_TRANSFER.name: hygiene_values["unrelated_transfer_id"],
         },
         screenshot_name="cross_sheet_hygiene_stale_param_leak",
     )
@@ -272,17 +278,17 @@ def test_sentinel_pArTransferId_fragment_resets_via_calc_field(
     baseline = _count_with_params(
         qs_client, account_id, ar_dashboard_id, page_timeout,
         params={
-            "pArAccountId": hygiene_values["account_id"],
-            "pArActivityDate": hygiene_values["activity_date"],
+            P_AR_ACCOUNT.name: hygiene_values["account_id"],
+            P_AR_ACTIVITY_DATE.name: hygiene_values["activity_date"],
         },
         screenshot_name="cross_sheet_hygiene_reset_baseline",
     )
     reset_attempt = _count_with_params(
         qs_client, account_id, ar_dashboard_id, page_timeout,
         params={
-            "pArAccountId": hygiene_values["account_id"],
-            "pArActivityDate": hygiene_values["activity_date"],
-            "pArTransferId": "__ALL__",
+            P_AR_ACCOUNT.name: hygiene_values["account_id"],
+            P_AR_ACTIVITY_DATE.name: hygiene_values["activity_date"],
+            P_AR_TRANSFER.name: "__ALL__",
         },
         screenshot_name="cross_sheet_hygiene_sentinel_fragment_resets",
     )

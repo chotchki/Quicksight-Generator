@@ -41,6 +41,14 @@ from quicksight_gen.account_recon.constants import (
     DS_AR_TRANSFER_SUMMARY,
     DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
     DS_AR_UNIFIED_EXCEPTIONS,
+    P_AR_ACCOUNT,
+    P_AR_ACTIVITY_DATE,
+    P_AR_DS_ACCOUNT,
+    P_AR_DS_BALANCE_DATE,
+    P_AR_LEDGER,
+    P_AR_SUBLEDGER,
+    P_AR_TRANSFER,
+    P_AR_TRANSFER_TYPE,
     SHEET_AR_BALANCES,
     SHEET_AR_DAILY_STATEMENT,
     SHEET_AR_TRANSACTIONS,
@@ -49,7 +57,6 @@ from quicksight_gen.common.clickability import (
     link_text_format,
     menu_link_text_format,
 )
-from quicksight_gen.common.dataset_contract import ColumnShape
 from quicksight_gen.common.drill import (
     DrillParam,
     DrillResetSentinel,
@@ -221,24 +228,6 @@ def _same_sheet_filter_action(
             ),
         ],
     )
-
-
-# K.2: typed drill parameters. Each carries the parameter's expected
-# value shape so cross_sheet_drill() can refuse a wiring whose source
-# field shape doesn't match. Constructing the destination's value via
-# field_source(...) reads the column's shape from the dataset
-# contract, so the only place a shape can be wrong is the contract
-# itself — which the dataset health tests cover.
-P_AR_SUBLEDGER = DrillParam("pArSubledgerAccountId",
-                            ColumnShape.SUBLEDGER_ACCOUNT_ID)
-P_AR_LEDGER = DrillParam("pArLedgerAccountId", ColumnShape.LEDGER_ACCOUNT_ID)
-P_AR_TRANSFER = DrillParam("pArTransferId", ColumnShape.TRANSFER_ID)
-P_AR_ACTIVITY_DATE = DrillParam("pArActivityDate",
-                                ColumnShape.DATE_YYYY_MM_DD_TEXT)
-P_AR_TRANSFER_TYPE = DrillParam("pArTransferType", ColumnShape.TRANSFER_TYPE)
-P_AR_ACCOUNT = DrillParam("pArAccountId", ColumnShape.ACCOUNT_ID)
-P_AR_DS_ACCOUNT = DrillParam("pArDsAccountId", ColumnShape.ACCOUNT_ID)
-P_AR_DS_BALANCE_DATE = DrillParam("pArDsBalanceDate", ColumnShape.DATETIME_DAY)
 
 
 # K.2: SHEET_AR_TRANSACTIONS PASS-filtered params. Every drill that
