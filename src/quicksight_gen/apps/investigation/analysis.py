@@ -1,28 +1,38 @@
 """QuickSight Analysis + Dashboard for the Investigation app.
 
-K.4.2 ships the skeleton: 4 sheets (Getting Started + 3 stubs named for
-K.4.3 / K.4.4 / K.4.5), zero datasets, zero filter groups, zero
-visuals. The stub sheets carry only a text-box explaining what the
-sheet will hold once K.4.3 / K.4.4 / K.4.5 land.
-
-The skeleton exists so the app can be wired into the CLI, deployed to
-AWS QuickSight, and exercised end-to-end before any sheet content
-arrives — failures in dataset wiring or sheet plumbing surface up
-front, not after the visuals are built.
+K.4.3 lands the Recipient Fanout sheet: dataset declaration, the
+analysis-level ``recipient_distinct_sender_count`` calc field that
+backs the threshold filter, three KPIs + a ranked table, a date-range
+window filter, and a slider-bound integer parameter for the fanout
+threshold. The Volume Anomalies and Money Trail sheets remain as
+stubs until K.4.4 / K.4.5.
 """
 
 from __future__ import annotations
 
 from quicksight_gen.apps.investigation.constants import (
+    CF_INV_FANOUT_DISTINCT_SENDERS,
+    DS_INV_RECIPIENT_FANOUT,
     SHEET_INV_ANOMALIES,
     SHEET_INV_FANOUT,
     SHEET_INV_GETTING_STARTED,
     SHEET_INV_MONEY_TRAIL,
+    V_INV_FANOUT_KPI_AMOUNT,
+    V_INV_FANOUT_KPI_RECIPIENTS,
+    V_INV_FANOUT_KPI_SENDERS,
+    V_INV_FANOUT_TABLE,
 )
 from quicksight_gen.apps.investigation.datasets import build_all_datasets
-from quicksight_gen.apps.investigation.filters import build_filter_groups
+from quicksight_gen.apps.investigation.filters import (
+    build_fanout_filter_controls,
+    build_fanout_parameter_controls,
+    build_filter_groups,
+    build_parameter_declarations,
+)
+from quicksight_gen.apps.investigation.visuals import build_fanout_visuals
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
+from quicksight_gen.common.ids import VisualId
 from quicksight_gen.common.models import (
     Analysis,
     AnalysisDefinition,
@@ -61,7 +71,11 @@ _DASHBOARD_ACTIONS = [
     "quicksight:UpdateDashboardLinks",
 ]
 
+# Grid is 36 columns wide.
 _FULL = 36
+_THIRD = 12
+_KPI_ROW_SPAN = 6
+_TABLE_ROW_SPAN = 18
 
 
 def _grid_layout(elements: list[GridLayoutElement]) -> list[Layout]:
@@ -78,16 +92,42 @@ def _full_width_text(element_id: str, row_span: int) -> GridLayoutElement:
     )
 
 
+def _full_width_visual(element_id: VisualId, row_span: int) -> GridLayoutElement:
+    return GridLayoutElement(
+        ElementId=element_id, ElementType=GridLayoutElement.VISUAL,
+        ColumnSpan=_FULL, RowSpan=row_span,
+        ColumnIndex=0,
+    )
+
+
+def _kpi_triple(
+    id_a: VisualId, id_b: VisualId, id_c: VisualId,
+) -> list[GridLayoutElement]:
+    return [
+        GridLayoutElement(
+            ElementId=id_a, ElementType=GridLayoutElement.VISUAL,
+            ColumnSpan=_THIRD, RowSpan=_KPI_ROW_SPAN, ColumnIndex=0,
+        ),
+        GridLayoutElement(
+            ElementId=id_b, ElementType=GridLayoutElement.VISUAL,
+            ColumnSpan=_THIRD, RowSpan=_KPI_ROW_SPAN, ColumnIndex=_THIRD,
+        ),
+        GridLayoutElement(
+            ElementId=id_c, ElementType=GridLayoutElement.VISUAL,
+            ColumnSpan=_THIRD, RowSpan=_KPI_ROW_SPAN, ColumnIndex=_THIRD * 2,
+        ),
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Sheet bodies
 # ---------------------------------------------------------------------------
 
-_FANOUT_BODY = (
+_FANOUT_DESCRIPTION = (
     "Who is receiving money from an unusual number of distinct senders? "
-    "Surfaces recipient accounts whose distinct-sender count over a "
-    "chosen window crosses a fanout threshold — the classic structuring "
-    "/ funnel-account pattern. KPI + ranked table; cross-app drill into "
-    "Account Reconciliation Transactions for the recipient."
+    "Drag the slider to set the minimum sender count; the table ranks "
+    "qualifying recipients by funnel width. K.4.7 wires per-row drill "
+    "into Account Reconciliation Transactions for the recipient."
 )
 
 _ANOMALY_BODY = (
@@ -145,7 +185,7 @@ def _build_getting_started_sheet(cfg: Config) -> SheetDefinition:
             rt.BR,
             rt.bullets([
                 "Recipient Fanout — who is receiving money from too many "
-                "distinct senders? (lands in K.4.3)",
+                "distinct senders? (live)",
                 "Volume Anomalies — which sender → recipient pair just "
                 "spiked above the rolling baseline? (lands in K.4.4)",
                 "Money Trail — where did this transfer originate and "
@@ -168,6 +208,37 @@ def _build_getting_started_sheet(cfg: Config) -> SheetDefinition:
             _full_width_text("inv-gs-welcome", 5),
             _full_width_text("inv-gs-roadmap", 6),
         ]),
+    )
+
+
+def _build_recipient_fanout_sheet(cfg: Config) -> SheetDefinition:
+    """Recipient Fanout — KPIs + ranked table.
+
+    Layout:
+      * Row 1: 3 KPIs (qualifying recipients / distinct senders /
+        total inbound), each ⅓ width.
+      * Row 2: full-width recipient table sorted by distinct sender
+        count desc.
+    Date-range filter widget + threshold slider live in the sheet's
+    controls panel (FilterControls + ParameterControls).
+    """
+    return SheetDefinition(
+        SheetId=SHEET_INV_FANOUT,
+        Name="Recipient Fanout",
+        Title="Recipient Fanout",
+        Description=_FANOUT_DESCRIPTION,
+        ContentType="INTERACTIVE",
+        Visuals=build_fanout_visuals(),
+        FilterControls=build_fanout_filter_controls(cfg),
+        ParameterControls=build_fanout_parameter_controls(cfg),
+        Layouts=_grid_layout(
+            _kpi_triple(
+                V_INV_FANOUT_KPI_RECIPIENTS,
+                V_INV_FANOUT_KPI_SENDERS,
+                V_INV_FANOUT_KPI_AMOUNT,
+            )
+            + [_full_width_visual(V_INV_FANOUT_TABLE, _TABLE_ROW_SPAN)]
+        ),
     )
 
 
@@ -200,13 +271,56 @@ def _build_stub_sheet(
 
 
 # ---------------------------------------------------------------------------
-# Analysis / Dashboard
+# Calculated fields
+# ---------------------------------------------------------------------------
+
+def _build_calculated_fields() -> list[dict]:
+    """Analysis-level calc fields.
+
+    ``recipient_distinct_sender_count`` is a windowed distinct count of
+    sender_account_id partitioned by recipient_account_id — every row of
+    a recipient carries the same value. The threshold NumericRangeFilter
+    references this calc field as its column, so dragging the slider
+    narrows visuals to recipients whose count crosses the threshold.
+    """
+    return [
+        {
+            "Name": CF_INV_FANOUT_DISTINCT_SENDERS,
+            "DataSetIdentifier": DS_INV_RECIPIENT_FANOUT,
+            "Expression": (
+                "distinct_count({sender_account_id}, "
+                "[{recipient_account_id}])"
+            ),
+        },
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Dataset declarations
 # ---------------------------------------------------------------------------
 
 def _build_dataset_declarations(cfg: Config) -> list[DataSetIdentifierDeclaration]:
-    """No datasets in the K.4.2 skeleton."""
-    return []
+    """Map logical Investigation dataset identifiers to ARNs.
 
+    Order matches ``build_all_datasets`` so each ARN lines up with the
+    intended logical identifier.
+    """
+    datasets = build_all_datasets(cfg)
+    names = [
+        DS_INV_RECIPIENT_FANOUT,
+    ]
+    return [
+        DataSetIdentifierDeclaration(
+            Identifier=name,
+            DataSetArn=cfg.dataset_arn(ds.DataSetId),
+        )
+        for name, ds in zip(names, datasets)
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Analysis / Dashboard
+# ---------------------------------------------------------------------------
 
 def _build_definition(cfg: Config) -> AnalysisDefinition:
     accent = get_preset(cfg.theme_preset).accent
@@ -214,10 +328,7 @@ def _build_definition(cfg: Config) -> AnalysisDefinition:
         DataSetIdentifierDeclarations=_build_dataset_declarations(cfg),
         Sheets=[
             _build_getting_started_sheet(cfg),
-            _build_stub_sheet(
-                SHEET_INV_FANOUT, "Recipient Fanout",
-                _FANOUT_BODY, "K.4.3", accent,
-            ),
+            _build_recipient_fanout_sheet(cfg),
             _build_stub_sheet(
                 SHEET_INV_ANOMALIES, "Volume Anomalies",
                 _ANOMALY_BODY, "K.4.4", accent,
@@ -228,8 +339,8 @@ def _build_definition(cfg: Config) -> AnalysisDefinition:
             ),
         ],
         FilterGroups=build_filter_groups(cfg),
-        CalculatedFields=[],
-        ParameterDeclarations=[],
+        CalculatedFields=_build_calculated_fields(),
+        ParameterDeclarations=build_parameter_declarations(cfg),
     )
 
 
