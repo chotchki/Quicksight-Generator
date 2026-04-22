@@ -150,6 +150,18 @@ See Training_Story.md, the executives want data!
 - The most recent timestamp materialized views were updated
   - Since that could be the source of data mismatch problems
 
+## Test Reliability
+- **Fix the 5 PR FilterControl dropdown e2e tests that hang on dropdown open.** Failing both pre- and post-K.2 (so not a K.2 regression), every run, both parallel and serial:
+  - `tests/e2e/test_filters.py::test_cashier_multi_select_narrows_sales`
+  - `tests/e2e/test_filters.py::test_payment_method_narrows_payments`
+  - `tests/e2e/test_filters.py::test_show_only_toggle_narrows_and_clears[Sales Overview-Show Only Unsettled-…]`
+  - `tests/e2e/test_filters.py::test_show_only_toggle_narrows_and_clears[Settlements-Show Only Unpaid-…]`
+  - `tests/e2e/test_filters.py::test_show_only_toggle_narrows_and_clears[Payments-Show Only Unmatched Externally-…]`
+  - All time out after 30s in `_open_control_dropdown` (`tests/e2e/browser_helpers.py:942`) waiting on `[data-automation-id="sheet_control_value-menu"][data-automation-context="<title>"] [role="option"], [role="listbox"] [role="option"]`. The control card is found and clicked, but the MUI listbox popover never resolves under the expected selector.
+  - Diagnostic path: screenshot the page after the click but before the timeout (the helper already saves to `tests/e2e/screenshots/payment-recon/`); inspect actual DOM for the listbox; reconcile with the selector. Likely a QuickSight UI change pushed the listbox out of the `data-automation-context`-scoped popover, breaking the first half of the selector union — the `[role="listbox"] [role="option"]` fallback may be matching a stale popover from a different control.
+  - Same dropdown helper works for AR (Today's Exceptions multi-selects) — comparing the two pages' DOM should isolate what's PR-specific.
+  - Acceptance: all 5 pass three runs in a row at `--parallel 4`. The full e2e suite goes from 156/161 → 161/161.
+
 ## Tech Debt
 - Are there invariants that are better encoded into the type system than how they are now?
 - A lot of the strings linking things together would be better this way
