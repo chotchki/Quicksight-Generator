@@ -30,7 +30,7 @@ class ParameterDeclLike(Protocol):
     def emit(self) -> ParameterDeclaration: ...
 
 
-@dataclass
+@dataclass(eq=False)
 class StringParam:
     """String-valued parameter declaration.
 
@@ -54,7 +54,7 @@ class StringParam:
         )
 
 
-@dataclass
+@dataclass(eq=False)
 class IntegerParam:
     """Integer-valued parameter declaration."""
     name: ParameterName
@@ -73,7 +73,7 @@ class IntegerParam:
         )
 
 
-@dataclass
+@dataclass(eq=False)
 class DateTimeParam:
     """DateTime parameter declaration.
 
