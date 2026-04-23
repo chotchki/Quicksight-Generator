@@ -11,11 +11,6 @@ tree primitives from ``common/tree/``. Sheets land one per L.2 sub-step:
 - L.2.4 — Money Trail
 - L.2.5 — Account Network (already validated through L.0 + L.1.15)
 - L.2.6 — App-level wiring: dashboard + dataset declarations
-- L.2.7 — Drop ALL_FG_INV_IDS / ALL_P_INV from constants.py
-
-Per-sub-step contract: byte-identical SheetDefinition output compared
-to the imperative builder's per-sheet output. The byte-identity tests
-live in ``tests/test_l2_investigation_port.py``.
 """
 
 from __future__ import annotations
@@ -67,6 +62,13 @@ from quicksight_gen.apps.investigation.constants import (
     V_INV_MONEY_TRAIL_SANKEY,
     V_INV_MONEY_TRAIL_TABLE,
 )
+# Importing datasets registers each Investigation DatasetContract via its
+# module-level register_contract() side effect — required so the L.1.17
+# bare-string / unvalidated-Column emit-time validator can resolve every
+# ds["col"] ref in the visuals below. Without this, build_investigation_app()
+# would only work after some other module (CLI, test_investigation) had
+# loaded datasets first.
+from quicksight_gen.apps.investigation import datasets as _register_contracts  # noqa: F401
 from quicksight_gen.common.dataset_contract import ColumnShape
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
