@@ -33,9 +33,14 @@ from __future__ import annotations
 # ds["col"] ref in the visuals below.
 from quicksight_gen.apps.payment_recon import datasets as _register_contracts  # noqa: F401
 from quicksight_gen.apps.payment_recon.constants import (
+    DS_PAYMENT_RETURNS,
     DS_PAYMENTS,
+    DS_SALE_SETTLEMENT_MISMATCH,
     DS_SALES,
+    DS_SETTLEMENT_EXCEPTIONS,
+    DS_SETTLEMENT_PAYMENT_MISMATCH,
     DS_SETTLEMENTS,
+    DS_UNMATCHED_EXTERNAL_TXNS,
     P_PR_EXTERNAL_TXN,
     P_PR_PAYMENT,
     P_PR_SETTLEMENT,
@@ -724,6 +729,155 @@ def _populate_payments(
 
 
 # ---------------------------------------------------------------------------
+# Exceptions & Alerts (L.4.5) — 2 KPIs at the top + 5 detail tables
+# arranged as 2 chart-pair rows (4 tables) + 1 full-width table.
+#
+# **Documented diff vs imperative** — `apps/payment_recon/visuals.py
+# ::build_exceptions_visuals()` constructs 5 additional `aging_bar_visual`
+# entries (`Unsettled Sales by Age`, `Returned Payments by Age`,
+# `Sale ↔ Settlement Mismatch by Age`, etc.) but no `GridLayoutElement`
+# references them — so they ship in `Sheets[].Visuals[]` but never
+# render. They look like an unfinished UX intention rather than dead
+# code (titles are real). The L.4.5 port emits only the placed visuals;
+# wiring the orphan bars is queued as a separate follow-up task (see
+# PLAN — "PR Exceptions: wire orphan aging bars").
+# ---------------------------------------------------------------------------
+
+def _populate_exceptions(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    datasets: dict[str, Dataset],
+) -> None:
+    del cfg
+    ds_se = datasets[DS_SETTLEMENT_EXCEPTIONS]
+    ds_pr = datasets[DS_PAYMENT_RETURNS]
+    ds_ssm = datasets[DS_SALE_SETTLEMENT_MISMATCH]
+    ds_spm = datasets[DS_SETTLEMENT_PAYMENT_MISMATCH]
+    ds_uet = datasets[DS_UNMATCHED_EXTERNAL_TXNS]
+
+    # Row 1: two KPIs.
+    kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
+    kpi_row.add_kpi(
+        width=_HALF,
+        visual_id="exceptions-kpi-unsettled",  # type: ignore[arg-type]
+        title="Unsettled Sales",
+        subtitle="Sales that have not yet been bundled into a settlement",
+        values=[ds_se["sale_id"].count(field_id="unsettled-count")],
+    )
+    kpi_row.add_kpi(
+        width=_HALF,
+        visual_id="exceptions-kpi-returns",  # type: ignore[arg-type]
+        title="Returned Payments",
+        subtitle=(
+            "Payments that were sent back — check the table below for details"
+        ),
+        values=[ds_pr["payment_id"].count(field_id="exc-return-count")],
+    )
+
+    # Row 2: side-by-side unsettled-sales + returned-payments tables.
+    chart_row1 = sheet.layout.row(height=_CHART_ROW_SPAN)
+    chart_row1.add_table(
+        width=_HALF,
+        visual_id="exceptions-unsettled-table",  # type: ignore[arg-type]
+        title="Sales Missing Settlements",
+        subtitle=(
+            "Sales not yet bundled into a settlement — investigate if any "
+            "are overdue"
+        ),
+        columns=[
+            ds_se["sale_id"].dim(field_id="tbl-exc-sale-id"),
+            ds_se["merchant_id"].dim(field_id="tbl-exc-merchant"),
+            ds_se["merchant_name"].dim(field_id="tbl-exc-merchant-name"),
+            ds_se["location_id"].dim(field_id="tbl-exc-location"),
+            ds_se["amount"].dim(field_id="tbl-exc-amount"),
+            ds_se["sale_timestamp"].dim(field_id="tbl-exc-timestamp"),
+            ds_se["days_outstanding"].dim(field_id="tbl-exc-days"),
+            ds_se["aging_bucket"].dim(field_id="tbl-exc-aging"),
+        ],
+    )
+    chart_row1.add_table(
+        width=_HALF,
+        visual_id="exceptions-returns-table",  # type: ignore[arg-type]
+        title="Returned Payments Detail",
+        subtitle="Payments that were returned with the reason for each",
+        columns=[
+            ds_pr["payment_id"].dim(field_id="tbl-ret-pay-id"),
+            ds_pr["settlement_id"].dim(field_id="tbl-ret-stl-id"),
+            ds_pr["merchant_id"].dim(field_id="tbl-ret-merchant"),
+            ds_pr["merchant_name"].dim(field_id="tbl-ret-merchant-name"),
+            ds_pr["payment_amount"].dim(field_id="tbl-ret-amount"),
+            ds_pr["payment_date"].dim(field_id="tbl-ret-date"),
+            ds_pr["return_reason"].dim(field_id="tbl-ret-reason"),
+            ds_pr["days_outstanding"].dim(field_id="tbl-ret-days"),
+            ds_pr["aging_bucket"].dim(field_id="tbl-ret-aging"),
+        ],
+    )
+
+    # Row 3: side-by-side sale↔settlement + settlement↔payment mismatch tables.
+    chart_row2 = sheet.layout.row(height=_CHART_ROW_SPAN)
+    chart_row2.add_table(
+        width=_HALF,
+        visual_id="exceptions-sale-settlement-mismatch-table",  # type: ignore[arg-type]
+        title="Sales ↔ Settlement Mismatch",
+        subtitle=(
+            "Settlements whose amount doesn't equal the signed sum of "
+            "their linked sales (refunds + corrections show up here)."
+        ),
+        columns=[
+            ds_ssm["settlement_id"].dim(field_id="tbl-ss-stl-id"),
+            ds_ssm["merchant_id"].dim(field_id="tbl-ss-merchant"),
+            ds_ssm["settlement_amount"].dim(field_id="tbl-ss-stl-amount"),
+            ds_ssm["sales_sum"].dim(field_id="tbl-ss-sales-sum"),
+            ds_ssm["difference"].dim(field_id="tbl-ss-difference"),
+            ds_ssm["settlement_date"].dim(field_id="tbl-ss-date"),
+            ds_ssm["days_outstanding"].dim(field_id="tbl-ss-days"),
+            ds_ssm["aging_bucket"].dim(field_id="tbl-ss-aging"),
+        ],
+    )
+    chart_row2.add_table(
+        width=_HALF,
+        visual_id="exceptions-settlement-payment-mismatch-table",  # type: ignore[arg-type]
+        title="Settlement ↔ Payment Mismatch",
+        subtitle=(
+            "Payments whose amount doesn't match their settlement — "
+            "investigate these before reconciling externally."
+        ),
+        columns=[
+            ds_spm["payment_id"].dim(field_id="tbl-sp-pay-id"),
+            ds_spm["settlement_id"].dim(field_id="tbl-sp-stl-id"),
+            ds_spm["merchant_id"].dim(field_id="tbl-sp-merchant"),
+            ds_spm["payment_amount"].dim(field_id="tbl-sp-pay-amount"),
+            ds_spm["settlement_amount"].dim(field_id="tbl-sp-stl-amount"),
+            ds_spm["difference"].dim(field_id="tbl-sp-difference"),
+            ds_spm["payment_date"].dim(field_id="tbl-sp-date"),
+            ds_spm["days_outstanding"].dim(field_id="tbl-sp-days"),
+            ds_spm["aging_bucket"].dim(field_id="tbl-sp-aging"),
+        ],
+    )
+
+    # Row 4: full-width unmatched external txns table.
+    sheet.layout.row(height=_CHART_ROW_SPAN).add_table(
+        width=_FULL,
+        visual_id="exceptions-unmatched-ext-txn-table",  # type: ignore[arg-type]
+        title="External Transactions Without a Payment",
+        subtitle=(
+            "External system transactions that have no internal payment "
+            "linked — usually the first thing to investigate."
+        ),
+        columns=[
+            ds_uet["transaction_id"].dim(field_id="tbl-ue-txn-id"),
+            ds_uet["external_system"].dim(field_id="tbl-ue-system"),
+            ds_uet["merchant_id"].dim(field_id="tbl-ue-merchant"),
+            ds_uet["external_amount"].dim(field_id="tbl-ue-amount"),
+            ds_uet["transaction_date"].dim(field_id="tbl-ue-date"),
+            ds_uet["days_outstanding"].dim(field_id="tbl-ue-days"),
+            ds_uet["aging_bucket"].dim(field_id="tbl-ue-aging"),
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
 # App entry points
 # ---------------------------------------------------------------------------
 
@@ -798,4 +952,5 @@ def build_payment_recon_app(cfg: Config) -> App:
         payment_recon_sheet=sheets[SHEET_PAYMENT_RECON],
         datasets=datasets,
     )
+    _populate_exceptions(cfg, sheets[SHEET_EXCEPTIONS], datasets=datasets)
     return app

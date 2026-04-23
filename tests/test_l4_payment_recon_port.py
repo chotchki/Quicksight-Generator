@@ -15,6 +15,7 @@ from dataclasses import asdict
 import pytest
 
 from quicksight_gen.apps.payment_recon.analysis import (
+    _build_exceptions_sheet as _imperative_exceptions_sheet,
     _build_getting_started_sheet as _imperative_getting_started_sheet,
     _build_payments_sheet as _imperative_payments_sheet,
     _build_sales_sheet as _imperative_sales_sheet,
@@ -22,10 +23,44 @@ from quicksight_gen.apps.payment_recon.analysis import (
 )
 from quicksight_gen.apps.payment_recon.app import build_payment_recon_app
 from quicksight_gen.apps.payment_recon.constants import (
+    SHEET_EXCEPTIONS,
     SHEET_PAYMENTS,
     SHEET_SALES,
     SHEET_SETTLEMENTS,
 )
+
+
+# L.4.5 — `apps/payment_recon/visuals.py::build_exceptions_visuals()`
+# constructs 5 `aging_bar_visual` entries (`exceptions-aging-{unsettled,
+# returns,sale-stl-mismatch,stl-pay-mismatch,unmatched-ext}`) but no
+# `GridLayoutElement` references them — so they ship in the imperative
+# `Sheets[].Visuals[]` but never render. They look like an unfinished
+# UX intention rather than dead code (titles are end-user-facing). The
+# L.4.5 port emits only the placed visuals; wiring the orphan bars is
+# queued as a separate follow-up. Strip them on the imperative side
+# so the byte-identity test compares apples to apples.
+_PR_EXC_ORPHAN_VISUAL_IDS: frozenset[str] = frozenset({
+    "exceptions-aging-unsettled",
+    "exceptions-aging-returns",
+    "exceptions-aging-sale-stl-mismatch",
+    "exceptions-aging-stl-pay-mismatch",
+    "exceptions-aging-unmatched-ext",
+})
+
+
+def _strip_orphan_visuals(
+    sheet_json: dict, orphan_ids: frozenset[str],
+) -> dict:
+    out = dict(sheet_json)
+    visuals = out.get("Visuals") or []
+    out["Visuals"] = [
+        v for v in visuals
+        if not any(
+            isinstance(body, dict) and body.get("VisualId") in orphan_ids
+            for body in v.values()
+        )
+    ]
+    return out
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.models import _strip_nones
 
@@ -154,6 +189,33 @@ def test_l4_3_settlements_sheet_byte_identical() -> None:
         s for s in analysis.Definition.Sheets if s.SheetId == SHEET_SETTLEMENTS
     )
     tree_sheet = _strip_filter_controls(_strip_nones(asdict(stl_sheet)))
+
+    assert _normalize_sheet(tree_sheet) == _normalize_sheet(imperative_sheet)
+
+
+def test_l4_5_exceptions_sheet_byte_identical_modulo_orphan_visuals() -> None:
+    """Exceptions & Alerts: 2 KPIs (unsettled count + returns count) +
+    2 chart-pair rows of side-by-side detail tables (4 tables total) +
+    1 full-width unmatched-external-txns table. 7 placed visuals.
+
+    The imperative `build_exceptions_visuals()` ships 5 additional
+    `aging_bar_visual` entries that no GridLayoutElement references —
+    documented diff (see app.py). Strip those before comparison."""
+    cfg = Config(**_BASE_CFG_KWARGS)
+
+    imperative_sheet = _strip_orphan_visuals(
+        _strip_filter_controls(
+            _strip_nones(asdict(_imperative_exceptions_sheet(cfg))),
+        ),
+        _PR_EXC_ORPHAN_VISUAL_IDS,
+    )
+
+    app = build_payment_recon_app(cfg)
+    analysis = app.emit_analysis()
+    exc_sheet = next(
+        s for s in analysis.Definition.Sheets if s.SheetId == SHEET_EXCEPTIONS
+    )
+    tree_sheet = _strip_filter_controls(_strip_nones(asdict(exc_sheet)))
 
     assert _normalize_sheet(tree_sheet) == _normalize_sheet(imperative_sheet)
 
