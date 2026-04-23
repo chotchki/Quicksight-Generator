@@ -129,17 +129,6 @@ def _normalize_sheet(sheet_json: dict) -> dict:
     return normalized
 
 
-def _strip_filter_controls(sheet_json: dict) -> dict:
-    """L.4.2-style normalization for sheets whose FilterControls are
-    deferred to L.4.7. The imperative builder emits per-sheet controls
-    inline; the tree port lands them via app-level wiring later. Until
-    then, comparing only Visuals + Layouts + descriptions is the right
-    granularity."""
-    out = dict(sheet_json)
-    out.pop("FilterControls", None)
-    return out
-
-
 @pytest.mark.parametrize("preset, demo_url", [
     ("default", None),
     ("sasquatch-bank", "postgres://demo:demo@localhost/demo"),
@@ -181,16 +170,14 @@ def test_l4_2_sales_overview_sheet_byte_identical() -> None:
     sheet is the right granularity until that wiring lands."""
     cfg = Config(**_BASE_CFG_KWARGS)
 
-    imperative_sheet = _strip_filter_controls(
-        _strip_nones(asdict(_imperative_sales_sheet(cfg)))
-    )
+    imperative_sheet = _strip_nones(asdict(_imperative_sales_sheet(cfg)))
 
     app = build_payment_recon_app(cfg)
     analysis = app.emit_analysis()
     sales_sheet = next(
         s for s in analysis.Definition.Sheets if s.SheetId == SHEET_SALES
     )
-    tree_sheet = _strip_filter_controls(_strip_nones(asdict(sales_sheet)))
+    tree_sheet = _strip_nones(asdict(sales_sheet))
 
     assert _normalize_sheet(tree_sheet) == _normalize_sheet(imperative_sheet)
 
@@ -204,16 +191,14 @@ def test_l4_3_settlements_sheet_byte_identical() -> None:
     (accent text only), payment_id menu_link (accent text + tint)."""
     cfg = Config(**_BASE_CFG_KWARGS)
 
-    imperative_sheet = _strip_filter_controls(
-        _strip_nones(asdict(_imperative_settlements_sheet(cfg)))
-    )
+    imperative_sheet = _strip_nones(asdict(_imperative_settlements_sheet(cfg)))
 
     app = build_payment_recon_app(cfg)
     analysis = app.emit_analysis()
     stl_sheet = next(
         s for s in analysis.Definition.Sheets if s.SheetId == SHEET_SETTLEMENTS
     )
-    tree_sheet = _strip_filter_controls(_strip_nones(asdict(stl_sheet)))
+    tree_sheet = _strip_nones(asdict(stl_sheet))
 
     assert _normalize_sheet(tree_sheet) == _normalize_sheet(imperative_sheet)
 
@@ -229,9 +214,7 @@ def test_l4_5_exceptions_sheet_byte_identical_modulo_orphan_visuals() -> None:
     cfg = Config(**_BASE_CFG_KWARGS)
 
     imperative_sheet = _strip_orphan_visuals(
-        _strip_filter_controls(
-            _strip_nones(asdict(_imperative_exceptions_sheet(cfg))),
-        ),
+        _strip_nones(asdict(_imperative_exceptions_sheet(cfg))),
         _PR_EXC_ORPHAN_VISUAL_IDS,
     )
 
@@ -240,7 +223,7 @@ def test_l4_5_exceptions_sheet_byte_identical_modulo_orphan_visuals() -> None:
     exc_sheet = next(
         s for s in analysis.Definition.Sheets if s.SheetId == SHEET_EXCEPTIONS
     )
-    tree_sheet = _strip_filter_controls(_strip_nones(asdict(exc_sheet)))
+    tree_sheet = _strip_nones(asdict(exc_sheet))
 
     assert _normalize_sheet(tree_sheet) == _normalize_sheet(imperative_sheet)
 
@@ -265,9 +248,7 @@ def test_l4_6_payment_recon_sheet_byte_identical_modulo_orphan_visuals() -> None
     cfg = Config(**_BASE_CFG_KWARGS)
 
     imperative_sheet = _sort_visuals_by_id(_strip_orphan_visuals(
-        _strip_filter_controls(
-            _strip_nones(asdict(_imperative_payment_recon_sheet(cfg))),
-        ),
+        _strip_nones(asdict(_imperative_payment_recon_sheet(cfg))),
         frozenset({"recon-aging-bar"}),
     ))
 
@@ -277,9 +258,7 @@ def test_l4_6_payment_recon_sheet_byte_identical_modulo_orphan_visuals() -> None
         s for s in analysis.Definition.Sheets
         if s.SheetId == SHEET_PAYMENT_RECON
     )
-    tree_sheet = _sort_visuals_by_id(_strip_filter_controls(
-        _strip_nones(asdict(recon_sheet)),
-    ))
+    tree_sheet = _sort_visuals_by_id(_strip_nones(asdict(recon_sheet)))
 
     assert _normalize_sheet(tree_sheet) == _normalize_sheet(imperative_sheet)
 
@@ -338,15 +317,13 @@ def test_l4_4_payments_sheet_byte_identical() -> None:
     entries — settlement_id link, external_transaction_id menu_link."""
     cfg = Config(**_BASE_CFG_KWARGS)
 
-    imperative_sheet = _strip_filter_controls(
-        _strip_nones(asdict(_imperative_payments_sheet(cfg)))
-    )
+    imperative_sheet = _strip_nones(asdict(_imperative_payments_sheet(cfg)))
 
     app = build_payment_recon_app(cfg)
     analysis = app.emit_analysis()
     pay_sheet = next(
         s for s in analysis.Definition.Sheets if s.SheetId == SHEET_PAYMENTS
     )
-    tree_sheet = _strip_filter_controls(_strip_nones(asdict(pay_sheet)))
+    tree_sheet = _strip_nones(asdict(pay_sheet))
 
     assert _normalize_sheet(tree_sheet) == _normalize_sheet(imperative_sheet)

@@ -1499,6 +1499,217 @@ def _wire_recon_sheet_filter_groups(
 
 
 # ---------------------------------------------------------------------------
+# L.4.7c — Per-sheet FilterControls (~25 across 5 sheets).
+#
+# Each control binds to a registered filter group's inner filter via
+# the tree's typed sheet API. Cross-sheet filters (merchant, location,
+# settlement_status) use `add_filter_cross_sheet`; single-sheet
+# filters get direct widgets (`add_filter_dropdown`,
+# `add_filter_datetime_picker`, `add_filter_slider`).
+#
+# Control IDs are pinned to the imperative names so the byte-identity
+# test holds.
+# ---------------------------------------------------------------------------
+
+
+def _filter_of(analysis: Analysis, fg_id: str) -> object:
+    """Return the (single) inner filter for a registered filter group."""
+    return analysis.find_filter_group(filter_group_id=fg_id).filters[0]  # type: ignore[arg-type]
+
+
+def _wire_sheet_filter_controls(
+    analysis: Analysis,
+    *,
+    sheets: dict[str, Sheet],
+) -> None:
+    """Per-sheet FilterControls for the 5 PR pipeline + recon sheets.
+
+    Order within each sheet matches the imperative ``build_*_controls``
+    return order so the SheetDefinition.FilterControls list lines up
+    byte-for-byte.
+    """
+    sales = sheets[SHEET_SALES]
+    settlements = sheets[SHEET_SETTLEMENTS]
+    payments = sheets[SHEET_PAYMENTS]
+    exceptions = sheets[SHEET_EXCEPTIONS]
+    recon = sheets[SHEET_PAYMENT_RECON]
+
+    # Cross-sheet filters used by multiple pipeline sheets.
+    f_merchant = _filter_of(analysis, FG_PR_MERCHANT)
+    f_location = _filter_of(analysis, FG_PR_LOCATION)
+    f_settlement_status = _filter_of(analysis, FG_PR_SETTLEMENT_STATUS)
+
+    # Per-sheet single-sheet filters.
+    f_sales_date = _filter_of(analysis, SheetDateRange("sales").fg_id)
+    f_settlements_date = _filter_of(
+        analysis, SheetDateRange("settlements").fg_id,
+    )
+    f_payments_date = _filter_of(analysis, SheetDateRange("payments").fg_id)
+    f_exceptions_date = _filter_of(analysis, SheetDateRange("exceptions").fg_id)
+    f_recon_date = _filter_of(analysis, FG_PR_RECON_DATE_RANGE)
+    f_recon_match = _filter_of(analysis, FG_PR_RECON_MATCH_STATUS)
+    f_recon_ext = _filter_of(analysis, FG_PR_RECON_EXTERNAL_SYSTEM)
+    f_payment_status = _filter_of(analysis, FG_PR_PAYMENT_STATUS)
+    f_payment_method = _filter_of(analysis, FG_PR_PAYMENT_METHOD)
+    f_sales_unsettled = _filter_of(analysis, FG_PR_SALES_UNSETTLED)
+    f_settlements_unpaid = _filter_of(analysis, FG_PR_SETTLEMENTS_UNPAID)
+    f_payments_unmatched = _filter_of(analysis, FG_PR_PAYMENTS_UNMATCHED)
+
+    # Sales — date + merchant + location + show-only-unsettled +
+    # 4 optional metadata controls. Matches build_sales_controls order.
+    sales.add_filter_datetime_picker(
+        filter=f_sales_date,  # type: ignore[arg-type]
+        title="Date Range",
+        type="DATE_RANGE",
+        control_id="ctrl-sales-date-range",  # type: ignore[arg-type]
+    )
+    sales.add_filter_cross_sheet(
+        filter=f_merchant,  # type: ignore[arg-type]
+        control_id="ctrl-sales-merchant",  # type: ignore[arg-type]
+    )
+    sales.add_filter_cross_sheet(
+        filter=f_location,  # type: ignore[arg-type]
+        control_id="ctrl-sales-location",  # type: ignore[arg-type]
+    )
+    sales.add_filter_dropdown(
+        filter=f_sales_unsettled,  # type: ignore[arg-type]
+        title="Show Only Unsettled",
+        type="SINGLE_SELECT",
+        control_id="ctrl-sales-unsettled",  # type: ignore[arg-type]
+    )
+    for col, _ddl, _qs, ftype, label in OPTIONAL_SALE_METADATA:
+        f_meta = _filter_of(analysis, SalesMeta(col).fg_id)
+        ctrl_id = f"ctrl-sales-meta-{col}"
+        if ftype == "numeric":
+            sales.add_filter_slider(
+                filter=f_meta,  # type: ignore[arg-type]
+                title=label,
+                minimum_value=0,
+                maximum_value=999,
+                step_size=1,
+                type="RANGE",
+                control_id=ctrl_id,  # type: ignore[arg-type]
+            )
+        elif ftype == "datetime":
+            sales.add_filter_datetime_picker(
+                filter=f_meta,  # type: ignore[arg-type]
+                title=label,
+                type="DATE_RANGE",
+                control_id=ctrl_id,  # type: ignore[arg-type]
+            )
+        else:
+            sales.add_filter_dropdown(
+                filter=f_meta,  # type: ignore[arg-type]
+                title=label,
+                type="MULTI_SELECT",
+                control_id=ctrl_id,  # type: ignore[arg-type]
+            )
+
+    # Settlements — date + merchant + location + settlement-status +
+    # show-only-unpaid.
+    settlements.add_filter_datetime_picker(
+        filter=f_settlements_date,  # type: ignore[arg-type]
+        title="Date Range",
+        type="DATE_RANGE",
+        control_id="ctrl-settlements-date-range",  # type: ignore[arg-type]
+    )
+    settlements.add_filter_cross_sheet(
+        filter=f_merchant,  # type: ignore[arg-type]
+        control_id="ctrl-settlements-merchant",  # type: ignore[arg-type]
+    )
+    settlements.add_filter_cross_sheet(
+        filter=f_location,  # type: ignore[arg-type]
+        control_id="ctrl-settlements-location",  # type: ignore[arg-type]
+    )
+    settlements.add_filter_cross_sheet(
+        filter=f_settlement_status,  # type: ignore[arg-type]
+        control_id="ctrl-settlements-settlement-status",  # type: ignore[arg-type]
+    )
+    settlements.add_filter_dropdown(
+        filter=f_settlements_unpaid,  # type: ignore[arg-type]
+        title="Show Only Unpaid",
+        type="SINGLE_SELECT",
+        control_id="ctrl-settlements-unpaid",  # type: ignore[arg-type]
+    )
+
+    # Payments — date + merchant + location + payment-status +
+    # payment-method + show-only-unmatched.
+    payments.add_filter_datetime_picker(
+        filter=f_payments_date,  # type: ignore[arg-type]
+        title="Date Range",
+        type="DATE_RANGE",
+        control_id="ctrl-payments-date-range",  # type: ignore[arg-type]
+    )
+    payments.add_filter_cross_sheet(
+        filter=f_merchant,  # type: ignore[arg-type]
+        control_id="ctrl-payments-merchant",  # type: ignore[arg-type]
+    )
+    payments.add_filter_cross_sheet(
+        filter=f_location,  # type: ignore[arg-type]
+        control_id="ctrl-payments-location",  # type: ignore[arg-type]
+    )
+    payments.add_filter_dropdown(
+        filter=f_payment_status,  # type: ignore[arg-type]
+        title="Payment Status",
+        type="MULTI_SELECT",
+        control_id="ctrl-payments-payment-status",  # type: ignore[arg-type]
+    )
+    payments.add_filter_dropdown(
+        filter=f_payment_method,  # type: ignore[arg-type]
+        title="Payment Method",
+        type="MULTI_SELECT",
+        control_id="ctrl-payments-payment-method",  # type: ignore[arg-type]
+    )
+    payments.add_filter_dropdown(
+        filter=f_payments_unmatched,  # type: ignore[arg-type]
+        title="Show Only Unmatched Externally",
+        type="SINGLE_SELECT",
+        control_id="ctrl-payments-unmatched",  # type: ignore[arg-type]
+    )
+
+    # Exceptions — date + merchant + location + settlement-status.
+    exceptions.add_filter_datetime_picker(
+        filter=f_exceptions_date,  # type: ignore[arg-type]
+        title="Date Range",
+        type="DATE_RANGE",
+        control_id="ctrl-exceptions-date-range",  # type: ignore[arg-type]
+    )
+    exceptions.add_filter_cross_sheet(
+        filter=f_merchant,  # type: ignore[arg-type]
+        control_id="ctrl-exceptions-merchant",  # type: ignore[arg-type]
+    )
+    exceptions.add_filter_cross_sheet(
+        filter=f_location,  # type: ignore[arg-type]
+        control_id="ctrl-exceptions-location",  # type: ignore[arg-type]
+    )
+    exceptions.add_filter_cross_sheet(
+        filter=f_settlement_status,  # type: ignore[arg-type]
+        control_id="ctrl-exceptions-settlement-status",  # type: ignore[arg-type]
+    )
+
+    # Payment Reconciliation — date + match-status + external-system.
+    # All single-dataset → direct controls (no cross-sheet).
+    recon.add_filter_datetime_picker(
+        filter=f_recon_date,  # type: ignore[arg-type]
+        title="Date Range",
+        type="DATE_RANGE",
+        control_id="ctrl-recon-date-range",  # type: ignore[arg-type]
+    )
+    recon.add_filter_dropdown(
+        filter=f_recon_match,  # type: ignore[arg-type]
+        title="Match Status",
+        type="MULTI_SELECT",
+        control_id="ctrl-recon-match-status",  # type: ignore[arg-type]
+    )
+    recon.add_filter_dropdown(
+        filter=f_recon_ext,  # type: ignore[arg-type]
+        title="External System",
+        type="MULTI_SELECT",
+        control_id="ctrl-recon-external-system",  # type: ignore[arg-type]
+    )
+
+
+# ---------------------------------------------------------------------------
 # App entry points
 # ---------------------------------------------------------------------------
 
@@ -1589,5 +1800,6 @@ def build_payment_recon_app(cfg: Config) -> App:
     _wire_drill_filter_groups(
         analysis, specs=_DRILL_SPECS_RECON, sheets=sheets, datasets=datasets,
     )
+    _wire_sheet_filter_controls(analysis, sheets=sheets)
 
     return app
