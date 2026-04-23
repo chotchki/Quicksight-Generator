@@ -45,6 +45,20 @@ SankeyDiagramVisual ×2. PieChartVisual is modeled but unused.
 from __future__ import annotations
 
 from quicksight_gen.common.tree.calc_fields import CalcField, ColumnRef
+from quicksight_gen.common.tree.controls import (
+    FilterControlLike,
+    FilterCrossSheet,
+    FilterDateTimePicker,
+    FilterDropdown,
+    FilterSlider,
+    LinkedValues,
+    ParameterControlLike,
+    ParameterDateTimePicker,
+    ParameterDropdown,
+    ParameterSlider,
+    SelectableValues,
+    StaticValues,
+)
 from quicksight_gen.common.tree.datasets import Dataset
 from quicksight_gen.common.tree.fields import (
     Dim,
@@ -99,6 +113,11 @@ __all__ = [
     "FilterGroup", "FilterLike",
     "CategoryFilter", "NumericRangeFilter", "TimeRangeFilter",
     "CategoryMatchOperator", "NullOption",
+    # Controls (L.1.9)
+    "ParameterControlLike", "FilterControlLike",
+    "ParameterDropdown", "ParameterSlider", "ParameterDateTimePicker",
+    "FilterDropdown", "FilterSlider", "FilterDateTimePicker", "FilterCrossSheet",
+    "StaticValues", "LinkedValues", "SelectableValues",
     # Structure
     "GridSlot", "Sheet", "Analysis", "Dashboard", "App",
     "ParameterControlNode",

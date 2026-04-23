@@ -22,7 +22,7 @@ pattern lets typos through to deploy.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, runtime_checkable
 
 from quicksight_gen.common.ids import FilterGroupId
 from quicksight_gen.common.models import (
@@ -67,7 +67,6 @@ class FilterLike(Protocol):
     a ``models.Filter``. The ``dataset`` field participates in the
     L.1.7 dependency-graph walk.
     """
-    filter_id: str
     dataset: Dataset
 
     def emit(self) -> Filter: ...
@@ -98,11 +97,13 @@ class CategoryFilter:
     calc field — both resolve to a ``ColumnIdentifier`` against the
     given dataset.
     """
-    filter_id: str
     dataset: Dataset
     column: ColumnRef
     values: list[str]
     match_operator: CategoryMatchOperator = "CONTAINS"
+    filter_id: str | None = None
+
+    _AUTO_KIND: ClassVar[str] = "category"
 
     def calc_field(self) -> CalcField | None:
         """The CalcField this filter references, or None if it points
@@ -110,6 +111,9 @@ class CategoryFilter:
         return _calc_field_in(self.column)
 
     def emit(self) -> Filter:
+        assert self.filter_id is not None, (
+            "filter_id wasn't resolved — App._resolve_auto_ids() must run."
+        )
         return Filter(
             CategoryFilter=ModelCategoryFilter(
                 FilterId=self.filter_id,
@@ -144,7 +148,6 @@ class NumericRangeFilter:
     ``param.name``; if the param ref is ``None`` you get a static
     bound or no bound).
     """
-    filter_id: str
     dataset: Dataset
     column: ColumnRef
     minimum_parameter: ParameterDeclLike | None = None
@@ -154,6 +157,9 @@ class NumericRangeFilter:
     null_option: NullOption = "NON_NULLS_ONLY"
     include_minimum: bool | None = None
     include_maximum: bool | None = None
+    filter_id: str | None = None
+
+    _AUTO_KIND: ClassVar[str] = "numeric"
 
     def __post_init__(self) -> None:
         if self.minimum_parameter is not None and self.minimum_value is not None:
@@ -180,6 +186,9 @@ class NumericRangeFilter:
         return _calc_field_in(self.column)
 
     def emit(self) -> Filter:
+        assert self.filter_id is not None, (
+            "filter_id wasn't resolved — App._resolve_auto_ids() must run."
+        )
         return Filter(
             NumericRangeFilter=ModelNumericRangeFilter(
                 FilterId=self.filter_id,
@@ -212,7 +221,6 @@ class TimeRangeFilter:
     Parameter — and lifting all of them under typed wrappers can wait
     for the L.2/L.3/L.4 ports to surface concrete needs).
     """
-    filter_id: str
     dataset: Dataset
     column: ColumnRef
     minimum: dict[str, Any] | None = None
@@ -221,11 +229,17 @@ class TimeRangeFilter:
     time_granularity: str | None = None
     include_minimum: bool | None = None
     include_maximum: bool | None = None
+    filter_id: str | None = None
+
+    _AUTO_KIND: ClassVar[str] = "time"
 
     def calc_field(self) -> CalcField | None:
         return _calc_field_in(self.column)
 
     def emit(self) -> Filter:
+        assert self.filter_id is not None, (
+            "filter_id wasn't resolved — App._resolve_auto_ids() must run."
+        )
         return Filter(
             TimeRangeFilter=ModelTimeRangeFilter(
                 FilterId=self.filter_id,

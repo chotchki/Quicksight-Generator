@@ -1659,3 +1659,252 @@ class TestTreeQueryHelpers:
         analysis.add_calc_field(cf)
         found = analysis.find_calc_field(name="my_calc")
         assert found is cf
+
+
+# ---------------------------------------------------------------------------
+# L.1.9 — Typed FilterControl + ParameterControl variants
+# ---------------------------------------------------------------------------
+
+from quicksight_gen.common.tree import (
+    FilterCrossSheet,
+    FilterDateTimePicker,
+    FilterDropdown,
+    FilterSlider,
+    LinkedValues,
+    ParameterDateTimePicker,
+    ParameterDropdown,
+    ParameterSlider,
+    StaticValues,
+)
+
+
+class TestParameterDropdown:
+    def test_emits_with_static_values(self):
+        sigma = IntegerParam(name=ParameterName("pSigma"), default=[2])
+        ctrl = ParameterDropdown(
+            parameter=sigma,
+            title="σ Threshold",
+            type="SINGLE_SELECT",
+            selectable_values=StaticValues(values=["1", "2", "3", "4"]),
+            control_id="pc-test",
+        )
+        emitted = ctrl.emit()
+        assert emitted.Dropdown.SourceParameterName == "pSigma"
+        assert emitted.Dropdown.Title == "σ Threshold"
+        assert emitted.Dropdown.Type == "SINGLE_SELECT"
+        assert emitted.Dropdown.SelectableValues == {"Values": ["1", "2", "3", "4"]}
+
+    def test_emits_with_linked_values(self):
+        anchor = StringParam(name=ParameterName("pAnchor"))
+        ctrl = ParameterDropdown(
+            parameter=anchor,
+            title="Anchor account",
+            selectable_values=LinkedValues(dataset=_DS_FOO, column="display"),
+            hidden_select_all=True,
+            control_id="pc-anchor",
+        )
+        emitted = ctrl.emit()
+        sv = emitted.Dropdown.SelectableValues
+        assert sv == {
+            "LinkToDataSetColumn": {
+                "DataSetIdentifier": "ds-foo",
+                "ColumnName": "display",
+            },
+        }
+        # SelectAll suppression encodes as the documented dict shape
+        assert emitted.Dropdown.DisplayOptions == {
+            "SelectAllOptions": {"Visibility": "HIDDEN"},
+        }
+
+    def test_linked_values_dataset_in_dependency_graph(self):
+        """A ParameterDropdown's LinkedValues dataset must be registered
+        on the App — same enforcement the visuals get."""
+        anchor = StringParam(name=ParameterName("pAnchor"))
+        app = App(name="t", cfg=_TEST_CFG)
+        # Don't register _DS_FOO — should raise.
+        analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
+        analysis.add_parameter(anchor)
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        sheet.add_parameter_control(ParameterDropdown(
+            parameter=anchor,
+            title="Anchor",
+            selectable_values=LinkedValues(dataset=_DS_FOO, column="d"),
+        ))
+        with pytest.raises(ValueError, match="references unregistered datasets"):
+            app.emit_analysis()
+
+
+class TestParameterSlider:
+    def test_emits(self):
+        sigma = IntegerParam(name=ParameterName("pSigma"), default=[2])
+        ctrl = ParameterSlider(
+            parameter=sigma,
+            title="σ",
+            minimum_value=1, maximum_value=4, step_size=1,
+            control_id="pc-test",
+        )
+        emitted = ctrl.emit()
+        assert emitted.Slider.SourceParameterName == "pSigma"
+        assert emitted.Slider.MinimumValue == 1
+        assert emitted.Slider.MaximumValue == 4
+        assert emitted.Slider.StepSize == 1
+
+
+class TestParameterDateTimePicker:
+    def test_emits(self):
+        date_param = DateTimeParam(name=ParameterName("pDate"))
+        ctrl = ParameterDateTimePicker(
+            parameter=date_param,
+            title="Date",
+            control_id="pc-date",
+        )
+        emitted = ctrl.emit()
+        assert emitted.DateTimePicker.SourceParameterName == "pDate"
+        assert emitted.DateTimePicker.Title == "Date"
+
+
+class TestFilterDropdown:
+    def test_emits_with_filter_id_resolved(self):
+        f = CategoryFilter(
+            filter_id="filter-anchor", dataset=_DS_FOO,
+            column="col", values=["yes"],
+        )
+        ctrl = FilterDropdown(
+            filter=f, title="Anchor",
+            control_id="fc-anchor",
+        )
+        emitted = ctrl.emit()
+        assert emitted.Dropdown.SourceFilterId == "filter-anchor"
+        assert emitted.Dropdown.Title == "Anchor"
+
+    def test_emits_with_auto_filter_id(self):
+        """Filter wrapper's auto-ID resolves to a string — the dropdown
+        reads it via the object ref. Tests the L.1.8.5 + L.1.9
+        interaction."""
+        f = CategoryFilter(
+            dataset=_DS_FOO, column="col", values=["yes"],
+        )  # no filter_id — auto
+        app = App(name="t", cfg=_TEST_CFG)
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        kpi = sheet.add_visual(KPI(title="K"))
+        fg = analysis.add_filter_group(FilterGroup(filters=[f]))
+        fg.scope_visuals(sheet, [kpi])
+        sheet.add_filter_control(FilterDropdown(filter=f, title="A"))
+        app.emit_analysis()
+        # Auto-IDs resolved
+        assert f.filter_id == "f-category-fg0-0"
+        # The dropdown picked it up
+        assert sheet.filter_controls[0].emit().Dropdown.SourceFilterId == "f-category-fg0-0"
+
+
+class TestFilterSlider:
+    def test_emits(self):
+        sigma_param = IntegerParam(name=ParameterName("pSigma"), default=[2])
+        f = NumericRangeFilter(
+            filter_id="filter-sigma",
+            dataset=_DS_FOO, column="z_score",
+            minimum_parameter=sigma_param,
+        )
+        ctrl = FilterSlider(
+            filter=f, title="σ",
+            minimum_value=1, maximum_value=4, step_size=1,
+            control_id="fc-sigma",
+        )
+        emitted = ctrl.emit()
+        assert emitted.Slider.SourceFilterId == "filter-sigma"
+
+
+class TestFilterDateTimePicker:
+    def test_emits(self):
+        f = TimeRangeFilter(
+            filter_id="filter-date",
+            dataset=_DS_FOO, column="posted_at",
+        )
+        ctrl = FilterDateTimePicker(
+            filter=f, title="Date Range",
+            control_id="fc-date",
+        )
+        emitted = ctrl.emit()
+        assert emitted.DateTimePicker.SourceFilterId == "filter-date"
+
+
+class TestFilterCrossSheet:
+    def test_emits_with_no_title(self):
+        f = CategoryFilter(
+            filter_id="filter-x", dataset=_DS_FOO,
+            column="col", values=["yes"],
+        )
+        ctrl = FilterCrossSheet(filter=f, control_id="fc-x")
+        emitted = ctrl.emit()
+        assert emitted.CrossSheet.SourceFilterId == "filter-x"
+
+
+class TestControlAutoIds:
+    """L.1.9 + L.1.8.5: control IDs auto-generate at emit time."""
+
+    def test_parameter_control_auto_id(self):
+        sigma = IntegerParam(name=ParameterName("pSigma"), default=[2])
+        app = App(name="t", cfg=_TEST_CFG)
+        analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
+        analysis.add_parameter(sigma)
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        ctrl = sheet.add_parameter_control(ParameterSlider(
+            parameter=sigma, title="σ",
+            minimum_value=1, maximum_value=4, step_size=1,
+        ))
+        assert ctrl.control_id is None
+        app.emit_analysis()
+        assert ctrl.control_id == "pc-slider-s0-0"
+
+    def test_filter_control_auto_id(self):
+        f = CategoryFilter(
+            filter_id="filter-x", dataset=_DS_FOO,
+            column="col", values=["yes"],
+        )
+        app = App(name="t", cfg=_TEST_CFG)
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        kpi = sheet.add_visual(KPI(title="K"))
+        fg = analysis.add_filter_group(FilterGroup(filters=[f]))
+        fg.scope_visuals(sheet, [kpi])
+        ctrl = sheet.add_filter_control(FilterDropdown(filter=f, title="X"))
+        assert ctrl.control_id is None
+        app.emit_analysis()
+        assert ctrl.control_id == "fc-dropdown-s0-0"
+
+
+class TestSheetEmitsFilterControls:
+    """SheetDefinition.FilterControls populated from sheet.filter_controls."""
+
+    def test_filter_controls_appear_in_emitted_sheet(self):
+        f = CategoryFilter(
+            filter_id="filter-x", dataset=_DS_FOO,
+            column="col", values=["yes"],
+        )
+        app = App(name="t", cfg=_TEST_CFG)
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        kpi = sheet.add_visual(KPI(title="K"))
+        fg = analysis.add_filter_group(FilterGroup(filters=[f]))
+        fg.scope_visuals(sheet, [kpi])
+        sheet.add_filter_control(FilterDropdown(
+            filter=f, title="X", control_id="fc-x",
+        ))
+        m = app.emit_analysis()
+        emitted_sheet = m.Definition.Sheets[0]
+        assert len(emitted_sheet.FilterControls) == 1
+        assert emitted_sheet.FilterControls[0].Dropdown.FilterControlId == "fc-x"

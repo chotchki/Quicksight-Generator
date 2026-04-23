@@ -36,6 +36,10 @@ from quicksight_gen.common.tree._helpers import (
     DASHBOARD_ACTIONS,
 )
 from quicksight_gen.common.tree.calc_fields import CalcField
+from quicksight_gen.common.tree.controls import (
+    FilterControlLike,
+    ParameterControlLike,
+)
 from quicksight_gen.common.tree.datasets import Dataset
 from quicksight_gen.common.tree.filters import FilterGroup
 from quicksight_gen.common.tree.parameters import ParameterDeclLike
@@ -114,10 +118,12 @@ class Sheet:
     title: str
     description: str
     visuals: list[VisualLike] = field(default_factory=list)
-    parameter_controls: list[ParameterControlNode] = field(default_factory=list)
+    parameter_controls: list[ParameterControlLike | ParameterControlNode] = field(
+        default_factory=list,
+    )
+    filter_controls: list[FilterControlLike] = field(default_factory=list)
     text_boxes: list[SheetTextBox] = field(default_factory=list)
     grid_slots: list[GridSlot] = field(default_factory=list)
-    # FilterControls join in L.1.9.
 
     def add_visual[T: VisualLike](self, node: T) -> T:
         """Register a visual on this sheet.
@@ -130,10 +136,28 @@ class Sheet:
         self.visuals.append(node)
         return node
 
-    def add_parameter_control(
-        self, node: ParameterControlNode,
-    ) -> ParameterControlNode:
+    def add_parameter_control[T: ParameterControlLike | ParameterControlNode](
+        self, node: T,
+    ) -> T:
+        """Register a parameter control on this sheet.
+
+        Accepts either a typed control (``ParameterDropdown`` /
+        ``ParameterSlider`` / ``ParameterDateTimePicker``) or the
+        spike-shape ``ParameterControlNode`` factory wrapper.
+        """
         self.parameter_controls.append(node)
+        return node
+
+    def add_filter_control[T: FilterControlLike](self, node: T) -> T:
+        """Register a filter control on this sheet.
+
+        Typed controls (``FilterDropdown`` / ``FilterSlider`` /
+        ``FilterDateTimePicker`` / ``FilterCrossSheet``) bind to
+        a ``FilterLike`` inside a registered FilterGroup; the
+        control's ``SourceFilterId`` resolves at emit time to the
+        bound filter's id.
+        """
+        self.filter_controls.append(node)
         return node
 
     def add_text_box(self, text_box: SheetTextBox) -> SheetTextBox:
@@ -224,7 +248,10 @@ class Sheet:
             Description=self.description,
             ContentType="INTERACTIVE",
             Visuals=[v.emit() for v in self.visuals] if self.visuals else None,
-            FilterControls=[],  # L.1.9
+            FilterControls=(
+                [fc.emit() for fc in self.filter_controls]
+                if self.filter_controls else []
+            ),
             ParameterControls=(
                 [c.emit() for c in self.parameter_controls]
                 if self.parameter_controls else None
@@ -408,6 +435,14 @@ class Analysis:
             for visual in sheet.visuals:
                 if hasattr(visual, "datasets"):
                     deps.update(visual.datasets())
+            # Parameter / filter controls with LinkedValues populate
+            # from a Dataset — that's a dep too.
+            for ctrl in sheet.parameter_controls:
+                if hasattr(ctrl, "datasets"):
+                    deps.update(ctrl.datasets())
+            for ctrl in sheet.filter_controls:
+                if hasattr(ctrl, "datasets"):
+                    deps.update(ctrl.datasets())
         for fg in self.filter_groups:
             deps.update(fg.datasets())
         for calc in self.calc_fields:
@@ -603,9 +638,23 @@ class App:
                     visual.visual_id = VisualId(
                         f"v-{kind}-s{sheet_idx}-{visual_idx}",
                     )
+            # Parameter controls — auto-IDs scoped to the sheet.
+            for ctrl_idx, ctrl in enumerate(sheet.parameter_controls):
+                kind = getattr(ctrl, "_AUTO_KIND", None)
+                if kind is not None and getattr(ctrl, "control_id", None) is None:
+                    ctrl.control_id = f"pc-{kind}-s{sheet_idx}-{ctrl_idx}"
+            # Filter controls — auto-IDs scoped to the sheet.
+            for ctrl_idx, ctrl in enumerate(sheet.filter_controls):
+                kind = getattr(ctrl, "_AUTO_KIND", None)
+                if kind is not None and getattr(ctrl, "control_id", None) is None:
+                    ctrl.control_id = f"fc-{kind}-s{sheet_idx}-{ctrl_idx}"
         for fg_idx, fg in enumerate(self.analysis.filter_groups):
             if fg.filter_group_id is None:
                 fg.filter_group_id = FilterGroupId(f"fg-{fg_idx}")
+            for filt_idx, filt in enumerate(fg.filters):
+                kind = getattr(filt, "_AUTO_KIND", None)
+                if kind is not None and getattr(filt, "filter_id", None) is None:
+                    filt.filter_id = f"f-{kind}-fg{fg_idx}-{filt_idx}"
 
     def _validate_dataset_references(self) -> None:
         """Raise if the tree references any Dataset not registered on
