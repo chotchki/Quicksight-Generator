@@ -29,8 +29,10 @@ from __future__ import annotations
 from quicksight_gen.apps.account_recon.constants import (
     DS_AR_LEDGER_ACCOUNTS,
     DS_AR_LEDGER_BALANCE_DRIFT,
+    DS_AR_NON_ZERO_TRANSFERS,
     DS_AR_SUBLEDGER_ACCOUNTS,
     DS_AR_SUBLEDGER_BALANCE_DRIFT,
+    DS_AR_TRANSFER_SUMMARY,
     P_AR_ACCOUNT,
     P_AR_ACTIVITY_DATE,
     P_AR_DS_ACCOUNT,
@@ -54,7 +56,10 @@ from quicksight_gen.apps.account_recon.constants import (
 # ds["col"] ref in the visuals below.
 from quicksight_gen.apps.account_recon import datasets as _register_contracts  # noqa: F401
 from quicksight_gen.common import rich_text as rt
-from quicksight_gen.common.clickability import menu_link_text_format
+from quicksight_gen.common.clickability import (
+    link_text_format,
+    menu_link_text_format,
+)
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.theme import get_preset
 from quicksight_gen.common.tree import (
@@ -64,6 +69,7 @@ from quicksight_gen.common.tree import (
     Drill,
     DrillResetSentinel,
     DrillSourceField,
+    SameSheetFilter,
     Sheet,
     TextBox,
 )
@@ -95,6 +101,8 @@ def _datasets(cfg: Config) -> dict[str, Dataset]:
             DS_AR_SUBLEDGER_ACCOUNTS,
             DS_AR_LEDGER_BALANCE_DRIFT,
             DS_AR_SUBLEDGER_BALANCE_DRIFT,
+            DS_AR_TRANSFER_SUMMARY,
+            DS_AR_NON_ZERO_TRANSFERS,
         )
     }
 
@@ -572,6 +580,121 @@ def _populate_balances(
 
 
 # ---------------------------------------------------------------------------
+# Transfers (L.3.3) — KPIs + status bar (with same-sheet click filter) +
+# transfer summary table (with cross-sheet drill to Transactions).
+# ---------------------------------------------------------------------------
+
+def _populate_transfers(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    transactions_sheet: Sheet,
+    datasets: dict[str, Dataset],
+) -> None:
+    preset = get_preset(cfg.theme_preset)
+    link_color = preset.accent
+
+    ds_xfr = datasets[DS_AR_TRANSFER_SUMMARY]
+    ds_nzt = datasets[DS_AR_NON_ZERO_TRANSFERS]
+
+    # Row 1: two KPIs side-by-side.
+    half = _FULL // 2
+    kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
+    kpi_row.add_kpi(
+        width=half,
+        visual_id="ar-transfers-kpi-count",  # type: ignore[arg-type]
+        title="Total Transfers",
+        subtitle="Count of transfers across all statuses",
+        values=[ds_xfr["transfer_id"].count(field_id="ar-transfers-count")],
+    )
+    kpi_row.add_kpi(
+        width=half,
+        visual_id="ar-transfers-kpi-unhealthy",  # type: ignore[arg-type]
+        title="Non-Zero Transfers",
+        subtitle=(
+            "Transfers whose non-failed legs don't sum to zero — the "
+            "ledger is out of balance for these"
+        ),
+        values=[ds_nzt["transfer_id"].count(field_id="ar-transfers-unhealthy")],
+    )
+
+    # Row 2: status bar chart (full width). Click-to-filter targets the
+    # summary table in row 3. We need bar BEFORE table in Visuals[]
+    # ordering (matches imperative declaration order) but the
+    # SameSheetFilter has to ref the table object. Solution: construct
+    # the filter action with an empty target_visuals list, attach it
+    # to the bar, then append the table to the action's list once it
+    # exists. The action only resolves target_visuals' visual_ids at
+    # emit time — by then the list is populated.
+    filter_action = SameSheetFilter(
+        target_visuals=[],
+        name="Filter Transfer Summary",
+        action_id="action-ar-transfers-bar-filter",
+    )
+    sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
+        width=_FULL,
+        visual_id="ar-transfers-bar-status",  # type: ignore[arg-type]
+        title="Transfer Status",
+        subtitle=(
+            "Count of transfers by net-zero status. Click a bar to "
+            "filter the summary table below."
+        ),
+        category=[ds_xfr["net_zero_status"].dim(field_id="ar-xfr-status-dim")],
+        values=[ds_xfr["transfer_id"].count(field_id="ar-xfr-status-count")],
+        orientation="HORIZONTAL",
+        bars_arrangement="CLUSTERED",
+        category_label="Status",
+        value_label="Transfers",
+        actions=[filter_action],
+    )
+
+    # Row 3: transfer summary table (full width).
+    table_transfers = sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        visual_id="ar-transfers-summary-table",  # type: ignore[arg-type]
+        title="Transfer Summary",
+        subtitle=(
+            "Every transfer with its net amount, debit/credit totals, "
+            "leg count, and net-zero status. Left-click a transfer_id "
+            "to drill into Transactions for that transfer."
+        ),
+        columns=[
+            ds_xfr["transfer_id"].dim(field_id="ar-xfr-id"),
+            ds_xfr["first_posted_at"].date(field_id="ar-xfr-posted"),
+            ds_xfr["total_debit"].numerical(field_id="ar-xfr-debit"),
+            ds_xfr["total_credit"].numerical(field_id="ar-xfr-credit"),
+            ds_xfr["net_amount"].numerical(field_id="ar-xfr-net"),
+            ds_xfr["net_zero_status"].dim(field_id="ar-xfr-status"),
+            ds_xfr["scope_type"].dim(field_id="ar-xfr-scope"),
+            ds_xfr["failed_leg_count"].numerical(field_id="ar-xfr-failed-legs"),
+            ds_xfr["memo"].dim(field_id="ar-xfr-memo"),
+        ],
+        sort_by=("ar-xfr-posted", "DESC"),
+        actions=[
+            _ar_drill_to_transactions(
+                target_sheet=transactions_sheet,
+                name="View Transactions",
+                writes=[(
+                    P_AR_TRANSFER,
+                    DrillSourceField(
+                        field_id="ar-xfr-id",
+                        shape=P_AR_TRANSFER.shape,
+                    ),
+                )],
+                action_id="action-ar-transfers-to-txn",
+            ),
+        ],
+        conditional_formatting={
+            "ConditionalFormattingOptions": [
+                link_text_format("ar-xfr-id", "transfer_id", link_color),
+            ],
+        },
+    )
+    # Back-patch the bar's filter action now that the table exists.
+    filter_action.target_visuals.append(table_transfers)
+
+
+# ---------------------------------------------------------------------------
 # App-level wiring
 # ---------------------------------------------------------------------------
 
@@ -638,6 +761,12 @@ def build_account_recon_app(cfg: Config) -> App:
         sheets[SHEET_AR_BALANCES],
         transactions_sheet=sheets[SHEET_AR_TRANSACTIONS],
         daily_statement_sheet=sheets[SHEET_AR_DAILY_STATEMENT],
+        datasets=datasets,
+    )
+    _populate_transfers(
+        cfg,
+        sheets[SHEET_AR_TRANSFERS],
+        transactions_sheet=sheets[SHEET_AR_TRANSACTIONS],
         datasets=datasets,
     )
 

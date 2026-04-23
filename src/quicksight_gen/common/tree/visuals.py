@@ -12,11 +12,13 @@ from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
 
 from quicksight_gen.common.ids import VisualId
 from quicksight_gen.common.models import (
+    AxisLabelOptions,
     BarChartAggregatedFieldWells,
     BarChartConfiguration,
     BarChartFieldWells,
     BarChartSortConfiguration,
     BarChartVisual,
+    ChartAxisLabelOptions,
     KPIConfiguration,
     KPIFieldWells,
     KPIVisual,
@@ -284,6 +286,8 @@ class BarChart:
     bars_arrangement: Literal[
         "CLUSTERED", "STACKED", "STACKED_PERCENT",
     ] | None = None
+    category_label: str | None = None
+    value_label: str | None = None
     sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None
     actions: list[Action] = field(default_factory=list[Action])
     visual_id: VisualId | AutoResolved = AUTO
@@ -341,6 +345,18 @@ class BarChart:
                     ),
                     Orientation=self.orientation,
                     BarsArrangement=self.bars_arrangement,
+                    CategoryLabelOptions=(
+                        ChartAxisLabelOptions(AxisLabelOptions=[
+                            AxisLabelOptions(CustomLabel=self.category_label),
+                        ])
+                        if self.category_label is not None else None
+                    ),
+                    ValueLabelOptions=(
+                        ChartAxisLabelOptions(AxisLabelOptions=[
+                            AxisLabelOptions(CustomLabel=self.value_label),
+                        ])
+                        if self.value_label is not None else None
+                    ),
                     SortConfiguration=sort_config,
                 ),
                 Actions=[a.emit() for a in self.actions] if self.actions else None,

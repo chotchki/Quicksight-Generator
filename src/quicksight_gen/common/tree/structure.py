@@ -561,6 +561,8 @@ class Row:
         bars_arrangement: Literal[
             "CLUSTERED", "STACKED", "STACKED_PERCENT",
         ] | None = None,
+        category_label: str | None = None,
+        value_label: str | None = None,
         sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None,
         actions: list[Action] | None = None,
         visual_id: VisualId | AutoResolved = AUTO,
@@ -571,6 +573,7 @@ class Row:
             title=title, subtitle=subtitle,
             category=category or [], values=values or [],
             orientation=orientation, bars_arrangement=bars_arrangement,
+            category_label=category_label, value_label=value_label,
             sort_by=sort_by, actions=actions or [], visual_id=visual_id,
         )
         self.sheet.visuals.append(bar)
