@@ -33,8 +33,10 @@ from __future__ import annotations
 # ds["col"] ref in the visuals below.
 from quicksight_gen.apps.payment_recon import datasets as _register_contracts  # noqa: F401
 from quicksight_gen.apps.payment_recon.constants import (
+    DS_PAYMENTS,
     DS_SALES,
     DS_SETTLEMENTS,
+    P_PR_EXTERNAL_TXN,
     P_PR_PAYMENT,
     P_PR_SETTLEMENT,
     SHEET_EXCEPTIONS,
@@ -594,6 +596,134 @@ def _populate_settlements(
 
 
 # ---------------------------------------------------------------------------
+# Payments (L.4.4) — KPI amount + KPI returns count + full-width vertical
+# bar by payment_status (with same-sheet click filter to detail table) +
+# 9-column unaggregated detail table with two drills:
+# left-click → Settlements (writes pSettlementId);
+# right-click → Payment Recon (writes pExternalTransactionId).
+# ---------------------------------------------------------------------------
+
+def _populate_payments(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    settlements_sheet: Sheet,
+    payment_recon_sheet: Sheet,
+    datasets: dict[str, Dataset],
+) -> None:
+    preset = get_preset(cfg.theme_preset)
+    link_color = preset.accent
+    link_tint = preset.link_tint
+
+    ds_pay = datasets[DS_PAYMENTS]
+
+    # Row 1: two KPIs side-by-side.
+    kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
+    kpi_row.add_kpi(
+        width=_HALF,
+        visual_id="payments-kpi-amount",  # type: ignore[arg-type]
+        title="Total Paid Amount",
+        subtitle="Sum of all payment amounts to merchants",
+        values=[ds_pay["payment_amount"].sum(field_id="paid-amount")],
+    )
+    kpi_row.add_kpi(
+        width=_HALF,
+        visual_id="payments-kpi-returns",  # type: ignore[arg-type]
+        title="Returned Payments",
+        subtitle=(
+            "Number of payments that were sent back — see detail table "
+            "for reasons"
+        ),
+        values=[ds_pay["payment_id"].count(field_id="return-count")],
+    )
+
+    # Row 2: full-width vertical bar by payment_status (chosen over a
+    # pie because QS pies don't expose keyboard navigation that the
+    # browser e2e suite relies on for click-to-filter automation).
+    status_filter = SameSheetFilter(
+        target_visuals=[],
+        name="Filter by Status",
+        action_id="action-payments-filter-by-status",
+    )
+    sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
+        width=_FULL,
+        visual_id="payments-bar-status",  # type: ignore[arg-type]
+        title="Payment Status Breakdown",
+        subtitle=(
+            "Count of payments by their current status. "
+            "Click a bar to filter the detail table."
+        ),
+        category=[ds_pay["payment_status"].dim(field_id="pstatus-dim")],
+        values=[ds_pay["payment_id"].count(field_id="pstatus-count")],
+        orientation="VERTICAL",
+        bars_arrangement="CLUSTERED",
+        category_label="Payment Status",
+        value_label="Number of Payments",
+        actions=[status_filter],
+    )
+
+    # Row 3: full-width 9-column detail table with two drills.
+    settlement_id_col = ds_pay["settlement_id"].dim(field_id="tbl-pay-stl-id")
+    ext_txn_col = ds_pay["external_transaction_id"].dim(
+        field_id="tbl-pay-ext-txn",
+    )
+    sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        visual_id="payments-detail-table",  # type: ignore[arg-type]
+        title="Payment Detail",
+        subtitle=(
+            "Each payment with its status and return reason if applicable. "
+            "Click a row to view its settlement; right-click to open "
+            "Payment Reconciliation for its external transaction."
+        ),
+        columns=[
+            ds_pay["payment_id"].dim(field_id="tbl-pay-id"),
+            settlement_id_col,
+            ds_pay["merchant_id"].dim(field_id="tbl-pay-merchant"),
+            ds_pay["payment_amount"].dim(field_id="tbl-pay-amount"),
+            ds_pay["payment_date"].dim(field_id="tbl-pay-date"),
+            ds_pay["payment_status"].dim(field_id="tbl-pay-status"),
+            ds_pay["is_returned"].dim(field_id="tbl-pay-returned"),
+            ds_pay["return_reason"].dim(field_id="tbl-pay-reason"),
+            ext_txn_col,
+        ],
+        actions=[
+            Drill(
+                target_sheet=settlements_sheet,
+                writes=[(P_PR_SETTLEMENT, DrillSourceField(
+                    field_id="tbl-pay-stl-id",
+                    shape=P_PR_SETTLEMENT.shape,
+                ))],
+                name="View Settlement",
+                trigger="DATA_POINT_CLICK",
+                action_id="action-payment-to-settlement",
+            ),
+            Drill(
+                target_sheet=payment_recon_sheet,
+                writes=[(P_PR_EXTERNAL_TXN, DrillSourceField(
+                    field_id="tbl-pay-ext-txn",
+                    shape=P_PR_EXTERNAL_TXN.shape,
+                ))],
+                name="View in Reconciliation",
+                trigger="DATA_POINT_MENU",
+                action_id="action-payment-to-recon",
+            ),
+        ],
+        conditional_formatting=[
+            CellAccentText(on=settlement_id_col, color=link_color),
+            CellAccentMenu(
+                on=ext_txn_col,
+                text_color=link_color,
+                background_color=link_tint,
+            ),
+        ],
+    )
+
+    detail_table = sheet.visuals[-1]
+    status_filter.target_visuals.append(detail_table)
+
+
+# ---------------------------------------------------------------------------
 # App entry points
 # ---------------------------------------------------------------------------
 
@@ -659,6 +789,13 @@ def build_payment_recon_app(cfg: Config) -> App:
         sheets[SHEET_SETTLEMENTS],
         sales_sheet=sheets[SHEET_SALES],
         payments_sheet=sheets[SHEET_PAYMENTS],
+        datasets=datasets,
+    )
+    _populate_payments(
+        cfg,
+        sheets[SHEET_PAYMENTS],
+        settlements_sheet=sheets[SHEET_SETTLEMENTS],
+        payment_recon_sheet=sheets[SHEET_PAYMENT_RECON],
         datasets=datasets,
     )
     return app

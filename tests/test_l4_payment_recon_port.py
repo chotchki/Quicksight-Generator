@@ -16,11 +16,13 @@ import pytest
 
 from quicksight_gen.apps.payment_recon.analysis import (
     _build_getting_started_sheet as _imperative_getting_started_sheet,
+    _build_payments_sheet as _imperative_payments_sheet,
     _build_sales_sheet as _imperative_sales_sheet,
     _build_settlements_sheet as _imperative_settlements_sheet,
 )
 from quicksight_gen.apps.payment_recon.app import build_payment_recon_app
 from quicksight_gen.apps.payment_recon.constants import (
+    SHEET_PAYMENTS,
     SHEET_SALES,
     SHEET_SETTLEMENTS,
 )
@@ -152,5 +154,28 @@ def test_l4_3_settlements_sheet_byte_identical() -> None:
         s for s in analysis.Definition.Sheets if s.SheetId == SHEET_SETTLEMENTS
     )
     tree_sheet = _strip_filter_controls(_strip_nones(asdict(stl_sheet)))
+
+    assert _normalize_sheet(tree_sheet) == _normalize_sheet(imperative_sheet)
+
+
+def test_l4_4_payments_sheet_byte_identical() -> None:
+    """Payments: 2 KPIs (paid amount + returned count) + full-width
+    vertical bar by payment_status (with same-sheet click filter to
+    detail table) + 9-column unaggregated detail table with two drills:
+    left-click → Settlements (writes pSettlementId), right-click →
+    Payment Reconciliation (writes pExternalTransactionId). Two CF
+    entries — settlement_id link, external_transaction_id menu_link."""
+    cfg = Config(**_BASE_CFG_KWARGS)
+
+    imperative_sheet = _strip_filter_controls(
+        _strip_nones(asdict(_imperative_payments_sheet(cfg)))
+    )
+
+    app = build_payment_recon_app(cfg)
+    analysis = app.emit_analysis()
+    pay_sheet = next(
+        s for s in analysis.Definition.Sheets if s.SheetId == SHEET_PAYMENTS
+    )
+    tree_sheet = _strip_filter_controls(_strip_nones(asdict(pay_sheet)))
 
     assert _normalize_sheet(tree_sheet) == _normalize_sheet(imperative_sheet)
