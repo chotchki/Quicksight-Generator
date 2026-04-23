@@ -20,10 +20,7 @@ from quicksight_gen.common.models import (
     ParameterDeclaration,
     StringParameterDeclaration,
 )
-from quicksight_gen.common.tree._helpers import (
-    TimeGranularity,
-    validate_literal,
-)
+from quicksight_gen.common.tree._helpers import TimeGranularity
 
 
 @runtime_checkable
@@ -90,12 +87,6 @@ class DateTimeParam:
     name: ParameterName
     time_granularity: TimeGranularity | None = None
     default: DateTimeDefaultValues | None = None
-
-    def __post_init__(self) -> None:
-        validate_literal(
-            self.time_granularity, TimeGranularity,
-            field_name="time_granularity",
-        )
 
     def emit(self) -> ParameterDeclaration:
         return ParameterDeclaration(

@@ -39,10 +39,7 @@ from quicksight_gen.common.models import FilterGroup as ModelFilterGroup
 from quicksight_gen.common.models import NumericRangeFilter as ModelNumericRangeFilter
 from quicksight_gen.common.models import TimeRangeFilter as ModelTimeRangeFilter
 
-from quicksight_gen.common.tree._helpers import (
-    TimeGranularity,
-    validate_literal,
-)
+from quicksight_gen.common.tree._helpers import TimeGranularity
 from quicksight_gen.common.tree.calc_fields import (
     CalcField,
     ColumnRef,
@@ -279,12 +276,6 @@ class TimeRangeFilter:
     filter_id: str | None = None
 
     _AUTO_KIND: ClassVar[str] = "time"
-
-    def __post_init__(self) -> None:
-        validate_literal(
-            self.time_granularity, TimeGranularity,
-            field_name="time_granularity",
-        )
 
     def calc_field(self) -> CalcField | None:
         return calc_field_in(self.column)

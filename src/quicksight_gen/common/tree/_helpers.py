@@ -7,17 +7,13 @@ them without re-importing across submodules.
 
 Plus shared ``Literal`` type aliases that more than one submodule
 references (e.g. ``TimeGranularity``, used by both filters and
-parameters), and the ``validate_literal`` runtime guard that backs
-them — this codebase has no pyright/mypy configured, so a typed
-``Literal`` field alone wouldn't catch typos at construction time.
-``validate_literal`` closes that gap by checking ``typing.get_args``
-in ``__post_init__``.
+parameters). Pyright strict on ``common/tree/`` (L.1.20) catches
+out-of-set values at the wiring site; no runtime guard needed.
 """
 
 from __future__ import annotations
 
-import typing
-from typing import Any, Literal
+from typing import Literal
 
 from quicksight_gen.common.models import (
     VisualSubtitleLabelOptions,
@@ -38,35 +34,6 @@ TimeGranularity = Literal[
     "YEAR", "QUARTER", "MONTH", "WEEK",
     "DAY", "HOUR", "MINUTE", "SECOND", "MILLISECOND",
 ]
-
-
-# ---------------------------------------------------------------------------
-# Runtime Literal validation
-# ---------------------------------------------------------------------------
-
-def validate_literal(value: Any, literal_type: Any, *, field_name: str) -> None:
-    """Reject ``value`` if it isn't one of ``literal_type``'s allowed args.
-
-    Pass ``None`` through (callers can declare ``Literal[...] | None`` and
-    leave the field optional). Use in ``__post_init__`` for tree wrappers
-    whose field type is a ``Literal`` — the runtime check substitutes for
-    the absent type checker.
-
-    Example::
-
-        def __post_init__(self) -> None:
-            validate_literal(
-                self.time_granularity, TimeGranularity,
-                field_name="time_granularity",
-            )
-    """
-    if value is None:
-        return
-    args = typing.get_args(literal_type)
-    if value not in args:
-        raise ValueError(
-            f"{field_name}={value!r} not in {list(args)}"
-        )
 
 
 def title_label(text: str) -> VisualTitleLabelOptions:
