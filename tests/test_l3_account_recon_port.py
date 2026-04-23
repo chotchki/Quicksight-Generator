@@ -26,6 +26,12 @@ from quicksight_gen.apps.account_recon.analysis import (
     _build_getting_started_sheet as _imperative_getting_started_sheet,
 )
 from quicksight_gen.apps.account_recon.analysis import (
+    _build_daily_statement_sheet as _imperative_daily_statement_sheet,
+)
+from quicksight_gen.apps.account_recon.analysis import (
+    _build_exceptions_trends_sheet as _imperative_exceptions_trends_sheet,
+)
+from quicksight_gen.apps.account_recon.analysis import (
     _build_todays_exceptions_sheet as _imperative_todays_exceptions_sheet,
 )
 from quicksight_gen.apps.account_recon.analysis import (
@@ -37,6 +43,8 @@ from quicksight_gen.apps.account_recon.analysis import (
 from quicksight_gen.apps.account_recon.app import build_account_recon_app
 from quicksight_gen.apps.account_recon.constants import (
     SHEET_AR_BALANCES,
+    SHEET_AR_DAILY_STATEMENT,
+    SHEET_AR_EXCEPTIONS_TRENDS,
     SHEET_AR_GETTING_STARTED,
     SHEET_AR_TODAYS_EXCEPTIONS,
     SHEET_AR_TRANSACTIONS,
@@ -189,6 +197,45 @@ def test_l3_5_todays_exceptions_sheet_byte_identical() -> None:
         _imperative_todays_exceptions_sheet(cfg, preset.accent, preset.link_tint),
     ))
     tree_sheet = _tree_sheet_by_id(cfg, SHEET_AR_TODAYS_EXCEPTIONS)
+
+    imperative_norm = _strip_filter_controls(_normalize_sheet(imperative_sheet))
+    tree_norm = _strip_filter_controls(_normalize_sheet(tree_sheet))
+
+    assert tree_norm == imperative_norm
+
+
+def test_l3_7_daily_statement_sheet_byte_identical() -> None:
+    """Daily Statement sheet: 5 KPIs (3 across + 2 across) + full-width
+    transaction detail table. ParameterControls (account / balance date
+    pickers) are stripped — they land in L.3.8 wiring."""
+    cfg_kwargs = dict(_BASE_CFG_KWARGS)
+    cfg_kwargs["theme_preset"] = "sasquatch-bank-ar"
+    cfg = Config(**cfg_kwargs)
+
+    imperative_sheet = _strip_nones(asdict(
+        _imperative_daily_statement_sheet(cfg),
+    ))
+    tree_sheet = _tree_sheet_by_id(cfg, SHEET_AR_DAILY_STATEMENT)
+
+    imperative_norm = _strip_filter_controls(_normalize_sheet(imperative_sheet))
+    tree_norm = _strip_filter_controls(_normalize_sheet(tree_sheet))
+
+    assert tree_norm == imperative_norm
+
+
+def test_l3_6_exceptions_trends_sheet_byte_identical() -> None:
+    """Exceptions Trends sheet: drift-timelines clustered bar + 2
+    KPI/table rollups (two-sided post mismatch + accounts expected
+    zero EOD) + aging-by-check stacked bar + per-check daily trend.
+    No drills, no same-sheet filters — pure read-only trend view."""
+    cfg_kwargs = dict(_BASE_CFG_KWARGS)
+    cfg_kwargs["theme_preset"] = "sasquatch-bank-ar"
+    cfg = Config(**cfg_kwargs)
+
+    imperative_sheet = _strip_nones(asdict(
+        _imperative_exceptions_trends_sheet(cfg),
+    ))
+    tree_sheet = _tree_sheet_by_id(cfg, SHEET_AR_EXCEPTIONS_TRENDS)
 
     imperative_norm = _strip_filter_controls(_normalize_sheet(imperative_sheet))
     tree_norm = _strip_filter_controls(_normalize_sheet(tree_sheet))

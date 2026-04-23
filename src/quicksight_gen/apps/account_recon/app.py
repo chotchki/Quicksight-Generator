@@ -32,8 +32,13 @@ from quicksight_gen.apps.account_recon.constants import (
     DS_AR_NON_ZERO_TRANSFERS,
     DS_AR_SUBLEDGER_ACCOUNTS,
     DS_AR_SUBLEDGER_BALANCE_DRIFT,
+    DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
+    DS_AR_DAILY_STATEMENT_SUMMARY,
+    DS_AR_DAILY_STATEMENT_TRANSACTIONS,
+    DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
+    DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
     DS_AR_UNIFIED_EXCEPTIONS,
     P_AR_ACCOUNT,
     P_AR_ACTIVITY_DATE,
@@ -107,6 +112,11 @@ def _datasets(cfg: Config) -> dict[str, Dataset]:
             DS_AR_NON_ZERO_TRANSFERS,
             DS_AR_TRANSACTIONS,
             DS_AR_UNIFIED_EXCEPTIONS,
+            DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
+            DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
+            DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+            DS_AR_DAILY_STATEMENT_SUMMARY,
+            DS_AR_DAILY_STATEMENT_TRANSACTIONS,
         )
     }
 
@@ -958,6 +968,262 @@ def _populate_todays_exceptions(
 
 
 # ---------------------------------------------------------------------------
+# Exceptions Trends (L.3.6) — drift timelines rollup + 2 KPI/table
+# rollups + aging matrix + per-check daily trend. No drills, no
+# same-sheet filters — pure read-only trend view.
+# ---------------------------------------------------------------------------
+
+def _populate_exceptions_trends(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    datasets: dict[str, Dataset],
+) -> None:
+    del cfg
+    ds_drift = datasets[DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP]
+    ds_two_sided = datasets[DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP]
+    ds_expected_zero = datasets[DS_AR_EXPECTED_ZERO_EOD_ROLLUP]
+    ds_exc = datasets[DS_AR_UNIFIED_EXCEPTIONS]
+
+    # Drift Timelines rollup — vertical clustered, colored by source check.
+    sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
+        width=_FULL,
+        visual_id="ar-exc-drift-timelines-rollup",  # type: ignore[arg-type]
+        title="Balance Drift Timelines",
+        subtitle=(
+            "Per-day drift from Concentration Master sweep and GL vs "
+            "Fed Master on one shared axis. Healthy days = 0; "
+            "clustered bars = days a feed diverged."
+        ),
+        category=[ds_drift["drift_date"].date(field_id="ar-exc-drift-rollup-dim")],
+        values=[ds_drift["drift"].sum(field_id="ar-exc-drift-rollup-val")],
+        colors=[ds_drift["source_check"].dim(field_id="ar-exc-drift-rollup-color")],
+        orientation="VERTICAL",
+        bars_arrangement="CLUSTERED",
+        category_label="Date",
+        value_label="Drift ($)",
+        color_label="Source",
+    )
+
+    # Two-Sided KPI + table.
+    sheet.layout.row(height=_KPI_ROW_SPAN).add_kpi(
+        width=_FULL,
+        visual_id="ar-exc-kpi-two-sided-rollup",  # type: ignore[arg-type]
+        title="Two-Sided Post Mismatch",
+        subtitle=(
+            "Total findings where one side of an expected SNB/Fed "
+            "post pair landed but the other side never did"
+        ),
+        values=[ds_two_sided["transfer_id"].count(
+            field_id="ar-exc-two-sided-rollup-count",
+        )],
+    )
+    sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        visual_id="ar-exc-two-sided-rollup-table",  # type: ignore[arg-type]
+        title="Two-Sided Post Mismatch",
+        subtitle=(
+            "Each row is a transfer where the side_present leg posted "
+            "but side_missing never did. source_check identifies the "
+            "detection rule; ordered oldest-first by aging."
+        ),
+        columns=[
+            ds_two_sided["transfer_id"].dim(field_id="ar-exc-tsr-xfer-id"),
+            ds_two_sided["observed_at"].date(field_id="ar-exc-tsr-observed-at"),
+            ds_two_sided["amount"].numerical(field_id="ar-exc-tsr-amount"),
+            ds_two_sided["side_present"].dim(field_id="ar-exc-tsr-side-present"),
+            ds_two_sided["side_missing"].dim(field_id="ar-exc-tsr-side-missing"),
+            ds_two_sided["aging_bucket"].dim(field_id="ar-exc-tsr-aging"),
+            ds_two_sided["source_check"].dim(field_id="ar-exc-tsr-source"),
+        ],
+        sort_by=("ar-exc-tsr-aging", "DESC"),
+    )
+
+    # Expected-Zero KPI + table.
+    sheet.layout.row(height=_KPI_ROW_SPAN).add_kpi(
+        width=_FULL,
+        visual_id="ar-exc-kpi-expected-zero-rollup",  # type: ignore[arg-type]
+        title="Accounts Expected Zero at EOD",
+        subtitle=(
+            "Total non-zero EOD findings across Sweep targets, ACH "
+            "Origination Settlement, and Internal Transfer Suspense — "
+            "same SHAPE: a control account that should be zero, isn't"
+        ),
+        values=[ds_expected_zero["account_id"].count(
+            field_id="ar-exc-expected-zero-rollup-count",
+        )],
+    )
+    sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        visual_id="ar-exc-expected-zero-rollup-table",  # type: ignore[arg-type]
+        title="Accounts Expected Zero at EOD",
+        subtitle=(
+            "Every (account, date) where a control account ended day "
+            "non-zero. source_check identifies which detection rule "
+            "fired; ordered oldest-first by aging."
+        ),
+        columns=[
+            ds_expected_zero["account_id"].dim(field_id="ar-exc-ezr-acct-id"),
+            ds_expected_zero["account_name"].dim(field_id="ar-exc-ezr-acct-name"),
+            ds_expected_zero["account_level"].dim(field_id="ar-exc-ezr-level"),
+            ds_expected_zero["balance_date"].date(field_id="ar-exc-ezr-date"),
+            ds_expected_zero["stored_balance"].numerical(field_id="ar-exc-ezr-balance"),
+            ds_expected_zero["aging_bucket"].dim(field_id="ar-exc-ezr-aging"),
+            ds_expected_zero["source_check"].dim(field_id="ar-exc-ezr-source"),
+        ],
+        sort_by=("ar-exc-ezr-aging", "DESC"),
+    )
+
+    # Aging matrix — horizontal stacked, colored by check.
+    sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
+        width=_FULL,
+        visual_id="ar-exc-trends-aging-matrix",  # type: ignore[arg-type]
+        title="Aging by Check",
+        subtitle=(
+            "Count of open exceptions per aging bucket, stacked by "
+            "check type — concentration of stale (8-30, >30) bars "
+            "marks checks that are falling behind."
+        ),
+        category=[ds_exc["aging_bucket"].dim(field_id="ar-exc-trends-aging-dim")],
+        values=[ds_exc["check_type"].count(
+            field_id="ar-exc-trends-aging-count",
+        )],
+        colors=[ds_exc["check_type"].dim(field_id="ar-exc-trends-aging-color")],
+        orientation="HORIZONTAL",
+        bars_arrangement="STACKED",
+        category_label="Aging Bucket",
+        value_label="Exceptions",
+        color_label="Check",
+    )
+
+    # Per-check daily trend — vertical stacked, colored by check.
+    sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
+        width=_FULL,
+        visual_id="ar-exc-trends-per-check",  # type: ignore[arg-type]
+        title="Exceptions per Check, by Day",
+        subtitle=(
+            "Daily count of open exception rows, stacked by check "
+            "type. Use the date-range filter to widen or narrow the "
+            "window; spikes that line up across checks usually point "
+            "to a single upstream feed event."
+        ),
+        category=[ds_exc["exception_date"].date(field_id="ar-exc-trends-perchk-dim")],
+        values=[ds_exc["check_type"].count(
+            field_id="ar-exc-trends-perchk-count",
+        )],
+        colors=[ds_exc["check_type"].dim(field_id="ar-exc-trends-perchk-color")],
+        orientation="VERTICAL",
+        bars_arrangement="STACKED",
+        category_label="Date",
+        value_label="Exceptions",
+        color_label="Check",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Daily Statement (L.3.7) — per-(account, day) feed-validation sheet.
+# Three KPIs across row A (1/3 width each), two KPIs across row B
+# (1/2 width each), then a full-width transaction detail table.
+# ---------------------------------------------------------------------------
+
+def _populate_daily_statement(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    datasets: dict[str, Dataset],
+) -> None:
+    del cfg
+    ds_ds = datasets[DS_AR_DAILY_STATEMENT_SUMMARY]
+    ds_ds_txn = datasets[DS_AR_DAILY_STATEMENT_TRANSACTIONS]
+
+    # Row 1: opening / debits / credits — three 1/3-width KPIs.
+    third = _FULL // 3
+    row_a = sheet.layout.row(height=_KPI_ROW_SPAN)
+    row_a.add_kpi(
+        width=third,
+        visual_id="ar-ds-kpi-opening",  # type: ignore[arg-type]
+        title="Opening Balance",
+        subtitle=(
+            "Stored end-of-day balance on the prior business day — "
+            "the starting point the day's posting activity walks from"
+        ),
+        values=[ds_ds["opening_balance"].sum(field_id="ar-ds-opening-val")],
+    )
+    row_a.add_kpi(
+        width=third,
+        visual_id="ar-ds-kpi-debits",  # type: ignore[arg-type]
+        title="Total Debits",
+        subtitle=(
+            "Sum of positive signed_amount legs posted on the day "
+            "(non-failed). Matches the Dr column on a statement."
+        ),
+        values=[ds_ds["total_debits"].sum(field_id="ar-ds-debits-val")],
+    )
+    row_a.add_kpi(
+        width=third,
+        visual_id="ar-ds-kpi-credits",  # type: ignore[arg-type]
+        title="Total Credits",
+        subtitle=(
+            "Sum of negative signed_amount legs posted on the day "
+            "(absolute value, non-failed). Matches the Cr column."
+        ),
+        values=[ds_ds["total_credits"].sum(field_id="ar-ds-credits-val")],
+    )
+
+    # Row 2: closing / drift — two 1/2-width KPIs.
+    row_b = sheet.layout.row(height=_KPI_ROW_SPAN)
+    row_b.add_kpi(
+        width=_HALF,
+        visual_id="ar-ds-kpi-closing",  # type: ignore[arg-type]
+        title="Closing Balance (Stored)",
+        subtitle=(
+            "Stored end-of-day balance from daily_balances — what "
+            "the feed asserts the account ended the day at"
+        ),
+        values=[ds_ds["closing_balance_stored"].sum(field_id="ar-ds-closing-val")],
+    )
+    row_b.add_kpi(
+        width=_HALF,
+        visual_id="ar-ds-kpi-drift",  # type: ignore[arg-type]
+        title="Drift",
+        subtitle=(
+            "Stored closing − (opening + Σ signed legs). Zero on a "
+            "clean feed; any non-zero value means the feed's balance "
+            "doesn't match its own posting activity."
+        ),
+        values=[ds_ds["drift"].sum(field_id="ar-ds-drift-val")],
+    )
+
+    # Row 3: transaction detail (full width unaggregated).
+    sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        visual_id="ar-ds-transactions-table",  # type: ignore[arg-type]
+        title="Transaction Detail",
+        subtitle=(
+            "Every leg posted to the selected account on the selected "
+            "day. counter_account_name shows the other side(s) of each "
+            "transfer — the offsetting legs keyed against this account."
+        ),
+        columns=[
+            ds_ds_txn["posted_at"].date(field_id="ar-ds-txn-posted-at"),
+            ds_ds_txn["transfer_type"].dim(field_id="ar-ds-txn-type"),
+            ds_ds_txn["origin"].dim(field_id="ar-ds-txn-origin"),
+            ds_ds_txn["direction"].dim(field_id="ar-ds-txn-direction"),
+            ds_ds_txn["signed_amount"].numerical(
+                field_id="ar-ds-txn-signed-amount",
+            ),
+            ds_ds_txn["counter_account_name"].dim(
+                field_id="ar-ds-txn-counter",
+            ),
+            ds_ds_txn["transfer_id"].dim(field_id="ar-ds-txn-transfer-id"),
+            ds_ds_txn["status"].dim(field_id="ar-ds-txn-status"),
+            ds_ds_txn["memo"].dim(field_id="ar-ds-txn-memo"),
+        ],
+        sort_by=("ar-ds-txn-posted-at", "ASC"),
+    )
+
+
+# ---------------------------------------------------------------------------
 # App-level wiring
 # ---------------------------------------------------------------------------
 
@@ -1038,6 +1304,12 @@ def build_account_recon_app(cfg: Config) -> App:
         sheets[SHEET_AR_TODAYS_EXCEPTIONS],
         transactions_sheet=sheets[SHEET_AR_TRANSACTIONS],
         datasets=datasets,
+    )
+    _populate_exceptions_trends(
+        cfg, sheets[SHEET_AR_EXCEPTIONS_TRENDS], datasets=datasets,
+    )
+    _populate_daily_statement(
+        cfg, sheets[SHEET_AR_DAILY_STATEMENT], datasets=datasets,
     )
 
     app.create_dashboard(
