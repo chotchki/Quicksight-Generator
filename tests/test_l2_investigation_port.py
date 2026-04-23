@@ -19,9 +19,11 @@ import pytest
 
 from quicksight_gen.apps.investigation.analysis import (
     _build_getting_started_sheet as _imperative_getting_started,
+    _build_recipient_fanout_sheet as _imperative_recipient_fanout,
 )
 from quicksight_gen.apps.investigation.app import build_investigation_app
 from quicksight_gen.apps.investigation.constants import (
+    SHEET_INV_FANOUT,
     SHEET_INV_GETTING_STARTED,
 )
 from quicksight_gen.common.config import Config
@@ -118,4 +120,17 @@ def test_l2_1_getting_started_sheet_byte_identical():
         "2.1",
         SHEET_INV_GETTING_STARTED,
         _imperative_getting_started(_TEST_CFG),
+    )
+
+
+def test_l2_2_recipient_fanout_sheet_byte_identical():
+    """L.2.2 — Recipient Fanout SheetDefinition matches the imperative
+    builder exactly. 3 KPIs + ranked table + threshold slider + date
+    range filter; first sheet exercising typed Dataset / IntegerParam /
+    CalcField / NumericRangeFilter / TimeRangeFilter / FilterDateTimePicker
+    / ParameterSlider primitives."""
+    _assert_sheet_byte_identical(
+        "2.2",
+        SHEET_INV_FANOUT,
+        _imperative_recipient_fanout(_TEST_CFG),
     )
