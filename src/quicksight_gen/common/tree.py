@@ -35,13 +35,7 @@ SankeyDiagramVisual ×2. PieChartVisual is modeled but unused.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal, Protocol, TypeVar, runtime_checkable
-
-# PEP 695 generic syntax `def add_visual[T: VisualLike](...)` would be
-# cleaner but requires Python 3.12+; project targets 3.11+ so we stick
-# with the TypeVar form.
-_VisualT = TypeVar("_VisualT", bound="VisualLike")
-_ParamT = TypeVar("_ParamT", bound="ParameterDeclLike")
+from typing import Any, Callable, Literal, Protocol, runtime_checkable
 
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.ids import ParameterName, SheetId, VisualId
@@ -616,13 +610,13 @@ class Sheet:
     # TextBoxes are passed through directly for now; a TextBoxNode
     # comes when the rich-text helper is ported.
 
-    def add_visual(self, node: _VisualT) -> _VisualT:
+    def add_visual[T: VisualLike](self, node: T) -> T:
         """Register a visual on this sheet.
 
         Accepts any ``VisualLike`` — spike-shape ``VisualNode`` or
         typed subtype (``KPI`` / ``Table`` / ``BarChart`` / ``Sankey``).
         Generic over ``T`` so the caller's variable keeps the concrete
-        subtype rather than widening to the Protocol.
+        subtype rather than widening to the Protocol (PEP 695).
         """
         self.visuals.append(node)
         return node
@@ -730,14 +724,14 @@ class Analysis:
         self.sheets.append(sheet)
         return sheet
 
-    def add_parameter(self, param: _ParamT) -> _ParamT:
+    def add_parameter[T: ParameterDeclLike](self, param: T) -> T:
         """Declare a parameter on this analysis.
 
         Construction-time check: parameter names are unique within
         the analysis. Catches the silent shadow bug where two declarations
         share a Name and only one wins at deploy time. Generic over
         the concrete subtype so the returned ref keeps its type
-        (``StringParam`` / ``IntegerParam`` / ``DateTimeParam``).
+        (``StringParam`` / ``IntegerParam`` / ``DateTimeParam``) (PEP 695).
         """
         if any(p.name == param.name for p in self.parameters):
             raise ValueError(

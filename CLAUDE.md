@@ -10,7 +10,7 @@ The customer doesn't know exactly what they want yet. Everything is generated fr
 
 ## Quick Reference
 
-- **Language**: Python 3.11+ (3.13 in use)
+- **Language**: Python 3.12+ (3.13 in use). 3.12 minimum is for PEP 695 generic syntax used in `common/tree.py`.
 - **Package manager**: pip / setuptools, venv at `.venv/`
 - **Entry point**: `python -m quicksight_gen` or `quicksight-gen` (installed script)
 - **CLI framework**: Click

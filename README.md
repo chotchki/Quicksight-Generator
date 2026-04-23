@@ -70,7 +70,7 @@ The customer for these reports doesn't know exactly what they want yet. Rather t
 
 ### Prerequisites
 
-- Python 3.11+
+- Python 3.12+
 - An AWS account with QuickSight Enterprise enabled
 - Either a pre-existing QuickSight datasource ARN **or** a PostgreSQL **17+** database URL for demo mode (the schema uses SQL/JSON path syntax)
 
