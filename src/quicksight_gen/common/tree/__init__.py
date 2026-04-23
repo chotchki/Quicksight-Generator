@@ -50,7 +50,15 @@ from quicksight_gen.common.tree.fields import (
     Measure,
     MeasureKind,
 )
-from quicksight_gen.common.tree.filters import FilterGroup
+from quicksight_gen.common.tree.filters import (
+    CategoryFilter,
+    CategoryMatchOperator,
+    FilterGroup,
+    FilterLike,
+    NullOption,
+    NumericRangeFilter,
+    TimeRangeFilter,
+)
 from quicksight_gen.common.tree.parameters import (
     DateTimeParam,
     IntegerParam,
@@ -82,7 +90,9 @@ __all__ = [
     # Visuals
     "VisualLike", "VisualNode", "KPI", "Table", "BarChart", "Sankey",
     # Filters
-    "FilterGroup",
+    "FilterGroup", "FilterLike",
+    "CategoryFilter", "NumericRangeFilter", "TimeRangeFilter",
+    "CategoryMatchOperator", "NullOption",
     # Structure
     "GridSlot", "Sheet", "Analysis", "Dashboard", "App",
     "ParameterControlNode",

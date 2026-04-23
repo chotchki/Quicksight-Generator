@@ -18,16 +18,10 @@ from quicksight_gen.common.ids import (
     VisualId,
 )
 from quicksight_gen.common.models import (
-    CategoryFilter,
-    CategoryFilterConfiguration,
-    ColumnIdentifier,
     DateTimeDefaultValues,
-    Filter,
     KPIConfiguration,
     KPIFieldWells,
     KPIVisual,
-    NumericRangeFilter,
-    NumericRangeFilterValue,
     SheetVisualScopingConfiguration,
     Visual,
 )
@@ -36,18 +30,22 @@ from quicksight_gen.common.tree import (
     Analysis,
     App,
     BarChart,
+    CategoryFilter,
     Dashboard,
     DateTimeParam,
     Dim,
     FilterGroup,
+    FilterLike,
     GridSlot,
     IntegerParam,
     Measure,
+    NumericRangeFilter,
     ParameterControlNode,
     Sankey,
     Sheet,
     StringParam,
     Table,
+    TimeRangeFilter,
     VisualLike,
     VisualNode,
 )
@@ -626,20 +624,14 @@ class TestAnalysisAddParameter:
 # L.1.5 — FilterGroup with object-ref scope + scope-on-same-sheet validation
 # ---------------------------------------------------------------------------
 
-def _category_filter(filter_id: str, dataset: str, column: str) -> Filter:
-    """Test-only Filter constructor — keeps the test focus on scope
-    validation, not on Filter construction details."""
-    return Filter(
-        CategoryFilter=CategoryFilter(
-            FilterId=filter_id,
-            Column=ColumnIdentifier(DataSetIdentifier=dataset, ColumnName=column),
-            Configuration=CategoryFilterConfiguration(
-                FilterListConfiguration={
-                    "MatchOperator": "CONTAINS",
-                    "CategoryValues": ["yes"],
-                },
-            ),
-        ),
+def _category_filter(filter_id: str, dataset: str, column: str) -> CategoryFilter:
+    """Test-only typed CategoryFilter constructor — keeps the test
+    focus on scope validation, not Filter construction details."""
+    return CategoryFilter(
+        filter_id=filter_id,
+        dataset=dataset,
+        column=column,
+        values=["yes"],
     )
 
 
@@ -752,6 +744,9 @@ class TestFilterGroupScope:
         assert configs[1].Scope == "ALL_VISUALS"
 
     def test_emit_carries_filters_through(self):
+        """Each typed FilterLike's emit() runs at FilterGroup.emit() time —
+        the emitted Filters list contains the corresponding models.Filter
+        instances, not the typed wrappers themselves."""
         sheet, _ = self._make_sheet_with_visuals("sheet-test", "v-1")
         f = _category_filter("f-1", "ds-foo", "col_a")
         fg = FilterGroup(
@@ -760,7 +755,10 @@ class TestFilterGroupScope:
         )
         fg.scope_sheet(sheet)
         emitted = fg.emit()
-        assert emitted.Filters == [f]
+        assert len(emitted.Filters) == 1
+        emitted_filter = emitted.Filters[0]
+        assert emitted_filter.CategoryFilter is not None
+        assert emitted_filter.CategoryFilter.FilterId == "f-1"
 
     def test_disabled_filter_group(self):
         sheet, _ = self._make_sheet_with_visuals("sheet-test", "v-1")
@@ -854,10 +852,188 @@ class TestFilterGroupCompositionWithApp:
         with pytest.raises(ValueError, match="isn't registered on sheet"):
             fg.scope_visuals(sheet_b, [v_a])
 
+# ---------------------------------------------------------------------------
+# L.1.6 — Typed Filter wrappers
+# ---------------------------------------------------------------------------
+
+class TestTypedCategoryFilter:
+    def test_emits_filter_list_configuration(self):
+        f = CategoryFilter(
+            filter_id="f-1",
+            dataset="ds-foo",
+            column="col_a",
+            values=["yes", "maybe"],
+        )
+        emitted = f.emit()
+        assert emitted.CategoryFilter is not None
+        assert emitted.CategoryFilter.FilterId == "f-1"
+        assert emitted.CategoryFilter.Column.DataSetIdentifier == "ds-foo"
+        assert emitted.CategoryFilter.Column.ColumnName == "col_a"
+        config = emitted.CategoryFilter.Configuration.FilterListConfiguration
+        assert config["MatchOperator"] == "CONTAINS"
+        assert config["CategoryValues"] == ["yes", "maybe"]
+
+    def test_match_operator_is_configurable(self):
+        f = CategoryFilter(
+            filter_id="f-1", dataset="ds", column="col_a",
+            values=["a"], match_operator="EQUALS",
+        )
+        emitted = f.emit()
+        assert emitted.CategoryFilter.Configuration.FilterListConfiguration["MatchOperator"] == "EQUALS"
+
+    def test_satisfies_filter_like_protocol(self):
+        f = CategoryFilter(
+            filter_id="f-1", dataset="ds", column="col_a", values=["x"],
+        )
+        assert isinstance(f, FilterLike)
+
+
+class TestTypedNumericRangeFilter:
+    def test_static_bounds(self):
+        f = NumericRangeFilter(
+            filter_id="f-1",
+            dataset="ds",
+            column="amount",
+            minimum_value=10.0,
+            maximum_value=1000.0,
+        )
+        emitted = f.emit()
+        assert emitted.NumericRangeFilter is not None
+        assert emitted.NumericRangeFilter.RangeMinimum.StaticValue == 10.0
+        assert emitted.NumericRangeFilter.RangeMaximum.StaticValue == 1000.0
+        assert emitted.NumericRangeFilter.RangeMinimum.Parameter is None
+
+    def test_parameter_bound_minimum(self):
+        """The wiring catches "filter bound to a parameter that doesn't
+        exist" — pass an actual ParameterDecl object, the type checker
+        guarantees it has a .name. emit() reads param.name to populate
+        NumericRangeFilterValue.Parameter."""
+        sigma = IntegerParam(
+            name=ParameterName("pSigma"), default=[2],
+        )
+        f = NumericRangeFilter(
+            filter_id="f-sigma",
+            dataset="ds",
+            column="z_score",
+            minimum_parameter=sigma,
+        )
+        emitted = f.emit()
+        assert emitted.NumericRangeFilter.RangeMinimum.Parameter == "pSigma"
+        assert emitted.NumericRangeFilter.RangeMinimum.StaticValue is None
+        assert emitted.NumericRangeFilter.RangeMaximum is None
+
+    def test_both_minimum_value_and_parameter_rejected(self):
+        sigma = IntegerParam(name=ParameterName("pSigma"), default=[2])
+        with pytest.raises(ValueError, match="not both"):
+            NumericRangeFilter(
+                filter_id="f-1",
+                dataset="ds",
+                column="amount",
+                minimum_value=10.0,
+                minimum_parameter=sigma,
+            )
+
+    def test_both_maximum_value_and_parameter_rejected(self):
+        sigma = IntegerParam(name=ParameterName("pSigma"), default=[2])
+        with pytest.raises(ValueError, match="not both"):
+            NumericRangeFilter(
+                filter_id="f-1",
+                dataset="ds",
+                column="amount",
+                maximum_value=10.0,
+                maximum_parameter=sigma,
+            )
+
+    def test_no_bounds_emits_filter_with_no_range(self):
+        """A NumericRangeFilter with no min/max is unusual but allowed
+        (matches the existing model behaviour where RangeMinimum /
+        RangeMaximum are optional)."""
+        f = NumericRangeFilter(
+            filter_id="f-1", dataset="ds", column="amount",
+        )
+        emitted = f.emit()
+        assert emitted.NumericRangeFilter.RangeMinimum is None
+        assert emitted.NumericRangeFilter.RangeMaximum is None
+
+    def test_satisfies_filter_like_protocol(self):
+        f = NumericRangeFilter(
+            filter_id="f-1", dataset="ds", column="amount",
+        )
+        assert isinstance(f, FilterLike)
+
+
+class TestTypedTimeRangeFilter:
+    def test_emits_with_min_max_passthrough(self):
+        f = TimeRangeFilter(
+            filter_id="f-1",
+            dataset="ds",
+            column="posted_at",
+            minimum={"StaticValue": "2026-01-01T00:00:00"},
+            maximum={"StaticValue": "2026-12-31T23:59:59"},
+            time_granularity="DAY",
+        )
+        emitted = f.emit()
+        assert emitted.TimeRangeFilter is not None
+        assert emitted.TimeRangeFilter.RangeMinimumValue == {"StaticValue": "2026-01-01T00:00:00"}
+        assert emitted.TimeRangeFilter.TimeGranularity == "DAY"
+
+    def test_satisfies_filter_like_protocol(self):
+        f = TimeRangeFilter(
+            filter_id="f-1", dataset="ds", column="posted_at",
+        )
+        assert isinstance(f, FilterLike)
+
+
+class TestFullEmitRoundTripWithTypedFilters:
+    """Replaces the placeholder above; threads through App.emit_analysis
+    to confirm typed Filter wrappers serialize cleanly end-to-end."""
+
     def test_full_emit_round_trip(self):
-        """End-to-end: tree → FilterGroup with scope → App emit_analysis →
+        app = App(name="test", cfg=_TEST_CFG)
+        analysis = app.set_analysis(Analysis(
+            analysis_id_suffix="test", name="Test",
+        ))
+        sigma = analysis.add_parameter(IntegerParam(
+            name=ParameterName("pSigma"), default=[2],
+        ))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("sheet-test"),
+            name="Test", title="Test", description="",
+        ))
+        kpi = sheet.add_visual(KPI(
+            visual_id=VisualId("v-test"), title="Test",
+            values=[Measure.sum("ds-foo", "f-val", "amount")],
+        ))
+        sheet.place(kpi, col_span=12, row_span=6, col_index=0)
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=FilterGroupId("fg-sigma"),
+            filters=[
+                NumericRangeFilter(
+                    filter_id="f-sigma",
+                    dataset="ds-foo",
+                    column="z_score",
+                    minimum_parameter=sigma,
+                ),
+            ],
+        ))
+        fg.scope_visuals(sheet, [kpi])
+        m = app.emit_analysis(dataset_declarations=[])
+        j = m.to_aws_json()
+        fg_json = j["Definition"]["FilterGroups"][0]
+        nrf = fg_json["Filters"][0]["NumericRangeFilter"]
+        assert nrf["FilterId"] == "f-sigma"
+        assert nrf["Column"]["ColumnName"] == "z_score"
+        assert nrf["RangeMinimum"]["Parameter"] == "pSigma"
+        # Static values not emitted when unset.
+        assert "StaticValue" not in nrf["RangeMinimum"]
+
+
+    def test_scoping_configuration_round_trips(self):
+        """End-to-end: tree → FilterGroup with scope → App.emit_analysis →
         models.Analysis.to_aws_json carries the scoping configuration
-        through to the emitted JSON. No JSON-level surprises."""
+        through to the emitted JSON. Carried over from the L.1.5
+        composition tests; lives here now alongside the typed-filter
+        round-trip."""
         app = App(name="test", cfg=_TEST_CFG)
         analysis = app.set_analysis(Analysis(
             analysis_id_suffix="test", name="Test",
