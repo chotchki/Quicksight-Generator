@@ -133,12 +133,7 @@ def build_kitchen_app(cfg: Config) -> App:
         description="One of every typed Visual subtype.",
     ))
 
-    kpi = showcase.add_visual(KPI(
-        title="Total Amount",
-        subtitle="SUM of amount",
-        values=[Measure.sum(ds_main, "amount")],
-    ))
-
+    # Row 1: KPI ⅓ + detail table ⅔.
     # Tree-level vars for the leaves so drills + sort_by reference
     # them by object ref (no string field_ids needed for routing).
     # Drill-source leaves keep an explicit field_id only because the
@@ -147,7 +142,15 @@ def build_kitchen_app(cfg: Config) -> App:
     # uses the explicit DrillSourceField escape-hatch path.
     tbl_name_dim = Dim(ds_main, "name", field_id="kitchen-tbl-name")
     tbl_amount_measure = Measure.sum(ds_main, "amount")
-    table = showcase.add_visual(Table(
+    showcase_row1 = showcase.layout.row(height=6)
+    showcase_row1.add_kpi(
+        width=8,
+        title="Total Amount",
+        subtitle="SUM of amount",
+        values=[Measure.sum(ds_main, "amount")],
+    )
+    table = showcase_row1.add_table(
+        width=28,
         title="Detail Table",
         subtitle="GroupBy + Values",
         group_by=[
@@ -158,32 +161,30 @@ def build_kitchen_app(cfg: Config) -> App:
         ],
         values=[tbl_amount_measure],
         sort_by=(tbl_amount_measure, "DESC"),
-    ))
+    )
 
+    # Row 2: bar chart ½ + sankey ½.
     bar_cat_dim = Dim(ds_main, "category", field_id="kitchen-bar-cat")
-    bar = showcase.add_visual(BarChart(
+    sankey_source_dim = Dim(
+        ds_main, "source_account", field_id="kitchen-sk-source",
+    )
+    showcase_row2 = showcase.layout.row(height=12)
+    bar = showcase_row2.add_bar_chart(
+        width=18,
         title="By Category",
         subtitle="Counts per category",
         category=[bar_cat_dim],
         values=[Measure.count(ds_main, "id")],
-    ))
-
-    sankey_source_dim = Dim(
-        ds_main, "source_account", field_id="kitchen-sk-source",
     )
-    sankey = showcase.add_visual(Sankey(
+    sankey = showcase_row2.add_sankey(
+        width=18,
         title="Flow",
         subtitle="Source → Target by amount",
         source=sankey_source_dim,
         target=Dim(ds_main, "target_account"),
         weight=Measure.sum(ds_main, "amount"),
         items_limit=25,
-    ))
-
-    showcase.place(kpi, col_span=8, row_span=6, col_index=0)
-    showcase.place(table, col_span=28, row_span=6, col_index=8)
-    showcase.place(bar, col_span=18, row_span=12, col_index=0)
-    showcase.place(sankey, col_span=18, row_span=12, col_index=18)
+    )
 
     # ================================================================
     # Sheet 2 — Filters & Controls (every Filter wrapper + control
@@ -197,13 +198,12 @@ def build_kitchen_app(cfg: Config) -> App:
     ))
 
     # A target visual for the filter group scope.
-    filtered_table = filters_sheet.add_visual(Table(
+    filtered_table = filters_sheet.layout.row(height=18).add_table(
+        width=36,
         title="Filtered Detail",
         group_by=[Dim(ds_main, "id")],
         values=[Measure.sum(ds_main, "amount")],
-    ))
-
-    filters_sheet.place(filtered_table, col_span=36, row_span=18, col_index=0)
+    )
 
     # Filter wrappers — one of each kind.
     cat_filter = CategoryFilter(
@@ -224,18 +224,21 @@ def build_kitchen_app(cfg: Config) -> App:
         values=["yes"],
     )
 
-    analysis.add_filter_group(FilterGroup(
-        filters=[cat_filter, num_filter, time_filter, calc_filter],
-    )).scope_visuals(filters_sheet, [filtered_table])
+    filters_sheet.scope(
+        analysis.add_filter_group(FilterGroup(
+            filters=[cat_filter, num_filter, time_filter, calc_filter],
+        )),
+        [filtered_table],
+    )
 
     # Parameter controls — one of each kind.
-    filters_sheet.add_parameter_control(ParameterDropdown(
+    filters_sheet.add_parameter_dropdown(
         parameter=p_category,
         title="Category (Static)",
         type="MULTI_SELECT",
         selectable_values=StaticValues(values=["a", "b", "c"]),
-    ))
-    filters_sheet.add_parameter_control(ParameterDropdown(
+    )
+    filters_sheet.add_parameter_dropdown(
         parameter=p_category,
         title="Category (Linked)",
         type="SINGLE_SELECT",
@@ -243,35 +246,35 @@ def build_kitchen_app(cfg: Config) -> App:
             dataset=ds_categories, column="category",
         ),
         hidden_select_all=True,
-    ))
-    filters_sheet.add_parameter_control(ParameterSlider(
+    )
+    filters_sheet.add_parameter_slider(
         parameter=p_threshold,
         title="Threshold",
         minimum_value=0, maximum_value=1000, step_size=10,
-    ))
-    filters_sheet.add_parameter_control(ParameterDateTimePicker(
+    )
+    filters_sheet.add_parameter_datetime_picker(
         parameter=p_date,
         title="Date",
-    ))
+    )
 
     # Filter controls — one of each kind.
-    filters_sheet.add_filter_control(FilterDropdown(
+    filters_sheet.add_filter_dropdown(
         filter=cat_filter,
         title="Category Filter",
         type="MULTI_SELECT",
-    ))
-    filters_sheet.add_filter_control(FilterSlider(
+    )
+    filters_sheet.add_filter_slider(
         filter=num_filter,
         title="Amount Range",
         minimum_value=0, maximum_value=1000, step_size=10,
         type="RANGE",
-    ))
-    filters_sheet.add_filter_control(FilterDateTimePicker(
+    )
+    filters_sheet.add_filter_datetime_picker(
         filter=time_filter,
         title="Date Range",
         type="DATE_RANGE",
-    ))
-    filters_sheet.add_filter_control(FilterCrossSheet(filter=cat_filter))
+    )
+    filters_sheet.add_filter_cross_sheet(filter=cat_filter)
 
     # ================================================================
     # Sheet 3 — Drill Target (drill destination from Sheet 1 visuals)
@@ -283,12 +286,12 @@ def build_kitchen_app(cfg: Config) -> App:
         description="Destination for drill actions from Visuals Showcase.",
     ))
 
-    drill_dest_table = drill_target.add_visual(Table(
+    drill_target.layout.row(height=18).add_table(
+        width=36,
         title="Drill Destination",
         group_by=[Dim(ds_main, "id")],
         values=[Measure.sum(ds_main, "amount")],
-    ))
-    drill_target.place(drill_dest_table, col_span=36, row_span=18, col_index=0)
+    )
 
     # ------ Drill actions -------------------------------------------
     # Wire drill actions from Sheet 1 visuals to Sheet 3.
@@ -326,10 +329,9 @@ def build_kitchen_app(cfg: Config) -> App:
     ))
 
     # ------ Dashboard -----------------------------------------------
-    app.set_dashboard(Dashboard(
+    app.create_dashboard(
         dashboard_id_suffix="tree-kitchen-dashboard",
         name="Tree Kitchen Sink",
-        analysis=analysis,
-    ))
+    )
 
     return app

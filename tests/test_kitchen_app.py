@@ -335,11 +335,11 @@ class TestValidationHooksAudit:
         sheet = app.analysis.add_sheet(_Sh(
             sheet_id=_SId("s"), name="S", title="S", description="",
         ))
-        sheet.add_parameter_control(_PS(
+        sheet.add_parameter_slider(
             parameter=rogue_param,
             title="Rogue",
             minimum_value=0, maximum_value=10, step_size=1,
-        ))
+        )
         with pytest.raises(
             ValueError, match="parameter references that aren't registered",
         ):
@@ -352,14 +352,16 @@ class TestValidationHooksAudit:
         sheet = app.analysis.add_sheet(_Sh(
             sheet_id=_SId("s"), name="S", title="S", description="",
         ))
-        kpi = sheet.add_visual(_KPI(title="K"))
+        kpi = sheet.layout.row(height=6).add_kpi(
+            width=12, title="K", values=[],
+        )
         fg = app.analysis.add_filter_group(_FG(filters=[
             _NRF(
                 dataset=self._DS_X, column="amount",
                 minimum_parameter=rogue_param,
             ),
         ]))
-        fg.scope_visuals(sheet, [kpi])
+        sheet.scope(fg, [kpi])
         with pytest.raises(
             ValueError, match="parameter references that aren't registered",
         ):
@@ -375,9 +377,9 @@ class TestValidationHooksAudit:
         sheet = app.analysis.add_sheet(_Sh(
             sheet_id=_SId("s"), name="S", title="S", description="",
         ))
-        sheet.add_parameter_control(_PS(
+        sheet.add_parameter_slider(
             parameter=sigma,
             title="σ",
             minimum_value=0, maximum_value=10, step_size=1,
-        ))
+        )
         app.emit_analysis()  # doesn't raise
