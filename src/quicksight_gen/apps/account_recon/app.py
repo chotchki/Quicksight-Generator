@@ -34,6 +34,7 @@ from quicksight_gen.apps.account_recon.constants import (
     DS_AR_SUBLEDGER_BALANCE_DRIFT,
     DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
+    DS_AR_UNIFIED_EXCEPTIONS,
     P_AR_ACCOUNT,
     P_AR_ACTIVITY_DATE,
     P_AR_DS_ACCOUNT,
@@ -105,6 +106,7 @@ def _datasets(cfg: Config) -> dict[str, Dataset]:
             DS_AR_TRANSFER_SUMMARY,
             DS_AR_NON_ZERO_TRANSFERS,
             DS_AR_TRANSACTIONS,
+            DS_AR_UNIFIED_EXCEPTIONS,
         )
     }
 
@@ -813,6 +815,149 @@ def _populate_transactions(
 
 
 # ---------------------------------------------------------------------------
+# Today's Exceptions (L.3.5) — KPI + breakdown bar (with same-sheet
+# click filter) + unified exception table (with 2 cross-sheet drills
+# + 2 CF entries).
+# ---------------------------------------------------------------------------
+
+def _populate_todays_exceptions(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    transactions_sheet: Sheet,
+    datasets: dict[str, Dataset],
+) -> None:
+    preset = get_preset(cfg.theme_preset)
+    link_color = preset.accent
+    link_tint = preset.link_tint
+
+    ds_exc = datasets[DS_AR_UNIFIED_EXCEPTIONS]
+
+    # Row 1: KPI (full width).
+    sheet.layout.row(height=_KPI_ROW_SPAN).add_kpi(
+        width=_FULL,
+        visual_id="ar-todays-exc-kpi-total",  # type: ignore[arg-type]
+        title="Total Exceptions",
+        subtitle=(
+            "Count of open exception rows across all 14 reconciliation "
+            "checks. Use the breakdown below to triage by check type "
+            "and severity."
+        ),
+        values=[ds_exc["check_type"].count(field_id="ar-todays-exc-total-count")],
+    )
+
+    # Row 2: breakdown bar (full width). Click-to-filter the table below.
+    breakdown_filter = SameSheetFilter(
+        target_visuals=[],
+        name="Filter Exceptions Table",
+        action_id="action-ar-todays-exc-bar-filter",
+    )
+    sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
+        width=_FULL,
+        visual_id="ar-todays-exc-breakdown",  # type: ignore[arg-type]
+        title="Exceptions by Check",
+        subtitle=(
+            "Count of open exceptions per check type, coloured by "
+            "severity (red = drift / overdraft, orange = expected-zero, "
+            "amber = limit-breach, yellow = other). Click a bar to "
+            "filter the table below to that check type."
+        ),
+        category=[ds_exc["check_type"].dim(field_id="ar-todays-exc-check-dim")],
+        values=[ds_exc["check_type"].count(field_id="ar-todays-exc-check-count")],
+        colors=[ds_exc["severity"].dim(field_id="ar-todays-exc-severity-color")],
+        orientation="HORIZONTAL",
+        bars_arrangement="STACKED",
+        category_label="Check",
+        value_label="Exceptions",
+        color_label="Severity",
+        actions=[breakdown_filter],
+    )
+
+    # Row 3: unified table — full width unaggregated, two drills + CF.
+    table_exc = sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        visual_id="ar-todays-exc-table",  # type: ignore[arg-type]
+        title="Open Exceptions",
+        subtitle=(
+            "Every open exception row across all 14 checks, sorted by "
+            "severity then aging. Left-click a transfer_id to drill into "
+            "Transactions for that transfer; right-click an account_id "
+            "to drill into Transactions for that account-day. The two "
+            "system-level drift rollups (concentration master sweep, GL "
+            "vs Fed master) carry neither value — investigate them on "
+            "the Trends sheet."
+        ),
+        columns=[
+            ds_exc["check_type"].dim(field_id="ar-todays-exc-check"),
+            ds_exc["severity"].dim(field_id="ar-todays-exc-severity"),
+            # K.2: bind the FieldId to the YYYY-MM-DD string projection
+            # (not the DATETIME exception_date) so the drill SourceField
+            # writes pArActivityDate in a format the destination's
+            # posted_date filter can match.
+            ds_exc["exception_date_str"].dim(field_id="ar-todays-exc-date"),
+            ds_exc["aging_bucket"].dim(field_id="ar-todays-exc-age"),
+            ds_exc["days_outstanding"].numerical(field_id="ar-todays-exc-days"),
+            # K.3.3: data-driven Late / On Time label.
+            ds_exc["is_late"].dim(field_id="ar-todays-exc-is-late"),
+            ds_exc["account_id"].dim(field_id="ar-todays-exc-account"),
+            ds_exc["account_name"].dim(field_id="ar-todays-exc-account-name"),
+            ds_exc["account_level"].dim(field_id="ar-todays-exc-account-level"),
+            ds_exc["ledger_name"].dim(field_id="ar-todays-exc-ledger"),
+            ds_exc["transfer_id"].dim(field_id="ar-todays-exc-transfer-id"),
+            ds_exc["transfer_type"].dim(field_id="ar-todays-exc-transfer-type"),
+            ds_exc["primary_amount"].numerical(field_id="ar-todays-exc-primary"),
+            ds_exc["secondary_amount"].numerical(field_id="ar-todays-exc-secondary"),
+        ],
+        sort_by=[
+            ("ar-todays-exc-severity", "ASC"),
+            ("ar-todays-exc-days", "DESC"),
+        ],
+        actions=[
+            _ar_drill_to_transactions(
+                target_sheet=transactions_sheet,
+                name="View Transactions",
+                writes=[(
+                    P_AR_TRANSFER,
+                    DrillSourceField(
+                        field_id="ar-todays-exc-transfer-id",
+                        shape=P_AR_TRANSFER.shape,
+                    ),
+                )],
+                action_id="action-ar-todays-exc-to-txn",
+            ),
+            _ar_drill_to_transactions(
+                target_sheet=transactions_sheet,
+                name="View Transactions for Account-Day",
+                writes=[
+                    (P_AR_ACCOUNT, DrillSourceField(
+                        field_id="ar-todays-exc-account",
+                        shape=P_AR_ACCOUNT.shape,
+                    )),
+                    (P_AR_ACTIVITY_DATE, DrillSourceField(
+                        field_id="ar-todays-exc-date",
+                        shape=P_AR_ACTIVITY_DATE.shape,
+                    )),
+                ],
+                trigger="DATA_POINT_MENU",
+                action_id="action-ar-todays-exc-to-txn-by-account",
+            ),
+        ],
+        conditional_formatting={
+            "ConditionalFormattingOptions": [
+                link_text_format(
+                    "ar-todays-exc-transfer-id", "transfer_id", link_color,
+                ),
+                menu_link_text_format(
+                    "ar-todays-exc-account", "account_id",
+                    link_color, link_tint,
+                ),
+            ],
+        },
+    )
+    breakdown_filter.target_visuals.append(table_exc)
+
+
+# ---------------------------------------------------------------------------
 # App-level wiring
 # ---------------------------------------------------------------------------
 
@@ -888,6 +1033,12 @@ def build_account_recon_app(cfg: Config) -> App:
         datasets=datasets,
     )
     _populate_transactions(cfg, sheets[SHEET_AR_TRANSACTIONS], datasets=datasets)
+    _populate_todays_exceptions(
+        cfg,
+        sheets[SHEET_AR_TODAYS_EXCEPTIONS],
+        transactions_sheet=sheets[SHEET_AR_TRANSACTIONS],
+        datasets=datasets,
+    )
 
     app.create_dashboard(
         dashboard_id_suffix="account-recon-dashboard",

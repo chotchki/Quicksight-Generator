@@ -523,7 +523,11 @@ class Row:
         values: list[Measure] | None = None,
         columns: list[Dim] | None = None,
         subtitle: str | None = None,
-        sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None,
+        sort_by: (
+            tuple[FieldRef, Literal["ASC", "DESC"]]
+            | list[tuple[FieldRef, Literal["ASC", "DESC"]]]
+            | None
+        ) = None,
         actions: list[Action] | None = None,
         conditional_formatting: dict[str, Any] | None = None,
         visual_id: VisualId | AutoResolved = AUTO,
@@ -687,7 +691,11 @@ class AbsoluteSlot:
         values: list[Measure] | None = None,
         columns: list[Dim] | None = None,
         subtitle: str | None = None,
-        sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None,
+        sort_by: (
+            tuple[FieldRef, Literal["ASC", "DESC"]]
+            | list[tuple[FieldRef, Literal["ASC", "DESC"]]]
+            | None
+        ) = None,
         actions: list[Action] | None = None,
         conditional_formatting: dict[str, Any] | None = None,
         visual_id: VisualId | AutoResolved = AUTO,

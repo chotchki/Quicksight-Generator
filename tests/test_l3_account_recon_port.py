@@ -26,6 +26,9 @@ from quicksight_gen.apps.account_recon.analysis import (
     _build_getting_started_sheet as _imperative_getting_started_sheet,
 )
 from quicksight_gen.apps.account_recon.analysis import (
+    _build_todays_exceptions_sheet as _imperative_todays_exceptions_sheet,
+)
+from quicksight_gen.apps.account_recon.analysis import (
     _build_transactions_sheet as _imperative_transactions_sheet,
 )
 from quicksight_gen.apps.account_recon.analysis import (
@@ -35,6 +38,7 @@ from quicksight_gen.apps.account_recon.app import build_account_recon_app
 from quicksight_gen.apps.account_recon.constants import (
     SHEET_AR_BALANCES,
     SHEET_AR_GETTING_STARTED,
+    SHEET_AR_TODAYS_EXCEPTIONS,
     SHEET_AR_TRANSACTIONS,
     SHEET_AR_TRANSFERS,
 )
@@ -164,6 +168,27 @@ def test_l3_3_transfers_sheet_byte_identical() -> None:
         _imperative_transfers_sheet(cfg, preset.accent),
     ))
     tree_sheet = _tree_sheet_by_id(cfg, SHEET_AR_TRANSFERS)
+
+    imperative_norm = _strip_filter_controls(_normalize_sheet(imperative_sheet))
+    tree_norm = _strip_filter_controls(_normalize_sheet(tree_sheet))
+
+    assert tree_norm == imperative_norm
+
+
+def test_l3_5_todays_exceptions_sheet_byte_identical() -> None:
+    """Today's Exceptions sheet: KPI + breakdown bar with same-sheet
+    click filter + unified exception table with two cross-sheet drills
+    (transfer + account-day) + two CF entries (left-click transfer_id,
+    right-click account_id) + multi-sort (severity ASC, days DESC)."""
+    cfg_kwargs = dict(_BASE_CFG_KWARGS)
+    cfg_kwargs["theme_preset"] = "sasquatch-bank-ar"
+    cfg = Config(**cfg_kwargs)
+    preset = get_preset("sasquatch-bank-ar")
+
+    imperative_sheet = _strip_nones(asdict(
+        _imperative_todays_exceptions_sheet(cfg, preset.accent, preset.link_tint),
+    ))
+    tree_sheet = _tree_sheet_by_id(cfg, SHEET_AR_TODAYS_EXCEPTIONS)
 
     imperative_norm = _strip_filter_controls(_normalize_sheet(imperative_sheet))
     tree_norm = _strip_filter_controls(_normalize_sheet(tree_sheet))

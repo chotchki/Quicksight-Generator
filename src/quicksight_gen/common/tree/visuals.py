@@ -171,7 +171,11 @@ class Table:
     group_by: list[Dim] = field(default_factory=list[Dim])
     values: list[Measure] = field(default_factory=list[Measure])
     columns: list[Dim] = field(default_factory=list[Dim])
-    sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None
+    sort_by: (
+        tuple[FieldRef, Literal["ASC", "DESC"]]
+        | list[tuple[FieldRef, Literal["ASC", "DESC"]]]
+        | None
+    ) = None
     actions: list[Action] = field(default_factory=list[Action])
     conditional_formatting: dict[str, Any] | None = None
     visual_id: VisualId | AutoResolved = AUTO
@@ -224,13 +228,17 @@ class Table:
         )
         sort_config: Any = None
         if self.sort_by is not None:
-            ref, direction = self.sort_by
+            sort_specs = (
+                self.sort_by if isinstance(self.sort_by, list)
+                else [self.sort_by]
+            )
             sort_config = {
                 "RowSort": [
                     {"FieldSort": {
                         "FieldId": resolve_field_id(ref),
                         "Direction": direction,
-                    }},
+                    }}
+                    for ref, direction in sort_specs
                 ],
             }
         if self.columns:
