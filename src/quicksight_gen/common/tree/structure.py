@@ -42,11 +42,19 @@ from quicksight_gen.common.tree.actions import Drill
 from quicksight_gen.common.tree.calc_fields import CalcField
 from quicksight_gen.common.tree.controls import (
     FilterControlLike,
+    FilterCrossSheet,
+    FilterDateTimePicker,
+    FilterDropdown,
+    FilterSlider,
     ParameterControlLike,
+    ParameterDateTimePicker,
+    ParameterDropdown,
+    ParameterSlider,
+    SelectableValues,
 )
 from quicksight_gen.common.tree.datasets import Column, Dataset
 from quicksight_gen.common.tree.fields import Dim, FieldRef, Measure
-from quicksight_gen.common.tree.filters import FilterGroup
+from quicksight_gen.common.tree.filters import FilterGroup, FilterLike
 from quicksight_gen.common.tree.parameters import ParameterDeclLike
 from quicksight_gen.common.tree.text_boxes import TextBox
 from quicksight_gen.common.tree.visuals import (
@@ -186,11 +194,28 @@ class GridSlot:
 class Sheet:
     """Tree node for one sheet on an Analysis / Dashboard.
 
-    Authors register visuals + controls via ``add_visual`` /
-    ``add_parameter_control``; place visuals into the grid layout via
-    ``place(visual_node, ...)`` (which validates the visual is
-    registered on this sheet first). ``emit()`` returns the
-    ``SheetDefinition`` ready to drop into ``AnalysisDefinition.Sheets``.
+    Sheet has four concerns:
+
+    1. **Metadata** — ``sheet_id``, ``name``, ``title``, ``description``
+       set at construction.
+    2. **Layout** — visuals + text boxes placed in a grid. Accessed via
+       ``sheet.layout``: ``sheet.layout.row(height=...).add_kpi(width=,
+       title=, values=, ...)`` for sequential rows, or ``sheet.layout.
+       absolute(col_index=, row_index=, col_span=, row_span=).add_*(...)``
+       for explicit positioning. The layout's row tracks the column
+       cursor so call sites don't compute ``col_index`` arithmetic by
+       hand.
+    3. **Controls** — parameter / filter controls live above/aside the
+       canvas (NOT in the grid). Added directly on Sheet via
+       ``sheet.add_parameter_dropdown(...)`` / ``add_parameter_slider``
+       / ``add_parameter_datetime_picker`` / ``add_filter_dropdown`` /
+       ``add_filter_slider`` / ``add_filter_datetime_picker`` /
+       ``add_filter_cross_sheet`` — one shortcut per control kind.
+    4. **Scope wiring** — ``sheet.scope(filter_group, [v1, v2])`` scopes
+       a filter group to specific visuals on this sheet.
+
+    ``emit()`` returns the ``SheetDefinition`` ready to drop into
+    ``AnalysisDefinition.Sheets``.
     """
     sheet_id: SheetId
     name: str
@@ -203,6 +228,10 @@ class Sheet:
     filter_controls: list[FilterControlLike] = field(default_factory=list[FilterControlLike])
     text_boxes: list[TextBox] = field(default_factory=list[TextBox])
     grid_slots: list[GridSlot] = field(default_factory=list["GridSlot"])
+    # Lazy layout — constructed on first ``sheet.layout`` access, then
+    # cached so the row cursor advances across calls. Init=False keeps
+    # it out of the dataclass constructor surface.
+    _layout: "SheetLayout | None" = field(default=None, init=False, repr=False)
 
     def add_visual[T: VisualLike](self, node: T) -> T:
         """Register a visual on this sheet.
@@ -250,175 +279,156 @@ class Sheet:
         self.text_boxes.append(text_box)
         return text_box
 
+    @property
+    def layout(self) -> "SheetLayout":
+        """L.1.21 — Layout namespace for grid placement.
+
+        Visuals + text boxes are added through the layout (one of:
+        ``sheet.layout.row(height=...).add_kpi(width=..., ...)`` or
+        ``sheet.layout.absolute(col_index=..., row_index=..., col_span=...,
+        row_span=...).add_kpi(...)``). The Sheet itself coordinates four
+        concerns; layout is one of them, factored out so the call sites
+        for "place a visual" don't crowd against "register a control" or
+        "scope a filter group".
+
+        Lazily constructed; the same SheetLayout instance returns on
+        subsequent accesses so the row cursor advances across calls.
+        """
+        if self._layout is None:
+            self._layout = SheetLayout(sheet=self)
+        return self._layout
+
     # -----------------------------------------------------------------------
-    # L.1.21 — Parent-creates-child shortcuts. Each `add_<kind>` constructs
-    # the visual + registers it on this sheet + places it in the grid in
-    # one atomic call. The old `add_visual` + `place` two-step pattern
-    # required the analyst to keep the visual ref around between calls,
-    # which created two bug classes:
-    #
-    #   1. Constructing a visual outside the sheet (`KPI(...)`) and then
-    #      forgetting to call `add_visual()` — `place()` raised
-    #      "isn't registered on this sheet" at runtime.
-    #   2. Calling `place()` twice on the same visual — `place()` raised
-    #      "is already placed".
-    #
-    # The new shortcuts make both bug classes structurally impossible:
-    # each call constructs a fresh visual that's atomically registered +
-    # placed; there's no opening for the analyst to misuse the API. The
-    # old runtime checks become unreachable code and retire alongside
-    # `add_visual` + `place`.
+    # Control + scope shortcuts (L.1.21). Sheet's other concerns beyond
+    # layout: parameter / filter controls (NOT placed in grid — they live
+    # above/aside the canvas) and filter-group scoping (acts on visuals
+    # from this sheet).
     # -----------------------------------------------------------------------
 
-    def add_kpi(
+    def add_parameter_dropdown(
         self,
         *,
+        parameter: ParameterDeclLike,
         title: str,
-        values: list[Measure],
-        subtitle: str | None = None,
-        visual_id: VisualId | AutoResolved = AUTO,
-        col_span: int,
-        row_span: int,
-        col_index: int,
-        row_index: int | None = None,
-    ) -> KPI:
-        """Construct + register + place a KPI visual on this sheet."""
-        kpi = KPI(
-            title=title, subtitle=subtitle, values=values, visual_id=visual_id,
+        type: Literal["SINGLE_SELECT", "MULTI_SELECT"] = "SINGLE_SELECT",
+        selectable_values: SelectableValues | None = None,
+        hidden_select_all: bool = False,
+        control_id: str | AutoResolved = AUTO,
+    ) -> ParameterDropdown:
+        """Construct + register a parameter dropdown control on this sheet."""
+        ctrl = ParameterDropdown(
+            parameter=parameter, title=title, type=type,
+            selectable_values=selectable_values,
+            hidden_select_all=hidden_select_all, control_id=control_id,
         )
-        self.visuals.append(kpi)
-        self.grid_slots.append(GridSlot(
-            element=kpi,
-            col_span=col_span, row_span=row_span,
-            col_index=col_index, row_index=row_index,
-        ))
-        return kpi
+        self.parameter_controls.append(ctrl)
+        return ctrl
 
-    def add_table(
+    def add_parameter_slider(
         self,
         *,
+        parameter: ParameterDeclLike,
         title: str,
-        group_by: list[Dim],
-        values: list[Measure],
-        subtitle: str | None = None,
-        sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None,
-        actions: list[Drill] | None = None,
-        visual_id: VisualId | AutoResolved = AUTO,
-        col_span: int,
-        row_span: int,
-        col_index: int,
-        row_index: int | None = None,
-    ) -> Table:
-        """Construct + register + place a Table visual on this sheet."""
-        table = Table(
-            title=title, subtitle=subtitle, group_by=group_by, values=values,
-            sort_by=sort_by, actions=actions or [], visual_id=visual_id,
+        minimum_value: float,
+        maximum_value: float,
+        step_size: float,
+        control_id: str | AutoResolved = AUTO,
+    ) -> ParameterSlider:
+        """Construct + register a parameter slider control on this sheet."""
+        ctrl = ParameterSlider(
+            parameter=parameter, title=title,
+            minimum_value=minimum_value, maximum_value=maximum_value,
+            step_size=step_size, control_id=control_id,
         )
-        self.visuals.append(table)
-        self.grid_slots.append(GridSlot(
-            element=table,
-            col_span=col_span, row_span=row_span,
-            col_index=col_index, row_index=row_index,
-        ))
-        return table
+        self.parameter_controls.append(ctrl)
+        return ctrl
 
-    def add_bar_chart(
+    def add_parameter_datetime_picker(
         self,
         *,
+        parameter: ParameterDeclLike,
         title: str,
-        category: list[Dim],
-        values: list[Measure],
-        subtitle: str | None = None,
-        orientation: Literal["HORIZONTAL", "VERTICAL"] | None = None,
-        bars_arrangement: Literal[
-            "CLUSTERED", "STACKED", "STACKED_PERCENT",
-        ] | None = None,
-        sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None,
-        actions: list[Drill] | None = None,
-        visual_id: VisualId | AutoResolved = AUTO,
-        col_span: int,
-        row_span: int,
-        col_index: int,
-        row_index: int | None = None,
-    ) -> BarChart:
-        """Construct + register + place a BarChart visual on this sheet."""
-        bar = BarChart(
-            title=title, subtitle=subtitle, category=category, values=values,
-            orientation=orientation, bars_arrangement=bars_arrangement,
-            sort_by=sort_by, actions=actions or [], visual_id=visual_id,
+        control_id: str | AutoResolved = AUTO,
+    ) -> ParameterDateTimePicker:
+        """Construct + register a parameter datetime picker control."""
+        ctrl = ParameterDateTimePicker(
+            parameter=parameter, title=title, control_id=control_id,
         )
-        self.visuals.append(bar)
-        self.grid_slots.append(GridSlot(
-            element=bar,
-            col_span=col_span, row_span=row_span,
-            col_index=col_index, row_index=row_index,
-        ))
-        return bar
+        self.parameter_controls.append(ctrl)
+        return ctrl
 
-    def add_sankey(
+    def add_filter_dropdown(
         self,
         *,
+        filter: FilterLike,
         title: str,
-        source: Dim,
-        target: Dim,
-        weight: Measure,
-        subtitle: str | None = None,
-        items_limit: int | None = None,
-        actions: list[Drill] | None = None,
-        visual_id: VisualId | AutoResolved = AUTO,
-        col_span: int,
-        row_span: int,
-        col_index: int,
-        row_index: int | None = None,
-    ) -> Sankey:
-        """Construct + register + place a Sankey visual on this sheet."""
-        sankey = Sankey(
-            title=title, subtitle=subtitle, source=source, target=target,
-            weight=weight, items_limit=items_limit, actions=actions or [],
-            visual_id=visual_id,
+        type: Literal["SINGLE_SELECT", "MULTI_SELECT"] = "MULTI_SELECT",
+        selectable_values: SelectableValues | None = None,
+        control_id: str | AutoResolved = AUTO,
+    ) -> FilterDropdown:
+        """Construct + register a filter dropdown control on this sheet."""
+        ctrl = FilterDropdown(
+            filter=filter, title=title, type=type,
+            selectable_values=selectable_values, control_id=control_id,
         )
-        self.visuals.append(sankey)
-        self.grid_slots.append(GridSlot(
-            element=sankey,
-            col_span=col_span, row_span=row_span,
-            col_index=col_index, row_index=row_index,
-        ))
-        return sankey
+        self.filter_controls.append(ctrl)
+        return ctrl
 
-    def place_text_box(
+    def add_filter_slider(
         self,
-        text_box: TextBox,
         *,
-        col_span: int,
-        row_span: int,
-        col_index: int,
-        row_index: int | None = None,
-    ) -> TextBox:
-        """L.1.21 transitional — construct+place a TextBox on this sheet.
+        filter: FilterLike,
+        title: str,
+        minimum_value: float,
+        maximum_value: float,
+        step_size: float,
+        type: Literal["SINGLE_POINT", "RANGE"] = "RANGE",
+        control_id: str | AutoResolved = AUTO,
+    ) -> FilterSlider:
+        """Construct + register a filter slider control on this sheet."""
+        ctrl = FilterSlider(
+            filter=filter, title=title,
+            minimum_value=minimum_value, maximum_value=maximum_value,
+            step_size=step_size, type=type, control_id=control_id,
+        )
+        self.filter_controls.append(ctrl)
+        return ctrl
 
-        TextBox is constructed externally (its content is verbose XML);
-        this method registers + places. The two-step ``add_text_box``
-        + ``place`` pattern retires alongside ``Sheet.place`` once the
-        L.1.21 migration completes; for now both work in parallel."""
-        if text_box not in self.text_boxes:
-            self.text_boxes.append(text_box)
-        self.grid_slots.append(GridSlot(
-            element=text_box,
-            col_span=col_span, row_span=row_span,
-            col_index=col_index, row_index=row_index,
-        ))
-        return text_box
+    def add_filter_datetime_picker(
+        self,
+        *,
+        filter: FilterLike,
+        title: str,
+        type: Literal["SINGLE_VALUED", "DATE_RANGE"] = "DATE_RANGE",
+        control_id: str | AutoResolved = AUTO,
+    ) -> FilterDateTimePicker:
+        """Construct + register a filter datetime picker control."""
+        ctrl = FilterDateTimePicker(
+            filter=filter, title=title, type=type, control_id=control_id,
+        )
+        self.filter_controls.append(ctrl)
+        return ctrl
+
+    def add_filter_cross_sheet(
+        self,
+        *,
+        filter: FilterLike,
+        control_id: str | AutoResolved = AUTO,
+    ) -> FilterCrossSheet:
+        """Construct + register a cross-sheet filter control on this sheet."""
+        ctrl = FilterCrossSheet(filter=filter, control_id=control_id)
+        self.filter_controls.append(ctrl)
+        return ctrl
 
     def scope(
-        self, fg: "FilterGroup", visuals: list[VisualLike],
-    ) -> "FilterGroup":
+        self, fg: FilterGroup, visuals: list[VisualLike],
+    ) -> FilterGroup:
         """L.1.21 — scope a filter group to specific visuals on this sheet.
 
         Reads more naturally than ``fg.scope_visuals(sheet, visuals)`` since
-        the sheet is the contextual subject. The runtime check that visuals
-        belong to this sheet stays — Python's type system can't track which
-        ``Sheet`` instance a visual was registered on without dependent
-        types, so the check moves rather than disappears.
+        the sheet is the contextual subject. Runtime check stays —
+        Python's type system can't track which ``Sheet`` instance a
+        visual was registered on without dependent types.
         """
         return fg.scope_visuals(self, visuals)
 
@@ -556,6 +566,335 @@ class Sheet:
                     ),
                 ),
             ],
+        )
+
+
+# ---------------------------------------------------------------------------
+# L.1.21 — Layout DSL. Sheet's grid layout factored into a separate
+# ``SheetLayout`` namespace owned by Sheet. Two placement modes:
+#
+#   - Row-based: ``sheet.layout.row(height=H)`` opens a row at the
+#     current vertical cursor; subsequent ``row.add_<kind>(width=W,
+#     ...)`` calls advance a column cursor and place the visual.
+#     Refuses widths that exceed the 36-col grid.
+#   - Absolute: ``sheet.layout.absolute(col_index=, row_index=,
+#     col_span=, row_span=).add_<kind>(...)`` for one-off explicit
+#     positioning (overlapping visuals, asymmetric grids).
+#
+# Both modes construct + register + place the visual atomically on
+# the parent Sheet — the analyst never holds a half-constructed visual
+# ref or computes col_index arithmetic by hand.
+# ---------------------------------------------------------------------------
+
+# QuickSight grid is 36 columns wide. Hardcoded here because the QS
+# model accepts it as a free int but the actual rendering breaks above
+# 36 (visuals get clipped).
+_GRID_WIDTH_COLS = 36
+
+
+@dataclass(eq=False)
+class Row:
+    """One horizontal band in a Sheet's grid layout.
+
+    Tracks the column cursor as visuals + text boxes are added; refuses
+    widths that overflow the 36-column grid. ``height`` becomes every
+    visual's ``row_span``; the column cursor advances by each visual's
+    ``width`` (col_span). A new row from ``sheet.layout.row()`` lands
+    below the previous row — the SheetLayout tracks the vertical cursor.
+    """
+    sheet: Sheet
+    height: int
+    row_index: int
+    _col_cursor: int = field(default=0, init=False, repr=False)
+
+    def _consume(self, width: int) -> int:
+        """Allocate ``width`` columns at the current cursor; return
+        the col_index for the slot. Raises if the row would overflow
+        the 36-col grid."""
+        if self._col_cursor + width > _GRID_WIDTH_COLS:
+            raise ValueError(
+                f"Row width exceeded: {self._col_cursor} + {width} > "
+                f"{_GRID_WIDTH_COLS} cols. Open a new row via "
+                f"sheet.layout.row(height=...) or reduce the visual width."
+            )
+        col_index = self._col_cursor
+        self._col_cursor += width
+        return col_index
+
+    def add_kpi(
+        self,
+        *,
+        width: int,
+        title: str,
+        values: list[Measure],
+        subtitle: str | None = None,
+        visual_id: VisualId | AutoResolved = AUTO,
+    ) -> KPI:
+        """Construct + register + place a KPI in this row."""
+        col_index = self._consume(width)
+        kpi = KPI(
+            title=title, subtitle=subtitle, values=values, visual_id=visual_id,
+        )
+        self.sheet.visuals.append(kpi)
+        self.sheet.grid_slots.append(GridSlot(
+            element=kpi,
+            col_span=width, row_span=self.height,
+            col_index=col_index, row_index=self.row_index,
+        ))
+        return kpi
+
+    def add_table(
+        self,
+        *,
+        width: int,
+        title: str,
+        group_by: list[Dim],
+        values: list[Measure],
+        subtitle: str | None = None,
+        sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None,
+        actions: list[Drill] | None = None,
+        visual_id: VisualId | AutoResolved = AUTO,
+    ) -> Table:
+        """Construct + register + place a Table in this row."""
+        col_index = self._consume(width)
+        table = Table(
+            title=title, subtitle=subtitle, group_by=group_by, values=values,
+            sort_by=sort_by, actions=actions or [], visual_id=visual_id,
+        )
+        self.sheet.visuals.append(table)
+        self.sheet.grid_slots.append(GridSlot(
+            element=table,
+            col_span=width, row_span=self.height,
+            col_index=col_index, row_index=self.row_index,
+        ))
+        return table
+
+    def add_bar_chart(
+        self,
+        *,
+        width: int,
+        title: str,
+        category: list[Dim],
+        values: list[Measure],
+        subtitle: str | None = None,
+        orientation: Literal["HORIZONTAL", "VERTICAL"] | None = None,
+        bars_arrangement: Literal[
+            "CLUSTERED", "STACKED", "STACKED_PERCENT",
+        ] | None = None,
+        sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None,
+        actions: list[Drill] | None = None,
+        visual_id: VisualId | AutoResolved = AUTO,
+    ) -> BarChart:
+        """Construct + register + place a BarChart in this row."""
+        col_index = self._consume(width)
+        bar = BarChart(
+            title=title, subtitle=subtitle, category=category, values=values,
+            orientation=orientation, bars_arrangement=bars_arrangement,
+            sort_by=sort_by, actions=actions or [], visual_id=visual_id,
+        )
+        self.sheet.visuals.append(bar)
+        self.sheet.grid_slots.append(GridSlot(
+            element=bar,
+            col_span=width, row_span=self.height,
+            col_index=col_index, row_index=self.row_index,
+        ))
+        return bar
+
+    def add_sankey(
+        self,
+        *,
+        width: int,
+        title: str,
+        source: Dim,
+        target: Dim,
+        weight: Measure,
+        subtitle: str | None = None,
+        items_limit: int | None = None,
+        actions: list[Drill] | None = None,
+        visual_id: VisualId | AutoResolved = AUTO,
+    ) -> Sankey:
+        """Construct + register + place a Sankey in this row."""
+        col_index = self._consume(width)
+        sankey = Sankey(
+            title=title, subtitle=subtitle, source=source, target=target,
+            weight=weight, items_limit=items_limit, actions=actions or [],
+            visual_id=visual_id,
+        )
+        self.sheet.visuals.append(sankey)
+        self.sheet.grid_slots.append(GridSlot(
+            element=sankey,
+            col_span=width, row_span=self.height,
+            col_index=col_index, row_index=self.row_index,
+        ))
+        return sankey
+
+    def add_text_box(
+        self,
+        text_box: TextBox,
+        *,
+        width: int,
+    ) -> TextBox:
+        """Register + place a pre-constructed TextBox in this row.
+
+        TextBox content is verbose XML (built via ``common/rich_text``),
+        so the analyst constructs the TextBox separately and passes it
+        here. Uniqueness is by object identity — placing the same
+        TextBox in two rows is a programmer error caught by the row-
+        cursor advance (you'd be calling _consume twice).
+        """
+        col_index = self._consume(width)
+        if text_box not in self.sheet.text_boxes:
+            self.sheet.text_boxes.append(text_box)
+        self.sheet.grid_slots.append(GridSlot(
+            element=text_box,
+            col_span=width, row_span=self.height,
+            col_index=col_index, row_index=self.row_index,
+        ))
+        return text_box
+
+
+@dataclass(eq=False)
+class AbsoluteSlot:
+    """One explicit-position slot. Use for layouts that don't fit the
+    row pattern — overlapping visuals, asymmetric grids, off-grid
+    positioning. One-shot: construct via ``sheet.layout.absolute(
+    col_index=, row_index=, col_span=, row_span=)`` then chain a single
+    ``add_<kind>(...)`` to fill it. Re-using an AbsoluteSlot for
+    multiple visuals would emit duplicate slot positions and isn't
+    supported."""
+    sheet: Sheet
+    col_span: int
+    row_span: int
+    col_index: int
+    row_index: int | None
+
+    def _place(self, element: LayoutNode) -> None:
+        self.sheet.grid_slots.append(GridSlot(
+            element=element,
+            col_span=self.col_span, row_span=self.row_span,
+            col_index=self.col_index, row_index=self.row_index,
+        ))
+
+    def add_kpi(
+        self,
+        *,
+        title: str,
+        values: list[Measure],
+        subtitle: str | None = None,
+        visual_id: VisualId | AutoResolved = AUTO,
+    ) -> KPI:
+        kpi = KPI(
+            title=title, subtitle=subtitle, values=values, visual_id=visual_id,
+        )
+        self.sheet.visuals.append(kpi)
+        self._place(kpi)
+        return kpi
+
+    def add_table(
+        self,
+        *,
+        title: str,
+        group_by: list[Dim],
+        values: list[Measure],
+        subtitle: str | None = None,
+        sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None,
+        actions: list[Drill] | None = None,
+        visual_id: VisualId | AutoResolved = AUTO,
+    ) -> Table:
+        table = Table(
+            title=title, subtitle=subtitle, group_by=group_by, values=values,
+            sort_by=sort_by, actions=actions or [], visual_id=visual_id,
+        )
+        self.sheet.visuals.append(table)
+        self._place(table)
+        return table
+
+    def add_bar_chart(
+        self,
+        *,
+        title: str,
+        category: list[Dim],
+        values: list[Measure],
+        subtitle: str | None = None,
+        orientation: Literal["HORIZONTAL", "VERTICAL"] | None = None,
+        bars_arrangement: Literal[
+            "CLUSTERED", "STACKED", "STACKED_PERCENT",
+        ] | None = None,
+        sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None,
+        actions: list[Drill] | None = None,
+        visual_id: VisualId | AutoResolved = AUTO,
+    ) -> BarChart:
+        bar = BarChart(
+            title=title, subtitle=subtitle, category=category, values=values,
+            orientation=orientation, bars_arrangement=bars_arrangement,
+            sort_by=sort_by, actions=actions or [], visual_id=visual_id,
+        )
+        self.sheet.visuals.append(bar)
+        self._place(bar)
+        return bar
+
+    def add_sankey(
+        self,
+        *,
+        title: str,
+        source: Dim,
+        target: Dim,
+        weight: Measure,
+        subtitle: str | None = None,
+        items_limit: int | None = None,
+        actions: list[Drill] | None = None,
+        visual_id: VisualId | AutoResolved = AUTO,
+    ) -> Sankey:
+        sankey = Sankey(
+            title=title, subtitle=subtitle, source=source, target=target,
+            weight=weight, items_limit=items_limit, actions=actions or [],
+            visual_id=visual_id,
+        )
+        self.sheet.visuals.append(sankey)
+        self._place(sankey)
+        return sankey
+
+    def add_text_box(self, text_box: TextBox) -> TextBox:
+        if text_box not in self.sheet.text_boxes:
+            self.sheet.text_boxes.append(text_box)
+        self._place(text_box)
+        return text_box
+
+
+@dataclass(eq=False)
+class SheetLayout:
+    """Layout namespace on a Sheet — manages rows + absolute placements.
+
+    Tracks a vertical row cursor: each ``row(height=H)`` opens a new row
+    at the current cursor and advances it by ``H`` for the next row.
+    Absolute placements don't advance the cursor (they're independent
+    of row flow).
+    """
+    sheet: Sheet
+    _row_cursor: int = field(default=0, init=False, repr=False)
+
+    def row(self, *, height: int) -> Row:
+        """Open a new row at the current vertical cursor with the given
+        height. The cursor advances by ``height`` so the next ``row()``
+        call lands below this one."""
+        row = Row(sheet=self.sheet, height=height, row_index=self._row_cursor)
+        self._row_cursor += height
+        return row
+
+    def absolute(
+        self,
+        *,
+        col_index: int,
+        row_index: int | None = None,
+        col_span: int,
+        row_span: int,
+    ) -> AbsoluteSlot:
+        """Open an explicit-position slot. Doesn't advance the row
+        cursor — absolute placements are independent of row flow."""
+        return AbsoluteSlot(
+            sheet=self.sheet,
+            col_span=col_span, row_span=row_span,
+            col_index=col_index, row_index=row_index,
         )
 
 

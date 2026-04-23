@@ -130,13 +130,16 @@ from quicksight_gen.common.tree.parameters import (
     StringParam,
 )
 from quicksight_gen.common.tree.structure import (
+    AbsoluteSlot,
     Analysis,
     App,
     Dashboard,
     GridSlot,
     LayoutNode,
     ParameterControlNode,
+    Row,
     Sheet,
+    SheetLayout,
 )
 from quicksight_gen.common.tree._helpers import AUTO, AutoResolved
 from quicksight_gen.common.tree.text_boxes import TextBox
@@ -180,4 +183,6 @@ __all__ = [
     # Structure
     "GridSlot", "Sheet", "Analysis", "Dashboard", "App",
     "ParameterControlNode",
+    # Layout DSL (L.1.21)
+    "SheetLayout", "Row", "AbsoluteSlot",
 ]

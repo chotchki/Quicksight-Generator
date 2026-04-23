@@ -123,6 +123,43 @@ _TEST_CFG = Config(
 )
 
 
+def _visual_id_by_title(sheet, title: str) -> str:
+    """Find a visual's auto-generated ID by walking the sheet's emitted
+    Visuals list and matching on title. Visual_ids are auto-derived
+    post-L.1.21; titles are the stable identifier for tests that pin
+    individual visuals.
+    """
+    for v in sheet.Visuals:
+        for inner_name in (
+            "KPIVisual", "TableVisual", "BarChartVisual",
+            "SankeyDiagramVisual", "PieChartVisual",
+        ):
+            inner = getattr(v, inner_name, None)
+            if inner is None:
+                continue
+            inner_title = inner.Title.FormatText.get("PlainText")
+            if inner_title == title:
+                return inner.VisualId
+    raise AssertionError(f"No visual on sheet matches title={title!r}")
+
+
+def _visual_kinds(sheet) -> list[str]:
+    """Return the kind ('KPIVisual', 'TableVisual', ...) of each visual
+    on the sheet in order. Used in lieu of explicit visual_ids for
+    "this sheet has [KPI, BarChart, Table] in this order" structure
+    checks (visual_ids are auto-generated post-L.1.21)."""
+    kinds: list[str] = []
+    for v in sheet.Visuals:
+        for inner_name in (
+            "KPIVisual", "TableVisual", "BarChartVisual",
+            "SankeyDiagramVisual", "PieChartVisual",
+        ):
+            if getattr(v, inner_name, None) is not None:
+                kinds.append(inner_name)
+                break
+    return kinds
+
+
 # ---------------------------------------------------------------------------
 # Theme preset
 # ---------------------------------------------------------------------------
@@ -369,16 +406,18 @@ def test_fanout_sheet_has_three_kpis_and_one_table():
         s for s in analysis.Definition.Sheets if s.SheetId == SHEET_INV_FANOUT
     )
     assert fanout.Visuals is not None
-    visual_ids = [
-        (v.KPIVisual.VisualId if v.KPIVisual else
-         v.TableVisual.VisualId if v.TableVisual else None)
+    # Three KPIs followed by one Table (visual_ids are auto-generated
+    # post-L.1.21; titles are the stable identifier for asserting order).
+    titles = [
+        (v.KPIVisual.Title.FormatText["PlainText"] if v.KPIVisual else
+         v.TableVisual.Title.FormatText["PlainText"] if v.TableVisual else None)
         for v in fanout.Visuals
     ]
-    assert visual_ids == [
-        V_INV_FANOUT_KPI_RECIPIENTS,
-        V_INV_FANOUT_KPI_SENDERS,
-        V_INV_FANOUT_KPI_AMOUNT,
-        V_INV_FANOUT_TABLE,
+    assert titles == [
+        "Qualifying Recipients",
+        "Distinct Senders",
+        "Total Inbound",
+        "Recipient Fanout — Ranked",
     ]
 
 
@@ -489,7 +528,8 @@ def test_sigma_filter_is_scoped_to_kpi_and_table_only():
     """Distribution chart MUST see the full population — its scope
     deliberately excludes the chart visual id. Otherwise the analyst
     loses the reference frame for where the slider cutoff lies."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    analysis = build_analysis(_TEST_CFG)
+    groups = {g.FilterGroupId: g for g in analysis.Definition.FilterGroups}
     sigma = groups[FG_INV_ANOMALIES_SIGMA]
     sheet_scopes = (
         sigma.ScopeConfiguration.SelectedSheets.SheetVisualScopingConfigurations
@@ -498,10 +538,15 @@ def test_sigma_filter_is_scoped_to_kpi_and_table_only():
     scope = sheet_scopes[0]
     assert scope.SheetId == SHEET_INV_ANOMALIES
     assert scope.Scope == SheetVisualScopingConfiguration.SELECTED_VISUALS
-    assert set(scope.VisualIds) == {
-        V_INV_ANOMALIES_KPI_FLAGGED, V_INV_ANOMALIES_TABLE,
-    }
-    assert V_INV_ANOMALIES_DISTRIBUTION not in scope.VisualIds
+    sheet = next(
+        s for s in analysis.Definition.Sheets
+        if s.SheetId == SHEET_INV_ANOMALIES
+    )
+    kpi_id = _visual_id_by_title(sheet, "Flagged Pair-Windows")
+    table_id = _visual_id_by_title(sheet, "Flagged Pair-Windows — Ranked")
+    dist_id = _visual_id_by_title(sheet, "Pair-Window σ Distribution")
+    assert set(scope.VisualIds) == {kpi_id, table_id}
+    assert dist_id not in scope.VisualIds
 
 
 def test_anomalies_window_filter_is_all_visuals_scope():
@@ -541,21 +586,10 @@ def test_anomalies_sheet_has_kpi_distribution_and_table():
         if s.SheetId == SHEET_INV_ANOMALIES
     )
     assert sheet.Visuals is not None
-    visual_ids = []
-    for v in sheet.Visuals:
-        if v.KPIVisual:
-            visual_ids.append(v.KPIVisual.VisualId)
-        elif v.BarChartVisual:
-            visual_ids.append(v.BarChartVisual.VisualId)
-        elif v.TableVisual:
-            visual_ids.append(v.TableVisual.VisualId)
-        else:
-            visual_ids.append(None)
-    assert visual_ids == [
-        V_INV_ANOMALIES_KPI_FLAGGED,
-        V_INV_ANOMALIES_DISTRIBUTION,
-        V_INV_ANOMALIES_TABLE,
-    ]
+    # KPI flagged-count, σ distribution bar chart, ranked table — in
+    # that order. Visual_ids are auto-derived (L.1.21); kind ordering
+    # is the stable structural assertion.
+    assert _visual_kinds(sheet) == ["KPIVisual", "BarChartVisual", "TableVisual"]
 
 
 def test_distribution_chart_categorises_by_z_bucket():
@@ -767,18 +801,7 @@ def test_money_trail_sheet_has_sankey_and_table():
         if s.SheetId == SHEET_INV_MONEY_TRAIL
     )
     assert sheet.Visuals is not None
-    visual_ids = []
-    for v in sheet.Visuals:
-        if v.SankeyDiagramVisual:
-            visual_ids.append(v.SankeyDiagramVisual.VisualId)
-        elif v.TableVisual:
-            visual_ids.append(v.TableVisual.VisualId)
-        else:
-            visual_ids.append(None)
-    assert visual_ids == [
-        V_INV_MONEY_TRAIL_SANKEY,
-        V_INV_MONEY_TRAIL_TABLE,
-    ]
+    assert _visual_kinds(sheet) == ["SankeyDiagramVisual", "TableVisual"]
 
 
 def test_money_trail_sankey_field_wells_use_account_names_and_sum_hop_amount():
@@ -888,10 +911,12 @@ def test_money_trail_sheet_serializes_to_aws_json():
     assert sheet.get("FilterControls", []) == []
     assert len(sheet["ParameterControls"]) == 3
     # Sankey visual surfaces with its dataclass key.
+    # Sankey visual surfaces with its dataclass key. Visual_id is
+    # auto-derived (L.1.21); just confirm the wrapper key exists.
     sankey = next(
         v for v in sheet["Visuals"] if "SankeyDiagramVisual" in v
     )
-    assert sankey["SankeyDiagramVisual"]["VisualId"] == V_INV_MONEY_TRAIL_SANKEY
+    assert sankey["SankeyDiagramVisual"]["VisualId"].startswith("v-sankey-")
 
 
 # ---------------------------------------------------------------------------
@@ -974,36 +999,61 @@ def test_anetwork_anchor_filter_is_table_only():
     """K.4.8i: anchor filter (is_anchor_edge='yes') is scoped to the
     touching-edges table only. The two Sankeys each carry their own
     direction-specific filter (is_inbound_edge / is_outbound_edge) so
-    the layout itself encodes direction."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    the layout itself encodes direction.
+
+    Walks the tree-emitted analysis (post-L.1.21) instead of the
+    imperative ``build_filter_groups`` — the latter has stale visual_id
+    constants that don't match the auto-derived IDs the tree emits."""
+    analysis = build_analysis(_TEST_CFG)
+    groups = {g.FilterGroupId: g for g in analysis.Definition.FilterGroups}
     sc = groups[FG_INV_ANETWORK_ANCHOR].ScopeConfiguration
     configs = sc.SelectedSheets.SheetVisualScopingConfigurations
     assert len(configs) == 1
     assert configs[0].SheetId == SHEET_INV_ACCOUNT_NETWORK
     assert configs[0].Scope == SheetVisualScopingConfiguration.SELECTED_VISUALS
-    assert configs[0].VisualIds == [V_INV_ANETWORK_TABLE]
+    sheet = next(
+        s for s in analysis.Definition.Sheets
+        if s.SheetId == SHEET_INV_ACCOUNT_NETWORK
+    )
+    assert configs[0].VisualIds == [
+        _visual_id_by_title(sheet, "Account Network — Touching Edges"),
+    ]
 
 
 def test_anetwork_inbound_filter_is_inbound_sankey_only():
     """K.4.8i: inbound filter scoped to the inbound Sankey only."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    analysis = build_analysis(_TEST_CFG)
+    groups = {g.FilterGroupId: g for g in analysis.Definition.FilterGroups}
     sc = groups[FG_INV_ANETWORK_INBOUND].ScopeConfiguration
     configs = sc.SelectedSheets.SheetVisualScopingConfigurations
     assert len(configs) == 1
     assert configs[0].SheetId == SHEET_INV_ACCOUNT_NETWORK
     assert configs[0].Scope == SheetVisualScopingConfiguration.SELECTED_VISUALS
-    assert configs[0].VisualIds == [V_INV_ANETWORK_SANKEY_INBOUND]
+    sheet = next(
+        s for s in analysis.Definition.Sheets
+        if s.SheetId == SHEET_INV_ACCOUNT_NETWORK
+    )
+    assert configs[0].VisualIds == [
+        _visual_id_by_title(sheet, "Inbound — counterparties → anchor"),
+    ]
 
 
 def test_anetwork_outbound_filter_is_outbound_sankey_only():
     """K.4.8i: outbound filter scoped to the outbound Sankey only."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    analysis = build_analysis(_TEST_CFG)
+    groups = {g.FilterGroupId: g for g in analysis.Definition.FilterGroups}
     sc = groups[FG_INV_ANETWORK_OUTBOUND].ScopeConfiguration
     configs = sc.SelectedSheets.SheetVisualScopingConfigurations
     assert len(configs) == 1
     assert configs[0].SheetId == SHEET_INV_ACCOUNT_NETWORK
     assert configs[0].Scope == SheetVisualScopingConfiguration.SELECTED_VISUALS
-    assert configs[0].VisualIds == [V_INV_ANETWORK_SANKEY_OUTBOUND]
+    sheet = next(
+        s for s in analysis.Definition.Sheets
+        if s.SheetId == SHEET_INV_ACCOUNT_NETWORK
+    )
+    assert configs[0].VisualIds == [
+        _visual_id_by_title(sheet, "Outbound — anchor → counterparties"),
+    ]
 
 
 def test_anetwork_directional_filters_are_category_filters_on_calc_fields():
@@ -1074,18 +1124,8 @@ def test_account_network_sheet_has_two_sankeys_and_table():
         if s.SheetId == SHEET_INV_ACCOUNT_NETWORK
     )
     assert sheet.Visuals is not None
-    visual_ids = []
-    for v in sheet.Visuals:
-        if v.SankeyDiagramVisual:
-            visual_ids.append(v.SankeyDiagramVisual.VisualId)
-        elif v.TableVisual:
-            visual_ids.append(v.TableVisual.VisualId)
-        else:
-            visual_ids.append(None)
-    assert visual_ids == [
-        V_INV_ANETWORK_SANKEY_INBOUND,
-        V_INV_ANETWORK_SANKEY_OUTBOUND,
-        V_INV_ANETWORK_TABLE,
+    assert _visual_kinds(sheet) == [
+        "SankeyDiagramVisual", "SankeyDiagramVisual", "TableVisual",
     ]
 
 
@@ -1133,18 +1173,20 @@ def test_account_network_sheet_serializes_to_aws_json():
 
 def _account_network_visuals():
     """Helper: returns (inbound_sankey, outbound_sankey, table) from
-    the deployed Account Network sheet — mirrors the K.4.8i layout."""
+    the deployed Account Network sheet — mirrors the K.4.8i layout.
+    Visual_ids are auto-derived (L.1.21); look up by title."""
     analysis = build_analysis(_TEST_CFG)
     sheet = next(
         s for s in analysis.Definition.Sheets
         if s.SheetId == SHEET_INV_ACCOUNT_NETWORK
     )
-    sankeys_by_id = {
-        v.SankeyDiagramVisual.VisualId: v.SankeyDiagramVisual
-        for v in sheet.Visuals if v.SankeyDiagramVisual
-    }
-    inbound = sankeys_by_id[V_INV_ANETWORK_SANKEY_INBOUND]
-    outbound = sankeys_by_id[V_INV_ANETWORK_SANKEY_OUTBOUND]
+    sankeys_by_title = {}
+    for v in sheet.Visuals:
+        if v.SankeyDiagramVisual:
+            title = v.SankeyDiagramVisual.Title.FormatText["PlainText"]
+            sankeys_by_title[title] = v.SankeyDiagramVisual
+    inbound = sankeys_by_title["Inbound — counterparties → anchor"]
+    outbound = sankeys_by_title["Outbound — anchor → counterparties"]
     table = next(
         v.TableVisual for v in sheet.Visuals if v.TableVisual
     )

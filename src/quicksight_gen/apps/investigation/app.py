@@ -206,47 +206,50 @@ def _build_getting_started_sheet(cfg: Config, analysis: Analysis) -> Sheet:
         ),
     ))
 
-    welcome = sheet.add_text_box(TextBox(
-        text_box_id="inv-gs-welcome",
-        content=rt.text_box(
-            rt.inline(
-                "Investigation Dashboard",
-                font_size="36px",
-                color=accent,
-            ),
-            rt.BR,
-            rt.BR,
-            rt.body(
-                "Compliance / AML triage surface for the Sasquatch "
-                "National Bank shared base ledger. Three question-shaped "
-                "sheets — recipient fanout, volume anomalies, and money "
-                "trail — each one drilling back into Account "
-                "Reconciliation or Payment Reconciliation for the row "
-                "evidence."
+    sheet.layout.row(height=5).add_text_box(
+        TextBox(
+            text_box_id="inv-gs-welcome",
+            content=rt.text_box(
+                rt.inline(
+                    "Investigation Dashboard",
+                    font_size="36px",
+                    color=accent,
+                ),
+                rt.BR,
+                rt.BR,
+                rt.body(
+                    "Compliance / AML triage surface for the Sasquatch "
+                    "National Bank shared base ledger. Three question-shaped "
+                    "sheets — recipient fanout, volume anomalies, and money "
+                    "trail — each one drilling back into Account "
+                    "Reconciliation or Payment Reconciliation for the row "
+                    "evidence."
+                ),
             ),
         ),
-    ))
-    roadmap = sheet.add_text_box(TextBox(
-        text_box_id="inv-gs-roadmap",
-        content=rt.text_box(
-            rt.heading("Sheets in this dashboard", color=accent),
-            rt.BR,
-            rt.BR,
-            rt.bullets([
-                "Recipient Fanout — who is receiving money from too many "
-                "distinct senders? (live)",
-                "Volume Anomalies — which sender → recipient pair just "
-                "spiked above the rolling baseline? (live)",
-                "Money Trail — where did this transfer originate and "
-                "where does it go? (live)",
-                "Account Network — who does this account exchange money "
-                "with, on either side? (live)",
-            ]),
+        width=_FULL,
+    )
+    sheet.layout.row(height=6).add_text_box(
+        TextBox(
+            text_box_id="inv-gs-roadmap",
+            content=rt.text_box(
+                rt.heading("Sheets in this dashboard", color=accent),
+                rt.BR,
+                rt.BR,
+                rt.bullets([
+                    "Recipient Fanout — who is receiving money from too many "
+                    "distinct senders? (live)",
+                    "Volume Anomalies — which sender → recipient pair just "
+                    "spiked above the rolling baseline? (live)",
+                    "Money Trail — where did this transfer originate and "
+                    "where does it go? (live)",
+                    "Account Network — who does this account exchange money "
+                    "with, on either side? (live)",
+                ]),
+            ),
         ),
-    ))
-
-    sheet.place(welcome, col_span=_FULL, row_span=5, col_index=0)
-    sheet.place(roadmap, col_span=_FULL, row_span=6, col_index=0)
+        width=_FULL,
+    )
 
     return sheet
 
@@ -300,31 +303,35 @@ def _build_recipient_fanout_sheet(
         description=_FANOUT_DESCRIPTION,
     ))
 
-    kpi_recipients = sheet.add_visual(KPI(
-        visual_id=V_INV_FANOUT_KPI_RECIPIENTS,
+    # Row 1: 3 KPIs each ⅓ width.
+    kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
+    kpi_row.add_kpi(
+        width=_THIRD,
         title="Qualifying Recipients",
         subtitle="Distinct recipients meeting the fanout threshold.",
         values=[ds_fanout["recipient_account_id"].distinct_count()],
-    ))
-    kpi_senders = sheet.add_visual(KPI(
-        visual_id=V_INV_FANOUT_KPI_SENDERS,
+    )
+    kpi_row.add_kpi(
+        width=_THIRD,
         title="Distinct Senders",
         subtitle=(
             "Distinct sender accounts feeding the qualifying recipients."
         ),
         values=[ds_fanout["sender_account_id"].distinct_count()],
-    ))
-    kpi_amount = sheet.add_visual(KPI(
-        visual_id=V_INV_FANOUT_KPI_AMOUNT,
+    )
+    kpi_row.add_kpi(
+        width=_THIRD,
         title="Total Inbound",
         subtitle=(
             "Sum of inbound amounts across qualifying recipient legs."
         ),
         values=[ds_fanout["amount"].sum()],
-    ))
+    )
+
+    # Row 2: ranked table full-width.
     distinct_senders_value = Measure.max(ds_fanout, distinct_senders_calc)
-    table = sheet.add_visual(Table(
-        visual_id=V_INV_FANOUT_TABLE,
+    sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
         title="Recipient Fanout — Ranked",
         subtitle=(
             "One row per recipient. Ranked by distinct sender count "
@@ -341,18 +348,7 @@ def _build_recipient_fanout_sheet(
             ds_fanout["amount"].sum(),
         ],
         sort_by=(distinct_senders_value, "DESC"),
-    ))
-
-    # Row 1: 3 KPIs each ⅓ width.
-    sheet.place(kpi_recipients,
-                col_span=_THIRD, row_span=_KPI_ROW_SPAN, col_index=0)
-    sheet.place(kpi_senders,
-                col_span=_THIRD, row_span=_KPI_ROW_SPAN, col_index=_THIRD)
-    sheet.place(kpi_amount,
-                col_span=_THIRD, row_span=_KPI_ROW_SPAN, col_index=_THIRD * 2)
-    # Row 2: table full-width.
-    sheet.place(table,
-                col_span=_FULL, row_span=_TABLE_ROW_SPAN, col_index=0)
+    )
 
     # Date-range window on posted_at — ALL visuals on this sheet. Narrow
     # scope: fanout sheet only, not cross-sheet.
@@ -384,20 +380,20 @@ def _build_recipient_fanout_sheet(
     threshold_fg.scope_sheet(sheet)
 
     # Sheet controls: date range picker + threshold slider.
-    sheet.add_filter_control(FilterDateTimePicker(
+    sheet.add_filter_datetime_picker(
         filter=window_fg.filters[0],
         title="Date Range",
         type="DATE_RANGE",
         control_id="ctrl-inv-fanout-window",
-    ))
-    sheet.add_parameter_control(ParameterSlider(
+    )
+    sheet.add_parameter_slider(
         parameter=threshold_param,
         title="Min distinct senders",
         minimum_value=_FANOUT_SLIDER_MIN,
         maximum_value=_FANOUT_SLIDER_MAX,
         step_size=1,
         control_id="ctrl-inv-fanout-threshold",
-    ))
+    )
 
     return sheet
 
@@ -441,17 +437,21 @@ def _build_volume_anomalies_sheet(
         description=_ANOMALY_DESCRIPTION,
     ))
 
-    kpi_flagged = sheet.add_visual(KPI(
-        visual_id=V_INV_ANOMALIES_KPI_FLAGGED,
+    # Row 1: KPI ⅓ + σ distribution ⅔. Distribution is taller (bucket
+    # bars need the extra vertical space); the row band is sized to fit
+    # the chart, KPI cell expands to match the row height.
+    row1 = sheet.layout.row(height=_KPI_ROW_SPAN * 2)
+    kpi_flagged = row1.add_kpi(
+        width=_THIRD,
         title="Flagged Pair-Windows",
         subtitle=(
             "Pair-windows whose 2-day rolling SUM clears the σ threshold."
         ),
         values=[ds_anomalies["recipient_account_id"].count()],
-    ))
+    )
     dist_bucket_dim = ds_anomalies["z_bucket"].dim()
-    distribution = sheet.add_visual(BarChart(
-        visual_id=V_INV_ANOMALIES_DISTRIBUTION,
+    row1.add_bar_chart(
+        width=_THIRD * 2,
         title="Pair-Window σ Distribution",
         subtitle=(
             "Pair-windows bucketed by |z-score| against the population "
@@ -462,10 +462,12 @@ def _build_volume_anomalies_sheet(
         orientation="VERTICAL",
         bars_arrangement="CLUSTERED",
         sort_by=(dist_bucket_dim, "ASC"),
-    ))
+    )
+
+    # Row 2: ranked table full-width.
     z_score_max = ds_anomalies["z_score"].max()
-    table = sheet.add_visual(Table(
-        visual_id=V_INV_ANOMALIES_TABLE,
+    table = sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
         title="Flagged Pair-Windows — Ranked",
         subtitle=(
             "One row per flagged 2-day window. Ranked by z-score "
@@ -484,16 +486,7 @@ def _build_volume_anomalies_sheet(
             ds_anomalies["transfer_count"].max(),
         ],
         sort_by=(z_score_max, "DESC"),
-    ))
-
-    # Layout: KPI ⅓ + Distribution ⅔ × 2 row span; Table full-width.
-    sheet.place(kpi_flagged,
-                col_span=_THIRD, row_span=_KPI_ROW_SPAN, col_index=0)
-    sheet.place(distribution,
-                col_span=_THIRD * 2, row_span=_KPI_ROW_SPAN * 2,
-                col_index=_THIRD)
-    sheet.place(table,
-                col_span=_FULL, row_span=_TABLE_ROW_SPAN, col_index=0)
+    )
 
     # Window date-range filter: ALL visuals on this sheet (chart + KPI +
     # table all narrow with the date range so the chart's shape stays
@@ -524,22 +517,22 @@ def _build_volume_anomalies_sheet(
             include_minimum=True,
         )],
     ))
-    sigma_fg.scope_visuals(sheet, [kpi_flagged, table])
+    sheet.scope(sigma_fg, [kpi_flagged, table])
 
-    sheet.add_filter_control(FilterDateTimePicker(
+    sheet.add_filter_datetime_picker(
         filter=window_fg.filters[0],
         title="Window End Date",
         type="DATE_RANGE",
         control_id="ctrl-inv-anomalies-window",
-    ))
-    sheet.add_parameter_control(ParameterSlider(
+    )
+    sheet.add_parameter_slider(
         parameter=sigma_param,
         title="Min sigma",
         minimum_value=_SIGMA_SLIDER_MIN,
         maximum_value=_SIGMA_SLIDER_MAX,
         step_size=1,
         control_id="ctrl-inv-anomalies-sigma",
-    ))
+    )
 
     return sheet
 
@@ -598,8 +591,11 @@ def _build_money_trail_sheet(
         description=_MONEY_TRAIL_DESCRIPTION,
     ))
 
-    sankey = sheet.add_visual(Sankey(
-        visual_id=V_INV_MONEY_TRAIL_SANKEY,
+    # Layout: Sankey ⅔ width on the left, hop-by-hop table ⅓ width on
+    # the right. Both span the full table row height.
+    main_row = sheet.layout.row(height=_TABLE_ROW_SPAN)
+    main_row.add_sankey(
+        width=_THIRD * 2,
         title="Money Trail — Chain Sankey",
         subtitle=(
             "Source account → target account ribbons for the selected "
@@ -611,10 +607,10 @@ def _build_money_trail_sheet(
         target=ds_money_trail["target_account_name"].dim(),
         weight=ds_money_trail["hop_amount"].sum(),
         items_limit=_SANKEY_NODE_CAP,
-    ))
+    )
     depth_dim = ds_money_trail["depth"].numerical()
-    table = sheet.add_visual(Table(
-        visual_id=V_INV_MONEY_TRAIL_TABLE,
+    main_row.add_table(
+        width=_THIRD,
         title="Money Trail — Hop-by-Hop",
         subtitle=(
             "Every edge in the selected chain, ordered root → leaf "
@@ -630,14 +626,7 @@ def _build_money_trail_sheet(
         ],
         values=[ds_money_trail["hop_amount"].sum()],
         sort_by=(depth_dim, "ASC"),
-    ))
-
-    # Layout: Sankey ⅔ width on the left, table ⅓ width on the right.
-    sheet.place(sankey,
-                col_span=_THIRD * 2, row_span=_TABLE_ROW_SPAN, col_index=0)
-    sheet.place(table,
-                col_span=_THIRD, row_span=_TABLE_ROW_SPAN,
-                col_index=_THIRD * 2)
+    )
 
     # Chain root: parameter-bound CategoryFilter — narrows to one chain.
     root_fg = analysis.add_filter_group(FilterGroup(
@@ -683,30 +672,30 @@ def _build_money_trail_sheet(
     amount_fg.scope_sheet(sheet)
 
     # All three controls are parameter-driven — no FilterControl widgets.
-    sheet.add_parameter_control(ParameterDropdown(
+    sheet.add_parameter_dropdown(
         parameter=root_param,
         title="Chain root transfer",
         type="SINGLE_SELECT",
         selectable_values=LinkedValues(ds_money_trail["root_transfer_id"]),
         hidden_select_all=True,
         control_id="ctrl-inv-money-trail-root",
-    ))
-    sheet.add_parameter_control(ParameterSlider(
+    )
+    sheet.add_parameter_slider(
         parameter=max_hops_param,
         title="Max hops",
         minimum_value=_HOPS_SLIDER_MIN,
         maximum_value=_HOPS_SLIDER_MAX,
         step_size=1,
         control_id="ctrl-inv-money-trail-hops",
-    ))
-    sheet.add_parameter_control(ParameterSlider(
+    )
+    sheet.add_parameter_slider(
         parameter=min_amount_param,
         title="Min hop amount ($)",
         minimum_value=_AMOUNT_SLIDER_MIN,
         maximum_value=_AMOUNT_SLIDER_MAX,
         step_size=10,
         control_id="ctrl-inv-money-trail-amount",
-    ))
+    )
 
     return sheet
 
@@ -814,9 +803,12 @@ def _build_account_network_sheet(
         P_INV_ANETWORK_ANCHOR, ColumnShape.ACCOUNT_DISPLAY,
     )
 
+    # Row 1: two Sankeys side-by-side (inbound on left, outbound on right).
+    half_width = _FULL // 2
+    sankey_row = sheet.layout.row(height=_TABLE_ROW_SPAN)
     inbound_source_dim = ds_anet["source_display"].dim()
-    inbound_sankey = sheet.add_visual(Sankey(
-        visual_id=V_INV_ANETWORK_SANKEY_INBOUND,
+    inbound_sankey = sankey_row.add_sankey(
+        width=half_width,
         title="Inbound — counterparties → anchor",
         subtitle=(
             "Counterparties sending money INTO the anchor account. "
@@ -834,10 +826,10 @@ def _build_account_network_sheet(
             trigger="DATA_POINT_CLICK",
             action_id="action-anetwork-sankey-inbound-walk",
         )],
-    ))
+    )
     outbound_target_dim = ds_anet["target_display"].dim()
-    outbound_sankey = sheet.add_visual(Sankey(
-        visual_id=V_INV_ANETWORK_SANKEY_OUTBOUND,
+    outbound_sankey = sankey_row.add_sankey(
+        width=half_width,
         title="Outbound — anchor → counterparties",
         subtitle=(
             "Counterparties receiving money FROM the anchor account. "
@@ -855,13 +847,15 @@ def _build_account_network_sheet(
             trigger="DATA_POINT_CLICK",
             action_id="action-anetwork-sankey-outbound-walk",
         )],
-    ))
+    )
+
+    # Row 2: full-width touching-edges table.
     # counterparty_display is a CalcField — Dim(ds, calc_field_ref)
     # carries the calc-field identity through the resolver.
     counterparty_dim = Dim(ds_anet, counterparty_display)
     table_amount = ds_anet["hop_amount"].sum()
-    table = sheet.add_visual(Table(
-        visual_id=V_INV_ANETWORK_TABLE,
+    table = sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
         title="Account Network — Touching Edges",
         subtitle=(
             "Every edge involving the anchor account in either "
@@ -890,54 +884,53 @@ def _build_account_network_sheet(
             trigger="DATA_POINT_MENU",
             action_id="action-anetwork-table-walk-counterparty",
         )],
-    ))
-
-    # Layout: two Sankeys side-by-side on top, full-width table below.
-    half_width = _FULL // 2
-    sheet.place(inbound_sankey,
-                col_span=half_width, row_span=_TABLE_ROW_SPAN, col_index=0)
-    sheet.place(outbound_sankey,
-                col_span=half_width, row_span=_TABLE_ROW_SPAN,
-                col_index=half_width)
-    sheet.place(table,
-                col_span=_FULL, row_span=_TABLE_ROW_SPAN, col_index=0)
+    )
 
     # Anchor filter — table only (broader scope than the directional
     # Sankeys, which use direction-specific calc fields).
-    analysis.add_filter_group(FilterGroup(
-        filter_group_id=FG_INV_ANETWORK_ANCHOR,
-        filters=[CategoryFilter(
-            filter_id="filter-inv-anetwork-anchor",
-            dataset=ds_anet,
-            column=is_anchor_edge,
-            values=["yes"],
-            match_operator="CONTAINS",
-        )],
-    )).scope_visuals(sheet, [table])
+    sheet.scope(
+        analysis.add_filter_group(FilterGroup(
+            filter_group_id=FG_INV_ANETWORK_ANCHOR,
+            filters=[CategoryFilter(
+                filter_id="filter-inv-anetwork-anchor",
+                dataset=ds_anet,
+                column=is_anchor_edge,
+                values=["yes"],
+                match_operator="CONTAINS",
+            )],
+        )),
+        [table],
+    )
 
     # Inbound direction filter — inbound Sankey only.
-    analysis.add_filter_group(FilterGroup(
-        filter_group_id=FG_INV_ANETWORK_INBOUND,
-        filters=[CategoryFilter(
-            filter_id="filter-inv-anetwork-inbound",
-            dataset=ds_anet,
-            column=is_inbound_edge,
-            values=["yes"],
-            match_operator="CONTAINS",
-        )],
-    )).scope_visuals(sheet, [inbound_sankey])
+    sheet.scope(
+        analysis.add_filter_group(FilterGroup(
+            filter_group_id=FG_INV_ANETWORK_INBOUND,
+            filters=[CategoryFilter(
+                filter_id="filter-inv-anetwork-inbound",
+                dataset=ds_anet,
+                column=is_inbound_edge,
+                values=["yes"],
+                match_operator="CONTAINS",
+            )],
+        )),
+        [inbound_sankey],
+    )
 
     # Outbound direction filter — outbound Sankey only.
-    analysis.add_filter_group(FilterGroup(
-        filter_group_id=FG_INV_ANETWORK_OUTBOUND,
-        filters=[CategoryFilter(
-            filter_id="filter-inv-anetwork-outbound",
-            dataset=ds_anet,
-            column=is_outbound_edge,
-            values=["yes"],
-            match_operator="CONTAINS",
-        )],
-    )).scope_visuals(sheet, [outbound_sankey])
+    sheet.scope(
+        analysis.add_filter_group(FilterGroup(
+            filter_group_id=FG_INV_ANETWORK_OUTBOUND,
+            filters=[CategoryFilter(
+                filter_id="filter-inv-anetwork-outbound",
+                dataset=ds_anet,
+                column=is_outbound_edge,
+                values=["yes"],
+                match_operator="CONTAINS",
+            )],
+        )),
+        [outbound_sankey],
+    )
 
     # Min-amount filter — all visuals on the sheet.
     analysis.add_filter_group(FilterGroup(
@@ -955,22 +948,22 @@ def _build_account_network_sheet(
     # Anchor dropdown reads the K.4.8k narrow accounts dataset (not the
     # main matview) to keep the dropdown's distinct-source-display query
     # cheap as the matview grows.
-    sheet.add_parameter_control(ParameterDropdown(
+    sheet.add_parameter_dropdown(
         parameter=anchor_param,
         title="Anchor account",
         type="SINGLE_SELECT",
         selectable_values=LinkedValues(ds_accounts["source_display"]),
         hidden_select_all=True,
         control_id="ctrl-inv-anetwork-anchor",
-    ))
-    sheet.add_parameter_control(ParameterSlider(
+    )
+    sheet.add_parameter_slider(
         parameter=min_amount_param,
         title="Min hop amount ($)",
         minimum_value=_AMOUNT_SLIDER_MIN,
         maximum_value=_AMOUNT_SLIDER_MAX,
         step_size=10,
         control_id="ctrl-inv-anetwork-amount",
-    ))
+    )
 
     return sheet
 
@@ -997,11 +990,10 @@ def build_investigation_app(cfg: Config) -> App:
     _build_volume_anomalies_sheet(cfg, app, analysis)
     _build_money_trail_sheet(cfg, app, analysis)
     _build_account_network_sheet(cfg, app, analysis)
-    app.set_dashboard(Dashboard(
+    app.create_dashboard(
         dashboard_id_suffix="investigation-dashboard",
         name=analysis_name,
-        analysis=analysis,
-    ))
+    )
     return app
 
 
