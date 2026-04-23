@@ -13,7 +13,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from quicksight_gen.common.config import Config
-from quicksight_gen.common.ids import SheetId
 from quicksight_gen.common.models import (
     AnalysisDefinition,
     DashboardPublishOptions,
@@ -31,6 +30,7 @@ from quicksight_gen.common.models import (
 from quicksight_gen.common.models import Analysis as ModelAnalysis
 from quicksight_gen.common.models import Dashboard as ModelDashboard
 
+from quicksight_gen.common.ids import FilterGroupId, SheetId, VisualId
 from quicksight_gen.common.tree._helpers import (
     ANALYSIS_ACTIONS,
     DASHBOARD_ACTIONS,
@@ -139,6 +139,52 @@ class Sheet:
     def add_text_box(self, text_box: SheetTextBox) -> SheetTextBox:
         self.text_boxes.append(text_box)
         return text_box
+
+    def find_visual(
+        self,
+        *,
+        title: str | None = None,
+        title_contains: str | None = None,
+        visual_id: VisualId | str | None = None,
+    ) -> VisualLike:
+        """Look up a single visual on this sheet by title / partial title /
+        visual id.
+
+        Designed for e2e + introspection: pass any of the three lookup
+        keys and get the matching node back. Raises if no match or
+        multiple matches — the API forces unambiguity at the call
+        site so tests can rely on the result.
+
+        Auto-IDs (L.1.8.5) make this the right way to find a visual
+        from outside the tree — IDs are not stable under tree
+        restructuring, but titles + structural position are.
+        """
+        matches: list[VisualLike] = []
+        for v in self.visuals:
+            if visual_id is not None and v.visual_id == visual_id:
+                matches.append(v)
+                continue
+            v_title = getattr(v, "title", None)
+            if title is not None and v_title == title:
+                matches.append(v)
+                continue
+            if title_contains is not None and v_title and title_contains in v_title:
+                matches.append(v)
+                continue
+        if not matches:
+            raise ValueError(
+                f"No visual on sheet {self.sheet_id!r} matches "
+                f"title={title!r} title_contains={title_contains!r} "
+                f"visual_id={visual_id!r}"
+            )
+        if len(matches) > 1:
+            raise ValueError(
+                f"Multiple visuals on sheet {self.sheet_id!r} match "
+                f"title={title!r} title_contains={title_contains!r} "
+                f"visual_id={visual_id!r} — got {len(matches)}; "
+                f"narrow the criteria."
+            )
+        return matches[0]
 
     def place(
         self,
@@ -252,11 +298,12 @@ class Analysis:
     def add_filter_group(self, fg: FilterGroup) -> FilterGroup:
         """Register a filter group on this analysis.
 
-        Construction-time check: filter group IDs are unique. Same
-        shadow-bug class as parameters — two declarations sharing an
-        ID silently let one win at deploy.
+        Construction-time check: explicit filter group IDs are unique.
+        (Auto-IDs are unique by construction — assigned from the
+        index in the analysis's filter_groups list — so the check
+        only applies when callers passed an explicit id.)
         """
-        if any(
+        if fg.filter_group_id is not None and any(
             existing.filter_group_id == fg.filter_group_id
             for existing in self.filter_groups
         ):
@@ -265,6 +312,65 @@ class Analysis:
             )
         self.filter_groups.append(fg)
         return fg
+
+    def find_sheet(
+        self,
+        *,
+        name: str | None = None,
+        sheet_id: SheetId | str | None = None,
+    ) -> Sheet:
+        """Look up a single sheet on this analysis by name or sheet id.
+
+        Raises on no-match or multi-match. Sheet IDs stay explicit
+        (URL-facing per the L.1.8.5 mixed scheme) so passing
+        ``sheet_id=`` is the most robust lookup; ``name=`` is the
+        next-best for tests that don't want to hardcode IDs.
+        """
+        matches = []
+        for s in self.sheets:
+            if sheet_id is not None and s.sheet_id == sheet_id:
+                matches.append(s)
+                continue
+            if name is not None and s.name == name:
+                matches.append(s)
+                continue
+        if not matches:
+            raise ValueError(
+                f"No sheet on Analysis {self.name!r} matches "
+                f"name={name!r} sheet_id={sheet_id!r}"
+            )
+        if len(matches) > 1:
+            raise ValueError(
+                f"Multiple sheets on Analysis {self.name!r} match "
+                f"name={name!r} sheet_id={sheet_id!r} — got {len(matches)}."
+            )
+        return matches[0]
+
+    def find_filter_group(
+        self,
+        *,
+        filter_group_id: FilterGroupId | str | None = None,
+    ) -> FilterGroup:
+        """Look up a single filter group by id (auto or explicit)."""
+        matches = [
+            fg for fg in self.filter_groups
+            if fg.filter_group_id == filter_group_id
+        ]
+        if not matches:
+            raise ValueError(
+                f"No filter group on Analysis {self.name!r} with "
+                f"filter_group_id={filter_group_id!r}"
+            )
+        return matches[0]
+
+    def find_calc_field(self, *, name: str) -> CalcField:
+        """Look up a single calc field by name."""
+        matches = [c for c in self.calc_fields if c.name == name]
+        if not matches:
+            raise ValueError(
+                f"No calc field on Analysis {self.name!r} named {name!r}"
+            )
+        return matches[0]
 
     def add_calc_field(self, calc: CalcField) -> CalcField:
         """Register a calculated field on this analysis.
@@ -454,6 +560,53 @@ class App:
             return set()
         return self.analysis.datasets()
 
+    def find_sheet(
+        self,
+        *,
+        name: str | None = None,
+        sheet_id: SheetId | str | None = None,
+    ) -> Sheet:
+        """Convenience pass-through to ``app.analysis.find_sheet(...)``."""
+        if self.analysis is None:
+            raise ValueError(
+                f"App {self.name!r} has no Analysis — can't find sheets."
+            )
+        return self.analysis.find_sheet(name=name, sheet_id=sheet_id)
+
+    def _resolve_auto_ids(self) -> None:
+        """Walk the tree and assign auto-IDs to nodes that left their
+        IDs unset. Called from emit_analysis / emit_dashboard before
+        any validation or emission.
+
+        L.1.8.5 mixed scheme: only typed Visual subtypes (KPI / Table
+        / BarChart / Sankey) and FilterGroup get auto-IDs. The
+        spike-shape ``VisualNode`` factory wrapper requires explicit
+        visual_id (it's the migration-window helper).
+
+        Auto-ID format:
+        - Visual: ``v-{kind}-s{sheet_idx}-{visual_idx}`` where
+          ``kind`` comes from the visual subtype's ``_AUTO_KIND``
+          (``"kpi"`` / ``"table"`` / ``"bar"`` / ``"sankey"``).
+        - FilterGroup: ``fg-{idx}`` — analysis-scoped (filter
+          groups don't belong to a specific sheet).
+
+        Idempotent: nodes that already have explicit IDs aren't
+        touched.
+        """
+        if self.analysis is None:
+            return
+        for sheet_idx, sheet in enumerate(self.analysis.sheets):
+            for visual_idx, visual in enumerate(sheet.visuals):
+                kind = getattr(visual, "_AUTO_KIND", None)
+                current = getattr(visual, "visual_id", None)
+                if kind is not None and current is None:
+                    visual.visual_id = VisualId(
+                        f"v-{kind}-s{sheet_idx}-{visual_idx}",
+                    )
+        for fg_idx, fg in enumerate(self.analysis.filter_groups):
+            if fg.filter_group_id is None:
+                fg.filter_group_id = FilterGroupId(f"fg-{fg_idx}")
+
     def _validate_dataset_references(self) -> None:
         """Raise if the tree references any Dataset not registered on
         this App. Catches "visual references undeclared dataset" at
@@ -510,6 +663,7 @@ class App:
             raise ValueError(
                 "App has no Analysis — call set_analysis() first."
             )
+        self._resolve_auto_ids()
         self._validate_dataset_references()
         self._validate_calc_field_references()
         return ModelAnalysis(
@@ -529,6 +683,7 @@ class App:
             raise ValueError(
                 "App has no Dashboard — call set_dashboard() first."
             )
+        self._resolve_auto_ids()
         self._validate_dataset_references()
         self._validate_calc_field_references()
         return ModelDashboard(

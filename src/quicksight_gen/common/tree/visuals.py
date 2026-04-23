@@ -11,7 +11,7 @@ at a time.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal, Protocol, runtime_checkable
+from typing import Any, Callable, ClassVar, Literal, Protocol, runtime_checkable
 
 from quicksight_gen.common.ids import VisualId
 from quicksight_gen.common.models import (
@@ -81,11 +81,17 @@ class KPI:
 
     Field-well shape: ``Values=[Measure, ...]``. Most KPIs use one
     measure; multiple are allowed and render as side-by-side numbers.
+
+    ``visual_id`` is optional (L.1.8.5 auto-ID). When omitted, the
+    App's tree walker assigns ``v-kpi-s{sheet_idx}-{visual_idx}`` at
+    emit time. Pass an explicit ``VisualId(...)`` to override.
     """
-    visual_id: VisualId
     title: str
     subtitle: str | None = None
     values: list[Measure] = field(default_factory=list)
+    visual_id: VisualId | None = None
+
+    _AUTO_KIND: ClassVar[str] = "kpi"
 
     def datasets(self) -> set[Dataset]:
         return {m.dataset for m in self.values}
@@ -95,6 +101,10 @@ class KPI:
         return {cf for m in self.values if (cf := m.calc_field()) is not None}
 
     def emit(self) -> Visual:
+        assert self.visual_id is not None, (
+            "visual_id wasn't resolved — App._resolve_auto_ids() must run "
+            "before Visual.emit(). This shouldn't happen via App.emit_*()."
+        )
         return Visual(
             KPIVisual=KPIVisual(
                 VisualId=self.visual_id,
@@ -117,13 +127,17 @@ class Table:
     Field-well shape: ``GroupBy=[Dim, ...]`` + ``Values=[Measure, ...]``.
     Optional ``sort_by`` is a ``(field_id, direction)`` tuple — direction
     is ``"ASC"`` or ``"DESC"``.
+
+    ``visual_id`` is optional (L.1.8.5 auto-ID).
     """
-    visual_id: VisualId
     title: str
     subtitle: str | None = None
     group_by: list[Dim] = field(default_factory=list)
     values: list[Measure] = field(default_factory=list)
     sort_by: tuple[str, Literal["ASC", "DESC"]] | None = None
+    visual_id: VisualId | None = None
+
+    _AUTO_KIND: ClassVar[str] = "table"
 
     def datasets(self) -> set[Dataset]:
         return ({d.dataset for d in self.group_by}
@@ -140,6 +154,9 @@ class Table:
         return deps
 
     def emit(self) -> Visual:
+        assert self.visual_id is not None, (
+            "visual_id wasn't resolved — see KPI.emit assertion."
+        )
         sort_config: Any = None
         if self.sort_by is not None:
             field_id, direction = self.sort_by
@@ -174,12 +191,16 @@ class BarChart:
     Field-well shape: ``Category=[Dim, ...]`` + ``Values=[Measure, ...]``.
     Future: ``orientation: "HORIZONTAL" | "VERTICAL"`` if needed; today
     every BarChart in the codebase is vertical.
+
+    ``visual_id`` is optional (L.1.8.5 auto-ID).
     """
-    visual_id: VisualId
     title: str
     subtitle: str | None = None
     category: list[Dim] = field(default_factory=list)
     values: list[Measure] = field(default_factory=list)
+    visual_id: VisualId | None = None
+
+    _AUTO_KIND: ClassVar[str] = "bar"
 
     def datasets(self) -> set[Dataset]:
         return ({d.dataset for d in self.category}
@@ -196,6 +217,9 @@ class BarChart:
         return deps
 
     def emit(self) -> Visual:
+        assert self.visual_id is not None, (
+            "visual_id wasn't resolved — see KPI.emit assertion."
+        )
         return Visual(
             BarChartVisual=BarChartVisual(
                 VisualId=self.visual_id,
@@ -227,14 +251,18 @@ class Sankey:
     sort configuration). ``OtherCategories`` defaults to ``"INCLUDE"``
     so capped flows roll into a "(others)" bucket rather than being
     dropped silently.
+
+    ``visual_id`` is optional (L.1.8.5 auto-ID).
     """
-    visual_id: VisualId
     title: str
     subtitle: str | None = None
     source: Dim | None = None
     target: Dim | None = None
     weight: Measure | None = None
     items_limit: int | None = None
+    visual_id: VisualId | None = None
+
+    _AUTO_KIND: ClassVar[str] = "sankey"
 
     def datasets(self) -> set[Dataset]:
         deps: set[Dataset] = set()
@@ -256,6 +284,9 @@ class Sankey:
         return deps
 
     def emit(self) -> Visual:
+        assert self.visual_id is not None, (
+            "visual_id wasn't resolved — see KPI.emit assertion."
+        )
         sort_config: Any = None
         if self.weight is not None or self.items_limit is not None:
             sort_config_kwargs: dict[str, Any] = {}

@@ -266,11 +266,15 @@ class FilterGroup:
     ``minimum_parameter`` / ``maximum_parameter``) carry object refs
     to ``ParameterDeclLike`` nodes — the type checker catches
     "filter bound to undeclared parameter" at the wiring site.
+
+    ``filter_group_id`` is optional (L.1.8.5 auto-ID). When omitted,
+    the App's tree walker assigns ``fg-{n}`` at emit time based on
+    the FilterGroup's index in the analysis's filter group list.
     """
-    filter_group_id: FilterGroupId
     filters: list[FilterLike]
     cross_dataset: Literal["SINGLE_DATASET", "ALL_DATASETS"] = "SINGLE_DATASET"
     enabled: bool = True
+    filter_group_id: FilterGroupId | None = None
     _scope_entries: list[tuple["Sheet", list[VisualLike] | None]] = field(
         default_factory=list, init=False, repr=False,
     )
@@ -320,6 +324,10 @@ class FilterGroup:
         return self
 
     def emit(self) -> ModelFilterGroup:
+        assert self.filter_group_id is not None, (
+            "filter_group_id wasn't resolved — App._resolve_auto_ids() "
+            "must run before FilterGroup.emit()."
+        )
         if not self._scope_entries:
             raise ValueError(
                 f"FilterGroup {self.filter_group_id!r} has no scope — "

@@ -1432,3 +1432,230 @@ class TestAppCalcFieldDependencies:
         # Both datasets show up — _DS_FOO from the visual, _DS_ANOMALIES
         # from the registered calc field.
         assert deps == {_DS_FOO, _DS_ANOMALIES}
+
+
+# ---------------------------------------------------------------------------
+# L.1.8.5 — Auto-IDs for internal IDs + tree-query helpers
+# ---------------------------------------------------------------------------
+
+class TestAutoVisualIds:
+    """L.1.8.5: typed Visual subtypes get auto-IDs from their position in
+    the tree when the user doesn't pass one explicitly."""
+
+    def test_kpi_without_visual_id_gets_auto_id_at_emit(self):
+        app = App(name="t", cfg=_TEST_CFG)
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s-test"), name="S", title="S", description="",
+        ))
+        kpi = sheet.add_visual(KPI(
+            title="Flagged",
+            values=[Measure.count(_DS_FOO, "f-cnt", "id")],
+        ))
+        # visual_id is None until emit-time resolution
+        assert kpi.visual_id is None
+        app.emit_analysis()
+        # Now resolved
+        assert kpi.visual_id == "v-kpi-s0-0"
+
+    def test_explicit_visual_id_preserved(self):
+        app = App(name="t", cfg=_TEST_CFG)
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        kpi = sheet.add_visual(KPI(
+            visual_id=VisualId("v-special"),
+            title="Special",
+        ))
+        app.emit_analysis()
+        assert kpi.visual_id == "v-special"
+
+    def test_mixed_explicit_and_auto(self):
+        """Explicit IDs interleave with auto-IDs without conflict —
+        auto-IDs use the position-indexed scheme, explicit ones pass
+        through unchanged."""
+        app = App(name="t", cfg=_TEST_CFG)
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        kpi_a = sheet.add_visual(KPI(title="A"))
+        kpi_b = sheet.add_visual(KPI(title="B", visual_id=VisualId("v-special")))
+        kpi_c = sheet.add_visual(KPI(title="C"))
+        app.emit_analysis()
+        assert kpi_a.visual_id == "v-kpi-s0-0"
+        assert kpi_b.visual_id == "v-special"
+        assert kpi_c.visual_id == "v-kpi-s0-2"
+
+    def test_kind_prefix_distinguishes_visual_types(self):
+        app = App(name="t", cfg=_TEST_CFG)
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        kpi = sheet.add_visual(KPI(title="K"))
+        table = sheet.add_visual(Table(title="T"))
+        bar = sheet.add_visual(BarChart(title="B"))
+        sankey = sheet.add_visual(Sankey(title="S"))
+        app.emit_analysis()
+        assert kpi.visual_id == "v-kpi-s0-0"
+        assert table.visual_id == "v-table-s0-1"
+        assert bar.visual_id == "v-bar-s0-2"
+        assert sankey.visual_id == "v-sankey-s0-3"
+
+    def test_visual_id_is_sheet_scoped(self):
+        """First visual on first sheet vs first visual on second sheet —
+        position resets per sheet, scope encoded in the ID prefix."""
+        app = App(name="t", cfg=_TEST_CFG)
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
+        sheet_a = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s-a"), name="A", title="A", description="",
+        ))
+        sheet_b = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s-b"), name="B", title="B", description="",
+        ))
+        kpi_a = sheet_a.add_visual(KPI(title="A0"))
+        kpi_b = sheet_b.add_visual(KPI(title="B0"))
+        app.emit_analysis()
+        assert kpi_a.visual_id == "v-kpi-s0-0"
+        assert kpi_b.visual_id == "v-kpi-s1-0"
+
+    def test_factory_visual_node_still_requires_explicit_id(self):
+        """The spike-shape VisualNode (factory wrapper) doesn't carry
+        an _AUTO_KIND, so the auto-ID walk skips it. Authors must
+        pass visual_id explicitly when using the factory pattern."""
+        from quicksight_gen.common.models import (
+            KPIConfiguration as _KPIC, KPIFieldWells as _KPIFW,
+            KPIVisual as _KPIV,
+        )
+        from quicksight_gen.common.tree.visuals import VisualNode as _VN
+        sheet = Sheet(sheet_id=SheetId("s"), name="S", title="S", description="")
+        node = sheet.add_visual(_VN(
+            visual_id=VisualId("v-factory-explicit"),
+            builder=lambda: Visual(KPIVisual=_KPIV(
+                VisualId="v-factory-explicit",
+                ChartConfiguration=_KPIC(FieldWells=_KPIFW()),
+            )),
+        ))
+        # Factory wrapper's visual_id is set explicitly; auto-ID walk
+        # doesn't touch it (no _AUTO_KIND).
+        assert node.visual_id == "v-factory-explicit"
+
+
+class TestAutoFilterGroupIds:
+    def test_filter_group_without_id_gets_auto_id(self):
+        app = App(name="t", cfg=_TEST_CFG)
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        kpi = sheet.add_visual(KPI(title="K"))
+        fg = analysis.add_filter_group(FilterGroup(
+            filters=[_category_filter("f-1", _DS_FOO, "col")],
+        ))
+        fg.scope_visuals(sheet, [kpi])
+        assert fg.filter_group_id is None
+        app.emit_analysis()
+        assert fg.filter_group_id == "fg-0"
+
+    def test_explicit_filter_group_id_preserved(self):
+        app = App(name="t", cfg=_TEST_CFG)
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        kpi = sheet.add_visual(KPI(title="K"))
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=FilterGroupId("fg-special"),
+            filters=[_category_filter("f-1", _DS_FOO, "col")],
+        ))
+        fg.scope_visuals(sheet, [kpi])
+        app.emit_analysis()
+        assert fg.filter_group_id == "fg-special"
+
+
+class TestTreeQueryHelpers:
+    """The L.1.8.5 introspection API. e2e tests + the dependency-graph
+    walk consume these instead of importing per-app constants."""
+
+    def _make_app(self) -> tuple[App, Sheet, KPI, Table, FilterGroup]:
+        app = App(name="t", cfg=_TEST_CFG)
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s-anet"),
+            name="Account Network", title="Account Network", description="",
+        ))
+        kpi = sheet.add_visual(KPI(title="Flagged Pair-Windows"))
+        table = sheet.add_visual(Table(title="Account Network — Touching Edges"))
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=FilterGroupId("fg-anchor"),
+            filters=[_category_filter("f-1", _DS_FOO, "col_a")],
+        ))
+        fg.scope_visuals(sheet, [table])
+        return app, sheet, kpi, table, fg
+
+    def test_app_find_sheet_by_name(self):
+        app, sheet, _, _, _ = self._make_app()
+        found = app.find_sheet(name="Account Network")
+        assert found is sheet
+
+    def test_app_find_sheet_by_sheet_id(self):
+        app, sheet, _, _, _ = self._make_app()
+        found = app.find_sheet(sheet_id=SheetId("s-anet"))
+        assert found is sheet
+
+    def test_app_find_sheet_no_match_raises(self):
+        app, _, _, _, _ = self._make_app()
+        with pytest.raises(ValueError, match="No sheet"):
+            app.find_sheet(name="Nonexistent")
+
+    def test_sheet_find_visual_by_title(self):
+        app, sheet, kpi, _, _ = self._make_app()
+        found = sheet.find_visual(title="Flagged Pair-Windows")
+        assert found is kpi
+
+    def test_sheet_find_visual_by_partial_title(self):
+        app, sheet, _, table, _ = self._make_app()
+        found = sheet.find_visual(title_contains="Touching Edges")
+        assert found is table
+
+    def test_sheet_find_visual_no_match_raises(self):
+        app, sheet, _, _, _ = self._make_app()
+        with pytest.raises(ValueError, match="No visual"):
+            sheet.find_visual(title="Doesn't Exist")
+
+    def test_sheet_find_visual_multiple_matches_raises(self):
+        """When the criteria are ambiguous, the helper raises rather
+        than returning a non-deterministic match."""
+        app = App(name="t", cfg=_TEST_CFG)
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        sheet.add_visual(KPI(title="Same Title"))
+        sheet.add_visual(KPI(title="Same Title"))
+        with pytest.raises(ValueError, match="Multiple visuals"):
+            sheet.find_visual(title="Same Title")
+
+    def test_analysis_find_filter_group_by_id(self):
+        app, _, _, _, fg = self._make_app()
+        found = app.analysis.find_filter_group(filter_group_id=FilterGroupId("fg-anchor"))
+        assert found is fg
+
+    def test_analysis_find_calc_field_by_name(self):
+        from quicksight_gen.common.tree import CalcField as _CF
+        cf = _CF(name="my_calc", dataset=_DS_FOO, expression="1")
+        analysis = Analysis(analysis_id_suffix="t", name="T")
+        analysis.add_calc_field(cf)
+        found = analysis.find_calc_field(name="my_calc")
+        assert found is cf
