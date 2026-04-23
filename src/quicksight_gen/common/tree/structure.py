@@ -35,15 +35,9 @@ from quicksight_gen.common.tree._helpers import (
     AUTO,
     AutoResolved,
     DASHBOARD_ACTIONS,
+    GridLayoutElementType,
     _AutoSentinel,
 )
-
-
-# Mirrors GridLayoutElement.ElementType in models.py — kept here so the
-# LayoutNode protocol can declare it cleanly without a circular reference.
-GridLayoutElementType = Literal[
-    "VISUAL", "FILTER_CONTROL", "PARAMETER_CONTROL", "TEXT_BOX", "IMAGE"
-]
 from quicksight_gen.common.tree.actions import Drill
 from quicksight_gen.common.tree.calc_fields import CalcField
 from quicksight_gen.common.tree.controls import (
@@ -51,10 +45,17 @@ from quicksight_gen.common.tree.controls import (
     ParameterControlLike,
 )
 from quicksight_gen.common.tree.datasets import Column, Dataset
+from quicksight_gen.common.tree.fields import Dim, FieldRef, Measure
 from quicksight_gen.common.tree.filters import FilterGroup
 from quicksight_gen.common.tree.parameters import ParameterDeclLike
 from quicksight_gen.common.tree.text_boxes import TextBox
-from quicksight_gen.common.tree.visuals import VisualLike
+from quicksight_gen.common.tree.visuals import (
+    KPI,
+    BarChart,
+    Sankey,
+    Table,
+    VisualLike,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +249,178 @@ class Sheet:
         """
         self.text_boxes.append(text_box)
         return text_box
+
+    # -----------------------------------------------------------------------
+    # L.1.21 — Parent-creates-child shortcuts. Each `add_<kind>` constructs
+    # the visual + registers it on this sheet + places it in the grid in
+    # one atomic call. The old `add_visual` + `place` two-step pattern
+    # required the analyst to keep the visual ref around between calls,
+    # which created two bug classes:
+    #
+    #   1. Constructing a visual outside the sheet (`KPI(...)`) and then
+    #      forgetting to call `add_visual()` — `place()` raised
+    #      "isn't registered on this sheet" at runtime.
+    #   2. Calling `place()` twice on the same visual — `place()` raised
+    #      "is already placed".
+    #
+    # The new shortcuts make both bug classes structurally impossible:
+    # each call constructs a fresh visual that's atomically registered +
+    # placed; there's no opening for the analyst to misuse the API. The
+    # old runtime checks become unreachable code and retire alongside
+    # `add_visual` + `place`.
+    # -----------------------------------------------------------------------
+
+    def add_kpi(
+        self,
+        *,
+        title: str,
+        values: list[Measure],
+        subtitle: str | None = None,
+        visual_id: VisualId | AutoResolved = AUTO,
+        col_span: int,
+        row_span: int,
+        col_index: int,
+        row_index: int | None = None,
+    ) -> KPI:
+        """Construct + register + place a KPI visual on this sheet."""
+        kpi = KPI(
+            title=title, subtitle=subtitle, values=values, visual_id=visual_id,
+        )
+        self.visuals.append(kpi)
+        self.grid_slots.append(GridSlot(
+            element=kpi,
+            col_span=col_span, row_span=row_span,
+            col_index=col_index, row_index=row_index,
+        ))
+        return kpi
+
+    def add_table(
+        self,
+        *,
+        title: str,
+        group_by: list[Dim],
+        values: list[Measure],
+        subtitle: str | None = None,
+        sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None,
+        actions: list[Drill] | None = None,
+        visual_id: VisualId | AutoResolved = AUTO,
+        col_span: int,
+        row_span: int,
+        col_index: int,
+        row_index: int | None = None,
+    ) -> Table:
+        """Construct + register + place a Table visual on this sheet."""
+        table = Table(
+            title=title, subtitle=subtitle, group_by=group_by, values=values,
+            sort_by=sort_by, actions=actions or [], visual_id=visual_id,
+        )
+        self.visuals.append(table)
+        self.grid_slots.append(GridSlot(
+            element=table,
+            col_span=col_span, row_span=row_span,
+            col_index=col_index, row_index=row_index,
+        ))
+        return table
+
+    def add_bar_chart(
+        self,
+        *,
+        title: str,
+        category: list[Dim],
+        values: list[Measure],
+        subtitle: str | None = None,
+        orientation: Literal["HORIZONTAL", "VERTICAL"] | None = None,
+        bars_arrangement: Literal[
+            "CLUSTERED", "STACKED", "STACKED_PERCENT",
+        ] | None = None,
+        sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None,
+        actions: list[Drill] | None = None,
+        visual_id: VisualId | AutoResolved = AUTO,
+        col_span: int,
+        row_span: int,
+        col_index: int,
+        row_index: int | None = None,
+    ) -> BarChart:
+        """Construct + register + place a BarChart visual on this sheet."""
+        bar = BarChart(
+            title=title, subtitle=subtitle, category=category, values=values,
+            orientation=orientation, bars_arrangement=bars_arrangement,
+            sort_by=sort_by, actions=actions or [], visual_id=visual_id,
+        )
+        self.visuals.append(bar)
+        self.grid_slots.append(GridSlot(
+            element=bar,
+            col_span=col_span, row_span=row_span,
+            col_index=col_index, row_index=row_index,
+        ))
+        return bar
+
+    def add_sankey(
+        self,
+        *,
+        title: str,
+        source: Dim,
+        target: Dim,
+        weight: Measure,
+        subtitle: str | None = None,
+        items_limit: int | None = None,
+        actions: list[Drill] | None = None,
+        visual_id: VisualId | AutoResolved = AUTO,
+        col_span: int,
+        row_span: int,
+        col_index: int,
+        row_index: int | None = None,
+    ) -> Sankey:
+        """Construct + register + place a Sankey visual on this sheet."""
+        sankey = Sankey(
+            title=title, subtitle=subtitle, source=source, target=target,
+            weight=weight, items_limit=items_limit, actions=actions or [],
+            visual_id=visual_id,
+        )
+        self.visuals.append(sankey)
+        self.grid_slots.append(GridSlot(
+            element=sankey,
+            col_span=col_span, row_span=row_span,
+            col_index=col_index, row_index=row_index,
+        ))
+        return sankey
+
+    def place_text_box(
+        self,
+        text_box: TextBox,
+        *,
+        col_span: int,
+        row_span: int,
+        col_index: int,
+        row_index: int | None = None,
+    ) -> TextBox:
+        """L.1.21 transitional — construct+place a TextBox on this sheet.
+
+        TextBox is constructed externally (its content is verbose XML);
+        this method registers + places. The two-step ``add_text_box``
+        + ``place`` pattern retires alongside ``Sheet.place`` once the
+        L.1.21 migration completes; for now both work in parallel."""
+        if text_box not in self.text_boxes:
+            self.text_boxes.append(text_box)
+        self.grid_slots.append(GridSlot(
+            element=text_box,
+            col_span=col_span, row_span=row_span,
+            col_index=col_index, row_index=row_index,
+        ))
+        return text_box
+
+    def scope(
+        self, fg: "FilterGroup", visuals: list[VisualLike],
+    ) -> "FilterGroup":
+        """L.1.21 — scope a filter group to specific visuals on this sheet.
+
+        Reads more naturally than ``fg.scope_visuals(sheet, visuals)`` since
+        the sheet is the contextual subject. The runtime check that visuals
+        belong to this sheet stays — Python's type system can't track which
+        ``Sheet`` instance a visual was registered on without dependent
+        types, so the check moves rather than disappears.
+        """
+        return fg.scope_visuals(self, visuals)
 
     def find_visual(
         self,
@@ -679,6 +852,35 @@ class App:
                 "the App owns. Construct the Dashboard with the App's "
                 "Analysis: Dashboard(analysis=app.analysis, ...)."
             )
+        self.dashboard = dashboard
+        return dashboard
+
+    def create_dashboard(
+        self,
+        *,
+        dashboard_id_suffix: str,
+        name: str,
+    ) -> Dashboard:
+        """L.1.21 — construct + register a Dashboard against the App's
+        already-set Analysis.
+
+        Replaces the two-step ``Dashboard(analysis=app.analysis, ...)``
+        + ``app.set_dashboard(dashboard)`` pattern. The App owns the
+        Analysis already; this shortcut prevents the analysis-mismatch
+        bug class by construction — there's no opening to pass a
+        different Analysis. Retires alongside ``App.set_dashboard``
+        once the L.1.21 migration completes.
+        """
+        if self.analysis is None:
+            raise ValueError(
+                "Cannot create_dashboard before set_analysis — "
+                "the dashboard publishes the App's Analysis."
+            )
+        dashboard = Dashboard(
+            dashboard_id_suffix=dashboard_id_suffix,
+            name=name,
+            analysis=self.analysis,
+        )
         self.dashboard = dashboard
         return dashboard
 

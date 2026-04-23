@@ -74,6 +74,17 @@ TimeGranularity = Literal[
 ]
 
 
+# Mirrors GridLayoutElement.ElementType in models.py — kept here so the
+# LayoutNode protocol in structure.py and the typed Visual / TextBox
+# element_type properties in visuals.py / text_boxes.py can both refer
+# to it without a circular import. Two values used in practice today
+# ("VISUAL" + "TEXT_BOX"); the rest reflect QS's API surface so the
+# tree primitives can grow into them.
+GridLayoutElementType = Literal[
+    "VISUAL", "FILTER_CONTROL", "PARAMETER_CONTROL", "TEXT_BOX", "IMAGE",
+]
+
+
 def title_label(text: str) -> VisualTitleLabelOptions:
     return VisualTitleLabelOptions(
         Visibility="VISIBLE", FormatText={"PlainText": text},

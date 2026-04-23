@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from quicksight_gen.common.models import SheetTextBox as ModelSheetTextBox
+from quicksight_gen.common.tree._helpers import GridLayoutElementType
 
 
 @dataclass(eq=False)
@@ -39,7 +40,7 @@ class TextBox:
         return self.text_box_id
 
     @property
-    def element_type(self) -> str:
+    def element_type(self) -> GridLayoutElementType:
         return "TEXT_BOX"
 
     def emit(self) -> ModelSheetTextBox:

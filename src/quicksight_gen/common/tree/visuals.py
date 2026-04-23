@@ -38,6 +38,7 @@ from quicksight_gen.common.models import (
 from quicksight_gen.common.tree._helpers import (
     AUTO,
     AutoResolved,
+    GridLayoutElementType,
     _AutoSentinel,
     subtitle_label,
     title_label,
@@ -113,7 +114,7 @@ class VisualNode:
         return _visual_element_id(self)
 
     @property
-    def element_type(self) -> str:
+    def element_type(self) -> GridLayoutElementType:
         return "VISUAL"
 
     def emit(self) -> Visual:
@@ -151,7 +152,7 @@ class KPI:
         return _visual_element_id(self)
 
     @property
-    def element_type(self) -> str:
+    def element_type(self) -> GridLayoutElementType:
         return "VISUAL"
 
     def datasets(self) -> set[Dataset]:
@@ -209,7 +210,7 @@ class Table:
         return _visual_element_id(self)
 
     @property
-    def element_type(self) -> str:
+    def element_type(self) -> GridLayoutElementType:
         return "VISUAL"
 
     def datasets(self) -> set[Dataset]:
@@ -296,7 +297,7 @@ class BarChart:
         return _visual_element_id(self)
 
     @property
-    def element_type(self) -> str:
+    def element_type(self) -> GridLayoutElementType:
         return "VISUAL"
 
     def datasets(self) -> set[Dataset]:
@@ -382,7 +383,7 @@ class Sankey:
         return _visual_element_id(self)
 
     @property
-    def element_type(self) -> str:
+    def element_type(self) -> GridLayoutElementType:
         return "VISUAL"
 
     def datasets(self) -> set[Dataset]:
