@@ -35,47 +35,424 @@ SankeyDiagramVisual ×2. PieChartVisual is modeled but unused.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Any, Callable, Literal, Protocol, TypeVar, runtime_checkable
+
+# PEP 695 generic syntax `def add_visual[T: VisualLike](...)` would be
+# cleaner but requires Python 3.12+; project targets 3.11+ so we stick
+# with the TypeVar form.
+_VisualT = TypeVar("_VisualT", bound="VisualLike")
 
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.ids import SheetId, VisualId
 from quicksight_gen.common.models import (
     AnalysisDefinition,
+    BarChartAggregatedFieldWells,
+    BarChartConfiguration,
+    BarChartFieldWells,
+    BarChartVisual,
+    CategoricalDimensionField,
+    CategoricalMeasureField,
+    ColumnIdentifier,
     DashboardPublishOptions,
     DataSetIdentifierDeclaration,
+    DateDimensionField,
+    DimensionField,
     GridLayoutConfiguration,
     GridLayoutElement,
+    KPIConfiguration,
+    KPIFieldWells,
+    KPIVisual,
     Layout,
     LayoutConfiguration,
+    MeasureField,
+    NumericalAggregationFunction,
+    NumericalDimensionField,
+    NumericalMeasureField,
     ParameterControl,
     ResourcePermission,
+    SankeyDiagramAggregatedFieldWells,
+    SankeyDiagramChartConfiguration,
+    SankeyDiagramFieldWells,
+    SankeyDiagramSortConfiguration,
+    SankeyDiagramVisual,
     SheetDefinition,
     SheetTextBox,
+    TableAggregatedFieldWells,
+    TableConfiguration,
+    TableFieldWells,
+    TableVisual,
     Visual,
+    VisualSubtitleLabelOptions,
+    VisualTitleLabelOptions,
 )
 from quicksight_gen.common.models import Analysis as ModelAnalysis
 from quicksight_gen.common.models import Dashboard as ModelDashboard
 
 
 # ---------------------------------------------------------------------------
-# Visual + control nodes — L.1.2 ships spike-shape factory wrappers.
-# L.1.3 will introduce typed Visual subtypes (KPI, Table, Bar, Sankey)
-# alongside; the wrappers stay until apps port to typed subtypes.
+# Field-well leaf nodes — Dim + Measure typed wrappers around the
+# DimensionField / MeasureField models. Class-method factories give
+# ergonomic construction (Dim.date(...), Measure.sum(...), ...).
 # ---------------------------------------------------------------------------
+
+DimKind = Literal["categorical", "date", "numerical"]
+
+
+@dataclass
+class Dim:
+    """One dimension field-well entry — typed wrapper that emits a
+    ``DimensionField`` of the appropriate kind.
+
+    Default kind is ``categorical`` (the most common); use the
+    ``date()`` / ``numerical()`` classmethods for the other variants.
+    Values may name a real dataset column or an analysis-level calc
+    field — the tree treats both the same.
+    """
+    dataset: str
+    field_id: str
+    column: str
+    kind: DimKind = "categorical"
+
+    @classmethod
+    def date(cls, dataset: str, field_id: str, column: str) -> Dim:
+        return cls(dataset=dataset, field_id=field_id, column=column, kind="date")
+
+    @classmethod
+    def numerical(cls, dataset: str, field_id: str, column: str) -> Dim:
+        return cls(dataset=dataset, field_id=field_id, column=column, kind="numerical")
+
+    def emit(self) -> DimensionField:
+        col = ColumnIdentifier(
+            DataSetIdentifier=self.dataset, ColumnName=self.column,
+        )
+        if self.kind == "date":
+            return DimensionField(
+                DateDimensionField=DateDimensionField(
+                    FieldId=self.field_id, Column=col,
+                ),
+            )
+        if self.kind == "numerical":
+            return DimensionField(
+                NumericalDimensionField=NumericalDimensionField(
+                    FieldId=self.field_id, Column=col,
+                ),
+            )
+        return DimensionField(
+            CategoricalDimensionField=CategoricalDimensionField(
+                FieldId=self.field_id, Column=col,
+            ),
+        )
+
+
+# Measure aggregation kinds — split into "categorical" (COUNT,
+# DISTINCT_COUNT — read off any column type) and "numerical" (SUM,
+# MAX, MIN, AVERAGE — require a numeric column). The split mirrors
+# the underlying ``CategoricalMeasureField`` vs ``NumericalMeasureField``
+# distinction in models.py.
+MeasureKind = Literal[
+    "sum", "max", "min", "average",          # → NumericalMeasureField
+    "count", "distinct_count",               # → CategoricalMeasureField
+]
+
+
+_NUMERICAL_AGG = {
+    "sum": "SUM", "max": "MAX", "min": "MIN", "average": "AVERAGE",
+}
+_CATEGORICAL_AGG = {
+    "count": "COUNT", "distinct_count": "DISTINCT_COUNT",
+}
+
+
+@dataclass
+class Measure:
+    """One value field-well entry — typed wrapper that emits a
+    ``MeasureField`` with the appropriate aggregation shape.
+
+    Use the classmethod factories for ergonomic construction:
+    ``Measure.sum(...)``, ``Measure.distinct_count(...)``, etc.
+    Aggregation kind determines which underlying model class is
+    emitted (numerical aggregations on numeric columns,
+    categorical on count-style aggregations).
+    """
+    dataset: str
+    field_id: str
+    column: str
+    kind: MeasureKind
+
+    @classmethod
+    def sum(cls, dataset: str, field_id: str, column: str) -> Measure:
+        return cls(dataset=dataset, field_id=field_id, column=column, kind="sum")
+
+    @classmethod
+    def max(cls, dataset: str, field_id: str, column: str) -> Measure:
+        return cls(dataset=dataset, field_id=field_id, column=column, kind="max")
+
+    @classmethod
+    def min(cls, dataset: str, field_id: str, column: str) -> Measure:
+        return cls(dataset=dataset, field_id=field_id, column=column, kind="min")
+
+    @classmethod
+    def average(cls, dataset: str, field_id: str, column: str) -> Measure:
+        return cls(dataset=dataset, field_id=field_id, column=column, kind="average")
+
+    @classmethod
+    def count(cls, dataset: str, field_id: str, column: str) -> Measure:
+        return cls(dataset=dataset, field_id=field_id, column=column, kind="count")
+
+    @classmethod
+    def distinct_count(
+        cls, dataset: str, field_id: str, column: str,
+    ) -> Measure:
+        return cls(
+            dataset=dataset, field_id=field_id, column=column,
+            kind="distinct_count",
+        )
+
+    def emit(self) -> MeasureField:
+        col = ColumnIdentifier(
+            DataSetIdentifier=self.dataset, ColumnName=self.column,
+        )
+        if self.kind in _CATEGORICAL_AGG:
+            return MeasureField(
+                CategoricalMeasureField=CategoricalMeasureField(
+                    FieldId=self.field_id,
+                    Column=col,
+                    AggregationFunction=_CATEGORICAL_AGG[self.kind],
+                ),
+            )
+        return MeasureField(
+            NumericalMeasureField=NumericalMeasureField(
+                FieldId=self.field_id,
+                Column=col,
+                AggregationFunction=NumericalAggregationFunction(
+                    SimpleNumericalAggregation=_NUMERICAL_AGG[self.kind],
+                ),
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Title / subtitle helpers — port of apps/investigation/visuals.py's
+# private _title / _subtitle. Lifted into common/ so visual subtypes
+# don't carry their own copies.
+# ---------------------------------------------------------------------------
+
+def _title_label(text: str) -> VisualTitleLabelOptions:
+    return VisualTitleLabelOptions(
+        Visibility="VISIBLE", FormatText={"PlainText": text},
+    )
+
+
+def _subtitle_label(text: str) -> VisualSubtitleLabelOptions:
+    return VisualSubtitleLabelOptions(
+        Visibility="VISIBLE", FormatText={"PlainText": text},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Visual node Protocol + typed subtypes per visual kind.
+#
+# Every visual node — typed subtype or spike-shape factory wrapper —
+# exposes ``visual_id`` and ``emit() -> Visual``. ``VisualLike``
+# captures that as a Protocol so ``Sheet.add_visual`` and
+# ``GridSlot.visual`` accept any node satisfying the shape.
+# ---------------------------------------------------------------------------
+
+@runtime_checkable
+class VisualLike(Protocol):
+    """Structural type for tree-level visual nodes.
+
+    Both ``VisualNode`` (the spike-shape factory wrapper) and the
+    L.1.3 typed subtypes (``KPI`` / ``Table`` / ``BarChart`` /
+    ``Sankey``) satisfy this Protocol — duck-typed so subtypes don't
+    have to inherit from a base class.
+    """
+    visual_id: VisualId
+
+    def emit(self) -> Visual: ...
+
 
 @dataclass
 class VisualNode:
     """Spike-shape factory wrapper for a Visual.
 
-    L.1.3 introduces typed subtypes per visual kind; this wrapper stays
-    until apps migrate. Keep `visual_id` as the node's identity and the
-    factory callable as the source of the underlying Visual.
+    Kept for migration during L.1 — apps port from this factory
+    pattern to the typed subtypes (``KPI`` / ``Table`` / ``BarChart``
+    / ``Sankey``) one app at a time. The wrapper itself is removed
+    once all three apps and the new Executives app are on the
+    typed subtypes.
     """
     visual_id: VisualId
     builder: Callable[[], Visual]
 
     def emit(self) -> Visual:
         return self.builder()
+
+
+@dataclass
+class KPI:
+    """KPI visual — single number per ``values`` entry, no grouping.
+
+    Field-well shape: ``Values=[Measure, ...]``. Most KPIs use one
+    measure; multiple are allowed and render as side-by-side numbers.
+    """
+    visual_id: VisualId
+    title: str
+    subtitle: str | None = None
+    values: list[Measure] = field(default_factory=list)
+
+    def emit(self) -> Visual:
+        return Visual(
+            KPIVisual=KPIVisual(
+                VisualId=self.visual_id,
+                Title=_title_label(self.title),
+                Subtitle=_subtitle_label(self.subtitle) if self.subtitle else None,
+                ChartConfiguration=KPIConfiguration(
+                    FieldWells=KPIFieldWells(
+                        Values=[m.emit() for m in self.values] if self.values else None,
+                    ),
+                ),
+            ),
+        )
+
+
+@dataclass
+class Table:
+    """Table visual — one row per distinct combination of ``group_by``,
+    aggregated by ``values``.
+
+    Field-well shape: ``GroupBy=[Dim, ...]`` + ``Values=[Measure, ...]``.
+    Optional ``sort_by`` is a ``(field_id, direction)`` tuple — direction
+    is ``"ASC"`` or ``"DESC"``.
+    """
+    visual_id: VisualId
+    title: str
+    subtitle: str | None = None
+    group_by: list[Dim] = field(default_factory=list)
+    values: list[Measure] = field(default_factory=list)
+    sort_by: tuple[str, Literal["ASC", "DESC"]] | None = None
+
+    def emit(self) -> Visual:
+        sort_config: Any = None
+        if self.sort_by is not None:
+            field_id, direction = self.sort_by
+            sort_config = {
+                "RowSort": [
+                    {"FieldSort": {"FieldId": field_id, "Direction": direction}},
+                ],
+            }
+        return Visual(
+            TableVisual=TableVisual(
+                VisualId=self.visual_id,
+                Title=_title_label(self.title),
+                Subtitle=_subtitle_label(self.subtitle) if self.subtitle else None,
+                ChartConfiguration=TableConfiguration(
+                    FieldWells=TableFieldWells(
+                        TableAggregatedFieldWells=TableAggregatedFieldWells(
+                            GroupBy=[d.emit() for d in self.group_by] if self.group_by else None,
+                            Values=[m.emit() for m in self.values] if self.values else None,
+                        ),
+                    ),
+                    SortConfiguration=sort_config,
+                ),
+            ),
+        )
+
+
+@dataclass
+class BarChart:
+    """Bar chart visual — one bar per distinct ``category``, height by
+    ``values``.
+
+    Field-well shape: ``Category=[Dim, ...]`` + ``Values=[Measure, ...]``.
+    Future: ``orientation: "HORIZONTAL" | "VERTICAL"`` if needed; today
+    every BarChart in the codebase is vertical.
+    """
+    visual_id: VisualId
+    title: str
+    subtitle: str | None = None
+    category: list[Dim] = field(default_factory=list)
+    values: list[Measure] = field(default_factory=list)
+
+    def emit(self) -> Visual:
+        return Visual(
+            BarChartVisual=BarChartVisual(
+                VisualId=self.visual_id,
+                Title=_title_label(self.title),
+                Subtitle=_subtitle_label(self.subtitle) if self.subtitle else None,
+                ChartConfiguration=BarChartConfiguration(
+                    FieldWells=BarChartFieldWells(
+                        BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
+                            Category=[d.emit() for d in self.category] if self.category else None,
+                            Values=[m.emit() for m in self.values] if self.values else None,
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+
+@dataclass
+class Sankey:
+    """Sankey diagram visual — flows from ``source`` nodes to
+    ``target`` nodes, ribbon thickness by ``weight``.
+
+    Field-well shape: each of ``source`` / ``target`` / ``weight`` is
+    a single ``Dim`` / ``Measure`` (the underlying model expects
+    lists, but every usage today has exactly one entry; emit wraps).
+
+    ``items_limit`` caps the number of source / destination nodes
+    rendered (matches the ``ItemsLimit`` shape on the underlying
+    sort configuration). ``OtherCategories`` defaults to ``"INCLUDE"``
+    so capped flows roll into a "(others)" bucket rather than being
+    dropped silently.
+    """
+    visual_id: VisualId
+    title: str
+    subtitle: str | None = None
+    source: Dim | None = None
+    target: Dim | None = None
+    weight: Measure | None = None
+    items_limit: int | None = None
+
+    def emit(self) -> Visual:
+        sort_config: Any = None
+        if self.weight is not None or self.items_limit is not None:
+            sort_config_kwargs: dict[str, Any] = {}
+            if self.weight is not None:
+                sort_config_kwargs["WeightSort"] = [
+                    {
+                        "FieldSort": {
+                            "FieldId": self.weight.field_id,
+                            "Direction": "DESC",
+                        },
+                    },
+                ]
+            if self.items_limit is not None:
+                limit_block = {
+                    "ItemsLimit": self.items_limit,
+                    "OtherCategories": "INCLUDE",
+                }
+                sort_config_kwargs["SourceItemsLimit"] = limit_block
+                sort_config_kwargs["DestinationItemsLimit"] = limit_block
+            sort_config = SankeyDiagramSortConfiguration(**sort_config_kwargs)
+        return Visual(
+            SankeyDiagramVisual=SankeyDiagramVisual(
+                VisualId=self.visual_id,
+                Title=_title_label(self.title),
+                Subtitle=_subtitle_label(self.subtitle) if self.subtitle else None,
+                ChartConfiguration=SankeyDiagramChartConfiguration(
+                    FieldWells=SankeyDiagramFieldWells(
+                        SankeyDiagramAggregatedFieldWells=SankeyDiagramAggregatedFieldWells(
+                            Source=[self.source.emit()] if self.source else None,
+                            Destination=[self.target.emit()] if self.target else None,
+                            Weight=[self.weight.emit()] if self.weight else None,
+                        ),
+                    ),
+                    SortConfiguration=sort_config,
+                ),
+            ),
+        )
 
 
 @dataclass
@@ -99,12 +476,14 @@ class ParameterControlNode:
 class GridSlot:
     """One placement in a sheet's grid layout.
 
-    Holds an OBJECT reference to the placed ``VisualNode`` — the locked
+    Holds an OBJECT reference to the placed visual node — the locked
     decision is cross-references via object refs, not via ``VisualId``
     strings. The element id is read off the referenced node at emit
-    time.
+    time. ``visual`` accepts any ``VisualLike`` — the spike-shape
+    ``VisualNode`` factory wrapper, or the typed subtypes (``KPI``,
+    ``Table``, ``BarChart``, ``Sankey``).
     """
-    visual: VisualNode
+    visual: VisualLike
     col_span: int
     row_span: int
     col_index: int
@@ -139,7 +518,7 @@ class Sheet:
     name: str
     title: str
     description: str
-    visuals: list[VisualNode] = field(default_factory=list)
+    visuals: list[VisualLike] = field(default_factory=list)
     parameter_controls: list[ParameterControlNode] = field(default_factory=list)
     text_boxes: list[SheetTextBox] = field(default_factory=list)
     grid_slots: list[GridSlot] = field(default_factory=list)
@@ -147,7 +526,14 @@ class Sheet:
     # TextBoxes are passed through directly for now; a TextBoxNode
     # comes when the rich-text helper is ported.
 
-    def add_visual(self, node: VisualNode) -> VisualNode:
+    def add_visual(self, node: _VisualT) -> _VisualT:
+        """Register a visual on this sheet.
+
+        Accepts any ``VisualLike`` — spike-shape ``VisualNode`` or
+        typed subtype (``KPI`` / ``Table`` / ``BarChart`` / ``Sankey``).
+        Generic over ``T`` so the caller's variable keeps the concrete
+        subtype rather than widening to the Protocol.
+        """
         self.visuals.append(node)
         return node
 
@@ -163,7 +549,7 @@ class Sheet:
 
     def place(
         self,
-        visual: VisualNode,
+        visual: VisualLike,
         *,
         col_span: int,
         row_span: int,

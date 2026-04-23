@@ -19,12 +19,19 @@ from quicksight_gen.common.models import (
     Visual,
 )
 from quicksight_gen.common.tree import (
+    KPI,
     Analysis,
     App,
+    BarChart,
     Dashboard,
+    Dim,
     GridSlot,
+    Measure,
     ParameterControlNode,
+    Sankey,
     Sheet,
+    Table,
+    VisualLike,
     VisualNode,
 )
 
@@ -283,3 +290,208 @@ class TestApp:
         assert "Definition" in j
         assert len(j["Definition"]["Sheets"]) == 1
         assert j["Definition"]["Sheets"][0]["SheetId"] == "sheet-1"
+
+
+# ---------------------------------------------------------------------------
+# L.1.3 — Field-well wrappers (Dim, Measure)
+# ---------------------------------------------------------------------------
+
+class TestDim:
+    def test_categorical_default(self):
+        dim = Dim(dataset="ds-foo", field_id="f-1", column="col_a")
+        emitted = dim.emit()
+        assert emitted.CategoricalDimensionField is not None
+        assert emitted.CategoricalDimensionField.FieldId == "f-1"
+        assert emitted.CategoricalDimensionField.Column.ColumnName == "col_a"
+        assert emitted.CategoricalDimensionField.Column.DataSetIdentifier == "ds-foo"
+
+    def test_date_factory(self):
+        dim = Dim.date(dataset="ds-foo", field_id="f-d", column="posted_at")
+        emitted = dim.emit()
+        assert emitted.DateDimensionField is not None
+        assert emitted.CategoricalDimensionField is None
+
+    def test_numerical_factory(self):
+        dim = Dim.numerical(dataset="ds-foo", field_id="f-n", column="depth")
+        emitted = dim.emit()
+        assert emitted.NumericalDimensionField is not None
+
+
+class TestMeasure:
+    def test_sum_emits_numerical_field(self):
+        m = Measure.sum(dataset="ds-foo", field_id="f-1", column="amount")
+        emitted = m.emit()
+        assert emitted.NumericalMeasureField is not None
+        assert emitted.NumericalMeasureField.AggregationFunction.SimpleNumericalAggregation == "SUM"
+
+    def test_max_min_average(self):
+        for kind, expected in [("max", "MAX"), ("min", "MIN"), ("average", "AVERAGE")]:
+            m = getattr(Measure, kind)(dataset="ds", field_id=f"f-{kind}", column="amount")
+            emitted = m.emit()
+            assert emitted.NumericalMeasureField.AggregationFunction.SimpleNumericalAggregation == expected
+
+    def test_count_emits_categorical_field(self):
+        m = Measure.count(dataset="ds-foo", field_id="f-1", column="account_id")
+        emitted = m.emit()
+        assert emitted.CategoricalMeasureField is not None
+        assert emitted.CategoricalMeasureField.AggregationFunction == "COUNT"
+
+    def test_distinct_count_emits_categorical_field(self):
+        m = Measure.distinct_count(dataset="ds-foo", field_id="f-1", column="account_id")
+        emitted = m.emit()
+        assert emitted.CategoricalMeasureField is not None
+        assert emitted.CategoricalMeasureField.AggregationFunction == "DISTINCT_COUNT"
+
+
+# ---------------------------------------------------------------------------
+# L.1.3 — Typed Visual subtypes
+# ---------------------------------------------------------------------------
+
+class TestKPIVisual:
+    def test_emits_kpi_visual(self):
+        kpi = KPI(
+            visual_id=VisualId("v-kpi"),
+            title="Total",
+            subtitle="Sum of amounts",
+            values=[Measure.sum("ds-foo", "f-val", "amount")],
+        )
+        emitted = kpi.emit()
+        assert emitted.KPIVisual is not None
+        assert emitted.KPIVisual.VisualId == "v-kpi"
+        assert emitted.KPIVisual.Title.FormatText["PlainText"] == "Total"
+        assert emitted.KPIVisual.Subtitle.FormatText["PlainText"] == "Sum of amounts"
+
+    def test_subtitle_optional(self):
+        kpi = KPI(
+            visual_id=VisualId("v-kpi"),
+            title="Total",
+            values=[Measure.sum("ds-foo", "f-val", "amount")],
+        )
+        emitted = kpi.emit()
+        assert emitted.KPIVisual.Subtitle is None
+
+    def test_satisfies_visual_like_protocol(self):
+        kpi = KPI(visual_id=VisualId("v-kpi"), title="Test")
+        assert isinstance(kpi, VisualLike)
+
+
+class TestTableVisual:
+    def test_emits_table_with_group_by_and_values(self):
+        table = Table(
+            visual_id=VisualId("v-tbl"),
+            title="Detail",
+            group_by=[
+                Dim(dataset="ds", field_id="f-id", column="id"),
+                Dim(dataset="ds", field_id="f-name", column="name"),
+            ],
+            values=[Measure.sum(dataset="ds", field_id="f-amt", column="amount")],
+        )
+        emitted = table.emit()
+        assert emitted.TableVisual is not None
+        wells = emitted.TableVisual.ChartConfiguration.FieldWells.TableAggregatedFieldWells
+        assert len(wells.GroupBy) == 2
+        assert len(wells.Values) == 1
+
+    def test_sort_by(self):
+        table = Table(
+            visual_id=VisualId("v-tbl"),
+            title="Detail",
+            sort_by=("f-amt", "DESC"),
+        )
+        emitted = table.emit()
+        sort = emitted.TableVisual.ChartConfiguration.SortConfiguration
+        assert sort["RowSort"][0]["FieldSort"]["FieldId"] == "f-amt"
+        assert sort["RowSort"][0]["FieldSort"]["Direction"] == "DESC"
+
+
+class TestBarChartVisual:
+    def test_emits_bar_with_category_and_values(self):
+        bar = BarChart(
+            visual_id=VisualId("v-bar"),
+            title="By Bucket",
+            category=[Dim(dataset="ds", field_id="f-bucket", column="z_bucket")],
+            values=[Measure.count(dataset="ds", field_id="f-cnt", column="recipient_id")],
+        )
+        emitted = bar.emit()
+        assert emitted.BarChartVisual is not None
+        wells = emitted.BarChartVisual.ChartConfiguration.FieldWells.BarChartAggregatedFieldWells
+        assert len(wells.Category) == 1
+        assert len(wells.Values) == 1
+
+
+class TestSankeyVisual:
+    def test_emits_sankey_with_source_target_weight(self):
+        sankey = Sankey(
+            visual_id=VisualId("v-sankey"),
+            title="Flow",
+            source=Dim(dataset="ds", field_id="f-src", column="source_display"),
+            target=Dim(dataset="ds", field_id="f-tgt", column="target_display"),
+            weight=Measure.sum(dataset="ds", field_id="f-wt", column="hop_amount"),
+            items_limit=50,
+        )
+        emitted = sankey.emit()
+        assert emitted.SankeyDiagramVisual is not None
+        wells = emitted.SankeyDiagramVisual.ChartConfiguration.FieldWells.SankeyDiagramAggregatedFieldWells
+        assert len(wells.Source) == 1
+        assert wells.Source[0].CategoricalDimensionField.Column.ColumnName == "source_display"
+        assert len(wells.Destination) == 1
+        assert wells.Destination[0].CategoricalDimensionField.Column.ColumnName == "target_display"
+        assert len(wells.Weight) == 1
+
+    def test_weight_drives_sort_desc(self):
+        sankey = Sankey(
+            visual_id=VisualId("v-sankey"),
+            title="Flow",
+            weight=Measure.sum(dataset="ds", field_id="f-wt", column="hop_amount"),
+        )
+        emitted = sankey.emit()
+        sort = emitted.SankeyDiagramVisual.ChartConfiguration.SortConfiguration
+        assert sort.WeightSort[0]["FieldSort"]["FieldId"] == "f-wt"
+        assert sort.WeightSort[0]["FieldSort"]["Direction"] == "DESC"
+
+    def test_items_limit_caps_both_sides(self):
+        sankey = Sankey(
+            visual_id=VisualId("v-sankey"),
+            title="Flow",
+            items_limit=25,
+        )
+        emitted = sankey.emit()
+        sort = emitted.SankeyDiagramVisual.ChartConfiguration.SortConfiguration
+        assert sort.SourceItemsLimit["ItemsLimit"] == 25
+        assert sort.DestinationItemsLimit["ItemsLimit"] == 25
+        assert sort.SourceItemsLimit["OtherCategories"] == "INCLUDE"
+
+
+class TestSheetAcceptsTypedVisuals:
+    """Sheet.add_visual accepts both spike-shape VisualNode and typed
+    subtypes — same VisualLike Protocol path."""
+
+    def test_add_kpi(self):
+        sheet = Sheet(
+            sheet_id=SheetId("sheet-test"),
+            name="Test", title="Test", description="",
+        )
+        kpi = sheet.add_visual(KPI(
+            visual_id=VisualId("v-kpi"),
+            title="Total",
+            values=[Measure.sum("ds", "f", "amount")],
+        ))
+        sheet.place(kpi, col_span=12, row_span=6, col_index=0)
+        emitted = sheet.emit()
+        assert emitted.Visuals[0].KPIVisual.VisualId == "v-kpi"
+        assert emitted.Layouts[0].Configuration.GridLayout.Elements[0].ElementId == "v-kpi"
+
+    def test_add_visual_returns_concrete_subtype(self):
+        """Generic add_visual preserves the caller's concrete subtype
+        — the returned ref still types as KPI, not the widened
+        VisualLike Protocol."""
+        sheet = Sheet(
+            sheet_id=SheetId("sheet-test"),
+            name="Test", title="Test", description="",
+        )
+        kpi: KPI = sheet.add_visual(KPI(
+            visual_id=VisualId("v-kpi"), title="Test",
+        ))
+        # If the generic worked, kpi is still a KPI — accessing
+        # KPI-only attributes shouldn't widen.
+        assert kpi.title == "Test"
