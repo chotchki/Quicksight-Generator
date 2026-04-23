@@ -35,6 +35,7 @@ from quicksight_gen.common.models import (
 )
 
 from quicksight_gen.common.tree._helpers import _subtitle_label, _title_label
+from quicksight_gen.common.tree.datasets import Dataset
 from quicksight_gen.common.tree.fields import Dim, Measure
 
 
@@ -46,6 +47,12 @@ class VisualLike(Protocol):
     typed subtypes (``KPI`` / ``Table`` / ``BarChart`` / ``Sankey``)
     satisfy this Protocol — duck-typed so subtypes don't have to
     inherit from a base class.
+
+    Typed subtypes also expose ``datasets() -> set[Dataset]`` for the
+    L.1.7 dependency-graph walk; the spike-shape ``VisualNode`` does
+    not (its factory callable hides its dataset references). Apps
+    using factory wrappers don't contribute to dependency tracking;
+    typed subtypes do.
     """
     visual_id: VisualId
 
@@ -79,6 +86,9 @@ class KPI:
     subtitle: str | None = None
     values: list[Measure] = field(default_factory=list)
 
+    def datasets(self) -> set[Dataset]:
+        return {m.dataset for m in self.values}
+
     def emit(self) -> Visual:
         return Visual(
             KPIVisual=KPIVisual(
@@ -109,6 +119,10 @@ class Table:
     group_by: list[Dim] = field(default_factory=list)
     values: list[Measure] = field(default_factory=list)
     sort_by: tuple[str, Literal["ASC", "DESC"]] | None = None
+
+    def datasets(self) -> set[Dataset]:
+        return ({d.dataset for d in self.group_by}
+                | {m.dataset for m in self.values})
 
     def emit(self) -> Visual:
         sort_config: Any = None
@@ -152,6 +166,10 @@ class BarChart:
     category: list[Dim] = field(default_factory=list)
     values: list[Measure] = field(default_factory=list)
 
+    def datasets(self) -> set[Dataset]:
+        return ({d.dataset for d in self.category}
+                | {m.dataset for m in self.values})
+
     def emit(self) -> Visual:
         return Visual(
             BarChartVisual=BarChartVisual(
@@ -192,6 +210,16 @@ class Sankey:
     target: Dim | None = None
     weight: Measure | None = None
     items_limit: int | None = None
+
+    def datasets(self) -> set[Dataset]:
+        deps: set[Dataset] = set()
+        if self.source is not None:
+            deps.add(self.source.dataset)
+        if self.target is not None:
+            deps.add(self.target.dataset)
+        if self.weight is not None:
+            deps.add(self.weight.dataset)
+        return deps
 
     def emit(self) -> Visual:
         sort_config: Any = None

@@ -24,6 +24,7 @@ from quicksight_gen.common.models import (
     NumericalDimensionField,
     NumericalMeasureField,
 )
+from quicksight_gen.common.tree.datasets import Dataset
 
 
 DimKind = Literal["categorical", "date", "numerical"]
@@ -34,27 +35,32 @@ class Dim:
     """One dimension field-well entry — typed wrapper that emits a
     ``DimensionField`` of the appropriate kind.
 
+    ``dataset`` is a ``Dataset`` object ref — the locked L.1.7 hard
+    switch. The dataset must be registered on the parent ``App`` (via
+    ``app.add_dataset()``) for the analysis to emit; the emit-time
+    dependency-graph check raises if not.
+
     Default kind is ``categorical`` (the most common); use the
     ``date()`` / ``numerical()`` classmethods for the other variants.
-    Values may name a real dataset column or an analysis-level calc
-    field — the tree treats both the same.
+    ``column`` may name a real dataset column or an analysis-level
+    calc field — the tree treats both the same.
     """
-    dataset: str
+    dataset: Dataset
     field_id: str
     column: str
     kind: DimKind = "categorical"
 
     @classmethod
-    def date(cls, dataset: str, field_id: str, column: str) -> Dim:
+    def date(cls, dataset: Dataset, field_id: str, column: str) -> Dim:
         return cls(dataset=dataset, field_id=field_id, column=column, kind="date")
 
     @classmethod
-    def numerical(cls, dataset: str, field_id: str, column: str) -> Dim:
+    def numerical(cls, dataset: Dataset, field_id: str, column: str) -> Dim:
         return cls(dataset=dataset, field_id=field_id, column=column, kind="numerical")
 
     def emit(self) -> DimensionField:
         col = ColumnIdentifier(
-            DataSetIdentifier=self.dataset, ColumnName=self.column,
+            DataSetIdentifier=self.dataset.identifier, ColumnName=self.column,
         )
         if self.kind == "date":
             return DimensionField(
@@ -98,40 +104,44 @@ class Measure:
     """One value field-well entry — typed wrapper that emits a
     ``MeasureField`` with the appropriate aggregation shape.
 
+    ``dataset`` is a ``Dataset`` object ref (L.1.7 hard switch). The
+    dataset must be registered on the parent ``App`` for the analysis
+    to emit.
+
     Use the classmethod factories for ergonomic construction:
     ``Measure.sum(...)``, ``Measure.distinct_count(...)``, etc.
     Aggregation kind determines which underlying model class is
     emitted (numerical aggregations on numeric columns,
     categorical on count-style aggregations).
     """
-    dataset: str
+    dataset: Dataset
     field_id: str
     column: str
     kind: MeasureKind
 
     @classmethod
-    def sum(cls, dataset: str, field_id: str, column: str) -> Measure:
+    def sum(cls, dataset: Dataset, field_id: str, column: str) -> Measure:
         return cls(dataset=dataset, field_id=field_id, column=column, kind="sum")
 
     @classmethod
-    def max(cls, dataset: str, field_id: str, column: str) -> Measure:
+    def max(cls, dataset: Dataset, field_id: str, column: str) -> Measure:
         return cls(dataset=dataset, field_id=field_id, column=column, kind="max")
 
     @classmethod
-    def min(cls, dataset: str, field_id: str, column: str) -> Measure:
+    def min(cls, dataset: Dataset, field_id: str, column: str) -> Measure:
         return cls(dataset=dataset, field_id=field_id, column=column, kind="min")
 
     @classmethod
-    def average(cls, dataset: str, field_id: str, column: str) -> Measure:
+    def average(cls, dataset: Dataset, field_id: str, column: str) -> Measure:
         return cls(dataset=dataset, field_id=field_id, column=column, kind="average")
 
     @classmethod
-    def count(cls, dataset: str, field_id: str, column: str) -> Measure:
+    def count(cls, dataset: Dataset, field_id: str, column: str) -> Measure:
         return cls(dataset=dataset, field_id=field_id, column=column, kind="count")
 
     @classmethod
     def distinct_count(
-        cls, dataset: str, field_id: str, column: str,
+        cls, dataset: Dataset, field_id: str, column: str,
     ) -> Measure:
         return cls(
             dataset=dataset, field_id=field_id, column=column,
@@ -140,7 +150,7 @@ class Measure:
 
     def emit(self) -> MeasureField:
         col = ColumnIdentifier(
-            DataSetIdentifier=self.dataset, ColumnName=self.column,
+            DataSetIdentifier=self.dataset.identifier, ColumnName=self.column,
         )
         if self.kind in _CATEGORICAL_AGG:
             return MeasureField(

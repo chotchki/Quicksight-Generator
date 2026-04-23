@@ -39,6 +39,7 @@ from quicksight_gen.common.models import FilterGroup as ModelFilterGroup
 from quicksight_gen.common.models import NumericRangeFilter as ModelNumericRangeFilter
 from quicksight_gen.common.models import TimeRangeFilter as ModelTimeRangeFilter
 
+from quicksight_gen.common.tree.datasets import Dataset
 from quicksight_gen.common.tree.parameters import ParameterDeclLike
 from quicksight_gen.common.tree.visuals import VisualLike
 
@@ -56,9 +57,12 @@ class FilterLike(Protocol):
 
     Each typed wrapper (``CategoryFilter`` / ``NumericRangeFilter`` /
     ``TimeRangeFilter``) satisfies this Protocol — exposes a
-    ``filter_id`` and emits a ``models.Filter``.
+    ``filter_id``, the underlying ``dataset`` (object ref), and emits
+    a ``models.Filter``. The ``dataset`` field participates in the
+    L.1.7 dependency-graph walk.
     """
     filter_id: str
+    dataset: Dataset
 
     def emit(self) -> Filter: ...
 
@@ -76,6 +80,8 @@ CategoryMatchOperator = Literal[
 class CategoryFilter:
     """Filter on a categorical (string) column or calc field.
 
+    ``dataset`` is a ``Dataset`` object ref (L.1.7 hard switch).
+
     Default match operator ``"CONTAINS"`` matches the
     ``FilterListConfiguration`` shape used by every CategoryFilter in
     the existing builders — pass ``["yes"]`` for the calc-field 'yes'
@@ -87,7 +93,7 @@ class CategoryFilter:
     given dataset.
     """
     filter_id: str
-    dataset: str
+    dataset: Dataset
     column: str
     values: list[str]
     match_operator: CategoryMatchOperator = "CONTAINS"
@@ -97,7 +103,8 @@ class CategoryFilter:
             CategoryFilter=ModelCategoryFilter(
                 FilterId=self.filter_id,
                 Column=ColumnIdentifier(
-                    DataSetIdentifier=self.dataset, ColumnName=self.column,
+                    DataSetIdentifier=self.dataset.identifier,
+                    ColumnName=self.column,
                 ),
                 Configuration=CategoryFilterConfiguration(
                     FilterListConfiguration={
@@ -127,7 +134,7 @@ class NumericRangeFilter:
     bound or no bound).
     """
     filter_id: str
-    dataset: str
+    dataset: Dataset
     column: str
     minimum_parameter: ParameterDeclLike | None = None
     minimum_value: float | None = None
@@ -163,7 +170,8 @@ class NumericRangeFilter:
             NumericRangeFilter=ModelNumericRangeFilter(
                 FilterId=self.filter_id,
                 Column=ColumnIdentifier(
-                    DataSetIdentifier=self.dataset, ColumnName=self.column,
+                    DataSetIdentifier=self.dataset.identifier,
+                    ColumnName=self.column,
                 ),
                 NullOption=self.null_option,
                 RangeMinimum=self._range_value(
@@ -182,13 +190,15 @@ class NumericRangeFilter:
 class TimeRangeFilter:
     """Filter on a date / datetime column.
 
+    ``dataset`` is a ``Dataset`` object ref (L.1.7 hard switch).
+
     ``minimum`` and ``maximum`` are passthrough dicts for now (the
     existing usage takes a variety of shapes — RollingDate, StaticValue,
     Parameter — and lifting all of them under typed wrappers can wait
     for the L.2/L.3/L.4 ports to surface concrete needs).
     """
     filter_id: str
-    dataset: str
+    dataset: Dataset
     column: str
     minimum: dict[str, Any] | None = None
     maximum: dict[str, Any] | None = None
@@ -202,7 +212,8 @@ class TimeRangeFilter:
             TimeRangeFilter=ModelTimeRangeFilter(
                 FilterId=self.filter_id,
                 Column=ColumnIdentifier(
-                    DataSetIdentifier=self.dataset, ColumnName=self.column,
+                    DataSetIdentifier=self.dataset.identifier,
+                    ColumnName=self.column,
                 ),
                 NullOption=self.null_option,
                 TimeGranularity=self.time_granularity,
@@ -267,6 +278,10 @@ class FilterGroup:
                 )
         self._scope_entries.append((sheet, list(visuals)))
         return self
+
+    def datasets(self) -> set[Dataset]:
+        """Datasets this group's filters reference (object refs)."""
+        return {f.dataset for f in self.filters}
 
     def scope_sheet(self, sheet: "Sheet") -> FilterGroup:
         """Scope this filter to ALL visuals on a sheet.

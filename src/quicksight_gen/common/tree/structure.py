@@ -35,6 +35,7 @@ from quicksight_gen.common.tree._helpers import (
     ANALYSIS_ACTIONS,
     DASHBOARD_ACTIONS,
 )
+from quicksight_gen.common.tree.datasets import Dataset
 from quicksight_gen.common.tree.filters import FilterGroup
 from quicksight_gen.common.tree.parameters import ParameterDeclLike
 from quicksight_gen.common.tree.visuals import VisualLike
@@ -264,13 +265,36 @@ class Analysis:
         self.filter_groups.append(fg)
         return fg
 
+    def datasets(self) -> set[Dataset]:
+        """Walk the analysis tree and return every Dataset referenced
+        by any visual or filter group. Used by App.dataset_dependencies
+        to derive the precise refresh set.
+
+        Visuals using the spike-shape ``VisualNode`` factory wrapper
+        don't expose their dataset refs (the factory hides them).
+        Typed Visual subtypes (``KPI`` / ``Table`` / ``BarChart`` /
+        ``Sankey``) all expose ``datasets()`` and contribute. The
+        spike-shape gap closes once apps port to typed subtypes
+        (L.2/L.3/L.4).
+        """
+        deps: set[Dataset] = set()
+        for sheet in self.sheets:
+            for visual in sheet.visuals:
+                if hasattr(visual, "datasets"):
+                    deps.update(visual.datasets())
+        for fg in self.filter_groups:
+            deps.update(fg.datasets())
+        return deps
+
     def emit_definition(
         self,
         *,
-        dataset_declarations: list[DataSetIdentifierDeclaration],
+        datasets: list[Dataset],
     ) -> AnalysisDefinition:
         return AnalysisDefinition(
-            DataSetIdentifierDeclarations=dataset_declarations,
+            DataSetIdentifierDeclarations=[
+                d.emit_declaration() for d in datasets
+            ],
             Sheets=[s.emit() for s in self.sheets],
             FilterGroups=(
                 [fg.emit() for fg in self.filter_groups]
@@ -324,16 +348,20 @@ class App:
     ``emit_dashboard()`` to get the ``models.py`` instances ready for
     deploy.
 
-    ``dataset_arns`` is the per-logical-id → ARN mapping the Analysis
-    references via ``DataSetIdentifierDeclarations``. Today this is
-    supplied at ``emit_*`` time so apps can plug in lazy dataset
-    construction; L.1.7 moves it onto the App as typed dataset
-    declaration tree nodes.
+    Datasets are registered on the App via ``add_dataset()`` and
+    referenced from visuals / filters by object ref. At emit time
+    the App walks the tree's ``dataset_dependencies()`` and includes
+    only the datasets actually used in the emitted
+    ``DataSetIdentifierDeclarations`` — selective by construction.
+    Validation: if a visual or filter references a Dataset that
+    isn't registered on the App, ``emit_analysis`` raises with the
+    offending identifiers.
     """
     name: str
     cfg: Config
     analysis: Analysis | None = None
     dashboard: Dashboard | None = None
+    datasets: list[Dataset] = field(default_factory=list)
 
     def set_analysis(self, analysis: Analysis) -> Analysis:
         self.analysis = analysis
@@ -349,6 +377,54 @@ class App:
         self.dashboard = dashboard
         return dashboard
 
+    def add_dataset(self, dataset: Dataset) -> Dataset:
+        """Register a Dataset on the App.
+
+        Construction-time check: dataset identifiers are unique within
+        the app. Catches the silent shadow bug where two registrations
+        share an identifier and only one wins at deploy.
+        """
+        if any(d.identifier == dataset.identifier for d in self.datasets):
+            raise ValueError(
+                f"Dataset {dataset.identifier!r} is already registered on this App"
+            )
+        self.datasets.append(dataset)
+        return dataset
+
+    def dataset_dependencies(self) -> set[Dataset]:
+        """The set of Datasets referenced anywhere in the App's tree.
+
+        Walks the Analysis (sheets → visuals + filter_groups). Each
+        typed Visual subtype + typed Filter wrapper exposes its own
+        ``datasets()`` set; the App unions them.
+
+        **Deployment side effect.** This set drives:
+        - selective deploy (only re-create / refresh the datasets
+          downstream of an actual change),
+        - matview REFRESH ordering (REFRESH only the matviews backing
+          datasets that the changed deploy surface depends on).
+
+        Returns an empty set when the App has no Analysis.
+        """
+        if self.analysis is None:
+            return set()
+        return self.analysis.datasets()
+
+    def _validate_dataset_references(self) -> None:
+        """Raise if the tree references any Dataset not registered on
+        this App. Catches "visual references undeclared dataset" at
+        emit time, where the existing string-keyed pattern would let
+        the mismatch flow through to deploy."""
+        referenced = self.dataset_dependencies()
+        registered = set(self.datasets)
+        unregistered = referenced - registered
+        if unregistered:
+            ids = sorted(d.identifier for d in unregistered)
+            raise ValueError(
+                f"App {self.name!r} references unregistered datasets: "
+                f"{ids} — register each via app.add_dataset() first."
+            )
+
     def _permissions(self, actions: list[str]) -> list[ResourcePermission] | None:
         if not self.cfg.principal_arns:
             return None
@@ -360,43 +436,43 @@ class App:
     def _theme_arn(self) -> str:
         return self.cfg.theme_arn(self.cfg.prefixed("theme"))
 
-    def emit_analysis(
-        self,
-        *,
-        dataset_declarations: list[DataSetIdentifierDeclaration],
-    ) -> ModelAnalysis:
+    def _used_datasets(self) -> list[Dataset]:
+        """Datasets the analysis emits declarations for — only those
+        actually referenced by the tree, in registration order."""
+        referenced = self.dataset_dependencies()
+        return [d for d in self.datasets if d in referenced]
+
+    def emit_analysis(self) -> ModelAnalysis:
         if self.analysis is None:
             raise ValueError(
                 "App has no Analysis — call set_analysis() first."
             )
+        self._validate_dataset_references()
         return ModelAnalysis(
             AwsAccountId=self.cfg.aws_account_id,
             AnalysisId=self.cfg.prefixed(self.analysis.analysis_id_suffix),
             Name=self.analysis.name,
             ThemeArn=self._theme_arn(),
             Definition=self.analysis.emit_definition(
-                dataset_declarations=dataset_declarations,
+                datasets=self._used_datasets(),
             ),
             Permissions=self._permissions(ANALYSIS_ACTIONS),
             Tags=self.cfg.tags(),
         )
 
-    def emit_dashboard(
-        self,
-        *,
-        dataset_declarations: list[DataSetIdentifierDeclaration],
-    ) -> ModelDashboard:
+    def emit_dashboard(self) -> ModelDashboard:
         if self.dashboard is None:
             raise ValueError(
                 "App has no Dashboard — call set_dashboard() first."
             )
+        self._validate_dataset_references()
         return ModelDashboard(
             AwsAccountId=self.cfg.aws_account_id,
             DashboardId=self.cfg.prefixed(self.dashboard.dashboard_id_suffix),
             Name=self.dashboard.name,
             ThemeArn=self._theme_arn(),
             Definition=self.dashboard.analysis.emit_definition(
-                dataset_declarations=dataset_declarations,
+                datasets=self._used_datasets(),
             ),
             Permissions=self._permissions(DASHBOARD_ACTIONS),
             Tags=self.cfg.tags(),

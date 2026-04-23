@@ -32,6 +32,7 @@ from quicksight_gen.common.tree import (
     BarChart,
     CategoryFilter,
     Dashboard,
+    Dataset,
     DateTimeParam,
     Dim,
     FilterGroup,
@@ -48,6 +49,17 @@ from quicksight_gen.common.tree import (
     TimeRangeFilter,
     VisualLike,
     VisualNode,
+)
+
+
+# Module-level Dataset fixtures used across the L.1.3 / L.1.6 tests.
+# Real apps use a per-app dataset registry on the App; tests use these
+# stand-ins. The identifiers ("ds", "ds-foo", "ds-anomalies") match
+# the strings the pre-L.1.7 tests passed.
+_DS = Dataset(identifier="ds", arn="arn:aws:quicksight:::dataset/ds")
+_DS_FOO = Dataset(identifier="ds-foo", arn="arn:aws:quicksight:::dataset/ds-foo")
+_DS_ANOMALIES = Dataset(
+    identifier="ds-anomalies", arn="arn:aws:quicksight:::dataset/ds-anomalies",
 )
 
 
@@ -199,20 +211,15 @@ class TestAnalysis:
             sheet_id=SheetId("sheet-2"),
             name="B", title="B", description="",
         ))
-        defn = analysis.emit_definition(dataset_declarations=[])
+        defn = analysis.emit_definition(datasets=[])
         assert [s.SheetId for s in defn.Sheets] == ["sheet-1", "sheet-2"]
 
-    def test_emit_definition_passes_through_dataset_declarations(self):
-        from quicksight_gen.common.models import DataSetIdentifierDeclaration
+    def test_emit_definition_emits_dataset_declarations_from_dataset_refs(self):
         analysis = Analysis(analysis_id_suffix="test-analysis", name="Test")
-        decls = [
-            DataSetIdentifierDeclaration(
-                Identifier="ds-foo",
-                DataSetArn="arn:aws:quicksight:::dataset/foo",
-            ),
-        ]
-        defn = analysis.emit_definition(dataset_declarations=decls)
-        assert defn.DataSetIdentifierDeclarations == decls
+        defn = analysis.emit_definition(datasets=[_DS_FOO])
+        assert len(defn.DataSetIdentifierDeclarations) == 1
+        assert defn.DataSetIdentifierDeclarations[0].Identifier == "ds-foo"
+        assert defn.DataSetIdentifierDeclarations[0].DataSetArn == _DS_FOO.arn
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +243,7 @@ class TestApp:
 
     def test_emit_analysis_builds_model_analysis(self):
         app = self._make_app_with_one_sheet()
-        analysis = app.emit_analysis(dataset_declarations=[])
+        analysis = app.emit_analysis()
         assert analysis.AwsAccountId == "111122223333"
         assert analysis.AnalysisId.startswith("qs-gen-")
         assert analysis.AnalysisId.endswith("test-analysis")
@@ -248,7 +255,7 @@ class TestApp:
     def test_emit_analysis_without_analysis_raises(self):
         app = App(name="test-app", cfg=_TEST_CFG)
         with pytest.raises(ValueError, match="set_analysis"):
-            app.emit_analysis(dataset_declarations=[])
+            app.emit_analysis()
 
     def test_set_dashboard_validates_analysis_match(self):
         """Dashboard.analysis must be the same instance the App owns —
@@ -280,7 +287,7 @@ class TestApp:
             name="Test Dashboard",
             analysis=app.analysis,
         ))
-        dashboard = app.emit_dashboard(dataset_declarations=[])
+        dashboard = app.emit_dashboard()
         assert dashboard.AwsAccountId == "111122223333"
         assert dashboard.DashboardId.startswith("qs-gen-")
         assert dashboard.DashboardId.endswith("test-dashboard")
@@ -292,13 +299,13 @@ class TestApp:
     def test_emit_dashboard_without_dashboard_raises(self):
         app = self._make_app_with_one_sheet()
         with pytest.raises(ValueError, match="set_dashboard"):
-            app.emit_dashboard(dataset_declarations=[])
+            app.emit_dashboard()
 
     def test_emit_analysis_round_trips_through_to_aws_json(self):
         """The whole point — tree-built models.Analysis serializes
         cleanly through the existing to_aws_json path."""
         app = self._make_app_with_one_sheet()
-        analysis = app.emit_analysis(dataset_declarations=[])
+        analysis = app.emit_analysis()
         j = analysis.to_aws_json()
         assert j["AwsAccountId"] == "111122223333"
         assert j["AnalysisId"].endswith("test-analysis")
@@ -313,7 +320,7 @@ class TestApp:
 
 class TestDim:
     def test_categorical_default(self):
-        dim = Dim(dataset="ds-foo", field_id="f-1", column="col_a")
+        dim = Dim(dataset=_DS_FOO, field_id="f-1", column="col_a")
         emitted = dim.emit()
         assert emitted.CategoricalDimensionField is not None
         assert emitted.CategoricalDimensionField.FieldId == "f-1"
@@ -321,38 +328,38 @@ class TestDim:
         assert emitted.CategoricalDimensionField.Column.DataSetIdentifier == "ds-foo"
 
     def test_date_factory(self):
-        dim = Dim.date(dataset="ds-foo", field_id="f-d", column="posted_at")
+        dim = Dim.date(dataset=_DS_FOO, field_id="f-d", column="posted_at")
         emitted = dim.emit()
         assert emitted.DateDimensionField is not None
         assert emitted.CategoricalDimensionField is None
 
     def test_numerical_factory(self):
-        dim = Dim.numerical(dataset="ds-foo", field_id="f-n", column="depth")
+        dim = Dim.numerical(dataset=_DS_FOO, field_id="f-n", column="depth")
         emitted = dim.emit()
         assert emitted.NumericalDimensionField is not None
 
 
 class TestMeasure:
     def test_sum_emits_numerical_field(self):
-        m = Measure.sum(dataset="ds-foo", field_id="f-1", column="amount")
+        m = Measure.sum(dataset=_DS_FOO, field_id="f-1", column="amount")
         emitted = m.emit()
         assert emitted.NumericalMeasureField is not None
         assert emitted.NumericalMeasureField.AggregationFunction.SimpleNumericalAggregation == "SUM"
 
     def test_max_min_average(self):
         for kind, expected in [("max", "MAX"), ("min", "MIN"), ("average", "AVERAGE")]:
-            m = getattr(Measure, kind)(dataset="ds", field_id=f"f-{kind}", column="amount")
+            m = getattr(Measure, kind)(dataset=_DS, field_id=f"f-{kind}", column="amount")
             emitted = m.emit()
             assert emitted.NumericalMeasureField.AggregationFunction.SimpleNumericalAggregation == expected
 
     def test_count_emits_categorical_field(self):
-        m = Measure.count(dataset="ds-foo", field_id="f-1", column="account_id")
+        m = Measure.count(dataset=_DS_FOO, field_id="f-1", column="account_id")
         emitted = m.emit()
         assert emitted.CategoricalMeasureField is not None
         assert emitted.CategoricalMeasureField.AggregationFunction == "COUNT"
 
     def test_distinct_count_emits_categorical_field(self):
-        m = Measure.distinct_count(dataset="ds-foo", field_id="f-1", column="account_id")
+        m = Measure.distinct_count(dataset=_DS_FOO, field_id="f-1", column="account_id")
         emitted = m.emit()
         assert emitted.CategoricalMeasureField is not None
         assert emitted.CategoricalMeasureField.AggregationFunction == "DISTINCT_COUNT"
@@ -368,7 +375,7 @@ class TestKPIVisual:
             visual_id=VisualId("v-kpi"),
             title="Total",
             subtitle="Sum of amounts",
-            values=[Measure.sum("ds-foo", "f-val", "amount")],
+            values=[Measure.sum(_DS_FOO, "f-val", "amount")],
         )
         emitted = kpi.emit()
         assert emitted.KPIVisual is not None
@@ -380,7 +387,7 @@ class TestKPIVisual:
         kpi = KPI(
             visual_id=VisualId("v-kpi"),
             title="Total",
-            values=[Measure.sum("ds-foo", "f-val", "amount")],
+            values=[Measure.sum(_DS_FOO, "f-val", "amount")],
         )
         emitted = kpi.emit()
         assert emitted.KPIVisual.Subtitle is None
@@ -396,10 +403,10 @@ class TestTableVisual:
             visual_id=VisualId("v-tbl"),
             title="Detail",
             group_by=[
-                Dim(dataset="ds", field_id="f-id", column="id"),
-                Dim(dataset="ds", field_id="f-name", column="name"),
+                Dim(dataset=_DS, field_id="f-id", column="id"),
+                Dim(dataset=_DS, field_id="f-name", column="name"),
             ],
-            values=[Measure.sum(dataset="ds", field_id="f-amt", column="amount")],
+            values=[Measure.sum(dataset=_DS, field_id="f-amt", column="amount")],
         )
         emitted = table.emit()
         assert emitted.TableVisual is not None
@@ -424,8 +431,8 @@ class TestBarChartVisual:
         bar = BarChart(
             visual_id=VisualId("v-bar"),
             title="By Bucket",
-            category=[Dim(dataset="ds", field_id="f-bucket", column="z_bucket")],
-            values=[Measure.count(dataset="ds", field_id="f-cnt", column="recipient_id")],
+            category=[Dim(dataset=_DS, field_id="f-bucket", column="z_bucket")],
+            values=[Measure.count(dataset=_DS, field_id="f-cnt", column="recipient_id")],
         )
         emitted = bar.emit()
         assert emitted.BarChartVisual is not None
@@ -439,9 +446,9 @@ class TestSankeyVisual:
         sankey = Sankey(
             visual_id=VisualId("v-sankey"),
             title="Flow",
-            source=Dim(dataset="ds", field_id="f-src", column="source_display"),
-            target=Dim(dataset="ds", field_id="f-tgt", column="target_display"),
-            weight=Measure.sum(dataset="ds", field_id="f-wt", column="hop_amount"),
+            source=Dim(dataset=_DS, field_id="f-src", column="source_display"),
+            target=Dim(dataset=_DS, field_id="f-tgt", column="target_display"),
+            weight=Measure.sum(dataset=_DS, field_id="f-wt", column="hop_amount"),
             items_limit=50,
         )
         emitted = sankey.emit()
@@ -457,7 +464,7 @@ class TestSankeyVisual:
         sankey = Sankey(
             visual_id=VisualId("v-sankey"),
             title="Flow",
-            weight=Measure.sum(dataset="ds", field_id="f-wt", column="hop_amount"),
+            weight=Measure.sum(dataset=_DS, field_id="f-wt", column="hop_amount"),
         )
         emitted = sankey.emit()
         sort = emitted.SankeyDiagramVisual.ChartConfiguration.SortConfiguration
@@ -489,7 +496,7 @@ class TestSheetAcceptsTypedVisuals:
         kpi = sheet.add_visual(KPI(
             visual_id=VisualId("v-kpi"),
             title="Total",
-            values=[Measure.sum("ds", "f", "amount")],
+            values=[Measure.sum(_DS, "f", "amount")],
         ))
         sheet.place(kpi, col_span=12, row_span=6, col_index=0)
         emitted = sheet.emit()
@@ -602,7 +609,7 @@ class TestAnalysisAddParameter:
         analysis.add_parameter(StringParam(
             name=ParameterName("pAnchor"),
         ))
-        defn = analysis.emit_definition(dataset_declarations=[])
+        defn = analysis.emit_definition(datasets=[])
         names = []
         for pd in defn.ParameterDeclarations:
             if pd.IntegerParameterDeclaration:
@@ -616,7 +623,7 @@ class TestAnalysisAddParameter:
         models.AnalysisDefinition (preserving the existing pattern that
         omits empty fields)."""
         analysis = Analysis(analysis_id_suffix="test", name="Test")
-        defn = analysis.emit_definition(dataset_declarations=[])
+        defn = analysis.emit_definition(datasets=[])
         assert defn.ParameterDeclarations is None
 
 
@@ -624,7 +631,9 @@ class TestAnalysisAddParameter:
 # L.1.5 — FilterGroup with object-ref scope + scope-on-same-sheet validation
 # ---------------------------------------------------------------------------
 
-def _category_filter(filter_id: str, dataset: str, column: str) -> CategoryFilter:
+def _category_filter(
+    filter_id: str, dataset: Dataset, column: str,
+) -> CategoryFilter:
     """Test-only typed CategoryFilter constructor — keeps the test
     focus on scope validation, not Filter construction details."""
     return CategoryFilter(
@@ -658,7 +667,7 @@ class TestFilterGroupScope:
 
         fg = FilterGroup(
             filter_group_id=FilterGroupId("fg-test"),
-            filters=[_category_filter("f-1", "ds-foo", "col_a")],
+            filters=[_category_filter("f-1", _DS_FOO, "col_a")],
         )
         with pytest.raises(ValueError, match="isn't registered on sheet"):
             # Trying to scope a visual from sheet-a onto sheet-b
@@ -670,7 +679,7 @@ class TestFilterGroupScope:
         )
         fg = FilterGroup(
             filter_group_id=FilterGroupId("fg-test"),
-            filters=[_category_filter("f-1", "ds-foo", "col_a")],
+            filters=[_category_filter("f-1", _DS_FOO, "col_a")],
         )
         ret = fg.scope_visuals(sheet, [v1, v2])
         assert ret is fg  # chains
@@ -682,7 +691,7 @@ class TestFilterGroupScope:
         )
         fg = FilterGroup(
             filter_group_id=FilterGroupId("fg-test"),
-            filters=[_category_filter("f-1", "ds-foo", "col_a")],
+            filters=[_category_filter("f-1", _DS_FOO, "col_a")],
         )
         fg.scope_visuals(sheet, [v1, v2])
         emitted = fg.emit()
@@ -698,7 +707,7 @@ class TestFilterGroupScope:
         )
         fg = FilterGroup(
             filter_group_id=FilterGroupId("fg-test"),
-            filters=[_category_filter("f-1", "ds-foo", "col_a")],
+            filters=[_category_filter("f-1", _DS_FOO, "col_a")],
         )
         fg.scope_sheet(sheet)
         emitted = fg.emit()
@@ -713,7 +722,7 @@ class TestFilterGroupScope:
         silently emitting an empty configuration."""
         fg = FilterGroup(
             filter_group_id=FilterGroupId("fg-test"),
-            filters=[_category_filter("f-1", "ds-foo", "col_a")],
+            filters=[_category_filter("f-1", _DS_FOO, "col_a")],
         )
         with pytest.raises(ValueError, match="has no scope"):
             fg.emit()
@@ -730,7 +739,7 @@ class TestFilterGroupScope:
         )
         fg = FilterGroup(
             filter_group_id=FilterGroupId("fg-multi"),
-            filters=[_category_filter("f-1", "ds-foo", "col_a")],
+            filters=[_category_filter("f-1", _DS_FOO, "col_a")],
         )
         fg.scope_visuals(sheet_a, [v_a1])
         fg.scope_sheet(sheet_b)
@@ -748,7 +757,7 @@ class TestFilterGroupScope:
         the emitted Filters list contains the corresponding models.Filter
         instances, not the typed wrappers themselves."""
         sheet, _ = self._make_sheet_with_visuals("sheet-test", "v-1")
-        f = _category_filter("f-1", "ds-foo", "col_a")
+        f = _category_filter("f-1", _DS_FOO, "col_a")
         fg = FilterGroup(
             filter_group_id=FilterGroupId("fg-test"),
             filters=[f],
@@ -764,7 +773,7 @@ class TestFilterGroupScope:
         sheet, _ = self._make_sheet_with_visuals("sheet-test", "v-1")
         fg = FilterGroup(
             filter_group_id=FilterGroupId("fg-test"),
-            filters=[_category_filter("f-1", "ds-foo", "col_a")],
+            filters=[_category_filter("f-1", _DS_FOO, "col_a")],
             enabled=False,
         )
         fg.scope_sheet(sheet)
@@ -782,7 +791,7 @@ class TestAnalysisAddFilterGroup:
         kpi = sheet.add_visual(KPI(visual_id=VisualId("v-1"), title="Test"))
         fg = analysis.add_filter_group(FilterGroup(
             filter_group_id=FilterGroupId("fg-test"),
-            filters=[_category_filter("f-1", "ds-foo", "col_a")],
+            filters=[_category_filter("f-1", _DS_FOO, "col_a")],
         ))
         fg.scope_visuals(sheet, [kpi])
         assert fg in analysis.filter_groups
@@ -791,12 +800,12 @@ class TestAnalysisAddFilterGroup:
         analysis = Analysis(analysis_id_suffix="test", name="Test")
         analysis.add_filter_group(FilterGroup(
             filter_group_id=FilterGroupId("fg-dup"),
-            filters=[_category_filter("f-1", "ds-foo", "col_a")],
+            filters=[_category_filter("f-1", _DS_FOO, "col_a")],
         ))
         with pytest.raises(ValueError, match="already on this Analysis"):
             analysis.add_filter_group(FilterGroup(
                 filter_group_id=FilterGroupId("fg-dup"),
-                filters=[_category_filter("f-2", "ds-foo", "col_b")],
+                filters=[_category_filter("f-2", _DS_FOO, "col_b")],
             ))
 
     def test_emit_definition_carries_filter_groups(self):
@@ -808,16 +817,16 @@ class TestAnalysisAddFilterGroup:
         kpi = sheet.add_visual(KPI(visual_id=VisualId("v-1"), title="Test"))
         fg = analysis.add_filter_group(FilterGroup(
             filter_group_id=FilterGroupId("fg-test"),
-            filters=[_category_filter("f-1", "ds-foo", "col_a")],
+            filters=[_category_filter("f-1", _DS_FOO, "col_a")],
         ))
         fg.scope_visuals(sheet, [kpi])
-        defn = analysis.emit_definition(dataset_declarations=[])
+        defn = analysis.emit_definition(datasets=[])
         assert len(defn.FilterGroups) == 1
         assert defn.FilterGroups[0].FilterGroupId == "fg-test"
 
     def test_no_filter_groups_emits_none(self):
         analysis = Analysis(analysis_id_suffix="test", name="Test")
-        defn = analysis.emit_definition(dataset_declarations=[])
+        defn = analysis.emit_definition(datasets=[])
         assert defn.FilterGroups is None
 
 
@@ -846,7 +855,7 @@ class TestFilterGroupCompositionWithApp:
         ))
         fg = analysis.add_filter_group(FilterGroup(
             filter_group_id=FilterGroupId("fg-cross"),
-            filters=[_category_filter("f-1", "ds", "col")],
+            filters=[_category_filter("f-1", _DS, "col")],
         ))
         # Try to scope sheet-A's visual onto sheet-B → caught here.
         with pytest.raises(ValueError, match="isn't registered on sheet"):
@@ -860,7 +869,7 @@ class TestTypedCategoryFilter:
     def test_emits_filter_list_configuration(self):
         f = CategoryFilter(
             filter_id="f-1",
-            dataset="ds-foo",
+            dataset=_DS_FOO,
             column="col_a",
             values=["yes", "maybe"],
         )
@@ -875,7 +884,7 @@ class TestTypedCategoryFilter:
 
     def test_match_operator_is_configurable(self):
         f = CategoryFilter(
-            filter_id="f-1", dataset="ds", column="col_a",
+            filter_id="f-1", dataset=_DS, column="col_a",
             values=["a"], match_operator="EQUALS",
         )
         emitted = f.emit()
@@ -883,7 +892,7 @@ class TestTypedCategoryFilter:
 
     def test_satisfies_filter_like_protocol(self):
         f = CategoryFilter(
-            filter_id="f-1", dataset="ds", column="col_a", values=["x"],
+            filter_id="f-1", dataset=_DS, column="col_a", values=["x"],
         )
         assert isinstance(f, FilterLike)
 
@@ -892,7 +901,7 @@ class TestTypedNumericRangeFilter:
     def test_static_bounds(self):
         f = NumericRangeFilter(
             filter_id="f-1",
-            dataset="ds",
+            dataset=_DS,
             column="amount",
             minimum_value=10.0,
             maximum_value=1000.0,
@@ -913,7 +922,7 @@ class TestTypedNumericRangeFilter:
         )
         f = NumericRangeFilter(
             filter_id="f-sigma",
-            dataset="ds",
+            dataset=_DS,
             column="z_score",
             minimum_parameter=sigma,
         )
@@ -927,7 +936,7 @@ class TestTypedNumericRangeFilter:
         with pytest.raises(ValueError, match="not both"):
             NumericRangeFilter(
                 filter_id="f-1",
-                dataset="ds",
+                dataset=_DS,
                 column="amount",
                 minimum_value=10.0,
                 minimum_parameter=sigma,
@@ -938,7 +947,7 @@ class TestTypedNumericRangeFilter:
         with pytest.raises(ValueError, match="not both"):
             NumericRangeFilter(
                 filter_id="f-1",
-                dataset="ds",
+                dataset=_DS,
                 column="amount",
                 maximum_value=10.0,
                 maximum_parameter=sigma,
@@ -949,7 +958,7 @@ class TestTypedNumericRangeFilter:
         (matches the existing model behaviour where RangeMinimum /
         RangeMaximum are optional)."""
         f = NumericRangeFilter(
-            filter_id="f-1", dataset="ds", column="amount",
+            filter_id="f-1", dataset=_DS, column="amount",
         )
         emitted = f.emit()
         assert emitted.NumericRangeFilter.RangeMinimum is None
@@ -957,7 +966,7 @@ class TestTypedNumericRangeFilter:
 
     def test_satisfies_filter_like_protocol(self):
         f = NumericRangeFilter(
-            filter_id="f-1", dataset="ds", column="amount",
+            filter_id="f-1", dataset=_DS, column="amount",
         )
         assert isinstance(f, FilterLike)
 
@@ -966,7 +975,7 @@ class TestTypedTimeRangeFilter:
     def test_emits_with_min_max_passthrough(self):
         f = TimeRangeFilter(
             filter_id="f-1",
-            dataset="ds",
+            dataset=_DS,
             column="posted_at",
             minimum={"StaticValue": "2026-01-01T00:00:00"},
             maximum={"StaticValue": "2026-12-31T23:59:59"},
@@ -979,7 +988,7 @@ class TestTypedTimeRangeFilter:
 
     def test_satisfies_filter_like_protocol(self):
         f = TimeRangeFilter(
-            filter_id="f-1", dataset="ds", column="posted_at",
+            filter_id="f-1", dataset=_DS, column="posted_at",
         )
         assert isinstance(f, FilterLike)
 
@@ -990,6 +999,7 @@ class TestFullEmitRoundTripWithTypedFilters:
 
     def test_full_emit_round_trip(self):
         app = App(name="test", cfg=_TEST_CFG)
+        app.add_dataset(_DS_FOO)
         analysis = app.set_analysis(Analysis(
             analysis_id_suffix="test", name="Test",
         ))
@@ -1002,7 +1012,7 @@ class TestFullEmitRoundTripWithTypedFilters:
         ))
         kpi = sheet.add_visual(KPI(
             visual_id=VisualId("v-test"), title="Test",
-            values=[Measure.sum("ds-foo", "f-val", "amount")],
+            values=[Measure.sum(_DS_FOO, "f-val", "amount")],
         ))
         sheet.place(kpi, col_span=12, row_span=6, col_index=0)
         fg = analysis.add_filter_group(FilterGroup(
@@ -1010,14 +1020,14 @@ class TestFullEmitRoundTripWithTypedFilters:
             filters=[
                 NumericRangeFilter(
                     filter_id="f-sigma",
-                    dataset="ds-foo",
+                    dataset=_DS_FOO,
                     column="z_score",
                     minimum_parameter=sigma,
                 ),
             ],
         ))
         fg.scope_visuals(sheet, [kpi])
-        m = app.emit_analysis(dataset_declarations=[])
+        m = app.emit_analysis()
         j = m.to_aws_json()
         fg_json = j["Definition"]["FilterGroups"][0]
         nrf = fg_json["Filters"][0]["NumericRangeFilter"]
@@ -1035,6 +1045,7 @@ class TestFullEmitRoundTripWithTypedFilters:
         composition tests; lives here now alongside the typed-filter
         round-trip."""
         app = App(name="test", cfg=_TEST_CFG)
+        app.add_dataset(_DS_FOO)
         analysis = app.set_analysis(Analysis(
             analysis_id_suffix="test", name="Test",
         ))
@@ -1044,15 +1055,15 @@ class TestFullEmitRoundTripWithTypedFilters:
         ))
         kpi = sheet.add_visual(KPI(
             visual_id=VisualId("v-test"), title="Test",
-            values=[Measure.sum("ds-foo", "f-val", "amount")],
+            values=[Measure.sum(_DS_FOO, "f-val", "amount")],
         ))
         sheet.place(kpi, col_span=12, row_span=6, col_index=0)
         fg = analysis.add_filter_group(FilterGroup(
             filter_group_id=FilterGroupId("fg-scoped"),
-            filters=[_category_filter("f-1", "ds-foo", "col_a")],
+            filters=[_category_filter("f-1", _DS_FOO, "col_a")],
         ))
         fg.scope_visuals(sheet, [kpi])
-        m = app.emit_analysis(dataset_declarations=[])
+        m = app.emit_analysis()
         j = m.to_aws_json()
         fgs = j["Definition"]["FilterGroups"]
         assert len(fgs) == 1
@@ -1061,3 +1072,155 @@ class TestFullEmitRoundTripWithTypedFilters:
         assert configs[0]["SheetId"] == "sheet-test"
         assert configs[0]["Scope"] == "SELECTED_VISUALS"
         assert configs[0]["VisualIds"] == ["v-test"]
+
+
+# ---------------------------------------------------------------------------
+# L.1.7 — Dataset tree nodes + dependency graph
+# ---------------------------------------------------------------------------
+
+class TestDataset:
+    def test_emit_declaration(self):
+        ds = Dataset(identifier="ds-foo", arn="arn:aws:quicksight:::dataset/foo")
+        decl = ds.emit_declaration()
+        assert decl.Identifier == "ds-foo"
+        assert decl.DataSetArn == "arn:aws:quicksight:::dataset/foo"
+
+    def test_dataset_is_hashable(self):
+        """Dataset is the dependency-graph KEY — must be hashable so
+        visuals/filters' refs can be collected into set[Dataset]."""
+        a = Dataset(identifier="a", arn="arn:a")
+        b = Dataset(identifier="b", arn="arn:b")
+        s = {a, b, a}
+        assert len(s) == 2
+
+    def test_dim_carries_dataset_ref(self):
+        """Hard-switch confirmation: Dim's dataset is the Dataset object,
+        not the identifier string."""
+        ds = Dataset(identifier="ds-foo", arn="arn:foo")
+        dim = Dim(dataset=ds, field_id="f-1", column="col_a")
+        assert dim.dataset is ds
+        # emit() reads the identifier off the Dataset
+        assert dim.emit().CategoricalDimensionField.Column.DataSetIdentifier == "ds-foo"
+
+    def test_measure_carries_dataset_ref(self):
+        ds = Dataset(identifier="ds-foo", arn="arn:foo")
+        m = Measure.sum(ds, "f-1", "amount")
+        assert m.dataset is ds
+        assert m.emit().NumericalMeasureField.Column.DataSetIdentifier == "ds-foo"
+
+
+class TestAppDatasetRegistry:
+    def test_add_dataset_returns_ref(self):
+        app = App(name="test", cfg=_TEST_CFG)
+        ds = app.add_dataset(_DS_FOO)
+        assert ds is _DS_FOO
+        assert _DS_FOO in app.datasets
+
+    def test_duplicate_dataset_identifier_rejected(self):
+        """Same shadow-bug class as duplicate parameters: two registrations
+        sharing an identifier silently let one win at deploy."""
+        app = App(name="test", cfg=_TEST_CFG)
+        app.add_dataset(Dataset(identifier="ds-x", arn="arn:1"))
+        with pytest.raises(ValueError, match="already registered"):
+            app.add_dataset(Dataset(identifier="ds-x", arn="arn:2"))
+
+
+class TestAppDatasetDependencies:
+    """Walking the tree to extract the precise dataset dependency graph
+    is the L.1.7 deployment-side-effect payoff. Selective deploy +
+    matview REFRESH ordering both consume this graph."""
+
+    def test_empty_when_no_analysis(self):
+        app = App(name="test", cfg=_TEST_CFG)
+        assert app.dataset_dependencies() == set()
+
+    def test_collects_from_visuals(self):
+        app = App(name="test", cfg=_TEST_CFG)
+        app.add_dataset(_DS_FOO)
+        app.add_dataset(_DS_ANOMALIES)
+        analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s-1"), name="S", title="S", description="",
+        ))
+        sheet.add_visual(KPI(
+            visual_id=VisualId("v-foo"), title="From foo",
+            values=[Measure.sum(_DS_FOO, "f-1", "amount")],
+        ))
+        sheet.add_visual(KPI(
+            visual_id=VisualId("v-anom"), title="From anomalies",
+            values=[Measure.count(_DS_ANOMALIES, "f-2", "id")],
+        ))
+        deps = app.dataset_dependencies()
+        assert deps == {_DS_FOO, _DS_ANOMALIES}
+
+    def test_collects_from_filter_groups(self):
+        app = App(name="test", cfg=_TEST_CFG)
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s-1"), name="S", title="S", description="",
+        ))
+        kpi = sheet.add_visual(KPI(
+            visual_id=VisualId("v"), title="V",
+        ))  # No values; visual itself doesn't reference _DS_FOO
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=FilterGroupId("fg-1"),
+            filters=[_category_filter("f-1", _DS_FOO, "col_a")],
+        ))
+        fg.scope_visuals(sheet, [kpi])
+        # Dependency comes via the filter group, not the visual.
+        assert app.dataset_dependencies() == {_DS_FOO}
+
+    def test_emit_analysis_rejects_unregistered_dataset(self):
+        """The load-bearing validation: if a visual or filter references
+        a Dataset that wasn't registered on the App, emit_analysis raises
+        with the offending identifier(s)."""
+        app = App(name="test", cfg=_TEST_CFG)
+        # _DS_FOO is NOT registered on this app
+        analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        sheet.add_visual(KPI(
+            visual_id=VisualId("v"), title="V",
+            values=[Measure.sum(_DS_FOO, "f", "amount")],
+        ))
+        with pytest.raises(ValueError, match="references unregistered datasets"):
+            app.emit_analysis()
+
+    def test_emit_analysis_includes_only_referenced_datasets(self):
+        """Selective-by-construction: registered-but-unreferenced datasets
+        DO NOT show up in the emitted DataSetIdentifierDeclarations.
+        Catches dataset bloat at the deploy boundary."""
+        app = App(name="test", cfg=_TEST_CFG)
+        app.add_dataset(_DS_FOO)
+        app.add_dataset(_DS_ANOMALIES)  # registered but unreferenced
+        analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        sheet.add_visual(KPI(
+            visual_id=VisualId("v"), title="V",
+            values=[Measure.sum(_DS_FOO, "f", "amount")],
+        ))
+        m = app.emit_analysis()
+        decls = m.Definition.DataSetIdentifierDeclarations
+        identifiers = {d.Identifier for d in decls}
+        assert identifiers == {"ds-foo"}
+        assert "ds-anomalies" not in identifiers
+
+    def test_emit_dashboard_validates_references_too(self):
+        app = App(name="test", cfg=_TEST_CFG)
+        analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        sheet.add_visual(KPI(
+            visual_id=VisualId("v"), title="V",
+            values=[Measure.sum(_DS_FOO, "f", "amount")],
+        ))
+        app.set_dashboard(Dashboard(
+            dashboard_id_suffix="d", name="D", analysis=analysis,
+        ))
+        with pytest.raises(ValueError, match="references unregistered datasets"):
+            app.emit_dashboard()
