@@ -19,6 +19,7 @@ import pytest
 
 from quicksight_gen.apps.investigation.analysis import (
     _build_getting_started_sheet as _imperative_getting_started,
+    _build_money_trail_sheet as _imperative_money_trail,
     _build_recipient_fanout_sheet as _imperative_recipient_fanout,
     _build_volume_anomalies_sheet as _imperative_volume_anomalies,
 )
@@ -27,6 +28,7 @@ from quicksight_gen.apps.investigation.constants import (
     SHEET_INV_ANOMALIES,
     SHEET_INV_FANOUT,
     SHEET_INV_GETTING_STARTED,
+    SHEET_INV_MONEY_TRAIL,
 )
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.models import _strip_nones
@@ -149,4 +151,17 @@ def test_l2_3_volume_anomalies_sheet_byte_identical():
         "2.3",
         SHEET_INV_ANOMALIES,
         _imperative_volume_anomalies(_TEST_CFG),
+    )
+
+
+def test_l2_4_money_trail_sheet_byte_identical():
+    """L.2.4 — Money Trail SheetDefinition matches the imperative
+    builder exactly. First sheet using parameter-bound CategoryFilter
+    (chain root via `CustomFilterConfiguration`), Sankey visual with
+    items_limit, and a LinkedValues-populated dropdown bound to the
+    same dataset that the visuals read from."""
+    _assert_sheet_byte_identical(
+        "2.4",
+        SHEET_INV_MONEY_TRAIL,
+        _imperative_money_trail(_TEST_CFG),
     )

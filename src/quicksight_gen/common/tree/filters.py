@@ -79,6 +79,7 @@ class FilterLike(Protocol):
 CategoryMatchOperator = Literal[
     "CONTAINS", "EQUALS", "DOES_NOT_EQUAL", "STARTS_WITH",
 ]
+NullOption = Literal["NON_NULLS_ONLY", "ALL_VALUES", "NULLS_ONLY"]
 
 
 @dataclass(eq=False)
@@ -87,23 +88,49 @@ class CategoryFilter:
 
     ``dataset`` is a ``Dataset`` object ref (L.1.7 hard switch).
 
-    Default match operator ``"CONTAINS"`` matches the
-    ``FilterListConfiguration`` shape used by every CategoryFilter in
-    the existing builders — pass ``["yes"]`` for the calc-field 'yes'
-    sentinel pattern, or pass an explicit list of category values to
-    include.
+    Two binding modes (mutually exclusive — exactly one must be set):
+
+    - **Static list** — pass ``values=["a", "b"]`` plus a
+      ``match_operator``. Emits a ``FilterListConfiguration`` with
+      ``CategoryValues`` set to the list. Use this for the calc-field
+      ``'yes'`` sentinel pattern (``values=["yes"]``) or a hardcoded
+      include-list.
+    - **Parameter-bound** — pass ``parameter=string_param`` (a
+      ``ParameterDeclLike`` object ref) plus ``match_operator="EQUALS"``
+      (typically). Emits a ``CustomFilterConfiguration`` with
+      ``ParameterName`` set to the param's name. Use this when a
+      dropdown control writes a single value into a string parameter
+      and the filter narrows to that value (e.g. Money Trail's chain
+      root selector).
 
     ``column`` may name a real dataset column or an analysis-level
     calc field — both resolve to a ``ColumnIdentifier`` against the
     given dataset.
+
+    ``null_option`` only surfaces in the parameter-bound emit (the
+    list-based ``FilterListConfiguration`` doesn't carry it).
     """
     dataset: Dataset
     column: ColumnRef
-    values: list[str]
+    values: list[str] | None = None
+    parameter: ParameterDeclLike | None = None
     match_operator: CategoryMatchOperator = "CONTAINS"
+    null_option: NullOption = "ALL_VALUES"
     filter_id: str | None = None
 
     _AUTO_KIND: ClassVar[str] = "category"
+
+    def __post_init__(self) -> None:
+        if self.values is None and self.parameter is None:
+            raise ValueError(
+                f"CategoryFilter {self.filter_id!r}: specify either "
+                f"values or parameter."
+            )
+        if self.values is not None and self.parameter is not None:
+            raise ValueError(
+                f"CategoryFilter {self.filter_id!r}: specify either "
+                f"values or parameter, not both."
+            )
 
     def calc_field(self) -> CalcField | None:
         """The CalcField this filter references, or None if it points
@@ -114,6 +141,21 @@ class CategoryFilter:
         assert self.filter_id is not None, (
             "filter_id wasn't resolved — App._resolve_auto_ids() must run."
         )
+        if self.parameter is not None:
+            configuration = CategoryFilterConfiguration(
+                CustomFilterConfiguration={
+                    "MatchOperator": self.match_operator,
+                    "ParameterName": self.parameter.name,
+                    "NullOption": self.null_option,
+                },
+            )
+        else:
+            configuration = CategoryFilterConfiguration(
+                FilterListConfiguration={
+                    "MatchOperator": self.match_operator,
+                    "CategoryValues": self.values,
+                },
+            )
         return Filter(
             CategoryFilter=ModelCategoryFilter(
                 FilterId=self.filter_id,
@@ -121,17 +163,9 @@ class CategoryFilter:
                     DataSetIdentifier=self.dataset.identifier,
                     ColumnName=_resolve_column(self.column),
                 ),
-                Configuration=CategoryFilterConfiguration(
-                    FilterListConfiguration={
-                        "MatchOperator": self.match_operator,
-                        "CategoryValues": self.values,
-                    },
-                ),
+                Configuration=configuration,
             ),
         )
-
-
-NullOption = Literal["NON_NULLS_ONLY", "ALL_VALUES", "NULLS_ONLY"]
 
 
 @dataclass(eq=False)

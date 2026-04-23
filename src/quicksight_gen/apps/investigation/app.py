@@ -22,17 +22,25 @@ from __future__ import annotations
 
 from quicksight_gen.apps.investigation.constants import (
     CF_INV_FANOUT_DISTINCT_SENDERS,
+    DS_INV_MONEY_TRAIL,
     DS_INV_RECIPIENT_FANOUT,
     DS_INV_VOLUME_ANOMALIES,
     FG_INV_ANOMALIES_SIGMA,
     FG_INV_ANOMALIES_WINDOW,
     FG_INV_FANOUT_THRESHOLD,
     FG_INV_FANOUT_WINDOW,
+    FG_INV_MONEY_TRAIL_AMOUNT,
+    FG_INV_MONEY_TRAIL_HOPS,
+    FG_INV_MONEY_TRAIL_ROOT,
     P_INV_ANOMALIES_SIGMA,
     P_INV_FANOUT_THRESHOLD,
+    P_INV_MONEY_TRAIL_MAX_HOPS,
+    P_INV_MONEY_TRAIL_MIN_AMOUNT,
+    P_INV_MONEY_TRAIL_ROOT,
     SHEET_INV_ANOMALIES,
     SHEET_INV_FANOUT,
     SHEET_INV_GETTING_STARTED,
+    SHEET_INV_MONEY_TRAIL,
     V_INV_ANOMALIES_DISTRIBUTION,
     V_INV_ANOMALIES_KPI_FLAGGED,
     V_INV_ANOMALIES_TABLE,
@@ -40,6 +48,8 @@ from quicksight_gen.apps.investigation.constants import (
     V_INV_FANOUT_KPI_RECIPIENTS,
     V_INV_FANOUT_KPI_SENDERS,
     V_INV_FANOUT_TABLE,
+    V_INV_MONEY_TRAIL_SANKEY,
+    V_INV_MONEY_TRAIL_TABLE,
 )
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
@@ -50,16 +60,20 @@ from quicksight_gen.common.tree import (
     App,
     BarChart,
     CalcField,
-    CategoryFilter,  # noqa: F401 — used by future sheets
+    CategoryFilter,
     Dataset,
     Dim,
     FilterDateTimePicker,
     FilterGroup,
     IntegerParam,
+    LinkedValues,
     Measure,
     NumericRangeFilter,
+    ParameterDropdown,
     ParameterSlider,
+    Sankey,
     Sheet,
+    StringParam,
     Table,
     TextBox,
     TimeRangeFilter,
@@ -83,6 +97,23 @@ _DEFAULT_ANOMALIES_SIGMA = 2
 _SIGMA_SLIDER_MIN = 1
 _SIGMA_SLIDER_MAX = 4
 
+# Money Trail defaults. Max hops 5 covers the 4-hop PR chain
+# (`external_txn → payment → settlement → sale`) with one hop of
+# headroom; >10 means the matview's recursive walk went pathological
+# and the analyst should be looking at data integrity, not the trail.
+_DEFAULT_MONEY_TRAIL_MAX_HOPS = 5
+_HOPS_SLIDER_MIN = 1
+_HOPS_SLIDER_MAX = 10
+_DEFAULT_MONEY_TRAIL_MIN_AMOUNT = 0
+_AMOUNT_SLIDER_MIN = 0
+_AMOUNT_SLIDER_MAX = 1000
+
+# Sankey items-limit shape: cap distinct source / destination nodes the
+# diagram renders. Set generously here — the chain root filter narrows
+# to one chain, so the realistic cap is "chain depth" not "every account
+# in the system".
+_SANKEY_NODE_CAP = 50
+
 
 # ---------------------------------------------------------------------------
 # Sheet descriptions (shared with imperative side — byte-identity only
@@ -101,6 +132,15 @@ _ANOMALY_DESCRIPTION = (
     "deviation. Drag the σ slider to flag the tail. The distribution "
     "chart shows the full population — your slider cutoff against that "
     "shape — while the KPI + table show only flagged windows."
+)
+
+_MONEY_TRAIL_DESCRIPTION = (
+    "Where did this transfer actually originate, and where does it go? "
+    "Pick a chain root from the dropdown — the Sankey renders that "
+    "chain's source-to-target ribbons, and the hop-by-hop table beside "
+    "it lists every edge ordered by depth. Single-leg transfers (sales, "
+    "raw external arrivals) appear as chain members but don't contribute "
+    "Sankey ribbons."
 )
 
 
@@ -494,6 +534,187 @@ def _build_volume_anomalies_sheet(
 
 
 # ---------------------------------------------------------------------------
+# Money Trail (L.2.4)
+# ---------------------------------------------------------------------------
+
+def _build_money_trail_sheet(
+    cfg: Config, app: App, analysis: Analysis,
+) -> Sheet:
+    """Money Trail — Sankey + hop-by-hop detail table side-by-side.
+
+    Three parameter-bound filter groups all scope ALL_VISUALS so the
+    Sankey + table share one chain selection:
+
+    - Chain root dropdown (parameter-bound `CategoryFilter` with
+      `MatchOperator=EQUALS`, populated from the matview's distinct
+      `root_transfer_id` values via `LinkedValues`).
+    - Max-hops slider (`NumericRangeFilter` max-bound, parameter-bound).
+    - Min-hop-amount slider (`NumericRangeFilter` min-bound,
+      parameter-bound).
+
+    Layout:
+      * Row 1: Sankey (⅔ width) + table (⅓ width), both `_TABLE_ROW_SPAN`
+        tall. Sankey is the headline; table is reference for edges the
+        diagram hides plus the future drill surface (K.4.7).
+    """
+    del cfg
+
+    ds_money_trail = app.add_dataset(Dataset(
+        identifier=DS_INV_MONEY_TRAIL,
+        arn=app.cfg.dataset_arn(app.cfg.prefixed("inv-money-trail-dataset")),
+    ))
+
+    root_param = analysis.add_parameter(StringParam(
+        name=P_INV_MONEY_TRAIL_ROOT,
+        # No default — dropdown auto-populates and SelectAll=HIDDEN
+        # forces QuickSight to land on the first available chain on
+        # first paint instead of an empty "All" state.
+        default=[],
+    ))
+    max_hops_param = analysis.add_parameter(IntegerParam(
+        name=P_INV_MONEY_TRAIL_MAX_HOPS,
+        default=[_DEFAULT_MONEY_TRAIL_MAX_HOPS],
+    ))
+    min_amount_param = analysis.add_parameter(IntegerParam(
+        name=P_INV_MONEY_TRAIL_MIN_AMOUNT,
+        default=[_DEFAULT_MONEY_TRAIL_MIN_AMOUNT],
+    ))
+
+    sheet = analysis.add_sheet(Sheet(
+        sheet_id=SHEET_INV_MONEY_TRAIL,
+        name="Money Trail",
+        title="Money Trail",
+        description=_MONEY_TRAIL_DESCRIPTION,
+    ))
+
+    sankey = sheet.add_visual(Sankey(
+        visual_id=V_INV_MONEY_TRAIL_SANKEY,
+        title="Money Trail — Chain Sankey",
+        subtitle=(
+            "Source account → target account ribbons for the selected "
+            "chain. Ribbon thickness = SUM(hop_amount). Single-leg "
+            "transfers don't render here — see the detail table for "
+            "every chain member."
+        ),
+        source=Dim(ds_money_trail, "inv-money-trail-sankey-source",
+                   "source_account_name"),
+        target=Dim(ds_money_trail, "inv-money-trail-sankey-target",
+                   "target_account_name"),
+        weight=Measure.sum(
+            ds_money_trail, "inv-money-trail-sankey-weight", "hop_amount",
+        ),
+        items_limit=_SANKEY_NODE_CAP,
+    ))
+    table = sheet.add_visual(Table(
+        visual_id=V_INV_MONEY_TRAIL_TABLE,
+        title="Money Trail — Hop-by-Hop",
+        subtitle=(
+            "Every edge in the selected chain, ordered root → leaf "
+            "by depth."
+        ),
+        group_by=[
+            Dim.numerical(ds_money_trail, "inv-money-trail-tbl-depth",
+                          "depth"),
+            Dim(ds_money_trail, "inv-money-trail-tbl-transfer-id",
+                "transfer_id"),
+            Dim(ds_money_trail, "inv-money-trail-tbl-transfer-type",
+                "transfer_type"),
+            Dim(ds_money_trail, "inv-money-trail-tbl-source-name",
+                "source_account_name"),
+            Dim(ds_money_trail, "inv-money-trail-tbl-target-name",
+                "target_account_name"),
+            Dim.date(ds_money_trail, "inv-money-trail-tbl-posted-at",
+                     "posted_at"),
+        ],
+        values=[Measure.sum(
+            ds_money_trail, "inv-money-trail-tbl-amount", "hop_amount",
+        )],
+        sort_by=("inv-money-trail-tbl-depth", "ASC"),
+    ))
+
+    # Layout: Sankey ⅔ width on the left, table ⅓ width on the right.
+    sheet.place(sankey,
+                col_span=_THIRD * 2, row_span=_TABLE_ROW_SPAN, col_index=0)
+    sheet.place(table,
+                col_span=_THIRD, row_span=_TABLE_ROW_SPAN,
+                col_index=_THIRD * 2)
+
+    # Chain root: parameter-bound CategoryFilter — narrows to one chain.
+    root_fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_INV_MONEY_TRAIL_ROOT,
+        filters=[CategoryFilter(
+            filter_id="filter-inv-money-trail-root",
+            dataset=ds_money_trail,
+            column="root_transfer_id",
+            parameter=root_param,
+            match_operator="EQUALS",
+            null_option="NON_NULLS_ONLY",
+        )],
+    ))
+    root_fg.scope_sheet(sheet)
+
+    # Max hops: max-bound numeric filter — IncludeMaximum so slider
+    # value 5 means "depth ≤ 5 surfaces".
+    hops_fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_INV_MONEY_TRAIL_HOPS,
+        filters=[NumericRangeFilter(
+            filter_id="filter-inv-money-trail-hops",
+            dataset=ds_money_trail,
+            column="depth",
+            maximum_parameter=max_hops_param,
+            null_option="NON_NULLS_ONLY",
+            include_maximum=True,
+        )],
+    ))
+    hops_fg.scope_sheet(sheet)
+
+    # Min hop amount: min-bound numeric filter.
+    amount_fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_INV_MONEY_TRAIL_AMOUNT,
+        filters=[NumericRangeFilter(
+            filter_id="filter-inv-money-trail-amount",
+            dataset=ds_money_trail,
+            column="hop_amount",
+            minimum_parameter=min_amount_param,
+            null_option="NON_NULLS_ONLY",
+            include_minimum=True,
+        )],
+    ))
+    amount_fg.scope_sheet(sheet)
+
+    # All three controls are parameter-driven — no FilterControl widgets.
+    sheet.add_parameter_control(ParameterDropdown(
+        parameter=root_param,
+        title="Chain root transfer",
+        type="SINGLE_SELECT",
+        selectable_values=LinkedValues(
+            dataset=ds_money_trail,
+            column="root_transfer_id",
+        ),
+        hidden_select_all=True,
+        control_id="ctrl-inv-money-trail-root",
+    ))
+    sheet.add_parameter_control(ParameterSlider(
+        parameter=max_hops_param,
+        title="Max hops",
+        minimum_value=_HOPS_SLIDER_MIN,
+        maximum_value=_HOPS_SLIDER_MAX,
+        step_size=1,
+        control_id="ctrl-inv-money-trail-hops",
+    ))
+    sheet.add_parameter_control(ParameterSlider(
+        parameter=min_amount_param,
+        title="Min hop amount ($)",
+        minimum_value=_AMOUNT_SLIDER_MIN,
+        maximum_value=_AMOUNT_SLIDER_MAX,
+        step_size=10,
+        control_id="ctrl-inv-money-trail-amount",
+    ))
+
+    return sheet
+
+
+# ---------------------------------------------------------------------------
 # App builder
 # ---------------------------------------------------------------------------
 
@@ -511,4 +732,5 @@ def build_investigation_app(cfg: Config) -> App:
     _build_getting_started_sheet(cfg, analysis)
     _build_recipient_fanout_sheet(cfg, app, analysis)
     _build_volume_anomalies_sheet(cfg, app, analysis)
+    _build_money_trail_sheet(cfg, app, analysis)
     return app
