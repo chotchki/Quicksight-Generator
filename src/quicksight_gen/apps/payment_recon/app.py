@@ -44,6 +44,22 @@ from quicksight_gen.apps.payment_recon.constants import (
     DS_SETTLEMENT_PAYMENT_MISMATCH,
     DS_SETTLEMENTS,
     DS_UNMATCHED_EXTERNAL_TXNS,
+    FG_PR_LOCATION,
+    FG_PR_MERCHANT,
+    FG_PR_PAYMENT_METHOD,
+    FG_PR_PAYMENT_STATUS,
+    FG_PR_PAYMENTS_KPI_RETURNS_ONLY,
+    FG_PR_PAYMENTS_UNMATCHED,
+    FG_PR_RECON_DATE_RANGE,
+    FG_PR_RECON_EXTERNAL_SYSTEM,
+    FG_PR_RECON_KPI_LATE_ONLY,
+    FG_PR_RECON_KPI_MATCHED_ONLY,
+    FG_PR_RECON_KPI_UNMATCHED_ONLY,
+    FG_PR_RECON_MATCH_STATUS,
+    FG_PR_SALES_UNSETTLED,
+    FG_PR_SETTLEMENT_STATUS,
+    FG_PR_SETTLEMENTS_KPI_PENDING_ONLY,
+    FG_PR_SETTLEMENTS_UNPAID,
     P_PR_EXTERNAL_TXN,
     P_PR_PAYMENT,
     P_PR_SETTLEMENT,
@@ -54,6 +70,8 @@ from quicksight_gen.apps.payment_recon.constants import (
     SHEET_PAYMENTS,
     SHEET_SALES,
     SHEET_SETTLEMENTS,
+    SalesMeta,
+    SheetDateRange,
 )
 from quicksight_gen.apps.payment_recon.datasets import (
     OPTIONAL_SALE_METADATA,
@@ -65,6 +83,7 @@ from quicksight_gen.common.models import Analysis as ModelAnalysis
 from quicksight_gen.common.models import Dashboard as ModelDashboard
 from quicksight_gen.common.theme import get_preset
 from quicksight_gen.common.ids import ParameterName
+from quicksight_gen.common.tree._helpers import _AutoSentinel
 from quicksight_gen.common.tree import (
     Analysis,
     App,
@@ -72,13 +91,19 @@ from quicksight_gen.common.tree import (
     CellAccentMenu,
     CellAccentText,
     Dataset,
+    DefaultDateTimePickerControl,
+    DefaultDropdownControl,
+    DefaultSliderControl,
     Drill,
     DrillSourceField,
     FilterGroup,
+    NumericRangeFilter,
     SameSheetFilter,
     Sheet,
+    StaticBound,
     StringParam,
     TextBox,
+    TimeRangeFilter,
 )
 
 
@@ -1081,48 +1106,49 @@ def _wire_parameters(analysis: Analysis) -> None:
         ))
 
 
+@dataclass(frozen=True)
+class _DrillSpec:
+    param_short: str    # "settlement" / "payment" / "ext-txn"
+    sheet_short: str    # "sales" / "settlements" / "payments" / "recon"
+    sheet_id: str
+    dataset_id: str
+    column_name: str
+    param_name: str
+
+
+_DRILL_SPECS_PIPELINE: tuple[_DrillSpec, ...] = (
+    _DrillSpec("settlement", "sales", SHEET_SALES, DS_SALES,
+               "settlement_id", P_PR_SETTLEMENT.name),
+    _DrillSpec("settlement", "settlements", SHEET_SETTLEMENTS, DS_SETTLEMENTS,
+               "settlement_id", P_PR_SETTLEMENT.name),
+    _DrillSpec("payment", "payments", SHEET_PAYMENTS, DS_PAYMENTS,
+               "payment_id", P_PR_PAYMENT.name),
+)
+
+_DRILL_SPECS_RECON: tuple[_DrillSpec, ...] = (
+    _DrillSpec("ext-txn", "recon", SHEET_PAYMENT_RECON, DS_PAYMENT_RECON,
+               "transaction_id", P_PR_EXTERNAL_TXN.name),
+    _DrillSpec("ext-txn", "payments", SHEET_PAYMENT_RECON, DS_PAYMENTS,
+               "external_transaction_id", P_PR_EXTERNAL_TXN.name),
+)
+
+
 def _wire_drill_filter_groups(
     analysis: Analysis,
     *,
+    specs: tuple[_DrillSpec, ...],
     sheets: dict[str, Sheet],
     datasets: dict[str, Dataset],
 ) -> None:
-    """5 drill PASS filter groups — one per `PR_DRILL_BINDINGS` entry.
+    """Wire one or more drill PASS filter groups.
 
-    Mapping mirrors `apps/payment_recon/analysis.py
-    ::_build_payment_recon_definition` so the byte-identity test
-    holds. Each filter binds the destination sheet's relevant id
-    column to the matching drill parameter via
-    ``CategoryFilter.with_parameter``.
+    Each spec binds the destination sheet's relevant id column to the
+    matching drill parameter via ``CategoryFilter.with_parameter``.
+    Split into pipeline / recon batches so the FilterGroup-list order
+    in the emitted JSON matches the imperative order (pipeline drills
+    are interleaved between the pipeline + recon sheet-level groups).
     """
-    @dataclass(frozen=True)
-    class _Spec:
-        param_short: str    # "settlement" / "payment" / "ext-txn"
-        sheet_short: str    # "sales" / "settlements" / "payments" / "recon"
-        sheet_id: str
-        dataset_id: str
-        column_name: str
-        param_name: str
-
-    sales = SHEET_SALES
-    settlements = SHEET_SETTLEMENTS
-    payments = SHEET_PAYMENTS
-    recon = SHEET_PAYMENT_RECON
-
-    specs = [
-        _Spec("settlement", "sales", sales, DS_SALES, "settlement_id",
-              P_PR_SETTLEMENT.name),
-        _Spec("settlement", "settlements", settlements, DS_SETTLEMENTS,
-              "settlement_id", P_PR_SETTLEMENT.name),
-        _Spec("payment", "payments", payments, DS_PAYMENTS, "payment_id",
-              P_PR_PAYMENT.name),
-        _Spec("ext-txn", "recon", recon, DS_PAYMENT_RECON, "transaction_id",
-              P_PR_EXTERNAL_TXN.name),
-        _Spec("ext-txn", "payments", recon, DS_PAYMENTS,
-              "external_transaction_id", P_PR_EXTERNAL_TXN.name),
-    ]
     binding_by_pair = {(b.kind, b.location): b for b in PR_DRILL_BINDINGS}
-
     for spec in specs:
         binding = binding_by_pair[(spec.param_short, spec.sheet_short)]
         target_sheet = sheets[spec.sheet_id]
@@ -1140,6 +1166,336 @@ def _wire_drill_filter_groups(
             )],
         ))
         fg.scope_sheet(target_sheet)
+
+
+# ---------------------------------------------------------------------------
+# L.4.7b — Sheet-level filter groups (24 total).
+#
+# Pipeline (18 from imperative `build_filter_groups`):
+# - 4 per-sheet date-range filters (single-dataset, native column per
+#   sheet — sale_timestamp / settlement_date / payment_date /
+#   sale_timestamp on Exceptions).
+# - merchant + location (cross-dataset, all 4 pipeline sheets, with
+#   default control for cross-sheet propagation).
+# - settlement_status (Settlements + Exceptions, with default control).
+# - payment_status, payment_method (Payments only, no default control).
+# - 3 state-toggle filter groups (sales_unsettled, settlements_unpaid,
+#   payments_unmatched) backing the Show-Only-X dropdowns.
+# - 2 visual-scoped pinned filter groups for KPIs whose subtitle
+#   promises a narrowed count (payments-kpi-returns-only,
+#   settlements-kpi-pending-only).
+# - 4 optional-metadata filter groups derived from
+#   `OPTIONAL_SALE_METADATA` (Sales sheet only).
+#
+# Recon (6 from imperative `build_recon_filter_groups`):
+# - 3 sheet-wide single-dataset filters (date-range, match-status,
+#   external-system).
+# - 3 visual-scoped pinned KPI filters (late-only, matched-only,
+#   unmatched-only).
+# ---------------------------------------------------------------------------
+
+_DATE_RANGE_BINDINGS: tuple[tuple[SheetDateRange, str, str, str], ...] = (
+    (SheetDateRange("sales"), SHEET_SALES, DS_SALES, "sale_timestamp"),
+    (SheetDateRange("settlements"), SHEET_SETTLEMENTS, DS_SETTLEMENTS,
+     "settlement_date"),
+    (SheetDateRange("payments"), SHEET_PAYMENTS, DS_PAYMENTS, "payment_date"),
+    (SheetDateRange("exceptions"), SHEET_EXCEPTIONS, DS_SETTLEMENT_EXCEPTIONS,
+     "sale_timestamp"),
+)
+
+
+def _wire_pipeline_filter_groups(
+    analysis: Analysis,
+    *,
+    sheets: dict[str, Sheet],
+    datasets: dict[str, Dataset],
+) -> None:
+    """18 pipeline-tab filter groups (date ranges, dropdowns, toggles,
+    KPI pins, optional metadata)."""
+    sales = sheets[SHEET_SALES]
+    settlements = sheets[SHEET_SETTLEMENTS]
+    payments = sheets[SHEET_PAYMENTS]
+    exceptions = sheets[SHEET_EXCEPTIONS]
+    all_pipeline = [sales, settlements, payments, exceptions]
+
+    ds_sales = datasets[DS_SALES]
+    ds_settlements = datasets[DS_SETTLEMENTS]
+    ds_payments = datasets[DS_PAYMENTS]
+    ds_settlement_exc = datasets[DS_SETTLEMENT_EXCEPTIONS]
+
+    def _scope_sheets(fg: FilterGroup, scoped: list[Sheet]) -> None:
+        for s in scoped:
+            fg.scope_sheet(s)
+
+    sheet_dataset_by_id: dict[str, Dataset] = {
+        SHEET_SALES: ds_sales,
+        SHEET_SETTLEMENTS: ds_settlements,
+        SHEET_PAYMENTS: ds_payments,
+        SHEET_EXCEPTIONS: ds_settlement_exc,
+    }
+
+    # 1-4. Per-sheet date-range filter groups.
+    for spec, sheet_id, ds_id, col in _DATE_RANGE_BINDINGS:
+        ds = sheet_dataset_by_id[sheet_id]
+        assert ds.identifier == ds_id
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=spec.fg_id,
+            filters=[TimeRangeFilter(
+                filter_id=spec.filter_id,
+                dataset=ds,
+                column=ds[col],
+                null_option="NON_NULLS_ONLY",
+                time_granularity="DAY",
+            )],
+        ))
+        fg.scope_sheet(sheets[sheet_id])
+
+    # 5. Merchant — cross-dataset, all 4 pipeline sheets, default control.
+    fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_PR_MERCHANT,
+        cross_dataset="ALL_DATASETS",
+        filters=[CategoryFilter.with_values(
+            filter_id="filter-merchant",
+            dataset=ds_sales,
+            column=ds_sales["merchant_id"],
+            values=[],
+            select_all_options="FILTER_ALL_VALUES",
+            default_control=DefaultDropdownControl(
+                title="Merchant", type="MULTI_SELECT",
+            ),
+        )],
+    ))
+    _scope_sheets(fg, all_pipeline)
+
+    # 6. Location — same shape as merchant.
+    fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_PR_LOCATION,
+        cross_dataset="ALL_DATASETS",
+        filters=[CategoryFilter.with_values(
+            filter_id="filter-location",
+            dataset=ds_sales,
+            column=ds_sales["location_id"],
+            values=[],
+            select_all_options="FILTER_ALL_VALUES",
+            default_control=DefaultDropdownControl(
+                title="Location", type="MULTI_SELECT",
+            ),
+        )],
+    ))
+    _scope_sheets(fg, all_pipeline)
+
+    # 7. Settlement status — Settlements + Exceptions, default control.
+    fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_PR_SETTLEMENT_STATUS,
+        filters=[CategoryFilter.with_values(
+            filter_id="filter-settlement-status",
+            dataset=ds_settlements,
+            column=ds_settlements["settlement_status"],
+            values=[],
+            select_all_options="FILTER_ALL_VALUES",
+            default_control=DefaultDropdownControl(
+                title="Settlement Status", type="MULTI_SELECT",
+            ),
+        )],
+    ))
+    _scope_sheets(fg, [settlements, exceptions])
+
+    # 8. Payment status — Payments only, no default control.
+    fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_PR_PAYMENT_STATUS,
+        filters=[CategoryFilter.with_values(
+            filter_id="filter-payment-status",
+            dataset=ds_payments,
+            column=ds_payments["payment_status"],
+            values=[],
+            select_all_options="FILTER_ALL_VALUES",
+        )],
+    ))
+    fg.scope_sheet(payments)
+
+    # 9. Payment method — Payments only, no default control.
+    fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_PR_PAYMENT_METHOD,
+        filters=[CategoryFilter.with_values(
+            filter_id="filter-payment-method",
+            dataset=ds_payments,
+            column=ds_payments["payment_method"],
+            values=[],
+            select_all_options="FILTER_ALL_VALUES",
+        )],
+    ))
+    fg.scope_sheet(payments)
+
+    # 10-12. Show-Only-X state-toggle filter groups.
+    state_toggles = (
+        (FG_PR_SALES_UNSETTLED, "filter-sales-unsettled", sales,
+         ds_sales, "settlement_state"),
+        (FG_PR_SETTLEMENTS_UNPAID, "filter-settlements-unpaid", settlements,
+         ds_settlements, "payment_state"),
+        (FG_PR_PAYMENTS_UNMATCHED, "filter-payments-unmatched", payments,
+         ds_payments, "external_match_state"),
+    )
+    for fg_id, filter_id, sheet, ds, col in state_toggles:
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=fg_id,
+            filters=[CategoryFilter.with_values(
+                filter_id=filter_id,
+                dataset=ds,
+                column=ds[col],
+                values=[],
+                select_all_options="FILTER_ALL_VALUES",
+            )],
+        ))
+        fg.scope_sheet(sheet)
+
+    # 13. payments-kpi-returns-only — visual-scoped pinned filter.
+    returns_pin = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_PR_PAYMENTS_KPI_RETURNS_ONLY,
+        filters=[CategoryFilter.with_values(
+            filter_id="filter-payments-kpi-returns-only",
+            dataset=ds_payments,
+            column=ds_payments["is_returned"],
+            values=["true"],
+        )],
+    ))
+    payments_kpi_returns = next(
+        v for v in payments.visuals
+        if not isinstance(v.visual_id, _AutoSentinel)
+        and v.visual_id == "payments-kpi-returns"
+    )
+    payments.scope(returns_pin, [payments_kpi_returns])
+
+    # 14. settlements-kpi-pending-only — visual-scoped pinned filter.
+    pending_pin = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_PR_SETTLEMENTS_KPI_PENDING_ONLY,
+        filters=[CategoryFilter.with_values(
+            filter_id="filter-settlements-kpi-pending-only",
+            dataset=ds_settlements,
+            column=ds_settlements["settlement_status"],
+            values=["pending"],
+        )],
+    ))
+    settlements_kpi_pending = next(
+        v for v in settlements.visuals
+        if not isinstance(v.visual_id, _AutoSentinel)
+        and v.visual_id == "settlements-kpi-pending"
+    )
+    settlements.scope(pending_pin, [settlements_kpi_pending])
+
+    # 15-18. Optional sale-metadata filter groups (Sales sheet only).
+    for col, _ddl, _qs, ftype, _label in OPTIONAL_SALE_METADATA:
+        spec = SalesMeta(col)
+        if ftype == "numeric":
+            filter_obj: NumericRangeFilter | TimeRangeFilter | CategoryFilter = (
+                NumericRangeFilter(
+                    filter_id=spec.filter_id,
+                    dataset=ds_sales,
+                    column=ds_sales[col],
+                    null_option="ALL_VALUES",
+                    minimum=StaticBound(value=0),
+                    maximum=StaticBound(value=999),
+                    include_minimum=True,
+                    include_maximum=True,
+                )
+            )
+        elif ftype == "datetime":
+            filter_obj = TimeRangeFilter(
+                filter_id=spec.filter_id,
+                dataset=ds_sales,
+                column=ds_sales[col],
+                null_option="NON_NULLS_ONLY",
+                time_granularity="DAY",
+            )
+        else:
+            filter_obj = CategoryFilter.with_values(
+                filter_id=spec.filter_id,
+                dataset=ds_sales,
+                column=ds_sales[col],
+                values=[],
+                select_all_options="FILTER_ALL_VALUES",
+            )
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=spec.fg_id,
+            filters=[filter_obj],
+        ))
+        fg.scope_sheet(sales)
+
+
+def _wire_recon_sheet_filter_groups(
+    analysis: Analysis,
+    *,
+    sheets: dict[str, Sheet],
+    datasets: dict[str, Dataset],
+) -> None:
+    """6 recon-sheet filter groups (date / match-status / ext-system +
+    3 visual-scoped pinned KPI filters)."""
+    recon = sheets[SHEET_PAYMENT_RECON]
+    ds_recon = datasets[DS_PAYMENT_RECON]
+
+    # 1. recon date-range.
+    fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_PR_RECON_DATE_RANGE,
+        filters=[TimeRangeFilter(
+            filter_id="filter-recon-date-range",
+            dataset=ds_recon,
+            column=ds_recon["transaction_date"],
+            null_option="NON_NULLS_ONLY",
+            time_granularity="DAY",
+        )],
+    ))
+    fg.scope_sheet(recon)
+
+    # 2. recon match-status.
+    fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_PR_RECON_MATCH_STATUS,
+        filters=[CategoryFilter.with_values(
+            filter_id="filter-recon-match-status",
+            dataset=ds_recon,
+            column=ds_recon["match_status"],
+            values=[],
+            select_all_options="FILTER_ALL_VALUES",
+        )],
+    ))
+    fg.scope_sheet(recon)
+
+    # 3. recon external-system.
+    fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_PR_RECON_EXTERNAL_SYSTEM,
+        filters=[CategoryFilter.with_values(
+            filter_id="filter-recon-external-system",
+            dataset=ds_recon,
+            column=ds_recon["external_system"],
+            values=[],
+            select_all_options="FILTER_ALL_VALUES",
+        )],
+    ))
+    fg.scope_sheet(recon)
+
+    # 4-6. KPI visual-scoped pinned filters.
+    kpi_pin_specs = (
+        (FG_PR_RECON_KPI_LATE_ONLY, "filter-recon-kpi-late-only",
+         "recon-kpi-late-count", ["late"]),
+        (FG_PR_RECON_KPI_MATCHED_ONLY, "filter-recon-kpi-matched-only",
+         "recon-kpi-matched-amount", ["matched"]),
+        (FG_PR_RECON_KPI_UNMATCHED_ONLY, "filter-recon-kpi-unmatched-only",
+         "recon-kpi-unmatched-amount", ["late", "not_yet_matched"]),
+    )
+    for fg_id, filter_id, kpi_visual_id, status_values in kpi_pin_specs:
+        pin = analysis.add_filter_group(FilterGroup(
+            filter_group_id=fg_id,
+            filters=[CategoryFilter.with_values(
+                filter_id=filter_id,
+                dataset=ds_recon,
+                column=ds_recon["match_status"],
+                values=status_values,
+            )],
+        ))
+        kpi = next(
+            v for v in recon.visuals
+            if not isinstance(v.visual_id, _AutoSentinel)
+            and v.visual_id == kpi_visual_id
+        )
+        recon.scope(pin, [kpi])
 
 
 # ---------------------------------------------------------------------------
@@ -1220,11 +1576,18 @@ def build_payment_recon_app(cfg: Config) -> App:
     _populate_exceptions(cfg, sheets[SHEET_EXCEPTIONS], datasets=datasets)
     _populate_payment_recon(cfg, sheets[SHEET_PAYMENT_RECON], datasets=datasets)
 
-    # L.4.7 — App-level wiring. Parameters first (validator depends on
-    # them), then drill PASS filter groups (they reference the
-    # parameters), then sheet-level filter groups + per-sheet
-    # FilterControls in subsequent substeps.
+    # L.4.7 — App-level wiring. Order matters for FilterGroup-list
+    # byte-identity vs the imperative concat:
+    # `build_filter_groups` (18 pipeline) → drill_down_filters (3) →
+    # `build_recon_filter_groups` (6 recon) → recon_drill_down_filters (2).
     _wire_parameters(analysis)
-    _wire_drill_filter_groups(analysis, sheets=sheets, datasets=datasets)
+    _wire_pipeline_filter_groups(analysis, sheets=sheets, datasets=datasets)
+    _wire_drill_filter_groups(
+        analysis, specs=_DRILL_SPECS_PIPELINE, sheets=sheets, datasets=datasets,
+    )
+    _wire_recon_sheet_filter_groups(analysis, sheets=sheets, datasets=datasets)
+    _wire_drill_filter_groups(
+        analysis, specs=_DRILL_SPECS_RECON, sheets=sheets, datasets=datasets,
+    )
 
     return app

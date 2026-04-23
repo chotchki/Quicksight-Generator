@@ -318,6 +318,17 @@ def test_l4_7a_parameters_and_drill_filter_groups_byte_identical() -> None:
         )
 
 
+def test_l4_7b_filter_groups_byte_identical() -> None:
+    """All 29 PR FilterGroups (18 pipeline + 3 pipeline drills + 6 recon
+    + 2 recon drills) — full FilterGroups list compared in order."""
+    cfg = Config(**_BASE_CFG_KWARGS)
+
+    imperative = _imperative_build_analysis(cfg).to_aws_json()["Definition"]
+    tree = build_payment_recon_app(cfg).emit_analysis().to_aws_json()["Definition"]
+
+    assert imperative["FilterGroups"] == tree["FilterGroups"]
+
+
 def test_l4_4_payments_sheet_byte_identical() -> None:
     """Payments: 2 KPIs (paid amount + returned count) + full-width
     vertical bar by payment_status (with same-sheet click filter to
