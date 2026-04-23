@@ -258,36 +258,24 @@ class TestApp:
         with pytest.raises(ValueError, match="set_analysis"):
             app.emit_analysis()
 
-    def test_set_dashboard_validates_analysis_match(self):
-        """Dashboard.analysis must be the same instance the App owns —
-        catches the cross-app dashboard wiring bug class."""
-        app = self._make_app_with_one_sheet()
-        other_analysis = Analysis(
-            analysis_id_suffix="other-analysis", name="Other",
-        )
-        with pytest.raises(ValueError, match="must be the same Analysis"):
-            app.set_dashboard(Dashboard(
-                dashboard_id_suffix="test-dashboard",
-                name="Test Dashboard",
-                analysis=other_analysis,  # wrong instance
-            ))
+    # L.1.21 — analysis-mismatch test deleted: app.create_dashboard()
+    # uses the App's already-set analysis by construction, so the
+    # mismatch bug class is structurally impossible.
 
-    def test_set_dashboard_with_correct_analysis(self):
+    def test_create_dashboard_returns_registered_dashboard(self):
         app = self._make_app_with_one_sheet()
-        ret = app.set_dashboard(Dashboard(
+        ret = app.create_dashboard(
             dashboard_id_suffix="test-dashboard",
             name="Test Dashboard",
-            analysis=app.analysis,  # correct
-        ))
+        )
         assert ret is app.dashboard
 
     def test_emit_dashboard_builds_model_dashboard(self):
         app = self._make_app_with_one_sheet()
-        app.set_dashboard(Dashboard(
+        app.create_dashboard(
             dashboard_id_suffix="test-dashboard",
             name="Test Dashboard",
-            analysis=app.analysis,
-        ))
+        )
         dashboard = app.emit_dashboard()
         assert dashboard.AwsAccountId == "111122223333"
         assert dashboard.DashboardId.startswith("qs-gen-")
@@ -1260,9 +1248,7 @@ class TestAppDatasetDependencies:
             visual_id=VisualId("v"), title="V",
             values=[Measure.sum(_DS_FOO, "amount", field_id="f-val")],
         ))
-        app.set_dashboard(Dashboard(
-            dashboard_id_suffix="d", name="D", analysis=analysis,
-        ))
+        app.create_dashboard(dashboard_id_suffix="d", name="D")
         with pytest.raises(ValueError, match="references unregistered datasets"):
             app.emit_dashboard()
 
@@ -2214,9 +2200,7 @@ class TestUnvalidatedColumnsRaiseByDefault:
 
     def test_default_app_raises_on_bare_string_column_in_dashboard(self):
         app = self._build_app_with_bare_string_dim()
-        app.set_dashboard(Dashboard(
-            dashboard_id_suffix="d", name="D", analysis=app.analysis,
-        ))
+        app.create_dashboard(dashboard_id_suffix="d", name="D")
         with pytest.raises(ValueError, match="unvalidated column refs"):
             app.emit_dashboard()
 
