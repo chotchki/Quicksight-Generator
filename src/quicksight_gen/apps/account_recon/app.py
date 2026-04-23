@@ -63,15 +63,13 @@ from quicksight_gen.apps.account_recon.constants import (
 # ds["col"] ref in the visuals below.
 from quicksight_gen.apps.account_recon import datasets as _register_contracts  # noqa: F401
 from quicksight_gen.common import rich_text as rt
-from quicksight_gen.common.clickability import (
-    link_text_format,
-    menu_link_text_format,
-)
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.theme import get_preset
 from quicksight_gen.common.tree import (
     Analysis,
     App,
+    CellAccentMenu,
+    CellAccentText,
     Dataset,
     Drill,
     DrillResetSentinel,
@@ -476,7 +474,10 @@ def _populate_balances(
         )],
     )
 
-    # Row 2: ledger drift table (full width, unaggregated).
+    # Row 2: ledger drift table (full width, unaggregated). Hoist the
+    # ledger-id Dim to a local var so the right-click CF + drill action
+    # both reference the same field_id.
+    ledger_id_col = ds_ledger_drift["ledger_account_id"].dim(field_id="ar-bal-ledger-id")
     sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
         width=_FULL,
         visual_id="ar-balances-ledger-table",  # type: ignore[arg-type]
@@ -488,7 +489,7 @@ def _populate_balances(
             "table below to that ledger's sub-ledgers."
         ),
         columns=[
-            ds_ledger_drift["ledger_account_id"].dim(field_id="ar-bal-ledger-id"),
+            ledger_id_col,
             ds_ledger_drift["ledger_name"].dim(field_id="ar-bal-ledger-name"),
             ds_ledger_drift["scope"].dim(field_id="ar-bal-scope"),
             ds_ledger_drift["balance_date"].date(field_id="ar-bal-date"),
@@ -515,19 +516,16 @@ def _populate_balances(
                 action_id="action-ar-balances-filter-subledgers",
             ),
         ],
-        conditional_formatting={
-            "ConditionalFormattingOptions": [
-                menu_link_text_format(
-                    "ar-bal-ledger-id",
-                    "ledger_account_id",
-                    link_color,
-                    link_tint,
-                ),
-            ],
-        },
+        conditional_formatting=[
+            CellAccentMenu(
+                on=ledger_id_col,
+                text_color=link_color, background_color=link_tint,
+            ),
+        ],
     )
 
     # Row 3: sub-ledger drift table (full width, unaggregated, two drills).
+    subledger_id_col = ds_subledger_drift["subledger_account_id"].dim(field_id="ar-bal-subledger-id")
     sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
         width=_FULL,
         visual_id="ar-balances-subledger-table",  # type: ignore[arg-type]
@@ -540,7 +538,7 @@ def _populate_balances(
             "Statement for that account-day."
         ),
         columns=[
-            ds_subledger_drift["subledger_account_id"].dim(field_id="ar-bal-subledger-id"),
+            subledger_id_col,
             ds_subledger_drift["subledger_name"].dim(field_id="ar-bal-subledger-name"),
             ds_subledger_drift["ledger_name"].dim(field_id="ar-bal-subledger-ledger"),
             ds_subledger_drift["scope"].dim(field_id="ar-bal-subledger-scope"),
@@ -580,16 +578,12 @@ def _populate_balances(
                 action_id="action-ar-balances-subledger-to-daily-statement",
             ),
         ],
-        conditional_formatting={
-            "ConditionalFormattingOptions": [
-                menu_link_text_format(
-                    "ar-bal-subledger-id",
-                    "subledger_account_id",
-                    link_color,
-                    link_tint,
-                ),
-            ],
-        },
+        conditional_formatting=[
+            CellAccentMenu(
+                on=subledger_id_col,
+                text_color=link_color, background_color=link_tint,
+            ),
+        ],
     )
 
 
@@ -663,6 +657,7 @@ def _populate_transfers(
     )
 
     # Row 3: transfer summary table (full width).
+    transfer_id_col = ds_xfr["transfer_id"].dim(field_id="ar-xfr-id")
     table_transfers = sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
         width=_FULL,
         visual_id="ar-transfers-summary-table",  # type: ignore[arg-type]
@@ -673,7 +668,7 @@ def _populate_transfers(
             "to drill into Transactions for that transfer."
         ),
         columns=[
-            ds_xfr["transfer_id"].dim(field_id="ar-xfr-id"),
+            transfer_id_col,
             ds_xfr["first_posted_at"].date(field_id="ar-xfr-posted"),
             ds_xfr["total_debit"].numerical(field_id="ar-xfr-debit"),
             ds_xfr["total_credit"].numerical(field_id="ar-xfr-credit"),
@@ -698,11 +693,9 @@ def _populate_transfers(
                 action_id="action-ar-transfers-to-txn",
             ),
         ],
-        conditional_formatting={
-            "ConditionalFormattingOptions": [
-                link_text_format("ar-xfr-id", "transfer_id", link_color),
-            ],
-        },
+        conditional_formatting=[
+            CellAccentText(on=transfer_id_col, color=link_color),
+        ],
     )
     # Back-patch the bar's filter action now that the table exists.
     filter_action.target_visuals.append(table_transfers)
@@ -883,7 +876,12 @@ def _populate_todays_exceptions(
         actions=[breakdown_filter],
     )
 
-    # Row 3: unified table — full width unaggregated, two drills + CF.
+    # Row 3: unified table — full width unaggregated, two drills + 2 CF.
+    # Hoist the two drill-source / CF-target columns to local vars so
+    # the cell formats reference the same Dim objects as the columns
+    # list (typed binding, no field_id string drift).
+    transfer_id_col = ds_exc["transfer_id"].dim(field_id="ar-todays-exc-transfer-id")
+    account_id_col = ds_exc["account_id"].dim(field_id="ar-todays-exc-account")
     table_exc = sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
         width=_FULL,
         visual_id="ar-todays-exc-table",  # type: ignore[arg-type]
@@ -909,11 +907,11 @@ def _populate_todays_exceptions(
             ds_exc["days_outstanding"].numerical(field_id="ar-todays-exc-days"),
             # K.3.3: data-driven Late / On Time label.
             ds_exc["is_late"].dim(field_id="ar-todays-exc-is-late"),
-            ds_exc["account_id"].dim(field_id="ar-todays-exc-account"),
+            account_id_col,
             ds_exc["account_name"].dim(field_id="ar-todays-exc-account-name"),
             ds_exc["account_level"].dim(field_id="ar-todays-exc-account-level"),
             ds_exc["ledger_name"].dim(field_id="ar-todays-exc-ledger"),
-            ds_exc["transfer_id"].dim(field_id="ar-todays-exc-transfer-id"),
+            transfer_id_col,
             ds_exc["transfer_type"].dim(field_id="ar-todays-exc-transfer-type"),
             ds_exc["primary_amount"].numerical(field_id="ar-todays-exc-primary"),
             ds_exc["secondary_amount"].numerical(field_id="ar-todays-exc-secondary"),
@@ -952,17 +950,13 @@ def _populate_todays_exceptions(
                 action_id="action-ar-todays-exc-to-txn-by-account",
             ),
         ],
-        conditional_formatting={
-            "ConditionalFormattingOptions": [
-                link_text_format(
-                    "ar-todays-exc-transfer-id", "transfer_id", link_color,
-                ),
-                menu_link_text_format(
-                    "ar-todays-exc-account", "account_id",
-                    link_color, link_tint,
-                ),
-            ],
-        },
+        conditional_formatting=[
+            CellAccentText(on=transfer_id_col, color=link_color),
+            CellAccentMenu(
+                on=account_id_col,
+                text_color=link_color, background_color=link_tint,
+            ),
+        ],
     )
     breakdown_filter.target_visuals.append(table_exc)
 

@@ -121,6 +121,11 @@ from quicksight_gen.common.tree.fields import (
     Measure,
     MeasureKind,
 )
+from quicksight_gen.common.tree.formatting import (
+    CellAccentMenu,
+    CellAccentText,
+    CellFormat,
+)
 from quicksight_gen.common.tree.filters import (
     Bound,
     CategoryFilter,
@@ -190,6 +195,8 @@ __all__ = [
     # Drill actions (L.1.10)
     "Action", "Drill", "DrillParam", "DrillSourceField", "DrillResetSentinel",
     "SameSheetFilter",
+    # Conditional formatting (L.3.7-followup)
+    "CellAccentText", "CellAccentMenu", "CellFormat",
     # Structure
     "GridSlot", "Sheet", "Analysis", "Dashboard", "App",
     # Layout DSL (L.1.21)

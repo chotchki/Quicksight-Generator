@@ -11,7 +11,7 @@ for deploy.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Literal
 
 from typing import Protocol, runtime_checkable
 
@@ -39,6 +39,7 @@ from quicksight_gen.common.tree._helpers import (
     _AutoSentinel,
 )
 from quicksight_gen.common.tree.actions import Action, Drill
+from quicksight_gen.common.tree.formatting import CellFormat
 from quicksight_gen.common.tree.calc_fields import CalcField
 from quicksight_gen.common.tree.controls import (
     FilterControlLike,
@@ -529,7 +530,7 @@ class Row:
             | None
         ) = None,
         actions: list[Action] | None = None,
-        conditional_formatting: dict[str, Any] | None = None,
+        conditional_formatting: list[CellFormat] | None = None,
         visual_id: VisualId | AutoResolved = AUTO,
     ) -> Table:
         """Construct + register + place a Table in this row.
@@ -697,7 +698,7 @@ class AbsoluteSlot:
             | None
         ) = None,
         actions: list[Action] | None = None,
-        conditional_formatting: dict[str, Any] | None = None,
+        conditional_formatting: list[CellFormat] | None = None,
         visual_id: VisualId | AutoResolved = AUTO,
     ) -> Table:
         table = Table(

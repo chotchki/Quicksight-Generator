@@ -44,6 +44,7 @@ from quicksight_gen.common.tree._helpers import (
     title_label,
 )
 from quicksight_gen.common.tree.actions import Action
+from quicksight_gen.common.tree.formatting import CellFormat
 from quicksight_gen.common.tree.calc_fields import CalcField
 from quicksight_gen.common.tree.datasets import Dataset
 from quicksight_gen.common.tree.fields import Dim, FieldRef, Measure, resolve_field_id
@@ -177,7 +178,7 @@ class Table:
         | None
     ) = None
     actions: list[Action] = field(default_factory=list[Action])
-    conditional_formatting: dict[str, Any] | None = None
+    conditional_formatting: list[CellFormat] | None = None
     visual_id: VisualId | AutoResolved = AUTO
 
     _AUTO_KIND: ClassVar[str] = "table"
@@ -264,7 +265,12 @@ class Table:
                     SortConfiguration=sort_config,
                 ),
                 Actions=[a.emit() for a in self.actions] if self.actions else None,
-                ConditionalFormatting=self.conditional_formatting,
+                ConditionalFormatting=(
+                    {"ConditionalFormattingOptions": [
+                        cf.emit() for cf in self.conditional_formatting
+                    ]}
+                    if self.conditional_formatting else None
+                ),
             ),
         )
 
