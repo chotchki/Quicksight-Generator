@@ -26,6 +26,8 @@ by id, so unported shells don't pollute the tested surface.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from quicksight_gen.apps.account_recon.constants import (
     DS_AR_LEDGER_ACCOUNTS,
     DS_AR_LEDGER_BALANCE_DRIFT,
@@ -40,6 +42,12 @@ from quicksight_gen.apps.account_recon.constants import (
     DS_AR_TRANSFER_SUMMARY,
     DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
     DS_AR_UNIFIED_EXCEPTIONS,
+    FG_AR_DRILL_ACCOUNT_ON_TXN,
+    FG_AR_DRILL_ACTIVITY_DATE_ON_TXN,
+    FG_AR_DRILL_LEDGER_ON_BALANCES_SUBLEDGER,
+    FG_AR_DRILL_SUBLEDGER_ON_TXN,
+    FG_AR_DRILL_TRANSFER_ON_TXN,
+    FG_AR_DRILL_TRANSFER_TYPE_ON_TXN,
     P_AR_ACCOUNT,
     P_AR_ACTIVITY_DATE,
     P_AR_DS_ACCOUNT,
@@ -65,17 +73,25 @@ from quicksight_gen.apps.account_recon import datasets as _register_contracts  #
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.theme import get_preset
+from quicksight_gen.common.ids import ParameterName
+from quicksight_gen.common.models import DateTimeDefaultValues
+from quicksight_gen.common.tree._helpers import _AutoSentinel
 from quicksight_gen.common.tree import (
     Analysis,
     App,
+    CalcField,
+    CategoryFilter,
     CellAccentMenu,
     CellAccentText,
+    DateTimeParam,
     Dataset,
     Drill,
     DrillResetSentinel,
     DrillSourceField,
+    FilterGroup,
     SameSheetFilter,
     Sheet,
+    StringParam,
     TextBox,
 )
 
@@ -1218,6 +1234,143 @@ def _populate_daily_statement(
 
 
 # ---------------------------------------------------------------------------
+# L.3.8 — App-level wiring: parameters + drill helper calc fields +
+# drill-down PASS filter groups. The K.2 PASS pattern: each drill writes
+# a parameter; the destination dataset has a calc field that returns
+# 'PASS' when (a) the param equals the sentinel "__ALL__" (untouched
+# state) or (b) the column matches the param. A FilterGroup with
+# `CategoryFilter.with_literal(value="PASS")` scopes the calc field to
+# the destination sheet (or specific visuals), so the visible row set
+# narrows to the drilled value or stays full when reset.
+# ---------------------------------------------------------------------------
+
+# K.2 sentinel — parameter default + the value drill resets write back
+# to clear the filter. Hard-coded here (mirror of analysis.py:697); the
+# same string appears in the calc-field expressions and the parameter
+# defaults below.
+_DRILL_RESET_SENTINEL = "__ALL__"
+
+
+def _wire_parameters(analysis: Analysis) -> None:
+    """Declare the 8 AR parameters: 6 drill-pass strings (with the
+    sentinel default) + 1 daily-statement account string + 1
+    daily-statement balance-date (rolling-today default)."""
+    for drill_param in (
+        P_AR_SUBLEDGER, P_AR_LEDGER, P_AR_TRANSFER, P_AR_ACTIVITY_DATE,
+        P_AR_TRANSFER_TYPE, P_AR_ACCOUNT,
+    ):
+        analysis.add_parameter(StringParam(
+            name=ParameterName(drill_param.name),
+            default=[_DRILL_RESET_SENTINEL],
+        ))
+    # Daily Statement parameters — picker-driven, no drill / no sentinel.
+    analysis.add_parameter(StringParam(
+        name=ParameterName(P_AR_DS_ACCOUNT.name),
+    ))
+    analysis.add_parameter(DateTimeParam(
+        name=ParameterName(P_AR_DS_BALANCE_DATE.name),
+        time_granularity="DAY",
+        default=DateTimeDefaultValues(
+            RollingDate={"Expression": "truncDate('DD', now())"},
+        ),
+    ))
+
+
+def _wire_drill_filter_groups(
+    analysis: Analysis,
+    *,
+    sheets: dict[str, Sheet],
+    datasets: dict[str, Dataset],
+) -> None:
+    """6 drill-down PASS filter groups + their backing calc fields.
+
+    Each spec encodes one cross-sheet drill:
+    - parameter to test
+    - destination dataset + the column the parameter compares against
+    - destination sheet (and optionally specific visuals to scope to)
+
+    The calc field expression is the K.2 sentinel-or-match pattern;
+    the FilterGroup uses ``CategoryFilter.with_literal(value="PASS")``
+    so the parameter test lives in the calc field (avoiding the
+    parameter-bound CustomFilterConfiguration's empty-string narrowing
+    bug).
+    """
+    @dataclass(frozen=True)
+    class _Spec:
+        fg_id: str
+        filter_id: str
+        param_name: str
+        dataset_id: str
+        column_name: str
+        sheet_id: str
+        visuals: tuple[str, ...] | None = None
+
+    txn_id = SHEET_AR_TRANSACTIONS
+    bal_id = SHEET_AR_BALANCES
+    txn_ds = DS_AR_TRANSACTIONS
+    sub_drift_ds = DS_AR_SUBLEDGER_BALANCE_DRIFT
+
+    specs = [
+        _Spec(FG_AR_DRILL_SUBLEDGER_ON_TXN, "filter-ar-drill-subledger-on-txn",
+              P_AR_SUBLEDGER.name, txn_ds, "subledger_account_id", txn_id),
+        _Spec(FG_AR_DRILL_TRANSFER_ON_TXN, "filter-ar-drill-transfer-on-txn",
+              P_AR_TRANSFER.name, txn_ds, "transfer_id", txn_id),
+        _Spec(FG_AR_DRILL_ACTIVITY_DATE_ON_TXN,
+              "filter-ar-drill-activity-date-on-txn",
+              P_AR_ACTIVITY_DATE.name, txn_ds, "posted_date", txn_id),
+        _Spec(FG_AR_DRILL_TRANSFER_TYPE_ON_TXN,
+              "filter-ar-drill-transfer-type-on-txn",
+              P_AR_TRANSFER_TYPE.name, txn_ds, "transfer_type", txn_id),
+        _Spec(FG_AR_DRILL_ACCOUNT_ON_TXN, "filter-ar-drill-account-on-txn",
+              P_AR_ACCOUNT.name, txn_ds, "account_id", txn_id),
+        _Spec(FG_AR_DRILL_LEDGER_ON_BALANCES_SUBLEDGER,
+              "filter-ar-drill-ledger-on-balances-subledger",
+              P_AR_LEDGER.name, sub_drift_ds, "ledger_account_id", bal_id,
+              ("ar-balances-subledger-table",)),
+    ]
+
+    for spec in specs:
+        # `_drill_pass_<param>_on_<suffix>` mirrors the imperative
+        # _DrillFilterSpec.calc_field_name shape so JSON byte-identity
+        # holds.
+        on_suffix = spec.fg_id.split("on-", 1)[-1].replace("-", "_")
+        calc_name = f"_drill_pass_{spec.param_name}_on_{on_suffix}"
+        ds = datasets[spec.dataset_id]
+        calc = analysis.add_calc_field(CalcField(
+            name=calc_name,
+            dataset=ds,
+            expression=(
+                f"ifelse("
+                f"${{{spec.param_name}}} = '{_DRILL_RESET_SENTINEL}', "
+                f"'PASS', "
+                f"ifelse({{{spec.column_name}}} = ${{{spec.param_name}}}, "
+                f"'PASS', 'FAIL')"
+                f")"
+            ),
+        ))
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=spec.fg_id,  # type: ignore[arg-type]
+            filters=[CategoryFilter.with_literal(
+                filter_id=spec.filter_id,
+                dataset=ds,
+                column=calc,
+                value="PASS",
+                null_option="NON_NULLS_ONLY",
+            )],
+        ))
+        target_sheet = sheets[spec.sheet_id]
+        if spec.visuals is None:
+            fg.scope_sheet(target_sheet)
+        else:
+            visuals = [
+                v for v in target_sheet.visuals
+                if not isinstance(v.visual_id, _AutoSentinel)
+                and v.visual_id in spec.visuals
+            ]
+            target_sheet.scope(fg, visuals)
+
+
+# ---------------------------------------------------------------------------
 # App-level wiring
 # ---------------------------------------------------------------------------
 
@@ -1305,6 +1458,12 @@ def build_account_recon_app(cfg: Config) -> App:
     _populate_daily_statement(
         cfg, sheets[SHEET_AR_DAILY_STATEMENT], datasets=datasets,
     )
+
+    # L.3.8 — App-level wiring. Parameters first (validator depends on
+    # them), then drill PASS calc fields + filter groups (which scope to
+    # the populated sheets above).
+    _wire_parameters(analysis)
+    _wire_drill_filter_groups(analysis, sheets=sheets, datasets=datasets)
 
     app.create_dashboard(
         dashboard_id_suffix="account-recon-dashboard",

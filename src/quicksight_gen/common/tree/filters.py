@@ -98,9 +98,9 @@ NullOption = Literal["NON_NULLS_ONLY", "ALL_VALUES", "NULLS_ONLY"]
 
 
 # Discriminated binding for CategoryFilter — exactly one of values vs
-# parameter must be expressed, and the type system makes mixing the two
-# structurally impossible (a binding is one or the other; a CategoryFilter
-# carries one binding).
+# parameter vs literal must be expressed, and the type system makes
+# mixing them structurally impossible (a binding is one or the other;
+# a CategoryFilter carries one binding).
 @dataclass(frozen=True)
 class _ValuesBinding:
     """Static-list binding — emits ``FilterListConfiguration``."""
@@ -114,7 +114,20 @@ class _ParameterBinding:
     parameter: ParameterDeclLike
 
 
-CategoryBinding = _ValuesBinding | _ParameterBinding
+@dataclass(frozen=True)
+class _LiteralBinding:
+    """Single literal exact-match binding — emits
+    ``CustomFilterConfiguration`` with a literal ``CategoryValue``.
+    Used for the K.2 calc-field PASS pattern: a calc field returns
+    ``"PASS"`` and the filter requires equality against that literal.
+    The list-based ``FilterListConfiguration`` doesn't support EQUALS
+    at the API (only CONTAINS / DOES_NOT_CONTAIN), so the
+    Custom-with-literal shape is the only way to get an exact match
+    against a single value."""
+    value: str
+
+
+CategoryBinding = _ValuesBinding | _ParameterBinding | _LiteralBinding
 
 
 @dataclass(eq=False)
@@ -196,6 +209,33 @@ class CategoryFilter:
             filter_id=filter_id,
         )
 
+    @classmethod
+    def with_literal(
+        cls,
+        *,
+        dataset: Dataset,
+        column: ColumnRef,
+        value: str,
+        match_operator: CategoryMatchOperator = "EQUALS",
+        null_option: NullOption = "NON_NULLS_ONLY",
+        filter_id: str | AutoResolved = AUTO,
+    ) -> "CategoryFilter":
+        """Single-literal exact-match category filter — emits
+        ``CustomFilterConfiguration`` with a literal ``CategoryValue``.
+        The list-based ``FilterListConfiguration`` rejects EQUALS at the
+        API (only CONTAINS / DOES_NOT_CONTAIN), so this is the only
+        shape that supports an exact-equality test against a single
+        value. Used for the K.2 calc-field PASS pattern: a calc field
+        returns ``"PASS"`` and the filter requires equality against
+        that literal."""
+        return cls(
+            dataset=dataset, column=column,
+            binding=_LiteralBinding(value=value),
+            match_operator=match_operator,
+            null_option=null_option,
+            filter_id=filter_id,
+        )
+
     def calc_field(self) -> CalcField | None:
         """The CalcField this filter references, or None if it points
         at a real dataset column."""
@@ -211,6 +251,14 @@ class CategoryFilter:
                     CustomFilterConfiguration={
                         "MatchOperator": self.match_operator,
                         "ParameterName": parameter.name,
+                        "NullOption": self.null_option,
+                    },
+                )
+            case _LiteralBinding(value=value):
+                configuration = CategoryFilterConfiguration(
+                    CustomFilterConfiguration={
+                        "MatchOperator": self.match_operator,
+                        "CategoryValue": value,
                         "NullOption": self.null_option,
                     },
                 )
