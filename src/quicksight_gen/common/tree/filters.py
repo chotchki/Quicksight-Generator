@@ -41,13 +41,13 @@ from quicksight_gen.common.models import TimeRangeFilter as ModelTimeRangeFilter
 
 from quicksight_gen.common.tree._helpers import (
     TimeGranularity,
-    _validate_literal,
+    validate_literal,
 )
 from quicksight_gen.common.tree.calc_fields import (
     CalcField,
     ColumnRef,
-    _calc_field_in,
-    _resolve_column,
+    calc_field_in,
+    resolve_column,
 )
 from quicksight_gen.common.tree.datasets import Dataset
 from quicksight_gen.common.tree.parameters import ParameterDeclLike
@@ -139,7 +139,7 @@ class CategoryFilter:
     def calc_field(self) -> CalcField | None:
         """The CalcField this filter references, or None if it points
         at a real dataset column."""
-        return _calc_field_in(self.column)
+        return calc_field_in(self.column)
 
     def emit(self) -> Filter:
         assert self.filter_id is not None, (
@@ -165,7 +165,7 @@ class CategoryFilter:
                 FilterId=self.filter_id,
                 Column=ColumnIdentifier(
                     DataSetIdentifier=self.dataset.identifier,
-                    ColumnName=_resolve_column(self.column),
+                    ColumnName=resolve_column(self.column),
                 ),
                 Configuration=configuration,
             ),
@@ -221,7 +221,7 @@ class NumericRangeFilter:
         return None
 
     def calc_field(self) -> CalcField | None:
-        return _calc_field_in(self.column)
+        return calc_field_in(self.column)
 
     def emit(self) -> Filter:
         assert self.filter_id is not None, (
@@ -232,7 +232,7 @@ class NumericRangeFilter:
                 FilterId=self.filter_id,
                 Column=ColumnIdentifier(
                     DataSetIdentifier=self.dataset.identifier,
-                    ColumnName=_resolve_column(self.column),
+                    ColumnName=resolve_column(self.column),
                 ),
                 NullOption=self.null_option,
                 RangeMinimum=self._range_value(
@@ -272,13 +272,13 @@ class TimeRangeFilter:
     _AUTO_KIND: ClassVar[str] = "time"
 
     def __post_init__(self) -> None:
-        _validate_literal(
+        validate_literal(
             self.time_granularity, TimeGranularity,
             field_name="time_granularity",
         )
 
     def calc_field(self) -> CalcField | None:
-        return _calc_field_in(self.column)
+        return calc_field_in(self.column)
 
     def emit(self) -> Filter:
         assert self.filter_id is not None, (
@@ -289,7 +289,7 @@ class TimeRangeFilter:
                 FilterId=self.filter_id,
                 Column=ColumnIdentifier(
                     DataSetIdentifier=self.dataset.identifier,
-                    ColumnName=_resolve_column(self.column),
+                    ColumnName=resolve_column(self.column),
                 ),
                 NullOption=self.null_option,
                 TimeGranularity=self.time_granularity,

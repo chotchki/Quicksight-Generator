@@ -30,7 +30,7 @@ the App walker assigns position-indexed IDs at emit time
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
 
 from quicksight_gen.common.models import (

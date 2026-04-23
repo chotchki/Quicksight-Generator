@@ -17,7 +17,6 @@ from quicksight_gen.common.dataset_contract import get_contract
 from quicksight_gen.common.models import (
     AnalysisDefinition,
     DashboardPublishOptions,
-    DataSetIdentifierDeclaration,
     GridLayoutConfiguration,
     GridLayoutElement,
     Layout,
@@ -25,7 +24,6 @@ from quicksight_gen.common.models import (
     ParameterControl,
     ResourcePermission,
     SheetDefinition,
-    Visual,
 )
 from quicksight_gen.common.models import Analysis as ModelAnalysis
 from quicksight_gen.common.models import Dashboard as ModelDashboard
@@ -35,7 +33,6 @@ from quicksight_gen.common.tree._helpers import (
     ANALYSIS_ACTIONS,
     DASHBOARD_ACTIONS,
 )
-from quicksight_gen.common.tree.actions import Drill
 from quicksight_gen.common.tree.calc_fields import CalcField
 from quicksight_gen.common.tree.controls import (
     FilterControlLike,

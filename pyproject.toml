@@ -52,6 +52,7 @@ dev = [
     "psycopg2-binary>=2.9",
     "build>=1.0",
     "twine>=5.0",
+    "pyright>=1.1.380",
 ]
 docs = [
     "mkdocs>=1.6",
@@ -94,3 +95,21 @@ markers = [
     "api: API-only e2e tests (no browser)",
     "browser: browser-based e2e tests (requires Playwright)",
 ]
+
+# Pyright is configured strict on the L.1 tree primitives. Scope stays
+# tight for now — tests come in a follow-up sub-step (pytest patterns
+# trip a lot of strict rules); apps stay outside until each L.{2,3,4}.13
+# cleanup retires the imperative builders. Models + drill helpers are
+# reachable through the tree but stay outside strict; pyright still
+# resolves them via extraPaths for inference.
+[tool.pyright]
+include = ["src/quicksight_gen/common/tree"]
+pythonVersion = "3.13"
+typeCheckingMode = "strict"
+extraPaths = ["src"]
+# Module-private leading-underscore helpers are intentionally shared
+# across tree submodules (e.g. `_calc_field_in` in calc_fields.py used
+# by filters.py / actions.py). Pyright flags this under `reportPrivateUsage`
+# but the codebase treats them as package-internal — suppressing keeps
+# the convention without renaming everything to drop the underscore.
+reportPrivateUsage = false

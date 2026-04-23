@@ -22,25 +22,22 @@ list into the underlying model's ``Actions`` slot.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import ClassVar, Literal
 
 from quicksight_gen.common.drill import (
     DrillResetSentinel,
     DrillSourceField,
-    DrillWriteValue,
     cross_sheet_drill as _emit_cross_sheet_drill,
 )
 from quicksight_gen.common.drill import DrillParam as _DrillParam
 from quicksight_gen.common.models import VisualCustomAction
 
 from quicksight_gen.common.tree.calc_fields import (
-    CalcField,
-    _calc_field_in,
-    _resolve_column,
+    calc_field_in,
+    resolve_column,
 )
 from quicksight_gen.common.tree.fields import Dim, Measure
-from quicksight_gen.common.tree.parameters import ParameterDeclLike
 # Sheet is referenced via TYPE_CHECKING — same trick as filters.py
 # uses for the FilterGroup → Sheet ref. Avoids circular import.
 from typing import TYPE_CHECKING, Union
@@ -89,7 +86,7 @@ def _resolve_drill_source(
         "Drill source field_id wasn't resolved — App._resolve_auto_ids() "
         "must run before Drill.emit()."
     )
-    calc = _calc_field_in(leaf.column)
+    calc = calc_field_in(leaf.column)
     if calc is not None:
         if calc.shape is None:
             raise TypeError(
@@ -104,7 +101,7 @@ def _resolve_drill_source(
     return field_source(
         field_id=leaf.field_id,
         dataset_id=leaf.dataset.identifier,
-        column_name=_resolve_column(leaf.column),
+        column_name=resolve_column(leaf.column),
     )
 
 

@@ -35,11 +35,11 @@ from quicksight_gen.common.models import (
     Visual,
 )
 
-from quicksight_gen.common.tree._helpers import _subtitle_label, _title_label
+from quicksight_gen.common.tree._helpers import subtitle_label, title_label
 from quicksight_gen.common.tree.actions import Drill
 from quicksight_gen.common.tree.calc_fields import CalcField
 from quicksight_gen.common.tree.datasets import Dataset
-from quicksight_gen.common.tree.fields import Dim, FieldRef, Measure, _resolve_field_id
+from quicksight_gen.common.tree.fields import Dim, FieldRef, Measure, resolve_field_id
 
 
 @runtime_checkable
@@ -146,8 +146,8 @@ class KPI:
         return Visual(
             KPIVisual=KPIVisual(
                 VisualId=self.visual_id,
-                Title=_title_label(self.title),
-                Subtitle=_subtitle_label(self.subtitle) if self.subtitle else None,
+                Title=title_label(self.title),
+                Subtitle=subtitle_label(self.subtitle) if self.subtitle else None,
                 ChartConfiguration=KPIConfiguration(
                     FieldWells=KPIFieldWells(
                         Values=[m.emit() for m in self.values] if self.values else None,
@@ -210,7 +210,7 @@ class Table:
             sort_config = {
                 "RowSort": [
                     {"FieldSort": {
-                        "FieldId": _resolve_field_id(ref),
+                        "FieldId": resolve_field_id(ref),
                         "Direction": direction,
                     }},
                 ],
@@ -218,8 +218,8 @@ class Table:
         return Visual(
             TableVisual=TableVisual(
                 VisualId=self.visual_id,
-                Title=_title_label(self.title),
-                Subtitle=_subtitle_label(self.subtitle) if self.subtitle else None,
+                Title=title_label(self.title),
+                Subtitle=subtitle_label(self.subtitle) if self.subtitle else None,
                 ChartConfiguration=TableConfiguration(
                     FieldWells=TableFieldWells(
                         TableAggregatedFieldWells=TableAggregatedFieldWells(
@@ -297,7 +297,7 @@ class BarChart:
             sort_config = BarChartSortConfiguration(
                 CategorySort=[
                     {"FieldSort": {
-                        "FieldId": _resolve_field_id(ref),
+                        "FieldId": resolve_field_id(ref),
                         "Direction": direction,
                     }},
                 ],
@@ -305,8 +305,8 @@ class BarChart:
         return Visual(
             BarChartVisual=BarChartVisual(
                 VisualId=self.visual_id,
-                Title=_title_label(self.title),
-                Subtitle=_subtitle_label(self.subtitle) if self.subtitle else None,
+                Title=title_label(self.title),
+                Subtitle=subtitle_label(self.subtitle) if self.subtitle else None,
                 ChartConfiguration=BarChartConfiguration(
                     FieldWells=BarChartFieldWells(
                         BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
@@ -389,7 +389,7 @@ class Sankey:
                 sort_config_kwargs["WeightSort"] = [
                     {
                         "FieldSort": {
-                            "FieldId": _resolve_field_id(self.weight),
+                            "FieldId": resolve_field_id(self.weight),
                             "Direction": "DESC",
                         },
                     },
@@ -405,8 +405,8 @@ class Sankey:
         return Visual(
             SankeyDiagramVisual=SankeyDiagramVisual(
                 VisualId=self.visual_id,
-                Title=_title_label(self.title),
-                Subtitle=_subtitle_label(self.subtitle) if self.subtitle else None,
+                Title=title_label(self.title),
+                Subtitle=subtitle_label(self.subtitle) if self.subtitle else None,
                 ChartConfiguration=SankeyDiagramChartConfiguration(
                     FieldWells=SankeyDiagramFieldWells(
                         SankeyDiagramAggregatedFieldWells=SankeyDiagramAggregatedFieldWells(

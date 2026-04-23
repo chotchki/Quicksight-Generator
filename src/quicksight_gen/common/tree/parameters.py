@@ -22,7 +22,7 @@ from quicksight_gen.common.models import (
 )
 from quicksight_gen.common.tree._helpers import (
     TimeGranularity,
-    _validate_literal,
+    validate_literal,
 )
 
 
@@ -92,7 +92,7 @@ class DateTimeParam:
     default: DateTimeDefaultValues | None = None
 
     def __post_init__(self) -> None:
-        _validate_literal(
+        validate_literal(
             self.time_granularity, TimeGranularity,
             field_name="time_granularity",
         )

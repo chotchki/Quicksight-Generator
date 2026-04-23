@@ -35,8 +35,8 @@ from quicksight_gen.common.models import (
 from quicksight_gen.common.tree.calc_fields import (
     CalcField,
     ColumnRef,
-    _calc_field_in,
-    _resolve_column,
+    calc_field_in,
+    resolve_column,
 )
 from quicksight_gen.common.tree.datasets import Dataset
 
@@ -98,7 +98,7 @@ class Dim:
     def calc_field(self) -> CalcField | None:
         """The CalcField this Dim references, or None if it points at
         a real dataset column. Used by the dependency-graph walk."""
-        return _calc_field_in(self.column)
+        return calc_field_in(self.column)
 
     def emit(self) -> DimensionField:
         assert self.field_id is not None, (
@@ -107,7 +107,7 @@ class Dim:
         )
         col = ColumnIdentifier(
             DataSetIdentifier=self.dataset.identifier,
-            ColumnName=_resolve_column(self.column),
+            ColumnName=resolve_column(self.column),
         )
         if self.kind == "date":
             return DimensionField(
@@ -220,7 +220,7 @@ class Measure:
     def calc_field(self) -> CalcField | None:
         """The CalcField this Measure references, or None if it points
         at a real dataset column."""
-        return _calc_field_in(self.column)
+        return calc_field_in(self.column)
 
     def emit(self) -> MeasureField:
         assert self.field_id is not None, (
@@ -229,7 +229,7 @@ class Measure:
         )
         col = ColumnIdentifier(
             DataSetIdentifier=self.dataset.identifier,
-            ColumnName=_resolve_column(self.column),
+            ColumnName=resolve_column(self.column),
         )
         if self.kind in _CATEGORICAL_AGG:
             return MeasureField(
@@ -257,12 +257,12 @@ class Measure:
 FieldRef = Dim | Measure | str
 
 
-def _resolve_field_id(ref: FieldRef) -> str:
+def resolve_field_id(ref: FieldRef) -> str:
     """Read the resolved field_id off a Dim / Measure / bare string."""
     if isinstance(ref, str):
         return ref
     assert ref.field_id is not None, (
         "field_id wasn't resolved — App._resolve_auto_ids() must run "
-        "before _resolve_field_id."
+        "before resolve_field_id."
     )
     return ref.field_id

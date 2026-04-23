@@ -99,7 +99,7 @@ class CalcField:
 ColumnRef = str | CalcField | Column
 
 
-def _resolve_column(column: ColumnRef) -> str:
+def resolve_column(column: ColumnRef) -> str:
     """Read the column-name string off a ``ColumnRef``."""
     if isinstance(column, CalcField):
         return column.name
@@ -108,7 +108,7 @@ def _resolve_column(column: ColumnRef) -> str:
     return column
 
 
-def _calc_field_in(column: ColumnRef) -> CalcField | None:
+def calc_field_in(column: ColumnRef) -> CalcField | None:
     """Return the CalcField if ``column`` is one, else ``None``.
 
     Used by the dependency-graph walk to harvest CalcField refs from
