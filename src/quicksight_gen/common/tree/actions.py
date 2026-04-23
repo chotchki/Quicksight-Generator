@@ -33,6 +33,7 @@ from quicksight_gen.common.drill import (
 from quicksight_gen.common.drill import DrillParam as _DrillParam
 from quicksight_gen.common.models import VisualCustomAction
 
+from quicksight_gen.common.tree._helpers import AUTO, AutoResolved, _AutoSentinel
 from quicksight_gen.common.tree.calc_fields import (
     calc_field_in,
     resolve_column,
@@ -82,7 +83,7 @@ def _resolve_drill_source(
         return source
     # Dim / Measure path — resolve field_id + shape.
     leaf = source
-    assert leaf.field_id is not None, (
+    assert not isinstance(leaf.field_id, _AutoSentinel), (
         "Drill source field_id wasn't resolved — App._resolve_auto_ids() "
         "must run before Drill.emit()."
     )
@@ -143,16 +144,16 @@ class Drill:
     writes: list[DrillWrite]
     name: str
     trigger: Literal["DATA_POINT_CLICK", "DATA_POINT_MENU"] = "DATA_POINT_CLICK"
-    action_id: str | None = None
-    target_sheet: "Sheet | None" = None
+    action_id: str | AutoResolved = AUTO
+    target_sheet: "Sheet | AutoResolved" = AUTO
 
     _AUTO_KIND: ClassVar[str] = "drill"
 
     def emit(self) -> VisualCustomAction:
-        assert self.action_id is not None, (
+        assert not isinstance(self.action_id, _AutoSentinel), (
             "action_id wasn't resolved — App._resolve_auto_ids() must run."
         )
-        assert self.target_sheet is not None, (
+        assert not isinstance(self.target_sheet, _AutoSentinel), (
             "target_sheet wasn't resolved — App._resolve_auto_ids() must "
             "run before Drill.emit(). Same-sheet drills get back-filled "
             "with the owning sheet automatically."

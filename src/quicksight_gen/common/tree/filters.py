@@ -39,7 +39,12 @@ from quicksight_gen.common.models import FilterGroup as ModelFilterGroup
 from quicksight_gen.common.models import NumericRangeFilter as ModelNumericRangeFilter
 from quicksight_gen.common.models import TimeRangeFilter as ModelTimeRangeFilter
 
-from quicksight_gen.common.tree._helpers import TimeGranularity
+from quicksight_gen.common.tree._helpers import (
+    AUTO,
+    AutoResolved,
+    TimeGranularity,
+    _AutoSentinel,
+)
 from quicksight_gen.common.tree.calc_fields import (
     CalcField,
     ColumnRef,
@@ -75,7 +80,7 @@ class FilterLike(Protocol):
     FilterControl wrappers that need the filter_id post-resolve.
     """
     dataset: Dataset
-    filter_id: str | None
+    filter_id: str | AutoResolved
 
     def emit(self) -> Filter: ...
 
@@ -126,7 +131,7 @@ class CategoryFilter:
     parameter: ParameterDeclLike | None = None
     match_operator: CategoryMatchOperator = "CONTAINS"
     null_option: NullOption = "ALL_VALUES"
-    filter_id: str | None = None
+    filter_id: str | AutoResolved = AUTO
 
     _AUTO_KIND: ClassVar[str] = "category"
 
@@ -148,7 +153,7 @@ class CategoryFilter:
         return calc_field_in(self.column)
 
     def emit(self) -> Filter:
-        assert self.filter_id is not None, (
+        assert not isinstance(self.filter_id, _AutoSentinel), (
             "filter_id wasn't resolved — App._resolve_auto_ids() must run."
         )
         if self.parameter is not None:
@@ -201,7 +206,7 @@ class NumericRangeFilter:
     null_option: NullOption = "NON_NULLS_ONLY"
     include_minimum: bool | None = None
     include_maximum: bool | None = None
-    filter_id: str | None = None
+    filter_id: str | AutoResolved = AUTO
 
     _AUTO_KIND: ClassVar[str] = "numeric"
 
@@ -230,7 +235,7 @@ class NumericRangeFilter:
         return calc_field_in(self.column)
 
     def emit(self) -> Filter:
-        assert self.filter_id is not None, (
+        assert not isinstance(self.filter_id, _AutoSentinel), (
             "filter_id wasn't resolved — App._resolve_auto_ids() must run."
         )
         return Filter(
@@ -273,7 +278,7 @@ class TimeRangeFilter:
     time_granularity: TimeGranularity | None = None
     include_minimum: bool | None = None
     include_maximum: bool | None = None
-    filter_id: str | None = None
+    filter_id: str | AutoResolved = AUTO
 
     _AUTO_KIND: ClassVar[str] = "time"
 
@@ -281,7 +286,7 @@ class TimeRangeFilter:
         return calc_field_in(self.column)
 
     def emit(self) -> Filter:
-        assert self.filter_id is not None, (
+        assert not isinstance(self.filter_id, _AutoSentinel), (
             "filter_id wasn't resolved — App._resolve_auto_ids() must run."
         )
         return Filter(
@@ -332,7 +337,7 @@ class FilterGroup:
     filters: list[FilterLike]
     cross_dataset: Literal["SINGLE_DATASET", "ALL_DATASETS"] = "SINGLE_DATASET"
     enabled: bool = True
-    filter_group_id: FilterGroupId | None = None
+    filter_group_id: FilterGroupId | AutoResolved = AUTO
     _scope_entries: list[tuple["Sheet", list[VisualLike] | None]] = field(
         default_factory=list[tuple["Sheet", list[VisualLike] | None]],
         init=False, repr=False,
@@ -383,7 +388,7 @@ class FilterGroup:
         return self
 
     def emit(self) -> ModelFilterGroup:
-        assert self.filter_group_id is not None, (
+        assert not isinstance(self.filter_group_id, _AutoSentinel), (
             "filter_group_id wasn't resolved — App._resolve_auto_ids() "
             "must run before FilterGroup.emit()."
         )
@@ -405,7 +410,7 @@ class FilterGroup:
                 # this code path only executes after resolution.
                 visual_ids: list[str] = []
                 for v in visuals:
-                    assert v.visual_id is not None, (
+                    assert not isinstance(v.visual_id, _AutoSentinel), (
                         "visual_id wasn't resolved — App._resolve_auto_ids() "
                         "must run before FilterGroup.emit()."
                     )

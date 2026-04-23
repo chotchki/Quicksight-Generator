@@ -32,6 +32,7 @@ from quicksight_gen.common.models import (
     NumericalDimensionField,
     NumericalMeasureField,
 )
+from quicksight_gen.common.tree._helpers import AUTO, AutoResolved, _AutoSentinel
 from quicksight_gen.common.tree.calc_fields import (
     CalcField,
     ColumnRef,
@@ -77,19 +78,19 @@ class Dim:
     dataset: Dataset
     column: ColumnRef
     kind: DimKind = "categorical"
-    field_id: str | None = field(default=None, kw_only=True)
+    field_id: str | AutoResolved = field(default=AUTO, kw_only=True)
 
     @classmethod
     def date(
         cls, dataset: Dataset, column: ColumnRef,
-        *, field_id: str | None = None,
+        *, field_id: str | AutoResolved = AUTO,
     ) -> Dim:
         return cls(dataset=dataset, column=column, kind="date", field_id=field_id)
 
     @classmethod
     def numerical(
         cls, dataset: Dataset, column: ColumnRef,
-        *, field_id: str | None = None,
+        *, field_id: str | AutoResolved = AUTO,
     ) -> Dim:
         return cls(
             dataset=dataset, column=column, kind="numerical", field_id=field_id,
@@ -101,7 +102,7 @@ class Dim:
         return calc_field_in(self.column)
 
     def emit(self) -> DimensionField:
-        assert self.field_id is not None, (
+        assert not isinstance(self.field_id, _AutoSentinel), (
             "field_id wasn't resolved — App._resolve_auto_ids() must run "
             "before Dim.emit()."
         )
@@ -168,33 +169,33 @@ class Measure:
     dataset: Dataset
     column: ColumnRef
     kind: MeasureKind
-    field_id: str | None = field(default=None, kw_only=True)
+    field_id: str | AutoResolved = field(default=AUTO, kw_only=True)
 
     @classmethod
     def sum(
         cls, dataset: Dataset, column: ColumnRef,
-        *, field_id: str | None = None,
+        *, field_id: str | AutoResolved = AUTO,
     ) -> Measure:
         return cls(dataset=dataset, column=column, kind="sum", field_id=field_id)
 
     @classmethod
     def max(
         cls, dataset: Dataset, column: ColumnRef,
-        *, field_id: str | None = None,
+        *, field_id: str | AutoResolved = AUTO,
     ) -> Measure:
         return cls(dataset=dataset, column=column, kind="max", field_id=field_id)
 
     @classmethod
     def min(
         cls, dataset: Dataset, column: ColumnRef,
-        *, field_id: str | None = None,
+        *, field_id: str | AutoResolved = AUTO,
     ) -> Measure:
         return cls(dataset=dataset, column=column, kind="min", field_id=field_id)
 
     @classmethod
     def average(
         cls, dataset: Dataset, column: ColumnRef,
-        *, field_id: str | None = None,
+        *, field_id: str | AutoResolved = AUTO,
     ) -> Measure:
         return cls(
             dataset=dataset, column=column, kind="average", field_id=field_id,
@@ -203,14 +204,14 @@ class Measure:
     @classmethod
     def count(
         cls, dataset: Dataset, column: ColumnRef,
-        *, field_id: str | None = None,
+        *, field_id: str | AutoResolved = AUTO,
     ) -> Measure:
         return cls(dataset=dataset, column=column, kind="count", field_id=field_id)
 
     @classmethod
     def distinct_count(
         cls, dataset: Dataset, column: ColumnRef,
-        *, field_id: str | None = None,
+        *, field_id: str | AutoResolved = AUTO,
     ) -> Measure:
         return cls(
             dataset=dataset, column=column, kind="distinct_count",
@@ -223,7 +224,7 @@ class Measure:
         return calc_field_in(self.column)
 
     def emit(self) -> MeasureField:
-        assert self.field_id is not None, (
+        assert not isinstance(self.field_id, _AutoSentinel), (
             "field_id wasn't resolved — App._resolve_auto_ids() must run "
             "before Measure.emit()."
         )
@@ -261,7 +262,7 @@ def resolve_field_id(ref: FieldRef) -> str:
     """Read the resolved field_id off a Dim / Measure / bare string."""
     if isinstance(ref, str):
         return ref
-    assert ref.field_id is not None, (
+    assert not isinstance(ref.field_id, _AutoSentinel), (
         "field_id wasn't resolved — App._resolve_auto_ids() must run "
         "before resolve_field_id."
     )

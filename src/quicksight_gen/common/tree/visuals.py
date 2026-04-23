@@ -35,7 +35,13 @@ from quicksight_gen.common.models import (
     Visual,
 )
 
-from quicksight_gen.common.tree._helpers import subtitle_label, title_label
+from quicksight_gen.common.tree._helpers import (
+    AUTO,
+    AutoResolved,
+    _AutoSentinel,
+    subtitle_label,
+    title_label,
+)
 from quicksight_gen.common.tree.actions import Drill
 from quicksight_gen.common.tree.calc_fields import CalcField
 from quicksight_gen.common.tree.datasets import Dataset
@@ -64,8 +70,13 @@ class VisualLike(Protocol):
     All visual nodes also satisfy ``LayoutNode`` (in ``structure.py``)
     via ``element_id`` + ``element_type`` so they can be placed in a
     sheet's grid layout via ``Sheet.place(...)``.
+
+    ``visual_id`` is ``VisualId | AutoResolved`` — typed subtypes default
+    to ``AUTO`` and ``App._resolve_auto_ids`` replaces it with the
+    derived id before emit. The walker / emit assert via ``isinstance``
+    narrowing.
     """
-    visual_id: VisualId | None
+    visual_id: VisualId | AutoResolved
 
     def emit(self) -> Visual: ...
 
@@ -79,11 +90,10 @@ def _visual_element_id(node: VisualLike) -> str:
     Resolves to ``visual_id`` (the visual's element id is the same id
     QuickSight uses for the visual itself); asserts auto-IDs are
     resolved before access."""
-    if node.visual_id is None:
-        raise AssertionError(
-            "visual_id wasn't resolved — App._resolve_auto_ids() must run "
-            "before LayoutNode.element_id access."
-        )
+    assert not isinstance(node.visual_id, _AutoSentinel), (
+        "visual_id wasn't resolved — App._resolve_auto_ids() must run "
+        "before LayoutNode.element_id access."
+    )
     return node.visual_id
 
 
@@ -95,7 +105,7 @@ class VisualNode:
     pattern to the typed subtypes one app at a time. The wrapper
     itself is removed once all apps are on the typed subtypes.
     """
-    visual_id: VisualId | None
+    visual_id: VisualId | AutoResolved
     builder: Callable[[], Visual]
 
     @property
@@ -132,7 +142,7 @@ class KPI:
     title: str
     subtitle: str | None = None
     values: list[Measure] = field(default_factory=list[Measure])
-    visual_id: VisualId | None = None
+    visual_id: VisualId | AutoResolved = AUTO
 
     _AUTO_KIND: ClassVar[str] = "kpi"
 
@@ -152,7 +162,7 @@ class KPI:
         return {cf for m in self.values if (cf := m.calc_field()) is not None}
 
     def emit(self) -> Visual:
-        assert self.visual_id is not None, (
+        assert not isinstance(self.visual_id, _AutoSentinel), (
             "visual_id wasn't resolved — App._resolve_auto_ids() must run "
             "before Visual.emit(). This shouldn't happen via App.emit_*()."
         )
@@ -190,7 +200,7 @@ class Table:
     values: list[Measure] = field(default_factory=list[Measure])
     sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None
     actions: list[Drill] = field(default_factory=list[Drill])
-    visual_id: VisualId | None = None
+    visual_id: VisualId | AutoResolved = AUTO
 
     _AUTO_KIND: ClassVar[str] = "table"
 
@@ -217,7 +227,7 @@ class Table:
         return deps
 
     def emit(self) -> Visual:
-        assert self.visual_id is not None, (
+        assert not isinstance(self.visual_id, _AutoSentinel), (
             "visual_id wasn't resolved — see KPI.emit assertion."
         )
         sort_config: Any = None
@@ -277,7 +287,7 @@ class BarChart:
     ] | None = None
     sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None
     actions: list[Drill] = field(default_factory=list[Drill])
-    visual_id: VisualId | None = None
+    visual_id: VisualId | AutoResolved = AUTO
 
     _AUTO_KIND: ClassVar[str] = "bar"
 
@@ -304,7 +314,7 @@ class BarChart:
         return deps
 
     def emit(self) -> Visual:
-        assert self.visual_id is not None, (
+        assert not isinstance(self.visual_id, _AutoSentinel), (
             "visual_id wasn't resolved — see KPI.emit assertion."
         )
         sort_config: BarChartSortConfiguration | None = None
@@ -363,7 +373,7 @@ class Sankey:
     weight: Measure | None = None
     items_limit: int | None = None
     actions: list[Drill] = field(default_factory=list[Drill])
-    visual_id: VisualId | None = None
+    visual_id: VisualId | AutoResolved = AUTO
 
     _AUTO_KIND: ClassVar[str] = "sankey"
 
@@ -395,7 +405,7 @@ class Sankey:
         return deps
 
     def emit(self) -> Visual:
-        assert self.visual_id is not None, (
+        assert not isinstance(self.visual_id, _AutoSentinel), (
             "visual_id wasn't resolved — see KPI.emit assertion."
         )
         sort_config: Any = None

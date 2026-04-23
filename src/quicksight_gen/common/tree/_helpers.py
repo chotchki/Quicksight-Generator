@@ -9,16 +9,54 @@ Plus shared ``Literal`` type aliases that more than one submodule
 references (e.g. ``TimeGranularity``, used by both filters and
 parameters). Pyright strict on ``common/tree/`` (L.1.20) catches
 out-of-set values at the wiring site; no runtime guard needed.
+
+Plus the ``AUTO`` sentinel — distinguishes "truly optional, may stay
+unset at deploy" (``T | None``) from "must be filled in by
+``App._resolve_auto_ids()`` before emit" (``T | AutoResolved``). What
+used to be a single ``T | None`` slot for both cases now type-encodes
+the difference: pyright narrows ``T | AutoResolved`` to ``T`` after
+``assert not isinstance(x, _AutoSentinel)``, and a typo'd
+``visual_id=None`` (where AUTO was meant) gets a red squiggle at the
+wiring site.
 """
 
 from __future__ import annotations
 
-from typing import Literal
+import enum
+from typing import Final, Literal
 
 from quicksight_gen.common.models import (
     VisualSubtitleLabelOptions,
     VisualTitleLabelOptions,
 )
+
+
+# ---------------------------------------------------------------------------
+# AUTO sentinel — "this field will be filled in by App._resolve_auto_ids()"
+# ---------------------------------------------------------------------------
+
+class _AutoSentinel(enum.Enum):
+    """Singleton sentinel — see ``AUTO`` below.
+
+    Internal enum so pyright can narrow ``T | AutoResolved`` cleanly
+    via ``isinstance`` / ``is AUTO`` checks. Single member; the enum
+    machinery only matters for type narrowing.
+    """
+    AUTO = "auto"
+
+    def __repr__(self) -> str:
+        return "AUTO"
+
+
+# Public sentinel value. ``KPI.visual_id: VisualId | AutoResolved = AUTO``
+# means "App._resolve_auto_ids fills me in"; emit() asserts the resolver
+# ran (``assert not isinstance(self.visual_id, _AutoSentinel)``) which
+# narrows the type to ``VisualId``.
+AUTO: Final = _AutoSentinel.AUTO
+
+# Type alias — the resolved-later half of the union. Reads cleaner at
+# field declarations than the bare ``Literal[_AutoSentinel.AUTO]``.
+AutoResolved = Literal[_AutoSentinel.AUTO]
 
 
 # ---------------------------------------------------------------------------

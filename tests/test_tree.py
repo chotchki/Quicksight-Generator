@@ -26,6 +26,7 @@ from quicksight_gen.common.models import (
     Visual,
 )
 from quicksight_gen.common.tree import (
+    AUTO,
     KPI,
     Analysis,
     App,
@@ -1457,8 +1458,8 @@ class TestAutoVisualIds:
             title="Flagged",
             values=[Measure.count(_DS_FOO, "id")],
         ))
-        # visual_id is None until emit-time resolution
-        assert kpi.visual_id is None
+        # visual_id defaults to AUTO until App._resolve_auto_ids() fills it
+        assert kpi.visual_id is AUTO
         app.emit_analysis()
         # Now resolved
         assert kpi.visual_id == "v-kpi-s0-0"
@@ -1565,7 +1566,7 @@ class TestAutoFilterGroupIds:
             filters=[_category_filter("f-1", _DS_FOO, "col")],
         ))
         fg.scope_visuals(sheet, [kpi])
-        assert fg.filter_group_id is None
+        assert fg.filter_group_id is AUTO
         app.emit_analysis()
         assert fg.filter_group_id == "fg-0"
 
@@ -1864,7 +1865,7 @@ class TestControlAutoIds:
             parameter=sigma, title="σ",
             minimum_value=1, maximum_value=4, step_size=1,
         ))
-        assert ctrl.control_id is None
+        assert ctrl.control_id is AUTO
         app.emit_analysis()
         assert ctrl.control_id == "pc-slider-s0-0"
 
@@ -1883,7 +1884,7 @@ class TestControlAutoIds:
         fg = analysis.add_filter_group(FilterGroup(filters=[f]))
         fg.scope_visuals(sheet, [kpi])
         ctrl = sheet.add_filter_control(FilterDropdown(filter=f, title="X"))
-        assert ctrl.control_id is None
+        assert ctrl.control_id is AUTO
         app.emit_analysis()
         assert ctrl.control_id == "fc-dropdown-s0-0"
 
@@ -1980,7 +1981,7 @@ class TestDrillEmit:
     def test_drill_action_id_auto_assigned(self):
         app, _, _, table = self._setup()
         action = table.actions[0]
-        assert action.action_id is None
+        assert action.action_id is AUTO
         app.emit_analysis()
         # auto-IDed: act-s{sheet_idx}-v{visual_idx}-{action_idx}
         assert action.action_id == "act-s0-v0-0"

@@ -59,6 +59,7 @@ from quicksight_gen.common.models import (
     ParameterSliderControl as ModelParameterSliderControl,
 )
 
+from quicksight_gen.common.tree._helpers import AUTO, AutoResolved, _AutoSentinel
 from quicksight_gen.common.tree.datasets import Column, Dataset
 from quicksight_gen.common.tree.filters import FilterLike
 from quicksight_gen.common.tree.parameters import ParameterDeclLike
@@ -148,7 +149,7 @@ class ParameterControlLike(Protocol):
     controls with ``LinkedValues`` populate from a ``Dataset``, and
     that's a dep. Controls with static values return an empty set.
     """
-    control_id: str | None
+    control_id: str | AutoResolved
 
     def emit(self) -> ParameterControl: ...
 
@@ -162,7 +163,7 @@ class FilterControlLike(Protocol):
     ``datasets()`` participates in the L.1.7 dependency-graph walk —
     same shape as ``ParameterControlLike.datasets()``.
     """
-    control_id: str | None
+    control_id: str | AutoResolved
 
     def emit(self) -> FilterControl: ...
 
@@ -196,7 +197,7 @@ class ParameterDropdown:
     type: Literal["SINGLE_SELECT", "MULTI_SELECT"] = "SINGLE_SELECT"
     selectable_values: SelectableValues | None = None
     hidden_select_all: bool = False
-    control_id: str | None = None
+    control_id: str | AutoResolved = AUTO
 
     _AUTO_KIND: ClassVar[str] = "dropdown"
 
@@ -209,7 +210,7 @@ class ParameterDropdown:
         return set()
 
     def emit(self) -> ParameterControl:
-        assert self.control_id is not None, (
+        assert not isinstance(self.control_id, _AutoSentinel), (
             "control_id wasn't resolved — App._resolve_auto_ids() must run."
         )
         display_options: dict[str, Any] | None = None
@@ -240,7 +241,7 @@ class ParameterSlider:
     minimum_value: float
     maximum_value: float
     step_size: float
-    control_id: str | None = None
+    control_id: str | AutoResolved = AUTO
 
     _AUTO_KIND: ClassVar[str] = "slider"
 
@@ -248,7 +249,7 @@ class ParameterSlider:
         return set()
 
     def emit(self) -> ParameterControl:
-        assert self.control_id is not None, (
+        assert not isinstance(self.control_id, _AutoSentinel), (
             "control_id wasn't resolved — App._resolve_auto_ids() must run."
         )
         return ParameterControl(
@@ -268,7 +269,7 @@ class ParameterDateTimePicker:
     """Date/time picker control bound to a DateTime parameter."""
     parameter: ParameterDeclLike
     title: str
-    control_id: str | None = None
+    control_id: str | AutoResolved = AUTO
 
     _AUTO_KIND: ClassVar[str] = "datetime"
 
@@ -276,7 +277,7 @@ class ParameterDateTimePicker:
         return set()
 
     def emit(self) -> ParameterControl:
-        assert self.control_id is not None, (
+        assert not isinstance(self.control_id, _AutoSentinel), (
             "control_id wasn't resolved — App._resolve_auto_ids() must run."
         )
         return ParameterControl(
@@ -305,7 +306,7 @@ class FilterDropdown:
     title: str
     type: Literal["SINGLE_SELECT", "MULTI_SELECT"] = "MULTI_SELECT"
     selectable_values: SelectableValues | None = None
-    control_id: str | None = None
+    control_id: str | AutoResolved = AUTO
 
     _AUTO_KIND: ClassVar[str] = "dropdown"
 
@@ -317,10 +318,10 @@ class FilterDropdown:
         return set()
 
     def emit(self) -> FilterControl:
-        assert self.control_id is not None, (
+        assert not isinstance(self.control_id, _AutoSentinel), (
             "control_id wasn't resolved — App._resolve_auto_ids() must run."
         )
-        assert self.filter.filter_id is not None, (
+        assert not isinstance(self.filter.filter_id, _AutoSentinel), (
             "inner filter's filter_id wasn't resolved — App._resolve_auto_ids() must run."
         )
         return FilterControl(
@@ -346,7 +347,7 @@ class FilterSlider:
     maximum_value: float
     step_size: float
     type: Literal["SINGLE_POINT", "RANGE"] = "RANGE"
-    control_id: str | None = None
+    control_id: str | AutoResolved = AUTO
 
     _AUTO_KIND: ClassVar[str] = "slider"
 
@@ -354,10 +355,10 @@ class FilterSlider:
         return set()
 
     def emit(self) -> FilterControl:
-        assert self.control_id is not None, (
+        assert not isinstance(self.control_id, _AutoSentinel), (
             "control_id wasn't resolved — App._resolve_auto_ids() must run."
         )
-        assert self.filter.filter_id is not None, (
+        assert not isinstance(self.filter.filter_id, _AutoSentinel), (
             "inner filter's filter_id wasn't resolved — App._resolve_auto_ids() must run."
         )
         return FilterControl(
@@ -379,7 +380,7 @@ class FilterDateTimePicker:
     filter: FilterLike
     title: str
     type: Literal["SINGLE_VALUED", "DATE_RANGE"] = "DATE_RANGE"
-    control_id: str | None = None
+    control_id: str | AutoResolved = AUTO
 
     _AUTO_KIND: ClassVar[str] = "datetime"
 
@@ -387,10 +388,10 @@ class FilterDateTimePicker:
         return set()
 
     def emit(self) -> FilterControl:
-        assert self.control_id is not None, (
+        assert not isinstance(self.control_id, _AutoSentinel), (
             "control_id wasn't resolved — App._resolve_auto_ids() must run."
         )
-        assert self.filter.filter_id is not None, (
+        assert not isinstance(self.filter.filter_id, _AutoSentinel), (
             "inner filter's filter_id wasn't resolved — App._resolve_auto_ids() must run."
         )
         return FilterControl(
@@ -412,7 +413,7 @@ class FilterCrossSheet:
     underlying filter's primary control.
     """
     filter: FilterLike
-    control_id: str | None = None
+    control_id: str | AutoResolved = AUTO
 
     _AUTO_KIND: ClassVar[str] = "crosssheet"
 
@@ -420,10 +421,10 @@ class FilterCrossSheet:
         return set()
 
     def emit(self) -> FilterControl:
-        assert self.control_id is not None, (
+        assert not isinstance(self.control_id, _AutoSentinel), (
             "control_id wasn't resolved — App._resolve_auto_ids() must run."
         )
-        assert self.filter.filter_id is not None, (
+        assert not isinstance(self.filter.filter_id, _AutoSentinel), (
             "inner filter's filter_id wasn't resolved — App._resolve_auto_ids() must run."
         )
         return FilterControl(

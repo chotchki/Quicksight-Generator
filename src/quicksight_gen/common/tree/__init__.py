@@ -138,6 +138,7 @@ from quicksight_gen.common.tree.structure import (
     ParameterControlNode,
     Sheet,
 )
+from quicksight_gen.common.tree._helpers import AUTO, AutoResolved
 from quicksight_gen.common.tree.text_boxes import TextBox
 from quicksight_gen.common.tree.visuals import (
     KPI,
@@ -149,6 +150,8 @@ from quicksight_gen.common.tree.visuals import (
 )
 
 __all__ = [
+    # AUTO sentinel (L.1.18 — fields the App walker fills in later)
+    "AUTO", "AutoResolved",
     # Datasets
     "Dataset", "Column",
     # Calc fields

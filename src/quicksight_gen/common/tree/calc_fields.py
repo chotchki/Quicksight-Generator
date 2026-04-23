@@ -38,6 +38,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from quicksight_gen.common.dataset_contract import ColumnShape
+from quicksight_gen.common.tree._helpers import AUTO, AutoResolved, _AutoSentinel
 from quicksight_gen.common.tree.datasets import Column, Dataset
 
 
@@ -70,11 +71,11 @@ class CalcField:
     """
     dataset: Dataset
     expression: str
-    name: str | None = None
+    name: str | AutoResolved = AUTO
     shape: ColumnShape | None = None
 
     def emit(self) -> dict[str, str]:
-        assert self.name is not None, (
+        assert not isinstance(self.name, _AutoSentinel), (
             "name wasn't resolved — App._resolve_auto_ids() must run "
             "before CalcField.emit()."
         )
@@ -106,7 +107,7 @@ def resolve_column(column: ColumnRef) -> str:
     callers asserting the resolver ran can rely on this returning ``str``.
     """
     if isinstance(column, CalcField):
-        assert column.name is not None, (
+        assert not isinstance(column.name, _AutoSentinel), (
             "CalcField.name wasn't resolved — App._resolve_auto_ids() "
             "must run before resolve_column() on a CalcField ref."
         )

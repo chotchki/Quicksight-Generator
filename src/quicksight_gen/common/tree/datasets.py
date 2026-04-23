@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING
 
 from quicksight_gen.common.dataset_contract import get_contract
 from quicksight_gen.common.models import DataSetIdentifierDeclaration
+from quicksight_gen.common.tree._helpers import AUTO, AutoResolved
 
 if TYPE_CHECKING:
     from quicksight_gen.common.tree.fields import Dim, DimKind, Measure
@@ -121,38 +122,38 @@ class Column:
     dataset: Dataset
     name: str
 
-    def dim(self, *, kind: DimKind = "categorical", field_id: str | None = None) -> Dim:
+    def dim(self, *, kind: DimKind = "categorical", field_id: str | AutoResolved = AUTO) -> Dim:
         from quicksight_gen.common.tree.fields import Dim
         return Dim(self.dataset, self, kind=kind, field_id=field_id)
 
-    def date(self, *, field_id: str | None = None) -> Dim:
+    def date(self, *, field_id: str | AutoResolved = AUTO) -> Dim:
         from quicksight_gen.common.tree.fields import Dim
         return Dim.date(self.dataset, self, field_id=field_id)
 
-    def numerical(self, *, field_id: str | None = None) -> Dim:
+    def numerical(self, *, field_id: str | AutoResolved = AUTO) -> Dim:
         from quicksight_gen.common.tree.fields import Dim
         return Dim.numerical(self.dataset, self, field_id=field_id)
 
-    def sum(self, *, field_id: str | None = None) -> Measure:
+    def sum(self, *, field_id: str | AutoResolved = AUTO) -> Measure:
         from quicksight_gen.common.tree.fields import Measure
         return Measure.sum(self.dataset, self, field_id=field_id)
 
-    def max(self, *, field_id: str | None = None) -> Measure:
+    def max(self, *, field_id: str | AutoResolved = AUTO) -> Measure:
         from quicksight_gen.common.tree.fields import Measure
         return Measure.max(self.dataset, self, field_id=field_id)
 
-    def min(self, *, field_id: str | None = None) -> Measure:
+    def min(self, *, field_id: str | AutoResolved = AUTO) -> Measure:
         from quicksight_gen.common.tree.fields import Measure
         return Measure.min(self.dataset, self, field_id=field_id)
 
-    def average(self, *, field_id: str | None = None) -> Measure:
+    def average(self, *, field_id: str | AutoResolved = AUTO) -> Measure:
         from quicksight_gen.common.tree.fields import Measure
         return Measure.average(self.dataset, self, field_id=field_id)
 
-    def count(self, *, field_id: str | None = None) -> Measure:
+    def count(self, *, field_id: str | AutoResolved = AUTO) -> Measure:
         from quicksight_gen.common.tree.fields import Measure
         return Measure.count(self.dataset, self, field_id=field_id)
 
-    def distinct_count(self, *, field_id: str | None = None) -> Measure:
+    def distinct_count(self, *, field_id: str | AutoResolved = AUTO) -> Measure:
         from quicksight_gen.common.tree.fields import Measure
         return Measure.distinct_count(self.dataset, self, field_id=field_id)

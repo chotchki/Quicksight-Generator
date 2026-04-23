@@ -32,7 +32,10 @@ from quicksight_gen.common.models import Dashboard as ModelDashboard
 from quicksight_gen.common.ids import FilterGroupId, SheetId, VisualId
 from quicksight_gen.common.tree._helpers import (
     ANALYSIS_ACTIONS,
+    AUTO,
+    AutoResolved,
     DASHBOARD_ACTIONS,
+    _AutoSentinel,
 )
 
 
@@ -96,7 +99,7 @@ def _resolve_field_ids(
         for slot_idx, leaf in enumerate(leaves):
             if leaf is None:
                 continue
-            if getattr(leaf, "field_id", "explicit") is None:
+            if isinstance(getattr(leaf, "field_id", None), _AutoSentinel):
                 leaf.field_id = (  # type: ignore[attr-defined]
                     f"f-{visual_kind}-s{sheet_idx}-v{visual_idx}-{role}{slot_idx}"
                 )
@@ -110,7 +113,7 @@ class ParameterControlNode:
     apps migrate.
     """
     builder: Callable[[], ParameterControl]
-    control_id: str | None = None
+    control_id: str | AutoResolved = AUTO
 
     def emit(self) -> ParameterControl:
         return self.builder()
@@ -444,7 +447,7 @@ class Analysis:
         index in the analysis's filter_groups list — so the check
         only applies when callers passed an explicit id.)
         """
-        if fg.filter_group_id is not None and any(
+        if not isinstance(fg.filter_group_id, _AutoSentinel) and any(
             existing.filter_group_id == fg.filter_group_id
             for existing in self.filter_groups
         ):
@@ -751,7 +754,7 @@ class App:
         - CalcField: ``calc-{idx}`` — analysis-scoped
 
         Same-sheet drills also get their target_sheet back-filled here
-        (Drill.target_sheet=None means "the sheet that owns me").
+        (Drill.target_sheet=AUTO means "the sheet that owns me").
 
         Idempotent: nodes that already have explicit IDs aren't touched.
         """
@@ -761,7 +764,7 @@ class App:
             for visual_idx, visual in enumerate(sheet.visuals):
                 kind = getattr(visual, "_AUTO_KIND", None)
                 current = getattr(visual, "visual_id", None)
-                if kind is not None and current is None:
+                if kind is not None and isinstance(current, _AutoSentinel):
                     visual.visual_id = VisualId(
                         f"v-{kind}-s{sheet_idx}-{visual_idx}",
                     )
@@ -776,38 +779,46 @@ class App:
                     visual_idx=visual_idx,
                 )
                 # Drill action IDs (sheet+visual scoped). Same-sheet
-                # drills (target_sheet=None at construction) get the
+                # drills (target_sheet=AUTO at construction) get the
                 # owning sheet back-filled here — the cycle closes the
                 # same time IDs resolve.
                 actions = getattr(visual, "actions", None)
                 if actions:
                     for action_idx, action in enumerate(actions):
-                        if action.action_id is None:
+                        if isinstance(action.action_id, _AutoSentinel):
                             action.action_id = (
                                 f"act-s{sheet_idx}-v{visual_idx}-{action_idx}"
                             )
-                        if hasattr(action, "target_sheet") and action.target_sheet is None:
+                        if hasattr(action, "target_sheet") and isinstance(
+                            action.target_sheet, _AutoSentinel,
+                        ):
                             action.target_sheet = sheet
             # Parameter controls — auto-IDs scoped to the sheet.
             for ctrl_idx, ctrl in enumerate(sheet.parameter_controls):
                 kind = getattr(ctrl, "_AUTO_KIND", None)
-                if kind is not None and getattr(ctrl, "control_id", None) is None:
+                if kind is not None and isinstance(
+                    getattr(ctrl, "control_id", None), _AutoSentinel,
+                ):
                     ctrl.control_id = f"pc-{kind}-s{sheet_idx}-{ctrl_idx}"
             # Filter controls — auto-IDs scoped to the sheet.
             for ctrl_idx, ctrl in enumerate(sheet.filter_controls):
                 kind = getattr(ctrl, "_AUTO_KIND", None)
-                if kind is not None and getattr(ctrl, "control_id", None) is None:
+                if kind is not None and isinstance(
+                    getattr(ctrl, "control_id", None), _AutoSentinel,
+                ):
                     ctrl.control_id = f"fc-{kind}-s{sheet_idx}-{ctrl_idx}"
         for fg_idx, fg in enumerate(self.analysis.filter_groups):
-            if fg.filter_group_id is None:
+            if isinstance(fg.filter_group_id, _AutoSentinel):
                 fg.filter_group_id = FilterGroupId(f"fg-{fg_idx}")
             for filt_idx, filt in enumerate(fg.filters):
                 kind = getattr(filt, "_AUTO_KIND", None)
-                if kind is not None and getattr(filt, "filter_id", None) is None:
+                if kind is not None and isinstance(
+                    getattr(filt, "filter_id", None), _AutoSentinel,
+                ):
                     filt.filter_id = f"f-{kind}-fg{fg_idx}-{filt_idx}"
         # CalcField names — analysis-scoped position index.
         for calc_idx, calc in enumerate(self.analysis.calc_fields):
-            if calc.name is None:
+            if isinstance(calc.name, _AutoSentinel):
                 calc.name = f"calc-{calc_idx}"
 
     def _validate_dataset_references(self) -> None:
@@ -901,7 +912,8 @@ class App:
                     ):
                         target_sheet_id = (
                             action.target_sheet.sheet_id
-                            if action.target_sheet is not None else "<unset>"
+                            if not isinstance(action.target_sheet, _AutoSentinel)
+                            else "<unset>"
                         )
                         bad.append(
                             f"action {action.name!r} on visual "
@@ -1019,7 +1031,10 @@ class App:
             # Names are populated by _resolve_auto_ids before validation
             # runs (see emit_analysis); fall back to "<unnamed>" for
             # safety.
-            names = sorted(c.name or "<unnamed>" for c in unregistered)
+            names = sorted(
+                "<unnamed>" if isinstance(c.name, _AutoSentinel) else c.name
+                for c in unregistered
+            )
             raise ValueError(
                 f"App {self.name!r} references unregistered calc fields: "
                 f"{names} — register each via "
