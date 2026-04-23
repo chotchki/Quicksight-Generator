@@ -17,6 +17,7 @@ import pytest
 from quicksight_gen.apps.payment_recon.analysis import (
     _build_exceptions_sheet as _imperative_exceptions_sheet,
     _build_getting_started_sheet as _imperative_getting_started_sheet,
+    _build_payment_recon_sheet as _imperative_payment_recon_sheet,
     _build_payments_sheet as _imperative_payments_sheet,
     _build_sales_sheet as _imperative_sales_sheet,
     _build_settlements_sheet as _imperative_settlements_sheet,
@@ -24,6 +25,7 @@ from quicksight_gen.apps.payment_recon.analysis import (
 from quicksight_gen.apps.payment_recon.app import build_payment_recon_app
 from quicksight_gen.apps.payment_recon.constants import (
     SHEET_EXCEPTIONS,
+    SHEET_PAYMENT_RECON,
     SHEET_PAYMENTS,
     SHEET_SALES,
     SHEET_SETTLEMENTS,
@@ -60,6 +62,27 @@ def _strip_orphan_visuals(
             for body in v.values()
         )
     ]
+    return out
+
+
+def _sort_visuals_by_id(sheet_json: dict) -> dict:
+    """Normalize `Visuals[]` ordering by VisualId.
+
+    `Visuals[]` is a registry — QuickSight uses `Layouts[].Elements`
+    for rendering order. The imperative builders return visuals in
+    construction order (which can mix layout-LEFT/RIGHT placement);
+    the tree's layout DSL appends in left-to-right placement order
+    per row. Both shapes deploy identically, so the byte-identity
+    test ignores Visuals order."""
+    out = dict(sheet_json)
+    visuals = out.get("Visuals") or []
+
+    def _vid(visual: dict) -> str:
+        for body in visual.values():
+            if isinstance(body, dict) and "VisualId" in body:
+                return body["VisualId"]
+        return ""
+    out["Visuals"] = sorted(visuals, key=_vid)
     return out
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.models import _strip_nones
@@ -216,6 +239,45 @@ def test_l4_5_exceptions_sheet_byte_identical_modulo_orphan_visuals() -> None:
         s for s in analysis.Definition.Sheets if s.SheetId == SHEET_EXCEPTIONS
     )
     tree_sheet = _strip_filter_controls(_strip_nones(asdict(exc_sheet)))
+
+    assert _normalize_sheet(tree_sheet) == _normalize_sheet(imperative_sheet)
+
+
+def test_l4_6_payment_recon_sheet_byte_identical_modulo_orphan_visuals() -> None:
+    """Payment Reconciliation: 3 KPIs at 1/3 width (matched amount,
+    unmatched amount, late count) + full-width vertical stacked bar by
+    external_system coloured by match_status (with same-sheet click
+    filter targeting BOTH detail tables) + side-by-side detail tables
+    (Internal Payments left, External Transactions right) — each with
+    a left-click Drill writing P_PR_EXTERNAL_TXN on the same sheet,
+    which is what powers the mutual-filter behaviour once the
+    parameter-bound filters land in L.4.7.
+
+    Same orphan pattern as L.4.5 — `build_payment_recon_visuals()`
+    ships a `recon-aging-bar` that no `GridLayoutElement` references.
+    Also: the imperative returns `[ext_txns, payments]` from
+    `build_payment_recon_visuals()` but the layout places them
+    `[payments LEFT, ext_txns RIGHT]`; the tree's left-to-right
+    layout DSL appends in placement order. `Visuals[]` is a registry
+    not a render-order — normalize via `_sort_visuals_by_id`."""
+    cfg = Config(**_BASE_CFG_KWARGS)
+
+    imperative_sheet = _sort_visuals_by_id(_strip_orphan_visuals(
+        _strip_filter_controls(
+            _strip_nones(asdict(_imperative_payment_recon_sheet(cfg))),
+        ),
+        frozenset({"recon-aging-bar"}),
+    ))
+
+    app = build_payment_recon_app(cfg)
+    analysis = app.emit_analysis()
+    recon_sheet = next(
+        s for s in analysis.Definition.Sheets
+        if s.SheetId == SHEET_PAYMENT_RECON
+    )
+    tree_sheet = _sort_visuals_by_id(_strip_filter_controls(
+        _strip_nones(asdict(recon_sheet)),
+    ))
 
     assert _normalize_sheet(tree_sheet) == _normalize_sheet(imperative_sheet)
 

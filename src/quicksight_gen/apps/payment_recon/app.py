@@ -33,6 +33,7 @@ from __future__ import annotations
 # ds["col"] ref in the visuals below.
 from quicksight_gen.apps.payment_recon import datasets as _register_contracts  # noqa: F401
 from quicksight_gen.apps.payment_recon.constants import (
+    DS_PAYMENT_RECON,
     DS_PAYMENT_RETURNS,
     DS_PAYMENTS,
     DS_SALE_SETTLEMENT_MISMATCH,
@@ -79,6 +80,7 @@ from quicksight_gen.common.tree import (
 # ---------------------------------------------------------------------------
 _FULL = 36
 _HALF = 18
+_THIRD = 12
 _KPI_ROW_SPAN = 6
 _CHART_ROW_SPAN = 12
 _TABLE_ROW_SPAN = 18
@@ -878,6 +880,182 @@ def _populate_exceptions(
 
 
 # ---------------------------------------------------------------------------
+# Payment Reconciliation (L.4.6) — the side-by-side mutual-filter sheet.
+#
+# **Mutual-filter mechanism.** Both detail tables (External Transactions
+# + Internal Payments) carry a left-click `Drill` whose `target_sheet`
+# is the Payment Reconciliation sheet itself (i.e. same-sheet
+# parameter-set). Each writes the same `P_PR_EXTERNAL_TXN` parameter
+# but from its row-specific source column — `transaction_id` on the
+# ext-txn table, `external_transaction_id` on the payments table.
+# The parameter-bound filters wired in L.4.7 (recon_filters.py
+# equivalent) read from this parameter and apply to both tables, so
+# clicking a row in one filters the other.
+#
+# **Documented diff vs imperative** — same shape as L.4.5: the
+# imperative `build_payment_recon_visuals()` ships an aging bar
+# (`reconciliation-aging-bar`) that no `GridLayoutElement` references.
+# Stripped on the imperative side in the L.4.6 byte-identity test;
+# wiring it properly is part of the same orphan-aging-bars follow-up.
+# ---------------------------------------------------------------------------
+
+def _populate_payment_recon(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    datasets: dict[str, Dataset],
+) -> None:
+    preset = get_preset(cfg.theme_preset)
+    link_color = preset.accent
+
+    ds_recon = datasets[DS_PAYMENT_RECON]
+    ds_pay = datasets[DS_PAYMENTS]
+
+    # Row 1: three KPIs at one-third width each.
+    kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
+    kpi_row.add_kpi(
+        width=_THIRD,
+        visual_id="recon-kpi-matched-amount",  # type: ignore[arg-type]
+        title="Matched Amount",
+        subtitle=(
+            "Total external transaction amount that matches internal payments"
+        ),
+        values=[ds_recon["external_amount"].sum(field_id="recon-matched-amt")],
+    )
+    kpi_row.add_kpi(
+        width=_THIRD,
+        visual_id="recon-kpi-unmatched-amount",  # type: ignore[arg-type]
+        title="Unmatched Amount",
+        subtitle=(
+            "Total external transaction amount not yet matched to internal "
+            "payments"
+        ),
+        values=[
+            ds_recon["external_amount"].sum(field_id="recon-unmatched-amt"),
+        ],
+    )
+    kpi_row.add_kpi(
+        width=_THIRD,
+        visual_id="recon-kpi-late-count",  # type: ignore[arg-type]
+        title="Late Transactions",
+        subtitle=(
+            "Unmatched transactions past their expected completion time "
+            "(per-row is_late = 'Late')"
+        ),
+        values=[ds_recon["transaction_id"].count(field_id="recon-late-count")],
+    )
+
+    # Row 2: full-width vertical stacked bar by external_system, coloured
+    # by match_status, with same-sheet click filter targeting BOTH detail
+    # tables (forward-ref + back-patch).
+    system_filter = SameSheetFilter(
+        target_visuals=[],
+        name="Filter by System",
+        action_id="action-recon-filter-by-system",
+    )
+    sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
+        width=_FULL,
+        visual_id="recon-bar-by-system",  # type: ignore[arg-type]
+        title="Match Status by External System",
+        subtitle=(
+            "Which external systems have the most mismatches. "
+            "Click a bar to filter the tables below."
+        ),
+        category=[ds_recon["external_system"].dim(field_id="recon-system-dim")],
+        values=[ds_recon["transaction_id"].count(field_id="recon-system-count")],
+        colors=[ds_recon["match_status"].dim(field_id="recon-system-status")],
+        orientation="VERTICAL",
+        bars_arrangement="STACKED",
+        category_label="External System",
+        value_label="Transaction Count",
+        color_label="Match Status",
+        actions=[system_filter],
+    )
+
+    # Row 3: side-by-side detail tables (payments left, ext-txns right).
+    # Each carries a left-click Drill that writes pExternalTransactionId
+    # on the same sheet — the parameter-bound filters wired in L.4.7
+    # turn this into the mutual-filter behaviour.
+    pay_ext_txn_col = ds_pay["external_transaction_id"].dim(
+        field_id="recon-pay-ext-txn",
+    )
+    table_row = sheet.layout.row(height=_TABLE_ROW_SPAN)
+    table_row.add_table(
+        width=_HALF,
+        visual_id="recon-payments-table",  # type: ignore[arg-type]
+        title="Internal Payments",
+        subtitle=(
+            "Payments linked to external transactions. "
+            "Click a row to filter the External Transactions table."
+        ),
+        columns=[
+            ds_pay["payment_id"].dim(field_id="recon-pay-id"),
+            ds_pay["merchant_id"].dim(field_id="recon-pay-merchant"),
+            ds_pay["payment_amount"].dim(field_id="recon-pay-amount"),
+            ds_pay["payment_date"].dim(field_id="recon-pay-date"),
+            ds_pay["payment_status"].dim(field_id="recon-pay-status"),
+            pay_ext_txn_col,
+        ],
+        actions=[
+            Drill(
+                target_sheet=sheet,
+                writes=[(P_PR_EXTERNAL_TXN, DrillSourceField(
+                    field_id="recon-pay-ext-txn",
+                    shape=P_PR_EXTERNAL_TXN.shape,
+                ))],
+                name="Show Transaction",
+                trigger="DATA_POINT_CLICK",
+                action_id="action-recon-pay-click",
+            ),
+        ],
+        conditional_formatting=[
+            CellAccentText(on=pay_ext_txn_col, color=link_color),
+        ],
+    )
+    txn_id_col = ds_recon["transaction_id"].dim(field_id="recon-tbl-txn-id")
+    table_row.add_table(
+        width=_HALF,
+        visual_id="recon-ext-txn-table",  # type: ignore[arg-type]
+        title="External Transactions",
+        subtitle=(
+            "Each external transaction with its match status and difference. "
+            "Click a row to filter the Internal Payments table."
+        ),
+        columns=[
+            txn_id_col,
+            ds_recon["external_system"].dim(field_id="recon-tbl-ext-sys"),
+            ds_recon["external_amount"].dim(field_id="recon-tbl-ext-amt"),
+            ds_recon["internal_total"].dim(field_id="recon-tbl-int-total"),
+            ds_recon["difference"].dim(field_id="recon-tbl-diff"),
+            ds_recon["match_status"].dim(field_id="recon-tbl-status"),
+            ds_recon["payment_count"].dim(field_id="recon-tbl-pay-count"),
+            ds_recon["merchant_id"].dim(field_id="recon-tbl-merchant"),
+            ds_recon["days_outstanding"].dim(field_id="recon-tbl-days"),
+        ],
+        actions=[
+            Drill(
+                target_sheet=sheet,
+                writes=[(P_PR_EXTERNAL_TXN, DrillSourceField(
+                    field_id="recon-tbl-txn-id",
+                    shape=P_PR_EXTERNAL_TXN.shape,
+                ))],
+                name="Show Payments",
+                trigger="DATA_POINT_CLICK",
+                action_id="action-recon-ext-txn-click",
+            ),
+        ],
+        conditional_formatting=[
+            CellAccentText(on=txn_id_col, color=link_color),
+        ],
+    )
+
+    # Back-patch the bar's same-sheet filter with both detail tables.
+    payments_table, ext_txn_table = sheet.visuals[-2], sheet.visuals[-1]
+    system_filter.target_visuals.append(ext_txn_table)
+    system_filter.target_visuals.append(payments_table)
+
+
+# ---------------------------------------------------------------------------
 # App entry points
 # ---------------------------------------------------------------------------
 
@@ -953,4 +1131,5 @@ def build_payment_recon_app(cfg: Config) -> App:
         datasets=datasets,
     )
     _populate_exceptions(cfg, sheets[SHEET_EXCEPTIONS], datasets=datasets)
+    _populate_payment_recon(cfg, sheets[SHEET_PAYMENT_RECON], datasets=datasets)
     return app
