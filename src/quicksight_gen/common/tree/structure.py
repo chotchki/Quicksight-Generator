@@ -222,15 +222,26 @@ class Sheet:
     ) -> GridSlot:
         """Place a registered visual into the grid layout.
 
-        Construction-time check: the visual must already be registered
-        on this sheet via ``add_visual()``. Catches the wrong-sheet
-        bug class at the call site.
+        Construction-time checks:
+        - The visual must already be registered on this sheet via
+          ``add_visual()`` (catches the wrong-sheet bug class).
+        - The visual must not already be placed in the grid layout
+          (placing the same visual at two positions emits two layout
+          slots with the same ElementId, which QuickSight rejects).
         """
         if visual not in self.visuals:
             raise ValueError(
                 f"Visual {visual.visual_id!r} isn't registered on this "
                 f"sheet — call add_visual() first."
             )
+        for existing in self.grid_slots:
+            if existing.visual is visual:
+                raise ValueError(
+                    f"Visual {getattr(visual, 'visual_id', '?')!r} is "
+                    f"already placed on sheet {self.sheet_id!r}. A visual "
+                    f"can occupy at most one grid slot — placing it twice "
+                    f"emits duplicate ElementIds."
+                )
         slot = GridSlot(
             visual=visual,
             col_span=col_span,
@@ -680,6 +691,57 @@ class App:
                 f"{ids} — register each via app.add_dataset() first."
             )
 
+    def _validate_parameter_references(self) -> None:
+        """Raise if any ParameterDeclLike reference in the tree
+        (control bindings, NumericRangeFilter parameter bounds) points
+        at a parameter that isn't registered on the analysis.
+
+        Same shadow-bug class as datasets and calc fields: a typed
+        parameter ref with .name set but never registered on the
+        analysis would emit a SourceParameterName / Parameter binding
+        that QuickSight resolves to "no such parameter" silently —
+        controls don't drive their bound parameter, filters don't
+        narrow.
+
+        DrillParam (in K.2 ``common/drill.py``) takes a string
+        ParameterName — those aren't validated here. Closing that
+        gap requires a typed-parameter-ref refactor of DrillParam,
+        queued as L.1.x follow-up.
+        """
+        if self.analysis is None:
+            return
+        registered_params = self.analysis.parameters
+        bad: list[str] = []
+
+        def _check(param, where: str) -> None:
+            if param is None:
+                return
+            if not any(p is param for p in registered_params):
+                bad.append(
+                    f"{where} → parameter {param.name!r} not registered"
+                )
+
+        for sheet in self.analysis.sheets:
+            for ctrl in sheet.parameter_controls:
+                p = getattr(ctrl, "parameter", None)
+                _check(p, f"sheet {sheet.sheet_id!r} parameter control")
+        for fg in self.analysis.filter_groups:
+            for f in fg.filters:
+                _check(
+                    getattr(f, "minimum_parameter", None),
+                    f"filter {f.filter_id!r} minimum_parameter",
+                )
+                _check(
+                    getattr(f, "maximum_parameter", None),
+                    f"filter {f.filter_id!r} maximum_parameter",
+                )
+        if bad:
+            raise ValueError(
+                f"App {self.name!r} has parameter references that aren't "
+                f"registered on the analysis: {bad} — call "
+                f"analysis.add_parameter() first."
+            )
+
     def _validate_drill_destinations(self) -> None:
         """Raise if any Drill action targets a Sheet that isn't on
         this App's Analysis. Catches "drill into a sheet that doesn't
@@ -758,6 +820,7 @@ class App:
         self._resolve_auto_ids()
         self._validate_dataset_references()
         self._validate_calc_field_references()
+        self._validate_parameter_references()
         self._validate_drill_destinations()
         return ModelAnalysis(
             AwsAccountId=self.cfg.aws_account_id,
@@ -779,6 +842,7 @@ class App:
         self._resolve_auto_ids()
         self._validate_dataset_references()
         self._validate_calc_field_references()
+        self._validate_parameter_references()
         self._validate_drill_destinations()
         return ModelDashboard(
             AwsAccountId=self.cfg.aws_account_id,

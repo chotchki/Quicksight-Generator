@@ -233,3 +233,151 @@ class TestCalcFieldsAndDatasets:
         deps = kitchen_app.dataset_dependencies()
         ids = {d.identifier for d in deps}
         assert ids >= {"kitchen-main-ds", "kitchen-categories-ds"}
+
+
+# ---------------------------------------------------------------------------
+# L.1.11 — JSON emission round-trip
+# ---------------------------------------------------------------------------
+
+import json
+
+
+class TestEmissionRoundTrip:
+    """Confirms the kitchen-sink Analysis serializes through the
+    full to_aws_json + json.dumps + json.loads loop without information
+    loss. Catches non-JSON-safe values, missing fields, etc."""
+
+    def test_analysis_to_aws_json_dumps_and_parses(self, emitted):
+        j = emitted.to_aws_json()
+        serialized = json.dumps(j)
+        parsed = json.loads(serialized)
+        assert parsed == j  # no information loss through json round-trip
+
+    def test_dashboard_to_aws_json_dumps_and_parses(self, emitted_dashboard):
+        j = emitted_dashboard.to_aws_json()
+        serialized = json.dumps(j)
+        parsed = json.loads(serialized)
+        assert parsed == j
+
+    def test_emitted_analysis_has_expected_top_level_fields(self, emitted):
+        j = emitted.to_aws_json()
+        assert "AwsAccountId" in j
+        assert "AnalysisId" in j
+        assert "Name" in j
+        assert "Definition" in j
+        defn = j["Definition"]
+        # Every Definition section the kitchen-sink populates is present
+        assert defn["DataSetIdentifierDeclarations"]
+        assert defn["Sheets"]
+        assert defn["FilterGroups"]
+        assert defn["CalculatedFields"]
+        assert defn["ParameterDeclarations"]
+
+
+# ---------------------------------------------------------------------------
+# L.1.12 — Validation hooks audit
+# ---------------------------------------------------------------------------
+
+from quicksight_gen.common.config import Config as _Cfg
+from quicksight_gen.common.tree import (
+    KPI as _KPI,
+    Analysis as _An,
+    App as _A,
+    Dataset as _DS,
+    IntegerParam as _IP,
+    Measure as _M,
+    NumericRangeFilter as _NRF,
+    ParameterControlNode as _PCN,
+    ParameterSlider as _PS,
+    Sheet as _Sh,
+)
+from quicksight_gen.common.ids import (
+    ParameterName as _PN,
+    SheetId as _SId,
+)
+
+
+class TestValidationHooksAudit:
+    """Exercises every validation rule documented in
+    common/tree/__init__.py. If a rule fires for the wrong reason
+    (or stops firing), the failure surfaces here."""
+
+    _CFG = _Cfg(
+        aws_account_id="111122223333",
+        aws_region="us-west-2",
+        theme_preset="default",
+        datasource_arn=(
+            "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
+        ),
+    )
+    _DS_X = _DS(identifier="ds-x", arn="arn:aws:quicksight:::dataset/x")
+
+    def _app(self) -> _A:
+        app = _A(name="t", cfg=self._CFG)
+        app.add_dataset(self._DS_X)
+        analysis = app.set_analysis(_An(analysis_id_suffix="t", name="T"))
+        return app
+
+    def test_place_rejects_duplicate_visual(self):
+        app = self._app()
+        sheet = app.analysis.add_sheet(_Sh(
+            sheet_id=_SId("s"), name="S", title="S", description="",
+        ))
+        kpi = sheet.add_visual(_KPI(title="K"))
+        sheet.place(kpi, col_span=12, row_span=6, col_index=0)
+        with pytest.raises(ValueError, match="already placed"):
+            sheet.place(kpi, col_span=12, row_span=6, col_index=12)
+
+    def test_unregistered_parameter_in_control_caught(self):
+        app = self._app()
+        # Parameter NOT registered on the analysis
+        rogue_param = _IP(name=_PN("pRogue"), default=[1])
+        sheet = app.analysis.add_sheet(_Sh(
+            sheet_id=_SId("s"), name="S", title="S", description="",
+        ))
+        sheet.add_parameter_control(_PS(
+            parameter=rogue_param,
+            title="Rogue",
+            minimum_value=0, maximum_value=10, step_size=1,
+        ))
+        with pytest.raises(
+            ValueError, match="parameter references that aren't registered",
+        ):
+            app.emit_analysis()
+
+    def test_unregistered_parameter_in_numeric_filter_caught(self):
+        from quicksight_gen.common.tree import FilterGroup as _FG
+        app = self._app()
+        rogue_param = _IP(name=_PN("pRogue"), default=[1])
+        sheet = app.analysis.add_sheet(_Sh(
+            sheet_id=_SId("s"), name="S", title="S", description="",
+        ))
+        kpi = sheet.add_visual(_KPI(title="K"))
+        fg = app.analysis.add_filter_group(_FG(filters=[
+            _NRF(
+                dataset=self._DS_X, column="amount",
+                minimum_parameter=rogue_param,
+            ),
+        ]))
+        fg.scope_visuals(sheet, [kpi])
+        with pytest.raises(
+            ValueError, match="parameter references that aren't registered",
+        ):
+            app.emit_analysis()
+
+    def test_registered_parameter_passes(self):
+        """Sanity check the validation isn't too tight — registered
+        parameters work fine."""
+        app = self._app()
+        sigma = app.analysis.add_parameter(
+            _IP(name=_PN("pSigma"), default=[2]),
+        )
+        sheet = app.analysis.add_sheet(_Sh(
+            sheet_id=_SId("s"), name="S", title="S", description="",
+        ))
+        sheet.add_parameter_control(_PS(
+            parameter=sigma,
+            title="σ",
+            minimum_value=0, maximum_value=10, step_size=1,
+        ))
+        app.emit_analysis()  # doesn't raise
