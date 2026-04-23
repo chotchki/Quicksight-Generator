@@ -155,7 +155,7 @@ def _generate_payment_recon(
 def _generate_account_recon(
     config_path: str, output_dir: str, theme_preset: str | None,
 ) -> None:
-    from quicksight_gen.apps.account_recon.analysis import (
+    from quicksight_gen.apps.account_recon.app import (
         build_account_recon_dashboard,
         build_analysis,
     )
@@ -396,7 +396,7 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     only thing that varies is which seed SQL gets loaded and which
     analyses get generated.
     """
-    from quicksight_gen.apps.account_recon.analysis import (
+    from quicksight_gen.apps.account_recon.app import (
         build_account_recon_dashboard,
         build_analysis as build_ar_analysis,
     )

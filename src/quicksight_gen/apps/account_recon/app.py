@@ -137,23 +137,39 @@ _TABLE_ROW_SPAN = 18
 # ---------------------------------------------------------------------------
 
 def _datasets(cfg: Config) -> dict[str, Dataset]:
+    """Map each AR logical dataset identifier to a typed `Dataset` ref.
+
+    Order matches `build_all_datasets`: the QuickSight DataSetId for
+    each dataset (e.g. ``qs-gen-ar-ledger-accounts-dataset``) becomes
+    the path component of the dataset's ARN. The Analysis JSON's
+    `DataSetIdentifierDeclarations` maps the logical identifier (used
+    in visuals + filter columns) → the ARN (the deployed DataSet's
+    cross-account-stable handle).
+    """
+    from quicksight_gen.apps.account_recon.datasets import build_all_datasets
+
+    # Order must mirror `_build_dataset_declarations` in analysis.py
+    # so each logical name lines up with the matching DataSet's
+    # DataSetId at the same index.
+    names = [
+        DS_AR_LEDGER_ACCOUNTS,
+        DS_AR_SUBLEDGER_ACCOUNTS,
+        DS_AR_TRANSACTIONS,
+        DS_AR_LEDGER_BALANCE_DRIFT,
+        DS_AR_SUBLEDGER_BALANCE_DRIFT,
+        DS_AR_TRANSFER_SUMMARY,
+        DS_AR_NON_ZERO_TRANSFERS,
+        DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
+        DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
+        DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
+        DS_AR_DAILY_STATEMENT_SUMMARY,
+        DS_AR_DAILY_STATEMENT_TRANSACTIONS,
+        DS_AR_UNIFIED_EXCEPTIONS,
+    ]
+    built = build_all_datasets(cfg)
     return {
-        identifier: Dataset(identifier=identifier, arn=cfg.dataset_arn(identifier))
-        for identifier in (
-            DS_AR_LEDGER_ACCOUNTS,
-            DS_AR_SUBLEDGER_ACCOUNTS,
-            DS_AR_LEDGER_BALANCE_DRIFT,
-            DS_AR_SUBLEDGER_BALANCE_DRIFT,
-            DS_AR_TRANSFER_SUMMARY,
-            DS_AR_NON_ZERO_TRANSFERS,
-            DS_AR_TRANSACTIONS,
-            DS_AR_UNIFIED_EXCEPTIONS,
-            DS_AR_BALANCE_DRIFT_TIMELINES_ROLLUP,
-            DS_AR_EXPECTED_ZERO_EOD_ROLLUP,
-            DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
-            DS_AR_DAILY_STATEMENT_SUMMARY,
-            DS_AR_DAILY_STATEMENT_TRANSACTIONS,
-        )
+        name: Dataset(identifier=name, arn=cfg.dataset_arn(ds.DataSetId))
+        for name, ds in zip(names, built)
     }
 
 
@@ -1429,6 +1445,39 @@ def _wire_sheet_filter_groups(
     transfer_type_scoped = [xfr, txn, todays, trends]
     unified_exc_sheets = [todays, trends]
 
+    def _multi_select(
+        *, fg_id: str, filter_id: str, title: str,
+        ds: Dataset, col: str, sheet_list: list[Sheet],
+        cross_dataset_override: str | None = None,
+    ) -> None:
+        is_multi_sheet = len(sheet_list) > 1
+        if cross_dataset_override is not None:
+            cross = cross_dataset_override
+        else:
+            cross = "ALL_DATASETS" if is_multi_sheet else "SINGLE_DATASET"
+        default = (
+            DefaultDropdownControl(title=title, type="MULTI_SELECT")
+            if is_multi_sheet else None
+        )
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=fg_id,  # type: ignore[arg-type]
+            cross_dataset=cross,  # type: ignore[arg-type]
+            filters=[CategoryFilter.with_values(
+                filter_id=filter_id,
+                dataset=ds, column=ds[col],
+                values=[],
+                select_all_options="FILTER_ALL_VALUES",
+                default_control=default,
+            )],
+        ))
+        for s in sheet_list:
+            fg.scope_sheet(s)
+
+    # Order matches imperative `build_filter_groups()`:
+    # date_range / ledger / subledger / transfer_status / transaction_status /
+    # transfer_type / posting_level / origin / 4 toggles / 2 daily-statement /
+    # 4 today's-exceptions.
+
     # 1. Date range — TimeRangeFilter on transactions.posted_at, all
     # five visible sheets. Multi-sheet → carries default_control.
     date_fg = analysis.add_filter_group(FilterGroup(
@@ -1448,83 +1497,51 @@ def _wire_sheet_filter_groups(
     for s in visible:
         date_fg.scope_sheet(s)
 
-    # 2-6 + 13-16. Multi-select category filters. Multi-sheet groups
-    # carry default_control; single-sheet ones omit it.
-    multi_specs: list[tuple] = [
-        (FG_AR_LEDGER_ACCOUNT, "filter-ar-ledger-account", "Ledger Account",
-         ds_ledger, "ledger_account_id", account_scoped),
-        (FG_AR_SUBLEDGER_ACCOUNT, "filter-ar-subledger-account",
-         "Sub-Ledger Account",
-         ds_subledger, "subledger_account_id", account_scoped),
-        (FG_AR_TRANSFER_TYPE, "filter-ar-transfer-type", "Transfer Type",
-         ds_txn, "transfer_type", transfer_type_scoped),
-        (FG_AR_TODAYS_EXC_CHECK_TYPE, "filter-ar-todays-exc-check-type",
-         "Check Type", ds_exc, "check_type", unified_exc_sheets),
-        (FG_AR_TODAYS_EXC_ACCOUNT, "filter-ar-todays-exc-account",
-         "Account", ds_exc, "account_id", unified_exc_sheets),
-        (FG_AR_TODAYS_EXC_AGING, "filter-ar-todays-exc-aging",
-         "Aging Bucket", ds_exc, "aging_bucket", unified_exc_sheets),
-        (FG_AR_TODAYS_EXC_IS_LATE, "filter-ar-todays-exc-is-late",
-         "Lateness", ds_exc, "is_late", unified_exc_sheets),
-    ]
-    for fg_id, filter_id, title, ds, col, sheet_list in multi_specs:
-        # Multi-sheet → default_control + ALL_DATASETS scope so cross-
-        # sheet controls inherit the widget. Single-sheet → no default,
-        # SINGLE_DATASET (the sheet's own FilterControl carries the
-        # widget). The today's-exception groups stay SINGLE_DATASET
-        # because they only apply to one dataset (unified_exceptions)
-        # even though they span two sheets.
-        is_multi_sheet = len(sheet_list) > 1
-        is_unified_exc = ds is ds_exc
-        cross = (
-            "ALL_DATASETS" if is_multi_sheet and not is_unified_exc
-            else "SINGLE_DATASET"
-        )
-        default = (
-            DefaultDropdownControl(title=title, type="MULTI_SELECT")
-            if is_multi_sheet else None
-        )
-        fg = analysis.add_filter_group(FilterGroup(
-            filter_group_id=fg_id,
-            cross_dataset=cross,
-            filters=[CategoryFilter.with_values(
-                filter_id=filter_id,
-                dataset=ds, column=ds[col],
-                values=[],
-                select_all_options="FILTER_ALL_VALUES",
-                default_control=default,
-            )],
-        ))
-        for s in sheet_list:
-            fg.scope_sheet(s)
+    _multi_select(
+        fg_id=FG_AR_LEDGER_ACCOUNT, filter_id="filter-ar-ledger-account",
+        title="Ledger Account",
+        ds=ds_ledger, col="ledger_account_id", sheet_list=account_scoped,
+    )
+    _multi_select(
+        fg_id=FG_AR_SUBLEDGER_ACCOUNT,
+        filter_id="filter-ar-subledger-account",
+        title="Sub-Ledger Account",
+        ds=ds_subledger, col="subledger_account_id",
+        sheet_list=account_scoped,
+    )
+    _multi_select(
+        fg_id=FG_AR_TRANSFER_STATUS, filter_id="filter-ar-transfer-status",
+        title="Transfer Status",
+        ds=ds_xfr_summary, col="net_zero_status", sheet_list=[xfr],
+    )
+    _multi_select(
+        fg_id=FG_AR_TRANSACTION_STATUS,
+        filter_id="filter-ar-transaction-status",
+        title="Transaction Status",
+        ds=ds_txn, col="status", sheet_list=[txn],
+    )
+    _multi_select(
+        fg_id=FG_AR_TRANSFER_TYPE, filter_id="filter-ar-transfer-type",
+        title="Transfer Type",
+        ds=ds_txn, col="transfer_type", sheet_list=transfer_type_scoped,
+    )
+    _multi_select(
+        fg_id=FG_AR_POSTING_LEVEL, filter_id="filter-ar-posting-level",
+        title="Posting Level",
+        ds=ds_txn, col="posting_level", sheet_list=[txn],
+    )
+    # Origin: single-sheet but ALL_DATASETS (matches imperative — the
+    # column appears in multiple datasets and the imperative didn't
+    # override the cross_dataset default).
+    _multi_select(
+        fg_id=FG_AR_ORIGIN, filter_id="filter-ar-origin",
+        title="Origin",
+        ds=ds_txn, col="origin", sheet_list=[txn],
+        cross_dataset_override="ALL_DATASETS",
+    )
 
-    # Single-sheet category filters (no default_control needed).
-    single_specs: list[tuple] = [
-        (FG_AR_TRANSFER_STATUS, "filter-ar-transfer-status",
-         ds_xfr_summary, "net_zero_status", xfr),
-        (FG_AR_TRANSACTION_STATUS, "filter-ar-transaction-status",
-         ds_txn, "status", txn),
-        (FG_AR_POSTING_LEVEL, "filter-ar-posting-level",
-         ds_txn, "posting_level", txn),
-        (FG_AR_ORIGIN, "filter-ar-origin", ds_txn, "origin", txn),
-    ]
-    for fg_id, filter_id, ds, col, sheet in single_specs:
-        fg = analysis.add_filter_group(FilterGroup(
-            filter_group_id=fg_id,
-            cross_dataset="SINGLE_DATASET",
-            filters=[CategoryFilter.with_values(
-                filter_id=filter_id,
-                dataset=ds, column=ds[col],
-                values=[],
-                select_all_options="FILTER_ALL_VALUES",
-            )],
-        ))
-        fg.scope_sheet(sheet)
-
-    # State toggle filters (Show-Only-X). SINGLE_DATASET, single-sheet,
-    # no default_control. Same shape as the multi-select but the sheet's
-    # control declares Type=SINGLE_SELECT.
-    toggle_specs: list[tuple] = [
+    # 4 state toggle filters (Show-Only-X).
+    for fg_id, filter_id, sheet, ds, col in (
         (FG_AR_BALANCES_LEDGER_DRIFT, "filter-ar-balances-ledger-drift",
          bal, ds_ledger_drift, "drift_status"),
         (FG_AR_BALANCES_SUBLEDGER_DRIFT, "filter-ar-balances-subledger-drift",
@@ -1533,8 +1550,7 @@ def _wire_sheet_filter_groups(
          bal, ds_sub_drift, "overdraft_status"),
         (FG_AR_TRANSACTIONS_FAILED, "filter-ar-transactions-failed",
          txn, ds_txn, "is_failed"),
-    ]
-    for fg_id, filter_id, sheet, ds, col in toggle_specs:
+    ):
         fg = analysis.add_filter_group(FilterGroup(
             filter_group_id=fg_id,
             cross_dataset="SINGLE_DATASET",
@@ -1578,6 +1594,39 @@ def _wire_sheet_filter_groups(
         )],
     ))
     fg_ds_date.scope_sheet(daily)
+
+    # 4 Today's Exceptions sheet pickers — multi-sheet (Today's + Trends)
+    # but SINGLE_DATASET (only the unified-exceptions dataset has the
+    # columns); follow same shape as multi-select but with cross_dataset
+    # override.
+    _multi_select(
+        fg_id=FG_AR_TODAYS_EXC_CHECK_TYPE,
+        filter_id="filter-ar-todays-exc-check-type",
+        title="Check Type",
+        ds=ds_exc, col="check_type", sheet_list=unified_exc_sheets,
+        cross_dataset_override="SINGLE_DATASET",
+    )
+    _multi_select(
+        fg_id=FG_AR_TODAYS_EXC_ACCOUNT,
+        filter_id="filter-ar-todays-exc-account",
+        title="Account",
+        ds=ds_exc, col="account_id", sheet_list=unified_exc_sheets,
+        cross_dataset_override="SINGLE_DATASET",
+    )
+    _multi_select(
+        fg_id=FG_AR_TODAYS_EXC_AGING,
+        filter_id="filter-ar-todays-exc-aging",
+        title="Aging Bucket",
+        ds=ds_exc, col="aging_bucket", sheet_list=unified_exc_sheets,
+        cross_dataset_override="SINGLE_DATASET",
+    )
+    _multi_select(
+        fg_id=FG_AR_TODAYS_EXC_IS_LATE,
+        filter_id="filter-ar-todays-exc-is-late",
+        title="Lateness",
+        ds=ds_exc, col="is_late", sheet_list=unified_exc_sheets,
+        cross_dataset_override="SINGLE_DATASET",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1866,3 +1915,19 @@ def build_account_recon_app(cfg: Config) -> App:
         name=_analysis_name(cfg),
     )
     return app
+
+
+# ---------------------------------------------------------------------------
+# CLI / external-caller shims. These mirror the imperative
+# ``apps/account_recon/analysis`` shape so the CLI can swap to the
+# tree-built app without changing its import surface.
+# ---------------------------------------------------------------------------
+
+def build_analysis(cfg: Config) -> ModelAnalysis:
+    """Build the complete Account Recon Analysis resource via the tree."""
+    return build_account_recon_app(cfg).emit_analysis()
+
+
+def build_account_recon_dashboard(cfg: Config) -> ModelDashboard:
+    """Build the Account Recon Dashboard resource via the tree."""
+    return build_account_recon_app(cfg).emit_dashboard()

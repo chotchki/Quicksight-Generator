@@ -20,6 +20,12 @@ from typing import Callable
 import pytest
 
 from quicksight_gen.apps.account_recon.analysis import (
+    build_account_recon_dashboard as _imperative_dashboard,
+)
+from quicksight_gen.apps.account_recon.analysis import (
+    build_analysis as _imperative_analysis,
+)
+from quicksight_gen.apps.account_recon.analysis import (
     _build_balances_sheet as _imperative_balances_sheet,
 )
 from quicksight_gen.apps.account_recon.analysis import (
@@ -40,7 +46,11 @@ from quicksight_gen.apps.account_recon.analysis import (
 from quicksight_gen.apps.account_recon.analysis import (
     _build_transfers_sheet as _imperative_transfers_sheet,
 )
-from quicksight_gen.apps.account_recon.app import build_account_recon_app
+from quicksight_gen.apps.account_recon.app import (
+    build_account_recon_app,
+    build_account_recon_dashboard as _tree_dashboard,
+    build_analysis as _tree_analysis,
+)
 from quicksight_gen.apps.account_recon.constants import (
     SHEET_AR_BALANCES,
     SHEET_AR_DAILY_STATEMENT,
@@ -262,3 +272,60 @@ def test_l3_4_transactions_sheet_byte_identical() -> None:
     tree_norm = _normalize_sheet(tree_sheet)
 
     assert tree_norm == imperative_norm
+
+
+# ---------------------------------------------------------------------------
+# L.3.8d — Full-app byte-identity gate. The CLI swap stands or falls
+# on these two tests: every sheet's visuals + filter groups +
+# parameters + drill plumbing must round-trip identical between the
+# tree-built and imperative-built JSON.
+# ---------------------------------------------------------------------------
+
+def _normalize_definition(defn: dict) -> dict:
+    """Strip layout-DSL diffs from every sheet in a Definition before
+    comparison. Same idea as `_normalize_sheet` but applied across all
+    7 sheets in one pass."""
+    defn = json.loads(json.dumps(defn))
+    for sheet in defn.get("Sheets") or []:
+        for layout in sheet.get("Layouts") or []:
+            for elem in (
+                layout.get("Configuration", {})
+                .get("GridLayout", {})
+                .get("Elements", [])
+            ):
+                elem.pop("RowIndex", None)
+        for key in ("Visuals", "FilterControls", "ParameterControls"):
+            if sheet.get(key) in (None, []):
+                sheet.pop(key, None)
+    return defn
+
+
+def test_l3_8d_full_analysis_byte_identical() -> None:
+    """The whole AR Analysis emitted by the tree matches the imperative
+    output across all 7 sheets + filter groups + parameters + calc
+    fields, modulo the layout-DSL RowIndex difference."""
+    cfg_kwargs = dict(_BASE_CFG_KWARGS)
+    cfg_kwargs["theme_preset"] = "sasquatch-bank-ar"
+    cfg = Config(**cfg_kwargs)
+
+    imp = _imperative_analysis(cfg).to_aws_json()
+    tree = _tree_analysis(cfg).to_aws_json()
+
+    assert _normalize_definition(tree["Definition"]) == _normalize_definition(
+        imp["Definition"]
+    )
+
+
+def test_l3_8d_full_dashboard_byte_identical() -> None:
+    """Same gate for the Dashboard variant — the published dashboard
+    embeds the same Definition the Analysis does."""
+    cfg_kwargs = dict(_BASE_CFG_KWARGS)
+    cfg_kwargs["theme_preset"] = "sasquatch-bank-ar"
+    cfg = Config(**cfg_kwargs)
+
+    imp = _imperative_dashboard(cfg).to_aws_json()
+    tree = _tree_dashboard(cfg).to_aws_json()
+
+    assert _normalize_definition(tree["Definition"]) == _normalize_definition(
+        imp["Definition"]
+    )
