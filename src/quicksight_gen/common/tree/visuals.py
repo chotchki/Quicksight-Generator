@@ -61,7 +61,7 @@ class VisualLike(Protocol):
     def emit(self) -> Visual: ...
 
 
-@dataclass
+@dataclass(eq=False)
 class VisualNode:
     """Spike-shape factory wrapper for a Visual.
 
@@ -76,7 +76,7 @@ class VisualNode:
         return self.builder()
 
 
-@dataclass
+@dataclass(eq=False)
 class KPI:
     """KPI visual — single number per ``values`` entry, no grouping.
 
@@ -123,7 +123,7 @@ class KPI:
         )
 
 
-@dataclass
+@dataclass(eq=False)
 class Table:
     """Table visual — one row per distinct combination of ``group_by``,
     aggregated by ``values``.
@@ -189,7 +189,7 @@ class Table:
         )
 
 
-@dataclass
+@dataclass(eq=False)
 class BarChart:
     """Bar chart visual — one bar per distinct ``category``, height by
     ``values``.
@@ -245,7 +245,7 @@ class BarChart:
         )
 
 
-@dataclass
+@dataclass(eq=False)
 class Sankey:
     """Sankey diagram visual — flows from ``source`` nodes to
     ``target`` nodes, ribbon thickness by ``weight``.

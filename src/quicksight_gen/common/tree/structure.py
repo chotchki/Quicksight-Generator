@@ -55,7 +55,7 @@ from quicksight_gen.common.tree.visuals import VisualLike
 from typing import Callable
 
 
-@dataclass
+@dataclass(eq=False)
 class ParameterControlNode:
     """Spike-shape factory wrapper for a ParameterControl.
 
@@ -72,7 +72,7 @@ class ParameterControlNode:
 # Layout — GridSlot references a VisualLike by object (locked decision).
 # ---------------------------------------------------------------------------
 
-@dataclass
+@dataclass(eq=False)
 class GridSlot:
     """One placement in a sheet's grid layout.
 
@@ -104,7 +104,7 @@ class GridSlot:
 # Sheet — child of Analysis.
 # ---------------------------------------------------------------------------
 
-@dataclass
+@dataclass(eq=False)
 class Sheet:
     """Tree node for one sheet on an Analysis / Dashboard.
 
@@ -276,7 +276,7 @@ class Sheet:
 # the App.
 # ---------------------------------------------------------------------------
 
-@dataclass
+@dataclass(eq=False)
 class Analysis:
     """Tree node for the Analysis-level structure.
 
@@ -499,7 +499,7 @@ class Analysis:
 # same definition.
 # ---------------------------------------------------------------------------
 
-@dataclass
+@dataclass(eq=False)
 class Dashboard:
     """Tree node for a Dashboard.
 
@@ -522,7 +522,7 @@ class Dashboard:
 # App — top-level tree node.
 # ---------------------------------------------------------------------------
 
-@dataclass
+@dataclass(eq=False)
 class App:
     """Top-level tree node — coordinates an Analysis + Dashboard plus
     the deploy-time context (theme, dataset arns, permissions) drawn

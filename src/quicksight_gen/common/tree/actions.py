@@ -58,7 +58,7 @@ __all__ = [
 DrillWrite = tuple[DrillParam, DrillWriteValue]
 
 
-@dataclass
+@dataclass(eq=False)
 class Drill:
     """One custom action on a Visual.
 

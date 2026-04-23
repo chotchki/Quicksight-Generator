@@ -127,7 +127,7 @@ class FilterControlLike(Protocol):
 # Parameter controls
 # ---------------------------------------------------------------------------
 
-@dataclass
+@dataclass(eq=False)
 class ParameterDropdown:
     """Dropdown control bound to a ``ParameterDeclLike`` parameter.
 
@@ -184,7 +184,7 @@ class ParameterDropdown:
         )
 
 
-@dataclass
+@dataclass(eq=False)
 class ParameterSlider:
     """Slider control bound to a numeric parameter."""
     parameter: ParameterDeclLike
@@ -215,7 +215,7 @@ class ParameterSlider:
         )
 
 
-@dataclass
+@dataclass(eq=False)
 class ParameterDateTimePicker:
     """Date/time picker control bound to a DateTime parameter."""
     parameter: ParameterDeclLike
@@ -244,7 +244,7 @@ class ParameterDateTimePicker:
 # Filter controls
 # ---------------------------------------------------------------------------
 
-@dataclass
+@dataclass(eq=False)
 class FilterDropdown:
     """Dropdown control bound to an inner filter (``CategoryFilter``).
 
@@ -284,7 +284,7 @@ class FilterDropdown:
         )
 
 
-@dataclass
+@dataclass(eq=False)
 class FilterSlider:
     """Slider control bound to a NumericRangeFilter."""
     filter: FilterLike
@@ -317,7 +317,7 @@ class FilterSlider:
         )
 
 
-@dataclass
+@dataclass(eq=False)
 class FilterDateTimePicker:
     """Date/time picker control bound to a TimeRangeFilter."""
     filter: FilterLike
@@ -344,7 +344,7 @@ class FilterDateTimePicker:
         )
 
 
-@dataclass
+@dataclass(eq=False)
 class FilterCrossSheet:
     """Cross-sheet filter control — surfaces the filter on multiple
     sheets via the same bound filter.

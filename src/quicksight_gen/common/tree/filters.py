@@ -81,7 +81,7 @@ CategoryMatchOperator = Literal[
 ]
 
 
-@dataclass
+@dataclass(eq=False)
 class CategoryFilter:
     """Filter on a categorical (string) column or calc field.
 
@@ -134,7 +134,7 @@ class CategoryFilter:
 NullOption = Literal["NON_NULLS_ONLY", "ALL_VALUES", "NULLS_ONLY"]
 
 
-@dataclass
+@dataclass(eq=False)
 class NumericRangeFilter:
     """Filter on a numeric column. Range bounds may be literals
     (``minimum_value`` / ``maximum_value``) or parameter-bound
@@ -209,7 +209,7 @@ class NumericRangeFilter:
         )
 
 
-@dataclass
+@dataclass(eq=False)
 class TimeRangeFilter:
     """Filter on a date / datetime column.
 
@@ -257,7 +257,7 @@ class TimeRangeFilter:
         )
 
 
-@dataclass
+@dataclass(eq=False)
 class FilterGroup:
     """Tree node for one analysis-level filter group.
 
