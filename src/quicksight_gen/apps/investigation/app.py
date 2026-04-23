@@ -21,10 +21,20 @@ live in ``tests/test_l2_investigation_port.py``.
 from __future__ import annotations
 
 from quicksight_gen.apps.investigation.constants import (
+    CF_INV_ANETWORK_COUNTERPARTY_DISPLAY,
+    CF_INV_ANETWORK_IS_ANCHOR_EDGE,
+    CF_INV_ANETWORK_IS_INBOUND_EDGE,
+    CF_INV_ANETWORK_IS_OUTBOUND_EDGE,
     CF_INV_FANOUT_DISTINCT_SENDERS,
+    DS_INV_ACCOUNT_NETWORK,
+    DS_INV_ANETWORK_ACCOUNTS,
     DS_INV_MONEY_TRAIL,
     DS_INV_RECIPIENT_FANOUT,
     DS_INV_VOLUME_ANOMALIES,
+    FG_INV_ANETWORK_AMOUNT,
+    FG_INV_ANETWORK_ANCHOR,
+    FG_INV_ANETWORK_INBOUND,
+    FG_INV_ANETWORK_OUTBOUND,
     FG_INV_ANOMALIES_SIGMA,
     FG_INV_ANOMALIES_WINDOW,
     FG_INV_FANOUT_THRESHOLD,
@@ -32,15 +42,21 @@ from quicksight_gen.apps.investigation.constants import (
     FG_INV_MONEY_TRAIL_AMOUNT,
     FG_INV_MONEY_TRAIL_HOPS,
     FG_INV_MONEY_TRAIL_ROOT,
+    P_INV_ANETWORK_ANCHOR,
+    P_INV_ANETWORK_MIN_AMOUNT,
     P_INV_ANOMALIES_SIGMA,
     P_INV_FANOUT_THRESHOLD,
     P_INV_MONEY_TRAIL_MAX_HOPS,
     P_INV_MONEY_TRAIL_MIN_AMOUNT,
     P_INV_MONEY_TRAIL_ROOT,
+    SHEET_INV_ACCOUNT_NETWORK,
     SHEET_INV_ANOMALIES,
     SHEET_INV_FANOUT,
     SHEET_INV_GETTING_STARTED,
     SHEET_INV_MONEY_TRAIL,
+    V_INV_ANETWORK_SANKEY_INBOUND,
+    V_INV_ANETWORK_SANKEY_OUTBOUND,
+    V_INV_ANETWORK_TABLE,
     V_INV_ANOMALIES_DISTRIBUTION,
     V_INV_ANOMALIES_KPI_FLAGGED,
     V_INV_ANOMALIES_TABLE,
@@ -51,6 +67,7 @@ from quicksight_gen.apps.investigation.constants import (
     V_INV_MONEY_TRAIL_SANKEY,
     V_INV_MONEY_TRAIL_TABLE,
 )
+from quicksight_gen.common.dataset_contract import ColumnShape
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.theme import get_preset
@@ -63,6 +80,9 @@ from quicksight_gen.common.tree import (
     CategoryFilter,
     Dataset,
     Dim,
+    Drill,
+    DrillParam,
+    DrillSourceField,
     FilterDateTimePicker,
     FilterGroup,
     IntegerParam,
@@ -141,6 +161,20 @@ _MONEY_TRAIL_DESCRIPTION = (
     "it lists every edge ordered by depth. Single-leg transfers (sales, "
     "raw external arrivals) appear as chain members but don't contribute "
     "Sankey ribbons."
+)
+
+_ACCOUNT_NETWORK_DESCRIPTION = (
+    "Who does this account exchange money with? Pick an anchor account "
+    "from the dropdown — the LEFT Sankey shows counterparties sending "
+    "money INTO the anchor; the RIGHT Sankey shows the anchor sending "
+    "money OUT to counterparties; the anchor visually meets in the "
+    "middle. The table below lists every touching edge ordered by "
+    "amount. Right-click any row and pick \"Walk to other account on "
+    "this edge\" — the anchor moves to the counterparty and the chart "
+    "re-renders. The dropdown widget above may briefly lag behind a "
+    "walk; trust the chart, not the control text. Same matview as "
+    "Money Trail, viewed account-centrically rather than chain-"
+    "centrically."
 )
 
 
@@ -715,6 +749,295 @@ def _build_money_trail_sheet(
 
 
 # ---------------------------------------------------------------------------
+# Account Network (L.2.5 — re-port of L.1.15 spike inside the full app)
+# ---------------------------------------------------------------------------
+
+def _build_account_network_sheet(
+    cfg: Config, app: App, analysis: Analysis,
+) -> Sheet:
+    """Account Network — directional Sankeys + touching-edges table.
+
+    The L.1.15 spike (`_account_network_full_port.py`) already proved
+    byte-identity for this sheet via the typed primitives. L.2.5 folds
+    that wiring into the main app builder so the full app emits one
+    coherent Analysis, dropping the standalone spike fixture.
+
+    Datasets: the matview wrapper (visuals + filters) plus the K.4.8k
+    narrow accounts dataset (anchor dropdown). Two parameters
+    (anchor + min amount), four analysis-level calc fields (the
+    direction-specific edge-touching predicates plus the counterparty
+    display picker), three drill actions (left-click on each Sankey
+    walks the anchor; right-click on a table row walks via the
+    counterparty calc field), four filter groups (anchor → table only,
+    inbound direction → inbound Sankey only, outbound direction →
+    outbound Sankey only, amount → all three).
+
+    Layout: two Sankeys side-by-side on top (½ width each), full-width
+    table below.
+    """
+    del cfg
+
+    ds_anet = app.add_dataset(Dataset(
+        identifier=DS_INV_ACCOUNT_NETWORK,
+        arn=app.cfg.dataset_arn(app.cfg.prefixed("inv-account-network-dataset")),
+    ))
+    ds_accounts = app.add_dataset(Dataset(
+        identifier=DS_INV_ANETWORK_ACCOUNTS,
+        arn=app.cfg.dataset_arn(app.cfg.prefixed("inv-anetwork-accounts-dataset")),
+    ))
+
+    anchor_param = analysis.add_parameter(StringParam(
+        name=P_INV_ANETWORK_ANCHOR,
+        # No default — SelectAll=HIDDEN forces dropdown to land on
+        # first available anchor on first paint.
+        default=[],
+    ))
+    min_amount_param = analysis.add_parameter(IntegerParam(
+        name=P_INV_ANETWORK_MIN_AMOUNT,
+        default=[_DEFAULT_MONEY_TRAIL_MIN_AMOUNT],
+    ))
+
+    is_anchor_edge = analysis.add_calc_field(CalcField(
+        name=CF_INV_ANETWORK_IS_ANCHOR_EDGE,
+        dataset=ds_anet,
+        expression=(
+            "ifelse({source_display} = ${pInvANetworkAnchor} "
+            "OR {target_display} = ${pInvANetworkAnchor}, "
+            "'yes', 'no')"
+        ),
+    ))
+    is_inbound_edge = analysis.add_calc_field(CalcField(
+        name=CF_INV_ANETWORK_IS_INBOUND_EDGE,
+        dataset=ds_anet,
+        expression=(
+            "ifelse({target_display} = ${pInvANetworkAnchor}, "
+            "'yes', 'no')"
+        ),
+    ))
+    is_outbound_edge = analysis.add_calc_field(CalcField(
+        name=CF_INV_ANETWORK_IS_OUTBOUND_EDGE,
+        dataset=ds_anet,
+        expression=(
+            "ifelse({source_display} = ${pInvANetworkAnchor}, "
+            "'yes', 'no')"
+        ),
+    ))
+    counterparty_display = analysis.add_calc_field(CalcField(
+        name=CF_INV_ANETWORK_COUNTERPARTY_DISPLAY,
+        dataset=ds_anet,
+        expression=(
+            "ifelse({source_display} = ${pInvANetworkAnchor}, "
+            "{target_display}, {source_display})"
+        ),
+    ))
+
+    sheet = analysis.add_sheet(Sheet(
+        sheet_id=SHEET_INV_ACCOUNT_NETWORK,
+        name="Account Network",
+        title="Account Network",
+        description=_ACCOUNT_NETWORK_DESCRIPTION,
+    ))
+
+    inbound_sankey = sheet.add_visual(Sankey(
+        visual_id=V_INV_ANETWORK_SANKEY_INBOUND,
+        title="Inbound — counterparties → anchor",
+        subtitle=(
+            "Counterparties sending money INTO the anchor account. "
+            "Ribbon thickness = SUM(hop_amount). Left-click any source "
+            "node (or its ribbon) to walk the anchor over to that "
+            "counterparty."
+        ),
+        source=Dim(ds_anet, "inv-anetwork-sankey-in-source",
+                   "source_display"),
+        target=Dim(ds_anet, "inv-anetwork-sankey-in-target",
+                   "target_display"),
+        weight=Measure.sum(
+            ds_anet, "inv-anetwork-sankey-in-weight", "hop_amount",
+        ),
+        items_limit=_SANKEY_NODE_CAP,
+        actions=[Drill(
+            target_sheet=None,  # filled in below — Drill needs sheet ref
+            writes=[(
+                DrillParam(P_INV_ANETWORK_ANCHOR, ColumnShape.ACCOUNT_DISPLAY),
+                DrillSourceField(
+                    field_id="inv-anetwork-sankey-in-source",
+                    shape=ColumnShape.ACCOUNT_DISPLAY,
+                ),
+            )],
+            name="Walk to this counterparty",
+            trigger="DATA_POINT_CLICK",
+            action_id="action-anetwork-sankey-inbound-walk",
+        )],
+    ))
+    outbound_sankey = sheet.add_visual(Sankey(
+        visual_id=V_INV_ANETWORK_SANKEY_OUTBOUND,
+        title="Outbound — anchor → counterparties",
+        subtitle=(
+            "Counterparties receiving money FROM the anchor account. "
+            "Ribbon thickness = SUM(hop_amount). Left-click any target "
+            "node (or its ribbon) to walk the anchor over to that "
+            "counterparty."
+        ),
+        source=Dim(ds_anet, "inv-anetwork-sankey-out-source",
+                   "source_display"),
+        target=Dim(ds_anet, "inv-anetwork-sankey-out-target",
+                   "target_display"),
+        weight=Measure.sum(
+            ds_anet, "inv-anetwork-sankey-out-weight", "hop_amount",
+        ),
+        items_limit=_SANKEY_NODE_CAP,
+        actions=[Drill(
+            target_sheet=None,
+            writes=[(
+                DrillParam(P_INV_ANETWORK_ANCHOR, ColumnShape.ACCOUNT_DISPLAY),
+                DrillSourceField(
+                    field_id="inv-anetwork-sankey-out-target",
+                    shape=ColumnShape.ACCOUNT_DISPLAY,
+                ),
+            )],
+            name="Walk to this counterparty",
+            trigger="DATA_POINT_CLICK",
+            action_id="action-anetwork-sankey-outbound-walk",
+        )],
+    ))
+    table = sheet.add_visual(Table(
+        visual_id=V_INV_ANETWORK_TABLE,
+        title="Account Network — Touching Edges",
+        subtitle=(
+            "Every edge involving the anchor account in either "
+            "direction, ordered by amount descending. The "
+            "Counterparty column shows the side that isn't the "
+            "current anchor — right-click any row and pick \"Walk "
+            "to other account on this edge\" to make that "
+            "counterparty the new anchor. The dropdown above may "
+            "take a moment to catch up; trust the data, not the "
+            "control text."
+        ),
+        group_by=[
+            Dim(ds_anet, "inv-anetwork-tbl-transfer-id", "transfer_id"),
+            Dim(ds_anet, "inv-anetwork-tbl-transfer-type",
+                "transfer_type"),
+            Dim(ds_anet, "inv-anetwork-tbl-source-display",
+                "source_display"),
+            Dim(ds_anet, "inv-anetwork-tbl-target-display",
+                "target_display"),
+            Dim(ds_anet, "inv-anetwork-tbl-counterparty",
+                counterparty_display),
+            Dim.numerical(ds_anet, "inv-anetwork-tbl-depth", "depth"),
+            Dim.date(ds_anet, "inv-anetwork-tbl-posted-at", "posted_at"),
+        ],
+        values=[Measure.sum(
+            ds_anet, "inv-anetwork-tbl-amount", "hop_amount",
+        )],
+        sort_by=("inv-anetwork-tbl-amount", "DESC"),
+        actions=[Drill(
+            target_sheet=None,
+            writes=[(
+                DrillParam(P_INV_ANETWORK_ANCHOR, ColumnShape.ACCOUNT_DISPLAY),
+                DrillSourceField(
+                    field_id="inv-anetwork-tbl-counterparty",
+                    shape=ColumnShape.ACCOUNT_DISPLAY,
+                ),
+            )],
+            name="Walk to other account on this edge",
+            trigger="DATA_POINT_MENU",
+            action_id="action-anetwork-table-walk-counterparty",
+        )],
+    ))
+
+    # All three drills navigate to this same sheet — back-fill the
+    # target_sheet refs now that the Sheet exists.
+    for visual in (inbound_sankey, outbound_sankey, table):
+        for action in visual.actions:
+            action.target_sheet = sheet
+
+    # Layout: two Sankeys side-by-side on top, full-width table below.
+    half_width = _FULL // 2
+    sheet.place(inbound_sankey,
+                col_span=half_width, row_span=_TABLE_ROW_SPAN, col_index=0)
+    sheet.place(outbound_sankey,
+                col_span=half_width, row_span=_TABLE_ROW_SPAN,
+                col_index=half_width)
+    sheet.place(table,
+                col_span=_FULL, row_span=_TABLE_ROW_SPAN, col_index=0)
+
+    # Anchor filter — table only (broader scope than the directional
+    # Sankeys, which use direction-specific calc fields).
+    analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_INV_ANETWORK_ANCHOR,
+        filters=[CategoryFilter(
+            filter_id="filter-inv-anetwork-anchor",
+            dataset=ds_anet,
+            column=is_anchor_edge,
+            values=["yes"],
+            match_operator="CONTAINS",
+        )],
+    )).scope_visuals(sheet, [table])
+
+    # Inbound direction filter — inbound Sankey only.
+    analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_INV_ANETWORK_INBOUND,
+        filters=[CategoryFilter(
+            filter_id="filter-inv-anetwork-inbound",
+            dataset=ds_anet,
+            column=is_inbound_edge,
+            values=["yes"],
+            match_operator="CONTAINS",
+        )],
+    )).scope_visuals(sheet, [inbound_sankey])
+
+    # Outbound direction filter — outbound Sankey only.
+    analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_INV_ANETWORK_OUTBOUND,
+        filters=[CategoryFilter(
+            filter_id="filter-inv-anetwork-outbound",
+            dataset=ds_anet,
+            column=is_outbound_edge,
+            values=["yes"],
+            match_operator="CONTAINS",
+        )],
+    )).scope_visuals(sheet, [outbound_sankey])
+
+    # Min-amount filter — all visuals on the sheet.
+    analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_INV_ANETWORK_AMOUNT,
+        filters=[NumericRangeFilter(
+            filter_id="filter-inv-anetwork-amount",
+            dataset=ds_anet,
+            column="hop_amount",
+            minimum_parameter=min_amount_param,
+            null_option="NON_NULLS_ONLY",
+            include_minimum=True,
+        )],
+    )).scope_sheet(sheet)
+
+    # Anchor dropdown reads the K.4.8k narrow accounts dataset (not the
+    # main matview) to keep the dropdown's distinct-source-display query
+    # cheap as the matview grows.
+    sheet.add_parameter_control(ParameterDropdown(
+        parameter=anchor_param,
+        title="Anchor account",
+        type="SINGLE_SELECT",
+        selectable_values=LinkedValues(
+            dataset=ds_accounts,
+            column="source_display",
+        ),
+        hidden_select_all=True,
+        control_id="ctrl-inv-anetwork-anchor",
+    ))
+    sheet.add_parameter_control(ParameterSlider(
+        parameter=min_amount_param,
+        title="Min hop amount ($)",
+        minimum_value=_AMOUNT_SLIDER_MIN,
+        maximum_value=_AMOUNT_SLIDER_MAX,
+        step_size=10,
+        control_id="ctrl-inv-anetwork-amount",
+    ))
+
+    return sheet
+
+
+# ---------------------------------------------------------------------------
 # App builder
 # ---------------------------------------------------------------------------
 
@@ -733,4 +1056,5 @@ def build_investigation_app(cfg: Config) -> App:
     _build_recipient_fanout_sheet(cfg, app, analysis)
     _build_volume_anomalies_sheet(cfg, app, analysis)
     _build_money_trail_sheet(cfg, app, analysis)
+    _build_account_network_sheet(cfg, app, analysis)
     return app

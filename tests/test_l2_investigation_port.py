@@ -18,6 +18,7 @@ from dataclasses import asdict
 import pytest
 
 from quicksight_gen.apps.investigation.analysis import (
+    _build_account_network_sheet as _imperative_account_network,
     _build_getting_started_sheet as _imperative_getting_started,
     _build_money_trail_sheet as _imperative_money_trail,
     _build_recipient_fanout_sheet as _imperative_recipient_fanout,
@@ -25,6 +26,7 @@ from quicksight_gen.apps.investigation.analysis import (
 )
 from quicksight_gen.apps.investigation.app import build_investigation_app
 from quicksight_gen.apps.investigation.constants import (
+    SHEET_INV_ACCOUNT_NETWORK,
     SHEET_INV_ANOMALIES,
     SHEET_INV_FANOUT,
     SHEET_INV_GETTING_STARTED,
@@ -164,4 +166,17 @@ def test_l2_4_money_trail_sheet_byte_identical():
         "2.4",
         SHEET_INV_MONEY_TRAIL,
         _imperative_money_trail(_TEST_CFG),
+    )
+
+
+def test_l2_5_account_network_sheet_byte_identical():
+    """L.2.5 — Account Network SheetDefinition matches the imperative
+    builder exactly. The L.1.15 spike already proved byte-identity in
+    isolation; this confirms the wiring stays green inside the full
+    app port (4 calc fields, 3 Drill actions, 4 filter groups with
+    mixed scope-by-visuals + scope-sheet, two datasets)."""
+    _assert_sheet_byte_identical(
+        "2.5",
+        SHEET_INV_ACCOUNT_NETWORK,
+        _imperative_account_network(_TEST_CFG),
     )
