@@ -76,23 +76,32 @@ class ParameterControlNode:
 class GridSlot:
     """One placement in a sheet's grid layout.
 
-    Holds an OBJECT reference to the placed visual node — the locked
-    decision is cross-references via object refs, not via ``VisualId``
-    strings. The element id is read off the referenced node at emit
-    time. ``visual`` accepts any ``VisualLike`` — the spike-shape
-    ``VisualNode`` factory wrapper, or the typed subtypes (``KPI``,
-    ``Table``, ``BarChart``, ``Sankey``).
+    Holds an OBJECT reference to the placed node — the locked decision
+    is cross-references via object refs, not via ID strings. The
+    element id is read off the referenced node at emit time.
+
+    ``element`` accepts either a ``VisualLike`` (the spike-shape
+    ``VisualNode`` factory wrapper or the typed subtypes — ``KPI`` /
+    ``Table`` / ``BarChart`` / ``Sankey``) or a ``SheetTextBox`` (the
+    rich-text box used on landing-page sheets). The slot type-dispatches
+    at emit so a single ``Sheet.grid_slots`` list carries both.
     """
-    visual: VisualLike
+    element: VisualLike | SheetTextBox
     col_span: int
     row_span: int
     col_index: int
     row_index: int | None = None
 
     def emit(self) -> GridLayoutElement:
+        if isinstance(self.element, SheetTextBox):
+            element_id = self.element.SheetTextBoxId
+            element_type = GridLayoutElement.TEXT_BOX
+        else:
+            element_id = self.element.visual_id
+            element_type = GridLayoutElement.VISUAL
         return GridLayoutElement(
-            ElementId=self.visual.visual_id,
-            ElementType=GridLayoutElement.VISUAL,
+            ElementId=element_id,
+            ElementType=element_type,
             ColumnSpan=self.col_span,
             RowSpan=self.row_span,
             ColumnIndex=self.col_index,
@@ -235,7 +244,7 @@ class Sheet:
                 f"sheet — call add_visual() first."
             )
         for existing in self.grid_slots:
-            if existing.visual is visual:
+            if existing.element is visual:
                 raise ValueError(
                     f"Visual {getattr(visual, 'visual_id', '?')!r} is "
                     f"already placed on sheet {self.sheet_id!r}. A visual "
@@ -243,7 +252,53 @@ class Sheet:
                     f"emits duplicate ElementIds."
                 )
         slot = GridSlot(
-            visual=visual,
+            element=visual,
+            col_span=col_span,
+            row_span=row_span,
+            col_index=col_index,
+            row_index=row_index,
+        )
+        self.grid_slots.append(slot)
+        return slot
+
+    def place_text_box(
+        self,
+        text_box: SheetTextBox,
+        *,
+        col_span: int,
+        row_span: int,
+        col_index: int,
+        row_index: int | None = None,
+    ) -> GridSlot:
+        """Place a registered text box into the grid layout.
+
+        Construction-time checks mirror ``place()``:
+        - The text box must already be registered on this sheet via
+          ``add_text_box()`` (catches the wrong-sheet bug class).
+        - The text box must not already be placed in the grid layout
+          (placing the same text box twice emits duplicate ElementIds,
+          which QuickSight rejects).
+
+        Emit-side: the slot dispatches on type so the resulting
+        ``GridLayoutElement`` carries ``ElementType=TEXT_BOX`` and
+        ``ElementId=text_box.SheetTextBoxId`` rather than the visual
+        defaults.
+        """
+        if text_box not in self.text_boxes:
+            raise ValueError(
+                f"TextBox {text_box.SheetTextBoxId!r} isn't registered on "
+                f"this sheet — call add_text_box() first."
+            )
+        for existing in self.grid_slots:
+            if existing.element is text_box:
+                raise ValueError(
+                    f"TextBox {text_box.SheetTextBoxId!r} is already "
+                    f"placed on sheet {self.sheet_id!r}. A text box can "
+                    f"occupy at most one grid slot — placing it twice "
+                    f"emits duplicate ElementIds."
+                )
+        slot = GridSlot(
+            element=text_box,
             col_span=col_span,
             row_span=row_span,
             col_index=col_index,

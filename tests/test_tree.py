@@ -160,7 +160,7 @@ class TestSheet:
         node = sheet.add_visual(_make_kpi("v-placed"))
         slot = sheet.place(node, col_span=12, row_span=6, col_index=0)
         assert isinstance(slot, GridSlot)
-        assert slot.visual is node
+        assert slot.element is node
         assert slot.col_span == 12
         assert slot.row_span == 6
         assert slot.col_index == 0

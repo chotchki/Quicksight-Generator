@@ -262,6 +262,7 @@ def _build_getting_started_sheet(cfg: Config) -> SheetDefinition:
             "No filters or visuals."
         ),
         ContentType="INTERACTIVE",
+        FilterControls=[],
         TextBoxes=[welcome, roadmap],
         Layouts=_grid_layout([
             _full_width_text("inv-gs-welcome", 5),

@@ -50,8 +50,8 @@ threading a typed parameter ref through ``DrillParam`` →
 
 **Locked decisions** (see PLAN.md Phase L):
 
-- Cross-references are object refs, not string IDs. ``GridSlot.visual``
-  takes a visual node; ``FilterGroup.scope_visuals`` takes
+- Cross-references are object refs, not string IDs. ``GridSlot.element``
+  takes a visual node or text box; ``FilterGroup.scope_visuals`` takes
   ``(sheet, [visual, ...])``; drill destinations take ``Sheet`` refs.
 - IDs appear once — at the constructor of the node that owns them.
   Per-app ``constants.py`` modules collapse: every other reference
