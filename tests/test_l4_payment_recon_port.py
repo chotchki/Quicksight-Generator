@@ -21,9 +21,11 @@ from quicksight_gen.apps.payment_recon.analysis import (
     _build_payments_sheet as _imperative_payments_sheet,
     _build_sales_sheet as _imperative_sales_sheet,
     _build_settlements_sheet as _imperative_settlements_sheet,
+    build_analysis as _imperative_build_analysis,
 )
 from quicksight_gen.apps.payment_recon.app import build_payment_recon_app
 from quicksight_gen.apps.payment_recon.constants import (
+    PR_DRILL_BINDINGS,
     SHEET_EXCEPTIONS,
     SHEET_PAYMENT_RECON,
     SHEET_PAYMENTS,
@@ -280,6 +282,40 @@ def test_l4_6_payment_recon_sheet_byte_identical_modulo_orphan_visuals() -> None
     ))
 
     assert _normalize_sheet(tree_sheet) == _normalize_sheet(imperative_sheet)
+
+
+def _filter_group_by_id(definition: dict, fg_id: str) -> dict | None:
+    for fg in definition.get("FilterGroups", []):
+        if fg.get("FilterGroupId") == fg_id:
+            return fg
+    return None
+
+
+def test_l4_7a_parameters_and_drill_filter_groups_byte_identical() -> None:
+    """3 string parameters (`pSettlementId`, `pPaymentId`,
+    `pExternalTransactionId`) + 5 drill PASS filter groups (one per
+    `PR_DRILL_BINDINGS` entry). The filter groups bind each drill
+    parameter to the destination sheet's relevant id column via
+    `CustomFilterConfiguration` (EQUALS + ParameterName +
+    NullOption=ALL_VALUES) — simpler than AR's K.2 calc-field PASS
+    pattern because PR drills are always single-parameter writes."""
+    cfg = Config(**_BASE_CFG_KWARGS)
+
+    imperative = _imperative_build_analysis(cfg).to_aws_json()["Definition"]
+    tree = build_payment_recon_app(cfg).emit_analysis().to_aws_json()["Definition"]
+
+    assert imperative["ParameterDeclarations"] == tree["ParameterDeclarations"]
+
+    for binding in PR_DRILL_BINDINGS:
+        imp_fg = _filter_group_by_id(imperative, binding.fg_id)
+        tree_fg = _filter_group_by_id(tree, binding.fg_id)
+        assert imp_fg is not None, (
+            f"imperative missing drill FG {binding.fg_id!r}"
+        )
+        assert tree_fg is not None, f"tree missing drill FG {binding.fg_id!r}"
+        assert imp_fg == tree_fg, (
+            f"drill filter group {binding.fg_id!r} diverged"
+        )
 
 
 def test_l4_4_payments_sheet_byte_identical() -> None:

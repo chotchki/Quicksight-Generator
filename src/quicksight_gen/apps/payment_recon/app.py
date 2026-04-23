@@ -27,6 +27,8 @@ by id, so unported shells don't pollute the tested surface.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 # Importing datasets registers each PR DatasetContract via its
 # module-level register_contract() side effect — required so the L.1.17
 # bare-string / unvalidated-Column emit-time validator can resolve every
@@ -45,6 +47,7 @@ from quicksight_gen.apps.payment_recon.constants import (
     P_PR_EXTERNAL_TXN,
     P_PR_PAYMENT,
     P_PR_SETTLEMENT,
+    PR_DRILL_BINDINGS,
     SHEET_EXCEPTIONS,
     SHEET_GETTING_STARTED,
     SHEET_PAYMENT_RECON,
@@ -61,16 +64,20 @@ from quicksight_gen.common.config import Config
 from quicksight_gen.common.models import Analysis as ModelAnalysis
 from quicksight_gen.common.models import Dashboard as ModelDashboard
 from quicksight_gen.common.theme import get_preset
+from quicksight_gen.common.ids import ParameterName
 from quicksight_gen.common.tree import (
     Analysis,
     App,
+    CategoryFilter,
     CellAccentMenu,
     CellAccentText,
     Dataset,
     Drill,
     DrillSourceField,
+    FilterGroup,
     SameSheetFilter,
     Sheet,
+    StringParam,
     TextBox,
 )
 
@@ -1056,6 +1063,86 @@ def _populate_payment_recon(
 
 
 # ---------------------------------------------------------------------------
+# L.4.7a — Parameters + 5 drill PASS filter groups.
+#
+# PR doesn't use AR's K.2 PASS calc-field sentinel pattern. Each
+# CategoryFilter is parameter-bound directly via
+# ``CustomFilterConfiguration`` (`MatchOperator=EQUALS`,
+# `ParameterName`, `NullOption=ALL_VALUES`) so an empty parameter
+# default lets all rows through; a drill that writes the parameter
+# narrows the destination sheet.
+# ---------------------------------------------------------------------------
+
+def _wire_parameters(analysis: Analysis) -> None:
+    """Declare the 3 PR string parameters for cross-sheet drill-down."""
+    for drill_param in (P_PR_SETTLEMENT, P_PR_PAYMENT, P_PR_EXTERNAL_TXN):
+        analysis.add_parameter(StringParam(
+            name=ParameterName(drill_param.name),
+        ))
+
+
+def _wire_drill_filter_groups(
+    analysis: Analysis,
+    *,
+    sheets: dict[str, Sheet],
+    datasets: dict[str, Dataset],
+) -> None:
+    """5 drill PASS filter groups — one per `PR_DRILL_BINDINGS` entry.
+
+    Mapping mirrors `apps/payment_recon/analysis.py
+    ::_build_payment_recon_definition` so the byte-identity test
+    holds. Each filter binds the destination sheet's relevant id
+    column to the matching drill parameter via
+    ``CategoryFilter.with_parameter``.
+    """
+    @dataclass(frozen=True)
+    class _Spec:
+        param_short: str    # "settlement" / "payment" / "ext-txn"
+        sheet_short: str    # "sales" / "settlements" / "payments" / "recon"
+        sheet_id: str
+        dataset_id: str
+        column_name: str
+        param_name: str
+
+    sales = SHEET_SALES
+    settlements = SHEET_SETTLEMENTS
+    payments = SHEET_PAYMENTS
+    recon = SHEET_PAYMENT_RECON
+
+    specs = [
+        _Spec("settlement", "sales", sales, DS_SALES, "settlement_id",
+              P_PR_SETTLEMENT.name),
+        _Spec("settlement", "settlements", settlements, DS_SETTLEMENTS,
+              "settlement_id", P_PR_SETTLEMENT.name),
+        _Spec("payment", "payments", payments, DS_PAYMENTS, "payment_id",
+              P_PR_PAYMENT.name),
+        _Spec("ext-txn", "recon", recon, DS_PAYMENT_RECON, "transaction_id",
+              P_PR_EXTERNAL_TXN.name),
+        _Spec("ext-txn", "payments", recon, DS_PAYMENTS,
+              "external_transaction_id", P_PR_EXTERNAL_TXN.name),
+    ]
+    binding_by_pair = {(b.kind, b.location): b for b in PR_DRILL_BINDINGS}
+
+    for spec in specs:
+        binding = binding_by_pair[(spec.param_short, spec.sheet_short)]
+        target_sheet = sheets[spec.sheet_id]
+        ds = datasets[spec.dataset_id]
+        param = analysis.find_parameter(name=spec.param_name)
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=binding.fg_id,
+            filters=[CategoryFilter.with_parameter(
+                filter_id=binding.filter_id,
+                dataset=ds,
+                column=ds[spec.column_name],
+                parameter=param,
+                match_operator="EQUALS",
+                null_option="ALL_VALUES",
+            )],
+        ))
+        fg.scope_sheet(target_sheet)
+
+
+# ---------------------------------------------------------------------------
 # App entry points
 # ---------------------------------------------------------------------------
 
@@ -1132,4 +1219,12 @@ def build_payment_recon_app(cfg: Config) -> App:
     )
     _populate_exceptions(cfg, sheets[SHEET_EXCEPTIONS], datasets=datasets)
     _populate_payment_recon(cfg, sheets[SHEET_PAYMENT_RECON], datasets=datasets)
+
+    # L.4.7 — App-level wiring. Parameters first (validator depends on
+    # them), then drill PASS filter groups (they reference the
+    # parameters), then sheet-level filter groups + per-sheet
+    # FilterControls in subsequent substeps.
+    _wire_parameters(analysis)
+    _wire_drill_filter_groups(analysis, sheets=sheets, datasets=datasets)
+
     return app
