@@ -35,6 +35,21 @@ from quicksight_gen.common.models import (
     SheetVisualScopingConfiguration,
 )
 from quicksight_gen.common.models import CategoryFilter as ModelCategoryFilter
+from quicksight_gen.common.models import (
+    DefaultDateTimePickerControlOptions as ModelDefaultDateTimePickerControlOptions,
+)
+from quicksight_gen.common.models import (
+    DefaultDropdownControlOptions as ModelDefaultDropdownControlOptions,
+)
+from quicksight_gen.common.models import (
+    DefaultFilterControlConfiguration as ModelDefaultFilterControlConfiguration,
+)
+from quicksight_gen.common.models import (
+    DefaultFilterControlOptions as ModelDefaultFilterControlOptions,
+)
+from quicksight_gen.common.models import (
+    DefaultSliderControlOptions as ModelDefaultSliderControlOptions,
+)
 from quicksight_gen.common.models import FilterGroup as ModelFilterGroup
 from quicksight_gen.common.models import NumericRangeFilter as ModelNumericRangeFilter
 from quicksight_gen.common.models import TimeRangeFilter as ModelTimeRangeFilter
@@ -95,6 +110,85 @@ CategoryMatchOperator = Literal[
     "CONTAINS", "EQUALS", "DOES_NOT_EQUAL", "STARTS_WITH",
 ]
 NullOption = Literal["NON_NULLS_ONLY", "ALL_VALUES", "NULLS_ONLY"]
+SelectAllOptions = Literal["FILTER_ALL_VALUES"]
+
+
+# ---------------------------------------------------------------------------
+# DefaultFilterControl wrappers — typed default-widget specs for use on
+# typed Filter wrappers. Multi-sheet filters need this so cross-sheet
+# controls have a widget config to inherit; single-sheet filters can
+# omit it (the sheet's own FilterControls list provides the widget
+# directly). The AWS rule is mechanical — wrong choice rejects at
+# deploy.
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class DefaultDateTimePickerControl:
+    """Inline default widget config for ``TimeRangeFilter``."""
+    title: str
+    type: Literal["SINGLE_VALUED", "DATE_RANGE"] = "DATE_RANGE"
+
+
+@dataclass(frozen=True)
+class DefaultDropdownControl:
+    """Inline default widget config for ``CategoryFilter`` (or any
+    list/parameter-driven filter)."""
+    title: str
+    type: Literal["MULTI_SELECT", "SINGLE_SELECT"] = "MULTI_SELECT"
+
+
+@dataclass(frozen=True)
+class DefaultSliderControl:
+    """Inline default widget config for ``NumericRangeFilter``."""
+    title: str
+    minimum_value: float
+    maximum_value: float
+    step_size: float
+    type: Literal["SINGLE_POINT", "RANGE"] = "SINGLE_POINT"
+
+
+DefaultControl = (
+    DefaultDateTimePickerControl
+    | DefaultDropdownControl
+    | DefaultSliderControl
+)
+
+
+def _emit_default_control(
+    ctrl: DefaultControl | None,
+) -> ModelDefaultFilterControlConfiguration | None:
+    """Translate a typed ``DefaultControl`` to the underlying
+    ``DefaultFilterControlConfiguration`` model, or ``None`` for
+    single-sheet filters that don't carry a default."""
+    if ctrl is None:
+        return None
+    options: ModelDefaultFilterControlOptions
+    match ctrl:
+        case DefaultDateTimePickerControl(title=_, type=t):
+            options = ModelDefaultFilterControlOptions(
+                DefaultDateTimePickerOptions=ModelDefaultDateTimePickerControlOptions(
+                    Type=t,
+                ),
+            )
+        case DefaultDropdownControl(title=_, type=t):
+            options = ModelDefaultFilterControlOptions(
+                DefaultDropdownOptions=ModelDefaultDropdownControlOptions(
+                    Type=t,
+                ),
+            )
+        case DefaultSliderControl():
+            options = ModelDefaultFilterControlOptions(
+                DefaultSliderOptions=ModelDefaultSliderControlOptions(
+                    MaximumValue=ctrl.maximum_value,
+                    MinimumValue=ctrl.minimum_value,
+                    StepSize=ctrl.step_size,
+                    Type=ctrl.type,
+                ),
+            )
+    return ModelDefaultFilterControlConfiguration(
+        Title=ctrl.title,
+        ControlOptions=options,
+    )
 
 
 # Discriminated binding for CategoryFilter — exactly one of values vs
@@ -103,8 +197,12 @@ NullOption = Literal["NON_NULLS_ONLY", "ALL_VALUES", "NULLS_ONLY"]
 # a CategoryFilter carries one binding).
 @dataclass(frozen=True)
 class _ValuesBinding:
-    """Static-list binding — emits ``FilterListConfiguration``."""
+    """Static-list binding — emits ``FilterListConfiguration``.
+    Optional ``select_all_options`` adds the ``"FILTER_ALL_VALUES"``
+    hint that tells QS to treat an empty selection as "all values"
+    (the multi-select-with-empty-default-means-all pattern)."""
     values: list[str]
+    select_all_options: SelectAllOptions | None = None
 
 
 @dataclass(frozen=True)
@@ -161,6 +259,7 @@ class CategoryFilter:
     binding: CategoryBinding
     match_operator: CategoryMatchOperator = "CONTAINS"
     null_option: NullOption = "ALL_VALUES"
+    default_control: DefaultDropdownControl | None = None
     filter_id: str | AutoResolved = AUTO
 
     _AUTO_KIND: ClassVar[str] = "category"
@@ -174,15 +273,23 @@ class CategoryFilter:
         values: list[str],
         match_operator: CategoryMatchOperator = "CONTAINS",
         null_option: NullOption = "ALL_VALUES",
+        select_all_options: SelectAllOptions | None = None,
+        default_control: DefaultDropdownControl | None = None,
         filter_id: str | AutoResolved = AUTO,
     ) -> "CategoryFilter":
         """Static-list category filter — ``CategoryValues`` is the literal
-        list of allowed values."""
+        list of allowed values. Pass ``values=[]`` plus
+        ``select_all_options="FILTER_ALL_VALUES"`` for the
+        multi-select-with-all-default pattern: an empty values list
+        means "every distinct column value is selected at runtime"."""
         return cls(
             dataset=dataset, column=column,
-            binding=_ValuesBinding(values=values),
+            binding=_ValuesBinding(
+                values=values, select_all_options=select_all_options,
+            ),
             match_operator=match_operator,
             null_option=null_option,
+            default_control=default_control,
             filter_id=filter_id,
         )
 
@@ -195,6 +302,7 @@ class CategoryFilter:
         parameter: ParameterDeclLike,
         match_operator: CategoryMatchOperator = "EQUALS",
         null_option: NullOption = "ALL_VALUES",
+        default_control: DefaultDropdownControl | None = None,
         filter_id: str | AutoResolved = AUTO,
     ) -> "CategoryFilter":
         """Parameter-bound category filter — ``ParameterName`` is read
@@ -206,6 +314,7 @@ class CategoryFilter:
             binding=_ParameterBinding(parameter=parameter),
             match_operator=match_operator,
             null_option=null_option,
+            default_control=default_control,
             filter_id=filter_id,
         )
 
@@ -218,6 +327,7 @@ class CategoryFilter:
         value: str,
         match_operator: CategoryMatchOperator = "EQUALS",
         null_option: NullOption = "NON_NULLS_ONLY",
+        default_control: DefaultDropdownControl | None = None,
         filter_id: str | AutoResolved = AUTO,
     ) -> "CategoryFilter":
         """Single-literal exact-match category filter — emits
@@ -233,6 +343,7 @@ class CategoryFilter:
             binding=_LiteralBinding(value=value),
             match_operator=match_operator,
             null_option=null_option,
+            default_control=default_control,
             filter_id=filter_id,
         )
 
@@ -262,12 +373,19 @@ class CategoryFilter:
                         "NullOption": self.null_option,
                     },
                 )
-            case _ValuesBinding(values=values):
+            case _ValuesBinding(values=values, select_all_options=sa_opts):
+                list_config: dict[str, object] = {
+                    "MatchOperator": self.match_operator,
+                }
+                if values:
+                    list_config["CategoryValues"] = values
+                if sa_opts is not None:
+                    list_config["SelectAllOptions"] = sa_opts
+                # Empty values + no select-all flag = the prior shape.
+                if not values and sa_opts is None:
+                    list_config["CategoryValues"] = values
                 configuration = CategoryFilterConfiguration(
-                    FilterListConfiguration={
-                        "MatchOperator": self.match_operator,
-                        "CategoryValues": values,
-                    },
+                    FilterListConfiguration=list_config,
                 )
         return Filter(
             CategoryFilter=ModelCategoryFilter(
@@ -277,6 +395,9 @@ class CategoryFilter:
                     ColumnName=resolve_column(self.column),
                 ),
                 Configuration=configuration,
+                DefaultFilterControlConfiguration=_emit_default_control(
+                    self.default_control,
+                ),
             ),
         )
 
@@ -341,6 +462,7 @@ class NumericRangeFilter:
     null_option: NullOption = "NON_NULLS_ONLY"
     include_minimum: bool | None = None
     include_maximum: bool | None = None
+    default_control: DefaultSliderControl | None = None
     filter_id: str | AutoResolved = AUTO
 
     _AUTO_KIND: ClassVar[str] = "numeric"
@@ -375,6 +497,9 @@ class NumericRangeFilter:
                 RangeMaximum=_emit_bound(self.maximum),
                 IncludeMinimum=self.include_minimum,
                 IncludeMaximum=self.include_maximum,
+                DefaultFilterControlConfiguration=_emit_default_control(
+                    self.default_control,
+                ),
             ),
         )
 
@@ -399,6 +524,7 @@ class TimeRangeFilter:
     time_granularity: TimeGranularity | None = None
     include_minimum: bool | None = None
     include_maximum: bool | None = None
+    default_control: DefaultDateTimePickerControl | None = None
     filter_id: str | AutoResolved = AUTO
 
     _AUTO_KIND: ClassVar[str] = "time"
@@ -423,6 +549,9 @@ class TimeRangeFilter:
                 RangeMaximumValue=self.maximum,
                 IncludeMinimum=self.include_minimum,
                 IncludeMaximum=self.include_maximum,
+                DefaultFilterControlConfiguration=_emit_default_control(
+                    self.default_control,
+                ),
             ),
         )
 
