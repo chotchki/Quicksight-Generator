@@ -1581,6 +1581,188 @@ def _wire_sheet_filter_groups(
 
 
 # ---------------------------------------------------------------------------
+# L.3.8c — Per-sheet FilterControls. Multi-sheet filter groups bind
+# CrossSheet controls (which inherit the default_control widget set on
+# the FilterGroup); single-sheet filter groups bind direct dropdowns or
+# state-toggle dropdowns. Daily Statement uses ParameterControls (a
+# parameter-bound filter's widget MUST be a ParameterControl, not a
+# FilterControl, per the QS UI rule).
+# ---------------------------------------------------------------------------
+
+def _filter_of(analysis: Analysis, fg_id: str) -> object:
+    """Return the (single) inner filter for a registered filter group."""
+    return analysis.find_filter_group(filter_group_id=fg_id).filters[0]  # type: ignore[arg-type]
+
+
+def _wire_sheet_filter_controls(
+    analysis: Analysis,
+    *,
+    sheets: dict[str, Sheet],
+) -> None:
+    bal = sheets[SHEET_AR_BALANCES]
+    xfr = sheets[SHEET_AR_TRANSFERS]
+    txn = sheets[SHEET_AR_TRANSACTIONS]
+    todays = sheets[SHEET_AR_TODAYS_EXCEPTIONS]
+    trends = sheets[SHEET_AR_EXCEPTIONS_TRENDS]
+    daily = sheets[SHEET_AR_DAILY_STATEMENT]
+
+    # Pre-fetch the multi-sheet filters by id (one fetch each).
+    f_date = _filter_of(analysis, FG_AR_DATE_RANGE)
+    f_ledger = _filter_of(analysis, FG_AR_LEDGER_ACCOUNT)
+    f_subledger = _filter_of(analysis, FG_AR_SUBLEDGER_ACCOUNT)
+    f_xfr_type = _filter_of(analysis, FG_AR_TRANSFER_TYPE)
+    f_xfr_status = _filter_of(analysis, FG_AR_TRANSFER_STATUS)
+    f_txn_status = _filter_of(analysis, FG_AR_TRANSACTION_STATUS)
+    f_posting = _filter_of(analysis, FG_AR_POSTING_LEVEL)
+    f_origin = _filter_of(analysis, FG_AR_ORIGIN)
+    f_bal_ledger_drift = _filter_of(analysis, FG_AR_BALANCES_LEDGER_DRIFT)
+    f_bal_subledger_drift = _filter_of(analysis, FG_AR_BALANCES_SUBLEDGER_DRIFT)
+    f_bal_overdraft = _filter_of(analysis, FG_AR_BALANCES_OVERDRAFT)
+    f_txn_failed = _filter_of(analysis, FG_AR_TRANSACTIONS_FAILED)
+    f_exc_check_type = _filter_of(analysis, FG_AR_TODAYS_EXC_CHECK_TYPE)
+    f_exc_account = _filter_of(analysis, FG_AR_TODAYS_EXC_ACCOUNT)
+    f_exc_aging = _filter_of(analysis, FG_AR_TODAYS_EXC_AGING)
+    f_exc_is_late = _filter_of(analysis, FG_AR_TODAYS_EXC_IS_LATE)
+
+    p_ds_account = analysis.find_parameter(name=P_AR_DS_ACCOUNT.name)
+    p_ds_date = analysis.find_parameter(name=P_AR_DS_BALANCE_DATE.name)
+    # Pull the daily-statement summary Dataset via the
+    # CategoryFilter we already registered (the filter's `dataset`
+    # field is a typed Dataset ref). Saves passing `datasets=` in.
+    ds_ds = _filter_of(analysis, FG_AR_DS_ACCOUNT).dataset  # type: ignore[attr-defined]
+
+    # Balances — 6 controls.
+    bal.add_filter_cross_sheet(
+        filter=f_date, control_id="ctrl-ar-balances-date-range",  # type: ignore[arg-type]
+    )
+    bal.add_filter_cross_sheet(
+        filter=f_ledger, control_id="ctrl-ar-balances-ledger-account",  # type: ignore[arg-type]
+    )
+    bal.add_filter_cross_sheet(
+        filter=f_subledger, control_id="ctrl-ar-balances-subledger-account",  # type: ignore[arg-type]
+    )
+    bal.add_filter_dropdown(
+        filter=f_bal_ledger_drift,
+        title="Show Only Ledger Drift",
+        type="SINGLE_SELECT",
+        control_id="ctrl-ar-balances-ledger-drift",  # type: ignore[arg-type]
+    )
+    bal.add_filter_dropdown(
+        filter=f_bal_subledger_drift,
+        title="Show Only Sub-Ledger Drift",
+        type="SINGLE_SELECT",
+        control_id="ctrl-ar-balances-subledger-drift",  # type: ignore[arg-type]
+    )
+    bal.add_filter_dropdown(
+        filter=f_bal_overdraft,
+        title="Show Only Overdraft",
+        type="SINGLE_SELECT",
+        control_id="ctrl-ar-balances-overdraft",  # type: ignore[arg-type]
+    )
+
+    # Transfers — 3 controls.
+    xfr.add_filter_cross_sheet(
+        filter=f_date, control_id="ctrl-ar-transfers-date-range",  # type: ignore[arg-type]
+    )
+    xfr.add_filter_cross_sheet(
+        filter=f_xfr_type, control_id="ctrl-ar-transfers-transfer-type",  # type: ignore[arg-type]
+    )
+    xfr.add_filter_dropdown(
+        filter=f_xfr_status, title="Transfer Status",
+        control_id="ctrl-ar-transfers-status",  # type: ignore[arg-type]
+    )
+
+    # Transactions — 8 controls.
+    txn.add_filter_cross_sheet(
+        filter=f_date, control_id="ctrl-ar-transactions-date-range",  # type: ignore[arg-type]
+    )
+    txn.add_filter_cross_sheet(
+        filter=f_ledger, control_id="ctrl-ar-transactions-ledger-account",  # type: ignore[arg-type]
+    )
+    txn.add_filter_cross_sheet(
+        filter=f_subledger, control_id="ctrl-ar-transactions-subledger-account",  # type: ignore[arg-type]
+    )
+    txn.add_filter_cross_sheet(
+        filter=f_xfr_type, control_id="ctrl-ar-transactions-transfer-type",  # type: ignore[arg-type]
+    )
+    txn.add_filter_dropdown(
+        filter=f_origin, title="Origin",
+        control_id="ctrl-ar-transactions-origin",  # type: ignore[arg-type]
+    )
+    txn.add_filter_dropdown(
+        filter=f_posting, title="Posting Level",
+        control_id="ctrl-ar-transactions-posting-level",  # type: ignore[arg-type]
+    )
+    txn.add_filter_dropdown(
+        filter=f_txn_status, title="Transaction Status",
+        control_id="ctrl-ar-transactions-status",  # type: ignore[arg-type]
+    )
+    txn.add_filter_dropdown(
+        filter=f_txn_failed, title="Show Only Failed",
+        type="SINGLE_SELECT",
+        control_id="ctrl-ar-transactions-failed",  # type: ignore[arg-type]
+    )
+
+    # Today's Exceptions — 6 cross-sheet controls.
+    todays.add_filter_cross_sheet(
+        filter=f_date, control_id="ctrl-ar-todays-exc-date-range",  # type: ignore[arg-type]
+    )
+    todays.add_filter_cross_sheet(
+        filter=f_xfr_type, control_id="ctrl-ar-todays-exc-transfer-type",  # type: ignore[arg-type]
+    )
+    todays.add_filter_cross_sheet(
+        filter=f_exc_check_type, control_id="ctrl-ar-todays-exc-check-type",  # type: ignore[arg-type]
+    )
+    todays.add_filter_cross_sheet(
+        filter=f_exc_account, control_id="ctrl-ar-todays-exc-account",  # type: ignore[arg-type]
+    )
+    todays.add_filter_cross_sheet(
+        filter=f_exc_aging, control_id="ctrl-ar-todays-exc-aging",  # type: ignore[arg-type]
+    )
+    todays.add_filter_cross_sheet(
+        filter=f_exc_is_late, control_id="ctrl-ar-todays-exc-is-late",  # type: ignore[arg-type]
+    )
+
+    # Exceptions Trends — 6 cross-sheet controls (mirror Today's).
+    trends.add_filter_cross_sheet(
+        filter=f_date, control_id="ctrl-ar-exc-trends-date-range",  # type: ignore[arg-type]
+    )
+    trends.add_filter_cross_sheet(
+        filter=f_xfr_type, control_id="ctrl-ar-exc-trends-transfer-type",  # type: ignore[arg-type]
+    )
+    trends.add_filter_cross_sheet(
+        filter=f_exc_check_type, control_id="ctrl-ar-exc-trends-check-type",  # type: ignore[arg-type]
+    )
+    trends.add_filter_cross_sheet(
+        filter=f_exc_account, control_id="ctrl-ar-exc-trends-account",  # type: ignore[arg-type]
+    )
+    trends.add_filter_cross_sheet(
+        filter=f_exc_aging, control_id="ctrl-ar-exc-trends-aging",  # type: ignore[arg-type]
+    )
+    trends.add_filter_cross_sheet(
+        filter=f_exc_is_late, control_id="ctrl-ar-exc-trends-is-late",  # type: ignore[arg-type]
+    )
+
+    # Daily Statement — 2 ParameterControls (NOT FilterControls — the
+    # filters are parameter-bound).
+    from quicksight_gen.common.tree import LinkedValues
+    daily.add_parameter_dropdown(
+        parameter=p_ds_account,
+        title="Account",
+        type="SINGLE_SELECT",
+        selectable_values=LinkedValues(
+            dataset=ds_ds, column_name="account_id",
+        ),
+        control_id="ctrl-ar-ds-account",  # type: ignore[arg-type]
+    )
+    daily.add_parameter_datetime_picker(
+        parameter=p_ds_date,
+        title="Balance Date",
+        control_id="ctrl-ar-ds-balance-date",  # type: ignore[arg-type]
+    )
+
+
+# ---------------------------------------------------------------------------
 # App-level wiring
 # ---------------------------------------------------------------------------
 
@@ -1671,10 +1853,12 @@ def build_account_recon_app(cfg: Config) -> App:
 
     # L.3.8 — App-level wiring. Parameters first (validator depends on
     # them), then sheet-level filter groups (which reference the
-    # parameters), then drill PASS calc fields + filter groups (which
-    # scope to the populated sheets above).
+    # parameters), then per-sheet FilterControls (which reference the
+    # filter groups), then drill PASS calc fields + filter groups
+    # (independent of controls; scoped to the populated sheets above).
     _wire_parameters(analysis)
     _wire_sheet_filter_groups(analysis, sheets=sheets, datasets=datasets)
+    _wire_sheet_filter_controls(analysis, sheets=sheets)
     _wire_drill_filter_groups(analysis, sheets=sheets, datasets=datasets)
 
     app.create_dashboard(

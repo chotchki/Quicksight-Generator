@@ -156,8 +156,8 @@ def test_l3_2_balances_sheet_byte_identical() -> None:
     ))
     tree_sheet = _tree_sheet_by_id(cfg, SHEET_AR_BALANCES)
 
-    imperative_norm = _strip_filter_controls(_normalize_sheet(imperative_sheet))
-    tree_norm = _strip_filter_controls(_normalize_sheet(tree_sheet))
+    imperative_norm = _normalize_sheet(imperative_sheet)
+    tree_norm = _normalize_sheet(tree_sheet)
 
     assert tree_norm == imperative_norm
 
@@ -177,8 +177,8 @@ def test_l3_3_transfers_sheet_byte_identical() -> None:
     ))
     tree_sheet = _tree_sheet_by_id(cfg, SHEET_AR_TRANSFERS)
 
-    imperative_norm = _strip_filter_controls(_normalize_sheet(imperative_sheet))
-    tree_norm = _strip_filter_controls(_normalize_sheet(tree_sheet))
+    imperative_norm = _normalize_sheet(imperative_sheet)
+    tree_norm = _normalize_sheet(tree_sheet)
 
     assert tree_norm == imperative_norm
 
@@ -198,8 +198,8 @@ def test_l3_5_todays_exceptions_sheet_byte_identical() -> None:
     ))
     tree_sheet = _tree_sheet_by_id(cfg, SHEET_AR_TODAYS_EXCEPTIONS)
 
-    imperative_norm = _strip_filter_controls(_normalize_sheet(imperative_sheet))
-    tree_norm = _strip_filter_controls(_normalize_sheet(tree_sheet))
+    imperative_norm = _normalize_sheet(imperative_sheet)
+    tree_norm = _normalize_sheet(tree_sheet)
 
     assert tree_norm == imperative_norm
 
@@ -217,8 +217,8 @@ def test_l3_7_daily_statement_sheet_byte_identical() -> None:
     ))
     tree_sheet = _tree_sheet_by_id(cfg, SHEET_AR_DAILY_STATEMENT)
 
-    imperative_norm = _strip_filter_controls(_normalize_sheet(imperative_sheet))
-    tree_norm = _strip_filter_controls(_normalize_sheet(tree_sheet))
+    imperative_norm = _normalize_sheet(imperative_sheet)
+    tree_norm = _normalize_sheet(tree_sheet)
 
     assert tree_norm == imperative_norm
 
@@ -237,8 +237,8 @@ def test_l3_6_exceptions_trends_sheet_byte_identical() -> None:
     ))
     tree_sheet = _tree_sheet_by_id(cfg, SHEET_AR_EXCEPTIONS_TRENDS)
 
-    imperative_norm = _strip_filter_controls(_normalize_sheet(imperative_sheet))
-    tree_norm = _strip_filter_controls(_normalize_sheet(tree_sheet))
+    imperative_norm = _normalize_sheet(imperative_sheet)
+    tree_norm = _normalize_sheet(tree_sheet)
 
     assert tree_norm == imperative_norm
 
@@ -258,7 +258,7 @@ def test_l3_4_transactions_sheet_byte_identical() -> None:
     ))
     tree_sheet = _tree_sheet_by_id(cfg, SHEET_AR_TRANSACTIONS)
 
-    imperative_norm = _strip_filter_controls(_normalize_sheet(imperative_sheet))
-    tree_norm = _strip_filter_controls(_normalize_sheet(tree_sheet))
+    imperative_norm = _normalize_sheet(imperative_sheet)
+    tree_norm = _normalize_sheet(tree_sheet)
 
     assert tree_norm == imperative_norm
