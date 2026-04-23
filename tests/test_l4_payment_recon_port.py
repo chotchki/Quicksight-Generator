@@ -17,9 +17,13 @@ import pytest
 from quicksight_gen.apps.payment_recon.analysis import (
     _build_getting_started_sheet as _imperative_getting_started_sheet,
     _build_sales_sheet as _imperative_sales_sheet,
+    _build_settlements_sheet as _imperative_settlements_sheet,
 )
 from quicksight_gen.apps.payment_recon.app import build_payment_recon_app
-from quicksight_gen.apps.payment_recon.constants import SHEET_SALES
+from quicksight_gen.apps.payment_recon.constants import (
+    SHEET_SALES,
+    SHEET_SETTLEMENTS,
+)
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.models import _strip_nones
 
@@ -125,5 +129,28 @@ def test_l4_2_sales_overview_sheet_byte_identical() -> None:
         s for s in analysis.Definition.Sheets if s.SheetId == SHEET_SALES
     )
     tree_sheet = _strip_filter_controls(_strip_nones(asdict(sales_sheet)))
+
+    assert _normalize_sheet(tree_sheet) == _normalize_sheet(imperative_sheet)
+
+
+def test_l4_3_settlements_sheet_byte_identical() -> None:
+    """Settlements: 2 KPIs (settled amount + pending count) + full-width
+    vertical bar by settlement_type (with same-sheet click filter to
+    detail table) + 8-column unaggregated detail table with two drills:
+    left-click → Sales (writes pSettlementId), right-click → Payments
+    (writes pPaymentId). Two CF entries — settlement_id link
+    (accent text only), payment_id menu_link (accent text + tint)."""
+    cfg = Config(**_BASE_CFG_KWARGS)
+
+    imperative_sheet = _strip_filter_controls(
+        _strip_nones(asdict(_imperative_settlements_sheet(cfg)))
+    )
+
+    app = build_payment_recon_app(cfg)
+    analysis = app.emit_analysis()
+    stl_sheet = next(
+        s for s in analysis.Definition.Sheets if s.SheetId == SHEET_SETTLEMENTS
+    )
+    tree_sheet = _strip_filter_controls(_strip_nones(asdict(stl_sheet)))
 
     assert _normalize_sheet(tree_sheet) == _normalize_sheet(imperative_sheet)

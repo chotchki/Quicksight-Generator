@@ -35,6 +35,7 @@ from quicksight_gen.apps.payment_recon import datasets as _register_contracts  #
 from quicksight_gen.apps.payment_recon.constants import (
     DS_SALES,
     DS_SETTLEMENTS,
+    P_PR_PAYMENT,
     P_PR_SETTLEMENT,
     SHEET_EXCEPTIONS,
     SHEET_GETTING_STARTED,
@@ -56,6 +57,7 @@ from quicksight_gen.common.tree import (
     Analysis,
     App,
     CellAccentMenu,
+    CellAccentText,
     Dataset,
     Drill,
     DrillSourceField,
@@ -472,6 +474,126 @@ def _populate_sales_overview(
 
 
 # ---------------------------------------------------------------------------
+# Settlements (L.4.3) — KPI amount + KPI pending count + full-width
+# vertical bar by settlement_type (with same-sheet click filter to the
+# detail table) + 8-column unaggregated detail table with two drills:
+# left-click → Sales (writes pSettlementId); right-click → Payments
+# (writes pPaymentId).
+# ---------------------------------------------------------------------------
+
+def _populate_settlements(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    sales_sheet: Sheet,
+    payments_sheet: Sheet,
+    datasets: dict[str, Dataset],
+) -> None:
+    preset = get_preset(cfg.theme_preset)
+    link_color = preset.accent
+    link_tint = preset.link_tint
+
+    ds_stl = datasets[DS_SETTLEMENTS]
+
+    # Row 1: two KPIs side-by-side.
+    kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
+    kpi_row.add_kpi(
+        width=_HALF,
+        visual_id="settlements-kpi-amount",  # type: ignore[arg-type]
+        title="Total Settled Amount",
+        subtitle="Sum of all settlement amounts in the selected date range",
+        values=[ds_stl["settlement_amount"].sum(field_id="settled-amount")],
+    )
+    kpi_row.add_kpi(
+        width=_HALF,
+        visual_id="settlements-kpi-pending",  # type: ignore[arg-type]
+        title="Pending Settlements",
+        subtitle="Number of settlements that have not yet completed",
+        values=[ds_stl["settlement_id"].count(field_id="pending-count")],
+    )
+
+    # Row 2: full-width vertical bar by settlement_type with same-sheet
+    # filter to the detail table (forward-ref + back-patch).
+    type_filter = SameSheetFilter(
+        target_visuals=[],
+        name="Filter by Type",
+        action_id="action-settlements-filter-by-type",
+    )
+    sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
+        width=_FULL,
+        visual_id="settlements-bar-by-type",  # type: ignore[arg-type]
+        title="Settlement Amount by Merchant Type",
+        subtitle=(
+            "How settlement amounts break down across merchant types. "
+            "Click a bar to filter the detail table."
+        ),
+        category=[ds_stl["settlement_type"].dim(field_id="stype-dim")],
+        values=[ds_stl["settlement_amount"].sum(field_id="stype-amount")],
+        orientation="VERTICAL",
+        bars_arrangement="CLUSTERED",
+        category_label="Merchant Type",
+        value_label="Settlement Amount ($)",
+        actions=[type_filter],
+    )
+
+    # Row 3: full-width unaggregated detail table with both drills.
+    settlement_id_col = ds_stl["settlement_id"].dim(field_id="tbl-stl-id")
+    payment_id_col = ds_stl["payment_id"].dim(field_id="tbl-stl-payment-id")
+    sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        visual_id="settlements-detail-table",  # type: ignore[arg-type]
+        title="Settlement Detail",
+        subtitle=(
+            "Each settlement with its status, amount, and sale count. "
+            "Click a row to view its sales."
+        ),
+        columns=[
+            settlement_id_col,
+            ds_stl["merchant_id"].dim(field_id="tbl-stl-merchant"),
+            ds_stl["settlement_type"].dim(field_id="tbl-stl-type"),
+            ds_stl["settlement_amount"].dim(field_id="tbl-stl-amount"),
+            ds_stl["settlement_date"].dim(field_id="tbl-stl-date"),
+            ds_stl["settlement_status"].dim(field_id="tbl-stl-status"),
+            ds_stl["sale_count"].dim(field_id="tbl-stl-sale-count"),
+            payment_id_col,
+        ],
+        actions=[
+            Drill(
+                target_sheet=sales_sheet,
+                writes=[(P_PR_SETTLEMENT, DrillSourceField(
+                    field_id="tbl-stl-id",
+                    shape=P_PR_SETTLEMENT.shape,
+                ))],
+                name="View Sales",
+                trigger="DATA_POINT_CLICK",
+                action_id="action-settlement-to-sales",
+            ),
+            Drill(
+                target_sheet=payments_sheet,
+                writes=[(P_PR_PAYMENT, DrillSourceField(
+                    field_id="tbl-stl-payment-id",
+                    shape=P_PR_PAYMENT.shape,
+                ))],
+                name="View Payment",
+                trigger="DATA_POINT_MENU",
+                action_id="action-settlement-to-payment",
+            ),
+        ],
+        conditional_formatting=[
+            CellAccentText(on=settlement_id_col, color=link_color),
+            CellAccentMenu(
+                on=payment_id_col,
+                text_color=link_color,
+                background_color=link_tint,
+            ),
+        ],
+    )
+
+    detail_table = sheet.visuals[-1]
+    type_filter.target_visuals.append(detail_table)
+
+
+# ---------------------------------------------------------------------------
 # App entry points
 # ---------------------------------------------------------------------------
 
@@ -530,6 +652,13 @@ def build_payment_recon_app(cfg: Config) -> App:
         cfg,
         sheets[SHEET_SALES],
         settlements_sheet=sheets[SHEET_SETTLEMENTS],
+        datasets=datasets,
+    )
+    _populate_settlements(
+        cfg,
+        sheets[SHEET_SETTLEMENTS],
+        sales_sheet=sheets[SHEET_SALES],
+        payments_sheet=sheets[SHEET_PAYMENTS],
         datasets=datasets,
     )
     return app
