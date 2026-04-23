@@ -228,7 +228,7 @@ class TestAnalysis:
 
 class TestApp:
     def _make_app_with_one_sheet(self) -> App:
-        app = App(name="test-app", cfg=_TEST_CFG)
+        app = App(name="test-app", cfg=_TEST_CFG, allow_bare_strings=True)
         analysis = app.set_analysis(Analysis(
             analysis_id_suffix="test-analysis",
             name="Test Analysis",
@@ -253,7 +253,7 @@ class TestApp:
         assert len(analysis.Definition.Sheets) == 1
 
     def test_emit_analysis_without_analysis_raises(self):
-        app = App(name="test-app", cfg=_TEST_CFG)
+        app = App(name="test-app", cfg=_TEST_CFG, allow_bare_strings=True)
         with pytest.raises(ValueError, match="set_analysis"):
             app.emit_analysis()
 
@@ -838,7 +838,7 @@ class TestFilterGroupCompositionWithApp:
     validation works end-to-end."""
 
     def test_wrong_sheet_visual_caught_at_scope_call(self):
-        app = App(name="test", cfg=_TEST_CFG)
+        app = App(name="test", cfg=_TEST_CFG, allow_bare_strings=True)
         analysis = app.set_analysis(Analysis(
             analysis_id_suffix="test", name="Test",
         ))
@@ -998,7 +998,7 @@ class TestFullEmitRoundTripWithTypedFilters:
     to confirm typed Filter wrappers serialize cleanly end-to-end."""
 
     def test_full_emit_round_trip(self):
-        app = App(name="test", cfg=_TEST_CFG)
+        app = App(name="test", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(_DS_FOO)
         analysis = app.set_analysis(Analysis(
             analysis_id_suffix="test", name="Test",
@@ -1044,7 +1044,7 @@ class TestFullEmitRoundTripWithTypedFilters:
         through to the emitted JSON. Carried over from the L.1.5
         composition tests; lives here now alongside the typed-filter
         round-trip."""
-        app = App(name="test", cfg=_TEST_CFG)
+        app = App(name="test", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(_DS_FOO)
         analysis = app.set_analysis(Analysis(
             analysis_id_suffix="test", name="Test",
@@ -1111,7 +1111,7 @@ class TestDataset:
 
 class TestAppDatasetRegistry:
     def test_add_dataset_returns_ref(self):
-        app = App(name="test", cfg=_TEST_CFG)
+        app = App(name="test", cfg=_TEST_CFG, allow_bare_strings=True)
         ds = app.add_dataset(_DS_FOO)
         assert ds is _DS_FOO
         assert _DS_FOO in app.datasets
@@ -1119,7 +1119,7 @@ class TestAppDatasetRegistry:
     def test_duplicate_dataset_identifier_rejected(self):
         """Same shadow-bug class as duplicate parameters: two registrations
         sharing an identifier silently let one win at deploy."""
-        app = App(name="test", cfg=_TEST_CFG)
+        app = App(name="test", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(Dataset(identifier="ds-x", arn="arn:1"))
         with pytest.raises(ValueError, match="already registered"):
             app.add_dataset(Dataset(identifier="ds-x", arn="arn:2"))
@@ -1131,11 +1131,11 @@ class TestAppDatasetDependencies:
     matview REFRESH ordering both consume this graph."""
 
     def test_empty_when_no_analysis(self):
-        app = App(name="test", cfg=_TEST_CFG)
+        app = App(name="test", cfg=_TEST_CFG, allow_bare_strings=True)
         assert app.dataset_dependencies() == set()
 
     def test_collects_from_visuals(self):
-        app = App(name="test", cfg=_TEST_CFG)
+        app = App(name="test", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(_DS_FOO)
         app.add_dataset(_DS_ANOMALIES)
         analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
@@ -1154,7 +1154,7 @@ class TestAppDatasetDependencies:
         assert deps == {_DS_FOO, _DS_ANOMALIES}
 
     def test_collects_from_filter_groups(self):
-        app = App(name="test", cfg=_TEST_CFG)
+        app = App(name="test", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(_DS_FOO)
         analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
         sheet = analysis.add_sheet(Sheet(
@@ -1175,7 +1175,7 @@ class TestAppDatasetDependencies:
         """The load-bearing validation: if a visual or filter references
         a Dataset that wasn't registered on the App, emit_analysis raises
         with the offending identifier(s)."""
-        app = App(name="test", cfg=_TEST_CFG)
+        app = App(name="test", cfg=_TEST_CFG, allow_bare_strings=True)
         # _DS_FOO is NOT registered on this app
         analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
         sheet = analysis.add_sheet(Sheet(
@@ -1192,7 +1192,7 @@ class TestAppDatasetDependencies:
         """Selective-by-construction: registered-but-unreferenced datasets
         DO NOT show up in the emitted DataSetIdentifierDeclarations.
         Catches dataset bloat at the deploy boundary."""
-        app = App(name="test", cfg=_TEST_CFG)
+        app = App(name="test", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(_DS_FOO)
         app.add_dataset(_DS_ANOMALIES)  # registered but unreferenced
         analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
@@ -1210,7 +1210,7 @@ class TestAppDatasetDependencies:
         assert "ds-anomalies" not in identifiers
 
     def test_emit_dashboard_validates_references_too(self):
-        app = App(name="test", cfg=_TEST_CFG)
+        app = App(name="test", cfg=_TEST_CFG, allow_bare_strings=True)
         analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s"), name="S", title="S", description="",
@@ -1348,7 +1348,7 @@ class TestAppCalcFieldDependencies:
 
     def test_calc_fields_referenced_includes_visual_refs(self):
         cf = _make_is_anchor()
-        app = App(name="t", cfg=_TEST_CFG)
+        app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(_DS_FOO)
         analysis = app.set_analysis(Analysis(
             analysis_id_suffix="t", name="T",
@@ -1366,7 +1366,7 @@ class TestAppCalcFieldDependencies:
 
     def test_calc_fields_referenced_includes_filter_refs(self):
         cf = _make_is_anchor()
-        app = App(name="t", cfg=_TEST_CFG)
+        app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(_DS_FOO)
         analysis = app.set_analysis(Analysis(
             analysis_id_suffix="t", name="T",
@@ -1389,7 +1389,7 @@ class TestAppCalcFieldDependencies:
         isn't registered on the Analysis. emit_analysis raises with
         the offending name."""
         cf = _make_is_anchor()  # NOT registered on the analysis
-        app = App(name="t", cfg=_TEST_CFG)
+        app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(_DS_FOO)
         analysis = app.set_analysis(Analysis(
             analysis_id_suffix="t", name="T",
@@ -1413,7 +1413,7 @@ class TestAppCalcFieldDependencies:
         cf = _CF(
             name="standalone_calc", dataset=_DS_ANOMALIES, expression="1",
         )
-        app = App(name="t", cfg=_TEST_CFG)
+        app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(_DS_FOO)
         app.add_dataset(_DS_ANOMALIES)
         analysis = app.set_analysis(Analysis(
@@ -1443,7 +1443,7 @@ class TestAutoVisualIds:
     the tree when the user doesn't pass one explicitly."""
 
     def test_kpi_without_visual_id_gets_auto_id_at_emit(self):
-        app = App(name="t", cfg=_TEST_CFG)
+        app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(_DS_FOO)
         analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
         sheet = analysis.add_sheet(Sheet(
@@ -1460,7 +1460,7 @@ class TestAutoVisualIds:
         assert kpi.visual_id == "v-kpi-s0-0"
 
     def test_explicit_visual_id_preserved(self):
-        app = App(name="t", cfg=_TEST_CFG)
+        app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(_DS_FOO)
         analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
         sheet = analysis.add_sheet(Sheet(
@@ -1477,7 +1477,7 @@ class TestAutoVisualIds:
         """Explicit IDs interleave with auto-IDs without conflict —
         auto-IDs use the position-indexed scheme, explicit ones pass
         through unchanged."""
-        app = App(name="t", cfg=_TEST_CFG)
+        app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(_DS_FOO)
         analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
         sheet = analysis.add_sheet(Sheet(
@@ -1492,7 +1492,7 @@ class TestAutoVisualIds:
         assert kpi_c.visual_id == "v-kpi-s0-2"
 
     def test_kind_prefix_distinguishes_visual_types(self):
-        app = App(name="t", cfg=_TEST_CFG)
+        app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(_DS_FOO)
         analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
         sheet = analysis.add_sheet(Sheet(
@@ -1511,7 +1511,7 @@ class TestAutoVisualIds:
     def test_visual_id_is_sheet_scoped(self):
         """First visual on first sheet vs first visual on second sheet —
         position resets per sheet, scope encoded in the ID prefix."""
-        app = App(name="t", cfg=_TEST_CFG)
+        app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(_DS_FOO)
         analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
         sheet_a = analysis.add_sheet(Sheet(
@@ -1550,7 +1550,7 @@ class TestAutoVisualIds:
 
 class TestAutoFilterGroupIds:
     def test_filter_group_without_id_gets_auto_id(self):
-        app = App(name="t", cfg=_TEST_CFG)
+        app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(_DS_FOO)
         analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
         sheet = analysis.add_sheet(Sheet(
@@ -1566,7 +1566,7 @@ class TestAutoFilterGroupIds:
         assert fg.filter_group_id == "fg-0"
 
     def test_explicit_filter_group_id_preserved(self):
-        app = App(name="t", cfg=_TEST_CFG)
+        app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(_DS_FOO)
         analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
         sheet = analysis.add_sheet(Sheet(
@@ -1587,7 +1587,7 @@ class TestTreeQueryHelpers:
     walk consume these instead of importing per-app constants."""
 
     def _make_app(self) -> tuple[App, Sheet, KPI, Table, FilterGroup]:
-        app = App(name="t", cfg=_TEST_CFG)
+        app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(_DS_FOO)
         analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
         sheet = analysis.add_sheet(Sheet(
@@ -1636,7 +1636,7 @@ class TestTreeQueryHelpers:
     def test_sheet_find_visual_multiple_matches_raises(self):
         """When the criteria are ambiguous, the helper raises rather
         than returning a non-deterministic match."""
-        app = App(name="t", cfg=_TEST_CFG)
+        app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(_DS_FOO)
         analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
         sheet = analysis.add_sheet(Sheet(
@@ -1720,7 +1720,7 @@ class TestParameterDropdown:
         """A ParameterDropdown's LinkedValues dataset must be registered
         on the App — same enforcement the visuals get."""
         anchor = StringParam(name=ParameterName("pAnchor"))
-        app = App(name="t", cfg=_TEST_CFG)
+        app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
         # Don't register _DS_FOO — should raise.
         analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
         analysis.add_parameter(anchor)
@@ -1786,7 +1786,7 @@ class TestFilterDropdown:
         f = CategoryFilter(
             dataset=_DS_FOO, column="col", values=["yes"],
         )  # no filter_id — auto
-        app = App(name="t", cfg=_TEST_CFG)
+        app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(_DS_FOO)
         analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
         sheet = analysis.add_sheet(Sheet(
@@ -1850,7 +1850,7 @@ class TestControlAutoIds:
 
     def test_parameter_control_auto_id(self):
         sigma = IntegerParam(name=ParameterName("pSigma"), default=[2])
-        app = App(name="t", cfg=_TEST_CFG)
+        app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
         analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
         analysis.add_parameter(sigma)
         sheet = analysis.add_sheet(Sheet(
@@ -1869,7 +1869,7 @@ class TestControlAutoIds:
             filter_id="filter-x", dataset=_DS_FOO,
             column="col", values=["yes"],
         )
-        app = App(name="t", cfg=_TEST_CFG)
+        app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(_DS_FOO)
         analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
         sheet = analysis.add_sheet(Sheet(
@@ -1892,7 +1892,7 @@ class TestSheetEmitsFilterControls:
             filter_id="filter-x", dataset=_DS_FOO,
             column="col", values=["yes"],
         )
-        app = App(name="t", cfg=_TEST_CFG)
+        app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(_DS_FOO)
         analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
         sheet = analysis.add_sheet(Sheet(
@@ -1926,7 +1926,7 @@ from quicksight_gen.common.tree import (
 
 class TestDrillEmit:
     def _setup(self) -> tuple[App, Sheet, Sheet, Table]:
-        app = App(name="t", cfg=_TEST_CFG)
+        app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(_DS_FOO)
         analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
         anchor = analysis.add_parameter(StringParam(
@@ -1985,7 +1985,7 @@ class TestDrillEmit:
         """Drill into a sheet that isn't on the analysis raises at
         emit time. Catches the wrong-sheet bug class — the typed
         ref means the Sheet must be a real, registered Sheet object."""
-        app = App(name="t", cfg=_TEST_CFG)
+        app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(_DS_FOO)
         analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
         src_sheet = analysis.add_sheet(Sheet(
@@ -2013,7 +2013,7 @@ class TestDrillEmit:
             app.emit_analysis()
 
     def test_explicit_action_id_preserved(self):
-        app = App(name="t", cfg=_TEST_CFG)
+        app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
         app.add_dataset(_DS_FOO)
         analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
         src = analysis.add_sheet(Sheet(
@@ -2034,3 +2034,93 @@ class TestDrillEmit:
         src.place(table, col_span=36, row_span=18, col_index=0)
         app.emit_analysis()
         assert table.actions[0].action_id == "my-explicit-id"
+
+
+# ---------------------------------------------------------------------------
+# L.1.17 — bare-string column refs raise unless explicitly allowed
+# ---------------------------------------------------------------------------
+
+class TestBareStringColumnsRaiseByDefault:
+    """``allow_bare_strings=False`` is the App's default. Any tree node
+    that references a column via a bare ``str`` (instead of ``ds["col"]``
+    or a ``CalcField`` ref) trips the emit-time validator.
+
+    The escape hatch (``allow_bare_strings=True``) covers test fixtures
+    that don't register a ``DatasetContract``, but production apps
+    should always go through the validated form.
+    """
+
+    def _build_app_with_bare_string_dim(self, **app_kwargs) -> App:
+        """Build a minimal App that references a column via a bare str."""
+        app = App(name="t", cfg=_TEST_CFG, **app_kwargs)
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(
+            analysis_id_suffix="a", name="A",
+        ))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        kpi = sheet.add_visual(KPI(
+            title="Total",
+            values=[Measure.sum(_DS_FOO, "amount")],  # bare string
+        ))
+        sheet.place(kpi, col_span=12, row_span=6, col_index=0)
+        return app
+
+    def test_default_app_raises_on_bare_string_column(self):
+        app = self._build_app_with_bare_string_dim()  # default allow=False
+        with pytest.raises(ValueError, match="bare-string column refs"):
+            app.emit_analysis()
+
+    def test_default_app_raises_on_bare_string_column_in_dashboard(self):
+        app = self._build_app_with_bare_string_dim()
+        app.set_dashboard(Dashboard(
+            dashboard_id_suffix="d", name="D", analysis=app.analysis,
+        ))
+        with pytest.raises(ValueError, match="bare-string column refs"):
+            app.emit_dashboard()
+
+    def test_explicit_allow_bypasses_check(self):
+        """Tests + datasets without a contract opt into the bare-string
+        form via ``allow_bare_strings=True``."""
+        app = self._build_app_with_bare_string_dim(allow_bare_strings=True)
+        # Should not raise.
+        app.emit_analysis()
+
+    def test_error_message_lists_offending_column(self):
+        app = self._build_app_with_bare_string_dim()
+        with pytest.raises(ValueError) as exc_info:
+            app.emit_analysis()
+        message = str(exc_info.value)
+        # The bad column name + the visual id appear in the message
+        # so the developer can fix at the right call site.
+        assert "amount" in message
+        # Mentions the typed alternative the user should reach for.
+        assert "ds[\"" in message
+
+    def test_bare_string_in_filter_column_also_raises(self):
+        app = App(name="t", cfg=_TEST_CFG)
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(
+            analysis_id_suffix="a", name="A",
+        ))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        # Add a visual that uses Column refs (no bare strings here)
+        # so the only bare-string ref is in the filter group below.
+        kpi = sheet.add_visual(KPI(
+            title="Total",
+            values=[Measure.sum(_DS_FOO, "amount", field_id="f")],
+        ))
+        sheet.place(kpi, col_span=12, row_span=6, col_index=0)
+        # Bare-string column on the filter — should raise.
+        analysis.add_filter_group(FilterGroup(
+            filters=[CategoryFilter(
+                dataset=_DS_FOO,
+                column="category",  # bare string
+                values=["a"],
+            )],
+        )).scope_visuals(sheet, [kpi])
+        with pytest.raises(ValueError, match="bare-string column refs"):
+            app.emit_analysis()

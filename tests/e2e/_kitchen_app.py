@@ -77,7 +77,10 @@ def build_kitchen_app(cfg: Config) -> App:
     or modify before emitting; the default returned shape is
     self-contained and exercises every primitive at least once.
     """
-    app = App(name="tree-kitchen", cfg=cfg)
+    # Kitchen sink doesn't register a DatasetContract for its datasets,
+    # so ds["col"] can't validate. Opt into the bare-string escape
+    # hatch so the existing Dim(ds, "col") form survives.
+    app = App(name="tree-kitchen", cfg=cfg, allow_bare_strings=True)
 
     # ------ Datasets -------------------------------------------------
     # Two datasets — one for visual data, one for the dropdown

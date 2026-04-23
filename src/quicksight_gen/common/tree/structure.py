@@ -649,6 +649,13 @@ class App:
     analysis: Analysis | None = None
     dashboard: Dashboard | None = None
     datasets: list[Dataset] = field(default_factory=list)
+    # Bare-string column refs (``Dim(ds, "amount")`` instead of
+    # ``ds["amount"].dim()``) are typo-prone — they bypass the dataset
+    # contract validation. ``emit_analysis`` raises on any bare-string
+    # column ref unless this flag is set. Test fixtures + datasets
+    # without a registered contract (kitchen-sink) opt in via
+    # ``allow_bare_strings=True``.
+    allow_bare_strings: bool = False
 
     def set_analysis(self, analysis: Analysis) -> Analysis:
         self.analysis = analysis
@@ -895,6 +902,74 @@ class App:
                 f"aren't registered on the analysis: {bad}"
             )
 
+    def _validate_no_bare_string_columns(self) -> None:
+        """Raise if any tree node uses a bare-string column ref.
+
+        Bare strings (``Dim(ds, "amount")``) bypass the dataset contract
+        validation that ``ds["amount"]`` carries — a typo silently
+        renders a broken visual at deploy. The validated path is the
+        ``Column`` ref form, ``ds["column_name"].dim()`` /
+        ``.sum()`` / etc.
+
+        ``allow_bare_strings=True`` on the App opts out of this check
+        for test fixtures and datasets without a registered contract
+        (the kitchen sink, which has no DatasetContract).
+        """
+        if self.allow_bare_strings or self.analysis is None:
+            return
+        bad: list[str] = []
+
+        def _check(column, where: str) -> None:
+            if isinstance(column, str):
+                bad.append(f"{where} → {column!r}")
+
+        for sheet in self.analysis.sheets:
+            for visual in sheet.visuals:
+                for attr, _role in _FIELD_SLOTS:
+                    slot = getattr(visual, attr, None)
+                    if slot is None:
+                        continue
+                    leaves = slot if isinstance(slot, list) else [slot]
+                    for leaf in leaves:
+                        if leaf is None:
+                            continue
+                        _check(
+                            getattr(leaf, "column", None),
+                            f"sheet {sheet.sheet_id!r} visual "
+                            f"{getattr(visual, 'visual_id', '?')!r} "
+                            f"{attr}",
+                        )
+                # LinkedValues on parameter / filter controls hits the
+                # same column-ref slot.
+                for ctrl in (
+                    *sheet.parameter_controls, *sheet.filter_controls,
+                ):
+                    sv = getattr(ctrl, "selectable_values", None)
+                    if sv is not None:
+                        _check(
+                            getattr(sv, "column", None),
+                            f"sheet {sheet.sheet_id!r} control "
+                            f"{getattr(ctrl, 'control_id', '?')!r} "
+                            f"selectable_values",
+                        )
+        for fg in self.analysis.filter_groups:
+            for filt in fg.filters:
+                _check(
+                    getattr(filt, "column", None),
+                    f"filter {getattr(filt, 'filter_id', '?')!r}",
+                )
+        if bad:
+            raise ValueError(
+                f"App {self.name!r} has bare-string column refs "
+                f"(typo-prone — they bypass the dataset contract "
+                f"validation that ds[\"col\"] carries):\n  "
+                + "\n  ".join(bad)
+                + "\n\nUse the typed form: ds[\"column_name\"].dim() "
+                "/ .sum() / .date() / etc. — or pass "
+                "``allow_bare_strings=True`` on the App when no "
+                "dataset contract is registered (test fixtures)."
+            )
+
     def _validate_calc_field_references(self) -> None:
         """Raise if the tree references any CalcField not registered on
         this App's Analysis. Catches "filter / visual references calc
@@ -941,6 +1016,7 @@ class App:
         self._validate_calc_field_references()
         self._validate_parameter_references()
         self._validate_drill_destinations()
+        self._validate_no_bare_string_columns()
         return ModelAnalysis(
             AwsAccountId=self.cfg.aws_account_id,
             AnalysisId=self.cfg.prefixed(self.analysis.analysis_id_suffix),
@@ -963,6 +1039,7 @@ class App:
         self._validate_calc_field_references()
         self._validate_parameter_references()
         self._validate_drill_destinations()
+        self._validate_no_bare_string_columns()
         return ModelDashboard(
             AwsAccountId=self.cfg.aws_account_id,
             DashboardId=self.cfg.prefixed(self.dashboard.dashboard_id_suffix),
