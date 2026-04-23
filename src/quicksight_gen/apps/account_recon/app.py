@@ -4,22 +4,48 @@ Replaces the constant-heavy + manually-cross-referenced builders in
 ``apps/account_recon/{analysis,filters,visuals}.py`` with the typed
 tree primitives from ``common/tree/``. Sheets land one per L.3 sub-step:
 
-- L.3.1 — Getting Started (text boxes only, app-level skeleton)
-- L.3.2 — Balances
+- L.3.1 — Getting Started (text boxes only)
+- L.3.2 — Balances (KPIs + ledger / sub-ledger drift tables + drills)
 - L.3.3 — Transfers
 - L.3.4 — Transactions
-- L.3.5 — Today's Exceptions (biggest single sheet — unified table +
-  14 per-check filter groups + cross-sheet check-type control)
-- L.3.6 — Exceptions Trends (3 cross-check rollups + per-check daily
-  trend grid)
+- L.3.5 — Today's Exceptions
+- L.3.6 — Exceptions Trends
 - L.3.7 — Daily Statement
-- L.3.8 — App-level wiring (datasets, parameters, drills)
+- L.3.8 — App-level wiring (parameters, filter groups, filter controls,
+  cross-sheet drill plumbing)
+
+**Pre-registered sheet shells.** AR's drill actions cross-reference
+sheets (Balances → Transactions, Balances → Daily Statement, etc.).
+Rather than ordering substeps by dependency, ``build_account_recon_app``
+pre-registers all 7 ``Sheet`` shells (in display order) up-front so any
+populator can construct a ``Drill(target_sheet=other_sheet, ...)``
+referencing any other shell. Unported sheets emit as bare shells (id +
+metadata only); the per-sheet byte-identity tests target their sheet
+by id, so unported shells don't pollute the tested surface.
 """
 
 from __future__ import annotations
 
 from quicksight_gen.apps.account_recon.constants import (
+    DS_AR_LEDGER_ACCOUNTS,
+    DS_AR_LEDGER_BALANCE_DRIFT,
+    DS_AR_SUBLEDGER_ACCOUNTS,
+    DS_AR_SUBLEDGER_BALANCE_DRIFT,
+    P_AR_ACCOUNT,
+    P_AR_ACTIVITY_DATE,
+    P_AR_DS_ACCOUNT,
+    P_AR_DS_BALANCE_DATE,
+    P_AR_LEDGER,
+    P_AR_SUBLEDGER,
+    P_AR_TRANSFER,
+    P_AR_TRANSFER_TYPE,
+    SHEET_AR_BALANCES,
+    SHEET_AR_DAILY_STATEMENT,
+    SHEET_AR_EXCEPTIONS_TRENDS,
     SHEET_AR_GETTING_STARTED,
+    SHEET_AR_TODAYS_EXCEPTIONS,
+    SHEET_AR_TRANSACTIONS,
+    SHEET_AR_TRANSFERS,
 )
 
 # Importing datasets registers each AR DatasetContract via its
@@ -28,20 +54,49 @@ from quicksight_gen.apps.account_recon.constants import (
 # ds["col"] ref in the visuals below.
 from quicksight_gen.apps.account_recon import datasets as _register_contracts  # noqa: F401
 from quicksight_gen.common import rich_text as rt
+from quicksight_gen.common.clickability import menu_link_text_format
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.theme import get_preset
-from quicksight_gen.common.models import Analysis as ModelAnalysis
-from quicksight_gen.common.models import Dashboard as ModelDashboard
 from quicksight_gen.common.tree import (
     Analysis,
     App,
+    Dataset,
+    Drill,
+    DrillResetSentinel,
+    DrillSourceField,
     Sheet,
     TextBox,
 )
 
 
-# Layout constants mirror apps/account_recon/analysis.py.
+# ---------------------------------------------------------------------------
+# Layout constants — mirror apps/account_recon/analysis.py.
+# ---------------------------------------------------------------------------
+
 _FULL = 36
+_HALF = 18
+_KPI_ROW_SPAN = 6
+_CHART_ROW_SPAN = 12
+_TABLE_ROW_SPAN = 18
+
+
+# ---------------------------------------------------------------------------
+# Dataset refs. Registered on the App in build_account_recon_app; the
+# populators reference them by Python variable. The Dataset arn is
+# computed from cfg.dataset_arn(identifier) so the tree-built JSON
+# matches the imperative DataSetIdentifierDeclarations.
+# ---------------------------------------------------------------------------
+
+def _datasets(cfg: Config) -> dict[str, Dataset]:
+    return {
+        identifier: Dataset(identifier=identifier, arn=cfg.dataset_arn(identifier))
+        for identifier in (
+            DS_AR_LEDGER_ACCOUNTS,
+            DS_AR_SUBLEDGER_ACCOUNTS,
+            DS_AR_LEDGER_BALANCE_DRIFT,
+            DS_AR_SUBLEDGER_BALANCE_DRIFT,
+        )
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -143,13 +198,52 @@ _DAILY_STATEMENT_BULLETS = [
 
 
 # ---------------------------------------------------------------------------
+# Drill-helper: AR cross-sheet drill into Transactions with stale-param
+# auto-reset (mirror of apps/account_recon/visuals._ar_drill_to_transactions).
+# Caller writes only the params that should narrow Transactions; every
+# other PASS-filtered param the caller doesn't write is auto-reset to
+# DrillResetSentinel so a prior drill's value can't leak through.
+# ---------------------------------------------------------------------------
+
+_AR_TXN_PASS_FILTERED_PARAMS = (
+    P_AR_SUBLEDGER,
+    P_AR_TRANSFER,
+    P_AR_ACTIVITY_DATE,
+    P_AR_TRANSFER_TYPE,
+    P_AR_ACCOUNT,
+)
+
+
+def _ar_drill_to_transactions(
+    *,
+    target_sheet: Sheet,
+    name: str,
+    writes: list[tuple],
+    trigger: str = "DATA_POINT_CLICK",
+    action_id: str | None = None,
+) -> Drill:
+    """Cross-sheet drill into Transactions with full stale-param coverage."""
+    written = {param.name for param, _ in writes}
+    full_writes = list(writes)
+    for param in _AR_TXN_PASS_FILTERED_PARAMS:
+        if param.name not in written:
+            full_writes.append((param, DrillResetSentinel()))
+    return Drill(
+        target_sheet=target_sheet,
+        writes=full_writes,
+        name=name,
+        trigger=trigger,  # type: ignore[arg-type]
+        action_id=action_id if action_id is not None else "auto",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Getting Started (L.3.1)
 # ---------------------------------------------------------------------------
 
 def _section_box_content(
     title: str, body: str, bullet_items: list[str], accent: str,
 ) -> str:
-    """Per-sheet Getting Started block: heading + body paragraph + bullets."""
     return rt.text_box(
         rt.heading(title, color=accent),
         rt.BR,
@@ -160,26 +254,9 @@ def _section_box_content(
     )
 
 
-def _build_getting_started_sheet(cfg: Config, analysis: Analysis) -> Sheet:
-    """Getting Started — landing page with welcome, nav tip, optional demo
-    flavor, and one block per other sheet.
-
-    Layout: vertical stack of full-width text boxes. No visuals, no
-    controls, no filters. Mirror of the imperative
-    ``_build_getting_started_sheet`` in ``analysis.py``.
-    """
+def _populate_getting_started(cfg: Config, sheet: Sheet) -> None:
     accent = get_preset(cfg.theme_preset).accent
     is_demo = cfg.demo_database_url is not None
-
-    sheet = analysis.add_sheet(Sheet(
-        sheet_id=SHEET_AR_GETTING_STARTED,
-        name="Getting Started",
-        title="Getting Started",
-        description=(
-            "Landing page — summarises each tab in this dashboard so readers "
-            "know where to look first. No filters or visuals."
-        ),
-    ))
 
     sheet.layout.row(height=5).add_text_box(
         TextBox(
@@ -300,30 +377,18 @@ def _build_getting_started_sheet(cfg: Config, analysis: Analysis) -> Sheet:
         )
 
     sheet_blocks = [
-        (
-            "ar-gs-balances", "Balances",
-            _BALANCES_DESCRIPTION, _BALANCES_BULLETS,
-        ),
-        (
-            "ar-gs-transfers", "Transfers",
-            _TRANSFERS_DESCRIPTION, _TRANSFERS_BULLETS,
-        ),
-        (
-            "ar-gs-transactions", "Transactions",
-            _TRANSACTIONS_DESCRIPTION, _TRANSACTIONS_BULLETS,
-        ),
-        (
-            "ar-gs-todays-exceptions", "Today's Exceptions",
-            _TODAYS_EXCEPTIONS_DESCRIPTION, _TODAYS_EXCEPTIONS_BULLETS,
-        ),
-        (
-            "ar-gs-exceptions-trends", "Exceptions Trends",
-            _EXCEPTIONS_TRENDS_DESCRIPTION, _EXCEPTIONS_TRENDS_BULLETS,
-        ),
-        (
-            "ar-gs-daily-statement", "Daily Statement",
-            _DAILY_STATEMENT_DESCRIPTION, _DAILY_STATEMENT_BULLETS,
-        ),
+        ("ar-gs-balances", "Balances",
+         _BALANCES_DESCRIPTION, _BALANCES_BULLETS),
+        ("ar-gs-transfers", "Transfers",
+         _TRANSFERS_DESCRIPTION, _TRANSFERS_BULLETS),
+        ("ar-gs-transactions", "Transactions",
+         _TRANSACTIONS_DESCRIPTION, _TRANSACTIONS_BULLETS),
+        ("ar-gs-todays-exceptions", "Today's Exceptions",
+         _TODAYS_EXCEPTIONS_DESCRIPTION, _TODAYS_EXCEPTIONS_BULLETS),
+        ("ar-gs-exceptions-trends", "Exceptions Trends",
+         _EXCEPTIONS_TRENDS_DESCRIPTION, _EXCEPTIONS_TRENDS_BULLETS),
+        ("ar-gs-daily-statement", "Daily Statement",
+         _DAILY_STATEMENT_DESCRIPTION, _DAILY_STATEMENT_BULLETS),
     ]
     for box_id, title, body_text, bullet_items in sheet_blocks:
         sheet.layout.row(height=7).add_text_box(
@@ -336,12 +401,178 @@ def _build_getting_started_sheet(cfg: Config, analysis: Analysis) -> Sheet:
             width=_FULL,
         )
 
-    return sheet
+
+# ---------------------------------------------------------------------------
+# Balances (L.3.2) — KPIs + ledger / sub-ledger drift tables with drills
+# ---------------------------------------------------------------------------
+
+def _populate_balances(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    transactions_sheet: Sheet,
+    daily_statement_sheet: Sheet,
+    datasets: dict[str, Dataset],
+) -> None:
+    """Balances tab — 2 KPIs, ledger drift table, sub-ledger drift table.
+
+    Drill plumbing:
+    - Ledger table → same-sheet right-click writes P_AR_LEDGER (filters
+      sub-ledger table below via the L.3.8 filter group).
+    - Sub-ledger table → left-click drills to Transactions writing
+      P_AR_SUBLEDGER (with stale-param reset); right-click drills to
+      Daily Statement writing P_AR_DS_ACCOUNT + P_AR_DS_BALANCE_DATE.
+    """
+    preset = get_preset(cfg.theme_preset)
+    link_color = preset.accent
+    link_tint = preset.link_tint
+
+    ds_ledger = datasets[DS_AR_LEDGER_ACCOUNTS]
+    ds_subledger = datasets[DS_AR_SUBLEDGER_ACCOUNTS]
+    ds_ledger_drift = datasets[DS_AR_LEDGER_BALANCE_DRIFT]
+    ds_subledger_drift = datasets[DS_AR_SUBLEDGER_BALANCE_DRIFT]
+
+    # Row 1: two KPIs side-by-side.
+    half = _FULL // 2
+    kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
+    kpi_row.add_kpi(
+        width=half,
+        visual_id="ar-balances-kpi-ledgers",  # type: ignore[arg-type]
+        title="Ledger Accounts",
+        subtitle="Count of ledger accounts (internal + external)",
+        values=[ds_ledger["ledger_account_id"].count(
+            field_id="ar-balances-ledger-count",
+        )],
+    )
+    kpi_row.add_kpi(
+        width=half,
+        visual_id="ar-balances-kpi-subledgers",  # type: ignore[arg-type]
+        title="Sub-Ledger Accounts",
+        subtitle="Count of individual sub-ledger accounts under all ledgers",
+        values=[ds_subledger["subledger_account_id"].count(
+            field_id="ar-balances-subledger-count",
+        )],
+    )
+
+    # Row 2: ledger drift table (full width, unaggregated).
+    sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        visual_id="ar-balances-ledger-table",  # type: ignore[arg-type]
+        title="Ledger Account Balances",
+        subtitle=(
+            "Each ledger account's stored vs computed daily balance. "
+            "Computed = Σ of its sub-ledgers' stored balances. "
+            "Right-click a ledger_account_id to filter the sub-ledger "
+            "table below to that ledger's sub-ledgers."
+        ),
+        columns=[
+            ds_ledger_drift["ledger_account_id"].dim(field_id="ar-bal-ledger-id"),
+            ds_ledger_drift["ledger_name"].dim(field_id="ar-bal-ledger-name"),
+            ds_ledger_drift["scope"].dim(field_id="ar-bal-scope"),
+            ds_ledger_drift["balance_date"].date(field_id="ar-bal-date"),
+            ds_ledger_drift["stored_balance"].numerical(field_id="ar-bal-stored"),
+            ds_ledger_drift["computed_balance"].numerical(field_id="ar-bal-computed"),
+            ds_ledger_drift["drift"].numerical(field_id="ar-bal-drift"),
+        ],
+        sort_by=("ar-bal-date", "DESC"),
+        actions=[
+            # Same-sheet right-click drill — writes P_AR_LEDGER, then a
+            # FilterGroup (declared in L.3.8) scoped to the sub-ledger
+            # table only filters that visual.
+            Drill(
+                target_sheet=sheet,
+                writes=[(
+                    P_AR_LEDGER,
+                    DrillSourceField(
+                        field_id="ar-bal-ledger-id",
+                        shape=P_AR_LEDGER.shape,
+                    ),
+                )],
+                name="Filter Sub-Ledger Accounts Below",
+                trigger="DATA_POINT_MENU",
+                action_id="action-ar-balances-filter-subledgers",
+            ),
+        ],
+        conditional_formatting={
+            "ConditionalFormattingOptions": [
+                menu_link_text_format(
+                    "ar-bal-ledger-id",
+                    "ledger_account_id",
+                    link_color,
+                    link_tint,
+                ),
+            ],
+        },
+    )
+
+    # Row 3: sub-ledger drift table (full width, unaggregated, two drills).
+    sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        visual_id="ar-balances-subledger-table",  # type: ignore[arg-type]
+        title="Sub-Ledger Account Balances",
+        subtitle=(
+            "Each sub-ledger account's stored vs computed daily balance. "
+            "Computed = running Σ of posted transactions. Left-click a "
+            "subledger_account_id to drill left into Transactions for "
+            "that sub-ledger; right-click to drill right into the Daily "
+            "Statement for that account-day."
+        ),
+        columns=[
+            ds_subledger_drift["subledger_account_id"].dim(field_id="ar-bal-subledger-id"),
+            ds_subledger_drift["subledger_name"].dim(field_id="ar-bal-subledger-name"),
+            ds_subledger_drift["ledger_name"].dim(field_id="ar-bal-subledger-ledger"),
+            ds_subledger_drift["scope"].dim(field_id="ar-bal-subledger-scope"),
+            ds_subledger_drift["balance_date"].date(field_id="ar-bal-subledger-date"),
+            ds_subledger_drift["stored_balance"].numerical(field_id="ar-bal-subledger-stored"),
+            ds_subledger_drift["computed_balance"].numerical(field_id="ar-bal-subledger-computed"),
+            ds_subledger_drift["drift"].numerical(field_id="ar-bal-subledger-drift"),
+        ],
+        sort_by=("ar-bal-subledger-date", "DESC"),
+        actions=[
+            _ar_drill_to_transactions(
+                target_sheet=transactions_sheet,
+                name="View Transactions",
+                writes=[(
+                    P_AR_SUBLEDGER,
+                    DrillSourceField(
+                        field_id="ar-bal-subledger-id",
+                        shape=P_AR_SUBLEDGER.shape,
+                    ),
+                )],
+                action_id="action-ar-balances-subledger-to-txn",
+            ),
+            Drill(
+                target_sheet=daily_statement_sheet,
+                writes=[
+                    (P_AR_DS_ACCOUNT, DrillSourceField(
+                        field_id="ar-bal-subledger-id",
+                        shape=P_AR_DS_ACCOUNT.shape,
+                    )),
+                    (P_AR_DS_BALANCE_DATE, DrillSourceField(
+                        field_id="ar-bal-subledger-date",
+                        shape=P_AR_DS_BALANCE_DATE.shape,
+                    )),
+                ],
+                name="View Daily Statement",
+                trigger="DATA_POINT_MENU",
+                action_id="action-ar-balances-subledger-to-daily-statement",
+            ),
+        ],
+        conditional_formatting={
+            "ConditionalFormattingOptions": [
+                menu_link_text_format(
+                    "ar-bal-subledger-id",
+                    "subledger_account_id",
+                    link_color,
+                    link_tint,
+                ),
+            ],
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
-# App-level wiring (L.3.8 lands the rest; L.3.1 stub builds Getting
-# Started only so we can land the byte-identity skeleton).
+# App-level wiring
 # ---------------------------------------------------------------------------
 
 def _analysis_name(cfg: Config) -> str:
@@ -351,19 +582,65 @@ def _analysis_name(cfg: Config) -> str:
     return "Account Reconciliation"
 
 
+# Order matters — sheets register on the analysis in this list's order,
+# which becomes the dashboard's tab order.
+_AR_SHEET_SPECS: tuple[tuple[str, str, str, str], ...] = (
+    (SHEET_AR_GETTING_STARTED, "Getting Started", "Getting Started",
+     "Landing page — summarises each tab in this dashboard so readers "
+     "know where to look first. No filters or visuals."),
+    (SHEET_AR_BALANCES, "Balances", "Balances", _BALANCES_DESCRIPTION),
+    (SHEET_AR_TRANSFERS, "Transfers", "Transfers", _TRANSFERS_DESCRIPTION),
+    (SHEET_AR_TRANSACTIONS, "Transactions", "Transactions", _TRANSACTIONS_DESCRIPTION),
+    (SHEET_AR_TODAYS_EXCEPTIONS, "Today's Exceptions", "Today's Exceptions",
+     _TODAYS_EXCEPTIONS_DESCRIPTION),
+    (SHEET_AR_EXCEPTIONS_TRENDS, "Exceptions Trends", "Exceptions Trends",
+     _EXCEPTIONS_TRENDS_DESCRIPTION),
+    (SHEET_AR_DAILY_STATEMENT, "Daily Statement", "Daily Statement",
+     _DAILY_STATEMENT_DESCRIPTION),
+)
+
+
 def build_account_recon_app(cfg: Config) -> App:
     """Construct the Account Reconciliation App as a tree.
 
-    Returns the App ready for ``app.emit_analysis()`` /
-    ``app.emit_dashboard()``. Mid-port: only Getting Started is wired
-    in L.3.1; subsequent sub-steps add the other six sheets.
+    Sheets are pre-registered in display order so cross-sheet drills can
+    target any sheet by ref. Populators run in any order; unported
+    sheets emit as bare shells (id + metadata) until their L.3.N
+    sub-step lands.
     """
     app = App(name="account-recon", cfg=cfg)
     analysis = app.set_analysis(Analysis(
         analysis_id_suffix="account-recon-analysis",
         name=_analysis_name(cfg),
     ))
-    _build_getting_started_sheet(cfg, analysis)
+
+    # Datasets — register every AR dataset the populated sheets reference.
+    # (L.3.2 only uses the four under Balances; subsequent substeps add
+    # to this list.)
+    datasets = _datasets(cfg)
+    for ds in datasets.values():
+        app.add_dataset(ds)
+
+    # Pre-register all 7 sheet shells in display order.
+    sheets: dict[str, Sheet] = {}
+    for sheet_id, name, title, description in _AR_SHEET_SPECS:
+        sheets[sheet_id] = analysis.add_sheet(Sheet(
+            sheet_id=sheet_id,  # type: ignore[arg-type]
+            name=name,
+            title=title,
+            description=description,
+        ))
+
+    # Populate sheets ported so far.
+    _populate_getting_started(cfg, sheets[SHEET_AR_GETTING_STARTED])
+    _populate_balances(
+        cfg,
+        sheets[SHEET_AR_BALANCES],
+        transactions_sheet=sheets[SHEET_AR_TRANSACTIONS],
+        daily_statement_sheet=sheets[SHEET_AR_DAILY_STATEMENT],
+        datasets=datasets,
+    )
+
     app.create_dashboard(
         dashboard_id_suffix="account-recon-dashboard",
         name=_analysis_name(cfg),
