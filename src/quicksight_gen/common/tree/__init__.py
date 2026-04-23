@@ -120,12 +120,15 @@ from quicksight_gen.common.tree.fields import (
     MeasureKind,
 )
 from quicksight_gen.common.tree.filters import (
+    Bound,
     CategoryFilter,
     CategoryMatchOperator,
     FilterGroup,
     FilterLike,
     NullOption,
     NumericRangeFilter,
+    ParameterBound,
+    StaticBound,
     TimeRangeFilter,
 )
 from quicksight_gen.common.tree.parameters import (
@@ -175,6 +178,7 @@ __all__ = [
     # Filters
     "FilterGroup", "FilterLike",
     "CategoryFilter", "NumericRangeFilter", "TimeRangeFilter",
+    "Bound", "StaticBound", "ParameterBound",
     "CategoryMatchOperator", "NullOption",
     # Controls (L.1.9)
     "ParameterControlLike", "FilterControlLike",

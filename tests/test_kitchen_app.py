@@ -349,10 +349,11 @@ class TestValidationHooksAudit:
         kpi = sheet.layout.row(height=6).add_kpi(
             width=12, title="K", values=[],
         )
+        from quicksight_gen.common.tree import ParameterBound as _PB
         fg = app.analysis.add_filter_group(_FG(filters=[
             _NRF(
                 dataset=self._DS_X, column="amount",
-                minimum_parameter=rogue_param,
+                minimum=_PB(rogue_param),
             ),
         ]))
         sheet.scope(fg, [kpi])

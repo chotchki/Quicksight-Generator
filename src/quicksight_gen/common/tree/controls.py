@@ -83,52 +83,45 @@ class StaticValues:
 class LinkedValues:
     """Auto-populate the dropdown's options from a dataset column.
 
-    Two forms (the typed-Column form is preferred — L.1.17):
+    Construct via the factory methods (L.1.22 — the canonical fields
+    are ``dataset`` + ``column_name``; the factories normalize the two
+    legitimate construction forms into that pair, eliminating the
+    dual-form ``__post_init__`` validation):
 
-    - ``LinkedValues(ds["column_name"])`` — single positional Column,
-      dataset implicit. Validated against the contract at
-      construction.
-    - ``LinkedValues(dataset=ds, column="column_name")`` — escape
-      hatch for unvalidated string. Dataset must be passed.
+    - ``LinkedValues.from_column(ds["col"])`` — typed Column form. The
+      Column carries its own dataset, so the factory derives ``dataset``
+      from the Column. Preferred — the contract validates the column
+      name at the wiring site.
+    - ``LinkedValues.from_string(dataset=ds, column_name="col")`` —
+      bare-string escape hatch for datasets without a registered
+      ``DatasetContract``. Dataset must be passed explicitly.
 
     The Dataset participates in the L.1.7 dependency-graph walk via
     the control's ``datasets()`` method.
     """
-    column: str | Column
-    dataset: Dataset | None = None
+    dataset: Dataset
+    column_name: str
 
-    def __post_init__(self) -> None:
-        if isinstance(self.column, Column):
-            inferred = self.column.dataset
-            if self.dataset is None:
-                # frozen=True — bypass __setattr__ guard.
-                object.__setattr__(self, "dataset", inferred)
-            elif self.dataset is not inferred:
-                raise ValueError(
-                    f"LinkedValues dataset mismatch: column "
-                    f"{self.column.name!r} belongs to "
-                    f"{inferred.identifier!r}, but dataset arg "
-                    f"is {self.dataset.identifier!r}."
-                )
-        elif self.dataset is None:
-            raise ValueError(
-                "LinkedValues: dataset is required when column is a "
-                "bare string. Prefer ``LinkedValues(ds[\"column\"])`` "
-                "for the validated path."
-            )
+    @classmethod
+    def from_column(cls, column: Column) -> "LinkedValues":
+        """Linked values pulled from a typed Column. The Column's
+        dataset is the source dataset."""
+        return cls(dataset=column.dataset, column_name=column.name)
+
+    @classmethod
+    def from_string(
+        cls, *, dataset: Dataset, column_name: str,
+    ) -> "LinkedValues":
+        """Linked values pulled from a bare-string column name on the
+        explicitly-passed dataset. Use when the dataset has no
+        registered ``DatasetContract``."""
+        return cls(dataset=dataset, column_name=column_name)
 
     def emit(self) -> dict[str, Any]:
-        # __post_init__ guarantees dataset is non-None: either passed
-        # explicitly, or inferred from the Column form.
-        assert self.dataset is not None
-        column_name = (
-            self.column.name if isinstance(self.column, Column)
-            else self.column
-        )
         return {
             "LinkToDataSetColumn": {
                 "DataSetIdentifier": self.dataset.identifier,
-                "ColumnName": column_name,
+                "ColumnName": self.column_name,
             },
         }
 

@@ -97,55 +97,104 @@ CategoryMatchOperator = Literal[
 NullOption = Literal["NON_NULLS_ONLY", "ALL_VALUES", "NULLS_ONLY"]
 
 
+# Discriminated binding for CategoryFilter — exactly one of values vs
+# parameter must be expressed, and the type system makes mixing the two
+# structurally impossible (a binding is one or the other; a CategoryFilter
+# carries one binding).
+@dataclass(frozen=True)
+class _ValuesBinding:
+    """Static-list binding — emits ``FilterListConfiguration``."""
+    values: list[str]
+
+
+@dataclass(frozen=True)
+class _ParameterBinding:
+    """Parameter-bound binding — emits ``CustomFilterConfiguration``
+    with ``ParameterName`` resolved from the parameter ref."""
+    parameter: ParameterDeclLike
+
+
+CategoryBinding = _ValuesBinding | _ParameterBinding
+
+
 @dataclass(eq=False)
 class CategoryFilter:
     """Filter on a categorical (string) column or calc field.
 
     ``dataset`` is a ``Dataset`` object ref (L.1.7 hard switch).
-
-    Two binding modes (mutually exclusive — exactly one must be set):
-
-    - **Static list** — pass ``values=["a", "b"]`` plus a
-      ``match_operator``. Emits a ``FilterListConfiguration`` with
-      ``CategoryValues`` set to the list. Use this for the calc-field
-      ``'yes'`` sentinel pattern (``values=["yes"]``) or a hardcoded
-      include-list.
-    - **Parameter-bound** — pass ``parameter=string_param`` (a
-      ``ParameterDeclLike`` object ref) plus ``match_operator="EQUALS"``
-      (typically). Emits a ``CustomFilterConfiguration`` with
-      ``ParameterName`` set to the param's name. Use this when a
-      dropdown control writes a single value into a string parameter
-      and the filter narrows to that value (e.g. Money Trail's chain
-      root selector).
-
     ``column`` may name a real dataset column or an analysis-level
     calc field — both resolve to a ``ColumnIdentifier`` against the
     given dataset.
+
+    Construct via the factory methods (L.1.22 — the discriminated
+    binding makes the "neither/both set" bug class structurally
+    impossible):
+
+    - ``CategoryFilter.with_values(dataset, column, values, ...)`` —
+      static list. Emits ``FilterListConfiguration`` with
+      ``CategoryValues``. Use for the calc-field ``'yes'`` sentinel
+      pattern or a hardcoded include-list.
+    - ``CategoryFilter.with_parameter(dataset, column, parameter, ...)`` —
+      parameter-bound. Emits ``CustomFilterConfiguration`` with
+      ``ParameterName`` from the param ref. Use when a dropdown writes
+      a single value into a string parameter and the filter narrows to
+      it (e.g. Money Trail's chain root selector).
 
     ``null_option`` only surfaces in the parameter-bound emit (the
     list-based ``FilterListConfiguration`` doesn't carry it).
     """
     dataset: Dataset
     column: ColumnRef
-    values: list[str] | None = None
-    parameter: ParameterDeclLike | None = None
+    binding: CategoryBinding
     match_operator: CategoryMatchOperator = "CONTAINS"
     null_option: NullOption = "ALL_VALUES"
     filter_id: str | AutoResolved = AUTO
 
     _AUTO_KIND: ClassVar[str] = "category"
 
-    def __post_init__(self) -> None:
-        if self.values is None and self.parameter is None:
-            raise ValueError(
-                f"CategoryFilter {self.filter_id!r}: specify either "
-                f"values or parameter."
-            )
-        if self.values is not None and self.parameter is not None:
-            raise ValueError(
-                f"CategoryFilter {self.filter_id!r}: specify either "
-                f"values or parameter, not both."
-            )
+    @classmethod
+    def with_values(
+        cls,
+        *,
+        dataset: Dataset,
+        column: ColumnRef,
+        values: list[str],
+        match_operator: CategoryMatchOperator = "CONTAINS",
+        null_option: NullOption = "ALL_VALUES",
+        filter_id: str | AutoResolved = AUTO,
+    ) -> "CategoryFilter":
+        """Static-list category filter — ``CategoryValues`` is the literal
+        list of allowed values."""
+        return cls(
+            dataset=dataset, column=column,
+            binding=_ValuesBinding(values=values),
+            match_operator=match_operator,
+            null_option=null_option,
+            filter_id=filter_id,
+        )
+
+    @classmethod
+    def with_parameter(
+        cls,
+        *,
+        dataset: Dataset,
+        column: ColumnRef,
+        parameter: ParameterDeclLike,
+        match_operator: CategoryMatchOperator = "EQUALS",
+        null_option: NullOption = "ALL_VALUES",
+        filter_id: str | AutoResolved = AUTO,
+    ) -> "CategoryFilter":
+        """Parameter-bound category filter — ``ParameterName`` is read
+        from the parameter ref at emit time. Default ``match_operator``
+        is ``EQUALS`` since dropdown-driven parameters typically write a
+        single value."""
+        return cls(
+            dataset=dataset, column=column,
+            binding=_ParameterBinding(parameter=parameter),
+            match_operator=match_operator,
+            null_option=null_option,
+            filter_id=filter_id,
+        )
 
     def calc_field(self) -> CalcField | None:
         """The CalcField this filter references, or None if it points
@@ -156,21 +205,22 @@ class CategoryFilter:
         assert not isinstance(self.filter_id, _AutoSentinel), (
             "filter_id wasn't resolved — App._resolve_auto_ids() must run."
         )
-        if self.parameter is not None:
-            configuration = CategoryFilterConfiguration(
-                CustomFilterConfiguration={
-                    "MatchOperator": self.match_operator,
-                    "ParameterName": self.parameter.name,
-                    "NullOption": self.null_option,
-                },
-            )
-        else:
-            configuration = CategoryFilterConfiguration(
-                FilterListConfiguration={
-                    "MatchOperator": self.match_operator,
-                    "CategoryValues": self.values,
-                },
-            )
+        match self.binding:
+            case _ParameterBinding(parameter=parameter):
+                configuration = CategoryFilterConfiguration(
+                    CustomFilterConfiguration={
+                        "MatchOperator": self.match_operator,
+                        "ParameterName": parameter.name,
+                        "NullOption": self.null_option,
+                    },
+                )
+            case _ValuesBinding(values=values):
+                configuration = CategoryFilterConfiguration(
+                    FilterListConfiguration={
+                        "MatchOperator": self.match_operator,
+                        "CategoryValues": values,
+                    },
+                )
         return Filter(
             CategoryFilter=ModelCategoryFilter(
                 FilterId=self.filter_id,
@@ -183,26 +233,63 @@ class CategoryFilter:
         )
 
 
+# Discriminated bound for NumericRangeFilter — each Bound variant carries
+# exactly one piece of data (a static value or a parameter ref), so the
+# "both static_value and parameter set" bug class is structurally gone.
+@dataclass(frozen=True)
+class StaticBound:
+    """A literal numeric bound — emits ``StaticValue`` in the range filter."""
+    value: float
+
+
+@dataclass(frozen=True)
+class ParameterBound:
+    """A parameter-driven bound — emits ``Parameter`` (resolved from
+    ``parameter.name``) in the range filter."""
+    parameter: ParameterDeclLike
+
+
+Bound = StaticBound | ParameterBound
+
+
+def _emit_bound(bound: Bound | None) -> NumericRangeFilterValue | None:
+    """Emit a Bound variant to ``NumericRangeFilterValue``, or None."""
+    match bound:
+        case None:
+            return None
+        case StaticBound(value=value):
+            return NumericRangeFilterValue(StaticValue=value)
+        case ParameterBound(parameter=parameter):
+            return NumericRangeFilterValue(Parameter=parameter.name)
+
+
+def _bound_parameter(bound: Bound | None) -> ParameterDeclLike | None:
+    """Pull a ParameterDeclLike out of a Bound, or None."""
+    match bound:
+        case ParameterBound(parameter=parameter):
+            return parameter
+        case _:
+            return None
+
+
 @dataclass(eq=False)
 class NumericRangeFilter:
-    """Filter on a numeric column. Range bounds may be literals
-    (``minimum_value`` / ``maximum_value``) or parameter-bound
-    (``minimum_parameter`` / ``maximum_parameter`` — object refs to a
-    ``ParameterDeclLike``).
+    """Filter on a numeric column. Range bounds are typed ``Bound``
+    variants — ``StaticBound(value)`` for a literal, ``ParameterBound(
+    parameter)`` for a parameter-driven bound. The parameter-binding
+    object ref catches "bound to a parameter that doesn't exist" at
+    the wiring site (the type checker resolves ``param.name``).
 
-    Construction-time check: at most one of (``minimum_value``,
-    ``minimum_parameter``) is set; same for the maximum side. The
-    parameter-binding object refs catch "bound to a parameter that
-    doesn't exist" at the wiring site (the type checker resolves
-    ``param.name``; if the param ref is ``None`` you get a static
-    bound or no bound).
+    L.1.22 — the discriminated ``Bound`` union makes the "both
+    static_value and parameter set" bug class structurally impossible:
+    a ``StaticBound`` carries a value but no parameter, and a
+    ``ParameterBound`` carries a parameter but no value. Each side
+    (min / max) is at most one ``Bound``.
     """
     dataset: Dataset
     column: ColumnRef
-    minimum_parameter: ParameterDeclLike | None = None
-    minimum_value: float | None = None
-    maximum_parameter: ParameterDeclLike | None = None
-    maximum_value: float | None = None
+    minimum: Bound | None = None
+    maximum: Bound | None = None
     null_option: NullOption = "NON_NULLS_ONLY"
     include_minimum: bool | None = None
     include_maximum: bool | None = None
@@ -210,26 +297,16 @@ class NumericRangeFilter:
 
     _AUTO_KIND: ClassVar[str] = "numeric"
 
-    def __post_init__(self) -> None:
-        if self.minimum_parameter is not None and self.minimum_value is not None:
-            raise ValueError(
-                f"NumericRangeFilter {self.filter_id!r}: specify either "
-                f"minimum_parameter or minimum_value, not both."
-            )
-        if self.maximum_parameter is not None and self.maximum_value is not None:
-            raise ValueError(
-                f"NumericRangeFilter {self.filter_id!r}: specify either "
-                f"maximum_parameter or maximum_value, not both."
-            )
+    @property
+    def minimum_parameter(self) -> ParameterDeclLike | None:
+        """The parameter ref the minimum bound is bound to, or None.
+        Used by the parameter-references validator walk."""
+        return _bound_parameter(self.minimum)
 
-    def _range_value(
-        self, parameter: ParameterDeclLike | None, value: float | None,
-    ) -> NumericRangeFilterValue | None:
-        if parameter is not None:
-            return NumericRangeFilterValue(Parameter=parameter.name)
-        if value is not None:
-            return NumericRangeFilterValue(StaticValue=value)
-        return None
+    @property
+    def maximum_parameter(self) -> ParameterDeclLike | None:
+        """The parameter ref the maximum bound is bound to, or None."""
+        return _bound_parameter(self.maximum)
 
     def calc_field(self) -> CalcField | None:
         return calc_field_in(self.column)
@@ -246,12 +323,8 @@ class NumericRangeFilter:
                     ColumnName=resolve_column(self.column),
                 ),
                 NullOption=self.null_option,
-                RangeMinimum=self._range_value(
-                    self.minimum_parameter, self.minimum_value,
-                ),
-                RangeMaximum=self._range_value(
-                    self.maximum_parameter, self.maximum_value,
-                ),
+                RangeMinimum=_emit_bound(self.minimum),
+                RangeMaximum=_emit_bound(self.maximum),
                 IncludeMinimum=self.include_minimum,
                 IncludeMaximum=self.include_maximum,
             ),

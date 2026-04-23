@@ -57,6 +57,7 @@ from quicksight_gen.common.tree import (
     LinkedValues,
     Measure,
     NumericRangeFilter,
+    ParameterBound,
     ParameterDateTimePicker,
     ParameterDropdown,
     ParameterSlider,
@@ -206,20 +207,20 @@ def build_kitchen_app(cfg: Config) -> App:
     )
 
     # Filter wrappers — one of each kind.
-    cat_filter = CategoryFilter(
+    cat_filter = CategoryFilter.with_values(
         dataset=ds_main, column="category",
         values=["a", "b", "c"], match_operator="CONTAINS",
     )
     num_filter = NumericRangeFilter(
         dataset=ds_main, column="amount",
-        minimum_parameter=p_threshold,  # parameter-bound
+        minimum=ParameterBound(p_threshold),  # parameter-bound
     )
     time_filter = TimeRangeFilter(
         dataset=ds_main, column="posted_at",
     )
     # Calc-field-backed CategoryFilter — same pattern as
     # is_anchor_edge in Investigation.
-    calc_filter = CategoryFilter(
+    calc_filter = CategoryFilter.with_values(
         dataset=ds_main, column=is_above_threshold,  # CalcField ref
         values=["yes"],
     )
@@ -242,8 +243,8 @@ def build_kitchen_app(cfg: Config) -> App:
         parameter=p_category,
         title="Category (Linked)",
         type="SINGLE_SELECT",
-        selectable_values=LinkedValues(
-            dataset=ds_categories, column="category",
+        selectable_values=LinkedValues.from_string(
+            dataset=ds_categories, column_name="category",
         ),
         hidden_select_all=True,
     )

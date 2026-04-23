@@ -81,6 +81,7 @@ from quicksight_gen.common.tree import (
     LinkedValues,
     Measure,
     NumericRangeFilter,
+    ParameterBound,
     ParameterDropdown,
     ParameterSlider,
     Sankey,
@@ -360,7 +361,7 @@ def _build_recipient_fanout_sheet(
             filter_id="filter-inv-fanout-threshold",
             dataset=ds_fanout,
             column=distinct_senders_calc,
-            minimum_parameter=threshold_param,
+            minimum=ParameterBound(threshold_param),
             null_option="NON_NULLS_ONLY",
             include_minimum=True,
         )],
@@ -500,7 +501,7 @@ def _build_volume_anomalies_sheet(
             filter_id="filter-inv-anomalies-sigma",
             dataset=ds_anomalies,
             column=ds_anomalies["z_score"],
-            minimum_parameter=sigma_param,
+            minimum=ParameterBound(sigma_param),
             null_option="NON_NULLS_ONLY",
             include_minimum=True,
         )],
@@ -619,7 +620,7 @@ def _build_money_trail_sheet(
     # Chain root: parameter-bound CategoryFilter — narrows to one chain.
     root_fg = analysis.add_filter_group(FilterGroup(
         filter_group_id=FG_INV_MONEY_TRAIL_ROOT,
-        filters=[CategoryFilter(
+        filters=[CategoryFilter.with_parameter(
             filter_id="filter-inv-money-trail-root",
             dataset=ds_money_trail,
             column=ds_money_trail["root_transfer_id"],
@@ -638,7 +639,7 @@ def _build_money_trail_sheet(
             filter_id="filter-inv-money-trail-hops",
             dataset=ds_money_trail,
             column=ds_money_trail["depth"],
-            maximum_parameter=max_hops_param,
+            maximum=ParameterBound(max_hops_param),
             null_option="NON_NULLS_ONLY",
             include_maximum=True,
         )],
@@ -652,7 +653,7 @@ def _build_money_trail_sheet(
             filter_id="filter-inv-money-trail-amount",
             dataset=ds_money_trail,
             column=ds_money_trail["hop_amount"],
-            minimum_parameter=min_amount_param,
+            minimum=ParameterBound(min_amount_param),
             null_option="NON_NULLS_ONLY",
             include_minimum=True,
         )],
@@ -664,7 +665,7 @@ def _build_money_trail_sheet(
         parameter=root_param,
         title="Chain root transfer",
         type="SINGLE_SELECT",
-        selectable_values=LinkedValues(ds_money_trail["root_transfer_id"]),
+        selectable_values=LinkedValues.from_column(ds_money_trail["root_transfer_id"]),
         hidden_select_all=True,
         control_id="ctrl-inv-money-trail-root",
     )
@@ -879,7 +880,7 @@ def _build_account_network_sheet(
     sheet.scope(
         analysis.add_filter_group(FilterGroup(
             filter_group_id=FG_INV_ANETWORK_ANCHOR,
-            filters=[CategoryFilter(
+            filters=[CategoryFilter.with_values(
                 filter_id="filter-inv-anetwork-anchor",
                 dataset=ds_anet,
                 column=is_anchor_edge,
@@ -894,7 +895,7 @@ def _build_account_network_sheet(
     sheet.scope(
         analysis.add_filter_group(FilterGroup(
             filter_group_id=FG_INV_ANETWORK_INBOUND,
-            filters=[CategoryFilter(
+            filters=[CategoryFilter.with_values(
                 filter_id="filter-inv-anetwork-inbound",
                 dataset=ds_anet,
                 column=is_inbound_edge,
@@ -909,7 +910,7 @@ def _build_account_network_sheet(
     sheet.scope(
         analysis.add_filter_group(FilterGroup(
             filter_group_id=FG_INV_ANETWORK_OUTBOUND,
-            filters=[CategoryFilter(
+            filters=[CategoryFilter.with_values(
                 filter_id="filter-inv-anetwork-outbound",
                 dataset=ds_anet,
                 column=is_outbound_edge,
@@ -927,7 +928,7 @@ def _build_account_network_sheet(
             filter_id="filter-inv-anetwork-amount",
             dataset=ds_anet,
             column=ds_anet["hop_amount"],
-            minimum_parameter=min_amount_param,
+            minimum=ParameterBound(min_amount_param),
             null_option="NON_NULLS_ONLY",
             include_minimum=True,
         )],
@@ -940,7 +941,7 @@ def _build_account_network_sheet(
         parameter=anchor_param,
         title="Anchor account",
         type="SINGLE_SELECT",
-        selectable_values=LinkedValues(ds_accounts["source_display"]),
+        selectable_values=LinkedValues.from_column(ds_accounts["source_display"]),
         hidden_select_all=True,
         control_id="ctrl-inv-anetwork-anchor",
     )

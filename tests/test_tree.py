@@ -34,8 +34,10 @@ from quicksight_gen.common.tree import (
     IntegerParam,
     Measure,
     NumericRangeFilter,
+    ParameterBound,
     Sankey,
     Sheet,
+    StaticBound,
     StringParam,
     Table,
     TimeRangeFilter,
@@ -565,7 +567,7 @@ def _category_filter(
 ) -> CategoryFilter:
     """Test-only typed CategoryFilter constructor — keeps the test
     focus on scope validation, not Filter construction details."""
-    return CategoryFilter(
+    return CategoryFilter.with_values(
         filter_id=filter_id,
         dataset=dataset,
         column=column,
@@ -800,8 +802,8 @@ class TestFilterGroupCompositionWithApp:
 # ---------------------------------------------------------------------------
 
 class TestTypedCategoryFilter:
-    def test_emits_filter_list_configuration(self):
-        f = CategoryFilter(
+    def test_with_values_emits_filter_list_configuration(self):
+        f = CategoryFilter.with_values(
             filter_id="f-1",
             dataset=_DS_FOO,
             column="col_a",
@@ -816,8 +818,21 @@ class TestTypedCategoryFilter:
         assert config["MatchOperator"] == "CONTAINS"
         assert config["CategoryValues"] == ["yes", "maybe"]
 
+    def test_with_parameter_emits_custom_filter_configuration(self):
+        anchor = StringParam(name=ParameterName("pAnchor"))
+        f = CategoryFilter.with_parameter(
+            filter_id="f-1", dataset=_DS, column="col_a",
+            parameter=anchor,
+        )
+        emitted = f.emit()
+        config = emitted.CategoryFilter.Configuration.CustomFilterConfiguration
+        # with_parameter defaults match_operator to EQUALS — dropdowns
+        # writing into a parameter typically narrow to a single value.
+        assert config["MatchOperator"] == "EQUALS"
+        assert config["ParameterName"] == "pAnchor"
+
     def test_match_operator_is_configurable(self):
-        f = CategoryFilter(
+        f = CategoryFilter.with_values(
             filter_id="f-1", dataset=_DS, column="col_a",
             values=["a"], match_operator="EQUALS",
         )
@@ -825,26 +840,15 @@ class TestTypedCategoryFilter:
         assert emitted.CategoryFilter.Configuration.FilterListConfiguration["MatchOperator"] == "EQUALS"
 
     def test_satisfies_filter_like_protocol(self):
-        f = CategoryFilter(
+        f = CategoryFilter.with_values(
             filter_id="f-1", dataset=_DS, column="col_a", values=["x"],
         )
         assert isinstance(f, FilterLike)
 
-    def test_neither_values_nor_parameter_rejected(self):
-        """L.1.18 — both None at construction trips __post_init__."""
-        with pytest.raises(ValueError, match="specify either"):
-            CategoryFilter(
-                filter_id="f-1", dataset=_DS, column="col_a",
-            )
-
-    def test_both_values_and_parameter_rejected(self):
-        """L.1.18 — both set at construction trips __post_init__."""
-        sigma = StringParam(name=ParameterName("pAnchor"))
-        with pytest.raises(ValueError, match="not both"):
-            CategoryFilter(
-                filter_id="f-1", dataset=_DS, column="col_a",
-                values=["x"], parameter=sigma,
-            )
+    # L.1.22 — `test_neither_values_nor_parameter_rejected` and
+    # `test_both_values_and_parameter_rejected` deleted: the discriminated
+    # `binding` field is one of `_ValuesBinding` or `_ParameterBinding`,
+    # so neither/both cases are structurally impossible.
 
 
 class TestTypedNumericRangeFilter:
@@ -853,8 +857,8 @@ class TestTypedNumericRangeFilter:
             filter_id="f-1",
             dataset=_DS,
             column="amount",
-            minimum_value=10.0,
-            maximum_value=1000.0,
+            minimum=StaticBound(10.0),
+            maximum=StaticBound(1000.0),
         )
         emitted = f.emit()
         assert emitted.NumericRangeFilter is not None
@@ -874,34 +878,17 @@ class TestTypedNumericRangeFilter:
             filter_id="f-sigma",
             dataset=_DS,
             column="z_score",
-            minimum_parameter=sigma,
+            minimum=ParameterBound(sigma),
         )
         emitted = f.emit()
         assert emitted.NumericRangeFilter.RangeMinimum.Parameter == "pSigma"
         assert emitted.NumericRangeFilter.RangeMinimum.StaticValue is None
         assert emitted.NumericRangeFilter.RangeMaximum is None
 
-    def test_both_minimum_value_and_parameter_rejected(self):
-        sigma = IntegerParam(name=ParameterName("pSigma"), default=[2])
-        with pytest.raises(ValueError, match="not both"):
-            NumericRangeFilter(
-                filter_id="f-1",
-                dataset=_DS,
-                column="amount",
-                minimum_value=10.0,
-                minimum_parameter=sigma,
-            )
-
-    def test_both_maximum_value_and_parameter_rejected(self):
-        sigma = IntegerParam(name=ParameterName("pSigma"), default=[2])
-        with pytest.raises(ValueError, match="not both"):
-            NumericRangeFilter(
-                filter_id="f-1",
-                dataset=_DS,
-                column="amount",
-                maximum_value=10.0,
-                maximum_parameter=sigma,
-            )
+    # L.1.22 — `test_both_minimum_value_and_parameter_rejected` and
+    # `test_both_maximum_value_and_parameter_rejected` deleted: each
+    # `Bound` variant carries exactly one piece of data (a value OR a
+    # parameter), so both-set cases are structurally impossible.
 
     def test_no_bounds_emits_filter_with_no_range(self):
         """A NumericRangeFilter with no min/max is unusual but allowed
@@ -970,7 +957,7 @@ class TestFullEmitRoundTripWithTypedFilters:
                     filter_id="f-sigma",
                     dataset=_DS_FOO,
                     column="z_score",
-                    minimum_parameter=sigma,
+                    minimum=ParameterBound(sigma),
                 ),
             ],
         ))
@@ -1262,7 +1249,7 @@ class TestColumnRefAcceptsCalcField:
 
     def test_category_filter_accepts_calc_field(self):
         cf = _make_is_anchor()
-        f = CategoryFilter(
+        f = CategoryFilter.with_values(
             filter_id="f-1", dataset=_DS_FOO, column=cf, values=["yes"],
         )
         emitted = f.emit()
@@ -1347,7 +1334,7 @@ class TestAppCalcFieldDependencies:
         )
         analysis.add_filter_group(FilterGroup(
             filter_group_id=FilterGroupId("fg"),
-            filters=[CategoryFilter(
+            filters=[CategoryFilter.with_values(
                 filter_id="f-1", dataset=_DS_FOO, column=cf, values=["yes"],
             )],
         ))
@@ -1670,30 +1657,30 @@ from quicksight_gen.common.tree import (
 
 
 class TestLinkedValues:
-    """L.1.18 — __post_init__ enforces dataset-vs-Column consistency."""
+    """L.1.22 — factory methods normalize the two construction forms.
+    The standalone constructor takes the canonical (dataset, column_name)
+    pair; the dual-form `__post_init__` validation has been replaced by
+    factory methods that produce the canonical pair."""
 
-    def test_bare_string_column_requires_dataset(self):
-        with pytest.raises(ValueError, match="dataset is required"):
-            LinkedValues(column="some_column")
-
-    def test_column_form_dataset_mismatch_rejected(self):
-        """Column from dataset A + explicit dataset=B is a wiring bug —
-        catch it at the constructor, not at emit."""
+    def test_from_column_derives_dataset_from_column(self):
         from quicksight_gen.common.dataset_contract import (
             ColumnSpec,
             DatasetContract,
             register_contract,
         )
-        ds_a = Dataset(identifier="lv-mismatch-a", arn="arn:a")
-        ds_b = Dataset(identifier="lv-mismatch-b", arn="arn:b")
+        ds_a = Dataset(identifier="lv-fromcol-a", arn="arn:a")
         register_contract(ds_a.identifier, DatasetContract(columns=[
             ColumnSpec(name="col", type="STRING"),
         ]))
-        register_contract(ds_b.identifier, DatasetContract(columns=[
-            ColumnSpec(name="col", type="STRING"),
-        ]))
-        with pytest.raises(ValueError, match="dataset mismatch"):
-            LinkedValues(column=ds_a["col"], dataset=ds_b)
+        lv = LinkedValues.from_column(ds_a["col"])
+        assert lv.dataset is ds_a
+        assert lv.column_name == "col"
+
+    def test_from_string_takes_explicit_dataset(self):
+        ds = Dataset(identifier="lv-fromstr", arn="arn:s")
+        lv = LinkedValues.from_string(dataset=ds, column_name="bare_col")
+        assert lv.dataset is ds
+        assert lv.column_name == "bare_col"
 
 
 class TestParameterDropdown:
@@ -1717,7 +1704,7 @@ class TestParameterDropdown:
         ctrl = ParameterDropdown(
             parameter=anchor,
             title="Anchor account",
-            selectable_values=LinkedValues(dataset=_DS_FOO, column="display"),
+            selectable_values=LinkedValues.from_string(dataset=_DS_FOO, column_name="display"),
             hidden_select_all=True,
             control_id="pc-anchor",
         )
@@ -1747,7 +1734,7 @@ class TestParameterDropdown:
         ))
         sheet.add_parameter_dropdown(parameter=anchor,
             title="Anchor",
-            selectable_values=LinkedValues(dataset=_DS_FOO, column="d"),
+            selectable_values=LinkedValues.from_string(dataset=_DS_FOO, column_name="d"),
         )
         with pytest.raises(ValueError, match="references unregistered datasets"):
             app.emit_analysis()
@@ -1784,7 +1771,7 @@ class TestParameterDateTimePicker:
 
 class TestFilterDropdown:
     def test_emits_with_filter_id_resolved(self):
-        f = CategoryFilter(
+        f = CategoryFilter.with_values(
             filter_id="filter-anchor", dataset=_DS_FOO,
             column="col", values=["yes"],
         )
@@ -1800,7 +1787,7 @@ class TestFilterDropdown:
         """Filter wrapper's auto-ID resolves to a string — the dropdown
         reads it via the object ref. Tests the L.1.8.5 + L.1.9
         interaction."""
-        f = CategoryFilter(
+        f = CategoryFilter.with_values(
             dataset=_DS_FOO, column="col", values=["yes"],
         )  # no filter_id — auto
         app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
@@ -1826,7 +1813,7 @@ class TestFilterSlider:
         f = NumericRangeFilter(
             filter_id="filter-sigma",
             dataset=_DS_FOO, column="z_score",
-            minimum_parameter=sigma_param,
+            minimum=ParameterBound(sigma_param),
         )
         ctrl = FilterSlider(
             filter=f, title="σ",
@@ -1853,7 +1840,7 @@ class TestFilterDateTimePicker:
 
 class TestFilterCrossSheet:
     def test_emits_with_no_title(self):
-        f = CategoryFilter(
+        f = CategoryFilter.with_values(
             filter_id="filter-x", dataset=_DS_FOO,
             column="col", values=["yes"],
         )
@@ -1881,7 +1868,7 @@ class TestControlAutoIds:
         assert ctrl.control_id == "pc-slider-s0-0"
 
     def test_filter_control_auto_id(self):
-        f = CategoryFilter(
+        f = CategoryFilter.with_values(
             filter_id="filter-x", dataset=_DS_FOO,
             column="col", values=["yes"],
         )
@@ -1904,7 +1891,7 @@ class TestSheetEmitsFilterControls:
     """SheetDefinition.FilterControls populated from sheet.filter_controls."""
 
     def test_filter_controls_appear_in_emitted_sheet(self):
-        f = CategoryFilter(
+        f = CategoryFilter.with_values(
             filter_id="filter-x", dataset=_DS_FOO,
             column="col", values=["yes"],
         )
@@ -2171,7 +2158,7 @@ class TestUnvalidatedColumnsRaiseByDefault:
             values=[Measure.sum(_DS_FOO, "amount", field_id="f")],
         )
         analysis.add_filter_group(FilterGroup(
-            filters=[CategoryFilter(
+            filters=[CategoryFilter.with_values(
                 dataset=_DS_FOO,
                 column="category",  # bare string
                 values=["a"],
@@ -2230,7 +2217,7 @@ class TestUnvalidatedColumnsRaiseByDefault:
         # path away from the value-leaf bare string.
         # The relevant unvalidated path is the filter's column.
         analysis.add_filter_group(FilterGroup(
-            filters=[CategoryFilter(
+            filters=[CategoryFilter.with_values(
                 dataset=_DS_FOO,
                 column=_DS_FOO["category"],  # unvalidated Column
                 values=["a"],
