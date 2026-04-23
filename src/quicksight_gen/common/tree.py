@@ -41,9 +41,10 @@ from typing import Any, Callable, Literal, Protocol, TypeVar, runtime_checkable
 # cleaner but requires Python 3.12+; project targets 3.11+ so we stick
 # with the TypeVar form.
 _VisualT = TypeVar("_VisualT", bound="VisualLike")
+_ParamT = TypeVar("_ParamT", bound="ParameterDeclLike")
 
 from quicksight_gen.common.config import Config
-from quicksight_gen.common.ids import SheetId, VisualId
+from quicksight_gen.common.ids import ParameterName, SheetId, VisualId
 from quicksight_gen.common.models import (
     AnalysisDefinition,
     BarChartAggregatedFieldWells,
@@ -56,9 +57,12 @@ from quicksight_gen.common.models import (
     DashboardPublishOptions,
     DataSetIdentifierDeclaration,
     DateDimensionField,
+    DateTimeDefaultValues,
+    DateTimeParameterDeclaration,
     DimensionField,
     GridLayoutConfiguration,
     GridLayoutElement,
+    IntegerParameterDeclaration,
     KPIConfiguration,
     KPIFieldWells,
     KPIVisual,
@@ -69,6 +73,7 @@ from quicksight_gen.common.models import (
     NumericalDimensionField,
     NumericalMeasureField,
     ParameterControl,
+    ParameterDeclaration,
     ResourcePermission,
     SankeyDiagramAggregatedFieldWells,
     SankeyDiagramChartConfiguration,
@@ -77,6 +82,7 @@ from quicksight_gen.common.models import (
     SankeyDiagramVisual,
     SheetDefinition,
     SheetTextBox,
+    StringParameterDeclaration,
     TableAggregatedFieldWells,
     TableConfiguration,
     TableFieldWells,
@@ -469,6 +475,90 @@ class ParameterControlNode:
 
 
 # ---------------------------------------------------------------------------
+# Parameter declarations — typed subtypes per parameter kind.
+#
+# StringParam / IntegerParam / DateTimeParam map to the three declaration
+# variants in models.py. Each carries its own ParameterName at the
+# constructor (single construction site); controls and filter parameter
+# bindings reference the parameter by object ref.
+# ---------------------------------------------------------------------------
+
+@runtime_checkable
+class ParameterDeclLike(Protocol):
+    """Structural type for parameter declaration tree nodes."""
+    name: ParameterName
+
+    def emit(self) -> ParameterDeclaration: ...
+
+
+@dataclass
+class StringParam:
+    """String-valued parameter declaration.
+
+    Default values are passed as a list — single-valued parameters
+    use ``[]`` for "no default" or ``["value"]`` for one default;
+    multi-valued use ``["a", "b", "c"]``.
+    """
+    name: ParameterName
+    default: list[str] = field(default_factory=list)
+    multi_valued: bool = False
+
+    def emit(self) -> ParameterDeclaration:
+        return ParameterDeclaration(
+            StringParameterDeclaration=StringParameterDeclaration(
+                ParameterValueType=(
+                    "MULTI_VALUED" if self.multi_valued else "SINGLE_VALUED"
+                ),
+                Name=self.name,
+                DefaultValues={"StaticValues": self.default},
+            ),
+        )
+
+
+@dataclass
+class IntegerParam:
+    """Integer-valued parameter declaration."""
+    name: ParameterName
+    default: list[int] = field(default_factory=list)
+    multi_valued: bool = False
+
+    def emit(self) -> ParameterDeclaration:
+        return ParameterDeclaration(
+            IntegerParameterDeclaration=IntegerParameterDeclaration(
+                ParameterValueType=(
+                    "MULTI_VALUED" if self.multi_valued else "SINGLE_VALUED"
+                ),
+                Name=self.name,
+                DefaultValues={"StaticValues": self.default},
+            ),
+        )
+
+
+@dataclass
+class DateTimeParam:
+    """DateTime parameter declaration.
+
+    Pass ``time_granularity="DAY" | "HOUR" | "MINUTE" | …`` to bound
+    the picker's resolution. Defaults take a ``DateTimeDefaultValues``
+    so callers can pick between ``StaticValues`` (literal date),
+    ``DynamicValue`` (data-driven), or ``RollingDate`` (e.g.
+    ``{"Expression": "truncDate('DD', now())"}`` for "today").
+    """
+    name: ParameterName
+    time_granularity: str | None = None
+    default: DateTimeDefaultValues | None = None
+
+    def emit(self) -> ParameterDeclaration:
+        return ParameterDeclaration(
+            DateTimeParameterDeclaration=DateTimeParameterDeclaration(
+                Name=self.name,
+                TimeGranularity=self.time_granularity,
+                DefaultValues=self.default,
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Layout — GridSlot references a VisualNode by object (locked decision).
 # ---------------------------------------------------------------------------
 
@@ -627,7 +717,7 @@ class Analysis:
     analysis_id_suffix: str
     name: str
     sheets: list[Sheet] = field(default_factory=list)
-    # ParameterDeclarations join in L.1.4
+    parameters: list[ParameterDeclLike] = field(default_factory=list)
     # FilterGroups join in L.1.5
     # CalculatedFields join in a later sub-step
     # DataSetIdentifierDeclarations come from the App at emit time
@@ -640,6 +730,22 @@ class Analysis:
         self.sheets.append(sheet)
         return sheet
 
+    def add_parameter(self, param: _ParamT) -> _ParamT:
+        """Declare a parameter on this analysis.
+
+        Construction-time check: parameter names are unique within
+        the analysis. Catches the silent shadow bug where two declarations
+        share a Name and only one wins at deploy time. Generic over
+        the concrete subtype so the returned ref keeps its type
+        (``StringParam`` / ``IntegerParam`` / ``DateTimeParam``).
+        """
+        if any(p.name == param.name for p in self.parameters):
+            raise ValueError(
+                f"Parameter {param.name!r} is already declared on this Analysis"
+            )
+        self.parameters.append(param)
+        return param
+
     def emit_definition(
         self,
         *,
@@ -650,7 +756,10 @@ class Analysis:
             Sheets=[s.emit() for s in self.sheets],
             FilterGroups=None,  # L.1.5
             CalculatedFields=None,  # later
-            ParameterDeclarations=None,  # L.1.4
+            ParameterDeclarations=(
+                [p.emit() for p in self.parameters]
+                if self.parameters else None
+            ),
         )
 
 

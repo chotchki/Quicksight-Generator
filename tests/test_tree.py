@@ -11,8 +11,9 @@ from __future__ import annotations
 import pytest
 
 from quicksight_gen.common.config import Config
-from quicksight_gen.common.ids import SheetId, VisualId
+from quicksight_gen.common.ids import ParameterName, SheetId, VisualId
 from quicksight_gen.common.models import (
+    DateTimeDefaultValues,
     KPIConfiguration,
     KPIFieldWells,
     KPIVisual,
@@ -24,12 +25,15 @@ from quicksight_gen.common.tree import (
     App,
     BarChart,
     Dashboard,
+    DateTimeParam,
     Dim,
     GridSlot,
+    IntegerParam,
     Measure,
     ParameterControlNode,
     Sankey,
     Sheet,
+    StringParam,
     Table,
     VisualLike,
     VisualNode,
@@ -495,3 +499,111 @@ class TestSheetAcceptsTypedVisuals:
         # If the generic worked, kpi is still a KPI — accessing
         # KPI-only attributes shouldn't widen.
         assert kpi.title == "Test"
+
+
+# ---------------------------------------------------------------------------
+# L.1.4 — Parameter declarations
+# ---------------------------------------------------------------------------
+
+class TestStringParam:
+    def test_emits_single_valued_string_param(self):
+        p = StringParam(
+            name=ParameterName("pTest"),
+            default=["default-value"],
+        )
+        emitted = p.emit()
+        assert emitted.StringParameterDeclaration is not None
+        assert emitted.StringParameterDeclaration.Name == "pTest"
+        assert emitted.StringParameterDeclaration.ParameterValueType == "SINGLE_VALUED"
+        assert emitted.StringParameterDeclaration.DefaultValues == {"StaticValues": ["default-value"]}
+
+    def test_no_default_emits_empty_static_values(self):
+        """No-default pattern matches the existing
+        ``DefaultValues={"StaticValues": []}`` shape used by the
+        K.4.5 chain-root + K.4.8 anchor parameters (which rely on
+        the SelectAll=HIDDEN dropdown to land on first row)."""
+        p = StringParam(name=ParameterName("pNoDefault"))
+        emitted = p.emit()
+        assert emitted.StringParameterDeclaration.DefaultValues == {"StaticValues": []}
+
+    def test_multi_valued(self):
+        p = StringParam(
+            name=ParameterName("pMulti"),
+            default=["a", "b"],
+            multi_valued=True,
+        )
+        emitted = p.emit()
+        assert emitted.StringParameterDeclaration.ParameterValueType == "MULTI_VALUED"
+
+
+class TestIntegerParam:
+    def test_emits_integer_param_with_default(self):
+        p = IntegerParam(
+            name=ParameterName("pSigma"),
+            default=[2],
+        )
+        emitted = p.emit()
+        assert emitted.IntegerParameterDeclaration is not None
+        assert emitted.IntegerParameterDeclaration.Name == "pSigma"
+        assert emitted.IntegerParameterDeclaration.DefaultValues == {"StaticValues": [2]}
+
+
+class TestDateTimeParam:
+    def test_emits_datetime_param_with_rolling_default(self):
+        """RollingDate pattern — same shape as AR's pArDsBalanceDate
+        (P_AR_DS_BALANCE_DATE) which uses ``truncDate('DD', now())``
+        for "today"."""
+        p = DateTimeParam(
+            name=ParameterName("pDate"),
+            time_granularity="DAY",
+            default=DateTimeDefaultValues(
+                RollingDate={"Expression": "truncDate('DD', now())"},
+            ),
+        )
+        emitted = p.emit()
+        assert emitted.DateTimeParameterDeclaration is not None
+        assert emitted.DateTimeParameterDeclaration.TimeGranularity == "DAY"
+        assert emitted.DateTimeParameterDeclaration.DefaultValues.RollingDate is not None
+
+
+class TestAnalysisAddParameter:
+    def test_add_parameter_returns_concrete_subtype(self):
+        analysis = Analysis(analysis_id_suffix="test", name="Test")
+        sigma: IntegerParam = analysis.add_parameter(IntegerParam(
+            name=ParameterName("pSigma"), default=[2],
+        ))
+        # Concrete subtype preserved through the generic.
+        assert sigma.default == [2]
+
+    def test_duplicate_parameter_name_raises(self):
+        """Same-name shadow bug class: two declarations sharing a Name
+        silently let one win at deploy time. Caught at construction."""
+        analysis = Analysis(analysis_id_suffix="test", name="Test")
+        analysis.add_parameter(IntegerParam(name=ParameterName("pDup"), default=[1]))
+        with pytest.raises(ValueError, match="already declared"):
+            analysis.add_parameter(StringParam(name=ParameterName("pDup")))
+
+    def test_emit_definition_carries_parameter_declarations(self):
+        analysis = Analysis(analysis_id_suffix="test", name="Test")
+        analysis.add_parameter(IntegerParam(
+            name=ParameterName("pSigma"), default=[2],
+        ))
+        analysis.add_parameter(StringParam(
+            name=ParameterName("pAnchor"),
+        ))
+        defn = analysis.emit_definition(dataset_declarations=[])
+        names = []
+        for pd in defn.ParameterDeclarations:
+            if pd.IntegerParameterDeclaration:
+                names.append(pd.IntegerParameterDeclaration.Name)
+            elif pd.StringParameterDeclaration:
+                names.append(pd.StringParameterDeclaration.Name)
+        assert names == ["pSigma", "pAnchor"]
+
+    def test_no_parameters_emits_none(self):
+        """Analysis without any parameter declarations passes None to
+        models.AnalysisDefinition (preserving the existing pattern that
+        omits empty fields)."""
+        analysis = Analysis(analysis_id_suffix="test", name="Test")
+        defn = analysis.emit_definition(dataset_declarations=[])
+        assert defn.ParameterDeclarations is None
