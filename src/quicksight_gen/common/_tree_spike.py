@@ -198,18 +198,32 @@ def build_account_network_sheet_via_tree() -> SheetDefinition:
     threads through to the visual builders via control / filter
     helpers, all of which are zero-arg today. Keeps the spike
     contract clean.
+
+    **IDs appear ONCE.** Each ``SheetId`` / ``VisualId`` is constructed
+    inline at the node's constructor — there are no imports from
+    ``apps/investigation/constants``. This is the endpoint shape the
+    locked object-ref decision unlocks: with cross-references carried
+    by object refs, the only place the string ID is needed is the
+    node that owns it. Every other reference is `inbound`, `outbound`,
+    `table` (the local Python variable holding the node ref). L.1's
+    full primitives will eliminate the per-app constants modules
+    entirely under the same principle.
+
+    Caveat for the spike: the existing private visual builders this
+    spike delegates to (e.g. ``_account_network_sankey_inbound``)
+    still read ``V_INV_ANETWORK_SANKEY_INBOUND`` from the constants
+    module to set their internal ``SankeyDiagramVisual.VisualId``. The
+    spike's literal here happens to equal that constant's string value
+    (which is what makes byte-identity hold). When L.1 lifts the
+    visual mechanics into typed ``Visual`` subtypes, the literal will
+    truly appear once — set on the node and read back at emit time
+    to populate the underlying model's ``VisualId``.
     """
     # Imports inside the function to avoid load-time coupling between
     # common/ and apps/. This module is a spike; L.1's primitives will
     # live in common/ unconditionally and apps/ will import from them.
     from quicksight_gen.apps.investigation.analysis import (
         _ACCOUNT_NETWORK_DESCRIPTION,
-    )
-    from quicksight_gen.apps.investigation.constants import (
-        SHEET_INV_ACCOUNT_NETWORK,
-        V_INV_ANETWORK_SANKEY_INBOUND,
-        V_INV_ANETWORK_SANKEY_OUTBOUND,
-        V_INV_ANETWORK_TABLE,
     )
     from quicksight_gen.apps.investigation.filters import (
         _anetwork_amount_control,
@@ -225,7 +239,7 @@ def build_account_network_sheet_via_tree() -> SheetDefinition:
     sankey_height = _TABLE_ROW_SPAN
 
     sheet = SheetNode(
-        sheet_id=SHEET_INV_ACCOUNT_NETWORK,
+        sheet_id=SheetId("inv-sheet-account-network"),
         name="Account Network",
         title="Account Network",
         description=_ACCOUNT_NETWORK_DESCRIPTION,
@@ -234,21 +248,23 @@ def build_account_network_sheet_via_tree() -> SheetDefinition:
     # Visuals: register on the sheet, then place into the layout. The
     # references returned by add_visual() are passed to place() — this
     # is what the locked object-ref decision looks like in practice.
+    # The visual_id literals appear here ONCE; every other reference
+    # is the local variable (`inbound`, `outbound`, `table`).
     inbound = sheet.add_visual(
         VisualNode(
-            visual_id=V_INV_ANETWORK_SANKEY_INBOUND,
+            visual_id=VisualId("inv-anetwork-sankey-inbound"),
             builder=_account_network_sankey_inbound,
         )
     )
     outbound = sheet.add_visual(
         VisualNode(
-            visual_id=V_INV_ANETWORK_SANKEY_OUTBOUND,
+            visual_id=VisualId("inv-anetwork-sankey-outbound"),
             builder=_account_network_sankey_outbound,
         )
     )
     table = sheet.add_visual(
         VisualNode(
-            visual_id=V_INV_ANETWORK_TABLE,
+            visual_id=VisualId("inv-anetwork-table"),
             builder=_account_network_table,
         )
     )
