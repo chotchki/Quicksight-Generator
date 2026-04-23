@@ -51,19 +51,27 @@ class VisualLike(Protocol):
     satisfy this Protocol — duck-typed so subtypes don't have to
     inherit from a base class.
 
-    Typed subtypes also expose ``datasets() -> set[Dataset]`` for the
-    L.1.7 dependency-graph walk; the spike-shape ``VisualNode`` does
-    not (its factory callable hides its dataset references). Apps
-    using factory wrappers don't contribute to dependency tracking;
-    typed subtypes do.
+    Typed subtypes contribute to the L.1.7 dependency-graph walk via
+    ``datasets()`` / ``calc_fields()``. The spike-shape ``VisualNode``
+    implements both as no-ops (returns empty sets) — its factory
+    callable hides the dataset/calc-field references it actually
+    holds, so the walker just doesn't see them.
+
+    ``visual_id`` is ``VisualId | None`` because typed subtypes default
+    to None and let ``App._resolve_auto_ids`` fill it. The walker /
+    emit asserts non-None at the appropriate point.
 
     All visual nodes also satisfy ``LayoutNode`` (in ``structure.py``)
     via ``element_id`` + ``element_type`` so they can be placed in a
     sheet's grid layout via ``Sheet.place(...)``.
     """
-    visual_id: VisualId
+    visual_id: VisualId | None
 
     def emit(self) -> Visual: ...
+
+    def datasets(self) -> set[Dataset]: ...
+
+    def calc_fields(self) -> set[CalcField]: ...
 
 
 def _visual_element_id(node) -> str:
@@ -87,7 +95,7 @@ class VisualNode:
     pattern to the typed subtypes one app at a time. The wrapper
     itself is removed once all apps are on the typed subtypes.
     """
-    visual_id: VisualId
+    visual_id: VisualId | None
     builder: Callable[[], Visual]
 
     @property
@@ -100,6 +108,14 @@ class VisualNode:
 
     def emit(self) -> Visual:
         return self.builder()
+
+    def datasets(self) -> set[Dataset]:
+        # Spike-shape: factory hides its references, so the dependency
+        # walk doesn't see them. Typed subtypes implement these for real.
+        return set()
+
+    def calc_fields(self) -> set[CalcField]:
+        return set()
 
 
 @dataclass(eq=False)
@@ -115,7 +131,7 @@ class KPI:
     """
     title: str
     subtitle: str | None = None
-    values: list[Measure] = field(default_factory=list)
+    values: list[Measure] = field(default_factory=list[Measure])
     visual_id: VisualId | None = None
 
     _AUTO_KIND: ClassVar[str] = "kpi"
@@ -170,10 +186,10 @@ class Table:
     """
     title: str
     subtitle: str | None = None
-    group_by: list[Dim] = field(default_factory=list)
-    values: list[Measure] = field(default_factory=list)
+    group_by: list[Dim] = field(default_factory=list[Dim])
+    values: list[Measure] = field(default_factory=list[Measure])
     sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None
-    actions: list[Drill] = field(default_factory=list)
+    actions: list[Drill] = field(default_factory=list[Drill])
     visual_id: VisualId | None = None
 
     _AUTO_KIND: ClassVar[str] = "table"
@@ -253,14 +269,14 @@ class BarChart:
     """
     title: str
     subtitle: str | None = None
-    category: list[Dim] = field(default_factory=list)
-    values: list[Measure] = field(default_factory=list)
+    category: list[Dim] = field(default_factory=list[Dim])
+    values: list[Measure] = field(default_factory=list[Measure])
     orientation: Literal["HORIZONTAL", "VERTICAL"] | None = None
     bars_arrangement: Literal[
         "CLUSTERED", "STACKED", "STACKED_PERCENT",
     ] | None = None
     sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None
-    actions: list[Drill] = field(default_factory=list)
+    actions: list[Drill] = field(default_factory=list[Drill])
     visual_id: VisualId | None = None
 
     _AUTO_KIND: ClassVar[str] = "bar"
@@ -346,7 +362,7 @@ class Sankey:
     target: Dim | None = None
     weight: Measure | None = None
     items_limit: int | None = None
-    actions: list[Drill] = field(default_factory=list)
+    actions: list[Drill] = field(default_factory=list[Drill])
     visual_id: VisualId | None = None
 
     _AUTO_KIND: ClassVar[str] = "sankey"

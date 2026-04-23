@@ -43,7 +43,7 @@ class StringParam:
     multi-valued use ``["a", "b", "c"]``.
     """
     name: ParameterName
-    default: list[str] = field(default_factory=list)
+    default: list[str] = field(default_factory=list[str])
     multi_valued: bool = False
 
     def emit(self) -> ParameterDeclaration:
@@ -62,7 +62,7 @@ class StringParam:
 class IntegerParam:
     """Integer-valued parameter declaration."""
     name: ParameterName
-    default: list[int] = field(default_factory=list)
+    default: list[int] = field(default_factory=list[int])
     multi_valued: bool = False
 
     def emit(self) -> ParameterDeclaration:

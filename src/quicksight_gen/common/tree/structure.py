@@ -101,9 +101,14 @@ class ParameterControlNode:
     apps migrate.
     """
     builder: Callable[[], ParameterControl]
+    control_id: str | None = None
 
     def emit(self) -> ParameterControl:
         return self.builder()
+
+    def datasets(self) -> set[Dataset]:
+        # Spike-shape: factory hides its references (matches VisualNode).
+        return set()
 
 
 # ---------------------------------------------------------------------------
@@ -178,13 +183,13 @@ class Sheet:
     name: str
     title: str
     description: str
-    visuals: list[VisualLike] = field(default_factory=list)
-    parameter_controls: list[ParameterControlLike | ParameterControlNode] = field(
-        default_factory=list,
+    visuals: list[VisualLike] = field(default_factory=list[VisualLike])
+    parameter_controls: list[ParameterControlLike] = field(
+        default_factory=list[ParameterControlLike],
     )
-    filter_controls: list[FilterControlLike] = field(default_factory=list)
-    text_boxes: list[TextBox] = field(default_factory=list)
-    grid_slots: list[GridSlot] = field(default_factory=list)
+    filter_controls: list[FilterControlLike] = field(default_factory=list[FilterControlLike])
+    text_boxes: list[TextBox] = field(default_factory=list[TextBox])
+    grid_slots: list[GridSlot] = field(default_factory=list["GridSlot"])
 
     def add_visual[T: VisualLike](self, node: T) -> T:
         """Register a visual on this sheet.
@@ -197,7 +202,7 @@ class Sheet:
         self.visuals.append(node)
         return node
 
-    def add_parameter_control[T: ParameterControlLike | ParameterControlNode](
+    def add_parameter_control[T: ParameterControlLike](
         self, node: T,
     ) -> T:
         """Register a parameter control on this sheet.
@@ -392,10 +397,10 @@ class Analysis:
     """
     analysis_id_suffix: str
     name: str
-    sheets: list[Sheet] = field(default_factory=list)
-    parameters: list[ParameterDeclLike] = field(default_factory=list)
-    filter_groups: list[FilterGroup] = field(default_factory=list)
-    calc_fields: list[CalcField] = field(default_factory=list)
+    sheets: list[Sheet] = field(default_factory=list["Sheet"])
+    parameters: list[ParameterDeclLike] = field(default_factory=list[ParameterDeclLike])
+    filter_groups: list[FilterGroup] = field(default_factory=list[FilterGroup])
+    calc_fields: list[CalcField] = field(default_factory=list[CalcField])
     # DataSetIdentifierDeclarations come from the App at emit time
 
     def add_sheet(self, sheet: Sheet) -> Sheet:
@@ -533,16 +538,13 @@ class Analysis:
         deps: set[Dataset] = set()
         for sheet in self.sheets:
             for visual in sheet.visuals:
-                if hasattr(visual, "datasets"):
-                    deps.update(visual.datasets())
+                deps.update(visual.datasets())
             # Parameter / filter controls with LinkedValues populate
             # from a Dataset — that's a dep too.
-            for ctrl in sheet.parameter_controls:
-                if hasattr(ctrl, "datasets"):
-                    deps.update(ctrl.datasets())
-            for ctrl in sheet.filter_controls:
-                if hasattr(ctrl, "datasets"):
-                    deps.update(ctrl.datasets())
+            for pctrl in sheet.parameter_controls:
+                deps.update(pctrl.datasets())
+            for fctrl in sheet.filter_controls:
+                deps.update(fctrl.datasets())
         for fg in self.filter_groups:
             deps.update(fg.datasets())
         for calc in self.calc_fields:
@@ -562,8 +564,7 @@ class Analysis:
         deps: set[CalcField] = set()
         for sheet in self.sheets:
             for visual in sheet.visuals:
-                if hasattr(visual, "calc_fields"):
-                    deps.update(visual.calc_fields())
+                deps.update(visual.calc_fields())
         for fg in self.filter_groups:
             deps.update(fg.calc_fields())
         return deps
@@ -646,7 +647,7 @@ class App:
     cfg: Config
     analysis: Analysis | None = None
     dashboard: Dashboard | None = None
-    datasets: list[Dataset] = field(default_factory=list)
+    datasets: list[Dataset] = field(default_factory=list[Dataset])
     # Bare-string column refs (``Dim(ds, "amount")`` instead of
     # ``ds["amount"].dim()``) are typo-prone — they bypass the dataset
     # contract validation. ``emit_analysis`` raises on any bare-string

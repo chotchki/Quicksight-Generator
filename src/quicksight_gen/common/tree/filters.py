@@ -70,10 +70,19 @@ class FilterLike(Protocol):
     ``filter_id``, the underlying ``dataset`` (object ref), and emits
     a ``models.Filter``. The ``dataset`` field participates in the
     L.1.7 dependency-graph walk.
+
+    ``filter_id`` is ``str | None`` because typed wrappers default to
+    None and let ``App._resolve_auto_ids`` fill it. ``calc_field()``
+    returns the CalcField the filter references (or None if it points
+    at a real column) — used by the dependency-graph walk and by
+    FilterControl wrappers that need the filter_id post-resolve.
     """
     dataset: Dataset
+    filter_id: str | None
 
     def emit(self) -> Filter: ...
+
+    def calc_field(self) -> CalcField | None: ...
 
 
 # ---------------------------------------------------------------------------

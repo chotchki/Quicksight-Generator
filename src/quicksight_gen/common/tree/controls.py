@@ -139,18 +139,31 @@ SelectableValues = StaticValues | LinkedValues
 
 @runtime_checkable
 class ParameterControlLike(Protocol):
-    """Tree-level parameter control nodes."""
+    """Tree-level parameter control nodes.
+
+    ``datasets()`` participates in the L.1.7 dependency-graph walk —
+    controls with ``LinkedValues`` populate from a ``Dataset``, and
+    that's a dep. Controls with static values return an empty set.
+    """
     control_id: str | None
 
     def emit(self) -> ParameterControl: ...
 
+    def datasets(self) -> set[Dataset]: ...
+
 
 @runtime_checkable
 class FilterControlLike(Protocol):
-    """Tree-level filter control nodes."""
+    """Tree-level filter control nodes.
+
+    ``datasets()`` participates in the L.1.7 dependency-graph walk —
+    same shape as ``ParameterControlLike.datasets()``.
+    """
     control_id: str | None
 
     def emit(self) -> FilterControl: ...
+
+    def datasets(self) -> set[Dataset]: ...
 
 
 # ---------------------------------------------------------------------------
