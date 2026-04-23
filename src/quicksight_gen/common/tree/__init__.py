@@ -141,6 +141,7 @@ from quicksight_gen.common.tree.filters import (
     ParameterBound,
     SelectAllOptions,
     StaticBound,
+    TimeEqualityFilter,
     TimeRangeFilter,
 )
 from quicksight_gen.common.tree.parameters import (
@@ -190,6 +191,7 @@ __all__ = [
     # Filters
     "FilterGroup", "FilterLike",
     "CategoryFilter", "NumericRangeFilter", "TimeRangeFilter",
+    "TimeEqualityFilter",
     "Bound", "StaticBound", "ParameterBound",
     "CategoryMatchOperator", "NullOption", "SelectAllOptions",
     "DefaultControl", "DefaultDateTimePickerControl",

@@ -42,12 +42,30 @@ from quicksight_gen.apps.account_recon.constants import (
     DS_AR_TRANSFER_SUMMARY,
     DS_AR_TWO_SIDED_POST_MISMATCH_ROLLUP,
     DS_AR_UNIFIED_EXCEPTIONS,
+    FG_AR_BALANCES_LEDGER_DRIFT,
+    FG_AR_BALANCES_OVERDRAFT,
+    FG_AR_BALANCES_SUBLEDGER_DRIFT,
+    FG_AR_DATE_RANGE,
     FG_AR_DRILL_ACCOUNT_ON_TXN,
     FG_AR_DRILL_ACTIVITY_DATE_ON_TXN,
     FG_AR_DRILL_LEDGER_ON_BALANCES_SUBLEDGER,
     FG_AR_DRILL_SUBLEDGER_ON_TXN,
     FG_AR_DRILL_TRANSFER_ON_TXN,
     FG_AR_DRILL_TRANSFER_TYPE_ON_TXN,
+    FG_AR_DS_ACCOUNT,
+    FG_AR_DS_BALANCE_DATE,
+    FG_AR_LEDGER_ACCOUNT,
+    FG_AR_ORIGIN,
+    FG_AR_POSTING_LEVEL,
+    FG_AR_SUBLEDGER_ACCOUNT,
+    FG_AR_TODAYS_EXC_ACCOUNT,
+    FG_AR_TODAYS_EXC_AGING,
+    FG_AR_TODAYS_EXC_CHECK_TYPE,
+    FG_AR_TODAYS_EXC_IS_LATE,
+    FG_AR_TRANSACTION_STATUS,
+    FG_AR_TRANSACTIONS_FAILED,
+    FG_AR_TRANSFER_STATUS,
+    FG_AR_TRANSFER_TYPE,
     P_AR_ACCOUNT,
     P_AR_ACTIVITY_DATE,
     P_AR_DS_ACCOUNT,
@@ -85,6 +103,8 @@ from quicksight_gen.common.tree import (
     CellAccentText,
     DateTimeParam,
     Dataset,
+    DefaultDateTimePickerControl,
+    DefaultDropdownControl,
     Drill,
     DrillResetSentinel,
     DrillSourceField,
@@ -93,6 +113,8 @@ from quicksight_gen.common.tree import (
     Sheet,
     StringParam,
     TextBox,
+    TimeEqualityFilter,
+    TimeRangeFilter,
 )
 
 
@@ -1371,6 +1393,194 @@ def _wire_drill_filter_groups(
 
 
 # ---------------------------------------------------------------------------
+# L.3.8b — Sheet-level filter groups (18 total). Two patterns:
+# - Multi-sheet filter groups carry a `default_control` so cross-sheet
+#   FilterControls on other sheets inherit the widget config (AWS rule
+#   for filters bound to multiple sheets).
+# - Single-sheet filter groups omit `default_control`; the sheet's own
+#   FilterControl provides the widget directly.
+# ---------------------------------------------------------------------------
+
+
+def _wire_sheet_filter_groups(
+    analysis: Analysis,
+    *,
+    sheets: dict[str, Sheet],
+    datasets: dict[str, Dataset],
+) -> None:
+    bal = sheets[SHEET_AR_BALANCES]
+    xfr = sheets[SHEET_AR_TRANSFERS]
+    txn = sheets[SHEET_AR_TRANSACTIONS]
+    todays = sheets[SHEET_AR_TODAYS_EXCEPTIONS]
+    trends = sheets[SHEET_AR_EXCEPTIONS_TRENDS]
+    daily = sheets[SHEET_AR_DAILY_STATEMENT]
+
+    ds_txn = datasets[DS_AR_TRANSACTIONS]
+    ds_ledger = datasets[DS_AR_LEDGER_ACCOUNTS]
+    ds_subledger = datasets[DS_AR_SUBLEDGER_ACCOUNTS]
+    ds_xfr_summary = datasets[DS_AR_TRANSFER_SUMMARY]
+    ds_ledger_drift = datasets[DS_AR_LEDGER_BALANCE_DRIFT]
+    ds_sub_drift = datasets[DS_AR_SUBLEDGER_BALANCE_DRIFT]
+    ds_exc = datasets[DS_AR_UNIFIED_EXCEPTIONS]
+    ds_ds_summary = datasets[DS_AR_DAILY_STATEMENT_SUMMARY]
+
+    visible = [bal, xfr, txn, todays, trends]
+    account_scoped = [bal, txn]
+    transfer_type_scoped = [xfr, txn, todays, trends]
+    unified_exc_sheets = [todays, trends]
+
+    # 1. Date range — TimeRangeFilter on transactions.posted_at, all
+    # five visible sheets. Multi-sheet → carries default_control.
+    date_fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_AR_DATE_RANGE,
+        cross_dataset="ALL_DATASETS",
+        filters=[TimeRangeFilter(
+            filter_id="filter-ar-date-range",
+            dataset=ds_txn,
+            column=ds_txn["posted_at"],
+            null_option="NON_NULLS_ONLY",
+            time_granularity="DAY",
+            default_control=DefaultDateTimePickerControl(
+                title="Date Range", type="DATE_RANGE",
+            ),
+        )],
+    ))
+    for s in visible:
+        date_fg.scope_sheet(s)
+
+    # 2-6 + 13-16. Multi-select category filters. Multi-sheet groups
+    # carry default_control; single-sheet ones omit it.
+    multi_specs: list[tuple] = [
+        (FG_AR_LEDGER_ACCOUNT, "filter-ar-ledger-account", "Ledger Account",
+         ds_ledger, "ledger_account_id", account_scoped),
+        (FG_AR_SUBLEDGER_ACCOUNT, "filter-ar-subledger-account",
+         "Sub-Ledger Account",
+         ds_subledger, "subledger_account_id", account_scoped),
+        (FG_AR_TRANSFER_TYPE, "filter-ar-transfer-type", "Transfer Type",
+         ds_txn, "transfer_type", transfer_type_scoped),
+        (FG_AR_TODAYS_EXC_CHECK_TYPE, "filter-ar-todays-exc-check-type",
+         "Check Type", ds_exc, "check_type", unified_exc_sheets),
+        (FG_AR_TODAYS_EXC_ACCOUNT, "filter-ar-todays-exc-account",
+         "Account", ds_exc, "account_id", unified_exc_sheets),
+        (FG_AR_TODAYS_EXC_AGING, "filter-ar-todays-exc-aging",
+         "Aging Bucket", ds_exc, "aging_bucket", unified_exc_sheets),
+        (FG_AR_TODAYS_EXC_IS_LATE, "filter-ar-todays-exc-is-late",
+         "Lateness", ds_exc, "is_late", unified_exc_sheets),
+    ]
+    for fg_id, filter_id, title, ds, col, sheet_list in multi_specs:
+        # Multi-sheet → default_control + ALL_DATASETS scope so cross-
+        # sheet controls inherit the widget. Single-sheet → no default,
+        # SINGLE_DATASET (the sheet's own FilterControl carries the
+        # widget). The today's-exception groups stay SINGLE_DATASET
+        # because they only apply to one dataset (unified_exceptions)
+        # even though they span two sheets.
+        is_multi_sheet = len(sheet_list) > 1
+        is_unified_exc = ds is ds_exc
+        cross = (
+            "ALL_DATASETS" if is_multi_sheet and not is_unified_exc
+            else "SINGLE_DATASET"
+        )
+        default = (
+            DefaultDropdownControl(title=title, type="MULTI_SELECT")
+            if is_multi_sheet else None
+        )
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=fg_id,
+            cross_dataset=cross,
+            filters=[CategoryFilter.with_values(
+                filter_id=filter_id,
+                dataset=ds, column=ds[col],
+                values=[],
+                select_all_options="FILTER_ALL_VALUES",
+                default_control=default,
+            )],
+        ))
+        for s in sheet_list:
+            fg.scope_sheet(s)
+
+    # Single-sheet category filters (no default_control needed).
+    single_specs: list[tuple] = [
+        (FG_AR_TRANSFER_STATUS, "filter-ar-transfer-status",
+         ds_xfr_summary, "net_zero_status", xfr),
+        (FG_AR_TRANSACTION_STATUS, "filter-ar-transaction-status",
+         ds_txn, "status", txn),
+        (FG_AR_POSTING_LEVEL, "filter-ar-posting-level",
+         ds_txn, "posting_level", txn),
+        (FG_AR_ORIGIN, "filter-ar-origin", ds_txn, "origin", txn),
+    ]
+    for fg_id, filter_id, ds, col, sheet in single_specs:
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=fg_id,
+            cross_dataset="SINGLE_DATASET",
+            filters=[CategoryFilter.with_values(
+                filter_id=filter_id,
+                dataset=ds, column=ds[col],
+                values=[],
+                select_all_options="FILTER_ALL_VALUES",
+            )],
+        ))
+        fg.scope_sheet(sheet)
+
+    # State toggle filters (Show-Only-X). SINGLE_DATASET, single-sheet,
+    # no default_control. Same shape as the multi-select but the sheet's
+    # control declares Type=SINGLE_SELECT.
+    toggle_specs: list[tuple] = [
+        (FG_AR_BALANCES_LEDGER_DRIFT, "filter-ar-balances-ledger-drift",
+         bal, ds_ledger_drift, "drift_status"),
+        (FG_AR_BALANCES_SUBLEDGER_DRIFT, "filter-ar-balances-subledger-drift",
+         bal, ds_sub_drift, "drift_status"),
+        (FG_AR_BALANCES_OVERDRAFT, "filter-ar-balances-overdraft",
+         bal, ds_sub_drift, "overdraft_status"),
+        (FG_AR_TRANSACTIONS_FAILED, "filter-ar-transactions-failed",
+         txn, ds_txn, "is_failed"),
+    ]
+    for fg_id, filter_id, sheet, ds, col in toggle_specs:
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=fg_id,
+            cross_dataset="SINGLE_DATASET",
+            filters=[CategoryFilter.with_values(
+                filter_id=filter_id,
+                dataset=ds, column=ds[col],
+                values=[],
+                select_all_options="FILTER_ALL_VALUES",
+            )],
+        ))
+        fg.scope_sheet(sheet)
+
+    # Daily Statement account picker — parameter-bound CategoryFilter
+    # (the picker is a ParameterControl, NOT a FilterControl, since
+    # parameter-bound filter controls are disabled in the UI).
+    fg_ds_acct = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_AR_DS_ACCOUNT,
+        cross_dataset="ALL_DATASETS",
+        filters=[CategoryFilter.with_parameter(
+            filter_id="filter-ar-ds-account",
+            dataset=ds_ds_summary,
+            column=ds_ds_summary["account_id"],
+            parameter=analysis.find_parameter(name=P_AR_DS_ACCOUNT.name),
+            match_operator="EQUALS",
+            null_option="NON_NULLS_ONLY",
+        )],
+    ))
+    fg_ds_acct.scope_sheet(daily)
+
+    # Daily Statement single-day picker — TimeEqualityFilter (NOT
+    # TimeRangeFilter) bound to the date parameter.
+    fg_ds_date = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_AR_DS_BALANCE_DATE,
+        cross_dataset="ALL_DATASETS",
+        filters=[TimeEqualityFilter(
+            filter_id="filter-ar-ds-balance-date",
+            dataset=ds_ds_summary,
+            column=ds_ds_summary["balance_date"],
+            parameter=analysis.find_parameter(name=P_AR_DS_BALANCE_DATE.name),
+            time_granularity="DAY",
+        )],
+    ))
+    fg_ds_date.scope_sheet(daily)
+
+
+# ---------------------------------------------------------------------------
 # App-level wiring
 # ---------------------------------------------------------------------------
 
@@ -1460,9 +1670,11 @@ def build_account_recon_app(cfg: Config) -> App:
     )
 
     # L.3.8 — App-level wiring. Parameters first (validator depends on
-    # them), then drill PASS calc fields + filter groups (which scope to
-    # the populated sheets above).
+    # them), then sheet-level filter groups (which reference the
+    # parameters), then drill PASS calc fields + filter groups (which
+    # scope to the populated sheets above).
     _wire_parameters(analysis)
+    _wire_sheet_filter_groups(analysis, sheets=sheets, datasets=datasets)
     _wire_drill_filter_groups(analysis, sheets=sheets, datasets=datasets)
 
     app.create_dashboard(

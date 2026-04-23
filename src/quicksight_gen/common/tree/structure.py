@@ -933,6 +933,15 @@ class Analysis:
             )
         return matches[0]
 
+    def find_parameter(self, *, name: str) -> ParameterDeclLike:
+        """Look up a single parameter declaration by name."""
+        matches = [p for p in self.parameters if p.name == name]
+        if not matches:
+            raise ValueError(
+                f"No parameter on Analysis {self.name!r} named {name!r}"
+            )
+        return matches[0]
+
     def add_calc_field(self, calc: CalcField) -> CalcField:
         """Register a calculated field on this analysis.
 

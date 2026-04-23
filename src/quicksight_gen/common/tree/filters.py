@@ -35,6 +35,7 @@ from quicksight_gen.common.models import (
     SheetVisualScopingConfiguration,
 )
 from quicksight_gen.common.models import CategoryFilter as ModelCategoryFilter
+from quicksight_gen.common.models import TimeEqualityFilter as ModelTimeEqualityFilter
 from quicksight_gen.common.models import (
     DefaultDateTimePickerControlOptions as ModelDefaultDateTimePickerControlOptions,
 )
@@ -549,6 +550,52 @@ class TimeRangeFilter:
                 RangeMaximumValue=self.maximum,
                 IncludeMinimum=self.include_minimum,
                 IncludeMaximum=self.include_maximum,
+                DefaultFilterControlConfiguration=_emit_default_control(
+                    self.default_control,
+                ),
+            ),
+        )
+
+
+@dataclass(eq=False)
+class TimeEqualityFilter:
+    """Single-day equality filter on a date column.
+
+    Used when paired with a SINGLE_VALUED date picker control —
+    ``TimeRangeFilter`` renders broken in the QS UI when paired with
+    a single-day picker; ``TimeEqualityFilter`` is the right shape
+    for "show rows where the date column equals one specific day".
+
+    ``parameter`` (a typed ``DateTimeParam`` ref) is the only binding
+    mode currently exposed (the AR Daily Statement use case). Extend
+    with ``rolling_date`` / ``static_value`` factories when other apps
+    need them.
+    """
+    dataset: Dataset
+    column: ColumnRef
+    parameter: ParameterDeclLike
+    time_granularity: TimeGranularity | None = None
+    default_control: DefaultDateTimePickerControl | None = None
+    filter_id: str | AutoResolved = AUTO
+
+    _AUTO_KIND: ClassVar[str] = "time_equality"
+
+    def calc_field(self) -> CalcField | None:
+        return calc_field_in(self.column)
+
+    def emit(self) -> Filter:
+        assert not isinstance(self.filter_id, _AutoSentinel), (
+            "filter_id wasn't resolved — App._resolve_auto_ids() must run."
+        )
+        return Filter(
+            TimeEqualityFilter=ModelTimeEqualityFilter(
+                FilterId=self.filter_id,
+                Column=ColumnIdentifier(
+                    DataSetIdentifier=self.dataset.identifier,
+                    ColumnName=resolve_column(self.column),
+                ),
+                ParameterName=self.parameter.name,
+                TimeGranularity=self.time_granularity,
                 DefaultFilterControlConfiguration=_emit_default_control(
                     self.default_control,
                 ),
