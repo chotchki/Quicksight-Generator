@@ -1,0 +1,161 @@
+"""Field-well leaf nodes — ``Dim`` + ``Measure`` typed wrappers.
+
+Every visual's field wells contain a mix of ``DimensionField`` and
+``MeasureField`` entries (source / target columns, group-by fields,
+aggregated values). These tree nodes wrap them with typed factories
+(``Dim.date(...)``, ``Measure.sum(...)``) so construction-time typing
+drives what the visual gets, rather than hand-wiring the underlying
+models every time.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal
+
+from quicksight_gen.common.models import (
+    CategoricalDimensionField,
+    CategoricalMeasureField,
+    ColumnIdentifier,
+    DateDimensionField,
+    DimensionField,
+    MeasureField,
+    NumericalAggregationFunction,
+    NumericalDimensionField,
+    NumericalMeasureField,
+)
+
+
+DimKind = Literal["categorical", "date", "numerical"]
+
+
+@dataclass
+class Dim:
+    """One dimension field-well entry — typed wrapper that emits a
+    ``DimensionField`` of the appropriate kind.
+
+    Default kind is ``categorical`` (the most common); use the
+    ``date()`` / ``numerical()`` classmethods for the other variants.
+    Values may name a real dataset column or an analysis-level calc
+    field — the tree treats both the same.
+    """
+    dataset: str
+    field_id: str
+    column: str
+    kind: DimKind = "categorical"
+
+    @classmethod
+    def date(cls, dataset: str, field_id: str, column: str) -> Dim:
+        return cls(dataset=dataset, field_id=field_id, column=column, kind="date")
+
+    @classmethod
+    def numerical(cls, dataset: str, field_id: str, column: str) -> Dim:
+        return cls(dataset=dataset, field_id=field_id, column=column, kind="numerical")
+
+    def emit(self) -> DimensionField:
+        col = ColumnIdentifier(
+            DataSetIdentifier=self.dataset, ColumnName=self.column,
+        )
+        if self.kind == "date":
+            return DimensionField(
+                DateDimensionField=DateDimensionField(
+                    FieldId=self.field_id, Column=col,
+                ),
+            )
+        if self.kind == "numerical":
+            return DimensionField(
+                NumericalDimensionField=NumericalDimensionField(
+                    FieldId=self.field_id, Column=col,
+                ),
+            )
+        return DimensionField(
+            CategoricalDimensionField=CategoricalDimensionField(
+                FieldId=self.field_id, Column=col,
+            ),
+        )
+
+
+# Aggregation kinds split into "categorical" (COUNT, DISTINCT_COUNT —
+# read off any column type) and "numerical" (SUM, MAX, MIN, AVERAGE —
+# require a numeric column). The split mirrors the underlying
+# ``CategoricalMeasureField`` vs ``NumericalMeasureField`` distinction.
+MeasureKind = Literal[
+    "sum", "max", "min", "average",          # → NumericalMeasureField
+    "count", "distinct_count",               # → CategoricalMeasureField
+]
+
+
+_NUMERICAL_AGG = {
+    "sum": "SUM", "max": "MAX", "min": "MIN", "average": "AVERAGE",
+}
+_CATEGORICAL_AGG = {
+    "count": "COUNT", "distinct_count": "DISTINCT_COUNT",
+}
+
+
+@dataclass
+class Measure:
+    """One value field-well entry — typed wrapper that emits a
+    ``MeasureField`` with the appropriate aggregation shape.
+
+    Use the classmethod factories for ergonomic construction:
+    ``Measure.sum(...)``, ``Measure.distinct_count(...)``, etc.
+    Aggregation kind determines which underlying model class is
+    emitted (numerical aggregations on numeric columns,
+    categorical on count-style aggregations).
+    """
+    dataset: str
+    field_id: str
+    column: str
+    kind: MeasureKind
+
+    @classmethod
+    def sum(cls, dataset: str, field_id: str, column: str) -> Measure:
+        return cls(dataset=dataset, field_id=field_id, column=column, kind="sum")
+
+    @classmethod
+    def max(cls, dataset: str, field_id: str, column: str) -> Measure:
+        return cls(dataset=dataset, field_id=field_id, column=column, kind="max")
+
+    @classmethod
+    def min(cls, dataset: str, field_id: str, column: str) -> Measure:
+        return cls(dataset=dataset, field_id=field_id, column=column, kind="min")
+
+    @classmethod
+    def average(cls, dataset: str, field_id: str, column: str) -> Measure:
+        return cls(dataset=dataset, field_id=field_id, column=column, kind="average")
+
+    @classmethod
+    def count(cls, dataset: str, field_id: str, column: str) -> Measure:
+        return cls(dataset=dataset, field_id=field_id, column=column, kind="count")
+
+    @classmethod
+    def distinct_count(
+        cls, dataset: str, field_id: str, column: str,
+    ) -> Measure:
+        return cls(
+            dataset=dataset, field_id=field_id, column=column,
+            kind="distinct_count",
+        )
+
+    def emit(self) -> MeasureField:
+        col = ColumnIdentifier(
+            DataSetIdentifier=self.dataset, ColumnName=self.column,
+        )
+        if self.kind in _CATEGORICAL_AGG:
+            return MeasureField(
+                CategoricalMeasureField=CategoricalMeasureField(
+                    FieldId=self.field_id,
+                    Column=col,
+                    AggregationFunction=_CATEGORICAL_AGG[self.kind],
+                ),
+            )
+        return MeasureField(
+            NumericalMeasureField=NumericalMeasureField(
+                FieldId=self.field_id,
+                Column=col,
+                AggregationFunction=NumericalAggregationFunction(
+                    SimpleNumericalAggregation=_NUMERICAL_AGG[self.kind],
+                ),
+            ),
+        )
