@@ -31,7 +31,14 @@ from quicksight_gen.common.drill import (
     cross_sheet_drill as _emit_cross_sheet_drill,
 )
 from quicksight_gen.common.drill import DrillParam as _DrillParam
-from quicksight_gen.common.models import VisualCustomAction
+from quicksight_gen.common.models import (
+    CustomActionFilterOperation,
+    FilterOperationSelectedFieldsConfiguration,
+    FilterOperationTargetVisualsConfiguration,
+    SameSheetTargetVisualConfiguration,
+    VisualCustomAction,
+    VisualCustomActionOperation,
+)
 
 from quicksight_gen.common.tree._helpers import AUTO, AutoResolved, _AutoSentinel
 from quicksight_gen.common.tree.calc_fields import (
@@ -49,10 +56,12 @@ if TYPE_CHECKING:
 # Re-exports so user code only needs to import from quicksight_gen.common.tree:
 DrillParam = _DrillParam  # K.2 shape-validated parameter spec — name + ColumnShape
 __all__ = [
+    "Action",
     "Drill",
     "DrillParam",
     "DrillSourceField",
     "DrillResetSentinel",
+    "SameSheetFilter",
 ]
 
 
@@ -169,3 +178,72 @@ class Drill:
             writes=resolved_writes,
             trigger=self.trigger,
         )
+
+
+# Forward reference — VisualLike is in visuals.py; import via TYPE_CHECKING.
+if TYPE_CHECKING:
+    from quicksight_gen.common.tree.visuals import VisualLike
+
+
+@dataclass(eq=False)
+class SameSheetFilter:
+    """A click action that filters target visuals on the same sheet via
+    ALL_FIELDS — the click-a-bar-to-narrow-the-table pattern.
+
+    ``target_visuals`` is a list of typed ``VisualLike`` object refs.
+    The action's emitted ``TargetVisuals`` field reads each visual's
+    (resolved) ``visual_id`` at emit time, so the action survives auto-
+    ID resolution and refactors that rename a visual.
+
+    Distinct from ``Drill`` — emits a ``FilterOperation`` rather than a
+    ``NavigationOperation`` + ``SetParametersOperation`` pair. Doesn't
+    cross sheets, doesn't write parameters.
+    """
+    target_visuals: list["VisualLike"]
+    name: str
+    trigger: Literal["DATA_POINT_CLICK", "DATA_POINT_MENU"] = "DATA_POINT_CLICK"
+    action_id: str | AutoResolved = AUTO
+
+    _AUTO_KIND: ClassVar[str] = "filter"
+
+    def emit(self) -> VisualCustomAction:
+        assert not isinstance(self.action_id, _AutoSentinel), (
+            "action_id wasn't resolved — App._resolve_auto_ids() must run."
+        )
+        target_ids: list[str] = []
+        for v in self.target_visuals:
+            assert not isinstance(v.visual_id, _AutoSentinel), (
+                f"SameSheetFilter target visual_id wasn't resolved — "
+                f"App._resolve_auto_ids() must run before emit."
+            )
+            target_ids.append(v.visual_id)
+        return VisualCustomAction(
+            CustomActionId=self.action_id,
+            Name=self.name,
+            Trigger=self.trigger,
+            ActionOperations=[
+                VisualCustomActionOperation(
+                    FilterOperation=CustomActionFilterOperation(
+                        SelectedFieldsConfiguration=(
+                            FilterOperationSelectedFieldsConfiguration(
+                                SelectedFieldOptions="ALL_FIELDS",
+                            )
+                        ),
+                        TargetVisualsConfiguration=(
+                            FilterOperationTargetVisualsConfiguration(
+                                SameSheetTargetVisualConfiguration=(
+                                    SameSheetTargetVisualConfiguration(
+                                        TargetVisuals=target_ids,
+                                    )
+                                ),
+                            )
+                        ),
+                    ),
+                ),
+            ],
+        )
+
+
+# Discriminated union of every visual action type. Visual subtypes
+# accept ``actions: list[Action]`` to mix Drills + filters in one list.
+Action = Union[Drill, SameSheetFilter]

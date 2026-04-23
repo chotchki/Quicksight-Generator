@@ -38,7 +38,7 @@ from quicksight_gen.common.tree._helpers import (
     GridLayoutElementType,
     _AutoSentinel,
 )
-from quicksight_gen.common.tree.actions import Drill
+from quicksight_gen.common.tree.actions import Action, Drill
 from quicksight_gen.common.tree.calc_fields import CalcField
 from quicksight_gen.common.tree.controls import (
     FilterControlLike,
@@ -523,7 +523,7 @@ class Row:
         columns: list[Dim] | None = None,
         subtitle: str | None = None,
         sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None,
-        actions: list[Drill] | None = None,
+        actions: list[Action] | None = None,
         conditional_formatting: dict[str, Any] | None = None,
         visual_id: VisualId | AutoResolved = AUTO,
     ) -> Table:
@@ -562,7 +562,7 @@ class Row:
             "CLUSTERED", "STACKED", "STACKED_PERCENT",
         ] | None = None,
         sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None,
-        actions: list[Drill] | None = None,
+        actions: list[Action] | None = None,
         visual_id: VisualId | AutoResolved = AUTO,
     ) -> BarChart:
         """Construct + register + place a BarChart in this row."""
@@ -591,7 +591,7 @@ class Row:
         weight: Measure,
         subtitle: str | None = None,
         items_limit: int | None = None,
-        actions: list[Drill] | None = None,
+        actions: list[Action] | None = None,
         visual_id: VisualId | AutoResolved = AUTO,
     ) -> Sankey:
         """Construct + register + place a Sankey in this row."""
@@ -680,7 +680,7 @@ class AbsoluteSlot:
         columns: list[Dim] | None = None,
         subtitle: str | None = None,
         sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None,
-        actions: list[Drill] | None = None,
+        actions: list[Action] | None = None,
         conditional_formatting: dict[str, Any] | None = None,
         visual_id: VisualId | AutoResolved = AUTO,
     ) -> Table:
@@ -708,7 +708,7 @@ class AbsoluteSlot:
             "CLUSTERED", "STACKED", "STACKED_PERCENT",
         ] | None = None,
         sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None,
-        actions: list[Drill] | None = None,
+        actions: list[Action] | None = None,
         visual_id: VisualId | AutoResolved = AUTO,
     ) -> BarChart:
         bar = BarChart(
@@ -730,7 +730,7 @@ class AbsoluteSlot:
         weight: Measure,
         subtitle: str | None = None,
         items_limit: int | None = None,
-        actions: list[Drill] | None = None,
+        actions: list[Action] | None = None,
         visual_id: VisualId | AutoResolved = AUTO,
     ) -> Sankey:
         sankey = Sankey(
@@ -1321,8 +1321,13 @@ class App:
         bad: list[str] = []
         for sheet in registered_sheets:
             for visual in sheet.visuals:
-                actions: list[Drill] = getattr(visual, "actions", None) or []
+                actions: list[Action] = getattr(visual, "actions", None) or []
+                # Only Drill actions navigate to a sheet; SameSheetFilter
+                # actions target visuals on the current sheet and don't
+                # carry a target_sheet field.
                 for action in actions:
+                    if not isinstance(action, Drill):
+                        continue
                     if not any(
                         action.target_sheet is s for s in registered_sheets
                     ):

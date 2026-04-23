@@ -41,7 +41,7 @@ from quicksight_gen.common.tree._helpers import (
     subtitle_label,
     title_label,
 )
-from quicksight_gen.common.tree.actions import Drill
+from quicksight_gen.common.tree.actions import Action
 from quicksight_gen.common.tree.calc_fields import CalcField
 from quicksight_gen.common.tree.datasets import Dataset
 from quicksight_gen.common.tree.fields import Dim, FieldRef, Measure, resolve_field_id
@@ -170,7 +170,7 @@ class Table:
     values: list[Measure] = field(default_factory=list[Measure])
     columns: list[Dim] = field(default_factory=list[Dim])
     sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None
-    actions: list[Drill] = field(default_factory=list[Drill])
+    actions: list[Action] = field(default_factory=list[Action])
     conditional_formatting: dict[str, Any] | None = None
     visual_id: VisualId | AutoResolved = AUTO
 
@@ -285,7 +285,7 @@ class BarChart:
         "CLUSTERED", "STACKED", "STACKED_PERCENT",
     ] | None = None
     sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None
-    actions: list[Drill] = field(default_factory=list[Drill])
+    actions: list[Action] = field(default_factory=list[Action])
     visual_id: VisualId | AutoResolved = AUTO
 
     _AUTO_KIND: ClassVar[str] = "bar"
@@ -371,7 +371,7 @@ class Sankey:
     target: Dim | None = None
     weight: Measure | None = None
     items_limit: int | None = None
-    actions: list[Drill] = field(default_factory=list[Drill])
+    actions: list[Action] = field(default_factory=list[Action])
     visual_id: VisualId | AutoResolved = AUTO
 
     _AUTO_KIND: ClassVar[str] = "sankey"
