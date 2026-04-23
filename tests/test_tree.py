@@ -2037,17 +2037,27 @@ class TestDrillEmit:
 
 
 # ---------------------------------------------------------------------------
-# L.1.17 — bare-string column refs raise unless explicitly allowed
+# L.1.17 — unvalidated column refs raise unless explicitly allowed
 # ---------------------------------------------------------------------------
 
-class TestBareStringColumnsRaiseByDefault:
-    """``allow_bare_strings=False`` is the App's default. Any tree node
-    that references a column via a bare ``str`` (instead of ``ds["col"]``
-    or a ``CalcField`` ref) trips the emit-time validator.
+class TestUnvalidatedColumnsRaiseByDefault:
+    """``allow_bare_strings=False`` is the App's default. Two unvalidated
+    column-ref forms raise at emit:
+
+    1. **Bare string** — ``Dim(ds, "amount")`` — literal string that
+       skips the contract check entirely.
+    2. **Unvalidated Column** — ``ds["amount"]`` against a dataset
+       with no registered ``DatasetContract``. ``Dataset.__getitem__``
+       can't validate when no contract exists, so it returns a Column
+       without checking. The walker catches this so the silent-pass
+       path becomes a loud raise.
+
+    The validated path: ``ds["amount"]`` against a dataset whose
+    contract IS registered. ``Dataset.__getitem__`` raises ``KeyError``
+    at the wiring site on typo.
 
     The escape hatch (``allow_bare_strings=True``) covers test fixtures
-    that don't register a ``DatasetContract``, but production apps
-    should always go through the validated form.
+    that don't register a ``DatasetContract``.
     """
 
     def _build_app_with_bare_string_dim(self, **app_kwargs) -> App:
@@ -2069,7 +2079,7 @@ class TestBareStringColumnsRaiseByDefault:
 
     def test_default_app_raises_on_bare_string_column(self):
         app = self._build_app_with_bare_string_dim()  # default allow=False
-        with pytest.raises(ValueError, match="bare-string column refs"):
+        with pytest.raises(ValueError, match="unvalidated column refs"):
             app.emit_analysis()
 
     def test_default_app_raises_on_bare_string_column_in_dashboard(self):
@@ -2077,7 +2087,7 @@ class TestBareStringColumnsRaiseByDefault:
         app.set_dashboard(Dashboard(
             dashboard_id_suffix="d", name="D", analysis=app.analysis,
         ))
-        with pytest.raises(ValueError, match="bare-string column refs"):
+        with pytest.raises(ValueError, match="unvalidated column refs"):
             app.emit_dashboard()
 
     def test_explicit_allow_bypasses_check(self):
@@ -2099,6 +2109,63 @@ class TestBareStringColumnsRaiseByDefault:
         assert "ds[\"" in message
 
     def test_bare_string_in_filter_column_also_raises(self):
+        app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(
+            analysis_id_suffix="a", name="A",
+        ))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        kpi = sheet.add_visual(KPI(
+            title="Total",
+            values=[Measure.sum(_DS_FOO, "amount", field_id="f")],
+        ))
+        sheet.place(kpi, col_span=12, row_span=6, col_index=0)
+        analysis.add_filter_group(FilterGroup(
+            filters=[CategoryFilter(
+                dataset=_DS_FOO,
+                column="category",  # bare string
+                values=["a"],
+            )],
+        )).scope_visuals(sheet, [kpi])
+        # Flip to default-strict for the assertion run.
+        app.allow_bare_strings = False
+        with pytest.raises(ValueError, match="unvalidated column refs"):
+            app.emit_analysis()
+
+    def test_unvalidated_column_ref_raises(self):
+        """``ds["col"]`` on a dataset without a registered DatasetContract
+        is the OTHER escape hatch — Column produced but never validated.
+        The walker catches it at emit unless ``allow_bare_strings=True``.
+        """
+        app = App(name="t", cfg=_TEST_CFG)  # default allow=False
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(
+            analysis_id_suffix="a", name="A",
+        ))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        # _DS_FOO has no registered DatasetContract. ds["amount"] returns
+        # a Column without validation — the walker should catch it.
+        sheet.add_visual(KPI(
+            title="Total",
+            values=[_DS_FOO["amount"].sum()],
+        ))
+        sheet.place(
+            sheet.visuals[0], col_span=12, row_span=6, col_index=0,
+        )
+        with pytest.raises(ValueError) as exc_info:
+            app.emit_analysis()
+        message = str(exc_info.value)
+        assert "no registered DatasetContract" in message
+        assert _DS_FOO.identifier in message
+        assert "amount" in message
+
+    def test_unvalidated_column_in_filter_also_raises(self):
+        """The same gap applies to filter columns — ds["col"] on a
+        contract-less dataset slips through unless caught here."""
         app = App(name="t", cfg=_TEST_CFG)
         app.add_dataset(_DS_FOO)
         analysis = app.set_analysis(Analysis(
@@ -2107,20 +2174,56 @@ class TestBareStringColumnsRaiseByDefault:
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s"), name="S", title="S", description="",
         ))
-        # Add a visual that uses Column refs (no bare strings here)
-        # so the only bare-string ref is in the filter group below.
         kpi = sheet.add_visual(KPI(
             title="Total",
             values=[Measure.sum(_DS_FOO, "amount", field_id="f")],
         ))
         sheet.place(kpi, col_span=12, row_span=6, col_index=0)
-        # Bare-string column on the filter — should raise.
+        # Wrap KPI in a FilterGroup to keep the visuals validation
+        # path away from the value-leaf bare string.
+        # The relevant unvalidated path is the filter's column.
         analysis.add_filter_group(FilterGroup(
             filters=[CategoryFilter(
                 dataset=_DS_FOO,
-                column="category",  # bare string
+                column=_DS_FOO["category"],  # unvalidated Column
                 values=["a"],
             )],
         )).scope_visuals(sheet, [kpi])
-        with pytest.raises(ValueError, match="bare-string column refs"):
+        # Allow bare strings so the KPI's bare-string measure column
+        # doesn't trip the check; this isolates the filter's
+        # unvalidated Column path. (In real production code both
+        # checks should fire — the test isolates them so each path is
+        # exercised independently.)
+        app.allow_bare_strings = True
+        # Filter's Column path bypasses the bare-string check too,
+        # though — so we need the strict mode to catch it.
+        app.allow_bare_strings = False
+        # Drop the bare-string KPI value so only the filter path is bad.
+        kpi.values = [_DS_FOO["amount"].sum()]
+        with pytest.raises(ValueError) as exc_info:
             app.emit_analysis()
+        message = str(exc_info.value)
+        assert "no registered DatasetContract" in message
+        # Both unvalidated columns surface (the KPI value AND the
+        # filter column) — the message names both.
+        assert "amount" in message
+        assert "category" in message
+
+    def test_explicit_allow_bypasses_unvalidated_column_too(self):
+        """``allow_bare_strings=True`` covers BOTH unvalidated forms —
+        the bare-string path and the contract-less Column path."""
+        app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(
+            analysis_id_suffix="a", name="A",
+        ))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        kpi = sheet.add_visual(KPI(
+            title="Total",
+            values=[_DS_FOO["amount"].sum()],
+        ))
+        sheet.place(kpi, col_span=12, row_span=6, col_index=0)
+        # Should not raise.
+        app.emit_analysis()

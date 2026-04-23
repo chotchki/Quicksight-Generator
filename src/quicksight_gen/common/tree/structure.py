@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from quicksight_gen.common.config import Config
+from quicksight_gen.common.dataset_contract import get_contract
 from quicksight_gen.common.models import (
     AnalysisDefinition,
     DashboardPublishOptions,
@@ -40,7 +41,7 @@ from quicksight_gen.common.tree.controls import (
     FilterControlLike,
     ParameterControlLike,
 )
-from quicksight_gen.common.tree.datasets import Dataset
+from quicksight_gen.common.tree.datasets import Column, Dataset
 from quicksight_gen.common.tree.filters import FilterGroup
 from quicksight_gen.common.tree.parameters import ParameterDeclLike
 from quicksight_gen.common.tree.text_boxes import TextBox
@@ -903,17 +904,26 @@ class App:
             )
 
     def _validate_no_bare_string_columns(self) -> None:
-        """Raise if any tree node uses a bare-string column ref.
+        """Raise if any tree node uses an unvalidated column ref.
 
-        Bare strings (``Dim(ds, "amount")``) bypass the dataset contract
-        validation that ``ds["amount"]`` carries — a typo silently
-        renders a broken visual at deploy. The validated path is the
-        ``Column`` ref form, ``ds["column_name"].dim()`` /
-        ``.sum()`` / etc.
+        Two unvalidated forms exist, both gated by ``allow_bare_strings``:
 
-        ``allow_bare_strings=True`` on the App opts out of this check
-        for test fixtures and datasets without a registered contract
-        (the kitchen sink, which has no DatasetContract).
+        - **Bare string**: ``Dim(ds, "amount")`` — a literal string
+          that bypasses any contract check. Typo-prone.
+        - **Unvalidated Column**: ``ds["amount"]`` against a dataset
+          with no registered ``DatasetContract``. ``Dataset.__getitem__``
+          can't validate when no contract exists, so it returns a
+          Column without checking. The walker catches this here so
+          the silent-pass path turns into a loud raise.
+
+        The validated path: ``ds["amount"]`` against a dataset whose
+        contract IS registered. ``Dataset.__getitem__`` raises
+        ``KeyError`` at the wiring site on typo, so by the time the
+        walker sees the Column, the column name is already known good.
+
+        ``allow_bare_strings=True`` on the App opts out for test
+        fixtures and datasets without a registered contract (the
+        kitchen sink, which has no DatasetContract).
         """
         if self.allow_bare_strings or self.analysis is None:
             return
@@ -921,7 +931,17 @@ class App:
 
         def _check(column, where: str) -> None:
             if isinstance(column, str):
-                bad.append(f"{where} → {column!r}")
+                bad.append(f"{where} → bare string {column!r}")
+                return
+            if isinstance(column, Column):
+                try:
+                    get_contract(column.dataset.identifier)
+                except KeyError:
+                    bad.append(
+                        f"{where} → ds[{column.name!r}] but dataset "
+                        f"{column.dataset.identifier!r} has no registered "
+                        f"DatasetContract — column couldn't be validated"
+                    )
 
         for sheet in self.analysis.sheets:
             for visual in sheet.visuals:
@@ -960,12 +980,12 @@ class App:
                 )
         if bad:
             raise ValueError(
-                f"App {self.name!r} has bare-string column refs "
-                f"(typo-prone — they bypass the dataset contract "
-                f"validation that ds[\"col\"] carries):\n  "
+                f"App {self.name!r} has unvalidated column refs "
+                f"(typo-prone — they bypass the dataset contract):\n  "
                 + "\n  ".join(bad)
-                + "\n\nUse the typed form: ds[\"column_name\"].dim() "
-                "/ .sum() / .date() / etc. — or pass "
+                + "\n\nUse the typed form ds[\"column_name\"].dim() / "
+                ".sum() / .date() / etc. against a dataset whose "
+                "DatasetContract is registered — or pass "
                 "``allow_bare_strings=True`` on the App when no "
                 "dataset contract is registered (test fixtures)."
             )
