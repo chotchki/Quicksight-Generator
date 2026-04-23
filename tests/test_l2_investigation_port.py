@@ -20,9 +20,11 @@ import pytest
 from quicksight_gen.apps.investigation.analysis import (
     _build_getting_started_sheet as _imperative_getting_started,
     _build_recipient_fanout_sheet as _imperative_recipient_fanout,
+    _build_volume_anomalies_sheet as _imperative_volume_anomalies,
 )
 from quicksight_gen.apps.investigation.app import build_investigation_app
 from quicksight_gen.apps.investigation.constants import (
+    SHEET_INV_ANOMALIES,
     SHEET_INV_FANOUT,
     SHEET_INV_GETTING_STARTED,
 )
@@ -133,4 +135,18 @@ def test_l2_2_recipient_fanout_sheet_byte_identical():
         "2.2",
         SHEET_INV_FANOUT,
         _imperative_recipient_fanout(_TEST_CFG),
+    )
+
+
+def test_l2_3_volume_anomalies_sheet_byte_identical():
+    """L.2.3 — Volume Anomalies SheetDefinition matches the imperative
+    builder exactly. Load-bearing case for the tree's scope API: σ
+    threshold filter scopes SELECTED_VISUALS (KPI + table only) so the
+    distribution chart keeps rendering the full population. First port
+    exercising typed BarChart with orientation / bars_arrangement /
+    sort_by extension."""
+    _assert_sheet_byte_identical(
+        "2.3",
+        SHEET_INV_ANOMALIES,
+        _imperative_volume_anomalies(_TEST_CFG),
     )

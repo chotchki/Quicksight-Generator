@@ -23,11 +23,19 @@ from __future__ import annotations
 from quicksight_gen.apps.investigation.constants import (
     CF_INV_FANOUT_DISTINCT_SENDERS,
     DS_INV_RECIPIENT_FANOUT,
+    DS_INV_VOLUME_ANOMALIES,
+    FG_INV_ANOMALIES_SIGMA,
+    FG_INV_ANOMALIES_WINDOW,
     FG_INV_FANOUT_THRESHOLD,
     FG_INV_FANOUT_WINDOW,
+    P_INV_ANOMALIES_SIGMA,
     P_INV_FANOUT_THRESHOLD,
+    SHEET_INV_ANOMALIES,
     SHEET_INV_FANOUT,
     SHEET_INV_GETTING_STARTED,
+    V_INV_ANOMALIES_DISTRIBUTION,
+    V_INV_ANOMALIES_KPI_FLAGGED,
+    V_INV_ANOMALIES_TABLE,
     V_INV_FANOUT_KPI_AMOUNT,
     V_INV_FANOUT_KPI_RECIPIENTS,
     V_INV_FANOUT_KPI_SENDERS,
@@ -40,6 +48,7 @@ from quicksight_gen.common.tree import (
     KPI,
     Analysis,
     App,
+    BarChart,
     CalcField,
     CategoryFilter,  # noqa: F401 — used by future sheets
     Dataset,
@@ -69,6 +78,11 @@ _DEFAULT_FANOUT_THRESHOLD = 5
 _FANOUT_SLIDER_MIN = 1
 _FANOUT_SLIDER_MAX = 20
 
+# Anomalies-specific defaults.
+_DEFAULT_ANOMALIES_SIGMA = 2
+_SIGMA_SLIDER_MIN = 1
+_SIGMA_SLIDER_MAX = 4
+
 
 # ---------------------------------------------------------------------------
 # Sheet descriptions (shared with imperative side — byte-identity only
@@ -79,6 +93,14 @@ _FANOUT_DESCRIPTION = (
     "Who is receiving money from an unusual number of distinct senders? "
     "Drag the slider to set the minimum sender count; the table ranks "
     "qualifying recipients by funnel width."
+)
+
+_ANOMALY_DESCRIPTION = (
+    "Which sender → recipient pair just spiked above its baseline? "
+    "Rolling 2-day SUM per pair vs. the population mean + standard "
+    "deviation. Drag the σ slider to flag the tail. The distribution "
+    "chart shows the full population — your slider cutoff against that "
+    "shape — while the KPI + table show only flagged windows."
 )
 
 
@@ -316,6 +338,162 @@ def _build_recipient_fanout_sheet(
 
 
 # ---------------------------------------------------------------------------
+# Volume Anomalies (L.2.3)
+# ---------------------------------------------------------------------------
+
+def _build_volume_anomalies_sheet(
+    cfg: Config, app: App, analysis: Analysis,
+) -> Sheet:
+    """Volume Anomalies — KPI flagged-count + σ distribution + ranked table.
+
+    Load-bearing case for the tree's scope API: the σ filter scopes
+    SELECTED_VISUALS (KPI + table only) so the distribution bar chart
+    keeps rendering the full population. The chart's job is the
+    reference frame — see where 2σ vs. 4σ falls in the overall shape
+    before deciding where to set the slider.
+
+    Layout:
+      * Row 1: KPI flagged count (⅓ width) + distribution bar chart
+        (⅔ width, 2× row span so it has room for the buckets).
+      * Row 2: full-width flagged table sorted by z_score desc.
+    """
+    del cfg
+
+    ds_anomalies = app.add_dataset(Dataset(
+        identifier=DS_INV_VOLUME_ANOMALIES,
+        arn=app.cfg.dataset_arn(app.cfg.prefixed("inv-volume-anomalies-dataset")),
+    ))
+
+    sigma_param = analysis.add_parameter(IntegerParam(
+        name=P_INV_ANOMALIES_SIGMA,
+        default=[_DEFAULT_ANOMALIES_SIGMA],
+    ))
+
+    sheet = analysis.add_sheet(Sheet(
+        sheet_id=SHEET_INV_ANOMALIES,
+        name="Volume Anomalies",
+        title="Volume Anomalies",
+        description=_ANOMALY_DESCRIPTION,
+    ))
+
+    kpi_flagged = sheet.add_visual(KPI(
+        visual_id=V_INV_ANOMALIES_KPI_FLAGGED,
+        title="Flagged Pair-Windows",
+        subtitle=(
+            "Pair-windows whose 2-day rolling SUM clears the σ threshold."
+        ),
+        values=[Measure.count(
+            ds_anomalies, "inv-anomalies-kpi-flagged-val",
+            "recipient_account_id",
+        )],
+    ))
+    distribution = sheet.add_visual(BarChart(
+        visual_id=V_INV_ANOMALIES_DISTRIBUTION,
+        title="Pair-Window σ Distribution",
+        subtitle=(
+            "Pair-windows bucketed by |z-score| against the population "
+            "mean. Chart is intentionally NOT filtered by the σ slider."
+        ),
+        category=[Dim(
+            ds_anomalies, "inv-anomalies-dist-bucket", "z_bucket",
+        )],
+        values=[Measure.count(
+            ds_anomalies, "inv-anomalies-dist-count",
+            "recipient_account_id",
+        )],
+        orientation="VERTICAL",
+        bars_arrangement="CLUSTERED",
+        sort_by=("inv-anomalies-dist-bucket", "ASC"),
+    ))
+    table = sheet.add_visual(Table(
+        visual_id=V_INV_ANOMALIES_TABLE,
+        title="Flagged Pair-Windows — Ranked",
+        subtitle=(
+            "One row per flagged 2-day window. Ranked by z-score "
+            "(highest = furthest from the population mean)."
+        ),
+        group_by=[
+            Dim(ds_anomalies, "inv-anomalies-tbl-recipient-id",
+                "recipient_account_id"),
+            Dim(ds_anomalies, "inv-anomalies-tbl-recipient-name",
+                "recipient_account_name"),
+            Dim(ds_anomalies, "inv-anomalies-tbl-sender-id",
+                "sender_account_id"),
+            Dim(ds_anomalies, "inv-anomalies-tbl-sender-name",
+                "sender_account_name"),
+            Dim.date(ds_anomalies, "inv-anomalies-tbl-window-end",
+                     "window_end"),
+        ],
+        values=[
+            Measure.max(ds_anomalies, "inv-anomalies-tbl-z-score",
+                        "z_score"),
+            Measure.max(ds_anomalies, "inv-anomalies-tbl-window-sum",
+                        "window_sum"),
+            Measure.max(ds_anomalies, "inv-anomalies-tbl-transfer-count",
+                        "transfer_count"),
+        ],
+        sort_by=("inv-anomalies-tbl-z-score", "DESC"),
+    ))
+
+    # Layout: KPI ⅓ + Distribution ⅔ × 2 row span; Table full-width.
+    sheet.place(kpi_flagged,
+                col_span=_THIRD, row_span=_KPI_ROW_SPAN, col_index=0)
+    sheet.place(distribution,
+                col_span=_THIRD * 2, row_span=_KPI_ROW_SPAN * 2,
+                col_index=_THIRD)
+    sheet.place(table,
+                col_span=_FULL, row_span=_TABLE_ROW_SPAN, col_index=0)
+
+    # Window date-range filter: ALL visuals on this sheet (chart + KPI +
+    # table all narrow with the date range so the chart's shape stays
+    # tied to what the analyst is investigating).
+    window_fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_INV_ANOMALIES_WINDOW,
+        filters=[TimeRangeFilter(
+            filter_id="filter-inv-anomalies-window",
+            dataset=ds_anomalies,
+            column="window_end",
+            null_option="NON_NULLS_ONLY",
+            time_granularity="DAY",
+        )],
+    ))
+    window_fg.scope_sheet(sheet)
+
+    # σ threshold: SELECTED_VISUALS — KPI + table only. The distribution
+    # chart stays unfiltered so it can show the full population shape.
+    # This is the load-bearing scope-by-visuals case for L.2.3.
+    sigma_fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_INV_ANOMALIES_SIGMA,
+        filters=[NumericRangeFilter(
+            filter_id="filter-inv-anomalies-sigma",
+            dataset=ds_anomalies,
+            column="z_score",
+            minimum_parameter=sigma_param,
+            null_option="NON_NULLS_ONLY",
+            include_minimum=True,
+        )],
+    ))
+    sigma_fg.scope_visuals(sheet, [kpi_flagged, table])
+
+    sheet.add_filter_control(FilterDateTimePicker(
+        filter=window_fg.filters[0],
+        title="Window End Date",
+        type="DATE_RANGE",
+        control_id="ctrl-inv-anomalies-window",
+    ))
+    sheet.add_parameter_control(ParameterSlider(
+        parameter=sigma_param,
+        title="Min sigma",
+        minimum_value=_SIGMA_SLIDER_MIN,
+        maximum_value=_SIGMA_SLIDER_MAX,
+        step_size=1,
+        control_id="ctrl-inv-anomalies-sigma",
+    ))
+
+    return sheet
+
+
+# ---------------------------------------------------------------------------
 # App builder
 # ---------------------------------------------------------------------------
 
@@ -332,4 +510,5 @@ def build_investigation_app(cfg: Config) -> App:
     ))
     _build_getting_started_sheet(cfg, analysis)
     _build_recipient_fanout_sheet(cfg, app, analysis)
+    _build_volume_anomalies_sheet(cfg, app, analysis)
     return app

@@ -18,6 +18,7 @@ from quicksight_gen.common.models import (
     BarChartAggregatedFieldWells,
     BarChartConfiguration,
     BarChartFieldWells,
+    BarChartSortConfiguration,
     BarChartVisual,
     KPIConfiguration,
     KPIFieldWells,
@@ -236,8 +237,14 @@ class BarChart:
     ``values``.
 
     Field-well shape: ``Category=[Dim, ...]`` + ``Values=[Measure, ...]``.
-    Future: ``orientation: "HORIZONTAL" | "VERTICAL"`` if needed; today
-    every BarChart in the codebase is vertical.
+
+    ``orientation`` (``"VERTICAL"`` or ``"HORIZONTAL"``) and
+    ``bars_arrangement`` (``"CLUSTERED"`` / ``"STACKED"`` /
+    ``"STACKED_PERCENT"``) pass through to the underlying
+    ``BarChartConfiguration``. ``sort_by`` is a ``(field_id, direction)``
+    tuple — direction ``"ASC"`` or ``"DESC"`` — and emits a
+    ``CategorySort`` entry. All three default to ``None`` so the
+    QuickSight defaults apply when not specified.
 
     ``visual_id`` is optional (L.1.8.5 auto-ID).
     """
@@ -245,6 +252,11 @@ class BarChart:
     subtitle: str | None = None
     category: list[Dim] = field(default_factory=list)
     values: list[Measure] = field(default_factory=list)
+    orientation: Literal["HORIZONTAL", "VERTICAL"] | None = None
+    bars_arrangement: Literal[
+        "CLUSTERED", "STACKED", "STACKED_PERCENT",
+    ] | None = None
+    sort_by: tuple[str, Literal["ASC", "DESC"]] | None = None
     actions: list[Drill] = field(default_factory=list)
     visual_id: VisualId | None = None
 
@@ -276,6 +288,14 @@ class BarChart:
         assert self.visual_id is not None, (
             "visual_id wasn't resolved — see KPI.emit assertion."
         )
+        sort_config: BarChartSortConfiguration | None = None
+        if self.sort_by is not None:
+            field_id, direction = self.sort_by
+            sort_config = BarChartSortConfiguration(
+                CategorySort=[
+                    {"FieldSort": {"FieldId": field_id, "Direction": direction}},
+                ],
+            )
         return Visual(
             BarChartVisual=BarChartVisual(
                 VisualId=self.visual_id,
@@ -288,6 +308,9 @@ class BarChart:
                             Values=[m.emit() for m in self.values] if self.values else None,
                         ),
                     ),
+                    Orientation=self.orientation,
+                    BarsArrangement=self.bars_arrangement,
+                    SortConfiguration=sort_config,
                 ),
                 Actions=[a.emit() for a in self.actions] if self.actions else None,
             ),
