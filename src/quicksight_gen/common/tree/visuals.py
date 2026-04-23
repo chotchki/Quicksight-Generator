@@ -55,10 +55,27 @@ class VisualLike(Protocol):
     not (its factory callable hides its dataset references). Apps
     using factory wrappers don't contribute to dependency tracking;
     typed subtypes do.
+
+    All visual nodes also satisfy ``LayoutNode`` (in ``structure.py``)
+    via ``element_id`` + ``element_type`` so they can be placed in a
+    sheet's grid layout via ``Sheet.place(...)``.
     """
     visual_id: VisualId
 
     def emit(self) -> Visual: ...
+
+
+def _visual_element_id(node) -> str:
+    """LayoutNode.element_id implementation shared by every visual subtype.
+    Resolves to ``visual_id`` (the visual's element id is the same id
+    QuickSight uses for the visual itself); asserts auto-IDs are
+    resolved before access."""
+    if node.visual_id is None:
+        raise AssertionError(
+            "visual_id wasn't resolved — App._resolve_auto_ids() must run "
+            "before LayoutNode.element_id access."
+        )
+    return node.visual_id
 
 
 @dataclass(eq=False)
@@ -71,6 +88,14 @@ class VisualNode:
     """
     visual_id: VisualId
     builder: Callable[[], Visual]
+
+    @property
+    def element_id(self) -> str:
+        return _visual_element_id(self)
+
+    @property
+    def element_type(self) -> str:
+        return "VISUAL"
 
     def emit(self) -> Visual:
         return self.builder()
@@ -93,6 +118,14 @@ class KPI:
     visual_id: VisualId | None = None
 
     _AUTO_KIND: ClassVar[str] = "kpi"
+
+    @property
+    def element_id(self) -> str:
+        return _visual_element_id(self)
+
+    @property
+    def element_type(self) -> str:
+        return "VISUAL"
 
     def datasets(self) -> set[Dataset]:
         return {m.dataset for m in self.values}
@@ -143,6 +176,14 @@ class Table:
     visual_id: VisualId | None = None
 
     _AUTO_KIND: ClassVar[str] = "table"
+
+    @property
+    def element_id(self) -> str:
+        return _visual_element_id(self)
+
+    @property
+    def element_type(self) -> str:
+        return "VISUAL"
 
     def datasets(self) -> set[Dataset]:
         return ({d.dataset for d in self.group_by}
@@ -209,6 +250,14 @@ class BarChart:
 
     _AUTO_KIND: ClassVar[str] = "bar"
 
+    @property
+    def element_id(self) -> str:
+        return _visual_element_id(self)
+
+    @property
+    def element_type(self) -> str:
+        return "VISUAL"
+
     def datasets(self) -> set[Dataset]:
         return ({d.dataset for d in self.category}
                 | {m.dataset for m in self.values})
@@ -272,6 +321,14 @@ class Sankey:
     visual_id: VisualId | None = None
 
     _AUTO_KIND: ClassVar[str] = "sankey"
+
+    @property
+    def element_id(self) -> str:
+        return _visual_element_id(self)
+
+    @property
+    def element_type(self) -> str:
+        return "VISUAL"
 
     def datasets(self) -> set[Dataset]:
         deps: set[Dataset] = set()

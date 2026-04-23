@@ -24,7 +24,6 @@ from quicksight_gen.common.models import (
     ParameterControl,
     ResourcePermission,
     SheetDefinition,
-    SheetTextBox,
     Visual,
 )
 from quicksight_gen.common.models import Analysis as ModelAnalysis
@@ -44,6 +43,7 @@ from quicksight_gen.common.tree.controls import (
 from quicksight_gen.common.tree.datasets import Dataset
 from quicksight_gen.common.tree.filters import FilterGroup
 from quicksight_gen.common.tree.parameters import ParameterDeclLike
+from quicksight_gen.common.tree.text_boxes import TextBox
 from quicksight_gen.common.tree.visuals import VisualLike
 
 
@@ -52,7 +52,7 @@ from quicksight_gen.common.tree.visuals import VisualLike
 # factory pattern. L.1.9 introduces typed Control variants alongside.
 # ---------------------------------------------------------------------------
 
-from typing import Callable
+from typing import Callable, Protocol, runtime_checkable
 
 
 @dataclass(eq=False)
@@ -69,39 +69,52 @@ class ParameterControlNode:
 
 
 # ---------------------------------------------------------------------------
-# Layout — GridSlot references a VisualLike by object (locked decision).
+# Layout — GridSlot references a LayoutNode by object (locked decision).
+# LayoutNode hides QuickSight's split between Visuals and TextBoxes —
+# both turn into a GridLayoutElement carrying an id + ElementType, but
+# flow into different SheetDefinition fields at emit time.
 # ---------------------------------------------------------------------------
+
+@runtime_checkable
+class LayoutNode(Protocol):
+    """Anything placeable in a sheet's grid layout.
+
+    Both typed visual subtypes (``KPI`` / ``Table`` / ``BarChart`` /
+    ``Sankey``) and the typed ``TextBox`` wrapper satisfy this Protocol.
+    Each exposes ``element_id`` (the layout slot's ``ElementId``) and
+    ``element_type`` (``"VISUAL"`` or ``"TEXT_BOX"``) — the slot reads
+    them off the node at emit time.
+
+    The Protocol means ``Sheet.place(node, ...)`` accepts both visuals
+    and text boxes uniformly; QuickSight's two-list split (Visuals vs
+    TextBoxes in ``SheetDefinition``) stays an emit-time concern that
+    callers never see.
+    """
+    @property
+    def element_id(self) -> str: ...
+
+    @property
+    def element_type(self) -> str: ...
+
 
 @dataclass(eq=False)
 class GridSlot:
     """One placement in a sheet's grid layout.
 
-    Holds an OBJECT reference to the placed node — the locked decision
-    is cross-references via object refs, not via ID strings. The
-    element id is read off the referenced node at emit time.
-
-    ``element`` accepts either a ``VisualLike`` (the spike-shape
-    ``VisualNode`` factory wrapper or the typed subtypes — ``KPI`` /
-    ``Table`` / ``BarChart`` / ``Sankey``) or a ``SheetTextBox`` (the
-    rich-text box used on landing-page sheets). The slot type-dispatches
-    at emit so a single ``Sheet.grid_slots`` list carries both.
+    Holds an OBJECT reference to the placed ``LayoutNode``. The element
+    id and element type are read off the node at emit time — the slot
+    is agnostic about whether it carries a visual or a text box.
     """
-    element: VisualLike | SheetTextBox
+    element: LayoutNode
     col_span: int
     row_span: int
     col_index: int
     row_index: int | None = None
 
     def emit(self) -> GridLayoutElement:
-        if isinstance(self.element, SheetTextBox):
-            element_id = self.element.SheetTextBoxId
-            element_type = GridLayoutElement.TEXT_BOX
-        else:
-            element_id = self.element.visual_id
-            element_type = GridLayoutElement.VISUAL
         return GridLayoutElement(
-            ElementId=element_id,
-            ElementType=element_type,
+            ElementId=self.element.element_id,
+            ElementType=self.element.element_type,
             ColumnSpan=self.col_span,
             RowSpan=self.row_span,
             ColumnIndex=self.col_index,
@@ -132,7 +145,7 @@ class Sheet:
         default_factory=list,
     )
     filter_controls: list[FilterControlLike] = field(default_factory=list)
-    text_boxes: list[SheetTextBox] = field(default_factory=list)
+    text_boxes: list[TextBox] = field(default_factory=list)
     grid_slots: list[GridSlot] = field(default_factory=list)
 
     def add_visual[T: VisualLike](self, node: T) -> T:
@@ -170,7 +183,14 @@ class Sheet:
         self.filter_controls.append(node)
         return node
 
-    def add_text_box(self, text_box: SheetTextBox) -> SheetTextBox:
+    def add_text_box(self, text_box: TextBox) -> TextBox:
+        """Register a typed ``TextBox`` on this sheet.
+
+        The TextBox is a ``LayoutNode``, so the same ``Sheet.place(...)``
+        method that places visuals also places text boxes — the layout
+        slot reads ``element_id`` / ``element_type`` off the node and
+        emits the appropriate ``GridLayoutElement``.
+        """
         self.text_boxes.append(text_box)
         return text_box
 
@@ -222,83 +242,55 @@ class Sheet:
 
     def place(
         self,
-        visual: VisualLike,
+        node: LayoutNode,
         *,
         col_span: int,
         row_span: int,
         col_index: int,
         row_index: int | None = None,
     ) -> GridSlot:
-        """Place a registered visual into the grid layout.
+        """Place a registered ``LayoutNode`` (visual or text box) into
+        the grid layout.
 
         Construction-time checks:
-        - The visual must already be registered on this sheet via
-          ``add_visual()`` (catches the wrong-sheet bug class).
-        - The visual must not already be placed in the grid layout
-          (placing the same visual at two positions emits two layout
-          slots with the same ElementId, which QuickSight rejects).
+        - The node must already be registered on this sheet via
+          ``add_visual()`` (for visuals) or ``add_text_box()`` (for
+          text boxes). Catches the wrong-sheet bug class — a visual
+          built for sheet A but placed on sheet B never silently
+          renders.
+        - The node must not already be placed in the grid layout
+          (placing the same node twice emits two slots with the same
+          ElementId, which QuickSight rejects).
+
+        The slot reads ``element_id`` / ``element_type`` off the node
+        at emit time — visuals contribute ``("VISUAL", visual_id)``,
+        text boxes contribute ``("TEXT_BOX", text_box_id)``.
         """
-        if visual not in self.visuals:
+        if isinstance(node, TextBox):
+            registry = self.text_boxes
+            registry_method = "add_text_box"
+            kind_label = "TextBox"
+            id_for_msg = node.text_box_id
+        else:
+            registry = self.visuals
+            registry_method = "add_visual"
+            kind_label = "Visual"
+            id_for_msg = getattr(node, "visual_id", "?")
+        if node not in registry:
             raise ValueError(
-                f"Visual {visual.visual_id!r} isn't registered on this "
-                f"sheet — call add_visual() first."
+                f"{kind_label} {id_for_msg!r} isn't registered on this "
+                f"sheet — call {registry_method}() first."
             )
         for existing in self.grid_slots:
-            if existing.element is visual:
+            if existing.element is node:
                 raise ValueError(
-                    f"Visual {getattr(visual, 'visual_id', '?')!r} is "
-                    f"already placed on sheet {self.sheet_id!r}. A visual "
-                    f"can occupy at most one grid slot — placing it twice "
-                    f"emits duplicate ElementIds."
+                    f"{kind_label} {id_for_msg!r} is already placed on "
+                    f"sheet {self.sheet_id!r}. A node can occupy at most "
+                    f"one grid slot — placing it twice emits duplicate "
+                    f"ElementIds."
                 )
         slot = GridSlot(
-            element=visual,
-            col_span=col_span,
-            row_span=row_span,
-            col_index=col_index,
-            row_index=row_index,
-        )
-        self.grid_slots.append(slot)
-        return slot
-
-    def place_text_box(
-        self,
-        text_box: SheetTextBox,
-        *,
-        col_span: int,
-        row_span: int,
-        col_index: int,
-        row_index: int | None = None,
-    ) -> GridSlot:
-        """Place a registered text box into the grid layout.
-
-        Construction-time checks mirror ``place()``:
-        - The text box must already be registered on this sheet via
-          ``add_text_box()`` (catches the wrong-sheet bug class).
-        - The text box must not already be placed in the grid layout
-          (placing the same text box twice emits duplicate ElementIds,
-          which QuickSight rejects).
-
-        Emit-side: the slot dispatches on type so the resulting
-        ``GridLayoutElement`` carries ``ElementType=TEXT_BOX`` and
-        ``ElementId=text_box.SheetTextBoxId`` rather than the visual
-        defaults.
-        """
-        if text_box not in self.text_boxes:
-            raise ValueError(
-                f"TextBox {text_box.SheetTextBoxId!r} isn't registered on "
-                f"this sheet — call add_text_box() first."
-            )
-        for existing in self.grid_slots:
-            if existing.element is text_box:
-                raise ValueError(
-                    f"TextBox {text_box.SheetTextBoxId!r} is already "
-                    f"placed on sheet {self.sheet_id!r}. A text box can "
-                    f"occupy at most one grid slot — placing it twice "
-                    f"emits duplicate ElementIds."
-                )
-        slot = GridSlot(
-            element=text_box,
+            element=node,
             col_span=col_span,
             row_span=row_span,
             col_index=col_index,
@@ -323,7 +315,10 @@ class Sheet:
                 [c.emit() for c in self.parameter_controls]
                 if self.parameter_controls else None
             ),
-            TextBoxes=self.text_boxes if self.text_boxes else None,
+            TextBoxes=(
+                [tb.emit() for tb in self.text_boxes]
+                if self.text_boxes else None
+            ),
             Layouts=[
                 Layout(
                     Configuration=LayoutConfiguration(

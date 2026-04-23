@@ -24,12 +24,12 @@ from quicksight_gen.apps.investigation.constants import (
 )
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
-from quicksight_gen.common.models import SheetTextBox
 from quicksight_gen.common.theme import get_preset
 from quicksight_gen.common.tree import (
     Analysis,
     App,
     Sheet,
+    TextBox,
 )
 
 
@@ -57,9 +57,9 @@ def _build_getting_started_sheet(cfg: Config, analysis: Analysis) -> Sheet:
         ),
     ))
 
-    welcome = sheet.add_text_box(SheetTextBox(
-        SheetTextBoxId="inv-gs-welcome",
-        Content=rt.text_box(
+    welcome = sheet.add_text_box(TextBox(
+        text_box_id="inv-gs-welcome",
+        content=rt.text_box(
             rt.inline(
                 "Investigation Dashboard",
                 font_size="36px",
@@ -77,9 +77,9 @@ def _build_getting_started_sheet(cfg: Config, analysis: Analysis) -> Sheet:
             ),
         ),
     ))
-    roadmap = sheet.add_text_box(SheetTextBox(
-        SheetTextBoxId="inv-gs-roadmap",
-        Content=rt.text_box(
+    roadmap = sheet.add_text_box(TextBox(
+        text_box_id="inv-gs-roadmap",
+        content=rt.text_box(
             rt.heading("Sheets in this dashboard", color=accent),
             rt.BR,
             rt.BR,
@@ -96,8 +96,8 @@ def _build_getting_started_sheet(cfg: Config, analysis: Analysis) -> Sheet:
         ),
     ))
 
-    sheet.place_text_box(welcome, col_span=_FULL, row_span=5, col_index=0)
-    sheet.place_text_box(roadmap, col_span=_FULL, row_span=6, col_index=0)
+    sheet.place(welcome, col_span=_FULL, row_span=5, col_index=0)
+    sheet.place(roadmap, col_span=_FULL, row_span=6, col_index=0)
 
     return sheet
 

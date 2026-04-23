@@ -51,8 +51,9 @@ threading a typed parameter ref through ``DrillParam`` →
 **Locked decisions** (see PLAN.md Phase L):
 
 - Cross-references are object refs, not string IDs. ``GridSlot.element``
-  takes a visual node or text box; ``FilterGroup.scope_visuals`` takes
-  ``(sheet, [visual, ...])``; drill destinations take ``Sheet`` refs.
+  takes any ``LayoutNode`` (typed visuals + ``TextBox``);
+  ``FilterGroup.scope_visuals`` takes ``(sheet, [visual, ...])``;
+  drill destinations take ``Sheet`` refs.
 - IDs appear once — at the constructor of the node that owns them.
   Per-app ``constants.py`` modules collapse: every other reference
   is the local Python variable holding the node ref.
@@ -133,9 +134,11 @@ from quicksight_gen.common.tree.structure import (
     App,
     Dashboard,
     GridSlot,
+    LayoutNode,
     ParameterControlNode,
     Sheet,
 )
+from quicksight_gen.common.tree.text_boxes import TextBox
 from quicksight_gen.common.tree.visuals import (
     KPI,
     BarChart,
@@ -156,6 +159,10 @@ __all__ = [
     "ParameterDeclLike", "StringParam", "IntegerParam", "DateTimeParam",
     # Visuals
     "VisualLike", "VisualNode", "KPI", "Table", "BarChart", "Sankey",
+    # Text boxes (typed wrapper for landing-page rich text)
+    "TextBox",
+    # Layout
+    "LayoutNode",
     # Filters
     "FilterGroup", "FilterLike",
     "CategoryFilter", "NumericRangeFilter", "TimeRangeFilter",
