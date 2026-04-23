@@ -71,30 +71,6 @@ from quicksight_gen.apps.investigation.datasets import (
     build_all_datasets,
 )
 from quicksight_gen.apps.investigation.demo_data import generate_demo_sql
-from quicksight_gen.apps.investigation.filters import (
-    AMOUNT_SLIDER_MAX,
-    AMOUNT_SLIDER_MIN,
-    DEFAULT_ANOMALIES_SIGMA,
-    DEFAULT_FANOUT_THRESHOLD,
-    DEFAULT_MONEY_TRAIL_MAX_HOPS,
-    DEFAULT_MONEY_TRAIL_MIN_AMOUNT,
-    HOPS_SLIDER_MAX,
-    HOPS_SLIDER_MIN,
-    SIGMA_SLIDER_MAX,
-    SIGMA_SLIDER_MIN,
-    SLIDER_MAX,
-    SLIDER_MIN,
-    build_account_network_filter_controls,
-    build_account_network_parameter_controls,
-    build_anomalies_filter_controls,
-    build_anomalies_parameter_controls,
-    build_fanout_filter_controls,
-    build_fanout_parameter_controls,
-    build_filter_groups,
-    build_money_trail_filter_controls,
-    build_money_trail_parameter_controls,
-    build_parameter_declarations,
-)
 from quicksight_gen.cli import main
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.models import SheetVisualScopingConfiguration
@@ -109,6 +85,52 @@ _TEST_CFG = Config(
         "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
     ),
 )
+
+
+# L.2.13 — Persona-defaults that the imperative ``filters.py`` carried as
+# named constants. Inlined as literals here so the assertions describe the
+# persona's intended UX (slider runs 1–20, sigma 1–4, etc.) instead of
+# tautologically re-checking that the same constant flows through. The
+# tree's ``apps/investigation/app.py`` keeps its own private copies; if
+# either side drifts, the assertions in this file fail loudly.
+SLIDER_MIN = 1
+SLIDER_MAX = 20
+DEFAULT_FANOUT_THRESHOLD = 5
+SIGMA_SLIDER_MIN = 1
+SIGMA_SLIDER_MAX = 4
+DEFAULT_ANOMALIES_SIGMA = 2
+HOPS_SLIDER_MIN = 1
+HOPS_SLIDER_MAX = 10
+DEFAULT_MONEY_TRAIL_MAX_HOPS = 5
+AMOUNT_SLIDER_MIN = 0
+AMOUNT_SLIDER_MAX = 1000
+DEFAULT_MONEY_TRAIL_MIN_AMOUNT = 0
+
+
+def _filter_groups(cfg: Config = _TEST_CFG) -> list:
+    """Walk the tree's emitted filter groups (post-resolve)."""
+    return build_analysis(cfg).Definition.FilterGroups
+
+
+def _parameter_declarations(cfg: Config = _TEST_CFG) -> list:
+    """Walk the tree's emitted parameter declarations (post-resolve)."""
+    return build_analysis(cfg).Definition.ParameterDeclarations
+
+
+def _sheet_by_id(sheet_id: str, cfg: Config = _TEST_CFG):
+    """Find an emitted Sheet by its `SheetId`."""
+    return next(
+        s for s in build_analysis(cfg).Definition.Sheets
+        if s.SheetId == sheet_id
+    )
+
+
+def _filter_controls(sheet_id: str, cfg: Config = _TEST_CFG) -> list:
+    return _sheet_by_id(sheet_id, cfg).FilterControls or []
+
+
+def _parameter_controls(sheet_id: str, cfg: Config = _TEST_CFG) -> list:
+    return _sheet_by_id(sheet_id, cfg).ParameterControls or []
 
 
 def _visual_id_by_title(sheet, title: str) -> str:
@@ -271,7 +293,7 @@ def test_filter_groups_in_expected_order():
     amount), then four K.4.8 account-network filter groups (anchor /
     inbound / outbound / amount). Order is stable so the deployed
     Definition diff is readable."""
-    groups = build_filter_groups(_TEST_CFG)
+    groups = _filter_groups()
     ids = [g.FilterGroupId for g in groups]
     assert ids == [
         FG_INV_FANOUT_WINDOW,
@@ -289,7 +311,7 @@ def test_filter_groups_in_expected_order():
 
 
 def test_threshold_filter_is_parameter_bound_on_calc_field():
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     threshold = groups[FG_INV_FANOUT_THRESHOLD]
     nrf = threshold.Filters[0].NumericRangeFilter
     assert nrf is not None
@@ -303,7 +325,7 @@ def test_threshold_filter_is_parameter_bound_on_calc_field():
 
 
 def test_window_filter_is_a_time_range_on_posted_at():
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     window = groups[FG_INV_FANOUT_WINDOW]
     trf = window.Filters[0].TimeRangeFilter
     assert trf is not None
@@ -315,7 +337,7 @@ def test_parameter_declarations_carry_both_thresholds():
     """Seven parameters: K.4.3 fanout threshold, K.4.4 sigma threshold,
     K.4.5 money-trail root (string) + max-hops + min-amount (integers),
     K.4.8 account-network anchor (string) + min-amount (integer)."""
-    decls = build_parameter_declarations(_TEST_CFG)
+    decls = _parameter_declarations()
     assert len(decls) == 7
     int_by_name = {
         d.IntegerParameterDeclaration.Name: d.IntegerParameterDeclaration
@@ -353,8 +375,8 @@ def test_parameter_declarations_carry_both_thresholds():
 
 
 def test_fanout_sheet_carries_window_filter_and_threshold_slider():
-    fc = build_fanout_filter_controls(_TEST_CFG)
-    pc = build_fanout_parameter_controls(_TEST_CFG)
+    fc = _filter_controls(SHEET_INV_FANOUT)
+    pc = _parameter_controls(SHEET_INV_FANOUT)
     assert len(fc) == 1
     assert fc[0].DateTimePicker is not None  # date range widget
     assert len(pc) == 1
@@ -492,7 +514,7 @@ def test_volume_anomalies_dataset_reads_from_matview():
 # ---------------------------------------------------------------------------
 
 def test_anomalies_window_filter_is_a_time_range_on_window_end():
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     window = groups[FG_INV_ANOMALIES_WINDOW]
     trf = window.Filters[0].TimeRangeFilter
     assert trf is not None
@@ -501,7 +523,7 @@ def test_anomalies_window_filter_is_a_time_range_on_window_end():
 
 
 def test_sigma_filter_is_parameter_bound_on_z_score():
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     sigma = groups[FG_INV_ANOMALIES_SIGMA]
     nrf = sigma.Filters[0].NumericRangeFilter
     assert nrf is not None
@@ -540,7 +562,7 @@ def test_sigma_filter_is_scoped_to_kpi_and_table_only():
 def test_anomalies_window_filter_is_all_visuals_scope():
     """Window filter applies to every visual on the sheet — both the
     KPI/table and the distribution chart should respect the date range."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     window = groups[FG_INV_ANOMALIES_WINDOW]
     sheet_scopes = (
         window.ScopeConfiguration.SelectedSheets.SheetVisualScopingConfigurations
@@ -550,8 +572,8 @@ def test_anomalies_window_filter_is_all_visuals_scope():
 
 
 def test_anomalies_sheet_carries_window_filter_and_sigma_slider():
-    fc = build_anomalies_filter_controls(_TEST_CFG)
-    pc = build_anomalies_parameter_controls(_TEST_CFG)
+    fc = _filter_controls(SHEET_INV_ANOMALIES)
+    pc = _parameter_controls(SHEET_INV_ANOMALIES)
     assert len(fc) == 1
     assert fc[0].DateTimePicker is not None
     assert len(pc) == 1
@@ -671,7 +693,7 @@ def test_money_trail_root_filter_is_parameter_bound_category_filter():
     """The chain root filter is a CategoryFilter with EQUALS match
     operator bound to ``pInvMoneyTrailRoot`` — the dropdown writes a
     single root_transfer_id and the filter narrows to that one chain."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     root = groups[FG_INV_MONEY_TRAIL_ROOT]
     cat = root.Filters[0].CategoryFilter
     assert cat is not None
@@ -686,7 +708,7 @@ def test_money_trail_hops_filter_caps_depth_via_parameter():
     """Max-hops filter is RangeMaximum bound to pInvMoneyTrailMaxHops on
     the depth column. Min-only would be the wrong shape — analysts care
     about ``depth ≤ N``, not a band of depths."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     hops = groups[FG_INV_MONEY_TRAIL_HOPS]
     nrf = hops.Filters[0].NumericRangeFilter
     assert nrf is not None
@@ -702,7 +724,7 @@ def test_money_trail_amount_filter_drops_noise_edges_via_parameter():
     """Min-hop-amount filter is RangeMinimum bound to
     pInvMoneyTrailMinAmount on hop_amount — drops edges below the
     slider so analysts can focus on meaningful flows."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     amt = groups[FG_INV_MONEY_TRAIL_AMOUNT]
     nrf = amt.Filters[0].NumericRangeFilter
     assert nrf is not None
@@ -718,7 +740,7 @@ def test_money_trail_filters_are_all_visuals_scope():
     """Both Sankey and hop-by-hop table reflect the same chain
     selection — every money-trail filter group scopes ALL_VISUALS so
     the visual + table read together as one chain."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     for fg_id in (
         FG_INV_MONEY_TRAIL_ROOT,
         FG_INV_MONEY_TRAIL_HOPS,
@@ -738,7 +760,7 @@ def test_money_trail_root_dropdown_links_to_dataset_column():
     """Dropdown auto-populates from the matview's distinct
     root_transfer_id values via LinkToDataSetColumn — analysts get a
     real list of chains, not an empty text input."""
-    pc = build_money_trail_parameter_controls(_TEST_CFG)
+    pc = _parameter_controls(SHEET_INV_MONEY_TRAIL)
     # 3 controls: root dropdown, hops slider, amount slider.
     assert len(pc) == 3
     dropdown = pc[0].Dropdown
@@ -753,7 +775,7 @@ def test_money_trail_root_dropdown_links_to_dataset_column():
 def test_money_trail_sliders_bind_to_their_parameters():
     """Hops slider + amount slider both wired to their respective
     parameters with the documented bounds."""
-    pc = build_money_trail_parameter_controls(_TEST_CFG)
+    pc = _parameter_controls(SHEET_INV_MONEY_TRAIL)
     hops_slider = pc[1].Slider
     assert hops_slider is not None
     assert hops_slider.SourceParameterName == P_INV_MONEY_TRAIL_MAX_HOPS
@@ -774,7 +796,7 @@ def test_money_trail_sliders_bind_to_their_parameters():
 def test_money_trail_sheet_has_no_filter_controls():
     """All three money-trail surfaces are parameter-bound, so the sheet
     ships with ParameterControls only — no FilterControls widgets."""
-    fc = build_money_trail_filter_controls(_TEST_CFG)
+    fc = _filter_controls(SHEET_INV_MONEY_TRAIL)
     assert fc == []
 
 
@@ -946,7 +968,7 @@ def test_anchor_calc_field_is_ifelse_on_anchor_param():
 def test_anchor_filter_matches_calc_field_on_yes():
     """Anchor filter is a CategoryFilter on the calc field equal to
     'yes' — narrows visuals to edges touching the anchor account."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     anchor = groups[FG_INV_ANETWORK_ANCHOR]
     cf = anchor.Filters[0].CategoryFilter
     assert cf is not None
@@ -960,7 +982,7 @@ def test_anchor_filter_matches_calc_field_on_yes():
 def test_anetwork_amount_filter_drops_noise_edges_via_parameter():
     """Min-amount filter on hop_amount bound to pInvANetworkMinAmount;
     same NumericRangeFilter shape as the money-trail amount slider."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     amount = groups[FG_INV_ANETWORK_AMOUNT]
     nrf = amount.Filters[0].NumericRangeFilter
     assert nrf is not None
@@ -975,7 +997,7 @@ def test_anetwork_amount_filter_drops_noise_edges_via_parameter():
 def test_anetwork_amount_filter_is_all_visuals_scope():
     """The amount filter applies to all three visuals on the sheet
     (both Sankeys + table)."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     sc = groups[FG_INV_ANETWORK_AMOUNT].ScopeConfiguration
     configs = sc.SelectedSheets.SheetVisualScopingConfigurations
     assert len(configs) == 1
@@ -989,9 +1011,9 @@ def test_anetwork_anchor_filter_is_table_only():
     direction-specific filter (is_inbound_edge / is_outbound_edge) so
     the layout itself encodes direction.
 
-    Walks the tree-emitted analysis (post-L.1.21) instead of the
-    imperative ``build_filter_groups`` — the latter has stale visual_id
-    constants that don't match the auto-derived IDs the tree emits."""
+    Walks the tree-emitted analysis. The L.1.21 auto-derived visual_ids
+    are the only IDs in play after L.2.13 retired the imperative
+    builder."""
     analysis = build_analysis(_TEST_CFG)
     groups = {g.FilterGroupId: g for g in analysis.Definition.FilterGroups}
     sc = groups[FG_INV_ANETWORK_ANCHOR].ScopeConfiguration
@@ -1048,7 +1070,7 @@ def test_anetwork_directional_filters_are_category_filters_on_calc_fields():
     """K.4.8i: each directional Sankey's filter is a CategoryFilter
     matching the calc field to 'yes' — the standard pattern for using
     a calc field as a boolean filter."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     for fg_id, expected_col in (
         (FG_INV_ANETWORK_INBOUND, CF_INV_ANETWORK_IS_INBOUND_EDGE),
         (FG_INV_ANETWORK_OUTBOUND, CF_INV_ANETWORK_IS_OUTBOUND_EDGE),
@@ -1071,7 +1093,7 @@ def test_anetwork_anchor_dropdown_links_to_narrow_accounts_dataset():
     work and times out as the matview grows. SelectAll stays HIDDEN
     so QuickSight lands on the first row instead of an empty/All
     state that would render two blank Sankeys."""
-    pc = build_account_network_parameter_controls(_TEST_CFG)
+    pc = _parameter_controls(SHEET_INV_ACCOUNT_NETWORK)
     # 2 controls: anchor dropdown, min-amount slider.
     assert len(pc) == 2
     dropdown = pc[0].Dropdown
@@ -1087,7 +1109,7 @@ def test_anetwork_anchor_dropdown_links_to_narrow_accounts_dataset():
 
 
 def test_anetwork_amount_slider_binds_to_parameter():
-    pc = build_account_network_parameter_controls(_TEST_CFG)
+    pc = _parameter_controls(SHEET_INV_ACCOUNT_NETWORK)
     amount_slider = pc[1].Slider
     assert amount_slider is not None
     assert amount_slider.SourceParameterName == P_INV_ANETWORK_MIN_AMOUNT
@@ -1098,7 +1120,7 @@ def test_anetwork_amount_slider_binds_to_parameter():
 
 def test_account_network_sheet_has_no_filter_controls():
     """All filters parameter-bound; ParameterControls only."""
-    fc = build_account_network_filter_controls(_TEST_CFG)
+    fc = _filter_controls(SHEET_INV_ACCOUNT_NETWORK)
     assert fc == []
 
 
@@ -1363,7 +1385,7 @@ def test_money_trail_root_dropdown_hides_select_all():
     """K.4.8f: Money Trail chain-root dropdown also hides SelectAll —
     a Sankey with no chain root selected renders blank, so 'All' is
     misleading. SelectAll HIDDEN forces QS to land on the first row."""
-    pc = build_money_trail_parameter_controls(_TEST_CFG)
+    pc = _parameter_controls(SHEET_INV_MONEY_TRAIL)
     dropdown = pc[0].Dropdown
     assert dropdown is not None
     assert dropdown.SourceParameterName == P_INV_MONEY_TRAIL_ROOT
