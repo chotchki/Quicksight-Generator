@@ -1224,3 +1224,211 @@ class TestAppDatasetDependencies:
         ))
         with pytest.raises(ValueError, match="references unregistered datasets"):
             app.emit_dashboard()
+
+
+# ---------------------------------------------------------------------------
+# L.1.8 — CalcField tree nodes
+# ---------------------------------------------------------------------------
+
+# Module-level CalcField fixture for the L.1.8 tests. Real apps construct
+# CalcField nodes inside per-app builders; tests use a stand-in.
+_CALC_IS_ANCHOR = None  # populated lazily inside tests so it can carry _DS_FOO
+
+
+def _make_is_anchor() -> "CalcField":
+    """A test-only calc field on _DS_FOO."""
+    from quicksight_gen.common.tree import CalcField as _CF
+    return _CF(
+        name="is_anchor_edge",
+        dataset=_DS_FOO,
+        expression="ifelse({source} = ${pAnchor}, 'yes', 'no')",
+    )
+
+
+class TestCalcField:
+    def test_emit_returns_dict(self):
+        from quicksight_gen.common.tree import CalcField as _CF
+        cf = _CF(
+            name="my_calc", dataset=_DS_FOO, expression="1 + 1",
+        )
+        d = cf.emit()
+        assert d == {
+            "Name": "my_calc",
+            "DataSetIdentifier": "ds-foo",
+            "Expression": "1 + 1",
+        }
+
+    def test_calc_field_is_hashable(self):
+        from quicksight_gen.common.tree import CalcField as _CF
+        a = _CF(name="a", dataset=_DS_FOO, expression="1")
+        b = _CF(name="b", dataset=_DS_FOO, expression="2")
+        assert len({a, b, a}) == 2
+
+
+class TestColumnRefAcceptsCalcField:
+    """Dim / Measure / CategoryFilter / NumericRangeFilter / TimeRangeFilter
+    accept either a string column name OR a CalcField object ref. The
+    CalcField ref carries the calc-field identity through the type
+    checker — typos at the wiring site become compile-time errors
+    (or test-time failures via the unregistered-calc-field check)."""
+
+    def test_dim_accepts_calc_field(self):
+        cf = _make_is_anchor()
+        dim = Dim(dataset=_DS_FOO, field_id="f-1", column=cf)
+        # emit reads name off the calc field
+        emitted = dim.emit()
+        assert emitted.CategoricalDimensionField.Column.ColumnName == "is_anchor_edge"
+        assert dim.calc_field() is cf
+
+    def test_dim_accepts_bare_string(self):
+        dim = Dim(dataset=_DS_FOO, field_id="f-1", column="real_column")
+        emitted = dim.emit()
+        assert emitted.CategoricalDimensionField.Column.ColumnName == "real_column"
+        assert dim.calc_field() is None
+
+    def test_measure_accepts_calc_field(self):
+        cf = _make_is_anchor()
+        m = Measure.count(_DS_FOO, "f-1", cf)
+        emitted = m.emit()
+        assert emitted.CategoricalMeasureField.Column.ColumnName == "is_anchor_edge"
+        assert m.calc_field() is cf
+
+    def test_category_filter_accepts_calc_field(self):
+        cf = _make_is_anchor()
+        f = CategoryFilter(
+            filter_id="f-1", dataset=_DS_FOO, column=cf, values=["yes"],
+        )
+        emitted = f.emit()
+        assert emitted.CategoryFilter.Column.ColumnName == "is_anchor_edge"
+        assert f.calc_field() is cf
+
+
+class TestAnalysisAddCalcField:
+    def test_add_calc_field_returns_ref(self):
+        from quicksight_gen.common.tree import CalcField as _CF
+        analysis = Analysis(analysis_id_suffix="t", name="T")
+        cf = analysis.add_calc_field(_CF(
+            name="my_calc", dataset=_DS_FOO, expression="1 + 1",
+        ))
+        assert cf in analysis.calc_fields
+
+    def test_duplicate_name_rejected(self):
+        from quicksight_gen.common.tree import CalcField as _CF
+        analysis = Analysis(analysis_id_suffix="t", name="T")
+        analysis.add_calc_field(_CF(
+            name="dup", dataset=_DS_FOO, expression="1",
+        ))
+        with pytest.raises(ValueError, match="already on this Analysis"):
+            analysis.add_calc_field(_CF(
+                name="dup", dataset=_DS_FOO, expression="2",
+            ))
+
+    def test_emit_definition_carries_calc_fields(self):
+        from quicksight_gen.common.tree import CalcField as _CF
+        analysis = Analysis(analysis_id_suffix="t", name="T")
+        analysis.add_calc_field(_CF(
+            name="cf-1", dataset=_DS_FOO, expression="x",
+        ))
+        analysis.add_calc_field(_CF(
+            name="cf-2", dataset=_DS_FOO, expression="y",
+        ))
+        defn = analysis.emit_definition(datasets=[_DS_FOO])
+        assert len(defn.CalculatedFields) == 2
+        assert defn.CalculatedFields[0]["Name"] == "cf-1"
+
+    def test_no_calc_fields_emits_none(self):
+        analysis = Analysis(analysis_id_suffix="t", name="T")
+        defn = analysis.emit_definition(datasets=[])
+        assert defn.CalculatedFields is None
+
+
+class TestAppCalcFieldDependencies:
+    """The L.1.8 dependency-graph extension: walk the tree to find
+    every CalcField a visual or filter actually references."""
+
+    def test_calc_fields_referenced_includes_visual_refs(self):
+        cf = _make_is_anchor()
+        app = App(name="t", cfg=_TEST_CFG)
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(
+            analysis_id_suffix="t", name="T",
+        ))
+        analysis.add_calc_field(cf)
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        sheet.add_visual(KPI(
+            visual_id=VisualId("v"), title="V",
+            values=[Measure.count(_DS_FOO, "f", cf)],
+        ))
+        # Tree walks the visual and finds the calc field ref.
+        assert analysis.calc_fields_referenced() == {cf}
+
+    def test_calc_fields_referenced_includes_filter_refs(self):
+        cf = _make_is_anchor()
+        app = App(name="t", cfg=_TEST_CFG)
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(
+            analysis_id_suffix="t", name="T",
+        ))
+        analysis.add_calc_field(cf)
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        kpi = sheet.add_visual(KPI(visual_id=VisualId("v"), title="V"))
+        analysis.add_filter_group(FilterGroup(
+            filter_group_id=FilterGroupId("fg"),
+            filters=[CategoryFilter(
+                filter_id="f-1", dataset=_DS_FOO, column=cf, values=["yes"],
+            )],
+        )).scope_visuals(sheet, [kpi])
+        assert analysis.calc_fields_referenced() == {cf}
+
+    def test_emit_analysis_rejects_unregistered_calc_field(self):
+        """The wrong-calc-field bug class — passing a CalcField that
+        isn't registered on the Analysis. emit_analysis raises with
+        the offending name."""
+        cf = _make_is_anchor()  # NOT registered on the analysis
+        app = App(name="t", cfg=_TEST_CFG)
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(
+            analysis_id_suffix="t", name="T",
+        ))
+        # Skip add_calc_field — the calc field is referenced but unregistered.
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        sheet.add_visual(KPI(
+            visual_id=VisualId("v"), title="V",
+            values=[Measure.count(_DS_FOO, "f", cf)],
+        ))
+        with pytest.raises(ValueError, match="references unregistered calc fields"):
+            app.emit_analysis()
+
+    def test_calc_field_dataset_in_dependency_graph(self):
+        """A registered CalcField's Dataset participates in the App's
+        dataset_dependencies — declaring a calc field on dataset D
+        establishes D as a dep even when no visual touches D's columns."""
+        from quicksight_gen.common.tree import CalcField as _CF
+        cf = _CF(
+            name="standalone_calc", dataset=_DS_ANOMALIES, expression="1",
+        )
+        app = App(name="t", cfg=_TEST_CFG)
+        app.add_dataset(_DS_FOO)
+        app.add_dataset(_DS_ANOMALIES)
+        analysis = app.set_analysis(Analysis(
+            analysis_id_suffix="t", name="T",
+        ))
+        analysis.add_calc_field(cf)
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        # KPI references _DS_FOO directly; calc field references _DS_ANOMALIES
+        sheet.add_visual(KPI(
+            visual_id=VisualId("v"), title="V",
+            values=[Measure.sum(_DS_FOO, "f", "amount")],
+        ))
+        deps = app.dataset_dependencies()
+        # Both datasets show up — _DS_FOO from the visual, _DS_ANOMALIES
+        # from the registered calc field.
+        assert deps == {_DS_FOO, _DS_ANOMALIES}

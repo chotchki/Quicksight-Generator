@@ -35,6 +35,7 @@ from quicksight_gen.common.models import (
 )
 
 from quicksight_gen.common.tree._helpers import _subtitle_label, _title_label
+from quicksight_gen.common.tree.calc_fields import CalcField
 from quicksight_gen.common.tree.datasets import Dataset
 from quicksight_gen.common.tree.fields import Dim, Measure
 
@@ -89,6 +90,10 @@ class KPI:
     def datasets(self) -> set[Dataset]:
         return {m.dataset for m in self.values}
 
+    def calc_fields(self) -> set[CalcField]:
+        """CalcFields this visual references via its field-well leaves."""
+        return {cf for m in self.values if (cf := m.calc_field()) is not None}
+
     def emit(self) -> Visual:
         return Visual(
             KPIVisual=KPIVisual(
@@ -123,6 +128,16 @@ class Table:
     def datasets(self) -> set[Dataset]:
         return ({d.dataset for d in self.group_by}
                 | {m.dataset for m in self.values})
+
+    def calc_fields(self) -> set[CalcField]:
+        deps: set[CalcField] = set()
+        for d in self.group_by:
+            if (cf := d.calc_field()) is not None:
+                deps.add(cf)
+        for m in self.values:
+            if (cf := m.calc_field()) is not None:
+                deps.add(cf)
+        return deps
 
     def emit(self) -> Visual:
         sort_config: Any = None
@@ -169,6 +184,16 @@ class BarChart:
     def datasets(self) -> set[Dataset]:
         return ({d.dataset for d in self.category}
                 | {m.dataset for m in self.values})
+
+    def calc_fields(self) -> set[CalcField]:
+        deps: set[CalcField] = set()
+        for d in self.category:
+            if (cf := d.calc_field()) is not None:
+                deps.add(cf)
+        for m in self.values:
+            if (cf := m.calc_field()) is not None:
+                deps.add(cf)
+        return deps
 
     def emit(self) -> Visual:
         return Visual(
@@ -219,6 +244,15 @@ class Sankey:
             deps.add(self.target.dataset)
         if self.weight is not None:
             deps.add(self.weight.dataset)
+        return deps
+
+    def calc_fields(self) -> set[CalcField]:
+        deps: set[CalcField] = set()
+        for leaf in (self.source, self.target, self.weight):
+            if leaf is None:
+                continue
+            if (cf := leaf.calc_field()) is not None:
+                deps.add(cf)
         return deps
 
     def emit(self) -> Visual:

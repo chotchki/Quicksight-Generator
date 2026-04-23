@@ -24,6 +24,12 @@ from quicksight_gen.common.models import (
     NumericalDimensionField,
     NumericalMeasureField,
 )
+from quicksight_gen.common.tree.calc_fields import (
+    CalcField,
+    ColumnRef,
+    _calc_field_in,
+    _resolve_column,
+)
 from quicksight_gen.common.tree.datasets import Dataset
 
 
@@ -37,30 +43,39 @@ class Dim:
 
     ``dataset`` is a ``Dataset`` object ref — the locked L.1.7 hard
     switch. The dataset must be registered on the parent ``App`` (via
-    ``app.add_dataset()``) for the analysis to emit; the emit-time
-    dependency-graph check raises if not.
+    ``app.add_dataset()``) for the analysis to emit.
+
+    ``column`` accepts either a bare ``str`` (a real column on the
+    dataset) or a ``CalcField`` object ref (an analysis-level
+    calculated field). The CalcField ref carries the calc-field
+    identity through the type checker — the App's emit-time
+    validation catches references to unregistered calc fields.
 
     Default kind is ``categorical`` (the most common); use the
     ``date()`` / ``numerical()`` classmethods for the other variants.
-    ``column`` may name a real dataset column or an analysis-level
-    calc field — the tree treats both the same.
     """
     dataset: Dataset
     field_id: str
-    column: str
+    column: ColumnRef
     kind: DimKind = "categorical"
 
     @classmethod
-    def date(cls, dataset: Dataset, field_id: str, column: str) -> Dim:
+    def date(cls, dataset: Dataset, field_id: str, column: ColumnRef) -> Dim:
         return cls(dataset=dataset, field_id=field_id, column=column, kind="date")
 
     @classmethod
-    def numerical(cls, dataset: Dataset, field_id: str, column: str) -> Dim:
+    def numerical(cls, dataset: Dataset, field_id: str, column: ColumnRef) -> Dim:
         return cls(dataset=dataset, field_id=field_id, column=column, kind="numerical")
+
+    def calc_field(self) -> CalcField | None:
+        """The CalcField this Dim references, or None if it points at
+        a real dataset column. Used by the dependency-graph walk."""
+        return _calc_field_in(self.column)
 
     def emit(self) -> DimensionField:
         col = ColumnIdentifier(
-            DataSetIdentifier=self.dataset.identifier, ColumnName=self.column,
+            DataSetIdentifier=self.dataset.identifier,
+            ColumnName=_resolve_column(self.column),
         )
         if self.kind == "date":
             return DimensionField(
@@ -116,41 +131,47 @@ class Measure:
     """
     dataset: Dataset
     field_id: str
-    column: str
+    column: ColumnRef
     kind: MeasureKind
 
     @classmethod
-    def sum(cls, dataset: Dataset, field_id: str, column: str) -> Measure:
+    def sum(cls, dataset: Dataset, field_id: str, column: ColumnRef) -> Measure:
         return cls(dataset=dataset, field_id=field_id, column=column, kind="sum")
 
     @classmethod
-    def max(cls, dataset: Dataset, field_id: str, column: str) -> Measure:
+    def max(cls, dataset: Dataset, field_id: str, column: ColumnRef) -> Measure:
         return cls(dataset=dataset, field_id=field_id, column=column, kind="max")
 
     @classmethod
-    def min(cls, dataset: Dataset, field_id: str, column: str) -> Measure:
+    def min(cls, dataset: Dataset, field_id: str, column: ColumnRef) -> Measure:
         return cls(dataset=dataset, field_id=field_id, column=column, kind="min")
 
     @classmethod
-    def average(cls, dataset: Dataset, field_id: str, column: str) -> Measure:
+    def average(cls, dataset: Dataset, field_id: str, column: ColumnRef) -> Measure:
         return cls(dataset=dataset, field_id=field_id, column=column, kind="average")
 
     @classmethod
-    def count(cls, dataset: Dataset, field_id: str, column: str) -> Measure:
+    def count(cls, dataset: Dataset, field_id: str, column: ColumnRef) -> Measure:
         return cls(dataset=dataset, field_id=field_id, column=column, kind="count")
 
     @classmethod
     def distinct_count(
-        cls, dataset: Dataset, field_id: str, column: str,
+        cls, dataset: Dataset, field_id: str, column: ColumnRef,
     ) -> Measure:
         return cls(
             dataset=dataset, field_id=field_id, column=column,
             kind="distinct_count",
         )
 
+    def calc_field(self) -> CalcField | None:
+        """The CalcField this Measure references, or None if it points
+        at a real dataset column."""
+        return _calc_field_in(self.column)
+
     def emit(self) -> MeasureField:
         col = ColumnIdentifier(
-            DataSetIdentifier=self.dataset.identifier, ColumnName=self.column,
+            DataSetIdentifier=self.dataset.identifier,
+            ColumnName=_resolve_column(self.column),
         )
         if self.kind in _CATEGORICAL_AGG:
             return MeasureField(

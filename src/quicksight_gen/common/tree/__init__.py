@@ -44,6 +44,7 @@ SankeyDiagramVisual ×2. PieChartVisual is modeled but unused.
 
 from __future__ import annotations
 
+from quicksight_gen.common.tree.calc_fields import CalcField, ColumnRef
 from quicksight_gen.common.tree.datasets import Dataset
 from quicksight_gen.common.tree.fields import (
     Dim,
@@ -86,6 +87,8 @@ from quicksight_gen.common.tree.visuals import (
 __all__ = [
     # Datasets
     "Dataset",
+    # Calc fields
+    "CalcField", "ColumnRef",
     # Field-well leaves
     "Dim", "DimKind", "Measure", "MeasureKind",
     # Parameters

@@ -35,6 +35,7 @@ from quicksight_gen.common.tree._helpers import (
     ANALYSIS_ACTIONS,
     DASHBOARD_ACTIONS,
 )
+from quicksight_gen.common.tree.calc_fields import CalcField
 from quicksight_gen.common.tree.datasets import Dataset
 from quicksight_gen.common.tree.filters import FilterGroup
 from quicksight_gen.common.tree.parameters import ParameterDeclLike
@@ -221,7 +222,7 @@ class Analysis:
     sheets: list[Sheet] = field(default_factory=list)
     parameters: list[ParameterDeclLike] = field(default_factory=list)
     filter_groups: list[FilterGroup] = field(default_factory=list)
-    # CalculatedFields join in L.1.8
+    calc_fields: list[CalcField] = field(default_factory=list)
     # DataSetIdentifierDeclarations come from the App at emit time
 
     def add_sheet(self, sheet: Sheet) -> Sheet:
@@ -265,10 +266,25 @@ class Analysis:
         self.filter_groups.append(fg)
         return fg
 
+    def add_calc_field(self, calc: CalcField) -> CalcField:
+        """Register a calculated field on this analysis.
+
+        Construction-time check: calc field names are unique within
+        the analysis. Two calc fields sharing a Name silently let one
+        win at deploy time — same shadow-bug class as parameters /
+        filter groups / datasets.
+        """
+        if any(c.name == calc.name for c in self.calc_fields):
+            raise ValueError(
+                f"CalcField {calc.name!r} is already on this Analysis"
+            )
+        self.calc_fields.append(calc)
+        return calc
+
     def datasets(self) -> set[Dataset]:
         """Walk the analysis tree and return every Dataset referenced
-        by any visual or filter group. Used by App.dataset_dependencies
-        to derive the precise refresh set.
+        by any visual, filter group, or registered calc field. Used by
+        App.dataset_dependencies to derive the precise refresh set.
 
         Visuals using the spike-shape ``VisualNode`` factory wrapper
         don't expose their dataset refs (the factory hides them).
@@ -276,6 +292,10 @@ class Analysis:
         ``Sankey``) all expose ``datasets()`` and contribute. The
         spike-shape gap closes once apps port to typed subtypes
         (L.2/L.3/L.4).
+
+        Registered CalcFields contribute too — their ``Dataset`` ref
+        becomes a dep even if no visual directly references the
+        underlying columns.
         """
         deps: set[Dataset] = set()
         for sheet in self.sheets:
@@ -284,6 +304,27 @@ class Analysis:
                     deps.update(visual.datasets())
         for fg in self.filter_groups:
             deps.update(fg.datasets())
+        for calc in self.calc_fields:
+            deps.add(calc.dataset)
+        return deps
+
+    def calc_fields_referenced(self) -> set[CalcField]:
+        """Walk the analysis tree and return every CalcField referenced
+        by any visual or filter group. Distinct from ``self.calc_fields``
+        (the registry): this returns only the calc fields actually used.
+
+        Catches "calc field declared but never used" (registered but
+        not in this set) and "calc field used but not declared" (in
+        this set but not in the registry — App._validate_calc_field_
+        references raises on emit).
+        """
+        deps: set[CalcField] = set()
+        for sheet in self.sheets:
+            for visual in sheet.visuals:
+                if hasattr(visual, "calc_fields"):
+                    deps.update(visual.calc_fields())
+        for fg in self.filter_groups:
+            deps.update(fg.calc_fields())
         return deps
 
     def emit_definition(
@@ -300,7 +341,10 @@ class Analysis:
                 [fg.emit() for fg in self.filter_groups]
                 if self.filter_groups else None
             ),
-            CalculatedFields=None,  # L.1.8
+            CalculatedFields=(
+                [c.emit() for c in self.calc_fields]
+                if self.calc_fields else None
+            ),
             ParameterDeclarations=(
                 [p.emit() for p in self.parameters]
                 if self.parameters else None
@@ -425,6 +469,25 @@ class App:
                 f"{ids} — register each via app.add_dataset() first."
             )
 
+    def _validate_calc_field_references(self) -> None:
+        """Raise if the tree references any CalcField not registered on
+        this App's Analysis. Catches "filter / visual references calc
+        field that doesn't exist" at emit time. The string-only
+        column pattern lets that bug flow through to deploy where it
+        renders silently as an empty column."""
+        if self.analysis is None:
+            return
+        referenced = self.analysis.calc_fields_referenced()
+        registered = set(self.analysis.calc_fields)
+        unregistered = referenced - registered
+        if unregistered:
+            names = sorted(c.name for c in unregistered)
+            raise ValueError(
+                f"App {self.name!r} references unregistered calc fields: "
+                f"{names} — register each via "
+                f"app.analysis.add_calc_field() first."
+            )
+
     def _permissions(self, actions: list[str]) -> list[ResourcePermission] | None:
         if not self.cfg.principal_arns:
             return None
@@ -448,6 +511,7 @@ class App:
                 "App has no Analysis — call set_analysis() first."
             )
         self._validate_dataset_references()
+        self._validate_calc_field_references()
         return ModelAnalysis(
             AwsAccountId=self.cfg.aws_account_id,
             AnalysisId=self.cfg.prefixed(self.analysis.analysis_id_suffix),
@@ -466,6 +530,7 @@ class App:
                 "App has no Dashboard — call set_dashboard() first."
             )
         self._validate_dataset_references()
+        self._validate_calc_field_references()
         return ModelDashboard(
             AwsAccountId=self.cfg.aws_account_id,
             DashboardId=self.cfg.prefixed(self.dashboard.dashboard_id_suffix),

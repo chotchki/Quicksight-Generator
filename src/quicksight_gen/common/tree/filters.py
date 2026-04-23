@@ -39,6 +39,12 @@ from quicksight_gen.common.models import FilterGroup as ModelFilterGroup
 from quicksight_gen.common.models import NumericRangeFilter as ModelNumericRangeFilter
 from quicksight_gen.common.models import TimeRangeFilter as ModelTimeRangeFilter
 
+from quicksight_gen.common.tree.calc_fields import (
+    CalcField,
+    ColumnRef,
+    _calc_field_in,
+    _resolve_column,
+)
 from quicksight_gen.common.tree.datasets import Dataset
 from quicksight_gen.common.tree.parameters import ParameterDeclLike
 from quicksight_gen.common.tree.visuals import VisualLike
@@ -94,9 +100,14 @@ class CategoryFilter:
     """
     filter_id: str
     dataset: Dataset
-    column: str
+    column: ColumnRef
     values: list[str]
     match_operator: CategoryMatchOperator = "CONTAINS"
+
+    def calc_field(self) -> CalcField | None:
+        """The CalcField this filter references, or None if it points
+        at a real dataset column."""
+        return _calc_field_in(self.column)
 
     def emit(self) -> Filter:
         return Filter(
@@ -104,7 +115,7 @@ class CategoryFilter:
                 FilterId=self.filter_id,
                 Column=ColumnIdentifier(
                     DataSetIdentifier=self.dataset.identifier,
-                    ColumnName=self.column,
+                    ColumnName=_resolve_column(self.column),
                 ),
                 Configuration=CategoryFilterConfiguration(
                     FilterListConfiguration={
@@ -135,7 +146,7 @@ class NumericRangeFilter:
     """
     filter_id: str
     dataset: Dataset
-    column: str
+    column: ColumnRef
     minimum_parameter: ParameterDeclLike | None = None
     minimum_value: float | None = None
     maximum_parameter: ParameterDeclLike | None = None
@@ -165,13 +176,16 @@ class NumericRangeFilter:
             return NumericRangeFilterValue(StaticValue=value)
         return None
 
+    def calc_field(self) -> CalcField | None:
+        return _calc_field_in(self.column)
+
     def emit(self) -> Filter:
         return Filter(
             NumericRangeFilter=ModelNumericRangeFilter(
                 FilterId=self.filter_id,
                 Column=ColumnIdentifier(
                     DataSetIdentifier=self.dataset.identifier,
-                    ColumnName=self.column,
+                    ColumnName=_resolve_column(self.column),
                 ),
                 NullOption=self.null_option,
                 RangeMinimum=self._range_value(
@@ -191,6 +205,7 @@ class TimeRangeFilter:
     """Filter on a date / datetime column.
 
     ``dataset`` is a ``Dataset`` object ref (L.1.7 hard switch).
+    ``column`` is a ``ColumnRef`` — a real column or a ``CalcField``.
 
     ``minimum`` and ``maximum`` are passthrough dicts for now (the
     existing usage takes a variety of shapes — RollingDate, StaticValue,
@@ -199,7 +214,7 @@ class TimeRangeFilter:
     """
     filter_id: str
     dataset: Dataset
-    column: str
+    column: ColumnRef
     minimum: dict[str, Any] | None = None
     maximum: dict[str, Any] | None = None
     null_option: NullOption = "NON_NULLS_ONLY"
@@ -207,13 +222,16 @@ class TimeRangeFilter:
     include_minimum: bool | None = None
     include_maximum: bool | None = None
 
+    def calc_field(self) -> CalcField | None:
+        return _calc_field_in(self.column)
+
     def emit(self) -> Filter:
         return Filter(
             TimeRangeFilter=ModelTimeRangeFilter(
                 FilterId=self.filter_id,
                 Column=ColumnIdentifier(
                     DataSetIdentifier=self.dataset.identifier,
-                    ColumnName=self.column,
+                    ColumnName=_resolve_column(self.column),
                 ),
                 NullOption=self.null_option,
                 TimeGranularity=self.time_granularity,
@@ -282,6 +300,14 @@ class FilterGroup:
     def datasets(self) -> set[Dataset]:
         """Datasets this group's filters reference (object refs)."""
         return {f.dataset for f in self.filters}
+
+    def calc_fields(self) -> set[CalcField]:
+        """CalcFields this group's filters reference."""
+        deps: set[CalcField] = set()
+        for f in self.filters:
+            if (cf := f.calc_field()) is not None:
+                deps.add(cf)
+        return deps
 
     def scope_sheet(self, sheet: "Sheet") -> FilterGroup:
         """Scope this filter to ALL visuals on a sheet.
