@@ -63,34 +63,10 @@ FG_AR_TODAYS_EXC_ACCOUNT = FilterGroupId("fg-ar-todays-exc-account")
 FG_AR_TODAYS_EXC_AGING = FilterGroupId("fg-ar-todays-exc-aging")
 FG_AR_TODAYS_EXC_IS_LATE = FilterGroupId("fg-ar-todays-exc-is-late")
 
-# Source of truth for tests asserting "every filter group is registered here".
-# Add new FG_AR_* constants and remember to extend this set.
-ALL_FG_AR_IDS: frozenset[FilterGroupId] = frozenset({
-    FG_AR_DATE_RANGE,
-    FG_AR_LEDGER_ACCOUNT,
-    FG_AR_SUBLEDGER_ACCOUNT,
-    FG_AR_TRANSFER_STATUS,
-    FG_AR_TRANSACTION_STATUS,
-    FG_AR_TRANSFER_TYPE,
-    FG_AR_POSTING_LEVEL,
-    FG_AR_ORIGIN,
-    FG_AR_BALANCES_LEDGER_DRIFT,
-    FG_AR_BALANCES_SUBLEDGER_DRIFT,
-    FG_AR_BALANCES_OVERDRAFT,
-    FG_AR_TRANSACTIONS_FAILED,
-    FG_AR_DRILL_SUBLEDGER_ON_TXN,
-    FG_AR_DRILL_TRANSFER_ON_TXN,
-    FG_AR_DRILL_LEDGER_ON_BALANCES_SUBLEDGER,
-    FG_AR_DRILL_ACTIVITY_DATE_ON_TXN,
-    FG_AR_DRILL_TRANSFER_TYPE_ON_TXN,
-    FG_AR_DRILL_ACCOUNT_ON_TXN,
-    FG_AR_DS_ACCOUNT,
-    FG_AR_DS_BALANCE_DATE,
-    FG_AR_TODAYS_EXC_CHECK_TYPE,
-    FG_AR_TODAYS_EXC_ACCOUNT,
-    FG_AR_TODAYS_EXC_AGING,
-    FG_AR_TODAYS_EXC_IS_LATE,
-})
+# L.3.9 — `ALL_FG_AR_IDS` aggregate dropped. The source of truth for
+# "every filter group registered" is now the tree itself: walk
+# ``build_account_recon_app(cfg).analysis.filter_groups`` post-resolve.
+# Tests that need the canonical set call into the tree builder.
 
 # ---------------------------------------------------------------------------
 # Drill / cross-sheet parameters
@@ -115,16 +91,8 @@ P_AR_DS_ACCOUNT = DrillParam(ParameterName("pArDsAccountId"), ColumnShape.ACCOUN
 P_AR_DS_BALANCE_DATE = DrillParam(ParameterName("pArDsBalanceDate"),
                                   ColumnShape.DATETIME_DAY)
 
-ALL_P_AR: tuple[DrillParam, ...] = (
-    P_AR_SUBLEDGER,
-    P_AR_LEDGER,
-    P_AR_TRANSFER,
-    P_AR_ACTIVITY_DATE,
-    P_AR_TRANSFER_TYPE,
-    P_AR_ACCOUNT,
-    P_AR_DS_ACCOUNT,
-    P_AR_DS_BALANCE_DATE,
-)
+# L.3.9 — `ALL_P_AR` aggregate dropped. Walk the tree's parameters
+# instead: ``build_account_recon_app(cfg).analysis.parameters``.
 
 # ---------------------------------------------------------------------------
 # Visual IDs
@@ -177,34 +145,6 @@ V_AR_EXC_EXPECTED_ZERO_ROLLUP_TABLE = VisualId("ar-exc-expected-zero-rollup-tabl
 V_AR_EXC_TRENDS_AGING_MATRIX = VisualId("ar-exc-trends-aging-matrix")
 V_AR_EXC_TRENDS_PER_CHECK = VisualId("ar-exc-trends-per-check")
 
-ALL_V_AR: frozenset[VisualId] = frozenset({
-    V_AR_BALANCES_KPI_LEDGERS,
-    V_AR_BALANCES_KPI_SUBLEDGERS,
-    V_AR_BALANCES_LEDGER_TABLE,
-    V_AR_BALANCES_SUBLEDGER_TABLE,
-    V_AR_TRANSFERS_KPI_COUNT,
-    V_AR_TRANSFERS_KPI_UNHEALTHY,
-    V_AR_TRANSFERS_BAR_STATUS,
-    V_AR_TRANSFERS_SUMMARY_TABLE,
-    V_AR_TXN_KPI_COUNT,
-    V_AR_TXN_KPI_FAILED,
-    V_AR_TXN_BAR_BY_STATUS,
-    V_AR_TXN_BAR_BY_DAY,
-    V_AR_TXN_DETAIL_TABLE,
-    V_AR_DS_KPI_OPENING,
-    V_AR_DS_KPI_DEBITS,
-    V_AR_DS_KPI_CREDITS,
-    V_AR_DS_KPI_CLOSING,
-    V_AR_DS_KPI_DRIFT,
-    V_AR_DS_TRANSACTIONS_TABLE,
-    V_AR_TODAYS_EXC_KPI_TOTAL,
-    V_AR_TODAYS_EXC_BREAKDOWN,
-    V_AR_TODAYS_EXC_TABLE,
-    V_AR_EXC_DRIFT_TIMELINES_ROLLUP,
-    V_AR_EXC_KPI_TWO_SIDED_ROLLUP,
-    V_AR_EXC_TWO_SIDED_ROLLUP_TABLE,
-    V_AR_EXC_KPI_EXPECTED_ZERO_ROLLUP,
-    V_AR_EXC_EXPECTED_ZERO_ROLLUP_TABLE,
-    V_AR_EXC_TRENDS_AGING_MATRIX,
-    V_AR_EXC_TRENDS_PER_CHECK,
-})
+# L.3.9 — `ALL_V_AR` aggregate dropped. Walk the tree's emitted visuals
+# instead: `[v.visual_id for s in app.analysis.sheets for v in s.visuals]`
+# (post-emit, after auto-IDs resolve).

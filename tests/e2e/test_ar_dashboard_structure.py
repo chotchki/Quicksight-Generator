@@ -13,8 +13,6 @@ from __future__ import annotations
 import pytest
 
 from quicksight_gen.apps.account_recon.constants import (
-    ALL_FG_AR_IDS,
-    ALL_P_AR,
     FG_AR_DRILL_LEDGER_ON_BALANCES_SUBLEDGER,
     V_AR_BALANCES_SUBLEDGER_TABLE,
     V_AR_DS_KPI_CLOSING,
@@ -38,6 +36,26 @@ def ar_dashboard_definition(qs_client, account_id, ar_dashboard_id) -> dict:
         DashboardId=ar_dashboard_id,
     )
     return resp["Definition"]
+
+
+@pytest.fixture(scope="module")
+def ar_app():
+    """L.3.9 — typed AR App handle. Aggregates `ALL_FG_AR_IDS` /
+    `ALL_P_AR` were dropped from constants.py; the tree's emitted
+    filter-group + parameter sets are the source of truth now. Module
+    scope mirrors `ar_dashboard_definition`."""
+    from quicksight_gen.apps.account_recon.app import build_account_recon_app
+    from quicksight_gen.common.config import Config
+
+    cfg = Config(
+        aws_account_id="111122223333",
+        aws_region="us-west-2",
+        datasource_arn="arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds",
+        theme_preset="default",
+    )
+    app = build_account_recon_app(cfg)
+    app.emit_analysis()
+    return app
 
 
 def _visual_ids(sheet: dict) -> list[str]:
@@ -169,18 +187,21 @@ class TestParameters:
                     names.add(decl["Name"])
         return names
 
-    def test_drill_down_parameters(self, ar_dashboard_definition):
+    def test_drill_down_parameters(self, ar_dashboard_definition, ar_app):
         # 6 drill-down parameters (Phase D + K.2 pArAccountId) + 2 Daily
         # Statement parameters (Phase I.2). pArDsBalanceDate is a DateTime
-        # parameter; the rest are String parameters.
-        assert self._names(ar_dashboard_definition) == {p.name for p in ALL_P_AR}
+        # parameter; the rest are String parameters. Tree-walked source
+        # of truth: `app.analysis.parameters`.
+        expected = {p.name for p in ar_app.analysis.parameters}
+        assert self._names(ar_dashboard_definition) == expected
 
 
 class TestFilterGroups:
-    def test_filter_group_ids(self, ar_dashboard_definition):
+    def test_filter_group_ids(self, ar_dashboard_definition, ar_app):
         groups = ar_dashboard_definition.get("FilterGroups", [])
         ids = {g["FilterGroupId"] for g in groups}
-        assert ids == ALL_FG_AR_IDS
+        expected = {fg.filter_group_id for fg in ar_app.analysis.filter_groups}
+        assert ids == expected
 
     def test_filter_group_ids_unique(self, ar_dashboard_definition):
         groups = ar_dashboard_definition.get("FilterGroups", [])

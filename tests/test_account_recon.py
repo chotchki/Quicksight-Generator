@@ -21,8 +21,6 @@ import pytest
 from click.testing import CliRunner
 
 from quicksight_gen.apps.account_recon.constants import (
-    ALL_FG_AR_IDS,
-    ALL_P_AR,
     FG_AR_BALANCES_LEDGER_DRIFT,
     FG_AR_BALANCES_OVERDRAFT,
     FG_AR_BALANCES_SUBLEDGER_DRIFT,
@@ -2122,6 +2120,29 @@ def ar_output_dir(tmp_path: Path) -> Path:
     return out
 
 
+@pytest.fixture()
+def ar_app():
+    """L.3.9 — typed AR App handle for tests that previously consumed
+    `ALL_FG_AR_IDS` / `ALL_P_AR` / `ALL_V_AR` aggregates from
+    constants.py. The tree's emitted sets are the source of truth now;
+    fixtures hand the App back so each test walks the same shape the
+    deployed dashboard will see."""
+    from quicksight_gen.apps.account_recon.app import build_account_recon_app
+    from quicksight_gen.common.config import Config
+
+    cfg = Config(
+        aws_account_id="111122223333",
+        aws_region="us-west-2",
+        datasource_arn="arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds",
+        theme_preset="default",
+    )
+    app = build_account_recon_app(cfg)
+    # Trigger emit so auto-IDs resolve — tests expect resolved IDs on
+    # the tree nodes they walk.
+    app.emit_analysis()
+    return app
+
+
 def _load(out_dir: Path, name: str) -> dict:
     return json.loads((out_dir / name).read_text())
 
@@ -2371,10 +2392,14 @@ class TestFilterGroups:
     5 drill-down parameter filters + Daily Statement (account/date) +
     Today's Exceptions (check-type/account/aging) filter groups."""
 
-    def test_filter_group_ids(self, ar_output_dir):
+    def test_filter_group_ids(self, ar_output_dir, ar_app):
+        """Compare emitted-JSON FilterGroupIds against the tree's
+        registered set (post-resolve). Same shape as L.2.8 did for
+        Investigation."""
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
         ids = {fg["FilterGroupId"] for fg in analysis["Definition"]["FilterGroups"]}
-        assert ids == ALL_FG_AR_IDS
+        expected = {fg.filter_group_id for fg in ar_app.analysis.filter_groups}
+        assert ids == expected
 
     def test_date_range_scopes_five_tabs(self, ar_output_dir):
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
@@ -2544,7 +2569,14 @@ class TestParameterDeclarations:
     """Phase 5 drill-downs use single-valued string parameters; the
     Daily Statement balance-date drill uses one date-time parameter."""
 
-    _STRING_PARAMS = {p.name for p in ALL_P_AR if p is not P_AR_DS_BALANCE_DATE}
+    # Hardcoded — these mirror the imperative declaration set. The
+    # canonical list lives in `apps/account_recon/app.py::_wire_parameters`;
+    # if a new AR parameter lands, add it here.
+    _STRING_PARAMS = frozenset({
+        P_AR_SUBLEDGER.name, P_AR_LEDGER.name, P_AR_TRANSFER.name,
+        P_AR_ACTIVITY_DATE.name, P_AR_TRANSFER_TYPE.name,
+        P_AR_ACCOUNT.name, P_AR_DS_ACCOUNT.name,
+    })
     _DATETIME_PARAMS = {P_AR_DS_BALANCE_DATE.name}
 
     def _split(self, params: list[dict]) -> tuple[list[dict], list[dict]]:
