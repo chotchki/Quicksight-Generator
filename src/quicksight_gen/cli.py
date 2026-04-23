@@ -193,7 +193,7 @@ def _generate_account_recon(
 def _generate_investigation(
     config_path: str, output_dir: str, theme_preset: str | None,
 ) -> None:
-    from quicksight_gen.apps.investigation.analysis import (
+    from quicksight_gen.apps.investigation.app import (
         build_analysis,
         build_investigation_dashboard,
     )
@@ -406,7 +406,7 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     from quicksight_gen.apps.account_recon.demo_data import (
         generate_demo_sql as generate_ar_sql,
     )
-    from quicksight_gen.apps.investigation.analysis import (
+    from quicksight_gen.apps.investigation.app import (
         build_analysis as build_inv_analysis,
         build_investigation_dashboard,
     )

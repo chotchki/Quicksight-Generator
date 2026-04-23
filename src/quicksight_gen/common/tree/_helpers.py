@@ -48,4 +48,5 @@ DASHBOARD_ACTIONS = [
     "quicksight:DeleteDashboard",
     "quicksight:DescribeDashboardPermissions",
     "quicksight:UpdateDashboardPublishedVersion",
+    "quicksight:UpdateDashboardLinks",
 ]

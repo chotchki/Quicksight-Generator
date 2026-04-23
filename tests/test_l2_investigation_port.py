@@ -23,8 +23,14 @@ from quicksight_gen.apps.investigation.analysis import (
     _build_money_trail_sheet as _imperative_money_trail,
     _build_recipient_fanout_sheet as _imperative_recipient_fanout,
     _build_volume_anomalies_sheet as _imperative_volume_anomalies,
+    build_analysis as _imperative_build_analysis,
+    build_investigation_dashboard as _imperative_build_dashboard,
 )
-from quicksight_gen.apps.investigation.app import build_investigation_app
+from quicksight_gen.apps.investigation.app import (
+    build_analysis as _tree_build_analysis,
+    build_investigation_app,
+    build_investigation_dashboard as _tree_build_dashboard,
+)
 from quicksight_gen.apps.investigation.constants import (
     SHEET_INV_ACCOUNT_NETWORK,
     SHEET_INV_ANOMALIES,
@@ -180,3 +186,46 @@ def test_l2_5_account_network_sheet_byte_identical():
         SHEET_INV_ACCOUNT_NETWORK,
         _imperative_account_network(_TEST_CFG),
     )
+
+
+def _full_to_json(model) -> dict:
+    return model.to_aws_json()
+
+
+def test_l2_6_analysis_full_app_byte_identical():
+    """L.2.6 — full Analysis JSON matches the imperative builder.
+
+    The per-sheet tests above prove each SheetDefinition is byte-
+    identical, but the App-level emit also ships dataset declarations,
+    parameter declarations, calc fields, and filter groups in their
+    own ordered lists. This test diffs the entire ``Analysis.to_aws_json()``
+    output to confirm those top-level slices match too — pre-CLI-swap
+    safety net.
+    """
+    imperative = _full_to_json(_imperative_build_analysis(_TEST_CFG))
+    tree = _full_to_json(_tree_build_analysis(_TEST_CFG))
+    if imperative != tree:
+        diff = _diff_json(imperative, tree)
+        pytest.fail(
+            "L.2.6: full Analysis JSON diverges from imperative builder.\n\n"
+            f"Diff:\n{diff}"
+        )
+
+
+def test_l2_6_dashboard_full_app_byte_identical():
+    """L.2.6 — full Dashboard JSON matches the imperative builder."""
+    imperative = _full_to_json(_imperative_build_dashboard(_TEST_CFG))
+    tree = _full_to_json(_tree_build_dashboard(_TEST_CFG))
+    if imperative != tree:
+        diff = _diff_json(imperative, tree)
+        pytest.fail(
+            "L.2.6: full Dashboard JSON diverges from imperative builder.\n\n"
+            f"Diff:\n{diff}"
+        )
+
+
+def test_l2_6_app_round_trip_through_json():
+    """Sanity: the App emits valid JSON-serializable output."""
+    app = build_investigation_app(_TEST_CFG)
+    json.dumps(app.emit_analysis().to_aws_json())
+    json.dumps(app.emit_dashboard().to_aws_json())

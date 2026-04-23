@@ -71,6 +71,8 @@ from quicksight_gen.common.dataset_contract import ColumnShape
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.theme import get_preset
+from quicksight_gen.common.models import Analysis as ModelAnalysis
+from quicksight_gen.common.models import Dashboard as ModelDashboard
 from quicksight_gen.common.tree import (
     KPI,
     Analysis,
@@ -78,6 +80,7 @@ from quicksight_gen.common.tree import (
     BarChart,
     CalcField,
     CategoryFilter,
+    Dashboard,
     Dataset,
     Dim,
     Drill,
@@ -838,6 +841,9 @@ def _build_account_network_sheet(
         description=_ACCOUNT_NETWORK_DESCRIPTION,
     ))
 
+    # All three Drills below are walk-the-flow (same-sheet) actions —
+    # they leave target_sheet unset and App._resolve_auto_ids() back-
+    # fills it with the owning sheet at emit time.
     inbound_sankey = sheet.add_visual(Sankey(
         visual_id=V_INV_ANETWORK_SANKEY_INBOUND,
         title="Inbound — counterparties → anchor",
@@ -856,7 +862,6 @@ def _build_account_network_sheet(
         ),
         items_limit=_SANKEY_NODE_CAP,
         actions=[Drill(
-            target_sheet=None,  # filled in below — Drill needs sheet ref
             writes=[(
                 DrillParam(P_INV_ANETWORK_ANCHOR, ColumnShape.ACCOUNT_DISPLAY),
                 DrillSourceField(
@@ -887,7 +892,6 @@ def _build_account_network_sheet(
         ),
         items_limit=_SANKEY_NODE_CAP,
         actions=[Drill(
-            target_sheet=None,
             writes=[(
                 DrillParam(P_INV_ANETWORK_ANCHOR, ColumnShape.ACCOUNT_DISPLAY),
                 DrillSourceField(
@@ -931,7 +935,6 @@ def _build_account_network_sheet(
         )],
         sort_by=("inv-anetwork-tbl-amount", "DESC"),
         actions=[Drill(
-            target_sheet=None,
             writes=[(
                 DrillParam(P_INV_ANETWORK_ANCHOR, ColumnShape.ACCOUNT_DISPLAY),
                 DrillSourceField(
@@ -944,12 +947,6 @@ def _build_account_network_sheet(
             action_id="action-anetwork-table-walk-counterparty",
         )],
     ))
-
-    # All three drills navigate to this same sheet — back-fill the
-    # target_sheet refs now that the Sheet exists.
-    for visual in (inbound_sankey, outbound_sankey, table):
-        for action in visual.actions:
-            action.target_sheet = sheet
 
     # Layout: two Sankeys side-by-side on top, full-width table below.
     half_width = _FULL // 2
@@ -1044,17 +1041,50 @@ def _build_account_network_sheet(
 def build_investigation_app(cfg: Config) -> App:
     """Build the Investigation App tree.
 
-    Grows one sheet per L.2.x sub-step; L.2.6 attaches the Dashboard
-    and swaps the CLI's analysis/dashboard build path to this function.
+    Returns a fully-wired App ready for ``app.emit_analysis()`` /
+    ``app.emit_dashboard()``. The CLI calls this via the
+    ``build_analysis`` / ``build_investigation_dashboard`` shims below.
     """
+    analysis_name = _analysis_name(cfg)
     app = App(name="investigation", cfg=cfg)
     analysis = app.set_analysis(Analysis(
         analysis_id_suffix="investigation-analysis",
-        name="Investigation",
+        name=analysis_name,
     ))
     _build_getting_started_sheet(cfg, analysis)
     _build_recipient_fanout_sheet(cfg, app, analysis)
     _build_volume_anomalies_sheet(cfg, app, analysis)
     _build_money_trail_sheet(cfg, app, analysis)
     _build_account_network_sheet(cfg, app, analysis)
+    app.set_dashboard(Dashboard(
+        dashboard_id_suffix="investigation-dashboard",
+        name=analysis_name,
+        analysis=analysis,
+    ))
     return app
+
+
+def _analysis_name(cfg: Config) -> str:
+    """Mirrors apps/investigation/analysis._analysis_name — preset
+    prefix when the preset declares one, else just "Investigation"."""
+    preset = get_preset(cfg.theme_preset)
+    if preset.analysis_name_prefix:
+        return f"{preset.analysis_name_prefix} — Investigation"
+    return "Investigation"
+
+
+# ---------------------------------------------------------------------------
+# Public CLI shims — drop-in replacements for the imperative
+# ``apps.investigation.analysis.build_analysis`` /
+# ``build_investigation_dashboard``. Same signatures, byte-identical
+# JSON, just routed through the typed tree.
+# ---------------------------------------------------------------------------
+
+def build_analysis(cfg: Config) -> ModelAnalysis:
+    """Tree-backed replacement for the imperative ``build_analysis``."""
+    return build_investigation_app(cfg).emit_analysis()
+
+
+def build_investigation_dashboard(cfg: Config) -> ModelDashboard:
+    """Tree-backed replacement for the imperative builder."""
+    return build_investigation_app(cfg).emit_dashboard()

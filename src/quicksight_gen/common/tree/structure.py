@@ -700,7 +700,10 @@ class App:
                     visual.visual_id = VisualId(
                         f"v-{kind}-s{sheet_idx}-{visual_idx}",
                     )
-                # Drill action IDs (sheet+visual scoped).
+                # Drill action IDs (sheet+visual scoped). Same-sheet
+                # drills (target_sheet=None at construction) get the
+                # owning sheet back-filled here — the cycle closes the
+                # same time IDs resolve.
                 actions = getattr(visual, "actions", None)
                 if actions:
                     for action_idx, action in enumerate(actions):
@@ -708,6 +711,8 @@ class App:
                             action.action_id = (
                                 f"act-s{sheet_idx}-v{visual_idx}-{action_idx}"
                             )
+                        if hasattr(action, "target_sheet") and action.target_sheet is None:
+                            action.target_sheet = sheet
             # Parameter controls — auto-IDs scoped to the sheet.
             for ctrl_idx, ctrl in enumerate(sheet.parameter_controls):
                 kind = getattr(ctrl, "_AUTO_KIND", None)

@@ -62,9 +62,20 @@ DrillWrite = tuple[DrillParam, DrillWriteValue]
 class Drill:
     """One custom action on a Visual.
 
-    ``target_sheet`` is a typed ``Sheet`` object ref. At emit time
-    the App walker reads ``.sheet_id`` to populate the underlying
-    NavigationOperation's TargetSheetId.
+    ``target_sheet`` is the destination ``Sheet`` object ref. Two
+    binding modes:
+
+    - **Cross-sheet drill** — pass an explicit ``target_sheet=sheet``.
+      The drill navigates to that sheet (and writes parameter values
+      to it).
+    - **Same-sheet drill** (the walk-the-flow / re-render-around-new-anchor
+      pattern) — leave ``target_sheet`` as ``None``. ``App._resolve_auto_ids``
+      back-fills the field with the sheet that owns the visual carrying
+      the drill, so the author never types ``target_sheet=this_sheet``
+      when wiring a drill inside the function that builds the sheet.
+      Resolves the chicken-and-egg cycle (sheet doesn't exist yet when
+      the drill is constructed inside ``Sheet.add_visual(...)``) without
+      a back-fill loop at the call site.
 
     ``writes`` is a list of ``(DrillParam, DrillSourceField | DrillResetSentinel)``
     tuples — same shape K.2 introduced. The ``DrillParam`` carries
@@ -82,17 +93,22 @@ class Drill:
     the name doesn't surface in the UI but is still required by the
     underlying model.
     """
-    target_sheet: "Sheet"
     writes: list[DrillWrite]
     name: str
     trigger: Literal["DATA_POINT_CLICK", "DATA_POINT_MENU"] = "DATA_POINT_CLICK"
     action_id: str | None = None
+    target_sheet: "Sheet | None" = None
 
     _AUTO_KIND: ClassVar[str] = "drill"
 
     def emit(self) -> VisualCustomAction:
         assert self.action_id is not None, (
             "action_id wasn't resolved — App._resolve_auto_ids() must run."
+        )
+        assert self.target_sheet is not None, (
+            "target_sheet wasn't resolved — App._resolve_auto_ids() must "
+            "run before Drill.emit(). Same-sheet drills get back-filled "
+            "with the owning sheet automatically."
         )
         return _emit_cross_sheet_drill(
             action_id=self.action_id,
