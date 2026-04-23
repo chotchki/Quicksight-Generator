@@ -39,7 +39,7 @@ from quicksight_gen.common.tree._helpers import _subtitle_label, _title_label
 from quicksight_gen.common.tree.actions import Drill
 from quicksight_gen.common.tree.calc_fields import CalcField
 from quicksight_gen.common.tree.datasets import Dataset
-from quicksight_gen.common.tree.fields import Dim, Measure
+from quicksight_gen.common.tree.fields import Dim, FieldRef, Measure, _resolve_field_id
 
 
 @runtime_checkable
@@ -172,7 +172,7 @@ class Table:
     subtitle: str | None = None
     group_by: list[Dim] = field(default_factory=list)
     values: list[Measure] = field(default_factory=list)
-    sort_by: tuple[str, Literal["ASC", "DESC"]] | None = None
+    sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None
     actions: list[Drill] = field(default_factory=list)
     visual_id: VisualId | None = None
 
@@ -206,10 +206,13 @@ class Table:
         )
         sort_config: Any = None
         if self.sort_by is not None:
-            field_id, direction = self.sort_by
+            ref, direction = self.sort_by
             sort_config = {
                 "RowSort": [
-                    {"FieldSort": {"FieldId": field_id, "Direction": direction}},
+                    {"FieldSort": {
+                        "FieldId": _resolve_field_id(ref),
+                        "Direction": direction,
+                    }},
                 ],
             }
         return Visual(
@@ -256,7 +259,7 @@ class BarChart:
     bars_arrangement: Literal[
         "CLUSTERED", "STACKED", "STACKED_PERCENT",
     ] | None = None
-    sort_by: tuple[str, Literal["ASC", "DESC"]] | None = None
+    sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None
     actions: list[Drill] = field(default_factory=list)
     visual_id: VisualId | None = None
 
@@ -290,10 +293,13 @@ class BarChart:
         )
         sort_config: BarChartSortConfiguration | None = None
         if self.sort_by is not None:
-            field_id, direction = self.sort_by
+            ref, direction = self.sort_by
             sort_config = BarChartSortConfiguration(
                 CategorySort=[
-                    {"FieldSort": {"FieldId": field_id, "Direction": direction}},
+                    {"FieldSort": {
+                        "FieldId": _resolve_field_id(ref),
+                        "Direction": direction,
+                    }},
                 ],
             )
         return Visual(
@@ -383,7 +389,7 @@ class Sankey:
                 sort_config_kwargs["WeightSort"] = [
                     {
                         "FieldSort": {
-                            "FieldId": self.weight.field_id,
+                            "FieldId": _resolve_field_id(self.weight),
                             "Direction": "DESC",
                         },
                     },

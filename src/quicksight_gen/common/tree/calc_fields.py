@@ -24,38 +24,60 @@ Dependency graph (L.1.7 + L.1.8):
   dataset participates in ``App.dataset_dependencies()`` so
   declaring a calc field on dataset D establishes D as a dep even
   when no visual directly references D's columns.
+
+Auto-name (L.2.6 follow-up): ``name`` is Optional. When omitted, the
+App walker assigns ``calc-{idx}`` at emit time based on the calc
+field's index in ``analysis.calc_fields``. Pass an explicit ``name=``
+when the calc field's column header text matters to analysts (the name
+becomes the underlying ColumnName in the data model — analyst-facing
+unless a visual's label options override it).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from quicksight_gen.common.dataset_contract import ColumnShape
 from quicksight_gen.common.tree.datasets import Dataset
 
 
-@dataclass(frozen=True)
+@dataclass(eq=False)
 class CalcField:
     """Tree node for one analysis-level calculated field.
 
     ``name`` is the column-style identifier visuals/filters reference
-    (e.g. ``"is_anchor_edge"`` — the existing ``CF_INV_*`` constant
-    string values). ``dataset`` is the ``Dataset`` object ref the
-    expression evaluates against. ``expression`` is the QuickSight
-    calc expression (e.g. ``"ifelse({source} = ${pAnchor}, 'yes', 'no')"``).
+    (e.g. ``"is_anchor_edge"``). Optional — auto-derived as
+    ``calc-{idx}`` at emit time when not specified.
 
-    Frozen because CalcField is referenced by object identity from
-    Dim/Measure/Filter column slots and used as a registry key —
-    must be hashable.
+    ``dataset`` is the ``Dataset`` object ref the expression evaluates
+    against. ``expression`` is the QuickSight calc expression
+    (e.g. ``"ifelse({source} = ${pAnchor}, 'yes', 'no')"``).
+
+    ``shape`` is Optional and only matters for drill sources: when a
+    drill action reads this calc field's value (via a ``Dim`` /
+    ``Measure`` object ref in the drill's ``writes``), the tree needs
+    a ``ColumnShape`` to type-check the drill parameter binding. Tag
+    here once rather than re-passing the shape at every drill site.
+
+    Identity-keyed (``eq=False``) so the auto-name resolver can mutate
+    the ``name`` field at emit time. CalcFields stay hashable via the
+    default object identity hash, which is what the dependency-graph
+    set membership needs anyway.
 
     Emits a plain dict that drops straight into
     ``AnalysisDefinition.CalculatedFields`` — same shape the existing
     builders write today.
     """
-    name: str
     dataset: Dataset
     expression: str
+    name: str | None = None
+    shape: ColumnShape | None = None
 
     def emit(self) -> dict:
+        assert self.name is not None, (
+            "name wasn't resolved — App._resolve_auto_ids() must run "
+            "before CalcField.emit()."
+        )
         return {
             "Name": self.name,
             "DataSetIdentifier": self.dataset.identifier,

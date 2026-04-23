@@ -85,7 +85,6 @@ from quicksight_gen.common.tree import (
     Dim,
     Drill,
     DrillParam,
-    DrillSourceField,
     FilterDateTimePicker,
     FilterGroup,
     IntegerParam,
@@ -281,6 +280,8 @@ def _build_recipient_fanout_sheet(
         default=[_DEFAULT_FANOUT_THRESHOLD],
     ))
 
+    # Calc field name kept explicit (CF_INV_FANOUT_DISTINCT_SENDERS)
+    # because analysts see the column name in the table header.
     distinct_senders_calc = analysis.add_calc_field(CalcField(
         name=CF_INV_FANOUT_DISTINCT_SENDERS,
         dataset=ds_fanout,
@@ -301,9 +302,7 @@ def _build_recipient_fanout_sheet(
         visual_id=V_INV_FANOUT_KPI_RECIPIENTS,
         title="Qualifying Recipients",
         subtitle="Distinct recipients meeting the fanout threshold.",
-        values=[Measure.distinct_count(
-            ds_fanout, "inv-fanout-kpi-recipients-val", "recipient_account_id",
-        )],
+        values=[Measure.distinct_count(ds_fanout, "recipient_account_id")],
     ))
     kpi_senders = sheet.add_visual(KPI(
         visual_id=V_INV_FANOUT_KPI_SENDERS,
@@ -311,9 +310,7 @@ def _build_recipient_fanout_sheet(
         subtitle=(
             "Distinct sender accounts feeding the qualifying recipients."
         ),
-        values=[Measure.distinct_count(
-            ds_fanout, "inv-fanout-kpi-senders-val", "sender_account_id",
-        )],
+        values=[Measure.distinct_count(ds_fanout, "sender_account_id")],
     ))
     kpi_amount = sheet.add_visual(KPI(
         visual_id=V_INV_FANOUT_KPI_AMOUNT,
@@ -321,10 +318,9 @@ def _build_recipient_fanout_sheet(
         subtitle=(
             "Sum of inbound amounts across qualifying recipient legs."
         ),
-        values=[Measure.sum(
-            ds_fanout, "inv-fanout-kpi-amount-val", "amount",
-        )],
+        values=[Measure.sum(ds_fanout, "amount")],
     ))
+    distinct_senders_value = Measure.max(ds_fanout, distinct_senders_calc)
     table = sheet.add_visual(Table(
         visual_id=V_INV_FANOUT_TABLE,
         title="Recipient Fanout — Ranked",
@@ -333,26 +329,16 @@ def _build_recipient_fanout_sheet(
             "(highest = widest funnel)."
         ),
         group_by=[
-            Dim(ds_fanout, "inv-fanout-tbl-recipient-id",
-                "recipient_account_id"),
-            Dim(ds_fanout, "inv-fanout-tbl-recipient-name",
-                "recipient_account_name"),
-            Dim(ds_fanout, "inv-fanout-tbl-recipient-type",
-                "recipient_account_type"),
+            Dim(ds_fanout, "recipient_account_id"),
+            Dim(ds_fanout, "recipient_account_name"),
+            Dim(ds_fanout, "recipient_account_type"),
         ],
         values=[
-            Measure.max(
-                ds_fanout, "inv-fanout-tbl-distinct-senders",
-                distinct_senders_calc,
-            ),
-            Measure.distinct_count(
-                ds_fanout, "inv-fanout-tbl-transfer-count", "transfer_id",
-            ),
-            Measure.sum(
-                ds_fanout, "inv-fanout-tbl-amount-total", "amount",
-            ),
+            distinct_senders_value,
+            Measure.distinct_count(ds_fanout, "transfer_id"),
+            Measure.sum(ds_fanout, "amount"),
         ],
-        sort_by=("inv-fanout-tbl-distinct-senders", "DESC"),
+        sort_by=(distinct_senders_value, "DESC"),
     ))
 
     # Row 1: 3 KPIs each ⅓ width.
@@ -459,11 +445,9 @@ def _build_volume_anomalies_sheet(
         subtitle=(
             "Pair-windows whose 2-day rolling SUM clears the σ threshold."
         ),
-        values=[Measure.count(
-            ds_anomalies, "inv-anomalies-kpi-flagged-val",
-            "recipient_account_id",
-        )],
+        values=[Measure.count(ds_anomalies, "recipient_account_id")],
     ))
+    dist_bucket_dim = Dim(ds_anomalies, "z_bucket")
     distribution = sheet.add_visual(BarChart(
         visual_id=V_INV_ANOMALIES_DISTRIBUTION,
         title="Pair-Window σ Distribution",
@@ -471,17 +455,13 @@ def _build_volume_anomalies_sheet(
             "Pair-windows bucketed by |z-score| against the population "
             "mean. Chart is intentionally NOT filtered by the σ slider."
         ),
-        category=[Dim(
-            ds_anomalies, "inv-anomalies-dist-bucket", "z_bucket",
-        )],
-        values=[Measure.count(
-            ds_anomalies, "inv-anomalies-dist-count",
-            "recipient_account_id",
-        )],
+        category=[dist_bucket_dim],
+        values=[Measure.count(ds_anomalies, "recipient_account_id")],
         orientation="VERTICAL",
         bars_arrangement="CLUSTERED",
-        sort_by=("inv-anomalies-dist-bucket", "ASC"),
+        sort_by=(dist_bucket_dim, "ASC"),
     ))
+    z_score_max = Measure.max(ds_anomalies, "z_score")
     table = sheet.add_visual(Table(
         visual_id=V_INV_ANOMALIES_TABLE,
         title="Flagged Pair-Windows — Ranked",
@@ -490,26 +470,18 @@ def _build_volume_anomalies_sheet(
             "(highest = furthest from the population mean)."
         ),
         group_by=[
-            Dim(ds_anomalies, "inv-anomalies-tbl-recipient-id",
-                "recipient_account_id"),
-            Dim(ds_anomalies, "inv-anomalies-tbl-recipient-name",
-                "recipient_account_name"),
-            Dim(ds_anomalies, "inv-anomalies-tbl-sender-id",
-                "sender_account_id"),
-            Dim(ds_anomalies, "inv-anomalies-tbl-sender-name",
-                "sender_account_name"),
-            Dim.date(ds_anomalies, "inv-anomalies-tbl-window-end",
-                     "window_end"),
+            Dim(ds_anomalies, "recipient_account_id"),
+            Dim(ds_anomalies, "recipient_account_name"),
+            Dim(ds_anomalies, "sender_account_id"),
+            Dim(ds_anomalies, "sender_account_name"),
+            Dim.date(ds_anomalies, "window_end"),
         ],
         values=[
-            Measure.max(ds_anomalies, "inv-anomalies-tbl-z-score",
-                        "z_score"),
-            Measure.max(ds_anomalies, "inv-anomalies-tbl-window-sum",
-                        "window_sum"),
-            Measure.max(ds_anomalies, "inv-anomalies-tbl-transfer-count",
-                        "transfer_count"),
+            z_score_max,
+            Measure.max(ds_anomalies, "window_sum"),
+            Measure.max(ds_anomalies, "transfer_count"),
         ],
-        sort_by=("inv-anomalies-tbl-z-score", "DESC"),
+        sort_by=(z_score_max, "DESC"),
     ))
 
     # Layout: KPI ⅓ + Distribution ⅔ × 2 row span; Table full-width.
@@ -633,15 +605,12 @@ def _build_money_trail_sheet(
             "transfers don't render here — see the detail table for "
             "every chain member."
         ),
-        source=Dim(ds_money_trail, "inv-money-trail-sankey-source",
-                   "source_account_name"),
-        target=Dim(ds_money_trail, "inv-money-trail-sankey-target",
-                   "target_account_name"),
-        weight=Measure.sum(
-            ds_money_trail, "inv-money-trail-sankey-weight", "hop_amount",
-        ),
+        source=Dim(ds_money_trail, "source_account_name"),
+        target=Dim(ds_money_trail, "target_account_name"),
+        weight=Measure.sum(ds_money_trail, "hop_amount"),
         items_limit=_SANKEY_NODE_CAP,
     ))
+    depth_dim = Dim.numerical(ds_money_trail, "depth")
     table = sheet.add_visual(Table(
         visual_id=V_INV_MONEY_TRAIL_TABLE,
         title="Money Trail — Hop-by-Hop",
@@ -650,23 +619,15 @@ def _build_money_trail_sheet(
             "by depth."
         ),
         group_by=[
-            Dim.numerical(ds_money_trail, "inv-money-trail-tbl-depth",
-                          "depth"),
-            Dim(ds_money_trail, "inv-money-trail-tbl-transfer-id",
-                "transfer_id"),
-            Dim(ds_money_trail, "inv-money-trail-tbl-transfer-type",
-                "transfer_type"),
-            Dim(ds_money_trail, "inv-money-trail-tbl-source-name",
-                "source_account_name"),
-            Dim(ds_money_trail, "inv-money-trail-tbl-target-name",
-                "target_account_name"),
-            Dim.date(ds_money_trail, "inv-money-trail-tbl-posted-at",
-                     "posted_at"),
+            depth_dim,
+            Dim(ds_money_trail, "transfer_id"),
+            Dim(ds_money_trail, "transfer_type"),
+            Dim(ds_money_trail, "source_account_name"),
+            Dim(ds_money_trail, "target_account_name"),
+            Dim.date(ds_money_trail, "posted_at"),
         ],
-        values=[Measure.sum(
-            ds_money_trail, "inv-money-trail-tbl-amount", "hop_amount",
-        )],
-        sort_by=("inv-money-trail-tbl-depth", "ASC"),
+        values=[Measure.sum(ds_money_trail, "hop_amount")],
+        sort_by=(depth_dim, "ASC"),
     ))
 
     # Layout: Sankey ⅔ width on the left, table ⅓ width on the right.
@@ -800,6 +761,8 @@ def _build_account_network_sheet(
         default=[_DEFAULT_MONEY_TRAIL_MIN_AMOUNT],
     ))
 
+    # Calc field names kept explicit because they're referenced by
+    # the constants module + analysts read them as column headers.
     is_anchor_edge = analysis.add_calc_field(CalcField(
         name=CF_INV_ANETWORK_IS_ANCHOR_EDGE,
         dataset=ds_anet,
@@ -825,6 +788,8 @@ def _build_account_network_sheet(
             "'yes', 'no')"
         ),
     ))
+    # counterparty_display is shape-tagged so the table's walk-the-flow
+    # drill can derive the parameter shape from the calc-field ref.
     counterparty_display = analysis.add_calc_field(CalcField(
         name=CF_INV_ANETWORK_COUNTERPARTY_DISPLAY,
         dataset=ds_anet,
@@ -832,6 +797,7 @@ def _build_account_network_sheet(
             "ifelse({source_display} = ${pInvANetworkAnchor}, "
             "{target_display}, {source_display})"
         ),
+        shape=ColumnShape.ACCOUNT_DISPLAY,
     ))
 
     sheet = analysis.add_sheet(Sheet(
@@ -842,8 +808,14 @@ def _build_account_network_sheet(
     ))
 
     # All three Drills below are walk-the-flow (same-sheet) actions —
-    # they leave target_sheet unset and App._resolve_auto_ids() back-
-    # fills it with the owning sheet at emit time.
+    # target_sheet auto-resolves to the owning sheet at emit time, and
+    # the drill source is a Dim object ref (field_id + shape resolve
+    # off the Dim's dataset contract / calc-field shape tag).
+    anchor_param_drill = DrillParam(
+        P_INV_ANETWORK_ANCHOR, ColumnShape.ACCOUNT_DISPLAY,
+    )
+
+    inbound_source_dim = Dim(ds_anet, "source_display")
     inbound_sankey = sheet.add_visual(Sankey(
         visual_id=V_INV_ANETWORK_SANKEY_INBOUND,
         title="Inbound — counterparties → anchor",
@@ -853,27 +825,18 @@ def _build_account_network_sheet(
             "node (or its ribbon) to walk the anchor over to that "
             "counterparty."
         ),
-        source=Dim(ds_anet, "inv-anetwork-sankey-in-source",
-                   "source_display"),
-        target=Dim(ds_anet, "inv-anetwork-sankey-in-target",
-                   "target_display"),
-        weight=Measure.sum(
-            ds_anet, "inv-anetwork-sankey-in-weight", "hop_amount",
-        ),
+        source=inbound_source_dim,
+        target=Dim(ds_anet, "target_display"),
+        weight=Measure.sum(ds_anet, "hop_amount"),
         items_limit=_SANKEY_NODE_CAP,
         actions=[Drill(
-            writes=[(
-                DrillParam(P_INV_ANETWORK_ANCHOR, ColumnShape.ACCOUNT_DISPLAY),
-                DrillSourceField(
-                    field_id="inv-anetwork-sankey-in-source",
-                    shape=ColumnShape.ACCOUNT_DISPLAY,
-                ),
-            )],
+            writes=[(anchor_param_drill, inbound_source_dim)],
             name="Walk to this counterparty",
             trigger="DATA_POINT_CLICK",
             action_id="action-anetwork-sankey-inbound-walk",
         )],
     ))
+    outbound_target_dim = Dim(ds_anet, "target_display")
     outbound_sankey = sheet.add_visual(Sankey(
         visual_id=V_INV_ANETWORK_SANKEY_OUTBOUND,
         title="Outbound — anchor → counterparties",
@@ -883,27 +846,19 @@ def _build_account_network_sheet(
             "node (or its ribbon) to walk the anchor over to that "
             "counterparty."
         ),
-        source=Dim(ds_anet, "inv-anetwork-sankey-out-source",
-                   "source_display"),
-        target=Dim(ds_anet, "inv-anetwork-sankey-out-target",
-                   "target_display"),
-        weight=Measure.sum(
-            ds_anet, "inv-anetwork-sankey-out-weight", "hop_amount",
-        ),
+        source=Dim(ds_anet, "source_display"),
+        target=outbound_target_dim,
+        weight=Measure.sum(ds_anet, "hop_amount"),
         items_limit=_SANKEY_NODE_CAP,
         actions=[Drill(
-            writes=[(
-                DrillParam(P_INV_ANETWORK_ANCHOR, ColumnShape.ACCOUNT_DISPLAY),
-                DrillSourceField(
-                    field_id="inv-anetwork-sankey-out-target",
-                    shape=ColumnShape.ACCOUNT_DISPLAY,
-                ),
-            )],
+            writes=[(anchor_param_drill, outbound_target_dim)],
             name="Walk to this counterparty",
             trigger="DATA_POINT_CLICK",
             action_id="action-anetwork-sankey-outbound-walk",
         )],
     ))
+    counterparty_dim = Dim(ds_anet, counterparty_display)
+    table_amount = Measure.sum(ds_anet, "hop_amount")
     table = sheet.add_visual(Table(
         visual_id=V_INV_ANETWORK_TABLE,
         title="Account Network — Touching Edges",
@@ -918,30 +873,18 @@ def _build_account_network_sheet(
             "control text."
         ),
         group_by=[
-            Dim(ds_anet, "inv-anetwork-tbl-transfer-id", "transfer_id"),
-            Dim(ds_anet, "inv-anetwork-tbl-transfer-type",
-                "transfer_type"),
-            Dim(ds_anet, "inv-anetwork-tbl-source-display",
-                "source_display"),
-            Dim(ds_anet, "inv-anetwork-tbl-target-display",
-                "target_display"),
-            Dim(ds_anet, "inv-anetwork-tbl-counterparty",
-                counterparty_display),
-            Dim.numerical(ds_anet, "inv-anetwork-tbl-depth", "depth"),
-            Dim.date(ds_anet, "inv-anetwork-tbl-posted-at", "posted_at"),
+            Dim(ds_anet, "transfer_id"),
+            Dim(ds_anet, "transfer_type"),
+            Dim(ds_anet, "source_display"),
+            Dim(ds_anet, "target_display"),
+            counterparty_dim,
+            Dim.numerical(ds_anet, "depth"),
+            Dim.date(ds_anet, "posted_at"),
         ],
-        values=[Measure.sum(
-            ds_anet, "inv-anetwork-tbl-amount", "hop_amount",
-        )],
-        sort_by=("inv-anetwork-tbl-amount", "DESC"),
+        values=[table_amount],
+        sort_by=(table_amount, "DESC"),
         actions=[Drill(
-            writes=[(
-                DrillParam(P_INV_ANETWORK_ANCHOR, ColumnShape.ACCOUNT_DISPLAY),
-                DrillSourceField(
-                    field_id="inv-anetwork-tbl-counterparty",
-                    shape=ColumnShape.ACCOUNT_DISPLAY,
-                ),
-            )],
+            writes=[(anchor_param_drill, counterparty_dim)],
             name="Walk to other account on this edge",
             trigger="DATA_POINT_MENU",
             action_id="action-anetwork-table-walk-counterparty",

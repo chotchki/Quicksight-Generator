@@ -34,10 +34,12 @@ from quicksight_gen.common.drill import (
 from quicksight_gen.common.drill import DrillParam as _DrillParam
 from quicksight_gen.common.models import VisualCustomAction
 
+from quicksight_gen.common.tree.calc_fields import CalcField, _calc_field_in
+from quicksight_gen.common.tree.fields import Dim, Measure
 from quicksight_gen.common.tree.parameters import ParameterDeclLike
 # Sheet is referenced via TYPE_CHECKING — same trick as filters.py
 # uses for the FilterGroup → Sheet ref. Avoids circular import.
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
 if TYPE_CHECKING:
     from quicksight_gen.common.tree.structure import Sheet
 
@@ -52,10 +54,54 @@ __all__ = [
 ]
 
 
-# A typed drill write — pairs a destination DrillParam with either a
-# source field (read the value off the clicked data point) or a reset
-# sentinel (clear the param to PASS).
-DrillWrite = tuple[DrillParam, DrillWriteValue]
+# A typed drill write — pairs a destination DrillParam with one of:
+# - Dim / Measure object ref (the Sankey source column, the Table
+#   counterparty calc-field column, etc.) — Drill.emit() resolves the
+#   field_id + shape via the dataset contract at emit time.
+# - DrillSourceField — explicit field_id + shape pair, kept as the
+#   escape hatch when callers need to override the auto-resolved shape.
+# - DrillResetSentinel — clears the parameter to PASS.
+DrillWriteSource = Union[Dim, Measure, DrillSourceField, DrillResetSentinel]
+DrillWrite = tuple[DrillParam, DrillWriteSource]
+
+
+def _resolve_drill_source(
+    source: DrillWriteSource,
+) -> Union[DrillSourceField, DrillResetSentinel]:
+    """Convert a tree-side drill write source into the K.2 type.
+
+    Dim / Measure refs are translated:
+    - field_id read off the (now-resolved) leaf
+    - shape pulled from the dataset contract for real columns; from
+      ``CalcField.shape`` for calc-field columns
+
+    DrillSourceField / DrillResetSentinel pass through unchanged.
+    """
+    if isinstance(source, (DrillSourceField, DrillResetSentinel)):
+        return source
+    # Dim / Measure path — resolve field_id + shape.
+    leaf = source
+    assert leaf.field_id is not None, (
+        "Drill source field_id wasn't resolved — App._resolve_auto_ids() "
+        "must run before Drill.emit()."
+    )
+    calc = _calc_field_in(leaf.column)
+    if calc is not None:
+        if calc.shape is None:
+            raise TypeError(
+                f"Drill source {leaf.field_id!r} reads calc field "
+                f"{calc.name!r} but the calc field has no ``shape`` tag — "
+                f"set ``shape=ColumnShape.<X>`` on the CalcField so the "
+                f"drill parameter binding can type-check."
+            )
+        return DrillSourceField(field_id=leaf.field_id, shape=calc.shape)
+    # Real column path — derive shape from the dataset contract.
+    from quicksight_gen.common.drill import field_source
+    return field_source(
+        field_id=leaf.field_id,
+        dataset_id=leaf.dataset.identifier,
+        column_name=leaf.column,
+    )
 
 
 @dataclass(eq=False)
@@ -110,10 +156,14 @@ class Drill:
             "run before Drill.emit(). Same-sheet drills get back-filled "
             "with the owning sheet automatically."
         )
+        resolved_writes = [
+            (param, _resolve_drill_source(source))
+            for param, source in self.writes
+        ]
         return _emit_cross_sheet_drill(
             action_id=self.action_id,
             name=self.name,
             target_sheet=self.target_sheet.sheet_id,
-            writes=self.writes,
+            writes=resolved_writes,
             trigger=self.trigger,
         )

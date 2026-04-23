@@ -6,11 +6,19 @@ aggregated values). These tree nodes wrap them with typed factories
 (``Dim.date(...)``, ``Measure.sum(...)``) so construction-time typing
 drives what the visual gets, rather than hand-wiring the underlying
 models every time.
+
+Auto field_id (L.1.16): both ``Dim`` and ``Measure`` accept an
+optional ``field_id`` keyword. When omitted, the App walker assigns
+``f-{visual_kind}-s{sheet_idx}-v{visual_idx}-{role}{slot_idx}`` at
+emit time. Authors typically pass ``Dim(ds, "column_name")`` and
+reference the leaf via Python variable for sort / drill plumbing
+(both accept ``Dim`` / ``Measure`` object refs in addition to bare
+field-id strings).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from quicksight_gen.common.models import (
@@ -36,7 +44,7 @@ from quicksight_gen.common.tree.datasets import Dataset
 DimKind = Literal["categorical", "date", "numerical"]
 
 
-@dataclass
+@dataclass(eq=False)
 class Dim:
     """One dimension field-well entry — typed wrapper that emits a
     ``DimensionField`` of the appropriate kind.
@@ -53,19 +61,39 @@ class Dim:
 
     Default kind is ``categorical`` (the most common); use the
     ``date()`` / ``numerical()`` classmethods for the other variants.
+
+    ``field_id`` is keyword-only and Optional (L.1.16 auto-ID). When
+    omitted, the App walker assigns one based on the leaf's tree
+    position. Pass an explicit ``field_id="..."`` only when external
+    consumers (browser e2e selectors, etc.) need a stable id —
+    cross-reference plumbing (sort_by, drill writes) accepts the
+    leaf object directly.
+
+    Identity-keyed (``eq=False``) so the auto-id resolver can mutate
+    the field_id at emit time. Dim leaves stay hashable via the
+    default object identity hash, which lets the dependency graph
+    set-membership check work.
     """
     dataset: Dataset
-    field_id: str
     column: ColumnRef
     kind: DimKind = "categorical"
+    field_id: str | None = field(default=None, kw_only=True)
 
     @classmethod
-    def date(cls, dataset: Dataset, field_id: str, column: ColumnRef) -> Dim:
-        return cls(dataset=dataset, field_id=field_id, column=column, kind="date")
+    def date(
+        cls, dataset: Dataset, column: ColumnRef,
+        *, field_id: str | None = None,
+    ) -> Dim:
+        return cls(dataset=dataset, column=column, kind="date", field_id=field_id)
 
     @classmethod
-    def numerical(cls, dataset: Dataset, field_id: str, column: ColumnRef) -> Dim:
-        return cls(dataset=dataset, field_id=field_id, column=column, kind="numerical")
+    def numerical(
+        cls, dataset: Dataset, column: ColumnRef,
+        *, field_id: str | None = None,
+    ) -> Dim:
+        return cls(
+            dataset=dataset, column=column, kind="numerical", field_id=field_id,
+        )
 
     def calc_field(self) -> CalcField | None:
         """The CalcField this Dim references, or None if it points at
@@ -73,6 +101,10 @@ class Dim:
         return _calc_field_in(self.column)
 
     def emit(self) -> DimensionField:
+        assert self.field_id is not None, (
+            "field_id wasn't resolved — App._resolve_auto_ids() must run "
+            "before Dim.emit()."
+        )
         col = ColumnIdentifier(
             DataSetIdentifier=self.dataset.identifier,
             ColumnName=_resolve_column(self.column),
@@ -114,7 +146,7 @@ _CATEGORICAL_AGG = {
 }
 
 
-@dataclass
+@dataclass(eq=False)
 class Measure:
     """One value field-well entry — typed wrapper that emits a
     ``MeasureField`` with the appropriate aggregation shape.
@@ -123,6 +155,10 @@ class Measure:
     dataset must be registered on the parent ``App`` for the analysis
     to emit.
 
+    ``field_id`` is keyword-only and Optional (L.1.16 auto-ID). When
+    omitted, the App walker assigns one based on the leaf's tree
+    position.
+
     Use the classmethod factories for ergonomic construction:
     ``Measure.sum(...)``, ``Measure.distinct_count(...)``, etc.
     Aggregation kind determines which underlying model class is
@@ -130,37 +166,55 @@ class Measure:
     categorical on count-style aggregations).
     """
     dataset: Dataset
-    field_id: str
     column: ColumnRef
     kind: MeasureKind
+    field_id: str | None = field(default=None, kw_only=True)
 
     @classmethod
-    def sum(cls, dataset: Dataset, field_id: str, column: ColumnRef) -> Measure:
-        return cls(dataset=dataset, field_id=field_id, column=column, kind="sum")
+    def sum(
+        cls, dataset: Dataset, column: ColumnRef,
+        *, field_id: str | None = None,
+    ) -> Measure:
+        return cls(dataset=dataset, column=column, kind="sum", field_id=field_id)
 
     @classmethod
-    def max(cls, dataset: Dataset, field_id: str, column: ColumnRef) -> Measure:
-        return cls(dataset=dataset, field_id=field_id, column=column, kind="max")
+    def max(
+        cls, dataset: Dataset, column: ColumnRef,
+        *, field_id: str | None = None,
+    ) -> Measure:
+        return cls(dataset=dataset, column=column, kind="max", field_id=field_id)
 
     @classmethod
-    def min(cls, dataset: Dataset, field_id: str, column: ColumnRef) -> Measure:
-        return cls(dataset=dataset, field_id=field_id, column=column, kind="min")
+    def min(
+        cls, dataset: Dataset, column: ColumnRef,
+        *, field_id: str | None = None,
+    ) -> Measure:
+        return cls(dataset=dataset, column=column, kind="min", field_id=field_id)
 
     @classmethod
-    def average(cls, dataset: Dataset, field_id: str, column: ColumnRef) -> Measure:
-        return cls(dataset=dataset, field_id=field_id, column=column, kind="average")
+    def average(
+        cls, dataset: Dataset, column: ColumnRef,
+        *, field_id: str | None = None,
+    ) -> Measure:
+        return cls(
+            dataset=dataset, column=column, kind="average", field_id=field_id,
+        )
 
     @classmethod
-    def count(cls, dataset: Dataset, field_id: str, column: ColumnRef) -> Measure:
-        return cls(dataset=dataset, field_id=field_id, column=column, kind="count")
+    def count(
+        cls, dataset: Dataset, column: ColumnRef,
+        *, field_id: str | None = None,
+    ) -> Measure:
+        return cls(dataset=dataset, column=column, kind="count", field_id=field_id)
 
     @classmethod
     def distinct_count(
-        cls, dataset: Dataset, field_id: str, column: ColumnRef,
+        cls, dataset: Dataset, column: ColumnRef,
+        *, field_id: str | None = None,
     ) -> Measure:
         return cls(
-            dataset=dataset, field_id=field_id, column=column,
-            kind="distinct_count",
+            dataset=dataset, column=column, kind="distinct_count",
+            field_id=field_id,
         )
 
     def calc_field(self) -> CalcField | None:
@@ -169,6 +223,10 @@ class Measure:
         return _calc_field_in(self.column)
 
     def emit(self) -> MeasureField:
+        assert self.field_id is not None, (
+            "field_id wasn't resolved — App._resolve_auto_ids() must run "
+            "before Measure.emit()."
+        )
         col = ColumnIdentifier(
             DataSetIdentifier=self.dataset.identifier,
             ColumnName=_resolve_column(self.column),
@@ -190,3 +248,21 @@ class Measure:
                 ),
             ),
         )
+
+
+# Type alias used everywhere a sort/drill plumbing slot accepts either
+# a leaf object ref or a bare field_id string. Object refs are the
+# preferred form (the tree resolves the field_id at emit time so
+# auto-IDed leaves work without exposing the synthesized id).
+FieldRef = Dim | Measure | str
+
+
+def _resolve_field_id(ref: FieldRef) -> str:
+    """Read the resolved field_id off a Dim / Measure / bare string."""
+    if isinstance(ref, str):
+        return ref
+    assert ref.field_id is not None, (
+        "field_id wasn't resolved — App._resolve_auto_ids() must run "
+        "before _resolve_field_id."
+    )
+    return ref.field_id

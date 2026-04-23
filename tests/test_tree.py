@@ -375,7 +375,7 @@ class TestKPIVisual:
             visual_id=VisualId("v-kpi"),
             title="Total",
             subtitle="Sum of amounts",
-            values=[Measure.sum(_DS_FOO, "f-val", "amount")],
+            values=[Measure.sum(_DS_FOO, "amount", field_id="f-val")],
         )
         emitted = kpi.emit()
         assert emitted.KPIVisual is not None
@@ -387,7 +387,7 @@ class TestKPIVisual:
         kpi = KPI(
             visual_id=VisualId("v-kpi"),
             title="Total",
-            values=[Measure.sum(_DS_FOO, "f-val", "amount")],
+            values=[Measure.sum(_DS_FOO, "amount", field_id="f-val")],
         )
         emitted = kpi.emit()
         assert emitted.KPIVisual.Subtitle is None
@@ -496,7 +496,7 @@ class TestSheetAcceptsTypedVisuals:
         kpi = sheet.add_visual(KPI(
             visual_id=VisualId("v-kpi"),
             title="Total",
-            values=[Measure.sum(_DS, "f", "amount")],
+            values=[Measure.sum(_DS, "amount", field_id="f")],
         ))
         sheet.place(kpi, col_span=12, row_span=6, col_index=0)
         emitted = sheet.emit()
@@ -1012,7 +1012,7 @@ class TestFullEmitRoundTripWithTypedFilters:
         ))
         kpi = sheet.add_visual(KPI(
             visual_id=VisualId("v-test"), title="Test",
-            values=[Measure.sum(_DS_FOO, "f-val", "amount")],
+            values=[Measure.sum(_DS_FOO, "amount", field_id="f-val")],
         ))
         sheet.place(kpi, col_span=12, row_span=6, col_index=0)
         fg = analysis.add_filter_group(FilterGroup(
@@ -1055,7 +1055,7 @@ class TestFullEmitRoundTripWithTypedFilters:
         ))
         kpi = sheet.add_visual(KPI(
             visual_id=VisualId("v-test"), title="Test",
-            values=[Measure.sum(_DS_FOO, "f-val", "amount")],
+            values=[Measure.sum(_DS_FOO, "amount", field_id="f-val")],
         ))
         sheet.place(kpi, col_span=12, row_span=6, col_index=0)
         fg = analysis.add_filter_group(FilterGroup(
@@ -1104,7 +1104,7 @@ class TestDataset:
 
     def test_measure_carries_dataset_ref(self):
         ds = Dataset(identifier="ds-foo", arn="arn:foo")
-        m = Measure.sum(ds, "f-1", "amount")
+        m = Measure.sum(ds, "amount", field_id="f")
         assert m.dataset is ds
         assert m.emit().NumericalMeasureField.Column.DataSetIdentifier == "ds-foo"
 
@@ -1144,11 +1144,11 @@ class TestAppDatasetDependencies:
         ))
         sheet.add_visual(KPI(
             visual_id=VisualId("v-foo"), title="From foo",
-            values=[Measure.sum(_DS_FOO, "f-1", "amount")],
+            values=[Measure.sum(_DS_FOO, "amount", field_id="f-val")],
         ))
         sheet.add_visual(KPI(
             visual_id=VisualId("v-anom"), title="From anomalies",
-            values=[Measure.count(_DS_ANOMALIES, "f-2", "id")],
+            values=[Measure.count(_DS_ANOMALIES, "id")],
         ))
         deps = app.dataset_dependencies()
         assert deps == {_DS_FOO, _DS_ANOMALIES}
@@ -1183,7 +1183,7 @@ class TestAppDatasetDependencies:
         ))
         sheet.add_visual(KPI(
             visual_id=VisualId("v"), title="V",
-            values=[Measure.sum(_DS_FOO, "f", "amount")],
+            values=[Measure.sum(_DS_FOO, "amount", field_id="f-val")],
         ))
         with pytest.raises(ValueError, match="references unregistered datasets"):
             app.emit_analysis()
@@ -1201,7 +1201,7 @@ class TestAppDatasetDependencies:
         ))
         sheet.add_visual(KPI(
             visual_id=VisualId("v"), title="V",
-            values=[Measure.sum(_DS_FOO, "f", "amount")],
+            values=[Measure.sum(_DS_FOO, "amount", field_id="f-val")],
         ))
         m = app.emit_analysis()
         decls = m.Definition.DataSetIdentifierDeclarations
@@ -1217,7 +1217,7 @@ class TestAppDatasetDependencies:
         ))
         sheet.add_visual(KPI(
             visual_id=VisualId("v"), title="V",
-            values=[Measure.sum(_DS_FOO, "f", "amount")],
+            values=[Measure.sum(_DS_FOO, "amount", field_id="f-val")],
         ))
         app.set_dashboard(Dashboard(
             dashboard_id_suffix="d", name="D", analysis=analysis,
@@ -1288,7 +1288,7 @@ class TestColumnRefAcceptsCalcField:
 
     def test_measure_accepts_calc_field(self):
         cf = _make_is_anchor()
-        m = Measure.count(_DS_FOO, "f-1", cf)
+        m = Measure.count(_DS_FOO, cf, field_id="f-1")
         emitted = m.emit()
         assert emitted.CategoricalMeasureField.Column.ColumnName == "is_anchor_edge"
         assert m.calc_field() is cf
@@ -1359,7 +1359,7 @@ class TestAppCalcFieldDependencies:
         ))
         sheet.add_visual(KPI(
             visual_id=VisualId("v"), title="V",
-            values=[Measure.count(_DS_FOO, "f", cf)],
+            values=[Measure.count(_DS_FOO, cf)],
         ))
         # Tree walks the visual and finds the calc field ref.
         assert analysis.calc_fields_referenced() == {cf}
@@ -1400,7 +1400,7 @@ class TestAppCalcFieldDependencies:
         ))
         sheet.add_visual(KPI(
             visual_id=VisualId("v"), title="V",
-            values=[Measure.count(_DS_FOO, "f", cf)],
+            values=[Measure.count(_DS_FOO, cf)],
         ))
         with pytest.raises(ValueError, match="references unregistered calc fields"):
             app.emit_analysis()
@@ -1426,7 +1426,7 @@ class TestAppCalcFieldDependencies:
         # KPI references _DS_FOO directly; calc field references _DS_ANOMALIES
         sheet.add_visual(KPI(
             visual_id=VisualId("v"), title="V",
-            values=[Measure.sum(_DS_FOO, "f", "amount")],
+            values=[Measure.sum(_DS_FOO, "amount", field_id="f-val")],
         ))
         deps = app.dataset_dependencies()
         # Both datasets show up — _DS_FOO from the visual, _DS_ANOMALIES
@@ -1451,7 +1451,7 @@ class TestAutoVisualIds:
         ))
         kpi = sheet.add_visual(KPI(
             title="Flagged",
-            values=[Measure.count(_DS_FOO, "f-cnt", "id")],
+            values=[Measure.count(_DS_FOO, "id")],
         ))
         # visual_id is None until emit-time resolution
         assert kpi.visual_id is None

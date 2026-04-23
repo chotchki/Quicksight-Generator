@@ -25,7 +25,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from quicksight_gen.apps.investigation.analysis import (
+from quicksight_gen.apps.investigation.app import (
     build_analysis,
     build_investigation_dashboard,
 )
@@ -584,7 +584,15 @@ def test_anomalies_table_sorted_by_z_score_desc():
     )
     table = next(v.TableVisual for v in sheet.Visuals if v.TableVisual)
     sort = table.ChartConfiguration.SortConfiguration["RowSort"][0]["FieldSort"]
-    assert sort["FieldId"] == "inv-anomalies-tbl-z-score"
+    # Field-ids are auto-derived (L.1.16). Look up the z_score field's
+    # auto-id by walking the table's Values list and matching column name.
+    z_score_field_id = next(
+        v.NumericalMeasureField.FieldId
+        for v in table.ChartConfiguration.FieldWells.TableAggregatedFieldWells.Values
+        if v.NumericalMeasureField
+        and v.NumericalMeasureField.Column.ColumnName == "z_score"
+    )
+    assert sort["FieldId"] == z_score_field_id
     assert sort["Direction"] == "DESC"
 
 
@@ -854,7 +862,15 @@ def test_money_trail_table_sorted_by_depth_asc_with_full_chain_grain():
         "posted_at",
     ]
     sort = table.ChartConfiguration.SortConfiguration["RowSort"][0]["FieldSort"]
-    assert sort["FieldId"] == "inv-money-trail-tbl-depth"
+    # Field-ids are auto-derived (L.1.16). Look up the depth field's
+    # auto-id by walking the table's GroupBy and matching column name.
+    depth_field_id = next(
+        d.NumericalDimensionField.FieldId
+        for d in table.ChartConfiguration.FieldWells.TableAggregatedFieldWells.GroupBy
+        if d.NumericalDimensionField
+        and d.NumericalDimensionField.Column.ColumnName == "depth"
+    )
+    assert sort["FieldId"] == depth_field_id
     assert sort["Direction"] == "ASC"
 
 
@@ -1135,6 +1151,39 @@ def _account_network_visuals():
     return inbound, outbound, table
 
 
+def _sankey_field_id_for_column(sankey, role: str, column_name: str) -> str:
+    """Look up the auto-derived field_id of a Sankey leaf by role +
+    column. Field-ids are auto-derived (L.1.16) so tests resolve them
+    via column-name lookup rather than hardcoded strings."""
+    field_wells = sankey.ChartConfiguration.FieldWells.SankeyDiagramAggregatedFieldWells
+    slot_attr = {"source": "Source", "target": "Destination"}[role]
+    leaves = getattr(field_wells, slot_attr) or []
+    for leaf in leaves:
+        if leaf.CategoricalDimensionField:
+            if leaf.CategoricalDimensionField.Column.ColumnName == column_name:
+                return leaf.CategoricalDimensionField.FieldId
+    raise AssertionError(
+        f"No Sankey {role} field with column {column_name!r}"
+    )
+
+
+def _table_groupby_field_id_for_column(table, column_name: str) -> str:
+    """Look up the auto-derived field_id of a Table GroupBy leaf by
+    column name."""
+    field_wells = table.ChartConfiguration.FieldWells.TableAggregatedFieldWells
+    for leaf in field_wells.GroupBy or []:
+        for sub in (
+            leaf.CategoricalDimensionField,
+            leaf.DateDimensionField,
+            leaf.NumericalDimensionField,
+        ):
+            if sub and sub.Column.ColumnName == column_name:
+                return sub.FieldId
+    raise AssertionError(
+        f"No Table GroupBy field with column {column_name!r}"
+    )
+
+
 def test_anetwork_inbound_sankey_left_click_walks_to_source_counterparty():
     """K.4.8i: inbound Sankey wires a single DATA_POINT_CLICK (left-
     click) action that reads the SOURCE field — the counterparty
@@ -1156,7 +1205,9 @@ def test_anetwork_inbound_sankey_left_click_walks_to_source_counterparty():
     cfg = set_params.ParameterValueConfigurations
     assert len(cfg) == 1
     assert cfg[0]["DestinationParameterName"] == P_INV_ANETWORK_ANCHOR
-    assert cfg[0]["Value"]["SourceField"] == "inv-anetwork-sankey-in-source"
+    assert cfg[0]["Value"]["SourceField"] == _sankey_field_id_for_column(
+        inbound, "source", "source_display",
+    )
 
 
 def test_anetwork_outbound_sankey_left_click_walks_to_target_counterparty():
@@ -1180,7 +1231,9 @@ def test_anetwork_outbound_sankey_left_click_walks_to_target_counterparty():
     cfg = set_params.ParameterValueConfigurations
     assert len(cfg) == 1
     assert cfg[0]["DestinationParameterName"] == P_INV_ANETWORK_ANCHOR
-    assert cfg[0]["Value"]["SourceField"] == "inv-anetwork-sankey-out-target"
+    assert cfg[0]["Value"]["SourceField"] == _sankey_field_id_for_column(
+        outbound, "target", "target_display",
+    )
 
 
 def test_anetwork_table_wires_single_counterparty_walk_action():
@@ -1200,7 +1253,9 @@ def test_anetwork_table_wires_single_counterparty_walk_action():
     cfg = set_params.ParameterValueConfigurations
     assert len(cfg) == 1
     assert cfg[0]["DestinationParameterName"] == P_INV_ANETWORK_ANCHOR
-    assert cfg[0]["Value"]["SourceField"] == "inv-anetwork-tbl-counterparty"
+    assert cfg[0]["Value"]["SourceField"] == _table_groupby_field_id_for_column(
+        table, CF_INV_ANETWORK_COUNTERPARTY_DISPLAY,
+    )
 
 
 def test_anetwork_table_columns_use_display_strings():

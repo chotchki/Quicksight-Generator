@@ -55,6 +55,46 @@ from quicksight_gen.common.tree.visuals import VisualLike
 from typing import Callable, Protocol, runtime_checkable
 
 
+# Field-well slot roles used by the auto-id resolver. The `role`
+# letter goes into the auto-derived field_id so the synthesized id
+# encodes which well a leaf came from.
+_FIELD_SLOTS: tuple[tuple[str, str], ...] = (
+    ("group_by", "g"),  # Table
+    ("values", "v"),    # KPI / Table / BarChart
+    ("category", "c"),  # BarChart
+    ("source", "s"),    # Sankey
+    ("target", "t"),    # Sankey
+    ("weight", "w"),    # Sankey
+)
+
+
+def _resolve_field_ids(
+    *, visual, visual_kind: str, sheet_idx: int, visual_idx: int,
+) -> None:
+    """Walk a visual's field-well slots and assign auto field_ids to
+    any Dim/Measure leaves that left field_id unset.
+
+    Iterates the fixed ``_FIELD_SLOTS`` table — each entry names an
+    attribute and a one-letter role tag. Missing attributes (e.g. KPI
+    has no ``group_by``) are skipped via ``getattr`` default ``None``.
+    Slots may be a single leaf (Sankey ``source`` / ``target`` /
+    ``weight``) or a list (KPI / Table / BarChart ``values``); both
+    shapes are handled.
+    """
+    for attr, role in _FIELD_SLOTS:
+        slot = getattr(visual, attr, None)
+        if slot is None:
+            continue
+        leaves = slot if isinstance(slot, list) else [slot]
+        for slot_idx, leaf in enumerate(leaves):
+            if leaf is None:
+                continue
+            if getattr(leaf, "field_id", "explicit") is None:
+                leaf.field_id = (
+                    f"f-{visual_kind}-s{sheet_idx}-v{visual_idx}-{role}{slot_idx}"
+                )
+
+
 @dataclass(eq=False)
 class ParameterControlNode:
     """Spike-shape factory wrapper for a ParameterControl.
@@ -675,20 +715,30 @@ class App:
         IDs unset. Called from emit_analysis / emit_dashboard before
         any validation or emission.
 
-        L.1.8.5 mixed scheme: only typed Visual subtypes (KPI / Table
-        / BarChart / Sankey) and FilterGroup get auto-IDs. The
-        spike-shape ``VisualNode`` factory wrapper requires explicit
-        visual_id (it's the migration-window helper).
+        Mixed scheme (L.1.8.5 + L.1.16): URL-facing IDs (``SheetId``,
+        ``ParameterName``) and analyst-facing identifiers (``Dataset``
+        identifier) stay explicit. Internal IDs the analyst never
+        types — visual_id, filter_id, control_id, action_id, field_id,
+        calc-field name — get tree-position-derived defaults when
+        omitted.
 
-        Auto-ID format:
-        - Visual: ``v-{kind}-s{sheet_idx}-{visual_idx}`` where
-          ``kind`` comes from the visual subtype's ``_AUTO_KIND``
-          (``"kpi"`` / ``"table"`` / ``"bar"`` / ``"sankey"``).
-        - FilterGroup: ``fg-{idx}`` — analysis-scoped (filter
-          groups don't belong to a specific sheet).
+        Auto-ID formats:
+        - Visual: ``v-{kind}-s{sheet_idx}-{visual_idx}``
+        - FilterGroup: ``fg-{idx}`` — analysis-scoped
+        - Filter: ``f-{kind}-fg{fg_idx}-{filt_idx}``
+        - ParameterControl: ``pc-{kind}-s{sheet_idx}-{ctrl_idx}``
+        - FilterControl: ``fc-{kind}-s{sheet_idx}-{ctrl_idx}``
+        - Drill action: ``act-s{sheet_idx}-v{visual_idx}-{action_idx}``
+        - Field-well leaf (Dim/Measure): ``f-{visual_kind}-s{sheet_idx}
+          -v{visual_idx}-{role}{slot_idx}`` where role tags the field
+          well slot (``g`` group_by, ``v`` values, ``c`` category,
+          ``s`` source, ``t`` target, ``w`` weight)
+        - CalcField: ``calc-{idx}`` — analysis-scoped
 
-        Idempotent: nodes that already have explicit IDs aren't
-        touched.
+        Same-sheet drills also get their target_sheet back-filled here
+        (Drill.target_sheet=None means "the sheet that owns me").
+
+        Idempotent: nodes that already have explicit IDs aren't touched.
         """
         if self.analysis is None:
             return
@@ -700,6 +750,16 @@ class App:
                     visual.visual_id = VisualId(
                         f"v-{kind}-s{sheet_idx}-{visual_idx}",
                     )
+                # Field-well leaves — Dim/Measure get position-indexed
+                # field_ids. Walk the slots that exist on this visual
+                # type; missing attributes (e.g. KPI has no group_by)
+                # are skipped via getattr default.
+                _resolve_field_ids(
+                    visual=visual,
+                    visual_kind=kind or "v",
+                    sheet_idx=sheet_idx,
+                    visual_idx=visual_idx,
+                )
                 # Drill action IDs (sheet+visual scoped). Same-sheet
                 # drills (target_sheet=None at construction) get the
                 # owning sheet back-filled here — the cycle closes the
@@ -730,6 +790,10 @@ class App:
                 kind = getattr(filt, "_AUTO_KIND", None)
                 if kind is not None and getattr(filt, "filter_id", None) is None:
                     filt.filter_id = f"f-{kind}-fg{fg_idx}-{filt_idx}"
+        # CalcField names — analysis-scoped position index.
+        for calc_idx, calc in enumerate(self.analysis.calc_fields):
+            if calc.name is None:
+                calc.name = f"calc-{calc_idx}"
 
     def _validate_dataset_references(self) -> None:
         """Raise if the tree references any Dataset not registered on

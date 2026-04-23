@@ -133,35 +133,47 @@ def build_kitchen_app(cfg: Config) -> App:
     kpi = showcase.add_visual(KPI(
         title="Total Amount",
         subtitle="SUM of amount",
-        values=[Measure.sum(ds_main, "kitchen-kpi-amount", "amount")],
+        values=[Measure.sum(ds_main, "amount")],
     ))
 
+    # Tree-level vars for the leaves so drills + sort_by reference
+    # them by object ref (no string field_ids needed for routing).
+    # Drill-source leaves keep an explicit field_id only because the
+    # kitchen sink isn't registered with a dataset contract — the
+    # drill resolver can't auto-derive ColumnShape, so the kitchen-sink
+    # uses the explicit DrillSourceField escape-hatch path.
+    tbl_name_dim = Dim(ds_main, "name", field_id="kitchen-tbl-name")
+    tbl_amount_measure = Measure.sum(ds_main, "amount")
     table = showcase.add_visual(Table(
         title="Detail Table",
         subtitle="GroupBy + Values",
         group_by=[
-            Dim(ds_main, "kitchen-tbl-id", "id"),
-            Dim(ds_main, "kitchen-tbl-name", "name"),
+            Dim(ds_main, "id"),
+            tbl_name_dim,
             # Calc-field reference (ColumnRef union)
-            Dim(ds_main, "kitchen-tbl-flag", is_above_threshold),
+            Dim(ds_main, is_above_threshold),
         ],
-        values=[Measure.sum(ds_main, "kitchen-tbl-amount", "amount")],
-        sort_by=("kitchen-tbl-amount", "DESC"),
+        values=[tbl_amount_measure],
+        sort_by=(tbl_amount_measure, "DESC"),
     ))
 
+    bar_cat_dim = Dim(ds_main, "category", field_id="kitchen-bar-cat")
     bar = showcase.add_visual(BarChart(
         title="By Category",
         subtitle="Counts per category",
-        category=[Dim(ds_main, "kitchen-bar-cat", "category")],
-        values=[Measure.count(ds_main, "kitchen-bar-cnt", "id")],
+        category=[bar_cat_dim],
+        values=[Measure.count(ds_main, "id")],
     ))
 
+    sankey_source_dim = Dim(
+        ds_main, "source_account", field_id="kitchen-sk-source",
+    )
     sankey = showcase.add_visual(Sankey(
         title="Flow",
         subtitle="Source → Target by amount",
-        source=Dim(ds_main, "kitchen-sk-source", "source_account"),
-        target=Dim(ds_main, "kitchen-sk-target", "target_account"),
-        weight=Measure.sum(ds_main, "kitchen-sk-amount", "amount"),
+        source=sankey_source_dim,
+        target=Dim(ds_main, "target_account"),
+        weight=Measure.sum(ds_main, "amount"),
         items_limit=25,
     ))
 
@@ -184,8 +196,8 @@ def build_kitchen_app(cfg: Config) -> App:
     # A target visual for the filter group scope.
     filtered_table = filters_sheet.add_visual(Table(
         title="Filtered Detail",
-        group_by=[Dim(ds_main, "ft-tbl-id", "id")],
-        values=[Measure.sum(ds_main, "ft-tbl-amount", "amount")],
+        group_by=[Dim(ds_main, "id")],
+        values=[Measure.sum(ds_main, "amount")],
     ))
 
     filters_sheet.place(filtered_table, col_span=36, row_span=18, col_index=0)
@@ -270,8 +282,8 @@ def build_kitchen_app(cfg: Config) -> App:
 
     drill_dest_table = drill_target.add_visual(Table(
         title="Drill Destination",
-        group_by=[Dim(ds_main, "dd-tbl-id", "id")],
-        values=[Measure.sum(ds_main, "dd-tbl-amount", "amount")],
+        group_by=[Dim(ds_main, "id")],
+        values=[Measure.sum(ds_main, "amount")],
     ))
     drill_target.place(drill_dest_table, col_span=36, row_span=18, col_index=0)
 

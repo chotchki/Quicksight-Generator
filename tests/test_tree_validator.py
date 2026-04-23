@@ -54,14 +54,14 @@ def _make_app() -> App:
         sheet_id=SheetId("s-1"), name="Sheet One",
         title="Sheet One", description="",
     ))
-    sheet.add_visual(KPI(title="Total", values=[Measure.sum(_DS, "f", "amount")]))
-    sheet.add_visual(Table(title="Detail", group_by=[Dim(_DS, "f-id", "id")]))
-    sheet.add_visual(BarChart(title="Distribution", category=[Dim(_DS, "f-c", "cat")]))
+    sheet.add_visual(KPI(title="Total", values=[Measure.sum(_DS, "amount")]))
+    sheet.add_visual(Table(title="Detail", group_by=[Dim(_DS, "id")]))
+    sheet.add_visual(BarChart(title="Distribution", category=[Dim(_DS, "cat")]))
     sheet.add_visual(Sankey(
         title="Flow",
-        source=Dim(_DS, "f-s", "source"),
-        target=Dim(_DS, "f-t", "target"),
-        weight=Measure.sum(_DS, "f-w", "weight"),
+        source=Dim(_DS, "source"),
+        target=Dim(_DS, "target"),
+        weight=Measure.sum(_DS, "weight"),
     ))
     return app
 
