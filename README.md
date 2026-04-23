@@ -269,6 +269,7 @@ src/quicksight_gen/
         cleanup.py      # Tag-based cleanup of stale resources
         clickability.py # Conditional-format helpers (plain + menu-link accent styles)
         rich_text.py    # XML helpers for SheetTextBox.Content (heading/bullets/…)
+        tree/           # Typed tree primitives (Phase L) — App / Analysis / Dashboard / Sheet / Visual subtypes / Filter wrappers / Controls / Drill actions. Replaces constant-heavy + manually-cross-referenced builders with object refs + auto-IDs + emit-time validation. Apps are mid-port; the L-series in PLAN.md tracks the migration.
     apps/
         payment_recon/
             analysis.py     # 6 sheets, drill-downs, filter groups, dashboard
