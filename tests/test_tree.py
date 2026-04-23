@@ -677,7 +677,7 @@ class TestFilterGroupScope:
         )
         with pytest.raises(ValueError, match="isn't registered on sheet"):
             # Trying to scope a visual from sheet-a onto sheet-b
-            fg.scope_visuals(sheet_b, [v_a])
+            sheet_b.scope(fg, [v_a])
 
     def test_scope_visuals_with_correct_visuals_succeeds(self):
         sheet, [v1, v2] = self._make_sheet_with_visuals(
@@ -687,7 +687,7 @@ class TestFilterGroupScope:
             filter_group_id=FilterGroupId("fg-test"),
             filters=[_category_filter("f-1", _DS_FOO, "col_a")],
         )
-        ret = fg.scope_visuals(sheet, [v1, v2])
+        ret = sheet.scope(fg, [v1, v2])
         assert ret is fg  # chains
         assert len(fg._scope_entries) == 1
 
@@ -699,7 +699,7 @@ class TestFilterGroupScope:
             filter_group_id=FilterGroupId("fg-test"),
             filters=[_category_filter("f-1", _DS_FOO, "col_a")],
         )
-        fg.scope_visuals(sheet, [v1, v2])
+        sheet.scope(fg, [v1, v2])
         emitted = fg.emit()
         configs = emitted.ScopeConfiguration.SelectedSheets.SheetVisualScopingConfigurations
         assert len(configs) == 1
@@ -747,7 +747,7 @@ class TestFilterGroupScope:
             filter_group_id=FilterGroupId("fg-multi"),
             filters=[_category_filter("f-1", _DS_FOO, "col_a")],
         )
-        fg.scope_visuals(sheet_a, [v_a1])
+        sheet_a.scope(fg, [v_a1])
         fg.scope_sheet(sheet_b)
         emitted = fg.emit()
         configs = emitted.ScopeConfiguration.SelectedSheets.SheetVisualScopingConfigurations
@@ -799,7 +799,7 @@ class TestAnalysisAddFilterGroup:
             filter_group_id=FilterGroupId("fg-test"),
             filters=[_category_filter("f-1", _DS_FOO, "col_a")],
         ))
-        fg.scope_visuals(sheet, [kpi])
+        sheet.scope(fg, [kpi])
         assert fg in analysis.filter_groups
 
     def test_duplicate_filter_group_id_raises(self):
@@ -825,7 +825,7 @@ class TestAnalysisAddFilterGroup:
             filter_group_id=FilterGroupId("fg-test"),
             filters=[_category_filter("f-1", _DS_FOO, "col_a")],
         ))
-        fg.scope_visuals(sheet, [kpi])
+        sheet.scope(fg, [kpi])
         defn = analysis.emit_definition(datasets=[])
         assert len(defn.FilterGroups) == 1
         assert defn.FilterGroups[0].FilterGroupId == "fg-test"
@@ -865,7 +865,7 @@ class TestFilterGroupCompositionWithApp:
         ))
         # Try to scope sheet-A's visual onto sheet-B → caught here.
         with pytest.raises(ValueError, match="isn't registered on sheet"):
-            fg.scope_visuals(sheet_b, [v_a])
+            sheet_b.scope(fg, [v_a])
 
 # ---------------------------------------------------------------------------
 # L.1.6 — Typed Filter wrappers
@@ -1047,7 +1047,7 @@ class TestFullEmitRoundTripWithTypedFilters:
                 ),
             ],
         ))
-        fg.scope_visuals(sheet, [kpi])
+        sheet.scope(fg, [kpi])
         m = app.emit_analysis()
         j = m.to_aws_json()
         fg_json = j["Definition"]["FilterGroups"][0]
@@ -1083,7 +1083,7 @@ class TestFullEmitRoundTripWithTypedFilters:
             filter_group_id=FilterGroupId("fg-scoped"),
             filters=[_category_filter("f-1", _DS_FOO, "col_a")],
         ))
-        fg.scope_visuals(sheet, [kpi])
+        sheet.scope(fg, [kpi])
         m = app.emit_analysis()
         j = m.to_aws_json()
         fgs = j["Definition"]["FilterGroups"]
@@ -1208,7 +1208,7 @@ class TestAppDatasetDependencies:
             filter_group_id=FilterGroupId("fg-1"),
             filters=[_category_filter("f-1", _DS_FOO, "col_a")],
         ))
-        fg.scope_visuals(sheet, [kpi])
+        sheet.scope(fg, [kpi])
         # Dependency comes via the filter group, not the visual.
         assert app.dataset_dependencies() == {_DS_FOO}
 
@@ -1422,7 +1422,8 @@ class TestAppCalcFieldDependencies:
             filters=[CategoryFilter(
                 filter_id="f-1", dataset=_DS_FOO, column=cf, values=["yes"],
             )],
-        )).scope_visuals(sheet, [kpi])
+        ))
+        sheet.scope(analysis.filter_groups[-1], [kpi])
         assert analysis.calc_fields_referenced() == {cf}
 
     def test_emit_analysis_rejects_unregistered_calc_field(self):
@@ -1601,7 +1602,7 @@ class TestAutoFilterGroupIds:
         fg = analysis.add_filter_group(FilterGroup(
             filters=[_category_filter("f-1", _DS_FOO, "col")],
         ))
-        fg.scope_visuals(sheet, [kpi])
+        sheet.scope(fg, [kpi])
         assert fg.filter_group_id is AUTO
         app.emit_analysis()
         assert fg.filter_group_id == "fg-0"
@@ -1618,7 +1619,7 @@ class TestAutoFilterGroupIds:
             filter_group_id=FilterGroupId("fg-special"),
             filters=[_category_filter("f-1", _DS_FOO, "col")],
         ))
-        fg.scope_visuals(sheet, [kpi])
+        sheet.scope(fg, [kpi])
         app.emit_analysis()
         assert fg.filter_group_id == "fg-special"
 
@@ -1641,7 +1642,7 @@ class TestTreeQueryHelpers:
             filter_group_id=FilterGroupId("fg-anchor"),
             filters=[_category_filter("f-1", _DS_FOO, "col_a")],
         ))
-        fg.scope_visuals(sheet, [table])
+        sheet.scope(fg, [table])
         return app, sheet, kpi, table, fg
 
     def test_app_find_sheet_by_name(self):
@@ -1823,11 +1824,10 @@ class TestParameterDropdown:
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s"), name="S", title="S", description="",
         ))
-        sheet.add_parameter_control(ParameterDropdown(
-            parameter=anchor,
+        sheet.add_parameter_dropdown(parameter=anchor,
             title="Anchor",
             selectable_values=LinkedValues(dataset=_DS_FOO, column="d"),
-        ))
+        )
         with pytest.raises(ValueError, match="references unregistered datasets"):
             app.emit_analysis()
 
@@ -1890,8 +1890,8 @@ class TestFilterDropdown:
         ))
         kpi = sheet.add_visual(KPI(title="K"))
         fg = analysis.add_filter_group(FilterGroup(filters=[f]))
-        fg.scope_visuals(sheet, [kpi])
-        sheet.add_filter_control(FilterDropdown(filter=f, title="A"))
+        sheet.scope(fg, [kpi])
+        sheet.add_filter_dropdown(filter=f, title="A")
         app.emit_analysis()
         # Auto-IDs resolved
         assert f.filter_id == "f-category-fg0-0"
@@ -1952,10 +1952,9 @@ class TestControlAutoIds:
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s"), name="S", title="S", description="",
         ))
-        ctrl = sheet.add_parameter_control(ParameterSlider(
-            parameter=sigma, title="σ",
+        ctrl = sheet.add_parameter_slider(parameter=sigma, title="σ",
             minimum_value=1, maximum_value=4, step_size=1,
-        ))
+        )
         assert ctrl.control_id is AUTO
         app.emit_analysis()
         assert ctrl.control_id == "pc-slider-s0-0"
@@ -1973,8 +1972,8 @@ class TestControlAutoIds:
         ))
         kpi = sheet.add_visual(KPI(title="K"))
         fg = analysis.add_filter_group(FilterGroup(filters=[f]))
-        fg.scope_visuals(sheet, [kpi])
-        ctrl = sheet.add_filter_control(FilterDropdown(filter=f, title="X"))
+        sheet.scope(fg, [kpi])
+        ctrl = sheet.add_filter_dropdown(filter=f, title="X")
         assert ctrl.control_id is AUTO
         app.emit_analysis()
         assert ctrl.control_id == "fc-dropdown-s0-0"
@@ -1996,10 +1995,9 @@ class TestSheetEmitsFilterControls:
         ))
         kpi = sheet.add_visual(KPI(title="K"))
         fg = analysis.add_filter_group(FilterGroup(filters=[f]))
-        fg.scope_visuals(sheet, [kpi])
-        sheet.add_filter_control(FilterDropdown(
-            filter=f, title="X", control_id="fc-x",
-        ))
+        sheet.scope(fg, [kpi])
+        sheet.add_filter_dropdown(filter=f, title="X", control_id="fc-x",
+        )
         m = app.emit_analysis()
         emitted_sheet = m.Definition.Sheets[0]
         assert len(emitted_sheet.FilterControls) == 1
@@ -2260,7 +2258,8 @@ class TestUnvalidatedColumnsRaiseByDefault:
                 column="category",  # bare string
                 values=["a"],
             )],
-        )).scope_visuals(sheet, [kpi])
+        ))
+        sheet.scope(analysis.filter_groups[-1], [kpi])
         # Flip to default-strict for the assertion run.
         app.allow_bare_strings = False
         with pytest.raises(ValueError, match="unvalidated column refs"):
@@ -2320,7 +2319,8 @@ class TestUnvalidatedColumnsRaiseByDefault:
                 column=_DS_FOO["category"],  # unvalidated Column
                 values=["a"],
             )],
-        )).scope_visuals(sheet, [kpi])
+        ))
+        sheet.scope(analysis.filter_groups[-1], [kpi])
         # Allow bare strings so the KPI's bare-string measure column
         # doesn't trip the check; this isolates the filter's
         # unvalidated Column path. (In real production code both
