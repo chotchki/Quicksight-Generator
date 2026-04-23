@@ -583,6 +583,21 @@ class TestDateTimeParam:
         assert emitted.DateTimeParameterDeclaration.TimeGranularity == "DAY"
         assert emitted.DateTimeParameterDeclaration.DefaultValues.RollingDate is not None
 
+    def test_rejects_invalid_time_granularity(self):
+        """L.1.19 — bare-string TimeGranularity ("DAyy", "Daily", etc.)
+        used to pass through to deploy and fail there. The Literal-typed
+        field + __post_init__ guard catches it at construction now."""
+        with pytest.raises(ValueError, match="time_granularity='DAyy'"):
+            DateTimeParam(
+                name=ParameterName("pDate"),
+                time_granularity="DAyy",  # type: ignore[arg-type]
+            )
+
+    def test_accepts_none_time_granularity(self):
+        # None bypasses the literal check (the field is Optional).
+        p = DateTimeParam(name=ParameterName("pDate"))
+        assert p.time_granularity is None
+
 
 class TestAnalysisAddParameter:
     def test_add_parameter_returns_concrete_subtype(self):
@@ -991,6 +1006,14 @@ class TestTypedTimeRangeFilter:
             filter_id="f-1", dataset=_DS, column="posted_at",
         )
         assert isinstance(f, FilterLike)
+
+    def test_rejects_invalid_time_granularity(self):
+        """L.1.19 — same Literal-typed field guard as DateTimeParam."""
+        with pytest.raises(ValueError, match="time_granularity='Daily'"):
+            TimeRangeFilter(
+                filter_id="f-1", dataset=_DS, column="posted_at",
+                time_granularity="Daily",  # type: ignore[arg-type]
+            )
 
 
 class TestFullEmitRoundTripWithTypedFilters:
