@@ -35,6 +35,7 @@ from quicksight_gen.common.models import (
 )
 
 from quicksight_gen.common.tree._helpers import _subtitle_label, _title_label
+from quicksight_gen.common.tree.actions import Drill
 from quicksight_gen.common.tree.calc_fields import CalcField
 from quicksight_gen.common.tree.datasets import Dataset
 from quicksight_gen.common.tree.fields import Dim, Measure
@@ -105,6 +106,9 @@ class KPI:
             "visual_id wasn't resolved — App._resolve_auto_ids() must run "
             "before Visual.emit(). This shouldn't happen via App.emit_*()."
         )
+        # KPI doesn't carry Actions per the QuickSight model — KPIs aren't
+        # data-point-clickable. If we ever need drill on a KPI, switch to
+        # a different visual type.
         return Visual(
             KPIVisual=KPIVisual(
                 VisualId=self.visual_id,
@@ -135,6 +139,7 @@ class Table:
     group_by: list[Dim] = field(default_factory=list)
     values: list[Measure] = field(default_factory=list)
     sort_by: tuple[str, Literal["ASC", "DESC"]] | None = None
+    actions: list[Drill] = field(default_factory=list)
     visual_id: VisualId | None = None
 
     _AUTO_KIND: ClassVar[str] = "table"
@@ -179,6 +184,7 @@ class Table:
                     ),
                     SortConfiguration=sort_config,
                 ),
+                Actions=[a.emit() for a in self.actions] if self.actions else None,
             ),
         )
 
@@ -198,6 +204,7 @@ class BarChart:
     subtitle: str | None = None
     category: list[Dim] = field(default_factory=list)
     values: list[Measure] = field(default_factory=list)
+    actions: list[Drill] = field(default_factory=list)
     visual_id: VisualId | None = None
 
     _AUTO_KIND: ClassVar[str] = "bar"
@@ -233,6 +240,7 @@ class BarChart:
                         ),
                     ),
                 ),
+                Actions=[a.emit() for a in self.actions] if self.actions else None,
             ),
         )
 
@@ -260,6 +268,7 @@ class Sankey:
     target: Dim | None = None
     weight: Measure | None = None
     items_limit: int | None = None
+    actions: list[Drill] = field(default_factory=list)
     visual_id: VisualId | None = None
 
     _AUTO_KIND: ClassVar[str] = "sankey"
@@ -322,5 +331,6 @@ class Sankey:
                     ),
                     SortConfiguration=sort_config,
                 ),
+                Actions=[a.emit() for a in self.actions] if self.actions else None,
             ),
         )

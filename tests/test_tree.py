@@ -1908,3 +1908,129 @@ class TestSheetEmitsFilterControls:
         emitted_sheet = m.Definition.Sheets[0]
         assert len(emitted_sheet.FilterControls) == 1
         assert emitted_sheet.FilterControls[0].Dropdown.FilterControlId == "fc-x"
+
+
+# ---------------------------------------------------------------------------
+# L.1.10 — Typed Drill action
+# ---------------------------------------------------------------------------
+
+from quicksight_gen.common.dataset_contract import ColumnShape
+from quicksight_gen.common.tree import Drill as TreeDrill
+from quicksight_gen.common.tree import (
+    DrillParam as TreeDrillParam,
+)
+from quicksight_gen.common.tree import (
+    DrillSourceField as TreeDrillSourceField,
+)
+
+
+class TestDrillEmit:
+    def _setup(self) -> tuple[App, Sheet, Sheet, Table]:
+        app = App(name="t", cfg=_TEST_CFG)
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
+        anchor = analysis.add_parameter(StringParam(
+            name=ParameterName("pAnchor"),
+        ))
+        src_sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s-source"),
+            name="Source", title="Source", description="",
+        ))
+        dest_sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s-dest"),
+            name="Dest", title="Dest", description="",
+        ))
+        # Set up a table on the source sheet that has a drill action
+        # targeting the dest sheet.
+        table = src_sheet.add_visual(Table(
+            title="Source Table",
+            group_by=[Dim(dataset=_DS_FOO, field_id="f-acct", column="display")],
+            actions=[TreeDrill(
+                target_sheet=dest_sheet,  # OBJECT REF
+                writes=[(
+                    TreeDrillParam(ParameterName("pAnchor"), ColumnShape.ACCOUNT_DISPLAY),
+                    TreeDrillSourceField(field_id="f-acct", shape=ColumnShape.ACCOUNT_DISPLAY),
+                )],
+                name="Walk to anchor",
+                trigger="DATA_POINT_MENU",
+            )],
+        ))
+        src_sheet.place(table, col_span=36, row_span=18, col_index=0)
+        return app, src_sheet, dest_sheet, table
+
+    def test_drill_emits_with_target_sheet_resolved(self):
+        app, _, dest_sheet, table = self._setup()
+        m = app.emit_analysis()
+        # Find the source sheet in the emitted JSON
+        emitted_src = m.Definition.Sheets[0]
+        emitted_table = emitted_src.Visuals[0].TableVisual
+        actions = emitted_table.Actions
+        assert len(actions) == 1
+        action = actions[0]
+        assert action.Name == "Walk to anchor"
+        assert action.Trigger == "DATA_POINT_MENU"
+        # NavigationOperation should have the dest sheet's id
+        nav = action.ActionOperations[0].NavigationOperation
+        assert nav.LocalNavigationConfiguration.TargetSheetId == "s-dest"
+
+    def test_drill_action_id_auto_assigned(self):
+        app, _, _, table = self._setup()
+        action = table.actions[0]
+        assert action.action_id is None
+        app.emit_analysis()
+        # auto-IDed: act-s{sheet_idx}-v{visual_idx}-{action_idx}
+        assert action.action_id == "act-s0-v0-0"
+
+    def test_drill_target_sheet_must_be_registered(self):
+        """Drill into a sheet that isn't on the analysis raises at
+        emit time. Catches the wrong-sheet bug class — the typed
+        ref means the Sheet must be a real, registered Sheet object."""
+        app = App(name="t", cfg=_TEST_CFG)
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
+        src_sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s-src"),
+            name="Source", title="Source", description="",
+        ))
+        # An UNregistered sheet — never goes through analysis.add_sheet
+        rogue_sheet = Sheet(
+            sheet_id=SheetId("s-rogue"),
+            name="Rogue", title="Rogue", description="",
+        )
+        table = src_sheet.add_visual(Table(
+            title="X",
+            actions=[TreeDrill(
+                target_sheet=rogue_sheet,  # not on the analysis!
+                writes=[(
+                    TreeDrillParam(ParameterName("pX"), ColumnShape.ACCOUNT_ID),
+                    TreeDrillSourceField(field_id="f", shape=ColumnShape.ACCOUNT_ID),
+                )],
+                name="Bad drill",
+            )],
+        ))
+        src_sheet.place(table, col_span=36, row_span=18, col_index=0)
+        with pytest.raises(ValueError, match="drill actions targeting sheets"):
+            app.emit_analysis()
+
+    def test_explicit_action_id_preserved(self):
+        app = App(name="t", cfg=_TEST_CFG)
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
+        src = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        table = src.add_visual(Table(
+            title="T",
+            actions=[TreeDrill(
+                target_sheet=src,  # same sheet — also valid
+                writes=[(
+                    TreeDrillParam(ParameterName("pX"), ColumnShape.ACCOUNT_ID),
+                    TreeDrillSourceField(field_id="f", shape=ColumnShape.ACCOUNT_ID),
+                )],
+                name="Drill",
+                action_id="my-explicit-id",
+            )],
+        ))
+        src.place(table, col_span=36, row_span=18, col_index=0)
+        app.emit_analysis()
+        assert table.actions[0].action_id == "my-explicit-id"

@@ -44,6 +44,12 @@ SankeyDiagramVisual ×2. PieChartVisual is modeled but unused.
 
 from __future__ import annotations
 
+from quicksight_gen.common.tree.actions import (
+    Drill,
+    DrillParam,
+    DrillResetSentinel,
+    DrillSourceField,
+)
 from quicksight_gen.common.tree.calc_fields import CalcField, ColumnRef
 from quicksight_gen.common.tree.controls import (
     FilterControlLike,
@@ -118,6 +124,8 @@ __all__ = [
     "ParameterDropdown", "ParameterSlider", "ParameterDateTimePicker",
     "FilterDropdown", "FilterSlider", "FilterDateTimePicker", "FilterCrossSheet",
     "StaticValues", "LinkedValues", "SelectableValues",
+    # Drill actions (L.1.10)
+    "Drill", "DrillParam", "DrillSourceField", "DrillResetSentinel",
     # Structure
     "GridSlot", "Sheet", "Analysis", "Dashboard", "App",
     "ParameterControlNode",

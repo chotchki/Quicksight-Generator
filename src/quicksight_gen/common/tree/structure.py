@@ -35,6 +35,7 @@ from quicksight_gen.common.tree._helpers import (
     ANALYSIS_ACTIONS,
     DASHBOARD_ACTIONS,
 )
+from quicksight_gen.common.tree.actions import Drill
 from quicksight_gen.common.tree.calc_fields import CalcField
 from quicksight_gen.common.tree.controls import (
     FilterControlLike,
@@ -638,6 +639,14 @@ class App:
                     visual.visual_id = VisualId(
                         f"v-{kind}-s{sheet_idx}-{visual_idx}",
                     )
+                # Drill action IDs (sheet+visual scoped).
+                actions = getattr(visual, "actions", None)
+                if actions:
+                    for action_idx, action in enumerate(actions):
+                        if action.action_id is None:
+                            action.action_id = (
+                                f"act-s{sheet_idx}-v{visual_idx}-{action_idx}"
+                            )
             # Parameter controls — auto-IDs scoped to the sheet.
             for ctrl_idx, ctrl in enumerate(sheet.parameter_controls):
                 kind = getattr(ctrl, "_AUTO_KIND", None)
@@ -669,6 +678,40 @@ class App:
             raise ValueError(
                 f"App {self.name!r} references unregistered datasets: "
                 f"{ids} — register each via app.add_dataset() first."
+            )
+
+    def _validate_drill_destinations(self) -> None:
+        """Raise if any Drill action targets a Sheet that isn't on
+        this App's Analysis. Catches "drill into a sheet that doesn't
+        exist" at emit time. The string-only ``target_sheet=SheetId(...)``
+        pattern lets typos through to deploy where the click silently
+        does nothing.
+
+        Sheet identity check uses ``is`` rather than ``in``/``set``
+        because Sheet's dataclass-generated ``__eq__`` compares fields
+        and Sheet isn't hashable — but we want OBJECT identity here,
+        not field equality.
+        """
+        if self.analysis is None:
+            return
+        registered_sheets = self.analysis.sheets
+        bad: list[str] = []
+        for sheet in registered_sheets:
+            for visual in sheet.visuals:
+                actions = getattr(visual, "actions", None) or []
+                for action in actions:
+                    if not any(
+                        action.target_sheet is s for s in registered_sheets
+                    ):
+                        bad.append(
+                            f"action {action.name!r} on visual "
+                            f"{getattr(visual, 'visual_id', '?')!r} → sheet "
+                            f"{action.target_sheet.sheet_id!r}"
+                        )
+        if bad:
+            raise ValueError(
+                f"App {self.name!r} has drill actions targeting sheets that "
+                f"aren't registered on the analysis: {bad}"
             )
 
     def _validate_calc_field_references(self) -> None:
@@ -715,6 +758,7 @@ class App:
         self._resolve_auto_ids()
         self._validate_dataset_references()
         self._validate_calc_field_references()
+        self._validate_drill_destinations()
         return ModelAnalysis(
             AwsAccountId=self.cfg.aws_account_id,
             AnalysisId=self.cfg.prefixed(self.analysis.analysis_id_suffix),
@@ -735,6 +779,7 @@ class App:
         self._resolve_auto_ids()
         self._validate_dataset_references()
         self._validate_calc_field_references()
+        self._validate_drill_destinations()
         return ModelDashboard(
             AwsAccountId=self.cfg.aws_account_id,
             DashboardId=self.cfg.prefixed(self.dashboard.dashboard_id_suffix),
