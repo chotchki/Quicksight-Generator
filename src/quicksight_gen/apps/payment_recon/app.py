@@ -6,16 +6,23 @@ with the typed tree primitives from ``common/tree/``. Sheets land one
 per L.4 sub-step:
 
 - L.4.1 — Getting Started (text boxes only, app-level skeleton)
-- L.4.2 — Sales Overview
+- L.4.2 — Sales Overview (KPIs + bar charts + detail table with
+  cross-sheet drill into Settlements)
 - L.4.3 — Settlements
 - L.4.4 — Payments
 - L.4.5 — Exceptions & Alerts
 - L.4.6 — Payment Reconciliation tab (side-by-side mutual-filter pattern)
-- L.4.7 — App-level wiring (datasets, parameters, drills, theme)
+- L.4.7 — App-level wiring (datasets, parameters, drills, theme,
+  filter controls)
 
-The minimal L.4.1 shape mirrors L.3.1 / L.2.1 — only Getting Started is
-registered. Subsequent substeps add sheets and (when cross-sheet drills
-land) switch to the pre-register-all-shells pattern AR adopted at L.3.2.
+**Pre-registered sheet shells.** PR's drill actions cross-reference
+sheets (Sales → Settlements, Payments → Recon, etc.). Rather than
+ordering substeps by dependency, ``build_payment_recon_app``
+pre-registers all 6 ``Sheet`` shells (in display order) up-front so
+any populator can construct a ``Drill(target_sheet=other_sheet, ...)``
+referencing any other shell. Unported sheets emit as bare shells (id +
+metadata only); the per-sheet byte-identity tests target their sheet
+by id, so unported shells don't pollute the tested surface.
 """
 
 from __future__ import annotations
@@ -26,7 +33,19 @@ from __future__ import annotations
 # ds["col"] ref in the visuals below.
 from quicksight_gen.apps.payment_recon import datasets as _register_contracts  # noqa: F401
 from quicksight_gen.apps.payment_recon.constants import (
+    DS_SALES,
+    DS_SETTLEMENTS,
+    P_PR_SETTLEMENT,
+    SHEET_EXCEPTIONS,
     SHEET_GETTING_STARTED,
+    SHEET_PAYMENT_RECON,
+    SHEET_PAYMENTS,
+    SHEET_SALES,
+    SHEET_SETTLEMENTS,
+)
+from quicksight_gen.apps.payment_recon.datasets import (
+    OPTIONAL_SALE_METADATA,
+    build_all_datasets,
 )
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
@@ -36,13 +55,66 @@ from quicksight_gen.common.theme import get_preset
 from quicksight_gen.common.tree import (
     Analysis,
     App,
+    CellAccentMenu,
+    Dataset,
+    Drill,
+    DrillSourceField,
+    SameSheetFilter,
     Sheet,
     TextBox,
 )
 
 
-# Layout constants mirror apps/payment_recon/analysis.py.
+# ---------------------------------------------------------------------------
+# Layout constants — mirror apps/payment_recon/analysis.py.
+# ---------------------------------------------------------------------------
 _FULL = 36
+_HALF = 18
+_KPI_ROW_SPAN = 6
+_CHART_ROW_SPAN = 12
+_TABLE_ROW_SPAN = 18
+
+
+# ---------------------------------------------------------------------------
+# Dataset refs. Registered on the App in build_payment_recon_app; the
+# populators reference them by Python variable. Order mirrors
+# `build_all_datasets` so the Analysis JSON's
+# `DataSetIdentifierDeclarations` lines up with the imperative output.
+# ---------------------------------------------------------------------------
+
+def _datasets(cfg: Config) -> dict[str, Dataset]:
+    """Map each PR logical dataset identifier to a typed `Dataset` ref."""
+    from quicksight_gen.apps.payment_recon.constants import (
+        DS_EXTERNAL_TRANSACTIONS,
+        DS_MERCHANTS,
+        DS_PAYMENT_RECON,
+        DS_PAYMENT_RETURNS,
+        DS_PAYMENTS,
+        DS_SALE_SETTLEMENT_MISMATCH,
+        DS_SETTLEMENT_EXCEPTIONS,
+        DS_SETTLEMENT_PAYMENT_MISMATCH,
+        DS_UNMATCHED_EXTERNAL_TXNS,
+    )
+    # Order must mirror build_all_datasets so each logical name
+    # lines up with the matching DataSet's DataSetId at the same index.
+    names = [
+        DS_MERCHANTS,
+        DS_SALES,
+        DS_SETTLEMENTS,
+        DS_PAYMENTS,
+        DS_SETTLEMENT_EXCEPTIONS,
+        DS_PAYMENT_RETURNS,
+        DS_SALE_SETTLEMENT_MISMATCH,
+        DS_SETTLEMENT_PAYMENT_MISMATCH,
+        DS_UNMATCHED_EXTERNAL_TXNS,
+        DS_EXTERNAL_TRANSACTIONS,
+        DS_PAYMENT_RECON,
+    ]
+    built = build_all_datasets(cfg)
+    return {
+        name: Dataset(identifier=name, arn=cfg.dataset_arn(ds.DataSetId))
+        for name, ds in zip(names, built)
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -244,17 +316,159 @@ def _populate_getting_started(cfg: Config, sheet: Sheet) -> None:
             _PAYMENT_RECON_DESCRIPTION, _PAYMENT_RECON_BULLETS,
         ),
     ]
-    accent_for_blocks = accent
     for box_id, title, body_text, bullet_items in sheet_blocks:
         sheet.layout.row(height=7).add_text_box(
             TextBox(
                 text_box_id=box_id,
                 content=_section_box_content(
-                    title, body_text, bullet_items, accent_for_blocks,
+                    title, body_text, bullet_items, accent,
                 ),
             ),
             width=_FULL,
         )
+
+
+# ---------------------------------------------------------------------------
+# Sales Overview (L.4.2) — 2 KPIs + 2 bar charts (each click-filters
+# the detail table) + unaggregated sales detail table with cross-sheet
+# right-click drill into Settlements (writes pSettlementId).
+# ---------------------------------------------------------------------------
+
+def _populate_sales_overview(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    settlements_sheet: Sheet,
+    datasets: dict[str, Dataset],
+) -> None:
+    preset = get_preset(cfg.theme_preset)
+    link_color = preset.accent
+    link_tint = preset.link_tint
+
+    ds_sales = datasets[DS_SALES]
+
+    # Row 1: two KPIs side-by-side.
+    kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
+    kpi_row.add_kpi(
+        width=_HALF,
+        visual_id="sales-kpi-count",  # type: ignore[arg-type]
+        title="Total Sales Count",
+        subtitle="Count of all sales in the selected date range",
+        values=[ds_sales["sale_id"].count(field_id="sales-count")],
+    )
+    kpi_row.add_kpi(
+        width=_HALF,
+        visual_id="sales-kpi-amount",  # type: ignore[arg-type]
+        title="Total Sales Amount",
+        subtitle="Sum of all sale amounts in the selected date range",
+        values=[ds_sales["amount"].sum(field_id="sales-amount")],
+    )
+
+    # Row 2: two horizontal bar charts (merchant + location), each with
+    # a same-sheet click filter that narrows the detail table in row 3.
+    # Forward-ref pattern: build SameSheetFilter actions with empty
+    # target_visuals, attach to bars, then back-patch with the table
+    # visual once row 3 lands.
+    merchant_filter = SameSheetFilter(
+        target_visuals=[],
+        name="Filter by Merchant",
+        action_id="action-sales-filter-by-merchant",
+    )
+    location_filter = SameSheetFilter(
+        target_visuals=[],
+        name="Filter by Location",
+        action_id="action-sales-filter-by-location",
+    )
+    chart_row = sheet.layout.row(height=_CHART_ROW_SPAN)
+    chart_row.add_bar_chart(
+        width=_HALF,
+        visual_id="sales-bar-by-merchant",  # type: ignore[arg-type]
+        title="Sales Amount by Merchant",
+        subtitle=(
+            "Which merchants are generating the most sales revenue. "
+            "Click a bar to filter the detail table."
+        ),
+        category=[ds_sales["merchant_id"].dim(field_id="merchant-dim")],
+        values=[ds_sales["amount"].sum(field_id="merchant-amount")],
+        orientation="HORIZONTAL",
+        bars_arrangement="CLUSTERED",
+        category_label="Merchant",
+        value_label="Sales Amount ($)",
+        actions=[merchant_filter],
+    )
+    chart_row.add_bar_chart(
+        width=_HALF,
+        visual_id="sales-bar-by-location",  # type: ignore[arg-type]
+        title="Sales Amount by Location",
+        subtitle=(
+            "Which locations are generating the most sales revenue. "
+            "Click a bar to filter the detail table."
+        ),
+        category=[ds_sales["location_id"].dim(field_id="location-dim")],
+        values=[ds_sales["amount"].sum(field_id="location-amount")],
+        orientation="HORIZONTAL",
+        bars_arrangement="CLUSTERED",
+        category_label="Location",
+        value_label="Sales Amount ($)",
+        actions=[location_filter],
+    )
+
+    # Row 3: full-width detail table. Base columns + optional metadata
+    # appended after, matching the imperative SPEC 2.2 shape.
+    settlement_id_col = ds_sales["settlement_id"].dim(field_id="tbl-settlement-id")
+    base_columns = [
+        ds_sales["sale_id"].dim(field_id="tbl-sale-id"),
+        ds_sales["sale_type"].dim(field_id="tbl-sale-type"),
+        settlement_id_col,
+        ds_sales["merchant_id"].dim(field_id="tbl-merchant-id"),
+        ds_sales["location_id"].dim(field_id="tbl-location-id"),
+        ds_sales["amount"].dim(field_id="tbl-amount"),
+        ds_sales["payment_method"].dim(field_id="tbl-payment-method"),
+        ds_sales["sale_timestamp"].dim(field_id="tbl-timestamp"),
+        ds_sales["card_brand"].dim(field_id="tbl-card-brand"),
+        ds_sales["reference_id"].dim(field_id="tbl-ref-id"),
+    ]
+    optional_columns = [
+        ds_sales[col].dim(field_id=f"tbl-sales-{col}")
+        for col, _ddl, _qs, _ftype, _label in OPTIONAL_SALE_METADATA
+    ]
+    sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        visual_id="sales-detail-table",  # type: ignore[arg-type]
+        title="Sales Detail",
+        subtitle=(
+            "Individual sale transactions — newest first. Right-click a "
+            "row to open its settlement."
+        ),
+        columns=base_columns + optional_columns,
+        sort_by=("tbl-timestamp", "DESC"),
+        actions=[
+            Drill(
+                target_sheet=settlements_sheet,
+                writes=[(P_PR_SETTLEMENT, DrillSourceField(
+                    field_id="tbl-settlement-id",
+                    shape=P_PR_SETTLEMENT.shape,
+                ))],
+                name="View Settlement",
+                trigger="DATA_POINT_MENU",
+                action_id="action-sale-to-settlement",
+            ),
+        ],
+        conditional_formatting=[
+            CellAccentMenu(
+                on=settlement_id_col,
+                text_color=link_color,
+                background_color=link_tint,
+            ),
+        ],
+    )
+
+    # Back-patch the bar charts' click filters now that the detail
+    # table exists. SameSheetFilter only resolves target_visuals'
+    # visual_ids at emit time; by then the table is in the sheet.
+    detail_table = sheet.visuals[-1]
+    merchant_filter.target_visuals.append(detail_table)
+    location_filter.target_visuals.append(detail_table)
 
 
 # ---------------------------------------------------------------------------
@@ -268,12 +482,29 @@ def _analysis_name(cfg: Config) -> str:
     return "Payment Reconciliation"
 
 
+# Order matters — sheets register on the analysis in this list's order,
+# which becomes the dashboard's tab order.
+_PR_SHEET_SPECS: tuple[tuple[str, str, str, str], ...] = (
+    (SHEET_GETTING_STARTED, "Getting Started", "Getting Started",
+     "Landing page — summarises each tab in this dashboard so readers "
+     "know where to look first. No filters or visuals."),
+    (SHEET_SALES, "Sales Overview", "Sales Overview", _SALES_DESCRIPTION),
+    (SHEET_SETTLEMENTS, "Settlements", "Settlements", _SETTLEMENTS_DESCRIPTION),
+    (SHEET_PAYMENTS, "Payments", "Payments", _PAYMENTS_DESCRIPTION),
+    (SHEET_EXCEPTIONS, "Exceptions & Alerts", "Exceptions & Alerts",
+     _EXCEPTIONS_DESCRIPTION),
+    (SHEET_PAYMENT_RECON, "Payment Reconciliation", "Payment Reconciliation",
+     _PAYMENT_RECON_DESCRIPTION),
+)
+
+
 def build_payment_recon_app(cfg: Config) -> App:
     """Construct the Payment Reconciliation App as a tree.
 
-    L.4.1 lands only the Getting Started sheet; subsequent substeps add
-    the pipeline sheets (Sales / Settlements / Payments / Exceptions /
-    Payment Reconciliation) and app-level wiring.
+    Sheets are pre-registered in display order so cross-sheet drills can
+    target any sheet by ref. Populators run in any order; unported
+    sheets emit as bare shells (id + metadata) until their L.4.N
+    sub-step lands.
     """
     app = App(name="payment-recon", cfg=cfg)
     analysis = app.set_analysis(Analysis(
@@ -281,14 +512,24 @@ def build_payment_recon_app(cfg: Config) -> App:
         name=_analysis_name(cfg),
     ))
 
-    gs = analysis.add_sheet(Sheet(
-        sheet_id=SHEET_GETTING_STARTED,
-        name="Getting Started",
-        title="Getting Started",
-        description=(
-            "Landing page — summarises each tab in this dashboard so readers "
-            "know where to look first. No filters or visuals."
-        ),
-    ))
-    _populate_getting_started(cfg, gs)
+    datasets = _datasets(cfg)
+    for ds in datasets.values():
+        app.add_dataset(ds)
+
+    sheets: dict[str, Sheet] = {}
+    for sheet_id, name, title, description in _PR_SHEET_SPECS:
+        sheets[sheet_id] = analysis.add_sheet(Sheet(
+            sheet_id=sheet_id,  # type: ignore[arg-type]
+            name=name,
+            title=title,
+            description=description,
+        ))
+
+    _populate_getting_started(cfg, sheets[SHEET_GETTING_STARTED])
+    _populate_sales_overview(
+        cfg,
+        sheets[SHEET_SALES],
+        settlements_sheet=sheets[SHEET_SETTLEMENTS],
+        datasets=datasets,
+    )
     return app

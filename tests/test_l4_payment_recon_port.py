@@ -16,8 +16,10 @@ import pytest
 
 from quicksight_gen.apps.payment_recon.analysis import (
     _build_getting_started_sheet as _imperative_getting_started_sheet,
+    _build_sales_sheet as _imperative_sales_sheet,
 )
 from quicksight_gen.apps.payment_recon.app import build_payment_recon_app
+from quicksight_gen.apps.payment_recon.constants import SHEET_SALES
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.models import _strip_nones
 
@@ -61,6 +63,17 @@ def _normalize_sheet(sheet_json: dict) -> dict:
     return normalized
 
 
+def _strip_filter_controls(sheet_json: dict) -> dict:
+    """L.4.2-style normalization for sheets whose FilterControls are
+    deferred to L.4.7. The imperative builder emits per-sheet controls
+    inline; the tree port lands them via app-level wiring later. Until
+    then, comparing only Visuals + Layouts + descriptions is the right
+    granularity."""
+    out = dict(sheet_json)
+    out.pop("FilterControls", None)
+    return out
+
+
 @pytest.mark.parametrize("preset, demo_url", [
     ("default", None),
     ("sasquatch-bank", "postgres://demo:demo@localhost/demo"),
@@ -83,6 +96,34 @@ def test_l4_1_getting_started_sheet_byte_identical(
 
     app = build_payment_recon_app(cfg)
     analysis = app.emit_analysis()
-    tree_sheet = _strip_nones(asdict(analysis.Definition.Sheets[0]))
+    gs_sheet = next(
+        s for s in analysis.Definition.Sheets if s.SheetId == "sheet-getting-started"
+    )
+    tree_sheet = _strip_nones(asdict(gs_sheet))
+
+    assert _normalize_sheet(tree_sheet) == _normalize_sheet(imperative_sheet)
+
+
+def test_l4_2_sales_overview_sheet_byte_identical() -> None:
+    """Sales Overview: 2 KPIs + 2 horizontal bar charts (with same-sheet
+    click filters narrowing the detail table) + unaggregated detail
+    table with right-click drill into Settlements (writes pSettlementId,
+    settlement_id cell carries the menu_link CF — accent text + tint
+    background).
+
+    FilterControls are deferred to L.4.7; comparing the rest of the
+    sheet is the right granularity until that wiring lands."""
+    cfg = Config(**_BASE_CFG_KWARGS)
+
+    imperative_sheet = _strip_filter_controls(
+        _strip_nones(asdict(_imperative_sales_sheet(cfg)))
+    )
+
+    app = build_payment_recon_app(cfg)
+    analysis = app.emit_analysis()
+    sales_sheet = next(
+        s for s in analysis.Definition.Sheets if s.SheetId == SHEET_SALES
+    )
+    tree_sheet = _strip_filter_controls(_strip_nones(asdict(sales_sheet)))
 
     assert _normalize_sheet(tree_sheet) == _normalize_sheet(imperative_sheet)
