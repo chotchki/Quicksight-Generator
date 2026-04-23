@@ -11,12 +11,24 @@ from __future__ import annotations
 import pytest
 
 from quicksight_gen.common.config import Config
-from quicksight_gen.common.ids import ParameterName, SheetId, VisualId
+from quicksight_gen.common.ids import (
+    FilterGroupId,
+    ParameterName,
+    SheetId,
+    VisualId,
+)
 from quicksight_gen.common.models import (
+    CategoryFilter,
+    CategoryFilterConfiguration,
+    ColumnIdentifier,
     DateTimeDefaultValues,
+    Filter,
     KPIConfiguration,
     KPIFieldWells,
     KPIVisual,
+    NumericRangeFilter,
+    NumericRangeFilterValue,
+    SheetVisualScopingConfiguration,
     Visual,
 )
 from quicksight_gen.common.tree import (
@@ -27,6 +39,7 @@ from quicksight_gen.common.tree import (
     Dashboard,
     DateTimeParam,
     Dim,
+    FilterGroup,
     GridSlot,
     IntegerParam,
     Measure,
@@ -607,3 +620,268 @@ class TestAnalysisAddParameter:
         analysis = Analysis(analysis_id_suffix="test", name="Test")
         defn = analysis.emit_definition(dataset_declarations=[])
         assert defn.ParameterDeclarations is None
+
+
+# ---------------------------------------------------------------------------
+# L.1.5 — FilterGroup with object-ref scope + scope-on-same-sheet validation
+# ---------------------------------------------------------------------------
+
+def _category_filter(filter_id: str, dataset: str, column: str) -> Filter:
+    """Test-only Filter constructor — keeps the test focus on scope
+    validation, not on Filter construction details."""
+    return Filter(
+        CategoryFilter=CategoryFilter(
+            FilterId=filter_id,
+            Column=ColumnIdentifier(DataSetIdentifier=dataset, ColumnName=column),
+            Configuration=CategoryFilterConfiguration(
+                FilterListConfiguration={
+                    "MatchOperator": "CONTAINS",
+                    "CategoryValues": ["yes"],
+                },
+            ),
+        ),
+    )
+
+
+class TestFilterGroupScope:
+    def _make_sheet_with_visuals(
+        self, sheet_id: str, *visual_ids: str,
+    ) -> tuple[Sheet, list[KPI]]:
+        sheet = Sheet(
+            sheet_id=SheetId(sheet_id),
+            name="Test", title="Test", description="",
+        )
+        visuals = []
+        for vid in visual_ids:
+            v = sheet.add_visual(KPI(visual_id=VisualId(vid), title=vid))
+            visuals.append(v)
+        return sheet, visuals
+
+    def test_scope_visuals_validates_visual_is_on_sheet(self):
+        """Wrong-sheet bug: scope_visuals raises if any visual isn't
+        registered on the given sheet. Catches the bug class at the
+        wiring line."""
+        sheet_a, [v_a] = self._make_sheet_with_visuals("sheet-a", "v-a")
+        sheet_b, [v_b] = self._make_sheet_with_visuals("sheet-b", "v-b")
+
+        fg = FilterGroup(
+            filter_group_id=FilterGroupId("fg-test"),
+            filters=[_category_filter("f-1", "ds-foo", "col_a")],
+        )
+        with pytest.raises(ValueError, match="isn't registered on sheet"):
+            # Trying to scope a visual from sheet-a onto sheet-b
+            fg.scope_visuals(sheet_b, [v_a])
+
+    def test_scope_visuals_with_correct_visuals_succeeds(self):
+        sheet, [v1, v2] = self._make_sheet_with_visuals(
+            "sheet-test", "v-1", "v-2",
+        )
+        fg = FilterGroup(
+            filter_group_id=FilterGroupId("fg-test"),
+            filters=[_category_filter("f-1", "ds-foo", "col_a")],
+        )
+        ret = fg.scope_visuals(sheet, [v1, v2])
+        assert ret is fg  # chains
+        assert len(fg._scope_entries) == 1
+
+    def test_scope_visuals_emits_selected_visuals_configuration(self):
+        sheet, [v1, v2] = self._make_sheet_with_visuals(
+            "sheet-test", "v-1", "v-2",
+        )
+        fg = FilterGroup(
+            filter_group_id=FilterGroupId("fg-test"),
+            filters=[_category_filter("f-1", "ds-foo", "col_a")],
+        )
+        fg.scope_visuals(sheet, [v1, v2])
+        emitted = fg.emit()
+        configs = emitted.ScopeConfiguration.SelectedSheets.SheetVisualScopingConfigurations
+        assert len(configs) == 1
+        assert configs[0].SheetId == "sheet-test"
+        assert configs[0].Scope == "SELECTED_VISUALS"
+        assert configs[0].VisualIds == ["v-1", "v-2"]
+
+    def test_scope_sheet_emits_all_visuals_configuration(self):
+        sheet, _ = self._make_sheet_with_visuals(
+            "sheet-test", "v-1", "v-2",
+        )
+        fg = FilterGroup(
+            filter_group_id=FilterGroupId("fg-test"),
+            filters=[_category_filter("f-1", "ds-foo", "col_a")],
+        )
+        fg.scope_sheet(sheet)
+        emitted = fg.emit()
+        configs = emitted.ScopeConfiguration.SelectedSheets.SheetVisualScopingConfigurations
+        assert configs[0].SheetId == "sheet-test"
+        assert configs[0].Scope == "ALL_VISUALS"
+        assert configs[0].VisualIds is None
+
+    def test_emit_without_scope_raises(self):
+        """A FilterGroup with no scope configured wouldn't apply to
+        anything at deploy — fail loud at construction rather than
+        silently emitting an empty configuration."""
+        fg = FilterGroup(
+            filter_group_id=FilterGroupId("fg-test"),
+            filters=[_category_filter("f-1", "ds-foo", "col_a")],
+        )
+        with pytest.raises(ValueError, match="has no scope"):
+            fg.emit()
+
+    def test_multiple_scope_entries(self):
+        """A FilterGroup can scope to (visual subset on sheet A) plus
+        (all visuals on sheet B). Each entry emits its own
+        SheetVisualScopingConfiguration."""
+        sheet_a, [v_a1, v_a2] = self._make_sheet_with_visuals(
+            "sheet-a", "v-a1", "v-a2",
+        )
+        sheet_b, _ = self._make_sheet_with_visuals(
+            "sheet-b", "v-b1",
+        )
+        fg = FilterGroup(
+            filter_group_id=FilterGroupId("fg-multi"),
+            filters=[_category_filter("f-1", "ds-foo", "col_a")],
+        )
+        fg.scope_visuals(sheet_a, [v_a1])
+        fg.scope_sheet(sheet_b)
+        emitted = fg.emit()
+        configs = emitted.ScopeConfiguration.SelectedSheets.SheetVisualScopingConfigurations
+        assert len(configs) == 2
+        assert configs[0].SheetId == "sheet-a"
+        assert configs[0].Scope == "SELECTED_VISUALS"
+        assert configs[0].VisualIds == ["v-a1"]
+        assert configs[1].SheetId == "sheet-b"
+        assert configs[1].Scope == "ALL_VISUALS"
+
+    def test_emit_carries_filters_through(self):
+        sheet, _ = self._make_sheet_with_visuals("sheet-test", "v-1")
+        f = _category_filter("f-1", "ds-foo", "col_a")
+        fg = FilterGroup(
+            filter_group_id=FilterGroupId("fg-test"),
+            filters=[f],
+        )
+        fg.scope_sheet(sheet)
+        emitted = fg.emit()
+        assert emitted.Filters == [f]
+
+    def test_disabled_filter_group(self):
+        sheet, _ = self._make_sheet_with_visuals("sheet-test", "v-1")
+        fg = FilterGroup(
+            filter_group_id=FilterGroupId("fg-test"),
+            filters=[_category_filter("f-1", "ds-foo", "col_a")],
+            enabled=False,
+        )
+        fg.scope_sheet(sheet)
+        emitted = fg.emit()
+        assert emitted.Status == "DISABLED"
+
+
+class TestAnalysisAddFilterGroup:
+    def test_add_filter_group_returns_ref(self):
+        analysis = Analysis(analysis_id_suffix="test", name="Test")
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("sheet-test"),
+            name="Test", title="Test", description="",
+        ))
+        kpi = sheet.add_visual(KPI(visual_id=VisualId("v-1"), title="Test"))
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=FilterGroupId("fg-test"),
+            filters=[_category_filter("f-1", "ds-foo", "col_a")],
+        ))
+        fg.scope_visuals(sheet, [kpi])
+        assert fg in analysis.filter_groups
+
+    def test_duplicate_filter_group_id_raises(self):
+        analysis = Analysis(analysis_id_suffix="test", name="Test")
+        analysis.add_filter_group(FilterGroup(
+            filter_group_id=FilterGroupId("fg-dup"),
+            filters=[_category_filter("f-1", "ds-foo", "col_a")],
+        ))
+        with pytest.raises(ValueError, match="already on this Analysis"):
+            analysis.add_filter_group(FilterGroup(
+                filter_group_id=FilterGroupId("fg-dup"),
+                filters=[_category_filter("f-2", "ds-foo", "col_b")],
+            ))
+
+    def test_emit_definition_carries_filter_groups(self):
+        analysis = Analysis(analysis_id_suffix="test", name="Test")
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("sheet-test"),
+            name="Test", title="Test", description="",
+        ))
+        kpi = sheet.add_visual(KPI(visual_id=VisualId("v-1"), title="Test"))
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=FilterGroupId("fg-test"),
+            filters=[_category_filter("f-1", "ds-foo", "col_a")],
+        ))
+        fg.scope_visuals(sheet, [kpi])
+        defn = analysis.emit_definition(dataset_declarations=[])
+        assert len(defn.FilterGroups) == 1
+        assert defn.FilterGroups[0].FilterGroupId == "fg-test"
+
+    def test_no_filter_groups_emits_none(self):
+        analysis = Analysis(analysis_id_suffix="test", name="Test")
+        defn = analysis.emit_definition(dataset_declarations=[])
+        assert defn.FilterGroups is None
+
+
+class TestFilterGroupCompositionWithApp:
+    """Cross-check: the wrong-sheet bug class is caught even when
+    FilterGroups go through the full App.emit_analysis path.
+
+    The L.1.5 check-in moment — the load-bearing object-ref scope
+    validation works end-to-end."""
+
+    def test_wrong_sheet_visual_caught_at_scope_call(self):
+        app = App(name="test", cfg=_TEST_CFG)
+        analysis = app.set_analysis(Analysis(
+            analysis_id_suffix="test", name="Test",
+        ))
+        sheet_a = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("sheet-a"),
+            name="A", title="A", description="",
+        ))
+        v_a = sheet_a.add_visual(KPI(
+            visual_id=VisualId("v-a"), title="A",
+        ))
+        sheet_b = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("sheet-b"),
+            name="B", title="B", description="",
+        ))
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=FilterGroupId("fg-cross"),
+            filters=[_category_filter("f-1", "ds", "col")],
+        ))
+        # Try to scope sheet-A's visual onto sheet-B → caught here.
+        with pytest.raises(ValueError, match="isn't registered on sheet"):
+            fg.scope_visuals(sheet_b, [v_a])
+
+    def test_full_emit_round_trip(self):
+        """End-to-end: tree → FilterGroup with scope → App emit_analysis →
+        models.Analysis.to_aws_json carries the scoping configuration
+        through to the emitted JSON. No JSON-level surprises."""
+        app = App(name="test", cfg=_TEST_CFG)
+        analysis = app.set_analysis(Analysis(
+            analysis_id_suffix="test", name="Test",
+        ))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("sheet-test"),
+            name="Test", title="Test", description="",
+        ))
+        kpi = sheet.add_visual(KPI(
+            visual_id=VisualId("v-test"), title="Test",
+            values=[Measure.sum("ds-foo", "f-val", "amount")],
+        ))
+        sheet.place(kpi, col_span=12, row_span=6, col_index=0)
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=FilterGroupId("fg-scoped"),
+            filters=[_category_filter("f-1", "ds-foo", "col_a")],
+        ))
+        fg.scope_visuals(sheet, [kpi])
+        m = app.emit_analysis(dataset_declarations=[])
+        j = m.to_aws_json()
+        fgs = j["Definition"]["FilterGroups"]
+        assert len(fgs) == 1
+        assert fgs[0]["FilterGroupId"] == "fg-scoped"
+        configs = fgs[0]["ScopeConfiguration"]["SelectedSheets"]["SheetVisualScopingConfigurations"]
+        assert configs[0]["SheetId"] == "sheet-test"
+        assert configs[0]["Scope"] == "SELECTED_VISUALS"
+        assert configs[0]["VisualIds"] == ["v-test"]
