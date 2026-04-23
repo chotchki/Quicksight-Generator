@@ -1,0 +1,129 @@
+"""Unit tests for ``TreeValidator``'s pure-Python parts (dispatch
+logic, failure collection, tree walking).
+
+The full integration value comes when run against a deployed
+dashboard + Playwright Page (lands in L.1.10.6 with the kitchen-sink
+test). These unit tests exercise the dispatch + failure-handling
+surface without needing a deploy.
+"""
+
+from __future__ import annotations
+
+from unittest.mock import MagicMock
+
+import pytest
+
+from quicksight_gen.common.config import Config
+from quicksight_gen.common.ids import SheetId, VisualId
+from quicksight_gen.common.tree import (
+    KPI,
+    Analysis,
+    App,
+    BarChart,
+    Dataset,
+    Dim,
+    Measure,
+    Sankey,
+    Sheet,
+    Table,
+)
+from tests.e2e.tree_validator import TreeValidator, ValidationFailure
+
+
+_TEST_CFG = Config(
+    aws_account_id="111122223333",
+    aws_region="us-west-2",
+    theme_preset="default",
+    datasource_arn=(
+        "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
+    ),
+)
+
+
+_DS = Dataset(identifier="ds", arn="arn:test:ds")
+
+
+def _make_app() -> App:
+    """Minimal App with a sheet + one of each visual kind."""
+    app = App(name="test", cfg=_TEST_CFG)
+    app.add_dataset(_DS)
+    analysis = app.set_analysis(Analysis(
+        analysis_id_suffix="t", name="T",
+    ))
+    sheet = analysis.add_sheet(Sheet(
+        sheet_id=SheetId("s-1"), name="Sheet One",
+        title="Sheet One", description="",
+    ))
+    sheet.add_visual(KPI(title="Total", values=[Measure.sum(_DS, "f", "amount")]))
+    sheet.add_visual(Table(title="Detail", group_by=[Dim(_DS, "f-id", "id")]))
+    sheet.add_visual(BarChart(title="Distribution", category=[Dim(_DS, "f-c", "cat")]))
+    sheet.add_visual(Sankey(
+        title="Flow",
+        source=Dim(_DS, "f-s", "source"),
+        target=Dim(_DS, "f-t", "target"),
+        weight=Measure.sum(_DS, "f-w", "weight"),
+    ))
+    return app
+
+
+class TestFailureCollection:
+    def test_no_failures_doesnt_raise(self):
+        v = TreeValidator(_make_app(), page=MagicMock())
+        # No _fail() calls — raise_if_failed is a no-op
+        v.raise_if_failed()  # doesn't raise
+
+    def test_single_failure_raises_with_message(self):
+        v = TreeValidator(_make_app(), page=MagicMock())
+        v._fail("Sheet 'X'", "missing visual 'Y'")
+        with pytest.raises(AssertionError, match="missing visual 'Y'"):
+            v.raise_if_failed()
+
+    def test_multiple_failures_all_surface_at_once(self):
+        v = TreeValidator(_make_app(), page=MagicMock())
+        v._fail("Sheet 'A'", "first")
+        v._fail("Sheet 'B'", "second")
+        v._fail("Sheet 'C'", "third")
+        with pytest.raises(AssertionError) as exc_info:
+            v.raise_if_failed()
+        msg = str(exc_info.value)
+        assert "first" in msg
+        assert "second" in msg
+        assert "third" in msg
+
+    def test_validation_failure_dataclass_fields(self):
+        f = ValidationFailure(where="Sheet 'X'", message="m")
+        assert f.where == "Sheet 'X'"
+        assert f.message == "m"
+
+
+class TestPerKindDispatch:
+    def test_kind_specific_method_invoked(self):
+        v = TreeValidator(_make_app(), page=MagicMock())
+        sheet = v.app.analysis.sheets[0]
+        kpi = sheet.visuals[0]
+        # Wrap _validate_kpi with a tracker — confirm dispatch hits it.
+        called = []
+        v._validate_kpi = lambda s, x: called.append(x)
+        v.validate_visual(sheet, kpi)
+        assert called == [kpi]
+
+    def test_unknown_kind_falls_through(self):
+        """A visual without _AUTO_KIND (e.g. spike-shape VisualNode)
+        doesn't crash — dispatch is best-effort."""
+        v = TreeValidator(_make_app(), page=MagicMock())
+        sheet = v.app.analysis.sheets[0]
+        fake_visual = MagicMock(spec=[])  # no _AUTO_KIND attr
+        # Doesn't raise, doesn't add a failure
+        v.validate_visual(sheet, fake_visual)
+        assert v.failures == []
+
+
+class TestStructureDispatch:
+    """validate_structure walks the App's sheets in registration order
+    and exercises every visual's per-kind hook."""
+
+    def test_no_analysis_fails_loud(self):
+        app = App(name="empty", cfg=_TEST_CFG)
+        v = TreeValidator(app, page=MagicMock())
+        with pytest.raises(AssertionError, match="App has no Analysis"):
+            v.validate_structure()

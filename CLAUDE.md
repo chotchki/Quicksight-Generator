@@ -10,7 +10,7 @@ The customer doesn't know exactly what they want yet. Everything is generated fr
 
 ## Quick Reference
 
-- **Language**: Python 3.11+ (3.13 in use)
+- **Language**: Python 3.12+ (3.13 in use). 3.12 minimum is for PEP 695 generic syntax used in `common/tree.py`.
 - **Package manager**: pip / setuptools, venv at `.venv/`
 - **Entry point**: `python -m quicksight_gen` or `quicksight-gen` (installed script)
 - **CLI framework**: Click
@@ -126,6 +126,7 @@ src/quicksight_gen/
     clickability.py      # Conditional-format helpers: accent text (left-click) + tint-background (right-click)
     aging.py             # Shared aging_bar_visual() — horizontal bar chart by aging bucket (used by both apps)
     rich_text.py         # XML composition helpers for SheetTextBox.Content (heading/bullets/link/inline)
+    tree/                # Phase L typed tree primitives (App / Analysis / Dashboard / Sheet / Visual subtypes / Filter wrappers / Controls / Drill actions). Object-ref cross-references; auto-IDs for internal IDs; emit-time validation walks (dataset / calc-field / parameter / drill-destination references). Apps mid-port — see PLAN.md L-series for migration status.
   apps/
     payment_recon/
       analysis.py          # 6 sheets, drill-downs, filter groups, dashboard builder
@@ -260,6 +261,7 @@ Demo persona is **Sasquatch National Bank — Cash Management Suite (CMS)** — 
 - Every sheet has a plain-language description; every visual has a subtitle — the end customer is not technical. Coverage is enforced in unit + API e2e tests.
 - Clickable cells use `common/clickability.py`: accent-colored text = left-click drill; accent text on pale-tint background = the cell also carries a right-click menu drill (use this style whenever a right-click action exists, even if a left-click is also wired)
 - **Drill direction convention** — left clicks move you LEFT, right clicks move you RIGHT. When wiring a new drill action on a row, pick the trigger by which sheet the drill points to relative to the source: deeper / further-down-the-pipeline / further-right-in-the-tab-order goes on `DATA_POINT_MENU` (right-click); back-toward-source goes on `DATA_POINT_CLICK` (left-click). Call out both clicks in the visual's subtitle when both are wired. Existing wirings that pre-date this rule are not retroactively flipped.
+- **Tree primitives (Phase L, mid-port).** New code under `common/tree/` — `App` / `Analysis` / `Dashboard` / `Sheet` plus typed `Visual` subtypes (`KPI` / `Table` / `BarChart` / `Sankey`), typed Filter wrappers (`CategoryFilter` / `NumericRangeFilter` / `TimeRangeFilter`), Parameter + Filter `Control` wrappers, and `Drill` actions. Cross-references are object refs, not string IDs (visuals reference datasets by `Dataset` node; filter groups reference visuals by `Visual` node; drills reference sheets by `Sheet` node). Internal IDs (visual_id, filter_group_id, action_id, layout element IDs) are auto-assigned at emit time using a position-indexed scheme; URL-facing IDs (`SheetId`, `ParameterName`) and analyst-facing identifiers (`Dataset` identifier, `CalcField` name) stay explicit. `App.emit_analysis()` / `emit_dashboard()` runs validation walks (dataset references, calc-field references, parameter references, drill destinations, FilterGroup scoping). Apps are mid-port off `apps/<app>/{analysis,filters,visuals,constants}.py` — Investigation is the L.2 first port. New app code should use the tree; per-app `constants.py` modules collapse as each port lands.
 
 ## Conventions
 
