@@ -26,6 +26,7 @@ from quicksight_gen.common.models import (
     SankeyDiagramSortConfiguration,
     SankeyDiagramVisual,
     TableAggregatedFieldWells,
+    TableUnaggregatedFieldWells,
     TableConfiguration,
     TableFieldWells,
     TableVisual,
@@ -142,12 +143,24 @@ class KPI:
 
 @dataclass(eq=False)
 class Table:
-    """Table visual — one row per distinct combination of ``group_by``,
-    aggregated by ``values``.
+    """Table visual — two field-well shapes:
 
-    Field-well shape: ``GroupBy=[Dim, ...]`` + ``Values=[Measure, ...]``.
-    Optional ``sort_by`` is a ``(field_id, direction)`` tuple — direction
-    is ``"ASC"`` or ``"DESC"``.
+    - **Aggregated** (default): ``group_by=[Dim, ...]`` +
+      ``values=[Measure, ...]``. One row per distinct ``group_by``
+      combination, aggregated by ``values``. Emits
+      ``TableAggregatedFieldWells``.
+    - **Unaggregated**: pass ``columns=[Dim, ...]`` (and leave
+      ``group_by`` / ``values`` empty). Each cell shows the raw column
+      value — no aggregation, one row per source row. Emits
+      ``TableUnaggregatedFieldWells``. Use this for detail/drill-source
+      tables (AR Balances, AR Daily Statement transaction list).
+
+    Optional ``sort_by`` is a ``(field_ref, direction)`` tuple —
+    direction is ``"ASC"`` or ``"DESC"``.
+
+    Optional ``conditional_formatting`` passes through to the model's
+    raw dict (see ``common/clickability.py`` for the standard
+    accent-text and tint-background helpers).
 
     ``visual_id`` is optional (L.1.8.5 auto-ID).
     """
@@ -155,11 +168,25 @@ class Table:
     subtitle: str | None = None
     group_by: list[Dim] = field(default_factory=list[Dim])
     values: list[Measure] = field(default_factory=list[Measure])
+    columns: list[Dim] = field(default_factory=list[Dim])
     sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None
     actions: list[Drill] = field(default_factory=list[Drill])
+    conditional_formatting: dict[str, Any] | None = None
     visual_id: VisualId | AutoResolved = AUTO
 
     _AUTO_KIND: ClassVar[str] = "table"
+
+    def __post_init__(self) -> None:
+        # Unaggregated and aggregated modes are mutually exclusive: if
+        # `columns` is set, `group_by` and `values` must be empty (and
+        # vice versa). This is the same pattern as the model's
+        # `TableFieldWells` — exactly one of `TableAggregatedFieldWells`
+        # / `TableUnaggregatedFieldWells` is set.
+        if self.columns and (self.group_by or self.values):
+            raise ValueError(
+                "Table: `columns` (unaggregated mode) cannot be combined "
+                "with `group_by` / `values` (aggregated mode). Pick one."
+            )
 
     @property
     def element_id(self) -> str:
@@ -170,8 +197,11 @@ class Table:
         return "VISUAL"
 
     def datasets(self) -> set[Dataset]:
-        return ({d.dataset for d in self.group_by}
-                | {m.dataset for m in self.values})
+        return (
+            {d.dataset for d in self.group_by}
+            | {m.dataset for m in self.values}
+            | {d.dataset for d in self.columns}
+        )
 
     def calc_fields(self) -> set[CalcField]:
         deps: set[CalcField] = set()
@@ -180,6 +210,9 @@ class Table:
                 deps.add(cf)
         for m in self.values:
             if (cf := m.calc_field()) is not None:
+                deps.add(cf)
+        for d in self.columns:
+            if (cf := d.calc_field()) is not None:
                 deps.add(cf)
         return deps
 
@@ -198,21 +231,30 @@ class Table:
                     }},
                 ],
             }
+        if self.columns:
+            field_wells = TableFieldWells(
+                TableUnaggregatedFieldWells=TableUnaggregatedFieldWells(
+                    Values=[d.emit_unaggregated_field() for d in self.columns],
+                ),
+            )
+        else:
+            field_wells = TableFieldWells(
+                TableAggregatedFieldWells=TableAggregatedFieldWells(
+                    GroupBy=[d.emit() for d in self.group_by] if self.group_by else None,
+                    Values=[m.emit() for m in self.values] if self.values else None,
+                ),
+            )
         return Visual(
             TableVisual=TableVisual(
                 VisualId=self.visual_id,
                 Title=title_label(self.title),
                 Subtitle=subtitle_label(self.subtitle) if self.subtitle else None,
                 ChartConfiguration=TableConfiguration(
-                    FieldWells=TableFieldWells(
-                        TableAggregatedFieldWells=TableAggregatedFieldWells(
-                            GroupBy=[d.emit() for d in self.group_by] if self.group_by else None,
-                            Values=[m.emit() for m in self.values] if self.values else None,
-                        ),
-                    ),
+                    FieldWells=field_wells,
                     SortConfiguration=sort_config,
                 ),
                 Actions=[a.emit() for a in self.actions] if self.actions else None,
+                ConditionalFormatting=self.conditional_formatting,
             ),
         )
 

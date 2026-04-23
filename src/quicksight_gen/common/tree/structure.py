@@ -11,7 +11,7 @@ for deploy.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 from typing import Protocol, runtime_checkable
 
@@ -70,8 +70,9 @@ from quicksight_gen.common.tree.visuals import (
 # letter goes into the auto-derived field_id so the synthesized id
 # encodes which well a leaf came from.
 _FIELD_SLOTS: tuple[tuple[str, str], ...] = (
-    ("group_by", "g"),  # Table
+    ("group_by", "g"),  # Table (aggregated)
     ("values", "v"),    # KPI / Table / BarChart
+    ("columns", "u"),   # Table (unaggregated)
     ("category", "c"),  # BarChart
     ("source", "s"),    # Sankey
     ("target", "t"),    # Sankey
@@ -519,17 +520,26 @@ class Row:
         title: str,
         group_by: list[Dim] | None = None,
         values: list[Measure] | None = None,
+        columns: list[Dim] | None = None,
         subtitle: str | None = None,
         sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None,
         actions: list[Drill] | None = None,
+        conditional_formatting: dict[str, Any] | None = None,
         visual_id: VisualId | AutoResolved = AUTO,
     ) -> Table:
-        """Construct + register + place a Table in this row."""
+        """Construct + register + place a Table in this row.
+
+        Aggregated mode: pass ``group_by`` + ``values``. Unaggregated
+        mode (raw column display): pass ``columns``. The two modes are
+        mutually exclusive (Table.__post_init__ enforces this)."""
         col_index = self._consume(width)
         table = Table(
             title=title, subtitle=subtitle,
             group_by=group_by or [], values=values or [],
-            sort_by=sort_by, actions=actions or [], visual_id=visual_id,
+            columns=columns or [],
+            sort_by=sort_by, actions=actions or [],
+            conditional_formatting=conditional_formatting,
+            visual_id=visual_id,
         )
         self.sheet.visuals.append(table)
         self.sheet.grid_slots.append(GridSlot(
@@ -667,15 +677,20 @@ class AbsoluteSlot:
         title: str,
         group_by: list[Dim] | None = None,
         values: list[Measure] | None = None,
+        columns: list[Dim] | None = None,
         subtitle: str | None = None,
         sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None,
         actions: list[Drill] | None = None,
+        conditional_formatting: dict[str, Any] | None = None,
         visual_id: VisualId | AutoResolved = AUTO,
     ) -> Table:
         table = Table(
             title=title, subtitle=subtitle,
             group_by=group_by or [], values=values or [],
-            sort_by=sort_by, actions=actions or [], visual_id=visual_id,
+            columns=columns or [],
+            sort_by=sort_by, actions=actions or [],
+            conditional_formatting=conditional_formatting,
+            visual_id=visual_id,
         )
         self.sheet.visuals.append(table)
         self._place(table)

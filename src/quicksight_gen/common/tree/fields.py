@@ -128,6 +128,23 @@ class Dim:
             ),
         )
 
+    def emit_unaggregated_field(self) -> dict[str, object]:
+        """Emit the raw ``UnaggregatedField`` dict shape used inside
+        ``TableUnaggregatedFieldWells.Values``. The model layer types
+        that field as ``list[dict[str, Any]]`` rather than a typed
+        union, so the tree emits it as a dict directly."""
+        assert not isinstance(self.field_id, _AutoSentinel), (
+            "field_id wasn't resolved — App._resolve_auto_ids() must run "
+            "before Dim.emit_unaggregated_field()."
+        )
+        return {
+            "FieldId": self.field_id,
+            "Column": {
+                "DataSetIdentifier": self.dataset.identifier,
+                "ColumnName": resolve_column(self.column),
+            },
+        }
+
 
 # Aggregation kinds split into "categorical" (COUNT, DISTINCT_COUNT —
 # read off any column type) and "numerical" (SUM, MAX, MIN, AVERAGE —
