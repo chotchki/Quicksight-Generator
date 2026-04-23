@@ -302,7 +302,7 @@ def _build_recipient_fanout_sheet(
         visual_id=V_INV_FANOUT_KPI_RECIPIENTS,
         title="Qualifying Recipients",
         subtitle="Distinct recipients meeting the fanout threshold.",
-        values=[Measure.distinct_count(ds_fanout, "recipient_account_id")],
+        values=[ds_fanout["recipient_account_id"].distinct_count()],
     ))
     kpi_senders = sheet.add_visual(KPI(
         visual_id=V_INV_FANOUT_KPI_SENDERS,
@@ -310,7 +310,7 @@ def _build_recipient_fanout_sheet(
         subtitle=(
             "Distinct sender accounts feeding the qualifying recipients."
         ),
-        values=[Measure.distinct_count(ds_fanout, "sender_account_id")],
+        values=[ds_fanout["sender_account_id"].distinct_count()],
     ))
     kpi_amount = sheet.add_visual(KPI(
         visual_id=V_INV_FANOUT_KPI_AMOUNT,
@@ -318,7 +318,7 @@ def _build_recipient_fanout_sheet(
         subtitle=(
             "Sum of inbound amounts across qualifying recipient legs."
         ),
-        values=[Measure.sum(ds_fanout, "amount")],
+        values=[ds_fanout["amount"].sum()],
     ))
     distinct_senders_value = Measure.max(ds_fanout, distinct_senders_calc)
     table = sheet.add_visual(Table(
@@ -329,14 +329,14 @@ def _build_recipient_fanout_sheet(
             "(highest = widest funnel)."
         ),
         group_by=[
-            Dim(ds_fanout, "recipient_account_id"),
-            Dim(ds_fanout, "recipient_account_name"),
-            Dim(ds_fanout, "recipient_account_type"),
+            ds_fanout["recipient_account_id"].dim(),
+            ds_fanout["recipient_account_name"].dim(),
+            ds_fanout["recipient_account_type"].dim(),
         ],
         values=[
             distinct_senders_value,
-            Measure.distinct_count(ds_fanout, "transfer_id"),
-            Measure.sum(ds_fanout, "amount"),
+            ds_fanout["transfer_id"].distinct_count(),
+            ds_fanout["amount"].sum(),
         ],
         sort_by=(distinct_senders_value, "DESC"),
     ))
@@ -359,7 +359,7 @@ def _build_recipient_fanout_sheet(
         filters=[TimeRangeFilter(
             filter_id="filter-inv-fanout-window",
             dataset=ds_fanout,
-            column="posted_at",
+            column=ds_fanout["posted_at"],
             null_option="NON_NULLS_ONLY",
             time_granularity="DAY",
         )],
@@ -445,9 +445,9 @@ def _build_volume_anomalies_sheet(
         subtitle=(
             "Pair-windows whose 2-day rolling SUM clears the σ threshold."
         ),
-        values=[Measure.count(ds_anomalies, "recipient_account_id")],
+        values=[ds_anomalies["recipient_account_id"].count()],
     ))
-    dist_bucket_dim = Dim(ds_anomalies, "z_bucket")
+    dist_bucket_dim = ds_anomalies["z_bucket"].dim()
     distribution = sheet.add_visual(BarChart(
         visual_id=V_INV_ANOMALIES_DISTRIBUTION,
         title="Pair-Window σ Distribution",
@@ -456,12 +456,12 @@ def _build_volume_anomalies_sheet(
             "mean. Chart is intentionally NOT filtered by the σ slider."
         ),
         category=[dist_bucket_dim],
-        values=[Measure.count(ds_anomalies, "recipient_account_id")],
+        values=[ds_anomalies["recipient_account_id"].count()],
         orientation="VERTICAL",
         bars_arrangement="CLUSTERED",
         sort_by=(dist_bucket_dim, "ASC"),
     ))
-    z_score_max = Measure.max(ds_anomalies, "z_score")
+    z_score_max = ds_anomalies["z_score"].max()
     table = sheet.add_visual(Table(
         visual_id=V_INV_ANOMALIES_TABLE,
         title="Flagged Pair-Windows — Ranked",
@@ -470,16 +470,16 @@ def _build_volume_anomalies_sheet(
             "(highest = furthest from the population mean)."
         ),
         group_by=[
-            Dim(ds_anomalies, "recipient_account_id"),
-            Dim(ds_anomalies, "recipient_account_name"),
-            Dim(ds_anomalies, "sender_account_id"),
-            Dim(ds_anomalies, "sender_account_name"),
-            Dim.date(ds_anomalies, "window_end"),
+            ds_anomalies["recipient_account_id"].dim(),
+            ds_anomalies["recipient_account_name"].dim(),
+            ds_anomalies["sender_account_id"].dim(),
+            ds_anomalies["sender_account_name"].dim(),
+            ds_anomalies["window_end"].date(),
         ],
         values=[
             z_score_max,
-            Measure.max(ds_anomalies, "window_sum"),
-            Measure.max(ds_anomalies, "transfer_count"),
+            ds_anomalies["window_sum"].max(),
+            ds_anomalies["transfer_count"].max(),
         ],
         sort_by=(z_score_max, "DESC"),
     ))
@@ -501,7 +501,7 @@ def _build_volume_anomalies_sheet(
         filters=[TimeRangeFilter(
             filter_id="filter-inv-anomalies-window",
             dataset=ds_anomalies,
-            column="window_end",
+            column=ds_anomalies["window_end"],
             null_option="NON_NULLS_ONLY",
             time_granularity="DAY",
         )],
@@ -516,7 +516,7 @@ def _build_volume_anomalies_sheet(
         filters=[NumericRangeFilter(
             filter_id="filter-inv-anomalies-sigma",
             dataset=ds_anomalies,
-            column="z_score",
+            column=ds_anomalies["z_score"],
             minimum_parameter=sigma_param,
             null_option="NON_NULLS_ONLY",
             include_minimum=True,
@@ -605,12 +605,12 @@ def _build_money_trail_sheet(
             "transfers don't render here — see the detail table for "
             "every chain member."
         ),
-        source=Dim(ds_money_trail, "source_account_name"),
-        target=Dim(ds_money_trail, "target_account_name"),
-        weight=Measure.sum(ds_money_trail, "hop_amount"),
+        source=ds_money_trail["source_account_name"].dim(),
+        target=ds_money_trail["target_account_name"].dim(),
+        weight=ds_money_trail["hop_amount"].sum(),
         items_limit=_SANKEY_NODE_CAP,
     ))
-    depth_dim = Dim.numerical(ds_money_trail, "depth")
+    depth_dim = ds_money_trail["depth"].numerical()
     table = sheet.add_visual(Table(
         visual_id=V_INV_MONEY_TRAIL_TABLE,
         title="Money Trail — Hop-by-Hop",
@@ -620,13 +620,13 @@ def _build_money_trail_sheet(
         ),
         group_by=[
             depth_dim,
-            Dim(ds_money_trail, "transfer_id"),
-            Dim(ds_money_trail, "transfer_type"),
-            Dim(ds_money_trail, "source_account_name"),
-            Dim(ds_money_trail, "target_account_name"),
-            Dim.date(ds_money_trail, "posted_at"),
+            ds_money_trail["transfer_id"].dim(),
+            ds_money_trail["transfer_type"].dim(),
+            ds_money_trail["source_account_name"].dim(),
+            ds_money_trail["target_account_name"].dim(),
+            ds_money_trail["posted_at"].date(),
         ],
-        values=[Measure.sum(ds_money_trail, "hop_amount")],
+        values=[ds_money_trail["hop_amount"].sum()],
         sort_by=(depth_dim, "ASC"),
     ))
 
@@ -643,7 +643,7 @@ def _build_money_trail_sheet(
         filters=[CategoryFilter(
             filter_id="filter-inv-money-trail-root",
             dataset=ds_money_trail,
-            column="root_transfer_id",
+            column=ds_money_trail["root_transfer_id"],
             parameter=root_param,
             match_operator="EQUALS",
             null_option="NON_NULLS_ONLY",
@@ -658,7 +658,7 @@ def _build_money_trail_sheet(
         filters=[NumericRangeFilter(
             filter_id="filter-inv-money-trail-hops",
             dataset=ds_money_trail,
-            column="depth",
+            column=ds_money_trail["depth"],
             maximum_parameter=max_hops_param,
             null_option="NON_NULLS_ONLY",
             include_maximum=True,
@@ -672,7 +672,7 @@ def _build_money_trail_sheet(
         filters=[NumericRangeFilter(
             filter_id="filter-inv-money-trail-amount",
             dataset=ds_money_trail,
-            column="hop_amount",
+            column=ds_money_trail["hop_amount"],
             minimum_parameter=min_amount_param,
             null_option="NON_NULLS_ONLY",
             include_minimum=True,
@@ -685,10 +685,7 @@ def _build_money_trail_sheet(
         parameter=root_param,
         title="Chain root transfer",
         type="SINGLE_SELECT",
-        selectable_values=LinkedValues(
-            dataset=ds_money_trail,
-            column="root_transfer_id",
-        ),
+        selectable_values=LinkedValues(ds_money_trail["root_transfer_id"]),
         hidden_select_all=True,
         control_id="ctrl-inv-money-trail-root",
     ))
@@ -815,7 +812,7 @@ def _build_account_network_sheet(
         P_INV_ANETWORK_ANCHOR, ColumnShape.ACCOUNT_DISPLAY,
     )
 
-    inbound_source_dim = Dim(ds_anet, "source_display")
+    inbound_source_dim = ds_anet["source_display"].dim()
     inbound_sankey = sheet.add_visual(Sankey(
         visual_id=V_INV_ANETWORK_SANKEY_INBOUND,
         title="Inbound — counterparties → anchor",
@@ -826,8 +823,8 @@ def _build_account_network_sheet(
             "counterparty."
         ),
         source=inbound_source_dim,
-        target=Dim(ds_anet, "target_display"),
-        weight=Measure.sum(ds_anet, "hop_amount"),
+        target=ds_anet["target_display"].dim(),
+        weight=ds_anet["hop_amount"].sum(),
         items_limit=_SANKEY_NODE_CAP,
         actions=[Drill(
             writes=[(anchor_param_drill, inbound_source_dim)],
@@ -836,7 +833,7 @@ def _build_account_network_sheet(
             action_id="action-anetwork-sankey-inbound-walk",
         )],
     ))
-    outbound_target_dim = Dim(ds_anet, "target_display")
+    outbound_target_dim = ds_anet["target_display"].dim()
     outbound_sankey = sheet.add_visual(Sankey(
         visual_id=V_INV_ANETWORK_SANKEY_OUTBOUND,
         title="Outbound — anchor → counterparties",
@@ -846,9 +843,9 @@ def _build_account_network_sheet(
             "node (or its ribbon) to walk the anchor over to that "
             "counterparty."
         ),
-        source=Dim(ds_anet, "source_display"),
+        source=ds_anet["source_display"].dim(),
         target=outbound_target_dim,
-        weight=Measure.sum(ds_anet, "hop_amount"),
+        weight=ds_anet["hop_amount"].sum(),
         items_limit=_SANKEY_NODE_CAP,
         actions=[Drill(
             writes=[(anchor_param_drill, outbound_target_dim)],
@@ -857,8 +854,10 @@ def _build_account_network_sheet(
             action_id="action-anetwork-sankey-outbound-walk",
         )],
     ))
+    # counterparty_display is a CalcField — Dim(ds, calc_field_ref)
+    # carries the calc-field identity through the resolver.
     counterparty_dim = Dim(ds_anet, counterparty_display)
-    table_amount = Measure.sum(ds_anet, "hop_amount")
+    table_amount = ds_anet["hop_amount"].sum()
     table = sheet.add_visual(Table(
         visual_id=V_INV_ANETWORK_TABLE,
         title="Account Network — Touching Edges",
@@ -873,13 +872,13 @@ def _build_account_network_sheet(
             "control text."
         ),
         group_by=[
-            Dim(ds_anet, "transfer_id"),
-            Dim(ds_anet, "transfer_type"),
-            Dim(ds_anet, "source_display"),
-            Dim(ds_anet, "target_display"),
+            ds_anet["transfer_id"].dim(),
+            ds_anet["transfer_type"].dim(),
+            ds_anet["source_display"].dim(),
+            ds_anet["target_display"].dim(),
             counterparty_dim,
-            Dim.numerical(ds_anet, "depth"),
-            Dim.date(ds_anet, "posted_at"),
+            ds_anet["depth"].numerical(),
+            ds_anet["posted_at"].date(),
         ],
         values=[table_amount],
         sort_by=(table_amount, "DESC"),
@@ -944,7 +943,7 @@ def _build_account_network_sheet(
         filters=[NumericRangeFilter(
             filter_id="filter-inv-anetwork-amount",
             dataset=ds_anet,
-            column="hop_amount",
+            column=ds_anet["hop_amount"],
             minimum_parameter=min_amount_param,
             null_option="NON_NULLS_ONLY",
             include_minimum=True,
@@ -958,10 +957,7 @@ def _build_account_network_sheet(
         parameter=anchor_param,
         title="Anchor account",
         type="SINGLE_SELECT",
-        selectable_values=LinkedValues(
-            dataset=ds_accounts,
-            column="source_display",
-        ),
+        selectable_values=LinkedValues(ds_accounts["source_display"]),
         hidden_select_all=True,
         control_id="ctrl-inv-anetwork-anchor",
     ))

@@ -59,7 +59,7 @@ from quicksight_gen.common.models import (
     ParameterSliderControl as ModelParameterSliderControl,
 )
 
-from quicksight_gen.common.tree.datasets import Dataset
+from quicksight_gen.common.tree.datasets import Column, Dataset
 from quicksight_gen.common.tree.filters import FilterLike
 from quicksight_gen.common.tree.parameters import ParameterDeclLike
 
@@ -82,19 +82,49 @@ class StaticValues:
 class LinkedValues:
     """Auto-populate the dropdown's options from a dataset column.
 
-    ``dataset`` is a typed ``Dataset`` ref — the dataset must be
-    registered on the App, same as any other typed reference.
-    Participates in the L.1.7 dependency-graph walk via the
-    control's ``datasets()`` walk method.
+    Two forms (the typed-Column form is preferred — L.1.17):
+
+    - ``LinkedValues(ds["column_name"])`` — single positional Column,
+      dataset implicit. Validated against the contract at
+      construction.
+    - ``LinkedValues(dataset=ds, column="column_name")`` — escape
+      hatch for unvalidated string. Dataset must be passed.
+
+    The Dataset participates in the L.1.7 dependency-graph walk via
+    the control's ``datasets()`` method.
     """
-    dataset: Dataset
-    column: str
+    column: str | Column
+    dataset: Dataset | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.column, Column):
+            inferred = self.column.dataset
+            if self.dataset is None:
+                # frozen=True — bypass __setattr__ guard.
+                object.__setattr__(self, "dataset", inferred)
+            elif self.dataset is not inferred:
+                raise ValueError(
+                    f"LinkedValues dataset mismatch: column "
+                    f"{self.column.name!r} belongs to "
+                    f"{inferred.identifier!r}, but dataset arg "
+                    f"is {self.dataset.identifier!r}."
+                )
+        elif self.dataset is None:
+            raise ValueError(
+                "LinkedValues: dataset is required when column is a "
+                "bare string. Prefer ``LinkedValues(ds[\"column\"])`` "
+                "for the validated path."
+            )
 
     def emit(self) -> dict[str, Any]:
+        column_name = (
+            self.column.name if isinstance(self.column, Column)
+            else self.column
+        )
         return {
             "LinkToDataSetColumn": {
                 "DataSetIdentifier": self.dataset.identifier,
-                "ColumnName": self.column,
+                "ColumnName": column_name,
             },
         }
 

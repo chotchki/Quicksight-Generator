@@ -38,7 +38,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from quicksight_gen.common.dataset_contract import ColumnShape
-from quicksight_gen.common.tree.datasets import Dataset
+from quicksight_gen.common.tree.datasets import Column, Dataset
 
 
 @dataclass(eq=False)
@@ -86,17 +86,24 @@ class CalcField:
 
 
 # Type alias used everywhere a tree node accepts a column reference.
-# Bare strings (real dataset columns) and CalcField object refs are
-# both valid; the resolver below pulls the column name out at emit
-# time. CalcField refs let the type checker carry the calc-field
-# identity through the wiring + the dependency-graph walk pick up
-# the calc field's dataset.
-ColumnRef = str | CalcField
+# Three forms (the resolver below pulls the column name out at emit
+# time):
+#
+# - ``str`` — bare column name. Escape hatch — no contract validation.
+#   Use sparingly (e.g., test fixtures or datasets without a contract).
+# - ``Column`` — typed ref produced by ``ds["column_name"]``. Validated
+#   against the dataset's contract at construction. Preferred form.
+# - ``CalcField`` — analysis-level calc field. Carries its own dataset
+#   ref + name; the dependency-graph walk picks up the calc field's
+#   dataset.
+ColumnRef = str | CalcField | Column
 
 
 def _resolve_column(column: ColumnRef) -> str:
     """Read the column-name string off a ``ColumnRef``."""
     if isinstance(column, CalcField):
+        return column.name
+    if isinstance(column, Column):
         return column.name
     return column
 
@@ -105,7 +112,8 @@ def _calc_field_in(column: ColumnRef) -> CalcField | None:
     """Return the CalcField if ``column`` is one, else ``None``.
 
     Used by the dependency-graph walk to harvest CalcField refs from
-    Dim / Measure / Filter column slots.
+    Dim / Measure / Filter column slots. ``Column`` refs return None
+    (they reference a real dataset column, not a calc field).
     """
     if isinstance(column, CalcField):
         return column

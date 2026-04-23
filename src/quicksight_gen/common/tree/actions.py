@@ -34,7 +34,11 @@ from quicksight_gen.common.drill import (
 from quicksight_gen.common.drill import DrillParam as _DrillParam
 from quicksight_gen.common.models import VisualCustomAction
 
-from quicksight_gen.common.tree.calc_fields import CalcField, _calc_field_in
+from quicksight_gen.common.tree.calc_fields import (
+    CalcField,
+    _calc_field_in,
+    _resolve_column,
+)
 from quicksight_gen.common.tree.fields import Dim, Measure
 from quicksight_gen.common.tree.parameters import ParameterDeclLike
 # Sheet is referenced via TYPE_CHECKING — same trick as filters.py
@@ -100,7 +104,7 @@ def _resolve_drill_source(
     return field_source(
         field_id=leaf.field_id,
         dataset_id=leaf.dataset.identifier,
-        column_name=leaf.column,
+        column_name=_resolve_column(leaf.column),
     )
 
 

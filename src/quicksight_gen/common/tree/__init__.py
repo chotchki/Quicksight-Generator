@@ -107,7 +107,7 @@ from quicksight_gen.common.tree.controls import (
     SelectableValues,
     StaticValues,
 )
-from quicksight_gen.common.tree.datasets import Dataset
+from quicksight_gen.common.tree.datasets import Column, Dataset
 from quicksight_gen.common.tree.fields import (
     Dim,
     DimKind,
@@ -150,7 +150,7 @@ from quicksight_gen.common.tree.visuals import (
 
 __all__ = [
     # Datasets
-    "Dataset",
+    "Dataset", "Column",
     # Calc fields
     "CalcField", "ColumnRef",
     # Field-well leaves
