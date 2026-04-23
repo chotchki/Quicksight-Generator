@@ -151,7 +151,7 @@ src/quicksight_gen/
       datasets.py          # 5 custom-SQL datasets — fanout + anomalies (matview) + money trail (matview) + account network (matview wrapper) + accounts dropdown source
       demo_data.py         # Sasquatch Bank — Compliance / AML demo (12-depositor fanout cluster + Cascadia $25K spike + 4-hop layering chain through three shells)
       etl_examples.py      # placeholder (no app-specific ETL keys; PR/AR examples cover the shape)
-      constants.py         # SheetId / VisualId / FilterGroupId / ParameterName + ALL_FG_INV_IDS / ALL_P_INV aggregates
+      constants.py         # SheetId / VisualId / FilterGroupId / ParameterName
   schema.py              # `generate_schema_sql()` — reads the canonical DDL from the package data file
   schema.sql             # Full PostgreSQL DDL — shared `transactions` + `daily_balances` base layer + AR dimension tables + AR + Investigation matviews
   docs/                  # mkdocs site source (handbook/, walkthroughs/, Schema_v3.md, Training_Story.md); extract via `quicksight-gen export docs`

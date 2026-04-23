@@ -11,14 +11,18 @@ the deploy pipeline uses.
 
 Construction-time (raise immediately):
 
-- ``Sheet.place(visual)`` — visual must be on this sheet, and not
-  already placed (rejects duplicate ElementIds in the layout).
-- ``FilterGroup.scope_visuals(sheet, visuals)`` — every scoped
-  visual must be on the given sheet (catches the wrong-sheet bug).
+- ``sheet.layout.row(height=H).add_<kind>(width=W, ...)`` —
+  constructs + registers + places a visual atomically; refuses widths
+  that overflow the 36-col grid. The duplicate-placement bug class is
+  structurally impossible (no separate ``place`` step).
+- ``sheet.scope(filter_group, [visuals])`` — every scoped visual must
+  be on this sheet (catches the wrong-sheet bug).
 - ``Analysis.add_sheet / add_parameter / add_filter_group /
   add_calc_field`` — rejects duplicate IDs (shadow-bug class).
 - ``App.add_dataset`` — rejects duplicate dataset identifiers.
-- ``App.set_dashboard(d)`` — requires ``d.analysis is app.analysis``.
+- ``App.create_dashboard(...)`` — requires ``set_analysis`` already ran;
+  the analysis-mismatch bug class is structurally impossible (no
+  opening to pass a different Analysis).
 - ``NumericRangeFilter.__post_init__`` — rejects setting both
   ``minimum_value`` and ``minimum_parameter`` (or both on the
   maximum side).
@@ -50,9 +54,10 @@ threading a typed parameter ref through ``DrillParam`` →
 
 **Locked decisions** (see PLAN.md Phase L):
 
-- Cross-references are object refs, not string IDs. ``GridSlot.visual``
-  takes a visual node; ``FilterGroup.scope_visuals`` takes
-  ``(sheet, [visual, ...])``; drill destinations take ``Sheet`` refs.
+- Cross-references are object refs, not string IDs. ``GridSlot.element``
+  takes any ``LayoutNode`` (typed visuals + ``TextBox``);
+  ``FilterGroup.scope_visuals`` takes ``(sheet, [visual, ...])``;
+  drill destinations take ``Sheet`` refs.
 - IDs appear once — at the constructor of the node that owns them.
   Per-app ``constants.py`` modules collapse: every other reference
   is the local Python variable holding the node ref.
@@ -70,26 +75,29 @@ SankeyDiagramVisual ×2. PieChartVisual is modeled but unused.
 
 **Module organization:**
 
-- ``_helpers`` — title/subtitle label builders + permissions actions
+- ``_helpers`` — AUTO sentinel + label builders + permissions actions
 - ``fields`` — ``Dim`` / ``Measure`` field-well leaf nodes
 - ``parameters`` — ``ParameterDeclLike`` Protocol + ``StringParam``
   / ``IntegerParam`` / ``DateTimeParam``
-- ``visuals`` — ``VisualLike`` Protocol + ``VisualNode`` (factory
-  wrapper) + ``KPI`` / ``Table`` / ``BarChart`` / ``Sankey``
-- ``filters`` — ``FilterGroup`` (object-ref scope + scope-on-same-sheet
-  validation); typed Filter wrappers (CategoryFilter / NumericRangeFilter
-  / TimeRangeFilter) land in L.1.6.
+- ``visuals`` — ``VisualLike`` Protocol + ``KPI`` / ``Table`` /
+  ``BarChart`` / ``Sankey``
+- ``filters`` — ``FilterGroup`` + typed Filter wrappers (CategoryFilter /
+  NumericRangeFilter / TimeRangeFilter)
+- ``controls`` — typed parameter / filter control variants
 - ``structure`` — ``GridSlot`` / ``Sheet`` / ``Analysis`` / ``Dashboard``
-  / ``App`` / ``ParameterControlNode``
+  / ``App`` plus the ``SheetLayout`` / ``Row`` / ``AbsoluteSlot``
+  layout DSL
 """
 
 from __future__ import annotations
 
 from quicksight_gen.common.tree.actions import (
+    Action,
     Drill,
     DrillParam,
     DrillResetSentinel,
     DrillSourceField,
+    SameSheetFilter,
 )
 from quicksight_gen.common.tree.calc_fields import CalcField, ColumnRef
 from quicksight_gen.common.tree.controls import (
@@ -106,20 +114,34 @@ from quicksight_gen.common.tree.controls import (
     SelectableValues,
     StaticValues,
 )
-from quicksight_gen.common.tree.datasets import Dataset
+from quicksight_gen.common.tree.datasets import Column, Dataset
 from quicksight_gen.common.tree.fields import (
     Dim,
     DimKind,
     Measure,
     MeasureKind,
 )
+from quicksight_gen.common.tree.formatting import (
+    CellAccentMenu,
+    CellAccentText,
+    CellFormat,
+)
 from quicksight_gen.common.tree.filters import (
+    Bound,
     CategoryFilter,
     CategoryMatchOperator,
+    DefaultControl,
+    DefaultDateTimePickerControl,
+    DefaultDropdownControl,
+    DefaultSliderControl,
     FilterGroup,
     FilterLike,
     NullOption,
     NumericRangeFilter,
+    ParameterBound,
+    SelectAllOptions,
+    StaticBound,
+    TimeEqualityFilter,
     TimeRangeFilter,
 )
 from quicksight_gen.common.tree.parameters import (
@@ -129,25 +151,31 @@ from quicksight_gen.common.tree.parameters import (
     StringParam,
 )
 from quicksight_gen.common.tree.structure import (
+    AbsoluteSlot,
     Analysis,
     App,
     Dashboard,
     GridSlot,
-    ParameterControlNode,
+    LayoutNode,
+    Row,
     Sheet,
+    SheetLayout,
 )
+from quicksight_gen.common.tree._helpers import AUTO, AutoResolved
+from quicksight_gen.common.tree.text_boxes import TextBox
 from quicksight_gen.common.tree.visuals import (
     KPI,
     BarChart,
     Sankey,
     Table,
     VisualLike,
-    VisualNode,
 )
 
 __all__ = [
+    # AUTO sentinel (L.1.18 — fields the App walker fills in later)
+    "AUTO", "AutoResolved",
     # Datasets
-    "Dataset",
+    "Dataset", "Column",
     # Calc fields
     "CalcField", "ColumnRef",
     # Field-well leaves
@@ -155,19 +183,31 @@ __all__ = [
     # Parameters
     "ParameterDeclLike", "StringParam", "IntegerParam", "DateTimeParam",
     # Visuals
-    "VisualLike", "VisualNode", "KPI", "Table", "BarChart", "Sankey",
+    "VisualLike", "KPI", "Table", "BarChart", "Sankey",
+    # Text boxes (typed wrapper for landing-page rich text)
+    "TextBox",
+    # Layout
+    "LayoutNode",
     # Filters
     "FilterGroup", "FilterLike",
     "CategoryFilter", "NumericRangeFilter", "TimeRangeFilter",
-    "CategoryMatchOperator", "NullOption",
+    "TimeEqualityFilter",
+    "Bound", "StaticBound", "ParameterBound",
+    "CategoryMatchOperator", "NullOption", "SelectAllOptions",
+    "DefaultControl", "DefaultDateTimePickerControl",
+    "DefaultDropdownControl", "DefaultSliderControl",
     # Controls (L.1.9)
     "ParameterControlLike", "FilterControlLike",
     "ParameterDropdown", "ParameterSlider", "ParameterDateTimePicker",
     "FilterDropdown", "FilterSlider", "FilterDateTimePicker", "FilterCrossSheet",
     "StaticValues", "LinkedValues", "SelectableValues",
     # Drill actions (L.1.10)
-    "Drill", "DrillParam", "DrillSourceField", "DrillResetSentinel",
+    "Action", "Drill", "DrillParam", "DrillSourceField", "DrillResetSentinel",
+    "SameSheetFilter",
+    # Conditional formatting (L.3.7-followup)
+    "CellAccentText", "CellAccentMenu", "CellFormat",
     # Structure
     "GridSlot", "Sheet", "Analysis", "Dashboard", "App",
-    "ParameterControlNode",
+    # Layout DSL (L.1.21)
+    "SheetLayout", "Row", "AbsoluteSlot",
 ]

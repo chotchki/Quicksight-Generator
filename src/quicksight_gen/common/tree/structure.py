@@ -11,79 +11,142 @@ for deploy.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
+
+from typing import Protocol, runtime_checkable
 
 from quicksight_gen.common.config import Config
+from quicksight_gen.common.dataset_contract import get_contract
+from quicksight_gen.common.ids import FilterGroupId, SheetId, VisualId
 from quicksight_gen.common.models import (
     AnalysisDefinition,
     DashboardPublishOptions,
-    DataSetIdentifierDeclaration,
     GridLayoutConfiguration,
     GridLayoutElement,
     Layout,
     LayoutConfiguration,
-    ParameterControl,
     ResourcePermission,
     SheetDefinition,
-    SheetTextBox,
-    Visual,
 )
 from quicksight_gen.common.models import Analysis as ModelAnalysis
 from quicksight_gen.common.models import Dashboard as ModelDashboard
-
-from quicksight_gen.common.ids import FilterGroupId, SheetId, VisualId
 from quicksight_gen.common.tree._helpers import (
     ANALYSIS_ACTIONS,
+    AUTO,
+    AutoResolved,
     DASHBOARD_ACTIONS,
+    GridLayoutElementType,
+    _AutoSentinel,
 )
-from quicksight_gen.common.tree.actions import Drill
+from quicksight_gen.common.tree.actions import Action, Drill
+from quicksight_gen.common.tree.formatting import CellFormat
 from quicksight_gen.common.tree.calc_fields import CalcField
 from quicksight_gen.common.tree.controls import (
     FilterControlLike,
+    FilterCrossSheet,
+    FilterDateTimePicker,
+    FilterDropdown,
+    FilterSlider,
     ParameterControlLike,
+    ParameterDateTimePicker,
+    ParameterDropdown,
+    ParameterSlider,
+    SelectableValues,
 )
-from quicksight_gen.common.tree.datasets import Dataset
-from quicksight_gen.common.tree.filters import FilterGroup
+from quicksight_gen.common.tree.datasets import Column, Dataset
+from quicksight_gen.common.tree.fields import Dim, FieldRef, Measure
+from quicksight_gen.common.tree.filters import FilterGroup, FilterLike
 from quicksight_gen.common.tree.parameters import ParameterDeclLike
-from quicksight_gen.common.tree.visuals import VisualLike
+from quicksight_gen.common.tree.text_boxes import TextBox
+from quicksight_gen.common.tree.visuals import (
+    KPI,
+    BarChart,
+    Sankey,
+    Table,
+    VisualLike,
+)
 
 
-# ---------------------------------------------------------------------------
-# Spike-shape ParameterControlNode wrapper — mirrors the VisualNode
-# factory pattern. L.1.9 introduces typed Control variants alongside.
-# ---------------------------------------------------------------------------
+# Field-well slot roles used by the auto-id resolver. The `role`
+# letter goes into the auto-derived field_id so the synthesized id
+# encodes which well a leaf came from.
+_FIELD_SLOTS: tuple[tuple[str, str], ...] = (
+    ("group_by", "g"),  # Table (aggregated)
+    ("values", "v"),    # KPI / Table / BarChart
+    ("columns", "u"),   # Table (unaggregated)
+    ("category", "c"),  # BarChart
+    ("colors", "k"),    # BarChart (color/group dim)
+    ("source", "s"),    # Sankey
+    ("target", "t"),    # Sankey
+    ("weight", "w"),    # Sankey
+)
 
-from typing import Callable
 
+def _resolve_field_ids(
+    *, visual: VisualLike, visual_kind: str, sheet_idx: int, visual_idx: int,
+) -> None:
+    """Walk a visual's field-well slots and assign auto field_ids to
+    any Dim/Measure leaves that left field_id unset.
 
-@dataclass(eq=False)
-class ParameterControlNode:
-    """Spike-shape factory wrapper for a ParameterControl.
-
-    L.1.9 introduces typed control variants; this wrapper stays until
-    apps migrate.
+    Iterates the fixed ``_FIELD_SLOTS`` table — each entry names an
+    attribute and a one-letter role tag. Missing attributes (e.g. KPI
+    has no ``group_by``) are skipped via ``getattr`` default ``None``.
+    Slots may be a single leaf (Sankey ``source`` / ``target`` /
+    ``weight``) or a list (KPI / Table / BarChart ``values``); both
+    shapes are handled.
     """
-    builder: Callable[[], ParameterControl]
-
-    def emit(self) -> ParameterControl:
-        return self.builder()
+    for attr, role in _FIELD_SLOTS:
+        slot: object = getattr(visual, attr, None)
+        if slot is None:
+            continue
+        leaves: list[object] = list(slot) if isinstance(slot, list) else [slot]  # type: ignore[arg-type]
+        for slot_idx, leaf in enumerate(leaves):
+            if leaf is None:
+                continue
+            if isinstance(getattr(leaf, "field_id", None), _AutoSentinel):
+                leaf.field_id = (  # type: ignore[attr-defined]
+                    f"f-{visual_kind}-s{sheet_idx}-v{visual_idx}-{role}{slot_idx}"
+                )
 
 
 # ---------------------------------------------------------------------------
-# Layout — GridSlot references a VisualLike by object (locked decision).
+# Layout — GridSlot references a LayoutNode by object (locked decision).
+# LayoutNode hides QuickSight's split between Visuals and TextBoxes —
+# both turn into a GridLayoutElement carrying an id + ElementType, but
+# flow into different SheetDefinition fields at emit time.
 # ---------------------------------------------------------------------------
+
+@runtime_checkable
+class LayoutNode(Protocol):
+    """Anything placeable in a sheet's grid layout.
+
+    Both typed visual subtypes (``KPI`` / ``Table`` / ``BarChart`` /
+    ``Sankey``) and the typed ``TextBox`` wrapper satisfy this Protocol.
+    Each exposes ``element_id`` (the layout slot's ``ElementId``) and
+    ``element_type`` (``"VISUAL"`` or ``"TEXT_BOX"``) — the slot reads
+    them off the node at emit time.
+
+    The Protocol means ``Sheet.place(node, ...)`` accepts both visuals
+    and text boxes uniformly; QuickSight's two-list split (Visuals vs
+    TextBoxes in ``SheetDefinition``) stays an emit-time concern that
+    callers never see.
+    """
+    @property
+    def element_id(self) -> str: ...
+
+    @property
+    def element_type(self) -> GridLayoutElementType: ...
+
 
 @dataclass(eq=False)
 class GridSlot:
     """One placement in a sheet's grid layout.
 
-    Holds an OBJECT reference to the placed visual node — the locked
-    decision is cross-references via object refs, not via ``VisualId``
-    strings. The element id is read off the referenced node at emit
-    time. ``visual`` accepts any ``VisualLike`` — the spike-shape
-    ``VisualNode`` factory wrapper, or the typed subtypes (``KPI``,
-    ``Table``, ``BarChart``, ``Sankey``).
+    Holds an OBJECT reference to the placed ``LayoutNode``. The element
+    id and element type are read off the node at emit time — the slot
+    is agnostic about whether it carries a visual or a text box.
     """
-    visual: VisualLike
+    element: LayoutNode
     col_span: int
     row_span: int
     col_index: int
@@ -91,8 +154,8 @@ class GridSlot:
 
     def emit(self) -> GridLayoutElement:
         return GridLayoutElement(
-            ElementId=self.visual.visual_id,
-            ElementType=GridLayoutElement.VISUAL,
+            ElementId=self.element.element_id,
+            ElementType=self.element.element_type,
             ColumnSpan=self.col_span,
             RowSpan=self.row_span,
             ColumnIndex=self.col_index,
@@ -108,62 +171,197 @@ class GridSlot:
 class Sheet:
     """Tree node for one sheet on an Analysis / Dashboard.
 
-    Authors register visuals + controls via ``add_visual`` /
-    ``add_parameter_control``; place visuals into the grid layout via
-    ``place(visual_node, ...)`` (which validates the visual is
-    registered on this sheet first). ``emit()`` returns the
-    ``SheetDefinition`` ready to drop into ``AnalysisDefinition.Sheets``.
+    Sheet has four concerns:
+
+    1. **Metadata** — ``sheet_id``, ``name``, ``title``, ``description``
+       set at construction.
+    2. **Layout** — visuals + text boxes placed in a grid. Accessed via
+       ``sheet.layout``: ``sheet.layout.row(height=...).add_kpi(width=,
+       title=, values=, ...)`` for sequential rows, or ``sheet.layout.
+       absolute(col_index=, row_index=, col_span=, row_span=).add_*(...)``
+       for explicit positioning. The layout's row tracks the column
+       cursor so call sites don't compute ``col_index`` arithmetic by
+       hand.
+    3. **Controls** — parameter / filter controls live above/aside the
+       canvas (NOT in the grid). Added directly on Sheet via
+       ``sheet.add_parameter_dropdown(...)`` / ``add_parameter_slider``
+       / ``add_parameter_datetime_picker`` / ``add_filter_dropdown`` /
+       ``add_filter_slider`` / ``add_filter_datetime_picker`` /
+       ``add_filter_cross_sheet`` — one shortcut per control kind.
+    4. **Scope wiring** — ``sheet.scope(filter_group, [v1, v2])`` scopes
+       a filter group to specific visuals on this sheet.
+
+    ``emit()`` returns the ``SheetDefinition`` ready to drop into
+    ``AnalysisDefinition.Sheets``.
     """
     sheet_id: SheetId
     name: str
     title: str
     description: str
-    visuals: list[VisualLike] = field(default_factory=list)
-    parameter_controls: list[ParameterControlLike | ParameterControlNode] = field(
-        default_factory=list,
+    visuals: list[VisualLike] = field(default_factory=list[VisualLike])
+    parameter_controls: list[ParameterControlLike] = field(
+        default_factory=list[ParameterControlLike],
     )
-    filter_controls: list[FilterControlLike] = field(default_factory=list)
-    text_boxes: list[SheetTextBox] = field(default_factory=list)
-    grid_slots: list[GridSlot] = field(default_factory=list)
+    filter_controls: list[FilterControlLike] = field(default_factory=list[FilterControlLike])
+    text_boxes: list[TextBox] = field(default_factory=list[TextBox])
+    grid_slots: list[GridSlot] = field(default_factory=list["GridSlot"])
+    # Lazy layout — constructed on first ``sheet.layout`` access, then
+    # cached so the row cursor advances across calls. Init=False keeps
+    # it out of the dataclass constructor surface.
+    _layout: "SheetLayout | None" = field(default=None, init=False, repr=False)
 
-    def add_visual[T: VisualLike](self, node: T) -> T:
-        """Register a visual on this sheet.
+    @property
+    def layout(self) -> "SheetLayout":
+        """L.1.21 — Layout namespace for grid placement.
 
-        Accepts any ``VisualLike`` — spike-shape ``VisualNode`` or
-        typed subtype (``KPI`` / ``Table`` / ``BarChart`` / ``Sankey``).
-        Generic over ``T`` so the caller's variable keeps the concrete
-        subtype rather than widening to the Protocol (PEP 695).
+        Visuals + text boxes are added through the layout (one of:
+        ``sheet.layout.row(height=...).add_kpi(width=..., ...)`` or
+        ``sheet.layout.absolute(col_index=..., row_index=..., col_span=...,
+        row_span=...).add_kpi(...)``). The Sheet itself coordinates four
+        concerns; layout is one of them, factored out so the call sites
+        for "place a visual" don't crowd against "register a control" or
+        "scope a filter group".
+
+        Lazily constructed; the same SheetLayout instance returns on
+        subsequent accesses so the row cursor advances across calls.
         """
-        self.visuals.append(node)
-        return node
+        if self._layout is None:
+            self._layout = SheetLayout(sheet=self)
+        return self._layout
 
-    def add_parameter_control[T: ParameterControlLike | ParameterControlNode](
-        self, node: T,
-    ) -> T:
-        """Register a parameter control on this sheet.
+    # -----------------------------------------------------------------------
+    # Control + scope shortcuts (L.1.21). Sheet's other concerns beyond
+    # layout: parameter / filter controls (NOT placed in grid — they live
+    # above/aside the canvas) and filter-group scoping (acts on visuals
+    # from this sheet).
+    # -----------------------------------------------------------------------
 
-        Accepts either a typed control (``ParameterDropdown`` /
-        ``ParameterSlider`` / ``ParameterDateTimePicker``) or the
-        spike-shape ``ParameterControlNode`` factory wrapper.
+    def add_parameter_dropdown(
+        self,
+        *,
+        parameter: ParameterDeclLike,
+        title: str,
+        type: Literal["SINGLE_SELECT", "MULTI_SELECT"] = "SINGLE_SELECT",
+        selectable_values: SelectableValues | None = None,
+        hidden_select_all: bool = False,
+        control_id: str | AutoResolved = AUTO,
+    ) -> ParameterDropdown:
+        """Construct + register a parameter dropdown control on this sheet."""
+        ctrl = ParameterDropdown(
+            parameter=parameter, title=title, type=type,
+            selectable_values=selectable_values,
+            hidden_select_all=hidden_select_all, control_id=control_id,
+        )
+        self.parameter_controls.append(ctrl)
+        return ctrl
+
+    def add_parameter_slider(
+        self,
+        *,
+        parameter: ParameterDeclLike,
+        title: str,
+        minimum_value: float,
+        maximum_value: float,
+        step_size: float,
+        control_id: str | AutoResolved = AUTO,
+    ) -> ParameterSlider:
+        """Construct + register a parameter slider control on this sheet."""
+        ctrl = ParameterSlider(
+            parameter=parameter, title=title,
+            minimum_value=minimum_value, maximum_value=maximum_value,
+            step_size=step_size, control_id=control_id,
+        )
+        self.parameter_controls.append(ctrl)
+        return ctrl
+
+    def add_parameter_datetime_picker(
+        self,
+        *,
+        parameter: ParameterDeclLike,
+        title: str,
+        control_id: str | AutoResolved = AUTO,
+    ) -> ParameterDateTimePicker:
+        """Construct + register a parameter datetime picker control."""
+        ctrl = ParameterDateTimePicker(
+            parameter=parameter, title=title, control_id=control_id,
+        )
+        self.parameter_controls.append(ctrl)
+        return ctrl
+
+    def add_filter_dropdown(
+        self,
+        *,
+        filter: FilterLike,
+        title: str,
+        type: Literal["SINGLE_SELECT", "MULTI_SELECT"] = "MULTI_SELECT",
+        selectable_values: SelectableValues | None = None,
+        control_id: str | AutoResolved = AUTO,
+    ) -> FilterDropdown:
+        """Construct + register a filter dropdown control on this sheet."""
+        ctrl = FilterDropdown(
+            filter=filter, title=title, type=type,
+            selectable_values=selectable_values, control_id=control_id,
+        )
+        self.filter_controls.append(ctrl)
+        return ctrl
+
+    def add_filter_slider(
+        self,
+        *,
+        filter: FilterLike,
+        title: str,
+        minimum_value: float,
+        maximum_value: float,
+        step_size: float,
+        type: Literal["SINGLE_POINT", "RANGE"] = "RANGE",
+        control_id: str | AutoResolved = AUTO,
+    ) -> FilterSlider:
+        """Construct + register a filter slider control on this sheet."""
+        ctrl = FilterSlider(
+            filter=filter, title=title,
+            minimum_value=minimum_value, maximum_value=maximum_value,
+            step_size=step_size, type=type, control_id=control_id,
+        )
+        self.filter_controls.append(ctrl)
+        return ctrl
+
+    def add_filter_datetime_picker(
+        self,
+        *,
+        filter: FilterLike,
+        title: str,
+        type: Literal["SINGLE_VALUED", "DATE_RANGE"] = "DATE_RANGE",
+        control_id: str | AutoResolved = AUTO,
+    ) -> FilterDateTimePicker:
+        """Construct + register a filter datetime picker control."""
+        ctrl = FilterDateTimePicker(
+            filter=filter, title=title, type=type, control_id=control_id,
+        )
+        self.filter_controls.append(ctrl)
+        return ctrl
+
+    def add_filter_cross_sheet(
+        self,
+        *,
+        filter: FilterLike,
+        control_id: str | AutoResolved = AUTO,
+    ) -> FilterCrossSheet:
+        """Construct + register a cross-sheet filter control on this sheet."""
+        ctrl = FilterCrossSheet(filter=filter, control_id=control_id)
+        self.filter_controls.append(ctrl)
+        return ctrl
+
+    def scope(
+        self, fg: FilterGroup, visuals: list[VisualLike],
+    ) -> FilterGroup:
+        """L.1.21 — scope a filter group to specific visuals on this sheet.
+
+        Reads more naturally than ``fg.scope_visuals(sheet, visuals)`` since
+        the sheet is the contextual subject. Runtime check stays —
+        Python's type system can't track which ``Sheet`` instance a
+        visual was registered on without dependent types.
         """
-        self.parameter_controls.append(node)
-        return node
-
-    def add_filter_control[T: FilterControlLike](self, node: T) -> T:
-        """Register a filter control on this sheet.
-
-        Typed controls (``FilterDropdown`` / ``FilterSlider`` /
-        ``FilterDateTimePicker`` / ``FilterCrossSheet``) bind to
-        a ``FilterLike`` inside a registered FilterGroup; the
-        control's ``SourceFilterId`` resolves at emit time to the
-        bound filter's id.
-        """
-        self.filter_controls.append(node)
-        return node
-
-    def add_text_box(self, text_box: SheetTextBox) -> SheetTextBox:
-        self.text_boxes.append(text_box)
-        return text_box
+        return fg.scope_visuals(self, visuals)
 
     def find_visual(
         self,
@@ -211,47 +409,6 @@ class Sheet:
             )
         return matches[0]
 
-    def place(
-        self,
-        visual: VisualLike,
-        *,
-        col_span: int,
-        row_span: int,
-        col_index: int,
-        row_index: int | None = None,
-    ) -> GridSlot:
-        """Place a registered visual into the grid layout.
-
-        Construction-time checks:
-        - The visual must already be registered on this sheet via
-          ``add_visual()`` (catches the wrong-sheet bug class).
-        - The visual must not already be placed in the grid layout
-          (placing the same visual at two positions emits two layout
-          slots with the same ElementId, which QuickSight rejects).
-        """
-        if visual not in self.visuals:
-            raise ValueError(
-                f"Visual {visual.visual_id!r} isn't registered on this "
-                f"sheet — call add_visual() first."
-            )
-        for existing in self.grid_slots:
-            if existing.visual is visual:
-                raise ValueError(
-                    f"Visual {getattr(visual, 'visual_id', '?')!r} is "
-                    f"already placed on sheet {self.sheet_id!r}. A visual "
-                    f"can occupy at most one grid slot — placing it twice "
-                    f"emits duplicate ElementIds."
-                )
-        slot = GridSlot(
-            visual=visual,
-            col_span=col_span,
-            row_span=row_span,
-            col_index=col_index,
-            row_index=row_index,
-        )
-        self.grid_slots.append(slot)
-        return slot
-
     def emit(self) -> SheetDefinition:
         return SheetDefinition(
             SheetId=self.sheet_id,
@@ -268,7 +425,10 @@ class Sheet:
                 [c.emit() for c in self.parameter_controls]
                 if self.parameter_controls else None
             ),
-            TextBoxes=self.text_boxes if self.text_boxes else None,
+            TextBoxes=(
+                [tb.emit() for tb in self.text_boxes]
+                if self.text_boxes else None
+            ),
             Layouts=[
                 Layout(
                     Configuration=LayoutConfiguration(
@@ -278,6 +438,368 @@ class Sheet:
                     ),
                 ),
             ],
+        )
+
+
+# ---------------------------------------------------------------------------
+# L.1.21 — Layout DSL. Sheet's grid layout factored into a separate
+# ``SheetLayout`` namespace owned by Sheet. Two placement modes:
+#
+#   - Row-based: ``sheet.layout.row(height=H)`` opens a row at the
+#     current vertical cursor; subsequent ``row.add_<kind>(width=W,
+#     ...)`` calls advance a column cursor and place the visual.
+#     Refuses widths that exceed the 36-col grid.
+#   - Absolute: ``sheet.layout.absolute(col_index=, row_index=,
+#     col_span=, row_span=).add_<kind>(...)`` for one-off explicit
+#     positioning (overlapping visuals, asymmetric grids).
+#
+# Both modes construct + register + place the visual atomically on
+# the parent Sheet — the analyst never holds a half-constructed visual
+# ref or computes col_index arithmetic by hand.
+# ---------------------------------------------------------------------------
+
+# QuickSight grid is 36 columns wide. Hardcoded here because the QS
+# model accepts it as a free int but the actual rendering breaks above
+# 36 (visuals get clipped).
+_GRID_WIDTH_COLS = 36
+
+
+@dataclass(eq=False)
+class Row:
+    """One horizontal band in a Sheet's grid layout.
+
+    Tracks the column cursor as visuals + text boxes are added; refuses
+    widths that overflow the 36-column grid. ``height`` becomes every
+    visual's ``row_span``; the column cursor advances by each visual's
+    ``width`` (col_span). A new row from ``sheet.layout.row()`` lands
+    below the previous row — the SheetLayout tracks the vertical cursor.
+    """
+    sheet: Sheet
+    height: int
+    row_index: int
+    _col_cursor: int = field(default=0, init=False, repr=False)
+
+    def _consume(self, width: int) -> int:
+        """Allocate ``width`` columns at the current cursor; return
+        the col_index for the slot. Raises if the row would overflow
+        the 36-col grid."""
+        if self._col_cursor + width > _GRID_WIDTH_COLS:
+            raise ValueError(
+                f"Row width exceeded: {self._col_cursor} + {width} > "
+                f"{_GRID_WIDTH_COLS} cols. Open a new row via "
+                f"sheet.layout.row(height=...) or reduce the visual width."
+            )
+        col_index = self._col_cursor
+        self._col_cursor += width
+        return col_index
+
+    def add_kpi(
+        self,
+        *,
+        width: int,
+        title: str,
+        values: list[Measure] | None = None,
+        subtitle: str | None = None,
+        visual_id: VisualId | AutoResolved = AUTO,
+    ) -> KPI:
+        """Construct + register + place a KPI in this row."""
+        col_index = self._consume(width)
+        kpi = KPI(
+            title=title, subtitle=subtitle, values=values or [], visual_id=visual_id,
+        )
+        self.sheet.visuals.append(kpi)
+        self.sheet.grid_slots.append(GridSlot(
+            element=kpi,
+            col_span=width, row_span=self.height,
+            col_index=col_index, row_index=self.row_index,
+        ))
+        return kpi
+
+    def add_table(
+        self,
+        *,
+        width: int,
+        title: str,
+        group_by: list[Dim] | None = None,
+        values: list[Measure] | None = None,
+        columns: list[Dim] | None = None,
+        subtitle: str | None = None,
+        sort_by: (
+            tuple[FieldRef, Literal["ASC", "DESC"]]
+            | list[tuple[FieldRef, Literal["ASC", "DESC"]]]
+            | None
+        ) = None,
+        actions: list[Action] | None = None,
+        conditional_formatting: list[CellFormat] | None = None,
+        visual_id: VisualId | AutoResolved = AUTO,
+    ) -> Table:
+        """Construct + register + place a Table in this row.
+
+        Aggregated mode: pass ``group_by`` + ``values``. Unaggregated
+        mode (raw column display): pass ``columns``. The two modes are
+        mutually exclusive (Table.__post_init__ enforces this)."""
+        col_index = self._consume(width)
+        table = Table(
+            title=title, subtitle=subtitle,
+            group_by=group_by or [], values=values or [],
+            columns=columns or [],
+            sort_by=sort_by, actions=actions or [],
+            conditional_formatting=conditional_formatting,
+            visual_id=visual_id,
+        )
+        self.sheet.visuals.append(table)
+        self.sheet.grid_slots.append(GridSlot(
+            element=table,
+            col_span=width, row_span=self.height,
+            col_index=col_index, row_index=self.row_index,
+        ))
+        return table
+
+    def add_bar_chart(
+        self,
+        *,
+        width: int,
+        title: str,
+        category: list[Dim] | None = None,
+        values: list[Measure] | None = None,
+        colors: list[Dim] | None = None,
+        subtitle: str | None = None,
+        orientation: Literal["HORIZONTAL", "VERTICAL"] | None = None,
+        bars_arrangement: Literal[
+            "CLUSTERED", "STACKED", "STACKED_PERCENT",
+        ] | None = None,
+        category_label: str | None = None,
+        value_label: str | None = None,
+        color_label: str | None = None,
+        sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None,
+        actions: list[Action] | None = None,
+        visual_id: VisualId | AutoResolved = AUTO,
+    ) -> BarChart:
+        """Construct + register + place a BarChart in this row."""
+        col_index = self._consume(width)
+        bar = BarChart(
+            title=title, subtitle=subtitle,
+            category=category or [], values=values or [],
+            colors=colors or [],
+            orientation=orientation, bars_arrangement=bars_arrangement,
+            category_label=category_label, value_label=value_label,
+            color_label=color_label,
+            sort_by=sort_by, actions=actions or [], visual_id=visual_id,
+        )
+        self.sheet.visuals.append(bar)
+        self.sheet.grid_slots.append(GridSlot(
+            element=bar,
+            col_span=width, row_span=self.height,
+            col_index=col_index, row_index=self.row_index,
+        ))
+        return bar
+
+    def add_sankey(
+        self,
+        *,
+        width: int,
+        title: str,
+        source: Dim,
+        target: Dim,
+        weight: Measure,
+        subtitle: str | None = None,
+        items_limit: int | None = None,
+        actions: list[Action] | None = None,
+        visual_id: VisualId | AutoResolved = AUTO,
+    ) -> Sankey:
+        """Construct + register + place a Sankey in this row."""
+        col_index = self._consume(width)
+        sankey = Sankey(
+            title=title, subtitle=subtitle, source=source, target=target,
+            weight=weight, items_limit=items_limit, actions=actions or [],
+            visual_id=visual_id,
+        )
+        self.sheet.visuals.append(sankey)
+        self.sheet.grid_slots.append(GridSlot(
+            element=sankey,
+            col_span=width, row_span=self.height,
+            col_index=col_index, row_index=self.row_index,
+        ))
+        return sankey
+
+    def add_text_box(
+        self,
+        text_box: TextBox,
+        *,
+        width: int,
+    ) -> TextBox:
+        """Register + place a pre-constructed TextBox in this row.
+
+        TextBox content is verbose XML (built via ``common/rich_text``),
+        so the analyst constructs the TextBox separately and passes it
+        here. Uniqueness is by object identity — placing the same
+        TextBox in two rows is a programmer error caught by the row-
+        cursor advance (you'd be calling _consume twice).
+        """
+        col_index = self._consume(width)
+        if text_box not in self.sheet.text_boxes:
+            self.sheet.text_boxes.append(text_box)
+        self.sheet.grid_slots.append(GridSlot(
+            element=text_box,
+            col_span=width, row_span=self.height,
+            col_index=col_index, row_index=self.row_index,
+        ))
+        return text_box
+
+
+@dataclass(eq=False)
+class AbsoluteSlot:
+    """One explicit-position slot. Use for layouts that don't fit the
+    row pattern — overlapping visuals, asymmetric grids, off-grid
+    positioning. One-shot: construct via ``sheet.layout.absolute(
+    col_index=, row_index=, col_span=, row_span=)`` then chain a single
+    ``add_<kind>(...)`` to fill it. Re-using an AbsoluteSlot for
+    multiple visuals would emit duplicate slot positions and isn't
+    supported."""
+    sheet: Sheet
+    col_span: int
+    row_span: int
+    col_index: int
+    row_index: int | None
+
+    def _place(self, element: LayoutNode) -> None:
+        self.sheet.grid_slots.append(GridSlot(
+            element=element,
+            col_span=self.col_span, row_span=self.row_span,
+            col_index=self.col_index, row_index=self.row_index,
+        ))
+
+    def add_kpi(
+        self,
+        *,
+        title: str,
+        values: list[Measure] | None = None,
+        subtitle: str | None = None,
+        visual_id: VisualId | AutoResolved = AUTO,
+    ) -> KPI:
+        kpi = KPI(
+            title=title, subtitle=subtitle, values=values or [], visual_id=visual_id,
+        )
+        self.sheet.visuals.append(kpi)
+        self._place(kpi)
+        return kpi
+
+    def add_table(
+        self,
+        *,
+        title: str,
+        group_by: list[Dim] | None = None,
+        values: list[Measure] | None = None,
+        columns: list[Dim] | None = None,
+        subtitle: str | None = None,
+        sort_by: (
+            tuple[FieldRef, Literal["ASC", "DESC"]]
+            | list[tuple[FieldRef, Literal["ASC", "DESC"]]]
+            | None
+        ) = None,
+        actions: list[Action] | None = None,
+        conditional_formatting: list[CellFormat] | None = None,
+        visual_id: VisualId | AutoResolved = AUTO,
+    ) -> Table:
+        table = Table(
+            title=title, subtitle=subtitle,
+            group_by=group_by or [], values=values or [],
+            columns=columns or [],
+            sort_by=sort_by, actions=actions or [],
+            conditional_formatting=conditional_formatting,
+            visual_id=visual_id,
+        )
+        self.sheet.visuals.append(table)
+        self._place(table)
+        return table
+
+    def add_bar_chart(
+        self,
+        *,
+        title: str,
+        category: list[Dim] | None = None,
+        values: list[Measure] | None = None,
+        subtitle: str | None = None,
+        orientation: Literal["HORIZONTAL", "VERTICAL"] | None = None,
+        bars_arrangement: Literal[
+            "CLUSTERED", "STACKED", "STACKED_PERCENT",
+        ] | None = None,
+        sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None,
+        actions: list[Action] | None = None,
+        visual_id: VisualId | AutoResolved = AUTO,
+    ) -> BarChart:
+        bar = BarChart(
+            title=title, subtitle=subtitle,
+            category=category or [], values=values or [],
+            orientation=orientation, bars_arrangement=bars_arrangement,
+            sort_by=sort_by, actions=actions or [], visual_id=visual_id,
+        )
+        self.sheet.visuals.append(bar)
+        self._place(bar)
+        return bar
+
+    def add_sankey(
+        self,
+        *,
+        title: str,
+        source: Dim,
+        target: Dim,
+        weight: Measure,
+        subtitle: str | None = None,
+        items_limit: int | None = None,
+        actions: list[Action] | None = None,
+        visual_id: VisualId | AutoResolved = AUTO,
+    ) -> Sankey:
+        sankey = Sankey(
+            title=title, subtitle=subtitle, source=source, target=target,
+            weight=weight, items_limit=items_limit, actions=actions or [],
+            visual_id=visual_id,
+        )
+        self.sheet.visuals.append(sankey)
+        self._place(sankey)
+        return sankey
+
+    def add_text_box(self, text_box: TextBox) -> TextBox:
+        if text_box not in self.sheet.text_boxes:
+            self.sheet.text_boxes.append(text_box)
+        self._place(text_box)
+        return text_box
+
+
+@dataclass(eq=False)
+class SheetLayout:
+    """Layout namespace on a Sheet — manages rows + absolute placements.
+
+    Tracks a vertical row cursor: each ``row(height=H)`` opens a new row
+    at the current cursor and advances it by ``H`` for the next row.
+    Absolute placements don't advance the cursor (they're independent
+    of row flow).
+    """
+    sheet: Sheet
+    _row_cursor: int = field(default=0, init=False, repr=False)
+
+    def row(self, *, height: int) -> Row:
+        """Open a new row at the current vertical cursor with the given
+        height. The cursor advances by ``height`` so the next ``row()``
+        call lands below this one."""
+        row = Row(sheet=self.sheet, height=height, row_index=self._row_cursor)
+        self._row_cursor += height
+        return row
+
+    def absolute(
+        self,
+        *,
+        col_index: int,
+        row_index: int | None = None,
+        col_span: int,
+        row_span: int,
+    ) -> AbsoluteSlot:
+        """Open an explicit-position slot. Doesn't advance the row
+        cursor — absolute placements are independent of row flow."""
+        return AbsoluteSlot(
+            sheet=self.sheet,
+            col_span=col_span, row_span=row_span,
+            col_index=col_index, row_index=row_index,
         )
 
 
@@ -304,10 +826,10 @@ class Analysis:
     """
     analysis_id_suffix: str
     name: str
-    sheets: list[Sheet] = field(default_factory=list)
-    parameters: list[ParameterDeclLike] = field(default_factory=list)
-    filter_groups: list[FilterGroup] = field(default_factory=list)
-    calc_fields: list[CalcField] = field(default_factory=list)
+    sheets: list[Sheet] = field(default_factory=list["Sheet"])
+    parameters: list[ParameterDeclLike] = field(default_factory=list[ParameterDeclLike])
+    filter_groups: list[FilterGroup] = field(default_factory=list[FilterGroup])
+    calc_fields: list[CalcField] = field(default_factory=list[CalcField])
     # DataSetIdentifierDeclarations come from the App at emit time
 
     def add_sheet(self, sheet: Sheet) -> Sheet:
@@ -342,7 +864,7 @@ class Analysis:
         index in the analysis's filter_groups list — so the check
         only applies when callers passed an explicit id.)
         """
-        if fg.filter_group_id is not None and any(
+        if not isinstance(fg.filter_group_id, _AutoSentinel) and any(
             existing.filter_group_id == fg.filter_group_id
             for existing in self.filter_groups
         ):
@@ -365,7 +887,7 @@ class Analysis:
         ``sheet_id=`` is the most robust lookup; ``name=`` is the
         next-best for tests that don't want to hardcode IDs.
         """
-        matches = []
+        matches: list[Sheet] = []
         for s in self.sheets:
             if sheet_id is not None and s.sheet_id == sheet_id:
                 matches.append(s)
@@ -411,6 +933,15 @@ class Analysis:
             )
         return matches[0]
 
+    def find_parameter(self, *, name: str) -> ParameterDeclLike:
+        """Look up a single parameter declaration by name."""
+        matches = [p for p in self.parameters if p.name == name]
+        if not matches:
+            raise ValueError(
+                f"No parameter on Analysis {self.name!r} named {name!r}"
+            )
+        return matches[0]
+
     def add_calc_field(self, calc: CalcField) -> CalcField:
         """Register a calculated field on this analysis.
 
@@ -445,16 +976,13 @@ class Analysis:
         deps: set[Dataset] = set()
         for sheet in self.sheets:
             for visual in sheet.visuals:
-                if hasattr(visual, "datasets"):
-                    deps.update(visual.datasets())
+                deps.update(visual.datasets())
             # Parameter / filter controls with LinkedValues populate
             # from a Dataset — that's a dep too.
-            for ctrl in sheet.parameter_controls:
-                if hasattr(ctrl, "datasets"):
-                    deps.update(ctrl.datasets())
-            for ctrl in sheet.filter_controls:
-                if hasattr(ctrl, "datasets"):
-                    deps.update(ctrl.datasets())
+            for pctrl in sheet.parameter_controls:
+                deps.update(pctrl.datasets())
+            for fctrl in sheet.filter_controls:
+                deps.update(fctrl.datasets())
         for fg in self.filter_groups:
             deps.update(fg.datasets())
         for calc in self.calc_fields:
@@ -474,8 +1002,7 @@ class Analysis:
         deps: set[CalcField] = set()
         for sheet in self.sheets:
             for visual in sheet.visuals:
-                if hasattr(visual, "calc_fields"):
-                    deps.update(visual.calc_fields())
+                deps.update(visual.calc_fields())
         for fg in self.filter_groups:
             deps.update(fg.calc_fields())
         return deps
@@ -558,19 +1085,42 @@ class App:
     cfg: Config
     analysis: Analysis | None = None
     dashboard: Dashboard | None = None
-    datasets: list[Dataset] = field(default_factory=list)
+    datasets: list[Dataset] = field(default_factory=list[Dataset])
+    # Bare-string column refs (``Dim(ds, "amount")`` instead of
+    # ``ds["amount"].dim()``) are typo-prone — they bypass the dataset
+    # contract validation. ``emit_analysis`` raises on any bare-string
+    # column ref unless this flag is set. Test fixtures + datasets
+    # without a registered contract (kitchen-sink) opt in via
+    # ``allow_bare_strings=True``.
+    allow_bare_strings: bool = False
 
     def set_analysis(self, analysis: Analysis) -> Analysis:
         self.analysis = analysis
         return analysis
 
-    def set_dashboard(self, dashboard: Dashboard) -> Dashboard:
-        if dashboard.analysis is not self.analysis:
+    def create_dashboard(
+        self,
+        *,
+        dashboard_id_suffix: str,
+        name: str,
+    ) -> Dashboard:
+        """Construct + register a Dashboard against the App's already-set
+        Analysis.
+
+        The App owns the Analysis already; this shortcut prevents the
+        analysis-mismatch bug class by construction — there's no opening
+        to pass a different Analysis.
+        """
+        if self.analysis is None:
             raise ValueError(
-                "Dashboard.analysis must be the same Analysis instance "
-                "the App owns. Construct the Dashboard with the App's "
-                "Analysis: Dashboard(analysis=app.analysis, ...)."
+                "Cannot create_dashboard before set_analysis — "
+                "the dashboard publishes the App's Analysis."
             )
+        dashboard = Dashboard(
+            dashboard_id_suffix=dashboard_id_suffix,
+            name=name,
+            analysis=self.analysis,
+        )
         self.dashboard = dashboard
         return dashboard
 
@@ -625,20 +1175,30 @@ class App:
         IDs unset. Called from emit_analysis / emit_dashboard before
         any validation or emission.
 
-        L.1.8.5 mixed scheme: only typed Visual subtypes (KPI / Table
-        / BarChart / Sankey) and FilterGroup get auto-IDs. The
-        spike-shape ``VisualNode`` factory wrapper requires explicit
-        visual_id (it's the migration-window helper).
+        Mixed scheme (L.1.8.5 + L.1.16): URL-facing IDs (``SheetId``,
+        ``ParameterName``) and analyst-facing identifiers (``Dataset``
+        identifier) stay explicit. Internal IDs the analyst never
+        types — visual_id, filter_id, control_id, action_id, field_id,
+        calc-field name — get tree-position-derived defaults when
+        omitted.
 
-        Auto-ID format:
-        - Visual: ``v-{kind}-s{sheet_idx}-{visual_idx}`` where
-          ``kind`` comes from the visual subtype's ``_AUTO_KIND``
-          (``"kpi"`` / ``"table"`` / ``"bar"`` / ``"sankey"``).
-        - FilterGroup: ``fg-{idx}`` — analysis-scoped (filter
-          groups don't belong to a specific sheet).
+        Auto-ID formats:
+        - Visual: ``v-{kind}-s{sheet_idx}-{visual_idx}``
+        - FilterGroup: ``fg-{idx}`` — analysis-scoped
+        - Filter: ``f-{kind}-fg{fg_idx}-{filt_idx}``
+        - ParameterControl: ``pc-{kind}-s{sheet_idx}-{ctrl_idx}``
+        - FilterControl: ``fc-{kind}-s{sheet_idx}-{ctrl_idx}``
+        - Drill action: ``act-s{sheet_idx}-v{visual_idx}-{action_idx}``
+        - Field-well leaf (Dim/Measure): ``f-{visual_kind}-s{sheet_idx}
+          -v{visual_idx}-{role}{slot_idx}`` where role tags the field
+          well slot (``g`` group_by, ``v`` values, ``c`` category,
+          ``s`` source, ``t`` target, ``w`` weight)
+        - CalcField: ``calc-{idx}`` — analysis-scoped
 
-        Idempotent: nodes that already have explicit IDs aren't
-        touched.
+        Same-sheet drills also get their target_sheet back-filled here
+        (Drill.target_sheet=AUTO means "the sheet that owns me").
+
+        Idempotent: nodes that already have explicit IDs aren't touched.
         """
         if self.analysis is None:
             return
@@ -646,35 +1206,62 @@ class App:
             for visual_idx, visual in enumerate(sheet.visuals):
                 kind = getattr(visual, "_AUTO_KIND", None)
                 current = getattr(visual, "visual_id", None)
-                if kind is not None and current is None:
+                if kind is not None and isinstance(current, _AutoSentinel):
                     visual.visual_id = VisualId(
                         f"v-{kind}-s{sheet_idx}-{visual_idx}",
                     )
-                # Drill action IDs (sheet+visual scoped).
+                # Field-well leaves — Dim/Measure get position-indexed
+                # field_ids. Walk the slots that exist on this visual
+                # type; missing attributes (e.g. KPI has no group_by)
+                # are skipped via getattr default.
+                _resolve_field_ids(
+                    visual=visual,
+                    visual_kind=kind or "v",
+                    sheet_idx=sheet_idx,
+                    visual_idx=visual_idx,
+                )
+                # Drill action IDs (sheet+visual scoped). Same-sheet
+                # drills (target_sheet=AUTO at construction) get the
+                # owning sheet back-filled here — the cycle closes the
+                # same time IDs resolve.
                 actions = getattr(visual, "actions", None)
                 if actions:
                     for action_idx, action in enumerate(actions):
-                        if action.action_id is None:
+                        if isinstance(action.action_id, _AutoSentinel):
                             action.action_id = (
                                 f"act-s{sheet_idx}-v{visual_idx}-{action_idx}"
                             )
+                        if hasattr(action, "target_sheet") and isinstance(
+                            action.target_sheet, _AutoSentinel,
+                        ):
+                            action.target_sheet = sheet
             # Parameter controls — auto-IDs scoped to the sheet.
             for ctrl_idx, ctrl in enumerate(sheet.parameter_controls):
                 kind = getattr(ctrl, "_AUTO_KIND", None)
-                if kind is not None and getattr(ctrl, "control_id", None) is None:
+                if kind is not None and isinstance(
+                    getattr(ctrl, "control_id", None), _AutoSentinel,
+                ):
                     ctrl.control_id = f"pc-{kind}-s{sheet_idx}-{ctrl_idx}"
             # Filter controls — auto-IDs scoped to the sheet.
             for ctrl_idx, ctrl in enumerate(sheet.filter_controls):
                 kind = getattr(ctrl, "_AUTO_KIND", None)
-                if kind is not None and getattr(ctrl, "control_id", None) is None:
+                if kind is not None and isinstance(
+                    getattr(ctrl, "control_id", None), _AutoSentinel,
+                ):
                     ctrl.control_id = f"fc-{kind}-s{sheet_idx}-{ctrl_idx}"
         for fg_idx, fg in enumerate(self.analysis.filter_groups):
-            if fg.filter_group_id is None:
+            if isinstance(fg.filter_group_id, _AutoSentinel):
                 fg.filter_group_id = FilterGroupId(f"fg-{fg_idx}")
             for filt_idx, filt in enumerate(fg.filters):
                 kind = getattr(filt, "_AUTO_KIND", None)
-                if kind is not None and getattr(filt, "filter_id", None) is None:
+                if kind is not None and isinstance(
+                    getattr(filt, "filter_id", None), _AutoSentinel,
+                ):
                     filt.filter_id = f"f-{kind}-fg{fg_idx}-{filt_idx}"
+        # CalcField names — analysis-scoped position index.
+        for calc_idx, calc in enumerate(self.analysis.calc_fields):
+            if isinstance(calc.name, _AutoSentinel):
+                calc.name = f"calc-{calc_idx}"
 
     def _validate_dataset_references(self) -> None:
         """Raise if the tree references any Dataset not registered on
@@ -713,7 +1300,7 @@ class App:
         registered_params = self.analysis.parameters
         bad: list[str] = []
 
-        def _check(param, where: str) -> None:
+        def _check(param: ParameterDeclLike | None, where: str) -> None:
             if param is None:
                 return
             if not any(p is param for p in registered_params):
@@ -760,20 +1347,120 @@ class App:
         bad: list[str] = []
         for sheet in registered_sheets:
             for visual in sheet.visuals:
-                actions = getattr(visual, "actions", None) or []
+                actions: list[Action] = getattr(visual, "actions", None) or []
+                # Only Drill actions navigate to a sheet; SameSheetFilter
+                # actions target visuals on the current sheet and don't
+                # carry a target_sheet field.
                 for action in actions:
+                    if not isinstance(action, Drill):
+                        continue
                     if not any(
                         action.target_sheet is s for s in registered_sheets
                     ):
+                        target_sheet_id = (
+                            action.target_sheet.sheet_id
+                            if not isinstance(action.target_sheet, _AutoSentinel)
+                            else "<unset>"
+                        )
                         bad.append(
                             f"action {action.name!r} on visual "
                             f"{getattr(visual, 'visual_id', '?')!r} → sheet "
-                            f"{action.target_sheet.sheet_id!r}"
+                            f"{target_sheet_id!r}"
                         )
         if bad:
             raise ValueError(
                 f"App {self.name!r} has drill actions targeting sheets that "
                 f"aren't registered on the analysis: {bad}"
+            )
+
+    def _validate_no_bare_string_columns(self) -> None:
+        """Raise if any tree node uses an unvalidated column ref.
+
+        Two unvalidated forms exist, both gated by ``allow_bare_strings``:
+
+        - **Bare string**: ``Dim(ds, "amount")`` — a literal string
+          that bypasses any contract check. Typo-prone.
+        - **Unvalidated Column**: ``ds["amount"]`` against a dataset
+          with no registered ``DatasetContract``. ``Dataset.__getitem__``
+          can't validate when no contract exists, so it returns a
+          Column without checking. The walker catches this here so
+          the silent-pass path turns into a loud raise.
+
+        The validated path: ``ds["amount"]`` against a dataset whose
+        contract IS registered. ``Dataset.__getitem__`` raises
+        ``KeyError`` at the wiring site on typo, so by the time the
+        walker sees the Column, the column name is already known good.
+
+        ``allow_bare_strings=True`` on the App opts out for test
+        fixtures and datasets without a registered contract (the
+        kitchen sink, which has no DatasetContract).
+        """
+        if self.allow_bare_strings or self.analysis is None:
+            return
+        bad: list[str] = []
+
+        def _check(column: object, where: str) -> None:
+            if isinstance(column, str):
+                bad.append(f"{where} → bare string {column!r}")
+                return
+            if isinstance(column, Column):
+                try:
+                    get_contract(column.dataset.identifier)
+                except KeyError:
+                    bad.append(
+                        f"{where} → ds[{column.name!r}] but dataset "
+                        f"{column.dataset.identifier!r} has no registered "
+                        f"DatasetContract — column couldn't be validated"
+                    )
+
+        for sheet in self.analysis.sheets:
+            for visual in sheet.visuals:
+                for attr, _role in _FIELD_SLOTS:
+                    slot: object = getattr(visual, attr, None)
+                    if slot is None:
+                        continue
+                    leaves: list[object] = (
+                        list(slot) if isinstance(slot, list)  # type: ignore[arg-type]
+                        else [slot]
+                    )
+                    for leaf in leaves:
+                        if leaf is None:
+                            continue
+                        _check(
+                            getattr(leaf, "column", None),
+                            f"sheet {sheet.sheet_id!r} visual "
+                            f"{getattr(visual, 'visual_id', '?')!r} "
+                            f"{attr}",
+                        )
+                # LinkedValues on parameter / filter controls hits the
+                # same column-ref slot.
+                for ctrl in (
+                    *sheet.parameter_controls, *sheet.filter_controls,
+                ):
+                    sv = getattr(ctrl, "selectable_values", None)
+                    if sv is not None:
+                        _check(
+                            getattr(sv, "column", None),
+                            f"sheet {sheet.sheet_id!r} control "
+                            f"{getattr(ctrl, 'control_id', '?')!r} "
+                            f"selectable_values",
+                        )
+        for fg in self.analysis.filter_groups:
+            for filt in fg.filters:
+                _check(
+                    getattr(filt, "column", None),
+                    f"filter {getattr(filt, 'filter_id', '?')!r}",
+                )
+        if bad:
+            raise ValueError(
+                f"App {self.name!r} has unvalidated column refs "
+                f"(typo-prone — they bypass the dataset contract):\n  "
+                + "\n  ".join(bad)
+                + "\n\nUse the typed form ds[\"column_name\"].dim() / "
+                ".sum() / .date() / etc. against a dataset whose "
+                "DatasetContract is registered — or pass "
+                "``allow_bare_strings=True`` on the App when no "
+                "dataset contract is registered (test fixtures)."
             )
 
     def _validate_calc_field_references(self) -> None:
@@ -788,7 +1475,13 @@ class App:
         registered = set(self.analysis.calc_fields)
         unregistered = referenced - registered
         if unregistered:
-            names = sorted(c.name for c in unregistered)
+            # Names are populated by _resolve_auto_ids before validation
+            # runs (see emit_analysis); fall back to "<unnamed>" for
+            # safety.
+            names = sorted(
+                "<unnamed>" if isinstance(c.name, _AutoSentinel) else c.name
+                for c in unregistered
+            )
             raise ValueError(
                 f"App {self.name!r} references unregistered calc fields: "
                 f"{names} — register each via "
@@ -822,6 +1515,7 @@ class App:
         self._validate_calc_field_references()
         self._validate_parameter_references()
         self._validate_drill_destinations()
+        self._validate_no_bare_string_columns()
         return ModelAnalysis(
             AwsAccountId=self.cfg.aws_account_id,
             AnalysisId=self.cfg.prefixed(self.analysis.analysis_id_suffix),
@@ -837,13 +1531,14 @@ class App:
     def emit_dashboard(self) -> ModelDashboard:
         if self.dashboard is None:
             raise ValueError(
-                "App has no Dashboard — call set_dashboard() first."
+                "App has no Dashboard — call create_dashboard() first."
             )
         self._resolve_auto_ids()
         self._validate_dataset_references()
         self._validate_calc_field_references()
         self._validate_parameter_references()
         self._validate_drill_destinations()
+        self._validate_no_bare_string_columns()
         return ModelDashboard(
             AwsAccountId=self.cfg.aws_account_id,
             DashboardId=self.cfg.prefixed(self.dashboard.dashboard_id_suffix),

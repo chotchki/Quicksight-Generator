@@ -21,8 +21,6 @@ import pytest
 from click.testing import CliRunner
 
 from quicksight_gen.apps.account_recon.constants import (
-    ALL_FG_AR_IDS,
-    ALL_P_AR,
     FG_AR_BALANCES_LEDGER_DRIFT,
     FG_AR_BALANCES_OVERDRAFT,
     FG_AR_BALANCES_SUBLEDGER_DRIFT,
@@ -2122,6 +2120,29 @@ def ar_output_dir(tmp_path: Path) -> Path:
     return out
 
 
+@pytest.fixture()
+def ar_app():
+    """L.3.9 — typed AR App handle for tests that previously consumed
+    `ALL_FG_AR_IDS` / `ALL_P_AR` / `ALL_V_AR` aggregates from
+    constants.py. The tree's emitted sets are the source of truth now;
+    fixtures hand the App back so each test walks the same shape the
+    deployed dashboard will see."""
+    from quicksight_gen.apps.account_recon.app import build_account_recon_app
+    from quicksight_gen.common.config import Config
+
+    cfg = Config(
+        aws_account_id="111122223333",
+        aws_region="us-west-2",
+        datasource_arn="arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds",
+        theme_preset="default",
+    )
+    app = build_account_recon_app(cfg)
+    # Trigger emit so auto-IDs resolve — tests expect resolved IDs on
+    # the tree nodes they walk.
+    app.emit_analysis()
+    return app
+
+
 def _load(out_dir: Path, name: str) -> dict:
     return json.loads((out_dir / name).read_text())
 
@@ -2371,10 +2392,14 @@ class TestFilterGroups:
     5 drill-down parameter filters + Daily Statement (account/date) +
     Today's Exceptions (check-type/account/aging) filter groups."""
 
-    def test_filter_group_ids(self, ar_output_dir):
+    def test_filter_group_ids(self, ar_output_dir, ar_app):
+        """Compare emitted-JSON FilterGroupIds against the tree's
+        registered set (post-resolve). Same shape as L.2.8 did for
+        Investigation."""
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
         ids = {fg["FilterGroupId"] for fg in analysis["Definition"]["FilterGroups"]}
-        assert ids == ALL_FG_AR_IDS
+        expected = {fg.filter_group_id for fg in ar_app.analysis.filter_groups}
+        assert ids == expected
 
     def test_date_range_scopes_five_tabs(self, ar_output_dir):
         analysis = _load(ar_output_dir, "account-recon-analysis.json")
@@ -2544,7 +2569,14 @@ class TestParameterDeclarations:
     """Phase 5 drill-downs use single-valued string parameters; the
     Daily Statement balance-date drill uses one date-time parameter."""
 
-    _STRING_PARAMS = {p.name for p in ALL_P_AR if p is not P_AR_DS_BALANCE_DATE}
+    # Hardcoded — these mirror the imperative declaration set. The
+    # canonical list lives in `apps/account_recon/app.py::_wire_parameters`;
+    # if a new AR parameter lands, add it here.
+    _STRING_PARAMS = frozenset({
+        P_AR_SUBLEDGER.name, P_AR_LEDGER.name, P_AR_TRANSFER.name,
+        P_AR_ACTIVITY_DATE.name, P_AR_TRANSFER_TYPE.name,
+        P_AR_ACCOUNT.name, P_AR_DS_ACCOUNT.name,
+    })
     _DATETIME_PARAMS = {P_AR_DS_BALANCE_DATE.name}
 
     def _split(self, params: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -2919,28 +2951,41 @@ class TestTransactionsDrillStaleParamHygiene:
                 "StringValues"
             ] == ["__ALL__"]
 
-    def test_helper_param_set_matches_analysis_drill_specs(self):
-        """``_AR_TXN_PASS_FILTERED_PARAMS`` (the helper's auto-reset set)
-        must mirror the SHEET_AR_TRANSACTIONS specs in
-        ``analysis._DRILL_SPECS``. If a new drill spec is added there,
-        the helper has to know about it — otherwise drills that don't
-        explicitly write the new param leave it stale on the destination
-        sheet (the K.2 bug class) and silently ship that way."""
-        from quicksight_gen.apps.account_recon import analysis as ar_analysis
-        from quicksight_gen.apps.account_recon.visuals import (
+    def test_every_drill_into_transactions_writes_full_param_set(self, ar_app):
+        """Every cross-sheet ``Drill`` whose ``target_sheet`` is the
+        Transactions sheet must have ``writes`` covering every
+        ``_AR_TXN_PASS_FILTERED_PARAMS`` entry — that's what the
+        ``_ar_drill_to_transactions`` helper guarantees by auto-filling
+        ``DrillResetSentinel`` for un-written PASS params. A drill that
+        bypasses the helper would leave a PASS-filtered param stale on
+        the destination sheet (the K.2 bug class). Walking the tree
+        catches that bypass at the wiring site."""
+        from quicksight_gen.apps.account_recon.app import (
             _AR_TXN_PASS_FILTERED_PARAMS,
         )
+        from quicksight_gen.common.tree.actions import Drill
 
-        spec_param_names = {
-            spec.parameter.name
-            for spec in ar_analysis._DRILL_SPECS
-            if spec.sheet_id == SHEET_AR_TRANSACTIONS
-        }
         helper_param_names = {p.name for p in _AR_TXN_PASS_FILTERED_PARAMS}
-        assert helper_param_names == spec_param_names, (
-            "Helper auto-reset set drifted from analysis._DRILL_SPECS — "
-            f"helper has {helper_param_names}, specs have {spec_param_names}"
+        txn_sheet = next(
+            s for s in ar_app.analysis.sheets
+            if s.sheet_id == SHEET_AR_TRANSACTIONS
         )
+        offenders: list[str] = []
+        for sheet in ar_app.analysis.sheets:
+            for visual in sheet.visuals:
+                for action in getattr(visual, "actions", []):
+                    if not isinstance(action, Drill):
+                        continue
+                    if action.target_sheet is not txn_sheet:
+                        continue
+                    written = {param.name for param, _ in action.writes}
+                    missing = helper_param_names - written
+                    if missing:
+                        offenders.append(
+                            f"Drill '{action.name}' on visual "
+                            f"'{visual.visual_id}' missing writes: {missing}"
+                        )
+        assert not offenders, "\n".join(offenders)
 
 
 def _cf_cells(visual: dict) -> list[dict]:
@@ -3272,13 +3317,13 @@ class TestAnalysisName:
         )
 
     def test_default_name(self):
-        from quicksight_gen.apps.account_recon.analysis import build_analysis
+        from quicksight_gen.apps.account_recon.app import build_analysis
 
         name = build_analysis(self._cfg("default")).Name
         assert name == "Account Reconciliation"
 
     def test_sasquatch_bank_ar_name(self):
-        from quicksight_gen.apps.account_recon.analysis import build_analysis
+        from quicksight_gen.apps.account_recon.app import build_analysis
 
         name = build_analysis(self._cfg("sasquatch-bank-ar")).Name
         assert name == "Demo — Account Reconciliation"

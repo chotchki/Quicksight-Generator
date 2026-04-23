@@ -20,6 +20,7 @@ from quicksight_gen.common.models import (
     ParameterDeclaration,
     StringParameterDeclaration,
 )
+from quicksight_gen.common.tree._helpers import TimeGranularity
 
 
 @runtime_checkable
@@ -39,7 +40,7 @@ class StringParam:
     multi-valued use ``["a", "b", "c"]``.
     """
     name: ParameterName
-    default: list[str] = field(default_factory=list)
+    default: list[str] = field(default_factory=list[str])
     multi_valued: bool = False
 
     def emit(self) -> ParameterDeclaration:
@@ -58,7 +59,7 @@ class StringParam:
 class IntegerParam:
     """Integer-valued parameter declaration."""
     name: ParameterName
-    default: list[int] = field(default_factory=list)
+    default: list[int] = field(default_factory=list[int])
     multi_valued: bool = False
 
     def emit(self) -> ParameterDeclaration:
@@ -84,7 +85,7 @@ class DateTimeParam:
     ``{"Expression": "truncDate('DD', now())"}`` for "today").
     """
     name: ParameterName
-    time_granularity: str | None = None
+    time_granularity: TimeGranularity | None = None
     default: DateTimeDefaultValues | None = None
 
     def emit(self) -> ParameterDeclaration:

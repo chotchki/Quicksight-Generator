@@ -25,7 +25,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from quicksight_gen.apps.investigation.analysis import (
+from quicksight_gen.apps.investigation.app import (
     build_analysis,
     build_investigation_dashboard,
 )
@@ -63,18 +63,6 @@ from quicksight_gen.apps.investigation.constants import (
     SHEET_INV_FANOUT,
     SHEET_INV_GETTING_STARTED,
     SHEET_INV_MONEY_TRAIL,
-    V_INV_ANETWORK_SANKEY_INBOUND,
-    V_INV_ANETWORK_SANKEY_OUTBOUND,
-    V_INV_ANETWORK_TABLE,
-    V_INV_ANOMALIES_DISTRIBUTION,
-    V_INV_ANOMALIES_KPI_FLAGGED,
-    V_INV_ANOMALIES_TABLE,
-    V_INV_FANOUT_KPI_AMOUNT,
-    V_INV_FANOUT_KPI_RECIPIENTS,
-    V_INV_FANOUT_KPI_SENDERS,
-    V_INV_FANOUT_TABLE,
-    V_INV_MONEY_TRAIL_SANKEY,
-    V_INV_MONEY_TRAIL_TABLE,
 )
 from quicksight_gen.apps.investigation.datasets import (
     MONEY_TRAIL_CONTRACT,
@@ -83,30 +71,6 @@ from quicksight_gen.apps.investigation.datasets import (
     build_all_datasets,
 )
 from quicksight_gen.apps.investigation.demo_data import generate_demo_sql
-from quicksight_gen.apps.investigation.filters import (
-    AMOUNT_SLIDER_MAX,
-    AMOUNT_SLIDER_MIN,
-    DEFAULT_ANOMALIES_SIGMA,
-    DEFAULT_FANOUT_THRESHOLD,
-    DEFAULT_MONEY_TRAIL_MAX_HOPS,
-    DEFAULT_MONEY_TRAIL_MIN_AMOUNT,
-    HOPS_SLIDER_MAX,
-    HOPS_SLIDER_MIN,
-    SIGMA_SLIDER_MAX,
-    SIGMA_SLIDER_MIN,
-    SLIDER_MAX,
-    SLIDER_MIN,
-    build_account_network_filter_controls,
-    build_account_network_parameter_controls,
-    build_anomalies_filter_controls,
-    build_anomalies_parameter_controls,
-    build_fanout_filter_controls,
-    build_fanout_parameter_controls,
-    build_filter_groups,
-    build_money_trail_filter_controls,
-    build_money_trail_parameter_controls,
-    build_parameter_declarations,
-)
 from quicksight_gen.cli import main
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.models import SheetVisualScopingConfiguration
@@ -121,6 +85,89 @@ _TEST_CFG = Config(
         "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
     ),
 )
+
+
+# L.2.13 — Persona-defaults that the imperative ``filters.py`` carried as
+# named constants. Inlined as literals here so the assertions describe the
+# persona's intended UX (slider runs 1–20, sigma 1–4, etc.) instead of
+# tautologically re-checking that the same constant flows through. The
+# tree's ``apps/investigation/app.py`` keeps its own private copies; if
+# either side drifts, the assertions in this file fail loudly.
+SLIDER_MIN = 1
+SLIDER_MAX = 20
+DEFAULT_FANOUT_THRESHOLD = 5
+SIGMA_SLIDER_MIN = 1
+SIGMA_SLIDER_MAX = 4
+DEFAULT_ANOMALIES_SIGMA = 2
+HOPS_SLIDER_MIN = 1
+HOPS_SLIDER_MAX = 10
+DEFAULT_MONEY_TRAIL_MAX_HOPS = 5
+AMOUNT_SLIDER_MIN = 0
+AMOUNT_SLIDER_MAX = 1000
+DEFAULT_MONEY_TRAIL_MIN_AMOUNT = 0
+
+
+def _filter_groups(cfg: Config = _TEST_CFG) -> list:
+    """Walk the tree's emitted filter groups (post-resolve)."""
+    return build_analysis(cfg).Definition.FilterGroups
+
+
+def _parameter_declarations(cfg: Config = _TEST_CFG) -> list:
+    """Walk the tree's emitted parameter declarations (post-resolve)."""
+    return build_analysis(cfg).Definition.ParameterDeclarations
+
+
+def _sheet_by_id(sheet_id: str, cfg: Config = _TEST_CFG):
+    """Find an emitted Sheet by its `SheetId`."""
+    return next(
+        s for s in build_analysis(cfg).Definition.Sheets
+        if s.SheetId == sheet_id
+    )
+
+
+def _filter_controls(sheet_id: str, cfg: Config = _TEST_CFG) -> list:
+    return _sheet_by_id(sheet_id, cfg).FilterControls or []
+
+
+def _parameter_controls(sheet_id: str, cfg: Config = _TEST_CFG) -> list:
+    return _sheet_by_id(sheet_id, cfg).ParameterControls or []
+
+
+def _visual_id_by_title(sheet, title: str) -> str:
+    """Find a visual's auto-generated ID by walking the sheet's emitted
+    Visuals list and matching on title. Visual_ids are auto-derived
+    post-L.1.21; titles are the stable identifier for tests that pin
+    individual visuals.
+    """
+    for v in sheet.Visuals:
+        for inner_name in (
+            "KPIVisual", "TableVisual", "BarChartVisual",
+            "SankeyDiagramVisual", "PieChartVisual",
+        ):
+            inner = getattr(v, inner_name, None)
+            if inner is None:
+                continue
+            inner_title = inner.Title.FormatText.get("PlainText")
+            if inner_title == title:
+                return inner.VisualId
+    raise AssertionError(f"No visual on sheet matches title={title!r}")
+
+
+def _visual_kinds(sheet) -> list[str]:
+    """Return the kind ('KPIVisual', 'TableVisual', ...) of each visual
+    on the sheet in order. Used in lieu of explicit visual_ids for
+    "this sheet has [KPI, BarChart, Table] in this order" structure
+    checks (visual_ids are auto-generated post-L.1.21)."""
+    kinds: list[str] = []
+    for v in sheet.Visuals:
+        for inner_name in (
+            "KPIVisual", "TableVisual", "BarChartVisual",
+            "SankeyDiagramVisual", "PieChartVisual",
+        ):
+            if getattr(v, inner_name, None) is not None:
+                kinds.append(inner_name)
+                break
+    return kinds
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +293,7 @@ def test_filter_groups_in_expected_order():
     amount), then four K.4.8 account-network filter groups (anchor /
     inbound / outbound / amount). Order is stable so the deployed
     Definition diff is readable."""
-    groups = build_filter_groups(_TEST_CFG)
+    groups = _filter_groups()
     ids = [g.FilterGroupId for g in groups]
     assert ids == [
         FG_INV_FANOUT_WINDOW,
@@ -264,7 +311,7 @@ def test_filter_groups_in_expected_order():
 
 
 def test_threshold_filter_is_parameter_bound_on_calc_field():
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     threshold = groups[FG_INV_FANOUT_THRESHOLD]
     nrf = threshold.Filters[0].NumericRangeFilter
     assert nrf is not None
@@ -278,7 +325,7 @@ def test_threshold_filter_is_parameter_bound_on_calc_field():
 
 
 def test_window_filter_is_a_time_range_on_posted_at():
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     window = groups[FG_INV_FANOUT_WINDOW]
     trf = window.Filters[0].TimeRangeFilter
     assert trf is not None
@@ -290,7 +337,7 @@ def test_parameter_declarations_carry_both_thresholds():
     """Seven parameters: K.4.3 fanout threshold, K.4.4 sigma threshold,
     K.4.5 money-trail root (string) + max-hops + min-amount (integers),
     K.4.8 account-network anchor (string) + min-amount (integer)."""
-    decls = build_parameter_declarations(_TEST_CFG)
+    decls = _parameter_declarations()
     assert len(decls) == 7
     int_by_name = {
         d.IntegerParameterDeclaration.Name: d.IntegerParameterDeclaration
@@ -328,8 +375,8 @@ def test_parameter_declarations_carry_both_thresholds():
 
 
 def test_fanout_sheet_carries_window_filter_and_threshold_slider():
-    fc = build_fanout_filter_controls(_TEST_CFG)
-    pc = build_fanout_parameter_controls(_TEST_CFG)
+    fc = _filter_controls(SHEET_INV_FANOUT)
+    pc = _parameter_controls(SHEET_INV_FANOUT)
     assert len(fc) == 1
     assert fc[0].DateTimePicker is not None  # date range widget
     assert len(pc) == 1
@@ -369,16 +416,18 @@ def test_fanout_sheet_has_three_kpis_and_one_table():
         s for s in analysis.Definition.Sheets if s.SheetId == SHEET_INV_FANOUT
     )
     assert fanout.Visuals is not None
-    visual_ids = [
-        (v.KPIVisual.VisualId if v.KPIVisual else
-         v.TableVisual.VisualId if v.TableVisual else None)
+    # Three KPIs followed by one Table (visual_ids are auto-generated
+    # post-L.1.21; titles are the stable identifier for asserting order).
+    titles = [
+        (v.KPIVisual.Title.FormatText["PlainText"] if v.KPIVisual else
+         v.TableVisual.Title.FormatText["PlainText"] if v.TableVisual else None)
         for v in fanout.Visuals
     ]
-    assert visual_ids == [
-        V_INV_FANOUT_KPI_RECIPIENTS,
-        V_INV_FANOUT_KPI_SENDERS,
-        V_INV_FANOUT_KPI_AMOUNT,
-        V_INV_FANOUT_TABLE,
+    assert titles == [
+        "Qualifying Recipients",
+        "Distinct Senders",
+        "Total Inbound",
+        "Recipient Fanout — Ranked",
     ]
 
 
@@ -465,7 +514,7 @@ def test_volume_anomalies_dataset_reads_from_matview():
 # ---------------------------------------------------------------------------
 
 def test_anomalies_window_filter_is_a_time_range_on_window_end():
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     window = groups[FG_INV_ANOMALIES_WINDOW]
     trf = window.Filters[0].TimeRangeFilter
     assert trf is not None
@@ -474,7 +523,7 @@ def test_anomalies_window_filter_is_a_time_range_on_window_end():
 
 
 def test_sigma_filter_is_parameter_bound_on_z_score():
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     sigma = groups[FG_INV_ANOMALIES_SIGMA]
     nrf = sigma.Filters[0].NumericRangeFilter
     assert nrf is not None
@@ -489,7 +538,8 @@ def test_sigma_filter_is_scoped_to_kpi_and_table_only():
     """Distribution chart MUST see the full population — its scope
     deliberately excludes the chart visual id. Otherwise the analyst
     loses the reference frame for where the slider cutoff lies."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    analysis = build_analysis(_TEST_CFG)
+    groups = {g.FilterGroupId: g for g in analysis.Definition.FilterGroups}
     sigma = groups[FG_INV_ANOMALIES_SIGMA]
     sheet_scopes = (
         sigma.ScopeConfiguration.SelectedSheets.SheetVisualScopingConfigurations
@@ -498,16 +548,21 @@ def test_sigma_filter_is_scoped_to_kpi_and_table_only():
     scope = sheet_scopes[0]
     assert scope.SheetId == SHEET_INV_ANOMALIES
     assert scope.Scope == SheetVisualScopingConfiguration.SELECTED_VISUALS
-    assert set(scope.VisualIds) == {
-        V_INV_ANOMALIES_KPI_FLAGGED, V_INV_ANOMALIES_TABLE,
-    }
-    assert V_INV_ANOMALIES_DISTRIBUTION not in scope.VisualIds
+    sheet = next(
+        s for s in analysis.Definition.Sheets
+        if s.SheetId == SHEET_INV_ANOMALIES
+    )
+    kpi_id = _visual_id_by_title(sheet, "Flagged Pair-Windows")
+    table_id = _visual_id_by_title(sheet, "Flagged Pair-Windows — Ranked")
+    dist_id = _visual_id_by_title(sheet, "Pair-Window σ Distribution")
+    assert set(scope.VisualIds) == {kpi_id, table_id}
+    assert dist_id not in scope.VisualIds
 
 
 def test_anomalies_window_filter_is_all_visuals_scope():
     """Window filter applies to every visual on the sheet — both the
     KPI/table and the distribution chart should respect the date range."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     window = groups[FG_INV_ANOMALIES_WINDOW]
     sheet_scopes = (
         window.ScopeConfiguration.SelectedSheets.SheetVisualScopingConfigurations
@@ -517,8 +572,8 @@ def test_anomalies_window_filter_is_all_visuals_scope():
 
 
 def test_anomalies_sheet_carries_window_filter_and_sigma_slider():
-    fc = build_anomalies_filter_controls(_TEST_CFG)
-    pc = build_anomalies_parameter_controls(_TEST_CFG)
+    fc = _filter_controls(SHEET_INV_ANOMALIES)
+    pc = _parameter_controls(SHEET_INV_ANOMALIES)
     assert len(fc) == 1
     assert fc[0].DateTimePicker is not None
     assert len(pc) == 1
@@ -541,21 +596,10 @@ def test_anomalies_sheet_has_kpi_distribution_and_table():
         if s.SheetId == SHEET_INV_ANOMALIES
     )
     assert sheet.Visuals is not None
-    visual_ids = []
-    for v in sheet.Visuals:
-        if v.KPIVisual:
-            visual_ids.append(v.KPIVisual.VisualId)
-        elif v.BarChartVisual:
-            visual_ids.append(v.BarChartVisual.VisualId)
-        elif v.TableVisual:
-            visual_ids.append(v.TableVisual.VisualId)
-        else:
-            visual_ids.append(None)
-    assert visual_ids == [
-        V_INV_ANOMALIES_KPI_FLAGGED,
-        V_INV_ANOMALIES_DISTRIBUTION,
-        V_INV_ANOMALIES_TABLE,
-    ]
+    # KPI flagged-count, σ distribution bar chart, ranked table — in
+    # that order. Visual_ids are auto-derived (L.1.21); kind ordering
+    # is the stable structural assertion.
+    assert _visual_kinds(sheet) == ["KPIVisual", "BarChartVisual", "TableVisual"]
 
 
 def test_distribution_chart_categorises_by_z_bucket():
@@ -584,7 +628,15 @@ def test_anomalies_table_sorted_by_z_score_desc():
     )
     table = next(v.TableVisual for v in sheet.Visuals if v.TableVisual)
     sort = table.ChartConfiguration.SortConfiguration["RowSort"][0]["FieldSort"]
-    assert sort["FieldId"] == "inv-anomalies-tbl-z-score"
+    # Field-ids are auto-derived (L.1.16). Look up the z_score field's
+    # auto-id by walking the table's Values list and matching column name.
+    z_score_field_id = next(
+        v.NumericalMeasureField.FieldId
+        for v in table.ChartConfiguration.FieldWells.TableAggregatedFieldWells.Values
+        if v.NumericalMeasureField
+        and v.NumericalMeasureField.Column.ColumnName == "z_score"
+    )
+    assert sort["FieldId"] == z_score_field_id
     assert sort["Direction"] == "DESC"
 
 
@@ -641,7 +693,7 @@ def test_money_trail_root_filter_is_parameter_bound_category_filter():
     """The chain root filter is a CategoryFilter with EQUALS match
     operator bound to ``pInvMoneyTrailRoot`` — the dropdown writes a
     single root_transfer_id and the filter narrows to that one chain."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     root = groups[FG_INV_MONEY_TRAIL_ROOT]
     cat = root.Filters[0].CategoryFilter
     assert cat is not None
@@ -656,7 +708,7 @@ def test_money_trail_hops_filter_caps_depth_via_parameter():
     """Max-hops filter is RangeMaximum bound to pInvMoneyTrailMaxHops on
     the depth column. Min-only would be the wrong shape — analysts care
     about ``depth ≤ N``, not a band of depths."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     hops = groups[FG_INV_MONEY_TRAIL_HOPS]
     nrf = hops.Filters[0].NumericRangeFilter
     assert nrf is not None
@@ -672,7 +724,7 @@ def test_money_trail_amount_filter_drops_noise_edges_via_parameter():
     """Min-hop-amount filter is RangeMinimum bound to
     pInvMoneyTrailMinAmount on hop_amount — drops edges below the
     slider so analysts can focus on meaningful flows."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     amt = groups[FG_INV_MONEY_TRAIL_AMOUNT]
     nrf = amt.Filters[0].NumericRangeFilter
     assert nrf is not None
@@ -688,7 +740,7 @@ def test_money_trail_filters_are_all_visuals_scope():
     """Both Sankey and hop-by-hop table reflect the same chain
     selection — every money-trail filter group scopes ALL_VISUALS so
     the visual + table read together as one chain."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     for fg_id in (
         FG_INV_MONEY_TRAIL_ROOT,
         FG_INV_MONEY_TRAIL_HOPS,
@@ -708,7 +760,7 @@ def test_money_trail_root_dropdown_links_to_dataset_column():
     """Dropdown auto-populates from the matview's distinct
     root_transfer_id values via LinkToDataSetColumn — analysts get a
     real list of chains, not an empty text input."""
-    pc = build_money_trail_parameter_controls(_TEST_CFG)
+    pc = _parameter_controls(SHEET_INV_MONEY_TRAIL)
     # 3 controls: root dropdown, hops slider, amount slider.
     assert len(pc) == 3
     dropdown = pc[0].Dropdown
@@ -723,7 +775,7 @@ def test_money_trail_root_dropdown_links_to_dataset_column():
 def test_money_trail_sliders_bind_to_their_parameters():
     """Hops slider + amount slider both wired to their respective
     parameters with the documented bounds."""
-    pc = build_money_trail_parameter_controls(_TEST_CFG)
+    pc = _parameter_controls(SHEET_INV_MONEY_TRAIL)
     hops_slider = pc[1].Slider
     assert hops_slider is not None
     assert hops_slider.SourceParameterName == P_INV_MONEY_TRAIL_MAX_HOPS
@@ -744,7 +796,7 @@ def test_money_trail_sliders_bind_to_their_parameters():
 def test_money_trail_sheet_has_no_filter_controls():
     """All three money-trail surfaces are parameter-bound, so the sheet
     ships with ParameterControls only — no FilterControls widgets."""
-    fc = build_money_trail_filter_controls(_TEST_CFG)
+    fc = _filter_controls(SHEET_INV_MONEY_TRAIL)
     assert fc == []
 
 
@@ -759,18 +811,7 @@ def test_money_trail_sheet_has_sankey_and_table():
         if s.SheetId == SHEET_INV_MONEY_TRAIL
     )
     assert sheet.Visuals is not None
-    visual_ids = []
-    for v in sheet.Visuals:
-        if v.SankeyDiagramVisual:
-            visual_ids.append(v.SankeyDiagramVisual.VisualId)
-        elif v.TableVisual:
-            visual_ids.append(v.TableVisual.VisualId)
-        else:
-            visual_ids.append(None)
-    assert visual_ids == [
-        V_INV_MONEY_TRAIL_SANKEY,
-        V_INV_MONEY_TRAIL_TABLE,
-    ]
+    assert _visual_kinds(sheet) == ["SankeyDiagramVisual", "TableVisual"]
 
 
 def test_money_trail_sankey_field_wells_use_account_names_and_sum_hop_amount():
@@ -854,7 +895,15 @@ def test_money_trail_table_sorted_by_depth_asc_with_full_chain_grain():
         "posted_at",
     ]
     sort = table.ChartConfiguration.SortConfiguration["RowSort"][0]["FieldSort"]
-    assert sort["FieldId"] == "inv-money-trail-tbl-depth"
+    # Field-ids are auto-derived (L.1.16). Look up the depth field's
+    # auto-id by walking the table's GroupBy and matching column name.
+    depth_field_id = next(
+        d.NumericalDimensionField.FieldId
+        for d in table.ChartConfiguration.FieldWells.TableAggregatedFieldWells.GroupBy
+        if d.NumericalDimensionField
+        and d.NumericalDimensionField.Column.ColumnName == "depth"
+    )
+    assert sort["FieldId"] == depth_field_id
     assert sort["Direction"] == "ASC"
 
 
@@ -872,10 +921,12 @@ def test_money_trail_sheet_serializes_to_aws_json():
     assert sheet.get("FilterControls", []) == []
     assert len(sheet["ParameterControls"]) == 3
     # Sankey visual surfaces with its dataclass key.
+    # Sankey visual surfaces with its dataclass key. Visual_id is
+    # auto-derived (L.1.21); just confirm the wrapper key exists.
     sankey = next(
         v for v in sheet["Visuals"] if "SankeyDiagramVisual" in v
     )
-    assert sankey["SankeyDiagramVisual"]["VisualId"] == V_INV_MONEY_TRAIL_SANKEY
+    assert sankey["SankeyDiagramVisual"]["VisualId"].startswith("v-sankey-")
 
 
 # ---------------------------------------------------------------------------
@@ -917,7 +968,7 @@ def test_anchor_calc_field_is_ifelse_on_anchor_param():
 def test_anchor_filter_matches_calc_field_on_yes():
     """Anchor filter is a CategoryFilter on the calc field equal to
     'yes' — narrows visuals to edges touching the anchor account."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     anchor = groups[FG_INV_ANETWORK_ANCHOR]
     cf = anchor.Filters[0].CategoryFilter
     assert cf is not None
@@ -931,7 +982,7 @@ def test_anchor_filter_matches_calc_field_on_yes():
 def test_anetwork_amount_filter_drops_noise_edges_via_parameter():
     """Min-amount filter on hop_amount bound to pInvANetworkMinAmount;
     same NumericRangeFilter shape as the money-trail amount slider."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     amount = groups[FG_INV_ANETWORK_AMOUNT]
     nrf = amount.Filters[0].NumericRangeFilter
     assert nrf is not None
@@ -946,7 +997,7 @@ def test_anetwork_amount_filter_drops_noise_edges_via_parameter():
 def test_anetwork_amount_filter_is_all_visuals_scope():
     """The amount filter applies to all three visuals on the sheet
     (both Sankeys + table)."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     sc = groups[FG_INV_ANETWORK_AMOUNT].ScopeConfiguration
     configs = sc.SelectedSheets.SheetVisualScopingConfigurations
     assert len(configs) == 1
@@ -958,43 +1009,68 @@ def test_anetwork_anchor_filter_is_table_only():
     """K.4.8i: anchor filter (is_anchor_edge='yes') is scoped to the
     touching-edges table only. The two Sankeys each carry their own
     direction-specific filter (is_inbound_edge / is_outbound_edge) so
-    the layout itself encodes direction."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    the layout itself encodes direction.
+
+    Walks the tree-emitted analysis. The L.1.21 auto-derived visual_ids
+    are the only IDs in play after L.2.13 retired the imperative
+    builder."""
+    analysis = build_analysis(_TEST_CFG)
+    groups = {g.FilterGroupId: g for g in analysis.Definition.FilterGroups}
     sc = groups[FG_INV_ANETWORK_ANCHOR].ScopeConfiguration
     configs = sc.SelectedSheets.SheetVisualScopingConfigurations
     assert len(configs) == 1
     assert configs[0].SheetId == SHEET_INV_ACCOUNT_NETWORK
     assert configs[0].Scope == SheetVisualScopingConfiguration.SELECTED_VISUALS
-    assert configs[0].VisualIds == [V_INV_ANETWORK_TABLE]
+    sheet = next(
+        s for s in analysis.Definition.Sheets
+        if s.SheetId == SHEET_INV_ACCOUNT_NETWORK
+    )
+    assert configs[0].VisualIds == [
+        _visual_id_by_title(sheet, "Account Network — Touching Edges"),
+    ]
 
 
 def test_anetwork_inbound_filter_is_inbound_sankey_only():
     """K.4.8i: inbound filter scoped to the inbound Sankey only."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    analysis = build_analysis(_TEST_CFG)
+    groups = {g.FilterGroupId: g for g in analysis.Definition.FilterGroups}
     sc = groups[FG_INV_ANETWORK_INBOUND].ScopeConfiguration
     configs = sc.SelectedSheets.SheetVisualScopingConfigurations
     assert len(configs) == 1
     assert configs[0].SheetId == SHEET_INV_ACCOUNT_NETWORK
     assert configs[0].Scope == SheetVisualScopingConfiguration.SELECTED_VISUALS
-    assert configs[0].VisualIds == [V_INV_ANETWORK_SANKEY_INBOUND]
+    sheet = next(
+        s for s in analysis.Definition.Sheets
+        if s.SheetId == SHEET_INV_ACCOUNT_NETWORK
+    )
+    assert configs[0].VisualIds == [
+        _visual_id_by_title(sheet, "Inbound — counterparties → anchor"),
+    ]
 
 
 def test_anetwork_outbound_filter_is_outbound_sankey_only():
     """K.4.8i: outbound filter scoped to the outbound Sankey only."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    analysis = build_analysis(_TEST_CFG)
+    groups = {g.FilterGroupId: g for g in analysis.Definition.FilterGroups}
     sc = groups[FG_INV_ANETWORK_OUTBOUND].ScopeConfiguration
     configs = sc.SelectedSheets.SheetVisualScopingConfigurations
     assert len(configs) == 1
     assert configs[0].SheetId == SHEET_INV_ACCOUNT_NETWORK
     assert configs[0].Scope == SheetVisualScopingConfiguration.SELECTED_VISUALS
-    assert configs[0].VisualIds == [V_INV_ANETWORK_SANKEY_OUTBOUND]
+    sheet = next(
+        s for s in analysis.Definition.Sheets
+        if s.SheetId == SHEET_INV_ACCOUNT_NETWORK
+    )
+    assert configs[0].VisualIds == [
+        _visual_id_by_title(sheet, "Outbound — anchor → counterparties"),
+    ]
 
 
 def test_anetwork_directional_filters_are_category_filters_on_calc_fields():
     """K.4.8i: each directional Sankey's filter is a CategoryFilter
     matching the calc field to 'yes' — the standard pattern for using
     a calc field as a boolean filter."""
-    groups = {g.FilterGroupId: g for g in build_filter_groups(_TEST_CFG)}
+    groups = {g.FilterGroupId: g for g in _filter_groups()}
     for fg_id, expected_col in (
         (FG_INV_ANETWORK_INBOUND, CF_INV_ANETWORK_IS_INBOUND_EDGE),
         (FG_INV_ANETWORK_OUTBOUND, CF_INV_ANETWORK_IS_OUTBOUND_EDGE),
@@ -1017,7 +1093,7 @@ def test_anetwork_anchor_dropdown_links_to_narrow_accounts_dataset():
     work and times out as the matview grows. SelectAll stays HIDDEN
     so QuickSight lands on the first row instead of an empty/All
     state that would render two blank Sankeys."""
-    pc = build_account_network_parameter_controls(_TEST_CFG)
+    pc = _parameter_controls(SHEET_INV_ACCOUNT_NETWORK)
     # 2 controls: anchor dropdown, min-amount slider.
     assert len(pc) == 2
     dropdown = pc[0].Dropdown
@@ -1033,7 +1109,7 @@ def test_anetwork_anchor_dropdown_links_to_narrow_accounts_dataset():
 
 
 def test_anetwork_amount_slider_binds_to_parameter():
-    pc = build_account_network_parameter_controls(_TEST_CFG)
+    pc = _parameter_controls(SHEET_INV_ACCOUNT_NETWORK)
     amount_slider = pc[1].Slider
     assert amount_slider is not None
     assert amount_slider.SourceParameterName == P_INV_ANETWORK_MIN_AMOUNT
@@ -1044,7 +1120,7 @@ def test_anetwork_amount_slider_binds_to_parameter():
 
 def test_account_network_sheet_has_no_filter_controls():
     """All filters parameter-bound; ParameterControls only."""
-    fc = build_account_network_filter_controls(_TEST_CFG)
+    fc = _filter_controls(SHEET_INV_ACCOUNT_NETWORK)
     assert fc == []
 
 
@@ -1058,18 +1134,8 @@ def test_account_network_sheet_has_two_sankeys_and_table():
         if s.SheetId == SHEET_INV_ACCOUNT_NETWORK
     )
     assert sheet.Visuals is not None
-    visual_ids = []
-    for v in sheet.Visuals:
-        if v.SankeyDiagramVisual:
-            visual_ids.append(v.SankeyDiagramVisual.VisualId)
-        elif v.TableVisual:
-            visual_ids.append(v.TableVisual.VisualId)
-        else:
-            visual_ids.append(None)
-    assert visual_ids == [
-        V_INV_ANETWORK_SANKEY_INBOUND,
-        V_INV_ANETWORK_SANKEY_OUTBOUND,
-        V_INV_ANETWORK_TABLE,
+    assert _visual_kinds(sheet) == [
+        "SankeyDiagramVisual", "SankeyDiagramVisual", "TableVisual",
     ]
 
 
@@ -1117,22 +1183,57 @@ def test_account_network_sheet_serializes_to_aws_json():
 
 def _account_network_visuals():
     """Helper: returns (inbound_sankey, outbound_sankey, table) from
-    the deployed Account Network sheet — mirrors the K.4.8i layout."""
+    the deployed Account Network sheet — mirrors the K.4.8i layout.
+    Visual_ids are auto-derived (L.1.21); look up by title."""
     analysis = build_analysis(_TEST_CFG)
     sheet = next(
         s for s in analysis.Definition.Sheets
         if s.SheetId == SHEET_INV_ACCOUNT_NETWORK
     )
-    sankeys_by_id = {
-        v.SankeyDiagramVisual.VisualId: v.SankeyDiagramVisual
-        for v in sheet.Visuals if v.SankeyDiagramVisual
-    }
-    inbound = sankeys_by_id[V_INV_ANETWORK_SANKEY_INBOUND]
-    outbound = sankeys_by_id[V_INV_ANETWORK_SANKEY_OUTBOUND]
+    sankeys_by_title = {}
+    for v in sheet.Visuals:
+        if v.SankeyDiagramVisual:
+            title = v.SankeyDiagramVisual.Title.FormatText["PlainText"]
+            sankeys_by_title[title] = v.SankeyDiagramVisual
+    inbound = sankeys_by_title["Inbound — counterparties → anchor"]
+    outbound = sankeys_by_title["Outbound — anchor → counterparties"]
     table = next(
         v.TableVisual for v in sheet.Visuals if v.TableVisual
     )
     return inbound, outbound, table
+
+
+def _sankey_field_id_for_column(sankey, role: str, column_name: str) -> str:
+    """Look up the auto-derived field_id of a Sankey leaf by role +
+    column. Field-ids are auto-derived (L.1.16) so tests resolve them
+    via column-name lookup rather than hardcoded strings."""
+    field_wells = sankey.ChartConfiguration.FieldWells.SankeyDiagramAggregatedFieldWells
+    slot_attr = {"source": "Source", "target": "Destination"}[role]
+    leaves = getattr(field_wells, slot_attr) or []
+    for leaf in leaves:
+        if leaf.CategoricalDimensionField:
+            if leaf.CategoricalDimensionField.Column.ColumnName == column_name:
+                return leaf.CategoricalDimensionField.FieldId
+    raise AssertionError(
+        f"No Sankey {role} field with column {column_name!r}"
+    )
+
+
+def _table_groupby_field_id_for_column(table, column_name: str) -> str:
+    """Look up the auto-derived field_id of a Table GroupBy leaf by
+    column name."""
+    field_wells = table.ChartConfiguration.FieldWells.TableAggregatedFieldWells
+    for leaf in field_wells.GroupBy or []:
+        for sub in (
+            leaf.CategoricalDimensionField,
+            leaf.DateDimensionField,
+            leaf.NumericalDimensionField,
+        ):
+            if sub and sub.Column.ColumnName == column_name:
+                return sub.FieldId
+    raise AssertionError(
+        f"No Table GroupBy field with column {column_name!r}"
+    )
 
 
 def test_anetwork_inbound_sankey_left_click_walks_to_source_counterparty():
@@ -1156,7 +1257,9 @@ def test_anetwork_inbound_sankey_left_click_walks_to_source_counterparty():
     cfg = set_params.ParameterValueConfigurations
     assert len(cfg) == 1
     assert cfg[0]["DestinationParameterName"] == P_INV_ANETWORK_ANCHOR
-    assert cfg[0]["Value"]["SourceField"] == "inv-anetwork-sankey-in-source"
+    assert cfg[0]["Value"]["SourceField"] == _sankey_field_id_for_column(
+        inbound, "source", "source_display",
+    )
 
 
 def test_anetwork_outbound_sankey_left_click_walks_to_target_counterparty():
@@ -1180,7 +1283,9 @@ def test_anetwork_outbound_sankey_left_click_walks_to_target_counterparty():
     cfg = set_params.ParameterValueConfigurations
     assert len(cfg) == 1
     assert cfg[0]["DestinationParameterName"] == P_INV_ANETWORK_ANCHOR
-    assert cfg[0]["Value"]["SourceField"] == "inv-anetwork-sankey-out-target"
+    assert cfg[0]["Value"]["SourceField"] == _sankey_field_id_for_column(
+        outbound, "target", "target_display",
+    )
 
 
 def test_anetwork_table_wires_single_counterparty_walk_action():
@@ -1200,7 +1305,9 @@ def test_anetwork_table_wires_single_counterparty_walk_action():
     cfg = set_params.ParameterValueConfigurations
     assert len(cfg) == 1
     assert cfg[0]["DestinationParameterName"] == P_INV_ANETWORK_ANCHOR
-    assert cfg[0]["Value"]["SourceField"] == "inv-anetwork-tbl-counterparty"
+    assert cfg[0]["Value"]["SourceField"] == _table_groupby_field_id_for_column(
+        table, CF_INV_ANETWORK_COUNTERPARTY_DISPLAY,
+    )
 
 
 def test_anetwork_table_columns_use_display_strings():
@@ -1278,7 +1385,7 @@ def test_money_trail_root_dropdown_hides_select_all():
     """K.4.8f: Money Trail chain-root dropdown also hides SelectAll —
     a Sankey with no chain root selected renders blank, so 'All' is
     misleading. SelectAll HIDDEN forces QS to land on the first row."""
-    pc = build_money_trail_parameter_controls(_TEST_CFG)
+    pc = _parameter_controls(SHEET_INV_MONEY_TRAIL)
     dropdown = pc[0].Dropdown
     assert dropdown is not None
     assert dropdown.SourceParameterName == P_INV_MONEY_TRAIL_ROOT

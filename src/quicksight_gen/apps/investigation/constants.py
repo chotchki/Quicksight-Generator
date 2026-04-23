@@ -65,22 +65,6 @@ FG_INV_ANETWORK_INBOUND = FilterGroupId("fg-inv-anetwork-inbound")      # K.4.8 
 FG_INV_ANETWORK_OUTBOUND = FilterGroupId("fg-inv-anetwork-outbound")    # K.4.8 — outbound Sankey only
 FG_INV_ANETWORK_AMOUNT = FilterGroupId("fg-inv-anetwork-amount")        # K.4.8
 
-# Source of truth for tests asserting "every filter group is registered
-# here". Add new FG_INV_* constants and remember to extend this set.
-ALL_FG_INV_IDS: frozenset[FilterGroupId] = frozenset({
-    FG_INV_FANOUT_THRESHOLD,
-    FG_INV_FANOUT_WINDOW,
-    FG_INV_ANOMALIES_SIGMA,
-    FG_INV_ANOMALIES_WINDOW,
-    FG_INV_MONEY_TRAIL_ROOT,
-    FG_INV_MONEY_TRAIL_HOPS,
-    FG_INV_MONEY_TRAIL_AMOUNT,
-    FG_INV_ANETWORK_ANCHOR,
-    FG_INV_ANETWORK_INBOUND,
-    FG_INV_ANETWORK_OUTBOUND,
-    FG_INV_ANETWORK_AMOUNT,
-})
-
 # ---------------------------------------------------------------------------
 # Calculated fields
 # ---------------------------------------------------------------------------
@@ -129,20 +113,6 @@ P_INV_MONEY_TRAIL_MAX_HOPS = ParameterName("pInvMoneyTrailMaxHops")  # K.4.5
 P_INV_MONEY_TRAIL_MIN_AMOUNT = ParameterName("pInvMoneyTrailMinAmount")  # K.4.5
 P_INV_ANETWORK_ANCHOR = ParameterName("pInvANetworkAnchor")              # K.4.8
 P_INV_ANETWORK_MIN_AMOUNT = ParameterName("pInvANetworkMinAmount")       # K.4.8
-
-# Source of truth for tests asserting "every parameter is registered
-# here". Drill helpers carry shape on top of the bare ParameterName via
-# DrillParam, but Investigation parameters are mostly slider/dropdown
-# controls — the bare name is enough for the structure tests to walk.
-ALL_P_INV: tuple[ParameterName, ...] = (
-    P_INV_FANOUT_THRESHOLD,
-    P_INV_ANOMALIES_SIGMA,
-    P_INV_MONEY_TRAIL_ROOT,
-    P_INV_MONEY_TRAIL_MAX_HOPS,
-    P_INV_MONEY_TRAIL_MIN_AMOUNT,
-    P_INV_ANETWORK_ANCHOR,
-    P_INV_ANETWORK_MIN_AMOUNT,
-)
 
 # ---------------------------------------------------------------------------
 # Visual IDs

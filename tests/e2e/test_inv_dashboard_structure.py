@@ -12,9 +12,8 @@ from __future__ import annotations
 
 import pytest
 
+from quicksight_gen.apps.investigation.app import build_investigation_app
 from quicksight_gen.apps.investigation.constants import (
-    ALL_FG_INV_IDS,
-    ALL_P_INV,
     V_INV_ANETWORK_SANKEY_INBOUND,
     V_INV_ANETWORK_SANKEY_OUTBOUND,
     V_INV_ANETWORK_TABLE,
@@ -33,6 +32,21 @@ def inv_dashboard_definition(qs_client, account_id, inv_dashboard_id) -> dict:
         DashboardId=inv_dashboard_id,
     )
     return resp["Definition"]
+
+
+@pytest.fixture(scope="module")
+def inv_app(cfg):
+    """Build the Investigation tree and resolve auto-IDs.
+
+    The tree is the source of truth — the deployed dashboard's filter
+    group / parameter sets must equal the tree's emitted set. emit_analysis()
+    runs _resolve_auto_ids() in place, so reading off
+    ``app.analysis.parameters`` / ``app.analysis.filter_groups`` after the
+    call gives the resolved IDs that should match the deployed definition.
+    """
+    app = build_investigation_app(cfg)
+    app.emit_analysis()
+    return app
 
 
 def _visual_ids(sheet: dict) -> list[str]:
@@ -152,18 +166,21 @@ class TestParameters:
                     names.add(decl["Name"])
         return names
 
-    def test_all_parameters_declared(self, inv_dashboard_definition):
-        # K.4.3 fanout-threshold + K.4.4 anomalies-sigma + K.4.5
-        # money-trail-root + max-hops + min-amount + K.4.8 anchor +
-        # min-amount = 7.
-        assert self._names(inv_dashboard_definition) == {p for p in ALL_P_INV}
+    def test_all_parameters_declared(self, inv_dashboard_definition, inv_app):
+        # The tree's parameter set is the source of truth — deployed must
+        # match exactly. K.4.3 fanout-threshold + K.4.4 anomalies-sigma +
+        # K.4.5 money-trail-root + max-hops + min-amount + K.4.8 anchor +
+        # min-amount = 7 today; the assert tracks adds/removes automatically.
+        expected = {str(p.name) for p in inv_app.analysis.parameters}
+        assert self._names(inv_dashboard_definition) == expected
 
 
 class TestFilterGroups:
-    def test_filter_group_ids(self, inv_dashboard_definition):
+    def test_filter_group_ids(self, inv_dashboard_definition, inv_app):
         groups = inv_dashboard_definition.get("FilterGroups", [])
-        ids = {g["FilterGroupId"] for g in groups}
-        assert ids == ALL_FG_INV_IDS
+        deployed = {g["FilterGroupId"] for g in groups}
+        expected = {str(fg.filter_group_id) for fg in inv_app.analysis.filter_groups}
+        assert deployed == expected
 
     def test_filter_group_ids_unique(self, inv_dashboard_definition):
         groups = inv_dashboard_definition.get("FilterGroups", [])

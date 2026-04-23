@@ -54,15 +54,21 @@ def _make_app() -> App:
         sheet_id=SheetId("s-1"), name="Sheet One",
         title="Sheet One", description="",
     ))
-    sheet.add_visual(KPI(title="Total", values=[Measure.sum(_DS, "f", "amount")]))
-    sheet.add_visual(Table(title="Detail", group_by=[Dim(_DS, "f-id", "id")]))
-    sheet.add_visual(BarChart(title="Distribution", category=[Dim(_DS, "f-c", "cat")]))
-    sheet.add_visual(Sankey(
+    row = sheet.layout.row(height=6)
+    row.add_kpi(width=8, title="Total", values=[Measure.sum(_DS, "amount")])
+    row.add_table(
+        width=8, title="Detail", group_by=[Dim(_DS, "id")], values=[],
+    )
+    row.add_bar_chart(
+        width=8, title="Distribution", category=[Dim(_DS, "cat")], values=[],
+    )
+    row.add_sankey(
+        width=12,
         title="Flow",
-        source=Dim(_DS, "f-s", "source"),
-        target=Dim(_DS, "f-t", "target"),
-        weight=Measure.sum(_DS, "f-w", "weight"),
-    ))
+        source=Dim(_DS, "source"),
+        target=Dim(_DS, "target"),
+        weight=Measure.sum(_DS, "weight"),
+    )
     return app
 
 
@@ -108,7 +114,7 @@ class TestPerKindDispatch:
         assert called == [kpi]
 
     def test_unknown_kind_falls_through(self):
-        """A visual without _AUTO_KIND (e.g. spike-shape VisualNode)
+        """A visual without _AUTO_KIND (e.g. a hypothetical untyped node)
         doesn't crash — dispatch is best-effort."""
         v = TreeValidator(_make_app(), page=MagicMock())
         sheet = v.app.analysis.sheets[0]
