@@ -287,7 +287,6 @@ from quicksight_gen.common.tree import (
     IntegerParam as _IP,
     Measure as _M,
     NumericRangeFilter as _NRF,
-    ParameterControlNode as _PCN,
     ParameterSlider as _PS,
     Sheet as _Sh,
 )
@@ -318,15 +317,10 @@ class TestValidationHooksAudit:
         analysis = app.set_analysis(_An(analysis_id_suffix="t", name="T"))
         return app
 
-    def test_place_rejects_duplicate_visual(self):
-        app = self._app()
-        sheet = app.analysis.add_sheet(_Sh(
-            sheet_id=_SId("s"), name="S", title="S", description="",
-        ))
-        kpi = sheet.add_visual(_KPI(title="K"))
-        sheet.place(kpi, col_span=12, row_span=6, col_index=0)
-        with pytest.raises(ValueError, match="already placed"):
-            sheet.place(kpi, col_span=12, row_span=6, col_index=12)
+    # L.1.21 — `test_place_rejects_duplicate_visual` deleted: the layout
+    # DSL constructs + places a visual atomically (`row.add_kpi(width=,
+    # ...)`), so there's no way to ask for a second placement. The
+    # duplicate-placement bug class is structurally impossible.
 
     def test_unregistered_parameter_in_control_caught(self):
         app = self._app()

@@ -17,14 +17,7 @@ from quicksight_gen.common.ids import (
     SheetId,
     VisualId,
 )
-from quicksight_gen.common.models import (
-    DateTimeDefaultValues,
-    KPIConfiguration,
-    KPIFieldWells,
-    KPIVisual,
-    SheetVisualScopingConfiguration,
-    Visual,
-)
+from quicksight_gen.common.models import DateTimeDefaultValues
 from quicksight_gen.common.tree import (
     AUTO,
     KPI,
@@ -32,7 +25,6 @@ from quicksight_gen.common.tree import (
     App,
     BarChart,
     CategoryFilter,
-    Dashboard,
     Dataset,
     DateTimeParam,
     Dim,
@@ -42,14 +34,12 @@ from quicksight_gen.common.tree import (
     IntegerParam,
     Measure,
     NumericRangeFilter,
-    ParameterControlNode,
     Sankey,
     Sheet,
     StringParam,
     Table,
     TimeRangeFilter,
     VisualLike,
-    VisualNode,
 )
 
 
@@ -74,26 +64,6 @@ _TEST_CFG = Config(
 )
 
 
-def _kpi_factory(visual_id: str, title: str) -> Visual:
-    """Minimal KPI visual factory for placeholder tests. The L.1.3
-    typed KPI subtype will replace VisualNode + factory pattern."""
-    return Visual(
-        KPIVisual=KPIVisual(
-            VisualId=visual_id,
-            ChartConfiguration=KPIConfiguration(
-                FieldWells=KPIFieldWells(),
-            ),
-        ),
-    )
-
-
-def _make_kpi(visual_id: str = "v-test-kpi") -> VisualNode:
-    return VisualNode(
-        visual_id=VisualId(visual_id),
-        builder=lambda: _kpi_factory(visual_id, "Test KPI"),
-    )
-
-
 # ---------------------------------------------------------------------------
 # Sheet
 # ---------------------------------------------------------------------------
@@ -116,55 +86,17 @@ class TestSheet:
         assert emitted.ParameterControls is None
         assert emitted.FilterControls == []  # explicit empty for L.1.6 forward-compat
 
-    def test_add_visual_returns_node_for_chaining(self):
+    def test_layout_row_emits_visuals_in_order(self):
         sheet = Sheet(
             sheet_id=SheetId("sheet-test"),
             name="Test", title="Test", description="",
         )
-        node = _make_kpi()
-        ret = sheet.add_visual(node)
-        assert ret is node
-        assert sheet.visuals == [node]
-
-    def test_emit_includes_visuals(self):
-        sheet = Sheet(
-            sheet_id=SheetId("sheet-test"),
-            name="Test", title="Test", description="",
-        )
-        sheet.add_visual(_make_kpi("v-a"))
-        sheet.add_visual(_make_kpi("v-b"))
+        row = sheet.layout.row(height=6)
+        row.add_kpi(width=12, visual_id=VisualId("v-a"), title="A")
+        row.add_kpi(width=12, visual_id=VisualId("v-b"), title="B")
         emitted = sheet.emit()
         assert emitted.Visuals is not None
         assert [v.KPIVisual.VisualId for v in emitted.Visuals] == ["v-a", "v-b"]
-
-    def test_place_requires_visual_to_be_registered(self):
-        """Construction-time check: place() rejects an unregistered visual.
-        Catches the wrong-sheet bug class at the call site."""
-        sheet_a = Sheet(
-            sheet_id=SheetId("sheet-a"),
-            name="A", title="A", description="",
-        )
-        sheet_b = Sheet(
-            sheet_id=SheetId("sheet-b"),
-            name="B", title="B", description="",
-        )
-        node = _make_kpi("v-on-a")
-        sheet_a.add_visual(node)
-        with pytest.raises(ValueError, match="isn't registered on this sheet"):
-            sheet_b.place(node, col_span=12, row_span=6, col_index=0)
-
-    def test_place_returns_grid_slot(self):
-        sheet = Sheet(
-            sheet_id=SheetId("sheet-test"),
-            name="Test", title="Test", description="",
-        )
-        node = sheet.add_visual(_make_kpi("v-placed"))
-        slot = sheet.place(node, col_span=12, row_span=6, col_index=0)
-        assert isinstance(slot, GridSlot)
-        assert slot.element is node
-        assert slot.col_span == 12
-        assert slot.row_span == 6
-        assert slot.col_index == 0
 
     def test_emit_layout_references_visual_id_at_emit_time(self):
         """GridSlot stores an object ref; ElementId resolves to the
@@ -174,8 +106,9 @@ class TestSheet:
             sheet_id=SheetId("sheet-test"),
             name="Test", title="Test", description="",
         )
-        node = sheet.add_visual(_make_kpi("v-the-one"))
-        sheet.place(node, col_span=36, row_span=18, col_index=0)
+        sheet.layout.row(height=18).add_kpi(
+            width=36, visual_id=VisualId("v-the-one"), title="One",
+        )
         emitted = sheet.emit()
         layout = emitted.Layouts[0]
         elements = layout.Configuration.GridLayout.Elements
@@ -238,8 +171,9 @@ class TestApp:
             sheet_id=SheetId("sheet-1"),
             name="A", title="A", description="",
         ))
-        node = sheet.add_visual(_make_kpi("v-1"))
-        sheet.place(node, col_span=36, row_span=18, col_index=0)
+        sheet.layout.row(height=18).add_kpi(
+            width=36, visual_id=VisualId("v-1"), title="One",
+        )
         return app
 
     def test_emit_analysis_builds_model_analysis(self):
@@ -287,7 +221,7 @@ class TestApp:
 
     def test_emit_dashboard_without_dashboard_raises(self):
         app = self._make_app_with_one_sheet()
-        with pytest.raises(ValueError, match="set_dashboard"):
+        with pytest.raises(ValueError, match="create_dashboard"):
             app.emit_dashboard()
 
     def test_emit_analysis_round_trips_through_to_aws_json(self):
@@ -474,35 +408,36 @@ class TestSankeyVisual:
 
 
 class TestSheetAcceptsTypedVisuals:
-    """Sheet.add_visual accepts both spike-shape VisualNode and typed
-    subtypes — same VisualLike Protocol path."""
+    """Layout DSL constructors return typed visual subtypes (KPI / Table
+    / BarChart / Sankey) — generic `add_*` preserves the concrete
+    subtype, the visual is registered + placed atomically."""
 
     def test_add_kpi(self):
         sheet = Sheet(
             sheet_id=SheetId("sheet-test"),
             name="Test", title="Test", description="",
         )
-        kpi = sheet.add_visual(KPI(
+        sheet.layout.row(height=6).add_kpi(
+            width=12,
             visual_id=VisualId("v-kpi"),
             title="Total",
             values=[Measure.sum(_DS, "amount", field_id="f")],
-        ))
-        sheet.place(kpi, col_span=12, row_span=6, col_index=0)
+        )
         emitted = sheet.emit()
         assert emitted.Visuals[0].KPIVisual.VisualId == "v-kpi"
         assert emitted.Layouts[0].Configuration.GridLayout.Elements[0].ElementId == "v-kpi"
 
-    def test_add_visual_returns_concrete_subtype(self):
-        """Generic add_visual preserves the caller's concrete subtype
-        — the returned ref still types as KPI, not the widened
-        VisualLike Protocol."""
+    def test_layout_add_kpi_returns_concrete_subtype(self):
+        """Layout DSL preserves the caller's concrete subtype — the
+        returned ref still types as KPI, not the widened VisualLike
+        Protocol."""
         sheet = Sheet(
             sheet_id=SheetId("sheet-test"),
             name="Test", title="Test", description="",
         )
-        kpi: KPI = sheet.add_visual(KPI(
-            visual_id=VisualId("v-kpi"), title="Test",
-        ))
+        kpi: KPI = sheet.layout.row(height=6).add_kpi(
+            width=12, visual_id=VisualId("v-kpi"), title="Test",
+        )
         # If the generic worked, kpi is still a KPI — accessing
         # KPI-only attributes shouldn't widen.
         assert kpi.title == "Test"
@@ -646,9 +581,10 @@ class TestFilterGroupScope:
             sheet_id=SheetId(sheet_id),
             name="Test", title="Test", description="",
         )
-        visuals = []
+        row = sheet.layout.row(height=6)
+        visuals: list[KPI] = []
         for vid in visual_ids:
-            v = sheet.add_visual(KPI(visual_id=VisualId(vid), title=vid))
+            v = row.add_kpi(width=6, visual_id=VisualId(vid), title=vid)
             visuals.append(v)
         return sheet, visuals
 
@@ -782,7 +718,9 @@ class TestAnalysisAddFilterGroup:
             sheet_id=SheetId("sheet-test"),
             name="Test", title="Test", description="",
         ))
-        kpi = sheet.add_visual(KPI(visual_id=VisualId("v-1"), title="Test"))
+        kpi = sheet.layout.row(height=6).add_kpi(
+            width=12, visual_id=VisualId("v-1"), title="Test",
+        )
         fg = analysis.add_filter_group(FilterGroup(
             filter_group_id=FilterGroupId("fg-test"),
             filters=[_category_filter("f-1", _DS_FOO, "col_a")],
@@ -808,7 +746,9 @@ class TestAnalysisAddFilterGroup:
             sheet_id=SheetId("sheet-test"),
             name="Test", title="Test", description="",
         ))
-        kpi = sheet.add_visual(KPI(visual_id=VisualId("v-1"), title="Test"))
+        kpi = sheet.layout.row(height=6).add_kpi(
+            width=12, visual_id=VisualId("v-1"), title="Test",
+        )
         fg = analysis.add_filter_group(FilterGroup(
             filter_group_id=FilterGroupId("fg-test"),
             filters=[_category_filter("f-1", _DS_FOO, "col_a")],
@@ -840,9 +780,9 @@ class TestFilterGroupCompositionWithApp:
             sheet_id=SheetId("sheet-a"),
             name="A", title="A", description="",
         ))
-        v_a = sheet_a.add_visual(KPI(
-            visual_id=VisualId("v-a"), title="A",
-        ))
+        v_a = sheet_a.layout.row(height=6).add_kpi(
+            width=12, visual_id=VisualId("v-a"), title="A",
+        )
         sheet_b = analysis.add_sheet(Sheet(
             sheet_id=SheetId("sheet-b"),
             name="B", title="B", description="",
@@ -1019,11 +959,10 @@ class TestFullEmitRoundTripWithTypedFilters:
             sheet_id=SheetId("sheet-test"),
             name="Test", title="Test", description="",
         ))
-        kpi = sheet.add_visual(KPI(
-            visual_id=VisualId("v-test"), title="Test",
+        kpi = sheet.layout.row(height=6).add_kpi(
+            width=12, visual_id=VisualId("v-test"), title="Test",
             values=[Measure.sum(_DS_FOO, "amount", field_id="f-val")],
-        ))
-        sheet.place(kpi, col_span=12, row_span=6, col_index=0)
+        )
         fg = analysis.add_filter_group(FilterGroup(
             filter_group_id=FilterGroupId("fg-sigma"),
             filters=[
@@ -1062,11 +1001,10 @@ class TestFullEmitRoundTripWithTypedFilters:
             sheet_id=SheetId("sheet-test"),
             name="Test", title="Test", description="",
         ))
-        kpi = sheet.add_visual(KPI(
-            visual_id=VisualId("v-test"), title="Test",
+        kpi = sheet.layout.row(height=6).add_kpi(
+            width=12, visual_id=VisualId("v-test"), title="Test",
             values=[Measure.sum(_DS_FOO, "amount", field_id="f-val")],
-        ))
-        sheet.place(kpi, col_span=12, row_span=6, col_index=0)
+        )
         fg = analysis.add_filter_group(FilterGroup(
             filter_group_id=FilterGroupId("fg-scoped"),
             filters=[_category_filter("f-1", _DS_FOO, "col_a")],
@@ -1171,14 +1109,15 @@ class TestAppDatasetDependencies:
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s-1"), name="S", title="S", description="",
         ))
-        sheet.add_visual(KPI(
-            visual_id=VisualId("v-foo"), title="From foo",
+        row = sheet.layout.row(height=6)
+        row.add_kpi(
+            width=12, visual_id=VisualId("v-foo"), title="From foo",
             values=[Measure.sum(_DS_FOO, "amount", field_id="f-val")],
-        ))
-        sheet.add_visual(KPI(
-            visual_id=VisualId("v-anom"), title="From anomalies",
+        )
+        row.add_kpi(
+            width=12, visual_id=VisualId("v-anom"), title="From anomalies",
             values=[Measure.count(_DS_ANOMALIES, "id")],
-        ))
+        )
         deps = app.dataset_dependencies()
         assert deps == {_DS_FOO, _DS_ANOMALIES}
 
@@ -1189,9 +1128,10 @@ class TestAppDatasetDependencies:
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s-1"), name="S", title="S", description="",
         ))
-        kpi = sheet.add_visual(KPI(
-            visual_id=VisualId("v"), title="V",
-        ))  # No values; visual itself doesn't reference _DS_FOO
+        # No values; visual itself doesn't reference _DS_FOO.
+        kpi = sheet.layout.row(height=6).add_kpi(
+            width=12, visual_id=VisualId("v"), title="V",
+        )
         fg = analysis.add_filter_group(FilterGroup(
             filter_group_id=FilterGroupId("fg-1"),
             filters=[_category_filter("f-1", _DS_FOO, "col_a")],
@@ -1210,10 +1150,10 @@ class TestAppDatasetDependencies:
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s"), name="S", title="S", description="",
         ))
-        sheet.add_visual(KPI(
-            visual_id=VisualId("v"), title="V",
+        sheet.layout.row(height=6).add_kpi(
+            width=12, visual_id=VisualId("v"), title="V",
             values=[Measure.sum(_DS_FOO, "amount", field_id="f-val")],
-        ))
+        )
         with pytest.raises(ValueError, match="references unregistered datasets"):
             app.emit_analysis()
 
@@ -1228,10 +1168,10 @@ class TestAppDatasetDependencies:
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s"), name="S", title="S", description="",
         ))
-        sheet.add_visual(KPI(
-            visual_id=VisualId("v"), title="V",
+        sheet.layout.row(height=6).add_kpi(
+            width=12, visual_id=VisualId("v"), title="V",
             values=[Measure.sum(_DS_FOO, "amount", field_id="f-val")],
-        ))
+        )
         m = app.emit_analysis()
         decls = m.Definition.DataSetIdentifierDeclarations
         identifiers = {d.Identifier for d in decls}
@@ -1244,10 +1184,10 @@ class TestAppDatasetDependencies:
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s"), name="S", title="S", description="",
         ))
-        sheet.add_visual(KPI(
-            visual_id=VisualId("v"), title="V",
+        sheet.layout.row(height=6).add_kpi(
+            width=12, visual_id=VisualId("v"), title="V",
             values=[Measure.sum(_DS_FOO, "amount", field_id="f-val")],
-        ))
+        )
         app.create_dashboard(dashboard_id_suffix="d", name="D")
         with pytest.raises(ValueError, match="references unregistered datasets"):
             app.emit_dashboard()
@@ -1384,10 +1324,10 @@ class TestAppCalcFieldDependencies:
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s"), name="S", title="S", description="",
         ))
-        sheet.add_visual(KPI(
-            visual_id=VisualId("v"), title="V",
+        sheet.layout.row(height=6).add_kpi(
+            width=12, visual_id=VisualId("v"), title="V",
             values=[Measure.count(_DS_FOO, cf)],
-        ))
+        )
         # Tree walks the visual and finds the calc field ref.
         assert analysis.calc_fields_referenced() == {cf}
 
@@ -1402,7 +1342,9 @@ class TestAppCalcFieldDependencies:
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s"), name="S", title="S", description="",
         ))
-        kpi = sheet.add_visual(KPI(visual_id=VisualId("v"), title="V"))
+        kpi = sheet.layout.row(height=6).add_kpi(
+            width=12, visual_id=VisualId("v"), title="V",
+        )
         analysis.add_filter_group(FilterGroup(
             filter_group_id=FilterGroupId("fg"),
             filters=[CategoryFilter(
@@ -1426,10 +1368,10 @@ class TestAppCalcFieldDependencies:
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s"), name="S", title="S", description="",
         ))
-        sheet.add_visual(KPI(
-            visual_id=VisualId("v"), title="V",
+        sheet.layout.row(height=6).add_kpi(
+            width=12, visual_id=VisualId("v"), title="V",
             values=[Measure.count(_DS_FOO, cf)],
-        ))
+        )
         with pytest.raises(ValueError, match="references unregistered calc fields"):
             app.emit_analysis()
 
@@ -1452,10 +1394,10 @@ class TestAppCalcFieldDependencies:
             sheet_id=SheetId("s"), name="S", title="S", description="",
         ))
         # KPI references _DS_FOO directly; calc field references _DS_ANOMALIES
-        sheet.add_visual(KPI(
-            visual_id=VisualId("v"), title="V",
+        sheet.layout.row(height=6).add_kpi(
+            width=12, visual_id=VisualId("v"), title="V",
             values=[Measure.sum(_DS_FOO, "amount", field_id="f-val")],
-        ))
+        )
         deps = app.dataset_dependencies()
         # Both datasets show up — _DS_FOO from the visual, _DS_ANOMALIES
         # from the registered calc field.
@@ -1477,10 +1419,11 @@ class TestAutoVisualIds:
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s-test"), name="S", title="S", description="",
         ))
-        kpi = sheet.add_visual(KPI(
+        kpi = sheet.layout.row(height=6).add_kpi(
+            width=12,
             title="Flagged",
             values=[Measure.count(_DS_FOO, "id")],
-        ))
+        )
         # visual_id defaults to AUTO until App._resolve_auto_ids() fills it
         assert kpi.visual_id is AUTO
         app.emit_analysis()
@@ -1494,10 +1437,11 @@ class TestAutoVisualIds:
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s"), name="S", title="S", description="",
         ))
-        kpi = sheet.add_visual(KPI(
+        kpi = sheet.layout.row(height=6).add_kpi(
+            width=12,
             visual_id=VisualId("v-special"),
             title="Special",
-        ))
+        )
         app.emit_analysis()
         assert kpi.visual_id == "v-special"
 
@@ -1511,9 +1455,10 @@ class TestAutoVisualIds:
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s"), name="S", title="S", description="",
         ))
-        kpi_a = sheet.add_visual(KPI(title="A"))
-        kpi_b = sheet.add_visual(KPI(title="B", visual_id=VisualId("v-special")))
-        kpi_c = sheet.add_visual(KPI(title="C"))
+        row = sheet.layout.row(height=6)
+        kpi_a = row.add_kpi(width=12, title="A")
+        kpi_b = row.add_kpi(width=12, title="B", visual_id=VisualId("v-special"))
+        kpi_c = row.add_kpi(width=12, title="C")
         app.emit_analysis()
         assert kpi_a.visual_id == "v-kpi-s0-0"
         assert kpi_b.visual_id == "v-special"
@@ -1526,10 +1471,16 @@ class TestAutoVisualIds:
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s"), name="S", title="S", description="",
         ))
-        kpi = sheet.add_visual(KPI(title="K"))
-        table = sheet.add_visual(Table(title="T"))
-        bar = sheet.add_visual(BarChart(title="B"))
-        sankey = sheet.add_visual(Sankey(title="S"))
+        row = sheet.layout.row(height=6)
+        kpi = row.add_kpi(width=8, title="K")
+        table = row.add_table(width=8, title="T", group_by=[], values=[])
+        bar = row.add_bar_chart(width=8, title="B", category=[], values=[])
+        sankey = row.add_sankey(
+            width=8, title="S",
+            source=Dim(_DS_FOO, "src"),
+            target=Dim(_DS_FOO, "tgt"),
+            weight=Measure.sum(_DS_FOO, "amount"),
+        )
         app.emit_analysis()
         assert kpi.visual_id == "v-kpi-s0-0"
         assert table.visual_id == "v-table-s0-1"
@@ -1548,32 +1499,11 @@ class TestAutoVisualIds:
         sheet_b = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s-b"), name="B", title="B", description="",
         ))
-        kpi_a = sheet_a.add_visual(KPI(title="A0"))
-        kpi_b = sheet_b.add_visual(KPI(title="B0"))
+        kpi_a = sheet_a.layout.row(height=6).add_kpi(width=12, title="A0")
+        kpi_b = sheet_b.layout.row(height=6).add_kpi(width=12, title="B0")
         app.emit_analysis()
         assert kpi_a.visual_id == "v-kpi-s0-0"
         assert kpi_b.visual_id == "v-kpi-s1-0"
-
-    def test_factory_visual_node_still_requires_explicit_id(self):
-        """The spike-shape VisualNode (factory wrapper) doesn't carry
-        an _AUTO_KIND, so the auto-ID walk skips it. Authors must
-        pass visual_id explicitly when using the factory pattern."""
-        from quicksight_gen.common.models import (
-            KPIConfiguration as _KPIC, KPIFieldWells as _KPIFW,
-            KPIVisual as _KPIV,
-        )
-        from quicksight_gen.common.tree.visuals import VisualNode as _VN
-        sheet = Sheet(sheet_id=SheetId("s"), name="S", title="S", description="")
-        node = sheet.add_visual(_VN(
-            visual_id=VisualId("v-factory-explicit"),
-            builder=lambda: Visual(KPIVisual=_KPIV(
-                VisualId="v-factory-explicit",
-                ChartConfiguration=_KPIC(FieldWells=_KPIFW()),
-            )),
-        ))
-        # Factory wrapper's visual_id is set explicitly; auto-ID walk
-        # doesn't touch it (no _AUTO_KIND).
-        assert node.visual_id == "v-factory-explicit"
 
 
 class TestAutoFilterGroupIds:
@@ -1584,7 +1514,7 @@ class TestAutoFilterGroupIds:
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s"), name="S", title="S", description="",
         ))
-        kpi = sheet.add_visual(KPI(title="K"))
+        kpi = sheet.layout.row(height=6).add_kpi(width=12, title="K")
         fg = analysis.add_filter_group(FilterGroup(
             filters=[_category_filter("f-1", _DS_FOO, "col")],
         ))
@@ -1600,7 +1530,7 @@ class TestAutoFilterGroupIds:
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s"), name="S", title="S", description="",
         ))
-        kpi = sheet.add_visual(KPI(title="K"))
+        kpi = sheet.layout.row(height=6).add_kpi(width=12, title="K")
         fg = analysis.add_filter_group(FilterGroup(
             filter_group_id=FilterGroupId("fg-special"),
             filters=[_category_filter("f-1", _DS_FOO, "col")],
@@ -1622,8 +1552,12 @@ class TestTreeQueryHelpers:
             sheet_id=SheetId("s-anet"),
             name="Account Network", title="Account Network", description="",
         ))
-        kpi = sheet.add_visual(KPI(title="Flagged Pair-Windows"))
-        table = sheet.add_visual(Table(title="Account Network — Touching Edges"))
+        row = sheet.layout.row(height=6)
+        kpi = row.add_kpi(width=12, title="Flagged Pair-Windows")
+        table = row.add_table(
+            width=24, title="Account Network — Touching Edges",
+            group_by=[], values=[],
+        )
         fg = analysis.add_filter_group(FilterGroup(
             filter_group_id=FilterGroupId("fg-anchor"),
             filters=[_category_filter("f-1", _DS_FOO, "col_a")],
@@ -1670,8 +1604,9 @@ class TestTreeQueryHelpers:
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s"), name="S", title="S", description="",
         ))
-        sheet.add_visual(KPI(title="Same Title"))
-        sheet.add_visual(KPI(title="Same Title"))
+        row = sheet.layout.row(height=6)
+        row.add_kpi(width=12, title="Same Title")
+        row.add_kpi(width=12, title="Same Title")
         with pytest.raises(ValueError, match="Multiple visuals"):
             sheet.find_visual(title="Same Title")
 
@@ -1874,7 +1809,7 @@ class TestFilterDropdown:
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s"), name="S", title="S", description="",
         ))
-        kpi = sheet.add_visual(KPI(title="K"))
+        kpi = sheet.layout.row(height=6).add_kpi(width=12, title="K")
         fg = analysis.add_filter_group(FilterGroup(filters=[f]))
         sheet.scope(fg, [kpi])
         sheet.add_filter_dropdown(filter=f, title="A")
@@ -1956,7 +1891,7 @@ class TestControlAutoIds:
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s"), name="S", title="S", description="",
         ))
-        kpi = sheet.add_visual(KPI(title="K"))
+        kpi = sheet.layout.row(height=6).add_kpi(width=12, title="K")
         fg = analysis.add_filter_group(FilterGroup(filters=[f]))
         sheet.scope(fg, [kpi])
         ctrl = sheet.add_filter_dropdown(filter=f, title="X")
@@ -1979,7 +1914,7 @@ class TestSheetEmitsFilterControls:
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s"), name="S", title="S", description="",
         ))
-        kpi = sheet.add_visual(KPI(title="K"))
+        kpi = sheet.layout.row(height=6).add_kpi(width=12, title="K")
         fg = analysis.add_filter_group(FilterGroup(filters=[f]))
         sheet.scope(fg, [kpi])
         sheet.add_filter_dropdown(filter=f, title="X", control_id="fc-x",
@@ -2022,9 +1957,11 @@ class TestDrillEmit:
         ))
         # Set up a table on the source sheet that has a drill action
         # targeting the dest sheet.
-        table = src_sheet.add_visual(Table(
+        table = src_sheet.layout.row(height=18).add_table(
+            width=36,
             title="Source Table",
             group_by=[Dim(dataset=_DS_FOO, field_id="f-acct", column="display")],
+            values=[],
             actions=[TreeDrill(
                 target_sheet=dest_sheet,  # OBJECT REF
                 writes=[(
@@ -2034,8 +1971,7 @@ class TestDrillEmit:
                 name="Walk to anchor",
                 trigger="DATA_POINT_MENU",
             )],
-        ))
-        src_sheet.place(table, col_span=36, row_span=18, col_index=0)
+        )
         return app, src_sheet, dest_sheet, table
 
     def test_drill_emits_with_target_sheet_resolved(self):
@@ -2077,8 +2013,8 @@ class TestDrillEmit:
             sheet_id=SheetId("s-rogue"),
             name="Rogue", title="Rogue", description="",
         )
-        table = src_sheet.add_visual(Table(
-            title="X",
+        src_sheet.layout.row(height=18).add_table(
+            width=36, title="X", group_by=[], values=[],
             actions=[TreeDrill(
                 target_sheet=rogue_sheet,  # not on the analysis!
                 writes=[(
@@ -2087,8 +2023,7 @@ class TestDrillEmit:
                 )],
                 name="Bad drill",
             )],
-        ))
-        src_sheet.place(table, col_span=36, row_span=18, col_index=0)
+        )
         with pytest.raises(ValueError, match="drill actions targeting sheets"):
             app.emit_analysis()
 
@@ -2112,9 +2047,10 @@ class TestDrillEmit:
         # resolver assigns its field_id) and the drill's writes (so the
         # source-shape lookup hits the unshaped CalcField).
         unshaped_dim = Dim(_DS_FOO, unshaped)
-        table = sheet.add_visual(Table(
-            title="X",
+        sheet.layout.row(height=18).add_table(
+            width=36, title="X",
             group_by=[unshaped_dim],
+            values=[],
             actions=[TreeDrill(
                 target_sheet=sheet,  # same-sheet
                 writes=[(
@@ -2123,8 +2059,7 @@ class TestDrillEmit:
                 )],
                 name="Drill on calc",
             )],
-        ))
-        sheet.place(table, col_span=36, row_span=18, col_index=0)
+        )
         with pytest.raises(TypeError, match="has no ``shape`` tag"):
             app.emit_analysis()
 
@@ -2135,8 +2070,8 @@ class TestDrillEmit:
         src = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s"), name="S", title="S", description="",
         ))
-        table = src.add_visual(Table(
-            title="T",
+        table = src.layout.row(height=18).add_table(
+            width=36, title="T", group_by=[], values=[],
             actions=[TreeDrill(
                 target_sheet=src,  # same sheet — also valid
                 writes=[(
@@ -2146,8 +2081,7 @@ class TestDrillEmit:
                 name="Drill",
                 action_id="my-explicit-id",
             )],
-        ))
-        src.place(table, col_span=36, row_span=18, col_index=0)
+        )
         app.emit_analysis()
         assert table.actions[0].action_id == "my-explicit-id"
 
@@ -2186,11 +2120,11 @@ class TestUnvalidatedColumnsRaiseByDefault:
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s"), name="S", title="S", description="",
         ))
-        kpi = sheet.add_visual(KPI(
+        sheet.layout.row(height=6).add_kpi(
+            width=12,
             title="Total",
             values=[Measure.sum(_DS_FOO, "amount")],  # bare string
-        ))
-        sheet.place(kpi, col_span=12, row_span=6, col_index=0)
+        )
         return app
 
     def test_default_app_raises_on_bare_string_column(self):
@@ -2231,11 +2165,11 @@ class TestUnvalidatedColumnsRaiseByDefault:
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s"), name="S", title="S", description="",
         ))
-        kpi = sheet.add_visual(KPI(
+        kpi = sheet.layout.row(height=6).add_kpi(
+            width=12,
             title="Total",
             values=[Measure.sum(_DS_FOO, "amount", field_id="f")],
-        ))
-        sheet.place(kpi, col_span=12, row_span=6, col_index=0)
+        )
         analysis.add_filter_group(FilterGroup(
             filters=[CategoryFilter(
                 dataset=_DS_FOO,
@@ -2264,12 +2198,10 @@ class TestUnvalidatedColumnsRaiseByDefault:
         ))
         # _DS_FOO has no registered DatasetContract. ds["amount"] returns
         # a Column without validation — the walker should catch it.
-        sheet.add_visual(KPI(
+        sheet.layout.row(height=6).add_kpi(
+            width=12,
             title="Total",
             values=[_DS_FOO["amount"].sum()],
-        ))
-        sheet.place(
-            sheet.visuals[0], col_span=12, row_span=6, col_index=0,
         )
         with pytest.raises(ValueError) as exc_info:
             app.emit_analysis()
@@ -2289,11 +2221,11 @@ class TestUnvalidatedColumnsRaiseByDefault:
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s"), name="S", title="S", description="",
         ))
-        kpi = sheet.add_visual(KPI(
+        kpi = sheet.layout.row(height=6).add_kpi(
+            width=12,
             title="Total",
             values=[Measure.sum(_DS_FOO, "amount", field_id="f")],
-        ))
-        sheet.place(kpi, col_span=12, row_span=6, col_index=0)
+        )
         # Wrap KPI in a FilterGroup to keep the visuals validation
         # path away from the value-leaf bare string.
         # The relevant unvalidated path is the filter's column.
@@ -2336,10 +2268,10 @@ class TestUnvalidatedColumnsRaiseByDefault:
         sheet = analysis.add_sheet(Sheet(
             sheet_id=SheetId("s"), name="S", title="S", description="",
         ))
-        kpi = sheet.add_visual(KPI(
+        sheet.layout.row(height=6).add_kpi(
+            width=12,
             title="Total",
             values=[_DS_FOO["amount"].sum()],
-        ))
-        sheet.place(kpi, col_span=12, row_span=6, col_index=0)
+        )
         # Should not raise.
         app.emit_analysis()

@@ -141,9 +141,8 @@ class TreeValidator:
         back to the generic title-present check."""
         kind = getattr(visual, "_AUTO_KIND", None)
         if kind is None:
-            # Factory-wrapper VisualNode — no typed subtype shape to
-            # validate. Title-present check already ran at the sheet
-            # level; nothing more to do here.
+            # No typed subtype shape to validate. Title-present check
+            # already ran at the sheet level; nothing more to do here.
             return
         method = getattr(self, f"_validate_{kind}", None)
         if method is not None:

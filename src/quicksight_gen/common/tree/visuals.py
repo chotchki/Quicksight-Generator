@@ -2,16 +2,13 @@
 
 L.1.1 catalog: KPI ×29, Table ×22, BarChart ×13, Sankey ×2 across
 the three apps. Each subtype owns its field-well shape and emits the
-corresponding ``models.py`` ``Visual`` instance. Spike-shape
-``VisualNode`` factory wrapper kept for migration-window
-compatibility — apps port from factory pattern to typed subtypes one
-at a time.
+corresponding ``models.py`` ``Visual`` instance.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, ClassVar, Literal, Protocol, runtime_checkable
+from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
 
 from quicksight_gen.common.ids import VisualId
 from quicksight_gen.common.models import (
@@ -53,24 +50,14 @@ from quicksight_gen.common.tree.fields import Dim, FieldRef, Measure, resolve_fi
 class VisualLike(Protocol):
     """Structural type for tree-level visual nodes.
 
-    Both ``VisualNode`` (the spike-shape factory wrapper) and the
-    typed subtypes (``KPI`` / ``Table`` / ``BarChart`` / ``Sankey``)
+    Typed subtypes (``KPI`` / ``Table`` / ``BarChart`` / ``Sankey``)
     satisfy this Protocol — duck-typed so subtypes don't have to
-    inherit from a base class.
-
-    Typed subtypes contribute to the L.1.7 dependency-graph walk via
-    ``datasets()`` / ``calc_fields()``. The spike-shape ``VisualNode``
-    implements both as no-ops (returns empty sets) — its factory
-    callable hides the dataset/calc-field references it actually
-    holds, so the walker just doesn't see them.
-
-    ``visual_id`` is ``VisualId | None`` because typed subtypes default
-    to None and let ``App._resolve_auto_ids`` fill it. The walker /
-    emit asserts non-None at the appropriate point.
+    inherit from a base class. Subtypes contribute to the L.1.7
+    dependency-graph walk via ``datasets()`` / ``calc_fields()``.
 
     All visual nodes also satisfy ``LayoutNode`` (in ``structure.py``)
     via ``element_id`` + ``element_type`` so they can be placed in a
-    sheet's grid layout via ``Sheet.place(...)``.
+    sheet's grid layout (``sheet.layout.row(...).add_<kind>(...)``).
 
     ``visual_id`` is ``VisualId | AutoResolved`` — typed subtypes default
     to ``AUTO`` and ``App._resolve_auto_ids`` replaces it with the
@@ -96,37 +83,6 @@ def _visual_element_id(node: VisualLike) -> str:
         "before LayoutNode.element_id access."
     )
     return node.visual_id
-
-
-@dataclass(eq=False)
-class VisualNode:
-    """Spike-shape factory wrapper for a Visual.
-
-    Kept for migration during L.1 — apps port from this factory
-    pattern to the typed subtypes one app at a time. The wrapper
-    itself is removed once all apps are on the typed subtypes.
-    """
-    visual_id: VisualId | AutoResolved
-    builder: Callable[[], Visual]
-
-    @property
-    def element_id(self) -> str:
-        return _visual_element_id(self)
-
-    @property
-    def element_type(self) -> GridLayoutElementType:
-        return "VISUAL"
-
-    def emit(self) -> Visual:
-        return self.builder()
-
-    def datasets(self) -> set[Dataset]:
-        # Spike-shape: factory hides its references, so the dependency
-        # walk doesn't see them. Typed subtypes implement these for real.
-        return set()
-
-    def calc_fields(self) -> set[CalcField]:
-        return set()
 
 
 @dataclass(eq=False)

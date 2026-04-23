@@ -11,14 +11,18 @@ the deploy pipeline uses.
 
 Construction-time (raise immediately):
 
-- ``Sheet.place(visual)`` — visual must be on this sheet, and not
-  already placed (rejects duplicate ElementIds in the layout).
-- ``FilterGroup.scope_visuals(sheet, visuals)`` — every scoped
-  visual must be on the given sheet (catches the wrong-sheet bug).
+- ``sheet.layout.row(height=H).add_<kind>(width=W, ...)`` —
+  constructs + registers + places a visual atomically; refuses widths
+  that overflow the 36-col grid. The duplicate-placement bug class is
+  structurally impossible (no separate ``place`` step).
+- ``sheet.scope(filter_group, [visuals])`` — every scoped visual must
+  be on this sheet (catches the wrong-sheet bug).
 - ``Analysis.add_sheet / add_parameter / add_filter_group /
   add_calc_field`` — rejects duplicate IDs (shadow-bug class).
 - ``App.add_dataset`` — rejects duplicate dataset identifiers.
-- ``App.set_dashboard(d)`` — requires ``d.analysis is app.analysis``.
+- ``App.create_dashboard(...)`` — requires ``set_analysis`` already ran;
+  the analysis-mismatch bug class is structurally impossible (no
+  opening to pass a different Analysis).
 - ``NumericRangeFilter.__post_init__`` — rejects setting both
   ``minimum_value`` and ``minimum_parameter`` (or both on the
   maximum side).
@@ -71,17 +75,18 @@ SankeyDiagramVisual ×2. PieChartVisual is modeled but unused.
 
 **Module organization:**
 
-- ``_helpers`` — title/subtitle label builders + permissions actions
+- ``_helpers`` — AUTO sentinel + label builders + permissions actions
 - ``fields`` — ``Dim`` / ``Measure`` field-well leaf nodes
 - ``parameters`` — ``ParameterDeclLike`` Protocol + ``StringParam``
   / ``IntegerParam`` / ``DateTimeParam``
-- ``visuals`` — ``VisualLike`` Protocol + ``VisualNode`` (factory
-  wrapper) + ``KPI`` / ``Table`` / ``BarChart`` / ``Sankey``
-- ``filters`` — ``FilterGroup`` (object-ref scope + scope-on-same-sheet
-  validation); typed Filter wrappers (CategoryFilter / NumericRangeFilter
-  / TimeRangeFilter) land in L.1.6.
+- ``visuals`` — ``VisualLike`` Protocol + ``KPI`` / ``Table`` /
+  ``BarChart`` / ``Sankey``
+- ``filters`` — ``FilterGroup`` + typed Filter wrappers (CategoryFilter /
+  NumericRangeFilter / TimeRangeFilter)
+- ``controls`` — typed parameter / filter control variants
 - ``structure`` — ``GridSlot`` / ``Sheet`` / ``Analysis`` / ``Dashboard``
-  / ``App`` / ``ParameterControlNode``
+  / ``App`` plus the ``SheetLayout`` / ``Row`` / ``AbsoluteSlot``
+  layout DSL
 """
 
 from __future__ import annotations
@@ -136,7 +141,6 @@ from quicksight_gen.common.tree.structure import (
     Dashboard,
     GridSlot,
     LayoutNode,
-    ParameterControlNode,
     Row,
     Sheet,
     SheetLayout,
@@ -149,7 +153,6 @@ from quicksight_gen.common.tree.visuals import (
     Sankey,
     Table,
     VisualLike,
-    VisualNode,
 )
 
 __all__ = [
@@ -164,7 +167,7 @@ __all__ = [
     # Parameters
     "ParameterDeclLike", "StringParam", "IntegerParam", "DateTimeParam",
     # Visuals
-    "VisualLike", "VisualNode", "KPI", "Table", "BarChart", "Sankey",
+    "VisualLike", "KPI", "Table", "BarChart", "Sankey",
     # Text boxes (typed wrapper for landing-page rich text)
     "TextBox",
     # Layout
@@ -182,7 +185,6 @@ __all__ = [
     "Drill", "DrillParam", "DrillSourceField", "DrillResetSentinel",
     # Structure
     "GridSlot", "Sheet", "Analysis", "Dashboard", "App",
-    "ParameterControlNode",
     # Layout DSL (L.1.21)
     "SheetLayout", "Row", "AbsoluteSlot",
 ]

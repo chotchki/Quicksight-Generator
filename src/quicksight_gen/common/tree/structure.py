@@ -13,8 +13,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+from typing import Protocol, runtime_checkable
+
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.dataset_contract import get_contract
+from quicksight_gen.common.ids import FilterGroupId, SheetId, VisualId
 from quicksight_gen.common.models import (
     AnalysisDefinition,
     DashboardPublishOptions,
@@ -22,14 +25,11 @@ from quicksight_gen.common.models import (
     GridLayoutElement,
     Layout,
     LayoutConfiguration,
-    ParameterControl,
     ResourcePermission,
     SheetDefinition,
 )
 from quicksight_gen.common.models import Analysis as ModelAnalysis
 from quicksight_gen.common.models import Dashboard as ModelDashboard
-
-from quicksight_gen.common.ids import FilterGroupId, SheetId, VisualId
 from quicksight_gen.common.tree._helpers import (
     ANALYSIS_ACTIONS,
     AUTO,
@@ -64,14 +64,6 @@ from quicksight_gen.common.tree.visuals import (
     Table,
     VisualLike,
 )
-
-
-# ---------------------------------------------------------------------------
-# Spike-shape ParameterControlNode wrapper — mirrors the VisualNode
-# factory pattern. L.1.9 introduces typed Control variants alongside.
-# ---------------------------------------------------------------------------
-
-from typing import Callable, Protocol, runtime_checkable
 
 
 # Field-well slot roles used by the auto-id resolver. The `role`
@@ -112,24 +104,6 @@ def _resolve_field_ids(
                 leaf.field_id = (  # type: ignore[attr-defined]
                     f"f-{visual_kind}-s{sheet_idx}-v{visual_idx}-{role}{slot_idx}"
                 )
-
-
-@dataclass(eq=False)
-class ParameterControlNode:
-    """Spike-shape factory wrapper for a ParameterControl.
-
-    L.1.9 introduces typed control variants; this wrapper stays until
-    apps migrate.
-    """
-    builder: Callable[[], ParameterControl]
-    control_id: str | AutoResolved = AUTO
-
-    def emit(self) -> ParameterControl:
-        return self.builder()
-
-    def datasets(self) -> set[Dataset]:
-        # Spike-shape: factory hides its references (matches VisualNode).
-        return set()
 
 
 # ---------------------------------------------------------------------------
@@ -232,52 +206,6 @@ class Sheet:
     # cached so the row cursor advances across calls. Init=False keeps
     # it out of the dataclass constructor surface.
     _layout: "SheetLayout | None" = field(default=None, init=False, repr=False)
-
-    def add_visual[T: VisualLike](self, node: T) -> T:
-        """Register a visual on this sheet.
-
-        Accepts any ``VisualLike`` — spike-shape ``VisualNode`` or
-        typed subtype (``KPI`` / ``Table`` / ``BarChart`` / ``Sankey``).
-        Generic over ``T`` so the caller's variable keeps the concrete
-        subtype rather than widening to the Protocol (PEP 695).
-        """
-        self.visuals.append(node)
-        return node
-
-    def add_parameter_control[T: ParameterControlLike](
-        self, node: T,
-    ) -> T:
-        """Register a parameter control on this sheet.
-
-        Accepts either a typed control (``ParameterDropdown`` /
-        ``ParameterSlider`` / ``ParameterDateTimePicker``) or the
-        spike-shape ``ParameterControlNode`` factory wrapper.
-        """
-        self.parameter_controls.append(node)
-        return node
-
-    def add_filter_control[T: FilterControlLike](self, node: T) -> T:
-        """Register a filter control on this sheet.
-
-        Typed controls (``FilterDropdown`` / ``FilterSlider`` /
-        ``FilterDateTimePicker`` / ``FilterCrossSheet``) bind to
-        a ``FilterLike`` inside a registered FilterGroup; the
-        control's ``SourceFilterId`` resolves at emit time to the
-        bound filter's id.
-        """
-        self.filter_controls.append(node)
-        return node
-
-    def add_text_box(self, text_box: TextBox) -> TextBox:
-        """Register a typed ``TextBox`` on this sheet.
-
-        The TextBox is a ``LayoutNode``, so the same ``Sheet.place(...)``
-        method that places visuals also places text boxes — the layout
-        slot reads ``element_id`` / ``element_type`` off the node and
-        emits the appropriate ``GridLayoutElement``.
-        """
-        self.text_boxes.append(text_box)
-        return text_box
 
     @property
     def layout(self) -> "SheetLayout":
@@ -478,65 +406,6 @@ class Sheet:
             )
         return matches[0]
 
-    def place(
-        self,
-        node: LayoutNode,
-        *,
-        col_span: int,
-        row_span: int,
-        col_index: int,
-        row_index: int | None = None,
-    ) -> GridSlot:
-        """Place a registered ``LayoutNode`` (visual or text box) into
-        the grid layout.
-
-        Construction-time checks:
-        - The node must already be registered on this sheet via
-          ``add_visual()`` (for visuals) or ``add_text_box()`` (for
-          text boxes). Catches the wrong-sheet bug class — a visual
-          built for sheet A but placed on sheet B never silently
-          renders.
-        - The node must not already be placed in the grid layout
-          (placing the same node twice emits two slots with the same
-          ElementId, which QuickSight rejects).
-
-        The slot reads ``element_id`` / ``element_type`` off the node
-        at emit time — visuals contribute ``("VISUAL", visual_id)``,
-        text boxes contribute ``("TEXT_BOX", text_box_id)``.
-        """
-        if isinstance(node, TextBox):
-            registry = self.text_boxes
-            registry_method = "add_text_box"
-            kind_label = "TextBox"
-            id_for_msg = node.text_box_id
-        else:
-            registry = self.visuals
-            registry_method = "add_visual"
-            kind_label = "Visual"
-            id_for_msg = getattr(node, "visual_id", "?")
-        if node not in registry:
-            raise ValueError(
-                f"{kind_label} {id_for_msg!r} isn't registered on this "
-                f"sheet — call {registry_method}() first."
-            )
-        for existing in self.grid_slots:
-            if existing.element is node:
-                raise ValueError(
-                    f"{kind_label} {id_for_msg!r} is already placed on "
-                    f"sheet {self.sheet_id!r}. A node can occupy at most "
-                    f"one grid slot — placing it twice emits duplicate "
-                    f"ElementIds."
-                )
-        slot = GridSlot(
-            element=node,
-            col_span=col_span,
-            row_span=row_span,
-            col_index=col_index,
-            row_index=row_index,
-        )
-        self.grid_slots.append(slot)
-        return slot
-
     def emit(self) -> SheetDefinition:
         return SheetDefinition(
             SheetId=self.sheet_id,
@@ -626,14 +495,14 @@ class Row:
         *,
         width: int,
         title: str,
-        values: list[Measure],
+        values: list[Measure] | None = None,
         subtitle: str | None = None,
         visual_id: VisualId | AutoResolved = AUTO,
     ) -> KPI:
         """Construct + register + place a KPI in this row."""
         col_index = self._consume(width)
         kpi = KPI(
-            title=title, subtitle=subtitle, values=values, visual_id=visual_id,
+            title=title, subtitle=subtitle, values=values or [], visual_id=visual_id,
         )
         self.sheet.visuals.append(kpi)
         self.sheet.grid_slots.append(GridSlot(
@@ -648,8 +517,8 @@ class Row:
         *,
         width: int,
         title: str,
-        group_by: list[Dim],
-        values: list[Measure],
+        group_by: list[Dim] | None = None,
+        values: list[Measure] | None = None,
         subtitle: str | None = None,
         sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None,
         actions: list[Drill] | None = None,
@@ -658,7 +527,8 @@ class Row:
         """Construct + register + place a Table in this row."""
         col_index = self._consume(width)
         table = Table(
-            title=title, subtitle=subtitle, group_by=group_by, values=values,
+            title=title, subtitle=subtitle,
+            group_by=group_by or [], values=values or [],
             sort_by=sort_by, actions=actions or [], visual_id=visual_id,
         )
         self.sheet.visuals.append(table)
@@ -674,8 +544,8 @@ class Row:
         *,
         width: int,
         title: str,
-        category: list[Dim],
-        values: list[Measure],
+        category: list[Dim] | None = None,
+        values: list[Measure] | None = None,
         subtitle: str | None = None,
         orientation: Literal["HORIZONTAL", "VERTICAL"] | None = None,
         bars_arrangement: Literal[
@@ -688,7 +558,8 @@ class Row:
         """Construct + register + place a BarChart in this row."""
         col_index = self._consume(width)
         bar = BarChart(
-            title=title, subtitle=subtitle, category=category, values=values,
+            title=title, subtitle=subtitle,
+            category=category or [], values=values or [],
             orientation=orientation, bars_arrangement=bars_arrangement,
             sort_by=sort_by, actions=actions or [], visual_id=visual_id,
         )
@@ -779,12 +650,12 @@ class AbsoluteSlot:
         self,
         *,
         title: str,
-        values: list[Measure],
+        values: list[Measure] | None = None,
         subtitle: str | None = None,
         visual_id: VisualId | AutoResolved = AUTO,
     ) -> KPI:
         kpi = KPI(
-            title=title, subtitle=subtitle, values=values, visual_id=visual_id,
+            title=title, subtitle=subtitle, values=values or [], visual_id=visual_id,
         )
         self.sheet.visuals.append(kpi)
         self._place(kpi)
@@ -794,15 +665,16 @@ class AbsoluteSlot:
         self,
         *,
         title: str,
-        group_by: list[Dim],
-        values: list[Measure],
+        group_by: list[Dim] | None = None,
+        values: list[Measure] | None = None,
         subtitle: str | None = None,
         sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None,
         actions: list[Drill] | None = None,
         visual_id: VisualId | AutoResolved = AUTO,
     ) -> Table:
         table = Table(
-            title=title, subtitle=subtitle, group_by=group_by, values=values,
+            title=title, subtitle=subtitle,
+            group_by=group_by or [], values=values or [],
             sort_by=sort_by, actions=actions or [], visual_id=visual_id,
         )
         self.sheet.visuals.append(table)
@@ -813,8 +685,8 @@ class AbsoluteSlot:
         self,
         *,
         title: str,
-        category: list[Dim],
-        values: list[Measure],
+        category: list[Dim] | None = None,
+        values: list[Measure] | None = None,
         subtitle: str | None = None,
         orientation: Literal["HORIZONTAL", "VERTICAL"] | None = None,
         bars_arrangement: Literal[
@@ -825,7 +697,8 @@ class AbsoluteSlot:
         visual_id: VisualId | AutoResolved = AUTO,
     ) -> BarChart:
         bar = BarChart(
-            title=title, subtitle=subtitle, category=category, values=values,
+            title=title, subtitle=subtitle,
+            category=category or [], values=values or [],
             orientation=orientation, bars_arrangement=bars_arrangement,
             sort_by=sort_by, actions=actions or [], visual_id=visual_id,
         )
@@ -1184,31 +1057,18 @@ class App:
         self.analysis = analysis
         return analysis
 
-    def set_dashboard(self, dashboard: Dashboard) -> Dashboard:
-        if dashboard.analysis is not self.analysis:
-            raise ValueError(
-                "Dashboard.analysis must be the same Analysis instance "
-                "the App owns. Construct the Dashboard with the App's "
-                "Analysis: Dashboard(analysis=app.analysis, ...)."
-            )
-        self.dashboard = dashboard
-        return dashboard
-
     def create_dashboard(
         self,
         *,
         dashboard_id_suffix: str,
         name: str,
     ) -> Dashboard:
-        """L.1.21 — construct + register a Dashboard against the App's
-        already-set Analysis.
+        """Construct + register a Dashboard against the App's already-set
+        Analysis.
 
-        Replaces the two-step ``Dashboard(analysis=app.analysis, ...)``
-        + ``app.set_dashboard(dashboard)`` pattern. The App owns the
-        Analysis already; this shortcut prevents the analysis-mismatch
-        bug class by construction — there's no opening to pass a
-        different Analysis. Retires alongside ``App.set_dashboard``
-        once the L.1.21 migration completes.
+        The App owns the Analysis already; this shortcut prevents the
+        analysis-mismatch bug class by construction — there's no opening
+        to pass a different Analysis.
         """
         if self.analysis is None:
             raise ValueError(
@@ -1625,7 +1485,7 @@ class App:
     def emit_dashboard(self) -> ModelDashboard:
         if self.dashboard is None:
             raise ValueError(
-                "App has no Dashboard — call set_dashboard() first."
+                "App has no Dashboard — call create_dashboard() first."
             )
         self._resolve_auto_ids()
         self._validate_dataset_references()
