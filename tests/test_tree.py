@@ -902,6 +902,22 @@ class TestTypedCategoryFilter:
         )
         assert isinstance(f, FilterLike)
 
+    def test_neither_values_nor_parameter_rejected(self):
+        """L.1.18 — both None at construction trips __post_init__."""
+        with pytest.raises(ValueError, match="specify either"):
+            CategoryFilter(
+                filter_id="f-1", dataset=_DS, column="col_a",
+            )
+
+    def test_both_values_and_parameter_rejected(self):
+        """L.1.18 — both set at construction trips __post_init__."""
+        sigma = StringParam(name=ParameterName("pAnchor"))
+        with pytest.raises(ValueError, match="not both"):
+            CategoryFilter(
+                filter_id="f-1", dataset=_DS, column="col_a",
+                values=["x"], parameter=sigma,
+            )
+
 
 class TestTypedNumericRangeFilter:
     def test_static_bounds(self):
@@ -1112,6 +1128,26 @@ class TestDataset:
         m = Measure.sum(ds, "amount", field_id="f")
         assert m.dataset is ds
         assert m.emit().NumericalMeasureField.Column.DataSetIdentifier == "ds-foo"
+
+    def test_getitem_unknown_column_raises(self):
+        """L.1.18 — ``ds["typo"]`` against a contract-registered Dataset
+        raises KeyError at the wiring site. The L.1.17 typed-Column path
+        depends on this; without it, the typo would survive to the emit
+        validator."""
+        from quicksight_gen.common.dataset_contract import (
+            ColumnSpec,
+            DatasetContract,
+            register_contract,
+        )
+        ds = Dataset(identifier="ds-with-contract", arn="arn:x")
+        register_contract(ds.identifier, DatasetContract(columns=[
+            ColumnSpec(name="amount", type="DECIMAL"),
+        ]))
+        # Known column passes through
+        assert ds["amount"].name == "amount"
+        # Unknown column raises at the wiring site
+        with pytest.raises(KeyError, match="typo_column"):
+            ds["typo_column"]
 
 
 class TestAppDatasetRegistry:
@@ -1665,6 +1701,34 @@ class TestTreeQueryHelpers:
         found = analysis.find_calc_field(name="my_calc")
         assert found is cf
 
+    def test_analysis_find_filter_group_no_match_raises(self):
+        """L.1.18 — finder raises rather than returning None on a miss."""
+        app, _, _, _, _ = self._make_app()
+        with pytest.raises(ValueError, match="No filter group"):
+            app.analysis.find_filter_group(
+                filter_group_id=FilterGroupId("fg-nonexistent"),
+            )
+
+    def test_analysis_find_calc_field_no_match_raises(self):
+        """L.1.18 — finder raises rather than returning None on a miss."""
+        analysis = Analysis(analysis_id_suffix="t", name="T")
+        with pytest.raises(ValueError, match="No calc field"):
+            analysis.find_calc_field(name="nonexistent")
+
+    def test_analysis_find_sheet_multi_match_raises(self):
+        """L.1.18 — when both name= and sheet_id= match a different sheet,
+        the helper detects the ambiguous result rather than picking one."""
+        analysis = Analysis(analysis_id_suffix="t", name="T")
+        analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s-1"), name="A", title="A", description="",
+        ))
+        analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s-2"), name="B", title="B", description="",
+        ))
+        # name="A" matches s-1; sheet_id="s-2" matches s-2 → 2 matches.
+        with pytest.raises(ValueError, match="Multiple sheets"):
+            analysis.find_sheet(name="A", sheet_id=SheetId("s-2"))
+
 
 # ---------------------------------------------------------------------------
 # L.1.9 — Typed FilterControl + ParameterControl variants
@@ -1681,6 +1745,33 @@ from quicksight_gen.common.tree import (
     ParameterSlider,
     StaticValues,
 )
+
+
+class TestLinkedValues:
+    """L.1.18 — __post_init__ enforces dataset-vs-Column consistency."""
+
+    def test_bare_string_column_requires_dataset(self):
+        with pytest.raises(ValueError, match="dataset is required"):
+            LinkedValues(column="some_column")
+
+    def test_column_form_dataset_mismatch_rejected(self):
+        """Column from dataset A + explicit dataset=B is a wiring bug —
+        catch it at the constructor, not at emit."""
+        from quicksight_gen.common.dataset_contract import (
+            ColumnSpec,
+            DatasetContract,
+            register_contract,
+        )
+        ds_a = Dataset(identifier="lv-mismatch-a", arn="arn:a")
+        ds_b = Dataset(identifier="lv-mismatch-b", arn="arn:b")
+        register_contract(ds_a.identifier, DatasetContract(columns=[
+            ColumnSpec(name="col", type="STRING"),
+        ]))
+        register_contract(ds_b.identifier, DatasetContract(columns=[
+            ColumnSpec(name="col", type="STRING"),
+        ]))
+        with pytest.raises(ValueError, match="dataset mismatch"):
+            LinkedValues(column=ds_a["col"], dataset=ds_b)
 
 
 class TestParameterDropdown:
@@ -2015,6 +2106,42 @@ class TestDrillEmit:
         ))
         src_sheet.place(table, col_span=36, row_span=18, col_index=0)
         with pytest.raises(ValueError, match="drill actions targeting sheets"):
+            app.emit_analysis()
+
+    def test_drill_source_calc_field_without_shape_raises(self):
+        """L.1.18 — _resolve_drill_source raises TypeError when a Drill
+        write reads a CalcField that has no ``shape`` tag. Catches the
+        K.2-style "what shape is this column?" bug class for calc fields."""
+        from quicksight_gen.common.tree import CalcField as _CF
+        app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(analysis_id_suffix="t", name="T"))
+        # CalcField without a shape — drill source can't type-check.
+        unshaped = analysis.add_calc_field(_CF(
+            name="counterparty", dataset=_DS_FOO, expression="ifelse(...)",
+            # shape= intentionally omitted
+        ))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        # Same Dim instance is referenced in both group_by (so the
+        # resolver assigns its field_id) and the drill's writes (so the
+        # source-shape lookup hits the unshaped CalcField).
+        unshaped_dim = Dim(_DS_FOO, unshaped)
+        table = sheet.add_visual(Table(
+            title="X",
+            group_by=[unshaped_dim],
+            actions=[TreeDrill(
+                target_sheet=sheet,  # same-sheet
+                writes=[(
+                    TreeDrillParam(ParameterName("pX"), ColumnShape.ACCOUNT_ID),
+                    unshaped_dim,  # uses the shapeless calc
+                )],
+                name="Drill on calc",
+            )],
+        ))
+        sheet.place(table, col_span=36, row_span=18, col_index=0)
+        with pytest.raises(TypeError, match="has no ``shape`` tag"):
             app.emit_analysis()
 
     def test_explicit_action_id_preserved(self):

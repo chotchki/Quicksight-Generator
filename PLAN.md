@@ -75,13 +75,69 @@ The tree's existence is the test case for the layer separation: anything Sasquat
   - [x] L.1.15 — Re-port the L.0 spike's Account Network sheet against the full L.1 primitives — `_account_network_full_port.py` + `test_l1_15_port.py`. **Result: byte-identical SheetDefinition on first run** — the typed primitives can reproduce the existing imperative builder exactly. Exercises 2 datasets, 2 parameters, 4 calc fields, 3 visuals (2 Sankey + 1 Table), 4 FilterGroups, 2 ParameterControls, 3 Drill actions through the full L.1 surface. L.2 unblocked. Commit `33ef5d5`. (Spike fixture + L.0 spike + imperative `apps/investigation/analysis.py` retired in L.1.16 — auto-derived field_ids intentionally diverge, so the byte-identity baseline is gone.)
   - [x] L.1.16 — Auto-derive `Dim` / `Measure` `field_id` and `CalcField` `name` from tree position. L.2 ports surfaced the principle: "if we can implicitly derive an answer from the tree, the user shouldn't have to specify it." `Dim(ds, "column")` and `Measure.sum(ds, "column")` now work — field_ids resolve at emit as `f-{visual_kind}-s{sheet_idx}-v{visual_idx}-{role}{slot_idx}`. `CalcField(dataset=ds, expression="...")` works similarly — name resolves as `calc-{idx}`. `sort_by` accepts a `Dim`/`Measure` object ref (preferred) or a bare field-id string; `Drill.writes` accepts `(DrillParam, Dim|Measure)` tuples and resolves field_id + shape via the dataset contract or `CalcField.shape`. The position-derived auto-IDs intentionally differ from the old hand-typed IDs, so the byte-identity baselines (`apps/investigation/analysis.py`, L.0 spike, L.1.15 spike) retire. The kitchen-sink + L.2 Investigation port both work end-to-end.
   - [x] L.1.17 — Typed `Column` refs (validate dataset column names). The "user shouldn't specify what tree can derive" principle extended to bare-string column names: `Dim(ds, "column_name")` was silently typo-able. New path: `ds["column_name"]` returns a typed `Column` ref validated against the registered `DatasetContract` — `KeyError` at the wiring site on typo. Chained factories on `Column` for ergonomics: `ds["amount"].sum()`, `ds["recipient_id"].dim()`, `ds["window_end"].date()`, `ds["depth"].numerical()`, `.distinct_count()`, `.max()`, etc. `LinkedValues(ds["col"])` accepts the single-positional Column form (dataset implicit). `CategoryFilter` / `NumericRangeFilter` / `TimeRangeFilter` `column=ds["col"]` works through the existing `ColumnRef` union. Investigation app fully ports. Bare strings stay as the escape hatch for dataset-without-contract cases (kitchen-sink test fixture). Follow-up commits gated both unvalidated paths behind `App.allow_bare_strings=False` (default raises): bare strings AND `ds["col"]` against a contract-less dataset both trip `_validate_no_bare_string_columns`. `TestUnvalidatedColumnsRaiseByDefault` covers both paths.
-  - [ ] L.1.18 — Validator coverage audit. The tree carries a growing set of construction-time + emit-time validators that aren't directly type-encoded — they raise at runtime. Make sure each has at least one negative test (rejection asserts) so future refactors can't silently drop the guard. Walk the codebase and inventory:
-    - Construction-time `__post_init__` raises: `NumericRangeFilter` (value/parameter mutual exclusion on min + max), `CategoryFilter` (values vs parameter mutual exclusion), `LinkedValues` (Column-vs-dataset consistency), any others added since.
-    - Construction-time guard methods: `Sheet.place` (registered + no duplicate), `Sheet.add_text_box`, `FilterGroup.scope_visuals` (visuals must be on the scoped sheet), `Analysis.add_sheet` / `add_parameter` / `add_filter_group` / `add_calc_field` (duplicate-id rejection), `App.add_dataset` (duplicate identifier), `App.set_dashboard` (analysis identity match), `Dataset.__getitem__` (column-in-contract).
-    - Emit-time walkers on `App`: `_validate_dataset_references`, `_validate_calc_field_references`, `_validate_parameter_references`, `_validate_drill_destinations`, `_validate_no_bare_string_columns`.
-    - `emit()` asserts (auto-id resolution): `Visual.visual_id`, `Drill.action_id` + `target_sheet`, `Dim`/`Measure`.`field_id`, `CalcField.name`, `FilterGroup.filter_group_id`, `Filter.filter_id`, `*Control.control_id`. Assertions are lightly tested via the App emit path; explicit "raises if you skip the resolver" tests are missing.
-    - K.2 drill helpers (`set_drill_parameters` shape mismatch, duplicate parameter writes, empty writes list). Already covered by `test_drill.py` from K.2 — confirm still passing after L.1 changes.
-    Output: a table in PLAN listing each validator and its test, plus new tests for any gaps. Lock the rule: every new validator needs a rejection test in the same commit that introduces it.
+  - [x] L.1.18 — Validator coverage audit. The tree carried ~50 runtime-raised validators when this audit started; the AUTO sentinel refactor (commit `88a11b8`) collapsed the "auto-id resolved before emit" cluster into the type system, leaving ~25 validators that genuinely can't be type-encoded. Coverage table below; every gap got a rejection test in the same commit (final tally: 17 new tests across `test_tree.py` + the new `tests/test_drill.py`).
+
+    **Construction-time `__post_init__` mutual-exclusion / consistency:**
+    | Validator | File:Line | Test |
+    |---|---|---|
+    | `CategoryFilter` neither values nor parameter | `filters.py:135` | `TestTypedCategoryFilter::test_neither_values_nor_parameter_rejected` |
+    | `CategoryFilter` both values and parameter | `filters.py:140` | `TestTypedCategoryFilter::test_both_values_and_parameter_rejected` |
+    | `NumericRangeFilter` both min value + min parameter | `filters.py:210` | `TestTypedNumericRangeFilter::test_both_minimum_value_and_parameter_rejected` |
+    | `NumericRangeFilter` both max value + max parameter | `filters.py:215` | `TestTypedNumericRangeFilter::test_both_maximum_value_and_parameter_rejected` |
+    | `LinkedValues` bare-string column requires explicit dataset | `controls.py:113` | `TestLinkedValues::test_bare_string_column_requires_dataset` |
+    | `LinkedValues` Column form vs explicit dataset mismatch | `controls.py:106` | `TestLinkedValues::test_column_form_dataset_mismatch_rejected` |
+
+    **Construction-time guard methods (registry / scope checks):**
+    | Validator | File:Line | Test |
+    |---|---|---|
+    | `Sheet.place` visual not registered | `structure.py:332` | `TestSheet::test_place_unregistered_visual_raises` |
+    | `Sheet.place` duplicate placement | `structure.py:338` | `TestKitchenAppValidationHooks::test_place_rejects_duplicate_visual` (kitchen) |
+    | `FilterGroup.scope_visuals` visual not on sheet | `filters.py:355` | `TestFilterGroupScope::test_scope_visuals_unregistered_raises` + `TestFilterGroupCompositionWithApp::...` |
+    | `Analysis.add_sheet` duplicate sheet_id | `structure.py:417` | `TestAnalysis::test_add_sheet_rejects_duplicate_id` |
+    | `Analysis.add_parameter` duplicate name | `structure.py:433` | `TestAnalysisAddParameter::test_duplicate_parameter_name_raises` |
+    | `Analysis.add_filter_group` duplicate filter_group_id | `structure.py:451` | `TestAnalysisAddFilterGroup::test_duplicate_filter_group_id_raises` |
+    | `Analysis.add_calc_field` duplicate name | `structure.py:525` | `TestAnalysisAddCalcField::test_duplicate_name_rejected` |
+    | `App.add_dataset` duplicate identifier | `structure.py:690` | `TestAppDatasetRegistry::test_duplicate_dataset_identifier_rejected` |
+    | `App.set_dashboard` analysis-identity mismatch | `structure.py:674` | `TestApp::test_set_dashboard_analysis_must_match` |
+    | `Dataset.__getitem__` column not in contract | `datasets.py:86` | `TestDataset::test_getitem_unknown_column_raises` |
+
+    **Find-helper raises (no-match / multi-match):**
+    | Validator | File:Line | Test |
+    |---|---|---|
+    | `Sheet.find_visual` no match | `structure.py:281` | `TestTreeQueryHelpers::test_sheet_find_visual_no_match_raises` |
+    | `Sheet.find_visual` multi match | `structure.py:287` | `TestTreeQueryHelpers::test_sheet_find_visual_multiple_matches_raises` |
+    | `Analysis.find_sheet` no match | `structure.py:479` | `TestTreeQueryHelpers::test_app_find_sheet_no_match_raises` (delegates) |
+    | `Analysis.find_sheet` multi match | `structure.py:484` | `TestTreeQueryHelpers::test_analysis_find_sheet_multi_match_raises` |
+    | `Analysis.find_filter_group` no match | `structure.py:501` | `TestTreeQueryHelpers::test_analysis_find_filter_group_no_match_raises` |
+    | `Analysis.find_calc_field` no match | `structure.py:511` | `TestTreeQueryHelpers::test_analysis_find_calc_field_no_match_raises` |
+
+    **Emit-time walkers on `App` (cross-tree validation):**
+    | Validator | File:Line | Test |
+    |---|---|---|
+    | `App.emit_analysis` no analysis set | `structure.py:1048` | `TestApp::test_emit_analysis_requires_analysis` |
+    | `App.emit_dashboard` no dashboard set | `structure.py:1071` | `TestApp::test_emit_dashboard_requires_dashboard` |
+    | `_validate_dataset_references` | `structure.py:823` | 3 tests in `TestAppDatasetDependencies` + `TestParameterDropdown::test_linked_values_dataset_in_dependency_graph` |
+    | `_validate_calc_field_references` | `structure.py:1023` | `TestAppCalcFieldDependencies::test_unregistered_calc_field_raises_at_emit` |
+    | `_validate_parameter_references` | `structure.py:873` | 2 tests in `tests/test_kitchen_app.py::TestValidationHooksAudit` |
+    | `_validate_drill_destinations` | `structure.py:912` | `TestDrillEmit::test_drill_target_sheet_must_be_registered` |
+    | `_validate_no_bare_string_columns` | `structure.py:996` | 6 tests in `TestUnvalidatedColumnsRaiseByDefault` |
+    | `FilterGroup.emit` no scope set | `filters.py:391` | `TestFilterGroupScope::test_emit_without_scope_raises` |
+    | `_resolve_drill_source` calc field has no shape | `actions.py:92` | `TestDrillEmit::test_drill_source_calc_field_without_shape_raises` |
+
+    **K.2 drill helpers (`common/drill.py`, separate from the tree wrappers):**
+    | Validator | File:Line | Test |
+    |---|---|---|
+    | `field_source` unshaped column | `drill.py:124` | `tests/test_drill.py::TestFieldSourceShapeRequired::test_unshaped_column_raises_type_error` |
+    | `set_drill_parameters` empty writes | `drill.py:148` | `tests/test_drill.py::TestSetDrillParametersValidators::test_empty_writes_rejected` |
+    | `set_drill_parameters` duplicate param writes | `drill.py:158` | `tests/test_drill.py::TestSetDrillParametersValidators::test_duplicate_parameter_writes_rejected` |
+    | `set_drill_parameters` shape mismatch | `drill.py:166` | `tests/test_drill.py::TestSetDrillParametersValidators::test_shape_mismatch_rejected` |
+    | `set_drill_parameters` unsupported value type | `drill.py:192` | `tests/test_drill.py::TestSetDrillParametersValidators::test_unsupported_value_type_rejected` |
+
+    **`emit()` auto-id asserts (formerly in scope; now type-encoded via AUTO sentinel — `88a11b8`):**
+
+    The `T | AutoResolved` field type + `assert not isinstance(x, _AutoSentinel)` narrowing means pyright proves the resolver-ran invariant from the field declaration alone. No explicit rejection test required — a typo'd `KPI(visual_id=None)` is now a *type* error at the wiring site, and the assert is belt-and-suspenders for runtime safety. Affected fields: `Visual.visual_id` (4 subtypes), `Drill.action_id` + `target_sheet`, `Dim`/`Measure.field_id`, `CalcField.name`, `FilterGroup.filter_group_id`, `Filter.filter_id` (3 subtypes), `*Control.control_id` (7 controls).
+
+    **Locked rule:** every new runtime-raised validator (anything that `raise`s a `ValueError` / `TypeError` / `KeyError` outside of an `assert`) gets a dedicated rejection test in the same commit that introduces it. The audit table above is the source of truth — extend it when adding a validator. Validators encoded purely in the type system (`Literal` field types, `T | AutoResolved` field types, `Protocol` shape checks) don't need a rejection test; pyright is the contract.
   - [x] L.1.19 — Tighten bare-`str` wrapper fields to `Literal` types (typo-safety sweep). Inventory across `common/tree/{filters,visuals,controls,actions,parameters,text_boxes}.py` turned up only TWO real bare-`str` enum fields:
     - `TimeRangeFilter.time_granularity` (`common/tree/filters.py:263`)
     - `DateTimeParam.time_granularity` (`common/tree/parameters.py:87`)
