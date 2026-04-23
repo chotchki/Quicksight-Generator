@@ -2951,28 +2951,41 @@ class TestTransactionsDrillStaleParamHygiene:
                 "StringValues"
             ] == ["__ALL__"]
 
-    def test_helper_param_set_matches_analysis_drill_specs(self):
-        """``_AR_TXN_PASS_FILTERED_PARAMS`` (the helper's auto-reset set)
-        must mirror the SHEET_AR_TRANSACTIONS specs in
-        ``analysis._DRILL_SPECS``. If a new drill spec is added there,
-        the helper has to know about it — otherwise drills that don't
-        explicitly write the new param leave it stale on the destination
-        sheet (the K.2 bug class) and silently ship that way."""
-        from quicksight_gen.apps.account_recon import analysis as ar_analysis
-        from quicksight_gen.apps.account_recon.visuals import (
+    def test_every_drill_into_transactions_writes_full_param_set(self, ar_app):
+        """Every cross-sheet ``Drill`` whose ``target_sheet`` is the
+        Transactions sheet must have ``writes`` covering every
+        ``_AR_TXN_PASS_FILTERED_PARAMS`` entry — that's what the
+        ``_ar_drill_to_transactions`` helper guarantees by auto-filling
+        ``DrillResetSentinel`` for un-written PASS params. A drill that
+        bypasses the helper would leave a PASS-filtered param stale on
+        the destination sheet (the K.2 bug class). Walking the tree
+        catches that bypass at the wiring site."""
+        from quicksight_gen.apps.account_recon.app import (
             _AR_TXN_PASS_FILTERED_PARAMS,
         )
+        from quicksight_gen.common.tree.actions import Drill
 
-        spec_param_names = {
-            spec.parameter.name
-            for spec in ar_analysis._DRILL_SPECS
-            if spec.sheet_id == SHEET_AR_TRANSACTIONS
-        }
         helper_param_names = {p.name for p in _AR_TXN_PASS_FILTERED_PARAMS}
-        assert helper_param_names == spec_param_names, (
-            "Helper auto-reset set drifted from analysis._DRILL_SPECS — "
-            f"helper has {helper_param_names}, specs have {spec_param_names}"
+        txn_sheet = next(
+            s for s in ar_app.analysis.sheets
+            if s.sheet_id == SHEET_AR_TRANSACTIONS
         )
+        offenders: list[str] = []
+        for sheet in ar_app.analysis.sheets:
+            for visual in sheet.visuals:
+                for action in getattr(visual, "actions", []):
+                    if not isinstance(action, Drill):
+                        continue
+                    if action.target_sheet is not txn_sheet:
+                        continue
+                    written = {param.name for param, _ in action.writes}
+                    missing = helper_param_names - written
+                    if missing:
+                        offenders.append(
+                            f"Drill '{action.name}' on visual "
+                            f"'{visual.visual_id}' missing writes: {missing}"
+                        )
+        assert not offenders, "\n".join(offenders)
 
 
 def _cf_cells(visual: dict) -> list[dict]:
@@ -3304,13 +3317,13 @@ class TestAnalysisName:
         )
 
     def test_default_name(self):
-        from quicksight_gen.apps.account_recon.analysis import build_analysis
+        from quicksight_gen.apps.account_recon.app import build_analysis
 
         name = build_analysis(self._cfg("default")).Name
         assert name == "Account Reconciliation"
 
     def test_sasquatch_bank_ar_name(self):
-        from quicksight_gen.apps.account_recon.analysis import build_analysis
+        from quicksight_gen.apps.account_recon.app import build_analysis
 
         name = build_analysis(self._cfg("sasquatch-bank-ar")).Name
         assert name == "Demo — Account Reconciliation"

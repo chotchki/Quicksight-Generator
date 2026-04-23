@@ -222,7 +222,13 @@ The tree's existence is the test case for the layer separation: anything Sasquat
   - [x] L.3.10 — Folded into L.3.9 — the `e2e/test_ar_dashboard_structure.py` updates landed in the same step (`TestFilterGroups::test_filter_group_ids` + `TestParameters::test_drill_down_parameters` now walk `ar_app.analysis.filter_groups` / `.parameters`).
   - [x] L.3.11 — JSON diff: covered by `test_l3_8d_full_analysis_byte_identical` + `_full_dashboard_byte_identical` (compare full Analysis + Dashboard from tree vs imperative; only documented diff is the layout-DSL `RowIndex` field, normalized away in the test).
   - [x] L.3.12 — Full unit suite green (724 passing, 199 skipped — e2e gated on `QS_GEN_E2E=1`); pyright strict on `common/tree/`: 0 errors. e2e suite needs deploy access (out of scope for this session).
-  - [ ] L.3.13 — **Retire the imperative builders.** Delete `apps/account_recon/{analysis,filters,visuals}.py` and rewrite/delete the `tests/test_account_recon.py` blocks that import them (top-level constants/demo-data imports stay; the function-scope `analysis`/`visuals` imports go). Same shape as L.2.13.
+  - [x] L.3.13 — **Retired.** Deleted `apps/account_recon/{analysis,filters,visuals}.py` (3417 lines combined) and `tests/test_l3_account_recon_port.py` (the tree-vs-imperative byte-identity gate, no comparator left). Two test blocks rewritten to walk the tree: `TestAnalysisName` switched both `build_analysis` imports from `apps.account_recon.analysis` to `apps.account_recon.app`; the K.2-invariant test (formerly `test_helper_param_set_matches_analysis_drill_specs` against `analysis._DRILL_SPECS`) became `test_every_drill_into_transactions_writes_full_param_set`, walking every `Drill` action whose `target_sheet is txn_sheet` and asserting every `_AR_TXN_PASS_FILTERED_PARAMS` entry appears in its writes — catches any drill that bypasses `_ar_drill_to_transactions` at the wiring site. CLI smoke (`generate account-recon`) clean. 714 passing.
+
+    **L.3 net reduction (vs pre-L.3.1 baseline):**
+    - **Sources** — 3417 → 1933 lines (`analysis.py` + `filters.py` + `visuals.py` → single `app.py`): **−1484 lines (−43%)**.
+    - **Tests** — `test_account_recon.py` 3428 → 3473 lines (+45; new `ar_app` fixture + tree-walk drill test): **+45 lines (+1.3%)**.
+    - **Combined** — 6845 → 5406: **−1439 lines (−21%)**.
+    - The shrink came mostly from collapsing three roles (sheet builder / filter builder / visual builder) into one tree builder; no imperative-only abstractions survived (`_DRILL_SPECS`, `_calc_field_pass_filter_group`, the per-sheet visual factories).
 
 - [ ] **L.4 — Port Payment Reconciliation to the tree.** Medium complexity; the Payment Reconciliation tab's side-by-side mutual-filter pattern is the only PR-special-case the tree needs to express cleanly. Acceptance: byte-identical PR JSON; full unit suite green; e2e green.
   - [ ] L.4.1 — Port Getting Started sheet.
