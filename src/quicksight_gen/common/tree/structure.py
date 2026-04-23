@@ -74,6 +74,7 @@ _FIELD_SLOTS: tuple[tuple[str, str], ...] = (
     ("values", "v"),    # KPI / Table / BarChart
     ("columns", "u"),   # Table (unaggregated)
     ("category", "c"),  # BarChart
+    ("colors", "k"),    # BarChart (color/group dim)
     ("source", "s"),    # Sankey
     ("target", "t"),    # Sankey
     ("weight", "w"),    # Sankey
@@ -556,6 +557,7 @@ class Row:
         title: str,
         category: list[Dim] | None = None,
         values: list[Measure] | None = None,
+        colors: list[Dim] | None = None,
         subtitle: str | None = None,
         orientation: Literal["HORIZONTAL", "VERTICAL"] | None = None,
         bars_arrangement: Literal[
@@ -563,6 +565,7 @@ class Row:
         ] | None = None,
         category_label: str | None = None,
         value_label: str | None = None,
+        color_label: str | None = None,
         sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None,
         actions: list[Action] | None = None,
         visual_id: VisualId | AutoResolved = AUTO,
@@ -572,8 +575,10 @@ class Row:
         bar = BarChart(
             title=title, subtitle=subtitle,
             category=category or [], values=values or [],
+            colors=colors or [],
             orientation=orientation, bars_arrangement=bars_arrangement,
             category_label=category_label, value_label=value_label,
+            color_label=color_label,
             sort_by=sort_by, actions=actions or [], visual_id=visual_id,
         )
         self.sheet.visuals.append(bar)

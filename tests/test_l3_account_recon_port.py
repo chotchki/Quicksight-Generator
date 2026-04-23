@@ -26,12 +26,16 @@ from quicksight_gen.apps.account_recon.analysis import (
     _build_getting_started_sheet as _imperative_getting_started_sheet,
 )
 from quicksight_gen.apps.account_recon.analysis import (
+    _build_transactions_sheet as _imperative_transactions_sheet,
+)
+from quicksight_gen.apps.account_recon.analysis import (
     _build_transfers_sheet as _imperative_transfers_sheet,
 )
 from quicksight_gen.apps.account_recon.app import build_account_recon_app
 from quicksight_gen.apps.account_recon.constants import (
     SHEET_AR_BALANCES,
     SHEET_AR_GETTING_STARTED,
+    SHEET_AR_TRANSACTIONS,
     SHEET_AR_TRANSFERS,
 )
 from quicksight_gen.common.config import Config
@@ -160,6 +164,27 @@ def test_l3_3_transfers_sheet_byte_identical() -> None:
         _imperative_transfers_sheet(cfg, preset.accent),
     ))
     tree_sheet = _tree_sheet_by_id(cfg, SHEET_AR_TRANSFERS)
+
+    imperative_norm = _strip_filter_controls(_normalize_sheet(imperative_sheet))
+    tree_norm = _strip_filter_controls(_normalize_sheet(tree_sheet))
+
+    assert tree_norm == imperative_norm
+
+
+def test_l3_4_transactions_sheet_byte_identical() -> None:
+    """Transactions sheet: 2 KPIs + 2 bar charts (status horizontal
+    cluster + day vertical stacked-by-status) each with same-sheet
+    click filter targeting the detail table + 11-column unaggregated
+    detail table (no actions — Transactions is the destination of every
+    other sheet's drill)."""
+    cfg_kwargs = dict(_BASE_CFG_KWARGS)
+    cfg_kwargs["theme_preset"] = "sasquatch-bank-ar"
+    cfg = Config(**cfg_kwargs)
+
+    imperative_sheet = _strip_nones(asdict(
+        _imperative_transactions_sheet(cfg),
+    ))
+    tree_sheet = _tree_sheet_by_id(cfg, SHEET_AR_TRANSACTIONS)
 
     imperative_norm = _strip_filter_controls(_normalize_sheet(imperative_sheet))
     tree_norm = _strip_filter_controls(_normalize_sheet(tree_sheet))

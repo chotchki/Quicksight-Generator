@@ -32,6 +32,7 @@ from quicksight_gen.apps.account_recon.constants import (
     DS_AR_NON_ZERO_TRANSFERS,
     DS_AR_SUBLEDGER_ACCOUNTS,
     DS_AR_SUBLEDGER_BALANCE_DRIFT,
+    DS_AR_TRANSACTIONS,
     DS_AR_TRANSFER_SUMMARY,
     P_AR_ACCOUNT,
     P_AR_ACTIVITY_DATE,
@@ -103,6 +104,7 @@ def _datasets(cfg: Config) -> dict[str, Dataset]:
             DS_AR_SUBLEDGER_BALANCE_DRIFT,
             DS_AR_TRANSFER_SUMMARY,
             DS_AR_NON_ZERO_TRANSFERS,
+            DS_AR_TRANSACTIONS,
         )
     }
 
@@ -695,6 +697,122 @@ def _populate_transfers(
 
 
 # ---------------------------------------------------------------------------
+# Transactions (L.3.4) — KPIs + 2 bar charts (with same-sheet click
+# filter on each) + detail unaggregated table. No drill actions on the
+# table — Transactions is the destination of every other sheet's drill.
+# ---------------------------------------------------------------------------
+
+def _populate_transactions(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    datasets: dict[str, Dataset],
+) -> None:
+    del cfg
+    ds_txn = datasets[DS_AR_TRANSACTIONS]
+
+    # Row 1: two KPIs.
+    half = _FULL // 2
+    kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
+    kpi_row.add_kpi(
+        width=half,
+        visual_id="ar-txn-kpi-count",  # type: ignore[arg-type]
+        title="Total Transactions",
+        subtitle="Count of all transactions (all statuses)",
+        values=[ds_txn["transaction_id"].count(field_id="ar-txn-count")],
+    )
+    kpi_row.add_kpi(
+        width=half,
+        visual_id="ar-txn-kpi-failed",  # type: ignore[arg-type]
+        title="Failed Transactions",
+        subtitle=(
+            "Transactions that did not post — money never moved. "
+            "Contributes to non-zero transfers upstream."
+        ),
+        values=[ds_txn["transaction_id"].count(field_id="ar-txn-failed-count")],
+    )
+
+    # Two bar charts in row 2 (status horizontal + day vertical), each
+    # with a same-sheet filter targeting the detail table in row 3.
+    # Same back-patch trick as Transfers — construct the filter actions
+    # with empty target_visuals, attach to bars, append the table after.
+    status_filter = SameSheetFilter(
+        target_visuals=[],
+        name="Filter Transaction Detail",
+        action_id="action-ar-txn-bar-filter",
+    )
+    day_filter = SameSheetFilter(
+        target_visuals=[],
+        name="Filter Transaction Detail",
+        action_id="action-ar-txn-day-filter",
+    )
+
+    chart_row = sheet.layout.row(height=_CHART_ROW_SPAN)
+    chart_row.add_bar_chart(
+        width=_HALF,
+        visual_id="ar-txn-bar-by-status",  # type: ignore[arg-type]
+        title="Transactions by Status",
+        subtitle=(
+            "Breakdown of posted / pending / failed transactions. "
+            "Click a bar to filter the detail table below."
+        ),
+        category=[ds_txn["status"].dim(field_id="ar-txn-status-dim")],
+        values=[ds_txn["transaction_id"].count(field_id="ar-txn-status-count")],
+        orientation="HORIZONTAL",
+        bars_arrangement="CLUSTERED",
+        category_label="Status",
+        value_label="Transactions",
+        actions=[status_filter],
+    )
+    chart_row.add_bar_chart(
+        width=_HALF,
+        visual_id="ar-txn-bar-by-day",  # type: ignore[arg-type]
+        title="Transactions by Day",
+        subtitle=(
+            "Daily transaction volume split by status. Click a bar to "
+            "filter the detail table below."
+        ),
+        category=[ds_txn["posted_at"].date(field_id="ar-txn-day-dim")],
+        values=[ds_txn["transaction_id"].count(field_id="ar-txn-day-count")],
+        colors=[ds_txn["status"].dim(field_id="ar-txn-day-color")],
+        orientation="VERTICAL",
+        bars_arrangement="STACKED",
+        category_label="Date",
+        value_label="Transactions",
+        color_label="Status",
+        actions=[day_filter],
+    )
+
+    # Row 3: detail table — full width unaggregated, no actions.
+    table_txn = sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        visual_id="ar-txn-detail-table",  # type: ignore[arg-type]
+        title="Transaction Detail",
+        subtitle=(
+            "Every leg of every transfer — newest first. Failed rows "
+            "indicate legs that did not post."
+        ),
+        columns=[
+            ds_txn["transaction_id"].dim(field_id="ar-txn-id"),
+            ds_txn["transfer_id"].dim(field_id="ar-txn-transfer"),
+            ds_txn["ledger_name"].dim(field_id="ar-txn-ledger"),
+            ds_txn["subledger_name"].dim(field_id="ar-txn-subledger"),
+            ds_txn["scope"].dim(field_id="ar-txn-scope"),
+            ds_txn["posting_level"].dim(field_id="ar-txn-posting-level"),
+            ds_txn["origin"].dim(field_id="ar-txn-origin"),
+            ds_txn["amount"].numerical(field_id="ar-txn-amount"),
+            ds_txn["status"].dim(field_id="ar-txn-status"),
+            ds_txn["posted_at"].date(field_id="ar-txn-posted"),
+            ds_txn["memo"].dim(field_id="ar-txn-memo"),
+        ],
+        sort_by=("ar-txn-posted", "DESC"),
+    )
+    # Back-patch both filters to point at the detail table.
+    status_filter.target_visuals.append(table_txn)
+    day_filter.target_visuals.append(table_txn)
+
+
+# ---------------------------------------------------------------------------
 # App-level wiring
 # ---------------------------------------------------------------------------
 
@@ -769,6 +887,7 @@ def build_account_recon_app(cfg: Config) -> App:
         transactions_sheet=sheets[SHEET_AR_TRANSACTIONS],
         datasets=datasets,
     )
+    _populate_transactions(cfg, sheets[SHEET_AR_TRANSACTIONS], datasets=datasets)
 
     app.create_dashboard(
         dashboard_id_suffix="account-recon-dashboard",

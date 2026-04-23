@@ -32,7 +32,12 @@ from quicksight_gen.common.models import (
     NumericalDimensionField,
     NumericalMeasureField,
 )
-from quicksight_gen.common.tree._helpers import AUTO, AutoResolved, _AutoSentinel
+from quicksight_gen.common.tree._helpers import (
+    AUTO,
+    AutoResolved,
+    TimeGranularity,
+    _AutoSentinel,
+)
 from quicksight_gen.common.tree.calc_fields import (
     CalcField,
     ColumnRef,
@@ -78,14 +83,24 @@ class Dim:
     dataset: Dataset
     column: ColumnRef
     kind: DimKind = "categorical"
+    date_granularity: TimeGranularity | None = field(default=None, kw_only=True)
     field_id: str | AutoResolved = field(default=AUTO, kw_only=True)
 
     @classmethod
     def date(
         cls, dataset: Dataset, column: ColumnRef,
-        *, field_id: str | AutoResolved = AUTO,
+        *,
+        date_granularity: TimeGranularity | None = "DAY",
+        field_id: str | AutoResolved = AUTO,
     ) -> Dim:
-        return cls(dataset=dataset, column=column, kind="date", field_id=field_id)
+        """Date dimension. ``date_granularity`` defaults to ``"DAY"`` —
+        QuickSight's most common bucket for daily series. Pass ``None``
+        to omit the granularity (the renderer falls back to its default,
+        which can shift bucketing on day-vs-month dashboards)."""
+        return cls(
+            dataset=dataset, column=column, kind="date",
+            date_granularity=date_granularity, field_id=field_id,
+        )
 
     @classmethod
     def numerical(
@@ -114,6 +129,7 @@ class Dim:
             return DimensionField(
                 DateDimensionField=DateDimensionField(
                     FieldId=self.field_id, Column=col,
+                    DateGranularity=self.date_granularity,
                 ),
             )
         if self.kind == "numerical":

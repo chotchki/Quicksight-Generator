@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING
 
 from quicksight_gen.common.dataset_contract import get_contract
 from quicksight_gen.common.models import DataSetIdentifierDeclaration
-from quicksight_gen.common.tree._helpers import AUTO, AutoResolved
+from quicksight_gen.common.tree._helpers import AUTO, AutoResolved, TimeGranularity
 
 if TYPE_CHECKING:
     from quicksight_gen.common.tree.fields import Dim, DimKind, Measure
@@ -126,9 +126,18 @@ class Column:
         from quicksight_gen.common.tree.fields import Dim
         return Dim(self.dataset, self, kind=kind, field_id=field_id)
 
-    def date(self, *, field_id: str | AutoResolved = AUTO) -> Dim:
+    def date(
+        self,
+        *,
+        date_granularity: TimeGranularity | None = "DAY",
+        field_id: str | AutoResolved = AUTO,
+    ) -> Dim:
         from quicksight_gen.common.tree.fields import Dim
-        return Dim.date(self.dataset, self, field_id=field_id)
+        return Dim.date(
+            self.dataset, self,
+            date_granularity=date_granularity,
+            field_id=field_id,
+        )
 
     def numerical(self, *, field_id: str | AutoResolved = AUTO) -> Dim:
         from quicksight_gen.common.tree.fields import Dim

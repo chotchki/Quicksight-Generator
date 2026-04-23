@@ -282,12 +282,14 @@ class BarChart:
     subtitle: str | None = None
     category: list[Dim] = field(default_factory=list[Dim])
     values: list[Measure] = field(default_factory=list[Measure])
+    colors: list[Dim] = field(default_factory=list[Dim])
     orientation: Literal["HORIZONTAL", "VERTICAL"] | None = None
     bars_arrangement: Literal[
         "CLUSTERED", "STACKED", "STACKED_PERCENT",
     ] | None = None
     category_label: str | None = None
     value_label: str | None = None
+    color_label: str | None = None
     sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None
     actions: list[Action] = field(default_factory=list[Action])
     visual_id: VisualId | AutoResolved = AUTO
@@ -304,7 +306,8 @@ class BarChart:
 
     def datasets(self) -> set[Dataset]:
         return ({d.dataset for d in self.category}
-                | {m.dataset for m in self.values})
+                | {m.dataset for m in self.values}
+                | {d.dataset for d in self.colors})
 
     def calc_fields(self) -> set[CalcField]:
         deps: set[CalcField] = set()
@@ -313,6 +316,9 @@ class BarChart:
                 deps.add(cf)
         for m in self.values:
             if (cf := m.calc_field()) is not None:
+                deps.add(cf)
+        for d in self.colors:
+            if (cf := d.calc_field()) is not None:
                 deps.add(cf)
         return deps
 
@@ -341,6 +347,7 @@ class BarChart:
                         BarChartAggregatedFieldWells=BarChartAggregatedFieldWells(
                             Category=[d.emit() for d in self.category] if self.category else None,
                             Values=[m.emit() for m in self.values] if self.values else None,
+                            Colors=[d.emit() for d in self.colors] if self.colors else None,
                         ),
                     ),
                     Orientation=self.orientation,
@@ -356,6 +363,12 @@ class BarChart:
                             AxisLabelOptions(CustomLabel=self.value_label),
                         ])
                         if self.value_label is not None else None
+                    ),
+                    ColorLabelOptions=(
+                        ChartAxisLabelOptions(AxisLabelOptions=[
+                            AxisLabelOptions(CustomLabel=self.color_label),
+                        ])
+                        if self.color_label is not None else None
                     ),
                     SortConfiguration=sort_config,
                 ),
