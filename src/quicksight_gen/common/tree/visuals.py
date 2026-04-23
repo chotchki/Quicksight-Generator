@@ -74,7 +74,7 @@ class VisualLike(Protocol):
     def calc_fields(self) -> set[CalcField]: ...
 
 
-def _visual_element_id(node) -> str:
+def _visual_element_id(node: VisualLike) -> str:
     """LayoutNode.element_id implementation shared by every visual subtype.
     Resolves to ``visual_id`` (the visual's element id is the same id
     QuickSight uses for the visual itself); asserts auto-IDs are

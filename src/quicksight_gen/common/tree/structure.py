@@ -11,6 +11,7 @@ for deploy.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
 
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.dataset_contract import get_contract
@@ -33,6 +34,14 @@ from quicksight_gen.common.tree._helpers import (
     ANALYSIS_ACTIONS,
     DASHBOARD_ACTIONS,
 )
+
+
+# Mirrors GridLayoutElement.ElementType in models.py — kept here so the
+# LayoutNode protocol can declare it cleanly without a circular reference.
+GridLayoutElementType = Literal[
+    "VISUAL", "FILTER_CONTROL", "PARAMETER_CONTROL", "TEXT_BOX", "IMAGE"
+]
+from quicksight_gen.common.tree.actions import Drill
 from quicksight_gen.common.tree.calc_fields import CalcField
 from quicksight_gen.common.tree.controls import (
     FilterControlLike,
@@ -67,7 +76,7 @@ _FIELD_SLOTS: tuple[tuple[str, str], ...] = (
 
 
 def _resolve_field_ids(
-    *, visual, visual_kind: str, sheet_idx: int, visual_idx: int,
+    *, visual: VisualLike, visual_kind: str, sheet_idx: int, visual_idx: int,
 ) -> None:
     """Walk a visual's field-well slots and assign auto field_ids to
     any Dim/Measure leaves that left field_id unset.
@@ -80,15 +89,15 @@ def _resolve_field_ids(
     shapes are handled.
     """
     for attr, role in _FIELD_SLOTS:
-        slot = getattr(visual, attr, None)
+        slot: object = getattr(visual, attr, None)
         if slot is None:
             continue
-        leaves = slot if isinstance(slot, list) else [slot]
+        leaves: list[object] = list(slot) if isinstance(slot, list) else [slot]  # type: ignore[arg-type]
         for slot_idx, leaf in enumerate(leaves):
             if leaf is None:
                 continue
             if getattr(leaf, "field_id", "explicit") is None:
-                leaf.field_id = (
+                leaf.field_id = (  # type: ignore[attr-defined]
                     f"f-{visual_kind}-s{sheet_idx}-v{visual_idx}-{role}{slot_idx}"
                 )
 
@@ -137,7 +146,7 @@ class LayoutNode(Protocol):
     def element_id(self) -> str: ...
 
     @property
-    def element_type(self) -> str: ...
+    def element_type(self) -> GridLayoutElementType: ...
 
 
 @dataclass(eq=False)
@@ -458,7 +467,7 @@ class Analysis:
         ``sheet_id=`` is the most robust lookup; ``name=`` is the
         next-best for tests that don't want to hardcode IDs.
         """
-        matches = []
+        matches: list[Sheet] = []
         for s in self.sheets:
             if sheet_id is not None and s.sheet_id == sheet_id:
                 matches.append(s)
@@ -838,7 +847,7 @@ class App:
         registered_params = self.analysis.parameters
         bad: list[str] = []
 
-        def _check(param, where: str) -> None:
+        def _check(param: ParameterDeclLike | None, where: str) -> None:
             if param is None:
                 return
             if not any(p is param for p in registered_params):
@@ -885,15 +894,19 @@ class App:
         bad: list[str] = []
         for sheet in registered_sheets:
             for visual in sheet.visuals:
-                actions = getattr(visual, "actions", None) or []
+                actions: list[Drill] = getattr(visual, "actions", None) or []
                 for action in actions:
                     if not any(
                         action.target_sheet is s for s in registered_sheets
                     ):
+                        target_sheet_id = (
+                            action.target_sheet.sheet_id
+                            if action.target_sheet is not None else "<unset>"
+                        )
                         bad.append(
                             f"action {action.name!r} on visual "
                             f"{getattr(visual, 'visual_id', '?')!r} → sheet "
-                            f"{action.target_sheet.sheet_id!r}"
+                            f"{target_sheet_id!r}"
                         )
         if bad:
             raise ValueError(
@@ -927,7 +940,7 @@ class App:
             return
         bad: list[str] = []
 
-        def _check(column, where: str) -> None:
+        def _check(column: object, where: str) -> None:
             if isinstance(column, str):
                 bad.append(f"{where} → bare string {column!r}")
                 return
@@ -944,10 +957,13 @@ class App:
         for sheet in self.analysis.sheets:
             for visual in sheet.visuals:
                 for attr, _role in _FIELD_SLOTS:
-                    slot = getattr(visual, attr, None)
+                    slot: object = getattr(visual, attr, None)
                     if slot is None:
                         continue
-                    leaves = slot if isinstance(slot, list) else [slot]
+                    leaves: list[object] = (
+                        list(slot) if isinstance(slot, list)  # type: ignore[arg-type]
+                        else [slot]
+                    )
                     for leaf in leaves:
                         if leaf is None:
                             continue
@@ -1000,7 +1016,10 @@ class App:
         registered = set(self.analysis.calc_fields)
         unregistered = referenced - registered
         if unregistered:
-            names = sorted(c.name for c in unregistered)
+            # Names are populated by _resolve_auto_ids before validation
+            # runs (see emit_analysis); fall back to "<unnamed>" for
+            # safety.
+            names = sorted(c.name or "<unnamed>" for c in unregistered)
             raise ValueError(
                 f"App {self.name!r} references unregistered calc fields: "
                 f"{names} — register each via "

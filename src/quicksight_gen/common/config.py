@@ -9,8 +9,12 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
+
+if TYPE_CHECKING:
+    from quicksight_gen.common.models import Tag
 
 
 @dataclass
@@ -38,7 +42,7 @@ class Config:
             )
 
     # Derived helpers
-    def tags(self) -> list[dict[str, str]]:
+    def tags(self) -> "list[Tag]":
         """Return common + extra tags as the AWS Tag list format."""
         from quicksight_gen.common.models import Tag
 

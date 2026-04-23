@@ -117,6 +117,9 @@ class LinkedValues:
             )
 
     def emit(self) -> dict[str, Any]:
+        # __post_init__ guarantees dataset is non-None: either passed
+        # explicitly, or inferred from the Column form.
+        assert self.dataset is not None
         column_name = (
             self.column.name if isinstance(self.column, Column)
             else self.column
@@ -200,7 +203,9 @@ class ParameterDropdown:
     def datasets(self) -> set[Dataset]:
         """Datasets this control references (via LinkedValues if any)."""
         if isinstance(self.selectable_values, LinkedValues):
-            return {self.selectable_values.dataset}
+            ds = self.selectable_values.dataset
+            assert ds is not None  # LinkedValues.__post_init__ guarantees
+            return {ds}
         return set()
 
     def emit(self) -> ParameterControl:
@@ -306,12 +311,17 @@ class FilterDropdown:
 
     def datasets(self) -> set[Dataset]:
         if isinstance(self.selectable_values, LinkedValues):
-            return {self.selectable_values.dataset}
+            ds = self.selectable_values.dataset
+            assert ds is not None  # LinkedValues.__post_init__ guarantees
+            return {ds}
         return set()
 
     def emit(self) -> FilterControl:
         assert self.control_id is not None, (
             "control_id wasn't resolved — App._resolve_auto_ids() must run."
+        )
+        assert self.filter.filter_id is not None, (
+            "inner filter's filter_id wasn't resolved — App._resolve_auto_ids() must run."
         )
         return FilterControl(
             Dropdown=ModelFilterDropDownControl(
@@ -347,6 +357,9 @@ class FilterSlider:
         assert self.control_id is not None, (
             "control_id wasn't resolved — App._resolve_auto_ids() must run."
         )
+        assert self.filter.filter_id is not None, (
+            "inner filter's filter_id wasn't resolved — App._resolve_auto_ids() must run."
+        )
         return FilterControl(
             Slider=ModelFilterSliderControl(
                 FilterControlId=self.control_id,
@@ -377,6 +390,9 @@ class FilterDateTimePicker:
         assert self.control_id is not None, (
             "control_id wasn't resolved — App._resolve_auto_ids() must run."
         )
+        assert self.filter.filter_id is not None, (
+            "inner filter's filter_id wasn't resolved — App._resolve_auto_ids() must run."
+        )
         return FilterControl(
             DateTimePicker=ModelFilterDateTimePickerControl(
                 FilterControlId=self.control_id,
@@ -406,6 +422,9 @@ class FilterCrossSheet:
     def emit(self) -> FilterControl:
         assert self.control_id is not None, (
             "control_id wasn't resolved — App._resolve_auto_ids() must run."
+        )
+        assert self.filter.filter_id is not None, (
+            "inner filter's filter_id wasn't resolved — App._resolve_auto_ids() must run."
         )
         return FilterControl(
             CrossSheet=ModelFilterCrossSheetControl(

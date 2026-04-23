@@ -343,7 +343,8 @@ class FilterGroup:
     enabled: bool = True
     filter_group_id: FilterGroupId | None = None
     _scope_entries: list[tuple["Sheet", list[VisualLike] | None]] = field(
-        default_factory=list, init=False, repr=False,
+        default_factory=list[tuple["Sheet", list[VisualLike] | None]],
+        init=False, repr=False,
     )
 
     def scope_visuals(
@@ -400,7 +401,7 @@ class FilterGroup:
                 f"FilterGroup {self.filter_group_id!r} has no scope — "
                 f"call scope_visuals() or scope_sheet() before emitting."
             )
-        configs = []
+        configs: list[SheetVisualScopingConfiguration] = []
         for sheet, visuals in self._scope_entries:
             if visuals is None:
                 configs.append(SheetVisualScopingConfiguration(
@@ -408,10 +409,20 @@ class FilterGroup:
                     Scope=SheetVisualScopingConfiguration.ALL_VISUALS,
                 ))
             else:
+                # Visuals' visual_id is resolved by App._resolve_auto_ids
+                # which runs before emit; the assert above guarantees
+                # this code path only executes after resolution.
+                visual_ids: list[str] = []
+                for v in visuals:
+                    assert v.visual_id is not None, (
+                        "visual_id wasn't resolved — App._resolve_auto_ids() "
+                        "must run before FilterGroup.emit()."
+                    )
+                    visual_ids.append(v.visual_id)
                 configs.append(SheetVisualScopingConfiguration(
                     SheetId=sheet.sheet_id,
                     Scope=SheetVisualScopingConfiguration.SELECTED_VISUALS,
-                    VisualIds=[v.visual_id for v in visuals],
+                    VisualIds=visual_ids,
                 ))
         return ModelFilterGroup(
             FilterGroupId=self.filter_group_id,

@@ -73,7 +73,7 @@ class CalcField:
     name: str | None = None
     shape: ColumnShape | None = None
 
-    def emit(self) -> dict:
+    def emit(self) -> dict[str, str]:
         assert self.name is not None, (
             "name wasn't resolved — App._resolve_auto_ids() must run "
             "before CalcField.emit()."
@@ -100,8 +100,16 @@ ColumnRef = str | CalcField | Column
 
 
 def resolve_column(column: ColumnRef) -> str:
-    """Read the column-name string off a ``ColumnRef``."""
+    """Read the column-name string off a ``ColumnRef``.
+
+    For a ``CalcField``, the name is set by ``App._resolve_auto_ids()``;
+    callers asserting the resolver ran can rely on this returning ``str``.
+    """
     if isinstance(column, CalcField):
+        assert column.name is not None, (
+            "CalcField.name wasn't resolved — App._resolve_auto_ids() "
+            "must run before resolve_column() on a CalcField ref."
+        )
         return column.name
     if isinstance(column, Column):
         return column.name
