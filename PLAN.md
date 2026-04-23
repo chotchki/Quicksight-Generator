@@ -236,7 +236,7 @@ The tree's existence is the test case for the layer separation: anything Sasquat
     - The shrink came mostly from collapsing three roles (sheet builder / filter builder / visual builder) into one tree builder; no imperative-only abstractions survived (`_DRILL_SPECS`, `_calc_field_pass_filter_group`, the per-sheet visual factories).
 
 - [ ] **L.4 — Port Payment Reconciliation to the tree.** Medium complexity; the Payment Reconciliation tab's side-by-side mutual-filter pattern is the only PR-special-case the tree needs to express cleanly. Acceptance: byte-identical PR JSON; full unit suite green; e2e green.
-  - [ ] L.4.1 — Port Getting Started sheet.
+  - [x] L.4.1 — Port Getting Started sheet — landed `apps/payment_recon/app.py` skeleton (`build_payment_recon_app(cfg)` + `_populate_getting_started`) with welcome / clickability legend / optional demo flavor / 5 per-sheet description blocks (Sales / Settlements / Payments / Exceptions / Payment Reconciliation). New `tests/test_l4_payment_recon_port.py` byte-identity gate compares the tree-built sheet against the imperative `_build_getting_started_sheet` for both default and demo configs — passes on first run after `_normalize_sheet` strips the layout DSL's explicit `RowIndex`. Same harness shape as L.2 / L.3. 716 passing.
   - [ ] L.4.2 — Port Sales Overview sheet.
   - [ ] L.4.3 — Port Settlements sheet.
   - [ ] L.4.4 — Port Payments sheet.
