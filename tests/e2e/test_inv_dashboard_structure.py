@@ -3,22 +3,19 @@
 Five sheets: Getting Started + four investigation surfaces (Recipient
 Fanout / Volume Anomalies / Money Trail / Account Network). The
 Account Network sheet's two side-by-side directional Sankeys are the
-load-bearing K.4.8 invariant — both must declare distinct visual IDs
-so the layout encodes direction in geometry rather than in node
-position inside one big Sankey.
+load-bearing K.4.8 invariant — both must declare distinct titles so
+the layout encodes direction in geometry rather than in node position
+inside one big Sankey.
+
+Per L.1.16 internal visual IDs are auto-derived; analyst-facing titles
+stay explicit. Identity assertions therefore key off `Title.PlainText`
+(stable across the imperative→tree port), not `VisualId` (regenerated
+positionally).
 """
 
 from __future__ import annotations
 
 import pytest
-
-from quicksight_gen.apps.investigation.constants import (
-    V_INV_ANETWORK_SANKEY_INBOUND,
-    V_INV_ANETWORK_SANKEY_OUTBOUND,
-    V_INV_ANETWORK_TABLE,
-    V_INV_MONEY_TRAIL_SANKEY,
-    V_INV_MONEY_TRAIL_TABLE,
-)
 
 
 pytestmark = [pytest.mark.e2e, pytest.mark.api]
@@ -43,6 +40,29 @@ def _visual_ids(sheet: dict) -> list[str]:
             if isinstance(vtype, dict) and "VisualId" in vtype:
                 out.append(vtype["VisualId"])
     return out
+
+
+def _visual_titles(sheet: dict) -> set[str]:
+    out: set[str] = set()
+    for v in sheet.get("Visuals", []):
+        for vtype in v.values():
+            if not isinstance(vtype, dict) or "VisualId" not in vtype:
+                continue
+            text = (
+                vtype.get("Title", {})
+                     .get("FormatText", {})
+                     .get("PlainText", "")
+            )
+            if text:
+                out.add(text)
+    return out
+
+
+def _tree_visual_titles(inv_app, sheet_name: str) -> set[str]:
+    sheet = next(
+        s for s in inv_app.analysis.sheets if s.name == sheet_name
+    )
+    return {v.title for v in sheet.visuals if getattr(v, "title", None)}
 
 
 class TestSheets:
@@ -113,34 +133,45 @@ class TestVisuals:
                         f"Visual '{vtype['VisualId']}' missing subtitle"
                     )
 
-    def test_money_trail_has_sankey_and_table(self, inv_dashboard_definition):
+    def test_money_trail_has_sankey_and_table(
+        self, inv_dashboard_definition, inv_app,
+    ):
         sheet = next(
             s for s in inv_dashboard_definition["Sheets"]
             if s["Name"] == "Money Trail"
         )
-        ids = set(_visual_ids(sheet))
-        assert V_INV_MONEY_TRAIL_SANKEY in ids
-        assert V_INV_MONEY_TRAIL_TABLE in ids
+        deployed = _visual_titles(sheet)
+        expected = _tree_visual_titles(inv_app, "Money Trail")
+        missing = expected - deployed
+        assert not missing, (
+            f"Money Trail missing visual titles: {sorted(missing)}"
+        )
 
     def test_account_network_has_two_directional_sankeys_and_table(
-        self, inv_dashboard_definition,
+        self, inv_dashboard_definition, inv_app,
     ):
         """K.4.8i invariant — direction must be encoded in geometry. A
         regression that drops one Sankey or merges them back into one
         omnidirectional view would silently put the analyst back into the
-        anchor-disambiguation problem the redesign solved."""
+        anchor-disambiguation problem the redesign solved.
+
+        The two distinct titles (inbound counterparties → anchor / outbound
+        anchor → counterparties) are the analyst-facing direction signal.
+        """
         sheet = next(
             s for s in inv_dashboard_definition["Sheets"]
             if s["Name"] == "Account Network"
         )
-        ids = set(_visual_ids(sheet))
-        for expected in (
-            V_INV_ANETWORK_SANKEY_INBOUND,
-            V_INV_ANETWORK_SANKEY_OUTBOUND,
-            V_INV_ANETWORK_TABLE,
-        ):
-            assert expected in ids, (
-                f"Account Network missing visual '{expected}'"
+        deployed = _visual_titles(sheet)
+        expected = _tree_visual_titles(inv_app, "Account Network")
+        missing = expected - deployed
+        assert not missing, (
+            f"Account Network missing visual titles: {sorted(missing)}"
+        )
+        for direction_marker in ("Inbound", "Outbound"):
+            assert any(direction_marker in t for t in deployed), (
+                f"Account Network missing a {direction_marker!r}-titled "
+                f"visual; rendered titles: {sorted(deployed)}"
             )
 
 

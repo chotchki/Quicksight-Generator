@@ -349,14 +349,14 @@ The tree's existence is the test case for the layer separation: anything Sasquat
     L.6 acceptance ratified: 4th app deploys via `generate executives` + `generate --all`; full unit suite green (719 passing); the L.6 author wrote zero `constants.py` (sheet IDs inline in `app.py`, internal IDs auto-resolved per L.1.16). Tree primitives held up well for the greenfield use case — the friction items are tooling polish, not structural gaps.
 
 - [ ] **L.7 — Browser e2e for Executives.** Mirror the K.4.9 / AR e2e shape. Acceptance: ~20–25 new tests collected; full e2e suite green.
-  - [ ] L.7.1 — Add `exec_dashboard_id`, `exec_analysis_id`, `exec_dataset_ids` session-scoped fixtures to `tests/e2e/conftest.py`.
-  - [ ] L.7.2 — `test_exec_deployed_resources.py` (dashboard / analysis / dataset existence).
-  - [ ] L.7.3 — `test_exec_dashboard_structure.py` (sheet count, per-sheet visual counts, parameter set, filter group set — walking the tree's emitted set).
-  - [ ] L.7.4 — `test_exec_dashboard_renders.py` (embed URL + tab smoke).
-  - [ ] L.7.5 — `test_exec_sheet_visuals.py` (parametrized per-sheet visual counts + spot-checked titles).
-  - [ ] L.7.6 — `test_exec_filters.py` if there are any (sheet-level period selectors, etc.).
-  - [ ] L.7.7 — `test_exec_drilldown.py` if cross-app drills land — verify the click navigates / sets the destination param.
-  - [ ] L.7.8 — Run full e2e suite; fix regressions.
+  - [x] L.7.1 — Add `exec_dashboard_id`, `exec_analysis_id`, `exec_dataset_ids` + `exec_app` session-scoped fixtures to `tests/e2e/conftest.py`.
+  - [x] L.7.2 — `test_exec_deployed_resources.py` (dashboard / analysis / dataset existence).
+  - [x] L.7.3 — `test_exec_dashboard_structure.py` (sheet count, per-sheet visual counts, parameter set, filter group set — walking the tree's emitted set; specific `test_active_only_filter_pinned_to_active_visuals` guard for the visual-pinned FG scoping).
+  - [x] L.7.4 — `test_exec_dashboard_renders.py` (embed URL + tab smoke; sheet-tab assertion derived from `exec_app.analysis.sheets` per L.11.1).
+  - [x] L.7.5 — `test_exec_sheet_visuals.py` (`TreeValidator(exec_app, page).validate_structure()` — one call replaces hand-curated per-sheet visual count + title dicts; tall viewport so Account Coverage's below-the-fold detail table doesn't virtualize).
+  - [x] L.7.6 — **Skipped: no UI controls.** Executives declares zero parameter declarations and zero filter / parameter controls (the only filter is the visual-pinned `activity_count >= 1` NumericRangeFilter on Account Coverage, asserted structurally in L.7.3). Nothing to drive browser-side; `test_exec_filters.py` not created.
+  - [x] L.7.7 — **Skipped: no drills.** Cross-app drills (Executives → AR Transactions / PR pipeline) were dropped in L.6.7 per the QS URL parameter sync defect. Same-sheet drills don't exist in Executives either. `test_exec_drilldown.py` not created.
+  - [x] L.7.8 — Run full e2e suite. **Result:** 184 passing / 9 skipped / 1 xfailed against the 4-app deployed stack; the surfaced regressions were not in the new Executives tests but in three pre-existing places, all fixed in this phase: (1) AR demo data drift (5 tests fixed by a fresh `demo apply --all` reseed — date-relative plant offsets had aged out); (2) Investigation `test_money_trail_has_sankey_and_table` + `test_account_network_has_two_directional_sankeys_and_table` keyed off legacy hardcoded `V_INV_*` VisualIds — rewrote to walk `inv_app.analysis.sheets` and key off analyst-facing visual titles (the L.2.8 cleanup missed these two), then dropped the now-orphan V_INV_* constants from `apps/investigation/constants.py`; (3) PR `test_all_datasets_declared` asserted every fixture-listed dataset is declared but the tree only declares datasets visuals reference (L.4.7d normalization) — rewrote to derive the expected set from `pr_app.dataset_dependencies()`. All 20 new Executives e2e tests passed on first run.
 
 - [ ] **L.8 — Executives handbook + walkthroughs.** New `docs/handbook/executives.md` + walkthroughs per sheet's core question. Acceptance: `mkdocs build --strict` clean.
   - [ ] L.8.1 — Read the L.6 sheet shape; draft the question per sheet that becomes a walkthrough title.
