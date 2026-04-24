@@ -192,13 +192,22 @@ class TestFilterGroups:
 
 
 class TestDatasetDeclarations:
-    def test_all_datasets_declared(self, dashboard_definition, dataset_ids):
+    def test_all_referenced_datasets_declared(
+        self, dashboard_definition, pr_app,
+    ):
+        """The deployed dashboard must declare every dataset the tree
+        actually uses. Tree's `_used_datasets()` is selective by
+        construction (L.4.7d) — `dataset_ids` fixture lists every PR
+        dataset built, including some (e.g. merchants-dataset) that no
+        visual currently references; using the fixture would over-assert.
+        """
         decls = dashboard_definition["DataSetIdentifierDeclarations"]
-        declared_ds_ids = set()
-        for d in decls:
-            ds_id = d["DataSetArn"].split("/")[-1]
-            declared_ds_ids.add(ds_id)
-        for ds_id in dataset_ids:
-            assert ds_id in declared_ds_ids, (
-                f"Dataset {ds_id} not declared in dashboard definition"
-            )
+        declared = {d["DataSetArn"].split("/")[-1] for d in decls}
+        expected = {
+            d.arn.split("/")[-1] for d in pr_app.dataset_dependencies()
+        }
+        missing = expected - declared
+        assert not missing, (
+            f"PR datasets referenced by tree but not declared in deployed "
+            f"dashboard: {sorted(missing)}"
+        )

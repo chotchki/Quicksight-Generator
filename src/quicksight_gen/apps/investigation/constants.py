@@ -18,7 +18,6 @@ from quicksight_gen.common.ids import (
     FilterGroupId,
     ParameterName,
     SheetId,
-    VisualId,
 )
 
 # ---------------------------------------------------------------------------
@@ -114,22 +113,4 @@ P_INV_MONEY_TRAIL_MIN_AMOUNT = ParameterName("pInvMoneyTrailMinAmount")  # K.4.5
 P_INV_ANETWORK_ANCHOR = ParameterName("pInvANetworkAnchor")              # K.4.8
 P_INV_ANETWORK_MIN_AMOUNT = ParameterName("pInvANetworkMinAmount")       # K.4.8
 
-# ---------------------------------------------------------------------------
-# Visual IDs
-# ---------------------------------------------------------------------------
-
-V_INV_FANOUT_KPI_RECIPIENTS = VisualId("inv-fanout-kpi-recipients")  # K.4.3
-V_INV_FANOUT_KPI_SENDERS = VisualId("inv-fanout-kpi-senders")        # K.4.3
-V_INV_FANOUT_KPI_AMOUNT = VisualId("inv-fanout-kpi-amount")          # K.4.3
-V_INV_FANOUT_TABLE = VisualId("inv-fanout-table")                    # K.4.3
-
-V_INV_ANOMALIES_KPI_FLAGGED = VisualId("inv-anomalies-kpi-flagged")  # K.4.4
-V_INV_ANOMALIES_DISTRIBUTION = VisualId("inv-anomalies-distribution")  # K.4.4
-V_INV_ANOMALIES_TABLE = VisualId("inv-anomalies-table")              # K.4.4
-
-V_INV_MONEY_TRAIL_SANKEY = VisualId("inv-money-trail-sankey")        # K.4.5
-V_INV_MONEY_TRAIL_TABLE = VisualId("inv-money-trail-table")          # K.4.5
-
-V_INV_ANETWORK_SANKEY_INBOUND = VisualId("inv-anetwork-sankey-inbound")    # K.4.8
-V_INV_ANETWORK_SANKEY_OUTBOUND = VisualId("inv-anetwork-sankey-outbound")  # K.4.8
-V_INV_ANETWORK_TABLE = VisualId("inv-anetwork-table")                      # K.4.8
+# Visual IDs are auto-derived per L.1.16; no constants needed here.

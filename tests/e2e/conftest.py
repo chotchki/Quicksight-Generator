@@ -194,6 +194,26 @@ def inv_dataset_ids(resource_prefix) -> list[str]:
     return [f"{resource_prefix}-{s}" for s in suffixes]
 
 
+@pytest.fixture(scope="session")
+def exec_dashboard_id(resource_prefix) -> str:
+    return f"{resource_prefix}-executives-dashboard"
+
+
+@pytest.fixture(scope="session")
+def exec_analysis_id(resource_prefix) -> str:
+    return f"{resource_prefix}-executives-analysis"
+
+
+@pytest.fixture(scope="session")
+def exec_dataset_ids(resource_prefix) -> list[str]:
+    """Expected Executives dataset IDs (L.6.3)."""
+    suffixes = [
+        "exec-transaction-summary-dataset",
+        "exec-account-summary-dataset",
+    ]
+    return [f"{resource_prefix}-{s}" for s in suffixes]
+
+
 # ---------------------------------------------------------------------------
 # Tree-built App fixtures (L.11)
 #
@@ -229,6 +249,16 @@ def inv_app(cfg):
     from quicksight_gen.apps.investigation.app import build_investigation_app
 
     app = build_investigation_app(cfg)
+    app.emit_analysis()
+    return app
+
+
+@pytest.fixture(scope="session")
+def exec_app(cfg):
+    """Tree-built Executives App (post-emit, auto-IDs resolved)."""
+    from quicksight_gen.apps.executives.app import build_executives_app
+
+    app = build_executives_app(cfg)
     app.emit_analysis()
     return app
 
