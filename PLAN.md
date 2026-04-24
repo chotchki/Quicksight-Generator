@@ -380,17 +380,17 @@ The tree's existence is the test case for the layer separation: anything Sasquat
   - [x] L.9.11 — `mkdocs build --strict` clean (only the upstream Material 2.0 advisory + an INFO-level "install Black or Ruff for signature formatting" — neither is a build failure).
   - [x] L.9.12 — `pytest` green: 719 passed, 195 skipped (e2e gated).
 
-- [ ] **L.10 — Release as v5.0.0 (major).** Earned by: internal API change (external callers importing `quicksight_gen.apps.*.analysis` / `.filters` / `.visuals` for programmatic dashboard construction need to update — the new public surface is the `common/` tree); the new Executives app; the layer-separation cleanup. Per the project's no-backwards-compat-shims rule, no compatibility re-exports of the old per-app builder modules.
-  - [ ] L.10.0 - Add to the release process that after pushed to pypi prod, a test install of the new version is automatically done
-  - [ ] L.10.1 — Bump `__version__` from 4.0.0 → 5.0.0 in `src/quicksight_gen/__init__.py`.
-  - [ ] L.10.2 — Write the v5.0.0 entry in `RELEASE_NOTES.md` covering: tree pattern + three-layer model, the apps porting (L.2–L.4), the layer-separation cleanup (L.5), the new Executives app (L.6 + L.7 + L.8), the new mkdocstrings API reference (L.9), and the migration path for external callers (old `apps/*/analysis.py` builder imports → new `common.tree` API).
-  - [ ] L.10.3 — Tick L.0 – L.10 in PLAN.md (the file you're reading).
-  - [ ] L.10.4 — Run `quicksight-gen --version` to confirm 5.0.0; run full unit suite green.
+- [x] **L.10 — Release as v5.0.0 (major).** Earned by: internal API change (external callers importing `quicksight_gen.apps.*.{analysis,filters,visuals}` for programmatic dashboard construction need to update — the new public surface is `quicksight_gen.common.tree`); the new Executives app; the layer-separation cleanup. Per the project's no-backwards-compat-shims rule, no compatibility re-exports of the old per-app builder modules.
+  - [x] L.10.0 — Added post-publish install verification to the release pipeline for **both** TestPyPI and prod PyPI. Two new symmetric jobs (`verify-testpypi-install` + `verify-pypi-install`) gate the next stage of the workflow: TestPyPI verify must pass before `publish-pypi`, prod PyPI verify must pass before `github-release`. Each job polls `pip install quicksight-gen==<TAG>` from the relevant index (6 attempts × 30s sleep = 3 min total CDN propagation tolerance), confirms `quicksight-gen --version` matches the tag, and runs a smoke import of the public surface (`common.tree.{App,Sheet,visuals,filters,actions}` + `dataset_contract` + each app's `build_<app>_app`).
+  - [x] L.10.1 — Bumped `__version__` from 4.0.0 → 5.0.0 in `src/quicksight_gen/__init__.py`.
+  - [x] L.10.2 — Wrote the v5.0.0 entry in `RELEASE_NOTES.md` covering: tree pattern + three-layer model, the apps porting (L.2–L.4), the new Executives app (L.6 + L.7), the docs sweep + mkdocstrings API reference (L.9), the L.10.0 release-pipeline post-publish install verification, the L.5 + L.8 deferral to Phase M, and the migration path for external callers (old `apps/*/{analysis,filters,visuals}.py` builder imports → new `common.tree` API with a worked code-snippet diff).
+  - [x] L.10.3 — Ticked L.0 – L.10 in PLAN.md (the file you're reading).
+  - [x] L.10.4 — Ran `quicksight-gen --version` (returned `quicksight-gen, version 5.0.0`); full unit suite green (719 passing).
   - [ ] L.10.5 — Commit on the `phase-l-10-release-v5-0-0` branch.
   - [ ] L.10.6 — Merge to main (`--no-ff` per K convention).
   - [ ] L.10.7 — Tag `v5.0.0` annotated.
   - [ ] L.10.8 — Push main + tag.
-  - [ ] L.10.9 — Verify the release pipeline (Phase I.6 release workflow) runs green: TestPyPI publish → manual approval gate → PyPI publish → GitHub Release with sdist + wheel + sample bundle.
+  - [ ] L.10.9 — Verify the release pipeline (Phase I.6 release workflow) runs green: TestPyPI publish → verify-testpypi-install → manual approval gate → PyPI publish → verify-pypi-install → GitHub Release with sdist + wheel + sample bundle.
 
 **Sequencing.** L.0 first — the tree spike's only job is to validate that the L1 API can produce JSON the existing models accept; if it can't, redesign before any porting. L.1 lands the full primitives once the spike validates. Port apps L.2 → L.3 → L.4 in increasing complexity (Investigation smallest, AR largest) so each port stress-tests the API a little more than the previous one. L.5 (layer separation) lands after porting because we can't see the persona-specific surface clearly until all three apps are on the tree. L.6 (Executives greenfield) follows L.5 so it's built against the cleaned-up two-layer API. L.7–L.8 (e2e + handbook for Executives) mirror the K.4.9 → K.4.10 shape and stack at the end where everything they reference exists. L.9 sweeps the docs. L.10 publishes.
 
