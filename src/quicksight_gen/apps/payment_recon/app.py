@@ -762,19 +762,47 @@ def _populate_payments(
     status_filter.target_visuals.append(detail_table)
 
 
+_AGING_ROW_SPAN = 8
+
+
+def _add_aging_bar(
+    row,  # type: ignore[no-untyped-def]
+    *,
+    width: int,
+    visual_id: str,
+    title: str,
+    subtitle: str,
+    dataset: Dataset,
+    count_column: str,
+) -> None:
+    """Horizontal bar chart of count grouped by aging_bucket.
+
+    Mirror of the shared `common/aging.py::aging_bar_visual` shape:
+    `aging_bucket` on Category, COUNT(<count_column>) on Values,
+    HORIZONTAL CLUSTERED, axis labels Age / Count.
+    """
+    row.add_bar_chart(
+        width=width,
+        visual_id=visual_id,  # type: ignore[arg-type]
+        title=title,
+        subtitle=subtitle,
+        category=[dataset["aging_bucket"].dim(field_id=f"{visual_id}-dim")],
+        values=[dataset[count_column].count(field_id=f"{visual_id}-count")],
+        orientation="HORIZONTAL",
+        bars_arrangement="CLUSTERED",
+        category_label="Age",
+        value_label="Count",
+    )
+
+
 # ---------------------------------------------------------------------------
-# Exceptions & Alerts (L.4.5) — 2 KPIs at the top + 5 detail tables
-# arranged as 2 chart-pair rows (4 tables) + 1 full-width table.
+# Exceptions & Alerts (L.4.5 + L.4.12a) — 2 KPIs + 5 detail tables, each
+# table paired with an aging bar in the row below it. 12 visuals total.
 #
-# **Documented diff vs imperative** — `apps/payment_recon/visuals.py
-# ::build_exceptions_visuals()` constructs 5 additional `aging_bar_visual`
-# entries (`Unsettled Sales by Age`, `Returned Payments by Age`,
-# `Sale ↔ Settlement Mismatch by Age`, etc.) but no `GridLayoutElement`
-# references them — so they ship in `Sheets[].Visuals[]` but never
-# render. They look like an unfinished UX intention rather than dead
-# code (titles are real). The L.4.5 port emits only the placed visuals;
-# wiring the orphan bars is queued as a separate follow-up task (see
-# PLAN — "PR Exceptions: wire orphan aging bars").
+# **L.4.12a** — wired the 5 aging bars that the imperative
+# `build_exceptions_visuals()` constructed but never placed in the
+# layout. Each bar pairs with one of the existing tables to surface
+# the per-check age distribution alongside the row-level detail.
 # ---------------------------------------------------------------------------
 
 def _populate_exceptions(
@@ -848,6 +876,27 @@ def _populate_exceptions(
         ],
     )
 
+    # Aging-bar pair under row 2.
+    aging_row1 = sheet.layout.row(height=_AGING_ROW_SPAN)
+    _add_aging_bar(
+        aging_row1,
+        width=_HALF,
+        visual_id="exceptions-aging-unsettled",
+        title="Unsettled Sales by Age",
+        subtitle="How long unsettled sales have been outstanding",
+        dataset=ds_se,
+        count_column="sale_id",
+    )
+    _add_aging_bar(
+        aging_row1,
+        width=_HALF,
+        visual_id="exceptions-aging-returns",
+        title="Returned Payments by Age",
+        subtitle="How long returned payments have been outstanding",
+        dataset=ds_pr,
+        count_column="payment_id",
+    )
+
     # Row 3: side-by-side sale↔settlement + settlement↔payment mismatch tables.
     chart_row2 = sheet.layout.row(height=_CHART_ROW_SPAN)
     chart_row2.add_table(
@@ -890,6 +939,27 @@ def _populate_exceptions(
         ],
     )
 
+    # Aging-bar pair under row 3.
+    aging_row2 = sheet.layout.row(height=_AGING_ROW_SPAN)
+    _add_aging_bar(
+        aging_row2,
+        width=_HALF,
+        visual_id="exceptions-aging-sale-stl-mismatch",
+        title="Sale ↔ Settlement Mismatch by Age",
+        subtitle="How long sale-settlement mismatches have been outstanding",
+        dataset=ds_ssm,
+        count_column="settlement_id",
+    )
+    _add_aging_bar(
+        aging_row2,
+        width=_HALF,
+        visual_id="exceptions-aging-stl-pay-mismatch",
+        title="Settlement ↔ Payment Mismatch by Age",
+        subtitle="How long settlement-payment mismatches have been outstanding",
+        dataset=ds_spm,
+        count_column="payment_id",
+    )
+
     # Row 4: full-width unmatched external txns table.
     sheet.layout.row(height=_CHART_ROW_SPAN).add_table(
         width=_FULL,
@@ -908,6 +978,17 @@ def _populate_exceptions(
             ds_uet["days_outstanding"].dim(field_id="tbl-ue-days"),
             ds_uet["aging_bucket"].dim(field_id="tbl-ue-aging"),
         ],
+    )
+
+    # Aging bar under row 4 (full-width unmatched-ext-txn table).
+    _add_aging_bar(
+        sheet.layout.row(height=_AGING_ROW_SPAN),
+        width=_FULL,
+        visual_id="exceptions-aging-unmatched-ext",
+        title="Unmatched External Txns by Age",
+        subtitle="How long unmatched external transactions have been outstanding",
+        dataset=ds_uet,
+        count_column="transaction_id",
     )
 
 
@@ -1085,6 +1166,20 @@ def _populate_payment_recon(
     payments_table, ext_txn_table = sheet.visuals[-2], sheet.visuals[-1]
     system_filter.target_visuals.append(ext_txn_table)
     system_filter.target_visuals.append(payments_table)
+
+    # Row 4: full-width aging bar (L.4.12a — wires the imperative orphan).
+    _add_aging_bar(
+        sheet.layout.row(height=_AGING_ROW_SPAN),
+        width=_FULL,
+        visual_id="recon-aging-bar",
+        title="Reconciliation by Age",
+        subtitle=(
+            "How long external transactions have been outstanding "
+            "— older items are more likely to need investigation"
+        ),
+        dataset=ds_recon,
+        count_column="transaction_id",
+    )
 
 
 # ---------------------------------------------------------------------------

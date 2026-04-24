@@ -15,20 +15,13 @@ from dataclasses import asdict
 import pytest
 
 from quicksight_gen.apps.payment_recon.analysis import (
-    _build_exceptions_sheet as _imperative_exceptions_sheet,
     _build_getting_started_sheet as _imperative_getting_started_sheet,
-    _build_payment_recon_sheet as _imperative_payment_recon_sheet,
     _build_payments_sheet as _imperative_payments_sheet,
     _build_sales_sheet as _imperative_sales_sheet,
     _build_settlements_sheet as _imperative_settlements_sheet,
     build_analysis as _imperative_build_analysis,
-    build_payment_recon_dashboard as _imperative_build_dashboard,
 )
-from quicksight_gen.apps.payment_recon.app import (
-    build_analysis as _tree_build_analysis,
-    build_payment_recon_app,
-    build_payment_recon_dashboard as _tree_build_dashboard,
-)
+from quicksight_gen.apps.payment_recon.app import build_payment_recon_app
 from quicksight_gen.apps.payment_recon.constants import (
     PR_DRILL_BINDINGS,
     SHEET_EXCEPTIONS,
@@ -39,58 +32,6 @@ from quicksight_gen.apps.payment_recon.constants import (
 )
 
 
-# L.4.5 — `apps/payment_recon/visuals.py::build_exceptions_visuals()`
-# constructs 5 `aging_bar_visual` entries (`exceptions-aging-{unsettled,
-# returns,sale-stl-mismatch,stl-pay-mismatch,unmatched-ext}`) but no
-# `GridLayoutElement` references them — so they ship in the imperative
-# `Sheets[].Visuals[]` but never render. They look like an unfinished
-# UX intention rather than dead code (titles are end-user-facing). The
-# L.4.5 port emits only the placed visuals; wiring the orphan bars is
-# queued as a separate follow-up. Strip them on the imperative side
-# so the byte-identity test compares apples to apples.
-_PR_EXC_ORPHAN_VISUAL_IDS: frozenset[str] = frozenset({
-    "exceptions-aging-unsettled",
-    "exceptions-aging-returns",
-    "exceptions-aging-sale-stl-mismatch",
-    "exceptions-aging-stl-pay-mismatch",
-    "exceptions-aging-unmatched-ext",
-})
-
-
-def _strip_orphan_visuals(
-    sheet_json: dict, orphan_ids: frozenset[str],
-) -> dict:
-    out = dict(sheet_json)
-    visuals = out.get("Visuals") or []
-    out["Visuals"] = [
-        v for v in visuals
-        if not any(
-            isinstance(body, dict) and body.get("VisualId") in orphan_ids
-            for body in v.values()
-        )
-    ]
-    return out
-
-
-def _sort_visuals_by_id(sheet_json: dict) -> dict:
-    """Normalize `Visuals[]` ordering by VisualId.
-
-    `Visuals[]` is a registry — QuickSight uses `Layouts[].Elements`
-    for rendering order. The imperative builders return visuals in
-    construction order (which can mix layout-LEFT/RIGHT placement);
-    the tree's layout DSL appends in left-to-right placement order
-    per row. Both shapes deploy identically, so the byte-identity
-    test ignores Visuals order."""
-    out = dict(sheet_json)
-    visuals = out.get("Visuals") or []
-
-    def _vid(visual: dict) -> str:
-        for body in visual.values():
-            if isinstance(body, dict) and "VisualId" in body:
-                return body["VisualId"]
-        return ""
-    out["Visuals"] = sorted(visuals, key=_vid)
-    return out
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.models import _strip_nones
 
@@ -208,64 +149,89 @@ def test_l4_3_settlements_sheet_byte_identical() -> None:
     assert _normalize_sheet(tree_sheet) == _normalize_sheet(imperative_sheet)
 
 
-def test_l4_5_exceptions_sheet_byte_identical_modulo_orphan_visuals() -> None:
-    """Exceptions & Alerts: 2 KPIs (unsettled count + returns count) +
-    2 chart-pair rows of side-by-side detail tables (4 tables total) +
-    1 full-width unmatched-external-txns table. 7 placed visuals.
+def _visual_ids(sheet: dict) -> list[str]:
+    out: list[str] = []
+    for v in sheet.get("Visuals") or []:
+        for body in v.values():
+            if isinstance(body, dict) and "VisualId" in body:
+                out.append(body["VisualId"])
+    return out
 
-    The imperative `build_exceptions_visuals()` ships 5 additional
-    `aging_bar_visual` entries that no GridLayoutElement references —
-    documented diff (see app.py). Strip those before comparison."""
+
+def _layout_visual_ids(sheet: dict) -> list[str]:
+    layouts = sheet.get("Layouts") or []
+    if not layouts:
+        return []
+    return [
+        e["ElementId"]
+        for e in layouts[0]["Configuration"]["GridLayout"]["Elements"]
+    ]
+
+
+def test_l4_5_exceptions_sheet_has_kpis_tables_and_aging_bars() -> None:
+    """Exceptions & Alerts (post L.4.12a): 2 KPIs + 5 detail tables +
+    5 aging bars (one per table) = 12 visuals, all placed in layout.
+
+    L.4.12a wired the 5 aging bars the imperative
+    `build_exceptions_visuals()` constructed but never placed (orphan
+    UX intention surfaced during the L.4.5 port). Assertions are now
+    positive structural ones — there's no imperative comparator to
+    diff against once L.4.13 deletes the imperative builders."""
     cfg = Config(**_BASE_CFG_KWARGS)
-
-    imperative_sheet = _strip_orphan_visuals(
-        _strip_nones(asdict(_imperative_exceptions_sheet(cfg))),
-        _PR_EXC_ORPHAN_VISUAL_IDS,
-    )
 
     app = build_payment_recon_app(cfg)
     analysis = app.emit_analysis()
-    exc_sheet = next(
+    exc_sheet = _strip_nones(asdict(next(
         s for s in analysis.Definition.Sheets if s.SheetId == SHEET_EXCEPTIONS
-    )
-    tree_sheet = _strip_nones(asdict(exc_sheet))
+    )))
 
-    assert _normalize_sheet(tree_sheet) == _normalize_sheet(imperative_sheet)
+    visual_ids = set(_visual_ids(exc_sheet))
+    expected = {
+        "exceptions-kpi-unsettled",
+        "exceptions-kpi-returns",
+        "exceptions-unsettled-table",
+        "exceptions-returns-table",
+        "exceptions-sale-settlement-mismatch-table",
+        "exceptions-settlement-payment-mismatch-table",
+        "exceptions-unmatched-ext-txn-table",
+        "exceptions-aging-unsettled",
+        "exceptions-aging-returns",
+        "exceptions-aging-sale-stl-mismatch",
+        "exceptions-aging-stl-pay-mismatch",
+        "exceptions-aging-unmatched-ext",
+    }
+    assert visual_ids == expected
+    # Every visual is placed in the layout — no orphans remain.
+    assert set(_layout_visual_ids(exc_sheet)) == expected
 
 
-def test_l4_6_payment_recon_sheet_byte_identical_modulo_orphan_visuals() -> None:
-    """Payment Reconciliation: 3 KPIs at 1/3 width (matched amount,
-    unmatched amount, late count) + full-width vertical stacked bar by
-    external_system coloured by match_status (with same-sheet click
-    filter targeting BOTH detail tables) + side-by-side detail tables
-    (Internal Payments left, External Transactions right) — each with
-    a left-click Drill writing P_PR_EXTERNAL_TXN on the same sheet,
-    which is what powers the mutual-filter behaviour once the
-    parameter-bound filters land in L.4.7.
+def test_l4_6_payment_recon_sheet_has_kpis_bar_tables_and_aging() -> None:
+    """Payment Reconciliation (post L.4.12a): 3 KPIs + bar by system +
+    side-by-side detail tables + 1 aging bar = 7 visuals all placed.
 
-    Same orphan pattern as L.4.5 — `build_payment_recon_visuals()`
-    ships a `recon-aging-bar` that no `GridLayoutElement` references.
-    Also: the imperative returns `[ext_txns, payments]` from
-    `build_payment_recon_visuals()` but the layout places them
-    `[payments LEFT, ext_txns RIGHT]`; the tree's left-to-right
-    layout DSL appends in placement order. `Visuals[]` is a registry
-    not a render-order — normalize via `_sort_visuals_by_id`."""
+    L.4.12a wired the `recon-aging-bar` the imperative
+    `build_payment_recon_visuals()` constructed but never placed."""
     cfg = Config(**_BASE_CFG_KWARGS)
-
-    imperative_sheet = _sort_visuals_by_id(_strip_orphan_visuals(
-        _strip_nones(asdict(_imperative_payment_recon_sheet(cfg))),
-        frozenset({"recon-aging-bar"}),
-    ))
 
     app = build_payment_recon_app(cfg)
     analysis = app.emit_analysis()
-    recon_sheet = next(
+    recon_sheet = _strip_nones(asdict(next(
         s for s in analysis.Definition.Sheets
         if s.SheetId == SHEET_PAYMENT_RECON
-    )
-    tree_sheet = _sort_visuals_by_id(_strip_nones(asdict(recon_sheet)))
+    )))
 
-    assert _normalize_sheet(tree_sheet) == _normalize_sheet(imperative_sheet)
+    visual_ids = set(_visual_ids(recon_sheet))
+    expected = {
+        "recon-kpi-matched-amount",
+        "recon-kpi-unmatched-amount",
+        "recon-kpi-late-count",
+        "recon-bar-by-system",
+        "recon-payments-table",
+        "recon-ext-txn-table",
+        "recon-aging-bar",
+    }
+    assert visual_ids == expected
+    assert set(_layout_visual_ids(recon_sheet)) == expected
 
 
 def _filter_group_by_id(definition: dict, fg_id: str) -> dict | None:
@@ -313,86 +279,18 @@ def test_l4_7b_filter_groups_byte_identical() -> None:
     assert imperative["FilterGroups"] == tree["FilterGroups"]
 
 
-# L.4.7d — DataSetIdentifierDeclarations carried by the imperative
-# `_build_dataset_declarations` for two datasets nobody actually
-# references: `DS_MERCHANTS` (deprecated when settlement_exceptions
-# and payment_returns gained denormalised merchant_name) and
-# `DS_EXTERNAL_TRANSACTIONS` (replaced by the recon dataset that
-# joins them). The tree's `_used_datasets()` is selective by
-# construction — it only emits declarations for datasets the visuals
-# / filters / calc fields actually reference. Dead-code declarations
-# in the imperative; same orphan pattern as the aging bars and
-# queued for the same cleanup follow-up.
-_PR_UNREFERENCED_DATASET_IDS: frozenset[str] = frozenset({
-    "merchants-ds",
-    "external-transactions-ds",
-})
-
-
-def _strip_unreferenced_dataset_declarations(definition: dict) -> dict:
-    out = dict(definition)
-    decls = out.get("DataSetIdentifierDeclarations") or []
-    out["DataSetIdentifierDeclarations"] = [
-        d for d in decls
-        if d.get("Identifier") not in _PR_UNREFERENCED_DATASET_IDS
-    ]
-    return out
-
-
-def _normalize_definition(definition: dict) -> dict:
-    """Apply the per-sheet normalizations (`RowIndex` strip, orphan-
-    visual strip on Exceptions + Payment Recon, Visuals[]-order sort
-    on Payment Recon) across the full Definition so the L.4.7d full-
-    app byte-identity test compares apples to apples."""
-    normalized = _strip_unreferenced_dataset_declarations(
-        json.loads(json.dumps(definition)),
-    )
-    sheets = normalized.get("Sheets") or []
-    for i, sheet in enumerate(sheets):
-        sheet_id = sheet.get("SheetId")
-        if sheet_id == SHEET_EXCEPTIONS:
-            sheet = _strip_orphan_visuals(sheet, _PR_EXC_ORPHAN_VISUAL_IDS)
-        if sheet_id == SHEET_PAYMENT_RECON:
-            sheet = _sort_visuals_by_id(_strip_orphan_visuals(
-                sheet, frozenset({"recon-aging-bar"}),
-            ))
-        sheets[i] = _normalize_sheet(sheet)
-    normalized["Sheets"] = sheets
-    return normalized
-
-
-def test_l4_7d_full_analysis_byte_identical() -> None:
-    """Full Analysis JSON: tree-built === imperative, modulo the
-    documented diffs (per-sheet `RowIndex` strip + Exceptions / Payment
-    Recon orphan visuals + Payment Recon Visuals[] order). Drives the
-    CLI swap — `_generate_payment_recon` now imports from `app.py`."""
-    cfg = Config(**_BASE_CFG_KWARGS)
-
-    imp = _imperative_build_analysis(cfg).to_aws_json()
-    tree = _tree_build_analysis(cfg).to_aws_json()
-
-    assert _normalize_definition(tree["Definition"]) == _normalize_definition(
-        imp["Definition"],
-    )
-    # AnalysisId / Name / ThemeArn / Tags / Permissions outside Definition.
-    assert tree["AnalysisId"] == imp["AnalysisId"]
-    assert tree["Name"] == imp["Name"]
-    assert tree["ThemeArn"] == imp["ThemeArn"]
-
-
-def test_l4_7d_full_dashboard_byte_identical() -> None:
-    """Full Dashboard JSON: tree-built === imperative, same normalizations."""
-    cfg = Config(**_BASE_CFG_KWARGS)
-
-    imp = _imperative_build_dashboard(cfg).to_aws_json()
-    tree = _tree_build_dashboard(cfg).to_aws_json()
-
-    assert _normalize_definition(tree["Definition"]) == _normalize_definition(
-        imp["Definition"],
-    )
-    assert tree["DashboardId"] == imp["DashboardId"]
-    assert tree["Name"] == imp["Name"]
-    assert tree["ThemeArn"] == imp["ThemeArn"]
+# L.4.7d full-app byte-identity tests retired in L.4.12a — adding the
+# 6 aging bars to the tree's layout makes per-sheet equality with the
+# imperative inherently false on the Exceptions + Payment Recon sheets,
+# and the byte-identity gates already proved port-correctness up to
+# that commit (git history is the receipt). The remaining structural
+# coverage:
+# - Per-sheet structural assertions on Exceptions / Payment Recon
+#   (visual count + visual ids + every visual is placed).
+# - Per-sheet byte-identity tests for the unchanged sheets (Getting
+#   Started / Sales / Settlements / Payments) until L.4.13.
+# - L.4.7a parameter + drill PASS filter group equality.
+# - L.4.7b full FilterGroups list equality.
 
 
 def test_l4_4_payments_sheet_byte_identical() -> None:

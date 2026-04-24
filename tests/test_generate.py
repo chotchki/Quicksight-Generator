@@ -432,13 +432,10 @@ class TestExceptionTables:
             s for s in analysis["Definition"]["Sheets"]
             if s["SheetId"] == "sheet-exceptions"
         )
-        # 2 KPIs + 5 tables = 7 placed visuals.
-        # The pre-L.4.5 imperative emitted 12 (5 extra `aging_bar_visual`
-        # entries that no GridLayoutElement referenced — they shipped
-        # in `Visuals[]` but never rendered). The L.4 tree port drops
-        # those orphans; wiring the bars properly is a follow-up
-        # tracked under L.4.5 in PLAN.md.
-        assert len(exc_sheet["Visuals"]) == 7
+        # 2 KPIs + 5 tables + 5 aging bars = 12 visuals (L.4.12a wired
+        # the aging bars the imperative had constructed but never
+        # placed in the layout).
+        assert len(exc_sheet["Visuals"]) == 12
 
 
 class TestOptionalMetadataFilters:
