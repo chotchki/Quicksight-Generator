@@ -27,7 +27,15 @@ pytestmark = [pytest.mark.e2e, pytest.mark.browser]
 
 def _pr_drill_specs():
     """Build the parametrize list at collection time. Same shape as
-    `_ar_drill_specs()` in `test_ar_drilldown.py`."""
+    `_ar_drill_specs()` in `test_ar_drilldown.py`.
+
+    Parametrize runs at module import — *before* the e2e gate skip in
+    `conftest.py` has a chance to fire — so on CI (no `config.yaml`,
+    no `QS_GEN_*` env) `load_config(None)` would raise. Catching here
+    and returning `[]` makes pytest mark the test as "no parameters"
+    and skip cleanly; on a configured dev box the full enumeration
+    runs as before.
+    """
     from pathlib import Path
 
     from quicksight_gen.apps.payment_recon.app import build_payment_recon_app
@@ -39,7 +47,10 @@ def _pr_drill_specs():
             cfg = load_config(str(candidate))
             break
     if cfg is None:
-        cfg = load_config(None)
+        try:
+            cfg = load_config(None)
+        except ValueError:
+            return []
     app = build_payment_recon_app(cfg)
     app.emit_analysis()
 

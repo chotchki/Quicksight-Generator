@@ -34,6 +34,13 @@ def _ar_drill_specs():
     walks the tree's cross-sheet left-click drills. Returns
     `[(src_sheet_name, src_visual_title, tgt_sheet_name), ...]` —
     string tuples so pytest's parameter ids serialize cleanly.
+
+    Parametrize runs at module import — *before* the e2e gate skip in
+    `conftest.py` has a chance to fire — so on CI (no `config.yaml`,
+    no `QS_GEN_*` env) `load_config(None)` would raise. Catching here
+    and returning `[]` makes pytest mark the test as "no parameters"
+    and skip cleanly; on a configured dev box the full enumeration
+    runs as before.
     """
     from pathlib import Path
 
@@ -46,7 +53,10 @@ def _ar_drill_specs():
             cfg = load_config(str(candidate))
             break
     if cfg is None:
-        cfg = load_config(None)
+        try:
+            cfg = load_config(None)
+        except ValueError:
+            return []
     app = build_account_recon_app(cfg)
     app.emit_analysis()
 
