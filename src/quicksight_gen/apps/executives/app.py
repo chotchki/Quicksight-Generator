@@ -25,6 +25,11 @@ Sheets land per L.6 sub-step:
 
 from __future__ import annotations
 
+# Importing datasets registers each Executives DatasetContract via its
+# module-level register_contract() side effect — required so the L.1.17
+# bare-string / unvalidated-Column emit-time validator can resolve
+# every ds["col"] ref in the visuals below.
+from quicksight_gen.apps.executives import datasets as _register_contracts  # noqa: F401
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.ids import SheetId
