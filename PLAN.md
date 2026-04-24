@@ -304,19 +304,27 @@ The tree's existence is the test case for the layer separation: anything Sasquat
     - **Tightening, not just compaction**: TreeValidator asserts ALL declared visual titles + ALL declared filter/parameter control titles per sheet. The prior tests checked subsets. Adding a new sheet, visual, or control in any tree port will auto-extend test coverage with no test edits.
     - **Drill coverage auto-extends**: The drill enumeration generates one parametrized case per cross-sheet left-click drill the tree declares. Pre-L.11 had 5 hand-curated tests (3 AR + 2 PR); post-L.11 has the same 5, derived from the tree.
 
-- [ ] **L.5 — Layer separation: default vs demo overlay.** With all three apps ported, audit the L1 + L2 surface for persona leaks. Acceptance: `quicksight-gen generate --all` against a non-demo config produces a fully-rendering generic dashboard with zero Sasquatch references; `demo apply --all` continues to produce the Sasquatch-flavored output it does today.
-  - [ ] L.5.1 — `grep -ri "sasquatch\|snb\|bigfoot\|juniper\|cascadia\|farmers exchange" src/quicksight_gen/common/ src/quicksight_gen/apps/{payment_recon,account_recon,investigation}/{analysis,filters,visuals,datasets,etl_examples,constants}.py` — every match is a leak that must move to L3.
-  - [ ] L.5.2 — Categorize each leak: persona-specific copy (move to L3 overlay), generic copy that happens to mention SNB (rephrase generically), or structural (refactor).
-  - [ ] L.5.3 — Define the L3 overlay API surface. Two candidate shapes:
-    - (a) **Wrapper:** `DemoOverlay(theme="sasquatch-bank-investigation", getting_started_extras={...}, demo_seed=sasquatch_inv_demo_data).apply_to(default_inv_app)` — overlay returns a new tree with persona copy + theme injected.
-    - (b) **Composition:** the L2 `build_investigation_app()` returns the bare tree; `build_investigation_demo_app()` in a separate module composes overlay on top.
-    - Pick by which keeps `apps/{pr,ar,inv}/` files most persona-free.
-  - [ ] L.5.4 — Move Sasquatch-specific Getting Started rich-text copy from sheet builders into the L3 overlay (today the Investigation Getting Started mentions "Sasquatch National Bank shared base ledger" — that copy belongs to demo, not default).
-  - [ ] L.5.5 — Make the demo theme preset explicit: default tree builds against `default` theme; demo overlay opts into `sasquatch-bank*`. Update CLI default-vs-demo behavior to match.
-  - [ ] L.5.6 — Wire the existing `demo_data.py` files into the L3 overlay layer (no changes to the demo SQL itself — just where it attaches).
-  - [ ] L.5.7 — Verify generic-mode rendering: a fresh `generate --all` against a non-demo config produces zero Sasquatch references in any emitted JSON (script the check).
-  - [ ] L.5.8 — Verify demo-mode rendering: `demo apply --all` produces output byte-identical to pre-L.5 (modulo any documented diffs from L.2-L.4).
-  - [ ] L.5.9 — Document the three-layer model in `CLAUDE.md` under Architecture Decisions. Include the "Sasquatch lives only in L3" rule with a code example.
+- [~] **L.5 — Layer separation: default vs demo overlay.** **Deferred to Phase M (Whitelabel-V2).** Phase M's headline is replacing today's persona model with a typed dataclass that drives seed SQL + handbook + dashboard render in lockstep — L.5's overlay extraction would be the throwaway intermediate step. Today's single-persona / no-customer-asking-for-non-demo state has nothing forcing the separation. The two costs of deferral are (a) two always-emitted persona leaks ship in non-demo dashboards (`apps/investigation/app.py:210` + `apps/account_recon/app.py:1062` — cosmetic, easy hotfix if it matters), and (b) the L.5 audit findings would re-surface at M kickoff — preserved here so they don't.
+
+  **L.5.1 + L.5.2 audit findings (preserved for Phase M kickoff):**
+
+  *Category A — always-emitted persona leaks (break "zero Sasquatch in non-demo"):*
+  - `apps/investigation/app.py:210` — Getting Started intro: "Compliance / AML triage surface for the Sasquatch National Bank shared base ledger."
+  - `apps/account_recon/app.py:1062` — Two-Sided Post Mismatch KPI subtitle: "...one side of an expected SNB/Fed post pair landed but the other side never did."
+
+  *Category B — demo-conditional flavor blocks (already gated by `if cfg.demo_database_url:`):*
+  - `apps/payment_recon/app.py` — Sasquatch coffee-shop demo block (~13 lines).
+  - `apps/account_recon/app.py` — Sasquatch CMS demo block (~50 lines).
+  - Investigation has no demo-conditional path — its persona text is unconditional (Category A above).
+
+  *Category C — already-isolated, intentional:*
+  - `common/persona.py` — `SNB_PERSONA` substitution dict (K.2a.5 — feeds `mapping.yaml.example` derivation).
+  - `common/theme.py` — Sasquatch theme presets (themes ARE personas).
+  - `common/dataset_contract.py:63` — single docstring example mentioning "Sasquatch Sips (gl-1850)"; rephraseable as a one-line cleanup.
+  - `apps/<app>/demo_data.py` — demo SQL generators (persona is the point).
+  - `apps/<app>/etl_examples.py` — ETL example files (these ARE examples, persona-by-design).
+
+  *Recommended overlay shape (notes for M):* extract demo flavor copy into `apps/<app>/_demo_copy.py` sibling modules; the `if is_demo:` branches in `app.py` import from `_demo_copy`. Smaller than the (a) wrapper / (b) composition shapes and keeps persona text near its consumer. **Note:** if Phase M moves to a fully persona-dataclass-driven render pipeline, this whole approach gets replaced — that's why deferring is correct.
 
 - [ ] **L.6 — Executives app on the new tree from scratch.** Greenfield use of the tree pattern as the proving ground that the API works for first-time authors, not just for porting existing apps. **Second iteration gate** — friction here calls back into L.1. Per Training_Story.md: counts across the data, transactions over time, money moved per type. Acceptance: 4th app deploys alongside the other 3; full unit + e2e suites green; the L.6 author writes ~no `constants.py` (the tree carries the IDs).
   - [ ] L.6.1 — Design pass: name the sheets, list visuals per sheet, identify dataset queries needed. Likely 3–4 sheets — Getting Started + Account Coverage (counts per ledger / sub-ledger / customer / merchant) + Transaction Volume Over Time (line charts per `transfer_type`) + Money Moved (totals per rail / per type, period-over-period).
