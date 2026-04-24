@@ -31,6 +31,7 @@ from __future__ import annotations
 # every ds["col"] ref in the visuals below.
 from quicksight_gen.apps.executives import datasets as _register_contracts  # noqa: F401
 from quicksight_gen.common import rich_text as rt
+from quicksight_gen.common.tree._helpers import _AutoSentinel
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.ids import SheetId
 from quicksight_gen.common.models import Analysis as ModelAnalysis
@@ -39,13 +40,26 @@ from quicksight_gen.common.theme import get_preset
 from quicksight_gen.common.tree import (
     Analysis,
     App,
+    CategoryFilter,
+    Dataset,
+    FilterGroup,
     Sheet,
     TextBox,
+)
+
+from quicksight_gen.apps.executives.datasets import (
+    DS_EXEC_ACCOUNT_SUMMARY,
+    DS_EXEC_TRANSACTION_SUMMARY,
+    build_all_datasets,
 )
 
 
 # Layout constants — same pattern as PR/AR/Inv app.py modules.
 _FULL = 36
+_HALF = 18
+_KPI_ROW_SPAN = 6
+_CHART_ROW_SPAN = 12
+_TABLE_ROW_SPAN = 18
 
 
 # URL-facing sheet IDs — these need to be stable across deploys and
@@ -200,6 +214,172 @@ def _populate_getting_started(cfg: Config, sheet: Sheet) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Datasets — registered on the App in build_executives_app; populators
+# reference them by Python variable. Same shape as AR/PR's _datasets()
+# helpers.
+# ---------------------------------------------------------------------------
+
+def _datasets(cfg: Config) -> dict[str, Dataset]:
+    """Map each Executives logical dataset identifier to a typed `Dataset` ref."""
+    built = build_all_datasets(cfg)
+    names = [DS_EXEC_TRANSACTION_SUMMARY, DS_EXEC_ACCOUNT_SUMMARY]
+    return {
+        name: Dataset(identifier=name, arn=cfg.dataset_arn(ds.DataSetId))
+        for name, ds in zip(names, built)
+    }
+
+
+# ---------------------------------------------------------------------------
+# Account Coverage (L.6.4) — 2 KPIs (open / active) + 2 bar charts
+# (open and active counts grouped by account_type) + detail table.
+#
+# "Active accounts" KPI scopes to a visual-pinned filter on
+# `activity_count > 0`. The bar of active counts uses the same
+# scoping pattern.
+# ---------------------------------------------------------------------------
+
+# Filter group ID for the visual-scoped pinned filter narrowing the
+# "active accounts" KPI + bar to rows with activity_count > 0.
+_FG_EXEC_ACCT_ACTIVE_ONLY = "fg-exec-account-active-only"
+
+
+def _populate_account_coverage(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    datasets: dict[str, Dataset],
+) -> None:
+    del cfg
+    ds_acct = datasets[DS_EXEC_ACCOUNT_SUMMARY]
+
+    # Row 1: two KPIs side-by-side.
+    kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
+    kpi_row.add_kpi(
+        width=_HALF,
+        visual_id="exec-account-kpi-open",  # type: ignore[arg-type]
+        title="Total Open Accounts",
+        subtitle="Every account that has ever appeared in daily_balances",
+        values=[ds_acct["account_id"].count(field_id="exec-acct-open-count")],
+    )
+    kpi_row.add_kpi(
+        width=_HALF,
+        visual_id="exec-account-kpi-active",  # type: ignore[arg-type]
+        title="Active Accounts",
+        subtitle=(
+            "Accounts with at least one successful transaction "
+            "(visual-pinned filter on activity_count > 0)"
+        ),
+        values=[
+            ds_acct["account_id"].count(field_id="exec-acct-active-count"),
+        ],
+    )
+
+    # Row 2: two horizontal bar charts side-by-side. Open count on
+    # the left, active count on the right — both grouped by
+    # account_type so the deposit base shape vs the operational GL
+    # shape pop visually.
+    chart_row = sheet.layout.row(height=_CHART_ROW_SPAN)
+    chart_row.add_bar_chart(
+        width=_HALF,
+        visual_id="exec-account-bar-open-by-type",  # type: ignore[arg-type]
+        title="Open Accounts by Type",
+        subtitle="Total open-account count grouped by account_type",
+        category=[
+            ds_acct["account_type"].dim(field_id="exec-acct-open-type-dim"),
+        ],
+        values=[ds_acct["account_id"].count(
+            field_id="exec-acct-open-type-count",
+        )],
+        orientation="HORIZONTAL",
+        bars_arrangement="CLUSTERED",
+        category_label="Account Type",
+        value_label="Open Accounts",
+    )
+    chart_row.add_bar_chart(
+        width=_HALF,
+        visual_id="exec-account-bar-active-by-type",  # type: ignore[arg-type]
+        title="Active Accounts by Type",
+        subtitle=(
+            "Accounts with activity_count > 0, grouped by account_type"
+        ),
+        category=[
+            ds_acct["account_type"].dim(field_id="exec-acct-active-type-dim"),
+        ],
+        values=[ds_acct["account_id"].count(
+            field_id="exec-acct-active-type-count",
+        )],
+        orientation="HORIZONTAL",
+        bars_arrangement="CLUSTERED",
+        category_label="Account Type",
+        value_label="Active Accounts",
+    )
+
+    # Row 3: full-width unaggregated detail table — one row per
+    # account, sorted by activity_count DESC so the busiest accounts
+    # surface at the top.
+    sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        visual_id="exec-account-detail-table",  # type: ignore[arg-type]
+        title="Account Detail",
+        subtitle=(
+            "Per-account row with last activity date and total count "
+            "of successful transaction legs"
+        ),
+        columns=[
+            ds_acct["account_id"].dim(field_id="exec-acct-tbl-id"),
+            ds_acct["account_name"].dim(field_id="exec-acct-tbl-name"),
+            ds_acct["account_type"].dim(field_id="exec-acct-tbl-type"),
+            ds_acct["last_activity_date"].dim(
+                field_id="exec-acct-tbl-last-activity",
+            ),
+            ds_acct["activity_count"].dim(field_id="exec-acct-tbl-count"),
+        ],
+        sort_by=("exec-acct-tbl-count", "DESC"),
+    )
+
+
+def _wire_account_coverage_filter_groups(
+    analysis: Analysis,
+    *,
+    sheet: Sheet,
+    datasets: dict[str, Dataset],
+) -> None:
+    """Visual-scoped pinned filter for the active-only KPI + bar.
+
+    `activity_count > 0` is naturally a NumericRangeFilter, but pinning
+    a visual filter via ``CategoryFilter.with_values`` is the common
+    pattern in PR/AR. Use a NumericRangeFilter with `RangeMinimum=1`
+    and no upper bound — narrows to rows where activity_count >= 1.
+    """
+    from quicksight_gen.common.tree import NumericRangeFilter, StaticBound
+
+    ds_acct = datasets[DS_EXEC_ACCOUNT_SUMMARY]
+
+    fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=_FG_EXEC_ACCT_ACTIVE_ONLY,
+        filters=[NumericRangeFilter(
+            filter_id="filter-exec-account-active-only",
+            dataset=ds_acct,
+            column=ds_acct["activity_count"],
+            minimum=StaticBound(value=1),
+            include_minimum=True,
+            null_option="NON_NULLS_ONLY",
+        )],
+    ))
+    # Scope to the active-only KPI + the active-by-type bar (the open
+    # KPI + open-by-type bar legitimately count every row).
+    active_visuals = [
+        v for v in sheet.visuals
+        if not isinstance(v.visual_id, _AutoSentinel)
+        and v.visual_id in (
+            "exec-account-kpi-active",
+            "exec-account-bar-active-by-type",
+        )
+    ]
+    sheet.scope(fg, active_visuals)
+
+
+# ---------------------------------------------------------------------------
 # App entry points
 # ---------------------------------------------------------------------------
 
@@ -236,6 +416,10 @@ def build_executives_app(cfg: Config) -> App:
         name=_analysis_name(cfg),
     ))
 
+    datasets = _datasets(cfg)
+    for ds in datasets.values():
+        app.add_dataset(ds)
+
     sheets: dict[str, Sheet] = {}
     for sheet_id, name, title, description in _EXEC_SHEET_SPECS:
         sheets[sheet_id] = analysis.add_sheet(Sheet(
@@ -246,6 +430,15 @@ def build_executives_app(cfg: Config) -> App:
         ))
 
     _populate_getting_started(cfg, sheets[SHEET_EXEC_GETTING_STARTED])
+    _populate_account_coverage(
+        cfg, sheets[SHEET_EXEC_ACCOUNT_COVERAGE], datasets=datasets,
+    )
+
+    _wire_account_coverage_filter_groups(
+        analysis,
+        sheet=sheets[SHEET_EXEC_ACCOUNT_COVERAGE],
+        datasets=datasets,
+    )
 
     app.create_dashboard(
         dashboard_id_suffix="executives-dashboard",
