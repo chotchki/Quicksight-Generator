@@ -172,11 +172,81 @@ jobs:
           repository-url: https://test.pypi.org/legacy/
 
   # ---------------------------------------------------------------------------
-  # Publish to PyPI (gated on TestPyPI success + manual environment approval)
+  # Verify the just-published TestPyPI release actually installs.
+  #
+  # The local-wheel `smoke` job above proves the wheel is sound, but it
+  # can't catch (a) missing files stripped by the sdist/wheel upload, or
+  # (b) PyPI metadata rejections that succeed locally. Pulling from the
+  # index after publish closes that gap before we promote to prod.
+  #
+  # CDN propagation lag is real (1-2 min after publish for the index to
+  # serve the new version), so the install step retries. TestPyPI doesn't
+  # mirror our dependencies (boto3, etc.) — `--extra-index-url` lets pip
+  # fetch deps from prod PyPI while pulling the package itself from
+  # TestPyPI.
+  # ---------------------------------------------------------------------------
+  verify-testpypi-install:
+    name: Verify TestPyPI install
+    needs: publish-testpypi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install from TestPyPI (with retries for CDN propagation)
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          python -m venv /tmp/qs-verify-testpypi
+          /tmp/qs-verify-testpypi/bin/pip install --upgrade pip
+          for attempt in 1 2 3 4 5 6; do
+            echo "Attempt ${attempt}: pip install quicksight-gen==${TAG} from TestPyPI"
+            if /tmp/qs-verify-testpypi/bin/pip install \
+                --index-url https://test.pypi.org/simple/ \
+                --extra-index-url https://pypi.org/simple/ \
+                "quicksight-gen==${TAG}"; then
+              echo "Install succeeded on attempt ${attempt}"
+              exit 0
+            fi
+            echo "Install failed; sleeping 30s before retry..."
+            sleep 30
+          done
+          echo "::error::pip install quicksight-gen==${TAG} from TestPyPI failed after 6 attempts (3 min total)"
+          exit 1
+
+      - name: Verify CLI version flag
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          OUT=$(/tmp/qs-verify-testpypi/bin/quicksight-gen --version)
+          echo "${OUT}"
+          echo "${OUT}" | grep -q "${TAG}" || { echo "::error::--version output missing tag ${TAG}"; exit 1; }
+
+      - name: Smoke import the public surface
+        run: |
+          /tmp/qs-verify-testpypi/bin/python -c "
+          from quicksight_gen.common.tree import App, Sheet
+          from quicksight_gen.common.tree.visuals import KPI, Table, BarChart, Sankey
+          from quicksight_gen.common.tree.filters import FilterGroup
+          from quicksight_gen.common.tree.actions import Drill
+          from quicksight_gen.common.dataset_contract import DatasetContract, ColumnSpec
+          from quicksight_gen.common.config import Config
+          from quicksight_gen.apps.payment_recon.app import build_payment_recon_app
+          from quicksight_gen.apps.account_recon.app import build_account_recon_app
+          from quicksight_gen.apps.investigation.app import build_investigation_app
+          from quicksight_gen.apps.executives.app import build_executives_app
+          print('public surface importable')
+          "
+
+  # ---------------------------------------------------------------------------
+  # Publish to PyPI (gated on TestPyPI install verify + manual environment
+  # approval)
   # ---------------------------------------------------------------------------
   publish-pypi:
     name: Publish to PyPI
-    needs: publish-testpypi
+    needs: verify-testpypi-install
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -193,11 +263,71 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
 
   # ---------------------------------------------------------------------------
+  # Verify the just-published prod PyPI release actually installs.
+  #
+  # Symmetric to verify-testpypi-install: poll the prod PyPI index until
+  # the new version is fetchable, install into a fresh venv, prove the
+  # CLI works and the public surface imports. github-release depends on
+  # this so a half-published package can't ship a GitHub Release.
+  # ---------------------------------------------------------------------------
+  verify-pypi-install:
+    name: Verify PyPI install
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install from PyPI (with retries for CDN propagation)
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          python -m venv /tmp/qs-verify-pypi
+          /tmp/qs-verify-pypi/bin/pip install --upgrade pip
+          for attempt in 1 2 3 4 5 6; do
+            echo "Attempt ${attempt}: pip install quicksight-gen==${TAG} from PyPI"
+            if /tmp/qs-verify-pypi/bin/pip install "quicksight-gen==${TAG}"; then
+              echo "Install succeeded on attempt ${attempt}"
+              exit 0
+            fi
+            echo "Install failed; sleeping 30s before retry..."
+            sleep 30
+          done
+          echo "::error::pip install quicksight-gen==${TAG} from PyPI failed after 6 attempts (3 min total)"
+          exit 1
+
+      - name: Verify CLI version flag
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          OUT=$(/tmp/qs-verify-pypi/bin/quicksight-gen --version)
+          echo "${OUT}"
+          echo "${OUT}" | grep -q "${TAG}" || { echo "::error::--version output missing tag ${TAG}"; exit 1; }
+
+      - name: Smoke import the public surface
+        run: |
+          /tmp/qs-verify-pypi/bin/python -c "
+          from quicksight_gen.common.tree import App, Sheet
+          from quicksight_gen.common.tree.visuals import KPI, Table, BarChart, Sankey
+          from quicksight_gen.common.tree.filters import FilterGroup
+          from quicksight_gen.common.tree.actions import Drill
+          from quicksight_gen.common.dataset_contract import DatasetContract, ColumnSpec
+          from quicksight_gen.common.config import Config
+          from quicksight_gen.apps.payment_recon.app import build_payment_recon_app
+          from quicksight_gen.apps.account_recon.app import build_account_recon_app
+          from quicksight_gen.apps.investigation.app import build_investigation_app
+          from quicksight_gen.apps.executives.app import build_executives_app
+          print('public surface importable')
+          "
+
+  # ---------------------------------------------------------------------------
   # GitHub Release with sdist + wheel + sample bundle
   # ---------------------------------------------------------------------------
   github-release:
     name: GitHub Release
-    needs: publish-pypi
+    needs: verify-pypi-install
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -1,5 +1,90 @@
 # Release Notes
 
+## v5.0.0
+
+### Phase L — Tree primitives + Executives app + mkdocstrings API reference (major)
+
+Replaces the constants-heavy, manually-cross-referenced dashboard construction in the per-app `analysis.py` / `filters.py` / `visuals.py` modules with a tree of typed builder objects in `common/tree/`. Visuals reference `Dataset` nodes (not string identifiers); filter groups reference `Visual` nodes; cross-sheet drills reference `Sheet` nodes. Internal IDs (visual_id, filter_group_id, action_id, layout element IDs) auto-derive from tree position; URL-facing identifiers (`SheetId`, `ParameterName`) and analyst-facing identifiers (`Dataset` identifier, `CalcField` name) stay explicit. `App.emit_analysis()` / `emit_dashboard()` runs validation walks (dataset / calc-field / parameter / drill-destination references) — a missing reference fails at construction with a stack trace pointing at the wiring site, not at deploy with an opaque "InvalidParameterValue".
+
+All three existing apps (Payment Reconciliation, Account Reconciliation, Investigation) ported to the tree, and a fourth app — **Executives**, board-cadence statistics over the shared base tables — built greenfield directly on the new primitives. Combined source reduction across the three ports: -47%.
+
+The major bump is earned by:
+
+- **Internal API change.** External callers importing `quicksight_gen.apps.{payment_recon,account_recon,investigation}.{analysis,filters,visuals}` for programmatic dashboard construction must update — those modules are gone, collapsed into a single `apps/<app>/app.py` per app. The new public construction surface is `quicksight_gen.common.tree` (App / Analysis / Dashboard / Sheet plus typed Visual / Filter / Control / Drill wrappers). Per the project's no-backwards-compat-shims rule, no compatibility re-exports.
+- **New Executives app** added as the fourth dashboard.
+- **Layer-separation cleanup.** The codebase is now structured around an explicit three-layer model: L1 (`common/tree/` — persona-blind primitives), L2 (`apps/<app>/app.py` — per-app tree assembly in domain vocabulary), L3 (SQL strings + `demo_data.py` + `common/persona.py` + theme presets — persona / customer flavor). The L1 invariant: zero `sasquatch` hits in `common/tree/`.
+
+### What landed
+
+**Typed tree primitives in `common/tree/` (L.1)**
+
+- `App` / `Analysis` / `Dashboard` / `Sheet` are the top-level structural nodes; cross-references between them are object refs, not string IDs.
+- Typed `Visual` subtypes: `KPI`, `Table`, `BarChart`, `Sankey`, plus `TextBox` for rich-text content. Each subtype validates its dataset / column references at emit time.
+- Typed Filter wrappers: `CategoryFilter`, `NumericRangeFilter`, `TimeRangeFilter`, plus `FilterGroup` for sheet-wide / visual-pinned / all-sheets scoping.
+- Typed Parameter declarations (`StringParameter` / `IntegerParameter` / `DecimalParameter` / `DatetimeParameter`) and matching Filter / Parameter `Control` wrappers (Dropdown, Slider, DateTimePicker, CrossSheet).
+- Typed `Drill` actions with `Sheet` object-ref targets — the tree validates the destination at emit time so a typo'd drill target fails at construction, not at deploy.
+- Typed `Dataset` + `Column` nodes; `ds["col"].dim()` / `.sum()` / `.date()` chained factories produce typed `Dim` / `Measure` slots that visuals consume directly. Column refs validate against the registered `DatasetContract` so column-name typos raise a loud `KeyError` at the wiring site.
+- Typed analysis-level `CalcField`; auto-naming from tree position.
+- Auto-ID resolver (L.1.16) for internal IDs; pyright strict on `common/tree/`; kitchen-sink app exercising every primitive shape (L.1.10.6).
+
+**Apps ported to the tree (L.2 / L.3 / L.4)**
+
+- L.2 — Investigation: 5 sheets, 5 datasets, walk-the-flow drills on the directional Sankeys, parameter-bound chain-root + anchor selection.
+- L.3 — Account Reconciliation: 5 sheets, 13 datasets including the 3 cross-check rollups + 2 daily-statement datasets, per-tab filters, drill-down chain (Balances → Transactions, Transfers → Transactions, Today's Exceptions → per-check details).
+- L.4 — Payment Reconciliation: 6 sheets, 11 datasets, mutual-filter Payment Reconciliation tab, cross-pipeline drills (Payments → Settlements → Sales).
+- Combined source reduction across the three ports: -47%.
+
+**Executives — fourth app, greenfield (L.6)**
+
+- 4 sheets: Getting Started + Account Coverage + Transaction Volume Over Time + Money Moved.
+- 2 custom-SQL datasets reading the shared base tables only — no Executives-specific schema. Per-transfer pre-aggregation (`WITH per_transfer AS`) collapses multi-leg transfers so a 2-leg $100 movement counts as one $100 transfer (not two $200) in the volume + money rollups.
+- Account Coverage's Active KPI + Active bar carry a visual-pinned `activity_count >= 1` filter so they read as "accounts that moved money in the period" while the Open KPI/bar count every row — same dataset, different scope.
+- The greenfield author wrote zero `constants.py` (sheet IDs inline in `app.py`, internal IDs auto-resolved per L.1.16) and used only the L.1 primitives — the validation that Phase L's API design is sound.
+
+**Browser e2e for Executives (L.7)**
+
+- 20 new tests across 4 modules in `tests/e2e/`. API + browser layers cover dashboard / analysis / 2-dataset existence, sheet structure (4 sheets with descriptions, per-sheet visual counts, the visual-pinned active-only filter scoping), embed URL, sheet-tab smoke, and per-sheet visual rendering via `TreeValidator(exec_app, page).validate_structure()`.
+- The `test_exec_*.py` files derive expected sets from the tree (`exec_app.analysis.{sheets,parameters,filter_groups}`) instead of hand-listed dicts — the L.11 "tree IS the source of truth" pattern.
+- Cleanup of three pre-existing structural-test debts surfaced during the run-the-suite step: two Investigation tests rewritten off legacy hardcoded `V_INV_*` VisualIds onto analyst-facing visual titles (then dropped the now-orphan V_INV_* exports from `apps/investigation/constants.py`); one PR test rewritten to derive from `pr_app.dataset_dependencies()` (was over-asserting via the fixture, which still listed the unreferenced `merchants-dataset`).
+
+**Docs sweep + mkdocstrings-driven Python API reference (L.9)**
+
+- New "Tree pattern" section in `CLAUDE.md` under Architecture Decisions covering the three-layer model (L1 / L2 / L3), the persona-blind primitives rule, and the "tree IS the source of truth" rule with three concrete tree-walking examples from the codebase.
+- `CLAUDE.md` project-structure tree refreshed: `common/tree/` expanded as a package with all 13 sub-modules listed; per-app entries collapsed off the dropped `analysis.py` / `visuals.py` / `filters.py` shape into `app.py`-only; `common/{persona,drill,ids}.py` + `apps/executives/` added; tests + e2e listings refreshed.
+- README updated for 4 apps throughout — new Executives table block in "The four apps" section, demo scenario block, deploy commands, project structure, customising section.
+- mkdocstrings wired into the mkdocs build (`mkdocstrings[python]>=0.26` added to `docs` extras). 7 API reference pages under `src/quicksight_gen/docs/api/`: `index.md` (overview + three-layer model), `tree-structure.md`, `tree-visuals.md`, `tree-data.md`, `tree-filters-controls.md`, `tree-actions.md`, `common-foundations.md`.
+- New customization handbook walkthrough: "How do I author a new app on the tree?" — L.6 Executives is the worked example. `mkdocs build --strict` clean.
+
+**Release pipeline: post-publish install verification (L.10.0)**
+
+- Two new symmetric jobs in `.github/workflows/release.yml` — `verify-testpypi-install` (gates `publish-pypi`) and `verify-pypi-install` (gates `github-release`). Each polls `pip install quicksight-gen==<TAG>` from the relevant index with retries (CDN propagation lag), confirms `quicksight-gen --version`, and runs a smoke import of the public surface (`common.tree.{App,Sheet,visuals,filters,actions}` + each app's `build_<app>_app` entry point).
+- Catches missing-package-data or stripped-import bugs the local-wheel `smoke` job can't see, and prevents a half-published-then-unfetchable package from getting a GitHub Release.
+
+### Migration path for external callers
+
+For programmatic dashboard construction, replace per-app builder imports with the public tree API:
+
+```python
+# v4.x — gone
+from quicksight_gen.apps.payment_recon.analysis import build_analysis
+from quicksight_gen.apps.payment_recon.visuals import sales_overview_visual
+from quicksight_gen.apps.payment_recon.filters import build_filter_group
+from quicksight_gen.apps.payment_recon.constants import V_PR_SALES_KPI
+
+# v5.0 — tree-based public API
+from quicksight_gen.common.tree import App, Sheet
+from quicksight_gen.common.tree.visuals import KPI, Table, BarChart, Sankey
+from quicksight_gen.common.tree.filters import FilterGroup
+from quicksight_gen.common.tree.actions import Drill
+from quicksight_gen.apps.payment_recon.app import build_payment_recon_app
+```
+
+Read [`How do I author a new app on the tree?`](https://chotchki.github.io/Quicksight-Generator/walkthroughs/customization/how-do-i-author-a-new-app-on-the-tree/) for the worked-example narrative; the [API Reference](https://chotchki.github.io/Quicksight-Generator/api/) covers every public class.
+
+The L.5 (default-vs-demo overlay) and L.8 (Executives handbook + walkthroughs) substeps were deferred to Phase M (Whitelabel-V2), where the persona-substitution surface gets unified across all four apps and the Executives copy lands in its final whitelabel-ready shape.
+
+---
+
 ## v4.0.0
 
 ### Phase K.4 — Investigation app + `apps/` namespace re-org (major)
