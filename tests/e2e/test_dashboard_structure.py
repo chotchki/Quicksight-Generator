@@ -9,8 +9,6 @@ from quicksight_gen.apps.payment_recon.constants import (
     FG_PR_PAYMENTS_UNMATCHED,
     FG_PR_SALES_UNSETTLED,
     FG_PR_SETTLEMENTS_UNPAID,
-    P_PR_EXTERNAL_TXN,
-    P_PR_SETTLEMENT,
     V_PR_EXC_SALE_SETTLEMENT_MISMATCH_TABLE,
     V_PR_EXC_SETTLEMENT_PAYMENT_MISMATCH_TABLE,
     V_PR_EXC_UNMATCHED_EXT_TXN_TABLE,
@@ -29,6 +27,26 @@ def dashboard_definition(qs_client, account_id, dashboard_id) -> dict:
         DashboardId=dashboard_id,
     )
     return resp["Definition"]
+
+
+@pytest.fixture(scope="module")
+def pr_app():
+    """L.4.9 — typed PR App handle. Aggregates `_STATIC_FG_PR_IDS` /
+    `ALL_P_PR` / `ALL_V_PR` were dropped from constants.py in L.4.8;
+    the tree's emitted filter-group + parameter sets are the source
+    of truth now. Module scope mirrors `dashboard_definition`."""
+    from quicksight_gen.apps.payment_recon.app import build_payment_recon_app
+    from quicksight_gen.common.config import Config
+
+    cfg = Config(
+        aws_account_id="111122223333",
+        aws_region="us-west-2",
+        datasource_arn="arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds",
+        theme_preset="default",
+    )
+    app = build_payment_recon_app(cfg)
+    app.emit_analysis()
+    return app
 
 
 class TestSheets:
@@ -132,31 +150,30 @@ class TestVisuals:
 
 
 class TestParameters:
-    def test_has_settlement_id_parameter(self, dashboard_definition):
-        params = dashboard_definition.get("ParameterDeclarations", [])
-        names = set()
-        for p in params:
+    def _names(self, definition: dict) -> set[str]:
+        names: set[str] = set()
+        for p in definition.get("ParameterDeclarations", []):
             for decl in p.values():
                 if isinstance(decl, dict) and "Name" in decl:
                     names.add(decl["Name"])
-        assert P_PR_SETTLEMENT.name in names
+        return names
 
-    def test_has_external_txn_id_parameter(self, dashboard_definition):
-        params = dashboard_definition.get("ParameterDeclarations", [])
-        names = set()
-        for p in params:
-            for decl in p.values():
-                if isinstance(decl, dict) and "Name" in decl:
-                    names.add(decl["Name"])
-        assert P_PR_EXTERNAL_TXN.name in names
+    def test_drill_down_parameters(self, dashboard_definition, pr_app):
+        """All 3 PR drill parameters declared. Tree-walked source of
+        truth: `app.analysis.parameters`."""
+        expected = {p.name for p in pr_app.analysis.parameters}
+        assert self._names(dashboard_definition) == expected
 
 
 class TestFilterGroups:
-    def test_has_filter_groups(self, dashboard_definition):
+    def test_filter_group_ids(self, dashboard_definition, pr_app):
+        """All registered PR filter groups present. Walks
+        `app.analysis.filter_groups` (29 total: 18 pipeline + 3 pipeline
+        drills + 6 recon + 2 recon drills)."""
         groups = dashboard_definition.get("FilterGroups", [])
-        # core pipeline + 3 state toggles + 4 optional metadata
-        # + settlement/payment drill-downs + 3 recon + 2 recon drill-downs
-        assert len(groups) >= 18
+        ids = {g["FilterGroupId"] for g in groups}
+        expected = {fg.filter_group_id for fg in pr_app.analysis.filter_groups}
+        assert ids == expected
 
     def test_filter_group_ids_unique(self, dashboard_definition):
         groups = dashboard_definition.get("FilterGroups", [])
