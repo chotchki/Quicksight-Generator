@@ -1,8 +1,10 @@
 # Release Notes
 
-## v5.0.0
+## v5.0.1
 
 ### Phase L — Tree primitives + Executives app + mkdocstrings API reference (major)
+
+> **v5.0.0 was cut but never published to prod PyPI.** The release pipeline reached the manual approval gate, at which point the underlying CI run on the same commit was discovered to be red — two e2e drilldown tests crashed at parametrize-collection time on a stock CI runner (no `config.yaml`, no `QS_GEN_*` env vars). The release was cancelled at the gate before `publish-pypi` ran. v5.0.1 ships the same Phase L work plus two release-pipeline reliability fixes that prevent the same situation from recurring. See "Release pipeline reliability" at the end of this entry. The v5.0.0 git tag was deleted; TestPyPI shows a v5.0.0 artifact (the pre-fix wheel) which will not be promoted.
 
 Replaces the constants-heavy, manually-cross-referenced dashboard construction in the per-app `analysis.py` / `filters.py` / `visuals.py` modules with a tree of typed builder objects in `common/tree/`. Visuals reference `Dataset` nodes (not string identifiers); filter groups reference `Visual` nodes; cross-sheet drills reference `Sheet` nodes. Internal IDs (visual_id, filter_group_id, action_id, layout element IDs) auto-derive from tree position; URL-facing identifiers (`SheetId`, `ParameterName`) and analyst-facing identifiers (`Dataset` identifier, `CalcField` name) stay explicit. `App.emit_analysis()` / `emit_dashboard()` runs validation walks (dataset / calc-field / parameter / drill-destination references) — a missing reference fails at construction with a stack trace pointing at the wiring site, not at deploy with an opaque "InvalidParameterValue".
 
@@ -55,10 +57,11 @@ The major bump is earned by:
 - mkdocstrings wired into the mkdocs build (`mkdocstrings[python]>=0.26` added to `docs` extras). 7 API reference pages under `src/quicksight_gen/docs/api/`: `index.md` (overview + three-layer model), `tree-structure.md`, `tree-visuals.md`, `tree-data.md`, `tree-filters-controls.md`, `tree-actions.md`, `common-foundations.md`.
 - New customization handbook walkthrough: "How do I author a new app on the tree?" — L.6 Executives is the worked example. `mkdocs build --strict` clean.
 
-**Release pipeline: post-publish install verification (L.10.0)**
+**Release pipeline reliability**
 
-- Two new symmetric jobs in `.github/workflows/release.yml` — `verify-testpypi-install` (gates `publish-pypi`) and `verify-pypi-install` (gates `github-release`). Each polls `pip install quicksight-gen==<TAG>` from the relevant index with retries (CDN propagation lag), confirms `quicksight-gen --version`, and runs a smoke import of the public surface (`common.tree.{App,Sheet,visuals,filters,actions}` + each app's `build_<app>_app` entry point).
-- Catches missing-package-data or stripped-import bugs the local-wheel `smoke` job can't see, and prevents a half-published-then-unfetchable package from getting a GitHub Release.
+- **Post-publish install verification (L.10.0).** Two new symmetric jobs in `.github/workflows/release.yml` — `verify-testpypi-install` (gates `publish-pypi`) and `verify-pypi-install` (gates `github-release`). Each polls `pip install quicksight-gen==<TAG>` from the relevant index with retries (CDN propagation lag), confirms `quicksight-gen --version`, and runs a smoke import of the public surface (`common.tree.{App,Sheet,visuals,filters,actions}` + each app's `build_<app>_app` entry point). Catches missing-package-data or stripped-import bugs the local-wheel `smoke` job can't see, and prevents a half-published-then-unfetchable package from getting a GitHub Release.
+- **Release gated on tests passing (v5.0.1 follow-up).** Added a `tests` job at the start of `release.yml` that re-runs the same pytest+pyright matrix `ci.yml` runs (Python 3.12 + 3.13). `build` depends on `tests`, so any test failure stops the release before any publish step fires — preventing the v5.0.0 situation where TestPyPI publish ran despite CI being red on the same commit.
+- **e2e drilldown collection-time crash (v5.0.1 fix).** `tests/e2e/test_drilldown.py` and `test_ar_drilldown.py` call helpers at module import time (pytest.mark.parametrize argument) that load `config.yaml`. On stock CI (no config, no `QS_GEN_*` env) the load raises `ValueError` *before* the `QS_GEN_E2E` gate in `conftest.py` has a chance to skip the test. Fix: catch the `ValueError` and return an empty parameter list — pytest then marks the test as "no parameters" and skips cleanly. On a configured dev box the full enumeration still runs.
 
 ### Migration path for external callers
 
