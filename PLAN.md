@@ -268,9 +268,41 @@ The tree's existence is the test case for the layer separation: anything Sasquat
   - [x] L.11.2 — Adopted `TreeValidator(<app>, page).validate_structure()` on the 3 `test_*_sheet_visuals.py` files. Each previously had two parametrized tests + two hand-curated dicts (`EXPECTED_VISUAL_COUNTS` + `EXPECTED_TITLES_PER_SHEET` covering 17 sheet entries across the 3 apps). Now each file has one `test_<app>_dashboard_structure_matches_tree` that walks every sheet, asserts every expected visual title is in the DOM, asserts the visual count matches `len(sheet.visuals)`, and accumulates failures across sheets into a single AssertionError listing every mismatch. **Tightening, not just compaction**: the prior tests checked SUBSETS of titles (e.g. AR Exceptions Trends asserted 5 of 7 visual titles); TreeValidator asserts ALL titles. PR file 105→48 lines, AR 151→52, Investigation 134→61. Net e2e -229 lines so far.
   - [x] L.11.3 — Filter / parameter control coverage moved to `TreeValidator.validate_sheet_controls(sheet)` extension instead of per-test enumerations. The validator walks `sheet.filter_controls + sheet.parameter_controls`, resolves each control's title (with a Cross-Sheet inheritance fallback that walks `control.filter.default_control.title`), and asserts every title is present in the deployed DOM. Wired into `validate_structure()` so the existing L.11.2 `test_*_dashboard_structure_matches_tree` tests automatically pick up the new coverage — no per-app rewrites needed. The behavioral filter tests (`test_filters.py`, `test_ar_filters.py`) stay untouched: they test "what happens when you click X" patterns where most of the test-specific data (toggle values, witness KPI titles) isn't in the tree. The 5 hanging PR FilterControl dropdown tests aren't fixed by this — L.4.10 already established their failure is a QS UI selector change, not a tree wiring issue.
   - [x] L.11.4 — Added `enumerate_cross_sheet_left_click_drills(app)` to `tree_validator.py` — walks every visual's actions, yields `(source_sheet, source_visual, target_sheet)` for each cross-sheet `Drill` with `trigger=DATA_POINT_CLICK`. `test_drilldown.py` (PR) + `test_ar_drilldown.py` collapsed to a single parametrized `test_drill_navigates_to_target_sheet` per file. Enumeration produces exactly the 5 cases the original tests covered (3 AR: Balances→Txn, Transfers→Txn, Today's Exc→Txn; 2 PR: Settlements→Sales, Payments→Settlements). Adding a new cross-sheet left-click drill in any tree port will auto-extend test coverage. `test_inv_drilldown.py` left alone — Investigation drilldown is a same-sheet walk-anchor pattern (skipped today, deferred per K.4.9 follow-up). Right-click `DATA_POINT_MENU` drills (5 in PR + 2 in AR) deferred to a follow-up substep when a right-click DOM driver lands.
-  - [ ] L.11.5 — **Audit remaining tests for opportunities.** `test_*_kpi_semantics.py` (KPI value correctness — domain-aware, probably stay hardcoded), `test_*_state_toggles.py` (toggle behavior), `test_*_cross_sheet_param_hygiene.py` (drill hygiene), `test_recon_mutual_filter.py` (mutual-filter behavior). Inventory and decide per-test; some are inherently DOM-state checks that can't tree-walk.
+  - [x] L.11.5 — Audit complete. Categorization of remaining browser e2e tests:
+
+    **Redundant with L.11.3 `validate_sheet_controls` coverage but kept as explicit regression guards** (cheap, narrow):
+    - `test_state_toggles.py` — toggle titles per pipeline tab + "no days-outstanding slider" absence guard.
+    - `test_ar_state_toggles.py` — AR Show-Only-X toggle titles + Daily Statement parameter control titles.
+    - `test_filters.py::test_no_payment_method_control_on_settlements` — explicit absence guard for the Phase 2.7 scope fix.
+    - `test_filters.py::test_no_days_outstanding_control` — same shape, days-outstanding slider absence.
+
+    **Inherently DOM-state behavioral, can't tree-walk** (test "what happens when you click X" rather than "what's declared"):
+    - `test_filters.py` — date-range / dropdown / slider narrowing, Show-Only-X toggle behavior, chart-bar click filtering.
+    - `test_ar_filters.py` — date-range narrows transactions.
+    - `test_inv_filters.py` — both tests skipped (deferred per K.4.9 — embed-URL hash interferes with embed handshake).
+    - `test_recon_mutual_filter.py` — clicking ext-txn / payment row filters the other table.
+    - `test_filter_stacking.py` — drill parameter persistence across tab roundtrip.
+    - `test_ar_todays_exc_drill.py` — Today's Exceptions table drill behavior.
+    - `test_ar_cross_sheet_param_hygiene.py` — drill hygiene (cross-sheet params reset properly).
+
+    **Postgres-direct semantics (no DOM, no tree walk applicable)**:
+    - `test_pr_kpi_semantics.py`, `test_ar_kpi_semantics.py` — KPI value correctness via direct SELECT.
+    - `test_ar_cross_visibility.py`, `test_ar_daily_statement.py` — scenario coverage via direct SELECT.
+
+    **API / boto3 resource checks (no tree walk applicable)**:
+    - `test_*_dataset_health.py`, `test_*_deployed_resources.py` — verify deployed AWS resources exist.
+
+    **Done in earlier substeps**:
+    - `test_*_dashboard_renders.py` (L.11.1), `test_*_dashboard_structure.py` (L.x.9), `test_*_sheet_visuals.py` (L.11.2), `test_drilldown.py` + `test_ar_drilldown.py` (L.11.4).
+
+    **No further substeps required.** The remaining tests are either (a) behavioral, (b) Postgres-direct, (c) API resource checks, or (d) explicit regression guards too narrow to fold into the tree walk. The tree-walk treatment is now complete for the structural test surface.
   - [ ] L.11.6 — Run the e2e suite end-to-end (`./run_e2e.sh`) to confirm tree-walked tests pass against the deployed dashboards. Out of scope for the L.11 implementation work itself — needs deploy access.
-  - [ ] L.11.7 — Net reduction figures + commit. Same shape as L.2/L.3/L.4 — track the line-count drop across the e2e directory.
+  - [x] L.11.7 — **L.11 net reduction (vs pre-L.11.1 baseline `35fe4a6`):**
+    - **Test surface** (dashboard_renders + dashboard_structure + sheet_visuals + drilldown): 1389 → 1133 lines (**−256 lines, −18%**). Sheet-visuals files alone shrank −228 lines (387 → 159) via TreeValidator.
+    - **Infrastructure** (tree_validator + conftest): +138 lines. Adds `validate_sheet_controls`, `enumerate_cross_sheet_left_click_drills`, `_control_title` helper, and 3 session-scoped `*_app` fixtures — amortized across all current and future tests.
+    - **Net**: −118 lines across the changed files.
+    - **Tightening, not just compaction**: TreeValidator asserts ALL declared visual titles + ALL declared filter/parameter control titles per sheet. The prior tests checked subsets. Adding a new sheet, visual, or control in any tree port will auto-extend test coverage with no test edits.
+    - **Drill coverage auto-extends**: The drill enumeration generates one parametrized case per cross-sheet left-click drill the tree declares. Pre-L.11 had 5 hand-curated tests (3 AR + 2 PR); post-L.11 has the same 5, derived from the tree.
 
 - [ ] **L.5 — Layer separation: default vs demo overlay.** With all three apps ported, audit the L1 + L2 surface for persona leaks. Acceptance: `quicksight-gen generate --all` against a non-demo config produces a fully-rendering generic dashboard with zero Sasquatch references; `demo apply --all` continues to produce the Sasquatch-flavored output it does today.
   - [ ] L.5.1 — `grep -ri "sasquatch\|snb\|bigfoot\|juniper\|cascadia\|farmers exchange" src/quicksight_gen/common/ src/quicksight_gen/apps/{payment_recon,account_recon,investigation}/{analysis,filters,visuals,datasets,etl_examples,constants}.py` — every match is a leak that must move to L3.
