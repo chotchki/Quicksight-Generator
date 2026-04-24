@@ -391,9 +391,9 @@ The tree's existence is the test case for the layer separation: anything Sasquat
   - [x] L.10.4 — Ran `quicksight-gen --version` (returned `quicksight-gen, version 5.0.2`); full unit suite green (719 passing).
   - [x] L.10.5 — Committed on the `phase-l-10-release-v5-0-0` branch (retired after the merge); v5.0.1 + v5.0.2 follow-up commits land directly on `main`.
   - [x] L.10.6 — Merged the original L.10 work to main (`--no-ff` per K convention) before discovery of the CI gating issues. v5.0.1 + v5.0.2 follow-ups landed directly on main.
-  - [ ] L.10.7 — Tag `v5.0.2` annotated. (v5.0.0 + v5.0.1 tags both deleted from local + origin.)
-  - [ ] L.10.8 — Push main + tag.
-  - [ ] L.10.9 — Verify the release pipeline (Phase I.6 release workflow) runs green: tests → build → smoke + bake-sample → TestPyPI publish → verify-testpypi-install → manual approval gate → PyPI publish → verify-pypi-install → GitHub Release with sdist + wheel + sample bundle.
+  - [x] L.10.7 — Tagged `v5.0.2` annotated. (v5.0.0 + v5.0.1 tags both deleted from local + origin.)
+  - [x] L.10.8 — Pushed main + tag.
+  - [x] L.10.9 — Release pipeline ran clean end-to-end (run id 24874497006): tests (3.12 + 3.13) → build → smoke + bake-sample → TestPyPI publish → verify-testpypi-install → manual approval → PyPI publish → verify-pypi-install → GitHub Release. v5.0.2 is live on prod PyPI; the new install-verification gates worked correctly on first promotion.
 
 **Sequencing.** L.0 first — the tree spike's only job is to validate that the L1 API can produce JSON the existing models accept; if it can't, redesign before any porting. L.1 lands the full primitives once the spike validates. Port apps L.2 → L.3 → L.4 in increasing complexity (Investigation smallest, AR largest) so each port stress-tests the API a little more than the previous one. L.5 (layer separation) lands after porting because we can't see the persona-specific surface clearly until all three apps are on the tree. L.6 (Executives greenfield) follows L.5 so it's built against the cleaned-up two-layer API. L.7–L.8 (e2e + handbook for Executives) mirror the K.4.9 → K.4.10 shape and stack at the end where everything they reference exists. L.9 sweeps the docs. L.10 publishes.
 
