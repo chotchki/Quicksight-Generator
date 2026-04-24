@@ -35,6 +35,7 @@ from quicksight_gen.common.tree import (
     Sheet,
     VisualLike,
 )
+from quicksight_gen.common.tree.actions import Drill
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
@@ -47,6 +48,41 @@ from tests.e2e.browser_helpers import (
     wait_for_visual_titles_present,
     wait_for_visuals_present,
 )
+
+
+def enumerate_cross_sheet_left_click_drills(
+    app: App,
+) -> list[tuple[Sheet, VisualLike, Sheet]]:
+    """Walk every visual's actions; yield each cross-sheet, left-click
+    `Drill` as a `(source_sheet, source_visual, target_sheet)` tuple.
+
+    "Cross-sheet" = `target_sheet is not source_sheet`. Same-sheet
+    drills (the mutual-filter pattern on PR Payment Reconciliation)
+    are filtered out — clicking doesn't change the sheet, so the
+    "wait for tab to switch" witness wouldn't apply.
+
+    "Left-click" = `trigger == "DATA_POINT_CLICK"`. Right-click menu
+    drills (`DATA_POINT_MENU`) need a different DOM driver and are
+    skipped here.
+
+    Returns a list (not a generator) so `pytest.mark.parametrize` can
+    consume it directly without exhausting on first call.
+    """
+    out: list[tuple[Sheet, VisualLike, Sheet]] = []
+    if app.analysis is None:
+        return out
+    for sheet in app.analysis.sheets:
+        for visual in sheet.visuals:
+            for action in getattr(visual, "actions", []) or []:
+                if not isinstance(action, Drill):
+                    continue
+                if action.trigger != "DATA_POINT_CLICK":
+                    continue
+                target = action.target_sheet
+                if not isinstance(target, Sheet) or target is sheet:
+                    continue
+                out.append((sheet, visual, target))
+    return out
 
 
 def _control_title(control) -> str | None:
