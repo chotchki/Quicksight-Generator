@@ -1,195 +1,152 @@
-"""Tests for Payment Reconciliation visuals and filters."""
+"""Tests for the Payment Reconciliation app.
+
+L.4.13 — the imperative builders (`apps/payment_recon/{analysis,
+filters,recon_filters,visuals,recon_visuals}.py`) were retired.
+Tests now walk the tree's emitted analysis from
+`build_payment_recon_app(cfg)`. The L.4.5 + L.4.6 structural
+assertions for the orphan-bar-wired Exceptions + Payment
+Reconciliation sheets live here (moved from the deleted
+`test_l4_payment_recon_port.py` byte-identity gate).
+"""
 
 from __future__ import annotations
 
 from dataclasses import asdict
 
-from quicksight_gen.common.config import Config
+import pytest
+
+from quicksight_gen.apps.payment_recon.app import build_payment_recon_app
 from quicksight_gen.apps.payment_recon.constants import (
-    DS_EXTERNAL_TRANSACTIONS,
-    DS_PAYMENT_RECON,
-    DS_PAYMENTS,
+    SHEET_EXCEPTIONS,
     SHEET_PAYMENT_RECON,
 )
+from quicksight_gen.common.config import Config
 from quicksight_gen.common.models import _strip_nones
-from quicksight_gen.apps.payment_recon.recon_filters import (
-    build_recon_controls,
-    build_recon_filter_groups,
-)
-from quicksight_gen.apps.payment_recon.recon_visuals import build_payment_recon_visuals
 
 
 _TEST_CFG = Config(
     aws_account_id="111122223333",
     aws_region="us-west-2",
     datasource_arn="arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds",
+    theme_preset="default",
 )
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _collect_visual_ids(visuals: list) -> list[str]:
-    """Extract VisualId from each Visual union."""
-    ids = []
-    for v in visuals:
-        raw = _strip_nones(asdict(v))
-        for vtype in raw.values():
-            if isinstance(vtype, dict) and "VisualId" in vtype:
-                ids.append(vtype["VisualId"])
-    return ids
+@pytest.fixture(scope="module")
+def pr_analysis():
+    """Tree-built PR Analysis (post-emit, auto-IDs resolved)."""
+    return build_payment_recon_app(_TEST_CFG).emit_analysis()
 
 
-def _collect_dataset_refs(visuals: list) -> set[str]:
-    """Collect all DataSetIdentifier values referenced by visuals."""
-    refs: set[str] = set()
+def _visual_ids(sheet: dict) -> list[str]:
+    out: list[str] = []
+    for v in sheet.get("Visuals") or []:
+        for body in v.values():
+            if isinstance(body, dict) and "VisualId" in body:
+                out.append(body["VisualId"])
+    return out
 
-    def _walk(obj: object) -> None:
-        if isinstance(obj, dict):
-            if "DataSetIdentifier" in obj:
-                refs.add(obj["DataSetIdentifier"])
-            for v in obj.values():
-                _walk(v)
-        elif isinstance(obj, list):
-            for item in obj:
-                _walk(item)
 
-    for v in visuals:
-        _walk(_strip_nones(asdict(v)))
-    return refs
+def _layout_visual_ids(sheet: dict) -> list[str]:
+    layouts = sheet.get("Layouts") or []
+    if not layouts:
+        return []
+    return [
+        e["ElementId"]
+        for e in layouts[0]["Configuration"]["GridLayout"]["Elements"]
+    ]
+
+
+def _sheet_dict(pr_analysis, sheet_id: str) -> dict:
+    sheet = next(
+        s for s in pr_analysis.Definition.Sheets if s.SheetId == sheet_id
+    )
+    return _strip_nones(asdict(sheet))
 
 
 # ---------------------------------------------------------------------------
-# Visual tests
+# Exceptions & Alerts (L.4.5 + L.4.12a)
 # ---------------------------------------------------------------------------
 
-class TestPaymentReconVisuals:
-    def test_count(self):
-        visuals = build_payment_recon_visuals("#2E5090")
-        assert len(visuals) == 7
-
-    def test_ids_unique(self):
-        ids = _collect_visual_ids(build_payment_recon_visuals("#2E5090"))
-        assert len(ids) == len(set(ids))
-
-    def test_dataset_refs(self):
-        refs = _collect_dataset_refs(build_payment_recon_visuals("#2E5090"))
-        assert refs == {DS_PAYMENT_RECON, DS_PAYMENTS}
-
-    def test_has_kpi_visuals(self):
-        visuals = build_payment_recon_visuals("#2E5090")
-        kpis = [v for v in visuals if v.KPIVisual is not None]
-        assert len(kpis) == 3
-
-    def test_has_bar_chart(self):
-        visuals = build_payment_recon_visuals("#2E5090")
-        bars = [v for v in visuals if v.BarChartVisual is not None]
-        assert len(bars) == 2
-
-    def test_has_tables(self):
-        visuals = build_payment_recon_visuals("#2E5090")
-        tables = [v for v in visuals if v.TableVisual is not None]
-        assert len(tables) == 2
-
-    def test_bar_chart_has_filter_action(self):
-        visuals = build_payment_recon_visuals("#2E5090")
-        bar = next(v for v in visuals if v.BarChartVisual is not None)
-        assert bar.BarChartVisual.Actions is not None
-        assert len(bar.BarChartVisual.Actions) == 1
-        action = bar.BarChartVisual.Actions[0]
-        assert action.Trigger == "DATA_POINT_CLICK"
-
-    def test_tables_have_param_actions(self):
-        visuals = build_payment_recon_visuals("#2E5090")
-        tables = [v for v in visuals if v.TableVisual is not None]
-        for t in tables:
-            assert t.TableVisual.Actions is not None
-            assert len(t.TableVisual.Actions) == 1
-            ops = t.TableVisual.Actions[0].ActionOperations
-            op_keys = set()
-            for op in ops:
-                op_keys.update(_strip_nones(asdict(op)).keys())
-            assert "NavigationOperation" in op_keys
-            assert "SetParametersOperation" in op_keys
+def test_exceptions_sheet_has_kpis_tables_and_aging_bars(pr_analysis) -> None:
+    """Exceptions & Alerts: 2 KPIs + 5 detail tables + 5 aging bars
+    (one per table) = 12 visuals, all placed in layout. L.4.12a wired
+    the 5 aging bars the imperative had constructed but never placed."""
+    sheet = _sheet_dict(pr_analysis, SHEET_EXCEPTIONS)
+    expected = {
+        "exceptions-kpi-unsettled",
+        "exceptions-kpi-returns",
+        "exceptions-unsettled-table",
+        "exceptions-returns-table",
+        "exceptions-sale-settlement-mismatch-table",
+        "exceptions-settlement-payment-mismatch-table",
+        "exceptions-unmatched-ext-txn-table",
+        "exceptions-aging-unsettled",
+        "exceptions-aging-returns",
+        "exceptions-aging-sale-stl-mismatch",
+        "exceptions-aging-stl-pay-mismatch",
+        "exceptions-aging-unmatched-ext",
+    }
+    assert set(_visual_ids(sheet)) == expected
+    # Every visual is placed — no orphans remain.
+    assert set(_layout_visual_ids(sheet)) == expected
 
 
 # ---------------------------------------------------------------------------
-# Filter tests
+# Payment Reconciliation (L.4.6 + L.4.12a)
 # ---------------------------------------------------------------------------
 
-class TestReconFilterGroups:
-    def test_count(self):
-        groups = build_recon_filter_groups(_TEST_CFG)
-        assert len(groups) == 6
-
-    def test_filter_ids_unique(self):
-        groups = build_recon_filter_groups(_TEST_CFG)
-        filter_ids = []
-        for fg in groups:
-            for f in fg.Filters:
-                raw = _strip_nones(asdict(f))
-                for filter_obj in raw.values():
-                    if isinstance(filter_obj, dict) and "FilterId" in filter_obj:
-                        filter_ids.append(filter_obj["FilterId"])
-        assert len(filter_ids) == len(set(filter_ids))
-
-    def test_filter_group_ids_unique(self):
-        groups = build_recon_filter_groups(_TEST_CFG)
-        fg_ids = [fg.FilterGroupId for fg in groups]
-        assert len(fg_ids) == len(set(fg_ids))
-
-    def test_all_scoped_to_payment_recon_sheet(self):
-        groups = build_recon_filter_groups(_TEST_CFG)
-        for fg in groups:
-            raw = _strip_nones(asdict(fg))
-            scope = raw["ScopeConfiguration"]
-            if "SelectedSheets" in scope:
-                for svc in scope["SelectedSheets"][
-                    "SheetVisualScopingConfigurations"
-                ]:
-                    assert svc["SheetId"] == SHEET_PAYMENT_RECON, (
-                        f"Filter group '{fg.FilterGroupId}' scoped to "
-                        f"'{svc['SheetId']}', expected '{SHEET_PAYMENT_RECON}'"
-                    )
-
-    def test_has_time_range_filter(self):
-        groups = build_recon_filter_groups(_TEST_CFG)
-        date_fgs = [g for g in groups if "date-range" in g.FilterGroupId]
-        assert len(date_fgs) == 1
-
-    def test_has_category_filters(self):
-        groups = build_recon_filter_groups(_TEST_CFG)
-        cat_fgs = [
-            g for g in groups
-            if "match-status" in g.FilterGroupId
-            or "external-system" in g.FilterGroupId
-        ]
-        assert len(cat_fgs) == 2
+def test_payment_recon_sheet_has_kpis_bar_tables_and_aging(pr_analysis) -> None:
+    """Payment Reconciliation: 3 KPIs + bar by system + side-by-side
+    detail tables + 1 aging bar = 7 visuals all placed."""
+    sheet = _sheet_dict(pr_analysis, SHEET_PAYMENT_RECON)
+    expected = {
+        "recon-kpi-matched-amount",
+        "recon-kpi-unmatched-amount",
+        "recon-kpi-late-count",
+        "recon-bar-by-system",
+        "recon-payments-table",
+        "recon-ext-txn-table",
+        "recon-aging-bar",
+    }
+    assert set(_visual_ids(sheet)) == expected
+    assert set(_layout_visual_ids(sheet)) == expected
 
 
-class TestReconFilterControls:
-    def test_count(self):
-        controls = build_recon_controls(_TEST_CFG)
-        assert len(controls) == 3
-
-    def test_controls_reference_valid_filters(self):
-        """Every SourceFilterId in controls must match a filter group filter."""
-        groups = build_recon_filter_groups(_TEST_CFG)
-        all_filter_ids = set()
-        for fg in groups:
-            for f in fg.Filters:
-                raw = _strip_nones(asdict(f))
-                for filter_obj in raw.values():
-                    if isinstance(filter_obj, dict) and "FilterId" in filter_obj:
-                        all_filter_ids.add(filter_obj["FilterId"])
-
-        for ctrl in build_recon_controls(_TEST_CFG):
-            raw = _strip_nones(asdict(ctrl))
-            for ctrl_obj in raw.values():
-                if isinstance(ctrl_obj, dict) and "SourceFilterId" in ctrl_obj:
-                    src = ctrl_obj["SourceFilterId"]
-                    assert src in all_filter_ids, (
-                        f"Control references filter '{src}' but it's not in "
-                        f"filter groups. Known: {all_filter_ids}"
-                    )
+def test_payment_recon_tables_carry_mutual_filter_drills(pr_analysis) -> None:
+    """Both detail tables on the recon sheet write `pExternalTransactionId`
+    on left-click — that's what powers the mutual-filter behaviour
+    (parameter-bound CategoryFilters re-render both tables when one
+    fires). The drill `target_sheet` is the recon sheet itself
+    (same-sheet parameter-set)."""
+    sheet = _sheet_dict(pr_analysis, SHEET_PAYMENT_RECON)
+    table_ids = {"recon-payments-table", "recon-ext-txn-table"}
+    for v in sheet["Visuals"]:
+        if "TableVisual" not in v:
+            continue
+        body = v["TableVisual"]
+        if body["VisualId"] not in table_ids:
+            continue
+        actions = body.get("Actions") or []
+        assert len(actions) == 1, (
+            f"{body['VisualId']} should have exactly one drill action"
+        )
+        action = actions[0]
+        assert action["Trigger"] == "DATA_POINT_CLICK"
+        ops = action["ActionOperations"]
+        # NavigationOperation + SetParametersOperation, both targeting
+        # the recon sheet itself (same-sheet param-set).
+        op_keys = {key for op in ops for key in op}
+        assert op_keys == {"NavigationOperation", "SetParametersOperation"}
+        nav = next(op for op in ops if "NavigationOperation" in op)
+        assert nav["NavigationOperation"]["LocalNavigationConfiguration"][
+            "TargetSheetId"
+        ] == SHEET_PAYMENT_RECON
+        set_params = next(op for op in ops if "SetParametersOperation" in op)
+        targets = {
+            cfg["DestinationParameterName"]
+            for cfg in set_params["SetParametersOperation"][
+                "ParameterValueConfigurations"
+            ]
+        }
+        assert targets == {"pExternalTransactionId"}
