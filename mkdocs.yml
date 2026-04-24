@@ -75,10 +75,37 @@ nav:
     - How do I run my first deploy?: walkthroughs/customization/how-do-i-run-my-first-deploy.md
     - How do I add an app-specific metadata key?: walkthroughs/customization/how-do-i-add-a-metadata-key.md
     - How do I extend canonical values?: walkthroughs/customization/how-do-i-extend-canonical-values.md
+    - How do I author a new app on the tree?: walkthroughs/customization/how-do-i-author-a-new-app-on-the-tree.md
     - How do I test my customization?: walkthroughs/customization/how-do-i-test-my-customization.md
   - Training Scenarios:
     - Account Structure: Training_Story.md
     - Schema v3 — Data Feed Contract: Schema_v3.md
+  - API Reference:
+    - Overview: api/index.md
+    - Tree — App / Analysis / Dashboard / Sheet: api/tree-structure.md
+    - Tree — Visuals (KPI / Table / BarChart / Sankey): api/tree-visuals.md
+    - Tree — Data (Dataset / Column / Dim / Measure / CalcField): api/tree-data.md
+    - Tree — Filters + Controls + Parameters: api/tree-filters-controls.md
+    - Tree — Drill Actions: api/tree-actions.md
+    - Common foundations (models / ids / dataset_contract / drill / persona): api/common-foundations.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_root_heading: true
+            show_root_full_path: false
+            show_if_no_docstring: true
+            show_source: false
+            members_order: source
+            docstring_style: google
+            heading_level: 2
+            separate_signature: true
+            show_signature_annotations: true
+            signature_crossrefs: true
 
 markdown_extensions:
   - toc:
