@@ -38,24 +38,7 @@ def ar_dashboard_definition(qs_client, account_id, ar_dashboard_id) -> dict:
     return resp["Definition"]
 
 
-@pytest.fixture(scope="module")
-def ar_app():
-    """L.3.9 — typed AR App handle. Aggregates `ALL_FG_AR_IDS` /
-    `ALL_P_AR` were dropped from constants.py; the tree's emitted
-    filter-group + parameter sets are the source of truth now. Module
-    scope mirrors `ar_dashboard_definition`."""
-    from quicksight_gen.apps.account_recon.app import build_account_recon_app
-    from quicksight_gen.common.config import Config
-
-    cfg = Config(
-        aws_account_id="111122223333",
-        aws_region="us-west-2",
-        datasource_arn="arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds",
-        theme_preset="default",
-    )
-    app = build_account_recon_app(cfg)
-    app.emit_analysis()
-    return app
+# L.11.1 — `ar_app` fixture promoted to session scope in conftest.py.
 
 
 def _visual_ids(sheet: dict) -> list[str]:
