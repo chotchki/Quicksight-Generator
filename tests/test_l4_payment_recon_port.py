@@ -22,8 +22,13 @@ from quicksight_gen.apps.payment_recon.analysis import (
     _build_sales_sheet as _imperative_sales_sheet,
     _build_settlements_sheet as _imperative_settlements_sheet,
     build_analysis as _imperative_build_analysis,
+    build_payment_recon_dashboard as _imperative_build_dashboard,
 )
-from quicksight_gen.apps.payment_recon.app import build_payment_recon_app
+from quicksight_gen.apps.payment_recon.app import (
+    build_analysis as _tree_build_analysis,
+    build_payment_recon_app,
+    build_payment_recon_dashboard as _tree_build_dashboard,
+)
 from quicksight_gen.apps.payment_recon.constants import (
     PR_DRILL_BINDINGS,
     SHEET_EXCEPTIONS,
@@ -306,6 +311,88 @@ def test_l4_7b_filter_groups_byte_identical() -> None:
     tree = build_payment_recon_app(cfg).emit_analysis().to_aws_json()["Definition"]
 
     assert imperative["FilterGroups"] == tree["FilterGroups"]
+
+
+# L.4.7d — DataSetIdentifierDeclarations carried by the imperative
+# `_build_dataset_declarations` for two datasets nobody actually
+# references: `DS_MERCHANTS` (deprecated when settlement_exceptions
+# and payment_returns gained denormalised merchant_name) and
+# `DS_EXTERNAL_TRANSACTIONS` (replaced by the recon dataset that
+# joins them). The tree's `_used_datasets()` is selective by
+# construction — it only emits declarations for datasets the visuals
+# / filters / calc fields actually reference. Dead-code declarations
+# in the imperative; same orphan pattern as the aging bars and
+# queued for the same cleanup follow-up.
+_PR_UNREFERENCED_DATASET_IDS: frozenset[str] = frozenset({
+    "merchants-ds",
+    "external-transactions-ds",
+})
+
+
+def _strip_unreferenced_dataset_declarations(definition: dict) -> dict:
+    out = dict(definition)
+    decls = out.get("DataSetIdentifierDeclarations") or []
+    out["DataSetIdentifierDeclarations"] = [
+        d for d in decls
+        if d.get("Identifier") not in _PR_UNREFERENCED_DATASET_IDS
+    ]
+    return out
+
+
+def _normalize_definition(definition: dict) -> dict:
+    """Apply the per-sheet normalizations (`RowIndex` strip, orphan-
+    visual strip on Exceptions + Payment Recon, Visuals[]-order sort
+    on Payment Recon) across the full Definition so the L.4.7d full-
+    app byte-identity test compares apples to apples."""
+    normalized = _strip_unreferenced_dataset_declarations(
+        json.loads(json.dumps(definition)),
+    )
+    sheets = normalized.get("Sheets") or []
+    for i, sheet in enumerate(sheets):
+        sheet_id = sheet.get("SheetId")
+        if sheet_id == SHEET_EXCEPTIONS:
+            sheet = _strip_orphan_visuals(sheet, _PR_EXC_ORPHAN_VISUAL_IDS)
+        if sheet_id == SHEET_PAYMENT_RECON:
+            sheet = _sort_visuals_by_id(_strip_orphan_visuals(
+                sheet, frozenset({"recon-aging-bar"}),
+            ))
+        sheets[i] = _normalize_sheet(sheet)
+    normalized["Sheets"] = sheets
+    return normalized
+
+
+def test_l4_7d_full_analysis_byte_identical() -> None:
+    """Full Analysis JSON: tree-built === imperative, modulo the
+    documented diffs (per-sheet `RowIndex` strip + Exceptions / Payment
+    Recon orphan visuals + Payment Recon Visuals[] order). Drives the
+    CLI swap — `_generate_payment_recon` now imports from `app.py`."""
+    cfg = Config(**_BASE_CFG_KWARGS)
+
+    imp = _imperative_build_analysis(cfg).to_aws_json()
+    tree = _tree_build_analysis(cfg).to_aws_json()
+
+    assert _normalize_definition(tree["Definition"]) == _normalize_definition(
+        imp["Definition"],
+    )
+    # AnalysisId / Name / ThemeArn / Tags / Permissions outside Definition.
+    assert tree["AnalysisId"] == imp["AnalysisId"]
+    assert tree["Name"] == imp["Name"]
+    assert tree["ThemeArn"] == imp["ThemeArn"]
+
+
+def test_l4_7d_full_dashboard_byte_identical() -> None:
+    """Full Dashboard JSON: tree-built === imperative, same normalizations."""
+    cfg = Config(**_BASE_CFG_KWARGS)
+
+    imp = _imperative_build_dashboard(cfg).to_aws_json()
+    tree = _tree_build_dashboard(cfg).to_aws_json()
+
+    assert _normalize_definition(tree["Definition"]) == _normalize_definition(
+        imp["Definition"],
+    )
+    assert tree["DashboardId"] == imp["DashboardId"]
+    assert tree["Name"] == imp["Name"]
+    assert tree["ThemeArn"] == imp["ThemeArn"]
 
 
 def test_l4_4_payments_sheet_byte_identical() -> None:

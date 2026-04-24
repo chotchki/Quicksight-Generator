@@ -1736,6 +1736,22 @@ _PR_SHEET_SPECS: tuple[tuple[str, str, str, str], ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# CLI / external-caller shims. These mirror the imperative
+# ``apps/payment_recon/analysis`` shape so the CLI can swap to the
+# tree-built app without changing its import surface.
+# ---------------------------------------------------------------------------
+
+def build_analysis(cfg: Config) -> ModelAnalysis:
+    """Build the complete Payment Recon Analysis resource via the tree."""
+    return build_payment_recon_app(cfg).emit_analysis()
+
+
+def build_payment_recon_dashboard(cfg: Config) -> ModelDashboard:
+    """Build the Payment Recon Dashboard resource via the tree."""
+    return build_payment_recon_app(cfg).emit_dashboard()
+
+
 def build_payment_recon_app(cfg: Config) -> App:
     """Construct the Payment Reconciliation App as a tree.
 
@@ -1802,4 +1818,8 @@ def build_payment_recon_app(cfg: Config) -> App:
     )
     _wire_sheet_filter_controls(analysis, sheets=sheets)
 
+    app.create_dashboard(
+        dashboard_id_suffix="payment-recon-dashboard",
+        name=_analysis_name(cfg),
+    )
     return app
