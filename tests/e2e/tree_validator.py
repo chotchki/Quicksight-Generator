@@ -42,9 +42,35 @@ if TYPE_CHECKING:
 from tests.e2e.browser_helpers import (
     click_sheet_tab,
     get_visual_titles,
+    sheet_control_titles,
+    wait_for_sheet_controls_present,
     wait_for_visual_titles_present,
     wait_for_visuals_present,
 )
+
+
+def _control_title(control) -> str | None:
+    """Resolve the visible title of a tree filter / parameter control.
+
+    Direct controls (`FilterDropdown`, `FilterDateTimePicker`,
+    `FilterSlider`, `ParameterDropdown`, `ParameterSlider`,
+    `ParameterDateTimePicker`) carry their own `.title`. Cross-sheet
+    filter controls (`FilterCrossSheet`) inherit the title from the
+    referenced filter's `default_control` (multi-sheet filters set this
+    in `FilterGroup.with_*` factories so the per-sheet cross-sheet
+    widget shows the same label across sheets).
+    """
+    title = getattr(control, "title", None)
+    if title:
+        return str(title)
+    # Cross-sheet control: walk to filter.default_control.title
+    inner_filter = getattr(control, "filter", None)
+    if inner_filter is None:
+        return None
+    default_control = getattr(inner_filter, "default_control", None)
+    if default_control is None:
+        return None
+    return getattr(default_control, "title", None)
 
 
 @dataclass
@@ -134,6 +160,43 @@ class TreeValidator:
         # Per-visual dispatch — each typed Visual subtype's check.
         for visual in sheet.visuals:
             self.validate_visual(sheet, visual)
+
+        # Sheet controls — each filter / parameter control declared on
+        # the sheet must be present in the DOM. Asserted as a positive
+        # set check; an unexpected stale control in the DOM doesn't
+        # fail here (the explicit regression guards in `test_filters.py`
+        # cover those).
+        self.validate_sheet_controls(sheet)
+
+    def validate_sheet_controls(self, sheet: Sheet) -> None:
+        """Walk this sheet's `filter_controls` + `parameter_controls`
+        and assert each control's title is in the rendered DOM.
+        Cross-sheet filter controls inherit their title from the bound
+        filter's `default_control`."""
+        filter_ctrls = getattr(sheet, "filter_controls", None) or []
+        param_ctrls = getattr(sheet, "parameter_controls", None) or []
+        expected_titles = {
+            t for t in (_control_title(c) for c in filter_ctrls + param_ctrls)
+            if t
+        }
+        if not expected_titles:
+            return
+        try:
+            wait_for_sheet_controls_present(self.page, self.timeout_ms)
+        except Exception:
+            self._fail(
+                f"Sheet {sheet.name!r}",
+                "Expected sheet controls but none rendered.",
+            )
+            return
+        rendered = set(sheet_control_titles(self.page))
+        missing = expected_titles - rendered
+        if missing:
+            self._fail(
+                f"Sheet {sheet.name!r}",
+                f"Missing sheet control titles: {sorted(missing)} "
+                f"(rendered: {sorted(rendered)})",
+            )
 
     def validate_visual(self, sheet: Sheet, visual: VisualLike) -> None:
         """Per-kind dispatch. Each typed Visual subtype has a
