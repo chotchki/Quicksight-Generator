@@ -15,7 +15,7 @@ from quicksight_gen.common.config import load_config
 from quicksight_gen.common.theme import build_theme
 
 
-APPS = ("payment-recon", "account-recon", "investigation")
+APPS = ("payment-recon", "account-recon", "investigation", "executives")
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -80,10 +80,12 @@ def generate(
         _generate_payment_recon(config, output_dir, theme_preset)
         _generate_account_recon(config, output_dir, theme_preset)
         _generate_investigation(config, output_dir, theme_preset)
+        _generate_executives(config, output_dir, theme_preset)
     else:
         click.echo(ctx.get_help())
         raise click.UsageError(
-            "Specify an app (payment-recon, account-recon, investigation) or --all."
+            "Specify an app (payment-recon, account-recon, "
+            "investigation, executives) or --all."
         )
 
 
@@ -101,6 +103,15 @@ def generate_payment_recon_cmd(ctx: click.Context) -> None:
 def generate_account_recon_cmd(ctx: click.Context) -> None:
     """Generate Account Reconciliation JSON."""
     _generate_account_recon(
+        ctx.obj["config"], ctx.obj["output_dir"], ctx.obj["theme_preset"],
+    )
+
+
+@generate.command("executives")
+@click.pass_context
+def generate_executives_cmd(ctx: click.Context) -> None:
+    """Generate Executives JSON."""
+    _generate_executives(
         ctx.obj["config"], ctx.obj["output_dir"], ctx.obj["theme_preset"],
     )
 
@@ -228,6 +239,43 @@ def _generate_investigation(
     click.echo(f"\nGenerated {1 + len(datasets) + 2} files in {out}/")
 
 
+def _generate_executives(
+    config_path: str, output_dir: str, theme_preset: str | None,
+) -> None:
+    from quicksight_gen.apps.executives.app import (
+        build_analysis,
+        build_executives_dashboard,
+    )
+    from quicksight_gen.apps.executives.datasets import build_all_datasets
+
+    cfg = load_config(config_path)
+    if theme_preset is not None:
+        cfg.theme_preset = theme_preset
+    out = Path(output_dir)
+    click.echo(
+        f"Executives: account={cfg.aws_account_id}, region={cfg.aws_region}"
+    )
+
+    theme = build_theme(cfg)
+    _write_json(out / "theme.json", theme.to_aws_json())
+
+    datasets = build_all_datasets(cfg)
+    _prune_stale_files(
+        out / "datasets",
+        keep=_all_dataset_filenames(cfg, keep_current=datasets),
+    )
+    for ds in datasets:
+        _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
+
+    analysis = build_analysis(cfg)
+    _write_json(out / "executives-analysis.json", analysis.to_aws_json())
+
+    dashboard = build_executives_dashboard(cfg)
+    _write_json(out / "executives-dashboard.json", dashboard.to_aws_json())
+
+    click.echo(f"\nGenerated {1 + len(datasets) + 2} files in {out}/")
+
+
 def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
     """Expected dataset filenames for both apps combined.
 
@@ -237,6 +285,9 @@ def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
     """
     from quicksight_gen.apps.account_recon.datasets import (
         build_all_datasets as _ar,
+    )
+    from quicksight_gen.apps.executives.datasets import (
+        build_all_datasets as _exec,
     )
     from quicksight_gen.apps.investigation.datasets import (
         build_all_datasets as _inv,
@@ -249,6 +300,7 @@ def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
     names.update(f"{ds.DataSetId}.json" for ds in _pr(cfg))
     names.update(f"{ds.DataSetId}.json" for ds in _ar(cfg))
     names.update(f"{ds.DataSetId}.json" for ds in _inv(cfg))
+    names.update(f"{ds.DataSetId}.json" for ds in _exec(cfg))
     return names
 
 
@@ -256,7 +308,9 @@ def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
 # Demo
 # ---------------------------------------------------------------------------
 
-APP_CHOICE = click.Choice(["payment-recon", "account-recon", "investigation"])
+APP_CHOICE = click.Choice([
+    "payment-recon", "account-recon", "investigation", "executives",
+])
 
 
 @main.group()
@@ -406,6 +460,13 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     from quicksight_gen.apps.account_recon.demo_data import (
         generate_demo_sql as generate_ar_sql,
     )
+    from quicksight_gen.apps.executives.app import (
+        build_analysis as build_exec_analysis,
+        build_executives_dashboard,
+    )
+    from quicksight_gen.apps.executives.datasets import (
+        build_all_datasets as build_exec_datasets,
+    )
     from quicksight_gen.apps.investigation.app import (
         build_analysis as build_inv_analysis,
         build_investigation_dashboard,
@@ -532,6 +593,22 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
         )
         json_count += len(inv_datasets) + 2
 
+    if app in ("executives", "all"):
+        # Executives has no demo seed of its own — reads what PR/AR/Inv
+        # plant. Just emit the JSON.
+        exec_datasets = build_exec_datasets(cfg)
+        for ds in exec_datasets:
+            _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
+        _write_json(
+            out / "executives-analysis.json",
+            build_exec_analysis(cfg).to_aws_json(),
+        )
+        _write_json(
+            out / "executives-dashboard.json",
+            build_executives_dashboard(cfg).to_aws_json(),
+        )
+        json_count += len(exec_datasets) + 2
+
     click.echo(f"\nDone. {json_count} JSON files in {out}/")
 
 
@@ -576,6 +653,8 @@ def deploy_cmd(
             _generate_account_recon(config, output_dir, theme_preset)
         if app_name in ("investigation", "all"):
             _generate_investigation(config, output_dir, theme_preset)
+        if app_name in ("executives", "all"):
+            _generate_executives(config, output_dir, theme_preset)
 
     cfg = load_config(config)
     if app_name == "all":
