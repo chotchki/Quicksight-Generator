@@ -4,13 +4,14 @@
 [![Coverage](https://raw.githubusercontent.com/chotchki/Quicksight-Generator/badges/coverage-badge.svg)](https://github.com/chotchki/Quicksight-Generator/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/quicksight-gen.svg)](https://pypi.org/project/quicksight-gen/)
 
-Python tool that programmatically generates AWS QuickSight JSON definitions (theme, datasets, analyses, dashboards) and deploys them via boto3. It currently ships three independent QuickSight apps:
+Python tool that programmatically generates AWS QuickSight JSON definitions (theme, datasets, analyses, dashboards) and deploys them via boto3. It currently ships four independent QuickSight apps:
 
 - **Payment Reconciliation** — sales → settlements → payments → external-system matching for a merchant bank.
 - **Account Reconciliation** — stored daily balances, transfers, and postings for a double-entry ledger.
 - **Investigation** — compliance / AML triage: recipient fanout, volume anomalies, money-trail provenance, and account-network graphs over the shared base ledger.
+- **Executives** — board-cadence statistics: account coverage (open vs active), transaction volume over time, money moved (gross + net) over time. Reads only the shared base tables — no Executives-specific schema.
 
-All three apps share one theme registry, one AWS account, one datasource, and the same CLI surface (`quicksight-gen generate|deploy|demo|cleanup`). Change the Python (or ask Claude), re-run `deploy --generate`, get a new dashboard.
+All four apps share one theme registry, one AWS account, one datasource, and the same CLI surface (`quicksight-gen generate|deploy|demo|cleanup`). Change the Python (or ask Claude), re-run `deploy --generate`, get a new dashboard.
 
 ## Demo Docs
 
@@ -27,7 +28,7 @@ Source lives in `src/quicksight_gen/docs/` (shipped with the wheel — extract w
 
 The customer for these reports doesn't know exactly what they want yet. Rather than click through the QuickSight console and lose the work when requirements change, everything is generated from code and deployed idempotently (delete-then-create). Iteration is one command.
 
-## The three apps
+## The four apps
 
 ### Payment Reconciliation — 6 tabs
 
@@ -59,6 +60,17 @@ The customer for these reports doesn't know exactly what they want yet. Rather t
 | Volume Anomalies | Which sender → recipient pair just spiked above its rolling baseline? Backed by `inv_pair_rolling_anomalies` matview (rolling 2-day SUM per pair + population z-score). KPI flagged-pair count + σ distribution chart + ranked table; σ slider gates KPI + table while the chart shows the full population. |
 | Money Trail | Where did this transfer originate, and where does it go? Backed by `inv_money_trail_edges` matview (recursive `WITH RECURSIVE` walk over `parent_transfer_id` flattened to one row per multi-leg edge). Sankey as the headline + hop-by-hop table beside it; chain-root dropdown + max-hops + min-hop-amount controls. |
 | Account Network | What does this account's money network look like, on either side? Same matview, account-anchored. Two side-by-side directional Sankeys (inbound on the left, outbound on the right, anchor visually meeting in the middle) + touching-edges table. Walk-the-flow drill: right-click any table row or left-click any Sankey node to walk the anchor to the counterparty and re-render around the new center. |
+
+### Executives — 4 tabs
+
+Greenfield app built on the typed tree primitives — board-cadence rollups over the shared `transactions` + `daily_balances` base tables, no Executives-specific schema.
+
+| Tab | What it shows |
+|---|---|
+| Getting Started | Landing page — heading + per-sheet highlights. |
+| Account Coverage | Open vs Active account KPIs + bar chart by `account_type` + detail table. The Active KPI + Active bar carry a visual-pinned `activity_count >= 1` filter so they read as "accounts that moved money in the period" while the Open KPI/bar count every row — same dataset, different scope. |
+| Transaction Volume Over Time | Total transfers + average daily KPIs + daily stacked bar by `transfer_type` + per-type bar. Per-transfer pre-aggregation (`WITH per_transfer AS`) collapses multi-leg transfers so a 2-leg $100 movement counts as one $100 transfer, not two $200. |
+| Money Moved | Gross + net amount KPIs + daily stacked bar by `transfer_type` + per-type bar. Same per-transfer pre-aggregation; net = inflows − outflows from the bank's perspective. |
 
 ### Shared conventions
 
@@ -140,7 +152,7 @@ All values can also be set via `QS_GEN_`-prefixed environment variables (e.g. `Q
 ### Generate and deploy
 
 ```bash
-# Generate all three apps' JSON
+# Generate all four apps' JSON
 quicksight-gen generate --all -c config.yaml -o out/
 
 # Deploy everything (delete-then-create, idempotent)
@@ -153,6 +165,7 @@ quicksight-gen deploy --all --generate -c config.yaml -o out/
 quicksight-gen generate payment-recon  -c config.yaml -o out/
 quicksight-gen generate account-recon  -c config.yaml -o out/
 quicksight-gen generate investigation  -c config.yaml -o out/
+quicksight-gen generate executives     -c config.yaml -o out/
 quicksight-gen deploy   payment-recon  -c config.yaml -o out/
 ```
 
@@ -217,7 +230,7 @@ out/
 
 ## Demo mode
 
-A deterministic demo generator seeds all three apps end-to-end so you can see them work without wiring up real data. Investigation rides on the shared `transactions` + `daily_balances` base tables — no investigation-specific schema; its scenario seed plants the fanout / anomaly / chain-walk shapes that drive each sheet.
+A deterministic demo generator seeds all four apps end-to-end so you can see them work without wiring up real data. Investigation and Executives both ride on the shared `transactions` + `daily_balances` base tables — no app-specific schema; the existing PR + AR + Investigation scenario seeds already plant enough movement that Executives' rollups (account coverage, daily transfer volume, money moved) populate without a separate seed.
 
 ```bash
 # Emit SQL only (no DB connection needed) — schema ships in the wheel,
@@ -241,6 +254,7 @@ Datasets are all Direct Query (no SPICE), so seed changes show up immediately af
 - **Payment Recon — Sasquatch National Bank (merchant settlement).** Six fictional Seattle coffee shops (Bigfoot Brews, Sasquatch Sips, Yeti Espresso, Skookum Coffee Co., Cryptid Coffee Cart, Wildman's Roastery). Sales flow into settlements and payments; planted unsettled sales, returned payments, amount mismatches, and orphan external transactions populate every exception table.
 - **Account Recon — Sasquatch National Bank (treasury / GL).** Same bank from the treasury side, after SNB absorbed Farmers Exchange Bank's commercial book. Eight internal GL control accounts (Cash & Due From FRB, ACH Origination Settlement, Card Acquiring Settlement, Wire Settlement Suspense, Internal Transfer Suspense, Cash Concentration Master, Internal Suspense / Reconciliation, Customer Deposits — DDA Control) plus per-customer DDAs for three coffee retailers (Bigfoot Brews, Sasquatch Sips, Yeti Espresso) and four commercial customers (Cascade Timber Mill, Pinecrest Vineyards, Big Meadow Dairy, Harvest Moon Bakery). The Cash Management Suite drives four telling-transfer flows — ZBA / Cash Concentration sweeps, daily ACH origination sweeps to the FRB Master Account, external force-posted card settlements, and on-us internal transfers through Internal Transfer Suspense. Each flow plants both success cycles and characteristic failures so every Exceptions check (including the cross-check rollups) surfaces distinct rows.
 - **Investigation — Sasquatch National Bank (compliance / AML).** Three converging scenarios on a single anchor account, **Juniper Ridge LLC**, so every Investigation sheet has a non-empty answer and the sheets connect: a fanout cluster (12 individual depositors × 2 ACH transfers each → Juniper, drives Recipient Fanout past the default 5-sender threshold), an anomaly pair (Cascadia Trust Bank — Operations wires Juniper $300–$700 routine amounts for 8 days then a single $25,000 spike, drives Volume Anomalies past the default 2σ threshold), and a 4-hop layering chain (Cascadia → Juniper → Shell A → Shell B → Shell C with $250 residue per hop, drives Money Trail with a non-trivial Sankey). Account Network anchored on Juniper shows the full picture — depositor inbounds on the left, shell outbounds on the right.
+- **Executives — Sasquatch National Bank (board / leadership cadence).** No new seed data — Executives is a roll-up of every successful transfer the PR / AR / Investigation seeds already plant. Account Coverage compares "open" (every account that exists) against "active" (`activity_count >= 1` in the period); Transaction Volume Over Time and Money Moved chart daily / per-type rollups. The mix of `merchant_dda` (PR coffee retailers), `dda` (AR commercial customers), `external_counter` (FRB Master, processors, individual depositors), and `gl_control` rows shows up directly in the per-type bars.
 
 ## Theming
 
@@ -260,49 +274,35 @@ Rich-text on the Getting Started sheets (headings, bullets, hyperlinks) uses the
 ```
 src/quicksight_gen/
     __main__.py         # python -m quicksight_gen entry point
-    cli.py              # Click CLI — generate / deploy / cleanup / demo
+    cli.py              # Click CLI — generate / deploy / cleanup / demo / export
     common/
         config.py       # Config dataclass + YAML/env loader
         models.py       # Dataclasses mapping to QuickSight API JSON
+        ids.py          # Typed ID newtypes (SheetId / VisualId / FilterGroupId / ParameterName)
         theme.py        # Theme presets (default, sasquatch-bank, sasquatch-bank-ar, sasquatch-bank-investigation)
+        persona.py      # DemoPersona — single source of truth for whitelabel-substitutable Sasquatch strings
         deploy.py       # Python deploy (delete-then-create, async waiters)
         cleanup.py      # Tag-based cleanup of stale resources
-        clickability.py # Conditional-format helpers (plain + menu-link accent styles)
-        rich_text.py    # XML helpers for SheetTextBox.Content (heading/bullets/…)
-        tree/           # Typed tree primitives (Phase L) — App / Analysis / Dashboard / Sheet / Visual subtypes / Filter wrappers / Controls / Drill actions. Replaces constant-heavy + manually-cross-referenced builders with object refs + auto-IDs + emit-time validation. Apps are mid-port; the L-series in PLAN.md tracks the migration.
+        dataset_contract.py  # ColumnSpec / DatasetContract / build_dataset()
+        drill.py        # Cross-app deep-link URL builder
+        clickability.py # Conditional-format helpers
+        rich_text.py    # XML helpers for SheetTextBox.Content
+        tree/           # Typed tree primitives (Phase L). App / Analysis / Dashboard / Sheet, typed Visual subtypes (KPI / Table / BarChart / Sankey), typed Filter wrappers (CategoryFilter / NumericRangeFilter / TimeRangeFilter), Parameter + Filter Controls, Drill actions, Datasets + Columns + Dim/Measure factories, CalcFields. Object-ref cross-references (visuals → datasets, filter groups → visuals, drills → sheets); auto-IDs at emit time for internal IDs; emit-time validation walks. All four apps are tree-built — see CLAUDE.md "Tree pattern" for the L1 / L2 / L3 layer model.
     apps/
-        payment_recon/
-            analysis.py     # 6 sheets, drill-downs, filter groups, dashboard
-            visuals.py      # Sales / Settlements / Payments / Exceptions visuals
-            recon_visuals.py# Payment Reconciliation side-by-side tables + KPIs
-            filters.py      # Pipeline-tab filter groups + controls
-            recon_filters.py# Payment Reconciliation filters
-            datasets.py     # 11 custom-SQL datasets
-            demo_data.py    # Sasquatch Bank demo data generator
-            constants.py    # Sheet + dataset identifier constants
-        account_recon/
-            analysis.py     # 5 sheets, drill-downs, filter groups, dashboard
-            visuals.py      # Balances / Transfers / Transactions / Exceptions visuals
-            filters.py      # Per-tab filters + Show-Only-X toggles
-            datasets.py     # 21 custom-SQL datasets
-            demo_data.py    # Sasquatch National Bank — CMS treasury demo data generator
-            constants.py    # Sheet + dataset identifier constants
-        investigation/
-            analysis.py     # 5 sheets: Getting Started + Fanout / Anomalies / Money Trail / Account Network
-            visuals.py      # KPIs + ranked tables + σ distribution + 3 Sankeys (chain, inbound, outbound)
-            filters.py      # 11 filter groups + parameter declarations + slider/dropdown controls
-            datasets.py     # 5 custom-SQL datasets (3 over base tables + 2 over investigation matviews)
-            demo_data.py    # Sasquatch Bank — Compliance / AML demo (fanout / anomaly / chain scenarios)
-            etl_examples.py # placeholder (no app-specific ETL keys; PR/AR examples cover the shape)
-            constants.py    # SheetId / VisualId / FilterGroupId / ParameterName
+        payment_recon/  # app.py (6 sheets), datasets.py (11 datasets), demo_data.py, constants.py
+        account_recon/  # app.py (5 sheets), datasets.py (13 datasets), demo_data.py, constants.py
+        investigation/  # app.py (5 sheets), datasets.py (5 datasets — 2 backed by matviews), demo_data.py, constants.py
+        executives/     # app.py (4 sheets), datasets.py (2 datasets, per-transfer pre-aggregated). Greenfield on tree primitives — no constants.py.
     schema.py           # `generate_schema_sql()` — reads the canonical DDL
-    schema.sql          # Canonical PostgreSQL DDL (interface contract for ETL); shared `transactions` + `daily_balances` base layer + AR dimension tables
+    schema.sql          # Canonical PostgreSQL DDL (interface contract for ETL); shared `transactions` + `daily_balances` base layer + AR dimension tables + AR + Investigation matviews
     docs/               # mkdocs site source — handbook/, walkthroughs/, Schema_v3.md, Training_Story.md (extract via `quicksight-gen export docs`)
     training/           # Whitelabel handbook kit — handbook/, mapping.yaml.example (extract via `quicksight-gen export training`)
 tests/
     test_models.py, test_generate.py, test_recon.py, test_account_recon.py,
-    test_investigation.py, test_theme_presets.py, test_demo_data.py, test_demo_sql.py
-    e2e/                # Two-layer e2e (API + browser); skipped unless QS_GEN_E2E=1
+    test_investigation.py, test_executives.py, test_tree.py, test_tree_validator.py,
+    test_kitchen_app.py, test_persona.py, test_drill.py, test_dataset_contract.py,
+    test_theme_presets.py, test_demo_data.py, test_demo_sql.py, test_export.py, ...
+    e2e/                # Two-layer e2e (API + browser) for all four apps; skipped unless QS_GEN_E2E=1
 run_e2e.sh              # One-shot: generate + deploy + e2e
 config.example.yaml
 ```
@@ -311,7 +311,7 @@ config.example.yaml
 
 ```bash
 pytest                  # unit + integration (fast, no AWS)
-./run_e2e.sh            # regenerate + deploy all three apps + e2e (pytest-xdist -n 4)
+./run_e2e.sh            # regenerate + deploy all four apps + e2e (pytest-xdist -n 4)
 ./run_e2e.sh --parallel 8            # override worker count (1 = serial; stable ceiling ~8)
 ./run_e2e.sh --skip-deploy api       # only API e2e
 ./run_e2e.sh --skip-deploy browser   # only browser e2e
@@ -346,17 +346,17 @@ The dataset SQL reads from two shared base tables (`transactions`, `daily_balanc
 
 ### Add a visual or tab
 
-1. Add the builder function in `<app>/visuals.py`.
-2. Wire it into the sheet layout in `<app>/analysis.py`.
-3. Add a subtitle (coverage tests enforce this).
-4. Run `pytest`.
+1. Open `apps/<app>/app.py` and find the relevant sheet's populator function (e.g. `_populate_account_coverage`).
+2. Place the visual on a layout row: `row.add_kpi(...)`, `row.add_table(...)`, `row.add_bar_chart(...)`, `row.add_sankey(...)`. Pass `title=`, `subtitle=`, and the typed `Dim`/`Measure` slots — the tree validates dataset / column references at emit time.
+3. Subtitle is required (coverage tests enforce this).
+4. Run `pytest` — typed cross-reference errors fail at the wiring site, not deep in the generated JSON.
 
 ### Add a filter
 
-1. Add the `FilterGroup` builder in `<app>/filters.py` (or `recon_filters.py` for PR).
-2. Add a matching `FilterControl`.
-3. Register it on the relevant sheet's `FilterControls` in `analysis.py`.
-4. `pytest` will flag any broken `SourceFilterId` references.
+1. In `apps/<app>/app.py`, build a `FilterGroup`: `fg = FilterGroup.with_category_filter(...)` (or `with_numeric_range_filter` / `with_time_range_filter`). Pass the typed `Dim` ref directly — no string IDs.
+2. Scope it: `fg.scope_sheet(sheet_obj)` for sheet-wide; `fg.scope_visuals(visual_a, visual_b)` for visual-pinned.
+3. For UI controls, attach the filter's `default_control` to a sheet via `sheet.filter_controls.append(...)`.
+4. `pytest` walks the tree and flags missing references at emit time.
 
 ### Add a theme preset
 

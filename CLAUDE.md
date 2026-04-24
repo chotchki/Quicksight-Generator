@@ -115,71 +115,102 @@ out/
 ```
 src/quicksight_gen/
   __main__.py            # Entry point (delegates to cli.main)
-  cli.py                 # Click CLI: generate / deploy / cleanup / demo (all with --all or app arg)
+  cli.py                 # Click CLI: generate / deploy / cleanup / demo / export (all with --all or app arg)
   common/
     config.py            # Config dataclass + YAML/env loader (principal_arns list, theme_preset)
     models.py            # Dataclasses mapping to QuickSight API JSON (to_aws_json + _strip_nones)
+    ids.py               # Typed ID newtypes (SheetId / VisualId / FilterGroupId / ParameterName / etc.)
     theme.py             # Theme presets (default / sasquatch-bank / sasquatch-bank-ar / sasquatch-bank-investigation); PRESETS registry
+    persona.py           # DemoPersona dataclass + derive_mapping_yaml_text — single source of truth for whitelabel-substitutable Sasquatch strings
     deploy.py            # boto3 delete-then-create deploy with async waiters
     cleanup.py           # Tag-based cleanup of stale resources (ManagedBy:quicksight-gen)
     dataset_contract.py  # ColumnSpec, DatasetContract, build_dataset() — shared dataset constructor
+    drill.py             # Cross-app deep-link URL builder (CustomActionURLOperation)
     clickability.py      # Conditional-format helpers: accent text (left-click) + tint-background (right-click)
-    aging.py             # Shared aging_bar_visual() — horizontal bar chart by aging bucket (used by both apps)
+    aging.py             # Shared aging_bar_visual() — horizontal bar chart by aging bucket
     rich_text.py         # XML composition helpers for SheetTextBox.Content (heading/bullets/link/inline)
-    tree/                # Phase L typed tree primitives (App / Analysis / Dashboard / Sheet / Visual subtypes / Filter wrappers / Controls / Drill actions). Object-ref cross-references; auto-IDs for internal IDs; emit-time validation walks (dataset / calc-field / parameter / drill-destination references). Apps mid-port — see PLAN.md L-series for migration status.
+    tree/                # Phase L typed tree primitives — see "Tree pattern" in Architecture Decisions
+      structure.py         # App / Analysis / Dashboard / Sheet — top-level tree nodes + emit + validation
+      visuals.py           # KPI / Table / BarChart / Sankey / TextBox typed Visual subtypes
+      filters.py           # CategoryFilter / NumericRangeFilter / TimeRangeFilter + FilterGroup
+      controls.py          # FilterDropdown / FilterSlider / FilterDateTimePicker / FilterCrossSheet + Parameter equivalents
+      parameters.py        # StringParameter / IntegerParameter / DecimalParameter / DatetimeParameter declarations
+      calc_fields.py       # CalcField — analysis-level calculated fields (typed; auto-named from tree position)
+      datasets.py          # Dataset + Column tree nodes; ds["col"].dim() / .sum() / .date() chained factories
+      fields.py            # Dim / Measure typed wrappers (validated against dataset contract)
+      actions.py           # Drill / NavigateAction typed actions; cross-sheet target as Sheet object ref
+      formatting.py        # Conditional-format primitives (color / icon / tint) used by visuals
+      text_boxes.py        # SheetTextBox content helpers
+      _helpers.py          # AutoSentinel + position-indexed ID resolver (visual_id / action_id / etc.)
   apps/
     payment_recon/
-      analysis.py          # 6 sheets, drill-downs, filter groups, dashboard builder
-      visuals.py           # Sales / Settlements / Payments / Exceptions visuals
-      recon_visuals.py     # Payment Reconciliation side-by-side tables + KPIs
-      filters.py           # Pipeline-tab filter groups + controls
-      recon_filters.py     # Payment Reconciliation filters (date, match status, ext system, days outstanding)
+      app.py               # Tree-built: 6 sheets, drill-downs, filter groups, dashboard
       datasets.py          # 11 custom-SQL datasets
       demo_data.py         # Sasquatch National Bank demo generator
-      constants.py         # Sheet + dataset identifier constants
+      etl_examples.py      # ETL shape examples (PR-flavored)
+      constants.py         # SheetId / FilterGroupId / ParameterName + dataset identifiers
     account_recon/
-      analysis.py          # 5 sheets, drill-downs, filter groups, dashboard builder
-      visuals.py           # Balances / Transfers / Transactions / Exceptions visuals
-      filters.py           # Per-tab filters + Show-Only-X toggles
-      datasets.py          # 21 custom-SQL datasets (9 baseline + 9 CMS checks + 3 rollups)
+      app.py               # Tree-built: 5 sheets, drill-downs, filter groups, dashboard
+      datasets.py          # 13 custom-SQL datasets (7 baseline + 1 unified-exceptions + 3 cross-check rollups + 2 daily-statement)
       demo_data.py         # Sasquatch National Bank — CMS treasury demo generator
-      constants.py         # Sheet + dataset identifier constants
+      etl_examples.py      # ETL shape examples (AR-flavored)
+      constants.py         # SheetId / FilterGroupId / ParameterName + dataset identifiers
     investigation/
-      analysis.py          # 5 sheets: Getting Started + Recipient Fanout / Volume Anomalies / Money Trail / Account Network
-      visuals.py           # KPIs + ranked tables + σ distribution + 3 Sankeys (chain + inbound + outbound) + touching-edges table
-      filters.py           # 11 filter groups + parameter declarations + slider/dropdown controls (date / threshold / σ / chain root / max hops / min amount / anchor)
+      app.py               # Tree-built: 5 sheets — Getting Started + Recipient Fanout / Volume Anomalies / Money Trail / Account Network
       datasets.py          # 5 custom-SQL datasets — fanout + anomalies (matview) + money trail (matview) + account network (matview wrapper) + accounts dropdown source
-      demo_data.py         # Sasquatch Bank — Compliance / AML demo (12-depositor fanout cluster + Cascadia $25K spike + 4-hop layering chain through three shells)
+      demo_data.py         # Sasquatch Bank — Compliance / AML demo (12-depositor fanout + Cascadia $25K spike + 4-hop layering chain)
       etl_examples.py      # placeholder (no app-specific ETL keys; PR/AR examples cover the shape)
-      constants.py         # SheetId / VisualId / FilterGroupId / ParameterName
+      constants.py         # SheetId / FilterGroupId / ParameterName (no VisualId — auto-derived per L.1.16)
+    executives/
+      app.py               # Tree-built: 4 sheets — Getting Started + Account Coverage + Transaction Volume + Money Moved (greenfield on L.1 primitives — no constants.py)
+      datasets.py          # 2 custom-SQL datasets — exec_transaction_summary (per-transfer pre-aggregated) + exec_account_summary
   schema.py              # `generate_schema_sql()` — reads the canonical DDL from the package data file
   schema.sql             # Full PostgreSQL DDL — shared `transactions` + `daily_balances` base layer + AR dimension tables + AR + Investigation matviews
   docs/                  # mkdocs site source (handbook/, walkthroughs/, Schema_v3.md, Training_Story.md); extract via `quicksight-gen export docs`
-  training/              # Whitelabel handbook kit; extract via `quicksight-gen export training`
+  training/              # Whitelabel handbook kit (handbook/, mapping.yaml.example, QUICKSTART.md); extract via `quicksight-gen export training`
 tests/
   test_models.py         # Models, tags, config, dataset builders
   test_generate.py       # Full pipeline, cross-refs, explanations (PR)
   test_account_recon.py  # AR visuals, filters, datasets, analysis wiring
   test_recon.py          # Payment recon visuals + filters
   test_investigation.py  # Investigation visuals + filters + datasets + matview SQL + sheet wiring + walk-the-flow drill shape + demo scenario coverage
+  test_executives.py     # Executives sheets, datasets, filters, CLI smoke (4 sheets, 2 datasets — greenfield app)
+  test_tree.py           # common/tree primitives — emit/validation walks, object-ref cross-references, auto-ID resolution
+  test_tree_validator.py # tests/e2e/tree_validator.py walker unit tests
+  test_kitchen_app.py    # Kitchen-sink app exercising every L.1 primitive
+  test_screenshot_harness.py # tests/e2e/screenshot_harness.py walker unit tests
+  test_drill.py          # Cross-app URL deep-link builder tests
+  test_persona.py        # DemoPersona round-trip + mapping.yaml derivation parity
+  test_export.py         # `export docs` / `export training` CLI tests
   test_theme_presets.py  # Preset registry, serialization, analysis name integration
   test_dataset_contract.py # DatasetContract basics + per-builder column-match assertions
   test_demo_data.py      # Demo determinism (SHA256 hash lock), row counts, FK integrity, scenario coverage, cross-app integrity, shared base layer projection
   test_demo_sql.py       # Schema/seed SQL structure, CLI command tests
+  test_demo_etl_examples.py # ETL example demo coverage
+  test_etl_examples.py   # ETL example shape tests
+  test_deploy.py         # Deploy delete-then-create + waiter logic
   e2e/                   # Two layers (API boto3 + browser Playwright WebKit); gated on QS_GEN_E2E=1
     conftest.py
     browser_helpers.py
-    test_deployed_resources.py    / test_ar_deployed_resources.py    / test_inv_deployed_resources.py
-    test_dashboard_structure.py   / test_ar_dashboard_structure.py   / test_inv_dashboard_structure.py
+    tree_validator.py             # TreeValidator(app, page).validate_structure() — typed walker that derives expected DOM from the tree
+    screenshot_harness.py         # Typed walker that drives screenshot capture from tree positions
+    _kitchen_app.py               # Shared kitchen-sink app fixture for tree-validator + screenshot-harness tests
+    test_deployed_resources.py    / test_ar_deployed_resources.py    / test_inv_deployed_resources.py    / test_exec_deployed_resources.py
+    test_dashboard_structure.py   / test_ar_dashboard_structure.py   / test_inv_dashboard_structure.py   / test_exec_dashboard_structure.py
     test_dataset_health.py        / test_ar_dataset_health.py
-    test_dashboard_renders.py     / test_ar_dashboard_renders.py     / test_inv_dashboard_renders.py
-    test_sheet_visuals.py         / test_ar_sheet_visuals.py         / test_inv_sheet_visuals.py
+    test_dashboard_renders.py     / test_ar_dashboard_renders.py     / test_inv_dashboard_renders.py     / test_exec_dashboard_renders.py
+    test_sheet_visuals.py         / test_ar_sheet_visuals.py         / test_inv_sheet_visuals.py         / test_exec_sheet_visuals.py
     test_drilldown.py             / test_ar_drilldown.py             / test_inv_drilldown.py
     test_state_toggles.py         / test_ar_state_toggles.py
     test_filters.py               / test_ar_filters.py               / test_inv_filters.py
-    test_recon_mutual_filter.py
+    test_pr_kpi_semantics.py      / test_ar_kpi_semantics.py         / test_ar_daily_statement.py        / test_ar_todays_exc_drill.py
+    test_ar_cross_visibility.py   / test_ar_cross_sheet_param_hygiene.py
+    test_recon_mutual_filter.py   / test_filter_stacking.py
 scripts/
   screenshot_getting_started.py   # Ad-hoc: screenshot both Getting Started tabs
+  screenshot_daily_statement.py
+  generate_walkthrough_screenshots.py
+  bake_sample_output.py
 run_e2e.sh
 ```
 
@@ -261,7 +292,16 @@ Demo persona is **Sasquatch National Bank — Cash Management Suite (CMS)** — 
 - Every sheet has a plain-language description; every visual has a subtitle — the end customer is not technical. Coverage is enforced in unit + API e2e tests.
 - Clickable cells use `common/clickability.py`: accent-colored text = left-click drill; accent text on pale-tint background = the cell also carries a right-click menu drill (use this style whenever a right-click action exists, even if a left-click is also wired)
 - **Drill direction convention** — left clicks move you LEFT, right clicks move you RIGHT. When wiring a new drill action on a row, pick the trigger by which sheet the drill points to relative to the source: deeper / further-down-the-pipeline / further-right-in-the-tab-order goes on `DATA_POINT_MENU` (right-click); back-toward-source goes on `DATA_POINT_CLICK` (left-click). Call out both clicks in the visual's subtitle when both are wired. Existing wirings that pre-date this rule are not retroactively flipped.
-- **Tree primitives (Phase L, mid-port).** New code under `common/tree/` — `App` / `Analysis` / `Dashboard` / `Sheet` plus typed `Visual` subtypes (`KPI` / `Table` / `BarChart` / `Sankey`), typed Filter wrappers (`CategoryFilter` / `NumericRangeFilter` / `TimeRangeFilter`), Parameter + Filter `Control` wrappers, and `Drill` actions. Cross-references are object refs, not string IDs (visuals reference datasets by `Dataset` node; filter groups reference visuals by `Visual` node; drills reference sheets by `Sheet` node). Internal IDs (visual_id, filter_group_id, action_id, layout element IDs) are auto-assigned at emit time using a position-indexed scheme; URL-facing IDs (`SheetId`, `ParameterName`) and analyst-facing identifiers (`Dataset` identifier, `CalcField` name) stay explicit. `App.emit_analysis()` / `emit_dashboard()` runs validation walks (dataset references, calc-field references, parameter references, drill destinations, FilterGroup scoping). Apps are mid-port off `apps/<app>/{analysis,filters,visuals,constants}.py` — Investigation is the L.2 first port. New app code should use the tree; per-app `constants.py` modules collapse as each port lands.
+- **Tree pattern (Phase L).** All four apps are tree-built. New code under `common/tree/` — `App` / `Analysis` / `Dashboard` / `Sheet` plus typed `Visual` subtypes (`KPI` / `Table` / `BarChart` / `Sankey`), typed Filter wrappers (`CategoryFilter` / `NumericRangeFilter` / `TimeRangeFilter`), Parameter + Filter `Control` wrappers, and `Drill` actions. Cross-references are object refs, not string IDs (visuals reference datasets by `Dataset` node; filter groups reference visuals by `Visual` node; drills reference sheets by `Sheet` node). Internal IDs (visual_id, filter_group_id, action_id, layout element IDs) are auto-assigned at emit time using a position-indexed scheme; URL-facing IDs (`SheetId`, `ParameterName`) and analyst-facing identifiers (`Dataset` identifier, `CalcField` name) stay explicit. `App.emit_analysis()` / `emit_dashboard()` runs validation walks (dataset references, calc-field references, parameter references, drill destinations, FilterGroup scoping). New app code uses the tree directly — `apps/<app>/app.py` is the only file that wires sheets/visuals/filters; per-app `constants.py` modules carry only the URL-facing + analyst-facing identifiers (sheet IDs, filter-group IDs, parameter names) and dataset identifiers; greenfield apps (Executives) skip `constants.py` entirely by inlining sheet IDs in `app.py`.
+- **Three-layer model — L1 / L2 / L3.** The tree's existence is the test case for layer separation:
+  - **L1 — `common/tree/`, `common/models.py`, `common/ids.py`, `common/dataset_contract.py`.** Persona-blind primitives. Every type knows about *dashboards* (sheets, visuals, filters, drills, dataset contracts) and nothing about Sasquatch / banks / accounts / transfers. If you grep `common/tree/` for "sasquatch" you should find zero hits — and that grep is the L1 invariant.
+  - **L2 — `apps/<app>/app.py`, `apps/<app>/constants.py`.** Per-app tree assembly. Wires L1 primitives into one app's dashboard shape: which sheets, which visuals on each, which filters/drills/parameters. Talks the *domain* vocabulary ("Account Coverage", "transfer_type", "open vs active", "expected_net_zero") — domain language a CPA would recognize, but **not** persona names ("Sasquatch", "Bigfoot Brews", "FRB Master").
+  - **L3 — `apps/<app>/datasets.py` SQL strings, `apps/<app>/demo_data.py`, `common/persona.py`, theme presets in `common/theme.py`.** Persona / customer flavor. SQL strings reference real column names; `demo_data.py` plants Sasquatch-flavored row values; theme presets carry brand colors; `persona.py` centralizes the Sasquatch strings so a publishing team can substitute them via `training/mapping.yaml.example`.
+- **Tree IS the source of truth.** Tests walk the tree to derive expected sets — they do not maintain parallel hand-listed expectations. Examples already in the codebase:
+  - Unit test: `test_executives.py::test_account_coverage_active_kpi_filter_pinned` walks `exec_app.analysis.filter_groups` to find the visual-pinned filter and asserts its scope, instead of asserting a hardcoded `(visual_id_a, visual_id_b)` tuple.
+  - API e2e: `test_exec_dashboard_structure.py::TestParameters::test_all_parameters_declared` derives `expected = {str(p.name) for p in exec_app.analysis.parameters}` instead of hardcoding the parameter set.
+  - Browser e2e: `test_exec_sheet_visuals.py` calls `TreeValidator(exec_app, page).validate_structure()` once instead of per-sheet visual-count + visual-title dicts; failures across sheets accumulate into one AssertionError listing every mismatch.
+  - Identity assertions key off **stable analyst-facing identifiers** (visual *titles*, sheet *names*, dataset *identifiers*, parameter *names*) — never off auto-derived internal IDs (`v-table-s4-2`), which are positional and regenerate on tree restructure.
 
 ## Conventions
 
