@@ -117,7 +117,7 @@ def generate_investigation_cmd(ctx: click.Context) -> None:
 def _generate_payment_recon(
     config_path: str, output_dir: str, theme_preset: str | None,
 ) -> None:
-    from quicksight_gen.apps.payment_recon.analysis import (
+    from quicksight_gen.apps.payment_recon.app import (
         build_analysis,
         build_payment_recon_dashboard,
     )
@@ -416,7 +416,7 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     from quicksight_gen.apps.investigation.demo_data import (
         generate_demo_sql as generate_inv_sql,
     )
-    from quicksight_gen.apps.payment_recon.analysis import (
+    from quicksight_gen.apps.payment_recon.app import (
         build_analysis as build_pr_analysis,
         build_payment_recon_dashboard,
     )

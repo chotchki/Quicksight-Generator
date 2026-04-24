@@ -432,7 +432,9 @@ class TestExceptionTables:
             s for s in analysis["Definition"]["Sheets"]
             if s["SheetId"] == "sheet-exceptions"
         )
-        # 2 KPIs + 5 tables + 5 aging bars
+        # 2 KPIs + 5 tables + 5 aging bars = 12 visuals (L.4.12a wired
+        # the aging bars the imperative had constructed but never
+        # placed in the layout).
         assert len(exc_sheet["Visuals"]) == 12
 
 

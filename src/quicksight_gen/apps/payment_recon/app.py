@@ -1,0 +1,1920 @@
+"""Tree-based builder for the Payment Reconciliation App (L.4 port).
+
+Replaces the constant-heavy + manually-cross-referenced builders in
+``apps/payment_recon/{analysis,filters,recon_filters,visuals,recon_visuals}.py``
+with the typed tree primitives from ``common/tree/``. Sheets land one
+per L.4 sub-step:
+
+- L.4.1 — Getting Started (text boxes only, app-level skeleton)
+- L.4.2 — Sales Overview (KPIs + bar charts + detail table with
+  cross-sheet drill into Settlements)
+- L.4.3 — Settlements
+- L.4.4 — Payments
+- L.4.5 — Exceptions & Alerts
+- L.4.6 — Payment Reconciliation tab (side-by-side mutual-filter pattern)
+- L.4.7 — App-level wiring (datasets, parameters, drills, theme,
+  filter controls)
+
+**Pre-registered sheet shells.** PR's drill actions cross-reference
+sheets (Sales → Settlements, Payments → Recon, etc.). Rather than
+ordering substeps by dependency, ``build_payment_recon_app``
+pre-registers all 6 ``Sheet`` shells (in display order) up-front so
+any populator can construct a ``Drill(target_sheet=other_sheet, ...)``
+referencing any other shell. Unported sheets emit as bare shells (id +
+metadata only); the per-sheet byte-identity tests target their sheet
+by id, so unported shells don't pollute the tested surface.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+# Importing datasets registers each PR DatasetContract via its
+# module-level register_contract() side effect — required so the L.1.17
+# bare-string / unvalidated-Column emit-time validator can resolve every
+# ds["col"] ref in the visuals below.
+from quicksight_gen.apps.payment_recon import datasets as _register_contracts  # noqa: F401
+from quicksight_gen.apps.payment_recon.constants import (
+    DS_PAYMENT_RECON,
+    DS_PAYMENT_RETURNS,
+    DS_PAYMENTS,
+    DS_SALE_SETTLEMENT_MISMATCH,
+    DS_SALES,
+    DS_SETTLEMENT_EXCEPTIONS,
+    DS_SETTLEMENT_PAYMENT_MISMATCH,
+    DS_SETTLEMENTS,
+    DS_UNMATCHED_EXTERNAL_TXNS,
+    FG_PR_LOCATION,
+    FG_PR_MERCHANT,
+    FG_PR_PAYMENT_METHOD,
+    FG_PR_PAYMENT_STATUS,
+    FG_PR_PAYMENTS_KPI_RETURNS_ONLY,
+    FG_PR_PAYMENTS_UNMATCHED,
+    FG_PR_RECON_DATE_RANGE,
+    FG_PR_RECON_EXTERNAL_SYSTEM,
+    FG_PR_RECON_KPI_LATE_ONLY,
+    FG_PR_RECON_KPI_MATCHED_ONLY,
+    FG_PR_RECON_KPI_UNMATCHED_ONLY,
+    FG_PR_RECON_MATCH_STATUS,
+    FG_PR_SALES_UNSETTLED,
+    FG_PR_SETTLEMENT_STATUS,
+    FG_PR_SETTLEMENTS_KPI_PENDING_ONLY,
+    FG_PR_SETTLEMENTS_UNPAID,
+    P_PR_EXTERNAL_TXN,
+    P_PR_PAYMENT,
+    P_PR_SETTLEMENT,
+    PR_DRILL_BINDINGS,
+    SHEET_EXCEPTIONS,
+    SHEET_GETTING_STARTED,
+    SHEET_PAYMENT_RECON,
+    SHEET_PAYMENTS,
+    SHEET_SALES,
+    SHEET_SETTLEMENTS,
+    SalesMeta,
+    SheetDateRange,
+)
+from quicksight_gen.apps.payment_recon.datasets import (
+    OPTIONAL_SALE_METADATA,
+    build_all_datasets,
+)
+from quicksight_gen.common import rich_text as rt
+from quicksight_gen.common.config import Config
+from quicksight_gen.common.models import Analysis as ModelAnalysis
+from quicksight_gen.common.models import Dashboard as ModelDashboard
+from quicksight_gen.common.theme import get_preset
+from quicksight_gen.common.ids import ParameterName
+from quicksight_gen.common.tree._helpers import _AutoSentinel
+from quicksight_gen.common.tree import (
+    Analysis,
+    App,
+    CategoryFilter,
+    CellAccentMenu,
+    CellAccentText,
+    Dataset,
+    DefaultDateTimePickerControl,
+    DefaultDropdownControl,
+    DefaultSliderControl,
+    Drill,
+    DrillSourceField,
+    FilterGroup,
+    NumericRangeFilter,
+    SameSheetFilter,
+    Sheet,
+    StaticBound,
+    StringParam,
+    TextBox,
+    TimeRangeFilter,
+)
+
+
+# ---------------------------------------------------------------------------
+# Layout constants — mirror apps/payment_recon/analysis.py.
+# ---------------------------------------------------------------------------
+_FULL = 36
+_HALF = 18
+_THIRD = 12
+_KPI_ROW_SPAN = 6
+_CHART_ROW_SPAN = 12
+_TABLE_ROW_SPAN = 18
+
+
+# ---------------------------------------------------------------------------
+# Dataset refs. Registered on the App in build_payment_recon_app; the
+# populators reference them by Python variable. Order mirrors
+# `build_all_datasets` so the Analysis JSON's
+# `DataSetIdentifierDeclarations` lines up with the imperative output.
+# ---------------------------------------------------------------------------
+
+def _datasets(cfg: Config) -> dict[str, Dataset]:
+    """Map each PR logical dataset identifier to a typed `Dataset` ref."""
+    from quicksight_gen.apps.payment_recon.constants import (
+        DS_EXTERNAL_TRANSACTIONS,
+        DS_MERCHANTS,
+        DS_PAYMENT_RECON,
+        DS_PAYMENT_RETURNS,
+        DS_PAYMENTS,
+        DS_SALE_SETTLEMENT_MISMATCH,
+        DS_SETTLEMENT_EXCEPTIONS,
+        DS_SETTLEMENT_PAYMENT_MISMATCH,
+        DS_UNMATCHED_EXTERNAL_TXNS,
+    )
+    # Order must mirror build_all_datasets so each logical name
+    # lines up with the matching DataSet's DataSetId at the same index.
+    names = [
+        DS_MERCHANTS,
+        DS_SALES,
+        DS_SETTLEMENTS,
+        DS_PAYMENTS,
+        DS_SETTLEMENT_EXCEPTIONS,
+        DS_PAYMENT_RETURNS,
+        DS_SALE_SETTLEMENT_MISMATCH,
+        DS_SETTLEMENT_PAYMENT_MISMATCH,
+        DS_UNMATCHED_EXTERNAL_TXNS,
+        DS_EXTERNAL_TRANSACTIONS,
+        DS_PAYMENT_RECON,
+    ]
+    built = build_all_datasets(cfg)
+    return {
+        name: Dataset(identifier=name, arn=cfg.dataset_arn(ds.DataSetId))
+        for name, ds in zip(names, built)
+    }
+
+
+# ---------------------------------------------------------------------------
+# Sheet descriptions — single source of truth, also surfaced in the
+# Getting Started bullet blocks so each sheet's description matches the
+# summary on the landing page. Lifted verbatim from analysis.py so the
+# byte-identity test passes.
+# ---------------------------------------------------------------------------
+
+_SALES_DESCRIPTION = (
+    "Shows total sales volume and dollar amounts. Use the filters above "
+    "to narrow by date range, merchant, or location. The bar charts "
+    "highlight which merchants and locations drive the most sales, and "
+    "the detail table at the bottom lists individual transactions."
+)
+
+_SETTLEMENTS_DESCRIPTION = (
+    "Shows how sales are bundled into settlements for each merchant. "
+    "The KPIs show total settled amounts and pending counts. Use the "
+    "settlement status filter to focus on specific statuses. The bar "
+    "chart breaks down amounts by merchant type, and the detail table "
+    "lists each settlement with its current status."
+)
+
+_PAYMENTS_DESCRIPTION = (
+    "Shows payments made to merchants from settlements. The KPIs show "
+    "total paid amounts and how many payments were returned. The pie "
+    "chart breaks down payment statuses, and the detail table includes "
+    "return reasons for any returned payments."
+)
+
+_EXCEPTIONS_DESCRIPTION = (
+    "Highlights items that need attention: sales that have not been "
+    "settled and payments that were returned. Use this tab to "
+    "investigate overdue settlements and understand why payments "
+    "were sent back. Layout is compact — half-width tables side-by-side "
+    "so all exception categories are visible without scrolling."
+)
+
+_PAYMENT_RECON_DESCRIPTION = (
+    "Compares internal payments against external system transactions. "
+    "The top KPIs show matched and unmatched totals. External transactions "
+    "and internal payments are shown side-by-side — click a row in either "
+    "table to filter the other. Use the filters to narrow by date, status, "
+    "or external system."
+)
+
+
+# Per-sheet highlights used to build bulleted summaries on the Getting
+# Started tab. Each list stays scannable — three to four concrete things
+# the reader will find on that sheet.
+_SALES_BULLETS = [
+    "KPIs: total sale count and total amount",
+    "Bar charts by merchant and by location",
+    "Detail table of individual transactions",
+    "Filters: date range, merchant, location",
+]
+
+_SETTLEMENTS_BULLETS = [
+    "KPIs: total settled amount and pending count",
+    "Bar chart breaking down amounts by merchant type",
+    "Detail table listing each settlement with its status",
+    "Filter: settlement status",
+]
+
+_PAYMENTS_BULLETS = [
+    "KPIs: total paid amount and number of returned payments",
+    "Bar chart of payment statuses",
+    "Detail table including return reasons",
+]
+
+_EXCEPTIONS_BULLETS = [
+    "Unsettled sales and returned payments side by side",
+    "Sale↔settlement and settlement↔payment amount mismatches",
+    "Unmatched external-system transactions",
+]
+
+_PAYMENT_RECON_BULLETS = [
+    "KPIs: matched amount, unmatched amount, and late count",
+    "Click an external transaction to filter payments (and vice-versa)",
+    "Filters: date, match status, external system, days outstanding",
+]
+
+
+# ---------------------------------------------------------------------------
+# Getting Started (L.4.1)
+# ---------------------------------------------------------------------------
+
+def _section_box_content(
+    title: str, body: str, bullet_items: list[str], accent: str,
+) -> str:
+    return rt.text_box(
+        rt.heading(title, color=accent),
+        rt.BR,
+        rt.BR,
+        rt.body(body),
+        rt.BR,
+        rt.bullets(bullet_items),
+    )
+
+
+def _populate_getting_started(cfg: Config, sheet: Sheet) -> None:
+    accent = get_preset(cfg.theme_preset).accent
+    is_demo = cfg.demo_database_url is not None
+
+    sheet.layout.row(height=4).add_text_box(
+        TextBox(
+            text_box_id="gs-welcome",
+            content=rt.text_box(
+                rt.inline(
+                    "Payment Reconciliation Dashboard",
+                    font_size="36px",
+                    color=accent,
+                ),
+                rt.BR,
+                rt.BR,
+                rt.body(
+                    "Track sales, settlements, and payments through the full "
+                    "reconciliation lifecycle. Use the tabs above to walk each "
+                    "stage — the sections below summarise what each tab covers."
+                ),
+            ),
+        ),
+        width=_FULL,
+    )
+    sheet.layout.row(height=6).add_text_box(
+        TextBox(
+            text_box_id="gs-clickability-legend",
+            content=rt.text_box(
+                rt.heading("Clickable cells", color=accent),
+                rt.BR,
+                rt.BR,
+                rt.body(
+                    "Cells rendered in the theme accent color are interactive:"
+                ),
+                rt.bullets_raw([
+                    "Plain accent-colored text — left-click drills to a related "
+                    "tab or filters this view",
+                    "Accent text with a pale tinted background — right-click "
+                    "menu for a secondary drill, keeping the left-click action "
+                    "free for the primary id",
+                    rt.inline(
+                        "Heads-up: drill-down filters stick after you switch "
+                        "tabs. Refresh the dashboard to clear them.",
+                        color=accent,
+                    ),
+                ]),
+            ),
+        ),
+        width=_FULL,
+    )
+
+    if is_demo:
+        sheet.layout.row(height=7).add_text_box(
+            TextBox(
+                text_box_id="gs-demo-flavor",
+                content=rt.text_box(
+                    rt.heading(
+                        "Demo scenario — Sasquatch National Bank",
+                        color=accent,
+                    ),
+                    rt.BR,
+                    rt.BR,
+                    rt.body(
+                        "Data is seeded from six fictional Seattle coffee shops "
+                        "(Bigfoot Brews, Sasquatch Sips, Yeti Espresso, Skookum "
+                        "Coffee Co., Cryptid Coffee Cart, and Wildman's Roastery). "
+                        "Sales flow into settlements which pay out to merchants; "
+                        "some settlements are intentionally left unsettled, a "
+                        "handful of payments are returned, and a few amounts are "
+                        "nudged off to populate the Exceptions tab."
+                    ),
+                    rt.BR,
+                    rt.BR,
+                    rt.body(
+                        "Anchor date for relative timestamps is the day the seed "
+                        "was generated. Everything here was produced "
+                        "deterministically from demo_data.py — explore the "
+                        "filters and drill-downs freely."
+                    ),
+                ),
+            ),
+            width=_FULL,
+        )
+
+    sheet_blocks = [
+        ("gs-sales", "Sales Overview", _SALES_DESCRIPTION, _SALES_BULLETS),
+        (
+            "gs-settlements", "Settlements",
+            _SETTLEMENTS_DESCRIPTION, _SETTLEMENTS_BULLETS,
+        ),
+        ("gs-payments", "Payments", _PAYMENTS_DESCRIPTION, _PAYMENTS_BULLETS),
+        (
+            "gs-exceptions", "Exceptions & Alerts",
+            _EXCEPTIONS_DESCRIPTION, _EXCEPTIONS_BULLETS,
+        ),
+        (
+            "gs-payment-recon", "Payment Reconciliation",
+            _PAYMENT_RECON_DESCRIPTION, _PAYMENT_RECON_BULLETS,
+        ),
+    ]
+    for box_id, title, body_text, bullet_items in sheet_blocks:
+        sheet.layout.row(height=7).add_text_box(
+            TextBox(
+                text_box_id=box_id,
+                content=_section_box_content(
+                    title, body_text, bullet_items, accent,
+                ),
+            ),
+            width=_FULL,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Sales Overview (L.4.2) — 2 KPIs + 2 bar charts (each click-filters
+# the detail table) + unaggregated sales detail table with cross-sheet
+# right-click drill into Settlements (writes pSettlementId).
+# ---------------------------------------------------------------------------
+
+def _populate_sales_overview(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    settlements_sheet: Sheet,
+    datasets: dict[str, Dataset],
+) -> None:
+    preset = get_preset(cfg.theme_preset)
+    link_color = preset.accent
+    link_tint = preset.link_tint
+
+    ds_sales = datasets[DS_SALES]
+
+    # Row 1: two KPIs side-by-side.
+    kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
+    kpi_row.add_kpi(
+        width=_HALF,
+        visual_id="sales-kpi-count",  # type: ignore[arg-type]
+        title="Total Sales Count",
+        subtitle="Count of all sales in the selected date range",
+        values=[ds_sales["sale_id"].count(field_id="sales-count")],
+    )
+    kpi_row.add_kpi(
+        width=_HALF,
+        visual_id="sales-kpi-amount",  # type: ignore[arg-type]
+        title="Total Sales Amount",
+        subtitle="Sum of all sale amounts in the selected date range",
+        values=[ds_sales["amount"].sum(field_id="sales-amount")],
+    )
+
+    # Row 2: two horizontal bar charts (merchant + location), each with
+    # a same-sheet click filter that narrows the detail table in row 3.
+    # Forward-ref pattern: build SameSheetFilter actions with empty
+    # target_visuals, attach to bars, then back-patch with the table
+    # visual once row 3 lands.
+    merchant_filter = SameSheetFilter(
+        target_visuals=[],
+        name="Filter by Merchant",
+        action_id="action-sales-filter-by-merchant",
+    )
+    location_filter = SameSheetFilter(
+        target_visuals=[],
+        name="Filter by Location",
+        action_id="action-sales-filter-by-location",
+    )
+    chart_row = sheet.layout.row(height=_CHART_ROW_SPAN)
+    chart_row.add_bar_chart(
+        width=_HALF,
+        visual_id="sales-bar-by-merchant",  # type: ignore[arg-type]
+        title="Sales Amount by Merchant",
+        subtitle=(
+            "Which merchants are generating the most sales revenue. "
+            "Click a bar to filter the detail table."
+        ),
+        category=[ds_sales["merchant_id"].dim(field_id="merchant-dim")],
+        values=[ds_sales["amount"].sum(field_id="merchant-amount")],
+        orientation="HORIZONTAL",
+        bars_arrangement="CLUSTERED",
+        category_label="Merchant",
+        value_label="Sales Amount ($)",
+        actions=[merchant_filter],
+    )
+    chart_row.add_bar_chart(
+        width=_HALF,
+        visual_id="sales-bar-by-location",  # type: ignore[arg-type]
+        title="Sales Amount by Location",
+        subtitle=(
+            "Which locations are generating the most sales revenue. "
+            "Click a bar to filter the detail table."
+        ),
+        category=[ds_sales["location_id"].dim(field_id="location-dim")],
+        values=[ds_sales["amount"].sum(field_id="location-amount")],
+        orientation="HORIZONTAL",
+        bars_arrangement="CLUSTERED",
+        category_label="Location",
+        value_label="Sales Amount ($)",
+        actions=[location_filter],
+    )
+
+    # Row 3: full-width detail table. Base columns + optional metadata
+    # appended after, matching the imperative SPEC 2.2 shape.
+    settlement_id_col = ds_sales["settlement_id"].dim(field_id="tbl-settlement-id")
+    base_columns = [
+        ds_sales["sale_id"].dim(field_id="tbl-sale-id"),
+        ds_sales["sale_type"].dim(field_id="tbl-sale-type"),
+        settlement_id_col,
+        ds_sales["merchant_id"].dim(field_id="tbl-merchant-id"),
+        ds_sales["location_id"].dim(field_id="tbl-location-id"),
+        ds_sales["amount"].dim(field_id="tbl-amount"),
+        ds_sales["payment_method"].dim(field_id="tbl-payment-method"),
+        ds_sales["sale_timestamp"].dim(field_id="tbl-timestamp"),
+        ds_sales["card_brand"].dim(field_id="tbl-card-brand"),
+        ds_sales["reference_id"].dim(field_id="tbl-ref-id"),
+    ]
+    optional_columns = [
+        ds_sales[col].dim(field_id=f"tbl-sales-{col}")
+        for col, _ddl, _qs, _ftype, _label in OPTIONAL_SALE_METADATA
+    ]
+    sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        visual_id="sales-detail-table",  # type: ignore[arg-type]
+        title="Sales Detail",
+        subtitle=(
+            "Individual sale transactions — newest first. Right-click a "
+            "row to open its settlement."
+        ),
+        columns=base_columns + optional_columns,
+        sort_by=("tbl-timestamp", "DESC"),
+        actions=[
+            Drill(
+                target_sheet=settlements_sheet,
+                writes=[(P_PR_SETTLEMENT, DrillSourceField(
+                    field_id="tbl-settlement-id",
+                    shape=P_PR_SETTLEMENT.shape,
+                ))],
+                name="View Settlement",
+                trigger="DATA_POINT_MENU",
+                action_id="action-sale-to-settlement",
+            ),
+        ],
+        conditional_formatting=[
+            CellAccentMenu(
+                on=settlement_id_col,
+                text_color=link_color,
+                background_color=link_tint,
+            ),
+        ],
+    )
+
+    # Back-patch the bar charts' click filters now that the detail
+    # table exists. SameSheetFilter only resolves target_visuals'
+    # visual_ids at emit time; by then the table is in the sheet.
+    detail_table = sheet.visuals[-1]
+    merchant_filter.target_visuals.append(detail_table)
+    location_filter.target_visuals.append(detail_table)
+
+
+# ---------------------------------------------------------------------------
+# Settlements (L.4.3) — KPI amount + KPI pending count + full-width
+# vertical bar by settlement_type (with same-sheet click filter to the
+# detail table) + 8-column unaggregated detail table with two drills:
+# left-click → Sales (writes pSettlementId); right-click → Payments
+# (writes pPaymentId).
+# ---------------------------------------------------------------------------
+
+def _populate_settlements(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    sales_sheet: Sheet,
+    payments_sheet: Sheet,
+    datasets: dict[str, Dataset],
+) -> None:
+    preset = get_preset(cfg.theme_preset)
+    link_color = preset.accent
+    link_tint = preset.link_tint
+
+    ds_stl = datasets[DS_SETTLEMENTS]
+
+    # Row 1: two KPIs side-by-side.
+    kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
+    kpi_row.add_kpi(
+        width=_HALF,
+        visual_id="settlements-kpi-amount",  # type: ignore[arg-type]
+        title="Total Settled Amount",
+        subtitle="Sum of all settlement amounts in the selected date range",
+        values=[ds_stl["settlement_amount"].sum(field_id="settled-amount")],
+    )
+    kpi_row.add_kpi(
+        width=_HALF,
+        visual_id="settlements-kpi-pending",  # type: ignore[arg-type]
+        title="Pending Settlements",
+        subtitle="Number of settlements that have not yet completed",
+        values=[ds_stl["settlement_id"].count(field_id="pending-count")],
+    )
+
+    # Row 2: full-width vertical bar by settlement_type with same-sheet
+    # filter to the detail table (forward-ref + back-patch).
+    type_filter = SameSheetFilter(
+        target_visuals=[],
+        name="Filter by Type",
+        action_id="action-settlements-filter-by-type",
+    )
+    sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
+        width=_FULL,
+        visual_id="settlements-bar-by-type",  # type: ignore[arg-type]
+        title="Settlement Amount by Merchant Type",
+        subtitle=(
+            "How settlement amounts break down across merchant types. "
+            "Click a bar to filter the detail table."
+        ),
+        category=[ds_stl["settlement_type"].dim(field_id="stype-dim")],
+        values=[ds_stl["settlement_amount"].sum(field_id="stype-amount")],
+        orientation="VERTICAL",
+        bars_arrangement="CLUSTERED",
+        category_label="Merchant Type",
+        value_label="Settlement Amount ($)",
+        actions=[type_filter],
+    )
+
+    # Row 3: full-width unaggregated detail table with both drills.
+    settlement_id_col = ds_stl["settlement_id"].dim(field_id="tbl-stl-id")
+    payment_id_col = ds_stl["payment_id"].dim(field_id="tbl-stl-payment-id")
+    sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        visual_id="settlements-detail-table",  # type: ignore[arg-type]
+        title="Settlement Detail",
+        subtitle=(
+            "Each settlement with its status, amount, and sale count. "
+            "Click a row to view its sales."
+        ),
+        columns=[
+            settlement_id_col,
+            ds_stl["merchant_id"].dim(field_id="tbl-stl-merchant"),
+            ds_stl["settlement_type"].dim(field_id="tbl-stl-type"),
+            ds_stl["settlement_amount"].dim(field_id="tbl-stl-amount"),
+            ds_stl["settlement_date"].dim(field_id="tbl-stl-date"),
+            ds_stl["settlement_status"].dim(field_id="tbl-stl-status"),
+            ds_stl["sale_count"].dim(field_id="tbl-stl-sale-count"),
+            payment_id_col,
+        ],
+        actions=[
+            Drill(
+                target_sheet=sales_sheet,
+                writes=[(P_PR_SETTLEMENT, DrillSourceField(
+                    field_id="tbl-stl-id",
+                    shape=P_PR_SETTLEMENT.shape,
+                ))],
+                name="View Sales",
+                trigger="DATA_POINT_CLICK",
+                action_id="action-settlement-to-sales",
+            ),
+            Drill(
+                target_sheet=payments_sheet,
+                writes=[(P_PR_PAYMENT, DrillSourceField(
+                    field_id="tbl-stl-payment-id",
+                    shape=P_PR_PAYMENT.shape,
+                ))],
+                name="View Payment",
+                trigger="DATA_POINT_MENU",
+                action_id="action-settlement-to-payment",
+            ),
+        ],
+        conditional_formatting=[
+            CellAccentText(on=settlement_id_col, color=link_color),
+            CellAccentMenu(
+                on=payment_id_col,
+                text_color=link_color,
+                background_color=link_tint,
+            ),
+        ],
+    )
+
+    detail_table = sheet.visuals[-1]
+    type_filter.target_visuals.append(detail_table)
+
+
+# ---------------------------------------------------------------------------
+# Payments (L.4.4) — KPI amount + KPI returns count + full-width vertical
+# bar by payment_status (with same-sheet click filter to detail table) +
+# 9-column unaggregated detail table with two drills:
+# left-click → Settlements (writes pSettlementId);
+# right-click → Payment Recon (writes pExternalTransactionId).
+# ---------------------------------------------------------------------------
+
+def _populate_payments(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    settlements_sheet: Sheet,
+    payment_recon_sheet: Sheet,
+    datasets: dict[str, Dataset],
+) -> None:
+    preset = get_preset(cfg.theme_preset)
+    link_color = preset.accent
+    link_tint = preset.link_tint
+
+    ds_pay = datasets[DS_PAYMENTS]
+
+    # Row 1: two KPIs side-by-side.
+    kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
+    kpi_row.add_kpi(
+        width=_HALF,
+        visual_id="payments-kpi-amount",  # type: ignore[arg-type]
+        title="Total Paid Amount",
+        subtitle="Sum of all payment amounts to merchants",
+        values=[ds_pay["payment_amount"].sum(field_id="paid-amount")],
+    )
+    kpi_row.add_kpi(
+        width=_HALF,
+        visual_id="payments-kpi-returns",  # type: ignore[arg-type]
+        title="Returned Payments",
+        subtitle=(
+            "Number of payments that were sent back — see detail table "
+            "for reasons"
+        ),
+        values=[ds_pay["payment_id"].count(field_id="return-count")],
+    )
+
+    # Row 2: full-width vertical bar by payment_status (chosen over a
+    # pie because QS pies don't expose keyboard navigation that the
+    # browser e2e suite relies on for click-to-filter automation).
+    status_filter = SameSheetFilter(
+        target_visuals=[],
+        name="Filter by Status",
+        action_id="action-payments-filter-by-status",
+    )
+    sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
+        width=_FULL,
+        visual_id="payments-bar-status",  # type: ignore[arg-type]
+        title="Payment Status Breakdown",
+        subtitle=(
+            "Count of payments by their current status. "
+            "Click a bar to filter the detail table."
+        ),
+        category=[ds_pay["payment_status"].dim(field_id="pstatus-dim")],
+        values=[ds_pay["payment_id"].count(field_id="pstatus-count")],
+        orientation="VERTICAL",
+        bars_arrangement="CLUSTERED",
+        category_label="Payment Status",
+        value_label="Number of Payments",
+        actions=[status_filter],
+    )
+
+    # Row 3: full-width 9-column detail table with two drills.
+    settlement_id_col = ds_pay["settlement_id"].dim(field_id="tbl-pay-stl-id")
+    ext_txn_col = ds_pay["external_transaction_id"].dim(
+        field_id="tbl-pay-ext-txn",
+    )
+    sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        visual_id="payments-detail-table",  # type: ignore[arg-type]
+        title="Payment Detail",
+        subtitle=(
+            "Each payment with its status and return reason if applicable. "
+            "Click a row to view its settlement; right-click to open "
+            "Payment Reconciliation for its external transaction."
+        ),
+        columns=[
+            ds_pay["payment_id"].dim(field_id="tbl-pay-id"),
+            settlement_id_col,
+            ds_pay["merchant_id"].dim(field_id="tbl-pay-merchant"),
+            ds_pay["payment_amount"].dim(field_id="tbl-pay-amount"),
+            ds_pay["payment_date"].dim(field_id="tbl-pay-date"),
+            ds_pay["payment_status"].dim(field_id="tbl-pay-status"),
+            ds_pay["is_returned"].dim(field_id="tbl-pay-returned"),
+            ds_pay["return_reason"].dim(field_id="tbl-pay-reason"),
+            ext_txn_col,
+        ],
+        actions=[
+            Drill(
+                target_sheet=settlements_sheet,
+                writes=[(P_PR_SETTLEMENT, DrillSourceField(
+                    field_id="tbl-pay-stl-id",
+                    shape=P_PR_SETTLEMENT.shape,
+                ))],
+                name="View Settlement",
+                trigger="DATA_POINT_CLICK",
+                action_id="action-payment-to-settlement",
+            ),
+            Drill(
+                target_sheet=payment_recon_sheet,
+                writes=[(P_PR_EXTERNAL_TXN, DrillSourceField(
+                    field_id="tbl-pay-ext-txn",
+                    shape=P_PR_EXTERNAL_TXN.shape,
+                ))],
+                name="View in Reconciliation",
+                trigger="DATA_POINT_MENU",
+                action_id="action-payment-to-recon",
+            ),
+        ],
+        conditional_formatting=[
+            CellAccentText(on=settlement_id_col, color=link_color),
+            CellAccentMenu(
+                on=ext_txn_col,
+                text_color=link_color,
+                background_color=link_tint,
+            ),
+        ],
+    )
+
+    detail_table = sheet.visuals[-1]
+    status_filter.target_visuals.append(detail_table)
+
+
+_AGING_ROW_SPAN = 8
+
+
+def _add_aging_bar(
+    row,  # type: ignore[no-untyped-def]
+    *,
+    width: int,
+    visual_id: str,
+    title: str,
+    subtitle: str,
+    dataset: Dataset,
+    count_column: str,
+) -> None:
+    """Horizontal bar chart of count grouped by aging_bucket.
+
+    Mirror of the shared `common/aging.py::aging_bar_visual` shape:
+    `aging_bucket` on Category, COUNT(<count_column>) on Values,
+    HORIZONTAL CLUSTERED, axis labels Age / Count.
+    """
+    row.add_bar_chart(
+        width=width,
+        visual_id=visual_id,  # type: ignore[arg-type]
+        title=title,
+        subtitle=subtitle,
+        category=[dataset["aging_bucket"].dim(field_id=f"{visual_id}-dim")],
+        values=[dataset[count_column].count(field_id=f"{visual_id}-count")],
+        orientation="HORIZONTAL",
+        bars_arrangement="CLUSTERED",
+        category_label="Age",
+        value_label="Count",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Exceptions & Alerts (L.4.5 + L.4.12a) — 2 KPIs + 5 detail tables, each
+# table paired with an aging bar in the row below it. 12 visuals total.
+#
+# **L.4.12a** — wired the 5 aging bars that the imperative
+# `build_exceptions_visuals()` constructed but never placed in the
+# layout. Each bar pairs with one of the existing tables to surface
+# the per-check age distribution alongside the row-level detail.
+# ---------------------------------------------------------------------------
+
+def _populate_exceptions(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    datasets: dict[str, Dataset],
+) -> None:
+    del cfg
+    ds_se = datasets[DS_SETTLEMENT_EXCEPTIONS]
+    ds_pr = datasets[DS_PAYMENT_RETURNS]
+    ds_ssm = datasets[DS_SALE_SETTLEMENT_MISMATCH]
+    ds_spm = datasets[DS_SETTLEMENT_PAYMENT_MISMATCH]
+    ds_uet = datasets[DS_UNMATCHED_EXTERNAL_TXNS]
+
+    # Row 1: two KPIs.
+    kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
+    kpi_row.add_kpi(
+        width=_HALF,
+        visual_id="exceptions-kpi-unsettled",  # type: ignore[arg-type]
+        title="Unsettled Sales",
+        subtitle="Sales that have not yet been bundled into a settlement",
+        values=[ds_se["sale_id"].count(field_id="unsettled-count")],
+    )
+    kpi_row.add_kpi(
+        width=_HALF,
+        visual_id="exceptions-kpi-returns",  # type: ignore[arg-type]
+        title="Returned Payments",
+        subtitle=(
+            "Payments that were sent back — check the table below for details"
+        ),
+        values=[ds_pr["payment_id"].count(field_id="exc-return-count")],
+    )
+
+    # Row 2: side-by-side unsettled-sales + returned-payments tables.
+    chart_row1 = sheet.layout.row(height=_CHART_ROW_SPAN)
+    chart_row1.add_table(
+        width=_HALF,
+        visual_id="exceptions-unsettled-table",  # type: ignore[arg-type]
+        title="Sales Missing Settlements",
+        subtitle=(
+            "Sales not yet bundled into a settlement — investigate if any "
+            "are overdue"
+        ),
+        columns=[
+            ds_se["sale_id"].dim(field_id="tbl-exc-sale-id"),
+            ds_se["merchant_id"].dim(field_id="tbl-exc-merchant"),
+            ds_se["merchant_name"].dim(field_id="tbl-exc-merchant-name"),
+            ds_se["location_id"].dim(field_id="tbl-exc-location"),
+            ds_se["amount"].dim(field_id="tbl-exc-amount"),
+            ds_se["sale_timestamp"].dim(field_id="tbl-exc-timestamp"),
+            ds_se["days_outstanding"].dim(field_id="tbl-exc-days"),
+            ds_se["aging_bucket"].dim(field_id="tbl-exc-aging"),
+        ],
+    )
+    chart_row1.add_table(
+        width=_HALF,
+        visual_id="exceptions-returns-table",  # type: ignore[arg-type]
+        title="Returned Payments Detail",
+        subtitle="Payments that were returned with the reason for each",
+        columns=[
+            ds_pr["payment_id"].dim(field_id="tbl-ret-pay-id"),
+            ds_pr["settlement_id"].dim(field_id="tbl-ret-stl-id"),
+            ds_pr["merchant_id"].dim(field_id="tbl-ret-merchant"),
+            ds_pr["merchant_name"].dim(field_id="tbl-ret-merchant-name"),
+            ds_pr["payment_amount"].dim(field_id="tbl-ret-amount"),
+            ds_pr["payment_date"].dim(field_id="tbl-ret-date"),
+            ds_pr["return_reason"].dim(field_id="tbl-ret-reason"),
+            ds_pr["days_outstanding"].dim(field_id="tbl-ret-days"),
+            ds_pr["aging_bucket"].dim(field_id="tbl-ret-aging"),
+        ],
+    )
+
+    # Aging-bar pair under row 2.
+    aging_row1 = sheet.layout.row(height=_AGING_ROW_SPAN)
+    _add_aging_bar(
+        aging_row1,
+        width=_HALF,
+        visual_id="exceptions-aging-unsettled",
+        title="Unsettled Sales by Age",
+        subtitle="How long unsettled sales have been outstanding",
+        dataset=ds_se,
+        count_column="sale_id",
+    )
+    _add_aging_bar(
+        aging_row1,
+        width=_HALF,
+        visual_id="exceptions-aging-returns",
+        title="Returned Payments by Age",
+        subtitle="How long returned payments have been outstanding",
+        dataset=ds_pr,
+        count_column="payment_id",
+    )
+
+    # Row 3: side-by-side sale↔settlement + settlement↔payment mismatch tables.
+    chart_row2 = sheet.layout.row(height=_CHART_ROW_SPAN)
+    chart_row2.add_table(
+        width=_HALF,
+        visual_id="exceptions-sale-settlement-mismatch-table",  # type: ignore[arg-type]
+        title="Sales ↔ Settlement Mismatch",
+        subtitle=(
+            "Settlements whose amount doesn't equal the signed sum of "
+            "their linked sales (refunds + corrections show up here)."
+        ),
+        columns=[
+            ds_ssm["settlement_id"].dim(field_id="tbl-ss-stl-id"),
+            ds_ssm["merchant_id"].dim(field_id="tbl-ss-merchant"),
+            ds_ssm["settlement_amount"].dim(field_id="tbl-ss-stl-amount"),
+            ds_ssm["sales_sum"].dim(field_id="tbl-ss-sales-sum"),
+            ds_ssm["difference"].dim(field_id="tbl-ss-difference"),
+            ds_ssm["settlement_date"].dim(field_id="tbl-ss-date"),
+            ds_ssm["days_outstanding"].dim(field_id="tbl-ss-days"),
+            ds_ssm["aging_bucket"].dim(field_id="tbl-ss-aging"),
+        ],
+    )
+    chart_row2.add_table(
+        width=_HALF,
+        visual_id="exceptions-settlement-payment-mismatch-table",  # type: ignore[arg-type]
+        title="Settlement ↔ Payment Mismatch",
+        subtitle=(
+            "Payments whose amount doesn't match their settlement — "
+            "investigate these before reconciling externally."
+        ),
+        columns=[
+            ds_spm["payment_id"].dim(field_id="tbl-sp-pay-id"),
+            ds_spm["settlement_id"].dim(field_id="tbl-sp-stl-id"),
+            ds_spm["merchant_id"].dim(field_id="tbl-sp-merchant"),
+            ds_spm["payment_amount"].dim(field_id="tbl-sp-pay-amount"),
+            ds_spm["settlement_amount"].dim(field_id="tbl-sp-stl-amount"),
+            ds_spm["difference"].dim(field_id="tbl-sp-difference"),
+            ds_spm["payment_date"].dim(field_id="tbl-sp-date"),
+            ds_spm["days_outstanding"].dim(field_id="tbl-sp-days"),
+            ds_spm["aging_bucket"].dim(field_id="tbl-sp-aging"),
+        ],
+    )
+
+    # Aging-bar pair under row 3.
+    aging_row2 = sheet.layout.row(height=_AGING_ROW_SPAN)
+    _add_aging_bar(
+        aging_row2,
+        width=_HALF,
+        visual_id="exceptions-aging-sale-stl-mismatch",
+        title="Sale ↔ Settlement Mismatch by Age",
+        subtitle="How long sale-settlement mismatches have been outstanding",
+        dataset=ds_ssm,
+        count_column="settlement_id",
+    )
+    _add_aging_bar(
+        aging_row2,
+        width=_HALF,
+        visual_id="exceptions-aging-stl-pay-mismatch",
+        title="Settlement ↔ Payment Mismatch by Age",
+        subtitle="How long settlement-payment mismatches have been outstanding",
+        dataset=ds_spm,
+        count_column="payment_id",
+    )
+
+    # Row 4: full-width unmatched external txns table.
+    sheet.layout.row(height=_CHART_ROW_SPAN).add_table(
+        width=_FULL,
+        visual_id="exceptions-unmatched-ext-txn-table",  # type: ignore[arg-type]
+        title="External Transactions Without a Payment",
+        subtitle=(
+            "External system transactions that have no internal payment "
+            "linked — usually the first thing to investigate."
+        ),
+        columns=[
+            ds_uet["transaction_id"].dim(field_id="tbl-ue-txn-id"),
+            ds_uet["external_system"].dim(field_id="tbl-ue-system"),
+            ds_uet["merchant_id"].dim(field_id="tbl-ue-merchant"),
+            ds_uet["external_amount"].dim(field_id="tbl-ue-amount"),
+            ds_uet["transaction_date"].dim(field_id="tbl-ue-date"),
+            ds_uet["days_outstanding"].dim(field_id="tbl-ue-days"),
+            ds_uet["aging_bucket"].dim(field_id="tbl-ue-aging"),
+        ],
+    )
+
+    # Aging bar under row 4 (full-width unmatched-ext-txn table).
+    _add_aging_bar(
+        sheet.layout.row(height=_AGING_ROW_SPAN),
+        width=_FULL,
+        visual_id="exceptions-aging-unmatched-ext",
+        title="Unmatched External Txns by Age",
+        subtitle="How long unmatched external transactions have been outstanding",
+        dataset=ds_uet,
+        count_column="transaction_id",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Payment Reconciliation (L.4.6) — the side-by-side mutual-filter sheet.
+#
+# **Mutual-filter mechanism.** Both detail tables (External Transactions
+# + Internal Payments) carry a left-click `Drill` whose `target_sheet`
+# is the Payment Reconciliation sheet itself (i.e. same-sheet
+# parameter-set). Each writes the same `P_PR_EXTERNAL_TXN` parameter
+# but from its row-specific source column — `transaction_id` on the
+# ext-txn table, `external_transaction_id` on the payments table.
+# The parameter-bound filters wired in L.4.7 (recon_filters.py
+# equivalent) read from this parameter and apply to both tables, so
+# clicking a row in one filters the other.
+#
+# **Documented diff vs imperative** — same shape as L.4.5: the
+# imperative `build_payment_recon_visuals()` ships an aging bar
+# (`reconciliation-aging-bar`) that no `GridLayoutElement` references.
+# Stripped on the imperative side in the L.4.6 byte-identity test;
+# wiring it properly is part of the same orphan-aging-bars follow-up.
+# ---------------------------------------------------------------------------
+
+def _populate_payment_recon(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    datasets: dict[str, Dataset],
+) -> None:
+    preset = get_preset(cfg.theme_preset)
+    link_color = preset.accent
+
+    ds_recon = datasets[DS_PAYMENT_RECON]
+    ds_pay = datasets[DS_PAYMENTS]
+
+    # Row 1: three KPIs at one-third width each.
+    kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
+    kpi_row.add_kpi(
+        width=_THIRD,
+        visual_id="recon-kpi-matched-amount",  # type: ignore[arg-type]
+        title="Matched Amount",
+        subtitle=(
+            "Total external transaction amount that matches internal payments"
+        ),
+        values=[ds_recon["external_amount"].sum(field_id="recon-matched-amt")],
+    )
+    kpi_row.add_kpi(
+        width=_THIRD,
+        visual_id="recon-kpi-unmatched-amount",  # type: ignore[arg-type]
+        title="Unmatched Amount",
+        subtitle=(
+            "Total external transaction amount not yet matched to internal "
+            "payments"
+        ),
+        values=[
+            ds_recon["external_amount"].sum(field_id="recon-unmatched-amt"),
+        ],
+    )
+    kpi_row.add_kpi(
+        width=_THIRD,
+        visual_id="recon-kpi-late-count",  # type: ignore[arg-type]
+        title="Late Transactions",
+        subtitle=(
+            "Unmatched transactions past their expected completion time "
+            "(per-row is_late = 'Late')"
+        ),
+        values=[ds_recon["transaction_id"].count(field_id="recon-late-count")],
+    )
+
+    # Row 2: full-width vertical stacked bar by external_system, coloured
+    # by match_status, with same-sheet click filter targeting BOTH detail
+    # tables (forward-ref + back-patch).
+    system_filter = SameSheetFilter(
+        target_visuals=[],
+        name="Filter by System",
+        action_id="action-recon-filter-by-system",
+    )
+    sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
+        width=_FULL,
+        visual_id="recon-bar-by-system",  # type: ignore[arg-type]
+        title="Match Status by External System",
+        subtitle=(
+            "Which external systems have the most mismatches. "
+            "Click a bar to filter the tables below."
+        ),
+        category=[ds_recon["external_system"].dim(field_id="recon-system-dim")],
+        values=[ds_recon["transaction_id"].count(field_id="recon-system-count")],
+        colors=[ds_recon["match_status"].dim(field_id="recon-system-status")],
+        orientation="VERTICAL",
+        bars_arrangement="STACKED",
+        category_label="External System",
+        value_label="Transaction Count",
+        color_label="Match Status",
+        actions=[system_filter],
+    )
+
+    # Row 3: side-by-side detail tables (payments left, ext-txns right).
+    # Each carries a left-click Drill that writes pExternalTransactionId
+    # on the same sheet — the parameter-bound filters wired in L.4.7
+    # turn this into the mutual-filter behaviour.
+    pay_ext_txn_col = ds_pay["external_transaction_id"].dim(
+        field_id="recon-pay-ext-txn",
+    )
+    table_row = sheet.layout.row(height=_TABLE_ROW_SPAN)
+    table_row.add_table(
+        width=_HALF,
+        visual_id="recon-payments-table",  # type: ignore[arg-type]
+        title="Internal Payments",
+        subtitle=(
+            "Payments linked to external transactions. "
+            "Click a row to filter the External Transactions table."
+        ),
+        columns=[
+            ds_pay["payment_id"].dim(field_id="recon-pay-id"),
+            ds_pay["merchant_id"].dim(field_id="recon-pay-merchant"),
+            ds_pay["payment_amount"].dim(field_id="recon-pay-amount"),
+            ds_pay["payment_date"].dim(field_id="recon-pay-date"),
+            ds_pay["payment_status"].dim(field_id="recon-pay-status"),
+            pay_ext_txn_col,
+        ],
+        actions=[
+            Drill(
+                target_sheet=sheet,
+                writes=[(P_PR_EXTERNAL_TXN, DrillSourceField(
+                    field_id="recon-pay-ext-txn",
+                    shape=P_PR_EXTERNAL_TXN.shape,
+                ))],
+                name="Show Transaction",
+                trigger="DATA_POINT_CLICK",
+                action_id="action-recon-pay-click",
+            ),
+        ],
+        conditional_formatting=[
+            CellAccentText(on=pay_ext_txn_col, color=link_color),
+        ],
+    )
+    txn_id_col = ds_recon["transaction_id"].dim(field_id="recon-tbl-txn-id")
+    table_row.add_table(
+        width=_HALF,
+        visual_id="recon-ext-txn-table",  # type: ignore[arg-type]
+        title="External Transactions",
+        subtitle=(
+            "Each external transaction with its match status and difference. "
+            "Click a row to filter the Internal Payments table."
+        ),
+        columns=[
+            txn_id_col,
+            ds_recon["external_system"].dim(field_id="recon-tbl-ext-sys"),
+            ds_recon["external_amount"].dim(field_id="recon-tbl-ext-amt"),
+            ds_recon["internal_total"].dim(field_id="recon-tbl-int-total"),
+            ds_recon["difference"].dim(field_id="recon-tbl-diff"),
+            ds_recon["match_status"].dim(field_id="recon-tbl-status"),
+            ds_recon["payment_count"].dim(field_id="recon-tbl-pay-count"),
+            ds_recon["merchant_id"].dim(field_id="recon-tbl-merchant"),
+            ds_recon["days_outstanding"].dim(field_id="recon-tbl-days"),
+        ],
+        actions=[
+            Drill(
+                target_sheet=sheet,
+                writes=[(P_PR_EXTERNAL_TXN, DrillSourceField(
+                    field_id="recon-tbl-txn-id",
+                    shape=P_PR_EXTERNAL_TXN.shape,
+                ))],
+                name="Show Payments",
+                trigger="DATA_POINT_CLICK",
+                action_id="action-recon-ext-txn-click",
+            ),
+        ],
+        conditional_formatting=[
+            CellAccentText(on=txn_id_col, color=link_color),
+        ],
+    )
+
+    # Back-patch the bar's same-sheet filter with both detail tables.
+    payments_table, ext_txn_table = sheet.visuals[-2], sheet.visuals[-1]
+    system_filter.target_visuals.append(ext_txn_table)
+    system_filter.target_visuals.append(payments_table)
+
+    # Row 4: full-width aging bar (L.4.12a — wires the imperative orphan).
+    _add_aging_bar(
+        sheet.layout.row(height=_AGING_ROW_SPAN),
+        width=_FULL,
+        visual_id="recon-aging-bar",
+        title="Reconciliation by Age",
+        subtitle=(
+            "How long external transactions have been outstanding "
+            "— older items are more likely to need investigation"
+        ),
+        dataset=ds_recon,
+        count_column="transaction_id",
+    )
+
+
+# ---------------------------------------------------------------------------
+# L.4.7a — Parameters + 5 drill PASS filter groups.
+#
+# PR doesn't use AR's K.2 PASS calc-field sentinel pattern. Each
+# CategoryFilter is parameter-bound directly via
+# ``CustomFilterConfiguration`` (`MatchOperator=EQUALS`,
+# `ParameterName`, `NullOption=ALL_VALUES`) so an empty parameter
+# default lets all rows through; a drill that writes the parameter
+# narrows the destination sheet.
+# ---------------------------------------------------------------------------
+
+def _wire_parameters(analysis: Analysis) -> None:
+    """Declare the 3 PR string parameters for cross-sheet drill-down."""
+    for drill_param in (P_PR_SETTLEMENT, P_PR_PAYMENT, P_PR_EXTERNAL_TXN):
+        analysis.add_parameter(StringParam(
+            name=ParameterName(drill_param.name),
+        ))
+
+
+@dataclass(frozen=True)
+class _DrillSpec:
+    param_short: str    # "settlement" / "payment" / "ext-txn"
+    sheet_short: str    # "sales" / "settlements" / "payments" / "recon"
+    sheet_id: str
+    dataset_id: str
+    column_name: str
+    param_name: str
+
+
+_DRILL_SPECS_PIPELINE: tuple[_DrillSpec, ...] = (
+    _DrillSpec("settlement", "sales", SHEET_SALES, DS_SALES,
+               "settlement_id", P_PR_SETTLEMENT.name),
+    _DrillSpec("settlement", "settlements", SHEET_SETTLEMENTS, DS_SETTLEMENTS,
+               "settlement_id", P_PR_SETTLEMENT.name),
+    _DrillSpec("payment", "payments", SHEET_PAYMENTS, DS_PAYMENTS,
+               "payment_id", P_PR_PAYMENT.name),
+)
+
+_DRILL_SPECS_RECON: tuple[_DrillSpec, ...] = (
+    _DrillSpec("ext-txn", "recon", SHEET_PAYMENT_RECON, DS_PAYMENT_RECON,
+               "transaction_id", P_PR_EXTERNAL_TXN.name),
+    _DrillSpec("ext-txn", "payments", SHEET_PAYMENT_RECON, DS_PAYMENTS,
+               "external_transaction_id", P_PR_EXTERNAL_TXN.name),
+)
+
+
+def _wire_drill_filter_groups(
+    analysis: Analysis,
+    *,
+    specs: tuple[_DrillSpec, ...],
+    sheets: dict[str, Sheet],
+    datasets: dict[str, Dataset],
+) -> None:
+    """Wire one or more drill PASS filter groups.
+
+    Each spec binds the destination sheet's relevant id column to the
+    matching drill parameter via ``CategoryFilter.with_parameter``.
+    Split into pipeline / recon batches so the FilterGroup-list order
+    in the emitted JSON matches the imperative order (pipeline drills
+    are interleaved between the pipeline + recon sheet-level groups).
+    """
+    binding_by_pair = {(b.kind, b.location): b for b in PR_DRILL_BINDINGS}
+    for spec in specs:
+        binding = binding_by_pair[(spec.param_short, spec.sheet_short)]
+        target_sheet = sheets[spec.sheet_id]
+        ds = datasets[spec.dataset_id]
+        param = analysis.find_parameter(name=spec.param_name)
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=binding.fg_id,
+            filters=[CategoryFilter.with_parameter(
+                filter_id=binding.filter_id,
+                dataset=ds,
+                column=ds[spec.column_name],
+                parameter=param,
+                match_operator="EQUALS",
+                null_option="ALL_VALUES",
+            )],
+        ))
+        fg.scope_sheet(target_sheet)
+
+
+# ---------------------------------------------------------------------------
+# L.4.7b — Sheet-level filter groups (24 total).
+#
+# Pipeline (18 from imperative `build_filter_groups`):
+# - 4 per-sheet date-range filters (single-dataset, native column per
+#   sheet — sale_timestamp / settlement_date / payment_date /
+#   sale_timestamp on Exceptions).
+# - merchant + location (cross-dataset, all 4 pipeline sheets, with
+#   default control for cross-sheet propagation).
+# - settlement_status (Settlements + Exceptions, with default control).
+# - payment_status, payment_method (Payments only, no default control).
+# - 3 state-toggle filter groups (sales_unsettled, settlements_unpaid,
+#   payments_unmatched) backing the Show-Only-X dropdowns.
+# - 2 visual-scoped pinned filter groups for KPIs whose subtitle
+#   promises a narrowed count (payments-kpi-returns-only,
+#   settlements-kpi-pending-only).
+# - 4 optional-metadata filter groups derived from
+#   `OPTIONAL_SALE_METADATA` (Sales sheet only).
+#
+# Recon (6 from imperative `build_recon_filter_groups`):
+# - 3 sheet-wide single-dataset filters (date-range, match-status,
+#   external-system).
+# - 3 visual-scoped pinned KPI filters (late-only, matched-only,
+#   unmatched-only).
+# ---------------------------------------------------------------------------
+
+_DATE_RANGE_BINDINGS: tuple[tuple[SheetDateRange, str, str, str], ...] = (
+    (SheetDateRange("sales"), SHEET_SALES, DS_SALES, "sale_timestamp"),
+    (SheetDateRange("settlements"), SHEET_SETTLEMENTS, DS_SETTLEMENTS,
+     "settlement_date"),
+    (SheetDateRange("payments"), SHEET_PAYMENTS, DS_PAYMENTS, "payment_date"),
+    (SheetDateRange("exceptions"), SHEET_EXCEPTIONS, DS_SETTLEMENT_EXCEPTIONS,
+     "sale_timestamp"),
+)
+
+
+def _wire_pipeline_filter_groups(
+    analysis: Analysis,
+    *,
+    sheets: dict[str, Sheet],
+    datasets: dict[str, Dataset],
+) -> None:
+    """18 pipeline-tab filter groups (date ranges, dropdowns, toggles,
+    KPI pins, optional metadata)."""
+    sales = sheets[SHEET_SALES]
+    settlements = sheets[SHEET_SETTLEMENTS]
+    payments = sheets[SHEET_PAYMENTS]
+    exceptions = sheets[SHEET_EXCEPTIONS]
+    all_pipeline = [sales, settlements, payments, exceptions]
+
+    ds_sales = datasets[DS_SALES]
+    ds_settlements = datasets[DS_SETTLEMENTS]
+    ds_payments = datasets[DS_PAYMENTS]
+    ds_settlement_exc = datasets[DS_SETTLEMENT_EXCEPTIONS]
+
+    def _scope_sheets(fg: FilterGroup, scoped: list[Sheet]) -> None:
+        for s in scoped:
+            fg.scope_sheet(s)
+
+    sheet_dataset_by_id: dict[str, Dataset] = {
+        SHEET_SALES: ds_sales,
+        SHEET_SETTLEMENTS: ds_settlements,
+        SHEET_PAYMENTS: ds_payments,
+        SHEET_EXCEPTIONS: ds_settlement_exc,
+    }
+
+    # 1-4. Per-sheet date-range filter groups.
+    for spec, sheet_id, ds_id, col in _DATE_RANGE_BINDINGS:
+        ds = sheet_dataset_by_id[sheet_id]
+        assert ds.identifier == ds_id
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=spec.fg_id,
+            filters=[TimeRangeFilter(
+                filter_id=spec.filter_id,
+                dataset=ds,
+                column=ds[col],
+                null_option="NON_NULLS_ONLY",
+                time_granularity="DAY",
+            )],
+        ))
+        fg.scope_sheet(sheets[sheet_id])
+
+    # 5. Merchant — cross-dataset, all 4 pipeline sheets, default control.
+    fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_PR_MERCHANT,
+        cross_dataset="ALL_DATASETS",
+        filters=[CategoryFilter.with_values(
+            filter_id="filter-merchant",
+            dataset=ds_sales,
+            column=ds_sales["merchant_id"],
+            values=[],
+            select_all_options="FILTER_ALL_VALUES",
+            default_control=DefaultDropdownControl(
+                title="Merchant", type="MULTI_SELECT",
+            ),
+        )],
+    ))
+    _scope_sheets(fg, all_pipeline)
+
+    # 6. Location — same shape as merchant.
+    fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_PR_LOCATION,
+        cross_dataset="ALL_DATASETS",
+        filters=[CategoryFilter.with_values(
+            filter_id="filter-location",
+            dataset=ds_sales,
+            column=ds_sales["location_id"],
+            values=[],
+            select_all_options="FILTER_ALL_VALUES",
+            default_control=DefaultDropdownControl(
+                title="Location", type="MULTI_SELECT",
+            ),
+        )],
+    ))
+    _scope_sheets(fg, all_pipeline)
+
+    # 7. Settlement status — Settlements + Exceptions, default control.
+    fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_PR_SETTLEMENT_STATUS,
+        filters=[CategoryFilter.with_values(
+            filter_id="filter-settlement-status",
+            dataset=ds_settlements,
+            column=ds_settlements["settlement_status"],
+            values=[],
+            select_all_options="FILTER_ALL_VALUES",
+            default_control=DefaultDropdownControl(
+                title="Settlement Status", type="MULTI_SELECT",
+            ),
+        )],
+    ))
+    _scope_sheets(fg, [settlements, exceptions])
+
+    # 8. Payment status — Payments only, no default control.
+    fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_PR_PAYMENT_STATUS,
+        filters=[CategoryFilter.with_values(
+            filter_id="filter-payment-status",
+            dataset=ds_payments,
+            column=ds_payments["payment_status"],
+            values=[],
+            select_all_options="FILTER_ALL_VALUES",
+        )],
+    ))
+    fg.scope_sheet(payments)
+
+    # 9. Payment method — Payments only, no default control.
+    fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_PR_PAYMENT_METHOD,
+        filters=[CategoryFilter.with_values(
+            filter_id="filter-payment-method",
+            dataset=ds_payments,
+            column=ds_payments["payment_method"],
+            values=[],
+            select_all_options="FILTER_ALL_VALUES",
+        )],
+    ))
+    fg.scope_sheet(payments)
+
+    # 10-12. Show-Only-X state-toggle filter groups.
+    state_toggles = (
+        (FG_PR_SALES_UNSETTLED, "filter-sales-unsettled", sales,
+         ds_sales, "settlement_state"),
+        (FG_PR_SETTLEMENTS_UNPAID, "filter-settlements-unpaid", settlements,
+         ds_settlements, "payment_state"),
+        (FG_PR_PAYMENTS_UNMATCHED, "filter-payments-unmatched", payments,
+         ds_payments, "external_match_state"),
+    )
+    for fg_id, filter_id, sheet, ds, col in state_toggles:
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=fg_id,
+            filters=[CategoryFilter.with_values(
+                filter_id=filter_id,
+                dataset=ds,
+                column=ds[col],
+                values=[],
+                select_all_options="FILTER_ALL_VALUES",
+            )],
+        ))
+        fg.scope_sheet(sheet)
+
+    # 13. payments-kpi-returns-only — visual-scoped pinned filter.
+    returns_pin = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_PR_PAYMENTS_KPI_RETURNS_ONLY,
+        filters=[CategoryFilter.with_values(
+            filter_id="filter-payments-kpi-returns-only",
+            dataset=ds_payments,
+            column=ds_payments["is_returned"],
+            values=["true"],
+        )],
+    ))
+    payments_kpi_returns = next(
+        v for v in payments.visuals
+        if not isinstance(v.visual_id, _AutoSentinel)
+        and v.visual_id == "payments-kpi-returns"
+    )
+    payments.scope(returns_pin, [payments_kpi_returns])
+
+    # 14. settlements-kpi-pending-only — visual-scoped pinned filter.
+    pending_pin = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_PR_SETTLEMENTS_KPI_PENDING_ONLY,
+        filters=[CategoryFilter.with_values(
+            filter_id="filter-settlements-kpi-pending-only",
+            dataset=ds_settlements,
+            column=ds_settlements["settlement_status"],
+            values=["pending"],
+        )],
+    ))
+    settlements_kpi_pending = next(
+        v for v in settlements.visuals
+        if not isinstance(v.visual_id, _AutoSentinel)
+        and v.visual_id == "settlements-kpi-pending"
+    )
+    settlements.scope(pending_pin, [settlements_kpi_pending])
+
+    # 15-18. Optional sale-metadata filter groups (Sales sheet only).
+    for col, _ddl, _qs, ftype, _label in OPTIONAL_SALE_METADATA:
+        spec = SalesMeta(col)
+        if ftype == "numeric":
+            filter_obj: NumericRangeFilter | TimeRangeFilter | CategoryFilter = (
+                NumericRangeFilter(
+                    filter_id=spec.filter_id,
+                    dataset=ds_sales,
+                    column=ds_sales[col],
+                    null_option="ALL_VALUES",
+                    minimum=StaticBound(value=0),
+                    maximum=StaticBound(value=999),
+                    include_minimum=True,
+                    include_maximum=True,
+                )
+            )
+        elif ftype == "datetime":
+            filter_obj = TimeRangeFilter(
+                filter_id=spec.filter_id,
+                dataset=ds_sales,
+                column=ds_sales[col],
+                null_option="NON_NULLS_ONLY",
+                time_granularity="DAY",
+            )
+        else:
+            filter_obj = CategoryFilter.with_values(
+                filter_id=spec.filter_id,
+                dataset=ds_sales,
+                column=ds_sales[col],
+                values=[],
+                select_all_options="FILTER_ALL_VALUES",
+            )
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=spec.fg_id,
+            filters=[filter_obj],
+        ))
+        fg.scope_sheet(sales)
+
+
+def _wire_recon_sheet_filter_groups(
+    analysis: Analysis,
+    *,
+    sheets: dict[str, Sheet],
+    datasets: dict[str, Dataset],
+) -> None:
+    """6 recon-sheet filter groups (date / match-status / ext-system +
+    3 visual-scoped pinned KPI filters)."""
+    recon = sheets[SHEET_PAYMENT_RECON]
+    ds_recon = datasets[DS_PAYMENT_RECON]
+
+    # 1. recon date-range.
+    fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_PR_RECON_DATE_RANGE,
+        filters=[TimeRangeFilter(
+            filter_id="filter-recon-date-range",
+            dataset=ds_recon,
+            column=ds_recon["transaction_date"],
+            null_option="NON_NULLS_ONLY",
+            time_granularity="DAY",
+        )],
+    ))
+    fg.scope_sheet(recon)
+
+    # 2. recon match-status.
+    fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_PR_RECON_MATCH_STATUS,
+        filters=[CategoryFilter.with_values(
+            filter_id="filter-recon-match-status",
+            dataset=ds_recon,
+            column=ds_recon["match_status"],
+            values=[],
+            select_all_options="FILTER_ALL_VALUES",
+        )],
+    ))
+    fg.scope_sheet(recon)
+
+    # 3. recon external-system.
+    fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_PR_RECON_EXTERNAL_SYSTEM,
+        filters=[CategoryFilter.with_values(
+            filter_id="filter-recon-external-system",
+            dataset=ds_recon,
+            column=ds_recon["external_system"],
+            values=[],
+            select_all_options="FILTER_ALL_VALUES",
+        )],
+    ))
+    fg.scope_sheet(recon)
+
+    # 4-6. KPI visual-scoped pinned filters.
+    kpi_pin_specs = (
+        (FG_PR_RECON_KPI_LATE_ONLY, "filter-recon-kpi-late-only",
+         "recon-kpi-late-count", ["late"]),
+        (FG_PR_RECON_KPI_MATCHED_ONLY, "filter-recon-kpi-matched-only",
+         "recon-kpi-matched-amount", ["matched"]),
+        (FG_PR_RECON_KPI_UNMATCHED_ONLY, "filter-recon-kpi-unmatched-only",
+         "recon-kpi-unmatched-amount", ["late", "not_yet_matched"]),
+    )
+    for fg_id, filter_id, kpi_visual_id, status_values in kpi_pin_specs:
+        pin = analysis.add_filter_group(FilterGroup(
+            filter_group_id=fg_id,
+            filters=[CategoryFilter.with_values(
+                filter_id=filter_id,
+                dataset=ds_recon,
+                column=ds_recon["match_status"],
+                values=status_values,
+            )],
+        ))
+        kpi = next(
+            v for v in recon.visuals
+            if not isinstance(v.visual_id, _AutoSentinel)
+            and v.visual_id == kpi_visual_id
+        )
+        recon.scope(pin, [kpi])
+
+
+# ---------------------------------------------------------------------------
+# L.4.7c — Per-sheet FilterControls (~25 across 5 sheets).
+#
+# Each control binds to a registered filter group's inner filter via
+# the tree's typed sheet API. Cross-sheet filters (merchant, location,
+# settlement_status) use `add_filter_cross_sheet`; single-sheet
+# filters get direct widgets (`add_filter_dropdown`,
+# `add_filter_datetime_picker`, `add_filter_slider`).
+#
+# Control IDs are pinned to the imperative names so the byte-identity
+# test holds.
+# ---------------------------------------------------------------------------
+
+
+def _filter_of(analysis: Analysis, fg_id: str) -> object:
+    """Return the (single) inner filter for a registered filter group."""
+    return analysis.find_filter_group(filter_group_id=fg_id).filters[0]  # type: ignore[arg-type]
+
+
+def _wire_sheet_filter_controls(
+    analysis: Analysis,
+    *,
+    sheets: dict[str, Sheet],
+) -> None:
+    """Per-sheet FilterControls for the 5 PR pipeline + recon sheets.
+
+    Order within each sheet matches the imperative ``build_*_controls``
+    return order so the SheetDefinition.FilterControls list lines up
+    byte-for-byte.
+    """
+    sales = sheets[SHEET_SALES]
+    settlements = sheets[SHEET_SETTLEMENTS]
+    payments = sheets[SHEET_PAYMENTS]
+    exceptions = sheets[SHEET_EXCEPTIONS]
+    recon = sheets[SHEET_PAYMENT_RECON]
+
+    # Cross-sheet filters used by multiple pipeline sheets.
+    f_merchant = _filter_of(analysis, FG_PR_MERCHANT)
+    f_location = _filter_of(analysis, FG_PR_LOCATION)
+    f_settlement_status = _filter_of(analysis, FG_PR_SETTLEMENT_STATUS)
+
+    # Per-sheet single-sheet filters.
+    f_sales_date = _filter_of(analysis, SheetDateRange("sales").fg_id)
+    f_settlements_date = _filter_of(
+        analysis, SheetDateRange("settlements").fg_id,
+    )
+    f_payments_date = _filter_of(analysis, SheetDateRange("payments").fg_id)
+    f_exceptions_date = _filter_of(analysis, SheetDateRange("exceptions").fg_id)
+    f_recon_date = _filter_of(analysis, FG_PR_RECON_DATE_RANGE)
+    f_recon_match = _filter_of(analysis, FG_PR_RECON_MATCH_STATUS)
+    f_recon_ext = _filter_of(analysis, FG_PR_RECON_EXTERNAL_SYSTEM)
+    f_payment_status = _filter_of(analysis, FG_PR_PAYMENT_STATUS)
+    f_payment_method = _filter_of(analysis, FG_PR_PAYMENT_METHOD)
+    f_sales_unsettled = _filter_of(analysis, FG_PR_SALES_UNSETTLED)
+    f_settlements_unpaid = _filter_of(analysis, FG_PR_SETTLEMENTS_UNPAID)
+    f_payments_unmatched = _filter_of(analysis, FG_PR_PAYMENTS_UNMATCHED)
+
+    # Sales — date + merchant + location + show-only-unsettled +
+    # 4 optional metadata controls. Matches build_sales_controls order.
+    sales.add_filter_datetime_picker(
+        filter=f_sales_date,  # type: ignore[arg-type]
+        title="Date Range",
+        type="DATE_RANGE",
+        control_id="ctrl-sales-date-range",  # type: ignore[arg-type]
+    )
+    sales.add_filter_cross_sheet(
+        filter=f_merchant,  # type: ignore[arg-type]
+        control_id="ctrl-sales-merchant",  # type: ignore[arg-type]
+    )
+    sales.add_filter_cross_sheet(
+        filter=f_location,  # type: ignore[arg-type]
+        control_id="ctrl-sales-location",  # type: ignore[arg-type]
+    )
+    sales.add_filter_dropdown(
+        filter=f_sales_unsettled,  # type: ignore[arg-type]
+        title="Show Only Unsettled",
+        type="SINGLE_SELECT",
+        control_id="ctrl-sales-unsettled",  # type: ignore[arg-type]
+    )
+    for col, _ddl, _qs, ftype, label in OPTIONAL_SALE_METADATA:
+        f_meta = _filter_of(analysis, SalesMeta(col).fg_id)
+        ctrl_id = f"ctrl-sales-meta-{col}"
+        if ftype == "numeric":
+            sales.add_filter_slider(
+                filter=f_meta,  # type: ignore[arg-type]
+                title=label,
+                minimum_value=0,
+                maximum_value=999,
+                step_size=1,
+                type="RANGE",
+                control_id=ctrl_id,  # type: ignore[arg-type]
+            )
+        elif ftype == "datetime":
+            sales.add_filter_datetime_picker(
+                filter=f_meta,  # type: ignore[arg-type]
+                title=label,
+                type="DATE_RANGE",
+                control_id=ctrl_id,  # type: ignore[arg-type]
+            )
+        else:
+            sales.add_filter_dropdown(
+                filter=f_meta,  # type: ignore[arg-type]
+                title=label,
+                type="MULTI_SELECT",
+                control_id=ctrl_id,  # type: ignore[arg-type]
+            )
+
+    # Settlements — date + merchant + location + settlement-status +
+    # show-only-unpaid.
+    settlements.add_filter_datetime_picker(
+        filter=f_settlements_date,  # type: ignore[arg-type]
+        title="Date Range",
+        type="DATE_RANGE",
+        control_id="ctrl-settlements-date-range",  # type: ignore[arg-type]
+    )
+    settlements.add_filter_cross_sheet(
+        filter=f_merchant,  # type: ignore[arg-type]
+        control_id="ctrl-settlements-merchant",  # type: ignore[arg-type]
+    )
+    settlements.add_filter_cross_sheet(
+        filter=f_location,  # type: ignore[arg-type]
+        control_id="ctrl-settlements-location",  # type: ignore[arg-type]
+    )
+    settlements.add_filter_cross_sheet(
+        filter=f_settlement_status,  # type: ignore[arg-type]
+        control_id="ctrl-settlements-settlement-status",  # type: ignore[arg-type]
+    )
+    settlements.add_filter_dropdown(
+        filter=f_settlements_unpaid,  # type: ignore[arg-type]
+        title="Show Only Unpaid",
+        type="SINGLE_SELECT",
+        control_id="ctrl-settlements-unpaid",  # type: ignore[arg-type]
+    )
+
+    # Payments — date + merchant + location + payment-status +
+    # payment-method + show-only-unmatched.
+    payments.add_filter_datetime_picker(
+        filter=f_payments_date,  # type: ignore[arg-type]
+        title="Date Range",
+        type="DATE_RANGE",
+        control_id="ctrl-payments-date-range",  # type: ignore[arg-type]
+    )
+    payments.add_filter_cross_sheet(
+        filter=f_merchant,  # type: ignore[arg-type]
+        control_id="ctrl-payments-merchant",  # type: ignore[arg-type]
+    )
+    payments.add_filter_cross_sheet(
+        filter=f_location,  # type: ignore[arg-type]
+        control_id="ctrl-payments-location",  # type: ignore[arg-type]
+    )
+    payments.add_filter_dropdown(
+        filter=f_payment_status,  # type: ignore[arg-type]
+        title="Payment Status",
+        type="MULTI_SELECT",
+        control_id="ctrl-payments-payment-status",  # type: ignore[arg-type]
+    )
+    payments.add_filter_dropdown(
+        filter=f_payment_method,  # type: ignore[arg-type]
+        title="Payment Method",
+        type="MULTI_SELECT",
+        control_id="ctrl-payments-payment-method",  # type: ignore[arg-type]
+    )
+    payments.add_filter_dropdown(
+        filter=f_payments_unmatched,  # type: ignore[arg-type]
+        title="Show Only Unmatched Externally",
+        type="SINGLE_SELECT",
+        control_id="ctrl-payments-unmatched",  # type: ignore[arg-type]
+    )
+
+    # Exceptions — date + merchant + location + settlement-status.
+    exceptions.add_filter_datetime_picker(
+        filter=f_exceptions_date,  # type: ignore[arg-type]
+        title="Date Range",
+        type="DATE_RANGE",
+        control_id="ctrl-exceptions-date-range",  # type: ignore[arg-type]
+    )
+    exceptions.add_filter_cross_sheet(
+        filter=f_merchant,  # type: ignore[arg-type]
+        control_id="ctrl-exceptions-merchant",  # type: ignore[arg-type]
+    )
+    exceptions.add_filter_cross_sheet(
+        filter=f_location,  # type: ignore[arg-type]
+        control_id="ctrl-exceptions-location",  # type: ignore[arg-type]
+    )
+    exceptions.add_filter_cross_sheet(
+        filter=f_settlement_status,  # type: ignore[arg-type]
+        control_id="ctrl-exceptions-settlement-status",  # type: ignore[arg-type]
+    )
+
+    # Payment Reconciliation — date + match-status + external-system.
+    # All single-dataset → direct controls (no cross-sheet).
+    recon.add_filter_datetime_picker(
+        filter=f_recon_date,  # type: ignore[arg-type]
+        title="Date Range",
+        type="DATE_RANGE",
+        control_id="ctrl-recon-date-range",  # type: ignore[arg-type]
+    )
+    recon.add_filter_dropdown(
+        filter=f_recon_match,  # type: ignore[arg-type]
+        title="Match Status",
+        type="MULTI_SELECT",
+        control_id="ctrl-recon-match-status",  # type: ignore[arg-type]
+    )
+    recon.add_filter_dropdown(
+        filter=f_recon_ext,  # type: ignore[arg-type]
+        title="External System",
+        type="MULTI_SELECT",
+        control_id="ctrl-recon-external-system",  # type: ignore[arg-type]
+    )
+
+
+# ---------------------------------------------------------------------------
+# App entry points
+# ---------------------------------------------------------------------------
+
+def _analysis_name(cfg: Config) -> str:
+    preset = get_preset(cfg.theme_preset)
+    if preset.analysis_name_prefix:
+        return f"{preset.analysis_name_prefix} — Payment Reconciliation"
+    return "Payment Reconciliation"
+
+
+# Order matters — sheets register on the analysis in this list's order,
+# which becomes the dashboard's tab order.
+_PR_SHEET_SPECS: tuple[tuple[str, str, str, str], ...] = (
+    (SHEET_GETTING_STARTED, "Getting Started", "Getting Started",
+     "Landing page — summarises each tab in this dashboard so readers "
+     "know where to look first. No filters or visuals."),
+    (SHEET_SALES, "Sales Overview", "Sales Overview", _SALES_DESCRIPTION),
+    (SHEET_SETTLEMENTS, "Settlements", "Settlements", _SETTLEMENTS_DESCRIPTION),
+    (SHEET_PAYMENTS, "Payments", "Payments", _PAYMENTS_DESCRIPTION),
+    (SHEET_EXCEPTIONS, "Exceptions & Alerts", "Exceptions & Alerts",
+     _EXCEPTIONS_DESCRIPTION),
+    (SHEET_PAYMENT_RECON, "Payment Reconciliation", "Payment Reconciliation",
+     _PAYMENT_RECON_DESCRIPTION),
+)
+
+
+# ---------------------------------------------------------------------------
+# CLI / external-caller shims. These mirror the imperative
+# ``apps/payment_recon/analysis`` shape so the CLI can swap to the
+# tree-built app without changing its import surface.
+# ---------------------------------------------------------------------------
+
+def build_analysis(cfg: Config) -> ModelAnalysis:
+    """Build the complete Payment Recon Analysis resource via the tree."""
+    return build_payment_recon_app(cfg).emit_analysis()
+
+
+def build_payment_recon_dashboard(cfg: Config) -> ModelDashboard:
+    """Build the Payment Recon Dashboard resource via the tree."""
+    return build_payment_recon_app(cfg).emit_dashboard()
+
+
+def build_payment_recon_app(cfg: Config) -> App:
+    """Construct the Payment Reconciliation App as a tree.
+
+    Sheets are pre-registered in display order so cross-sheet drills can
+    target any sheet by ref. Populators run in any order; unported
+    sheets emit as bare shells (id + metadata) until their L.4.N
+    sub-step lands.
+    """
+    app = App(name="payment-recon", cfg=cfg)
+    analysis = app.set_analysis(Analysis(
+        analysis_id_suffix="payment-recon-analysis",
+        name=_analysis_name(cfg),
+    ))
+
+    datasets = _datasets(cfg)
+    for ds in datasets.values():
+        app.add_dataset(ds)
+
+    sheets: dict[str, Sheet] = {}
+    for sheet_id, name, title, description in _PR_SHEET_SPECS:
+        sheets[sheet_id] = analysis.add_sheet(Sheet(
+            sheet_id=sheet_id,  # type: ignore[arg-type]
+            name=name,
+            title=title,
+            description=description,
+        ))
+
+    _populate_getting_started(cfg, sheets[SHEET_GETTING_STARTED])
+    _populate_sales_overview(
+        cfg,
+        sheets[SHEET_SALES],
+        settlements_sheet=sheets[SHEET_SETTLEMENTS],
+        datasets=datasets,
+    )
+    _populate_settlements(
+        cfg,
+        sheets[SHEET_SETTLEMENTS],
+        sales_sheet=sheets[SHEET_SALES],
+        payments_sheet=sheets[SHEET_PAYMENTS],
+        datasets=datasets,
+    )
+    _populate_payments(
+        cfg,
+        sheets[SHEET_PAYMENTS],
+        settlements_sheet=sheets[SHEET_SETTLEMENTS],
+        payment_recon_sheet=sheets[SHEET_PAYMENT_RECON],
+        datasets=datasets,
+    )
+    _populate_exceptions(cfg, sheets[SHEET_EXCEPTIONS], datasets=datasets)
+    _populate_payment_recon(cfg, sheets[SHEET_PAYMENT_RECON], datasets=datasets)
+
+    # L.4.7 — App-level wiring. Order matters for FilterGroup-list
+    # byte-identity vs the imperative concat:
+    # `build_filter_groups` (18 pipeline) → drill_down_filters (3) →
+    # `build_recon_filter_groups` (6 recon) → recon_drill_down_filters (2).
+    _wire_parameters(analysis)
+    _wire_pipeline_filter_groups(analysis, sheets=sheets, datasets=datasets)
+    _wire_drill_filter_groups(
+        analysis, specs=_DRILL_SPECS_PIPELINE, sheets=sheets, datasets=datasets,
+    )
+    _wire_recon_sheet_filter_groups(analysis, sheets=sheets, datasets=datasets)
+    _wire_drill_filter_groups(
+        analysis, specs=_DRILL_SPECS_RECON, sheets=sheets, datasets=datasets,
+    )
+    _wire_sheet_filter_controls(analysis, sheets=sheets)
+
+    app.create_dashboard(
+        dashboard_id_suffix="payment-recon-dashboard",
+        name=_analysis_name(cfg),
+    )
+    return app

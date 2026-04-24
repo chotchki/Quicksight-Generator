@@ -73,24 +73,9 @@ FG_PR_RECON_KPI_LATE_ONLY = FilterGroupId("fg-recon-kpi-late-only")
 FG_PR_RECON_KPI_MATCHED_ONLY = FilterGroupId("fg-recon-kpi-matched-only")
 FG_PR_RECON_KPI_UNMATCHED_ONLY = FilterGroupId("fg-recon-kpi-unmatched-only")
 
-_STATIC_FG_PR_IDS: frozenset[FilterGroupId] = frozenset({
-    FG_PR_MERCHANT,
-    FG_PR_LOCATION,
-    FG_PR_SETTLEMENT_STATUS,
-    FG_PR_PAYMENT_STATUS,
-    FG_PR_PAYMENT_METHOD,
-    FG_PR_SALES_UNSETTLED,
-    FG_PR_SETTLEMENTS_UNPAID,
-    FG_PR_PAYMENTS_UNMATCHED,
-    FG_PR_PAYMENTS_KPI_RETURNS_ONLY,
-    FG_PR_SETTLEMENTS_KPI_PENDING_ONLY,
-    FG_PR_RECON_DATE_RANGE,
-    FG_PR_RECON_MATCH_STATUS,
-    FG_PR_RECON_EXTERNAL_SYSTEM,
-    FG_PR_RECON_KPI_LATE_ONLY,
-    FG_PR_RECON_KPI_MATCHED_ONLY,
-    FG_PR_RECON_KPI_UNMATCHED_ONLY,
-})
+# L.4.8 — `_STATIC_FG_PR_IDS` aggregate dropped. Walk the tree's
+# emitted filter groups instead:
+# `build_payment_recon_app(cfg).analysis.filter_groups`.
 
 
 # ---------------------------------------------------------------------------
@@ -189,37 +174,13 @@ P_PR_PAYMENT = DrillParam(ParameterName("pPaymentId"), ColumnShape.PAYMENT_ID)
 P_PR_EXTERNAL_TXN = DrillParam(ParameterName("pExternalTransactionId"),
                                ColumnShape.EXTERNAL_TXN_ID)
 
-ALL_P_PR: tuple[DrillParam, ...] = (
-    P_PR_SETTLEMENT,
-    P_PR_PAYMENT,
-    P_PR_EXTERNAL_TXN,
-)
+# L.4.8 — `ALL_P_PR` aggregate dropped. Walk the tree's parameters
+# instead: `build_payment_recon_app(cfg).analysis.parameters`.
 
-
-# Sheet slugs that carry a date-range filter — single source of truth so
-# tests can enumerate the dynamic FG IDs without grepping filters.py.
-PR_DATE_RANGE_SHEET_SLUGS: tuple[str, ...] = (
-    "sales",
-    "settlements",
-    "payments",
-    "exceptions",
-)
-
-
-def all_fg_pr_ids() -> frozenset[FilterGroupId]:
-    """Source of truth for tests asserting "every PR filter group is registered".
-
-    Composed lazily because the per-metadata-column IDs are derived from
-    ``OPTIONAL_SALE_METADATA`` which lives in datasets.py (would be a
-    circular import at module load).
-    """
-    from quicksight_gen.apps.payment_recon.datasets import OPTIONAL_SALE_METADATA
-    return frozenset({
-        *_STATIC_FG_PR_IDS,
-        *(SheetDateRange(slug).fg_id for slug in PR_DATE_RANGE_SHEET_SLUGS),
-        *(SalesMeta(col).fg_id for col, *_ in OPTIONAL_SALE_METADATA),
-        *(b.fg_id for b in PR_DRILL_BINDINGS),
-    })
+# L.4.8 — `PR_DATE_RANGE_SHEET_SLUGS` + `all_fg_pr_ids()` aggregate
+# dropped. The per-sheet date-range FG IDs are wired in
+# `apps/payment_recon/app.py::_DATE_RANGE_BINDINGS`; the full
+# filter-group set is the tree's `analysis.filter_groups` post-emit.
 
 
 # ---------------------------------------------------------------------------
@@ -274,37 +235,7 @@ V_PR_RECON_EXT_TXN_TABLE = VisualId("recon-ext-txn-table")
 V_PR_RECON_PAYMENTS_TABLE = VisualId("recon-payments-table")
 V_PR_RECON_AGING_BAR = VisualId("recon-aging-bar")
 
-ALL_V_PR: frozenset[VisualId] = frozenset({
-    V_PR_SALES_KPI_COUNT,
-    V_PR_SALES_KPI_AMOUNT,
-    V_PR_SALES_BAR_BY_MERCHANT,
-    V_PR_SALES_BAR_BY_LOCATION,
-    V_PR_SALES_DETAIL_TABLE,
-    V_PR_SETTLEMENTS_KPI_AMOUNT,
-    V_PR_SETTLEMENTS_KPI_PENDING,
-    V_PR_SETTLEMENTS_BAR_BY_TYPE,
-    V_PR_SETTLEMENTS_DETAIL_TABLE,
-    V_PR_PAYMENTS_KPI_AMOUNT,
-    V_PR_PAYMENTS_KPI_RETURNS,
-    V_PR_PAYMENTS_BAR_STATUS,
-    V_PR_PAYMENTS_DETAIL_TABLE,
-    V_PR_EXC_KPI_UNSETTLED,
-    V_PR_EXC_KPI_RETURNS,
-    V_PR_EXC_UNSETTLED_TABLE,
-    V_PR_EXC_RETURNS_TABLE,
-    V_PR_EXC_SALE_SETTLEMENT_MISMATCH_TABLE,
-    V_PR_EXC_SETTLEMENT_PAYMENT_MISMATCH_TABLE,
-    V_PR_EXC_UNMATCHED_EXT_TXN_TABLE,
-    V_PR_EXC_AGING_UNSETTLED,
-    V_PR_EXC_AGING_RETURNS,
-    V_PR_EXC_AGING_SALE_STL_MISMATCH,
-    V_PR_EXC_AGING_STL_PAY_MISMATCH,
-    V_PR_EXC_AGING_UNMATCHED_EXT,
-    V_PR_RECON_KPI_MATCHED_AMOUNT,
-    V_PR_RECON_KPI_UNMATCHED_AMOUNT,
-    V_PR_RECON_KPI_LATE_COUNT,
-    V_PR_RECON_BAR_BY_SYSTEM,
-    V_PR_RECON_EXT_TXN_TABLE,
-    V_PR_RECON_PAYMENTS_TABLE,
-    V_PR_RECON_AGING_BAR,
-})
+# L.4.8 — `ALL_V_PR` aggregate dropped. Walk the tree's emitted
+# visuals instead:
+# `[v.visual_id for s in app.analysis.sheets for v in s.visuals]`
+# (post-emit, after auto-IDs resolve).
