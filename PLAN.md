@@ -415,6 +415,8 @@ Bundles in three currently-queued items:
 
 CLI scope revisit likely lands here too — `quicksight-gen` grows from a generator/deployer into a customization platform, and `export training` / `export docs` / `whitelabel apply` may collapse or restructure. Decide at M kickoff.
 
+**Unified theme across all 4 dashboards** — today the apps default to three different Sasquatch presets (`sasquatch-bank` / `sasquatch-bank-ar` / `sasquatch-bank-investigation`), each designed during its app's phase to be "visually separable so analysts can tell at a glance which one they're in" (per `common/theme.py` comments). With L.6 shipping a 4th app and the product hardening into a four-dashboard surface, the right call is to reverse that decision: one persona = one bank = one theme. Phase M is the natural home because (a) the persona-dataclass redesign naturally drives theming as a persona attribute, and (b) picking a unified palette is a deliberate design exercise (a colour scheme that works for executive board reports AND fraud investigation alerts AND merchant ops AND treasury reconciliation), not a 5-line CLI swap. Deferred per the same logic that deferred L.5 — a small intermediate fix today would just get redone in M. **Audit findings preserved for M kickoff:** today's per-app preset mapping lives in `cli.py::_apply_demo`'s `theme_preset` dict and in the `_generate_<app>(theme_preset=…)` defaults; the 3 SNB presets live in `common/theme.py::PRESETS`. None of the L.4–L.6 ports created new presets — Executives reuses `sasquatch-bank` as a fallback (L.6.8 decision).
+
 # Backlog - Phase N+ Candidates
 
 ## Audit Enhancements
