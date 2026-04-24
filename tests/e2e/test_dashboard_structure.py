@@ -29,24 +29,7 @@ def dashboard_definition(qs_client, account_id, dashboard_id) -> dict:
     return resp["Definition"]
 
 
-@pytest.fixture(scope="module")
-def pr_app():
-    """L.4.9 — typed PR App handle. Aggregates `_STATIC_FG_PR_IDS` /
-    `ALL_P_PR` / `ALL_V_PR` were dropped from constants.py in L.4.8;
-    the tree's emitted filter-group + parameter sets are the source
-    of truth now. Module scope mirrors `dashboard_definition`."""
-    from quicksight_gen.apps.payment_recon.app import build_payment_recon_app
-    from quicksight_gen.common.config import Config
-
-    cfg = Config(
-        aws_account_id="111122223333",
-        aws_region="us-west-2",
-        datasource_arn="arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds",
-        theme_preset="default",
-    )
-    app = build_payment_recon_app(cfg)
-    app.emit_analysis()
-    return app
+# L.11.1 — `pr_app` fixture promoted to session scope in conftest.py.
 
 
 class TestSheets:

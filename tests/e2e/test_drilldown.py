@@ -1,24 +1,62 @@
-"""Browser tests: drill-down from one sheet to another with parameter pass-through."""
+"""Browser tests: PR cross-sheet drill-downs navigate to the target sheet.
+
+L.11.4 — parametrized over every cross-sheet, left-click `Drill` the
+tree declares (via `enumerate_cross_sheet_left_click_drills(pr_app)`).
+"""
 
 from __future__ import annotations
 
 import pytest
 
 from .browser_helpers import (
+    click_first_row_of_visual,
     click_sheet_tab,
-    first_table_cell_text,
     generate_dashboard_embed_url,
     screenshot,
     selected_sheet_name,
     wait_for_dashboard_loaded,
     wait_for_sheet_tab,
-    wait_for_table_cells_present,
     wait_for_visuals_present,
     webkit_page,
 )
+from .tree_validator import enumerate_cross_sheet_left_click_drills
 
 
 pytestmark = [pytest.mark.e2e, pytest.mark.browser]
+
+
+def _pr_drill_specs():
+    """Build the parametrize list at collection time. Same shape as
+    `_ar_drill_specs()` in `test_ar_drilldown.py`."""
+    from pathlib import Path
+
+    from quicksight_gen.apps.payment_recon.app import build_payment_recon_app
+    from quicksight_gen.common.config import load_config
+
+    cfg = None
+    for candidate in (Path("config.yaml"), Path("run/config.yaml")):
+        if candidate.exists():
+            cfg = load_config(str(candidate))
+            break
+    if cfg is None:
+        cfg = load_config(None)
+    app = build_payment_recon_app(cfg)
+    app.emit_analysis()
+
+    out = []
+    for src_sheet, src_visual, tgt_sheet in (
+        enumerate_cross_sheet_left_click_drills(app)
+    ):
+        title = getattr(src_visual, "title", None)
+        if not title:
+            continue
+        out.append(pytest.param(
+            src_sheet.name,
+            title,
+            tgt_sheet.name,
+            id=f"{src_sheet.name}::{title}→{tgt_sheet.name}",
+        ))
+    return out
 
 
 @pytest.fixture
@@ -30,60 +68,27 @@ def embed_url(qs_client, account_id, dashboard_id) -> str:
     )
 
 
-def test_settlements_to_sales_drilldown(embed_url, page_timeout):
-    """Clicking a settlement_id in the Settlements detail table should
-    navigate to Sales Overview (with pSettlementId set)."""
+@pytest.mark.parametrize(
+    "src_sheet_name,src_visual_title,tgt_sheet_name", _pr_drill_specs(),
+)
+def test_drill_navigates_to_target_sheet(
+    embed_url, page_timeout,
+    src_sheet_name, src_visual_title, tgt_sheet_name,
+):
+    """Click the first row of the source visual; the drill should switch
+    the dashboard to the target sheet."""
     with webkit_page(headless=True) as page:
         page.goto(embed_url, timeout=page_timeout)
         wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
-        click_sheet_tab(page, "Settlements", timeout_ms=page_timeout)
-        wait_for_visuals_present(page, min_count=4, timeout_ms=page_timeout)
-        wait_for_table_cells_present(page, timeout_ms=page_timeout)
-
-        settlement_id = first_table_cell_text(page, row=0, col=0)
-        assert settlement_id.startswith("stl-"), (
-            f"Expected first column to hold settlement_id, got {settlement_id!r}"
+        click_sheet_tab(page, src_sheet_name, timeout_ms=page_timeout)
+        wait_for_visuals_present(page, min_count=1, timeout_ms=page_timeout)
+        click_first_row_of_visual(
+            page, src_visual_title, timeout_ms=page_timeout,
         )
-
-        # Click the settlement_id cell — DATA_POINT_CLICK fires the drill-down
-        page.click('[data-automation-id="sn-table-cell-0-0"]', timeout=page_timeout)
-
-        # Sheet should switch to Sales Overview
-        wait_for_sheet_tab(page, "Sales Overview", timeout_ms=page_timeout)
-        screenshot(page, "drilldown_settlements_to_sales", subdir="payment_recon")
-
-        assert selected_sheet_name(page) == "Sales Overview"
-
-
-def test_payments_to_settlements_drilldown(embed_url, page_timeout):
-    """Clicking a settlement_id in the Payments detail table should
-    navigate to Settlements with pSettlementId set."""
-    with webkit_page(headless=True) as page:
-        page.goto(embed_url, timeout=page_timeout)
-        wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
-        click_sheet_tab(page, "Payments", timeout_ms=page_timeout)
-        wait_for_visuals_present(page, min_count=4, timeout_ms=page_timeout)
-        wait_for_table_cells_present(page, timeout_ms=page_timeout)
-
-        # Find a column whose value looks like a settlement id (stl-…). The
-        # exact column index for settlement_id depends on the visual's field
-        # ordering; scan the first row.
-        settlement_col = None
-        for c in range(20):
-            cell = page.query_selector(f'[data-automation-id="sn-table-cell-0-{c}"]')
-            if cell is None:
-                break
-            if cell.inner_text().strip().startswith("stl-"):
-                settlement_col = c
-                break
-        assert settlement_col is not None, (
-            "No settlement_id column found in Payments detail table"
+        wait_for_sheet_tab(page, tgt_sheet_name, timeout_ms=page_timeout)
+        screenshot(
+            page,
+            f"drill_{src_sheet_name}_to_{tgt_sheet_name}".replace(" ", "_"),
+            subdir="payment_recon",
         )
-
-        page.click(
-            f'[data-automation-id="sn-table-cell-0-{settlement_col}"]',
-            timeout=page_timeout,
-        )
-        wait_for_sheet_tab(page, "Settlements", timeout_ms=page_timeout)
-        screenshot(page, "drilldown_payments_to_settlements", subdir="payment_recon")
-        assert selected_sheet_name(page) == "Settlements"
+        assert selected_sheet_name(page) == tgt_sheet_name

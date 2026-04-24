@@ -1,4 +1,8 @@
-"""Browser test: verify the deployed Investigation dashboard loads."""
+"""Browser test: verify the deployed Investigation dashboard loads.
+
+L.11.1 — sheet-tab assertion derives the expected set from the tree
+(`inv_app.analysis.sheets`).
+"""
 
 from __future__ import annotations
 
@@ -11,15 +15,6 @@ from .browser_helpers import (
     wait_for_dashboard_loaded,
     webkit_page,
 )
-
-
-EXPECTED_SHEETS = {
-    "Getting Started",
-    "Recipient Fanout",
-    "Volume Anomalies",
-    "Money Trail",
-    "Account Network",
-}
 
 
 pytestmark = [pytest.mark.e2e, pytest.mark.browser]
@@ -47,12 +42,13 @@ class TestInvDashboardLoads:
             screenshot(page, "dashboard_initial_load", subdir="investigation")
             assert page.title(), "Page has no title — embed likely failed"
 
-    def test_all_five_sheet_tabs_visible(self, embed_url, page_timeout):
+    def test_all_sheet_tabs_visible(self, embed_url, page_timeout, inv_app):
+        expected = {s.name for s in inv_app.analysis.sheets}
         with webkit_page(headless=True) as page:
             page.goto(embed_url, timeout=page_timeout)
             wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
             tab_names = set(get_sheet_tab_names(page))
-            missing = EXPECTED_SHEETS - tab_names
+            missing = expected - tab_names
             assert not missing, (
                 f"Missing Investigation sheet tabs: {missing}. "
                 f"Found: {sorted(tab_names)}"

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import pytest
 
-from quicksight_gen.apps.investigation.app import build_investigation_app
 from quicksight_gen.apps.investigation.constants import (
     V_INV_ANETWORK_SANKEY_INBOUND,
     V_INV_ANETWORK_SANKEY_OUTBOUND,
@@ -34,19 +33,7 @@ def inv_dashboard_definition(qs_client, account_id, inv_dashboard_id) -> dict:
     return resp["Definition"]
 
 
-@pytest.fixture(scope="module")
-def inv_app(cfg):
-    """Build the Investigation tree and resolve auto-IDs.
-
-    The tree is the source of truth — the deployed dashboard's filter
-    group / parameter sets must equal the tree's emitted set. emit_analysis()
-    runs _resolve_auto_ids() in place, so reading off
-    ``app.analysis.parameters`` / ``app.analysis.filter_groups`` after the
-    call gives the resolved IDs that should match the deployed definition.
-    """
-    app = build_investigation_app(cfg)
-    app.emit_analysis()
-    return app
+# L.11.1 — `inv_app` fixture promoted to session scope in conftest.py.
 
 
 def _visual_ids(sheet: dict) -> list[str]:

@@ -194,6 +194,45 @@ def inv_dataset_ids(resource_prefix) -> list[str]:
     return [f"{resource_prefix}-{s}" for s in suffixes]
 
 
+# ---------------------------------------------------------------------------
+# Tree-built App fixtures (L.11)
+#
+# Session-scoped because the tree is pure, in-memory, and identical for
+# every test that consumes it. Tests walk these to derive expected sheet
+# names / visual titles / filter group ids / parameter names — the tree
+# is the source of truth, not a parallel hand-maintained list.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="session")
+def pr_app(cfg):
+    """Tree-built Payment Reconciliation App (post-emit, auto-IDs resolved)."""
+    from quicksight_gen.apps.payment_recon.app import build_payment_recon_app
+
+    app = build_payment_recon_app(cfg)
+    app.emit_analysis()
+    return app
+
+
+@pytest.fixture(scope="session")
+def ar_app(cfg):
+    """Tree-built Account Reconciliation App (post-emit, auto-IDs resolved)."""
+    from quicksight_gen.apps.account_recon.app import build_account_recon_app
+
+    app = build_account_recon_app(cfg)
+    app.emit_analysis()
+    return app
+
+
+@pytest.fixture(scope="session")
+def inv_app(cfg):
+    """Tree-built Investigation App (post-emit, auto-IDs resolved)."""
+    from quicksight_gen.apps.investigation.app import build_investigation_app
+
+    app = build_investigation_app(cfg)
+    app.emit_analysis()
+    return app
+
+
 @pytest.fixture(scope="session")
 def page_timeout() -> int:
     return PAGE_TIMEOUT
