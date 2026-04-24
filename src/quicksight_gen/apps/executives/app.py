@@ -338,6 +338,185 @@ def _populate_account_coverage(
     )
 
 
+# ---------------------------------------------------------------------------
+# Transaction Volume Over Time (L.6.5) — 2 KPIs (period total +
+# average daily count) + daily stacked bar by transfer_type +
+# per-type clustered bar.
+#
+# **L.6.12 friction note** — original design called for a line chart
+# of daily counts coloured by transfer_type. The tree has no
+# LineChart primitive yet (PR/AR/Inv didn't need one). Substituted
+# a vertical STACKED BarChart with `posted_date` on Category +
+# `transfer_count` on Values + `transfer_type` on Colors — same
+# trend signal, different visual shape. Adding a `LineChart` typed
+# Visual subtype + an `add_line_chart` layout DSL helper is queued
+# for the L.6.12 iteration gate.
+# ---------------------------------------------------------------------------
+
+def _populate_transaction_volume(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    datasets: dict[str, Dataset],
+) -> None:
+    del cfg
+    ds_txn = datasets[DS_EXEC_TRANSACTION_SUMMARY]
+
+    # Row 1: two KPIs.
+    kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
+    kpi_row.add_kpi(
+        width=_HALF,
+        visual_id="exec-txn-kpi-total",  # type: ignore[arg-type]
+        title="Total Transactions",
+        subtitle=(
+            "Sum of transfer count across the selected period and "
+            "all transfer types"
+        ),
+        values=[ds_txn["transfer_count"].sum(field_id="exec-txn-total-count")],
+    )
+    kpi_row.add_kpi(
+        width=_HALF,
+        visual_id="exec-txn-kpi-avg-daily",  # type: ignore[arg-type]
+        title="Average Daily Volume",
+        subtitle=(
+            "Average daily transfer count, averaged across days that "
+            "had any activity (zero-volume days don't surface in the "
+            "underlying dataset)"
+        ),
+        values=[ds_txn["transfer_count"].average(
+            field_id="exec-txn-avg-daily-count",
+        )],
+    )
+
+    # Row 2: full-width vertical STACKED bar — daily transfer count,
+    # stacked by transfer_type. The trend over time PLUS the
+    # composition signal in one visual.
+    sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
+        width=_FULL,
+        visual_id="exec-txn-bar-daily-stacked",  # type: ignore[arg-type]
+        title="Daily Transaction Count by Type",
+        subtitle=(
+            "Each day's transfer count, stacked by transfer_type so "
+            "rail composition + trend show together"
+        ),
+        category=[ds_txn["posted_date"].date(field_id="exec-txn-daily-date")],
+        values=[ds_txn["transfer_count"].sum(
+            field_id="exec-txn-daily-count",
+        )],
+        colors=[ds_txn["transfer_type"].dim(field_id="exec-txn-daily-type")],
+        orientation="VERTICAL",
+        bars_arrangement="STACKED",
+        category_label="Posted Date",
+        value_label="Transactions",
+        color_label="Transfer Type",
+    )
+
+    # Row 3: full-width vertical clustered bar — period total per
+    # transfer_type. Reads the same dataset, aggregates across the
+    # date axis to give the "where did the volume come from" snapshot.
+    sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
+        width=_FULL,
+        visual_id="exec-txn-bar-by-type",  # type: ignore[arg-type]
+        title="Period Total by Type",
+        subtitle="Total transfer count over the selected period, per transfer_type",
+        category=[
+            ds_txn["transfer_type"].dim(field_id="exec-txn-type-dim"),
+        ],
+        values=[ds_txn["transfer_count"].sum(field_id="exec-txn-type-count")],
+        orientation="VERTICAL",
+        bars_arrangement="CLUSTERED",
+        category_label="Transfer Type",
+        value_label="Transactions",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Money Moved (L.6.6) — same shape as Transaction Volume but with
+# gross + net dollars instead of count.
+# ---------------------------------------------------------------------------
+
+def _populate_money_moved(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    datasets: dict[str, Dataset],
+) -> None:
+    del cfg
+    ds_txn = datasets[DS_EXEC_TRANSACTION_SUMMARY]
+
+    # Row 1: two KPIs.
+    kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
+    kpi_row.add_kpi(
+        width=_HALF,
+        visual_id="exec-money-kpi-net",  # type: ignore[arg-type]
+        title="Net Money Moved",
+        subtitle=(
+            "Σ signed amount across the period — positive = inflow to "
+            "the bank, near zero = balanced rails, negative = net "
+            "outflow"
+        ),
+        values=[ds_txn["net_amount"].sum(field_id="exec-money-net-sum")],
+    )
+    kpi_row.add_kpi(
+        width=_HALF,
+        visual_id="exec-money-kpi-gross",  # type: ignore[arg-type]
+        title="Gross Money Moved",
+        subtitle=(
+            "Total handle — sum of per-transfer dollar magnitudes "
+            "regardless of direction"
+        ),
+        values=[ds_txn["gross_amount"].sum(field_id="exec-money-gross-sum")],
+    )
+
+    # Row 2: full-width vertical stacked bar — daily gross dollars,
+    # stacked by transfer_type. Same friction note as L.6.5 — would
+    # be a line chart if the tree had one.
+    sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
+        width=_FULL,
+        visual_id="exec-money-bar-daily-stacked",  # type: ignore[arg-type]
+        title="Daily Gross Dollars Moved by Type",
+        subtitle=(
+            "Each day's gross dollar volume, stacked by transfer_type"
+        ),
+        category=[
+            ds_txn["posted_date"].date(field_id="exec-money-daily-date"),
+        ],
+        values=[ds_txn["gross_amount"].sum(
+            field_id="exec-money-daily-gross",
+        )],
+        colors=[ds_txn["transfer_type"].dim(
+            field_id="exec-money-daily-type",
+        )],
+        orientation="VERTICAL",
+        bars_arrangement="STACKED",
+        category_label="Posted Date",
+        value_label="Gross Dollars Moved",
+        color_label="Transfer Type",
+    )
+
+    # Row 3: full-width vertical clustered bar — period total per
+    # transfer_type.
+    sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
+        width=_FULL,
+        visual_id="exec-money-bar-by-type",  # type: ignore[arg-type]
+        title="Period Total Gross Dollars by Type",
+        subtitle=(
+            "Total gross dollar volume over the period, per "
+            "transfer_type"
+        ),
+        category=[
+            ds_txn["transfer_type"].dim(field_id="exec-money-type-dim"),
+        ],
+        values=[ds_txn["gross_amount"].sum(
+            field_id="exec-money-type-gross",
+        )],
+        orientation="VERTICAL",
+        bars_arrangement="CLUSTERED",
+        category_label="Transfer Type",
+        value_label="Gross Dollars Moved",
+    )
+
+
 def _wire_account_coverage_filter_groups(
     analysis: Analysis,
     *,
@@ -432,6 +611,12 @@ def build_executives_app(cfg: Config) -> App:
     _populate_getting_started(cfg, sheets[SHEET_EXEC_GETTING_STARTED])
     _populate_account_coverage(
         cfg, sheets[SHEET_EXEC_ACCOUNT_COVERAGE], datasets=datasets,
+    )
+    _populate_transaction_volume(
+        cfg, sheets[SHEET_EXEC_TRANSACTION_VOLUME], datasets=datasets,
+    )
+    _populate_money_moved(
+        cfg, sheets[SHEET_EXEC_MONEY_MOVED], datasets=datasets,
     )
 
     _wire_account_coverage_filter_groups(
