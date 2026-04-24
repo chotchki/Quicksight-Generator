@@ -91,7 +91,18 @@ class TestSafeIdSanitization:
 
 class TestCaptureWithStateUrlConstruction:
     """The URL fragment construction is the load-bearing part of
-    capture_with_state — verify parameter writes encode correctly."""
+    capture_with_state — verify parameter writes encode correctly.
+
+    `capture_with_state` runs through `tests.e2e.browser_helpers`
+    (`wait_for_dashboard_loaded`, `click_sheet_tab`), which lazy-import
+    `playwright.sync_api`. CI's `[dev]` extras don't pull in playwright
+    (it lives under `[e2e]`), so these tests skip cleanly when
+    playwright isn't importable. Locally, install `[e2e]` to run them.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _require_playwright(self):
+        pytest.importorskip("playwright")
 
     def test_url_fragment_built_from_parameter_object_refs(self, tmp_path):
         app = _empty_app()
