@@ -22,8 +22,8 @@ Substep landmarks:
     M.2a.1 — package skeleton + Analysis + Dashboard registered
     M.2a.2 — Getting Started sheet with description-driven prose
     M.2a.3 — Drift sheet — KPIs + leaf + ledger drift tables
-    M.2a.4 — Overdraft sheet (this commit) — KPI + violations table
-    M.2a.5 — Limit Breach sheet
+    M.2a.4 — Overdraft sheet — KPI + violations table
+    M.2a.5 — Limit Breach sheet (this commit) — KPI + breach table
     M.2a.6 — Today's Exceptions sheet (UNION across L1 views)
     M.2a.7 — Description-driven prose across every sheet
     M.2a.8 — Hash-lock the seed at the M.2a structure
@@ -37,6 +37,7 @@ from quicksight_gen.apps.account_recon._l2 import default_l2_instance
 from quicksight_gen.apps.l1_dashboard.datasets import (
     DS_DRIFT,
     DS_LEDGER_DRIFT,
+    DS_LIMIT_BREACH,
     DS_OVERDRAFT,
     build_all_l1_dashboard_datasets,
 )
@@ -68,6 +69,7 @@ _TABLE_ROW_SPAN = 18
 SHEET_GETTING_STARTED = SheetId("l1-sheet-getting-started")
 SHEET_DRIFT = SheetId("l1-sheet-drift")
 SHEET_OVERDRAFT = SheetId("l1-sheet-overdraft")
+SHEET_LIMIT_BREACH = SheetId("l1-sheet-limit-breach")
 
 
 _GETTING_STARTED_NAME = "Getting Started"
@@ -104,6 +106,17 @@ _OVERDRAFT_DESCRIPTION = (
 )
 
 
+_LIMIT_BREACH_NAME = "Limit Breach"
+_LIMIT_BREACH_TITLE = "Outbound Transfer Limit Breaches"
+_LIMIT_BREACH_DESCRIPTION = (
+    "Per-account, per-day, per-transfer-type cells where cumulative "
+    "outbound debit exceeded the L2-configured cap. Caps are pulled "
+    "from the L2 instance's LimitSchedules at schema-emit time and "
+    "embedded inline in the underlying view — no JSON path lookups in "
+    "the dataset SQL. Every row is one violation."
+)
+
+
 def _analysis_name(cfg: Config, l2_instance: L2Instance) -> str:
     """Title shown on the deployed QuickSight Analysis."""
     return f"L1 Reconciliation Dashboard ({l2_instance.instance})"
@@ -123,7 +136,7 @@ def _l1_datasets(
     aws_datasets = build_all_l1_dashboard_datasets(cfg, l2_instance)
     # `build_all_l1_dashboard_datasets` returns AWS DataSets in the same
     # order as the visual identifiers below; map each to a tree Dataset.
-    visual_ids = [DS_DRIFT, DS_LEDGER_DRIFT, DS_OVERDRAFT]
+    visual_ids = [DS_DRIFT, DS_LEDGER_DRIFT, DS_OVERDRAFT, DS_LIMIT_BREACH]
     return {
         vid: Dataset(identifier=vid, arn=cfg.dataset_arn(aws.DataSetId))
         for vid, aws in zip(visual_ids, aws_datasets)
@@ -295,6 +308,52 @@ def _populate_overdraft_sheet(
     )
 
 
+def _populate_limit_breach_sheet(
+    cfg: Config,  # noqa: ARG001  (M.2a.7 wires theme accent on conditional formats)
+    sheet: Sheet,
+    *,
+    datasets: dict[str, Dataset],
+) -> None:
+    """Limit Breach sheet — KPI + per-(account, day, type) breach table.
+
+    Single dataset (`<prefix>_limit_breach`). Each row is one cell where
+    cumulative outbound debit on that (account, day, transfer_type)
+    exceeded the L2-configured cap. The cap column lives next to the
+    outbound_total so analysts can read both numbers at once.
+    """
+    ds_lb = datasets[DS_LIMIT_BREACH]
+
+    sheet.layout.row(height=_KPI_ROW_SPAN).add_kpi(
+        width=_FULL,
+        title="Limit Breach Cells",
+        subtitle=(
+            "Count of (account, day, transfer_type) cells where the "
+            "outbound total exceeded the L2-configured cap."
+        ),
+        values=[ds_lb["account_id"].count()],
+    )
+
+    sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        title="Limit Breach Detail",
+        subtitle=(
+            "Each (account, day, transfer_type) cell where outbound "
+            "debit > cap. `outbound_total` and `cap` shown side-by-side "
+            "so the magnitude of the breach is readable in-line."
+        ),
+        columns=[
+            ds_lb["account_id"].dim(),
+            ds_lb["account_name"].dim(),
+            ds_lb["account_role"].dim(),
+            ds_lb["account_parent_role"].dim(),
+            ds_lb["business_day"].date(),
+            ds_lb["transfer_type"].dim(),
+            ds_lb["outbound_total"].numerical(),
+            ds_lb["cap"].numerical(),
+        ],
+    )
+
+
 def build_l1_dashboard_app(
     cfg: Config,
     *,
@@ -350,7 +409,15 @@ def build_l1_dashboard_app(
     ))
     _populate_overdraft_sheet(cfg, overdraft_sheet, datasets=datasets)
 
-    # Per-invariant sheets land in M.2a.5-M.2a.6.
+    limit_breach_sheet = analysis.add_sheet(Sheet(
+        sheet_id=SHEET_LIMIT_BREACH,
+        name=_LIMIT_BREACH_NAME,
+        title=_LIMIT_BREACH_TITLE,
+        description=_LIMIT_BREACH_DESCRIPTION,
+    ))
+    _populate_limit_breach_sheet(cfg, limit_breach_sheet, datasets=datasets)
+
+    # Today's Exceptions sheet lands in M.2a.6.
 
     app.create_dashboard(
         dashboard_id_suffix="l1-dashboard",

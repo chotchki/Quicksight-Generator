@@ -10,8 +10,8 @@ dataset's logical name traces back to the underlying L1 invariant.
 
 Substep landmarks:
     M.2a.3 — drift + ledger_drift datasets
-    M.2a.4 — overdraft dataset (this commit)
-    M.2a.5 — limit_breach dataset
+    M.2a.4 — overdraft dataset
+    M.2a.5 — limit_breach dataset (this commit)
     M.2a.6 — today's exceptions UNION dataset (or live SQL on the sheet)
 """
 
@@ -32,6 +32,7 @@ from quicksight_gen.common.models import DataSet
 DS_DRIFT = "l1-drift-ds"
 DS_LEDGER_DRIFT = "l1-ledger-drift-ds"
 DS_OVERDRAFT = "l1-overdraft-ds"
+DS_LIMIT_BREACH = "l1-limit-breach-ds"
 
 
 # Contracts — column shapes the M.1a.7 views project.
@@ -70,6 +71,23 @@ OVERDRAFT_CONTRACT = DatasetContract(columns=[
     ColumnSpec("business_day_start", "DATETIME", shape=ColumnShape.DATETIME_DAY),
     ColumnSpec("business_day_end", "DATETIME", shape=ColumnShape.DATETIME_DAY),
     ColumnSpec("stored_balance", "DECIMAL"),
+])
+
+
+# Limit breach view groups by (account, day, transfer_type), so each
+# row is one (parent-account, day, type) cell where the cumulative
+# debit total exceeded the L2-configured cap. `business_day` is the
+# truncated day (DATETIME, not the start/end pair the daily-balance
+# views carry — the M.1a.7 view uses DATE_TRUNC on transaction posting).
+LIMIT_BREACH_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("account_id", "STRING", shape=ColumnShape.ACCOUNT_ID),
+    ColumnSpec("account_name", "STRING"),
+    ColumnSpec("account_role", "STRING"),
+    ColumnSpec("account_parent_role", "STRING"),
+    ColumnSpec("business_day", "DATETIME", shape=ColumnShape.DATETIME_DAY),
+    ColumnSpec("transfer_type", "STRING", shape=ColumnShape.TRANSFER_TYPE),
+    ColumnSpec("outbound_total", "DECIMAL"),
+    ColumnSpec("cap", "DECIMAL"),
 ])
 
 
@@ -133,17 +151,38 @@ def build_overdraft_dataset(
     )
 
 
+def build_limit_breach_dataset(
+    cfg: Config, l2_instance: L2Instance,
+) -> DataSet:
+    """Wrap the per-(account, day, type) limit-breach view from M.1a.7.
+
+    Each row is one cell where the cumulative outbound debit exceeded
+    the L2-configured cap. Caps are inlined in the view at emit-time
+    from the L2 LimitSchedules — no JSON path lookups in the dataset
+    SQL.
+    """
+    prefix = l2_instance.instance
+    sql = f"SELECT * FROM {prefix}_limit_breach"
+    return build_dataset(
+        cfg, cfg.prefixed("l1-limit-breach-dataset"),
+        "L1 Limit Breach", "l1-limit-breach",
+        sql, LIMIT_BREACH_CONTRACT,
+        visual_identifier=DS_LIMIT_BREACH,
+    )
+
+
 def build_all_l1_dashboard_datasets(
     cfg: Config, l2_instance: L2Instance,
 ) -> list[DataSet]:
     """Return every dataset the L1 dashboard's sheets reference.
 
-    M.2a.5-M.2a.6 add to this list as their per-invariant datasets land.
-    `build_l1_dashboard_app` calls this and registers each result on the
-    App tree.
+    M.2a.6 may add a today's-exceptions UNION dataset here, OR may live
+    as inline SQL on the sheet. `build_l1_dashboard_app` calls this and
+    registers each result on the App tree.
     """
     return [
         build_drift_dataset(cfg, l2_instance),
         build_ledger_drift_dataset(cfg, l2_instance),
         build_overdraft_dataset(cfg, l2_instance),
+        build_limit_breach_dataset(cfg, l2_instance),
     ]

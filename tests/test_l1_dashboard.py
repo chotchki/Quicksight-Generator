@@ -84,15 +84,16 @@ def test_dashboard_registered() -> None:
     assert app.dashboard is not None
 
 
-def test_three_sheets_after_m2a4() -> None:
-    """M.2a.2 shipped Getting Started; M.2a.3 shipped Drift; M.2a.4
-    ships Overdraft. Remaining per-invariant sheets land in M.2a.5 -
-    M.2a.6. This guard fires if a future commit accidentally lands a
-    sheet outside its own substep."""
+def test_four_sheets_after_m2a5() -> None:
+    """M.2a.2-M.2a.5 ships 4 sheets: Getting Started, Drift, Overdraft,
+    Limit Breach. Today's Exceptions lands at M.2a.6. This guard fires
+    if a future commit accidentally lands a sheet outside its own substep."""
     app = build_l1_dashboard_app(_CFG)
     assert app.analysis is not None
     sheet_names = [s.name for s in app.analysis.sheets]
-    assert sheet_names == ["Getting Started", "Drift", "Overdraft"]
+    assert sheet_names == [
+        "Getting Started", "Drift", "Overdraft", "Limit Breach",
+    ]
 
 
 # -- Getting Started — description-driven prose (M.2a.2) ---------------------
@@ -244,6 +245,48 @@ def test_overdraft_dataset_registered_and_targets_l1_view() -> None:
     sql = next(iter(overdraft_ds.PhysicalTableMap.values())).CustomSql
     assert sql is not None
     assert sql.SqlQuery == f"SELECT * FROM {instance.instance}_overdraft"
+
+
+# -- Limit Breach sheet (M.2a.5) ---------------------------------------------
+
+
+def test_limit_breach_sheet_present_after_m2a5() -> None:
+    """M.2a.5 lands the Limit Breach sheet — fourth tab in display order."""
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    lb = app.analysis.sheets[3]
+    assert lb.name == "Limit Breach"
+    assert lb.title == "Outbound Transfer Limit Breaches"
+
+
+def test_limit_breach_sheet_has_kpi_and_table() -> None:
+    """Limit Breach sheet structure: 1 KPI (count of breach cells) +
+    1 detail table that puts outbound_total + cap side-by-side."""
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    lb = app.analysis.sheets[3]
+    titles = [v.title for v in lb.visuals]
+    assert titles == ["Limit Breach Cells", "Limit Breach Detail"]
+
+
+def test_limit_breach_dataset_registered_and_targets_l1_view() -> None:
+    """The L1 limit-breach dataset must be registered + its SQL must
+    point at the L2-prefixed `<prefix>_limit_breach` invariant view."""
+    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard.datasets import (
+        DS_LIMIT_BREACH,
+        build_limit_breach_dataset,
+    )
+
+    app = build_l1_dashboard_app(_CFG)
+    registered_ids = {ds.identifier for ds in app.datasets}
+    assert DS_LIMIT_BREACH in registered_ids
+
+    instance = default_l2_instance()
+    lb_ds = build_limit_breach_dataset(_CFG, instance)
+    sql = next(iter(lb_ds.PhysicalTableMap.values())).CustomSql
+    assert sql is not None
+    assert sql.SqlQuery == f"SELECT * FROM {instance.instance}_limit_breach"
 
 
 # -- Emit shape (substitutability with other apps) ---------------------------
