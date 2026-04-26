@@ -1,8 +1,38 @@
 # Phase M.0 — vertical-slice spike findings
 
-Notes captured during M.0 to inform M.1 library design + SPEC amendments. This file is updated as findings surface throughout M.0.x; it's reviewed and consolidated at the M.0.13 iteration gate.
+Notes captured during M.0 to inform M.1 library design + SPEC amendments. This file is updated as findings surface throughout M.0.x; reviewed and consolidated at the M.0.13 iteration gate.
 
 Format per entry: surface point (which substep), observation, implication for SPEC, implication for M.1 library.
+
+---
+
+## Consolidation (M.0.12)
+
+12 findings logged. Categorized by what they trigger:
+
+**SPEC amendment** *(real changes to SPEC.md):*
+- **F5 — InstancePrefix regex/length pin** → applied at M.0.13.
+
+**M.1 library design** *(concrete asks the M.1 plan needs to absorb):*
+- **F1 — Rail-references-Role validation** is already in SPEC's load-time list; M.1.7 tests cover it.
+- **F2 — Rail as discriminated union** (TwoLegRail / SingleLegRail) — M.1.1 dataclass shape.
+- **F3 — Two-pass validation** (cross-entity: TransferTemplate.LegRails ↔ Rail.expected_net interplay) — M.1.3.
+- **F4 — `Decimal(str(value))` coercion** uniformly across Money-typed YAML fields — M.1.2.
+- **F6 — Two parallel "Dataset" types** (api `DataSet` vs tree `Dataset`); rename or wrap to remove the colloquial collision — M.1.4 / library-side cleanup.
+
+**Refactor (touches existing code beyond M.1):**
+- **F7 — Promote `ScreenshotHarness` out of `tests/e2e/`** to a public `common/screenshot/` (or similar). Production code can't import from `tests/`. Add as a new M.1 substep.
+- **F8 — Sheet screenshot dict keyed by `sheet_id` string** (not Sheet ref). M.1's harness API design.
+
+**Confirmations (no plan change, but worth pinning):**
+- **F9 — Existing `deploy()` + `build_datasource()` + `build_theme()` reuse cleanly** for an L2-driven app. M.6 (CLI workflow) inherits them; doesn't need to redesign.
+- **F10 — L2 InstancePrefix splice over `cfg.resource_prefix` works** — confirms the SPEC's Storage Isolation rule materializes in practice. M.6 default should adopt this.
+- **F11 — Two-input CLI split (`--instance` + `--config`)** — adopt for the production CLI in M.6.
+
+**Operational lesson (no SPEC, no library — pattern for M.7/M.8):**
+- **F12 — Aurora Serverless cold-start manifests as QS's generic "We can't open that dashboard"** error. Every screenshot/browser-side CLI path needs an explicit DB warm-up (`SELECT 1` via psycopg2 right before fetching the embed URL). v5.0.2 e2e suite already has the pattern; lift it.
+
+**Net for M.1+:** SPEC amendment small (F5). M.1 plan absorbs F1-F8 into existing/new substeps; M.6 inherits F9-F11; M.7/M.8 inherits F12.
 
 ---
 
