@@ -15,6 +15,7 @@ External callers import from this package's public surface, not from any
 internal submodule.
 """
 
+from .loader import L2LoaderError, load_instance
 from .primitives import (
     Account,
     AccountTemplate,
@@ -47,6 +48,7 @@ __all__ = [
     "CompletionExpression",
     "Identifier",
     "L2Instance",
+    "L2LoaderError",
     "LegDirection",
     "LimitSchedule",
     "Money",
@@ -59,4 +61,5 @@ __all__ = [
     "TransferTemplate",
     "TransferType",
     "TwoLegRail",
+    "load_instance",
 ]
