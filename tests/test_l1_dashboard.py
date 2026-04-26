@@ -84,14 +84,14 @@ def test_dashboard_registered() -> None:
     assert app.dashboard is not None
 
 
-def test_one_sheet_after_m2a2() -> None:
-    """M.2a.2 ships Getting Started. Per-invariant sheets land in M.2a.3
-    - M.2a.6. This guard fires if a future commit accidentally lands a
-    sheet outside its own substep."""
+def test_two_sheets_after_m2a3() -> None:
+    """M.2a.2 shipped Getting Started; M.2a.3 ships Drift. Remaining
+    per-invariant sheets land in M.2a.4 - M.2a.6. This guard fires if a
+    future commit accidentally lands a sheet outside its own substep."""
     app = build_l1_dashboard_app(_CFG)
     assert app.analysis is not None
-    assert len(app.analysis.sheets) == 1
-    assert app.analysis.sheets[0].name == "Getting Started"
+    sheet_names = [s.name for s in app.analysis.sheets]
+    assert sheet_names == ["Getting Started", "Drift"]
 
 
 # -- Getting Started — description-driven prose (M.2a.2) ---------------------
@@ -131,6 +131,73 @@ def test_getting_started_title_is_constant_ui_vocabulary() -> None:
     app = build_l1_dashboard_app(_CFG)
     gs = app.analysis.sheets[0]
     assert "L1 Reconciliation Dashboard" in gs.text_boxes[0].content
+
+
+# -- Drift sheet (M.2a.3) ----------------------------------------------------
+
+
+def test_drift_sheet_present_after_m2a3() -> None:
+    """M.2a.3 lands the Drift sheet — second tab in display order."""
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    drift = app.analysis.sheets[1]
+    assert drift.name == "Drift"
+    assert drift.title == "Account Balance Drift"
+
+
+def test_drift_sheet_has_two_kpis_and_two_tables() -> None:
+    """Drift sheet structure: 2 KPIs side-by-side + leaf table + parent
+    table. KPIs surface the "how many violations" headline; tables surface
+    "which accounts on which days"."""
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    drift = app.analysis.sheets[1]
+    titles = [v.title for v in drift.visuals]
+    assert titles == [
+        "Leaf Accounts in Drift",
+        "Parent Accounts in Drift",
+        "Leaf Account Drift",
+        "Parent Account Drift",
+    ]
+
+
+def test_drift_datasets_registered_and_target_l1_views() -> None:
+    """The L1 drift datasets must be registered on the App and their
+    custom SQL must target the per-L2-instance L1 invariant views by
+    prefix — that's the M.2a "L1 dashboard configured by L2" promise."""
+    from quicksight_gen.apps.l1_dashboard.datasets import (
+        DS_DRIFT,
+        DS_LEDGER_DRIFT,
+    )
+
+    app = build_l1_dashboard_app(_CFG)
+    registered_ids = {ds.identifier for ds in app.datasets}
+    assert DS_DRIFT in registered_ids
+    assert DS_LEDGER_DRIFT in registered_ids
+
+
+def test_drift_dataset_sql_targets_prefixed_l1_views() -> None:
+    """SQL for each drift dataset must SELECT from the L2-prefixed L1
+    invariant view emitted by M.1a.7. Switching L2 instance switches the
+    view targets — the parallel-stack v6 promise."""
+    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard.datasets import (
+        build_drift_dataset,
+        build_ledger_drift_dataset,
+    )
+
+    instance = default_l2_instance()
+    prefix = instance.instance
+
+    drift_ds = build_drift_dataset(_CFG, instance)
+    ledger_ds = build_ledger_drift_dataset(_CFG, instance)
+
+    drift_sql = next(iter(drift_ds.PhysicalTableMap.values())).CustomSql
+    ledger_sql = next(iter(ledger_ds.PhysicalTableMap.values())).CustomSql
+    assert drift_sql is not None
+    assert ledger_sql is not None
+    assert drift_sql.SqlQuery == f"SELECT * FROM {prefix}_drift"
+    assert ledger_sql.SqlQuery == f"SELECT * FROM {prefix}_ledger_drift"
 
 
 # -- Emit shape (substitutability with other apps) ---------------------------

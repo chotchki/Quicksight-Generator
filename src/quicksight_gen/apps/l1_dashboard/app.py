@@ -19,9 +19,9 @@ AR legacy stack); callers MAY override (tests, alternative-persona
 deployments) via the kwarg.
 
 Substep landmarks:
-    M.2a.1 — package skeleton + Analysis + Dashboard registered (this commit)
+    M.2a.1 — package skeleton + Analysis + Dashboard registered
     M.2a.2 — Getting Started sheet with description-driven prose
-    M.2a.3 — Drift sheet
+    M.2a.3 — Drift sheet (this commit) — KPIs + leaf + ledger drift tables
     M.2a.4 — Overdraft sheet
     M.2a.5 — Limit Breach sheet
     M.2a.6 — Today's Exceptions sheet (UNION across L1 views)
@@ -34,18 +34,38 @@ Substep landmarks:
 from __future__ import annotations
 
 from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+from quicksight_gen.apps.l1_dashboard.datasets import (
+    DS_DRIFT,
+    DS_LEDGER_DRIFT,
+    build_all_l1_dashboard_datasets,
+)
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.ids import SheetId
 from quicksight_gen.common.l2 import L2Instance
 from quicksight_gen.common.theme import get_preset
-from quicksight_gen.common.tree import Analysis, App, Sheet, TextBox
+from quicksight_gen.common.tree import (
+    Analysis,
+    App,
+    Dataset,
+    Sheet,
+    TextBox,
+)
+
+
+# Layout constants — mirror apps/account_recon/app.py so visual heights
+# read consistently across the two AR stacks.
+_FULL = 36
+_HALF = 18
+_KPI_ROW_SPAN = 6
+_TABLE_ROW_SPAN = 18
 
 
 # Sheet IDs — inlined in app.py per the greenfield-app convention
 # (L.7 Executives) since the L1 dashboard isn't dragging legacy URL
 # stability constraints from a previous deploy.
 SHEET_GETTING_STARTED = SheetId("l1-sheet-getting-started")
+SHEET_DRIFT = SheetId("l1-sheet-drift")
 
 
 _GETTING_STARTED_NAME = "Getting Started"
@@ -59,13 +79,42 @@ _GETTING_STARTED_DESCRIPTION = (
 )
 
 
+_DRIFT_NAME = "Drift"
+_DRIFT_TITLE = "Account Balance Drift"
+_DRIFT_DESCRIPTION = (
+    "Stored vs computed balance disagreements at end-of-day. Leaf table "
+    "covers individual posting accounts (computed = cumulative net of "
+    "every Money record through that BusinessDay's end). Ledger table "
+    "covers parent accounts (computed = sum of child accounts' stored "
+    "balances). Both tables only show rows where stored ≠ computed — "
+    "every row is one SHOULD-constraint violation."
+)
+
+
 def _analysis_name(cfg: Config, l2_instance: L2Instance) -> str:
     """Title shown on the deployed QuickSight Analysis."""
-    # Persona-flavored title would come from L2 description fields under
-    # M.7's render pipeline; for now use a stable "L1 Dashboard" label
-    # plus the L2 instance prefix so multi-instance deployments are
-    # distinguishable.
     return f"L1 Reconciliation Dashboard ({l2_instance.instance})"
+
+
+def _l1_datasets(
+    cfg: Config, l2_instance: L2Instance,
+) -> dict[str, Dataset]:
+    """Build every L1 dataset and return tree-ref Datasets keyed by id.
+
+    Each AWS DataSet's ``DataSetId`` becomes the tree Dataset's ARN
+    path component; the visual identifier (the registry key passed to
+    `build_dataset()`) becomes the tree Dataset's ``identifier`` field.
+    The contract is registered as a side-effect of `build_dataset()`,
+    so subsequent ``ds["col"]`` accesses validate.
+    """
+    aws_datasets = build_all_l1_dashboard_datasets(cfg, l2_instance)
+    # `build_all_l1_dashboard_datasets` returns AWS DataSets in the same
+    # order as the visual identifiers below; map each to a tree Dataset.
+    visual_ids = [DS_DRIFT, DS_LEDGER_DRIFT]
+    return {
+        vid: Dataset(identifier=vid, arn=cfg.dataset_arn(aws.DataSetId))
+        for vid, aws in zip(visual_ids, aws_datasets)
+    }
 
 
 def _populate_getting_started(
@@ -107,6 +156,90 @@ def _populate_getting_started(
     )
 
 
+def _populate_drift_sheet(
+    cfg: Config,  # noqa: ARG001  (M.2a.7 wires theme accent on conditional formats)
+    sheet: Sheet,
+    *,
+    datasets: dict[str, Dataset],
+) -> None:
+    """Drift sheet — 2 KPIs + leaf-drift table + ledger-drift table.
+
+    Both tables are unaggregated row passthroughs: the L1 views
+    pre-filter to violations only (``stored_balance != computed_balance``)
+    so each row is one SHOULD-constraint failure. No drill actions yet —
+    M.2a.7 layers same-sheet + cross-sheet wiring on once every sheet
+    exists.
+    """
+    ds_drift = datasets[DS_DRIFT]
+    ds_ledger_drift = datasets[DS_LEDGER_DRIFT]
+
+    # Row 1: two KPIs side-by-side — one count per drift-violation kind.
+    half = _FULL // 2
+    kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
+    kpi_row.add_kpi(
+        width=half,
+        title="Leaf Accounts in Drift",
+        subtitle=(
+            "Count of leaf-account day-rows where stored balance "
+            "disagrees with the cumulative net of posted Money records."
+        ),
+        values=[ds_drift["account_id"].count()],
+    )
+    kpi_row.add_kpi(
+        width=half,
+        title="Parent Accounts in Drift",
+        subtitle=(
+            "Count of parent-account day-rows where stored balance "
+            "disagrees with the sum of child accounts' stored balances."
+        ),
+        values=[ds_ledger_drift["account_id"].count()],
+    )
+
+    # Row 2: leaf-drift table.
+    sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        title="Leaf Account Drift",
+        subtitle=(
+            "Each leaf account's stored vs computed balance per "
+            "BusinessDay. Computed = cumulative Σ signed Money through "
+            "that day's end. Drift = stored − computed; non-zero ⇒ feed "
+            "diverged from the underlying ledger."
+        ),
+        columns=[
+            ds_drift["account_id"].dim(),
+            ds_drift["account_name"].dim(),
+            ds_drift["account_role"].dim(),
+            ds_drift["account_parent_role"].dim(),
+            ds_drift["business_day_end"].date(),
+            ds_drift["stored_balance"].numerical(),
+            ds_drift["computed_balance"].numerical(),
+            ds_drift["drift"].numerical(),
+        ],
+    )
+
+    # Row 3: ledger (parent-account) drift table — same shape minus
+    # account_parent_role (parents ARE the parents).
+    sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        title="Parent Account Drift",
+        subtitle=(
+            "Each parent account's stored vs computed balance per "
+            "BusinessDay. Computed = Σ stored balances of its child "
+            "accounts on that day. Drift = stored − computed; non-zero "
+            "⇒ a child posting didn't roll up correctly."
+        ),
+        columns=[
+            ds_ledger_drift["account_id"].dim(),
+            ds_ledger_drift["account_name"].dim(),
+            ds_ledger_drift["account_role"].dim(),
+            ds_ledger_drift["business_day_end"].date(),
+            ds_ledger_drift["stored_balance"].numerical(),
+            ds_ledger_drift["computed_balance"].numerical(),
+            ds_ledger_drift["drift"].numerical(),
+        ],
+    )
+
+
 def build_l1_dashboard_app(
     cfg: Config,
     *,
@@ -114,9 +247,10 @@ def build_l1_dashboard_app(
 ) -> App:
     """Construct the L1 Reconciliation Dashboard App as a tree.
 
-    M.2a.2: registers Analysis + Dashboard + Getting Started sheet.
-    Substeps M.2a.3-M.2a.6 add the per-invariant sheets (Drift,
-    Overdraft, Limit Breach, Today's Exceptions). Each sheet IS one
+    M.2a.3: registers Analysis + Dashboard + Getting Started + Drift
+    sheets, plus the 2 L1 invariant datasets (drift + ledger_drift).
+    Substeps M.2a.4-M.2a.6 add the remaining per-invariant sheets
+    (Overdraft, Limit Breach, Today's Exceptions). Each sheet IS one
     L1 SHOULD-constraint visualized via the M.1a.7 invariant views.
 
     Dashboard ID convention: ``<l2_prefix>-l1-dashboard``. Matches the
@@ -132,6 +266,11 @@ def build_l1_dashboard_app(
         name=_analysis_name(cfg, l2_instance),
     ))
 
+    # Datasets first — registers contracts so visual ds["col"] refs validate.
+    datasets = _l1_datasets(cfg, l2_instance)
+    for ds in datasets.values():
+        app.add_dataset(ds)
+
     getting_started = analysis.add_sheet(Sheet(
         sheet_id=SHEET_GETTING_STARTED,
         name=_GETTING_STARTED_NAME,
@@ -140,7 +279,15 @@ def build_l1_dashboard_app(
     ))
     _populate_getting_started(cfg, getting_started, l2_instance)
 
-    # Per-invariant sheets land in M.2a.3-M.2a.6.
+    drift_sheet = analysis.add_sheet(Sheet(
+        sheet_id=SHEET_DRIFT,
+        name=_DRIFT_NAME,
+        title=_DRIFT_TITLE,
+        description=_DRIFT_DESCRIPTION,
+    ))
+    _populate_drift_sheet(cfg, drift_sheet, datasets=datasets)
+
+    # Per-invariant sheets land in M.2a.4-M.2a.6.
 
     app.create_dashboard(
         dashboard_id_suffix="l1-dashboard",
