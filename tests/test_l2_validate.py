@@ -378,6 +378,31 @@ def test_s2_template_leg_must_not_have_expected_net() -> None:
         validate(bad)
 
 
+def test_s3_aggregating_single_leg_exempt_from_reconciliation() -> None:
+    """Per SPEC: aggregating single-leg rails ARE the reconciliation mechanism.
+
+    They drift their leg into an external counterparty by design (sweep
+    pattern) — they don't themselves need to be reconciled by another
+    rail or template. Surfaced by M.1.8 kitchen-sink fixture.
+    """
+    inst = _baseline_instance()
+    sweep = SingleLegRail(
+        name=Identifier("DailySweepToExternal"),
+        transfer_type="external_sweep",
+        origin="InternalInitiated",
+        metadata_keys=(),
+        leg_role=(Identifier("ExternalCounterparty"),),
+        leg_direction="Credit",
+        aggregating=True,
+        bundles_activity=(Identifier("ach"),),
+        cadence="daily-eod",
+    )
+    # NOT in any TransferTemplate.leg_rails AND not in any other
+    # aggregating rail's bundles_activity — but its own aggregating=True
+    # means it self-reconciles.
+    validate(_replace(inst, rails=(*inst.rails, sweep)))
+
+
 def test_s3_unreconciled_single_leg_rejected() -> None:
     inst = _baseline_instance()
     # Add a SingleLegRail not in any template + not matched by any

@@ -252,11 +252,13 @@ RoleExpression: Role | (Role | Role | …)   # union role; see below
 Declare both `SourceRole` (debit leg) and `DestinationRole` (credit leg). When fired as a standalone Transfer, `ExpectedNet` MUST be set (typically `0`); L1 Conservation enforces `Σ legs = ExpectedNet`. When the rail is a leg-pattern of a TransferTemplate, `ExpectedNet` lives on the template, not the rail.
 
 #### Single-leg rails
-Declare `LegRole` and `LegDirection`. Per L1, the resulting Transfer leaves `ExpectedNet` unset and is exempt from Conservation in isolation. Single-leg rails MUST be reconciled by EITHER:
+Declare `LegRole` and `LegDirection`. Per L1, the resulting Transfer leaves `ExpectedNet` unset and is exempt from Conservation in isolation. Single-leg rails (with `Aggregating: false`) MUST be reconciled by EITHER:
 - A `TransferTemplate` whose `LegRails` includes this rail (the shared Transfer's `ExpectedNet` provides closure via Conservation + Timeliness), OR
 - An `AggregatingRail` whose `BundlesActivity` includes this rail's `TransferType` (periodic reconciliation closes the drift).
 
-A single-leg rail that is neither a leg-pattern of a TransferTemplate nor reconciled by an AggregatingRail is a configuration error — the drift it introduces would persist forever.
+A non-aggregating single-leg rail that is neither a leg-pattern of a TransferTemplate nor reconciled by an AggregatingRail is a configuration error — the drift it introduces would persist forever.
+
+**Single-leg aggregating rails are exempt from this rule** — they ARE the reconciliation mechanism (sweeping their drift into an External counterparty by design, per the Aggregating Rails section). They do not themselves appear in another rail's `BundlesActivity`.
 
 #### `LegDirection = Variable`
 Both the leg's amount AND direction are determined at posting time by surrounding context — specifically, by the requirement that a containing TransferTemplate's `ExpectedNet` hold given the other legs already posted. A "settlement" leg that posts whatever amount/direction closes the bundle is the canonical case.

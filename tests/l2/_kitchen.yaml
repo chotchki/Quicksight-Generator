@@ -1,0 +1,236 @@
+# Kitchen-sink L2 instance — exercises every primitive shape + every
+# variant flag at least once. Per M.1.8: this is the regression harness
+# for "did anything stop loading + validating + emitting cleanly?"
+#
+# Shape: a slightly-extended merchant-acquirer pipeline. Adds primitives
+# the SPEC's worked example didn't cover (single-leg aggregating rail,
+# Cadence variants beyond intraday-2h, completion forms beyond metadata.,
+# multiple TransferTemplates, both XOR + non-XOR chains).
+#
+# Loaded by `tests/test_l2_pipeline.py::test_kitchen_sink_*` — if a new
+# primitive lands without coverage here, the test count check fires.
+
+instance: kitchen
+
+# ---------------------------------------------------------------------
+# Singleton accounts: one per role used by the rails below. Mix of
+# internal + external; one with explicit expected_eod_balance, one with
+# explicit name + parent_role chain (singleton-under-singleton).
+# ---------------------------------------------------------------------
+accounts:
+  - id: north-pool
+    name: North Pool
+    role: NorthPool
+    scope: internal
+
+  - id: south-pool
+    name: South Pool
+    role: SouthPool
+    scope: internal
+
+  - id: gl-control
+    role: ControlAccount
+    scope: internal
+
+  - id: clearing-suspense
+    name: Clearing Suspense
+    role: ClearingSuspense
+    scope: internal
+    expected_eod_balance: 0
+
+  - id: ext-counter
+    role: ExternalCounterparty
+    scope: external
+
+# ---------------------------------------------------------------------
+# AccountTemplates: parent_role on each MUST resolve to a singleton
+# Account (R3). No template-under-template nesting.
+# ---------------------------------------------------------------------
+account_templates:
+  - role: CustomerSubledger
+    scope: internal
+    parent_role: SouthPool
+
+  - role: MerchantLedger
+    scope: internal
+    parent_role: NorthPool
+
+  - role: WatchlistAccount
+    scope: internal
+    parent_role: ControlAccount
+    expected_eod_balance: 0
+
+# ---------------------------------------------------------------------
+# Rails — every shape variant present:
+#   - Two-leg standalone (with expected_net)
+#   - Two-leg as TransferTemplate leg (NO expected_net per S2)
+#   - Single-leg in TransferTemplate leg_rails (S3 reconciliation path A)
+#   - Single-leg Variable-direction (closing leg)
+#   - Single-leg reconciled by an aggregating rail (S3 path B)
+#   - Two-leg aggregating with intraday-2h cadence
+#   - Single-leg aggregating with daily-eod cadence
+#   - Union role (RoleA | RoleB)
+# ---------------------------------------------------------------------
+rails:
+  # Standalone two-leg
+  - name: ExternalRailInbound
+    transfer_type: ach
+    source_role: ExternalCounterparty
+    destination_role: ClearingSuspense
+    expected_net: 0
+    origin: ExternalForcePosted
+    metadata_keys: [external_reference]
+
+  # Two-leg in MerchantSettlementCycle.leg_rails — no expected_net (S2)
+  - name: SettlementSweepLeg
+    transfer_type: settlement_sweep
+    source_role: SouthPool
+    destination_role: NorthPool
+    origin: InternalInitiated
+    metadata_keys: [merchant_id, settlement_period]
+
+  # Single-leg, in MerchantSettlementCycle.leg_rails (S3 path A)
+  - name: SubledgerCharge
+    transfer_type: charge
+    leg_role: CustomerSubledger
+    leg_direction: Debit
+    origin: InternalInitiated
+    metadata_keys: [merchant_id, customer_id, settlement_period, settlement_period_end]
+
+  - name: SubledgerRefund
+    transfer_type: refund
+    leg_role: CustomerSubledger
+    leg_direction: Credit
+    origin: InternalInitiated
+    metadata_keys: [merchant_id, customer_id, settlement_period, settlement_period_end]
+
+  # Single-leg Variable closing leg of the template
+  - name: SettlementClose
+    transfer_type: settlement
+    leg_role: MerchantLedger
+    leg_direction: Variable
+    origin: InternalInitiated
+    metadata_keys: [merchant_id, settlement_period, settlement_period_end]
+
+  # Single-leg reconciled by aggregating rail below (S3 path B)
+  - name: WatchlistAdjustment
+    transfer_type: adjustment
+    leg_role: WatchlistAccount
+    leg_direction: Variable
+    origin: InternalInitiated
+    metadata_keys: [adjustment_reason]
+
+  # Standalone payout — XOR group target
+  - name: MerchantPayoutACH
+    transfer_type: ach
+    source_role: MerchantLedger
+    destination_role: ExternalCounterparty
+    expected_net: 0
+    origin: InternalInitiated
+    metadata_keys: [merchant_id, settlement_period]
+
+  - name: MerchantPayoutVoucher
+    transfer_type: voucher
+    source_role: MerchantLedger
+    destination_role: ExternalCounterparty
+    expected_net: 0
+    origin: InternalInitiated
+    metadata_keys: [merchant_id, settlement_period]
+
+  # Two-leg aggregating, intraday-2h
+  - name: PoolBalancingNorthToSouth
+    transfer_type: pool_balancing
+    source_role: NorthPool
+    destination_role: SouthPool
+    expected_net: 0
+    origin: InternalInitiated
+    metadata_keys: [bundled_transfer_type, business_day]
+    aggregating: true
+    bundles_activity: [SubledgerCharge, SubledgerRefund]
+    cadence: intraday-2h
+
+  # Single-leg aggregating, daily-eod cadence — sweeps WatchlistAdjustment activity
+  - name: WatchlistDailySweep
+    transfer_type: watchlist_sweep
+    leg_role: ExternalCounterparty
+    leg_direction: Credit
+    origin: InternalInitiated
+    metadata_keys: [bundled_transfer_type, business_day]
+    aggregating: true
+    bundles_activity: [adjustment]
+    cadence: daily-eod
+
+  # Two-leg standalone with union source_role
+  - name: BatchInbound
+    transfer_type: batch
+    source_role: [ExternalCounterparty, ClearingSuspense]
+    destination_role: SouthPool
+    expected_net: 0
+    origin: ExternalForcePosted
+    metadata_keys: [batch_id]
+
+  # Single-leg in DailyClearingCycle.leg_rails — provides the leg
+  # the template needs (and exercises a different Completion form).
+  - name: ClearingPosting
+    transfer_type: clearing_post
+    leg_role: ClearingSuspense
+    leg_direction: Variable
+    origin: InternalInitiated
+    metadata_keys: [batch_id]
+
+# ---------------------------------------------------------------------
+# TransferTemplates with each Completion vocabulary form covered across
+# the three templates (business_day_end, business_day_end+Nd, month_end,
+# metadata.<key>).
+# ---------------------------------------------------------------------
+transfer_templates:
+  - name: MerchantSettlementCycle
+    transfer_type: settlement_cycle
+    expected_net: 0
+    transfer_key: [merchant_id, settlement_period]
+    completion: metadata.settlement_period_end
+    leg_rails: [SubledgerCharge, SubledgerRefund, SettlementSweepLeg, SettlementClose]
+
+  - name: DailyClearingCycle
+    transfer_type: clearing_cycle
+    expected_net: 0
+    transfer_key: [batch_id]
+    completion: business_day_end
+    leg_rails: [ClearingPosting]
+
+# ---------------------------------------------------------------------
+# Chains — both XOR and non-XOR; required + optional.
+# ---------------------------------------------------------------------
+chains:
+  # XOR group — exactly one payout vehicle per settlement cycle.
+  - parent: MerchantSettlementCycle
+    child: MerchantPayoutACH
+    required: false
+    xor_group: PayoutVehicle
+
+  - parent: MerchantSettlementCycle
+    child: MerchantPayoutVoucher
+    required: false
+    xor_group: PayoutVehicle
+
+  # Non-XOR fan-out: every clearing cycle MUST have at least one
+  # ExternalRailInbound child.
+  - parent: DailyClearingCycle
+    child: ExternalRailInbound
+    required: true
+
+# ---------------------------------------------------------------------
+# Limit Schedules across the three pool/template parent roles.
+# ---------------------------------------------------------------------
+limit_schedules:
+  - parent_role: SouthPool
+    transfer_type: charge
+    cap: 5000.00
+
+  - parent_role: NorthPool
+    transfer_type: ach
+    cap: 25000.00
+
+  - parent_role: ControlAccount
+    transfer_type: adjustment
+    cap: 1000.00

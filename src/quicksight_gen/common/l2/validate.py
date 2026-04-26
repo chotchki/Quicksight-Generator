@@ -8,8 +8,12 @@ Public entry point: ``validate(instance)``. Raises ``L2ValidationError``
 on the first failure with a message identifying the offending field +
 the rule that failed.
 
-Per L.1.18 + M.1's testing principle: every rule below has a dedicated
-rejection test in ``tests/test_l2_validate.py``.
+**Locked rule (per L.1.18 + M.1.7):** every cross-entity validator that
+``validate(instance)`` runs has a dedicated rejection test in
+``tests/test_l2_validate.py``. The rule numbering in this docstring
+matches the test names (e.g. rule U1 → ``test_u1_duplicate_account_id_rejected``).
+Adding a new validator MUST land its rejection test in the same commit
+that introduces it; the audit table below extends to cover the new rule.
 
 Rules enforced (numbered for cross-reference with the test file):
   U1. Account.id values are unique within ``accounts``.
@@ -36,9 +40,12 @@ Rules enforced (numbered for cross-reference with the test file):
       ``expected_net`` set.
   S2. A two-leg Rail that IS a TransferTemplate leg MUST NOT have
       ``expected_net`` set (the template owns the bundle's ExpectedNet).
-  S3. Every single-leg Rail MUST be reconciled — appears in some
-      TransferTemplate.leg_rails OR some aggregating Rail's
+  S3. Every NON-aggregating single-leg Rail MUST be reconciled — appears
+      in some TransferTemplate.leg_rails OR some aggregating Rail's
       bundles_activity (matched by Rail.name OR Rail.transfer_type).
+      Aggregating single-leg rails are exempt — they ARE the
+      reconciliation mechanism (per SPEC's "single-leg sweep that lands
+      in an external counterparty" example).
   S4. Aggregating Rails MUST NOT appear as Chain.child.
   S5. Aggregating Rails MUST declare both ``cadence`` and
       ``bundles_activity``.
@@ -371,7 +378,21 @@ def _check_two_leg_expected_net_consistency(inst: L2Instance) -> None:
 
 
 def _check_single_leg_reconciliation(inst: L2Instance) -> None:
-    """S3: every single-leg Rail is reconciled by Template OR AggregatingRail."""
+    """S3: every non-aggregating single-leg Rail is reconciled.
+
+    Aggregating single-leg rails ARE the reconciliation mechanism (per
+    SPEC's Aggregating Rails section: "single-leg aggregating rails are
+    permitted, e.g. a single-leg sweep that lands in an external
+    counterparty"). Their drift exits the system into the External
+    counterparty by design — they do not themselves need to appear in
+    any other rail's bundles_activity. So the S3 reconciliation check
+    only applies to non-aggregating single-leg rails.
+
+    This exemption was surfaced by the M.1.8 kitchen-sink fixture (a
+    single-leg aggregating rail tripped a literal reading of the SPEC
+    rule). SPEC v1's wording amended in M.1.8 to make the exemption
+    explicit.
+    """
     template_leg_names: set[str] = set()
     for t in inst.transfer_templates:
         template_leg_names.update(t.leg_rails)
@@ -383,6 +404,9 @@ def _check_single_leg_reconciliation(inst: L2Instance) -> None:
 
     for r in inst.rails:
         if not isinstance(r, SingleLegRail):
+            continue
+        if r.aggregating:
+            # Self-reconciling per the exemption above.
             continue
         in_template = r.name in template_leg_names
         in_aggregating = (
