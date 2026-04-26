@@ -16,6 +16,7 @@ internal submodule.
 """
 
 from .loader import L2LoaderError, load_instance
+from .schema import emit_schema
 from .validate import L2ValidationError, validate
 from .primitives import (
     Account,
@@ -63,6 +64,7 @@ __all__ = [
     "TransferTemplate",
     "TransferType",
     "TwoLegRail",
+    "emit_schema",
     "load_instance",
     "validate",
 ]
