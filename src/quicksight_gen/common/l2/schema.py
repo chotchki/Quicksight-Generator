@@ -44,21 +44,90 @@ from .primitives import L2Instance
 
 
 def emit_schema(instance: L2Instance) -> str:
-    """Emit the full DDL script for an L2 instance's prefixed L1 base tables.
+    """Emit the full DDL script for an L2 instance's prefixed L1 schema.
 
-    Idempotent: every CREATE is preceded by a DROP IF EXISTS so re-running
-    the same `apply schema` clears stale state. The returned string can
-    be fed straight to ``psql`` or ``psycopg2.cursor.execute(sql)``.
+    Three layers, all per L2 instance prefix:
 
-    Per L1 SPEC: the v6 schema differs from v5 in three load-bearing
-    ways — adds ``entry BIGSERIAL`` for append-only supersession (F's
-    Entry primitive), splits the v5 ``signed_amount`` into the v6
-    ``amount_money + amount_direction`` per the L1 Amount invariant
-    (money agrees with direction), and adds ``transfer_parent_id``
-    for the L1 Transfer.Parent recursive chain (PR pipeline support).
+    1. **Base tables** — ``<prefix>_transactions`` + ``<prefix>_daily_balances``,
+       v6 column shape (entry BIGSERIAL, amount_money + amount_direction,
+       transfer_parent_id, rail_name, template_name, bundle_id, supersedes,
+       …).
+    2. **Current\\* views** — ``<prefix>_current_transactions`` +
+       ``<prefix>_current_daily_balances``, materializing L1's
+       max-Entry-per-logical-key theorems so dashboard SQL is transparent
+       to technical-error supersession.
+    3. **L1 invariant views (M.1a.7)** — ``<prefix>_drift`` /
+       ``<prefix>_ledger_drift`` / ``<prefix>_overdraft`` /
+       ``<prefix>_expected_eod_balance_breach`` / ``<prefix>_limit_breach``
+       (plus 2 helpers: ``<prefix>_computed_subledger_balance`` +
+       ``<prefix>_computed_ledger_balance``). Each materializes one of
+       the SPEC's L1 SHOULD-constraints as a queryable exception
+       surface; rows in these views are the constraint violations.
+       Caps for ``<prefix>_limit_breach`` are embedded inline from
+       ``instance.limit_schedules`` at view-emit time (CASE branches
+       per declared (parent_role, transfer_type) pair) so the view DDL
+       stays JSON-path-portable.
+
+    Idempotent: every CREATE is preceded by a DROP IF EXISTS so
+    re-running the same ``apply schema`` clears stale state. The
+    returned string can be fed straight to ``psql`` or
+    ``psycopg2.cursor.execute(sql)``.
     """
     p = instance.instance
-    return _SCHEMA_TEMPLATE.format(p=p)
+    # L1 invariant view DROPs MUST run before base DROPs — the L1 views
+    # depend on the Current* views (which depend on the base tables),
+    # so dropping current_* first would error with "dependent objects
+    # still exist" on a re-run. Emit L1 drops at the top of the script,
+    # then the base block (which drops Current* + tables + creates
+    # everything), then the L1 view CREATE statements.
+    l1_drops = _L1_INVARIANT_VIEWS_DROPS_TEMPLATE.format(p=p)
+    base = _SCHEMA_TEMPLATE.format(p=p)
+    invariants = _emit_l1_invariant_views(instance)
+    return l1_drops + "\n" + base + "\n\n" + invariants
+
+
+def _emit_l1_invariant_views(instance: L2Instance) -> str:
+    """Render the M.1a.7 L1-invariant view block for ``instance``.
+
+    Each view drops + creates idempotently so repeated runs converge.
+    Drop order is reverse of create order (no view depends on a later
+    one).
+    """
+    p = instance.instance
+    limit_cases = _render_limit_breach_cases(instance, p=p)
+    return _L1_INVARIANT_VIEWS_TEMPLATE.format(
+        p=p, limit_cases=limit_cases,
+    )
+
+
+def _render_limit_breach_cases(instance: L2Instance, *, p: str) -> str:
+    """Build the CASE-WHEN body that the limit_breach view uses to look
+    up a (parent_role, transfer_type) cap from L2's LimitSchedules.
+
+    Inline at view-emit time (not via JSON_VALUE on daily_balances.limits)
+    because dynamic-key JSON path syntax isn't portable across the SQL
+    targets we support. The L2 instance's LimitSchedules are static at
+    schema-emit time anyway — re-emitting the schema picks up changes.
+
+    Returns a multi-line SQL CASE expression. References ``tx.``-prefixed
+    columns since the view reads parent_role + transfer_type directly
+    from the transaction row (denormalized in v6) — no JOIN to
+    daily_balances needed. If the instance has no LimitSchedules,
+    returns ``NULL`` so the view emits valid SQL but surfaces no rows.
+    """
+    if not instance.limit_schedules:
+        return "NULL"
+    branches: list[str] = []
+    for ls in instance.limit_schedules:
+        # Each LimitSchedule is keyed on (parent_role, transfer_type) per
+        # validator U5; the cap is the threshold value.
+        branches.append(
+            f"WHEN tx.account_parent_role = '{ls.parent_role}' "
+            f"AND tx.transfer_type = '{ls.transfer_type}' "
+            f"THEN {ls.cap}"
+        )
+    branches_sql = "\n        ".join(branches)
+    return f"CASE\n        {branches_sql}\n        ELSE NULL\n    END"
 
 
 _SCHEMA_TEMPLATE = """\
@@ -235,4 +304,235 @@ WHERE sb.entry = (
     WHERE account_id = sb.account_id
       AND business_day_start = sb.business_day_start
 );
+"""
+
+
+# -- L1 invariant views (M.1a.7) ---------------------------------------------
+#
+# Per L2 instance, materialize the SPEC's L1 SHOULD-constraints as queryable
+# exception surfaces. Each view's rows ARE the constraint violations:
+# `<prefix>_drift` returns leaf-account-day cells where stored ≠ computed,
+# `<prefix>_overdraft` returns rows where money < 0, etc. Dashboards
+# (M.2.4 + later) just SELECT from these views — the L1 invariant SQL
+# lives once per instance, not duplicated per app.
+#
+# All views read from the Current* views (M.1.5) so technical-error
+# supersession is transparent. Drop order is reverse of create order
+# (no view here depends on another in this block, but ordering is
+# conservative).
+_L1_INVARIANT_VIEWS_DROPS_TEMPLATE = """\
+-- L1 invariant view drops (M.1a.7) — MUST run before base drops because
+-- the L1 views depend on the Current* views (which depend on the base
+-- tables). Re-emitted at the top of the script so re-runs converge.
+DROP VIEW IF EXISTS {p}_limit_breach;
+DROP VIEW IF EXISTS {p}_expected_eod_balance_breach;
+DROP VIEW IF EXISTS {p}_overdraft;
+DROP VIEW IF EXISTS {p}_ledger_drift;
+DROP VIEW IF EXISTS {p}_drift;
+DROP VIEW IF EXISTS {p}_computed_ledger_balance;
+DROP VIEW IF EXISTS {p}_computed_subledger_balance;
+"""
+
+
+_L1_INVARIANT_VIEWS_TEMPLATE = """\
+-- L1 invariant views per M.1a.7 (one set per L2 instance) ------------------
+-- (DROPs moved to the top of the script so they run before the base
+-- DROPs that would otherwise hit "dependent objects still exist".)
+
+-- ---------------------------------------------------------------------
+-- Helper view: ComputedBalance theorem for leaf accounts.
+-- Per SPEC: ComputedBalance(account, businessDay) := Σ CurrentTransaction
+-- (Account = inAccount, Status = Posted, Posting ≤ inBusinessDay.EndTime).
+-- A "leaf" account is one with account_parent_role IS NOT NULL
+-- (i.e., it's a child of a parent role).
+-- ---------------------------------------------------------------------
+CREATE VIEW {p}_computed_subledger_balance AS
+SELECT
+    sb.account_id,
+    sb.business_day_start,
+    sb.business_day_end,
+    sb.account_parent_role,
+    COALESCE((
+        SELECT SUM(tx.amount_money)
+        FROM {p}_current_transactions tx
+        WHERE tx.account_id = sb.account_id
+          AND tx.status = 'Posted'
+          AND tx.posting <= sb.business_day_end
+    ), 0) AS computed_balance
+FROM {p}_current_daily_balances sb
+WHERE sb.account_scope = 'internal'
+  AND sb.account_parent_role IS NOT NULL;
+
+-- ---------------------------------------------------------------------
+-- Helper view: ComputedBalance theorem for parent (ledger) accounts.
+-- Per SPEC's LedgerDrift: stored ledger balance should equal
+--   Σ child sub-ledger stored balances + Σ direct ledger postings.
+-- A "parent" account is one whose role appears as account_parent_role
+-- on at least one other account (resolved via subquery).
+-- ---------------------------------------------------------------------
+CREATE VIEW {p}_computed_ledger_balance AS
+SELECT
+    parent_db.account_id,
+    parent_db.account_role,
+    parent_db.business_day_start,
+    parent_db.business_day_end,
+    COALESCE(child_totals.child_balance, 0)
+        + COALESCE(direct_totals.direct_balance, 0) AS computed_balance
+FROM {p}_current_daily_balances parent_db
+LEFT JOIN (
+    SELECT
+        child_db.account_parent_role AS parent_role,
+        child_db.business_day_start,
+        SUM(child_db.money) AS child_balance
+    FROM {p}_current_daily_balances child_db
+    WHERE child_db.account_parent_role IS NOT NULL
+    GROUP BY child_db.account_parent_role, child_db.business_day_start
+) child_totals
+    ON child_totals.parent_role = parent_db.account_role
+   AND child_totals.business_day_start = parent_db.business_day_start
+LEFT JOIN (
+    SELECT
+        tx.account_id,
+        DATE_TRUNC('day', tx.posting) AS business_day,
+        SUM(tx.amount_money) AS direct_balance
+    FROM {p}_current_transactions tx
+    WHERE tx.status = 'Posted'
+    GROUP BY tx.account_id, DATE_TRUNC('day', tx.posting)
+) direct_totals
+    ON direct_totals.account_id = parent_db.account_id
+   AND direct_totals.business_day >= parent_db.business_day_start
+   AND direct_totals.business_day < parent_db.business_day_end
+WHERE parent_db.account_scope = 'internal'
+  AND parent_db.account_role IS NOT NULL
+  -- Only emit for accounts whose role IS a parent role to some child.
+  AND EXISTS (
+      SELECT 1 FROM {p}_current_daily_balances child2
+      WHERE child2.account_parent_role = parent_db.account_role
+  );
+
+-- ---------------------------------------------------------------------
+-- L1 invariant: Sub-ledger drift.
+-- SPEC: For every CurrentStoredBalance where Account.Scope = Internal
+-- and ¬IsParent(Account), Drift(Account, BusinessDay) SHOULD equal 0.
+-- Rows in this view are the violations: stored ≠ computed.
+-- ---------------------------------------------------------------------
+CREATE VIEW {p}_drift AS
+SELECT
+    sb.account_id,
+    sb.account_name,
+    sb.account_role,
+    sb.account_parent_role,
+    sb.business_day_start,
+    sb.business_day_end,
+    sb.money AS stored_balance,
+    cb.computed_balance,
+    sb.money - cb.computed_balance AS drift
+FROM {p}_current_daily_balances sb
+JOIN {p}_computed_subledger_balance cb
+  ON cb.account_id = sb.account_id
+ AND cb.business_day_start = sb.business_day_start
+WHERE sb.account_scope = 'internal'
+  AND sb.account_parent_role IS NOT NULL
+  AND sb.money <> cb.computed_balance;
+
+-- ---------------------------------------------------------------------
+-- L1 invariant: Ledger drift.
+-- SPEC: For every CurrentStoredBalance where Account.Scope = Internal
+-- and IsParent(Account), LedgerDrift(Account, BusinessDay) SHOULD equal 0.
+-- Rows in this view are the violations.
+-- ---------------------------------------------------------------------
+CREATE VIEW {p}_ledger_drift AS
+SELECT
+    sb.account_id,
+    sb.account_name,
+    sb.account_role,
+    sb.business_day_start,
+    sb.business_day_end,
+    sb.money AS stored_balance,
+    cb.computed_balance,
+    sb.money - cb.computed_balance AS drift
+FROM {p}_current_daily_balances sb
+JOIN {p}_computed_ledger_balance cb
+  ON cb.account_id = sb.account_id
+ AND cb.business_day_start = sb.business_day_start
+WHERE sb.money <> cb.computed_balance;
+
+-- ---------------------------------------------------------------------
+-- L1 invariant: Non-negative stored balance.
+-- SPEC: For every CurrentStoredBalance, money SHOULD be ≥ 0.
+-- Rows in this view are accounts × days where the stored balance is
+-- negative (overdraft).
+-- ---------------------------------------------------------------------
+CREATE VIEW {p}_overdraft AS
+SELECT
+    sb.account_id,
+    sb.account_name,
+    sb.account_role,
+    sb.account_parent_role,
+    sb.business_day_start,
+    sb.business_day_end,
+    sb.money AS stored_balance
+FROM {p}_current_daily_balances sb
+WHERE sb.account_scope = 'internal'
+  AND sb.money < 0;
+
+-- ---------------------------------------------------------------------
+-- L1 invariant: Expected EOD balance.
+-- SPEC: For every CurrentStoredBalance where ExpectedEODBalance is
+-- set, money SHOULD equal expected_eod_balance.
+-- Rows are violations.
+-- ---------------------------------------------------------------------
+CREATE VIEW {p}_expected_eod_balance_breach AS
+SELECT
+    sb.account_id,
+    sb.account_name,
+    sb.account_role,
+    sb.business_day_start,
+    sb.business_day_end,
+    sb.money AS stored_balance,
+    sb.expected_eod_balance,
+    sb.money - sb.expected_eod_balance AS variance
+FROM {p}_current_daily_balances sb
+WHERE sb.expected_eod_balance IS NOT NULL
+  AND sb.money <> sb.expected_eod_balance;
+
+-- ---------------------------------------------------------------------
+-- L1 invariant: Limit breach.
+-- SPEC: For every CurrentStoredBalance where Limits is set, for every
+-- (TransferType, limit) in Limits, for every child Account whose
+-- Parent = this account, OutboundFlow(child, type, businessDay)
+-- SHOULD be ≤ limit.
+-- Implementation: compute outbound debit totals per (account, day, type)
+-- from CurrentTransaction, compare against the cap. Caps come from
+-- L2's LimitSchedules — embedded inline as CASE branches at view-emit
+-- time (dynamic JSON path lookup isn't portable across our SQL targets).
+-- account_parent_role is denormalized on every transaction row in v6,
+-- so no JOIN to daily_balances is needed (which also avoids the failure
+-- mode where a breach business_day has no enclosing daily_balance row).
+-- ---------------------------------------------------------------------
+CREATE VIEW {p}_limit_breach AS
+SELECT *
+FROM (
+    SELECT
+        tx.account_id,
+        tx.account_name,
+        tx.account_role,
+        tx.account_parent_role,
+        DATE_TRUNC('day', tx.posting) AS business_day,
+        tx.transfer_type,
+        SUM(ABS(tx.amount_money)) AS outbound_total,
+        {limit_cases} AS cap
+    FROM {p}_current_transactions tx
+    WHERE tx.amount_direction = 'Debit'
+      AND tx.status = 'Posted'
+      AND tx.account_scope = 'internal'
+      AND tx.account_parent_role IS NOT NULL
+    GROUP BY
+        tx.account_id, tx.account_name, tx.account_role,
+        tx.account_parent_role,
+        DATE_TRUNC('day', tx.posting),
+        tx.transfer_type
+) outbound_with_cap
+WHERE cap IS NOT NULL
+  AND outbound_total > cap;
 """

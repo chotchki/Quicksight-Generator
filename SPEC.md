@@ -102,7 +102,7 @@ Recording the reason is load-bearing for the recon experience: an accountant loo
 ## Derivatives (Theorems)
 - `CurrentTransaction` := `{ tx ∈ Transaction : tx.Entry = max(Transaction(ID = tx.ID).Entry) }`
 - `CurrentStoredBalance` := `{ sb ∈ StoredBalance : sb.Entry = max(StoredBalance(Account = sb.Account, BusinessDay = sb.BusinessDay).Entry) }`
-- `ComputedBalance(inAccount: Account, inBusinessDay: BusinessDay)` := `Σ CurrentTransaction(Account = inAccount, Status = Posted, Posting ≤ inBusinessDay.EndTime).Amount.Money`
+- `ComputedBalance(inAccount: Account, inBusinessDay: BusinessDay)` := `Σ CurrentTransaction(Account = inAccount, Status = Posted, Posting ≤ inBusinessDay.EndTime).Amount.Money`. **Cumulative through end-of-day** — every Posted transaction with `Posting ≤ EndTime` contributes regardless of how far in the past it was, NOT just events on `inBusinessDay`. See the "Stored balance contract" note under System Constraints for the implementation contract this implies for integrators planting StoredBalance entries.
 - `Drift(inAccount: Account, inBusinessDay: BusinessDay)` := `CurrentStoredBalance(Account = inAccount, BusinessDay = inBusinessDay).Money − ComputedBalance(inAccount, inBusinessDay)`
 - `LedgerDrift(inAccount: Account, inBusinessDay: BusinessDay)` := `CurrentStoredBalance(Account = inAccount, BusinessDay = inBusinessDay).Money − ( Σ CurrentTransaction(Account = inAccount, Status = Posted, Posting ≤ inBusinessDay.EndTime).Amount.Money + Σ CurrentStoredBalance(Account.Parent = inAccount, BusinessDay = inBusinessDay).Money )`
 - `NetOfTransfer(inTransfer: Transfer)` := `Σ CurrentTransaction(Transfer = inTransfer, Status = Posted).Amount.Money`
@@ -122,6 +122,12 @@ Recording the reason is load-bearing for the recon experience: an accountant loo
 - **Expected EOD balance**: For every `sb: CurrentStoredBalance` where `sb.Account.ExpectedEODBalance` is set, `sb.Money` SHOULD equal `sb.Account.ExpectedEODBalance`.
 - **Limit breach**: For every `sb: CurrentStoredBalance` where `sb.Limits` is set, for every `(t, limit) ∈ sb.Limits`, for every child `c ∈ Account(Parent = sb.Account)`, `OutboundFlow(c, t, sb.BusinessDay)` SHOULD be `≤ limit`. (Limits live on the parent's `StoredBalance` and apply to each child individually — not aggregated across children.)
 - **Immutability**: Every `Transaction` and `StoredBalance` entity is immutable. Violations of constraints should be repaired by posting additional transactions. System errors may be corrected (but not hidden) by entering a higher entry; every higher Entry row MUST set `Supersedes` to record why.
+
+**Stored balance contract** (implementation note for integrators planting StoredBalance rows): every StoredBalance row is an assertion that this account's cumulative net through that BusinessDay's end is exactly `Money`. The Sub-ledger drift / Ledger drift constraints check that assertion against `ComputedBalance` (see Theorems). Practically:
+- A drift-free StoredBalance for `(account, day)` SHOULD have `Money = ComputedBalance(account, day)` — i.e., the cumulative net of every Posted transaction on this account with `Posting ≤ day.EndTime`.
+- A StoredBalance posted at `0` for an account with prior posted activity will surface as drift equal to the negative of the cumulative — this is correct semantic, not a bug.
+- To plant intentional drift for testing exception surfaces, set `Money = ComputedBalance + delta` and the Drift theorem returns `delta`.
+- An account with no StoredBalance for a given BusinessDay is invisible to the Drift / Overdraft / Expected EOD constraints (they iterate over CurrentStoredBalance, not over Account). This is the right semantic — if the integrator never asserted a stored balance, there's nothing to compare against.
 
 ## Design Principles
 

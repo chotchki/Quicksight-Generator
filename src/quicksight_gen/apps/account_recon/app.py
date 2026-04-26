@@ -92,6 +92,8 @@ from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.theme import get_preset
 from quicksight_gen.common.ids import ParameterName
+from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+from quicksight_gen.common.l2 import L2Instance
 from quicksight_gen.common.models import DateTimeDefaultValues
 from quicksight_gen.common.tree._helpers import _AutoSentinel
 from quicksight_gen.common.tree import (
@@ -136,7 +138,10 @@ _TABLE_ROW_SPAN = 18
 # matches the imperative DataSetIdentifierDeclarations.
 # ---------------------------------------------------------------------------
 
-def _datasets(cfg: Config) -> dict[str, Dataset]:
+def _datasets(
+    cfg: Config,
+    l2_instance: L2Instance,  # noqa: ARG001  (unused in M.2.3; M.2.4 consumes)
+) -> dict[str, Dataset]:
     """Map each AR logical dataset identifier to a typed `Dataset` ref.
 
     Order matches `build_all_datasets`: the QuickSight DataSetId for
@@ -145,8 +150,18 @@ def _datasets(cfg: Config) -> dict[str, Dataset]:
     `DataSetIdentifierDeclarations` maps the logical identifier (used
     in visuals + filter columns) → the ARN (the deployed DataSet's
     cross-account-stable handle).
+
+    M.2.4b-narrow: 2 of 13 datasets switched to v6 builders that target
+    the M.1a.7 L1 invariant views (`<prefix>_drift` and
+    `<prefix>_ledger_drift`). The other 11 stay on v5 builders pending
+    M.2.6's real-Aurora deploy + verify; M.2.10's iteration gate
+    decides the rest of the rewrite shape from real evidence.
     """
     from quicksight_gen.apps.account_recon.datasets import build_all_datasets
+    from quicksight_gen.apps.account_recon._l2_datasets import (
+        build_ledger_balance_drift_dataset_v2,
+        build_subledger_balance_drift_dataset_v2,
+    )
 
     # Order must mirror `_build_dataset_declarations` in analysis.py
     # so each logical name lines up with the matching DataSet's
@@ -167,6 +182,11 @@ def _datasets(cfg: Config) -> dict[str, Dataset]:
         DS_AR_UNIFIED_EXCEPTIONS,
     ]
     built = build_all_datasets(cfg)
+    # M.2.4b-narrow: replace the 2 drift entries with v6 builders that
+    # target the M.1a.7 L1 invariant views. Index positions match
+    # `names` above (3 = ledger drift; 4 = subledger drift).
+    built[3] = build_ledger_balance_drift_dataset_v2(cfg, l2_instance)
+    built[4] = build_subledger_balance_drift_dataset_v2(cfg, l2_instance)
     return {
         name: Dataset(identifier=name, arn=cfg.dataset_arn(ds.DataSetId))
         for name, ds in zip(names, built)
@@ -1840,14 +1860,28 @@ _AR_SHEET_SPECS: tuple[tuple[str, str, str, str], ...] = (
 )
 
 
-def build_account_recon_app(cfg: Config) -> App:
+def build_account_recon_app(
+    cfg: Config,
+    *,
+    l2_instance: L2Instance | None = None,
+) -> App:
     """Construct the Account Reconciliation App as a tree.
 
     Sheets are pre-registered in display order so cross-sheet drills can
     target any sheet by ref. Populators run in any order; unported
     sheets emit as bare shells (id + metadata) until their L.3.N
     sub-step lands.
+
+    M.2.3: ``l2_instance`` is the L2 institutional model the AR
+    dashboard configures itself against. Defaults to
+    ``default_l2_instance()`` (the canonical Sasquatch AR fixture);
+    callers MAY override (tests, alternative-persona deployments). The
+    instance currently flows into ``_datasets`` as a no-op placeholder;
+    M.2.4 rewires the dataset SQL to consume the L2 prefix + L2-derived
+    account dim / scope predicates.
     """
+    if l2_instance is None:
+        l2_instance = default_l2_instance()
     app = App(name="account-recon", cfg=cfg)
     analysis = app.set_analysis(Analysis(
         analysis_id_suffix="account-recon-analysis",
@@ -1857,7 +1891,7 @@ def build_account_recon_app(cfg: Config) -> App:
     # Datasets — register every AR dataset the populated sheets reference.
     # (L.3.2 only uses the four under Balances; subsequent substeps add
     # to this list.)
-    datasets = _datasets(cfg)
+    datasets = _datasets(cfg, l2_instance)
     for ds in datasets.values():
         app.add_dataset(ds)
 
@@ -1923,11 +1957,25 @@ def build_account_recon_app(cfg: Config) -> App:
 # tree-built app without changing its import surface.
 # ---------------------------------------------------------------------------
 
-def build_analysis(cfg: Config) -> ModelAnalysis:
-    """Build the complete Account Recon Analysis resource via the tree."""
-    return build_account_recon_app(cfg).emit_analysis()
+def build_analysis(
+    cfg: Config,
+    *,
+    l2_instance: L2Instance | None = None,
+) -> ModelAnalysis:
+    """Build the complete Account Recon Analysis resource via the tree.
+
+    Forwards ``l2_instance`` to ``build_account_recon_app``; default
+    behaviour (unset) auto-loads the canonical Sasquatch AR L2 fixture.
+    """
+    return build_account_recon_app(cfg, l2_instance=l2_instance).emit_analysis()
 
 
-def build_account_recon_dashboard(cfg: Config) -> ModelDashboard:
+def build_account_recon_dashboard(
+    cfg: Config,
+    *,
+    l2_instance: L2Instance | None = None,
+) -> ModelDashboard:
     """Build the Account Recon Dashboard resource via the tree."""
-    return build_account_recon_app(cfg).emit_dashboard()
+    return build_account_recon_app(
+        cfg, l2_instance=l2_instance,
+    ).emit_dashboard()
