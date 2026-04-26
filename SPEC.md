@@ -151,6 +151,8 @@ A short SQL-identifier-safe string declared once at the top of the L2 instance. 
 InstancePrefix: Identifier
 ```
 
+**Format**: MUST match `^[a-z][a-z0-9_]*$` (lowercase start, alphanumeric or underscore thereafter), max 30 characters. The lowercase-only constraint avoids Postgres' quoted-vs-unquoted-identifier hazard; the 30-character cap leaves room for the longest table-name suffix within Postgres' 63-character identifier limit.
+
 Two L2 instances coexist in one database by using distinct prefixes; cross-instance JOINs are not supported.
 
 Prefix-based isolation (over Postgres schemas) is the default because not all deployment environments grant `CREATE SCHEMA` rights to the library's runtime; bare table/view name prefixing works everywhere.
