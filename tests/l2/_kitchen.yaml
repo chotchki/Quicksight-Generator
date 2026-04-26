@@ -11,6 +11,11 @@
 # primitive lands without coverage here, the test count check fires.
 
 instance: kitchen
+description: |
+  Kitchen-sink L2 instance — exercises every L2 primitive and every
+  variant flag. Used as the regression harness for "did anything stop
+  loading + validating + emitting cleanly?". Top-level description
+  exercises the M.1a.6 instance-level prose surface.
 
 # ---------------------------------------------------------------------
 # Singleton accounts: one per role used by the rails below. Mix of
@@ -22,6 +27,7 @@ accounts:
     name: North Pool
     role: NorthPool
     scope: internal
+    description: Pool A in the two-pool sweep loop. Holds merchant ledger balances.
 
   - id: south-pool
     name: South Pool
@@ -50,6 +56,9 @@ account_templates:
   - role: CustomerSubledger
     scope: internal
     parent_role: SouthPool
+    description: |
+      Per-customer subledger; one runtime instance per customer_id.
+      Carried as Metadata at posting time, materialized via ETL.
 
   - role: MerchantLedger
     scope: internal
@@ -87,6 +96,12 @@ rails:
     metadata_keys: [external_reference]
     posted_requirements: [external_reference]
     max_pending_age: PT24H
+    description: |
+      Inbound ACH from a counterparty bank. The external party drives
+      the rail (their force-post) while we record the corresponding
+      credit on the internal clearing suspense — hence the per-leg
+      Origin override. ETL must capture the bank's trace number
+      (`external_reference`) before the row can be Posted.
 
   # Two-leg in MerchantSettlementCycle.leg_rails — no expected_net (S2)
   - name: SettlementSweepLeg
@@ -201,6 +216,10 @@ transfer_templates:
     transfer_key: [merchant_id, settlement_period]
     completion: metadata.settlement_period_end
     leg_rails: [SubledgerCharge, SubledgerRefund, SettlementSweepLeg, SettlementClose]
+    description: |
+      One shared Transfer per (merchant, settlement_period). Charges
+      and refunds accumulate as legs; SettlementClose's Variable leg
+      brings the bundle to zero at period end.
 
   - name: DailyClearingCycle
     transfer_type: clearing_cycle
@@ -218,6 +237,7 @@ chains:
     child: MerchantPayoutACH
     required: false
     xor_group: PayoutVehicle
+    description: ACH path for the payout. Mutually exclusive with the voucher path below.
 
   - parent: MerchantSettlementCycle
     child: MerchantPayoutVoucher
@@ -237,6 +257,9 @@ limit_schedules:
   - parent_role: SouthPool
     transfer_type: charge
     cap: 5000.00
+    description: |
+      Per-customer daily charge cap. Each child sub-ledger is evaluated
+      independently against this cap; not aggregated across siblings.
 
   - parent_role: NorthPool
     transfer_type: ach

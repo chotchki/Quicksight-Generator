@@ -122,6 +122,10 @@ class Account:
     Per SPEC: singletons that Rails reference by Role; the Role is
     technically optional but in practice required for any Account a Rail
     touches (per F1, enforced by the validator at load time).
+
+    ``description`` is free-form prose (markdown OK) read by handbook +
+    training render templates per the SPEC's "Description fields" rule.
+    Optional at the type level but SHOULD be filled.
     """
 
     id: Identifier
@@ -130,6 +134,7 @@ class Account:
     role: Identifier | None = None
     parent_role: Identifier | None = None
     expected_eod_balance: Money | None = None
+    description: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,6 +153,7 @@ class AccountTemplate:
     scope: Scope
     parent_role: Identifier | None = None
     expected_eod_balance: Money | None = None
+    description: str | None = None
 
 
 # -- Rails (discriminated union per F2) --------------------------------------
@@ -198,6 +204,9 @@ class TwoLegRail:
     aggregating: bool = False
     bundles_activity: tuple[BundlesActivityRef, ...] = field(default_factory=tuple)
     cadence: CadenceExpression | None = None
+    # Free-form prose for handbook + training render templates per
+    # the SPEC's "Description fields" rule. Optional; SHOULD be filled.
+    description: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,6 +248,9 @@ class SingleLegRail:
     aggregating: bool = False
     bundles_activity: tuple[BundlesActivityRef, ...] = field(default_factory=tuple)
     cadence: CadenceExpression | None = None
+    # Free-form prose for handbook + training render templates per
+    # the SPEC's "Description fields" rule. Optional; SHOULD be filled.
+    description: str | None = None
 
 
 Rail: TypeAlias = TwoLegRail | SingleLegRail
@@ -268,6 +280,7 @@ class TransferTemplate:
     transfer_key: tuple[Identifier, ...]
     completion: CompletionExpression
     leg_rails: tuple[Identifier, ...]
+    description: str | None = None
 
 
 # -- Chains ------------------------------------------------------------------
@@ -294,6 +307,7 @@ class ChainEntry:
     child: Identifier
     required: bool
     xor_group: Identifier | None = None
+    description: str | None = None
 
 
 # -- Limit Schedules ---------------------------------------------------------
@@ -312,6 +326,7 @@ class LimitSchedule:
     parent_role: Identifier
     transfer_type: TransferType
     cap: Money
+    description: str | None = None
 
 
 # -- Top-level instance ------------------------------------------------------
@@ -334,3 +349,6 @@ class L2Instance:
     transfer_templates: tuple[TransferTemplate, ...]
     chains: tuple[ChainEntry, ...]
     limit_schedules: tuple[LimitSchedule, ...]
+    # Top-level institution-level prose. Read by handbook templates as
+    # the "what is this institution" introductory paragraph.
+    description: str | None = None

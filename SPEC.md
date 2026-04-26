@@ -171,6 +171,22 @@ L2 contributes no invariants of its own. All checks reduce to L1 invariants firi
 
 ## Primitives
 
+### Description fields *(optional, on every primitive)*
+
+Every L2 primitive (and the top-level `L2Instance` itself) carries an optional `Description?: Value` field. Free-form prose authored by the integrator — typically markdown — explaining what this entity is and why it exists. The library does no pre-processing; the value reaches handbook + training render templates as-is.
+
+The field is **optional** at the type level (defaults to absent) for backward compatibility, but **SHOULD** be filled per RFC 2119 — handbook and training-scenario quality depends on it. An integrator skipping descriptions still gets functioning dashboards; what they lose is the auto-rendered prose explaining each entity's purpose.
+
+```
+Description: Value     # markdown-friendly prose, single field, no schema beyond "string"
+```
+
+Why on every primitive (including `ChainEntry` and `LimitSchedule` which look like pure plumbing): training-scenario authoring needs the *why* context — "this XOR group exists because exactly one payout vehicle fires per cycle", "this cap exists because regulators require X" — not just the names. The handbook reads them to render entity-purpose paragraphs without authors having to reproduce the institutional knowledge inline in handbook source.
+
+Per primitive's type signature below, `Description?` is shown as an optional last field; it is intentionally omitted from the worked-example YAML blocks to keep them shape-focused, but production L2 instances should fill it.
+
+---
+
 ### Instance Prefix *(required)*
 
 A short SQL-identifier-safe string declared once at the top of the L2 instance. Applied to every generated database object and dashboard resource ID.
@@ -214,6 +230,7 @@ Account: (
   Scope,
   ParentRole?: Role,
   ExpectedEODBalance?: Money,
+  Description?: Value,
 )
 ```
 
@@ -233,6 +250,7 @@ AccountTemplate: (
   Scope,
   ParentRole?: Role,
   ExpectedEODBalance?: Money,
+  Description?: Value,
 )
 ```
 
@@ -281,6 +299,8 @@ Rail: (
   PostedRequirements?: [Identifier, …],  # additional integrator-declared posting requirements
   MaxPendingAge?: Duration,              # aging watch for Pending → Posted lag
   MaxUnbundledAge?: Duration,            # aging watch for Posted-but-not-bundled (only for bundled rails)
+
+  Description?: Value,                   # see "Description fields" above
 )
 
 RoleExpression: Role | (Role | Role | …)   # union role; see below
@@ -399,6 +419,7 @@ TransferTemplate: (
   TransferKey: [MetadataKey, …],         # values whose equality groups legs onto one Transfer
   Completion: CompletionExpression,      # how Transfer.Completion is derived
   LegRails: [RailName, …],               # which Rails fire as legs into this Transfer
+  Description?: Value,                   # see "Description fields" above
 )
 ```
 
@@ -450,6 +471,7 @@ ChainEntry: (
   Child:  RailName | TransferTemplateName,
   Required: Boolean,
   XorGroup?: Identifier,
+  Description?: Value,                   # see "Description fields" above
 )
 ```
 
@@ -486,6 +508,7 @@ LimitSchedule: (
   ParentRole: Role,
   TransferType,
   Cap: Money,
+  Description?: Value,                   # see "Description fields" above
 )
 ```
 

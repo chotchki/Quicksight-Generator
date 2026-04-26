@@ -269,6 +269,30 @@ def _load_leg_direction(raw: object, *, path: str) -> LegDirection:
     return raw  # type: ignore[return-value]
 
 
+def _load_description(raw: object, *, path: str) -> str | None:
+    """Parse an optional description field per SPEC's "Description fields".
+
+    Free-form prose; library does no pre-processing on the value. Type
+    must be string when present (a YAML mapping or list under
+    ``description:`` is almost certainly a key collision and worth
+    erroring on). Empty string is rejected — if you mean "no description"
+    omit the key entirely.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise L2LoaderError(
+            f"{path}: description must be a string, "
+            f"got {type(raw).__name__}"
+        )
+    if not raw.strip():
+        raise L2LoaderError(
+            f"{path}: description is empty; omit the key instead of "
+            f"declaring it blank"
+        )
+    return raw
+
+
 def _load_identifier_list(
     raw: object, *, path: str, allow_empty: bool = True,
 ) -> tuple[Identifier, ...]:
@@ -329,6 +353,9 @@ def _load_account(raw: object, *, path: str) -> Account:
         if "parent_role" in raw_d else None,
         expected_eod_balance=_load_money(eod, path=f"{path}.expected_eod_balance")
         if eod is not None else None,
+        description=_load_description(
+            raw_d.get("description"), path=f"{path}.description",
+        ),
     )
 
 
@@ -342,6 +369,9 @@ def _load_account_template(raw: object, *, path: str) -> AccountTemplate:
         if "parent_role" in raw_d else None,
         expected_eod_balance=_load_money(eod, path=f"{path}.expected_eod_balance")
         if eod is not None else None,
+        description=_load_description(
+            raw_d.get("description"), path=f"{path}.description",
+        ),
     )
 
 
@@ -402,6 +432,10 @@ def _load_rail(raw: object, *, path: str) -> Rail:
         if cadence_raw is not None else None
     )
 
+    description = _load_description(
+        raw_d.get("description"), path=f"{path}.description",
+    )
+
     has_two_leg_fields = "source_role" in raw_d or "destination_role" in raw_d
     has_single_leg_fields = "leg_role" in raw_d or "leg_direction" in raw_d
 
@@ -458,6 +492,7 @@ def _load_rail(raw: object, *, path: str) -> Rail:
             aggregating=aggregating,
             bundles_activity=bundles_activity,
             cadence=cadence,
+            description=description,
         )
 
     # Single-leg
@@ -491,6 +526,7 @@ def _load_rail(raw: object, *, path: str) -> Rail:
         aggregating=aggregating,
         bundles_activity=bundles_activity,
         cadence=cadence,
+        description=description,
     )
 
 
@@ -522,6 +558,9 @@ def _load_transfer_template(raw: object, *, path: str) -> TransferTemplate:
             path=f"{path}.leg_rails",
             allow_empty=False,
         ),
+        description=_load_description(
+            raw_d.get("description"), path=f"{path}.description",
+        ),
     )
 
 
@@ -537,6 +576,9 @@ def _load_chain_entry(raw: object, *, path: str) -> ChainEntry:
         required=bool(_require(raw_d, "required", path=path)),
         xor_group=_load_identifier(raw_d["xor_group"], path=f"{path}.xor_group")
         if "xor_group" in raw_d else None,
+        description=_load_description(
+            raw_d.get("description"), path=f"{path}.description",
+        ),
     )
 
 
@@ -552,6 +594,9 @@ def _load_limit_schedule(raw: object, *, path: str) -> LimitSchedule:
             path=f"{path}.transfer_type",
         ),
         cap=_load_money(_require(raw_d, "cap", path=path), path=f"{path}.cap"),
+        description=_load_description(
+            raw_d.get("description"), path=f"{path}.description",
+        ),
     )
 
 
@@ -626,4 +671,7 @@ def load_instance(path: Path | str) -> L2Instance:
         transfer_templates=transfer_templates,
         chains=chains,
         limit_schedules=limit_schedules,
+        description=_load_description(
+            raw_d.get("description"), path="description",
+        ),
     )
