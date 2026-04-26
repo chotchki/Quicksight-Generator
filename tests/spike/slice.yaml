@@ -1,0 +1,33 @@
+# M.0 vertical-slice spike — Two-Account Drift Spike.
+#
+# Smallest meaningful L2 instance: one internal account, one external
+# counterparty, one inbound ach rail. The seed generator (l2_spike/emit.py)
+# plants 5 transfers + a stored-balance snapshot that's $50 short of the
+# computed sum — triggering one Sub-ledger drift exception that the spike's
+# dashboard surfaces.
+#
+# This deliberately omits AccountTemplates, TransferTemplates, Chains,
+# AggregatingRails, LimitSchedules — full L2 coverage lands in M.1's
+# kitchen-sink fixture.
+
+instance: spk
+
+accounts:
+  - id: int-001
+    name: Internal Operations Account
+    role: InternalDDA
+    scope: internal
+
+  - id: ext-001
+    name: External Counterparty Bank
+    role: ExternalCounterparty
+    scope: external
+
+rails:
+  - name: ExtInbound
+    transfer_type: ach
+    source_role: ExternalCounterparty
+    destination_role: InternalDDA
+    expected_net: 0
+    origin: ExternalForcePosted
+    metadata_keys: [external_reference]
