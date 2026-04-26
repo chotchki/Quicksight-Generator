@@ -1,18 +1,25 @@
-"""L.1.10.7 — ScreenshotHarness: walk a deployed App's tree and
-capture screenshots systematically.
+"""ScreenshotHarness: walk a deployed App's tree and capture
+screenshots systematically.
 
 Three capture modes:
 
 - ``capture_all_sheets()`` — one full-page screenshot per sheet.
-  Filenames are stable from sheet IDs. Used for handbook
-  "Where to look" overview shots.
+  Returns ``dict[Sheet, Path]`` keyed by the Sheet object ref so
+  handbook templates can look up by Sheet, not by sheet_id string.
+  Filenames remain ``{sheet_id}.png`` for stable on-disk names.
 - ``capture_per_visual(sheet)`` — one screenshot per visual on the
-  sheet, scroll-into-view + element crop. Filenames derive from the
-  visual's auto-ID (or explicit ID). Used for walkthrough inline
-  visual screenshots.
+  sheet, scroll-into-view + element crop. Returns
+  ``dict[VisualLike, Path]`` keyed by the Visual object ref;
+  filenames derive from each visual's resolved ``visual_id``.
 - ``capture_with_state(parameter_values)`` — apply parameter values
-  via URL hash, then capture. Used for "before/after slider"
-  handbook shots.
+  via URL hash, then capture every sheet. Returns
+  ``dict[Sheet, Path]`` keyed by Sheet ref.
+
+Sheet/Visual object keys (M.1.10 / F8) means callers can do
+``paths[my_sheet]`` from the same App they constructed, instead
+of carrying a parallel ``sheet_id`` string around. The on-disk
+filenames stay sheet_id-derived so previously-generated images
+overwrite cleanly across runs.
 
 Why this matters for **Phase M**: when whitelabel-V2 swaps personas
 (Sasquatch → Acme Bank), the docs need Acme-shaped screenshots.
@@ -28,7 +35,7 @@ crystallize. For now each tool has its own class.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -40,7 +47,7 @@ from quicksight_gen.common.tree import (
     VisualLike,
 )
 
-from tests.e2e.browser_helpers import (
+from .helpers import (
     click_sheet_tab,
     wait_for_dashboard_loaded,
     wait_for_visuals_present,
@@ -64,17 +71,19 @@ class ScreenshotHarness:
     # Capture modes
     # ------------------------------------------------------------------
 
-    def capture_all_sheets(self) -> dict[str, Path]:
+    def capture_all_sheets(self) -> dict[Sheet, Path]:
         """One full-page screenshot per sheet on the App's analysis.
 
-        Returns a map of ``sheet_id → path``. Filenames are
-        ``{sheet_id}.png`` so re-running overwrites the same file.
+        Returns ``dict[Sheet, Path]`` keyed by the Sheet object ref.
+        Filenames remain ``{sheet_id}.png`` so re-running overwrites
+        the same on-disk file; only the in-memory key shape changed
+        (M.1.10 / F8).
         """
         if self.app.analysis is None:
             raise ValueError(
                 f"App {self.app.name!r} has no Analysis — nothing to capture."
             )
-        results: dict[str, Path] = {}
+        results: dict[Sheet, Path] = {}
         for sheet in self.app.analysis.sheets:
             click_sheet_tab(self.page, sheet.name, self.timeout_ms)
             wait_for_visuals_present(
@@ -82,16 +91,17 @@ class ScreenshotHarness:
             )
             path = self.output_dir / f"{self._safe_id(sheet.sheet_id)}.png"
             self.page.screenshot(path=str(path), full_page=True)
-            results[sheet.sheet_id] = path
+            results[sheet] = path
         return results
 
-    def capture_per_visual(self, sheet: Sheet) -> dict[str, Path]:
+    def capture_per_visual(self, sheet: Sheet) -> dict[VisualLike, Path]:
         """One screenshot per visual on ``sheet``, element-cropped.
 
-        Skips visuals without a resolved ``visual_id`` — the auto-ID
-        walker hasn't run, or the visual is a factory wrapper without
-        an explicit id. Caller should ``app.emit_analysis()`` once
-        before to resolve auto-IDs (the validator + this harness
+        Returns ``dict[VisualLike, Path]`` keyed by the Visual object
+        ref. Skips visuals without a resolved ``visual_id`` — the
+        auto-ID walker hasn't run, or the visual is a factory wrapper
+        without an explicit id. Caller should ``app.emit_analysis()``
+        once before to resolve auto-IDs (the validator + this harness
         usually share a session-scoped fixture that already does
         that).
         """
@@ -100,12 +110,11 @@ class ScreenshotHarness:
             self.page, min_count=len(sheet.visuals),
             timeout_ms=self.timeout_ms,
         )
-        results: dict[str, Path] = {}
+        results: dict[VisualLike, Path] = {}
         for visual in sheet.visuals:
             visual_id = getattr(visual, "visual_id", None)
             if not visual_id:
                 continue
-            selector = f'[data-automation-id="analysis_visual"]'
             # Scroll into view + crop. Per the project memory,
             # below-the-fold visuals virtualize; a tall viewport is
             # sometimes needed. Caller manages viewport — the harness
@@ -118,7 +127,7 @@ class ScreenshotHarness:
                 self.page.screenshot(path=str(path), full_page=True)
             else:
                 element.screenshot(path=str(path))
-            results[visual_id] = path
+            results[visual] = path
         return results
 
     def capture_with_state(
@@ -126,10 +135,11 @@ class ScreenshotHarness:
         *,
         parameter_values: dict[ParameterDeclLike, Any],
         suffix: str = "state",
-    ) -> dict[str, Path]:
+    ) -> dict[Sheet, Path]:
         """Re-load the dashboard with parameter values applied via URL
         hash (``#p.<name>=<value>``), then capture every sheet.
 
+        Returns ``dict[Sheet, Path]`` keyed by Sheet object ref.
         Filenames suffix-tagged so multiple states don't overwrite each
         other: ``{sheet_id}-{suffix}.png``. Pass distinct ``suffix``
         values per state.
@@ -159,7 +169,7 @@ class ScreenshotHarness:
         self.page.goto(url, timeout=self.timeout_ms)
         wait_for_dashboard_loaded(self.page, timeout_ms=self.timeout_ms)
 
-        results: dict[str, Path] = {}
+        results: dict[Sheet, Path] = {}
         for sheet in self.app.analysis.sheets:
             click_sheet_tab(self.page, sheet.name, self.timeout_ms)
             wait_for_visuals_present(
@@ -168,7 +178,7 @@ class ScreenshotHarness:
             sheet_safe = self._safe_id(sheet.sheet_id)
             path = self.output_dir / f"{sheet_safe}-{suffix}.png"
             self.page.screenshot(path=str(path), full_page=True)
-            results[sheet.sheet_id] = path
+            results[sheet] = path
         return results
 
     # ------------------------------------------------------------------

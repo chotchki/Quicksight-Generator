@@ -2,22 +2,19 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "tests"))
-
-import boto3  # noqa: E402
-from e2e.browser_helpers import (  # noqa: E402
+import boto3
+from quicksight_gen.common.browser.helpers import (
     SCREENSHOT_DIR,
     generate_dashboard_embed_url,
     screenshot,
     wait_for_dashboard_loaded,
     webkit_page,
 )
+from quicksight_gen.common.config import load_config
 
-from quicksight_gen.common.config import load_config  # noqa: E402
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def main() -> None:

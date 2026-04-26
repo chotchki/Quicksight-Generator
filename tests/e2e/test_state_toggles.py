@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from .browser_helpers import (
+from quicksight_gen.common.browser.helpers import (
     click_sheet_tab,
     generate_dashboard_embed_url,
     sheet_control_titles,

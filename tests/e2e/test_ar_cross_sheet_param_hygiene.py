@@ -39,7 +39,7 @@ from quicksight_gen.apps.account_recon.constants import (
     P_AR_TRANSFER,
 )
 
-from .browser_helpers import (
+from quicksight_gen.common.browser.helpers import (
     click_sheet_tab,
     count_table_total_rows,
     generate_dashboard_embed_url,

@@ -142,6 +142,9 @@ src/quicksight_gen/
       formatting.py        # Conditional-format primitives (color / icon / tint) used by visuals
       text_boxes.py        # SheetTextBox content helpers
       _helpers.py          # AutoSentinel + position-indexed ID resolver (visual_id / action_id / etc.)
+    browser/             # Playwright-driven browser helpers (M.1.10) — production-importable
+      helpers.py           # URL gen / page setup / sheet-tab nav / table+control probing / waits / screenshot()
+      screenshot.py        # ScreenshotHarness — typed walker capturing per-Sheet / per-Visual screenshots
   apps/
     payment_recon/
       app.py               # Tree-built: 6 sheets, drill-downs, filter groups, dashboard
@@ -178,7 +181,7 @@ tests/
   test_tree.py           # common/tree primitives — emit/validation walks, object-ref cross-references, auto-ID resolution
   test_tree_validator.py # tests/e2e/tree_validator.py walker unit tests
   test_kitchen_app.py    # Kitchen-sink app exercising every L.1 primitive
-  test_screenshot_harness.py # tests/e2e/screenshot_harness.py walker unit tests
+  test_screenshot_harness.py # common/browser/screenshot.py walker unit tests
   test_drill.py          # Cross-app URL deep-link builder tests
   test_persona.py        # DemoPersona round-trip + mapping.yaml derivation parity
   test_export.py         # `export docs` / `export training` CLI tests
@@ -191,9 +194,7 @@ tests/
   test_deploy.py         # Deploy delete-then-create + waiter logic
   e2e/                   # Two layers (API boto3 + browser Playwright WebKit); gated on QS_GEN_E2E=1
     conftest.py
-    browser_helpers.py
     tree_validator.py             # TreeValidator(app, page).validate_structure() — typed walker that derives expected DOM from the tree
-    screenshot_harness.py         # Typed walker that drives screenshot capture from tree positions
     _kitchen_app.py               # Shared kitchen-sink app fixture for tree-validator + screenshot-harness tests
     test_deployed_resources.py    / test_ar_deployed_resources.py    / test_inv_deployed_resources.py    / test_exec_deployed_resources.py
     test_dashboard_structure.py   / test_ar_dashboard_structure.py   / test_inv_dashboard_structure.py   / test_exec_dashboard_structure.py

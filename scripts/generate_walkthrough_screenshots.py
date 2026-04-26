@@ -23,17 +23,11 @@ for a non-default user.
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 
-
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "tests"))
-
-import boto3  # noqa: E402
-from playwright.sync_api import TimeoutError as PWTimeoutError  # noqa: E402
-
-from e2e.browser_helpers import (  # noqa: E402
+import boto3
+from playwright.sync_api import TimeoutError as PWTimeoutError
+from quicksight_gen.common.browser.helpers import (
     _open_control_dropdown,
     click_sheet_tab,
     generate_dashboard_embed_url,
@@ -42,8 +36,9 @@ from e2e.browser_helpers import (  # noqa: E402
     wait_for_visuals_rendered,
     webkit_page,
 )
+from quicksight_gen.common.config import load_config
 
-from quicksight_gen.common.config import load_config  # noqa: E402
+ROOT = Path(__file__).resolve().parents[1]
 
 
 PAGE_TIMEOUT = 60_000

@@ -291,8 +291,7 @@ def _capture_screenshot(cfg: Config, inst: L2Instance, output_dir: Path) -> str:
     """
     import boto3
 
-    # tests/e2e helpers — see F7 for the promote-out-of-tests follow-up.
-    from tests.e2e.browser_helpers import (
+    from quicksight_gen.common.browser import (
         generate_dashboard_embed_url,
         webkit_page,
     )

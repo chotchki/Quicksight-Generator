@@ -40,7 +40,7 @@ from quicksight_gen.common.tree.actions import Drill
 if TYPE_CHECKING:
     from playwright.sync_api import Page
 
-from tests.e2e.browser_helpers import (
+from quicksight_gen.common.browser.helpers import (
     click_sheet_tab,
     get_visual_titles,
     sheet_control_titles,

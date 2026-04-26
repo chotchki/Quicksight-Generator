@@ -28,7 +28,7 @@ from urllib.parse import quote
 
 import pytest
 
-from .browser_helpers import (
+from quicksight_gen.common.browser.helpers import (
     click_sheet_tab,
     count_table_total_rows,
     generate_dashboard_embed_url,

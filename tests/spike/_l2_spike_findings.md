@@ -124,32 +124,33 @@ Both are valid; (a) is a slightly cleaner rule. Either way, "Role is required wh
 
 ---
 
-## F7 — `ScreenshotHarness` lives under `tests/e2e/` but is needed by production code
+## F7 — `ScreenshotHarness` lives under `tests/e2e/` but is needed by production code — RESOLVED M.1.10
 
 **Surfaced:** M.0.8 (writing `capture_drift_screenshot`)
 
 **Observation:** `ScreenshotHarness` was built in L.1.10.7 as test infrastructure under `tests/e2e/screenshot_harness.py`. The `generate training` CLI command needs to invoke it during normal user workflow (rendering handbook pages with embedded screenshots), which means production code now imports from `tests/`. That import path is wrong — `tests/` is conventionally not part of the package surface.
 
-**Implication for SPEC:** No change.
+**Resolution (M.1.10):** Promoted to `src/quicksight_gen/common/browser/`:
+- `helpers.py` (was `tests/e2e/browser_helpers.py`)
+- `screenshot.py` (was `tests/e2e/screenshot_harness.py`)
+- Re-exported via `quicksight_gen.common.browser` package.
 
-**Implication for M.1:**
-- Promote `ScreenshotHarness` (and its supporting `browser_helpers` module) from `tests/e2e/` to `common/screenshot/` (or similar public-surface path).
-- Existing test imports update to point at the new location.
-- Playwright stays an optional dependency (`[e2e]` extra); the production module gracefully reports when it's not installed.
+`SCREENSHOT_DIR` now resolves relative to cwd (overridable via `QS_E2E_SCREENSHOT_DIR`) so the e2e `screenshot()` helper still writes to `tests/e2e/screenshots/` from the repo root. The package is NOT in the pyright strict gate yet (browser_helpers loosely types Playwright Page as plain `page` parameter); tightening is queued for when M.6/M.7/M.8 surface what production really needs.
 
 ---
 
-## F8 — Sheet has TWO IDs the spike reasoned about: `sheet_id` (URL-stable) and visual screenshot filenames
+## F8 — Sheet has TWO IDs the spike reasoned about: `sheet_id` (URL-stable) and visual screenshot filenames — RESOLVED M.1.10
 
 **Surfaced:** M.0.6 + M.0.8 (sheet construction + screenshot wiring)
 
-**Observation:** The `Sheet` constructor takes `sheet_id` (an explicit, URL-stable identifier) plus auto-derived internal IDs. `ScreenshotHarness.capture_all_sheets()` returns `dict[sheet_id_str, Path]` keyed by the explicit sheet_id, with PNG filenames `<sheet_id>.png`. Lookups by sheet name would feel more natural for "I want the drift sheet's PNG" but require the harness to know about names; keying by sheet_id is more robust but forces callers to remember the explicit ID strings.
+**Observation:** The `Sheet` constructor takes `sheet_id` (an explicit, URL-stable identifier) plus auto-derived internal IDs. `ScreenshotHarness.capture_all_sheets()` originally returned `dict[sheet_id_str, Path]` keyed by the explicit sheet_id string, with PNG filenames `<sheet_id>.png`. Lookups by sheet name would feel more natural for "I want the drift sheet's PNG" but require the harness to know about names; keying by sheet_id is more robust but forces callers to remember the explicit ID strings.
 
-**Implication for SPEC:** No SPEC change — internal API design.
+**Resolution (M.1.10):** Reshaped harness API to key on object refs:
+- `capture_all_sheets()` → `dict[Sheet, Path]`
+- `capture_per_visual(sheet)` → `dict[VisualLike, Path]`
+- `capture_with_state(...)` → `dict[Sheet, Path]`
 
-**Implication for M.1:**
-- Consider extending the harness with `capture_by_name()` or returning `dict[Sheet, Path]` (object refs) so callers can lookup by Sheet node.
-- Documentation should be clear that handbook templates referencing screenshots cite by `sheet_id` filename, not by name.
+On-disk filenames stay `<sheet_id>.png` / `<visual_id>.png` so prior images overwrite cleanly. Callers now lookup with `paths[my_sheet]` from the same App they constructed — no parallel sheet_id strings. The spike's `capture_drift_screenshot` re-wired to `paths[drift_sheet]` (`drift_sheet = app.analysis.sheets[0]`).
 
 ---
 
