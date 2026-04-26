@@ -21,8 +21,8 @@ deployments) via the kwarg.
 Substep landmarks:
     M.2a.1 — package skeleton + Analysis + Dashboard registered
     M.2a.2 — Getting Started sheet with description-driven prose
-    M.2a.3 — Drift sheet (this commit) — KPIs + leaf + ledger drift tables
-    M.2a.4 — Overdraft sheet
+    M.2a.3 — Drift sheet — KPIs + leaf + ledger drift tables
+    M.2a.4 — Overdraft sheet (this commit) — KPI + violations table
     M.2a.5 — Limit Breach sheet
     M.2a.6 — Today's Exceptions sheet (UNION across L1 views)
     M.2a.7 — Description-driven prose across every sheet
@@ -37,6 +37,7 @@ from quicksight_gen.apps.account_recon._l2 import default_l2_instance
 from quicksight_gen.apps.l1_dashboard.datasets import (
     DS_DRIFT,
     DS_LEDGER_DRIFT,
+    DS_OVERDRAFT,
     build_all_l1_dashboard_datasets,
 )
 from quicksight_gen.common import rich_text as rt
@@ -66,6 +67,7 @@ _TABLE_ROW_SPAN = 18
 # stability constraints from a previous deploy.
 SHEET_GETTING_STARTED = SheetId("l1-sheet-getting-started")
 SHEET_DRIFT = SheetId("l1-sheet-drift")
+SHEET_OVERDRAFT = SheetId("l1-sheet-overdraft")
 
 
 _GETTING_STARTED_NAME = "Getting Started"
@@ -91,6 +93,17 @@ _DRIFT_DESCRIPTION = (
 )
 
 
+_OVERDRAFT_NAME = "Overdraft"
+_OVERDRAFT_TITLE = "Internal Account Overdrafts"
+_OVERDRAFT_DESCRIPTION = (
+    "Internal accounts holding negative money at end-of-day. The L1 "
+    "invariant is 'no internal account holds negative balance' — every "
+    "row in the table below is one violation. External accounts are "
+    "excluded by the underlying view (banks may legitimately overdraft "
+    "us; we MUST NOT overdraft them)."
+)
+
+
 def _analysis_name(cfg: Config, l2_instance: L2Instance) -> str:
     """Title shown on the deployed QuickSight Analysis."""
     return f"L1 Reconciliation Dashboard ({l2_instance.instance})"
@@ -110,7 +123,7 @@ def _l1_datasets(
     aws_datasets = build_all_l1_dashboard_datasets(cfg, l2_instance)
     # `build_all_l1_dashboard_datasets` returns AWS DataSets in the same
     # order as the visual identifiers below; map each to a tree Dataset.
-    visual_ids = [DS_DRIFT, DS_LEDGER_DRIFT]
+    visual_ids = [DS_DRIFT, DS_LEDGER_DRIFT, DS_OVERDRAFT]
     return {
         vid: Dataset(identifier=vid, arn=cfg.dataset_arn(aws.DataSetId))
         for vid, aws in zip(visual_ids, aws_datasets)
@@ -240,6 +253,48 @@ def _populate_drift_sheet(
     )
 
 
+def _populate_overdraft_sheet(
+    cfg: Config,  # noqa: ARG001  (M.2a.7 wires theme accent on conditional formats)
+    sheet: Sheet,
+    *,
+    datasets: dict[str, Dataset],
+) -> None:
+    """Overdraft sheet — KPI (count of violations) + violations table.
+
+    Single dataset (`<prefix>_overdraft`) — only internal accounts, only
+    days where stored balance < 0. No drill actions yet (M.2a.7).
+    """
+    ds_overdraft = datasets[DS_OVERDRAFT]
+
+    sheet.layout.row(height=_KPI_ROW_SPAN).add_kpi(
+        width=_FULL,
+        title="Internal Accounts in Overdraft",
+        subtitle=(
+            "Count of internal-account day-rows holding negative stored "
+            "balance — every row in the table below is one violation."
+        ),
+        values=[ds_overdraft["account_id"].count()],
+    )
+
+    sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        title="Overdraft Violations",
+        subtitle=(
+            "Each internal account-day where stored balance < 0. "
+            "Negative magnitude indicates how far below zero the account "
+            "ended the day."
+        ),
+        columns=[
+            ds_overdraft["account_id"].dim(),
+            ds_overdraft["account_name"].dim(),
+            ds_overdraft["account_role"].dim(),
+            ds_overdraft["account_parent_role"].dim(),
+            ds_overdraft["business_day_end"].date(),
+            ds_overdraft["stored_balance"].numerical(),
+        ],
+    )
+
+
 def build_l1_dashboard_app(
     cfg: Config,
     *,
@@ -287,7 +342,15 @@ def build_l1_dashboard_app(
     ))
     _populate_drift_sheet(cfg, drift_sheet, datasets=datasets)
 
-    # Per-invariant sheets land in M.2a.4-M.2a.6.
+    overdraft_sheet = analysis.add_sheet(Sheet(
+        sheet_id=SHEET_OVERDRAFT,
+        name=_OVERDRAFT_NAME,
+        title=_OVERDRAFT_TITLE,
+        description=_OVERDRAFT_DESCRIPTION,
+    ))
+    _populate_overdraft_sheet(cfg, overdraft_sheet, datasets=datasets)
+
+    # Per-invariant sheets land in M.2a.5-M.2a.6.
 
     app.create_dashboard(
         dashboard_id_suffix="l1-dashboard",

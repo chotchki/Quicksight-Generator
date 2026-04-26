@@ -84,14 +84,15 @@ def test_dashboard_registered() -> None:
     assert app.dashboard is not None
 
 
-def test_two_sheets_after_m2a3() -> None:
-    """M.2a.2 shipped Getting Started; M.2a.3 ships Drift. Remaining
-    per-invariant sheets land in M.2a.4 - M.2a.6. This guard fires if a
-    future commit accidentally lands a sheet outside its own substep."""
+def test_three_sheets_after_m2a4() -> None:
+    """M.2a.2 shipped Getting Started; M.2a.3 shipped Drift; M.2a.4
+    ships Overdraft. Remaining per-invariant sheets land in M.2a.5 -
+    M.2a.6. This guard fires if a future commit accidentally lands a
+    sheet outside its own substep."""
     app = build_l1_dashboard_app(_CFG)
     assert app.analysis is not None
     sheet_names = [s.name for s in app.analysis.sheets]
-    assert sheet_names == ["Getting Started", "Drift"]
+    assert sheet_names == ["Getting Started", "Drift", "Overdraft"]
 
 
 # -- Getting Started — description-driven prose (M.2a.2) ---------------------
@@ -198,6 +199,51 @@ def test_drift_dataset_sql_targets_prefixed_l1_views() -> None:
     assert ledger_sql is not None
     assert drift_sql.SqlQuery == f"SELECT * FROM {prefix}_drift"
     assert ledger_sql.SqlQuery == f"SELECT * FROM {prefix}_ledger_drift"
+
+
+# -- Overdraft sheet (M.2a.4) ------------------------------------------------
+
+
+def test_overdraft_sheet_present_after_m2a4() -> None:
+    """M.2a.4 lands the Overdraft sheet — third tab in display order."""
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    overdraft = app.analysis.sheets[2]
+    assert overdraft.name == "Overdraft"
+    assert overdraft.title == "Internal Account Overdrafts"
+
+
+def test_overdraft_sheet_has_kpi_and_table() -> None:
+    """Overdraft sheet structure: 1 KPI (count) + 1 violations table.
+    Single-dataset sheet — every row in the table IS one violation."""
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    overdraft = app.analysis.sheets[2]
+    titles = [v.title for v in overdraft.visuals]
+    assert titles == [
+        "Internal Accounts in Overdraft",
+        "Overdraft Violations",
+    ]
+
+
+def test_overdraft_dataset_registered_and_targets_l1_view() -> None:
+    """The L1 overdraft dataset must be registered + its SQL must point
+    at the L2-prefixed `<prefix>_overdraft` invariant view."""
+    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard.datasets import (
+        DS_OVERDRAFT,
+        build_overdraft_dataset,
+    )
+
+    app = build_l1_dashboard_app(_CFG)
+    registered_ids = {ds.identifier for ds in app.datasets}
+    assert DS_OVERDRAFT in registered_ids
+
+    instance = default_l2_instance()
+    overdraft_ds = build_overdraft_dataset(_CFG, instance)
+    sql = next(iter(overdraft_ds.PhysicalTableMap.values())).CustomSql
+    assert sql is not None
+    assert sql.SqlQuery == f"SELECT * FROM {instance.instance}_overdraft"
 
 
 # -- Emit shape (substitutability with other apps) ---------------------------
