@@ -35,7 +35,7 @@ from __future__ import annotations
 import re
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import cast
 
 import yaml
 
@@ -152,19 +152,42 @@ def _load_money(raw: object, *, path: str) -> Money:
 # -- Generic field helpers ---------------------------------------------------
 
 
-T = TypeVar("T")
+def _as_mapping(raw: object, *, path: str, what: str) -> dict[str, object]:
+    """Narrow a raw YAML value to ``dict[str, object]`` or fail loudly.
+
+    PyYAML's ``safe_load`` returns ``Any``; pyright strict surfaces every
+    downstream use as ``Unknown``. Centralizing the ``isinstance`` check
+    here lets each per-primitive loader work with a precisely-typed
+    mapping (and produces a uniform error message including the
+    primitive name).
+    """
+    if not isinstance(raw, dict):
+        raise L2LoaderError(
+            f"{path}: {what} must be a mapping, got {type(raw).__name__}"
+        )
+    return cast("dict[str, object]", raw)
 
 
-def _require(raw: dict[str, Any], key: str, *, path: str) -> Any:
+def _as_list(raw: object, *, path: str) -> list[object]:
+    """Narrow a raw YAML value to ``list[object]``; ``None`` → ``[]``.
+
+    Used for the top-level section lists (``accounts``, ``rails``, …)
+    where missing/null is fine and means "no entries of this kind".
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise L2LoaderError(
+            f"{path}: expected a list, got {type(raw).__name__}"
+        )
+    return cast("list[object]", raw)
+
+
+def _require(raw: dict[str, object], key: str, *, path: str) -> object:
     """Pull a required field; raise if missing."""
     if key not in raw:
         raise L2LoaderError(f"{path}: missing required field {key!r}")
     return raw[key]
-
-
-def _optional(raw: dict[str, Any], key: str, default: T) -> Any | T:
-    """Pull an optional field with a default."""
-    return raw.get(key, default)
 
 
 def _load_string(raw: object, *, path: str) -> str:
@@ -206,9 +229,10 @@ def _load_identifier_list(
             f"{path}: expected a list of identifiers, "
             f"got {type(raw).__name__}"
         )
+    items = cast("list[object]", raw)
     return tuple(
         _load_identifier(item, path=f"{path}[{i}]")
-        for i, item in enumerate(raw)
+        for i, item in enumerate(items)
     )
 
 
@@ -222,13 +246,14 @@ def _load_role_expression(raw: object, *, path: str) -> RoleExpression:
     if isinstance(raw, str):
         return (_load_identifier(raw, path=path),)
     if isinstance(raw, list):
-        if not raw:
+        items = cast("list[object]", raw)
+        if not items:
             raise L2LoaderError(
                 f"{path}: role expression list must not be empty"
             )
         return tuple(
             _load_identifier(item, path=f"{path}[{i}]")
-            for i, item in enumerate(raw)
+            for i, item in enumerate(items)
         )
     raise L2LoaderError(
         f"{path}: role expression must be a string or list of strings, "
@@ -240,37 +265,30 @@ def _load_role_expression(raw: object, *, path: str) -> RoleExpression:
 
 
 def _load_account(raw: object, *, path: str) -> Account:
-    if not isinstance(raw, dict):
-        raise L2LoaderError(
-            f"{path}: account must be a mapping, got {type(raw).__name__}"
-        )
-    eod = raw.get("expected_eod_balance")
+    raw_d = _as_mapping(raw, path=path, what="account")
+    eod = raw_d.get("expected_eod_balance")
     return Account(
-        id=_load_identifier(_require(raw, "id", path=path), path=f"{path}.id"),
-        scope=_load_scope(_require(raw, "scope", path=path), path=f"{path}.scope"),
-        name=Name(_load_string(raw["name"], path=f"{path}.name"))
-        if "name" in raw else None,
-        role=_load_identifier(raw["role"], path=f"{path}.role")
-        if "role" in raw else None,
-        parent_role=_load_identifier(raw["parent_role"], path=f"{path}.parent_role")
-        if "parent_role" in raw else None,
+        id=_load_identifier(_require(raw_d, "id", path=path), path=f"{path}.id"),
+        scope=_load_scope(_require(raw_d, "scope", path=path), path=f"{path}.scope"),
+        name=Name(_load_string(raw_d["name"], path=f"{path}.name"))
+        if "name" in raw_d else None,
+        role=_load_identifier(raw_d["role"], path=f"{path}.role")
+        if "role" in raw_d else None,
+        parent_role=_load_identifier(raw_d["parent_role"], path=f"{path}.parent_role")
+        if "parent_role" in raw_d else None,
         expected_eod_balance=_load_money(eod, path=f"{path}.expected_eod_balance")
         if eod is not None else None,
     )
 
 
 def _load_account_template(raw: object, *, path: str) -> AccountTemplate:
-    if not isinstance(raw, dict):
-        raise L2LoaderError(
-            f"{path}: account_template must be a mapping, "
-            f"got {type(raw).__name__}"
-        )
-    eod = raw.get("expected_eod_balance")
+    raw_d = _as_mapping(raw, path=path, what="account_template")
+    eod = raw_d.get("expected_eod_balance")
     return AccountTemplate(
-        role=_load_identifier(_require(raw, "role", path=path), path=f"{path}.role"),
-        scope=_load_scope(_require(raw, "scope", path=path), path=f"{path}.scope"),
-        parent_role=_load_identifier(raw["parent_role"], path=f"{path}.parent_role")
-        if "parent_role" in raw else None,
+        role=_load_identifier(_require(raw_d, "role", path=path), path=f"{path}.role"),
+        scope=_load_scope(_require(raw_d, "scope", path=path), path=f"{path}.scope"),
+        parent_role=_load_identifier(raw_d["parent_role"], path=f"{path}.parent_role")
+        if "parent_role" in raw_d else None,
         expected_eod_balance=_load_money(eod, path=f"{path}.expected_eod_balance")
         if eod is not None else None,
     )
@@ -278,37 +296,36 @@ def _load_account_template(raw: object, *, path: str) -> AccountTemplate:
 
 def _load_rail(raw: object, *, path: str) -> Rail:
     """Discriminate two-leg vs single-leg by which keys are present."""
-    if not isinstance(raw, dict):
-        raise L2LoaderError(
-            f"{path}: rail must be a mapping, got {type(raw).__name__}"
-        )
+    raw_d = _as_mapping(raw, path=path, what="rail")
 
-    name = _load_identifier(_require(raw, "name", path=path), path=f"{path}.name")
+    name = _load_identifier(_require(raw_d, "name", path=path), path=f"{path}.name")
     transfer_type: TransferType = _load_string(
-        _require(raw, "transfer_type", path=path),
+        _require(raw_d, "transfer_type", path=path),
         path=f"{path}.transfer_type",
     )
     origin: Origin = _load_string(
-        _require(raw, "origin", path=path), path=f"{path}.origin",
+        _require(raw_d, "origin", path=path), path=f"{path}.origin",
     )
     metadata_keys = _load_identifier_list(
-        raw.get("metadata_keys"), path=f"{path}.metadata_keys",
+        raw_d.get("metadata_keys"), path=f"{path}.metadata_keys",
     )
 
     # Aggregating flags can appear on either shape.
-    aggregating: bool = bool(raw.get("aggregating", False))
+    aggregating: bool = bool(raw_d.get("aggregating", False))
     bundles_activity = tuple(
         BundlesActivityRef(_load_identifier(item, path=f"{path}.bundles_activity[{i}]"))
-        for i, item in enumerate(raw.get("bundles_activity") or [])
+        for i, item in enumerate(
+            _as_list(raw_d.get("bundles_activity"), path=f"{path}.bundles_activity")
+        )
     )
-    cadence_raw = raw.get("cadence")
+    cadence_raw = raw_d.get("cadence")
     cadence: CadenceExpression | None = (
         _load_string(cadence_raw, path=f"{path}.cadence")
         if cadence_raw is not None else None
     )
 
-    has_two_leg_fields = "source_role" in raw or "destination_role" in raw
-    has_single_leg_fields = "leg_role" in raw or "leg_direction" in raw
+    has_two_leg_fields = "source_role" in raw_d or "destination_role" in raw_d
+    has_single_leg_fields = "leg_role" in raw_d or "leg_direction" in raw_d
 
     if has_two_leg_fields and has_single_leg_fields:
         raise L2LoaderError(
@@ -324,22 +341,22 @@ def _load_rail(raw: object, *, path: str) -> Rail:
         )
 
     if has_two_leg_fields:
-        if "source_role" not in raw or "destination_role" not in raw:
+        if "source_role" not in raw_d or "destination_role" not in raw_d:
             raise L2LoaderError(
                 f"{path}: two-leg rail requires both source_role and "
                 f"destination_role"
             )
-        en = raw.get("expected_net")
+        en = raw_d.get("expected_net")
         return TwoLegRail(
             name=name,
             transfer_type=transfer_type,
             origin=origin,
             metadata_keys=metadata_keys,
             source_role=_load_role_expression(
-                raw["source_role"], path=f"{path}.source_role",
+                raw_d["source_role"], path=f"{path}.source_role",
             ),
             destination_role=_load_role_expression(
-                raw["destination_role"], path=f"{path}.destination_role",
+                raw_d["destination_role"], path=f"{path}.destination_role",
             ),
             expected_net=_load_money(en, path=f"{path}.expected_net")
             if en is not None else None,
@@ -349,7 +366,7 @@ def _load_rail(raw: object, *, path: str) -> Rail:
         )
 
     # Single-leg
-    if "leg_role" not in raw or "leg_direction" not in raw:
+    if "leg_role" not in raw_d or "leg_direction" not in raw_d:
         raise L2LoaderError(
             f"{path}: single-leg rail requires both leg_role and leg_direction"
         )
@@ -359,10 +376,10 @@ def _load_rail(raw: object, *, path: str) -> Rail:
         origin=origin,
         metadata_keys=metadata_keys,
         leg_role=_load_role_expression(
-            raw["leg_role"], path=f"{path}.leg_role",
+            raw_d["leg_role"], path=f"{path}.leg_role",
         ),
         leg_direction=_load_leg_direction(
-            raw["leg_direction"], path=f"{path}.leg_direction",
+            raw_d["leg_direction"], path=f"{path}.leg_direction",
         ),
         aggregating=aggregating,
         bundles_activity=bundles_activity,
@@ -371,34 +388,30 @@ def _load_rail(raw: object, *, path: str) -> Rail:
 
 
 def _load_transfer_template(raw: object, *, path: str) -> TransferTemplate:
-    if not isinstance(raw, dict):
-        raise L2LoaderError(
-            f"{path}: transfer_template must be a mapping, "
-            f"got {type(raw).__name__}"
-        )
+    raw_d = _as_mapping(raw, path=path, what="transfer_template")
     completion: CompletionExpression = _load_string(
-        _require(raw, "completion", path=path), path=f"{path}.completion",
+        _require(raw_d, "completion", path=path), path=f"{path}.completion",
     )
     return TransferTemplate(
         name=_load_identifier(
-            _require(raw, "name", path=path), path=f"{path}.name",
+            _require(raw_d, "name", path=path), path=f"{path}.name",
         ),
         transfer_type=_load_string(
-            _require(raw, "transfer_type", path=path),
+            _require(raw_d, "transfer_type", path=path),
             path=f"{path}.transfer_type",
         ),
         expected_net=_load_money(
-            _require(raw, "expected_net", path=path),
+            _require(raw_d, "expected_net", path=path),
             path=f"{path}.expected_net",
         ),
         transfer_key=_load_identifier_list(
-            _require(raw, "transfer_key", path=path),
+            _require(raw_d, "transfer_key", path=path),
             path=f"{path}.transfer_key",
             allow_empty=False,
         ),
         completion=completion,
         leg_rails=_load_identifier_list(
-            _require(raw, "leg_rails", path=path),
+            _require(raw_d, "leg_rails", path=path),
             path=f"{path}.leg_rails",
             allow_empty=False,
         ),
@@ -406,39 +419,32 @@ def _load_transfer_template(raw: object, *, path: str) -> TransferTemplate:
 
 
 def _load_chain_entry(raw: object, *, path: str) -> ChainEntry:
-    if not isinstance(raw, dict):
-        raise L2LoaderError(
-            f"{path}: chain entry must be a mapping, got {type(raw).__name__}"
-        )
+    raw_d = _as_mapping(raw, path=path, what="chain entry")
     return ChainEntry(
         parent=_load_identifier(
-            _require(raw, "parent", path=path), path=f"{path}.parent",
+            _require(raw_d, "parent", path=path), path=f"{path}.parent",
         ),
         child=_load_identifier(
-            _require(raw, "child", path=path), path=f"{path}.child",
+            _require(raw_d, "child", path=path), path=f"{path}.child",
         ),
-        required=bool(_require(raw, "required", path=path)),
-        xor_group=_load_identifier(raw["xor_group"], path=f"{path}.xor_group")
-        if "xor_group" in raw else None,
+        required=bool(_require(raw_d, "required", path=path)),
+        xor_group=_load_identifier(raw_d["xor_group"], path=f"{path}.xor_group")
+        if "xor_group" in raw_d else None,
     )
 
 
 def _load_limit_schedule(raw: object, *, path: str) -> LimitSchedule:
-    if not isinstance(raw, dict):
-        raise L2LoaderError(
-            f"{path}: limit_schedule must be a mapping, "
-            f"got {type(raw).__name__}"
-        )
+    raw_d = _as_mapping(raw, path=path, what="limit_schedule")
     return LimitSchedule(
         parent_role=_load_identifier(
-            _require(raw, "parent_role", path=path),
+            _require(raw_d, "parent_role", path=path),
             path=f"{path}.parent_role",
         ),
         transfer_type=_load_string(
-            _require(raw, "transfer_type", path=path),
+            _require(raw_d, "transfer_type", path=path),
             path=f"{path}.transfer_type",
         ),
-        cap=_load_money(_require(raw, "cap", path=path), path=f"{path}.cap"),
+        cap=_load_money(_require(raw_d, "cap", path=path), path=f"{path}.cap"),
     )
 
 
@@ -468,39 +474,41 @@ def load_instance(path: Path | str) -> L2Instance:
 
     if raw is None:
         raise L2LoaderError(f"{yaml_path}: file is empty")
-    if not isinstance(raw, dict):
-        raise L2LoaderError(
-            f"{yaml_path}: top level must be a mapping, "
-            f"got {type(raw).__name__}"
-        )
+    raw_d = _as_mapping(raw, path=str(yaml_path), what="top-level")
 
     instance = _load_instance_prefix(
-        _require(raw, "instance", path="instance"), path="instance",
+        _require(raw_d, "instance", path="instance"), path="instance",
     )
 
     accounts = tuple(
         _load_account(item, path=f"accounts[{i}]")
-        for i, item in enumerate(raw.get("accounts") or [])
+        for i, item in enumerate(_as_list(raw_d.get("accounts"), path="accounts"))
     )
     account_templates = tuple(
         _load_account_template(item, path=f"account_templates[{i}]")
-        for i, item in enumerate(raw.get("account_templates") or [])
+        for i, item in enumerate(
+            _as_list(raw_d.get("account_templates"), path="account_templates")
+        )
     )
     rails = tuple(
         _load_rail(item, path=f"rails[{i}]")
-        for i, item in enumerate(raw.get("rails") or [])
+        for i, item in enumerate(_as_list(raw_d.get("rails"), path="rails"))
     )
     transfer_templates = tuple(
         _load_transfer_template(item, path=f"transfer_templates[{i}]")
-        for i, item in enumerate(raw.get("transfer_templates") or [])
+        for i, item in enumerate(
+            _as_list(raw_d.get("transfer_templates"), path="transfer_templates")
+        )
     )
     chains = tuple(
         _load_chain_entry(item, path=f"chains[{i}]")
-        for i, item in enumerate(raw.get("chains") or [])
+        for i, item in enumerate(_as_list(raw_d.get("chains"), path="chains"))
     )
     limit_schedules = tuple(
         _load_limit_schedule(item, path=f"limit_schedules[{i}]")
-        for i, item in enumerate(raw.get("limit_schedules") or [])
+        for i, item in enumerate(
+            _as_list(raw_d.get("limit_schedules"), path="limit_schedules")
+        )
     )
 
     return L2Instance(

@@ -104,7 +104,10 @@ markers = [
 # reachable through the tree but stay outside strict; pyright still
 # resolves them via extraPaths for inference.
 [tool.pyright]
-include = ["src/quicksight_gen/common/tree"]
+include = [
+    "src/quicksight_gen/common/tree",
+    "src/quicksight_gen/common/l2",
+]
 pythonVersion = "3.13"
 typeCheckingMode = "strict"
 extraPaths = ["src"]

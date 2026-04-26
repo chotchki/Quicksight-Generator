@@ -65,10 +65,10 @@ from collections import Counter
 from collections.abc import Iterable
 
 from .primitives import (
+    Identifier,
     L2Instance,
     Rail,
     SingleLegRail,
-    TransferTemplate,
     TwoLegRail,
 )
 
@@ -195,7 +195,7 @@ def _check_unique_transfer_template_names(inst: L2Instance) -> None:
     )
 
 
-def _reject_duplicates(values: Iterable[str], *, label: str) -> None:
+def _reject_duplicates(values: Iterable[Identifier], *, label: str) -> None:
     counts = Counter(values)
     dupes = sorted(v for v, c in counts.items() if c > 1)
     if dupes:
@@ -207,7 +207,7 @@ def _reject_duplicates(values: Iterable[str], *, label: str) -> None:
 # -- Reference resolution (R1-R6) --------------------------------------------
 
 
-def _check_role_references(inst: L2Instance, all_roles: set[str]) -> None:
+def _check_role_references(inst: L2Instance, all_roles: set[Identifier]) -> None:
     """R1: Every Role referenced by a Rail's role fields resolves to a declared Role."""
     for r in inst.rails:
         match r:
@@ -218,7 +218,9 @@ def _check_role_references(inst: L2Instance, all_roles: set[str]) -> None:
                 _check_role_set(leg, all_roles, where=f"Rail {n!r}.leg_role")
 
 
-def _check_role_set(roles: tuple[str, ...], declared: set[str], *, where: str) -> None:
+def _check_role_set(
+    roles: tuple[Identifier, ...], declared: set[Identifier], *, where: str,
+) -> None:
     missing = [r for r in roles if r not in declared]
     if missing:
         raise L2ValidationError(
@@ -228,7 +230,7 @@ def _check_role_set(roles: tuple[str, ...], declared: set[str], *, where: str) -
 
 
 def _check_account_parent_role_resolves(
-    inst: L2Instance, all_roles: set[str],
+    inst: L2Instance, all_roles: set[Identifier],
 ) -> None:
     """R2: every Account.parent_role resolves to some declared Role."""
     for a in inst.accounts:
@@ -241,8 +243,8 @@ def _check_account_parent_role_resolves(
 
 def _check_account_template_parent_role_is_singleton(
     inst: L2Instance,
-    account_roles: set[str],
-    template_roles: set[str],
+    account_roles: set[Identifier],
+    template_roles: set[Identifier],
 ) -> None:
     """R3: AccountTemplate.parent_role MUST resolve to a singleton Account.
 
@@ -269,7 +271,7 @@ def _check_account_template_parent_role_is_singleton(
 
 
 def _check_template_leg_rails_exist(
-    inst: L2Instance, rail_names: set[str],
+    inst: L2Instance, rail_names: set[Identifier],
 ) -> None:
     """R4: every RailName in TransferTemplate.leg_rails exists."""
     for t in inst.transfer_templates:
@@ -283,8 +285,8 @@ def _check_template_leg_rails_exist(
 
 def _check_chain_endpoints_exist(
     inst: L2Instance,
-    rail_names: set[str],
-    template_names: set[str],
+    rail_names: set[Identifier],
+    template_names: set[Identifier],
 ) -> None:
     """R5: every Chain.parent and Chain.child resolves to a Rail or Template."""
     valid = rail_names | template_names
@@ -302,7 +304,7 @@ def _check_chain_endpoints_exist(
 
 
 def _check_limit_schedule_parent_role_resolves(
-    inst: L2Instance, all_roles: set[str],
+    inst: L2Instance, all_roles: set[Identifier],
 ) -> None:
     """R6: every LimitSchedule.parent_role resolves to some declared Role."""
     for i, ls in enumerate(inst.limit_schedules):
@@ -337,7 +339,7 @@ def _check_variable_leg_count_per_template(inst: L2Instance) -> None:
 def _check_chain_xor_group_consistency(inst: L2Instance) -> None:
     """C2: every XorGroup's members share the same Chain.parent."""
     parents_by_xor: dict[str, set[str]] = {}
-    for i, c in enumerate(inst.chains):
+    for c in inst.chains:
         if c.xor_group is None:
             continue
         parents_by_xor.setdefault(c.xor_group, set()).add(c.parent)

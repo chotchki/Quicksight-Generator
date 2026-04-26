@@ -350,7 +350,7 @@ def test_malformed_yaml_rejected(tmp_path: Path) -> None:
 def test_top_level_must_be_mapping(tmp_path: Path) -> None:
     p = tmp_path / "list.yaml"
     p.write_text("- not\n- a\n- mapping\n")
-    with pytest.raises(L2LoaderError, match="top level must be a mapping"):
+    with pytest.raises(L2LoaderError, match="top-level must be a mapping"):
         load_instance(p)
 
 
