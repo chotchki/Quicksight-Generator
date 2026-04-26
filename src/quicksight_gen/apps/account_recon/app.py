@@ -151,14 +151,17 @@ def _datasets(
     in visuals + filter columns) → the ARN (the deployed DataSet's
     cross-account-stable handle).
 
-    M.2.3: ``l2_instance`` is plumbed in but not consumed yet. M.2.4
-    will rewrite each dataset's SQL to use the L2 prefix
-    (``<prefix>_transactions``, ``<prefix>_daily_balances``) instead
-    of the v5 hardcoded table names, and replace today's hardcoded
-    ``is_internal = TRUE`` scope predicates with the v6
-    ``account_scope = 'internal'`` form derived from L2 Account roles.
+    M.2.4b-narrow: 2 of 13 datasets switched to v6 builders that target
+    the M.1a.7 L1 invariant views (`<prefix>_drift` and
+    `<prefix>_ledger_drift`). The other 11 stay on v5 builders pending
+    M.2.6's real-Aurora deploy + verify; M.2.10's iteration gate
+    decides the rest of the rewrite shape from real evidence.
     """
     from quicksight_gen.apps.account_recon.datasets import build_all_datasets
+    from quicksight_gen.apps.account_recon._l2_datasets import (
+        build_ledger_balance_drift_dataset_v2,
+        build_subledger_balance_drift_dataset_v2,
+    )
 
     # Order must mirror `_build_dataset_declarations` in analysis.py
     # so each logical name lines up with the matching DataSet's
@@ -179,6 +182,11 @@ def _datasets(
         DS_AR_UNIFIED_EXCEPTIONS,
     ]
     built = build_all_datasets(cfg)
+    # M.2.4b-narrow: replace the 2 drift entries with v6 builders that
+    # target the M.1a.7 L1 invariant views. Index positions match
+    # `names` above (3 = ledger drift; 4 = subledger drift).
+    built[3] = build_ledger_balance_drift_dataset_v2(cfg, l2_instance)
+    built[4] = build_subledger_balance_drift_dataset_v2(cfg, l2_instance)
     return {
         name: Dataset(identifier=name, arn=cfg.dataset_arn(ds.DataSetId))
         for name, ds in zip(names, built)

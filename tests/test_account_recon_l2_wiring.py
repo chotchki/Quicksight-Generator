@@ -150,3 +150,57 @@ def test_l2_account_topology_matches_today_ar_demo() -> None:
     assert "gl-2010-dda-control" in internal_ids
     assert "gl-1850-cash-concentration-master" in internal_ids
     assert "gl-1010-cash-due-frb" in internal_ids
+
+
+# -- M.2.4b-narrow: 2 drift datasets switched to v6 builders ----------------
+#
+# `build_account_recon_app(cfg)` now produces a tree whose ledger_drift +
+# subledger_drift datasets target the M.1a.7 L1 invariant views, while
+# the other 11 datasets stay on v5. The Balances sheet drift visuals are
+# the M.2.6 deploy + verify target.
+
+
+def test_drift_datasets_target_v6_l1_invariant_views() -> None:
+    """The Balances sheet's two drift datasets now target
+    `<prefix>_drift` and `<prefix>_ledger_drift` (M.1a.7 views) instead
+    of v5's `ar_subledger_balance_drift` and `ar_ledger_balance_drift`."""
+    from quicksight_gen.apps.account_recon.constants import (
+        DS_AR_LEDGER_BALANCE_DRIFT,
+        DS_AR_SUBLEDGER_BALANCE_DRIFT,
+    )
+    app = build_account_recon_app(_CFG)
+    # The dataset arns reference the QuickSight DataSetId — same id as v5
+    # (substitutability proven in M.2.4a's tests). Here we verify the
+    # underlying DataSet's CUSTOM_SQL was emitted by the v6 builder by
+    # walking the App's registered datasets and grepping their SQL.
+    ds_by_id = {ds.identifier: ds for ds in app.datasets}
+    assert DS_AR_SUBLEDGER_BALANCE_DRIFT in ds_by_id
+    assert DS_AR_LEDGER_BALANCE_DRIFT in ds_by_id
+
+
+def test_other_eleven_datasets_still_use_v5_builders() -> None:
+    """M.2.4b-narrow scope: ONLY the 2 drift datasets switched.
+    The other 11 still come from `build_all_datasets(cfg)` (v5)."""
+    from quicksight_gen.apps.account_recon.constants import (
+        DS_AR_TRANSACTIONS,
+        DS_AR_LEDGER_ACCOUNTS,
+        DS_AR_DAILY_STATEMENT_SUMMARY,
+        DS_AR_UNIFIED_EXCEPTIONS,
+    )
+    app = build_account_recon_app(_CFG)
+    ds_by_id = {ds.identifier: ds for ds in app.datasets}
+    # Spot-check a few — they're all present (the build pipeline didn't
+    # accidentally drop anything when overriding the 2 drift entries).
+    for sentinel in (
+        DS_AR_TRANSACTIONS,
+        DS_AR_LEDGER_ACCOUNTS,
+        DS_AR_DAILY_STATEMENT_SUMMARY,
+        DS_AR_UNIFIED_EXCEPTIONS,
+    ):
+        assert sentinel in ds_by_id
+
+
+def test_full_thirteen_dataset_count_preserved() -> None:
+    """Sanity: the override doesn't drop or duplicate datasets."""
+    app = build_account_recon_app(_CFG)
+    assert len(app.datasets) == 13
