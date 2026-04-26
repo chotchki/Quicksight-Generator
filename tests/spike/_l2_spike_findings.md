@@ -122,3 +122,46 @@ Both are valid; (a) is a slightly cleaner rule. Either way, "Role is required wh
 - Documentation should be clear that handbook templates referencing screenshots cite by `sheet_id` filename, not by name.
 
 ---
+
+## F9 — Existing `deploy()` + `build_datasource()` + `build_theme()` reuse cleanly for a new app
+
+**Surfaced:** M.0.10 (real-AWS deploy via the spike CLI)
+
+**Observation:** The spike's `apply dashboards` writes its JSON bundle in the existing convention (`<app>-analysis.json` + `<app>-dashboard.json` + `theme.json` + `datasource.json` + `datasets/<id>.json`) and calls `quicksight_gen.common.deploy.deploy(cfg, out_dir, ["spike-drift"])` directly. Deploy succeeded on first run — DataSource + Theme + Dataset + Analysis + Dashboard all created cleanly under the `spk-` prefix, no QS API surprises. The existing infrastructure is reusable as-is for the new L2-driven workflow.
+
+**Implication for SPEC:** No change.
+
+**Implication for M.1:**
+- The `deploy()` API + the JSON file naming convention can stay. M.1's library can wrap them; doesn't need to redesign them.
+- `build_datasource()` lives under `apps/payment_recon/datasets.py` but is generic (doesn't know about PR specifically). Should move to `common/` so other apps + the spike don't need cross-app imports for it.
+
+---
+
+## F10 — L2 InstancePrefix over `cfg.resource_prefix` is the right composition
+
+**Surfaced:** M.0.10 (CLI rewrite for `--instance` + `--config`)
+
+**Observation:** The AWS config YAML's `resource_prefix: "qs-gen"` would collide with the existing demo's resources if used as-is. The spike CLI splices `cfg.resource_prefix = inst.instance` immediately after loading both — so `qs-gen` from `run/config.yaml` becomes `spk` for the spike deploy. Two L2 instances (production demo + spike) coexist in the same AWS account because their prefixes differ.
+
+This is the SPEC's storage isolation rule (L2 InstancePrefix scopes every generated resource ID) materialized in the actual deploy, and it works.
+
+**Implication for SPEC:** No change — this confirms the Storage Isolation section's design.
+
+**Implication for M.1:**
+- The "L2 instance prefix overrides AWS config prefix" rule should be the default behavior of the production CLI's load path, not a per-command splice. Cleanest: the loader returns a Config where `resource_prefix = inst.instance` already, and the AWS YAML's prefix is informational/default-only.
+
+---
+
+## F11 — Two CLI inputs (`--instance` + `--config`) work; existing `--config` convention preserved
+
+**Surfaced:** M.0.10 (CLI rewrite)
+
+**Observation:** Renaming the spike's L2 YAML option from `--config` to `--instance` (`-i`) and adding `--config` (`-c`) for the AWS YAML preserves the existing CLI's `-c` convention. Two required options per command read cleanly: `apply schema --instance slice.yaml --config run/config.yaml`. The two-input split mirrors LAYER 1 (universal AWS coords + Postgres URL) vs LAYER 2 (per-integrator institution).
+
+**Implication for SPEC:** No change.
+
+**Implication for M.1:**
+- The production CLI should adopt the same `--instance` / `--config` split. `quicksight-gen apply schema -c run/config.yaml -i sasquatch_ar.yaml` becomes the workflow shape for M.6.
+- Default for `--config` could fall back to `config.yaml` in CWD (matches existing `quicksight-gen` convention) if not specified.
+
+---
