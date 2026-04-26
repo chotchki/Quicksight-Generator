@@ -1,22 +1,17 @@
-# QuickSight Analysis Generator — Spec - Starting Phase M Delivery
+# Domain Model — QuickSight Analysis Generator
 
 ## Overall Goal
 
 Help integrators generate AWS QuickSight dashboards that help non-technical financial users find and triage problems in their unique institution. This consists of a shared common library that wraps the QuickSight JSON and a series of example applications built on top that are easily customizable to the situation.
 
-## The Problem with the Application as of Today
-The users described below can understand in the abstract the value this application provides. However they cannot make the mental leap to understand how it applies to their scenario because all the training material AND test data is oriented around the demo scenario. 
-
 ## Architecture Layers
 
-The SPEC is organized in two layers:
+The model is organized in two layers:
 
-- **LAYER 1 — Universal model**: The Domain Model v2 below. Money, accounts, transfers, transactions, balances, and the invariants they obey. Same for every institution. Shipped as library code. Integrators do not modify.
-- **LAYER 2 — Institutional model**: Per-integrator description of this institution's account roles, transfer rails, business processes, and reconciliation expectations. Defined by the integrator as data (the graph YAML). The library reads it to scope LAYER 1 constraints to the institution's specifics, generate seed data, and render handbook prose.
+- **LAYER 1 — Universal model**: Money, accounts, transfers, transactions, balances, and the invariants they obey. Same for every institution. Shipped as library code. Integrators do not modify.
+- **LAYER 2 — Institutional model**: Per-integrator description of this institution's account roles, transfer rails, business processes, and reconciliation expectations. Defined by the integrator as data (a YAML instance). The library reads it to scope LAYER 1 constraints to the institution's specifics, generate seed data, and render handbook prose.
 
 LAYER 1 SHAPES are rigid (Conservation is Conservation); LAYER 1 SCOPES (which TransferTypes have `ExpectedNet=0`, which accounts have `ExpectedEODBalance` set, etc.) are filled in by LAYER 2. LAYER 2 itself is fully defined by the integrator — the library has no opinion beyond providing the LAYER 1 building blocks to express it.
-
-Today's apps map roughly: AR is the showcase of LAYER 1 (most checks are direct L1 invariants); PR is the showcase of LAYER 2 (the sale → settlement → payment → external_txn pipeline IS the institution's specific business process); Investigation is almost entirely LAYER 2; Executives aggregates over both.
 
 ## Notation Conventions
 
@@ -31,11 +26,13 @@ Today's apps map roughly: AR is the showcase of LAYER 1 (most checks are direct 
   - **Aggregation**: `Σ S.Field` (sum of `.Field` across every element of S); `max S.Field` (largest such value); `|x|` (absolute value of x); `x between A and B` (shorthand for `A ≤ x ≤ B`).
   - **Definition**: `Foo := expression` defines `Foo` as the named expression (used by theorems).
 - **Constraint strength**: MUST and SHOULD per RFC 2119. MUST = a hard invariant the system relies on; SHOULD = an expected condition whose violation surfaces as a dashboard exception.
-- **Implementation entity composition**: `EntityA + EntityB` denotes a denormalized merge — every row of the implementation entity physically carries all fields of both component entities on a single row, no JOIN required at query time.
+- **YAML key convention**: SPEC type and field names are PascalCase; the YAML representation transliterates them to snake_case (`SourceRole` → `source_role`). Role / Rail / Template *names* themselves stay PascalCase as identifier values.
 
-## Domain Model v2 - Layer 1
+---
 
-### Primitives (Axioms)
+# Layer 1 — Universal Model
+
+## Primitives (Axioms)
 
 Identity & labels:
 - `Entry`: ordered sequence
@@ -54,24 +51,55 @@ Money:
 Time:
 - `Timestamp`: instant in UTC (integrators convert at the boundary)
 - `BusinessDay`: (StartTime: Timestamp, EndTime: Timestamp)
+- `Duration`: a span of time (used for aging windows)
 
 Transfer machinery:
-- `Status` ⊇ {Posted}
+- `Status` ⊇ {Pending, Posted}
 - `TransferType` ⊇ {Sale}
 - `Origin` ⊇ {InternalInitiated, ExternalForcePosted}
+- `SupersedeReason` ⊇ {Inflight, BundleAssignment, TechnicalCorrection}
 - `Metadata`: `Map[Name, Value]`
 
 Entities:
 - `Account`: (ID, Name?, Parent?: Account, Scope, ExpectedEODBalance?: Money)
 - `Transfer`: (ID, Completion: Timestamp, TransferType, Parent?: Transfer, ExpectedNet?: Money)
-- `Transaction`: (Entry, ID, Account, Amount, Status, Posting: Timestamp, Transfer, Origin, Metadata)
-- `StoredBalance`: (Entry, Account, BusinessDay, Money, Limits?: Map[TransferType, Money])
+- `Transaction`: (Entry, ID, Account, Amount, Status, Posting: Timestamp, Transfer, Origin, BundleId?: ID, Supersedes?: SupersedeReason, Metadata)
+- `StoredBalance`: (Entry, Account, BusinessDay, Money, Limits?: Map[TransferType, Money], Supersedes?: SupersedeReason)
 
 Expected Implementation Entities:
 - `DailyBalance`: `StoredBalance` + `Account`
 - `StoredTransaction`: `Transaction` + `Transfer`
 
-### Derivatives (Theorems)
+### Status lifecycle
+
+Transactions typically transition `Pending → Posted` via successive Entry rows of the same ID. A Pending Transaction is recorded but not yet considered settled fact — the integrator has captured the event but its required fields aren't all present yet. L1 invariants scope to `Status = Posted` because Pending values represent uncertainty about whether the event happened; counting them would produce false reconciliation results.
+
+What makes a Transaction validly Posted is declared per-Rail in L2 (see `PostedRequirements`). Other state machines (e.g., `Pending → Cancelled`) are integrator-defined; the library does not interpret status values outside `{Pending, Posted}`.
+
+### Higher-Entry rows: inflight vs correction vs bundling
+
+Every higher-Entry row that supersedes a previous Entry (for the same `Transaction.ID` or the same `(StoredBalance.Account, StoredBalance.BusinessDay)` pair) MUST set the typed `Supersedes` field naming the category. The categorization is determined by the **prior row's** state and the entity kind:
+
+**Categories applicable to `Transaction`:**
+
+- **`Inflight`** — the prior row had `Status = Pending`. The new row completes the data (possibly transitioning Status to Posted, or just filling in more fields while still Pending). This is **NOT a correction** — nothing was wrong; the row was always going to fill in over time as the integrator's ETL caught up. Normal lifecycle progression.
+- **`BundleAssignment`** — the prior row had `Status = Posted` and `BundleId` NULL; the new row carries `BundleId = <bundle Transfer's id>`, otherwise identical. The bundler consumed this Transaction and recorded which aggregating Transfer it folded into. Also not a correction — the prior row was correct, just unbundled.
+- **`TechnicalCorrection`** — the prior row had wrong data and the new row changes one or more load-bearing values. **This IS a correction** — upstream wrote the wrong data, and the new row is what should have been written. The superseded row stays visible for audit.
+
+**Categories applicable to `StoredBalance`:**
+
+- **`TechnicalCorrection`** — the prior snapshot value was wrong (either we recorded it wrong, or the source authority later restated). The new row carries the corrected `Money` value. The superseded row stays visible for audit.
+
+`Inflight` and `BundleAssignment` do not apply to StoredBalance — snapshots don't have a Pending lifecycle and aren't bundled. Any higher-Entry StoredBalance is by construction a `TechnicalCorrection`.
+
+The distinction matters because the dashboard / handbook surfaces these very differently:
+- Inflight progressions are noise during normal operation; only an Inflight row that's been Pending for too long (per `MaxPendingAge`) is worth surfacing.
+- Bundle assignments are operational — accountants want to see which bundle a row landed in, but it's not an exception.
+- Technical corrections are exceptions worth investigation — somebody had bad data; the audit trail (prior + corrected entries) is what they need.
+
+Recording the reason is load-bearing for the recon experience: an accountant looking at a row's history needs to immediately see whether the supersedence means "your ETL is fine, this row was just inflight" or "your upstream got something wrong here."
+
+## Derivatives (Theorems)
 - `CurrentTransaction` := `{ tx ∈ Transaction : tx.Entry = max(Transaction(ID = tx.ID).Entry) }`
 - `CurrentStoredBalance` := `{ sb ∈ StoredBalance : sb.Entry = max(StoredBalance(Account = sb.Account, BusinessDay = sb.BusinessDay).Entry) }`
 - `ComputedBalance(inAccount: Account, inBusinessDay: BusinessDay)` := `Σ CurrentTransaction(Account = inAccount, Status = Posted, Posting ≤ inBusinessDay.EndTime).Amount.Money`
@@ -80,9 +108,9 @@ Expected Implementation Entities:
 - `NetOfTransfer(inTransfer: Transfer)` := `Σ CurrentTransaction(Transfer = inTransfer, Status = Posted).Amount.Money`
 - `IsParent(inAccount: Account)` := `∃ child ∈ Account where child.Parent = inAccount`
 - `OutboundFlow(inAccount: Account, inTransferType: TransferType, inBusinessDay: BusinessDay)` := `Σ |CurrentTransaction(Account = inAccount, Transfer.TransferType = inTransferType, Amount.Direction = Debit, Status = Posted, Posting between inBusinessDay.StartTime and inBusinessDay.EndTime).Amount.Money|`
+- `Age(inTransaction: Transaction)` := `now() − inTransaction.Posting`
 
-
-### System Constraints
+## System Constraints
 
 - **Conservation**: For every `t: Transfer` where `t.ExpectedNet` is set, `Σ CurrentTransaction(Transfer = t, Status = Posted).Amount.Money` SHOULD equal `t.ExpectedNet`. (Single-leg transfers leave `ExpectedNet` unset and are exempt; standard double-entry transfers set `ExpectedNet = 0`.)
 - **Timeliness**: For every `tx: CurrentTransaction`, `tx.Posting ≤ tx.Transfer.Completion` SHOULD hold. Remediation is append-only — a violation (or any other Conservation-breaking condition) is corrected by posting a new Transaction against the same Transfer, not by amending the offending one.
@@ -93,18 +121,25 @@ Expected Implementation Entities:
 - **Parent balance existence**: For every `sb: CurrentStoredBalance` where `sb.Account.Parent` is set, there MUST exist `CurrentStoredBalance(Account = sb.Account.Parent, BusinessDay = sb.BusinessDay)`.
 - **Expected EOD balance**: For every `sb: CurrentStoredBalance` where `sb.Account.ExpectedEODBalance` is set, `sb.Money` SHOULD equal `sb.Account.ExpectedEODBalance`.
 - **Limit breach**: For every `sb: CurrentStoredBalance` where `sb.Limits` is set, for every `(t, limit) ∈ sb.Limits`, for every child `c ∈ Account(Parent = sb.Account)`, `OutboundFlow(c, t, sb.BusinessDay)` SHOULD be `≤ limit`. (Limits live on the parent's `StoredBalance` and apply to each child individually — not aggregated across children.)
-- **Immutability**: Every `Transaction` and `StoredBalance` entity is immutable. Violations of constraints should be repaired by posting additional transactions. System errors may be corrected (but not hidden) by entering a higher entry.
+- **Immutability**: Every `Transaction` and `StoredBalance` entity is immutable. Violations of constraints should be repaired by posting additional transactions. System errors may be corrected (but not hidden) by entering a higher entry; every higher Entry row MUST set `Supersedes` to record why.
 
-### Design Principles
+## Design Principles
 
 - **Metadata promotion**: `Metadata` is opaque to System Constraints and Theorems — it carries values for display and integrator-defined filtering only. If a rule (a constraint, theorem, invariant, or scenario predicate) needs to read a value to evaluate, that value MUST be promoted out of `Metadata` into a typed field on the bearing entity. The set of typed fields is the set of load-bearing values; everything in `Metadata` is observational.
-- **Technical vs business correction**:                                                                                            
-  - **Technical errors** (upstream wrote the wrong row — wrong amount, wrong Account reference, wrong Parent, wrong StoredBalance number) are corrected by appending a higher-Entry row that supersedes the offending one. The superseded row stays visible for audit.                                                                                        
-  - **Business-process failures** (a real-world event went wrong — a wrong transfer was actually executed, a leg never posted, a balance ended overdrawn) are corrected by posting additional Transactions against the same Transfer. The original Transaction(s) stay as-is — they record what actually happened in the business.    
+- **Three kinds of higher-Entry row** (also see "Higher-Entry rows" above):
+  - **Inflight progression** (Transaction only; prior row was Pending) — the new row carries more complete data; possibly transitions Status to Posted. Not a correction; this is how integrator ETL completes a row over time. `Supersedes = Inflight`.
+  - **Bundle assignment** (Transaction only; prior row was Posted with BundleId NULL) — the bundler consumed this Transaction; the new row records its `BundleId`. Not a correction. `Supersedes = BundleAssignment`.
+  - **Technical correction** (Transaction or StoredBalance; prior row was wrong) — upstream wrote a wrong amount, wrong Account reference, wrong Parent, wrong daily balance, etc. The new row is what should have been written. The superseded row stays visible for audit. `Supersedes = TechnicalCorrection`.
+- **Business-process failures vs technical errors**:
+  - **Business-process failures** (a real-world event went wrong — a wrong transfer was actually executed, a leg never posted, a balance ended overdrawn) are corrected by posting **additional Transactions against the same Transfer**, NOT by superseding existing rows. The original Transaction(s) stay as-is — they record what actually happened in the business.
+  - **Technical errors** (the system wrote the wrong row for a real-world event) are corrected by superseding (above).
+  - The distinction is "did the real-world event happen the way the row says?" If yes but our row is wrong → technical correction. If no, the row is correct as a record of what happened → fix by posting an additional Transaction.
 - **Account dimension is read-only**: This system reads accounts from upstream and uses their typed structural attributes (`Scope`, `Parent`, `ExpectedEODBalance`) to evaluate constraints. It does not provide tools to create, modify, or audit accounts. `Account.Name` is a human-convenience display label and is not load-bearing for any constraint or theorem.
 - **Implementation**: Entities are stored in an append-only format with an automatically-incrementing `Entry` id. Technical-error remediation MUST insert a new entity with a higher `Entry` id than the error's.
 
-# Domain Model — Layer 2 (Institutional Model)
+---
+
+# Layer 2 — Institutional Model
 
 ## Purpose
 
@@ -113,19 +148,9 @@ LAYER 2 captures the integrator's institution: which accounts exist, what kinds 
 - Drive deterministic seed-data generation that exercises every declared rail.
 - Render handbook prose against the institution's vocabulary.
 
-LAYER 2 is fully defined by the integrator. The library has no opinion on its content beyond providing the LAYER 1 building blocks (`Account`, `Transfer`, `Transaction`, `StoredBalance`, `ExpectedNet`, etc.) the integrator's L2 expresses against.
-
-## Notation
-
-Conventions match LAYER 1:
-- `TypeName: (Field: Type, OptionalField?: Type)` — both field names and types are PascalCase.
-- `TypeName ⊇ {a, b}` — open enum (system uses at least these; integrators may extend).
-- MUST and SHOULD per RFC 2119.
-- **YAML key convention.** SPEC type and field names are PascalCase; the YAML representation transliterates them to snake_case (`SourceRole` → `source_role`, `TransferKey` → `transfer_key`, `LegRails` → `leg_rails`). Role / Rail / Template *names* themselves stay PascalCase as identifiers — they're values, not keys.
+LAYER 2 is fully defined by the integrator. The library has no opinion on its content beyond providing the LAYER 1 building blocks the integrator's L2 expresses against.
 
 ## How L2 plugs into L1
-
-L2 declares the integrator's institution against L1's primitives. The L1 hooks L2 reaches for:
 
 | L1 element | L2 contribution |
 |---|---|
@@ -134,9 +159,12 @@ L2 declares the integrator's institution against L1's primitives. The L1 hooks L
 | `Transfer.ExpectedNet` | Set by L2 — per-Rail (standalone Transfers) or per-TransferTemplate (shared multi-leg Transfers). |
 | `Transfer.Completion` | Set by L2 — per-Rail or per-TransferTemplate. |
 | `Transaction.Account` | Resolved per leg from the firing Rail's `SourceRole` / `DestinationRole` / `LegRole`. When the role comes from an AccountTemplate, the concrete account instance is selected at posting time from the leg's Metadata. |
-| `Transaction.Origin` | Declared per-Rail. |
+| `Transaction.Origin` | Declared per-leg per-Rail. The rail-level `Origin` field applies to all legs by default; `SourceOrigin` / `DestinationOrigin` override per-leg when the legs differ (e.g., the leg touching an external counterparty is `ExternalForcePosted` while the internal counterpart is `InternalInitiated`). |
+| `Transaction.Posting` | Runtime / ETL-supplied; L2 does NOT contribute. |
+| `Transaction.Amount` | Runtime / ETL-supplied; L2 does NOT contribute. |
+| `Transaction.Status` | Lifecycle managed via L2's `PostedRequirements`. The library refuses to mark `Status = Posted` for a Transaction missing any of the firing Rail's PostedRequirements. |
+| `Transaction.BundleId` | Populated by AggregatingRail bundlers; integrator's ETL leaves it NULL. |
 | `Transaction.Metadata` | L2 declares the key set per Rail; values remain opaque runtime data. |
-| `Transaction.Status` (open enum) | L2 does NOT contribute. Status is runtime/upstream-determined (Posted, Pending, Cancelled, etc.) and reflects state, not structure. |
 | `StoredBalance.Limits` | Populated from L2's Limit Schedules. |
 
 L2 contributes no invariants of its own. All checks reduce to L1 invariants firing on data L2 has shaped.
@@ -225,8 +253,13 @@ A canonical leg-pattern the institution operates. Each Rail produces one or two 
 Rail: (
   Name,
   TransferType,                          # extends L1 TransferType
-  Origin,                                # extends L1 Origin
-  MetadataKeys: [Identifier, …],         # which Metadata keys legs populate
+  MetadataKeys: [Identifier, …],         # which Metadata keys legs may populate (informative)
+
+  # Origin — per-leg (extends L1 Origin). At least one resolution path MUST be available
+  # for every leg. See "Per-leg Origin" below.
+  Origin?: Origin,                       # default for all legs (shorthand when all legs share)
+  SourceOrigin?: Origin,                 # 2-leg only: override for source/debit leg
+  DestinationOrigin?: Origin,            # 2-leg only: override for destination/credit leg
 
   # Shape — exactly one of the two groups below:
 
@@ -241,29 +274,52 @@ Rail: (
 
   # Optional flags
   Aggregating?: Boolean,                 # see Aggregating Rails below
-  BundlesActivity?: [TransferType | Name, …],
+  BundlesActivity?: [BundleSelector, …],
   Cadence?: CadenceExpression,
+
+  # Inflight-handling (see "Inflight transaction handling" below)
+  PostedRequirements?: [Identifier, …],  # additional integrator-declared posting requirements
+  MaxPendingAge?: Duration,              # aging watch for Pending → Posted lag
+  MaxUnbundledAge?: Duration,            # aging watch for Posted-but-not-bundled (only for bundled rails)
 )
 
 RoleExpression: Role | (Role | Role | …)   # union role; see below
+
+BundleSelector: TransferType | RailName | TransferTemplateName | TransferTemplateName.LegRailName
 ```
+
+#### Per-leg Origin
+
+`Transaction.Origin` is a per-Transaction field at L1. Two legs of the same Rail commonly share an Origin (e.g., a fully-internal sweep where both legs are `InternalInitiated`), but real flows often need different Origins per leg — most commonly when one leg touches an external counterparty (`ExternalForcePosted` — the external party drove this) while the other touches an internal account (`InternalInitiated` — we recorded the response on our books).
+
+Resolution rules:
+- **1-leg rails**: only `Origin` applies. `SourceOrigin` / `DestinationOrigin` are ignored if set (load-time warning).
+- **2-leg rails**:
+  - If `Origin` is set and neither override is set: both legs resolve to `Origin`.
+  - If `SourceOrigin` and `DestinationOrigin` are both set: each leg resolves to its respective override; rail-level `Origin` is ignored if also set (load-time warning).
+  - If only one of `SourceOrigin` / `DestinationOrigin` is set: the other leg resolves to rail-level `Origin` (which MUST then be set). If `Origin` is unset in this case, load-time error — the unspecified leg has no resolved Origin.
+  - At least one of `Origin`, `SourceOrigin`, `DestinationOrigin` MUST be sufficient to resolve both legs.
 
 #### Two-leg rails
 Declare both `SourceRole` (debit leg) and `DestinationRole` (credit leg). When fired as a standalone Transfer, `ExpectedNet` MUST be set (typically `0`); L1 Conservation enforces `Σ legs = ExpectedNet`. When the rail is a leg-pattern of a TransferTemplate, `ExpectedNet` lives on the template, not the rail.
 
 #### Single-leg rails
-Declare `LegRole` and `LegDirection`. Per L1, the resulting Transfer leaves `ExpectedNet` unset and is exempt from Conservation in isolation. Single-leg rails (with `Aggregating: false`) MUST be reconciled by EITHER:
+Declare `LegRole` and `LegDirection`. Per L1, the resulting Transfer leaves `ExpectedNet` unset and is exempt from Conservation in isolation. Single-leg rails (with `Aggregating: false` or unset) MUST be reconciled by EITHER:
 - A `TransferTemplate` whose `LegRails` includes this rail (the shared Transfer's `ExpectedNet` provides closure via Conservation + Timeliness), OR
-- An `AggregatingRail` whose `BundlesActivity` includes this rail's `TransferType` (periodic reconciliation closes the drift).
+- An `AggregatingRail` whose `BundlesActivity` matches this rail (periodic reconciliation closes the drift).
 
-A non-aggregating single-leg rail that is neither a leg-pattern of a TransferTemplate nor reconciled by an AggregatingRail is a configuration error — the drift it introduces would persist forever.
+A non-aggregating single-leg rail that meets neither condition is a configuration error — the drift it introduces would persist forever.
 
-**Single-leg aggregating rails are exempt from this rule** — they ARE the reconciliation mechanism (sweeping their drift into an External counterparty by design, per the Aggregating Rails section). They do not themselves appear in another rail's `BundlesActivity`.
+A rail MAY be reconciled by both (a leg of a TransferTemplate AND bundled by an AggregatingRail) — they reconcile different kinds of drift (transfer-net closure vs pool ledger drift). This combination is explicitly permitted.
+
+**Single-leg aggregating rails** are exempt from the reconciliation rule above — they ARE the reconciliation mechanism (sweeping their drift into an External counterparty by design). They do not themselves appear in another rail's `BundlesActivity`.
 
 #### `LegDirection = Variable`
 Both the leg's amount AND direction are determined at posting time by surrounding context — specifically, by the requirement that a containing TransferTemplate's `ExpectedNet` hold given the other legs already posted. A "settlement" leg that posts whatever amount/direction closes the bundle is the canonical case.
 
 A TransferTemplate MUST contain at most one Variable-direction leg per shared Transfer. Two or more Variable legs leave the closure under-determined; the library detects this at load-time validation, not at posting.
+
+A Variable-direction leg MUST be the LAST leg posted on its Transfer — all sibling legs MUST be `Status = Posted` (not Pending) before the Variable leg posts. Posting a Variable leg while sibling legs are still Pending is a posting-time error (the closure amount can't be computed against incomplete data).
 
 #### Union roles
 `(RoleA | RoleB)` — a Role field MAY express that the rail can target accounts of more than one role. Each firing still resolves to one concrete role per leg; the union is about which roles are admissible, not about firing multiple legs at once.
@@ -277,18 +333,36 @@ A Rail with `Aggregating: true` sweeps activity from many other Transfers over a
 ```
 # Same Rail shape as above, plus:
 Aggregating: true
-BundlesActivity: [TransferType | RailName | TransferTemplateName, …]
+BundlesActivity: [BundleSelector, …]
 Cadence: CadenceExpression
 ```
 
 `BundlesActivity` is the aggregating-rail equivalent of `Chain` — it expresses which activity the rail rolls up over, in lieu of explicit parent-child chain entries.
 
-#### `BundlesActivity` semantics
+#### `BundleSelector` semantics
 
-A list-element matches activity by union (OR):
-- A `TransferType` matches every Transfer of that type.
-- A `RailName` or `TransferTemplateName` matches Transfers produced by that specific rail/template.
-Both kinds may coexist in one list. A single Transfer that matches multiple list-elements still counts once toward the bundle.
+A `BundleSelector` matches eligible activity by union (OR):
+- `TransferType` — every Transaction whose Transfer has this type.
+- `RailName` — every Transaction produced by that specific rail.
+- `TransferTemplateName` — every Transaction belonging to a Transfer of that template (i.e., every leg of that template's Transfers).
+- `TransferTemplateName.LegRailName` — every Transaction belonging to a Transfer of that template AND produced by that specific leg-pattern rail. Use this to scope to one leg of a multi-leg template.
+
+A single Transaction matched by multiple selectors counts once toward the bundle.
+
+A Transaction is **eligible** when:
+- `Status = Posted`
+- `BundleId IS NULL`
+- It matches the AggregatingRail's `BundlesActivity`
+
+#### Bundling semantics (append-only)
+
+When an AggregatingRail fires:
+1. Bundler queries eligible Transactions matching `BundlesActivity`.
+2. Bundler computes the net Amount across them.
+3. Bundler creates a new Transfer (the aggregating Transfer) with a fresh ID — call it `bundle_id` — and posts the rail's leg(s) against it.
+4. For each consumed source Transaction, bundler appends a higher-Entry `Transaction` row with `BundleId = bundle_id`, `Supersedes = BundleAssignment`. Per L1 append-only, the original row is preserved; `CurrentTransaction(ID = tx.ID)` is now the higher-Entry one.
+
+This pattern keeps consumed-tracking append-only — no row mutation — and preserves a full audit trail of when each Transaction was bundled and into which aggregating Transfer.
 
 #### `CadenceExpression` vocabulary *(v1)*
 
@@ -340,14 +414,22 @@ A Rail listed in `LegRails` of a TransferTemplate MUST NOT also fire standalone 
 
 `TransferKey` declares which Metadata KEYS participate in the grouping rule (schema-level). The runtime VALUES under those keys remain opaque integrator-supplied data — consistent with L1's Metadata Promotion principle, which governs values, not key declarations.
 
-Behavior with missing/NULL key values: a leg whose Metadata is missing one or more declared `TransferKey` keys (or whose value is NULL) is a posting-time error — the leg cannot be assigned to a shared Transfer. The library reports this as a posting failure, not as silent grouping. Real ETL boundary problems should be caught at load, not absorbed by the L2 model.
+`TransferKey` values are **auto-derived as `PostedRequirements`** for every Rail in `LegRails`: a leg whose Metadata is missing one or more declared `TransferKey` keys (or whose value is NULL) cannot be Posted, because it can't be assigned to a shared Transfer. Integrators don't need to repeat TransferKey fields in each Rail's PostedRequirements; the library projects them automatically.
+
+#### Transfer ID derivation (lookup-or-create)
+
+For TransferTemplate-based Transfers, the Transfer's L1 `ID` is allocated **lookup-or-create**: the first leg posting for a given (template, TransferKey-values) tuple creates a Transfer with a fresh ID; subsequent legs query by (template, TransferKey-values) and post against that ID.
+
+**Implementers MUST treat this as a known failure point.** Concurrent posters racing on the first leg for a key can produce duplicate Transfers — fix path is L1's append-only entry correction (post a higher-Entry version of the duplicate's legs pointing them at the surviving Transfer ID; supersede the duplicate Transfer record). The library SHOULD provide a uniqueness constraint on (template_name, transfer_key_values) at the storage layer to catch the race at write time rather than at reconciliation time.
+
+For ordinary business processing — where an integrator's ETL is well-behaved — lookup-or-create works without intervention. It's the high-throughput / concurrent-poster scenarios that need the entry-correction fallback.
 
 #### `CompletionExpression` vocabulary *(v1)*
 
 | Literal | Meaning |
 |---|---|
 | `business_day_end` | End of the BusinessDay the Transfer was opened. |
-| `business_day_end+Nd` | End of the BusinessDay N business days after open (e.g., `business_day_end+3d`). |
+| `business_day_end+Nd` | End of the BusinessDay N business days after open (e.g., `business_day_end+3d`). N counts business days, skipping weekends and holidays per the integrator-supplied business calendar. |
 | `month_end` | End of the calendar month the Transfer was opened. |
 | `metadata.<key>` | Resolves to the Timestamp value at Metadata key `<key>` on any leg of the Transfer. ETL is responsible for pre-computing this value and posting it on at least one leg. |
 
@@ -360,7 +442,7 @@ Expressions outside this vocabulary are not recognized in v1; the library reject
 Parent → child relationships between Rails or Transfer Templates. Used to:
 - Validate that a Transfer's L1 `Parent` reference matches an allowed pattern.
 - Render multi-stage pipelines.
-- Generate orphan checks (every required parent must have a corresponding child).
+- Generate orphan checks (every required parent SHOULD have a corresponding child).
 
 ```
 ChainEntry: (
@@ -377,13 +459,15 @@ Resolution:
 
 `Required: true` — every parent Transfer firing SHOULD eventually have at least one matching child Transfer firing. A missing child surfaces as an orphan exception (RFC 2119 SHOULD: violation surfaces as a dashboard exception, not a hard failure).
 
+When a chain entry has `Required: true`, the child Rail's `parent_transfer_id` field is **auto-derived as a `PostedRequirement`** — the child can't be Posted without naming its parent. (When `Required: false`, the parent is genuinely optional; `parent_transfer_id` may be NULL on the child's Posted legs.)
+
 #### XOR groups
 
 When several chain entries share the same `Parent` AND the same `XorGroup`, exactly one of them SHOULD fire per parent Transfer instance. Without `XorGroup`, multiple `Required: false` children allow any combination including none.
 
 XOR groups capture flows like:
 - "Exactly one of {success path, reversal path} happens for an escrow transfer."
-- "Exactly one of {ACH payout, voucher payout, internal payout} fires per settlement cycle."
+- "Exactly one of {ACH payout, wire payout, internal payout} fires per settlement cycle."
 
 The library evaluates XOR-group membership: missing-firings AND multiple-firings both surface as exceptions when at least one chain entry in the group has `Required: true`. (If all `Required: false` and `XorGroup` is set, it means "at most one" rather than "exactly one.")
 
@@ -405,34 +489,101 @@ LimitSchedule: (
 )
 ```
 
-The library projects each LimitSchedule entry into the relevant `StoredBalance.Limits` map; L1's Limit Breach invariant then evaluates per child individually (the cap is per-child, not aggregated across siblings of the parent).
+The library projects each LimitSchedule entry into the relevant `StoredBalance.Limits` map for every StoredBalance of every account whose Role matches `ParentRole`, for every BusinessDay. L1's Limit Breach invariant then evaluates per child individually (the cap is per-child, not aggregated across siblings of the parent).
+
+The combination `(ParentRole, TransferType)` MUST be unique across LimitSchedule entries — duplicate combinations are a load-time configuration error.
 
 ---
 
-### Implementation notes
+## Inflight transaction handling
+
+L2 needs to reason about Transactions in flight: those that are recorded but not yet eligible to count as settled fact, and those that are settled but not yet bundled. This section covers the declarative knobs and the lifecycle.
+
+### Lifecycle (per Transaction)
+
+```
+[ETL writes row]   →   Pending   →   Posted, BundleId NULL   →   Posted, BundleId set
+                   ↑              ↑                          ↑
+        Status = Pending     PostedRequirements          AggregatingRail bundler
+        (some required      all populated                consumes and assigns
+         fields may          (higher-Entry row,           (higher-Entry row,
+         still be NULL)      Supersedes = Inflight)       Supersedes = BundleAssignment)
+                            ──────────────              ──────────────────
+                             MaxPendingAge              MaxUnbundledAge
+                             watches this               watches this
+```
+
+Each transition is a **higher-Entry row of the same Transaction ID**, with `Supersedes` recording the category. Per L1's "Three kinds of higher-Entry row":
+- Pending → (more complete Pending OR Posted) is `Inflight` — normal lifecycle progression, NOT a correction.
+- Posted → Posted-with-BundleId is `BundleAssignment`.
+- Posted → Posted-with-different-data is `TechnicalCorrection` (upstream got it wrong).
+
+The first two are normal operation. Only the third is an exception worth surfacing.
+
+Not every Transaction goes through every state. Specifically:
+- A Transaction whose Rail has no PostedRequirements (or whose ETL writes the row already complete) may be Posted from creation — no Pending state, no Inflight supersedence.
+- A Transaction whose Rail isn't matched by any AggregatingRail's `BundlesActivity` stays at "Posted, BundleId NULL" forever — that's correct, no BundleAssignment will ever happen. The MaxUnbundledAge watch only applies if the Rail IS bundled.
+
+### `PostedRequirements`
+
+Declares the field set that MUST be populated for a Transaction to legitimately have `Status = Posted`. The library refuses to mark `Status = Posted` for a Transaction missing any of these fields; the Transaction stays Pending until a higher-Entry row supplies the missing data.
+
+The library auto-derives PostedRequirements entries from structural declarations:
+- Every field in a containing TransferTemplate's `TransferKey`.
+- `parent_transfer_id` if the Rail appears as Child in a chain entry with `Required: true`.
+
+The integrator's `PostedRequirements` declaration adds Rail-specific requirements on top of these auto-derived entries.
+
+Examples of integrator-added requirements:
+- A card-spend Rail might require `[card_brand, mcc, merchant_descriptor]` because absent any of those, the row isn't reconcilable.
+- An ACH Rail might require `[external_reference]` because the trace number is needed to match against the bank statement.
+
+### `MaxPendingAge`
+
+The longest acceptable interval between a Transaction's Pending posting and its transition to Posted. Pending Transactions older than this surface as exceptions ("stale Pending").
+
+- SHOULD constraint per RFC 2119 — surfaces as dashboard exception, not a hard failure.
+- Catches systemic ETL failures (a feed stopped delivering settlement files; a queue is backed up; a key field is being dropped at the source) that would otherwise hide behind aggregation.
+- Distinct from chain orphan checks (which fire on missing child Transfers) and Conservation (which fires on Posted-leg sums) — those check structure; this one checks ETL liveness.
+
+### `MaxUnbundledAge`
+
+The longest acceptable interval between a Transaction becoming Posted-and-eligible-for-bundling and being assigned a `BundleId`. Posted-and-unbundled Transactions older than this surface as exceptions ("stale Unbundled").
+
+- Only meaningful when the Rail's transactions are bundled (i.e., something else has them in `BundlesActivity`).
+- Catches bundler liveness — distinct from MaxPendingAge (which catches incomplete data).
+
+---
+
+## Implementation notes
 
 - Each L2 instance is fully isolated by its `InstancePrefix`. Every generated database object and every dashboard resource ID is prefixed.
 - Production integrators typically run one L2 instance under a stable production prefix. Demo and test runs use ephemeral or fixture-specific prefixes so they never collide.
-- The library validates the L2 instance at load time:
-  - Every `Role` referenced by a Rail or AccountTemplate resolves to either a declared `Account` or an `AccountTemplate`.
-  - Every `RailName` in a `TransferTemplate.LegRails` or `ChainEntry` exists.
-  - Every `AccountTemplate.ParentRole` resolves to a singleton `Account` (NOT another `AccountTemplate`).
-  - Every single-leg Rail is reconciled (TransferTemplate leg or AggregatingRail target).
-  - Every TransferTemplate contains at most one `LegDirection: Variable` leg.
-  - Every `TransferTemplate.LegRails` entry references a non-Aggregating Rail. (Aggregating rails sweep on a cadence and don't carry the per-instance identity a TransferKey-grouped template needs.)
-  - Every `Aggregating: true` Rail is absent from `Child` positions in chains.
-  - Every `XorGroup` membership is consistent (all members share `Parent`).
-  - Every `Completion` and `Cadence` literal is in the v1 vocabulary.
+- The library validates the L2 instance at load time. Configuration errors are reported at load, not at posting time.
 
-Configuration errors are reported at load, not at posting time.
+### Validation rules
+
+- Every `Role` referenced by a Rail or AccountTemplate resolves to either a declared `Account` or an `AccountTemplate`.
+- Every `RailName` in a `TransferTemplate.LegRails` or `ChainEntry` exists.
+- Every `TransferTemplateName` in a `ChainEntry` or `BundleSelector` exists.
+- Every `AccountTemplate.ParentRole` resolves to a singleton `Account` (NOT another `AccountTemplate`).
+- Every single-leg Rail (with `Aggregating: false` or unset) is reconciled — appears as a leg of a TransferTemplate AND/OR is matched by an AggregatingRail's `BundlesActivity`.
+- Every TransferTemplate contains at most one `LegDirection: Variable` leg.
+- Every `TransferTemplate.LegRails` entry references a non-Aggregating Rail. (Aggregating rails sweep on a cadence and don't carry the per-instance identity a TransferKey-grouped template needs.)
+- Every `Aggregating: true` Rail is absent from `Child` positions in chains.
+- Every `XorGroup` membership is consistent (all members share `Parent`).
+- Every `Completion` and `Cadence` literal is in the v1 vocabulary.
+- Every `LimitSchedule` `(ParentRole, TransferType)` combination is unique.
+- Every `MaxUnbundledAge` is set only on Rails that appear in some AggregatingRail's `BundlesActivity` (otherwise the watch can never fire).
+- Every `BundleSelector` of the form `TransferTemplateName.LegRailName` references a rail that's actually in that template's `LegRails`.
+- Every leg of every Rail resolves to an Origin (per the resolution rules in "Per-leg Origin"). Unresolved legs are a load-time configuration error.
+- Per-leg overrides (`SourceOrigin`, `DestinationOrigin`) appear only on 2-leg rails. Their presence on a 1-leg rail is a load-time warning (the field is ignored).
 
 ---
 
-### Worked example shapes
+## Worked example shapes
 
-The shapes below are illustrative, deliberately abstracted. Each demonstrates one primitive in isolation; none describe a real institution.
-
-#### Singleton account
+### Singleton account
 ```yaml
 - id: clearing-suspense
   name: Clearing Suspense
@@ -441,28 +592,53 @@ The shapes below are illustrative, deliberately abstracted. Each demonstrates on
   expected_eod_balance: 0
 ```
 
-#### Account template
+### Account template
 ```yaml
 - role: CustomerSubledger
   scope: internal
   parent_role: CustomerLedger
 # Assumes a singleton Account with role: CustomerLedger declared
-# elsewhere in the same instance — AccountTemplate.ParentRole MUST
-# resolve to a singleton, never to another template.
+# elsewhere in the same instance.
 ```
 
-#### Two-leg standalone rail
+### Two-leg standalone rail (shared Origin)
+```yaml
+- name: InternalSweep
+  transfer_type: sweep
+  source_role: ClearingSuspense
+  destination_role: NorthPool
+  expected_net: 0
+  origin: InternalInitiated                    # both legs are internal-initiated
+  metadata_keys: [business_day]
+```
+
+### Two-leg rail with per-leg Origin
 ```yaml
 - name: ExternalRailInbound
   transfer_type: ach
   source_role: ExternalCounterparty
   destination_role: ClearingSuspense
   expected_net: 0
-  origin: ExternalForcePosted
+  source_origin: ExternalForcePosted           # external party drove the inbound
+  destination_origin: InternalInitiated        # we recorded the credit on our books
   metadata_keys: [external_reference, originator_id]
+  posted_requirements: [external_reference]    # bank reference number is required (integrator-declared)
+  max_pending_age: PT24H                       # ETL should complete within a day
 ```
 
-#### Single-leg rail (reconciled by a TransferTemplate)
+### Two-leg rail with union destination role
+```yaml
+- name: InternalPayout
+  transfer_type: internal_transfer
+  source_role: MerchantLedger
+  destination_role: (MerchantLedger | CustomerSubledger)   # union — either is admissible
+  expected_net: 0
+  origin: InternalInitiated
+  metadata_keys: [paying_merchant_id, receiving_party_id, party_kind]
+  posted_requirements: [party_kind]            # ETL MUST tag which kind of destination this is
+```
+
+### Single-leg debit rail
 ```yaml
 - name: SubledgerCharge
   transfer_type: charge
@@ -470,10 +646,24 @@ The shapes below are illustrative, deliberately abstracted. Each demonstrates on
   leg_direction: Debit
   origin: InternalInitiated
   metadata_keys: [merchant_id, customer_id, settlement_period]
-  # Reconciled as a leg of MerchantSettlementCycle (TransferTemplate below).
+  max_unbundled_age: PT4H                      # PoolBalancing should sweep within 4 hours
+  # TransferKey fields (merchant_id, settlement_period) auto-derived to
+  # PostedRequirements via MerchantSettlementCycle below.
 ```
 
-#### Single-leg variable-direction rail
+### Single-leg credit rail (mirror)
+```yaml
+- name: SubledgerRefund
+  transfer_type: refund
+  leg_role: CustomerSubledger
+  leg_direction: Credit
+  origin: InternalInitiated
+  metadata_keys: [merchant_id, customer_id, settlement_period, original_charge_id]
+  max_unbundled_age: PT4H
+  # Posted as a leg of MerchantSettlementCycle alongside SubledgerCharge.
+```
+
+### Single-leg variable-direction rail
 ```yaml
 - name: SettlementClose
   transfer_type: settlement
@@ -481,23 +671,24 @@ The shapes below are illustrative, deliberately abstracted. Each demonstrates on
   leg_direction: Variable
   origin: InternalInitiated
   metadata_keys: [merchant_id, settlement_period]
-  # Direction determined by the TransferTemplate's net-zero requirement.
+  # Direction + amount determined by the TransferTemplate's net-zero
+  # requirement; MUST be the last leg posted on its Transfer.
 ```
 
-#### Transfer template
+### Transfer template
 ```yaml
 - name: MerchantSettlementCycle
   transfer_type: settlement_cycle
   expected_net: 0
   transfer_key: [merchant_id, settlement_period]
-  completion: settlement_period_deadline
+  completion: metadata.settlement_period_end
   leg_rails:
     - SubledgerCharge
     - SubledgerRefund
     - SettlementClose
 ```
 
-#### Aggregating rail (two-leg, intraday)
+### Aggregating rail (two-leg, intraday) — demonstrating BundleSelector forms
 ```yaml
 - name: PoolBalancingNorthToSouth
   transfer_type: pool_balancing
@@ -507,18 +698,41 @@ The shapes below are illustrative, deliberately abstracted. Each demonstrates on
   origin: InternalInitiated
   metadata_keys: [bundled_transfer_type, business_day]
   aggregating: true
-  bundles_activity: [SubledgerCharge, SubledgerRefund, SettlementClose]
   cadence: intraday-2h
+  bundles_activity:
+    # Leg-scoped — only these specific leg-patterns of MerchantSettlementCycle
+    - MerchantSettlementCycle.SubledgerCharge
+    - MerchantSettlementCycle.SubledgerRefund
+    - MerchantSettlementCycle.SettlementClose
+    # RailName form — every Transfer produced by this standalone rail
+    - InternalPayout
+    # TransferType form — every Transfer of this type, regardless of producing rail
+    - cross_world_transfer
 ```
 
-#### Chain — XOR group with TransferTemplate parent
+### Aggregating rail (single-leg, monthly)
+```yaml
+- name: ExternalFeeAssessment
+  transfer_type: fee
+  leg_role: ExternalCounterparty
+  leg_direction: Debit
+  origin: ExternalForcePosted
+  metadata_keys: [accrual_period]
+  aggregating: true
+  cadence: monthly-eom
+  bundles_activity: [SubledgerCharge]
+  # Single-leg aggregating rail — exempt from "must be reconciled by another rail."
+  # By design it sweeps drift into an external counterparty.
+```
+
+### Chain — XOR group with TransferTemplate parent
 ```yaml
 - parent: MerchantSettlementCycle
   child: MerchantPayoutACH
   required: false
   xor_group: PayoutVehicle
 - parent: MerchantSettlementCycle
-  child: MerchantPayoutVoucher
+  child: MerchantPayoutWire
   required: false
   xor_group: PayoutVehicle
 - parent: MerchantSettlementCycle
@@ -528,25 +742,26 @@ The shapes below are illustrative, deliberately abstracted. Each demonstrates on
 # Exactly one of the three vehicles fires per settlement cycle.
 ```
 
-#### Chain — fan-out (one parent, many children)
+### Chain — fan-out (one parent, many children)
 ```yaml
 - parent: BatchInbound
   child: PerRecipientCredit
   required: true
-# The required-true on a one-to-many fan-out means at least one child
-# must fire (typical: many fire, one per item in the batch).
+# Required: true on a one-to-many fan-out means at least one child
+# must fire (typical: many fire, one per item in the batch). The
+# child's parent_transfer_id is auto-added to its PostedRequirements.
 ```
 
-#### Limit schedule
+### Limit schedule
 ```yaml
 - parent_role: NorthPool
   transfer_type: ach
   cap: 5000.00
 ```
 
-#### End-to-end: a complete merchant-acquiring instance
+### End-to-end: a complete merchant-acquiring instance
 
-The fragment below shows every primitive composed into one coherent declaration — an abstract "merchant acquiring" pipeline where customers charge against subledgers, refunds and settlements net per merchant period, and a single payout vehicle drains each settled merchant.
+This example exercises every L2 primitive — singleton accounts, account templates, two-leg + single-leg + variable-direction + aggregating rails, per-leg Origin, union roles, transfer templates, chains with XOR groups, limit schedules, PostedRequirements, MaxPendingAge, MaxUnbundledAge, and BundleSelector in three forms.
 
 ```yaml
 instance: example_acquirer
@@ -582,38 +797,60 @@ account_templates:
 
 # ---- Rails ------------------------------------------------------------------
 rails:
-  # Leg patterns of MerchantSettlementCycle (single-leg)
+  # ===== Leg patterns of MerchantSettlementCycle (single-leg) =================
+
   - name: SubledgerCharge
     transfer_type: charge
     leg_role: CustomerSubledger
     leg_direction: Debit
     origin: InternalInitiated
     metadata_keys: [merchant_id, customer_id, settlement_period, settlement_period_end]
+    max_pending_age: PT4H        # ETL should complete within 4h
+    max_unbundled_age: PT4H      # PoolBalancing should sweep within 4h
 
   - name: SubledgerRefund
     transfer_type: refund
     leg_role: CustomerSubledger
     leg_direction: Credit
     origin: InternalInitiated
-    metadata_keys: [merchant_id, customer_id, settlement_period, settlement_period_end]
+    metadata_keys: [merchant_id, customer_id, settlement_period, settlement_period_end, original_charge_id]
+    max_pending_age: PT4H
+    max_unbundled_age: PT4H
 
   - name: SettlementClose
     transfer_type: settlement
     leg_role: MerchantLedger
-    leg_direction: Variable
+    leg_direction: Variable      # amount + direction set by Transfer's net-zero
     origin: InternalInitiated
     metadata_keys: [merchant_id, settlement_period, settlement_period_end]
+    max_unbundled_age: PT4H
 
-  # Standalone two-leg rails (vehicles)
+  # ===== Vehicle Transfers (chained children of the settlement cycle) ========
+
+  # Vehicle 1: outbound ACH — per-leg Origin (internal sweep + external landing)
   - name: MerchantPayoutACH
     transfer_type: ach
     source_role: MerchantLedger
     destination_role: ExternalCounterparty
     expected_net: 0
-    origin: InternalInitiated
-    metadata_keys: [merchant_id, settlement_period]
+    source_origin: InternalInitiated         # we initiated the debit on the merchant
+    destination_origin: ExternalForcePosted  # external bank's books are where it lands
+    metadata_keys: [merchant_id, settlement_period, external_reference]
+    posted_requirements: [external_reference]   # bank trace number required
+    max_pending_age: PT24H
 
-  # Aggregating rail (closes pool drift caused by single-leg activity)
+  # Vehicle 2: internal payout — union destination role
+  - name: MerchantPayoutInternal
+    transfer_type: internal_transfer
+    source_role: MerchantLedger
+    destination_role: (MerchantLedger | CustomerSubledger)   # could be either
+    expected_net: 0
+    origin: InternalInitiated
+    metadata_keys: [merchant_id, settlement_period, receiving_party_id, receiving_party_kind]
+    posted_requirements: [receiving_party_kind]   # disambiguator for the union
+
+  # ===== Aggregating rail (closes pool drift) ================================
+
   - name: PoolBalancingSouthToNorth
     transfer_type: pool_balancing
     source_role: SouthPool
@@ -622,8 +859,12 @@ rails:
     origin: InternalInitiated
     metadata_keys: [bundled_transfer_type, business_day]
     aggregating: true
-    bundles_activity: [SubledgerCharge, SubledgerRefund, SettlementClose]
     cadence: intraday-2h
+    bundles_activity:
+      # Leg-scoped: just these legs of MerchantSettlementCycle
+      - MerchantSettlementCycle.SubledgerCharge
+      - MerchantSettlementCycle.SubledgerRefund
+      - MerchantSettlementCycle.SettlementClose
 
 # ---- Transfer template ------------------------------------------------------
 transfer_templates:
@@ -639,73 +880,40 @@ transfer_templates:
 
 # ---- Chains -----------------------------------------------------------------
 chains:
+  # Exactly one payout vehicle per settled merchant — XOR group:
   - parent: MerchantSettlementCycle
-    child:  MerchantPayoutACH
-    required: true
+    child: MerchantPayoutACH
+    required: false
+    xor_group: PayoutVehicle
+
+  - parent: MerchantSettlementCycle
+    child: MerchantPayoutInternal
+    required: false
+    xor_group: PayoutVehicle
 
 # ---- Limit schedules --------------------------------------------------------
 limit_schedules:
   - parent_role: SouthPool
     transfer_type: charge
-    cap: 5000.00
+    cap: 5000.00       # per-customer daily charge cap
 ```
 
 What this composes:
-- **Charges** debit individual customer subledgers as they happen; **refunds** credit them. Both fire as legs of the per-(merchant, settlement_period) shared Transfer.
+- **Charges and refunds** post as single-leg debits/credits to individual customer subledgers as they happen. Both fire as legs of the per-(merchant, settlement_period) shared Transfer. `merchant_id` and `settlement_period` are auto-derived as PostedRequirements via TransferKey; the integrator declares no extra requirements on them.
 - At period end, **SettlementClose** fires once per merchant with the net amount and direction needed to bring the shared Transfer to `ExpectedNet=0`. L1 Conservation flags the Transfer if SettlementClose never fires; Timeliness flags it if any leg posts after the period's `settlement_period_end`.
-- **PoolBalancingSouthToNorth** runs every 2 hours, sweeping the pool drift the single-leg charges/refunds/settlements have created.
-- After SettlementClose, the **MerchantPayoutACH** Transfer (chained to the MerchantSettlementCycle Transfer) drains the merchant's accumulated balance to the external counterparty.
+- **PoolBalancingSouthToNorth** runs every 2 hours, sweeping the pool drift the single-leg activity creates. Leg-scoped `BundleSelector`s confine its sweep to MerchantSettlementCycle's leg postings only.
+- After SettlementClose, **exactly one of** the two payout vehicles fires per settled merchant (XOR group `PayoutVehicle`):
+  - **MerchantPayoutACH** — outbound ACH; per-leg Origin distinguishes the internal merchant-debit (`InternalInitiated`) from the external bank landing (`ExternalForcePosted`). Requires a bank trace number (`external_reference`) before it can be Posted.
+  - **MerchantPayoutInternal** — same-system payout to either another merchant OR a customer subledger (union destination role). The integrator's ETL must tag `receiving_party_kind` so the destination role resolves unambiguously.
+- **Aging watches** catch operational failures distinctly from structural ones: `MaxPendingAge` flags ETL stuck-Pending; `MaxUnbundledAge` flags bundler-stuck-Posted. Both are operational health checks, not structural exceptions.
+- **Auto-derived PostedRequirements** ensure structural integrity: TransferKey fields can't be NULL on leg postings; `parent_transfer_id` can't be NULL on a `required: true` chained child. Integrators add their own (e.g., `external_reference` on the ACH payout, `receiving_party_kind` on the internal payout) for domain-specific completeness.
 
 ---
 
-### Deliberately not in v1
+## Deliberately not in v1
 
-- **Scope predicates.** Earlier drafts considered named groups of accounts/types for scoping L1 constraints. With Roles + per-account typed L1 fields (ExpectedEODBalance, etc.), scope predicates aren't needed in v1. Revisit if a real integrator needs to express something the typed fields can't (e.g., "limit applies only on business days").
+- **Scope predicates.** Earlier drafts considered named groups of accounts/types for scoping L1 constraints. With Roles + per-account typed L1 fields (ExpectedEODBalance, etc.), scope predicates aren't needed in v1. Revisit if a real integrator needs to express something the typed fields can't.
 - **Failure category catalogue.** Failure shapes (Stuck, Drift, OutOfBounds, etc.) are scenario-declaration concerns, not L2 primitive concerns; they live in a sibling document.
-- **Per-leg `Origin`.** The current Rail shape carries `Origin` at the rail level. If real flows surface that need per-leg Origin (e.g., the customer-facing leg is `InternalInitiated` but the funding leg is `ExternalForcePosted`), extend the Rail with an optional per-leg-Origin override. Not needed in v1.
 - **Time-varying limits.** Limit Schedules are time-invariant in v1. Per-day or per-window caps await a real integrator requirement.
 - **Cross-instance JOINs.** Two L2 instances coexist via prefixing but cannot be queried together. If federated analytics across instances is needed, that's a higher-layer concern.
-
-## Users
-Four main audiences, with different needs:
-
-- **Business Analyst / Product Owner (PO)** customizing the apps onto their backends:
-  - Need to describe the institution's structure and relationships to other financial partners to the tool so that business relavant training data is generated
-  - Need to train the other audiences, a stable business relevant demo system plus a version connected to real data is ideal
-- **Integration Engineers**
-  - Need to understand the two data source tables that drive this application
-  - Have to write ETL processes to regularly populate the tables with data
-  - May need to create additional custom applications building upon, extending or transforming the default applications
-  - Edit each behavior in one place (DRY)
-  - Trust a comprehensive test suite to catch regressions
-  - Iterate fast — regenerate + redeploy in one command
-  - Reskin via theme presets so the dashboards land inside the host system
-- **Non-technical accountants** consuming the dashboards:
-  - Job is to find problems and route them to the team that fixes them
-  - These dashboards are unfamiliar — plain-English labels, hint text, and Getting Started rich text are critical
-  - Strong accounting background; not programmers
-  - Need to recognize *when* something needs investigation, not how to fix the broken upstream system
-- **Third party stakeholders** consuming the dashboards:
-  - Want data for metrics or to support compliance needs
-  - They will not be the primary users but the system should be extensible to meet the changing requirements they will bring
-
-## Workflow Ideas
-- PO installs `quicksight-gen`, runs `quicksight-gen --help`, sees guideance to start with a demo config.
-- PO next runs `quicksight-gen generate config demo > demo.yaml` and a demo config is output.
--  PO is told the demo.yaml needs updates for their environment.
-- PO edits the `demo.yaml` and fills in the AWS/postgres connection details from the placeholders at the top.
-- PO next runs `quicksight-gen generate dashboards --config demo.yaml --output demo_dir/` and the json/schema/test data are created.
-- PO next runs `quicksight-gen apply schema --config demo.yaml --input demo_dir/` and the database schema is (re)populated.
-- PO next runs `quicksight-gen apply data --config demo.yaml --input demo_dir/` and the database is (re)populated with test data.
-- PO next runs `quicksight-gen apply dashboards --config demo.yaml --input demo_dir/` and quicksight is (re)created.
-- PO next runs `quicksight-gen generate training --config demo.yaml` and a demo training site is output with screenshots inserted.
-- PO reads the site, understands what the tool can do and next wants to start iterating on their own version.
-- PO next runs `quicksight-gen generate config template > my_site.yaml` and an example config is output. PO is told they need to replace placeholders for their environment, relationships and any other needed data.
-- Rest of the steps mirror the demo generation/apply steps.
-
-## Current State as of v5.0.2
-See README.md, CLAUDE.md and RELEASE_NOTES.md for the current extensive state. To be very clear, the core tool works and is flexible enough to handle almost any business scenario however as is described in the current challenges it is the test and training side that is problematic.
-
-## Current Challenges of v5.0.2
-The default application, demo scenarios and test data are tightly coupled and very fragile. The ability to retheme is based on a simple string replacement process but does not enable an implementation team to shape the data and scenarios to their exact business situation while still producing stable training scenarios for the end user.
-
+- **Bidirectional aggregating rails.** Aggregating rails whose net direction varies day-to-day are modeled as two separate Rails (one per direction). A unified bidirectional shape is deferred until the two-rail pattern proves cumbersome at scale.

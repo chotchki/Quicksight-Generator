@@ -15,6 +15,7 @@ External callers import from this package's public surface, not from any
 internal submodule.
 """
 
+from .derived import PARENT_TRANSFER_ID, posted_requirements_for
 from .loader import L2LoaderError, load_instance
 from .schema import emit_schema
 from .validate import L2ValidationError, validate
@@ -25,6 +26,7 @@ from .primitives import (
     CadenceExpression,
     ChainEntry,
     CompletionExpression,
+    Duration,
     Identifier,
     L2Instance,
     LegDirection,
@@ -36,6 +38,7 @@ from .primitives import (
     RoleExpression,
     Scope,
     SingleLegRail,
+    SupersedeReason,
     TransferTemplate,
     TransferType,
     TwoLegRail,
@@ -48,6 +51,7 @@ __all__ = [
     "CadenceExpression",
     "ChainEntry",
     "CompletionExpression",
+    "Duration",
     "Identifier",
     "L2Instance",
     "L2LoaderError",
@@ -57,14 +61,17 @@ __all__ = [
     "Money",
     "Name",
     "Origin",
+    "PARENT_TRANSFER_ID",
     "Rail",
     "RoleExpression",
     "Scope",
     "SingleLegRail",
+    "SupersedeReason",
     "TransferTemplate",
     "TransferType",
     "TwoLegRail",
     "emit_schema",
     "load_instance",
+    "posted_requirements_for",
     "validate",
 ]

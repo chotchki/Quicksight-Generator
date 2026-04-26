@@ -163,3 +163,117 @@ def test_aggregating_flag_optional_on_both_rail_shapes() -> None:
     )
     assert single.aggregating is True
     assert single.cadence == "daily-eod"
+
+
+# -- M.1a.2: per-leg Origin, PostedRequirements, aging, Duration ------------
+
+
+from datetime import timedelta  # noqa: E402  (test-local import for clarity)
+
+
+def test_two_leg_rail_accepts_per_leg_origin_overrides() -> None:
+    """Per SPEC: 2-leg rails MAY override Origin per leg (the leg touching
+    an external counterparty often differs from its internal counterpart)."""
+    rail = TwoLegRail(
+        name=Identifier("ExtRailInbound"),
+        transfer_type="ach",
+        metadata_keys=(),
+        source_role=(Identifier("ExternalCounterparty"),),
+        destination_role=(Identifier("ClearingSuspense"),),
+        source_origin="ExternalForcePosted",
+        destination_origin="InternalInitiated",
+        expected_net=Decimal("0"),
+    )
+    assert rail.origin is None
+    assert rail.source_origin == "ExternalForcePosted"
+    assert rail.destination_origin == "InternalInitiated"
+
+
+def test_two_leg_rail_origin_optional_when_per_leg_set() -> None:
+    """Rail-level origin can be None when both per-leg overrides are set."""
+    rail = TwoLegRail(
+        name=Identifier("R"),
+        transfer_type="ach",
+        metadata_keys=(),
+        source_role=(Identifier("A"),),
+        destination_role=(Identifier("B"),),
+        source_origin="ExternalForcePosted",
+        destination_origin="InternalInitiated",
+        expected_net=Decimal("0"),
+    )
+    assert rail.origin is None
+
+
+def test_single_leg_rail_has_no_per_leg_origin_fields() -> None:
+    """Per-leg overrides are intentionally absent on SingleLegRail
+    (type-level prevention; loader hard-errors if YAML supplies them)."""
+    assert not hasattr(SingleLegRail, "source_origin")
+    assert not hasattr(SingleLegRail, "destination_origin")
+
+
+def test_rails_carry_posted_requirements() -> None:
+    """Per SPEC: integrator-declared PostedRequirements list lives on the Rail."""
+    rail = SingleLegRail(
+        name=Identifier("ExtRail"),
+        transfer_type="ach",
+        metadata_keys=(Identifier("external_reference"),),
+        leg_role=(Identifier("InternalDDA"),),
+        leg_direction="Credit",
+        origin="ExternalForcePosted",
+        posted_requirements=(Identifier("external_reference"),),
+    )
+    assert rail.posted_requirements == (Identifier("external_reference"),)
+
+
+def test_rails_carry_aging_thresholds() -> None:
+    """Per SPEC: max_pending_age + max_unbundled_age are Duration-typed."""
+    rail = TwoLegRail(
+        name=Identifier("R"),
+        transfer_type="ach",
+        metadata_keys=(),
+        source_role=(Identifier("A"),),
+        destination_role=(Identifier("B"),),
+        origin="InternalInitiated",
+        expected_net=Decimal("0"),
+        max_pending_age=timedelta(hours=24),
+        max_unbundled_age=timedelta(hours=4),
+    )
+    assert rail.max_pending_age == timedelta(hours=24)
+    assert rail.max_unbundled_age == timedelta(hours=4)
+
+
+def test_rails_default_to_no_aging_or_posted_requirements() -> None:
+    """All three new fields default to None / empty so existing callers
+    that don't supply them keep working."""
+    rail = SingleLegRail(
+        name=Identifier("R"),
+        transfer_type="t",
+        metadata_keys=(),
+        leg_role=(Identifier("A"),),
+        leg_direction="Debit",
+        origin="InternalInitiated",
+    )
+    assert rail.posted_requirements == ()
+    assert rail.max_pending_age is None
+    assert rail.max_unbundled_age is None
+
+
+def test_supersede_reason_v1_set() -> None:
+    """SPEC v1 SupersedeReason categories. The TypeAlias is open (Literal
+    accepts the v1 set; storage column is open enum at the schema layer)."""
+    from quicksight_gen.common.l2 import SupersedeReason
+    # Smoke: the three v1 values type-check as SupersedeReason at runtime.
+    inflight: SupersedeReason = "Inflight"
+    bundle: SupersedeReason = "BundleAssignment"
+    correction: SupersedeReason = "TechnicalCorrection"
+    assert {inflight, bundle, correction} == {
+        "Inflight", "BundleAssignment", "TechnicalCorrection",
+    }
+
+
+def test_duration_is_timedelta() -> None:
+    """Duration is an alias for datetime.timedelta — same arithmetic + comparisons."""
+    from quicksight_gen.common.l2 import Duration
+    d: Duration = timedelta(hours=24)
+    assert isinstance(d, timedelta)
+    assert d == timedelta(days=1)

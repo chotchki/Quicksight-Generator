@@ -33,6 +33,7 @@ Errors raise ``L2LoaderError`` with a logical path (e.g.
 from __future__ import annotations
 
 import re
+from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import cast
@@ -46,6 +47,7 @@ from .primitives import (
     CadenceExpression,
     ChainEntry,
     CompletionExpression,
+    Duration,
     Identifier,
     L2Instance,
     LegDirection,
@@ -147,6 +149,55 @@ def _load_money(raw: object, *, path: str) -> Money:
         f"{path}: expected money (number or decimal string), "
         f"got {type(raw).__name__}"
     )
+
+
+# -- Duration parsing (ISO 8601, M.1a.2) -------------------------------------
+
+
+# ISO 8601 duration subset supporting the SPEC's worked-example shapes:
+# ``PT24H`` (hours), ``PT4H`` (hours), ``PT30M`` (minutes), ``P1D`` (days),
+# ``P7D`` (days), and combinations like ``P1DT12H`` (mixed days+hours).
+# Years/months are deliberately rejected — neither has a fixed
+# ``timedelta`` representation (a "month" depends on which calendar
+# month you're in). Aging windows in v1 are short enough that
+# days+hours+minutes+seconds covers every realistic case.
+_ISO_DURATION_RE = re.compile(
+    r"^P"
+    r"(?:(?P<days>\d+)D)?"
+    r"(?:T"
+    r"(?:(?P<hours>\d+)H)?"
+    r"(?:(?P<minutes>\d+)M)?"
+    r"(?:(?P<seconds>\d+)S)?"
+    r")?$"
+)
+
+
+def _load_duration(raw: object, *, path: str) -> Duration:
+    """Parse an ISO 8601 duration literal into ``datetime.timedelta``.
+
+    Accepts the shapes the SPEC's aging-window examples use: ``PT24H``,
+    ``PT4H``, ``PT30M``, ``P1D``, ``P7D``, plus combined forms
+    (``P1DT12H``). Rejects year/month forms (no fixed duration) and any
+    string that doesn't fit the ISO 8601 grammar.
+    """
+    if not isinstance(raw, str):
+        raise L2LoaderError(
+            f"{path}: expected ISO 8601 duration string (e.g. 'PT24H'), "
+            f"got {type(raw).__name__}"
+        )
+    match = _ISO_DURATION_RE.match(raw)
+    if match is None or raw == "P" or raw == "PT":
+        raise L2LoaderError(
+            f"{path}={raw!r}: not an ISO 8601 duration literal "
+            f"(expected forms like 'PT24H', 'P1D', 'P1DT12H'; year/month "
+            f"forms not supported)"
+        )
+    parts = {k: int(v) for k, v in match.groupdict().items() if v is not None}
+    if not parts:
+        raise L2LoaderError(
+            f"{path}={raw!r}: empty duration (no numeric components)"
+        )
+    return timedelta(**parts)
 
 
 # -- Generic field helpers ---------------------------------------------------
@@ -295,7 +346,13 @@ def _load_account_template(raw: object, *, path: str) -> AccountTemplate:
 
 
 def _load_rail(raw: object, *, path: str) -> Rail:
-    """Discriminate two-leg vs single-leg by which keys are present."""
+    """Discriminate two-leg vs single-leg by which keys are present.
+
+    Per M.1a SPEC catch-up: ``origin`` is optional at the rail level
+    (per-leg ``source_origin`` / ``destination_origin`` may cover both
+    legs on a two-leg rail; the validator's O1 rule checks resolution).
+    Per-leg overrides on a single-leg rail are a hard load-time error.
+    """
     raw_d = _as_mapping(raw, path=path, what="rail")
 
     name = _load_identifier(_require(raw_d, "name", path=path), path=f"{path}.name")
@@ -303,11 +360,32 @@ def _load_rail(raw: object, *, path: str) -> Rail:
         _require(raw_d, "transfer_type", path=path),
         path=f"{path}.transfer_type",
     )
-    origin: Origin = _load_string(
-        _require(raw_d, "origin", path=path), path=f"{path}.origin",
+    origin_raw = raw_d.get("origin")
+    origin: Origin | None = (
+        _load_string(origin_raw, path=f"{path}.origin")
+        if origin_raw is not None else None
     )
     metadata_keys = _load_identifier_list(
         raw_d.get("metadata_keys"), path=f"{path}.metadata_keys",
+    )
+
+    # PostedRequirements (integrator-declared); see derived.py for the
+    # full computed set that unions in TransferKey + chain-required.
+    posted_requirements = _load_identifier_list(
+        raw_d.get("posted_requirements"),
+        path=f"{path}.posted_requirements",
+    )
+
+    # Aging watches.
+    mpa_raw = raw_d.get("max_pending_age")
+    max_pending_age: Duration | None = (
+        _load_duration(mpa_raw, path=f"{path}.max_pending_age")
+        if mpa_raw is not None else None
+    )
+    mua_raw = raw_d.get("max_unbundled_age")
+    max_unbundled_age: Duration | None = (
+        _load_duration(mua_raw, path=f"{path}.max_unbundled_age")
+        if mua_raw is not None else None
     )
 
     # Aggregating flags can appear on either shape.
@@ -347,10 +425,21 @@ def _load_rail(raw: object, *, path: str) -> Rail:
                 f"destination_role"
             )
         en = raw_d.get("expected_net")
+        # Per-leg Origin overrides. Loader pulls them; validator's O1
+        # rule checks every leg resolves under the SPEC's resolution table.
+        so_raw = raw_d.get("source_origin")
+        source_origin: Origin | None = (
+            _load_string(so_raw, path=f"{path}.source_origin")
+            if so_raw is not None else None
+        )
+        do_raw = raw_d.get("destination_origin")
+        destination_origin: Origin | None = (
+            _load_string(do_raw, path=f"{path}.destination_origin")
+            if do_raw is not None else None
+        )
         return TwoLegRail(
             name=name,
             transfer_type=transfer_type,
-            origin=origin,
             metadata_keys=metadata_keys,
             source_role=_load_role_expression(
                 raw_d["source_role"], path=f"{path}.source_role",
@@ -358,8 +447,14 @@ def _load_rail(raw: object, *, path: str) -> Rail:
             destination_role=_load_role_expression(
                 raw_d["destination_role"], path=f"{path}.destination_role",
             ),
+            origin=origin,
+            source_origin=source_origin,
+            destination_origin=destination_origin,
             expected_net=_load_money(en, path=f"{path}.expected_net")
             if en is not None else None,
+            posted_requirements=posted_requirements,
+            max_pending_age=max_pending_age,
+            max_unbundled_age=max_unbundled_age,
             aggregating=aggregating,
             bundles_activity=bundles_activity,
             cadence=cadence,
@@ -370,10 +465,18 @@ def _load_rail(raw: object, *, path: str) -> Rail:
         raise L2LoaderError(
             f"{path}: single-leg rail requires both leg_role and leg_direction"
         )
+    # Per-leg Origin overrides only make sense on a 2-leg rail. Hard
+    # error per the M.1a design call (no warning channel today).
+    for forbidden in ("source_origin", "destination_origin"):
+        if forbidden in raw_d:
+            raise L2LoaderError(
+                f"{path}.{forbidden}: per-leg Origin overrides are only "
+                f"valid on two-leg rails; remove this field or restructure "
+                f"the rail as two-leg"
+            )
     return SingleLegRail(
         name=name,
         transfer_type=transfer_type,
-        origin=origin,
         metadata_keys=metadata_keys,
         leg_role=_load_role_expression(
             raw_d["leg_role"], path=f"{path}.leg_role",
@@ -381,6 +484,10 @@ def _load_rail(raw: object, *, path: str) -> Rail:
         leg_direction=_load_leg_direction(
             raw_d["leg_direction"], path=f"{path}.leg_direction",
         ),
+        origin=origin,
+        posted_requirements=posted_requirements,
+        max_pending_age=max_pending_age,
+        max_unbundled_age=max_unbundled_age,
         aggregating=aggregating,
         bundles_activity=bundles_activity,
         cadence=cadence,

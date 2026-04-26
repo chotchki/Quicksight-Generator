@@ -170,7 +170,7 @@ def emit_seed_sql(inst: L2Instance) -> str:
             metadata=f'{{"external_reference": "ER-{i:03d}"}}',
         ))
 
-    transactions_insert = "INSERT INTO {p}_transactions (id, account_id, account_name, account_scope, amount_money, amount_direction, status, posting, transfer_id, transfer_type, transfer_completion, origin, metadata) VALUES\n  ".format(p=p) + ",\n  ".join(transaction_rows) + ";"
+    transactions_insert = "INSERT INTO {p}_transactions (id, account_id, account_name, account_scope, amount_money, amount_direction, status, posting, transfer_id, transfer_type, transfer_completion, rail_name, origin, metadata) VALUES\n  ".format(p=p) + ",\n  ".join(transaction_rows) + ";"
 
     # One StoredBalance for int-001 on 2026-04-25; money=$450, drift=$50 low.
     daily_balance_insert = (
@@ -210,7 +210,8 @@ def _txn_row(
     return (
         f"('{id_}', '{account_id}', '{account_name}', '{account_scope}', "
         f"{money}, '{direction}', 'Posted', '{posting}', "
-        f"'{transfer_id}', 'ach', NULL, 'ExternalForcePosted', '{metadata}')"
+        f"'{transfer_id}', 'ach', NULL, 'ExtInbound', "
+        f"'ExternalForcePosted', '{metadata}')"
     )
 
 

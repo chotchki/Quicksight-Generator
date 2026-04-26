@@ -549,3 +549,209 @@ def test_v2_cadence_vocabulary_rejects_invalid(bad_cadence: str) -> None:
     bad = _replace(inst, rails=(*inst.rails[:2], bad_rail))
     with pytest.raises(L2ValidationError, match="not a v1 CadenceExpression"):
         validate(bad)
+
+
+# -- M.1a.3: New SPEC rules (U5, R7, R8, R9, O1) ----------------------------
+
+
+def test_u5_duplicate_limit_schedule_combination_rejected() -> None:
+    """U5: (parent_role, transfer_type) MUST be unique across LimitSchedule."""
+    inst = _baseline_instance()
+    dup = LimitSchedule(
+        parent_role=inst.limit_schedules[0].parent_role,
+        transfer_type=inst.limit_schedules[0].transfer_type,
+        cap=Decimal("999.00"),
+    )
+    bad = _replace(inst, limit_schedules=(*inst.limit_schedules, dup))
+    with pytest.raises(L2ValidationError, match="duplicate"):
+        validate(bad)
+
+
+def test_u5_same_role_different_transfer_type_allowed() -> None:
+    """U5 negative: same parent_role with different transfer_type is fine."""
+    inst = _baseline_instance()
+    extra = LimitSchedule(
+        parent_role=inst.limit_schedules[0].parent_role,  # same role
+        transfer_type="charge",  # different type
+        cap=Decimal("100.00"),
+    )
+    ok = _replace(inst, limit_schedules=(*inst.limit_schedules, extra))
+    validate(ok)
+
+
+def test_r7_template_leg_rails_must_be_non_aggregating() -> None:
+    """R7: TransferTemplate.leg_rails entries MUST NOT reference aggregating rails."""
+    inst = _baseline_instance()
+    # Add an aggregating rail and reference it from the template's leg_rails.
+    agg = SingleLegRail(
+        name=Identifier("AggLeg"),
+        transfer_type="adj",
+        origin="InternalInitiated",
+        metadata_keys=(),
+        leg_role=(Identifier("ControlAccount"),),
+        leg_direction="Variable",
+        aggregating=True,
+        bundles_activity=(Identifier("charge"),),
+        cadence="daily-eod",
+    )
+    bad_template = dataclasses.replace(
+        inst.transfer_templates[0],
+        leg_rails=(*inst.transfer_templates[0].leg_rails, Identifier("AggLeg")),
+    )
+    bad = _replace(
+        inst,
+        rails=(*inst.rails, agg),
+        transfer_templates=(bad_template,),
+    )
+    with pytest.raises(
+        L2ValidationError,
+        match=r"leg_rails: rail 'AggLeg' is aggregating",
+    ):
+        validate(bad)
+
+
+def test_r8_max_unbundled_age_requires_a_bundling_rail() -> None:
+    """R8: max_unbundled_age set on a Rail nothing bundles is rejected."""
+    inst = _baseline_instance()
+    # SubledgerCharge has no aggregating rail bundling it (the baseline's
+    # PoolBalancing bundles "ach", not "charge"). Set max_unbundled_age to
+    # trigger the rule.
+    from datetime import timedelta
+    bad_rail = dataclasses.replace(
+        inst.rails[1],
+        max_unbundled_age=timedelta(hours=4),
+    )
+    bad = _replace(
+        inst, rails=(inst.rails[0], bad_rail, inst.rails[2]),
+    )
+    with pytest.raises(
+        L2ValidationError,
+        match=r"max_unbundled_age is set but no aggregating Rail bundles",
+    ):
+        validate(bad)
+
+
+def test_r8_max_unbundled_age_satisfied_by_transfer_type_match() -> None:
+    """R8 negative: a bare-identifier selector matching transfer_type satisfies the watch."""
+    inst = _baseline_instance()
+    # The baseline's PoolBalancing bundles "ach". Add max_unbundled_age
+    # to ExtInbound (whose transfer_type IS "ach"); should validate cleanly.
+    from datetime import timedelta
+    ok_rail = dataclasses.replace(
+        inst.rails[0],
+        max_unbundled_age=timedelta(hours=4),
+    )
+    ok = _replace(inst, rails=(ok_rail, *inst.rails[1:]))
+    validate(ok)
+
+
+def test_r9_dotted_bundle_selector_unknown_template_rejected() -> None:
+    """R9: dotted-form selector with unknown template name is rejected."""
+    inst = _baseline_instance()
+    bad_agg = dataclasses.replace(
+        inst.rails[2],
+        bundles_activity=(Identifier("UnknownTemplate.SubledgerCharge"),),
+    )
+    bad = _replace(inst, rails=(*inst.rails[:2], bad_agg))
+    with pytest.raises(
+        L2ValidationError,
+        match=r"references TransferTemplate 'UnknownTemplate' which is not declared",
+    ):
+        validate(bad)
+
+
+def test_r9_dotted_bundle_selector_unknown_leg_rejected() -> None:
+    """R9: dotted-form selector where leg-rail isn't actually in template's leg_rails."""
+    inst = _baseline_instance()
+    bad_agg = dataclasses.replace(
+        inst.rails[2],
+        bundles_activity=(
+            Identifier("MerchantSettlementCycle.NotAlegRail"),
+        ),
+    )
+    bad = _replace(inst, rails=(*inst.rails[:2], bad_agg))
+    with pytest.raises(
+        L2ValidationError,
+        match=r"references rail 'NotAlegRail' which is not in TransferTemplate",
+    ):
+        validate(bad)
+
+
+def test_r9_dotted_bundle_selector_valid_pair_accepted() -> None:
+    """R9 negative: a real Template.LegRail pair validates cleanly."""
+    inst = _baseline_instance()
+    ok_agg = dataclasses.replace(
+        inst.rails[2],
+        bundles_activity=(
+            Identifier("MerchantSettlementCycle.SubledgerCharge"),
+        ),
+    )
+    ok = _replace(inst, rails=(*inst.rails[:2], ok_agg))
+    validate(ok)
+
+
+def test_o1_single_leg_rail_without_origin_rejected() -> None:
+    """O1: single-leg rail with no origin set is rejected."""
+    inst = _baseline_instance()
+    bad_rail = dataclasses.replace(inst.rails[1], origin=None)
+    bad = _replace(inst, rails=(inst.rails[0], bad_rail, inst.rails[2]))
+    with pytest.raises(
+        L2ValidationError,
+        match=r"single-leg rail MUST set origin",
+    ):
+        validate(bad)
+
+
+def test_o1_two_leg_rail_with_no_origin_anywhere_rejected() -> None:
+    """O1: two-leg rail with no origin AND no per-leg overrides is rejected."""
+    inst = _baseline_instance()
+    bad_rail = dataclasses.replace(inst.rails[0], origin=None)
+    bad = _replace(inst, rails=(bad_rail, *inst.rails[1:]))
+    with pytest.raises(
+        L2ValidationError,
+        match=r"two-leg rail's source leg has no resolved Origin",
+    ):
+        validate(bad)
+
+
+def test_o1_two_leg_rail_one_override_no_fallback_rejected() -> None:
+    """O1: one per-leg override + no rail-level origin = the OTHER leg unresolved."""
+    inst = _baseline_instance()
+    bad_rail = dataclasses.replace(
+        inst.rails[0],
+        origin=None,
+        source_origin="ExternalForcePosted",
+        # destination_origin still None; rail-level origin still None
+    )
+    bad = _replace(inst, rails=(bad_rail, *inst.rails[1:]))
+    with pytest.raises(
+        L2ValidationError,
+        match=r"two-leg rail's destination leg has no resolved Origin",
+    ):
+        validate(bad)
+
+
+def test_o1_two_leg_rail_one_override_plus_rail_origin_accepted() -> None:
+    """O1 negative: one per-leg override + rail-level origin fallback is valid."""
+    inst = _baseline_instance()
+    ok_rail = dataclasses.replace(
+        inst.rails[0],
+        origin="InternalInitiated",  # fallback
+        source_origin="ExternalForcePosted",  # override on source
+        # destination falls back to rail-level "InternalInitiated"
+    )
+    ok = _replace(inst, rails=(ok_rail, *inst.rails[1:]))
+    validate(ok)
+
+
+def test_o1_two_leg_rail_both_per_leg_overrides_accepted() -> None:
+    """O1 negative: both per-leg overrides cover both legs without rail-level origin."""
+    inst = _baseline_instance()
+    ok_rail = dataclasses.replace(
+        inst.rails[0],
+        origin=None,
+        source_origin="ExternalForcePosted",
+        destination_origin="InternalInitiated",
+    )
+    ok = _replace(inst, rails=(ok_rail, *inst.rails[1:]))
+    validate(ok)

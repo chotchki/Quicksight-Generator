@@ -75,6 +75,7 @@ DROP INDEX IF EXISTS idx_{p}_transactions_transfer;
 DROP INDEX IF EXISTS idx_{p}_transactions_type_status;
 DROP INDEX IF EXISTS idx_{p}_transactions_business_day;
 DROP INDEX IF EXISTS idx_{p}_transactions_parent;
+DROP INDEX IF EXISTS idx_{p}_transactions_bundler_eligibility;
 DROP INDEX IF EXISTS idx_{p}_daily_balances_business_day;
 DROP TABLE IF EXISTS {p}_daily_balances CASCADE;
 DROP TABLE IF EXISTS {p}_transactions  CASCADE;
@@ -92,6 +93,25 @@ DROP TABLE IF EXISTS {p}_transactions  CASCADE;
 --                 ⇔ Debit. The CHECK enforces sign-direction agreement.
 -- transfer_parent_id — L1 Transfer.Parent recursive chain (the PR
 --                 pipeline support added in Phase L's L1 spec work).
+-- rail_name     — L2 Rail name that produced this leg. Required on every
+--                 row so the bundler's eligibility query (M.1a / SPEC's
+--                 BundleSelector RailName form) can filter without an
+--                 expensive transfer→rail lookup. Denormalized at write
+--                 time by integrator ETL.
+-- template_name — L2 TransferTemplate name this leg belongs to (NULL for
+--                 standalone-rail postings). Combined with rail_name
+--                 this lets the bundler's "TransferTemplateName" and
+--                 "TransferTemplateName.LegRailName" BundleSelector
+--                 forms resolve to simple WHERE clauses.
+-- bundle_id     — L1 Transaction.BundleId. Populated by AggregatingRail
+--                 bundlers via a higher-Entry row (Supersedes =
+--                 BundleAssignment); NULL on first-entry rows.
+-- supersedes    — L1 Transaction.Supersedes; open enum per SPEC
+--                 (no CHECK). Set on higher-Entry rows that supersede
+--                 a prior row of the same id; NULL on first-entry rows.
+--                 v1 categories: Inflight / BundleAssignment /
+--                 TechnicalCorrection (see SPEC's "Higher-Entry rows"
+--                 section for which category applies when).
 -- origin        — open enum, no CHECK; integrators may extend.
 -- metadata      — TEXT + IS JSON (portability constraint: no JSONB,
 --                 no GIN indexes; SQL/JSON path syntax for extraction).
@@ -114,6 +134,10 @@ CREATE TABLE {p}_transactions (
     transfer_type        VARCHAR(50)    NOT NULL,
     transfer_completion  TIMESTAMPTZ,
     transfer_parent_id   VARCHAR(100),
+    rail_name            VARCHAR(100)   NOT NULL,
+    template_name        VARCHAR(100),
+    bundle_id            VARCHAR(100),
+    supersedes           VARCHAR(50),
     origin               VARCHAR(50)    NOT NULL,
     metadata             TEXT,
     PRIMARY KEY (id, entry),
@@ -141,6 +165,12 @@ CREATE TABLE {p}_transactions (
 --                 means no limit enforcement on this account-day.
 -- money         — signed; CAN go negative (overdraft is observable per
 --                 L1's Non-negative Stored Balance SHOULD constraint).
+-- supersedes    — L1 StoredBalance.Supersedes; open enum per SPEC
+--                 (no CHECK). Per the SPEC's "Higher-Entry rows"
+--                 section, the only category applicable to StoredBalance
+--                 is TechnicalCorrection — snapshots have no Pending
+--                 lifecycle and aren't bundled. Any higher-Entry
+--                 daily_balances row is by construction a correction.
 -- ---------------------------------------------------------------------
 CREATE TABLE {p}_daily_balances (
     entry                  BIGSERIAL      NOT NULL,
@@ -155,6 +185,7 @@ CREATE TABLE {p}_daily_balances (
     business_day_end       TIMESTAMPTZ    NOT NULL,
     money                  DECIMAL(20,2)  NOT NULL,
     limits                 TEXT,
+    supersedes             VARCHAR(50),
     PRIMARY KEY (account_id, business_day_start, entry),
     CHECK (business_day_end > business_day_start),
     CHECK (limits IS NULL OR limits IS JSON)
@@ -166,6 +197,12 @@ CREATE INDEX idx_{p}_transactions_account_posting ON {p}_transactions (account_i
 CREATE INDEX idx_{p}_transactions_transfer        ON {p}_transactions (transfer_id);
 CREATE INDEX idx_{p}_transactions_type_status     ON {p}_transactions (transfer_type, status);
 CREATE INDEX idx_{p}_transactions_parent          ON {p}_transactions (transfer_parent_id);
+-- Bundler eligibility: AggregatingRails query for Posted, unbundled rows
+-- by rail_name (matching their BundlesActivity selectors). Partial index
+-- on `bundle_id IS NULL` keeps the index small as bundled-row count grows.
+CREATE INDEX idx_{p}_transactions_bundler_eligibility
+    ON {p}_transactions (rail_name, status)
+    WHERE bundle_id IS NULL;
 CREATE INDEX idx_{p}_daily_balances_business_day  ON {p}_daily_balances (business_day_start);
 
 -- ---------------------------------------------------------------------

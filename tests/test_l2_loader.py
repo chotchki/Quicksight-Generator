@@ -357,3 +357,195 @@ def test_top_level_must_be_mapping(tmp_path: Path) -> None:
 def test_missing_file_rejected(tmp_path: Path) -> None:
     with pytest.raises(L2LoaderError, match="could not read"):
         load_instance(tmp_path / "nonexistent.yaml")
+
+
+# -- M.1a.2 — per-leg Origin / PostedRequirements / aging / Duration --------
+
+
+def _write_rail_yaml(tmp_path: Path, body: str) -> Path:
+    """Helper: dump a minimal L2 instance with the given rail body."""
+    p = tmp_path / "instance.yaml"
+    p.write_text(
+        "instance: spk\n"
+        "accounts:\n"
+        "  - id: int-001\n"
+        "    role: A\n"
+        "    scope: internal\n"
+        "  - id: ext-001\n"
+        "    role: B\n"
+        "    scope: external\n"
+        "rails:\n"
+        + body
+    )
+    return p
+
+
+def test_two_leg_rail_loads_per_leg_origin_overrides(tmp_path: Path) -> None:
+    """Per-leg origin overrides land as fields on the loaded TwoLegRail."""
+    p = _write_rail_yaml(tmp_path, """\
+  - name: ExtInbound
+    transfer_type: ach
+    source_role: B
+    destination_role: A
+    expected_net: 0
+    source_origin: ExternalForcePosted
+    destination_origin: InternalInitiated
+""")
+    inst = load_instance(p)
+    rail = inst.rails[0]
+    from quicksight_gen.common.l2 import TwoLegRail
+    assert isinstance(rail, TwoLegRail)
+    assert rail.origin is None
+    assert rail.source_origin == "ExternalForcePosted"
+    assert rail.destination_origin == "InternalInitiated"
+
+
+def test_single_leg_rail_rejects_per_leg_origin_overrides(tmp_path: Path) -> None:
+    """Per the M.1a hard-error stance — `source_origin`/`destination_origin`
+    on a single-leg rail is a load-time configuration error."""
+    p = _write_rail_yaml(tmp_path, """\
+  - name: BadSingle
+    transfer_type: ach
+    leg_role: A
+    leg_direction: Debit
+    origin: InternalInitiated
+    source_origin: ExternalForcePosted
+""")
+    with pytest.raises(
+        L2LoaderError,
+        match=r"source_origin: per-leg Origin overrides.*two-leg rails",
+    ):
+        load_instance(p)
+
+
+def test_single_leg_rail_rejects_destination_origin(tmp_path: Path) -> None:
+    p = _write_rail_yaml(tmp_path, """\
+  - name: BadSingle
+    transfer_type: ach
+    leg_role: A
+    leg_direction: Debit
+    origin: InternalInitiated
+    destination_origin: InternalInitiated
+""")
+    with pytest.raises(
+        L2LoaderError,
+        match=r"destination_origin: per-leg Origin overrides.*two-leg rails",
+    ):
+        load_instance(p)
+
+
+def test_two_leg_rail_origin_now_optional(tmp_path: Path) -> None:
+    """Per the SPEC's per-leg Origin section: rail-level ``origin`` is
+    optional when both per-leg overrides are present (legacy required
+    behavior dropped in M.1a)."""
+    p = _write_rail_yaml(tmp_path, """\
+  - name: ExtInbound
+    transfer_type: ach
+    source_role: B
+    destination_role: A
+    expected_net: 0
+    source_origin: ExternalForcePosted
+    destination_origin: InternalInitiated
+""")
+    # Loads cleanly without a top-level `origin:` key.
+    inst = load_instance(p)
+    assert inst.rails[0].origin is None
+
+
+def test_rail_loads_posted_requirements(tmp_path: Path) -> None:
+    """Integrator-declared PostedRequirements list loads as a tuple of Identifiers."""
+    p = _write_rail_yaml(tmp_path, """\
+  - name: ExtRail
+    transfer_type: ach
+    leg_role: A
+    leg_direction: Debit
+    origin: ExternalForcePosted
+    metadata_keys: [external_reference, originator_id]
+    posted_requirements: [external_reference]
+""")
+    inst = load_instance(p)
+    assert inst.rails[0].posted_requirements == ("external_reference",)
+
+
+def test_rail_loads_aging_durations(tmp_path: Path) -> None:
+    """ISO 8601 duration literals → datetime.timedelta on the loaded Rail."""
+    from datetime import timedelta
+    p = _write_rail_yaml(tmp_path, """\
+  - name: AgingRail
+    transfer_type: ach
+    leg_role: A
+    leg_direction: Debit
+    origin: InternalInitiated
+    max_pending_age: PT24H
+    max_unbundled_age: PT4H
+""")
+    inst = load_instance(p)
+    rail = inst.rails[0]
+    assert rail.max_pending_age == timedelta(hours=24)
+    assert rail.max_unbundled_age == timedelta(hours=4)
+
+
+@pytest.mark.parametrize("literal,expected", [
+    ("PT24H", "hours=24"),
+    ("PT4H", "hours=4"),
+    ("PT30M", "minutes=30"),
+    ("PT15S", "seconds=15"),
+    ("P1D", "days=1"),
+    ("P7D", "days=7"),
+    ("P1DT12H", "days=1, hours=12"),
+    ("P2DT6H30M", "days=2, hours=6, minutes=30"),
+])
+def test_duration_literal_accepted(
+    literal: str, expected: str, tmp_path: Path,
+) -> None:
+    """Every SPEC-shaped duration literal parses; expected is a docstring
+    that names the components (used to make the parametrize labels readable)."""
+    p = _write_rail_yaml(tmp_path, f"""\
+  - name: R
+    transfer_type: t
+    leg_role: A
+    leg_direction: Debit
+    origin: InternalInitiated
+    max_pending_age: {literal}
+""")
+    # Parses without raising. The exact timedelta-arithmetic equivalence
+    # is covered by test_rail_loads_aging_durations above.
+    load_instance(p)
+    assert expected  # silence the unused-arg lint (the parametrize label IS the value)
+
+
+@pytest.mark.parametrize("bad", [
+    "P1Y",        # years not supported (no fixed timedelta)
+    "P1M",        # months not supported (no fixed timedelta)
+    "PT",         # empty time component
+    "P",          # empty date component
+    "24H",        # missing the leading "PT"
+    "PT-1H",     # negative
+    "1 day",     # natural language
+    "",           # empty string
+])
+def test_duration_literal_rejected(bad: str, tmp_path: Path) -> None:
+    p = _write_rail_yaml(tmp_path, f"""\
+  - name: R
+    transfer_type: t
+    leg_role: A
+    leg_direction: Debit
+    origin: InternalInitiated
+    max_pending_age: '{bad}'
+""")
+    with pytest.raises(L2LoaderError, match="ISO 8601 duration"):
+        load_instance(p)
+
+
+def test_duration_rejects_non_string(tmp_path: Path) -> None:
+    """A YAML numeric like ``86400`` is a plausible mistake — explicitly reject."""
+    p = _write_rail_yaml(tmp_path, """\
+  - name: R
+    transfer_type: t
+    leg_role: A
+    leg_direction: Debit
+    origin: InternalInitiated
+    max_pending_age: 86400
+""")
+    with pytest.raises(L2LoaderError, match="expected ISO 8601 duration string"):
+        load_instance(p)

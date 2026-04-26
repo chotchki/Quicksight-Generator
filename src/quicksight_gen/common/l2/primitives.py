@@ -33,6 +33,7 @@ validator (M.1.3) walks the resolution graph.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import timedelta
 from decimal import Decimal
 from typing import Literal, NewType, TypeAlias
 
@@ -97,6 +98,19 @@ RoleExpression: TypeAlias = tuple[Identifier, ...]
 # rail/template. Both kinds are strings; the validator resolves which.
 BundlesActivityRef: TypeAlias = Identifier
 
+# A span of time — used for aging windows (max_pending_age,
+# max_unbundled_age). Loader parses ISO 8601 duration literals
+# (``PT24H``, ``PT4H``, ``P1D``, etc.) into ``datetime.timedelta``.
+Duration: TypeAlias = timedelta
+
+# Per SPEC's "Higher-Entry rows" section: every row that supersedes a
+# prior row of the same logical key MUST set ``Supersedes`` to one of
+# these v1 categories. Storage column is open enum (no DB CHECK) so
+# integrators may extend; the loader pins the v1 set at load time.
+SupersedeReason: TypeAlias = Literal[
+    "Inflight", "BundleAssignment", "TechnicalCorrection",
+]
+
 
 # -- Account dimension --------------------------------------------------------
 
@@ -148,15 +162,38 @@ class TwoLegRail:
     When the rail is a leg-pattern of a TransferTemplate, ``expected_net``
     MUST be unset — the template owns the bundle's ExpectedNet. Per F3
     this is a cross-entity validation rule (the validator's pass 2).
+
+    Per-leg Origin: ``origin`` shorthands "both legs share this Origin";
+    ``source_origin`` / ``destination_origin`` override per leg when the
+    legs differ (e.g., the leg touching an external counterparty is
+    ``ExternalForcePosted`` while the internal counterpart is
+    ``InternalInitiated``). The validator (rule O1) checks every leg
+    resolves to an Origin under the SPEC's resolution table.
+
+    PostedRequirements / aging: ``posted_requirements`` adds Rail-specific
+    fields beyond the auto-derived TransferKey + chain-Required-true
+    parent_transfer_id (see ``derived.posted_requirements_for``);
+    ``max_pending_age`` + ``max_unbundled_age`` are aging-watch durations.
     """
 
     name: Identifier
     transfer_type: TransferType
-    origin: Origin
     metadata_keys: tuple[Identifier, ...]
     source_role: RoleExpression
     destination_role: RoleExpression
+    # Origin resolution (validator rule O1). At least one path MUST cover
+    # both legs — either rail-level ``origin`` alone, both per-leg
+    # overrides, or one override + rail-level ``origin``.
+    origin: Origin | None = None
+    source_origin: Origin | None = None
+    destination_origin: Origin | None = None
     expected_net: Money | None = None
+    # Integrator-declared posting requirements; see derived.py for the
+    # full computed set (unions in TransferKey + chain-required fields).
+    posted_requirements: tuple[Identifier, ...] = field(default_factory=tuple)
+    # Aging watches — surface as exception views in dashboards.
+    max_pending_age: Duration | None = None
+    max_unbundled_age: Duration | None = None
     # Aggregating-rail flags. Per SPEC, aggregating rails MAY be two-leg.
     aggregating: bool = False
     bundles_activity: tuple[BundlesActivityRef, ...] = field(default_factory=tuple)
@@ -177,14 +214,25 @@ class SingleLegRail:
     determined at posting time by a containing TransferTemplate's
     ExpectedNet closure requirement. Each TransferTemplate MUST contain
     at most one Variable-direction leg.
+
+    Per-leg Origin overrides (``source_origin`` / ``destination_origin``)
+    are deliberately absent here — they only make sense on a 2-leg rail.
+    The loader rejects them at load if they appear in YAML for a
+    single-leg rail (hard error, per the M.1a design call).
     """
 
     name: Identifier
     transfer_type: TransferType
-    origin: Origin
     metadata_keys: tuple[Identifier, ...]
     leg_role: RoleExpression
     leg_direction: LegDirection
+    # Required for single-leg rails (every leg resolves to an Origin). The
+    # default-None lets the dataclass field-order rule work; the loader
+    # enforces presence at load time.
+    origin: Origin | None = None
+    posted_requirements: tuple[Identifier, ...] = field(default_factory=tuple)
+    max_pending_age: Duration | None = None
+    max_unbundled_age: Duration | None = None
     # Aggregating-rail flags. Per SPEC, single-leg aggregating rails are
     # permitted (e.g. a single-leg sweep that lands in an external
     # counterparty).

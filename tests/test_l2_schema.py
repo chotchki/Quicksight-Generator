@@ -304,3 +304,83 @@ def test_views_use_l2_instance_prefix() -> None:
     # The view's body references the prefixed base tables, not bare names.
     assert "FROM aaa_transactions tx" in sql
     assert "FROM aaa_daily_balances sb" in sql
+
+
+# -- v1.1 columns (M.1a.1 — SPEC catch-up) -----------------------------------
+
+
+def test_transactions_includes_rail_name_not_null() -> None:
+    """SPEC: every leg's L2 Rail name denormalized so BundleSelector by
+    RailName resolves to a simple WHERE without a transfer→rail join."""
+    sql = emit_schema(_instance("v11"))
+    assert "rail_name            VARCHAR(100)   NOT NULL" in sql
+
+
+def test_transactions_includes_template_name_nullable() -> None:
+    """SPEC: TransferTemplate name; NULL when the leg posts standalone."""
+    sql = emit_schema(_instance("v11"))
+    # NULL allowed: just the column declaration, no NOT NULL.
+    assert re.search(
+        r"\btemplate_name\s+VARCHAR\(100\)(?!\s+NOT NULL)",
+        sql,
+    ), "template_name should be nullable"
+
+
+def test_transactions_includes_bundle_id_nullable() -> None:
+    """SPEC: L1 Transaction.BundleId — populated by AggregatingRail bundlers."""
+    sql = emit_schema(_instance("v11"))
+    assert re.search(
+        r"\bbundle_id\s+VARCHAR\(100\)(?!\s+NOT NULL)",
+        sql,
+    ), "bundle_id should be nullable"
+
+
+def test_transactions_includes_supersedes_open_enum() -> None:
+    """SPEC: L1 Transaction.Supersedes — open enum, no CHECK so integrators
+    may extend the v1 set (Inflight / BundleAssignment / TechnicalCorrection)."""
+    sql = emit_schema(_instance("v11"))
+    assert re.search(
+        r"\bsupersedes\s+VARCHAR\(50\)(?!\s+NOT NULL)",
+        sql,
+    ), "supersedes should be nullable + open enum"
+    # Confirm no CHECK constraint constrains the supersedes value set.
+    assert re.search(
+        r"CHECK\s*\(\s*supersedes\s+IN\s*\(",
+        sql,
+    ) is None, "supersedes must be open enum (no CHECK)"
+
+
+def test_daily_balances_includes_supersedes_open_enum() -> None:
+    """SPEC: L1 StoredBalance.Supersedes — only TechnicalCorrection applies
+    in practice but the column is open enum to match the transactions side."""
+    sql = emit_schema(_instance("v11"))
+    # Find the daily_balances CREATE TABLE block specifically.
+    db_block_match = re.search(
+        r"CREATE TABLE v11_daily_balances\s*\((.*?)\);",
+        sql,
+        re.DOTALL,
+    )
+    assert db_block_match is not None
+    db_block = db_block_match.group(1)
+    assert re.search(
+        r"\bsupersedes\s+VARCHAR\(50\)(?!\s+NOT NULL)",
+        db_block,
+    ), "daily_balances.supersedes should be nullable + open enum"
+
+
+def test_emits_bundler_eligibility_index() -> None:
+    """SPEC: AggregatingRails query for Posted, unbundled rows by rail_name.
+    Partial index on `bundle_id IS NULL` keeps it small as bundled count grows."""
+    sql = emit_schema(_instance("be"))
+    assert "CREATE INDEX idx_be_transactions_bundler_eligibility" in sql
+    assert "ON be_transactions (rail_name, status)" in sql
+    assert "WHERE bundle_id IS NULL" in sql
+
+
+def test_bundler_eligibility_index_drops_before_create() -> None:
+    """The new bundler index participates in the same DROP-before-CREATE
+    idempotency the other indexes follow."""
+    sql = emit_schema(_instance("be"))
+    drop_idx = sql.index("DROP INDEX IF EXISTS idx_be_transactions_bundler_eligibility")
+    create_idx = sql.index("CREATE INDEX idx_be_transactions_bundler_eligibility")
+    assert drop_idx < create_idx

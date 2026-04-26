@@ -72,14 +72,21 @@ account_templates:
 #   - Union role (RoleA | RoleB)
 # ---------------------------------------------------------------------
 rails:
-  # Standalone two-leg
+  # Standalone two-leg with PER-LEG ORIGIN OVERRIDES (M.1a.2).
+  # Inbound from external party: external leg is force-posted, internal
+  # leg is initiated by us recording the credit. No rail-level `origin`
+  # because the per-leg overrides cover both legs (validator's O1 rule).
+  # PostedRequirements + max_pending_age also exercise the new fields.
   - name: ExternalRailInbound
     transfer_type: ach
     source_role: ExternalCounterparty
     destination_role: ClearingSuspense
     expected_net: 0
-    origin: ExternalForcePosted
+    source_origin: ExternalForcePosted
+    destination_origin: InternalInitiated
     metadata_keys: [external_reference]
+    posted_requirements: [external_reference]
+    max_pending_age: PT24H
 
   # Two-leg in MerchantSettlementCycle.leg_rails — no expected_net (S2)
   - name: SettlementSweepLeg
@@ -89,13 +96,17 @@ rails:
     origin: InternalInitiated
     metadata_keys: [merchant_id, settlement_period]
 
-  # Single-leg, in MerchantSettlementCycle.leg_rails (S3 path A)
+  # Single-leg, in MerchantSettlementCycle.leg_rails (S3 path A).
+  # max_unbundled_age exercises the bundler-liveness aging watch — this
+  # rail's transfer_type is matched by PoolBalancingNorthToSouth's
+  # bundles_activity, so the watch is meaningful (R8 OK).
   - name: SubledgerCharge
     transfer_type: charge
     leg_role: CustomerSubledger
     leg_direction: Debit
     origin: InternalInitiated
     metadata_keys: [merchant_id, customer_id, settlement_period, settlement_period_end]
+    max_unbundled_age: PT4H
 
   - name: SubledgerRefund
     transfer_type: refund
