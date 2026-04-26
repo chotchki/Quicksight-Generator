@@ -241,34 +241,106 @@ def generate() -> None:
     help="Where to write the handbook + screenshots. Defaults to ./training/<prefix>/.",
 )
 @click.option(
-    "--screenshot-path",
-    type=str,
-    default="drift-sheet.png",
+    "--no-screenshot",
+    is_flag=True,
+    default=False,
     help=(
-        "Path the handbook page references for the embedded screenshot. "
-        "ScreenshotHarness wiring is a follow-up substep — for now this "
-        "defaults to the harness's expected filename so the markdown link "
-        "resolves once a real PNG lands in the same directory."
+        "Skip ScreenshotHarness invocation; render handbook with a "
+        "placeholder image reference. Useful when the dashboard isn't "
+        "deployed yet or when running without Playwright/AWS credentials."
     ),
 )
 def generate_training(
     instance_path: Path,
     config_path: Path,
     output_dir: Path | None,
-    screenshot_path: str,
+    no_screenshot: bool,
 ) -> None:
-    """Render the handbook page against the L2 instance vocabulary."""
-    inst, _cfg = _load_pair(instance_path, config_path)
+    """Render the handbook page (with embedded screenshot) against the L2 instance."""
+    inst, cfg = _load_pair(instance_path, config_path)
     out = output_dir or Path("training") / inst.instance
     out.mkdir(parents=True, exist_ok=True)
 
-    handbook_md = emit.render_handbook(inst, screenshot_path=screenshot_path)
+    if no_screenshot:
+        screenshot_filename = "drift-sheet.png"
+        click.echo(
+            "--no-screenshot: skipping ScreenshotHarness; handbook will "
+            f"reference '{screenshot_filename}' as a placeholder."
+        )
+    else:
+        screenshot_filename = _capture_screenshot(cfg, inst, out)
+        click.echo(f"Captured screenshot at {out / screenshot_filename}")
+
+    handbook_md = emit.render_handbook(inst, screenshot_path=screenshot_filename)
     (out / "drift-handbook.md").write_text(handbook_md)
     click.echo(f"Wrote drift-handbook.md to {out}/")
-    click.echo(
-        f"Handbook references '{screenshot_path}' — drop the captured PNG "
-        f"there or wire ScreenshotHarness via a follow-up substep."
+
+
+def _capture_screenshot(cfg: Config, inst: L2Instance, output_dir: Path) -> str:
+    """Generate embed URL → launch Playwright → screenshot the deployed Drift sheet.
+
+    Returns the screenshot filename (relative to output_dir) so the
+    handbook's `![](...)` reference resolves alongside the rendered page.
+    The dashboard must already be deployed (run `apply dashboards` first).
+
+    Note: ``ScreenshotHarness.capture_all_sheets()`` was built for multi-
+    sheet dashboards and waits on `[role="tab"]` (the sheet tab strip)
+    which QuickSight doesn't render for single-sheet dashboards. The spike
+    has one sheet, so we do a direct capture inline rather than going
+    through the harness's tab-aware machinery — see F12 in findings.
+    """
+    import boto3
+
+    # tests/e2e helpers — see F7 for the promote-out-of-tests follow-up.
+    from tests.e2e.browser_helpers import (
+        generate_dashboard_embed_url,
+        webkit_page,
     )
+
+    if not cfg.principal_arns:
+        raise click.ClickException(
+            "principal_arns is required in the AWS config to generate an "
+            "embed URL. Add at least one user ARN to run/config.yaml or "
+            "use --no-screenshot."
+        )
+
+    dashboard_id = cfg.prefixed("spike-drift-dashboard")
+    # QS_SPIKE_EMBED_USER_ARN can override which principal_arn we embed for —
+    # `quicksight-test-user` is typically the right default rather than the
+    # root-linked first ARN, which can have account-binding quirks that
+    # surface as "We can't open that dashboard" in headless contexts.
+    user_arn = os.environ.get(
+        "QS_SPIKE_EMBED_USER_ARN",
+        cfg.principal_arns[-1],  # Last entry; usually the dedicated test user.
+    )
+
+    click.echo(f"Generating embed URL for dashboard {dashboard_id}...")
+    qs_identity_client = boto3.client("quicksight", region_name="us-east-1")
+    embed_url = generate_dashboard_embed_url(
+        qs_identity_client,
+        account_id=cfg.aws_account_id,
+        dashboard_id=dashboard_id,
+        user_arn=user_arn,
+    )
+
+    click.echo("Launching Playwright + capturing the Drift sheet...")
+    timeout_ms = int(os.environ.get("QS_E2E_PAGE_TIMEOUT", "60000"))
+    settle_seconds = int(os.environ.get("QS_SPIKE_SETTLE_SECONDS", "12"))
+    screenshot_filename = "drift-sheet.png"
+    screenshot_path = output_dir / screenshot_filename
+
+    # Single-sheet dashboards don't render the tab strip and the
+    # visual-rendered selector is fragile; for the spike we use a
+    # plain networkidle + fixed-seconds settle. Brute-force but
+    # reliable. M.1+ wires a proper wait that handles one-sheet vs
+    # multi-sheet uniformly.
+    with webkit_page(headless=True) as page:
+        page.goto(embed_url)
+        page.wait_for_load_state("networkidle", timeout=timeout_ms)
+        page.wait_for_timeout(settle_seconds * 1000)
+        page.screenshot(path=str(screenshot_path), full_page=True)
+
+    return screenshot_filename
 
 
 # -- Internal helpers ---------------------------------------------------------

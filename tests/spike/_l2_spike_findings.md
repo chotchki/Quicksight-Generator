@@ -165,3 +165,24 @@ This is the SPEC's storage isolation rule (L2 InstancePrefix scopes every genera
 - Default for `--config` could fall back to `config.yaml` in CWD (matches existing `quicksight-gen` convention) if not specified.
 
 ---
+
+## F12 — Aurora Serverless cold-start manifests as a generic "We can't open that dashboard" error in the embed UI
+
+**Surfaced:** M.0.10 (debugging the screenshot capture against the deployed dashboard)
+
+**Observation:** The screenshot pipeline ran cleanly (embed URL fetched, Playwright launched, navigation succeeded) but every screenshot showed QuickSight's generic error page: *"We can't open that dashboard. This usually happens when you don't have access permission, it's from another Quick account, or it was deleted."* I burned significant time chasing permissions (verified — identical to working dashboards), embed-URL targeting (verified — same `get_user_arn()` default the existing tests use), and selector-wait timing (irrelevant — same error regardless of wait shape).
+
+**Actual root cause (per user):** The backing Aurora Postgres is autoscaling Serverless v2 that **goes to sleep after 5 minutes of inactivity**. The dashboard's data-fetch silently failed against the cold DB, and QuickSight's embed UI surfaced that as the same generic "we can't open" page that permissions / scope / deletion errors produce — masking the actual cause.
+
+The v5.0.2 e2e test suite already handles this — every browser test has a **DB warm-up phase** before the actual capture. The spike CLI doesn't (yet).
+
+**Implication for SPEC:** No SPEC change.
+
+**Implication for M.1:**
+- **Every screenshot / browser-side test path needs a warm-up step.** A simple `SELECT 1` against `cfg.demo_database_url` via psycopg2 right before fetching the embed URL would have wakened the cluster + made the spike's first capture work.
+- M.7 (docs render pipeline) and M.8 (training render pipeline) — both will invoke ScreenshotHarness against deployed dashboards. Both need a built-in warm-up. Don't repeat my debugging time.
+- The v5.0.2 e2e test conftest is the reference implementation; lift its warm-up pattern when M.7/M.8 wire screenshot capture into the production CLI.
+
+**Diagnostic lesson for me:** When QuickSight shows a generic "We can't open that dashboard" error, treat **DB connectivity** as the FIRST hypothesis (not the last). Permissions / embed scope / cross-account issues all surface as the same UI text but are far less common than a sleepy backing database.
+
+---
