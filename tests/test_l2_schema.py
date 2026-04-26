@@ -255,3 +255,52 @@ def test_daily_balances_denormalizes_account(col: str) -> None:
     # Just verify the column name appears (we already assert on transactions
     # via the same parametrize; here we trust same-string-in-template).
     assert col in sql
+
+
+# -- Current* views (M.1.5) --------------------------------------------------
+
+
+def test_emits_current_transactions_view() -> None:
+    """L1 CurrentTransaction theorem materialized as max-Entry-per-ID view."""
+    sql = emit_schema(_instance("v"))
+    assert "CREATE VIEW v_current_transactions AS" in sql
+    # Per L1 CurrentTransaction set-comprehension definition: the view
+    # selects rows whose entry equals the max entry for the same logical id.
+    assert "WHERE tx.entry = (" in sql
+    assert "SELECT MAX(entry) FROM v_transactions WHERE id = tx.id" in sql
+
+
+def test_emits_current_daily_balances_view() -> None:
+    """L1 CurrentStoredBalance theorem materialized as max-Entry-per-(account,day) view."""
+    sql = emit_schema(_instance("v"))
+    assert "CREATE VIEW v_current_daily_balances AS" in sql
+    # Per L1 CurrentStoredBalance: max-Entry per (Account, BusinessDay).
+    assert "WHERE sb.entry = (" in sql
+    assert "WHERE account_id = sb.account_id" in sql
+    assert "AND business_day_start = sb.business_day_start" in sql
+
+
+def test_view_drops_precede_table_drops() -> None:
+    """Views must drop before tables they depend on (Postgres dependency)."""
+    sql = emit_schema(_instance("ord"))
+    view_drop = sql.index("DROP VIEW IF EXISTS ord_current_transactions")
+    table_drop = sql.index("DROP TABLE IF EXISTS ord_transactions ")
+    assert view_drop < table_drop
+
+
+def test_view_creates_after_table_creates() -> None:
+    """Views must be created after the tables they reference."""
+    sql = emit_schema(_instance("ord"))
+    table_create = sql.index("CREATE TABLE ord_transactions")
+    view_create = sql.index("CREATE VIEW ord_current_transactions")
+    assert table_create < view_create
+
+
+def test_views_use_l2_instance_prefix() -> None:
+    """View names + their referenced base tables share the prefix."""
+    sql = emit_schema(_instance("aaa"))
+    assert "aaa_current_transactions" in sql
+    assert "aaa_current_daily_balances" in sql
+    # The view's body references the prefixed base tables, not bare names.
+    assert "FROM aaa_transactions tx" in sql
+    assert "FROM aaa_daily_balances sb" in sql
