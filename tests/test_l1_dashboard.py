@@ -84,13 +84,53 @@ def test_dashboard_registered() -> None:
     assert app.dashboard is not None
 
 
-def test_no_sheets_yet_at_m2a1() -> None:
-    """M.2a.1 ships the skeleton only. Sheets land in M.2a.2 - M.2a.6.
-    This guard fires if a future commit accidentally lands sheets here
-    instead of in their own substep."""
+def test_one_sheet_after_m2a2() -> None:
+    """M.2a.2 ships Getting Started. Per-invariant sheets land in M.2a.3
+    - M.2a.6. This guard fires if a future commit accidentally lands a
+    sheet outside its own substep."""
     app = build_l1_dashboard_app(_CFG)
     assert app.analysis is not None
-    assert len(app.analysis.sheets) == 0
+    assert len(app.analysis.sheets) == 1
+    assert app.analysis.sheets[0].name == "Getting Started"
+
+
+# -- Getting Started — description-driven prose (M.2a.2) ---------------------
+
+
+def test_getting_started_welcome_uses_l2_instance_description() -> None:
+    """Core M.2a "description-driven prose" rule: the welcome body
+    comes from `l2_instance.description`, NOT from a hardcoded persona
+    string. Switching L2 instance switches the prose; M.7's render
+    pipeline becomes "walk the L2 instance" instead of "substitute
+    Sasquatch tokens"."""
+    app = build_l1_dashboard_app(_CFG)
+    gs = app.analysis.sheets[0]
+    assert len(gs.text_boxes) == 1
+    welcome_xml = gs.text_boxes[0].content
+    # The fixture's top-level description string is the body source.
+    assert "Sasquatch National Bank" in welcome_xml
+    assert "Cash Management Suite" in welcome_xml
+
+
+def test_getting_started_welcome_falls_back_when_l2_description_missing() -> None:
+    """If the L2 instance has no top-level description, we surface a
+    hint to fill it rather than a blank welcome — quicker debug."""
+    from dataclasses import replace
+    explicit = default_l2_instance()
+    minimal = replace(explicit, description=None)
+    app = build_l1_dashboard_app(_CFG, l2_instance=minimal)
+    gs = app.analysis.sheets[0]
+    welcome_xml = gs.text_boxes[0].content
+    assert "L2 instance description missing" in welcome_xml
+
+
+def test_getting_started_title_is_constant_ui_vocabulary() -> None:
+    """The title 'L1 Reconciliation Dashboard' is constant UI vocabulary
+    (NOT pulled from L2). Per the M.2a.4 design note: titles stay
+    hardcoded, subtitles + bodies pull from L2 descriptions."""
+    app = build_l1_dashboard_app(_CFG)
+    gs = app.analysis.sheets[0]
+    assert "L1 Reconciliation Dashboard" in gs.text_boxes[0].content
 
 
 # -- Emit shape (substitutability with other apps) ---------------------------
