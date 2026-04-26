@@ -454,18 +454,31 @@ def test_l1_invariant_view_drops_before_creates(view: str) -> None:
 
 
 def test_l1_invariant_views_drop_before_base_table_drops() -> None:
-    """L1 views depend on the Current* views which depend on the base
-    tables — so views MUST drop before tables get cascaded."""
+    """L1 views depend on the Current* views (which depend on the base
+    tables). DROPing Current* before L1 views fails with "dependent
+    objects still exist" on a re-run, so L1 view drops MUST emit
+    before the base block's drops. Surfaced by M.2.6's first run
+    against real Postgres."""
     sql = emit_schema(_instance("ord"))
-    # The first L1 view drop must come before the table drops.
+    # All L1 view drops emit before the base block's first DROP VIEW.
     overdraft_drop = sql.index("DROP VIEW IF EXISTS ord_overdraft")
-    table_drop = sql.index("DROP TABLE IF EXISTS ord_transactions ")
-    # Both belong to a fully-idempotent script — the L1 view block lands
-    # AFTER the base CREATE block. Table drops happen at the top of the
-    # base block; L1 view drops happen at the top of the appended block.
-    # As long as the script runs straight through, view drops succeed
-    # because the views are recreated after table CREATE.
-    assert overdraft_drop > table_drop  # appended block lands later
+    current_drop = sql.index(
+        "DROP VIEW IF EXISTS ord_current_daily_balances",
+    )
+    assert overdraft_drop < current_drop
+
+
+def test_l1_invariant_view_drops_emit_at_top_of_script() -> None:
+    """Catches the regression — every L1 view drop happens before any
+    base-block CREATE (the base block contains the Current* drops + all
+    base creates as a single chunk)."""
+    sql = emit_schema(_instance("top"))
+    first_create = sql.index("CREATE TABLE top_transactions")
+    for view in _L1_VIEW_NAMES:
+        drop_idx = sql.index(f"DROP VIEW IF EXISTS top_{view}")
+        assert drop_idx < first_create, (
+            f"top_{view} drop must come before any CREATE TABLE"
+        )
 
 
 def test_drift_view_filters_to_leaf_accounts_with_nonzero_drift() -> None:
@@ -532,23 +545,23 @@ def test_expected_eod_balance_breach_excludes_null_expectations() -> None:
 
 def test_limit_breach_embeds_limit_schedule_caps_inline() -> None:
     """L2's LimitSchedules become CASE branches in the limit_breach view;
-    JSON-path-portable across SQL targets."""
+    JSON-path-portable across SQL targets. Branches reference `tx.`
+    aliases since the view reads parent_role + transfer_type from the
+    transaction row directly (no JOIN to daily_balances needed —
+    parent_role is denormalized on every v6 transaction)."""
     sql = emit_schema(_instance_with_limits("lb"))
-    # Each LimitSchedule entry shows up as a CASE branch.
     assert (
-        "WHEN child_db.account_parent_role = 'DDAControl' "
-        "AND outbound.transfer_type = 'ach' THEN 12000"
+        "WHEN tx.account_parent_role = 'DDAControl' "
+        "AND tx.transfer_type = 'ach' THEN 12000"
     ) in sql
 
 
 def test_limit_breach_view_with_no_limit_schedules_is_inert() -> None:
     """An L2 instance with no LimitSchedules emits a syntactically valid
-    limit_breach view that surfaces no rows (cap is NULL → IS NOT NULL
-    filter excludes everything)."""
+    limit_breach view that surfaces no rows (cap is NULL → outer WHERE
+    `cap IS NOT NULL` excludes everything)."""
     sql = emit_schema(_instance("nolim"))  # _instance has no limit_schedules
     assert "CREATE VIEW nolim_limit_breach" in sql
-    # CASE was replaced with NULL; the view's WHERE filter then excludes
-    # every row (NULL IS NOT NULL is always false).
     body_match = re.search(
         r"CREATE VIEW nolim_limit_breach AS(.*?);",
         sql,
@@ -556,10 +569,30 @@ def test_limit_breach_view_with_no_limit_schedules_is_inert() -> None:
     )
     assert body_match is not None
     body = body_match.group(1)
-    # `NULL AS cap` appears in the SELECT list.
+    # `NULL AS cap` appears in the inner SELECT.
     assert "NULL AS cap" in body
-    # And the WHERE filters by `(NULL) IS NOT NULL` which is always false.
-    assert "(NULL) IS NOT NULL" in body
+    # Outer WHERE filters `cap IS NOT NULL` so an inert NULL cap excludes
+    # every row.
+    assert "WHERE cap IS NOT NULL" in body
+
+
+def test_limit_breach_view_does_not_join_daily_balances() -> None:
+    """v6's denormalized account_parent_role on transactions means the
+    view reads parent role directly from the transaction row, no JOIN
+    to daily_balances. Catches the bug M.2.6's first run surfaced:
+    a JOIN-based view fails when no daily_balance row exists for the
+    breach business_day."""
+    sql = emit_schema(_instance_with_limits("nojoin"))
+    body_match = re.search(
+        r"CREATE VIEW nojoin_limit_breach AS(.*?);",
+        sql,
+        re.DOTALL,
+    )
+    assert body_match is not None
+    body = body_match.group(1)
+    # No JOIN on daily_balances anywhere in the view body.
+    assert "_current_daily_balances" not in body
+    assert "_daily_balances" not in body
 
 
 def test_computed_subledger_balance_uses_current_transactions_view() -> None:

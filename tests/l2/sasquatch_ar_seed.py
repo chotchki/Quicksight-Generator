@@ -171,11 +171,17 @@ def emit_seed(instance: L2Instance, scenarios: ScenarioPlant) -> str:
     # daily_balances row alone (negative money) drives the exception.
 
     # -- Build daily_balances rows --
+    #
+    # Each scenario plant emits its own daily_balances row at its plant
+    # day. We deliberately do NOT emit a baseline daily_balance for
+    # "today" — under L1 SPEC, ComputedBalance is cumulative through
+    # business_day_end (sum of ALL Posted transactions, not same-day),
+    # so a $0 baseline today against any account with planted
+    # transactions would surface a spurious drift row. Accounts without
+    # planted transactions (context-only template instances) get NO
+    # daily_balance row — they're invisible to the drift / overdraft /
+    # expected_eod views, which is the correct semantic.
     db_rows: list[str] = []
-    for ti in sorted(scenarios.template_instances, key=lambda t: t.account_id):
-        db_rows.extend(
-            _emit_clean_baseline_balance_rows(ti, scenarios, template_by_role)
-        )
 
     for p in sorted(scenarios.drift_plants, key=_drift_key):
         db_rows.append(
@@ -410,33 +416,6 @@ def _emit_drift_background_rows(
             ),
         ])
     return rows
-
-
-def _emit_clean_baseline_balance_rows(
-    ti: TemplateInstance,
-    scenarios: ScenarioPlant,
-    template_by_role: dict[Identifier, AccountTemplate],
-) -> list[str]:
-    """One baseline daily_balance row per template instance for today.
-
-    Stored balance defaults to 0 unless this account has a planted scenario
-    that overrides it. The drift / overdraft plants emit their own rows
-    later that supersede via different `business_day_start` (different
-    days_ago) — so this baseline only collides if days_ago=0.
-    """
-    template = template_by_role[ti.template_role]
-    parent_role = template.parent_role
-    return [
-        _balance_row(
-            account_id=ti.account_id,
-            account_name=ti.name,
-            account_role=ti.template_role,
-            account_scope=template.scope,
-            account_parent_role=parent_role,
-            day=scenarios.today,
-            money=Decimal("0.00"),
-        )
-    ]
 
 
 def _emit_drift_balance_row(
