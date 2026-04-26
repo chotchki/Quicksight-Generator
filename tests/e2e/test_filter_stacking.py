@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from .browser_helpers import (
+from quicksight_gen.common.browser.helpers import (
     click_sheet_tab,
     count_table_total_rows,
     first_table_cell_text,

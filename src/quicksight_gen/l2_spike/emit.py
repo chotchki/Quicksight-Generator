@@ -394,14 +394,8 @@ def capture_drift_screenshot(
     QuickSight dashboard. Invoked by the CLI's ``generate training`` after
     ``apply dashboards`` has actually deployed (the spike's CLI sets up
     Playwright + fetches the embed URL; ScreenshotHarness handles the rest).
-
-    NOTE: The import below reaches into ``tests/e2e/`` for production code,
-    which is wrong long-term — see _l2_spike_findings.md for the
-    promote-ScreenshotHarness-out-of-tests follow-up.
     """
-    # Local import: ScreenshotHarness lives under tests/ today (L.1.10.7);
-    # promoting it to a public module is an M.1+ task captured in findings.
-    from tests.e2e.screenshot_harness import ScreenshotHarness  # type: ignore[import-not-found]
+    from quicksight_gen.common.browser import ScreenshotHarness
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -414,10 +408,14 @@ def capture_drift_screenshot(
     )
     paths = harness.capture_all_sheets()
 
-    # Spike has only one sheet ("drift-sheet"); the harness keys by sheet_id.
-    if "drift-sheet" not in paths:
+    # Spike has only one sheet; pull its Path back out by Sheet object ref.
+    if app.analysis is None or not app.analysis.sheets:
+        raise RuntimeError(f"App {app.name!r} has no sheets to capture.")
+    drift_sheet = app.analysis.sheets[0]
+    if drift_sheet not in paths:
         raise RuntimeError(
             f"ScreenshotHarness did not produce a screenshot for "
-            f"sheet_id='drift-sheet'. Captured: {list(paths.keys())!r}"
+            f"sheet {drift_sheet.name!r}. Captured: "
+            f"{[s.name for s in paths]!r}"
         )
-    return paths["drift-sheet"]
+    return paths[drift_sheet]

@@ -1,7 +1,14 @@
-"""Helpers for browser-based e2e tests against deployed dashboards.
+"""Helpers for driving QuickSight dashboards in a Playwright browser.
 
-The QuickSight identity region (us-east-1) is where embed URL generation
-and user operations live, even when the dashboard itself is in another region.
+Used by both the e2e test suite (``tests/e2e/test_*.py``) and
+production CLI code (the screenshot pipeline that renders handbook
+images against a deployed dashboard). Promoted out of
+``tests/e2e/`` in M.1.10 so production no longer has to import
+from ``tests/``.
+
+The QuickSight identity region (us-east-1) is where embed URL
+generation and user operations live, even when the dashboard
+itself is deployed in another region.
 """
 
 from __future__ import annotations
@@ -12,7 +19,16 @@ from pathlib import Path
 from typing import Iterator
 
 
-SCREENSHOT_DIR = Path(__file__).parent / "screenshots"
+# Failure-screenshot output directory used by the e2e test suite's
+# ``screenshot()`` helper. Resolved relative to the current working
+# directory (pytest runs from repo root per pyproject.toml's
+# ``testpaths = ["tests"]``); override via ``QS_E2E_SCREENSHOT_DIR``
+# if you need a different sink. Production CLI screenshot capture
+# uses an explicit ``output_dir`` arg to ``ScreenshotHarness`` and
+# does NOT touch this constant.
+SCREENSHOT_DIR = Path(
+    os.environ.get("QS_E2E_SCREENSHOT_DIR", "tests/e2e/screenshots")
+).resolve()
 
 
 def get_user_arn() -> str:

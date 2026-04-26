@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from .browser_helpers import (
+from quicksight_gen.common.browser.helpers import (
     click_first_row_of_visual,
     click_sheet_tab,
     generate_dashboard_embed_url,

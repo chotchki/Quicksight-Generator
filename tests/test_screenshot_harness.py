@@ -21,7 +21,7 @@ from quicksight_gen.common.tree import (
     IntegerParam,
     Sheet,
 )
-from tests.e2e.screenshot_harness import ScreenshotHarness
+from quicksight_gen.common.browser import ScreenshotHarness
 
 
 _CFG = Config(
