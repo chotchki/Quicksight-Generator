@@ -16,6 +16,7 @@ internal submodule.
 """
 
 from .loader import L2LoaderError, load_instance
+from .validate import L2ValidationError, validate
 from .primitives import (
     Account,
     AccountTemplate,
@@ -49,6 +50,7 @@ __all__ = [
     "Identifier",
     "L2Instance",
     "L2LoaderError",
+    "L2ValidationError",
     "LegDirection",
     "LimitSchedule",
     "Money",
@@ -62,4 +64,5 @@ __all__ = [
     "TransferType",
     "TwoLegRail",
     "load_instance",
+    "validate",
 ]
