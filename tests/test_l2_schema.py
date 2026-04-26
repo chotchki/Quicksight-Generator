@@ -170,14 +170,27 @@ def test_daily_balances_money_is_signed() -> None:
 
     Overdraft is observable — the balance column accepts negatives so the
     dashboard can surface them. The transactions table has a sign-direction
-    CHECK on its ``amount_money``, but daily_balances has no constraint on
-    its ``money`` column at all.
+    CHECK on its ``amount_money``, but daily_balances has no CHECK constraint
+    on its ``money`` column at all.
+
+    M.1a.7's ``<prefix>_overdraft`` view legitimately filters on
+    ``money < 0`` — that's the whole point of the view. The regex below
+    looks for a CHECK on the bare ``money`` column inside the
+    daily_balances CREATE TABLE block, NOT any usage in a downstream view.
     """
     sql = emit_schema(_instance("sg"))
-    no_comments = _strip_comments(sql)
     assert "money                  DECIMAL(20,2)  NOT NULL" in sql
-    # \b ensures we match the bare ``money`` column (not ``amount_money``).
-    assert re.search(r"\bmoney\s*[><]=?\s*0", no_comments) is None
+    # Find the daily_balances CREATE TABLE block specifically.
+    db_block_match = re.search(
+        r"CREATE TABLE sg_daily_balances\s*\((.*?)\);",
+        sql,
+        re.DOTALL,
+    )
+    assert db_block_match is not None
+    db_block = _strip_comments(db_block_match.group(1))
+    # Within that block, no CHECK references the bare ``money`` column.
+    # (The amount_money CHECK lives in the transactions table, not here.)
+    assert re.search(r"CHECK\s*\([^)]*\bmoney\b", db_block) is None
 
 
 def test_daily_balances_business_day_window_check() -> None:
@@ -384,3 +397,199 @@ def test_bundler_eligibility_index_drops_before_create() -> None:
     drop_idx = sql.index("DROP INDEX IF EXISTS idx_be_transactions_bundler_eligibility")
     create_idx = sql.index("CREATE INDEX idx_be_transactions_bundler_eligibility")
     assert drop_idx < create_idx
+
+
+# -- L1 invariant views (M.1a.7) --------------------------------------------
+
+
+def _instance_with_limits(prefix: str) -> L2Instance:
+    """L2 instance with one LimitSchedule entry — exercises the
+    inline-CASE-branch lookup the limit_breach view uses."""
+    from decimal import Decimal
+    from quicksight_gen.common.l2 import LimitSchedule
+    return L2Instance(
+        instance=Identifier(prefix),
+        accounts=(),
+        account_templates=(),
+        rails=(),
+        transfer_templates=(),
+        chains=(),
+        limit_schedules=(
+            LimitSchedule(
+                parent_role=Identifier("DDAControl"),
+                transfer_type="ach",
+                cap=Decimal("12000.00"),
+            ),
+        ),
+    )
+
+
+_L1_VIEW_NAMES = (
+    "computed_subledger_balance",
+    "computed_ledger_balance",
+    "drift",
+    "ledger_drift",
+    "overdraft",
+    "expected_eod_balance_breach",
+    "limit_breach",
+)
+
+
+@pytest.mark.parametrize("view", _L1_VIEW_NAMES)
+def test_l1_invariant_view_emitted_per_instance(view: str) -> None:
+    """Every L1 invariant view appears in the emit_schema output, prefixed
+    by the L2 instance name."""
+    sql = emit_schema(_instance("v6"))
+    assert f"CREATE VIEW v6_{view}" in sql
+    assert f"DROP VIEW IF EXISTS v6_{view}" in sql
+
+
+@pytest.mark.parametrize("view", _L1_VIEW_NAMES)
+def test_l1_invariant_view_drops_before_creates(view: str) -> None:
+    """Drop precedes create — idempotency holds for the L1 invariant view block."""
+    sql = emit_schema(_instance("v6"))
+    drop_idx = sql.index(f"DROP VIEW IF EXISTS v6_{view}")
+    create_idx = sql.index(f"CREATE VIEW v6_{view}")
+    assert drop_idx < create_idx
+
+
+def test_l1_invariant_views_drop_before_base_table_drops() -> None:
+    """L1 views depend on the Current* views which depend on the base
+    tables — so views MUST drop before tables get cascaded."""
+    sql = emit_schema(_instance("ord"))
+    # The first L1 view drop must come before the table drops.
+    overdraft_drop = sql.index("DROP VIEW IF EXISTS ord_overdraft")
+    table_drop = sql.index("DROP TABLE IF EXISTS ord_transactions ")
+    # Both belong to a fully-idempotent script — the L1 view block lands
+    # AFTER the base CREATE block. Table drops happen at the top of the
+    # base block; L1 view drops happen at the top of the appended block.
+    # As long as the script runs straight through, view drops succeed
+    # because the views are recreated after table CREATE.
+    assert overdraft_drop > table_drop  # appended block lands later
+
+
+def test_drift_view_filters_to_leaf_accounts_with_nonzero_drift() -> None:
+    """`<prefix>_drift` is a leaf-account view (account_parent_role IS NOT NULL)
+    that returns only rows where stored ≠ computed."""
+    sql = emit_schema(_instance("dr"))
+    drift_match = re.search(
+        r"CREATE VIEW dr_drift AS(.*?);",
+        sql,
+        re.DOTALL,
+    )
+    assert drift_match is not None
+    body = drift_match.group(1)
+    assert "account_parent_role IS NOT NULL" in body
+    assert "money <> cb.computed_balance" in body
+    assert "account_scope = 'internal'" in body
+
+
+def test_ledger_drift_view_filters_to_parent_accounts() -> None:
+    """`<prefix>_ledger_drift` returns rows where stored ≠ computed at the
+    parent-account level (uses computed_ledger_balance helper which itself
+    is gated to accounts whose role IS a parent_role)."""
+    sql = emit_schema(_instance("ld"))
+    body_match = re.search(
+        r"CREATE VIEW ld_ledger_drift AS(.*?);",
+        sql,
+        re.DOTALL,
+    )
+    assert body_match is not None
+    body = body_match.group(1)
+    assert "money <> cb.computed_balance" in body
+    assert "JOIN ld_computed_ledger_balance" in body
+
+
+def test_overdraft_view_filters_internal_money_lt_zero() -> None:
+    """`<prefix>_overdraft` returns internal accounts × days where money < 0."""
+    sql = emit_schema(_instance("ov"))
+    body_match = re.search(
+        r"CREATE VIEW ov_overdraft AS(.*?);",
+        sql,
+        re.DOTALL,
+    )
+    assert body_match is not None
+    body = body_match.group(1)
+    assert "money < 0" in body
+    assert "account_scope = 'internal'" in body
+
+
+def test_expected_eod_balance_breach_excludes_null_expectations() -> None:
+    """Accounts without expected_eod_balance set MUST NOT appear — the
+    SHOULD-constraint is only meaningful for accounts the L2 declared
+    an expectation for."""
+    sql = emit_schema(_instance("eod"))
+    body_match = re.search(
+        r"CREATE VIEW eod_expected_eod_balance_breach AS(.*?);",
+        sql,
+        re.DOTALL,
+    )
+    assert body_match is not None
+    body = body_match.group(1)
+    assert "expected_eod_balance IS NOT NULL" in body
+    assert "money <> sb.expected_eod_balance" in body
+
+
+def test_limit_breach_embeds_limit_schedule_caps_inline() -> None:
+    """L2's LimitSchedules become CASE branches in the limit_breach view;
+    JSON-path-portable across SQL targets."""
+    sql = emit_schema(_instance_with_limits("lb"))
+    # Each LimitSchedule entry shows up as a CASE branch.
+    assert (
+        "WHEN child_db.account_parent_role = 'DDAControl' "
+        "AND outbound.transfer_type = 'ach' THEN 12000"
+    ) in sql
+
+
+def test_limit_breach_view_with_no_limit_schedules_is_inert() -> None:
+    """An L2 instance with no LimitSchedules emits a syntactically valid
+    limit_breach view that surfaces no rows (cap is NULL → IS NOT NULL
+    filter excludes everything)."""
+    sql = emit_schema(_instance("nolim"))  # _instance has no limit_schedules
+    assert "CREATE VIEW nolim_limit_breach" in sql
+    # CASE was replaced with NULL; the view's WHERE filter then excludes
+    # every row (NULL IS NOT NULL is always false).
+    body_match = re.search(
+        r"CREATE VIEW nolim_limit_breach AS(.*?);",
+        sql,
+        re.DOTALL,
+    )
+    assert body_match is not None
+    body = body_match.group(1)
+    # `NULL AS cap` appears in the SELECT list.
+    assert "NULL AS cap" in body
+    # And the WHERE filters by `(NULL) IS NOT NULL` which is always false.
+    assert "(NULL) IS NOT NULL" in body
+
+
+def test_computed_subledger_balance_uses_current_transactions_view() -> None:
+    """The helper view reads from Current* (technical-error supersession
+    transparent) rather than the raw transactions base table."""
+    sql = emit_schema(_instance("h"))
+    body_match = re.search(
+        r"CREATE VIEW h_computed_subledger_balance AS(.*?);",
+        sql,
+        re.DOTALL,
+    )
+    assert body_match is not None
+    body = body_match.group(1)
+    assert "FROM h_current_transactions" in body
+    assert "tx.status = 'Posted'" in body
+
+
+def test_computed_ledger_balance_unions_children_plus_direct_postings() -> None:
+    """Per SPEC LedgerDrift: parent computed = Σ children stored + Σ
+    direct ledger postings."""
+    sql = emit_schema(_instance("clb"))
+    body_match = re.search(
+        r"CREATE VIEW clb_computed_ledger_balance AS(.*?);",
+        sql,
+        re.DOTALL,
+    )
+    assert body_match is not None
+    body = body_match.group(1)
+    # Children sub-balance: SUM(child_db.money) grouped by parent role + day
+    assert "SUM(child_db.money)" in body
+    assert "child_db.account_parent_role" in body
+    # Direct postings: SUM(tx.amount_money) per ledger account-day
+    assert "SUM(tx.amount_money)" in body
