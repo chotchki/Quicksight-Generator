@@ -242,14 +242,18 @@ def test_default_scenario_is_deterministic(instance) -> None:
     assert sql1 == sql2
 
 
-def test_default_scenario_hash_is_stable(default_seed_sql: str) -> None:
-    """Output stays stable as long as no intentional generator change.
-    M.2.7 will pin this hash assertion as the canonical re-lock point."""
+def test_default_scenario_hash_is_locked(default_seed_sql: str) -> None:
+    """SHA256 hash-lock — M.2a.8 (replaces deprecated M.2.7 substep).
+
+    Any silent generator drift (different scenario count, reordered
+    plants, changed reference date math) flips this hash and trips
+    the test loudly. Re-lock by pasting the printed digest below in
+    the same commit that intentionally changes the generator.
+    """
     h = hashlib.sha256(default_seed_sql.encode("utf-8")).hexdigest()
-    # Smoke: just confirms the hash is computable + not empty.
-    # M.2.7 will replace this with an exact-match assertion.
-    assert len(h) == 64
-    assert h != "0" * 64
+    assert h == (
+        "c12242c0e892e13393b2daffe4a33d472cad3decc3e736ff5439c24740801695"
+    ), f"sasquatch_ar L2 seed drifted; new hash: {h}"
 
 
 # -- Multiple plants of the same kind ----------------------------------------
