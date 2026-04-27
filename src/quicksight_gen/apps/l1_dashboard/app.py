@@ -51,6 +51,7 @@ from quicksight_gen.common.theme import get_preset
 from quicksight_gen.common.tree import (
     Analysis,
     App,
+    CellAccentText,
     Dataset,
     DateTimeParam,
     FilterGroup,
@@ -360,7 +361,9 @@ def _populate_drift_sheet(
         values=[ds_ledger_drift["account_id"].count()],
     )
 
-    # Row 2: leaf-drift table.
+    # Row 2: leaf-drift table. Pull account_id Dim local so the link
+    # tint can reference the same field_id as the column.
+    leaf_account_col = ds_drift["account_id"].dim()
     sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
         width=_FULL,
         title="Leaf Account Drift",
@@ -371,7 +374,7 @@ def _populate_drift_sheet(
             "diverged from the underlying ledger."
         ),
         columns=[
-            ds_drift["account_id"].dim(),
+            leaf_account_col,
             ds_drift["account_name"].dim(),
             ds_drift["account_role"].dim(),
             ds_drift["account_parent_role"].dim(),
@@ -380,10 +383,14 @@ def _populate_drift_sheet(
             ds_drift["computed_balance"].numerical(),
             ds_drift["drift"].numerical(),
         ],
+        conditional_formatting=[
+            CellAccentText(on=leaf_account_col, color=accent),
+        ],
     )
 
     # Row 3: ledger (parent-account) drift table — same shape minus
     # account_parent_role (parents ARE the parents).
+    parent_account_col = ds_ledger_drift["account_id"].dim()
     sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
         width=_FULL,
         title="Parent Account Drift",
@@ -394,7 +401,7 @@ def _populate_drift_sheet(
             "⇒ a child posting didn't roll up correctly."
         ),
         columns=[
-            ds_ledger_drift["account_id"].dim(),
+            parent_account_col,
             ds_ledger_drift["account_name"].dim(),
             ds_ledger_drift["account_role"].dim(),
             ds_ledger_drift["business_day_end"].date(),
@@ -402,11 +409,14 @@ def _populate_drift_sheet(
             ds_ledger_drift["computed_balance"].numerical(),
             ds_ledger_drift["drift"].numerical(),
         ],
+        conditional_formatting=[
+            CellAccentText(on=parent_account_col, color=accent),
+        ],
     )
 
 
 def _populate_overdraft_sheet(
-    cfg: Config,  # noqa: ARG001  (M.2a.7 wires theme accent on conditional formats)
+    cfg: Config,
     sheet: Sheet,
     *,
     datasets: dict[str, Dataset],
@@ -414,8 +424,10 @@ def _populate_overdraft_sheet(
     """Overdraft sheet — KPI (count of violations) + violations table.
 
     Single dataset (`<prefix>_overdraft`) — only internal accounts, only
-    days where stored balance < 0. No drill actions yet (M.2a.7).
+    days where stored balance < 0. M.2b.2 link tint on account_id; full
+    drill wiring lands at M.2b.7.
     """
+    accent = get_preset(cfg.theme_preset).accent
     ds_overdraft = datasets[DS_OVERDRAFT]
 
     sheet.layout.row(height=_KPI_ROW_SPAN).add_kpi(
@@ -428,6 +440,7 @@ def _populate_overdraft_sheet(
         values=[ds_overdraft["account_id"].count()],
     )
 
+    account_col = ds_overdraft["account_id"].dim()
     sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
         width=_FULL,
         title="Overdraft Violations",
@@ -437,12 +450,15 @@ def _populate_overdraft_sheet(
             "ended the day."
         ),
         columns=[
-            ds_overdraft["account_id"].dim(),
+            account_col,
             ds_overdraft["account_name"].dim(),
             ds_overdraft["account_role"].dim(),
             ds_overdraft["account_parent_role"].dim(),
             ds_overdraft["business_day_end"].date(),
             ds_overdraft["stored_balance"].numerical(),
+        ],
+        conditional_formatting=[
+            CellAccentText(on=account_col, color=accent),
         ],
     )
 
@@ -499,6 +515,7 @@ def _populate_todays_exceptions_sheet(
     # Row 3: detail table — every row is one violation, sorted by
     # magnitude DESC so the biggest variances surface first.
     magnitude_col = ds["magnitude"].numerical()
+    account_col = ds["account_id"].dim()
     sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
         width=_FULL,
         title="Exception Detail",
@@ -510,7 +527,7 @@ def _populate_todays_exceptions_sheet(
         ),
         columns=[
             ds["check_type"].dim(),
-            ds["account_id"].dim(),
+            account_col,
             ds["account_name"].dim(),
             ds["account_role"].dim(),
             ds["account_parent_role"].dim(),
@@ -519,6 +536,9 @@ def _populate_todays_exceptions_sheet(
             magnitude_col,
         ],
         sort_by=(magnitude_col, "DESC"),
+        conditional_formatting=[
+            CellAccentText(on=account_col, color=accent),
+        ],
     )
 
     # Row 4: L2-description footer — the institution's "what we are"
@@ -560,7 +580,8 @@ def _populate_limit_breach_sheet(
     M.2a.7: top-of-sheet TextBox enumerates the L2 LimitSchedules
     (parent_role × transfer_type → cap, plus L2-supplied prose) so
     analysts see "what's configured" before "what got breached" —
-    description-driven, not hardcoded.
+    description-driven, not hardcoded. M.2b.2: link tint on
+    `account_id` for the M.2b.7 drill plumbing.
     """
     accent = get_preset(cfg.theme_preset).accent
     ds_lb = datasets[DS_LIMIT_BREACH]
@@ -592,6 +613,7 @@ def _populate_limit_breach_sheet(
         values=[ds_lb["account_id"].count()],
     )
 
+    account_col = ds_lb["account_id"].dim()
     sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
         width=_FULL,
         title="Limit Breach Detail",
@@ -601,7 +623,7 @@ def _populate_limit_breach_sheet(
             "so the magnitude of the breach is readable in-line."
         ),
         columns=[
-            ds_lb["account_id"].dim(),
+            account_col,
             ds_lb["account_name"].dim(),
             ds_lb["account_role"].dim(),
             ds_lb["account_parent_role"].dim(),
@@ -609,6 +631,9 @@ def _populate_limit_breach_sheet(
             ds_lb["transfer_type"].dim(),
             ds_lb["outbound_total"].numerical(),
             ds_lb["cap"].numerical(),
+        ],
+        conditional_formatting=[
+            CellAccentText(on=account_col, color=accent),
         ],
     )
 

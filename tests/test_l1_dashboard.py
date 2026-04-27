@@ -458,6 +458,42 @@ def test_todays_exceptions_footer_carries_l2_description() -> None:
     assert "Sasquatch National Bank" in footer_xml
 
 
+# -- Conditional formatting on tables (M.2b.2) -------------------------------
+
+
+def test_account_id_link_tints_on_every_table() -> None:
+    """M.2b.2: every L1 dashboard table tints `account_id` with the
+    theme accent — visual cue that the column will become a drill source
+    at M.2b.7. Theme accent is resolved from cfg, never hardcoded."""
+    from quicksight_gen.common.theme import get_preset
+    from quicksight_gen.common.tree import CellAccentText, Table
+
+    accent = get_preset(_CFG.theme_preset).accent
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+
+    # Every Table on every data-bearing sheet should have at least one
+    # CellAccentText format using the theme accent.
+    tables_seen = 0
+    for sheet in app.analysis.sheets[1:]:  # skip Getting Started
+        for visual in sheet.visuals:
+            if not isinstance(visual, Table):
+                continue
+            tables_seen += 1
+            cf = visual.conditional_formatting or []
+            tints = [
+                f for f in cf
+                if isinstance(f, CellAccentText) and f.color == accent
+            ]
+            assert len(tints) >= 1, (
+                f"sheet {sheet.name!r} table {visual.title!r} missing "
+                f"theme-accent link tint"
+            )
+    assert tables_seen >= 5, (
+        f"expected at least 5 tables across data sheets, saw {tables_seen}"
+    )
+
+
 # -- Universal date-range filter (M.2b.1) ------------------------------------
 
 
