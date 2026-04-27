@@ -904,12 +904,44 @@ def set_date_range(
     ``start`` / ``end`` use QuickSight's accepted text format (``YYYY/MM/DD``).
     ``picker_indices`` defaults to (0, 1) — the first date-range control on
     the active sheet. Override when a sheet has multiple ranges.
+
+    For parameter-driven date pickers (``ParameterDateTimePicker``,
+    not ``FilterDateTimePicker.type=DATE_RANGE``), use
+    :func:`set_parameter_datetime_value` instead — those render as
+    separate sheet controls each with their own scoped DOM, not a
+    shared 0-and-1-indexed range widget.
     """
     for picker_index, value in zip(picker_indices, (start, end)):
         selector = f'[data-automation-id="date_picker_{picker_index}"]'
         page.wait_for_selector(selector, timeout=timeout_ms, state="visible")
         page.fill(selector, value)
         page.press(selector, "Enter")
+
+
+def set_parameter_datetime_value(
+    page, control_title: str, value: str, timeout_ms: int,
+) -> None:
+    """Fill a single ``ParameterDateTimePicker`` control by its title.
+
+    Each ParameterDateTimePicker on a sheet renders as its own
+    ``sheet_control`` card scoped by ``data-automation-context`` to
+    the control's title. The date input lives at
+    ``data-automation-id="date_picker_0"`` *within* that card. Targeting
+    by title avoids the cross-control collision (each card has its own
+    locally-indexed picker).
+
+    ``value`` uses QuickSight's accepted text format (``YYYY/MM/DD``).
+    """
+    card_selector = (
+        f'[data-automation-id="sheet_control"]'
+        f'[data-automation-context="{control_title}"]'
+    )
+    picker_selector = (
+        f'{card_selector} [data-automation-id="date_picker_0"]'
+    )
+    page.wait_for_selector(picker_selector, timeout=timeout_ms, state="visible")
+    page.fill(picker_selector, value)
+    page.press(picker_selector, "Enter")
 
 
 def set_slider_range(
@@ -1038,6 +1070,31 @@ def set_multi_select_values(
     for value in targets:
         page.locator(mselect, has_text=value).first.click(timeout=timeout_ms)
     page.keyboard.press("Escape")
+
+
+def read_dropdown_options(
+    page, control_title: str, timeout_ms: int,
+) -> list[str]:
+    """Return the data-value option labels in a FilterControl dropdown.
+
+    Opens the dropdown for ``control_title``, reads every
+    ``[role="option"]`` label, dismisses the popover, and returns the
+    list with sentinel entries filtered out (``"Select all"``, ``"All"``,
+    blanks). Used by data-agnostic e2e tests that need to pick a
+    valid value from the dropdown without hardcoding what the values
+    are — e.g., "pick the first selectable value to narrow the table."
+    """
+    _open_control_dropdown(page, control_title, timeout_ms)
+    labels = page.evaluate(
+        """() => Array.from(
+            document.querySelectorAll('[role="listbox"] [role="option"]')
+        ).map(o => o.innerText.trim())"""
+    )
+    page.keyboard.press("Escape")
+    return [
+        label for label in labels
+        if label and label not in ("Select all", "All")
+    ]
 
 
 def clear_dropdown(page, control_title: str, timeout_ms: int) -> None:
