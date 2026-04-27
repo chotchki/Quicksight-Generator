@@ -93,6 +93,7 @@ nav:
   - Training Scenarios:
     - Account Structure: Training_Story.md
     - Schema v3 — Data Feed Contract: Schema_v3.md
+    - L1 Invariants: L1_Invariants.md
   - API Reference:
     - Overview: api/index.md
     - Tree — App / Analysis / Dashboard / Sheet: api/tree-structure.md

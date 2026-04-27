@@ -133,11 +133,101 @@ them when you can give the dashboard rail-accurate signal:
   *How do I add an app-specific metadata key?* walkthrough above
   is the read/write contract.
 
+## The L2-fed pattern (M.2b)
+
+The above sections cover the v5 customization path — `mapping.yaml`
+substitution onto a hand-rolled per-app dashboard. The newer
+**L2-fed pattern** is the recommended approach going forward: declare
+your institution as an L2 instance YAML once, and the L1 dashboard
+renders against it generically.
+
+### 1. Write your L2 instance YAML
+
+Mirror `tests/l2/sasquatch_ar.yaml` for shape. The L2 declares:
+
+- **Accounts** + roles, scopes (internal/external), parents
+- **Account templates** (role classes that materialize at runtime)
+- **Rails** — one-leg / two-leg / aggregating; per-rail aging caps
+  (`max_pending_age`, `max_unbundled_age`)
+- **Transfer templates** — multi-leg shared transfers with closure
+- **Chains** — transfer-of-transfers ordered flows; XOR groups
+- **LimitSchedules** — per-`(parent_role × transfer_type)` daily caps
+- A `description` field on every primitive (surfaces as TextBox
+  prose on the dashboard)
+
+Rich descriptions matter — the M.2a.7 prose seam pulls them straight
+into the dashboard's Getting Started, Drift, Limit Breach, and
+Today's Exceptions text boxes. Switching the L2 instance switches
+the prose without touching dashboard code.
+
+### 2. Apply the prefixed schema
+
+```python
+from quicksight_gen.common.l2 import emit_schema, load_instance
+
+instance = load_instance("path/to/myorg.yaml")
+sql = emit_schema(instance)
+# Pipe to psql, or:
+import psycopg2
+conn = psycopg2.connect(your_db_url)
+with conn.cursor() as cur:
+    cur.execute(sql)
+```
+
+Every table, view, and matview in the emitted DDL is prefixed by
+`instance.instance` (e.g. `myorg_transactions`, `myorg_drift`,
+`myorg_stuck_pending`). Multiple L2 instances coexist in one
+database via prefix isolation.
+
+### 3. Refresh the matviews after every load
+
+The L1 invariant views are MATERIALIZED (M.1a.9) for dashboard
+performance. After every batch insert into `<prefix>_transactions`
+or `<prefix>_daily_balances`, refresh the dependent matviews:
+
+```python
+from quicksight_gen.common.l2 import refresh_matviews_sql
+sql = refresh_matviews_sql(instance)
+# 13 matviews × 2 statements each = 26 (REFRESH + ANALYZE) per call
+```
+
+### 4. Deploy the L1 dashboard against your instance
+
+The CLI defaults to the canonical Sasquatch fixture; swap to your
+own instance by editing the build call site or providing your own
+`l2_instance` kwarg via a small wrapper script. Then:
+
+```bash
+quicksight-gen generate l1-dashboard -c run/config.yaml -o run/out
+quicksight-gen deploy --generate -c run/config.yaml -o run/out l1-dashboard
+```
+
+### 5. Verify with `m2_6_verify.py`
+
+`scripts/m2_6_verify.py` is the end-to-end smoke that applies the
+schema, plants the canonical seed scenarios, refreshes matviews,
+and asserts each L1 invariant view returns the planted scenarios.
+For your own instance, write a sibling `myorg_seed.py` (mirror of
+`tests/l2/sasquatch_ar_seed.py`) declaring your scenarios via the
+generic plant primitives (`DriftPlant`, `OverdraftPlant`,
+`LimitBreachPlant`, `StuckPendingPlant`, `StuckUnbundledPlant`,
+`SupersessionPlant`). Run the verify against your DB to PASS-gate
+your customization before touching the dashboard.
+
+For the full L1 invariant inventory (what each `<prefix>_*` view
+returns + its SHOULD-constraint motivation), see
+[L1 Invariants](../L1_Invariants.md).
+
 ## Reference
 
 - [Schema v3 — Data Feed Contract](../Schema_v3.md) — the column
   contract for the two base tables. Read this before mapping
   your source system.
+- [L1 Invariants](../L1_Invariants.md) — what each `<prefix>_*`
+  view returns and what it asserts. The L1-fed dashboard reads
+  these directly.
+- [L1 Reconciliation Dashboard](l1.md) — the L2-fed dashboard's
+  analyst view.
 - [Data Integration Handbook](etl.md) — the ETL-engineer view of
   the same surface. Useful when your customization spans both
   product wiring and the upstream feed.
