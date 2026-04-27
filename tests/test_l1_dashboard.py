@@ -89,16 +89,17 @@ def test_dashboard_registered() -> None:
     assert app.dashboard is not None
 
 
-def test_five_sheets_after_m2a6() -> None:
-    """M.2a.2-M.2a.6 ships 5 sheets: Getting Started + 4 per-invariant
-    + Today's Exceptions. This guard fires if a future commit accidentally
-    lands a sheet outside its own substep."""
+def test_six_sheets_after_m2b4() -> None:
+    """M.2b.4 adds Daily Statement. Sheet order is the analyst's
+    journey order (Getting Started → 4 invariants → today's roll-up
+    → per-account-day detail). Future M.2b substeps add more sheets;
+    re-lock this list at each substep that adds one."""
     app = build_l1_dashboard_app(_CFG)
     assert app.analysis is not None
     sheet_names = [s.name for s in app.analysis.sheets]
     assert sheet_names == [
         "Getting Started", "Drift", "Overdraft",
-        "Limit Breach", "Today's Exceptions",
+        "Limit Breach", "Today's Exceptions", "Daily Statement",
     ]
 
 
@@ -385,6 +386,103 @@ def test_todays_exceptions_sql_emits_unified_shape() -> None:
         assert label in sql
 
 
+# -- Daily Statement sheet (M.2b.4) ------------------------------------------
+
+
+def test_daily_statement_sheet_present_after_m2b4() -> None:
+    """M.2b.4 lands the Daily Statement sheet — sixth tab."""
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    ds = app.analysis.sheets[5]
+    assert ds.name == "Daily Statement"
+    assert ds.title == "Per-Account Daily Statement"
+
+
+def test_daily_statement_has_five_kpis_and_one_table() -> None:
+    """Daily Statement structure: 5 KPIs side-by-side (Opening / Debits /
+    Credits / Closing Stored / Drift) + 1 detail table."""
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    ds = app.analysis.sheets[5]
+    titles = [v.title for v in ds.visuals]
+    assert titles == [
+        "Opening Balance",
+        "Debits",
+        "Credits",
+        "Closing Stored",
+        "Drift",
+        "Posted Money Records",
+    ]
+
+
+def test_daily_statement_parameters_and_controls() -> None:
+    """M.2b.4: 2 new analysis-level parameters drive the sheet's
+    per-account-day filter, surfaced as 2 sheet controls."""
+    from quicksight_gen.apps.l1_dashboard.app import (
+        P_L1_DS_ACCOUNT, P_L1_DS_BALANCE_DATE,
+    )
+
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    param_names = {p.name for p in app.analysis.parameters}
+    assert P_L1_DS_ACCOUNT in param_names
+    assert P_L1_DS_BALANCE_DATE in param_names
+
+    ds = app.analysis.sheets[5]
+    control_titles = [
+        c.title for c in ds.parameter_controls
+        if hasattr(c, "title")
+    ]
+    assert "Account" in control_titles
+    assert "Business Day" in control_titles
+
+
+def test_daily_statement_filter_groups_target_correct_columns() -> None:
+    """4 SINGLE_DATASET filter groups (2 datasets × 2 params), each
+    column-specific: summary uses business_day_start; transactions
+    uses business_day."""
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    fg_ids = {fg.filter_group_id for fg in app.analysis.filter_groups}
+    expected = {
+        "fg-l1-ds-summary-account",
+        "fg-l1-ds-summary-date",
+        "fg-l1-ds-txn-account",
+        "fg-l1-ds-txn-date",
+    }
+    assert expected.issubset(fg_ids)
+
+
+def test_daily_statement_datasets_registered() -> None:
+    """Both new datasets register on the App tree + their SQL targets
+    the prefixed L2 instance (mirrors the M.2a.3 pattern)."""
+    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard.datasets import (
+        DS_DAILY_STATEMENT_SUMMARY,
+        DS_DAILY_STATEMENT_TRANSACTIONS,
+        build_daily_statement_summary_dataset,
+        build_daily_statement_transactions_dataset,
+    )
+
+    app = build_l1_dashboard_app(_CFG)
+    registered_ids = {ds.identifier for ds in app.datasets}
+    assert DS_DAILY_STATEMENT_SUMMARY in registered_ids
+    assert DS_DAILY_STATEMENT_TRANSACTIONS in registered_ids
+
+    instance = default_l2_instance()
+    summary_ds = build_daily_statement_summary_dataset(_CFG, instance)
+    txn_ds = build_daily_statement_transactions_dataset(_CFG, instance)
+
+    summary_sql = next(
+        iter(summary_ds.PhysicalTableMap.values())
+    ).CustomSql
+    txn_sql = next(iter(txn_ds.PhysicalTableMap.values())).CustomSql
+    assert summary_sql is not None and txn_sql is not None
+    assert f"FROM {instance.instance}_current_daily_balances" in summary_sql.SqlQuery
+    assert f"FROM {instance.instance}_current_transactions" in summary_sql.SqlQuery
+    assert f"FROM {instance.instance}_current_transactions" in txn_sql.SqlQuery
+
+
 # -- Description-driven prose (M.2a.7) ---------------------------------------
 
 
@@ -496,10 +594,17 @@ def test_per_sheet_filter_dropdowns() -> None:
 # -- Conditional formatting on tables (M.2b.2) -------------------------------
 
 
-def test_account_id_link_tints_on_every_table() -> None:
-    """M.2b.2: every L1 dashboard table tints `account_id` with the
-    theme accent — visual cue that the column will become a drill source
-    at M.2b.7. Theme accent is resolved from cfg, never hardcoded."""
+def test_account_id_link_tints_on_every_table_with_account_id() -> None:
+    """M.2b.2: every L1 dashboard table that exposes `account_id` tints
+    it with the theme accent — visual cue that the column will become
+    a drill source at M.2b.7. Theme accent is resolved from cfg, never
+    hardcoded.
+
+    Tables that don't expose `account_id` (e.g., Daily Statement's
+    Posted Money Records, which is pre-filtered to one account by the
+    sheet's parameter binding) are not required to carry the tint —
+    there's nothing to drill from. The assertion walks each table's
+    actual columns to decide whether the tint is required."""
     from quicksight_gen.common.theme import get_preset
     from quicksight_gen.common.tree import CellAccentText, Table
 
@@ -507,25 +612,32 @@ def test_account_id_link_tints_on_every_table() -> None:
     app = build_l1_dashboard_app(_CFG)
     assert app.analysis is not None
 
-    # Every Table on every data-bearing sheet should have at least one
-    # CellAccentText format using the theme accent.
-    tables_seen = 0
+    tinted_tables = 0
     for sheet in app.analysis.sheets[1:]:  # skip Getting Started
         for visual in sheet.visuals:
             if not isinstance(visual, Table):
                 continue
-            tables_seen += 1
+            col_names = {
+                c.column.name for c in visual.columns
+                if hasattr(c, "column") and hasattr(c.column, "name")
+            }
+            if "account_id" not in col_names:
+                continue
             cf = visual.conditional_formatting or []
             tints = [
                 f for f in cf
                 if isinstance(f, CellAccentText) and f.color == accent
             ]
             assert len(tints) >= 1, (
-                f"sheet {sheet.name!r} table {visual.title!r} missing "
-                f"theme-accent link tint"
+                f"sheet {sheet.name!r} table {visual.title!r} exposes "
+                f"account_id but is missing the theme-accent link tint"
             )
-    assert tables_seen >= 5, (
-        f"expected at least 5 tables across data sheets, saw {tables_seen}"
+            tinted_tables += 1
+    # 5 tables (drift leaf + drift parent + overdraft + limit breach +
+    # today's exceptions) carry account_id and so should be tinted.
+    assert tinted_tables >= 5, (
+        f"expected at least 5 tables with account_id+tint, saw "
+        f"{tinted_tables}"
     )
 
 

@@ -34,6 +34,8 @@ DS_LEDGER_DRIFT = "l1-ledger-drift-ds"
 DS_OVERDRAFT = "l1-overdraft-ds"
 DS_LIMIT_BREACH = "l1-limit-breach-ds"
 DS_TODAYS_EXCEPTIONS = "l1-todays-exceptions-ds"
+DS_DAILY_STATEMENT_SUMMARY = "l1-daily-statement-summary-ds"
+DS_DAILY_STATEMENT_TRANSACTIONS = "l1-daily-statement-transactions-ds"
 
 
 # Contracts — column shapes the M.1a.7 views project.
@@ -111,6 +113,55 @@ TODAYS_EXCEPTIONS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("business_day", "DATETIME", shape=ColumnShape.DATETIME_DAY),
     ColumnSpec("transfer_type", "STRING", shape=ColumnShape.TRANSFER_TYPE),
     ColumnSpec("magnitude", "DECIMAL"),
+])
+
+
+# Daily Statement summary — one row per (account_id, business_day_start)
+# across every internal account (and external if scoped). Sheet-level
+# filters narrow to a single (account, day) for KPIs + detail; the
+# dataset itself is unfiltered so the dropdown can browse all accounts.
+# `opening_balance` = LAG(money) from prior business_day; `total_debits`
+# / `_credits` from per-day transaction sums on `<prefix>_current_transactions`;
+# `closing_balance_recomputed` = opening + signed-net of the day; `drift`
+# = stored − recomputed. Drift is the single visual cue that the feed
+# is consistent (= 0 on a healthy day).
+DAILY_STATEMENT_SUMMARY_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("account_id", "STRING", shape=ColumnShape.ACCOUNT_ID),
+    ColumnSpec("account_name", "STRING"),
+    ColumnSpec("account_role", "STRING"),
+    ColumnSpec("account_parent_role", "STRING"),
+    ColumnSpec("account_scope", "STRING"),
+    ColumnSpec("business_day_start", "DATETIME", shape=ColumnShape.DATETIME_DAY),
+    ColumnSpec("business_day_end", "DATETIME", shape=ColumnShape.DATETIME_DAY),
+    ColumnSpec("opening_balance", "DECIMAL"),
+    ColumnSpec("total_debits", "DECIMAL"),
+    ColumnSpec("total_credits", "DECIMAL"),
+    ColumnSpec("net_flow", "DECIMAL"),
+    ColumnSpec("leg_count", "INTEGER"),
+    ColumnSpec("closing_balance_stored", "DECIMAL"),
+    ColumnSpec("closing_balance_recomputed", "DECIMAL"),
+    ColumnSpec("drift", "DECIMAL"),
+])
+
+
+# Daily Statement transactions — one row per Money record (leg) across
+# every account-day. Same per-account-day filter pattern as the summary;
+# detail table on the sheet renders the day's legs once both filters are
+# applied. `business_day` = DATE_TRUNC('day', posting) so the
+# business_day_start filter on the summary side aligns with this column.
+DAILY_STATEMENT_TRANSACTIONS_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("transaction_id", "STRING"),
+    ColumnSpec("account_id", "STRING", shape=ColumnShape.ACCOUNT_ID),
+    ColumnSpec("account_name", "STRING"),
+    ColumnSpec("business_day", "DATETIME", shape=ColumnShape.DATETIME_DAY),
+    ColumnSpec("posting", "DATETIME"),
+    ColumnSpec("transfer_id", "STRING", shape=ColumnShape.TRANSFER_ID),
+    ColumnSpec("transfer_type", "STRING", shape=ColumnShape.TRANSFER_TYPE),
+    ColumnSpec("amount_money", "DECIMAL"),
+    ColumnSpec("amount_direction", "STRING"),
+    ColumnSpec("status", "STRING"),
+    ColumnSpec("origin", "STRING"),
+    ColumnSpec("memo", "STRING"),
 ])
 
 
@@ -266,6 +317,117 @@ def build_todays_exceptions_dataset(
     )
 
 
+def _daily_statement_summary_sql(prefix: str) -> str:
+    """Per-(account, business_day) walk: opening + day's signed flows
+    + recomputed closing + drift = stored − recomputed.
+
+    `account_days` projects the daily-balance + LAG opening-balance
+    pair. `today_flows` aggregates that day's transactions on
+    `<prefix>_current_transactions` keyed off
+    `DATE_TRUNC('day', posting) = business_day_start`. Status filter
+    drops `'Failed'` legs from the flow sums (mirrors AR's pattern).
+    `amount_direction` discriminates Debit vs Credit; `signed_amount`
+    is computed as `+amount_money` for Credit, `-amount_money` for
+    Debit so `net_flow` and `closing_recomputed` arithmetic mirror
+    the L1 sign convention.
+    """
+    return (
+        f"WITH account_days AS ("
+        f"  SELECT db.account_id, db.account_name, db.account_role,"
+        f"         db.account_parent_role, db.account_scope,"
+        f"         db.business_day_start, db.business_day_end,"
+        f"         db.money AS closing_balance_stored,"
+        f"         LAG(db.money) OVER ("
+        f"           PARTITION BY db.account_id"
+        f"           ORDER BY db.business_day_start"
+        f"         ) AS opening_balance"
+        f"  FROM {prefix}_current_daily_balances db"
+        f"),"
+        f"today_flows AS ("
+        f"  SELECT tx.account_id,"
+        f"         DATE_TRUNC('day', tx.posting) AS business_day_start,"
+        f"         SUM(CASE WHEN tx.amount_direction = 'Debit'"
+        f"                  THEN tx.amount_money ELSE 0 END) AS total_debits,"
+        f"         SUM(CASE WHEN tx.amount_direction = 'Credit'"
+        f"                  THEN tx.amount_money ELSE 0 END) AS total_credits,"
+        f"         SUM(CASE WHEN tx.amount_direction = 'Credit'"
+        f"                  THEN tx.amount_money"
+        f"                  ELSE -tx.amount_money END) AS net_flow,"
+        f"         COUNT(*) AS leg_count"
+        f"  FROM {prefix}_current_transactions tx"
+        f"  WHERE tx.status <> 'Failed'"
+        f"  GROUP BY tx.account_id, DATE_TRUNC('day', tx.posting)"
+        f")"
+        f" SELECT ad.account_id, ad.account_name, ad.account_role,"
+        f"        ad.account_parent_role, ad.account_scope,"
+        f"        ad.business_day_start, ad.business_day_end,"
+        f"        COALESCE(ad.opening_balance, 0) AS opening_balance,"
+        f"        COALESCE(tf.total_debits, 0) AS total_debits,"
+        f"        COALESCE(tf.total_credits, 0) AS total_credits,"
+        f"        COALESCE(tf.net_flow, 0) AS net_flow,"
+        f"        COALESCE(tf.leg_count, 0) AS leg_count,"
+        f"        ad.closing_balance_stored,"
+        f"        COALESCE(ad.opening_balance, 0)"
+        f"          + COALESCE(tf.net_flow, 0) AS closing_balance_recomputed,"
+        f"        ad.closing_balance_stored"
+        f"          - (COALESCE(ad.opening_balance, 0)"
+        f"             + COALESCE(tf.net_flow, 0)) AS drift"
+        f" FROM account_days ad"
+        f" LEFT JOIN today_flows tf"
+        f"   ON tf.account_id = ad.account_id"
+        f"   AND tf.business_day_start = ad.business_day_start"
+    )
+
+
+def build_daily_statement_summary_dataset(
+    cfg: Config, l2_instance: L2Instance,
+) -> DataSet:
+    """Wrap the per-(account, day) summary view for Daily Statement KPIs.
+
+    Sheet-level filters narrow this dataset to a single
+    (account_id, business_day_start) pair; the underlying SQL stays
+    unfiltered so the account dropdown can browse every account.
+    """
+    sql = _daily_statement_summary_sql(l2_instance.instance)
+    return build_dataset(
+        cfg, cfg.prefixed("l1-daily-statement-summary-dataset"),
+        "L1 Daily Statement Summary", "l1-daily-statement-summary",
+        sql, DAILY_STATEMENT_SUMMARY_CONTRACT,
+        visual_identifier=DS_DAILY_STATEMENT_SUMMARY,
+    )
+
+
+def _daily_statement_transactions_sql(prefix: str) -> str:
+    """Per-leg projection from `<prefix>_current_transactions` carrying
+    everything the Daily Statement detail table renders. Sheet-level
+    filters narrow to one (account_id, business_day) at render time.
+    """
+    return (
+        f"SELECT tx.id AS transaction_id,"
+        f"       tx.account_id, tx.account_name,"
+        f"       DATE_TRUNC('day', tx.posting) AS business_day,"
+        f"       tx.posting,"
+        f"       tx.transfer_id, tx.transfer_type,"
+        f"       tx.amount_money, tx.amount_direction,"
+        f"       tx.status, tx.origin, tx.memo"
+        f" FROM {prefix}_current_transactions tx"
+    )
+
+
+def build_daily_statement_transactions_dataset(
+    cfg: Config, l2_instance: L2Instance,
+) -> DataSet:
+    """Wrap the per-leg ledger feed for Daily Statement detail rows."""
+    sql = _daily_statement_transactions_sql(l2_instance.instance)
+    return build_dataset(
+        cfg, cfg.prefixed("l1-daily-statement-transactions-dataset"),
+        "L1 Daily Statement Transactions",
+        "l1-daily-statement-transactions",
+        sql, DAILY_STATEMENT_TRANSACTIONS_CONTRACT,
+        visual_identifier=DS_DAILY_STATEMENT_TRANSACTIONS,
+    )
+
+
 def build_all_l1_dashboard_datasets(
     cfg: Config, l2_instance: L2Instance,
 ) -> list[DataSet]:
@@ -280,4 +442,6 @@ def build_all_l1_dashboard_datasets(
         build_overdraft_dataset(cfg, l2_instance),
         build_limit_breach_dataset(cfg, l2_instance),
         build_todays_exceptions_dataset(cfg, l2_instance),
+        build_daily_statement_summary_dataset(cfg, l2_instance),
+        build_daily_statement_transactions_dataset(cfg, l2_instance),
     ]

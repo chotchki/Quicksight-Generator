@@ -41,6 +41,19 @@ def embed_url(qs_client, account_id, l1_dashboard_id) -> str:
 # walk — mirrors AR's tall-viewport pattern.
 TALL_VIEWPORT = (1600, 4000)
 
+# Per-sheet visual-rendering budget. The default PAGE_TIMEOUT (30s) is
+# enough for steady-state QS dashboards (Investigation works at 30s),
+# but the L1 dashboard's KPI-heavy Daily Statement (5 KPIs + 1 table
+# all backed by the multi-CTE summary SQL) consistently takes longer
+# than 30s after a fresh deploy — the per-dataset query cache hasn't
+# warmed yet so each KPI's first SELECT pays a cold-start tax. Screenshot
+# evidence: KPI titles ALL render eventually (visible in
+# tests/e2e/screenshots/l1_dashboard/dashboard_full_walk.png) — they
+# just don't all hydrate within the default 30s window when the test
+# runs immediately after a redeploy. 90s gives Aurora + QS room to
+# warm without artificially slowing happy-path runs.
+L1_VISUAL_TIMEOUT = 90_000
+
 
 def test_l1_dashboard_structure_matches_tree(embed_url, page_timeout, l1_app):
     """The deployed L1 dashboard's sheets + visuals match what the tree
@@ -51,6 +64,6 @@ def test_l1_dashboard_structure_matches_tree(embed_url, page_timeout, l1_app):
         page.goto(embed_url, timeout=page_timeout)
         wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
         TreeValidator(
-            l1_app, page, timeout_ms=page_timeout,
+            l1_app, page, timeout_ms=L1_VISUAL_TIMEOUT,
         ).validate_structure()
         screenshot(page, "dashboard_full_walk", subdir="l1_dashboard")

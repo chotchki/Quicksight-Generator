@@ -35,6 +35,8 @@ from __future__ import annotations
 
 from quicksight_gen.apps.account_recon._l2 import default_l2_instance
 from quicksight_gen.apps.l1_dashboard.datasets import (
+    DS_DAILY_STATEMENT_SUMMARY,
+    DS_DAILY_STATEMENT_TRANSACTIONS,
     DS_DRIFT,
     DS_LEDGER_DRIFT,
     DS_LIMIT_BREACH,
@@ -57,7 +59,9 @@ from quicksight_gen.common.tree import (
     DateTimeParam,
     FilterGroup,
     Sheet,
+    StringParam,
     TextBox,
+    TimeEqualityFilter,
     TimeRangeFilter,
 )
 
@@ -79,6 +83,7 @@ SHEET_DRIFT = SheetId("l1-sheet-drift")
 SHEET_OVERDRAFT = SheetId("l1-sheet-overdraft")
 SHEET_LIMIT_BREACH = SheetId("l1-sheet-limit-breach")
 SHEET_TODAYS_EXCEPTIONS = SheetId("l1-sheet-todays-exceptions")
+SHEET_DAILY_STATEMENT = SheetId("l1-sheet-daily-statement")
 
 
 # Parameter names — analysis-level parameters that drive the universal
@@ -87,6 +92,12 @@ SHEET_TODAYS_EXCEPTIONS = SheetId("l1-sheet-todays-exceptions")
 # pickers stay in sync via shared parameter values.
 P_L1_DATE_START = ParameterName("pL1DateStart")
 P_L1_DATE_END = ParameterName("pL1DateEnd")
+
+# M.2b.4 — Daily Statement parameters. Single-value account_id +
+# single-value business_day_start drive the per-account-day filter on
+# both the summary KPIs and the transactions detail table.
+P_L1_DS_ACCOUNT = ParameterName("pL1DsAccount")
+P_L1_DS_BALANCE_DATE = ParameterName("pL1DsBalanceDate")
 
 
 _GETTING_STARTED_NAME = "Getting Started"
@@ -144,6 +155,20 @@ _TODAYS_EXCEPTIONS_DESCRIPTION = (
     "UNION; no REFRESH contract. KPI tracks total open count; bar chart "
     "breaks down by check_type; detail table sorts by magnitude so the "
     "biggest variances surface first."
+)
+
+
+_DAILY_STATEMENT_NAME = "Daily Statement"
+_DAILY_STATEMENT_TITLE = "Per-Account Daily Statement"
+_DAILY_STATEMENT_DESCRIPTION = (
+    "Per-account, per-day walk: opening balance + day's debits + "
+    "credits + closing balance + drift. Pick one account and one "
+    "business day via the controls; KPIs surface the 5-number summary "
+    "and the detail table lists every Money record posted that day. "
+    "Drift = stored closing − (opening + signed-net flow); on a healthy "
+    "feed it's exactly zero, so non-zero drift here is the single "
+    "visual cue the underlying ledger doesn't reconcile for that "
+    "account-day. Mirrors AR's Daily Statement pattern."
 )
 
 
@@ -239,6 +264,7 @@ def _l1_datasets(
     visual_ids = [
         DS_DRIFT, DS_LEDGER_DRIFT, DS_OVERDRAFT,
         DS_LIMIT_BREACH, DS_TODAYS_EXCEPTIONS,
+        DS_DAILY_STATEMENT_SUMMARY, DS_DAILY_STATEMENT_TRANSACTIONS,
     ]
     return {
         vid: Dataset(identifier=vid, arn=cfg.dataset_arn(aws.DataSetId))
@@ -639,6 +665,84 @@ def _populate_limit_breach_sheet(
     )
 
 
+def _populate_daily_statement_sheet(
+    cfg: Config,  # noqa: ARG001  (M.2b.13 wires drift-sign tints)
+    sheet: Sheet,
+    *,
+    datasets: dict[str, Dataset],
+) -> None:
+    """Daily Statement — 5 KPIs across the day's walk + detail table.
+
+    KPIs read the summary dataset (one row per account-day after sheet
+    filters narrow). Detail table reads the per-leg transactions
+    dataset. Both filtered by the M.2b.4 sheet-local
+    (P_L1_DS_ACCOUNT, P_L1_DS_BALANCE_DATE) parameters via the filter
+    groups wired in `_wire_daily_statement_filters`.
+    """
+    ds_summary = datasets[DS_DAILY_STATEMENT_SUMMARY]
+    ds_txn = datasets[DS_DAILY_STATEMENT_TRANSACTIONS]
+
+    # Row 1: 5 KPIs at width 7 each (sums to 35 of 36 grid cols; 1
+    # column slack on the right).
+    kpi_width = 7
+    kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
+    kpi_row.add_kpi(
+        width=kpi_width,
+        title="Opening Balance",
+        subtitle="End-of-prior-day stored balance for the picked account.",
+        values=[ds_summary["opening_balance"].max()],
+    )
+    kpi_row.add_kpi(
+        width=kpi_width,
+        title="Debits",
+        subtitle="Sum of Debit-direction Money records posted today.",
+        values=[ds_summary["total_debits"].max()],
+    )
+    kpi_row.add_kpi(
+        width=kpi_width,
+        title="Credits",
+        subtitle="Sum of Credit-direction Money records posted today.",
+        values=[ds_summary["total_credits"].max()],
+    )
+    kpi_row.add_kpi(
+        width=kpi_width,
+        title="Closing Stored",
+        subtitle="The day's stored closing balance from the feed.",
+        values=[ds_summary["closing_balance_stored"].max()],
+    )
+    kpi_row.add_kpi(
+        width=kpi_width,
+        title="Drift",
+        subtitle=(
+            "Stored − recomputed. Non-zero ⇒ feed doesn't reconcile."
+        ),
+        values=[ds_summary["drift"].max()],
+    )
+
+    # Row 2: detail table — every Money record posted that day for the
+    # picked account, after sheet filters narrow.
+    sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        title="Posted Money Records",
+        subtitle=(
+            "Every leg posted on the picked account-day. Direction "
+            "shows Debit / Credit; status filters out Failed legs in "
+            "the summary KPIs but not here."
+        ),
+        columns=[
+            ds_txn["transaction_id"].dim(),
+            ds_txn["transfer_id"].dim(),
+            ds_txn["transfer_type"].dim(),
+            ds_txn["amount_money"].numerical(),
+            ds_txn["amount_direction"].dim(),
+            ds_txn["status"].dim(),
+            ds_txn["origin"].dim(),
+            ds_txn["posting"].date(),
+            ds_txn["memo"].dim(),
+        ],
+    )
+
+
 # -- M.2b.1: Universal date-range filter -------------------------------------
 #
 # Two analysis-level DateTimeParams drive a per-dataset FilterGroup family:
@@ -842,6 +946,102 @@ def _wire_per_sheet_dropdowns(
     )
 
 
+def _wire_daily_statement_filters(
+    analysis: Analysis,
+    *,
+    datasets: dict[str, Dataset],
+    daily_statement_sheet: Sheet,
+) -> None:
+    """M.2b.4 — wire the Daily Statement sheet's per-account-day filter.
+
+    Two analysis-level parameters (P_L1_DS_ACCOUNT, P_L1_DS_BALANCE_DATE)
+    drive both the summary dataset and the transactions dataset via two
+    SINGLE_DATASET FilterGroups each — same-shape (account_id +
+    business_day_start) on the summary, (account_id + business_day) on
+    the transactions. ParameterDropdown + ParameterDateTimePicker
+    controls on the sheet bind to the params, so changing either
+    propagates to KPIs + table at once.
+
+    No defaults are pinned (no `RollingDate` / `default=...`) — at
+    first load the controls render empty and the analyst picks. This
+    avoids the no-hardcoded-data trap where a default account_id
+    would have to know an L2-specific value.
+    """
+    ds_account = analysis.add_parameter(StringParam(
+        name=P_L1_DS_ACCOUNT,
+    ))
+    ds_balance_date = analysis.add_parameter(DateTimeParam(
+        name=P_L1_DS_BALANCE_DATE,
+        time_granularity="DAY",
+    ))
+
+    summary_ds = datasets[DS_DAILY_STATEMENT_SUMMARY]
+    txn_ds = datasets[DS_DAILY_STATEMENT_TRANSACTIONS]
+
+    # Summary dataset: account_id + business_day_start.
+    summary_account_fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id="fg-l1-ds-summary-account",  # type: ignore[arg-type]
+        cross_dataset="SINGLE_DATASET",
+        filters=[CategoryFilter.with_parameter(
+            filter_id="filter-l1-ds-summary-account",
+            dataset=summary_ds,
+            column=summary_ds["account_id"],
+            parameter=ds_account,
+        )],
+    ))
+    summary_account_fg.scope_sheet(daily_statement_sheet)
+
+    summary_date_fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id="fg-l1-ds-summary-date",  # type: ignore[arg-type]
+        cross_dataset="SINGLE_DATASET",
+        filters=[TimeEqualityFilter(
+            filter_id="filter-l1-ds-summary-date",
+            dataset=summary_ds,
+            column=summary_ds["business_day_start"],
+            parameter=ds_balance_date,
+            time_granularity="DAY",
+        )],
+    ))
+    summary_date_fg.scope_sheet(daily_statement_sheet)
+
+    # Transactions dataset: account_id + business_day (DATE_TRUNC of
+    # posting); same parameter-bound shape.
+    txn_account_fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id="fg-l1-ds-txn-account",  # type: ignore[arg-type]
+        cross_dataset="SINGLE_DATASET",
+        filters=[CategoryFilter.with_parameter(
+            filter_id="filter-l1-ds-txn-account",
+            dataset=txn_ds,
+            column=txn_ds["account_id"],
+            parameter=ds_account,
+        )],
+    ))
+    txn_account_fg.scope_sheet(daily_statement_sheet)
+
+    txn_date_fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id="fg-l1-ds-txn-date",  # type: ignore[arg-type]
+        cross_dataset="SINGLE_DATASET",
+        filters=[TimeEqualityFilter(
+            filter_id="filter-l1-ds-txn-date",
+            dataset=txn_ds,
+            column=txn_ds["business_day"],
+            parameter=ds_balance_date,
+            time_granularity="DAY",
+        )],
+    ))
+    txn_date_fg.scope_sheet(daily_statement_sheet)
+
+    # Sheet controls — single-select dropdown + datetime picker bound
+    # to the params.
+    daily_statement_sheet.add_parameter_dropdown(
+        parameter=ds_account, title="Account",
+        type="SINGLE_SELECT",
+    )
+    daily_statement_sheet.add_parameter_datetime_picker(
+        parameter=ds_balance_date, title="Business Day",
+    )
+
+
 def build_l1_dashboard_app(
     cfg: Config,
     *,
@@ -921,6 +1121,16 @@ def build_l1_dashboard_app(
         datasets=datasets, l2_instance=l2_instance,
     )
 
+    daily_statement_sheet = analysis.add_sheet(Sheet(
+        sheet_id=SHEET_DAILY_STATEMENT,
+        name=_DAILY_STATEMENT_NAME,
+        title=_DAILY_STATEMENT_TITLE,
+        description=_DAILY_STATEMENT_DESCRIPTION,
+    ))
+    _populate_daily_statement_sheet(
+        cfg, daily_statement_sheet, datasets=datasets,
+    )
+
     # M.2b.1 — Universal date-range filter wires the sheets together.
     # Lands AFTER all sheets are populated since the FilterGroups scope
     # by sheet ref + the controls register on the sheets directly.
@@ -942,6 +1152,13 @@ def build_l1_dashboard_app(
         overdraft_sheet=overdraft_sheet,
         limit_breach_sheet=limit_breach_sheet,
         todays_exceptions_sheet=todays_exceptions_sheet,
+    )
+
+    # M.2b.4 — Daily Statement per-account-day parameter filters.
+    _wire_daily_statement_filters(
+        analysis,
+        datasets=datasets,
+        daily_statement_sheet=daily_statement_sheet,
     )
 
     app.create_dashboard(
