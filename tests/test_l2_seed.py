@@ -27,16 +27,16 @@ from quicksight_gen.common.l2 import (
     emit_schema,
     load_instance,
 )
-
-from tests.l2.sasquatch_ar_seed import (
+from quicksight_gen.common.l2.seed import (
     DriftPlant,
     LimitBreachPlant,
     OverdraftPlant,
     ScenarioPlant,
     TemplateInstance,
-    default_ar_scenario,
     emit_seed,
 )
+
+from tests.l2.sasquatch_ar_seed import default_ar_scenario
 
 
 YAML_PATH = Path(__file__).parent / "l2" / "sasquatch_ar.yaml"
@@ -252,7 +252,7 @@ def test_default_scenario_hash_is_locked(default_seed_sql: str) -> None:
     """
     h = hashlib.sha256(default_seed_sql.encode("utf-8")).hexdigest()
     assert h == (
-        "cd237706b7211985dcbdd02bd78aa0d9c2f838ce63124be4910b7702d260ac98"
+        "b7c7db6486ad15760c672ab6aea735ced239efa7afa193d1710c4c13c16326ec"
     ), f"sasquatch_ar L2 seed drifted; new hash: {h}"
 
 
@@ -284,11 +284,15 @@ def test_multiple_drift_plants_each_get_their_own_balance_row(
                     account_id=Identifier("cust-001"),
                     days_ago=3,
                     delta_money=Decimal("50.00"),
+                    rail_name=Identifier("CustomerInboundACH"),
+                    counter_account_id=Identifier("ext-frb-snb-master"),
                 ),
                 DriftPlant(
                     account_id=Identifier("cust-002"),
                     days_ago=4,
                     delta_money=Decimal("-30.00"),
+                    rail_name=Identifier("CustomerInboundACH"),
+                    counter_account_id=Identifier("ext-frb-snb-master"),
                 ),
             ),
             today=REFERENCE_DATE,
@@ -314,6 +318,8 @@ def test_unknown_account_id_in_plant_raises(instance) -> None:
                         account_id=Identifier("ghost-account"),
                         days_ago=1,
                         delta_money=Decimal("10.00"),
+                        rail_name=Identifier("CustomerInboundACH"),
+                        counter_account_id=Identifier("ext-frb-snb-master"),
                     ),
                 ),
                 today=REFERENCE_DATE,

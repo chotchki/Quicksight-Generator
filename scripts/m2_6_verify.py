@@ -80,7 +80,8 @@ def _apply_schema(conn, instance) -> None:
 
 def _apply_seed(conn, instance, today_ref) -> None:
     """Apply the M.2.2 default scenario seed."""
-    from tests.l2.sasquatch_ar_seed import default_ar_scenario, emit_seed
+    from quicksight_gen.common.l2.seed import emit_seed
+    from tests.l2.sasquatch_ar_seed import default_ar_scenario
     sql = emit_seed(instance, default_ar_scenario(today=today_ref))
     print(
         f"→ Planting seed (today={today_ref.isoformat()}, "
