@@ -36,7 +36,6 @@ from quicksight_gen.apps.payment_recon.demo_data import generate_demo_sql
 
 from tests.test_demo_data import (
     ANCHOR,
-    CANONICAL_ACCOUNT_TYPES,
     _metadata,
     _parse_inserts,
     _row_parts,
@@ -54,37 +53,6 @@ DOC_PATH = REPO_ROOT / "src" / "quicksight_gen" / "docs" / "Schema_v6.md"
 
 def _doc_text() -> str:
     return DOC_PATH.read_text()
-
-
-def _markdown_table_first_column(doc: str, heading: str) -> list[str]:
-    """Return the first-column cell values from the markdown table that
-    immediately follows ``heading`` (an ``## `` / ``### `` line).
-    """
-    lines = doc.splitlines()
-    try:
-        start = next(
-            i for i, ln in enumerate(lines)
-            if ln.strip().startswith("#") and ln.strip().lstrip("# ").startswith(heading)
-        )
-    except StopIteration:
-        raise AssertionError(f"Heading not found in {DOC_PATH.name}: {heading!r}")
-    rows: list[str] = []
-    in_table = False
-    for ln in lines[start + 1:]:
-        stripped = ln.strip()
-        if stripped.startswith("|"):
-            in_table = True
-            cells = [c.strip() for c in stripped.strip("|").split("|")]
-            # Skip header (`| heading |`) and separator (`|---|---|`).
-            if all(set(c) <= set("- ") for c in cells):
-                continue
-            rows.append(cells[0])
-        elif in_table:
-            break
-    if rows and rows[0].lower() in {"key", "`account_type`", "forbidden"}:
-        rows = rows[1:]
-    # Strip backticks the markdown wraps identifiers in.
-    return [r.strip("`") for r in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -107,151 +75,16 @@ def combined() -> dict[str, list[str]]:
     return out
 
 
-# ---------------------------------------------------------------------------
-# 1. Canonical account_type list — doc vs. Python
-# ---------------------------------------------------------------------------
-
-@pytest.mark.xfail(
-    reason="M.2d follow-up: Schema_v6 rewrite removed the Canonical "
-    "account_type values table (account types now live in L2 instance "
-    "YAML, not the schema doc). Tests need re-aiming at L2 instance "
-    "registries — substantial rewrite, queued for M.2d docs+tests sweep.",
-    strict=False,
-)
-class TestAccountTypeCatalog:
-    def test_doc_table_matches_python_canonical_set(self, doc):
-        documented = set(_markdown_table_first_column(
-            doc, "Canonical `account_type` values"
-        ))
-        assert documented == CANONICAL_ACCOUNT_TYPES, (
-            "docs/Schema_v6.md account_type table is out of sync with "
-            f"CANONICAL_ACCOUNT_TYPES.  Doc - Python: {documented - CANONICAL_ACCOUNT_TYPES}; "
-            f"Python - doc: {CANONICAL_ACCOUNT_TYPES - documented}"
-        )
-
-    def test_every_emitted_account_type_is_documented(self, doc, combined):
-        documented = set(_markdown_table_first_column(
-            doc, "Canonical `account_type` values"
-        ))
-        emitted_txn = {_val(r, "account_type") for r in combined["transactions"]}
-        emitted_bal = {_row_parts(r)[3] for r in combined["daily_balances"]}
-        emitted = emitted_txn | emitted_bal
-        missing = emitted - documented
-        assert not missing, (
-            f"Demo emits account_type values not in docs/Schema_v6.md: {missing}"
-        )
+# M.2d.7: TestAccountTypeCatalog + TestMetadataKeyCatalog removed
+# (used to parse Schema_v3 markdown tables that the v6 rewrite
+# eliminated). Their persona-contract intent — "the seed's emitted
+# values trace back to a declared spec" — is now the M.2d.8 matrix's
+# job in tests/test_l2_seed_contract.py: parameterized over multiple
+# L2 YAMLs, asserts contract against L2.accounts / Rail.metadata_keys.
 
 
 # ---------------------------------------------------------------------------
-# 2. Metadata key catalog — doc vs. seed
-# ---------------------------------------------------------------------------
-
-# Map each documented metadata-key section to the predicate that selects
-# the rows it claims to describe.  The lambda picks rows matching the
-# section's filter so the test can assert "every documented key shows up
-# on at least one matching row".
-METADATA_SECTIONS: list[tuple[str, str, callable]] = [
-    (
-        "On `transactions` rows where `transfer_type = 'sale'` (PR merchant sales)",
-        "transactions",
-        lambda r: _val(r, "transfer_type") == "sale",
-    ),
-    (
-        "On `transactions` rows where `transfer_type = 'payment'` (PR merchant payouts)",
-        "transactions",
-        lambda r: _val(r, "transfer_type") == "payment",
-    ),
-    (
-        "On `transactions` rows where `transfer_type = 'external_txn'` (external observations)",
-        "transactions",
-        lambda r: _val(r, "transfer_type") == "external_txn",
-    ),
-]
-
-
-@pytest.mark.xfail(
-    reason="M.2d follow-up: Schema_v6 rewrite removed the per-transfer_type "
-    "metadata key catalog tables (metadata is opaque to L1 invariants and "
-    "the per-rail metadata_keys list lives in the L2 instance YAML). Tests "
-    "need re-aiming at L2 Rail.metadata_keys — queued for M.2d docs+tests sweep.",
-    strict=False,
-)
-class TestMetadataKeyCatalog:
-    @pytest.mark.parametrize(
-        "section,table,predicate",
-        METADATA_SECTIONS,
-        ids=[s[0].split("`")[1] for s in METADATA_SECTIONS],
-    )
-    def test_documented_keys_appear_in_demo(
-        self, doc, combined, section, table, predicate
-    ):
-        documented = _markdown_table_first_column(doc, section)
-        # Some doc rows pack multiple keys: "`taxes`, `tips`, `discount_percentage`".
-        documented = [k.strip("` ") for cell in documented for k in cell.split(",")]
-        documented = [k for k in documented if k]
-
-        # Phase H rows aren't in the v3 demo; everything else is.
-        if not documented:
-            pytest.skip(f"No keys documented under {section!r}")
-
-        rows = [r for r in combined[table] if predicate(r)]
-        assert rows, f"No demo rows match predicate for {section!r}"
-
-        observed: set[str] = set()
-        for r in rows:
-            observed.update(_metadata(r).keys())
-
-        # Optional keys (taxes/tips/discount_percentage) only appear on a
-        # subset of sales — accept "any documented key found on any row"
-        # and report which keys never showed up so the doc and demo can
-        # be reconciled if they drift.
-        missing = set(documented) - observed
-        # Only flag keys the demo deliberately emits.  The doc lists a few
-        # "future / Phase H" keys — track them in EXEMPT.
-        EXEMPT = {"card_last_four", "external_transaction_id"}
-        missing -= EXEMPT
-        # Optional sales metadata is sparse; accept absence of one of
-        # taxes/tips/discount_percentage but flag if all three are missing.
-        OPTIONAL = {"taxes", "tips", "discount_percentage"}
-        if (missing & OPTIONAL) and (OPTIONAL - missing):
-            missing -= OPTIONAL
-        assert not missing, (
-            f"Documented metadata keys absent from demo for {section!r}: {missing}"
-        )
-
-    def test_ledger_balance_rows_carry_documented_limits(self, doc, combined):
-        # Doc declares: limits is an object with per-transfer-type caps
-        # like {"ach": 100000, "wire": 50000, "internal": 25000}.
-        ledger_rows = [
-            r for r in combined["daily_balances"]
-            if _row_parts(r)[2] == "NULL"  # control_account_id IS NULL
-        ]
-        with_limits = [
-            r for r in ledger_rows if "limits" in _metadata(r)
-        ]
-        assert with_limits, (
-            "No ledger daily_balances rows carry a `limits` metadata "
-            "object — Example 3 in docs/Schema_v6.md cannot be exercised."
-        )
-        # Every limits payload key should be a known transfer_type.
-        known_types = {
-            "ach", "wire", "internal", "cash",
-            "funding_batch", "fee", "clearing_sweep",
-            "sale", "settlement", "payment", "external_txn",
-        }
-        for r in with_limits:
-            limits = _metadata(r)["limits"]
-            assert isinstance(limits, dict), (
-                f"limits payload not a dict: {limits!r}"
-            )
-            unknown = set(limits) - known_types
-            assert not unknown, (
-                f"limits keys not in transfer_type enum: {unknown}"
-            )
-
-
-# ---------------------------------------------------------------------------
-# 3. Example 3 — limit-breach SELECT replicated against demo data
+# Example 3 — limit-breach SELECT replicated against demo data
 # ---------------------------------------------------------------------------
 
 class TestExample3LimitBreachQuery:
@@ -383,17 +216,7 @@ class TestSqlBlocksParse:
                 f"(open={opens}, close={closes}):\n{block[:200]}"
             )
 
-    @pytest.mark.xfail(
-        reason="M.2d follow-up: Schema_v6 rewrite moved the 5 ETL Example "
-        "blocks out of the schema doc and into docs/walkthroughs/etl/ "
-        "(per-question handbook walkthroughs). Test needs re-aiming at "
-        "the walkthroughs — queued for M.2d docs+tests sweep.",
-        strict=False,
-    )
-    def test_etl_examples_present(self, doc):
-        # The 5 ETL examples are the persona's day-one read; if any goes
-        # missing the doc lost its persona contract.
-        for n in range(1, 6):
-            assert f"### Example {n}" in doc, (
-                f"docs/Schema_v6.md is missing `### Example {n}` ETL block"
-            )
+    # M.2d.7: test_etl_examples_present removed — the 5 ETL Example
+    # blocks moved from Schema_v6.md into docs/walkthroughs/etl/. The
+    # walkthrough-presence guard is now in test_etl_walkthroughs.py
+    # (M.2d.8) — single check against the per-question handbook files.

@@ -130,74 +130,14 @@ class TestAccountReconExamples:
 # ---------------------------------------------------------------------------
 
 class TestSchemaContractAlignment:
-    @pytest.mark.xfail(
-        reason="M.2d follow-up: Schema_v6 rewrite restructured the column "
-        "documentation (no longer a single column-by-column table the "
-        "regex can find). Test needs re-aiming at v6's per-table column "
-        "blocks — queued for M.2d docs+tests sweep.",
-        strict=False,
-    )
-    def test_every_inserted_column_is_documented(self, pr_sql, ar_sql, schema_doc):
-        # Pull every column name from INSERT INTO ... ( col1, col2, ... )
-        # in both example outputs.
-        combined = pr_sql + "\n" + ar_sql
-        column_lists = re.findall(
-            r"INSERT INTO (transactions|daily_balances) \(\s*([^)]+)\)",
-            combined,
-            re.DOTALL,
-        )
-        all_columns: set[str] = set()
-        for _table, raw_cols in column_lists:
-            for c in raw_cols.split(","):
-                col = c.strip()
-                if col:
-                    all_columns.add(col)
-
-        # The doc's column-spec tables list each column as a backticked
-        # identifier in the first cell; build the union.
-        documented = set(re.findall(r"\|\s*`(\w+)`\s*\|", schema_doc))
-
-        undocumented = all_columns - documented
-        assert not undocumented, (
-            f"Examples reference columns not documented in Schema_v6: {undocumented}"
-        )
-
-    @pytest.mark.xfail(
-        reason="M.2d follow-up: Schema_v6 dropped the per-transfer_type "
-        "metadata key catalog (metadata is opaque to L1; per-rail "
-        "metadata_keys lives in L2 instance YAML now). Test needs "
-        "re-aiming at L2 Rail.metadata_keys union — queued for M.2d "
-        "docs+tests sweep.",
-        strict=False,
-    )
-    def test_metadata_keys_referenced_in_examples_are_documented(
-        self, pr_sql, ar_sql, schema_doc
-    ):
-        # Find every JSON_OBJECT key emitted in the examples.
-        combined = pr_sql + "\n" + ar_sql
-        emitted_keys = set(re.findall(r"'(\w+)'\s+VALUE", combined))
-        # Drop nested-call keys (they appear before VALUE inside outer
-        # JSON_OBJECT calls) — for now treat all extracted keys as
-        # candidates.
-
-        # Schema_v6.md lists metadata keys as the first cell of the
-        # metadata-key tables (backticked).  This is the same list the
-        # existing test_etl_examples.py checks against the demo seed.
-        documented = set(re.findall(r"\|\s*`(\w+)`\s*\|", schema_doc))
-        # Plus the special `limits` payload's nested transfer-type keys
-        # (ach, wire, internal, etc.) which appear in the doc as
-        # bulleted/inline strings, not table rows.
-        documented.update({
-            "ach", "wire", "internal", "cash",
-            "funding_batch", "fee", "clearing_sweep",
-            "sale", "settlement", "payment", "external_txn",
-        })
-
-        undocumented = emitted_keys - documented
-        assert not undocumented, (
-            f"Examples emit metadata keys not in Schema_v6 catalog: {undocumented}. "
-            f"Either add them to docs/Schema_v6.md or drop them from the examples."
-        )
+    # M.2d.7: test_every_inserted_column_is_documented +
+    # test_metadata_keys_referenced_in_examples_are_documented removed
+    # — both parsed Schema_v3 markdown structures the v6 rewrite
+    # eliminated. The "seed values trace back to a declared spec"
+    # intent moved to the M.2d.8 matrix in
+    # tests/test_l2_seed_contract.py: parameterized over multiple L2
+    # YAMLs, asserts contract against the v6 column lists +
+    # Rail.metadata_keys.
 
     def test_no_forbidden_postgres_only_syntax(self, pr_sql, ar_sql):
         # Mirror the Forbidden SQL Patterns table from Schema_v6 — the
