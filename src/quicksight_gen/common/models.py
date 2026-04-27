@@ -397,6 +397,43 @@ class BarChartVisual:
     Actions: list[VisualCustomAction] | None = None
 
 
+# -- Line chart --
+
+@dataclass
+class LineChartAggregatedFieldWells:
+    Category: list[DimensionField] | None = None  # x-axis
+    Values: list[MeasureField] | None = None       # y-axis
+    Colors: list[DimensionField] | None = None     # one line per color value
+
+
+@dataclass
+class LineChartFieldWells:
+    LineChartAggregatedFieldWells: LineChartAggregatedFieldWells | None = None
+
+
+@dataclass
+class LineChartSortConfiguration:
+    CategorySort: list[dict[str, Any]] | None = None
+
+
+@dataclass
+class LineChartConfiguration:
+    FieldWells: LineChartFieldWells | None = None
+    Type: str | None = None  # LINE | AREA | STACKED_AREA — default LINE
+    SortConfiguration: LineChartSortConfiguration | None = None
+    XAxisLabelOptions: ChartAxisLabelOptions | None = None
+    PrimaryYAxisLabelOptions: ChartAxisLabelOptions | None = None
+
+
+@dataclass
+class LineChartVisual:
+    VisualId: str
+    Title: VisualTitleLabelOptions | None = None
+    Subtitle: VisualSubtitleLabelOptions | None = None
+    ChartConfiguration: LineChartConfiguration | None = None
+    Actions: list[VisualCustomAction] | None = None
+
+
 # -- Pie chart --
 
 @dataclass
@@ -614,6 +651,7 @@ class VisualCustomAction:
 class Visual:
     """Union type — set exactly one."""
     BarChartVisual: BarChartVisual | None = None
+    LineChartVisual: LineChartVisual | None = None
     PieChartVisual: PieChartVisual | None = None
     KPIVisual: KPIVisual | None = None
     TableVisual: TableVisual | None = None

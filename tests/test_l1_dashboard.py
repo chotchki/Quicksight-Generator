@@ -41,6 +41,19 @@ _CFG = Config(
 )
 
 
+def _sheet_by_name(app, name: str):
+    """Look up a Sheet by display name. Position-agnostic — sheet order
+    can be reshuffled without breaking these tests, per CLAUDE.md
+    "key off stable analyst-facing identifiers" rule."""
+    assert app.analysis is not None
+    for s in app.analysis.sheets:
+        if s.name == name:
+            return s
+    raise AssertionError(
+        f"sheet {name!r} missing — found {[s.name for s in app.analysis.sheets]}"
+    )
+
+
 # -- Build pipeline -----------------------------------------------------------
 
 
@@ -89,15 +102,17 @@ def test_dashboard_registered() -> None:
     assert app.dashboard is not None
 
 
-def test_seven_sheets_after_m2b5() -> None:
-    """M.2b.5 adds Transactions (raw posting ledger). Sheet order
-    follows the analyst's journey: Getting Started → invariants →
-    today's roll-up → per-account-day detail → raw legs."""
+def test_eight_sheets_after_m2b6() -> None:
+    """M.2b.6 inserts Drift Timelines after Drift. Sheet order follows
+    the analyst's journey: Getting Started → drift (today) → drift (over
+    time) → other invariants → today's roll-up → per-account-day detail
+    → raw legs."""
     app = build_l1_dashboard_app(_CFG)
     assert app.analysis is not None
     sheet_names = [s.name for s in app.analysis.sheets]
     assert sheet_names == [
-        "Getting Started", "Drift", "Overdraft", "Limit Breach",
+        "Getting Started", "Drift", "Drift Timelines",
+        "Overdraft", "Limit Breach",
         "Today's Exceptions", "Daily Statement", "Transactions",
     ]
 
@@ -211,15 +226,96 @@ def test_drift_dataset_sql_targets_prefixed_l1_views() -> None:
     assert ledger_sql.SqlQuery == f"SELECT * FROM {prefix}_ledger_drift"
 
 
+# -- Drift Timelines sheet (M.2b.6) ------------------------------------------
+
+
+def test_drift_timelines_sheet_present_after_m2b6() -> None:
+    """M.2b.6 lands the Drift Timelines sheet — line-chart trends
+    that complement the per-violation Drift table sheet."""
+    app = build_l1_dashboard_app(_CFG)
+    timelines = _sheet_by_name(app, "Drift Timelines")
+    assert timelines.title == "Drift Magnitude Over Time"
+
+
+def test_drift_timelines_has_two_kpis_and_two_line_charts() -> None:
+    """Drift Timelines structure: 2 KPIs (max single-day Σ ABS(drift) for
+    leaf + parent) + 2 LineCharts (one per role, plotting per-day
+    Σ ABS(drift) over the visible date range)."""
+    from quicksight_gen.common.tree import KPI, LineChart
+
+    app = build_l1_dashboard_app(_CFG)
+    timelines = _sheet_by_name(app, "Drift Timelines")
+    titles = [v.title for v in timelines.visuals]
+    assert titles == [
+        "Largest Leaf Drift Day",
+        "Largest Parent Drift Day",
+        "Leaf Account Drift Over Time",
+        "Parent Account Drift Over Time",
+    ]
+    kinds = [type(v).__name__ for v in timelines.visuals]
+    assert kinds == ["KPI", "KPI", "LineChart", "LineChart"]
+    # Sanity-check the LineCharts each carry one category, value, color
+    # since the LineChart primitive supports the multi-line-by-color shape.
+    for visual in timelines.visuals:
+        if isinstance(visual, LineChart):
+            assert len(visual.category) == 1, (
+                f"{visual.title!r}: line charts plot one category dim"
+            )
+            assert len(visual.values) == 1
+            assert len(visual.colors) == 1, (
+                f"{visual.title!r}: one line per color value (account_role)"
+            )
+        elif isinstance(visual, KPI):
+            assert len(visual.values) == 1
+
+
+def test_drift_timeline_datasets_registered_and_aggregate_in_sql() -> None:
+    """Both timeline datasets must register on the App + their SQL must
+    GROUP BY the (day, role) keys so each dataset row IS one (day, role)
+    cell — otherwise the line chart would re-aggregate at render time."""
+    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard.datasets import (
+        DS_DRIFT_TIMELINE,
+        DS_LEDGER_DRIFT_TIMELINE,
+        build_drift_timeline_dataset,
+        build_ledger_drift_timeline_dataset,
+    )
+
+    app = build_l1_dashboard_app(_CFG)
+    registered_ids = {ds.identifier for ds in app.datasets}
+    assert DS_DRIFT_TIMELINE in registered_ids
+    assert DS_LEDGER_DRIFT_TIMELINE in registered_ids
+
+    instance = default_l2_instance()
+    prefix = instance.instance
+
+    drift_tl_ds = build_drift_timeline_dataset(_CFG, instance)
+    ledger_tl_ds = build_ledger_drift_timeline_dataset(_CFG, instance)
+    drift_sql = next(iter(drift_tl_ds.PhysicalTableMap.values())).CustomSql
+    ledger_sql = next(
+        iter(ledger_tl_ds.PhysicalTableMap.values())
+    ).CustomSql
+    assert drift_sql is not None
+    assert ledger_sql is not None
+    # SQL must aggregate ABS(drift) by (day, role) on the prefixed
+    # invariant matview — that's the L1-invariant promise + the
+    # per-render-not-per-row efficiency win.
+    assert f"FROM {prefix}_drift" in drift_sql.SqlQuery
+    assert "SUM(ABS(drift))" in drift_sql.SqlQuery
+    assert "GROUP BY business_day_end, account_role" in drift_sql.SqlQuery
+    assert f"FROM {prefix}_ledger_drift" in ledger_sql.SqlQuery
+    assert "SUM(ABS(drift))" in ledger_sql.SqlQuery
+    assert "GROUP BY business_day_end, account_role" in ledger_sql.SqlQuery
+
+
 # -- Overdraft sheet (M.2a.4) ------------------------------------------------
 
 
 def test_overdraft_sheet_present_after_m2a4() -> None:
-    """M.2a.4 lands the Overdraft sheet — third tab in display order."""
+    """M.2a.4 lands the Overdraft sheet — referenced by name (M.2b.6
+    inserted Drift Timelines so positional index would shift)."""
     app = build_l1_dashboard_app(_CFG)
-    assert app.analysis is not None
-    overdraft = app.analysis.sheets[2]
-    assert overdraft.name == "Overdraft"
+    overdraft = _sheet_by_name(app, "Overdraft")
     assert overdraft.title == "Internal Account Overdrafts"
 
 
@@ -227,8 +323,7 @@ def test_overdraft_sheet_has_kpi_and_table() -> None:
     """Overdraft sheet structure: 1 KPI (count) + 1 violations table.
     Single-dataset sheet — every row in the table IS one violation."""
     app = build_l1_dashboard_app(_CFG)
-    assert app.analysis is not None
-    overdraft = app.analysis.sheets[2]
+    overdraft = _sheet_by_name(app, "Overdraft")
     titles = [v.title for v in overdraft.visuals]
     assert titles == [
         "Internal Accounts in Overdraft",
@@ -260,11 +355,9 @@ def test_overdraft_dataset_registered_and_targets_l1_view() -> None:
 
 
 def test_limit_breach_sheet_present_after_m2a5() -> None:
-    """M.2a.5 lands the Limit Breach sheet — fourth tab in display order."""
+    """M.2a.5 lands the Limit Breach sheet — referenced by name."""
     app = build_l1_dashboard_app(_CFG)
-    assert app.analysis is not None
-    lb = app.analysis.sheets[3]
-    assert lb.name == "Limit Breach"
+    lb = _sheet_by_name(app, "Limit Breach")
     assert lb.title == "Outbound Transfer Limit Breaches"
 
 
@@ -272,8 +365,7 @@ def test_limit_breach_sheet_has_kpi_and_table() -> None:
     """Limit Breach sheet structure: 1 KPI (count of breach cells) +
     1 detail table that puts outbound_total + cap side-by-side."""
     app = build_l1_dashboard_app(_CFG)
-    assert app.analysis is not None
-    lb = app.analysis.sheets[3]
+    lb = _sheet_by_name(app, "Limit Breach")
     titles = [v.title for v in lb.visuals]
     assert titles == ["Limit Breach Cells", "Limit Breach Detail"]
 
@@ -302,12 +394,9 @@ def test_limit_breach_dataset_registered_and_targets_l1_view() -> None:
 
 
 def test_todays_exceptions_sheet_present_after_m2a6() -> None:
-    """M.2a.6 lands the Today's Exceptions sheet — fifth tab in display
-    order, last in the M.2a.2-M.2a.6 sheet rollout."""
+    """M.2a.6 lands the Today's Exceptions sheet — referenced by name."""
     app = build_l1_dashboard_app(_CFG)
-    assert app.analysis is not None
-    te = app.analysis.sheets[4]
-    assert te.name == "Today's Exceptions"
+    te = _sheet_by_name(app, "Today's Exceptions")
     assert te.title == "Today's Exceptions"
 
 
@@ -315,8 +404,7 @@ def test_todays_exceptions_sheet_has_kpi_bar_table() -> None:
     """Today's Exceptions structure: 1 KPI (count) + 1 BarChart by
     check_type + 1 detail table sorted by magnitude DESC."""
     app = build_l1_dashboard_app(_CFG)
-    assert app.analysis is not None
-    te = app.analysis.sheets[4]
+    te = _sheet_by_name(app, "Today's Exceptions")
     titles = [v.title for v in te.visuals]
     assert titles == [
         "Open Exceptions",
@@ -354,12 +442,9 @@ def test_todays_exceptions_dataset_reads_matview() -> None:
 
 
 def test_transactions_sheet_present_after_m2b5() -> None:
-    """M.2b.5 lands the Transactions sheet — seventh tab (last in the
-    M.2b core ramp; aging + audit sheets follow at M.2b.10-12)."""
+    """M.2b.5 lands the Transactions sheet — referenced by name."""
     app = build_l1_dashboard_app(_CFG)
-    assert app.analysis is not None
-    tx = app.analysis.sheets[6]
-    assert tx.name == "Transactions"
+    tx = _sheet_by_name(app, "Transactions")
     assert tx.title == "Posting Ledger"
 
 
@@ -367,8 +452,7 @@ def test_transactions_sheet_has_single_table() -> None:
     """Transactions has 1 detail table and no KPIs — its value is
     'show me every leg + filter'."""
     app = build_l1_dashboard_app(_CFG)
-    assert app.analysis is not None
-    tx = app.analysis.sheets[6]
+    tx = _sheet_by_name(app, "Transactions")
     titles = [v.title for v in tx.visuals]
     assert titles == ["Posting Ledger"]
 
@@ -400,11 +484,9 @@ def test_transactions_dataset_registered_and_targets_matview() -> None:
 
 
 def test_daily_statement_sheet_present_after_m2b4() -> None:
-    """M.2b.4 lands the Daily Statement sheet — sixth tab."""
+    """M.2b.4 lands the Daily Statement sheet — referenced by name."""
     app = build_l1_dashboard_app(_CFG)
-    assert app.analysis is not None
-    ds = app.analysis.sheets[5]
-    assert ds.name == "Daily Statement"
+    ds = _sheet_by_name(app, "Daily Statement")
     assert ds.title == "Per-Account Daily Statement"
 
 
@@ -412,8 +494,7 @@ def test_daily_statement_has_five_kpis_and_one_table() -> None:
     """Daily Statement structure: 5 KPIs side-by-side (Opening / Debits /
     Credits / Closing Stored / Drift) + 1 detail table."""
     app = build_l1_dashboard_app(_CFG)
-    assert app.analysis is not None
-    ds = app.analysis.sheets[5]
+    ds = _sheet_by_name(app, "Daily Statement")
     titles = [v.title for v in ds.visuals]
     assert titles == [
         "Opening Balance",
@@ -438,7 +519,7 @@ def test_daily_statement_parameters_and_controls() -> None:
     assert P_L1_DS_ACCOUNT in param_names
     assert P_L1_DS_BALANCE_DATE in param_names
 
-    ds = app.analysis.sheets[5]
+    ds = _sheet_by_name(app, "Daily Statement")
     control_titles = [
         c.title for c in ds.parameter_controls
         if hasattr(c, "title")
@@ -546,7 +627,7 @@ def test_limit_breach_sheet_lists_l2_caps() -> None:
     LimitSchedule with its cap + L2-supplied prose. Analysts see "what's
     configured" before "what got breached"."""
     app = build_l1_dashboard_app(_CFG)
-    lb = app.analysis.sheets[3]
+    lb = _sheet_by_name(app, "Limit Breach")
     assert len(lb.text_boxes) == 1
     config_xml = lb.text_boxes[0].content
     assert "Configured Caps" in config_xml
@@ -563,7 +644,7 @@ def test_todays_exceptions_footer_carries_l2_description() -> None:
     instance's top-level description — same prose as the Getting Started
     welcome, anchored at the bottom of the unified-view landing page."""
     app = build_l1_dashboard_app(_CFG)
-    te = app.analysis.sheets[4]
+    te = _sheet_by_name(app, "Today's Exceptions")
     assert len(te.text_boxes) == 1
     footer_xml = te.text_boxes[0].content
     assert "Institution Context" in footer_xml
@@ -575,10 +656,11 @@ def test_todays_exceptions_footer_carries_l2_description() -> None:
 
 
 def test_per_sheet_filter_dropdowns() -> None:
-    """M.2b.3 + M.2b.5: each data-bearing sheet carries the right
-    filter dropdowns.
+    """M.2b.3 + M.2b.5 + M.2b.6: each data-bearing sheet carries the
+    right filter dropdowns.
 
     - Drift: Account + Account Role
+    - Drift Timelines: Account Role
     - Overdraft: Account + Account Role
     - Limit Breach: Account + Transfer Type
     - Today's Exceptions: Check Type + Account + Transfer Type
@@ -586,30 +668,23 @@ def test_per_sheet_filter_dropdowns() -> None:
 
     Plus the date-range pickers from M.2b.1 (Date From / Date To)."""
     app = build_l1_dashboard_app(_CFG)
-    assert app.analysis is not None
 
-    def _filter_titles(sheet_idx: int) -> set[str]:
-        sheet = app.analysis.sheets[sheet_idx]
+    def _filter_titles(sheet_name: str) -> set[str]:
+        sheet = _sheet_by_name(app, sheet_name)
         return {
             ctrl.title for ctrl in sheet.filter_controls
             if hasattr(ctrl, "title")
         }
 
-    drift_filters = _filter_titles(1)
-    assert {"Account", "Account Role"}.issubset(drift_filters)
-
-    overdraft_filters = _filter_titles(2)
-    assert {"Account", "Account Role"}.issubset(overdraft_filters)
-
-    lb_filters = _filter_titles(3)
-    assert {"Account", "Transfer Type"}.issubset(lb_filters)
-
-    te_filters = _filter_titles(4)
-    assert {"Check Type", "Account", "Transfer Type"}.issubset(te_filters)
-
-    tx_filters = _filter_titles(6)
+    assert {"Account", "Account Role"}.issubset(_filter_titles("Drift"))
+    assert {"Account Role"}.issubset(_filter_titles("Drift Timelines"))
+    assert {"Account", "Account Role"}.issubset(_filter_titles("Overdraft"))
+    assert {"Account", "Transfer Type"}.issubset(_filter_titles("Limit Breach"))
+    assert {"Check Type", "Account", "Transfer Type"}.issubset(
+        _filter_titles("Today's Exceptions"),
+    )
     assert {"Account", "Transfer", "Status", "Origin", "Transfer Type"}.issubset(
-        tx_filters,
+        _filter_titles("Transactions"),
     )
 
 
@@ -635,7 +710,9 @@ def test_account_id_link_tints_on_every_table_with_account_id() -> None:
     assert app.analysis is not None
 
     tinted_tables = 0
-    for sheet in app.analysis.sheets[1:]:  # skip Getting Started
+    for sheet in app.analysis.sheets:
+        if sheet.name == "Getting Started":
+            continue
         for visual in sheet.visuals:
             if not isinstance(visual, Table):
                 continue
@@ -699,18 +776,21 @@ def test_date_range_filter_groups_per_dataset() -> None:
 
 
 def test_date_range_pickers_on_every_data_sheet() -> None:
-    """Every data-bearing sheet (Drift, Overdraft, Limit Breach,
-    Today's Exceptions) carries paired date pickers (Date From / Date
-    To) bound to the shared params — controls sync via shared parameter
-    binding so changing one moves all four."""
+    """Every data-bearing sheet (Drift, Drift Timelines, Overdraft,
+    Limit Breach, Today's Exceptions) carries paired date pickers
+    (Date From / Date To) bound to the shared params — controls sync
+    via shared parameter binding so changing one moves all five."""
     app = build_l1_dashboard_app(_CFG)
     assert app.analysis is not None
     # Getting Started has no data → no date pickers.
-    gs = app.analysis.sheets[0]
+    gs = _sheet_by_name(app, "Getting Started")
     assert len(gs.parameter_controls) == 0
-    # Each of the 4 data-bearing sheets has 2 pickers.
-    for sheet_idx in (1, 2, 3, 4):
-        sheet = app.analysis.sheets[sheet_idx]
+    # Each of the 5 data-bearing universal-date sheets has 2 pickers.
+    for sheet_name in (
+        "Drift", "Drift Timelines", "Overdraft",
+        "Limit Breach", "Today's Exceptions",
+    ):
+        sheet = _sheet_by_name(app, sheet_name)
         picker_titles = [
             ctrl.title for ctrl in sheet.parameter_controls
             if hasattr(ctrl, "title")

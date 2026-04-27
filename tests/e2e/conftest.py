@@ -239,7 +239,8 @@ def l1_dataset_ids(resource_prefix) -> list[str]:
     M.2a.3 shipped drift + ledger_drift; M.2a.4 added overdraft;
     M.2a.5 added limit_breach; M.2a.6 added the unified
     todays_exceptions UNION dataset; M.2b.4 added daily_statement
-    summary + transactions for the per-account-day walk.
+    summary + transactions for the per-account-day walk; M.2b.6 added
+    the 2 timeline pre-aggregations for the LineChart sheet.
     """
     suffixes = [
         "l1-drift-dataset",
@@ -250,6 +251,8 @@ def l1_dataset_ids(resource_prefix) -> list[str]:
         "l1-daily-statement-summary-dataset",
         "l1-daily-statement-transactions-dataset",
         "l1-transactions-dataset",
+        "l1-drift-timeline-dataset",
+        "l1-ledger-drift-timeline-dataset",
     ]
     return [f"{resource_prefix}-{s}" for s in suffixes]
 

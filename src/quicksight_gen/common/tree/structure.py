@@ -61,6 +61,7 @@ from quicksight_gen.common.tree.text_boxes import TextBox
 from quicksight_gen.common.tree.visuals import (
     KPI,
     BarChart,
+    LineChart,
     Sankey,
     Table,
     VisualLike,
@@ -594,6 +595,40 @@ class Row:
         ))
         return bar
 
+    def add_line_chart(
+        self,
+        *,
+        width: int,
+        title: str,
+        category: list[Dim] | None = None,
+        values: list[Measure] | None = None,
+        colors: list[Dim] | None = None,
+        subtitle: str | None = None,
+        chart_type: Literal["LINE", "AREA", "STACKED_AREA"] | None = None,
+        category_label: str | None = None,
+        value_label: str | None = None,
+        sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None,
+        actions: list[Action] | None = None,
+        visual_id: VisualId | AutoResolved = AUTO,
+    ) -> LineChart:
+        """Construct + register + place a LineChart in this row."""
+        col_index = self._consume(width)
+        line = LineChart(
+            title=title, subtitle=subtitle,
+            category=category or [], values=values or [],
+            colors=colors or [],
+            chart_type=chart_type,
+            category_label=category_label, value_label=value_label,
+            sort_by=sort_by, actions=actions or [], visual_id=visual_id,
+        )
+        self.sheet.visuals.append(line)
+        self.sheet.grid_slots.append(GridSlot(
+            element=line,
+            col_span=width, row_span=self.height,
+            col_index=col_index, row_index=self.row_index,
+        ))
+        return line
+
     def add_sankey(
         self,
         *,
@@ -737,6 +772,33 @@ class AbsoluteSlot:
         self.sheet.visuals.append(bar)
         self._place(bar)
         return bar
+
+    def add_line_chart(
+        self,
+        *,
+        title: str,
+        category: list[Dim] | None = None,
+        values: list[Measure] | None = None,
+        colors: list[Dim] | None = None,
+        subtitle: str | None = None,
+        chart_type: Literal["LINE", "AREA", "STACKED_AREA"] | None = None,
+        category_label: str | None = None,
+        value_label: str | None = None,
+        sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None,
+        actions: list[Action] | None = None,
+        visual_id: VisualId | AutoResolved = AUTO,
+    ) -> LineChart:
+        line = LineChart(
+            title=title, subtitle=subtitle,
+            category=category or [], values=values or [],
+            colors=colors or [],
+            chart_type=chart_type,
+            category_label=category_label, value_label=value_label,
+            sort_by=sort_by, actions=actions or [], visual_id=visual_id,
+        )
+        self.sheet.visuals.append(line)
+        self._place(line)
+        return line
 
     def add_sankey(
         self,

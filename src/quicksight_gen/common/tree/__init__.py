@@ -166,6 +166,7 @@ from quicksight_gen.common.tree.text_boxes import TextBox
 from quicksight_gen.common.tree.visuals import (
     KPI,
     BarChart,
+    LineChart,
     Sankey,
     Table,
     VisualLike,
@@ -183,7 +184,7 @@ __all__ = [
     # Parameters
     "ParameterDeclLike", "StringParam", "IntegerParam", "DateTimeParam",
     # Visuals
-    "VisualLike", "KPI", "Table", "BarChart", "Sankey",
+    "VisualLike", "KPI", "Table", "BarChart", "LineChart", "Sankey",
     # Text boxes (typed wrapper for landing-page rich text)
     "TextBox",
     # Layout

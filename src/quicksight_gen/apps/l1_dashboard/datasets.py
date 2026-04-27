@@ -37,6 +37,8 @@ DS_TODAYS_EXCEPTIONS = "l1-todays-exceptions-ds"
 DS_DAILY_STATEMENT_SUMMARY = "l1-daily-statement-summary-ds"
 DS_DAILY_STATEMENT_TRANSACTIONS = "l1-daily-statement-transactions-ds"
 DS_TRANSACTIONS = "l1-transactions-ds"
+DS_DRIFT_TIMELINE = "l1-drift-timeline-ds"
+DS_LEDGER_DRIFT_TIMELINE = "l1-ledger-drift-timeline-ds"
 
 
 # Contracts — column shapes the M.1a.7 views project.
@@ -189,6 +191,18 @@ TRANSACTIONS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("origin", "STRING"),
     ColumnSpec("posting", "DATETIME"),
     ColumnSpec("transfer_completion", "DATETIME"),
+])
+
+
+# Drift timelines pre-aggregate ABS(drift) by (business_day_end,
+# account_role) — one point per role per day. Sourced from the small
+# drift / ledger_drift matviews (already tiny — only violations); the
+# (account_role) index supports the GROUP BY at sub-ms latency. The
+# dashboard uses these for the LineChart primitive (one line per role).
+DRIFT_TIMELINE_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("business_day_end", "DATETIME", shape=ColumnShape.DATETIME_DAY),
+    ColumnSpec("account_role", "STRING"),
+    ColumnSpec("abs_drift", "DECIMAL"),
 ])
 
 
@@ -376,6 +390,55 @@ def build_transactions_dataset(
     )
 
 
+def build_drift_timeline_dataset(
+    cfg: Config, l2_instance: L2Instance,
+) -> DataSet:
+    """Pre-aggregate leaf-account drift by (business_day_end, account_role).
+
+    One row per (day, role) carrying SUM(ABS(drift)). Source matview is
+    already small (only violations) and indexed on `account_role`, so the
+    GROUP BY runs at indexed-scan latency. Backs the leaf-drift LineChart.
+    """
+    prefix = l2_instance.instance
+    sql = (
+        f"SELECT business_day_end,"
+        f"       account_role,"
+        f"       SUM(ABS(drift)) AS abs_drift"
+        f" FROM {prefix}_drift"
+        f" GROUP BY business_day_end, account_role"
+    )
+    return build_dataset(
+        cfg, cfg.prefixed("l1-drift-timeline-dataset"),
+        "L1 Drift Timeline", "l1-drift-timeline",
+        sql, DRIFT_TIMELINE_CONTRACT,
+        visual_identifier=DS_DRIFT_TIMELINE,
+    )
+
+
+def build_ledger_drift_timeline_dataset(
+    cfg: Config, l2_instance: L2Instance,
+) -> DataSet:
+    """Pre-aggregate ledger drift by (business_day_end, account_role).
+
+    Same shape as the leaf-drift timeline, sourced from the parent-account
+    drift matview. Backs the ledger-drift LineChart.
+    """
+    prefix = l2_instance.instance
+    sql = (
+        f"SELECT business_day_end,"
+        f"       account_role,"
+        f"       SUM(ABS(drift)) AS abs_drift"
+        f" FROM {prefix}_ledger_drift"
+        f" GROUP BY business_day_end, account_role"
+    )
+    return build_dataset(
+        cfg, cfg.prefixed("l1-ledger-drift-timeline-dataset"),
+        "L1 Ledger Drift Timeline", "l1-ledger-drift-timeline",
+        sql, DRIFT_TIMELINE_CONTRACT,
+        visual_identifier=DS_LEDGER_DRIFT_TIMELINE,
+    )
+
+
 def build_all_l1_dashboard_datasets(
     cfg: Config, l2_instance: L2Instance,
 ) -> list[DataSet]:
@@ -393,4 +456,6 @@ def build_all_l1_dashboard_datasets(
         build_daily_statement_summary_dataset(cfg, l2_instance),
         build_daily_statement_transactions_dataset(cfg, l2_instance),
         build_transactions_dataset(cfg, l2_instance),
+        build_drift_timeline_dataset(cfg, l2_instance),
+        build_ledger_drift_timeline_dataset(cfg, l2_instance),
     ]

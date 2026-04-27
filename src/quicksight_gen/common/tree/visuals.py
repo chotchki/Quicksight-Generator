@@ -22,6 +22,11 @@ from quicksight_gen.common.models import (
     KPIConfiguration,
     KPIFieldWells,
     KPIVisual,
+    LineChartAggregatedFieldWells,
+    LineChartConfiguration,
+    LineChartFieldWells,
+    LineChartSortConfiguration,
+    LineChartVisual,
     SankeyDiagramAggregatedFieldWells,
     SankeyDiagramChartConfiguration,
     SankeyDiagramFieldWells,
@@ -385,6 +390,111 @@ class BarChart:
                         if self.color_label is not None else None
                     ),
                     SortConfiguration=sort_config,
+                ),
+                Actions=[a.emit() for a in self.actions] if self.actions else None,
+            ),
+        )
+
+
+@dataclass(eq=False)
+class LineChart:
+    """Line chart visual — one line per distinct ``colors`` value,
+    plotted across ``category`` (x-axis) with height by ``values``
+    (y-axis).
+
+    Field-well shape: ``Category=[Dim, ...]`` + ``Values=[Measure, ...]``
+    + ``Colors=[Dim, ...]``.
+
+    ``chart_type`` selects ``LINE`` (default), ``AREA``, or
+    ``STACKED_AREA``. ``sort_by`` is a ``(field_id, direction)`` tuple
+    — direction ``"ASC"`` or ``"DESC"`` — and emits a ``CategorySort``
+    entry. All optional fields default to ``None`` so the QuickSight
+    defaults apply when not specified.
+
+    ``visual_id`` is optional (L.1.8.5 auto-ID).
+    """
+    title: str
+    subtitle: str | None = None
+    category: list[Dim] = field(default_factory=list[Dim])
+    values: list[Measure] = field(default_factory=list[Measure])
+    colors: list[Dim] = field(default_factory=list[Dim])
+    chart_type: Literal["LINE", "AREA", "STACKED_AREA"] | None = None
+    category_label: str | None = None
+    value_label: str | None = None
+    sort_by: tuple[FieldRef, Literal["ASC", "DESC"]] | None = None
+    actions: list[Action] = field(default_factory=list[Action])
+    visual_id: VisualId | AutoResolved = AUTO
+
+    _AUTO_KIND: ClassVar[str] = "line"
+
+    @property
+    def element_id(self) -> str:
+        return _visual_element_id(self)
+
+    @property
+    def element_type(self) -> GridLayoutElementType:
+        return "VISUAL"
+
+    def datasets(self) -> set[Dataset]:
+        return ({d.dataset for d in self.category}
+                | {m.dataset for m in self.values}
+                | {d.dataset for d in self.colors})
+
+    def calc_fields(self) -> set[CalcField]:
+        deps: set[CalcField] = set()
+        for d in self.category:
+            if (cf := d.calc_field()) is not None:
+                deps.add(cf)
+        for m in self.values:
+            if (cf := m.calc_field()) is not None:
+                deps.add(cf)
+        for d in self.colors:
+            if (cf := d.calc_field()) is not None:
+                deps.add(cf)
+        return deps
+
+    def emit(self) -> Visual:
+        assert not isinstance(self.visual_id, _AutoSentinel), (
+            "visual_id wasn't resolved — see KPI.emit assertion."
+        )
+        sort_config: LineChartSortConfiguration | None = None
+        if self.sort_by is not None:
+            ref, direction = self.sort_by
+            sort_config = LineChartSortConfiguration(
+                CategorySort=[
+                    {"FieldSort": {
+                        "FieldId": resolve_field_id(ref),
+                        "Direction": direction,
+                    }},
+                ],
+            )
+        return Visual(
+            LineChartVisual=LineChartVisual(
+                VisualId=self.visual_id,
+                Title=title_label(self.title),
+                Subtitle=subtitle_label(self.subtitle) if self.subtitle else None,
+                ChartConfiguration=LineChartConfiguration(
+                    FieldWells=LineChartFieldWells(
+                        LineChartAggregatedFieldWells=LineChartAggregatedFieldWells(
+                            Category=[d.emit() for d in self.category] if self.category else None,
+                            Values=[m.emit() for m in self.values] if self.values else None,
+                            Colors=[d.emit() for d in self.colors] if self.colors else None,
+                        ),
+                    ),
+                    Type=self.chart_type,
+                    SortConfiguration=sort_config,
+                    XAxisLabelOptions=(
+                        ChartAxisLabelOptions(AxisLabelOptions=[
+                            AxisLabelOptions(CustomLabel=self.category_label),
+                        ])
+                        if self.category_label is not None else None
+                    ),
+                    PrimaryYAxisLabelOptions=(
+                        ChartAxisLabelOptions(AxisLabelOptions=[
+                            AxisLabelOptions(CustomLabel=self.value_label),
+                        ])
+                        if self.value_label is not None else None
+                    ),
                 ),
                 Actions=[a.emit() for a in self.actions] if self.actions else None,
             ),

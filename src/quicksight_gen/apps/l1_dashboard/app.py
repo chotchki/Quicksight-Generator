@@ -38,7 +38,9 @@ from quicksight_gen.apps.l1_dashboard.datasets import (
     DS_DAILY_STATEMENT_SUMMARY,
     DS_DAILY_STATEMENT_TRANSACTIONS,
     DS_DRIFT,
+    DS_DRIFT_TIMELINE,
     DS_LEDGER_DRIFT,
+    DS_LEDGER_DRIFT_TIMELINE,
     DS_LIMIT_BREACH,
     DS_OVERDRAFT,
     DS_TODAYS_EXCEPTIONS,
@@ -59,6 +61,7 @@ from quicksight_gen.common.tree import (
     Dataset,
     DateTimeParam,
     FilterGroup,
+    LineChart,
     Sheet,
     StringParam,
     TextBox,
@@ -81,6 +84,7 @@ _TABLE_ROW_SPAN = 18
 # stability constraints from a previous deploy.
 SHEET_GETTING_STARTED = SheetId("l1-sheet-getting-started")
 SHEET_DRIFT = SheetId("l1-sheet-drift")
+SHEET_DRIFT_TIMELINES = SheetId("l1-sheet-drift-timelines")
 SHEET_OVERDRAFT = SheetId("l1-sheet-overdraft")
 SHEET_LIMIT_BREACH = SheetId("l1-sheet-limit-breach")
 SHEET_TODAYS_EXCEPTIONS = SheetId("l1-sheet-todays-exceptions")
@@ -122,6 +126,18 @@ _DRIFT_DESCRIPTION = (
     "covers parent accounts (computed = sum of child accounts' stored "
     "balances). Both tables only show rows where stored ≠ computed — "
     "every row is one SHOULD-constraint violation."
+)
+
+
+_DRIFT_TIMELINES_NAME = "Drift Timelines"
+_DRIFT_TIMELINES_TITLE = "Drift Magnitude Over Time"
+_DRIFT_TIMELINES_DESCRIPTION = (
+    "Σ ABS(drift) per BusinessDay end, one line per account_role. "
+    "Healthy days sit on the zero baseline; spikes mark when the feed "
+    "or the parent-roll-up diverged. Use this to spot recurring "
+    "violations vs one-off events — a role that spikes every Monday is "
+    "a different problem than a role that spiked once after a deploy. "
+    "KPIs surface the largest single-day magnitude in the past 7 days."
 )
 
 
@@ -281,6 +297,7 @@ def _l1_datasets(
         DS_LIMIT_BREACH, DS_TODAYS_EXCEPTIONS,
         DS_DAILY_STATEMENT_SUMMARY, DS_DAILY_STATEMENT_TRANSACTIONS,
         DS_TRANSACTIONS,
+        DS_DRIFT_TIMELINE, DS_LEDGER_DRIFT_TIMELINE,
     ]
     return {
         vid: Dataset(identifier=vid, arn=cfg.dataset_arn(aws.DataSetId))
@@ -455,6 +472,88 @@ def _populate_drift_sheet(
         conditional_formatting=[
             CellAccentText(on=parent_account_col, color=accent),
         ],
+    )
+
+
+def _populate_drift_timelines_sheet(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    datasets: dict[str, Dataset],
+) -> None:
+    """Drift Timelines sheet — 2 KPIs + 2 line charts.
+
+    KPIs surface the largest single-day Σ ABS(drift) over the past 7
+    days for leaf and parent accounts respectively. Line charts plot
+    Σ ABS(drift) per BusinessDay end with one line per account_role,
+    so a recurring-drift role visually separates from a one-off spike.
+
+    Datasets pre-aggregate via `GROUP BY business_day_end, account_role`
+    on the (already small) drift / ledger_drift matviews. The line-chart
+    Y-axis is the SUM of the pre-aggregated `abs_drift` measure since
+    the dataset rows are already at (day, role) grain — the SUM is a
+    no-op per cell but lets QS render the line chart.
+    """
+    ds_drift_timeline = datasets[DS_DRIFT_TIMELINE]
+    ds_ledger_drift_timeline = datasets[DS_LEDGER_DRIFT_TIMELINE]
+
+    # Row 1: 2 KPIs side-by-side — max single-day Σ ABS(drift) per kind.
+    half = _FULL // 2
+    kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
+    kpi_row.add_kpi(
+        width=half,
+        title="Largest Leaf Drift Day",
+        subtitle=(
+            "Max Σ ABS(drift) on any single BusinessDay across leaf "
+            "accounts in the visible date range. Healthy = $0."
+        ),
+        values=[ds_drift_timeline["abs_drift"].max()],
+    )
+    kpi_row.add_kpi(
+        width=half,
+        title="Largest Parent Drift Day",
+        subtitle=(
+            "Max Σ ABS(drift) on any single BusinessDay across parent "
+            "accounts in the visible date range. Healthy = $0."
+        ),
+        values=[ds_ledger_drift_timeline["abs_drift"].max()],
+    )
+
+    # Row 2: leaf drift line chart — one line per account_role.
+    leaf_day_col = ds_drift_timeline["business_day_end"].date()
+    sheet.layout.row(height=_CHART_ROW_SPAN).add_line_chart(
+        width=_FULL,
+        title="Leaf Account Drift Over Time",
+        subtitle=(
+            "Σ ABS(drift) per BusinessDay end for leaf accounts, one "
+            "line per role. A role hugging zero is healthy; persistent "
+            "non-zero ⇒ ongoing feed divergence; one-off spike ⇒ "
+            "isolated event worth drilling into."
+        ),
+        category=[leaf_day_col],
+        values=[ds_drift_timeline["abs_drift"].sum()],
+        colors=[ds_drift_timeline["account_role"].dim()],
+        category_label="BusinessDay end",
+        value_label="Σ |drift|",
+        sort_by=(leaf_day_col, "ASC"),
+    )
+
+    # Row 3: ledger (parent) drift line chart — same shape.
+    parent_day_col = ds_ledger_drift_timeline["business_day_end"].date()
+    sheet.layout.row(height=_CHART_ROW_SPAN).add_line_chart(
+        width=_FULL,
+        title="Parent Account Drift Over Time",
+        subtitle=(
+            "Σ ABS(drift) per BusinessDay end for parent accounts, one "
+            "line per role. Non-zero ⇒ child postings didn't roll up "
+            "correctly that day."
+        ),
+        category=[parent_day_col],
+        values=[ds_ledger_drift_timeline["abs_drift"].sum()],
+        colors=[ds_ledger_drift_timeline["account_role"].dim()],
+        category_label="BusinessDay end",
+        value_label="Σ |drift|",
+        sort_by=(parent_day_col, "ASC"),
     )
 
 
@@ -832,6 +931,7 @@ def _wire_date_range_filter(
     *,
     datasets: dict[str, Dataset],
     drift_sheet: Sheet,
+    drift_timelines_sheet: Sheet,
     overdraft_sheet: Sheet,
     limit_breach_sheet: Sheet,
     todays_exceptions_sheet: Sheet,
@@ -891,6 +991,12 @@ def _wire_date_range_filter(
                "fg-l1-date-drift")
     _scope_one(DS_LEDGER_DRIFT, "business_day_start", drift_sheet,
                "fg-l1-date-ledger-drift")
+    # Drift Timelines uses pre-aggregated datasets keyed on
+    # business_day_end (one row per (day, role)).
+    _scope_one(DS_DRIFT_TIMELINE, "business_day_end",
+               drift_timelines_sheet, "fg-l1-date-drift-timeline")
+    _scope_one(DS_LEDGER_DRIFT_TIMELINE, "business_day_end",
+               drift_timelines_sheet, "fg-l1-date-ledger-drift-timeline")
     _scope_one(DS_OVERDRAFT, "business_day_start", overdraft_sheet,
                "fg-l1-date-overdraft")
     # Limit breach + today's exceptions expose `business_day` (truncated
@@ -900,10 +1006,10 @@ def _wire_date_range_filter(
     _scope_one(DS_TODAYS_EXCEPTIONS, "business_day",
                todays_exceptions_sheet, "fg-l1-date-todays-exceptions")
 
-    # Per-sheet date pickers — bound to the shared params so all four
+    # Per-sheet date pickers — bound to the shared params so all five
     # sheets' pickers sync.
     for sheet in (
-        drift_sheet, overdraft_sheet,
+        drift_sheet, drift_timelines_sheet, overdraft_sheet,
         limit_breach_sheet, todays_exceptions_sheet,
     ):
         sheet.add_parameter_datetime_picker(
@@ -919,6 +1025,7 @@ def _wire_per_sheet_dropdowns(
     *,
     datasets: dict[str, Dataset],
     drift_sheet: Sheet,
+    drift_timelines_sheet: Sheet,
     overdraft_sheet: Sheet,
     limit_breach_sheet: Sheet,
     todays_exceptions_sheet: Sheet,
@@ -973,6 +1080,14 @@ def _wire_per_sheet_dropdowns(
     _dropdown(
         fg_id="fg-l1-drift-role", ds=ds_drift, col="account_role",
         title="Account Role", sheet=drift_sheet,
+        cross_dataset="ALL_DATASETS",
+    )
+
+    # Drift Timelines — both timeline datasets share column names too.
+    ds_drift_tl = datasets[DS_DRIFT_TIMELINE]
+    _dropdown(
+        fg_id="fg-l1-drift-tl-role", ds=ds_drift_tl, col="account_role",
+        title="Account Role", sheet=drift_timelines_sheet,
         cross_dataset="ALL_DATASETS",
     )
 
@@ -1182,6 +1297,16 @@ def build_l1_dashboard_app(
         cfg, drift_sheet, datasets=datasets, l2_instance=l2_instance,
     )
 
+    drift_timelines_sheet = analysis.add_sheet(Sheet(
+        sheet_id=SHEET_DRIFT_TIMELINES,
+        name=_DRIFT_TIMELINES_NAME,
+        title=_DRIFT_TIMELINES_TITLE,
+        description=_DRIFT_TIMELINES_DESCRIPTION,
+    ))
+    _populate_drift_timelines_sheet(
+        cfg, drift_timelines_sheet, datasets=datasets,
+    )
+
     overdraft_sheet = analysis.add_sheet(Sheet(
         sheet_id=SHEET_OVERDRAFT,
         name=_OVERDRAFT_NAME,
@@ -1239,6 +1364,7 @@ def build_l1_dashboard_app(
         analysis,
         datasets=datasets,
         drift_sheet=drift_sheet,
+        drift_timelines_sheet=drift_timelines_sheet,
         overdraft_sheet=overdraft_sheet,
         limit_breach_sheet=limit_breach_sheet,
         todays_exceptions_sheet=todays_exceptions_sheet,
@@ -1251,6 +1377,7 @@ def build_l1_dashboard_app(
         analysis,
         datasets=datasets,
         drift_sheet=drift_sheet,
+        drift_timelines_sheet=drift_timelines_sheet,
         overdraft_sheet=overdraft_sheet,
         limit_breach_sheet=limit_breach_sheet,
         todays_exceptions_sheet=todays_exceptions_sheet,
