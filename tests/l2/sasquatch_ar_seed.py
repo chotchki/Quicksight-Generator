@@ -593,7 +593,12 @@ def default_ar_scenario(today: date | None = None) -> ScenarioPlant:
         limit_breach_plants=(
             LimitBreachPlant(
                 account_id=Identifier("cust-700-0001-big-meadow-dairy"),
-                days_ago=8,
+                # Land inside the dashboard's default 7-day date-range
+                # filter so the breach surfaces without the analyst
+                # having to widen the picker. Drift = 5d, Overdraft =
+                # 6d; staying under both keeps the bigger violation at
+                # the recent end of the window.
+                days_ago=4,
                 transfer_type="wire",
                 rail_name=Identifier("CustomerOutboundWire"),
                 amount=Decimal("22000.00"),  # > $15k wire cap
