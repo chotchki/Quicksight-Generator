@@ -33,6 +33,8 @@ Substep landmarks:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from quicksight_gen.apps.account_recon._l2 import default_l2_instance
 from quicksight_gen.apps.l1_dashboard.datasets import (
     DS_DAILY_STATEMENT_SUMMARY,
@@ -52,14 +54,21 @@ from quicksight_gen.common.config import Config
 from quicksight_gen.common.ids import ParameterName, SheetId
 from quicksight_gen.common.l2 import L2Instance
 from quicksight_gen.common.models import DateTimeDefaultValues
+from quicksight_gen.common.dataset_contract import ColumnShape
 from quicksight_gen.common.theme import get_preset
 from quicksight_gen.common.tree import (
+    AUTO,
     Analysis,
     App,
+    AutoResolved,
+    CalcField,
     CategoryFilter,
     CellAccentText,
     Dataset,
     DateTimeParam,
+    Drill,
+    DrillParam,
+    DrillResetSentinel,
     FilterGroup,
     LineChart,
     Sheet,
@@ -104,6 +113,31 @@ P_L1_DATE_END = ParameterName("pL1DateEnd")
 # both the summary KPIs and the transactions detail table.
 P_L1_DS_ACCOUNT = ParameterName("pL1DsAccount")
 P_L1_DS_BALANCE_DATE = ParameterName("pL1DsBalanceDate")
+
+# M.2b.7 — Drill-target parameters (sentinel-pattern, mirror of AR).
+# These never appear as visible sheet controls — they're only written
+# by drill actions. Each per-invariant sheet (Drift / Overdraft /
+# Limit Breach) carries a calc-field-backed FilterGroup that reads
+# ``pL1FilterAccount`` to narrow its dataset to one account; the
+# Transactions sheet does the same for ``pL1TxTransfer``. The "__ALL__"
+# sentinel default means "no filter" — destination calc fields special-
+# case it to PASS so the un-drilled state shows everything.
+P_L1_FILTER_ACCOUNT = ParameterName("pL1FilterAccount")
+P_L1_TX_TRANSFER = ParameterName("pL1TxTransfer")
+
+# Sentinel value the M.2b.7 drill calc fields treat as PASS — same
+# string AR uses (mirror).
+_DRILL_RESET_SENTINEL = "__ALL__"
+
+# Typed DrillParam constants — pair each ParameterName with its
+# expected ColumnShape so cross_sheet_drill() refuses shape-mismatched
+# writes at construction time (the K.2 invariant).
+_DP_FILTER_ACCOUNT = DrillParam(P_L1_FILTER_ACCOUNT, ColumnShape.ACCOUNT_ID)
+_DP_TX_TRANSFER = DrillParam(P_L1_TX_TRANSFER, ColumnShape.TRANSFER_ID)
+_DP_DS_ACCOUNT = DrillParam(P_L1_DS_ACCOUNT, ColumnShape.ACCOUNT_ID)
+_DP_DS_BALANCE_DATE = DrillParam(
+    P_L1_DS_BALANCE_DATE, ColumnShape.DATETIME_DAY,
+)
 
 
 _GETTING_STARTED_NAME = "Getting Started"
@@ -366,6 +400,7 @@ def _populate_drift_sheet(
     *,
     datasets: dict[str, Dataset],
     l2_instance: L2Instance,
+    daily_statement_sheet: Sheet,
 ) -> None:
     """Drift sheet — 2 KPIs + leaf-drift table + ledger-drift table.
 
@@ -421,9 +456,12 @@ def _populate_drift_sheet(
         values=[ds_ledger_drift["account_id"].count()],
     )
 
-    # Row 2: leaf-drift table. Pull account_id Dim local so the link
-    # tint can reference the same field_id as the column.
+    # Row 2: leaf-drift table. Pull account_id + business_day_end Dims
+    # local so the link tint + drill can reference the same field_id
+    # as the columns. Right-click → View Daily Statement narrows the
+    # forward investigation to that account-day.
     leaf_account_col = ds_drift["account_id"].dim()
+    leaf_day_col = ds_drift["business_day_end"].date()
     sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
         width=_FULL,
         title="Leaf Account Drift",
@@ -431,17 +469,29 @@ def _populate_drift_sheet(
             "Each leaf account's stored vs computed balance per "
             "BusinessDay. Computed = cumulative Σ signed Money through "
             "that day's end. Drift = stored − computed; non-zero ⇒ feed "
-            "diverged from the underlying ledger."
+            "diverged from the underlying ledger. Right-click any row "
+            "→ View Daily Statement to open that account-day."
         ),
         columns=[
             leaf_account_col,
             ds_drift["account_name"].dim(),
             ds_drift["account_role"].dim(),
             ds_drift["account_parent_role"].dim(),
-            ds_drift["business_day_end"].date(),
+            leaf_day_col,
             ds_drift["stored_balance"].numerical(),
             ds_drift["computed_balance"].numerical(),
             ds_drift["drift"].numerical(),
+        ],
+        actions=[
+            _l1_drill(
+                target_sheet=daily_statement_sheet,
+                name="View Daily Statement for this account-day",
+                writes=[
+                    (_DP_DS_ACCOUNT, leaf_account_col),
+                    (_DP_DS_BALANCE_DATE, leaf_day_col),
+                ],
+                trigger="DATA_POINT_MENU",
+            ),
         ],
         conditional_formatting=[
             CellAccentText(on=leaf_account_col, color=accent),
@@ -449,8 +499,10 @@ def _populate_drift_sheet(
     )
 
     # Row 3: ledger (parent-account) drift table — same shape minus
-    # account_parent_role (parents ARE the parents).
+    # account_parent_role (parents ARE the parents). Same Daily
+    # Statement drill.
     parent_account_col = ds_ledger_drift["account_id"].dim()
+    parent_day_col = ds_ledger_drift["business_day_end"].date()
     sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
         width=_FULL,
         title="Parent Account Drift",
@@ -458,16 +510,28 @@ def _populate_drift_sheet(
             "Each parent account's stored vs computed balance per "
             "BusinessDay. Computed = Σ stored balances of its child "
             "accounts on that day. Drift = stored − computed; non-zero "
-            "⇒ a child posting didn't roll up correctly."
+            "⇒ a child posting didn't roll up correctly. Right-click "
+            "any row → View Daily Statement to open that account-day."
         ),
         columns=[
             parent_account_col,
             ds_ledger_drift["account_name"].dim(),
             ds_ledger_drift["account_role"].dim(),
-            ds_ledger_drift["business_day_end"].date(),
+            parent_day_col,
             ds_ledger_drift["stored_balance"].numerical(),
             ds_ledger_drift["computed_balance"].numerical(),
             ds_ledger_drift["drift"].numerical(),
+        ],
+        actions=[
+            _l1_drill(
+                target_sheet=daily_statement_sheet,
+                name="View Daily Statement for this account-day",
+                writes=[
+                    (_DP_DS_ACCOUNT, parent_account_col),
+                    (_DP_DS_BALANCE_DATE, parent_day_col),
+                ],
+                trigger="DATA_POINT_MENU",
+            ),
         ],
         conditional_formatting=[
             CellAccentText(on=parent_account_col, color=accent),
@@ -562,12 +626,13 @@ def _populate_overdraft_sheet(
     sheet: Sheet,
     *,
     datasets: dict[str, Dataset],
+    daily_statement_sheet: Sheet,
 ) -> None:
     """Overdraft sheet — KPI (count of violations) + violations table.
 
     Single dataset (`<prefix>_overdraft`) — only internal accounts, only
-    days where stored balance < 0. M.2b.2 link tint on account_id; full
-    drill wiring lands at M.2b.7.
+    days where stored balance < 0. Right-click any row → Daily Statement
+    for that account-day (M.2b.7).
     """
     accent = get_preset(cfg.theme_preset).accent
     ds_overdraft = datasets[DS_OVERDRAFT]
@@ -583,21 +648,33 @@ def _populate_overdraft_sheet(
     )
 
     account_col = ds_overdraft["account_id"].dim()
+    day_col = ds_overdraft["business_day_end"].date()
     sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
         width=_FULL,
         title="Overdraft Violations",
         subtitle=(
             "Each internal account-day where stored balance < 0. "
             "Negative magnitude indicates how far below zero the account "
-            "ended the day."
+            "ended the day. Right-click any row → View Daily Statement."
         ),
         columns=[
             account_col,
             ds_overdraft["account_name"].dim(),
             ds_overdraft["account_role"].dim(),
             ds_overdraft["account_parent_role"].dim(),
-            ds_overdraft["business_day_end"].date(),
+            day_col,
             ds_overdraft["stored_balance"].numerical(),
+        ],
+        actions=[
+            _l1_drill(
+                target_sheet=daily_statement_sheet,
+                name="View Daily Statement for this account-day",
+                writes=[
+                    (_DP_DS_ACCOUNT, account_col),
+                    (_DP_DS_BALANCE_DATE, day_col),
+                ],
+                trigger="DATA_POINT_MENU",
+            ),
         ],
         conditional_formatting=[
             CellAccentText(on=account_col, color=accent),
@@ -611,6 +688,8 @@ def _populate_todays_exceptions_sheet(
     *,
     datasets: dict[str, Dataset],
     l2_instance: L2Instance,
+    drift_sheet: Sheet,
+    daily_statement_sheet: Sheet,
 ) -> None:
     """Today's Exceptions sheet — KPI + check-type breakdown bar +
     sorted detail table.
@@ -655,17 +734,21 @@ def _populate_todays_exceptions_sheet(
     )
 
     # Row 3: detail table — every row is one violation, sorted by
-    # magnitude DESC so the biggest variances surface first.
+    # magnitude DESC so the biggest variances surface first. Drills:
+    # left-click → Drift (back-toward per-invariant source); right-click
+    # menu → Daily Statement (forward into the per-account-day walk).
     magnitude_col = ds["magnitude"].numerical()
     account_col = ds["account_id"].dim()
+    business_day_col = ds["business_day"].date()
     sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
         width=_FULL,
         title="Exception Detail",
         subtitle=(
             "Every violation on today's business day. Sorted by "
             "magnitude (largest first) so the biggest variances are "
-            "the top rows. `transfer_type` and `account_parent_role` "
-            "are NULL for checks that don't carry them."
+            "the top rows. Left-click an account_id to narrow Drift "
+            "to that account; right-click → View Daily Statement to "
+            "open the per-account-day walk."
         ),
         columns=[
             ds["check_type"].dim(),
@@ -673,11 +756,28 @@ def _populate_todays_exceptions_sheet(
             ds["account_name"].dim(),
             ds["account_role"].dim(),
             ds["account_parent_role"].dim(),
-            ds["business_day"].date(),
+            business_day_col,
             ds["transfer_type"].dim(),
             magnitude_col,
         ],
         sort_by=(magnitude_col, "DESC"),
+        actions=[
+            _l1_drill(
+                target_sheet=drift_sheet,
+                name="Narrow Drift to this account",
+                writes=[(_DP_FILTER_ACCOUNT, account_col)],
+                trigger="DATA_POINT_CLICK",
+            ),
+            _l1_drill(
+                target_sheet=daily_statement_sheet,
+                name="View Daily Statement for this account-day",
+                writes=[
+                    (_DP_DS_ACCOUNT, account_col),
+                    (_DP_DS_BALANCE_DATE, business_day_col),
+                ],
+                trigger="DATA_POINT_MENU",
+            ),
+        ],
         conditional_formatting=[
             CellAccentText(on=account_col, color=accent),
         ],
@@ -711,19 +811,20 @@ def _populate_limit_breach_sheet(
     *,
     datasets: dict[str, Dataset],
     l2_instance: L2Instance,
+    daily_statement_sheet: Sheet,
 ) -> None:
     """Limit Breach sheet — KPI + per-(account, day, type) breach table.
 
     Single dataset (`<prefix>_limit_breach`). Each row is one cell where
     cumulative outbound debit on that (account, day, transfer_type)
     exceeded the L2-configured cap. The cap column lives next to the
-    outbound_total so analysts can read both numbers at once.
+    outbound_total so analysts can read both numbers at once. Right-click
+    any row → Daily Statement for that account-day (M.2b.7).
 
     M.2a.7: top-of-sheet TextBox enumerates the L2 LimitSchedules
     (parent_role × transfer_type → cap, plus L2-supplied prose) so
     analysts see "what's configured" before "what got breached" —
-    description-driven, not hardcoded. M.2b.2: link tint on
-    `account_id` for the M.2b.7 drill plumbing.
+    description-driven, not hardcoded.
     """
     accent = get_preset(cfg.theme_preset).accent
     ds_lb = datasets[DS_LIMIT_BREACH]
@@ -756,23 +857,36 @@ def _populate_limit_breach_sheet(
     )
 
     account_col = ds_lb["account_id"].dim()
+    day_col = ds_lb["business_day"].date()
     sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
         width=_FULL,
         title="Limit Breach Detail",
         subtitle=(
             "Each (account, day, transfer_type) cell where outbound "
             "debit > cap. `outbound_total` and `cap` shown side-by-side "
-            "so the magnitude of the breach is readable in-line."
+            "so the magnitude of the breach is readable in-line. "
+            "Right-click any row → View Daily Statement."
         ),
         columns=[
             account_col,
             ds_lb["account_name"].dim(),
             ds_lb["account_role"].dim(),
             ds_lb["account_parent_role"].dim(),
-            ds_lb["business_day"].date(),
+            day_col,
             ds_lb["transfer_type"].dim(),
             ds_lb["outbound_total"].numerical(),
             ds_lb["cap"].numerical(),
+        ],
+        actions=[
+            _l1_drill(
+                target_sheet=daily_statement_sheet,
+                name="View Daily Statement for this account-day",
+                writes=[
+                    (_DP_DS_ACCOUNT, account_col),
+                    (_DP_DS_BALANCE_DATE, day_col),
+                ],
+                trigger="DATA_POINT_MENU",
+            ),
         ],
         conditional_formatting=[
             CellAccentText(on=account_col, color=accent),
@@ -831,10 +945,11 @@ def _populate_transactions_sheet(
 
 
 def _populate_daily_statement_sheet(
-    cfg: Config,  # noqa: ARG001  (M.2b.13 wires drift-sign tints)
+    cfg: Config,
     sheet: Sheet,
     *,
     datasets: dict[str, Dataset],
+    transactions_sheet: Sheet,
 ) -> None:
     """Daily Statement — 5 KPIs across the day's walk + detail table.
 
@@ -885,18 +1000,23 @@ def _populate_daily_statement_sheet(
     )
 
     # Row 2: detail table — every Money record posted that day for the
-    # picked account, after sheet filters narrow.
+    # picked account, after sheet filters narrow. Right-click any row →
+    # Transactions narrowed to that transfer_id (every leg of the
+    # multi-leg transfer the clicked row is part of).
+    accent = get_preset(cfg.theme_preset).accent
+    transfer_col = ds_txn["transfer_id"].dim()
     sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
         width=_FULL,
         title="Posted Money Records",
         subtitle=(
             "Every leg posted on the picked account-day. Direction "
             "shows Debit / Credit; status filters out Failed legs in "
-            "the summary KPIs but not here."
+            "the summary KPIs but not here. Right-click any row → "
+            "View Transactions to see every leg of that transfer."
         ),
         columns=[
             ds_txn["transaction_id"].dim(),
-            ds_txn["transfer_id"].dim(),
+            transfer_col,
             ds_txn["transfer_type"].dim(),
             ds_txn["amount_money"].numerical(),
             ds_txn["amount_direction"].dim(),
@@ -904,6 +1024,17 @@ def _populate_daily_statement_sheet(
             ds_txn["origin"].dim(),
             ds_txn["posting"].date(),
             ds_txn["memo"].dim(),
+        ],
+        actions=[
+            _l1_drill(
+                target_sheet=transactions_sheet,
+                name="View Transactions for this transfer",
+                writes=[(_DP_TX_TRANSFER, transfer_col)],
+                trigger="DATA_POINT_MENU",
+            ),
+        ],
+        conditional_formatting=[
+            CellAccentText(on=transfer_col, color=accent),
         ],
     )
 
@@ -1248,6 +1379,166 @@ def _wire_daily_statement_filters(
     )
 
 
+# ---------------------------------------------------------------------------
+# M.2b.7 — Cross-sheet drill plumbing
+# ---------------------------------------------------------------------------
+#
+# Two sentinel-pattern parameters (`pL1FilterAccount`, `pL1TxTransfer`)
+# carry the drill-target value. Each destination sheet has a calc-field-
+# backed FilterGroup that reads its parameter and either narrows the
+# dataset to one row or PASSes everything through (when the param is
+# the `__ALL__` sentinel).
+#
+# Drill writes auto-reset every sentinel-pattern param the caller didn't
+# explicitly write — so a stale "I drilled to account-A on Drift earlier"
+# value doesn't leak into the next drill's filtered view. Mirrors the
+# AR `_ar_drill_to_transactions` pattern.
+
+# Auto-reset list — only the sentinel-pattern params. Picker-driven
+# params (P_L1_DS_*, P_L1_DATE_*) stay sticky across drills, since
+# clearing a DateTimeParam to a string sentinel would break it.
+_L1_DRILL_RESET_PARAMS = (_DP_FILTER_ACCOUNT, _DP_TX_TRANSFER)
+
+
+def _l1_drill(
+    *,
+    target_sheet: Sheet,
+    name: str,
+    writes: list,  # list[tuple[DrillParam, ...]]
+    trigger: str = "DATA_POINT_CLICK",
+    action_id: str | AutoResolved = AUTO,
+) -> Drill:
+    """Cross-sheet drill with auto-reset on un-written sentinel params.
+
+    Caller writes only the params that should narrow the destination;
+    any sentinel-pattern param the caller doesn't write gets a
+    DrillResetSentinel write, so a prior drill's value can't leak.
+    """
+    written = {param.name for param, _ in writes}
+    full_writes = list(writes)
+    for param in _L1_DRILL_RESET_PARAMS:
+        if param.name not in written:
+            full_writes.append((param, DrillResetSentinel()))
+    return Drill(
+        target_sheet=target_sheet,
+        writes=full_writes,
+        name=name,
+        trigger=trigger,  # type: ignore[arg-type]
+        action_id=action_id,
+    )
+
+
+def _wire_drill_filter_groups(
+    analysis: Analysis,
+    *,
+    datasets: dict[str, Dataset],
+    sheets: dict[str, Sheet],
+) -> None:
+    """5 sentinel-pattern FilterGroups + their backing calc fields.
+
+    Each spec encodes one drill-destination filter:
+    - parameter to test (sentinel-pattern StringParam, default "__ALL__")
+    - destination dataset + the column to compare against
+    - destination sheet to scope the FilterGroup to
+
+    The calc-field expression is the K.2 sentinel-or-match pattern;
+    the FilterGroup uses ``CategoryFilter.with_literal(value="PASS")``
+    so the parameter test lives in the calc field — sidesteps the
+    parameter-bound CustomFilterConfiguration's empty-string narrowing
+    bug AR's docstring calls out.
+
+    Parameters are added to the analysis via ``_wire_drill_parameters``;
+    this helper wires the per-destination calc field + filter group.
+    """
+    # Declare the 2 drill-target StringParams with sentinel defaults.
+    analysis.add_parameter(StringParam(
+        name=P_L1_FILTER_ACCOUNT,
+        default=[_DRILL_RESET_SENTINEL],
+    ))
+    analysis.add_parameter(StringParam(
+        name=P_L1_TX_TRANSFER,
+        default=[_DRILL_RESET_SENTINEL],
+    ))
+
+    @dataclass(frozen=True)
+    class _DrillDest:
+        fg_id: str
+        param_name: str
+        dataset_id: str
+        column_name: str
+        sheet_id: str
+
+    specs: list[_DrillDest] = [
+        _DrillDest(
+            fg_id="fg-l1-drill-account-on-drift",
+            param_name=P_L1_FILTER_ACCOUNT,
+            dataset_id=DS_DRIFT,
+            column_name="account_id",
+            sheet_id=SHEET_DRIFT,
+        ),
+        _DrillDest(
+            fg_id="fg-l1-drill-account-on-ledger-drift",
+            param_name=P_L1_FILTER_ACCOUNT,
+            dataset_id=DS_LEDGER_DRIFT,
+            column_name="account_id",
+            sheet_id=SHEET_DRIFT,
+        ),
+        _DrillDest(
+            fg_id="fg-l1-drill-account-on-overdraft",
+            param_name=P_L1_FILTER_ACCOUNT,
+            dataset_id=DS_OVERDRAFT,
+            column_name="account_id",
+            sheet_id=SHEET_OVERDRAFT,
+        ),
+        _DrillDest(
+            fg_id="fg-l1-drill-account-on-limit-breach",
+            param_name=P_L1_FILTER_ACCOUNT,
+            dataset_id=DS_LIMIT_BREACH,
+            column_name="account_id",
+            sheet_id=SHEET_LIMIT_BREACH,
+        ),
+        _DrillDest(
+            fg_id="fg-l1-drill-transfer-on-transactions",
+            param_name=P_L1_TX_TRANSFER,
+            dataset_id=DS_TRANSACTIONS,
+            column_name="transfer_id",
+            sheet_id=SHEET_TRANSACTIONS,
+        ),
+    ]
+
+    for spec in specs:
+        ds = datasets[spec.dataset_id]
+        # Sentinel-or-match calc field. Mirrors AR's
+        # `_drill_pass_<param>_on_<suffix>` shape so the analyst-facing
+        # calc-field name reads consistently across apps.
+        on_suffix = spec.fg_id.split("on-", 1)[-1].replace("-", "_")
+        calc_name = f"_drill_pass_{spec.param_name}_on_{on_suffix}"
+        calc = analysis.add_calc_field(CalcField(
+            name=calc_name,
+            dataset=ds,
+            expression=(
+                f"ifelse("
+                f"${{{spec.param_name}}} = '{_DRILL_RESET_SENTINEL}', "
+                f"'PASS', "
+                f"ifelse({{{spec.column_name}}} = ${{{spec.param_name}}}, "
+                f"'PASS', 'FAIL')"
+                f")"
+            ),
+        ))
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=spec.fg_id,  # type: ignore[arg-type]
+            cross_dataset="SINGLE_DATASET",
+            filters=[CategoryFilter.with_literal(
+                filter_id=f"filter-{spec.fg_id}",
+                dataset=ds,
+                column=calc,
+                value="PASS",
+                null_option="NON_NULLS_ONLY",
+            )],
+        ))
+        fg.scope_sheet(sheets[spec.sheet_id])
+
+
 def build_l1_dashboard_app(
     cfg: Config,
     *,
@@ -1279,80 +1570,85 @@ def build_l1_dashboard_app(
     for ds in datasets.values():
         app.add_dataset(ds)
 
+    # M.2b.7 — sheets built upfront so populators can drill across.
     getting_started = analysis.add_sheet(Sheet(
         sheet_id=SHEET_GETTING_STARTED,
         name=_GETTING_STARTED_NAME,
         title=_GETTING_STARTED_TITLE,
         description=_GETTING_STARTED_DESCRIPTION,
     ))
-    _populate_getting_started(cfg, getting_started, l2_instance)
-
     drift_sheet = analysis.add_sheet(Sheet(
         sheet_id=SHEET_DRIFT,
         name=_DRIFT_NAME,
         title=_DRIFT_TITLE,
         description=_DRIFT_DESCRIPTION,
     ))
-    _populate_drift_sheet(
-        cfg, drift_sheet, datasets=datasets, l2_instance=l2_instance,
-    )
-
     drift_timelines_sheet = analysis.add_sheet(Sheet(
         sheet_id=SHEET_DRIFT_TIMELINES,
         name=_DRIFT_TIMELINES_NAME,
         title=_DRIFT_TIMELINES_TITLE,
         description=_DRIFT_TIMELINES_DESCRIPTION,
     ))
-    _populate_drift_timelines_sheet(
-        cfg, drift_timelines_sheet, datasets=datasets,
-    )
-
     overdraft_sheet = analysis.add_sheet(Sheet(
         sheet_id=SHEET_OVERDRAFT,
         name=_OVERDRAFT_NAME,
         title=_OVERDRAFT_TITLE,
         description=_OVERDRAFT_DESCRIPTION,
     ))
-    _populate_overdraft_sheet(cfg, overdraft_sheet, datasets=datasets)
-
     limit_breach_sheet = analysis.add_sheet(Sheet(
         sheet_id=SHEET_LIMIT_BREACH,
         name=_LIMIT_BREACH_NAME,
         title=_LIMIT_BREACH_TITLE,
         description=_LIMIT_BREACH_DESCRIPTION,
     ))
-    _populate_limit_breach_sheet(
-        cfg, limit_breach_sheet,
-        datasets=datasets, l2_instance=l2_instance,
-    )
-
     todays_exceptions_sheet = analysis.add_sheet(Sheet(
         sheet_id=SHEET_TODAYS_EXCEPTIONS,
         name=_TODAYS_EXCEPTIONS_NAME,
         title=_TODAYS_EXCEPTIONS_TITLE,
         description=_TODAYS_EXCEPTIONS_DESCRIPTION,
     ))
-    _populate_todays_exceptions_sheet(
-        cfg, todays_exceptions_sheet,
-        datasets=datasets, l2_instance=l2_instance,
-    )
-
     daily_statement_sheet = analysis.add_sheet(Sheet(
         sheet_id=SHEET_DAILY_STATEMENT,
         name=_DAILY_STATEMENT_NAME,
         title=_DAILY_STATEMENT_TITLE,
         description=_DAILY_STATEMENT_DESCRIPTION,
     ))
-    _populate_daily_statement_sheet(
-        cfg, daily_statement_sheet, datasets=datasets,
-    )
-
     transactions_sheet = analysis.add_sheet(Sheet(
         sheet_id=SHEET_TRANSACTIONS,
         name=_TRANSACTIONS_NAME,
         title=_TRANSACTIONS_TITLE,
         description=_TRANSACTIONS_DESCRIPTION,
     ))
+
+    # Populators — each receives the sheets it drills into so the drill
+    # actions can reference target_sheet by typed ref.
+    _populate_getting_started(cfg, getting_started, l2_instance)
+    _populate_drift_sheet(
+        cfg, drift_sheet, datasets=datasets, l2_instance=l2_instance,
+        daily_statement_sheet=daily_statement_sheet,
+    )
+    _populate_drift_timelines_sheet(
+        cfg, drift_timelines_sheet, datasets=datasets,
+    )
+    _populate_overdraft_sheet(
+        cfg, overdraft_sheet, datasets=datasets,
+        daily_statement_sheet=daily_statement_sheet,
+    )
+    _populate_limit_breach_sheet(
+        cfg, limit_breach_sheet,
+        datasets=datasets, l2_instance=l2_instance,
+        daily_statement_sheet=daily_statement_sheet,
+    )
+    _populate_todays_exceptions_sheet(
+        cfg, todays_exceptions_sheet,
+        datasets=datasets, l2_instance=l2_instance,
+        drift_sheet=drift_sheet,
+        daily_statement_sheet=daily_statement_sheet,
+    )
+    _populate_daily_statement_sheet(
+        cfg, daily_statement_sheet, datasets=datasets,
+        transactions_sheet=transactions_sheet,
+    )
     _populate_transactions_sheet(
         cfg, transactions_sheet, datasets=datasets,
     )
@@ -1389,6 +1685,18 @@ def build_l1_dashboard_app(
         analysis,
         datasets=datasets,
         daily_statement_sheet=daily_statement_sheet,
+    )
+
+    # M.2b.7 — Cross-sheet drill filter groups (sentinel-pattern).
+    _wire_drill_filter_groups(
+        analysis,
+        datasets=datasets,
+        sheets={
+            SHEET_DRIFT: drift_sheet,
+            SHEET_OVERDRAFT: overdraft_sheet,
+            SHEET_LIMIT_BREACH: limit_breach_sheet,
+            SHEET_TRANSACTIONS: transactions_sheet,
+        },
     )
 
     app.create_dashboard(

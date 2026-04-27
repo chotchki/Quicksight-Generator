@@ -825,6 +825,176 @@ def test_date_range_filter_targets_correct_columns() -> None:
     assert _column_name("fg-l1-date-todays-exceptions") == "business_day"
 
 
+# -- Cross-sheet drill plumbing (M.2b.7) -------------------------------------
+
+
+def test_drill_target_parameters_registered() -> None:
+    """M.2b.7: 2 sentinel-pattern params land on the analysis with the
+    "__ALL__" default. They never surface as sheet controls — drills
+    set them, and the destination calc fields treat the sentinel as
+    PASS so the un-drilled state shows everything."""
+    from quicksight_gen.apps.l1_dashboard.app import (
+        P_L1_FILTER_ACCOUNT, P_L1_TX_TRANSFER,
+    )
+
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    by_name = {p.name: p for p in app.analysis.parameters}
+    assert P_L1_FILTER_ACCOUNT in by_name
+    assert P_L1_TX_TRANSFER in by_name
+    # Both default to the sentinel string.
+    assert by_name[P_L1_FILTER_ACCOUNT].default == ["__ALL__"]
+    assert by_name[P_L1_TX_TRANSFER].default == ["__ALL__"]
+
+
+def test_drill_calc_fields_present() -> None:
+    """M.2b.7: 5 sentinel-or-match calc fields, one per drill destination
+    dataset (drift, ledger_drift, overdraft, limit_breach, transactions).
+    Each calc field's expression compares its dataset's column against
+    the sentinel-pattern parameter; PASS when the param is "__ALL__"
+    OR the column matches; FAIL otherwise."""
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    calc_names = {c.name for c in app.analysis.calc_fields}
+    expected = {
+        "_drill_pass_pL1FilterAccount_on_drift",
+        "_drill_pass_pL1FilterAccount_on_ledger_drift",
+        "_drill_pass_pL1FilterAccount_on_overdraft",
+        "_drill_pass_pL1FilterAccount_on_limit_breach",
+        "_drill_pass_pL1TxTransfer_on_transactions",
+    }
+    assert expected.issubset(calc_names), (
+        f"missing calc fields: {expected - calc_names}"
+    )
+
+    # Each expression is the sentinel-or-match shape.
+    by_name = {c.name: c for c in app.analysis.calc_fields}
+    for cf_name in expected:
+        cf = by_name[cf_name]
+        assert "'__ALL__'" in cf.expression, (
+            f"{cf_name} missing sentinel guard"
+        )
+        assert "'PASS'" in cf.expression
+        assert "'FAIL'" in cf.expression
+
+
+def test_drill_filter_groups_present() -> None:
+    """M.2b.7: 5 SINGLE_DATASET FilterGroups (one per destination)
+    apply the calc-field PASS filter to scope each destination sheet's
+    visuals when its sentinel-pattern param is set."""
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    fg_ids = {fg.filter_group_id for fg in app.analysis.filter_groups}
+    expected = {
+        "fg-l1-drill-account-on-drift",
+        "fg-l1-drill-account-on-ledger-drift",
+        "fg-l1-drill-account-on-overdraft",
+        "fg-l1-drill-account-on-limit-breach",
+        "fg-l1-drill-transfer-on-transactions",
+    }
+    assert expected.issubset(fg_ids), (
+        f"missing filter groups: {expected - fg_ids}"
+    )
+
+
+def test_todays_exceptions_table_carries_two_drills() -> None:
+    """M.2b.7: Exception Detail table has 2 drill actions —
+    DATA_POINT_CLICK → Drift (back-toward source per CLAUDE drill
+    direction); DATA_POINT_MENU → Daily Statement (forward into the
+    per-account-day investigation).
+    """
+    from quicksight_gen.common.tree import Drill
+
+    app = build_l1_dashboard_app(_CFG)
+    te = _sheet_by_name(app, "Today's Exceptions")
+    detail = next(v for v in te.visuals if v.title == "Exception Detail")
+    drills = [a for a in detail.actions if isinstance(a, Drill)]
+    assert len(drills) == 2
+
+    by_trigger = {d.trigger: d for d in drills}
+    assert "DATA_POINT_CLICK" in by_trigger
+    assert "DATA_POINT_MENU" in by_trigger
+
+    # DATA_POINT_CLICK targets Drift (back-toward source).
+    click = by_trigger["DATA_POINT_CLICK"]
+    assert click.target_sheet.name == "Drift"
+    # DATA_POINT_MENU targets Daily Statement (forward).
+    menu = by_trigger["DATA_POINT_MENU"]
+    assert menu.target_sheet.name == "Daily Statement"
+
+
+def test_per_invariant_sheets_drill_to_daily_statement() -> None:
+    """M.2b.7: each per-invariant detail table (Drift leaf + parent,
+    Overdraft, Limit Breach) has a DATA_POINT_MENU drill into Daily
+    Statement that writes (account, business_day) into the picker
+    parameters."""
+    from quicksight_gen.common.tree import Drill
+
+    app = build_l1_dashboard_app(_CFG)
+    expected: list[tuple[str, str]] = [
+        ("Drift", "Leaf Account Drift"),
+        ("Drift", "Parent Account Drift"),
+        ("Overdraft", "Overdraft Violations"),
+        ("Limit Breach", "Limit Breach Detail"),
+    ]
+    for sheet_name, table_title in expected:
+        sheet = _sheet_by_name(app, sheet_name)
+        table = next(v for v in sheet.visuals if v.title == table_title)
+        drills = [a for a in table.actions if isinstance(a, Drill)]
+        menu_drills = [d for d in drills if d.trigger == "DATA_POINT_MENU"]
+        assert len(menu_drills) == 1, (
+            f"{sheet_name}/{table_title}: expected 1 menu drill, got "
+            f"{len(menu_drills)}"
+        )
+        assert menu_drills[0].target_sheet.name == "Daily Statement"
+
+
+def test_daily_statement_drills_to_transactions() -> None:
+    """M.2b.7: Daily Statement detail table has DATA_POINT_MENU drill
+    into Transactions that writes transfer_id into pL1TxTransfer."""
+    from quicksight_gen.common.tree import Drill
+
+    app = build_l1_dashboard_app(_CFG)
+    ds = _sheet_by_name(app, "Daily Statement")
+    table = next(v for v in ds.visuals if v.title == "Posted Money Records")
+    drills = [a for a in table.actions if isinstance(a, Drill)]
+    assert len(drills) == 1
+    drill = drills[0]
+    assert drill.trigger == "DATA_POINT_MENU"
+    assert drill.target_sheet.name == "Transactions"
+
+
+def test_drill_emission_navigation_plus_set_parameters() -> None:
+    """M.2b.7: every drill emits BOTH a NavigationOperation (target
+    sheet) and a SetParametersOperation (writes + auto-reset). End-to-
+    end check via to_aws_json walk."""
+    app = build_l1_dashboard_app(_CFG)
+    j = app.emit_analysis().to_aws_json()
+    drill_count = 0
+    for sheet in j["Definition"]["Sheets"]:
+        for visual in sheet.get("Visuals") or []:
+            for kind, body in visual.items():
+                if not isinstance(body, dict):
+                    continue
+                for action in body.get("Actions") or []:
+                    op_kinds = {
+                        next(iter(op.keys()))
+                        for op in action.get("ActionOperations") or []
+                    }
+                    assert "NavigationOperation" in op_kinds, (
+                        f"action {action['Name']!r} missing nav op"
+                    )
+                    assert "SetParametersOperation" in op_kinds, (
+                        f"action {action['Name']!r} missing set-params op"
+                    )
+                    drill_count += 1
+    # 6 drill source sites: Today's Exc (2), Drift (2), Overdraft (1),
+    # Limit Breach (1), Daily Statement (1) = 7 total drills.
+    assert drill_count == 7, (
+        f"expected 7 drills total, saw {drill_count}"
+    )
+
+
 # -- Emit shape (substitutability with other apps) ---------------------------
 
 
