@@ -690,6 +690,40 @@ def test_per_sheet_filter_dropdowns() -> None:
     )
 
 
+# -- Theme + styling consistency audit (M.2b.13) -----------------------------
+
+
+def test_no_hardcoded_hex_in_l1_dashboard_code() -> None:
+    """M.2b.13 invariant: every color reference in the L1 dashboard app
+    code resolves from `cfg.theme_preset` — never a hardcoded `#xxxxxx`
+    literal. A drift in this invariant means a future theme switch
+    silently fails to repaint that visual.
+
+    Scans both `app.py` and `datasets.py` for hex-color patterns
+    (`#abc`, `#abcdef`, `#abcdef12`). Comments / docstrings allowed
+    to mention hex strings as examples; this regex catches actual
+    string literals only when they look like a CSS hex.
+    """
+    import re
+    from pathlib import Path
+
+    pkg_dir = (
+        Path(__file__).parent.parent
+        / "src" / "quicksight_gen" / "apps" / "l1_dashboard"
+    )
+    hex_re = re.compile(r"['\"]#[0-9A-Fa-f]{3,8}['\"]")
+    offenders: list[str] = []
+    for py in pkg_dir.glob("*.py"):
+        for n, line in enumerate(py.read_text().splitlines(), start=1):
+            if hex_re.search(line):
+                offenders.append(f"{py.name}:{n}: {line.strip()}")
+    assert not offenders, (
+        "L1 dashboard code MUST NOT contain hardcoded hex colors — "
+        "resolve from cfg.theme_preset.accent / .primary_fg / etc. "
+        f"instead. Found:\n  " + "\n  ".join(offenders)
+    )
+
+
 # -- Conditional formatting on tables (M.2b.2) -------------------------------
 
 
