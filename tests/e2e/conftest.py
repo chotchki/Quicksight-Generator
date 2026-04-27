@@ -216,24 +216,34 @@ def exec_dataset_ids(resource_prefix) -> list[str]:
 
 # -- L1 dashboard fixtures (M.2c) --------------------------------------------
 #
-# IDs derive from the resource_prefix per the no-hardcoded-data rule —
-# changing `qs-gen` to anything else doesn't break the tests. Dataset
-# suffixes mirror what `apps/l1_dashboard/datasets.py::DS_*` registers
-# via `cfg.prefixed("l1-<view>-dataset")`.
+# IDs derive from the resource_prefix + the L2 instance's prefix per the
+# M.2d.3 convention: `<resource_prefix>-<l2_prefix>-l1-<thing>`. The L2
+# prefix is queried from the same default L2 instance the
+# CLI/build_l1_dashboard_app uses, so no hardcoded "sasquatch_ar"
+# string lives in the e2e fixtures.
 
 
 @pytest.fixture(scope="session")
-def l1_dashboard_id(resource_prefix) -> str:
-    return f"{resource_prefix}-l1-dashboard"
+def l1_l2_prefix() -> str:
+    """The default L2 instance's prefix — the middle segment of every
+    L1 resource ID per M.2d.3."""
+    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+
+    return str(default_l2_instance().instance)
 
 
 @pytest.fixture(scope="session")
-def l1_analysis_id(resource_prefix) -> str:
-    return f"{resource_prefix}-l1-dashboard-analysis"
+def l1_dashboard_id(resource_prefix, l1_l2_prefix) -> str:
+    return f"{resource_prefix}-{l1_l2_prefix}-l1-dashboard"
 
 
 @pytest.fixture(scope="session")
-def l1_dataset_ids(resource_prefix) -> list[str]:
+def l1_analysis_id(resource_prefix, l1_l2_prefix) -> str:
+    return f"{resource_prefix}-{l1_l2_prefix}-l1-dashboard-analysis"
+
+
+@pytest.fixture(scope="session")
+def l1_dataset_ids(resource_prefix, l1_l2_prefix) -> list[str]:
     """Expected L1 dashboard dataset IDs.
 
     M.2a.3 shipped drift + ledger_drift; M.2a.4 added overdraft;
@@ -241,6 +251,7 @@ def l1_dataset_ids(resource_prefix) -> list[str]:
     todays_exceptions UNION dataset; M.2b.4 added daily_statement
     summary + transactions for the per-account-day walk; M.2b.6 added
     the 2 timeline pre-aggregations for the LineChart sheet.
+    M.2d.3 added the L2 prefix as the middle segment.
     """
     suffixes = [
         "l1-drift-dataset",
@@ -258,7 +269,7 @@ def l1_dataset_ids(resource_prefix) -> list[str]:
         "l1-supersession-transactions-dataset",
         "l1-supersession-daily-balances-dataset",
     ]
-    return [f"{resource_prefix}-{s}" for s in suffixes]
+    return [f"{resource_prefix}-{l1_l2_prefix}-{s}" for s in suffixes]
 
 
 # ---------------------------------------------------------------------------

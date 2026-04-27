@@ -27,6 +27,16 @@ class Config:
     extra_tags: dict[str, str] = field(default_factory=dict)
     theme_preset: str = "default"
     demo_database_url: str | None = None
+    # Per M.2d.3: when set, the L2 instance prefix becomes the middle
+    # segment of every resource ID generated via ``cfg.prefixed(name)``,
+    # producing IDs like ``qs-gen-sasquatch_ar-l1-dashboard``. Lets N
+    # apps (L1, PR, Exec) deploy against the same L2 instance without
+    # collision, AND lets the same app deploy against N L2 instances
+    # in the same QS account. Apps set this at build time (e.g.
+    # ``build_l1_dashboard_app`` derives it from the L2 instance).
+    # Also surfaces as an ``L2Instance`` resource tag for cleanup
+    # scoping. Unset = legacy single-tenant flat-prefix behavior.
+    l2_instance_prefix: str | None = None
 
     def __post_init__(self) -> None:
         # If demo_database_url is set but datasource_arn is not, derive it
@@ -43,10 +53,16 @@ class Config:
 
     # Derived helpers
     def tags(self) -> "list[Tag]":
-        """Return common + extra tags as the AWS Tag list format."""
+        """Return common + extra tags as the AWS Tag list format.
+
+        When ``l2_instance_prefix`` is set, an ``L2Instance`` tag is
+        attached so cleanup can scope per-instance (M.2d.3).
+        """
         from quicksight_gen.common.models import Tag
 
         all_tags = [Tag(Key="ManagedBy", Value="quicksight-gen")]
+        if self.l2_instance_prefix is not None:
+            all_tags.append(Tag(Key="L2Instance", Value=self.l2_instance_prefix))
         for key, value in self.extra_tags.items():
             all_tags.append(Tag(Key=key, Value=value))
         return all_tags
@@ -64,7 +80,14 @@ class Config:
         )
 
     def prefixed(self, name: str) -> str:
-        """Return a resource ID with the configured prefix."""
+        """Return a resource ID with the configured prefix.
+
+        When ``l2_instance_prefix`` is set, that prefix becomes the
+        middle segment so multiple L2 instances coexist in one QS
+        account (M.2d.3): ``qs-gen-<l2_instance>-<name>``.
+        """
+        if self.l2_instance_prefix is not None:
+            return f"{self.resource_prefix}-{self.l2_instance_prefix}-{name}"
         return f"{self.resource_prefix}-{name}"
 
 

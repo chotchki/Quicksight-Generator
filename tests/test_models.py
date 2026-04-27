@@ -425,6 +425,64 @@ class TestConfigTags:
         tags = cfg.tags()
         assert tags[0].Key == "ManagedBy"
 
+    def test_l2_instance_tag_added_when_prefix_set(self):
+        """M.2d.3 — when l2_instance_prefix is set, an L2Instance tag
+        is added so cleanup can scope per-instance."""
+        cfg = Config(
+            aws_account_id="123",
+            aws_region="us-east-1",
+            datasource_arn="arn:aws:quicksight:us-east-1:123:datasource/x",
+            l2_instance_prefix="sasquatch_ar",
+        )
+        tags = cfg.tags()
+        assert {t.Key: t.Value for t in tags} == {
+            "ManagedBy": "quicksight-gen",
+            "L2Instance": "sasquatch_ar",
+        }
+
+    def test_l2_instance_tag_omitted_when_prefix_unset(self):
+        """M.2d.3 — legacy single-tenant deploys don't carry the tag."""
+        cfg = Config(
+            aws_account_id="123",
+            aws_region="us-east-1",
+            datasource_arn="arn:aws:quicksight:us-east-1:123:datasource/x",
+        )
+        tag_keys = [t.Key for t in cfg.tags()]
+        assert "L2Instance" not in tag_keys
+
+
+class TestConfigPrefixed:
+    """M.2d.3 — cfg.prefixed() incorporates l2_instance_prefix when set."""
+
+    def test_prefixed_without_l2_prefix_legacy_shape(self):
+        cfg = Config(
+            aws_account_id="123",
+            aws_region="us-east-1",
+            datasource_arn="arn:x",
+        )
+        assert cfg.prefixed("l1-dashboard") == "qs-gen-l1-dashboard"
+
+    def test_prefixed_with_l2_prefix_inserts_middle_segment(self):
+        cfg = Config(
+            aws_account_id="123",
+            aws_region="us-east-1",
+            datasource_arn="arn:x",
+            l2_instance_prefix="sasquatch_ar",
+        )
+        assert cfg.prefixed("l1-dashboard") == "qs-gen-sasquatch_ar-l1-dashboard"
+
+    def test_prefixed_lets_two_l2_instances_coexist(self):
+        """M.2d.3's headline use case: same dashboard kind, different L2."""
+        cfg_a = Config(
+            aws_account_id="123", aws_region="us-east-1",
+            datasource_arn="arn:x", l2_instance_prefix="sasquatch_ar",
+        )
+        cfg_b = Config(
+            aws_account_id="123", aws_region="us-east-1",
+            datasource_arn="arn:x", l2_instance_prefix="wonkawash",
+        )
+        assert cfg_a.prefixed("l1-dashboard") != cfg_b.prefixed("l1-dashboard")
+
 
 # ---------------------------------------------------------------------------
 # Dataset builder tests

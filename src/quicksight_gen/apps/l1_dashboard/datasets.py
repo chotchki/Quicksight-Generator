@@ -17,6 +17,8 @@ Substep landmarks:
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.dataset_contract import (
     ColumnShape,
@@ -640,8 +642,13 @@ def build_all_l1_dashboard_datasets(
     """Return every dataset the L1 dashboard's sheets reference.
 
     `build_l1_dashboard_app` calls this and registers each result on the
-    App tree.
+    App tree. Per M.2d.3, derives an L2-aware ``cfg`` (so dataset IDs
+    carry the L2 instance prefix as their middle segment) when the
+    caller hasn't pre-stamped it. Idempotent — re-deriving an already-
+    L2-aware cfg is a no-op.
     """
+    if cfg.l2_instance_prefix is None:
+        cfg = replace(cfg, l2_instance_prefix=str(l2_instance.instance))
     return [
         build_drift_dataset(cfg, l2_instance),
         build_ledger_drift_dataset(cfg, l2_instance),

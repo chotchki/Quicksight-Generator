@@ -21,18 +21,29 @@ from quicksight_gen.common.config import Config
 
 MANAGED_TAG_KEY = "ManagedBy"
 MANAGED_TAG_VALUE = "quicksight-gen"
+L2_INSTANCE_TAG_KEY = "L2Instance"
 
 
-def _is_managed(client, resource_arn: str) -> bool:
-    """Check if a resource carries the managed tag."""
+def _read_managed_tags(client, resource_arn: str) -> dict[str, str] | None:
+    """Return the resource's tag map IF it carries ``ManagedBy: quicksight-gen``.
+
+    Returns None if the resource is not ours (or we can't read its tags).
+    Caller uses the returned map to additionally filter on ``L2Instance``
+    when ``cfg.l2_instance_prefix`` is set (M.2d.3).
+    """
     try:
         resp = client.list_tags_for_resource(ResourceArn=resource_arn)
     except ClientError:
-        return False
+        return None
+    tag_map: dict[str, str] = {}
     for tag in resp.get("Tags", []):
-        if tag.get("Key") == MANAGED_TAG_KEY and tag.get("Value") == MANAGED_TAG_VALUE:
-            return True
-    return False
+        key = tag.get("Key")
+        value = tag.get("Value")
+        if isinstance(key, str) and isinstance(value, str):
+            tag_map[key] = value
+    if tag_map.get(MANAGED_TAG_KEY) != MANAGED_TAG_VALUE:
+        return None
+    return tag_map
 
 
 def _expected_ids_from_out(out_dir: Path, cfg: Config) -> dict[str, set[str]]:
@@ -111,9 +122,22 @@ def _iter_datasources(client, account_id: str) -> Iterable[tuple[str, str]]:
 
 
 def _collect_stale(
-    client, account_id: str, expected: dict[str, set[str]],
+    client,
+    account_id: str,
+    expected: dict[str, set[str]],
+    *,
+    l2_instance_prefix: str | None = None,
 ) -> dict[str, list[tuple[str, str]]]:
-    """Return stale (id, arn) tuples grouped by resource type."""
+    """Return stale (id, arn) tuples grouped by resource type.
+
+    When ``l2_instance_prefix`` is set (M.2d.3), only resources whose
+    ``L2Instance`` tag matches are eligible for deletion. Untagged
+    managed resources (legacy single-tenant deploys, or resources
+    deployed before M.2d.3 landed) are skipped — they're owned by a
+    different scope. When ``l2_instance_prefix`` is None, falls back
+    to the legacy "any ManagedBy resource" sweep for backward compat
+    with single-tenant out-dirs.
+    """
     stale: dict[str, list[tuple[str, str]]] = {
         "dashboard": [],
         "analysis": [],
@@ -132,8 +156,15 @@ def _collect_stale(
         for rid, arn in it(client, account_id):
             if rid in expected[kind]:
                 continue
-            if _is_managed(client, arn):
-                stale[kind].append((rid, arn))
+            tags = _read_managed_tags(client, arn)
+            if tags is None:
+                # Not ours.
+                continue
+            if l2_instance_prefix is not None:
+                # Per-instance scope: only sweep matching-tag resources.
+                if tags.get(L2_INSTANCE_TAG_KEY) != l2_instance_prefix:
+                    continue
+            stale[kind].append((rid, arn))
     return stale
 
 
@@ -192,9 +223,20 @@ def run_cleanup(
     client = boto3.client("quicksight", region_name=cfg.aws_region)
     account_id = cfg.aws_account_id
 
-    click.echo(f"Scanning QuickSight resources in {account_id} ({cfg.aws_region})...")
+    scope_label = (
+        f" scoped to L2Instance={cfg.l2_instance_prefix!r}"
+        if cfg.l2_instance_prefix
+        else ""
+    )
+    click.echo(
+        f"Scanning QuickSight resources in {account_id} "
+        f"({cfg.aws_region}){scope_label}..."
+    )
     expected = _expected_ids_from_out(out_dir, cfg)
-    stale = _collect_stale(client, account_id, expected)
+    stale = _collect_stale(
+        client, account_id, expected,
+        l2_instance_prefix=cfg.l2_instance_prefix,
+    )
 
     total = sum(len(items) for items in stale.values())
     if total == 0:

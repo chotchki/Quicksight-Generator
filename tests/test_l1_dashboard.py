@@ -1282,15 +1282,17 @@ def test_analysis_emits_with_expected_id_suffix() -> None:
 
 
 def test_dashboard_emits_with_expected_id_suffix() -> None:
-    """Per the M.2a reframe naming: `<prefix>-l1-dashboard`.
+    """Per the M.2d.3 naming: `<resource_prefix>-<l2_prefix>-l1-dashboard`.
 
-    The QuickSight resource prefix (default `qs-gen`) prepends, so the
-    full DashboardId is `qs-gen-l1-dashboard`.
+    The L2 instance prefix becomes the middle segment so multiple L2
+    instances coexist in one QS account. The default L2 instance is
+    `sasquatch_ar`, so the full DashboardId is
+    `qs-gen-sasquatch_ar-l1-dashboard`.
     """
     app = build_l1_dashboard_app(_CFG)
     dashboard = app.emit_dashboard()
     assert dashboard.DashboardId.endswith("-l1-dashboard")
-    assert dashboard.DashboardId == "qs-gen-l1-dashboard"
+    assert dashboard.DashboardId == "qs-gen-sasquatch_ar-l1-dashboard"
 
 
 # -- CLI smoke (M.2a.9) ------------------------------------------------------
@@ -1323,17 +1325,18 @@ class TestCli:
         assert result.exit_code == 0, result.output
         assert (out / "l1-dashboard-analysis.json").exists()
         assert (out / "l1-dashboard-dashboard.json").exists()
-        # 8 datasets land in out/datasets/ (M.2a.3-6 + M.2b.4 + M.2b.5).
+        # Datasets land in out/datasets/ with the M.2d.3 L2-instance
+        # middle segment in their IDs (`<resource_prefix>-<l2_prefix>-...`).
         ds_dir = out / "datasets"
         for name in (
-            "qs-gen-l1-drift-dataset.json",
-            "qs-gen-l1-ledger-drift-dataset.json",
-            "qs-gen-l1-overdraft-dataset.json",
-            "qs-gen-l1-limit-breach-dataset.json",
-            "qs-gen-l1-todays-exceptions-dataset.json",
-            "qs-gen-l1-daily-statement-summary-dataset.json",
-            "qs-gen-l1-daily-statement-transactions-dataset.json",
-            "qs-gen-l1-transactions-dataset.json",
+            "qs-gen-sasquatch_ar-l1-drift-dataset.json",
+            "qs-gen-sasquatch_ar-l1-ledger-drift-dataset.json",
+            "qs-gen-sasquatch_ar-l1-overdraft-dataset.json",
+            "qs-gen-sasquatch_ar-l1-limit-breach-dataset.json",
+            "qs-gen-sasquatch_ar-l1-todays-exceptions-dataset.json",
+            "qs-gen-sasquatch_ar-l1-daily-statement-summary-dataset.json",
+            "qs-gen-sasquatch_ar-l1-daily-statement-transactions-dataset.json",
+            "qs-gen-sasquatch_ar-l1-transactions-dataset.json",
         ):
             assert (ds_dir / name).exists(), f"missing {name}"
 
