@@ -39,6 +39,8 @@ DS_DAILY_STATEMENT_TRANSACTIONS = "l1-daily-statement-transactions-ds"
 DS_TRANSACTIONS = "l1-transactions-ds"
 DS_DRIFT_TIMELINE = "l1-drift-timeline-ds"
 DS_LEDGER_DRIFT_TIMELINE = "l1-ledger-drift-timeline-ds"
+DS_STUCK_PENDING = "l1-stuck-pending-ds"
+DS_STUCK_UNBUNDLED = "l1-stuck-unbundled-ds"
 
 
 # Contracts — column shapes the M.1a.7 views project.
@@ -203,6 +205,46 @@ DRIFT_TIMELINE_CONTRACT = DatasetContract(columns=[
     ColumnSpec("business_day_end", "DATETIME", shape=ColumnShape.DATETIME_DAY),
     ColumnSpec("account_role", "STRING"),
     ColumnSpec("abs_drift", "DECIMAL"),
+])
+
+
+# Stuck Pending / Unbundled — both M.2b.8/9 matviews share the same
+# 13-col shape (only the cap column name differs:
+# `max_pending_age_seconds` vs `max_unbundled_age_seconds`). Defined as
+# 2 contracts so the L.1.17 typed Column refs catch column-name
+# mismatches at the wiring site (one contract collapsing both would
+# require optional cols, which the contract intentionally doesn't model).
+STUCK_PENDING_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("transaction_id", "STRING"),
+    ColumnSpec("account_id", "STRING", shape=ColumnShape.ACCOUNT_ID),
+    ColumnSpec("account_name", "STRING"),
+    ColumnSpec("account_role", "STRING"),
+    ColumnSpec("account_parent_role", "STRING"),
+    ColumnSpec("transfer_id", "STRING", shape=ColumnShape.TRANSFER_ID),
+    ColumnSpec("transfer_type", "STRING", shape=ColumnShape.TRANSFER_TYPE),
+    ColumnSpec("rail_name", "STRING"),
+    ColumnSpec("amount_money", "DECIMAL"),
+    ColumnSpec("amount_direction", "STRING"),
+    ColumnSpec("posting", "DATETIME"),
+    ColumnSpec("max_pending_age_seconds", "INTEGER"),
+    ColumnSpec("age_seconds", "DECIMAL"),
+])
+
+
+STUCK_UNBUNDLED_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("transaction_id", "STRING"),
+    ColumnSpec("account_id", "STRING", shape=ColumnShape.ACCOUNT_ID),
+    ColumnSpec("account_name", "STRING"),
+    ColumnSpec("account_role", "STRING"),
+    ColumnSpec("account_parent_role", "STRING"),
+    ColumnSpec("transfer_id", "STRING", shape=ColumnShape.TRANSFER_ID),
+    ColumnSpec("transfer_type", "STRING", shape=ColumnShape.TRANSFER_TYPE),
+    ColumnSpec("rail_name", "STRING"),
+    ColumnSpec("amount_money", "DECIMAL"),
+    ColumnSpec("amount_direction", "STRING"),
+    ColumnSpec("posting", "DATETIME"),
+    ColumnSpec("max_unbundled_age_seconds", "INTEGER"),
+    ColumnSpec("age_seconds", "DECIMAL"),
 ])
 
 
@@ -439,6 +481,45 @@ def build_ledger_drift_timeline_dataset(
     )
 
 
+def build_stuck_pending_dataset(
+    cfg: Config, l2_instance: L2Instance,
+) -> DataSet:
+    """Wrap the M.2b.8 `<prefix>_stuck_pending` matview.
+
+    Pending transactions whose age exceeds the per-rail
+    `max_pending_age` cap. Backs the M.2b.10 Pending Aging sheet —
+    aging buckets come from a calc field on the dataset, so the SQL
+    stays a thin SELECT * passthrough.
+    """
+    prefix = l2_instance.instance
+    sql = f"SELECT * FROM {prefix}_stuck_pending"
+    return build_dataset(
+        cfg, cfg.prefixed("l1-stuck-pending-dataset"),
+        "L1 Stuck Pending", "l1-stuck-pending",
+        sql, STUCK_PENDING_CONTRACT,
+        visual_identifier=DS_STUCK_PENDING,
+    )
+
+
+def build_stuck_unbundled_dataset(
+    cfg: Config, l2_instance: L2Instance,
+) -> DataSet:
+    """Wrap the M.2b.9 `<prefix>_stuck_unbundled` matview.
+
+    Posted transactions where bundle_id IS NULL and age exceeds the
+    per-rail `max_unbundled_age` cap. Backs the M.2b.11 Unbundled
+    Aging sheet.
+    """
+    prefix = l2_instance.instance
+    sql = f"SELECT * FROM {prefix}_stuck_unbundled"
+    return build_dataset(
+        cfg, cfg.prefixed("l1-stuck-unbundled-dataset"),
+        "L1 Stuck Unbundled", "l1-stuck-unbundled",
+        sql, STUCK_UNBUNDLED_CONTRACT,
+        visual_identifier=DS_STUCK_UNBUNDLED,
+    )
+
+
 def build_all_l1_dashboard_datasets(
     cfg: Config, l2_instance: L2Instance,
 ) -> list[DataSet]:
@@ -458,4 +539,8 @@ def build_all_l1_dashboard_datasets(
         build_transactions_dataset(cfg, l2_instance),
         build_drift_timeline_dataset(cfg, l2_instance),
         build_ledger_drift_timeline_dataset(cfg, l2_instance),
+        build_stuck_pending_dataset(cfg, l2_instance),
+        # build_stuck_unbundled_dataset wires in at M.2b.11 with the
+        # Unbundled Aging sheet — registering it here without a
+        # consuming sheet would deploy a dataset with no visuals.
     ]

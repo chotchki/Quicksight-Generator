@@ -45,6 +45,7 @@ from quicksight_gen.apps.l1_dashboard.datasets import (
     DS_LEDGER_DRIFT_TIMELINE,
     DS_LIMIT_BREACH,
     DS_OVERDRAFT,
+    DS_STUCK_PENDING,
     DS_TODAYS_EXCEPTIONS,
     DS_TRANSACTIONS,
     build_all_l1_dashboard_datasets,
@@ -66,6 +67,7 @@ from quicksight_gen.common.tree import (
     CellAccentText,
     Dataset,
     DateTimeParam,
+    Dim,
     Drill,
     DrillParam,
     DrillResetSentinel,
@@ -96,6 +98,7 @@ SHEET_DRIFT = SheetId("l1-sheet-drift")
 SHEET_DRIFT_TIMELINES = SheetId("l1-sheet-drift-timelines")
 SHEET_OVERDRAFT = SheetId("l1-sheet-overdraft")
 SHEET_LIMIT_BREACH = SheetId("l1-sheet-limit-breach")
+SHEET_PENDING_AGING = SheetId("l1-sheet-pending-aging")
 SHEET_TODAYS_EXCEPTIONS = SheetId("l1-sheet-todays-exceptions")
 SHEET_DAILY_STATEMENT = SheetId("l1-sheet-daily-statement")
 SHEET_TRANSACTIONS = SheetId("l1-sheet-transactions")
@@ -194,6 +197,20 @@ _LIMIT_BREACH_DESCRIPTION = (
     "from the L2 instance's LimitSchedules at schema-emit time and "
     "embedded inline in the underlying view — no JSON path lookups in "
     "the dataset SQL. Every row is one violation."
+)
+
+
+_PENDING_AGING_NAME = "Pending Aging"
+_PENDING_AGING_TITLE = "Pending Transactions Aging Past Cap"
+_PENDING_AGING_DESCRIPTION = (
+    "Transactions stuck in `status='Pending'` past their rail's "
+    "configured `max_pending_age` cap. Each Rail in the L2 instance "
+    "with an aging watch contributes its own threshold; the underlying "
+    "view inlines these caps at schema-emit time. KPI shows total stuck "
+    "count; the aging bar chart breaks the population into 5 buckets "
+    "(0–6h, 6–24h, 1–3d, 3–7d, >7d) so operators can see whether they're "
+    "fighting one big spike or a slow drift. Right-click any row → "
+    "View Transactions to see every leg of that transfer."
 )
 
 
@@ -332,6 +349,7 @@ def _l1_datasets(
         DS_DAILY_STATEMENT_SUMMARY, DS_DAILY_STATEMENT_TRANSACTIONS,
         DS_TRANSACTIONS,
         DS_DRIFT_TIMELINE, DS_LEDGER_DRIFT_TIMELINE,
+        DS_STUCK_PENDING,
     ]
     return {
         vid: Dataset(identifier=vid, arn=cfg.dataset_arn(aws.DataSetId))
@@ -894,6 +912,123 @@ def _populate_limit_breach_sheet(
     )
 
 
+# Aging-bucket cutoffs (seconds). 5 buckets per CLAUDE.md AR convention
+# — number-prefixed labels keep the QS bar chart sorted correctly
+# without an explicit sort_by override.
+_AGING_BUCKET_6H = 6 * 3600
+_AGING_BUCKET_24H = 24 * 3600
+_AGING_BUCKET_3D = 3 * 24 * 3600
+_AGING_BUCKET_7D = 7 * 24 * 3600
+
+
+def _aging_bucket_expression(age_col: str) -> str:
+    """Build the QS calc-field expression that buckets a numeric age
+    column (in seconds) into 5 labelled bands.
+
+    Labels are number-prefixed (`'1: 0-6h'` … `'5: >7d'`) so the
+    QuickSight horizontal bar chart sorts them naturally without an
+    explicit sort_by override. Mirrors AR's aging-bucket convention.
+    """
+    return (
+        f"ifelse({{{age_col}}} <= {_AGING_BUCKET_6H}, '1: 0-6h',"
+        f" ifelse({{{age_col}}} <= {_AGING_BUCKET_24H}, '2: 6-24h',"
+        f" ifelse({{{age_col}}} <= {_AGING_BUCKET_3D}, '3: 1-3d',"
+        f" ifelse({{{age_col}}} <= {_AGING_BUCKET_7D}, '4: 3-7d',"
+        f" '5: >7d'))))"
+    )
+
+
+def _populate_pending_aging_sheet(
+    cfg: Config,
+    analysis: Analysis,
+    sheet: Sheet,
+    *,
+    datasets: dict[str, Dataset],
+    transactions_sheet: Sheet,
+) -> None:
+    """Pending Aging sheet — KPI + horizontal aging BarChart + detail.
+
+    Backed by the M.2b.8 `<prefix>_stuck_pending` matview. Aging
+    buckets come from a per-dataset CalcField on `age_seconds` (5
+    bands; number-prefixed labels keep the bar chart sort stable).
+    Right-click any detail-table row → Transactions narrowed to that
+    transfer (M.2b.7 drill plumbing).
+    """
+    accent = get_preset(cfg.theme_preset).accent
+    ds = datasets[DS_STUCK_PENDING]
+
+    # Aging-bucket calc field (analysis-level so the BarChart category
+    # + detail-table column read the same dim).
+    aging_bucket = analysis.add_calc_field(CalcField(
+        name="stuck_pending_aging_bucket",
+        dataset=ds,
+        expression=_aging_bucket_expression("age_seconds"),
+    ))
+
+    # Row 1: total stuck count KPI.
+    sheet.layout.row(height=_KPI_ROW_SPAN).add_kpi(
+        width=_FULL,
+        title="Stuck Pending",
+        subtitle=(
+            "Count of Pending transactions whose live age has exceeded "
+            "their rail's `max_pending_age` cap. Healthy = 0."
+        ),
+        values=[ds["transaction_id"].count()],
+    )
+
+    # Row 2: horizontal aging bar chart — count per bucket.
+    sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
+        width=_FULL,
+        title="Stuck Pending by Age Bucket",
+        subtitle=(
+            "Distribution of stuck-Pending transactions across 5 age "
+            "bands. Right-skewed (>3d, >7d) ⇒ slow drift; spike at "
+            "0-6h ⇒ a recent batch failed to post."
+        ),
+        category=[Dim(ds, aging_bucket)],
+        values=[ds["transaction_id"].count()],
+        orientation="HORIZONTAL",
+    )
+
+    # Row 3: detail table — every stuck-Pending leg, drillable to
+    # Transactions for that transfer.
+    transfer_col = ds["transfer_id"].dim()
+    sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        title="Stuck Pending Detail",
+        subtitle=(
+            "Every stuck-Pending leg with rail / amount / posting / "
+            "live age. `max_pending_age_seconds` is the rail's cap "
+            "(inlined at view-emit time from L2). Right-click any "
+            "row → View Transactions to see every leg of that transfer."
+        ),
+        columns=[
+            ds["account_id"].dim(),
+            ds["account_name"].dim(),
+            transfer_col,
+            ds["transfer_type"].dim(),
+            ds["rail_name"].dim(),
+            ds["amount_money"].numerical(),
+            ds["amount_direction"].dim(),
+            ds["posting"].date(),
+            Dim(ds, aging_bucket),
+            ds["max_pending_age_seconds"].numerical(),
+            ds["age_seconds"].numerical(),
+        ],
+        actions=[
+            _l1_drill(
+                target_sheet=transactions_sheet,
+                name="View Transactions for this transfer",
+                writes=[(_DP_TX_TRANSFER, transfer_col)],
+                trigger="DATA_POINT_MENU",
+            ),
+        ],
+        conditional_formatting=[
+            CellAccentText(on=transfer_col, color=accent),
+        ],
+    )
+
+
 def _populate_transactions_sheet(
     cfg: Config,
     sheet: Sheet,
@@ -1065,6 +1200,7 @@ def _wire_date_range_filter(
     drift_timelines_sheet: Sheet,
     overdraft_sheet: Sheet,
     limit_breach_sheet: Sheet,
+    pending_aging_sheet: Sheet,
     todays_exceptions_sheet: Sheet,
 ) -> None:
     """Wire the universal date-range filter (params + groups + controls).
@@ -1136,12 +1272,16 @@ def _wire_date_range_filter(
                "fg-l1-date-limit-breach")
     _scope_one(DS_TODAYS_EXCEPTIONS, "business_day",
                todays_exceptions_sheet, "fg-l1-date-todays-exceptions")
+    # Pending Aging exposes `posting` (the original transaction posting
+    # timestamp, no DATE_TRUNC) — use that for the date-range filter.
+    _scope_one(DS_STUCK_PENDING, "posting", pending_aging_sheet,
+               "fg-l1-date-stuck-pending")
 
-    # Per-sheet date pickers — bound to the shared params so all five
+    # Per-sheet date pickers — bound to the shared params so all six
     # sheets' pickers sync.
     for sheet in (
         drift_sheet, drift_timelines_sheet, overdraft_sheet,
-        limit_breach_sheet, todays_exceptions_sheet,
+        limit_breach_sheet, pending_aging_sheet, todays_exceptions_sheet,
     ):
         sheet.add_parameter_datetime_picker(
             parameter=date_start, title="Date From",
@@ -1159,6 +1299,7 @@ def _wire_per_sheet_dropdowns(
     drift_timelines_sheet: Sheet,
     overdraft_sheet: Sheet,
     limit_breach_sheet: Sheet,
+    pending_aging_sheet: Sheet,
     todays_exceptions_sheet: Sheet,
     transactions_sheet: Sheet,
 ) -> None:
@@ -1241,6 +1382,22 @@ def _wire_per_sheet_dropdowns(
     _dropdown(
         fg_id="fg-l1-limit-breach-type", ds=ds_lb, col="transfer_type",
         title="Transfer Type", sheet=limit_breach_sheet,
+    )
+
+    # Pending Aging — account / transfer_type / rail_name (per the
+    # M.2b.10 plan).
+    ds_sp = datasets[DS_STUCK_PENDING]
+    _dropdown(
+        fg_id="fg-l1-pending-account", ds=ds_sp, col="account_id",
+        title="Account", sheet=pending_aging_sheet,
+    )
+    _dropdown(
+        fg_id="fg-l1-pending-type", ds=ds_sp, col="transfer_type",
+        title="Transfer Type", sheet=pending_aging_sheet,
+    )
+    _dropdown(
+        fg_id="fg-l1-pending-rail", ds=ds_sp, col="rail_name",
+        title="Rail", sheet=pending_aging_sheet,
     )
 
     # Today's Exceptions — check_type narrows the unified UNION; account
@@ -1601,6 +1758,12 @@ def build_l1_dashboard_app(
         title=_LIMIT_BREACH_TITLE,
         description=_LIMIT_BREACH_DESCRIPTION,
     ))
+    pending_aging_sheet = analysis.add_sheet(Sheet(
+        sheet_id=SHEET_PENDING_AGING,
+        name=_PENDING_AGING_NAME,
+        title=_PENDING_AGING_TITLE,
+        description=_PENDING_AGING_DESCRIPTION,
+    ))
     todays_exceptions_sheet = analysis.add_sheet(Sheet(
         sheet_id=SHEET_TODAYS_EXCEPTIONS,
         name=_TODAYS_EXCEPTIONS_NAME,
@@ -1639,6 +1802,11 @@ def build_l1_dashboard_app(
         datasets=datasets, l2_instance=l2_instance,
         daily_statement_sheet=daily_statement_sheet,
     )
+    _populate_pending_aging_sheet(
+        cfg, analysis, pending_aging_sheet,
+        datasets=datasets,
+        transactions_sheet=transactions_sheet,
+    )
     _populate_todays_exceptions_sheet(
         cfg, todays_exceptions_sheet,
         datasets=datasets, l2_instance=l2_instance,
@@ -1663,12 +1831,13 @@ def build_l1_dashboard_app(
         drift_timelines_sheet=drift_timelines_sheet,
         overdraft_sheet=overdraft_sheet,
         limit_breach_sheet=limit_breach_sheet,
+        pending_aging_sheet=pending_aging_sheet,
         todays_exceptions_sheet=todays_exceptions_sheet,
     )
 
-    # M.2b.3 + M.2b.5 — Per-sheet category filter dropdowns (account /
-    # role / transfer_type / check_type / status / origin as
-    # appropriate per sheet).
+    # M.2b.3 + M.2b.5 + M.2b.10 — Per-sheet category filter dropdowns
+    # (account / role / transfer_type / check_type / status / origin /
+    # rail_name as appropriate per sheet).
     _wire_per_sheet_dropdowns(
         analysis,
         datasets=datasets,
@@ -1676,6 +1845,7 @@ def build_l1_dashboard_app(
         drift_timelines_sheet=drift_timelines_sheet,
         overdraft_sheet=overdraft_sheet,
         limit_breach_sheet=limit_breach_sheet,
+        pending_aging_sheet=pending_aging_sheet,
         todays_exceptions_sheet=todays_exceptions_sheet,
         transactions_sheet=transactions_sheet,
     )
