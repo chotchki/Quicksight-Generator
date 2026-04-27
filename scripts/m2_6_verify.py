@@ -188,6 +188,62 @@ def _verify_limit_breach(conn, prefix: str) -> bool:
     return True
 
 
+def _verify_stuck_pending(conn, prefix: str) -> bool:
+    """Bigfoot-brews stuck Pending: ACH leg 2 days old vs PT24H cap."""
+    print("→ Verifying stuck-pending scenario (bigfoot-brews ACH > 24h)...", end=" ", flush=True)
+    rows = _query_view(conn, f"""
+        SELECT account_id, rail_name, max_pending_age_seconds, age_seconds
+        FROM {prefix}_stuck_pending
+        WHERE account_id = 'cust-900-0001-bigfoot-brews'
+    """)
+    if not rows:
+        print("FAIL — no row in <prefix>_stuck_pending for bigfoot-brews")
+        return False
+    _, rail, cap_s, age_s = rows[0]
+    if age_s <= cap_s:
+        print(f"FAIL — expected age > cap, got age={age_s}s <= cap={cap_s}s")
+        return False
+    print(f"OK (rail={rail} age={age_s:.0f}s > cap={cap_s}s)")
+    return True
+
+
+def _verify_stuck_unbundled(conn, prefix: str) -> bool:
+    """Sasquatch-sips stuck Unbundled: fee accrual 35 days old vs P31D cap."""
+    print("→ Verifying stuck-unbundled scenario (sasquatch-sips fee > 31d)...", end=" ", flush=True)
+    rows = _query_view(conn, f"""
+        SELECT account_id, rail_name, max_unbundled_age_seconds, age_seconds
+        FROM {prefix}_stuck_unbundled
+        WHERE account_id = 'cust-900-0002-sasquatch-sips'
+    """)
+    if not rows:
+        print("FAIL — no row in <prefix>_stuck_unbundled for sasquatch-sips")
+        return False
+    _, rail, cap_s, age_s = rows[0]
+    if age_s <= cap_s:
+        print(f"FAIL — expected age > cap, got age={age_s}s <= cap={cap_s}s")
+        return False
+    print(f"OK (rail={rail} age={age_s:.0f}s > cap={cap_s}s)")
+    return True
+
+
+def _verify_supersession(conn, prefix: str) -> bool:
+    """Bigfoot-brews TechnicalCorrection: 2 entries on the same logical id."""
+    print("→ Verifying supersession scenario (TechnicalCorrection)...", end=" ", flush=True)
+    rows = _query_view(conn, f"""
+        SELECT id, COUNT(*) AS entry_count
+        FROM {prefix}_transactions
+        WHERE id LIKE 'tx-supersedes-%'
+        GROUP BY id
+        HAVING COUNT(*) > 1
+    """)
+    if not rows:
+        print("FAIL — no logical key with multiple entries planted")
+        return False
+    txn_id, count = rows[0]
+    print(f"OK ({txn_id} has {count} entries)")
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="M.2.6 verification: deploy v6 schema + verify L1 views",
@@ -253,6 +309,9 @@ def main() -> int:
             _verify_drift(conn, prefix),
             _verify_overdraft(conn, prefix),
             _verify_limit_breach(conn, prefix),
+            _verify_stuck_pending(conn, prefix),
+            _verify_stuck_unbundled(conn, prefix),
+            _verify_supersession(conn, prefix),
         ]
         print()
         passed = sum(results)

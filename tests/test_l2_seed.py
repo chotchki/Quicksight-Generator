@@ -252,7 +252,7 @@ def test_default_scenario_hash_is_locked(default_seed_sql: str) -> None:
     """
     h = hashlib.sha256(default_seed_sql.encode("utf-8")).hexdigest()
     assert h == (
-        "fc1e7c126303ce86b06ac2085de172b0dba5f82ce64110630486cef459cd8a8c"
+        "cd237706b7211985dcbdd02bd78aa0d9c2f838ce63124be4910b7702d260ac98"
     ), f"sasquatch_ar L2 seed drifted; new hash: {h}"
 
 

@@ -115,6 +115,62 @@ class LimitBreachPlant:
 
 
 @dataclass(frozen=True, slots=True)
+class StuckPendingPlant:
+    """A planted Pending leg whose age exceeds the rail's `max_pending_age`.
+
+    Surfaces in L1's `<prefix>_stuck_pending` view (M.2b.8) when
+    `EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - posting)) >
+    rail.max_pending_age_seconds`. Pick a rail with a max_pending_age
+    set + a `days_ago` value comfortably past the cap.
+    """
+
+    account_id: Identifier
+    days_ago: int
+    transfer_type: str
+    rail_name: Identifier
+    amount: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class StuckUnbundledPlant:
+    """A planted Posted leg with `bundle_id IS NULL` whose age exceeds
+    the rail's `max_unbundled_age`.
+
+    Surfaces in L1's `<prefix>_stuck_unbundled` view (M.2b.9) when the
+    leg's age past `posting` exceeds the per-rail cap. Per validator
+    R8, the rail MUST appear in some AggregatingRail's bundles_activity
+    — the seed picks a rail that satisfies this.
+    """
+
+    account_id: Identifier
+    days_ago: int
+    transfer_type: str
+    rail_name: Identifier
+    amount: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class SupersessionPlant:
+    """A planted logical-key (transaction.id) with multiple `entry`
+    versions, simulating a TechnicalCorrection rewrite of a posted leg.
+
+    Surfaces in M.2b.12's Supersession Audit detail tables. Emits two
+    transaction rows with the same `id`: the first ("original") posts
+    `original_amount`; the second ("correction") posts `corrected_amount`
+    a few minutes later carrying `supersedes='TechnicalCorrection'`.
+    PostgreSQL's BIGSERIAL `entry` column auto-assigns the entry
+    versioning, so the second insert lands at a higher entry value.
+    """
+
+    account_id: Identifier
+    days_ago: int
+    transfer_type: str
+    rail_name: Identifier
+    original_amount: Decimal
+    corrected_amount: Decimal
+
+
+@dataclass(frozen=True, slots=True)
 class ScenarioPlant:
     """The full set of planted scenarios + materialized template instances.
 
@@ -126,6 +182,9 @@ class ScenarioPlant:
     drift_plants: tuple[DriftPlant, ...] = ()
     overdraft_plants: tuple[OverdraftPlant, ...] = ()
     limit_breach_plants: tuple[LimitBreachPlant, ...] = ()
+    stuck_pending_plants: tuple[StuckPendingPlant, ...] = ()
+    stuck_unbundled_plants: tuple[StuckUnbundledPlant, ...] = ()
+    supersession_plants: tuple[SupersessionPlant, ...] = ()
     today: date = field(
         default_factory=lambda: datetime.now(tz=timezone.utc).date(),
     )
@@ -164,6 +223,27 @@ def emit_seed(instance: L2Instance, scenarios: ScenarioPlant) -> str:
             _emit_drift_background_rows(
                 p, scenarios, template_by_role,
                 parent_singleton_by_role, txn_counter,
+            )
+        )
+
+    for p in sorted(scenarios.stuck_pending_plants, key=_stuck_pending_key):
+        txn_rows.extend(
+            _emit_stuck_pending_rows(
+                p, scenarios, template_by_role, txn_counter,
+            )
+        )
+
+    for p in sorted(scenarios.stuck_unbundled_plants, key=_stuck_unbundled_key):
+        txn_rows.extend(
+            _emit_stuck_unbundled_rows(
+                p, scenarios, template_by_role, txn_counter,
+            )
+        )
+
+    for p in sorted(scenarios.supersession_plants, key=_supersession_key):
+        txn_rows.extend(
+            _emit_supersession_rows(
+                p, scenarios, template_by_role, txn_counter,
             )
         )
 
@@ -259,6 +339,18 @@ def _overdraft_key(p: OverdraftPlant) -> tuple[str, int]:
 
 
 def _breach_key(p: LimitBreachPlant) -> tuple[str, int, str]:
+    return (str(p.account_id), p.days_ago, p.transfer_type)
+
+
+def _stuck_pending_key(p: StuckPendingPlant) -> tuple[str, int, str]:
+    return (str(p.account_id), p.days_ago, p.transfer_type)
+
+
+def _stuck_unbundled_key(p: StuckUnbundledPlant) -> tuple[str, int, str]:
+    return (str(p.account_id), p.days_ago, p.transfer_type)
+
+
+def _supersession_key(p: SupersessionPlant) -> tuple[str, int, str]:
     return (str(p.account_id), p.days_ago, p.transfer_type)
 
 
@@ -470,6 +562,142 @@ def _emit_overdraft_balance_row(
     )
 
 
+def _emit_stuck_pending_rows(
+    p: StuckPendingPlant,
+    scenarios: ScenarioPlant,
+    template_by_role: dict[Identifier, AccountTemplate],
+    counter: _Counter,
+) -> list[str]:
+    """Plant ONE Pending leg (no external counter-leg — Pending legs
+    haven't traversed the rail yet so the counter-leg doesn't exist).
+
+    The rail's `max_pending_age` cap (inlined into the
+    `<prefix>_stuck_pending` view at schema-emit time) determines
+    when this surfaces; pick `days_ago` past whatever cap the chosen
+    rail carries.
+    """
+    ti = _resolve_template(p.account_id, scenarios)
+    template = template_by_role[ti.template_role]
+    parent_role = template.parent_role
+    plant_day = scenarios.today - timedelta(days=p.days_ago)
+    posting_ts = f"{plant_day.isoformat()}T10:00:00+00:00"
+    n = counter.next()
+    return [
+        _txn_row(
+            id_=f"tx-pending-{n:04d}",
+            account_id=ti.account_id,
+            account_name=ti.name,
+            account_role=ti.template_role,
+            account_scope=template.scope,
+            account_parent_role=parent_role,
+            money=-p.amount,  # Debit
+            direction="Debit",
+            posting=posting_ts,
+            transfer_id=f"tr-pending-{n:04d}",
+            transfer_type=p.transfer_type,
+            rail_name=p.rail_name,
+            origin="InternalInitiated",
+            metadata={"customer_id": str(ti.account_id)},
+            status="Pending",
+        ),
+    ]
+
+
+def _emit_stuck_unbundled_rows(
+    p: StuckUnbundledPlant,
+    scenarios: ScenarioPlant,
+    template_by_role: dict[Identifier, AccountTemplate],
+    counter: _Counter,
+) -> list[str]:
+    """Plant ONE Posted leg with `bundle_id IS NULL` on a rail whose
+    `max_unbundled_age` cap has been exceeded.
+
+    Per validator R8, `max_unbundled_age` is only meaningful on rails
+    that appear in some AggregatingRail's `bundles_activity`. Pick a
+    rail name + days_ago that satisfies both conditions.
+    """
+    ti = _resolve_template(p.account_id, scenarios)
+    template = template_by_role[ti.template_role]
+    parent_role = template.parent_role
+    plant_day = scenarios.today - timedelta(days=p.days_ago)
+    posting_ts = f"{plant_day.isoformat()}T11:00:00+00:00"
+    n = counter.next()
+    return [
+        _txn_row(
+            id_=f"tx-unbundled-{n:04d}",
+            account_id=ti.account_id,
+            account_name=ti.name,
+            account_role=ti.template_role,
+            account_scope=template.scope,
+            account_parent_role=parent_role,
+            money=-p.amount,  # Debit (fee accrual)
+            direction="Debit",
+            posting=posting_ts,
+            transfer_id=f"tr-unbundled-{n:04d}",
+            transfer_type=p.transfer_type,
+            rail_name=p.rail_name,
+            origin="InternalInitiated",
+            metadata={"customer_id": str(ti.account_id)},
+            # status defaults to Posted; bundle_id stays NULL — that's
+            # the whole point.
+        ),
+    ]
+
+
+def _emit_supersession_rows(
+    p: SupersessionPlant,
+    scenarios: ScenarioPlant,
+    template_by_role: dict[Identifier, AccountTemplate],
+    counter: _Counter,
+) -> list[str]:
+    """Plant TWO transactions sharing one logical `id` — the original
+    + a TechnicalCorrection rewrite.
+
+    PostgreSQL's BIGSERIAL `entry` column auto-increments per insert,
+    so the second row lands at a higher entry value; the M.2b.12
+    Supersession Audit dataset's `COUNT(*) OVER (PARTITION BY id) > 1`
+    catches the pair. No counter-leg — the corrected leg is the audit
+    artifact, not a Conservation-bearing transfer.
+    """
+    ti = _resolve_template(p.account_id, scenarios)
+    template = template_by_role[ti.template_role]
+    parent_role = template.parent_role
+    plant_day = scenarios.today - timedelta(days=p.days_ago)
+    n = counter.next()
+    txn_id = f"tx-supersedes-{n:04d}"
+    transfer_id = f"tr-supersedes-{n:04d}"
+    common = {
+        "id_": txn_id,
+        "account_id": ti.account_id,
+        "account_name": ti.name,
+        "account_role": ti.template_role,
+        "account_scope": template.scope,
+        "account_parent_role": parent_role,
+        "direction": "Debit",
+        "transfer_id": transfer_id,
+        "transfer_type": p.transfer_type,
+        "rail_name": p.rail_name,
+        "origin": "InternalInitiated",
+        "metadata": {"customer_id": str(ti.account_id)},
+    }
+    return [
+        # Original posting at 09:00.
+        _txn_row(
+            **common,
+            money=-p.original_amount,
+            posting=f"{plant_day.isoformat()}T09:00:00+00:00",
+        ),
+        # TechnicalCorrection at 09:30 — same logical id, different
+        # amount, supersedes='TechnicalCorrection'.
+        _txn_row(
+            **common,
+            money=-p.corrected_amount,
+            posting=f"{plant_day.isoformat()}T09:30:00+00:00",
+            supersedes="TechnicalCorrection",
+        ),
+    ]
+
+
 def _txn_row(
     *,
     id_: str,
@@ -486,13 +714,18 @@ def _txn_row(
     rail_name: Identifier,
     origin: str,
     metadata: dict[str, str],
+    status: str = "Posted",
+    bundle_id: str | None = None,
+    supersedes: str | None = None,
 ) -> str:
     """Build one VALUES row for the transactions INSERT.
 
-    Static columns we don't currently exercise (transfer_completion,
-    transfer_parent_id, template_name, bundle_id, supersedes) emit as
-    NULL — they're real columns the schema requires but the M.2.2
-    scenario set doesn't plant rows that need them.
+    `status` defaults to 'Posted' — the M.2.2 baseline scenarios all
+    plant Posted legs. `bundle_id` and `supersedes` default to NULL —
+    M.2b.14 plants exercise them for stuck-Unbundled / supersession
+    scenarios. Static columns we don't currently exercise
+    (transfer_completion, transfer_parent_id, template_name) emit
+    as NULL.
     """
     parent_role_lit = (
         _sql_str(account_parent_role) if account_parent_role else "NULL"
@@ -502,14 +735,16 @@ def _txn_row(
             f'"{k}": "{v}"' for k, v in sorted(metadata.items())
         ) + "}"
     )
+    bundle_lit = _sql_str(bundle_id) if bundle_id is not None else "NULL"
+    supersedes_lit = _sql_str(supersedes) if supersedes is not None else "NULL"
     return (
         f"({_sql_str(id_)}, {_sql_str(account_id)}, "
         f"{_sql_str(account_name)}, {_sql_str(account_role)}, "
         f"{_sql_str(account_scope)}, {parent_role_lit}, "
-        f"{money}, {_sql_str(direction)}, 'Posted', "
+        f"{money}, {_sql_str(direction)}, {_sql_str(status)}, "
         f"{_sql_str(posting)}, {_sql_str(transfer_id)}, "
         f"{_sql_str(transfer_type)}, NULL, NULL, "
-        f"{_sql_str(rail_name)}, NULL, NULL, NULL, "
+        f"{_sql_str(rail_name)}, NULL, {bundle_lit}, {supersedes_lit}, "
         f"{_sql_str(origin)}, {_sql_str(metadata_json)})"
     )
 
@@ -602,6 +837,43 @@ def default_ar_scenario(today: date | None = None) -> ScenarioPlant:
                 transfer_type="wire",
                 rail_name=Identifier("CustomerOutboundWire"),
                 amount=Decimal("22000.00"),  # > $15k wire cap
+            ),
+        ),
+        stuck_pending_plants=(
+            # CustomerInboundACH carries `max_pending_age: PT24H`
+            # (86400 seconds). Plant 2 days ago = 172800 seconds old =
+            # comfortably past the cap, surfaces in stuck_pending.
+            StuckPendingPlant(
+                account_id=Identifier("cust-900-0001-bigfoot-brews"),
+                days_ago=2,
+                transfer_type="ach",
+                rail_name=Identifier("CustomerInboundACH"),
+                amount=Decimal("450.00"),
+            ),
+        ),
+        stuck_unbundled_plants=(
+            # CustomerFeeAccrual carries `max_unbundled_age: P31D`
+            # (~2.68M seconds). Plant 35 days ago = comfortably past
+            # the cap, surfaces in stuck_unbundled with bundle_id NULL.
+            StuckUnbundledPlant(
+                account_id=Identifier("cust-900-0002-sasquatch-sips"),
+                days_ago=35,
+                transfer_type="fee",
+                rail_name=Identifier("CustomerFeeAccrual"),
+                amount=Decimal("12.50"),
+            ),
+        ),
+        supersession_plants=(
+            # TechnicalCorrection on a recent posting — same logical id,
+            # two entries (BIGSERIAL auto-versions). Surfaces in M.2b.12
+            # Supersession Audit's transactions table.
+            SupersessionPlant(
+                account_id=Identifier("cust-900-0001-bigfoot-brews"),
+                days_ago=3,
+                transfer_type="ach",
+                rail_name=Identifier("CustomerOutboundACH"),
+                original_amount=Decimal("250.00"),
+                corrected_amount=Decimal("275.00"),
             ),
         ),
         today=today_ref,
