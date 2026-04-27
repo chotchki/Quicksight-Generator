@@ -44,15 +44,19 @@ from quicksight_gen.apps.l1_dashboard.datasets import (
 )
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
-from quicksight_gen.common.ids import SheetId
+from quicksight_gen.common.ids import ParameterName, SheetId
 from quicksight_gen.common.l2 import L2Instance
+from quicksight_gen.common.models import DateTimeDefaultValues
 from quicksight_gen.common.theme import get_preset
 from quicksight_gen.common.tree import (
     Analysis,
     App,
     Dataset,
+    DateTimeParam,
+    FilterGroup,
     Sheet,
     TextBox,
+    TimeRangeFilter,
 )
 
 
@@ -73,6 +77,14 @@ SHEET_DRIFT = SheetId("l1-sheet-drift")
 SHEET_OVERDRAFT = SheetId("l1-sheet-overdraft")
 SHEET_LIMIT_BREACH = SheetId("l1-sheet-limit-breach")
 SHEET_TODAYS_EXCEPTIONS = SheetId("l1-sheet-todays-exceptions")
+
+
+# Parameter names — analysis-level parameters that drive the universal
+# date-range filter (M.2b.1). Each data-bearing sheet has paired
+# date-time picker controls bound to these params, so all 4 sheets'
+# pickers stay in sync via shared parameter values.
+P_L1_DATE_START = ParameterName("pL1DateStart")
+P_L1_DATE_END = ParameterName("pL1DateEnd")
 
 
 _GETTING_STARTED_NAME = "Getting Started"
@@ -601,6 +613,111 @@ def _populate_limit_breach_sheet(
     )
 
 
+# -- M.2b.1: Universal date-range filter -------------------------------------
+#
+# Two analysis-level DateTimeParams drive a per-dataset FilterGroup family:
+# every data-bearing sheet has paired date-time picker controls bound to the
+# same params, so changing the date range on one sheet propagates to all.
+# Per-dataset FilterGroups (rather than a single ALL_DATASETS group) because
+# the L1 invariant views don't share a single date column name — daily-balance
+# views expose `business_day_start`, while limit_breach + todays_exceptions
+# expose `business_day` (DATE_TRUNC of posting). Per-dataset binding sidesteps
+# the column-name mismatch without a schema migration.
+
+
+# Default = last 7 days. QuickSight rolling-date expressions handle the
+# "today" anchor; addDateTime yields the start-of-window 7 days back.
+_DATE_END_DEFAULT_EXPR = "truncDate('DD', now())"
+_DATE_START_DEFAULT_EXPR = "addDateTime(-7, 'DD', truncDate('DD', now()))"
+
+
+def _wire_date_range_filter(
+    analysis: Analysis,
+    *,
+    datasets: dict[str, Dataset],
+    drift_sheet: Sheet,
+    overdraft_sheet: Sheet,
+    limit_breach_sheet: Sheet,
+    todays_exceptions_sheet: Sheet,
+) -> None:
+    """Wire the universal date-range filter (params + groups + controls).
+
+    Adds 2 DateTimeParams (P_L1_DATE_START + P_L1_DATE_END) with rolling
+    7-day defaults; 5 SINGLE_DATASET FilterGroups (one per data-bearing
+    dataset, each scoped to its sheet); paired ParameterDateTimePicker
+    controls on every data-bearing sheet so the analyst sets the window
+    once and it propagates.
+    """
+    date_start = analysis.add_parameter(DateTimeParam(
+        name=P_L1_DATE_START,
+        time_granularity="DAY",
+        default=DateTimeDefaultValues(
+            RollingDate={"Expression": _DATE_START_DEFAULT_EXPR},
+        ),
+    ))
+    date_end = analysis.add_parameter(DateTimeParam(
+        name=P_L1_DATE_END,
+        time_granularity="DAY",
+        default=DateTimeDefaultValues(
+            RollingDate={"Expression": _DATE_END_DEFAULT_EXPR},
+        ),
+    ))
+
+    # Param-bound dict literals — TimeRangeFilter.minimum/maximum are
+    # passthrough dicts; {"Parameter": "<name>"} is the AWS shape for
+    # parameter-driven bounds (mirrors how DateTimeDefaultValues
+    # passthrough works).
+    min_bound: dict[str, str] = {"Parameter": P_L1_DATE_START}
+    max_bound: dict[str, str] = {"Parameter": P_L1_DATE_END}
+
+    def _scope_one(
+        dataset_key: str, date_col: str, sheet: Sheet, fg_id: str,
+    ) -> None:
+        ds = datasets[dataset_key]
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=fg_id,  # type: ignore[arg-type]
+            cross_dataset="SINGLE_DATASET",
+            filters=[TimeRangeFilter(
+                filter_id=f"filter-{fg_id}",
+                dataset=ds,
+                column=ds[date_col],
+                null_option="NON_NULLS_ONLY",
+                time_granularity="DAY",
+                minimum=min_bound,
+                maximum=max_bound,
+            )],
+        ))
+        fg.scope_sheet(sheet)
+
+    # Drift sheet — both leaf-drift + parent-drift datasets share
+    # business_day_start.
+    _scope_one(DS_DRIFT, "business_day_start", drift_sheet,
+               "fg-l1-date-drift")
+    _scope_one(DS_LEDGER_DRIFT, "business_day_start", drift_sheet,
+               "fg-l1-date-ledger-drift")
+    _scope_one(DS_OVERDRAFT, "business_day_start", overdraft_sheet,
+               "fg-l1-date-overdraft")
+    # Limit breach + today's exceptions expose `business_day` (truncated
+    # posting), not `business_day_start`.
+    _scope_one(DS_LIMIT_BREACH, "business_day", limit_breach_sheet,
+               "fg-l1-date-limit-breach")
+    _scope_one(DS_TODAYS_EXCEPTIONS, "business_day",
+               todays_exceptions_sheet, "fg-l1-date-todays-exceptions")
+
+    # Per-sheet date pickers — bound to the shared params so all four
+    # sheets' pickers sync.
+    for sheet in (
+        drift_sheet, overdraft_sheet,
+        limit_breach_sheet, todays_exceptions_sheet,
+    ):
+        sheet.add_parameter_datetime_picker(
+            parameter=date_start, title="Date From",
+        )
+        sheet.add_parameter_datetime_picker(
+            parameter=date_end, title="Date To",
+        )
+
+
 def build_l1_dashboard_app(
     cfg: Config,
     *,
@@ -678,6 +795,18 @@ def build_l1_dashboard_app(
     _populate_todays_exceptions_sheet(
         cfg, todays_exceptions_sheet,
         datasets=datasets, l2_instance=l2_instance,
+    )
+
+    # M.2b.1 — Universal date-range filter wires the sheets together.
+    # Lands AFTER all sheets are populated since the FilterGroups scope
+    # by sheet ref + the controls register on the sheets directly.
+    _wire_date_range_filter(
+        analysis,
+        datasets=datasets,
+        drift_sheet=drift_sheet,
+        overdraft_sheet=overdraft_sheet,
+        limit_breach_sheet=limit_breach_sheet,
+        todays_exceptions_sheet=todays_exceptions_sheet,
     )
 
     app.create_dashboard(

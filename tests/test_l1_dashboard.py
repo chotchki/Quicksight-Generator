@@ -458,6 +458,88 @@ def test_todays_exceptions_footer_carries_l2_description() -> None:
     assert "Sasquatch National Bank" in footer_xml
 
 
+# -- Universal date-range filter (M.2b.1) ------------------------------------
+
+
+def test_date_range_parameters_registered() -> None:
+    """M.2b.1: P_L1_DATE_START + P_L1_DATE_END land on the analysis with
+    rolling-date defaults."""
+    from quicksight_gen.apps.l1_dashboard.app import (
+        P_L1_DATE_END, P_L1_DATE_START,
+    )
+
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    param_names = {p.name for p in app.analysis.parameters}
+    assert P_L1_DATE_START in param_names
+    assert P_L1_DATE_END in param_names
+
+
+def test_date_range_filter_groups_per_dataset() -> None:
+    """One SINGLE_DATASET filter group lands per data-bearing dataset
+    (5 total: drift, ledger_drift, overdraft, limit_breach, todays_exc)
+    so the column-name mismatch (business_day_start vs business_day) is
+    handled per-dataset rather than via cross-dataset matching."""
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    fg_ids = {fg.filter_group_id for fg in app.analysis.filter_groups}
+    expected = {
+        "fg-l1-date-drift",
+        "fg-l1-date-ledger-drift",
+        "fg-l1-date-overdraft",
+        "fg-l1-date-limit-breach",
+        "fg-l1-date-todays-exceptions",
+    }
+    assert expected.issubset(fg_ids)
+
+
+def test_date_range_pickers_on_every_data_sheet() -> None:
+    """Every data-bearing sheet (Drift, Overdraft, Limit Breach,
+    Today's Exceptions) carries paired date pickers (Date From / Date
+    To) bound to the shared params — controls sync via shared parameter
+    binding so changing one moves all four."""
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    # Getting Started has no data → no date pickers.
+    gs = app.analysis.sheets[0]
+    assert len(gs.parameter_controls) == 0
+    # Each of the 4 data-bearing sheets has 2 pickers.
+    for sheet_idx in (1, 2, 3, 4):
+        sheet = app.analysis.sheets[sheet_idx]
+        picker_titles = [
+            ctrl.title for ctrl in sheet.parameter_controls
+            if hasattr(ctrl, "title")
+        ]
+        assert "Date From" in picker_titles, (
+            f"sheet {sheet.name!r} missing Date From picker"
+        )
+        assert "Date To" in picker_titles, (
+            f"sheet {sheet.name!r} missing Date To picker"
+        )
+
+
+def test_date_range_filter_targets_correct_columns() -> None:
+    """Per-dataset filter binding: drift/ledger_drift/overdraft target
+    `business_day_start` (the daily-balance column); limit_breach +
+    todays_exceptions target `business_day` (the truncated-posting
+    column). The mismatch is what motivates per-dataset filter groups."""
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    by_id = {fg.filter_group_id: fg for fg in app.analysis.filter_groups}
+
+    def _column_name(fg_id: str) -> str:
+        fg = by_id[fg_id]
+        flt = fg.filters[0]
+        # TimeRangeFilter.column is a Column ref; .name exposes the col.
+        return flt.column.name  # type: ignore[union-attr]
+
+    assert _column_name("fg-l1-date-drift") == "business_day_start"
+    assert _column_name("fg-l1-date-ledger-drift") == "business_day_start"
+    assert _column_name("fg-l1-date-overdraft") == "business_day_start"
+    assert _column_name("fg-l1-date-limit-breach") == "business_day"
+    assert _column_name("fg-l1-date-todays-exceptions") == "business_day"
+
+
 # -- Emit shape (substitutability with other apps) ---------------------------
 
 
