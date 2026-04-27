@@ -458,6 +458,41 @@ def test_todays_exceptions_footer_carries_l2_description() -> None:
     assert "Sasquatch National Bank" in footer_xml
 
 
+# -- Per-sheet filter controls (M.2b.3) --------------------------------------
+
+
+def test_per_sheet_filter_dropdowns() -> None:
+    """M.2b.3: each data-bearing sheet carries the right filter dropdowns.
+
+    - Drift: Account + Account Role
+    - Overdraft: Account + Account Role
+    - Limit Breach: Account + Transfer Type
+    - Today's Exceptions: Check Type + Account + Transfer Type
+
+    Plus the date-range pickers from M.2b.1 (Date From / Date To)."""
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+
+    def _filter_titles(sheet_idx: int) -> set[str]:
+        sheet = app.analysis.sheets[sheet_idx]
+        return {
+            ctrl.title for ctrl in sheet.filter_controls
+            if hasattr(ctrl, "title")
+        }
+
+    drift_filters = _filter_titles(1)
+    assert {"Account", "Account Role"}.issubset(drift_filters)
+
+    overdraft_filters = _filter_titles(2)
+    assert {"Account", "Account Role"}.issubset(overdraft_filters)
+
+    lb_filters = _filter_titles(3)
+    assert {"Account", "Transfer Type"}.issubset(lb_filters)
+
+    te_filters = _filter_titles(4)
+    assert {"Check Type", "Account", "Transfer Type"}.issubset(te_filters)
+
+
 # -- Conditional formatting on tables (M.2b.2) -------------------------------
 
 

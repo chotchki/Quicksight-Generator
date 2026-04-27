@@ -51,6 +51,7 @@ from quicksight_gen.common.theme import get_preset
 from quicksight_gen.common.tree import (
     Analysis,
     App,
+    CategoryFilter,
     CellAccentText,
     Dataset,
     DateTimeParam,
@@ -743,6 +744,104 @@ def _wire_date_range_filter(
         )
 
 
+def _wire_per_sheet_dropdowns(
+    analysis: Analysis,
+    *,
+    datasets: dict[str, Dataset],
+    drift_sheet: Sheet,
+    overdraft_sheet: Sheet,
+    limit_breach_sheet: Sheet,
+    todays_exceptions_sheet: Sheet,
+) -> None:
+    """M.2b.3 — per-sheet category filter dropdowns.
+
+    Each dropdown is a multi-select with empty-default-means-all
+    (`select_all_options="FILTER_ALL_VALUES"`), keyed off a
+    `CategoryFilter.with_values(values=[])` per AR's pattern. Single-
+    sheet scope (cross_dataset SINGLE_DATASET) for sheets backed by one
+    dataset; cross_dataset ALL_DATASETS only on the Drift sheet, which
+    has both leaf-drift + parent-drift datasets sharing the same
+    column names.
+    """
+
+    def _dropdown(
+        *,
+        fg_id: str,
+        ds: Dataset,
+        col: str,
+        title: str,
+        sheet: Sheet,
+        cross_dataset: str = "SINGLE_DATASET",
+    ) -> None:
+        cat_filter = CategoryFilter.with_values(
+            filter_id=f"filter-{fg_id}",
+            dataset=ds,
+            column=ds[col],
+            values=[],
+            select_all_options="FILTER_ALL_VALUES",
+        )
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=fg_id,  # type: ignore[arg-type]
+            cross_dataset=cross_dataset,  # type: ignore[arg-type]
+            filters=[cat_filter],
+        ))
+        fg.scope_sheet(sheet)
+        sheet.add_filter_dropdown(filter=cat_filter, title=title)
+
+    ds_drift = datasets[DS_DRIFT]
+    ds_overdraft = datasets[DS_OVERDRAFT]
+    ds_lb = datasets[DS_LIMIT_BREACH]
+    ds_te = datasets[DS_TODAYS_EXCEPTIONS]
+
+    # Drift — both drift + ledger_drift datasets share column names, so
+    # ALL_DATASETS lets one dropdown filter both tables on the sheet.
+    _dropdown(
+        fg_id="fg-l1-drift-account", ds=ds_drift, col="account_id",
+        title="Account", sheet=drift_sheet, cross_dataset="ALL_DATASETS",
+    )
+    _dropdown(
+        fg_id="fg-l1-drift-role", ds=ds_drift, col="account_role",
+        title="Account Role", sheet=drift_sheet,
+        cross_dataset="ALL_DATASETS",
+    )
+
+    # Overdraft — single dataset.
+    _dropdown(
+        fg_id="fg-l1-overdraft-account", ds=ds_overdraft,
+        col="account_id", title="Account", sheet=overdraft_sheet,
+    )
+    _dropdown(
+        fg_id="fg-l1-overdraft-role", ds=ds_overdraft,
+        col="account_role", title="Account Role",
+        sheet=overdraft_sheet,
+    )
+
+    # Limit Breach — single dataset; account + transfer_type.
+    _dropdown(
+        fg_id="fg-l1-limit-breach-account", ds=ds_lb, col="account_id",
+        title="Account", sheet=limit_breach_sheet,
+    )
+    _dropdown(
+        fg_id="fg-l1-limit-breach-type", ds=ds_lb, col="transfer_type",
+        title="Transfer Type", sheet=limit_breach_sheet,
+    )
+
+    # Today's Exceptions — check_type narrows the unified UNION; account
+    # + transfer_type are the secondary narrow-downs.
+    _dropdown(
+        fg_id="fg-l1-todays-exc-check-type", ds=ds_te, col="check_type",
+        title="Check Type", sheet=todays_exceptions_sheet,
+    )
+    _dropdown(
+        fg_id="fg-l1-todays-exc-account", ds=ds_te, col="account_id",
+        title="Account", sheet=todays_exceptions_sheet,
+    )
+    _dropdown(
+        fg_id="fg-l1-todays-exc-type", ds=ds_te, col="transfer_type",
+        title="Transfer Type", sheet=todays_exceptions_sheet,
+    )
+
+
 def build_l1_dashboard_app(
     cfg: Config,
     *,
@@ -826,6 +925,17 @@ def build_l1_dashboard_app(
     # Lands AFTER all sheets are populated since the FilterGroups scope
     # by sheet ref + the controls register on the sheets directly.
     _wire_date_range_filter(
+        analysis,
+        datasets=datasets,
+        drift_sheet=drift_sheet,
+        overdraft_sheet=overdraft_sheet,
+        limit_breach_sheet=limit_breach_sheet,
+        todays_exceptions_sheet=todays_exceptions_sheet,
+    )
+
+    # M.2b.3 — Per-sheet category filter dropdowns (account / role /
+    # transfer_type / check_type as appropriate).
+    _wire_per_sheet_dropdowns(
         analysis,
         datasets=datasets,
         drift_sheet=drift_sheet,
