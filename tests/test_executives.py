@@ -291,12 +291,14 @@ class TestCli:
             main, ["generate", "-c", str(config), "-o", str(out), "--all"],
         )
         assert result.exit_code == 0, result.output
-        # All 4 apps should produce both files.
+        # All 5 apps should produce both files (M.2a.9 added l1-dashboard
+        # to --all alongside the v5 stack).
         for stem in (
             "payment-recon",
             "account-recon",
             "investigation",
             "executives",
+            "l1-dashboard",
         ):
             assert (out / f"{stem}-analysis.json").exists()
             assert (out / f"{stem}-dashboard.json").exists()
