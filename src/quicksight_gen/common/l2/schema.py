@@ -116,6 +116,7 @@ def refresh_matviews_sql(instance: L2Instance) -> str:
         f"{p}_overdraft",
         f"{p}_expected_eod_balance_breach",
         f"{p}_limit_breach",
+        f"{p}_stuck_pending",
         # Dashboard-shape matviews: read from current_* +
         # L1 invariants. MUST refresh AFTER all L1 invariants are
         # fresh so todays_exceptions's UNION reads up-to-date data.
@@ -140,8 +141,11 @@ def _emit_l1_invariant_views(instance: L2Instance) -> str:
     """
     p = instance.instance
     limit_cases = _render_limit_breach_cases(instance, p=p)
+    pending_age_cases = _render_pending_age_cases(instance)
     return _L1_INVARIANT_VIEWS_TEMPLATE.format(
-        p=p, limit_cases=limit_cases,
+        p=p,
+        limit_cases=limit_cases,
+        pending_age_cases=pending_age_cases,
     )
 
 
@@ -171,6 +175,34 @@ def _render_limit_breach_cases(instance: L2Instance, *, p: str) -> str:
             f"AND tx.transfer_type = '{ls.transfer_type}' "
             f"THEN {ls.cap}"
         )
+    branches_sql = "\n        ".join(branches)
+    return f"CASE\n        {branches_sql}\n        ELSE NULL\n    END"
+
+
+def _render_pending_age_cases(instance: L2Instance) -> str:
+    """Build the CASE-WHEN body the stuck_pending view uses to look up
+    a Rail's `max_pending_age` (in seconds).
+
+    Mirror of `_render_limit_breach_cases` — inline at view-emit time
+    rather than via JSON_VALUE on a per-row config column, so the SQL
+    stays JSON-path-portable. Walks both TwoLegRail + SingleLegRail
+    instances; each Rail with a non-None `max_pending_age` becomes one
+    CASE branch keyed on `rail_name`. Rails without an aging watch get
+    no branch (the outer CASE returns NULL → outer WHERE excludes them).
+
+    Empty result if no Rail has `max_pending_age` set: returns ``NULL``
+    so the view emits valid SQL but surfaces zero rows.
+    """
+    branches: list[str] = []
+    for rail in instance.rails:
+        if rail.max_pending_age is None:
+            continue
+        seconds = int(rail.max_pending_age.total_seconds())
+        branches.append(
+            f"WHEN ct.rail_name = '{rail.name}' THEN {seconds}"
+        )
+    if not branches:
+        return "NULL"
     branches_sql = "\n        ".join(branches)
     return f"CASE\n        {branches_sql}\n        ELSE NULL\n    END"
 
@@ -403,6 +435,7 @@ _L1_INVARIANT_VIEWS_DROPS_TEMPLATE = """\
 -- Steady state (post-migration) the matview-only DROP suffices.
 DROP MATERIALIZED VIEW IF EXISTS {p}_todays_exceptions;
 DROP MATERIALIZED VIEW IF EXISTS {p}_daily_statement_summary;
+DROP MATERIALIZED VIEW IF EXISTS {p}_stuck_pending;
 DROP MATERIALIZED VIEW IF EXISTS {p}_limit_breach;
 DROP MATERIALIZED VIEW IF EXISTS {p}_expected_eod_balance_breach;
 DROP MATERIALIZED VIEW IF EXISTS {p}_overdraft;
@@ -637,6 +670,51 @@ WHERE cap IS NOT NULL
 CREATE INDEX idx_{p}_lb_account_day
     ON {p}_limit_breach (account_id, business_day);
 CREATE INDEX idx_{p}_lb_type ON {p}_limit_breach (transfer_type);
+
+-- ---------------------------------------------------------------------
+-- L1 invariant: Stuck Pending (M.2b.8).
+-- SPEC-derived: every Rail with `max_pending_age` SHOULD see its legs
+-- transition Pending → Posted before `posting + max_pending_age`. Rows
+-- here are the violations: `status = 'Pending'` AND posting age exceeds
+-- the rail's configured threshold.
+--
+-- Caps come from L2's per-Rail `max_pending_age`; embedded inline as
+-- CASE branches at view-emit time (mirror of limit_breach's pattern,
+-- so JSON-path-portable across SQL targets). Rails without a
+-- `max_pending_age` get NULL and are excluded by the outer WHERE.
+--
+-- `max_pending_age_seconds` is the resolved cap in seconds (timedelta
+-- → integer). `age_seconds` is the live age at view-refresh time —
+-- recomputed each REFRESH; the matview snapshots both numbers so the
+-- dashboard can sort by staleness without re-evaluating CURRENT_TIMESTAMP
+-- on every visual.
+-- ---------------------------------------------------------------------
+CREATE MATERIALIZED VIEW {p}_stuck_pending AS
+SELECT * FROM (
+    SELECT
+        ct.id AS transaction_id,
+        ct.account_id,
+        ct.account_name,
+        ct.account_role,
+        ct.account_parent_role,
+        ct.transfer_id,
+        ct.transfer_type,
+        ct.rail_name,
+        ct.amount_money,
+        ct.amount_direction,
+        ct.posting,
+        {pending_age_cases} AS max_pending_age_seconds,
+        EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - ct.posting)) AS age_seconds
+    FROM {p}_current_transactions ct
+    WHERE ct.status = 'Pending'
+) tx
+WHERE tx.max_pending_age_seconds IS NOT NULL
+  AND tx.age_seconds > tx.max_pending_age_seconds;
+-- Dashboard hot-path indexes — per-rail filter, per-account dropdown,
+-- and the per-transfer drill (via M.2b.7 drill-target filter group).
+CREATE INDEX idx_{p}_sp_rail ON {p}_stuck_pending (rail_name);
+CREATE INDEX idx_{p}_sp_account ON {p}_stuck_pending (account_id);
+CREATE INDEX idx_{p}_sp_transfer ON {p}_stuck_pending (transfer_id);
 
 -- ---------------------------------------------------------------------
 -- Dashboard-shape matview: Daily Statement Summary.

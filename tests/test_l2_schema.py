@@ -433,6 +433,7 @@ _L1_VIEW_NAMES = (
     "overdraft",
     "expected_eod_balance_breach",
     "limit_breach",
+    "stuck_pending",
 )
 
 
@@ -596,6 +597,93 @@ def test_limit_breach_view_does_not_join_daily_balances() -> None:
     assert "_daily_balances" not in body
 
 
+def _instance_with_pending_age(prefix: str) -> L2Instance:
+    """L2 instance with one Rail carrying a `max_pending_age` so the
+    stuck_pending view's CASE-branch lookup has data to match against.
+    Uses a SingleLegRail; the case-branch helper walks both kinds.
+    """
+    from datetime import timedelta
+    from quicksight_gen.common.l2 import SingleLegRail
+    return L2Instance(
+        instance=Identifier(prefix),
+        accounts=(),
+        account_templates=(),
+        rails=(
+            SingleLegRail(
+                name=Identifier("ach-credit"),
+                transfer_type="ach",
+                metadata_keys=(),
+                leg_role="DDAControl",
+                leg_direction="Credit",
+                origin="InternalInitiated",
+                max_pending_age=timedelta(hours=24),
+            ),
+        ),
+        transfer_templates=(),
+        chains=(),
+        limit_schedules=(),
+    )
+
+
+def test_stuck_pending_emits_with_status_and_age_filter() -> None:
+    """`<prefix>_stuck_pending` returns transactions where status is
+    Pending AND the live age exceeds the rail's `max_pending_age` cap.
+    Both filters live in the view body."""
+    sql = emit_schema(_instance_with_pending_age("sp"))
+    body_match = re.search(
+        r"CREATE MATERIALIZED VIEW sp_stuck_pending AS(.*?);",
+        sql,
+        re.DOTALL,
+    )
+    assert body_match is not None
+    body = body_match.group(1)
+    assert "ct.status = 'Pending'" in body
+    assert "max_pending_age_seconds IS NOT NULL" in body
+    assert "age_seconds > tx.max_pending_age_seconds" in body
+    # CURRENT_TIMESTAMP-driven age computation lives in the inner SELECT.
+    assert "EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - ct.posting))" in body
+
+
+def test_stuck_pending_embeds_rail_max_pending_age_inline() -> None:
+    """Each Rail with `max_pending_age` becomes one CASE branch keyed
+    on `ct.rail_name`. Cap renders as integer seconds (timedelta
+    → total_seconds())."""
+    sql = emit_schema(_instance_with_pending_age("sp2"))
+    # 24 hours = 86400 seconds.
+    assert (
+        "WHEN ct.rail_name = 'ach-credit' THEN 86400"
+    ) in sql
+
+
+def test_stuck_pending_view_with_no_aging_rails_is_inert() -> None:
+    """An L2 instance whose Rails all leave `max_pending_age` unset
+    emits a syntactically valid stuck_pending view that surfaces no
+    rows (max_pending_age_seconds is NULL → outer WHERE excludes
+    everything)."""
+    sql = emit_schema(_instance("noage"))
+    assert "CREATE MATERIALIZED VIEW noage_stuck_pending" in sql
+    body_match = re.search(
+        r"CREATE MATERIALIZED VIEW noage_stuck_pending AS(.*?);",
+        sql,
+        re.DOTALL,
+    )
+    assert body_match is not None
+    body = body_match.group(1)
+    # `NULL AS max_pending_age_seconds` from the helper's no-rails branch.
+    assert "NULL AS max_pending_age_seconds" in body
+    # Outer WHERE filters NULL caps so an inert NULL excludes every row.
+    assert "max_pending_age_seconds IS NOT NULL" in body
+
+
+def test_stuck_pending_view_indexes_emit() -> None:
+    """Dashboard hot-path indexes on rail_name / account_id / transfer_id
+    — same shape as the other L1 invariant matviews."""
+    sql = emit_schema(_instance_with_pending_age("idx"))
+    assert "CREATE INDEX idx_idx_sp_rail ON idx_stuck_pending (rail_name);" in sql
+    assert "CREATE INDEX idx_idx_sp_account ON idx_stuck_pending (account_id);" in sql
+    assert "CREATE INDEX idx_idx_sp_transfer ON idx_stuck_pending (transfer_id);" in sql
+
+
 def test_computed_subledger_balance_uses_current_transactions_view() -> None:
     """The helper view reads from Current* (technical-error supersession
     transparent) rather than the raw transactions base table."""
@@ -646,16 +734,18 @@ def _baseline_instance() -> L2Instance:
 
 
 def test_refresh_matviews_sql_emits_one_per_view() -> None:
-    """All 11 L1-pipeline matviews each get a REFRESH command + an
-    ANALYZE follow-up: 2 current_* + 2 computed_* + 5 L1 invariants +
-    2 dashboard-shape (daily_statement_summary + todays_exceptions)
-    = 11 matviews × 2 statements each = 22 total."""
+    """All 12 L1-pipeline matviews each get a REFRESH command + an
+    ANALYZE follow-up: 2 current_* + 2 computed_* + 6 L1 invariants
+    (drift + ledger_drift + overdraft + expected_eod_balance_breach +
+    limit_breach + stuck_pending) + 2 dashboard-shape
+    (daily_statement_summary + todays_exceptions) = 12 matviews × 2
+    statements each = 24 total."""
     sql = refresh_matviews_sql(_baseline_instance())
     statements = [s.strip() for s in sql.split(";") if s.strip()]
     refreshes = [s for s in statements if s.startswith("REFRESH ")]
     analyzes = [s for s in statements if s.startswith("ANALYZE ")]
-    assert len(refreshes) == 11
-    assert len(analyzes) == 11
+    assert len(refreshes) == 12
+    assert len(analyzes) == 12
     # Every REFRESHed matview gets a matching ANALYZE.
     refresh_names = {s.removeprefix("REFRESH MATERIALIZED VIEW ") for s in refreshes}
     analyze_names = {s.removeprefix("ANALYZE ") for s in analyzes}
