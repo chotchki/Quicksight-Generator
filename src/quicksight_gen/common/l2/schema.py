@@ -117,6 +117,7 @@ def refresh_matviews_sql(instance: L2Instance) -> str:
         f"{p}_expected_eod_balance_breach",
         f"{p}_limit_breach",
         f"{p}_stuck_pending",
+        f"{p}_stuck_unbundled",
         # Dashboard-shape matviews: read from current_* +
         # L1 invariants. MUST refresh AFTER all L1 invariants are
         # fresh so todays_exceptions's UNION reads up-to-date data.
@@ -142,10 +143,12 @@ def _emit_l1_invariant_views(instance: L2Instance) -> str:
     p = instance.instance
     limit_cases = _render_limit_breach_cases(instance, p=p)
     pending_age_cases = _render_pending_age_cases(instance)
+    unbundled_age_cases = _render_unbundled_age_cases(instance)
     return _L1_INVARIANT_VIEWS_TEMPLATE.format(
         p=p,
         limit_cases=limit_cases,
         pending_age_cases=pending_age_cases,
+        unbundled_age_cases=unbundled_age_cases,
     )
 
 
@@ -198,6 +201,32 @@ def _render_pending_age_cases(instance: L2Instance) -> str:
         if rail.max_pending_age is None:
             continue
         seconds = int(rail.max_pending_age.total_seconds())
+        branches.append(
+            f"WHEN ct.rail_name = '{rail.name}' THEN {seconds}"
+        )
+    if not branches:
+        return "NULL"
+    branches_sql = "\n        ".join(branches)
+    return f"CASE\n        {branches_sql}\n        ELSE NULL\n    END"
+
+
+def _render_unbundled_age_cases(instance: L2Instance) -> str:
+    """Build the CASE-WHEN body the stuck_unbundled view uses to look
+    up a Rail's `max_unbundled_age` (in seconds).
+
+    Same shape as `_render_pending_age_cases`, keyed on the same
+    `ct.rail_name` column. Per validator R8, `max_unbundled_age` is
+    only meaningful on rails that appear in some AggregatingRail's
+    `bundles_activity` — the validator catches misconfigured rails at
+    L2 load time, so by the time we render here every Rail with the
+    field set is bundle-eligible. Rails without `max_unbundled_age`
+    get no branch (no aging watch → NULL → excluded by outer WHERE).
+    """
+    branches: list[str] = []
+    for rail in instance.rails:
+        if rail.max_unbundled_age is None:
+            continue
+        seconds = int(rail.max_unbundled_age.total_seconds())
         branches.append(
             f"WHEN ct.rail_name = '{rail.name}' THEN {seconds}"
         )
@@ -435,6 +464,7 @@ _L1_INVARIANT_VIEWS_DROPS_TEMPLATE = """\
 -- Steady state (post-migration) the matview-only DROP suffices.
 DROP MATERIALIZED VIEW IF EXISTS {p}_todays_exceptions;
 DROP MATERIALIZED VIEW IF EXISTS {p}_daily_statement_summary;
+DROP MATERIALIZED VIEW IF EXISTS {p}_stuck_unbundled;
 DROP MATERIALIZED VIEW IF EXISTS {p}_stuck_pending;
 DROP MATERIALIZED VIEW IF EXISTS {p}_limit_breach;
 DROP MATERIALIZED VIEW IF EXISTS {p}_expected_eod_balance_breach;
@@ -715,6 +745,53 @@ WHERE tx.max_pending_age_seconds IS NOT NULL
 CREATE INDEX idx_{p}_sp_rail ON {p}_stuck_pending (rail_name);
 CREATE INDEX idx_{p}_sp_account ON {p}_stuck_pending (account_id);
 CREATE INDEX idx_{p}_sp_transfer ON {p}_stuck_pending (transfer_id);
+
+-- ---------------------------------------------------------------------
+-- L1 invariant: Stuck Unbundled (M.2b.9).
+-- SPEC-derived: every Rail with `max_unbundled_age` SHOULD see its
+-- Posted legs picked up by a bundler before `posting + max_unbundled_age`.
+-- Per validator R8, `max_unbundled_age` is only meaningful on rails
+-- whose `transfer_type` / `rail_name` appears in some AggregatingRail's
+-- `bundles_activity`. Rows here are the violations: bundle_id IS NULL
+-- AND status = 'Posted' AND posting age exceeds the per-rail cap.
+--
+-- Caps come from L2's per-Rail `max_unbundled_age`; embedded inline as
+-- CASE branches at view-emit time (mirror of stuck_pending). Same
+-- live-age computation via EXTRACT(EPOCH ...) so analysts can sort by
+-- staleness without re-evaluating CURRENT_TIMESTAMP.
+--
+-- Status filter is `'Posted'` (vs `'Pending'` for stuck_pending) since
+-- AggregatingRails only bundle posted legs — a Pending leg isn't
+-- "stuck unbundled," it's just "stuck pending." The two views are
+-- structurally similar but cover disjoint conditions.
+-- ---------------------------------------------------------------------
+CREATE MATERIALIZED VIEW {p}_stuck_unbundled AS
+SELECT * FROM (
+    SELECT
+        ct.id AS transaction_id,
+        ct.account_id,
+        ct.account_name,
+        ct.account_role,
+        ct.account_parent_role,
+        ct.transfer_id,
+        ct.transfer_type,
+        ct.rail_name,
+        ct.amount_money,
+        ct.amount_direction,
+        ct.posting,
+        {unbundled_age_cases} AS max_unbundled_age_seconds,
+        EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - ct.posting)) AS age_seconds
+    FROM {p}_current_transactions ct
+    WHERE ct.bundle_id IS NULL
+      AND ct.status = 'Posted'
+) tx
+WHERE tx.max_unbundled_age_seconds IS NOT NULL
+  AND tx.age_seconds > tx.max_unbundled_age_seconds;
+-- Dashboard hot-path indexes — same shape as stuck_pending so the
+-- M.2b.11 Unbundled Aging sheet's filter dropdowns hit indexed lookups.
+CREATE INDEX idx_{p}_su_rail ON {p}_stuck_unbundled (rail_name);
+CREATE INDEX idx_{p}_su_account ON {p}_stuck_unbundled (account_id);
+CREATE INDEX idx_{p}_su_transfer ON {p}_stuck_unbundled (transfer_id);
 
 -- ---------------------------------------------------------------------
 -- Dashboard-shape matview: Daily Statement Summary.

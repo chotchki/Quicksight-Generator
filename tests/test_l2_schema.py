@@ -434,6 +434,7 @@ _L1_VIEW_NAMES = (
     "expected_eod_balance_breach",
     "limit_breach",
     "stuck_pending",
+    "stuck_unbundled",
 )
 
 
@@ -684,6 +685,92 @@ def test_stuck_pending_view_indexes_emit() -> None:
     assert "CREATE INDEX idx_idx_sp_transfer ON idx_stuck_pending (transfer_id);" in sql
 
 
+def _instance_with_unbundled_age(prefix: str) -> L2Instance:
+    """L2 instance with one Rail carrying a `max_unbundled_age` so the
+    stuck_unbundled view's CASE-branch lookup has data to match against.
+    Uses a SingleLegRail; the case-branch helper walks both kinds.
+    """
+    from datetime import timedelta
+    from quicksight_gen.common.l2 import SingleLegRail
+    return L2Instance(
+        instance=Identifier(prefix),
+        accounts=(),
+        account_templates=(),
+        rails=(
+            SingleLegRail(
+                name=Identifier("ach-orig"),
+                transfer_type="ach",
+                metadata_keys=(),
+                leg_role="DDAControl",
+                leg_direction="Credit",
+                origin="InternalInitiated",
+                max_unbundled_age=timedelta(days=1),
+            ),
+        ),
+        transfer_templates=(),
+        chains=(),
+        limit_schedules=(),
+    )
+
+
+def test_stuck_unbundled_emits_with_bundle_status_and_age_filter() -> None:
+    """`<prefix>_stuck_unbundled` returns Posted transactions where
+    bundle_id IS NULL AND the live age exceeds the rail's
+    `max_unbundled_age` cap. Status filter is 'Posted' (vs 'Pending'
+    for stuck_pending) since AggregatingRails only bundle posted legs."""
+    sql = emit_schema(_instance_with_unbundled_age("su"))
+    body_match = re.search(
+        r"CREATE MATERIALIZED VIEW su_stuck_unbundled AS(.*?);",
+        sql,
+        re.DOTALL,
+    )
+    assert body_match is not None
+    body = body_match.group(1)
+    assert "ct.bundle_id IS NULL" in body
+    assert "ct.status = 'Posted'" in body
+    assert "max_unbundled_age_seconds IS NOT NULL" in body
+    assert "age_seconds > tx.max_unbundled_age_seconds" in body
+    assert "EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - ct.posting))" in body
+
+
+def test_stuck_unbundled_embeds_rail_max_unbundled_age_inline() -> None:
+    """Each Rail with `max_unbundled_age` becomes one CASE branch keyed
+    on `ct.rail_name`. Cap renders as integer seconds (timedelta
+    → total_seconds())."""
+    sql = emit_schema(_instance_with_unbundled_age("su2"))
+    # 1 day = 86400 seconds.
+    assert (
+        "WHEN ct.rail_name = 'ach-orig' THEN 86400"
+    ) in sql
+
+
+def test_stuck_unbundled_view_with_no_bundling_rails_is_inert() -> None:
+    """An L2 instance whose Rails all leave `max_unbundled_age` unset
+    emits a syntactically valid stuck_unbundled view that surfaces no
+    rows."""
+    sql = emit_schema(_instance("nobun"))
+    assert "CREATE MATERIALIZED VIEW nobun_stuck_unbundled" in sql
+    body_match = re.search(
+        r"CREATE MATERIALIZED VIEW nobun_stuck_unbundled AS(.*?);",
+        sql,
+        re.DOTALL,
+    )
+    assert body_match is not None
+    body = body_match.group(1)
+    assert "NULL AS max_unbundled_age_seconds" in body
+    assert "max_unbundled_age_seconds IS NOT NULL" in body
+
+
+def test_stuck_unbundled_view_indexes_emit() -> None:
+    """Same hot-path indexes (rail_name / account_id / transfer_id) as
+    stuck_pending — the M.2b.11 Unbundled Aging sheet uses the same
+    filter dropdowns."""
+    sql = emit_schema(_instance_with_unbundled_age("ix"))
+    assert "CREATE INDEX idx_ix_su_rail ON ix_stuck_unbundled (rail_name);" in sql
+    assert "CREATE INDEX idx_ix_su_account ON ix_stuck_unbundled (account_id);" in sql
+    assert "CREATE INDEX idx_ix_su_transfer ON ix_stuck_unbundled (transfer_id);" in sql
+
+
 def test_computed_subledger_balance_uses_current_transactions_view() -> None:
     """The helper view reads from Current* (technical-error supersession
     transparent) rather than the raw transactions base table."""
@@ -734,18 +821,18 @@ def _baseline_instance() -> L2Instance:
 
 
 def test_refresh_matviews_sql_emits_one_per_view() -> None:
-    """All 12 L1-pipeline matviews each get a REFRESH command + an
-    ANALYZE follow-up: 2 current_* + 2 computed_* + 6 L1 invariants
+    """All 13 L1-pipeline matviews each get a REFRESH command + an
+    ANALYZE follow-up: 2 current_* + 2 computed_* + 7 L1 invariants
     (drift + ledger_drift + overdraft + expected_eod_balance_breach +
-    limit_breach + stuck_pending) + 2 dashboard-shape
-    (daily_statement_summary + todays_exceptions) = 12 matviews × 2
-    statements each = 24 total."""
+    limit_breach + stuck_pending + stuck_unbundled) + 2 dashboard-shape
+    (daily_statement_summary + todays_exceptions) = 13 matviews × 2
+    statements each = 26 total."""
     sql = refresh_matviews_sql(_baseline_instance())
     statements = [s.strip() for s in sql.split(";") if s.strip()]
     refreshes = [s for s in statements if s.startswith("REFRESH ")]
     analyzes = [s for s in statements if s.startswith("ANALYZE ")]
-    assert len(refreshes) == 12
-    assert len(analyzes) == 12
+    assert len(refreshes) == 13
+    assert len(analyzes) == 13
     # Every REFRESHed matview gets a matching ANALYZE.
     refresh_names = {s.removeprefix("REFRESH MATERIALIZED VIEW ") for s in refreshes}
     analyze_names = {s.removeprefix("ANALYZE ") for s in analyzes}
