@@ -19,7 +19,7 @@ def test_bundled_docs_directory_exists():
     docs = files("quicksight_gen") / "docs"
     assert docs.is_dir()
     assert (docs / "index.md").is_file()
-    assert (docs / "Schema_v3.md").is_file()
+    assert (docs / "Schema_v6.md").is_file()
     assert (docs / "handbook" / "customization.md").is_file()
 
 
@@ -36,7 +36,7 @@ def test_export_docs_writes_tree(tmp_path: Path):
     result = runner.invoke(main, ["export", "docs", "-o", str(out)])
     assert result.exit_code == 0, result.output
     assert (out / "index.md").is_file()
-    assert (out / "Schema_v3.md").is_file()
+    assert (out / "Schema_v6.md").is_file()
     assert (out / "handbook" / "customization.md").is_file()
     assert (out / "walkthroughs" / "customization" /
             "how-do-i-test-my-customization.md").is_file()

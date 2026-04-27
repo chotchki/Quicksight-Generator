@@ -25,6 +25,7 @@ import pytest
 
 from quicksight_gen.common.l2 import (
     L2LoaderError,
+    L2ValidationError,
     SingleLegRail,
     TwoLegRail,
     load_instance,
@@ -134,7 +135,10 @@ def test_loads_kitchen_sink_yaml_inline(tmp_path: Path) -> None:
     p = tmp_path / "kitchen.yaml"
     p.write_text(yaml_text)
 
-    inst = load_instance(p)
+    # validate=False: this fixture is intentionally partial — the chain
+    # references a template not declared in transfer_templates so the
+    # cross-entity validator (M.2d.2) would reject it. Loader-only test.
+    inst = load_instance(p, validate=False)
     assert inst.instance == "ksk"
     assert len(inst.accounts) == 2
     assert len(inst.account_templates) == 2
@@ -463,7 +467,9 @@ def test_rail_loads_posted_requirements(tmp_path: Path) -> None:
     metadata_keys: [external_reference, originator_id]
     posted_requirements: [external_reference]
 """)
-    inst = load_instance(p)
+    # validate=False: rail-only fixture exercises loader-side parsing
+    # (a one-rail YAML can't satisfy single-leg reconciliation S3).
+    inst = load_instance(p, validate=False)
     assert inst.rails[0].posted_requirements == ("external_reference",)
 
 
@@ -479,7 +485,9 @@ def test_rail_loads_aging_durations(tmp_path: Path) -> None:
     max_pending_age: PT24H
     max_unbundled_age: PT4H
 """)
-    inst = load_instance(p)
+    # validate=False: rail-only fixture (R8 would reject max_unbundled_age
+    # without an aggregating rail bundling this one).
+    inst = load_instance(p, validate=False)
     rail = inst.rails[0]
     assert rail.max_pending_age == timedelta(hours=24)
     assert rail.max_unbundled_age == timedelta(hours=4)
@@ -510,7 +518,8 @@ def test_duration_literal_accepted(
 """)
     # Parses without raising. The exact timedelta-arithmetic equivalence
     # is covered by test_rail_loads_aging_durations above.
-    load_instance(p)
+    # validate=False: rail-only fixture, S3 reconciliation not satisfied.
+    load_instance(p, validate=False)
     assert expected  # silence the unused-arg lint (the parametrize label IS the value)
 
 
@@ -549,3 +558,98 @@ def test_duration_rejects_non_string(tmp_path: Path) -> None:
 """)
     with pytest.raises(L2LoaderError, match="expected ISO 8601 duration string"):
         load_instance(p)
+
+# -- M.2d.2 parse-time validation enforcement -------------------------------
+
+
+def test_load_instance_runs_validate_by_default(tmp_path: Path) -> None:
+    """``load_instance(p)`` runs the cross-entity validator before returning.
+
+    Per M.2d.2 — every SHOULD-constraint in the SPEC's Validation Rules
+    section is a YAML parse-time error. The fixture below has duplicate
+    LimitSchedule (parent_role, transfer_type) which violates U5; the
+    loader MUST raise on it without the caller having to know to call
+    ``validate()`` separately.
+    """
+    yaml_text = dedent("""\
+        instance: ldp
+
+        accounts:
+          - id: gl-1
+            role: Control
+            scope: internal
+            expected_eod_balance: 0
+
+        account_templates:
+          - role: Sub
+            scope: internal
+            parent_role: Control
+
+        rails:
+          - name: SubCharge
+            transfer_type: charge
+            origin: InternalInitiated
+            leg_role: Sub
+            leg_direction: Debit
+
+        transfer_templates:
+          - name: ChargeBatch
+            transfer_type: charge
+            expected_net: 0
+            transfer_key: [batch_id]
+            completion: business_day_end
+            leg_rails: [SubCharge]
+
+        limit_schedules:
+          - parent_role: Control
+            transfer_type: charge
+            cap: 1000.00
+          - parent_role: Control
+            transfer_type: charge
+            cap: 5000.00
+        """)
+    p = tmp_path / "dup_limit.yaml"
+    p.write_text(yaml_text)
+
+    with pytest.raises(L2ValidationError, match="duplicate"):
+        load_instance(p)
+
+
+def test_load_instance_validate_false_skips_cross_entity_pass(
+    tmp_path: Path,
+) -> None:
+    """``validate=False`` opts out of cross-entity validation.
+
+    The same overlap fixture as the test above loads cleanly when
+    ``validate=False`` is passed — proves the kwarg actually disables
+    the validator pass (and not just the U5 check). Useful for narrow
+    loader tests that intentionally exercise partial fixtures.
+    """
+    yaml_text = dedent("""\
+        instance: ldp
+
+        accounts:
+          - id: gl-1
+            role: Control
+            scope: internal
+
+        rails:
+          - name: SubCharge
+            transfer_type: charge
+            origin: InternalInitiated
+            leg_role: Control
+            leg_direction: Debit
+
+        limit_schedules:
+          - parent_role: Control
+            transfer_type: charge
+            cap: 1000.00
+          - parent_role: Control
+            transfer_type: charge
+            cap: 5000.00
+        """)
+    p = tmp_path / "dup_limit_skip.yaml"
+    p.write_text(yaml_text)
+
+    inst = load_instance(p, validate=False)
+    assert len(inst.limit_schedules) == 2

@@ -592,6 +592,8 @@ The longest acceptable interval between a Transaction becoming Posted-and-eligib
 
 ### Validation rules
 
+Every rule below is enforced at YAML load time — `load_instance(path)` runs the full cross-entity validation pass before returning, so an integrator authoring a malformed L2 instance fails at parse time rather than at first render. Violations raise `L2ValidationError` with a logical-path message identifying the offending field. (Tests that need to construct intentionally-incomplete instances may opt out via `load_instance(path, validate=False)`.)
+
 - Every `Role` referenced by a Rail or AccountTemplate resolves to either a declared `Account` or an `AccountTemplate`.
 - Every `RailName` in a `TransferTemplate.LegRails` or `ChainEntry` exists.
 - Every `TransferTemplateName` in a `ChainEntry` or `BundleSelector` exists.
@@ -602,11 +604,12 @@ The longest acceptable interval between a Transaction becoming Posted-and-eligib
 - Every `Aggregating: true` Rail is absent from `Child` positions in chains.
 - Every `XorGroup` membership is consistent (all members share `Parent`).
 - Every `Completion` and `Cadence` literal is in the v1 vocabulary.
-- Every `LimitSchedule` `(ParentRole, TransferType)` combination is unique.
+- Every `LimitSchedule` `(ParentRole, TransferType)` combination is unique. **(M.2d.2)** Duplicate combinations are ambiguous — the projection into `StoredBalance.Limits` would have two competing caps, and the CASE-branch render order in the limit-breach matview silently picks the first match. Caught at YAML load.
 - Every `MaxUnbundledAge` is set only on Rails that appear in some AggregatingRail's `BundlesActivity` (otherwise the watch can never fire).
 - Every `BundleSelector` of the form `TransferTemplateName.LegRailName` references a rail that's actually in that template's `LegRails`.
 - Every leg of every Rail resolves to an Origin (per the resolution rules in "Per-leg Origin"). Unresolved legs are a load-time configuration error.
 - Per-leg overrides (`SourceOrigin`, `DestinationOrigin`) appear only on 2-leg rails. Their presence on a 1-leg rail is a load-time warning (the field is ignored).
+- Every Transfer surface (Rail's `TransferType`, TransferTemplate's `TransferType`) MUST be matchable to a Rail. **(M.2d.1, planned — not yet enforced)** A TransferTemplate whose `TransferType` doesn't appear on any Rail loads silently today, then drops out of the rail-keyed L1 invariant matchers (`stuck_pending` / `stuck_unbundled` / `limit_breach`) at render. Validator rule + sibling rejection test land before M.2d closes.
 
 ---
 

@@ -20,14 +20,17 @@ What this module does:
 - ``RoleExpression`` normalization: a single string YAML value becomes
   a 1-tuple; a YAML list of strings becomes a tuple.
 
-What this module does NOT do (deferred to M.1.3 ``validate.py``):
-- Cross-entity validation (singleton-ParentRole, ≤1 Variable leg per
-  template, single-leg reconciliation paths, XOR-group consistency,
-  Aggregating-not-as-child, vocabulary literals for Completion/Cadence).
-- Reference resolution (does this Role appear on any Account?).
+Cross-entity validation (M.1.3 ``validate.py``) runs automatically as
+the last step of ``load_instance`` (per M.2d.2 — every cross-entity
+rule is a YAML parse-time error by default). The loader still owns
+syntactic + per-entity errors; the validator owns reference-resolution,
+cardinality, state-dependent, vocabulary, and per-leg-Origin rules.
+Tests that need to construct intentionally-incomplete instances may
+opt out via ``load_instance(path, validate=False)``.
 
-Errors raise ``L2LoaderError`` with a logical path (e.g.
-``accounts[2].id``) so the caller can pinpoint the bad field.
+Errors raise ``L2LoaderError`` (loader-side) or ``L2ValidationError``
+(validator-side) with a logical path (e.g. ``accounts[2].id``) so the
+caller can pinpoint the bad field.
 """
 
 from __future__ import annotations
@@ -603,13 +606,25 @@ def _load_limit_schedule(raw: object, *, path: str) -> LimitSchedule:
 # -- Public API --------------------------------------------------------------
 
 
-def load_instance(path: Path | str) -> L2Instance:
-    """Load + per-entity-validate an L2 YAML file into an ``L2Instance``.
+def load_instance(path: Path | str, *, validate: bool = True) -> L2Instance:
+    """Load + validate an L2 YAML file into an ``L2Instance``.
 
-    Cross-entity validation (M.1.3) is a separate ``validate(instance)``
-    pass; ``load_instance`` only catches malformed YAML, missing required
-    fields, type-shape errors, identifier-format violations, and Money
-    coercion errors.
+    By default (``validate=True``), runs the full cross-entity
+    validation pass (``common.l2.validate.validate``) before returning,
+    so a malformed instance fails at YAML load time rather than at
+    first render. This is the M.2d.2 contract — every cross-entity
+    SHOULD-constraint listed in the SPEC's Validation Rules section
+    is a parse-time error by default.
+
+    Pass ``validate=False`` to skip the cross-entity pass — useful for
+    narrow loader tests that intentionally exercise partial fixtures
+    without satisfying every reference-resolution rule.
+
+    Loader-side errors (malformed YAML, missing required fields, type
+    shapes, identifier format, Money coercion) raise ``L2LoaderError``.
+    Validator-side errors (reference resolution, uniqueness,
+    cardinality, vocabulary, Origin resolution) raise
+    ``L2ValidationError``.
     """
     yaml_path = Path(path)
     try:
@@ -663,7 +678,7 @@ def load_instance(path: Path | str) -> L2Instance:
         )
     )
 
-    return L2Instance(
+    inst = L2Instance(
         instance=instance,
         accounts=accounts,
         account_templates=account_templates,
@@ -675,3 +690,8 @@ def load_instance(path: Path | str) -> L2Instance:
             raw_d.get("description"), path="description",
         ),
     )
+    if validate:
+        # Local import dodges loader↔validate import-cycle.
+        from .validate import validate as _validate
+        _validate(inst)
+    return inst
