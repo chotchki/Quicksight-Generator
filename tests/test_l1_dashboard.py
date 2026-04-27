@@ -1043,13 +1043,16 @@ def test_supersession_datasets_registered_and_target_base_tables() -> None:
     assert f"{prefix}_current_transactions" not in tx_sql.SqlQuery
     assert f" {prefix}_daily_balances" in db_sql.SqlQuery
     assert f"{prefix}_current_daily_balances" not in db_sql.SqlQuery
-    # Both surface only logical keys with multiple entries.
-    assert "GROUP BY id HAVING COUNT(*) > 1" in tx_sql.SqlQuery
+    # Both surface only logical keys with multiple entries via window
+    # function (window form survives QS dropdown query rewriting where
+    # the IN-subquery + ORDER BY combo doesn't).
+    assert "COUNT(*) OVER (PARTITION BY id)" in tx_sql.SqlQuery
     assert (
-        "GROUP BY account_id, business_day_start"
+        "COUNT(*) OVER (PARTITION BY account_id, business_day_start)"
         in db_sql.SqlQuery
     )
-    assert "HAVING COUNT(*) > 1" in db_sql.SqlQuery
+    assert "_entry_count > 1" in tx_sql.SqlQuery
+    assert "_entry_count > 1" in db_sql.SqlQuery
 
 
 def test_supersession_audit_has_supersedes_filter() -> None:

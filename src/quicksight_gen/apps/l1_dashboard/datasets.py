@@ -566,29 +566,30 @@ def build_supersession_transactions_dataset(
     multiple `entry` values — the audit trail for superseded postings.
 
     Reads from the BASE table (not `<prefix>_current_transactions`)
-    because Current* hides superseded entries by design. Subquery
-    finds logical keys with more than one entry, outer query returns
-    every entry of those keys ordered by `(id, entry)` so the audit
-    history reads top-down per logical row. Only the analyst-visible
-    columns project; internal storage columns (account_role /
-    account_parent_role / account_scope / template_name /
-    transfer_parent_id / transfer_completion / metadata) stay in the
-    base table.
+    because Current* hides superseded entries by design. Uses a window
+    function (`COUNT(*) OVER (PARTITION BY id) > 1`) instead of an
+    `id IN (... GROUP BY id HAVING COUNT(*) > 1)` subquery — the
+    window form survives QuickSight's distinct-values dropdown query
+    rewriting (which wraps the dataset SQL in `SELECT DISTINCT col
+    FROM (...)` for filter dropdowns; QS chokes on the IN-subquery +
+    `ORDER BY` combo). Sort handled by the dashboard, not the
+    dataset.
     """
     prefix = l2_instance.instance
     sql = (
-        f"SELECT entry,"
-        f" id AS transaction_id,"
-        f" supersedes,"
+        f"SELECT entry, transaction_id, supersedes,"
         f" account_id, account_name,"
         f" transfer_id, transfer_type, rail_name,"
         f" amount_money, amount_direction, status, posting, bundle_id"
-        f" FROM {prefix}_transactions"
-        f" WHERE id IN ("
-        f"    SELECT id FROM {prefix}_transactions"
-        f"    GROUP BY id HAVING COUNT(*) > 1"
-        f" )"
-        f" ORDER BY id, entry"
+        f" FROM ("
+        f"   SELECT entry, id AS transaction_id, supersedes,"
+        f"   account_id, account_name,"
+        f"   transfer_id, transfer_type, rail_name,"
+        f"   amount_money, amount_direction, status, posting, bundle_id,"
+        f"   COUNT(*) OVER (PARTITION BY id) AS _entry_count"
+        f"   FROM {prefix}_transactions"
+        f" ) sub"
+        f" WHERE _entry_count > 1"
     )
     return build_dataset(
         cfg, cfg.prefixed("l1-supersession-transactions-dataset"),
@@ -605,24 +606,24 @@ def build_supersession_daily_balances_dataset(
     """Pull rows from `<prefix>_daily_balances` whose logical key
     `(account_id, business_day_start)` has multiple `entry` values.
 
-    Same shape as `build_supersession_transactions_dataset`. Subquery
-    finds composite keys with more than one entry, outer query
-    returns every entry ordered by `(account_id, business_day_start,
-    entry)` so the audit history is readable top-down per logical row.
+    Same window-function pattern as the transactions audit dataset
+    — `COUNT(*) OVER (PARTITION BY account_id, business_day_start)`
+    + outer `WHERE > 1` filter. Sort handled by the dashboard.
     """
     prefix = l2_instance.instance
     sql = (
         f"SELECT entry,"
         f" account_id, account_name, account_role, supersedes,"
         f" business_day_start, business_day_end, money"
-        f" FROM {prefix}_daily_balances"
-        f" WHERE (account_id, business_day_start) IN ("
-        f"    SELECT account_id, business_day_start"
-        f"    FROM {prefix}_daily_balances"
-        f"    GROUP BY account_id, business_day_start"
-        f"    HAVING COUNT(*) > 1"
-        f" )"
-        f" ORDER BY account_id, business_day_start, entry"
+        f" FROM ("
+        f"   SELECT entry,"
+        f"   account_id, account_name, account_role, supersedes,"
+        f"   business_day_start, business_day_end, money,"
+        f"   COUNT(*) OVER (PARTITION BY account_id, business_day_start)"
+        f"     AS _entry_count"
+        f"   FROM {prefix}_daily_balances"
+        f" ) sub"
+        f" WHERE _entry_count > 1"
     )
     return build_dataset(
         cfg, cfg.prefixed("l1-supersession-daily-balances-dataset"),
