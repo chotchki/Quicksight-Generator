@@ -84,15 +84,16 @@ def test_dashboard_registered() -> None:
     assert app.dashboard is not None
 
 
-def test_four_sheets_after_m2a5() -> None:
-    """M.2a.2-M.2a.5 ships 4 sheets: Getting Started, Drift, Overdraft,
-    Limit Breach. Today's Exceptions lands at M.2a.6. This guard fires
-    if a future commit accidentally lands a sheet outside its own substep."""
+def test_five_sheets_after_m2a6() -> None:
+    """M.2a.2-M.2a.6 ships 5 sheets: Getting Started + 4 per-invariant
+    + Today's Exceptions. This guard fires if a future commit accidentally
+    lands a sheet outside its own substep."""
     app = build_l1_dashboard_app(_CFG)
     assert app.analysis is not None
     sheet_names = [s.name for s in app.analysis.sheets]
     assert sheet_names == [
-        "Getting Started", "Drift", "Overdraft", "Limit Breach",
+        "Getting Started", "Drift", "Overdraft",
+        "Limit Breach", "Today's Exceptions",
     ]
 
 
@@ -287,6 +288,93 @@ def test_limit_breach_dataset_registered_and_targets_l1_view() -> None:
     sql = next(iter(lb_ds.PhysicalTableMap.values())).CustomSql
     assert sql is not None
     assert sql.SqlQuery == f"SELECT * FROM {instance.instance}_limit_breach"
+
+
+# -- Today's Exceptions sheet (M.2a.6) ---------------------------------------
+
+
+def test_todays_exceptions_sheet_present_after_m2a6() -> None:
+    """M.2a.6 lands the Today's Exceptions sheet — fifth tab in display
+    order, last in the M.2a.2-M.2a.6 sheet rollout."""
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    te = app.analysis.sheets[4]
+    assert te.name == "Today's Exceptions"
+    assert te.title == "Today's Exceptions"
+
+
+def test_todays_exceptions_sheet_has_kpi_bar_table() -> None:
+    """Today's Exceptions structure: 1 KPI (count) + 1 BarChart by
+    check_type + 1 detail table sorted by magnitude DESC."""
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    te = app.analysis.sheets[4]
+    titles = [v.title for v in te.visuals]
+    assert titles == [
+        "Open Exceptions",
+        "Exceptions by Check Type",
+        "Exception Detail",
+    ]
+
+
+def test_todays_exceptions_dataset_unions_all_five_l1_views() -> None:
+    """The Today's Exceptions dataset SQL must UNION ALL across every
+    L1 invariant view — drift / ledger_drift / overdraft / limit_breach
+    / expected_eod_balance_breach — and pre-filter each branch to the
+    most recent business day from `<prefix>_current_daily_balances`."""
+    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard.datasets import (
+        DS_TODAYS_EXCEPTIONS,
+        build_todays_exceptions_dataset,
+    )
+
+    app = build_l1_dashboard_app(_CFG)
+    registered_ids = {ds.identifier for ds in app.datasets}
+    assert DS_TODAYS_EXCEPTIONS in registered_ids
+
+    instance = default_l2_instance()
+    p = instance.instance
+    te_ds = build_todays_exceptions_dataset(_CFG, instance)
+    sql_obj = next(iter(te_ds.PhysicalTableMap.values())).CustomSql
+    assert sql_obj is not None
+    sql = sql_obj.SqlQuery
+
+    # Every L1 invariant view is referenced.
+    assert f"FROM {p}_drift " in sql
+    assert f"FROM {p}_ledger_drift " in sql
+    assert f"FROM {p}_overdraft " in sql
+    assert f"FROM {p}_limit_breach " in sql
+    assert f"FROM {p}_expected_eod_balance_breach " in sql
+    # Today filter targets the prefix's current_daily_balances.
+    assert f"MAX(business_day_start) FROM {p}_current_daily_balances" in sql
+    # UNION ALL stitches the 5 branches (4 ALLs join 5 SELECTs).
+    assert sql.count("UNION ALL") == 4
+
+
+def test_todays_exceptions_sql_emits_unified_shape() -> None:
+    """Every UNION branch must SELECT into the same column shape so the
+    contract validates — check_type discriminator first, magnitude last,
+    NULLs where the source view doesn't carry the column."""
+    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard.datasets import (
+        build_todays_exceptions_dataset,
+    )
+
+    instance = default_l2_instance()
+    te_ds = build_todays_exceptions_dataset(_CFG, instance)
+    sql_obj = next(iter(te_ds.PhysicalTableMap.values())).CustomSql
+    assert sql_obj is not None
+    sql = sql_obj.SqlQuery
+
+    # One literal check_type discriminator per branch.
+    for label in (
+        "'drift' AS check_type",
+        "'ledger_drift'",
+        "'overdraft'",
+        "'limit_breach'",
+        "'expected_eod_balance_breach'",
+    ):
+        assert label in sql
 
 
 # -- Emit shape (substitutability with other apps) ---------------------------

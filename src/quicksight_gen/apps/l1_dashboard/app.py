@@ -23,8 +23,8 @@ Substep landmarks:
     M.2a.2 — Getting Started sheet with description-driven prose
     M.2a.3 — Drift sheet — KPIs + leaf + ledger drift tables
     M.2a.4 — Overdraft sheet — KPI + violations table
-    M.2a.5 — Limit Breach sheet (this commit) — KPI + breach table
-    M.2a.6 — Today's Exceptions sheet (UNION across L1 views)
+    M.2a.5 — Limit Breach sheet — KPI + breach table
+    M.2a.6 — Today's Exceptions sheet (this commit) — UNION across L1 views
     M.2a.7 — Description-driven prose across every sheet
     M.2a.8 — Hash-lock the seed at the M.2a structure
     M.2a.9 — Deploy + verify against Aurora
@@ -39,6 +39,7 @@ from quicksight_gen.apps.l1_dashboard.datasets import (
     DS_LEDGER_DRIFT,
     DS_LIMIT_BREACH,
     DS_OVERDRAFT,
+    DS_TODAYS_EXCEPTIONS,
     build_all_l1_dashboard_datasets,
 )
 from quicksight_gen.common import rich_text as rt
@@ -60,6 +61,7 @@ from quicksight_gen.common.tree import (
 _FULL = 36
 _HALF = 18
 _KPI_ROW_SPAN = 6
+_CHART_ROW_SPAN = 12
 _TABLE_ROW_SPAN = 18
 
 
@@ -70,6 +72,7 @@ SHEET_GETTING_STARTED = SheetId("l1-sheet-getting-started")
 SHEET_DRIFT = SheetId("l1-sheet-drift")
 SHEET_OVERDRAFT = SheetId("l1-sheet-overdraft")
 SHEET_LIMIT_BREACH = SheetId("l1-sheet-limit-breach")
+SHEET_TODAYS_EXCEPTIONS = SheetId("l1-sheet-todays-exceptions")
 
 
 _GETTING_STARTED_NAME = "Getting Started"
@@ -117,6 +120,19 @@ _LIMIT_BREACH_DESCRIPTION = (
 )
 
 
+_TODAYS_EXCEPTIONS_NAME = "Today's Exceptions"
+_TODAYS_EXCEPTIONS_TITLE = "Today's Exceptions"
+_TODAYS_EXCEPTIONS_DESCRIPTION = (
+    "The 9am scan — every L1 SHOULD-constraint violation across all 5 "
+    "invariant views (drift, ledger drift, overdraft, limit breach, "
+    "expected EOD balance), scoped to the most recent business day in "
+    "the data. Replaces v5's ar_unified_exceptions matview with a live "
+    "UNION; no REFRESH contract. KPI tracks total open count; bar chart "
+    "breaks down by check_type; detail table sorts by magnitude so the "
+    "biggest variances surface first."
+)
+
+
 def _analysis_name(cfg: Config, l2_instance: L2Instance) -> str:
     """Title shown on the deployed QuickSight Analysis."""
     return f"L1 Reconciliation Dashboard ({l2_instance.instance})"
@@ -136,7 +152,10 @@ def _l1_datasets(
     aws_datasets = build_all_l1_dashboard_datasets(cfg, l2_instance)
     # `build_all_l1_dashboard_datasets` returns AWS DataSets in the same
     # order as the visual identifiers below; map each to a tree Dataset.
-    visual_ids = [DS_DRIFT, DS_LEDGER_DRIFT, DS_OVERDRAFT, DS_LIMIT_BREACH]
+    visual_ids = [
+        DS_DRIFT, DS_LEDGER_DRIFT, DS_OVERDRAFT,
+        DS_LIMIT_BREACH, DS_TODAYS_EXCEPTIONS,
+    ]
     return {
         vid: Dataset(identifier=vid, arn=cfg.dataset_arn(aws.DataSetId))
         for vid, aws in zip(visual_ids, aws_datasets)
@@ -308,6 +327,74 @@ def _populate_overdraft_sheet(
     )
 
 
+def _populate_todays_exceptions_sheet(
+    cfg: Config,  # noqa: ARG001  (M.2a.7 wires theme accent on conditional formats)
+    sheet: Sheet,
+    *,
+    datasets: dict[str, Dataset],
+) -> None:
+    """Today's Exceptions sheet — KPI + check-type breakdown bar +
+    sorted detail table.
+
+    Backed by the live UNION ALL dataset across all 5 L1 invariant views
+    (drift, ledger_drift, overdraft, limit_breach, expected_eod_balance_breach),
+    pre-filtered to the most recent business day at the SQL layer. This
+    is the v5 ar_unified_exceptions matview's replacement — no REFRESH
+    contract; queries are live.
+    """
+    ds = datasets[DS_TODAYS_EXCEPTIONS]
+
+    # Row 1: total count KPI (full width — single headline number).
+    sheet.layout.row(height=_KPI_ROW_SPAN).add_kpi(
+        width=_FULL,
+        title="Open Exceptions",
+        subtitle=(
+            "Total count of L1 SHOULD-constraint violations on today's "
+            "business day across all 5 invariant checks."
+        ),
+        values=[ds["account_id"].count()],
+    )
+
+    # Row 2: bar chart broken out by check_type (count per check kind).
+    sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
+        width=_FULL,
+        title="Exceptions by Check Type",
+        subtitle=(
+            "How today's open exceptions distribute across the 5 L1 "
+            "invariants. Spikes in one check kind point at a recurring "
+            "error class to investigate first."
+        ),
+        category=[ds["check_type"].dim()],
+        values=[ds["account_id"].count()],
+        orientation="HORIZONTAL",
+    )
+
+    # Row 3: detail table — every row is one violation, sorted by
+    # magnitude DESC so the biggest variances surface first.
+    magnitude_col = ds["magnitude"].numerical()
+    sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        title="Exception Detail",
+        subtitle=(
+            "Every violation on today's business day. Sorted by "
+            "magnitude (largest first) so the biggest variances are "
+            "the top rows. `transfer_type` and `account_parent_role` "
+            "are NULL for checks that don't carry them."
+        ),
+        columns=[
+            ds["check_type"].dim(),
+            ds["account_id"].dim(),
+            ds["account_name"].dim(),
+            ds["account_role"].dim(),
+            ds["account_parent_role"].dim(),
+            ds["business_day"].date(),
+            ds["transfer_type"].dim(),
+            magnitude_col,
+        ],
+        sort_by=(magnitude_col, "DESC"),
+    )
+
+
 def _populate_limit_breach_sheet(
     cfg: Config,  # noqa: ARG001  (M.2a.7 wires theme accent on conditional formats)
     sheet: Sheet,
@@ -417,7 +504,15 @@ def build_l1_dashboard_app(
     ))
     _populate_limit_breach_sheet(cfg, limit_breach_sheet, datasets=datasets)
 
-    # Today's Exceptions sheet lands in M.2a.6.
+    todays_exceptions_sheet = analysis.add_sheet(Sheet(
+        sheet_id=SHEET_TODAYS_EXCEPTIONS,
+        name=_TODAYS_EXCEPTIONS_NAME,
+        title=_TODAYS_EXCEPTIONS_TITLE,
+        description=_TODAYS_EXCEPTIONS_DESCRIPTION,
+    ))
+    _populate_todays_exceptions_sheet(
+        cfg, todays_exceptions_sheet, datasets=datasets,
+    )
 
     app.create_dashboard(
         dashboard_id_suffix="l1-dashboard",
