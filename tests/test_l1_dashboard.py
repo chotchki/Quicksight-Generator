@@ -102,18 +102,19 @@ def test_dashboard_registered() -> None:
     assert app.dashboard is not None
 
 
-def test_ten_sheets_after_m2b11() -> None:
-    """M.2b.11 inserts Unbundled Aging after Pending Aging. Sheet
-    order: Getting Started → drift (today + over time) → other
+def test_eleven_sheets_after_m2b12() -> None:
+    """M.2b.12 inserts Supersession Audit after Unbundled Aging.
+    Sheet order: Getting Started → drift (today + over time) → other
     invariants (overdraft, limit breach, pending aging, unbundled
-    aging) → today's roll-up → per-account-day detail → raw legs."""
+    aging) → audit → today's roll-up → per-account-day detail →
+    raw legs."""
     app = build_l1_dashboard_app(_CFG)
     assert app.analysis is not None
     sheet_names = [s.name for s in app.analysis.sheets]
     assert sheet_names == [
         "Getting Started", "Drift", "Drift Timelines",
         "Overdraft", "Limit Breach",
-        "Pending Aging", "Unbundled Aging",
+        "Pending Aging", "Unbundled Aging", "Supersession Audit",
         "Today's Exceptions", "Daily Statement", "Transactions",
     ]
 
@@ -981,6 +982,86 @@ def test_unbundled_aging_dataset_registered() -> None:
     sql_obj = next(iter(su_ds.PhysicalTableMap.values())).CustomSql
     assert sql_obj is not None
     assert sql_obj.SqlQuery == f"SELECT * FROM {instance.instance}_stuck_unbundled"
+
+
+# -- Supersession Audit sheet (M.2b.12) --------------------------------------
+
+
+def test_supersession_audit_sheet_present_after_m2b12() -> None:
+    """M.2b.12 lands the Supersession Audit sheet — referenced by name."""
+    app = build_l1_dashboard_app(_CFG)
+    sa = _sheet_by_name(app, "Supersession Audit")
+    assert sa.title == "Supersession Audit Trail"
+
+
+def test_supersession_audit_has_kpi_and_two_tables() -> None:
+    """Supersession Audit structure: 1 KPI (count of distinct logical
+    keys with supersession history) + 1 transactions audit table +
+    1 daily-balances audit table."""
+    from quicksight_gen.common.tree import KPI, Table
+
+    app = build_l1_dashboard_app(_CFG)
+    sa = _sheet_by_name(app, "Supersession Audit")
+    titles = [v.title for v in sa.visuals]
+    assert titles == [
+        "Logical Keys with Supersession",
+        "Transactions Audit",
+        "Daily Balances Audit",
+    ]
+    kinds = [type(v).__name__ for v in sa.visuals]
+    assert kinds == ["KPI", "Table", "Table"]
+
+
+def test_supersession_datasets_registered_and_target_base_tables() -> None:
+    """Both supersession datasets register on the App and read from
+    the BASE tables (NOT Current*) — Current* hides superseded
+    entries by design, but the audit specifically needs them."""
+    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard.datasets import (
+        DS_SUPERSESSION_DAILY_BALANCES,
+        DS_SUPERSESSION_TRANSACTIONS,
+        build_supersession_daily_balances_dataset,
+        build_supersession_transactions_dataset,
+    )
+
+    app = build_l1_dashboard_app(_CFG)
+    registered_ids = {ds.identifier for ds in app.datasets}
+    assert DS_SUPERSESSION_TRANSACTIONS in registered_ids
+    assert DS_SUPERSESSION_DAILY_BALANCES in registered_ids
+
+    instance = default_l2_instance()
+    prefix = instance.instance
+
+    tx_ds = build_supersession_transactions_dataset(_CFG, instance)
+    db_ds = build_supersession_daily_balances_dataset(_CFG, instance)
+    tx_sql = next(iter(tx_ds.PhysicalTableMap.values())).CustomSql
+    db_sql = next(iter(db_ds.PhysicalTableMap.values())).CustomSql
+    assert tx_sql is not None
+    assert db_sql is not None
+    # Both target the BASE tables (no `current_` prefix).
+    assert f" {prefix}_transactions" in tx_sql.SqlQuery
+    assert f"{prefix}_current_transactions" not in tx_sql.SqlQuery
+    assert f" {prefix}_daily_balances" in db_sql.SqlQuery
+    assert f"{prefix}_current_daily_balances" not in db_sql.SqlQuery
+    # Both surface only logical keys with multiple entries.
+    assert "GROUP BY id HAVING COUNT(*) > 1" in tx_sql.SqlQuery
+    assert (
+        "GROUP BY account_id, business_day_start"
+        in db_sql.SqlQuery
+    )
+    assert "HAVING COUNT(*) > 1" in db_sql.SqlQuery
+
+
+def test_supersession_audit_has_supersedes_filter() -> None:
+    """Supersession Audit carries one filter dropdown: supersedes
+    reason. Daily-balances doesn't get a paired filter (low signal)."""
+    app = build_l1_dashboard_app(_CFG)
+    sa = _sheet_by_name(app, "Supersession Audit")
+    titles = {
+        ctrl.title for ctrl in sa.filter_controls
+        if hasattr(ctrl, "title")
+    }
+    assert "Supersedes Reason" in titles
 
 
 # -- Cross-sheet drill plumbing (M.2b.7) -------------------------------------

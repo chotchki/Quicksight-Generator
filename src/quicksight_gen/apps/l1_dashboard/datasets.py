@@ -41,6 +41,8 @@ DS_DRIFT_TIMELINE = "l1-drift-timeline-ds"
 DS_LEDGER_DRIFT_TIMELINE = "l1-ledger-drift-timeline-ds"
 DS_STUCK_PENDING = "l1-stuck-pending-ds"
 DS_STUCK_UNBUNDLED = "l1-stuck-unbundled-ds"
+DS_SUPERSESSION_TRANSACTIONS = "l1-supersession-transactions-ds"
+DS_SUPERSESSION_DAILY_BALANCES = "l1-supersession-daily-balances-ds"
 
 
 # Contracts — column shapes the M.1a.7 views project.
@@ -245,6 +247,43 @@ STUCK_UNBUNDLED_CONTRACT = DatasetContract(columns=[
     ColumnSpec("posting", "DATETIME"),
     ColumnSpec("max_unbundled_age_seconds", "INTEGER"),
     ColumnSpec("age_seconds", "DECIMAL"),
+])
+
+
+# Supersession Audit datasets — surface logical keys whose append-only
+# `entry` column has multiple rows (the audit trail of technical-error
+# corrections, inflight-bundling reposts, etc). Read from the BASE
+# tables, NOT Current* (Current* hides superseded entries by design —
+# that's the whole point of the max-Entry-per-logical-key view). The
+# `supersedes` column tells you why the higher entry exists per L1's
+# v1 SupersedeReason vocabulary (Inflight / BundleAssignment /
+# TechnicalCorrection).
+SUPERSESSION_TRANSACTIONS_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("entry", "INTEGER"),
+    ColumnSpec("transaction_id", "STRING"),
+    ColumnSpec("supersedes", "STRING"),
+    ColumnSpec("account_id", "STRING", shape=ColumnShape.ACCOUNT_ID),
+    ColumnSpec("account_name", "STRING"),
+    ColumnSpec("transfer_id", "STRING", shape=ColumnShape.TRANSFER_ID),
+    ColumnSpec("transfer_type", "STRING", shape=ColumnShape.TRANSFER_TYPE),
+    ColumnSpec("rail_name", "STRING"),
+    ColumnSpec("amount_money", "DECIMAL"),
+    ColumnSpec("amount_direction", "STRING"),
+    ColumnSpec("status", "STRING"),
+    ColumnSpec("posting", "DATETIME"),
+    ColumnSpec("bundle_id", "STRING"),
+])
+
+
+SUPERSESSION_DAILY_BALANCES_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("entry", "INTEGER"),
+    ColumnSpec("account_id", "STRING", shape=ColumnShape.ACCOUNT_ID),
+    ColumnSpec("account_name", "STRING"),
+    ColumnSpec("account_role", "STRING"),
+    ColumnSpec("supersedes", "STRING"),
+    ColumnSpec("business_day_start", "DATETIME", shape=ColumnShape.DATETIME_DAY),
+    ColumnSpec("business_day_end", "DATETIME", shape=ColumnShape.DATETIME_DAY),
+    ColumnSpec("money", "DECIMAL"),
 ])
 
 
@@ -520,6 +559,80 @@ def build_stuck_unbundled_dataset(
     )
 
 
+def build_supersession_transactions_dataset(
+    cfg: Config, l2_instance: L2Instance,
+) -> DataSet:
+    """Pull rows from `<prefix>_transactions` whose logical `id` has
+    multiple `entry` values — the audit trail for superseded postings.
+
+    Reads from the BASE table (not `<prefix>_current_transactions`)
+    because Current* hides superseded entries by design. Subquery
+    finds logical keys with more than one entry, outer query returns
+    every entry of those keys ordered by `(id, entry)` so the audit
+    history reads top-down per logical row. Only the analyst-visible
+    columns project; internal storage columns (account_role /
+    account_parent_role / account_scope / template_name /
+    transfer_parent_id / transfer_completion / metadata) stay in the
+    base table.
+    """
+    prefix = l2_instance.instance
+    sql = (
+        f"SELECT entry,"
+        f" id AS transaction_id,"
+        f" supersedes,"
+        f" account_id, account_name,"
+        f" transfer_id, transfer_type, rail_name,"
+        f" amount_money, amount_direction, status, posting, bundle_id"
+        f" FROM {prefix}_transactions"
+        f" WHERE id IN ("
+        f"    SELECT id FROM {prefix}_transactions"
+        f"    GROUP BY id HAVING COUNT(*) > 1"
+        f" )"
+        f" ORDER BY id, entry"
+    )
+    return build_dataset(
+        cfg, cfg.prefixed("l1-supersession-transactions-dataset"),
+        "L1 Supersession — Transactions",
+        "l1-supersession-transactions",
+        sql, SUPERSESSION_TRANSACTIONS_CONTRACT,
+        visual_identifier=DS_SUPERSESSION_TRANSACTIONS,
+    )
+
+
+def build_supersession_daily_balances_dataset(
+    cfg: Config, l2_instance: L2Instance,
+) -> DataSet:
+    """Pull rows from `<prefix>_daily_balances` whose logical key
+    `(account_id, business_day_start)` has multiple `entry` values.
+
+    Same shape as `build_supersession_transactions_dataset`. Subquery
+    finds composite keys with more than one entry, outer query
+    returns every entry ordered by `(account_id, business_day_start,
+    entry)` so the audit history is readable top-down per logical row.
+    """
+    prefix = l2_instance.instance
+    sql = (
+        f"SELECT entry,"
+        f" account_id, account_name, account_role, supersedes,"
+        f" business_day_start, business_day_end, money"
+        f" FROM {prefix}_daily_balances"
+        f" WHERE (account_id, business_day_start) IN ("
+        f"    SELECT account_id, business_day_start"
+        f"    FROM {prefix}_daily_balances"
+        f"    GROUP BY account_id, business_day_start"
+        f"    HAVING COUNT(*) > 1"
+        f" )"
+        f" ORDER BY account_id, business_day_start, entry"
+    )
+    return build_dataset(
+        cfg, cfg.prefixed("l1-supersession-daily-balances-dataset"),
+        "L1 Supersession — Daily Balances",
+        "l1-supersession-daily-balances",
+        sql, SUPERSESSION_DAILY_BALANCES_CONTRACT,
+        visual_identifier=DS_SUPERSESSION_DAILY_BALANCES,
+    )
+
+
 def build_all_l1_dashboard_datasets(
     cfg: Config, l2_instance: L2Instance,
 ) -> list[DataSet]:
@@ -541,4 +654,6 @@ def build_all_l1_dashboard_datasets(
         build_ledger_drift_timeline_dataset(cfg, l2_instance),
         build_stuck_pending_dataset(cfg, l2_instance),
         build_stuck_unbundled_dataset(cfg, l2_instance),
+        build_supersession_transactions_dataset(cfg, l2_instance),
+        build_supersession_daily_balances_dataset(cfg, l2_instance),
     ]

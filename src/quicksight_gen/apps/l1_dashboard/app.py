@@ -47,6 +47,8 @@ from quicksight_gen.apps.l1_dashboard.datasets import (
     DS_OVERDRAFT,
     DS_STUCK_PENDING,
     DS_STUCK_UNBUNDLED,
+    DS_SUPERSESSION_DAILY_BALANCES,
+    DS_SUPERSESSION_TRANSACTIONS,
     DS_TODAYS_EXCEPTIONS,
     DS_TRANSACTIONS,
     build_all_l1_dashboard_datasets,
@@ -101,6 +103,7 @@ SHEET_OVERDRAFT = SheetId("l1-sheet-overdraft")
 SHEET_LIMIT_BREACH = SheetId("l1-sheet-limit-breach")
 SHEET_PENDING_AGING = SheetId("l1-sheet-pending-aging")
 SHEET_UNBUNDLED_AGING = SheetId("l1-sheet-unbundled-aging")
+SHEET_SUPERSESSION_AUDIT = SheetId("l1-sheet-supersession-audit")
 SHEET_TODAYS_EXCEPTIONS = SheetId("l1-sheet-todays-exceptions")
 SHEET_DAILY_STATEMENT = SheetId("l1-sheet-daily-statement")
 SHEET_TRANSACTIONS = SheetId("l1-sheet-transactions")
@@ -228,6 +231,19 @@ _UNBUNDLED_AGING_DESCRIPTION = (
     "— the typical max_unbundled_age cadence is a day or two, so "
     "buckets are wider than Pending Aging's. Right-click any row → "
     "View Transactions to see every leg of that transfer."
+)
+
+
+_SUPERSESSION_AUDIT_NAME = "Supersession Audit"
+_SUPERSESSION_AUDIT_TITLE = "Supersession Audit Trail"
+_SUPERSESSION_AUDIT_DESCRIPTION = (
+    "Every logical row whose append-only `entry` column has more than "
+    "one version. Each rewrite carries a `supersedes` reason from L1's "
+    "v1 vocabulary (Inflight / BundleAssignment / TechnicalCorrection). "
+    "Reads from the BASE tables, not Current* — by definition Current* "
+    "hides the prior entries we want to audit here. Use the supersedes "
+    "filter to slice by reason: high TechnicalCorrection volume signals "
+    "a feed problem; high Inflight is normal in a busy bundling cadence."
 )
 
 
@@ -367,6 +383,7 @@ def _l1_datasets(
         DS_TRANSACTIONS,
         DS_DRIFT_TIMELINE, DS_LEDGER_DRIFT_TIMELINE,
         DS_STUCK_PENDING, DS_STUCK_UNBUNDLED,
+        DS_SUPERSESSION_TRANSACTIONS, DS_SUPERSESSION_DAILY_BALANCES,
     ]
     return {
         vid: Dataset(identifier=vid, arn=cfg.dataset_arn(aws.DataSetId))
@@ -1156,6 +1173,105 @@ def _populate_unbundled_aging_sheet(
     )
 
 
+def _populate_supersession_audit_sheet(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    datasets: dict[str, Dataset],
+) -> None:
+    """Supersession Audit sheet — KPI + 2 detail tables.
+
+    Both detail tables read from BASE tables (not Current*), filtered
+    to only logical keys with multiple `entry` versions. The audit
+    trail is sorted top-down per logical row so the analyst can read
+    what changed across re-postings. KPI is the count of distinct
+    logical keys in the transactions audit (not row count — one
+    entity can have N entries; we want the entity count).
+
+    `supersedes` filter dropdown applies to the transactions table
+    (the daily-balances superceding pattern is so rare in practice
+    that adding a second filter would be noise).
+    """
+    accent = get_preset(cfg.theme_preset).accent
+    ds_tx = datasets[DS_SUPERSESSION_TRANSACTIONS]
+    ds_db = datasets[DS_SUPERSESSION_DAILY_BALANCES]
+
+    # Row 1: KPI — count of distinct logical keys in the transactions
+    # supersession dataset. distinct_count on transaction_id since the
+    # dataset is already filtered to >1-entry keys.
+    sheet.layout.row(height=_KPI_ROW_SPAN).add_kpi(
+        width=_FULL,
+        title="Logical Keys with Supersession",
+        subtitle=(
+            "Count of distinct transaction_id values whose append-only "
+            "`entry` column has more than one row. Healthy demos may "
+            "be 0; production workloads typically have a small steady "
+            "trickle of TechnicalCorrection / BundleAssignment events."
+        ),
+        values=[ds_tx["transaction_id"].distinct_count()],
+    )
+
+    # Row 2: transactions audit detail — every entry of every
+    # superseded logical row, sorted by (transaction_id, entry).
+    tx_id_col = ds_tx["transaction_id"].dim()
+    sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        title="Transactions Audit",
+        subtitle=(
+            "Every entry of every logical transaction with >1 entry. "
+            "The `supersedes` column on the higher-entry row tells you "
+            "why it exists. Use the supersedes filter (Inflight / "
+            "BundleAssignment / TechnicalCorrection) to narrow the "
+            "audit to one cause class."
+        ),
+        columns=[
+            ds_tx["entry"].numerical(),
+            tx_id_col,
+            ds_tx["supersedes"].dim(),
+            ds_tx["account_id"].dim(),
+            ds_tx["account_name"].dim(),
+            ds_tx["transfer_id"].dim(),
+            ds_tx["transfer_type"].dim(),
+            ds_tx["rail_name"].dim(),
+            ds_tx["amount_money"].numerical(),
+            ds_tx["amount_direction"].dim(),
+            ds_tx["status"].dim(),
+            ds_tx["posting"].date(),
+            ds_tx["bundle_id"].dim(),
+        ],
+        conditional_formatting=[
+            CellAccentText(on=tx_id_col, color=accent),
+        ],
+    )
+
+    # Row 3: daily-balances audit detail — every entry of every
+    # superseded (account_id, business_day_start) cell.
+    db_account_col = ds_db["account_id"].dim()
+    sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        title="Daily Balances Audit",
+        subtitle=(
+            "Every entry of every (account, business_day) cell with "
+            "more than one stored value. The `money` column changing "
+            "across entries is the audit trail for an end-of-day "
+            "re-statement."
+        ),
+        columns=[
+            ds_db["entry"].numerical(),
+            db_account_col,
+            ds_db["account_name"].dim(),
+            ds_db["account_role"].dim(),
+            ds_db["supersedes"].dim(),
+            ds_db["business_day_start"].date(),
+            ds_db["business_day_end"].date(),
+            ds_db["money"].numerical(),
+        ],
+        conditional_formatting=[
+            CellAccentText(on=db_account_col, color=accent),
+        ],
+    )
+
+
 def _populate_transactions_sheet(
     cfg: Config,
     sheet: Sheet,
@@ -1433,6 +1549,7 @@ def _wire_per_sheet_dropdowns(
     limit_breach_sheet: Sheet,
     pending_aging_sheet: Sheet,
     unbundled_aging_sheet: Sheet,
+    supersession_audit_sheet: Sheet,
     todays_exceptions_sheet: Sheet,
     transactions_sheet: Sheet,
 ) -> None:
@@ -1547,6 +1664,18 @@ def _wire_per_sheet_dropdowns(
     _dropdown(
         fg_id="fg-l1-unbundled-rail", ds=ds_su, col="rail_name",
         title="Rail", sheet=unbundled_aging_sheet,
+    )
+
+    # Supersession Audit — supersedes-reason dropdown narrows the
+    # transactions table to one cause class (Inflight /
+    # BundleAssignment / TechnicalCorrection). The daily-balances
+    # table doesn't get a paired filter — supersession on
+    # daily_balances is rare enough that a second control would be
+    # noise.
+    ds_sa_tx = datasets[DS_SUPERSESSION_TRANSACTIONS]
+    _dropdown(
+        fg_id="fg-l1-supersession-reason", ds=ds_sa_tx, col="supersedes",
+        title="Supersedes Reason", sheet=supersession_audit_sheet,
     )
 
     # Today's Exceptions — check_type narrows the unified UNION; account
@@ -1919,6 +2048,12 @@ def build_l1_dashboard_app(
         title=_UNBUNDLED_AGING_TITLE,
         description=_UNBUNDLED_AGING_DESCRIPTION,
     ))
+    supersession_audit_sheet = analysis.add_sheet(Sheet(
+        sheet_id=SHEET_SUPERSESSION_AUDIT,
+        name=_SUPERSESSION_AUDIT_NAME,
+        title=_SUPERSESSION_AUDIT_TITLE,
+        description=_SUPERSESSION_AUDIT_DESCRIPTION,
+    ))
     todays_exceptions_sheet = analysis.add_sheet(Sheet(
         sheet_id=SHEET_TODAYS_EXCEPTIONS,
         name=_TODAYS_EXCEPTIONS_NAME,
@@ -1967,6 +2102,9 @@ def build_l1_dashboard_app(
         datasets=datasets,
         transactions_sheet=transactions_sheet,
     )
+    _populate_supersession_audit_sheet(
+        cfg, supersession_audit_sheet, datasets=datasets,
+    )
     _populate_todays_exceptions_sheet(
         cfg, todays_exceptions_sheet,
         datasets=datasets, l2_instance=l2_instance,
@@ -1996,9 +2134,10 @@ def build_l1_dashboard_app(
         todays_exceptions_sheet=todays_exceptions_sheet,
     )
 
-    # M.2b.3 + M.2b.5 + M.2b.10 + M.2b.11 — Per-sheet category filter
-    # dropdowns (account / role / transfer_type / check_type / status /
-    # origin / rail_name as appropriate per sheet).
+    # M.2b.3 + M.2b.5 + M.2b.10 + M.2b.11 + M.2b.12 — Per-sheet
+    # category filter dropdowns (account / role / transfer_type /
+    # check_type / status / origin / rail_name / supersedes as
+    # appropriate per sheet).
     _wire_per_sheet_dropdowns(
         analysis,
         datasets=datasets,
@@ -2008,6 +2147,7 @@ def build_l1_dashboard_app(
         limit_breach_sheet=limit_breach_sheet,
         pending_aging_sheet=pending_aging_sheet,
         unbundled_aging_sheet=unbundled_aging_sheet,
+        supersession_audit_sheet=supersession_audit_sheet,
         todays_exceptions_sheet=todays_exceptions_sheet,
         transactions_sheet=transactions_sheet,
     )
