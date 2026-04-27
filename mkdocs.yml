@@ -24,6 +24,8 @@ extra_css:
 
 nav:
   - Home: index.md
+  - L1 Handbook:
+    - Overview: handbook/l1.md
   - AR Handbook:
     - Overview: handbook/ar.md
     - Balance Drift Timelines Rollup: walkthroughs/ar/balance-drift-timelines-rollup.md
