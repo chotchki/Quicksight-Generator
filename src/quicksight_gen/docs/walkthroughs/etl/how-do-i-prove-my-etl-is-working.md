@@ -227,7 +227,7 @@ for the symptom-organized debug recipes.
 - [What do I do when the demo passes but my prod data fails?](what-do-i-do-when-demo-passes-but-prod-fails.md) —
   the symptom-organized debug companion when an invariant fails
   and you can't immediately see why.
-- [Schema_v6 → minimum viable feed](../../Schema_v6.md#the-minimum-viable-feed) —
+- [Schema_v6 → minimum viable feed](../../Schema_v6.md#etl-contract-minimum-viable-feed) —
   the column contract whose failure modes drive the invariants.
 - [AR Exceptions: Balance Drift Timelines rollup](../ar/balance-drift-timelines-rollup.md) —
   the dashboard-side view of what Invariant 2 catches when it fires

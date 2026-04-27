@@ -76,10 +76,10 @@ anchor:
   the thing to drill" mental model.
 
 The anchor dropdown widget **may briefly lag behind a walk** — this
-is the [QuickSight URL-parameter control sync](../../Schema_v6.md#materialized-views)
-limitation; the data filters correctly, but the on-screen widget
-text may stay stale. The sheet description says "trust the chart,
-not the control text" so analysts know what to expect.
+is a known QuickSight URL-parameter control sync limitation; the
+data filters correctly, but the on-screen widget text may stay
+stale. The sheet description says "trust the chart, not the
+control text" so analysts know what to expect.
 
 ## What you'll see in the demo
 

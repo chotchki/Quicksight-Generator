@@ -184,7 +184,7 @@ Once the key is producing, consuming, and rendering:
 - `what-do-i-do-when-demo-passes-but-prod-fails.md` (forthcoming) —
   the "visual shows N/A" symptom in the debug recipes is usually
   a metadata-key contract violation.
-- [Schema_v6 → metadata catalog](../../Schema_v6.md#table-1-transactions) —
+- [Schema_v6 → metadata catalog](../../Schema_v6.md#table-1-prefix_transactions) —
   the per-`transfer_type` key inventory and its forbidden-syntax
   rules.
 - [How much did we return?](../pr/how-much-did-we-return.md) —

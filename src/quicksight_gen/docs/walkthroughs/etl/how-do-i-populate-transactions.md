@@ -13,7 +13,7 @@ two-table schema by the morning cut so the dashboards work.
 
 The good news: it's mostly a column-rename. The contract is small
 (11 mandatory columns + a handful of conditional ones — see
-[Schema_v6.md → Getting Started for Data Teams](../../Schema_v6.md#getting-started-for-data-teams)).
+[Schema_v6.md → Getting Started for Data Teams](../../Schema_v6.md#etl-contract-minimum-viable-feed)).
 The bad news: skip the wrong column and a downstream check goes
 silent. So this walkthrough covers the canonical projection plus
 the per-column failure modes.
@@ -67,7 +67,7 @@ a hypothetical core-banking source schema.
 For every row your ETL writes, you're committing to a contract:
 
 1. **The 11 mandatory columns** (per [Schema_v6.md → minimum
-   viable feed](../../Schema_v6.md#the-minimum-viable-feed)) get
+   viable feed](../../Schema_v6.md#etl-contract-minimum-viable-feed)) get
    the row visible on the dashboard at all.
 2. **`parent_transfer_id`** populated only for chained transfers
    (sale → settlement → payment → external_txn for PR; reversal
@@ -160,8 +160,9 @@ Once your projection is wired up:
    for the symptom-organized debug recipes.
 4. **Iterate on metadata** — once the minimum feed is stable,
    layer in `parent_transfer_id` and the per-`transfer_type`
-   metadata keys per the priority order in
-   [Schema_v6.md → What changes after day 1](../../Schema_v6.md#what-changes-after-day-1).
+   metadata keys per the
+   [Metadata JSON columns](../../Schema_v6.md#metadata-json-columns)
+   contract.
 
 If your upstream source isn't a `gl_postings` table — say it's a
 processor report, a Fed statement file, or a sweep-engine log —
@@ -181,10 +182,10 @@ remaining patterns.
 - [How do I add a metadata key without breaking the dashboards?](how-do-i-add-a-metadata-key.md) —
   the extension contract for when your team needs a new metadata
   field.
-- [Schema_v6 → Getting Started for Data Teams](../../Schema_v6.md#getting-started-for-data-teams) —
+- [Schema_v6 → Getting Started for Data Teams](../../Schema_v6.md#etl-contract-minimum-viable-feed) —
   the persona-oriented intro to the contract.
-- [Schema_v6 → ETL examples](../../Schema_v6.md#etl-examples) —
-  the canonical SQL templates this walkthrough references.
+- [Schema_v6 → ETL contract / minimum viable feed](../../Schema_v6.md#etl-contract-minimum-viable-feed) —
+  the column-by-column day-1 minimum the projection must satisfy.
 - [Where's my money for merchant?](../pr/wheres-my-money-for-merchant.md) —
   a **downstream consumer** walkthrough: what an analyst does with
   the `transactions` rows your projection lands.

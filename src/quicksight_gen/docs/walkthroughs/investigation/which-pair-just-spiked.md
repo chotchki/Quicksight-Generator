@@ -69,7 +69,7 @@ deferred to a later phase).
 
 The matview **does not auto-refresh**. After every ETL load, the
 operator runs `REFRESH MATERIALIZED VIEW inv_pair_rolling_anomalies;`
-— see [Materialized views](../../Schema_v6.md#materialized-views).
+— see [Materialized views](../../Schema_v6.md#the-layered-model).
 A skipped refresh means the z-scores reflect yesterday's population.
 
 ## What you'll see in the demo

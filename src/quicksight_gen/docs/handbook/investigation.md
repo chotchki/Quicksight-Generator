@@ -36,7 +36,7 @@ The dashboard reads from the same `transactions` base table PR and AR
 read, plus two materialized views (`inv_pair_rolling_anomalies` and
 `inv_money_trail_edges`) that pre-compute the rolling-window
 statistics and recursive chain walk respectively. See
-[Materialized views](../Schema_v6.md#materialized-views) for the
+[Materialized views](../Schema_v6.md#the-layered-model) for the
 refresh contract — these matviews **do not auto-refresh**, so a
 skipped REFRESH after ETL load means the anomaly z-scores and chain
 edges lag the source data.
@@ -115,7 +115,7 @@ Juniper meeting in the middle.
   accounts, and money flows behind every walkthrough on this page.
 - [Schema v3 — Data Feed Contract](../Schema_v6.md) — column specs,
   metadata keys, and ETL examples for the upstream feeds. The
-  [Materialized views](../Schema_v6.md#materialized-views) section
+  [Materialized views](../Schema_v6.md#the-layered-model) section
   documents `inv_pair_rolling_anomalies` (Volume Anomalies) and
   `inv_money_trail_edges` (Money Trail / Account Network) plus the
   REFRESH cadence contract.

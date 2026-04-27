@@ -82,7 +82,7 @@ ORDER BY COUNT(*) DESC;
 ```
 
 Compare against the `transfer_type` enum in
-[Schema_v6.md → transfer_type catalog](../../Schema_v6.md#table-1-transactions).
+[Schema_v6.md → transfer_type catalog](../../Schema_v6.md#table-1-prefix_transactions).
 Any value not in the enum would have been rejected at insert.
 
 **Check 2 — Non-Zero Transfers KPI specifically**: query the
@@ -274,7 +274,7 @@ Once you've identified the root cause:
   Fed-statement ingest.
 - [How do I add a metadata key without breaking the dashboards?](how-do-i-add-a-metadata-key.md) —
   Symptom 3 is most often a metadata-key contract violation.
-- [Schema_v6 → minimum viable feed](../../Schema_v6.md#the-minimum-viable-feed) —
+- [Schema_v6 → minimum viable feed](../../Schema_v6.md#etl-contract-minimum-viable-feed) —
   the column-by-column failure modes are the source-of-truth for
   the symptoms above.
 - [Where's my money for merchant?](../pr/wheres-my-money-for-merchant.md) —

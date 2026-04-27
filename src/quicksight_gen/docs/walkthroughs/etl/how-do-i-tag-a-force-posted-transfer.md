@@ -164,5 +164,5 @@ Once your Fed-statement projection is wired up:
 - [AR Exceptions: ACH Sweep No Fed Confirmation](../ar/ach-sweep-no-fed-confirmation.md) —
   the inverse case (we posted, Fed didn't confirm) — also reads
   the `origin` tag.
-- [Schema_v6 → `origin` column spec](../../Schema_v6.md#table-1-transactions) —
+- [Schema_v6 → `origin` column spec](../../Schema_v6.md#table-1-prefix_transactions) —
   the column-contract details.

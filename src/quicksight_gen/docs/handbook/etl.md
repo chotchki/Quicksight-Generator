@@ -92,7 +92,7 @@ REFRESH MATERIALIZED VIEW inv_pair_rolling_anomalies;
 REFRESH MATERIALIZED VIEW inv_money_trail_edges;
 ```
 afterward, or the operator-facing aging / anomaly / chain columns will
-lag. See [Materialized views](../Schema_v6.md#materialized-views) for
+lag. See [Materialized views](../Schema_v6.md#the-layered-model) for
 the full refresh contract.
 
 ## Foundational walkthroughs

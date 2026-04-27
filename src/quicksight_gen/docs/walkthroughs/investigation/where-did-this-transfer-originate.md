@@ -75,7 +75,7 @@ disambiguate accounts that share names.
 
 The matview **does not auto-refresh**. After every ETL load, the
 operator runs `REFRESH MATERIALIZED VIEW inv_money_trail_edges;` —
-see [Materialized views](../../Schema_v6.md#materialized-views).
+see [Materialized views](../../Schema_v6.md#the-layered-model).
 QuickSight Direct Query can't run a recursive CTE inside a custom-
 SQL dataset, so materialization isn't optional here.
 

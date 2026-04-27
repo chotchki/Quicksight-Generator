@@ -38,7 +38,7 @@ to know before I commit?"
 
 Two reference points before you write a line of mapping code:
 
-- **[Schema_v6.md → The minimum viable feed](../../Schema_v6.md#the-minimum-viable-feed)** —
+- **[Schema_v6.md → The minimum viable feed](../../Schema_v6.md#etl-contract-minimum-viable-feed)** —
   the 11 mandatory columns on `transactions` + 6 on
   `daily_balances`. Read these first. Anything beyond the
   minimum is conditional and can wait for v2.
@@ -146,7 +146,7 @@ you commit:
   Structural level (control vs. sub-ledger) derives from
   `control_account_id IS NULL`. Don't pack the level into the
   type field — see
-  [Schema_v6.md → Canonical account_type values](../../Schema_v6.md#canonical-account_type-values).
+  [Schema_v6.md → Canonical account_type values](../../Schema_v6.md#table-1-prefix_transactions).
 - **`metadata` is the extension point, not a schema migration.**
   Your bank wants to surface a custom field (a transaction
   reference number, a regulatory flag, a per-merchant tier
@@ -196,6 +196,6 @@ Once you've decided this product fits your data:
   the ETL-engineer view of metadata key extension. The
   customization counterpart (dashboard-side read pattern) is
   later in this handbook.
-- [Schema_v6 → Getting Started for Data Teams](../../Schema_v6.md#getting-started-for-data-teams) —
+- [Schema_v6 → Getting Started for Data Teams](../../Schema_v6.md#etl-contract-minimum-viable-feed) —
   the column-level contract, including the per-column failure
   modes ("if you skip this, what dashboard breaks?").

@@ -239,7 +239,7 @@ dashboard still renders cleanly:
   the upstream prerequisite. SQL swaps assume your data is
   already in `transactions` + `daily_balances` (or in
   warehouse views you've decided to read directly).
-- [Schema_v6 → Computed views catalogue](../../Schema_v6.md#computed-views-catalogue) —
+- [Schema_v6 → Computed views catalogue](../../Schema_v6.md#the-layered-model) —
   the AR-side computed views (`ar_subledger_overdraft`,
   `ar_computed_ledger_daily_balance`, etc.) the default SQL
   reads. Read these to decide whether to redirect at the
