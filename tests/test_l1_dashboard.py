@@ -12,16 +12,21 @@ Tests here cover:
 - Dashboard ID + Analysis ID follow the `<l2_prefix>-l1-dashboard`
   convention so multi-instance deployments are distinguishable.
 - Default L2 instance auto-loads the canonical Sasquatch fixture.
+- M.2a.9 CLI smoke: `quicksight-gen generate l1-dashboard` writes the
+  expected files.
 """
 
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 
 from quicksight_gen.apps.account_recon._l2 import default_l2_instance
 from quicksight_gen.apps.l1_dashboard.app import build_l1_dashboard_app
+from quicksight_gen.cli import main
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.l2 import L2Instance
 
@@ -472,3 +477,58 @@ def test_dashboard_emits_with_expected_id_suffix() -> None:
     dashboard = app.emit_dashboard()
     assert dashboard.DashboardId.endswith("-l1-dashboard")
     assert dashboard.DashboardId == "qs-gen-l1-dashboard"
+
+
+# -- CLI smoke (M.2a.9) ------------------------------------------------------
+
+
+class TestCli:
+    """`quicksight-gen generate l1-dashboard` writes the expected files
+    + the L1 dashboard is included in the `--all` shortcut. Mirrors
+    the shape of test_executives.py::TestCli."""
+
+    def _base_config(self, tmp_path: Path) -> Path:
+        p = tmp_path / "config.yaml"
+        p.write_text(
+            "aws_account_id: '111122223333'\n"
+            "aws_region: us-west-2\n"
+            "theme_preset: default\n"
+            "datasource_arn: arn:aws:quicksight:us-west-2:111122223333"
+            ":datasource/ds\n"
+        )
+        return p
+
+    def test_generate_l1_dashboard_subcommand(self, tmp_path: Path):
+        config = self._base_config(tmp_path)
+        out = tmp_path / "out"
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["generate", "-c", str(config), "-o", str(out), "l1-dashboard"],
+        )
+        assert result.exit_code == 0, result.output
+        assert (out / "l1-dashboard-analysis.json").exists()
+        assert (out / "l1-dashboard-dashboard.json").exists()
+        # 5 datasets land in out/datasets/.
+        ds_dir = out / "datasets"
+        for name in (
+            "qs-gen-l1-drift-dataset.json",
+            "qs-gen-l1-ledger-drift-dataset.json",
+            "qs-gen-l1-overdraft-dataset.json",
+            "qs-gen-l1-limit-breach-dataset.json",
+            "qs-gen-l1-todays-exceptions-dataset.json",
+        ):
+            assert (ds_dir / name).exists(), f"missing {name}"
+
+    def test_demo_seed_rejects_l1_dashboard(self, tmp_path: Path):
+        """`demo seed l1-dashboard` must fail with a Click validation
+        error — L1 dashboard is L2-fed, not v5-demo-fed; the user should
+        run the L2 pipeline (m2_6_verify.sh) instead."""
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["demo", "seed", "l1-dashboard", "-o", str(tmp_path / "seed.sql")],
+        )
+        assert result.exit_code != 0
+        # Click's choice-validation error mentions the invalid value.
+        assert "l1-dashboard" in result.output

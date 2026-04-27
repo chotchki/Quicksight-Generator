@@ -15,7 +15,10 @@ from quicksight_gen.common.config import load_config
 from quicksight_gen.common.theme import build_theme
 
 
-APPS = ("payment-recon", "account-recon", "investigation", "executives")
+APPS = (
+    "payment-recon", "account-recon", "investigation",
+    "executives", "l1-dashboard",
+)
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -81,11 +84,12 @@ def generate(
         _generate_account_recon(config, output_dir, theme_preset)
         _generate_investigation(config, output_dir, theme_preset)
         _generate_executives(config, output_dir, theme_preset)
+        _generate_l1_dashboard(config, output_dir, theme_preset)
     else:
         click.echo(ctx.get_help())
         raise click.UsageError(
             "Specify an app (payment-recon, account-recon, "
-            "investigation, executives) or --all."
+            "investigation, executives, l1-dashboard) or --all."
         )
 
 
@@ -121,6 +125,15 @@ def generate_executives_cmd(ctx: click.Context) -> None:
 def generate_investigation_cmd(ctx: click.Context) -> None:
     """Generate Investigation JSON."""
     _generate_investigation(
+        ctx.obj["config"], ctx.obj["output_dir"], ctx.obj["theme_preset"],
+    )
+
+
+@generate.command("l1-dashboard")
+@click.pass_context
+def generate_l1_dashboard_cmd(ctx: click.Context) -> None:
+    """Generate L1 Reconciliation Dashboard JSON (M.2a — L2-fed)."""
+    _generate_l1_dashboard(
         ctx.obj["config"], ctx.obj["output_dir"], ctx.obj["theme_preset"],
     )
 
@@ -276,6 +289,48 @@ def _generate_executives(
     click.echo(f"\nGenerated {1 + len(datasets) + 2} files in {out}/")
 
 
+def _generate_l1_dashboard(
+    config_path: str, output_dir: str, theme_preset: str | None,
+) -> None:
+    from quicksight_gen.apps.l1_dashboard.app import (
+        build_analysis,
+        build_l1_dashboard_dashboard,
+    )
+    from quicksight_gen.apps.l1_dashboard.datasets import (
+        build_all_l1_dashboard_datasets,
+    )
+    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+
+    cfg = load_config(config_path)
+    if theme_preset is not None:
+        cfg.theme_preset = theme_preset
+    out = Path(output_dir)
+    click.echo(
+        f"L1 Dashboard: account={cfg.aws_account_id}, "
+        f"region={cfg.aws_region}"
+    )
+
+    theme = build_theme(cfg)
+    _write_json(out / "theme.json", theme.to_aws_json())
+
+    l2_instance = default_l2_instance()
+    datasets = build_all_l1_dashboard_datasets(cfg, l2_instance)
+    _prune_stale_files(
+        out / "datasets",
+        keep=_all_dataset_filenames(cfg, keep_current=datasets),
+    )
+    for ds in datasets:
+        _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
+
+    analysis = build_analysis(cfg)
+    _write_json(out / "l1-dashboard-analysis.json", analysis.to_aws_json())
+
+    dashboard = build_l1_dashboard_dashboard(cfg)
+    _write_json(out / "l1-dashboard-dashboard.json", dashboard.to_aws_json())
+
+    click.echo(f"\nGenerated {1 + len(datasets) + 2} files in {out}/")
+
+
 def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
     """Expected dataset filenames for both apps combined.
 
@@ -283,6 +338,7 @@ def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
     pass will write — always included. The other app's filenames are
     included so a single-app generate doesn't prune its sibling's output.
     """
+    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
     from quicksight_gen.apps.account_recon.datasets import (
         build_all_datasets as _ar,
     )
@@ -291,6 +347,9 @@ def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
     )
     from quicksight_gen.apps.investigation.datasets import (
         build_all_datasets as _inv,
+    )
+    from quicksight_gen.apps.l1_dashboard.datasets import (
+        build_all_l1_dashboard_datasets as _l1,
     )
     from quicksight_gen.apps.payment_recon.datasets import (
         build_all_datasets as _pr,
@@ -301,6 +360,10 @@ def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
     names.update(f"{ds.DataSetId}.json" for ds in _ar(cfg))
     names.update(f"{ds.DataSetId}.json" for ds in _inv(cfg))
     names.update(f"{ds.DataSetId}.json" for ds in _exec(cfg))
+    names.update(
+        f"{ds.DataSetId}.json"
+        for ds in _l1(cfg, default_l2_instance())
+    )
     return names
 
 
@@ -309,6 +372,18 @@ def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
 # ---------------------------------------------------------------------------
 
 APP_CHOICE = click.Choice([
+    "payment-recon", "account-recon", "investigation",
+    "executives", "l1-dashboard",
+])
+
+# Demo subcommands (schema / seed / etl-example / apply) target the v5
+# demo-data pipeline only. `l1-dashboard` is the L2-fed app — its data
+# comes from the L2 prefixed schema + M.2.2's L2 seed via the L2
+# pipeline (e.g. `m2_6_verify.sh`), NOT from the v5 demo_data.py
+# generators here. Keeping it out of DEMO_APP_CHOICE means
+# `demo seed l1-dashboard` fails with a Click validation error pointing
+# the user at the right surface.
+DEMO_APP_CHOICE = click.Choice([
     "payment-recon", "account-recon", "investigation", "executives",
 ])
 
@@ -319,7 +394,7 @@ def demo() -> None:
 
 
 @demo.command("schema")
-@click.argument("app", type=APP_CHOICE, required=False)
+@click.argument("app", type=DEMO_APP_CHOICE, required=False)
 @click.option("--all", "all_apps", is_flag=True, help="Emit schema for all apps.")
 @click.option(
     "--output", "-o",
@@ -340,7 +415,7 @@ def demo_schema(app: str | None, all_apps: bool, output: str) -> None:
 
 
 @demo.command("seed")
-@click.argument("app", type=APP_CHOICE, required=False)
+@click.argument("app", type=DEMO_APP_CHOICE, required=False)
 @click.option("--all", "all_apps", is_flag=True, help="Emit seeds for all apps.")
 @click.option(
     "--output", "-o",
@@ -377,7 +452,7 @@ def demo_seed(app: str | None, all_apps: bool, output: str) -> None:
 
 
 @demo.command("etl-example")
-@click.argument("app", type=APP_CHOICE, required=False)
+@click.argument("app", type=DEMO_APP_CHOICE, required=False)
 @click.option("--all", "all_apps", is_flag=True, help="Emit examples for all apps.")
 @click.option(
     "--output", "-o",
@@ -424,7 +499,7 @@ def demo_etl_example(app: str | None, all_apps: bool, output: str) -> None:
 
 
 @demo.command("apply")
-@click.argument("app", type=APP_CHOICE, required=False)
+@click.argument("app", type=DEMO_APP_CHOICE, required=False)
 @click.option("--all", "all_apps", is_flag=True, help="Apply for all apps.")
 @click.option(
     "--config", "-c",
@@ -655,6 +730,8 @@ def deploy_cmd(
             _generate_investigation(config, output_dir, theme_preset)
         if app_name in ("executives", "all"):
             _generate_executives(config, output_dir, theme_preset)
+        if app_name in ("l1-dashboard", "all"):
+            _generate_l1_dashboard(config, output_dir, theme_preset)
 
     cfg = load_config(config)
     if app_name == "all":
