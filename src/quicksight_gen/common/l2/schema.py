@@ -122,7 +122,13 @@ def refresh_matviews_sql(instance: L2Instance) -> str:
         f"{p}_daily_statement_summary",
         f"{p}_todays_exceptions",
     ]
-    return "\n".join(f"REFRESH MATERIALIZED VIEW {n};" for n in names)
+    # REFRESH first, then ANALYZE — ANALYZE updates planner stats so
+    # subsequent SELECTs use the indexes we ship on each matview
+    # (without ANALYZE the planner doesn't know the post-REFRESH row
+    # count + value distribution and may pick a sequential scan).
+    refreshes = "\n".join(f"REFRESH MATERIALIZED VIEW {n};" for n in names)
+    analyzes = "\n".join(f"ANALYZE {n};" for n in names)
+    return f"{refreshes}\n{analyzes}"
 
 
 def _emit_l1_invariant_views(instance: L2Instance) -> str:
@@ -340,6 +346,14 @@ SELECT * FROM {p}_transactions tx
 WHERE tx.entry = (
     SELECT MAX(entry) FROM {p}_transactions WHERE id = tx.id
 );
+-- Indexes targeting the dashboard's hot-path filters: per-account
+-- date range (Daily Statement detail, Transactions sheet), per-transfer
+-- (drill chain), per-status (filter dropdowns).
+CREATE INDEX idx_{p}_curr_tx_account_posting
+    ON {p}_current_transactions (account_id, posting);
+CREATE INDEX idx_{p}_curr_tx_transfer ON {p}_current_transactions (transfer_id);
+CREATE INDEX idx_{p}_curr_tx_id ON {p}_current_transactions (id);
+CREATE INDEX idx_{p}_curr_tx_status ON {p}_current_transactions (status);
 
 CREATE MATERIALIZED VIEW {p}_current_daily_balances AS
 SELECT * FROM {p}_daily_balances sb
@@ -349,6 +363,13 @@ WHERE sb.entry = (
     WHERE account_id = sb.account_id
       AND business_day_start = sb.business_day_start
 );
+-- Composite index covers (account_id, business_day_start) which every
+-- downstream view JOINs / filters on. Scope index covers the WHERE
+-- account_scope = 'internal' filter common in L1 invariants.
+CREATE INDEX idx_{p}_curr_db_account_day
+    ON {p}_current_daily_balances (account_id, business_day_start);
+CREATE INDEX idx_{p}_curr_db_scope_day
+    ON {p}_current_daily_balances (account_scope, business_day_start);
 """
 
 
@@ -420,6 +441,9 @@ SELECT
 FROM {p}_current_daily_balances sb
 WHERE sb.account_scope = 'internal'
   AND sb.account_parent_role IS NOT NULL;
+-- JOIN key with current_daily_balances + drift's WHERE filter.
+CREATE INDEX idx_{p}_csb_account_day
+    ON {p}_computed_subledger_balance (account_id, business_day_start);
 
 -- ---------------------------------------------------------------------
 -- Helper view: ComputedBalance theorem for parent (ledger) accounts.
@@ -467,6 +491,9 @@ WHERE parent_db.account_scope = 'internal'
       SELECT 1 FROM {p}_current_daily_balances child2
       WHERE child2.account_parent_role = parent_db.account_role
   );
+-- JOIN key with current_daily_balances + ledger_drift's WHERE filter.
+CREATE INDEX idx_{p}_clb_account_day
+    ON {p}_computed_ledger_balance (account_id, business_day_start);
 
 -- ---------------------------------------------------------------------
 -- L1 invariant: Sub-ledger drift.
@@ -492,6 +519,11 @@ JOIN {p}_computed_subledger_balance cb
 WHERE sb.account_scope = 'internal'
   AND sb.account_parent_role IS NOT NULL
   AND sb.money <> cb.computed_balance;
+-- Dashboard hot-path: per-sheet account dropdown + date filter, plus
+-- the universal-date-range filter from M.2b.1.
+CREATE INDEX idx_{p}_drift_account_day
+    ON {p}_drift (account_id, business_day_start);
+CREATE INDEX idx_{p}_drift_role ON {p}_drift (account_role);
 
 -- ---------------------------------------------------------------------
 -- L1 invariant: Ledger drift.
@@ -514,6 +546,10 @@ JOIN {p}_computed_ledger_balance cb
   ON cb.account_id = sb.account_id
  AND cb.business_day_start = sb.business_day_start
 WHERE sb.money <> cb.computed_balance;
+CREATE INDEX idx_{p}_ledger_drift_account_day
+    ON {p}_ledger_drift (account_id, business_day_start);
+CREATE INDEX idx_{p}_ledger_drift_role
+    ON {p}_ledger_drift (account_role);
 
 -- ---------------------------------------------------------------------
 -- L1 invariant: Non-negative stored balance.
@@ -533,6 +569,9 @@ SELECT
 FROM {p}_current_daily_balances sb
 WHERE sb.account_scope = 'internal'
   AND sb.money < 0;
+CREATE INDEX idx_{p}_overdraft_account_day
+    ON {p}_overdraft (account_id, business_day_start);
+CREATE INDEX idx_{p}_overdraft_role ON {p}_overdraft (account_role);
 
 -- ---------------------------------------------------------------------
 -- L1 invariant: Expected EOD balance.
@@ -553,6 +592,8 @@ SELECT
 FROM {p}_current_daily_balances sb
 WHERE sb.expected_eod_balance IS NOT NULL
   AND sb.money <> sb.expected_eod_balance;
+CREATE INDEX idx_{p}_eod_breach_account_day
+    ON {p}_expected_eod_balance_breach (account_id, business_day_start);
 
 -- ---------------------------------------------------------------------
 -- L1 invariant: Limit breach.
@@ -593,6 +634,9 @@ FROM (
 ) outbound_with_cap
 WHERE cap IS NOT NULL
   AND outbound_total > cap;
+CREATE INDEX idx_{p}_lb_account_day
+    ON {p}_limit_breach (account_id, business_day);
+CREATE INDEX idx_{p}_lb_type ON {p}_limit_breach (transfer_type);
 
 -- ---------------------------------------------------------------------
 -- Dashboard-shape matview: Daily Statement Summary.
@@ -648,6 +692,11 @@ FROM account_days ad
 LEFT JOIN today_flows tf
   ON tf.account_id = ad.account_id
   AND tf.business_day_start = ad.business_day_start;
+-- Daily Statement sheet's per-(account, day) parameter filter — both
+-- columns participate in the WHERE so a composite index covers the
+-- KPIs + detail table at once.
+CREATE INDEX idx_{p}_dss_account_day
+    ON {p}_daily_statement_summary (account_id, business_day_start);
 
 -- ---------------------------------------------------------------------
 -- Dashboard-shape matview: Today's Exceptions UNION.
@@ -693,4 +742,10 @@ SELECT 'expected_eod_balance_breach', account_id, account_name,
        account_role, NULL, business_day_start, NULL, ABS(variance)
 FROM {p}_expected_eod_balance_breach, latest_day
 WHERE business_day_start = latest_day.day;
+-- Today's Exceptions sheet has 3 dropdowns (check_type, account,
+-- transfer_type); each WHERE filter benefits from its own index.
+CREATE INDEX idx_{p}_te_check_type
+    ON {p}_todays_exceptions (check_type);
+CREATE INDEX idx_{p}_te_account ON {p}_todays_exceptions (account_id);
+CREATE INDEX idx_{p}_te_type ON {p}_todays_exceptions (transfer_type);
 """

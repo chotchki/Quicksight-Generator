@@ -646,15 +646,20 @@ def _baseline_instance() -> L2Instance:
 
 
 def test_refresh_matviews_sql_emits_one_per_view() -> None:
-    """All 11 L1-pipeline matviews each get a REFRESH command:
-    2 current_* + 2 computed_* + 5 L1 invariants + 2 dashboard-shape
-    matviews (daily_statement_summary + todays_exceptions) added at
-    M.1a.9."""
+    """All 11 L1-pipeline matviews each get a REFRESH command + an
+    ANALYZE follow-up: 2 current_* + 2 computed_* + 5 L1 invariants +
+    2 dashboard-shape (daily_statement_summary + todays_exceptions)
+    = 11 matviews × 2 statements each = 22 total."""
     sql = refresh_matviews_sql(_baseline_instance())
-    statements = [s for s in sql.split(";") if s.strip()]
-    assert len(statements) == 11
-    for stmt in statements:
-        assert stmt.strip().startswith("REFRESH MATERIALIZED VIEW re_")
+    statements = [s.strip() for s in sql.split(";") if s.strip()]
+    refreshes = [s for s in statements if s.startswith("REFRESH ")]
+    analyzes = [s for s in statements if s.startswith("ANALYZE ")]
+    assert len(refreshes) == 11
+    assert len(analyzes) == 11
+    # Every REFRESHed matview gets a matching ANALYZE.
+    refresh_names = {s.removeprefix("REFRESH MATERIALIZED VIEW ") for s in refreshes}
+    analyze_names = {s.removeprefix("ANALYZE ") for s in analyzes}
+    assert refresh_names == analyze_names
 
 
 def test_refresh_matviews_sql_dependency_order() -> None:
