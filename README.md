@@ -265,7 +265,7 @@ quicksight-gen demo seed   --all -o /tmp/seed.sql
 quicksight-gen demo apply --all -c config.yaml -o out/
 ```
 
-`demo apply` creates tables + views, inserts the sample data, writes a `datasource.json` derived from the database URL, and generates all QuickSight JSON. Both apps feed two shared base tables — `transactions` (every money-movement leg) and `daily_balances` (per-account end-of-day snapshots) — plus AR-only dimension tables (`ar_ledger_accounts`, `ar_subledger_accounts`, `ar_ledger_transfer_limits`). The `account_type` and `transfer_type` columns discriminate which app a row belongs to. See [`Schema_v3.md`](src/quicksight_gen/docs/Schema_v3.md) for the full feed contract, canonical type values, metadata key catalog, and ETL examples for piping production data into the same shape.
+`demo apply` creates tables + views, inserts the sample data, writes a `datasource.json` derived from the database URL, and generates all QuickSight JSON. Both apps feed two shared base tables — `transactions` (every money-movement leg) and `daily_balances` (per-account end-of-day snapshots) — plus AR-only dimension tables (`ar_ledger_accounts`, `ar_subledger_accounts`, `ar_ledger_transfer_limits`). The `account_type` and `transfer_type` columns discriminate which app a row belongs to. See [`Schema_v6.md`](src/quicksight_gen/docs/Schema_v6.md) for the full feed contract, canonical type values, metadata key catalog, and ETL examples for piping production data into the same shape.
 
 **PostgreSQL 17+ is required** for `demo apply`: the schema uses SQL/JSON path syntax (`JSON_VALUE`, `JSON_QUERY`, `JSON_EXISTS`) for the `metadata TEXT` columns, and the portable subset forbids the Postgres-only `->>` / `->` / `@>` / `?` operators and JSONB.
 
@@ -317,7 +317,7 @@ src/quicksight_gen/
         executives/     # app.py (4 sheets), datasets.py (2 datasets, per-transfer pre-aggregated). Greenfield on tree primitives — no constants.py.
     schema.py           # `generate_schema_sql()` — reads the canonical DDL
     schema.sql          # Canonical PostgreSQL DDL (interface contract for ETL); shared `transactions` + `daily_balances` base layer + AR dimension tables + AR + Investigation matviews
-    docs/               # mkdocs site source — handbook/, walkthroughs/, Schema_v3.md, Training_Story.md (extract via `quicksight-gen export docs`)
+    docs/               # mkdocs site source — handbook/, walkthroughs/, Schema_v6.md, Training_Story.md (extract via `quicksight-gen export docs`)
     training/           # Whitelabel handbook kit — handbook/, mapping.yaml.example (extract via `quicksight-gen export training`)
 tests/
     test_models.py, test_generate.py, test_recon.py, test_account_recon.py,
@@ -364,7 +364,7 @@ Captured as an `xfail(strict=False)` characterization test in `tests/e2e/test_fi
 
 Edit the dataset builders in `<app>/datasets.py`. Each dataset has a `sql` string and a `DatasetContract` (column name + type list) — unit tests assert the SQL projection matches the contract, so the contract is the safety net when rewriting.
 
-The dataset SQL reads from two shared base tables (`transactions`, `daily_balances`) plus the AR-only dimension tables. To wire your production data in, ETL into the same shape: see [`Schema_v3.md`](src/quicksight_gen/docs/Schema_v3.md) for column specifications, the canonical `account_type` / `transfer_type` values, the JSON metadata key catalog, and end-to-end ETL examples.
+The dataset SQL reads from two shared base tables (`transactions`, `daily_balances`) plus the AR-only dimension tables. To wire your production data in, ETL into the same shape: see [`Schema_v6.md`](src/quicksight_gen/docs/Schema_v6.md) for column specifications, the canonical `account_type` / `transfer_type` values, the JSON metadata key catalog, and end-to-end ETL examples.
 
 ### Add a visual or tab
 

@@ -92,7 +92,7 @@ nav:
     - How do I test my customization?: walkthroughs/customization/how-do-i-test-my-customization.md
   - Training Scenarios:
     - Account Structure: Training_Story.md
-    - Schema v3 — Data Feed Contract: Schema_v3.md
+    - Schema v6 — Data Feed Contract: Schema_v6.md
     - L1 Invariants: L1_Invariants.md
   - API Reference:
     - Overview: api/index.md

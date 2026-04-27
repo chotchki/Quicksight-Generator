@@ -39,8 +39,8 @@ Three reference points:
 - **`demo/schema.sql`** — the `CHECK (transfer_type IN (...))`
   constraint at the top of the `transactions` table DDL. This
   is the source of truth for the canonical value list.
-- **[Schema_v3.md → Canonical account_type values](../../Schema_v3.md#canonical-account_type-values)** /
-  **[Schema_v3.md → Table 1 transactions](../../Schema_v3.md#table-1-transactions)** —
+- **[Schema_v6.md → Canonical account_type values](../../Schema_v6.md#canonical-account_type-values)** /
+  **[Schema_v6.md → Table 1 transactions](../../Schema_v6.md#table-1-transactions)** —
   the per-`transfer_type` metadata key inventory and the
   `account_type` table (`gl_control`, `dda`, `merchant_dda`,
   `external_counter`, `concentration_master`, `funds_pool`).
@@ -80,7 +80,7 @@ account_type VARCHAR(50) NOT NULL,
 The canonical list (`gl_control`, `dda`, `merchant_dda`,
 `external_counter`, `concentration_master`, `funds_pool`) is
 documented in
-[Schema_v3.md](../../Schema_v3.md#canonical-account_type-values)
+[Schema_v6.md](../../Schema_v6.md#canonical-account_type-values)
 but enforced only by convention. Adding a new account_type is
 zero-DDL.
 
@@ -99,7 +99,7 @@ Three steps:
    schema is direct query — no downstream cache to invalidate.)
 2. **Decide the metadata-key payload.** The existing
    per-`transfer_type` metadata catalog
-   ([Schema_v3.md](../../Schema_v3.md#the-metadata-text-column-contract))
+   ([Schema_v6.md](../../Schema_v6.md#the-metadata-text-column-contract))
    gives each `transfer_type` its own metadata key set
    (`card_brand` on sales, `settlement_type` on settlements,
    etc.). Decide what goes in `metadata` for your new value.
@@ -117,7 +117,7 @@ Two steps (no schema change needed — `account_type` has no
 CHECK constraint):
 
 1. **Document the new value.** Update
-   [Schema_v3.md → Canonical account_type values](../../Schema_v3.md#canonical-account_type-values)
+   [Schema_v6.md → Canonical account_type values](../../Schema_v6.md#canonical-account_type-values)
    with the new role and what it means. The list is the
    convention; without it, future-you will guess.
 2. **Wire your ETL to write the new value.** Same as
@@ -247,6 +247,6 @@ Once your new canonical value is wired:
   for when you need to extend a type-scoped exception check
   to fire on your new value. The contract-preserving SQL edit
   is the right shape.
-- [Schema_v3 → Canonical account_type values](../../Schema_v3.md#canonical-account_type-values) —
+- [Schema_v6 → Canonical account_type values](../../Schema_v6.md#canonical-account_type-values) —
   the documented convention for `account_type`. Update the
   table when you add a new role.

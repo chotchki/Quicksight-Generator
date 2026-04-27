@@ -32,7 +32,7 @@ Three reference points:
 - **`quicksight-gen demo etl-example account-recon`** — Pattern 5
   is the canonical ledger-drift recompute query. Copy it as-is and
   point it at your account set.
-- **`docs/Schema_v3.md`** — the per-column failure-mode notes
+- **`docs/Schema_v6.md`** — the per-column failure-mode notes
   ("If you skip this, what dashboard breaks?") tell you which
   invariant a column violation will trip.
 - **AR Exceptions sheet** — three checks (AR Non-Zero Transfers,
@@ -227,7 +227,7 @@ for the symptom-organized debug recipes.
 - [What do I do when the demo passes but my prod data fails?](what-do-i-do-when-demo-passes-but-prod-fails.md) —
   the symptom-organized debug companion when an invariant fails
   and you can't immediately see why.
-- [Schema_v3 → minimum viable feed](../../Schema_v3.md#the-minimum-viable-feed) —
+- [Schema_v6 → minimum viable feed](../../Schema_v6.md#the-minimum-viable-feed) —
   the column contract whose failure modes drive the invariants.
 - [AR Exceptions: Balance Drift Timelines rollup](../ar/balance-drift-timelines-rollup.md) —
   the dashboard-side view of what Invariant 2 catches when it fires

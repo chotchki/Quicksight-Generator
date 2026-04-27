@@ -37,7 +37,7 @@ dashboards or the portability of the SQL?"
 
 Three reference points:
 
-- **`docs/Schema_v3.md` → metadata catalog tables** — the existing
+- **`docs/Schema_v6.md` → metadata catalog tables** — the existing
   per-`transfer_type` key inventory. New keys should slot into the
   same shape (key name, type, what it drives).
 - **`src/quicksight_gen/apps/payment_recon/datasets.py`** and
@@ -88,7 +88,7 @@ The contract for any new metadata key has four parts:
 3. **Use `JSON_VALUE(metadata, '$.key')` to read, never `->>`**.
    The `->>` operator is PostgreSQL-only; `JSON_VALUE` is the
    SQL/JSON standard form.
-4. **Document the new key in `Schema_v3.md`'s metadata catalog
+4. **Document the new key in `Schema_v6.md`'s metadata catalog
    for that `transfer_type`**. Otherwise the
    `test_metadata_keys_referenced_in_examples_are_documented`
    test fails the next time anyone touches the etl-example
@@ -143,7 +143,7 @@ Update the matching `DatasetContract` to add `("originating_branch",
 "STRING")` so the contract test stays green.
 
 **Step 3 — document it.** Add a row to the PR `sale` metadata
-catalog table in `Schema_v3.md`:
+catalog table in `Schema_v6.md`:
 
 ```markdown
 | `originating_branch` | string | Branch code that handled the sale | Sales sheet branch grouping |
@@ -184,7 +184,7 @@ Once the key is producing, consuming, and rendering:
 - `what-do-i-do-when-demo-passes-but-prod-fails.md` (forthcoming) —
   the "visual shows N/A" symptom in the debug recipes is usually
   a metadata-key contract violation.
-- [Schema_v3 → metadata catalog](../../Schema_v3.md#table-1-transactions) —
+- [Schema_v6 → metadata catalog](../../Schema_v6.md#table-1-transactions) —
   the per-`transfer_type` key inventory and its forbidden-syntax
   rules.
 - [How much did we return?](../pr/how-much-did-we-return.md) —

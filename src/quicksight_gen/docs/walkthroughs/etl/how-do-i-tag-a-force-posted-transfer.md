@@ -39,7 +39,7 @@ Two reference points:
 - **`quicksight-gen demo etl-example account-recon`** — Pattern 2
   ("Force-posted ACH from the Fed") is the canonical projection.
   Strip the sentinel suffix and wire to your Fed-statement parser.
-- **`docs/Schema_v3.md` → `origin` column spec** — the per-value
+- **`docs/Schema_v6.md` → `origin` column spec** — the per-value
   failure-mode notes describe exactly which checks under-fire when
   you skip `external_force_posted`.
 
@@ -164,5 +164,5 @@ Once your Fed-statement projection is wired up:
 - [AR Exceptions: ACH Sweep No Fed Confirmation](../ar/ach-sweep-no-fed-confirmation.md) —
   the inverse case (we posted, Fed didn't confirm) — also reads
   the `origin` tag.
-- [Schema_v3 → `origin` column spec](../../Schema_v3.md#table-1-transactions) —
+- [Schema_v6 → `origin` column spec](../../Schema_v6.md#table-1-transactions) —
   the column-contract details.

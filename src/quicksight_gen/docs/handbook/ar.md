@@ -139,10 +139,10 @@ per-check walkthrough below describes column meanings and drill paths.
 
 - [Account Structure](../Training_Story.md) — the bank, customers,
   accounts, and money flows behind every walkthrough on this page.
-- [Schema v3 — Data Feed Contract](../Schema_v3.md) — column specs,
+- [Schema v3 — Data Feed Contract](../Schema_v6.md) — column specs,
   metadata keys, and ETL examples for the upstream feeds that populate
   the dashboards. The
-  [Lateness as data](../Schema_v3.md#lateness-as-data) section is the
+  [Lateness as data](../Schema_v6.md#lateness-as-data) section is the
   contract behind the **Lateness** picker on the Today's Exceptions /
   Trends sheets and the `is_late` column on the unified table.
 - [Data Integration Handbook](etl.md) — the team that populates the

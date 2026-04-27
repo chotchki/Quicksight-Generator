@@ -44,7 +44,7 @@ Three reference points:
   dataset SQL files. Every existing `JSON_VALUE` extraction is
   a model for the one you're adding. Grep for
   `JSON_VALUE(metadata` to see them.
-- **[Schema_v3.md → metadata text column contract](../../Schema_v3.md#the-metadata-text-column-contract)** —
+- **[Schema_v6.md → metadata text column contract](../../Schema_v6.md#the-metadata-text-column-contract)** —
   the cataloged keys, their per-`transfer_type` placement, and
   the forbidden-syntax list (`->>`, `->`, `@>`, `?` are all
   out — only `JSON_VALUE` / `JSON_QUERY` / `JSON_EXISTS`).
@@ -236,7 +236,7 @@ Once the new column is reading and rendering:
    (your own `originating_branch` schema), document in your
    internal customization README; if it's a candidate for
    upstream contribution, add a row to
-   [Schema_v3.md → metadata catalog](../../Schema_v3.md#the-metadata-text-column-contract)
+   [Schema_v6.md → metadata catalog](../../Schema_v6.md#the-metadata-text-column-contract)
    and propose it as part of the canonical key set.
 
 ## Related walkthroughs
@@ -248,7 +248,7 @@ Once the new column is reading and rendering:
   the contract / projection relationship. Adding a metadata
   column is a contract change; the swap walkthrough explains
   why that's not free and what the test catches.
-- [Schema_v3 → metadata text column contract](../../Schema_v3.md#the-metadata-text-column-contract) —
+- [Schema_v6 → metadata text column contract](../../Schema_v6.md#the-metadata-text-column-contract) —
   the canonical per-`transfer_type` metadata key inventory and
   the forbidden-syntax list (no `->>`, no JSONB, no
   Postgres-specific operators).

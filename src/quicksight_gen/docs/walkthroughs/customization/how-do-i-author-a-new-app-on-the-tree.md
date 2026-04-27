@@ -4,7 +4,7 @@
 
 ## The story
 
-You've read the [shared schema](../../Schema_v3.md), pointed your
+You've read the [shared schema](../../Schema_v6.md), pointed your
 production data at `transactions` + `daily_balances`, and the three
 shipped apps (Payment Reconciliation, Account Reconciliation,
 Investigation) cover most of what your operations team needs. But

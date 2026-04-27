@@ -39,5 +39,5 @@ For the teams loading data into and customizing the dashboards.
 
 - [Account Structure](Training_Story.md) — how Sasquatch National
   Bank, the demo persona, and its accounts relate to each other.
-- [Schema v3 — Data Feed Contract](Schema_v3.md) — column specs,
+- [Schema v3 — Data Feed Contract](Schema_v6.md) — column specs,
   metadata key catalog, and ETL examples for the two base tables.

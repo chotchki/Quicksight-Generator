@@ -136,7 +136,7 @@ Asserts the schema DDL and ETL example SQL produced by the
 - Schema migrations that don't round-trip (DROP without
   matching CREATE, missing index).
 - ETL examples whose metadata keys aren't in
-  Schema_v3.md's catalog.
+  Schema_v6.md's catalog.
 
 Customizations that touch `demo/schema.sql` (a new CHECK
 constraint value, a new index) are most likely to fail tests

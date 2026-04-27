@@ -123,7 +123,7 @@ them when you can give the dashboard rail-accurate signal:
   data-driven `is_late` predicate fires off this column with a
   `posted_at + INTERVAL '1 day'` fallback when it's NULL. Adopt
   one rail at a time; until then, every row uses the one-day
-  default. Full contract: [Lateness as data](../Schema_v3.md#lateness-as-data)
+  default. Full contract: [Lateness as data](../Schema_v6.md#lateness-as-data)
   in the schema doc, plus the
   [`expected_complete_at` ETL section](etl.md#optional-expected_complete_at-lateness)
   in the ETL handbook.
@@ -220,7 +220,7 @@ returns + its SHOULD-constraint motivation), see
 
 ## Reference
 
-- [Schema v3 — Data Feed Contract](../Schema_v3.md) — the column
+- [Schema v3 — Data Feed Contract](../Schema_v6.md) — the column
   contract for the two base tables. Read this before mapping
   your source system.
 - [L1 Invariants](../L1_Invariants.md) — what each `<prefix>_*`

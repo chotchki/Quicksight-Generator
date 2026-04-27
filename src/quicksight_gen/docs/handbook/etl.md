@@ -46,7 +46,7 @@ discriminate which app a row belongs to; the schema itself is
 shared. Full column contract, per-column failure modes, metadata
 catalog, and ETL examples:
 
-- [Schema v3 — Data Feed Contract](../Schema_v3.md) — the
+- [Schema v3 — Data Feed Contract](../Schema_v6.md) — the
   source-of-truth document. Read the *Getting Started for Data
   Teams* preamble first.
 
@@ -76,7 +76,7 @@ transfer-level deadline. You don't need to denormalize this across
 all legs of a transfer — just populate the leg(s) you have rail
 data for, and the views work the join.
 
-See [Lateness as data](../Schema_v3.md#lateness-as-data) for the
+See [Lateness as data](../Schema_v6.md#lateness-as-data) for the
 default formula, the `is_late` predicate SQL, and the
 multi-leg tie-breaker query.
 
@@ -92,7 +92,7 @@ REFRESH MATERIALIZED VIEW inv_pair_rolling_anomalies;
 REFRESH MATERIALIZED VIEW inv_money_trail_edges;
 ```
 afterward, or the operator-facing aging / anomaly / chain columns will
-lag. See [Materialized views](../Schema_v3.md#materialized-views) for
+lag. See [Materialized views](../Schema_v6.md#materialized-views) for
 the full refresh contract.
 
 ## Foundational walkthroughs
@@ -125,7 +125,7 @@ the full refresh contract.
   </a>
   <a class="snb-card" href="../walkthroughs/etl/how-do-i-add-a-metadata-key/">
     <h3>How do I add a metadata key without breaking the dashboards?</h3>
-    <p>Extension contract: portable scalar types, `JSON_OBJECT` writes / `JSON_VALUE` reads, Schema_v3 catalog update. Walks an `originating_branch` addition end-to-end.</p>
+    <p>Extension contract: portable scalar types, `JSON_OBJECT` writes / `JSON_VALUE` reads, Schema_v6 catalog update. Walks an `originating_branch` addition end-to-end.</p>
   </a>
 </div>
 
@@ -162,7 +162,7 @@ upstream feed's source fields.
 
 ## Reference
 
-- [Schema v3 — Data Feed Contract](../Schema_v3.md) — column specs,
+- [Schema v3 — Data Feed Contract](../Schema_v6.md) — column specs,
   metadata keys, ETL examples. The source of truth this handbook
   points at.
 - [Account Structure](../Training_Story.md) — the bank, customers,

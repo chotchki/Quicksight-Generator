@@ -13,7 +13,7 @@ two-table schema by the morning cut so the dashboards work.
 
 The good news: it's mostly a column-rename. The contract is small
 (11 mandatory columns + a handful of conditional ones — see
-[Schema_v3.md → Getting Started for Data Teams](../../Schema_v3.md#getting-started-for-data-teams)).
+[Schema_v6.md → Getting Started for Data Teams](../../Schema_v6.md#getting-started-for-data-teams)).
 The bad news: skip the wrong column and a downstream check goes
 silent. So this walkthrough covers the canonical projection plus
 the per-column failure modes.
@@ -28,7 +28,7 @@ must I populate, and what columns can wait until v2?"
 
 Two reference points:
 
-- **`docs/Schema_v3.md`** — column-level contract and per-column
+- **`docs/Schema_v6.md`** — column-level contract and per-column
   failure modes ("If you skip this, what dashboard breaks?").
 - **`quicksight-gen demo etl-example --all -o etl-examples.sql`** —
   emits 11 canonical INSERT-pattern blocks (6 PR + 5 AR) that you
@@ -56,7 +56,7 @@ upstream feed's source field. The full block runs ~50 lines and
 covers every column the PR side cares about.
 
 For an end-to-end mapping from `core_banking.gl_postings` →
-`transactions`, see **Example 1** in `docs/Schema_v3.md` (the
+`transactions`, see **Example 1** in `docs/Schema_v6.md` (the
 SQL block under "Populating customer DDA postings from core
 banking"). It's the same pattern shape as the demo `etl-examples`
 output but written as a real `INSERT INTO ... SELECT FROM` against
@@ -66,8 +66,8 @@ a hypothetical core-banking source schema.
 
 For every row your ETL writes, you're committing to a contract:
 
-1. **The 11 mandatory columns** (per [Schema_v3.md → minimum
-   viable feed](../../Schema_v3.md#the-minimum-viable-feed)) get
+1. **The 11 mandatory columns** (per [Schema_v6.md → minimum
+   viable feed](../../Schema_v6.md#the-minimum-viable-feed)) get
    the row visible on the dashboard at all.
 2. **`parent_transfer_id`** populated only for chained transfers
    (sale → settlement → payment → external_txn for PR; reversal
@@ -79,7 +79,7 @@ For every row your ETL writes, you're committing to a contract:
 4. **`metadata` JSON** — the universal extras container. Skip it
    on day 1 if your downstream consumer doesn't need it; populate
    it in priority order (`source` first, then per-`transfer_type`
-   keys per the catalog). The catalog tables in Schema_v3 list the
+   keys per the catalog). The catalog tables in Schema_v6 list the
    keys + what each one drives.
 
 Everything else (`memo`, `external_system`, `control_account_id`)
@@ -88,7 +88,7 @@ is conditional — populate when the downstream consumer demands it.
 ## Drilling in
 
 The mapping pattern looks like this for a customer-DDA posting
-(from Schema_v3 Example 1, abbreviated):
+(from Schema_v6 Example 1, abbreviated):
 
 ```sql
 INSERT INTO transactions (
@@ -161,12 +161,12 @@ Once your projection is wired up:
 4. **Iterate on metadata** — once the minimum feed is stable,
    layer in `parent_transfer_id` and the per-`transfer_type`
    metadata keys per the priority order in
-   [Schema_v3.md → What changes after day 1](../../Schema_v3.md#what-changes-after-day-1).
+   [Schema_v6.md → What changes after day 1](../../Schema_v6.md#what-changes-after-day-1).
 
 If your upstream source isn't a `gl_postings` table — say it's a
 processor report, a Fed statement file, or a sweep-engine log —
 the same projection shape applies, but the inbound columns differ.
-Schema_v3.md Examples 4 and 5 cover PR sales and Fed-statement
+Schema_v6.md Examples 4 and 5 cover PR sales and Fed-statement
 ingest specifically; the demo `etl-example` output covers the
 remaining patterns.
 
@@ -181,9 +181,9 @@ remaining patterns.
 - [How do I add a metadata key without breaking the dashboards?](how-do-i-add-a-metadata-key.md) —
   the extension contract for when your team needs a new metadata
   field.
-- [Schema_v3 → Getting Started for Data Teams](../../Schema_v3.md#getting-started-for-data-teams) —
+- [Schema_v6 → Getting Started for Data Teams](../../Schema_v6.md#getting-started-for-data-teams) —
   the persona-oriented intro to the contract.
-- [Schema_v3 → ETL examples](../../Schema_v3.md#etl-examples) —
+- [Schema_v6 → ETL examples](../../Schema_v6.md#etl-examples) —
   the canonical SQL templates this walkthrough references.
 - [Where's my money for merchant?](../pr/wheres-my-money-for-merchant.md) —
   a **downstream consumer** walkthrough: what an analyst does with

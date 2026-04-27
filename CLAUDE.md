@@ -172,7 +172,7 @@ src/quicksight_gen/
       datasets.py          # 14 custom-SQL datasets — wraps the 5 L1 invariant matviews + 2 aging-watch matviews (M.2b.8/9) + 2 supersession audit views (M.2b.12) + 2 drift-timeline pre-aggregations + Daily Statement summary/transactions + raw transactions + Today's Exceptions UNION matview
   schema.py              # `generate_schema_sql()` — reads the canonical DDL from the package data file
   schema.sql             # Full PostgreSQL DDL — shared `transactions` + `daily_balances` base layer + AR dimension tables + AR + Investigation matviews
-  docs/                  # mkdocs site source (handbook/, walkthroughs/, Schema_v3.md, Training_Story.md); extract via `quicksight-gen export docs`
+  docs/                  # mkdocs site source (handbook/, walkthroughs/, Schema_v6.md, Training_Story.md); extract via `quicksight-gen export docs`
   training/              # Whitelabel handbook kit (handbook/, mapping.yaml.example, QUICKSTART.md); extract via `quicksight-gen export training`
 tests/
   test_models.py         # Models, tags, config, dataset builders
@@ -222,12 +222,12 @@ run_e2e.sh
 
 ### Shared base layer (v3.0.0)
 
-All three apps feed two base tables. PR + AR + Investigation share the same physical schema; the `account_type` column discriminates which app a row belongs to (Investigation reads `dda` + `external_counter` rows by way of its planted scenario subset). See `docs/Schema_v3.md` for the full feed contract.
+All three apps feed two base tables. PR + AR + Investigation share the same physical schema; the `account_type` column discriminates which app a row belongs to (Investigation reads `dda` + `external_counter` rows by way of its planted scenario subset). See `docs/Schema_v6.md` for the full feed contract.
 
 - **`transactions`** — one row per money-movement leg. Carries `transaction_id` PK, `transfer_id` (groups legs of one financial event), `parent_transfer_id` (chains transfers — used by PR for `external_txn → payment → settlement → sale`), `transfer_type`, `origin`, `account_id`, denormalized account fields (`account_name`, `account_type`, `control_account_id`, `is_internal`), `signed_amount` (positive = money IN to the account, negative = money OUT), `amount` (absolute), `status`, `posted_at`, `balance_date`, `external_system`, `memo`, and a `metadata TEXT` column constrained `IS JSON` for app-specific keys (`card_brand`, `cashier`, `settlement_type`, etc.). Non-failed legs of a non-single-leg transfer net to zero.
 - **`daily_balances`** — one row per `(account_id, balance_date)`. Carries the same denormalized account fields as `transactions` plus `balance` (stored end-of-day) and a `metadata TEXT` JSON column (used by AR to attach per-day limit configuration so the limit-breach view stays a single SELECT).
 
-**Sign convention.** `signed_amount > 0` = money IN to the account; `signed_amount < 0` = money OUT; `daily_balances.balance = SUM(signed_amount)` over the account's history (the drift-check invariant). Applies to every `account_type` including `merchant_dda` — sales credit (positive), payments debit (negative). `Schema_v3.md` states the same rule from the bank's bookkeeping perspective ("+= debit, −= credit"); both are the same rule read from opposite ends of the double-entry, and the code uses the account-holder view everywhere.
+**Sign convention.** `signed_amount > 0` = money IN to the account; `signed_amount < 0` = money OUT; `daily_balances.balance = SUM(signed_amount)` over the account's history (the drift-check invariant). Applies to every `account_type` including `merchant_dda` — sales credit (positive), payments debit (negative). `Schema_v6.md` states the same rule from the bank's bookkeeping perspective ("+= debit, −= credit"); both are the same rule read from opposite ends of the double-entry, and the code uses the account-holder view everywhere.
 
 Six canonical `account_type` values: `gl_control` (AR GL control accounts), `dda` (AR customer demand-deposit accounts), `merchant_dda` (PR merchant accounts), `external_counter` (FRB Master, processors, PR external customer pool / external rail), `concentration_master` (the cash concentration target), `funds_pool` (reserved; not currently emitted by the demo seed). `control_account_id` is a self-referential FK; PR sub-ledger accounts roll up to the synthetic `pr-merchant-ledger` control row.
 

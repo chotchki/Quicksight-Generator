@@ -38,7 +38,7 @@ One sheet, two reference points:
   Exceptions). Two sheet controls at the top: an **Account**
   dropdown and a **Balance Date** picker. Pick them and the
   whole page re-renders for that account-day.
-- **`docs/Schema_v3.md` → Getting Started for Data Teams** — the
+- **`docs/Schema_v6.md` → Getting Started for Data Teams** — the
   invariant the Drift KPI checks (`stored balance = opening +
   net flow`) is invariant 2 from the column contract. The Daily
   Statement KPI is the row-level expression of that invariant.
