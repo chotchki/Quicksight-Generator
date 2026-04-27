@@ -755,3 +755,88 @@ def test_o1_two_leg_rail_both_per_leg_overrides_accepted() -> None:
     )
     ok = _replace(inst, rails=(ok_rail, *inst.rails[1:]))
     validate(ok)
+
+
+# -- M.2d.1: New SPEC rules (R10, R11) --------------------------------------
+
+
+def test_r10_limit_schedule_transfer_type_must_match_some_rail() -> None:
+    """R10: a LimitSchedule.transfer_type with no matching Rail is rejected.
+
+    The baseline declares Rails with transfer_types {ach, charge,
+    pool_balancing}. A cap on transfer_type='wire' (no Rail emits
+    that) would silently never fire — load-time error.
+    """
+    inst = _baseline_instance()
+    bad = LimitSchedule(
+        parent_role=Identifier("ControlAccount"),
+        transfer_type="wire",  # no Rail emits this
+        cap=Decimal("1000.00"),
+    )
+    inst = _replace(inst, limit_schedules=(*inst.limit_schedules, bad))
+    with pytest.raises(L2ValidationError, match="no declared Rail emits"):
+        validate(inst)
+
+
+def test_r10_typo_in_existing_transfer_type_rejected() -> None:
+    """R10: typo'd transfer_type ('acch' for 'ach') is the canonical bug."""
+    inst = _baseline_instance()
+    typo = dataclasses.replace(inst.limit_schedules[0], transfer_type="acch")
+    inst = _replace(inst, limit_schedules=(typo,))
+    with pytest.raises(L2ValidationError, match=r"transfer_type='acch'"):
+        validate(inst)
+
+
+def test_r11_bare_bundles_activity_selector_resolving_by_transfer_type_accepted() -> None:
+    """R11 negative: a bare selector matching a Rail.transfer_type is fine.
+
+    The baseline's PoolBalancing rail bundles 'ach' which IS a
+    declared Rail.transfer_type (on ExtInbound). Validates without
+    raising.
+    """
+    validate(_baseline_instance())
+
+
+def test_r11_bare_bundles_activity_selector_resolving_by_rail_name_accepted() -> None:
+    """R11 negative: a bare selector matching a Rail.name is fine."""
+    inst = _baseline_instance()
+    # Swap PoolBalancing to bundle by Rail.name instead of transfer_type.
+    pool = dataclasses.replace(
+        inst.rails[2], bundles_activity=(Identifier("ExtInbound"),),
+    )
+    inst = _replace(inst, rails=(*inst.rails[:2], pool))
+    validate(inst)
+
+
+def test_r11_unresolvable_bare_bundles_activity_selector_rejected() -> None:
+    """R11: a bare selector matching neither a Rail.name nor a transfer_type rejects.
+
+    'CustomerOutboundACHTypo' isn't a declared rail name AND no rail
+    emits that transfer_type — bundler would silently match nothing.
+    """
+    inst = _baseline_instance()
+    typo = dataclasses.replace(
+        inst.rails[2],
+        bundles_activity=(Identifier("CustomerOutboundACHTypo"),),
+    )
+    inst = _replace(inst, rails=(*inst.rails[:2], typo))
+    with pytest.raises(
+        L2ValidationError,
+        match=r"bare selector 'CustomerOutboundACHTypo' resolves to neither",
+    ):
+        validate(inst)
+
+
+def test_r11_dotted_form_selector_unaffected() -> None:
+    """R11: dotted-form selectors are R9's job; R11 skips them.
+
+    Build a fixture with a dotted selector that R9 would accept (the
+    template + leg both exist) and confirm R11 doesn't second-guess it.
+    """
+    inst = _baseline_instance()
+    pool = dataclasses.replace(
+        inst.rails[2],
+        bundles_activity=(Identifier("MerchantSettlementCycle.SubledgerCharge"),),
+    )
+    inst = _replace(inst, rails=(*inst.rails[:2], pool))
+    validate(inst)

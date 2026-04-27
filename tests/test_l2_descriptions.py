@@ -221,7 +221,10 @@ def test_limit_schedule_description_loads(tmp_path: Path) -> None:
         "    cap: 5000.00\n"
         "    description: Per-child daily cap mandated by policy.\n"
     )
-    inst = load_instance(p)
+    # validate=False: narrow per-primitive description test — the
+    # fixture has no Rail emitting transfer_type='charge' (R10 would
+    # reject), but this test only asserts the description field round-trips.
+    inst = load_instance(p, validate=False)
     assert inst.limit_schedules[0].description == (
         "Per-child daily cap mandated by policy."
     )

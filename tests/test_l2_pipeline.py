@@ -357,7 +357,25 @@ def test_pipeline_limit_schedule(tmp_path: Path) -> None:
           - id: north
             role: NorthPool
             scope: internal
-        rails: []
+          - id: child
+            role: ChildPool
+            scope: internal
+            parent_role: NorthPool
+        rails:
+          # R10: every LimitSchedule.transfer_type must match some Rail.
+          - name: ChildAch
+            transfer_type: ach
+            origin: InternalInitiated
+            leg_role: ChildPool
+            leg_direction: Debit
+        transfer_templates:
+          # S3: single-leg ChildAch needs reconciliation.
+          - name: AchCycle
+            transfer_type: ach_cycle
+            expected_net: 0
+            transfer_key: [batch_id]
+            completion: business_day_end
+            leg_rails: [ChildAch]
         limit_schedules:
           - parent_role: NorthPool
             transfer_type: ach

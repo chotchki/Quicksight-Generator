@@ -609,7 +609,7 @@ Every rule below is enforced at YAML load time — `load_instance(path)` runs th
 - Every `BundleSelector` of the form `TransferTemplateName.LegRailName` references a rail that's actually in that template's `LegRails`.
 - Every leg of every Rail resolves to an Origin (per the resolution rules in "Per-leg Origin"). Unresolved legs are a load-time configuration error.
 - Per-leg overrides (`SourceOrigin`, `DestinationOrigin`) appear only on 2-leg rails. Their presence on a 1-leg rail is a load-time warning (the field is ignored).
-- Every Transfer surface (Rail's `TransferType`, TransferTemplate's `TransferType`) MUST be matchable to a Rail. **(M.2d.1, planned — not yet enforced)** A TransferTemplate whose `TransferType` doesn't appear on any Rail loads silently today, then drops out of the rail-keyed L1 invariant matchers (`stuck_pending` / `stuck_unbundled` / `limit_breach`) at render. Validator rule + sibling rejection test land before M.2d closes.
+- Every L2-instance reference to a `TransferType` string MUST resolve to some Rail's declared `TransferType`. **(M.2d.1)** Concretely: every `LimitSchedule.TransferType` matches some `Rail.TransferType`, and every bare-form (`<name>`, not `Template.LegRail`) entry in an AggregatingRail's `BundlesActivity` resolves to either a declared `Rail.Name` OR some declared `Rail.TransferType`. Catches typos in cap declarations and bundle selectors that would otherwise silently no-op. (The runtime invariant — every *posted* Transaction's `TransferType` matches some Rail — is the L3 surface, slated for M.2d.4 as a SHOULD-constraint matview rather than a load-time validator.)
 
 ---
 

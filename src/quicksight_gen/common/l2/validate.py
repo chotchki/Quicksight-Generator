@@ -43,6 +43,16 @@ Rules enforced (numbered for cross-reference with the test file):
   R9. Every dotted-form BundleSelector (``Template.LegRail``) references
       a rail that is actually in that template's ``leg_rails`` (M.1a —
       catches typos + leg-rail cross-references at load).
+  R10. Every ``LimitSchedule.transfer_type`` matches some declared
+      ``Rail.transfer_type`` (M.2d.1 — a cap declared against a
+      transfer_type no Rail emits is a no-op; catches typos).
+  R11. Every bare-form (``<name>``, not ``Template.LegRail``) entry in
+      an AggregatingRail's ``bundles_activity`` resolves to either a
+      declared ``Rail.name`` OR some declared ``Rail.transfer_type``
+      (M.2d.1 — catches typos that would silently make the bundler
+      match nothing). Companion to R8 (which checks the inverse: any
+      rail with ``max_unbundled_age`` set must appear in *some*
+      bundles_activity).
 
   C1. Every TransferTemplate contains at most one Variable-direction leg.
   C2. Every Chain.xor_group's members share the same Chain.parent.
@@ -171,6 +181,8 @@ def validate(instance: L2Instance) -> None:
     _check_template_leg_rails_are_non_aggregating(instance, rails_by_name)
     _check_max_unbundled_age_only_on_bundled_rails(instance)
     _check_dotted_bundle_selectors_resolve(instance)
+    _check_limit_schedule_transfer_type_has_rail(instance)
+    _check_bare_bundles_activity_selectors_resolve(instance)
 
     _check_variable_leg_count_per_template(instance)
     _check_chain_xor_group_consistency(instance)
@@ -420,6 +432,60 @@ def _check_max_unbundled_age_only_on_bundled_rails(inst: L2Instance) -> None:
             f"its transfer_type {r.transfer_type!r} appears in any "
             f"bundles_activity); the watch can never fire"
         )
+
+
+def _check_limit_schedule_transfer_type_has_rail(inst: L2Instance) -> None:
+    """R10: every LimitSchedule.transfer_type matches some Rail.transfer_type.
+
+    Per M.2d.1: a cap declared against a transfer_type that no Rail
+    emits is a no-op — the limit-breach matview's CASE branches key
+    off the rail's transfer_type, so a typo'd cap never fires. Caught
+    at YAML load.
+    """
+    rail_transfer_types = {r.transfer_type for r in inst.rails}
+    for i, ls in enumerate(inst.limit_schedules):
+        if ls.transfer_type not in rail_transfer_types:
+            raise L2ValidationError(
+                f"limit_schedules[{i}].transfer_type={ls.transfer_type!r}: "
+                f"no declared Rail emits this transfer_type "
+                f"(declared: {sorted(rail_transfer_types)!r}). The cap "
+                f"would silently never fire."
+            )
+
+
+def _check_bare_bundles_activity_selectors_resolve(inst: L2Instance) -> None:
+    """R11: every bare-form bundles_activity selector resolves.
+
+    Per M.2d.1: a bare-form selector (``<name>``, not ``Template.LegRail``)
+    must match either a declared Rail.name OR some declared
+    Rail.transfer_type. Otherwise the bundler matches nothing and the
+    aggregating rail silently never sweeps. R8 (max_unbundled_age set
+    ⇒ rail must be bundled) and R9 (dotted form ⇒ template + leg
+    actually exist) cover the inverse and the dotted form respectively;
+    this rule catches typos in the bare form.
+    """
+    rail_names = {r.name for r in inst.rails}
+    rail_transfer_types = {r.transfer_type for r in inst.rails}
+    for r in inst.rails:
+        if not r.aggregating:
+            continue
+        for sel in r.bundles_activity:
+            sel_str = str(sel)
+            if "." in sel_str:
+                # Dotted form — R9's job, not R11's.
+                continue
+            if sel_str in rail_names:
+                continue
+            if sel_str in rail_transfer_types:
+                continue
+            raise L2ValidationError(
+                f"Rail {r.name!r}.bundles_activity: bare selector "
+                f"{sel_str!r} resolves to neither a declared Rail.name "
+                f"nor any declared Rail.transfer_type "
+                f"(rail names: {sorted(rail_names)!r}; transfer_types: "
+                f"{sorted(rail_transfer_types)!r}). The bundler would "
+                f"silently match nothing."
+            )
 
 
 def _check_dotted_bundle_selectors_resolve(inst: L2Instance) -> None:
