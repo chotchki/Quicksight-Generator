@@ -272,6 +272,30 @@ def _load_leg_direction(raw: object, *, path: str) -> LegDirection:
     return raw  # type: ignore[return-value]
 
 
+_SEED_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _load_seed_hash(raw: object, *, path: str) -> str | None:
+    """Optional SHA256 hex string for the auto-seed hash-lock (M.2d.6).
+
+    Lowercase 64-char hex; rejected if any other shape. Stored as-is on
+    L2Instance.seed_hash for the CLI to compare against the actual
+    hash of ``emit_seed(default_scenario_for(instance))``.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise L2LoaderError(
+            f"{path}: seed_hash must be a string, got {type(raw).__name__}"
+        )
+    if not _SEED_HASH_RE.match(raw):
+        raise L2LoaderError(
+            f"{path}={raw!r}: seed_hash must be a 64-char lowercase hex "
+            f"SHA256 (no '0x' prefix; no uppercase)"
+        )
+    return raw
+
+
 def _load_description(raw: object, *, path: str) -> str | None:
     """Parse an optional description field per SPEC's "Description fields".
 
@@ -689,6 +713,7 @@ def load_instance(path: Path | str, *, validate: bool = True) -> L2Instance:
         description=_load_description(
             raw_d.get("description"), path="description",
         ),
+        seed_hash=_load_seed_hash(raw_d.get("seed_hash"), path="seed_hash"),
     )
     if validate:
         # Local import dodges loader↔validate import-cycle.

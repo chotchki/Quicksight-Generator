@@ -352,3 +352,11 @@ class L2Instance:
     # Top-level institution-level prose. Read by handbook templates as
     # the "what is this institution" introductory paragraph.
     description: str | None = None
+    # Optional SHA256 hash-lock for the auto-generated seed SQL produced
+    # by ``quicksight-gen demo seed-l2`` (M.2d.6). Lets integrators
+    # version-control the determinism of their demo seed alongside the
+    # L2 spec itself; the CLI verifies the actual seed hash matches
+    # this declared value (or rewrites it via ``--lock`` after a
+    # reviewed change). Not load-bearing for any L1 invariant — pure
+    # metadata tied to the seed pipeline.
+    seed_hash: str | None = None

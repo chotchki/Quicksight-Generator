@@ -498,6 +498,129 @@ def demo_etl_example(app: str | None, all_apps: bool, output: str) -> None:
     click.echo(f"Wrote ETL examples to {out}")
 
 
+@demo.command("seed-l2")
+@click.argument(
+    "yaml_path",
+    type=click.Path(exists=True, dir_okay=False),
+)
+@click.option(
+    "--output", "-o",
+    type=click.Path(), default=None,
+    help="Output path for the SQL (default: stdout).",
+)
+@click.option(
+    "--lock", is_flag=True,
+    help=(
+        "After emitting the SQL, write its SHA256 back into the YAML's "
+        "`seed_hash:` field (creating the field if absent). Use this "
+        "after a reviewed change to the L2 spec drifts the seed output."
+    ),
+)
+@click.option(
+    "--check-hash", is_flag=True,
+    help=(
+        "Exit 1 if the YAML's `seed_hash:` field doesn't match the "
+        "actual SHA256 of the auto-generated seed. Use in CI to guard "
+        "against unreviewed L2 spec drift."
+    ),
+)
+def demo_seed_l2(
+    yaml_path: str, output: str | None, lock: bool, check_hash: bool,
+) -> None:
+    """Auto-generate a deterministic L1-exception seed from an L2 YAML.
+
+    Walks the L2 instance and plants one of every L1 exception kind
+    (drift, overdraft, limit-breach, stuck-pending, stuck-unbundled,
+    supersession) using deterministic heuristics — no hand-authored
+    scenario required. Plants that can't be derived from the YAML
+    (e.g., no LimitSchedule declared) are omitted with a one-line
+    warning.
+
+    Hash semantics: the auto-seed is hashed against a fixed canonical
+    reference date (2030-01-01) so the SHA256 is stable across days.
+    `--lock` writes the current hash into the YAML; `--check-hash`
+    verifies the YAML's declared hash matches.
+    """
+    from datetime import date
+    import hashlib
+    from quicksight_gen.common.l2 import load_instance
+    from quicksight_gen.common.l2.auto_scenario import default_scenario_for
+    from quicksight_gen.common.l2.seed import emit_seed
+
+    p = Path(yaml_path)
+    instance = load_instance(p)
+
+    # The hash is computed against the canonical reference date so the
+    # SHA256 lives independently of the day the CLI runs.
+    canonical_today = date(2030, 1, 1)
+    report = default_scenario_for(instance, today=canonical_today)
+    sql = emit_seed(instance, report.scenario)
+    actual_hash = hashlib.sha256(sql.encode("utf-8")).hexdigest()
+
+    for kind, reason in report.omitted:
+        click.echo(f"  [warn] omitted {kind}: {reason}", err=True)
+
+    if check_hash:
+        declared = instance.seed_hash
+        if declared is None:
+            click.echo(
+                "  [error] --check-hash requested but YAML has no "
+                "`seed_hash:` field; run with --lock first.",
+                err=True,
+            )
+            raise SystemExit(1)
+        if declared != actual_hash:
+            click.echo(
+                f"  [error] seed_hash mismatch:\n"
+                f"    YAML  : {declared}\n"
+                f"    actual: {actual_hash}\n"
+                f"  Re-run with --lock if the change was intentional.",
+                err=True,
+            )
+            raise SystemExit(1)
+        click.echo(f"  [ok] seed_hash matches ({actual_hash})", err=True)
+
+    if lock:
+        _rewrite_seed_hash_in_yaml(p, actual_hash)
+        click.echo(f"  [lock] wrote seed_hash={actual_hash} into {p}", err=True)
+
+    if output is None:
+        click.echo(sql)
+    else:
+        out = Path(output)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(sql)
+        click.echo(f"Wrote auto-seed to {out}", err=True)
+
+
+def _rewrite_seed_hash_in_yaml(yaml_path: Path, new_hash: str) -> None:
+    """Idempotently set ``seed_hash: <new_hash>`` on a YAML file.
+
+    Preserves comments + ordering by treating the file as text — never
+    parses + re-emits via PyYAML (that would lose every comment and
+    re-order keys). Either replaces an existing top-level
+    ``seed_hash:`` line, or appends one to the file.
+    """
+    text = yaml_path.read_text()
+    lines = text.splitlines(keepends=True)
+    new_line = f"seed_hash: {new_hash}\n"
+    seen = False
+    for i, line in enumerate(lines):
+        # Match top-level seed_hash (no leading whitespace) followed by
+        # a colon. A more permissive regex would catch indented uses
+        # too but we don't want to mutate nested fields named the same.
+        if re.match(r"^seed_hash\s*:", line):
+            lines[i] = new_line
+            seen = True
+            break
+    if not seen:
+        # Append, ensuring the file ends with a newline first.
+        if lines and not lines[-1].endswith("\n"):
+            lines[-1] = lines[-1] + "\n"
+        lines.append(new_line)
+    yaml_path.write_text("".join(lines))
+
+
 @demo.command("apply")
 @click.argument("app", type=DEMO_APP_CHOICE, required=False)
 @click.option("--all", "all_apps", is_flag=True, help="Apply for all apps.")
