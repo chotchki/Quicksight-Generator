@@ -4,19 +4,21 @@
 [![Coverage](https://raw.githubusercontent.com/chotchki/Quicksight-Generator/badges/coverage-badge.svg)](https://github.com/chotchki/Quicksight-Generator/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/quicksight-gen.svg)](https://pypi.org/project/quicksight-gen/)
 
-Python tool that programmatically generates AWS QuickSight JSON definitions (theme, datasets, analyses, dashboards) and deploys them via boto3. It currently ships four independent QuickSight apps:
+Python tool that programmatically generates AWS QuickSight JSON definitions (theme, datasets, analyses, dashboards) and deploys them via boto3. It currently ships five independent QuickSight apps:
 
+- **L1 Reconciliation Dashboard** — generic L1 SHOULD-constraint surface (drift / overdraft / limit breach / expected EOD balance / stuck pending / stuck unbundled, plus supersession audit). 11 sheets. Configured by an **L2 instance YAML** rather than per-app code — the same dashboard renders against any institution that declares its accounts / rails / templates / chains / limit schedules in L2 form. The newest app (M.2b); the L2-fed pattern is the recommended path for new integrators.
 - **Payment Reconciliation** — sales → settlements → payments → external-system matching for a merchant bank.
 - **Account Reconciliation** — stored daily balances, transfers, and postings for a double-entry ledger.
 - **Investigation** — compliance / AML triage: recipient fanout, volume anomalies, money-trail provenance, and account-network graphs over the shared base ledger.
 - **Executives** — board-cadence statistics: account coverage (open vs active), transaction volume over time, money moved (gross + net) over time. Reads only the shared base tables — no Executives-specific schema.
 
-All four apps share one theme registry, one AWS account, one datasource, and the same CLI surface (`quicksight-gen generate|deploy|demo|cleanup`). Change the Python (or ask Claude), re-run `deploy --generate`, get a new dashboard.
+All five apps share one theme registry, one AWS account, one datasource, and the same CLI surface (`quicksight-gen generate|deploy|demo|cleanup`). Change the Python (or ask Claude), re-run `deploy --generate`, get a new dashboard.
 
 ## Demo Docs
 
 The demo ships with four task-shaped handbooks, one per persona team at Sasquatch National Bank. Deployed to GitHub Pages at **[chotchki.github.io/Quicksight-Generator](https://chotchki.github.io/Quicksight-Generator/)**.
 
+- **[L1 Reconciliation Dashboard](https://chotchki.github.io/Quicksight-Generator/handbook/l1/)** — the generic L2-fed dashboard. 11 sheets covering 5 baseline L1 invariants + 2 aging-watch invariants + supersession audit + per-account-day walk + raw posting ledger. Switch the L2 instance to switch the persona prose without touching dashboard code.
 - **[GL Reconciliation Handbook](https://chotchki.github.io/Quicksight-Generator/handbook/ar/)** — how the Accounting Operations team works the AR Exceptions sheet. Morning rollups + per-check drill-downs for 17 exception classes.
 - **[Payment Reconciliation Handbook](https://chotchki.github.io/Quicksight-Generator/handbook/pr/)** — how the Merchant Support team answers "where's my money?" calls. 7 walkthroughs organized by operator question.
 - **[Investigation Handbook](https://chotchki.github.io/Quicksight-Generator/handbook/investigation/)** — how the Compliance / Investigation team triages AML cases. 4 walkthroughs, one per sheet's question — the app is question-shaped rather than pipeline-staged or rotation-driven.
@@ -28,7 +30,27 @@ Source lives in `src/quicksight_gen/docs/` (shipped with the wheel — extract w
 
 The customer for these reports doesn't know exactly what they want yet. Rather than click through the QuickSight console and lose the work when requirements change, everything is generated from code and deployed idempotently (delete-then-create). Iteration is one command.
 
-## The four apps
+## The five apps
+
+### L1 Reconciliation Dashboard — 11 tabs
+
+The newest app and the recommended path for new integrators. Configured by an L2 instance YAML — declare your institution once (accounts, rails, transfer templates, chains, limit schedules, per-rail aging caps), and the same dashboard renders against you. Switching the L2 instance switches the prose on every TextBox without touching dashboard code.
+
+| Tab | What it shows |
+|---|---|
+| Getting Started | Welcome + L2 coverage inventory (account counts, rail counts, etc) — both pulled from the L2 instance's prose. |
+| Drift | Leaf + parent account balance drift detail tables. Right-click any row → Daily Statement for that account-day. |
+| Drift Timelines | KPI for largest single-day drift + 2 LineCharts (one line per `account_role`) tracking Σ ABS(drift) over the visible date range. |
+| Overdraft | KPI + violations table for internal accounts holding negative money at EOD. Right-click → Daily Statement. |
+| Limit Breach | KPI + per-(account, day, transfer_type) breach table. Caps inlined from L2 LimitSchedules at schema-emit time. |
+| Pending Aging | Stuck-Pending transactions past their rail's `max_pending_age`. KPI + 5-bucket horizontal aging bar (`0-6h`, `6-24h`, `1-3d`, `3-7d`, `>7d`) + detail. Right-click → Transactions. |
+| Unbundled Aging | Posted legs with `bundle_id IS NULL` past their rail's `max_unbundled_age`. Same KPI + bar + detail shape with 4 day-scale buckets. |
+| Supersession Audit | Logical keys with multiple `entry` versions — the rewrite trail (Inflight / BundleAssignment / TechnicalCorrection). Reads from BASE tables (not Current*) since Current* hides the audit-relevant prior entries. |
+| Today's Exceptions | UNION across all 5 baseline invariant views scoped to the most recent business day. KPI + by-check bar + detail sorted by magnitude. Drill-source for the canonical analyst journey. |
+| Daily Statement | Per-account-day walk: 5 KPIs (Opening / Debits / Credits / Closing / Drift) + every Money record posted that day. Right-click any leg → Transactions filtered to that transfer. |
+| Transactions | Raw posting ledger (`<prefix>_current_transactions` matview — supersession-aware). 5 dropdown filters for analyst-driven slicing. |
+
+Reads from per-instance `<prefix>_*` views/matviews emitted by `common.l2.emit_schema(instance)`. See [L1 Invariants](https://chotchki.github.io/Quicksight-Generator/L1_Invariants/) for the per-view contract + SHOULD-constraint motivation.
 
 ### Payment Reconciliation — 6 tabs
 

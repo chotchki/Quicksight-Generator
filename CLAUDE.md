@@ -167,6 +167,9 @@ src/quicksight_gen/
     executives/
       app.py               # Tree-built: 4 sheets — Getting Started + Account Coverage + Transaction Volume + Money Moved (greenfield on L.1 primitives — no constants.py)
       datasets.py          # 2 custom-SQL datasets — exec_transaction_summary (per-transfer pre-aggregated) + exec_account_summary
+    l1_dashboard/
+      app.py               # Tree-built: 11 sheets — Getting Started + Drift + Drift Timelines + Overdraft + Limit Breach + Pending Aging + Unbundled Aging + Supersession Audit + Today's Exceptions + Daily Statement + Transactions. **Configured by L2 instance** (M.2a/M.2b) — feed the L2 once, dashboard renders against any institution.
+      datasets.py          # 14 custom-SQL datasets — wraps the 5 L1 invariant matviews + 2 aging-watch matviews (M.2b.8/9) + 2 supersession audit views (M.2b.12) + 2 drift-timeline pre-aggregations + Daily Statement summary/transactions + raw transactions + Today's Exceptions UNION matview
   schema.py              # `generate_schema_sql()` — reads the canonical DDL from the package data file
   schema.sql             # Full PostgreSQL DDL — shared `transactions` + `daily_balances` base layer + AR dimension tables + AR + Investigation matviews
   docs/                  # mkdocs site source (handbook/, walkthroughs/, Schema_v3.md, Training_Story.md); extract via `quicksight-gen export docs`
