@@ -214,6 +214,42 @@ def exec_dataset_ids(resource_prefix) -> list[str]:
     return [f"{resource_prefix}-{s}" for s in suffixes]
 
 
+# -- L1 dashboard fixtures (M.2c) --------------------------------------------
+#
+# IDs derive from the resource_prefix per the no-hardcoded-data rule —
+# changing `qs-gen` to anything else doesn't break the tests. Dataset
+# suffixes mirror what `apps/l1_dashboard/datasets.py::DS_*` registers
+# via `cfg.prefixed("l1-<view>-dataset")`.
+
+
+@pytest.fixture(scope="session")
+def l1_dashboard_id(resource_prefix) -> str:
+    return f"{resource_prefix}-l1-dashboard"
+
+
+@pytest.fixture(scope="session")
+def l1_analysis_id(resource_prefix) -> str:
+    return f"{resource_prefix}-l1-dashboard-analysis"
+
+
+@pytest.fixture(scope="session")
+def l1_dataset_ids(resource_prefix) -> list[str]:
+    """Expected L1 dashboard dataset IDs.
+
+    M.2a.3 shipped drift + ledger_drift; M.2a.4 added overdraft;
+    M.2a.5 added limit_breach; M.2a.6 added the unified
+    todays_exceptions UNION dataset.
+    """
+    suffixes = [
+        "l1-drift-dataset",
+        "l1-ledger-drift-dataset",
+        "l1-overdraft-dataset",
+        "l1-limit-breach-dataset",
+        "l1-todays-exceptions-dataset",
+    ]
+    return [f"{resource_prefix}-{s}" for s in suffixes]
+
+
 # ---------------------------------------------------------------------------
 # Tree-built App fixtures (L.11)
 #
@@ -264,6 +300,22 @@ def exec_app(cfg):
 
 
 @pytest.fixture(scope="session")
+def l1_app(cfg):
+    """Tree-built L1 Reconciliation Dashboard App.
+
+    Auto-loads `default_l2_instance()` (the canonical Sasquatch AR
+    fixture) — same default the CLI's `generate l1-dashboard` uses,
+    so the tree shape here matches the deployed dashboard's shape.
+    Post-emit so auto-IDs are resolved.
+    """
+    from quicksight_gen.apps.l1_dashboard.app import build_l1_dashboard_app
+
+    app = build_l1_dashboard_app(cfg)
+    app.emit_analysis()
+    return app
+
+
+@pytest.fixture(scope="session")
 def page_timeout() -> int:
     return PAGE_TIMEOUT
 
@@ -298,6 +350,18 @@ _WARMUP_QUERIES = (
     # first SELECT after Aurora cold-starts still pays the warm-up tax.
     "SELECT COUNT(*) FROM inv_pair_rolling_anomalies",
     "SELECT COUNT(*) FROM inv_money_trail_edges",
+    # M.2c.1 — L1 invariant views per the M.1a.7 schema, prefixed by
+    # the canonical Sasquatch AR L2 instance the L1 dashboard targets
+    # by default. F12 cold-start tax applies to the first SELECT against
+    # each prefixed table; warm them up here so the dashboard's first
+    # render hits a hot cluster.
+    "SELECT COUNT(*) FROM sasquatch_ar_current_transactions",
+    "SELECT COUNT(*) FROM sasquatch_ar_current_daily_balances",
+    "SELECT COUNT(*) FROM sasquatch_ar_drift",
+    "SELECT COUNT(*) FROM sasquatch_ar_ledger_drift",
+    "SELECT COUNT(*) FROM sasquatch_ar_overdraft",
+    "SELECT COUNT(*) FROM sasquatch_ar_expected_eod_balance_breach",
+    "SELECT COUNT(*) FROM sasquatch_ar_limit_breach",
 )
 
 
