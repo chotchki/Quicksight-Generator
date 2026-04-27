@@ -386,7 +386,7 @@ def test_kitchen_sink_loads_validates_emits() -> None:
     validate(inst)
     sql = emit_schema(inst)
     assert "CREATE TABLE kitchen_transactions" in sql
-    assert "CREATE VIEW kitchen_current_transactions AS" in sql
+    assert "CREATE MATERIALIZED VIEW kitchen_current_transactions AS" in sql
 
 
 def test_kitchen_sink_covers_every_primitive_kind() -> None:
@@ -569,5 +569,5 @@ def test_pipeline_full_merchant_acquirer_end_to_end(tmp_path: Path) -> None:
     # Schema includes the prefix and Current* views
     assert "CREATE TABLE ex_acq_transactions" in sql
     assert "CREATE TABLE ex_acq_daily_balances" in sql
-    assert "CREATE VIEW ex_acq_current_transactions AS" in sql
-    assert "CREATE VIEW ex_acq_current_daily_balances AS" in sql
+    assert "CREATE MATERIALIZED VIEW ex_acq_current_transactions AS" in sql
+    assert "CREATE MATERIALIZED VIEW ex_acq_current_daily_balances AS" in sql

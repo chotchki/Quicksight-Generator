@@ -94,6 +94,29 @@ def _apply_seed(conn, instance, today_ref) -> None:
     print(f"OK ({time.time() - t0:.1f}s)")
 
 
+def _refresh_matviews(conn, instance) -> None:
+    """M.1a.9 — REFRESH every matview in dependency order.
+
+    Required after every base-table batch insert; without it the L1
+    invariant views (matviews) return stale data. PostgreSQL refuses
+    to refresh a downstream matview before its upstream is fresh, so
+    `refresh_matviews_sql` emits the right order.
+    """
+    from quicksight_gen.common.l2 import refresh_matviews_sql
+
+    statements = [
+        s.strip() for s in refresh_matviews_sql(instance).split(";")
+        if s.strip()
+    ]
+    print(f"→ Refreshing {len(statements)} matviews...", end=" ", flush=True)
+    t0 = time.time()
+    with conn.cursor() as cur:
+        for stmt in statements:
+            cur.execute(stmt)
+    conn.commit()
+    print(f"OK ({time.time() - t0:.1f}s)")
+
+
 def _query_view(conn, sql: str) -> list[tuple[Any, ...]]:
     """Run a verification SELECT; return rows."""
     with conn.cursor() as cur:
@@ -222,6 +245,7 @@ def main() -> int:
                 print("Schema-only run complete. Skipping seed + verification.")
                 return 0
             _apply_seed(conn, instance, today_ref)
+            _refresh_matviews(conn, instance)
 
         print()
         print("=== Verification ===")

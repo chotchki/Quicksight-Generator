@@ -245,70 +245,19 @@ def build_limit_breach_dataset(
     )
 
 
-def _todays_exceptions_sql(prefix: str) -> str:
-    """Live UNION ALL across the 5 L1 invariant views, scoped to the
-    most recent business day in the data.
-
-    The "today" filter targets ``MAX(business_day_start)`` from
-    ``<prefix>_current_daily_balances`` — that subquery returns the
-    literal current calendar day in production (where the feed is
-    fresh) AND the most-recently-planted day in demo data (where the
-    seed lives at past timestamps relative to the system clock). One
-    SQL semantic, both contexts.
-
-    Each branch SELECTs into the unified shape:
-    ``(check_type, account_id, account_name, account_role,
-       account_parent_role, business_day, transfer_type, magnitude)``.
-    NULLs go where the source view doesn't carry that column
-    (ledger_drift has no parent_role; only limit_breach has
-    transfer_type). `magnitude` is normalized to a positive number per
-    branch so a sort-by-magnitude reads consistently regardless of
-    check_type.
-
-    Replaces v5's ``ar_unified_exceptions`` matview — no
-    REFRESH MATERIALIZED VIEW contract, queries are live.
-    """
-    today = (
-        f"(SELECT MAX(business_day_start) "
-        f"FROM {prefix}_current_daily_balances)"
-    )
-    return (
-        f"SELECT 'drift' AS check_type, account_id, account_name, "
-        f"account_role, account_parent_role, "
-        f"business_day_start AS business_day, "
-        f"NULL AS transfer_type, ABS(drift) AS magnitude "
-        f"FROM {prefix}_drift WHERE business_day_start = {today} "
-        f"UNION ALL "
-        f"SELECT 'ledger_drift', account_id, account_name, account_role, "
-        f"NULL, business_day_start, NULL, ABS(drift) "
-        f"FROM {prefix}_ledger_drift WHERE business_day_start = {today} "
-        f"UNION ALL "
-        f"SELECT 'overdraft', account_id, account_name, account_role, "
-        f"account_parent_role, business_day_start, NULL, ABS(stored_balance) "
-        f"FROM {prefix}_overdraft WHERE business_day_start = {today} "
-        f"UNION ALL "
-        f"SELECT 'limit_breach', account_id, account_name, account_role, "
-        f"account_parent_role, business_day, transfer_type, "
-        f"(outbound_total - cap) "
-        f"FROM {prefix}_limit_breach WHERE business_day = {today} "
-        f"UNION ALL "
-        f"SELECT 'expected_eod_balance_breach', account_id, account_name, "
-        f"account_role, NULL, business_day_start, NULL, ABS(variance) "
-        f"FROM {prefix}_expected_eod_balance_breach "
-        f"WHERE business_day_start = {today}"
-    )
-
-
 def build_todays_exceptions_dataset(
     cfg: Config, l2_instance: L2Instance,
 ) -> DataSet:
-    """Wrap the live UNION ALL across all 5 L1 invariant views.
+    """Wrap the `<prefix>_todays_exceptions` matview from M.1a.9.
 
-    Single dataset feeds the Today's Exceptions sheet's KPI + per-check
-    bar chart + detail table — no per-check dataset proliferation, no
-    matview to refresh.
+    M.1a.9 promoted the UNION ALL from inline CustomSql to a per-instance
+    MATERIALIZED VIEW so each visual on the Today's Exceptions sheet
+    reads a precomputed table instead of re-running the 5-branch UNION.
+    Refresh contract: integrators MUST call `refresh_matviews_sql()`
+    after every batch insert into the base tables.
     """
-    sql = _todays_exceptions_sql(l2_instance.instance)
+    prefix = l2_instance.instance
+    sql = f"SELECT * FROM {prefix}_todays_exceptions"
     return build_dataset(
         cfg, cfg.prefixed("l1-todays-exceptions-dataset"),
         "L1 Today's Exceptions", "l1-todays-exceptions",
@@ -317,78 +266,20 @@ def build_todays_exceptions_dataset(
     )
 
 
-def _daily_statement_summary_sql(prefix: str) -> str:
-    """Per-(account, business_day) walk: opening + day's signed flows
-    + recomputed closing + drift = stored − recomputed.
-
-    `account_days` projects the daily-balance + LAG opening-balance
-    pair. `today_flows` aggregates that day's transactions on
-    `<prefix>_current_transactions` keyed off
-    `DATE_TRUNC('day', posting) = business_day_start`. Status filter
-    drops `'Failed'` legs from the flow sums (mirrors AR's pattern).
-    `amount_direction` discriminates Debit vs Credit; `signed_amount`
-    is computed as `+amount_money` for Credit, `-amount_money` for
-    Debit so `net_flow` and `closing_recomputed` arithmetic mirror
-    the L1 sign convention.
-    """
-    return (
-        f"WITH account_days AS ("
-        f"  SELECT db.account_id, db.account_name, db.account_role,"
-        f"         db.account_parent_role, db.account_scope,"
-        f"         db.business_day_start, db.business_day_end,"
-        f"         db.money AS closing_balance_stored,"
-        f"         LAG(db.money) OVER ("
-        f"           PARTITION BY db.account_id"
-        f"           ORDER BY db.business_day_start"
-        f"         ) AS opening_balance"
-        f"  FROM {prefix}_current_daily_balances db"
-        f"),"
-        f"today_flows AS ("
-        f"  SELECT tx.account_id,"
-        f"         DATE_TRUNC('day', tx.posting) AS business_day_start,"
-        f"         SUM(CASE WHEN tx.amount_direction = 'Debit'"
-        f"                  THEN tx.amount_money ELSE 0 END) AS total_debits,"
-        f"         SUM(CASE WHEN tx.amount_direction = 'Credit'"
-        f"                  THEN tx.amount_money ELSE 0 END) AS total_credits,"
-        f"         SUM(CASE WHEN tx.amount_direction = 'Credit'"
-        f"                  THEN tx.amount_money"
-        f"                  ELSE -tx.amount_money END) AS net_flow,"
-        f"         COUNT(*) AS leg_count"
-        f"  FROM {prefix}_current_transactions tx"
-        f"  WHERE tx.status <> 'Failed'"
-        f"  GROUP BY tx.account_id, DATE_TRUNC('day', tx.posting)"
-        f")"
-        f" SELECT ad.account_id, ad.account_name, ad.account_role,"
-        f"        ad.account_parent_role, ad.account_scope,"
-        f"        ad.business_day_start, ad.business_day_end,"
-        f"        COALESCE(ad.opening_balance, 0) AS opening_balance,"
-        f"        COALESCE(tf.total_debits, 0) AS total_debits,"
-        f"        COALESCE(tf.total_credits, 0) AS total_credits,"
-        f"        COALESCE(tf.net_flow, 0) AS net_flow,"
-        f"        COALESCE(tf.leg_count, 0) AS leg_count,"
-        f"        ad.closing_balance_stored,"
-        f"        COALESCE(ad.opening_balance, 0)"
-        f"          + COALESCE(tf.net_flow, 0) AS closing_balance_recomputed,"
-        f"        ad.closing_balance_stored"
-        f"          - (COALESCE(ad.opening_balance, 0)"
-        f"             + COALESCE(tf.net_flow, 0)) AS drift"
-        f" FROM account_days ad"
-        f" LEFT JOIN today_flows tf"
-        f"   ON tf.account_id = ad.account_id"
-        f"   AND tf.business_day_start = ad.business_day_start"
-    )
-
-
 def build_daily_statement_summary_dataset(
     cfg: Config, l2_instance: L2Instance,
 ) -> DataSet:
-    """Wrap the per-(account, day) summary view for Daily Statement KPIs.
+    """Wrap the `<prefix>_daily_statement_summary` matview from M.1a.9.
 
-    Sheet-level filters narrow this dataset to a single
-    (account_id, business_day_start) pair; the underlying SQL stays
-    unfiltered so the account dropdown can browse every account.
+    M.1a.9 promoted the LAG window + LEFT JOIN + GROUP BY CTE from
+    inline CustomSql to a per-instance MATERIALIZED VIEW so each KPI
+    on the Daily Statement sheet reads a precomputed table instead of
+    re-evaluating the multi-CTE per visual (5 KPIs × CTE = 5
+    re-evaluations otherwise). Refresh contract via
+    `refresh_matviews_sql()` after every batch insert.
     """
-    sql = _daily_statement_summary_sql(l2_instance.instance)
+    prefix = l2_instance.instance
+    sql = f"SELECT * FROM {prefix}_daily_statement_summary"
     return build_dataset(
         cfg, cfg.prefixed("l1-daily-statement-summary-dataset"),
         "L1 Daily Statement Summary", "l1-daily-statement-summary",

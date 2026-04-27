@@ -22,6 +22,7 @@ from quicksight_gen.common.l2 import (
     Identifier,
     L2Instance,
     emit_schema,
+    refresh_matviews_sql,
 )
 
 
@@ -276,7 +277,7 @@ def test_daily_balances_denormalizes_account(col: str) -> None:
 def test_emits_current_transactions_view() -> None:
     """L1 CurrentTransaction theorem materialized as max-Entry-per-ID view."""
     sql = emit_schema(_instance("v"))
-    assert "CREATE VIEW v_current_transactions AS" in sql
+    assert "CREATE MATERIALIZED VIEW v_current_transactions AS" in sql
     # Per L1 CurrentTransaction set-comprehension definition: the view
     # selects rows whose entry equals the max entry for the same logical id.
     assert "WHERE tx.entry = (" in sql
@@ -286,7 +287,7 @@ def test_emits_current_transactions_view() -> None:
 def test_emits_current_daily_balances_view() -> None:
     """L1 CurrentStoredBalance theorem materialized as max-Entry-per-(account,day) view."""
     sql = emit_schema(_instance("v"))
-    assert "CREATE VIEW v_current_daily_balances AS" in sql
+    assert "CREATE MATERIALIZED VIEW v_current_daily_balances AS" in sql
     # Per L1 CurrentStoredBalance: max-Entry per (Account, BusinessDay).
     assert "WHERE sb.entry = (" in sql
     assert "WHERE account_id = sb.account_id" in sql
@@ -296,7 +297,7 @@ def test_emits_current_daily_balances_view() -> None:
 def test_view_drops_precede_table_drops() -> None:
     """Views must drop before tables they depend on (Postgres dependency)."""
     sql = emit_schema(_instance("ord"))
-    view_drop = sql.index("DROP VIEW IF EXISTS ord_current_transactions")
+    view_drop = sql.index("DROP MATERIALIZED VIEW IF EXISTS ord_current_transactions")
     table_drop = sql.index("DROP TABLE IF EXISTS ord_transactions ")
     assert view_drop < table_drop
 
@@ -305,7 +306,7 @@ def test_view_creates_after_table_creates() -> None:
     """Views must be created after the tables they reference."""
     sql = emit_schema(_instance("ord"))
     table_create = sql.index("CREATE TABLE ord_transactions")
-    view_create = sql.index("CREATE VIEW ord_current_transactions")
+    view_create = sql.index("CREATE MATERIALIZED VIEW ord_current_transactions")
     assert table_create < view_create
 
 
@@ -440,16 +441,16 @@ def test_l1_invariant_view_emitted_per_instance(view: str) -> None:
     """Every L1 invariant view appears in the emit_schema output, prefixed
     by the L2 instance name."""
     sql = emit_schema(_instance("v6"))
-    assert f"CREATE VIEW v6_{view}" in sql
-    assert f"DROP VIEW IF EXISTS v6_{view}" in sql
+    assert f"CREATE MATERIALIZED VIEW v6_{view}" in sql
+    assert f"DROP MATERIALIZED VIEW IF EXISTS v6_{view}" in sql
 
 
 @pytest.mark.parametrize("view", _L1_VIEW_NAMES)
 def test_l1_invariant_view_drops_before_creates(view: str) -> None:
     """Drop precedes create — idempotency holds for the L1 invariant view block."""
     sql = emit_schema(_instance("v6"))
-    drop_idx = sql.index(f"DROP VIEW IF EXISTS v6_{view}")
-    create_idx = sql.index(f"CREATE VIEW v6_{view}")
+    drop_idx = sql.index(f"DROP MATERIALIZED VIEW IF EXISTS v6_{view}")
+    create_idx = sql.index(f"CREATE MATERIALIZED VIEW v6_{view}")
     assert drop_idx < create_idx
 
 
@@ -461,9 +462,9 @@ def test_l1_invariant_views_drop_before_base_table_drops() -> None:
     against real Postgres."""
     sql = emit_schema(_instance("ord"))
     # All L1 view drops emit before the base block's first DROP VIEW.
-    overdraft_drop = sql.index("DROP VIEW IF EXISTS ord_overdraft")
+    overdraft_drop = sql.index("DROP MATERIALIZED VIEW IF EXISTS ord_overdraft")
     current_drop = sql.index(
-        "DROP VIEW IF EXISTS ord_current_daily_balances",
+        "DROP MATERIALIZED VIEW IF EXISTS ord_current_daily_balances",
     )
     assert overdraft_drop < current_drop
 
@@ -475,7 +476,7 @@ def test_l1_invariant_view_drops_emit_at_top_of_script() -> None:
     sql = emit_schema(_instance("top"))
     first_create = sql.index("CREATE TABLE top_transactions")
     for view in _L1_VIEW_NAMES:
-        drop_idx = sql.index(f"DROP VIEW IF EXISTS top_{view}")
+        drop_idx = sql.index(f"DROP MATERIALIZED VIEW IF EXISTS top_{view}")
         assert drop_idx < first_create, (
             f"top_{view} drop must come before any CREATE TABLE"
         )
@@ -486,7 +487,7 @@ def test_drift_view_filters_to_leaf_accounts_with_nonzero_drift() -> None:
     that returns only rows where stored ≠ computed."""
     sql = emit_schema(_instance("dr"))
     drift_match = re.search(
-        r"CREATE VIEW dr_drift AS(.*?);",
+        r"CREATE MATERIALIZED VIEW dr_drift AS(.*?);",
         sql,
         re.DOTALL,
     )
@@ -503,7 +504,7 @@ def test_ledger_drift_view_filters_to_parent_accounts() -> None:
     is gated to accounts whose role IS a parent_role)."""
     sql = emit_schema(_instance("ld"))
     body_match = re.search(
-        r"CREATE VIEW ld_ledger_drift AS(.*?);",
+        r"CREATE MATERIALIZED VIEW ld_ledger_drift AS(.*?);",
         sql,
         re.DOTALL,
     )
@@ -517,7 +518,7 @@ def test_overdraft_view_filters_internal_money_lt_zero() -> None:
     """`<prefix>_overdraft` returns internal accounts × days where money < 0."""
     sql = emit_schema(_instance("ov"))
     body_match = re.search(
-        r"CREATE VIEW ov_overdraft AS(.*?);",
+        r"CREATE MATERIALIZED VIEW ov_overdraft AS(.*?);",
         sql,
         re.DOTALL,
     )
@@ -533,7 +534,7 @@ def test_expected_eod_balance_breach_excludes_null_expectations() -> None:
     an expectation for."""
     sql = emit_schema(_instance("eod"))
     body_match = re.search(
-        r"CREATE VIEW eod_expected_eod_balance_breach AS(.*?);",
+        r"CREATE MATERIALIZED VIEW eod_expected_eod_balance_breach AS(.*?);",
         sql,
         re.DOTALL,
     )
@@ -561,9 +562,9 @@ def test_limit_breach_view_with_no_limit_schedules_is_inert() -> None:
     limit_breach view that surfaces no rows (cap is NULL → outer WHERE
     `cap IS NOT NULL` excludes everything)."""
     sql = emit_schema(_instance("nolim"))  # _instance has no limit_schedules
-    assert "CREATE VIEW nolim_limit_breach" in sql
+    assert "CREATE MATERIALIZED VIEW nolim_limit_breach" in sql
     body_match = re.search(
-        r"CREATE VIEW nolim_limit_breach AS(.*?);",
+        r"CREATE MATERIALIZED VIEW nolim_limit_breach AS(.*?);",
         sql,
         re.DOTALL,
     )
@@ -584,7 +585,7 @@ def test_limit_breach_view_does_not_join_daily_balances() -> None:
     breach business_day."""
     sql = emit_schema(_instance_with_limits("nojoin"))
     body_match = re.search(
-        r"CREATE VIEW nojoin_limit_breach AS(.*?);",
+        r"CREATE MATERIALIZED VIEW nojoin_limit_breach AS(.*?);",
         sql,
         re.DOTALL,
     )
@@ -600,7 +601,7 @@ def test_computed_subledger_balance_uses_current_transactions_view() -> None:
     transparent) rather than the raw transactions base table."""
     sql = emit_schema(_instance("h"))
     body_match = re.search(
-        r"CREATE VIEW h_computed_subledger_balance AS(.*?);",
+        r"CREATE MATERIALIZED VIEW h_computed_subledger_balance AS(.*?);",
         sql,
         re.DOTALL,
     )
@@ -615,7 +616,7 @@ def test_computed_ledger_balance_unions_children_plus_direct_postings() -> None:
     direct ledger postings."""
     sql = emit_schema(_instance("clb"))
     body_match = re.search(
-        r"CREATE VIEW clb_computed_ledger_balance AS(.*?);",
+        r"CREATE MATERIALIZED VIEW clb_computed_ledger_balance AS(.*?);",
         sql,
         re.DOTALL,
     )
@@ -626,3 +627,76 @@ def test_computed_ledger_balance_unions_children_plus_direct_postings() -> None:
     assert "child_db.account_parent_role" in body
     # Direct postings: SUM(tx.amount_money) per ledger account-day
     assert "SUM(tx.amount_money)" in body
+
+
+# -- M.1a.9: matview refresh helper -----------------------------------------
+
+
+def _baseline_instance() -> L2Instance:
+    """Minimum L2Instance fixture for refresh-helper tests."""
+    return L2Instance(
+        instance=Identifier("re"),
+        accounts=(),
+        account_templates=(),
+        rails=(),
+        transfer_templates=(),
+        chains=(),
+        limit_schedules=(),
+    )
+
+
+def test_refresh_matviews_sql_emits_one_per_view() -> None:
+    """All 11 L1-pipeline matviews each get a REFRESH command:
+    2 current_* + 2 computed_* + 5 L1 invariants + 2 dashboard-shape
+    matviews (daily_statement_summary + todays_exceptions) added at
+    M.1a.9."""
+    sql = refresh_matviews_sql(_baseline_instance())
+    statements = [s for s in sql.split(";") if s.strip()]
+    assert len(statements) == 11
+    for stmt in statements:
+        assert stmt.strip().startswith("REFRESH MATERIALIZED VIEW re_")
+
+
+def test_refresh_matviews_sql_dependency_order() -> None:
+    """current_* must REFRESH before computed_*; computed_* before
+    L1 invariants. PostgreSQL refuses to refresh a downstream matview
+    before its upstream is fresh, so order is load-bearing."""
+    sql = refresh_matviews_sql(_baseline_instance())
+
+    def _idx(name: str) -> int:
+        return sql.index(f"REFRESH MATERIALIZED VIEW re_{name};")
+
+    # current_* are leaves (read base tables only).
+    assert _idx("current_transactions") < _idx("computed_subledger_balance")
+    assert _idx("current_daily_balances") < _idx("computed_subledger_balance")
+    # computed_* helpers feed drift / ledger_drift.
+    assert _idx("computed_subledger_balance") < _idx("drift")
+    assert _idx("computed_ledger_balance") < _idx("ledger_drift")
+    # All L1 invariants come after current_*.
+    for inv in (
+        "drift", "ledger_drift", "overdraft",
+        "expected_eod_balance_breach", "limit_breach",
+    ):
+        assert _idx("current_transactions") < _idx(inv)
+    # Dashboard-shape matviews (M.1a.9) refresh AFTER L1 invariants
+    # because todays_exceptions UNIONs them.
+    assert _idx("limit_breach") < _idx("todays_exceptions")
+    assert _idx("current_daily_balances") < _idx("daily_statement_summary")
+
+
+def test_refresh_matviews_sql_uses_instance_prefix() -> None:
+    """Prefix is per-L2-instance; switching instances switches prefixes."""
+    inst_a = L2Instance(
+        instance=Identifier("alpha"), accounts=(), account_templates=(),
+        rails=(), transfer_templates=(), chains=(), limit_schedules=(),
+    )
+    inst_b = L2Instance(
+        instance=Identifier("beta"), accounts=(), account_templates=(),
+        rails=(), transfer_templates=(), chains=(), limit_schedules=(),
+    )
+    sql_a = refresh_matviews_sql(inst_a)
+    sql_b = refresh_matviews_sql(inst_b)
+    assert "alpha_current_transactions" in sql_a
+    assert "alpha_" in sql_a and "beta_" not in sql_a
+    assert "beta_current_transactions" in sql_b
+    assert "beta_" in sql_b and "alpha_" not in sql_b

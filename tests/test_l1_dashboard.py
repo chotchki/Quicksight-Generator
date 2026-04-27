@@ -326,11 +326,12 @@ def test_todays_exceptions_sheet_has_kpi_bar_table() -> None:
     ]
 
 
-def test_todays_exceptions_dataset_unions_all_five_l1_views() -> None:
-    """The Today's Exceptions dataset SQL must UNION ALL across every
-    L1 invariant view — drift / ledger_drift / overdraft / limit_breach
-    / expected_eod_balance_breach — and pre-filter each branch to the
-    most recent business day from `<prefix>_current_daily_balances`."""
+def test_todays_exceptions_dataset_reads_matview() -> None:
+    """M.1a.9: the Today's Exceptions dataset SQL is a thin wrapper
+    around `<prefix>_todays_exceptions` matview — the UNION ALL logic
+    moved into the L1 schema in M.1a.9 so QS reads a precomputed
+    table instead of re-running the 5-branch UNION per visual.
+    """
     from quicksight_gen.apps.account_recon._l2 import default_l2_instance
     from quicksight_gen.apps.l1_dashboard.datasets import (
         DS_TODAYS_EXCEPTIONS,
@@ -342,48 +343,12 @@ def test_todays_exceptions_dataset_unions_all_five_l1_views() -> None:
     assert DS_TODAYS_EXCEPTIONS in registered_ids
 
     instance = default_l2_instance()
-    p = instance.instance
     te_ds = build_todays_exceptions_dataset(_CFG, instance)
     sql_obj = next(iter(te_ds.PhysicalTableMap.values())).CustomSql
     assert sql_obj is not None
     sql = sql_obj.SqlQuery
-
-    # Every L1 invariant view is referenced.
-    assert f"FROM {p}_drift " in sql
-    assert f"FROM {p}_ledger_drift " in sql
-    assert f"FROM {p}_overdraft " in sql
-    assert f"FROM {p}_limit_breach " in sql
-    assert f"FROM {p}_expected_eod_balance_breach " in sql
-    # Today filter targets the prefix's current_daily_balances.
-    assert f"MAX(business_day_start) FROM {p}_current_daily_balances" in sql
-    # UNION ALL stitches the 5 branches (4 ALLs join 5 SELECTs).
-    assert sql.count("UNION ALL") == 4
-
-
-def test_todays_exceptions_sql_emits_unified_shape() -> None:
-    """Every UNION branch must SELECT into the same column shape so the
-    contract validates — check_type discriminator first, magnitude last,
-    NULLs where the source view doesn't carry the column."""
-    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
-    from quicksight_gen.apps.l1_dashboard.datasets import (
-        build_todays_exceptions_dataset,
-    )
-
-    instance = default_l2_instance()
-    te_ds = build_todays_exceptions_dataset(_CFG, instance)
-    sql_obj = next(iter(te_ds.PhysicalTableMap.values())).CustomSql
-    assert sql_obj is not None
-    sql = sql_obj.SqlQuery
-
-    # One literal check_type discriminator per branch.
-    for label in (
-        "'drift' AS check_type",
-        "'ledger_drift'",
-        "'overdraft'",
-        "'limit_breach'",
-        "'expected_eod_balance_breach'",
-    ):
-        assert label in sql
+    # SQL is now just a SELECT * from the prefixed matview.
+    assert sql == f"SELECT * FROM {instance.instance}_todays_exceptions"
 
 
 # -- Daily Statement sheet (M.2b.4) ------------------------------------------
@@ -478,8 +443,13 @@ def test_daily_statement_datasets_registered() -> None:
     ).CustomSql
     txn_sql = next(iter(txn_ds.PhysicalTableMap.values())).CustomSql
     assert summary_sql is not None and txn_sql is not None
-    assert f"FROM {instance.instance}_current_daily_balances" in summary_sql.SqlQuery
-    assert f"FROM {instance.instance}_current_transactions" in summary_sql.SqlQuery
+    # M.1a.9: summary reads from the daily_statement_summary matview
+    # (the multi-CTE moved into the L1 schema). Transactions still
+    # projects per-leg from current_transactions (which IS itself a
+    # matview, so cheap).
+    assert summary_sql.SqlQuery == (
+        f"SELECT * FROM {instance.instance}_daily_statement_summary"
+    )
     assert f"FROM {instance.instance}_current_transactions" in txn_sql.SqlQuery
 
 
