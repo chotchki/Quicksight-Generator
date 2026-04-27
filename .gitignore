@@ -30,4 +30,5 @@ site/
 
 /config.yaml
 tests/e2e/screenshots/
+tests/l2/fuzz_failures/
 .claude/

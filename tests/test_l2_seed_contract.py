@@ -41,7 +41,9 @@ Contracts asserted here:
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+import secrets
 from datetime import date
 from pathlib import Path
 
@@ -51,6 +53,8 @@ from quicksight_gen.common.l2 import L2Instance, load_instance
 from quicksight_gen.common.l2.auto_scenario import default_scenario_for
 from quicksight_gen.common.l2.seed import emit_seed
 
+from tests.l2.fuzz import random_l2_yaml
+
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 L2_DIR = REPO_ROOT / "tests" / "l2"
@@ -58,13 +62,65 @@ SCHEMA_DOC = REPO_ROOT / "src" / "quicksight_gen" / "docs" / "Schema_v6.md"
 CANONICAL_TODAY = date(2030, 1, 1)
 
 
+# The fuzz seed: random per dev session by default, env-var-overridable
+# for CI determinism (M.2d.9.3). Resolved once at module import so every
+# test in this file sees the same fuzz instance within a run.
+def _resolve_fuzz_seed() -> int:
+    override = os.environ.get("QS_GEN_FUZZ_SEED")
+    if override is not None:
+        return int(override)
+    # secrets.randbits is cryptographically random — different across
+    # dev runs, surfacing new shapes each test invocation.
+    return secrets.randbits(32)
+
+
+FUZZ_SEED: int = _resolve_fuzz_seed()
+
+
+# Fuzz YAML materialized once per pytest session into a known location
+# under the repo's tmp area so a failure can be re-loaded for triage.
+# (Path is in the gitignored tests/l2/fuzz_failures/ dir.)
+_FUZZ_DUMP_DIR = REPO_ROOT / "tests" / "l2" / "fuzz_failures"
+
+
+def _fuzz_yaml_path() -> Path:
+    """Materialize fuzz YAML to a stable path keyed by seed."""
+    _FUZZ_DUMP_DIR.mkdir(parents=True, exist_ok=True)
+    p = _FUZZ_DUMP_DIR / f"fuzz_seed_{FUZZ_SEED}.yaml"
+    if not p.exists():
+        text = random_l2_yaml(FUZZ_SEED)
+        # Lock the seed_hash by computing it then appending — this
+        # mirrors what the `demo seed-l2 --lock` CLI does, but in-process
+        # so the matrix runs without subprocess overhead.
+        instance = load_instance(_write_temp(text))
+        report = default_scenario_for(instance, today=CANONICAL_TODAY)
+        sql = emit_seed(instance, report.scenario)
+        sha = hashlib.sha256(sql.encode("utf-8")).hexdigest()
+        text_with_lock = text.rstrip() + f"\nseed_hash: {sha}\n"
+        p.write_text(text_with_lock)
+    return p
+
+
+def _write_temp(text: str) -> Path:
+    """Write to a sibling tmp file just for the pre-lock load."""
+    tmp = _FUZZ_DUMP_DIR / f"_tmp_seed_{FUZZ_SEED}.yaml"
+    tmp.write_text(text)
+    return tmp
+
+
 # The L2 fixtures that every contract test runs against. Adding a new
 # YAML here parameterizes the entire file at once — that's the M.2d.8
 # headline ergonomics. M.3.1 will add `sasquatch_pr.yaml` and inherit
-# all assertions.
+# all assertions. The fuzz entry is resolved at module import so the
+# id reflects the actual seed in the test name (helps when triaging
+# failures).
 L2_INSTANCES = [
     pytest.param(L2_DIR / "spec_example.yaml", id="spec_example"),
     pytest.param(L2_DIR / "sasquatch_ar.yaml", id="sasquatch_ar"),
+    pytest.param(
+        _fuzz_yaml_path(),
+        id=f"fuzz-seed-{FUZZ_SEED}",
+    ),
 ]
 
 
@@ -90,6 +146,37 @@ def auto_seed_sql(instance: L2Instance) -> str:
     """
     report = default_scenario_for(instance, today=CANONICAL_TODAY)
     return emit_seed(instance, report.scenario)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _announce_fuzz_seed(request) -> None:
+    """Print the fuzz seed at session start so passing runs surface it,
+    and the matrix's `fuzz-seed-N` test id matches the printed seed."""
+    reporter = request.config.pluginmanager.get_plugin("terminalreporter")
+    if reporter is not None:
+        override = "QS_GEN_FUZZ_SEED" in os.environ
+        suffix = " (from QS_GEN_FUZZ_SEED)" if override else " (random; pin via QS_GEN_FUZZ_SEED=N)"
+        reporter.write_sep(
+            "-", f"fuzz seed for L2 contract matrix: {FUZZ_SEED}{suffix}",
+        )
+
+
+def _fuzz_repro_hint() -> str:
+    """A trailing hint included in every assertion message on the fuzz
+    entry — gives the developer the exact command to reproduce."""
+    return (
+        f"\n\n[reproduce] QS_GEN_FUZZ_SEED={FUZZ_SEED} pytest "
+        f"tests/test_l2_seed_contract.py\n"
+        f"[fuzz YAML] {_fuzz_yaml_path()}"
+    )
+
+
+def _is_fuzz_instance(instance: L2Instance) -> bool:
+    return str(instance.instance).startswith("fuzz_seed_")
+
+
+def _hint_if_fuzz(instance: L2Instance) -> str:
+    return _fuzz_repro_hint() if _is_fuzz_instance(instance) else ""
 
 
 # -- SQL parsing helpers ----------------------------------------------------
@@ -238,11 +325,13 @@ def test_seed_hash_in_yaml_matches_actual_when_set(
     assert declared is not None, (
         f"L2 instance {instance.instance!r} is in the matrix but has no "
         f"seed_hash; lock with `quicksight-gen demo seed-l2 <yaml> --lock`."
+        + _hint_if_fuzz(instance)
     )
     assert actual == declared, (
         f"Auto-seed for {instance.instance!r} drifted from locked hash:\n"
         f"  YAML  : {declared}\n"
         f"  actual: {actual}"
+        + _hint_if_fuzz(instance)
     )
 
 
@@ -288,6 +377,7 @@ def test_seed_account_roles_resolve_to_instance(
     assert not undeclared, (
         f"Auto-seed for {instance.instance!r} emitted account_role values "
         f"not declared in instance.accounts/account_templates: {sorted(undeclared)!r}"
+        + _hint_if_fuzz(instance)
     )
 
 
@@ -323,6 +413,7 @@ def test_seed_account_ids_resolve_to_instance_or_synthetic_template(
         f"Auto-seed for {instance.instance!r} emitted account_id values "
         f"that are neither declared singletons nor synthetic "
         f"template-instances: {sorted(undeclared)!r}"
+        + _hint_if_fuzz(instance)
     )
 
 
@@ -354,6 +445,7 @@ def test_seed_rail_names_resolve_to_instance(
     assert not undeclared, (
         f"Auto-seed for {instance.instance!r} emitted rail_name values "
         f"not declared in instance.rails: {sorted(undeclared)!r}"
+        + _hint_if_fuzz(instance)
     )
 
 
@@ -382,6 +474,7 @@ def test_seed_transfer_types_resolve_to_instance(
     assert not undeclared, (
         f"Auto-seed for {instance.instance!r} emitted transfer_type values "
         f"not declared on any Rail.transfer_type: {sorted(undeclared)!r}"
+        + _hint_if_fuzz(instance)
     )
 
 
@@ -417,6 +510,7 @@ def test_seed_metadata_keys_subset_of_rail_declarations(
         f"not declared on any Rail.metadata_keys (and not infra-keys): "
         f"{sorted(undeclared)!r}. Either add them to the relevant rail's "
         f"metadata_keys, or add them to _INFRA_METADATA_KEYS in this test."
+        + _hint_if_fuzz(instance)
     )
 
 
@@ -440,4 +534,5 @@ def test_seed_columns_match_schema_v6_documented_set(
             f"Schema_v6.md's `<prefix>_{table}` documentation: "
             f"{sorted(undocumented)!r}. Update the doc OR drop the "
             f"columns from the seed."
+            + _hint_if_fuzz(instance)
         )
