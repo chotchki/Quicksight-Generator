@@ -254,6 +254,7 @@ def l1_dataset_ids(resource_prefix) -> list[str]:
         "l1-drift-timeline-dataset",
         "l1-ledger-drift-timeline-dataset",
         "l1-stuck-pending-dataset",
+        "l1-stuck-unbundled-dataset",
     ]
     return [f"{resource_prefix}-{s}" for s in suffixes]
 

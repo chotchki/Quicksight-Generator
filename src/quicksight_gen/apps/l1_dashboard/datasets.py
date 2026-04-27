@@ -540,7 +540,5 @@ def build_all_l1_dashboard_datasets(
         build_drift_timeline_dataset(cfg, l2_instance),
         build_ledger_drift_timeline_dataset(cfg, l2_instance),
         build_stuck_pending_dataset(cfg, l2_instance),
-        # build_stuck_unbundled_dataset wires in at M.2b.11 with the
-        # Unbundled Aging sheet — registering it here without a
-        # consuming sheet would deploy a dataset with no visuals.
+        build_stuck_unbundled_dataset(cfg, l2_instance),
     ]

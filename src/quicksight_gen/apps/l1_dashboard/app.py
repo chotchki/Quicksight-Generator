@@ -46,6 +46,7 @@ from quicksight_gen.apps.l1_dashboard.datasets import (
     DS_LIMIT_BREACH,
     DS_OVERDRAFT,
     DS_STUCK_PENDING,
+    DS_STUCK_UNBUNDLED,
     DS_TODAYS_EXCEPTIONS,
     DS_TRANSACTIONS,
     build_all_l1_dashboard_datasets,
@@ -99,6 +100,7 @@ SHEET_DRIFT_TIMELINES = SheetId("l1-sheet-drift-timelines")
 SHEET_OVERDRAFT = SheetId("l1-sheet-overdraft")
 SHEET_LIMIT_BREACH = SheetId("l1-sheet-limit-breach")
 SHEET_PENDING_AGING = SheetId("l1-sheet-pending-aging")
+SHEET_UNBUNDLED_AGING = SheetId("l1-sheet-unbundled-aging")
 SHEET_TODAYS_EXCEPTIONS = SheetId("l1-sheet-todays-exceptions")
 SHEET_DAILY_STATEMENT = SheetId("l1-sheet-daily-statement")
 SHEET_TRANSACTIONS = SheetId("l1-sheet-transactions")
@@ -210,6 +212,21 @@ _PENDING_AGING_DESCRIPTION = (
     "count; the aging bar chart breaks the population into 5 buckets "
     "(0–6h, 6–24h, 1–3d, 3–7d, >7d) so operators can see whether they're "
     "fighting one big spike or a slow drift. Right-click any row → "
+    "View Transactions to see every leg of that transfer."
+)
+
+
+_UNBUNDLED_AGING_NAME = "Unbundled Aging"
+_UNBUNDLED_AGING_TITLE = "Unbundled Posted Legs Aging Past Cap"
+_UNBUNDLED_AGING_DESCRIPTION = (
+    "Posted transactions whose `bundle_id` is still NULL past their "
+    "rail's `max_unbundled_age` cap. An AggregatingRail's job is to "
+    "pick up these legs and group them into a Bundle; an unbundled leg "
+    "older than the rail's cadence means the bundler hasn't fired or "
+    "is failing to match. KPI shows total stuck count; the aging bar "
+    "chart breaks the population into 4 buckets (<1d, 1–2d, 2–7d, >7d) "
+    "— the typical max_unbundled_age cadence is a day or two, so "
+    "buckets are wider than Pending Aging's. Right-click any row → "
     "View Transactions to see every leg of that transfer."
 )
 
@@ -349,7 +366,7 @@ def _l1_datasets(
         DS_DAILY_STATEMENT_SUMMARY, DS_DAILY_STATEMENT_TRANSACTIONS,
         DS_TRANSACTIONS,
         DS_DRIFT_TIMELINE, DS_LEDGER_DRIFT_TIMELINE,
-        DS_STUCK_PENDING,
+        DS_STUCK_PENDING, DS_STUCK_UNBUNDLED,
     ]
     return {
         vid: Dataset(identifier=vid, arn=cfg.dataset_arn(aws.DataSetId))
@@ -912,30 +929,48 @@ def _populate_limit_breach_sheet(
     )
 
 
-# Aging-bucket cutoffs (seconds). 5 buckets per CLAUDE.md AR convention
-# — number-prefixed labels keep the QS bar chart sorted correctly
-# without an explicit sort_by override.
-_AGING_BUCKET_6H = 6 * 3600
-_AGING_BUCKET_24H = 24 * 3600
-_AGING_BUCKET_3D = 3 * 24 * 3600
-_AGING_BUCKET_7D = 7 * 24 * 3600
+# Aging-bucket helper. Number-prefixed labels keep the QS horizontal
+# bar chart sorted correctly without an explicit sort_by override.
+# Mirrors AR's aging-bucket convention.
+
+# Pending Aging buckets — finer-grained at the short end since
+# max_pending_age caps are typically hours-to-1-day.
+_PENDING_AGING_BUCKETS: tuple[tuple[int, str], ...] = (
+    (6 * 3600,       "1: 0-6h"),
+    (24 * 3600,      "2: 6-24h"),
+    (3 * 24 * 3600,  "3: 1-3d"),
+    (7 * 24 * 3600,  "4: 3-7d"),
+)
+_PENDING_AGING_OVERFLOW = "5: >7d"
+
+# Unbundled Aging buckets — coarser at the short end since
+# max_unbundled_age is typically a day or two; finer-grained beyond
+# that to surface stale shouldn't-still-be-unbundled legs.
+_UNBUNDLED_AGING_BUCKETS: tuple[tuple[int, str], ...] = (
+    (24 * 3600,      "1: <1d"),
+    (2 * 24 * 3600,  "2: 1-2d"),
+    (7 * 24 * 3600,  "3: 2-7d"),
+)
+_UNBUNDLED_AGING_OVERFLOW = "4: >7d"
 
 
-def _aging_bucket_expression(age_col: str) -> str:
+def _aging_bucket_expression(
+    age_col: str,
+    *,
+    buckets: tuple[tuple[int, str], ...],
+    overflow_label: str,
+) -> str:
     """Build the QS calc-field expression that buckets a numeric age
-    column (in seconds) into 5 labelled bands.
+    column (in seconds) into labelled bands.
 
-    Labels are number-prefixed (`'1: 0-6h'` … `'5: >7d'`) so the
-    QuickSight horizontal bar chart sorts them naturally without an
-    explicit sort_by override. Mirrors AR's aging-bucket convention.
+    Each ``(cutoff_seconds, label)`` defines a band; values <= cutoff
+    get that label. Anything bigger than the last cutoff falls into
+    ``overflow_label``. Builds a nested ``ifelse(...)`` chain.
     """
-    return (
-        f"ifelse({{{age_col}}} <= {_AGING_BUCKET_6H}, '1: 0-6h',"
-        f" ifelse({{{age_col}}} <= {_AGING_BUCKET_24H}, '2: 6-24h',"
-        f" ifelse({{{age_col}}} <= {_AGING_BUCKET_3D}, '3: 1-3d',"
-        f" ifelse({{{age_col}}} <= {_AGING_BUCKET_7D}, '4: 3-7d',"
-        f" '5: >7d'))))"
-    )
+    expr = f"'{overflow_label}'"
+    for cutoff, label in reversed(buckets):
+        expr = f"ifelse({{{age_col}}} <= {cutoff}, '{label}', {expr})"
+    return expr
 
 
 def _populate_pending_aging_sheet(
@@ -962,7 +997,11 @@ def _populate_pending_aging_sheet(
     aging_bucket = analysis.add_calc_field(CalcField(
         name="stuck_pending_aging_bucket",
         dataset=ds,
-        expression=_aging_bucket_expression("age_seconds"),
+        expression=_aging_bucket_expression(
+            "age_seconds",
+            buckets=_PENDING_AGING_BUCKETS,
+            overflow_label=_PENDING_AGING_OVERFLOW,
+        ),
     ))
 
     # Row 1: total stuck count KPI.
@@ -1013,6 +1052,94 @@ def _populate_pending_aging_sheet(
             ds["posting"].date(),
             Dim(ds, aging_bucket),
             ds["max_pending_age_seconds"].numerical(),
+            ds["age_seconds"].numerical(),
+        ],
+        actions=[
+            _l1_drill(
+                target_sheet=transactions_sheet,
+                name="View Transactions for this transfer",
+                writes=[(_DP_TX_TRANSFER, transfer_col)],
+                trigger="DATA_POINT_MENU",
+            ),
+        ],
+        conditional_formatting=[
+            CellAccentText(on=transfer_col, color=accent),
+        ],
+    )
+
+
+def _populate_unbundled_aging_sheet(
+    cfg: Config,
+    analysis: Analysis,
+    sheet: Sheet,
+    *,
+    datasets: dict[str, Dataset],
+    transactions_sheet: Sheet,
+) -> None:
+    """Unbundled Aging sheet — KPI + horizontal aging BarChart + detail.
+
+    Mirror of `_populate_pending_aging_sheet` but backed by
+    `<prefix>_stuck_unbundled` and using the `_UNBUNDLED_AGING_BUCKETS`
+    bucket cadence (4 bands sized for the typical 1-2 day
+    `max_unbundled_age` configuration).
+    """
+    accent = get_preset(cfg.theme_preset).accent
+    ds = datasets[DS_STUCK_UNBUNDLED]
+
+    aging_bucket = analysis.add_calc_field(CalcField(
+        name="stuck_unbundled_aging_bucket",
+        dataset=ds,
+        expression=_aging_bucket_expression(
+            "age_seconds",
+            buckets=_UNBUNDLED_AGING_BUCKETS,
+            overflow_label=_UNBUNDLED_AGING_OVERFLOW,
+        ),
+    ))
+
+    sheet.layout.row(height=_KPI_ROW_SPAN).add_kpi(
+        width=_FULL,
+        title="Stuck Unbundled",
+        subtitle=(
+            "Count of Posted transactions whose `bundle_id` is still "
+            "NULL past their rail's `max_unbundled_age` cap. Healthy = 0."
+        ),
+        values=[ds["transaction_id"].count()],
+    )
+
+    sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
+        width=_FULL,
+        title="Stuck Unbundled by Age Bucket",
+        subtitle=(
+            "Distribution of stuck-Unbundled transactions across 4 age "
+            "bands. Right-skewed (>2d, >7d) ⇒ the bundler hasn't fired "
+            "for those rails in a while."
+        ),
+        category=[Dim(ds, aging_bucket)],
+        values=[ds["transaction_id"].count()],
+        orientation="HORIZONTAL",
+    )
+
+    transfer_col = ds["transfer_id"].dim()
+    sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        title="Stuck Unbundled Detail",
+        subtitle=(
+            "Every stuck-Unbundled leg with rail / amount / posting / "
+            "live age. `max_unbundled_age_seconds` is the rail's cap "
+            "(inlined at view-emit time from L2). Right-click any "
+            "row → View Transactions to see every leg of that transfer."
+        ),
+        columns=[
+            ds["account_id"].dim(),
+            ds["account_name"].dim(),
+            transfer_col,
+            ds["transfer_type"].dim(),
+            ds["rail_name"].dim(),
+            ds["amount_money"].numerical(),
+            ds["amount_direction"].dim(),
+            ds["posting"].date(),
+            Dim(ds, aging_bucket),
+            ds["max_unbundled_age_seconds"].numerical(),
             ds["age_seconds"].numerical(),
         ],
         actions=[
@@ -1201,6 +1328,7 @@ def _wire_date_range_filter(
     overdraft_sheet: Sheet,
     limit_breach_sheet: Sheet,
     pending_aging_sheet: Sheet,
+    unbundled_aging_sheet: Sheet,
     todays_exceptions_sheet: Sheet,
 ) -> None:
     """Wire the universal date-range filter (params + groups + controls).
@@ -1276,12 +1404,16 @@ def _wire_date_range_filter(
     # timestamp, no DATE_TRUNC) — use that for the date-range filter.
     _scope_one(DS_STUCK_PENDING, "posting", pending_aging_sheet,
                "fg-l1-date-stuck-pending")
+    # Unbundled Aging — same shape, different dataset.
+    _scope_one(DS_STUCK_UNBUNDLED, "posting", unbundled_aging_sheet,
+               "fg-l1-date-stuck-unbundled")
 
-    # Per-sheet date pickers — bound to the shared params so all six
+    # Per-sheet date pickers — bound to the shared params so all seven
     # sheets' pickers sync.
     for sheet in (
         drift_sheet, drift_timelines_sheet, overdraft_sheet,
-        limit_breach_sheet, pending_aging_sheet, todays_exceptions_sheet,
+        limit_breach_sheet, pending_aging_sheet, unbundled_aging_sheet,
+        todays_exceptions_sheet,
     ):
         sheet.add_parameter_datetime_picker(
             parameter=date_start, title="Date From",
@@ -1300,6 +1432,7 @@ def _wire_per_sheet_dropdowns(
     overdraft_sheet: Sheet,
     limit_breach_sheet: Sheet,
     pending_aging_sheet: Sheet,
+    unbundled_aging_sheet: Sheet,
     todays_exceptions_sheet: Sheet,
     transactions_sheet: Sheet,
 ) -> None:
@@ -1398,6 +1531,22 @@ def _wire_per_sheet_dropdowns(
     _dropdown(
         fg_id="fg-l1-pending-rail", ds=ds_sp, col="rail_name",
         title="Rail", sheet=pending_aging_sheet,
+    )
+
+    # Unbundled Aging — same 3 dropdowns over the stuck_unbundled
+    # dataset.
+    ds_su = datasets[DS_STUCK_UNBUNDLED]
+    _dropdown(
+        fg_id="fg-l1-unbundled-account", ds=ds_su, col="account_id",
+        title="Account", sheet=unbundled_aging_sheet,
+    )
+    _dropdown(
+        fg_id="fg-l1-unbundled-type", ds=ds_su, col="transfer_type",
+        title="Transfer Type", sheet=unbundled_aging_sheet,
+    )
+    _dropdown(
+        fg_id="fg-l1-unbundled-rail", ds=ds_su, col="rail_name",
+        title="Rail", sheet=unbundled_aging_sheet,
     )
 
     # Today's Exceptions — check_type narrows the unified UNION; account
@@ -1764,6 +1913,12 @@ def build_l1_dashboard_app(
         title=_PENDING_AGING_TITLE,
         description=_PENDING_AGING_DESCRIPTION,
     ))
+    unbundled_aging_sheet = analysis.add_sheet(Sheet(
+        sheet_id=SHEET_UNBUNDLED_AGING,
+        name=_UNBUNDLED_AGING_NAME,
+        title=_UNBUNDLED_AGING_TITLE,
+        description=_UNBUNDLED_AGING_DESCRIPTION,
+    ))
     todays_exceptions_sheet = analysis.add_sheet(Sheet(
         sheet_id=SHEET_TODAYS_EXCEPTIONS,
         name=_TODAYS_EXCEPTIONS_NAME,
@@ -1807,6 +1962,11 @@ def build_l1_dashboard_app(
         datasets=datasets,
         transactions_sheet=transactions_sheet,
     )
+    _populate_unbundled_aging_sheet(
+        cfg, analysis, unbundled_aging_sheet,
+        datasets=datasets,
+        transactions_sheet=transactions_sheet,
+    )
     _populate_todays_exceptions_sheet(
         cfg, todays_exceptions_sheet,
         datasets=datasets, l2_instance=l2_instance,
@@ -1832,12 +1992,13 @@ def build_l1_dashboard_app(
         overdraft_sheet=overdraft_sheet,
         limit_breach_sheet=limit_breach_sheet,
         pending_aging_sheet=pending_aging_sheet,
+        unbundled_aging_sheet=unbundled_aging_sheet,
         todays_exceptions_sheet=todays_exceptions_sheet,
     )
 
-    # M.2b.3 + M.2b.5 + M.2b.10 — Per-sheet category filter dropdowns
-    # (account / role / transfer_type / check_type / status / origin /
-    # rail_name as appropriate per sheet).
+    # M.2b.3 + M.2b.5 + M.2b.10 + M.2b.11 — Per-sheet category filter
+    # dropdowns (account / role / transfer_type / check_type / status /
+    # origin / rail_name as appropriate per sheet).
     _wire_per_sheet_dropdowns(
         analysis,
         datasets=datasets,
@@ -1846,6 +2007,7 @@ def build_l1_dashboard_app(
         overdraft_sheet=overdraft_sheet,
         limit_breach_sheet=limit_breach_sheet,
         pending_aging_sheet=pending_aging_sheet,
+        unbundled_aging_sheet=unbundled_aging_sheet,
         todays_exceptions_sheet=todays_exceptions_sheet,
         transactions_sheet=transactions_sheet,
     )

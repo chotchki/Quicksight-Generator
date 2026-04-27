@@ -102,17 +102,18 @@ def test_dashboard_registered() -> None:
     assert app.dashboard is not None
 
 
-def test_nine_sheets_after_m2b10() -> None:
-    """M.2b.10 inserts Pending Aging after Limit Breach. Sheet order
-    follows the analyst's journey: Getting Started → drift (today + over
-    time) → other invariants (overdraft, limit breach, pending aging)
-    → today's roll-up → per-account-day detail → raw legs."""
+def test_ten_sheets_after_m2b11() -> None:
+    """M.2b.11 inserts Unbundled Aging after Pending Aging. Sheet
+    order: Getting Started → drift (today + over time) → other
+    invariants (overdraft, limit breach, pending aging, unbundled
+    aging) → today's roll-up → per-account-day detail → raw legs."""
     app = build_l1_dashboard_app(_CFG)
     assert app.analysis is not None
     sheet_names = [s.name for s in app.analysis.sheets]
     assert sheet_names == [
         "Getting Started", "Drift", "Drift Timelines",
-        "Overdraft", "Limit Breach", "Pending Aging",
+        "Overdraft", "Limit Breach",
+        "Pending Aging", "Unbundled Aging",
         "Today's Exceptions", "Daily Statement", "Transactions",
     ]
 
@@ -905,6 +906,83 @@ def test_pending_aging_dataset_registered() -> None:
     assert sql_obj.SqlQuery == f"SELECT * FROM {instance.instance}_stuck_pending"
 
 
+# -- Unbundled Aging sheet (M.2b.11) -----------------------------------------
+
+
+def test_unbundled_aging_sheet_present_after_m2b11() -> None:
+    """M.2b.11 lands the Unbundled Aging sheet — referenced by name."""
+    app = build_l1_dashboard_app(_CFG)
+    ua = _sheet_by_name(app, "Unbundled Aging")
+    assert ua.title == "Unbundled Posted Legs Aging Past Cap"
+
+
+def test_unbundled_aging_sheet_has_kpi_bar_table() -> None:
+    """Same KPI + horizontal BarChart + detail-table structure as
+    Pending Aging, mirror but backed by stuck_unbundled."""
+    from quicksight_gen.common.tree import BarChart, KPI, Table
+
+    app = build_l1_dashboard_app(_CFG)
+    ua = _sheet_by_name(app, "Unbundled Aging")
+    titles = [v.title for v in ua.visuals]
+    assert titles == [
+        "Stuck Unbundled",
+        "Stuck Unbundled by Age Bucket",
+        "Stuck Unbundled Detail",
+    ]
+    kinds = [type(v).__name__ for v in ua.visuals]
+    assert kinds == ["KPI", "BarChart", "Table"]
+    bar = next(v for v in ua.visuals if isinstance(v, BarChart))
+    assert bar.orientation == "HORIZONTAL"
+
+
+def test_unbundled_aging_uses_4_buckets() -> None:
+    """Aging buckets are coarser than Pending Aging (4 vs 5 bands) —
+    `max_unbundled_age` is typically days, not hours."""
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    by_name = {c.name: c for c in app.analysis.calc_fields}
+    assert "stuck_unbundled_aging_bucket" in by_name
+    expr = by_name["stuck_unbundled_aging_bucket"].expression
+    for label in ("'1: <1d'", "'2: 1-2d'", "'3: 2-7d'", "'4: >7d'"):
+        assert label in expr, f"missing bucket label {label}"
+    # No 6h or 24h buckets here (those are Pending Aging's).
+    assert "0-6h" not in expr
+    assert "6-24h" not in expr
+
+
+def test_unbundled_aging_drill_to_transactions() -> None:
+    """M.2b.7 drill plumbing — same shape as Pending Aging."""
+    from quicksight_gen.common.tree import Drill
+
+    app = build_l1_dashboard_app(_CFG)
+    ua = _sheet_by_name(app, "Unbundled Aging")
+    table = next(v for v in ua.visuals if v.title == "Stuck Unbundled Detail")
+    drills = [a for a in table.actions if isinstance(a, Drill)]
+    assert len(drills) == 1
+    drill = drills[0]
+    assert drill.trigger == "DATA_POINT_MENU"
+    assert drill.target_sheet.name == "Transactions"
+
+
+def test_unbundled_aging_dataset_registered() -> None:
+    """DS_STUCK_UNBUNDLED dataset registers + targets prefixed matview."""
+    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard.datasets import (
+        DS_STUCK_UNBUNDLED,
+        build_stuck_unbundled_dataset,
+    )
+
+    app = build_l1_dashboard_app(_CFG)
+    registered_ids = {ds.identifier for ds in app.datasets}
+    assert DS_STUCK_UNBUNDLED in registered_ids
+
+    instance = default_l2_instance()
+    su_ds = build_stuck_unbundled_dataset(_CFG, instance)
+    sql_obj = next(iter(su_ds.PhysicalTableMap.values())).CustomSql
+    assert sql_obj is not None
+    assert sql_obj.SqlQuery == f"SELECT * FROM {instance.instance}_stuck_unbundled"
+
+
 # -- Cross-sheet drill plumbing (M.2b.7) -------------------------------------
 
 
@@ -1068,11 +1146,11 @@ def test_drill_emission_navigation_plus_set_parameters() -> None:
                         f"action {action['Name']!r} missing set-params op"
                     )
                     drill_count += 1
-    # 7 drill source sites: Today's Exc (2), Drift (2), Overdraft (1),
-    # Limit Breach (1), Pending Aging (1), Daily Statement (1) = 8
-    # total drills.
-    assert drill_count == 8, (
-        f"expected 8 drills total, saw {drill_count}"
+    # 8 drill source sites: Today's Exc (2), Drift (2), Overdraft (1),
+    # Limit Breach (1), Pending Aging (1), Unbundled Aging (1), Daily
+    # Statement (1) = 9 total drills.
+    assert drill_count == 9, (
+        f"expected 9 drills total, saw {drill_count}"
     )
 
 
