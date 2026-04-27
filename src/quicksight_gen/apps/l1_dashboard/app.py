@@ -24,8 +24,8 @@ Substep landmarks:
     M.2a.3 — Drift sheet — KPIs + leaf + ledger drift tables
     M.2a.4 — Overdraft sheet — KPI + violations table
     M.2a.5 — Limit Breach sheet — KPI + breach table
-    M.2a.6 — Today's Exceptions sheet (this commit) — UNION across L1 views
-    M.2a.7 — Description-driven prose across every sheet
+    M.2a.6 — Today's Exceptions sheet — UNION across L1 views
+    M.2a.7 — Description-driven prose across every sheet (this commit)
     M.2a.8 — Hash-lock the seed at the M.2a structure
     M.2a.9 — Deploy + verify against Aurora
     M.2a.10 — Iteration gate; decide on apps/account_recon/ deprecation
@@ -138,6 +138,76 @@ def _analysis_name(cfg: Config, l2_instance: L2Instance) -> str:
     return f"L1 Reconciliation Dashboard ({l2_instance.instance})"
 
 
+# -- L2-prose helpers --------------------------------------------------------
+#
+# M.2a.7's "description-driven prose" core: pull facts about the configured
+# L2 instance into per-sheet text boxes so each sheet IS the handbook page
+# for that L1 invariant under this institution. Switching L2 instance
+# switches the prose across every sheet — tested at the substep that
+# introduces each helper's call site.
+
+
+def _l2_inventory_lines(l2_instance: L2Instance) -> list[str]:
+    """Compact inventory bullets for the Getting Started coverage block."""
+    accounts = l2_instance.accounts
+    internal = sum(1 for a in accounts if a.scope == "internal")
+    external = sum(1 for a in accounts if a.scope == "external")
+    return [
+        f"{internal} internal accounts, {external} external accounts",
+        f"{len(l2_instance.account_templates)} account templates "
+        f"(role classes that bind to specific accounts at posting time)",
+        f"{len(l2_instance.rails)} rails "
+        f"(reconciliation patterns the integrator declares)",
+        f"{len(l2_instance.transfer_templates)} transfer templates "
+        f"(multi-leg shared transfers)",
+        f"{len(l2_instance.chains)} chains "
+        f"(transfer-of-transfers ordered flows)",
+        f"{len(l2_instance.limit_schedules)} limit schedules "
+        f"(daily outbound caps by parent role × transfer type)",
+    ]
+
+
+def _l2_limit_schedule_lines(l2_instance: L2Instance) -> list[str]:
+    """Per-LimitSchedule bullets — name, cap, and L2-supplied prose."""
+    if not l2_instance.limit_schedules:
+        return [
+            "No limit schedules configured on this L2 instance — "
+            "the limit-breach view returns zero rows by construction.",
+        ]
+    lines: list[str] = []
+    for ls in l2_instance.limit_schedules:
+        # Money is a Decimal; format with thousands separators + 2dp.
+        cap_str = f"${ls.cap:,.2f}/day"
+        head = f"{ls.parent_role} × {ls.transfer_type}: {cap_str}"
+        if ls.description:
+            lines.append(f"{head} — {ls.description}")
+        else:
+            lines.append(head)
+    return lines
+
+
+def _l2_internal_account_role_lines(l2_instance: L2Instance) -> list[str]:
+    """One bullet per internal account or template with prose."""
+    lines: list[str] = []
+    for a in l2_instance.accounts:
+        if a.scope != "internal":
+            continue
+        head = f"{a.role or a.id} ({a.id})"
+        if a.description:
+            lines.append(f"{head} — {a.description}")
+        else:
+            lines.append(head)
+    for t in l2_instance.account_templates:
+        if t.scope != "internal":
+            continue
+        head = f"{t.role} (template)"
+        if t.description:
+            lines.append(f"{head} — {t.description}")
+        else:
+            lines.append(head)
+    return lines
+
+
 def _l1_datasets(
     cfg: Config, l2_instance: L2Instance,
 ) -> dict[str, Dataset]:
@@ -170,10 +240,10 @@ def _populate_getting_started(
     """Render the Getting Started sheet using the L2 instance's prose.
 
     M.2a's "description-driven prose" core: the welcome text uses
-    `l2_instance.description` as the body — NOT a hardcoded persona
-    string. This is the seam M.2a.7 generalizes across every sheet
-    (subtitle prose pulled from per-entity descriptions). For M.2a.2
-    we just need the welcome + a single overview block.
+    `l2_instance.description` as the body, and the coverage block lists
+    the L2 inventory (account counts, rail counts, etc.) — both
+    derived from the L2 instance, NOT hardcoded persona strings.
+    Switching L2 instance switches the prose.
     """
     accent = get_preset(cfg.theme_preset).accent
 
@@ -197,28 +267,66 @@ def _populate_getting_started(
                 rt.body(welcome_body),
             ),
         ),
-        width=36,  # full QuickSight row width
+        width=_FULL,
+    )
+
+    sheet.layout.row(height=8).add_text_box(
+        TextBox(
+            text_box_id="l1-gs-coverage",
+            content=rt.text_box(
+                rt.subheading("L2 Coverage", color=accent),
+                rt.BR,
+                rt.body(
+                    "What this dashboard reconciles, derived from the "
+                    "configured L2 instance:"
+                ),
+                rt.bullets(_l2_inventory_lines(l2_instance)),
+            ),
+        ),
+        width=_FULL,
     )
 
 
 def _populate_drift_sheet(
-    cfg: Config,  # noqa: ARG001  (M.2a.7 wires theme accent on conditional formats)
+    cfg: Config,
     sheet: Sheet,
     *,
     datasets: dict[str, Dataset],
+    l2_instance: L2Instance,
 ) -> None:
     """Drift sheet — 2 KPIs + leaf-drift table + ledger-drift table.
 
     Both tables are unaggregated row passthroughs: the L1 views
     pre-filter to violations only (``stored_balance != computed_balance``)
-    so each row is one SHOULD-constraint failure. No drill actions yet —
-    M.2a.7 layers same-sheet + cross-sheet wiring on once every sheet
-    exists.
+    so each row is one SHOULD-constraint failure.
+
+    M.2a.7: top-of-sheet TextBox enumerates the L2's internal accounts
+    + their roles + L2-supplied prose so analysts see the universe of
+    accounts drift can surface against.
     """
+    accent = get_preset(cfg.theme_preset).accent
     ds_drift = datasets[DS_DRIFT]
     ds_ledger_drift = datasets[DS_LEDGER_DRIFT]
 
-    # Row 1: two KPIs side-by-side — one count per drift-violation kind.
+    sheet.layout.row(height=8).add_text_box(
+        TextBox(
+            text_box_id="l1-drift-accounts",
+            content=rt.text_box(
+                rt.subheading("Internal Accounts in Scope", color=accent),
+                rt.BR,
+                rt.body(
+                    "Accounts where drift is checked — drift surfaces "
+                    "where stored balance disagrees with the cumulative "
+                    "net of posted Money records (leaf) or the sum of "
+                    "child stored balances (parent):"
+                ),
+                rt.bullets(_l2_internal_account_role_lines(l2_instance)),
+            ),
+        ),
+        width=_FULL,
+    )
+
+    # Row 2: two KPIs side-by-side — one count per drift-violation kind.
     half = _FULL // 2
     kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
     kpi_row.add_kpi(
@@ -328,10 +436,11 @@ def _populate_overdraft_sheet(
 
 
 def _populate_todays_exceptions_sheet(
-    cfg: Config,  # noqa: ARG001  (M.2a.7 wires theme accent on conditional formats)
+    cfg: Config,
     sheet: Sheet,
     *,
     datasets: dict[str, Dataset],
+    l2_instance: L2Instance,
 ) -> None:
     """Today's Exceptions sheet — KPI + check-type breakdown bar +
     sorted detail table.
@@ -341,7 +450,13 @@ def _populate_todays_exceptions_sheet(
     pre-filtered to the most recent business day at the SQL layer. This
     is the v5 ar_unified_exceptions matview's replacement — no REFRESH
     contract; queries are live.
+
+    M.2a.7: footer TextBox carries the L2 instance's top-level
+    description, mirroring the Getting Started welcome — the unified
+    view's job is to be the morning landing page, so it gets the
+    institution's "what we are" prose at the bottom for context.
     """
+    accent = get_preset(cfg.theme_preset).accent
     ds = datasets[DS_TODAYS_EXCEPTIONS]
 
     # Row 1: total count KPI (full width — single headline number).
@@ -394,12 +509,34 @@ def _populate_todays_exceptions_sheet(
         sort_by=(magnitude_col, "DESC"),
     )
 
+    # Row 4: L2-description footer — the institution's "what we are"
+    # prose. Mirrors the Getting Started welcome at the bottom of the
+    # unified-view landing page.
+    footer_body = (
+        l2_instance.description
+        if l2_instance.description
+        else "(L2 instance description missing — fill the top-level "
+             "`description` field in the L2 YAML.)"
+    )
+    sheet.layout.row(height=6).add_text_box(
+        TextBox(
+            text_box_id="l1-te-l2-footer",
+            content=rt.text_box(
+                rt.subheading("Institution Context", color=accent),
+                rt.BR,
+                rt.body(footer_body),
+            ),
+        ),
+        width=_FULL,
+    )
+
 
 def _populate_limit_breach_sheet(
-    cfg: Config,  # noqa: ARG001  (M.2a.7 wires theme accent on conditional formats)
+    cfg: Config,
     sheet: Sheet,
     *,
     datasets: dict[str, Dataset],
+    l2_instance: L2Instance,
 ) -> None:
     """Limit Breach sheet — KPI + per-(account, day, type) breach table.
 
@@ -407,8 +544,31 @@ def _populate_limit_breach_sheet(
     cumulative outbound debit on that (account, day, transfer_type)
     exceeded the L2-configured cap. The cap column lives next to the
     outbound_total so analysts can read both numbers at once.
+
+    M.2a.7: top-of-sheet TextBox enumerates the L2 LimitSchedules
+    (parent_role × transfer_type → cap, plus L2-supplied prose) so
+    analysts see "what's configured" before "what got breached" —
+    description-driven, not hardcoded.
     """
+    accent = get_preset(cfg.theme_preset).accent
     ds_lb = datasets[DS_LIMIT_BREACH]
+
+    sheet.layout.row(height=8).add_text_box(
+        TextBox(
+            text_box_id="l1-lb-config",
+            content=rt.text_box(
+                rt.subheading("Configured Caps", color=accent),
+                rt.BR,
+                rt.body(
+                    "Outbound debit caps from the L2 instance's "
+                    "LimitSchedules — these are the thresholds the "
+                    "view below compares against:"
+                ),
+                rt.bullets(_l2_limit_schedule_lines(l2_instance)),
+            ),
+        ),
+        width=_FULL,
+    )
 
     sheet.layout.row(height=_KPI_ROW_SPAN).add_kpi(
         width=_FULL,
@@ -486,7 +646,9 @@ def build_l1_dashboard_app(
         title=_DRIFT_TITLE,
         description=_DRIFT_DESCRIPTION,
     ))
-    _populate_drift_sheet(cfg, drift_sheet, datasets=datasets)
+    _populate_drift_sheet(
+        cfg, drift_sheet, datasets=datasets, l2_instance=l2_instance,
+    )
 
     overdraft_sheet = analysis.add_sheet(Sheet(
         sheet_id=SHEET_OVERDRAFT,
@@ -502,7 +664,10 @@ def build_l1_dashboard_app(
         title=_LIMIT_BREACH_TITLE,
         description=_LIMIT_BREACH_DESCRIPTION,
     ))
-    _populate_limit_breach_sheet(cfg, limit_breach_sheet, datasets=datasets)
+    _populate_limit_breach_sheet(
+        cfg, limit_breach_sheet,
+        datasets=datasets, l2_instance=l2_instance,
+    )
 
     todays_exceptions_sheet = analysis.add_sheet(Sheet(
         sheet_id=SHEET_TODAYS_EXCEPTIONS,
@@ -511,7 +676,8 @@ def build_l1_dashboard_app(
         description=_TODAYS_EXCEPTIONS_DESCRIPTION,
     ))
     _populate_todays_exceptions_sheet(
-        cfg, todays_exceptions_sheet, datasets=datasets,
+        cfg, todays_exceptions_sheet,
+        datasets=datasets, l2_instance=l2_instance,
     )
 
     app.create_dashboard(

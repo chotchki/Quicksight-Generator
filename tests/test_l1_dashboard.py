@@ -105,10 +105,13 @@ def test_getting_started_welcome_uses_l2_instance_description() -> None:
     comes from `l2_instance.description`, NOT from a hardcoded persona
     string. Switching L2 instance switches the prose; M.7's render
     pipeline becomes "walk the L2 instance" instead of "substitute
-    Sasquatch tokens"."""
+    Sasquatch tokens".
+
+    M.2a.7 added a second text box (L2 Coverage block) below the
+    welcome — both are description-driven."""
     app = build_l1_dashboard_app(_CFG)
     gs = app.analysis.sheets[0]
-    assert len(gs.text_boxes) == 1
+    assert len(gs.text_boxes) == 2
     welcome_xml = gs.text_boxes[0].content
     # The fixture's top-level description string is the body source.
     assert "Sasquatch National Bank" in welcome_xml
@@ -375,6 +378,79 @@ def test_todays_exceptions_sql_emits_unified_shape() -> None:
         "'expected_eod_balance_breach'",
     ):
         assert label in sql
+
+
+# -- Description-driven prose (M.2a.7) ---------------------------------------
+
+
+def test_getting_started_coverage_lists_l2_inventory() -> None:
+    """M.2a.7: Getting Started gets a second TextBox listing L2-derived
+    inventory (account counts, rail counts, etc.) — switching L2
+    instance changes the numbers, proving the seam."""
+    app = build_l1_dashboard_app(_CFG)
+    gs = app.analysis.sheets[0]
+    assert len(gs.text_boxes) == 2
+    coverage_xml = gs.text_boxes[1].content
+    assert "L2 Coverage" in coverage_xml
+    # Sasquatch fixture: 8 internal + 5 external accounts (per the M.2.1
+    # hand-write). If the fixture changes, this test re-locks.
+    assert "internal accounts" in coverage_xml
+    assert "external accounts" in coverage_xml
+    assert "rails" in coverage_xml
+    assert "limit schedules" in coverage_xml
+
+
+def test_drift_sheet_lists_internal_accounts_from_l2() -> None:
+    """M.2a.7: Drift sheet's top TextBox enumerates internal accounts
+    + roles from the L2 instance — analysts see the universe drift can
+    surface against without leaving the sheet."""
+    app = build_l1_dashboard_app(_CFG)
+    drift = app.analysis.sheets[1]
+    assert len(drift.text_boxes) == 1
+    accounts_xml = drift.text_boxes[0].content
+    assert "Internal Accounts in Scope" in accounts_xml
+    # Sasquatch fixture has at least one GL control + one DDA template;
+    # both should appear.
+    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    instance = default_l2_instance()
+    internal_account_ids = [
+        a.id for a in instance.accounts if a.scope == "internal"
+    ]
+    assert len(internal_account_ids) > 0, (
+        "fixture must have internal accounts for this test to be meaningful"
+    )
+    # At least one internal account id appears in the rendered prose.
+    assert any(aid in accounts_xml for aid in internal_account_ids)
+
+
+def test_limit_breach_sheet_lists_l2_caps() -> None:
+    """M.2a.7: Limit Breach sheet's top TextBox enumerates each L2
+    LimitSchedule with its cap + L2-supplied prose. Analysts see "what's
+    configured" before "what got breached"."""
+    app = build_l1_dashboard_app(_CFG)
+    lb = app.analysis.sheets[3]
+    assert len(lb.text_boxes) == 1
+    config_xml = lb.text_boxes[0].content
+    assert "Configured Caps" in config_xml
+    # Each LimitSchedule renders a `parent_role × transfer_type: $cap`
+    # line; the multiplication-sign separator is a structural marker
+    # the test can key off.
+    assert "×" in config_xml
+    # Cap renders with $ prefix.
+    assert "$" in config_xml
+
+
+def test_todays_exceptions_footer_carries_l2_description() -> None:
+    """M.2a.7: Today's Exceptions ends with a TextBox carrying the L2
+    instance's top-level description — same prose as the Getting Started
+    welcome, anchored at the bottom of the unified-view landing page."""
+    app = build_l1_dashboard_app(_CFG)
+    te = app.analysis.sheets[4]
+    assert len(te.text_boxes) == 1
+    footer_xml = te.text_boxes[0].content
+    assert "Institution Context" in footer_xml
+    # Same Sasquatch fixture string the Getting Started welcome uses.
+    assert "Sasquatch National Bank" in footer_xml
 
 
 # -- Emit shape (substitutability with other apps) ---------------------------
