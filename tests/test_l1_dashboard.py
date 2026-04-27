@@ -89,17 +89,16 @@ def test_dashboard_registered() -> None:
     assert app.dashboard is not None
 
 
-def test_six_sheets_after_m2b4() -> None:
-    """M.2b.4 adds Daily Statement. Sheet order is the analyst's
-    journey order (Getting Started → 4 invariants → today's roll-up
-    → per-account-day detail). Future M.2b substeps add more sheets;
-    re-lock this list at each substep that adds one."""
+def test_seven_sheets_after_m2b5() -> None:
+    """M.2b.5 adds Transactions (raw posting ledger). Sheet order
+    follows the analyst's journey: Getting Started → invariants →
+    today's roll-up → per-account-day detail → raw legs."""
     app = build_l1_dashboard_app(_CFG)
     assert app.analysis is not None
     sheet_names = [s.name for s in app.analysis.sheets]
     assert sheet_names == [
-        "Getting Started", "Drift", "Overdraft",
-        "Limit Breach", "Today's Exceptions", "Daily Statement",
+        "Getting Started", "Drift", "Overdraft", "Limit Breach",
+        "Today's Exceptions", "Daily Statement", "Transactions",
     ]
 
 
@@ -351,6 +350,52 @@ def test_todays_exceptions_dataset_reads_matview() -> None:
     assert sql == f"SELECT * FROM {instance.instance}_todays_exceptions"
 
 
+# -- Transactions sheet (M.2b.5) ---------------------------------------------
+
+
+def test_transactions_sheet_present_after_m2b5() -> None:
+    """M.2b.5 lands the Transactions sheet — seventh tab (last in the
+    M.2b core ramp; aging + audit sheets follow at M.2b.10-12)."""
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    tx = app.analysis.sheets[6]
+    assert tx.name == "Transactions"
+    assert tx.title == "Posting Ledger"
+
+
+def test_transactions_sheet_has_single_table() -> None:
+    """Transactions has 1 detail table and no KPIs — its value is
+    'show me every leg + filter'."""
+    app = build_l1_dashboard_app(_CFG)
+    assert app.analysis is not None
+    tx = app.analysis.sheets[6]
+    titles = [v.title for v in tx.visuals]
+    assert titles == ["Posting Ledger"]
+
+
+def test_transactions_dataset_registered_and_targets_matview() -> None:
+    """The new transactions dataset reads from the prefix's
+    `<prefix>_current_transactions` matview (M.1a.9)."""
+    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard.datasets import (
+        DS_TRANSACTIONS,
+        build_transactions_dataset,
+    )
+
+    app = build_l1_dashboard_app(_CFG)
+    registered_ids = {ds.identifier for ds in app.datasets}
+    assert DS_TRANSACTIONS in registered_ids
+
+    instance = default_l2_instance()
+    tx_ds = build_transactions_dataset(_CFG, instance)
+    sql_obj = next(iter(tx_ds.PhysicalTableMap.values())).CustomSql
+    assert sql_obj is not None
+    assert (
+        f"FROM {instance.instance}_current_transactions"
+        in sql_obj.SqlQuery
+    )
+
+
 # -- Daily Statement sheet (M.2b.4) ------------------------------------------
 
 
@@ -530,12 +575,14 @@ def test_todays_exceptions_footer_carries_l2_description() -> None:
 
 
 def test_per_sheet_filter_dropdowns() -> None:
-    """M.2b.3: each data-bearing sheet carries the right filter dropdowns.
+    """M.2b.3 + M.2b.5: each data-bearing sheet carries the right
+    filter dropdowns.
 
     - Drift: Account + Account Role
     - Overdraft: Account + Account Role
     - Limit Breach: Account + Transfer Type
     - Today's Exceptions: Check Type + Account + Transfer Type
+    - Transactions: Account + Transfer + Status + Origin + Transfer Type
 
     Plus the date-range pickers from M.2b.1 (Date From / Date To)."""
     app = build_l1_dashboard_app(_CFG)
@@ -559,6 +606,11 @@ def test_per_sheet_filter_dropdowns() -> None:
 
     te_filters = _filter_titles(4)
     assert {"Check Type", "Account", "Transfer Type"}.issubset(te_filters)
+
+    tx_filters = _filter_titles(6)
+    assert {"Account", "Transfer", "Status", "Origin", "Transfer Type"}.issubset(
+        tx_filters,
+    )
 
 
 # -- Conditional formatting on tables (M.2b.2) -------------------------------
@@ -744,7 +796,7 @@ class TestCli:
         assert result.exit_code == 0, result.output
         assert (out / "l1-dashboard-analysis.json").exists()
         assert (out / "l1-dashboard-dashboard.json").exists()
-        # 5 datasets land in out/datasets/.
+        # 8 datasets land in out/datasets/ (M.2a.3-6 + M.2b.4 + M.2b.5).
         ds_dir = out / "datasets"
         for name in (
             "qs-gen-l1-drift-dataset.json",
@@ -752,6 +804,9 @@ class TestCli:
             "qs-gen-l1-overdraft-dataset.json",
             "qs-gen-l1-limit-breach-dataset.json",
             "qs-gen-l1-todays-exceptions-dataset.json",
+            "qs-gen-l1-daily-statement-summary-dataset.json",
+            "qs-gen-l1-daily-statement-transactions-dataset.json",
+            "qs-gen-l1-transactions-dataset.json",
         ):
             assert (ds_dir / name).exists(), f"missing {name}"
 

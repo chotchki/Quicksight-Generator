@@ -249,6 +249,7 @@ def l1_dataset_ids(resource_prefix) -> list[str]:
         "l1-todays-exceptions-dataset",
         "l1-daily-statement-summary-dataset",
         "l1-daily-statement-transactions-dataset",
+        "l1-transactions-dataset",
     ]
     return [f"{resource_prefix}-{s}" for s in suffixes]
 

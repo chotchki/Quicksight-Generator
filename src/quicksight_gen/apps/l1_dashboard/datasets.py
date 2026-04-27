@@ -36,6 +36,7 @@ DS_LIMIT_BREACH = "l1-limit-breach-ds"
 DS_TODAYS_EXCEPTIONS = "l1-todays-exceptions-ds"
 DS_DAILY_STATEMENT_SUMMARY = "l1-daily-statement-summary-ds"
 DS_DAILY_STATEMENT_TRANSACTIONS = "l1-daily-statement-transactions-ds"
+DS_TRANSACTIONS = "l1-transactions-ds"
 
 
 # Contracts — column shapes the M.1a.7 views project.
@@ -162,6 +163,32 @@ DAILY_STATEMENT_TRANSACTIONS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("status", "STRING"),
     ColumnSpec("origin", "STRING"),
     ColumnSpec("memo", "STRING"),
+])
+
+
+# Transactions sheet — raw posting ledger, every leg in the L2's
+# current_transactions matview. Supersession-aware via Current* (no
+# superseded entries). Columns are a subset of the matview shape: drop
+# entry / account_scope / transfer_completion / metadata / template_name
+# / bundle_id / supersedes since they're internal-only and the per-leg
+# table doesn't need them. account_id + transfer_id stay for drill
+# wiring (M.2b.7).
+TRANSACTIONS_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("transaction_id", "STRING"),
+    ColumnSpec("account_id", "STRING", shape=ColumnShape.ACCOUNT_ID),
+    ColumnSpec("account_name", "STRING"),
+    ColumnSpec("account_role", "STRING"),
+    ColumnSpec("account_parent_role", "STRING"),
+    ColumnSpec("transfer_id", "STRING", shape=ColumnShape.TRANSFER_ID),
+    ColumnSpec("transfer_parent_id", "STRING"),
+    ColumnSpec("transfer_type", "STRING", shape=ColumnShape.TRANSFER_TYPE),
+    ColumnSpec("rail_name", "STRING"),
+    ColumnSpec("amount_money", "DECIMAL"),
+    ColumnSpec("amount_direction", "STRING"),
+    ColumnSpec("status", "STRING"),
+    ColumnSpec("origin", "STRING"),
+    ColumnSpec("posting", "DATETIME"),
+    ColumnSpec("transfer_completion", "DATETIME"),
 ])
 
 
@@ -319,6 +346,36 @@ def build_daily_statement_transactions_dataset(
     )
 
 
+def build_transactions_dataset(
+    cfg: Config, l2_instance: L2Instance,
+) -> DataSet:
+    """Wrap `<prefix>_current_transactions` matview for the Transactions
+    sheet's raw posting ledger.
+
+    Reads from the matview directly (M.1a.9 made it a MATERIALIZED VIEW
+    + indexed) so per-account / per-transfer / per-status / per-origin /
+    per-transfer_type filter dropdowns hit indexed lookups. Projects
+    only the analyst-visible columns; internal columns (entry,
+    account_scope, supersedes, bundle_id, template_name, metadata) stay
+    in the matview but aren't surfaced.
+    """
+    prefix = l2_instance.instance
+    sql = (
+        f"SELECT id AS transaction_id, account_id, account_name,"
+        f" account_role, account_parent_role,"
+        f" transfer_id, transfer_parent_id, transfer_type, rail_name,"
+        f" amount_money, amount_direction, status, origin,"
+        f" posting, transfer_completion"
+        f" FROM {prefix}_current_transactions"
+    )
+    return build_dataset(
+        cfg, cfg.prefixed("l1-transactions-dataset"),
+        "L1 Transactions", "l1-transactions",
+        sql, TRANSACTIONS_CONTRACT,
+        visual_identifier=DS_TRANSACTIONS,
+    )
+
+
 def build_all_l1_dashboard_datasets(
     cfg: Config, l2_instance: L2Instance,
 ) -> list[DataSet]:
@@ -335,4 +392,5 @@ def build_all_l1_dashboard_datasets(
         build_todays_exceptions_dataset(cfg, l2_instance),
         build_daily_statement_summary_dataset(cfg, l2_instance),
         build_daily_statement_transactions_dataset(cfg, l2_instance),
+        build_transactions_dataset(cfg, l2_instance),
     ]

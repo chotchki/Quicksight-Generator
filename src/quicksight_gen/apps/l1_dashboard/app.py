@@ -42,6 +42,7 @@ from quicksight_gen.apps.l1_dashboard.datasets import (
     DS_LIMIT_BREACH,
     DS_OVERDRAFT,
     DS_TODAYS_EXCEPTIONS,
+    DS_TRANSACTIONS,
     build_all_l1_dashboard_datasets,
 )
 from quicksight_gen.common import rich_text as rt
@@ -84,6 +85,7 @@ SHEET_OVERDRAFT = SheetId("l1-sheet-overdraft")
 SHEET_LIMIT_BREACH = SheetId("l1-sheet-limit-breach")
 SHEET_TODAYS_EXCEPTIONS = SheetId("l1-sheet-todays-exceptions")
 SHEET_DAILY_STATEMENT = SheetId("l1-sheet-daily-statement")
+SHEET_TRANSACTIONS = SheetId("l1-sheet-transactions")
 
 
 # Parameter names — analysis-level parameters that drive the universal
@@ -169,6 +171,19 @@ _DAILY_STATEMENT_DESCRIPTION = (
     "feed it's exactly zero, so non-zero drift here is the single "
     "visual cue the underlying ledger doesn't reconcile for that "
     "account-day. Mirrors AR's Daily Statement pattern."
+)
+
+
+_TRANSACTIONS_NAME = "Transactions"
+_TRANSACTIONS_TITLE = "Posting Ledger"
+_TRANSACTIONS_DESCRIPTION = (
+    "The raw posting ledger — one row per Money record (leg). "
+    "Supersession-aware: the underlying view filters out replaced "
+    "entries so what you see IS the current truth. Filter by account, "
+    "transfer, status (Pending / Posted / Failed), origin "
+    "(InternalInitiated / ExternalForcePosted / ExternalAggregated), "
+    "or transfer type. Drill out to Daily Statement for the account-day "
+    "context any leg sits in (drill wiring lands at M.2b.7)."
 )
 
 
@@ -265,6 +280,7 @@ def _l1_datasets(
         DS_DRIFT, DS_LEDGER_DRIFT, DS_OVERDRAFT,
         DS_LIMIT_BREACH, DS_TODAYS_EXCEPTIONS,
         DS_DAILY_STATEMENT_SUMMARY, DS_DAILY_STATEMENT_TRANSACTIONS,
+        DS_TRANSACTIONS,
     ]
     return {
         vid: Dataset(identifier=vid, arn=cfg.dataset_arn(aws.DataSetId))
@@ -665,6 +681,56 @@ def _populate_limit_breach_sheet(
     )
 
 
+def _populate_transactions_sheet(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    datasets: dict[str, Dataset],
+) -> None:
+    """Transactions sheet — single detail table over the per-leg ledger.
+
+    No KPIs above the table — the value of this sheet is "show me every
+    leg + filter to the slice I care about." Filter dropdowns (wired in
+    `_wire_per_sheet_dropdowns`) cover account / transfer / status /
+    origin / transfer_type. M.2b.2 link tint on `account_id` +
+    `transfer_id` cues the M.2b.7 drill plumbing.
+    """
+    accent = get_preset(cfg.theme_preset).accent
+    ds_tx = datasets[DS_TRANSACTIONS]
+
+    account_col = ds_tx["account_id"].dim()
+    transfer_col = ds_tx["transfer_id"].dim()
+    posting_col = ds_tx["posting"].date()
+    sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
+        width=_FULL,
+        title="Posting Ledger",
+        subtitle=(
+            "Every Money record (leg) in the L2 instance's current "
+            "view — supersession-aware, so replaced entries don't "
+            "show. Sorted by posting time DESC so the most recent "
+            "activity is at the top."
+        ),
+        columns=[
+            account_col,
+            ds_tx["account_name"].dim(),
+            ds_tx["account_role"].dim(),
+            transfer_col,
+            ds_tx["transfer_type"].dim(),
+            ds_tx["rail_name"].dim(),
+            ds_tx["amount_money"].numerical(),
+            ds_tx["amount_direction"].dim(),
+            ds_tx["status"].dim(),
+            ds_tx["origin"].dim(),
+            posting_col,
+        ],
+        sort_by=(posting_col, "DESC"),
+        conditional_formatting=[
+            CellAccentText(on=account_col, color=accent),
+            CellAccentText(on=transfer_col, color=accent),
+        ],
+    )
+
+
 def _populate_daily_statement_sheet(
     cfg: Config,  # noqa: ARG001  (M.2b.13 wires drift-sign tints)
     sheet: Sheet,
@@ -856,6 +922,7 @@ def _wire_per_sheet_dropdowns(
     overdraft_sheet: Sheet,
     limit_breach_sheet: Sheet,
     todays_exceptions_sheet: Sheet,
+    transactions_sheet: Sheet,
 ) -> None:
     """M.2b.3 — per-sheet category filter dropdowns.
 
@@ -943,6 +1010,30 @@ def _wire_per_sheet_dropdowns(
     _dropdown(
         fg_id="fg-l1-todays-exc-type", ds=ds_te, col="transfer_type",
         title="Transfer Type", sheet=todays_exceptions_sheet,
+    )
+
+    # Transactions — 5 dropdowns covering the analyst's narrow vectors:
+    # account / transfer / status / origin / transfer_type.
+    ds_tx = datasets[DS_TRANSACTIONS]
+    _dropdown(
+        fg_id="fg-l1-tx-account", ds=ds_tx, col="account_id",
+        title="Account", sheet=transactions_sheet,
+    )
+    _dropdown(
+        fg_id="fg-l1-tx-transfer", ds=ds_tx, col="transfer_id",
+        title="Transfer", sheet=transactions_sheet,
+    )
+    _dropdown(
+        fg_id="fg-l1-tx-status", ds=ds_tx, col="status",
+        title="Status", sheet=transactions_sheet,
+    )
+    _dropdown(
+        fg_id="fg-l1-tx-origin", ds=ds_tx, col="origin",
+        title="Origin", sheet=transactions_sheet,
+    )
+    _dropdown(
+        fg_id="fg-l1-tx-type", ds=ds_tx, col="transfer_type",
+        title="Transfer Type", sheet=transactions_sheet,
     )
 
 
@@ -1131,6 +1222,16 @@ def build_l1_dashboard_app(
         cfg, daily_statement_sheet, datasets=datasets,
     )
 
+    transactions_sheet = analysis.add_sheet(Sheet(
+        sheet_id=SHEET_TRANSACTIONS,
+        name=_TRANSACTIONS_NAME,
+        title=_TRANSACTIONS_TITLE,
+        description=_TRANSACTIONS_DESCRIPTION,
+    ))
+    _populate_transactions_sheet(
+        cfg, transactions_sheet, datasets=datasets,
+    )
+
     # M.2b.1 — Universal date-range filter wires the sheets together.
     # Lands AFTER all sheets are populated since the FilterGroups scope
     # by sheet ref + the controls register on the sheets directly.
@@ -1143,8 +1244,9 @@ def build_l1_dashboard_app(
         todays_exceptions_sheet=todays_exceptions_sheet,
     )
 
-    # M.2b.3 — Per-sheet category filter dropdowns (account / role /
-    # transfer_type / check_type as appropriate).
+    # M.2b.3 + M.2b.5 — Per-sheet category filter dropdowns (account /
+    # role / transfer_type / check_type / status / origin as
+    # appropriate per sheet).
     _wire_per_sheet_dropdowns(
         analysis,
         datasets=datasets,
@@ -1152,6 +1254,7 @@ def build_l1_dashboard_app(
         overdraft_sheet=overdraft_sheet,
         limit_breach_sheet=limit_breach_sheet,
         todays_exceptions_sheet=todays_exceptions_sheet,
+        transactions_sheet=transactions_sheet,
     )
 
     # M.2b.4 — Daily Statement per-account-day parameter filters.
