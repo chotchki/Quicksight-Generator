@@ -198,12 +198,14 @@ def test_every_sheet_has_at_least_one_text_box() -> None:
 
 
 def test_dataset_count_matches_populated_sheets() -> None:
-    """M.3.5 ships the Rails dataset (1 total). Each subsequent populator
-    substep grows this assertion (M.3.6 → 2, M.3.7 → 8 etc.). Re-key
-    when a new tab populator lands."""
+    """M.3.5 ships Rails (1); M.3.6 adds Chains (2). Each subsequent
+    populator substep grows this assertion (M.3.7 → ~8). Re-key when a
+    new tab populator lands."""
     app = build_l2_flow_tracing_app(_CFG)
-    assert len(app.datasets) == 1
-    assert {d.identifier for d in app.datasets} == {"l2ft-rails-ds"}
+    assert len(app.datasets) == 2
+    assert {d.identifier for d in app.datasets} == {
+        "l2ft-rails-ds", "l2ft-chains-ds",
+    }
 
 
 # -- Getting Started — description-driven prose (M.2a.2 contract) ------------
@@ -246,7 +248,6 @@ def test_getting_started_title_is_constant_ui_vocabulary() -> None:
 @pytest.mark.parametrize(
     "sheet_name,substep",
     [
-        ("Chains", "M.3.6"),
         ("L2 Exceptions", "M.3.7"),
     ],
 )
@@ -256,7 +257,7 @@ def test_placeholder_sheets_point_to_their_substep(
     """Each remaining placeholder TextBox names the substep that will
     replace it, so the next agent on this app sees a clear pointer to
     the next work item. Drop the parametrize entry as each substep
-    populator lands (M.3.5 dropped 'Rails')."""
+    populator lands (M.3.5 dropped Rails; M.3.6 dropped Chains)."""
     app = build_l2_flow_tracing_app(_CFG)
     sheet = _sheet_by_name(app, sheet_name)
     body = sheet.text_boxes[0].content
@@ -419,3 +420,165 @@ def test_rails_sheet_table_columns_cover_full_contract() -> None:
     table_col_names = {c.column.name for c in table.columns}
     contract_col_names = {c.name for c in RAILS_CONTRACT.columns}
     assert table_col_names == contract_col_names
+
+
+# -- Chains sheet (M.3.6) ----------------------------------------------------
+
+
+def _chains_dataset_sql_against(yaml_path: Path) -> str:
+    """Pull the SQL string out of the Chains dataset against a chosen
+    L2 instance. Used by tests that want to assert non-empty CTEs
+    (sasquatch_pr.yaml has 6 chains; spec_example has 0)."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        build_chains_dataset,
+    )
+    inst = load_instance(yaml_path)
+    aws_ds = build_chains_dataset(_CFG, inst)
+    table = list(aws_ds.PhysicalTableMap.values())[0]
+    return table.CustomSql.SqlQuery
+
+
+def test_chains_dataset_targets_prefixed_current_transactions() -> None:
+    """Chains runtime joins reference the prefixed current_transactions
+    matview — `<prefix>_current_transactions`."""
+    sql = _chains_dataset_sql_against(SASQUATCH_PR_YAML)
+    assert "FROM sasquatch_pr_current_transactions" in sql
+
+
+def test_chains_dataset_inlines_l2_chain_entries() -> None:
+    """The declared edges CTE inlines every ChainEntry as a SQL
+    string-literal SELECT row joined by N-1 UNION ALLs.
+    sasquatch_pr.yaml has 6 chains; spec_example has 0 (the empty
+    path is exercised in another test)."""
+    inst = load_instance(SASQUATCH_PR_YAML)
+    sql = _chains_dataset_sql_against(SASQUATCH_PR_YAML)
+    assert "WITH declared AS" in sql
+    for c in inst.chains:
+        assert f"'{c.parent}'" in sql
+        assert f"'{c.child}'" in sql
+    assert sql.count("UNION ALL") == max(0, len(inst.chains) - 1)
+
+
+def test_chains_dataset_emits_required_optional_labels() -> None:
+    """The 'required' column in the dataset is emitted as the
+    display-friendly 'Required' / 'Optional' labels (not boolean
+    literals) so the visual reads cleanly."""
+    sql = _chains_dataset_sql_against(SASQUATCH_PR_YAML)
+    inst = load_instance(SASQUATCH_PR_YAML)
+    has_required = any(c.required for c in inst.chains)
+    has_optional = any(not c.required for c in inst.chains)
+    if has_required:
+        assert "'Required'" in sql
+    if has_optional:
+        assert "'Optional'" in sql
+
+
+def test_chains_dataset_xor_group_emits_null_for_no_group() -> None:
+    """ChainEntries without an xor_group serialize as NULL in the
+    CTE, not as an empty string. Visuals can then treat NULL as
+    'no XOR group' explicitly."""
+    inst = load_instance(SASQUATCH_PR_YAML)
+    has_no_group = any(c.xor_group is None for c in inst.chains)
+    assert has_no_group, "test fixture lost its no-xor-group rows"
+    sql = _chains_dataset_sql_against(SASQUATCH_PR_YAML)
+    # At least one CTE row must have NULL in the xor_group slot.
+    assert " NULL AS xor_group" in sql
+
+
+def test_chains_dataset_orphan_rate_clamps_at_zero() -> None:
+    """Orphan count uses GREATEST(...,  0) so child-fires-more-than-
+    parent doesn't go negative — non-intuitive in a Sankey legend."""
+    sql = _chains_dataset_sql_against(SASQUATCH_PR_YAML)
+    assert "GREATEST(e.parent_firing_count - e.child_firing_count, 0)" in sql
+
+
+def test_chains_dataset_orphan_rate_avoids_divide_by_zero() -> None:
+    """Dead parent (zero firings) → orphan_rate of 0 instead of NaN
+    or a divide-by-zero error. CASE guards the division."""
+    sql = _chains_dataset_sql_against(SASQUATCH_PR_YAML)
+    assert "WHEN e.parent_firing_count > 0" in sql
+    assert "ELSE 0" in sql
+
+
+def test_chains_dataset_contract_columns_match_builder() -> None:
+    """Contract columns and SQL projection match — visual ds["col"]
+    references resolve cleanly."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        CHAINS_CONTRACT, build_chains_dataset,
+    )
+    aws_ds = build_chains_dataset(_CFG, default_l2_instance())
+    cols = {
+        c.Name for c in list(aws_ds.PhysicalTableMap.values())[0].CustomSql.Columns
+    }
+    expected = {c.name for c in CHAINS_CONTRACT.columns}
+    assert cols == expected
+
+
+def test_chains_dataset_handles_empty_chains_list() -> None:
+    """spec_example.yaml has zero chains; the empty CTE path
+    (WHERE FALSE) keeps the SQL valid + visual harmless."""
+    sql = _chains_dataset_sql_against(
+        Path(__file__).parent / "l2" / "spec_example.yaml"
+    )
+    assert "WHERE FALSE" in sql
+    assert "WITH declared AS" in sql
+
+
+def test_chains_dataset_id_uses_l2_instance_prefix() -> None:
+    """Per M.2d.3 — dataset ID middle segment is the L2 instance
+    prefix so multi-instance deploys don't collide."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        build_chains_dataset,
+    )
+    from dataclasses import replace
+    cfg = replace(_CFG, l2_instance_prefix="sasquatch_pr")
+    ds = build_chains_dataset(cfg, load_instance(SASQUATCH_PR_YAML))
+    assert ds.DataSetId == "qs-gen-sasquatch_pr-l2ft-chains-dataset"
+
+
+def test_chains_sheet_has_a_sankey_visual() -> None:
+    """M.3.6 promotes Chains out of the placeholder TextBox-only state.
+    The Chains sheet now hosts a Sankey + a detail Table."""
+    from quicksight_gen.common.tree import Sankey, Table
+    app = build_l2_flow_tracing_app(_CFG)
+    chains = _sheet_by_name(app, "Chains")
+    sankey_visuals = [v for v in chains.visuals if isinstance(v, Sankey)]
+    table_visuals = [v for v in chains.visuals if isinstance(v, Table)]
+    assert len(sankey_visuals) == 1
+    assert len(table_visuals) == 1
+
+
+def test_chains_sankey_uses_node_columns_for_source_target() -> None:
+    """The Sankey uses source_node + target_node (not parent_name +
+    child_name) so future M.3.6+ display-string changes don't bust
+    the SQL semantics."""
+    from quicksight_gen.common.tree import Sankey
+    app = build_l2_flow_tracing_app(_CFG)
+    chains = _sheet_by_name(app, "Chains")
+    sankey = next(v for v in chains.visuals if isinstance(v, Sankey))
+    assert sankey.source.column.name == "source_node"
+    assert sankey.target.column.name == "target_node"
+
+
+def test_chains_sankey_weighted_by_parent_firing_count() -> None:
+    """Edge thickness = how many times the parent fired in the
+    window. Choosing a different weight (e.g., orphan_count) would
+    invert the visual meaning."""
+    from quicksight_gen.common.tree import Sankey
+    app = build_l2_flow_tracing_app(_CFG)
+    chains = _sheet_by_name(app, "Chains")
+    sankey = next(v for v in chains.visuals if isinstance(v, Sankey))
+    assert sankey.weight.column.name == "parent_firing_count"
+
+
+def test_chains_detail_table_includes_orphan_columns() -> None:
+    """The detail Table carries the orphan_count + orphan_rate
+    columns Sankey can't show natively. Without these, analysts
+    can't see chain orphans on this tab — they'd have to wait for
+    M.3.7's L2.1 'Chain orphans' surface."""
+    from quicksight_gen.common.tree import Table
+    app = build_l2_flow_tracing_app(_CFG)
+    chains = _sheet_by_name(app, "Chains")
+    table = next(v for v in chains.visuals if isinstance(v, Table))
+    table_col_names = {c.column.name for c in table.columns}
+    assert {"orphan_count", "orphan_rate"} <= table_col_names

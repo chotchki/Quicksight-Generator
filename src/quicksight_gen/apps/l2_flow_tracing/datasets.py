@@ -38,6 +38,7 @@ from quicksight_gen.common.tree import Dataset
 
 # Visual identifiers — keys for the Dataset registry on App.
 DS_RAILS = "l2ft-rails-ds"
+DS_CHAINS = "l2ft-chains-ds"
 
 
 # Per-Rail row table — declared L2 columns + runtime activity counts.
@@ -57,6 +58,23 @@ RAILS_CONTRACT = DatasetContract(columns=[
 ])
 
 
+# Per-ChainEntry edge — declared parent→child relationship + runtime
+# parent firing counts + matched-child counts + orphan rate. A row IS
+# one Sankey edge in the Chains visual.
+CHAINS_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("parent_name", "STRING"),
+    ColumnSpec("child_name", "STRING"),
+    ColumnSpec("required", "STRING"),     # 'Required' / 'Optional' for display
+    ColumnSpec("xor_group", "STRING"),    # NULL when no XOR membership
+    ColumnSpec("source_node", "STRING"),  # display label for the parent node
+    ColumnSpec("target_node", "STRING"),  # display label for the child node
+    ColumnSpec("parent_firing_count", "INTEGER"),
+    ColumnSpec("child_firing_count", "INTEGER"),
+    ColumnSpec("orphan_count", "INTEGER"),
+    ColumnSpec("orphan_rate", "DECIMAL"),
+])
+
+
 # -- Builders ----------------------------------------------------------------
 
 
@@ -70,11 +88,14 @@ def build_all_l2_flow_tracing_datasets(
     middle segment per M.2d.3) when the caller hasn't pre-stamped it.
     Idempotent — re-deriving an already-L2-aware cfg is a no-op.
 
-    M.3.5 ships the Rails dataset; M.3.6+ adds Chains + L2 Exceptions.
+    M.3.5 ships Rails; M.3.6 adds Chains; M.3.7+ adds L2 Exceptions.
     """
     if cfg.l2_instance_prefix is None:
         cfg = replace(cfg, l2_instance_prefix=str(l2_instance.instance))
-    return [build_rails_dataset(cfg, l2_instance)]
+    return [
+        build_rails_dataset(cfg, l2_instance),
+        build_chains_dataset(cfg, l2_instance),
+    ]
 
 
 def build_rails_dataset(cfg: Config, l2_instance: L2Instance) -> DataSet:
@@ -126,6 +147,90 @@ def build_rails_dataset(cfg: Config, l2_instance: L2Instance) -> DataSet:
         "L2FT Rails", "l2ft-rails",
         sql, RAILS_CONTRACT,
         visual_identifier=DS_RAILS,
+    )
+
+
+def build_chains_dataset(cfg: Config, l2_instance: L2Instance) -> DataSet:
+    """One row per declared ChainEntry — the L2's parent→child topology
+    joined to runtime parent firing counts + matched-child counts.
+
+    A row IS one Sankey edge in the Chains visual. Counts come from
+    ``<prefix>_current_transactions`` matched on the parent's name
+    (which can be a Rail's ``rail_name`` OR a TransferTemplate's
+    ``template_name`` — every leg row carries both, with template_name
+    taking precedence when a rail is part of a template). Child
+    matches require ``transfer_parent_id`` to point at one of the
+    parent's transfer_ids — that's the runtime "did this child fire
+    in response to this parent" relation.
+
+    Orphan rate = (parent_firings without a matched child) /
+    parent_firings. A required Chain entry with non-zero orphan rate
+    is the seed for M.3.7's L2.1 'Chain orphans' exception.
+
+    Note on portability: uses correlated subqueries instead of
+    ARRAY_AGG (PG-only) to keep the SQL portable. The chains table is
+    small (typically tens of entries), so the cost is bounded.
+    """
+    prefix = l2_instance.instance
+    declared = _declared_chains_cte(l2_instance)
+    sql = (
+        f"WITH declared AS (\n{declared}\n),\n"
+        f"edge_runtime AS (\n"
+        f"  SELECT\n"
+        f"    d.parent_name,\n"
+        f"    d.child_name,\n"
+        f"    d.required,\n"
+        f"    d.xor_group,\n"
+        f"    d.source_node,\n"
+        f"    d.target_node,\n"
+        f"    COALESCE((\n"
+        f"      SELECT COUNT(DISTINCT t.transfer_id)\n"
+        f"      FROM {prefix}_current_transactions t\n"
+        f"      WHERE COALESCE(t.template_name, t.rail_name) = d.parent_name\n"
+        f"    ), 0) AS parent_firing_count,\n"
+        f"    COALESCE((\n"
+        f"      SELECT COUNT(DISTINCT c.transfer_id)\n"
+        f"      FROM {prefix}_current_transactions c\n"
+        f"      WHERE COALESCE(c.template_name, c.rail_name) = d.child_name\n"
+        f"        AND c.transfer_parent_id IN (\n"
+        f"          SELECT t2.transfer_id\n"
+        f"          FROM {prefix}_current_transactions t2\n"
+        f"          WHERE COALESCE(t2.template_name, t2.rail_name) "
+        f"= d.parent_name\n"
+        f"        )\n"
+        f"    ), 0) AS child_firing_count\n"
+        f"  FROM declared d\n"
+        f")\n"
+        f"SELECT\n"
+        f"  e.parent_name,\n"
+        f"  e.child_name,\n"
+        f"  e.required,\n"
+        f"  e.xor_group,\n"
+        f"  e.source_node,\n"
+        f"  e.target_node,\n"
+        f"  e.parent_firing_count,\n"
+        f"  e.child_firing_count,\n"
+        # GREATEST clamps at 0 — child can fire more than parent in some
+        # patterns (e.g., one parent triggers many children); negative
+        # orphans don't read intuitively in the visual.
+        f"  GREATEST(e.parent_firing_count - e.child_firing_count, 0) "
+        f"AS orphan_count,\n"
+        f"  CASE\n"
+        f"    WHEN e.parent_firing_count > 0\n"
+        f"      THEN CAST(\n"
+        f"        GREATEST(e.parent_firing_count - e.child_firing_count, 0) "
+        f"AS DECIMAL(20,4)\n"
+        f"      ) / e.parent_firing_count\n"
+        f"    ELSE 0\n"
+        f"  END AS orphan_rate\n"
+        f"FROM edge_runtime e\n"
+        f"ORDER BY e.parent_name, e.child_name"
+    )
+    return build_dataset(
+        cfg, cfg.prefixed("l2ft-chains-dataset"),
+        "L2FT Chains", "l2ft-chains",
+        sql, CHAINS_CONTRACT,
+        visual_identifier=DS_CHAINS,
     )
 
 
@@ -185,6 +290,47 @@ def _declared_rails_cte(l2_instance: L2Instance) -> str:
             f"{_sql_nullable_str(max_pending)} AS max_pending_age, "
             f"{_sql_nullable_str(max_unbundled)} AS max_unbundled_age, "
             f"{_sql_str(posted_reqs)} AS posted_requirements"
+        )
+    return "\n  UNION ALL\n".join(rows)
+
+
+def _declared_chains_cte(l2_instance: L2Instance) -> str:
+    """Render the L2-declared ChainEntry list as a UNION ALL of
+    SELECT-literal rows.
+
+    ``source_node`` / ``target_node`` are the display strings the
+    Sankey reads — currently identical to the parent / child name,
+    but kept as separate columns so M.3.6+ can attach a "(Required)"
+    or "(XOR: <group>)" suffix without breaking the join semantics.
+    """
+    if not l2_instance.chains:
+        return (
+            "  SELECT\n"
+            "    NULL::TEXT AS parent_name,\n"
+            "    NULL::TEXT AS child_name,\n"
+            "    NULL::TEXT AS required,\n"
+            "    NULL::TEXT AS xor_group,\n"
+            "    NULL::TEXT AS source_node,\n"
+            "    NULL::TEXT AS target_node\n"
+            "  WHERE FALSE"
+        )
+    rows: list[str] = []
+    for c in l2_instance.chains:
+        required_label = "Required" if c.required else "Optional"
+        xor_group = str(c.xor_group) if c.xor_group is not None else None
+        # Source / target node display strings — same as the names today;
+        # M.3.6+ may suffix with required / xor info if visual readability
+        # demands. Keeping the seam so the SQL stays stable.
+        source_node = str(c.parent)
+        target_node = str(c.child)
+        rows.append(
+            "  SELECT "
+            f"{_sql_str(str(c.parent))} AS parent_name, "
+            f"{_sql_str(str(c.child))} AS child_name, "
+            f"{_sql_str(required_label)} AS required, "
+            f"{_sql_nullable_str(xor_group)} AS xor_group, "
+            f"{_sql_str(source_node)} AS source_node, "
+            f"{_sql_str(target_node)} AS target_node"
         )
     return "\n  UNION ALL\n".join(rows)
 

@@ -34,6 +34,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from quicksight_gen.apps.l2_flow_tracing.datasets import (
+    DS_CHAINS,
     DS_RAILS,
     build_all_l2_flow_tracing_datasets,
 )
@@ -180,13 +181,7 @@ def build_l2_flow_tracing_app(
 
     _populate_getting_started(cfg, getting_started, l2_instance)
     _populate_rails_sheet(cfg, rails_sheet, datasets=datasets)
-    _populate_placeholder(
-        cfg, chains_sheet,
-        title=_CHAINS_TITLE,
-        body=_CHAINS_DESCRIPTION,
-        substep="M.3.6",
-        text_box_id="l2ft-chains-placeholder",
-    )
+    _populate_chains_sheet(cfg, chains_sheet, datasets=datasets)
     _populate_placeholder(
         cfg, l2_exceptions_sheet,
         title=_L2_EXCEPTIONS_TITLE,
@@ -219,7 +214,7 @@ def _l2ft_datasets(
     wiring on the App.
     """
     aws_datasets = build_all_l2_flow_tracing_datasets(cfg, l2_instance)
-    visual_ids = [DS_RAILS]  # M.3.6+ extends in lockstep with the dataset list
+    visual_ids = [DS_RAILS, DS_CHAINS]  # M.3.7 extends
     return {
         vid: Dataset(identifier=vid, arn=cfg.dataset_arn(aws.DataSetId))
         for vid, aws in zip(visual_ids, aws_datasets)
@@ -346,6 +341,87 @@ def _populate_rails_sheet(
         ],
         conditional_formatting=[
             CellAccentText(on=rail_name_col, color=accent),
+        ],
+    )
+
+
+def _populate_chains_sheet(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    datasets: dict[str, Dataset],
+) -> None:
+    """Chains sheet — Sankey of declared parent→child topology + a
+    detail Table with the gating data Sankey can't show natively
+    (M.3.6).
+
+    Sankey: source = parent_name, target = child_name, weight =
+    parent_firing_count. Edge thickness reads as "how many times this
+    parent fired in the window." Nodes appear iff they participate
+    in at least one declared chain entry.
+
+    Detail Table below: same edges, but with required / xor_group /
+    orphan_count / orphan_rate spelled out so analysts can see which
+    edges are required vs optional and which have orphan parents.
+    QuickSight's Sankey doesn't carry per-edge color encoding via
+    conditional formatting natively; the detail table is the
+    workaround until M.3.6+ explores per-edge tinting if AWS adds
+    that capability.
+    """
+    accent = get_preset(cfg.theme_preset).accent
+    ds_chains = datasets[DS_CHAINS]
+
+    sheet.layout.row(height=8).add_text_box(
+        TextBox(
+            text_box_id="l2ft-chains-header",
+            content=rt.text_box(
+                rt.subheading("Chains", color=accent),
+                rt.BR,
+                rt.body(
+                    "Sankey of declared Chain entries. Edge width = "
+                    "parent firing count over the window. The detail "
+                    "table below carries the L2 gating data — required "
+                    "vs optional, XOR-group membership, orphan rate "
+                    "(= parent firings without a matched child). A "
+                    "Required edge with a non-zero orphan rate is the "
+                    "seed for L2.1 'Chain orphans' (M.3.7)."
+                ),
+            ),
+        ),
+        width=36,
+    )
+
+    sheet.layout.row(height=18).add_sankey(
+        width=36,
+        title="Chain Topology — Parent → Child Firing Counts",
+        subtitle=(
+            "Width encodes how many times the parent fired in the "
+            "window. Empty nodes mean the rail / template was declared "
+            "but never fired."
+        ),
+        source=ds_chains["source_node"].dim(),
+        target=ds_chains["target_node"].dim(),
+        weight=ds_chains["parent_firing_count"].sum(),
+    )
+
+    sheet.layout.row(height=18).add_table(
+        width=36,
+        title="Chain Edge Details",
+        subtitle=(
+            "One row per declared Chain entry. Required + XOR-group "
+            "carry the L2 gating semantic; orphan_count + orphan_rate "
+            "show how many parent firings didn't have a matched child "
+            "in the window."
+        ),
+        columns=[
+            ds_chains["parent_name"].dim(),
+            ds_chains["child_name"].dim(),
+            ds_chains["required"].dim(),
+            ds_chains["xor_group"].dim(),
+            ds_chains["parent_firing_count"].numerical(),
+            ds_chains["child_firing_count"].numerical(),
+            ds_chains["orphan_count"].numerical(),
+            ds_chains["orphan_rate"].numerical(),
         ],
     )
 
