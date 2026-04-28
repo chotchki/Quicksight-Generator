@@ -141,11 +141,24 @@ def generate_l1_dashboard_cmd(ctx: click.Context) -> None:
 
 
 @generate.command("l2-flow-tracing")
+@click.option(
+    "--l2-instance", "l2_instance_path",
+    type=click.Path(exists=True), default=None,
+    help=(
+        "Path to an L2 instance YAML. Defaults to the persona-neutral "
+        "spec_example.yaml fixture. Use this to deploy l2-flow-tracing "
+        "against multiple L2 instances side-by-side without code edits "
+        "(M.3.9 surface)."
+    ),
+)
 @click.pass_context
-def generate_l2_flow_tracing_cmd(ctx: click.Context) -> None:
+def generate_l2_flow_tracing_cmd(
+    ctx: click.Context, l2_instance_path: str | None,
+) -> None:
     """Generate L2 Flow Tracing dashboard JSON (M.3 — L2-fed)."""
     _generate_l2_flow_tracing(
         ctx.obj["config"], ctx.obj["output_dir"], ctx.obj["theme_preset"],
+        l2_instance_path=l2_instance_path,
     )
 
 
@@ -344,29 +357,44 @@ def _generate_l1_dashboard(
 
 def _generate_l2_flow_tracing(
     config_path: str, output_dir: str, theme_preset: str | None,
+    *,
+    l2_instance_path: str | None = None,
 ) -> None:
+    """Generate L2 Flow Tracing JSON.
+
+    ``l2_instance_path``: optional YAML path. When unset, loads the
+    persona-neutral spec_example fixture (the M.3.2 default). Use the
+    flag to deploy l2-flow-tracing against any L2 instance — sasquatch_pr
+    for the rich Sasquatch view, fuzz-seed-N for adversarial coverage,
+    or an integrator-supplied YAML.
+    """
     from quicksight_gen.apps.l2_flow_tracing.app import (
-        build_analysis,
-        build_l2_flow_tracing_dashboard,
+        build_l2_flow_tracing_app,
     )
     from quicksight_gen.apps.l2_flow_tracing.datasets import (
         build_all_l2_flow_tracing_datasets,
     )
     from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    from quicksight_gen.common.l2 import load_instance
 
     cfg = load_config(config_path)
     if theme_preset is not None:
         cfg.theme_preset = theme_preset
     out = Path(output_dir)
+
+    if l2_instance_path is not None:
+        l2_instance = load_instance(Path(l2_instance_path))
+    else:
+        l2_instance = default_l2_instance()
+
     click.echo(
         f"L2 Flow Tracing: account={cfg.aws_account_id}, "
-        f"region={cfg.aws_region}"
+        f"region={cfg.aws_region}, l2_instance={l2_instance.instance}"
     )
 
     theme = build_theme(cfg)
     _write_json(out / "theme.json", theme.to_aws_json())
 
-    l2_instance = default_l2_instance()
     datasets = build_all_l2_flow_tracing_datasets(cfg, l2_instance)
     _prune_stale_files(
         out / "datasets",
@@ -375,11 +403,20 @@ def _generate_l2_flow_tracing(
     for ds in datasets:
         _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
 
-    analysis = build_analysis(cfg)
-    _write_json(out / "l2-flow-tracing-analysis.json", analysis.to_aws_json())
-
-    dashboard = build_l2_flow_tracing_dashboard(cfg)
-    _write_json(out / "l2-flow-tracing-dashboard.json", dashboard.to_aws_json())
+    # Build the app once + emit both Analysis + Dashboard from it so the
+    # L2 instance is consistent across both. The shim wrappers
+    # (build_analysis / build_l2_flow_tracing_dashboard) would each
+    # re-invoke build_l2_flow_tracing_app — using the app directly
+    # avoids the redundant build.
+    app = build_l2_flow_tracing_app(cfg, l2_instance=l2_instance)
+    _write_json(
+        out / "l2-flow-tracing-analysis.json",
+        app.emit_analysis().to_aws_json(),
+    )
+    _write_json(
+        out / "l2-flow-tracing-dashboard.json",
+        app.emit_dashboard().to_aws_json(),
+    )
 
     click.echo(f"\nGenerated {1 + len(datasets) + 2} files in {out}/")
 

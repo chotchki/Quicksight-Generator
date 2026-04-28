@@ -286,6 +286,43 @@ def test_l2_flow_tracing_in_app_choice() -> None:
     assert "l2-flow-tracing" in APP_CHOICE.choices
 
 
+def test_cli_generate_l2_flow_tracing_l2_instance_flag(tmp_path: Path) -> None:
+    """M.3.9 CLI surface: `--l2-instance PATH` overrides the default
+    spec_example fixture. Generated dataset filenames carry the
+    overridden prefix."""
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(
+        "aws_account_id: '111122223333'\n"
+        "aws_region: us-west-2\n"
+        "theme_preset: default\n"
+        "datasource_arn: 'arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds'\n"
+    )
+    out_dir = tmp_path / "out"
+
+    runner = CliRunner()
+    result = runner.invoke(
+        main, [
+            "generate",
+            "-c", str(cfg_path),
+            "-o", str(out_dir),
+            "l2-flow-tracing",
+            "--l2-instance", str(SASQUATCH_PR_YAML),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    # Dataset filenames carry the sasquatch_pr prefix, not spec_example.
+    sasq_chains = (
+        out_dir / "datasets"
+        / "qs-gen-sasquatch_pr-l2ft-chains-dataset.json"
+    )
+    assert sasq_chains.exists()
+    spec_chains = (
+        out_dir / "datasets"
+        / "qs-gen-spec_example-l2ft-chains-dataset.json"
+    )
+    assert not spec_chains.exists()
+
+
 def test_cli_generate_l2_flow_tracing_writes_files(tmp_path: Path) -> None:
     """M.3.4 CLI smoke: `quicksight-gen generate l2-flow-tracing`
     writes theme + analysis + dashboard. M.3.5 adds the Rails dataset
