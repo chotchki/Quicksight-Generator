@@ -321,6 +321,68 @@ class DataSetUsageConfiguration:
 
 
 @dataclass
+class StringDatasetParameterDefaultValues:
+    StaticValues: list[str] | None = None
+
+
+@dataclass
+class IntegerDatasetParameterDefaultValues:
+    StaticValues: list[int] | None = None
+
+
+@dataclass
+class DecimalDatasetParameterDefaultValues:
+    StaticValues: list[float] | None = None
+
+
+@dataclass
+class DateTimeDatasetParameterDefaultValues:
+    StaticValues: list[str] | None = None  # ISO8601 datetime strings
+
+
+@dataclass
+class StringDatasetParameter:
+    Id: str
+    Name: str
+    ValueType: str  # SINGLE_VALUED|MULTI_VALUED
+    DefaultValues: StringDatasetParameterDefaultValues | None = None
+
+
+@dataclass
+class IntegerDatasetParameter:
+    Id: str
+    Name: str
+    ValueType: str  # SINGLE_VALUED|MULTI_VALUED
+    DefaultValues: IntegerDatasetParameterDefaultValues | None = None
+
+
+@dataclass
+class DecimalDatasetParameter:
+    Id: str
+    Name: str
+    ValueType: str  # SINGLE_VALUED|MULTI_VALUED
+    DefaultValues: DecimalDatasetParameterDefaultValues | None = None
+
+
+@dataclass
+class DateTimeDatasetParameter:
+    Id: str
+    Name: str
+    ValueType: str  # SINGLE_VALUED|MULTI_VALUED
+    TimeGranularity: str | None = None
+    DefaultValues: DateTimeDatasetParameterDefaultValues | None = None
+
+
+@dataclass
+class DatasetParameter:
+    """Discriminated union — set exactly one variant."""
+    StringDatasetParameter: StringDatasetParameter | None = None
+    IntegerDatasetParameter: IntegerDatasetParameter | None = None
+    DecimalDatasetParameter: DecimalDatasetParameter | None = None
+    DateTimeDatasetParameter: DateTimeDatasetParameter | None = None
+
+
+@dataclass
 class DataSet:
     AwsAccountId: str
     DataSetId: str
@@ -331,6 +393,10 @@ class DataSet:
     DataSetUsageConfiguration: DataSetUsageConfiguration | None = None
     Permissions: list[ResourcePermission] | None = None
     Tags: list[Tag] | None = None
+    # Dataset-level parameters substituted into CustomSql via the
+    # ``<<$paramName>>`` syntax. Bridge analysis params via
+    # ``MappedDataSetParameters`` on each ParameterDeclaration variant.
+    DatasetParameters: list[DatasetParameter] | None = None
 
     def to_aws_json(self) -> dict[str, Any]:
         return _strip_nones(asdict(self))
@@ -1014,10 +1080,25 @@ class DataSetIdentifierDeclaration:
 
 
 @dataclass
+class MappedDataSetParameter:
+    """Bridges an analysis-level parameter to a dataset-level parameter.
+
+    When the analysis parameter changes, QuickSight pushes the value
+    into the named dataset parameter — which then substitutes into the
+    dataset's CustomSql via ``<<$paramName>>`` at query time. The
+    mapping list lives on the analysis ParameterDeclaration variant
+    (StringParameterDeclaration, etc.).
+    """
+    DataSetIdentifier: str
+    DataSetParameterName: str
+
+
+@dataclass
 class StringParameterDeclaration:
     ParameterValueType: str  # SINGLE_VALUED|MULTI_VALUED
     Name: str
     DefaultValues: dict[str, Any]
+    MappedDataSetParameters: list[MappedDataSetParameter] | None = None
 
 
 @dataclass
@@ -1025,6 +1106,7 @@ class IntegerParameterDeclaration:
     ParameterValueType: str  # SINGLE_VALUED|MULTI_VALUED
     Name: str
     DefaultValues: dict[str, Any]  # {"StaticValues": [int]}
+    MappedDataSetParameters: list[MappedDataSetParameter] | None = None
 
 
 @dataclass
@@ -1040,6 +1122,7 @@ class DateTimeParameterDeclaration:
     TimeGranularity: str | None = None
     DefaultValues: DateTimeDefaultValues | None = None
     ValueWhenUnset: dict[str, Any] | None = None
+    MappedDataSetParameters: list[MappedDataSetParameter] | None = None
 
 
 @dataclass

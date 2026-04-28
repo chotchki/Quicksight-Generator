@@ -180,7 +180,7 @@ def test_metadata_dropdowns_scale_with_declared_keys(
     n_keys = len(declared_metadata_keys(l2_instance))
     meta_params = [
         p for p in app.analysis.parameters
-        if str(p.name).startswith("pL2ftMeta_")
+        if str(p.name).startswith("pL2ftMeta")
     ]
     assert len(meta_params) == n_keys
     exc = next(s for s in app.analysis.sheets if s.name == "L2 Exceptions")

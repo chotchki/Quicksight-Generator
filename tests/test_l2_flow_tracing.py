@@ -1007,7 +1007,7 @@ def test_no_metadata_controls_when_l2_has_no_metadata_keys(
     # the assertion is on the metadata-key prefix).
     meta_params = [
         p for p in app.analysis.parameters
-        if str(p.name).startswith("pL2ftMeta_")
+        if str(p.name).startswith("pL2ftMeta")
     ]
     assert meta_params == []
     exc = _sheet_by_name(app, "L2 Exceptions")
@@ -1027,7 +1027,7 @@ def test_metadata_dropdowns_scale_with_l2_instance() -> None:
     sasq_meta_count = len(declared_metadata_keys(sasq))
     sasq_meta_params = [
         p for p in sasq_app.analysis.parameters
-        if str(p.name).startswith("pL2ftMeta_")
+        if str(p.name).startswith("pL2ftMeta")
     ]
     assert len(sasq_meta_params) == sasq_meta_count
     sasq_exc = _sheet_by_name(sasq_app, "L2 Exceptions")

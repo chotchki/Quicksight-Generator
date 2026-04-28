@@ -132,11 +132,23 @@ def generate_investigation_cmd(ctx: click.Context) -> None:
 
 
 @generate.command("l1-dashboard")
+@click.option(
+    "--l2-instance", "l2_instance_path",
+    type=click.Path(exists=True), default=None,
+    help=(
+        "Path to an L2 instance YAML. Defaults to the persona-neutral "
+        "spec_example.yaml fixture. Use this to deploy l1-dashboard "
+        "against multiple L2 instances side-by-side without code edits."
+    ),
+)
 @click.pass_context
-def generate_l1_dashboard_cmd(ctx: click.Context) -> None:
+def generate_l1_dashboard_cmd(
+    ctx: click.Context, l2_instance_path: str | None,
+) -> None:
     """Generate L1 Reconciliation Dashboard JSON (M.2a — L2-fed)."""
     _generate_l1_dashboard(
         ctx.obj["config"], ctx.obj["output_dir"], ctx.obj["theme_preset"],
+        l2_instance_path=l2_instance_path,
     )
 
 
@@ -315,29 +327,36 @@ def _generate_executives(
 
 def _generate_l1_dashboard(
     config_path: str, output_dir: str, theme_preset: str | None,
+    *,
+    l2_instance_path: str | None = None,
 ) -> None:
     from quicksight_gen.apps.l1_dashboard.app import (
-        build_analysis,
-        build_l1_dashboard_dashboard,
+        build_l1_dashboard_app,
     )
     from quicksight_gen.apps.l1_dashboard.datasets import (
         build_all_l1_dashboard_datasets,
     )
     from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    from quicksight_gen.common.l2 import load_instance
 
     cfg = load_config(config_path)
     if theme_preset is not None:
         cfg.theme_preset = theme_preset
     out = Path(output_dir)
+
+    if l2_instance_path is not None:
+        l2_instance = load_instance(Path(l2_instance_path))
+    else:
+        l2_instance = default_l2_instance()
+
     click.echo(
         f"L1 Dashboard: account={cfg.aws_account_id}, "
-        f"region={cfg.aws_region}"
+        f"region={cfg.aws_region}, l2_instance={l2_instance.instance}"
     )
 
     theme = build_theme(cfg)
     _write_json(out / "theme.json", theme.to_aws_json())
 
-    l2_instance = default_l2_instance()
     datasets = build_all_l1_dashboard_datasets(cfg, l2_instance)
     _prune_stale_files(
         out / "datasets",
@@ -346,11 +365,19 @@ def _generate_l1_dashboard(
     for ds in datasets:
         _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
 
-    analysis = build_analysis(cfg)
-    _write_json(out / "l1-dashboard-analysis.json", analysis.to_aws_json())
-
-    dashboard = build_l1_dashboard_dashboard(cfg)
-    _write_json(out / "l1-dashboard-dashboard.json", dashboard.to_aws_json())
+    # Build the app once + emit both Analysis + Dashboard so the L2
+    # instance is consistent across both. Same pattern as
+    # _generate_l2_flow_tracing — avoids the redundant rebuild a shim
+    # wrapper would trigger.
+    app = build_l1_dashboard_app(cfg, l2_instance=l2_instance)
+    _write_json(
+        out / "l1-dashboard-analysis.json",
+        app.emit_analysis().to_aws_json(),
+    )
+    _write_json(
+        out / "l1-dashboard-dashboard.json",
+        app.emit_dashboard().to_aws_json(),
+    )
 
     click.echo(f"\nGenerated {1 + len(datasets) + 2} files in {out}/")
 

@@ -15,6 +15,7 @@ from quicksight_gen.common.config import Config
 from quicksight_gen.common.models import (
     CustomSql,
     DataSet,
+    DatasetParameter,
     DataSetUsageConfiguration,
     InputColumn,
     LogicalTable,
@@ -212,7 +213,15 @@ def build_dataset(
     sql: str,
     contract: DatasetContract,
     visual_identifier: str,
+    dataset_parameters: list[DatasetParameter] | None = None,
 ) -> DataSet:
+    """Build an AWS-shape DataSet.
+
+    ``dataset_parameters``: optional list of dataset-level parameters
+    that get substituted into ``sql`` via the ``<<$paramName>>``
+    syntax at QuickSight query time. Bridge to analysis params via
+    ``MappedDataSetParameters`` on the analysis ParameterDeclaration.
+    """
     columns = contract.to_input_columns()
     physical = {
         table_key: PhysicalTable(
@@ -241,4 +250,5 @@ def build_dataset(
         DataSetUsageConfiguration=DataSetUsageConfiguration(),
         Permissions=dataset_permissions(cfg),
         Tags=cfg.tags(),
+        DatasetParameters=dataset_parameters,
     )

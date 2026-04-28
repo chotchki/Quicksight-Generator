@@ -122,9 +122,10 @@ _L2_EXCEPTIONS_DESCRIPTION = (
 
 
 def _analysis_name(cfg: Config, l2_instance: L2Instance) -> str:
-    """Title shown in QuickSight — surfaces the L2 prefix so multi-instance
-    deployments are distinguishable in the UI."""
-    return f"{l2_instance.instance} — L2 Flow Tracing"
+    """Title shown in QuickSight — matches L1's `Name (prefix)` shape so
+    the two apps' QS asset names are visually consistent in the
+    dashboard list."""
+    return f"L2 Flow Tracing ({l2_instance.instance})"
 
 
 def build_l2_flow_tracing_app(

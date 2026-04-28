@@ -60,9 +60,15 @@ def metadata_dropdown_ds_id(key: str) -> str:
 
 def metadata_param_name(key: str) -> str:
     """Analysis-level parameter name for a metadata-key dropdown.
-    Matches the camelCase convention the rest of the app uses
-    (``pL2DateStart`` etc.); `pL2ftMeta_<KeyOriginal>` is the form."""
-    return f"pL2ftMeta_{key}"
+
+    QuickSight requires parameter names to match ``^[a-zA-Z0-9]+$`` —
+    no underscores, hyphens, or other separators. We CamelCase the
+    metadata key so ``business_day`` becomes ``BusinessDay`` and the
+    final form is ``pL2ftMetaBusinessDay``.
+    """
+    parts = [p for p in str(key).replace("-", "_").split("_") if p]
+    cameled = "".join(p[0].upper() + p[1:] for p in parts)
+    return f"pL2ftMeta{cameled}"
 
 
 # Per-Rail row table — declared L2 columns + runtime activity counts.
