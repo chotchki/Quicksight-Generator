@@ -1,18 +1,31 @@
 """QuickSight DataSet builders for the L2 Flow Tracing app.
 
-The Rails / Chains / L2 Exceptions tabs join L2-declared values
-(static, from the L2 instance) to runtime activity (from the prefixed
+The Chains / L2 Exceptions tabs join L2-declared values (static, from
+the L2 instance) to runtime activity (from the prefixed
 ``<prefix>_current_transactions`` matview). The L2 declarations are
 inlined into the SQL as a CTE of literal rows — no per-rail dataset
 proliferation, no per-instance database table.
 
+The Rails tab is a transactions explorer (M.3.10c rewrite — the
+M.3.5 declared-rails table moves to a future Docs tab). It uses two
+new datasets that participate in the metadata cascade:
+
+- ``l2ft-postings-ds``: one row per leg, parameterized on ``pKey`` +
+  ``pValues`` so the metadata cascade filters it via QS ``<<$param>>``
+  substitution into a JSONPath.
+- ``l2ft-meta-values-ds``: distinct metadata values for the chosen
+  key, parameterized on ``pKey`` so the Value dropdown narrows when
+  the Key dropdown changes.
+
 Substep landmarks:
 
 - M.3.4 — skeleton (no datasets)
-- M.3.5 — Rails dataset (this commit)
+- M.3.5 — Rails dataset (later DROPPED in M.3.10c — moves to Docs tab)
 - M.3.6 — Chains dataset
 - M.3.7 — L2 Exceptions datasets (six small KPI-backers)
 - M.3.8 — Auto metadata-driven filter dropdown sources
+  (later DROPPED in M.3.10c — replaced by the cascade)
+- M.3.10c — Rails tab redesign on dataset parameters
 """
 
 from __future__ import annotations
@@ -32,12 +45,18 @@ from quicksight_gen.common.l2 import (
     TwoLegRail,
     posted_requirements_for,
 )
-from quicksight_gen.common.models import DataSet
+from quicksight_gen.common.models import (
+    DataSet,
+    DatasetParameter,
+    StringDatasetParameter,
+    StringDatasetParameterDefaultValues,
+)
 from quicksight_gen.common.tree import Dataset
 
 
 # Visual identifiers — keys for the Dataset registry on App.
-DS_RAILS = "l2ft-rails-ds"
+DS_POSTINGS = "l2ft-postings-ds"
+DS_META_VALUES = "l2ft-meta-values-ds"
 DS_CHAINS = "l2ft-chains-ds"
 # M.3.7 — six L2 exception sections, each backed by its own narrow dataset.
 DS_EXC_CHAIN_ORPHANS = "l2ft-exc-chain-orphans-ds"
@@ -48,44 +67,28 @@ DS_EXC_DEAD_METADATA = "l2ft-exc-dead-metadata-ds"
 DS_EXC_DEAD_LIMIT_SCHEDULES = "l2ft-exc-dead-limit-schedules-ds"
 
 
-def metadata_dropdown_ds_id(key: str) -> str:
-    """Visual identifier for the per-metadata-key dropdown source
-    dataset. Keys are slugified (lowercased, non-alphanumerics → '-')
-    so identifier names stay safe across QuickSight resource naming
-    rules."""
-    slug = "".join(ch if ch.isalnum() else "-" for ch in str(key).lower())
-    slug = "-".join(part for part in slug.split("-") if part)
-    return f"l2ft-meta-{slug}-ds"
+# Sentinel value for the metadata Key parameter's default. The
+# transactions dataset's WHERE clause short-circuits to "no metadata
+# filter" when the picked key equals this sentinel, so a freshly-
+# loaded dashboard renders all rows even before the analyst engages
+# the cascade. Placed at module scope so app.py + tests can reference
+# it from a single source of truth.
+META_KEY_ALL_SENTINEL = "__ALL__"
 
+# Sentinel default for the multi-valued Value parameter. When the
+# Key has been picked but no Value has yet been chosen, this default
+# matches no real metadata value → the table goes empty as a hint
+# the analyst still needs to pick a Value. Lives in CamelCase-safe
+# form (no underscores other than at the boundaries — QS parameter
+# *names* require alphanumerics, but parameter *values* can be
+# anything the SQL accepts).
+META_VALUE_PLACEHOLDER_SENTINEL = "__placeholder__"
 
-def metadata_param_name(key: str) -> str:
-    """Analysis-level parameter name for a metadata-key dropdown.
-
-    QuickSight requires parameter names to match ``^[a-zA-Z0-9]+$`` —
-    no underscores, hyphens, or other separators. We CamelCase the
-    metadata key so ``business_day`` becomes ``BusinessDay`` and the
-    final form is ``pL2ftMetaBusinessDay``.
-    """
-    parts = [p for p in str(key).replace("-", "_").split("_") if p]
-    cameled = "".join(p[0].upper() + p[1:] for p in parts)
-    return f"pL2ftMeta{cameled}"
-
-
-# Per-Rail row table — declared L2 columns + runtime activity counts.
-RAILS_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("rail_name", "STRING"),
-    ColumnSpec("transfer_type", "STRING"),
-    ColumnSpec("leg_shape", "STRING"),
-    ColumnSpec("source_role", "STRING"),
-    ColumnSpec("destination_role", "STRING"),
-    ColumnSpec("leg_role", "STRING"),
-    ColumnSpec("max_pending_age", "STRING"),
-    ColumnSpec("max_unbundled_age", "STRING"),
-    ColumnSpec("posted_requirements", "STRING"),
-    ColumnSpec("total_postings", "INTEGER"),
-    ColumnSpec("pending_count", "INTEGER"),
-    ColumnSpec("unbundled_count", "INTEGER"),
-])
+# Dataset-parameter IDs are stable UUIDs so re-deploying produces
+# byte-identical DatasetParameters JSON. QS-issued IDs would re-rotate
+# on every regenerate.
+_DSP_ID_PKEY = "11111111-1111-4111-8111-111111111111"
+_DSP_ID_PVALUES = "22222222-2222-4222-8222-222222222222"
 
 
 # Per-ChainEntry edge — declared parent→child relationship + runtime
@@ -164,6 +167,41 @@ EXC_DEAD_LIMIT_SCHEDULES_CONTRACT = DatasetContract(columns=[
 ])
 
 
+# -- Rails tab (M.3.10c) — postings explorer + cascade source ---------------
+
+# Per-leg view from <prefix>_current_transactions, parameterized on
+# pKey + pValues so the metadata cascade filter applies via QS
+# CustomSql substitution. The Rails sheet's transactions Table reads
+# directly from this dataset.
+POSTINGS_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("id", "STRING"),
+    ColumnSpec("transfer_id", "STRING"),
+    ColumnSpec("transfer_parent_id", "STRING"),
+    ColumnSpec("rail_name", "STRING"),
+    ColumnSpec("transfer_type", "STRING"),
+    ColumnSpec("account_id", "STRING"),
+    ColumnSpec("account_name", "STRING"),
+    ColumnSpec("account_role", "STRING"),
+    ColumnSpec("account_scope", "STRING"),
+    ColumnSpec("posting", "DATETIME"),
+    ColumnSpec("amount_money", "DECIMAL"),
+    ColumnSpec("amount_direction", "STRING"),
+    ColumnSpec("status", "STRING"),
+    ColumnSpec("bundle_id", "STRING"),
+    ColumnSpec("bundle_status", "STRING"),  # 'Bundled' / 'Unbundled' calc
+    ColumnSpec("origin", "STRING"),
+])
+
+
+# Distinct metadata values for whichever key the cascade has selected.
+# Single-column dataset; the Value dropdown's LinkedValues sources
+# from this. Re-queries every time pKey changes (QS substitutes the
+# new value into the WHERE clause).
+META_VALUES_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("metadata_value", "STRING"),
+])
+
+
 # -- Builders ----------------------------------------------------------------
 
 
@@ -177,15 +215,17 @@ def build_all_l2_flow_tracing_datasets(
     middle segment per M.2d.3) when the caller hasn't pre-stamped it.
     Idempotent — re-deriving an already-L2-aware cfg is a no-op.
 
-    M.3.5 ships Rails; M.3.6 adds Chains; M.3.7 adds the 6 L2
-    Exceptions sections; M.3.8 appends one tiny dropdown-source
-    dataset per declared metadata key (auto-walked from
-    `instance.rails[*].metadata_keys`).
+    M.3.6 ships Chains; M.3.7 adds the 6 L2 Exceptions sections;
+    M.3.10c adds the postings explorer + meta-values cascade source
+    for the Rails tab (replacing M.3.5's declared-rails table — moves
+    to a future Docs tab — and M.3.8's 28 per-key metadata dropdowns
+    — replaced by the cascade).
     """
     if cfg.l2_instance_prefix is None:
         cfg = replace(cfg, l2_instance_prefix=str(l2_instance.instance))
     return [
-        build_rails_dataset(cfg, l2_instance),
+        build_postings_dataset(cfg, l2_instance),
+        build_meta_values_dataset(cfg, l2_instance),
         build_chains_dataset(cfg, l2_instance),
         build_exc_chain_orphans_dataset(cfg, l2_instance),
         build_exc_unmatched_transfer_type_dataset(cfg, l2_instance),
@@ -193,7 +233,6 @@ def build_all_l2_flow_tracing_datasets(
         build_exc_dead_bundles_activity_dataset(cfg, l2_instance),
         build_exc_dead_metadata_dataset(cfg, l2_instance),
         build_exc_dead_limit_schedules_dataset(cfg, l2_instance),
-        *build_metadata_dropdown_datasets(cfg, l2_instance),
     ]
 
 
@@ -210,106 +249,107 @@ def declared_metadata_keys(l2_instance: L2Instance) -> list[str]:
     return sorted(keys)
 
 
-# Dropdown source datasets project a single column named `value`.
-METADATA_DROPDOWN_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("value", "STRING"),
-])
-
-
-def build_metadata_dropdown_datasets(
+def build_postings_dataset(
     cfg: Config, l2_instance: L2Instance,
-) -> list[DataSet]:
-    """One small dataset per declared metadata key, each projecting
-    distinct values from `JSON_VALUE(metadata, '$.<key>')`. Sorted
-    output keeps the QS dropdown options stable across runs."""
-    return [
-        build_metadata_dropdown_dataset(cfg, l2_instance, key)
-        for key in declared_metadata_keys(l2_instance)
-    ]
-
-
-def build_metadata_dropdown_dataset(
-    cfg: Config, l2_instance: L2Instance, key: str,
 ) -> DataSet:
-    """Distinct values of one metadata key over the prefixed
-    transactions matview.
+    """One row per leg from ``<prefix>_current_transactions``,
+    parameterized on ``pKey`` + ``pValues`` so the metadata cascade
+    filters server-side via QS ``<<$param>>`` substitution.
 
-    Static `$.<key>` JSONPath keeps the SQL portable per the project's
-    no-JSONB constraint. NULLs are filtered out — a NULL in the
-    dropdown would just confuse the analyst (it isn't a value the
-    user can pick to filter against). Sort keeps the option list
-    stable across deploys.
+    Defaults: ``pKey = '__ALL__'`` short-circuits the metadata WHERE
+    clause to "no metadata filter" → freshly-loaded dashboard renders
+    every leg. ``pValues = '__placeholder__'`` matches no real value,
+    so picking a Key without a Value goes empty (UX hint to pick both).
+
+    Other filters (date range, rail, status, bundle status) apply via
+    standard QS TimeRangeFilter + CategoryFilter on the analysis side
+    — no parameterization needed for those.
     """
     prefix = l2_instance.instance
-    json_path = f"$.{key}"
     sql = (
-        f"SELECT DISTINCT JSON_VALUE(metadata, {_sql_str(json_path)}) "
-        f"AS value\n"
+        f"SELECT\n"
+        f"  id, transfer_id, transfer_parent_id, rail_name, transfer_type,\n"
+        f"  account_id, account_name, account_role, account_scope,\n"
+        f"  posting, amount_money, amount_direction, status, bundle_id,\n"
+        f"  CASE WHEN bundle_id IS NULL THEN 'Unbundled' ELSE 'Bundled' END "
+        f"AS bundle_status,\n"
+        f"  origin\n"
+        f"FROM {prefix}_current_transactions\n"
+        # The metadata cascade short-circuit: when pKey is the sentinel,
+        # the WHERE always evaluates true (no filtering); otherwise
+        # JSON_VALUE compares the leg's metadata against the picked
+        # values. Multi-valued IN takes the comma-list QS substitutes
+        # for <<$pValues>>.
+        f"WHERE\n"
+        f"  <<$pKey>> = {_sql_str(META_KEY_ALL_SENTINEL)}\n"
+        f"  OR JSON_VALUE(metadata, '$.' || <<$pKey>>) IN (<<$pValues>>)"
+    )
+    return build_dataset(
+        cfg, cfg.prefixed("l2ft-postings-dataset"),
+        "L2FT Postings", "l2ft-postings",
+        sql, POSTINGS_CONTRACT,
+        visual_identifier=DS_POSTINGS,
+        dataset_parameters=[
+            DatasetParameter(StringDatasetParameter=StringDatasetParameter(
+                Id=_DSP_ID_PKEY,
+                Name="pKey",
+                ValueType="SINGLE_VALUED",
+                DefaultValues=StringDatasetParameterDefaultValues(
+                    StaticValues=[META_KEY_ALL_SENTINEL],
+                ),
+            )),
+            DatasetParameter(StringDatasetParameter=StringDatasetParameter(
+                Id=_DSP_ID_PVALUES,
+                Name="pValues",
+                ValueType="MULTI_VALUED",
+                DefaultValues=StringDatasetParameterDefaultValues(
+                    StaticValues=[META_VALUE_PLACEHOLDER_SENTINEL],
+                ),
+            )),
+        ],
+    )
+
+
+def build_meta_values_dataset(
+    cfg: Config, l2_instance: L2Instance,
+) -> DataSet:
+    """Distinct metadata values for the chosen key — the Value
+    dropdown's ``LinkedValues`` source.
+
+    Parameterized on ``pKey``: when the Key dropdown picks a real key,
+    QS substitutes it into the JSONPath and the result narrows to that
+    key's distinct values. When pKey is the ``__ALL__`` sentinel
+    (default), the JSONPath ``'$.__ALL__'`` resolves nothing and the
+    dropdown is empty — UX hint that the analyst must pick a Key
+    before picking a Value.
+
+    NULLs filtered out (a NULL value in the dropdown would confuse).
+    Sorted output keeps the dropdown options stable across runs.
+    """
+    prefix = l2_instance.instance
+    sql = (
+        f"SELECT DISTINCT JSON_VALUE(metadata, '$.' || <<$pKey>>) "
+        f"AS metadata_value\n"
         f"FROM {prefix}_current_transactions\n"
         f"WHERE metadata IS NOT NULL\n"
-        f"  AND JSON_VALUE(metadata, {_sql_str(json_path)}) IS NOT NULL\n"
-        f"ORDER BY value"
-    )
-    visual_id = metadata_dropdown_ds_id(key)
-    # Strip the trailing '-ds' to produce the AWS resource name slug.
-    aws_slug = visual_id[:-3] if visual_id.endswith("-ds") else visual_id
-    return build_dataset(
-        cfg, cfg.prefixed(f"{aws_slug}-dataset"),
-        f"L2FT Metadata — {key}", aws_slug,
-        sql, METADATA_DROPDOWN_CONTRACT,
-        visual_identifier=visual_id,
-    )
-
-
-def build_rails_dataset(cfg: Config, l2_instance: L2Instance) -> DataSet:
-    """One row per declared Rail in the L2 instance.
-
-    Static columns come from the L2 declaration (inlined as a VALUES CTE
-    so the L2 stays out of the database). Runtime columns come from the
-    ``<prefix>_current_transactions`` matview, aggregated per
-    ``rail_name``. LEFT JOIN preserves Rails with zero activity in the
-    window — those surface as L2.3 'Dead rails' on the Exceptions tab.
-
-    Note: if multiple Rails share a ``transfer_type``, runtime counts
-    on each row reflect the activity the matview attributes to THAT
-    Rail's name (the schema's per-leg ``rail_name`` column makes the
-    attribution unambiguous regardless of transfer_type sharing).
-    """
-    prefix = l2_instance.instance
-    declared = _declared_rails_cte(l2_instance)
-    sql = (
-        f"WITH declared AS (\n{declared}\n),\n"
-        f"runtime AS (\n"
-        f"  SELECT\n"
-        f"    rail_name,\n"
-        f"    COUNT(*) AS total_postings,\n"
-        f"    SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END) AS pending_count,\n"
-        f"    SUM(CASE WHEN bundle_id IS NULL THEN 1 ELSE 0 END) AS unbundled_count\n"
-        f"  FROM {prefix}_current_transactions\n"
-        f"  GROUP BY rail_name\n"
-        f")\n"
-        f"SELECT\n"
-        f"  d.rail_name,\n"
-        f"  d.transfer_type,\n"
-        f"  d.leg_shape,\n"
-        f"  d.source_role,\n"
-        f"  d.destination_role,\n"
-        f"  d.leg_role,\n"
-        f"  d.max_pending_age,\n"
-        f"  d.max_unbundled_age,\n"
-        f"  d.posted_requirements,\n"
-        f"  COALESCE(r.total_postings, 0) AS total_postings,\n"
-        f"  COALESCE(r.pending_count, 0) AS pending_count,\n"
-        f"  COALESCE(r.unbundled_count, 0) AS unbundled_count\n"
-        f"FROM declared d\n"
-        f"LEFT JOIN runtime r ON r.rail_name = d.rail_name\n"
-        f"ORDER BY d.rail_name"
+        f"  AND JSON_VALUE(metadata, '$.' || <<$pKey>>) IS NOT NULL\n"
+        f"ORDER BY metadata_value"
     )
     return build_dataset(
-        cfg, cfg.prefixed("l2ft-rails-dataset"),
-        "L2FT Rails", "l2ft-rails",
-        sql, RAILS_CONTRACT,
-        visual_identifier=DS_RAILS,
+        cfg, cfg.prefixed("l2ft-meta-values-dataset"),
+        "L2FT Metadata Values", "l2ft-meta-values",
+        sql, META_VALUES_CONTRACT,
+        visual_identifier=DS_META_VALUES,
+        dataset_parameters=[
+            DatasetParameter(StringDatasetParameter=StringDatasetParameter(
+                Id=_DSP_ID_PKEY,
+                Name="pKey",
+                ValueType="SINGLE_VALUED",
+                DefaultValues=StringDatasetParameterDefaultValues(
+                    StaticValues=[META_KEY_ALL_SENTINEL],
+                ),
+            )),
+        ],
     )
 
 

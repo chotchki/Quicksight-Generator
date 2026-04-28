@@ -112,15 +112,16 @@ def test_l2_exceptions_sheet_visuals_invariant(
 # -- Dataset count + ID prefix invariants -----------------------------------
 
 
-def test_dataset_count_is_eight_plus_metadata_keys(
+def test_dataset_count_is_nine_per_instance(
     l2_instance: L2Instance,
 ) -> None:
-    """8 fixed core datasets + N metadata-key dropdown sources.
-    Catches a substep regression where the core datasets drift OR
-    the metadata-key fan-out detaches from `declared_metadata_keys`."""
+    """M.3.10c stabilizes at 9 fixed datasets per L2 instance —
+    postings + meta-values (Rails cascade) + chains + 6 L2 exceptions.
+    The M.3.5 declared-rails dataset moved to a future Docs tab; the
+    M.3.8 per-key metadata dropdown fan-out is gone — replaced by the
+    parameterized meta-values dataset that re-queries on Key change."""
     app = build_l2_flow_tracing_app(_CFG, l2_instance=l2_instance)
-    n_meta = len(declared_metadata_keys(l2_instance))
-    assert len(app.datasets) == 8 + n_meta
+    assert len(app.datasets) == 9
 
 
 def test_every_dataset_id_carries_l2_prefix(
@@ -165,26 +166,46 @@ def test_emit_analysis_and_dashboard_succeed(
     assert app.emit_dashboard() is not None
 
 
-# -- Metadata controls scale per-instance ------------------------------------
+# -- Metadata cascade — fixed shape per L2 (M.3.10c) ------------------------
 
 
-def test_metadata_dropdowns_scale_with_declared_keys(
+def test_metadata_cascade_has_two_params_per_instance(
     l2_instance: L2Instance,
 ) -> None:
-    """Per-instance ergonomics: the metadata dropdowns auto-walk
-    `declared_metadata_keys(l2_instance)` — an instance with 5 keys
-    gets 5 dropdowns + 5 parameters; an instance with 28 gets 28 + 28.
-    Zero per-instance code; whatever the L2 declares becomes
-    filterable."""
+    """M.3.10c reframes the metadata surface: instead of N dropdowns
+    (one per key), one Key + one Value cascade pair on the Rails
+    sheet. Always exactly 2 metadata params (`pL2ftMetaKey` +
+    `pL2ftMetaValue`) regardless of declared-key count."""
     app = build_l2_flow_tracing_app(_CFG, l2_instance=l2_instance)
-    n_keys = len(declared_metadata_keys(l2_instance))
     meta_params = [
         p for p in app.analysis.parameters
         if str(p.name).startswith("pL2ftMeta")
     ]
-    assert len(meta_params) == n_keys
-    exc = next(s for s in app.analysis.sheets if s.name == "L2 Exceptions")
-    assert len(exc.parameter_controls) == n_keys
+    assert len(meta_params) == 2
+    assert {str(p.name) for p in meta_params} == {
+        "pL2ftMetaKey", "pL2ftMetaValue",
+    }
+
+
+def test_metadata_key_dropdown_options_scale_with_declared_keys(
+    l2_instance: L2Instance,
+) -> None:
+    """The Key dropdown's StaticValues includes the sentinel +
+    every declared metadata key — that scales per-instance. An
+    instance with N keys produces N+1 dropdown options."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        META_KEY_ALL_SENTINEL,
+    )
+    from quicksight_gen.common.tree import StaticValues
+    app = build_l2_flow_tracing_app(_CFG, l2_instance=l2_instance)
+    n_keys = len(declared_metadata_keys(l2_instance))
+    rails = next(s for s in app.analysis.sheets if s.name == "Rails")
+    key_ctrl = next(
+        c for c in rails.parameter_controls if c.title == "Metadata Key"
+    )
+    assert isinstance(key_ctrl.selectable_values, StaticValues)
+    assert key_ctrl.selectable_values.values[0] == META_KEY_ALL_SENTINEL
+    assert len(key_ctrl.selectable_values.values) == n_keys + 1
 
 
 # -- Cross-instance differentiation ------------------------------------------

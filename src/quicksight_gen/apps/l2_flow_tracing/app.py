@@ -41,26 +41,33 @@ from quicksight_gen.apps.l2_flow_tracing.datasets import (
     DS_EXC_DEAD_METADATA,
     DS_EXC_DEAD_RAILS,
     DS_EXC_UNMATCHED_TRANSFER_TYPE,
-    DS_RAILS,
+    DS_META_VALUES,
+    DS_POSTINGS,
+    META_KEY_ALL_SENTINEL,
+    META_VALUE_PLACEHOLDER_SENTINEL,
     build_all_l2_flow_tracing_datasets,
     declared_metadata_keys,
-    metadata_dropdown_ds_id,
-    metadata_param_name,
 )
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.ids import ParameterName, SheetId
 from quicksight_gen.common.l2 import L2Instance, load_instance
+from quicksight_gen.common.models import DateTimeDefaultValues
 from quicksight_gen.common.theme import get_preset
 from quicksight_gen.common.tree import (
     Analysis,
     App,
+    CategoryFilter,
     CellAccentText,
     Dataset,
+    DateTimeParam,
+    FilterGroup,
     LinkedValues,
     Sheet,
+    StaticValues,
     StringParam,
     TextBox,
+    TimeRangeFilter,
 )
 
 
@@ -192,25 +199,12 @@ def build_l2_flow_tracing_app(
     ))
 
     _populate_getting_started(cfg, getting_started, l2_instance)
-    _populate_rails_sheet(cfg, rails_sheet, datasets=datasets)
+    _populate_rails_sheet(
+        cfg, rails_sheet,
+        analysis=analysis, datasets=datasets, l2_instance=l2_instance,
+    )
     _populate_chains_sheet(cfg, chains_sheet, datasets=datasets)
     _populate_l2_exceptions_sheet(cfg, l2_exceptions_sheet, datasets=datasets)
-
-    # M.3.8 — auto metadata-driven filter controls. One StringParam per
-    # declared metadata key (analysis-level, so any future visual on
-    # any sheet can read it via FilterGroup) + one dropdown widget per
-    # key on the L2 Exceptions sheet (the natural home for filtering).
-    # Filter wiring of visuals is deferred — most current datasets are
-    # aggregates that don't carry per-metadata-key columns; pushing
-    # filters through would require extending each dataset's SQL with
-    # CalcField-style projections (M.3.8b candidate).
-    _wire_metadata_dropdowns(
-        cfg=cfg,
-        analysis=analysis,
-        sheet=l2_exceptions_sheet,
-        datasets=datasets,
-        l2_instance=l2_instance,
-    )
 
     app.create_dashboard(
         dashboard_id_suffix="l2-flow-tracing",
@@ -236,8 +230,12 @@ def _l2ft_datasets(
     wiring on the App.
     """
     aws_datasets = build_all_l2_flow_tracing_datasets(cfg, l2_instance)
+    # Order matches `build_all_l2_flow_tracing_datasets`. M.3.10c
+    # dropped DS_RAILS + the 28 per-key dropdowns; replaced with
+    # DS_POSTINGS + DS_META_VALUES driving the cascade.
     visual_ids = [
-        DS_RAILS,
+        DS_POSTINGS,
+        DS_META_VALUES,
         DS_CHAINS,
         DS_EXC_CHAIN_ORPHANS,
         DS_EXC_UNMATCHED_TRANSFER_TYPE,
@@ -246,10 +244,6 @@ def _l2ft_datasets(
         DS_EXC_DEAD_METADATA,
         DS_EXC_DEAD_LIMIT_SCHEDULES,
     ]
-    # M.3.8 — append one visual_id per declared metadata key. Order
-    # matches `build_all_l2_flow_tracing_datasets`'s zip pairing.
-    for key in declared_metadata_keys(l2_instance):
-        visual_ids.append(metadata_dropdown_ds_id(key))
     return {
         vid: Dataset(identifier=vid, arn=cfg.dataset_arn(aws.DataSetId))
         for vid, aws in zip(visual_ids, aws_datasets)
@@ -309,73 +303,200 @@ def _populate_getting_started(
     )
 
 
+_DATE_END_DEFAULT_EXPR = "truncDate('DD', now())"
+_DATE_START_DEFAULT_EXPR = (
+    "addDateTime(-7, 'DD', truncDate('DD', now()))"
+)
+
+
 def _populate_rails_sheet(
     cfg: Config,
     sheet: Sheet,
     *,
+    analysis: Analysis,
     datasets: dict[str, Dataset],
+    l2_instance: L2Instance,
 ) -> None:
-    """Rails sheet — one-row-per-Rail table joining L2 declaration to
-    runtime activity (M.3.5).
+    """Rails sheet — interactive transactions explorer (M.3.10c rewrite).
 
-    Static columns come from the L2 instance (inlined in the dataset's
-    SQL CTE); runtime columns come from the prefixed
-    ``<prefix>_current_transactions`` matview LEFT JOINed by
-    ``rail_name``. Rails with zero activity in the window show
-    ``total_postings = 0`` — they're the seeds for the L2.3 'Dead
-    rails' exception (M.3.7).
+    Six controls in the sheet's filter bar drive a transactions Table:
 
-    Visual layout: short header text, then one wide unaggregated table.
-    The accent text on ``rail_name`` signals the column will be a drill
-    anchor at M.3.7 (no drill action wired yet — drill plumbing lands
-    when the per-Rail postings detail destination exists).
+    1. **Date From** + **Date To** — bind to ``pL2ftDateStart`` /
+       ``pL2ftDateEnd``; ``TimeRangeFilter`` on ``posting``.
+    2. **Rail** — multi-select ``CategoryFilter`` on ``rail_name``.
+    3. **Status** — multi-select ``CategoryFilter`` on ``status``.
+    4. **Bundle** — multi-select ``CategoryFilter`` on the calc'd
+       ``bundle_status`` ('Bundled' / 'Unbundled').
+    5. **Metadata Key** — single-select ``ParameterDropdown`` with
+       ``StaticValues`` (the L2's declared keys + ``__ALL__``
+       sentinel). Bound to ``pL2ftMetaKey``, mapped to ``pKey`` on
+       BOTH the postings dataset (filters the table) AND the
+       meta-values dataset (narrows the Value dropdown's options).
+    6. **Metadata Value** — multi-select ``ParameterDropdown`` with
+       ``LinkedValues`` from the meta-values dataset. Bound to
+       ``pL2ftMetaValue``, mapped to ``pValues`` on the postings
+       dataset.
+
+    The cascade is fully native QS: when the analyst picks a Key,
+    QS's MappedDataSetParameters push the value into the meta-values
+    dataset's ``pKey`` parameter, which re-runs that dataset's SQL
+    (substituting the new key into the JSONPath) — the Value
+    dropdown's options narrow automatically. No client-side
+    JavaScript, no synthetic chaining.
+
+    The declared-rails table that lived here pre-M.3.10c moved to
+    a future Docs tab; the runtime postings explorer is the focus
+    here.
     """
     accent = get_preset(cfg.theme_preset).accent
-    ds_rails = datasets[DS_RAILS]
+    ds_postings = datasets[DS_POSTINGS]
+    ds_meta_values = datasets[DS_META_VALUES]
 
-    sheet.layout.row(height=8).add_text_box(
+    sheet.layout.row(height=4).add_text_box(
         TextBox(
             text_box_id="l2ft-rails-header",
             content=rt.text_box(
-                rt.subheading("Rails", color=accent),
+                rt.subheading("Rails — Transactions Explorer", color=accent),
                 rt.BR,
                 rt.body(
-                    "One row per declared Rail. Static columns reflect "
-                    "the L2 declaration; runtime columns count what "
-                    "actually landed in the window. A row with zero "
-                    "Total Postings means the rail was declared but "
-                    "never fired — the L2.3 'Dead rails' exception "
-                    "surfaces those (M.3.7)."
+                    "Filter the postings ledger by date range, rail, "
+                    "status, bundle status, and (cascading) metadata "
+                    "key + value. Pick a Metadata Key to populate the "
+                    "Value dropdown; pick one or more Values to narrow "
+                    "the table to legs carrying that metadata."
                 ),
             ),
         ),
         width=36,
     )
 
-    rail_name_col = ds_rails["rail_name"].dim()
-    sheet.layout.row(height=18).add_table(
+    # 1+2. Date range — params + TimeRangeFilter scoped to this sheet.
+    date_start = analysis.add_parameter(DateTimeParam(
+        name=ParameterName("pL2ftDateStart"),
+        time_granularity="DAY",
+        default=DateTimeDefaultValues(
+            RollingDate={"Expression": _DATE_START_DEFAULT_EXPR},
+        ),
+    ))
+    date_end = analysis.add_parameter(DateTimeParam(
+        name=ParameterName("pL2ftDateEnd"),
+        time_granularity="DAY",
+        default=DateTimeDefaultValues(
+            RollingDate={"Expression": _DATE_END_DEFAULT_EXPR},
+        ),
+    ))
+    fg_date = analysis.add_filter_group(FilterGroup(
+        filter_group_id="fg-l2ft-rails-date",  # type: ignore[arg-type]
+        cross_dataset="SINGLE_DATASET",
+        filters=[TimeRangeFilter(
+            filter_id="filter-l2ft-rails-date",
+            dataset=ds_postings,
+            column=ds_postings["posting"],
+            null_option="NON_NULLS_ONLY",
+            time_granularity="DAY",
+            minimum={"Parameter": "pL2ftDateStart"},
+            maximum={"Parameter": "pL2ftDateEnd"},
+        )],
+    ))
+    fg_date.scope_sheet(sheet)
+    sheet.add_parameter_datetime_picker(parameter=date_start, title="Date From")
+    sheet.add_parameter_datetime_picker(parameter=date_end, title="Date To")
+
+    # 3-5. Three "default-all multi-select" CategoryFilter dropdowns
+    # (rail / status / bundle status). Empty values + FILTER_ALL_VALUES
+    # is the AR/L1 idiom for "no filter applied until analyst picks".
+    def _cat_dropdown(*, fg_id: str, col: str, title: str) -> None:
+        cat = CategoryFilter.with_values(
+            filter_id=f"filter-{fg_id}",
+            dataset=ds_postings,
+            column=ds_postings[col],
+            values=[],
+            select_all_options="FILTER_ALL_VALUES",
+        )
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=fg_id,  # type: ignore[arg-type]
+            cross_dataset="SINGLE_DATASET",
+            filters=[cat],
+        ))
+        fg.scope_sheet(sheet)
+        sheet.add_filter_dropdown(filter=cat, title=title)
+
+    _cat_dropdown(fg_id="fg-l2ft-rails-rail", col="rail_name", title="Rail")
+    _cat_dropdown(fg_id="fg-l2ft-rails-status", col="status", title="Status")
+    _cat_dropdown(
+        fg_id="fg-l2ft-rails-bundle", col="bundle_status", title="Bundle",
+    )
+
+    # 6. Metadata cascade — the M.3.10c novelty.
+    #
+    # Key: single-select StaticValues from the L2 walk + sentinel.
+    # Bound to pL2ftMetaKey, which maps to `pKey` on BOTH the
+    # postings dataset (controls the WHERE clause) and the
+    # meta-values dataset (controls which key's values populate the
+    # Value dropdown).
+    p_meta_key = analysis.add_parameter(StringParam(
+        name=ParameterName("pL2ftMetaKey"),
+        default=[META_KEY_ALL_SENTINEL],
+        multi_valued=False,
+        mapped_dataset_params=[
+            (ds_postings, "pKey"),
+            (ds_meta_values, "pKey"),
+        ],
+    ))
+    # Value: multi-select LinkedValues from the meta-values dataset.
+    # Bound to pL2ftMetaValue, mapped to `pValues` on the postings
+    # dataset.
+    p_meta_value = analysis.add_parameter(StringParam(
+        name=ParameterName("pL2ftMetaValue"),
+        default=[META_VALUE_PLACEHOLDER_SENTINEL],
+        multi_valued=True,
+        mapped_dataset_params=[
+            (ds_postings, "pValues"),
+        ],
+    ))
+    declared_keys = declared_metadata_keys(l2_instance)
+    sheet.add_parameter_dropdown(
+        parameter=p_meta_key,
+        title="Metadata Key",
+        type="SINGLE_SELECT",
+        # Sentinel first so it's the visible default; declared keys
+        # follow in sorted order.
+        selectable_values=StaticValues(
+            values=[META_KEY_ALL_SENTINEL] + declared_keys,
+        ),
+    )
+    sheet.add_parameter_dropdown(
+        parameter=p_meta_value,
+        title="Metadata Value",
+        type="MULTI_SELECT",
+        selectable_values=LinkedValues(
+            dataset=ds_meta_values,
+            column_name="metadata_value",
+        ),
+    )
+
+    # Transactions table — the postings dataset's SQL handles the
+    # metadata-cascade WHERE clause via dataset parameters; the four
+    # category filters narrow further.
+    sheet.layout.row(height=21).add_table(
         width=36,
-        title="Declared Rails — Shape and Activity",
+        title="Transactions",
         subtitle=(
-            "Static columns from the L2 instance; runtime counts from "
-            "the prefixed transactions matview joined by rail_name."
+            "One row per leg matching all the filters above. With no "
+            "Metadata Key picked, every leg in the date window appears; "
+            "picking a Key + one or more Values narrows to legs whose "
+            "metadata carries that key=value pair."
         ),
         columns=[
-            rail_name_col,
-            ds_rails["transfer_type"].dim(),
-            ds_rails["leg_shape"].dim(),
-            ds_rails["source_role"].dim(),
-            ds_rails["destination_role"].dim(),
-            ds_rails["leg_role"].dim(),
-            ds_rails["max_pending_age"].dim(),
-            ds_rails["max_unbundled_age"].dim(),
-            ds_rails["posted_requirements"].dim(),
-            ds_rails["total_postings"].numerical(),
-            ds_rails["pending_count"].numerical(),
-            ds_rails["unbundled_count"].numerical(),
-        ],
-        conditional_formatting=[
-            CellAccentText(on=rail_name_col, color=accent),
+            ds_postings["posting"].date(),
+            ds_postings["rail_name"].dim(),
+            ds_postings["transfer_id"].dim(),
+            ds_postings["account_name"].dim(),
+            ds_postings["amount_money"].numerical(),
+            ds_postings["amount_direction"].dim(),
+            ds_postings["status"].dim(),
+            ds_postings["bundle_status"].dim(),
+            ds_postings["transfer_parent_id"].dim(),
         ],
     )
 
@@ -662,74 +783,6 @@ def _add_l2_exception_section(
             "orphan_count", "posting_count", "cap",
         } else ds[c].numerical() for c in table_columns],
     )
-
-
-def _wire_metadata_dropdowns(
-    *,
-    cfg: Config,
-    analysis: Analysis,
-    sheet: Sheet,
-    datasets: dict[str, Dataset],
-    l2_instance: L2Instance,
-) -> None:
-    """Auto metadata-driven filters (M.3.8).
-
-    Walks ``union(instance.rails[*].metadata_keys)`` and emits one
-    ``StringParam`` per declared key on the analysis (so the parameter
-    is universal — any sheet's visuals can read it via FilterGroup),
-    plus one dropdown widget per key on the L2 Exceptions sheet (the
-    natural home for filtering). The widget is sourced from the
-    per-key ``DISTINCT JSON_VALUE(metadata, '$.<key>')`` dataset
-    emitted by ``build_metadata_dropdown_datasets``.
-
-    Design call: controls live on a single sheet rather than
-    duplicating onto all four. With ~30 metadata keys per L2
-    instance, fanning out to every sheet creates UI clutter that
-    overwhelms the visuals; the L2 Exceptions tab is where 'filter
-    by this metadata value' is most useful. The parameter staying
-    analysis-level keeps the seam open for the M.3.8b follow-on
-    that wires actual visual filtering.
-    """
-    keys = declared_metadata_keys(l2_instance)
-    if not keys:
-        return  # No metadata declared in this L2 — no-op.
-
-    accent = get_preset(cfg.theme_preset).accent
-    sheet.layout.row(height=4).add_text_box(
-        TextBox(
-            text_box_id="l2ft-meta-filters-header",
-            content=rt.text_box(
-                rt.subheading("Metadata Filters", color=accent),
-                rt.BR,
-                rt.body(
-                    "One dropdown per declared Rail metadata key — "
-                    "auto-derived from the L2 instance. Selecting a "
-                    "value sets the corresponding parameter; the "
-                    "M.3.8 baseline registers parameters universally "
-                    "but the visual filter wiring across tabs is a "
-                    "follow-on."
-                ),
-            ),
-        ),
-        width=36,
-    )
-
-    for key in keys:
-        param = StringParam(
-            name=ParameterName(metadata_param_name(key)),
-            default=[],  # No default — analyst picks from the dropdown.
-            multi_valued=True,
-        )
-        analysis.add_parameter(param)
-        sheet.add_parameter_dropdown(
-            parameter=param,
-            title=f"Metadata: {key}",
-            type="MULTI_SELECT",
-            selectable_values=LinkedValues(
-                dataset=datasets[metadata_dropdown_ds_id(key)],
-                column_name="value",
-            ),
-        )
 
 
 def _populate_placeholder(
