@@ -157,11 +157,24 @@ TT_INSTANCES_CONTRACT = DatasetContract(columns=[
 # ``amount_direction`` so the Sankey reads as:
 #
 #   debit account → template_name → credit account
+#                         │
+#                         ├──> matched chain child rail (M.3.10i)
+#                         └──> orphan chain child rail (M.3.10i,
+#                              synthetic row for declared edges
+#                              the runtime didn't fire)
 #
 # Width = ABS(amount_money). Each leg contributes one segment to one
 # side of the template middle-node. The shared template middle-node
 # means a 4-leg shared Transfer renders as 2 source nodes + the
 # template + 2 target nodes — natural multi-leg flow visualization.
+#
+# M.3.10i adds chain-child edges as additional flow segments coming
+# OUT of the template node. ``edge_kind`` = 'template_leg' for the
+# original legs; 'chain_matched' / 'chain_orphan' for the L2-declared
+# chain children flowing from the template. Synthetic orphan rows
+# are emitted per (parent firing, declared chain child) where no
+# matched child exists, so the Sankey shows the FULL declared topology
+# even when runtime data is incomplete.
 #
 # Shares ``template_name`` + ``posting`` columns with tt-instances so
 # cross_dataset='ALL_DATASETS' filter groups apply both the date +
@@ -179,6 +192,7 @@ TT_LEGS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("amount_abs", "DECIMAL"),
     ColumnSpec("flow_source", "STRING"),
     ColumnSpec("flow_target", "STRING"),
+    ColumnSpec("edge_kind", "STRING"),
 ])
 
 
@@ -558,18 +572,26 @@ def build_chain_instances_dataset(
     cfg: Config, l2_instance: L2Instance,
 ) -> DataSet:
     """One row per parent transfer firing of a declared chain parent
-    (M.3.10d). Backs the Chains sheet's per-instance explorer:
+    (M.3.10d, completion_status extended in M.3.10i for XOR groups).
+    Backs the Chains sheet's per-instance explorer.
+
+    Columns:
 
     - ``parent_chain_name`` — the L2-declared parent rail / template
       name. Drives the Chain dropdown's selectable values.
     - ``parent_transfer_id`` — DISTINCT transfer_id of the parent
       firing. Multiple legs of one transfer collapse to one row via
       GROUP BY.
-    - ``completion_status`` — computed inline: 'Completed' iff every
-      Required child declared for the parent has a matching child
-      transfer (``transfer_parent_id = parent_transfer_id``);
-      'Incomplete' if any required child is missing; 'No Required
-      Children' when the parent's ChainEntries are all optional.
+    - ``completion_status`` — computed inline; one of:
+
+      * ``'Completed'`` — every Required child fired AND every XOR
+        group has exactly one member fired.
+      * ``'Incomplete'`` — at least one Required child missing OR
+        any XOR group has 0 fired (orphan) OR > 1 fired (violation).
+      * ``'No Required Children'`` — the parent has no Required
+        children AND no XOR groups (e.g. a fire-and-forget chain
+        whose downstream is purely advisory).
+
     - ``parent_metadata`` is read in the WHERE only — kept off the
       contract so users don't see raw JSON. ``pKey`` / ``pValues``
       substitute into a JSONPath ``IN (...)`` predicate same as the
@@ -590,7 +612,9 @@ def build_chain_instances_dataset(
         f"  SELECT\n"
         f"    parent_name,\n"
         f"    SUM(CASE WHEN required = 'Required' THEN 1 ELSE 0 END) "
-        f"AS required_total\n"
+        f"AS required_total,\n"
+        f"    COUNT(DISTINCT CASE WHEN xor_group IS NOT NULL "
+        f"THEN xor_group END) AS xor_group_count\n"
         f"  FROM declared\n"
         f"  GROUP BY parent_name\n"
         f"),\n"
@@ -598,6 +622,7 @@ def build_chain_instances_dataset(
         f"  SELECT\n"
         f"    pc.parent_name AS parent_chain_name,\n"
         f"    pc.required_total,\n"
+        f"    pc.xor_group_count,\n"
         f"    t.transfer_id AS parent_transfer_id,\n"
         f"    MIN(t.posting) AS parent_posting,\n"
         f"    MAX(t.status) AS parent_status,\n"
@@ -606,7 +631,8 @@ def build_chain_instances_dataset(
         f"  FROM parent_chains pc\n"
         f"  JOIN {prefix}_current_transactions t\n"
         f"    ON COALESCE(t.template_name, t.rail_name) = pc.parent_name\n"
-        f"  GROUP BY pc.parent_name, pc.required_total, t.transfer_id\n"
+        f"  GROUP BY pc.parent_name, pc.required_total, pc.xor_group_count, "
+        f"t.transfer_id\n"
         f"),\n"
         f"firing_completion AS (\n"
         f"  SELECT\n"
@@ -616,6 +642,7 @@ def build_chain_instances_dataset(
         f"    pf.parent_status,\n"
         f"    pf.parent_amount_money,\n"
         f"    pf.required_total,\n"
+        f"    pf.xor_group_count,\n"
         f"    pf.parent_metadata,\n"
         f"    (\n"
         f"      SELECT COUNT(DISTINCT d.child_name)\n"
@@ -628,7 +655,28 @@ def build_chain_instances_dataset(
         f"= d.child_name\n"
         f"            AND c.transfer_parent_id = pf.parent_transfer_id\n"
         f"        )\n"
-        f"    ) AS required_fired\n"
+        f"    ) AS required_fired,\n"
+        # XOR violation count = number of declared XOR groups under this
+        # parent where fired-children count != 1. SPEC: "exactly one of
+        # them SHOULD fire per parent instance"; 0 fired = orphan, > 1
+        # fired = violation. Both flagged as Incomplete.
+        f"    (\n"
+        f"      SELECT COUNT(*)\n"
+        f"      FROM (\n"
+        f"        SELECT d.xor_group,\n"
+        f"          SUM(CASE WHEN EXISTS (\n"
+        f"            SELECT 1 FROM {prefix}_current_transactions c\n"
+        f"            WHERE COALESCE(c.template_name, c.rail_name) "
+        f"= d.child_name\n"
+        f"              AND c.transfer_parent_id = pf.parent_transfer_id\n"
+        f"          ) THEN 1 ELSE 0 END) AS fired_in_group\n"
+        f"        FROM declared d\n"
+        f"        WHERE d.parent_name = pf.parent_chain_name\n"
+        f"          AND d.xor_group IS NOT NULL\n"
+        f"        GROUP BY d.xor_group\n"
+        f"      ) g\n"
+        f"      WHERE g.fired_in_group <> 1\n"
+        f"    ) AS xor_violations\n"
         f"  FROM parent_firings pf\n"
         f")\n"
         f"SELECT\n"
@@ -640,8 +688,10 @@ def build_chain_instances_dataset(
         f"  required_total,\n"
         f"  required_fired,\n"
         f"  CASE\n"
-        f"    WHEN required_total = 0 THEN 'No Required Children'\n"
-        f"    WHEN required_fired >= required_total THEN 'Completed'\n"
+        f"    WHEN required_total = 0 AND xor_group_count = 0 "
+        f"THEN 'No Required Children'\n"
+        f"    WHEN required_fired >= required_total "
+        f"AND xor_violations = 0 THEN 'Completed'\n"
         f"    ELSE 'Incomplete'\n"
         f"  END AS completion_status\n"
         f"FROM firing_completion\n"
@@ -1288,26 +1338,36 @@ def build_tt_instances_dataset(
 def build_tt_legs_dataset(
     cfg: Config, l2_instance: L2Instance,
 ) -> DataSet:
-    """One row per leg of any shared Transfer that matches a declared
-    TransferTemplate (M.3.10f). Backs the Transfer Templates sheet's
-    Sankey:
+    """One row per Sankey edge segment for a TransferTemplate firing
+    (M.3.10f, chain-edge UNION added in M.3.10i).
 
-    - ``flow_source`` → Sankey source node.
-    - ``flow_target`` → Sankey target node.
-    - ``amount_abs.sum()`` → ribbon thickness.
+    The query UNIONs three row-sources:
 
-    ``flow_source`` / ``flow_target`` derive from
-    ``amount_direction``:
+    1. **Template legs** (``edge_kind='template_leg'``) — actual
+       transactions where ``template_name`` matches a declared
+       TransferTemplate. ``flow_source`` / ``flow_target`` derive from
+       ``amount_direction`` so the Sankey reads as
+       ``debit account → template_name → credit account``.
+    2. **Matched chain children** (``edge_kind='chain_matched'``) —
+       actual transactions whose ``transfer_parent_id`` points at a
+       template firing's transfer_id AND whose rail_name matches a
+       declared chain child. ``flow_source = template_name``,
+       ``flow_target = child_rail_name``.
+    3. **Orphan chain children** (``edge_kind='chain_orphan'``) —
+       SYNTHETIC rows for declared (template, child) chain edges
+       that the runtime didn't fire. One row per (parent firing,
+       declared child) where no matching child transaction exists.
+       ``flow_source = template_name``, ``flow_target = child_rail_name
+       || ' (orphan)'`` so the analyst sees the missing edge
+       visualized as a thin dashed-style ribbon to a distinct node.
 
-    - Debit leg (``amount_money <= 0``, money OUT of the account):
-      source = ``account_name``, target = ``template_name``.
-    - Credit leg (``amount_money >= 0``, money IN to the account):
-      source = ``template_name``, target = ``account_name``.
+    Together this gives a complete Sankey per parent firing — every
+    declared chain edge is visible whether it fired or not, with the
+    template legs forming the central trunk.
 
-    The template_name acts as the middle node — a 4-leg shared
-    Transfer renders as 2 source-account ribbons + the template +
-    2 target-account ribbons. Filtering Template = 'X' on the sheet
-    collapses the Sankey to that one template's flow pattern.
+    Width = ABS(amount_money). Synthetic orphan rows carry the parent
+    firing's amount as a representative ribbon thickness so they're
+    visually present but recognizable.
 
     Joining against the declared-templates CTE filters out any
     rogue ``template_name`` value in current_transactions that isn't
@@ -1316,33 +1376,97 @@ def build_tt_legs_dataset(
     Parameterized on pKey + pValues for the metadata cascade.
     """
     prefix = l2_instance.instance
-    declared = _declared_templates_cte(l2_instance)
+    declared_tt = _declared_templates_cte(l2_instance)
+    declared_ch = _declared_chains_cte(l2_instance)
     sql = (
-        f"WITH templates AS (\n{declared}\n)\n"
-        f"SELECT\n"
-        f"  ct.template_name,\n"
-        f"  ct.transfer_id,\n"
-        f"  ct.posting,\n"
-        f"  ct.account_name,\n"
-        f"  ct.account_role,\n"
-        f"  ct.amount_money,\n"
-        f"  ct.amount_direction,\n"
-        f"  ABS(ct.amount_money) AS amount_abs,\n"
-        f"  CASE\n"
-        f"    WHEN ct.amount_direction = 'Debit' THEN ct.account_name\n"
-        f"    ELSE ct.template_name\n"
-        f"  END AS flow_source,\n"
-        f"  CASE\n"
-        f"    WHEN ct.amount_direction = 'Debit' THEN ct.template_name\n"
-        f"    ELSE ct.account_name\n"
-        f"  END AS flow_target\n"
-        f"FROM {prefix}_current_transactions ct\n"
-        f"JOIN templates t ON t.template_name = ct.template_name\n"
+        f"WITH templates AS (\n{declared_tt}\n),\n"
+        f"declared AS (\n{declared_ch}\n),\n"
+        # Real template legs (unchanged from M.3.10f).
+        f"template_legs AS (\n"
+        f"  SELECT\n"
+        f"    ct.template_name,\n"
+        f"    ct.transfer_id,\n"
+        f"    ct.posting,\n"
+        f"    ct.metadata,\n"
+        f"    ct.account_name,\n"
+        f"    ct.account_role,\n"
+        f"    ct.amount_money,\n"
+        f"    ct.amount_direction,\n"
+        f"    ABS(ct.amount_money) AS amount_abs,\n"
+        f"    CASE\n"
+        f"      WHEN ct.amount_direction = 'Debit' THEN ct.account_name\n"
+        f"      ELSE ct.template_name\n"
+        f"    END AS flow_source,\n"
+        f"    CASE\n"
+        f"      WHEN ct.amount_direction = 'Debit' THEN ct.template_name\n"
+        f"      ELSE ct.account_name\n"
+        f"    END AS flow_target,\n"
+        f"    CAST('template_leg' AS VARCHAR(20)) AS edge_kind\n"
+        f"  FROM {prefix}_current_transactions ct\n"
+        f"  JOIN templates t ON t.template_name = ct.template_name\n"
+        f"),\n"
+        # One row per (parent firing, declared chain child) — the
+        # cartesian we need to detect both matched + orphan edges.
+        # parent_firings dedupes the legs of one shared Transfer to
+        # one (template_name, transfer_id, posting, metadata) row so
+        # the cartesian doesn't multiply by leg count.
+        f"parent_firings AS (\n"
+        f"  SELECT DISTINCT\n"
+        f"    template_name,\n"
+        f"    transfer_id,\n"
+        f"    MIN(posting) OVER (PARTITION BY transfer_id) AS posting,\n"
+        f"    MAX(metadata) OVER (PARTITION BY transfer_id) AS metadata,\n"
+        f"    MAX(ABS(amount_money)) OVER (PARTITION BY transfer_id) "
+        f"AS firing_amount_abs\n"
+        f"  FROM template_legs\n"
+        f"),\n"
+        f"chain_edges AS (\n"
+        f"  SELECT\n"
+        f"    pf.template_name,\n"
+        f"    pf.transfer_id,\n"
+        f"    pf.posting,\n"
+        f"    pf.metadata,\n"
+        f"    CAST(NULL AS VARCHAR(255)) AS account_name,\n"
+        f"    CAST(NULL AS VARCHAR(100)) AS account_role,\n"
+        f"    pf.firing_amount_abs AS amount_money,\n"
+        f"    CAST('Credit' AS VARCHAR(20)) AS amount_direction,\n"
+        f"    pf.firing_amount_abs AS amount_abs,\n"
+        f"    pf.template_name AS flow_source,\n"
+        f"    CASE WHEN EXISTS (\n"
+        f"      SELECT 1 FROM {prefix}_current_transactions c\n"
+        f"      WHERE c.rail_name = d.child_name\n"
+        f"        AND c.transfer_parent_id = pf.transfer_id\n"
+        f"    ) THEN d.child_name\n"
+        f"    ELSE d.child_name || ' (orphan)'\n"
+        f"    END AS flow_target,\n"
+        f"    CASE WHEN EXISTS (\n"
+        f"      SELECT 1 FROM {prefix}_current_transactions c\n"
+        f"      WHERE c.rail_name = d.child_name\n"
+        f"        AND c.transfer_parent_id = pf.transfer_id\n"
+        f"    ) THEN CAST('chain_matched' AS VARCHAR(20))\n"
+        f"    ELSE CAST('chain_orphan' AS VARCHAR(20))\n"
+        f"    END AS edge_kind\n"
+        f"  FROM parent_firings pf\n"
+        f"  JOIN declared d ON d.parent_name = pf.template_name\n"
+        f")\n"
+        f"SELECT template_name, transfer_id, posting, account_name, "
+        f"account_role, amount_money, amount_direction, amount_abs, "
+        f"flow_source, flow_target, edge_kind\n"
+        f"FROM template_legs\n"
         f"WHERE\n"
         f"  <<$pKey>> = {_sql_str(META_KEY_ALL_SENTINEL)}\n"
-        f"  OR JSON_VALUE(ct.metadata, '$.' || <<$pKey>>) "
+        f"  OR JSON_VALUE(metadata, '$.' || <<$pKey>>) "
         f"IN (<<$pValues>>)\n"
-        f"ORDER BY ct.posting DESC, ct.template_name, ct.transfer_id"
+        f"UNION ALL\n"
+        f"SELECT template_name, transfer_id, posting, account_name, "
+        f"account_role, amount_money, amount_direction, amount_abs, "
+        f"flow_source, flow_target, edge_kind\n"
+        f"FROM chain_edges\n"
+        f"WHERE\n"
+        f"  <<$pKey>> = {_sql_str(META_KEY_ALL_SENTINEL)}\n"
+        f"  OR JSON_VALUE(metadata, '$.' || <<$pKey>>) "
+        f"IN (<<$pValues>>)\n"
+        f"ORDER BY posting DESC, template_name, transfer_id"
     )
     return build_dataset(
         cfg, cfg.prefixed("l2ft-tt-legs-dataset"),

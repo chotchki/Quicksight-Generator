@@ -51,7 +51,10 @@ def test_auto_scenario_against_spec_example_covers_all_six_plant_kinds(
     spec_instance,
 ) -> None:
     """spec_example.yaml is intentionally complete enough that the
-    auto-scenario derives one of every plant kind."""
+    auto-scenario derives one of every L1-invariant plant kind. Its
+    sole declared TransferTemplate (MerchantSettlementCycle) lists a
+    SingleLegRail as its first leg_rail, which the M.3.10g first-cut
+    TT picker can't handle — that's a known omission, not a bug."""
     report = default_scenario_for(spec_instance, today=CANONICAL_TODAY)
     sc = report.scenario
     assert len(sc.template_instances) == 2
@@ -61,14 +64,21 @@ def test_auto_scenario_against_spec_example_covers_all_six_plant_kinds(
     assert len(sc.stuck_pending_plants) == 1
     assert len(sc.stuck_unbundled_plants) == 1
     assert len(sc.supersession_plants) == 1
-    # No omissions — the SPEC example is sufficient for full coverage.
-    assert report.omitted == ()
+    # Only-omission: the lone TT plant whose first leg_rail isn't TwoLeg.
+    omitted_kinds = [kind for kind, _ in report.omitted]
+    assert all(
+        k.startswith("TransferTemplatePlant[")
+        for k in omitted_kinds
+    ), f"Unexpected non-TT omissions: {report.omitted!r}"
 
 
 def test_auto_scenario_against_sasquatch_pr_covers_all_six_plant_kinds(
     sasquatch_instance,
 ) -> None:
-    """The full AR fixture also has enough surface for full coverage."""
+    """The full AR fixture also has enough surface for full coverage.
+    Sasquatch's MerchantSettlementCycle's first leg_rail is a TwoLeg
+    (MerchantCardSale), so the TT plant fires; InternalTransferCycle's
+    first leg_rail is SingleLeg, so it's a known omission."""
     report = default_scenario_for(sasquatch_instance, today=CANONICAL_TODAY)
     sc = report.scenario
     assert len(sc.drift_plants) >= 1
@@ -77,6 +87,7 @@ def test_auto_scenario_against_sasquatch_pr_covers_all_six_plant_kinds(
     assert len(sc.stuck_pending_plants) >= 1
     assert len(sc.stuck_unbundled_plants) >= 1
     assert len(sc.supersession_plants) >= 1
+    assert len(sc.transfer_template_plants) >= 2  # 2 firings of one template
     # Sasquatch may or may not surface omissions depending on instance
     # shape — the key claim is that NO ALL-skip happens.
     omitted_kinds = [kind for kind, _ in report.omitted]

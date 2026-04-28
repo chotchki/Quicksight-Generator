@@ -57,6 +57,7 @@ from .primitives import (
     LimitSchedule,
     Name,
     Rail,
+    RoleExpression,
     SingleLegRail,
     TwoLegRail,
 )
@@ -69,6 +70,7 @@ from .seed import (
     StuckUnbundledPlant,
     SupersessionPlant,
     TemplateInstance,
+    TransferTemplatePlant,
 )
 
 
@@ -229,6 +231,91 @@ def default_scenario_for(
             ),
         )
 
+    # M.3.10g — TransferTemplate firings. For every L2-declared
+    # template whose first leg_rail is a TwoLegRail with
+    # expected_net=0 AND we can resolve accounts for both source +
+    # destination roles, plant 2 firings (so two distinct shared
+    # Transfers appear per template, exercising the transfer_key
+    # Metadata-grouping).
+    tt_plants_list: list[TransferTemplatePlant] = []
+    for tt in sorted(
+        instance.transfer_templates, key=lambda t: str(t.name)
+    ):
+        if not tt.leg_rails:
+            omitted.append((
+                f"TransferTemplatePlant[{tt.name}]",
+                "template has no leg_rails declared",
+            ))
+            continue
+        first_rail = _resolve_rail_by_name(tt.leg_rails[0], instance)
+        if not isinstance(first_rail, TwoLegRail):
+            omitted.append((
+                f"TransferTemplatePlant[{tt.name}]",
+                f"first leg_rail {tt.leg_rails[0]!r} is not a TwoLegRail "
+                f"(M.3.10g first cut handles only the simple two-leg case)",
+            ))
+            continue
+        if tt.expected_net != Decimal("0"):
+            omitted.append((
+                f"TransferTemplatePlant[{tt.name}]",
+                f"expected_net != 0 ({tt.expected_net}); "
+                f"non-zero net plants deferred",
+            ))
+            continue
+        src_id = _pick_account_id_for_role_expr(
+            first_rail.source_role, instance, template, cust1,
+        )
+        if src_id is None:
+            omitted.append((
+                f"TransferTemplatePlant[{tt.name}]",
+                f"no Account or template-instance matching source_role "
+                f"{first_rail.source_role!r}",
+            ))
+            continue
+        dst_id = _pick_account_id_for_role_expr(
+            first_rail.destination_role, instance, template, cust1,
+        )
+        if dst_id is None:
+            omitted.append((
+                f"TransferTemplatePlant[{tt.name}]",
+                f"no Account or template-instance matching destination_role "
+                f"{first_rail.destination_role!r}",
+            ))
+            continue
+        # Pre-resolve chain children for the first firing of each
+        # template (M.3.10h). Scan declared chains for entries whose
+        # parent matches this template name; for each, resolve the
+        # child rail + an account matching the child rail's role
+        # expression. The first firing then plants matched children
+        # for every declared chain edge, giving the visualization a
+        # variety of (matched, orphan) parent firings to display.
+        # The second firing leaves chain_children empty — that
+        # parent's chain edges all surface as orphans.
+        chain_children_for_firing_1 = _pick_chain_children_for_template(
+            tt.name, instance, template, cust1,
+        )
+        for firing_seq in (1, 2):
+            tt_plants_list.append(TransferTemplatePlant(
+                template_name=tt.name,
+                # Stagger days so the two firings spread across the
+                # date window — gives the explorer something visual.
+                days_ago=2 + firing_seq,
+                amount=Decimal("125.00"),
+                source_account_id=src_id,
+                destination_account_id=dst_id,
+                firing_seq=firing_seq,
+                chain_children=(
+                    chain_children_for_firing_1
+                    if firing_seq == 1 else ()
+                ),
+            ))
+    transfer_template_plants = tuple(tt_plants_list)
+    if not instance.transfer_templates:
+        omitted.append((
+            "TransferTemplatePlant",
+            "no TransferTemplate declared in instance",
+        ))
+
     scenario = ScenarioPlant(
         template_instances=(cust1, cust2),
         drift_plants=drift_plants,
@@ -237,6 +324,7 @@ def default_scenario_for(
         stuck_pending_plants=stuck_pending_plants,
         stuck_unbundled_plants=stuck_unbundled_plants,
         supersession_plants=supersession_plants,
+        transfer_template_plants=transfer_template_plants,
         today=today_ref,
     )
     return AutoScenarioReport(scenario=scenario, omitted=tuple(omitted))
@@ -333,6 +421,106 @@ def _pick_external_counter_for_outbound(
     if not candidates:
         return None
     return sorted(candidates, key=lambda a: str(a.id))[0]
+
+
+def _resolve_rail_by_name(
+    rail_name: Identifier, instance: L2Instance,
+) -> Rail | None:
+    """Find the L2-declared Rail by name; None on miss. Used by the TT
+    picker when validating a template's first leg_rail is a TwoLegRail.
+    """
+    for r in instance.rails:
+        if r.name == rail_name:
+            return r
+    return None
+
+
+def _pick_chain_children_for_template(
+    template_name: Identifier,
+    instance: L2Instance,
+    template: AccountTemplate,
+    customer_instance: TemplateInstance,
+) -> tuple[tuple[Identifier, Identifier], ...]:
+    """Pre-resolve chain-child (rail_name, account_id) pairs for a TT
+    plant's first firing (M.3.10h).
+
+    For each declared ChainEntry whose parent matches the template
+    name, resolve the child rail (must exist in instance.rails) and
+    pick an account by the child rail's role expression. Aggregating
+    rails are skipped — they don't have per-Transfer parents.
+
+    Returns the pairs in declaration order; entries that can't resolve
+    to a rail or an account are silently skipped (the chain
+    detection just doesn't see a matched child for them, which
+    naturally surfaces as an orphan in the dashboard).
+    """
+    pairs: list[tuple[Identifier, Identifier]] = []
+    for chain in instance.chains:
+        if chain.parent != template_name:
+            continue
+        child_rail = _resolve_rail_by_name(chain.child, instance)
+        if child_rail is None:
+            continue
+        # Aggregating rails sweep on cadence, not per-Transfer — they
+        # MUST NOT appear as chain children per SPEC. The validator
+        # enforces this at L2 load time, but a defensive skip here
+        # also avoids planting a chain child that can't legitimately
+        # exist in the data.
+        if child_rail.aggregating:
+            continue
+        # Pick the role expression from the child rail's leg side
+        # most likely to surface in the data. For a TwoLegRail use
+        # destination_role (where money lands — the receiving party's
+        # account); for a SingleLegRail use leg_role.
+        if isinstance(child_rail, TwoLegRail):
+            role_expr = child_rail.destination_role
+        else:
+            role_expr = child_rail.leg_role
+        account_id = _pick_account_id_for_role_expr(
+            role_expr, instance, template, customer_instance,
+        )
+        if account_id is None:
+            # Fallback: child rail's role might be an unmaterialized
+            # account-template role (e.g. MerchantDDA when only
+            # CustomerDDA is materialized). The chain detection SQL
+            # only checks rail_name + transfer_parent_id, not
+            # account roles, so any account works for the test.
+            # Land the leg on the customer instance so it's at least
+            # observable in the data.
+            account_id = customer_instance.account_id
+        pairs.append((chain.child, account_id))
+    return tuple(pairs)
+
+
+def _pick_account_id_for_role_expr(
+    role_expr: RoleExpression,
+    instance: L2Instance,
+    template: AccountTemplate,
+    customer_instance: TemplateInstance,
+) -> Identifier | None:
+    """Pick an account_id whose role matches one of the role expression's
+    members (M.3.10g TT plant picker).
+
+    Resolution order — first match wins:
+
+    1. If the role matches the customer template's role, use the
+       materialized customer (so a CustomerDDA-side leg lands on a real
+       customer instance, not a synthetic singleton).
+    2. Any L2 Account whose role appears in the role expression,
+       sorted by id for determinism.
+
+    Returns ``None`` if no candidate exists. The caller treats that
+    as "omit this plant".
+    """
+    candidate_roles = set(role_expr)
+    if template.role in candidate_roles:
+        return customer_instance.account_id
+    candidates = [
+        a for a in instance.accounts if a.role in candidate_roles
+    ]
+    if not candidates:
+        return None
+    return sorted(candidates, key=lambda a: str(a.id))[0].id
 
 
 def _pick_breach_inputs(

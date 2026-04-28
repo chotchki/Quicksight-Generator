@@ -193,6 +193,51 @@ class SupersessionPlant:
 
 
 @dataclass(frozen=True, slots=True)
+class TransferTemplatePlant:
+    """A planted firing of a declared TransferTemplate.
+
+    Plants one shared Transfer (single ``transfer_id``) made up of
+    legs whose ``template_name`` points back to the template. Each leg
+    carries the same ``transfer_key`` metadata values (per SPEC: "every
+    firing of a leg_rails rail with the same transfer_key Metadata
+    values posts to the same shared Transfer"); the seed emits
+    synthetic values keyed off ``firing_seq`` so two firings of the
+    same template don't collapse to one shared Transfer.
+
+    M.3.10g first cut: only handles templates whose ``leg_rails`` first
+    entry is a ``TwoLegRail`` with ``expected_net = 0`` — emits 2 legs
+    per firing (debit on source-side account + credit on destination-
+    side account, summing to zero). Multi-rail / SingleLegRail-chain
+    templates (e.g. internal-transfer suspense cycles) are deferred.
+
+    ``source_account_id`` and ``destination_account_id`` may each be
+    either a ``TemplateInstance.account_id`` (a materialized customer)
+    OR an L2 ``Account.id`` (a singleton or external counterparty).
+    The emit helper resolves each at seed time — so a
+    customer-DDA→external rail and an external→clearing rail both
+    fit this single plant shape.
+
+    ``chain_children`` (M.3.10h) — a tuple of (child_rail_name,
+    account_id) pairs pre-resolved by the auto-scenario picker. For
+    each pair, the emit helper plants ONE additional child leg whose
+    ``rail_name`` is the child + ``transfer_parent_id`` points at this
+    plant's shared transfer_id, so the L2 chain detection SQL sees a
+    matched child for every declared chain edge. Empty tuple = no
+    chain children fire (orphan firing — every declared chain edge
+    surfaces as a missing child). The picker mixes these per template
+    to exercise both matched + orphan code paths in one seed.
+    """
+
+    template_name: Identifier
+    days_ago: int
+    amount: Decimal
+    source_account_id: Identifier
+    destination_account_id: Identifier
+    firing_seq: int   # 1, 2, ... — disambiguates firings of the same template
+    chain_children: tuple[tuple[Identifier, Identifier], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class ScenarioPlant:
     """The full set of planted scenarios + materialized template instances.
 
@@ -207,6 +252,7 @@ class ScenarioPlant:
     stuck_pending_plants: tuple[StuckPendingPlant, ...] = ()
     stuck_unbundled_plants: tuple[StuckUnbundledPlant, ...] = ()
     supersession_plants: tuple[SupersessionPlant, ...] = ()
+    transfer_template_plants: tuple[TransferTemplatePlant, ...] = ()
     today: date = field(
         default_factory=lambda: datetime.now(tz=timezone.utc).date(),
     )
@@ -266,6 +312,13 @@ def emit_seed(instance: L2Instance, scenarios: ScenarioPlant) -> str:
         txn_rows.extend(
             _emit_supersession_rows(
                 p, scenarios, template_by_role, txn_counter,
+            )
+        )
+
+    for p in sorted(scenarios.transfer_template_plants, key=_tt_key):
+        txn_rows.extend(
+            _emit_transfer_template_rows(
+                p, instance, scenarios, template_by_role, txn_counter,
             )
         )
 
@@ -374,6 +427,10 @@ def _stuck_unbundled_key(p: StuckUnbundledPlant) -> tuple[str, int, str]:
 
 def _supersession_key(p: SupersessionPlant) -> tuple[str, int, str]:
     return (str(p.account_id), p.days_ago, p.transfer_type)
+
+
+def _tt_key(p: TransferTemplatePlant) -> tuple[str, int, int]:
+    return (str(p.template_name), p.days_ago, p.firing_seq)
 
 
 def _parent_singletons(instance: L2Instance) -> dict[Identifier, Account]:
@@ -792,6 +849,221 @@ def _emit_supersession_rows(
     ]
 
 
+def _resolve_transfer_template(
+    template_name: Identifier,
+    instance: L2Instance,
+):
+    """Find the L2-declared TransferTemplate by name; raise on miss."""
+    for t in instance.transfer_templates:
+        if t.name == template_name:
+            return t
+    raise KeyError(
+        f"transfer_template {template_name!r} not declared in "
+        f"instance.transfer_templates"
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _ResolvedAccount:
+    """Per-account fields the seed needs to emit a transactions row.
+
+    Captures both the simple-Account case (singleton or external from
+    instance.accounts) and the TemplateInstance case (materialized
+    customer under an AccountTemplate) under one shape so the emit
+    helper doesn't branch on which kind it got.
+    """
+
+    account_id: Identifier
+    account_name: Name
+    account_role: Identifier
+    account_scope: str
+    account_parent_role: Identifier | None
+
+
+def _resolve_any_account(
+    account_id: Identifier,
+    instance: L2Instance,
+    scenarios: ScenarioPlant,
+    template_by_role: dict[Identifier, AccountTemplate],
+) -> _ResolvedAccount:
+    """Resolve account_id to (id, name, role, scope, parent_role).
+
+    Tries scenarios.template_instances first (materialized customers),
+    falls back to instance.accounts (singletons + externals). Raises
+    KeyError if neither match.
+    """
+    for ti in scenarios.template_instances:
+        if ti.account_id == account_id:
+            tmpl = template_by_role[ti.template_role]
+            return _ResolvedAccount(
+                account_id=ti.account_id,
+                account_name=ti.name,
+                account_role=ti.template_role,
+                account_scope=tmpl.scope,
+                account_parent_role=tmpl.parent_role,
+            )
+    for a in instance.accounts:
+        if a.id == account_id:
+            return _ResolvedAccount(
+                account_id=a.id,
+                account_name=a.name or Name(str(a.id)),
+                account_role=a.role or Identifier(str(a.id)),
+                account_scope=a.scope,
+                account_parent_role=a.parent_role,
+            )
+    raise KeyError(
+        f"account_id {account_id!r} not found in template_instances "
+        f"or instance.accounts"
+    )
+
+
+def _emit_transfer_template_rows(
+    p: TransferTemplatePlant,
+    instance: L2Instance,
+    scenarios: ScenarioPlant,
+    template_by_role: dict[Identifier, AccountTemplate],
+    counter: _Counter,
+) -> list[str]:
+    """Plant ONE shared Transfer firing of the L2-declared TransferTemplate.
+
+    Two legs (debit on source-side account, credit on destination-side
+    account) both carrying:
+
+    - ``transfer_id`` shared (= ``tr-tt-<n>``)
+    - ``template_name`` = ``p.template_name``
+    - ``transfer_type`` = the template's declared ``transfer_type``
+    - ``rail_name`` = first ``leg_rails`` entry (a TwoLegRail; the
+      picker enforced this)
+    - ``transfer_key`` metadata values populated with synthetic
+      per-firing values so the SPEC's "same transfer_key joins one
+      shared Transfer" rule remains true.
+
+    Net = -amount + amount = 0, matching the templates we currently
+    handle (``expected_net = 0``). Templates with non-zero
+    ``expected_net`` are not yet supported; the picker excludes them.
+    """
+    template = _resolve_transfer_template(p.template_name, instance)
+    rail = _resolve_rail(template.leg_rails[0], instance)
+    if not isinstance(rail, TwoLegRail):
+        raise ValueError(
+            f"_emit_transfer_template_rows: rail {rail.name!r} is not a "
+            f"TwoLegRail. The picker should have excluded the template."
+        )
+
+    src = _resolve_any_account(
+        p.source_account_id, instance, scenarios, template_by_role,
+    )
+    dst = _resolve_any_account(
+        p.destination_account_id, instance, scenarios, template_by_role,
+    )
+
+    # Origin resolution per L2 rule O1: per-leg overrides take precedence
+    # over the rail-level shared origin.
+    src_origin = (
+        str(rail.source_origin) if rail.source_origin is not None
+        else (str(rail.origin) if rail.origin is not None else "InternalInitiated")
+    )
+    dst_origin = (
+        str(rail.destination_origin) if rail.destination_origin is not None
+        else (str(rail.origin) if rail.origin is not None else "InternalInitiated")
+    )
+
+    # transfer_key metadata: populate every declared transfer_key field
+    # with a synthetic per-firing value so two firings of the same
+    # template don't collapse to one shared Transfer (per SPEC).
+    metadata = {
+        str(k): f"{p.template_name}-firing-{p.firing_seq:04d}"
+        for k in template.transfer_key
+    }
+
+    plant_day = scenarios.today - timedelta(days=p.days_ago)
+    n = counter.next()
+    txn_id = f"tx-tt-{n:04d}"
+    transfer_id = f"tr-tt-{n:04d}"
+    posting_ts = f"{plant_day.isoformat()}T11:00:00+00:00"
+
+    rows = [
+        # Source-side leg (debit, money out).
+        _txn_row(
+            id_=f"{txn_id}-src",
+            account_id=src.account_id,
+            account_name=src.account_name,
+            account_role=src.account_role,
+            account_scope=src.account_scope,
+            account_parent_role=src.account_parent_role,
+            money=-p.amount,
+            direction="Debit",
+            posting=posting_ts,
+            transfer_id=transfer_id,
+            transfer_type=template.transfer_type,
+            rail_name=rail.name,
+            origin=src_origin,
+            metadata=metadata,
+            template_name=p.template_name,
+        ),
+        # Destination-side leg (credit, money in).
+        _txn_row(
+            id_=txn_id,
+            account_id=dst.account_id,
+            account_name=dst.account_name,
+            account_role=dst.account_role,
+            account_scope=dst.account_scope,
+            account_parent_role=dst.account_parent_role,
+            money=p.amount,
+            direction="Credit",
+            posting=posting_ts,
+            transfer_id=transfer_id,
+            transfer_type=template.transfer_type,
+            rail_name=rail.name,
+            origin=dst_origin,
+            metadata=metadata,
+            template_name=p.template_name,
+        ),
+    ]
+
+    # Chain children (M.3.10h). For each pre-resolved (child_rail,
+    # account) pair, plant ONE child leg whose transfer_parent_id
+    # points at this firing's transfer_id — that's what the L2 chain
+    # detection SQL matches against. Single-leg child plants don't
+    # satisfy L1 conservation in isolation, but the chain dataset's
+    # detection only needs EXISTS of a leg with the right rail_name +
+    # transfer_parent_id, which this satisfies. Posting timestamps
+    # one hour after the parent for visual sequencing in the explorer.
+    if p.chain_children:
+        child_posting_ts = f"{plant_day.isoformat()}T12:00:00+00:00"
+        for child_rail_name, child_account_id in p.chain_children:
+            child_rail = _resolve_rail(child_rail_name, instance)
+            child_acct = _resolve_any_account(
+                child_account_id, instance, scenarios, template_by_role,
+            )
+            child_origin = (
+                str(child_rail.origin)
+                if child_rail.origin is not None
+                else "InternalInitiated"
+            )
+            cn = counter.next()
+            child_txn_id = f"tx-tt-cc-{cn:04d}"
+            child_transfer_id = f"tr-tt-cc-{cn:04d}"
+            rows.append(_txn_row(
+                id_=child_txn_id,
+                account_id=child_acct.account_id,
+                account_name=child_acct.account_name,
+                account_role=child_acct.account_role,
+                account_scope=child_acct.account_scope,
+                account_parent_role=child_acct.account_parent_role,
+                money=p.amount,
+                direction="Credit",
+                posting=child_posting_ts,
+                transfer_id=child_transfer_id,
+                transfer_type=child_rail.transfer_type,
+                rail_name=child_rail.name,
+                origin=child_origin,
+                metadata=metadata,
+                transfer_parent_id=transfer_id,
+            ))
+    return rows
+
+
 def _txn_row(
     *,
     id_: str,
@@ -811,15 +1083,21 @@ def _txn_row(
     status: str = "Posted",
     bundle_id: str | None = None,
     supersedes: str | None = None,
+    template_name: Identifier | None = None,
+    transfer_parent_id: str | None = None,
 ) -> str:
     """Build one VALUES row for the transactions INSERT.
 
     `status` defaults to 'Posted' — the M.2.2 baseline scenarios all
     plant Posted legs. `bundle_id` and `supersedes` default to NULL —
     M.2b.14 plants exercise them for stuck-Unbundled / supersession
-    scenarios. Static columns we don't currently exercise
-    (transfer_completion, transfer_parent_id, template_name) emit
-    as NULL.
+    scenarios. `template_name` defaults to NULL; the M.3.10g
+    TransferTemplate plant is the first scenario kind to populate it.
+    `transfer_parent_id` defaults to NULL; the M.3.10h chain-child
+    legs are the first scenario kind to populate it (linking child
+    Transfers back to their parent Transfer's transfer_id so the L2
+    chain detection SQL sees a matched child). `transfer_completion`
+    isn't currently exercised, emits as NULL.
     """
     parent_role_lit = (
         _sql_str(account_parent_role) if account_parent_role else "NULL"
@@ -831,14 +1109,22 @@ def _txn_row(
     )
     bundle_lit = _sql_str(bundle_id) if bundle_id is not None else "NULL"
     supersedes_lit = _sql_str(supersedes) if supersedes is not None else "NULL"
+    template_lit = (
+        _sql_str(template_name) if template_name is not None else "NULL"
+    )
+    transfer_parent_lit = (
+        _sql_str(transfer_parent_id) if transfer_parent_id is not None
+        else "NULL"
+    )
     return (
         f"({_sql_str(id_)}, {_sql_str(account_id)}, "
         f"{_sql_str(account_name)}, {_sql_str(account_role)}, "
         f"{_sql_str(account_scope)}, {parent_role_lit}, "
         f"{money}, {_sql_str(direction)}, {_sql_str(status)}, "
         f"{_sql_str(posting)}, {_sql_str(transfer_id)}, "
-        f"{_sql_str(transfer_type)}, NULL, NULL, "
-        f"{_sql_str(rail_name)}, NULL, {bundle_lit}, {supersedes_lit}, "
+        f"{_sql_str(transfer_type)}, NULL, {transfer_parent_lit}, "
+        f"{_sql_str(rail_name)}, {template_lit}, "
+        f"{bundle_lit}, {supersedes_lit}, "
         f"{_sql_str(origin)}, {_sql_str(metadata_json)})"
     )
 

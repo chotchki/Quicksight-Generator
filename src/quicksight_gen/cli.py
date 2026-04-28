@@ -745,6 +745,55 @@ def _rewrite_seed_hash_in_yaml(yaml_path: Path, new_hash: str) -> None:
     yaml_path.write_text("".join(lines))
 
 
+@demo.command("topology")
+@click.option(
+    "--l2-instance", "l2_instance_path",
+    type=click.Path(exists=True, dir_okay=False), required=True,
+    help="Path to the L2 instance YAML to render.",
+)
+@click.option(
+    "--output", "-o",
+    type=click.Path(), required=True,
+    help="Output path for the SVG file (parent directories created).",
+)
+@click.option(
+    "--engine", type=click.Choice(
+        ["dot", "neato", "sfdp", "fdp", "twopi", "circo"],
+    ),
+    default="dot", show_default=True,
+    help=(
+        "Graphviz layout engine. 'dot' is hierarchical (good for chain "
+        "DAGs); the rest are force-directed (better when the topology has "
+        "many bidirectional edges between counterparties)."
+    ),
+)
+def demo_topology(
+    l2_instance_path: str, output: str, engine: str,
+) -> None:
+    """Render an L2 instance topology diagram to SVG.
+
+    Walks the L2 YAML and emits a Graphviz SVG showing roles,
+    rails (bundled when parallel), single-leg self-loops, transfer
+    templates as clusters of their leg rails, and chain edges between
+    parent and child rails / templates.
+
+    Requires the system `dot` binary (Homebrew: 'brew install
+    graphviz'; Debian/Ubuntu: 'apt install graphviz') and the Python
+    `graphviz` package (already a runtime dependency).
+    """
+    from quicksight_gen.common.l2 import load_instance
+    from quicksight_gen.common.l2.topology import render_topology
+
+    instance = load_instance(Path(l2_instance_path))
+    try:
+        rendered = render_topology(
+            instance, Path(output), engine=engine,
+        )
+    except (ImportError, RuntimeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Wrote topology SVG to {rendered}")
+
+
 @demo.command("apply")
 @click.argument("app", type=DEMO_APP_CHOICE, required=False)
 @click.option("--all", "all_apps", is_flag=True, help="Apply for all apps.")

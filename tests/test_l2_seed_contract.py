@@ -453,9 +453,13 @@ def test_seed_transfer_types_resolve_to_instance(
     instance: L2Instance, auto_seed_sql: str,
 ) -> None:
     """Every transfer_type literal in the seed = a declared
-    Rail.transfer_type. Catches drift where the auto-scenario or seed
-    code emits a transfer_type the L2 doesn't actually declare."""
+    Rail.transfer_type OR TransferTemplate.transfer_type (M.3.10g —
+    TT plants emit the template's own transfer_type, which is a
+    separate declaration from any leg_rail's transfer_type per SPEC).
+    Catches drift where the auto-scenario or seed code emits a
+    transfer_type the L2 doesn't actually declare."""
     declared = {r.transfer_type for r in instance.rails}
+    declared.update(t.transfer_type for t in instance.transfer_templates)
     txn_cols = _columns_in_insert(auto_seed_sql, "transactions")
     if "transfer_type" not in txn_cols:
         pytest.skip("transactions INSERT doesn't include transfer_type column")
@@ -491,11 +495,16 @@ _INFRA_METADATA_KEYS = {"customer_id", "external_reference"}
 def test_seed_metadata_keys_subset_of_rail_declarations(
     instance: L2Instance, auto_seed_sql: str,
 ) -> None:
-    """Every JSON metadata key in the seed comes from either some
-    Rail's metadata_keys list OR the small set of seed-infra keys."""
+    """Every JSON metadata key in the seed comes from one of:
+    a Rail.metadata_keys entry, a TransferTemplate.transfer_key entry
+    (M.3.10g — TT plants emit transfer_key fields per SPEC's "same
+    transfer_key joins one shared Transfer" rule), OR the small set
+    of seed-infra keys."""
     declared: set[str] = set(_INFRA_METADATA_KEYS)
     for r in instance.rails:
         declared.update(str(k) for k in r.metadata_keys)
+    for t in instance.transfer_templates:
+        declared.update(str(k) for k in t.transfer_key)
 
     # Pull keys from every metadata literal — `'key': 'value'`.
     metadata_lits = re.findall(r"'(\{[^']*\})'", auto_seed_sql)
@@ -507,9 +516,11 @@ def test_seed_metadata_keys_subset_of_rail_declarations(
     undeclared = seen_keys - declared
     assert not undeclared, (
         f"Auto-seed for {instance.instance!r} emitted metadata keys "
-        f"not declared on any Rail.metadata_keys (and not infra-keys): "
-        f"{sorted(undeclared)!r}. Either add them to the relevant rail's "
-        f"metadata_keys, or add them to _INFRA_METADATA_KEYS in this test."
+        f"not declared on any Rail.metadata_keys / TransferTemplate."
+        f"transfer_key (and not infra-keys): "
+        f"{sorted(undeclared)!r}. Either add them to the relevant "
+        f"rail's metadata_keys, or add them to _INFRA_METADATA_KEYS "
+        f"in this test."
         + _hint_if_fuzz(instance)
     )
 
