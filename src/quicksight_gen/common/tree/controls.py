@@ -198,6 +198,11 @@ class ParameterDropdown:
     selectable_values: SelectableValues | None = None
     hidden_select_all: bool = False
     cascade_source: "ParameterDropdown | None" = None
+    # Column-match for the cascade: when the source control's value
+    # changes, QS filters THIS dropdown's source dataset to rows
+    # where this column equals the source value, then re-distincts
+    # the dropdown's options. Required when cascade_source is set.
+    cascade_match_column: "Column | None" = None
     control_id: str | AutoResolved = AUTO
 
     _AUTO_KIND: ClassVar[str] = "dropdown"
@@ -232,22 +237,18 @@ class ParameterDropdown:
                 "control's emit — auto-ID resolution must visit the source "
                 "control first."
             )
-            # ColumnToMatch is required by QS when SourceControls is set
-            # — even for parameter-bridged cascades where the column
-            # isn't really used for filtering. Default to the linked
-            # dataset's source column (the one populating the
-            # dropdown's options) — that's the natural "what this
-            # control varies on" answer.
-            column_to_match = None
-            if isinstance(self.selectable_values, LinkedValues):
-                column_to_match = ColumnIdentifier(
-                    DataSetIdentifier=self.selectable_values.dataset.identifier,
-                    ColumnName=self.selectable_values.column_name,
-                )
+            assert self.cascade_match_column is not None, (
+                "cascade_source set without cascade_match_column — QS "
+                "needs to know which column on this dropdown's dataset "
+                "to filter by the source control's selected value."
+            )
             cascading_config = CascadingControlConfiguration(
                 SourceControls=[CascadingControlSource(
                     SourceSheetControlId=self.cascade_source.control_id,
-                    ColumnToMatch=column_to_match,
+                    ColumnToMatch=ColumnIdentifier(
+                        DataSetIdentifier=self.cascade_match_column.dataset.identifier,
+                        ColumnName=self.cascade_match_column.name,
+                    ),
                 )],
             )
 

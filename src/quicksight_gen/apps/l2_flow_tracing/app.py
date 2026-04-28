@@ -34,7 +34,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from quicksight_gen.apps.l2_flow_tracing.datasets import (
-    DS_CHAINS,
+    DS_CHAIN_INSTANCES,
     DS_EXC_CHAIN_ORPHANS,
     DS_EXC_DEAD_BUNDLES_ACTIVITY,
     DS_EXC_DEAD_LIMIT_SCHEDULES,
@@ -43,10 +43,14 @@ from quicksight_gen.apps.l2_flow_tracing.datasets import (
     DS_EXC_UNMATCHED_TRANSFER_TYPE,
     DS_META_VALUES,
     DS_POSTINGS,
+    DS_TT_INSTANCES,
+    DS_TT_LEGS,
     META_KEY_ALL_SENTINEL,
     META_VALUE_PLACEHOLDER_SENTINEL,
     build_all_l2_flow_tracing_datasets,
+    declared_chain_parents,
     declared_metadata_keys,
+    declared_template_names,
 )
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
@@ -76,6 +80,7 @@ from quicksight_gen.common.tree import (
 SHEET_GETTING_STARTED = SheetId("l2ft-sheet-getting-started")
 SHEET_RAILS = SheetId("l2ft-sheet-rails")
 SHEET_CHAINS = SheetId("l2ft-sheet-chains")
+SHEET_TRANSFER_TEMPLATES = SheetId("l2ft-sheet-transfer-templates")
 SHEET_L2_EXCEPTIONS = SheetId("l2ft-sheet-l2-exceptions")
 
 
@@ -92,26 +97,38 @@ _GETTING_STARTED_DESCRIPTION = (
 
 
 _RAILS_NAME = "Rails"
-_RAILS_TITLE = "Declared Rails — Shape and Activity"
+_RAILS_TITLE = "Rails — Transactions Explorer"
 _RAILS_DESCRIPTION = (
-    "One row per declared Rail. Static columns show the L2 declaration "
-    "(transfer_type, leg shape, role(s), aging caps, posted_requirements). "
-    "Runtime columns show what's actually happening in the date window: "
-    "total postings, pending count, unbundled count. Dead rails (zero "
-    "activity in the window) surface as a Stuck-Pending-Aging-style "
-    "exception on the L2 Exceptions tab."
+    "Filter the postings ledger by date range, rail, status, bundle "
+    "status, and (cascading) metadata key + value. Pick a Metadata Key "
+    "to populate the Value dropdown; pick one or more Values to narrow "
+    "the table to legs carrying that metadata."
 )
 
 
 _CHAINS_NAME = "Chains"
-_CHAINS_TITLE = "Declared Chains — Parent-Child Firing Topology"
+_CHAINS_TITLE = "Chains — Per-Instance Explorer"
 _CHAINS_DESCRIPTION = (
-    "Sankey of declared Chain entries. Nodes are the union of Rails and "
-    "TransferTemplates the chains reference; edge widths show parent "
-    "firing counts in the window. Edge color encodes Required vs "
-    "Optional and XOR-group membership. Edges where the orphan rate "
-    "(parent fired but Required child didn't) is non-zero get a tint "
-    "so analysts can spot broken cycles at a glance."
+    "Filter declared chain firings by date range, chain (parent rail / "
+    "template name), completion status, and (cascading) metadata key + "
+    "value. One row per parent transfer firing; completion_status reads "
+    "'Completed' when every Required child declared for the parent fired "
+    "against this transfer_id, 'Incomplete' if any required child is "
+    "missing, 'No Required Children' when only optional / XOR-group "
+    "children are declared."
+)
+
+
+_TRANSFER_TEMPLATES_NAME = "Transfer Templates"
+_TRANSFER_TEMPLATES_TITLE = "Transfer Templates — Multi-Leg Flow"
+_TRANSFER_TEMPLATES_DESCRIPTION = (
+    "Visualize the multi-leg flow of declared TransferTemplates: each "
+    "shared Transfer's debit legs flow into the template (middle node), "
+    "credit legs flow out to their destination accounts. Filter by date, "
+    "template, net status (Balanced / Imbalanced — checks the "
+    "ExpectedNet invariant), and (cascading) metadata key + value. The "
+    "Sankey shows the flow shape; the Table below shows per-instance "
+    "balance detail."
 )
 
 
@@ -191,6 +208,12 @@ def build_l2_flow_tracing_app(
         title=_CHAINS_TITLE,
         description=_CHAINS_DESCRIPTION,
     ))
+    transfer_templates_sheet = analysis.add_sheet(Sheet(
+        sheet_id=SHEET_TRANSFER_TEMPLATES,
+        name=_TRANSFER_TEMPLATES_NAME,
+        title=_TRANSFER_TEMPLATES_TITLE,
+        description=_TRANSFER_TEMPLATES_DESCRIPTION,
+    ))
     l2_exceptions_sheet = analysis.add_sheet(Sheet(
         sheet_id=SHEET_L2_EXCEPTIONS,
         name=_L2_EXCEPTIONS_NAME,
@@ -203,7 +226,14 @@ def build_l2_flow_tracing_app(
         cfg, rails_sheet,
         analysis=analysis, datasets=datasets, l2_instance=l2_instance,
     )
-    _populate_chains_sheet(cfg, chains_sheet, datasets=datasets)
+    _populate_chains_sheet(
+        cfg, chains_sheet,
+        analysis=analysis, datasets=datasets, l2_instance=l2_instance,
+    )
+    _populate_transfer_templates_sheet(
+        cfg, transfer_templates_sheet,
+        analysis=analysis, datasets=datasets, l2_instance=l2_instance,
+    )
     _populate_l2_exceptions_sheet(cfg, l2_exceptions_sheet, datasets=datasets)
 
     app.create_dashboard(
@@ -232,11 +262,17 @@ def _l2ft_datasets(
     aws_datasets = build_all_l2_flow_tracing_datasets(cfg, l2_instance)
     # Order matches `build_all_l2_flow_tracing_datasets`. M.3.10c
     # dropped DS_RAILS + the 28 per-key dropdowns; replaced with
-    # DS_POSTINGS + DS_META_VALUES driving the cascade.
+    # DS_POSTINGS + DS_META_VALUES driving the cascade. M.3.10d
+    # swapped DS_CHAINS (aggregated edges) for DS_CHAIN_INSTANCES
+    # (per parent firing) backing the chains explorer. M.3.10f adds
+    # DS_TT_INSTANCES (per shared Transfer) + DS_TT_LEGS (per leg)
+    # to back the new Transfer Templates sheet (Sankey + Table).
     visual_ids = [
         DS_POSTINGS,
         DS_META_VALUES,
-        DS_CHAINS,
+        DS_CHAIN_INSTANCES,
+        DS_TT_INSTANCES,
+        DS_TT_LEGS,
         DS_EXC_CHAIN_ORPHANS,
         DS_EXC_UNMATCHED_TRANSFER_TYPE,
         DS_EXC_DEAD_RAILS,
@@ -338,45 +374,33 @@ def _populate_rails_sheet(
     5. **Metadata Key** — single-select ``ParameterDropdown`` with
        ``StaticValues`` (the L2's declared keys + ``__ALL__``
        sentinel). Bound to ``pL2ftMetaKey``, mapped to ``pKey`` on
-       BOTH the postings dataset (filters the table) AND the
-       meta-values dataset (narrows the Value dropdown's options).
+       the postings dataset (so its ``<<$pKey>>`` substitution
+       narrows the table).
     6. **Metadata Value** — multi-select ``ParameterDropdown`` with
        ``LinkedValues`` from the meta-values dataset. Bound to
        ``pL2ftMetaValue``, mapped to ``pValues`` on the postings
-       dataset.
+       dataset. ``CascadingControlConfiguration`` on this control
+       points at the meta-values dataset's ``metadata_key`` column,
+       so QS column-match-filters its rows by the Key dropdown's
+       selection — which narrows the Value dropdown's options.
 
-    The cascade is fully native QS: when the analyst picks a Key,
-    QS's MappedDataSetParameters push the value into the meta-values
-    dataset's ``pKey`` parameter, which re-runs that dataset's SQL
-    (substituting the new key into the JSONPath) — the Value
-    dropdown's options narrow automatically. No client-side
-    JavaScript, no synthetic chaining.
+    Two distinct mechanisms working together:
+
+    - Postings table filtering: dataset parameters
+      (``<<$pKey>>`` / ``<<$pValues>>``) substituted into a JSONPath
+      ``IN (...)`` predicate at query time.
+    - Value dropdown options narrowing: column-match cascade against
+      the long-form ``(metadata_key, metadata_value)`` meta-values
+      dataset. (Earlier attempt to drive this via dataset parameters
+      alone failed — QS's cascade is column-match, not parameter-
+      driven re-query. See M.3.10c memory.)
 
     The declared-rails table that lived here pre-M.3.10c moved to
     a future Docs tab; the runtime postings explorer is the focus
     here.
     """
-    accent = get_preset(cfg.theme_preset).accent
     ds_postings = datasets[DS_POSTINGS]
     ds_meta_values = datasets[DS_META_VALUES]
-
-    sheet.layout.row(height=4).add_text_box(
-        TextBox(
-            text_box_id="l2ft-rails-header",
-            content=rt.text_box(
-                rt.subheading("Rails — Transactions Explorer", color=accent),
-                rt.BR,
-                rt.body(
-                    "Filter the postings ledger by date range, rail, "
-                    "status, bundle status, and (cascading) metadata "
-                    "key + value. Pick a Metadata Key to populate the "
-                    "Value dropdown; pick one or more Values to narrow "
-                    "the table to legs carrying that metadata."
-                ),
-            ),
-        ),
-        width=36,
-    )
 
     # 1+2. Date range — params + TimeRangeFilter scoped to this sheet.
     date_start = analysis.add_parameter(DateTimeParam(
@@ -442,9 +466,12 @@ def _populate_rails_sheet(
         name=ParameterName("pL2ftMetaKey"),
         default=[META_KEY_ALL_SENTINEL],
         multi_valued=False,
+        # Bridge to the postings dataset only — meta-values now uses
+        # QS's native column-match cascade (driven by the Value
+        # dropdown's CascadingControlConfiguration, not by SQL
+        # substitution on the meta-values dataset).
         mapped_dataset_params=[
             (ds_postings, "pKey"),
-            (ds_meta_values, "pKey"),
         ],
     ))
     # Value: multi-select LinkedValues from the meta-values dataset.
@@ -477,12 +504,15 @@ def _populate_rails_sheet(
             dataset=ds_meta_values,
             column_name="metadata_value",
         ),
-        # Cascade: when Key changes, refresh THIS dropdown's options.
-        # Required even though MappedDataSetParameters bridges the
-        # Key analysis-param to the meta-values dataset's pKey
-        # parameter — QS won't refresh the dropdown widget without
-        # this UI-level dependency declaration (M.3.10c finding).
+        # Cascade: when Key changes, QS filters meta-values rows to
+        # WHERE metadata_key = <Key's selected value>, then DISTINCT
+        # metadata_value populates this dropdown. This is QS's
+        # native column-match cascade — NOT the parameter-bridged
+        # re-query approach (which we tried first; QS doesn't
+        # actually refresh dropdown options on dataset-parameter
+        # change at runtime — M.3.10c finding).
         cascade_source=key_dropdown,
+        cascade_match_column=ds_meta_values["metadata_key"],
     )
 
     # Transactions table — the postings dataset's SQL handles the
@@ -515,79 +545,362 @@ def _populate_chains_sheet(
     cfg: Config,
     sheet: Sheet,
     *,
+    analysis: Analysis,
     datasets: dict[str, Dataset],
+    l2_instance: L2Instance,
 ) -> None:
-    """Chains sheet — Sankey of declared parent→child topology + a
-    detail Table with the gating data Sankey can't show natively
-    (M.3.6).
+    """Chains sheet — per-instance explorer (M.3.10d rewrite).
 
-    Sankey: source = parent_name, target = child_name, weight =
-    parent_firing_count. Edge thickness reads as "how many times this
-    parent fired in the window." Nodes appear iff they participate
-    in at least one declared chain entry.
+    Six controls in the sheet's filter bar drive a chain-instances
+    Table:
 
-    Detail Table below: same edges, but with required / xor_group /
-    orphan_count / orphan_rate spelled out so analysts can see which
-    edges are required vs optional and which have orphan parents.
-    QuickSight's Sankey doesn't carry per-edge color encoding via
-    conditional formatting natively; the detail table is the
-    workaround until M.3.6+ explores per-edge tinting if AWS adds
-    that capability.
+    1. **Date From** + **Date To** — bind to ``pL2ftChainsDateStart``
+       / ``pL2ftChainsDateEnd``; ``TimeRangeFilter`` on
+       ``parent_posting``.
+    2. **Chain** — multi-select ``CategoryFilter`` on
+       ``parent_chain_name``.
+    3. **Completion** — multi-select ``CategoryFilter`` on
+       ``completion_status`` (Completed / Incomplete / No Required
+       Children).
+    4. **Metadata Key** — single-select ``ParameterDropdown`` with
+       ``StaticValues`` (the L2's declared keys + ``__ALL__``
+       sentinel). Mapped to ``pKey`` on the chain-instances dataset.
+    5. **Metadata Value** — multi-select ``ParameterDropdown`` with
+       ``LinkedValues`` from the meta-values dataset (shared with
+       Rails). Mapped to ``pValues`` on the chain-instances dataset.
+       ``CascadingControlConfiguration`` on this control points at
+       the meta-values dataset's ``metadata_key`` column for the
+       column-match cascade (same mechanism Rails uses).
+
+    Visualization choice: Chains is a *runtime causality* concept
+    (parent transfer fires → child transfer should fire later),
+    not a multi-leg flow graph — Sankey does not read naturally.
+    Per-firing Table is the right shape for now; revisit if a
+    better visual primitive emerges. Multi-leg flow visualization
+    belongs on TransferTemplates (which have explicit leg topology),
+    if/when an L2 Templates explorer surface is added.
     """
-    accent = get_preset(cfg.theme_preset).accent
-    ds_chains = datasets[DS_CHAINS]
+    ds_chain_instances = datasets[DS_CHAIN_INSTANCES]
+    ds_meta_values = datasets[DS_META_VALUES]
 
-    sheet.layout.row(height=8).add_text_box(
-        TextBox(
-            text_box_id="l2ft-chains-header",
-            content=rt.text_box(
-                rt.subheading("Chains", color=accent),
-                rt.BR,
-                rt.body(
-                    "Sankey of declared Chain entries. Edge width = "
-                    "parent firing count over the window. The detail "
-                    "table below carries the L2 gating data — required "
-                    "vs optional, XOR-group membership, orphan rate "
-                    "(= parent firings without a matched child). A "
-                    "Required edge with a non-zero orphan rate is the "
-                    "seed for L2.1 'Chain orphans' (M.3.7)."
-                ),
-            ),
+    # 1+2. Date range — params + TimeRangeFilter scoped to this sheet.
+    # Separate from Rails' date params so the analyst's chains-window
+    # selection doesn't perturb the rails view (and vice versa).
+    date_start = analysis.add_parameter(DateTimeParam(
+        name=ParameterName("pL2ftChainsDateStart"),
+        time_granularity="DAY",
+        default=DateTimeDefaultValues(StaticValues=[_DATE_START_STATIC]),
+    ))
+    date_end = analysis.add_parameter(DateTimeParam(
+        name=ParameterName("pL2ftChainsDateEnd"),
+        time_granularity="DAY",
+        default=DateTimeDefaultValues(StaticValues=[_DATE_END_STATIC]),
+    ))
+    fg_date = analysis.add_filter_group(FilterGroup(
+        filter_group_id="fg-l2ft-chains-date",  # type: ignore[arg-type]
+        cross_dataset="SINGLE_DATASET",
+        filters=[TimeRangeFilter(
+            filter_id="filter-l2ft-chains-date",
+            dataset=ds_chain_instances,
+            column=ds_chain_instances["parent_posting"],
+            null_option="NON_NULLS_ONLY",
+            time_granularity="DAY",
+            minimum={"Parameter": "pL2ftChainsDateStart"},
+            maximum={"Parameter": "pL2ftChainsDateEnd"},
+        )],
+    ))
+    fg_date.scope_sheet(sheet)
+    sheet.add_parameter_datetime_picker(parameter=date_start, title="Date From")
+    sheet.add_parameter_datetime_picker(parameter=date_end, title="Date To")
+
+    # 3. Chain — multi-select on the L2-declared parent names. Empty
+    # default + FILTER_ALL_VALUES means "no filter" until analyst picks.
+    chain_filter = CategoryFilter.with_values(
+        filter_id="filter-l2ft-chains-chain",
+        dataset=ds_chain_instances,
+        column=ds_chain_instances["parent_chain_name"],
+        values=[],
+        select_all_options="FILTER_ALL_VALUES",
+    )
+    fg_chain = analysis.add_filter_group(FilterGroup(
+        filter_group_id="fg-l2ft-chains-chain",  # type: ignore[arg-type]
+        cross_dataset="SINGLE_DATASET",
+        filters=[chain_filter],
+    ))
+    fg_chain.scope_sheet(sheet)
+    sheet.add_filter_dropdown(filter=chain_filter, title="Chain")
+
+    # 4. Completion status — multi-select on the computed
+    # completion_status column.
+    completion_filter = CategoryFilter.with_values(
+        filter_id="filter-l2ft-chains-completion",
+        dataset=ds_chain_instances,
+        column=ds_chain_instances["completion_status"],
+        values=[],
+        select_all_options="FILTER_ALL_VALUES",
+    )
+    fg_completion = analysis.add_filter_group(FilterGroup(
+        filter_group_id="fg-l2ft-chains-completion",  # type: ignore[arg-type]
+        cross_dataset="SINGLE_DATASET",
+        filters=[completion_filter],
+    ))
+    fg_completion.scope_sheet(sheet)
+    sheet.add_filter_dropdown(filter=completion_filter, title="Completion")
+
+    # 5+6. Metadata cascade — same mechanism as Rails (M.3.10c memory):
+    # SQL substitution on the chain-instances dataset for the table's
+    # WHERE clause + column-match CascadingControlConfiguration on the
+    # Value dropdown for option-narrowing. Separate analysis params
+    # from Rails so per-sheet selection doesn't bleed across tabs.
+    p_meta_key = analysis.add_parameter(StringParam(
+        name=ParameterName("pL2ftChainsMetaKey"),
+        default=[META_KEY_ALL_SENTINEL],
+        multi_valued=False,
+        mapped_dataset_params=[
+            (ds_chain_instances, "pKey"),
+        ],
+    ))
+    p_meta_value = analysis.add_parameter(StringParam(
+        name=ParameterName("pL2ftChainsMetaValue"),
+        default=[META_VALUE_PLACEHOLDER_SENTINEL],
+        multi_valued=True,
+        mapped_dataset_params=[
+            (ds_chain_instances, "pValues"),
+        ],
+    ))
+    declared_keys = declared_metadata_keys(l2_instance)
+    key_dropdown = sheet.add_parameter_dropdown(
+        parameter=p_meta_key,
+        title="Metadata Key",
+        type="SINGLE_SELECT",
+        selectable_values=StaticValues(
+            values=[META_KEY_ALL_SENTINEL] + declared_keys,
         ),
-        width=36,
+    )
+    sheet.add_parameter_dropdown(
+        parameter=p_meta_value,
+        title="Metadata Value",
+        type="MULTI_SELECT",
+        selectable_values=LinkedValues(
+            dataset=ds_meta_values,
+            column_name="metadata_value",
+        ),
+        cascade_source=key_dropdown,
+        cascade_match_column=ds_meta_values["metadata_key"],
     )
 
-    sheet.layout.row(height=18).add_sankey(
+    sheet.layout.row(height=21).add_table(
         width=36,
-        title="Chain Topology — Parent → Child Firing Counts",
+        title="Chain Instances",
         subtitle=(
-            "Width encodes how many times the parent fired in the "
-            "window. Empty nodes mean the rail / template was declared "
-            "but never fired."
-        ),
-        source=ds_chains["source_node"].dim(),
-        target=ds_chains["target_node"].dim(),
-        weight=ds_chains["parent_firing_count"].sum(),
-    )
-
-    sheet.layout.row(height=18).add_table(
-        width=36,
-        title="Chain Edge Details",
-        subtitle=(
-            "One row per declared Chain entry. Required + XOR-group "
-            "carry the L2 gating semantic; orphan_count + orphan_rate "
-            "show how many parent firings didn't have a matched child "
-            "in the window."
+            "One row per parent transfer firing. completion_status reads "
+            "'Completed' iff every Required child declared for the parent "
+            "fired against this transfer_id; 'Incomplete' if any required "
+            "child is missing. With no Metadata Key picked, every firing "
+            "in the date window appears."
         ),
         columns=[
-            ds_chains["parent_name"].dim(),
-            ds_chains["child_name"].dim(),
-            ds_chains["required"].dim(),
-            ds_chains["xor_group"].dim(),
-            ds_chains["parent_firing_count"].numerical(),
-            ds_chains["child_firing_count"].numerical(),
-            ds_chains["orphan_count"].numerical(),
-            ds_chains["orphan_rate"].numerical(),
+            ds_chain_instances["parent_posting"].date(),
+            ds_chain_instances["parent_chain_name"].dim(),
+            ds_chain_instances["parent_transfer_id"].dim(),
+            ds_chain_instances["completion_status"].dim(),
+            ds_chain_instances["required_fired"].numerical(),
+            ds_chain_instances["required_total"].numerical(),
+            ds_chain_instances["parent_amount_money"].numerical(),
+            ds_chain_instances["parent_status"].dim(),
+        ],
+    )
+
+
+def _populate_transfer_templates_sheet(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    analysis: Analysis,
+    datasets: dict[str, Dataset],
+    l2_instance: L2Instance,
+) -> None:
+    """Transfer Templates sheet — multi-leg flow Sankey + per-instance
+    detail Table (M.3.10f).
+
+    Two visuals stacked: Sankey (multi-leg flow through declared
+    templates) and Table (per-shared-Transfer balance detail).
+
+    Filter bar (six controls):
+
+    1. **Date From** + **Date To** — bind to ``pL2ftTtDateStart`` /
+       ``pL2ftTtDateEnd``; ``TimeRangeFilter`` on ``posting``.
+       ``cross_dataset='ALL_DATASETS'`` so the filter narrows BOTH
+       tt-instances + tt-legs (which both carry the column).
+    2. **Template** — multi-select ``CategoryFilter`` on
+       ``template_name``. Same ``ALL_DATASETS`` shape.
+    3. **Net Status** — multi-select ``CategoryFilter`` on
+       ``net_status`` (Balanced / Imbalanced) — tt-instances only
+       (per-firing balance check). Filtering to 'Imbalanced' narrows
+       the table to bundles failing the L1 Conservation invariant.
+    4. **Metadata Key** — single-select ``ParameterDropdown`` with
+       ``StaticValues`` (the L2's declared keys + ``__ALL__``
+       sentinel). Mapped to ``pKey`` on BOTH tt-instances + tt-legs
+       (so the cascade narrows both visuals via SQL substitution).
+    5. **Metadata Value** — multi-select ``ParameterDropdown`` with
+       ``LinkedValues`` from the meta-values dataset (shared with
+       Rails / Chains). Mapped to ``pValues`` on BOTH datasets.
+       ``CascadingControlConfiguration`` on this control points at
+       the meta-values dataset's ``metadata_key`` column for the
+       column-match cascade.
+
+    Sankey reads as: debit accounts → template → credit accounts.
+    Each shared Transfer's debit legs flow into the template middle
+    node, credit legs flow out. Picking a single Template collapses
+    the Sankey to that one template's flow shape.
+    """
+    ds_tt_instances = datasets[DS_TT_INSTANCES]
+    ds_tt_legs = datasets[DS_TT_LEGS]
+    ds_meta_values = datasets[DS_META_VALUES]
+
+    # 1+2. Date range. ALL_DATASETS so tt-legs narrows in lockstep.
+    date_start = analysis.add_parameter(DateTimeParam(
+        name=ParameterName("pL2ftTtDateStart"),
+        time_granularity="DAY",
+        default=DateTimeDefaultValues(StaticValues=[_DATE_START_STATIC]),
+    ))
+    date_end = analysis.add_parameter(DateTimeParam(
+        name=ParameterName("pL2ftTtDateEnd"),
+        time_granularity="DAY",
+        default=DateTimeDefaultValues(StaticValues=[_DATE_END_STATIC]),
+    ))
+    fg_date = analysis.add_filter_group(FilterGroup(
+        filter_group_id="fg-l2ft-tt-date",  # type: ignore[arg-type]
+        cross_dataset="ALL_DATASETS",
+        filters=[TimeRangeFilter(
+            filter_id="filter-l2ft-tt-date",
+            dataset=ds_tt_instances,
+            column=ds_tt_instances["posting"],
+            null_option="NON_NULLS_ONLY",
+            time_granularity="DAY",
+            minimum={"Parameter": "pL2ftTtDateStart"},
+            maximum={"Parameter": "pL2ftTtDateEnd"},
+        )],
+    ))
+    fg_date.scope_sheet(sheet)
+    sheet.add_parameter_datetime_picker(parameter=date_start, title="Date From")
+    sheet.add_parameter_datetime_picker(parameter=date_end, title="Date To")
+
+    # 3. Template — multi-select on declared template names.
+    # ALL_DATASETS so tt-legs narrows in lockstep.
+    template_filter = CategoryFilter.with_values(
+        filter_id="filter-l2ft-tt-template",
+        dataset=ds_tt_instances,
+        column=ds_tt_instances["template_name"],
+        values=[],
+        select_all_options="FILTER_ALL_VALUES",
+    )
+    fg_template = analysis.add_filter_group(FilterGroup(
+        filter_group_id="fg-l2ft-tt-template",  # type: ignore[arg-type]
+        cross_dataset="ALL_DATASETS",
+        filters=[template_filter],
+    ))
+    fg_template.scope_sheet(sheet)
+    sheet.add_filter_dropdown(filter=template_filter, title="Template")
+
+    # 4. Net Status — multi-select on the computed net_status column.
+    # Single-dataset (tt-instances only — per-firing balance concept;
+    # the Sankey aggregates per-edge so net_status would be an
+    # ambiguous attribution at the leg level).
+    net_status_filter = CategoryFilter.with_values(
+        filter_id="filter-l2ft-tt-net-status",
+        dataset=ds_tt_instances,
+        column=ds_tt_instances["net_status"],
+        values=[],
+        select_all_options="FILTER_ALL_VALUES",
+    )
+    fg_net_status = analysis.add_filter_group(FilterGroup(
+        filter_group_id="fg-l2ft-tt-net-status",  # type: ignore[arg-type]
+        cross_dataset="SINGLE_DATASET",
+        filters=[net_status_filter],
+    ))
+    fg_net_status.scope_sheet(sheet)
+    sheet.add_filter_dropdown(filter=net_status_filter, title="Net Status")
+
+    # 5+6. Metadata cascade — same mechanism as Rails / Chains.
+    # mapped_dataset_params lists BOTH tt-instances + tt-legs so the
+    # cascade narrows the Sankey + Table together.
+    p_meta_key = analysis.add_parameter(StringParam(
+        name=ParameterName("pL2ftTtMetaKey"),
+        default=[META_KEY_ALL_SENTINEL],
+        multi_valued=False,
+        mapped_dataset_params=[
+            (ds_tt_instances, "pKey"),
+            (ds_tt_legs, "pKey"),
+        ],
+    ))
+    p_meta_value = analysis.add_parameter(StringParam(
+        name=ParameterName("pL2ftTtMetaValue"),
+        default=[META_VALUE_PLACEHOLDER_SENTINEL],
+        multi_valued=True,
+        mapped_dataset_params=[
+            (ds_tt_instances, "pValues"),
+            (ds_tt_legs, "pValues"),
+        ],
+    ))
+    declared_keys = declared_metadata_keys(l2_instance)
+    key_dropdown = sheet.add_parameter_dropdown(
+        parameter=p_meta_key,
+        title="Metadata Key",
+        type="SINGLE_SELECT",
+        selectable_values=StaticValues(
+            values=[META_KEY_ALL_SENTINEL] + declared_keys,
+        ),
+    )
+    sheet.add_parameter_dropdown(
+        parameter=p_meta_value,
+        title="Metadata Value",
+        type="MULTI_SELECT",
+        selectable_values=LinkedValues(
+            dataset=ds_meta_values,
+            column_name="metadata_value",
+        ),
+        cascade_source=key_dropdown,
+        cascade_match_column=ds_meta_values["metadata_key"],
+    )
+
+    # Sankey — multi-leg flow. flow_source / flow_target derive from
+    # amount_direction (debit account → template → credit account).
+    # Width = SUM(amount_abs).
+    sheet.layout.row(height=14).add_sankey(
+        width=36,
+        title="Multi-Leg Flow — Account → Template → Account",
+        subtitle=(
+            "Width = total absolute amount through the edge in the "
+            "filtered window. Debit legs (money out) flow from the "
+            "source account to the template middle node; credit legs "
+            "(money in) flow from the template to the destination "
+            "account. Pick a single Template to see just that "
+            "template's flow shape."
+        ),
+        source=ds_tt_legs["flow_source"].dim(),
+        target=ds_tt_legs["flow_target"].dim(),
+        weight=ds_tt_legs["amount_abs"].sum(),
+    )
+
+    sheet.layout.row(height=14).add_table(
+        width=36,
+        title="Template Instances",
+        subtitle=(
+            "One row per shared Transfer. net_status reads 'Balanced' "
+            "iff the sum of legs matches the L2's expected_net within "
+            "$0.01; 'Imbalanced' surfaces L1 Conservation breaks. "
+            "leg_count = how many leg postings landed on this transfer."
+        ),
+        columns=[
+            ds_tt_instances["posting"].date(),
+            ds_tt_instances["template_name"].dim(),
+            ds_tt_instances["transfer_id"].dim(),
+            ds_tt_instances["net_status"].dim(),
+            ds_tt_instances["actual_net"].numerical(),
+            ds_tt_instances["expected_net"].numerical(),
+            ds_tt_instances["net_diff"].numerical(),
+            ds_tt_instances["leg_count"].numerical(),
         ],
     )
 

@@ -168,13 +168,16 @@ def test_per_instance_prefix_isolates_resource_ids() -> None:
 # -- Sheet structure (M.3.4 — 4 sheets) --------------------------------------
 
 
-def test_four_sheets_in_display_order() -> None:
-    """M.3.4 spec: Getting Started + Rails + Chains + L2 Exceptions.
-    Position-stable — the order matches the spec."""
+def test_five_sheets_in_display_order() -> None:
+    """M.3.10f: Getting Started + Rails + Chains + Transfer Templates +
+    L2 Exceptions. Position-stable — the order matches the L2-primitive
+    type progression (the per-Rail explorer, the cross-Rail chain,
+    the multi-Rail bundled Transfer, then hygiene exceptions)."""
     app = build_l2_flow_tracing_app(_CFG)
     assert app.analysis is not None
     assert [s.name for s in app.analysis.sheets] == [
-        "Getting Started", "Rails", "Chains", "L2 Exceptions",
+        "Getting Started", "Rails", "Chains",
+        "Transfer Templates", "L2 Exceptions",
     ]
 
 
@@ -186,29 +189,22 @@ def test_every_sheet_has_a_description() -> None:
         assert s.description, f"sheet {s.name!r} missing description"
 
 
-def test_every_sheet_has_at_least_one_text_box() -> None:
-    """Skeleton invariant: every sheet renders at least the
-    description prose. Removed when M.3.5+ replaces the placeholders
-    with real visuals."""
-    app = build_l2_flow_tracing_app(_CFG)
-    for s in app.analysis.sheets:
-        assert len(s.text_boxes) >= 1, (
-            f"sheet {s.name!r} has no text_boxes — placeholder missing?"
-        )
-
-
 def test_dataset_count_matches_populated_sheets() -> None:
-    """M.3.10c stabilized at 9 fixed datasets per L2 instance:
-    postings + meta-values (Rails), chains, + 6 L2 exceptions. The
-    M.3.8 per-key metadata dropdown fan-out (was 8 + N) is gone —
-    replaced by the single meta-values dataset that's parameterized
-    on the cascade Key."""
+    """M.3.10f stabilized at 11 fixed datasets per L2 instance:
+    postings + meta-values (Rails), chain-instances (Chains),
+    tt-instances + tt-legs (Transfer Templates), + 6 L2 exceptions.
+    M.3.10c dropped the M.3.8 per-key metadata dropdown fan-out;
+    M.3.10d swapped the chains aggregate dataset for chain-instances;
+    M.3.10f added the Transfer Templates sheet's two datasets
+    (per-shared-Transfer + per-leg)."""
     app = build_l2_flow_tracing_app(_CFG)
-    assert len(app.datasets) == 9
+    assert len(app.datasets) == 11
     assert {d.identifier for d in app.datasets} == {
         "l2ft-postings-ds",
         "l2ft-meta-values-ds",
-        "l2ft-chains-ds",
+        "l2ft-chain-instances-ds",
+        "l2ft-tt-instances-ds",
+        "l2ft-tt-legs-ds",
         "l2ft-exc-chain-orphans-ds",
         "l2ft-exc-unmatched-transfer-type-ds",
         "l2ft-exc-dead-rails-ds",
@@ -308,16 +304,16 @@ def test_cli_generate_l2_flow_tracing_l2_instance_flag(tmp_path: Path) -> None:
     )
     assert result.exit_code == 0, result.output
     # Dataset filenames carry the sasquatch_pr prefix, not spec_example.
-    sasq_chains = (
+    sasq_chain_inst = (
         out_dir / "datasets"
-        / "qs-gen-sasquatch_pr-l2ft-chains-dataset.json"
+        / "qs-gen-sasquatch_pr-l2ft-chain-instances-dataset.json"
     )
-    assert sasq_chains.exists()
-    spec_chains = (
+    assert sasq_chain_inst.exists()
+    spec_chain_inst = (
         out_dir / "datasets"
-        / "qs-gen-spec_example-l2ft-chains-dataset.json"
+        / "qs-gen-spec_example-l2ft-chain-instances-dataset.json"
     )
-    assert not spec_chains.exists()
+    assert not spec_chain_inst.exists()
 
 
 def test_cli_generate_l2_flow_tracing_writes_files(tmp_path: Path) -> None:
@@ -516,52 +512,86 @@ def test_chains_dataset_id_uses_l2_instance_prefix() -> None:
     assert ds.DataSetId == "qs-gen-sasquatch_pr-l2ft-chains-dataset"
 
 
-def test_chains_sheet_has_a_sankey_visual() -> None:
-    """M.3.6 promotes Chains out of the placeholder TextBox-only state.
-    The Chains sheet now hosts a Sankey + a detail Table."""
-    from quicksight_gen.common.tree import Sankey, Table
+# -- Chains sheet — M.3.10d per-instance explorer ---------------------------
+
+
+def test_chains_sheet_is_a_single_table() -> None:
+    """M.3.10d: Chains sheet is the per-parent-firing explorer — one
+    Table backed by chain-instances. The pre-M.3.10d Sankey + edge
+    detail moved to the M.7 docs render of declared topology.
+    A brief M.3.10e Sankey-on-edges experiment (chain-edges dataset)
+    was reverted: chains is a runtime causality concept, not a
+    multi-leg flow graph — Sankey doesn't read naturally for it.
+    Multi-leg Sankey visualization belongs on TransferTemplates."""
+    from quicksight_gen.common.tree import Table
     app = build_l2_flow_tracing_app(_CFG)
     chains = _sheet_by_name(app, "Chains")
-    sankey_visuals = [v for v in chains.visuals if isinstance(v, Sankey)]
     table_visuals = [v for v in chains.visuals if isinstance(v, Table)]
-    assert len(sankey_visuals) == 1
     assert len(table_visuals) == 1
+    # Table reads from chain-instances, not the aggregate chains dataset.
+    table = table_visuals[0]
+    assert table.columns[0].column.dataset.identifier == "l2ft-chain-instances-ds"
 
 
-def test_chains_sankey_uses_node_columns_for_source_target() -> None:
-    """The Sankey uses source_node + target_node (not parent_name +
-    child_name) so future M.3.6+ display-string changes don't bust
-    the SQL semantics."""
-    from quicksight_gen.common.tree import Sankey
-    app = build_l2_flow_tracing_app(_CFG)
-    chains = _sheet_by_name(app, "Chains")
-    sankey = next(v for v in chains.visuals if isinstance(v, Sankey))
-    assert sankey.source.column.name == "source_node"
-    assert sankey.target.column.name == "target_node"
-
-
-def test_chains_sankey_weighted_by_parent_firing_count() -> None:
-    """Edge thickness = how many times the parent fired in the
-    window. Choosing a different weight (e.g., orphan_count) would
-    invert the visual meaning."""
-    from quicksight_gen.common.tree import Sankey
-    app = build_l2_flow_tracing_app(_CFG)
-    chains = _sheet_by_name(app, "Chains")
-    sankey = next(v for v in chains.visuals if isinstance(v, Sankey))
-    assert sankey.weight.column.name == "parent_firing_count"
-
-
-def test_chains_detail_table_includes_orphan_columns() -> None:
-    """The detail Table carries the orphan_count + orphan_rate
-    columns Sankey can't show natively. Without these, analysts
-    can't see chain orphans on this tab — they'd have to wait for
-    M.3.7's L2.1 'Chain orphans' surface."""
+def test_chains_table_carries_completion_status_column() -> None:
+    """The completion_status column is the answer the explorer is
+    built around — without it the Completion filter has nothing to
+    visibly affect."""
     from quicksight_gen.common.tree import Table
     app = build_l2_flow_tracing_app(_CFG)
     chains = _sheet_by_name(app, "Chains")
     table = next(v for v in chains.visuals if isinstance(v, Table))
-    table_col_names = {c.column.name for c in table.columns}
-    assert {"orphan_count", "orphan_rate"} <= table_col_names
+    cols = {c.column.name for c in table.columns}
+    assert "completion_status" in cols
+    assert "parent_chain_name" in cols
+    assert "parent_transfer_id" in cols
+
+
+def test_chains_sheet_has_six_filter_controls() -> None:
+    """Filter bar shape matches Rails: 2 datetime pickers, 2 filter
+    dropdowns (Chain + Completion), 2 parameter dropdowns (Metadata
+    Key + Metadata Value)."""
+    app = build_l2_flow_tracing_app(_CFG)
+    chains = _sheet_by_name(app, "Chains")
+    titles = (
+        [c.title for c in chains.parameter_controls]
+        + [c.title for c in chains.filter_controls]
+    )
+    assert set(titles) == {
+        "Date From", "Date To", "Chain", "Completion",
+        "Metadata Key", "Metadata Value",
+    }
+
+
+def test_chains_metadata_params_are_chain_scoped() -> None:
+    """Chains uses its own pL2ftChainsMeta{Key,Value} params — separate
+    from Rails' pL2ftMeta{Key,Value} so per-sheet selection doesn't
+    bleed across tabs."""
+    app = build_l2_flow_tracing_app(_CFG)
+    param_names = {str(p.name) for p in app.analysis.parameters}
+    assert "pL2ftChainsMetaKey" in param_names
+    assert "pL2ftChainsMetaValue" in param_names
+    # And the date params are independent too — chains has its own.
+    assert "pL2ftChainsDateStart" in param_names
+    assert "pL2ftChainsDateEnd" in param_names
+
+
+def test_chains_metadata_value_dropdown_cascades_off_chain_meta_key() -> None:
+    """The Metadata Value control cascades off Chains' own Metadata
+    Key control (NOT Rails'), so picking a Key on Chains narrows the
+    Value dropdown only on Chains."""
+    from quicksight_gen.common.tree import LinkedValues
+    app = build_l2_flow_tracing_app(_CFG)
+    chains = _sheet_by_name(app, "Chains")
+    value_ctrl = next(
+        c for c in chains.parameter_controls if c.title == "Metadata Value"
+    )
+    key_ctrl = next(
+        c for c in chains.parameter_controls if c.title == "Metadata Key"
+    )
+    assert value_ctrl.cascade_source is key_ctrl
+    assert isinstance(value_ctrl.selectable_values, LinkedValues)
+    assert value_ctrl.selectable_values.dataset.identifier == "l2ft-meta-values-ds"
 
 
 # -- L2 Exceptions sheet (M.3.7) ---------------------------------------------
@@ -849,28 +879,31 @@ def test_postings_dataset_declares_pkey_and_pvalues_parameters() -> None:
     ]
 
 
-def test_meta_values_dataset_parameterized_on_pkey() -> None:
-    """Meta-values dataset substitutes `pKey` into a JSONPath concat
-    so the Value dropdown's options narrow on Key change."""
+def test_meta_values_dataset_is_long_form_with_metadata_key_column() -> None:
+    """Meta-values dataset projects (metadata_key, metadata_value) for every
+    declared key via UNION ALL — QS's CascadingControlConfiguration filters
+    by metadata_key column-match (NOT by dataset-parameter substitution,
+    which doesn't trigger a re-query at the QS widget level)."""
     from quicksight_gen.apps.l2_flow_tracing.datasets import (
-        build_meta_values_dataset, META_KEY_ALL_SENTINEL,
+        build_meta_values_dataset,
     )
     inst = load_instance(SASQUATCH_PR_YAML)
     aws_ds = build_meta_values_dataset(_CFG, inst)
     sql = list(aws_ds.PhysicalTableMap.values())[0].CustomSql.SqlQuery
-    assert "SELECT DISTINCT JSON_VALUE(metadata, '$.' || <<$pKey>>)" in sql
-    params = aws_ds.DatasetParameters
-    assert params is not None and len(params) == 1
-    assert params[0].StringDatasetParameter.Name == "pKey"
-    assert params[0].StringDatasetParameter.DefaultValues.StaticValues == [
-        META_KEY_ALL_SENTINEL,
-    ]
+    # Long-form: UNION ALL one branch per declared key.
+    assert "UNION ALL" in sql
+    assert "AS metadata_key" in sql
+    assert "AS metadata_value" in sql
+    # No dataset parameters — cascade is column-match driven.
+    assert aws_ds.DatasetParameters is None or aws_ds.DatasetParameters == []
 
 
-def test_meta_key_param_maps_to_both_postings_and_meta_values() -> None:
-    """The Key analysis-param's MappedDataSetParameters bridge BOTH
-    datasets via `pKey` — that's what makes the cascade work
-    (postings filter + value dropdown narrow simultaneously)."""
+def test_meta_key_param_maps_to_postings_only() -> None:
+    """The Key analysis-param's MappedDataSetParameters bridge only the
+    postings dataset (so its `<<$pKey>>` substitution narrows the
+    transactions table). The meta-values dataset doesn't take a `pKey`
+    parameter — QS's CascadingControlConfiguration filters its rows by
+    metadata_key column-match instead."""
     app = build_l2_flow_tracing_app(_CFG)
     p_key = next(
         p for p in app.analysis.parameters
@@ -882,7 +915,6 @@ def test_meta_key_param_maps_to_both_postings_and_meta_values() -> None:
     }
     assert mapped_pairs == {
         ("l2ft-postings-ds", "pKey"),
-        ("l2ft-meta-values-ds", "pKey"),
     }
 
 

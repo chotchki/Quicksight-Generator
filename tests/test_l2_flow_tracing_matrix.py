@@ -70,12 +70,13 @@ def l2_instance(request) -> L2Instance:
 # -- Sheet structure invariants ----------------------------------------------
 
 
-def test_four_sheets_in_display_order(l2_instance: L2Instance) -> None:
-    """Same 4-sheet shape across every L2 instance — switching the L2
-    doesn't reshuffle the dashboard."""
+def test_five_sheets_in_display_order(l2_instance: L2Instance) -> None:
+    """Same 5-sheet shape (M.3.10f) across every L2 instance —
+    switching the L2 doesn't reshuffle the dashboard."""
     app = build_l2_flow_tracing_app(_CFG, l2_instance=l2_instance)
     assert [s.name for s in app.analysis.sheets] == [
-        "Getting Started", "Rails", "Chains", "L2 Exceptions",
+        "Getting Started", "Rails", "Chains",
+        "Transfer Templates", "L2 Exceptions",
     ]
 
 
@@ -89,12 +90,15 @@ def test_rails_sheet_visuals_invariant(l2_instance: L2Instance) -> None:
 
 
 def test_chains_sheet_visuals_invariant(l2_instance: L2Instance) -> None:
-    """Chains sheet always has exactly 1 Sankey + 1 Table — even
-    against an L2 with zero chains (Sankey gracefully renders empty)."""
+    """Chains sheet (M.3.10d) is the per-instance explorer — exactly 1
+    Table backed by the chain-instances dataset, six controls in the
+    sheet's filter bar, and zero TextBox / Sankey leftover from the
+    pre-M.3.10d declared-topology view (which moved to the M.7 docs
+    render)."""
     app = build_l2_flow_tracing_app(_CFG, l2_instance=l2_instance)
     chains = next(s for s in app.analysis.sheets if s.name == "Chains")
     counts = Counter(type(v).__name__ for v in chains.visuals)
-    assert counts == Counter(["Sankey", "Table"])
+    assert counts == Counter(["Table"])
 
 
 def test_l2_exceptions_sheet_visuals_invariant(
@@ -112,16 +116,16 @@ def test_l2_exceptions_sheet_visuals_invariant(
 # -- Dataset count + ID prefix invariants -----------------------------------
 
 
-def test_dataset_count_is_nine_per_instance(
+def test_dataset_count_is_eleven_per_instance(
     l2_instance: L2Instance,
 ) -> None:
-    """M.3.10c stabilizes at 9 fixed datasets per L2 instance —
-    postings + meta-values (Rails cascade) + chains + 6 L2 exceptions.
-    The M.3.5 declared-rails dataset moved to a future Docs tab; the
-    M.3.8 per-key metadata dropdown fan-out is gone — replaced by the
-    parameterized meta-values dataset that re-queries on Key change."""
+    """M.3.10f stabilizes at 11 fixed datasets per L2 instance —
+    postings + meta-values (Rails cascade) + chain-instances (Chains
+    explorer) + tt-instances + tt-legs (Transfer Templates) + 6 L2
+    exceptions. M.3.10d dropped the chains aggregate dataset; M.3.10f
+    added the Transfer Templates sheet's two datasets."""
     app = build_l2_flow_tracing_app(_CFG, l2_instance=l2_instance)
-    assert len(app.datasets) == 9
+    assert len(app.datasets) == 11
 
 
 def test_every_dataset_id_carries_l2_prefix(

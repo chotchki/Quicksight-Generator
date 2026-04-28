@@ -246,6 +246,7 @@ class Sheet:
         selectable_values: SelectableValues | None = None,
         hidden_select_all: bool = False,
         cascade_source: ParameterDropdown | None = None,
+        cascade_match_column: Column | None = None,
         control_id: str | AutoResolved = AUTO,
     ) -> ParameterDropdown:
         """Construct + register a parameter dropdown control on this sheet."""
@@ -254,6 +255,7 @@ class Sheet:
             selectable_values=selectable_values,
             hidden_select_all=hidden_select_all,
             cascade_source=cascade_source,
+            cascade_match_column=cascade_match_column,
             control_id=control_id,
         )
         self.parameter_controls.append(ctrl)
