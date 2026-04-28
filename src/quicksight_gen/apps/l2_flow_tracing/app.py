@@ -43,10 +43,13 @@ from quicksight_gen.apps.l2_flow_tracing.datasets import (
     DS_EXC_UNMATCHED_TRANSFER_TYPE,
     DS_RAILS,
     build_all_l2_flow_tracing_datasets,
+    declared_metadata_keys,
+    metadata_dropdown_ds_id,
+    metadata_param_name,
 )
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
-from quicksight_gen.common.ids import SheetId
+from quicksight_gen.common.ids import ParameterName, SheetId
 from quicksight_gen.common.l2 import L2Instance, load_instance
 from quicksight_gen.common.theme import get_preset
 from quicksight_gen.common.tree import (
@@ -54,7 +57,9 @@ from quicksight_gen.common.tree import (
     App,
     CellAccentText,
     Dataset,
+    LinkedValues,
     Sheet,
+    StringParam,
     TextBox,
 )
 
@@ -190,6 +195,22 @@ def build_l2_flow_tracing_app(
     _populate_chains_sheet(cfg, chains_sheet, datasets=datasets)
     _populate_l2_exceptions_sheet(cfg, l2_exceptions_sheet, datasets=datasets)
 
+    # M.3.8 — auto metadata-driven filter controls. One StringParam per
+    # declared metadata key (analysis-level, so any future visual on
+    # any sheet can read it via FilterGroup) + one dropdown widget per
+    # key on the L2 Exceptions sheet (the natural home for filtering).
+    # Filter wiring of visuals is deferred — most current datasets are
+    # aggregates that don't carry per-metadata-key columns; pushing
+    # filters through would require extending each dataset's SQL with
+    # CalcField-style projections (M.3.8b candidate).
+    _wire_metadata_dropdowns(
+        cfg=cfg,
+        analysis=analysis,
+        sheet=l2_exceptions_sheet,
+        datasets=datasets,
+        l2_instance=l2_instance,
+    )
+
     app.create_dashboard(
         dashboard_id_suffix="l2-flow-tracing",
         name=_analysis_name(cfg, l2_instance),
@@ -224,6 +245,10 @@ def _l2ft_datasets(
         DS_EXC_DEAD_METADATA,
         DS_EXC_DEAD_LIMIT_SCHEDULES,
     ]
+    # M.3.8 — append one visual_id per declared metadata key. Order
+    # matches `build_all_l2_flow_tracing_datasets`'s zip pairing.
+    for key in declared_metadata_keys(l2_instance):
+        visual_ids.append(metadata_dropdown_ds_id(key))
     return {
         vid: Dataset(identifier=vid, arn=cfg.dataset_arn(aws.DataSetId))
         for vid, aws in zip(visual_ids, aws_datasets)
@@ -636,6 +661,74 @@ def _add_l2_exception_section(
             "orphan_count", "posting_count", "cap",
         } else ds[c].numerical() for c in table_columns],
     )
+
+
+def _wire_metadata_dropdowns(
+    *,
+    cfg: Config,
+    analysis: Analysis,
+    sheet: Sheet,
+    datasets: dict[str, Dataset],
+    l2_instance: L2Instance,
+) -> None:
+    """Auto metadata-driven filters (M.3.8).
+
+    Walks ``union(instance.rails[*].metadata_keys)`` and emits one
+    ``StringParam`` per declared key on the analysis (so the parameter
+    is universal — any sheet's visuals can read it via FilterGroup),
+    plus one dropdown widget per key on the L2 Exceptions sheet (the
+    natural home for filtering). The widget is sourced from the
+    per-key ``DISTINCT JSON_VALUE(metadata, '$.<key>')`` dataset
+    emitted by ``build_metadata_dropdown_datasets``.
+
+    Design call: controls live on a single sheet rather than
+    duplicating onto all four. With ~30 metadata keys per L2
+    instance, fanning out to every sheet creates UI clutter that
+    overwhelms the visuals; the L2 Exceptions tab is where 'filter
+    by this metadata value' is most useful. The parameter staying
+    analysis-level keeps the seam open for the M.3.8b follow-on
+    that wires actual visual filtering.
+    """
+    keys = declared_metadata_keys(l2_instance)
+    if not keys:
+        return  # No metadata declared in this L2 — no-op.
+
+    accent = get_preset(cfg.theme_preset).accent
+    sheet.layout.row(height=4).add_text_box(
+        TextBox(
+            text_box_id="l2ft-meta-filters-header",
+            content=rt.text_box(
+                rt.subheading("Metadata Filters", color=accent),
+                rt.BR,
+                rt.body(
+                    "One dropdown per declared Rail metadata key — "
+                    "auto-derived from the L2 instance. Selecting a "
+                    "value sets the corresponding parameter; the "
+                    "M.3.8 baseline registers parameters universally "
+                    "but the visual filter wiring across tabs is a "
+                    "follow-on."
+                ),
+            ),
+        ),
+        width=36,
+    )
+
+    for key in keys:
+        param = StringParam(
+            name=ParameterName(metadata_param_name(key)),
+            default=[],  # No default — analyst picks from the dropdown.
+            multi_valued=True,
+        )
+        analysis.add_parameter(param)
+        sheet.add_parameter_dropdown(
+            parameter=param,
+            title=f"Metadata: {key}",
+            type="MULTI_SELECT",
+            selectable_values=LinkedValues(
+                dataset=datasets[metadata_dropdown_ds_id(key)],
+                column_name="value",
+            ),
+        )
 
 
 def _populate_placeholder(

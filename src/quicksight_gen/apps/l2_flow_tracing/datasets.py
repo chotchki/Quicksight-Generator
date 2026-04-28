@@ -48,6 +48,23 @@ DS_EXC_DEAD_METADATA = "l2ft-exc-dead-metadata-ds"
 DS_EXC_DEAD_LIMIT_SCHEDULES = "l2ft-exc-dead-limit-schedules-ds"
 
 
+def metadata_dropdown_ds_id(key: str) -> str:
+    """Visual identifier for the per-metadata-key dropdown source
+    dataset. Keys are slugified (lowercased, non-alphanumerics → '-')
+    so identifier names stay safe across QuickSight resource naming
+    rules."""
+    slug = "".join(ch if ch.isalnum() else "-" for ch in str(key).lower())
+    slug = "-".join(part for part in slug.split("-") if part)
+    return f"l2ft-meta-{slug}-ds"
+
+
+def metadata_param_name(key: str) -> str:
+    """Analysis-level parameter name for a metadata-key dropdown.
+    Matches the camelCase convention the rest of the app uses
+    (``pL2DateStart`` etc.); `pL2ftMeta_<KeyOriginal>` is the form."""
+    return f"pL2ftMeta_{key}"
+
+
 # Per-Rail row table — declared L2 columns + runtime activity counts.
 RAILS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("rail_name", "STRING"),
@@ -155,7 +172,9 @@ def build_all_l2_flow_tracing_datasets(
     Idempotent — re-deriving an already-L2-aware cfg is a no-op.
 
     M.3.5 ships Rails; M.3.6 adds Chains; M.3.7 adds the 6 L2
-    Exceptions sections.
+    Exceptions sections; M.3.8 appends one tiny dropdown-source
+    dataset per declared metadata key (auto-walked from
+    `instance.rails[*].metadata_keys`).
     """
     if cfg.l2_instance_prefix is None:
         cfg = replace(cfg, l2_instance_prefix=str(l2_instance.instance))
@@ -168,7 +187,72 @@ def build_all_l2_flow_tracing_datasets(
         build_exc_dead_bundles_activity_dataset(cfg, l2_instance),
         build_exc_dead_metadata_dataset(cfg, l2_instance),
         build_exc_dead_limit_schedules_dataset(cfg, l2_instance),
+        *build_metadata_dropdown_datasets(cfg, l2_instance),
     ]
+
+
+def declared_metadata_keys(l2_instance: L2Instance) -> list[str]:
+    """Sorted list of distinct metadata keys declared across every
+    rail in the L2 instance. Drives both the dropdown-source dataset
+    list and the analysis-level parameter list — single source of
+    truth for "what metadata keys does this L2 expose?".
+    """
+    keys: set[str] = set()
+    for r in l2_instance.rails:
+        for k in r.metadata_keys:
+            keys.add(str(k))
+    return sorted(keys)
+
+
+# Dropdown source datasets project a single column named `value`.
+METADATA_DROPDOWN_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("value", "STRING"),
+])
+
+
+def build_metadata_dropdown_datasets(
+    cfg: Config, l2_instance: L2Instance,
+) -> list[DataSet]:
+    """One small dataset per declared metadata key, each projecting
+    distinct values from `JSON_VALUE(metadata, '$.<key>')`. Sorted
+    output keeps the QS dropdown options stable across runs."""
+    return [
+        build_metadata_dropdown_dataset(cfg, l2_instance, key)
+        for key in declared_metadata_keys(l2_instance)
+    ]
+
+
+def build_metadata_dropdown_dataset(
+    cfg: Config, l2_instance: L2Instance, key: str,
+) -> DataSet:
+    """Distinct values of one metadata key over the prefixed
+    transactions matview.
+
+    Static `$.<key>` JSONPath keeps the SQL portable per the project's
+    no-JSONB constraint. NULLs are filtered out — a NULL in the
+    dropdown would just confuse the analyst (it isn't a value the
+    user can pick to filter against). Sort keeps the option list
+    stable across deploys.
+    """
+    prefix = l2_instance.instance
+    json_path = f"$.{key}"
+    sql = (
+        f"SELECT DISTINCT JSON_VALUE(metadata, {_sql_str(json_path)}) "
+        f"AS value\n"
+        f"FROM {prefix}_current_transactions\n"
+        f"WHERE metadata IS NOT NULL\n"
+        f"  AND JSON_VALUE(metadata, {_sql_str(json_path)}) IS NOT NULL\n"
+        f"ORDER BY value"
+    )
+    visual_id = metadata_dropdown_ds_id(key)
+    # Strip the trailing '-ds' to produce the AWS resource name slug.
+    aws_slug = visual_id[:-3] if visual_id.endswith("-ds") else visual_id
+    return build_dataset(
+        cfg, cfg.prefixed(f"{aws_slug}-dataset"),
+        f"L2FT Metadata — {key}", aws_slug,
+        sql, METADATA_DROPDOWN_CONTRACT,
+        visual_identifier=visual_id,
+    )
 
 
 def build_rails_dataset(cfg: Config, l2_instance: L2Instance) -> DataSet:

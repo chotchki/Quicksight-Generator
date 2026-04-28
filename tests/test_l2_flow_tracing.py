@@ -199,10 +199,16 @@ def test_every_sheet_has_at_least_one_text_box() -> None:
 
 def test_dataset_count_matches_populated_sheets() -> None:
     """M.3.5 → 1 (Rails); M.3.6 → 2 (+ Chains); M.3.7 → 8 (+ 6
-    L2 exception sections). Re-key as each substep lands."""
+    L2 exception sections); M.3.8 → 8 + N (one dropdown source per
+    declared metadata key). The fixed 8 are core; the metadata-key
+    fan-out is per-instance."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        declared_metadata_keys,
+    )
     app = build_l2_flow_tracing_app(_CFG)
-    assert len(app.datasets) == 8
-    assert {d.identifier for d in app.datasets} == {
+    n_meta = len(declared_metadata_keys(default_l2_instance()))
+    assert len(app.datasets) == 8 + n_meta
+    fixed = {
         "l2ft-rails-ds",
         "l2ft-chains-ds",
         "l2ft-exc-chain-orphans-ds",
@@ -212,6 +218,7 @@ def test_dataset_count_matches_populated_sheets() -> None:
         "l2ft-exc-dead-metadata-ds",
         "l2ft-exc-dead-limit-schedules-ds",
     }
+    assert fixed <= {d.identifier for d in app.datasets}
 
 
 # -- Getting Started — description-driven prose (M.2a.2 contract) ------------
@@ -793,3 +800,206 @@ def test_exceptions_sheet_has_each_section_header(
     assert title_fragment in body_blob, (
         f"section {title_fragment!r} title missing from L2 Exceptions"
     )
+
+
+# -- Metadata-driven filters (M.3.8) -----------------------------------------
+
+
+def test_declared_metadata_keys_walks_union_across_rails() -> None:
+    """`declared_metadata_keys` returns the sorted union of every
+    Rail's `metadata_keys`. Drives both the dropdown-source dataset
+    list AND the analysis-level parameter list — single source of
+    truth so a key declared on a rail can't silently miss a control."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        declared_metadata_keys,
+    )
+    inst = load_instance(SASQUATCH_PR_YAML)
+    keys = declared_metadata_keys(inst)
+    expected = sorted({
+        str(k) for r in inst.rails for k in r.metadata_keys
+    })
+    assert keys == expected
+    # Sorted (deterministic across runs).
+    assert keys == sorted(keys)
+
+
+def test_metadata_dropdown_dataset_per_declared_key() -> None:
+    """One dataset per declared metadata key; missing keys means
+    missing dropdowns."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        build_metadata_dropdown_datasets,
+        declared_metadata_keys,
+    )
+    inst = load_instance(SASQUATCH_PR_YAML)
+    dss = build_metadata_dropdown_datasets(_CFG, inst)
+    assert len(dss) == len(declared_metadata_keys(inst))
+
+
+def test_metadata_dropdown_dataset_uses_distinct_json_value() -> None:
+    """Per-key dataset: distinct JSON_VALUE over the prefixed
+    transactions matview, NULLs filtered, sorted output."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        build_metadata_dropdown_dataset,
+    )
+    inst = load_instance(SASQUATCH_PR_YAML)
+    aws_ds = build_metadata_dropdown_dataset(_CFG, inst, "merchant_id")
+    sql = list(aws_ds.PhysicalTableMap.values())[0].CustomSql.SqlQuery
+    assert "SELECT DISTINCT JSON_VALUE(metadata, '$.merchant_id')" in sql
+    assert "FROM sasquatch_pr_current_transactions" in sql
+    assert "IS NOT NULL" in sql  # NULL filter
+    assert "ORDER BY value" in sql
+
+
+def test_metadata_dropdown_dataset_id_uses_l2_prefix_and_slug() -> None:
+    """Per-key ID = `qs-gen-<l2-prefix>-l2ft-meta-<slug>-dataset`.
+    Slug is the lowercased key with non-alphanumerics replaced by '-'."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        build_metadata_dropdown_dataset,
+    )
+    from dataclasses import replace
+    cfg = replace(_CFG, l2_instance_prefix="sasquatch_pr")
+    inst = load_instance(SASQUATCH_PR_YAML)
+    # external_reference → 'external-reference' slug.
+    ds = build_metadata_dropdown_dataset(cfg, inst, "external_reference")
+    assert ds.DataSetId == (
+        "qs-gen-sasquatch_pr-l2ft-meta-external-reference-dataset"
+    )
+
+
+def test_one_string_param_declared_per_metadata_key() -> None:
+    """Every declared metadata key gets one analysis-level
+    StringParam — the parameter is universal so any future visual on
+    any sheet can read it via FilterGroup."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        declared_metadata_keys, metadata_param_name,
+    )
+    app = build_l2_flow_tracing_app(_CFG)
+    keys = declared_metadata_keys(default_l2_instance())
+    expected_param_names = {metadata_param_name(k) for k in keys}
+    actual_param_names = {str(p.name) for p in app.analysis.parameters}
+    assert expected_param_names <= actual_param_names
+
+
+def test_metadata_dropdown_per_key_on_l2_exceptions_sheet() -> None:
+    """One ParameterDropdown per key on the L2 Exceptions sheet —
+    the natural home for filtering. Other sheets have no metadata
+    controls (deferred to M.3.8b for visual filter wiring)."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        declared_metadata_keys,
+    )
+    app = build_l2_flow_tracing_app(_CFG)
+    keys = declared_metadata_keys(default_l2_instance())
+    exc = _sheet_by_name(app, "L2 Exceptions")
+    assert len(exc.parameter_controls) == len(keys), (
+        f"L2 Exceptions: expected {len(keys)} dropdowns, "
+        f"got {len(exc.parameter_controls)}"
+    )
+    # Other sheets (Getting Started / Rails / Chains) have no
+    # parameter controls in M.3.8 — controls are not duplicated.
+    for sheet_name in ("Getting Started", "Rails", "Chains"):
+        sheet = _sheet_by_name(app, sheet_name)
+        assert len(sheet.parameter_controls) == 0, (
+            f"{sheet_name}: expected 0 parameter controls, "
+            f"got {len(sheet.parameter_controls)}"
+        )
+
+
+def test_metadata_dropdown_titles_are_human_readable() -> None:
+    """Dropdown titles read as 'Metadata: <key>' so the analyst can
+    scan the filter bar without reverse-engineering the parameter
+    name."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        declared_metadata_keys,
+    )
+    app = build_l2_flow_tracing_app(_CFG)
+    exc = _sheet_by_name(app, "L2 Exceptions")
+    titles = {ctrl.title for ctrl in exc.parameter_controls}
+    for k in declared_metadata_keys(default_l2_instance()):
+        assert f"Metadata: {k}" in titles
+
+
+def test_metadata_dropdown_sourced_from_per_key_dataset() -> None:
+    """Each dropdown's selectable_values point at the per-key
+    dropdown source dataset's `value` column. Catches a wiring bug
+    where the dropdown loses its options at deploy time."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        declared_metadata_keys, metadata_dropdown_ds_id,
+    )
+    from quicksight_gen.common.tree import LinkedValues
+    app = build_l2_flow_tracing_app(_CFG)
+    exc = _sheet_by_name(app, "L2 Exceptions")
+    expected_ds_ids = {
+        metadata_dropdown_ds_id(k)
+        for k in declared_metadata_keys(default_l2_instance())
+    }
+    actual_ds_ids = set()
+    for ctrl in exc.parameter_controls:
+        assert isinstance(ctrl.selectable_values, LinkedValues)
+        assert ctrl.selectable_values.column_name == "value"
+        actual_ds_ids.add(ctrl.selectable_values.dataset.identifier)
+    assert actual_ds_ids == expected_ds_ids
+
+
+def test_no_metadata_controls_when_l2_has_no_metadata_keys(
+    tmp_path: Path,
+) -> None:
+    """An L2 instance with no Rail.metadata_keys produces zero
+    metadata dropdowns + zero metadata parameters — no-op path."""
+    bare = tmp_path / "no_metadata.yaml"
+    bare.write_text(
+        "instance: no_metadata\n"
+        "accounts:\n"
+        "  - id: control\n"
+        "    role: ControlAccount\n"
+        "    scope: internal\n"
+        "    expected_eod_balance: 0\n"
+        "  - id: ext\n"
+        "    role: External\n"
+        "    scope: external\n"
+        "rails:\n"
+        # 1-leg rail with no metadata_keys.
+        "  - name: BareRail\n"
+        "    transfer_type: bare\n"
+        "    leg_role: ControlAccount\n"
+        "    leg_direction: Debit\n"
+        "    origin: InternalInitiated\n"
+    )
+    inst = load_instance(bare, validate=False)
+    app = build_l2_flow_tracing_app(_CFG, l2_instance=inst)
+    # Zero metadata-key parameters; only base params (none today, but
+    # the assertion is on the metadata-key prefix).
+    meta_params = [
+        p for p in app.analysis.parameters
+        if str(p.name).startswith("pL2ftMeta_")
+    ]
+    assert meta_params == []
+    exc = _sheet_by_name(app, "L2 Exceptions")
+    assert exc.parameter_controls == []
+
+
+def test_metadata_dropdowns_scale_with_l2_instance() -> None:
+    """sasquatch_pr (28 keys) and spec_example (5 keys) both produce
+    the right control + parameter counts. The dashboard adapts to the
+    L2 — zero per-instance code, whatever the L2 declares becomes
+    filterable."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        declared_metadata_keys,
+    )
+    sasq = load_instance(SASQUATCH_PR_YAML)
+    sasq_app = build_l2_flow_tracing_app(_CFG, l2_instance=sasq)
+    sasq_meta_count = len(declared_metadata_keys(sasq))
+    sasq_meta_params = [
+        p for p in sasq_app.analysis.parameters
+        if str(p.name).startswith("pL2ftMeta_")
+    ]
+    assert len(sasq_meta_params) == sasq_meta_count
+    sasq_exc = _sheet_by_name(sasq_app, "L2 Exceptions")
+    assert len(sasq_exc.parameter_controls) == sasq_meta_count
+
+    spec_app = build_l2_flow_tracing_app(_CFG)
+    spec_meta_count = len(declared_metadata_keys(default_l2_instance()))
+    assert spec_meta_count != sasq_meta_count, (
+        "test fixtures lost their differentiation"
+    )
+    spec_exc = _sheet_by_name(spec_app, "L2 Exceptions")
+    assert len(spec_exc.parameter_controls) == spec_meta_count
