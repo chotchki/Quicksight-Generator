@@ -392,23 +392,25 @@ rails:
     leg_role: CustomerDDA
     leg_direction: Debit
     origin: InternalInitiated
-    metadata_keys: [source_customer_id, destination_customer_id, transfer_purpose]
+    metadata_keys: [internal_transfer_id, source_customer_id, destination_customer_id, transfer_purpose]
     description: |
       Debit leg of an on-us transfer cycle. Posts against the source
       customer's DDA. Joins the shared `InternalTransferCycle` Transfer
-      via the `internal_transfer_id` TransferKey. Auto-derived
-      PostedRequirement: `internal_transfer_id`.
+      via the `internal_transfer_id` TransferKey (declared first in
+      `metadata_keys` because it's auto-derived as a PostedRequirement
+      from the template's `transfer_key`).
 
   - name: InternalTransferCredit
     transfer_type: internal
     leg_role: CustomerDDA
     leg_direction: Credit
     origin: InternalInitiated
-    metadata_keys: [source_customer_id, destination_customer_id, transfer_purpose]
+    metadata_keys: [internal_transfer_id, source_customer_id, destination_customer_id, transfer_purpose]
     description: |
       Credit leg of an on-us transfer cycle. Posts against the
       destination customer's DDA. Joins the shared `InternalTransferCycle`
-      Transfer; the matching debit and suspense-close legs share its ID.
+      Transfer via the `internal_transfer_id` TransferKey; the matching
+      debit and suspense-close legs share its ID.
 
   - name: InternalTransferSuspenseClose
     transfer_type: internal

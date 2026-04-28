@@ -138,11 +138,15 @@ rails:
     origin: InternalInitiated
     metadata_keys: [merchant_id, settlement_period, settlement_period_end]
 
-  # Single-leg reconciled by aggregating rail below (S3 path B)
+  # Single-leg reconciled by aggregating rail below (S3 path B). Direction
+  # is `Debit` rather than `Variable` because Variable closure semantics
+  # require a containing TransferTemplate's ExpectedNet (validator C3) —
+  # this rail's role is to exercise S3 path B (aggregating reconciliation),
+  # which works the same for any non-Variable direction.
   - name: WatchlistAdjustment
     transfer_type: adjustment
     leg_role: WatchlistAccount
-    leg_direction: Variable
+    leg_direction: Debit
     origin: InternalInitiated
     metadata_keys: [adjustment_reason]
 

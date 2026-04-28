@@ -280,12 +280,18 @@ def test_r6_limit_schedule_parent_role_must_resolve() -> None:
 def test_c1_at_most_one_variable_leg_per_template() -> None:
     inst = _baseline_instance()
     # Add a second SingleLegRail with Variable direction; both go in the
-    # template's leg_rails, triggering > 1 Variable legs.
+    # template's leg_rails, triggering > 1 Variable legs. R12 requires
+    # the template's transfer_key fields appear in every leg_rail's
+    # metadata_keys, so both Variable legs carry merchant_id +
+    # settlement_period.
     second_var = SingleLegRail(
         name=Identifier("SettlementCloseB"),
         transfer_type="settlement",
         origin="InternalInitiated",
-        metadata_keys=(),
+        metadata_keys=(
+            Identifier("merchant_id"),
+            Identifier("settlement_period"),
+        ),
         leg_role=(Identifier("ControlAccount"),),
         leg_direction="Variable",
     )
@@ -352,12 +358,16 @@ def test_s2_template_leg_must_not_have_expected_net() -> None:
     # Add a two-leg rail that's listed in the template's leg_rails AND
     # carries expected_net. The baseline's template only has the
     # SubledgerCharge single-leg; add a two-leg "ClosingLeg" so we can
-    # exercise this rule.
+    # exercise this rule. R12 requires the template's transfer_key
+    # fields appear in every leg_rail's metadata_keys.
     closing = TwoLegRail(
         name=Identifier("ClosingLeg"),
         transfer_type="closing",
         origin="InternalInitiated",
-        metadata_keys=(),
+        metadata_keys=(
+            Identifier("merchant_id"),
+            Identifier("settlement_period"),
+        ),
         source_role=(Identifier("ControlAccount"),),
         destination_role=(Identifier("ControlAccount"),),
         expected_net=Decimal("0"),  # Wrong: rail is in leg_rails so this is forbidden.
@@ -840,3 +850,153 @@ def test_r11_dotted_form_selector_unaffected() -> None:
     )
     inst = _replace(inst, rails=(*inst.rails[:2], pool))
     validate(inst)
+
+
+# -- M.3.13: New SPEC rules (R12, C3, C4) -----------------------------------
+
+
+def test_r12_transfer_key_field_missing_from_leg_rail_metadata_keys_rejected() -> None:
+    """R12: a TransferKey field absent from a leg_rail's metadata_keys
+    is rejected.
+
+    The library auto-derives every TransferKey field as a
+    PostedRequirement on each leg_rail. If the rail's metadata_keys
+    doesn't declare the field, ETL has no legitimate place to populate
+    it — the leg can never reach Status=Posted. Caught at load.
+    """
+    inst = _baseline_instance()
+    # Drop merchant_id from SubledgerCharge.metadata_keys; the template's
+    # transfer_key still demands (merchant_id, settlement_period).
+    bad_rail = dataclasses.replace(
+        inst.rails[1],  # SubledgerCharge
+        metadata_keys=(Identifier("settlement_period"),),  # missing merchant_id
+    )
+    bad = _replace(inst, rails=(inst.rails[0], bad_rail, inst.rails[2]))
+    with pytest.raises(
+        L2ValidationError,
+        match=r"missing TransferKey field\(s\) \['merchant_id'\]",
+    ):
+        validate(bad)
+
+
+def test_r12_passes_when_every_leg_rail_carries_every_transfer_key_field() -> None:
+    """R12 negative: the baseline already satisfies R12 (SubledgerCharge
+    declares both merchant_id + settlement_period). Sanity guard."""
+    validate(_baseline_instance())
+
+
+def test_r12_template_with_no_transfer_key_skips_check() -> None:
+    """R12: a TransferTemplate with empty transfer_key has no field
+    requirements, so the rule is vacuously satisfied for its leg_rails.
+    """
+    inst = _baseline_instance()
+    # Empty transfer_key — leg_rail's metadata_keys can be anything.
+    no_key_template = dataclasses.replace(
+        inst.transfer_templates[0],
+        transfer_key=(),
+    )
+    bare_rail = dataclasses.replace(
+        inst.rails[1], metadata_keys=(),  # empty metadata_keys
+    )
+    ok = _replace(
+        inst,
+        rails=(inst.rails[0], bare_rail, inst.rails[2]),
+        transfer_templates=(no_key_template,),
+    )
+    validate(ok)
+
+
+def test_c3_variable_single_leg_not_in_any_template_rejected() -> None:
+    """C3: a Variable single-leg rail not in any TransferTemplate.leg_rails
+    is rejected.
+
+    Variable closure semantics require a containing template's
+    ExpectedNet to compute the leg's amount + direction at posting
+    time. A Variable rail reconciled only via aggregating-bundling has
+    no closure target — the bundler computes its own amount, not a
+    closure. Configuration is meaningless.
+    """
+    inst = _baseline_instance()
+    # Add a Variable single-leg rail that's bundled by the existing
+    # PoolBalancing aggregator (so S3 reconciliation passes), but NOT
+    # in any TransferTemplate.leg_rails — should trip C3.
+    var_rail = SingleLegRail(
+        name=Identifier("OrphanVariable"),
+        transfer_type="ach",  # PoolBalancing bundles 'ach' (S3 path B OK)
+        origin="InternalInitiated",
+        metadata_keys=(),
+        leg_role=(Identifier("ControlAccount"),),
+        leg_direction="Variable",
+    )
+    bad = _replace(inst, rails=(*inst.rails, var_rail))
+    with pytest.raises(
+        L2ValidationError,
+        match=r"OrphanVariable.*Variable-direction.*not in any TransferTemplate",
+    ):
+        validate(bad)
+
+
+def test_c3_variable_single_leg_in_some_template_accepted() -> None:
+    """C3 negative: a Variable single-leg rail listed in some
+    TransferTemplate.leg_rails is fine."""
+    inst = _baseline_instance()
+    # Promote SubledgerCharge (already in MerchantSettlementCycle.leg_rails)
+    # to Variable direction. Should validate cleanly.
+    promoted = dataclasses.replace(
+        inst.rails[1], leg_direction="Variable",
+    )
+    ok = _replace(inst, rails=(inst.rails[0], promoted, inst.rails[2]))
+    validate(ok)
+
+
+def test_c4_xor_group_with_one_member_rejected() -> None:
+    """C4: a singleton xor_group is degenerate — 'exactly one of one
+    option' trivially holds. Catches a deletion-leftover or typo'd
+    xor_group string.
+    """
+    inst = _baseline_instance()
+    lonely = ChainEntry(
+        parent=Identifier("MerchantSettlementCycle"),
+        child=Identifier("ExtInbound"),
+        required=False,
+        xor_group=Identifier("LonelyGroup"),
+    )
+    bad = _replace(inst, chains=(lonely,))
+    with pytest.raises(
+        L2ValidationError,
+        match=r"xor_group 'LonelyGroup'.*has only 1 member",
+    ):
+        validate(bad)
+
+
+def test_c4_xor_group_with_two_members_accepted() -> None:
+    """C4 negative: a 2-member XOR group is valid (smallest meaningful
+    group — 'exactly one of two options')."""
+    inst = _baseline_instance()
+    a = ChainEntry(
+        parent=Identifier("MerchantSettlementCycle"),
+        child=Identifier("ExtInbound"),
+        required=False,
+        xor_group=Identifier("Pair"),
+    )
+    b = ChainEntry(
+        parent=Identifier("MerchantSettlementCycle"),
+        child=Identifier("SubledgerCharge"),
+        required=False,
+        xor_group=Identifier("Pair"),
+    )
+    ok = _replace(inst, chains=(a, b))
+    validate(ok)
+
+
+def test_c4_chain_with_no_xor_group_unaffected() -> None:
+    """C4 negative: a regular ChainEntry without xor_group is unaffected
+    (the rule only fires on entries with xor_group set)."""
+    inst = _baseline_instance()
+    regular = ChainEntry(
+        parent=Identifier("MerchantSettlementCycle"),
+        child=Identifier("ExtInbound"),
+        required=True,
+    )
+    ok = _replace(inst, chains=(regular,))
+    validate(ok)

@@ -368,6 +368,7 @@ def test_pipeline_limit_schedule(tmp_path: Path) -> None:
             origin: InternalInitiated
             leg_role: ChildPool
             leg_direction: Debit
+            metadata_keys: [batch_id]
         transfer_templates:
           # S3: single-leg ChildAch needs reconciliation.
           - name: AchCycle

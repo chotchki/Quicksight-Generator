@@ -482,6 +482,12 @@ def _build_transfer_templates(
         # transfer_key needs at least one non-empty identifier.
         n_keys = rng.randint(1, 2)
         keys = [f"key_{j}" for j in range(n_keys)]
+        # Validator R12: every TransferKey field MUST appear in
+        # metadata_keys of every leg_rail. The fuzzer picks legs from
+        # the rail pool with random metadata_keys that don't intersect
+        # the synthetic `key_<N>` template keys, so without this graft
+        # the rails can't legitimately reach Posted (R12 fires at load).
+        _extend_metadata_keys(rails, legs, keys)
 
         tt: dict[str, Any] = {
             "name": name,
@@ -545,11 +551,16 @@ def _ensure_single_leg_reconciliation(
     if transfer_templates:
         target_tt = transfer_templates[0]
         existing = list(target_tt["leg_rails"])
+        new_legs: list[str] = []
         for n in sorted(state.needs_reconciliation):
             if n not in existing:
                 existing.append(n)
+                new_legs.append(n)
                 state.template_leg_rail_names.add(n)
         target_tt["leg_rails"] = sorted(set(existing))
+        # R12: the template's existing transfer_key fields must appear
+        # in the newly-folded legs' metadata_keys.
+        _extend_metadata_keys(rails, new_legs, target_tt["transfer_key"])
         state.needs_reconciliation.clear()
         return
 
@@ -560,15 +571,39 @@ def _ensure_single_leg_reconciliation(
     legs = sorted(state.needs_reconciliation)
     for n in legs:
         state.template_leg_rail_names.add(n)
+    fallback_keys = ["fuzz_reconcile_key"]
     transfer_templates.append({
         "name": name,
         "transfer_type": "fuzz_reconcile_type",
         "expected_net": 0,
-        "transfer_key": ["fuzz_reconcile_key"],
+        "transfer_key": fallback_keys,
         "completion": "business_day_end",
         "leg_rails": legs,
     })
+    # R12 graft for the synthetic template's leg_rails.
+    _extend_metadata_keys(rails, legs, fallback_keys)
     state.needs_reconciliation.clear()
+
+
+def _extend_metadata_keys(
+    rails: list[dict[str, Any]],
+    leg_names: list[str],
+    transfer_key_fields: list[str],
+) -> None:
+    """Validator R12: extend each named rail's `metadata_keys` to include
+    every TransferKey field of its containing template.
+
+    Mutates the rail dicts in-place; idempotent (set-union dedupes).
+    """
+    for n in leg_names:
+        for r in rails:
+            if r["name"] != n:
+                continue
+            existing = list(r.get("metadata_keys", []))
+            r["metadata_keys"] = sorted(
+                set(existing) | set(transfer_key_fields)
+            )
+            break
 
 
 # ---------------------------------------------------------------------------

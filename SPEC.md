@@ -390,6 +390,17 @@ When an AggregatingRail fires:
 
 This pattern keeps consumed-tracking append-only — no row mutation — and preserves a full audit trail of when each Transaction was bundled and into which aggregating Transfer.
 
+#### Late-arriving Pending rows *(M.3.13)*
+
+A Transaction whose `Pending` row arrives after a previous bundler firing has already closed for the same Rail's eligibility window is bundled by the **next** bundler firing — not retroactively into the closed bundle. The bundler treats eligibility purely on current state at the moment it runs (`Status = Posted` AND `BundleId IS NULL`), so a late-arriving leg whose Pending → Posted transition completes after the previous cadence boundary lands in whatever bundle is open the next time the bundler fires.
+
+Concretely:
+- The previous bundle's `BundleId` reflects the bundler's firing day, not the consumed source rows' `posted_at` days.
+- A row that was already `Posted` at the previous firing but somehow missed the eligibility query (network blip, RDBMS replication lag) gets picked up on the next firing — same mechanism, just shifted one cadence cycle.
+- `MaxUnbundledAge` measures wall-clock age of the Posted-and-eligible state, not bundler latency. An aggressive `MaxUnbundledAge` shorter than the bundler's cadence period intentionally surfaces every late-arriving row as a SHOULD-violation; the integrator chooses how aggressive to set it relative to the cadence.
+
+This is intentional: the alternative (re-opening a closed bundle to add late rows) would mutate `BundleAssignment` rows after the fact and break L1's append-only invariant. Late rows always wait for the next firing.
+
 #### `CadenceExpression` vocabulary *(v1)*
 
 | Literal | Meaning |
@@ -450,6 +461,14 @@ For TransferTemplate-based Transfers, the Transfer's L1 `ID` is allocated **look
 **Implementers MUST treat this as a known failure point.** Concurrent posters racing on the first leg for a key can produce duplicate Transfers — fix path is L1's append-only entry correction (post a higher-Entry version of the duplicate's legs pointing them at the surviving Transfer ID; supersede the duplicate Transfer record). The library SHOULD provide a uniqueness constraint on (template_name, transfer_key_values) at the storage layer to catch the race at write time rather than at reconciliation time.
 
 For ordinary business processing — where an integrator's ETL is well-behaved — lookup-or-create works without intervention. It's the high-throughput / concurrent-poster scenarios that need the entry-correction fallback.
+
+#### TransferKey scope and field-name validity *(M.3.13)*
+
+`TransferKey` values are scoped by **`(template_name, transfer_key_values)`**, not by `transfer_key_values` alone. Two different templates that happen to declare the same `TransferKey` field names with the same values do NOT collide on a shared Transfer — the template name disambiguates them. So `TemplateA(transfer_key=[merchant_id, period])` and `TemplateB(transfer_key=[merchant_id, period])` firing simultaneously with `merchant_id="m1", period="2026-04"` produce two distinct Transfers (one per template).
+
+Every `TransferKey` field name MUST also appear in every leg_rail's `MetadataKeys` (validator R12 — see Validation rules above). The auto-derivation chain is: TransferKey → PostedRequirements → ETL must populate. If the field isn't in the rail's `MetadataKeys`, ETL has no schema slot to populate it — the leg can't reach Posted, and the rail is dead.
+
+A `TransferKey` value of `NULL` (or an empty string after trimming whitespace, where the integrator's storage layer surfaces "empty" as distinct from NULL) is treated as "missing" for grouping purposes — the leg can't be Posted because its grouping membership is undefined. This mirrors the SPEC's general "TransferKey value is NULL → leg can't be Posted" rule above.
 
 #### `CompletionExpression` vocabulary *(v1)*
 
@@ -610,6 +629,9 @@ Every rule below is enforced at YAML load time — `load_instance(path)` runs th
 - Every leg of every Rail resolves to an Origin (per the resolution rules in "Per-leg Origin"). Unresolved legs are a load-time configuration error.
 - Per-leg overrides (`SourceOrigin`, `DestinationOrigin`) appear only on 2-leg rails. Their presence on a 1-leg rail is a load-time warning (the field is ignored).
 - Every L2-instance reference to a `TransferType` string MUST resolve to some Rail's declared `TransferType`. **(M.2d.1)** Concretely: every `LimitSchedule.TransferType` matches some `Rail.TransferType`, and every bare-form (`<name>`, not `Template.LegRail`) entry in an AggregatingRail's `BundlesActivity` resolves to either a declared `Rail.Name` OR some declared `Rail.TransferType`. Catches typos in cap declarations and bundle selectors that would otherwise silently no-op. (The runtime invariant — every *posted* Transaction's `TransferType` matches some Rail — is the L3 surface, slated for M.2d.4 as a SHOULD-constraint matview rather than a load-time validator.)
+- Every `TransferKey` field name MUST appear in `MetadataKeys` of every Rail in the template's `LegRails`. **(M.3.13)** TransferKey fields are auto-derived as `PostedRequirements` for every leg_rail; if the field isn't declared in the rail's `MetadataKeys`, the integrator's ETL has no legitimate place to populate it — the column simply doesn't exist on the rail's posting shape — and the leg can never reach `Status = Posted`. Caught at YAML load instead of at first posting attempt.
+- Every Variable-direction `SingleLegRail` MUST appear in some `TransferTemplate.LegRails`. **(M.3.13)** Variable closure semantics require a containing template's `ExpectedNet` to compute the leg's amount + direction at posting time. A Variable rail reconciled only by an AggregatingRail (the alternate S3 reconciliation path) has no closure target — the bundler computes its own amount, not a closure. Caught at YAML load.
+- Every `XorGroup` MUST have at least 2 members. **(M.3.13)** A single-member XOR group is degenerate: "exactly one of one option happens" trivially holds whenever the parent fires, so the declaration adds no constraint. In practice this is a typo (the second member's `XorGroup` string disagrees) or a leftover from a deletion. Caught at YAML load so the misconfig can't silently weaken the dashboard's XOR-violation detection.
 
 ---
 

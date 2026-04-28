@@ -53,9 +53,25 @@ Rules enforced (numbered for cross-reference with the test file):
       match nothing). Companion to R8 (which checks the inverse: any
       rail with ``max_unbundled_age`` set must appear in *some*
       bundles_activity).
+  R12. Every ``TransferKey`` field name MUST appear in
+      ``metadata_keys`` of every Rail in the template's ``leg_rails``
+      (M.3.13 — a TransferKey field is auto-derived as a
+      ``PostedRequirement`` for every leg_rail; if the field isn't
+      declared in the rail's ``metadata_keys``, the integrator's ETL
+      has no legitimate place to populate it, and the leg can never
+      reach Status=Posted).
 
   C1. Every TransferTemplate contains at most one Variable-direction leg.
   C2. Every Chain.xor_group's members share the same Chain.parent.
+  C3. Every Variable-direction SingleLegRail MUST appear in some
+      ``TransferTemplate.leg_rails`` (M.3.13 — Variable closure
+      semantics require a containing template's ``ExpectedNet`` to
+      compute the leg's amount + direction; a Variable rail
+      reconciled only by an AggregatingRail has no closure target).
+  C4. Every Chain.xor_group MUST have at least 2 members (M.3.13 — a
+      single-member XOR group is degenerate: "exactly one of one
+      option happens" trivially holds, so the declaration is a typo
+      or leftover from a deletion).
 
   S1. A two-leg Rail that is NOT a TransferTemplate leg MUST have
       ``expected_net`` set.
@@ -183,9 +199,12 @@ def validate(instance: L2Instance) -> None:
     _check_dotted_bundle_selectors_resolve(instance)
     _check_limit_schedule_transfer_type_has_rail(instance)
     _check_bare_bundles_activity_selectors_resolve(instance)
+    _check_transfer_key_in_leg_rail_metadata_keys(instance, rails_by_name)
 
     _check_variable_leg_count_per_template(instance)
     _check_chain_xor_group_consistency(instance)
+    _check_variable_single_leg_in_some_template(instance, rails_by_name)
+    _check_xor_group_min_members(instance)
 
     _check_two_leg_expected_net_consistency(instance)
     _check_single_leg_reconciliation(instance)
@@ -525,7 +544,44 @@ def _check_dotted_bundle_selectors_resolve(inst: L2Instance) -> None:
                 )
 
 
-# -- Cardinality (C1-C2) -----------------------------------------------------
+def _check_transfer_key_in_leg_rail_metadata_keys(
+    inst: L2Instance, rails_by_name: dict[Identifier, Rail],
+) -> None:
+    """R12: every TransferKey field name MUST appear in metadata_keys of
+    every Rail in the template's leg_rails.
+
+    Per SPEC §"PostedRequirements": TransferKey fields are auto-derived
+    as PostedRequirements for every leg_rail (``derived.posted_requirements_for``).
+    A leg can't be Posted without those fields populated. If the field
+    isn't declared in the rail's ``metadata_keys``, the integrator's
+    ETL has no legitimate place to populate it — the column simply
+    doesn't exist on the rail's posting shape — and the rail can never
+    reach Status=Posted. That's a configuration error, caught at load
+    instead of at first posting attempt.
+    """
+    for t in inst.transfer_templates:
+        if not t.transfer_key:
+            continue
+        for n in t.leg_rails:
+            r = rails_by_name.get(n)
+            # R4 already guarantees the rail exists; defensive skip.
+            if r is None:
+                continue
+            missing = [
+                k for k in t.transfer_key if k not in r.metadata_keys
+            ]
+            if missing:
+                raise L2ValidationError(
+                    f"TransferTemplate {t.name!r}.transfer_key={list(t.transfer_key)!r}: "
+                    f"leg_rail {n!r}.metadata_keys={list(r.metadata_keys)!r} "
+                    f"is missing TransferKey field(s) {missing!r}; the "
+                    f"library auto-derives these as PostedRequirements, "
+                    f"so a leg whose rail can't carry the field can never "
+                    f"reach Status=Posted"
+                )
+
+
+# -- Cardinality (C1-C4) -----------------------------------------------------
 
 
 def _check_variable_leg_count_per_template(inst: L2Instance) -> None:
@@ -559,6 +615,66 @@ def _check_chain_xor_group_consistency(inst: L2Instance) -> None:
                 f"xor_group {xor_group!r}: members reference different "
                 f"parents {sorted(parents)!r}; all members of an XOR "
                 f"group MUST share the same parent"
+            )
+
+
+def _check_variable_single_leg_in_some_template(
+    inst: L2Instance, rails_by_name: dict[Identifier, Rail],
+) -> None:
+    """C3: every Variable-direction SingleLegRail MUST appear in some
+    TransferTemplate.leg_rails.
+
+    Per SPEC §"LegDirection = Variable": "Both the leg's amount AND
+    direction are determined at posting time by ... the requirement that
+    a containing TransferTemplate's ExpectedNet hold given the other
+    legs already posted." A Variable rail not in any template has no
+    closure target — the bundler-only reconciliation path (S3's other
+    branch) doesn't compute closure amounts, only sweeps eligible rows.
+    Catches the failure mode where an integrator declares a Variable
+    rail and reconciles it via an aggregating bundler, expecting the
+    closure to "just work".
+    """
+    template_leg_names: set[Identifier] = set()
+    for t in inst.transfer_templates:
+        template_leg_names.update(t.leg_rails)
+    for r in inst.rails:
+        if not isinstance(r, SingleLegRail):
+            continue
+        if r.leg_direction != "Variable":
+            continue
+        if r.name in template_leg_names:
+            continue
+        raise L2ValidationError(
+            f"Rail {r.name!r}: Variable-direction single-leg rail is "
+            f"not in any TransferTemplate.leg_rails; Variable closure "
+            f"semantics require a containing template's ExpectedNet to "
+            f"compute the leg's amount + direction at posting time"
+        )
+
+
+def _check_xor_group_min_members(inst: L2Instance) -> None:
+    """C4: every Chain.xor_group MUST have at least 2 members.
+
+    A single-member XOR group is degenerate — "exactly one of one
+    option happens" trivially holds whenever the parent fires, so the
+    declaration adds no constraint. In practice this is a typo (the
+    second member was deleted, or its xor_group string disagrees) or
+    a leftover from an editing pass. Caught at load so the misconfig
+    can't silently weaken the dashboard's XOR-violation detection.
+    """
+    member_count_by_group: dict[str, int] = {}
+    for c in inst.chains:
+        if c.xor_group is None:
+            continue
+        key = str(c.xor_group)
+        member_count_by_group[key] = member_count_by_group.get(key, 0) + 1
+    for group, count in member_count_by_group.items():
+        if count < 2:
+            raise L2ValidationError(
+                f"xor_group {group!r}: has only {count} member; XOR "
+                f"groups MUST have at least 2 members (a single-member "
+                f"group is degenerate — 'exactly one of one option' "
+                f"trivially holds)"
             )
 
 
