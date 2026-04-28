@@ -37,6 +37,8 @@ nav:
     - Today's Exceptions: walkthroughs/l1/todays-exceptions.md
     - Daily Statement: walkthroughs/l1/daily-statement.md
     - Transactions: walkthroughs/l1/transactions.md
+  - L2 Flow Tracing Handbook:
+    - Overview: handbook/l2_flow_tracing.md
   - AR Handbook:
     - Overview: handbook/ar.md
     - Balance Drift Timelines Rollup: walkthroughs/ar/balance-drift-timelines-rollup.md
