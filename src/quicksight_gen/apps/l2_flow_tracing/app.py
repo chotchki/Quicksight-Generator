@@ -303,10 +303,18 @@ def _populate_getting_started(
     )
 
 
-_DATE_END_DEFAULT_EXPR = "truncDate('DD', now())"
-_DATE_START_DEFAULT_EXPR = (
-    "addDateTime(-7, 'DD', truncDate('DD', now()))"
-)
+# Date-filter defaults are intentionally "all time" so a freshly-loaded
+# Rails tab renders all postings — the date pickers are for narrowing,
+# not for a default scope. The L1 dashboard's rolling-7-day default
+# DOESN'T fit here for two reasons: (1) the demo seed plants synthetic
+# postings dated 2029-11 to 2030-01-01 (deliberately decoupled from
+# wall-clock), so a "now-relative" default would exclude every demo row;
+# (2) Rails is an explorer tab — the analyst comes in not knowing what
+# range to look at, and an unconstrained default lets them see what's
+# there before narrowing. Switch to RollingDate when the L2 instance
+# carries production data with current timestamps.
+_DATE_START_STATIC = "1900-01-01T00:00:00.000Z"
+_DATE_END_STATIC = "2099-12-31T23:59:59.999Z"
 
 
 def _populate_rails_sheet(
@@ -374,16 +382,12 @@ def _populate_rails_sheet(
     date_start = analysis.add_parameter(DateTimeParam(
         name=ParameterName("pL2ftDateStart"),
         time_granularity="DAY",
-        default=DateTimeDefaultValues(
-            RollingDate={"Expression": _DATE_START_DEFAULT_EXPR},
-        ),
+        default=DateTimeDefaultValues(StaticValues=[_DATE_START_STATIC]),
     ))
     date_end = analysis.add_parameter(DateTimeParam(
         name=ParameterName("pL2ftDateEnd"),
         time_granularity="DAY",
-        default=DateTimeDefaultValues(
-            RollingDate={"Expression": _DATE_END_DEFAULT_EXPR},
-        ),
+        default=DateTimeDefaultValues(StaticValues=[_DATE_END_STATIC]),
     ))
     fg_date = analysis.add_filter_group(FilterGroup(
         filter_group_id="fg-l2ft-rails-date",  # type: ignore[arg-type]
