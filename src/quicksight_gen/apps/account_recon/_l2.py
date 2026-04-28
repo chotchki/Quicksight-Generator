@@ -1,50 +1,42 @@
-"""L2 instance loader + build-pipeline seam for the AR app (M.2.3).
+"""L2 instance loader + build-pipeline seam (M.2.3, repointed in M.3.2).
 
-The AR app's pre-M.2 build flow took only a ``Config`` and read all of
-its data shape from hardcoded table names + per-dataset SQL strings
-(see ``apps/account_recon/datasets.py``). M.2.3 introduces an
-``L2Instance`` parameter to the build pipeline so M.2.4+ can rewrite
-those datasets to use the L2 prefix + L2-derived account dim / scope
-predicates.
+Originally the L2 bridge for the AR app — the AR app deletes in M.4.3
+and this whole `apps/account_recon/` directory goes with it. M.3.2
+repoints ``default_l2_instance()`` from the (now-deleted)
+sasquatch_ar.yaml to the persona-neutral ``spec_example.yaml`` so the
+L1 dashboard's default behavior post-M.3 doesn't carry implicit
+Sasquatch flavor in production library code. Callers wanting the
+canonical Sasquatch fixture pass ``l2_instance=...`` explicitly with
+the loaded ``sasquatch_pr.yaml``.
 
-This module owns:
-- ``default_l2_instance()`` — loads + validates the canonical Sasquatch
-  AR L2 fixture from ``tests/l2/sasquatch_ar.yaml``. Default for the
-  build pipeline; callers MAY override (e.g., tests or alternative-
-  persona deployments) via the ``l2_instance`` kwarg on
-  ``build_account_recon_app``.
-- The path constant naming the test-side YAML location. M.5/M.6 will
-  move this to a published location (likely ``src/quicksight_gen/personas/``)
-  once the CLI-driven persona workflow lands; the constant is a single
-  source of truth that those substeps can update.
-
-Why a thin module: keeping the loader in its own file isolates the
-test-fixture-path detail (M.2.3-only concern) from the rest of the AR
-build code, so M.5/M.6 can swap the path without touching app.py.
+This module survives only until M.4.3 — when ``apps/account_recon/``
+deletes, callers will import the L1 dashboard's L2 bridge directly
+from wherever it lands (likely the L2 dashboard build picks the
+default from a CLI flag).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from quicksight_gen.common.l2 import L2Instance, load_instance, validate
+from quicksight_gen.common.l2 import L2Instance, load_instance
 
 
-# Path to the canonical Sasquatch AR L2 instance. Test fixture today;
-# M.5/M.6 will publish to a permanent location.
-_SASQUATCH_AR_YAML: Path = (
+# Path to the persona-neutral SPEC example L2 instance. Test fixture
+# today; M.5/M.6 will publish to a permanent location.
+_SPEC_EXAMPLE_YAML: Path = (
     Path(__file__).resolve().parents[4]
-    / "tests" / "l2" / "sasquatch_ar.yaml"
+    / "tests" / "l2" / "spec_example.yaml"
 )
 
 
 def default_l2_instance() -> L2Instance:
-    """Load + validate the canonical Sasquatch AR L2 instance.
+    """Load + validate the persona-neutral default L2 instance.
 
-    Used by ``build_account_recon_app`` when the caller doesn't supply
-    an ``l2_instance`` explicitly. Validation runs at load time so a
-    malformed fixture fails immediately rather than at first-use.
+    Used by ``build_l1_dashboard_app`` when the caller doesn't supply
+    an ``l2_instance`` explicitly. Returns ``spec_example`` (M.3.2
+    repoint) so production library code carries no implicit persona
+    flavor; pass ``l2_instance=load_instance("...sasquatch_pr.yaml")``
+    explicitly to render the canonical Sasquatch demo.
     """
-    instance = load_instance(_SASQUATCH_AR_YAML)
-    validate(instance)
-    return instance
+    return load_instance(_SPEC_EXAMPLE_YAML)

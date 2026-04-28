@@ -59,7 +59,7 @@ def test_subledger_drift_v2_targets_l1_drift_view(instance) -> None:
     `ar_subledger_balance_drift` view."""
     ds = build_subledger_balance_drift_dataset_v2(_CFG, instance)
     sql = _custom_sql(ds)
-    assert "FROM sasquatch_ar_drift" in sql
+    assert "FROM spec_example_drift" in sql
     assert "ar_subledger_balance_drift" not in sql
 
 
@@ -108,7 +108,7 @@ def test_subledger_drift_v2_drift_status_is_constant(instance) -> None:
 def test_ledger_drift_v2_targets_l1_ledger_drift_view(instance) -> None:
     ds = build_ledger_balance_drift_dataset_v2(_CFG, instance)
     sql = _custom_sql(ds)
-    assert "FROM sasquatch_ar_ledger_drift" in sql
+    assert "FROM spec_example_ledger_drift" in sql
     assert "ar_ledger_balance_drift" not in sql
 
 
@@ -145,7 +145,7 @@ def test_overdraft_v2_targets_l1_overdraft_view(instance) -> None:
     """New v6 dataset; no v5 standalone equivalent."""
     ds = build_overdraft_dataset_v2(_CFG, instance)
     sql = _custom_sql(ds)
-    assert "FROM sasquatch_ar_overdraft" in sql
+    assert "FROM spec_example_overdraft" in sql
 
 
 def test_overdraft_v2_contract_columns_match_builder(instance) -> None:
@@ -170,7 +170,7 @@ def test_all_v6_builders_use_l2_instance_prefix(instance) -> None:
         ds = builder(_CFG, instance)
         sql = _custom_sql(ds)
         # The Sasquatch instance prefix appears in every dataset's SQL.
-        assert f"FROM sasquatch_ar_" in sql, (
+        assert f"FROM spec_example_" in sql, (
             f"{builder.__name__}: SQL doesn't reference the L2 prefix"
         )
 

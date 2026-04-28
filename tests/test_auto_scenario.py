@@ -30,7 +30,7 @@ from quicksight_gen.common.l2.seed import emit_seed
 
 
 SPEC_YAML = Path(__file__).parent / "l2" / "spec_example.yaml"
-SASQUATCH_YAML = Path(__file__).parent / "l2" / "sasquatch_ar.yaml"
+SASQUATCH_YAML = Path(__file__).parent / "l2" / "sasquatch_pr.yaml"
 CANONICAL_TODAY = date(2030, 1, 1)
 
 
@@ -65,7 +65,7 @@ def test_auto_scenario_against_spec_example_covers_all_six_plant_kinds(
     assert report.omitted == ()
 
 
-def test_auto_scenario_against_sasquatch_ar_covers_all_six_plant_kinds(
+def test_auto_scenario_against_sasquatch_pr_covers_all_six_plant_kinds(
     sasquatch_instance,
 ) -> None:
     """The full AR fixture also has enough surface for full coverage."""

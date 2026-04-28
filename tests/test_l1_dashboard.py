@@ -57,8 +57,10 @@ def _sheet_by_name(app, name: str):
 # -- Build pipeline -----------------------------------------------------------
 
 
-def test_build_with_default_loads_sasquatch_ar() -> None:
-    """No kwarg → auto-load the canonical Sasquatch AR L2 fixture."""
+def test_build_with_default_loads_spec_example() -> None:
+    """No kwarg → auto-load the persona-neutral spec_example L2 fixture
+    (M.3.2 repointed the default away from sasquatch_ar so production
+    library code carries no implicit Sasquatch flavor)."""
     app = build_l1_dashboard_app(_CFG)
     assert app is not None
     assert app.name == "l1-dashboard"
@@ -94,7 +96,7 @@ def test_analysis_registered_with_l2_aware_name() -> None:
     deployments are distinguishable in the QuickSight UI."""
     app = build_l1_dashboard_app(_CFG)
     assert app.analysis is not None
-    assert "sasquatch_ar" in app.analysis.name
+    assert "spec_example" in app.analysis.name
 
 
 def test_dashboard_registered() -> None:
@@ -136,8 +138,8 @@ def test_getting_started_welcome_uses_l2_instance_description() -> None:
     assert len(gs.text_boxes) == 2
     welcome_xml = gs.text_boxes[0].content
     # The fixture's top-level description string is the body source.
-    assert "Sasquatch National Bank" in welcome_xml
-    assert "Cash Management Suite" in welcome_xml
+    # Default L2 instance is spec_example (M.3.2 repoint).
+    assert "Generic SPEC-shaped instance" in welcome_xml
 
 
 def test_getting_started_welcome_falls_back_when_l2_description_missing() -> None:
@@ -650,8 +652,9 @@ def test_todays_exceptions_footer_carries_l2_description() -> None:
     assert len(te.text_boxes) == 1
     footer_xml = te.text_boxes[0].content
     assert "Institution Context" in footer_xml
-    # Same Sasquatch fixture string the Getting Started welcome uses.
-    assert "Sasquatch National Bank" in footer_xml
+    # Same fixture string the Getting Started welcome uses (M.3.2:
+    # default L2 instance is spec_example).
+    assert "Generic SPEC-shaped instance" in footer_xml
 
 
 # -- Per-sheet filter controls (M.2b.3) --------------------------------------
@@ -1286,13 +1289,14 @@ def test_dashboard_emits_with_expected_id_suffix() -> None:
 
     The L2 instance prefix becomes the middle segment so multiple L2
     instances coexist in one QS account. The default L2 instance is
-    `sasquatch_ar`, so the full DashboardId is
-    `qs-gen-sasquatch_ar-l1-dashboard`.
+    `spec_example` (M.3.2 repointed from sasquatch_ar to a
+    persona-neutral default for production library code), so the
+    full DashboardId is `qs-gen-spec_example-l1-dashboard`.
     """
     app = build_l1_dashboard_app(_CFG)
     dashboard = app.emit_dashboard()
     assert dashboard.DashboardId.endswith("-l1-dashboard")
-    assert dashboard.DashboardId == "qs-gen-sasquatch_ar-l1-dashboard"
+    assert dashboard.DashboardId == "qs-gen-spec_example-l1-dashboard"
 
 
 # -- CLI smoke (M.2a.9) ------------------------------------------------------
@@ -1329,14 +1333,14 @@ class TestCli:
         # middle segment in their IDs (`<resource_prefix>-<l2_prefix>-...`).
         ds_dir = out / "datasets"
         for name in (
-            "qs-gen-sasquatch_ar-l1-drift-dataset.json",
-            "qs-gen-sasquatch_ar-l1-ledger-drift-dataset.json",
-            "qs-gen-sasquatch_ar-l1-overdraft-dataset.json",
-            "qs-gen-sasquatch_ar-l1-limit-breach-dataset.json",
-            "qs-gen-sasquatch_ar-l1-todays-exceptions-dataset.json",
-            "qs-gen-sasquatch_ar-l1-daily-statement-summary-dataset.json",
-            "qs-gen-sasquatch_ar-l1-daily-statement-transactions-dataset.json",
-            "qs-gen-sasquatch_ar-l1-transactions-dataset.json",
+            "qs-gen-spec_example-l1-drift-dataset.json",
+            "qs-gen-spec_example-l1-ledger-drift-dataset.json",
+            "qs-gen-spec_example-l1-overdraft-dataset.json",
+            "qs-gen-spec_example-l1-limit-breach-dataset.json",
+            "qs-gen-spec_example-l1-todays-exceptions-dataset.json",
+            "qs-gen-spec_example-l1-daily-statement-summary-dataset.json",
+            "qs-gen-spec_example-l1-daily-statement-transactions-dataset.json",
+            "qs-gen-spec_example-l1-transactions-dataset.json",
         ):
             assert (ds_dir / name).exists(), f"missing {name}"
 

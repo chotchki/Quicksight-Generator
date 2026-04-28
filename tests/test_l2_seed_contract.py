@@ -116,7 +116,7 @@ def _write_temp(text: str) -> Path:
 # failures).
 L2_INSTANCES = [
     pytest.param(L2_DIR / "spec_example.yaml", id="spec_example"),
-    pytest.param(L2_DIR / "sasquatch_ar.yaml", id="sasquatch_ar"),
+    pytest.param(L2_DIR / "sasquatch_pr.yaml", id="sasquatch_pr"),
     pytest.param(
         _fuzz_yaml_path(),
         id=f"fuzz-seed-{FUZZ_SEED}",
