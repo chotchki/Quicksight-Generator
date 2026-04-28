@@ -271,6 +271,14 @@ class RailFiringPlant:
     The emit helper unions them with auto-derived TransferKey values
     so the resulting JSON column is well-formed for the L2 Flow Tracing
     metadata cascade.
+
+    ``template_name`` (M.4.2a) is set when this firing's rail is a
+    ``leg_rails`` entry of some TransferTemplate — the L2 Flow Tracing
+    ``tt-instances`` + ``tt-legs`` datasets read rows by
+    ``template_name``, so leg-rail broad firings need this field
+    populated to surface on the Transfer Templates sheet alongside
+    the structured ``TransferTemplatePlant`` firings. ``None`` for
+    standalone rails (most of them).
     """
 
     rail_name: Identifier
@@ -281,6 +289,7 @@ class RailFiringPlant:
     account_id_b: Identifier | None = None
     transfer_parent_id: str | None = None
     extra_metadata: tuple[tuple[str, str], ...] = ()
+    template_name: Identifier | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1222,6 +1231,7 @@ def _emit_rail_firing_rows(
                 origin=src_origin,
                 metadata=metadata,
                 transfer_parent_id=p.transfer_parent_id,
+                template_name=p.template_name,
             ),
             _txn_row(
                 id_=txn_id,
@@ -1239,6 +1249,7 @@ def _emit_rail_firing_rows(
                 origin=dst_origin,
                 metadata=metadata,
                 transfer_parent_id=p.transfer_parent_id,
+                template_name=p.template_name,
             ),
         ]
 
@@ -1273,6 +1284,7 @@ def _emit_rail_firing_rows(
             origin=leg_origin,
             metadata=metadata,
             transfer_parent_id=p.transfer_parent_id,
+            template_name=p.template_name,
         ),
     ]
 

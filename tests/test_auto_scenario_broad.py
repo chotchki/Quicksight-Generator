@@ -72,23 +72,31 @@ def test_l1_mode_emits_no_rail_firing_plants(instance: L2Instance) -> None:
     assert report.scenario.rail_firing_plants == ()
 
 
-def test_broad_mode_emits_only_rail_firing_plants(instance: L2Instance) -> None:
-    """Broad-only mode zeros out the L1 invariant plants but keeps the
-    rail_firing_plants."""
+def test_broad_mode_emits_no_l1_invariant_plants(instance: L2Instance) -> None:
+    """Broad-only mode zeros out the L1 SHOULD-violation plants. M.4.2a
+    re-categorized ``transfer_template_plants`` as a broad-mode plant
+    (they're shape-driven, not invariant-violation-driven), so they're
+    now expected in broad mode alongside ``rail_firing_plants``."""
     report = default_scenario_for(
         instance, today=CANONICAL_TODAY, mode="broad",
     )
     s = report.scenario
+    # The 6 SHOULD-violation plant kinds — none in broad mode.
     assert s.drift_plants == ()
     assert s.overdraft_plants == ()
     assert s.limit_breach_plants == ()
     assert s.stuck_pending_plants == ()
     assert s.stuck_unbundled_plants == ()
     assert s.supersession_plants == ()
-    assert s.transfer_template_plants == ()
-    # At least one rail with a materialized account exists in every
-    # fixture; broad mode plants firings for it.
+    # Shape-driven plants — both expected in broad mode.
     assert len(s.rail_firing_plants) > 0
+    # transfer_template_plants is non-empty when the YAML declares any
+    # template whose first leg_rail is a TwoLegRail (the M.3.10g picker
+    # constraint). spec_example's MerchantSettlementCycle's first
+    # leg_rail is SingleLegRail SubledgerCharge → omitted; sasquatch_pr
+    # + kitchen pass at least one TwoLegRail-first template through.
+    # So we just assert the field is the broad layer's responsibility,
+    # not specifically that it's non-empty per-instance.
 
 
 def test_l1_plus_broad_mode_emits_both_layers(instance: L2Instance) -> None:
@@ -222,6 +230,48 @@ def test_broad_mode_metadata_values_per_rail_per_firing(
 # ---------------------------------------------------------------------------
 # Required chain linkage
 # ---------------------------------------------------------------------------
+
+
+def test_broad_mode_sets_template_name_on_leg_rail_firings(
+    instance: L2Instance,
+) -> None:
+    """M.4.2a: a broad-mode RailFiringPlant for a rail that's a leg_rail
+    of some TransferTemplate carries that template's name in the
+    `template_name` field. Standalone rails (not in any template's
+    leg_rails) carry None.
+
+    This is the M.4.2a fix that closes the L2 Flow Tracing Transfer
+    Templates sheet visibility gap — without `template_name` set, the
+    `tt-instances` + `tt-legs` datasets miss broad-mode firings of
+    leg_rails entirely."""
+    report = default_scenario_for(
+        instance, today=CANONICAL_TODAY, mode="broad",
+    )
+    leg_rail_to_template: dict[str, str] = {}
+    for tt in instance.transfer_templates:
+        for leg in tt.leg_rails:
+            # First template wins — matches the deterministic-by-name
+            # tie-break in the broad picker.
+            leg_rail_to_template.setdefault(str(leg), str(tt.name))
+    for p in report.scenario.rail_firing_plants:
+        # Skip chain children (their template_name handling follows
+        # the chain child rail's own leg_rails membership, exercised
+        # by the same logic).
+        if p.transfer_parent_id is not None:
+            continue
+        rail_name = str(p.rail_name)
+        expected = leg_rail_to_template.get(rail_name)
+        if expected is not None:
+            assert p.template_name is not None and str(p.template_name) == expected, (
+                f"rail {rail_name!r} is a leg_rail of {expected!r} but "
+                f"its broad firing carries template_name={p.template_name!r}"
+            )
+        else:
+            assert p.template_name is None, (
+                f"rail {rail_name!r} is NOT a leg_rail of any template "
+                f"but its broad firing carries template_name="
+                f"{p.template_name!r}"
+            )
 
 
 def test_broad_mode_links_required_chain_children() -> None:

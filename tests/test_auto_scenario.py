@@ -78,8 +78,14 @@ def test_auto_scenario_against_sasquatch_pr_covers_all_six_plant_kinds(
     """The full AR fixture also has enough surface for full coverage.
     Sasquatch's MerchantSettlementCycle's first leg_rail is a TwoLeg
     (MerchantCardSale), so the TT plant fires; InternalTransferCycle's
-    first leg_rail is SingleLeg, so it's a known omission."""
-    report = default_scenario_for(sasquatch_instance, today=CANONICAL_TODAY)
+    first leg_rail is SingleLeg, so it's a known omission. M.4.2a moved
+    `transfer_template_plants` from the L1 layer to the broad layer,
+    so this 'full coverage' check uses ``mode='l1_plus_broad'`` to
+    pick up both layers — the original 6 SHOULD-violation plants AND
+    the broad-layer TT plants."""
+    report = default_scenario_for(
+        sasquatch_instance, today=CANONICAL_TODAY, mode="l1_plus_broad",
+    )
     sc = report.scenario
     assert len(sc.drift_plants) >= 1
     assert len(sc.overdraft_plants) >= 1

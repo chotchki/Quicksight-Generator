@@ -567,13 +567,13 @@ def test_seed_columns_match_schema_v6_documented_set(
 
 _BROAD_MODE_HASHES: dict[tuple[str, str], str] = {
     ("spec_example", "broad"):
-        "1e64e28c99ef94ef2ccc533b5115288d32a53a4fa521e2c4e95ce540d41cf56f",
+        "a5a2656614d1ac821533b206508440e16b5055b263ce733059f472b58506354e",
     ("spec_example", "l1_plus_broad"):
-        "ada02b5c55b6f23a72eeb2c794dfc7d699810d0a224f96390dd404d2ac746231",
+        "ab700f03e0b72d4be201b8eca49242eddac4f7dc695b6af72ecbd54718fd86bb",
     ("sasquatch_pr", "broad"):
-        "a7b5c5f2f07b17c5e13eb8eafc6195e3e4b2072262016670304e1172b68fb72c",
+        "3b05375c0b2e61077b6f87f3b3baa448f77d92b87d6b80e20e71a1167d457cb2",
     ("sasquatch_pr", "l1_plus_broad"):
-        "4aa476afa5ffce7dbf2d96c1c4e856fc37e750057ff4e1bf2e7c08145a457d9f",
+        "2c9a325a71674562041ea65f8c2379d9e305781c6a1d0fb18eda2a48cc13a93f",
 }
 
 

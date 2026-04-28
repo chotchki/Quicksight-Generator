@@ -368,10 +368,16 @@ def default_scenario_for(
         rail_firing_plants = ()
 
     # -- Mode-aware plant assembly ----------------------------------
-    # Broad-only mode zeros out the L1 invariant tuples but keeps the
-    # template instances + reference date — cust1/cust2 are still the
-    # source of customer-side account ids the broad picker resolves
+    # Broad-only mode zeros out the L1 SHOULD-violation tuples but keeps
+    # the template instances + reference date — cust1/cust2 are still
+    # the source of customer-side account ids the broad picker resolves
     # against, so they must stay in the ScenarioPlant either way.
+    #
+    # M.4.2a re-categorization: ``transfer_template_plants`` are
+    # shape-driven ("populate the L2FT Transfer Templates sheet") not
+    # invariant-violation-driven, so they belong with the broad layer
+    # alongside ``rail_firing_plants``. Pure ``l1_invariants`` mode now
+    # plants only the 7 SHOULD-violation kinds.
     scenario = ScenarioPlant(
         template_instances=(cust1, cust2),
         drift_plants=drift_plants if include_l1 else (),
@@ -380,7 +386,7 @@ def default_scenario_for(
         stuck_pending_plants=stuck_pending_plants if include_l1 else (),
         stuck_unbundled_plants=stuck_unbundled_plants if include_l1 else (),
         supersession_plants=supersession_plants if include_l1 else (),
-        transfer_template_plants=transfer_template_plants if include_l1 else (),
+        transfer_template_plants=transfer_template_plants if include_broad else (),
         rail_firing_plants=rail_firing_plants,
         today=today_ref,
     )
@@ -460,6 +466,24 @@ def _build_broad_rail_firings(
                 continue
             account_ids = (leg_id, None)
 
+        # Resolve which TransferTemplate this rail belongs to (M.4.2a).
+        # ``template_name`` lets the L2FT Transfer Templates sheet's
+        # tt-instances + tt-legs datasets see broad rail firings of
+        # leg_rails as ad-hoc legs of the template they belong to,
+        # alongside the structured TransferTemplatePlant firings.
+        # When a rail appears in multiple templates' leg_rails (rare
+        # but legal per SPEC), pick the first by name for determinism.
+        containing_templates = sorted(
+            (
+                tt.name for tt in instance.transfer_templates
+                if rail.name in tt.leg_rails
+            ),
+            key=str,
+        )
+        template_name_for_rail: Identifier | None = (
+            containing_templates[0] if containing_templates else None
+        )
+
         # Build extra_metadata for non-TransferKey fields. Per PLAN
         # cleanup: respect the rail's declared metadata_keys; values
         # are per-(rail, firing) unique so the L2 Flow Tracing
@@ -491,6 +515,7 @@ def _build_broad_rail_firings(
                 account_id_a=account_ids[0],
                 account_id_b=account_ids[1],
                 extra_metadata=extra,
+                template_name=template_name_for_rail,
             ))
 
     # Required chain children — pair child firings to parent firings.
