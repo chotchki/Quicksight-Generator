@@ -34,6 +34,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from quicksight_gen.apps.l2_flow_tracing.datasets import (
+    DS_RAILS,
     build_all_l2_flow_tracing_datasets,
 )
 from quicksight_gen.common import rich_text as rt
@@ -44,6 +45,8 @@ from quicksight_gen.common.theme import get_preset
 from quicksight_gen.common.tree import (
     Analysis,
     App,
+    CellAccentText,
+    Dataset,
     Sheet,
     TextBox,
 )
@@ -143,9 +146,11 @@ def build_l2_flow_tracing_app(
         name=_analysis_name(cfg, l2_instance),
     ))
 
-    # No datasets at M.3.4 — the call exists so the CLI integration is
-    # uniform; M.3.5+ populates the list.
-    for ds in build_all_l2_flow_tracing_datasets(cfg, l2_instance):
+    # Tree Dataset refs keyed by visual_identifier — populators pull
+    # by stable name. The CLI writes the AWS-shape DataSets separately
+    # (this is the L1 dashboard's split-of-concern pattern).
+    datasets = _l2ft_datasets(cfg, l2_instance)
+    for ds in datasets.values():
         app.add_dataset(ds)
 
     getting_started = analysis.add_sheet(Sheet(
@@ -174,13 +179,7 @@ def build_l2_flow_tracing_app(
     ))
 
     _populate_getting_started(cfg, getting_started, l2_instance)
-    _populate_placeholder(
-        cfg, rails_sheet,
-        title=_RAILS_TITLE,
-        body=_RAILS_DESCRIPTION,
-        substep="M.3.5",
-        text_box_id="l2ft-rails-placeholder",
-    )
+    _populate_rails_sheet(cfg, rails_sheet, datasets=datasets)
     _populate_placeholder(
         cfg, chains_sheet,
         title=_CHAINS_TITLE,
@@ -201,6 +200,30 @@ def build_l2_flow_tracing_app(
         name=_analysis_name(cfg, l2_instance),
     )
     return app
+
+
+def _l2ft_datasets(
+    cfg: Config, l2_instance: L2Instance,
+) -> dict[str, Dataset]:
+    """Build every L2 Flow Tracing dataset and return tree-ref Datasets
+    keyed by visual_identifier.
+
+    Each AWS DataSet's ``DataSetId`` becomes the tree Dataset's ARN
+    path component; the visual identifier (the key passed to
+    `build_dataset()`) becomes the tree Dataset's ``identifier`` field.
+    The contract is registered as a side-effect of `build_dataset()`,
+    so subsequent ``ds["col"]`` accesses validate.
+
+    Mirrors `apps/l1_dashboard/app.py::_l1_datasets` pattern — the CLI
+    writes the AWS shapes; this builds the typed tree refs for visual
+    wiring on the App.
+    """
+    aws_datasets = build_all_l2_flow_tracing_datasets(cfg, l2_instance)
+    visual_ids = [DS_RAILS]  # M.3.6+ extends in lockstep with the dataset list
+    return {
+        vid: Dataset(identifier=vid, arn=cfg.dataset_arn(aws.DataSetId))
+        for vid, aws in zip(visual_ids, aws_datasets)
+    }
 
 
 def _default_l2_instance() -> L2Instance:
@@ -253,6 +276,77 @@ def _populate_getting_started(
             ),
         ),
         width=36,
+    )
+
+
+def _populate_rails_sheet(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    datasets: dict[str, Dataset],
+) -> None:
+    """Rails sheet — one-row-per-Rail table joining L2 declaration to
+    runtime activity (M.3.5).
+
+    Static columns come from the L2 instance (inlined in the dataset's
+    SQL CTE); runtime columns come from the prefixed
+    ``<prefix>_current_transactions`` matview LEFT JOINed by
+    ``rail_name``. Rails with zero activity in the window show
+    ``total_postings = 0`` — they're the seeds for the L2.3 'Dead
+    rails' exception (M.3.7).
+
+    Visual layout: short header text, then one wide unaggregated table.
+    The accent text on ``rail_name`` signals the column will be a drill
+    anchor at M.3.7 (no drill action wired yet — drill plumbing lands
+    when the per-Rail postings detail destination exists).
+    """
+    accent = get_preset(cfg.theme_preset).accent
+    ds_rails = datasets[DS_RAILS]
+
+    sheet.layout.row(height=8).add_text_box(
+        TextBox(
+            text_box_id="l2ft-rails-header",
+            content=rt.text_box(
+                rt.subheading("Rails", color=accent),
+                rt.BR,
+                rt.body(
+                    "One row per declared Rail. Static columns reflect "
+                    "the L2 declaration; runtime columns count what "
+                    "actually landed in the window. A row with zero "
+                    "Total Postings means the rail was declared but "
+                    "never fired — the L2.3 'Dead rails' exception "
+                    "surfaces those (M.3.7)."
+                ),
+            ),
+        ),
+        width=36,
+    )
+
+    rail_name_col = ds_rails["rail_name"].dim()
+    sheet.layout.row(height=18).add_table(
+        width=36,
+        title="Declared Rails — Shape and Activity",
+        subtitle=(
+            "Static columns from the L2 instance; runtime counts from "
+            "the prefixed transactions matview joined by rail_name."
+        ),
+        columns=[
+            rail_name_col,
+            ds_rails["transfer_type"].dim(),
+            ds_rails["leg_shape"].dim(),
+            ds_rails["source_role"].dim(),
+            ds_rails["destination_role"].dim(),
+            ds_rails["leg_role"].dim(),
+            ds_rails["max_pending_age"].dim(),
+            ds_rails["max_unbundled_age"].dim(),
+            ds_rails["posted_requirements"].dim(),
+            ds_rails["total_postings"].numerical(),
+            ds_rails["pending_count"].numerical(),
+            ds_rails["unbundled_count"].numerical(),
+        ],
+        conditional_formatting=[
+            CellAccentText(on=rail_name_col, color=accent),
+        ],
     )
 
 
