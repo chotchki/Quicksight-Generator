@@ -184,12 +184,20 @@ class ParameterDropdown:
     ``hidden_select_all=True`` suppresses the "Select all" entry —
     needed for SINGLE_SELECT dropdowns where empty/All semantics don't
     apply (e.g. a Sankey anchor that needs exactly one value).
+
+    ``cascade_source`` makes this dropdown depend on another dropdown:
+    when ``cascade_source`` changes value, QS refreshes THIS dropdown's
+    options. Required for cascading filters even when the source
+    dataset's params are bridged via ``MappedDataSetParameters`` —
+    QS won't refresh the dropdown widget without explicit UI-level
+    cascade wiring (M.3.10c finding).
     """
     parameter: ParameterDeclLike
     title: str
     type: Literal["SINGLE_SELECT", "MULTI_SELECT"] = "SINGLE_SELECT"
     selectable_values: SelectableValues | None = None
     hidden_select_all: bool = False
+    cascade_source: "ParameterDropdown | None" = None
     control_id: str | AutoResolved = AUTO
 
     _AUTO_KIND: ClassVar[str] = "dropdown"
@@ -211,6 +219,38 @@ class ParameterDropdown:
             display_options = {
                 "SelectAllOptions": {"Visibility": "HIDDEN"},
             }
+
+        cascading_config = None
+        if self.cascade_source is not None:
+            from quicksight_gen.common.models import (
+                CascadingControlConfiguration,
+                CascadingControlSource,
+                ColumnIdentifier,
+            )
+            assert not isinstance(self.cascade_source.control_id, _AutoSentinel), (
+                "cascade_source's control_id wasn't resolved before this "
+                "control's emit — auto-ID resolution must visit the source "
+                "control first."
+            )
+            # ColumnToMatch is required by QS when SourceControls is set
+            # — even for parameter-bridged cascades where the column
+            # isn't really used for filtering. Default to the linked
+            # dataset's source column (the one populating the
+            # dropdown's options) — that's the natural "what this
+            # control varies on" answer.
+            column_to_match = None
+            if isinstance(self.selectable_values, LinkedValues):
+                column_to_match = ColumnIdentifier(
+                    DataSetIdentifier=self.selectable_values.dataset.identifier,
+                    ColumnName=self.selectable_values.column_name,
+                )
+            cascading_config = CascadingControlConfiguration(
+                SourceControls=[CascadingControlSource(
+                    SourceSheetControlId=self.cascade_source.control_id,
+                    ColumnToMatch=column_to_match,
+                )],
+            )
+
         return ParameterControl(
             Dropdown=ModelParameterDropDownControl(
                 ParameterControlId=self.control_id,
@@ -222,6 +262,7 @@ class ParameterDropdown:
                     if self.selectable_values is not None else None
                 ),
                 DisplayOptions=display_options,
+                CascadingControlConfiguration=cascading_config,
             ),
         )
 

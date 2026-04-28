@@ -245,13 +245,16 @@ class Sheet:
         type: Literal["SINGLE_SELECT", "MULTI_SELECT"] = "SINGLE_SELECT",
         selectable_values: SelectableValues | None = None,
         hidden_select_all: bool = False,
+        cascade_source: ParameterDropdown | None = None,
         control_id: str | AutoResolved = AUTO,
     ) -> ParameterDropdown:
         """Construct + register a parameter dropdown control on this sheet."""
         ctrl = ParameterDropdown(
             parameter=parameter, title=title, type=type,
             selectable_values=selectable_values,
-            hidden_select_all=hidden_select_all, control_id=control_id,
+            hidden_select_all=hidden_select_all,
+            cascade_source=cascade_source,
+            control_id=control_id,
         )
         self.parameter_controls.append(ctrl)
         return ctrl

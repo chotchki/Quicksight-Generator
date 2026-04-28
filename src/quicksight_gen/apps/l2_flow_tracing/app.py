@@ -459,7 +459,7 @@ def _populate_rails_sheet(
         ],
     ))
     declared_keys = declared_metadata_keys(l2_instance)
-    sheet.add_parameter_dropdown(
+    key_dropdown = sheet.add_parameter_dropdown(
         parameter=p_meta_key,
         title="Metadata Key",
         type="SINGLE_SELECT",
@@ -477,6 +477,12 @@ def _populate_rails_sheet(
             dataset=ds_meta_values,
             column_name="metadata_value",
         ),
+        # Cascade: when Key changes, refresh THIS dropdown's options.
+        # Required even though MappedDataSetParameters bridges the
+        # Key analysis-param to the meta-values dataset's pKey
+        # parameter — QS won't refresh the dropdown widget without
+        # this UI-level dependency declaration (M.3.10c finding).
+        cascade_source=key_dropdown,
     )
 
     # Transactions table — the postings dataset's SQL handles the

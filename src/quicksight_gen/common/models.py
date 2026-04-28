@@ -955,6 +955,13 @@ class ParameterDropDownControl:
     # dropdowns where empty/All semantics don't apply (e.g., a Sankey
     # anchor that needs exactly one value to render).
     DisplayOptions: dict[str, Any] | None = None
+    # UI-level cascade wiring: when any control listed in
+    # SourceControls changes, refresh THIS control's options. Without
+    # this, dataset-parameter-bridged cascades (MappedDataSetParameters)
+    # don't trigger dropdown refresh — the dataset re-queries on
+    # parameter change but the control's cached snapshot of options
+    # stays stale.
+    CascadingControlConfiguration: CascadingControlConfiguration | None = None
 
 
 @dataclass
@@ -1091,6 +1098,44 @@ class MappedDataSetParameter:
     """
     DataSetIdentifier: str
     DataSetParameterName: str
+
+
+@dataclass
+class ColumnIdentifier:
+    """References a column on a specific dataset by identifier.
+    Used by ``CascadingControlSource.ColumnToMatch``."""
+    DataSetIdentifier: str
+    ColumnName: str
+
+
+@dataclass
+class CascadingControlSource:
+    """One source control in a CascadingControlConfiguration.
+
+    ``SourceSheetControlId`` is the upstream control's ID; QS refreshes
+    THIS control whenever that source control's value changes.
+    ``ColumnToMatch`` is the documented value-match hint (used by
+    column-on-column cascades); for parameter-bridged cascades it can
+    be the dependent control's own source column — it doubles as a
+    "this column is the one that varies with the source" marker.
+    """
+    SourceSheetControlId: str | None = None
+    ColumnToMatch: ColumnIdentifier | None = None
+
+
+@dataclass
+class CascadingControlConfiguration:
+    """UI-level cascade wiring: tells QS to refresh THIS control's
+    options when any of the listed source controls change.
+
+    Required for the M.3.10c metadata cascade — without this, even
+    with `MappedDataSetParameters` correctly bridging analysis params
+    to dataset params, QS won't refresh the dependent dropdown's
+    options when the source dropdown changes (the dataset query
+    substitution stays "pending" until something else triggers a
+    refresh, like a sheet reload).
+    """
+    SourceControls: list[CascadingControlSource] | None = None
 
 
 @dataclass
