@@ -101,31 +101,32 @@ def test_chains_sheet_visuals_invariant(l2_instance: L2Instance) -> None:
     assert counts == Counter(["Table"])
 
 
-def test_l2_exceptions_sheet_visuals_invariant(
+def test_l2_exceptions_sheet_visuals_invariant_M3_10l(
     l2_instance: L2Instance,
 ) -> None:
-    """L2 Exceptions: 12 KPIs (2 per section × 6 sections) + 6 Tables
-    — the section count doesn't bend with the L2."""
+    """M.3.10l: L2 Exceptions sheet collapses to 1 KPI + 1 BarChart +
+    1 Table backed by the unified-exceptions dataset (mirrors L1's
+    Today's Exceptions). Pre-M.3.10l shape was 12 KPIs + 6 Tables
+    across 6 vertical sections."""
     app = build_l2_flow_tracing_app(_CFG, l2_instance=l2_instance)
     exc = next(s for s in app.analysis.sheets if s.name == "L2 Exceptions")
     counts = Counter(type(v).__name__ for v in exc.visuals)
-    assert counts.get("KPI", 0) == 12
-    assert counts.get("Table", 0) == 6
+    assert counts == Counter(["KPI", "BarChart", "Table"])
 
 
 # -- Dataset count + ID prefix invariants -----------------------------------
 
 
-def test_dataset_count_is_eleven_per_instance(
+def test_dataset_count_is_six_per_instance(
     l2_instance: L2Instance,
 ) -> None:
-    """M.3.10f stabilizes at 11 fixed datasets per L2 instance —
+    """M.3.10l stabilizes at 6 fixed datasets per L2 instance —
     postings + meta-values (Rails cascade) + chain-instances (Chains
-    explorer) + tt-instances + tt-legs (Transfer Templates) + 6 L2
-    exceptions. M.3.10d dropped the chains aggregate dataset; M.3.10f
-    added the Transfer Templates sheet's two datasets."""
+    explorer) + tt-instances + tt-legs (Transfer Templates) +
+    unified-exceptions (L2 Exceptions). M.3.10l replaced 6 separate
+    L2 exception datasets with one UNION-ALL dataset."""
     app = build_l2_flow_tracing_app(_CFG, l2_instance=l2_instance)
-    assert len(app.datasets) == 11
+    assert len(app.datasets) == 6
 
 
 def test_every_dataset_id_carries_l2_prefix(

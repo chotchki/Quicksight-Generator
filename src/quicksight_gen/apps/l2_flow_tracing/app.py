@@ -35,16 +35,11 @@ from dataclasses import replace
 
 from quicksight_gen.apps.l2_flow_tracing.datasets import (
     DS_CHAIN_INSTANCES,
-    DS_EXC_CHAIN_ORPHANS,
-    DS_EXC_DEAD_BUNDLES_ACTIVITY,
-    DS_EXC_DEAD_LIMIT_SCHEDULES,
-    DS_EXC_DEAD_METADATA,
-    DS_EXC_DEAD_RAILS,
-    DS_EXC_UNMATCHED_TRANSFER_TYPE,
     DS_META_VALUES,
     DS_POSTINGS,
     DS_TT_INSTANCES,
     DS_TT_LEGS,
+    DS_UNIFIED_L2_EXCEPTIONS,
     META_KEY_ALL_SENTINEL,
     META_VALUE_PLACEHOLDER_SENTINEL,
     build_all_l2_flow_tracing_datasets,
@@ -54,6 +49,7 @@ from quicksight_gen.apps.l2_flow_tracing.datasets import (
 )
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
+from quicksight_gen.common.dataset_contract import ColumnShape
 from quicksight_gen.common.ids import ParameterName, SheetId
 from quicksight_gen.common.l2 import L2Instance, load_instance
 from quicksight_gen.common.models import DateTimeDefaultValues
@@ -61,10 +57,14 @@ from quicksight_gen.common.theme import get_preset
 from quicksight_gen.common.tree import (
     Analysis,
     App,
+    CalcField,
     CategoryFilter,
     CellAccentText,
     Dataset,
     DateTimeParam,
+    Drill,
+    DrillParam,
+    DrillResetSentinel,
     FilterGroup,
     LinkedValues,
     Sheet,
@@ -82,6 +82,23 @@ SHEET_RAILS = SheetId("l2ft-sheet-rails")
 SHEET_CHAINS = SheetId("l2ft-sheet-chains")
 SHEET_TRANSFER_TEMPLATES = SheetId("l2ft-sheet-transfer-templates")
 SHEET_L2_EXCEPTIONS = SheetId("l2ft-sheet-l2-exceptions")
+
+
+# M.3.10m — drill from the L2 Exceptions table to the per-rail or
+# per-chain explorer. Two parameters mirror the L1 dashboard's
+# sentinel-pattern drill machinery: default '__ALL__' acts as a
+# "no narrowing" pass-through; a real value sets the destination
+# sheet's filter to that one rail / chain parent. The 2 drills
+# (DATA_POINT_MENU triggers) appear as right-click menu items on
+# every row of the L2 Exceptions table.
+P_L2FT_RAIL_DRILL = ParameterName("pL2ftRailDrill")
+P_L2FT_CHAIN_DRILL = ParameterName("pL2ftChainDrill")
+_DRILL_RESET_SENTINEL = "__ALL__"
+_DP_RAIL_DRILL = DrillParam(P_L2FT_RAIL_DRILL, ColumnShape.L2_DECLARED_NAME)
+_DP_CHAIN_DRILL = DrillParam(
+    P_L2FT_CHAIN_DRILL, ColumnShape.L2_DECLARED_NAME,
+)
+_L2FT_DRILL_RESET_PARAMS = (_DP_RAIL_DRILL, _DP_CHAIN_DRILL)
 
 
 _GETTING_STARTED_NAME = "Getting Started"
@@ -135,13 +152,15 @@ _TRANSFER_TEMPLATES_DESCRIPTION = (
 _L2_EXCEPTIONS_NAME = "L2 Exceptions"
 _L2_EXCEPTIONS_TITLE = "L2 Hygiene Exceptions"
 _L2_EXCEPTIONS_DESCRIPTION = (
-    "Six L2-shaped exception kinds the L1 dashboard doesn't surface — "
-    "each one is a 'your L2 declaration says X but the runtime data "
-    "disagrees' signal. Distinct visual styling from the L1 Exceptions "
-    "tab (different accent shade, leading 'L2:' prefix on titles) so "
-    "analysts don't confuse the two surfaces. Sections: Chain orphans, "
-    "Unmatched transfer_type, Dead rails, Dead bundles_activity, "
-    "Dead metadata declarations, Dead LimitSchedules."
+    "All six L2 hygiene checks unified into one row-per-violation "
+    "view. KPI = total open violations; bar chart breaks down by "
+    "check_type so you see which check kind dominates today; the "
+    "detail table sorts by magnitude (descending) so the worst "
+    "offenders surface first. Each check_type captures a "
+    "'declaration vs runtime' mismatch the L1 dashboard doesn't "
+    "catch — Chain Orphans, Unmatched Transfer Type, Dead Rails, "
+    "Dead Bundles Activity, Dead Metadata Declarations, Dead Limit "
+    "Schedules."
 )
 
 
@@ -234,7 +253,22 @@ def build_l2_flow_tracing_app(
         cfg, transfer_templates_sheet,
         analysis=analysis, datasets=datasets, l2_instance=l2_instance,
     )
-    _populate_l2_exceptions_sheet(cfg, l2_exceptions_sheet, datasets=datasets)
+    # M.3.10m — declare the 2 drill parameters + sentinel-pattern
+    # filter groups on the destination sheets (Rails / Chains) BEFORE
+    # populating the L2 Exceptions sheet, since the Exceptions
+    # populator wires drill actions referencing both params.
+    _wire_l2ft_drill_filter_groups(
+        analysis,
+        datasets=datasets,
+        rails_sheet=rails_sheet,
+        chains_sheet=chains_sheet,
+    )
+    _populate_l2_exceptions_sheet(
+        cfg, l2_exceptions_sheet,
+        datasets=datasets,
+        rails_sheet=rails_sheet,
+        chains_sheet=chains_sheet,
+    )
 
     app.create_dashboard(
         dashboard_id_suffix="l2-flow-tracing",
@@ -263,22 +297,18 @@ def _l2ft_datasets(
     # Order matches `build_all_l2_flow_tracing_datasets`. M.3.10c
     # dropped DS_RAILS + the 28 per-key dropdowns; replaced with
     # DS_POSTINGS + DS_META_VALUES driving the cascade. M.3.10d
-    # swapped DS_CHAINS (aggregated edges) for DS_CHAIN_INSTANCES
-    # (per parent firing) backing the chains explorer. M.3.10f adds
-    # DS_TT_INSTANCES (per shared Transfer) + DS_TT_LEGS (per leg)
-    # to back the new Transfer Templates sheet (Sankey + Table).
+    # swapped DS_CHAINS (aggregated edges) for DS_CHAIN_INSTANCES.
+    # M.3.10f added DS_TT_INSTANCES + DS_TT_LEGS for the Transfer
+    # Templates sheet. M.3.10l replaced the 6 separate L2 exception
+    # datasets with one DS_UNIFIED_L2_EXCEPTIONS (mirrors L1's
+    # todays-exceptions pattern).
     visual_ids = [
         DS_POSTINGS,
         DS_META_VALUES,
         DS_CHAIN_INSTANCES,
         DS_TT_INSTANCES,
         DS_TT_LEGS,
-        DS_EXC_CHAIN_ORPHANS,
-        DS_EXC_UNMATCHED_TRANSFER_TYPE,
-        DS_EXC_DEAD_RAILS,
-        DS_EXC_DEAD_BUNDLES_ACTIVITY,
-        DS_EXC_DEAD_METADATA,
-        DS_EXC_DEAD_LIMIT_SCHEDULES,
+        DS_UNIFIED_L2_EXCEPTIONS,
     ]
     return {
         vid: Dataset(identifier=vid, arn=cfg.dataset_arn(aws.DataSetId))
@@ -734,10 +764,11 @@ def _populate_transfer_templates_sheet(
        tt-instances + tt-legs (which both carry the column).
     2. **Template** — multi-select ``CategoryFilter`` on
        ``template_name``. Same ``ALL_DATASETS`` shape.
-    3. **Net Status** — multi-select ``CategoryFilter`` on
-       ``net_status`` (Balanced / Imbalanced) — tt-instances only
-       (per-firing balance check). Filtering to 'Imbalanced' narrows
-       the table to bundles failing the L1 Conservation invariant.
+    3. **Completion** — multi-select ``CategoryFilter`` on
+       ``completion_status`` (Complete / Imbalanced / Orphaned) —
+       tt-instances only (per-firing balance + chain-completion
+       check). Filter narrows the table to bundles by their L1 +
+       L2 outcome.
     4. **Metadata Key** — single-select ``ParameterDropdown`` with
        ``StaticValues`` (the L2's declared keys + ``__ALL__``
        sentinel). Mapped to ``pKey`` on BOTH tt-instances + tt-legs
@@ -803,24 +834,26 @@ def _populate_transfer_templates_sheet(
     fg_template.scope_sheet(sheet)
     sheet.add_filter_dropdown(filter=template_filter, title="Template")
 
-    # 4. Net Status — multi-select on the computed net_status column.
-    # Single-dataset (tt-instances only — per-firing balance concept;
-    # the Sankey aggregates per-edge so net_status would be an
-    # ambiguous attribution at the leg level).
-    net_status_filter = CategoryFilter.with_values(
-        filter_id="filter-l2ft-tt-net-status",
+    # 4. Completion — multi-select on the per-firing completion_status
+    # column (Complete / Imbalanced / Orphaned). M.3.10k: tt-legs
+    # denormalizes completion_status from the per-firing rollup so
+    # ALL_DATASETS lets one dropdown narrow BOTH the Sankey and the
+    # Table together. Picking 'Complete' shows just the firing(s)
+    # that landed cleanly across both visuals.
+    completion_filter = CategoryFilter.with_values(
+        filter_id="filter-l2ft-tt-completion",
         dataset=ds_tt_instances,
-        column=ds_tt_instances["net_status"],
+        column=ds_tt_instances["completion_status"],
         values=[],
         select_all_options="FILTER_ALL_VALUES",
     )
-    fg_net_status = analysis.add_filter_group(FilterGroup(
-        filter_group_id="fg-l2ft-tt-net-status",  # type: ignore[arg-type]
-        cross_dataset="SINGLE_DATASET",
-        filters=[net_status_filter],
+    fg_completion = analysis.add_filter_group(FilterGroup(
+        filter_group_id="fg-l2ft-tt-completion",  # type: ignore[arg-type]
+        cross_dataset="ALL_DATASETS",
+        filters=[completion_filter],
     ))
-    fg_net_status.scope_sheet(sheet)
-    sheet.add_filter_dropdown(filter=net_status_filter, title="Net Status")
+    fg_completion.scope_sheet(sheet)
+    sheet.add_filter_dropdown(filter=completion_filter, title="Completion")
 
     # 5+6. Metadata cascade — same mechanism as Rails / Chains.
     # mapped_dataset_params lists BOTH tt-instances + tt-legs so the
@@ -864,39 +897,69 @@ def _populate_transfer_templates_sheet(
         cascade_match_column=ds_meta_values["metadata_key"],
     )
 
+    # Edge legend. QuickSight Sankey doesn't support data-driven
+    # ribbon colors (colors auto-assign per source/target node by the
+    # theme), so the matched-vs-orphan distinction is encoded in the
+    # NODE NAMES — orphan edges land on a "(orphan)" suffixed node.
+    # This text box spells out the three edge kinds the analyst will
+    # see in the Sankey below.
+    accent = get_preset(cfg.theme_preset).accent
+    sheet.layout.row(height=3).add_text_box(
+        TextBox(
+            text_box_id="l2ft-tt-sankey-legend",
+            content=rt.text_box(
+                rt.subheading("Edge legend", color=accent),
+                rt.bullets_raw([
+                    rt.inline("Account ↔ Template", color=accent)
+                    + ": the template's own legs (debit on source, "
+                    "credit on destination).",
+                    rt.inline("Template → <child rail>", color=accent)
+                    + ": declared chain child that fired (matched edge).",
+                    rt.inline(
+                        "Template → <child rail> (orphan)", color=accent,
+                    )
+                    + ": declared chain child that didn't fire "
+                    "(orphan edge — the missing-link signal).",
+                ]),
+            ),
+        ),
+        width=36,
+    )
+
     # Sankey — multi-leg flow. flow_source / flow_target derive from
     # amount_direction (debit account → template → credit account).
     # Width = SUM(amount_abs).
-    sheet.layout.row(height=14).add_sankey(
+    sheet.layout.row(height=12).add_sankey(
         width=36,
         title="Multi-Leg Flow — Account → Template → Account",
         subtitle=(
             "Width = total absolute amount through the edge in the "
-            "filtered window. Debit legs (money out) flow from the "
-            "source account to the template middle node; credit legs "
-            "(money in) flow from the template to the destination "
-            "account. Pick a single Template to see just that "
-            "template's flow shape."
+            "filtered window. Pick a single Template to see just that "
+            "template's flow shape. Ribbon colors are QuickSight's "
+            "auto-assignment per source node — the matched-vs-orphan "
+            "distinction is in the node names (see legend above)."
         ),
         source=ds_tt_legs["flow_source"].dim(),
         target=ds_tt_legs["flow_target"].dim(),
         weight=ds_tt_legs["amount_abs"].sum(),
     )
 
-    sheet.layout.row(height=14).add_table(
+    sheet.layout.row(height=12).add_table(
         width=36,
         title="Template Instances",
         subtitle=(
-            "One row per shared Transfer. net_status reads 'Balanced' "
-            "iff the sum of legs matches the L2's expected_net within "
-            "$0.01; 'Imbalanced' surfaces L1 Conservation breaks. "
-            "leg_count = how many leg postings landed on this transfer."
+            "One row per shared Transfer. completion_status combines "
+            "the L1 balance check (legs sum to expected_net within "
+            "$0.01) with the L2 chain-completion check (every Required "
+            "child fired AND every XOR group has exactly one fired): "
+            "'Complete' / 'Imbalanced' (L1 break) / 'Orphaned' (L2 "
+            "chain break)."
         ),
         columns=[
             ds_tt_instances["posting"].date(),
             ds_tt_instances["template_name"].dim(),
             ds_tt_instances["transfer_id"].dim(),
-            ds_tt_instances["net_status"].dim(),
+            ds_tt_instances["completion_status"].dim(),
             ds_tt_instances["actual_net"].numerical(),
             ds_tt_instances["expected_net"].numerical(),
             ds_tt_instances["net_diff"].numerical(),
@@ -905,206 +968,215 @@ def _populate_transfer_templates_sheet(
     )
 
 
+def _wire_l2ft_drill_filter_groups(
+    analysis: Analysis,
+    *,
+    datasets: dict[str, Dataset],
+    rails_sheet: Sheet,
+    chains_sheet: Sheet,
+) -> None:
+    """Declare the 2 L2 Exceptions drill parameters + their sentinel-
+    pattern destination filter groups (M.3.10m).
+
+    Mirrors the L1 dashboard's drill machinery (see
+    ``_wire_drill_filter_groups`` in ``apps/l1_dashboard/app.py``):
+
+    - 2 parameters with default ``__ALL__`` — when un-narrowed the
+      sentinel short-circuits the calc field to ``'PASS'`` so the
+      destination shows everything; on a real drill the calc returns
+      ``'PASS'`` only for matching rows.
+    - 2 calc fields (sentinel-or-match expression) — one on the
+      postings dataset for Rails, one on the chain-instances dataset
+      for Chains.
+    - 2 filter groups, each ``CategoryFilter.with_literal(value='PASS')``
+      against the calc field, scoped to the destination sheet.
+
+    The literal filter pattern sidesteps QS's parameter-bound
+    CategoryFilter empty-string narrowing bug — same workaround AR
+    uses; same workaround L1 uses.
+    """
+    analysis.add_parameter(StringParam(
+        name=P_L2FT_RAIL_DRILL,
+        default=[_DRILL_RESET_SENTINEL],
+    ))
+    analysis.add_parameter(StringParam(
+        name=P_L2FT_CHAIN_DRILL,
+        default=[_DRILL_RESET_SENTINEL],
+    ))
+
+    ds_postings = datasets[DS_POSTINGS]
+    ds_chain_instances = datasets[DS_CHAIN_INSTANCES]
+
+    rail_calc = analysis.add_calc_field(CalcField(
+        name="_drill_pass_pL2ftRailDrill_on_postings",
+        dataset=ds_postings,
+        expression=(
+            f"ifelse(${{{P_L2FT_RAIL_DRILL}}} = '{_DRILL_RESET_SENTINEL}', "
+            f"'PASS', "
+            f"ifelse({{rail_name}} = ${{{P_L2FT_RAIL_DRILL}}}, "
+            f"'PASS', 'FAIL'))"
+        ),
+    ))
+    fg_rail = analysis.add_filter_group(FilterGroup(
+        filter_group_id="fg-l2ft-drill-rail-on-postings",  # type: ignore[arg-type]
+        cross_dataset="SINGLE_DATASET",
+        filters=[CategoryFilter.with_literal(
+            filter_id="filter-fg-l2ft-drill-rail-on-postings",
+            dataset=ds_postings,
+            column=rail_calc,
+            value="PASS",
+            null_option="NON_NULLS_ONLY",
+        )],
+    ))
+    fg_rail.scope_sheet(rails_sheet)
+
+    chain_calc = analysis.add_calc_field(CalcField(
+        name="_drill_pass_pL2ftChainDrill_on_chain_instances",
+        dataset=ds_chain_instances,
+        expression=(
+            f"ifelse(${{{P_L2FT_CHAIN_DRILL}}} = '{_DRILL_RESET_SENTINEL}', "
+            f"'PASS', "
+            f"ifelse({{parent_chain_name}} = ${{{P_L2FT_CHAIN_DRILL}}}, "
+            f"'PASS', 'FAIL'))"
+        ),
+    ))
+    fg_chain = analysis.add_filter_group(FilterGroup(
+        filter_group_id="fg-l2ft-drill-chain-on-instances",  # type: ignore[arg-type]
+        cross_dataset="SINGLE_DATASET",
+        filters=[CategoryFilter.with_literal(
+            filter_id="filter-fg-l2ft-drill-chain-on-instances",
+            dataset=ds_chain_instances,
+            column=chain_calc,
+            value="PASS",
+            null_option="NON_NULLS_ONLY",
+        )],
+    ))
+    fg_chain.scope_sheet(chains_sheet)
+
+
+def _l2ft_drill(
+    *,
+    target_sheet: Sheet,
+    name: str,
+    writes: list,
+    trigger: str = "DATA_POINT_MENU",
+) -> Drill:
+    """L2FT cross-sheet drill helper. Mirrors L1's `_l1_drill`: any
+    drill param the caller doesn't write gets a DrillResetSentinel
+    so a prior drill's value can't leak across navigations.
+    """
+    written = {param.name for param, _ in writes}
+    full_writes = list(writes)
+    for param in _L2FT_DRILL_RESET_PARAMS:
+        if param.name not in written:
+            full_writes.append((param, DrillResetSentinel()))
+    return Drill(
+        target_sheet=target_sheet,
+        writes=full_writes,
+        name=name,
+        trigger=trigger,  # type: ignore[arg-type]
+    )
+
+
 def _populate_l2_exceptions_sheet(
     cfg: Config,
     sheet: Sheet,
     *,
     datasets: dict[str, Dataset],
+    rails_sheet: Sheet,
+    chains_sheet: Sheet,
 ) -> None:
-    """L2 Exceptions sheet — six KPI + table sections, one per L2
-    hygiene check (M.3.7).
+    """L2 Exceptions sheet — unified violation view (M.3.10l rewrite
+    of M.3.7).
 
-    Each section follows the same pattern: a small text-box header
-    with the section's invariant statement, a KPI counting the
-    violation rows, and a detail table listing them. The 'L2:'
-    prefix on every visual title flags the surface so analysts
-    don't confuse it with the L1 dashboard's exceptions tab.
+    Mirrors L1's Today's Exceptions pattern: one KPI (total count),
+    one bar chart (by check_type), one detail table (sorted by
+    magnitude DESC). All six L2 hygiene checks (Chain Orphans,
+    Unmatched Transfer Type, Dead Rails, Dead Bundles Activity,
+    Dead Metadata, Dead Limit Schedules) UNION into one
+    `unified-exceptions` dataset; the `check_type` discriminator
+    column drives the bar chart breakout + the table's left-most
+    grouping column.
+
+    Pre-M.3.10l this sheet had 6 vertically-stacked sections
+    (header text-box + 2 KPIs + table per check) that totaled ~144
+    rows of vertical scroll; the unified view fits in one screen and
+    matches the L1 dashboard's familiar shape.
     """
     accent = get_preset(cfg.theme_preset).accent
 
-    sheet.layout.row(height=8).add_text_box(
-        TextBox(
-            text_box_id="l2ft-exc-header",
-            content=rt.text_box(
-                rt.subheading("L2 Exceptions", color=accent),
-                rt.BR,
-                rt.body(
-                    "Six L2 hygiene checks. Each surfaces a "
-                    "'declaration vs runtime' mismatch the L1 "
-                    "dashboard's exceptions tab doesn't catch — "
-                    "every row here is one piece of the L2 instance "
-                    "the runtime data disagrees with."
-                ),
-            ),
+    del accent  # unused after the M.3.10l rewrite — kept the lookup
+                # so a future legend / KPI tint can pick it up cheaply.
+    ds = datasets[DS_UNIFIED_L2_EXCEPTIONS]
+
+    # Row 1 — KPI (narrow, left) + bar chart (wide, right). KPI sits
+    # next to the bar chart so the headline number reads alongside
+    # the breakdown rather than dominating its own row.
+    top_row = sheet.layout.row(height=10)
+    top_row.add_kpi(
+        width=12,
+        title="Open L2 Violations",
+        subtitle=(
+            "Total count across all six L2 hygiene checks."
         ),
-        width=36,
+        values=[ds["check_type"].count()],
+    )
+    top_row.add_bar_chart(
+        width=24,
+        title="L2 Violations by Check Type",
+        subtitle=(
+            "Count per L2 hygiene check. A spike in one kind points "
+            "at a recurring class of declaration-vs-runtime drift to "
+            "investigate first."
+        ),
+        category=[ds["check_type"].dim()],
+        values=[ds["check_type"].count()],
+        orientation="HORIZONTAL",
     )
 
-    _add_l2_exception_section(
-        sheet=sheet,
-        accent=accent,
-        section_id="l2-1-chain-orphans",
-        section_label="L2.1",
-        title="Chain Orphans",
-        body=(
-            "Required Chain entries where the parent fired but the "
-            "child didn't in the window. A non-zero count means the "
-            "L2 says these flows MUST chain together but the runtime "
-            "data shows broken cycles. (XOR-group multi/none "
-            "violations are deferred to a follow-on substep.)"
+    # Row 2 — detail table. Right-click any row's entity_a to drill
+    # into the source. Both menu items appear on every row regardless
+    # of check_type; pick the one that matches the row's subject
+    # (e.g., "View in Rails" for Dead Rails / Dead Metadata; "View
+    # in Chains" for Chain Orphans). Rows whose entity_a isn't a rail
+    # or chain parent (Unmatched Transfer Type, Dead Limit Schedules)
+    # land an empty destination — clear "this drill doesn't apply"
+    # signal.
+    magnitude_col = ds["magnitude"].numerical()
+    entity_a_col = ds["entity_a"].dim()
+    sheet.layout.row(height=14).add_table(
+        width=36,
+        title="L2 Violation Detail",
+        subtitle=(
+            "Every row is one detected L2 violation. Sorted by "
+            "magnitude (largest first). Right-click any row to drill "
+            "into Rails (entity_a → Rail filter) or Chains (entity_a → "
+            "Chain filter). Read entity_a / entity_b / detail in the "
+            "context of the row's check_type — see the sheet "
+            "description above for which fields each check populates."
         ),
-        ds=datasets[DS_EXC_CHAIN_ORPHANS],
-        kpi_value_col="parent_name",
-        table_columns=[
-            "parent_name", "child_name",
-            "parent_firing_count", "child_firing_count", "orphan_count",
+        columns=[
+            ds["check_type"].dim(),
+            entity_a_col,
+            ds["entity_b"].dim(),
+            ds["detail"].dim(),
+            magnitude_col,
         ],
-    )
-    _add_l2_exception_section(
-        sheet=sheet,
-        accent=accent,
-        section_id="l2-2-unmatched-transfer-type",
-        section_label="L2.2",
-        title="Unmatched Transfer Type",
-        body=(
-            "Posted Transactions whose transfer_type isn't in the L2's "
-            "declared Rail.transfer_type set. Means the runtime feed "
-            "is producing types the L2 doesn't know about — usually "
-            "an integrator-side ETL gap or a stale L2 declaration."
-        ),
-        ds=datasets[DS_EXC_UNMATCHED_TRANSFER_TYPE],
-        kpi_value_col="transfer_type",
-        table_columns=["transfer_type", "posting_count"],
-    )
-    _add_l2_exception_section(
-        sheet=sheet,
-        accent=accent,
-        section_id="l2-3-dead-rails",
-        section_label="L2.3",
-        title="Dead Rails",
-        body=(
-            "Rails declared in L2 with zero postings in the window. "
-            "Either the rail was retired and the declaration should "
-            "follow, or the ETL isn't producing activity through it "
-            "yet — the L2 says it should."
-        ),
-        ds=datasets[DS_EXC_DEAD_RAILS],
-        kpi_value_col="rail_name",
-        table_columns=["rail_name", "transfer_type", "leg_shape"],
-    )
-    _add_l2_exception_section(
-        sheet=sheet,
-        accent=accent,
-        section_id="l2-4-dead-bundles-activity",
-        section_label="L2.4",
-        title="Dead Bundles Activity",
-        body=(
-            "Aggregating-rail bundles_activity targets that no posting "
-            "matched (by rail_name OR transfer_type) in the window. "
-            "Means the bundler will never fire — the activity selector "
-            "doesn't resolve to anything the runtime is producing."
-        ),
-        ds=datasets[DS_EXC_DEAD_BUNDLES_ACTIVITY],
-        kpi_value_col="aggregating_rail",
-        table_columns=["aggregating_rail", "bundle_target"],
-    )
-    _add_l2_exception_section(
-        sheet=sheet,
-        accent=accent,
-        section_id="l2-5-dead-metadata",
-        section_label="L2.5",
-        title="Dead Metadata Declarations",
-        body=(
-            "Rail.metadata_keys that no posting on that rail carries a "
-            "value for. Either the L2 over-declares what the rail "
-            "exposes, or the integrator's ETL isn't propagating those "
-            "keys onto the leg's metadata."
-        ),
-        ds=datasets[DS_EXC_DEAD_METADATA],
-        kpi_value_col="rail_name",
-        table_columns=["rail_name", "metadata_key"],
-    )
-    _add_l2_exception_section(
-        sheet=sheet,
-        accent=accent,
-        section_id="l2-6-dead-limit-schedules",
-        section_label="L2.6",
-        title="Dead Limit Schedules",
-        body=(
-            "LimitSchedule (parent_role, transfer_type) cells with "
-            "zero outbound debit flow in the window. The cap is "
-            "effectively dead — either nobody routes that combo, or "
-            "the L2 is enforcing against a flow that doesn't exist."
-        ),
-        ds=datasets[DS_EXC_DEAD_LIMIT_SCHEDULES],
-        kpi_value_col="parent_role",
-        table_columns=["parent_role", "transfer_type", "cap"],
-    )
-
-
-def _add_l2_exception_section(
-    *,
-    sheet: Sheet,
-    accent: str,
-    section_id: str,
-    section_label: str,
-    title: str,
-    body: str,
-    ds: Dataset,
-    kpi_value_col: str,
-    table_columns: list[str],
-) -> None:
-    """One L2 exception section — header text + KPI + table row.
-
-    Lays out three rows: a short text-box (8 high), a KPI (6 high)
-    half-width, and a table (12 high) full-width. The KPI counts
-    rows in the dataset (every row IS one violation per the
-    M.3.7 spec); the table lists them with the columns the section
-    cares about. ``L2.X`` label leads every title for visual
-    differentiation from the L1 dashboard.
-    """
-    sheet.layout.row(height=6).add_text_box(
-        TextBox(
-            text_box_id=f"l2ft-exc-{section_id}-header",
-            content=rt.text_box(
-                rt.subheading(f"{section_label} — {title}", color=accent),
-                rt.BR,
-                rt.body(body),
+        sort_by=(magnitude_col, "DESC"),
+        actions=[
+            _l2ft_drill(
+                target_sheet=rails_sheet,
+                name="View in Rails (filter rail_name to entity_a)",
+                writes=[(_DP_RAIL_DRILL, entity_a_col)],
+                trigger="DATA_POINT_MENU",
             ),
-        ),
-        width=36,
-    )
-
-    half = 18
-    kpi_row = sheet.layout.row(height=6)
-    kpi_row.add_kpi(
-        width=half,
-        title=f"L2: {title} — Violation Count",
-        subtitle="One row per detected violation in the window.",
-        values=[ds[kpi_value_col].count()],
-    )
-    kpi_row.add_kpi(
-        width=half,
-        title=f"L2: {title} — Distinct Subjects",
-        subtitle=(
-            "Distinct subjects involved (e.g., distinct rails, "
-            "transfer_types, edges). May equal the violation count "
-            "if every row carries a different subject."
-        ),
-        values=[ds[kpi_value_col].distinct_count()],
-    )
-
-    sheet.layout.row(height=12).add_table(
-        width=36,
-        title=f"L2: {title} — Detail",
-        subtitle=(
-            "Every row in this dataset IS one violation — open the "
-            "L2 declaration that emitted the row to investigate."
-        ),
-        columns=[ds[c].dim() if c not in {
-            "parent_firing_count", "child_firing_count",
-            "orphan_count", "posting_count", "cap",
-        } else ds[c].numerical() for c in table_columns],
+            _l2ft_drill(
+                target_sheet=chains_sheet,
+                name="View in Chains (filter parent_chain_name to entity_a)",
+                writes=[(_DP_CHAIN_DRILL, entity_a_col)],
+                trigger="DATA_POINT_MENU",
+            ),
+        ],
     )
 
 

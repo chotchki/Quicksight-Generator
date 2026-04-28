@@ -35,6 +35,7 @@ from datetime import timedelta
 
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.dataset_contract import (
+    ColumnShape,
     ColumnSpec,
     DatasetContract,
     build_dataset,
@@ -61,6 +62,7 @@ DS_CHAINS = "l2ft-chains-ds"
 DS_CHAIN_INSTANCES = "l2ft-chain-instances-ds"
 DS_TT_INSTANCES = "l2ft-tt-instances-ds"
 DS_TT_LEGS = "l2ft-tt-legs-ds"
+DS_UNIFIED_L2_EXCEPTIONS = "l2ft-unified-exceptions-ds"
 # M.3.7 — six L2 exception sections, each backed by its own narrow dataset.
 DS_EXC_CHAIN_ORPHANS = "l2ft-exc-chain-orphans-ds"
 DS_EXC_UNMATCHED_TRANSFER_TYPE = "l2ft-exc-unmatched-transfer-type-ds"
@@ -121,7 +123,14 @@ CHAINS_CONTRACT = DatasetContract(columns=[
 # inline from required-child firings against the parent's transfer_id.
 # Parameterized on pKey + pValues for the metadata cascade.
 CHAIN_INSTANCES_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("parent_chain_name", "STRING"),
+    # parent_chain_name is a drill destination for the L2 Exceptions
+    # table's "View in Chains" right-click — see
+    # UNIFIED_L2_EXCEPTIONS_CONTRACT for the full drill story. Holds
+    # either a rail OR a template name per SPEC.
+    ColumnSpec(
+        "parent_chain_name", "STRING",
+        shape=ColumnShape.L2_DECLARED_NAME,
+    ),
     ColumnSpec("parent_transfer_id", "STRING"),
     ColumnSpec("parent_posting", "DATETIME"),
     ColumnSpec("parent_status", "STRING"),
@@ -133,11 +142,21 @@ CHAIN_INSTANCES_CONTRACT = DatasetContract(columns=[
 
 
 # Per-shared-Transfer row backing the Transfer Templates sheet's
-# Table (M.3.10f). One row per (template_name, transfer_id) — the
-# distinct shared Transfers that match a declared TransferTemplate.
-# ``net_status`` reads 'Balanced' iff |actual_net - expected_net| <
-# 0.01 else 'Imbalanced' — direct check of the SPEC's ExpectedNet
-# invariant for the bundle. Parameterized on pKey + pValues.
+# Table (M.3.10f, completion_status reshaped in M.3.10j).
+#
+# ``completion_status`` (M.3.10j) combines the L1 conservation check
+# (``actual_net`` ≈ ``expected_net``) with the L2 chain completeness
+# check (every Required child fired AND every XOR group has exactly
+# one fired). Three states cover the meaningful outcomes:
+#
+# - 'Complete' — balanced AND no chain orphans / XOR violations
+# - 'Imbalanced' — legs don't sum to expected_net (L1 break)
+# - 'Orphaned' — balanced but a Required child missing OR an XOR
+#   group has 0 or > 1 fired members (L2 chain break)
+#
+# Mirrors chain-instances completion_status semantics so the analyst
+# sees consistent language across the Chains and Transfer Templates
+# sheets.
 TT_INSTANCES_CONTRACT = DatasetContract(columns=[
     ColumnSpec("template_name", "STRING"),
     ColumnSpec("transfer_id", "STRING"),
@@ -146,7 +165,7 @@ TT_INSTANCES_CONTRACT = DatasetContract(columns=[
     ColumnSpec("actual_net", "DECIMAL"),
     ColumnSpec("net_diff", "DECIMAL"),
     ColumnSpec("leg_count", "INTEGER"),
-    ColumnSpec("net_status", "STRING"),
+    ColumnSpec("completion_status", "STRING"),
 ])
 
 
@@ -176,9 +195,12 @@ TT_INSTANCES_CONTRACT = DatasetContract(columns=[
 # matched child exists, so the Sankey shows the FULL declared topology
 # even when runtime data is incomplete.
 #
-# Shares ``template_name`` + ``posting`` columns with tt-instances so
-# cross_dataset='ALL_DATASETS' filter groups apply both the date +
-# template dropdowns to BOTH datasets in lockstep.
+# Shares ``template_name`` + ``posting`` + ``completion_status``
+# columns with tt-instances so cross_dataset='ALL_DATASETS' filter
+# groups apply BOTH the date + template + completion dropdowns to
+# both datasets in lockstep — picking 'Complete' on the Completion
+# dropdown narrows the Sankey and the Table together to just the
+# matching firings (M.3.10k).
 #
 # Parameterized on pKey + pValues for the metadata cascade.
 TT_LEGS_CONTRACT = DatasetContract(columns=[
@@ -193,6 +215,7 @@ TT_LEGS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("flow_source", "STRING"),
     ColumnSpec("flow_target", "STRING"),
     ColumnSpec("edge_kind", "STRING"),
+    ColumnSpec("completion_status", "STRING"),
 ])
 
 
@@ -257,6 +280,41 @@ EXC_DEAD_LIMIT_SCHEDULES_CONTRACT = DatasetContract(columns=[
 ])
 
 
+# Unified L2 Exceptions (M.3.10l) — UNION ALL across all 6 L2 hygiene
+# checks with a shared shape so a single KPI + bar chart + detail
+# table can present the whole L2-hygiene picture in one place.
+# Mirrors the L1 dashboard's `_todays_exceptions` pattern (one row =
+# one violation; check_type is the discriminator).
+#
+# - check_type: which L2 hygiene check produced the row.
+# - entity_a / entity_b: the primary and secondary subject of the
+#   violation (e.g., parent rail + child rail for Chain Orphans;
+#   rail_name + metadata_key for Dead Metadata; transfer_type alone
+#   for Unmatched Transfer Type with entity_b NULL).
+# - detail: optional extra context (leg_shape, cap, etc.) — STRING
+#   regardless of source type so the unified projection works.
+# - magnitude: "how bad is it", used for the bar chart's count
+#   weighting + the table's sort order. Per check:
+#     * Chain Orphans → orphan_count (parent firings without a child)
+#     * Unmatched Transfer Type → posting_count (count of leaking legs)
+#     * Dead Rails / Dead Bundles / Dead Metadata / Dead Limit
+#       Schedules → 1 (each row IS one dead declaration)
+UNIFIED_L2_EXCEPTIONS_CONTRACT = DatasetContract(columns=[
+    ColumnSpec("check_type", "STRING"),
+    # entity_a holds the L2-declared name relevant to each row's
+    # check_type — rail/template name for 4 of 6 checks, transfer_type
+    # for L2.2, parent_role for L2.6. The shape lets the L2 Exceptions
+    # table's right-click drills wire entity_a → Rails sheet / Chains
+    # sheet filter parameters; the destination filters return zero
+    # rows for the 2 check_types whose entity_a isn't actually a rail
+    # or template name (transparent "this drill doesn't apply" UX).
+    ColumnSpec("entity_a", "STRING", shape=ColumnShape.L2_DECLARED_NAME),
+    ColumnSpec("entity_b", "STRING"),
+    ColumnSpec("detail", "STRING"),
+    ColumnSpec("magnitude", "INTEGER"),
+])
+
+
 # -- Rails tab (M.3.10c) — postings explorer + cascade source ---------------
 
 # Per-leg view from <prefix>_current_transactions, parameterized on
@@ -267,7 +325,9 @@ POSTINGS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("id", "STRING"),
     ColumnSpec("transfer_id", "STRING"),
     ColumnSpec("transfer_parent_id", "STRING"),
-    ColumnSpec("rail_name", "STRING"),
+    # rail_name is a drill destination for the L2 Exceptions table's
+    # "View in Rails" right-click — see UNIFIED_L2_EXCEPTIONS_CONTRACT.
+    ColumnSpec("rail_name", "STRING", shape=ColumnShape.L2_DECLARED_NAME),
     ColumnSpec("transfer_type", "STRING"),
     ColumnSpec("account_id", "STRING"),
     ColumnSpec("account_name", "STRING"),
@@ -318,7 +378,9 @@ def build_all_l2_flow_tracing_datasets(
     dataset for a per-parent-firing explorer (chain-instances);
     M.3.10f adds the Transfer Templates sheet with tt-instances (per
     shared Transfer) + tt-legs (per leg, backing the multi-leg flow
-    Sankey).
+    Sankey); M.3.10l replaces the 6 separate L2 exception datasets
+    with one unified UNION-ALL dataset (mirrors L1's todays-exceptions
+    pattern — single KPI + bar chart + detail table).
     """
     if cfg.l2_instance_prefix is None:
         cfg = replace(cfg, l2_instance_prefix=str(l2_instance.instance))
@@ -328,12 +390,7 @@ def build_all_l2_flow_tracing_datasets(
         build_chain_instances_dataset(cfg, l2_instance),
         build_tt_instances_dataset(cfg, l2_instance),
         build_tt_legs_dataset(cfg, l2_instance),
-        build_exc_chain_orphans_dataset(cfg, l2_instance),
-        build_exc_unmatched_transfer_type_dataset(cfg, l2_instance),
-        build_exc_dead_rails_dataset(cfg, l2_instance),
-        build_exc_dead_bundles_activity_dataset(cfg, l2_instance),
-        build_exc_dead_metadata_dataset(cfg, l2_instance),
-        build_exc_dead_limit_schedules_dataset(cfg, l2_instance),
+        build_unified_l2_exceptions_dataset(cfg, l2_instance),
     ]
 
 
@@ -965,6 +1022,173 @@ def build_exc_dead_limit_schedules_dataset(
     )
 
 
+# -- Unified L2 Exceptions (M.3.10l) -----------------------------------------
+
+
+def build_unified_l2_exceptions_dataset(
+    cfg: Config, l2_instance: L2Instance,
+) -> DataSet:
+    """UNION ALL across the 6 L2 hygiene checks into one row-per-
+    violation dataset (M.3.10l).
+
+    Mirrors L1's `todays_exceptions` pattern: one row = one violation;
+    `check_type` is the discriminator; `magnitude` is the
+    "how-bad-is-it" metric used for sort + bar weighting. Each branch
+    inlines its own CTEs as a subquery so the outer SELECT can do
+    consistent typing across branches without colliding CTE names.
+
+    Each branch is functionally equivalent to one of the 6 retired
+    `build_exc_*` queries, just projected to the unified shape via
+    CASTs + literal `check_type` labels.
+    """
+    prefix = l2_instance.instance
+    declared_chains = _declared_chains_cte(l2_instance)
+    declared_types = _declared_transfer_types_cte(l2_instance)
+    declared_rails = _declared_rails_cte(l2_instance)
+    declared_bundles = _declared_bundles_activity_cte(l2_instance)
+    declared_limits = _declared_limit_schedules_cte(l2_instance)
+    dead_metadata_fragments = _dead_metadata_check_fragments(
+        l2_instance, prefix,
+    )
+    if dead_metadata_fragments:
+        dead_metadata_inner = "\n  UNION ALL\n".join(dead_metadata_fragments)
+    else:
+        dead_metadata_inner = (
+            "  SELECT NULL::TEXT AS rail_name, "
+            "NULL::TEXT AS metadata_key WHERE FALSE"
+        )
+    sql = (
+        # Branch 1: Chain Orphans
+        f"SELECT\n"
+        f"  CAST('Chain Orphans' AS VARCHAR(50)) AS check_type,\n"
+        f"  parent_name AS entity_a,\n"
+        f"  child_name AS entity_b,\n"
+        f"  CAST(NULL AS VARCHAR(255)) AS detail,\n"
+        f"  CAST(orphan_count AS INTEGER) AS magnitude\n"
+        f"FROM (\n"
+        f"  WITH declared AS (\n{declared_chains}\n),\n"
+        f"  edge_runtime AS (\n"
+        f"    SELECT\n"
+        f"      d.parent_name, d.child_name, d.required,\n"
+        f"      COALESCE((\n"
+        f"        SELECT COUNT(DISTINCT t.transfer_id)\n"
+        f"        FROM {prefix}_current_transactions t\n"
+        f"        WHERE COALESCE(t.template_name, t.rail_name) "
+        f"= d.parent_name\n"
+        f"      ), 0) AS parent_firing_count,\n"
+        f"      COALESCE((\n"
+        f"        SELECT COUNT(DISTINCT c.transfer_id)\n"
+        f"        FROM {prefix}_current_transactions c\n"
+        f"        WHERE COALESCE(c.template_name, c.rail_name) "
+        f"= d.child_name\n"
+        f"          AND c.transfer_parent_id IN (\n"
+        f"            SELECT t2.transfer_id\n"
+        f"            FROM {prefix}_current_transactions t2\n"
+        f"            WHERE COALESCE(t2.template_name, t2.rail_name) "
+        f"= d.parent_name\n"
+        f"          )\n"
+        f"      ), 0) AS child_firing_count\n"
+        f"    FROM declared d\n"
+        f"  )\n"
+        f"  SELECT parent_name, child_name,\n"
+        f"    GREATEST(parent_firing_count - child_firing_count, 0) "
+        f"AS orphan_count\n"
+        f"  FROM edge_runtime\n"
+        f"  WHERE required = 'Required'\n"
+        f"    AND parent_firing_count > child_firing_count\n"
+        f") sub_chain_orphans\n"
+        # Branch 2: Unmatched Transfer Type
+        f"UNION ALL\n"
+        f"SELECT\n"
+        f"  CAST('Unmatched Transfer Type' AS VARCHAR(50)),\n"
+        f"  CAST(transfer_type AS VARCHAR(255)),\n"
+        f"  CAST(NULL AS VARCHAR(255)),\n"
+        f"  CAST(NULL AS VARCHAR(255)),\n"
+        f"  CAST(posting_count AS INTEGER)\n"
+        f"FROM (\n"
+        f"  WITH declared_types AS (\n{declared_types}\n)\n"
+        f"  SELECT t.transfer_type, COUNT(*) AS posting_count\n"
+        f"  FROM {prefix}_current_transactions t\n"
+        f"  LEFT JOIN declared_types d "
+        f"ON d.transfer_type = t.transfer_type\n"
+        f"  WHERE d.transfer_type IS NULL\n"
+        f"  GROUP BY t.transfer_type\n"
+        f") sub_unmatched\n"
+        # Branch 3: Dead Rails
+        f"UNION ALL\n"
+        f"SELECT\n"
+        f"  CAST('Dead Rails' AS VARCHAR(50)),\n"
+        f"  CAST(rail_name AS VARCHAR(255)),\n"
+        f"  CAST(transfer_type AS VARCHAR(255)),\n"
+        f"  CAST(leg_shape AS VARCHAR(255)),\n"
+        f"  1\n"
+        f"FROM (\n"
+        f"  WITH declared AS (\n{declared_rails}\n),\n"
+        f"  runtime AS (\n"
+        f"    SELECT rail_name, COUNT(*) AS total_postings\n"
+        f"    FROM {prefix}_current_transactions GROUP BY rail_name\n"
+        f"  )\n"
+        f"  SELECT d.rail_name, d.transfer_type, d.leg_shape\n"
+        f"  FROM declared d\n"
+        f"  LEFT JOIN runtime r ON r.rail_name = d.rail_name\n"
+        f"  WHERE COALESCE(r.total_postings, 0) = 0\n"
+        f") sub_dead_rails\n"
+        # Branch 4: Dead Bundles Activity
+        f"UNION ALL\n"
+        f"SELECT\n"
+        f"  CAST('Dead Bundles Activity' AS VARCHAR(50)),\n"
+        f"  CAST(aggregating_rail AS VARCHAR(255)),\n"
+        f"  CAST(bundle_target AS VARCHAR(255)),\n"
+        f"  CAST(NULL AS VARCHAR(255)),\n"
+        f"  1\n"
+        f"FROM (\n"
+        f"  WITH declared_bundles AS (\n{declared_bundles}\n)\n"
+        f"  SELECT db.aggregating_rail, db.bundle_target\n"
+        f"  FROM declared_bundles db\n"
+        f"  WHERE NOT EXISTS (\n"
+        f"    SELECT 1 FROM {prefix}_current_transactions t\n"
+        f"    WHERE t.rail_name = db.bundle_target "
+        f"OR t.transfer_type = db.bundle_target\n"
+        f"  )\n"
+        f") sub_dead_bundles\n"
+        # Branch 5: Dead Metadata Declarations
+        f"UNION ALL\n"
+        f"SELECT\n"
+        f"  CAST('Dead Metadata Declarations' AS VARCHAR(50)),\n"
+        f"  CAST(rail_name AS VARCHAR(255)),\n"
+        f"  CAST(metadata_key AS VARCHAR(255)),\n"
+        f"  CAST(NULL AS VARCHAR(255)),\n"
+        f"  1\n"
+        f"FROM (\n{dead_metadata_inner}\n) sub_dead_metadata\n"
+        # Branch 6: Dead Limit Schedules
+        f"UNION ALL\n"
+        f"SELECT\n"
+        f"  CAST('Dead Limit Schedules' AS VARCHAR(50)),\n"
+        f"  CAST(parent_role AS VARCHAR(255)),\n"
+        f"  CAST(transfer_type AS VARCHAR(255)),\n"
+        f"  CAST(cap AS VARCHAR(255)),\n"
+        f"  1\n"
+        f"FROM (\n"
+        f"  WITH declared_limits AS (\n{declared_limits}\n)\n"
+        f"  SELECT dl.parent_role, dl.transfer_type, dl.cap\n"
+        f"  FROM declared_limits dl\n"
+        f"  WHERE NOT EXISTS (\n"
+        f"    SELECT 1 FROM {prefix}_current_transactions t\n"
+        f"    WHERE t.account_parent_role = dl.parent_role\n"
+        f"      AND t.transfer_type = dl.transfer_type\n"
+        f"      AND t.amount_direction = 'Debit'\n"
+        f"  )\n"
+        f") sub_dead_limits\n"
+        f"ORDER BY magnitude DESC, check_type, entity_a, entity_b"
+    )
+    return build_dataset(
+        cfg, cfg.prefixed("l2ft-unified-exceptions-dataset"),
+        "L2 Unified Exceptions", "l2ft-unified-exceptions",
+        sql, UNIFIED_L2_EXCEPTIONS_CONTRACT,
+        visual_identifier=DS_UNIFIED_L2_EXCEPTIONS,
+    )
+
+
 # -- Internals ---------------------------------------------------------------
 
 
@@ -1254,8 +1478,7 @@ def build_tt_instances_dataset(
     cfg: Config, l2_instance: L2Instance,
 ) -> DataSet:
     """One row per shared Transfer that matches a declared
-    TransferTemplate (M.3.10f). Backs the Transfer Templates sheet's
-    detail Table.
+    TransferTemplate (M.3.10f, completion_status reshaped M.3.10j).
 
     A "shared Transfer" is one ``transfer_id`` from
     ``<prefix>_current_transactions`` whose legs all carry the same
@@ -1265,30 +1488,96 @@ def build_tt_instances_dataset(
     transfer_id distinct-count = number of TransferTemplate
     instances.
 
-    ``net_status`` reads 'Balanced' iff
-    ``ABS(actual_net - expected_net) < 0.01`` else 'Imbalanced' —
-    direct check of the L1 Conservation invariant against the L2's
-    ExpectedNet declaration.
+    ``completion_status`` is one of:
+
+    - 'Imbalanced' — ``ABS(actual_net - expected_net) >= 0.01``
+      (L1 Conservation break).
+    - 'Orphaned' — balanced, but a Required chain child didn't fire
+      OR an XOR group has 0 or > 1 fired members (L2 chain break).
+    - 'Complete' — balanced AND every Required child fired AND every
+      XOR group has exactly one fired member.
+
+    Mirrors the chain-instances completion_status semantics so the
+    analyst sees consistent language across both sheets.
 
     Parameterized on pKey + pValues for the metadata cascade.
     """
     prefix = l2_instance.instance
-    declared = _declared_templates_cte(l2_instance)
+    declared_tt = _declared_templates_cte(l2_instance)
+    declared_ch = _declared_chains_cte(l2_instance)
     sql = (
-        f"WITH templates AS (\n{declared}\n),\n"
+        f"WITH templates AS (\n{declared_tt}\n),\n"
+        f"declared AS (\n{declared_ch}\n),\n"
+        # Chain-shape per template: counts of declared Required children
+        # + count of distinct XOR groups. Templates with no chain entries
+        # (parent_name not in declared) get NULL for the LEFT JOIN, which
+        # the COALESCEs below treat as zero.
+        f"template_chain_shape AS (\n"
+        f"  SELECT\n"
+        f"    t.template_name,\n"
+        f"    COALESCE(SUM(CASE WHEN d.required = 'Required' "
+        f"THEN 1 ELSE 0 END), 0) AS required_total,\n"
+        f"    COUNT(DISTINCT CASE WHEN d.xor_group IS NOT NULL "
+        f"THEN d.xor_group END) AS xor_group_count\n"
+        f"  FROM templates t\n"
+        f"  LEFT JOIN declared d ON d.parent_name = t.template_name\n"
+        f"  GROUP BY t.template_name\n"
+        f"),\n"
         f"firings AS (\n"
         f"  SELECT\n"
         f"    t.template_name,\n"
         f"    t.expected_net,\n"
+        f"    tcs.required_total,\n"
+        f"    tcs.xor_group_count,\n"
         f"    ct.transfer_id,\n"
         f"    MIN(ct.posting) AS posting,\n"
         f"    SUM(ct.amount_money) AS actual_net,\n"
         f"    COUNT(*) AS leg_count,\n"
         f"    MAX(ct.metadata) AS parent_metadata\n"
         f"  FROM templates t\n"
+        f"  JOIN template_chain_shape tcs ON tcs.template_name = t.template_name\n"
         f"  JOIN {prefix}_current_transactions ct\n"
         f"    ON ct.template_name = t.template_name\n"
-        f"  GROUP BY t.template_name, t.expected_net, ct.transfer_id\n"
+        f"  GROUP BY t.template_name, t.expected_net, tcs.required_total, "
+        f"tcs.xor_group_count, ct.transfer_id\n"
+        f"),\n"
+        # Chain completeness per firing — same shape as chain-instances:
+        # required_fired = how many declared-Required children were
+        # matched via transfer_parent_id; xor_violations = how many
+        # declared XOR groups had ≠ 1 fired members.
+        f"firing_completion AS (\n"
+        f"  SELECT\n"
+        f"    f.*,\n"
+        f"    (\n"
+        f"      SELECT COUNT(DISTINCT d.child_name)\n"
+        f"      FROM declared d\n"
+        f"      WHERE d.parent_name = f.template_name\n"
+        f"        AND d.required = 'Required'\n"
+        f"        AND EXISTS (\n"
+        f"          SELECT 1 FROM {prefix}_current_transactions c\n"
+        f"          WHERE COALESCE(c.template_name, c.rail_name) "
+        f"= d.child_name\n"
+        f"            AND c.transfer_parent_id = f.transfer_id\n"
+        f"        )\n"
+        f"    ) AS required_fired,\n"
+        f"    (\n"
+        f"      SELECT COUNT(*)\n"
+        f"      FROM (\n"
+        f"        SELECT d.xor_group,\n"
+        f"          SUM(CASE WHEN EXISTS (\n"
+        f"            SELECT 1 FROM {prefix}_current_transactions c\n"
+        f"            WHERE COALESCE(c.template_name, c.rail_name) "
+        f"= d.child_name\n"
+        f"              AND c.transfer_parent_id = f.transfer_id\n"
+        f"          ) THEN 1 ELSE 0 END) AS fired_in_group\n"
+        f"        FROM declared d\n"
+        f"        WHERE d.parent_name = f.template_name\n"
+        f"          AND d.xor_group IS NOT NULL\n"
+        f"        GROUP BY d.xor_group\n"
+        f"      ) g\n"
+        f"      WHERE g.fired_in_group <> 1\n"
+        f"    ) AS xor_violations\n"
+        f"  FROM firings f\n"
         f")\n"
         f"SELECT\n"
         f"  template_name,\n"
@@ -1299,10 +1588,12 @@ def build_tt_instances_dataset(
         f"  (actual_net - expected_net) AS net_diff,\n"
         f"  leg_count,\n"
         f"  CASE\n"
-        f"    WHEN ABS(actual_net - expected_net) < 0.01 THEN 'Balanced'\n"
-        f"    ELSE 'Imbalanced'\n"
-        f"  END AS net_status\n"
-        f"FROM firings\n"
+        f"    WHEN ABS(actual_net - expected_net) >= 0.01 THEN 'Imbalanced'\n"
+        f"    WHEN required_fired < required_total THEN 'Orphaned'\n"
+        f"    WHEN xor_violations > 0 THEN 'Orphaned'\n"
+        f"    ELSE 'Complete'\n"
+        f"  END AS completion_status\n"
+        f"FROM firing_completion\n"
         f"WHERE\n"
         f"  <<$pKey>> = {_sql_str(META_KEY_ALL_SENTINEL)}\n"
         f"  OR JSON_VALUE(parent_metadata, '$.' || <<$pKey>>) "
@@ -1381,7 +1672,67 @@ def build_tt_legs_dataset(
     sql = (
         f"WITH templates AS (\n{declared_tt}\n),\n"
         f"declared AS (\n{declared_ch}\n),\n"
-        # Real template legs (unchanged from M.3.10f).
+        # Per-firing completion calc — same shape as tt-instances'
+        # firing_completion CTE so the column denormalized into every
+        # leg + chain-edge row matches what the Table sees per firing.
+        # Lets cross_dataset='ALL_DATASETS' on the Completion filter
+        # narrow both Sankey + Table together (M.3.10k).
+        f"firing_completion AS (\n"
+        f"  SELECT\n"
+        f"    t.template_name,\n"
+        f"    t.expected_net,\n"
+        f"    ct.transfer_id,\n"
+        f"    SUM(ct.amount_money) AS actual_net,\n"
+        f"    (\n"
+        f"      SELECT COUNT(*)\n"
+        f"      FROM declared d\n"
+        f"      WHERE d.parent_name = t.template_name\n"
+        f"        AND d.required = 'Required'\n"
+        f"    ) AS required_total,\n"
+        f"    (\n"
+        f"      SELECT COUNT(DISTINCT d.child_name)\n"
+        f"      FROM declared d\n"
+        f"      WHERE d.parent_name = t.template_name\n"
+        f"        AND d.required = 'Required'\n"
+        f"        AND EXISTS (\n"
+        f"          SELECT 1 FROM {prefix}_current_transactions c\n"
+        f"          WHERE COALESCE(c.template_name, c.rail_name) "
+        f"= d.child_name\n"
+        f"            AND c.transfer_parent_id = ct.transfer_id\n"
+        f"        )\n"
+        f"    ) AS required_fired,\n"
+        f"    (\n"
+        f"      SELECT COUNT(*) FROM (\n"
+        f"        SELECT d.xor_group,\n"
+        f"          SUM(CASE WHEN EXISTS (\n"
+        f"            SELECT 1 FROM {prefix}_current_transactions c\n"
+        f"            WHERE COALESCE(c.template_name, c.rail_name) "
+        f"= d.child_name\n"
+        f"              AND c.transfer_parent_id = ct.transfer_id\n"
+        f"          ) THEN 1 ELSE 0 END) AS fired_in_group\n"
+        f"        FROM declared d\n"
+        f"        WHERE d.parent_name = t.template_name\n"
+        f"          AND d.xor_group IS NOT NULL\n"
+        f"        GROUP BY d.xor_group\n"
+        f"      ) g WHERE g.fired_in_group <> 1\n"
+        f"    ) AS xor_violations\n"
+        f"  FROM templates t\n"
+        f"  JOIN {prefix}_current_transactions ct\n"
+        f"    ON ct.template_name = t.template_name\n"
+        f"  GROUP BY t.template_name, t.expected_net, ct.transfer_id\n"
+        f"),\n"
+        f"firing_status AS (\n"
+        f"  SELECT\n"
+        f"    transfer_id,\n"
+        f"    CASE\n"
+        f"      WHEN ABS(actual_net - expected_net) >= 0.01 THEN 'Imbalanced'\n"
+        f"      WHEN required_fired < required_total THEN 'Orphaned'\n"
+        f"      WHEN xor_violations > 0 THEN 'Orphaned'\n"
+        f"      ELSE 'Complete'\n"
+        f"    END AS completion_status\n"
+        f"  FROM firing_completion\n"
+        f"),\n"
+        # Real template legs.
         f"template_legs AS (\n"
         f"  SELECT\n"
         f"    ct.template_name,\n"
@@ -1401,9 +1752,11 @@ def build_tt_legs_dataset(
         f"      WHEN ct.amount_direction = 'Debit' THEN ct.template_name\n"
         f"      ELSE ct.account_name\n"
         f"    END AS flow_target,\n"
-        f"    CAST('template_leg' AS VARCHAR(20)) AS edge_kind\n"
+        f"    CAST('template_leg' AS VARCHAR(20)) AS edge_kind,\n"
+        f"    fs.completion_status\n"
         f"  FROM {prefix}_current_transactions ct\n"
         f"  JOIN templates t ON t.template_name = ct.template_name\n"
+        f"  JOIN firing_status fs ON fs.transfer_id = ct.transfer_id\n"
         f"),\n"
         # One row per (parent firing, declared chain child) — the
         # cartesian we need to detect both matched + orphan edges.
@@ -1417,7 +1770,9 @@ def build_tt_legs_dataset(
         f"    MIN(posting) OVER (PARTITION BY transfer_id) AS posting,\n"
         f"    MAX(metadata) OVER (PARTITION BY transfer_id) AS metadata,\n"
         f"    MAX(ABS(amount_money)) OVER (PARTITION BY transfer_id) "
-        f"AS firing_amount_abs\n"
+        f"AS firing_amount_abs,\n"
+        f"    MAX(completion_status) OVER (PARTITION BY transfer_id) "
+        f"AS completion_status\n"
         f"  FROM template_legs\n"
         f"),\n"
         f"chain_edges AS (\n"
@@ -1445,13 +1800,14 @@ def build_tt_legs_dataset(
         f"        AND c.transfer_parent_id = pf.transfer_id\n"
         f"    ) THEN CAST('chain_matched' AS VARCHAR(20))\n"
         f"    ELSE CAST('chain_orphan' AS VARCHAR(20))\n"
-        f"    END AS edge_kind\n"
+        f"    END AS edge_kind,\n"
+        f"    pf.completion_status\n"
         f"  FROM parent_firings pf\n"
         f"  JOIN declared d ON d.parent_name = pf.template_name\n"
         f")\n"
         f"SELECT template_name, transfer_id, posting, account_name, "
         f"account_role, amount_money, amount_direction, amount_abs, "
-        f"flow_source, flow_target, edge_kind\n"
+        f"flow_source, flow_target, edge_kind, completion_status\n"
         f"FROM template_legs\n"
         f"WHERE\n"
         f"  <<$pKey>> = {_sql_str(META_KEY_ALL_SENTINEL)}\n"
@@ -1460,7 +1816,7 @@ def build_tt_legs_dataset(
         f"UNION ALL\n"
         f"SELECT template_name, transfer_id, posting, account_name, "
         f"account_role, amount_money, amount_direction, amount_abs, "
-        f"flow_source, flow_target, edge_kind\n"
+        f"flow_source, flow_target, edge_kind, completion_status\n"
         f"FROM chain_edges\n"
         f"WHERE\n"
         f"  <<$pKey>> = {_sql_str(META_KEY_ALL_SENTINEL)}\n"

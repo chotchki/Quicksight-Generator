@@ -282,32 +282,44 @@ def default_scenario_for(
                 f"{first_rail.destination_role!r}",
             ))
             continue
-        # Pre-resolve chain children for the first firing of each
-        # template (M.3.10h). Scan declared chains for entries whose
-        # parent matches this template name; for each, resolve the
-        # child rail + an account matching the child rail's role
-        # expression. The first firing then plants matched children
-        # for every declared chain edge, giving the visualization a
-        # variety of (matched, orphan) parent firings to display.
-        # The second firing leaves chain_children empty — that
-        # parent's chain edges all surface as orphans.
-        chain_children_for_firing_1 = _pick_chain_children_for_template(
+        # Pre-resolve chain children for the firings of each template
+        # (M.3.10h, expanded M.3.10j). Scan declared chains for entries
+        # whose parent matches this template name; for each, resolve
+        # the child rail + an account matching the child rail's role
+        # expression. Three firings exercise three TT-instance
+        # completion_status values:
+        #
+        #   firing 1: ALL declared children fire — XOR violation if the
+        #             template's chain children are XOR-grouped (>1 in
+        #             one group); shows 'Orphaned' on tt-instances.
+        #   firing 2: NO chain children fire — orphan for every declared
+        #             edge; shows 'Orphaned' on tt-instances.
+        #   firing 3: ONLY the first declared chain child fires —
+        #             satisfies XOR (exactly 1 fired) AND any single
+        #             required child; shows 'Complete' on tt-instances
+        #             (assuming the template has a single XOR group or
+        #             a single required child as the first declared).
+        all_chain_children = _pick_chain_children_for_template(
             tt.name, instance, template, cust1,
         )
-        for firing_seq in (1, 2):
+        first_chain_child = all_chain_children[:1]
+        for firing_seq in (1, 2, 3):
+            if firing_seq == 1:
+                children = all_chain_children
+            elif firing_seq == 2:
+                children = ()
+            else:  # firing_seq == 3
+                children = first_chain_child
             tt_plants_list.append(TransferTemplatePlant(
                 template_name=tt.name,
-                # Stagger days so the two firings spread across the
+                # Stagger days so the three firings spread across the
                 # date window — gives the explorer something visual.
                 days_ago=2 + firing_seq,
                 amount=Decimal("125.00"),
                 source_account_id=src_id,
                 destination_account_id=dst_id,
                 firing_seq=firing_seq,
-                chain_children=(
-                    chain_children_for_firing_1
-                    if firing_seq == 1 else ()
-                ),
+                chain_children=children,
             ))
     transfer_template_plants = tuple(tt_plants_list)
     if not instance.transfer_templates:

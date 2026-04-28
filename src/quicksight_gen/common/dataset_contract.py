@@ -80,6 +80,16 @@ class ColumnShape(Enum):
     PAYMENT_ID = "payment_id"
     EXTERNAL_TXN_ID = "external_txn_id"
 
+    # L2-declared name (a Rail.name or TransferTemplate.name — both
+    # Identifiers in the L2 SPEC). Used by the L2 Flow Tracing
+    # Exceptions table's drill, which writes ``entity_a`` (a STRING
+    # holding either a rail or template name depending on check_type)
+    # into the destination sheet's filter parameter. Both Rails sheet
+    # (``rail_name`` column) and Chains sheet (``parent_chain_name``
+    # column) accept this shape — the chain parent column legitimately
+    # holds either a rail OR a template name per SPEC.
+    L2_DECLARED_NAME = "l2_declared_name"
+
     def can_assign_to(self, other: "ColumnShape") -> bool:
         """True iff a value of ``self`` is acceptable into a ``other`` param.
 

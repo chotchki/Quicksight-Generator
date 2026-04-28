@@ -190,27 +190,21 @@ def test_every_sheet_has_a_description() -> None:
 
 
 def test_dataset_count_matches_populated_sheets() -> None:
-    """M.3.10f stabilized at 11 fixed datasets per L2 instance:
+    """M.3.10l stabilized at 6 fixed datasets per L2 instance:
     postings + meta-values (Rails), chain-instances (Chains),
-    tt-instances + tt-legs (Transfer Templates), + 6 L2 exceptions.
-    M.3.10c dropped the M.3.8 per-key metadata dropdown fan-out;
-    M.3.10d swapped the chains aggregate dataset for chain-instances;
-    M.3.10f added the Transfer Templates sheet's two datasets
-    (per-shared-Transfer + per-leg)."""
+    tt-instances + tt-legs (Transfer Templates), unified-exceptions
+    (L2 Exceptions). M.3.10l replaced the 6 separate L2 exception
+    datasets with one UNION-ALL dataset (mirrors L1's Today's
+    Exceptions pattern: KPI + bar chart + unified detail table)."""
     app = build_l2_flow_tracing_app(_CFG)
-    assert len(app.datasets) == 11
+    assert len(app.datasets) == 6
     assert {d.identifier for d in app.datasets} == {
         "l2ft-postings-ds",
         "l2ft-meta-values-ds",
         "l2ft-chain-instances-ds",
         "l2ft-tt-instances-ds",
         "l2ft-tt-legs-ds",
-        "l2ft-exc-chain-orphans-ds",
-        "l2ft-exc-unmatched-transfer-type-ds",
-        "l2ft-exc-dead-rails-ds",
-        "l2ft-exc-dead-bundles-activity-ds",
-        "l2ft-exc-dead-metadata-ds",
-        "l2ft-exc-dead-limit-schedules-ds",
+        "l2ft-unified-exceptions-ds",
     }
 
 
@@ -754,59 +748,59 @@ def test_exc_dataset_contract_columns_match_builder(
     assert cols == expected
 
 
-def test_exceptions_sheet_has_six_kpi_pairs_and_six_tables() -> None:
-    """M.3.7 lands all 6 sections: each has 2 KPIs (count + distinct)
-    and 1 detail Table. Final tally on the L2 Exceptions sheet:
-    12 KPIs + 6 Tables."""
+def test_exceptions_sheet_unified_shape() -> None:
+    """M.3.10l: L2 Exceptions sheet is a single KPI + bar chart +
+    detail table backed by one unified-exceptions dataset (mirrors
+    L1's Today's Exceptions). The pre-M.3.10l 6-sections × (2 KPI +
+    1 Table) layout (12 KPIs + 6 Tables ~= 144 rows of vertical
+    scroll) collapses to one screen-sized view."""
     from collections import Counter
-    from quicksight_gen.common.tree import KPI, Table
     app = build_l2_flow_tracing_app(_CFG)
     exc = _sheet_by_name(app, "L2 Exceptions")
     counts = Counter(type(v).__name__ for v in exc.visuals)
-    assert counts.get("KPI", 0) == 12, f"expected 12 KPIs, got {counts}"
-    assert counts.get("Table", 0) == 6, f"expected 6 Tables, got {counts}"
+    assert counts == Counter(["KPI", "BarChart", "Table"]), (
+        f"unexpected visual mix: {counts}"
+    )
 
 
-def test_exceptions_sheet_titles_have_l2_prefix() -> None:
-    """Every KPI + Table on the L2 Exceptions sheet leads with 'L2:' so
-    analysts spot the surface at a glance vs the L1 dashboard's
-    exceptions tab."""
-    from quicksight_gen.common.tree import KPI, Table
+def test_exceptions_sheet_visuals_read_unified_dataset() -> None:
+    """Every visual on the L2 Exceptions sheet reads from the unified
+    dataset — catches accidental wiring back to a sub-dataset that
+    isn't in the deployed dataset list anymore."""
+    from quicksight_gen.common.tree import BarChart, KPI, Table
     app = build_l2_flow_tracing_app(_CFG)
     exc = _sheet_by_name(app, "L2 Exceptions")
+    expected_ds = "l2ft-unified-exceptions-ds"
     for v in exc.visuals:
-        if isinstance(v, (KPI, Table)):
-            assert v.title.startswith("L2:"), (
-                f"visual title {v.title!r} doesn't carry the L2: prefix"
-            )
+        if isinstance(v, KPI):
+            assert v.values[0].column.dataset.identifier == expected_ds
+        elif isinstance(v, BarChart):
+            assert v.category[0].column.dataset.identifier == expected_ds
+        elif isinstance(v, Table):
+            assert v.columns[0].column.dataset.identifier == expected_ds
 
 
-@pytest.mark.parametrize(
-    "section_label,title_fragment",
-    [
-        ("L2.1", "Chain Orphans"),
-        ("L2.2", "Unmatched Transfer Type"),
-        ("L2.3", "Dead Rails"),
-        ("L2.4", "Dead Bundles Activity"),
-        ("L2.5", "Dead Metadata Declarations"),
-        ("L2.6", "Dead Limit Schedules"),
-    ],
-)
-def test_exceptions_sheet_has_each_section_header(
-    section_label: str, title_fragment: str,
-) -> None:
-    """Each of the 6 L2 hygiene sections renders its named header
-    text-box on the sheet. Catches accidental section drops in the
-    populator."""
-    app = build_l2_flow_tracing_app(_CFG)
-    exc = _sheet_by_name(app, "L2 Exceptions")
-    body_blob = "".join(tb.content for tb in exc.text_boxes)
-    assert section_label in body_blob, (
-        f"section {section_label!r} header missing from L2 Exceptions"
+def test_unified_exceptions_dataset_unions_all_six_check_types() -> None:
+    """The unified dataset's SQL UNIONs all 6 check_type literals so
+    every L2 hygiene check feeds the same KPI / bar / table. Catches
+    accidental drops of a check branch from the UNION."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        build_unified_l2_exceptions_dataset,
     )
-    assert title_fragment in body_blob, (
-        f"section {title_fragment!r} title missing from L2 Exceptions"
-    )
+    inst = load_instance(SASQUATCH_PR_YAML)
+    aws_ds = build_unified_l2_exceptions_dataset(_CFG, inst)
+    sql = list(aws_ds.PhysicalTableMap.values())[0].CustomSql.SqlQuery
+    for check_type in (
+        "Chain Orphans",
+        "Unmatched Transfer Type",
+        "Dead Rails",
+        "Dead Bundles Activity",
+        "Dead Metadata Declarations",
+        "Dead Limit Schedules",
+    ):
+        assert f"'{check_type}'" in sql, (
+            f"check_type {check_type!r} missing from unified SQL"
+        )
 
 
 # -- Metadata-cascade source-of-truth (kept from M.3.8) ----------------------
