@@ -645,11 +645,30 @@ def demo_etl_example(app: str | None, all_apps: bool, output: str) -> None:
     help=(
         "Exit 1 if the YAML's `seed_hash:` field doesn't match the "
         "actual SHA256 of the auto-generated seed. Use in CI to guard "
-        "against unreviewed L2 spec drift."
+        "against unreviewed L2 spec drift. Only meaningful in the "
+        "default --mode l1_invariants — broad / l1_plus_broad modes "
+        "have their hashes locked in tests/test_l2_seed_contract.py."
+    ),
+)
+@click.option(
+    "--mode",
+    type=click.Choice(["l1_invariants", "broad", "l1_plus_broad"]),
+    default="l1_invariants",
+    help=(
+        "Which scenario plants to emit. `l1_invariants` (default) "
+        "plants one of every L1 SHOULD-violation kind. `broad` "
+        "plants per-rail firings for every Rail with materialized "
+        "accounts (M.4.2 — for visual review of the L2 surface). "
+        "`l1_plus_broad` is the union (used by the M.4.1 end-to-end "
+        "harness)."
     ),
 )
 def demo_seed_l2(
-    yaml_path: str, output: str | None, lock: bool, check_hash: bool,
+    yaml_path: str,
+    output: str | None,
+    lock: bool,
+    check_hash: bool,
+    mode: str,
 ) -> None:
     """Auto-generate a deterministic L1-exception seed from an L2 YAML.
 
@@ -668,8 +687,12 @@ def demo_seed_l2(
     from datetime import date
     import hashlib
     from quicksight_gen.common.l2 import load_instance
-    from quicksight_gen.common.l2.auto_scenario import default_scenario_for
+    from quicksight_gen.common.l2.auto_scenario import (
+        ScenarioMode,
+        default_scenario_for,
+    )
     from quicksight_gen.common.l2.seed import emit_seed
+    from typing import cast
 
     p = Path(yaml_path)
     instance = load_instance(p)
@@ -677,7 +700,9 @@ def demo_seed_l2(
     # The hash is computed against the canonical reference date so the
     # SHA256 lives independently of the day the CLI runs.
     canonical_today = date(2030, 1, 1)
-    report = default_scenario_for(instance, today=canonical_today)
+    report = default_scenario_for(
+        instance, today=canonical_today, mode=cast(ScenarioMode, mode),
+    )
     sql = emit_seed(instance, report.scenario)
     actual_hash = hashlib.sha256(sql.encode("utf-8")).hexdigest()
 

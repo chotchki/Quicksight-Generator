@@ -121,4 +121,4 @@ limit_schedules:
   - parent_role: CustomerLedger
     transfer_type: wire
     cap: 5000.00
-seed_hash: 688566c3530c071e3ff0c414095d726a6307a76c25eacafac369f184a3144d85
+seed_hash: d980d31ca2ca7a4d692c836220ab5d0a7a0a771d4c789611fb5992cdb7251965

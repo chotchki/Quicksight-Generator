@@ -63,7 +63,7 @@ def test_seed_l2_lock_writes_hash_into_yaml(
     wrong = "deadbeef" * 8
     text = tmp_yaml.read_text()
     text = text.replace(
-        "seed_hash: 688566c3530c071e3ff0c414095d726a6307a76c25eacafac369f184a3144d85",
+        "seed_hash: d980d31ca2ca7a4d692c836220ab5d0a7a0a771d4c789611fb5992cdb7251965",
         f"seed_hash: {wrong}",
     )
     tmp_yaml.write_text(text)
@@ -140,7 +140,7 @@ def test_seed_l2_check_hash_fails_on_drift(tmp_yaml: Path) -> None:
     """`--check-hash` exits 1 when YAML's seed_hash doesn't match actual."""
     text = tmp_yaml.read_text()
     text = text.replace(
-        "seed_hash: 688566c3530c071e3ff0c414095d726a6307a76c25eacafac369f184a3144d85",
+        "seed_hash: d980d31ca2ca7a4d692c836220ab5d0a7a0a771d4c789611fb5992cdb7251965",
         "seed_hash: " + ("a" * 64),
     )
     tmp_yaml.write_text(text)

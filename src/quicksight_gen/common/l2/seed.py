@@ -52,6 +52,7 @@ from .primitives import (
     L2Instance,
     Name,
     Rail,
+    SingleLegRail,
     TwoLegRail,
 )
 
@@ -238,6 +239,51 @@ class TransferTemplatePlant:
 
 
 @dataclass(frozen=True, slots=True)
+class RailFiringPlant:
+    """A planted Posted firing of a single Rail (M.4.2 broad-mode plant kind).
+
+    The L1-invariant plant types only fire rails the auto-scenario picks
+    to surface a SHOULD violation (one drift account, one overdraft
+    account, one limit-breach pair, etc.). Most declared rails see zero
+    firings under that picker — which is *correct* L2-hygiene behavior
+    but leaves the L2 Flow Tracing dashboard's Rails / Chains /
+    Transfer Templates sheets reading "dead" for every rail the picker
+    didn't choose.
+
+    Broad mode (M.4.2) plants additional ordinary firings — no SHOULD
+    violation, just "this rail fired, here's the data" — across every
+    declared rail whose role(s) actually resolve to a materialized
+    account. The L1 surface stays clean (no new drift / overdraft /
+    breach rows); the L2 surface gains visible content.
+
+    Two-leg rails plant 2 legs (debit on ``account_id_a``, credit on
+    ``account_id_b``); single-leg rails plant 1 leg (on ``account_id_a``,
+    direction per ``Rail.leg_direction``). ``account_id_b`` is None for
+    single-leg rails.
+
+    ``transfer_parent_id`` is set when this firing is the child end of
+    a Required chain entry — points at one of the parent rail's
+    ``transfer_id``s so the L1 invariant view's chain-orphan detection
+    sees a matched pair. Defaults to None for standalone firings.
+
+    ``extra_metadata`` carries values for rail.metadata_keys fields NOT
+    auto-derived from a containing TransferTemplate's transfer_key.
+    The emit helper unions them with auto-derived TransferKey values
+    so the resulting JSON column is well-formed for the L2 Flow Tracing
+    metadata cascade.
+    """
+
+    rail_name: Identifier
+    days_ago: int
+    firing_seq: int
+    amount: Decimal
+    account_id_a: Identifier
+    account_id_b: Identifier | None = None
+    transfer_parent_id: str | None = None
+    extra_metadata: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class ScenarioPlant:
     """The full set of planted scenarios + materialized template instances.
 
@@ -253,6 +299,7 @@ class ScenarioPlant:
     stuck_unbundled_plants: tuple[StuckUnbundledPlant, ...] = ()
     supersession_plants: tuple[SupersessionPlant, ...] = ()
     transfer_template_plants: tuple[TransferTemplatePlant, ...] = ()
+    rail_firing_plants: tuple[RailFiringPlant, ...] = ()
     today: date = field(
         default_factory=lambda: datetime.now(tz=timezone.utc).date(),
     )
@@ -322,6 +369,13 @@ def emit_seed(instance: L2Instance, scenarios: ScenarioPlant) -> str:
             )
         )
 
+    for p in sorted(scenarios.rail_firing_plants, key=_rail_firing_key):
+        txn_rows.extend(
+            _emit_rail_firing_rows(
+                p, instance, scenarios, template_by_role, txn_counter,
+            )
+        )
+
     # Overdraft scenarios don't need extra transaction rows — the
     # daily_balances row alone (negative money) drives the exception.
 
@@ -382,6 +436,7 @@ def emit_seed(instance: L2Instance, scenarios: ScenarioPlant) -> str:
 --   {len(scenarios.drift_plants)} drift scenarios
 --   {len(scenarios.overdraft_plants)} overdraft scenarios
 --   {len(scenarios.limit_breach_plants)} limit-breach scenarios
+--   {len(scenarios.rail_firing_plants)} rail firings (broad mode)
 -- =====================================================================
 
 {txn_insert}
@@ -431,6 +486,10 @@ def _supersession_key(p: SupersessionPlant) -> tuple[str, int, str]:
 
 def _tt_key(p: TransferTemplatePlant) -> tuple[str, int, int]:
     return (str(p.template_name), p.days_ago, p.firing_seq)
+
+
+def _rail_firing_key(p: RailFiringPlant) -> tuple[str, int, int]:
+    return (str(p.rail_name), p.days_ago, p.firing_seq)
 
 
 def _parent_singletons(instance: L2Instance) -> dict[Identifier, Account]:
@@ -1062,6 +1121,160 @@ def _emit_transfer_template_rows(
                 transfer_parent_id=transfer_id,
             ))
     return rows
+
+
+def _emit_rail_firing_rows(
+    p: RailFiringPlant,
+    instance: L2Instance,
+    scenarios: ScenarioPlant,
+    template_by_role: dict[Identifier, AccountTemplate],
+    counter: _Counter,
+) -> list[str]:
+    """Plant ONE Posted firing of an L2-declared Rail (M.4.2 broad mode).
+
+    Two-leg rails plant 2 legs:
+      - debit on ``account_id_a`` for -amount
+      - credit on ``account_id_b`` for +amount
+
+    Single-leg rails plant 1 leg:
+      - on ``account_id_a``, direction per ``Rail.leg_direction``
+      - amount sign per the direction (Variable treated as Debit for
+        the seed; the closing-leg semantics aren't material to the
+        L2 hygiene checks the broad mode targets)
+
+    Per-leg Origin resolves through the SPEC's Origin resolution rules
+    (validator O1) — rail-level ``origin`` falls back if a per-leg
+    override isn't set; for 1-leg rails ``origin`` is required (validator).
+
+    Metadata:
+      - Auto-derived ``transfer_key`` field values come from any
+        containing TransferTemplate's transfer_key.
+      - ``extra_metadata`` (per-key tuples on the plant) supplies
+        values for the rail's other declared metadata_keys.
+      - The two sources are merged at emit time; ``extra_metadata``
+        wins on overlap (gives the broad-mode picker explicit control).
+
+    ``transfer_parent_id`` is set when the plant carries one — used
+    for chain-child firings the broad picker links into Required
+    chain entries.
+    """
+    rail = _resolve_rail(p.rail_name, instance)
+
+    n = counter.next()
+    plant_day = scenarios.today - timedelta(days=p.days_ago)
+    posting_ts = f"{plant_day.isoformat()}T11:00:00+00:00"
+    transfer_id = f"tr-rail-{n:04d}"
+    txn_id = f"tx-rail-{n:04d}"
+
+    src = _resolve_any_account(
+        p.account_id_a, instance, scenarios, template_by_role,
+    )
+    dst = (
+        _resolve_any_account(
+            p.account_id_b, instance, scenarios, template_by_role,
+        ) if p.account_id_b is not None else None
+    )
+
+    # Metadata: TransferKey fields auto-derived from any containing
+    # TransferTemplate, plus the plant's extra_metadata. Per-firing
+    # values keyed off rail name + firing seq so two firings of the
+    # same rail produce distinct values (the L2 Flow Tracing metadata
+    # cascade reads distinct values from this column).
+    metadata: dict[str, str] = {}
+    for tt in instance.transfer_templates:
+        if rail.name not in tt.leg_rails:
+            continue
+        for k in tt.transfer_key:
+            metadata[str(k)] = (
+                f"{rail.name}-firing-{p.firing_seq:04d}"
+            )
+    for key, value in p.extra_metadata:
+        metadata[key] = value
+
+    if isinstance(rail, TwoLegRail):
+        if dst is None:
+            raise ValueError(
+                f"_emit_rail_firing_rows: TwoLegRail {rail.name!r} requires "
+                f"account_id_b for the destination leg"
+            )
+        src_origin = (
+            str(rail.source_origin) if rail.source_origin is not None
+            else (str(rail.origin) if rail.origin is not None else "InternalInitiated")
+        )
+        dst_origin = (
+            str(rail.destination_origin) if rail.destination_origin is not None
+            else (str(rail.origin) if rail.origin is not None else "InternalInitiated")
+        )
+        return [
+            _txn_row(
+                id_=f"{txn_id}-src",
+                account_id=src.account_id,
+                account_name=src.account_name,
+                account_role=src.account_role,
+                account_scope=src.account_scope,
+                account_parent_role=src.account_parent_role,
+                money=-p.amount,
+                direction="Debit",
+                posting=posting_ts,
+                transfer_id=transfer_id,
+                transfer_type=rail.transfer_type,
+                rail_name=rail.name,
+                origin=src_origin,
+                metadata=metadata,
+                transfer_parent_id=p.transfer_parent_id,
+            ),
+            _txn_row(
+                id_=txn_id,
+                account_id=dst.account_id,
+                account_name=dst.account_name,
+                account_role=dst.account_role,
+                account_scope=dst.account_scope,
+                account_parent_role=dst.account_parent_role,
+                money=p.amount,
+                direction="Credit",
+                posting=posting_ts,
+                transfer_id=transfer_id,
+                transfer_type=rail.transfer_type,
+                rail_name=rail.name,
+                origin=dst_origin,
+                metadata=metadata,
+                transfer_parent_id=p.transfer_parent_id,
+            ),
+        ]
+
+    # SingleLegRail (the only other arm of the discriminated union;
+    # exhaustion guarded by the TwoLegRail isinstance branch above).
+    assert isinstance(rail, SingleLegRail)
+    if rail.leg_direction == "Credit":
+        direction, money = "Credit", p.amount
+    else:
+        # Debit OR Variable — Variable closing-leg semantics aren't
+        # material to broad-mode L2 hygiene checks; treat as Debit
+        # so the firing has a consistent sign.
+        direction, money = "Debit", -p.amount
+    leg_origin = (
+        str(rail.origin) if rail.origin is not None
+        else "InternalInitiated"
+    )
+    return [
+        _txn_row(
+            id_=txn_id,
+            account_id=src.account_id,
+            account_name=src.account_name,
+            account_role=src.account_role,
+            account_scope=src.account_scope,
+            account_parent_role=src.account_parent_role,
+            money=money,
+            direction=direction,
+            posting=posting_ts,
+            transfer_id=transfer_id,
+            transfer_type=rail.transfer_type,
+            rail_name=rail.name,
+            origin=leg_origin,
+            metadata=metadata,
+            transfer_parent_id=p.transfer_parent_id,
+        ),
+    ]
 
 
 def _txn_row(

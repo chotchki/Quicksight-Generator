@@ -547,3 +547,70 @@ def test_seed_columns_match_schema_v6_documented_set(
             f"columns from the seed."
             + _hint_if_fuzz(instance)
         )
+
+
+# -- M.4.2: broad-mode hash-locks -------------------------------------------
+#
+# The YAML's ``seed_hash:`` field locks the L1-invariants-only mode (the
+# original M.2a.8 contract; preserved by tests above). The broad and
+# l1_plus_broad modes need their own per-(instance, mode) locks so the
+# matrix's M.4.1 harness scenarios stay deterministic across runs.
+#
+# Sidecar dict approach instead of YAML field per mode: keeps the YAML
+# semantics simple ("seed_hash is THE hash for the canonical scenario")
+# and centralizes the multi-mode lock surface in one place. Adding a
+# new mode is one entry per (instance, mode) row here.
+#
+# Fuzz instance is excluded from the lock check — its hash naturally
+# changes per fuzz seed; the byte-determinism test above is the
+# regression guard for the fuzz path.
+
+_BROAD_MODE_HASHES: dict[tuple[str, str], str] = {
+    ("spec_example", "broad"):
+        "1e64e28c99ef94ef2ccc533b5115288d32a53a4fa521e2c4e95ce540d41cf56f",
+    ("spec_example", "l1_plus_broad"):
+        "ada02b5c55b6f23a72eeb2c794dfc7d699810d0a224f96390dd404d2ac746231",
+    ("sasquatch_pr", "broad"):
+        "a7b5c5f2f07b17c5e13eb8eafc6195e3e4b2072262016670304e1172b68fb72c",
+    ("sasquatch_pr", "l1_plus_broad"):
+        "4aa476afa5ffce7dbf2d96c1c4e856fc37e750057ff4e1bf2e7c08145a457d9f",
+}
+
+
+@pytest.mark.parametrize("mode", ["broad", "l1_plus_broad"])
+def test_broad_mode_hashes_match_lock(instance: L2Instance, mode: str) -> None:
+    """M.4.2: every (instance, mode) pair has a locked SHA256 in the
+    sidecar dict above; this test asserts the actual hash matches.
+
+    Drift fixes follow the same pattern as the L1-mode lock — re-run
+    the helper script (see the print snippet in the M.4.2 commit) to
+    regenerate the dict, then commit. The fuzz fixture is skipped
+    because its hash drifts per ``QS_GEN_FUZZ_SEED``.
+    """
+    instance_name = str(instance.instance)
+    if instance_name.startswith("fuzz_"):
+        pytest.skip("fuzz fixture's broad-mode hash drifts per seed")
+    key = (instance_name, mode)
+    if key not in _BROAD_MODE_HASHES:
+        pytest.skip(
+            f"no broad-mode hash locked for {key!r}; "
+            f"add to _BROAD_MODE_HASHES if you want this combination locked"
+        )
+    from quicksight_gen.common.l2.auto_scenario import (
+        ScenarioMode,
+    )
+    from typing import cast
+    report = default_scenario_for(
+        instance, today=CANONICAL_TODAY, mode=cast(ScenarioMode, mode),
+    )
+    sql = emit_seed(instance, report.scenario)
+    actual = hashlib.sha256(sql.encode("utf-8")).hexdigest()
+    expected = _BROAD_MODE_HASHES[key]
+    assert actual == expected, (
+        f"Broad-mode seed for ({instance_name!r}, {mode!r}) drifted from "
+        f"locked hash:\n"
+        f"  locked: {expected}\n"
+        f"  actual: {actual}\n"
+        f"Update _BROAD_MODE_HASHES in tests/test_l2_seed_contract.py "
+        f"if the change was intentional."
+    )
