@@ -251,8 +251,53 @@
 
   - [ ] M.3.N — **End-of-phase iteration gate.** Amend SPEC.md; document the L2 flow-tracing dashboard in a new `docs/handbook/l2_flow_tracing.md`; replan M.4 substeps with the end-to-end harness destination from M.3.11 as a likely first phase; decide whether to merge to main or hold on `phase-m-3-l2-flow-tracing` until M.4 starts.
 
-- [ ] **M.4 — Port Investigation + Executives.** Lighter-weight — Inv is question-shaped (mostly read-side over the shared base ledger) and Exec aggregates over both. Both should consume the same L2 instances PR + AR produced rather than declare their own. Acceptance: all 4 apps build against L2 instances; full e2e suite green against the new pattern.
-  - Sub-steps deferred until after M.3 iteration gate.
+- [ ] **M.4 — Remove `apps/account_recon/` + `apps/payment_recon/`; extend the test harness end-to-end.** Reframed at the M.3 transition: with `apps/l1_dashboard/` covering L1 invariants and `apps/l2_flow_tracing/` covering L2 spec primitives, the AR + PR v5 apps become pure maintenance cost. Original M.4 was "port Investigation + Executives" — that's the same wrong move M.3 backed off (porting just renames Sasquatch strings). M.4 deletes AR + PR and lands the M.3.11 end-to-end harness destination so the full chain (YAML → schema → seed → DB → dashboard → browser-validate) is automated.
+
+  **Investigation + Executives stay (for now)**: they get revisited / reshaped in a separate post-M.3 phase (call it **M.4.5** below) once we have M.3 evidence about what l2_flow_tracing surfaces and where Investigation's question-shaped analysis (fanout / money-trail / network) might fit. Punting the decision avoids pre-committing to either "delete" or "rebuild" without the data M.3 produces.
+
+  **What survives M.4**:
+  - `apps/l1_dashboard/`, `apps/l2_flow_tracing/` (the production app surface)
+  - `apps/investigation/`, `apps/executives/` (held for M.4.5 reshape decision)
+  - `tests/l2/{spec_example, sasquatch_ar, sasquatch_pr}.yaml` + `fuzz.py` (L2 fixtures)
+  - `common/l2/` library + `common/l2/seed.py` + `common/l2/auto_scenario.py`
+
+  **What goes in M.4**:
+  - `apps/account_recon/` (except `_l2.py`, which moves to `tests/l2/sasquatch_ar.py`)
+  - `apps/payment_recon/` fully
+  - Per-app handbook + walkthrough docs for AR + PR
+  - Per-app test files for AR + PR (~15-20 unit + e2e files)
+  - `ar_*` matviews in `schema.sql` (read only by AR's gone v5 datasets)
+  - Per-app theme presets `sasquatch-bank-ar` (consolidated)
+
+  Acceptance: codebase has 2 active production apps (L1 dashboard + L2 flow tracing) plus 2 held apps (Investigation + Executives) awaiting M.4.5 decision; AR + PR v5 surfaces fully removed; CLI's `account-recon` + `payment-recon` subcommands gone; end-to-end harness drives any L2 YAML through schema-emit → auto-seed → DB-apply → dashboard-deploy → Playwright browser-validation; `quicksight-gen` documentation reflects the reduced surface.
+
+  - [ ] M.4.1 — **End-to-end harness — `tests/test_harness_end_to_end.py`** (the M.3.11 destination). Per-L2-instance flow: (1) load YAML; (2) `emit_schema` to a fresh prefix in a Postgres test database; (3) auto-scenario + emit_seed → apply to DB; (4) refresh matviews; (5) `quicksight-gen generate l1-dashboard --l2 <yaml>` + `generate l2-flow-tracing --l2 <yaml>`; (6) deploy both to QuickSight; (7) Playwright opens each dashboard, asserts the planted scenarios surface as visible rows on the right sheets. Parameterized over `L2_INSTANCES` (4 entries by then). Gated behind `QS_GEN_E2E=1` like the other browser e2e tests since it's slow + AWS-touching. Per-test failure dumps the seed's SHA + the planted-scenarios manifest + the dashboard URL for triage. Land this BEFORE the deletes so the harness covers the surviving apps' regression bar through M.4's destructive substeps.
+
+  - [ ] M.4.2 — **Move `apps/account_recon/_l2.py` → `tests/l2/sasquatch_ar.py`.** That file is the only AR-app survivor; it loads `sasquatch_ar.yaml` and returns the L2Instance. Naming convention `tests/l2/<instance>.py` mirrors existing `sasquatch_ar_seed.py`. Update import sites (`apps/l1_dashboard/app.py`, the L1 e2e conftest, the M.2d.8 contract matrix). Default L2 instance for `build_l1_dashboard_app(cfg, l2_instance=None)` either: (a) drops the default and forces explicit pass; (b) defaults to a brand-new persona-neutral spec_example loader. Lean (a) — no implicit Sasquatch in production library code post-M.4.
+
+  - [ ] M.4.3 — **Delete `apps/account_recon/`** (excluding `_l2.py` already moved). Removes `app.py`, `datasets.py`, `demo_data.py`, `etl_examples.py`, `constants.py`, `__init__.py`. Update `apps/__init__.py` if it re-exports.
+
+  - [ ] M.4.4 — **Delete `apps/payment_recon/` fully.** No survivors — there's no PR equivalent of `_l2.py` to preserve.
+
+  - [ ] M.4.5 — **Investigation + Executives reshape decision** — held for post-M.3 review. Not a delete by default; the question is "what shape, if any, do these need post-M.3?" Three candidate paths to evaluate at this substep's gate:
+      - **Keep as-is**: Investigation's question-shaped analysis is genuinely different from L1/L2 invariant work; if a stakeholder still wants it, the v5 surface stays untouched.
+      - **Reshape onto L2**: if M.3 surfaced enough overlap, Investigation's primitives could become a third L2-fed app (e.g., `apps/l2_network_analysis/`). Same shape as M.3 but for analytic-not-invariant surfaces.
+      - **Delete**: if no stakeholder will miss them and the analytic surface isn't worth maintaining as a v5 relic, sweep them.
+      Output: a short audit doc captured in this substep, plus the chosen path's substeps materialized as M.4.5a, M.4.5b, … Closes once the decision is made + the chosen path lands.
+
+  - [ ] M.4.6 — **Delete the AR + PR test files.** `test_account_recon.py`, `test_recon.py` (PR), `test_demo_data.py` (the AR + PR portions only — Investigation portions stay until M.4.5 resolves), `test_demo_etl_examples.py` (already partially gutted in M.2d.7; fully drops now), `test_etl_examples.py` (same), and `tests/e2e/test_ar_*.py` + `tests/e2e/test_pr_*.py`. Investigation + Executives test files (`test_investigation.py`, `test_executives.py`, `tests/e2e/test_inv_*.py`, `tests/e2e/test_exec_*.py`) STAY pending M.4.5. Rerun full suite to confirm 0 broken imports.
+
+  - [ ] M.4.7 — **Update CLI surface.** Drop `account-recon`, `payment-recon` from `APPS` constant. Drop their `generate <app>` / `deploy <app>` subcommands + the per-app `_generate_<app>` / `_apply_demo` branches. CLI's `--all` flag now means "L1 dashboard + L2 flow tracing + (Investigation + Executives until M.4.5 resolves)." Drop `demo seed account-recon` and `demo seed payment-recon` (auto-scenario via `demo seed-l2 <yaml>` is the replacement).
+
+  - [ ] M.4.8 — **Drop the AR-only `schema.sql` carry-overs.** Specifically the `ar_ledger_accounts`, `ar_subledger_accounts`, `ar_ledger_transfer_limits` tables + the `ar_*` computed/matview surface (~14 entries) that only the deleted AR datasets read. Investigation's `inv_*` matviews stay until M.4.5 resolves.
+
+  - [ ] M.4.9 — **Update docs.** Delete `docs/handbook/ar.md`, `docs/handbook/pr.md`, `docs/walkthroughs/ar/`, `docs/walkthroughs/pr/`. Investigation handbook + walkthroughs stay pending M.4.5. `mkdocs.yml` nav cleanup. README.md "five apps" framing collapses (specific count depends on M.4.5 outcome — write README.md update as a M.4.5 closer rather than here). CLAUDE.md updates: new app inventory + drop "Account Reconciliation" + "Payment Reconciliation" sections from the Domain Model. mkdocs build --strict passes.
+
+  - [ ] M.4.10 — **Theme consolidation (partial).** `sasquatch-bank-ar` theme preset deletes; the `sasquatch-bank` and `sasquatch-bank-investigation` presets stay until M.4.5 resolves Investigation's fate.
+
+  - [ ] M.4.11 — **No-regression bar**: the surviving L1 dashboard + L2 flow tracing tests stay green. The M.2d.8 matrix (4 L2 instances × 8 contracts = 32 cases) stays green. The M.2d.9 fuzzer's 100-seed meta-guard stays green. Investigation + Executives tests stay green pending M.4.5. Total test count drops substantially (~15-20 files removed in this M.4 pass; more if M.4.5 deletes Inv/Exec).
+
+  - [ ] M.4.N — **End-of-phase iteration gate.** Read the codebase from a fresh integrator's perspective — does "drop your YAML in, run `quicksight-gen demo seed-l2`, deploy" actually work cleanly? Capture any rough edges as M.5 input. Document M.4.5's decision + chosen path. Replan M.5 (originally "demo persona infrastructure + unified theme") with the cleaner surface in mind. Decide branch merge timing.
 
 - [ ] **M.5 — Demo persona infrastructure + unified theme.** Sasquatch becomes N L2 instances (one per app, or per business context — decided after M.2 + M.3 land). Persona substitution wired so a fresh `quicksight-gen generate config demo > sasquatch.yaml` produces a runnable bundle. Includes the per-instance prefix story (each instance gets its own isolated table set per SPEC). Also lands the **unified theme** decision: today's per-app `sasquatch-bank` / `sasquatch-bank-ar` / `sasquatch-bank-investigation` split (per-app `cli.py::_apply_demo` `theme_preset` dict + `_generate_<app>(theme_preset=…)` defaults; Executives falls back to `sasquatch-bank` per L.6.8) collapses to one theme per persona — driven as an attribute of the L2 persona model, not as per-app preset selection.
   - Sub-steps deferred until after M.4 iteration gate.
