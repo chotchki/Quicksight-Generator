@@ -262,7 +262,7 @@
     - **M.4.1.g — Parallelism + flake hardening.** Decide serial vs pytest-xdist parallel. Constraint: shared QS account means cleanup tags have to be per-test-uid (not per-app) to avoid one test's teardown sweeping another's resources. Per-test Aurora warmup (`SELECT 1`) before the first query. QS dashboard "spinner forever" footgun (CLAUDE.md operational footgun): per-visual timeout + retry-once-with-fresh-embed-URL. Document any QS-side rate limits hit; tune the matrix size if needed.
     - **M.4.1.h — Wire into `run_e2e.sh`.** New `--harness` flag alongside existing `--skip-deploy` / `--parallel` options. Default behavior: skipped (slow + AWS-touching + costs real $$); explicit opt-in for nightly / pre-release runs. Document expected runtime in the script comments (rough estimate: `len(L2_INSTANCES) × 5 min/instance`).
 
-  - [ ] M.3.12 — **No-regression check** — today's PR/AR/Investigation/Executives unit + e2e tests pass unchanged. M.3 is additive; the legacy v5 apps don't get touched.
+  - [x] M.3.12 — **Skipped: no-regression check on legacy apps is moot at this point.** PR + AR are slated for deletion in M.4.2/M.4.3; Investigation + Executives await the M.4.5 reshape decision. Running today's tests against apps about to be deleted-or-reshaped doesn't add coverage value — the bar that matters is the M.4.1 end-to-end harness covering the surviving L1 + L2FT apps.
 
   - [ ] M.3.13 — **Capture SPEC gaps** — what M.3.1's hand-write surfaced about TransferKey runtime resolution semantics, Variable closure edge cases, XOR group seed planting, AggregatingRail bundling under late arrivals. Each gap gets a SPEC.md amendment + a regression test under `tests/test_l2_validate.py` or `tests/l2/fuzz.py` (if the gap can be fuzz-explored).
 
