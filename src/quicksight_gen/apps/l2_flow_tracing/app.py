@@ -35,6 +35,12 @@ from dataclasses import replace
 
 from quicksight_gen.apps.l2_flow_tracing.datasets import (
     DS_CHAINS,
+    DS_EXC_CHAIN_ORPHANS,
+    DS_EXC_DEAD_BUNDLES_ACTIVITY,
+    DS_EXC_DEAD_LIMIT_SCHEDULES,
+    DS_EXC_DEAD_METADATA,
+    DS_EXC_DEAD_RAILS,
+    DS_EXC_UNMATCHED_TRANSFER_TYPE,
     DS_RAILS,
     build_all_l2_flow_tracing_datasets,
 )
@@ -182,13 +188,7 @@ def build_l2_flow_tracing_app(
     _populate_getting_started(cfg, getting_started, l2_instance)
     _populate_rails_sheet(cfg, rails_sheet, datasets=datasets)
     _populate_chains_sheet(cfg, chains_sheet, datasets=datasets)
-    _populate_placeholder(
-        cfg, l2_exceptions_sheet,
-        title=_L2_EXCEPTIONS_TITLE,
-        body=_L2_EXCEPTIONS_DESCRIPTION,
-        substep="M.3.7",
-        text_box_id="l2ft-l2-exceptions-placeholder",
-    )
+    _populate_l2_exceptions_sheet(cfg, l2_exceptions_sheet, datasets=datasets)
 
     app.create_dashboard(
         dashboard_id_suffix="l2-flow-tracing",
@@ -214,7 +214,16 @@ def _l2ft_datasets(
     wiring on the App.
     """
     aws_datasets = build_all_l2_flow_tracing_datasets(cfg, l2_instance)
-    visual_ids = [DS_RAILS, DS_CHAINS]  # M.3.7 extends
+    visual_ids = [
+        DS_RAILS,
+        DS_CHAINS,
+        DS_EXC_CHAIN_ORPHANS,
+        DS_EXC_UNMATCHED_TRANSFER_TYPE,
+        DS_EXC_DEAD_RAILS,
+        DS_EXC_DEAD_BUNDLES_ACTIVITY,
+        DS_EXC_DEAD_METADATA,
+        DS_EXC_DEAD_LIMIT_SCHEDULES,
+    ]
     return {
         vid: Dataset(identifier=vid, arn=cfg.dataset_arn(aws.DataSetId))
         for vid, aws in zip(visual_ids, aws_datasets)
@@ -423,6 +432,209 @@ def _populate_chains_sheet(
             ds_chains["orphan_count"].numerical(),
             ds_chains["orphan_rate"].numerical(),
         ],
+    )
+
+
+def _populate_l2_exceptions_sheet(
+    cfg: Config,
+    sheet: Sheet,
+    *,
+    datasets: dict[str, Dataset],
+) -> None:
+    """L2 Exceptions sheet — six KPI + table sections, one per L2
+    hygiene check (M.3.7).
+
+    Each section follows the same pattern: a small text-box header
+    with the section's invariant statement, a KPI counting the
+    violation rows, and a detail table listing them. The 'L2:'
+    prefix on every visual title flags the surface so analysts
+    don't confuse it with the L1 dashboard's exceptions tab.
+    """
+    accent = get_preset(cfg.theme_preset).accent
+
+    sheet.layout.row(height=8).add_text_box(
+        TextBox(
+            text_box_id="l2ft-exc-header",
+            content=rt.text_box(
+                rt.subheading("L2 Exceptions", color=accent),
+                rt.BR,
+                rt.body(
+                    "Six L2 hygiene checks. Each surfaces a "
+                    "'declaration vs runtime' mismatch the L1 "
+                    "dashboard's exceptions tab doesn't catch — "
+                    "every row here is one piece of the L2 instance "
+                    "the runtime data disagrees with."
+                ),
+            ),
+        ),
+        width=36,
+    )
+
+    _add_l2_exception_section(
+        sheet=sheet,
+        accent=accent,
+        section_id="l2-1-chain-orphans",
+        section_label="L2.1",
+        title="Chain Orphans",
+        body=(
+            "Required Chain entries where the parent fired but the "
+            "child didn't in the window. A non-zero count means the "
+            "L2 says these flows MUST chain together but the runtime "
+            "data shows broken cycles. (XOR-group multi/none "
+            "violations are deferred to a follow-on substep.)"
+        ),
+        ds=datasets[DS_EXC_CHAIN_ORPHANS],
+        kpi_value_col="parent_name",
+        table_columns=[
+            "parent_name", "child_name",
+            "parent_firing_count", "child_firing_count", "orphan_count",
+        ],
+    )
+    _add_l2_exception_section(
+        sheet=sheet,
+        accent=accent,
+        section_id="l2-2-unmatched-transfer-type",
+        section_label="L2.2",
+        title="Unmatched Transfer Type",
+        body=(
+            "Posted Transactions whose transfer_type isn't in the L2's "
+            "declared Rail.transfer_type set. Means the runtime feed "
+            "is producing types the L2 doesn't know about — usually "
+            "an integrator-side ETL gap or a stale L2 declaration."
+        ),
+        ds=datasets[DS_EXC_UNMATCHED_TRANSFER_TYPE],
+        kpi_value_col="transfer_type",
+        table_columns=["transfer_type", "posting_count"],
+    )
+    _add_l2_exception_section(
+        sheet=sheet,
+        accent=accent,
+        section_id="l2-3-dead-rails",
+        section_label="L2.3",
+        title="Dead Rails",
+        body=(
+            "Rails declared in L2 with zero postings in the window. "
+            "Either the rail was retired and the declaration should "
+            "follow, or the ETL isn't producing activity through it "
+            "yet — the L2 says it should."
+        ),
+        ds=datasets[DS_EXC_DEAD_RAILS],
+        kpi_value_col="rail_name",
+        table_columns=["rail_name", "transfer_type", "leg_shape"],
+    )
+    _add_l2_exception_section(
+        sheet=sheet,
+        accent=accent,
+        section_id="l2-4-dead-bundles-activity",
+        section_label="L2.4",
+        title="Dead Bundles Activity",
+        body=(
+            "Aggregating-rail bundles_activity targets that no posting "
+            "matched (by rail_name OR transfer_type) in the window. "
+            "Means the bundler will never fire — the activity selector "
+            "doesn't resolve to anything the runtime is producing."
+        ),
+        ds=datasets[DS_EXC_DEAD_BUNDLES_ACTIVITY],
+        kpi_value_col="aggregating_rail",
+        table_columns=["aggregating_rail", "bundle_target"],
+    )
+    _add_l2_exception_section(
+        sheet=sheet,
+        accent=accent,
+        section_id="l2-5-dead-metadata",
+        section_label="L2.5",
+        title="Dead Metadata Declarations",
+        body=(
+            "Rail.metadata_keys that no posting on that rail carries a "
+            "value for. Either the L2 over-declares what the rail "
+            "exposes, or the integrator's ETL isn't propagating those "
+            "keys onto the leg's metadata."
+        ),
+        ds=datasets[DS_EXC_DEAD_METADATA],
+        kpi_value_col="rail_name",
+        table_columns=["rail_name", "metadata_key"],
+    )
+    _add_l2_exception_section(
+        sheet=sheet,
+        accent=accent,
+        section_id="l2-6-dead-limit-schedules",
+        section_label="L2.6",
+        title="Dead Limit Schedules",
+        body=(
+            "LimitSchedule (parent_role, transfer_type) cells with "
+            "zero outbound debit flow in the window. The cap is "
+            "effectively dead — either nobody routes that combo, or "
+            "the L2 is enforcing against a flow that doesn't exist."
+        ),
+        ds=datasets[DS_EXC_DEAD_LIMIT_SCHEDULES],
+        kpi_value_col="parent_role",
+        table_columns=["parent_role", "transfer_type", "cap"],
+    )
+
+
+def _add_l2_exception_section(
+    *,
+    sheet: Sheet,
+    accent: str,
+    section_id: str,
+    section_label: str,
+    title: str,
+    body: str,
+    ds: Dataset,
+    kpi_value_col: str,
+    table_columns: list[str],
+) -> None:
+    """One L2 exception section — header text + KPI + table row.
+
+    Lays out three rows: a short text-box (8 high), a KPI (6 high)
+    half-width, and a table (12 high) full-width. The KPI counts
+    rows in the dataset (every row IS one violation per the
+    M.3.7 spec); the table lists them with the columns the section
+    cares about. ``L2.X`` label leads every title for visual
+    differentiation from the L1 dashboard.
+    """
+    sheet.layout.row(height=6).add_text_box(
+        TextBox(
+            text_box_id=f"l2ft-exc-{section_id}-header",
+            content=rt.text_box(
+                rt.subheading(f"{section_label} — {title}", color=accent),
+                rt.BR,
+                rt.body(body),
+            ),
+        ),
+        width=36,
+    )
+
+    half = 18
+    kpi_row = sheet.layout.row(height=6)
+    kpi_row.add_kpi(
+        width=half,
+        title=f"L2: {title} — Violation Count",
+        subtitle="One row per detected violation in the window.",
+        values=[ds[kpi_value_col].count()],
+    )
+    kpi_row.add_kpi(
+        width=half,
+        title=f"L2: {title} — Distinct Subjects",
+        subtitle=(
+            "Distinct subjects involved (e.g., distinct rails, "
+            "transfer_types, edges). May equal the violation count "
+            "if every row carries a different subject."
+        ),
+        values=[ds[kpi_value_col].distinct_count()],
+    )
+
+    sheet.layout.row(height=12).add_table(
+        width=36,
+        title=f"L2: {title} — Detail",
+        subtitle=(
+            "Every row in this dataset IS one violation — open the "
+            "L2 declaration that emitted the row to investigate."
+        ),
+        columns=[ds[c].dim() if c not in {
+            "parent_firing_count", "child_firing_count",
+            "orphan_count", "posting_count", "cap",
+        } else ds[c].numerical() for c in table_columns],
     )
 
 

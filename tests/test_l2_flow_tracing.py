@@ -198,13 +198,19 @@ def test_every_sheet_has_at_least_one_text_box() -> None:
 
 
 def test_dataset_count_matches_populated_sheets() -> None:
-    """M.3.5 ships Rails (1); M.3.6 adds Chains (2). Each subsequent
-    populator substep grows this assertion (M.3.7 → ~8). Re-key when a
-    new tab populator lands."""
+    """M.3.5 → 1 (Rails); M.3.6 → 2 (+ Chains); M.3.7 → 8 (+ 6
+    L2 exception sections). Re-key as each substep lands."""
     app = build_l2_flow_tracing_app(_CFG)
-    assert len(app.datasets) == 2
+    assert len(app.datasets) == 8
     assert {d.identifier for d in app.datasets} == {
-        "l2ft-rails-ds", "l2ft-chains-ds",
+        "l2ft-rails-ds",
+        "l2ft-chains-ds",
+        "l2ft-exc-chain-orphans-ds",
+        "l2ft-exc-unmatched-transfer-type-ds",
+        "l2ft-exc-dead-rails-ds",
+        "l2ft-exc-dead-bundles-activity-ds",
+        "l2ft-exc-dead-metadata-ds",
+        "l2ft-exc-dead-limit-schedules-ds",
     }
 
 
@@ -245,26 +251,16 @@ def test_getting_started_title_is_constant_ui_vocabulary() -> None:
 # -- Placeholder sheets — substep pointers (removed when populated) ----------
 
 
-@pytest.mark.parametrize(
-    "sheet_name,substep",
-    [
-        ("L2 Exceptions", "M.3.7"),
-    ],
-)
-def test_placeholder_sheets_point_to_their_substep(
-    sheet_name: str, substep: str,
-) -> None:
-    """Each remaining placeholder TextBox names the substep that will
-    replace it, so the next agent on this app sees a clear pointer to
-    the next work item. Drop the parametrize entry as each substep
-    populator lands (M.3.5 dropped Rails; M.3.6 dropped Chains)."""
+def test_no_remaining_placeholder_sheets() -> None:
+    """M.3.7 lands the last populator (L2 Exceptions). No sheet
+    should retain the M.3.4 'skeleton' placeholder marker — every
+    sheet has its real visuals + prose now."""
     app = build_l2_flow_tracing_app(_CFG)
-    sheet = _sheet_by_name(app, sheet_name)
-    body = sheet.text_boxes[0].content
-    assert f"M.3.4" in body  # documents that this is the skeleton
-    assert substep in body, (
-        f"sheet {sheet_name!r} placeholder doesn't point at {substep}"
-    )
+    for s in app.analysis.sheets:
+        body_blob = "".join(tb.content for tb in s.text_boxes)
+        assert "Skeleton at M.3.4" not in body_blob, (
+            f"sheet {s.name!r} still carries the M.3.4 placeholder marker"
+        )
 
 
 # -- CLI plumbing ------------------------------------------------------------
@@ -582,3 +578,218 @@ def test_chains_detail_table_includes_orphan_columns() -> None:
     table = next(v for v in chains.visuals if isinstance(v, Table))
     table_col_names = {c.column.name for c in table.columns}
     assert {"orphan_count", "orphan_rate"} <= table_col_names
+
+
+# -- L2 Exceptions sheet (M.3.7) ---------------------------------------------
+
+
+_EXC_DATASETS = (
+    ("l2ft-exc-chain-orphans-ds", "build_exc_chain_orphans_dataset"),
+    ("l2ft-exc-unmatched-transfer-type-ds",
+     "build_exc_unmatched_transfer_type_dataset"),
+    ("l2ft-exc-dead-rails-ds", "build_exc_dead_rails_dataset"),
+    ("l2ft-exc-dead-bundles-activity-ds",
+     "build_exc_dead_bundles_activity_dataset"),
+    ("l2ft-exc-dead-metadata-ds", "build_exc_dead_metadata_dataset"),
+    ("l2ft-exc-dead-limit-schedules-ds",
+     "build_exc_dead_limit_schedules_dataset"),
+)
+
+
+def _exc_dataset_sql(builder_name: str, yaml_path: Path) -> str:
+    import quicksight_gen.apps.l2_flow_tracing.datasets as ds_mod
+    inst = load_instance(yaml_path)
+    builder = getattr(ds_mod, builder_name)
+    aws_ds = builder(_CFG, inst)
+    table = list(aws_ds.PhysicalTableMap.values())[0]
+    return table.CustomSql.SqlQuery
+
+
+@pytest.mark.parametrize("ds_id,builder_name", _EXC_DATASETS)
+def test_exc_dataset_targets_prefixed_current_transactions(
+    ds_id: str, builder_name: str,
+) -> None:
+    """Every L2 Exceptions dataset queries `<prefix>_current_transactions`
+    so the supersession-aware ('latest entry per id') view drives the
+    runtime side. The CTE may also reference the prefix; the broader
+    check is that the target table name appears at least once."""
+    sql = _exc_dataset_sql(builder_name, SASQUATCH_PR_YAML)
+    assert "sasquatch_pr_current_transactions" in sql, (
+        f"{builder_name} doesn't reference the prefixed transactions matview"
+    )
+
+
+@pytest.mark.parametrize("ds_id,builder_name", _EXC_DATASETS)
+def test_exc_dataset_id_uses_l2_instance_prefix(
+    ds_id: str, builder_name: str,
+) -> None:
+    """Per M.2d.3 — every exception dataset's ID middle segment is
+    the L2 instance prefix so multi-instance deploys don't collide."""
+    import quicksight_gen.apps.l2_flow_tracing.datasets as ds_mod
+    from dataclasses import replace
+    cfg = replace(_CFG, l2_instance_prefix="sasquatch_pr")
+    builder = getattr(ds_mod, builder_name)
+    aws_ds = builder(cfg, load_instance(SASQUATCH_PR_YAML))
+    assert aws_ds.DataSetId.startswith("qs-gen-sasquatch_pr-l2ft-exc-"), (
+        f"{builder_name} dataset ID lacks prefix: {aws_ds.DataSetId}"
+    )
+
+
+def test_exc_chain_orphans_filters_required_only() -> None:
+    """L2.1 surfaces ONLY required orphans. Optional chain entries
+    with unmatched children are by-design (XOR groups, optional
+    follow-ons) — they don't constitute violations."""
+    sql = _exc_dataset_sql(
+        "build_exc_chain_orphans_dataset", SASQUATCH_PR_YAML,
+    )
+    assert "WHERE e.required = 'Required'" in sql
+
+
+def test_exc_unmatched_transfer_type_excludes_declared_types() -> None:
+    """L2.2 LEFT JOINs on declared types and filters to the unmatched
+    side (NULL after join). All declared transfer_types appear as
+    SELECT-literal rows in the declared_types CTE."""
+    sql = _exc_dataset_sql(
+        "build_exc_unmatched_transfer_type_dataset", SASQUATCH_PR_YAML,
+    )
+    inst = load_instance(SASQUATCH_PR_YAML)
+    declared_types = {str(r.transfer_type) for r in inst.rails}
+    for t in declared_types:
+        assert f"'{t}'" in sql
+    assert "LEFT JOIN declared_types" in sql
+    assert "WHERE d.transfer_type IS NULL" in sql
+
+
+def test_exc_dead_rails_filters_zero_postings_only() -> None:
+    """L2.3 filters to ``COALESCE(r.total_postings, 0) = 0``. A LEFT
+    JOIN preserves Rails with no matching runtime activity at all."""
+    sql = _exc_dataset_sql(
+        "build_exc_dead_rails_dataset", SASQUATCH_PR_YAML,
+    )
+    assert "COALESCE(r.total_postings, 0) = 0" in sql
+
+
+def test_exc_dead_bundles_activity_checks_both_attributions() -> None:
+    """L2.4: bundles_activity refs MAY name a rail OR a transfer_type
+    — the SQL's NOT EXISTS checks BOTH attributions to avoid false
+    positives."""
+    sql = _exc_dataset_sql(
+        "build_exc_dead_bundles_activity_dataset", SASQUATCH_PR_YAML,
+    )
+    assert "t.rail_name = db.bundle_target" in sql
+    assert "t.transfer_type = db.bundle_target" in sql
+
+
+def test_exc_dead_metadata_uses_static_json_paths() -> None:
+    """L2.5 emits one NOT EXISTS fragment per (rail, metadata_key)
+    with a static `$.<key>` JSONPath — keeps the SQL portable per
+    the project's no-JSONB constraint (PG's JSON_VALUE prefers
+    constant paths)."""
+    sql = _exc_dataset_sql(
+        "build_exc_dead_metadata_dataset", SASQUATCH_PR_YAML,
+    )
+    inst = load_instance(SASQUATCH_PR_YAML)
+    declared_keys = {
+        (str(r.name), str(k))
+        for r in inst.rails for k in r.metadata_keys
+    }
+    if declared_keys:
+        # At least one fragment per declared (rail, key) — checks
+        # the literal '$.key' substring shows up.
+        for _, key in declared_keys:
+            assert f"'$.{key}'" in sql
+        assert sql.count("JSON_VALUE(t.metadata,") == len(declared_keys)
+
+
+def test_exc_dead_limit_schedules_filters_outbound_debit() -> None:
+    """L2.6 only counts a LimitSchedule cell as 'used' if there's
+    outbound DEBIT flow against the parent_role + transfer_type. A
+    cap on inbound flow doesn't make sense; matching credit-only
+    flow would give a false 'alive' signal."""
+    sql = _exc_dataset_sql(
+        "build_exc_dead_limit_schedules_dataset", SASQUATCH_PR_YAML,
+    )
+    assert "AND t.amount_direction = 'Debit'" in sql
+
+
+@pytest.mark.parametrize("ds_id,builder_name", _EXC_DATASETS)
+def test_exc_dataset_contract_columns_match_builder(
+    ds_id: str, builder_name: str,
+) -> None:
+    """Every exception dataset's contract columns match its SQL
+    projection — visual ds["col"] references resolve cleanly."""
+    import quicksight_gen.apps.l2_flow_tracing.datasets as ds_mod
+    contract_name_map = {
+        "l2ft-exc-chain-orphans-ds": "EXC_CHAIN_ORPHANS_CONTRACT",
+        "l2ft-exc-unmatched-transfer-type-ds":
+            "EXC_UNMATCHED_TRANSFER_TYPE_CONTRACT",
+        "l2ft-exc-dead-rails-ds": "EXC_DEAD_RAILS_CONTRACT",
+        "l2ft-exc-dead-bundles-activity-ds":
+            "EXC_DEAD_BUNDLES_ACTIVITY_CONTRACT",
+        "l2ft-exc-dead-metadata-ds": "EXC_DEAD_METADATA_CONTRACT",
+        "l2ft-exc-dead-limit-schedules-ds":
+            "EXC_DEAD_LIMIT_SCHEDULES_CONTRACT",
+    }
+    contract = getattr(ds_mod, contract_name_map[ds_id])
+    builder = getattr(ds_mod, builder_name)
+    aws_ds = builder(_CFG, load_instance(SASQUATCH_PR_YAML))
+    cols = {
+        c.Name for c in list(aws_ds.PhysicalTableMap.values())[0].CustomSql.Columns
+    }
+    expected = {c.name for c in contract.columns}
+    assert cols == expected
+
+
+def test_exceptions_sheet_has_six_kpi_pairs_and_six_tables() -> None:
+    """M.3.7 lands all 6 sections: each has 2 KPIs (count + distinct)
+    and 1 detail Table. Final tally on the L2 Exceptions sheet:
+    12 KPIs + 6 Tables."""
+    from collections import Counter
+    from quicksight_gen.common.tree import KPI, Table
+    app = build_l2_flow_tracing_app(_CFG)
+    exc = _sheet_by_name(app, "L2 Exceptions")
+    counts = Counter(type(v).__name__ for v in exc.visuals)
+    assert counts.get("KPI", 0) == 12, f"expected 12 KPIs, got {counts}"
+    assert counts.get("Table", 0) == 6, f"expected 6 Tables, got {counts}"
+
+
+def test_exceptions_sheet_titles_have_l2_prefix() -> None:
+    """Every KPI + Table on the L2 Exceptions sheet leads with 'L2:' so
+    analysts spot the surface at a glance vs the L1 dashboard's
+    exceptions tab."""
+    from quicksight_gen.common.tree import KPI, Table
+    app = build_l2_flow_tracing_app(_CFG)
+    exc = _sheet_by_name(app, "L2 Exceptions")
+    for v in exc.visuals:
+        if isinstance(v, (KPI, Table)):
+            assert v.title.startswith("L2:"), (
+                f"visual title {v.title!r} doesn't carry the L2: prefix"
+            )
+
+
+@pytest.mark.parametrize(
+    "section_label,title_fragment",
+    [
+        ("L2.1", "Chain Orphans"),
+        ("L2.2", "Unmatched Transfer Type"),
+        ("L2.3", "Dead Rails"),
+        ("L2.4", "Dead Bundles Activity"),
+        ("L2.5", "Dead Metadata Declarations"),
+        ("L2.6", "Dead Limit Schedules"),
+    ],
+)
+def test_exceptions_sheet_has_each_section_header(
+    section_label: str, title_fragment: str,
+) -> None:
+    """Each of the 6 L2 hygiene sections renders its named header
+    text-box on the sheet. Catches accidental section drops in the
+    populator."""
+    app = build_l2_flow_tracing_app(_CFG)
+    exc = _sheet_by_name(app, "L2 Exceptions")
+    body_blob = "".join(tb.content for tb in exc.text_boxes)
+    assert section_label in body_blob, (
+        f"section {section_label!r} header missing from L2 Exceptions"
+    )
+    assert title_fragment in body_blob, (
+        f"section {title_fragment!r} title missing from L2 Exceptions"
+    )
