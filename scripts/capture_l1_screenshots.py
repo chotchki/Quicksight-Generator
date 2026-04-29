@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 
 
-from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
 from quicksight_gen.apps.l1_dashboard.app import build_l1_dashboard_app
 from quicksight_gen.common.browser.helpers import (
     click_sheet_tab,

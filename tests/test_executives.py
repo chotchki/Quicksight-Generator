@@ -295,7 +295,6 @@ class TestCli:
         # to --all alongside the v5 stack).
         for stem in (
             "payment-recon",
-            "account-recon",
             "investigation",
             "executives",
             "l1-dashboard",

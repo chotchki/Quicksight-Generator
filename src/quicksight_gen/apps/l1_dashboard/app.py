@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
 from quicksight_gen.apps.l1_dashboard.datasets import (
     DS_DAILY_STATEMENT_SUMMARY,
     DS_DAILY_STATEMENT_TRANSACTIONS,

@@ -126,48 +126,6 @@ def dataset_ids(resource_prefix) -> list[str]:
 
 
 @pytest.fixture(scope="session")
-def ar_dashboard_id(resource_prefix) -> str:
-    return f"{resource_prefix}-account-recon-dashboard"
-
-
-@pytest.fixture(scope="session")
-def ar_analysis_id(resource_prefix) -> str:
-    return f"{resource_prefix}-account-recon-analysis"
-
-
-@pytest.fixture(scope="session")
-def ar_dataset_ids(resource_prefix) -> list[str]:
-    """Expected Account Recon dataset IDs.
-
-    Phase K.1.4 collapsed the 14-check exception inventory into a single
-    unified-exceptions dataset; the per-check datasets (limit-breach,
-    overdraft, 9 CMS-specific checks) were dropped. non-zero-transfers
-    survives because the Transfers tab still uses it for the Unhealthy
-    KPI.
-    """
-    suffixes = [
-        # Baseline (7)
-        "ar-ledger-accounts-dataset",
-        "ar-subledger-accounts-dataset",
-        "ar-transactions-dataset",
-        "ar-ledger-balance-drift-dataset",
-        "ar-subledger-balance-drift-dataset",
-        "ar-transfer-summary-dataset",
-        "ar-non-zero-transfers-dataset",
-        # Cross-check rollups (Phase F, 3)
-        "ar-expected-zero-eod-rollup-dataset",
-        "ar-two-sided-post-mismatch-rollup-dataset",
-        "ar-balance-drift-timelines-rollup-dataset",
-        # Daily Statement (Phase I.2, 2)
-        "ar-daily-statement-summary-dataset",
-        "ar-daily-statement-transactions-dataset",
-        # Unified exceptions (Phase K.1.1, 1)
-        "ar-unified-exceptions-dataset",
-    ]
-    return [f"{resource_prefix}-{s}" for s in suffixes]
-
-
-@pytest.fixture(scope="session")
 def inv_dashboard_id(resource_prefix) -> str:
     return f"{resource_prefix}-investigation-dashboard"
 
@@ -229,7 +187,7 @@ def exec_dataset_ids(resource_prefix) -> list[str]:
 def l1_l2_prefix() -> str:
     """The default L2 instance's prefix — the middle segment of every
     L1 resource ID per M.2d.3."""
-    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
 
     return str(default_l2_instance().instance)
 
@@ -289,16 +247,6 @@ def pr_app(cfg):
     from quicksight_gen.apps.payment_recon.app import build_payment_recon_app
 
     app = build_payment_recon_app(cfg)
-    app.emit_analysis()
-    return app
-
-
-@pytest.fixture(scope="session")
-def ar_app(cfg):
-    """Tree-built Account Reconciliation App (post-emit, auto-IDs resolved)."""
-    from quicksight_gen.apps.account_recon.app import build_account_recon_app
-
-    app = build_account_recon_app(cfg)
     app.emit_analysis()
     return app
 

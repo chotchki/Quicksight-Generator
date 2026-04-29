@@ -269,7 +269,7 @@ def main() -> int:
     args = parser.parse_args()
 
     # Late imports so --help works even if the venv isn't fully set up.
-    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
     from quicksight_gen.common.config import load_config
 
     cfg = load_config(str(args.config))

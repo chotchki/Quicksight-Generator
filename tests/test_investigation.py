@@ -1438,5 +1438,4 @@ def test_generate_all_writes_all_three_app_jsons(tmp_path: Path):
     )
     assert result.exit_code == 0, result.output
     assert (out_dir / "payment-recon-analysis.json").is_file()
-    assert (out_dir / "account-recon-analysis.json").is_file()
     assert (out_dir / "investigation-analysis.json").is_file()

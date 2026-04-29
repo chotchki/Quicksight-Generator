@@ -10,7 +10,6 @@ import pytest
 
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.dataset_contract import ColumnSpec, DatasetContract
-from quicksight_gen.apps.account_recon import datasets as ar_datasets
 from quicksight_gen.apps.investigation import datasets as inv_datasets
 from quicksight_gen.apps.payment_recon import datasets as pr_datasets
 
@@ -29,39 +28,6 @@ def _extract_column_names(dataset) -> list[str]:
     for physical in dataset.PhysicalTableMap.values():
         return [c.Name for c in physical.CustomSql.Columns]
     raise AssertionError("No PhysicalTable found")
-
-
-# ---------------------------------------------------------------------------
-# AR contracts
-# ---------------------------------------------------------------------------
-
-AR_BUILDERS_AND_CONTRACTS = [
-    (ar_datasets.build_ledger_accounts_dataset, ar_datasets.LEDGER_ACCOUNTS_CONTRACT),
-    (ar_datasets.build_subledger_accounts_dataset, ar_datasets.SUBLEDGER_ACCOUNTS_CONTRACT),
-    (ar_datasets.build_transactions_dataset, ar_datasets.TRANSACTIONS_CONTRACT),
-    (ar_datasets.build_ledger_balance_drift_dataset, ar_datasets.LEDGER_BALANCE_DRIFT_CONTRACT),
-    (ar_datasets.build_subledger_balance_drift_dataset, ar_datasets.SUBLEDGER_BALANCE_DRIFT_CONTRACT),
-    (ar_datasets.build_transfer_summary_dataset, ar_datasets.TRANSFER_SUMMARY_CONTRACT),
-    (ar_datasets.build_non_zero_transfers_dataset, ar_datasets.NON_ZERO_TRANSFERS_CONTRACT),
-    (ar_datasets.build_expected_zero_eod_rollup_dataset, ar_datasets.EXPECTED_ZERO_EOD_ROLLUP_CONTRACT),
-    (ar_datasets.build_two_sided_post_mismatch_rollup_dataset, ar_datasets.TWO_SIDED_POST_MISMATCH_ROLLUP_CONTRACT),
-    (ar_datasets.build_balance_drift_timelines_rollup_dataset, ar_datasets.BALANCE_DRIFT_TIMELINES_ROLLUP_CONTRACT),
-    (ar_datasets.build_daily_statement_summary_dataset, ar_datasets.DAILY_STATEMENT_SUMMARY_CONTRACT),
-    (ar_datasets.build_daily_statement_transactions_dataset, ar_datasets.DAILY_STATEMENT_TRANSACTIONS_CONTRACT),
-    (ar_datasets.build_ar_unified_exceptions_dataset, ar_datasets.UNIFIED_EXCEPTIONS_CONTRACT),
-]
-
-
-class TestArContracts:
-    @pytest.mark.parametrize(
-        "builder,contract",
-        AR_BUILDERS_AND_CONTRACTS,
-        ids=[c.columns[0].name for _, c in AR_BUILDERS_AND_CONTRACTS],
-    )
-    def test_columns_match_contract(self, cfg, builder, contract):
-        ds = builder(cfg)
-        actual = _extract_column_names(ds)
-        assert actual == contract.column_names
 
 
 # ---------------------------------------------------------------------------
@@ -156,23 +122,13 @@ PR_LATENESS_CONTRACTS = [
     ("PAYMENT_RECON", pr_datasets.PAYMENT_RECON_CONTRACT),
 ]
 
-AR_LATENESS_CONTRACTS = [
-    ("LEDGER_BALANCE_DRIFT", ar_datasets.LEDGER_BALANCE_DRIFT_CONTRACT),
-    ("SUBLEDGER_BALANCE_DRIFT", ar_datasets.SUBLEDGER_BALANCE_DRIFT_CONTRACT),
-    ("NON_ZERO_TRANSFERS", ar_datasets.NON_ZERO_TRANSFERS_CONTRACT),
-    ("EXPECTED_ZERO_EOD_ROLLUP", ar_datasets.EXPECTED_ZERO_EOD_ROLLUP_CONTRACT),
-    ("TWO_SIDED_POST_MISMATCH_ROLLUP", ar_datasets.TWO_SIDED_POST_MISMATCH_ROLLUP_CONTRACT),
-    ("UNIFIED_EXCEPTIONS", ar_datasets.UNIFIED_EXCEPTIONS_CONTRACT),
-]
-
-
 class TestLatenessColumns:
     """K.3.2: every aging-bearing contract surfaces is_late + expected_complete_at."""
 
     @pytest.mark.parametrize(
         "label,contract",
-        PR_LATENESS_CONTRACTS + AR_LATENESS_CONTRACTS,
-        ids=[label for label, _ in PR_LATENESS_CONTRACTS + AR_LATENESS_CONTRACTS],
+        PR_LATENESS_CONTRACTS,
+        ids=[label for label, _ in PR_LATENESS_CONTRACTS],
     )
     def test_contract_has_lateness_columns(self, label, contract):
         names = contract.column_names
@@ -185,8 +141,8 @@ class TestLatenessColumns:
 
     @pytest.mark.parametrize(
         "label,contract",
-        PR_LATENESS_CONTRACTS + AR_LATENESS_CONTRACTS,
-        ids=[label for label, _ in PR_LATENESS_CONTRACTS + AR_LATENESS_CONTRACTS],
+        PR_LATENESS_CONTRACTS,
+        ids=[label for label, _ in PR_LATENESS_CONTRACTS],
     )
     def test_lateness_column_types(self, label, contract):
         is_late = contract.column("is_late")
@@ -225,18 +181,3 @@ class TestPaymentReconLateness:
         )
 
 
-class TestUnifiedExceptionsLateness:
-    """K.3.2: ar_unified_exceptions matview surfaces is_late + expected_complete_at."""
-
-    def test_matview_select_passes_through_lateness(self, cfg):
-        # The dataset SQL is `SELECT *, TO_CHAR(...) FROM ar_unified_exceptions`,
-        # so adding the columns to the matview makes them available to the
-        # contract automatically. We assert the contract has the columns
-        # in TestLatenessColumns; here we verify the dataset SQL doesn't
-        # accidentally restrict the column set.
-        ds = ar_datasets.build_ar_unified_exceptions_dataset(cfg)
-        sql = next(iter(ds.PhysicalTableMap.values())).CustomSql.SqlQuery
-        assert "SELECT *" in sql, (
-            "Unified exceptions dataset should pass through all matview "
-            "columns via SELECT *"
-        )

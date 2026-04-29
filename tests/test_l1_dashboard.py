@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
 from quicksight_gen.apps.l1_dashboard.app import build_l1_dashboard_app
 from quicksight_gen.cli import main
 from quicksight_gen.common.config import Config
@@ -210,7 +210,7 @@ def test_drift_dataset_sql_targets_prefixed_l1_views() -> None:
     """SQL for each drift dataset must SELECT from the L2-prefixed L1
     invariant view emitted by M.1a.7. Switching L2 instance switches the
     view targets — the parallel-stack v6 promise."""
-    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
     from quicksight_gen.apps.l1_dashboard.datasets import (
         build_drift_dataset,
         build_ledger_drift_dataset,
@@ -277,7 +277,7 @@ def test_drift_timeline_datasets_registered_and_aggregate_in_sql() -> None:
     """Both timeline datasets must register on the App + their SQL must
     GROUP BY the (day, role) keys so each dataset row IS one (day, role)
     cell — otherwise the line chart would re-aggregate at render time."""
-    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
     from quicksight_gen.apps.l1_dashboard.datasets import (
         DS_DRIFT_TIMELINE,
         DS_LEDGER_DRIFT_TIMELINE,
@@ -338,7 +338,7 @@ def test_overdraft_sheet_has_kpi_and_table() -> None:
 def test_overdraft_dataset_registered_and_targets_l1_view() -> None:
     """The L1 overdraft dataset must be registered + its SQL must point
     at the L2-prefixed `<prefix>_overdraft` invariant view."""
-    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
     from quicksight_gen.apps.l1_dashboard.datasets import (
         DS_OVERDRAFT,
         build_overdraft_dataset,
@@ -377,7 +377,7 @@ def test_limit_breach_sheet_has_kpi_and_table() -> None:
 def test_limit_breach_dataset_registered_and_targets_l1_view() -> None:
     """The L1 limit-breach dataset must be registered + its SQL must
     point at the L2-prefixed `<prefix>_limit_breach` invariant view."""
-    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
     from quicksight_gen.apps.l1_dashboard.datasets import (
         DS_LIMIT_BREACH,
         build_limit_breach_dataset,
@@ -423,7 +423,7 @@ def test_todays_exceptions_dataset_reads_matview() -> None:
     moved into the L1 schema in M.1a.9 so QS reads a precomputed
     table instead of re-running the 5-branch UNION per visual.
     """
-    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
     from quicksight_gen.apps.l1_dashboard.datasets import (
         DS_TODAYS_EXCEPTIONS,
         build_todays_exceptions_dataset,
@@ -464,7 +464,7 @@ def test_transactions_sheet_has_single_table() -> None:
 def test_transactions_dataset_registered_and_targets_matview() -> None:
     """The new transactions dataset reads from the prefix's
     `<prefix>_current_transactions` matview (M.1a.9)."""
-    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
     from quicksight_gen.apps.l1_dashboard.datasets import (
         DS_TRANSACTIONS,
         build_transactions_dataset,
@@ -551,7 +551,7 @@ def test_daily_statement_filter_groups_target_correct_columns() -> None:
 def test_daily_statement_datasets_registered() -> None:
     """Both new datasets register on the App tree + their SQL targets
     the prefixed L2 instance (mirrors the M.2a.3 pattern)."""
-    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
     from quicksight_gen.apps.l1_dashboard.datasets import (
         DS_DAILY_STATEMENT_SUMMARY,
         DS_DAILY_STATEMENT_TRANSACTIONS,
@@ -614,7 +614,7 @@ def test_drift_sheet_lists_internal_accounts_from_l2() -> None:
     assert "Internal Accounts in Scope" in accounts_xml
     # Sasquatch fixture has at least one GL control + one DDA template;
     # both should appear.
-    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
     instance = default_l2_instance()
     internal_account_ids = [
         a.id for a in instance.accounts if a.scope == "internal"
@@ -927,7 +927,7 @@ def test_pending_aging_drill_to_transactions() -> None:
 def test_pending_aging_dataset_registered() -> None:
     """DS_STUCK_PENDING dataset registers on the App tree + its SQL
     targets the prefixed `<prefix>_stuck_pending` matview."""
-    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
     from quicksight_gen.apps.l1_dashboard.datasets import (
         DS_STUCK_PENDING,
         build_stuck_pending_dataset,
@@ -1004,7 +1004,7 @@ def test_unbundled_aging_drill_to_transactions() -> None:
 
 def test_unbundled_aging_dataset_registered() -> None:
     """DS_STUCK_UNBUNDLED dataset registers + targets prefixed matview."""
-    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
     from quicksight_gen.apps.l1_dashboard.datasets import (
         DS_STUCK_UNBUNDLED,
         build_stuck_unbundled_dataset,
@@ -1053,7 +1053,7 @@ def test_supersession_datasets_registered_and_target_base_tables() -> None:
     """Both supersession datasets register on the App and read from
     the BASE tables (NOT Current*) — Current* hides superseded
     entries by design, but the audit specifically needs them."""
-    from quicksight_gen.apps.account_recon._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
     from quicksight_gen.apps.l1_dashboard.datasets import (
         DS_SUPERSESSION_DAILY_BALANCES,
         DS_SUPERSESSION_TRANSACTIONS,
