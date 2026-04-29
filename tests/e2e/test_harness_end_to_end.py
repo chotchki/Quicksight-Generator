@@ -48,6 +48,7 @@ import os
 import sys
 import uuid
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -57,6 +58,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _harness_cleanup import (  # noqa: E402
     drop_prefixed_schema,
     sweep_qs_resources_by_tag,
+)
+from _harness_seed import (  # noqa: E402
+    apply_db_seed,
+    build_planted_manifest,
 )
 
 # L2_INSTANCES matrix: re-use the exact list `test_l2_seed_contract.py`
@@ -184,6 +189,35 @@ def harness_db_conn(harness_cfg: Config):
 
 
 @pytest.fixture
+def harness_seeded(harness_db_conn: Any, harness_l2: L2Instance):
+    """Apply schema + seed + matview refresh; return the per-test
+    handle the M.4.1.b–e harness body consumes (M.4.1.b).
+
+    Three DB-side steps run via ``_harness_seed.apply_db_seed``:
+    emit_schema → emit_seed (mode='l1_plus_broad' so both L1 SHOULD
+    plants and broad-mode rail firings land) → refresh_matviews_sql.
+    Each commits independently so a mid-flow failure leaves the DB in
+    a known state for ``harness_db_conn``'s teardown to drop cleanly.
+
+    Returns a dict with three keys downstream Playwright assertions
+    (M.4.1.d/e) consume:
+      - ``instance``: the per-test L2Instance (already cloned with the
+        ephemeral prefix)
+      - ``prefix``: the same prefix as a string, for SQL-emit /
+        boto3 ID derivation convenience
+      - ``planted_manifest``: dict of plant-kind → list-of-row-finder
+        dicts (see ``_harness_seed.build_planted_manifest`` for the
+        shape; M.4.1.f's failure dump consumes the same dict)
+    """
+    scenario = apply_db_seed(harness_db_conn, harness_l2)
+    return {
+        "instance": harness_l2,
+        "prefix": str(harness_l2.instance),
+        "planted_manifest": build_planted_manifest(scenario),
+    }
+
+
+@pytest.fixture
 def harness_qs_cleanup(harness_cfg: Config, harness_uid: str):
     """Yield, then sweep every QS resource carrying ``TestUid: <uid>``.
 
@@ -252,3 +286,78 @@ def test_harness_fixtures_wire_up(
     assert tag_dict["L2Instance"] == str(harness_l2.instance)
     assert tag_dict["TestUid"] == harness_uid
     assert tag_dict["Harness"] == "e2e"
+
+
+# ---------------------------------------------------------------------------
+# M.4.1.b smoke — DB-side seed fixture wires up + planted_manifest lands
+# ---------------------------------------------------------------------------
+
+
+def test_harness_seeded_fixture_lands_with_manifest(
+    harness_seeded: dict[str, Any],
+    harness_l2: L2Instance,
+    harness_db_conn: Any,
+) -> None:
+    """The full DB-side fixture chain (schema → seed → matview refresh)
+    runs cleanly and returns a usable handle for downstream M.4.1.c–e
+    fixtures.
+
+    Sanity-checks performed on the deployed DB state:
+    1. The base table ``<prefix>_transactions`` exists and has rows
+       (broad mode + L1 invariant plants both populate it).
+    2. The ``<prefix>_current_transactions`` matview is fresh (rows
+       there match the base table; if the refresh step were skipped
+       the matview would be empty).
+    3. The planted_manifest contains the expected plant kinds for
+       l1_plus_broad mode (rail_firing_plants + transfer_template_plants
+       at minimum, since these are the broad-layer plants every
+       L2 instance with at least one Rail produces).
+
+    Skipped under default pytest (no QS_GEN_E2E); requires Aurora
+    via QS_GEN_DEMO_DATABASE_URL.
+    """
+    instance = harness_seeded["instance"]
+    prefix = harness_seeded["prefix"]
+    manifest = harness_seeded["planted_manifest"]
+
+    # Sanity: instance handle round-trips.
+    assert instance is harness_l2
+    assert prefix == str(harness_l2.instance)
+
+    # DB has the prefixed base table with rows.
+    with harness_db_conn.cursor() as cur:
+        cur.execute(f"SELECT COUNT(*) FROM {prefix}_transactions")
+        n_base = cur.fetchone()[0]
+    assert n_base > 0, (
+        f"{prefix}_transactions has no rows after apply_db_seed; "
+        f"either seed planted nothing or schema apply silently failed"
+    )
+
+    # current_transactions matview is fresh (count matches base).
+    with harness_db_conn.cursor() as cur:
+        cur.execute(f"SELECT COUNT(*) FROM {prefix}_current_transactions")
+        n_current = cur.fetchone()[0]
+    assert n_current == n_base, (
+        f"{prefix}_current_transactions out of sync with base "
+        f"({n_current} vs {n_base}); refresh_matviews_sql step missed"
+    )
+
+    # Manifest carries every plant-kind key the builder declares,
+    # and at least the broad-layer kinds are non-empty (every L2
+    # instance with rails produces rail_firing_plants in
+    # l1_plus_broad mode).
+    expected_kinds = {
+        "drift_plants",
+        "overdraft_plants",
+        "limit_breach_plants",
+        "stuck_pending_plants",
+        "stuck_unbundled_plants",
+        "supersession_plants",
+        "transfer_template_plants",
+        "rail_firing_plants",
+    }
+    assert set(manifest.keys()) == expected_kinds
+    assert len(manifest["rail_firing_plants"]) > 0, (
+        "broad mode should plant rail firings for every L2 instance "
+        "with at least one Rail whose roles materialize"
+    )
