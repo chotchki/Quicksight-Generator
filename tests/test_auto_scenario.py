@@ -237,3 +237,48 @@ def test_auto_scenario_breach_amount_exceeds_cap(spec_instance) -> None:
         if ls.transfer_type == breach.transfer_type
     )
     assert breach.amount > matching.cap
+
+
+def test_auto_scenario_stuck_pending_age_exceeds_picked_rail_cap(
+    spec_instance,
+) -> None:
+    """The stuck_pending plant's days_ago must exceed the picked rail's
+    `max_pending_age` (in days) so the matview surfaces the row.
+
+    Regression for M.4.4.13 — original code hardcoded `days_ago=2`,
+    which silently failed for any picked rail with a cap >= 2 days
+    (e.g., fuzz seed 227844959 picked a Rail_00 with `max_pending_age=P7D`).
+    """
+    report = default_scenario_for(spec_instance, today=CANONICAL_TODAY)
+    pending = report.scenario.stuck_pending_plants[0]
+    matching = next(
+        r for r in spec_instance.rails if r.name == pending.rail_name
+    )
+    assert matching.max_pending_age is not None, (
+        "auto-scenario must only pick a rail with max_pending_age set"
+    )
+    cap_days = matching.max_pending_age.total_seconds() / 86400
+    assert pending.days_ago > cap_days, (
+        f"stuck_pending plant days_ago={pending.days_ago} doesn't exceed "
+        f"picked rail {pending.rail_name!r}'s max_pending_age "
+        f"({cap_days} days) — matview won't surface the row"
+    )
+
+
+def test_auto_scenario_stuck_unbundled_age_exceeds_picked_rail_cap(
+    spec_instance,
+) -> None:
+    """Sister test of stuck_pending — the unbundled plant must
+    similarly clear the picked rail's `max_unbundled_age` cap."""
+    report = default_scenario_for(spec_instance, today=CANONICAL_TODAY)
+    unbundled = report.scenario.stuck_unbundled_plants[0]
+    matching = next(
+        r for r in spec_instance.rails if r.name == unbundled.rail_name
+    )
+    assert matching.max_unbundled_age is not None
+    cap_days = matching.max_unbundled_age.total_seconds() / 86400
+    assert unbundled.days_ago > cap_days, (
+        f"stuck_unbundled plant days_ago={unbundled.days_ago} doesn't "
+        f"exceed picked rail {unbundled.rail_name!r}'s max_unbundled_age "
+        f"({cap_days} days)"
+    )

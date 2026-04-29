@@ -218,10 +218,22 @@ def default_scenario_for(
 
     stuck_pending_plants: tuple[StuckPendingPlant, ...] = ()
     if pending_rail is not None:
+        # max_pending_age caps vary widely (PT4H ↔ P7D in production
+        # fixtures, longer in fuzz). Read the picked rail's cap and
+        # plant comfortably past it (cap_days + 7) so the matview
+        # surfaces the row regardless of which rail got chosen. Same
+        # pattern as stuck_unbundled below — the original hardcoded
+        # days_ago=2 silently failed for any rail with a cap >= 2
+        # days (M.4.4.13).
+        cap_days = max(
+            1,
+            int((pending_rail.max_pending_age or _zero_td()).total_seconds()
+                // 86400) + 7,
+        )
         stuck_pending_plants = (
             StuckPendingPlant(
                 account_id=cust1.account_id,
-                days_ago=2,
+                days_ago=cap_days,
                 transfer_type=pending_rail.transfer_type,
                 rail_name=pending_rail.name,
                 amount=Decimal("450.00"),

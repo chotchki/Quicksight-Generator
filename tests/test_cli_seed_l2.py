@@ -138,10 +138,18 @@ def test_seed_l2_check_hash_passes_when_matching(tmp_yaml: Path) -> None:
 
 def test_seed_l2_check_hash_fails_on_drift(tmp_yaml: Path) -> None:
     """`--check-hash` exits 1 when YAML's seed_hash doesn't match actual."""
+    # Read the current real hash by spec_example regex match — the value
+    # rotates whenever the auto-scenario emit changes (e.g., M.4.4.13's
+    # cap-aware stuck_pending plant), and hardcoding it here just means
+    # one more file to update on each rotation.
     text = tmp_yaml.read_text()
-    text = text.replace(
-        "seed_hash: d980d31ca2ca7a4d692c836220ab5d0a7a0a771d4c789611fb5992cdb7251965",
+    import re
+    text = re.sub(
+        r"^seed_hash: [0-9a-f]{64}$",
         "seed_hash: " + ("a" * 64),
+        text,
+        count=1,
+        flags=re.MULTILINE,
     )
     tmp_yaml.write_text(text)
 

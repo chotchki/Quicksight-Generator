@@ -588,11 +588,11 @@ _BROAD_MODE_HASHES: dict[tuple[str, str], str] = {
     ("spec_example", "broad"):
         "a5a2656614d1ac821533b206508440e16b5055b263ce733059f472b58506354e",
     ("spec_example", "l1_plus_broad"):
-        "ab700f03e0b72d4be201b8eca49242eddac4f7dc695b6af72ecbd54718fd86bb",
+        "bf335e34490924cc0d9251460018f3c4e3ae0ba0e8c7f40f4698278a49a75174",
     ("sasquatch_pr", "broad"):
         "a2c53350ae2fdfccbe73224e8c801f348a7e31f57d16b6b44f2c350fdc7c18a6",
     ("sasquatch_pr", "l1_plus_broad"):
-        "9a89257ac5bd21825c840427758b9c2c1925bf115c435ace261cca5b5f159e02",
+        "8b61ea6c84cfd3e935bdd600fe3c2f310bd9d7ca114f5645a7fca09c9d91dbaa",
 }
 
 
