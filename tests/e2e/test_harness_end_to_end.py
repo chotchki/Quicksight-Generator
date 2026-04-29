@@ -740,43 +740,33 @@ def test_harness_l1_planted_scenarios_visible(
         assert_l1_plants_visible(
             page, manifest, timeout_ms=visual_timeout,
         )
+        # M.4.4.12 — KPI assertion compares dashboard render to matview
+        # COUNT(*) directly. Manifest-based expected derivation can't
+        # model broad-mode rail_firing plants whose legs surface in
+        # stuck_pending / stuck_unbundled.
         assert_todays_exceptions_kpi_matches(
-            page, manifest, timeout_ms=visual_timeout,
+            page, harness_db_conn, prefix, timeout_ms=visual_timeout,
         )
 
     # Tall viewport so stacked tables don't sit below the fold during
     # the per-sheet walk — same pattern as the existing L1 browser
-    # tests.
-    #
-    # Layer 2 PUNTED to M.5 — the L1 dashboard intermittently fails to
-    # render planted rows even when the matview holds them and the
-    # dataset preview shows them (M.4.1.k debug session: ruled out TZ,
-    # dropdowns, date filter, shared datasource caching, per-test
-    # datasource isolation). Symptom matches CLAUDE.md operational
-    # footgun: "QuickSight can fail silently — datasets healthy,
-    # analyses dead." Try/except + pytest.xfail() converts any failure
-    # into XFAIL so the harness suite passes overall while still
-    # exercising the deploy + render path. If QS recovers and the
-    # render works, pytest reports XPASS — heads up to revisit.
-    try:
-        run_dashboard_check_with_retry(
-            aws_account_id=harness_cfg.aws_account_id,
-            aws_region=harness_cfg.aws_region,
-            dashboard_id=dashboard_id,
-            operation=_check_l1,
-            page_timeout_ms=page_timeout,
-            viewport=(1600, 4000),
-            screenshot_dir=Path(__file__).parent / "failures",
-        )
-    except Exception as exc:  # noqa: BLE001 — xfail catch
-        pytest.xfail(
-            f"L1 dashboard render Layer 2 punt to M.5 — QS intermittently "
-            f"fails to surface matview rows in the dashboard view. See "
-            f"CLAUDE.md QS spinner-forever footgun + the M.4.1.k debug "
-            f"trail (TZ, dropdown, date filter, datasource isolation all "
-            f"ruled out). Underlying error: "
-            f"{type(exc).__name__}: {exc}"
-        )
+    # tests. Layer 2 xfail wrapper REMOVED (M.4.4.12) — the persistent
+    # render failures turned out to be two real bugs: (1) the harness
+    # asserted on a KPI title that didn't exist on the dashboard
+    # ("Open Exceptions Today" → "Open Exceptions"); (2) the
+    # `todays_exceptions` matview was missing the stuck_pending /
+    # stuck_unbundled UNION branches that the harness expected to
+    # roll up. Both fixed; assertion failures now propagate as real
+    # FAILED so future regressions don't get masked.
+    run_dashboard_check_with_retry(
+        aws_account_id=harness_cfg.aws_account_id,
+        aws_region=harness_cfg.aws_region,
+        dashboard_id=dashboard_id,
+        operation=_check_l1,
+        page_timeout_ms=page_timeout,
+        viewport=(1600, 4000),
+        screenshot_dir=Path(__file__).parent / "failures",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -835,6 +825,13 @@ def test_harness_l2ft_planted_scenarios_visible(
             screenshot_dir=Path(__file__).parent / "failures",
         )
     except Exception as exc:  # noqa: BLE001 — xfail catch
+        # M.4.4.12 diagnostic — same as L1 above.
+        import traceback
+        print(
+            f"[harness][L2FT][{harness_deployed['prefix']}] xfailed "
+            f"underlying exception:\n{traceback.format_exc()}",
+            file=sys.stderr,
+        )
         pytest.xfail(
             f"L2FT dashboard render Layer 2 punt to M.5 — same QS render "
             f"flake as L1 (see CLAUDE.md QS spinner-forever footgun). "

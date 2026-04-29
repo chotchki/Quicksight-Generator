@@ -873,6 +873,9 @@ WITH latest_day AS (
     SELECT MAX(business_day_start) AS day
     FROM {p}_current_daily_balances
 )
+-- Per-day branches (drift / ledger_drift / overdraft / limit_breach /
+-- expected_eod_balance_breach) — each is a per-(account, day) cell, so
+-- "today's exception" filters to MAX(business_day) from current_daily_balances.
 SELECT 'drift' AS check_type, account_id, account_name,
        account_role, account_parent_role,
        business_day_start AS business_day,
@@ -901,7 +904,21 @@ UNION ALL
 SELECT 'expected_eod_balance_breach', account_id, account_name,
        account_role, NULL, business_day_start, NULL, ABS(variance)
 FROM {p}_expected_eod_balance_breach, latest_day
-WHERE business_day_start = latest_day.day;
+WHERE business_day_start = latest_day.day
+-- Currently-open branches (M.4.4.12) — stuck_pending and stuck_unbundled
+-- are matviews of legs whose age has exceeded a per-rail cap measured
+-- against CURRENT_TIMESTAMP. By construction every row is "currently
+-- stuck", so no per-day filter applies — include them all in the rollup.
+UNION ALL
+SELECT 'stuck_pending', account_id, account_name, account_role,
+       account_parent_role, posting::date AS business_day,
+       transfer_type, amount_money AS magnitude
+FROM {p}_stuck_pending
+UNION ALL
+SELECT 'stuck_unbundled', account_id, account_name, account_role,
+       account_parent_role, posting::date AS business_day,
+       transfer_type, amount_money AS magnitude
+FROM {p}_stuck_unbundled;
 -- Today's Exceptions sheet has 3 dropdowns (check_type, account,
 -- transfer_type); each WHERE filter benefits from its own index.
 CREATE INDEX idx_{p}_te_check_type

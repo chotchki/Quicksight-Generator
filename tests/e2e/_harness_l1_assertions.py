@@ -73,8 +73,11 @@ L1_MATVIEW_FOR_PLANT_KIND: dict[str, str] = {
 }
 
 
-# Plant kinds that contribute to Today's Exceptions KPI count.
-# Supersession is diagnostic, not a SHOULD-violation, so excluded.
+# Plant kinds that map to a dedicated matview for Layer 1 (matview-row-
+# presence) checks. Today's Exceptions KPI count is verified against
+# the matview row count directly (M.4.4.12 reframe — manifest-based
+# count derivation can't model broad-mode rail_firing plants whose
+# legs surface in stuck_pending / stuck_unbundled).
 L1_SHOULD_VIOLATION_PLANT_KINDS: frozenset[str] = frozenset({
     "drift_plants",
     "overdraft_plants",
@@ -82,24 +85,6 @@ L1_SHOULD_VIOLATION_PLANT_KINDS: frozenset[str] = frozenset({
     "stuck_pending_plants",
     "stuck_unbundled_plants",
 })
-
-
-def expected_todays_exceptions_kpi_count(
-    planted_manifest: dict[str, list[dict[str, Any]]],
-) -> int:
-    """Sum of every L1 SHOULD-violation plant kind in the manifest.
-
-    The L1 dashboard's Today's Exceptions sheet has a KPI showing
-    the total open violation count. Per the M.4.1.d contract, this
-    KPI MUST equal the sum of planted SHOULD-violation scenarios
-    (drift + overdraft + limit_breach + stuck_pending + stuck_unbundled).
-    Supersession isn't a SHOULD-violation; transfer_template /
-    rail_firing aren't L1 plants — neither contributes.
-    """
-    return sum(
-        len(planted_manifest.get(kind, []))
-        for kind in L1_SHOULD_VIOLATION_PLANT_KINDS
-    )
 
 
 def assert_l1_matview_rows_present(
@@ -268,27 +253,47 @@ def assert_l1_plants_visible(
 
 def assert_todays_exceptions_kpi_matches(
     page: Any,
-    planted_manifest: dict[str, list[dict[str, Any]]],
+    db_conn: Any,
+    prefix: str,
     *,
     timeout_ms: int = 30_000,
 ) -> None:
-    """Today's Exceptions KPI count == sum of planted SHOULD-violation
-    scenarios. Plant kinds excluded from the rollup (supersession,
-    TT, rail-firing) don't contribute.
+    """Today's Exceptions KPI count == ``SELECT COUNT(*) FROM
+    <prefix>_todays_exceptions``.
 
-    Reads the KPI's text content via the existing
-    ``wait_for_kpi_text_nonempty`` helper, parses out the number,
-    compares to ``expected_todays_exceptions_kpi_count``.
+    M.4.4.12 reframe — the KPI is just a passthrough of the matview
+    row count. Computing "expected" from the planted manifest hits
+    two snags:
+    1. Per-day branches (drift / overdraft / limit_breach) are filtered
+       to MAX(business_day_start), so multi-day plants don't all surface.
+    2. Currently-open branches (stuck_pending / stuck_unbundled) ALSO
+       catch broad-mode rail_firing plants whose legs age past the
+       per-rail cap, so the count exceeds the SHOULD-violation manifest
+       sum.
+    Layer 1 (``assert_l1_matview_rows_present``) is the integrity check
+    that planted account_ids show up where they should; this Layer 2
+    assertion verifies the dashboard renders the matview's row count
+    truthfully — independent of the planting model's complexity.
+
+    Reads the KPI's text via the existing ``wait_for_kpi_text_nonempty``,
+    parses out the number, compares to the matview COUNT(*).
     """
     from quicksight_gen.common.browser.helpers import (
         click_sheet_tab,
         wait_for_kpi_text_nonempty,
     )
 
-    expected = expected_todays_exceptions_kpi_count(planted_manifest)
+    with db_conn.cursor() as cur:
+        cur.execute(f"SELECT COUNT(*) FROM {prefix}_todays_exceptions")
+        row = cur.fetchone()
+        expected = int(row[0]) if row else 0
+
     click_sheet_tab(page, "Today's Exceptions", timeout_ms=timeout_ms)
-    # KPI title on the L1 dashboard's Today's Exceptions sheet.
-    kpi_title = "Open Exceptions Today"
+    # KPI title on the L1 dashboard's Today's Exceptions sheet — must
+    # match the analyst-facing label in apps/l1_dashboard/app.py
+    # (M.4.4.12 — the bare "Open Exceptions" since the sheet name
+    # already carries the temporal context).
+    kpi_title = "Open Exceptions"
     actual_text = wait_for_kpi_text_nonempty(
         page, kpi_title, timeout_ms=timeout_ms,
     )
@@ -306,9 +311,9 @@ def assert_todays_exceptions_kpi_matches(
         ) from exc
     assert actual == expected, (
         f"Today's Exceptions KPI {kpi_title!r}: expected {expected} "
-        f"(sum of planted L1 SHOULD-violations across drift / "
-        f"overdraft / limit_breach / stuck_pending / stuck_unbundled), "
-        f"got {actual}"
+        f"(SELECT COUNT(*) FROM {prefix}_todays_exceptions), "
+        f"got {actual} from the dashboard. The KPI dataset's filter "
+        f"or aggregation isn't matching the underlying matview."
     )
 
 

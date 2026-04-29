@@ -29,7 +29,6 @@ from _harness_l1_assertions import (  # noqa: E402
     L1_SHEET_FOR_PLANT_KIND,
     L1_SHOULD_VIOLATION_PLANT_KINDS,
     assert_l1_matview_rows_present,
-    expected_todays_exceptions_kpi_count,
 )
 
 
@@ -73,46 +72,6 @@ def test_supersession_excluded_from_kpi_count() -> None:
     surfaces on the Supersession Audit sheet but doesn't contribute
     to Today's Exceptions KPI."""
     assert "supersession_plants" not in L1_SHOULD_VIOLATION_PLANT_KINDS
-
-
-# ---------------------------------------------------------------------------
-# expected_todays_exceptions_kpi_count
-# ---------------------------------------------------------------------------
-
-
-def test_kpi_count_empty_manifest_is_zero() -> None:
-    assert expected_todays_exceptions_kpi_count({}) == 0
-
-
-def test_kpi_count_sums_should_violation_kinds() -> None:
-    """Sum across drift + overdraft + breach + pending + unbundled."""
-    manifest = {
-        "drift_plants": [{}, {}],         # 2
-        "overdraft_plants": [{}],          # 1
-        "limit_breach_plants": [{}],       # 1
-        "stuck_pending_plants": [{}, {}],  # 2
-        "stuck_unbundled_plants": [{}],    # 1
-    }
-    assert expected_todays_exceptions_kpi_count(manifest) == 7
-
-
-def test_kpi_count_excludes_supersession_and_l2_kinds() -> None:
-    """Supersession + transfer_template + rail_firing all NOT counted."""
-    manifest = {
-        "drift_plants": [{}],          # +1
-        "supersession_plants": [{}, {}, {}, {}],  # excluded
-        "transfer_template_plants": [{}, {}],     # excluded (L2)
-        "rail_firing_plants": [{}, {}, {}, {}],   # excluded (L2)
-    }
-    assert expected_todays_exceptions_kpi_count(manifest) == 1
-
-
-def test_kpi_count_handles_missing_keys() -> None:
-    """A partial manifest missing entire kinds doesn't KeyError —
-    the function uses .get(kind, []) so a YAML with no L2 instance
-    or no LimitSchedule (etc.) gracefully contributes 0."""
-    partial = {"drift_plants": [{}, {}, {}]}  # 3
-    assert expected_todays_exceptions_kpi_count(partial) == 3
 
 
 # ---------------------------------------------------------------------------
