@@ -52,7 +52,23 @@ from quicksight_gen.common.models import (
     StringDatasetParameter,
     StringDatasetParameterDefaultValues,
 )
+from quicksight_gen.common.sheets.app_info import (
+    build_liveness_dataset,
+    build_matview_status_dataset,
+)
 from quicksight_gen.common.tree import Dataset
+
+
+def l2ft_matview_names(l2_instance: L2Instance) -> list[str]:
+    """Matviews the L2 Flow Tracing dashboard reads.
+
+    Surfaced on the App Info ("i") sheet's matview status table.
+    """
+    p = str(l2_instance.instance)
+    return [
+        f"{p}_current_transactions",
+        f"{p}_current_daily_balances",
+    ]
 
 
 # Visual identifiers — keys for the Dataset registry on App.
@@ -391,6 +407,11 @@ def build_all_l2_flow_tracing_datasets(
         build_tt_instances_dataset(cfg, l2_instance),
         build_tt_legs_dataset(cfg, l2_instance),
         build_unified_l2_exceptions_dataset(cfg, l2_instance),
+        # M.4.4.5 — App Info ("i") sheet datasets, ALWAYS LAST.
+        build_liveness_dataset(cfg),
+        build_matview_status_dataset(
+            cfg, view_names=l2ft_matview_names(l2_instance),
+        ),
     ]
 
 

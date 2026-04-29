@@ -65,8 +65,6 @@ from quicksight_gen.common.sheets.app_info import (
     APP_INFO_SHEET_TITLE,
     DS_APP_INFO_LIVENESS,
     DS_APP_INFO_MATVIEWS,
-    build_liveness_dataset,
-    build_matview_status_dataset,
     populate_app_info_sheet,
 )
 from quicksight_gen.common.theme import get_preset
@@ -373,27 +371,6 @@ def _l2_internal_account_role_lines(l2_instance: L2Instance) -> list[str]:
     return lines
 
 
-def _l1_matview_names(l2_instance: L2Instance) -> list[str]:
-    """The L2-prefixed matviews the L1 dashboard reads.
-
-    Surfaced on the App Info ("i") sheet's matview status table so an
-    operator can see ETL refresh state at a glance. Order is the rough
-    "narrow-to-broad" surfaces order each invariant view covers.
-    """
-    p = str(l2_instance.instance)
-    return [
-        f"{p}_current_transactions",
-        f"{p}_current_daily_balances",
-        f"{p}_drift",
-        f"{p}_ledger_drift",
-        f"{p}_overdraft",
-        f"{p}_limit_breach",
-        f"{p}_todays_exceptions",
-        f"{p}_stuck_pending",
-        f"{p}_stuck_unbundled",
-    ]
-
-
 def _l1_datasets(
     cfg: Config, l2_instance: L2Instance,
 ) -> dict[str, Dataset]:
@@ -404,6 +381,10 @@ def _l1_datasets(
     `build_dataset()`) becomes the tree Dataset's ``identifier`` field.
     The contract is registered as a side-effect of `build_dataset()`,
     so subsequent ``ds["col"]`` accesses validate.
+
+    M.4.4.5 — App Info ("i") sheet datasets land at the end of the
+    list; their order matches `build_all_l1_dashboard_datasets`'s
+    appended App Info pair.
     """
     aws_datasets = build_all_l1_dashboard_datasets(cfg, l2_instance)
     # `build_all_l1_dashboard_datasets` returns AWS DataSets in the same
@@ -416,24 +397,12 @@ def _l1_datasets(
         DS_DRIFT_TIMELINE, DS_LEDGER_DRIFT_TIMELINE,
         DS_STUCK_PENDING, DS_STUCK_UNBUNDLED,
         DS_SUPERSESSION_TRANSACTIONS, DS_SUPERSESSION_DAILY_BALANCES,
+        DS_APP_INFO_LIVENESS, DS_APP_INFO_MATVIEWS,
     ]
-    out: dict[str, Dataset] = {
+    return {
         vid: Dataset(identifier=vid, arn=cfg.dataset_arn(aws.DataSetId))
         for vid, aws in zip(visual_ids, aws_datasets)
     }
-    liveness_aws = build_liveness_dataset(cfg)
-    matviews_aws = build_matview_status_dataset(
-        cfg, view_names=_l1_matview_names(l2_instance),
-    )
-    out[DS_APP_INFO_LIVENESS] = Dataset(
-        identifier=DS_APP_INFO_LIVENESS,
-        arn=cfg.dataset_arn(liveness_aws.DataSetId),
-    )
-    out[DS_APP_INFO_MATVIEWS] = Dataset(
-        identifier=DS_APP_INFO_MATVIEWS,
-        arn=cfg.dataset_arn(matviews_aws.DataSetId),
-    )
-    return out
 
 
 def _populate_getting_started(

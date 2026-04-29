@@ -106,14 +106,21 @@ def test_every_sheet_has_a_description(exec_analysis):
 # Datasets
 # ---------------------------------------------------------------------------
 
-def test_two_datasets_in_expected_order():
+def test_datasets_in_expected_order():
+    """2 content datasets + 2 M.4.4.5 App Info datasets, in order."""
     datasets = build_all_datasets(_TEST_CFG)
-    assert len(datasets) == 2
+    assert len(datasets) == 4
     assert datasets[0].DataSetId == _TEST_CFG.prefixed(
         "exec-transaction-summary-dataset",
     )
     assert datasets[1].DataSetId == _TEST_CFG.prefixed(
         "exec-account-summary-dataset",
+    )
+    assert datasets[2].DataSetId == _TEST_CFG.prefixed(
+        "app-info-liveness-dataset",
+    )
+    assert datasets[3].DataSetId == _TEST_CFG.prefixed(
+        "app-info-matviews-dataset",
     )
 
 
@@ -180,10 +187,13 @@ def test_account_summary_sql_left_joins_activity():
     assert "LEFT JOIN activity" in sql
 
 
-def test_both_datasets_filter_to_status_success():
+def test_both_content_datasets_filter_to_status_success():
     """Failed legs were recorded but didn't move money — including them
-    pollutes executive trends with operational noise."""
-    for ds in build_all_datasets(_TEST_CFG):
+    pollutes executive trends with operational noise. Scoped to the 2
+    content datasets — the M.4.4.5 App Info datasets read schema/
+    matview metadata and don't carry a status column."""
+    content = build_all_datasets(_TEST_CFG)[:2]
+    for ds in content:
         sql = next(iter(ds.PhysicalTableMap.values())).CustomSql.SqlQuery
         assert "status = 'success'" in sql, (
             f"{ds.DataSetId} must filter status='success'"

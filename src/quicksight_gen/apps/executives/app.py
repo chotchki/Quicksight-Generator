@@ -42,8 +42,6 @@ from quicksight_gen.common.sheets.app_info import (
     APP_INFO_SHEET_TITLE,
     DS_APP_INFO_LIVENESS,
     DS_APP_INFO_MATVIEWS,
-    build_liveness_dataset,
-    build_matview_status_dataset,
     populate_app_info_sheet,
 )
 from quicksight_gen.common.theme import get_preset
@@ -231,9 +229,18 @@ def _populate_getting_started(cfg: Config, sheet: Sheet) -> None:
 # ---------------------------------------------------------------------------
 
 def _datasets(cfg: Config) -> dict[str, Dataset]:
-    """Map each Executives logical dataset identifier to a typed `Dataset` ref."""
+    """Map each Executives logical dataset identifier to a typed `Dataset` ref.
+
+    M.4.4.5 — last 2 entries are the App Info datasets, mirroring the
+    order in `build_all_datasets`.
+    """
     built = build_all_datasets(cfg)
-    names = [DS_EXEC_TRANSACTION_SUMMARY, DS_EXEC_ACCOUNT_SUMMARY]
+    names = [
+        DS_EXEC_TRANSACTION_SUMMARY,
+        DS_EXEC_ACCOUNT_SUMMARY,
+        DS_APP_INFO_LIVENESS,
+        DS_APP_INFO_MATVIEWS,
+    ]
     return {
         name: Dataset(identifier=name, arn=cfg.dataset_arn(ds.DataSetId))
         for name, ds in zip(names, built)
@@ -637,19 +644,10 @@ def build_executives_app(cfg: Config) -> App:
     )
 
     # M.4.4.5 — App Info ("i") sheet, ALWAYS LAST. Diagnostic canary;
-    # see common/sheets/app_info.py. Executives reads base tables only
-    # (no matviews), so the matview-status dataset emits its placeholder
-    # row.
-    liveness_aws = build_liveness_dataset(cfg)
-    matviews_aws = build_matview_status_dataset(cfg, view_names=[])
-    liveness_ds = app.add_dataset(Dataset(
-        identifier=DS_APP_INFO_LIVENESS,
-        arn=cfg.dataset_arn(liveness_aws.DataSetId),
-    ))
-    matviews_ds = app.add_dataset(Dataset(
-        identifier=DS_APP_INFO_MATVIEWS,
-        arn=cfg.dataset_arn(matviews_aws.DataSetId),
-    ))
+    # see common/sheets/app_info.py. Datasets registered via
+    # `_datasets` above (single source of truth across the tree-ref +
+    # JSON-write flows). Executives reads base tables only — the
+    # matview-status dataset emits its placeholder row.
     app_info_sheet = analysis.add_sheet(Sheet(
         sheet_id=SHEET_EXEC_APP_INFO,
         name=APP_INFO_SHEET_NAME,
@@ -658,7 +656,8 @@ def build_executives_app(cfg: Config) -> App:
     ))
     populate_app_info_sheet(
         cfg, app_info_sheet,
-        liveness_ds=liveness_ds, matview_status_ds=matviews_ds,
+        liveness_ds=datasets[DS_APP_INFO_LIVENESS],
+        matview_status_ds=datasets[DS_APP_INFO_MATVIEWS],
     )
 
     app.create_dashboard(

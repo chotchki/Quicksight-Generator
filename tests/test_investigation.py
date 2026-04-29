@@ -246,15 +246,18 @@ def test_demo_sql_is_a_string():
 def test_investigation_datasets_in_expected_order():
     """K.4.3 dataset first, K.4.4 matview-backed dataset second, K.4.5
     money-trail matview dataset third, K.4.8 account-network wrapper
-    fourth, K.4.8k narrow accounts dataset fifth. Order matters —
-    analysis.py's DataSetIdentifierDeclarations zip relies on it."""
+    fourth, K.4.8k narrow accounts dataset fifth. M.4.4.5 appended the
+    2 App Info datasets last. Order matters — analysis.py's
+    DataSetIdentifierDeclarations zip relies on it."""
     datasets = build_all_datasets(_TEST_CFG)
-    assert len(datasets) == 5
+    assert len(datasets) == 7
     assert datasets[0].DataSetId == _TEST_CFG.prefixed("inv-recipient-fanout-dataset")
     assert datasets[1].DataSetId == _TEST_CFG.prefixed("inv-volume-anomalies-dataset")
     assert datasets[2].DataSetId == _TEST_CFG.prefixed("inv-money-trail-dataset")
     assert datasets[3].DataSetId == _TEST_CFG.prefixed("inv-account-network-dataset")
     assert datasets[4].DataSetId == _TEST_CFG.prefixed("inv-anetwork-accounts-dataset")
+    assert datasets[5].DataSetId == _TEST_CFG.prefixed("app-info-liveness-dataset")
+    assert datasets[6].DataSetId == _TEST_CFG.prefixed("app-info-matviews-dataset")
 
 
 def test_investigation_datasets_declared_in_analysis():

@@ -34,6 +34,18 @@ from quicksight_gen.common.dataset_contract import (
     register_contract,
 )
 from quicksight_gen.common.models import DataSet
+from quicksight_gen.common.sheets.app_info import (
+    build_liveness_dataset,
+    build_matview_status_dataset,
+)
+
+
+# M.4.4.5 — matviews the Investigation app reads, surfaced on the
+# App Info ("i") sheet's matview-status table.
+INV_MATVIEW_NAMES = [
+    "inv_pair_rolling_anomalies",
+    "inv_money_trail_edges",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +312,9 @@ def build_all_datasets(cfg: Config) -> list[DataSet]:
         build_money_trail_dataset(cfg),
         build_account_network_dataset(cfg),
         build_account_network_accounts_dataset(cfg),
+        # M.4.4.5 — App Info ("i") sheet datasets, ALWAYS LAST.
+        build_liveness_dataset(cfg),
+        build_matview_status_dataset(cfg, view_names=INV_MATVIEW_NAMES),
     ]
 
 

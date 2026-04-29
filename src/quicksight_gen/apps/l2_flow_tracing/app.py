@@ -59,8 +59,6 @@ from quicksight_gen.common.sheets.app_info import (
     APP_INFO_SHEET_TITLE,
     DS_APP_INFO_LIVENESS,
     DS_APP_INFO_MATVIEWS,
-    build_liveness_dataset,
-    build_matview_status_dataset,
     populate_app_info_sheet,
 )
 from quicksight_gen.common.theme import get_preset
@@ -282,21 +280,9 @@ def build_l2_flow_tracing_app(
     )
 
     # M.4.4.5 — App Info ("i") sheet, ALWAYS LAST. Diagnostic canary;
-    # see common/sheets/app_info.py.
-    _l2ft_prefix = str(l2_instance.instance)
-    liveness_aws = build_liveness_dataset(cfg)
-    matviews_aws = build_matview_status_dataset(cfg, view_names=[
-        f"{_l2ft_prefix}_current_transactions",
-        f"{_l2ft_prefix}_current_daily_balances",
-    ])
-    liveness_ds = app.add_dataset(Dataset(
-        identifier=DS_APP_INFO_LIVENESS,
-        arn=cfg.dataset_arn(liveness_aws.DataSetId),
-    ))
-    matviews_ds = app.add_dataset(Dataset(
-        identifier=DS_APP_INFO_MATVIEWS,
-        arn=cfg.dataset_arn(matviews_aws.DataSetId),
-    ))
+    # see common/sheets/app_info.py. Datasets registered via
+    # `_l2ft_datasets` above (single source of truth across the
+    # tree-ref + JSON-write flows).
     app_info_sheet = analysis.add_sheet(Sheet(
         sheet_id=SHEET_APP_INFO,
         name=APP_INFO_SHEET_NAME,
@@ -305,7 +291,8 @@ def build_l2_flow_tracing_app(
     ))
     populate_app_info_sheet(
         cfg, app_info_sheet,
-        liveness_ds=liveness_ds, matview_status_ds=matviews_ds,
+        liveness_ds=datasets[DS_APP_INFO_LIVENESS],
+        matview_status_ds=datasets[DS_APP_INFO_MATVIEWS],
     )
 
     app.create_dashboard(
@@ -347,6 +334,7 @@ def _l2ft_datasets(
         DS_TT_INSTANCES,
         DS_TT_LEGS,
         DS_UNIFIED_L2_EXCEPTIONS,
+        DS_APP_INFO_LIVENESS, DS_APP_INFO_MATVIEWS,  # M.4.4.5
     ]
     return {
         vid: Dataset(identifier=vid, arn=cfg.dataset_arn(aws.DataSetId))

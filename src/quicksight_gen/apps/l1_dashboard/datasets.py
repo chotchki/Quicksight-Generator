@@ -28,6 +28,30 @@ from quicksight_gen.common.dataset_contract import (
 )
 from quicksight_gen.common.l2 import L2Instance
 from quicksight_gen.common.models import DataSet
+from quicksight_gen.common.sheets.app_info import (
+    build_liveness_dataset,
+    build_matview_status_dataset,
+)
+
+
+def l1_matview_names(l2_instance: L2Instance) -> list[str]:
+    """The L2-prefixed matviews the L1 dashboard reads.
+
+    Surfaced on the App Info ("i") sheet's matview status table so an
+    operator can see ETL refresh state at a glance.
+    """
+    p = str(l2_instance.instance)
+    return [
+        f"{p}_current_transactions",
+        f"{p}_current_daily_balances",
+        f"{p}_drift",
+        f"{p}_ledger_drift",
+        f"{p}_overdraft",
+        f"{p}_limit_breach",
+        f"{p}_todays_exceptions",
+        f"{p}_stuck_pending",
+        f"{p}_stuck_unbundled",
+    ]
 
 
 # Visual identifiers — keys for the Dataset registry on App.
@@ -664,4 +688,9 @@ def build_all_l1_dashboard_datasets(
         build_stuck_unbundled_dataset(cfg, l2_instance),
         build_supersession_transactions_dataset(cfg, l2_instance),
         build_supersession_daily_balances_dataset(cfg, l2_instance),
+        # M.4.4.5 — App Info ("i") sheet datasets, ALWAYS LAST.
+        build_liveness_dataset(cfg),
+        build_matview_status_dataset(
+            cfg, view_names=l1_matview_names(l2_instance),
+        ),
     ]

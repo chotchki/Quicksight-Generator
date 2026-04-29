@@ -998,18 +998,20 @@ def build_investigation_app(cfg: Config) -> App:
     return app
 
 
-_INV_MATVIEW_NAMES = [
-    "inv_pair_rolling_anomalies",
-    "inv_money_trail_edges",
-]
-
-
 def _build_app_info_sheet(cfg: Config, app: App, analysis: Analysis) -> None:
     """M.4.4.5 — App Info ("i") sheet, ALWAYS LAST. Diagnostic canary;
-    see common/sheets/app_info.py."""
+    see common/sheets/app_info.py.
+
+    Builds the App Info DataSets so the tree refs can derive ARNs from
+    the IDs. ``build_all_datasets()`` ALSO calls these (so the JSON
+    write step ships them on deploy) — identity-idempotent contract
+    registration on the second call, identical DataSetIds, no harm.
+    """
+    from quicksight_gen.apps.investigation.datasets import INV_MATVIEW_NAMES
+
     liveness_aws = build_liveness_dataset(cfg)
     matviews_aws = build_matview_status_dataset(
-        cfg, view_names=_INV_MATVIEW_NAMES,
+        cfg, view_names=INV_MATVIEW_NAMES,
     )
     liveness_ds = app.add_dataset(Dataset(
         identifier=DS_APP_INFO_LIVENESS,

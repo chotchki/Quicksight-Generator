@@ -35,6 +35,16 @@ from quicksight_gen.common.dataset_contract import (
     register_contract,
 )
 from quicksight_gen.common.models import DataSet
+from quicksight_gen.common.sheets.app_info import (
+    build_liveness_dataset,
+    build_matview_status_dataset,
+)
+
+
+# M.4.4.5 — Executives reads base tables only; no app-specific
+# matviews. The App Info sheet still ships with the matview status
+# table, which renders a placeholder row when the list is empty.
+EXEC_MATVIEW_NAMES: list[str] = []
 
 
 # Identifier strings used as the DataSetIdentifier in visuals + filters.
@@ -157,6 +167,9 @@ def build_all_datasets(cfg: Config) -> list[DataSet]:
     return [
         build_transaction_summary_dataset(cfg),
         build_account_summary_dataset(cfg),
+        # M.4.4.5 — App Info ("i") sheet datasets, ALWAYS LAST.
+        build_liveness_dataset(cfg),
+        build_matview_status_dataset(cfg, view_names=EXEC_MATVIEW_NAMES),
     ]
 
 
