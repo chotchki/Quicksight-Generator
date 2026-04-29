@@ -69,6 +69,10 @@ from _harness_deploy import (  # noqa: E402
     extract_dashboard_ids,
     generate_apps,
 )
+from _harness_l1_assertions import (  # noqa: E402
+    assert_l1_plants_visible,
+    assert_todays_exceptions_kpi_matches,
+)
 
 # L2_INSTANCES matrix: re-use the exact list `test_l2_seed_contract.py`
 # uses so adding a new YAML there parameterizes the harness too.
@@ -487,3 +491,54 @@ def test_harness_deployed_fixture_lands_with_embed_urls(
     assert harness_deployed["instance"] is not None
     assert harness_deployed["prefix"] == prefix
     assert "rail_firing_plants" in harness_deployed["planted_manifest"]
+
+
+# ---------------------------------------------------------------------------
+# M.4.1.d smoke — Playwright walks the L1 dashboard + asserts plants
+# ---------------------------------------------------------------------------
+
+
+def test_harness_l1_planted_scenarios_visible(
+    harness_deployed: dict[str, Any],
+) -> None:
+    """Open the deployed L1 dashboard via Playwright and verify each
+    planted scenario surfaces on its corresponding sheet (M.4.1.d).
+
+    Per-plant-kind assertions:
+    - DriftPlant → Drift sheet shows account_id
+    - OverdraftPlant → Overdraft sheet shows account_id
+    - LimitBreachPlant → Limit Breach sheet shows account_id
+    - StuckPendingPlant → Pending Aging shows account_id
+    - StuckUnbundledPlant → Unbundled Aging shows account_id
+    - SupersessionPlant → Supersession Audit shows account_id
+
+    Plus Today's Exceptions KPI rollup: the open-violations count
+    matches the sum of planted SHOULD-violation scenarios across
+    drift / overdraft / breach / pending / unbundled.
+
+    Skipped under default pytest. Per the existing browser-e2e
+    convention, requires Playwright + WebKit installed (via
+    ``playwright install webkit`` once per environment).
+    """
+    from quicksight_gen.common.browser.helpers import (
+        wait_for_dashboard_loaded,
+        webkit_page,
+    )
+
+    embed_url = harness_deployed["embed_urls"]["l1-dashboard"]
+    manifest = harness_deployed["planted_manifest"]
+    page_timeout = int(os.environ.get("QS_E2E_PAGE_TIMEOUT", "30000"))
+    visual_timeout = int(os.environ.get("QS_E2E_VISUAL_TIMEOUT", "30000"))
+
+    # Tall viewport so stacked tables don't sit below the fold during
+    # the per-sheet walk — same pattern as the existing L1 browser
+    # tests.
+    with webkit_page(headless=True, viewport=(1600, 4000)) as page:
+        page.goto(embed_url, timeout=page_timeout)
+        wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
+        assert_l1_plants_visible(
+            page, manifest, timeout_ms=visual_timeout,
+        )
+        assert_todays_exceptions_kpi_matches(
+            page, manifest, timeout_ms=visual_timeout,
+        )
