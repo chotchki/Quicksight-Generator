@@ -66,6 +66,7 @@ import dataclasses
 import os
 import sys
 import uuid
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -79,7 +80,6 @@ from _harness_cleanup import (  # noqa: E402
     sweep_qs_resources_by_tag,
 )
 from _harness_seed import (  # noqa: E402
-    DEFAULT_HARNESS_TODAY,
     apply_db_seed,
     build_planted_manifest,
 )
@@ -241,20 +241,38 @@ def harness_seeded(harness_db_conn: Any, harness_l2: L2Instance):
     Each commits independently so a mid-flow failure leaves the DB in
     a known state for ``harness_db_conn``'s teardown to drop cleanly.
 
-    Returns a dict with three keys downstream Playwright assertions
-    (M.4.1.d/e) consume:
-      - ``instance``: the per-test L2Instance (already cloned with the
+    **today=date.today()** (M.4.1.k bug fix) — overrides
+    ``DEFAULT_HARNESS_TODAY``. The L1 invariant matviews
+    (``stuck_pending`` / ``stuck_unbundled``) compute their key
+    predicates against ``CURRENT_TIMESTAMP`` (real wall-clock NOW), so
+    plants anchored to a fixed-future ``today`` (the default) yield
+    NEGATIVE age values that never exceed any positive max-pending /
+    max-unbundled threshold — those plants silently never land in
+    the matviews. The seed-hash-determinism rationale that pins
+    DEFAULT_HARNESS_TODAY at 2030-01-01 (M.2a.8) is for
+    ``test_l2_seed_contract.py``'s hash-lock — the harness asserts
+    against deployed-dashboard rendering, not seed-byte-equality, so
+    using the wall clock is correct here.
+
+    Returns a dict with the per-test handle downstream Playwright
+    assertions (M.4.1.d/e) consume:
+      - ``instance``: the per-test L2Instance (cloned with the
         ephemeral prefix)
       - ``prefix``: the same prefix as a string, for SQL-emit /
         boto3 ID derivation convenience
+      - ``today``: the wall-clock date used as the plant anchor;
+        the L1 widen helper needs this so its filter window matches
+        the planted ages
       - ``planted_manifest``: dict of plant-kind → list-of-row-finder
         dicts (see ``_harness_seed.build_planted_manifest`` for the
         shape; M.4.1.f's failure dump consumes the same dict)
     """
-    scenario = apply_db_seed(harness_db_conn, harness_l2)
+    today = date.today()
+    scenario = apply_db_seed(harness_db_conn, harness_l2, today=today)
     return {
         "instance": harness_l2,
         "prefix": str(harness_l2.instance),
+        "today": today,
         "planted_manifest": build_planted_manifest(scenario),
     }
 
@@ -336,6 +354,7 @@ def harness_deployed(
     return {
         "instance": instance,
         "prefix": harness_seeded["prefix"],
+        "today": harness_seeded["today"],
         "planted_manifest": harness_seeded["planted_manifest"],
         "dashboard_ids": dashboard_ids,
         "embed_urls": embed_urls,
@@ -698,13 +717,15 @@ def test_harness_l1_planted_scenarios_visible(
     assert_l1_matview_rows_present(harness_db_conn, prefix, manifest)
 
     def _check_l1(page: Any) -> None:
-        # Widen the universal date filter (M.2b.1) so plants anchored
-        # to DEFAULT_HARNESS_TODAY (date(2030, 1, 1)) fall inside the
-        # window. Default rolling-7-day window ends at the dashboard's
-        # actual today, which excludes every plant.
+        # Widen the universal date filter (M.2b.1) so plants outside
+        # the default 7-day rolling window still surface. The harness
+        # uses today=date.today() for the seed (M.4.1.k bug fix —
+        # otherwise stuck_pending/stuck_unbundled matviews compute
+        # negative ages and never match), so a 30-day window comfortably
+        # covers every plant kind's max days_ago.
         widen_l1_date_range(
             page,
-            today=DEFAULT_HARNESS_TODAY,
+            today=harness_deployed["today"],
             days_back=30,
             timeout_ms=visual_timeout,
         )
