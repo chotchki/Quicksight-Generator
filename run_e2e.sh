@@ -9,6 +9,23 @@
 #   ./run_e2e.sh --skip-deploy    # skip generate+deploy, just run tests
 #   ./run_e2e.sh --parallel N     # run e2e with pytest-xdist at -n N (default 4)
 #   ./run_e2e.sh --parallel 1     # force serial
+#   ./run_e2e.sh --harness        # run ONLY the M.4.1 end-to-end harness
+#                                 # (skips production deploy + skips the rest
+#                                 #  of the e2e suite — opt-in for nightly /
+#                                 #  pre-release validation; not for fast
+#                                 #  inner-loop dev work)
+#
+# --harness mode notes:
+#   - Each harness test deploys per-test ephemeral QuickSight resources
+#     and tears them down via tag-filter sweep at teardown. Unlike the
+#     rest of the e2e suite, no pre-existing dashboard is required.
+#   - Expected runtime: ~5–10 min per L2_INSTANCES entry (currently 3 →
+#     wall clock ~5–10 min at --parallel 3 with xdist saturation; ~15–30
+#     min at --parallel 1).
+#   - Triage manifests for failed tests land under tests/e2e/failures/
+#     (gitignored); each carries seed_hash, planted_manifest, deployed
+#     dashboard ids + embed URLs, matview row counts, and the full
+#     pytest traceback.
 #
 # Env vars (optional):
 #   QS_E2E_PAGE_TIMEOUT   page load timeout in ms (default 30000)
@@ -20,12 +37,14 @@ set -euo pipefail
 CONFIG=${CONFIG:-run/config.yaml}
 OUT_DIR=${OUT_DIR:-run/out}
 SKIP_DEPLOY=false
+HARNESS=false
 PARALLEL=4
 PYTEST_ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --skip-deploy) SKIP_DEPLOY=true; shift ;;
+        --harness)     HARNESS=true; shift ;;
         --parallel)    PARALLEL="$2"; shift 2 ;;
         api)     PYTEST_ARGS+=("-m" "api"); shift ;;
         browser) PYTEST_ARGS+=("-m" "browser"); shift ;;
@@ -35,6 +54,18 @@ done
 
 if [ "$PARALLEL" -gt 1 ]; then
     PYTEST_ARGS=("-n" "$PARALLEL" "${PYTEST_ARGS[@]}")
+fi
+
+# --harness mode: skip prod deploy + run only the harness file.
+# The harness manages its own per-test ephemeral resources, so the
+# production deploy is irrelevant (and the rest of the e2e suite
+# would conflict by binding to the production resource IDs).
+if [ "$HARNESS" = true ]; then
+    echo "==> Running M.4.1 end-to-end harness (per-test ephemeral deploys)"
+    echo "    L2_INSTANCES × ~5–10 min/instance; xdist=$PARALLEL"
+    QS_GEN_E2E=1 .venv/bin/python -m pytest \
+        tests/e2e/test_harness_end_to_end.py "${PYTEST_ARGS[@]}"
+    exit $?
 fi
 
 if [ "$SKIP_DEPLOY" = false ]; then
