@@ -4,14 +4,34 @@
 
 Help integrators generate AWS QuickSight dashboards that help non-technical financial users find and triage problems in their unique institution. This consists of a shared common library that wraps the QuickSight JSON and a series of example applications built on top that are easily customizable to the situation.
 
+## Audiences
+
+Four audiences with different needs. Design decisions trace to one or more of them; features that serve none are out of scope.
+
+- **Business Analyst / Product Owner**: customizes the apps onto a real institution.
+  - Describes the institution's structure and external relationships in L2 so the demo data and dashboards reflect their world.
+  - Trains the other audiences against a stable demo system that mirrors real-data deployments.
+- **Integration Engineer**: wires the apps into a host system.
+  - Understands the two source tables (`Transaction`, `StoredBalance`) that drive every app.
+  - Writes ETL that populates them on a recurring schedule.
+  - Builds custom apps on the L1 primitives, or extends the shipped apps.
+  - Edits each behavior in one place (DRY); trusts the test suite to catch regressions; iterates fast (regenerate + redeploy in one command); reskins via theme presets.
+- **Non-technical Accountant**: uses the dashboards day-to-day.
+  - Job is to find problems and route them to the team that fixes them.
+  - Strong accounting background, not a programmer; the dashboards are unfamiliar — plain-English labels, hint text, and Getting Started prose are load-bearing.
+  - Needs to recognize *when* something needs investigation, not *how* to fix the broken upstream system.
+- **Third-party Stakeholder**: consumes the dashboards for compliance, metrics, or audit.
+  - Not the primary user. The system stays extensible to meet evolving requirements without disrupting the core experience.
+
 ## Architecture Layers
 
-The model is organized in two layers:
+The model is organized in three layers:
 
 - **LAYER 1 — Universal model**: Money, accounts, transfers, transactions, balances, and the invariants they obey. Same for every institution. Shipped as library code. Integrators do not modify.
 - **LAYER 2 — Institutional model**: Per-integrator description of this institution's account roles, transfer rails, business processes, and reconciliation expectations. Defined by the integrator as data (a YAML instance). The library reads it to scope LAYER 1 constraints to the institution's specifics, generate seed data, and render handbook prose.
+- **LAYER 3 — Applications**: A fixed set of dashboard apps, each answering one **question shape** the L1 primitives and L2 instance can produce. The library ships multiple orthogonal apps; an institution gets every shipped app deployed against its single L2 instance, no code changes required. Integrators build custom apps on the L1 primitives when no shipped app covers their question.
 
-LAYER 1 SHAPES are rigid (Conservation is Conservation); LAYER 1 SCOPES (which TransferTypes have `ExpectedNet=0`, which accounts have `ExpectedEODBalance` set, etc.) are filled in by LAYER 2. LAYER 2 itself is fully defined by the integrator — the library has no opinion beyond providing the LAYER 1 building blocks to express it.
+LAYER 1 SHAPES are rigid (Conservation is Conservation); LAYER 1 SCOPES (which TransferTypes have `ExpectedNet=0`, which accounts have `ExpectedEODBalance` set, etc.) are filled in by LAYER 2. LAYER 2 itself is fully defined by the integrator — the library has no opinion beyond providing the LAYER 1 building blocks to express it. LAYER 3 is fixed by the library; institutions get the same app shapes regardless of L2 content.
 
 ## Notation Conventions
 
@@ -962,6 +982,43 @@ What this composes:
   - **MerchantPayoutInternal** — same-system payout to either another merchant OR a customer subledger (union destination role). The integrator's ETL must tag `receiving_party_kind` so the destination role resolves unambiguously.
 - **Aging watches** catch operational failures distinctly from structural ones: `MaxPendingAge` flags ETL stuck-Pending; `MaxUnbundledAge` flags bundler-stuck-Posted. Both are operational health checks, not structural exceptions.
 - **Auto-derived PostedRequirements** ensure structural integrity: TransferKey fields can't be NULL on leg postings; `parent_transfer_id` can't be NULL on a `required: true` chained child. Integrators add their own (e.g., `external_reference` on the ACH payout, `receiving_party_kind` on the internal payout) for domain-specific completeness.
+
+---
+
+# Layer 3 — Applications
+
+## Purpose
+
+LAYER 3 is a set of dashboard applications, each answering one **question shape** the L1 primitives and L2 instance can produce. The shipped apps are deliberately small and orthogonal: each answers a question the others cannot, so the user reaches for a specific app based on the shape of the question. Adding a fifth shipped app should require justifying that no existing app's stepback already covers it.
+
+## Question shapes
+
+| App | Question shape | Primary audience | L1 primitives leaned on |
+|---|---|---|---|
+| **L1 Reconciliation Dashboard** | Are the institution's L1 invariants holding right now? Where are they breaking? | Accountant | `Drift`, `LedgerDrift`, `OutboundFlow` (limit breach), `Age` (stuck pending / unbundled), `Status`, `Supersedes` |
+| **L2 Flow Tracing** | Did this transfer (or transfer type) post the way L2 says it should? | Accountant + Integration Engineer | `CurrentTransaction`, `NetOfTransfer`, `PostedRequirements`, `Origin` |
+| **Investigation** | What's flowing between accounts, and which flows are anomalous? | Accountant + Third-party (compliance) | `CurrentTransaction` aggregated by (source Account, target Account); pair-rolling statistics; recursive walk over `Transfer.Parent` |
+| **Executives** | How large is this institution's activity? Account counts, money moved, period-over-period totals. | Third-party + Business Analyst | `CurrentTransaction` aggregated by (period, dimension); `Account` counts |
+
+## Per-app stepbacks
+
+### L1 Reconciliation Dashboard
+Operational integrity at the level of L1 invariants. Every sheet maps to one or more L1 SHOULD-constraints — drift, overdraft, limit breach, expected-EOD-balance, stuck pending, stuck unbundled, supersession audit. The accountant scans today's exception count, drills into the offending row, and routes it to whoever owns the upstream feed. Configured by exactly one L2 instance: feed it `sasquatch_ar.yaml`, get a Sasquatch dashboard; feed it `cascadia.yaml`, get a Cascadia dashboard.
+
+### L2 Flow Tracing
+Operational integrity at the level of L2-declared transfer flows. Where L1 asks "is the math right?", L2 FT asks "did the transfer happen the way the institution said it would?" — every Transfer should match a declared Rail, every leg should land on the role the Rail names, every PostedRequirement should be satisfied within the declared Duration. The accountant uses it to triage failed transfers; the integration engineer uses it to validate that a newly-declared Rail actually fires.
+
+### Investigation
+Forensic / network analysis. Where L1 and L2 FT ask integrity questions about individual transactions and transfers, Investigation steps back to **accounts and the flows between them** and asks pattern questions: which counterparties does this account talk to? Which pairs are moving anomalous volume relative to their baseline? What chain of transfers connects two accounts? The compliance / AML stakeholder is the primary user; the accountant reaches for it when an L1 exception pattern hints at a broader story (e.g., a single account driving multiple drift events across days).
+
+### Executives
+Aggregate scope and scale. Steps further back than Investigation — not "are flows anomalous" but "how large is the institution". Account counts by role, transfer volume by type and period, money moved by counterparty class. The third-party stakeholder (board, regulator, executive sponsor) is the primary user; the business analyst uses it as the headline view when onboarding a new institution.
+
+## What L3 is not
+
+- **Not a query interface.** L3 apps answer fixed question shapes; they don't let the user write arbitrary queries. Integrators who need free-form querying go to the database directly — the apps are scoped to "the questions this institution should be asking every day".
+- **Not customer-extended without code.** Adding a sheet to a shipped app means editing the app's `app.py`. L2 cannot add or hide sheets — the app structure is fixed across institutions on purpose, so training and documentation transfer cleanly between deployments.
+- **Not where institution-specific quirks live.** Quirks belong in L2 (declare a custom TransferType / Rail / role; the shipped apps will surface the resulting transactions and exceptions automatically). If a customer needs a question shape no shipped app covers, the path is "build a custom app on L1 primitives", not "fork the shipped apps".
 
 ---
 
