@@ -572,8 +572,10 @@ def test_limit_breach_view_with_no_limit_schedules_is_inert() -> None:
     )
     assert body_match is not None
     body = body_match.group(1)
-    # `NULL AS cap` appears in the inner SELECT.
-    assert "NULL AS cap" in body
+    # `NULL::numeric AS cap` appears in the inner SELECT — typed NULL
+    # so `outbound_total > cap` doesn't fail with `numeric > text`
+    # when no LimitSchedules are declared (M.4.4.6 fix).
+    assert "NULL::numeric AS cap" in body
     # Outer WHERE filters `cap IS NOT NULL` so an inert NULL cap excludes
     # every row.
     assert "WHERE cap IS NOT NULL" in body
@@ -670,8 +672,10 @@ def test_stuck_pending_view_with_no_aging_rails_is_inert() -> None:
     )
     assert body_match is not None
     body = body_match.group(1)
-    # `NULL AS max_pending_age_seconds` from the helper's no-rails branch.
-    assert "NULL AS max_pending_age_seconds" in body
+    # `NULL::bigint AS max_pending_age_seconds` from the helper's
+    # no-rails branch (M.4.4.6 — typed NULL so the outer `age_seconds
+    # > max_pending_age_seconds` doesn't fail with `numeric > text`).
+    assert "NULL::bigint AS max_pending_age_seconds" in body
     # Outer WHERE filters NULL caps so an inert NULL excludes every row.
     assert "max_pending_age_seconds IS NOT NULL" in body
 
@@ -757,7 +761,7 @@ def test_stuck_unbundled_view_with_no_bundling_rails_is_inert() -> None:
     )
     assert body_match is not None
     body = body_match.group(1)
-    assert "NULL AS max_unbundled_age_seconds" in body
+    assert "NULL::bigint AS max_unbundled_age_seconds" in body  # M.4.4.6
     assert "max_unbundled_age_seconds IS NOT NULL" in body
 
 

@@ -165,10 +165,12 @@ def _render_limit_breach_cases(instance: L2Instance, *, p: str) -> str:
     columns since the view reads parent_role + transfer_type directly
     from the transaction row (denormalized in v6) — no JOIN to
     daily_balances needed. If the instance has no LimitSchedules,
-    returns ``NULL`` so the view emits valid SQL but surfaces no rows.
+    returns ``NULL::numeric`` (typed NULL) so the column has a concrete
+    type — bare NULL infers as text in PostgreSQL and breaks the outer
+    ``outbound_total > cap`` comparison with `numeric > text`.
     """
     if not instance.limit_schedules:
-        return "NULL"
+        return "NULL::numeric"
     branches: list[str] = []
     for ls in instance.limit_schedules:
         # Each LimitSchedule is keyed on (parent_role, transfer_type) per
@@ -205,7 +207,9 @@ def _render_pending_age_cases(instance: L2Instance) -> str:
             f"WHEN ct.rail_name = '{rail.name}' THEN {seconds}"
         )
     if not branches:
-        return "NULL"
+        # Typed NULL — bare NULL infers as text and breaks the outer
+        # `tx.age_seconds > tx.max_pending_age_seconds` comparison.
+        return "NULL::bigint"
     branches_sql = "\n        ".join(branches)
     return f"CASE\n        {branches_sql}\n        ELSE NULL\n    END"
 
@@ -231,7 +235,8 @@ def _render_unbundled_age_cases(instance: L2Instance) -> str:
             f"WHEN ct.rail_name = '{rail.name}' THEN {seconds}"
         )
     if not branches:
-        return "NULL"
+        # Typed NULL — same reason as `_render_pending_age_cases`.
+        return "NULL::bigint"
     branches_sql = "\n        ".join(branches)
     return f"CASE\n        {branches_sql}\n        ELSE NULL\n    END"
 
