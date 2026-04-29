@@ -1,5 +1,21 @@
 # Release Notes
 
+## v6.0.3
+
+### Hotfix — Drop deleted apps from release-pipeline smoke imports
+
+> **v6.0.2 was tagged and pushed.** The smoke-test-wheel fix from v6.0.2 worked, but the next failure surfaced one job further down the pipeline: `verify-testpypi-install` failed at the "Smoke import the public surface" step with `ModuleNotFoundError: No module named 'quicksight_gen.apps.payment_recon'`. v6.0.2 was published to TestPyPI as a build artifact but never promoted to PyPI; v6.0.3 ships the same v6.0.0 + v6.0.1 + v6.0.2 work plus this fix. The v6.0.0–v6.0.2 git tags stay in place.
+
+**Root cause**:
+- `.github/workflows/release.yml`'s `verify-testpypi-install` and `verify-pypi-install` jobs both run a hardcoded smoke-import block listing the 4 apps to import.
+- M.4.3 / M.4.4 deleted `quicksight_gen.apps.payment_recon` and `quicksight_gen.apps.account_recon` — the workflow's import list wasn't updated.
+- `verify-testpypi-install` failed at the first hidden-import call.
+
+**Fix**:
+- Swapped `payment_recon` / `account_recon` imports for `l1_dashboard` / `l2_flow_tracing` — the 4 apps that actually ship in v6.
+
+**Operator impact**: zero behavior change vs v6.0.0 / v6.0.1 / v6.0.2 — the wheel itself is identical. The fix is purely a release-pipeline assertion concern.
+
 ## v6.0.2
 
 ### Hotfix — Drop deleted test files from the smoke-test-wheel job

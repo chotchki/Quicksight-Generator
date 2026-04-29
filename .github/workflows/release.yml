@@ -262,8 +262,8 @@ jobs:
           from quicksight_gen.common.tree.actions import Drill
           from quicksight_gen.common.dataset_contract import DatasetContract, ColumnSpec
           from quicksight_gen.common.config import Config
-          from quicksight_gen.apps.payment_recon.app import build_payment_recon_app
-          from quicksight_gen.apps.account_recon.app import build_account_recon_app
+          from quicksight_gen.apps.l1_dashboard.app import build_l1_dashboard_app
+          from quicksight_gen.apps.l2_flow_tracing.app import build_l2_flow_tracing_app
           from quicksight_gen.apps.investigation.app import build_investigation_app
           from quicksight_gen.apps.executives.app import build_executives_app
           print('public surface importable')
@@ -344,8 +344,8 @@ jobs:
           from quicksight_gen.common.tree.actions import Drill
           from quicksight_gen.common.dataset_contract import DatasetContract, ColumnSpec
           from quicksight_gen.common.config import Config
-          from quicksight_gen.apps.payment_recon.app import build_payment_recon_app
-          from quicksight_gen.apps.account_recon.app import build_account_recon_app
+          from quicksight_gen.apps.l1_dashboard.app import build_l1_dashboard_app
+          from quicksight_gen.apps.l2_flow_tracing.app import build_l2_flow_tracing_app
           from quicksight_gen.apps.investigation.app import build_investigation_app
           from quicksight_gen.apps.executives.app import build_executives_app
           print('public surface importable')
