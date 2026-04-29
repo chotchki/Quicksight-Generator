@@ -178,9 +178,8 @@ def test_investigation_theme_preset_registered():
     assert "sasquatch-bank-investigation" in PRESETS
     preset = get_preset("sasquatch-bank-investigation")
     assert preset.analysis_name_prefix == "Demo"
-    # Distinct accent from PR / AR (slate vs forest vs valley green)
+    # Distinct accent from sasquatch-bank (slate vs forest green)
     assert preset.accent != get_preset("sasquatch-bank").accent
-    assert preset.accent != get_preset("sasquatch-bank-ar").accent
 
 
 # ---------------------------------------------------------------------------

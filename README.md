@@ -152,7 +152,7 @@ datasource_arn: "arn:aws:quicksight:us-east-2:123456789012:datasource/your-datas
 resource_prefix: "qs-gen"
 
 # Optional: which theme preset to use. One of: default, sasquatch-bank,
-# sasquatch-bank-ar, sasquatch-bank-investigation
+# sasquatch-bank-investigation
 theme_preset: "default"
 
 # Optional: IAM principals granted permissions on generated resources.
@@ -284,7 +284,6 @@ Datasets are all Direct Query (no SPICE), so seed changes show up immediately af
 |---|---|---|
 | `default` | Navy / blue / grey | — |
 | `sasquatch-bank` | Forest green + bark brown + bank gold | `Demo — ` |
-| `sasquatch-bank-ar` | Valley green + harvest gold + earth | `Demo — ` |
 | `sasquatch-bank-investigation` | Slate blue + amber alert | `Demo — ` |
 
 Set `theme_preset:` in `config.yaml` (or pass `--theme-preset` to `generate` / `deploy --generate`). Add a new preset by declaring a `ThemePreset` in `src/quicksight_gen/common/theme.py` and registering it in `PRESETS`.
@@ -301,7 +300,7 @@ src/quicksight_gen/
         config.py       # Config dataclass + YAML/env loader
         models.py       # Dataclasses mapping to QuickSight API JSON
         ids.py          # Typed ID newtypes (SheetId / VisualId / FilterGroupId / ParameterName)
-        theme.py        # Theme presets (default, sasquatch-bank, sasquatch-bank-ar, sasquatch-bank-investigation)
+        theme.py        # Theme presets (default, sasquatch-bank, sasquatch-bank-investigation)
         persona.py      # DemoPersona — single source of truth for whitelabel-substitutable Sasquatch strings
         deploy.py       # Python deploy (delete-then-create, async waiters)
         cleanup.py      # Tag-based cleanup of stale resources

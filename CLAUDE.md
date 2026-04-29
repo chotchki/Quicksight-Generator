@@ -29,7 +29,7 @@ quicksight-gen generate --all -c config.yaml -o out/
 
 # Generate a single app
 quicksight-gen generate payment-recon -c config.yaml -o out/
-quicksight-gen generate account-recon -c config.yaml -o out/ --theme-preset sasquatch-bank-ar
+quicksight-gen generate l1-dashboard -c config.yaml -o out/ --theme-preset sasquatch-bank
 
 # Deploy to AWS (delete-then-create; polls async resources to terminal state)
 quicksight-gen deploy --all -c config.yaml -o out/
@@ -55,7 +55,7 @@ pytest                              # unit + integration, fast, no AWS
 ./run_e2e.sh --skip-deploy browser  # browser e2e only
 ```
 
-`demo apply` is app-scoped: `demo apply payment-recon` generates with the `sasquatch-bank` preset; `demo apply account-recon` uses `sasquatch-bank-ar`; `demo apply investigation` uses `sasquatch-bank-investigation`; `--all` generates all three with each app's natural preset. Schema is always loaded in full — all three apps feed the same `transactions` + `daily_balances` base tables, plus AR-only dimension tables (`ar_ledger_accounts`, `ar_subledger_accounts`, `ar_ledger_transfer_limits`). Investigation reads the shared base tables only — no investigation-specific schema.
+`demo apply` is app-scoped: `demo apply l1-dashboard` / `demo apply l2-flow-tracing` use the `sasquatch-bank` preset; `demo apply investigation` uses `sasquatch-bank-investigation`; `--all` generates every app with each app's natural preset. Schema is always loaded in full — feeds the shared `transactions` + `daily_balances` base tables. Investigation continues to register its own sub-ledgers in the `ar_ledger_accounts` / `ar_subledger_accounts` dimension tables for FK integrity (carry-over from v5; Phase N decides whether to migrate Inv off them).
 
 ## Generated Output
 
@@ -121,7 +121,7 @@ src/quicksight_gen/
     config.py            # Config dataclass + YAML/env loader (principal_arns list, theme_preset)
     models.py            # Dataclasses mapping to QuickSight API JSON (to_aws_json + _strip_nones)
     ids.py               # Typed ID newtypes (SheetId / VisualId / FilterGroupId / ParameterName / etc.)
-    theme.py             # Theme presets (default / sasquatch-bank / sasquatch-bank-ar / sasquatch-bank-investigation); PRESETS registry
+    theme.py             # Theme presets (default / sasquatch-bank / sasquatch-bank-investigation); PRESETS registry
     persona.py           # DemoPersona dataclass + derive_mapping_yaml_text — single source of truth for whitelabel-substitutable Sasquatch strings
     deploy.py            # boto3 delete-then-create deploy with async waiters
     cleanup.py           # Tag-based cleanup of stale resources (ManagedBy:quicksight-gen)

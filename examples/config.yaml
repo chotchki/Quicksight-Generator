@@ -23,9 +23,7 @@ datasource_arn: "arn:aws:quicksight:us-east-1:111122223333:datasource/example-da
 # Prefix for all generated resource IDs (default: qs-gen).
 resource_prefix: "qs-gen"
 
-# Theme preset (one of: default, sasquatch-bank, sasquatch-bank-ar).
-# `generate --all` resolves the AR app to `sasquatch-bank-ar` automatically;
-# this top-level preset applies to PR.
+# Theme preset (one of: default, sasquatch-bank, sasquatch-bank-investigation).
 theme_preset: "sasquatch-bank"
 
 # IAM principals granted permissions on every generated resource.

@@ -184,68 +184,6 @@ SASQUATCH_BANK_PRESET = ThemePreset(
 
 
 # ---------------------------------------------------------------------------
-# Sasquatch National Bank — AR (treasury) preset — valley green, harvest gold
-# ---------------------------------------------------------------------------
-#
-# AR (treasury / GL reconciliation) gets a distinct palette from PR (merchant
-# settlement) so the two operationally different dashboards from the same
-# bank stay visually separable. Palette honors the legacy Farmers Exchange
-# Bank brand absorbed into SNB during the Phase F restructure.
-
-# Valley greens (dark → light)
-_VALLEY_DEEP = "#2B4A2E"
-_VALLEY_GREEN = "#4A7C3F"
-_MEADOW = "#7BA96B"
-_PALE_MEADOW = "#D6E6C8"
-
-# Harvest / earth
-_HARVEST_GOLD = "#D4A017"
-_WHEAT = "#E8C77A"
-_SOIL_BROWN = "#6B4423"
-_BARN_RED = "#8B3A2A"
-_CREAM = "#FBF7EE"
-
-# Warm neutrals
-_DARK_EARTH = "#3A2E24"
-_STONE = "#8C7A66"
-
-SASQUATCH_BANK_AR_PRESET = ThemePreset(
-    theme_name="Sasquatch National Bank — AR Theme",
-    version_description="Sasquatch National Bank AR — valley green and harvest gold palette",
-    analysis_name_prefix="Demo",
-    data_colors=[
-        _VALLEY_GREEN,
-        _HARVEST_GOLD,
-        _SOIL_BROWN,
-        _MEADOW,
-        _BARN_RED,
-        _WHEAT,
-        "#5E8B7E",           # pond teal
-        _STONE,
-    ],
-    empty_fill_color="#D8D4CA",
-    gradient=[_PALE_MEADOW, _VALLEY_DEEP],
-    primary_bg=_WHITE,
-    secondary_bg=_CREAM,
-    primary_fg=_DARK_EARTH,
-    secondary_fg=_SOIL_BROWN,
-    accent=_VALLEY_GREEN,
-    accent_fg=_WHITE,
-    link_tint="#EAF2E1",
-    danger=_BARN_RED,
-    danger_fg=_WHITE,
-    warning="#C67D1F",
-    warning_fg=_WHITE,
-    success=_VALLEY_GREEN,
-    success_fg=_WHITE,
-    dimension=_MEADOW,
-    dimension_fg=_WHITE,
-    measure=_VALLEY_DEEP,
-    measure_fg=_WHITE,
-)
-
-
-# ---------------------------------------------------------------------------
 # Sasquatch National Bank — Investigation preset — slate blue, amber alert
 # ---------------------------------------------------------------------------
 #
@@ -316,7 +254,6 @@ SASQUATCH_BANK_INVESTIGATION_PRESET = ThemePreset(
 PRESETS: dict[str, ThemePreset] = {
     "default": DEFAULT_PRESET,
     "sasquatch-bank": SASQUATCH_BANK_PRESET,
-    "sasquatch-bank-ar": SASQUATCH_BANK_AR_PRESET,
     "sasquatch-bank-investigation": SASQUATCH_BANK_INVESTIGATION_PRESET,
 }
 
