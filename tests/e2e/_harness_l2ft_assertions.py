@@ -122,49 +122,63 @@ def assert_l2ft_plants_visible(
             )
 
 
+def assert_l2_exceptions_kpi_renders(
+    page: Any,
+    *,
+    timeout_ms: int = 30_000,
+) -> None:
+    """Sanity check: the L2 Exceptions sheet's "Open L2 Violations" KPI
+    renders an integer (≥ 0) — proves the unified-exceptions dataset's
+    CustomSql ran against the per-test prefix without errors.
+
+    M.4.4.15 reframe — the previous assertion looked for at least one
+    of 6 hardcoded ``check_type`` category labels in the sheet text
+    (Chain Orphans / Unmatched Transfer Type / Dead Rails / Dead
+    Bundles Activity / Dead Metadata Declarations / Dead Limit
+    Schedules). For a clean SPEC-skeleton fixture (spec_example),
+    the broad-mode scenario produces ZERO violations of any kind —
+    the dataset returns an empty result set and the dashboard
+    correctly shows "No data" on every visual + 0 on the KPI. That's
+    the desired healthy-state render, not a failure.
+
+    A KPI rendering a number — even 0 — proves the dataset SQL
+    executed cleanly. SQL errors would have left the KPI blank
+    (caught by ``wait_for_kpi_text_nonempty``'s timeout).
+    """
+    from quicksight_gen.common.browser.helpers import (
+        click_sheet_tab,
+        wait_for_kpi_text_nonempty,
+    )
+
+    click_sheet_tab(page, "L2 Exceptions", timeout_ms=timeout_ms)
+    kpi_title = "Open L2 Violations"
+    kpi_text = wait_for_kpi_text_nonempty(
+        page, kpi_title, timeout_ms=timeout_ms,
+    )
+    cleaned = kpi_text.replace(",", "").strip()
+    try:
+        kpi_value = int(cleaned)
+    except ValueError as exc:
+        raise AssertionError(
+            f"L2 Exceptions KPI {kpi_title!r} text {kpi_text!r} isn't "
+            f"parseable as an integer — dataset may have a SQL error"
+        ) from exc
+    assert kpi_value >= 0, (
+        f"L2 Exceptions KPI {kpi_title!r} rendered a negative count "
+        f"({kpi_value}) — dataset COUNT(*) shouldn't be negative"
+    )
+
+
+# Backwards-compat alias — the harness test still imports the old
+# name. Kept as a thin wrapper so the rename can land in one commit
+# without scattering test-file edits across this PR.
 def assert_l2_exceptions_check_types_present(
     page: Any,
     *,
     timeout_ms: int = 30_000,
 ) -> None:
-    """Sanity check: the L2 Exceptions sheet's bar chart has at least
-    one bar per ``check_type`` category — proves the unified-exceptions
-    dataset rendered against the per-test prefix without SQL errors.
-
-    The bar chart shows count by check_type; even if the broad-mode
-    scenario produces zero violations of a kind, the kind's category
-    label will appear on the chart's axis (QS draws zero-height
-    bars for declared categories present in the dataset).
-
-    Substring-based check: every check_type label string must appear
-    somewhere on the sheet. Doesn't try to assert specific counts
-    (those are scenario-dependent + brittle).
-    """
-    from quicksight_gen.common.browser.helpers import click_sheet_tab
-
-    click_sheet_tab(page, "L2 Exceptions", timeout_ms=timeout_ms)
-    sheet_text = _active_sheet_text(page, timeout_ms=timeout_ms)
-
-    # Walk every check_type — collect misses for one consolidated
-    # error message rather than failing on the first one. Helps with
-    # M.4.1.f's failure manifest dump.
-    missing = sorted(
-        ct for ct in L2_EXCEPTION_CHECK_TYPES if ct not in sheet_text
-    )
-    if missing:
-        # Some check_types may legitimately be absent from a small
-        # YAML (e.g. spec_example doesn't declare a Required chain so
-        # 'Chain Orphans' as a category may not appear if the bar
-        # chart hides empty categories). Soft-fail with a clear
-        # message: at least 1 of the 6 must appear, otherwise the
-        # sheet didn't render at all.
-        present = L2_EXCEPTION_CHECK_TYPES - set(missing)
-        assert len(present) >= 1, (
-            f"L2 Exceptions sheet shows none of the 6 declared "
-            f"check_type categories ({sorted(L2_EXCEPTION_CHECK_TYPES)!r}). "
-            f"Either the unified-exceptions dataset failed to render "
-            f"or the deploy was misconfigured."
-        )
+    """Deprecated — see ``assert_l2_exceptions_kpi_renders``."""
+    assert_l2_exceptions_kpi_renders(page, timeout_ms=timeout_ms)
 
 
 # ---------------------------------------------------------------------------
