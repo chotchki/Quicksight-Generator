@@ -1,5 +1,67 @@
 # Release Notes
 
+## v6.0.0
+
+### Phase M — L2 foundation + 4-app consolidation (major)
+
+**Headline**: every dashboard configurable from a single L2 institutional model. Drop a YAML in, run `quicksight-gen demo seed-l2 myorg.yaml`, and the L1 dashboard renders against your declared accounts / rails / chains / transfer templates without per-institution code changes.
+
+The four-app v6 lineup:
+
+- **L1 Dashboard** — persona-blind L1 invariant violation surface (drift / overdraft / limit breach / stuck pending / stuck unbundled / supersession audit / today's exceptions / daily statement / transactions). Configured by an L2 instance — feed any institution's L2 YAML once, dashboard renders against it.
+- **L2 Flow Tracing** — Rails / Chains / Transfer Templates / L2 Hygiene Exceptions for the integrator validating their L2 instance against the SPEC.
+- **Investigation** — recipient fanout, volume anomalies, money-trail provenance, account-network graphs (compliance / AML triage). Carry-forward from v5; reshape decision deferred to Phase N.
+- **Executives** — board-cadence statistics over the shared base tables (Account Coverage, Transaction Volume, Money Moved). Carry-forward from v5.
+
+The major bump is earned by:
+
+- **L1 schema breaking change**. The shared base layer added new fields the L1 invariant matviews depend on (Entry, ExpectedEODBalance, ExpectedNet, Origin per-leg, Limits, Transfer.Parent). Existing v5 integrators must update their ETL to populate the new columns before deploying v6.
+- **Account Reconciliation + Payment Reconciliation apps deleted** (M.4.3 + M.4.4). Both replaced by the L1 Dashboard configured against a per-institution L2 instance. External callers importing `quicksight_gen.apps.account_recon` or `quicksight_gen.apps.payment_recon` must migrate to `quicksight_gen.apps.l1_dashboard` + a hand-written L2 YAML for their institution. CLI: `generate account-recon` / `generate payment-recon` / `demo seed account-recon` / `demo seed payment-recon` removed.
+- **`sasquatch-bank-ar` theme preset deleted**. Existing config files using `theme_preset: sasquatch-bank-ar` must switch to `sasquatch-bank` or `sasquatch-bank-investigation` before redeploy.
+- **Internal API change**: many tree-building helpers in `common/tree/` gained typed-required parameters that previously had defaults (`DateTimeParam.default` is now required; `KPIOptions` requires the full block including empty `TargetValues=[]` / `TrendGroups=[]`; `build_liveness_dataset` / `build_matview_status_dataset` now require an `app_segment` keyword arg). These prevent classes of bugs from recurring at the wiring site rather than catching them in tests.
+
+### What landed
+
+**M.0–M.4: L2 foundation + L1 + L2FT apps + harness.** The L2 model (Accounts + AccountTemplates + Rails + TransferTemplates + Chains + LimitSchedules) loads from YAML, validates 30+ cross-entity rules at construction, and emits per-instance prefixed schema (`<prefix>_drift`, `<prefix>_stuck_pending`, etc.). The L1 dashboard reads from these prefixed matviews; feeding a different L2 instance gives the dashboard a different prefix automatically. The L2 Flow Tracing dashboard surfaces the L2-side hygiene exceptions (Chain Orphans / Unmatched Transfer Type / Dead Rails / Dead Bundles Activity / Dead Metadata Declarations / Dead Limit Schedules) for the integrator validating their YAML against runtime data.
+
+A new end-to-end harness (`tests/e2e/test_harness_end_to_end.py`) parameterizes over the L2 contract matrix (3 instances: spec_example, sasquatch_pr, fuzz) and runs the full chain — schema apply → seed → matview refresh → deploy → Playwright asserts planted scenarios surface as visible rows. Per-test failure dumps a triage manifest (planted_manifest + matview row counts + dashboard IDs + embed URLs + JS console capture).
+
+**M.4.4 hardening stack.** A long debug session post-deletes uncovered and fixed a stack of QS-UI compatibility bugs that had been silently working in v5:
+
+- **App Info canary sheet** on every dashboard. Real-query liveness KPI + per-matview row-count table + deploy stamp. Collapses the QS spinner-forever footgun ladder to a single glance.
+- **AnalysisDefinition shape match for QS UI editor**: top-level `Options` + `AnalysisDefaults` + per-sheet `CanvasSizeOptions`; auto-VisualIds use UUIDs not positional slugs; KPIs emit the full `KPIOptions` block (was crashing the QS editor on open).
+- **`DateTimeParam.default` is now required.** Without one, QS's date picker initialized with no value and crashed the editor with `Error: epochMilliseconds must be a number, you gave: null`. Type-encoded the invariant so the bug class can't recur.
+- **JS console capture in e2e failure manifests.** Every page-load attempt registers `page.on("console", ...)` + `page.on("pageerror", ...)` listeners; on failure the captured messages dump next to the screenshot. Drove the epochMilliseconds bug discovery (the error never surfaced in the QS UI but printed to the JS console).
+- **Cap-aware `days_ago` for stuck_pending plant** (M.4.4.13). Hardcoded `days_ago=2` silently failed for any picked rail with `max_pending_age >= 2 days`. Fixed with the same cap-aware pattern stuck_unbundled already used.
+- **L1 render xfails root-caused** (M.4.4.12). KPI title mismatch + `todays_exceptions` matview missing `stuck_pending`/`stuck_unbundled` UNION branches + manifest-derived expected math (reframed to query the matview directly). Plus dynamic date-filter widening from manifest `max(days_ago) + 7` so cap-aware plants don't fall outside the dashboard's filter window.
+- **Per-app prefix in App Info DataSetIds** (M.4.4.7). Each app's App Info datasets now carry a per-app segment so `deploy <single-app>` can't delete-then-create another app's App Info dataset.
+- **Per-role business_day offsets for the fuzz matrix** (M.4.4.14). Fuzz instances now emit varied per-role hour offsets so any future L1 view that depends on per-role business-day boundaries differing has fuzz coverage. Production fixtures stay midnight-aligned (no hash drift).
+
+### Migration
+
+For existing v5 integrators on Account Reconciliation or Payment Reconciliation:
+
+1. Author an L2 instance YAML for your institution under `tests/l2/` (use `tests/l2/spec_example.yaml` as the skeleton).
+2. Migrate your ETL to populate the new L1 schema fields (Entry, ExpectedEODBalance, ExpectedNet, Origin per-leg, Limits, Transfer.Parent).
+3. Switch from `quicksight-gen generate account-recon` / `generate payment-recon` to `quicksight-gen generate l1-dashboard --l2-instance <yourorg>.yaml`.
+4. Replace any `theme_preset: sasquatch-bank-ar` config with `theme_preset: sasquatch-bank`.
+
+Investigation + Executives users: no migration needed; both apps continue working as in v5. Their Phase N reshape decision is forthcoming.
+
+### Deferred to Phase N
+
+The following work originally scoped under M.4.5, M.5, M.6, M.7, M.8, M.4.4.9, M.4.4.16 was punted to a new Phase N to ship v6 with the L2 foundation as the headline:
+
+- **N.1**: Investigation + Executives reshape decision (keep / reshape onto L2 / delete)
+- **N.2**: Demo persona infrastructure + unified theme — Sasquatch becomes N L2 instances; persona substitution wired into a `generate config demo` command
+- **N.3**: CLI workflow polish — `generate config / apply schema / apply data / apply dashboards / generate training`
+- **N.4**: Docs render pipeline — handbook prose templated against L2 persona vocabulary; replaces today's `mapping.yaml` substitution
+- **N.5**: Training render pipeline — training site rendered from L2 + ScreenshotHarness regenerated per L2 instance
+- **N.6**: QS-UI kitchen-sink reference tool — defensive measure, deferred since the concrete editor-crash bugs got fixed
+- **N.7**: L2FT plants-visible date-filter widening — same shape as the M.4.4.12 L1 widening fix, currently wrapped in an inline xfail
+
+The bulk of `schema.sql`'s AR `ar_*` view surface (~1130 lines) is dead code in v6 (no v6 app reads it) but stays in the schema because Investigation's demo seed registers its sub-ledgers in the AR dimension tables for FK integrity. Phase N's N.1 (Inv reshape) is the natural moment to either migrate Inv off the dim tables or accept the carry-over and sweep the dead views.
+
 ## v5.0.2
 
 ### Phase L — Tree primitives + Executives app + mkdocstrings API reference (major)
