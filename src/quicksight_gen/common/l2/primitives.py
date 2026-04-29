@@ -147,6 +147,22 @@ class AccountTemplate:
     singleton ``Account`` (never another ``AccountTemplate``) — enforced
     by the validator at load time per the SPEC's "singleton parent only"
     constraint.
+
+    ``instance_id_template`` + ``instance_name_template`` (M.4.2b) —
+    optional Python str.format() templates the demo seed's
+    ``_materialize_instances`` uses when synthesizing per-template
+    instances. Both default to ``None``; the seed falls back to the
+    legacy synthetic patterns (``"cust-{n:03d}"`` for id,
+    ``"Customer {n}"`` for name) so existing L2 fixtures don't drift.
+    Integrators opt in via YAML to control the persona's per-template
+    naming, e.g.:
+
+        instance_id_template: "cust-{n:03d}-bigfoot"
+        instance_name_template: "Bigfoot-{n}"
+
+    Both templates support the placeholders ``{role}`` (the template's
+    ``role`` field) and ``{n}`` (1-indexed instance number). Loader
+    rejects format strings that reference any other placeholder.
     """
 
     role: Identifier
@@ -154,6 +170,8 @@ class AccountTemplate:
     parent_role: Identifier | None = None
     expected_eod_balance: Money | None = None
     description: str | None = None
+    instance_id_template: str | None = None
+    instance_name_template: str | None = None
 
 
 # -- Rails (discriminated union per F2) --------------------------------------
@@ -207,6 +225,16 @@ class TwoLegRail:
     # Free-form prose for handbook + training render templates per
     # the SPEC's "Description fields" rule. Optional; SHOULD be filled.
     description: str | None = None
+    # Per-key example metadata values (M.4.2b). When set, the demo seed's
+    # broad-mode RailFiringPlant emits values from the per-key list
+    # (cycling through if firings exceed list length) — the L2 Flow
+    # Tracing metadata cascade reads realistic per-persona values
+    # instead of the synthetic ``<rail>-firing-<seq>`` fallback.
+    # Validator R13: every dict key MUST be in ``metadata_keys``.
+    # Stored as a tuple-of-tuples to keep the dataclass frozen + hashable.
+    metadata_value_examples: tuple[tuple[Identifier, tuple[str, ...]], ...] = (
+        field(default_factory=tuple)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,6 +279,11 @@ class SingleLegRail:
     # Free-form prose for handbook + training render templates per
     # the SPEC's "Description fields" rule. Optional; SHOULD be filled.
     description: str | None = None
+    # Per-key example metadata values (M.4.2b) — see TwoLegRail's field
+    # for full semantics. Same shape, same validator rule, same fallback.
+    metadata_value_examples: tuple[tuple[Identifier, tuple[str, ...]], ...] = (
+        field(default_factory=tuple)
+    )
 
 
 Rail: TypeAlias = TwoLegRail | SingleLegRail

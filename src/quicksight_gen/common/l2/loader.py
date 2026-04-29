@@ -399,7 +399,48 @@ def _load_account_template(raw: object, *, path: str) -> AccountTemplate:
         description=_load_description(
             raw_d.get("description"), path=f"{path}.description",
         ),
+        instance_id_template=_load_instance_template(
+            raw_d.get("instance_id_template"),
+            path=f"{path}.instance_id_template",
+        ),
+        instance_name_template=_load_instance_template(
+            raw_d.get("instance_name_template"),
+            path=f"{path}.instance_name_template",
+        ),
     )
+
+
+def _load_instance_template(raw: object | None, *, path: str) -> str | None:
+    """M.4.2b: parse + validate an AccountTemplate instance display template.
+
+    Returns the format string if set; ``None`` if the field is absent
+    (the seed falls back to the legacy synthetic pattern). Validates
+    that the format string only references the supported placeholders
+    ``{role}`` and ``{n}`` — any other placeholder is a hard load error
+    so an integrator's typo doesn't silently produce a broken seed.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise L2LoaderError(
+            f"{path}: instance template must be a string, got {type(raw).__name__}"
+        )
+    # str.Formatter().parse() yields (literal_text, field_name, format_spec,
+    # conversion) per parsed segment; field_name is None on plain text and
+    # the placeholder name on `{name}` substitutions.
+    import string
+    valid_placeholders = {"role", "n"}
+    for _literal, field_name, _format_spec, _conversion in (
+        string.Formatter().parse(raw)
+    ):
+        if field_name is None:
+            continue
+        if field_name not in valid_placeholders:
+            raise L2LoaderError(
+                f"{path}={raw!r}: unknown placeholder {field_name!r}; only "
+                f"{sorted(valid_placeholders)!r} are supported"
+            )
+    return raw
 
 
 def _load_rail(raw: object, *, path: str) -> Rail:
@@ -463,6 +504,14 @@ def _load_rail(raw: object, *, path: str) -> Rail:
         raw_d.get("description"), path=f"{path}.description",
     )
 
+    # M.4.2b: per-key metadata value examples. Loader normalizes the
+    # YAML mapping into a tuple-of-tuples (frozen-dataclass-friendly).
+    # Validator R13 checks every key exists in metadata_keys.
+    metadata_value_examples = _load_metadata_value_examples(
+        raw_d.get("metadata_value_examples"),
+        path=f"{path}.metadata_value_examples",
+    )
+
     has_two_leg_fields = "source_role" in raw_d or "destination_role" in raw_d
     has_single_leg_fields = "leg_role" in raw_d or "leg_direction" in raw_d
 
@@ -520,6 +569,7 @@ def _load_rail(raw: object, *, path: str) -> Rail:
             bundles_activity=bundles_activity,
             cadence=cadence,
             description=description,
+            metadata_value_examples=metadata_value_examples,
         )
 
     # Single-leg
@@ -554,7 +604,51 @@ def _load_rail(raw: object, *, path: str) -> Rail:
         bundles_activity=bundles_activity,
         cadence=cadence,
         description=description,
+        metadata_value_examples=metadata_value_examples,
     )
+
+
+def _load_metadata_value_examples(
+    raw: object | None, *, path: str,
+) -> tuple[tuple[Identifier, tuple[str, ...]], ...]:
+    """M.4.2b: parse per-key metadata value example lists.
+
+    Expected YAML shape:
+        metadata_value_examples:
+          merchant_id: ["m-001", "m-002", "m-003"]
+          settlement_period: ["2026-04", "2026-05"]
+
+    Returns ``()`` when absent. Validates that every value-list is a
+    list of strings (not arbitrary Python objects). Cross-key validation
+    (every key must be in ``metadata_keys``) is the validator's R13
+    job — it has the rail context this loader doesn't.
+    """
+    if raw is None:
+        return ()
+    raw_d = _as_mapping(raw, path=path, what="metadata_value_examples")
+    items: list[tuple[Identifier, tuple[str, ...]]] = []
+    for raw_key, raw_values in raw_d.items():
+        key: str = str(raw_key)
+        # _as_list narrows from `object` and rejects non-list inputs
+        # with a typed error message — same shape used elsewhere in
+        # this loader for safe_load Any cascade narrowing.
+        values_list = _as_list(raw_values, path=f"{path}.{key}")
+        if not values_list:
+            raise L2LoaderError(
+                f"{path}.{key}: example list must be non-empty"
+            )
+        coerced: list[str] = []
+        for i, v in enumerate(values_list):
+            if not isinstance(v, str):
+                raise L2LoaderError(
+                    f"{path}.{key}[{i}]: example values must be strings, "
+                    f"got {type(v).__name__}"
+                )
+            coerced.append(v)
+        items.append((Identifier(key), tuple(coerced)))
+    # Sorted by key for deterministic dataclass equality.
+    items.sort(key=lambda kv: str(kv[0]))
+    return tuple(items)
 
 
 def _load_transfer_template(raw: object, *, path: str) -> TransferTemplate:

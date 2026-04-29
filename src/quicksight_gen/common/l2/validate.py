@@ -60,6 +60,10 @@ Rules enforced (numbered for cross-reference with the test file):
       declared in the rail's ``metadata_keys``, the integrator's ETL
       has no legitimate place to populate it, and the leg can never
       reach Status=Posted).
+  R13. Every key in a Rail's ``metadata_value_examples`` MUST appear
+      in the same Rail's ``metadata_keys`` (M.4.2b — a typo'd example
+      key would otherwise be silently ignored by the seed picker;
+      catch it at load).
 
   C1. Every TransferTemplate contains at most one Variable-direction leg.
   C2. Every Chain.xor_group's members share the same Chain.parent.
@@ -200,6 +204,7 @@ def validate(instance: L2Instance) -> None:
     _check_limit_schedule_transfer_type_has_rail(instance)
     _check_bare_bundles_activity_selectors_resolve(instance)
     _check_transfer_key_in_leg_rail_metadata_keys(instance, rails_by_name)
+    _check_metadata_value_example_keys_resolve(instance)
 
     _check_variable_leg_count_per_template(instance)
     _check_chain_xor_group_consistency(instance)
@@ -578,6 +583,31 @@ def _check_transfer_key_in_leg_rail_metadata_keys(
                     f"library auto-derives these as PostedRequirements, "
                     f"so a leg whose rail can't carry the field can never "
                     f"reach Status=Posted"
+                )
+
+
+def _check_metadata_value_example_keys_resolve(inst: L2Instance) -> None:
+    """R13: every key in a Rail's ``metadata_value_examples`` MUST also
+    appear in that Rail's ``metadata_keys``.
+
+    Catches typos. The seed picker only consults examples by-key for
+    keys it's already iterating from ``metadata_keys``, so a typo'd
+    example-list key would silently never be used — the integrator
+    would never see a feedback signal that their example data is
+    wrong. Caught at load instead.
+    """
+    for r in inst.rails:
+        if not r.metadata_value_examples:
+            continue
+        declared = set(r.metadata_keys)
+        for key, _values in r.metadata_value_examples:
+            if key not in declared:
+                raise L2ValidationError(
+                    f"Rail {r.name!r}.metadata_value_examples: key "
+                    f"{key!r} is not in metadata_keys "
+                    f"{list(r.metadata_keys)!r}; example values would "
+                    f"be silently ignored. Add the key to metadata_keys "
+                    f"or remove the example list."
                 )
 
 

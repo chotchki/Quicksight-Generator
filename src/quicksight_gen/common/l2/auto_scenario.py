@@ -496,11 +496,27 @@ def _build_broad_rail_firings(
             if rail.name in tt.leg_rails:
                 tt_keys.update(tt.transfer_key)
 
+        # Per-key example values (M.4.2b). When a rail's metadata_keys
+        # entry has examples declared, the seed cycles through them
+        # by firing seq. When absent, fall back to the synthetic
+        # `<rail>-firing-<seq>` pattern so existing fixtures don't
+        # drift unless they opt in.
+        examples_by_key: dict[Identifier, tuple[str, ...]] = dict(
+            rail.metadata_value_examples,
+        )
+
         rail_to_transfer_seq_starts[rail.name] = seq_counter + 1
         for firing_seq in range(1, per_rail_firings + 1):
             seq_counter += 1
             extra: tuple[tuple[str, str], ...] = tuple(
-                (str(k), f"{rail.name}-firing-{firing_seq:04d}")
+                (
+                    str(k),
+                    _pick_metadata_value(
+                        examples=examples_by_key.get(k),
+                        rail_name=rail.name,
+                        firing_seq=firing_seq,
+                    ),
+                )
                 for k in rail.metadata_keys
                 if k not in tt_keys
             )
@@ -607,19 +623,69 @@ def _pick_template(instance: L2Instance) -> AccountTemplate | None:
 def _materialize_instances(
     template: AccountTemplate,
 ) -> tuple[TemplateInstance, TemplateInstance]:
-    """Synthesize 2 generic customer instances under the template."""
-    return (
+    """Synthesize 2 customer instances under the template.
+
+    M.4.2b: when the template declares ``instance_id_template`` /
+    ``instance_name_template`` (both optional), the seed uses those
+    format strings to render persona-aware identifiers. When unset,
+    falls back to the legacy synthetic patterns ``cust-{n:03d}`` +
+    ``Customer {n}`` so existing L2 fixtures don't drift their
+    seed_hash.
+    """
+    return tuple(
         TemplateInstance(
             template_role=template.role,
-            account_id=Identifier("cust-001"),
-            name=Name("Customer 1"),
-        ),
-        TemplateInstance(
-            template_role=template.role,
-            account_id=Identifier("cust-002"),
-            name=Name("Customer 2"),
-        ),
-    )
+            account_id=Identifier(_render_template_field(
+                template.instance_id_template,
+                fallback=f"cust-{n:03d}",
+                template=template,
+                n=n,
+            )),
+            name=Name(_render_template_field(
+                template.instance_name_template,
+                fallback=f"Customer {n}",
+                template=template,
+                n=n,
+            )),
+        )
+        for n in (1, 2)
+    )  # type: ignore[return-value]
+
+
+def _render_template_field(
+    fmt: str | None,
+    *,
+    fallback: str,
+    template: AccountTemplate,
+    n: int,
+) -> str:
+    """Apply an instance display template, or use the fallback (M.4.2b).
+
+    The format string is loader-validated to reference only ``{role}``
+    and ``{n}``; any KeyError here would be a loader bug.
+    """
+    if fmt is None:
+        return fallback
+    return fmt.format(role=str(template.role), n=n)
+
+
+def _pick_metadata_value(
+    *,
+    examples: tuple[str, ...] | None,
+    rail_name: Identifier,
+    firing_seq: int,
+) -> str:
+    """Pick a metadata value for a (rail, key, firing) triple (M.4.2b).
+
+    When ``examples`` is set, cycle through them by ``firing_seq``
+    (modular indexing so per_rail_firings can exceed list length
+    without IndexError). When unset, fall back to the original
+    synthetic ``<rail>-firing-<seq>`` pattern so existing fixtures
+    don't drift unless they opt into example values.
+    """
+    if examples:
+        return examples[(firing_seq - 1) % len(examples)]
+    return f"{rail_name}-firing-{firing_seq:04d}"
 
 
 def _pick_inbound_2leg_rail(
