@@ -51,6 +51,28 @@ L1_SHEET_FOR_PLANT_KIND: dict[str, str] = {
 }
 
 
+# Plant kind → L1 invariant matview name (no prefix). Drives the
+# fast pre-render assertion that confirms the seed → matview
+# pipeline landed each planted scenario as a queryable row.
+# Decoupled from the sheet-name dispatch: the matview names mirror
+# the schema.py CREATE MATERIALIZED VIEW names exactly, while the
+# sheet names are the human-readable dashboard labels.
+#
+# Supersession is intentionally absent — supersession isn't its own
+# matview; it's a property of multiple `entry` rows in `transactions`
+# for the same `id`. The dashboard's Supersession Audit sheet derives
+# from a per-dashboard view, not a planted-violation matview. Defer
+# the supersession matview check to a follow-up if the audit sheet
+# starts losing rows.
+L1_MATVIEW_FOR_PLANT_KIND: dict[str, str] = {
+    "drift_plants": "drift",
+    "overdraft_plants": "overdraft",
+    "limit_breach_plants": "limit_breach",
+    "stuck_pending_plants": "stuck_pending",
+    "stuck_unbundled_plants": "stuck_unbundled",
+}
+
+
 # Plant kinds that contribute to Today's Exceptions KPI count.
 # Supersession is diagnostic, not a SHOULD-violation, so excluded.
 L1_SHOULD_VIOLATION_PLANT_KINDS: frozenset[str] = frozenset({
@@ -78,6 +100,70 @@ def expected_todays_exceptions_kpi_count(
         len(planted_manifest.get(kind, []))
         for kind in L1_SHOULD_VIOLATION_PLANT_KINDS
     )
+
+
+def assert_l1_matview_rows_present(
+    db_conn: Any,
+    prefix: str,
+    planted_manifest: dict[str, list[dict[str, Any]]],
+) -> None:
+    """For every L1 plant kind in the manifest, query the prefixed
+    invariant matview directly and assert the planted ``account_id``
+    surfaces as a row.
+
+    **The fast-fail layer of the harness (M.4.1.k)**. Catches seed →
+    matview-refresh pipeline regressions in <1s per query, BEFORE
+    we open Playwright. If this assertion fails, the dashboard render
+    check would also fail — but the matview-side error message points
+    straight at the seed/matview layer, not the dashboard layer.
+    The dashboard render check is the SECONDARY layer; it catches
+    bugs that survive the matview check (dataset SQL filters,
+    visual config, dashboard-side date filter, QS rendering quirks).
+
+    Pattern matches the established "verify the lower layer first"
+    diagnostic ladder from CLAUDE.md (psycopg2 → describe_data_set →
+    dashboard render — narrowest blame radius first).
+
+    Args:
+        db_conn: psycopg2 connection to the demo Aurora cluster.
+        prefix: per-test L2 instance prefix (matches what
+            ``apply_db_seed`` used).
+        planted_manifest: ``build_planted_manifest`` output from
+            M.4.1.b — keyed by plant kind.
+
+    Raises:
+        AssertionError: on the first planted plant whose ``account_id``
+            doesn't appear in its expected matview, with the matview
+            name + plant + row count for triage.
+    """
+    for kind, matview in L1_MATVIEW_FOR_PLANT_KIND.items():
+        plants = planted_manifest.get(kind, [])
+        if not plants:
+            continue
+        full_view = f"{prefix}_{matview}"
+        for plant in plants:
+            account_id = plant.get("account_id")
+            assert account_id is not None, (
+                f"plant {plant!r} in kind {kind!r} has no account_id; "
+                f"can't verify against matview {full_view!r}"
+            )
+            with db_conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT COUNT(*) FROM {full_view} WHERE account_id = %s",
+                    (account_id,),
+                )
+                row = cur.fetchone()
+                count = row[0] if row else 0
+                cur.execute(f"SELECT COUNT(*) FROM {full_view}")
+                total_row = cur.fetchone()
+                total = total_row[0] if total_row else 0
+            assert count > 0, (
+                f"L1 invariant matview {full_view!r} has no row for "
+                f"planted {kind} account_id={account_id!r} — seed→"
+                f"matview-refresh pipeline regression. Total rows in "
+                f"the matview: {total}.\n"
+                f"plant: {plant!r}"
+            )
 
 
 def widen_l1_date_range(

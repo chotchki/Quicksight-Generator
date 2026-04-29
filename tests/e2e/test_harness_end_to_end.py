@@ -92,6 +92,7 @@ from _harness_deploy import (  # noqa: E402
 from _harness_browser import run_dashboard_check_with_retry  # noqa: E402
 from _harness_failure_dump import dump_failure_manifest  # noqa: E402
 from _harness_l1_assertions import (  # noqa: E402
+    assert_l1_matview_rows_present,
     assert_l1_plants_visible,
     assert_todays_exceptions_kpi_matches,
     widen_l1_date_range,
@@ -643,13 +644,28 @@ def test_harness_deployed_fixture_lands_with_embed_urls(
 
 def test_harness_l1_planted_scenarios_visible(
     harness_cfg: Config,
+    harness_db_conn: Any,
     harness_deployed: dict[str, Any],
     harness_failure_dump: None,
 ) -> None:
-    """Open the deployed L1 dashboard via Playwright and verify each
-    planted scenario surfaces on its corresponding sheet (M.4.1.d).
+    """Two-layer verification: matview rows present (psycopg2, fast)
+    THEN dashboard renders the planted scenarios (Playwright, slow).
 
-    Per-plant-kind assertions:
+    **Layer 1 — matview rows present** (M.4.1.k):
+        Direct psycopg2 query against ``<prefix>_<matview>`` for each
+        plant kind. <1s per query; if a planted account doesn't appear
+        the failure points straight at the seed → matview-refresh
+        pipeline. Runs first so a regression at this layer fails
+        fast WITHOUT paying the Playwright + visual-timeout cost.
+
+    **Layer 2 — dashboard render** (M.4.1.d):
+        Open the deployed L1 dashboard via Playwright; for each plant
+        kind, navigate to its corresponding sheet and verify the
+        planted account_id surfaces. Catches bugs that pass Layer 1
+        but break in the dashboard layer (dataset SQL filters,
+        visual config, sheet-level filter scoping, QS rendering).
+
+    Per-plant-kind assertions (Layer 2):
     - DriftPlant → Drift sheet shows account_id
     - OverdraftPlant → Overdraft sheet shows account_id
     - LimitBreachPlant → Limit Breach sheet shows account_id
@@ -672,9 +688,14 @@ def test_harness_l1_planted_scenarios_visible(
     ``playwright install webkit`` once per environment).
     """
     manifest = harness_deployed["planted_manifest"]
+    prefix = harness_deployed["prefix"]
     dashboard_id = harness_deployed["dashboard_ids"]["l1-dashboard"]
     page_timeout = int(os.environ.get("QS_E2E_PAGE_TIMEOUT", "30000"))
     visual_timeout = int(os.environ.get("QS_E2E_VISUAL_TIMEOUT", "30000"))
+
+    # Layer 1: matview-row-presence. Fast, deterministic, points at
+    # the seed/matview layer if it fails.
+    assert_l1_matview_rows_present(harness_db_conn, prefix, manifest)
 
     def _check_l1(page: Any) -> None:
         # Widen the universal date filter (M.2b.1) so plants anchored
