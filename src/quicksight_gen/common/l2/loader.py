@@ -39,7 +39,7 @@ import re
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import yaml
 
@@ -273,6 +273,48 @@ def _load_leg_direction(raw: object, *, path: str) -> LegDirection:
 
 
 _SEED_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _load_role_business_day_offsets(
+    raw: object, *, path: str,
+) -> dict[str, int] | None:
+    """Optional ``{role_name: hours}`` map (M.4.4.14).
+
+    Each value must be an int in [0, 24); the seed adds the hours to
+    midnight-of-day to compute ``business_day_start`` (and the same
+    offset propagates to ``business_day_end`` so the 24-hour window
+    contract holds). Roles absent from the map default to
+    midnight-aligned.
+
+    None / missing returns None — caller treats that as
+    "every role midnight-aligned".
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise L2LoaderError(
+            f"{path}: role_business_day_offsets must be a mapping, "
+            f"got {type(raw).__name__}"
+        )
+    raw_dict = cast(dict[Any, Any], raw)
+    out: dict[str, int] = {}
+    for role_raw, hours_raw in raw_dict.items():
+        if not isinstance(role_raw, str) or not role_raw:
+            raise L2LoaderError(
+                f"{path}.{role_raw!r}: keys must be non-empty role-name "
+                f"strings, got {type(role_raw).__name__}"
+            )
+        if not isinstance(hours_raw, int) or isinstance(hours_raw, bool):
+            raise L2LoaderError(
+                f"{path}.{role_raw!r}={hours_raw!r}: value must be an int "
+                f"hours offset, got {type(hours_raw).__name__}"
+            )
+        if not (0 <= hours_raw < 24):
+            raise L2LoaderError(
+                f"{path}.{role_raw!r}={hours_raw!r}: hours must be in [0, 24)"
+            )
+        out[role_raw] = hours_raw
+    return out or None
 
 
 def _load_seed_hash(raw: object, *, path: str) -> str | None:
@@ -808,6 +850,10 @@ def load_instance(path: Path | str, *, validate: bool = True) -> L2Instance:
             raw_d.get("description"), path="description",
         ),
         seed_hash=_load_seed_hash(raw_d.get("seed_hash"), path="seed_hash"),
+        role_business_day_offsets=_load_role_business_day_offsets(
+            raw_d.get("role_business_day_offsets"),
+            path="role_business_day_offsets",
+        ),
     )
     if validate:
         # Local import dodges loader↔validate import-cycle.

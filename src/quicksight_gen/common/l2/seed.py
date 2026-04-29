@@ -401,17 +401,18 @@ def emit_seed(instance: L2Instance, scenarios: ScenarioPlant) -> str:
     # expected_eod views, which is the correct semantic.
     db_rows: list[str] = []
 
+    role_offsets = instance.role_business_day_offsets
     for p in sorted(scenarios.drift_plants, key=_drift_key):
         db_rows.append(
             _emit_drift_balance_row(
-                p, scenarios, template_by_role,
+                p, scenarios, template_by_role, role_offsets,
             )
         )
 
     for p in sorted(scenarios.overdraft_plants, key=_overdraft_key):
         db_rows.append(
             _emit_overdraft_balance_row(
-                p, scenarios, template_by_role,
+                p, scenarios, template_by_role, role_offsets,
             )
         )
 
@@ -534,15 +535,20 @@ def _resolve_account(account_id: Identifier, instance: L2Instance) -> Account:
     )
 
 
-def _eod_timestamp(d: date) -> str:
-    """End-of-day UTC timestamp for `d` (i.e. start of next day)."""
+def _eod_timestamp(d: date, offset_hours: int = 0) -> str:
+    """End-of-day UTC timestamp for `d` shifted by ``offset_hours``
+    (i.e. start of next day at the same hour). Default 0 keeps
+    midnight-aligned production behavior.
+    """
     next_day = d + timedelta(days=1)
-    return f"{next_day.isoformat()}T00:00:00+00:00"
+    return f"{next_day.isoformat()}T{offset_hours:02d}:00:00+00:00"
 
 
-def _bod_timestamp(d: date) -> str:
-    """Beginning-of-day UTC timestamp for `d`."""
-    return f"{d.isoformat()}T00:00:00+00:00"
+def _bod_timestamp(d: date, offset_hours: int = 0) -> str:
+    """Beginning-of-day UTC timestamp for `d` shifted by ``offset_hours``.
+    Default 0 keeps midnight-aligned production behavior.
+    """
+    return f"{d.isoformat()}T{offset_hours:02d}:00:00+00:00"
 
 
 def _emit_limit_breach_rows(
@@ -724,6 +730,7 @@ def _emit_drift_balance_row(
     p: DriftPlant,
     scenarios: ScenarioPlant,
     template_by_role: dict[Identifier, AccountTemplate],
+    role_offsets: dict[str, int] | None,
 ) -> str:
     """Emit one daily_balances row whose `money` differs from the sum of
     that day's planted credits ($200) by `delta_money`.
@@ -744,6 +751,7 @@ def _emit_drift_balance_row(
         account_parent_role=parent_role,
         day=drift_day,
         money=stored,
+        offset_hours=_resolve_role_offset(ti.template_role, role_offsets),
     )
 
 
@@ -751,6 +759,7 @@ def _emit_overdraft_balance_row(
     p: OverdraftPlant,
     scenarios: ScenarioPlant,
     template_by_role: dict[Identifier, AccountTemplate],
+    role_offsets: dict[str, int] | None,
 ) -> str:
     """Emit one daily_balances row with negative money — overdraft."""
     ti = _resolve_template(p.account_id, scenarios)
@@ -769,7 +778,22 @@ def _emit_overdraft_balance_row(
         account_parent_role=parent_role,
         day=overdraft_day,
         money=p.money,
+        offset_hours=_resolve_role_offset(ti.template_role, role_offsets),
     )
+
+
+def _resolve_role_offset(
+    role: Identifier, role_offsets: dict[str, int] | None,
+) -> int:
+    """Look up ``role``'s business-day offset hours (M.4.4.14).
+
+    Returns 0 when no map is set OR the role is absent — preserves
+    midnight-aligned behavior for production fixtures that don't opt
+    into per-role offsets.
+    """
+    if not role_offsets:
+        return 0
+    return role_offsets.get(str(role), 0)
 
 
 def _emit_stuck_pending_rows(
@@ -1363,8 +1387,15 @@ def _balance_row(
     account_parent_role: Identifier | None,
     day: date,
     money: Decimal,
+    offset_hours: int = 0,
 ) -> str:
-    """Build one VALUES row for the daily_balances INSERT."""
+    """Build one VALUES row for the daily_balances INSERT.
+
+    ``offset_hours`` shifts ``business_day_start`` and
+    ``business_day_end`` by the same amount (M.4.4.14) — a
+    role with offset=17 emits 17:00→17:00 next day. Default 0 keeps
+    production midnight-aligned (no hash drift).
+    """
     parent_role_lit = (
         _sql_str(account_parent_role) if account_parent_role else "NULL"
     )
@@ -1372,8 +1403,8 @@ def _balance_row(
         f"({_sql_str(account_id)}, {_sql_str(account_name)}, "
         f"{_sql_str(account_role)}, {_sql_str(account_scope)}, "
         f"{parent_role_lit}, NULL, "
-        f"{_sql_str(_bod_timestamp(day))}, "
-        f"{_sql_str(_eod_timestamp(day))}, "
+        f"{_sql_str(_bod_timestamp(day, offset_hours))}, "
+        f"{_sql_str(_eod_timestamp(day, offset_hours))}, "
         f"{money}, NULL, NULL)"
     )
 

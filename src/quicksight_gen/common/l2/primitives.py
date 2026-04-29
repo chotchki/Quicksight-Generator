@@ -393,3 +393,13 @@ class L2Instance:
     # reviewed change). Not load-bearing for any L1 invariant — pure
     # metadata tied to the seed pipeline.
     seed_hash: str | None = None
+    # Optional per-role business-day offset in hours (M.4.4.14). When
+    # set, an account whose role appears in this map gets its emitted
+    # ``daily_balances.business_day_start`` shifted by the offset
+    # (e.g., 17 → "5pm"). ``business_day_end`` shifts the same amount
+    # so the 24-hour window contract holds. Roles not in the map
+    # default to midnight-aligned (00:00 → 00:00 next day) — preserves
+    # production fixtures' bytes-identical seed_hash. Used by the fuzz
+    # matrix to exercise any future L1 view that depends on per-role
+    # business-day boundaries differing.
+    role_business_day_offsets: dict[str, int] | None = None

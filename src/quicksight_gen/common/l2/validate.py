@@ -216,6 +216,7 @@ def validate(instance: L2Instance) -> None:
     _check_chain_aggregating_not_child(instance)
     _check_aggregating_rail_required_fields(instance)
     _check_non_aggregating_rail_no_cadence_or_bundles(instance)
+    _check_role_business_day_offsets_resolve(instance, all_roles)
 
     _check_completion_vocabulary(instance)
     _check_cadence_vocabulary(instance)
@@ -892,4 +893,21 @@ def _check_per_leg_origin_resolution(inst: L2Instance) -> None:
                 f"`origin` OR provide both `source_origin` + "
                 f"`destination_origin` OR set the missing per-leg override "
                 f"alongside rail-level `origin` as fallback."
+            )
+
+
+def _check_role_business_day_offsets_resolve(
+    inst: L2Instance, all_roles: set[Identifier],
+) -> None:
+    """role_business_day_offsets keys must reference declared roles
+    (M.4.4.14). Catches typos before they silently no-op at emit time.
+    """
+    if not inst.role_business_day_offsets:
+        return
+    declared = {str(r) for r in all_roles}
+    for role in inst.role_business_day_offsets:
+        if role not in declared:
+            raise L2ValidationError(
+                f"role_business_day_offsets key {role!r} doesn't match any "
+                f"declared role (declared: {sorted(declared)})"
             )
