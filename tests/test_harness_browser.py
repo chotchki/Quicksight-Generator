@@ -98,18 +98,32 @@ def _patch_boto3_client(
     return fake_client
 
 
+class _FakeConsoleMessage:
+    """Playwright ConsoleMessage substitute — minimal shape the helper
+    consumes (``msg.type`` + ``msg.text``)."""
+
+    def __init__(self, *, type: str, text: str) -> None:
+        self.type = type
+        self.text = text
+
+
 class _FakePage:
     """Playwright Page substitute — records ``goto`` calls + supports
-    ``wait_for_load_state`` + ``wait_for_selector`` (no-ops by default).
+    ``wait_for_load_state`` + ``wait_for_selector`` + ``on`` listener
+    registration + ``screenshot`` (no-ops by default).
 
     Tests that need to simulate a per-call timeout patch ``goto`` or
-    install a side effect.
+    install a side effect. Tests that simulate console events call
+    ``emit_console`` / ``emit_pageerror`` to invoke the registered
+    handlers — same shape as Playwright's real event dispatch.
     """
 
     def __init__(self) -> None:
         self.gotos: list[str] = []
         self.load_state_calls: list[Any] = []
         self.selector_calls: list[Any] = []
+        self.screenshots: list[dict[str, Any]] = []
+        self._listeners: dict[str, list[Any]] = {}
 
     def goto(self, url: str, timeout: int) -> None:
         self.gotos.append(url)
@@ -119,6 +133,21 @@ class _FakePage:
 
     def wait_for_selector(self, selector: str, timeout: int, state: str) -> None:
         self.selector_calls.append((selector, timeout, state))
+
+    def on(self, event: str, handler: Any) -> None:
+        self._listeners.setdefault(event, []).append(handler)
+
+    def screenshot(self, *, path: str, full_page: bool) -> None:
+        self.screenshots.append({"path": path, "full_page": full_page})
+
+    def emit_console(self, *, type: str, text: str) -> None:
+        msg = _FakeConsoleMessage(type=type, text=text)
+        for handler in self._listeners.get("console", []):
+            handler(msg)
+
+    def emit_pageerror(self, exc: Any) -> None:
+        for handler in self._listeners.get("pageerror", []):
+            handler(exc)
 
 
 def _patch_webkit_page(monkeypatch: pytest.MonkeyPatch, page: _FakePage) -> None:
@@ -354,3 +383,211 @@ def test_page_goto_uses_generated_url(
     )
 
     assert page.gotos == ["https://test.aws/embed/1"]
+
+
+# ---------------------------------------------------------------------------
+# JS console capture (M.4.4.11)
+# ---------------------------------------------------------------------------
+
+
+def test_console_capture_writes_sidecar_on_assertion_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """When a real failure (AssertionError) fires after console messages
+    were emitted, the helper writes both the screenshot AND a
+    ``<dashboard_id>_attempt<n>_console.txt`` sidecar capturing the
+    JS console output. Pairs the failure screenshot with the JS error
+    log that drove the M.4.4.10d epochMilliseconds bug discovery."""
+    _patch_boto3_client(monkeypatch)
+    page = _FakePage()
+    _patch_webkit_page(monkeypatch, page)
+
+    def operation(p: _FakePage) -> None:
+        # Page emits two real-world-shaped console events before the
+        # assertion fires.
+        p.emit_console(type="error", text="epochMilliseconds must be a number")
+        p.emit_console(type="warning", text="deprecated API in use")
+        raise AssertionError("planted row missing on Drift sheet")
+
+    with pytest.raises(AssertionError):
+        run_dashboard_check_with_retry(
+            aws_account_id="111122223333",
+            aws_region="us-east-2",
+            dashboard_id="dash-c",
+            operation=operation,
+            page_timeout_ms=30_000,
+            screenshot_dir=tmp_path,
+        )
+
+    console_path = tmp_path / "dash-c_attempt1_console.txt"
+    assert console_path.exists(), (
+        "console sidecar must be written on failure"
+    )
+    body = console_path.read_text(encoding="utf-8")
+    assert "[error] epochMilliseconds must be a number" in body
+    assert "[warning] deprecated API in use" in body
+
+    # Screenshot pair lands too — same per-attempt naming.
+    shot_path = tmp_path / "dash-c_attempt1.png"
+    assert any(
+        s["path"] == str(shot_path) for s in page.screenshots
+    ), "screenshot must be written on failure (pairs 1:1 with console log)"
+
+
+def test_console_capture_writes_sidecar_on_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Timeout failures (the QS spinner-forever case) get the sidecar
+    too — both attempts on a permanent timeout each write their own
+    pair."""
+    from playwright.sync_api import TimeoutError as PWTimeout
+
+    _patch_boto3_client(monkeypatch)
+    page = _FakePage()
+    _patch_webkit_page(monkeypatch, page)
+
+    def operation(p: _FakePage) -> None:
+        p.emit_console(type="error", text="failed to load")
+        raise PWTimeout("visual didn't render")
+
+    with pytest.raises(PWTimeout):
+        run_dashboard_check_with_retry(
+            aws_account_id="111122223333",
+            aws_region="us-east-2",
+            dashboard_id="dash-t",
+            operation=operation,
+            page_timeout_ms=30_000,
+            screenshot_dir=tmp_path,
+        )
+
+    # max_attempts=2 default → both attempts dump their sidecar.
+    a1 = tmp_path / "dash-t_attempt1_console.txt"
+    a2 = tmp_path / "dash-t_attempt2_console.txt"
+    assert a1.exists() and a2.exists()
+    assert "[error] failed to load" in a1.read_text(encoding="utf-8")
+
+
+def test_console_capture_writes_sentinel_when_no_events(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """If the page logged nothing before the failure, the sidecar still
+    lands carrying a clear ``<no console output captured>`` sentinel.
+    Empty file + present file are both diagnostics; a missing file
+    would force the human to wonder whether capture even ran."""
+    _patch_boto3_client(monkeypatch)
+    page = _FakePage()
+    _patch_webkit_page(monkeypatch, page)
+
+    def operation(p: _FakePage) -> None:
+        # No console emission at all — straight to assertion.
+        raise AssertionError("missing row")
+
+    with pytest.raises(AssertionError):
+        run_dashboard_check_with_retry(
+            aws_account_id="111122223333",
+            aws_region="us-east-2",
+            dashboard_id="dash-s",
+            operation=operation,
+            page_timeout_ms=30_000,
+            screenshot_dir=tmp_path,
+        )
+
+    console_path = tmp_path / "dash-s_attempt1_console.txt"
+    assert console_path.exists()
+    body = console_path.read_text(encoding="utf-8")
+    assert "<no console output captured>" in body
+
+
+def test_console_capture_includes_pageerror(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """``page.on("pageerror")`` events (uncaught JS exceptions that
+    don't go through the console.* API) MUST also reach the sidecar
+    — those are exactly the failure mode M.4.4.10d turned out to be
+    (the QS UI silently swallowed the error; only pageerror fired)."""
+    _patch_boto3_client(monkeypatch)
+    page = _FakePage()
+    _patch_webkit_page(monkeypatch, page)
+
+    def operation(p: _FakePage) -> None:
+        p.emit_pageerror(
+            "TypeError: Cannot read property 'foo' of undefined",
+        )
+        raise AssertionError("data missing")
+
+    with pytest.raises(AssertionError):
+        run_dashboard_check_with_retry(
+            aws_account_id="111122223333",
+            aws_region="us-east-2",
+            dashboard_id="dash-pe",
+            operation=operation,
+            page_timeout_ms=30_000,
+            screenshot_dir=tmp_path,
+        )
+
+    body = (tmp_path / "dash-pe_attempt1_console.txt").read_text(
+        encoding="utf-8",
+    )
+    assert "[pageerror] TypeError: Cannot read property" in body
+
+
+def test_no_artifacts_when_screenshot_dir_omitted(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Without ``screenshot_dir``, neither a screenshot nor a console
+    sidecar is written — the helper stays usable in standalone
+    debugging mode that doesn't want any disk artifacts."""
+    _patch_boto3_client(monkeypatch)
+    page = _FakePage()
+    _patch_webkit_page(monkeypatch, page)
+
+    def operation(p: _FakePage) -> None:
+        p.emit_console(type="error", text="something")
+        raise AssertionError("x")
+
+    with pytest.raises(AssertionError):
+        run_dashboard_check_with_retry(
+            aws_account_id="111122223333",
+            aws_region="us-east-2",
+            dashboard_id="dash-n",
+            operation=operation,
+            page_timeout_ms=30_000,
+            # screenshot_dir intentionally omitted.
+        )
+
+    # tmp_path is unused here on purpose — confirms no incidental writes.
+    assert list(tmp_path.iterdir()) == []
+    assert page.screenshots == []
+
+
+def test_no_artifacts_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Clean runs leave no console sidecar or screenshot — the helper
+    only writes failure artifacts."""
+    _patch_boto3_client(monkeypatch)
+    page = _FakePage()
+    _patch_webkit_page(monkeypatch, page)
+
+    def operation(p: _FakePage) -> None:
+        # Some consoles are emitted during success too — must NOT
+        # write a sidecar in this case.
+        p.emit_console(type="log", text="loaded")
+
+    run_dashboard_check_with_retry(
+        aws_account_id="111122223333",
+        aws_region="us-east-2",
+        dashboard_id="dash-ok",
+        operation=operation,
+        page_timeout_ms=30_000,
+        screenshot_dir=tmp_path,
+    )
+
+    assert list(tmp_path.iterdir()) == []
+    assert page.screenshots == []

@@ -31,6 +31,18 @@ be heavier than the gain; keep the rule simple.
 exception propagates. A debug breadcrumb (``[harness] retry…``) goes
 to stderr on every retry attempt so the failure dump's ``Exception``
 section + the retry log together explain what happened.
+
+**JS console capture (M.4.4.11)**: every page-load attempt registers
+``page.on("console", ...)`` + ``page.on("pageerror", ...)`` handlers
+that accumulate into a per-attempt list. On failure (timeout OR
+assertion), the list is written next to the screenshot as
+``<dashboard_id>_attempt<n>_console.txt`` so the human triaging can
+pair the failure screenshot with the JS console output. Flushed-out
+the M.4.4.10d-class bug (``epochMilliseconds must be a number, you
+gave: null``) — that error never surfaced in the QS UI but printed
+to the JS console. Capturing it as part of the failure manifest
+turns the next bug of that shape from "spent hours on dead-end
+diagnostics" into "look at the console output".
 """
 
 from __future__ import annotations
@@ -120,6 +132,11 @@ def run_dashboard_check_with_retry(
         )
         try:
             with webkit_page(headless=headless, viewport=viewport) as page:
+                # Per-attempt JS console + pageerror capture (M.4.4.11).
+                # Listeners stay live for the full attempt; on failure
+                # the list is dumped next to the screenshot.
+                console_messages: list[str] = []
+                _attach_console_capture(page, console_messages)
                 try:
                     page.goto(embed_url, timeout=page_timeout_ms)
                     wait_for_dashboard_loaded(page, timeout_ms=page_timeout_ms)
@@ -134,23 +151,13 @@ def run_dashboard_check_with_retry(
                     # absence problem. TimeoutError captures help with
                     # the QS spinner-forever footgun.
                     if screenshot_dir is not None:
-                        try:
-                            from pathlib import Path
-                            Path(screenshot_dir).mkdir(
-                                parents=True, exist_ok=True,
-                            )
-                            shot_path = Path(screenshot_dir) / (
-                                f"{dashboard_id}_attempt{attempt}.png"
-                            )
-                            page.screenshot(
-                                path=str(shot_path), full_page=True,
-                            )
-                            print(
-                                f"[harness] screenshot: {shot_path}",
-                                file=sys.stderr,
-                            )
-                        except Exception:  # noqa: BLE001 — best-effort
-                            pass
+                        _dump_failure_artifacts(
+                            page=page,
+                            screenshot_dir=screenshot_dir,
+                            dashboard_id=dashboard_id,
+                            attempt=attempt,
+                            console_messages=console_messages,
+                        )
                     raise
             return
         except PlaywrightTimeoutError as exc:
@@ -169,3 +176,91 @@ def run_dashboard_check_with_retry(
         f"unreachable: retry loop exhausted without return; "
         f"last={last_timeout!r}"
     )
+
+
+def _attach_console_capture(page: Any, sink: list[str]) -> None:
+    """Register ``page.on("console")`` + ``page.on("pageerror")`` so
+    every JS console message + uncaught error during the attempt
+    accumulates into ``sink``.
+
+    Format mirrors what a human sees in the browser devtools:
+    ``[<type>] <text>`` for console events, ``[pageerror] <text>`` for
+    uncaught exceptions. Each handler is wrapped in a broad ``except``
+    because a misbehaving listener that raises would otherwise abort
+    the page lifecycle — the failure-dump path needs this best-effort
+    semantic so a console-handler bug never masks the real test
+    failure.
+    """
+    def _on_console(msg: Any) -> None:
+        try:
+            msg_type = getattr(msg, "type", "log")
+            text = getattr(msg, "text", "")
+            sink.append(f"[{msg_type}] {text}")
+        except Exception:  # noqa: BLE001 — best-effort
+            pass
+
+    def _on_pageerror(exc: Any) -> None:
+        try:
+            sink.append(f"[pageerror] {exc}")
+        except Exception:  # noqa: BLE001 — best-effort
+            pass
+
+    page.on("console", _on_console)
+    page.on("pageerror", _on_pageerror)
+
+
+def _dump_failure_artifacts(
+    *,
+    page: Any,
+    screenshot_dir: Any,
+    dashboard_id: str,
+    attempt: int,
+    console_messages: list[str],
+) -> None:
+    """Write screenshot + console-log sidecar inside the still-live
+    page context.
+
+    Both writes are best-effort — a failure here MUST NOT mask the
+    real exception that triggered the dump. Each artifact has its
+    own try/except so a screenshot failure doesn't suppress the
+    console dump (or vice versa).
+
+    Filenames pair 1:1: ``<dashboard_id>_attempt<n>.png`` +
+    ``<dashboard_id>_attempt<n>_console.txt`` so the human triaging
+    can ``ls -la`` and immediately see "screenshot + console-log
+    sidecar" for the same attempt.
+    """
+    from pathlib import Path
+
+    try:
+        Path(screenshot_dir).mkdir(parents=True, exist_ok=True)
+    except Exception:  # noqa: BLE001 — best-effort
+        return
+
+    shot_path = Path(screenshot_dir) / f"{dashboard_id}_attempt{attempt}.png"
+    try:
+        page.screenshot(path=str(shot_path), full_page=True)
+        print(f"[harness] screenshot: {shot_path}", file=sys.stderr)
+    except Exception:  # noqa: BLE001 — best-effort
+        pass
+
+    # Always write the console file — the empty case is itself a
+    # diagnostic ("page never logged anything; failure is purely
+    # network / render-side").
+    console_path = (
+        Path(screenshot_dir) / f"{dashboard_id}_attempt{attempt}_console.txt"
+    )
+    try:
+        body = (
+            "\n".join(console_messages)
+            if console_messages
+            else "<no console output captured>"
+        )
+        console_path.write_text(body + "\n", encoding="utf-8")
+        print(
+            f"[harness] console log: {console_path} "
+            f"({len(console_messages)} message(s))",
+            file=sys.stderr,
+        )
+    except Exception:  # noqa: BLE001 — best-effort
+        pass
