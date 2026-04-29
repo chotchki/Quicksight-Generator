@@ -127,14 +127,21 @@ class DateTimeParam:
     """DateTime parameter declaration.
 
     Pass ``time_granularity="DAY" | "HOUR" | "MINUTE" | …`` to bound
-    the picker's resolution. Defaults take a ``DateTimeDefaultValues``
-    so callers can pick between ``StaticValues`` (literal date),
-    ``DynamicValue`` (data-driven), or ``RollingDate`` (e.g.
-    ``{"Expression": "truncDate('DD', now())"}`` for "today").
+    the picker's resolution. ``default`` is **required** —
+    DateTimeDefaultValues with one of StaticValues / DynamicValue /
+    RollingDate populated. Common rolling default for "today":
+    ``DateTimeDefaultValues(RollingDate={"Expression":
+    "truncDate('DD', now())"})``.
+
+    Why default is required (M.4.4.10d): without one, QS UI's date
+    picker initializes with no value and crashes on editor open with
+    "epochMilliseconds must be a number, you gave: null". Making
+    the field type-required prevents the bug class from recurring at
+    the wiring site.
     """
     name: ParameterName
+    default: DateTimeDefaultValues
     time_granularity: TimeGranularity | None = None
-    default: DateTimeDefaultValues | None = None
     mapped_dataset_params: list[DatasetParamMapping] | None = None
 
     def emit(self) -> ParameterDeclaration:

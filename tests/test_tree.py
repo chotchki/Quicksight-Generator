@@ -511,8 +511,11 @@ class TestDateTimeParam:
         assert emitted.DateTimeParameterDeclaration.DefaultValues.RollingDate is not None
 
     def test_accepts_none_time_granularity(self):
-        # Optional field — None is the default.
-        p = DateTimeParam(name=ParameterName("pDate"))
+        # time_granularity is optional; default is required (M.4.4.10d).
+        p = DateTimeParam(
+            name=ParameterName("pDate"),
+            default=DateTimeDefaultValues(StaticValues=["2030-01-01"]),
+        )
         assert p.time_granularity is None
 
 
@@ -1759,7 +1762,10 @@ class TestParameterSlider:
 
 class TestParameterDateTimePicker:
     def test_emits(self):
-        date_param = DateTimeParam(name=ParameterName("pDate"))
+        date_param = DateTimeParam(
+            name=ParameterName("pDate"),
+            default=DateTimeDefaultValues(StaticValues=["2030-01-01"]),
+        )
         ctrl = ParameterDateTimePicker(
             parameter=date_param,
             title="Date",

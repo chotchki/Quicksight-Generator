@@ -1759,6 +1759,13 @@ def _wire_daily_statement_filters(
     ds_balance_date = analysis.add_parameter(DateTimeParam(
         name=P_L1_DS_BALANCE_DATE,
         time_granularity="DAY",
+        # M.4.4.10ab — must have a default; QS UI errors with
+        # "epochMilliseconds must be a number, you gave: null"
+        # when the picker initializes with no value. Default to today
+        # (truncDate to DAY granularity).
+        default=DateTimeDefaultValues(
+            RollingDate={"Expression": "truncDate('DD', now())"},
+        ),
     ))
 
     summary_ds = datasets[DS_DAILY_STATEMENT_SUMMARY]

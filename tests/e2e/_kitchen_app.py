@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.dataset_contract import ColumnShape
+from quicksight_gen.common.models import DateTimeDefaultValues
 from quicksight_gen.common.ids import (
     FilterGroupId,
     ParameterName,
@@ -113,6 +114,9 @@ def build_kitchen_app(cfg: Config) -> App:
     ))
     p_date = analysis.add_parameter(DateTimeParam(
         name=ParameterName("pKitchenDate"),
+        default=DateTimeDefaultValues(
+            RollingDate={"Expression": "truncDate('DD', now())"},
+        ),
     ))
 
     # ------ Calc field -----------------------------------------------
