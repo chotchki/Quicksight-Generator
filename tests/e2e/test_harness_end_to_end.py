@@ -69,6 +69,7 @@ from _harness_deploy import (  # noqa: E402
     extract_dashboard_ids,
     generate_apps,
 )
+from _harness_failure_dump import dump_failure_manifest  # noqa: E402
 from _harness_l1_assertions import (  # noqa: E402
     assert_l1_plants_visible,
     assert_todays_exceptions_kpi_matches,
@@ -336,6 +337,56 @@ def harness_qs_cleanup(harness_cfg: Config, harness_uid: str):
     )
 
 
+@pytest.fixture
+def harness_failure_dump(
+    request: pytest.FixtureRequest,
+    harness_l2: L2Instance,
+    harness_seeded: dict[str, Any],
+    harness_deployed: dict[str, Any],
+    harness_db_conn: Any,
+):
+    """Dump a triage manifest under ``tests/e2e/failures/`` if the test
+    body raises (M.4.1.f).
+
+    Reads ``request.node.rep_call`` — the per-phase test outcome the
+    ``pytest_runtest_makereport`` hook in ``conftest.py`` exposes.
+    Only fires when the call phase failed; clean tests leave no file.
+
+    All four optional sections (``dashboard_ids``, ``embed_urls``,
+    ``db_conn``, ``exception_text``) are best-effort:
+    - If the failure happened *before* ``harness_deployed`` resolved
+      (e.g. the seed step blew up), this fixture would not run because
+      pytest only injects fixtures whose own setup succeeded. The
+      ``harness_seeded``-only fallback is covered by the M.4.1.b smoke
+      test's own try/except, not here.
+    - ``rep_call.longreprtext`` is pytest's full traceback string —
+      the same blob you see in the terminal on a failure.
+
+    Pairs with ``harness_qs_cleanup`` (tag-filter sweep) — the cleanup
+    runs after the dump, so you can ``ls tests/e2e/failures/`` even
+    after the QS resources are reaped.
+    """
+    yield
+    rep = getattr(request.node, "rep_call", None)
+    if rep is None or not rep.failed:
+        return
+    failure_dir = Path(__file__).parent / "failures"
+    out_path = dump_failure_manifest(
+        failure_dir,
+        test_id=request.node.nodeid,
+        instance=harness_l2,
+        planted_manifest=harness_seeded["planted_manifest"],
+        dashboard_ids=harness_deployed.get("dashboard_ids"),
+        embed_urls=harness_deployed.get("embed_urls"),
+        db_conn=harness_db_conn,
+        exception_text=rep.longreprtext or None,
+    )
+    print(
+        f"[harness] failure manifest written: {out_path}",
+        file=sys.stderr,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Smoke test — fixtures wire up + tag injection lands
 # ---------------------------------------------------------------------------
@@ -504,6 +555,7 @@ def test_harness_deployed_fixture_lands_with_embed_urls(
 
 def test_harness_l1_planted_scenarios_visible(
     harness_deployed: dict[str, Any],
+    harness_failure_dump: None,
 ) -> None:
     """Open the deployed L1 dashboard via Playwright and verify each
     planted scenario surfaces on its corresponding sheet (M.4.1.d).
@@ -555,6 +607,7 @@ def test_harness_l1_planted_scenarios_visible(
 
 def test_harness_l2ft_planted_scenarios_visible(
     harness_deployed: dict[str, Any],
+    harness_failure_dump: None,
 ) -> None:
     """Open the deployed L2 Flow Tracing dashboard via Playwright and
     verify each L2-side planted scenario surfaces (M.4.1.e).

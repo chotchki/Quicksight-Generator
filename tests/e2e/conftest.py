@@ -32,6 +32,19 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(skip)
 
 
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Expose per-phase test outcome to fixtures via item.rep_<phase>.
+
+    M.4.1.f's harness fixtures consult ``item.rep_call.failed`` during
+    teardown to decide whether to dump the failure triage manifest.
+    Standard pytest idiom.
+    """
+    outcome = yield
+    rep = outcome.get_result()
+    setattr(item, f"rep_{rep.when}", rep)
+
+
 # ---------------------------------------------------------------------------
 # Timeout configuration
 # ---------------------------------------------------------------------------
