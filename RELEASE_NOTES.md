@@ -1,5 +1,22 @@
 # Release Notes
 
+## v6.0.2
+
+### Hotfix — Drop deleted test files from the smoke-test-wheel job
+
+> **v6.0.1 was tagged and pushed.** The `bake-sample` fix from v6.0.1 worked (the bake job that broke v6.0.0 went green), but the next job in the pipeline — `smoke-test-wheel` — failed with `ERROR: file or directory not found: tests/test_account_recon.py`. v6.0.1 was published to TestPyPI as a build artifact but never promoted to PyPI; v6.0.2 ships the same v6.0.0 + v6.0.1 work plus this fix. The v6.0.0 and v6.0.1 git tags stay in place; v6.0.2 ships the corrected workflow.
+
+**Root cause**:
+- `.github/workflows/release.yml`'s `smoke` job ran a hardcoded list of pytest files against the freshly-installed wheel.
+- M.4.3 / M.4.4 deleted `tests/test_account_recon.py`, `tests/test_demo_sql.py`, `tests/test_recon.py`, `tests/test_generate.py` — the workflow's hardcoded list wasn't updated.
+- The job blew up at the pytest collection step before any test ran.
+
+**Fix**:
+- Removed the deleted test files from the smoke-job pytest invocation. Surviving wheel-shaped tests (`test_models.py`, `test_demo_data.py`, `test_theme_presets.py`, `test_dataset_contract.py`) stay in the list.
+- Added `QS_GEN_SKIP_PYRIGHT=1` to the smoke-job env block. The smoke venv only installs the runtime wheel + a small pytest set (no `[dev]` extras), so pyright isn't on PATH; `pytest_sessionstart`'s pyright gate handles missing pyright gracefully (returns early), but setting the env var makes the intent explicit.
+
+**Operator impact**: zero behavior change vs v6.0.0 / v6.0.1 — the wheel itself is identical. The fix is purely a release-pipeline concern.
+
 ## v6.0.1
 
 ### Hotfix — Bundle the L1 default L2 instance YAML in the wheel

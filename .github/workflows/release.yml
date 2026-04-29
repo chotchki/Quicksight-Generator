@@ -130,14 +130,15 @@ jobs:
       - name: Run unit + integration tests against installed wheel
         env:
           PYTHONDONTWRITEBYTECODE: "1"
+          # Skip pytest_sessionstart's pyright gate — pyright isn't
+          # installed against the smoke venv (it's a [dev] extra
+          # the bake env doesn't pull). The wheel itself is the
+          # subject under test, not its pyright cleanliness.
+          QS_GEN_SKIP_PYRIGHT: "1"
         run: |
           /tmp/qs-smoke/bin/pytest \
             tests/test_models.py \
-            tests/test_account_recon.py \
             tests/test_demo_data.py \
-            tests/test_demo_sql.py \
-            tests/test_recon.py \
-            tests/test_generate.py \
             tests/test_theme_presets.py \
             tests/test_dataset_contract.py
 
