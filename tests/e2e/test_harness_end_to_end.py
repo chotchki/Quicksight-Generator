@@ -73,6 +73,10 @@ from _harness_l1_assertions import (  # noqa: E402
     assert_l1_plants_visible,
     assert_todays_exceptions_kpi_matches,
 )
+from _harness_l2ft_assertions import (  # noqa: E402
+    assert_l2_exceptions_check_types_present,
+    assert_l2ft_plants_visible,
+)
 
 # L2_INSTANCES matrix: re-use the exact list `test_l2_seed_contract.py`
 # uses so adding a new YAML there parameterizes the harness too.
@@ -541,4 +545,50 @@ def test_harness_l1_planted_scenarios_visible(
         )
         assert_todays_exceptions_kpi_matches(
             page, manifest, timeout_ms=visual_timeout,
+        )
+
+
+# ---------------------------------------------------------------------------
+# M.4.1.e smoke — Playwright walks the L2 Flow Tracing dashboard
+# ---------------------------------------------------------------------------
+
+
+def test_harness_l2ft_planted_scenarios_visible(
+    harness_deployed: dict[str, Any],
+) -> None:
+    """Open the deployed L2 Flow Tracing dashboard via Playwright and
+    verify each L2-side planted scenario surfaces (M.4.1.e).
+
+    Per-plant-kind assertions:
+    - rail_firing_plants → Rails sheet shows each rail_name
+      (chain-child plants skipped — they reuse the standalone's
+      rail_name and would double-count)
+    - transfer_template_plants → Transfer Templates sheet shows
+      each template_name
+
+    Plus an L2 Exceptions sanity check: at least one of the 6
+    declared check_type categories appears on the L2 Exceptions
+    sheet (proves the unified-exceptions dataset rendered against
+    the per-test prefix without SQL errors).
+
+    Skipped under default pytest (no QS_GEN_E2E).
+    """
+    from quicksight_gen.common.browser.helpers import (
+        wait_for_dashboard_loaded,
+        webkit_page,
+    )
+
+    embed_url = harness_deployed["embed_urls"]["l2-flow-tracing"]
+    manifest = harness_deployed["planted_manifest"]
+    page_timeout = int(os.environ.get("QS_E2E_PAGE_TIMEOUT", "30000"))
+    visual_timeout = int(os.environ.get("QS_E2E_VISUAL_TIMEOUT", "30000"))
+
+    with webkit_page(headless=True, viewport=(1600, 4000)) as page:
+        page.goto(embed_url, timeout=page_timeout)
+        wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
+        assert_l2ft_plants_visible(
+            page, manifest, timeout_ms=visual_timeout,
+        )
+        assert_l2_exceptions_check_types_present(
+            page, timeout_ms=visual_timeout,
         )
