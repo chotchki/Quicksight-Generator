@@ -143,7 +143,7 @@ landed before the parent, or you trimmed the parent out with a
 narrow `WHERE` clause on the source feed.
 
 **Dashboard consequence**: The PR pipeline-traversal walkthroughs
-([Where's my money for merchant?](../pr/wheres-my-money-for-merchant.md))
+(Where's my money for merchant?)
 silently return nothing for the orphaned chains. No KPI fires, but
 the "trace this dollar" experience breaks.
 
@@ -229,6 +229,6 @@ for the symptom-organized debug recipes.
   and you can't immediately see why.
 - [Schema_v6 → minimum viable feed](../../Schema_v6.md#etl-contract-minimum-viable-feed) —
   the column contract whose failure modes drive the invariants.
-- [AR Exceptions: Balance Drift Timelines rollup](../ar/balance-drift-timelines-rollup.md) —
+- AR Exceptions: Balance Drift Timelines rollup —
   the dashboard-side view of what Invariant 2 catches when it fires
   in production.

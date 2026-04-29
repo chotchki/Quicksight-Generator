@@ -231,7 +231,7 @@ returns + its SHOULD-constraint motivation), see
 - [Data Integration Handbook](etl.md) — the ETL-engineer view of
   the same surface. Useful when your customization spans both
   product wiring and the upstream feed.
-- [GL Reconciliation Handbook](ar.md) — the AR analyst's view of
+- GL Reconciliation Handbook — the AR analyst's view of
   what the dashboard looks like once your data is loaded.
-- [Payment Reconciliation Handbook](pr.md) — the merchant
+- Payment Reconciliation Handbook — the merchant
   support team's view.

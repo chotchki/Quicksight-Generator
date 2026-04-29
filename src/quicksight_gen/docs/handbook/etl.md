@@ -167,7 +167,7 @@ upstream feed's source fields.
   points at.
 - [Account Structure](../Training_Story.md) — the bank, customers,
   accounts, and money flows the populated data represents.
-- [GL Reconciliation Handbook](ar.md) — the AR dashboard and the
+- GL Reconciliation Handbook — the AR dashboard and the
   analyst team your feeds serve.
-- [Payment Reconciliation Handbook](pr.md) — the PR dashboard and
+- Payment Reconciliation Handbook — the PR dashboard and
   the merchant support team your feeds serve.

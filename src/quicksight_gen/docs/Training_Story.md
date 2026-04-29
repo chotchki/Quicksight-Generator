@@ -249,12 +249,15 @@ SNB.
 
 ## Where to go from here
 
-- [GL Reconciliation Handbook](handbook/ar.md) — the AR dashboard's
-  walkthroughs, organized by exception class. Where the Accounting
-  Operations team works.
-- [Payment Reconciliation Handbook](handbook/pr.md) — the PR
-  dashboard's walkthroughs, organized by operator question. Where
-  the Merchant Support team works.
+- [L1 Dashboard Handbook](handbook/l1.md) — the persona-blind L1
+  invariant view, organized by exception class. Where Accounting
+  Operations works for any L2 instance.
+- [L2 Flow Tracing Handbook](handbook/l2_flow_tracing.md) — Rails,
+  Chains, Transfer Templates, and L2 hygiene exceptions. Where the
+  integrator validates their L2 instance against the SPEC.
+- [Investigation Handbook](handbook/investigation.md) — recipient
+  fanout, volume anomalies, money-trail provenance, and the account
+  network graph. Where the Compliance / AML team works.
 - [Data Integration Handbook](handbook/etl.md) — the feed-side
   walkthroughs: mapping an upstream system into `transactions` and
   `daily_balances`, validating the load, extending the metadata

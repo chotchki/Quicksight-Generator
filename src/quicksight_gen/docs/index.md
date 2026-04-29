@@ -7,19 +7,20 @@
 # QuickSight Analysis Generator
 
 Programmatic AWS QuickSight analysis generator for financial reporting.
-Ships three independent dashboards sharing one theme, account,
-datasource, and CLI surface.
+Ships an L1 dashboard + an L2 flow-tracing dashboard fed by the L2
+foundation, plus the legacy Investigation app, sharing one theme,
+account, datasource, and CLI surface.
 
 ## Operator handbooks
 
 For the day-to-day users of the deployed dashboards.
 
-- [Account Reconciliation Handbook](handbook/ar.md) — ledger /
-  sub-ledger balances, transfers, and double-entry posting integrity
-  for a community bank's treasury team.
-- [Payment Reconciliation Handbook](handbook/pr.md) — sales,
-  settlements, payments, and external-system matching for a merchant
-  bank's payments team.
+- [L1 Dashboard Handbook](handbook/l1.md) — L1 invariant violations
+  (drift, overdraft, limit breach, stuck pending, stuck unbundled)
+  surfaced from any L2 instance — the persona-blind operator view.
+- [L2 Flow Tracing Handbook](handbook/l2_flow_tracing.md) — Rails,
+  Chains, Transfer Templates, and L2 hygiene exceptions — for the
+  integrator validating their L2 instance against the SPEC.
 - [Investigation Handbook](handbook/investigation.md) — recipient
   fanout, volume anomalies, money-trail provenance, and account-network
   graphs for a bank's compliance / AML triage team.

@@ -1,10 +1,11 @@
 # QuickSight Analysis Generator
 
-Python tool that programmatically generates AWS QuickSight JSON definitions (theme, datasets, analyses, dashboards) and deploys them via boto3. Ships **three independent QuickSight apps** sharing one theme registry, account, datasource, and CLI surface:
+Python tool that programmatically generates AWS QuickSight JSON definitions (theme, datasets, analyses, dashboards) and deploys them via boto3. Ships **four independent QuickSight apps** sharing one theme registry, account, datasource, and CLI surface:
 
-- **Payment Reconciliation** — 6 sheets: Getting Started, Sales, Settlements, Payments, Exceptions, Payment Reconciliation
-- **Account Reconciliation** — 5 sheets: Getting Started, Balances, Transfers, Transactions, Exceptions
-- **Investigation** — 5 sheets: Getting Started, Recipient Fanout, Volume Anomalies, Money Trail, Account Network
+- **L1 Dashboard** — persona-blind L1 invariant violation surface (drift / overdraft / limit breach / stuck pending / stuck unbundled / supersession audit / today's exceptions / daily statement / transactions). Configured by an L2 instance — feed any institution's L2 YAML once, dashboard renders against it.
+- **L2 Flow Tracing** — Rails / Chains / Transfer Templates / L2 Hygiene Exceptions for the integrator validating their L2 instance against the SPEC.
+- **Investigation** — 5 sheets: Getting Started, Recipient Fanout, Volume Anomalies, Money Trail, Account Network. Compliance / AML triage flow.
+- **Executives** — 4 sheets: Getting Started, Account Coverage, Transaction Volume, Money Moved. Executive scorecard.
 
 The customer doesn't know exactly what they want yet. Everything is generated from code and deployed idempotently (delete-then-create) so a change is one command to roll out.
 
@@ -231,47 +232,30 @@ All three apps feed two base tables. PR + AR + Investigation share the same phys
 
 Six canonical `account_type` values: `gl_control` (AR GL control accounts), `dda` (AR customer demand-deposit accounts), `merchant_dda` (PR merchant accounts), `external_counter` (FRB Master, processors, PR external customer pool / external rail), `concentration_master` (the cash concentration target), `funds_pool` (reserved; not currently emitted by the demo seed). `control_account_id` is a self-referential FK; PR sub-ledger accounts roll up to the synthetic `pr-merchant-ledger` control row.
 
-JSON metadata uses portable SQL/JSON path syntax (`JSON_VALUE`, `JSON_QUERY`, `JSON_EXISTS`) — no JSONB, no `->>` / `->` / `@>` / `?` operators, no GIN indexes on JSON. PostgreSQL 17+ required for `demo apply`. AR computed views (`ar_computed_ledger_daily_balance`, `ar_subledger_overdraft`, `ar_subledger_daily_outbound_by_type`, etc.) read from these two base tables and the AR-only dimension tables.
+JSON metadata uses portable SQL/JSON path syntax (`JSON_VALUE`, `JSON_QUERY`, `JSON_EXISTS`) — no JSONB, no `->>` / `->` / `@>` / `?` operators, no GIN indexes on JSON. PostgreSQL 17+ required for `demo apply`.
 
-The legacy 12-table family (`pr_*`, `transfer`, `posting`, `ar_*_daily_balances`) was dropped in Phase G.10 and never recreated — `DROP TABLE IF EXISTS` lines remain in `schema.sql` for upgrade safety.
+The legacy 12-table family (`pr_*`, `transfer`, `posting`, `ar_*_daily_balances`) was dropped in Phase G.10 and never recreated — `DROP TABLE IF EXISTS` lines remain in `schema.sql` for upgrade safety. Account Reconciliation + Payment Reconciliation themselves were deleted in M.4.3 + M.4.4 (v6); the `ar_ledger_accounts` / `ar_subledger_accounts` dimension tables stay in `schema.sql` because Investigation's demo seed registers its own sub-ledgers there for FK integrity. The bulk of the `ar_*` view surface is dead code in v6 — Phase N picks up the cleanup once Investigation reshape decides whether Inv migrates off the AR dim tables.
 
-### Payment Reconciliation
-**Merchants → Sales → Settlements → Payments → External Transactions**
+### L1 Dashboard
+**L1 invariant violations across any L2 instance — persona-blind operator view.**
 
-- Merchants make sales at locations
-- Sales bundle into settlements (settlement type depends on merchant type)
-- Settlements get paid to merchants as payments
-- Payments leave the internal system, so only payments reconcile against external systems
-- Multiple external systems (BankSync, PaymentHub, ClearSettle) aggregate 1+ internal payments into one external transaction
-- Match is valid only when external total exactly equals sum of linked payments — no partials
-- Match statuses: **matched**, **not_yet_matched**, **late** (data-driven: `late` ↔ `CURRENT_TIMESTAMP > COALESCE(expected_complete_at, posted_at + INTERVAL '1 day')`; the per-row `is_late` column carries the same predicate as a `'Late'` / `'On Time'` label)
-- Mutual table filtering on the Payment Reconciliation tab: clicking an external txn filters its payments; clicking a payment filters back
-- All 5 PR exception checks and the Payment Recon tab carry `aging_bucket` (same 5-band pattern as AR) with aging bar charts
-- **Transfer chain** (parent → child): `external_txn → payment → settlement → sale`, linked by `parent_transfer_id` in `transactions`. PR account rows in `transactions` / `daily_balances` use `account_type IN ('gl_control', 'merchant_dda', 'external_counter')`; merchant sub-ledgers and the external customer pool / external rail roll up to the synthetic `pr-merchant-ledger` control account. PR-specific metadata (`card_brand`, `cashier`, `settlement_type`, `payment_method`, `is_returned`, `return_reason`, etc.) lives in the `metadata` JSON column and is read via `JSON_VALUE(metadata, '$.<key>')`.
+The L1 dashboard is configured by an L2 instance: feed any institution's L2 YAML once and the dashboard renders the L1 invariant surface against it. Sheets:
 
-### Account Reconciliation
-**Ledger accounts (with daily balances) → Sub-ledger accounts → Transactions (double-entry ledger)**
+- **Drift / Ledger Drift / Drift Timelines** — recomputed-vs-stored balance per (account, business_day); timelines surface persistent drift over time.
+- **Overdraft** — sub-ledger or DDA below zero on its EOD balance row.
+- **Limit Breach** — daily outbound flow per (account, transfer_type) exceeding the rail's `LimitSchedule.cap`.
+- **Pending Aging / Unbundled Aging** — Pending legs older than the rail's `max_pending_age`; Posted legs older than the rail's `max_unbundled_age` without a bundle parent. 5-band aging buckets (`1: 0-1 day`, `2: 2-3 days`, `3: 4-7 days`, `4: 8-30 days`, `5: >30 days`).
+- **Supersession Audit** — entries where `supersedes` updates an earlier (account, day) cell — proves the audit trail of corrections without overwriting history.
+- **Today's Exceptions** — UNION ALL of every L1 SHOULD-violation matview, filtered to the latest day for per-day kinds + every currently-stuck leg for stuck_*. KPI rollup of "open violations today" + detail drill.
+- **Daily Statement / Transactions** — per-(account, day) statement view + raw transactions browser for triage drill targets.
+- **Info** — the App Info canary (see Conventions).
 
-- Every transfer is a set of `transactions` legs (grouped by `transfer_id`) that must net to zero
-- Legs can target sub-ledger accounts OR ledger control accounts directly (funding batches, fee assessments, clearing sweeps, all CMS-driven sweeps); the `account_id` and `control_account_id` columns express the hierarchy
-- Ledger drift invariant: `stored ledger balance = Σ direct ledger postings + Σ sub-ledger stored balances`
-- Sub-ledger drift invariant: `stored sub-ledger balance = Σ postings to that sub-ledger` (unaffected by ledger-level postings)
-- Daily balance snapshots in `daily_balances` allow drift detection: recomputed balance vs. stored balance
-- Failed legs, limit breaches (ledger daily out-flow cap per sub-ledger/type, configured in `ar_ledger_transfer_limits` and surfaced through the `daily_balances.metadata` JSON), and overdrafts (sub-ledger below zero) populate the Exceptions tab
-- Every exception check follows a standard visual pattern: KPI count + detail table (with `days_outstanding` and `aging_bucket` columns) + horizontal aging bar chart. Drift checks also have timelines.
-- Aging buckets: 5 hardcoded bands (`1: 0-1 day`, `2: 2-3 days`, `3: 4-7 days`, `4: 8-30 days`, `5: >30 days`) — numeric prefix forces correct sort in QuickSight
-- Drift timelines (ledger + sub-ledger) surface systemic issues over time
-- Transactions carry an `origin` tag (`internal_initiated` / `external_force_posted`); origin multi-select filter on Transactions + Exceptions tabs
-- AR is the unified view of the shared base tables — every `transfer_type` (PR types included) and every `account_id` surfaces in AR datasets and views without artificial exclusion. Single-leg PR types (`sale`, `external_txn`) carry `expected_net_zero = 'not_expected'` on `ar_transfer_summary` so the Non-Zero Transfers KPI excludes them semantically rather than by hiding them. Conversely, PR datasets stay tightly persona-scoped: that's the asymmetry of the unified-AR-superset framing.
+Every sheet has a Universal Date Range filter (rolling 7-day default). The L1 invariant matviews live in the L2-instance-prefixed schema (`<prefix>_drift`, `<prefix>_overdraft`, etc.) emitted by `common/l2/schema.py` — feeding a different L2 instance gives the dashboard a different prefix automatically.
 
-#### CMS structure (Phase F)
+### L2 Flow Tracing
+**Rails / Chains / Transfer Templates / L2 Hygiene Exceptions — for the integrator validating their L2 instance against the SPEC.**
 
-Demo persona is **Sasquatch National Bank — Cash Management Suite (CMS)** — same SNB from PR, viewed through treasury after SNB absorbed Farmers Exchange Bank's commercial book.
-
-- **8 internal GL control accounts**: Cash & Due From FRB, ACH Origination Settlement (`gl-1810`), Card Acquiring Settlement, Wire Settlement Suspense, Internal Transfer Suspense (`gl-1830`), Cash Concentration Master (`gl-1850`), Internal Suspense / Reconciliation, Customer Deposits — DDA Control.
-- **7 customer DDAs**: 3 coffee retailers shared with PR (Bigfoot Brews, Sasquatch Sips, Yeti Espresso) + 4 commercial (Cascade Timber Mill, Pinecrest Vineyards, Big Meadow Dairy, Harvest Moon Bakery).
-- **4 telling-transfer flows from CMS**: ZBA / Cash Concentration sweep → Concentration Master; daily ACH origination sweep → FRB Master Account; external force-posted card settlement → Card Acquiring Settlement; on-us internal transfer → Internal Transfer Suspense → destination DDA. Each flow plants both success cycles and characteristic failures.
-- **Exceptions tab structure**: 3 cross-check rollups at the top (expected-zero EOD, two-sided post-mismatch, balance drift timelines) teach error-class recognition; per-check details below let analysts drill the specific row. 14 checks total: 5 baseline (sub-ledger drift, ledger drift, non-zero transfers, limit breach, overdraft) + 9 CMS-specific (sweep target nonzero, concentration master sweep drift, ACH orig settlement nonzero, ACH sweep no Fed confirmation, Fed card no internal catch-up, GL vs FRB master drift, internal transfer stuck, internal transfer suspense nonzero, internal reversal uncredited).
+Sheets walk the L2 model: each Rail's runtime postings, each Chain's parent → child firing pairs, each Transfer Template's instances. The L2 Exceptions sheet UNIONs 6 hygiene checks (Chain Orphans, Unmatched Transfer Type, Dead Rails, Dead Bundles Activity, Dead Metadata Declarations, Dead Limit Schedules) into one row-per-violation surface — proves the integrator's L2 declarations match runtime data.
 
 ### Investigation
 **Question-shaped: Recipient Fanout / Volume Anomalies / Money Trail / Account Network**
@@ -311,7 +295,7 @@ Demo persona is **Sasquatch National Bank — Cash Management Suite (CMS)** — 
 
 - Type hints throughout
 - **Never hardcode hex colors in analysis code.** Resolve from `get_preset(cfg.theme_preset).<token>` at generate time (accent, primary_fg, link_tint, etc.).
-- One module per concern; `apps/payment_recon/` has `visuals.py` + `recon_visuals.py` and `filters.py` + `recon_filters.py` because the Payment Reconciliation tab is a distinct UX pattern
+- One module per concern; e.g., the L1 dashboard splits dataset builders, app builders, and sheet populators across separate modules so each surface stays focused.
 - Theme presets live in the `PRESETS` dict in `common/theme.py`; set `analysis_name_prefix="Demo"` on demo presets
 - Default theme: blues and greys, high contrast, titles ≥ 16px, body ≥ 12px
 - The end customer doesn't know exactly what they want — keep the code easy to mutate and iterate on

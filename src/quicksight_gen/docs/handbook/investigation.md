@@ -123,10 +123,10 @@ Juniper meeting in the middle.
   data behind every walkthrough on this page. Read it when an anomaly
   z-score, fanout count, or chain-walk result disagrees with what you
   see in the source feed.
-- [GL Reconciliation Handbook](ar.md) — Treasury's view of the same
+- GL Reconciliation Handbook — Treasury's view of the same
   base tables. When a Money Trail edge needs row-level posting
   evidence, AR's Transactions sheet is the next stop.
-- [Payment Reconciliation Handbook](pr.md) — Merchant Support's view
+- Payment Reconciliation Handbook — Merchant Support's view
   of the same base tables. When a fanout or anomaly traces back to a
   merchant settlement chain, PR's pipeline tabs are where the rest of
   the story lives.

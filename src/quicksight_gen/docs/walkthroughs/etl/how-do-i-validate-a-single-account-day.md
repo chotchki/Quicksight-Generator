@@ -233,11 +233,11 @@ closing ≥ 0, every leg has a counter_account_name):
 - [How do I populate `transactions` from my core banking system?](how-do-i-populate-transactions.md) —
   the projection that this sheet reads. A drift here usually
   traces to a branch of that projection.
-- [AR Exceptions: Ledger Drift](../ar/ledger-drift.md) /
-  [AR Exceptions: Sub-Ledger Drift](../ar/sub-ledger-drift.md) —
+- AR Exceptions: Ledger Drift /
+  AR Exceptions: Sub-Ledger Drift —
   the dashboard-side aggregate views of the per-day drift the
   Daily Statement makes inspectable.
-- [AR Exceptions: Sub-Ledger Overdraft](../ar/sub-ledger-overdraft.md) —
+- AR Exceptions: Sub-Ledger Overdraft —
   the aggregate view of overdraft days; the Daily Statement is
   where you confirm the overdraft is real (not a drift symptom
   in disguise).

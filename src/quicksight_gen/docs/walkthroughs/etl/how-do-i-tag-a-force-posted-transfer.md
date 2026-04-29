@@ -158,10 +158,10 @@ Once your Fed-statement projection is wired up:
 - [How do I prove my ETL is working before going live?](how-do-i-prove-my-etl-is-working.md) —
   Invariant 3 (parent-chain integrity) is the pre-flight check
   for the catch-up linkage described here.
-- [AR Exceptions: GL vs Fed Master Drift](../ar/gl-vs-fed-master-drift.md) —
+- AR Exceptions: GL vs Fed Master Drift —
   the **downstream consumer**. Read this to understand what a
   correctly tagged Fed row enables.
-- [AR Exceptions: ACH Sweep No Fed Confirmation](../ar/ach-sweep-no-fed-confirmation.md) —
+- AR Exceptions: ACH Sweep No Fed Confirmation —
   the inverse case (we posted, Fed didn't confirm) — also reads
   the `origin` tag.
 - [Schema_v6 → `origin` column spec](../../Schema_v6.md#table-1-prefix_transactions) —

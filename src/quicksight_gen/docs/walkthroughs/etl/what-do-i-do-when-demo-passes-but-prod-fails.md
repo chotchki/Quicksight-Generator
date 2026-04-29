@@ -176,7 +176,7 @@ for the screen-level walkthrough.
 ### Symptom 5 — "PR pipeline drilldown returns nothing for my merchant"
 
 **Most likely**: the `parent_transfer_id` chain has a gap. The
-[Where's my money for merchant?](../pr/wheres-my-money-for-merchant.md)
+Where's my money for merchant?
 walkthrough relies on traversing
 `external_txn → payment → settlement → sale` via
 `parent_transfer_id`. If any link is NULL where it shouldn't be,
@@ -277,8 +277,8 @@ Once you've identified the root cause:
 - [Schema_v6 → minimum viable feed](../../Schema_v6.md#etl-contract-minimum-viable-feed) —
   the column-by-column failure modes are the source-of-truth for
   the symptoms above.
-- [Where's my money for merchant?](../pr/wheres-my-money-for-merchant.md) —
+- Where's my money for merchant? —
   the analyst-side traversal that depends on Symptom 5's
   `parent_transfer_id` chain being intact.
-- [AR Exceptions: Ledger Drift](../ar/ledger-drift.md) —
+- AR Exceptions: Ledger Drift —
   the analyst-side view of Symptom 4's drift KPI spike.

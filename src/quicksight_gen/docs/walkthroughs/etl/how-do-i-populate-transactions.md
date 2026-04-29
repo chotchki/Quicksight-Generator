@@ -186,6 +186,6 @@ remaining patterns.
   the persona-oriented intro to the contract.
 - [Schema_v6 → ETL contract / minimum viable feed](../../Schema_v6.md#etl-contract-minimum-viable-feed) —
   the column-by-column day-1 minimum the projection must satisfy.
-- [Where's my money for merchant?](../pr/wheres-my-money-for-merchant.md) —
+- Where's my money for merchant? —
   a **downstream consumer** walkthrough: what an analyst does with
   the `transactions` rows your projection lands.
