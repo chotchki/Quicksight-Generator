@@ -243,6 +243,8 @@ account_templates:
   - role: CustomerDDA
     scope: internal
     parent_role: DDAControl
+    instance_id_template: "cust-{n:04d}-snb"
+    instance_name_template: "SNB Customer #{n:04d}"
     description: |
       Per-customer demand-deposit account. One runtime instance per
       retail or commercial customer; the account number and name are
@@ -253,6 +255,8 @@ account_templates:
   - role: MerchantDDA
     scope: internal
     parent_role: MerchantDDAControl
+    instance_id_template: "merch-{n:03d}-snb"
+    instance_name_template: "SNB Merchant DDA #{n:03d}"
     description: |
       Per-merchant demand-deposit account. Merchants who bank at SNB
       receive their card-sales payouts directly via the
@@ -263,6 +267,8 @@ account_templates:
   - role: ZBASubAccount
     scope: internal
     parent_role: ConcentrationMaster
+    instance_id_template: "zba-{n:03d}-snb"
+    instance_name_template: "SNB ZBA Sub-Account #{n:03d}"
     description: |
       Operating sub-account under the cash-concentration master. Each
       ZBA location (a customer's main location, a separate operating
@@ -358,6 +364,9 @@ rails:
     source_origin: ExternalForcePosted
     destination_origin: InternalInitiated
     metadata_keys: [branch_id, teller_id, customer_id]
+    metadata_value_examples:
+      branch_id: ["br-bigfoot-001", "br-sasquatch-002", "br-yeti-003"]
+      teller_id: ["t-jane-001", "t-bob-002", "t-mary-003"]
     posted_requirements: [customer_id]
     description: |
       Physical cash deposit at an SNB branch. The "external" source
@@ -393,6 +402,8 @@ rails:
     leg_direction: Debit
     origin: InternalInitiated
     metadata_keys: [internal_transfer_id, source_customer_id, destination_customer_id, transfer_purpose]
+    metadata_value_examples:
+      transfer_purpose: ["rent", "payroll", "vendor_payment"]
     description: |
       Debit leg of an on-us transfer cycle. Posts against the source
       customer's DDA. Joins the shared `InternalTransferCycle` Transfer
@@ -442,6 +453,9 @@ rails:
     leg_direction: Debit
     origin: InternalInitiated
     metadata_keys: [customer_id, fee_type, accrual_period]
+    metadata_value_examples:
+      fee_type: ["monthly_maintenance", "overdraft", "stop_pay"]
+      accrual_period: ["2026-04", "2026-05", "2026-06"]
     posted_requirements: [customer_id, fee_type]
     max_unbundled_age: P31D
     description: |
@@ -545,6 +559,8 @@ rails:
     expected_net: 0
     origin: InternalInitiated
     metadata_keys: [original_external_reference, return_reason_code, customer_id]
+    metadata_value_examples:
+      return_reason_code: ["R01"]
     posted_requirements: [original_external_reference, return_reason_code]
     description: |
       ACH return path for NACHA reason code R01 (insufficient funds).
@@ -560,6 +576,8 @@ rails:
     expected_net: 0
     origin: InternalInitiated
     metadata_keys: [original_external_reference, return_reason_code, customer_id]
+    metadata_value_examples:
+      return_reason_code: ["R08"]
     posted_requirements: [original_external_reference, return_reason_code]
     description: |
       ACH return path for NACHA reason code R08 (stop payment by
@@ -592,6 +610,12 @@ rails:
     source_origin: ExternalForcePosted
     destination_origin: InternalInitiated
     metadata_keys: [merchant_id, settlement_period, card_network_ref, card_brand]
+    metadata_value_examples:
+      # Note: merchant_id + settlement_period are the
+      # MerchantSettlementCycle TransferKey — auto-derived per
+      # firing seq, NOT pulled from these examples. Only non-TT
+      # keys (card_brand here) get example-driven values.
+      card_brand: ["Visa", "Mastercard", "Amex"]
     posted_requirements: [merchant_id, settlement_period, card_network_ref]
     max_pending_age: PT24H
     max_unbundled_age: PT48H
@@ -666,6 +690,11 @@ rails:
     leg_direction: Credit
     origin: ExternalForcePosted
     metadata_keys: [settlement_period, card_brand]
+    metadata_value_examples:
+      # ExternalCardSettlement is aggregating, NOT a leg of any
+      # template — both keys are non-TT, both get example values.
+      settlement_period: ["2026-04", "2026-05", "2026-06"]
+      card_brand: ["Visa", "Mastercard", "Amex"]
     aggregating: true
     cadence: daily-eod
     bundles_activity: [MerchantCardSale]
@@ -879,4 +908,4 @@ limit_schedules:
       ACH cap because check-payout merchants are by definition
       lower-tech / lower-volume operations; SNB caps aggressive
       check issuance to surface anomalies.
-seed_hash: b02ff337d45fd321425bc9db2f5b535251da865d97486f1c1703f2c14b506dad
+seed_hash: 1083ba1fd651cfe987c6929da4e33d8dd3c40913b4eb575a7a295537e65dd61a

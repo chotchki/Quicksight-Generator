@@ -205,9 +205,16 @@ def test_broad_mode_stratifies_days_ago(instance: L2Instance) -> None:
 def test_broad_mode_metadata_values_per_rail_per_firing(
     instance: L2Instance,
 ) -> None:
-    """Metadata values are per-(rail, firing) unique — two firings of
-    the same rail produce DIFFERENT metadata so the L2 Flow Tracing
-    cascade reads distinct values."""
+    """Metadata values are non-empty so the L2 Flow Tracing cascade
+    has values to display.
+
+    M.4.2b adds opt-in ``rails[].metadata_value_examples`` — when a
+    key opts in, values come from the integrator-supplied list (e.g.
+    ``["Visa", "Mastercard", "Amex"]``); when not, values follow the
+    legacy synthetic ``<rail>-firing-<seq>`` / ``<rail>-chained-<seq>``
+    pattern. So this test no longer asserts a value-shape pattern —
+    it only asserts every metadata value is non-empty.
+    """
     report = default_scenario_for(
         instance, today=CANONICAL_TODAY, mode="broad",
     )
@@ -215,16 +222,11 @@ def test_broad_mode_metadata_values_per_rail_per_firing(
     for p in report.scenario.rail_firing_plants:
         for key, value in p.extra_metadata:
             seen_per_key.setdefault(key, set()).add(value)
-    # Every key with multiple firings carries multiple distinct values.
-    # (Some keys may only appear on one rail with one firing; the
-    # invariant we check is "if multiple firings populate this key,
-    # they don't all collapse to one value".)
     for key, values in seen_per_key.items():
-        # We don't assert a hard count — just that the metadata
-        # pattern produces distinguishable values when multiple
-        # firings touch one key.
-        assert all(value for value in values)
-        assert all("-firing-" in v or "-chained-" in v for v in values)
+        # Non-empty values on every (rail, firing).
+        assert all(value for value in values), (
+            f"key {key!r} has empty values: {values!r}"
+        )
 
 
 # ---------------------------------------------------------------------------

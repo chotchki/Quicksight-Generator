@@ -385,11 +385,22 @@ def test_seed_account_ids_resolve_to_instance_or_synthetic_template(
     instance: L2Instance, auto_seed_sql: str,
 ) -> None:
     """Every account_id literal in the seed is either a declared singleton
-    Account.id OR a synthetic template-instance id (cust-NNN) the
-    auto-scenario materialized."""
+    Account.id OR a synthetic template-instance id the auto-scenario
+    materialized.
+
+    Synthetic ids are derived by calling ``_materialize_instances`` on
+    every declared AccountTemplate — so M.4.2b's per-template
+    ``instance_id_template`` opt-in (e.g. sasquatch_pr's
+    ``cust-{n:04d}-snb``) is naturally accepted alongside the legacy
+    ``cust-{n:03d}`` default. Hardcoding the legacy pattern would
+    falsely reject any persona that opts in.
+    """
+    from quicksight_gen.common.l2.auto_scenario import _materialize_instances
     declared_ids = {str(a.id) for a in instance.accounts}
-    # The auto-scenario's TemplateInstance synthesis uses cust-001 / cust-002.
-    synthetic_ids = {"cust-001", "cust-002"}
+    synthetic_ids: set[str] = set()
+    for tmpl in instance.account_templates:
+        for cust in _materialize_instances(tmpl):
+            synthetic_ids.add(str(cust.account_id))
     allowed = declared_ids | synthetic_ids
 
     seen_ids: set[str] = set()
@@ -571,9 +582,9 @@ _BROAD_MODE_HASHES: dict[tuple[str, str], str] = {
     ("spec_example", "l1_plus_broad"):
         "ab700f03e0b72d4be201b8eca49242eddac4f7dc695b6af72ecbd54718fd86bb",
     ("sasquatch_pr", "broad"):
-        "3b05375c0b2e61077b6f87f3b3baa448f77d92b87d6b80e20e71a1167d457cb2",
+        "a2c53350ae2fdfccbe73224e8c801f348a7e31f57d16b6b44f2c350fdc7c18a6",
     ("sasquatch_pr", "l1_plus_broad"):
-        "2c9a325a71674562041ea65f8c2379d9e305781c6a1d0fb18eda2a48cc13a93f",
+        "9a89257ac5bd21825c840427758b9c2c1925bf115c435ace261cca5b5f159e02",
 }
 
 
