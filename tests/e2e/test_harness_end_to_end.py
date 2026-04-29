@@ -33,6 +33,25 @@ Per-test isolation strategy:
   schema by ``e2e_*_<uid>`` prefix discovery (via
   ``_harness_cleanup.drop_prefixed_schema``).
 
+**Parallelism (M.4.1.g).** The per-test isolation is xdist-safe by
+construction — every QS resource carries a unique ``TestUid`` tag
+and every DB object carries a unique prefix, so concurrent tests on
+the same QS account + Aurora cluster cannot collide. Run via the
+existing ``./run_e2e.sh --parallel N`` switch (default N=4 from the
+PR/AR/Inv/Exec e2e suite); for the harness alone, ``-n 3`` saturates
+the current ``L2_INSTANCES`` matrix. Each test deploys 14 datasets +
+2 dashboards, so xdist=3 puts ~42 ``create_data_set`` calls in flight
+— boto3's standard retry mode handles transient ``ThrottlingException``
+without harness-side intervention.
+
+**Flake hardening (M.4.1.g).** The smoke tests below wrap their
+Playwright bodies in ``run_dashboard_check_with_retry`` from
+``_harness_browser.py`` — one retry-with-fresh-embed-URL on
+Playwright timeout, addressing the CLAUDE.md "QuickSight spinner
+forever" footgun. AssertionError from the assertion helpers
+propagates immediately (real planted-row-missing failures are NOT
+retried — that would mask regressions).
+
 Required env vars beyond the existing e2e set (see
 ``tests/e2e/conftest.py`` for the base set):
 - ``QS_GEN_DEMO_DATABASE_URL`` — psycopg2 DSN for the harness's DB
@@ -69,6 +88,7 @@ from _harness_deploy import (  # noqa: E402
     extract_dashboard_ids,
     generate_apps,
 )
+from _harness_browser import run_dashboard_check_with_retry  # noqa: E402
 from _harness_failure_dump import dump_failure_manifest  # noqa: E402
 from _harness_l1_assertions import (  # noqa: E402
     assert_l1_plants_visible,
@@ -554,8 +574,10 @@ def test_harness_deployed_fixture_lands_with_embed_urls(
 
 
 def test_harness_l1_planted_scenarios_visible(
+    harness_cfg: Config,
     harness_deployed: dict[str, Any],
     harness_failure_dump: None,
+    qs_identity_client: Any,
 ) -> None:
     """Open the deployed L1 dashboard via Playwright and verify each
     planted scenario surfaces on its corresponding sheet (M.4.1.d).
@@ -572,32 +594,40 @@ def test_harness_l1_planted_scenarios_visible(
     matches the sum of planted SHOULD-violation scenarios across
     drift / overdraft / breach / pending / unbundled.
 
+    Wraps the page lifecycle in ``run_dashboard_check_with_retry``
+    (M.4.1.g) — one retry-with-fresh-embed-URL on Playwright timeout
+    handles the QS spinner-forever flake (CLAUDE.md operational
+    footgun). AssertionError from the assertion helpers propagates
+    immediately — real planted-row-missing failures are NOT retried.
+
     Skipped under default pytest. Per the existing browser-e2e
     convention, requires Playwright + WebKit installed (via
     ``playwright install webkit`` once per environment).
     """
-    from quicksight_gen.common.browser.helpers import (
-        wait_for_dashboard_loaded,
-        webkit_page,
-    )
-
-    embed_url = harness_deployed["embed_urls"]["l1-dashboard"]
     manifest = harness_deployed["planted_manifest"]
+    dashboard_id = harness_deployed["dashboard_ids"]["l1-dashboard"]
     page_timeout = int(os.environ.get("QS_E2E_PAGE_TIMEOUT", "30000"))
     visual_timeout = int(os.environ.get("QS_E2E_VISUAL_TIMEOUT", "30000"))
 
-    # Tall viewport so stacked tables don't sit below the fold during
-    # the per-sheet walk — same pattern as the existing L1 browser
-    # tests.
-    with webkit_page(headless=True, viewport=(1600, 4000)) as page:
-        page.goto(embed_url, timeout=page_timeout)
-        wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
+    def _check_l1(page: Any) -> None:
         assert_l1_plants_visible(
             page, manifest, timeout_ms=visual_timeout,
         )
         assert_todays_exceptions_kpi_matches(
             page, manifest, timeout_ms=visual_timeout,
         )
+
+    # Tall viewport so stacked tables don't sit below the fold during
+    # the per-sheet walk — same pattern as the existing L1 browser
+    # tests.
+    run_dashboard_check_with_retry(
+        qs_identity_client,
+        account_id=harness_cfg.aws_account_id,
+        dashboard_id=dashboard_id,
+        operation=_check_l1,
+        page_timeout_ms=page_timeout,
+        viewport=(1600, 4000),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -606,8 +636,10 @@ def test_harness_l1_planted_scenarios_visible(
 
 
 def test_harness_l2ft_planted_scenarios_visible(
+    harness_cfg: Config,
     harness_deployed: dict[str, Any],
     harness_failure_dump: None,
+    qs_identity_client: Any,
 ) -> None:
     """Open the deployed L2 Flow Tracing dashboard via Playwright and
     verify each L2-side planted scenario surfaces (M.4.1.e).
@@ -624,24 +656,29 @@ def test_harness_l2ft_planted_scenarios_visible(
     sheet (proves the unified-exceptions dataset rendered against
     the per-test prefix without SQL errors).
 
+    Wrapped in ``run_dashboard_check_with_retry`` (M.4.1.g) for the
+    same spinner-forever-flake reasons as the L1 smoke test above.
+
     Skipped under default pytest (no QS_GEN_E2E).
     """
-    from quicksight_gen.common.browser.helpers import (
-        wait_for_dashboard_loaded,
-        webkit_page,
-    )
-
-    embed_url = harness_deployed["embed_urls"]["l2-flow-tracing"]
     manifest = harness_deployed["planted_manifest"]
+    dashboard_id = harness_deployed["dashboard_ids"]["l2-flow-tracing"]
     page_timeout = int(os.environ.get("QS_E2E_PAGE_TIMEOUT", "30000"))
     visual_timeout = int(os.environ.get("QS_E2E_VISUAL_TIMEOUT", "30000"))
 
-    with webkit_page(headless=True, viewport=(1600, 4000)) as page:
-        page.goto(embed_url, timeout=page_timeout)
-        wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
+    def _check_l2ft(page: Any) -> None:
         assert_l2ft_plants_visible(
             page, manifest, timeout_ms=visual_timeout,
         )
         assert_l2_exceptions_check_types_present(
             page, timeout_ms=visual_timeout,
         )
+
+    run_dashboard_check_with_retry(
+        qs_identity_client,
+        account_id=harness_cfg.aws_account_id,
+        dashboard_id=dashboard_id,
+        operation=_check_l2ft,
+        page_timeout_ms=page_timeout,
+        viewport=(1600, 4000),
+    )
