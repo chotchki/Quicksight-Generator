@@ -37,6 +37,7 @@ from quicksight_gen.common.tree._helpers import (
     DASHBOARD_ACTIONS,
     GridLayoutElementType,
     _AutoSentinel,
+    auto_id,
 )
 from quicksight_gen.common.tree.actions import Action, Drill
 from quicksight_gen.common.tree.formatting import CellFormat
@@ -105,7 +106,7 @@ def _resolve_field_ids(
             if leaf is None:
                 continue
             if isinstance(getattr(leaf, "field_id", None), _AutoSentinel):
-                leaf.field_id = (  # type: ignore[attr-defined]
+                leaf.field_id = auto_id(  # type: ignore[attr-defined]
                     f"f-{visual_kind}-s{sheet_idx}-v{visual_idx}-{role}{slot_idx}"
                 )
 
@@ -440,6 +441,14 @@ class Sheet:
                     Configuration=LayoutConfiguration(
                         GridLayout=GridLayoutConfiguration(
                             Elements=[s.emit() for s in self.grid_slots],
+                            # M.4.4.10ab — QS UI emits this on every
+                            # GridLayout; its absence breaks the editor.
+                            CanvasSizeOptions={
+                                "ScreenCanvasSizeOptions": {
+                                    "ResizeOption": "FIXED",
+                                    "OptimizedViewPortWidth": "1600px",
+                                },
+                            },
                         ),
                     ),
                 ),
@@ -1096,6 +1105,42 @@ class Analysis:
                 [p.emit() for p in self.parameters]
                 if self.parameters else None
             ),
+            # M.4.4.10ab — three top-level fields QS UI populates on
+            # every analysis. Their absence loads but breaks the editor
+            # when adding visuals/sheets. Shapes mirror the QS-UI
+            # control analysis verified against on 2026-04-29.
+            Options={
+                "WeekStart": "SUNDAY",
+                "QBusinessInsightsStatus": "DISABLED",
+                "ExcludedDataSetArns": [],
+                "CustomActionDefaults": {
+                    "highlightOperation": {
+                        "Trigger": "DATA_POINT_CLICK",
+                    },
+                },
+            },
+            AnalysisDefaults={
+                "DefaultNewSheetConfiguration": {
+                    "InteractiveLayoutConfiguration": {
+                        "Grid": {
+                            "CanvasSizeOptions": {
+                                "ScreenCanvasSizeOptions": {
+                                    "ResizeOption": "FIXED",
+                                    "OptimizedViewPortWidth": "1600px",
+                                },
+                            },
+                        },
+                    },
+                    "SheetContentType": "INTERACTIVE",
+                },
+            },
+            # QueryExecutionOptions: NOT EMITTED. boto3 1.42.97's model
+            # claims the field is accepted on CreateAnalysis but the
+            # serializer raises KeyError mid-serialize. Both with and
+            # without parameter_validation=False. QS auto-fills the
+            # field server-side to {QueryExecutionMode: AUTO} anyway —
+            # the working hand-built control analysis showed the same
+            # value on describe even though it was never sent.
         )
 
 
@@ -1275,7 +1320,7 @@ class App:
                 current = getattr(visual, "visual_id", None)
                 if kind is not None and isinstance(current, _AutoSentinel):
                     visual.visual_id = VisualId(
-                        f"v-{kind}-s{sheet_idx}-{visual_idx}",
+                        auto_id(f"v-{kind}-s{sheet_idx}-{visual_idx}"),
                     )
                 # Field-well leaves — Dim/Measure get position-indexed
                 # field_ids. Walk the slots that exist on this visual
@@ -1295,7 +1340,7 @@ class App:
                 if actions:
                     for action_idx, action in enumerate(actions):
                         if isinstance(action.action_id, _AutoSentinel):
-                            action.action_id = (
+                            action.action_id = auto_id(
                                 f"act-s{sheet_idx}-v{visual_idx}-{action_idx}"
                             )
                         if hasattr(action, "target_sheet") and isinstance(
@@ -1308,24 +1353,33 @@ class App:
                 if kind is not None and isinstance(
                     getattr(ctrl, "control_id", None), _AutoSentinel,
                 ):
-                    ctrl.control_id = f"pc-{kind}-s{sheet_idx}-{ctrl_idx}"
+                    ctrl.control_id = auto_id(
+                        f"pc-{kind}-s{sheet_idx}-{ctrl_idx}"
+                    )
             # Filter controls — auto-IDs scoped to the sheet.
             for ctrl_idx, ctrl in enumerate(sheet.filter_controls):
                 kind = getattr(ctrl, "_AUTO_KIND", None)
                 if kind is not None and isinstance(
                     getattr(ctrl, "control_id", None), _AutoSentinel,
                 ):
-                    ctrl.control_id = f"fc-{kind}-s{sheet_idx}-{ctrl_idx}"
+                    ctrl.control_id = auto_id(
+                        f"fc-{kind}-s{sheet_idx}-{ctrl_idx}"
+                    )
         for fg_idx, fg in enumerate(self.analysis.filter_groups):
             if isinstance(fg.filter_group_id, _AutoSentinel):
-                fg.filter_group_id = FilterGroupId(f"fg-{fg_idx}")
+                fg.filter_group_id = FilterGroupId(auto_id(f"fg-{fg_idx}"))
             for filt_idx, filt in enumerate(fg.filters):
                 kind = getattr(filt, "_AUTO_KIND", None)
                 if kind is not None and isinstance(
                     getattr(filt, "filter_id", None), _AutoSentinel,
                 ):
-                    filt.filter_id = f"f-{kind}-fg{fg_idx}-{filt_idx}"
-        # CalcField names — analysis-scoped position index.
+                    filt.filter_id = auto_id(
+                        f"f-{kind}-fg{fg_idx}-{filt_idx}"
+                    )
+        # CalcField names — analysis-scoped position index. KEPT AS
+        # SLUG: calc field names are analyst-facing (they show in the
+        # field-well dropdowns and visual subtitles); UUIDs would be
+        # unreadable. QS doesn't seem to require UUID-shape for these.
         for calc_idx, calc in enumerate(self.analysis.calc_fields):
             if isinstance(calc.name, _AutoSentinel):
                 calc.name = f"calc-{calc_idx}"

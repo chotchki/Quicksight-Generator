@@ -21,6 +21,7 @@ from quicksight_gen.common.models import (
     ChartAxisLabelOptions,
     KPIConfiguration,
     KPIFieldWells,
+    KPIOptions,
     KPIVisual,
     LineChartAggregatedFieldWells,
     LineChartConfiguration,
@@ -143,6 +144,33 @@ class KPI:
                 ChartConfiguration=KPIConfiguration(
                     FieldWells=KPIFieldWells(
                         Values=[m.emit() for m in self.values] if self.values else None,
+                        # Hand-built KPIs emit explicit empty lists for
+                        # TargetValues + TrendGroups; without them, QS
+                        # rejects KPIOptions with the "Only
+                        # PrimaryValueFontSize display property..."
+                        # error. Apparently QS treats missing different
+                        # from empty even though docs imply both are
+                        # "empty". (M.4.4.8)
+                        TargetValues=[],
+                        TrendGroups=[],
+                    ),
+                    # M.4.4.8 — Without a fully-populated KPIOptions
+                    # block QS silently renders the visual blank
+                    # (verified against a hand-built control KPI on
+                    # 2026-04-29; QS-docs-claim-optional but in
+                    # practice the UI always produces this shape and
+                    # rejects partial shapes at CreateAnalysis time).
+                    # Mirror exactly what QS UI defaults to.
+                    KPIOptions=KPIOptions(
+                        Comparison={"ComparisonMethod": "PERCENT_DIFFERENCE"},
+                        PrimaryValueDisplayType="ACTUAL",
+                        SecondaryValueFontConfiguration={
+                            "FontSize": {"Relative": "EXTRA_LARGE"},
+                        },
+                        Sparkline={"Visibility": "VISIBLE", "Type": "AREA"},
+                        VisualLayoutOptions={
+                            "StandardLayout": {"Type": "VERTICAL"},
+                        },
                     ),
                 ),
             ),

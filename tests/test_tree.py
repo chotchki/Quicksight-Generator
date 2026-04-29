@@ -33,6 +33,7 @@ from quicksight_gen.common.tree import (
     GridSlot,
     IntegerParam,
     Measure,
+    auto_id,
     NumericRangeFilter,
     ParameterBound,
     Sankey,
@@ -1415,7 +1416,7 @@ class TestAutoVisualIds:
         assert kpi.visual_id is AUTO
         app.emit_analysis()
         # Now resolved
-        assert kpi.visual_id == "v-kpi-s0-0"
+        assert kpi.visual_id == auto_id("v-kpi-s0-0")
 
     def test_explicit_visual_id_preserved(self):
         app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
@@ -1447,9 +1448,9 @@ class TestAutoVisualIds:
         kpi_b = row.add_kpi(width=12, title="B", visual_id=VisualId("v-special"))
         kpi_c = row.add_kpi(width=12, title="C")
         app.emit_analysis()
-        assert kpi_a.visual_id == "v-kpi-s0-0"
+        assert kpi_a.visual_id == auto_id("v-kpi-s0-0")
         assert kpi_b.visual_id == "v-special"
-        assert kpi_c.visual_id == "v-kpi-s0-2"
+        assert kpi_c.visual_id == auto_id("v-kpi-s0-2")
 
     def test_kind_prefix_distinguishes_visual_types(self):
         app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
@@ -1469,10 +1470,10 @@ class TestAutoVisualIds:
             weight=Measure.sum(_DS_FOO, "amount"),
         )
         app.emit_analysis()
-        assert kpi.visual_id == "v-kpi-s0-0"
-        assert table.visual_id == "v-table-s0-1"
-        assert bar.visual_id == "v-bar-s0-2"
-        assert sankey.visual_id == "v-sankey-s0-3"
+        assert kpi.visual_id == auto_id("v-kpi-s0-0")
+        assert table.visual_id == auto_id("v-table-s0-1")
+        assert bar.visual_id == auto_id("v-bar-s0-2")
+        assert sankey.visual_id == auto_id("v-sankey-s0-3")
 
     def test_visual_id_is_sheet_scoped(self):
         """First visual on first sheet vs first visual on second sheet —
@@ -1489,8 +1490,8 @@ class TestAutoVisualIds:
         kpi_a = sheet_a.layout.row(height=6).add_kpi(width=12, title="A0")
         kpi_b = sheet_b.layout.row(height=6).add_kpi(width=12, title="B0")
         app.emit_analysis()
-        assert kpi_a.visual_id == "v-kpi-s0-0"
-        assert kpi_b.visual_id == "v-kpi-s1-0"
+        assert kpi_a.visual_id == auto_id("v-kpi-s0-0")
+        assert kpi_b.visual_id == auto_id("v-kpi-s1-0")
 
 
 class TestAutoFilterGroupIds:
@@ -1508,7 +1509,7 @@ class TestAutoFilterGroupIds:
         sheet.scope(fg, [kpi])
         assert fg.filter_group_id is AUTO
         app.emit_analysis()
-        assert fg.filter_group_id == "fg-0"
+        assert fg.filter_group_id == auto_id("fg-0")
 
     def test_explicit_filter_group_id_preserved(self):
         app = App(name="t", cfg=_TEST_CFG, allow_bare_strings=True)
@@ -1802,9 +1803,9 @@ class TestFilterDropdown:
         sheet.add_filter_dropdown(filter=f, title="A")
         app.emit_analysis()
         # Auto-IDs resolved
-        assert f.filter_id == "f-category-fg0-0"
+        assert f.filter_id == auto_id("f-category-fg0-0")
         # The dropdown picked it up
-        assert sheet.filter_controls[0].emit().Dropdown.SourceFilterId == "f-category-fg0-0"
+        assert sheet.filter_controls[0].emit().Dropdown.SourceFilterId == auto_id("f-category-fg0-0")
 
 
 class TestFilterSlider:
@@ -1865,7 +1866,7 @@ class TestControlAutoIds:
         )
         assert ctrl.control_id is AUTO
         app.emit_analysis()
-        assert ctrl.control_id == "pc-slider-s0-0"
+        assert ctrl.control_id == auto_id("pc-slider-s0-0")
 
     def test_filter_control_auto_id(self):
         f = CategoryFilter.with_values(
@@ -1884,7 +1885,7 @@ class TestControlAutoIds:
         ctrl = sheet.add_filter_dropdown(filter=f, title="X")
         assert ctrl.control_id is AUTO
         app.emit_analysis()
-        assert ctrl.control_id == "fc-dropdown-s0-0"
+        assert ctrl.control_id == auto_id("fc-dropdown-s0-0")
 
 
 class TestSheetEmitsFilterControls:
@@ -1982,7 +1983,7 @@ class TestDrillEmit:
         assert action.action_id is AUTO
         app.emit_analysis()
         # auto-IDed: act-s{sheet_idx}-v{visual_idx}-{action_idx}
-        assert action.action_id == "act-s0-v0-0"
+        assert action.action_id == auto_id("act-s0-v0-0")
 
     def test_drill_target_sheet_must_be_registered(self):
         """Drill into a sheet that isn't on the analysis raises at

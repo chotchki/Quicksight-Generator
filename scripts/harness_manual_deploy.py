@@ -56,6 +56,11 @@ def main() -> int:
     cfg = load_config(str(_REPO / "run" / "config.yaml"))
     hcfg = dataclasses.replace(
         cfg,
+        # Clear the pre-derived datasource_arn so __post_init__ re-derives
+        # it with the new l2_instance_prefix in the path. Without this,
+        # datasets get created referencing the unprefixed datasource ARN
+        # (which doesn't exist) — same pattern the harness_cfg fixture uses.
+        datasource_arn=None,
         extra_tags={"TestUid": prefix, "Harness": "manual"},
         l2_instance_prefix=prefix,
     )

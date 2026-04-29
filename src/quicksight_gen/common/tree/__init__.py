@@ -161,7 +161,7 @@ from quicksight_gen.common.tree.structure import (
     Sheet,
     SheetLayout,
 )
-from quicksight_gen.common.tree._helpers import AUTO, AutoResolved
+from quicksight_gen.common.tree._helpers import AUTO, AutoResolved, auto_id
 from quicksight_gen.common.tree.text_boxes import TextBox
 from quicksight_gen.common.tree.visuals import (
     KPI,
@@ -175,6 +175,8 @@ from quicksight_gen.common.tree.visuals import (
 __all__ = [
     # AUTO sentinel (L.1.18 — fields the App walker fills in later)
     "AUTO", "AutoResolved",
+    # auto_id helper — for tests asserting on tree-position-derived UUIDs
+    "auto_id",
     # Datasets
     "Dataset", "Column",
     # Calc fields

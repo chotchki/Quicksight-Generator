@@ -546,7 +546,22 @@ class KPIFieldWells:
 
 @dataclass
 class KPIOptions:
+    """KPI display options.
+
+    QS rejects partial KPIOptions when the field-well has no
+    TargetValue/TrendGroup (verified against hand-built control
+    KPI on 2026-04-29 — `KPIOptions(PrimaryValueDisplayType="ACTUAL")`
+    alone got rejected with "Only PrimaryValueFontSize display
+    property can be defined..."). The hand-built shape — Comparison +
+    PrimaryValueDisplayType + SecondaryValueFontConfiguration +
+    Sparkline + VisualLayoutOptions — is the smallest set QS UI
+    produces and accepts. Tree's KPI.emit() defaults to that shape.
+    """
+    Comparison: dict[str, Any] | None = None
     PrimaryValueDisplayType: str | None = None  # HIDDEN|COMPARISON|ACTUAL
+    SecondaryValueFontConfiguration: dict[str, Any] | None = None
+    Sparkline: dict[str, Any] | None = None
+    VisualLayoutOptions: dict[str, Any] | None = None
 
 
 @dataclass
@@ -1042,6 +1057,13 @@ class GridLayoutElement:
 @dataclass
 class GridLayoutConfiguration:
     Elements: list[GridLayoutElement]
+    # M.4.4.10ab — QS UI emits CanvasSizeOptions inside every GridLayout.
+    # Without it the editor fails when adding visuals (verified against
+    # hand-built control on 2026-04-29). dict[str, Any] for now —
+    # the shape is `{ScreenCanvasSizeOptions: {ResizeOption: FIXED,
+    # OptimizedViewPortWidth: "1600px"}}`. Promote to typed dataclass
+    # if a third call site needs it.
+    CanvasSizeOptions: dict[str, Any] | None = None
 
 
 @dataclass
@@ -1185,6 +1207,14 @@ class AnalysisDefinition:
     FilterGroups: list[FilterGroup] | None = None
     ParameterDeclarations: list[ParameterDeclaration] | None = None
     CalculatedFields: list[dict[str, Any]] | None = None
+    # M.4.4.10ab — three top-level fields QS UI emits + appears to
+    # require for editor compat. Without them the analysis loads but
+    # adding visuals/sheets through the editor fails (verified against
+    # hand-built control on 2026-04-29). dict[str, Any] until a typed
+    # API materializes; defaults match QS UI's outputs exactly.
+    Options: dict[str, Any] | None = None
+    AnalysisDefaults: dict[str, Any] | None = None
+    QueryExecutionOptions: dict[str, Any] | None = None
 
 
 @dataclass

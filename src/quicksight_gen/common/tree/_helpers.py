@@ -23,12 +23,34 @@ wiring site.
 from __future__ import annotations
 
 import enum
+import uuid
 from typing import Final, Literal
 
 from quicksight_gen.common.models import (
     VisualSubtitleLabelOptions,
     VisualTitleLabelOptions,
 )
+
+
+# Project-pinned namespace for deterministic UUID v5s on tree-position
+# slugs. QS UI defaults VisualId / FilterGroupId / etc. to UUID-shape
+# strings; positional slugs (`v-kpi-s11-0`) appear to break the editor
+# even though Create succeeds. UUID v5 keeps determinism (same slug →
+# same UUID) so unit tests can compute expected values via the same
+# helper.
+_AUTO_ID_NAMESPACE: Final = uuid.uuid5(
+    uuid.NAMESPACE_DNS, "quicksight-gen.tree.auto-id",
+)
+
+
+def auto_id(slug: str) -> str:
+    """Deterministic UUID v5 from a tree-position slug.
+
+    Same input → same UUID across runs (test stability) AND across
+    machines. Output matches QS's UUID format so the editor accepts
+    it. (M.4.4.10c)
+    """
+    return str(uuid.uuid5(_AUTO_ID_NAMESPACE, slug))
 
 
 # ---------------------------------------------------------------------------

@@ -936,13 +936,18 @@ def test_money_trail_sheet_serializes_to_aws_json():
     # 3 parameter controls (root dropdown + 2 sliders), no FilterControls.
     assert sheet.get("FilterControls", []) == []
     assert len(sheet["ParameterControls"]) == 3
-    # Sankey visual surfaces with its dataclass key.
     # Sankey visual surfaces with its dataclass key. Visual_id is
-    # auto-derived (L.1.21); just confirm the wrapper key exists.
+    # auto-derived as a UUID v5 from the position slug (M.4.4.10c);
+    # just confirm the wrapper key exists with a UUID-shape value.
+    import re as _re
     sankey = next(
         v for v in sheet["Visuals"] if "SankeyDiagramVisual" in v
     )
-    assert sankey["SankeyDiagramVisual"]["VisualId"].startswith("v-sankey-")
+    vid = sankey["SankeyDiagramVisual"]["VisualId"]
+    assert _re.match(
+        r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        vid,
+    ), f"VisualId {vid!r} should be UUID-shape"
 
 
 # ---------------------------------------------------------------------------

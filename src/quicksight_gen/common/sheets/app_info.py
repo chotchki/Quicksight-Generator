@@ -132,13 +132,13 @@ def _matview_status_sql(view_names: list[str]) -> str:
 def build_liveness_dataset(cfg: Config) -> DataSet:
     """Trivial liveness query against information_schema.
 
-    SQL is universal — same bytes for every app. Returns one row
+    SQL is universal -- same bytes for every app. Returns one row
     with the count of public-schema tables.
     """
     return build_dataset(
         cfg,
         cfg.prefixed("app-info-liveness-dataset"),
-        "App Info — Liveness",
+        "App Info -- Liveness",  # ASCII-only — testing QS em-dash hypothesis
         "app-info-liveness",
         LIVENESS_SQL,
         LIVENESS_CONTRACT,
@@ -159,7 +159,7 @@ def build_matview_status_dataset(
     return build_dataset(
         cfg,
         cfg.prefixed("app-info-matviews-dataset"),
-        "App Info — Matview Status",
+        "App Info -- Matview Status",  # ASCII-only
         "app-info-matviews",
         _matview_status_sql(view_names),
         MATVIEW_STATUS_CONTRACT,
@@ -225,8 +225,8 @@ def populate_app_info_sheet(
         title="Liveness",
         subtitle=(
             "Count of public-schema tables. Real query against the "
-            "database via Direct Query — if this shows a number, "
-            "QuickSight's rendering pipeline is healthy. Blank ⇒ "
+            "database via Direct Query -- if this shows a number, "
+            "QuickSight's rendering pipeline is healthy. Blank means "
             "QuickSight itself is broken (not the data, not the SQL)."
         ),
         values=[liveness_ds["table_count"].sum()],
@@ -236,7 +236,7 @@ def populate_app_info_sheet(
         title="Matview Status",
         subtitle=(
             "Row counts for materialized views the dashboard reads. "
-            "Freshly-loaded matviews showing 0 ⇒ the ETL hasn't "
+            "Freshly-loaded matviews showing 0 means the ETL has not "
             "refreshed them yet."
         ),
         columns=[
