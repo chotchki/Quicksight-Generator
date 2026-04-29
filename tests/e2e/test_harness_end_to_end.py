@@ -729,12 +729,23 @@ def test_harness_l1_planted_scenarios_visible(
         # the default 7-day rolling window still surface. The harness
         # uses today=date.today() for the seed (M.4.1.k bug fix —
         # otherwise stuck_pending/stuck_unbundled matviews compute
-        # negative ages and never match), so a 30-day window comfortably
-        # covers every plant kind's max days_ago.
+        # negative ages and never match). Window must comfortably span
+        # max(days_ago across the manifest) — the cap-aware stuck_*
+        # plants from M.4.4.13 can sit at days_ago=cap+7 (e.g., P31D
+        # cap → 38 days), exceeding any fixed default.
+        max_days_ago = max(
+            (
+                int(plant["days_ago"])
+                for plants in manifest.values()
+                for plant in plants
+                if isinstance(plant, dict) and "days_ago" in plant
+            ),
+            default=30,
+        )
         widen_l1_date_range(
             page,
             today=harness_deployed["today"],
-            days_back=30,
+            days_back=max_days_ago + 7,  # buffer past the deepest plant
             timeout_ms=visual_timeout,
         )
         assert_l1_plants_visible(
