@@ -71,7 +71,7 @@ from quicksight_gen.common.tree.structure import Sheet
 from quicksight_gen.common.tree.text_boxes import TextBox
 
 
-APP_INFO_SHEET_NAME = "i"
+APP_INFO_SHEET_NAME = "Info"  # Renamed from "i" — testing whether QS hides single-char tab names
 APP_INFO_SHEET_TITLE = "App Info"
 APP_INFO_SHEET_DESCRIPTION = (
     "Diagnostic canary. The Liveness KPI runs a real query against "

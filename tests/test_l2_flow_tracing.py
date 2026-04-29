@@ -178,7 +178,7 @@ def test_six_sheets_in_display_order() -> None:
     assert app.analysis is not None
     assert [s.name for s in app.analysis.sheets] == [
         "Getting Started", "Rails", "Chains",
-        "Transfer Templates", "L2 Exceptions", "i",
+        "Transfer Templates", "L2 Exceptions", "Info",
     ]
 
 

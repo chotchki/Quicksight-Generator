@@ -118,7 +118,7 @@ def test_twelve_sheets_after_m445() -> None:
         "Overdraft", "Limit Breach",
         "Pending Aging", "Unbundled Aging", "Supersession Audit",
         "Today's Exceptions", "Daily Statement", "Transactions",
-        "i",  # M.4.4.5 — App Info canary, always last
+        "Info",  # M.4.4.5 — App Info canary, always last
     ]
 
 
