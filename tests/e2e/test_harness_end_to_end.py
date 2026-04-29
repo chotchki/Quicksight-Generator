@@ -63,6 +63,12 @@ from _harness_seed import (  # noqa: E402
     apply_db_seed,
     build_planted_manifest,
 )
+from _harness_deploy import (  # noqa: E402
+    HARNESS_APPS,
+    build_embed_urls,
+    extract_dashboard_ids,
+    generate_apps,
+)
 
 # L2_INSTANCES matrix: re-use the exact list `test_l2_seed_contract.py`
 # uses so adding a new YAML there parameterizes the harness too.
@@ -218,6 +224,80 @@ def harness_seeded(harness_db_conn: Any, harness_l2: L2Instance):
 
 
 @pytest.fixture
+def harness_deployed(
+    tmp_path: Path,
+    harness_seeded: dict[str, Any],
+    harness_cfg: Config,
+    harness_qs_cleanup: None,
+) -> dict[str, Any]:
+    """Generate + deploy both apps + build embed URLs (M.4.1.c).
+
+    Pulls together the M.4.1.b harness_seeded handle and the
+    M.4.1.a harness_qs_cleanup teardown, then runs the deploy chain:
+
+    1. ``generate_apps`` writes theme + per-app analysis/dashboard +
+       per-dataset JSON to ``tmp_path``. Datasource skipped (uses
+       cfg.datasource_arn from env).
+    2. ``common.deploy.deploy()`` does the delete-then-create dance
+       on QS for both apps' resources, waits for
+       ``CREATION_SUCCESSFUL``. The harness's ``cfg.tags()`` carry
+       the M.4.1.a TestUid + Harness tags so every created resource
+       is reapable by the cleanup fixture's tag-filter sweep.
+    3. ``extract_dashboard_ids`` reads the dashboard JSONs back to
+       recover the QS DashboardId per app.
+    4. ``build_embed_urls`` generates one signed embed URL per
+       dashboard via the identity-region QS client.
+
+    Depends on ``harness_qs_cleanup`` (the underscore-prefixed
+    pytest declaration is fine — pytest evaluates fixture dependencies
+    by name, so requesting ``harness_qs_cleanup`` ensures the
+    teardown runs after this test exits) so even a mid-deploy
+    failure gets reaped.
+
+    Returns ``{instance, prefix, planted_manifest, dashboard_ids,
+    embed_urls}`` for the M.4.1.d/.e Playwright assertions.
+    """
+    from quicksight_gen.common.deploy import deploy as deploy_apps
+
+    out_dir = tmp_path / "harness_out"
+    instance = harness_seeded["instance"]
+
+    # 1. Generate JSON for both apps.
+    generate_apps(harness_cfg, instance, out_dir)
+
+    # 2. Deploy via the existing CLI deploy (delete-then-create +
+    # CREATION_SUCCESSFUL wait). Returns 0 on success.
+    rc = deploy_apps(harness_cfg, out_dir, list(HARNESS_APPS))
+    if rc != 0:
+        raise RuntimeError(
+            f"harness deploy failed for prefix "
+            f"{harness_cfg.l2_instance_prefix!r}; see deploy stdout"
+        )
+
+    # 3. Recover dashboard IDs from the JSON the deploy step sent.
+    dashboard_ids = extract_dashboard_ids(out_dir)
+
+    # 4. Build per-test embed URLs. Identity-region client (us-east-1)
+    # — the dashboard region is irrelevant for embed-URL signing.
+    import boto3
+    from tests.e2e.conftest import IDENTITY_REGION
+    qs_identity = boto3.client("quicksight", region_name=IDENTITY_REGION)
+    embed_urls = build_embed_urls(
+        qs_identity,
+        harness_cfg.aws_account_id,
+        dashboard_ids,
+    )
+
+    return {
+        "instance": instance,
+        "prefix": harness_seeded["prefix"],
+        "planted_manifest": harness_seeded["planted_manifest"],
+        "dashboard_ids": dashboard_ids,
+        "embed_urls": embed_urls,
+    }
+
+
+@pytest.fixture
 def harness_qs_cleanup(harness_cfg: Config, harness_uid: str):
     """Yield, then sweep every QS resource carrying ``TestUid: <uid>``.
 
@@ -361,3 +441,49 @@ def test_harness_seeded_fixture_lands_with_manifest(
         "broad mode should plant rail firings for every L2 instance "
         "with at least one Rail whose roles materialize"
     )
+
+
+# ---------------------------------------------------------------------------
+# M.4.1.c smoke — deploy fixture lands both apps + builds embed URLs
+# ---------------------------------------------------------------------------
+
+
+def test_harness_deployed_fixture_lands_with_embed_urls(
+    harness_deployed: dict[str, Any],
+) -> None:
+    """The full deploy chain (generate → deploy → extract IDs →
+    build embed URLs) runs cleanly and returns one URL per app.
+
+    Sanity-checks the M.4.1.d/.e contract: both apps' dashboard ids
+    + embed URLs are present and well-shaped. The planted_manifest
+    + instance + prefix from M.4.1.b survive through the chain.
+
+    Skipped under default pytest (no QS_GEN_E2E); requires QS account
+    + region + datasource ARN env vars set, and Aurora available
+    (transitively via M.4.1.b's harness_seeded dependency).
+    """
+    # Both apps deployed.
+    dashboard_ids = harness_deployed["dashboard_ids"]
+    assert set(dashboard_ids.keys()) == set(HARNESS_APPS)
+
+    # Each dashboard ID carries the per-test L2 prefix (M.2d.3).
+    prefix = harness_deployed["prefix"]
+    expected_id_prefix = f"qs-gen-{prefix}-"
+    for app_name, dashboard_id in dashboard_ids.items():
+        assert dashboard_id.startswith(expected_id_prefix), (
+            f"{app_name} dashboard_id {dashboard_id!r} doesn't carry "
+            f"per-test prefix {expected_id_prefix!r} — check cfg flow"
+        )
+
+    # Embed URLs match the dashboard ids 1:1 and look like signed URLs.
+    embed_urls = harness_deployed["embed_urls"]
+    assert set(embed_urls.keys()) == set(HARNESS_APPS)
+    for app_name, url in embed_urls.items():
+        assert url.startswith("https://"), (
+            f"{app_name} embed URL {url!r} doesn't look like a signed URL"
+        )
+
+    # M.4.1.b handles still present (so M.4.1.d/.e can iterate plants).
+    assert harness_deployed["instance"] is not None
+    assert harness_deployed["prefix"] == prefix
+    assert "rail_firing_plants" in harness_deployed["planted_manifest"]
