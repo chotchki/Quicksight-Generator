@@ -689,8 +689,11 @@ def build_all_l1_dashboard_datasets(
         build_supersession_transactions_dataset(cfg, l2_instance),
         build_supersession_daily_balances_dataset(cfg, l2_instance),
         # M.4.4.5 — App Info ("i") sheet datasets, ALWAYS LAST.
-        build_liveness_dataset(cfg),
+        # M.4.4.7 — per-app segment so deploy <single-app> doesn't
+        # delete-then-create another app's App Info dataset.
+        build_liveness_dataset(cfg, app_segment="l1"),
         build_matview_status_dataset(
-            cfg, view_names=l1_matview_names(l2_instance),
+            cfg, app_segment="l1",
+            view_names=l1_matview_names(l2_instance),
         ),
     ]

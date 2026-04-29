@@ -29,9 +29,10 @@ from quicksight_gen.common.sheets.app_info import (
 )
 
 # In _l1_datasets (or equivalent):
-liveness_aws = build_liveness_dataset(cfg)
+liveness_aws = build_liveness_dataset(cfg, app_segment="l1")
 matviews_aws = build_matview_status_dataset(
-    cfg, view_names=[f"{l2_prefix}_drift", f"{l2_prefix}_overdraft", ...],
+    cfg, app_segment="l1",
+    view_names=[f"{l2_prefix}_drift", f"{l2_prefix}_overdraft", ...],
 )
 liveness_ds = Dataset(identifier=DS_APP_INFO_LIVENESS,
                      arn=cfg.dataset_arn(liveness_aws.DataSetId))
@@ -129,15 +130,25 @@ def _matview_status_sql(view_names: list[str]) -> str:
     return "\nUNION ALL\n".join(parts)
 
 
-def build_liveness_dataset(cfg: Config) -> DataSet:
+def build_liveness_dataset(cfg: Config, *, app_segment: str) -> DataSet:
     """Trivial liveness query against information_schema.
 
     SQL is universal -- same bytes for every app. Returns one row
     with the count of public-schema tables.
+
+    ``app_segment``: short kebab-case tag identifying which app owns
+    this Dataset (e.g., ``"l1"``, ``"exec"``, ``"inv"``, ``"l2ft"``).
+    Becomes part of the AWS DataSetId so each app gets its own
+    physical dataset and ``deploy <single-app>`` doesn't delete-then-
+    create another app's App Info dataset out from under it (M.4.4.7).
+    The visual_identifier (``DS_APP_INFO_LIVENESS``) stays shared
+    because it's analysis-internal — every app's analysis JSON has
+    its own ``DataSetIdentifierDeclaration`` mapping the same logical
+    name to its own per-app ARN.
     """
     return build_dataset(
         cfg,
-        cfg.prefixed("app-info-liveness-dataset"),
+        cfg.prefixed(f"{app_segment}-app-info-liveness-dataset"),
         "App Info -- Liveness",  # ASCII-only — testing QS em-dash hypothesis
         "app-info-liveness",
         LIVENESS_SQL,
@@ -147,7 +158,7 @@ def build_liveness_dataset(cfg: Config) -> DataSet:
 
 
 def build_matview_status_dataset(
-    cfg: Config, *, view_names: list[str],
+    cfg: Config, *, app_segment: str, view_names: list[str],
 ) -> DataSet:
     """Per-matview row count table.
 
@@ -155,10 +166,12 @@ def build_matview_status_dataset(
     monitor (caller decides which ones matter for this app — typically
     the L1 invariant matviews + any app-specific ones, e.g. the L2-
     instance-prefixed names like ``sasquatch_ar_drift``).
+
+    ``app_segment``: see ``build_liveness_dataset``.
     """
     return build_dataset(
         cfg,
-        cfg.prefixed("app-info-matviews-dataset"),
+        cfg.prefixed(f"{app_segment}-app-info-matviews-dataset"),
         "App Info -- Matview Status",  # ASCII-only
         "app-info-matviews",
         _matview_status_sql(view_names),

@@ -256,8 +256,8 @@ def test_investigation_datasets_in_expected_order():
     assert datasets[2].DataSetId == _TEST_CFG.prefixed("inv-money-trail-dataset")
     assert datasets[3].DataSetId == _TEST_CFG.prefixed("inv-account-network-dataset")
     assert datasets[4].DataSetId == _TEST_CFG.prefixed("inv-anetwork-accounts-dataset")
-    assert datasets[5].DataSetId == _TEST_CFG.prefixed("app-info-liveness-dataset")
-    assert datasets[6].DataSetId == _TEST_CFG.prefixed("app-info-matviews-dataset")
+    assert datasets[5].DataSetId == _TEST_CFG.prefixed("inv-app-info-liveness-dataset")
+    assert datasets[6].DataSetId == _TEST_CFG.prefixed("inv-app-info-matviews-dataset")
 
 
 def test_investigation_datasets_declared_in_analysis():

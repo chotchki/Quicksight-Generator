@@ -408,9 +408,12 @@ def build_all_l2_flow_tracing_datasets(
         build_tt_legs_dataset(cfg, l2_instance),
         build_unified_l2_exceptions_dataset(cfg, l2_instance),
         # M.4.4.5 — App Info ("i") sheet datasets, ALWAYS LAST.
-        build_liveness_dataset(cfg),
+        # M.4.4.7 — per-app segment so deploy <single-app> doesn't
+        # delete-then-create another app's App Info dataset.
+        build_liveness_dataset(cfg, app_segment="l2ft"),
         build_matview_status_dataset(
-            cfg, view_names=l2ft_matview_names(l2_instance),
+            cfg, app_segment="l2ft",
+            view_names=l2ft_matview_names(l2_instance),
         ),
     ]
 

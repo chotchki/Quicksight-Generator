@@ -97,3 +97,40 @@ def test_app_info_datasets_declared(builder):
         f"{app.name} is missing {DS_APP_INFO_MATVIEWS!r} — the "
         f"matview status table dataset isn't registered."
     )
+
+
+def test_no_two_apps_share_an_app_info_data_set_id():
+    """Each shipped app's App Info datasets carry a per-app segment in
+    their AWS DataSetId so deploying app A doesn't delete-then-create
+    app B's App Info dataset out from under it (M.4.4.7).
+
+    The Dataset's tree-internal ``identifier`` (used as
+    ``DataSetIdentifier`` in the analysis JSON) stays shared across
+    apps — that's analysis-internal and each app's analysis has its
+    own ``DataSetIdentifierDeclaration`` mapping to its own ARN. What
+    must NOT collide is the AWS-side resource ID, which we derive
+    here by parsing each Dataset's ARN trailing segment.
+    """
+    from quicksight_gen.common.sheets.app_info import (
+        build_liveness_dataset, build_matview_status_dataset,
+    )
+
+    aws_ids: dict[str, set[str]] = {}
+    for app_segment in ("l1", "exec", "inv", "l2ft"):
+        liveness = build_liveness_dataset(_CFG, app_segment=app_segment)
+        matviews = build_matview_status_dataset(
+            _CFG, app_segment=app_segment, view_names=[],
+        )
+        aws_ids[app_segment] = {liveness.DataSetId, matviews.DataSetId}
+
+    # Pairwise: every app's ID set must be disjoint from every other.
+    seen_ids: set[str] = set()
+    for app_segment, ids in aws_ids.items():
+        overlap = ids & seen_ids
+        assert not overlap, (
+            f"app {app_segment!r} App Info DataSetIds {overlap!r} "
+            f"already used by an earlier app — deploy <single-app> "
+            f"would collide. Update the app_segment passed to "
+            f"build_liveness_dataset / build_matview_status_dataset."
+        )
+        seen_ids |= ids

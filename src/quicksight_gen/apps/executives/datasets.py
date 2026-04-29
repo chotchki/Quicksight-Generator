@@ -168,8 +168,12 @@ def build_all_datasets(cfg: Config) -> list[DataSet]:
         build_transaction_summary_dataset(cfg),
         build_account_summary_dataset(cfg),
         # M.4.4.5 — App Info ("i") sheet datasets, ALWAYS LAST.
-        build_liveness_dataset(cfg),
-        build_matview_status_dataset(cfg, view_names=EXEC_MATVIEW_NAMES),
+        # M.4.4.7 — per-app segment so deploy <single-app> doesn't
+        # delete-then-create another app's App Info dataset.
+        build_liveness_dataset(cfg, app_segment="exec"),
+        build_matview_status_dataset(
+            cfg, app_segment="exec", view_names=EXEC_MATVIEW_NAMES,
+        ),
     ]
 
 

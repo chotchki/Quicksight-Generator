@@ -1009,9 +1009,12 @@ def _build_app_info_sheet(cfg: Config, app: App, analysis: Analysis) -> None:
     """
     from quicksight_gen.apps.investigation.datasets import INV_MATVIEW_NAMES
 
-    liveness_aws = build_liveness_dataset(cfg)
+    # M.4.4.7 — per-app segment matches the inv-segmented call in
+    # apps/investigation/datasets.py::build_all_datasets so the
+    # contract-registry idempotence check sees the same DataSetIds.
+    liveness_aws = build_liveness_dataset(cfg, app_segment="inv")
     matviews_aws = build_matview_status_dataset(
-        cfg, view_names=INV_MATVIEW_NAMES,
+        cfg, app_segment="inv", view_names=INV_MATVIEW_NAMES,
     )
     liveness_ds = app.add_dataset(Dataset(
         identifier=DS_APP_INFO_LIVENESS,

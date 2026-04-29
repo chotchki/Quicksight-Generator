@@ -117,10 +117,10 @@ def test_datasets_in_expected_order():
         "exec-account-summary-dataset",
     )
     assert datasets[2].DataSetId == _TEST_CFG.prefixed(
-        "app-info-liveness-dataset",
+        "exec-app-info-liveness-dataset",
     )
     assert datasets[3].DataSetId == _TEST_CFG.prefixed(
-        "app-info-matviews-dataset",
+        "exec-app-info-matviews-dataset",
     )
 
 
