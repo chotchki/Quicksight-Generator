@@ -92,17 +92,6 @@ def qs_client(region):
 
 
 @pytest.fixture(scope="session")
-def qs_identity_client():
-    """Boto3 QuickSight client for the identity region (us-east-1).
-
-    QuickSight user operations and embed URL generation must use
-    the identity region, which may differ from the dashboard region.
-    """
-    import boto3
-    return boto3.client("quicksight", region_name=IDENTITY_REGION)
-
-
-@pytest.fixture(scope="session")
 def dashboard_id(resource_prefix) -> str:
     return f"{resource_prefix}-payment-recon-dashboard"
 

@@ -25,7 +25,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import boto3
 from playwright.sync_api import TimeoutError as PWTimeoutError
 from quicksight_gen.common.browser.helpers import (
     _open_control_dropdown,
@@ -367,7 +366,6 @@ def main() -> int:
         return 1
 
     cfg = load_config(str(config_path))
-    qs = boto3.client("quicksight", region_name=cfg.aws_region)
 
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 
@@ -380,8 +378,8 @@ def main() -> int:
         print(f"==> {dashboard_id} ({len(shots)} shots)")
 
         embed_url = generate_dashboard_embed_url(
-            qs_identity_client=qs,
-            account_id=cfg.aws_account_id,
+            aws_account_id=cfg.aws_account_id,
+            aws_region=cfg.aws_region,
             dashboard_id=dashboard_id,
         )
 

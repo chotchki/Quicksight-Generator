@@ -1,4 +1,4 @@
-"""Unit tests for ``tests/e2e/_harness_browser.py`` (M.4.1.g).
+"""Unit tests for ``tests/e2e/_harness_browser.py`` (M.4.1.g, M.4.1.i).
 
 The retry helper's two contracts:
 
@@ -10,14 +10,13 @@ The retry helper's two contracts:
    On each retry the helper calls ``generate_dashboard_embed_url``
    again so the second attempt has a fresh single-use token.
 
-Both behaviors are exercised here against a fake QS client (records
-``generate_embed_url_for_registered_user`` calls) + a fake
-``webkit_page`` substitute (monkeypatched in via
-``quicksight_gen.common.browser.helpers``). No real Playwright,
-no real boto3.
+Both behaviors are exercised here against a fake boto3 client (the
+helper builds the client internally now — M.4.1.i tightening — so we
+monkeypatch boto3.client to return a tracking MagicMock) + a fake
+``webkit_page`` substitute. No real Playwright, no real boto3 calls.
 
 Lives at the project test root so it runs in default ``pytest``
-(no ``QS_GEN_E2E`` gate needed — it's pure-data unit tests).
+(no ``QS_GEN_E2E`` gate needed — pure-data unit tests).
 """
 
 from __future__ import annotations
@@ -52,22 +51,51 @@ from _harness_browser import run_dashboard_check_with_retry  # noqa: E402
 # ---------------------------------------------------------------------------
 
 
-def _fake_qs_client(url_prefix: str = "https://quicksight.aws/embed/") -> MagicMock:
-    """psycopg2-style mock returning a unique embed URL each call.
+def _patch_boto3_client(
+    monkeypatch: pytest.MonkeyPatch,
+    url_prefix: str = "https://quicksight.aws/embed/",
+) -> MagicMock:
+    """Monkeypatch ``boto3.client`` so the helper-under-test gets a
+    tracking MagicMock instead of a real boto3 QuickSight client.
 
-    Every call to ``generate_embed_url_for_registered_user`` returns a
-    monotonically-incrementing URL so the test can prove a retry
-    actually called the API a second time.
+    Returns the MagicMock so the test can assert against
+    ``call_count`` / ``call_args`` on
+    ``generate_embed_url_for_registered_user``.
+
+    Each ``generate_embed_url_for_registered_user`` call returns a
+    monotonically-incrementing URL so a retry test can prove a second
+    URL was actually issued (not a stale one reused).
+
+    Asserts ``region_name`` is passed through — the M.4.1.i fix made
+    the helper build the client itself, so the test needs to confirm
+    the caller's region reaches the boto3.client call (otherwise the
+    "make wrong-region bug unrepresentable" claim doesn't hold).
     """
-    client = MagicMock()
+    fake_client = MagicMock()
     counter = {"n": 0}
 
-    def _gen(**kwargs):
+    def _gen(**kwargs: Any) -> dict[str, str]:
         counter["n"] += 1
         return {"EmbedUrl": f"{url_prefix}{counter['n']}"}
 
-    client.generate_embed_url_for_registered_user.side_effect = _gen
-    return client
+    fake_client.generate_embed_url_for_registered_user.side_effect = _gen
+
+    captured_regions: list[str] = []
+
+    def _fake_boto3_client(service: str, region_name: str | None = None, **kw: Any):
+        assert service == "quicksight", (
+            f"helper should only build QS clients, got {service!r}"
+        )
+        assert region_name is not None, (
+            "helper must pass region_name to boto3.client (otherwise "
+            "the wrong-region-client bug class is back)"
+        )
+        captured_regions.append(region_name)
+        return fake_client
+
+    monkeypatch.setattr("boto3.client", _fake_boto3_client)
+    fake_client._captured_regions = captured_regions  # type: ignore[attr-defined]
+    return fake_client
 
 
 class _FakePage:
@@ -122,7 +150,7 @@ def test_first_attempt_success_calls_qs_once(
 ) -> None:
     """No retry on success — exactly one embed URL generated, exactly
     one operation call, one ``page.goto``."""
-    qs = _fake_qs_client()
+    qs = _patch_boto3_client(monkeypatch)
     page = _FakePage()
     _patch_webkit_page(monkeypatch, page)
 
@@ -132,8 +160,8 @@ def test_first_attempt_success_calls_qs_once(
         op_calls.append(p)
 
     run_dashboard_check_with_retry(
-        qs,
-        account_id="111122223333",
+        aws_account_id="111122223333",
+        aws_region="us-east-2",
         dashboard_id="dash-123",
         operation=operation,
         page_timeout_ms=30_000,
@@ -142,6 +170,9 @@ def test_first_attempt_success_calls_qs_once(
     assert qs.generate_embed_url_for_registered_user.call_count == 1
     assert len(page.gotos) == 1
     assert len(op_calls) == 1
+    # Region threaded through to the boto3.client call (proves the
+    # M.4.1.i type-tightening still holds).
+    assert qs._captured_regions == ["us-east-2"]
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +185,7 @@ def test_assertion_error_propagates_no_retry(
 ) -> None:
     """A real test failure must NOT trigger the QS retry path —
     swallowing AssertionError would mask regressions."""
-    qs = _fake_qs_client()
+    qs = _patch_boto3_client(monkeypatch)
     page = _FakePage()
     _patch_webkit_page(monkeypatch, page)
 
@@ -163,8 +194,8 @@ def test_assertion_error_propagates_no_retry(
 
     with pytest.raises(AssertionError, match="planted row missing"):
         run_dashboard_check_with_retry(
-            qs,
-            account_id="111122223333",
+            aws_account_id="111122223333",
+            aws_region="us-east-2",
             dashboard_id="dash-x",
             operation=operation,
             page_timeout_ms=30_000,
@@ -187,7 +218,7 @@ def test_timeout_then_success_retries_once_with_fresh_url(
     different URL (proves the retry didn't reuse the spent one)."""
     from playwright.sync_api import TimeoutError as PWTimeout
 
-    qs = _fake_qs_client()
+    qs = _patch_boto3_client(monkeypatch)
     page = _FakePage()
     _patch_webkit_page(monkeypatch, page)
 
@@ -200,8 +231,8 @@ def test_timeout_then_success_retries_once_with_fresh_url(
         # Second attempt: succeed.
 
     run_dashboard_check_with_retry(
-        qs,
-        account_id="111122223333",
+        aws_account_id="111122223333",
+        aws_region="us-east-2",
         dashboard_id="dash-flake",
         operation=operation,
         page_timeout_ms=30_000,
@@ -223,7 +254,7 @@ def test_timeout_on_both_attempts_raises_last(
     propagates the timeout — caller sees a real failure to triage."""
     from playwright.sync_api import TimeoutError as PWTimeout
 
-    qs = _fake_qs_client()
+    qs = _patch_boto3_client(monkeypatch)
     page = _FakePage()
     _patch_webkit_page(monkeypatch, page)
 
@@ -232,8 +263,8 @@ def test_timeout_on_both_attempts_raises_last(
 
     with pytest.raises(PWTimeout, match="permanently broken"):
         run_dashboard_check_with_retry(
-            qs,
-            account_id="111122223333",
+            aws_account_id="111122223333",
+            aws_region="us-east-2",
             dashboard_id="dash-broken",
             operation=operation,
             page_timeout_ms=30_000,
@@ -250,7 +281,7 @@ def test_max_attempts_param_controls_retry_count(
     propagates immediately."""
     from playwright.sync_api import TimeoutError as PWTimeout
 
-    qs = _fake_qs_client()
+    qs = _patch_boto3_client(monkeypatch)
     page = _FakePage()
     _patch_webkit_page(monkeypatch, page)
 
@@ -259,8 +290,8 @@ def test_max_attempts_param_controls_retry_count(
 
     with pytest.raises(PWTimeout):
         run_dashboard_check_with_retry(
-            qs,
-            account_id="111122223333",
+            aws_account_id="111122223333",
+            aws_region="us-east-2",
             dashboard_id="dash-x",
             operation=operation,
             page_timeout_ms=30_000,
@@ -280,15 +311,15 @@ def test_user_arn_threaded_through_to_qs_call(
 ) -> None:
     """Custom ``user_arn`` reaches the QS embed-URL call — used by
     integrators with non-default user mappings."""
-    qs = _fake_qs_client()
+    qs = _patch_boto3_client(monkeypatch)
     page = _FakePage()
     _patch_webkit_page(monkeypatch, page)
 
     custom_arn = "arn:aws:quicksight:us-east-1:111122223333:user/default/test-user"
 
     run_dashboard_check_with_retry(
-        qs,
-        account_id="111122223333",
+        aws_account_id="111122223333",
+        aws_region="us-west-2",
         dashboard_id="dash-u",
         operation=lambda _p: None,
         page_timeout_ms=30_000,
@@ -301,6 +332,8 @@ def test_user_arn_threaded_through_to_qs_call(
     assert call_kwargs["ExperienceConfiguration"]["Dashboard"][
         "InitialDashboardId"
     ] == "dash-u"
+    # Region from caller reached boto3.client.
+    assert qs._captured_regions == ["us-west-2"]
 
 
 def test_page_goto_uses_generated_url(
@@ -308,13 +341,13 @@ def test_page_goto_uses_generated_url(
 ) -> None:
     """The URL returned by the QS client is what ``page.goto`` opens —
     no caching / mutation between generation and use."""
-    qs = _fake_qs_client(url_prefix="https://test.aws/embed/")
+    qs = _patch_boto3_client(monkeypatch, url_prefix="https://test.aws/embed/")
     page = _FakePage()
     _patch_webkit_page(monkeypatch, page)
 
     run_dashboard_check_with_retry(
-        qs,
-        account_id="111122223333",
+        aws_account_id="111122223333",
+        aws_region="us-east-2",
         dashboard_id="dash-x",
         operation=lambda _p: None,
         page_timeout_ms=30_000,

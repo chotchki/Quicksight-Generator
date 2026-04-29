@@ -29,10 +29,10 @@ TALL_VIEWPORT = (1600, 5000)
 
 
 @pytest.fixture
-def embed_url(qs_client, account_id, dashboard_id) -> str:
+def embed_url(region, account_id, dashboard_id) -> str:
     return generate_dashboard_embed_url(
-        qs_identity_client=qs_client,
-        account_id=account_id,
+        aws_account_id=account_id,
+        aws_region=region,
         dashboard_id=dashboard_id,
     )
 

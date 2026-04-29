@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import boto3
 from quicksight_gen.common.browser.helpers import (
     SCREENSHOT_DIR,
     generate_dashboard_embed_url,
@@ -20,7 +19,6 @@ ROOT = Path(__file__).resolve().parents[1]
 def main() -> None:
     cfg = load_config(str(ROOT / "run" / "config.yaml"))
     # Embed URL must be generated against the dashboard region, not us-east-1.
-    qs = boto3.client("quicksight", region_name=cfg.aws_region)
 
     dashboards = [
         ("payment_recon", f"{cfg.resource_prefix}-payment-recon-dashboard"),
@@ -30,8 +28,8 @@ def main() -> None:
     for subdir, dashboard_id in dashboards:
         print(f"==> {dashboard_id}")
         url = generate_dashboard_embed_url(
-            qs_identity_client=qs,
-            account_id=cfg.aws_account_id,
+            aws_account_id=cfg.aws_account_id,
+            aws_region=cfg.aws_region,
             dashboard_id=dashboard_id,
         )
         with webkit_page(headless=True, viewport=(1600, 2400)) as page:

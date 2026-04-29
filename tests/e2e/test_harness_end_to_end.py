@@ -149,34 +149,38 @@ def harness_l2(request, harness_uid: str) -> L2Instance:
 
 
 @pytest.fixture
-def harness_cfg(harness_l2: L2Instance, harness_uid: str) -> Config:
-    """Per-test ``Config`` with TestUid-tagged extra_tags.
+def harness_cfg(cfg: Config, harness_l2: L2Instance, harness_uid: str) -> Config:
+    """Per-test ``Config`` derived from the session-scoped ``cfg`` fixture
+    with TestUid-tagged ``extra_tags`` + per-test ``l2_instance_prefix``.
 
-    Env-var driven (NOT loading production config.yaml — the harness
-    deploys to ephemeral resource IDs that have no relationship with
-    the production deploy's ``out/`` directory).
+    Inherits from ``cfg`` (which loads ``run/config.yaml`` per the
+    existing e2e convention in ``conftest.py``) so the harness picks
+    up the same ``principal_arns`` (otherwise the deployed dashboards
+    wouldn't grant view permission to the embed user) +
+    ``theme_preset`` + ``aws_account_id`` / ``aws_region`` /
+    ``datasource_arn`` (or ``demo_database_url``-derived equivalent).
 
-    ``extra_tags`` is the M.4.1.a tag-injection point: ``TestUid``
-    enables the per-test tag-filter sweep at teardown; ``Harness``
-    is a coarse marker for "this came from the e2e harness, not the
-    production deploy" (cheap to query at scale, useful for debugging
-    if a leak ever shows up in the QS console).
+    Override surface (per-test):
+    - ``extra_tags``: M.4.1.a tag-injection point. ``TestUid`` enables
+      the per-test tag-filter sweep at teardown; ``Harness`` is a
+      coarse marker for "this came from the e2e harness, not the
+      production deploy" (useful in QS console searches).
+    - ``l2_instance_prefix``: per-test ephemeral prefix
+      (``e2e_<instance>_<uid>``) so concurrent tests can't collide
+      on shared schema names OR shared QS resource IDs.
+
+    Note that ``dataclasses.replace`` re-runs ``__post_init__``, but
+    the datasource_arn auto-derivation is a no-op when the original
+    cfg already had it set — so the per-test cfg points at the same
+    pre-existing datasource the production deploy uses.
     """
-    aws_account_id = os.environ["QS_GEN_AWS_ACCOUNT_ID"]
-    aws_region = os.environ["QS_GEN_AWS_REGION"]
-    datasource_arn = os.environ.get("QS_GEN_DATASOURCE_ARN")
-    demo_db_url = os.environ.get("QS_GEN_DEMO_DATABASE_URL")
-    if datasource_arn is None and demo_db_url is None:
-        raise RuntimeError(
-            "harness needs QS_GEN_DATASOURCE_ARN or QS_GEN_DEMO_DATABASE_URL "
-            "set; neither found in env"
-        )
-    return Config(
-        aws_account_id=aws_account_id,
-        aws_region=aws_region,
-        datasource_arn=datasource_arn,
-        demo_database_url=demo_db_url,
-        extra_tags={"TestUid": harness_uid, "Harness": "e2e"},
+    return dataclasses.replace(
+        cfg,
+        extra_tags={
+            **cfg.extra_tags,
+            "TestUid": harness_uid,
+            "Harness": "e2e",
+        },
         l2_instance_prefix=str(harness_l2.instance),
     )
 
@@ -256,6 +260,7 @@ def harness_seeded(harness_db_conn: Any, harness_l2: L2Instance):
 def harness_deployed(
     tmp_path: Path,
     harness_seeded: dict[str, Any],
+    harness_db_conn: Any,
     harness_cfg: Config,
     harness_qs_cleanup: None,
 ) -> dict[str, Any]:
@@ -306,16 +311,24 @@ def harness_deployed(
     # 3. Recover dashboard IDs from the JSON the deploy step sent.
     dashboard_ids = extract_dashboard_ids(out_dir)
 
-    # 4. Build per-test embed URLs. Identity-region client (us-east-1)
-    # — the dashboard region is irrelevant for embed-URL signing.
-    import boto3
-    from tests.e2e.conftest import IDENTITY_REGION
-    qs_identity = boto3.client("quicksight", region_name=IDENTITY_REGION)
+    # 4. Build per-test embed URLs. The helper builds a boto3 QS
+    # client in the dashboard region internally — embed URLs MUST
+    # be signed by the dashboard-region client (M.4.1.i pin).
     embed_urls = build_embed_urls(
-        qs_identity,
-        harness_cfg.aws_account_id,
-        dashboard_ids,
+        aws_account_id=harness_cfg.aws_account_id,
+        aws_region=harness_cfg.aws_region,
+        dashboard_ids=dashboard_ids,
     )
+
+    # 5. Pre-warm Aurora for this per-test prefix BEFORE QuickSight
+    # asks. The session-scoped warm_aurora fixture (conftest.py) only
+    # warms the production prefix; each per-test prefix's view DAG
+    # needs its own first-touch to compile. Without this, the first
+    # dashboard render times out waiting for Aurora to compile the
+    # L1 invariant view chain (drift / overdraft / breach / pending /
+    # unbundled through current_transactions + current_daily_balances)
+    # — observed during the first AWS-side harness dry-run.
+    _prewarm_db_for_prefix(harness_db_conn, harness_seeded["prefix"])
 
     return {
         "instance": instance,
@@ -324,6 +337,48 @@ def harness_deployed(
         "dashboard_ids": dashboard_ids,
         "embed_urls": embed_urls,
     }
+
+
+def _prewarm_db_for_prefix(db_conn: Any, prefix: str) -> None:
+    """Issue ``SELECT 1 FROM <prefix>_<view> LIMIT 1`` against every
+    L1 invariant view + matview + base table, post-deploy / pre-render.
+
+    Why: the session-scoped ``warm_aurora`` fixture in conftest.py only
+    warms the production prefix's tables. Each per-test prefix's view
+    DAG pays Aurora's full per-prefix view-compilation cost on its
+    first SELECT — typically 10–30s for the L1 invariant chain.
+    Doing the warmup HERE (post-deploy, pre-render) gets the cache
+    hot before QuickSight asks for the same data over the embed URL.
+    Without it, the first dashboard render times out waiting on the
+    compile.
+
+    Best-effort: per-query failure rolls back the txn (otherwise
+    psycopg2 leaves it aborted and every subsequent query errors)
+    and continues — missing views (older fixtures) are tolerated.
+    """
+    objects = (
+        # Base tables.
+        "transactions", "daily_balances",
+        # current_* matviews — the rest of the L1 chain reads from these.
+        "current_transactions", "current_daily_balances",
+        # L1 invariant matviews — what the dashboard SQL hits.
+        "drift", "ledger_drift", "overdraft", "limit_breach",
+        "stuck_pending", "stuck_unbundled",
+        # Dashboard-shape matview.
+        "todays_exceptions",
+    )
+    for obj in objects:
+        full = f"{prefix}_{obj}"
+        try:
+            with db_conn.cursor() as cur:
+                cur.execute(f"SELECT 1 FROM {full} LIMIT 1")
+                cur.fetchall()
+            db_conn.commit()
+        except Exception:  # noqa: BLE001 — best-effort
+            try:
+                db_conn.rollback()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 @pytest.fixture
@@ -492,13 +547,24 @@ def test_harness_seeded_fixture_lands_with_manifest(
         f"either seed planted nothing or schema apply silently failed"
     )
 
-    # current_transactions matview is fresh (count matches base).
+    # current_transactions matview is fresh — has rows, but NOT
+    # necessarily equal to base count. The matview is "latest entry
+    # per id" (M.1a.9 supersession contract); the base table can carry
+    # multiple entry rows per id when SupersedeReason updates fire.
+    # Equality would only hold for fixtures that plant zero
+    # supersessions; sasquatch_pr broad-mode plants several. The
+    # right contract is: matview > 0 (refresh fired) AND <= base
+    # (matview is a subset).
     with harness_db_conn.cursor() as cur:
         cur.execute(f"SELECT COUNT(*) FROM {prefix}_current_transactions")
         n_current = cur.fetchone()[0]
-    assert n_current == n_base, (
-        f"{prefix}_current_transactions out of sync with base "
-        f"({n_current} vs {n_base}); refresh_matviews_sql step missed"
+    assert n_current > 0, (
+        f"{prefix}_current_transactions has no rows after apply_db_seed; "
+        f"refresh_matviews_sql step missed"
+    )
+    assert n_current <= n_base, (
+        f"{prefix}_current_transactions has {n_current} rows but base "
+        f"only has {n_base}; matview must be a subset of base"
     )
 
     # Manifest carries every plant-kind key the builder declares,
@@ -577,7 +643,6 @@ def test_harness_l1_planted_scenarios_visible(
     harness_cfg: Config,
     harness_deployed: dict[str, Any],
     harness_failure_dump: None,
-    qs_identity_client: Any,
 ) -> None:
     """Open the deployed L1 dashboard via Playwright and verify each
     planted scenario surfaces on its corresponding sheet (M.4.1.d).
@@ -621,12 +686,13 @@ def test_harness_l1_planted_scenarios_visible(
     # the per-sheet walk — same pattern as the existing L1 browser
     # tests.
     run_dashboard_check_with_retry(
-        qs_identity_client,
-        account_id=harness_cfg.aws_account_id,
+        aws_account_id=harness_cfg.aws_account_id,
+        aws_region=harness_cfg.aws_region,
         dashboard_id=dashboard_id,
         operation=_check_l1,
         page_timeout_ms=page_timeout,
         viewport=(1600, 4000),
+        screenshot_dir=Path(__file__).parent / "failures",
     )
 
 
@@ -639,7 +705,6 @@ def test_harness_l2ft_planted_scenarios_visible(
     harness_cfg: Config,
     harness_deployed: dict[str, Any],
     harness_failure_dump: None,
-    qs_identity_client: Any,
 ) -> None:
     """Open the deployed L2 Flow Tracing dashboard via Playwright and
     verify each L2-side planted scenario surfaces (M.4.1.e).
@@ -675,10 +740,11 @@ def test_harness_l2ft_planted_scenarios_visible(
         )
 
     run_dashboard_check_with_retry(
-        qs_identity_client,
-        account_id=harness_cfg.aws_account_id,
+        aws_account_id=harness_cfg.aws_account_id,
+        aws_region=harness_cfg.aws_region,
         dashboard_id=dashboard_id,
         operation=_check_l2ft,
         page_timeout_ms=page_timeout,
         viewport=(1600, 4000),
+        screenshot_dir=Path(__file__).parent / "failures",
     )

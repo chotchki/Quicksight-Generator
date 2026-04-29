@@ -42,10 +42,10 @@ pytestmark = [pytest.mark.e2e, pytest.mark.browser]
 
 
 @pytest.fixture
-def embed_url(qs_client, account_id, l1_dashboard_id) -> str:
+def embed_url(region, account_id, l1_dashboard_id) -> str:
     return generate_dashboard_embed_url(
-        qs_identity_client=qs_client,
-        account_id=account_id,
+        aws_account_id=account_id,
+        aws_region=region,
         dashboard_id=l1_dashboard_id,
     )
 

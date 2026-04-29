@@ -45,19 +45,39 @@ def get_user_arn() -> str:
 
 
 def generate_dashboard_embed_url(
-    qs_identity_client,
-    account_id: str,
+    *,
+    aws_account_id: str,
+    aws_region: str,
     dashboard_id: str,
     user_arn: str | None = None,
     session_lifetime_minutes: int = 60,
 ) -> str:
     """Generate a pre-authenticated embed URL for a dashboard.
 
-    Uses the identity-region client (us-east-1) regardless of where the
-    dashboard is deployed.
+    Builds a boto3 QuickSight client in ``aws_region`` (the dashboard's
+    region) and signs the URL with it. Embed URLs MUST be signed by a
+    client whose region matches the dashboard's region — using the
+    identity region (us-east-1) for a dashboard deployed elsewhere
+    returns a URL QuickSight rejects with "We can't open that
+    dashboard, another Quick account or it was deleted" — a confusing
+    error that suggests permission/account/deletion when the actual
+    cause is region mismatch. The M.4.1.i first AWS-side dry-run
+    burned an hour on this when the harness called this helper with
+    the identity-region client.
+
+    Earlier the signature took a pre-built client which made it
+    possible to pass the wrong region's client. This version requires
+    callers to pass ``aws_region`` and constructs the client itself,
+    making the bug class unrepresentable.
+
+    All args keyword-only — protects against positional-arg drift if
+    the parameter list ever changes again.
     """
-    resp = qs_identity_client.generate_embed_url_for_registered_user(
-        AwsAccountId=account_id,
+    import boto3
+
+    qs = boto3.client("quicksight", region_name=aws_region)
+    resp = qs.generate_embed_url_for_registered_user(
+        AwsAccountId=aws_account_id,
         SessionLifetimeInMinutes=session_lifetime_minutes,
         UserArn=user_arn or get_user_arn(),
         ExperienceConfiguration={

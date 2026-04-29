@@ -90,10 +90,10 @@ def drill_values(cfg) -> dict:
     }
 
 
-def _fresh_embed_url(qs_client, account_id, ar_dashboard_id) -> str:
+def _fresh_embed_url(region, account_id, ar_dashboard_id) -> str:
     return generate_dashboard_embed_url(
-        qs_identity_client=qs_client,
-        account_id=account_id,
+        aws_account_id=account_id,
+        aws_region=region,
         dashboard_id=ar_dashboard_id,
     )
 
@@ -106,8 +106,8 @@ def _transactions_count(page, page_timeout: int) -> int:
     )
 
 
-def _baseline(qs_client, account_id, ar_dashboard_id, page_timeout) -> int:
-    url = _fresh_embed_url(qs_client, account_id, ar_dashboard_id)
+def _baseline(region, account_id, ar_dashboard_id, page_timeout) -> int:
+    url = _fresh_embed_url(region, account_id, ar_dashboard_id)
     with webkit_page(headless=True) as page:
         page.goto(url, timeout=page_timeout)
         wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
@@ -115,15 +115,15 @@ def _baseline(qs_client, account_id, ar_dashboard_id, page_timeout) -> int:
 
 
 def test_drill_param_pArTransferId_narrows_transactions(
-    qs_client, account_id, ar_dashboard_id, page_timeout, drill_values,
+    region, account_id, ar_dashboard_id, page_timeout, drill_values,
 ):
     """Setting pArTransferId via URL fragment filters Transactions to that
     transfer's legs. Guards the original (left-click) drill path."""
-    baseline = _baseline(qs_client, account_id, ar_dashboard_id, page_timeout)
+    baseline = _baseline(region, account_id, ar_dashboard_id, page_timeout)
     assert baseline > 0, "Transactions baseline must be > 0"
 
     url = (
-        _fresh_embed_url(qs_client, account_id, ar_dashboard_id)
+        _fresh_embed_url(region, account_id, ar_dashboard_id)
         + f"#p.pArTransferId={quote(drill_values['transfer_id'])}"
     )
     with webkit_page(headless=True) as page:
@@ -143,17 +143,17 @@ def test_drill_param_pArTransferId_narrows_transactions(
 
 
 def test_drill_params_pArAccountId_and_date_narrow_transactions(
-    qs_client, account_id, ar_dashboard_id, page_timeout, drill_values,
+    region, account_id, ar_dashboard_id, page_timeout, drill_values,
 ):
     """Setting pArAccountId + pArActivityDate via URL fragment filters
     Transactions to that account-day. Guards the Phase K.1.6.x fix — the
     new DATA_POINT_MENU drill action that covers seven account-shaped
     check types the legacy single-drill silently no-op'd for."""
-    baseline = _baseline(qs_client, account_id, ar_dashboard_id, page_timeout)
+    baseline = _baseline(region, account_id, ar_dashboard_id, page_timeout)
     assert baseline > 0, "Transactions baseline must be > 0"
 
     url = (
-        _fresh_embed_url(qs_client, account_id, ar_dashboard_id)
+        _fresh_embed_url(region, account_id, ar_dashboard_id)
         + f"#p.pArAccountId={quote(drill_values['account_id'])}"
         + f"&p.pArActivityDate={quote(drill_values['activity_date'])}"
     )

@@ -21,7 +21,6 @@ from __future__ import annotations
 from datetime import date, timedelta
 from pathlib import Path
 
-import boto3
 from quicksight_gen.apps.account_recon.demo_data import (
     _OVERDRAFT_PLANT,
     _SUBLEDGER_DRIFT_PLANT,
@@ -94,13 +93,12 @@ def main() -> int:
         return 1
 
     cfg = load_config(str(config_path))
-    qs = boto3.client("quicksight", region_name=cfg.aws_region)
     dashboard_id = f"{cfg.resource_prefix}-account-recon-dashboard"
     print(f"==> {dashboard_id}")
 
     embed_url = generate_dashboard_embed_url(
-        qs_identity_client=qs,
-        account_id=cfg.aws_account_id,
+        aws_account_id=cfg.aws_account_id,
+        aws_region=cfg.aws_region,
         dashboard_id=dashboard_id,
     )
 

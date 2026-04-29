@@ -314,10 +314,9 @@ def _capture_screenshot(cfg: Config, inst: L2Instance, output_dir: Path) -> str:
     )
 
     click.echo(f"Generating embed URL for dashboard {dashboard_id}...")
-    qs_identity_client = boto3.client("quicksight", region_name="us-east-1")
     embed_url = generate_dashboard_embed_url(
-        qs_identity_client,
-        account_id=cfg.aws_account_id,
+        aws_account_id=cfg.aws_account_id,
+        aws_region=cfg.aws_region,
         dashboard_id=dashboard_id,
         user_arn=user_arn,
     )

@@ -24,7 +24,6 @@ import argparse
 import sys
 from pathlib import Path
 
-import boto3
 
 from quicksight_gen.apps.account_recon._l2 import default_l2_instance
 from quicksight_gen.apps.l1_dashboard.app import build_l1_dashboard_app
@@ -91,11 +90,10 @@ def main() -> int:
     app.emit_analysis()  # resolve auto-IDs
 
     dashboard_id = f"{cfg.resource_prefix}-l1-dashboard"
-    qs = boto3.client("quicksight", region_name=cfg.aws_region)
     print(f"→ Generating embed URL for {dashboard_id}...", end=" ", flush=True)
     url = generate_dashboard_embed_url(
-        qs_identity_client=qs,
-        account_id=cfg.aws_account_id,
+        aws_account_id=cfg.aws_account_id,
+        aws_region=cfg.aws_region,
         dashboard_id=dashboard_id,
     )
     print("OK")

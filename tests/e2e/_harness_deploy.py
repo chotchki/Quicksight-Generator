@@ -16,14 +16,17 @@ Three surfaces:
    JSON files (the same ones deploy just sent to QS) is the cheapest
    way to recover the IDs without monkeypatching.
 
-3. ``build_embed_urls(qs_identity_client, account_id, dashboard_ids,
+3. ``build_embed_urls(*, aws_account_id, aws_region, dashboard_ids,
    user_arn=None) -> dict[app_name, embed_url]`` — wraps
    ``common.browser.helpers.generate_dashboard_embed_url`` for each
-   dashboard. Embed URLs MUST come from the identity-region QS
-   client (us-east-1), NOT the dashboard region — that's a long-
-   standing convention enforced by every existing browser-e2e
-   fixture. Single-use URLs → caller must be fixture-scoped to the
-   test, not session.
+   dashboard. Embed URLs MUST be signed by a client created in the
+   dashboard region; the helper builds it internally from
+   ``aws_region`` (M.4.1.i type-tightening — earlier signature took
+   a pre-built client which made it possible to pass the wrong
+   region's client and surface the cryptic "We can't open that
+   dashboard, another Quick account or it was deleted" page).
+   Single-use URLs → caller must be fixture-scoped to the test,
+   not session.
 
 Why this is its own module instead of inline-in-the-harness: the
 JSON-writing logic + dashboard-id extraction are both unit-testable
@@ -147,18 +150,23 @@ def extract_dashboard_ids(out_dir: Path) -> dict[str, str]:
 
 
 def build_embed_urls(
-    qs_identity_client: Any,
-    account_id: str,
-    dashboard_ids: dict[str, str],
     *,
+    aws_account_id: str,
+    aws_region: str,
+    dashboard_ids: dict[str, str],
     user_arn: str | None = None,
 ) -> dict[str, str]:
     """Generate one embed URL per (app_name, dashboard_id).
 
-    ``qs_identity_client`` MUST be the us-east-1 client (QS identity
-    region) — the dashboard region is irrelevant for embed-URL
-    generation. Long-standing convention from ``conftest.py``'s
-    ``qs_identity_client`` fixture.
+    Takes ``aws_region`` (the dashboard's region) — embed URLs MUST
+    be signed by a client created in the dashboard region (NOT the
+    identity region; see ``generate_dashboard_embed_url`` docstring
+    for the details + the M.4.1.i bug history). The earlier signature
+    took a pre-built client, which made it possible to pass the wrong
+    region's client and surface the cryptic "We can't open that
+    dashboard" error page. This signature makes that bug
+    unrepresentable: caller passes a region string, helper builds
+    the client.
 
     Embed URLs are single-use; caller must scope to per-test, not
     session, so a re-entrant test gets a fresh URL.
@@ -170,9 +178,9 @@ def build_embed_urls(
     urls: dict[str, str] = {}
     for app_name, dashboard_id in dashboard_ids.items():
         urls[app_name] = generate_dashboard_embed_url(
-            qs_identity_client,
-            account_id,
-            dashboard_id,
+            aws_account_id=aws_account_id,
+            aws_region=aws_region,
+            dashboard_id=dashboard_id,
             user_arn=user_arn,
         )
     return urls

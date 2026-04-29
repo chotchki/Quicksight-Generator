@@ -40,9 +40,9 @@ from typing import Any, Callable
 
 
 def run_dashboard_check_with_retry(
-    qs_identity_client: Any,
     *,
-    account_id: str,
+    aws_account_id: str,
+    aws_region: str,
     dashboard_id: str,
     operation: Callable[[Any], None],
     page_timeout_ms: int,
@@ -50,6 +50,7 @@ def run_dashboard_check_with_retry(
     headless: bool = True,
     max_attempts: int = 2,
     user_arn: str | None = None,
+    screenshot_dir: Any | None = None,
 ) -> None:
     """Open a dashboard + run ``operation(page)``; retry once on flake.
 
@@ -64,10 +65,17 @@ def run_dashboard_check_with_retry(
     timed out.
 
     Args:
-        qs_identity_client: boto3 QS client in the identity region
-            (us-east-1) — embed URLs ALWAYS come from the identity
-            region, never the dashboard region.
-        account_id: AWS account id for the embed URL signing call.
+        aws_account_id: AWS account id for the embed URL signing call.
+        aws_region: dashboard region — passed through to
+            ``generate_dashboard_embed_url`` which builds the boto3
+            QS client in that region. Embed URLs MUST be signed by a
+            dashboard-region client; using us-east-1 (identity region)
+            for a dashboard deployed elsewhere returns a URL
+            QuickSight rejects with the cryptic "We can't open that
+            dashboard, another Quick account or it was deleted" page
+            (M.4.1.i bug history). The helper signature takes the
+            region string instead of a pre-built client so the
+            wrong-client bug is unrepresentable.
         dashboard_id: QS dashboard id to open.
         operation: callable(page) -> None; runs the actual checks.
         page_timeout_ms: timeout for ``page.goto`` + dashboard-loaded
@@ -80,6 +88,12 @@ def run_dashboard_check_with_retry(
             2 = one retry).
         user_arn: optional override for the embed URL's UserArn; falls
             back to the env-var / project default.
+        screenshot_dir: optional path where ``<dashboard_id>_attempt<n>.png``
+            screenshots get written before re-raising on timeout. Lets
+            the failure-dump fixture surface "what was actually on the
+            page when we timed out" — usually the difference between
+            a real spinner-forever vs an auth/perm error page vs a
+            dashboard with zero sheets is one glance at the image.
 
     Raises:
         AssertionError: from ``operation`` — real test failure, no retry.
@@ -99,16 +113,42 @@ def run_dashboard_check_with_retry(
     last_timeout: Exception | None = None
     for attempt in range(1, max_attempts + 1):
         embed_url = generate_dashboard_embed_url(
-            qs_identity_client,
-            account_id,
-            dashboard_id,
+            aws_account_id=aws_account_id,
+            aws_region=aws_region,
+            dashboard_id=dashboard_id,
             user_arn=user_arn,
         )
         try:
             with webkit_page(headless=headless, viewport=viewport) as page:
-                page.goto(embed_url, timeout=page_timeout_ms)
-                wait_for_dashboard_loaded(page, timeout_ms=page_timeout_ms)
-                operation(page)
+                try:
+                    page.goto(embed_url, timeout=page_timeout_ms)
+                    wait_for_dashboard_loaded(page, timeout_ms=page_timeout_ms)
+                    operation(page)
+                except PlaywrightTimeoutError:
+                    # Capture the screenshot WHILE the page is still
+                    # live (we're still inside the webkit_page context).
+                    # The earlier version captured AFTER the context
+                    # exited, when the underlying browser was already
+                    # torn down — page.screenshot raised silently.
+                    if screenshot_dir is not None:
+                        try:
+                            from pathlib import Path
+                            Path(screenshot_dir).mkdir(
+                                parents=True, exist_ok=True,
+                            )
+                            shot_path = Path(screenshot_dir) / (
+                                f"{dashboard_id}_attempt{attempt}.png"
+                            )
+                            page.screenshot(
+                                path=str(shot_path), full_page=True,
+                            )
+                            print(
+                                f"[harness] screenshot: {shot_path}",
+                                file=sys.stderr,
+                            )
+                        except Exception:  # noqa: BLE001 — best-effort
+                            pass
+                    raise
             return
         except PlaywrightTimeoutError as exc:
             last_timeout = exc

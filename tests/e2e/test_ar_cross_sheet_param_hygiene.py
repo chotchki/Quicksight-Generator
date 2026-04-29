@@ -146,10 +146,10 @@ def hygiene_values(cfg) -> dict:
     }
 
 
-def _embed(qs_client, account_id, ar_dashboard_id) -> str:
+def _embed(region, account_id, ar_dashboard_id) -> str:
     return generate_dashboard_embed_url(
-        qs_identity_client=qs_client,
-        account_id=account_id,
+        aws_account_id=account_id,
+        aws_region=region,
         dashboard_id=ar_dashboard_id,
     )
 
@@ -163,7 +163,7 @@ def _transactions_count(page, page_timeout: int) -> int:
 
 
 def _count_with_params(
-    qs_client, account_id, ar_dashboard_id, page_timeout, params: dict,
+    region, account_id, ar_dashboard_id, page_timeout, params: dict,
     screenshot_name: str,
 ) -> int:
     """Generate a fresh embed URL with the given param fragment, load
@@ -171,7 +171,7 @@ def _count_with_params(
     fragment = "&".join(
         f"p.{k}={quote(v)}" for k, v in params.items()
     )
-    url = _embed(qs_client, account_id, ar_dashboard_id) + "#" + fragment
+    url = _embed(region, account_id, ar_dashboard_id) + "#" + fragment
     with webkit_page(headless=True) as page:
         page.goto(url, timeout=page_timeout)
         wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
@@ -181,14 +181,14 @@ def _count_with_params(
 
 
 def test_account_day_baseline(
-    qs_client, account_id, ar_dashboard_id, page_timeout, hygiene_values,
+    region, account_id, ar_dashboard_id, page_timeout, hygiene_values,
 ):
     """Baseline: setting only pArAccountId + pArActivityDate scopes
     Transactions to the account-day. This is the row count the spike's
     reset semantics aim to preserve even when an earlier click left
     pArTransferId set to an unrelated value."""
     count = _count_with_params(
-        qs_client, account_id, ar_dashboard_id, page_timeout,
+        region, account_id, ar_dashboard_id, page_timeout,
         params={
             P_AR_ACCOUNT.name: hygiene_values["account_id"],
             P_AR_ACTIVITY_DATE.name: hygiene_values["activity_date"],
@@ -204,7 +204,7 @@ def test_account_day_baseline(
 
 
 def test_stale_pArTransferId_suppresses_account_day(
-    qs_client, account_id, ar_dashboard_id, page_timeout, hygiene_values,
+    region, account_id, ar_dashboard_id, page_timeout, hygiene_values,
 ):
     """Premise check: a stale pArTransferId set alongside the account-day
     pair narrows Transactions to (effectively) zero, because the AND of
@@ -217,7 +217,7 @@ def test_stale_pArTransferId_suppresses_account_day(
     that ``test_empty_pArTransferId_fragment_resets`` compares against.
     """
     baseline = _count_with_params(
-        qs_client, account_id, ar_dashboard_id, page_timeout,
+        region, account_id, ar_dashboard_id, page_timeout,
         params={
             P_AR_ACCOUNT.name: hygiene_values["account_id"],
             P_AR_ACTIVITY_DATE.name: hygiene_values["activity_date"],
@@ -225,7 +225,7 @@ def test_stale_pArTransferId_suppresses_account_day(
         screenshot_name="cross_sheet_hygiene_paired_baseline",
     )
     leaked = _count_with_params(
-        qs_client, account_id, ar_dashboard_id, page_timeout,
+        region, account_id, ar_dashboard_id, page_timeout,
         params={
             P_AR_ACCOUNT.name: hygiene_values["account_id"],
             P_AR_ACTIVITY_DATE.name: hygiene_values["activity_date"],
@@ -243,7 +243,7 @@ def test_stale_pArTransferId_suppresses_account_day(
 
 
 def test_sentinel_pArTransferId_fragment_resets_via_calc_field(
-    qs_client, account_id, ar_dashboard_id, page_timeout, hygiene_values,
+    region, account_id, ar_dashboard_id, page_timeout, hygiene_values,
 ):
     """Phase K.2 spike outcome: with ``fg-ar-drill-transfer-on-txn``
     rewired to a calc-field-based ``PASS`` filter (see
@@ -276,7 +276,7 @@ def test_sentinel_pArTransferId_fragment_resets_via_calc_field(
     never-touched fresh-load state behaves as ALL.
     """
     baseline = _count_with_params(
-        qs_client, account_id, ar_dashboard_id, page_timeout,
+        region, account_id, ar_dashboard_id, page_timeout,
         params={
             P_AR_ACCOUNT.name: hygiene_values["account_id"],
             P_AR_ACTIVITY_DATE.name: hygiene_values["activity_date"],
@@ -284,7 +284,7 @@ def test_sentinel_pArTransferId_fragment_resets_via_calc_field(
         screenshot_name="cross_sheet_hygiene_reset_baseline",
     )
     reset_attempt = _count_with_params(
-        qs_client, account_id, ar_dashboard_id, page_timeout,
+        region, account_id, ar_dashboard_id, page_timeout,
         params={
             P_AR_ACCOUNT.name: hygiene_values["account_id"],
             P_AR_ACTIVITY_DATE.name: hygiene_values["activity_date"],
