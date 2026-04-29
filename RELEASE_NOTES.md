@@ -1,5 +1,13 @@
 # Release Notes
 
+## v6.0.4
+
+### Hotfix — Re-cut to escape v6.0.3 duplicate-run race
+
+> **v6.0.3 was tagged once but GitHub Actions kicked off two concurrent pipeline runs against the same tag.** The first run made it through `verify-testpypi-install` cleanly (the smoke-import fix from v6.0.3 worked), but the duplicate run failed at `Publish to TestPyPI` with `400 File already exists`, and the first run's `Publish to PyPI` deployment was rejected during the manual-approval step (operator saw the chaos and stopped it). v6.0.4 carries no code or workflow changes vs v6.0.3 — it's a clean re-cut so the pipeline runs once.
+
+**Operator impact**: zero behavior change. The wheel is identical to v6.0.3 (which is identical to v6.0.0–v6.0.2). v6.0.3 sits on TestPyPI as a build artifact but never promoted.
+
 ## v6.0.3
 
 ### Hotfix — Drop deleted apps from release-pipeline smoke imports
