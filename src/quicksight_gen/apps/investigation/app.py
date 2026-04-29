@@ -46,6 +46,7 @@ from quicksight_gen.apps.investigation.constants import (
     P_INV_MONEY_TRAIL_ROOT,
     SHEET_INV_ACCOUNT_NETWORK,
     SHEET_INV_ANOMALIES,
+    SHEET_INV_APP_INFO,
     SHEET_INV_FANOUT,
     SHEET_INV_GETTING_STARTED,
     SHEET_INV_MONEY_TRAIL,
@@ -60,6 +61,16 @@ from quicksight_gen.apps.investigation import datasets as _register_contracts  #
 from quicksight_gen.common.dataset_contract import ColumnShape
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
+from quicksight_gen.common.sheets.app_info import (
+    APP_INFO_SHEET_DESCRIPTION,
+    APP_INFO_SHEET_NAME,
+    APP_INFO_SHEET_TITLE,
+    DS_APP_INFO_LIVENESS,
+    DS_APP_INFO_MATVIEWS,
+    build_liveness_dataset,
+    build_matview_status_dataset,
+    populate_app_info_sheet,
+)
 from quicksight_gen.common.theme import get_preset
 from quicksight_gen.common.models import Analysis as ModelAnalysis
 from quicksight_gen.common.models import Dashboard as ModelDashboard
@@ -979,11 +990,45 @@ def build_investigation_app(cfg: Config) -> App:
     _build_volume_anomalies_sheet(cfg, app, analysis)
     _build_money_trail_sheet(cfg, app, analysis)
     _build_account_network_sheet(cfg, app, analysis)
+    _build_app_info_sheet(cfg, app, analysis)
     app.create_dashboard(
         dashboard_id_suffix="investigation-dashboard",
         name=analysis_name,
     )
     return app
+
+
+_INV_MATVIEW_NAMES = [
+    "inv_pair_rolling_anomalies",
+    "inv_money_trail_edges",
+]
+
+
+def _build_app_info_sheet(cfg: Config, app: App, analysis: Analysis) -> None:
+    """M.4.4.5 — App Info ("i") sheet, ALWAYS LAST. Diagnostic canary;
+    see common/sheets/app_info.py."""
+    liveness_aws = build_liveness_dataset(cfg)
+    matviews_aws = build_matview_status_dataset(
+        cfg, view_names=_INV_MATVIEW_NAMES,
+    )
+    liveness_ds = app.add_dataset(Dataset(
+        identifier=DS_APP_INFO_LIVENESS,
+        arn=cfg.dataset_arn(liveness_aws.DataSetId),
+    ))
+    matviews_ds = app.add_dataset(Dataset(
+        identifier=DS_APP_INFO_MATVIEWS,
+        arn=cfg.dataset_arn(matviews_aws.DataSetId),
+    ))
+    sheet = analysis.add_sheet(Sheet(
+        sheet_id=SHEET_INV_APP_INFO,
+        name=APP_INFO_SHEET_NAME,
+        title=APP_INFO_SHEET_TITLE,
+        description=APP_INFO_SHEET_DESCRIPTION,
+    ))
+    populate_app_info_sheet(
+        cfg, sheet,
+        liveness_ds=liveness_ds, matview_status_ds=matviews_ds,
+    )
 
 
 def _analysis_name(cfg: Config) -> str:

@@ -29,6 +29,7 @@ SHEET_INV_FANOUT = SheetId("inv-sheet-fanout")                # K.4.3
 SHEET_INV_ANOMALIES = SheetId("inv-sheet-anomalies")          # K.4.4
 SHEET_INV_MONEY_TRAIL = SheetId("inv-sheet-money-trail")      # K.4.5
 SHEET_INV_ACCOUNT_NETWORK = SheetId("inv-sheet-account-network")  # K.4.8
+SHEET_INV_APP_INFO = SheetId("inv-sheet-app-info")                # M.4.4.5
 
 # ---------------------------------------------------------------------------
 # Datasets

@@ -53,6 +53,16 @@ from quicksight_gen.common.dataset_contract import ColumnShape
 from quicksight_gen.common.ids import ParameterName, SheetId
 from quicksight_gen.common.l2 import L2Instance, load_instance
 from quicksight_gen.common.models import DateTimeDefaultValues
+from quicksight_gen.common.sheets.app_info import (
+    APP_INFO_SHEET_DESCRIPTION,
+    APP_INFO_SHEET_NAME,
+    APP_INFO_SHEET_TITLE,
+    DS_APP_INFO_LIVENESS,
+    DS_APP_INFO_MATVIEWS,
+    build_liveness_dataset,
+    build_matview_status_dataset,
+    populate_app_info_sheet,
+)
 from quicksight_gen.common.theme import get_preset
 from quicksight_gen.common.tree import (
     Analysis,
@@ -82,6 +92,7 @@ SHEET_RAILS = SheetId("l2ft-sheet-rails")
 SHEET_CHAINS = SheetId("l2ft-sheet-chains")
 SHEET_TRANSFER_TEMPLATES = SheetId("l2ft-sheet-transfer-templates")
 SHEET_L2_EXCEPTIONS = SheetId("l2ft-sheet-l2-exceptions")
+SHEET_APP_INFO = SheetId("l2ft-sheet-app-info")  # M.4.4.5
 
 
 # M.3.10m — drill from the L2 Exceptions table to the per-rail or
@@ -268,6 +279,33 @@ def build_l2_flow_tracing_app(
         datasets=datasets,
         rails_sheet=rails_sheet,
         chains_sheet=chains_sheet,
+    )
+
+    # M.4.4.5 — App Info ("i") sheet, ALWAYS LAST. Diagnostic canary;
+    # see common/sheets/app_info.py.
+    _l2ft_prefix = str(l2_instance.instance)
+    liveness_aws = build_liveness_dataset(cfg)
+    matviews_aws = build_matview_status_dataset(cfg, view_names=[
+        f"{_l2ft_prefix}_current_transactions",
+        f"{_l2ft_prefix}_current_daily_balances",
+    ])
+    liveness_ds = app.add_dataset(Dataset(
+        identifier=DS_APP_INFO_LIVENESS,
+        arn=cfg.dataset_arn(liveness_aws.DataSetId),
+    ))
+    matviews_ds = app.add_dataset(Dataset(
+        identifier=DS_APP_INFO_MATVIEWS,
+        arn=cfg.dataset_arn(matviews_aws.DataSetId),
+    ))
+    app_info_sheet = analysis.add_sheet(Sheet(
+        sheet_id=SHEET_APP_INFO,
+        name=APP_INFO_SHEET_NAME,
+        title=APP_INFO_SHEET_TITLE,
+        description=APP_INFO_SHEET_DESCRIPTION,
+    ))
+    populate_app_info_sheet(
+        cfg, app_info_sheet,
+        liveness_ds=liveness_ds, matview_status_ds=matviews_ds,
     )
 
     app.create_dashboard(

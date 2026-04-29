@@ -59,13 +59,17 @@ def exec_analysis(exec_app):
 # Top-level shape
 # ---------------------------------------------------------------------------
 
-def test_analysis_has_four_sheets_in_expected_order(exec_analysis):
+def test_analysis_has_five_sheets_in_expected_order(exec_analysis):
+    """4 content sheets + the M.4.4.5 App Info ("i") sheet last."""
+    from quicksight_gen.apps.executives.app import SHEET_EXEC_APP_INFO
+
     sheet_ids = [s.SheetId for s in exec_analysis.Definition.Sheets]
     assert sheet_ids == [
         SHEET_EXEC_GETTING_STARTED,
         SHEET_EXEC_ACCOUNT_COVERAGE,
         SHEET_EXEC_TRANSACTION_VOLUME,
         SHEET_EXEC_MONEY_MOVED,
+        SHEET_EXEC_APP_INFO,
     ]
 
 
@@ -77,7 +81,7 @@ def test_analysis_serializes_to_aws_json(exec_analysis):
     """to_aws_json() must succeed end-to-end — no None-strip crashes."""
     j = exec_analysis.to_aws_json()
     assert j["AnalysisId"] == _TEST_CFG.prefixed("executives-analysis")
-    assert len(j["Definition"]["Sheets"]) == 4
+    assert len(j["Definition"]["Sheets"]) == 5
 
 
 def test_dashboard_mirrors_analysis(exec_app):
@@ -114,10 +118,17 @@ def test_two_datasets_in_expected_order():
 
 
 def test_datasets_declared_in_analysis(exec_analysis):
+    """2 content datasets + the 2 M.4.4.5 App Info datasets."""
+    from quicksight_gen.common.sheets.app_info import (
+        DS_APP_INFO_LIVENESS, DS_APP_INFO_MATVIEWS,
+    )
+
     decls = exec_analysis.Definition.DataSetIdentifierDeclarations
     assert [d.Identifier for d in decls] == [
         DS_EXEC_TRANSACTION_SUMMARY,
         DS_EXEC_ACCOUNT_SUMMARY,
+        DS_APP_INFO_LIVENESS,
+        DS_APP_INFO_MATVIEWS,
     ]
 
 

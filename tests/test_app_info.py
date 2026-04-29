@@ -1,0 +1,99 @@
+"""Tree-walker tests for the M.4.4.5 App Info ("i") canary sheet.
+
+Every shipped L3 dashboard MUST end with a sheet named "i" that
+contains the App Info liveness KPI. This is the convention that
+collapses the QuickSight spinner-footgun ladder (CLAUDE.md ops
+footgun) to a single glance.
+
+Walks each app's emitted tree rather than asserting hardcoded sheet
+counts — failures point at the offending app and explain WHY the
+constraint matters.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from quicksight_gen.apps.executives.app import build_executives_app
+from quicksight_gen.apps.investigation.app import build_investigation_app
+from quicksight_gen.apps.l1_dashboard.app import build_l1_dashboard_app
+from quicksight_gen.apps.l2_flow_tracing.app import (
+    build_l2_flow_tracing_app,
+)
+from quicksight_gen.common.config import Config
+from quicksight_gen.common.sheets.app_info import (
+    APP_INFO_SHEET_NAME,
+    DS_APP_INFO_LIVENESS,
+    DS_APP_INFO_MATVIEWS,
+)
+
+
+_CFG = Config(
+    aws_account_id="111122223333",
+    aws_region="us-east-2",
+    datasource_arn="arn:aws:quicksight:us-east-2:111122223333:datasource/ds",
+)
+
+
+SHIPPED_APP_BUILDERS = [
+    pytest.param(build_l1_dashboard_app, id="l1-dashboard"),
+    pytest.param(build_l2_flow_tracing_app, id="l2-flow-tracing"),
+    pytest.param(build_investigation_app, id="investigation"),
+    pytest.param(build_executives_app, id="executives"),
+]
+
+
+@pytest.mark.parametrize("builder", SHIPPED_APP_BUILDERS)
+def test_last_sheet_is_app_info(builder):
+    """The last sheet on every shipped app must be the "i" canary.
+
+    Diagnostic value: when a sheet renders blank in QS, the operator
+    glances at "i". If "i" renders, QS is healthy and the empty
+    visual is a data/SQL issue. If "i" is also blank, QS itself is
+    broken (the CLAUDE.md spinner-forever footgun).
+    """
+    app = builder(_CFG)
+    sheets = app.analysis.sheets
+    assert sheets[-1].name == APP_INFO_SHEET_NAME, (
+        f"{app.name}'s last sheet is {sheets[-1].name!r}, not "
+        f"{APP_INFO_SHEET_NAME!r}. Add the App Info sheet via "
+        f"common/sheets/app_info.py — it MUST be the last sheet."
+    )
+
+
+@pytest.mark.parametrize("builder", SHIPPED_APP_BUILDERS)
+def test_app_info_sheet_carries_liveness_kpi(builder):
+    """The "i" sheet must contain a KPI sourced from the liveness
+    dataset — that's what makes it a meaningful diagnostic canary
+    rather than just a label."""
+    app = builder(_CFG)
+    info_sheet = app.analysis.sheets[-1]
+    visual_kinds = {type(v).__name__ for v in info_sheet.visuals}
+    assert "KPI" in visual_kinds, (
+        f"{app.name}'s App Info sheet has no KPI; visuals: "
+        f"{visual_kinds}. The liveness KPI is the canary signal."
+    )
+    # Confirm the liveness dataset is one of the dataset refs the
+    # KPI's measures resolve to.
+    kpi = next(v for v in info_sheet.visuals if type(v).__name__ == "KPI")
+    kpi_dataset_ids = {ds.identifier for ds in kpi.datasets()}
+    assert DS_APP_INFO_LIVENESS in kpi_dataset_ids, (
+        f"{app.name}'s App Info KPI doesn't read from "
+        f"{DS_APP_INFO_LIVENESS!r}; reads from {kpi_dataset_ids}."
+    )
+
+
+@pytest.mark.parametrize("builder", SHIPPED_APP_BUILDERS)
+def test_app_info_datasets_declared(builder):
+    """Both App Info datasets (liveness + matview status) must be
+    declared on the App so deploy ships them."""
+    app = builder(_CFG)
+    declared = {ds.identifier for ds in app.datasets}
+    assert DS_APP_INFO_LIVENESS in declared, (
+        f"{app.name} is missing {DS_APP_INFO_LIVENESS!r} — the "
+        f"liveness KPI dataset isn't registered."
+    )
+    assert DS_APP_INFO_MATVIEWS in declared, (
+        f"{app.name} is missing {DS_APP_INFO_MATVIEWS!r} — the "
+        f"matview status table dataset isn't registered."
+    )

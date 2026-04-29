@@ -56,6 +56,18 @@ if [ "$PARALLEL" -gt 1 ]; then
     PYTEST_ARGS=("-n" "$PARALLEL" "${PYTEST_ARGS[@]}")
 fi
 
+# Pin the L2 fuzz seed once at the parent level so every pytest-xdist
+# worker inherits the same value. Without this, each worker imports
+# tests/test_l2_seed_contract.py independently and `secrets.randbits(32)`
+# resolves to a different seed per worker → the `fuzz-seed-N` parametrize
+# id diverges across workers → xdist refuses to run with "Different tests
+# were collected between gw0 and gwN". User can still pin manually via
+# QS_GEN_FUZZ_SEED=N to reproduce a specific shape.
+if [ -z "${QS_GEN_FUZZ_SEED:-}" ]; then
+    export QS_GEN_FUZZ_SEED=$(python3 -c 'import secrets; print(secrets.randbits(32))')
+    echo "==> Pinned QS_GEN_FUZZ_SEED=$QS_GEN_FUZZ_SEED for this run"
+fi
+
 # --harness mode: skip prod deploy + run only the harness file.
 # The harness manages its own per-test ephemeral resources, so the
 # production deploy is irrelevant (and the rest of the e2e suite

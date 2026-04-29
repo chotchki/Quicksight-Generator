@@ -104,7 +104,7 @@ def test_dashboard_registered() -> None:
     assert app.dashboard is not None
 
 
-def test_eleven_sheets_after_m2b12() -> None:
+def test_twelve_sheets_after_m445() -> None:
     """M.2b.12 inserts Supersession Audit after Unbundled Aging.
     Sheet order: Getting Started → drift (today + over time) → other
     invariants (overdraft, limit breach, pending aging, unbundled
@@ -118,6 +118,7 @@ def test_eleven_sheets_after_m2b12() -> None:
         "Overdraft", "Limit Breach",
         "Pending Aging", "Unbundled Aging", "Supersession Audit",
         "Today's Exceptions", "Daily Statement", "Transactions",
+        "i",  # M.4.4.5 — App Info canary, always last
     ]
 
 

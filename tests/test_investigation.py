@@ -187,7 +187,10 @@ def test_investigation_theme_preset_registered():
 # Top-level shape
 # ---------------------------------------------------------------------------
 
-def test_analysis_has_five_sheets_in_expected_order():
+def test_analysis_has_six_sheets_in_expected_order():
+    """5 content sheets + the M.4.4.5 App Info ("i") sheet last."""
+    from quicksight_gen.apps.investigation.constants import SHEET_INV_APP_INFO
+
     analysis = build_analysis(_TEST_CFG)
     sheet_ids = [s.SheetId for s in analysis.Definition.Sheets]
     assert sheet_ids == [
@@ -196,6 +199,7 @@ def test_analysis_has_five_sheets_in_expected_order():
         SHEET_INV_ANOMALIES,
         SHEET_INV_MONEY_TRAIL,
         SHEET_INV_ACCOUNT_NETWORK,
+        SHEET_INV_APP_INFO,
     ]
 
 
@@ -220,10 +224,12 @@ def test_every_sheet_has_a_description():
 
 
 def test_analysis_serializes_to_aws_json():
-    """to_aws_json() must succeed end-to-end — no None-strip crashes."""
+    """to_aws_json() must succeed end-to-end — no None-strip crashes.
+
+    5 content sheets + the M.4.4.5 App Info ("i") sheet = 6 total."""
     j = build_analysis(_TEST_CFG).to_aws_json()
     assert j["AnalysisId"] == _TEST_CFG.prefixed("investigation-analysis")
-    assert len(j["Definition"]["Sheets"]) == 5
+    assert len(j["Definition"]["Sheets"]) == 6
 
 
 def test_demo_sql_is_a_string():
@@ -252,6 +258,11 @@ def test_investigation_datasets_in_expected_order():
 
 
 def test_investigation_datasets_declared_in_analysis():
+    """5 content datasets + the 2 M.4.4.5 App Info datasets."""
+    from quicksight_gen.common.sheets.app_info import (
+        DS_APP_INFO_LIVENESS, DS_APP_INFO_MATVIEWS,
+    )
+
     analysis = build_analysis(_TEST_CFG)
     decls = analysis.Definition.DataSetIdentifierDeclarations
     assert [d.Identifier for d in decls] == [
@@ -260,6 +271,8 @@ def test_investigation_datasets_declared_in_analysis():
         DS_INV_MONEY_TRAIL,
         DS_INV_ACCOUNT_NETWORK,
         DS_INV_ANETWORK_ACCOUNTS,
+        DS_APP_INFO_LIVENESS,
+        DS_APP_INFO_MATVIEWS,
     ]
 
 

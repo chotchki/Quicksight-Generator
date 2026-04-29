@@ -168,16 +168,17 @@ def test_per_instance_prefix_isolates_resource_ids() -> None:
 # -- Sheet structure (M.3.4 — 4 sheets) --------------------------------------
 
 
-def test_five_sheets_in_display_order() -> None:
+def test_six_sheets_in_display_order() -> None:
     """M.3.10f: Getting Started + Rails + Chains + Transfer Templates +
     L2 Exceptions. Position-stable — the order matches the L2-primitive
     type progression (the per-Rail explorer, the cross-Rail chain,
-    the multi-Rail bundled Transfer, then hygiene exceptions)."""
+    the multi-Rail bundled Transfer, then hygiene exceptions). M.4.4.5
+    appended the App Info ("i") canary as the last sheet."""
     app = build_l2_flow_tracing_app(_CFG)
     assert app.analysis is not None
     assert [s.name for s in app.analysis.sheets] == [
         "Getting Started", "Rails", "Chains",
-        "Transfer Templates", "L2 Exceptions",
+        "Transfer Templates", "L2 Exceptions", "i",
     ]
 
 
@@ -197,7 +198,8 @@ def test_dataset_count_matches_populated_sheets() -> None:
     datasets with one UNION-ALL dataset (mirrors L1's Today's
     Exceptions pattern: KPI + bar chart + unified detail table)."""
     app = build_l2_flow_tracing_app(_CFG)
-    assert len(app.datasets) == 6
+    # M.4.4.5 added 2 App Info datasets to every shipped app.
+    assert len(app.datasets) == 8
     assert {d.identifier for d in app.datasets} == {
         "l2ft-postings-ds",
         "l2ft-meta-values-ds",
@@ -205,6 +207,8 @@ def test_dataset_count_matches_populated_sheets() -> None:
         "l2ft-tt-instances-ds",
         "l2ft-tt-legs-ds",
         "l2ft-unified-exceptions-ds",
+        "app-info-liveness-ds",
+        "app-info-matviews-ds",
     }
 
 

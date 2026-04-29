@@ -70,13 +70,14 @@ def l2_instance(request) -> L2Instance:
 # -- Sheet structure invariants ----------------------------------------------
 
 
-def test_five_sheets_in_display_order(l2_instance: L2Instance) -> None:
-    """Same 5-sheet shape (M.3.10f) across every L2 instance —
-    switching the L2 doesn't reshuffle the dashboard."""
+def test_six_sheets_in_display_order(l2_instance: L2Instance) -> None:
+    """Same 6-sheet shape across every L2 instance — switching the L2
+    doesn't reshuffle the dashboard. M.4.4.5 appended the App Info
+    ("i") canary as the always-last sheet."""
     app = build_l2_flow_tracing_app(_CFG, l2_instance=l2_instance)
     assert [s.name for s in app.analysis.sheets] == [
         "Getting Started", "Rails", "Chains",
-        "Transfer Templates", "L2 Exceptions",
+        "Transfer Templates", "L2 Exceptions", "i",
     ]
 
 
@@ -117,16 +118,16 @@ def test_l2_exceptions_sheet_visuals_invariant_M3_10l(
 # -- Dataset count + ID prefix invariants -----------------------------------
 
 
-def test_dataset_count_is_six_per_instance(
+def test_dataset_count_is_eight_per_instance(
     l2_instance: L2Instance,
 ) -> None:
-    """M.3.10l stabilizes at 6 fixed datasets per L2 instance —
-    postings + meta-values (Rails cascade) + chain-instances (Chains
-    explorer) + tt-instances + tt-legs (Transfer Templates) +
-    unified-exceptions (L2 Exceptions). M.3.10l replaced 6 separate
-    L2 exception datasets with one UNION-ALL dataset."""
+    """6 content datasets (M.3.10l) + 2 App Info datasets (M.4.4.5).
+
+    Content: postings + meta-values (Rails cascade), chain-instances
+    (Chains), tt-instances + tt-legs (Transfer Templates), unified-
+    exceptions (L2 Exceptions). App Info: liveness + matview status."""
     app = build_l2_flow_tracing_app(_CFG, l2_instance=l2_instance)
-    assert len(app.datasets) == 6
+    assert len(app.datasets) == 8
 
 
 def test_every_dataset_id_carries_l2_prefix(

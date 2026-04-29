@@ -36,6 +36,16 @@ from quicksight_gen.common.config import Config
 from quicksight_gen.common.ids import SheetId
 from quicksight_gen.common.models import Analysis as ModelAnalysis
 from quicksight_gen.common.models import Dashboard as ModelDashboard
+from quicksight_gen.common.sheets.app_info import (
+    APP_INFO_SHEET_DESCRIPTION,
+    APP_INFO_SHEET_NAME,
+    APP_INFO_SHEET_TITLE,
+    DS_APP_INFO_LIVENESS,
+    DS_APP_INFO_MATVIEWS,
+    build_liveness_dataset,
+    build_matview_status_dataset,
+    populate_app_info_sheet,
+)
 from quicksight_gen.common.theme import get_preset
 from quicksight_gen.common.tree import (
     Analysis,
@@ -70,6 +80,7 @@ SHEET_EXEC_GETTING_STARTED = SheetId("exec-sheet-getting-started")
 SHEET_EXEC_ACCOUNT_COVERAGE = SheetId("exec-sheet-account-coverage")
 SHEET_EXEC_TRANSACTION_VOLUME = SheetId("exec-sheet-transaction-volume")
 SHEET_EXEC_MONEY_MOVED = SheetId("exec-sheet-money-moved")
+SHEET_EXEC_APP_INFO = SheetId("exec-sheet-app-info")  # M.4.4.5
 
 
 # Sheet descriptions — single source of truth, also surfaced in the
@@ -623,6 +634,31 @@ def build_executives_app(cfg: Config) -> App:
         analysis,
         sheet=sheets[SHEET_EXEC_ACCOUNT_COVERAGE],
         datasets=datasets,
+    )
+
+    # M.4.4.5 — App Info ("i") sheet, ALWAYS LAST. Diagnostic canary;
+    # see common/sheets/app_info.py. Executives reads base tables only
+    # (no matviews), so the matview-status dataset emits its placeholder
+    # row.
+    liveness_aws = build_liveness_dataset(cfg)
+    matviews_aws = build_matview_status_dataset(cfg, view_names=[])
+    liveness_ds = app.add_dataset(Dataset(
+        identifier=DS_APP_INFO_LIVENESS,
+        arn=cfg.dataset_arn(liveness_aws.DataSetId),
+    ))
+    matviews_ds = app.add_dataset(Dataset(
+        identifier=DS_APP_INFO_MATVIEWS,
+        arn=cfg.dataset_arn(matviews_aws.DataSetId),
+    ))
+    app_info_sheet = analysis.add_sheet(Sheet(
+        sheet_id=SHEET_EXEC_APP_INFO,
+        name=APP_INFO_SHEET_NAME,
+        title=APP_INFO_SHEET_TITLE,
+        description=APP_INFO_SHEET_DESCRIPTION,
+    ))
+    populate_app_info_sheet(
+        cfg, app_info_sheet,
+        liveness_ds=liveness_ds, matview_status_ds=matviews_ds,
     )
 
     app.create_dashboard(

@@ -59,6 +59,16 @@ from quicksight_gen.common.ids import ParameterName, SheetId
 from quicksight_gen.common.l2 import L2Instance
 from quicksight_gen.common.models import DateTimeDefaultValues
 from quicksight_gen.common.dataset_contract import ColumnShape
+from quicksight_gen.common.sheets.app_info import (
+    APP_INFO_SHEET_DESCRIPTION,
+    APP_INFO_SHEET_NAME,
+    APP_INFO_SHEET_TITLE,
+    DS_APP_INFO_LIVENESS,
+    DS_APP_INFO_MATVIEWS,
+    build_liveness_dataset,
+    build_matview_status_dataset,
+    populate_app_info_sheet,
+)
 from quicksight_gen.common.theme import get_preset
 from quicksight_gen.common.tree import (
     AUTO,
@@ -107,6 +117,7 @@ SHEET_SUPERSESSION_AUDIT = SheetId("l1-sheet-supersession-audit")
 SHEET_TODAYS_EXCEPTIONS = SheetId("l1-sheet-todays-exceptions")
 SHEET_DAILY_STATEMENT = SheetId("l1-sheet-daily-statement")
 SHEET_TRANSACTIONS = SheetId("l1-sheet-transactions")
+SHEET_APP_INFO = SheetId("l1-sheet-app-info")
 
 
 # Parameter names — analysis-level parameters that drive the universal
@@ -362,6 +373,27 @@ def _l2_internal_account_role_lines(l2_instance: L2Instance) -> list[str]:
     return lines
 
 
+def _l1_matview_names(l2_instance: L2Instance) -> list[str]:
+    """The L2-prefixed matviews the L1 dashboard reads.
+
+    Surfaced on the App Info ("i") sheet's matview status table so an
+    operator can see ETL refresh state at a glance. Order is the rough
+    "narrow-to-broad" surfaces order each invariant view covers.
+    """
+    p = str(l2_instance.instance)
+    return [
+        f"{p}_current_transactions",
+        f"{p}_current_daily_balances",
+        f"{p}_drift",
+        f"{p}_ledger_drift",
+        f"{p}_overdraft",
+        f"{p}_limit_breach",
+        f"{p}_todays_exceptions",
+        f"{p}_stuck_pending",
+        f"{p}_stuck_unbundled",
+    ]
+
+
 def _l1_datasets(
     cfg: Config, l2_instance: L2Instance,
 ) -> dict[str, Dataset]:
@@ -385,10 +417,23 @@ def _l1_datasets(
         DS_STUCK_PENDING, DS_STUCK_UNBUNDLED,
         DS_SUPERSESSION_TRANSACTIONS, DS_SUPERSESSION_DAILY_BALANCES,
     ]
-    return {
+    out: dict[str, Dataset] = {
         vid: Dataset(identifier=vid, arn=cfg.dataset_arn(aws.DataSetId))
         for vid, aws in zip(visual_ids, aws_datasets)
     }
+    liveness_aws = build_liveness_dataset(cfg)
+    matviews_aws = build_matview_status_dataset(
+        cfg, view_names=_l1_matview_names(l2_instance),
+    )
+    out[DS_APP_INFO_LIVENESS] = Dataset(
+        identifier=DS_APP_INFO_LIVENESS,
+        arn=cfg.dataset_arn(liveness_aws.DataSetId),
+    )
+    out[DS_APP_INFO_MATVIEWS] = Dataset(
+        identifier=DS_APP_INFO_MATVIEWS,
+        arn=cfg.dataset_arn(matviews_aws.DataSetId),
+    )
+    return out
 
 
 def _populate_getting_started(
@@ -2081,6 +2126,14 @@ def build_l1_dashboard_app(
         title=_TRANSACTIONS_TITLE,
         description=_TRANSACTIONS_DESCRIPTION,
     ))
+    # M.4.4.5 — App Info ("i") sheet, ALWAYS LAST. Diagnostic canary;
+    # see common/sheets/app_info.py.
+    app_info_sheet = analysis.add_sheet(Sheet(
+        sheet_id=SHEET_APP_INFO,
+        name=APP_INFO_SHEET_NAME,
+        title=APP_INFO_SHEET_TITLE,
+        description=APP_INFO_SHEET_DESCRIPTION,
+    ))
 
     # Populators — each receives the sheets it drills into so the drill
     # actions can reference target_sheet by typed ref.
@@ -2126,6 +2179,11 @@ def build_l1_dashboard_app(
     )
     _populate_transactions_sheet(
         cfg, transactions_sheet, datasets=datasets,
+    )
+    populate_app_info_sheet(
+        cfg, app_info_sheet,
+        liveness_ds=datasets[DS_APP_INFO_LIVENESS],
+        matview_status_ds=datasets[DS_APP_INFO_MATVIEWS],
     )
 
     # M.2b.1 — Universal date-range filter wires the sheets together.

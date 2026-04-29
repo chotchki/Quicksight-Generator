@@ -84,26 +84,34 @@ _FUZZ_DUMP_DIR = REPO_ROOT / "tests" / "l2" / "fuzz_failures"
 
 
 def _fuzz_yaml_path() -> Path:
-    """Materialize fuzz YAML to a stable path keyed by seed."""
+    """Materialize fuzz YAML to a stable path keyed by seed.
+
+    xdist-safe: per-PID temp filenames + atomic ``os.replace`` for the
+    final file, so multiple worker processes that race on collection
+    don't corrupt the canonical path. If two workers race to the
+    final ``os.replace``, the loser's identical content overwrites
+    the winner's — harmless because both bytes are byte-identical
+    (same seed → same text → same hash).
+    """
     _FUZZ_DUMP_DIR.mkdir(parents=True, exist_ok=True)
     p = _FUZZ_DUMP_DIR / f"fuzz_seed_{FUZZ_SEED}.yaml"
-    if not p.exists():
-        text = random_l2_yaml(FUZZ_SEED)
-        # Lock the seed_hash by computing it then appending — this
-        # mirrors what the `demo seed-l2 --lock` CLI does, but in-process
-        # so the matrix runs without subprocess overhead.
-        instance = load_instance(_write_temp(text))
-        report = default_scenario_for(instance, today=CANONICAL_TODAY)
-        sql = emit_seed(instance, report.scenario)
-        sha = hashlib.sha256(sql.encode("utf-8")).hexdigest()
-        text_with_lock = text.rstrip() + f"\nseed_hash: {sha}\n"
-        p.write_text(text_with_lock)
+    if p.exists():
+        return p
+    text = random_l2_yaml(FUZZ_SEED)
+    instance = load_instance(_write_temp(text))
+    report = default_scenario_for(instance, today=CANONICAL_TODAY)
+    sql = emit_seed(instance, report.scenario)
+    sha = hashlib.sha256(sql.encode("utf-8")).hexdigest()
+    text_with_lock = text.rstrip() + f"\nseed_hash: {sha}\n"
+    final_tmp = _FUZZ_DUMP_DIR / f"_final_pid_{os.getpid()}.yaml"
+    final_tmp.write_text(text_with_lock)
+    os.replace(final_tmp, p)
     return p
 
 
 def _write_temp(text: str) -> Path:
     """Write to a sibling tmp file just for the pre-lock load."""
-    tmp = _FUZZ_DUMP_DIR / f"_tmp_seed_{FUZZ_SEED}.yaml"
+    tmp = _FUZZ_DUMP_DIR / f"_tmp_seed_{FUZZ_SEED}_pid_{os.getpid()}.yaml"
     tmp.write_text(text)
     return tmp
 
