@@ -177,8 +177,15 @@ def harness_cfg(cfg: Config, harness_l2: L2Instance, harness_uid: str) -> Config
     cfg already had it set — so the per-test cfg points at the same
     pre-existing datasource the production deploy uses.
     """
+    # Clear datasource_arn so Config.__post_init__ re-derives it from
+    # the per-test l2_instance_prefix. Result: each test gets its own
+    # `qs-gen-<per-test-prefix>-demo-datasource` ARN, which the harness
+    # also creates fresh in generate_apps (M.4.1 option 2 — per-test
+    # datasource decouples the harness from any QS-side caching tied
+    # to the shared production datasource).
     return dataclasses.replace(
         cfg,
+        datasource_arn=None,
         extra_tags={
             **cfg.extra_tags,
             "TestUid": harness_uid,

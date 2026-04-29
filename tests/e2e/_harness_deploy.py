@@ -88,6 +88,18 @@ def generate_apps(
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "datasets").mkdir(exist_ok=True)
 
+    # Per-test datasource (M.4.1 option 2 — harness owns its own
+    # datasource per test, vs the earlier shared-production-datasource
+    # pattern). Decouples the harness from any QS-side caching tied
+    # to the shared datasource ARN; cfg.datasource_arn must be the
+    # auto-derived per-test ARN (cfg.l2_instance_prefix in the path).
+    if cfg.demo_database_url:
+        from quicksight_gen.apps.payment_recon.datasets import (
+            build_datasource,
+        )
+        datasource = build_datasource(cfg)
+        _write_json(out_dir / "datasource.json", datasource.to_aws_json())
+
     # Theme — shared across both apps.
     theme = build_theme(cfg)
     _write_json(out_dir / "theme.json", theme.to_aws_json())

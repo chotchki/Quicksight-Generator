@@ -35,9 +35,13 @@ from typing import Any
 
 # QS resource types swept in dependency order: dashboards reference
 # analyses, analyses reference datasets, datasets reference datasources +
-# themes. Datasources are NEVER deleted by the harness (single shared
-# datasource for all tests, owned by the production deploy).
-_QS_DELETION_ORDER = ("dashboard", "analysis", "dataset", "theme")
+# themes. Datasource swept LAST (after datasets) since datasets reference
+# it; theme is independent. M.4.1 option 2 — the harness now creates its
+# OWN per-test datasource (vs the earlier shared-production-datasource
+# pattern), so the sweep needs to delete it.
+_QS_DELETION_ORDER = (
+    "dashboard", "analysis", "dataset", "datasource", "theme",
+)
 
 
 def sweep_qs_resources_by_tag(
@@ -49,10 +53,10 @@ def sweep_qs_resources_by_tag(
 ) -> dict[str, int]:
     """Delete every QS resource carrying ``tag_key == tag_value``.
 
-    Walks dashboards / analyses / datasets / themes; for each, calls
-    ``list_tags_for_resource`` on its ARN; if the tag matches, deletes.
-    Datasources are intentionally skipped — the harness does not own
-    them.
+    Walks dashboards / analyses / datasets / datasources / themes; for
+    each, calls ``list_tags_for_resource`` on its ARN; if the tag
+    matches, deletes. Datasources are now part of the sweep (M.4.1
+    option 2 — harness owns its own per-test datasource).
 
     Returns a dict ``{resource_type: deletion_count}`` for the
     per-test failure triage manifest (M.4.1.f).
@@ -102,6 +106,7 @@ def _collect_resources_matching_tag(
         "dashboard": _iter_dashboards,
         "analysis": _iter_analyses,
         "dataset": _iter_datasets,
+        "datasource": _iter_datasources,
         "theme": _iter_themes,
     }
     for kind, it in iterators.items():
@@ -139,6 +144,8 @@ def _delete_one(client: Any, account_id: str, kind: str, rid: str) -> None:
         )
     elif kind == "dataset":
         client.delete_data_set(AwsAccountId=account_id, DataSetId=rid)
+    elif kind == "datasource":
+        client.delete_data_source(AwsAccountId=account_id, DataSourceId=rid)
     elif kind == "theme":
         client.delete_theme(AwsAccountId=account_id, ThemeId=rid)
     else:
@@ -169,6 +176,13 @@ def _iter_datasets(client: Any, account_id: str):
     for page in paginator.paginate(AwsAccountId=account_id):
         for item in page.get("DataSetSummaries", []):
             yield item["DataSetId"], item["Arn"]
+
+
+def _iter_datasources(client: Any, account_id: str):
+    paginator = client.get_paginator("list_data_sources")
+    for page in paginator.paginate(AwsAccountId=account_id):
+        for item in page.get("DataSources", []):
+            yield item["DataSourceId"], item["Arn"]
 
 
 def _iter_themes(client: Any, account_id: str):

@@ -57,11 +57,13 @@ class _FakeQsClient:
         datasets: list[tuple[str, str]],
         themes: list[tuple[str, str]],
         tags_by_arn: dict[str, list[dict[str, str]]],
+        datasources: list[tuple[str, str]] | None = None,
     ) -> None:
         self._dashboards = dashboards
         self._analyses = analyses
         self._datasets = datasets
         self._themes = themes
+        self._datasources = datasources or []
         self._tags_by_arn = tags_by_arn
         self.deletions: list[tuple[str, str]] = []  # (kind, id)
 
@@ -88,6 +90,13 @@ class _FakeQsClient:
                 [
                     {"DataSetId": rid, "Arn": arn}
                     for rid, arn in self._datasets
+                ],
+            ),
+            "list_data_sources": (
+                "DataSources",
+                [
+                    {"DataSourceId": rid, "Arn": arn}
+                    for rid, arn in self._datasources
                 ],
             ),
             "list_themes": (
@@ -119,6 +128,9 @@ class _FakeQsClient:
 
     def delete_data_set(self, *, AwsAccountId: str, DataSetId: str):
         self.deletions.append(("dataset", DataSetId))
+
+    def delete_data_source(self, *, AwsAccountId: str, DataSourceId: str):
+        self.deletions.append(("datasource", DataSourceId))
 
     def delete_theme(self, *, AwsAccountId: str, ThemeId: str):
         self.deletions.append(("theme", ThemeId))
@@ -170,24 +182,29 @@ def test_sweep_deletes_only_tag_matching_resources() -> None:
 
     assert client.deletions == [("dashboard", "qs-gen-e2e-spec-dash")]
     assert counts == {
-        "dashboard": 1, "analysis": 0, "dataset": 0, "theme": 0,
+        "dashboard": 1, "analysis": 0, "dataset": 0,
+        "datasource": 0, "theme": 0,
     }
 
 
 def test_sweep_deletes_in_dependency_order() -> None:
-    """Dashboards delete BEFORE analyses BEFORE datasets BEFORE themes —
-    QS rejects e.g. dataset deletion while a dashboard still references it.
+    """Dashboards → analyses → datasets → datasource → themes. QS rejects
+    e.g. dataset deletion while a dashboard still references it; same
+    rule applies to datasource deletion while datasets reference it.
+    Theme is independent so its order vs datasource doesn't matter for
+    correctness, but we pin it last for stability.
     """
     account = "111122223333"
     tags = [{"Key": "TestUid", "Value": "uid42"}]
     arns = {
         kind: _arn(account, kind, f"qs-gen-e2e-{kind}")
-        for kind in ("dashboard", "analysis", "dataset", "theme")
+        for kind in ("dashboard", "analysis", "dataset", "datasource", "theme")
     }
     client = _FakeQsClient(
         dashboards=[("qs-gen-e2e-dashboard", arns["dashboard"])],
         analyses=[("qs-gen-e2e-analysis", arns["analysis"])],
         datasets=[("qs-gen-e2e-dataset", arns["dataset"])],
+        datasources=[("qs-gen-e2e-datasource", arns["datasource"])],
         themes=[("qs-gen-e2e-theme", arns["theme"])],
         tags_by_arn={arn: tags for arn in arns.values()},
     )
@@ -200,6 +217,7 @@ def test_sweep_deletes_in_dependency_order() -> None:
         ("dashboard", "qs-gen-e2e-dashboard"),
         ("analysis", "qs-gen-e2e-analysis"),
         ("dataset", "qs-gen-e2e-dataset"),
+        ("datasource", "qs-gen-e2e-datasource"),
         ("theme", "qs-gen-e2e-theme"),
     ]
 
@@ -284,31 +302,46 @@ def test_sweep_continues_past_individual_delete_failure(
     assert "simulated 5xx" in captured.err
 
 
-def test_sweep_does_not_touch_datasources() -> None:
-    """Datasources are explicitly excluded from the sweep — they're
-    shared across tests, owned by the production deploy.
+def test_sweep_includes_datasources() -> None:
+    """Datasources are part of the sweep (M.4.1 option 2 — harness owns
+    its own per-test datasource, vs the earlier shared-production pattern).
+    Pages through ``list_data_sources`` and tag-filters like every other
+    resource type.
     """
     account = "111122223333"
-
-    class _DataSourceWatchingClient(_FakeQsClient):
-        def __init__(self, **kw: Any) -> None:
-            super().__init__(**kw)
-            self.list_datasource_called = False
-
-        def get_paginator(self, op_name: str):
-            if op_name == "list_data_sources":
-                self.list_datasource_called = True
-            return super().get_paginator(op_name)
-
-    client = _DataSourceWatchingClient(
-        dashboards=[], analyses=[], datasets=[], themes=[], tags_by_arn={},
+    tags = [{"Key": "TestUid", "Value": "uid42"}]
+    ds_arn = _arn(account, "datasource", "qs-gen-e2e-datasource")
+    client = _FakeQsClient(
+        dashboards=[], analyses=[], datasets=[],
+        datasources=[("qs-gen-e2e-datasource", ds_arn)],
+        themes=[], tags_by_arn={ds_arn: tags},
     )
 
-    sweep_qs_resources_by_tag(
+    counts = sweep_qs_resources_by_tag(
         client, account, tag_key="TestUid", tag_value="uid42",
     )
 
-    assert client.list_datasource_called is False
+    assert ("datasource", "qs-gen-e2e-datasource") in client.deletions
+    assert counts["datasource"] == 1
+
+
+def test_sweep_skips_untagged_datasources() -> None:
+    """A datasource missing the test's tag stays — protects the
+    production datasource from being swept by a foreign run."""
+    account = "111122223333"
+    prod_arn = _arn(account, "datasource", "qs-gen-demo-datasource")
+    client = _FakeQsClient(
+        dashboards=[], analyses=[], datasets=[],
+        datasources=[("qs-gen-demo-datasource", prod_arn)],
+        themes=[], tags_by_arn={},  # no tags → not matched
+    )
+
+    counts = sweep_qs_resources_by_tag(
+        client, account, tag_key="TestUid", tag_value="uid42",
+    )
+
+    assert client.deletions == []
+    assert counts["datasource"] == 0
 
 
 # ---------------------------------------------------------------------------
