@@ -33,6 +33,7 @@ harness test.
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from typing import Any
 
 
@@ -77,6 +78,63 @@ def expected_todays_exceptions_kpi_count(
         len(planted_manifest.get(kind, []))
         for kind in L1_SHOULD_VIOLATION_PLANT_KINDS
     )
+
+
+def widen_l1_date_range(
+    page: Any,
+    *,
+    today: date,
+    days_back: int = 30,
+    timeout_ms: int = 30_000,
+) -> None:
+    """Set the L1 dashboard's universal date filter wide enough to
+    span every planted scenario, BEFORE the visibility assertions run.
+
+    Why: ``apply_db_seed`` anchors plants to ``DEFAULT_HARNESS_TODAY``
+    (date(2030, 1, 1)) so the seed hash is deterministic across runs.
+    The L1 dashboard's universal date-range filter (M.2b.1) defaults
+    to a rolling 7-day window ending at the dashboard's "now" — which
+    is the actual current wall-clock date, NOT the harness's pinned
+    today. The plants therefore sit several years outside the default
+    window and every visibility check trivially fails.
+
+    Setting the filter on ONE sheet propagates to all data-bearing
+    sheets (the params are analysis-level — see M.2b.1 in app.py),
+    so we only navigate once. We pick "Drift" because it's the first
+    data-bearing sheet that always exists for any L2 instance with
+    a TwoLegRail.
+
+    Args:
+        page: loaded Playwright Page on the L1 dashboard.
+        today: the same ``today`` ``apply_db_seed`` used (typically
+            ``DEFAULT_HARNESS_TODAY``). Plants land at this anchor
+            minus their ``days_ago``; setting the filter window to
+            end at this date ensures they all fall inside.
+        days_back: width of the window. Default 30 covers all current
+            plant kinds (max ``days_ago`` is ~7); leaves headroom for
+            future fixture changes.
+        timeout_ms: per-step picker wait timeout.
+    """
+    from quicksight_gen.common.browser.helpers import (
+        click_sheet_tab,
+        set_parameter_datetime_value,
+    )
+
+    click_sheet_tab(page, "Drift", timeout_ms=timeout_ms)
+    start = today - timedelta(days=days_back)
+    end = today
+    set_parameter_datetime_value(
+        page, "Date From", start.strftime("%Y/%m/%d"),
+        timeout_ms=timeout_ms,
+    )
+    set_parameter_datetime_value(
+        page, "Date To", end.strftime("%Y/%m/%d"),
+        timeout_ms=timeout_ms,
+    )
+    # Give QS a beat to propagate the param change + re-query visuals.
+    # The set_parameter_datetime_value helper waits for the input but
+    # not for the downstream visual rerender.
+    page.wait_for_timeout(2000)
 
 
 def assert_l1_plants_visible(

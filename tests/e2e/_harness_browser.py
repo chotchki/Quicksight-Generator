@@ -124,12 +124,15 @@ def run_dashboard_check_with_retry(
                     page.goto(embed_url, timeout=page_timeout_ms)
                     wait_for_dashboard_loaded(page, timeout_ms=page_timeout_ms)
                     operation(page)
-                except PlaywrightTimeoutError:
+                except (PlaywrightTimeoutError, AssertionError):
                     # Capture the screenshot WHILE the page is still
-                    # live (we're still inside the webkit_page context).
-                    # The earlier version captured AFTER the context
-                    # exited, when the underlying browser was already
-                    # torn down — page.screenshot raised silently.
+                    # live (still inside the webkit_page context).
+                    # AssertionError captures help diagnose "data is in
+                    # the matview but the sheet doesn't show it" — the
+                    # screenshot reveals whether it's a date filter,
+                    # virtualization, column-visibility, or actual data
+                    # absence problem. TimeoutError captures help with
+                    # the QS spinner-forever footgun.
                     if screenshot_dir is not None:
                         try:
                             from pathlib import Path

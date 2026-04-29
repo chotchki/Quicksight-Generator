@@ -79,6 +79,7 @@ from _harness_cleanup import (  # noqa: E402
     sweep_qs_resources_by_tag,
 )
 from _harness_seed import (  # noqa: E402
+    DEFAULT_HARNESS_TODAY,
     apply_db_seed,
     build_planted_manifest,
 )
@@ -93,6 +94,7 @@ from _harness_failure_dump import dump_failure_manifest  # noqa: E402
 from _harness_l1_assertions import (  # noqa: E402
     assert_l1_plants_visible,
     assert_todays_exceptions_kpi_matches,
+    widen_l1_date_range,
 )
 from _harness_l2ft_assertions import (  # noqa: E402
     assert_l2_exceptions_check_types_present,
@@ -675,6 +677,16 @@ def test_harness_l1_planted_scenarios_visible(
     visual_timeout = int(os.environ.get("QS_E2E_VISUAL_TIMEOUT", "30000"))
 
     def _check_l1(page: Any) -> None:
+        # Widen the universal date filter (M.2b.1) so plants anchored
+        # to DEFAULT_HARNESS_TODAY (date(2030, 1, 1)) fall inside the
+        # window. Default rolling-7-day window ends at the dashboard's
+        # actual today, which excludes every plant.
+        widen_l1_date_range(
+            page,
+            today=DEFAULT_HARNESS_TODAY,
+            days_back=30,
+            timeout_ms=visual_timeout,
+        )
         assert_l1_plants_visible(
             page, manifest, timeout_ms=visual_timeout,
         )
