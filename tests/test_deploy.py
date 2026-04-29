@@ -29,27 +29,27 @@ def _write_analysis(path: Path, dataset_ids: list[str]) -> None:
 
 class TestDatasetIdsForApps:
     def test_single_app_returns_only_its_datasets(self, tmp_path: Path) -> None:
-        ar_analysis = tmp_path / "account-recon-analysis.json"
-        _write_analysis(ar_analysis, ["qs-gen-ar-foo", "qs-gen-ar-bar"])
-        apps = [AppFiles(name="account-recon", analysis_path=ar_analysis,
-                         dashboard_path=tmp_path / "account-recon-dashboard.json")]
+        inv_analysis = tmp_path / "investigation-analysis.json"
+        _write_analysis(inv_analysis, ["qs-gen-inv-foo", "qs-gen-inv-bar"])
+        apps = [AppFiles(name="investigation", analysis_path=inv_analysis,
+                         dashboard_path=tmp_path / "investigation-dashboard.json")]
 
-        assert _dataset_ids_for_apps(apps) == {"qs-gen-ar-foo", "qs-gen-ar-bar"}
+        assert _dataset_ids_for_apps(apps) == {"qs-gen-inv-foo", "qs-gen-inv-bar"}
 
     def test_two_apps_returns_union(self, tmp_path: Path) -> None:
-        pr_analysis = tmp_path / "payment-recon-analysis.json"
-        ar_analysis = tmp_path / "account-recon-analysis.json"
-        _write_analysis(pr_analysis, ["qs-gen-pr-foo"])
-        _write_analysis(ar_analysis, ["qs-gen-ar-foo", "qs-gen-ar-bar"])
+        inv_analysis = tmp_path / "investigation-analysis.json"
+        exec_analysis = tmp_path / "executives-analysis.json"
+        _write_analysis(inv_analysis, ["qs-gen-inv-foo"])
+        _write_analysis(exec_analysis, ["qs-gen-exec-foo", "qs-gen-exec-bar"])
         apps = [
-            AppFiles(name="payment-recon", analysis_path=pr_analysis,
-                     dashboard_path=tmp_path / "payment-recon-dashboard.json"),
-            AppFiles(name="account-recon", analysis_path=ar_analysis,
-                     dashboard_path=tmp_path / "account-recon-dashboard.json"),
+            AppFiles(name="investigation", analysis_path=inv_analysis,
+                     dashboard_path=tmp_path / "investigation-dashboard.json"),
+            AppFiles(name="executives", analysis_path=exec_analysis,
+                     dashboard_path=tmp_path / "executives-dashboard.json"),
         ]
 
         assert _dataset_ids_for_apps(apps) == {
-            "qs-gen-pr-foo", "qs-gen-ar-foo", "qs-gen-ar-bar",
+            "qs-gen-inv-foo", "qs-gen-exec-foo", "qs-gen-exec-bar",
         }
 
     def test_missing_analysis_file_is_skipped(self, tmp_path: Path) -> None:

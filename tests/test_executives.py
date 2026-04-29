@@ -291,10 +291,7 @@ class TestCli:
             main, ["generate", "-c", str(config), "-o", str(out), "--all"],
         )
         assert result.exit_code == 0, result.output
-        # All 5 apps should produce both files (M.2a.9 added l1-dashboard
-        # to --all alongside the v5 stack).
         for stem in (
-            "payment-recon",
             "investigation",
             "executives",
             "l1-dashboard",

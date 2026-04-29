@@ -197,7 +197,7 @@ def apply_dashboards(
 
     # Theme + datasource — reuse existing builders so the deploy machinery
     # has every JSON file it expects under the same naming scheme.
-    from quicksight_gen.apps.payment_recon.datasets import build_datasource
+    from quicksight_gen.common.datasource import build_datasource
     from quicksight_gen.common.theme import build_theme
 
     if cfg.demo_database_url:

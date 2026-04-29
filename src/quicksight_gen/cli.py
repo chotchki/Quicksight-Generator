@@ -16,7 +16,7 @@ from quicksight_gen.common.theme import build_theme
 
 
 APPS = (
-    "payment-recon", "investigation",
+    "investigation",
     "executives", "l1-dashboard", "l2-flow-tracing",
 )
 
@@ -80,7 +80,6 @@ def generate(
     if ctx.invoked_subcommand is not None:
         return
     if all_apps:
-        _generate_payment_recon(config, output_dir, theme_preset)
         _generate_investigation(config, output_dir, theme_preset)
         _generate_executives(config, output_dir, theme_preset)
         _generate_l1_dashboard(config, output_dir, theme_preset)
@@ -88,19 +87,10 @@ def generate(
     else:
         click.echo(ctx.get_help())
         raise click.UsageError(
-            "Specify an app (payment-recon, investigation, "
+            "Specify an app (investigation, "
             "executives, l1-dashboard, l2-flow-tracing) "
             "or --all."
         )
-
-
-@generate.command("payment-recon")
-@click.pass_context
-def generate_payment_recon_cmd(ctx: click.Context) -> None:
-    """Generate Payment Reconciliation JSON."""
-    _generate_payment_recon(
-        ctx.obj["config"], ctx.obj["output_dir"], ctx.obj["theme_preset"],
-    )
 
 
 @generate.command("executives")
@@ -162,44 +152,6 @@ def generate_l2_flow_tracing_cmd(
         ctx.obj["config"], ctx.obj["output_dir"], ctx.obj["theme_preset"],
         l2_instance_path=l2_instance_path,
     )
-
-
-def _generate_payment_recon(
-    config_path: str, output_dir: str, theme_preset: str | None,
-) -> None:
-    from quicksight_gen.apps.payment_recon.app import (
-        build_analysis,
-        build_payment_recon_dashboard,
-    )
-    from quicksight_gen.apps.payment_recon.datasets import build_all_datasets
-
-    cfg = load_config(config_path)
-    if theme_preset is not None:
-        cfg.theme_preset = theme_preset
-    out = Path(output_dir)
-    click.echo(
-        f"Payment Recon: account={cfg.aws_account_id}, "
-        f"region={cfg.aws_region}"
-    )
-
-    theme = build_theme(cfg)
-    _write_json(out / "theme.json", theme.to_aws_json())
-
-    datasets = build_all_datasets(cfg)
-    _prune_stale_files(
-        out / "datasets",
-        keep=_all_dataset_filenames(cfg, keep_current=datasets),
-    )
-    for ds in datasets:
-        _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
-
-    analysis = build_analysis(cfg)
-    _write_json(out / "payment-recon-analysis.json", analysis.to_aws_json())
-
-    dashboard = build_payment_recon_dashboard(cfg)
-    _write_json(out / "payment-recon-dashboard.json", dashboard.to_aws_json())
-
-    click.echo(f"\nGenerated {1 + len(datasets) + 2} files in {out}/")
 
 
 def _generate_investigation(
@@ -420,12 +372,8 @@ def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
     from quicksight_gen.apps.l2_flow_tracing.datasets import (
         build_all_l2_flow_tracing_datasets as _l2ft,
     )
-    from quicksight_gen.apps.payment_recon.datasets import (
-        build_all_datasets as _pr,
-    )
 
     names: set[str] = {f"{ds.DataSetId}.json" for ds in keep_current}
-    names.update(f"{ds.DataSetId}.json" for ds in _pr(cfg))
     names.update(f"{ds.DataSetId}.json" for ds in _inv(cfg))
     names.update(f"{ds.DataSetId}.json" for ds in _exec(cfg))
     names.update(
@@ -444,7 +392,7 @@ def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
 # ---------------------------------------------------------------------------
 
 APP_CHOICE = click.Choice([
-    "payment-recon", "investigation",
+    "investigation",
     "executives", "l1-dashboard", "l2-flow-tracing",
 ])
 
@@ -456,7 +404,7 @@ APP_CHOICE = click.Choice([
 # means `demo seed l1-dashboard` / `demo seed l2-flow-tracing` fails
 # with a Click validation error pointing the user at the right surface.
 DEMO_APP_CHOICE = click.Choice([
-    "payment-recon", "investigation", "executives",
+    "investigation", "executives",
 ])
 
 
@@ -497,20 +445,14 @@ def demo_schema(app: str | None, all_apps: bool, output: str) -> None:
 def demo_seed(app: str | None, all_apps: bool, output: str) -> None:
     """Emit INSERT statements with demo data."""
     app = _resolve_app(app, all_apps, allow_all=True)
-    from quicksight_gen.apps.payment_recon.demo_data import (
-        generate_demo_sql as generate_pr_sql,
-    )
-
     from quicksight_gen.apps.investigation.demo_data import (
         generate_demo_sql as generate_inv_sql,
     )
 
-    if app == "payment-recon":
-        sql = generate_pr_sql()
-    elif app == "investigation":
+    if app == "investigation":
         sql = generate_inv_sql()
     else:  # all
-        sql = generate_pr_sql() + "\n" + generate_inv_sql()
+        sql = generate_inv_sql()
 
     out = Path(output)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -535,23 +477,14 @@ def demo_etl_example(app: str | None, all_apps: bool, output: str) -> None:
     walkthroughs that reference this output.
     """
     app = _resolve_app(app, all_apps, allow_all=True)
-    from quicksight_gen.apps.payment_recon.etl_examples import (
-        generate_etl_examples_sql as generate_pr_examples,
-    )
-
     from quicksight_gen.apps.investigation.etl_examples import (
         generate_etl_examples_sql as generate_inv_examples,
     )
 
-    if app == "payment-recon":
-        sql = generate_pr_examples()
-    elif app == "investigation":
+    if app == "investigation":
         sql = generate_inv_examples()
     else:  # all
-        sql = (
-            generate_pr_examples() + "\n"
-            + generate_inv_examples()
-        )
+        sql = generate_inv_examples()
 
     out = Path(output)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -778,10 +711,10 @@ def demo_apply(app: str | None, all_apps: bool, config: str, output_dir: str) ->
 def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     """Load schema + chosen seed(s) into demo DB, then regenerate JSON.
 
-    ``app`` is one of ``payment-recon``, ``investigation``, ``executives``,
-    or ``all``. Schema is always applied in full — apps share the DB — so
-    the only thing that varies is which seed SQL gets loaded and which
-    analyses get generated.
+    ``app`` is one of ``investigation``, ``executives``, or ``all``.
+    Schema is always applied in full — apps share the DB — so the only
+    thing that varies is which seed SQL gets loaded and which analyses
+    get generated.
     """
     from quicksight_gen.apps.executives.app import (
         build_analysis as build_exec_analysis,
@@ -799,17 +732,6 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     )
     from quicksight_gen.apps.investigation.demo_data import (
         generate_demo_sql as generate_inv_sql,
-    )
-    from quicksight_gen.apps.payment_recon.app import (
-        build_analysis as build_pr_analysis,
-        build_payment_recon_dashboard,
-    )
-    from quicksight_gen.apps.payment_recon.datasets import (
-        build_all_datasets as build_pr_datasets,
-        build_datasource,
-    )
-    from quicksight_gen.apps.payment_recon.demo_data import (
-        generate_demo_sql as generate_pr_sql,
     )
 
     cfg = load_config(config_path)
@@ -831,8 +753,6 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     schema_sql = generate_schema_sql()
 
     seed_parts: list[str] = []
-    if app in ("payment-recon", "all"):
-        seed_parts.append(generate_pr_sql())
     if app in ("investigation", "all"):
         seed_parts.append(generate_inv_sql())
     seed_sql = "\n".join(seed_parts)
@@ -871,20 +791,6 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     _write_json(out / "theme.json", theme.to_aws_json())
 
     json_count = 2  # datasource + theme
-    if app in ("payment-recon", "all"):
-        pr_datasets = build_pr_datasets(cfg)
-        for ds in pr_datasets:
-            _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
-        _write_json(
-            out / "payment-recon-analysis.json",
-            build_pr_analysis(cfg).to_aws_json(),
-        )
-        _write_json(
-            out / "payment-recon-dashboard.json",
-            build_payment_recon_dashboard(cfg).to_aws_json(),
-        )
-        json_count += len(pr_datasets) + 2
-
     if app in ("investigation", "all"):
         inv_datasets = build_inv_datasets(cfg)
         for ds in inv_datasets:
@@ -953,8 +859,6 @@ def deploy_cmd(
     app_name = _resolve_app(app, all_apps, allow_all=True)
 
     if generate_first:
-        if app_name in ("payment-recon", "all"):
-            _generate_payment_recon(config, output_dir, theme_preset)
         if app_name in ("investigation", "all"):
             _generate_investigation(config, output_dir, theme_preset)
         if app_name in ("executives", "all"):
@@ -1234,7 +1138,7 @@ def _resolve_app(app: str | None, all_apps: bool, *, allow_all: bool) -> str:
         return "all"
     if app is None:
         raise click.UsageError(
-            "Specify an app (payment-recon, investigation) or --all."
+            "Specify an app (investigation) or --all."
         )
     return app
 

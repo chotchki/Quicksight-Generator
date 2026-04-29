@@ -92,40 +92,6 @@ def qs_client(region):
 
 
 @pytest.fixture(scope="session")
-def dashboard_id(resource_prefix) -> str:
-    return f"{resource_prefix}-payment-recon-dashboard"
-
-
-@pytest.fixture(scope="session")
-def analysis_id(resource_prefix) -> str:
-    return f"{resource_prefix}-payment-recon-analysis"
-
-
-@pytest.fixture(scope="session")
-def theme_id(resource_prefix) -> str:
-    return f"{resource_prefix}-theme"
-
-
-@pytest.fixture(scope="session")
-def dataset_ids(resource_prefix) -> list[str]:
-    """All expected dataset IDs."""
-    suffixes = [
-        "merchants-dataset",
-        "sales-dataset",
-        "settlements-dataset",
-        "payments-dataset",
-        "settlement-exceptions-dataset",
-        "payment-returns-dataset",
-        "sale-settlement-mismatch-dataset",
-        "settlement-payment-mismatch-dataset",
-        "unmatched-external-txns-dataset",
-        "external-transactions-dataset",
-        "payment-recon-dataset",
-    ]
-    return [f"{resource_prefix}-{s}" for s in suffixes]
-
-
-@pytest.fixture(scope="session")
 def inv_dashboard_id(resource_prefix) -> str:
     return f"{resource_prefix}-investigation-dashboard"
 
@@ -240,16 +206,6 @@ def l1_dataset_ids(resource_prefix, l1_l2_prefix) -> list[str]:
 # names / visual titles / filter group ids / parameter names — the tree
 # is the source of truth, not a parallel hand-maintained list.
 # ---------------------------------------------------------------------------
-
-@pytest.fixture(scope="session")
-def pr_app(cfg):
-    """Tree-built Payment Reconciliation App (post-emit, auto-IDs resolved)."""
-    from quicksight_gen.apps.payment_recon.app import build_payment_recon_app
-
-    app = build_payment_recon_app(cfg)
-    app.emit_analysis()
-    return app
-
 
 @pytest.fixture(scope="session")
 def inv_app(cfg):

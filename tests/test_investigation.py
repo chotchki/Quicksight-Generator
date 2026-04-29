@@ -1429,7 +1429,7 @@ def test_generate_investigation_subcommand_writes_files(tmp_path: Path):
     assert fanout_ds.is_file()
 
 
-def test_generate_all_writes_all_three_app_jsons(tmp_path: Path):
+def test_generate_all_writes_investigation_app_jsons(tmp_path: Path):
     cfg_path = _write_min_config(tmp_path)
     out_dir = tmp_path / "out-all"
     runner = CliRunner()
@@ -1437,5 +1437,4 @@ def test_generate_all_writes_all_three_app_jsons(tmp_path: Path):
         main, ["generate", "-c", str(cfg_path), "-o", str(out_dir), "--all"],
     )
     assert result.exit_code == 0, result.output
-    assert (out_dir / "payment-recon-analysis.json").is_file()
     assert (out_dir / "investigation-analysis.json").is_file()

@@ -94,9 +94,7 @@ def generate_apps(
     # to the shared datasource ARN; cfg.datasource_arn must be the
     # auto-derived per-test ARN (cfg.l2_instance_prefix in the path).
     if cfg.demo_database_url:
-        from quicksight_gen.apps.payment_recon.datasets import (
-            build_datasource,
-        )
+        from quicksight_gen.common.datasource import build_datasource
         datasource = build_datasource(cfg)
         _write_json(out_dir / "datasource.json", datasource.to_aws_json())
 

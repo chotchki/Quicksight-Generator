@@ -105,27 +105,3 @@ class TestSasquatchBankPreset:
         assert "forest green" in data["VersionDescription"].lower()
 
 
-# ---------------------------------------------------------------------------
-# Preset integration with analysis names
-# ---------------------------------------------------------------------------
-
-class TestPresetAnalysisNames:
-    def _cfg(self, preset: str = "default") -> Config:
-        return Config(
-            aws_account_id="111122223333",
-            aws_region="us-west-2",
-            datasource_arn="arn:aws:quicksight:us-west-2:111122223333:datasource/ds",
-            theme_preset=preset,
-        )
-
-    def test_default_payment_recon_name(self):
-        from quicksight_gen.apps.payment_recon.app import build_analysis
-
-        a = build_analysis(self._cfg())
-        assert a.to_aws_json()["Name"] == "Payment Reconciliation"
-
-    def test_sasquatch_payment_recon_name(self):
-        from quicksight_gen.apps.payment_recon.app import build_analysis
-
-        a = build_analysis(self._cfg("sasquatch-bank"))
-        assert a.to_aws_json()["Name"] == "Demo — Payment Reconciliation"

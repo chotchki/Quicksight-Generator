@@ -21,8 +21,8 @@ def main() -> None:
     # Embed URL must be generated against the dashboard region, not us-east-1.
 
     dashboards = [
-        ("payment_recon", f"{cfg.resource_prefix}-payment-recon-dashboard"),
-        ("account_recon", f"{cfg.resource_prefix}-account-recon-dashboard"),
+        ("investigation", f"{cfg.resource_prefix}-investigation-dashboard"),
+        ("executives", f"{cfg.resource_prefix}-executives-dashboard"),
     ]
 
     for subdir, dashboard_id in dashboards:

@@ -53,14 +53,7 @@ from quicksight_gen.common.models import (
     VisualTitleLabelOptions,
 )
 from quicksight_gen.common.config import Config
-from quicksight_gen.apps.payment_recon.datasets import (
-    build_datasource,
-    build_pipeline_datasets,
-    build_recon_datasets,
-    build_all_datasets,
-    build_external_transactions_dataset,
-    build_payment_recon_dataset,
-)
+from quicksight_gen.common.datasource import build_datasource
 
 
 class TestStripNones:
@@ -494,68 +487,6 @@ _TEST_CFG = Config(
     datasource_arn="arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds",
     principal_arns=["arn:aws:quicksight:us-west-2:111122223333:user/default/admin"],
 )
-
-
-class TestDatasetBuilderCounts:
-    def test_pipeline_datasets_count(self):
-        # merchants, sales, settlements, payments, settlement-exceptions,
-        # payment-returns, + 3 new mismatch datasets (SPEC 2.4)
-        assert len(build_pipeline_datasets(_TEST_CFG)) == 9
-
-    def test_recon_datasets_count(self):
-        assert len(build_recon_datasets(_TEST_CFG)) == 2
-
-    def test_all_datasets_count(self):
-        assert len(build_all_datasets(_TEST_CFG)) == 11
-
-    def test_all_datasets_is_pipeline_plus_recon(self):
-        all_ds = build_all_datasets(_TEST_CFG)
-        pipeline_ds = build_pipeline_datasets(_TEST_CFG)
-        recon_ds = build_recon_datasets(_TEST_CFG)
-        all_ids = [ds.DataSetId for ds in all_ds]
-        pipeline_ids = [ds.DataSetId for ds in pipeline_ds]
-        recon_ids = [ds.DataSetId for ds in recon_ds]
-        assert all_ids == pipeline_ids + recon_ids
-
-    def test_no_duplicate_dataset_ids(self):
-        all_ds = build_all_datasets(_TEST_CFG)
-        ids = [ds.DataSetId for ds in all_ds]
-        assert len(ids) == len(set(ids))
-
-
-class TestReconDatasetStructure:
-    """Verify each reconciliation dataset serializes with the expected shape."""
-
-    def _assert_common(self, ds: DataSet):
-        out = ds.to_aws_json()
-        assert out["AwsAccountId"] == "111122223333"
-        assert "PhysicalTableMap" in out
-        # Has SQL
-        for table in out["PhysicalTableMap"].values():
-            assert "CustomSql" in table
-            assert "test-ds" in table["CustomSql"]["DataSourceArn"]
-        # Has tags
-        tag_keys = {t["Key"] for t in out["Tags"]}
-        assert "ManagedBy" in tag_keys
-        # Has permissions
-        assert "Permissions" in out
-
-    def test_external_transactions(self):
-        ds = build_external_transactions_dataset(_TEST_CFG)
-        assert ds.Name == "External Transactions"
-        self._assert_common(ds)
-        col_names = {c.Name for c in list(ds.PhysicalTableMap.values())[0].CustomSql.Columns}
-        assert "transaction_id" in col_names
-        assert "external_system" in col_names
-        assert "external_amount" in col_names
-
-    def test_payment_recon(self):
-        ds = build_payment_recon_dataset(_TEST_CFG)
-        assert ds.Name == "Payment Reconciliation"
-        self._assert_common(ds)
-        col_names = {c.Name for c in list(ds.PhysicalTableMap.values())[0].CustomSql.Columns}
-        assert "payment_count" in col_names
-        assert "match_status" in col_names
 
 
 # ---------------------------------------------------------------------------
