@@ -1,5 +1,25 @@
 # Release Notes
 
+## v6.0.1
+
+### Hotfix — Bundle the L1 default L2 instance YAML in the wheel
+
+> **v6.0.0 was cut and reached the post-PyPI install verification job before being caught.** The release pipeline's `bake-sample` job (runs `quicksight-gen generate --all` against the freshly-installed wheel) failed with `FileNotFoundError: '/tmp/qs-bake/lib/python3.13/tests/l2/spec_example.yaml'`. v6.0.0 was published to TestPyPI as a build artifact but never promoted to PyPI; v6.0.1 ships the same v6.0.0 work plus this hotfix. The v6.0.0 git tag stays in place; v6.0.1 ships the corrected wheel.
+
+**Root cause** (uncovered during the v6.0.0 release pipeline run):
+- M.4.3 migrated `default_l2_instance()` from `apps/account_recon/_l2.py` → `apps/l1_dashboard/_l2.py`.
+- The migration kept the old path resolution: `Path(__file__).resolve().parents[4] / "tests" / "l2" / "spec_example.yaml"`.
+- That path works in dev (where `parents[4]` from the source tree resolves to the repo root) but breaks when installed (the wheel doesn't ship `tests/l2/`).
+- Any `quicksight-gen generate` invocation that fell back to the L1 dashboard's default L2 instance crashed.
+
+**Fix**:
+- Copied `tests/l2/spec_example.yaml` → `src/quicksight_gen/apps/l1_dashboard/_default_l2.yaml`.
+- Switched `default_l2_instance()` to load via `importlib.resources.files(...) / "_default_l2.yaml"` so the YAML is bundled in the wheel.
+- Added the new path to `pyproject.toml`'s `[tool.setuptools.package-data]` block.
+- Added a unit-test regression (`test_default_l2_yaml_is_byte_identical_to_test_fixture`) that hashes both files; if the bundled copy ever drifts from the test fixture, this fails loudly with the resync command.
+
+**Operator impact**: zero behavior change vs v6.0.0 — same default L2, same dashboard render. The fix is purely a wheel-packaging concern.
+
 ## v6.0.0
 
 ### Phase M — L2 foundation + 4-app consolidation (major)

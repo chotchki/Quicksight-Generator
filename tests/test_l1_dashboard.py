@@ -31,6 +31,24 @@ from quicksight_gen.common.config import Config
 from quicksight_gen.common.l2 import L2Instance
 
 
+# v6.0.1 hotfix regression — the bundled `_default_l2.yaml` next to
+# `_l2.py` ships in the wheel via `pyproject.toml`'s package-data
+# entry; if it drifts from `tests/l2/spec_example.yaml` the L1
+# dashboard's "default L2" silently diverges from the test fixture.
+def test_default_l2_yaml_is_byte_identical_to_test_fixture():
+    pkg_yaml = (
+        Path(__file__).parent.parent
+        / "src" / "quicksight_gen" / "apps" / "l1_dashboard"
+        / "_default_l2.yaml"
+    )
+    test_yaml = Path(__file__).parent / "l2" / "spec_example.yaml"
+    assert pkg_yaml.read_bytes() == test_yaml.read_bytes(), (
+        f"Bundled L1 default L2 has drifted from test fixture. "
+        f"Re-sync with:\n"
+        f"  cp {test_yaml} {pkg_yaml}"
+    )
+
+
 _CFG = Config(
     aws_account_id="111122223333",
     aws_region="us-west-2",

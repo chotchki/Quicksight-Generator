@@ -76,6 +76,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 quicksight_gen = [
     "schema.sql",
+    "apps/l1_dashboard/_default_l2.yaml",
     "docs/**/*.md",
     "docs/**/*.svg",
     "docs/**/*.png",
