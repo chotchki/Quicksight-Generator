@@ -52,10 +52,31 @@
     - [ ] N.3.p — Aurora deploy verification of the L2-fed Investigation flow + planted Sasquatch Investigation persona (defer to combined N.3+N.4 deploy at end of N.4). The seed-data lift to common/l2/seed.py is the prerequisite (currently flat-table v5 plants don't surface in the prefixed Inv matviews).
   - **Cleanup carried into N.4** — `populate_app_info_sheet(theme=None)` fallback stays until Executives also migrates.
 
-- [ ] **N.4 — Executives reshape.** Port Executives onto L1/L2 primitives. The 3 operational sheets keep their shapes; reshape is plumbing only.
-  - Datasets become `<prefix>-exec-*-dataset`, reading from prefixed `<prefix>_transactions` / `<prefix>_daily_balances`. No matview migration needed (Executives has none).
-  - Theme via `resolve_l2_theme(l2_instance)`.
-  - Cleanup: once Executives is the last legacy caller of `cfg.theme_preset`, the `app_info` fallback is unreachable. Drop it; remove `cfg.theme_preset` and the CLI's `--theme-preset` flag entirely as part of N.5.
+- [ ] **N.4 — Executives reshape + theme cleanup + Inv harness parity.** Closes Phase N's substantive work. Executives goes L2-fed, the deferred N.3.l-ter Inv plant primitives land here (so combined N.3+N.4 Aurora verify has actual data), the legacy `cfg.theme_preset` path gets fully removed, and the silent-fallback theme contract lands (no L2 theme block → no custom QS Theme resource emitted; AWS CLASSIC takes over).
+  - **Phase 1 — App rewiring.**
+    - [ ] N.4.a — Executives dataset SQL → prefixed base tables (`<prefix>_transactions` / `<prefix>_daily_balances`). Add `_require_prefix(cfg)` helper following N.3.d pattern.
+    - [ ] N.4.b — `build_executives_app(cfg, *, l2_instance=None)`. Default to `default_l2_instance()` (same import path Investigation uses). Auto-derive `cfg.l2_instance_prefix`. Mirror L1.
+    - [ ] N.4.c — Theme via `resolve_l2_theme(l2_instance)` in Executives; drop every `get_preset(cfg.theme_preset)` call. Pass `theme=theme` to `populate_app_info_sheet`.
+    - [ ] N.4.d — CLI `_generate_executives` accepts + passes `l2_instance`. Demo apply Exec flow updated to thread `l2_instance` through `build_exec_analysis` / `build_executives_dashboard`.
+  - **Phase 2 — Tests + harness parity.**
+    - [ ] N.4.e — `test_executives.py` for L2-fed shape. `_TEST_CFG.l2_instance_prefix="spec_example"`; dataset ID assertions become `qs-gen-spec_example-exec-*`; analysis name follows L2 theme prefix.
+    - [ ] N.4.f — `tests/e2e/conftest.py` Exec fixtures: add `exec_l2_prefix`, prefix segments on `exec_dashboard_id` / `exec_analysis_id` / `exec_dataset_ids`. Mirrors N.3.l for Investigation.
+    - [ ] N.4.g — `tests/e2e/_harness_exec_assertions.py` (new). "Datasets queryable" check (`SELECT COUNT(*) FROM <prefix>_transactions / <prefix>_daily_balances`). Wire into `test_harness_end_to_end.py` as Layer 1c.
+    - [ ] N.4.h — **Inv plant primitives + harness tightening (was N.3.l-ter).** Add `InvFanoutPlant` / `InvAnomalyPlant` / `InvChainPlant` to `common/l2/seed.py`. Wire each into `auto_scenario.default_scenario_for(mode="l1_plus_broad")` so fuzz instances + sasquatch_pr seed Inv matview rows. Re-lock `seed_hash` on `spec_example` + `sasquatch_pr` (validated by N.4.o Aurora deploy). Tighten `_harness_inv_assertions.py`: replace `assert_inv_matviews_queryable` with `assert_inv_planted_rows_visible(db_conn, prefix, manifest)` mirroring `assert_l1_matview_rows_present` shape. Per-plant unit tests (rejection + happy path). ~400-500 LOC; the meatiest substep in N.4.
+  - **Phase 3 — Theme path cleanup (the v6.1.0 trigger).**
+    - [ ] N.4.i — Drop `populate_app_info_sheet(theme=None)` fallback. Make `theme: ThemePreset` required (not `theme: ThemePreset | None`). All four apps now pass `theme=theme`; the fallback path is unreachable. Removes the `(theme or get_preset(cfg.theme_preset)).accent` indirection.
+    - [ ] N.4.j — Drop `cfg.theme_preset` field + CLI `--theme-preset` flag. ~70-site sweep: `Config` dataclass, CLI option + `_generate_*` kwargs + `cfg.theme_preset = ...` mutations, last `get_preset(cfg.theme_preset)` call in Executives, test fixtures, YAML loader, test config helpers, docs.
+    - [ ] N.4.k — `build_theme(cfg, theme: ThemePreset) -> Theme | None`. Return `None` when `theme is DEFAULT_PRESET` (no L2-declared theme). CLI skips `theme.json` write + skips theme deploy when `None` — silent-fallback contract: AWS QS CLASSIC takes over for instances that didn't declare a theme. Comment explains the design intent.
+    - [ ] N.4.l — Drop `get_preset()` if unused after N.4.j sweep, OR inline `resolve_l2_theme`'s use of `get_preset("default")` to a direct `DEFAULT_PRESET` reference.
+  - **Phase 4 — Verify + close.**
+    - [ ] N.4.m — Full unit suite + pyright; commit. Expect ~70-100 LOC churn from N.4.j + hash-relock fallout from N.4.h.
+    - [ ] N.4.n — CLAUDE.md sweep. Executives section reflects L2-fed status. Architecture Decisions theme paragraph drops per-app-preset framing. Document the silent-fallback contract on `build_theme`.
+    - [ ] N.4.o — **Combined N.3 + N.4 Aurora deploy verify.** Closes N.3.p + Exec validation:
+      - Deploy L1 + L2FT + Inv + Exec against `sasquatch_pr.yaml` (one institution YAML, four apps).
+      - Verify each dashboard renders with the forest-green theme baked in.
+      - Verify Inv matviews populate (per N.4.h plants).
+      - Verify the silent-fallback path: deploy a fresh L2 instance YAML with NO `theme:` block; verify dashboards render against AWS CLASSIC.
+      - Re-lock both `seed_hash` values with the actual planted-bytes from the deploy.
 
 - [ ] **N.5 — End-of-phase iteration gate.** Cut **v6.1.0** — L2 YAML is the only configuration surface for app shape + theme. All four apps L2-fed, no per-app theme presets, no hand-rolled persona globals.
 
