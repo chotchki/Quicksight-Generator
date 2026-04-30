@@ -67,7 +67,7 @@ external counterparties.
 
 | ID | Role | Scope | Parent role | Description |
 |---|---|---|---|---|
-{% for a in l2.accounts %}
+{% for a in l2.accounts -%}
 | `{{ a.id }}` | {{ a.role or "—" }} | {{ a.scope }} | {{ a.parent_role or "—" }} | {{ (a.description or "—")|replace("\n", " ") }} |
 {% endfor %}
 
@@ -81,7 +81,7 @@ accounts, and per-product subledgers all live here.
 
 | Role | Scope | Parent role | Description |
 |---|---|---|---|
-{% for t in l2.account_templates %}
+{% for t in l2.account_templates -%}
 | {{ t.role }} | {{ t.scope }} | {{ t.parent_role or "—" }} | {{ (t.description or "—")|replace("\n", " ") }} |
 {% endfor %}
 
@@ -146,7 +146,7 @@ gating. XOR groups encode "exactly one of these children MUST fire".
 
 | Parent | Child | Required | XOR group | Description |
 |---|---|---|---|---|
-{% for c in l2.chains %}
+{% for c in l2.chains -%}
 | {{ c.parent }} | {{ c.child }} | {{ "✓" if c.required else "—" }} | {{ c.xor_group or "—" }} | {{ (c.description or "—")|replace("\n", " ") }} |
 {% endfor %}
 
@@ -160,7 +160,7 @@ account/day where outbound activity exceeded the cap.
 
 | Parent role | Transfer type | Cap | Description |
 |---|---|---|---|
-{% for ls in l2.limit_schedules %}
+{% for ls in l2.limit_schedules -%}
 | {{ ls.parent_role }} | {{ ls.transfer_type }} | `{{ ls.cap }}` | {{ (ls.description or "—")|replace("\n", " ") }} |
 {% endfor %}
 
