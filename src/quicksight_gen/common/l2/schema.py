@@ -40,10 +40,19 @@ the base layer. Add them then.
 
 from __future__ import annotations
 
+from quicksight_gen.common.sql import (
+    Dialect,
+    analyze_table,
+    refresh_matview,
+    typed_null,
+)
+
 from .primitives import L2Instance
 
 
-def emit_schema(instance: L2Instance) -> str:
+def emit_schema(
+    instance: L2Instance, *, dialect: Dialect = Dialect.POSTGRES,
+) -> str:
     """Emit the full DDL script for an L2 instance's prefixed L1 schema.
 
     Three layers, all per L2 instance prefix:
@@ -72,7 +81,16 @@ def emit_schema(instance: L2Instance) -> str:
     re-running the same ``apply schema`` clears stale state. The
     returned string can be fed straight to ``psql`` or
     ``psycopg2.cursor.execute(sql)``.
+
+    ``dialect`` selects the SQL flavor. P.2 only ships
+    ``Dialect.POSTGRES``; the Oracle branch lands in P.3 (the big
+    template strings need either splitting or templating to support
+    both — call open in the audit doc).
     """
+    if dialect is not Dialect.POSTGRES:
+        raise NotImplementedError(
+            "emit_schema: Oracle DDL emission lands in Phase P.3."
+        )
     p = instance.instance
     # L1 invariant view DROPs MUST run before base DROPs — the L1 views
     # depend on the Current* views (which depend on the base tables),
@@ -87,7 +105,7 @@ def emit_schema(instance: L2Instance) -> str:
     l1_drops = _L1_INVARIANT_VIEWS_DROPS_TEMPLATE.format(p=p)
     inv_drops = _INV_MATVIEWS_DROPS_TEMPLATE.format(p=p)
     base = _SCHEMA_TEMPLATE.format(p=p)
-    invariants = _emit_l1_invariant_views(instance)
+    invariants = _emit_l1_invariant_views(instance, dialect=dialect)
     inv_views = _emit_inv_views(instance)
     return (
         l1_drops + "\n" + inv_drops + "\n" + base + "\n\n"
@@ -95,7 +113,9 @@ def emit_schema(instance: L2Instance) -> str:
     )
 
 
-def refresh_matviews_sql(instance: L2Instance) -> str:
+def refresh_matviews_sql(
+    instance: L2Instance, *, dialect: Dialect = Dialect.POSTGRES,
+) -> str:
     """Emit `REFRESH MATERIALIZED VIEW` commands in dependency order.
 
     M.1a.9 made every L1-pipeline view a MATERIALIZED VIEW (kills the
@@ -143,12 +163,14 @@ def refresh_matviews_sql(instance: L2Instance) -> str:
     # subsequent SELECTs use the indexes we ship on each matview
     # (without ANALYZE the planner doesn't know the post-REFRESH row
     # count + value distribution and may pick a sequential scan).
-    refreshes = "\n".join(f"REFRESH MATERIALIZED VIEW {n};" for n in names)
-    analyzes = "\n".join(f"ANALYZE {n};" for n in names)
+    refreshes = "\n".join(f"{refresh_matview(n, dialect)};" for n in names)
+    analyzes = "\n".join(f"{analyze_table(n, dialect)};" for n in names)
     return f"{refreshes}\n{analyzes}"
 
 
-def _emit_l1_invariant_views(instance: L2Instance) -> str:
+def _emit_l1_invariant_views(
+    instance: L2Instance, *, dialect: Dialect = Dialect.POSTGRES,
+) -> str:
     """Render the M.1a.7 L1-invariant view block for ``instance``.
 
     Each view drops + creates idempotently so repeated runs converge.
@@ -156,9 +178,9 @@ def _emit_l1_invariant_views(instance: L2Instance) -> str:
     one).
     """
     p = instance.instance
-    limit_cases = _render_limit_breach_cases(instance, p=p)
-    pending_age_cases = _render_pending_age_cases(instance)
-    unbundled_age_cases = _render_unbundled_age_cases(instance)
+    limit_cases = _render_limit_breach_cases(instance, p=p, dialect=dialect)
+    pending_age_cases = _render_pending_age_cases(instance, dialect=dialect)
+    unbundled_age_cases = _render_unbundled_age_cases(instance, dialect=dialect)
     return _L1_INVARIANT_VIEWS_TEMPLATE.format(
         p=p,
         limit_cases=limit_cases,
@@ -167,7 +189,9 @@ def _emit_l1_invariant_views(instance: L2Instance) -> str:
     )
 
 
-def _render_limit_breach_cases(instance: L2Instance, *, p: str) -> str:
+def _render_limit_breach_cases(
+    instance: L2Instance, *, p: str, dialect: Dialect = Dialect.POSTGRES,
+) -> str:
     """Build the CASE-WHEN body that the limit_breach view uses to look
     up a (parent_role, transfer_type) cap from L2's LimitSchedules.
 
@@ -185,7 +209,7 @@ def _render_limit_breach_cases(instance: L2Instance, *, p: str) -> str:
     ``outbound_total > cap`` comparison with `numeric > text`.
     """
     if not instance.limit_schedules:
-        return "NULL::numeric"
+        return typed_null("numeric", dialect)
     branches: list[str] = []
     for ls in instance.limit_schedules:
         # Each LimitSchedule is keyed on (parent_role, transfer_type) per
@@ -199,7 +223,9 @@ def _render_limit_breach_cases(instance: L2Instance, *, p: str) -> str:
     return f"CASE\n        {branches_sql}\n        ELSE NULL\n    END"
 
 
-def _render_pending_age_cases(instance: L2Instance) -> str:
+def _render_pending_age_cases(
+    instance: L2Instance, *, dialect: Dialect = Dialect.POSTGRES,
+) -> str:
     """Build the CASE-WHEN body the stuck_pending view uses to look up
     a Rail's `max_pending_age` (in seconds).
 
@@ -224,7 +250,7 @@ def _render_pending_age_cases(instance: L2Instance) -> str:
     if not branches:
         # Typed NULL — bare NULL infers as text and breaks the outer
         # `tx.age_seconds > tx.max_pending_age_seconds` comparison.
-        return "NULL::bigint"
+        return typed_null("bigint", dialect)
     branches_sql = "\n        ".join(branches)
     return f"CASE\n        {branches_sql}\n        ELSE NULL\n    END"
 
@@ -257,7 +283,9 @@ def _emit_inv_views(instance: L2Instance) -> str:
     return _INV_MATVIEWS_TEMPLATE.format(p=p)
 
 
-def _render_unbundled_age_cases(instance: L2Instance) -> str:
+def _render_unbundled_age_cases(
+    instance: L2Instance, *, dialect: Dialect = Dialect.POSTGRES,
+) -> str:
     """Build the CASE-WHEN body the stuck_unbundled view uses to look
     up a Rail's `max_unbundled_age` (in seconds).
 
@@ -279,7 +307,7 @@ def _render_unbundled_age_cases(instance: L2Instance) -> str:
         )
     if not branches:
         # Typed NULL — same reason as `_render_pending_age_cases`.
-        return "NULL::bigint"
+        return typed_null("bigint", dialect)
     branches_sql = "\n        ".join(branches)
     return f"CASE\n        {branches_sql}\n        ELSE NULL\n    END"
 
