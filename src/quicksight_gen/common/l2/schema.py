@@ -43,6 +43,7 @@ from __future__ import annotations
 from quicksight_gen.common.sql import (
     Dialect,
     analyze_table,
+    drop_matview_if_exists,
     refresh_matview,
     typed_null,
 )
@@ -102,8 +103,8 @@ def emit_schema(
     # Investigation matview DROPs (N.3.b) sit alongside the L1 drops at
     # the top — they read from the base ``{p}_transactions`` table, so
     # the same dependency-ordering rule applies.
-    l1_drops = _L1_INVARIANT_VIEWS_DROPS_TEMPLATE.format(p=p)
-    inv_drops = _INV_MATVIEWS_DROPS_TEMPLATE.format(p=p)
+    l1_drops = _emit_l1_invariant_drops(p, dialect)
+    inv_drops = _emit_inv_matview_drops(p, dialect)
     base = _SCHEMA_TEMPLATE.format(p=p)
     invariants = _emit_l1_invariant_views(instance, dialect=dialect)
     inv_views = _emit_inv_views(instance)
@@ -523,7 +524,27 @@ CREATE INDEX idx_{p}_curr_db_scope_day
 # supersession is transparent. Drop order is reverse of create order
 # (no view here depends on another in this block, but ordering is
 # conservative).
-_L1_INVARIANT_VIEWS_DROPS_TEMPLATE = """\
+# L1 invariant matview names in drop order: dashboard-shape matviews
+# (todays_exceptions, daily_statement_summary) drop FIRST because they
+# read from the L1 invariant matviews (which read from current_* +
+# computed_*). The two helper matviews (computed_ledger_balance,
+# computed_subledger_balance) drop last.
+_L1_INVARIANT_DROP_NAMES: tuple[str, ...] = (
+    "todays_exceptions",
+    "daily_statement_summary",
+    "stuck_unbundled",
+    "stuck_pending",
+    "limit_breach",
+    "expected_eod_balance_breach",
+    "overdraft",
+    "ledger_drift",
+    "drift",
+    "computed_ledger_balance",
+    "computed_subledger_balance",
+)
+
+
+_L1_INVARIANT_DROPS_HEADER = """\
 -- L1 invariant view drops (M.1a.7 + M.1a.9) — MUST run before base
 -- drops because the L1 views depend on the Current* matviews (which
 -- depend on the base tables). Re-emitted at the top of the script so
@@ -537,19 +558,22 @@ _L1_INVARIANT_VIEWS_DROPS_TEMPLATE = """\
 -- M.1a.9 deploy on a stale instance needs to manually
 -- `DROP VIEW IF EXISTS <name>;` for each before running the script
 -- (PostgreSQL refuses `DROP MATERIALIZED VIEW` on a regular VIEW).
--- Steady state (post-migration) the matview-only DROP suffices.
-DROP MATERIALIZED VIEW IF EXISTS {p}_todays_exceptions;
-DROP MATERIALIZED VIEW IF EXISTS {p}_daily_statement_summary;
-DROP MATERIALIZED VIEW IF EXISTS {p}_stuck_unbundled;
-DROP MATERIALIZED VIEW IF EXISTS {p}_stuck_pending;
-DROP MATERIALIZED VIEW IF EXISTS {p}_limit_breach;
-DROP MATERIALIZED VIEW IF EXISTS {p}_expected_eod_balance_breach;
-DROP MATERIALIZED VIEW IF EXISTS {p}_overdraft;
-DROP MATERIALIZED VIEW IF EXISTS {p}_ledger_drift;
-DROP MATERIALIZED VIEW IF EXISTS {p}_drift;
-DROP MATERIALIZED VIEW IF EXISTS {p}_computed_ledger_balance;
-DROP MATERIALIZED VIEW IF EXISTS {p}_computed_subledger_balance;
-"""
+-- Steady state (post-migration) the matview-only DROP suffices."""
+
+
+def _emit_l1_invariant_drops(p: str, dialect: Dialect) -> str:
+    """Emit the L1 invariant matview DROP block per dialect.
+
+    Postgres uses native ``DROP MATERIALIZED VIEW IF EXISTS``; Oracle
+    uses a PL/SQL block per drop that swallows ORA-12003 / ORA-00942.
+    Order is fixed by ``_L1_INVARIANT_DROP_NAMES`` (dashboard-shape
+    first, helpers last).
+    """
+    drops = "\n".join(
+        f"{drop_matview_if_exists(f'{p}_{name}', dialect)};"
+        for name in _L1_INVARIANT_DROP_NAMES
+    )
+    return f"{_L1_INVARIANT_DROPS_HEADER}\n{drops}\n"
 
 
 _L1_INVARIANT_VIEWS_TEMPLATE = """\
@@ -999,13 +1023,34 @@ CREATE INDEX idx_{p}_te_type ON {p}_todays_exceptions (transfer_type);
 """
 
 
-_INV_MATVIEWS_DROPS_TEMPLATE = """\
+# Investigation matview names in drop order. Both read from the base
+# ``{p}_transactions`` only — order between the two doesn't matter, but
+# fixing it keeps emit output deterministic.
+_INV_MATVIEW_DROP_NAMES: tuple[str, ...] = (
+    "inv_money_trail_edges",
+    "inv_pair_rolling_anomalies",
+)
+
+
+_INV_MATVIEW_DROPS_HEADER = """\
 -- Investigation matview drops (N.3.b) — like the L1 invariant matview
 -- drops, these MUST run before the base ``{p}_transactions`` table is
--- dropped, so we emit them at the top of the script.
-DROP MATERIALIZED VIEW IF EXISTS {p}_inv_money_trail_edges;
-DROP MATERIALIZED VIEW IF EXISTS {p}_inv_pair_rolling_anomalies;
-"""
+-- dropped, so we emit them at the top of the script."""
+
+
+def _emit_inv_matview_drops(p: str, dialect: Dialect) -> str:
+    """Emit the Investigation matview DROP block per dialect.
+
+    Same shape as ``_emit_l1_invariant_drops`` — Postgres native /
+    Oracle PL/SQL block. Header carries the literal ``{p}_transactions``
+    placeholder so the comment stays meaningful regardless of the
+    instance prefix; no ``.format()`` substitution on the body.
+    """
+    drops = "\n".join(
+        f"{drop_matview_if_exists(f'{p}_{name}', dialect)};"
+        for name in _INV_MATVIEW_DROP_NAMES
+    )
+    return f"{_INV_MATVIEW_DROPS_HEADER}\n{drops}\n"
 
 
 _INV_MATVIEWS_TEMPLATE = """\
