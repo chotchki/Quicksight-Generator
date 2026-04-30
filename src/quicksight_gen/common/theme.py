@@ -3,13 +3,15 @@
 The ``default`` preset is a neutral blue/grey professional palette used for
 production dashboards. Demo presets (e.g. ``sasquatch-bank``) brand the output
 for demo scenarios and prefix the analysis name with ``Demo —``.
+
+The ``ThemePreset`` dataclass itself lives in ``common/l2/theme.py`` per N.1
+— theme is now an L2 model concept; this module re-exports for back-compat.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from quicksight_gen.common.config import Config
+from quicksight_gen.common.l2.theme import ThemePreset
 from quicksight_gen.common.models import (
     DataColorPalette,
     FontFamily,
@@ -26,45 +28,15 @@ from quicksight_gen.common.models import (
     UIColorPalette,
 )
 
-
-# ---------------------------------------------------------------------------
-# Preset dataclass
-# ---------------------------------------------------------------------------
-
-@dataclass
-class ThemePreset:
-    """Everything that varies between theme variants."""
-
-    theme_name: str
-    version_description: str
-    analysis_name_prefix: str | None  # None → use default analysis names
-
-    # Data colour palette
-    data_colors: list[str]
-    empty_fill_color: str
-    gradient: list[str]  # [light, dark] for min/max
-
-    # UI colour palette
-    primary_bg: str
-    secondary_bg: str
-    primary_fg: str
-    secondary_fg: str
-    accent: str
-    accent_fg: str
-    # Pale-accent cell tint used as the background for table cells whose
-    # click target is a DATA_POINT_MENU (right-click) rather than a direct
-    # left-click drill.
-    link_tint: str
-    danger: str
-    danger_fg: str
-    warning: str
-    warning_fg: str
-    success: str
-    success_fg: str
-    dimension: str
-    dimension_fg: str
-    measure: str
-    measure_fg: str
+__all__ = [
+    "DEFAULT_PRESET",
+    "PRESETS",
+    "SASQUATCH_BANK_INVESTIGATION_PRESET",
+    "SASQUATCH_BANK_PRESET",
+    "ThemePreset",
+    "build_theme",
+    "get_preset",
+]
 
 
 # ---------------------------------------------------------------------------

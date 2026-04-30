@@ -12,11 +12,17 @@
 
 **Sequencing rationale.** Theme moves first (N.1) because it's a pure L2-side change — no app rewiring — and the reshapes that follow can pick up the new attribute. Audit happens before the reshapes (N.2) to confirm the question shape each app answers and decide keep / reshape / delete per app rather than committing in advance.
 
-- [ ] **N.1 — Theme as an L2 YAML attribute.** Today's `PRESETS` dict in `common/theme.py` collapses to one theme per L2 instance, declared inline in the L2 YAML.
-  - Add a top-level `theme:` block to `L2Instance` (primary / secondary / accent / link / etc. — match today's `ThemePreset` dataclass shape).
-  - Loader parses; validator rejects malformed hex.
-  - All four apps resolve theme from the L2 instance, not from `cfg.theme_preset`. Drop `--theme-preset` from the CLI.
-  - `tests/l2/spec_example.yaml` + `tests/l2/sasquatch_pr.yaml` carry their own theme blocks; the existing presets become the seed values.
+- [ ] **N.1 — Theme as an L2 YAML attribute.** Today's `PRESETS` dict in `common/theme.py` collapses to one theme per L2 instance, declared inline in the L2 YAML. Scope decision: only the two L2-fed apps (L1 dashboard + L2FT) migrate in N.1; Investigation + Executives keep their current `cfg.theme_preset` path until each gets an L2 instance at N.3 / N.4. CLI `--theme-preset` flag stays for now; it's dropped at N.5 once all four apps are L2-fed.
+  - [ ] N.1.a — Promote `ThemePreset` to the L2 model. Move the dataclass from `common/theme.py` → `common/l2/theme.py`; re-export from `common/theme.py` for back-compat with apps still consuming directly.
+  - [ ] N.1.b — Add `theme: ThemePreset | None = None` to `L2Instance`. Optional so existing fixtures + integrator YAMLs without a theme block still load.
+  - [ ] N.1.c — Loader: `_load_theme(raw, *, path) -> ThemePreset`. Parses inline `theme:` dict; validates hex regex (`^#[0-9a-fA-F]{6}$`) on every color field; friendly errors cite logical path (`theme.accent`).
+  - [ ] N.1.d — Test fixtures get inline theme blocks. `tests/l2/spec_example.yaml` carries the default palette; `tests/l2/sasquatch_pr.yaml` carries today's `sasquatch-bank` palette. Re-hash-lock seeds if the fixture-load tests require it.
+  - [ ] N.1.e — L1 dashboard routes from L2. `build_l1_dashboard_app` resolves `theme = l2_instance.theme or get_preset("default")`. `cfg.theme_preset` no longer consulted on the L1 path.
+  - [ ] N.1.f — L2 Flow Tracing routes from L2. Same wiring as N.1.e.
+  - [ ] N.1.g — Drop `sasquatch-bank` + `sasquatch-bank-investigation` from `PRESETS`. Personas now live in L2 YAML; registry keeps only `default` as the no-theme fallback. Inv + Exec temporarily fall back to `default` until N.3 / N.4 migrates them.
+  - [ ] N.1.h — Loader unit tests. Happy path + every rejection (missing color, bad hex, wrong type, blank string).
+  - [ ] N.1.i — Kitchen-sink fixture exercises a theme block so primitive coverage stays whole.
+  - [ ] N.1.j — Verify + commit. Full unit suite green, pyright strict gate green, Aurora deploy of L1 + L2FT renders with the L2-sourced theme. Tick PLAN.
 
 - [ ] **N.2 — Inv + Exec audit + reshape decision.** Read each app's surface fresh; decide per-app: **keep / reshape onto L2 / delete**. Reshape is the default expectation, but pick it deliberately.
   - What does Investigation answer that L1+L2FT don't? (Recipient Fanout, Volume Anomalies, Money Trail, Account Network — all key on `transactions` semantics.)

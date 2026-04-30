@@ -18,6 +18,7 @@ internal submodule.
 from .derived import PARENT_TRANSFER_ID, posted_requirements_for
 from .loader import L2LoaderError, load_instance
 from .schema import emit_schema, refresh_matviews_sql
+from .theme import ThemePreset
 from .validate import L2ValidationError, validate
 from .primitives import (
     Account,
@@ -67,6 +68,7 @@ __all__ = [
     "Scope",
     "SingleLegRail",
     "SupersedeReason",
+    "ThemePreset",
     "TransferTemplate",
     "TransferType",
     "TwoLegRail",
