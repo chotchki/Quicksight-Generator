@@ -69,7 +69,7 @@ this tool puts the investigative loop in your hands.**
     - [Where did this transfer actually originate?](../walkthroughs/investigation/where-did-this-transfer-originate.md)
     - [What does this account's money network look like?](../walkthroughs/investigation/what-does-this-accounts-money-network-look-like.md)
 3. Practice on the demo scenarios. The
-   [Cast of Characters](../Training_Story.md) page lays out the
+   [Cast of Characters](../scenario/index.md) page lays out the
    demo's converging-anchor scenario (one recipient hub, several
    sender-side cluster shapes); each walkthrough above resolves
    one face of that scenario.

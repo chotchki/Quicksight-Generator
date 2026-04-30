@@ -34,7 +34,7 @@ Pick the section that matches your role:
   "I have X and want Y" or "I'm looking at this row, what do I do?"
 - **[For Your Role](for-your-role/index.md)** — role-oriented
   entry points; pick yours and the page funnels you in.
-- **[Scenarios](scenarios/index.md)** — end-to-end stories
+- **[Scenarios](scenario/index.md)** — end-to-end stories
   grounded in the demo data.
 - **[API Reference](api/index.md)** — for building a custom app
   on the typed tree primitives.

@@ -165,7 +165,7 @@ upstream feed's source fields.
 - [Schema v3 — Data Feed Contract](../Schema_v6.md) — column specs,
   metadata keys, ETL examples. The source of truth this handbook
   points at.
-- [Account Structure](../Training_Story.md) — the bank, customers,
+- [Account Structure](../scenario/index.md) — the bank, customers,
   accounts, and money flows the populated data represents.
 - GL Reconciliation Handbook — the AR dashboard and the
   analyst team your feeds serve.

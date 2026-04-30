@@ -105,9 +105,13 @@ nav:
     - For the ETL engineer: for-your-role/etl-engineer.md
     - For the executive: for-your-role/executive.md
     - For the compliance analyst: for-your-role/compliance-analyst.md
-  - Scenarios:
-    - Overview: scenarios/index.md
-    - Cast of Characters — Demo Account Structure: Training_Story.md
+  - Scenario:
+    - Institution tour: scenario/index.md
+    - Accounts: scenario/accounts.md
+    - Rails: scenario/rails.md
+    - Transfer templates: scenario/transfer-templates.md
+    - Chains: scenario/chains.md
+    - Limit schedules: scenario/limit-schedules.md
   - API Reference:
     - Overview: api/index.md
     - Tree — App / Analysis / Dashboard / Sheet: api/tree-structure.md

@@ -28,6 +28,6 @@ type yet).
   per (parent_role, transfer_type).
 
 For the broader institution-tour view that walks every entity at
-once, see [Training Story](../../Training_Story.md). For the data-
+once, see [Training Story](../../scenario/index.md). For the data-
 side feed contract those entities project into, see
 [Schema v6](../../Schema_v6.md).
