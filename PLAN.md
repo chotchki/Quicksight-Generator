@@ -32,8 +32,8 @@
     - [x] N.3.b — `_emit_inv_views(instance)` added to `common/l2/schema.py`. Lifts the K.4.4/K.4.5 matview bodies; prefix-substitutes matview names + every `transactions` ref. Wired into `emit_schema()` and `refresh_matviews_sql()`.
     - [x] N.3.c — 10 unit tests in `test_l2_schema.py` covering parametrized emit/drop-before-create/drop-before-base, prefix substitution totality, no flat-ref leakage, no v5-column leakage, inter-view independence, per-instance isolation. Real-Postgres parse deferred to N.3.j Aurora deploy.
   - **Phase 2 — App rewiring.**
-    - [ ] N.3.d — Investigation dataset SQL strings → prefixed matview + base-table names.
-    - [ ] N.3.e — Investigation dataset IDs → prefixed via `cfg.prefixed()`.
+    - [x] N.3.d — Investigation dataset SQL strings now derive `prefix` from `cfg.l2_instance_prefix` and substitute every `inv_*` matview + `transactions` ref. Top-level SQL constants → prefix-taking helpers (`_money_trail_base_sql`, `_anetwork_accounts_sql`). New `_require_prefix(cfg)` raises a friendly error if the prefix isn't set, so misuse fails at construction time. Tests fail until N.3.f wires the prefix.
+    - [x] N.3.e — Folded into N.3.d. Dataset IDs were already routed through `cfg.prefixed()`; once `build_investigation_app` (N.3.f) sets `cfg.l2_instance_prefix`, the IDs come out as `qs-gen-<prefix>-inv-*-dataset` automatically.
     - [ ] N.3.f — `build_investigation_app(cfg, *, l2_instance=None)`. Default to spec_example. Sets `cfg.l2_instance_prefix` if not pre-set. Mirror L1.
     - [ ] N.3.g — Theme via `resolve_l2_theme(l2_instance)`; drop every `get_preset(cfg.theme_preset)` call. Pass `theme=theme` to `populate_app_info_sheet`.
     - [ ] N.3.h — CLI's `_generate_investigation` accepts + passes `l2_instance` (mirror L1 plumbing).

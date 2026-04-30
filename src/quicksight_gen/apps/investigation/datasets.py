@@ -117,7 +117,7 @@ MONEY_TRAIL_CONTRACT = DatasetContract(columns=[
     ColumnSpec("posted_at", "DATETIME"),
     ColumnSpec("transfer_type", "STRING"),
     # Concatenated display labels, computed in the dataset SQL (see
-    # MONEY_TRAIL_BASE_SQL). Used by the Account Network sheet as the
+    # ``_money_trail_base_sql``). Used by the Account Network sheet as the
     # walk-the-flow anchor — they're both human-readable AND uniquely
     # keyed (embedded account_id disambiguates name collisions). Money
     # Trail doesn't read these but they project cleanly through its
@@ -129,14 +129,18 @@ MONEY_TRAIL_CONTRACT = DatasetContract(columns=[
 
 # Both money-trail-shaped datasets project the same matview; the
 # wrapper computes the display columns inline so the matview stays a
-# pure shape over base tables.
-MONEY_TRAIL_BASE_SQL = """\
-SELECT
-    *,
-    source_account_name || ' (' || source_account_id || ')' AS source_display,
-    target_account_name || ' (' || target_account_id || ')' AS target_display
-FROM inv_money_trail_edges
-"""
+# pure shape over base tables. N.3.d: matview name is per-instance
+# prefixed (was global ``inv_money_trail_edges`` pre-N.3).
+def _money_trail_base_sql(prefix: str) -> str:
+    return (
+        f"SELECT\n"
+        f"    *,\n"
+        f"    source_account_name || ' (' || source_account_id || ')' "
+        f"AS source_display,\n"
+        f"    target_account_name || ' (' || target_account_id || ')' "
+        f"AS target_display\n"
+        f"FROM {prefix}_inv_money_trail_edges\n"
+    )
 
 
 # K.4.8k — narrow dataset feeding only the anchor-account dropdown.
@@ -153,11 +157,29 @@ ANETWORK_ACCOUNTS_CONTRACT = DatasetContract(columns=[
     ),
 ])
 
-ANETWORK_ACCOUNTS_SQL = """\
-SELECT DISTINCT
-    source_account_name || ' (' || source_account_id || ')' AS source_display
-FROM inv_money_trail_edges
-"""
+def _anetwork_accounts_sql(prefix: str) -> str:
+    return (
+        f"SELECT DISTINCT\n"
+        f"    source_account_name || ' (' || source_account_id || ')' "
+        f"AS source_display\n"
+        f"FROM {prefix}_inv_money_trail_edges\n"
+    )
+
+
+def _require_prefix(cfg: Config) -> str:
+    """Return ``cfg.l2_instance_prefix`` or raise.
+
+    Investigation under L2-fed (N.3) requires ``build_investigation_app``
+    to have set ``cfg.l2_instance_prefix`` before any dataset SQL is
+    rendered. Build entry points either pre-stamp the field on the cfg
+    or auto-derive it from ``l2_instance.instance``.
+    """
+    if cfg.l2_instance_prefix is None:
+        raise ValueError(
+            "Investigation datasets require cfg.l2_instance_prefix to be "
+            "set; build_investigation_app derives it from the L2 instance."
+        )
+    return cfg.l2_instance_prefix
 
 
 def build_recipient_fanout_dataset(cfg: Config) -> DataSet:
@@ -168,7 +190,8 @@ def build_recipient_fanout_dataset(cfg: Config) -> DataSet:
     don't dominate the fanout ranking — those always pull from many
     accounts by design and would crowd out genuine AML signal.
     """
-    sql = """\
+    p = _require_prefix(cfg)
+    sql = f"""\
 WITH inflows AS (
     SELECT
         t.transfer_id,
@@ -177,7 +200,7 @@ WITH inflows AS (
         t.account_type          AS recipient_account_type,
         t.signed_amount         AS amount,
         t.posted_at             AS posted_at
-    FROM transactions t
+    FROM {p}_transactions t
     WHERE t.signed_amount > 0
       AND t.status = 'success'
       AND t.account_type IN ('dda', 'merchant_dda')
@@ -188,7 +211,7 @@ outflows AS (
         t.account_id            AS sender_account_id,
         t.account_name          AS sender_account_name,
         t.account_type          AS sender_account_type
-    FROM transactions t
+    FROM {p}_transactions t
     WHERE t.signed_amount < 0
       AND t.status = 'success'
 )
@@ -222,7 +245,8 @@ def build_volume_anomalies_dataset(cfg: Config) -> DataSet:
     every column is computed at refresh time. Visuals filter via a
     NumericRangeFilter on ``z_score`` bound to the σ-threshold parameter.
     """
-    sql = "SELECT * FROM inv_pair_rolling_anomalies"
+    p = _require_prefix(cfg)
+    sql = f"SELECT * FROM {p}_inv_pair_rolling_anomalies"
     return build_dataset(
         cfg,
         cfg.prefixed("inv-volume-anomalies-dataset"),
@@ -247,7 +271,7 @@ def build_money_trail_dataset(cfg: Config) -> DataSet:
     - ``NumericRangeFilter`` on ``hop_amount`` bound to
       ``pInvMoneyTrailMinAmount`` — drops noise edges.
     """
-    sql = MONEY_TRAIL_BASE_SQL
+    sql = _money_trail_base_sql(_require_prefix(cfg))
     return build_dataset(
         cfg,
         cfg.prefixed("inv-money-trail-dataset"),
@@ -268,7 +292,7 @@ def build_account_network_dataset(cfg: Config) -> DataSet:
     chain-root filters. Contract is identical because the underlying
     rows are.
     """
-    sql = MONEY_TRAIL_BASE_SQL
+    sql = _money_trail_base_sql(_require_prefix(cfg))
     return build_dataset(
         cfg,
         cfg.prefixed("inv-account-network-dataset"),
@@ -299,7 +323,7 @@ def build_account_network_accounts_dataset(cfg: Config) -> DataSet:
         cfg.prefixed("inv-anetwork-accounts-dataset"),
         "Investigation Account Network — Accounts",
         "inv-anetwork-accounts",
-        ANETWORK_ACCOUNTS_SQL,
+        _anetwork_accounts_sql(_require_prefix(cfg)),
         ANETWORK_ACCOUNTS_CONTRACT,
         visual_identifier=DS_INV_ANETWORK_ACCOUNTS,
     )
