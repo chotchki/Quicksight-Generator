@@ -23,51 +23,63 @@ extra_css:
   - stylesheets/sasquatch.css
 
 nav:
+  # Phase O.1.a — 5-section IA per docs/audits/o_0_content_audit.md §6.
+  # Pages live in their existing paths; O.1.d-i moves them under
+  # explicit subdirectories (concepts/, reference/, etc.) once the
+  # diagram pipeline (O.1.c) and templating (O.1.b) are in.
   - Home: index.md
-  - L1 Handbook:
-    - Overview: handbook/l1.md
-    - Getting Started: walkthroughs/l1/getting-started.md
-    - Drift: walkthroughs/l1/drift.md
-    - Drift Timelines: walkthroughs/l1/drift-timelines.md
-    - Overdraft: walkthroughs/l1/overdraft.md
-    - Limit Breach: walkthroughs/l1/limit-breach.md
-    - Pending Aging: walkthroughs/l1/pending-aging.md
-    - Unbundled Aging: walkthroughs/l1/unbundled-aging.md
-    - Supersession Audit: walkthroughs/l1/supersession-audit.md
-    - Today's Exceptions: walkthroughs/l1/todays-exceptions.md
-    - Daily Statement: walkthroughs/l1/daily-statement.md
-    - Transactions: walkthroughs/l1/transactions.md
-  - L2 Flow Tracing Handbook:
-    - Overview: handbook/l2_flow_tracing.md
-  - Investigation Handbook:
-    - Overview: handbook/investigation.md
-    - Who's Getting Money from Too Many Senders?: walkthroughs/investigation/who-is-getting-money-from-too-many-senders.md
-    - Which Sender → Recipient Pair Just Spiked?: walkthroughs/investigation/which-pair-just-spiked.md
-    - Where Did This Transfer Actually Originate?: walkthroughs/investigation/where-did-this-transfer-originate.md
-    - What Does This Account's Money Network Look Like?: walkthroughs/investigation/what-does-this-accounts-money-network-look-like.md
-  - Data Integration Handbook:
-    - Overview: handbook/etl.md
-    - How do I populate transactions?: walkthroughs/etl/how-do-i-populate-transactions.md
-    - How do I validate a single account-day?: walkthroughs/etl/how-do-i-validate-a-single-account-day.md
-    - How do I prove my ETL is working?: walkthroughs/etl/how-do-i-prove-my-etl-is-working.md
-    - How do I tag a force-posted transfer?: walkthroughs/etl/how-do-i-tag-a-force-posted-transfer.md
-    - How do I add a metadata key?: walkthroughs/etl/how-do-i-add-a-metadata-key.md
-    - What to do when demo passes but prod fails?: walkthroughs/etl/what-do-i-do-when-demo-passes-but-prod-fails.md
-  - Customization Handbook:
-    - Overview: handbook/customization.md
-    - How do I map my database to the two base tables?: walkthroughs/customization/how-do-i-map-my-database.md
-    - How do I swap the SQL behind a dataset?: walkthroughs/customization/how-do-i-swap-dataset-sql.md
-    - How do I reskin the dashboards for my brand?: walkthroughs/customization/how-do-i-reskin-the-dashboards.md
-    - How do I configure the deploy for my AWS account?: walkthroughs/customization/how-do-i-configure-the-deploy.md
-    - How do I run my first deploy?: walkthroughs/customization/how-do-i-run-my-first-deploy.md
-    - How do I add an app-specific metadata key?: walkthroughs/customization/how-do-i-add-a-metadata-key.md
-    - How do I extend canonical values?: walkthroughs/customization/how-do-i-extend-canonical-values.md
-    - How do I author a new app on the tree?: walkthroughs/customization/how-do-i-author-a-new-app-on-the-tree.md
-    - How do I test my customization?: walkthroughs/customization/how-do-i-test-my-customization.md
-  - Training Scenarios:
-    - Account Structure: Training_Story.md
+  - Concepts:
+    - Overview: concepts/index.md
+  - Reference:
+    - Overview: reference/index.md
+    - L1 Reconciliation Dashboard: handbook/l1.md
+    - L2 Flow Tracing: handbook/l2_flow_tracing.md
+    - Investigation: handbook/investigation.md
+    - ETL — Data Integration: handbook/etl.md
+    - Customization: handbook/customization.md
     - Schema v6 — Data Feed Contract: Schema_v6.md
     - L1 Invariants: L1_Invariants.md
+  - Walkthroughs:
+    - Overview: walkthroughs/index.md
+    - L1 Sheets:
+      - Getting Started: walkthroughs/l1/getting-started.md
+      - Drift: walkthroughs/l1/drift.md
+      - Drift Timelines: walkthroughs/l1/drift-timelines.md
+      - Overdraft: walkthroughs/l1/overdraft.md
+      - Limit Breach: walkthroughs/l1/limit-breach.md
+      - Pending Aging: walkthroughs/l1/pending-aging.md
+      - Unbundled Aging: walkthroughs/l1/unbundled-aging.md
+      - Supersession Audit: walkthroughs/l1/supersession-audit.md
+      - Today's Exceptions: walkthroughs/l1/todays-exceptions.md
+      - Daily Statement: walkthroughs/l1/daily-statement.md
+      - Transactions: walkthroughs/l1/transactions.md
+    - Investigation:
+      - Who's Getting Money from Too Many Senders?: walkthroughs/investigation/who-is-getting-money-from-too-many-senders.md
+      - Which Sender → Recipient Pair Just Spiked?: walkthroughs/investigation/which-pair-just-spiked.md
+      - Where Did This Transfer Actually Originate?: walkthroughs/investigation/where-did-this-transfer-originate.md
+      - What Does This Account's Money Network Look Like?: walkthroughs/investigation/what-does-this-accounts-money-network-look-like.md
+    - ETL:
+      - How do I populate transactions?: walkthroughs/etl/how-do-i-populate-transactions.md
+      - How do I validate a single account-day?: walkthroughs/etl/how-do-i-validate-a-single-account-day.md
+      - How do I prove my ETL is working?: walkthroughs/etl/how-do-i-prove-my-etl-is-working.md
+      - How do I tag a force-posted transfer?: walkthroughs/etl/how-do-i-tag-a-force-posted-transfer.md
+      - How do I add a metadata key?: walkthroughs/etl/how-do-i-add-a-metadata-key.md
+      - What to do when demo passes but prod fails?: walkthroughs/etl/what-do-i-do-when-demo-passes-but-prod-fails.md
+    - Customization:
+      - How do I map my database to the two base tables?: walkthroughs/customization/how-do-i-map-my-database.md
+      - How do I swap the SQL behind a dataset?: walkthroughs/customization/how-do-i-swap-dataset-sql.md
+      - How do I reskin the dashboards for my brand?: walkthroughs/customization/how-do-i-reskin-the-dashboards.md
+      - How do I configure the deploy for my AWS account?: walkthroughs/customization/how-do-i-configure-the-deploy.md
+      - How do I run my first deploy?: walkthroughs/customization/how-do-i-run-my-first-deploy.md
+      - How do I add an app-specific metadata key?: walkthroughs/customization/how-do-i-add-a-metadata-key.md
+      - How do I extend canonical values?: walkthroughs/customization/how-do-i-extend-canonical-values.md
+      - How do I author a new app on the tree?: walkthroughs/customization/how-do-i-author-a-new-app-on-the-tree.md
+      - How do I test my customization?: walkthroughs/customization/how-do-i-test-my-customization.md
+  - For Your Role:
+    - Overview: for-your-role/index.md
+  - Scenarios:
+    - Overview: scenarios/index.md
+    - Cast of Characters — Demo Account Structure: Training_Story.md
   - API Reference:
     - Overview: api/index.md
     - Tree — App / Analysis / Dashboard / Sheet: api/tree-structure.md
@@ -79,6 +91,11 @@ nav:
 
 plugins:
   - search
+  - macros:
+      # Phase O.1.a — Jinja2 templating in markdown. The vocabulary +
+      # diagram macros land in O.1.b / O.1.c; this is the engine
+      # wiring only.
+      include_dir: src/quicksight_gen/docs/_macros
   - mkdocstrings:
       handlers:
         python:
