@@ -9,7 +9,7 @@ constraint violations. Healthy = empty.
 This page is the authoritative reference for what each
 `<prefix>_*` view returns, the SHOULD-constraint motivation, and
 what `scripts/m2_6_verify.py` asserts against the canonical
-Sasquatch seed.
+demo seed.
 
 ## How the views are layered
 
