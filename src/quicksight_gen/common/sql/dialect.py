@@ -237,9 +237,14 @@ def drop_table_if_exists(
 
     Postgres has native ``DROP TABLE IF EXISTS … CASCADE``. Oracle 19c
     needs a PL/SQL block that catches ORA-00942 (table not found).
+
+    Returned string is **fully terminated** (Postgres trailing ``;``,
+    Oracle ``END;`` PL/SQL terminator). Callers concatenate directly
+    without appending ``;`` to avoid a double-semicolon that Oracle's
+    PL/SQL parser rejects.
     """
     if dialect is Dialect.POSTGRES:
-        return f"DROP TABLE IF EXISTS {name} CASCADE"
+        return f"DROP TABLE IF EXISTS {name} CASCADE;"
     return _oracle_drop_if_exists(
         f"DROP TABLE {name} CASCADE CONSTRAINTS", ignore_codes=(-942,),
     )
@@ -250,11 +255,12 @@ def drop_matview_if_exists(
 ) -> str:
     """Idempotent DROP MATERIALIZED VIEW.
 
-    Postgres ``DROP MATERIALIZED VIEW IF EXISTS …`` / Oracle PL/SQL
-    block catching ORA-12003 (matview does not exist).
+    Postgres ``DROP MATERIALIZED VIEW IF EXISTS …;`` / Oracle PL/SQL
+    block catching ORA-12003 (matview does not exist). Returned string
+    is **fully terminated** — same convention as ``drop_table_if_exists``.
     """
     if dialect is Dialect.POSTGRES:
-        return f"DROP MATERIALIZED VIEW IF EXISTS {name}"
+        return f"DROP MATERIALIZED VIEW IF EXISTS {name};"
     return _oracle_drop_if_exists(
         f"DROP MATERIALIZED VIEW {name}", ignore_codes=(-12003, -942),
     )
@@ -265,11 +271,12 @@ def drop_index_if_exists(
 ) -> str:
     """Idempotent DROP INDEX.
 
-    Postgres ``DROP INDEX IF EXISTS …`` / Oracle PL/SQL block
-    catching ORA-01418 (index does not exist).
+    Postgres ``DROP INDEX IF EXISTS …;`` / Oracle PL/SQL block
+    catching ORA-01418 (index does not exist). Returned string is
+    **fully terminated**.
     """
     if dialect is Dialect.POSTGRES:
-        return f"DROP INDEX IF EXISTS {name}"
+        return f"DROP INDEX IF EXISTS {name};"
     return _oracle_drop_if_exists(
         f"DROP INDEX {name}", ignore_codes=(-1418,),
     )
@@ -280,11 +287,11 @@ def drop_view_if_exists(
 ) -> str:
     """Idempotent DROP VIEW.
 
-    Postgres ``DROP VIEW IF EXISTS …`` / Oracle PL/SQL block
-    catching ORA-00942.
+    Postgres ``DROP VIEW IF EXISTS …;`` / Oracle PL/SQL block
+    catching ORA-00942. Returned string is **fully terminated**.
     """
     if dialect is Dialect.POSTGRES:
-        return f"DROP VIEW IF EXISTS {name}"
+        return f"DROP VIEW IF EXISTS {name};"
     return _oracle_drop_if_exists(
         f"DROP VIEW {name}", ignore_codes=(-942,),
     )
@@ -337,12 +344,14 @@ def refresh_matview(
 ) -> str:
     """``REFRESH MATERIALIZED VIEW`` per dialect.
 
-    Postgres: bare ``REFRESH MATERIALIZED VIEW name``. Oracle: a
-    PL/SQL block invoking ``DBMS_MVIEW.REFRESH('name', method => 'C')``
-    — ``C`` = complete refresh, matching Postgres semantics.
+    Postgres: ``REFRESH MATERIALIZED VIEW name;``. Oracle: a PL/SQL
+    block invoking ``DBMS_MVIEW.REFRESH('name', method => 'C')`` —
+    ``C`` = complete refresh, matching Postgres semantics. Returned
+    string is **fully terminated** — same convention as the drop
+    helpers.
     """
     if dialect is Dialect.POSTGRES:
-        return f"REFRESH MATERIALIZED VIEW {name}"
+        return f"REFRESH MATERIALIZED VIEW {name};"
     return f"BEGIN DBMS_MVIEW.REFRESH('{name}', method => 'C'); END;"
 
 
@@ -351,11 +360,12 @@ def analyze_table(
 ) -> str:
     """Refresh planner statistics on a table or matview.
 
-    Postgres: ``ANALYZE name``. Oracle: ``BEGIN
-    DBMS_STATS.GATHER_TABLE_STATS(USER, 'name'); END;``.
+    Postgres: ``ANALYZE name;``. Oracle: ``BEGIN
+    DBMS_STATS.GATHER_TABLE_STATS(USER, 'name'); END;``. Returned
+    string is **fully terminated**.
     """
     if dialect is Dialect.POSTGRES:
-        return f"ANALYZE {name}"
+        return f"ANALYZE {name};"
     return f"BEGIN DBMS_STATS.GATHER_TABLE_STATS(USER, '{name}'); END;"
 
 

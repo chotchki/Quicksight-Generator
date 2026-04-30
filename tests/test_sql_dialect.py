@@ -108,37 +108,45 @@ class TestPostgresDateTime:
 
 
 class TestPostgresDdlIdempotency:
+    # P.3.d.2 — DDL idempotency + statement-runner helpers return
+    # **fully terminated** statements so the Oracle PL/SQL ``END;`` and
+    # the Postgres trailing ``;`` share one convention. Callers
+    # concatenate without appending ``;``.
+
     def test_drop_table(self):
         assert drop_table_if_exists("foo", PG) == (
-            "DROP TABLE IF EXISTS foo CASCADE"
+            "DROP TABLE IF EXISTS foo CASCADE;"
         )
 
     def test_drop_matview(self):
         assert drop_matview_if_exists("p_drift", PG) == (
-            "DROP MATERIALIZED VIEW IF EXISTS p_drift"
+            "DROP MATERIALIZED VIEW IF EXISTS p_drift;"
         )
 
     def test_drop_index(self):
         assert drop_index_if_exists("idx_foo", PG) == (
-            "DROP INDEX IF EXISTS idx_foo"
+            "DROP INDEX IF EXISTS idx_foo;"
         )
 
     def test_drop_view(self):
-        assert drop_view_if_exists("v_foo", PG) == "DROP VIEW IF EXISTS v_foo"
+        assert drop_view_if_exists("v_foo", PG) == "DROP VIEW IF EXISTS v_foo;"
 
 
 class TestPostgresMatviews:
     def test_create_matview(self):
+        # ``create_matview`` is the only matview helper that does NOT
+        # carry its own terminator — its caller wraps the whole
+        # CREATE in a ; or stitches it inline in a template.
         result = create_matview("p_drift", "SELECT 1", PG)
         assert result == "CREATE MATERIALIZED VIEW p_drift AS SELECT 1"
 
     def test_refresh_matview(self):
         assert refresh_matview("p_drift", PG) == (
-            "REFRESH MATERIALIZED VIEW p_drift"
+            "REFRESH MATERIALIZED VIEW p_drift;"
         )
 
     def test_analyze_table(self):
-        assert analyze_table("p_drift", PG) == "ANALYZE p_drift"
+        assert analyze_table("p_drift", PG) == "ANALYZE p_drift;"
 
 
 class TestPostgresRecursiveCte:
@@ -293,8 +301,8 @@ class TestDefaultDialect:
             (typed_null, ("numeric",), "NULL::numeric"),
             (interval_days, (1,), "INTERVAL '1 day'"),
             (with_recursive, (), "WITH RECURSIVE"),
-            (refresh_matview, ("foo",), "REFRESH MATERIALIZED VIEW foo"),
-            (analyze_table, ("foo",), "ANALYZE foo"),
+            (refresh_matview, ("foo",), "REFRESH MATERIALIZED VIEW foo;"),
+            (analyze_table, ("foo",), "ANALYZE foo;"),
         ],
     )
     def test_postgres_default(self, fn, args, expected):

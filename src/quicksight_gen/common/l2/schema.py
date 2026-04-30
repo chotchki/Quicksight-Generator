@@ -43,9 +43,16 @@ from __future__ import annotations
 from quicksight_gen.common.sql import (
     Dialect,
     analyze_table,
+    decimal_type,
+    drop_index_if_exists,
     drop_matview_if_exists,
+    drop_table_if_exists,
     refresh_matview,
+    serial_type,
+    text_type,
+    timestamp_tz_type,
     typed_null,
+    varchar_type,
 )
 
 from .primitives import L2Instance
@@ -105,7 +112,7 @@ def emit_schema(
     # the same dependency-ordering rule applies.
     l1_drops = _emit_l1_invariant_drops(p, dialect)
     inv_drops = _emit_inv_matview_drops(p, dialect)
-    base = _SCHEMA_TEMPLATE.format(p=p)
+    base = _emit_base_schema(p, dialect)
     invariants = _emit_l1_invariant_views(instance, dialect=dialect)
     inv_views = _emit_inv_views(instance)
     return (
@@ -164,8 +171,8 @@ def refresh_matviews_sql(
     # subsequent SELECTs use the indexes we ship on each matview
     # (without ANALYZE the planner doesn't know the post-REFRESH row
     # count + value distribution and may pick a sequential scan).
-    refreshes = "\n".join(f"{refresh_matview(n, dialect)};" for n in names)
-    analyzes = "\n".join(f"{analyze_table(n, dialect)};" for n in names)
+    refreshes = "\n".join(refresh_matview(n, dialect) for n in names)
+    analyzes = "\n".join(analyze_table(n, dialect) for n in names)
     return f"{refreshes}\n{analyzes}"
 
 
@@ -313,6 +320,84 @@ def _render_unbundled_age_cases(
     return f"CASE\n        {branches_sql}\n        ELSE NULL\n    END"
 
 
+# Base-schema indexes that need a DROP IF EXISTS in the preamble (the
+# CREATE statements live inline in _SCHEMA_TEMPLATE further below).
+# Order doesn't matter for indexes — they're independent objects.
+_BASE_INDEX_DROPS: tuple[tuple[str, str], ...] = (
+    # (placeholder_key, index_name_template)
+    ("drop_idx_account_posting", "idx_{p}_transactions_account_posting"),
+    ("drop_idx_transfer", "idx_{p}_transactions_transfer"),
+    ("drop_idx_type_status", "idx_{p}_transactions_type_status"),
+    ("drop_idx_business_day", "idx_{p}_transactions_business_day"),
+    ("drop_idx_parent", "idx_{p}_transactions_parent"),
+    ("drop_idx_bundler", "idx_{p}_transactions_bundler_eligibility"),
+    ("drop_idx_db_business_day", "idx_{p}_daily_balances_business_day"),
+)
+
+
+def _matview_options(dialect: Dialect) -> str:
+    """Per-dialect suffix between ``CREATE MATERIALIZED VIEW <name>`` and
+    ``AS <body>``. Postgres takes none; Oracle needs ``BUILD IMMEDIATE
+    REFRESH COMPLETE ON DEMAND`` to match Postgres's build-on-create +
+    manual-REFRESH semantics (without it Oracle defaults to
+    ``REFRESH FORCE ON DEMAND``, which has more setup requirements).
+    """
+    if dialect is Dialect.POSTGRES:
+        return ""
+    return " BUILD IMMEDIATE REFRESH COMPLETE ON DEMAND"
+
+
+def _emit_base_schema(p: str, dialect: Dialect) -> str:
+    """Render ``_SCHEMA_TEMPLATE`` with all dialect placeholders filled.
+
+    Type-name placeholders ({serial}, {ts_tz}, {text}, {vc20…vc255},
+    {dec202}) come from common/sql type helpers. DROP placeholders
+    come from drop_*_if_exists helpers (PG IF EXISTS / Oracle PL/SQL).
+    The bundler-eligibility partial-index ``WHERE bundle_id IS NULL``
+    is a Postgres-only optimization — Oracle gets a full index, which
+    works correctly but is larger; converting to a function-based
+    index for parity is a future optimization.
+    """
+    fmt: dict[str, str] = {
+        "p": p,
+        # Type names
+        "serial": serial_type(dialect),
+        "ts_tz": timestamp_tz_type(dialect),
+        "text": text_type(dialect),
+        "vc20": varchar_type(20, dialect),
+        "vc50": varchar_type(50, dialect),
+        "vc100": varchar_type(100, dialect),
+        "vc255": varchar_type(255, dialect),
+        "dec202": decimal_type(20, 2, dialect),
+        # Matview options suffix (Oracle BUILD IMMEDIATE REFRESH COMPLETE
+        # ON DEMAND; empty on Postgres).
+        "matview_options": _matview_options(dialect),
+        # Partial-index WHERE clause — PG only.
+        "bundler_partial_where": (
+            "\n    WHERE bundle_id IS NULL"
+            if dialect is Dialect.POSTGRES else ""
+        ),
+        # Current* matview drops.
+        "drop_curr_db": drop_matview_if_exists(
+            f"{p}_current_daily_balances", dialect,
+        ),
+        "drop_curr_tx": drop_matview_if_exists(
+            f"{p}_current_transactions", dialect,
+        ),
+        # Base table drops.
+        "drop_table_db": drop_table_if_exists(
+            f"{p}_daily_balances", dialect,
+        ),
+        "drop_table_tx": drop_table_if_exists(
+            f"{p}_transactions", dialect,
+        ),
+    }
+    # Index drops — name-template substitution for the prefix.
+    for key, name_template in _BASE_INDEX_DROPS:
+        fmt[key] = drop_index_if_exists(name_template.format(p=p), dialect)
+    return _SCHEMA_TEMPLATE.format(**fmt)
+
+
 _SCHEMA_TEMPLATE = """\
 -- =====================================================================
 -- L2 instance: {p}
@@ -321,17 +406,17 @@ _SCHEMA_TEMPLATE = """\
 
 -- Drop views first (they depend on the base tables). M.1a.9 made
 -- these MATERIALIZED VIEWs.
-DROP MATERIALIZED VIEW IF EXISTS {p}_current_daily_balances;
-DROP MATERIALIZED VIEW IF EXISTS {p}_current_transactions;
-DROP INDEX IF EXISTS idx_{p}_transactions_account_posting;
-DROP INDEX IF EXISTS idx_{p}_transactions_transfer;
-DROP INDEX IF EXISTS idx_{p}_transactions_type_status;
-DROP INDEX IF EXISTS idx_{p}_transactions_business_day;
-DROP INDEX IF EXISTS idx_{p}_transactions_parent;
-DROP INDEX IF EXISTS idx_{p}_transactions_bundler_eligibility;
-DROP INDEX IF EXISTS idx_{p}_daily_balances_business_day;
-DROP TABLE IF EXISTS {p}_daily_balances CASCADE;
-DROP TABLE IF EXISTS {p}_transactions  CASCADE;
+{drop_curr_db}
+{drop_curr_tx}
+{drop_idx_account_posting}
+{drop_idx_transfer}
+{drop_idx_type_status}
+{drop_idx_business_day}
+{drop_idx_parent}
+{drop_idx_bundler}
+{drop_idx_db_business_day}
+{drop_table_db}
+{drop_table_tx}
 
 -- ---------------------------------------------------------------------
 -- L1 Transaction (denormalized with Transfer + Account fields per
@@ -370,29 +455,29 @@ DROP TABLE IF EXISTS {p}_transactions  CASCADE;
 --                 no GIN indexes; SQL/JSON path syntax for extraction).
 -- ---------------------------------------------------------------------
 CREATE TABLE {p}_transactions (
-    entry                BIGSERIAL      NOT NULL,
-    id                   VARCHAR(100)   NOT NULL,
-    account_id           VARCHAR(100)   NOT NULL,
-    account_name         VARCHAR(255),
-    account_role         VARCHAR(100),
-    account_scope        VARCHAR(20)    NOT NULL
+    entry                {serial}      NOT NULL,
+    id                   {vc100}   NOT NULL,
+    account_id           {vc100}   NOT NULL,
+    account_name         {vc255},
+    account_role         {vc100},
+    account_scope        {vc20}    NOT NULL
         CHECK (account_scope IN ('internal', 'external')),
-    account_parent_role  VARCHAR(100),
-    amount_money         DECIMAL(20,2)  NOT NULL,
-    amount_direction     VARCHAR(20)    NOT NULL
+    account_parent_role  {vc100},
+    amount_money         {dec202}  NOT NULL,
+    amount_direction     {vc20}    NOT NULL
         CHECK (amount_direction IN ('Debit', 'Credit')),
-    status               VARCHAR(50)    NOT NULL,
-    posting              TIMESTAMPTZ    NOT NULL,
-    transfer_id          VARCHAR(100)   NOT NULL,
-    transfer_type        VARCHAR(50)    NOT NULL,
-    transfer_completion  TIMESTAMPTZ,
-    transfer_parent_id   VARCHAR(100),
-    rail_name            VARCHAR(100)   NOT NULL,
-    template_name        VARCHAR(100),
-    bundle_id            VARCHAR(100),
-    supersedes           VARCHAR(50),
-    origin               VARCHAR(50)    NOT NULL,
-    metadata             TEXT,
+    status               {vc50}    NOT NULL,
+    posting              {ts_tz}    NOT NULL,
+    transfer_id          {vc100}   NOT NULL,
+    transfer_type        {vc50}    NOT NULL,
+    transfer_completion  {ts_tz},
+    transfer_parent_id   {vc100},
+    rail_name            {vc100}   NOT NULL,
+    template_name        {vc100},
+    bundle_id            {vc100},
+    supersedes           {vc50},
+    origin               {vc50}    NOT NULL,
+    metadata             {text},
     PRIMARY KEY (id, entry),
     -- Sign-direction agreement (L1 Amount INVARIANT):
     --   money ≥ 0 if direction = Credit; money ≤ 0 if direction = Debit.
@@ -426,19 +511,19 @@ CREATE TABLE {p}_transactions (
 --                 daily_balances row is by construction a correction.
 -- ---------------------------------------------------------------------
 CREATE TABLE {p}_daily_balances (
-    entry                  BIGSERIAL      NOT NULL,
-    account_id             VARCHAR(100)   NOT NULL,
-    account_name           VARCHAR(255),
-    account_role           VARCHAR(100),
-    account_scope          VARCHAR(20)    NOT NULL
+    entry                  {serial}      NOT NULL,
+    account_id             {vc100}   NOT NULL,
+    account_name           {vc255},
+    account_role           {vc100},
+    account_scope          {vc20}    NOT NULL
         CHECK (account_scope IN ('internal', 'external')),
-    account_parent_role    VARCHAR(100),
-    expected_eod_balance   DECIMAL(20,2),
-    business_day_start     TIMESTAMPTZ    NOT NULL,
-    business_day_end       TIMESTAMPTZ    NOT NULL,
-    money                  DECIMAL(20,2)  NOT NULL,
-    limits                 TEXT,
-    supersedes             VARCHAR(50),
+    account_parent_role    {vc100},
+    expected_eod_balance   {dec202},
+    business_day_start     {ts_tz}    NOT NULL,
+    business_day_end       {ts_tz}    NOT NULL,
+    money                  {dec202}  NOT NULL,
+    limits                 {text},
+    supersedes             {vc50},
     PRIMARY KEY (account_id, business_day_start, entry),
     CHECK (business_day_end > business_day_start),
     CHECK (limits IS NULL OR limits IS JSON)
@@ -454,8 +539,7 @@ CREATE INDEX idx_{p}_transactions_parent          ON {p}_transactions (transfer_
 -- by rail_name (matching their BundlesActivity selectors). Partial index
 -- on `bundle_id IS NULL` keeps the index small as bundled-row count grows.
 CREATE INDEX idx_{p}_transactions_bundler_eligibility
-    ON {p}_transactions (rail_name, status)
-    WHERE bundle_id IS NULL;
+    ON {p}_transactions (rail_name, status){bundler_partial_where};
 CREATE INDEX idx_{p}_daily_balances_business_day  ON {p}_daily_balances (business_day_start);
 
 -- ---------------------------------------------------------------------
@@ -479,7 +563,7 @@ CREATE INDEX idx_{p}_daily_balances_business_day  ON {p}_daily_balances (busines
 -- contract: integrators MUST `REFRESH MATERIALIZED VIEW` after every
 -- batch insert into the base tables. The library ships
 -- `refresh_matviews_sql(instance)` that emits the right REFRESH order.
-CREATE MATERIALIZED VIEW {p}_current_transactions AS
+CREATE MATERIALIZED VIEW {p}_current_transactions{matview_options} AS
 SELECT * FROM {p}_transactions tx
 WHERE tx.entry = (
     SELECT MAX(entry) FROM {p}_transactions WHERE id = tx.id
@@ -493,7 +577,7 @@ CREATE INDEX idx_{p}_curr_tx_transfer ON {p}_current_transactions (transfer_id);
 CREATE INDEX idx_{p}_curr_tx_id ON {p}_current_transactions (id);
 CREATE INDEX idx_{p}_curr_tx_status ON {p}_current_transactions (status);
 
-CREATE MATERIALIZED VIEW {p}_current_daily_balances AS
+CREATE MATERIALIZED VIEW {p}_current_daily_balances{matview_options} AS
 SELECT * FROM {p}_daily_balances sb
 WHERE sb.entry = (
     SELECT MAX(entry)
@@ -570,7 +654,7 @@ def _emit_l1_invariant_drops(p: str, dialect: Dialect) -> str:
     first, helpers last).
     """
     drops = "\n".join(
-        f"{drop_matview_if_exists(f'{p}_{name}', dialect)};"
+        drop_matview_if_exists(f"{p}_{name}", dialect)
         for name in _L1_INVARIANT_DROP_NAMES
     )
     return f"{_L1_INVARIANT_DROPS_HEADER}\n{drops}\n"
@@ -1047,7 +1131,7 @@ def _emit_inv_matview_drops(p: str, dialect: Dialect) -> str:
     instance prefix; no ``.format()`` substitution on the body.
     """
     drops = "\n".join(
-        f"{drop_matview_if_exists(f'{p}_{name}', dialect)};"
+        drop_matview_if_exists(f"{p}_{name}", dialect)
         for name in _INV_MATVIEW_DROP_NAMES
     )
     return f"{_INV_MATVIEW_DROPS_HEADER}\n{drops}\n"
