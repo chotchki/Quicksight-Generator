@@ -36,6 +36,20 @@ blue; external counterparties are orange.
 
 ---
 
+## Topology — account templates + rails
+
+Same shape as the accounts view above, but the nodes are
+``AccountTemplate`` roles rather than singleton Accounts. Each template
+is one ``role × N`` node (the dashed border marks "many instances at
+runtime"); rail edges connect templates whose roles the rail's
+``source_role`` / ``destination_role`` / ``leg_role`` references.
+Singleton-only rails (no template touched) drop out — this is the
+template-shape skeleton, not the full topology.
+
+{{ diagram("l2_topology", kind="account_templates") }}
+
+---
+
 ## Topology — chains (parent → child firings)
 
 Chains declare that when one Rail or Transfer Template fires, another

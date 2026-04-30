@@ -28,14 +28,20 @@ _SASQUATCH_PR = _FIXTURES / "sasquatch_pr.yaml"
 
 
 class TestL2Topology:
-    @pytest.mark.parametrize("kind", ["accounts", "chains", "layered", "hierarchy"])
+    @pytest.mark.parametrize(
+        "kind",
+        ["accounts", "account_templates", "chains", "layered", "hierarchy"],
+    )
     def test_renders_against_spec_example(self, kind: str):
         l2 = load_instance(_SPEC_EXAMPLE)
         svg = render_l2_topology(l2, kind)  # type: ignore[arg-type]
         assert "<svg" in svg
         assert "</svg>" in svg
 
-    @pytest.mark.parametrize("kind", ["accounts", "chains", "layered", "hierarchy"])
+    @pytest.mark.parametrize(
+        "kind",
+        ["accounts", "account_templates", "chains", "layered", "hierarchy"],
+    )
     def test_renders_against_sasquatch_pr(self, kind: str):
         # Sasquatch is a richer fixture — exercises union role expressions
         # + XOR-grouped chain entries that spec_example doesn't have.
@@ -56,6 +62,17 @@ class TestL2Topology:
         # each should appear in the rendered SVG as a node label.
         for expected in ("Clearing Suspense", "North Pool", "South Pool"):
             assert expected in svg, f"missing account label: {expected}"
+
+    def test_account_templates_diagram_includes_template_marker(self):
+        # spec_example declares CustomerSubledger as a template;
+        # sasquatch_pr declares CustomerDDA / MerchantDDA / etc. The
+        # template node label is rendered as ``role × N`` so the SVG
+        # must contain that marker once at minimum.
+        l2 = load_instance(_SASQUATCH_PR)
+        svg = render_l2_topology(l2, "account_templates")
+        assert "× N" in svg, (
+            "account_templates diagram should mark templates with × N"
+        )
 
     def test_chains_diagram_renders_when_chains_present(self):
         # sasquatch_pr declares chain entries; spec_example may or may

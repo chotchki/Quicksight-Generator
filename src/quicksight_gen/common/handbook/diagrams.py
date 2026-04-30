@@ -43,7 +43,9 @@ from quicksight_gen.common.l2.primitives import (
 # -- Public API --------------------------------------------------------------
 
 
-TopologyKind = Literal["accounts", "chains", "layered", "hierarchy"]
+TopologyKind = Literal[
+    "accounts", "account_templates", "chains", "layered", "hierarchy",
+]
 
 
 def render_l2_topology(l2_instance: L2Instance, kind: TopologyKind) -> str:
@@ -53,6 +55,14 @@ def render_l2_topology(l2_instance: L2Instance, kind: TopologyKind) -> str:
     an edge between source-role-account and destination-role-account.
     Single-leg rails draw a self-loop on the leg-role account so they
     show up at all.
+
+    ``kind="account_templates"`` mirrors the accounts diagram but with
+    ``AccountTemplate`` nodes (keyed by role) instead of singleton
+    Accounts. Rails whose ``source_role`` / ``destination_role`` /
+    ``leg_role`` reference a template's role get edges to those template
+    nodes; rails whose roles touch no template are excluded — this
+    diagram is the "what does the template-shape graph look like?" view,
+    not the full topology.
 
     ``kind="chains"`` shows every Rail / TransferTemplate the chains
     table references, with ``parent → child`` edges (XOR groups
@@ -72,6 +82,8 @@ def render_l2_topology(l2_instance: L2Instance, kind: TopologyKind) -> str:
     """
     if kind == "accounts":
         return _to_svg(_build_accounts_graph(l2_instance))
+    if kind == "account_templates":
+        return _to_svg(_build_account_templates_graph(l2_instance))
     if kind == "chains":
         return _to_svg(_build_chains_graph(l2_instance))
     if kind == "layered":
@@ -337,6 +349,30 @@ def _build_accounts_graph(l2_instance: L2Instance) -> graphviz.Digraph:
     return g
 
 
+def _build_account_templates_graph(l2_instance: L2Instance) -> graphviz.Digraph:
+    """Mirror of the accounts graph using AccountTemplate nodes by role.
+
+    Renders each ``AccountTemplate`` as a dashed-border node (the same
+    shape used by the hierarchy diagram for templates) keyed by role,
+    then draws rail edges between template-role nodes. Rails whose
+    source / destination / leg roles touch no template are excluded —
+    this diagram is intentionally narrower than the singleton accounts
+    view, surfacing only the template-shape topology.
+    """
+    g = graphviz.Digraph(format="svg")
+    g.attr(rankdir="LR", nodesep="0.5", ranksep="1.0")
+    g.attr("node", fontsize="11", style="filled")
+
+    template_roles = {str(t.role) for t in l2_instance.account_templates}
+    role_to_template = _role_to_template(l2_instance)
+    for template in l2_instance.account_templates:
+        _add_account_template_node(g, template)
+
+    for rail in l2_instance.rails:
+        _add_template_rail_edges(g, rail, template_roles, role_to_template)
+    return g
+
+
 def _build_chains_graph(l2_instance: L2Instance) -> graphviz.Digraph:
     g = graphviz.Digraph(format="svg")
     g.attr(rankdir="LR", nodesep="0.4", ranksep="0.9")
@@ -473,6 +509,10 @@ def _role_to_account(l2_instance: L2Instance) -> dict[str, Account]:
     }
 
 
+def _role_to_template(l2_instance: L2Instance) -> dict[str, AccountTemplate]:
+    return {str(t.role): t for t in l2_instance.account_templates}
+
+
 def _add_account_node(g: graphviz.Digraph, acc: Account) -> None:
     color = "#bbdefb" if acc.scope == "internal" else "#ffe0b2"
     label = acc.name or acc.id
@@ -545,6 +585,52 @@ def _add_rail_edges(
             g.edge(
                 str(acc.id),
                 str(acc.id),
+                label=f"{rail.name}\n({rail.transfer_type})",
+                fontsize="9",
+                style="dashed",
+                color="#7b1fa2",
+            )
+
+
+def _add_template_rail_edges(
+    g: graphviz.Digraph,
+    rail: Rail,
+    template_roles: set[str],
+    role_to_template: dict[str, AccountTemplate],
+) -> None:
+    """Mirror of ``_add_rail_edges`` keyed off AccountTemplate nodes.
+
+    Only emits an edge when the role on each end resolves to an
+    AccountTemplate; singleton-only rails (no template touched) drop
+    out of the diagram by design.
+    """
+    if isinstance(rail, TwoLegRail):
+        sources = _expand_role_expression(rail.source_role)
+        destinations = _expand_role_expression(rail.destination_role)
+        for src_role in sources:
+            if src_role not in template_roles:
+                continue
+            src_template = role_to_template[src_role]
+            for dst_role in destinations:
+                if dst_role not in template_roles:
+                    continue
+                dst_template = role_to_template[dst_role]
+                g.edge(
+                    _template_node_id(src_template),
+                    _template_node_id(dst_template),
+                    label=f"{rail.name}\n({rail.transfer_type})",
+                    fontsize="9",
+                    color="#1976d2",
+                )
+    elif isinstance(rail, SingleLegRail):
+        for leg_role in _expand_role_expression(rail.leg_role):
+            if leg_role not in template_roles:
+                continue
+            template = role_to_template[leg_role]
+            node_id = _template_node_id(template)
+            g.edge(
+                node_id,
+                node_id,
                 label=f"{rail.name}\n({rail.transfer_type})",
                 fontsize="9",
                 style="dashed",
