@@ -48,9 +48,10 @@ Three substitution surfaces:
   renders.
 - **Walkthroughs** describing per-sheet operator flows are written
   against the dashboard structure (which is the same regardless of
-  L2). Body examples may still mention SNB-flavored identifiers
-  (gl-1010, Bigfoot Brews) where the example is illustrative; those
-  are tagged for future cleanup or replacement with vocab pulls.
+  L2). Body examples may still mention Sasquatch-flavored
+  identifiers (gl-1010, Bigfoot Brews) where the example is
+  illustrative; those are tagged for future cleanup or replacement
+  with vocab pulls.
 
 ## Custom built-in vocabularies
 

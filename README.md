@@ -255,17 +255,15 @@ out/
 A deterministic demo generator seeds all four apps end-to-end so you can see them work without wiring up real data. Investigation and Executives both ride on the shared `transactions` + `daily_balances` base tables — no app-specific schema; the existing PR + AR + Investigation scenario seeds already plant enough movement that Executives' rollups (account coverage, daily transfer volume, money moved) populate without a separate seed.
 
 ```bash
-# Emit SQL only (no DB connection needed) — schema ships in the wheel,
-# `demo schema` writes a copy out for inspection or hand-loading.
-quicksight-gen demo schema --all -o /tmp/schema.sql
-quicksight-gen demo seed   --all -o /tmp/seed.sql
-
-# Apply schema + seed to PostgreSQL, then generate QuickSight JSON
-# Requires: demo_database_url in config.yaml and `pip install -e ".[demo]"`
+# Apply schema + seed to PostgreSQL, then generate QuickSight JSON.
+# Requires: demo_database_url in config.yaml and `pip install -e ".[demo]"`.
+# Per-prefix DDL + seed are emitted at apply time from the L2 instance
+# YAML — no separate `demo schema` / `demo seed` files (those CLI
+# commands were retired in P.1 along with the v5 schema.sql).
 quicksight-gen demo apply --all -c config.yaml -o out/
 ```
 
-`demo apply` creates tables + views, inserts the sample data, writes a `datasource.json` derived from the database URL, and generates all QuickSight JSON. Both apps feed two shared base tables — `transactions` (every money-movement leg) and `daily_balances` (per-account end-of-day snapshots) — plus AR-only dimension tables (`ar_ledger_accounts`, `ar_subledger_accounts`, `ar_ledger_transfer_limits`). The `account_type` and `transfer_type` columns discriminate which app a row belongs to. See [`Schema_v6.md`](src/quicksight_gen/docs/Schema_v6.md) for the full feed contract, canonical type values, metadata key catalog, and ETL examples for piping production data into the same shape.
+`demo apply` creates the per-prefix base tables + matviews, inserts the L2-shape seed data (every L1 SHOULD-violation kind plus the Investigation fanout plant), refreshes every dependent matview in dependency order, writes a `datasource.json` derived from the database URL, and generates all QuickSight JSON. Every app feeds two per-prefix base tables — `<prefix>_transactions` (every money-movement leg) and `<prefix>_daily_balances` (per-account end-of-day snapshots) — emitted by `common/l2/schema.py::emit_schema(l2_instance)`. The `account_type` and `transfer_type` columns discriminate which app a row belongs to. See [`Schema_v6.md`](src/quicksight_gen/docs/Schema_v6.md) for the full feed contract, canonical type values, metadata key catalog, and ETL examples.
 
 **PostgreSQL 17+ is required** for `demo apply`: the schema uses SQL/JSON path syntax (`JSON_VALUE`, `JSON_QUERY`, `JSON_EXISTS`) for the `metadata TEXT` columns, and the portable subset forbids the Postgres-only `->>` / `->` / `@>` / `?` operators and JSONB.
 
@@ -312,16 +310,13 @@ src/quicksight_gen/
     apps/
         payment_recon/  # app.py (6 sheets), datasets.py (11 datasets), demo_data.py, constants.py
         account_recon/  # app.py (5 sheets), datasets.py (13 datasets), demo_data.py, constants.py
-        investigation/  # app.py (5 sheets), datasets.py (5 datasets — 2 backed by matviews), demo_data.py, constants.py
+        investigation/  # app.py (5 sheets), datasets.py (5 datasets — 2 backed by matviews), constants.py
         executives/     # app.py (4 sheets), datasets.py (2 datasets, per-transfer pre-aggregated). Greenfield on tree primitives — no constants.py.
-    schema.py           # `generate_schema_sql()` — reads the canonical DDL
-    schema.sql          # Canonical PostgreSQL DDL (interface contract for ETL); shared `transactions` + `daily_balances` base layer + AR dimension tables + AR + Investigation matviews
     docs/               # Unified mkdocs site source — concepts/, reference (handbook/), walkthroughs/, for-your-role/, scenarios/, Schema_v6.md, Training_Story.md, _diagrams/, _macros/ (extract via `quicksight-gen export docs`). Renders against any L2 instance via mkdocs-macros + HandbookVocabulary.
 tests/
-    test_models.py, test_generate.py, test_recon.py, test_account_recon.py,
-    test_investigation.py, test_executives.py, test_tree.py, test_tree_validator.py,
-    test_kitchen_app.py, test_persona.py, test_drill.py, test_dataset_contract.py,
-    test_theme_presets.py, test_demo_data.py, test_demo_sql.py, test_export.py, ...
+    test_models.py, test_generate.py, test_investigation.py, test_executives.py,
+    test_tree.py, test_tree_validator.py, test_kitchen_app.py, test_persona.py,
+    test_drill.py, test_dataset_contract.py, test_theme_presets.py, test_export.py, ...
     e2e/                # Two-layer e2e (API + browser) for all four apps; skipped unless QS_GEN_E2E=1
 run_e2e.sh              # One-shot: generate + deploy + e2e
 config.example.yaml

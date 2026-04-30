@@ -158,7 +158,7 @@
 
 The existing SQL is already constrained to a portable subset (no JSONB, SQL/JSON path syntax) precisely because Oracle was anticipated; Phase P operationalizes that intent end-to-end.
 
-- [ ] **P.0 — Audit + decisions captured.** This conversation is the audit; the design calls landed:
+- [x] **P.0 — Audit + decisions captured.** This conversation is the audit; the design calls landed:
   - **Abstraction**: hand-written `common/sql/dialect.py` helpers (option (i)). Switch to per-dialect parallel SQL files only if helpers get unwieldy on a specific surface.
   - **Materialized views everywhere**: keep MVs on Oracle (`REFRESH ON DEMAND`); plain views skipped — performance would suffer on the L1 invariant scans.
   - **Oracle target**: 19c Standard Edition. BOOLEAN doesn't exist (NUMBER(1)); TEXT → CLOB / VARCHAR2; identity columns + sequences differ; `WITH RECURSIVE` → unmarked recursive `WITH`.
@@ -167,13 +167,16 @@ The existing SQL is already constrained to a portable subset (no JSONB, SQL/JSON
   - **Naming**: Oracle is named freely in repo artifacts going forward. The "do not name the target RDBMS" memory becomes historical context (pre-Phase-P era).
 
 - [ ] **P.1 — V5 carry-over cleanup.** `schema.sql` ships dead DDL (`DROP TABLE IF EXISTS` for the v5 12-table family + the AR `ar_*` dim tables + dead `ar_*` view surface) carried for upgrade safety + Investigation FK integrity. Phase P starts here so the dialect port has the smaller, current-only schema to work against.
-  - [ ] P.1.a — Trace Investigation demo seed: which rows actually land in `ar_ledger_accounts` / `ar_subledger_accounts`. Document the FK dependency.
-  - [ ] P.1.b — Decide migration target: per-prefix dim tables under `<prefix>_inv_*_accounts`, OR drop the FK dependency entirely (if Investigation matviews don't need the dim rows for analytics, the FK is integrity-only and the dim tables can go).
-  - [ ] P.1.c — Migrate Investigation seed off `ar_*_accounts` per the P.1.b decision. Hash-relock the seed if bytes shift.
-  - [ ] P.1.d — Drop `ar_ledger_accounts` + `ar_subledger_accounts` DDL from `schema.sql`.
-  - [ ] P.1.e — Drop the dead `ar_*` view surface from `schema.sql` (per CLAUDE.md: "bulk of the `ar_*` view surface is dead code in v6").
-  - [ ] P.1.f — Drop the v5 `DROP TABLE IF EXISTS` carry-overs (`pr_*` / `transfer` / `posting` / `ar_*_daily_balances`). Anyone on v5 → v7 follows a documented migration path; auto-drop is no longer load-bearing.
-  - [ ] P.1.g — Full unit + e2e suite green. Commit.
+  - [x] P.1.a — **Trace findings.** Investigation seed (`apps/investigation/demo_data.py:310`) writes two `_inserts(...)` blocks: 3 rows into `ar_ledger_accounts` (from `INV_LEDGER_ACCOUNTS`) + 6 rows into `ar_subledger_accounts` (from `INV_SUBLEDGER_ACCOUNTS`). The dim tables carry a self-FK (`ar_subledger.ledger_account_id → ar_ledger`) plus an inbound FK from `ar_ledger_transfer_limits`. Both per-prefix Investigation matviews (`<prefix>_inv_pair_rolling_anomalies`, `<prefix>_inv_money_trail_edges`) only read from `<prefix>_transactions` — zero references to `ar_*_accounts`. The whole dim-table family is FK-integrity-only for Investigation's seed; nothing live needs the rows.
+  - [x] P.1.b — **Decision: drop the FK dependency entirely + scope the cleanup to all v5-shape leftovers.** Tracing for P.1.a turned up more dead code than just the AR dim tables: (1) the global `transactions` + `daily_balances` tables in `schema.sql` are never populated by `_apply_demo` (which writes only to `<prefix>_*` tables via `emit_l2_seed`); (2) the entire `ar_*` view surface (~15 views including `ar_unified_exceptions`) is referenced by zero app dataset SQL; (3) `apps/investigation/demo_data.py::generate_demo_sql` is itself v5-shape, planting into the now-dead unprefixed tables — only `demo seed` CLI + tests still call it. Decision: drop **all of it** (schema.sql, schema.py wrapper, the legacy Inv demo_data, the dead CLI commands), not just the dim tables. Per-prefix `emit_l2_schema` + `emit_l2_seed` are the only live emit surface going forward.
+  - [x] P.1.c — Dropped `apps/investigation/demo_data.py` + the `from quicksight_gen.apps.investigation.demo_data import generate_demo_sql` lines in `cli.py` (`demo seed` command body) and `tests/test_investigation.py` (the trivial smoke test).
+  - [x] P.1.d — Dropped `src/quicksight_gen/schema.sql` (1379 lines).
+  - [x] P.1.e — Dropped `src/quicksight_gen/schema.py` + the `from quicksight_gen.schema import generate_schema_sql` import + the `cur.execute(schema_sql)` + `cur.execute("REFRESH MATERIALIZED VIEW ar_unified_exceptions;")` lines in `_apply_demo`.
+  - [x] P.1.f — Dropped `demo schema` + `demo seed` CLI command definitions in `cli.py`.
+  - [x] P.1.g — Dropped `tests/test_demo_data.py` (entire file: every assertion tested the dropped v5 seed); dropped the `test_demo_seed_rejects_l1_dashboard` test in `tests/test_l1_dashboard.py` (the command no longer exists). 1224 unit tests pass post-cleanup.
+  - [x] P.1.h — Dropped `"schema.sql"` from `pyproject.toml` `package_data`.
+  - [x] P.1.i — README + CLAUDE.md sweep landed: dropped the `demo schema` / `demo seed` CLI examples, dropped the `schema.py` / `schema.sql` tree references, rewrote the v5 carry-over story as the P.1 retirement note. Subagent then swept `docs/walkthroughs/` (19 files updated): every AR / PR app reference, every dropped dataset name, every `ar_*` dim/view mention got updated to the four-app vocab + per-prefix base-table convention. The 7 remaining `demo schema` / `demo seed` CLI invocations across walkthroughs got retargeted to `emit_schema(l2)` / `emit_seed(l2, scenario)` Python calls or `quicksight-gen demo apply`.
+  - [x] P.1.j — Full unit suite green (1224 passed, 2 skipped). `mkdocs build --strict` clean. Commit landed.
 
 - [ ] **P.2 — Dialect helper layer (Postgres-only first).** `common/sql/dialect.py` ships `Dialect` enum + per-construct helpers. Refactors current Postgres SQL to use the helpers without changing emitted bytes — pure behavior-preserving change.
   - [ ] P.2.a — Define `Dialect` enum (`POSTGRES`, `ORACLE`). Single source of truth.

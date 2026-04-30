@@ -469,53 +469,6 @@ def demo() -> None:
     """Manage demo database schema and sample data."""
 
 
-@demo.command("schema")
-@click.argument("app", type=DEMO_APP_CHOICE, required=False)
-@click.option("--all", "all_apps", is_flag=True, help="Emit schema for all apps.")
-@click.option(
-    "--output", "-o",
-    type=click.Path(), default="demo/schema.sql",
-    help="Output path for the schema SQL file.",
-)
-def demo_schema(app: str | None, all_apps: bool, output: str) -> None:
-    """Emit the PostgreSQL DDL for the demo database."""
-    _resolve_app(app, all_apps, allow_all=True)
-    # Schema covers both apps — they share the `transactions` +
-    # `daily_balances` base tables and AR-only dimension tables.
-    from quicksight_gen.schema import generate_schema_sql
-
-    out = Path(output)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(generate_schema_sql())
-    click.echo(f"Wrote schema to {out}")
-
-
-@demo.command("seed")
-@click.argument("app", type=DEMO_APP_CHOICE, required=False)
-@click.option("--all", "all_apps", is_flag=True, help="Emit seeds for all apps.")
-@click.option(
-    "--output", "-o",
-    type=click.Path(), default="demo/seed.sql",
-    help="Output path for the seed data SQL file.",
-)
-def demo_seed(app: str | None, all_apps: bool, output: str) -> None:
-    """Emit INSERT statements with demo data."""
-    app = _resolve_app(app, all_apps, allow_all=True)
-    from quicksight_gen.apps.investigation.demo_data import (
-        generate_demo_sql as generate_inv_sql,
-    )
-
-    if app == "investigation":
-        sql = generate_inv_sql()
-    else:  # all
-        sql = generate_inv_sql()
-
-    out = Path(output)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(sql)
-    click.echo(f"Wrote seed data to {out}")
-
-
 @demo.command("etl-example")
 @click.argument("app", type=DEMO_APP_CHOICE, required=False)
 @click.option("--all", "all_apps", is_flag=True, help="Emit examples for all apps.")
@@ -805,14 +758,12 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
             "Install it with: pip install 'quicksight-gen[demo]'"
         )
 
-    from quicksight_gen.schema import generate_schema_sql
     from quicksight_gen.common.l2.schema import (
         emit_schema as emit_l2_schema,
         refresh_matviews_sql,
     )
     from quicksight_gen.common.l2.seed import emit_seed as emit_l2_seed
     from quicksight_gen.common.l2.auto_scenario import default_scenario_for
-    schema_sql = generate_schema_sql()
 
     # Pre-stamp ``cfg.l2_instance_prefix`` from the default L2 instance
     # before opening the DB connection: the REFRESH MATERIALIZED VIEW
@@ -826,24 +777,19 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     if cfg.l2_instance_prefix is None:
         cfg = cfg.with_l2_instance_prefix(str(inv_l2.instance))
 
-    # The L2 instance carries its own per-prefix DDL — base tables
+    # The L2 instance carries its full per-prefix DDL — base tables
     # (``<prefix>_transactions`` / ``<prefix>_daily_balances``), Current*
     # views, L1 invariant matviews, AND the Inv matviews (N.3.n /
-    # N.4.h). Apply alongside the legacy ``schema.sql`` so all four
-    # apps (L1 / L2FT / Inv / Exec) have their backing tables on the
-    # demo database.
+    # N.4.h). The legacy global ``schema.sql`` was retired in P.1.
     l2_schema_sql = emit_l2_schema(inv_l2)
 
     # Plant the L2-shape demo seed: every L1 SHOULD-violation kind
     # (drift / overdraft / limit-breach / stuck-pending /
     # stuck-unbundled / supersession) plus the Investigation
-    # InvFanoutPlant — landed via the auto-derived scenario picker,
-    # NOT via the legacy ``apps/investigation/demo_data.py``
-    # (which planted v5-shape flat-table data into the now-dead
+    # InvFanoutPlant — landed via the auto-derived scenario picker.
+    # P.1 retired the legacy ``apps/investigation/demo_data.py``
+    # (which planted v5-shape flat-table data into the now-deleted
     # unprefixed ``transactions`` / ``daily_balances`` tables).
-    # The Cascadia/Juniper persona-flavored Investigation walkthrough
-    # is on hold until the persona-fixture lift to common/l2/seed.py
-    # lands as Phase O work.
     seed_sql = emit_l2_seed(
         inv_l2, default_scenario_for(inv_l2).scenario,
     )
@@ -852,14 +798,11 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     conn = psycopg2.connect(cfg.demo_database_url)
     try:
         with conn.cursor() as cur:
-            click.echo("  Applying schema...")
-            cur.execute(schema_sql)
             click.echo("  Applying L2 instance schema...")
             cur.execute(l2_schema_sql)
             click.echo("  Inserting seed data...")
             cur.execute(seed_sql)
             click.echo("  Refreshing materialized views...")
-            cur.execute("REFRESH MATERIALIZED VIEW ar_unified_exceptions;")
             # Refresh every per-instance L1 + Inv matview in dependency
             # order: leaves (current_*) → helpers (computed_*) → L1
             # invariants (drift / overdraft / limit_breach / stuck_*) →

@@ -8,7 +8,7 @@ You've customized — swapped a dataset's SQL to read from your
 warehouse view, added an `originating_branch` metadata key,
 extended `transfer_type` with `repo`. Each customization is a
 small mutation to a small surface (one SQL function, one
-ColumnSpec, one CHECK constraint). The shipped test suite covers
+ColumnSpec, one L2 declaration). The shipped test suite covers
 the contract layer: do the dataset SQL projections still emit
 the columns the visuals expect? But it doesn't (and can't) cover
 *your* SQL's semantic correctness — whether your warehouse view
@@ -69,9 +69,9 @@ For a single test:
 ```
 
 The `-k` filter matches on test ID. The contract test IDs are
-the first column of each contract (e.g.,
-`subledger_account_id` for `OVERDRAFT_CONTRACT`). Use this
-to narrow to one customization at a time during iteration.
+the first column of each contract (e.g., `account_id` for
+`OVERDRAFT_CONTRACT`). Use this to narrow to one customization
+at a time during iteration.
 
 ## What it means
 
@@ -92,10 +92,10 @@ generator's output.
   cross-references that broke (a visual referencing a
   dataset that no longer exists, a filter referencing a
   column that's gone).
-- **`test_account_recon.py`** /
-  **`test_recon.py`** — per-app visual + filter wiring
-  assertions. Catches "the visual now references a column
-  the contract dropped."
+- **`test_<app>.py` per app** (`test_executives.py`,
+  `test_investigation.py`, etc.) — per-app visual + filter
+  wiring assertions. Catches "the visual now references a
+  column the contract dropped."
 - **`test_theme_presets.py`** — theme preset registry
   validity. Add a test here when registering a new preset
   for your bank.
@@ -121,27 +121,27 @@ scenario), the hash test fails — that's the prompt to re-lock
 the hash by pasting the new value into the assertion. See
 CLAUDE.md "Demo Data Conventions" for the re-lock pattern.
 
-If you customized the schema CHECK constraint (added a new
-`transfer_type` value), the demo seed should also be updated
+If you customized the L2 instance to add a new
+`transfer_type` value, the demo seed should also be updated
 to plant ≥1 row of the new type, so the e2e tests have
 something to render. The `TestScenarioCoverage` pattern
 makes this a one-line assertion.
 
-### Layer 3 — Demo SQL structure tests (`tests/test_demo_sql.py`,
-`tests/test_demo_etl_examples.py`)
+### Layer 3 — L2 schema + seed contract tests (`tests/test_l2_seed_contract.py`)
 
-Asserts the schema DDL and ETL example SQL produced by the
-`demo schema` / `demo etl-example` commands. Catches:
+Asserts the per-prefix DDL emitted by `common.l2.schema.emit_schema(l2_instance)`
+and the seed bytes emitted by `common.l2.seed.emit_seed(l2_instance, scenario)`.
+Catches:
 
 - Schema migrations that don't round-trip (DROP without
   matching CREATE, missing index).
-- ETL examples whose metadata keys aren't in
-  Schema_v6.md's catalog.
+- Per-prefix view emission that drifts from the L2 instance
+  vocabulary.
 
-Customizations that touch `demo/schema.sql` (a new CHECK
-constraint value, a new index) are most likely to fail tests
-here. The fix is usually to update the matching test
-expectation alongside the schema change.
+Customizations that touch `common/l2/schema.py` (a new view, a
+new index) are most likely to fail tests here. The fix is
+usually to update the matching test expectation alongside the
+schema change.
 
 ### Layer 4 — End-to-end (`tests/e2e/*`, gated on `QS_GEN_E2E=1`)
 
@@ -189,7 +189,7 @@ test. Pattern:
 import pytest
 import psycopg2
 from quicksight_gen.common.config import load_config
-from quicksight_gen.apps.account_recon.datasets import build_overdraft_dataset
+from quicksight_gen.apps.l1_dashboard.datasets import build_overdraft_dataset
 
 
 @pytest.mark.skipif(
@@ -229,14 +229,14 @@ def test_repo_transfers_appear_in_transfer_type_filter(qs_client, dashboard_id):
     # After your seed includes 'repo' transfers, the Transfer Type
     # filter dropdown should auto-populate the new value.
     distinct_types = qs_client.get_dashboard_filter_values(
-        dashboard_id, filter_id="filter-ar-transfer-type",
+        dashboard_id, filter_id="filter-l1-transfer-type",
     )
     assert "repo" in distinct_types
 ```
 
 The e2e suite runs against the deployed dashboard. New tests
-follow the existing AR / PR test patterns
-(`tests/e2e/test_ar_*.py` is the canonical reference).
+follow the existing test patterns
+(`tests/e2e/test_l1_*.py` is the canonical reference).
 
 ### When to add a test vs trust the contract test
 

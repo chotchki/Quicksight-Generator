@@ -53,29 +53,30 @@ case file.
 ## Single-leg transfers don't draw ribbons
 
 The matview projects one row per multi-leg edge. **Single-leg
-transfers** (PR's `sale` and `external_txn` types — where the
-counterparty leg lives in the external system, not in `transactions`)
-appear as chain members in the table but **do not produce Sankey
-ribbons** because the Sankey needs a source × target pair on each
-edge. The sheet's description calls this out — if a chain mixes
-multi-leg and single-leg transfers, the Sankey will look thinner
-than the table.
+transfers** (`sale` and `external_txn` types — where the
+counterparty leg lives in the external system, not in
+`<prefix>_transactions`) appear as chain members in the table but
+**do not produce Sankey ribbons** because the Sankey needs a
+source × target pair on each edge. The sheet's description calls
+this out — if a chain mixes multi-leg and single-leg transfers,
+the Sankey will look thinner than the table.
 
 ## The math, briefly
 
-The matview `inv_money_trail_edges` walks `parent_transfer_id` chains
-via PostgreSQL's `WITH RECURSIVE`. Each transfer's parent is the
-upstream transfer that funded it; chains terminate when
-`parent_transfer_id IS NULL` (the chain root). The matview joins
-each transfer's two legs (debit + credit) and projects one row per
-multi-leg edge with the chain root, the depth from root, the source
-+ target account, the hop amount, and `source_display` /
+The matview `<prefix>_inv_money_trail_edges` walks
+`transfer_parent_id` chains via PostgreSQL's `WITH RECURSIVE`. Each
+transfer's parent is the upstream transfer that funded it; chains
+terminate when `transfer_parent_id IS NULL` (the chain root). The
+matview joins each transfer's two legs (debit + credit) and projects
+one row per multi-leg edge with the chain root, the depth from root,
+the source + target account, the hop amount, and `source_display` /
 `target_display` strings (`name (id)`) so dropdowns and tables
 disambiguate accounts that share names.
 
 The matview **does not auto-refresh**. After every ETL load, the
-operator runs `REFRESH MATERIALIZED VIEW inv_money_trail_edges;` —
-see [Materialized views](../../Schema_v6.md#the-layered-model).
+operator runs
+`REFRESH MATERIALIZED VIEW <prefix>_inv_money_trail_edges;` —
+see [Refresh contract](../../Schema_v6.md#refresh-contract).
 QuickSight Direct Query can't run a recursive CTE inside a custom-
 SQL dataset, so materialization isn't optional here.
 
@@ -103,11 +104,12 @@ disappear from the table; raise it past $19,000 and the table empties
 entirely (the seed's largest hop is $18,750). This is how the K.4.9
 e2e test confirms the slider actually filters.
 
-The PR demo also seeds chains rooted on `external_txn → payment →
-settlement → sale` — pick one of those from the dropdown to see a
-PR-shaped chain. The single-leg `sale` and `external_txn` rows will
-appear in the table but won't draw Sankey ribbons (matview projects
-multi-leg edges only).
+The L2 instance also declares chains rooted on
+`external_txn → payment → settlement → sale` — pick one of those
+from the dropdown to see a payment-pipeline-shaped chain. The
+single-leg `sale` and `external_txn` rows will appear in the table
+but won't draw Sankey ribbons (matview projects multi-leg edges
+only).
 
 ## What it means
 
@@ -142,10 +144,10 @@ want to know:
   Account Network sheet. Anchor on the deepest target; the inbound
   Sankey shows the chain's last hop, and the outbound Sankey shows
   whether the money moved on again.
-- **"Show me the actual posting rows for this chain."** → Account
-  Reconciliation, Transactions sheet, filtered by `transfer_id` for
-  each hop. The table on this sheet carries the IDs in plain text for
-  copy-paste.
+- **"Show me the actual posting rows for this chain."** → L1
+  Reconciliation Dashboard, Transactions sheet, filtered by
+  `transfer_id` for each hop. The table on this sheet carries the
+  IDs in plain text for copy-paste.
 - **"Is the chain root part of a broader pair-spike pattern?"** →
   Volume Anomalies sheet. The chain root pair (sender → first hop)
   may also flag on z-score if the root amount is unusual for that
@@ -157,8 +159,8 @@ The fastest path from "I have a transfer" to "I have a complete
 chain" usually goes:
 
 1. Find the chain root. If you only have a downstream transfer ID,
-   look it up in AR Transactions to read its `parent_transfer_id`,
-   then walk back to the depth-0 ancestor.
+   look it up in the L1 Transactions sheet to read its
+   `transfer_parent_id`, then walk back to the depth-0 ancestor.
 2. Pick that root in the Money Trail dropdown.
 3. Read the hop-by-hop table — confirm the chain depth, the per-hop
    residue pattern, and the terminal account.

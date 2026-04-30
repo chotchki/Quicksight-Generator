@@ -1361,15 +1361,3 @@ class TestCli:
         ):
             assert (ds_dir / name).exists(), f"missing {name}"
 
-    def test_demo_seed_rejects_l1_dashboard(self, tmp_path: Path):
-        """`demo seed l1-dashboard` must fail with a Click validation
-        error — L1 dashboard is L2-fed, not v5-demo-fed; the user should
-        run the L2 pipeline (m2_6_verify.sh) instead."""
-        runner = CliRunner()
-        result = runner.invoke(
-            main,
-            ["demo", "seed", "l1-dashboard", "-o", str(tmp_path / "seed.sql")],
-        )
-        assert result.exit_code != 0
-        # Click's choice-validation error mentions the invalid value.
-        assert "l1-dashboard" in result.output

@@ -4,12 +4,12 @@
 
 ## What the sheet shows
 
-The 9am roll-up. UNION ALL across all 5 L1 invariant views (drift,
-ledger_drift, overdraft, limit_breach, expected_eod_balance_breach)
-scoped to the most recent business day in the data. Replaces the
-v5 `ar_unified_exceptions` matview with composable live SQL — the
-matview is precomputed at refresh time so each visual reads a
-small precomputed table rather than re-running the 5-branch UNION.
+The 9am roll-up. UNION ALL across all 5 L1 invariant views
+(`<prefix>_drift`, `<prefix>_ledger_drift`, `<prefix>_overdraft`,
+`<prefix>_limit_breach`, `<prefix>_expected_eod_balance_breach`)
+scoped to the most recent business day in the data. Materialized
+at refresh time so each visual reads a small precomputed table
+rather than re-running the 5-branch UNION live.
 
 The `magnitude` column is normalized per branch to a positive number
 (`ABS(drift)` for drift / ledger_drift / expected_eod_breach;

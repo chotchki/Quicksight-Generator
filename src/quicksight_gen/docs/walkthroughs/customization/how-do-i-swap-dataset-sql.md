@@ -4,11 +4,13 @@
 
 ## The story
 
-Your data lands in `transactions` and `daily_balances` per
+Your data lands in `<prefix>_transactions` and
+`<prefix>_daily_balances` per
 [How do I map my production database?](how-do-i-map-my-database.md).
 Most of the 32+ datasets work out of the box — they read directly
-from the two base tables. But for one specific dataset (say
-sub-ledger overdraft), your team has already built a heavily
+from the two prefixed base tables (or from the L1 invariant views
+emitted by `common/l2/schema.py`). But for one specific dataset
+(say sub-ledger overdraft), your team has already built a heavily
 optimized warehouse view that pre-joins the right columns,
 applies your bank's overdraft-grace-period policy, and runs in
 20 ms. You want the dashboard to read *that view* instead of the
@@ -44,11 +46,11 @@ Three reference points:
   declares one. The `build_dataset()` function takes the SQL
   and the contract together and produces the QuickSight DataSet
   JSON.
-- **`src/quicksight_gen/apps/account_recon/datasets.py`** /
-  **`apps/payment_recon/datasets.py`** — every dataset's contract
-  declaration sits next to its `build_*_dataset()` function.
-  Read the contract first; it's the interface. Read the SQL
-  second; it's the default implementation.
+- **`src/quicksight_gen/apps/<app>/datasets.py`** — every
+  dataset's contract declaration sits next to its
+  `build_*_dataset()` function. Read the contract first; it's
+  the interface. Read the SQL second; it's the default
+  implementation.
 - **`tests/test_dataset_contract.py`** — the regression test.
   For every dataset, it builds the DataSet, extracts the
   `InputColumn` list QuickSight will see, and asserts it matches
@@ -57,26 +59,25 @@ Three reference points:
 
 ## What you'll see in the demo
 
-Pick the sub-ledger overdraft dataset as the worked example.
-Its contract sits at `apps/account_recon/datasets.py:144`:
+Pick the L1 overdraft dataset as the worked example. Its contract
+sits in `apps/l1_dashboard/datasets.py`:
 
 ```python
 OVERDRAFT_CONTRACT = DatasetContract(columns=[
-    ColumnSpec("subledger_account_id", "STRING"),
-    ColumnSpec("subledger_name",       "STRING"),
-    ColumnSpec("ledger_account_id",    "STRING"),
-    ColumnSpec("ledger_name",          "STRING"),
-    ColumnSpec("balance_date",         "DATETIME"),
-    ColumnSpec("balance_date_str",     "STRING"),
-    ColumnSpec("stored_balance",       "DECIMAL"),
-    ColumnSpec("days_outstanding",     "INTEGER"),
-    ColumnSpec("aging_bucket",         "STRING"),
+    ColumnSpec("account_id",            "STRING"),
+    ColumnSpec("account_name",          "STRING"),
+    ColumnSpec("account_parent_role",   "STRING"),
+    ColumnSpec("business_day_start",    "DATETIME"),
+    ColumnSpec("business_day_str",      "STRING"),
+    ColumnSpec("stored_balance",        "DECIMAL"),
+    ColumnSpec("days_outstanding",      "INTEGER"),
+    ColumnSpec("aging_bucket",          "STRING"),
 ])
 ```
 
-That's the interface every visual on the AR Exceptions tab
+That's the interface every visual on the L1 Overdraft sheet
 reads. The default SQL just pulls these columns from
-`ar_subledger_overdraft` (a view shipped with the demo schema).
+`<prefix>_overdraft` (a view emitted by `common/l2/schema.py`).
 
 To swap the implementation, edit the `build_overdraft_dataset()`
 function and change the SQL — leaving the contract untouched:
@@ -85,12 +86,11 @@ function and change the SQL — leaving the contract untouched:
 def build_overdraft_dataset(cfg: Config) -> DataSet:
     sql = """\
 SELECT
-    subledger_account_id,
-    subledger_name,
-    ledger_account_id,
-    ledger_name,
-    balance_date,
-    TO_CHAR(balance_date, 'YYYY-MM-DD') AS balance_date_str,
+    account_id,
+    account_name,
+    account_parent_role,
+    business_day_start,
+    TO_CHAR(business_day_start, 'YYYY-MM-DD') AS business_day_str,
     stored_balance,
     days_outstanding,
     aging_bucket
@@ -98,24 +98,23 @@ FROM treasury.subledger_overdraft_v          -- your warehouse view
 WHERE bank_unit = 'snb'                      -- your scope filter
 """
     return build_dataset(
-        cfg, cfg.prefixed("ar-overdraft-dataset"),
-        "AR Sub-Ledger Overdraft", "ar-overdraft",
+        cfg, cfg.prefixed("l1-overdraft-dataset"),
+        "L1 Overdraft", "l1-overdraft",
         sql, OVERDRAFT_CONTRACT,
-        visual_identifier=DS_AR_OVERDRAFT,
+        visual_identifier=DS_L1_OVERDRAFT,
     )
 ```
 
 Run the contract test:
 
 ```bash
-.venv/bin/pytest tests/test_dataset_contract.py::TestArContracts::test_columns_match_contract -k overdraft
+.venv/bin/pytest tests/test_dataset_contract.py -k overdraft
 ```
 
 Green = your projection emits the contract columns in the right
-order. Deploy with `quicksight-gen deploy account-recon
---generate -c config.yaml -o out/`. The Sub-Ledger Overdraft
-KPI, table, and aging bar chart all keep working — they don't
-know your SQL changed.
+order. Deploy with `quicksight-gen deploy l1-dashboard --generate
+-c config.yaml -o out/`. The Overdraft KPI, table, and aging bar
+chart all keep working — they don't know your SQL changed.
 
 ## What it means
 
@@ -123,9 +122,9 @@ The contract is a binding interface, not documentation. Three
 properties of the swap to internalize:
 
 1. **Column names must match exactly.** The visuals reference
-   columns by name (`subledger_name`, `aging_bucket`,
+   columns by name (`account_name`, `aging_bucket`,
    `stored_balance`). If your warehouse view calls it
-   `account_name`, alias it: `account_name AS subledger_name`.
+   `subledger_name`, alias it: `subledger_name AS account_name`.
    The alias is part of the projection contract — keep it in
    the SQL, not in a downstream view.
 2. **Column types must match exactly.** `STRING` / `DECIMAL` /
@@ -137,13 +136,12 @@ properties of the swap to internalize:
    ordering — but type mismatches surface only at deploy time
    when QuickSight rejects the InputColumn list.
 3. **Column order matters.** `DatasetContract.columns` is a
-   list, not a set. `_extract_column_names()` in
-   `tests/test_dataset_contract.py:26-30` asserts list equality.
-   If you reorder columns in your SELECT, the test fails. This
-   is intentional — column order is part of the dataset's
-   public surface (it drives the field-list ordering in the
-   QuickSight authoring UI), and reordering is a breaking
-   change customers should be conscious of.
+   list, not a set. The contract test asserts list equality. If
+   you reorder columns in your SELECT, the test fails. This is
+   intentional — column order is part of the dataset's public
+   surface (it drives the field-list ordering in the QuickSight
+   authoring UI), and reordering is a breaking change customers
+   should be conscious of.
 
 ## Drilling in
 
@@ -169,8 +167,8 @@ config. This is a contract change, not a SQL swap:
    `build_overdraft_dataset()`.
 3. Run the contract test — it goes green again because contract
    and projection agree.
-4. Add the column to the visual that displays it (in
-   `apps/account_recon/visuals.py`'s overdraft table builder).
+4. Add the column to the visual that displays it (in the
+   relevant L1 sheet populator).
 
 The contract test catches step 1 + step 2 drift. The visual
 edit (step 4) is the actual UX work.
@@ -217,9 +215,9 @@ dashboard still renders cleanly:
    intact, not that your specific SQL produces correct
    numbers). Write a test that connects to your warehouse,
    runs the new SQL against a known fixture, and asserts row
-   counts / aggregate values. The *How do I run the test
-   suite against my customized dataset SQL?* walkthrough later
-   in this handbook covers the pytest pattern.
+   counts / aggregate values. The
+   [How do I test my customization?](how-do-i-test-my-customization.md)
+   walkthrough covers the pytest pattern.
 2. **Document why you swapped.** Add a one-line comment above
    the SQL in `build_overdraft_dataset()` pointing at the
    warehouse view (`-- Reads treasury.subledger_overdraft_v;
@@ -237,11 +235,14 @@ dashboard still renders cleanly:
 
 - [How do I map my production database to the two base tables?](how-do-i-map-my-database.md) —
   the upstream prerequisite. SQL swaps assume your data is
-  already in `transactions` + `daily_balances` (or in
-  warehouse views you've decided to read directly).
-- [Schema_v6 → Computed views catalogue](../../Schema_v6.md#the-layered-model) —
-  the AR-side computed views (`ar_subledger_overdraft`,
-  `ar_computed_ledger_daily_balance`, etc.) the default SQL
+  already in `<prefix>_transactions` +
+  `<prefix>_daily_balances` (or in warehouse views you've
+  decided to read directly).
+- [Schema_v6 → The layered model](../../Schema_v6.md#the-layered-model) —
+  the L1 invariant views (`<prefix>_drift`, `<prefix>_overdraft`,
+  `<prefix>_limit_breach`, `<prefix>_stuck_pending`,
+  `<prefix>_stuck_unbundled`,
+  `<prefix>_expected_eod_balance_breach`) the default SQL
   reads. Read these to decide whether to redirect at the
   dataset level or recreate the views in your warehouse with
   the same shape.

@@ -70,7 +70,6 @@ from quicksight_gen.apps.investigation.datasets import (
     VOLUME_ANOMALIES_CONTRACT,
     build_all_datasets,
 )
-from quicksight_gen.apps.investigation.demo_data import generate_demo_sql
 from quicksight_gen.cli import main
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.models import SheetVisualScopingConfiguration
@@ -223,13 +222,6 @@ def test_analysis_serializes_to_aws_json():
     j = build_analysis(_TEST_CFG).to_aws_json()
     assert j["AnalysisId"] == _TEST_CFG.prefixed("investigation-analysis")
     assert len(j["Definition"]["Sheets"]) == 6
-
-
-def test_demo_sql_is_a_string():
-    """Skeleton emits a comment-only seed; K.4.6 plants the scenarios."""
-    sql = generate_demo_sql()
-    assert isinstance(sql, str)
-    assert sql.strip()  # non-empty (even if only a comment)
 
 
 # ---------------------------------------------------------------------------

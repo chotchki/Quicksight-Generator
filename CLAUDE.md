@@ -44,9 +44,9 @@ quicksight-gen cleanup --dry-run
 quicksight-gen cleanup --yes
 
 # Demo: schema DDL / seed SQL / apply to a Postgres database
-# (schema ships with the wheel — `demo schema` writes a copy out for inspection.)
-quicksight-gen demo schema --all -o /tmp/schema.sql
-quicksight-gen demo seed   --all -o /tmp/seed.sql
+# Per-prefix DDL + seed are emitted at apply time from the L2 instance
+# YAML — no separate `demo schema` / `demo seed` files (those CLI commands
+# were retired in P.1 alongside the v5 schema.sql carry-overs).
 quicksight-gen demo apply  --all -c config.yaml -o out/
 
 # Tests
@@ -57,7 +57,7 @@ pytest                              # unit + integration, fast, no AWS
 ./run_e2e.sh --skip-deploy browser  # browser e2e only
 ```
 
-`demo apply` is app-scoped: `demo apply l1-dashboard` / `demo apply l2-flow-tracing` / `demo apply investigation` / `demo apply executives` all read theme from the L2 institution YAML's inline `theme:` block (post-N.4 every shipped app is L2-fed); `--all` generates every app. When the L2 instance has no `theme:` block, the deploy skips emitting a custom Theme resource and AWS QuickSight CLASSIC takes over (N.4.k silent-fallback contract). Schema is always loaded in full — feeds the prefixed base tables (`<prefix>_transactions`, `<prefix>_daily_balances`) emitted by the L2 instance. Investigation's pre-N.3 carry-over (it registered its own sub-ledgers in `ar_ledger_accounts` / `ar_subledger_accounts` for FK integrity) is being unwound — the demo seed lift to `common/l2/seed.py` is deferred Phase O work; until then, the existing v5-shape demo seed plants flat-table data that doesn't surface in the new prefixed Inv matviews. Aurora deploy verification of the L2-fed Investigation + Executives flow with planted data is N.4.o.
+`demo apply` is app-scoped: `demo apply l1-dashboard` / `demo apply l2-flow-tracing` / `demo apply investigation` / `demo apply executives` all read theme from the L2 institution YAML's inline `theme:` block (post-N.4 every shipped app is L2-fed); `--all` generates every app. When the L2 instance has no `theme:` block, the deploy skips emitting a custom Theme resource and AWS QuickSight CLASSIC takes over (N.4.k silent-fallback contract). Schema is emitted per-L2-instance via `common/l2/schema.py::emit_schema(l2_instance)` — base tables (`<prefix>_transactions`, `<prefix>_daily_balances`), Current* views, L1 invariant matviews, and the Investigation matviews. P.1 retired the legacy global `schema.sql` + the v5-shape Investigation seed (which registered sub-ledgers in `ar_ledger_accounts` / `ar_subledger_accounts` for FK integrity); per-prefix `emit_l2_schema` + `emit_l2_seed` are the only live emit surface.
 
 ## Generated Output
 
@@ -174,8 +174,6 @@ src/quicksight_gen/
     l1_dashboard/
       app.py               # Tree-built: 11 sheets — Getting Started + Drift + Drift Timelines + Overdraft + Limit Breach + Pending Aging + Unbundled Aging + Supersession Audit + Today's Exceptions + Daily Statement + Transactions. **Configured by L2 instance** (M.2a/M.2b) — feed the L2 once, dashboard renders against any institution.
       datasets.py          # 14 custom-SQL datasets — wraps the 5 L1 invariant matviews + 2 aging-watch matviews (M.2b.8/9) + 2 supersession audit views (M.2b.12) + 2 drift-timeline pre-aggregations + Daily Statement summary/transactions + raw transactions + Today's Exceptions UNION matview
-  schema.py              # `generate_schema_sql()` — reads the canonical DDL from the package data file
-  schema.sql             # Legacy v5 PostgreSQL DDL — shared `transactions` + `daily_balances` base layer + AR dimension tables + remaining AR matviews. Investigation matviews migrated to per-instance prefixed views in `common/l2/schema.py` (N.3.b/n); the global `inv_*` names live here only as `DROP IF EXISTS` for upgrade safety.
   docs/                  # Unified mkdocs site source — concepts/, handbook/ (Reference), walkthroughs/, for-your-role/, scenarios/, Schema_v6.md, Training_Story.md, _diagrams/, _macros/. Extract via `quicksight-gen export docs`. Renders against any L2 instance via mkdocs-macros + HandbookVocabulary (Phase O.1).
 tests/
   test_models.py         # Models, tags, config, dataset builders
@@ -238,7 +236,7 @@ Six canonical `account_type` values: `gl_control` (AR GL control accounts), `dda
 
 JSON metadata uses portable SQL/JSON path syntax (`JSON_VALUE`, `JSON_QUERY`, `JSON_EXISTS`) — no JSONB, no `->>` / `->` / `@>` / `?` operators, no GIN indexes on JSON. PostgreSQL 17+ required for `demo apply`.
 
-The legacy 12-table family (`pr_*`, `transfer`, `posting`, `ar_*_daily_balances`) was dropped in Phase G.10 and never recreated — `DROP TABLE IF EXISTS` lines remain in `schema.sql` for upgrade safety. Account Reconciliation + Payment Reconciliation themselves were deleted in M.4.3 + M.4.4 (v6); the `ar_ledger_accounts` / `ar_subledger_accounts` dimension tables stay in `schema.sql` because Investigation's demo seed registers its own sub-ledgers there for FK integrity. The bulk of the `ar_*` view surface is dead code in v6 — Phase N picks up the cleanup once Investigation reshape decides whether Inv migrates off the AR dim tables.
+P.1 retired the legacy v5 `schema.sql` + every dependency: the unprefixed `transactions` / `daily_balances` global tables, the `ar_*` dimension tables (`ar_ledger_accounts`, `ar_subledger_accounts`, `ar_ledger_transfer_limits`), the dead `ar_*` view surface (~15 views including `ar_unified_exceptions`), the v5 12-table family (`pr_*`, `transfer`, `posting`, `ar_*_daily_balances`) `DROP TABLE IF EXISTS` carry-overs, the legacy `apps/investigation/demo_data.py` (v5-shape seed planting flat-table data), and the `demo schema` / `demo seed` CLI commands. Per-prefix `emit_l2_schema(l2_instance)` + `emit_l2_seed(l2_instance, scenario)` are the only live emit surface. Anyone upgrading from v5 → v7 follows a documented migration path; the auto-drops are no longer load-bearing.
 
 ### L1 Dashboard
 **L1 invariant violations across any L2 instance — persona-blind operator view.**
@@ -265,7 +263,7 @@ Sheets walk the L2 model: each Rail's runtime postings, each Chain's parent → 
 **Question-shaped: Recipient Fanout / Volume Anomalies / Money Trail / Account Network**
 
 - L2-fed (N.3): reads from `<prefix>_transactions` (the per-instance prefixed base table) where `<prefix>` is `cfg.l2_instance_prefix`, auto-derived from `l2_instance.instance` by `build_investigation_app`. The institution YAML drives all four apps including Investigation — no Investigation-specific YAML.
-- Two materialized views back the heavier sheets, both per-instance prefixed: `<prefix>_inv_pair_rolling_anomalies` (Volume Anomalies — rolling 2-day SUM per (sender, recipient) pair + population mean / sample stddev → per-row z-score + 5-band bucket) and `<prefix>_inv_money_trail_edges` (Money Trail + Account Network — `WITH RECURSIVE` walk over `transfer_parent_id` flattened to one row per multi-leg edge with chain root + depth + `source_display` / `target_display` strings). Both emitted by `common/l2/schema.py::_emit_inv_views` (N.3.b). Both **do not auto-refresh** — every ETL load must run `REFRESH MATERIALIZED VIEW` on each, same contract as `ar_unified_exceptions`.
+- Two materialized views back the heavier sheets, both per-instance prefixed: `<prefix>_inv_pair_rolling_anomalies` (Volume Anomalies — rolling 2-day SUM per (sender, recipient) pair + population mean / sample stddev → per-row z-score + 5-band bucket) and `<prefix>_inv_money_trail_edges` (Money Trail + Account Network — `WITH RECURSIVE` walk over `transfer_parent_id` flattened to one row per multi-leg edge with chain root + depth + `source_display` / `target_display` strings). Both emitted by `common/l2/schema.py::_emit_inv_views` (N.3.b). Both **do not auto-refresh** — every ETL load must run `REFRESH MATERIALIZED VIEW` on each (use `refresh_matviews_sql(l2_instance)` for the dependency-ordered statements).
 - The Account Network sheet's anchor dropdown is backed by a small dedicated dataset (`inv-anetwork-accounts-ds`) that pre-deduplicates `name (id)` display strings — querying the K.4.5 matview directly for distinct anchors forces the planner to compute the concat per row before dedupe (O(matview rows)); the small-dataset wrapper does it once per distinct account.
 - Walk-the-flow drills (Account Network): right-click any touching-edges table row OR left-click any directional Sankey node overwrites the `pInvANetworkAnchor` parameter with the counterparty side. Per the QuickSight URL-parameter control sync limitation (see PLAN.md tech debt), the dropdown widget may briefly lag; sheet description tells analysts "trust the chart, not the control text".
 - Cross-app drills (Investigation → AR/PR) were investigated and **dropped** in K.4.7 — QuickSight doesn't sync sheet parameter controls to URL-set values. Investigation stays a self-contained app; analysts leave for AR Transactions / PR pipeline tabs by manually navigating.
@@ -325,7 +323,7 @@ Sheets walk the L2 model: each Rail's runtime postings, each Chain's parent → 
 - Every visual should have non-empty data in the demo. For each new visual that relies on a scenario (drift, unmatched, failed, returned, limit-breach, overdraft, etc.), add a `TestScenarioCoverage` assertion in the app's demo-data tests that guarantees ≥N rows of that shape — counts alone don't catch "zero scenario rows slipped through".
 - Generators must stay deterministic (`random.Random(42)`); tests depend on exact output.
 - Write the coverage assertion **before** the visual, not after. It's the fastest way to notice when generator pool-sizing or branching makes a scenario silently vanish.
-- Each app has its own demo persona — same Sasquatch National Bank, three operational views: PR is the merchant-acquiring side (coffee-shop settlement); AR is the treasury / CMS side (GL control accounts + customer DDAs absorbed from FEB); Investigation is the Compliance / AML side (Juniper Ridge LLC convergence anchor + 12 individual depositors + Cascadia Trust Bank ops + 3 shell DDAs). Don't cross-contaminate at the persona level — PR and AR share base tables and three customer DDAs (the coffee retailers) but the rest of the data is disjoint, separated by `account_type` / `transfer_type`. Investigation registers its own internal + external ledger sub-tree (`inv-customer-deposits-watch` + `ext-individual-depositors` + `ext-cascadia-trust-bank`) so `demo seed investigation` is FK-safe standalone.
+- The L2-shape demo seed plants every L1 SHOULD-violation kind (drift / overdraft / limit-breach / stuck-pending / stuck-unbundled / supersession) plus the Investigation fanout via `emit_l2_seed(l2_instance, scenario)` — driven by `common/l2/auto_scenario.default_scenario_for(l2_instance)`. Each scenario plants the row patterns the dashboards need to populate cleanly under the given L2 model. The Cascadia/Juniper persona-flavored Investigation walkthrough is on hold until the persona-fixture lift to `common/l2/seed.py` lands.
 - Determinism is locked by a SHA256 hash assertion on the full seed SQL output (`tests/test_demo_data.py::TestDeterminism::test_seed_output_hash_is_locked` per app). Any generator change that shifts a single byte fails that test loudly — re-lock by pasting the new hash into the assertion when the change is intentional.
 
 ## Operational Footguns

@@ -4,15 +4,14 @@
 
 ## The story
 
-The 11-column `transactions` contract intentionally doesn't carry
-every per-`transfer_type` attribute as its own column —
-`card_brand` belongs on PR sales but is meaningless on AR
-internal transfers; `settlement_type` matters on settlements but
-not on payments; `statement_line_id` belongs on Fed force-posts
-only. The schema's answer is the `metadata` JSON column: each
-`transfer_type` carries its own grab-bag of typed extras inside
-JSON, and dataset SQL extracts via `JSON_VALUE(metadata,
-'$.your_key')`.
+The 11-column `<prefix>_transactions` contract intentionally
+doesn't carry every per-`transfer_type` attribute as its own column
+— `card_brand` belongs on sales but is meaningless on internal
+transfers; `settlement_type` matters on settlements but not on
+payments; `statement_line_id` belongs on Fed force-posts only. The
+schema's answer is the `metadata` JSON column: each `transfer_type`
+carries its own grab-bag of typed extras inside JSON, and dataset
+SQL extracts via `JSON_VALUE(metadata, '$.your_key')`.
 
 That's powerful — and easy to misuse. Two failure modes show up
 when teams add a new metadata key:
@@ -29,8 +28,8 @@ when teams add a new metadata key:
 ## The question
 
 "My team needs to add a new attribute (`originating_branch`,
-`risk_score`, `fx_rate`) to a subset of `transactions` rows.
-What's the contract for adding it without breaking existing
+`risk_score`, `fx_rate`) to a subset of `<prefix>_transactions`
+rows. What's the contract for adding it without breaking existing
 dashboards or the portability of the SQL?"
 
 ## Where to look
@@ -40,11 +39,11 @@ Three reference points:
 - **`docs/Schema_v6.md` → metadata catalog tables** — the existing
   per-`transfer_type` key inventory. New keys should slot into the
   same shape (key name, type, what it drives).
-- **`src/quicksight_gen/apps/payment_recon/datasets.py`** and
-  **`src/quicksight_gen/apps/account_recon/datasets.py`** — the SQL
+- **`src/quicksight_gen/apps/<app>/datasets.py`** — the SQL
   patterns. Every metadata extraction looks like
   `JSON_VALUE(metadata, '$.<key>') AS <alias>`; new keys follow
-  the same shape.
+  the same shape. The L1 Reconciliation Dashboard's datasets are
+  the densest reference.
 - **CLAUDE.md → "Database portability constraint"** — the
   forbidden-pattern list (`JSONB`, `->>`, `->`, `@>`, `?`, GIN
   indexes). If you reach for any of these, the new key won't
@@ -54,17 +53,22 @@ Three reference points:
 
 Existing demo rows already exercise the pattern. Grep one out:
 
-```bash
-quicksight-gen demo seed --all -o /tmp/seed.sql
-grep -m1 "card_brand" /tmp/seed.sql
+```python
+from quicksight_gen.common.l2.loader import load_instance
+from quicksight_gen.common.l2.seed import emit_seed
+from quicksight_gen.common.l2.auto_scenario import default_scenario_for
+
+l2 = load_instance("tests/l2/sasquatch_pr.yaml")
+sql = emit_seed(l2, default_scenario_for(l2).scenario)
+print(next(line for line in sql.splitlines() if "card_brand" in line))
 ```
 
 You'll see a `JSON_OBJECT(... 'card_brand' VALUE 'visa', ...)`
 literal in the INSERT. The matching dataset SQL:
 
 ```bash
-grep -n "JSON_VALUE(metadata, '\\$.card_brand')" \
-     src/quicksight_gen/apps/payment_recon/datasets.py
+grep -rn "JSON_VALUE(metadata, '\\$.card_brand')" \
+     src/quicksight_gen/apps/
 ```
 
 shows the consumer side: `JSON_VALUE(metadata, '$.card_brand') AS
@@ -79,9 +83,9 @@ The contract for any new metadata key has four parts:
 
 1. **JSON value type must be a portable scalar**. Strings,
    numbers, booleans, and dates are fine. Nested objects work for
-   well-defined sub-payloads (e.g., AR's `limits` payload). Arrays
-   work in principle but no current dataset reads one — exercise
-   caution. **No binary, no Postgres-specific types**.
+   well-defined sub-payloads. Arrays work in principle but no
+   current dataset reads one — exercise caution. **No binary, no
+   Postgres-specific types**.
 2. **Use `JSON_OBJECT(... 'key' VALUE 'value')` to write, not
    PostgreSQL row-to-JSON shortcuts**. Row-to-JSON casts emit a
    shape that breaks `JSON_VALUE` parsing on stricter dialects.
@@ -89,10 +93,8 @@ The contract for any new metadata key has four parts:
    The `->>` operator is PostgreSQL-only; `JSON_VALUE` is the
    SQL/JSON standard form.
 4. **Document the new key in `Schema_v6.md`'s metadata catalog
-   for that `transfer_type`**. Otherwise the
-   `test_metadata_keys_referenced_in_examples_are_documented`
-   test fails the next time anyone touches the etl-example
-   generator.
+   for that `transfer_type`**. Otherwise the schema-doc drift
+   tests fail the next time anyone touches the catalog.
 
 A subtle constraint on dataset visuals: if a visual *expects* the
 key to be present (e.g., uses it as a filter or grouping
@@ -113,8 +115,8 @@ options for handling rows without the key:
 ## Drilling in
 
 A worked example. Suppose your team needs to add an
-`originating_branch` key on PR sales so the Sales sheet can group
-by branch.
+`originating_branch` key on sale rows so a downstream Executives
+sheet can group by branch.
 
 **Step 1 — write it on the producer side (your ETL).** Add to the
 existing `JSON_OBJECT` literal in your sale-projection INSERT:
@@ -135,23 +137,23 @@ the relevant `datasets.py` builder, add a projected column:
 SELECT
     -- existing columns ...
     JSON_VALUE(metadata, '$.originating_branch') AS originating_branch
-FROM transactions
+FROM <prefix>_transactions
 WHERE transfer_type = 'sale';
 ```
 
 Update the matching `DatasetContract` to add `("originating_branch",
 "STRING")` so the contract test stays green.
 
-**Step 3 — document it.** Add a row to the PR `sale` metadata
+**Step 3 — document it.** Add a row to the `sale` metadata
 catalog table in `Schema_v6.md`:
 
 ```markdown
-| `originating_branch` | string | Branch code that handled the sale | Sales sheet branch grouping |
+| `originating_branch` | string | Branch code that handled the sale | Branch grouping in downstream sheets |
 ```
 
 **Step 4 — wire the visual.** Direct query (not SPICE) means new
 columns show up immediately after `quicksight-gen deploy`. No
-refresh step. Open the Sales sheet, drag `originating_branch`
+refresh step. Open the relevant sheet, drag `originating_branch`
 into the Pivot grouping or Table column list.
 
 ## Next step
@@ -167,7 +169,7 @@ Once the key is producing, consuming, and rendering:
    walkthrough. Adding a metadata key shouldn't break any of
    them, but if you backfilled rows via UPDATE, double-check that
    the cumulative-sum invariant still holds (UPDATEs on
-   `signed_amount` are the danger; UPDATEs on `metadata` are
+   `amount_money` are the danger; UPDATEs on `metadata` are
    safe).
 3. **Deploy to the QuickSight environment**:
    `quicksight-gen deploy --all --generate -c run/config.yaml -o
@@ -176,18 +178,14 @@ Once the key is producing, consuming, and rendering:
 
 ## Related walkthroughs
 
-- [How do I populate `transactions` from my core banking system?](how-do-i-populate-transactions.md) —
+- [How do I populate `<prefix>_transactions` from my core banking system?](how-do-i-populate-transactions.md) —
   the foundational projection. This walkthrough adds keys to that
   projection's `metadata` literal.
 - [How do I prove my ETL is working before going live?](how-do-i-prove-my-etl-is-working.md) —
   re-run the three invariants after any metadata addition.
-- `what-do-i-do-when-demo-passes-but-prod-fails.md` (forthcoming) —
+- [What do I do when the demo passes but my prod data fails?](what-do-i-do-when-demo-passes-but-prod-fails.md) —
   the "visual shows N/A" symptom in the debug recipes is usually
   a metadata-key contract violation.
-- [Schema_v6 → metadata catalog](../../Schema_v6.md#table-1-prefix_transactions) —
+- [Schema_v6 → metadata catalog](../../Schema_v6.md#metadata-json-columns) —
   the per-`transfer_type` key inventory and its forbidden-syntax
   rules.
-- How much did we return? —
-  a **downstream consumer** example: PR's returned-payment KPI
-  reads `metadata.is_returned`, the same metadata-key pattern a
-  new addition follows.

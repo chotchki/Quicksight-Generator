@@ -4,7 +4,8 @@
 
 ## The story
 
-Your data is landing in `transactions` + `daily_balances`
+Your data is landing in `<prefix>_transactions` +
+`<prefix>_daily_balances`
 ([How do I map my production database?](how-do-i-map-my-database.md)),
 your `config.yaml` is in place
 ([How do I configure the deploy?](how-do-i-configure-the-deploy.md)),
@@ -35,17 +36,18 @@ Three reference points:
 
 - **`quicksight-gen --help`** — the CLI surface. Four commands:
   `generate`, `deploy`, `cleanup`, `demo`. Each accepts an app
-  argument (`payment-recon` / `account-recon`) or `--all`.
+  argument (one of `l1-dashboard` / `l2-flow-tracing` /
+  `investigation` / `executives`) or `--all`.
 - **`src/quicksight_gen/common/deploy.py`** — the deploy
-  implementation. Read `deploy()` at line 233 to see the
-  delete-then-create order.
+  implementation. Read `deploy()` to see the delete-then-create
+  order.
 - **The QuickSight console** (`https://quicksight.aws.amazon.com`)
   — the visual target. After deploy, your analyses + dashboards
   appear here under the configured prefix (default `qs-gen-*`).
 
 ## What you'll see in the demo
 
-The minimum end-to-end run for both apps:
+The minimum end-to-end run for all four apps:
 
 ```bash
 quicksight-gen deploy --all --generate -c config.yaml -o out/
@@ -59,8 +61,10 @@ step itself without re-running generate).
 The output stream looks like:
 
 ```
-==> qs-gen-payment-recon-analysis ... (regenerated)
-==> qs-gen-account-recon-analysis ... (regenerated)
+==> qs-gen-<prefix>-l1-dashboard-analysis ... (regenerated)
+==> qs-gen-<prefix>-l2-flow-tracing-analysis ... (regenerated)
+==> qs-gen-<prefix>-investigation-analysis ... (regenerated)
+==> qs-gen-<prefix>-executives-analysis ... (regenerated)
 Deploying QuickSight resources from out
   Account: 111122223333
   Region:  us-east-2
@@ -69,23 +73,22 @@ Deploying QuickSight resources from out
 
 ==> Creating DataSource: qs-gen-demo-datasource
 ==> Creating Theme: qs-gen-theme
-==> Creating Dataset: qs-gen-merchants-dataset
-... (32 datasets total)
-==> Creating Analysis: qs-gen-payment-recon-analysis
-==> Creating Analysis: qs-gen-account-recon-analysis
-==> Creating Dashboard: qs-gen-payment-recon-dashboard
-==> Creating Dashboard: qs-gen-account-recon-dashboard
+==> Creating Dataset: qs-gen-<prefix>-l1-todays-exceptions-dataset
+... (32+ datasets total)
+==> Creating Analysis: qs-gen-<prefix>-l1-dashboard-analysis
+==> Creating Analysis: qs-gen-<prefix>-l2-flow-tracing-analysis
+==> Creating Analysis: qs-gen-<prefix>-investigation-analysis
+==> Creating Analysis: qs-gen-<prefix>-executives-analysis
+==> Creating Dashboard: qs-gen-<prefix>-l1-dashboard
+==> Creating Dashboard: qs-gen-<prefix>-l2-flow-tracing-dashboard
+==> Creating Dashboard: qs-gen-<prefix>-investigation-dashboard
+==> Creating Dashboard: qs-gen-<prefix>-executives-dashboard
 
 --- Waiting for async resources ---
 
-==> Checking Analysis: qs-gen-payment-recon-analysis
+==> Checking Analysis: qs-gen-<prefix>-l1-dashboard-analysis
     Status: CREATION_SUCCESSFUL
-==> Checking Analysis: qs-gen-account-recon-analysis
-    Status: CREATION_SUCCESSFUL
-==> Checking Dashboard: qs-gen-payment-recon-dashboard
-    Status: CREATION_SUCCESSFUL
-==> Checking Dashboard: qs-gen-account-recon-dashboard
-    Status: CREATION_SUCCESSFUL
+... (one per analysis + dashboard)
 
 Done. All resources deployed to 111122223333 in us-east-2.
 ```
@@ -97,7 +100,7 @@ and complete in seconds).
 ## What it means
 
 The deploy runs a fixed order of operations
-(`common/deploy.py:259-272`):
+(`common/deploy.py`):
 
 ### Phase 1 — Delete existing (in dependency order)
 
@@ -176,30 +179,30 @@ quicksight-gen deploy --all --generate -c config.yaml -o out/
 
 `--generate` rolls `quicksight-gen generate --all` and
 `quicksight-gen deploy --all` into one command. About 3-5
-minutes per cycle for both apps. Single-app iteration:
-`deploy account-recon --generate` cuts the cycle to ~2
-minutes.
+minutes per cycle for all four apps. Single-app iteration:
+`deploy l1-dashboard --generate` cuts the cycle to ~2 minutes.
 
 ### Single-app deploy
 
 Deploy one app at a time when you're iterating fast on it:
 
 ```bash
-quicksight-gen deploy account-recon --generate -c config.yaml
+quicksight-gen deploy l1-dashboard --generate -c config.yaml
 ```
 
-The other app's analysis + dashboard remain untouched. Datasets
+The other apps' analyses + dashboards remain untouched. Datasets
 and theme are shared — the deploy still re-creates them, so a
 single-app deploy doesn't isolate dataset changes between apps
-(the apps share a base layer; dataset changes affect both).
+(the apps share a base layer; dataset changes affect every app
+that reads them).
 
 ### Cleanup after dropping a dataset
 
 If you remove a dataset from a `datasets.py` file (a contract
-revision or a Phase K consolidation), the next generate
-correctly omits it from `out/datasets/`, but the deploy
-deletes only the datasets it knows about — the orphan dataset
-in QuickSight survives. Run:
+revision or a sheet consolidation), the next generate correctly
+omits it from `out/datasets/`, but the deploy deletes only the
+datasets it knows about — the orphan dataset in QuickSight
+survives. Run:
 
 ```bash
 quicksight-gen cleanup -c config.yaml
@@ -237,7 +240,7 @@ Once your first deploy completes with all
 `CREATION_SUCCESSFUL`:
 
 1. **Open the dashboard in QuickSight.** Console → Dashboards
-   → `qs-gen-account-recon-dashboard` (or your custom prefix).
+   → `qs-gen-<prefix>-l1-dashboard` (or your custom prefix).
    Click through the tabs. KPIs should populate; tables should
    render rows. Empty visuals usually mean the underlying
    dataset's SQL returned zero rows against your data — open
@@ -246,8 +249,8 @@ Once your first deploy completes with all
 2. **Hand the dashboard URL to a small group of users first.**
    The principals you listed in `config.yaml` get edit + view
    access. Your treasury / GL recon team is the natural first
-   audience — their feedback on visual layout, filter wiring,
-   and exception KPIs informs the persona work in Phase K.
+   audience for the L1 dashboard; your compliance team for
+   Investigation; your CFO for Executives.
 3. **Wire deploy into CI.** Once the deploy is reliable
    manually, automate it. The env-var override pattern from
    [How do I configure the deploy?](how-do-i-configure-the-deploy.md)
