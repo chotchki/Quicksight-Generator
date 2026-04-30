@@ -89,49 +89,63 @@
 
 ---
 
-## Phase O — Docs + training render pipeline
+## Phase O — Unified docs render pipeline
 
-**Goal.** Handbook + training pages render against the L2 instance's vocabulary instead of today's hand-written Sasquatch-flavored copy. Replaces `mapping.yaml` substitution.
+**Goal.** One unified docs site rendered per L2 instance. Today's two separate surfaces (`docs/handbook/` — reference voice, details + examples; `training/handbook/` — narrative voice, how + why) merge into a single mkdocs site with a coherent information architecture that holds both voices. Templated against the L2 institution YAML's vocabulary instead of today's hand-written Sasquatch-flavored copy. Replaces `mapping.yaml` substitution.
 
-**Sequencing rationale.** Audit + decisions land in O.0 (template engine, vocabulary schema, file-layout convention) so O.1/O.2 can execute mechanically against a settled contract. O.1 is docs (mkdocs site under `docs/`); O.2 is the whitelabel training kit (`training/handbook/` + ScreenshotHarness regen). O.3 closes the loop with a fresh-L2-yaml smoke + per-customer publishing workflow.
+**Two voices, one site.**
+- **Reference voice** (handbook today): "what column does `posting` carry, what shape does `daily_balances` take, here's the contract, here's an example row". Lives under a "Reference" section.
+- **Narrative voice** (training today): "what is double-entry, why does escrow need a reversal, when does eventual consistency bite". Lives under a "Concepts" section + per-persona quickstarts.
+- **Walkthroughs** (mixed): task-oriented "how do I set up the L1 dashboard for my institution" / "how do I read the Drift sheet". Bridges the two voices on a per-task basis.
+
+**Sequencing rationale.** Audit + decisions land in O.0 (template engine, vocabulary schema, **information architecture for the merged site**, file-layout convention) so O.1 can execute mechanically against a settled contract. O.1 is the unified docs migration (folds `docs/handbook/` + `docs/walkthroughs/` + `training/handbook/` into the merged IA). O.2 collapses to the bits that don't fit O.1 cleanly: the deferred L.8 Executives prose, the per-instance ScreenshotHarness regen, and the `export` CLI surface. O.3 closes the loop with a fresh-L2-yaml smoke + per-customer publishing workflow.
 
 **Help-sheet idea dropped.** The "render docs into a sheet on the dashboard itself" idea was investigated (`docs/audits/o_help_sheet_design.md`) and shelved — QS sheet rendering is too limiting for the doc shapes we need. Docs stay as mkdocs HTML / markdown.
 
-- [ ] **O.0 — Audit + ground-truth decisions.** Lock the template engine + vocabulary schema before touching prose.
-  - [ ] O.0.a — **Audit**: enumerate every persona-flavored string across `docs/handbook/`, `docs/walkthroughs/`, `training/handbook/`, plus residual Sasquatch / Bigfoot / SNB references in code (folds in the deferred L.5 audit). Output: `docs/audits/o_0_persona_leak_audit.md` listing source path → string → suggested vocabulary key.
+- [ ] **O.0 — Audit + ground-truth decisions.** Lock the template engine, vocabulary schema, AND merged information architecture before touching prose.
+  - [ ] O.0.a — **Audit content**: enumerate every persona-flavored string across `docs/handbook/`, `docs/walkthroughs/`, `training/handbook/`, plus residual Sasquatch / Bigfoot / SNB references in code (folds in the deferred L.5 audit). For each existing prose file, classify the dominant voice (reference / narrative / walkthrough) so O.0.e's IA decision has data. Output: `docs/audits/o_0_content_audit.md` listing source path → dominant voice → persona-strings → suggested vocabulary key.
   - [ ] O.0.b — **Decide template engine**. Prefer `mkdocs-macros-plugin` + Jinja2 — already in the mkdocs ecosystem, doesn't fork the build, lets templates live alongside markdown. Document the trade-offs vs. custom render in the audit doc.
-  - [ ] O.0.c — **Define `HandbookVocabulary` dataclass** + `vocabulary_for(l2_instance) -> HandbookVocabulary`. Typed contract: institution name, account-taxonomy strings (subledger / control / external), persona names, sample customer/account names, anchor scenario references (Cascadia/Juniper-style). Some fields come from `l2_instance.description`; the persona-shaped fields likely need a new optional `personas:` block on the L2 YAML — decide whether to extend `L2Instance` (typed primitive) or sidecar (separate `<instance>_personas.yaml`).
+  - [ ] O.0.c — **Define `HandbookVocabulary` dataclass** + `vocabulary_for(l2_instance) -> HandbookVocabulary`. Typed contract carries BOTH voices' needs: institution name, account-taxonomy strings (subledger / control / external), persona names + role descriptions (training voice), sample customer/account names, anchor scenario references (Cascadia/Juniper-style), conceptual examples (double-entry walk-through values). Some fields come from `l2_instance.description`; the persona-shaped fields likely need a new optional `personas:` block on the L2 YAML — decide whether to extend `L2Instance` (typed primitive) or sidecar (separate `<instance>_personas.yaml`).
   - [ ] O.0.d — **Decide file-layout convention**: in-place templating (overwrite `docs/`) vs. split `docs_template/` + render to `_rendered/`. Probably split, so source diffs stay clean. Document in the audit.
-  - [ ] O.0.e — Commit O.0 audit + decisions doc. Phase 1 unblocked.
+  - [ ] O.0.e — **Decide merged IA**. Default proposal (refine in audit doc):
+    - `Concepts/` — narrative voice (today's `training/handbook/concepts/`): double-entry, escrow-with-reversal, eventual-consistency, sweep-net-settle, vouchering, open-vs-closed-loop. The "why" before the "what".
+    - `Reference/` — reference voice (today's `docs/handbook/`): per-app reference (l1, l2_flow_tracing, investigation, executives, etl, customization), schema_v6, L1-invariants. The "what" with examples.
+    - `Walkthroughs/` — mixed task-oriented (today's `docs/walkthroughs/`): per-sheet markdown for each app + customization how-tos.
+    - `For Your Role/` — narrative voice, audience-specific quickstarts (today's `training/handbook/for-*/`): for-accounting, for-customer-service, for-developers, for-product-owner. Each landing page picks the right Concepts + Reference pages for that role.
+    - `Scenarios/` — walkthrough voice (today's `training/handbook/scenarios/`): end-to-end demo narratives. Reference back to Concepts + Reference.
+    Document the IA as a top-level mkdocs nav skeleton in the audit.
+  - [ ] O.0.f — Commit O.0 audit + decisions doc. Phase 1 unblocked.
 
-- [ ] **O.1 — Docs render pipeline.** Handbook prose templated against L2 vocabulary; mkdocs render takes `(L2 instance, neutral templates) → rendered handbook`. Friendly + helpful voice retained per SPEC personas.
-  - [ ] O.1.a — Add chosen template-engine dep (likely `mkdocs-macros-plugin`). Wire into `mkdocs.yml`.
-  - [ ] O.1.b — Implement `HandbookVocabulary` + `vocabulary_for(l2_instance)`. Unit tests: spec_example, sasquatch_pr, plus a synthetic minimal-L2 fixture exercise the full field set.
-  - [ ] O.1.c — **Pilot migration**: convert ONE handbook page (`docs/handbook/l1.md` is the canonical candidate) from hardcoded Sasquatch → templated. Render against spec_example AND sasquatch_pr; eyeball both outputs for friendly-voice retention + zero leakage.
-  - [ ] O.1.d — Migrate the rest of `docs/handbook/` (`l2_flow_tracing.md`, `investigation.md`, `etl.md`, `customization.md`).
-  - [ ] O.1.e — Migrate `docs/walkthroughs/` per-sheet markdown (l1/, investigation/, etl/, customization/).
-  - [ ] O.1.f — **L2 topology diagram render** (carry-over from M.3.10d). Graphviz dependency; SVG output embedded in handbook; three cuts to ship: account-rail-account topology, chain DAG, layered combination. `apps/l2_flow_tracing/datasets.py::CHAINS_CONTRACT` is the pre-shaped input for the chain DAG cut.
-  - [ ] O.1.g — **Schema_v6 examples lift**: detailed `transactions` / `daily_balances` row examples + recommendations, sourced from YAML fixtures (so they stay in sync with the seed primitives). Append to `docs/Schema_v6.md`.
-  - [ ] O.1.h — **CLI**: `quicksight-gen export docs --l2-instance <yaml> -o <dir>`. Renders the templated docs against the supplied L2; default L2 = spec_example. Extends or replaces the existing `export docs` command.
-  - [ ] O.1.i — **L.5 persona-leak cleanup**: grep for residual Sasquatch / Bigfoot / SNB outside `apps/<app>/demo_data.py` + `tests/l2/` fixtures. Each remaining hit is a real bleed; either fix at source or template through O.0.c's vocabulary.
-  - [ ] O.1.j — **Drop `training/mapping.yaml.example`** + the SNB-string substitution machinery (superseded by templating). The auto-derive parity test in `test_persona.py` either retargets to the new `vocabulary_for` shape or is deleted.
-  - [ ] O.1.k — Tests: render docs against spec_example, sasquatch_pr, and a fresh "acme_treasury" minimal fixture. Assert NO Sasquatch / Bigfoot leakage in spec_example's rendered output. `mkdocs build --strict` green.
-  - [ ] O.1.l — Commit.
+- [ ] **O.1 — Unified docs render pipeline.** All prose (today's `docs/handbook/` + `docs/walkthroughs/` + `training/handbook/`) folds into the merged IA from O.0.e and renders against L2 vocabulary. mkdocs render takes `(L2 instance, neutral templates) → rendered docs site`. Friendly + helpful voice in narrative sections, precise + example-rich voice in reference sections.
+  - [ ] O.1.a — Add chosen template-engine dep (likely `mkdocs-macros-plugin`). Wire into `mkdocs.yml`. Stand up the new top-level nav skeleton from O.0.e (Concepts / Reference / Walkthroughs / For Your Role / Scenarios) with placeholder index pages so the structure is visible before content moves in.
+  - [ ] O.1.b — Implement `HandbookVocabulary` + `vocabulary_for(l2_instance)`. Unit tests: spec_example, sasquatch_pr, plus a synthetic minimal-L2 fixture exercise the full field set including the both-voices fields (persona role descriptions, conceptual examples).
+  - [ ] O.1.c — **Pilot migration**: convert ONE Reference-voice page (`docs/handbook/l1.md`) AND ONE narrative-voice page (`training/handbook/concepts/double-entry.md`) into the new IA's templated form. Render against spec_example AND sasquatch_pr; eyeball both for voice consistency in their respective sections + zero Sasquatch leakage.
+  - [ ] O.1.d — Migrate the rest of `docs/handbook/` into `Reference/` (`l2_flow_tracing.md`, `investigation.md`, `etl.md`, `customization.md`, plus the new `executives.md` from L.8 — see O.2.a).
+  - [ ] O.1.e — Migrate `docs/walkthroughs/` per-sheet markdown into `Walkthroughs/` (l1/, investigation/, etl/, customization/, plus the new executives/ from L.8 — see O.2.b).
+  - [ ] O.1.f — Migrate `training/handbook/concepts/` into `Concepts/` (double-entry, escrow-with-reversal, eventual-consistency, sweep-net-settle, vouchering, open-vs-closed-loop).
+  - [ ] O.1.g — Migrate `training/handbook/for-*/` into `For Your Role/` (for-accounting, for-customer-service, for-developers, for-product-owner). Each landing page links into the right Concepts + Reference pages for that role.
+  - [ ] O.1.h — Migrate `training/handbook/scenarios/` into `Scenarios/`.
+  - [ ] O.1.i — **L2 topology diagram render** (carry-over from M.3.10d). Graphviz dependency; SVG output embedded in the Reference section; three cuts to ship: account-rail-account topology, chain DAG, layered combination. `apps/l2_flow_tracing/datasets.py::CHAINS_CONTRACT` is the pre-shaped input for the chain DAG cut.
+  - [ ] O.1.j — **Schema_v6 examples lift**: detailed `transactions` / `daily_balances` row examples + recommendations, sourced from YAML fixtures (so they stay in sync with the seed primitives). Append to `docs/Schema_v6.md` under Reference.
+  - [ ] O.1.k — **L.5 persona-leak cleanup**: grep for residual Sasquatch / Bigfoot / SNB outside `apps/<app>/demo_data.py` + `tests/l2/` fixtures. Each remaining hit is a real bleed; either fix at source or template through O.0.c's vocabulary.
+  - [ ] O.1.l — **Drop `training/`** — the entire directory goes away once content has moved. Drop `training/mapping.yaml.example` + the SNB-string substitution machinery (superseded by templating). Drop `training/QUICKSTART.md` (folds into the new `For Your Role/` landing page or the top-level `index.md`). The auto-derive parity test in `test_persona.py` either retargets to the new `vocabulary_for` shape or is deleted.
+  - [ ] O.1.m — Tests: render docs against spec_example, sasquatch_pr, and a fresh "acme_treasury" minimal fixture. Assert NO Sasquatch / Bigfoot leakage in spec_example's rendered output. `mkdocs build --strict` green. Nav structure matches the O.0.e IA.
+  - [ ] O.1.n — Commit.
 
-- [ ] **O.2 — Training render pipeline.** Training kit rendered from L2 + ScreenshotHarness regenerated per L2 instance.
-  - [ ] O.2.a — Migrate `training/handbook/` (`for-accounting/`, `for-customer-service/`, `for-developers/`, `for-product-owner/`, `concepts/`, `scenarios/`) onto the O.0.c vocabulary.
-  - [ ] O.2.b — **L.8 deferred Executives handbook** — write `docs/handbook/executives.md` covering the 4 sheets + how it overlaps with L1 / L2FT / Inv (consumes the existing Executives sheet descriptions).
-  - [ ] O.2.c — **L.8 deferred Executives walkthroughs** — `docs/walkthroughs/executives/` per-sheet markdown (Getting Started + Account Coverage + Transaction Volume + Money Moved). Mirrors L1's per-sheet walkthrough shape.
-  - [ ] O.2.d — **CLI**: `quicksight-gen export training --l2-instance <yaml> -o <dir>`. Renders training handbook + invokes ScreenshotHarness against the deployed dashboards for the supplied L2.
+- [ ] **O.2 — Executives docs + ScreenshotHarness regen + CLI.** What didn't fit cleanly into O.1's prose-migration loop.
+  - [ ] O.2.a — **L.8 deferred Executives handbook** — write `docs/handbook/executives.md` (lands under Reference) covering the 4 sheets + how it overlaps with L1 / L2FT / Inv. Consumes the existing Executives sheet descriptions.
+  - [ ] O.2.b — **L.8 deferred Executives walkthroughs** — `docs/walkthroughs/executives/` per-sheet markdown (Getting Started + Account Coverage + Transaction Volume + Money Moved). Mirrors L1's per-sheet walkthrough shape; lands under Walkthroughs.
+  - [ ] O.2.c — **CLI**: `quicksight-gen export docs --l2-instance <yaml> -o <dir>`. Renders the unified docs site against the supplied L2; default L2 = spec_example. Replaces both the existing `export docs` AND `export training` commands (the unified site eliminates the split).
+  - [ ] O.2.d — **ScreenshotHarness wrapper**: per-instance regen. Deploy → warm Aurora (`SELECT 1`) → screenshot → tear down. Wire into the `export docs` flow as an optional `--with-screenshots` flag (heavy operation; off by default).
   - [ ] O.2.e — **Aurora warm-up**: `SELECT 1` against `cfg.demo_database_url` right before each ScreenshotHarness embed-URL fetch (per F12 / M.0.10 — Aurora Serverless cold-start otherwise surfaces as QS's generic "We can't open that dashboard" error). Wrap in a helper so future ScreenshotHarness callers inherit the warm-up.
-  - [ ] O.2.f — Tests: training rendered against multiple L2 instances; ScreenshotHarness output present + non-empty.
+  - [ ] O.2.f — Tests: docs+screenshots rendered against multiple L2 instances; ScreenshotHarness output present + non-empty.
   - [ ] O.2.g — Commit.
 
-- [ ] **O.3 — Iteration gate.** Docs + training render against any L2 instance the integrator points at. Handbook publishing pipeline supports per-customer renders.
-  - [ ] O.3.a — **Per-customer smoke**: write a fresh `tests/l2/acme_treasury.yaml` (no Sasquatch flavor, simplest possible institution shape). Run `export docs` + `export training` against it; eyeball outputs for leakage + voice consistency.
-  - [ ] O.3.b — **Publishing workflow doc**: `docs/walkthroughs/customization/how-do-i-publish-per-customer.md` walks the integrator through the end-to-end (write your L2 YAML → `export docs` → `export training` → publish to your wiki / website).
-  - [ ] O.3.c — README + CLAUDE.md sweep: docs section reflects the templated workflow; drop references to the substitution-via-`mapping.yaml` approach.
-  - [ ] O.3.d — Decide release cut: **v6.2.0** (additive — docs+training pipeline lands cleanly on top of N's L2-fed apps, no breaking changes to the runtime surface) vs **v7.0.0** (if O surfaces a bigger reframe). Default expectation: v6.2.0.
+- [ ] **O.3 — Iteration gate.** Unified docs render against any L2 instance the integrator points at. Per-customer publishing pipeline supports the merged site.
+  - [ ] O.3.a — **Per-customer smoke**: write a fresh `tests/l2/acme_treasury.yaml` (no Sasquatch flavor, simplest possible institution shape). Run `export docs --l2-instance acme_treasury.yaml` (with + without `--with-screenshots`) and eyeball outputs for leakage + voice consistency across all 5 IA sections.
+  - [ ] O.3.b — **Publishing workflow doc** (lands under the new `Walkthroughs/` section as a customization how-to): walks the integrator through the end-to-end (write your L2 YAML → `export docs` → publish to your wiki / website).
+  - [ ] O.3.c — README + CLAUDE.md sweep: docs section reflects the unified-site + templated-render workflow; drop references to the substitution-via-`mapping.yaml` approach AND the `training/` directory; `export training` command no longer exists.
+  - [ ] O.3.d — Decide release cut: **v6.2.0** (additive — the unified docs pipeline lands cleanly on top of N's L2-fed apps; the `training/` directory removal is technically a breaking change for anyone consuming it as a Python package surface, but in practice it's a docs reorg + a CLI surface change `export training` → `export docs`) vs **v7.0.0** (if you want to flag the docs reorg as breaking explicitly). Default expectation: v6.2.0 with a clearly-called-out "training/ directory removed" entry in RELEASE_NOTES.
   - [ ] O.3.e — Bump `__version__`; write RELEASE_NOTES; commit + tag + push.
 
 ---
