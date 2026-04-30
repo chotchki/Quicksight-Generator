@@ -105,6 +105,21 @@ def timestamp_tz_type(dialect: Dialect) -> str:
     return "TIMESTAMP WITH TIME ZONE"
 
 
+def pk_safe_timestamp_type(dialect: Dialect) -> str:
+    """Timestamp type usable in a PRIMARY KEY column.
+
+    Postgres allows ``TIMESTAMPTZ`` in PKs; Oracle 19c rejects it
+    with ORA-02329 ("column of datatype TIME/TIMESTAMP WITH TIME ZONE
+    cannot be unique or a primary key"). Demote to plain
+    ``TIMESTAMP`` on Oracle — loses the TZ metadata, but day-anchored
+    snapshot timestamps (the only PK use in this codebase) don't
+    depend on it.
+    """
+    if dialect is Dialect.POSTGRES:
+        return "TIMESTAMPTZ"
+    return "TIMESTAMP"
+
+
 def varchar_type(n: int, dialect: Dialect) -> str:
     """Bounded variable-length character.
 

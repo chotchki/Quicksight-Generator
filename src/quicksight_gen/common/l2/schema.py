@@ -53,6 +53,7 @@ from quicksight_gen.common.sql import (
     epoch_seconds_between,
     interval_days,
     matview_options,
+    pk_safe_timestamp_type,
     refresh_matview,
     serial_type,
     text_type,
@@ -218,7 +219,13 @@ def _emit_l1_invariant_views(
             "CURRENT_TIMESTAMP", "ct.posting", dialect,
         ),
         posting_to_date=to_date("posting", dialect),
-        null_text=typed_null("text", dialect),
+        # Typed NULL for the UNION ALL transfer_type column. Oracle
+        # rejects ``CAST(NULL AS CLOB)`` here (ORA-00932) because the
+        # subsequent UNION branches' transfer_type values are
+        # VARCHAR2(50) — Oracle won't UNION CLOB with VARCHAR2. Bind
+        # to a VARCHAR-shaped NULL so the UNION column type matches
+        # the actual data in every branch on both dialects.
+        null_text=cast("NULL", varchar_type(50, dialect), dialect),
     )
 
 
@@ -312,8 +319,12 @@ def _emit_inv_views(
       ON DEMAND suffix (empty on Postgres).
     - ``{recipient_posting_to_date}`` — ``recipient.posting::date`` on
       Postgres / ``TRUNC(recipient.posting)`` on Oracle.
-    - ``{interval_one_day}`` — ``INTERVAL '1 day'`` on Postgres /
-      ``INTERVAL '1' DAY`` on Oracle (used inside RANGE BETWEEN).
+    - ``{rolling_window}`` — full PARTITION BY / ORDER BY / RANGE
+      BETWEEN clause for the rolling 2-day pair window, inlined into
+      each ``OVER (...)`` because Oracle 19c doesn't support the named
+      ``WINDOW w AS`` clause (added in 21c). The dialect-specific
+      ``INTERVAL`` form ships inside the RANGE clause: PG ``INTERVAL
+      '1 day'`` / Oracle ``INTERVAL '1' DAY``.
     - ``{cast_avg_numeric}`` / ``{cast_stddev_numeric}`` — ``::NUMERIC``
       on Postgres / ``CAST(... AS NUMBER)`` on Oracle.
     - ``{window_start_expr}`` / ``{window_end_expr}`` — date arithmetic
@@ -327,11 +338,21 @@ def _emit_inv_views(
     after seed inserts.
     """
     p = instance.instance
+    # Inline the rolling-2-day window definition. Oracle 19c doesn't
+    # support the named ``WINDOW w AS (...)`` clause (added in 21c),
+    # so each ``OVER (...)`` substitutes the full definition. PG accepts
+    # the same inline form — slightly more verbose than the named-window
+    # PG-only optimization but the planner produces the same plan.
+    rolling_window = (
+        "PARTITION BY recipient_account_id, sender_account_id "
+        "ORDER BY posted_day "
+        f"RANGE BETWEEN {interval_days(1, dialect)} PRECEDING AND CURRENT ROW"
+    )
     return _INV_MATVIEWS_TEMPLATE.format(
         p=p,
         matview_options=matview_options(dialect),
         recipient_posting_to_date=to_date("recipient.posting", dialect),
-        interval_one_day=interval_days(1, dialect),
+        rolling_window=rolling_window,
         cast_avg_numeric=cast("AVG(window_sum)", "NUMERIC", dialect),
         cast_stddev_numeric=cast(
             "COALESCE(STDDEV_SAMP(window_sum), 0)", "NUMERIC", dialect,
@@ -405,6 +426,10 @@ def _emit_base_schema(p: str, dialect: Dialect) -> str:
         # Type names
         "serial": serial_type(dialect),
         "ts_tz": timestamp_tz_type(dialect),
+        # PK-eligible timestamp — Oracle 19c rejects TIMESTAMP WITH
+        # TIME ZONE in PRIMARY KEYs, so daily_balances'
+        # business_day_start/end demote to plain TIMESTAMP on Oracle.
+        "ts_pk": pk_safe_timestamp_type(dialect),
         "text": text_type(dialect),
         "vc20": varchar_type(20, dialect),
         "vc50": varchar_type(50, dialect),
@@ -561,8 +586,8 @@ CREATE TABLE {p}_daily_balances (
         CHECK (account_scope IN ('internal', 'external')),
     account_parent_role    {vc100},
     expected_eod_balance   {dec202},
-    business_day_start     {ts_tz}    NOT NULL,
-    business_day_end       {ts_tz}    NOT NULL,
+    business_day_start     {ts_pk}    NOT NULL,
+    business_day_end       {ts_pk}    NOT NULL,
     money                  {dec202}  NOT NULL,
     limits                 {text},
     supersedes             {vc50},
@@ -1274,14 +1299,9 @@ pair_windows AS (
         sender_account_name,
         sender_account_type,
         posted_day,
-        SUM(day_sum) OVER w            AS window_sum,
-        SUM(day_transfer_count) OVER w AS transfer_count
+        SUM(day_sum) OVER ({rolling_window})            AS window_sum,
+        SUM(day_transfer_count) OVER ({rolling_window}) AS transfer_count
     FROM pair_daily
-    WINDOW w AS (
-        PARTITION BY recipient_account_id, sender_account_id
-        ORDER BY posted_day
-        RANGE BETWEEN {interval_one_day} PRECEDING AND CURRENT ROW
-    )
 ),
 population AS (
     -- Single-row scalar: mean + sample stddev across every pair-window.
@@ -1361,7 +1381,10 @@ distinct_transfers AS (
     SELECT DISTINCT transfer_id, transfer_parent_id
     FROM {p}_transactions
 ),
-chain AS (
+-- Oracle 19c requires recursive CTEs to declare their column alias
+-- list inline (ORA-32039). Postgres accepts the same syntax — both
+-- dialects emit the explicit list.
+chain (transfer_id, root_transfer_id, depth) AS (
     -- Roots: transfers with no parent. Each root labels itself.
     SELECT
         transfer_id,

@@ -163,7 +163,10 @@ class TestOracleConstructsPresent:
         # Interval arithmetic
         "INTERVAL '1' DAY",        # interval_days(1, Oracle)
         # Casts
-        "CAST(NULL AS CLOB)",      # typed_null('text', Oracle)
+        # P.5.b — todays_exceptions UNION ALL needs VARCHAR2-shaped
+        # NULL for the transfer_type column (Oracle ORA-00932 rejects
+        # CLOB-vs-VARCHAR2 in UNION ALL). Asserted as VARCHAR2(50).
+        "CAST(NULL AS VARCHAR2(50))",
         "CAST(AVG(window_sum) AS NUMBER)",
         "CAST((pw.posted_day - 1) AS TIMESTAMP)",
         "CAST(pw.posted_day AS TIMESTAMP)",

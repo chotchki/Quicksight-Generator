@@ -755,8 +755,18 @@ def _execute_script(cur, sql: str, *, dialect) -> None:
         cur.execute(sql)
         return
     # Oracle: split on bare ";" outside PL/SQL blocks.
-    for stmt in _split_oracle_script(sql):
-        cur.execute(stmt)
+    for i, stmt in enumerate(_split_oracle_script(sql)):
+        try:
+            cur.execute(stmt)
+        except Exception as e:
+            # Surface which statement (out of N) failed + show its first
+            # 200 chars so the failure is debuggable without re-emitting
+            # the full DDL script.
+            preview = stmt.strip()[:1500]
+            raise RuntimeError(
+                f"Oracle stmt #{i} failed ({type(e).__name__}: {e})\n"
+                f"  Preview: {preview}"
+            ) from e
 
 
 def _split_oracle_script(sql: str) -> list[str]:
@@ -764,28 +774,49 @@ def _split_oracle_script(sql: str) -> list[str]:
 
     Handles PL/SQL blocks (anything starting with ``BEGIN`` or
     ``DECLARE`` and ending with ``END;``) as one unit; everything else
-    splits on bare ``;``. Strips trailing semicolons since
-    cursor.execute() doesn't want them.
+    splits on bare ``;``.
+
+    Trailing-semicolon contract differs between the two:
+
+    - **PL/SQL blocks**: the ``;`` is part of the ``END;`` terminator
+      and Oracle's parser rejects the block without it
+      (PLS-00103 "encountered end-of-file"). Keep it.
+    - **Plain SQL statements**: ``oracledb.Cursor.execute`` rejects
+      a trailing ``;`` ("invalid character"). Strip it.
     """
     statements: list[str] = []
     buffer: list[str] = []
     in_plsql = False
     for raw_line in sql.splitlines():
         line = raw_line.rstrip()
-        stripped = line.strip()
-        if not in_plsql and stripped.upper().startswith(("BEGIN ", "DECLARE")):
+        # Strip the trailing ``-- comment`` before checking for the
+        # statement terminator; a ``;`` inside a SQL line-comment is
+        # commentary, not a statement boundary, and treating it as one
+        # falsely splits the next CREATE block off into a comment-only
+        # "statement" that Oracle rejects with ORA-00900.
+        code = line.split("--", 1)[0].rstrip()
+        stripped_code = code.strip()
+        if not in_plsql and stripped_code.upper().startswith(
+            ("BEGIN ", "DECLARE")
+        ):
             in_plsql = True
         buffer.append(line)
         if in_plsql:
-            # PL/SQL block ends at "END;" (terminator).
-            if stripped.upper().endswith("END;"):
-                statements.append("\n".join(buffer).rstrip().rstrip(";"))
+            # PL/SQL block ends at "END;" (the ; is the PL/SQL
+            # statement terminator — keep it, the parser needs it).
+            if stripped_code.upper().endswith("END;"):
+                statements.append("\n".join(buffer).rstrip())
                 buffer = []
                 in_plsql = False
         else:
-            if stripped.endswith(";"):
+            if stripped_code.endswith(";"):
+                # Plain SQL: oracledb rejects the trailing ; — strip.
                 stmt = "\n".join(buffer).rstrip().rstrip(";")
-                if stmt.strip():
+                # Skip comment-only buffers (`split("--")` left side is
+                # empty, so the buffer is all whitespace + comment text).
+                # We only need stripped-code non-empty here; the actual
+                # SQL body content doesn't matter for emit.
+                if stripped_code:
                     statements.append(stmt)
                 buffer = []
     # Trailing buffer (no final semicolon)
