@@ -132,23 +132,36 @@ def inv_dataset_ids(resource_prefix, inv_l2_prefix) -> list[str]:
 
 
 @pytest.fixture(scope="session")
-def exec_dashboard_id(resource_prefix) -> str:
-    return f"{resource_prefix}-executives-dashboard"
+def exec_l2_prefix() -> str:
+    """The default L2 instance's prefix — the middle segment of every
+    Executives resource ID under N.4.b (Executives became L2-fed,
+    same default-institution YAML the L1 dashboard uses)."""
+    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
+
+    return str(default_l2_instance().instance)
 
 
 @pytest.fixture(scope="session")
-def exec_analysis_id(resource_prefix) -> str:
-    return f"{resource_prefix}-executives-analysis"
+def exec_dashboard_id(resource_prefix, exec_l2_prefix) -> str:
+    return f"{resource_prefix}-{exec_l2_prefix}-executives-dashboard"
 
 
 @pytest.fixture(scope="session")
-def exec_dataset_ids(resource_prefix) -> list[str]:
-    """Expected Executives dataset IDs (L.6.3)."""
+def exec_analysis_id(resource_prefix, exec_l2_prefix) -> str:
+    return f"{resource_prefix}-{exec_l2_prefix}-executives-analysis"
+
+
+@pytest.fixture(scope="session")
+def exec_dataset_ids(resource_prefix, exec_l2_prefix) -> list[str]:
+    """Expected Executives dataset IDs (L.6.3).
+
+    N.4.b added the L2 instance prefix as the middle segment.
+    """
     suffixes = [
         "exec-transaction-summary-dataset",
         "exec-account-summary-dataset",
     ]
-    return [f"{resource_prefix}-{s}" for s in suffixes]
+    return [f"{resource_prefix}-{exec_l2_prefix}-{s}" for s in suffixes]
 
 
 # -- L1 dashboard fixtures (M.2c) --------------------------------------------

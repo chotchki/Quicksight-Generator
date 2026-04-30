@@ -104,6 +104,9 @@ from _harness_l2ft_assertions import (  # noqa: E402
 from _harness_inv_assertions import (  # noqa: E402
     assert_inv_matviews_queryable,
 )
+from _harness_exec_assertions import (  # noqa: E402
+    assert_exec_base_tables_queryable,
+)
 
 # L2_INSTANCES matrix: re-use the exact list `test_l2_seed_contract.py`
 # uses so adding a new YAML there parameterizes the harness too.
@@ -736,6 +739,13 @@ def test_harness_l1_planted_scenarios_visible(
     # the v6 base tables — which catches the v5/v6 column-name
     # regression class surfaced in N.3.b.
     assert_inv_matviews_queryable(harness_db_conn, prefix)
+
+    # Layer 1c (N.4.g): Executives base-table schema-health check.
+    # Executives reads only from <prefix>_transactions +
+    # <prefix>_daily_balances (no app-specific matviews). Same
+    # column-rename-regression net as Layer 1b but applied at the
+    # base-table level since there's no Exec matview to expand.
+    assert_exec_base_tables_queryable(harness_db_conn, prefix)
 
     def _check_l1(page: Any) -> None:
         # Widen the universal date filter (M.2b.1) so plants outside
