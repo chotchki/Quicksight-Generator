@@ -1,264 +1,187 @@
-# Training Scenario Account Structure
+# {{ vocab.institution.name }} — Institution Tour
 
-This document describes the fictional bank, customers, accounts, and money
-flows that the training scenarios use. The point is to teach users to
-recognize a *class* of reconciliation error using the AR app — the
-specific names and topology are illustrative.
+*Generated from the L2 institution YAML (`{{ l2_instance_name }}.yaml`).
+Re-run the docs build (or point `QS_DOCS_L2_INSTANCE` at a different
+YAML) to regenerate this page against another institution.*
 
-## Business Structure
+{{ l2.description or "_(no institution description provided in the L2 YAML)_" }}
 
-Sasquatch National Bank (SNB) — a community bank serving the Pacific
-Northwest.
+---
 
-```
-Sasquatch National Bank (SNB)
- │
- ├── Merchant Customers (coffee retail)
- │    ├── Bigfoot Brews
- │    ├── Sasquatch Sips
- │    └── Yeti Espresso
- │
- └── Commercial Customers (agricultural / industrial — several acquired through FEB)
-      ├── Cascade Timber Mill
-      ├── Pinecrest Vineyards LLC
-      ├── Big Meadow Dairy
-      └── Harvest Moon Bakery
+## At a glance
 
-External Counterparties (not customers — SNB transacts with them but
-doesn't hold their accounts)
- ├── Federal Reserve Bank — holds SNB's Master Account (cash position authority)
- ├── Payment Gateway Processor — card acquirer for SNB merchants
- ├── Coffee Shop Supply Co — receives ACH / RTP from SNB merchants
- ├── Valley Grain Co-op — agricultural settlement counterparty
- └── Harvest Credit Exchange — credit-clearing counterparty
-```
-
-## Account Structure
-
-External authority — what SNB reconciles its books to:
-
-```
-Federal Reserve — SNB Master Account (Master Acct 21000123)
-```
-
-SNB General Ledger — ABA 999999999:
-
-```
-Asset accounts:
- ├── 1010  Cash & Due From Federal Reserve
- ├── 1810  ACH Origination Settlement       (sweep)
- ├── 1815  Card Acquiring Settlement
- ├── 1820  Wire Settlement Suspense
- ├── 1830  Internal Transfer Suspense
- ├── 1850  Cash Concentration Master        (ZBA target)
- └── 1899  Internal Suspense / Reconciliation
-
-Liability accounts:
- └── 2010  Customer Deposits — DDA Control
-      ├── 900-0001  Bigfoot Brews            — DDA
-      ├── 900-0002  Sasquatch Sips           — DDA
-      ├── 900-0003  Yeti Espresso            — DDA
-      ├── 800-0001  Cascade Timber Mill      — DDA
-      ├── 800-0002  Pinecrest Vineyards LLC  — DDA
-      ├── 700-0001  Big Meadow Dairy         — DDA
-      └── 700-0002  Harvest Moon Bakery      — DDA
-```
-
-The reconciliation invariant the demo teaches:
-
-> The sum of SNB's internal GL balances must equal what the Federal
-> Reserve says is in SNB's Master Account. When they don't match,
-> something is in transit, posted on one side only, or stuck.
-
-## Cash Management Suite
-
-SNB offers commercial customers a Cash Management Suite — Zero Balance
-Accounts (ZBA), ACH origination, Card Acquiring, and On-Us Internal
-Transfer Service. Each product generates a different pattern of internal
-book activity that the AR app teaches users to monitor.
-
-## Telling Transfers
-
-Four representative flows, each tied to one Cash Management Suite
-product. Each is a class of reconciliation issue the AR app surfaces.
-
-### 1. ZBA / Cash Concentration sweep
-
-Big Meadow Dairy maintains operating sub-accounts (one per location)
-that sweep to the Cash Concentration Master at EOD.
-
-```
-Sweep cycle (one set of postings per operating sub-account, daily):
-  DR  1850      Cash Concentration Master              $X
-  CR  700-0001  Big Meadow Dairy — Operating sub-acct  $X
-
-External: no Fed activity (sweep is intra-bank).
-```
-
-**Reconciliation question:** did every operating sub-account sweep to
-zero? Did the Cash Concentration Master receive the expected total?
-
-**Errors this surfaces:** failed sweep (operating ends day non-zero),
-partial sweep, double-posted sweep.
-
-### 2. Daily ACH origination sweep
-
-Throughout the day, SNB customers initiate ACH payments → debits
-accumulate in 1810 ACH Origination Settlement. EOD, the net balance is
-wired to the FRB Master Account, clearing the sweep account to zero.
-
-```
-Intraday accumulation (many of these):
-  DR  1810      ACH Origination Settlement   $250
-  CR  900-XXXX  Customer DDA                 $250
-  ...
-
-EOD sweep (one transfer):
-  DR  1010      Cash & Due From FRB          $18,400  ← total day's net
-  CR  1810      ACH Origination Settlement   $18,400  ← sweeps to zero
-
-Fed-side confirmation:
-  CR  FRB Master — SNB                       $18,400
-  (counterparty: ACH operator)
-```
-
-**Reconciliation question:** is ACH Origination Settlement at zero EOD?
-Does the swept amount match the Fed posting?
-
-**Errors this surfaces:** failed sweep (account ends day non-zero),
-partial sweep, sweep posted internally but no Fed confirmation.
-
-### 3. External force-posted card settlement
-
-Payment Gateway Processor settles a day's card sales into Bigfoot
-Brews's DDA. The Fed posts the settlement before SNB's internal system
-catches up.
-
-```
-Fed-side (happens first, externally driven):
-  DR  FRB Master — Processor's Bank   $4,200
-  CR  FRB Master — SNB                $4,200
-
-SNB BOOKS — must catch up via force-posted entry:
-  DR  1815      Card Acquiring Settlement   $4,200    ← origin = external_force_posted
-  CR  900-0001  Bigfoot Brews — DDA         $4,200
-```
-
-**Reconciliation question:** for every Fed credit / debit, is there a
-matching internal posting?
-
-**Errors this surfaces:** unposted external activity, mis-routed force
-posts, GL-vs-Fed drift over time.
-
-### 4. On-Us Internal Transfer with fail / reversal
-
-Big Meadow Dairy initiates a transfer to Cascade Timber Mill (both SNB
-customers). The transfer routes through 1830 Internal Transfer Suspense.
-It can fail (NSF, compliance hold, recipient account closed) — failures
-reverse to the originator. The suspense account should net to zero EOD.
-
-```
-Step 1 — originate (move into suspense):
-  DR  1830      Internal Transfer Suspense    $3,500
-  CR  700-0001  Big Meadow Dairy — DDA        $3,500
-
-Step 2a — success (settle to recipient):
-  DR  800-0001  Cascade Timber Mill — DDA     $3,500
-  CR  1830      Internal Transfer Suspense    $3,500
-
-Step 2b — failure (reverse to originator):
-  DR  700-0001  Big Meadow Dairy — DDA        $3,500
-  CR  1830      Internal Transfer Suspense    $3,500
-```
-
-**Reconciliation question:** is Internal Transfer Suspense at zero EOD?
-Are all originated transfers either settled or reversed?
-
-**Errors this surfaces:** stuck in suspense (no settle, no reversal —
-money in flight too long), settled-but-not-debited, reversed-but-not-
-credited (double spend).
-
-## Mapping to AR exception checks
-
-Each telling transfer maps to one or more AR exception checks. Every
-check surfaces as rows in the unified *Open Exceptions* table on the
-**Today's Exceptions** sheet (with `days_outstanding` and
-`aging_bucket` columns); the **Exceptions Trends** sheet adds an aging
-matrix + per-check daily counts across all checks, plus drift
-timelines for the drift checks.
-
-| Telling transfer | New / existing AR exception check |
+| What | Count |
 |---|---|
-| ZBA / Cash Concentration sweep | **Sweep target non-zero EOD**; **Concentration master vs sum of sub-account sweeps** |
-| Daily ACH origination sweep | **ACH Origination Settlement non-zero EOD**; **Internal sweep posted but no Fed confirmation** |
-| External force-posted card settlement | **Fed activity with no matching internal post**; **GL-vs-Fed Master drift** |
-| On-Us Internal Transfer with fail / reversal | **Stuck in Internal Transfer Suspense**; **Suspense non-zero EOD**; **Reversed-but-not-credited (double spend)** |
+| Singleton accounts ({{ vocab.institution.acronym }}'s GL + external counterparties) | **{{ l2.accounts|length }}** |
+| Account templates (per-customer / per-merchant shapes) | **{{ l2.account_templates|length }}** |
+| Rails (money-movement primitives) | **{{ l2.rails|length }}** |
+| Transfer Templates (multi-rail bundles) | **{{ l2.transfer_templates|length }}** |
+| Chains (parent → child firing rules) | **{{ l2.chains|length }}** |
+| Limit Schedules (per-account / per-rail caps) | **{{ l2.limit_schedules|length }}** |
 
-## Scenario Story
+The diagrams below show how these pieces connect. Every section also
+unfolds the per-row description text {{ vocab.institution.acronym }}'s
+integrators put on the L2 YAML — that prose IS the source of truth for
+how the institution treats each entity.
 
-Sasquatch National Bank (SNB) is a successful community bank in the
-Pacific Northwest serving coffee retailers, agricultural cooperatives,
-and farms. SNB is run by an elusive founder / president, Margaret
-Hollowcreek — a shrewd business person rarely seen outside the bank's
-modest headquarters.
+---
 
-In September 2025, riding the region's endless appetite for coffee and
-a healthy capital position, SNB acquired the struggling Farmers
-Exchange Bank (FEB) just before harvest season. Integration was
-completed quickly: legacy FEB customers (Cascade Timber Mill, Pinecrest
-Vineyards LLC, Big Meadow Dairy, Harvest Moon Bakery) became SNB
-customers, and FEB's chart of accounts was merged into SNB's general
-ledger.
+## Topology — accounts + rails
 
-Important payment flows for the customers:
+Every Rail draws an edge between its source-role account and its
+destination-role account. Single-leg rails draw a self-loop on the leg-
+role account. Internal {{ vocab.institution.acronym }} accounts are
+blue; external counterparties are orange.
 
-- **Merchants** (coffee retail) accept the vast majority of their
-  customer payments via credit / debit cards. SNB partners with the
-  Payment Gateway Processor to enable card acceptance. Card sales are
-  settled to the merchants' DDAs every business day via the Card
-  Acquiring Settlement account.
-- **Commercial customers** pay their suppliers primarily via ACH or
-  Real-Time Payments. All ACH originations route through the ACH
-  Origination Settlement account, which net-settles to the FRB Master
-  Account at EOD.
+{{ diagram("l2_topology", kind="accounts") }}
 
-The training scenarios play out from September 2025 through December
-2025.
+---
 
-What follows are the details of people in the different departments at
-SNB.
-  - SNB's General Ledger Reconciliation / Accounting Operations team
-    - opens the AR dashboard each morning, scans **Today's Exceptions** for the day's totals, glances **Exceptions Trends** for the shape of any breaks, drills into anything aging past their threshold
-    - a key data sanity check artifact for them is checking an externally generated bank statement against this system's data import
-  - SNB's Merchant Support Team
-    - opens a dashboard and looks to see all the merchants sales had settled/been paid
-  - SNB's Data Integration Team
-    - creates ETL jobs to populate the data to support this tool. The simpler and fewer the tables are, the easier it is for them to do their job. Their attitude is, what do I have a database server that can do fancy queries for unless I use it?
-    - populates the optional `expected_complete_at` column on `transactions` per rail (instant: same-day; ACH: T+2; cards: T+3) so the dashboard's `is_late` predicate fires off rail-accurate deadlines instead of a one-day default — adopted incrementally, one rail at a time
-  - SNB's Fraud Team
-    - uses the recon tool to search for transactions that break limits set on the accounts
-  - SNB's Investigation/AML Team
-    - uses the recon tool to detect if transactions/balances are outside of the statistical average and attempts to find patterns
-    - They are looking for a dashboard that shows: for transfers between different subledger accounts, are there transfers inside a couple day sliding window that sum to amounts that 2 std deviations higher than other transfers?
-  - SNB's Executive Management
-    - Looking for transaction statistics and trends.
-    - For all the data in the system, how much money is moving over time?
-    - How many accounts do we have open?
-    - How many accounts have activity?
-    - Any other useful stats
+## Topology — chains (parent → child firings)
 
-## Where to go from here
+Chains declare that when one Rail or Transfer Template fires, another
+SHOULD fire too. Solid edges are required (validator catches a missing
+firing); dashed edges are optional. XOR groups capture "any one of
+these MUST fire — pick the right child by metadata".
 
-- [L1 Dashboard Handbook](handbook/l1.md) — the persona-blind L1
-  invariant view, organized by exception class. Where Accounting
-  Operations works for any L2 instance.
-- [L2 Flow Tracing Handbook](handbook/l2_flow_tracing.md) — Rails,
-  Chains, Transfer Templates, and L2 hygiene exceptions. Where the
-  integrator validates their L2 instance against the SPEC.
-- [Investigation Handbook](handbook/investigation.md) — recipient
-  fanout, volume anomalies, money-trail provenance, and the account
-  network graph. Where the Compliance / AML team works.
-- [Data Integration Handbook](handbook/etl.md) — the feed-side
-  walkthroughs: mapping an upstream system into `transactions` and
-  `daily_balances`, validating the load, extending the metadata
-  contract. Where the Data Integration Team works.
+{{ diagram("l2_topology", kind="chains") }}
+
+---
+
+## Topology — layered (accounts above, chains below)
+
+Both views in a single diagram. Use this when you need to explain
+"how does cash get from {{ vocab.institution.acronym }}'s sub-ledger
+to the FRB master account, and which rails participate" — the rail
+labels carry transfer types, the chain edges show ordering.
+
+{{ diagram("l2_topology", kind="layered") }}
+
+---
+
+## Singleton accounts
+
+These are the 1-of-1 accounts {{ vocab.institution.acronym }} holds —
+the GL control accounts on the asset/liability side, plus the named
+external counterparties.
+
+| ID | Role | Scope | Parent role | Description |
+|---|---|---|---|---|
+{% for a in l2.accounts %}
+| `{{ a.id }}` | {{ a.role or "—" }} | {{ a.scope }} | {{ a.parent_role or "—" }} | {{ (a.description or "—")|replace("\n", " ") }} |
+{% endfor %}
+
+{% if l2.account_templates %}
+## Account templates
+
+Templates declare the SHAPE of a 1-of-many account class — the
+specific account instance is selected at posting time (typically from
+``Transaction.Metadata``). Customer DDAs, merchant settlement
+accounts, and per-product subledgers all live here.
+
+| Role | Scope | Parent role | Description |
+|---|---|---|---|
+{% for t in l2.account_templates %}
+| {{ t.role }} | {{ t.scope }} | {{ t.parent_role or "—" }} | {{ (t.description or "—")|replace("\n", " ") }} |
+{% endfor %}
+
+{% endif %}
+## Rails — money-movement primitives
+
+Each Rail is a single money-movement primitive. **TwoLegRail** posts
+one debit + one credit; **SingleLegRail** posts a single leg (must be
+reconciled by a Transfer Template or aggregating rail).
+
+{% for r in l2.rails %}
+### {{ r.name }} — `{{ r.transfer_type }}`
+
+{{ r.description or "_(no description on the L2 YAML)_" }}
+
+- **Shape:** {% if r.__class__.__name__ == "TwoLegRail" %}Two-leg ({{ r.source_role }} → {{ r.destination_role }}){% else %}Single-leg ({{ r.leg_role }}, direction {{ r.leg_direction }}){% endif %}
+{%- if r.posted_requirements %}
+- **Posted requirements:** {{ r.posted_requirements|join(", ") }}
+{%- endif %}
+{%- if r.max_pending_age %}
+- **Aging — pending:** legs SHOULD post within `{{ r.max_pending_age }}` (Stuck Pending matview surfaces violations)
+{%- endif %}
+{%- if r.max_unbundled_age %}
+- **Aging — unbundled:** posted legs SHOULD bundle within `{{ r.max_unbundled_age }}` (Stuck Unbundled matview surfaces violations)
+{%- endif %}
+{%- if r.aggregating %}
+- **Aggregating:** YES — bundles `{{ r.bundles_activity|join(", ") }}`
+{%- endif %}
+{%- if r.metadata_keys %}
+- **Metadata keys:** {{ r.metadata_keys|join(", ") }}
+{%- endif %}
+
+{% endfor %}
+{% if l2.transfer_templates %}
+## Transfer Templates — multi-rail bundles
+
+A Transfer Template chains multiple Rail firings into a single
+business-meaningful Transfer (e.g. "ACH origination cycle: customer
+debit + sweep + Fed master credit"). The template's ``expected_net``
+closes the bundle — every leg's signed amount MUST sum to that value
+(L1 Conservation invariant).
+
+{% for tt in l2.transfer_templates %}
+### {{ tt.name }}
+
+{{ tt.description or "_(no description on the L2 YAML)_" }}
+
+- **Expected net:** `{{ tt.expected_net }}`
+{%- if tt.leg_rails %}
+- **Leg rails:** {{ tt.leg_rails|map(attribute="rail_name")|join(" → ") }}
+{%- endif %}
+
+{% endfor %}
+{% endif %}
+{% if l2.chains %}
+## Chains — required + optional firings
+
+A chain entry declares "when {{ "{{" }} parent {{ "}}" }} fires, {{ "{{" }} child {{ "}}" }} SHOULD fire too".
+Required chains gate L2 hygiene (the L2 Flow Tracing app's Chain
+Orphans check); optional chains document expected patterns without
+gating. XOR groups encode "exactly one of these children MUST fire".
+
+| Parent | Child | Required | XOR group | Description |
+|---|---|---|---|---|
+{% for c in l2.chains %}
+| {{ c.parent }} | {{ c.child }} | {{ "✓" if c.required else "—" }} | {{ c.xor_group or "—" }} | {{ (c.description or "—")|replace("\n", " ") }} |
+{% endfor %}
+
+{% endif %}
+{% if l2.limit_schedules %}
+## Limit Schedules — per-(role, transfer_type) caps
+
+Each Limit Schedule sets a daily outbound-flow cap for a (parent_role,
+transfer_type) pair. The L1 ``limit_breach`` matview lists every
+account/day where outbound activity exceeded the cap.
+
+| Parent role | Transfer type | Cap | Description |
+|---|---|---|---|
+{% for ls in l2.limit_schedules %}
+| {{ ls.parent_role }} | {{ ls.transfer_type }} | `{{ ls.cap }}` | {{ (ls.description or "—")|replace("\n", " ") }} |
+{% endfor %}
+
+{% endif %}
+---
+
+## How the dashboards read this
+
+- **L1 Reconciliation Dashboard** — surfaces the L1 invariant
+  violations against the data this L2 declares: drift, overdraft,
+  limit breach (using the Limit Schedules above), stuck pending /
+  unbundled (using the Rails' aging caps), supersession audit.
+- **L2 Flow Tracing** — walks the Rails / Chains / Transfer Templates
+  diagrams above against runtime activity, surfacing
+  declared-but-never-fired rails, chain orphans, and unmatched
+  transfer types.
+- **Investigation** — questions over the leaf-account / external-
+  counterparty graph above (recipient fanout, volume anomalies, money
+  trail, account network).
+- **Executives** — coverage / volume / money-moved scorecard rolled up
+  across {{ vocab.institution.acronym }}'s account roster.
+
+For a per-app sheet-by-sheet walkthrough, see the
+[Walkthroughs](walkthroughs/index.md) section.

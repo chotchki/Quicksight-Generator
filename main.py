@@ -80,6 +80,12 @@ def define_env(env: Any) -> None:
     default_l2 = load_instance(default_l2_path)
     env.variables["vocab"] = vocabulary_for(default_l2)
     env.variables["l2_instance_name"] = str(default_l2.instance)
+    # Expose the full ``L2Instance`` so generated pages
+    # (e.g. ``Training_Story.md``) can iterate accounts / rails /
+    # chains / templates / limit_schedules and render their
+    # descriptions. The Jinja template walks attributes directly:
+    # ``{% for a in l2.accounts %}{{ a.id }}: {{ a.description }}…``.
+    env.variables["l2"] = default_l2
 
     # If the L2 carries inline brand assets, override mkdocs theme.logo
     # / theme.favicon. URLs pass through; absolute paths get copied into
