@@ -103,7 +103,8 @@ class TestOracleNoPostgresIsms:
 
     @pytest.mark.parametrize("pattern", [
         "BIGSERIAL",
-        "TIMESTAMPTZ",
+        "TIMESTAMPTZ",          # P.9a — both dialects now use plain TIMESTAMP
+        "TIMESTAMP WITH TIME ZONE",  # P.9a — same
         "VARCHAR(",     # Oracle uses VARCHAR2(N)
         "DECIMAL(",     # Oracle uses NUMBER(p, s)
         "TEXT,",        # column type — Oracle CLOB
@@ -138,7 +139,14 @@ class TestOracleConstructsPresent:
     @pytest.mark.parametrize("pattern", [
         # Type names
         "NUMBER GENERATED ALWAYS AS IDENTITY",
-        "TIMESTAMP WITH TIME ZONE",
+        # P.9a — TZ-naive TIMESTAMP across both dialects, NO ``WITH
+        # TIME ZONE`` qualifier. Anchored on the column-aligned
+        # appearances in the rendered DDL (transactions.posting +
+        # daily_balances.business_day_start) so a future regression
+        # like ``TIMESTAMPTZ`` or ``TIMESTAMP WITH TIME ZONE`` would
+        # break the match.
+        "posting              TIMESTAMP    NOT NULL",
+        "business_day_start     TIMESTAMP    NOT NULL",
         "VARCHAR2(",
         "NUMBER(20,2)",
         "CLOB",

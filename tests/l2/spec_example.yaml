@@ -122,8 +122,8 @@ limit_schedules:
     transfer_type: wire
     cap: 5000.00
 seed_hash:
-  postgres: 9f0842bf6b3f0d2883a4efb16286a9503a6c24560750b8c972009db0b7fad3ff
-  oracle: 10d30c1bdeec5ff2412b35ef54d90e23409b0cada5fc83e023056dc7a78795e8
+  postgres: be926275bc5cdc1f428b981ab435dad1220f80b911e2c4f820c9dab4608e7084
+  oracle: 11311b059ff8f80e51e15d42cdad623a27225a8bd199ec74af288efd623f41dd
 
 # Inline brand theme (N.1). Mirrors the legacy ``default`` preset
 # in common/theme.py byte-for-byte so spec_example renders identically

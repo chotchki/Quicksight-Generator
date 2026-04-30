@@ -30,7 +30,7 @@ from quicksight_gen.common.sql import (
     refresh_matview,
     serial_type,
     text_type,
-    timestamp_tz_type,
+    timestamp_type,
     to_date,
     typed_null,
     varchar_type,
@@ -55,8 +55,9 @@ class TestPostgresTypeNames:
     def test_text_type(self):
         assert text_type(PG) == "TEXT"
 
-    def test_timestamp_tz_type(self):
-        assert timestamp_tz_type(PG) == "TIMESTAMPTZ"
+    def test_timestamp_type(self):
+        # P.9a — TZ-naive TIMESTAMP across both dialects.
+        assert timestamp_type(PG) == "TIMESTAMP"
 
     def test_varchar_type(self):
         assert varchar_type(100, PG) == "VARCHAR(100)"
@@ -183,8 +184,9 @@ class TestOracleTypeNames:
     def test_text_type(self):
         assert text_type(ORA) == "CLOB"
 
-    def test_timestamp_tz_type(self):
-        assert timestamp_tz_type(ORA) == "TIMESTAMP WITH TIME ZONE"
+    def test_timestamp_type(self):
+        # P.9a — TZ-naive TIMESTAMP across both dialects.
+        assert timestamp_type(ORA) == "TIMESTAMP"
 
     def test_varchar_type(self):
         assert varchar_type(100, ORA) == "VARCHAR2(100)"
@@ -329,7 +331,7 @@ class TestDialectIsRequired:
             (serial_type, ()),
             (boolean_type, ()),
             (text_type, ()),
-            (timestamp_tz_type, ()),
+            (timestamp_type, ()),
             (varchar_type, (50,)),
             (decimal_type, (10, 2)),
             (typed_null, ("numeric",)),

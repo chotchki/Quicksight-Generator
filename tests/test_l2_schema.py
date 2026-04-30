@@ -136,7 +136,7 @@ def test_transactions_includes_transfer_parent_id() -> None:
 def test_transactions_includes_transfer_completion_and_origin() -> None:
     """L1 SPEC: Transfer.Completion + Transaction.Origin both denormalized."""
     sql = emit_schema(_instance("co"))
-    assert "transfer_completion  TIMESTAMPTZ" in sql
+    assert "transfer_completion  TIMESTAMP" in sql
     assert "origin               VARCHAR(50)    NOT NULL" in sql
     # Origin is open enum — no CHECK so integrators can extend.
     assert "origin IN" not in sql

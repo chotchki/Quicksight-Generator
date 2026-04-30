@@ -21,7 +21,7 @@ appending a separate ``;``.
 trailing ``;``. Substituted into larger SQL templates by the caller,
 which decides where the statement boundary lives.
 
-  - Type names (``serial_type``, ``timestamp_tz_type``, ``text_type``,
+  - Type names (``serial_type``, ``timestamp_type``, ``text_type``,
     ``varchar_type``, ``decimal_type``, ``boolean_type``, ``decimal_type``)
   - Casts (``cast``, ``typed_null``, ``to_date``, ``date_trunc_day``)
   - Date arithmetic (``epoch_seconds_between``, ``interval_days``,
@@ -95,28 +95,27 @@ def text_type(dialect: Dialect) -> str:
     return "CLOB"
 
 
-def timestamp_tz_type(dialect: Dialect) -> str:
-    """Timestamp with time zone.
+def timestamp_type(dialect: Dialect) -> str:  # noqa: ARG001
+    """TZ-naive timestamp, identical on both dialects.
 
-    Postgres ``TIMESTAMPTZ`` / Oracle ``TIMESTAMP WITH TIME ZONE``.
+    Returns ``TIMESTAMP`` regardless of dialect (P.9a). Timezone
+    normalization is the integrator's contract — the L2 schema does
+    not store timezone metadata and does not convert across zones.
+    Banks reading from sources in multiple zones MUST normalize at
+    the ETL boundary (typically to UTC or the institution's local
+    business zone).
+
+    Why standardized: the prior split helpers (``timestamp_tz_type``
+    + ``pk_safe_timestamp_type``) bridged Postgres TIMESTAMPTZ /
+    Oracle TIMESTAMP WITH TIME ZONE for non-PK columns and demoted
+    to plain TIMESTAMP for PK columns (Oracle rejects TZ-aware
+    TIMESTAMPs in PKs with ORA-02329). The split surfaced as a
+    cross-dialect divergence with no compensating value — neither
+    engine performs query-time TZ conversion in a way the dashboards
+    rely on, and the demotion was already happening for half the
+    columns. Unifying on plain TIMESTAMP makes the schema byte-
+    identical between dialects.
     """
-    if dialect is Dialect.POSTGRES:
-        return "TIMESTAMPTZ"
-    return "TIMESTAMP WITH TIME ZONE"
-
-
-def pk_safe_timestamp_type(dialect: Dialect) -> str:
-    """Timestamp type usable in a PRIMARY KEY column.
-
-    Postgres allows ``TIMESTAMPTZ`` in PKs; Oracle 19c rejects it
-    with ORA-02329 ("column of datatype TIME/TIMESTAMP WITH TIME ZONE
-    cannot be unique or a primary key"). Demote to plain
-    ``TIMESTAMP`` on Oracle — loses the TZ metadata, but day-anchored
-    snapshot timestamps (the only PK use in this codebase) don't
-    depend on it.
-    """
-    if dialect is Dialect.POSTGRES:
-        return "TIMESTAMPTZ"
     return "TIMESTAMP"
 
 
@@ -271,10 +270,10 @@ def date_minus_days(date_expr: str, n: int, dialect: Dialect) -> str:
 def date_trunc_day(timestamp_expr: str, dialect: Dialect) -> str:
     """Truncate a timestamp expression to its day boundary, preserving
     a timestamp-shaped result type so downstream JOINs against
-    TIMESTAMPTZ columns don't fall through implicit conversion.
+    TIMESTAMP columns don't fall through implicit conversion.
 
     Postgres ``DATE_TRUNC('day', expr)`` returns the same type as the
-    input (TIMESTAMPTZ → TIMESTAMPTZ at 00:00:00). Oracle's ``TRUNC(X)``
+    input (TIMESTAMP → TIMESTAMP at 00:00:00). Oracle's ``TRUNC(X)``
     on a TIMESTAMP returns a DATE, which loses subseconds + the
     timestamp shape; wrapping in ``CAST(... AS TIMESTAMP)`` puts it
     back in the timestamp domain so the L1 invariant matviews compare

@@ -22,8 +22,13 @@ prose — derives from them.
 > - B-tree indexes only on real columns.
 > - **No** `JSONB`, no `->>` / `->` / `@>` / `?` operators, no GIN
 >   indexes on JSON, no Postgres extensions, no array / range types,
->   no named `WINDOW w AS` clause (Oracle 19c lacks it), no
->   `TIMESTAMP WITH TIME ZONE` in PK columns (Oracle rejects it).
+>   no named `WINDOW w AS` clause (Oracle 19c lacks it).
+> - All timestamp columns are TZ-naive `TIMESTAMP` on both engines
+>   (P.9a). **Timezone normalization is the integrator's contract** —
+>   the schema does not store timezone metadata and does not convert
+>   across zones at query time. ETL teams reading from sources in
+>   multiple zones MUST normalize at the ETL boundary (typically to
+>   UTC or the institution's local business zone).
 > See **Forbidden SQL patterns** at the end. Pick the dialect via the
 > `dialect:` field on your config YAML (default `postgres`).
 
@@ -122,10 +127,10 @@ Every row identifies its parent transfer via `transfer_id`.
 | `amount_money` | `DECIMAL(20,2) NOT NULL` | Signed amount. **Positive = Credit (money in), Negative = Debit (money out).** Per L1 Amount invariant. |
 | `amount_direction` | `VARCHAR(20) NOT NULL` | `'Debit'` or `'Credit'`. Constrained agreement with `amount_money` sign — see CHECK below. |
 | `status` | `VARCHAR(20) NOT NULL` | `'Pending'`, `'Posted'`, `'Failed'`. Drives stuck_pending + non-zero-transfer math. |
-| `posting` | `TIMESTAMPTZ NOT NULL` | When the leg posted to the underlying ledger. |
+| `posting` | `TIMESTAMP NOT NULL` (TZ-naive) | When the leg posted to the underlying ledger. |
 | `transfer_id` | `VARCHAR(100) NOT NULL` | Groups legs of one financial event. Conservation invariant: `Σ amount_money` over non-Failed legs of one transfer = expected_net (typically 0 for two-leg, ExpectedNet for templates). |
 | `transfer_type` | `VARCHAR(50) NOT NULL` | The L2 TransferType (`'ach'`, `'wire'`, `'fee'`, `'internal'`, etc). |
-| `transfer_completion` | `TIMESTAMPTZ` | When the transfer finished its full lifecycle (last leg posted). NULL while in flight. |
+| `transfer_completion` | `TIMESTAMP` (TZ-naive) | When the transfer finished its full lifecycle (last leg posted). NULL while in flight. |
 | `transfer_parent_id` | `VARCHAR(100)` | Recursive parent — links a transfer to its parent (PR pattern: `external_txn → payment → settlement → sale`). |
 | `rail_name` | `VARCHAR(100) NOT NULL` | Which Rail produced this leg. Drives stuck_pending / stuck_unbundled per-rail caps. |
 | `template_name` | `VARCHAR(100)` | If posted via a TransferTemplate, the template name. NULL otherwise. |
@@ -194,8 +199,8 @@ end-of-day stored balance for each account each day.
 | `account_scope` | `VARCHAR(20) NOT NULL` | `'internal'` / `'external'`. |
 | `account_parent_role` | `VARCHAR(100)` | Parent role; NULL for parent / external. |
 | `expected_eod_balance` | `DECIMAL(20,2)` | If set, the L1 invariant `expected_eod_balance_breach` fires when `money <> expected_eod_balance` at EOD. NULL = no expected target declared. |
-| `business_day_start` | `TIMESTAMPTZ NOT NULL` | Beginning-of-day UTC midnight. The composite key `(account_id, business_day_start)` is the logical row id. |
-| `business_day_end` | `TIMESTAMPTZ NOT NULL` | End-of-day = `business_day_start + INTERVAL '1 day'`. |
+| `business_day_start` | `TIMESTAMP NOT NULL` (TZ-naive) | Beginning-of-day UTC midnight. The composite key `(account_id, business_day_start)` is the logical row id. |
+| `business_day_end` | `TIMESTAMP NOT NULL` (TZ-naive) | End-of-day = `business_day_start + INTERVAL '1 day'`. |
 | `money` | `DECIMAL(20,2) NOT NULL` | Stored EOD balance. Computed-vs-stored disagreement surfaces as drift. |
 | `limits` | `TEXT` | Per-row JSON; per-day limit overrides. See **Metadata** below. |
 | `supersedes` | `VARCHAR(50)` | Same vocabulary as transactions.supersedes. |
@@ -443,13 +448,13 @@ projections) must follow these rules:
 | GIN indexes on JSON | B-tree on real columns; metadata is searched, not indexed | Oracle has no GIN |
 | Postgres extensions (e.g., `pg_trgm`, `uuid-ossp`) | None | Oracle has no extension model |
 | Array types (`TEXT[]`, `INT[]`) | Normalized child rows, or JSON arrays in metadata | Oracle has no array types |
-| Range types (`tstzrange`, etc) | Two TIMESTAMPTZ columns | Oracle has no range types |
+| Range types (`tstzrange`, etc) | Two `TIMESTAMP` columns | Oracle has no range types |
 | Window functions inside CTE references that recurse | Plain recursive CTEs | Both dialects' planners |
 | `RETURNING` for batch fanout | Re-SELECT after INSERT | Oracle's `RETURNING` is single-row |
 | Multi-row `INSERT … VALUES (a),(b)` | Per-row `INSERT … VALUES (…)` statements | Oracle 19c rejects multi-row VALUES |
 | Named `WINDOW w AS (…)` clause | Inline the `OVER (…)` definition on each window function | Oracle 19c added named WINDOW in 21c only |
-| `TIMESTAMP WITH TIME ZONE` in a PRIMARY KEY column | Plain `TIMESTAMP` (use `pk_safe_timestamp_type(dialect)`) | Oracle rejects `TIMESTAMP WITH TIME ZONE` PKs (ORA-02329) |
-| Postgres-style timestamp literal `'2030-01-01T12:00:00+00'` | `TIMESTAMP 'YYYY-MM-DD HH:MI:SS+TZ'` (space separator) | Oracle requires the typed literal form |
+| `TIMESTAMPTZ` / `TIMESTAMP WITH TIME ZONE` columns | Plain `TIMESTAMP` via `timestamp_type(dialect)`. TZ normalization happens at the ETL boundary (see top callout). | Single TZ-naive type unifies both engines; was previously a Postgres / Oracle PK divergence (ORA-02329). |
+| Bare-string Oracle timestamp literal `'2030-01-01 10:00:00'` | `TIMESTAMP 'YYYY-MM-DD HH:MI:SS'` typed literal (no TZ offset) | Oracle's plain `TIMESTAMP` literal must be wrapped in the typed `TIMESTAMP '…'` form. |
 | Recursive CTE without explicit column-alias list | `WITH chain (col1, col2, depth) AS (…)` | Oracle 19c requires the alias list (ORA-32039) |
 | `EXTRACT(EPOCH FROM …)` | `epoch_seconds_between(a, b, dialect)` | Oracle's `EXTRACT` doesn't accept `EPOCH` |
 | `IF EXISTS` on `DROP MATERIALIZED VIEW` | Use `drop_matview_if_exists(name, dialect)` (wraps Oracle in PL/SQL) | Oracle has no `IF EXISTS` clause on most DROPs |

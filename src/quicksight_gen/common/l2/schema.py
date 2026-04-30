@@ -53,11 +53,10 @@ from quicksight_gen.common.sql import (
     epoch_seconds_between,
     interval_days,
     matview_options,
-    pk_safe_timestamp_type,
     refresh_matview,
     serial_type,
     text_type,
-    timestamp_tz_type,
+    timestamp_type,
     to_date,
     typed_null,
     varchar_type,
@@ -413,7 +412,7 @@ _BASE_INDEX_DROPS: tuple[tuple[str, str], ...] = (
 def _emit_base_schema(p: str, dialect: Dialect) -> str:
     """Render ``_SCHEMA_TEMPLATE`` with all dialect placeholders filled.
 
-    Type-name placeholders ({serial}, {ts_tz}, {text}, {vc20…vc255},
+    Type-name placeholders ({serial}, {ts}, {text}, {vc20…vc255},
     {dec202}) come from common/sql type helpers. DROP placeholders
     come from drop_*_if_exists helpers (PG IF EXISTS / Oracle PL/SQL).
     The bundler-eligibility partial-index ``WHERE bundle_id IS NULL``
@@ -425,11 +424,12 @@ def _emit_base_schema(p: str, dialect: Dialect) -> str:
         "p": p,
         # Type names
         "serial": serial_type(dialect),
-        "ts_tz": timestamp_tz_type(dialect),
-        # PK-eligible timestamp — Oracle 19c rejects TIMESTAMP WITH
-        # TIME ZONE in PRIMARY KEYs, so daily_balances'
-        # business_day_start/end demote to plain TIMESTAMP on Oracle.
-        "ts_pk": pk_safe_timestamp_type(dialect),
+        # P.9a — single TZ-naive TIMESTAMP type across both dialects;
+        # the prior {ts} (TIMESTAMPTZ / TIMESTAMP WITH TIME ZONE)
+        # + {ts} (TIMESTAMPTZ on PG, TIMESTAMP on Oracle for PK
+        # eligibility) split was removed. Timezone normalization is
+        # the integrator's contract — see Schema_v6.md.
+        "ts": timestamp_type(dialect),
         "text": text_type(dialect),
         "vc20": varchar_type(20, dialect),
         "vc50": varchar_type(50, dialect),
@@ -534,10 +534,10 @@ CREATE TABLE {p}_transactions (
     amount_direction     {vc20}    NOT NULL
         CHECK (amount_direction IN ('Debit', 'Credit')),
     status               {vc50}    NOT NULL,
-    posting              {ts_tz}    NOT NULL,
+    posting              {ts}    NOT NULL,
     transfer_id          {vc100}   NOT NULL,
     transfer_type        {vc50}    NOT NULL,
-    transfer_completion  {ts_tz},
+    transfer_completion  {ts},
     transfer_parent_id   {vc100},
     rail_name            {vc100}   NOT NULL,
     template_name        {vc100},
@@ -586,8 +586,8 @@ CREATE TABLE {p}_daily_balances (
         CHECK (account_scope IN ('internal', 'external')),
     account_parent_role    {vc100},
     expected_eod_balance   {dec202},
-    business_day_start     {ts_pk}    NOT NULL,
-    business_day_end       {ts_pk}    NOT NULL,
+    business_day_start     {ts}    NOT NULL,
+    business_day_end       {ts}    NOT NULL,
     money                  {dec202}  NOT NULL,
     limits                 {text},
     supersedes             {vc50},

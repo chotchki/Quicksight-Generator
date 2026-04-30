@@ -909,8 +909,8 @@ limit_schedules:
       lower-tech / lower-volume operations; SNB caps aggressive
       check issuance to surface anomalies.
 seed_hash:
-  postgres: eccbe76f91128833381caf9a3e62e798ea007d8b3c4531dce5ebe49c12bb8f98
-  oracle: ba7042a9b2d46e3d025ff01bc9699d39c83067fd26b1dd81755f5b549eaf046c
+  postgres: 74cfb1d5ca8f275253a92643094985f98841dd7a024efb26199dad39db168b53
+  oracle: e092b74738184a1134a0ba7257da876feb7f755889a54eeebe9c11a8330c995f
 
 # Inline brand theme (N.1). Mirrors the legacy ``sasquatch-bank``
 # preset in common/theme.py byte-for-byte so the PR demo render is

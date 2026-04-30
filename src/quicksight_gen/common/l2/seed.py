@@ -62,23 +62,48 @@ from .primitives import (
 def _sql_timestamp_literal(iso_8601_str: str, dialect: Dialect) -> str:
     """Format an ISO-8601 timestamp string as a SQL literal per dialect.
 
-    PG accepts a bare string literal — its TIMESTAMPTZ column type
-    auto-parses ISO-8601 with the ``T`` separator. Oracle requires a
-    typed ``TIMESTAMP 'YYYY-MM-DD HH:MI:SS [+TZ]'`` literal with a
-    space separator (not ``T``); the typed literal works equally well
-    when inserted into either a TIMESTAMP WITH TIME ZONE column
-    (preserves TZ) or a plain TIMESTAMP column (drops TZ).
+    P.9a — both dialects' TIMESTAMP columns are now TZ-naive (the
+    ``timestamp_type`` helper returns plain ``TIMESTAMP`` on both),
+    so the trailing ``+HH:MM`` / ``Z`` offset on every seed timestamp
+    string gets stripped here at the literal-formatter boundary
+    (Oracle's plain ``TIMESTAMP`` literal rejects offsets; PG would
+    accept then silently drop). Timezone normalization is the
+    integrator's contract — see Schema_v6.md.
 
-    The same helper is used for every timestamp the seed emits — both
-    transactions.posting (TIMESTAMPTZ on PG / TS WITH TZ on Oracle)
-    and daily_balances.business_day_start (TIMESTAMPTZ on PG / plain
-    TIMESTAMP on Oracle, demoted in P.5.b for PK eligibility).
+    PG: bare string literal with the ``T`` separator preserved
+    (PG accepts both space + T separators).
+
+    Oracle: typed ``TIMESTAMP 'YYYY-MM-DD HH:MI:SS'`` literal with a
+    space separator (not ``T``).
+
+    The same helper is used for every timestamp the seed emits —
+    transactions.posting and daily_balances.business_day_start.
     """
+    naive = _strip_tz_offset(iso_8601_str)
     if dialect is Dialect.POSTGRES:
-        return "'" + iso_8601_str.replace("'", "''") + "'"
-    # Oracle: typed literal with space separator.
-    oracle_str = iso_8601_str.replace("T", " ", 1).replace("'", "''")
+        return "'" + naive.replace("'", "''") + "'"
+    oracle_str = naive.replace("T", " ", 1).replace("'", "''")
     return f"TIMESTAMP '{oracle_str}'"
+
+
+def _strip_tz_offset(iso_8601_str: str) -> str:
+    """Return the ISO-8601 string with any trailing ``+HH:MM`` / ``Z``
+    offset removed. Idempotent on inputs that already lack an offset.
+    """
+    # Trailing 'Z'.
+    if iso_8601_str.endswith("Z"):
+        return iso_8601_str[:-1]
+    # Trailing offset: scan for the rightmost '+' or '-' that follows
+    # a digit and has the shape ``±HH:MM`` or ``±HHMM`` or ``±HH``.
+    # The date itself doesn't have a sign in that position, so the
+    # rightmost match is unambiguous.
+    for sign_pos in range(len(iso_8601_str) - 1, -1, -1):
+        ch = iso_8601_str[sign_pos]
+        if ch in "+-" and sign_pos > 10:  # past the YYYY-MM-DD prefix
+            return iso_8601_str[:sign_pos]
+        if ch == "T":
+            break
+    return iso_8601_str
 
 
 # -- Public scenario dataclasses ---------------------------------------------
