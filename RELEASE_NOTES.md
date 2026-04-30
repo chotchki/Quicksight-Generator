@@ -1,5 +1,16 @@
 # Release Notes
 
+## v6.2.1 — CI: install Graphviz on workflow runners
+
+The v6.2.0 release pipeline failed at the tests gate because the
+Phase O.1.c diagram render module shells out to the system `dot`
+binary, which wasn't pre-installed on the Ubuntu CI / Pages /
+Release runners. The functional release is unchanged from v6.2.0;
+this patch adds `apt-get install -y graphviz` as the first step
+after checkout in `.github/workflows/{ci,pages,release}.yml`.
+
+No code, schema, or API surface changes.
+
 ## v6.2.0 — Unified docs render pipeline; training/ removed
 
 ### What's new
