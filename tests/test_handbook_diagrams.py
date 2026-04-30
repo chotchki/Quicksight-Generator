@@ -74,6 +74,24 @@ class TestL2Topology:
             "account_templates diagram should mark templates with × N"
         )
 
+    def test_account_templates_diagram_renders_singleton_cross_edges(self):
+        # Regression guard: an earlier filter required BOTH ends of a
+        # rail to be templates, which dropped every template ↔ singleton
+        # rail (the common case) and left only SingleLegRail self-loops
+        # on template nodes — a useless diagram.
+        #
+        # sasquatch_pr's ZBASweep rail (ZBASubAccount → ConcentrationMaster)
+        # is the canonical template ↔ singleton case; ConcentrationMaster
+        # is a singleton account whose label "Cash Concentration Master"
+        # MUST appear in the rendered SVG so the rail edge is visible.
+        l2 = load_instance(_SASQUATCH_PR)
+        svg = render_l2_topology(l2, "account_templates")
+        assert "Cash Concentration Master" in svg, (
+            "account_templates diagram dropped a template→singleton rail "
+            "(ZBASweep). The diagram should render singleton endpoints "
+            "for any template-touching rail, not only template→template."
+        )
+
     def test_chains_diagram_renders_when_chains_present(self):
         # sasquatch_pr declares chain entries; spec_example may or may
         # not. Either way the SVG should be well-formed.

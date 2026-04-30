@@ -350,14 +350,14 @@ def _build_accounts_graph(l2_instance: L2Instance) -> graphviz.Digraph:
 
 
 def _build_account_templates_graph(l2_instance: L2Instance) -> graphviz.Digraph:
-    """Mirror of the accounts graph using AccountTemplate nodes by role.
+    """Template-focused topology: every rail that touches at least one
+    AccountTemplate, with template nodes (dashed) on the template legs
+    and singleton nodes (solid) on any non-template legs.
 
-    Renders each ``AccountTemplate`` as a dashed-border node (the same
-    shape used by the hierarchy diagram for templates) keyed by role,
-    then draws rail edges between template-role nodes. Rails whose
-    source / destination / leg roles touch no template are excluded —
-    this diagram is intentionally narrower than the singleton accounts
-    view, surfacing only the template-shape topology.
+    Rails that touch no template at all drop out, so the diagram stays
+    a focused template-topology view rather than a full re-render of
+    the accounts graph. Singletons that only appear on dropped rails
+    don't get rendered either — keeps the canvas small.
     """
     g = graphviz.Digraph(format="svg")
     g.attr(rankdir="LR", nodesep="0.5", ranksep="1.0")
@@ -365,11 +365,16 @@ def _build_account_templates_graph(l2_instance: L2Instance) -> graphviz.Digraph:
 
     template_roles = {str(t.role) for t in l2_instance.account_templates}
     role_to_template = _role_to_template(l2_instance)
+    role_to_account = _role_to_account(l2_instance)
     for template in l2_instance.account_templates:
         _add_account_template_node(g, template)
 
+    rendered_singletons: set[str] = set()
     for rail in l2_instance.rails:
-        _add_template_rail_edges(g, rail, template_roles, role_to_template)
+        _add_template_rail_edges(
+            g, rail, template_roles, role_to_template,
+            role_to_account, rendered_singletons,
+        )
     return g
 
 
@@ -597,27 +602,39 @@ def _add_template_rail_edges(
     rail: Rail,
     template_roles: set[str],
     role_to_template: dict[str, AccountTemplate],
+    role_to_account: dict[str, Account],
+    rendered_singletons: set[str],
 ) -> None:
-    """Mirror of ``_add_rail_edges`` keyed off AccountTemplate nodes.
+    """Render rail edges where at least one leg touches a template.
 
-    Only emits an edge when the role on each end resolves to an
-    AccountTemplate; singleton-only rails (no template touched) drop
-    out of the diagram by design.
+    Template-roled legs render against the dashed template node;
+    singleton-roled legs render against the singleton account node
+    (added on-demand to ``rendered_singletons`` so it appears once).
+    Rails that touch no template at all are skipped entirely — that's
+    what keeps this view template-focused.
     """
     if isinstance(rail, TwoLegRail):
         sources = _expand_role_expression(rail.source_role)
         destinations = _expand_role_expression(rail.destination_role)
+        if not _rail_touches_template(sources, destinations, template_roles):
+            return
         for src_role in sources:
-            if src_role not in template_roles:
+            src_id = _template_or_singleton_node_id(
+                g, src_role, template_roles, role_to_template,
+                role_to_account, rendered_singletons,
+            )
+            if src_id is None:
                 continue
-            src_template = role_to_template[src_role]
             for dst_role in destinations:
-                if dst_role not in template_roles:
+                dst_id = _template_or_singleton_node_id(
+                    g, dst_role, template_roles, role_to_template,
+                    role_to_account, rendered_singletons,
+                )
+                if dst_id is None:
                     continue
-                dst_template = role_to_template[dst_role]
                 g.edge(
-                    _template_node_id(src_template),
-                    _template_node_id(dst_template),
+                    src_id,
+                    dst_id,
                     label=f"{rail.name}\n({rail.transfer_type})",
                     fontsize="9",
                     color="#1976d2",
@@ -636,6 +653,41 @@ def _add_template_rail_edges(
                 style="dashed",
                 color="#7b1fa2",
             )
+
+
+def _rail_touches_template(
+    sources: tuple[str, ...],
+    destinations: tuple[str, ...],
+    template_roles: set[str],
+) -> bool:
+    """True iff any leg's role resolves to a declared AccountTemplate."""
+    return any(r in template_roles for r in (*sources, *destinations))
+
+
+def _template_or_singleton_node_id(
+    g: graphviz.Digraph,
+    role: str,
+    template_roles: set[str],
+    role_to_template: dict[str, AccountTemplate],
+    role_to_account: dict[str, Account],
+    rendered_singletons: set[str],
+) -> str | None:
+    """Resolve a role to a graph node id, adding the singleton on first use.
+
+    Templates were already added by the builder; singletons get added
+    lazily here the first time a template-touching rail references one,
+    so unrelated singletons stay out of the diagram.
+    """
+    if role in template_roles:
+        return _template_node_id(role_to_template[role])
+    acc = role_to_account.get(role)
+    if acc is None:
+        return None
+    acc_id = str(acc.id)
+    if acc_id not in rendered_singletons:
+        _add_account_node(g, acc)
+        rendered_singletons.add(acc_id)
+    return acc_id
 
 
 def _expand_role_expression(expr: object) -> tuple[str, ...]:
