@@ -589,6 +589,9 @@ def demo_seed_l2(
         click.echo(f"  [warn] omitted {kind}: {reason}", err=True)
 
     if check_hash:
+        # P.5.b — seed_hash is now per-dialect dict on L2Instance. The
+        # CLI's emit_seed call uses the default Postgres dialect; check
+        # against the ``postgres`` entry only.
         declared = instance.seed_hash
         if declared is None:
             click.echo(
@@ -597,20 +600,34 @@ def demo_seed_l2(
                 err=True,
             )
             raise SystemExit(1)
-        if declared != actual_hash:
+        expected = declared.get("postgres")
+        if expected is None:
             click.echo(
-                f"  [error] seed_hash mismatch:\n"
-                f"    YAML  : {declared}\n"
+                "  [error] --check-hash requested but YAML's `seed_hash:` "
+                "dict is missing the `postgres` key; run with --lock to "
+                "populate.",
+                err=True,
+            )
+            raise SystemExit(1)
+        if expected != actual_hash:
+            click.echo(
+                f"  [error] seed_hash mismatch (postgres):\n"
+                f"    YAML  : {expected}\n"
                 f"    actual: {actual_hash}\n"
                 f"  Re-run with --lock if the change was intentional.",
                 err=True,
             )
             raise SystemExit(1)
-        click.echo(f"  [ok] seed_hash matches ({actual_hash})", err=True)
+        click.echo(
+            f"  [ok] seed_hash matches (postgres={actual_hash})", err=True,
+        )
 
     if lock:
         _rewrite_seed_hash_in_yaml(p, actual_hash)
-        click.echo(f"  [lock] wrote seed_hash={actual_hash} into {p}", err=True)
+        click.echo(
+            f"  [lock] wrote seed_hash.postgres={actual_hash} into {p}",
+            err=True,
+        )
 
     if output is None:
         click.echo(sql)
@@ -622,30 +639,61 @@ def demo_seed_l2(
 
 
 def _rewrite_seed_hash_in_yaml(yaml_path: Path, new_hash: str) -> None:
-    """Idempotently set ``seed_hash: <new_hash>`` on a YAML file.
+    """Idempotently set ``seed_hash.postgres: <new_hash>`` on a YAML
+    file.
+
+    P.5.b — seed_hash is now a per-dialect dict in YAML. ``--lock`` only
+    writes the Postgres hash (the CLI's emit_seed defaults to PG); the
+    Oracle hash is locked separately (in tests/l2/*.yaml manually until
+    a future ``--dialect oracle`` flag lands).
 
     Preserves comments + ordering by treating the file as text — never
     parses + re-emits via PyYAML (that would lose every comment and
-    re-order keys). Either replaces an existing top-level
-    ``seed_hash:`` line, or appends one to the file.
+    re-order keys). Replaces the entire ``seed_hash:`` block (top-level
+    key + any indented children) with the new dict shape, or appends
+    one if the field is absent.
     """
     text = yaml_path.read_text()
     lines = text.splitlines(keepends=True)
-    new_line = f"seed_hash: {new_hash}\n"
-    seen = False
+    new_block = (
+        f"seed_hash:\n  postgres: {new_hash}\n"
+    )
+    seen_at = -1
     for i, line in enumerate(lines):
-        # Match top-level seed_hash (no leading whitespace) followed by
-        # a colon. A more permissive regex would catch indented uses
-        # too but we don't want to mutate nested fields named the same.
         if re.match(r"^seed_hash\s*:", line):
-            lines[i] = new_line
-            seen = True
+            seen_at = i
             break
-    if not seen:
+    if seen_at >= 0:
+        # Find the end of the block: either the next top-level key or
+        # the end of file. A "top-level key" is a line with no leading
+        # whitespace and a ``:`` separator.
+        end_at = len(lines)
+        existing_oracle: str | None = None
+        for j in range(seen_at + 1, len(lines)):
+            stripped = lines[j].lstrip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if not lines[j][:1].isspace():
+                end_at = j
+                break
+            # Capture the existing oracle hash so we don't lose it
+            # when --lock only refreshes the postgres value.
+            m = re.match(r"\s+oracle\s*:\s*(\w+)", lines[j])
+            if m:
+                existing_oracle = m.group(1)
+        # Reassemble preserving the oracle entry if it was present.
+        if existing_oracle is not None:
+            new_block = (
+                f"seed_hash:\n"
+                f"  postgres: {new_hash}\n"
+                f"  oracle: {existing_oracle}\n"
+            )
+        lines = lines[:seen_at] + [new_block] + lines[end_at:]
+    else:
         # Append, ensuring the file ends with a newline first.
         if lines and not lines[-1].endswith("\n"):
             lines[-1] = lines[-1] + "\n"
-        lines.append(new_line)
+        lines.append(new_block)
     yaml_path.write_text("".join(lines))
 
 
@@ -918,6 +966,7 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     # unprefixed ``transactions`` / ``daily_balances`` tables).
     seed_sql = emit_l2_seed(
         inv_l2, default_scenario_for(inv_l2).scenario,
+        dialect=cfg.dialect,
     )
 
     click.echo(f"Connecting to {cfg.demo_database_url.split('@')[-1]}...")
@@ -937,16 +986,12 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
             # dashboards render empty even though emit_seed planted the
             # base-table rows — the matviews themselves stay empty.
             # ``refresh_matviews_sql`` returns one statement per line
-            # (REFRESHes first, then ANALYZEs); the per-statement loop
-            # works for both psycopg2 (which can't run multi-statement
-            # strings reliably) and oracledb (which requires single-
-            # statement execute calls outside of PL/SQL blocks).
-            for stmt in refresh_matviews_sql(
-                inv_l2, dialect=cfg.dialect,
-            ).strip().split("\n"):
-                stmt = stmt.strip()
-                if stmt:
-                    cur.execute(stmt.rstrip(";"))
+            # (REFRESHes first, then ANALYZEs). Route through
+            # ``_execute_script`` so the per-dialect splitter handles
+            # the Oracle PL/SQL ``END;`` terminator correctly (Oracle
+            # rejects ``BEGIN ... END`` without the trailing ``;``).
+            refresh_sql = refresh_matviews_sql(inv_l2, dialect=cfg.dialect)
+            _execute_script(cur, refresh_sql, dialect=cfg.dialect)
         conn.commit()
         click.echo("  Database ready.")
     except Exception:

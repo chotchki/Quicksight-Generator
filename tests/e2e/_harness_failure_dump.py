@@ -107,9 +107,17 @@ def dump_failure_manifest(
         f"timestamp_utc  : {datetime.now(timezone.utc).isoformat()}",
     ]))
 
-    # 2. Seed hash from the YAML.
-    seed_hash = instance.seed_hash or "<not locked>"
-    sections.append(_section("Seed Hash (YAML)", [seed_hash]))
+    # 2. Seed hash from the YAML. P.5.b — seed_hash is now a per-dialect
+    # dict; render each entry on its own line so failure dumps surface
+    # both PG + Oracle hashes.
+    if instance.seed_hash:
+        seed_hash_lines = [
+            f"{dialect:9s}: {h}"
+            for dialect, h in sorted(instance.seed_hash.items())
+        ]
+    else:
+        seed_hash_lines = ["<not locked>"]
+    sections.append(_section("Seed Hash (YAML)", seed_hash_lines))
 
     # 3. Planted manifest — JSON-pretty.
     sections.append(_section(

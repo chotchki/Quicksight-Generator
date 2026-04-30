@@ -102,7 +102,11 @@ def _fuzz_yaml_path() -> Path:
     report = default_scenario_for(instance, today=CANONICAL_TODAY)
     sql = emit_seed(instance, report.scenario)
     sha = hashlib.sha256(sql.encode("utf-8")).hexdigest()
-    text_with_lock = text.rstrip() + f"\nseed_hash: {sha}\n"
+    # P.5.b — seed_hash is now a per-dialect dict. Fuzz mode only
+    # exercises Postgres bytes; the Oracle hash isn't needed here.
+    text_with_lock = (
+        text.rstrip() + f"\nseed_hash:\n  postgres: {sha}\n"
+    )
     final_tmp = _FUZZ_DUMP_DIR / f"_final_pid_{os.getpid()}.yaml"
     final_tmp.write_text(text_with_lock)
     os.replace(final_tmp, p)
@@ -327,6 +331,10 @@ def test_seed_hash_in_yaml_matches_actual_when_set(
 
     The two L2 fixtures both have seed_hash locked; this is the
     matrix-wide regression guard against drift.
+
+    P.5.b — seed_hash is now a per-dialect dict on L2Instance. The
+    ``auto_seed_sql`` fixture emits the Postgres bytes (default
+    dialect on emit_seed); compare against the ``postgres`` entry.
     """
     actual = hashlib.sha256(auto_seed_sql.encode("utf-8")).hexdigest()
     declared = instance.seed_hash
@@ -335,9 +343,16 @@ def test_seed_hash_in_yaml_matches_actual_when_set(
         f"seed_hash; lock with `quicksight-gen demo seed-l2 <yaml> --lock`."
         + _hint_if_fuzz(instance)
     )
-    assert actual == declared, (
-        f"Auto-seed for {instance.instance!r} drifted from locked hash:\n"
-        f"  YAML  : {declared}\n"
+    expected = declared.get("postgres")
+    assert expected is not None, (
+        f"L2 instance {instance.instance!r} seed_hash dict is missing "
+        f"the 'postgres' key. Re-lock to populate."
+        + _hint_if_fuzz(instance)
+    )
+    assert actual == expected, (
+        f"Auto-seed for {instance.instance!r} (postgres) drifted from "
+        f"locked hash:\n"
+        f"  YAML  : {expected}\n"
         f"  actual: {actual}"
         + _hint_if_fuzz(instance)
     )
@@ -588,15 +603,18 @@ def test_seed_columns_match_schema_v6_documented_set(
 # changes per fuzz seed; the byte-determinism test above is the
 # regression guard for the fuzz path.
 
+# P.5.b — Postgres-only hashes; the L2FT broad-mode harness only
+# exercises PG so far (Oracle harness lands in P.7+ once the per-row
+# INSERT format is verified end-to-end against live Oracle).
 _BROAD_MODE_HASHES: dict[tuple[str, str], str] = {
     ("spec_example", "broad"):
-        "a5a2656614d1ac821533b206508440e16b5055b263ce733059f472b58506354e",
+        "402a90fcbced3372541bc46cc1cd834567d8dd960d1f9630d5dde8221e2545c2",
     ("spec_example", "l1_plus_broad"):
-        "1062c218e22d5a63dade7f0bfb027c6c50fbbbb3dc743b40675c77d344bd4a94",
+        "4a0fc8f947fc05f3c55e12ff18094dad9401b19e1e5d8962795b74404dc1821e",
     ("sasquatch_pr", "broad"):
-        "a2c53350ae2fdfccbe73224e8c801f348a7e31f57d16b6b44f2c350fdc7c18a6",
+        "795f74b6a2c4a8daa8a1e82ac26ddc85a9c5f764b051b551fbb03e288b190721",
     ("sasquatch_pr", "l1_plus_broad"):
-        "fdebc0d3a68884b0c6136f60426ee6ac46d6c3c41cef34800f37663caf5f6dd6",
+        "608f07180a3629590d005becbf510c5907d49c09cd2275799ce31275d3d538cc",
 }
 
 

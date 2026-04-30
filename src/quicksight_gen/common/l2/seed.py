@@ -45,6 +45,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
+from quicksight_gen.common.sql import Dialect
+
 from .primitives import (
     Account,
     AccountTemplate,
@@ -55,6 +57,28 @@ from .primitives import (
     SingleLegRail,
     TwoLegRail,
 )
+
+
+def _sql_timestamp_literal(iso_8601_str: str, dialect: Dialect) -> str:
+    """Format an ISO-8601 timestamp string as a SQL literal per dialect.
+
+    PG accepts a bare string literal — its TIMESTAMPTZ column type
+    auto-parses ISO-8601 with the ``T`` separator. Oracle requires a
+    typed ``TIMESTAMP 'YYYY-MM-DD HH:MI:SS [+TZ]'`` literal with a
+    space separator (not ``T``); the typed literal works equally well
+    when inserted into either a TIMESTAMP WITH TIME ZONE column
+    (preserves TZ) or a plain TIMESTAMP column (drops TZ).
+
+    The same helper is used for every timestamp the seed emits — both
+    transactions.posting (TIMESTAMPTZ on PG / TS WITH TZ on Oracle)
+    and daily_balances.business_day_start (TIMESTAMPTZ on PG / plain
+    TIMESTAMP on Oracle, demoted in P.5.b for PK eligibility).
+    """
+    if dialect is Dialect.POSTGRES:
+        return "'" + iso_8601_str.replace("'", "''") + "'"
+    # Oracle: typed literal with space separator.
+    oracle_str = iso_8601_str.replace("T", " ", 1).replace("'", "''")
+    return f"TIMESTAMP '{oracle_str}'"
 
 
 # -- Public scenario dataclasses ---------------------------------------------
@@ -354,13 +378,27 @@ class ScenarioPlant:
 # -- Public emit_seed --------------------------------------------------------
 
 
-def emit_seed(instance: L2Instance, scenarios: ScenarioPlant) -> str:
+def emit_seed(
+    instance: L2Instance,
+    scenarios: ScenarioPlant,
+    *,
+    dialect: Dialect = Dialect.POSTGRES,
+) -> str:
     """Emit the full SQL INSERT script for the planted scenarios.
 
-    The output is a single SQL string ready for ``psycopg2.cursor.execute``
-    or feeding into ``psql``. Scenarios are emitted in deterministic
-    order (sorted by account_id then days_ago) so the M.2.7 hash-lock
+    The output is a single SQL string ready for
+    ``psycopg2.cursor.execute`` (Postgres) or for the per-statement
+    runner in ``cli._execute_script`` (Oracle, via oracledb's
+    cursor.execute). Scenarios are emitted in deterministic order
+    (sorted by account_id then days_ago) so the per-dialect hash-lock
     can pin the output bytes.
+
+    P.5.b — emits **one INSERT per row**, terminated with ``;``. Both
+    PG and Oracle accept this form. Multi-row ``INSERT INTO foo
+    VALUES (...), (...)`` (the M.2 PG-only form) is unsupported on
+    Oracle (which uses ``INSERT ALL`` instead); per-row INSERT is
+    the simpler portability choice and the perf cost is negligible
+    for the demo's ~few-hundred-row scale.
     """
     prefix = instance.instance
     template_by_role = {t.role: t for t in instance.account_templates}
@@ -375,7 +413,7 @@ def emit_seed(instance: L2Instance, scenarios: ScenarioPlant) -> str:
         txn_rows.extend(
             _emit_limit_breach_rows(
                 p, instance, scenarios, template_by_role,
-                parent_singleton_by_role, txn_counter,
+                parent_singleton_by_role, txn_counter, dialect,
             )
         )
 
@@ -383,28 +421,28 @@ def emit_seed(instance: L2Instance, scenarios: ScenarioPlant) -> str:
         txn_rows.extend(
             _emit_drift_background_rows(
                 p, instance, scenarios, template_by_role,
-                parent_singleton_by_role, txn_counter,
+                parent_singleton_by_role, txn_counter, dialect,
             )
         )
 
     for p in sorted(scenarios.stuck_pending_plants, key=_stuck_pending_key):
         txn_rows.extend(
             _emit_stuck_pending_rows(
-                p, scenarios, template_by_role, txn_counter,
+                p, scenarios, template_by_role, txn_counter, dialect,
             )
         )
 
     for p in sorted(scenarios.stuck_unbundled_plants, key=_stuck_unbundled_key):
         txn_rows.extend(
             _emit_stuck_unbundled_rows(
-                p, scenarios, template_by_role, txn_counter,
+                p, scenarios, template_by_role, txn_counter, dialect,
             )
         )
 
     for p in sorted(scenarios.supersession_plants, key=_supersession_key):
         txn_rows.extend(
             _emit_supersession_rows(
-                p, scenarios, template_by_role, txn_counter,
+                p, scenarios, template_by_role, txn_counter, dialect,
             )
         )
 
@@ -412,6 +450,7 @@ def emit_seed(instance: L2Instance, scenarios: ScenarioPlant) -> str:
         txn_rows.extend(
             _emit_transfer_template_rows(
                 p, instance, scenarios, template_by_role, txn_counter,
+                dialect,
             )
         )
 
@@ -419,6 +458,7 @@ def emit_seed(instance: L2Instance, scenarios: ScenarioPlant) -> str:
         txn_rows.extend(
             _emit_rail_firing_rows(
                 p, instance, scenarios, template_by_role, txn_counter,
+                dialect,
             )
         )
 
@@ -426,6 +466,7 @@ def emit_seed(instance: L2Instance, scenarios: ScenarioPlant) -> str:
         txn_rows.extend(
             _emit_inv_fanout_rows(
                 p, instance, scenarios, template_by_role, txn_counter,
+                dialect,
             )
         )
 
@@ -449,35 +490,45 @@ def emit_seed(instance: L2Instance, scenarios: ScenarioPlant) -> str:
     for p in sorted(scenarios.drift_plants, key=_drift_key):
         db_rows.append(
             _emit_drift_balance_row(
-                p, scenarios, template_by_role, role_offsets,
+                p, scenarios, template_by_role, role_offsets, dialect,
             )
         )
 
     for p in sorted(scenarios.overdraft_plants, key=_overdraft_key):
         db_rows.append(
             _emit_overdraft_balance_row(
-                p, scenarios, template_by_role, role_offsets,
+                p, scenarios, template_by_role, role_offsets, dialect,
             )
         )
 
-    txn_insert = (
-        f"INSERT INTO {prefix}_transactions "
+    # Per-row INSERTs (one per row, terminated with ``;``). Both PG +
+    # Oracle accept this form; PG's multi-row VALUES (...) , (...) is
+    # unsupported on Oracle. The earlier multi-row form was an M.2 PG-
+    # only optimization; per-row is the simpler portability choice.
+    txn_cols = (
         "(id, account_id, account_name, account_role, account_scope, "
         "account_parent_role, amount_money, amount_direction, status, "
         "posting, transfer_id, transfer_type, transfer_completion, "
         "transfer_parent_id, rail_name, template_name, bundle_id, "
-        "supersedes, origin, metadata) VALUES\n  "
-        + ",\n  ".join(txn_rows)
-        + ";"
+        "supersedes, origin, metadata)"
+    )
+    txn_insert = (
+        "\n".join(
+            f"INSERT INTO {prefix}_transactions {txn_cols} VALUES\n  {row};"
+            for row in txn_rows
+        )
     ) if txn_rows else "-- (no transactions planted)"
 
-    db_insert = (
-        f"INSERT INTO {prefix}_daily_balances "
+    db_cols = (
         "(account_id, account_name, account_role, account_scope, "
         "account_parent_role, expected_eod_balance, business_day_start, "
-        "business_day_end, money, limits, supersedes) VALUES\n  "
-        + ",\n  ".join(db_rows)
-        + ";"
+        "business_day_end, money, limits, supersedes)"
+    )
+    db_insert = (
+        "\n".join(
+            f"INSERT INTO {prefix}_daily_balances {db_cols} VALUES\n  {row};"
+            for row in db_rows
+        )
     ) if db_rows else "-- (no daily_balances planted)"
 
     return f"""\
@@ -606,6 +657,7 @@ def _emit_limit_breach_rows(
     template_by_role: dict[Identifier, AccountTemplate],
     parent_singleton_by_role: dict[Identifier, Account],
     counter: _Counter,
+    dialect: Dialect,
 ) -> list[str]:
     """Plant ONE outbound debit row exceeding the cap. The row alone is
     enough to drive `OutboundFlow > limit` for the (account, day, type)."""
@@ -642,6 +694,8 @@ def _emit_limit_breach_rows(
             rail_name=p.rail_name,
             origin="InternalInitiated",
             metadata={"customer_id": str(ti.account_id)},
+        
+            dialect=dialect,
         ),
         # External counter-leg (no balance tracking, but needed for Conservation)
         _txn_row(
@@ -659,6 +713,8 @@ def _emit_limit_breach_rows(
             rail_name=p.rail_name,
             origin="InternalInitiated",
             metadata={"customer_id": str(ti.account_id)},
+        
+            dialect=dialect,
         ),
     ]
 
@@ -670,6 +726,7 @@ def _emit_drift_background_rows(
     template_by_role: dict[Identifier, AccountTemplate],
     parent_singleton_by_role: dict[Identifier, Account],
     counter: _Counter,
+    dialect: Dialect,
 ) -> list[str]:
     """For drift planting we want SOME postings on the day so the computed
     balance is meaningful. Plant two normal credits, each $100, so the
@@ -716,6 +773,8 @@ def _emit_drift_background_rows(
                 origin=counter_origin,
                 metadata={"customer_id": str(ti.account_id),
                           "external_reference": f"ER-{n:04d}"},
+            
+                dialect=dialect,
             ),
             # Customer DDA credit leg (the one we're tracking)
             _txn_row(
@@ -734,6 +793,8 @@ def _emit_drift_background_rows(
                 origin=customer_origin,
                 metadata={"customer_id": str(ti.account_id),
                           "external_reference": f"ER-{n:04d}"},
+            
+                dialect=dialect,
             ),
         ])
     return rows
@@ -779,6 +840,7 @@ def _emit_drift_balance_row(
     scenarios: ScenarioPlant,
     template_by_role: dict[Identifier, AccountTemplate],
     role_offsets: dict[str, int] | None,
+    dialect: Dialect,
 ) -> str:
     """Emit one daily_balances row whose `money` differs from the sum of
     that day's planted credits ($200) by `delta_money`.
@@ -800,6 +862,8 @@ def _emit_drift_balance_row(
         day=drift_day,
         money=stored,
         offset_hours=_resolve_role_offset(ti.template_role, role_offsets),
+    
+        dialect=dialect,
     )
 
 
@@ -808,6 +872,7 @@ def _emit_overdraft_balance_row(
     scenarios: ScenarioPlant,
     template_by_role: dict[Identifier, AccountTemplate],
     role_offsets: dict[str, int] | None,
+    dialect: Dialect,
 ) -> str:
     """Emit one daily_balances row with negative money — overdraft."""
     ti = _resolve_template(p.account_id, scenarios)
@@ -827,6 +892,8 @@ def _emit_overdraft_balance_row(
         day=overdraft_day,
         money=p.money,
         offset_hours=_resolve_role_offset(ti.template_role, role_offsets),
+    
+        dialect=dialect,
     )
 
 
@@ -849,6 +916,7 @@ def _emit_stuck_pending_rows(
     scenarios: ScenarioPlant,
     template_by_role: dict[Identifier, AccountTemplate],
     counter: _Counter,
+    dialect: Dialect,
 ) -> list[str]:
     """Plant ONE Pending leg (no external counter-leg — Pending legs
     haven't traversed the rail yet so the counter-leg doesn't exist).
@@ -881,6 +949,8 @@ def _emit_stuck_pending_rows(
             origin="InternalInitiated",
             metadata={"customer_id": str(ti.account_id)},
             status="Pending",
+        
+            dialect=dialect,
         ),
     ]
 
@@ -890,6 +960,7 @@ def _emit_stuck_unbundled_rows(
     scenarios: ScenarioPlant,
     template_by_role: dict[Identifier, AccountTemplate],
     counter: _Counter,
+    dialect: Dialect,
 ) -> list[str]:
     """Plant ONE Posted leg with `bundle_id IS NULL` on a rail whose
     `max_unbundled_age` cap has been exceeded.
@@ -922,6 +993,7 @@ def _emit_stuck_unbundled_rows(
             metadata={"customer_id": str(ti.account_id)},
             # status defaults to Posted; bundle_id stays NULL — that's
             # the whole point.
+            dialect=dialect,
         ),
     ]
 
@@ -931,6 +1003,7 @@ def _emit_supersession_rows(
     scenarios: ScenarioPlant,
     template_by_role: dict[Identifier, AccountTemplate],
     counter: _Counter,
+    dialect: Dialect,
 ) -> list[str]:
     """Plant TWO transactions sharing one logical `id` — the original
     + a TechnicalCorrection rewrite.
@@ -966,6 +1039,8 @@ def _emit_supersession_rows(
             rail_name=p.rail_name,
             origin="InternalInitiated",
             metadata=metadata,
+        
+            dialect=dialect,
         ),
         # TechnicalCorrection at 09:30 — same logical id, different
         # amount, supersedes='TechnicalCorrection'.
@@ -985,6 +1060,8 @@ def _emit_supersession_rows(
             origin="InternalInitiated",
             metadata=metadata,
             supersedes="TechnicalCorrection",
+        
+            dialect=dialect,
         ),
     ]
 
@@ -1063,6 +1140,7 @@ def _emit_transfer_template_rows(
     scenarios: ScenarioPlant,
     template_by_role: dict[Identifier, AccountTemplate],
     counter: _Counter,
+    dialect: Dialect,
 ) -> list[str]:
     """Plant ONE shared Transfer firing of the L2-declared TransferTemplate.
 
@@ -1140,6 +1218,8 @@ def _emit_transfer_template_rows(
             origin=src_origin,
             metadata=metadata,
             template_name=p.template_name,
+        
+            dialect=dialect,
         ),
         # Destination-side leg (credit, money in).
         _txn_row(
@@ -1158,6 +1238,8 @@ def _emit_transfer_template_rows(
             origin=dst_origin,
             metadata=metadata,
             template_name=p.template_name,
+        
+            dialect=dialect,
         ),
     ]
 
@@ -1200,6 +1282,8 @@ def _emit_transfer_template_rows(
                 origin=child_origin,
                 metadata=metadata,
                 transfer_parent_id=transfer_id,
+            
+                dialect=dialect,
             ))
     return rows
 
@@ -1210,6 +1294,7 @@ def _emit_rail_firing_rows(
     scenarios: ScenarioPlant,
     template_by_role: dict[Identifier, AccountTemplate],
     counter: _Counter,
+    dialect: Dialect,
 ) -> list[str]:
     """Plant ONE Posted firing of an L2-declared Rail (M.4.2 broad mode).
 
@@ -1304,6 +1389,8 @@ def _emit_rail_firing_rows(
                 metadata=metadata,
                 transfer_parent_id=p.transfer_parent_id,
                 template_name=p.template_name,
+            
+                dialect=dialect,
             ),
             _txn_row(
                 id_=txn_id,
@@ -1322,6 +1409,8 @@ def _emit_rail_firing_rows(
                 metadata=metadata,
                 transfer_parent_id=p.transfer_parent_id,
                 template_name=p.template_name,
+            
+                dialect=dialect,
             ),
         ]
 
@@ -1357,6 +1446,8 @@ def _emit_rail_firing_rows(
             metadata=metadata,
             transfer_parent_id=p.transfer_parent_id,
             template_name=p.template_name,
+        
+            dialect=dialect,
         ),
     ]
 
@@ -1367,6 +1458,7 @@ def _emit_inv_fanout_rows(
     scenarios: ScenarioPlant,
     template_by_role: dict[Identifier, AccountTemplate],
     counter: _Counter,
+    dialect: Dialect,
 ) -> list[str]:
     """Plant N two-leg transfers: every sender debits, the same recipient
     credits, all on ``days_ago`` (N.4.h Investigation coverage).
@@ -1425,6 +1517,8 @@ def _emit_inv_fanout_rows(
                     "sender_id": str(sender.account_id),
                     "recipient_id": str(recipient.account_id),
                 },
+            
+                dialect=dialect,
             ),
             # Recipient credit leg
             _txn_row(
@@ -1445,6 +1539,8 @@ def _emit_inv_fanout_rows(
                     "sender_id": str(sender.account_id),
                     "recipient_id": str(recipient.account_id),
                 },
+            
+                dialect=dialect,
             ),
         ])
     return rows
@@ -1466,6 +1562,7 @@ def _txn_row(
     rail_name: Identifier,
     origin: str,
     metadata: dict[str, str],
+    dialect: Dialect,
     status: str = "Posted",
     bundle_id: str | None = None,
     supersedes: str | None = None,
@@ -1484,6 +1581,10 @@ def _txn_row(
     Transfers back to their parent Transfer's transfer_id so the L2
     chain detection SQL sees a matched child). `transfer_completion`
     isn't currently exercised, emits as NULL.
+
+    ``dialect`` flows into ``_sql_timestamp_literal`` for the
+    ``posting`` column — PG keeps the bare ISO-8601 string; Oracle
+    wraps in ``TIMESTAMP 'YYYY-MM-DD HH:MI:SS+TZ'``.
     """
     parent_role_lit = (
         _sql_str(account_parent_role) if account_parent_role else "NULL"
@@ -1507,7 +1608,8 @@ def _txn_row(
         f"{_sql_str(account_name)}, {_sql_str(account_role)}, "
         f"{_sql_str(account_scope)}, {parent_role_lit}, "
         f"{money}, {_sql_str(direction)}, {_sql_str(status)}, "
-        f"{_sql_str(posting)}, {_sql_str(transfer_id)}, "
+        f"{_sql_timestamp_literal(posting, dialect)}, "
+        f"{_sql_str(transfer_id)}, "
         f"{_sql_str(transfer_type)}, NULL, {transfer_parent_lit}, "
         f"{_sql_str(rail_name)}, {template_lit}, "
         f"{bundle_lit}, {supersedes_lit}, "
@@ -1524,6 +1626,7 @@ def _balance_row(
     account_parent_role: Identifier | None,
     day: date,
     money: Decimal,
+    dialect: Dialect,
     offset_hours: int = 0,
 ) -> str:
     """Build one VALUES row for the daily_balances INSERT.
@@ -1532,6 +1635,13 @@ def _balance_row(
     ``business_day_end`` by the same amount (M.4.4.14) — a
     role with offset=17 emits 17:00→17:00 next day. Default 0 keeps
     production midnight-aligned (no hash drift).
+
+    ``dialect`` flows into ``_sql_timestamp_literal`` for the
+    business_day_start / business_day_end columns. Note these columns
+    are demoted to plain TIMESTAMP on Oracle (PK-eligibility, see
+    P.5.b), so the typed literal's TZ portion is dropped at insert
+    time — accepted by Oracle, lossless for our midnight-aligned
+    snapshot timestamps.
     """
     parent_role_lit = (
         _sql_str(account_parent_role) if account_parent_role else "NULL"
@@ -1540,8 +1650,8 @@ def _balance_row(
         f"({_sql_str(account_id)}, {_sql_str(account_name)}, "
         f"{_sql_str(account_role)}, {_sql_str(account_scope)}, "
         f"{parent_role_lit}, NULL, "
-        f"{_sql_str(_bod_timestamp(day, offset_hours))}, "
-        f"{_sql_str(_eod_timestamp(day, offset_hours))}, "
+        f"{_sql_timestamp_literal(_bod_timestamp(day, offset_hours), dialect)}, "
+        f"{_sql_timestamp_literal(_eod_timestamp(day, offset_hours), dialect)}, "
         f"{money}, NULL, NULL)"
     )
 

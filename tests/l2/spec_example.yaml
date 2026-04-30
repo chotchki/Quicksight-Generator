@@ -121,7 +121,9 @@ limit_schedules:
   - parent_role: CustomerLedger
     transfer_type: wire
     cap: 5000.00
-seed_hash: ec2391ffe85c18da093f3fe63a0752d829de6bcacd9f28d3c8f4f0451e8751a0
+seed_hash:
+  postgres: 9f0842bf6b3f0d2883a4efb16286a9503a6c24560750b8c972009db0b7fad3ff
+  oracle: 10d30c1bdeec5ff2412b35ef54d90e23409b0cada5fc83e023056dc7a78795e8
 
 # Inline brand theme (N.1). Mirrors the legacy ``default`` preset
 # in common/theme.py byte-for-byte so spec_example renders identically

@@ -148,13 +148,16 @@ def test_all_required_sections_present(tmp_path: Path) -> None:
 
 
 def test_seed_hash_section_carries_yaml_hash(tmp_path: Path) -> None:
+    """P.5.b — seed_hash is now a per-dialect dict; the dump renders one
+    line per (dialect, hash) entry. Every locked hash must appear."""
     inst = _instance()
     out_path = dump_failure_manifest(
         tmp_path, test_id="t", instance=inst, planted_manifest={},
     )
     text = out_path.read_text()
     assert inst.seed_hash is not None
-    assert inst.seed_hash in text
+    for dialect, h in inst.seed_hash.items():
+        assert h in text, f"{dialect} hash missing from dump: {h}"
 
 
 def test_planted_manifest_round_trips_as_json(tmp_path: Path) -> None:

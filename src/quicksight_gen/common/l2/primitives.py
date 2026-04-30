@@ -394,7 +394,14 @@ class L2Instance:
     # this declared value (or rewrites it via ``--lock`` after a
     # reviewed change). Not load-bearing for any L1 invariant — pure
     # metadata tied to the seed pipeline.
-    seed_hash: str | None = None
+    #
+    # P.5.b — switched from ``str`` to ``dict[str, str]`` keyed on
+    # dialect name (``postgres`` / ``oracle``). The seed bytes differ
+    # per dialect (Oracle wraps timestamps in ``TIMESTAMP '...'`` typed
+    # literals, emits one INSERT per row instead of multi-row VALUES).
+    # The YAML loader accepts either the legacy single-string form
+    # (interpreted as the Postgres hash) or the new dict form.
+    seed_hash: dict[str, str] | None = None
     # Optional per-role business-day offset in hours (M.4.4.14). When
     # set, an account whose role appears in this map gets its emitted
     # ``daily_balances.business_day_start`` shifted by the offset
