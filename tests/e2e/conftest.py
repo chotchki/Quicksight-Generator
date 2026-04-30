@@ -92,23 +92,34 @@ def qs_client(region):
 
 
 @pytest.fixture(scope="session")
-def inv_dashboard_id(resource_prefix) -> str:
-    return f"{resource_prefix}-investigation-dashboard"
+def inv_l2_prefix() -> str:
+    """The default L2 instance's prefix — the middle segment of every
+    Investigation resource ID under N.3.f (Investigation became L2-fed,
+    same default-institution YAML the L1 dashboard uses)."""
+    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
+
+    return str(default_l2_instance().instance)
 
 
 @pytest.fixture(scope="session")
-def inv_analysis_id(resource_prefix) -> str:
-    return f"{resource_prefix}-investigation-analysis"
+def inv_dashboard_id(resource_prefix, inv_l2_prefix) -> str:
+    return f"{resource_prefix}-{inv_l2_prefix}-investigation-dashboard"
 
 
 @pytest.fixture(scope="session")
-def inv_dataset_ids(resource_prefix) -> list[str]:
+def inv_analysis_id(resource_prefix, inv_l2_prefix) -> str:
+    return f"{resource_prefix}-{inv_l2_prefix}-investigation-analysis"
+
+
+@pytest.fixture(scope="session")
+def inv_dataset_ids(resource_prefix, inv_l2_prefix) -> list[str]:
     """Expected Investigation dataset IDs.
 
     K.4.3 ships recipient-fanout. K.4.4 adds volume-anomalies (rolling
     z-score matview). K.4.5 adds money-trail (recursive-CTE matview).
     K.4.8 adds account-network (second wrapper over the K.4.5 matview)
     and a narrow accounts dataset feeding only the anchor dropdown.
+    N.3.f added the L2 instance prefix as the middle segment.
     """
     suffixes = [
         "inv-recipient-fanout-dataset",
@@ -117,7 +128,7 @@ def inv_dataset_ids(resource_prefix) -> list[str]:
         "inv-account-network-dataset",
         "inv-anetwork-accounts-dataset",
     ]
-    return [f"{resource_prefix}-{s}" for s in suffixes]
+    return [f"{resource_prefix}-{inv_l2_prefix}-{s}" for s in suffixes]
 
 
 @pytest.fixture(scope="session")

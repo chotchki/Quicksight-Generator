@@ -101,6 +101,9 @@ from _harness_l2ft_assertions import (  # noqa: E402
     assert_l2_exceptions_check_types_present,
     assert_l2ft_plants_visible,
 )
+from _harness_inv_assertions import (  # noqa: E402
+    assert_inv_matviews_queryable,
+)
 
 # L2_INSTANCES matrix: re-use the exact list `test_l2_seed_contract.py`
 # uses so adding a new YAML there parameterizes the harness too.
@@ -723,6 +726,16 @@ def test_harness_l1_planted_scenarios_visible(
     # the seed/matview layer if it fails. NOT xfailed — this is the
     # primary regression net the harness provides.
     assert_l1_matview_rows_present(harness_db_conn, prefix, manifest)
+
+    # Layer 1b (N.3.l-bis): Investigation matview schema-health check.
+    # Investigation has no planted scenarios in the fuzz manifest yet
+    # (Sasquatch Cascadia/Juniper plants live in
+    # apps/investigation/demo_data.py and weren't lifted to
+    # common/l2/seed.py — deferred Phase O candidate). For now we
+    # assert the prefixed inv matviews exist and emit cleanly against
+    # the v6 base tables — which catches the v5/v6 column-name
+    # regression class surfaced in N.3.b.
+    assert_inv_matviews_queryable(harness_db_conn, prefix)
 
     def _check_l1(page: Any) -> None:
         # Widen the universal date filter (M.2b.1) so plants outside
