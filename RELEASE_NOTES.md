@@ -1,5 +1,45 @@
 # Release Notes
 
+## v6.1.0 — Theme as L2 attribute; Investigation + Executives go L2-fed; Inv plant + harness parity
+
+### What's new
+
+- **Theme is an L2 institution attribute.** Each L2 YAML carries an inline `theme:` block validated by `ThemePreset`. Apps resolve via `resolve_l2_theme(l2_instance)`. When no inline theme is declared, AWS QuickSight CLASSIC takes over — `build_theme` returns None and the deploy skips emitting a custom Theme resource (silent-fallback contract).
+- **All four shipped apps are L2-fed.** L1 Dashboard, L2 Flow Tracing, Investigation, and Executives all consume the same institution YAML's `instance` prefix + `theme:` block. One YAML drives the whole 4-app deployment unit.
+- **Investigation + Executives ported.** Investigation reads from `<prefix>_inv_*` matviews (lifted from the legacy global namespace into per-prefix DDL via `common/l2/schema.py::_emit_inv_views`); Executives reads from `<prefix>_transactions` / `<prefix>_daily_balances` directly.
+- **Investigation plant primitive.** New `InvFanoutPlant` in `common/l2/seed.py` populates the `<prefix>_inv_pair_rolling_anomalies` + `<prefix>_inv_money_trail_edges` matviews with N-sender → 1-recipient fanout edges. Wired into `auto_scenario.default_scenario_for` so every L2 instance with at least 2 sender candidates gets a planted Investigation scenario.
+- **Harness parity for Investigation + Executives.** New `_harness_inv_assertions.assert_inv_planted_rows_visible` mirrors the L1 plant-row visibility check; `_harness_exec_assertions.assert_exec_base_tables_queryable` covers Executives' base-table contract.
+- **`Config.with_l2_instance_prefix(prefix)` helper.** Centralizes the L2-prefix stamp + `datasource_arn` re-derive across all 8 sites (4 `_generate_*`, 2 dataset builders, 2 app builders, demo apply). Closes a class of bugs where per-app builders baked the unprefixed `qs-gen-demo-datasource` ARN into dataset JSON.
+- **`demo apply` now plants L2-shape data.** Calls `emit_l2_seed(inv_l2, default_scenario_for(inv_l2).scenario)` and `refresh_matviews_sql(inv_l2)` so the prefixed L1 + Inv matviews actually populate. Pre-N.4 demo apply only seeded the legacy v5-shape unprefixed tables (which dashboards no longer read from). Closes pending issue #433 ("L1 dashboard date filter doesn't surface matview rows").
+- **Investigation `recipient_fanout` dataset SQL** migrated to v6 column names (`amount_money` / `posting` / `account_role` / `status='Posted'` / leaf-internal predicate).
+- **Inv + Exec analysis names** normalized to `Name (instance)` shape so multi-instance deployments are visually distinguishable in the QS dashboard list.
+
+### Breaking changes
+
+- **`cfg.theme_preset` field dropped** (Config dataclass + YAML loader + `QS_GEN_THEME_PRESET` env var). Theme is fully L2-driven.
+- **CLI `--theme-preset` flag dropped** from `generate` + `deploy --generate`. Override theme by editing the L2 YAML's `theme:` block, or use `--l2-instance` to point at a different institution YAML.
+- **`PRESETS` dict + `get_preset()` function dropped** from `common/theme.py`. The single `DEFAULT_PRESET` constant is the only fallback.
+- **`populate_app_info_sheet(theme=None)` fallback dropped.** `theme: ThemePreset` is now required — every caller already passes one.
+- **`build_theme(cfg)` → `build_theme(cfg, theme: ThemePreset | None) -> Theme | None`.** Returns None for the silent-fallback path (CLI + harness deploy skip writing `theme.json` accordingly).
+- **`resolve_l2_theme` returns `ThemePreset | None`** instead of always returning a preset. Apps coerce via `resolve_l2_theme(l2_instance) or DEFAULT_PRESET` for in-canvas accent colors; CLI uses the raw Optional for the deploy decision.
+
+### Migration notes (operators on v6.0.x)
+
+- If your `config.yaml` carried `theme_preset: <name>`, remove that line. Move the brand colors into your L2 institution YAML's `theme:` block (see `tests/l2/sasquatch_pr.yaml` for an example, or omit entirely to fall back to AWS QuickSight CLASSIC).
+- If you were invoking `quicksight-gen generate ... --theme-preset <name>`, drop the flag. The L2 YAML now owns this decision.
+- If you have CI scripts that set `QS_GEN_THEME_PRESET=<name>`, drop the env var.
+
+### Aurora deploy verify
+
+End-to-end: 75 passed, 1 known-flake (`test_harness_l1_planted_scenarios_visible[sasquatch_pr]` Layer 2 — see backlog "Sasquatch L1 dashboard render flake"). Eight commits across the iteration loop captured the structural fixes; see commits `aff3229` → `38b2b6c`.
+
+### Internal cleanups
+
+- Inv matview `pair_legs` CTE now aliases v6 `account_role` back to v5 `_account_type` so downstream consumers don't need the rename.
+- Inv matview filter `status='success'` → `status='Posted'` (v5-era leftover from the N.3.b column corrections).
+- `_create_theme` skips when `theme.json` is missing (parity with `_delete_theme`'s existing guard).
+- `_apply_demo` applies the per-instance L2 schema (`emit_l2_schema(inv_l2)`) alongside the legacy `schema.sql`.
+
 ## v6.0.4
 
 ### Hotfix — Re-cut to escape v6.0.3 duplicate-run race
