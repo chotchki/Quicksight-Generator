@@ -283,13 +283,17 @@ def test_recipient_fanout_contract_columns():
     assert "amount" in names
 
 
-def test_recipient_fanout_sql_filters_recipient_to_dda_types():
-    """Administrative sweeps land in gl_control / concentration_master
-    accounts — those would dominate the fanout ranking. Filter limits
-    recipients to dda + merchant_dda so the signal is meaningful."""
+def test_recipient_fanout_sql_filters_recipient_to_leaf_internal_accounts():
+    """N.4.o v6 column rename: the v5 ``account_type IN ('dda',
+    'merchant_dda')`` filter became the leaf-internal predicate
+    (``account_scope = 'internal' AND account_parent_role IS NOT NULL``)
+    — administrative sweeps land in singleton control accounts, those
+    have ``parent_role IS NULL`` and get filtered out, so the fanout
+    signal stays focused on real customer recipients."""
     ds = build_all_datasets(_TEST_CFG)[0]
     sql = next(iter(ds.PhysicalTableMap.values())).CustomSql.SqlQuery
-    assert "account_type IN ('dda', 'merchant_dda')" in sql
+    assert "t.account_scope = 'internal'" in sql
+    assert "t.account_parent_role IS NOT NULL" in sql
 
 
 # ---------------------------------------------------------------------------

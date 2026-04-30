@@ -185,10 +185,13 @@ def _require_prefix(cfg: Config) -> str:
 def build_recipient_fanout_dataset(cfg: Config) -> DataSet:
     """Recipient × sender × transfer rows, one per (recipient leg, sender leg).
 
-    Filters to recipient ``account_type IN ('dda', 'merchant_dda')`` so
-    administrative sweeps into ``gl_control`` / ``concentration_master``
-    don't dominate the fanout ranking — those always pull from many
-    accounts by design and would crowd out genuine AML signal.
+    Filters to leaf-internal recipients (``account_scope='internal'``
+    AND ``account_parent_role IS NOT NULL`` — the v6 equivalent of the
+    v5 ``account_type IN ('dda', 'merchant_dda')`` filter, mirroring
+    the Inv matview convention) so administrative sweeps into control
+    accounts don't dominate the fanout ranking. v5 column names kept
+    in the output projection (``_account_type``) so downstream consumers
+    aren't sensitive to the source-side rename.
     """
     p = _require_prefix(cfg)
     sql = f"""\
@@ -197,23 +200,24 @@ WITH inflows AS (
         t.transfer_id,
         t.account_id            AS recipient_account_id,
         t.account_name          AS recipient_account_name,
-        t.account_type          AS recipient_account_type,
-        t.signed_amount         AS amount,
-        t.posted_at             AS posted_at
+        t.account_role          AS recipient_account_type,
+        t.amount_money          AS amount,
+        t.posting               AS posted_at
     FROM {p}_transactions t
-    WHERE t.signed_amount > 0
-      AND t.status = 'success'
-      AND t.account_type IN ('dda', 'merchant_dda')
+    WHERE t.amount_money > 0
+      AND t.status = 'Posted'
+      AND t.account_scope = 'internal'
+      AND t.account_parent_role IS NOT NULL
 ),
 outflows AS (
     SELECT
         t.transfer_id,
         t.account_id            AS sender_account_id,
         t.account_name          AS sender_account_name,
-        t.account_type          AS sender_account_type
+        t.account_role          AS sender_account_type
     FROM {p}_transactions t
-    WHERE t.signed_amount < 0
-      AND t.status = 'success'
+    WHERE t.amount_money < 0
+      AND t.status = 'Posted'
 )
 SELECT
     i.recipient_account_id,
