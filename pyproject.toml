@@ -93,6 +93,7 @@ quicksight_gen = [
     "docs/**/*.svg",
     "docs/**/*.png",
     "docs/**/*.css",
+    "docs/**/*.js",
     "docs/**/*.yaml",
     "docs/**/*.yml",
     # Phase O.1.c — hand-authored Graphviz diagrams.

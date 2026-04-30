@@ -141,9 +141,16 @@ def define_env(env: Any) -> None:
 
 
 def _wrap_svg(svg: str, *, alt: str) -> str:
-    """Wrap inline SVG in a figure block so md_in_html lays it out cleanly."""
+    """Wrap inline SVG in a figure block so md_in_html lays it out cleanly.
+
+    The ``data-zoomable`` + ``tabindex`` attributes opt the figure in to
+    the click-to-zoom lightbox wired up in
+    ``stylesheets/qs-lightbox.js`` — clicking (or pressing Enter / Space
+    while focused) opens the SVG in a fullscreen pan/zoom overlay.
+    """
     return (
-        f'<figure class="qs-diagram" role="img" aria-label="{alt}">\n'
+        f'<figure class="qs-diagram" role="img" aria-label="{alt}" '
+        f'data-zoomable="true" tabindex="0">\n'
         f"{svg}\n"
         f"</figure>"
     )

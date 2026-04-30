@@ -22,6 +22,11 @@ theme:
 extra_css:
   - stylesheets/sasquatch.css
 
+extra_javascript:
+  # Click-to-zoom lightbox for inline-SVG diagrams emitted by
+  # main.py::_wrap_svg. Pure vanilla JS, no third-party dep.
+  - stylesheets/qs-lightbox.js
+
 nav:
   # Phase O.1.a — 5-section IA per docs/audits/o_0_content_audit.md §6.
   # Pages live in their existing paths; O.1.d-i moves them under
