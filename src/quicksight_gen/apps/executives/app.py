@@ -594,16 +594,11 @@ def _wire_account_coverage_filter_groups(
 # App entry points
 # ---------------------------------------------------------------------------
 
-def _analysis_name(theme: ThemePreset) -> str:
-    """Resolve the analysis name from the L2 theme's prefix (N.4.c).
-
-    Mirrors L1 / Investigation: when the institution YAML declares a
-    theme with ``analysis_name_prefix`` (e.g. "Demo"), the title
-    becomes ``"<prefix> — Executives"``; otherwise just ``"Executives"``.
-    """
-    if theme.analysis_name_prefix:
-        return f"{theme.analysis_name_prefix} — Executives"
-    return "Executives"
+def _analysis_name(l2_instance: L2Instance) -> str:
+    """Title shown in QuickSight — matches L1/L2FT's ``Name (instance)``
+    shape so multi-instance deployments are visually distinguishable
+    in the dashboard list."""
+    return f"Executives ({l2_instance.instance})"
 
 
 # Sheet display order. Pre-register-all-shells pattern (mirrors
@@ -645,7 +640,7 @@ def build_executives_app(
         l2_instance = default_l2_instance()
 
     if cfg.l2_instance_prefix is None:
-        cfg = replace(cfg, l2_instance_prefix=str(l2_instance.instance))
+        cfg = cfg.with_l2_instance_prefix(str(l2_instance.instance))
 
     # N.4.c / N.4.k: theme from the L2 instance, coerced to the
     # registry default for in-canvas accent colors when the instance
@@ -655,7 +650,7 @@ def build_executives_app(
     from quicksight_gen.common.theme import DEFAULT_PRESET
     theme = resolve_l2_theme(l2_instance) or DEFAULT_PRESET
 
-    analysis_name = _analysis_name(theme)
+    analysis_name = _analysis_name(l2_instance)
     app = App(name="executives", cfg=cfg)
     analysis = app.set_analysis(Analysis(
         analysis_id_suffix="executives-analysis",

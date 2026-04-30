@@ -78,7 +78,10 @@ def test_analysis_has_five_sheets_in_expected_order(exec_analysis):
 
 
 def test_analysis_name_is_executives(exec_analysis):
-    assert exec_analysis.Name == "Executives"
+    # N.4 normalization: every L2-fed app's analysis name follows the
+    # ``Name (instance)`` shape so multi-instance deployments are
+    # visually distinguishable in the QS dashboard list.
+    assert exec_analysis.Name == "Executives (spec_example)"
 
 
 def test_analysis_serializes_to_aws_json(exec_analysis):

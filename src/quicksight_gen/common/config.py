@@ -50,6 +50,34 @@ class Config:
                 "datasource_arn is required unless demo_database_url is set."
             )
 
+    def with_l2_instance_prefix(self, prefix: str) -> "Config":
+        """Return a new Config with the L2 prefix stamped in.
+
+        When ``demo_database_url`` is set, also clears ``datasource_arn``
+        so ``__post_init__`` re-derives it with the prefix in the path —
+        without this, per-app builders bake the unprefixed
+        ``qs-gen-demo-datasource`` ARN into dataset JSON and the deploy
+        fails with ``InvalidParameterValueException: Invalid dataSourceArn``
+        because the actual datasource resource carries the prefix
+        (``qs-gen-<prefix>-demo-datasource``).
+
+        When ``demo_database_url`` is unset (production deploys against
+        a pre-existing customer datasource), the explicit ``datasource_arn``
+        stays as-is — re-deriving would synthesize an ARN the customer's
+        QS account doesn't have.
+
+        Idempotent: callers can guard with ``if cfg.l2_instance_prefix
+        is None`` to skip the re-derive when the cfg is already L2-aware.
+        """
+        from dataclasses import replace
+        if self.demo_database_url is not None:
+            return replace(
+                self,
+                l2_instance_prefix=prefix,
+                datasource_arn=None,
+            )
+        return replace(self, l2_instance_prefix=prefix)
+
     # Derived helpers
     def tags(self) -> "list[Tag]":
         """Return common + extra tags as the AWS Tag list format.

@@ -174,7 +174,7 @@ def _generate_investigation(
     else:
         l2_instance = default_l2_instance()
     if cfg.l2_instance_prefix is None:
-        cfg = _replace(cfg, l2_instance_prefix=str(l2_instance.instance))
+        cfg = cfg.with_l2_instance_prefix(str(l2_instance.instance))
 
     click.echo(
         f"Investigation: account={cfg.aws_account_id}, "
@@ -237,7 +237,7 @@ def _generate_executives(
     else:
         l2_instance = default_l2_instance()
     if cfg.l2_instance_prefix is None:
-        cfg = _replace(cfg, l2_instance_prefix=str(l2_instance.instance))
+        cfg = cfg.with_l2_instance_prefix(str(l2_instance.instance))
 
     click.echo(
         f"Executives: account={cfg.aws_account_id}, "
@@ -427,7 +427,7 @@ def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
     default_l2 = default_l2_instance()
     cfg_with_prefix = (
         cfg if cfg.l2_instance_prefix is not None
-        else _replace(cfg, l2_instance_prefix=str(default_l2.instance))
+        else cfg.with_l2_instance_prefix(str(default_l2.instance))
     )
 
     names: set[str] = {f"{ds.DataSetId}.json" for ds in keep_current}
@@ -789,9 +789,6 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     from quicksight_gen.apps.investigation.datasets import (
         build_all_datasets as build_inv_datasets,
     )
-    from quicksight_gen.apps.investigation.demo_data import (
-        generate_demo_sql as generate_inv_sql,
-    )
     from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
 
     cfg = load_config(config_path)
@@ -810,12 +807,44 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
         )
 
     from quicksight_gen.schema import generate_schema_sql
+    from quicksight_gen.common.l2.schema import emit_schema as emit_l2_schema
+    from quicksight_gen.common.l2.seed import emit_seed as emit_l2_seed
+    from quicksight_gen.common.l2.auto_scenario import default_scenario_for
     schema_sql = generate_schema_sql()
 
-    seed_parts: list[str] = []
-    if app in ("investigation", "all"):
-        seed_parts.append(generate_inv_sql())
-    seed_sql = "\n".join(seed_parts)
+    # Pre-stamp ``cfg.l2_instance_prefix`` from the default L2 instance
+    # before opening the DB connection: the REFRESH MATERIALIZED VIEW
+    # calls below reference ``<prefix>_inv_*`` and would land on
+    # ``None_inv_pair_rolling_anomalies`` if the prefix isn't set yet.
+    # Clear ``datasource_arn`` at the same time so ``Config.__post_init__``
+    # re-derives it with the prefix included (otherwise the per-app
+    # builders bake the unprefixed ``qs-gen-demo-datasource`` ARN into
+    # the dataset JSON, and deploy fails with "Invalid dataSourceArn").
+    inv_l2 = default_l2_instance()
+    if cfg.l2_instance_prefix is None:
+        cfg = cfg.with_l2_instance_prefix(str(inv_l2.instance))
+
+    # The L2 instance carries its own per-prefix DDL — base tables
+    # (``<prefix>_transactions`` / ``<prefix>_daily_balances``), Current*
+    # views, L1 invariant matviews, AND the Inv matviews (N.3.n /
+    # N.4.h). Apply alongside the legacy ``schema.sql`` so all four
+    # apps (L1 / L2FT / Inv / Exec) have their backing tables on the
+    # demo database.
+    l2_schema_sql = emit_l2_schema(inv_l2)
+
+    # Plant the L2-shape demo seed: every L1 SHOULD-violation kind
+    # (drift / overdraft / limit-breach / stuck-pending /
+    # stuck-unbundled / supersession) plus the Investigation
+    # InvFanoutPlant — landed via the auto-derived scenario picker,
+    # NOT via the legacy ``apps/investigation/demo_data.py``
+    # (which planted v5-shape flat-table data into the now-dead
+    # unprefixed ``transactions`` / ``daily_balances`` tables).
+    # The Cascadia/Juniper persona-flavored Investigation walkthrough
+    # is on hold until the persona-fixture lift to common/l2/seed.py
+    # lands as Phase O work.
+    seed_sql = emit_l2_seed(
+        inv_l2, default_scenario_for(inv_l2).scenario,
+    )
 
     click.echo(f"Connecting to {cfg.demo_database_url.split('@')[-1]}...")
     conn = psycopg2.connect(cfg.demo_database_url)
@@ -823,6 +852,8 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
         with conn.cursor() as cur:
             click.echo("  Applying schema...")
             cur.execute(schema_sql)
+            click.echo("  Applying L2 instance schema...")
+            cur.execute(l2_schema_sql)
             click.echo("  Inserting seed data...")
             cur.execute(seed_sql)
             click.echo("  Refreshing materialized views...")
@@ -862,17 +893,10 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     # the instance has no ``theme:`` block (the silent-fallback
     # contract), ``build_theme`` returns None and we skip writing
     # ``theme.json`` — AWS QuickSight CLASSIC takes over at deploy.
+    # ``inv_l2`` + ``cfg.l2_instance_prefix`` were pre-stamped above
+    # so the REFRESH MATERIALIZED VIEW calls had a valid prefix.
+    from quicksight_gen.common.datasource import build_datasource
     from quicksight_gen.common.theme import resolve_l2_theme
-
-    # N.3.h: pre-stamp ``cfg.l2_instance_prefix`` from the default L2
-    # instance so Investigation's prefix-aware dataset builders can
-    # render their SQL. Same shape as ``_generate_investigation``.
-    # NOTE (N.3.i): seed SQL above still plants flat-table data; the
-    # prefix-aware seed lift lands in N.3.i. This keeps demo apply
-    # generating the QuickSight JSON correctly mid-flight.
-    inv_l2 = default_l2_instance()
-    if cfg.l2_instance_prefix is None:
-        cfg = _replace(cfg, l2_instance_prefix=str(inv_l2.instance))
 
     click.echo("\nGenerating QuickSight JSON...")
 

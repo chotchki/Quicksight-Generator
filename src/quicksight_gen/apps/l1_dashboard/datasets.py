@@ -672,7 +672,7 @@ def build_all_l1_dashboard_datasets(
     L2-aware cfg is a no-op.
     """
     if cfg.l2_instance_prefix is None:
-        cfg = replace(cfg, l2_instance_prefix=str(l2_instance.instance))
+        cfg = cfg.with_l2_instance_prefix(str(l2_instance.instance))
     return [
         build_drift_dataset(cfg, l2_instance),
         build_ledger_drift_dataset(cfg, l2_instance),

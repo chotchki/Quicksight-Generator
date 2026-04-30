@@ -616,6 +616,7 @@ def test_harness_seeded_fixture_lands_with_manifest(
         "supersession_plants",
         "transfer_template_plants",
         "rail_firing_plants",
+        "inv_fanout_plants",  # N.4.h — Investigation pair_rolling + money_trail
     }
     assert set(manifest.keys()) == expected_kinds
     assert len(manifest["rail_firing_plants"]) > 0, (

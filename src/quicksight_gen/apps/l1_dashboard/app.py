@@ -2034,7 +2034,7 @@ def build_l1_dashboard_app(
         l2_instance = default_l2_instance()
 
     if cfg.l2_instance_prefix is None:
-        cfg = replace(cfg, l2_instance_prefix=str(l2_instance.instance))
+        cfg = cfg.with_l2_instance_prefix(str(l2_instance.instance))
 
     # N.1.e / N.4.k — resolve theme once from the L2 instance, coerced
     # to the registry default for in-canvas accent colors when the

@@ -193,13 +193,12 @@ def test_analysis_has_six_sheets_in_expected_order():
     ]
 
 
-def test_analysis_name_no_demo_prefix_under_default_preset():
-    # N.1.g: Investigation no longer uses sasquatch-bank-investigation
-    # (which set analysis_name_prefix='Demo'); it falls back to the
-    # default preset until N.3 reshapes it. Default preset has
-    # analysis_name_prefix=None → no "Demo — " prefix.
+def test_analysis_name_carries_l2_instance():
+    # N.4 normalization: every L2-fed app's analysis name follows the
+    # ``Name (instance)`` shape so multi-instance deployments are
+    # visually distinguishable in the QS dashboard list.
     analysis = build_analysis(_TEST_CFG)
-    assert analysis.Name == "Investigation"
+    assert analysis.Name == "Investigation (spec_example)"
 
 
 def test_dashboard_mirrors_analysis_definition():

@@ -220,6 +220,13 @@ def _create_datasource(client, datasource_path: Path) -> None:
 
 
 def _create_theme(client, theme_path: Path) -> None:
+    if not theme_path.exists():
+        # N.4.k silent-fallback: when the L2 instance carried no inline
+        # ``theme:`` block, ``build_theme`` returned None and the
+        # generate step skipped writing ``theme.json``. AWS QuickSight
+        # CLASSIC takes over for the dashboards. ``_delete_theme``
+        # uses the same guard.
+        return
     payload = _read_json(theme_path)
     click.echo(f"==> Creating Theme: {payload['ThemeId']}")
     client.create_theme(**payload)

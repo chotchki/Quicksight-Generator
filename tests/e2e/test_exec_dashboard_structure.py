@@ -39,10 +39,11 @@ class TestSheets:
         "Account Coverage",
         "Transaction Volume Over Time",
         "Money Moved",
+        "Info",  # M.4.4.5 — App Info canary, always last
     ]
 
-    def test_has_four_sheets(self, exec_dashboard_definition):
-        assert len(exec_dashboard_definition["Sheets"]) == 4
+    def test_has_five_sheets(self, exec_dashboard_definition):
+        assert len(exec_dashboard_definition["Sheets"]) == 5
 
     def test_sheet_order(self, exec_dashboard_definition):
         names = [s["Name"] for s in exec_dashboard_definition["Sheets"]]

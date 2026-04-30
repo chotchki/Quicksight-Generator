@@ -72,10 +72,11 @@ class TestSheets:
         "Volume Anomalies",
         "Money Trail",
         "Account Network",
+        "Info",  # M.4.4.5 — App Info canary, always last
     ]
 
-    def test_has_five_sheets(self, inv_dashboard_definition):
-        assert len(inv_dashboard_definition["Sheets"]) == 5
+    def test_has_six_sheets(self, inv_dashboard_definition):
+        assert len(inv_dashboard_definition["Sheets"]) == 6
 
     def test_sheet_order(self, inv_dashboard_definition):
         names = [s["Name"] for s in inv_dashboard_definition["Sheets"]]

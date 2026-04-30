@@ -218,6 +218,9 @@ def l1_dataset_ids(resource_prefix, l1_l2_prefix) -> list[str]:
         "l1-stuck-unbundled-dataset",
         "l1-supersession-transactions-dataset",
         "l1-supersession-daily-balances-dataset",
+        # M.4.4.5 / M.4.4.7 — App Info canary sheet datasets, per-app prefix.
+        "l1-app-info-liveness-dataset",
+        "l1-app-info-matviews-dataset",
     ]
     return [f"{resource_prefix}-{l1_l2_prefix}-{s}" for s in suffixes]
 

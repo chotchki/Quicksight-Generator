@@ -399,7 +399,7 @@ def build_all_l2_flow_tracing_datasets(
     pattern — single KPI + bar chart + detail table).
     """
     if cfg.l2_instance_prefix is None:
-        cfg = replace(cfg, l2_instance_prefix=str(l2_instance.instance))
+        cfg = cfg.with_l2_instance_prefix(str(l2_instance.instance))
     return [
         build_postings_dataset(cfg, l2_instance),
         build_meta_values_dataset(cfg, l2_instance),

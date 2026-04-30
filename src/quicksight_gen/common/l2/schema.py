@@ -1026,10 +1026,10 @@ WITH pair_legs AS (
     SELECT
         recipient.account_id          AS recipient_account_id,
         recipient.account_name        AS recipient_account_name,
-        recipient.account_role        AS recipient_account_role,
+        recipient.account_role        AS recipient_account_type,
         sender.account_id             AS sender_account_id,
         sender.account_name           AS sender_account_name,
-        sender.account_role           AS sender_account_role,
+        sender.account_role           AS sender_account_type,
         recipient.posting::date       AS posted_day,
         recipient.transfer_id,
         recipient.amount_money        AS amount
