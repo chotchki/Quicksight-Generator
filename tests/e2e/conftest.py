@@ -60,10 +60,27 @@ IDENTITY_REGION = os.environ.get("QS_E2E_IDENTITY_REGION", "us-east-1")
 
 @pytest.fixture(scope="session")
 def cfg():
-    """Load project config from config.yaml or env vars."""
+    """Load project config — checks the legacy single-file location, then
+    the per-dialect copies (Phase P), then env vars.
+
+    The candidate order favors the explicit single-file config before
+    falling back to the dialect-specific files. Override with the
+    ``QS_GEN_CONFIG`` env var when both per-dialect files exist and
+    you need to pin to one.
+    """
     from quicksight_gen.common.config import load_config
 
-    for candidate in (Path("config.yaml"), Path("run/config.yaml")):
+    explicit = os.environ.get("QS_GEN_CONFIG")
+    if explicit:
+        return load_config(explicit)
+
+    candidates = (
+        Path("config.yaml"),
+        Path("run/config.yaml"),
+        Path("run/config.postgres.yaml"),
+        Path("run/config.oracle.yaml"),
+    )
+    for candidate in candidates:
         if candidate.exists():
             return load_config(str(candidate))
     return load_config(None)

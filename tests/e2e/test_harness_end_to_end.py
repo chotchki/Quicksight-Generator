@@ -632,6 +632,7 @@ def test_harness_seeded_fixture_lands_with_manifest(
 
 def test_harness_deployed_fixture_lands_with_embed_urls(
     harness_deployed: dict[str, Any],
+    cfg,
 ) -> None:
     """The full deploy chain (generate → deploy → extract IDs →
     build embed URLs) runs cleanly and returns one URL per app.
@@ -649,8 +650,11 @@ def test_harness_deployed_fixture_lands_with_embed_urls(
     assert set(dashboard_ids.keys()) == set(HARNESS_APPS)
 
     # Each dashboard ID carries the per-test L2 prefix (M.2d.3).
+    # Resource-prefix is read from cfg so per-dialect copies of
+    # config.yaml (Phase P) — e.g. ``qs-gen-postgres`` /
+    # ``qs-gen-oracle`` — work without hardcoding ``qs-gen``.
     prefix = harness_deployed["prefix"]
-    expected_id_prefix = f"qs-gen-{prefix}-"
+    expected_id_prefix = f"{cfg.resource_prefix}-{prefix}-"
     for app_name, dashboard_id in dashboard_ids.items():
         assert dashboard_id.startswith(expected_id_prefix), (
             f"{app_name} dashboard_id {dashboard_id!r} doesn't carry "
