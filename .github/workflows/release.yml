@@ -29,6 +29,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Install Graphviz (system binary; tests/test_handbook_diagrams.py shells out to `dot`)
+        run: sudo apt-get update && sudo apt-get install -y graphviz
+
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v6
         with:
