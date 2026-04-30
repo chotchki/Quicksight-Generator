@@ -48,17 +48,6 @@ these MUST fire — pick the right child by metadata".
 
 ---
 
-## Topology — layered (accounts above, chains below)
-
-Both views in a single diagram. Use this when you need to explain
-"how does cash get from {{ vocab.institution.acronym }}'s sub-ledger
-to the FRB master account, and which rails participate" — the rail
-labels carry transfer types, the chain edges show ordering.
-
-{{ diagram("l2_topology", kind="layered") }}
-
----
-
 ## Singleton accounts
 
 These are the 1-of-1 accounts {{ vocab.institution.acronym }} holds —
