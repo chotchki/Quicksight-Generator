@@ -1,9 +1,9 @@
 """Unit tests for ``common.sql.dialect``.
 
-Phase P.2 ships every helper with a Postgres branch only; the Oracle
-branch raises ``NotImplementedError`` as the placeholder. Tests
-cover the full Postgres surface + assert that every helper fails
-loudly on Oracle until P.3 fills it in.
+Phase P.2 shipped every helper with a Postgres branch only; Phase
+P.3 filled in the Oracle branches. Tests cover both — the Postgres
+branch returns the canonical bytes, the Oracle branch returns the
+Oracle 19c-compatible equivalent.
 """
 
 from __future__ import annotations
@@ -77,9 +77,16 @@ class TestPostgresCasts:
         assert to_date("recipient.posting", PG) == "recipient.posting::date"
 
 
-class TestPostgresJson:
-    def test_json_check(self):
+class TestPortableJson:
+    def test_json_check_postgres(self):
         assert json_check("metadata", PG) == (
+            "CHECK (metadata IS NULL OR metadata IS JSON)"
+        )
+
+    def test_json_check_oracle_identical(self):
+        # Both dialects ship SQL/JSON-standard IS JSON since
+        # Postgres 16+ / Oracle 12.2+ — bytes-identical output.
+        assert json_check("metadata", ORA) == (
             "CHECK (metadata IS NULL OR metadata IS JSON)"
         )
 
@@ -139,58 +146,118 @@ class TestPostgresRecursiveCte:
         assert with_recursive(PG) == "WITH RECURSIVE"
 
 
-# -- Oracle branches all NotImplementedError --------------------------------
+# -- Oracle branches ---------------------------------------------------------
 
 
-_ORACLE_HELPERS_NULLARY = [
-    serial_type, boolean_type, text_type, timestamp_tz_type, with_recursive,
-]
+class TestOracleTypeNames:
+    def test_serial_type(self):
+        assert serial_type(ORA) == "NUMBER GENERATED ALWAYS AS IDENTITY"
 
-_ORACLE_HELPERS_UNARY = [
-    drop_table_if_exists, drop_matview_if_exists, drop_index_if_exists,
-    drop_view_if_exists, refresh_matview, analyze_table,
-    typed_null, to_date, json_check,
-]
+    def test_boolean_type(self):
+        # Oracle 19c has no native BOOLEAN; canonical encoding is
+        # NUMBER(1). Caller composes the CHECK (col IN (0,1)).
+        assert boolean_type(ORA) == "NUMBER(1)"
+
+    def test_text_type(self):
+        assert text_type(ORA) == "CLOB"
+
+    def test_timestamp_tz_type(self):
+        assert timestamp_tz_type(ORA) == "TIMESTAMP WITH TIME ZONE"
+
+    def test_varchar_type(self):
+        assert varchar_type(100, ORA) == "VARCHAR2(100)"
+
+    def test_decimal_type(self):
+        assert decimal_type(20, 2, ORA) == "NUMBER(20,2)"
 
 
-class TestOracleNotYet:
-    @pytest.mark.parametrize("fn", _ORACLE_HELPERS_NULLARY)
-    def test_nullary_oracle_raises(self, fn):
-        with pytest.raises(NotImplementedError, match="Oracle branch"):
-            fn(ORA)
+class TestOracleCasts:
+    def test_cast_numeric_aliases_to_number(self):
+        # Postgres-shape "numeric" → Oracle "NUMBER".
+        assert cast("col", "numeric", ORA) == "CAST(col AS NUMBER)"
 
-    @pytest.mark.parametrize("fn", _ORACLE_HELPERS_UNARY)
-    def test_unary_oracle_raises(self, fn):
-        with pytest.raises(NotImplementedError, match="Oracle branch"):
-            fn("foo", ORA)
+    def test_cast_bigint_aliases_to_number_19(self):
+        assert cast("(a + b)", "bigint", ORA) == "CAST((a + b) AS NUMBER(19))"
 
-    def test_varchar_oracle_raises(self):
-        with pytest.raises(NotImplementedError, match="Oracle branch"):
-            varchar_type(100, ORA)
+    def test_cast_unaliased_type_passes_through(self):
+        # Type names not in the Postgres-alias table pass through verbatim.
+        assert cast("col", "VARCHAR2(50)", ORA) == "CAST(col AS VARCHAR2(50))"
 
-    def test_decimal_oracle_raises(self):
-        with pytest.raises(NotImplementedError, match="Oracle branch"):
-            decimal_type(20, 2, ORA)
+    def test_typed_null_numeric(self):
+        assert typed_null("numeric", ORA) == "CAST(NULL AS NUMBER)"
 
-    def test_cast_oracle_raises(self):
-        with pytest.raises(NotImplementedError, match="Oracle branch"):
-            cast("col", "numeric", ORA)
+    def test_typed_null_bigint(self):
+        assert typed_null("bigint", ORA) == "CAST(NULL AS NUMBER(19))"
 
-    def test_epoch_seconds_oracle_raises(self):
-        with pytest.raises(NotImplementedError, match="Oracle branch"):
-            epoch_seconds_between("a", "b", ORA)
+    def test_to_date(self):
+        assert to_date("posting", ORA) == "TRUNC(posting)"
 
-    def test_interval_days_oracle_raises(self):
-        with pytest.raises(NotImplementedError, match="Oracle branch"):
-            interval_days(1, ORA)
 
-    def test_date_minus_days_oracle_raises(self):
-        with pytest.raises(NotImplementedError, match="Oracle branch"):
-            date_minus_days("d", 1, ORA)
+class TestOracleDateTime:
+    def test_epoch_seconds_between(self):
+        # Oracle has no EPOCH unit; replicate via DAY*86400 +
+        # HOUR*3600 + MINUTE*60 + SECOND on the INTERVAL DAY TO SECOND
+        # result.
+        result = epoch_seconds_between("CURRENT_TIMESTAMP", "ct.posting", ORA)
+        assert "EXTRACT(DAY FROM " in result
+        assert "* 86400" in result
+        assert "EXTRACT(SECOND FROM " in result
 
-    def test_create_matview_oracle_raises(self):
-        with pytest.raises(NotImplementedError, match="Oracle branch"):
-            create_matview("name", "SELECT 1", ORA)
+    def test_interval_days(self):
+        assert interval_days(1, ORA) == "INTERVAL '1' DAY"
+        assert interval_days(7, ORA) == "INTERVAL '7' DAY"
+
+    def test_date_minus_days(self):
+        # Oracle DATE arithmetic interprets "date - n" as N days.
+        assert date_minus_days("pw.posted_day", 1, ORA) == "(pw.posted_day - 1)"
+
+
+class TestOracleDdlIdempotency:
+    def test_drop_table_wraps_in_plsql_block(self):
+        sql = drop_table_if_exists("foo", ORA)
+        assert sql.startswith("BEGIN EXECUTE IMMEDIATE 'DROP TABLE foo CASCADE CONSTRAINTS'")
+        assert "EXCEPTION" in sql
+        assert "SQLCODE != -942" in sql
+        assert sql.endswith("END;")
+
+    def test_drop_matview_swallows_two_codes(self):
+        sql = drop_matview_if_exists("p_drift", ORA)
+        # ORA-12003 (matview) AND ORA-942 (table-or-view, in case the
+        # object has been recreated as a regular table) both ignored.
+        assert "SQLCODE != -12003" in sql
+        assert "SQLCODE != -942" in sql
+
+    def test_drop_index_swallows_1418(self):
+        sql = drop_index_if_exists("idx_foo", ORA)
+        assert "SQLCODE != -1418" in sql
+
+    def test_drop_view_swallows_942(self):
+        sql = drop_view_if_exists("v_foo", ORA)
+        assert "SQLCODE != -942" in sql
+
+
+class TestOracleMatviews:
+    def test_create_matview_emits_build_immediate(self):
+        sql = create_matview("p_drift", "SELECT 1", ORA)
+        assert "BUILD IMMEDIATE" in sql
+        assert "REFRESH COMPLETE ON DEMAND" in sql
+        assert sql.endswith("AS SELECT 1")
+
+    def test_refresh_matview_uses_dbms_mview(self):
+        assert refresh_matview("p_drift", ORA) == (
+            "BEGIN DBMS_MVIEW.REFRESH('p_drift', method => 'C'); END;"
+        )
+
+    def test_analyze_table_uses_dbms_stats(self):
+        assert analyze_table("p_drift", ORA) == (
+            "BEGIN DBMS_STATS.GATHER_TABLE_STATS(USER, 'p_drift'); END;"
+        )
+
+
+class TestOracleRecursiveCte:
+    def test_with_recursive_drops_keyword(self):
+        # Oracle 19c infers recursion from self-reference; "WITH" alone.
+        assert with_recursive(ORA) == "WITH"
 
 
 # -- Dialect enum ------------------------------------------------------------
@@ -204,3 +271,31 @@ class TestDialectEnum:
     def test_round_trip_from_string(self):
         assert Dialect("postgres") is Dialect.POSTGRES
         assert Dialect("oracle") is Dialect.ORACLE
+
+
+# -- Default-arg behavior ---------------------------------------------------
+
+
+class TestDefaultDialect:
+    """Every helper defaults to Postgres so existing callers don't
+    have to thread a dialect argument until P.4 propagates it.
+    """
+
+    @pytest.mark.parametrize(
+        "fn,args,expected",
+        [
+            (serial_type, (), "BIGSERIAL"),
+            (boolean_type, (), "BOOLEAN"),
+            (text_type, (), "TEXT"),
+            (timestamp_tz_type, (), "TIMESTAMPTZ"),
+            (varchar_type, (50,), "VARCHAR(50)"),
+            (decimal_type, (10, 2), "DECIMAL(10,2)"),
+            (typed_null, ("numeric",), "NULL::numeric"),
+            (interval_days, (1,), "INTERVAL '1 day'"),
+            (with_recursive, (), "WITH RECURSIVE"),
+            (refresh_matview, ("foo",), "REFRESH MATERIALIZED VIEW foo"),
+            (analyze_table, ("foo",), "ANALYZE foo"),
+        ],
+    )
+    def test_postgres_default(self, fn, args, expected):
+        assert fn(*args) == expected
