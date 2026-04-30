@@ -216,8 +216,39 @@ brand:
    dashboards with two distinct themes — no per-app preset
    juggling required.
 
+## Brand assets on the docs site
+
+The docs site (the mkdocs handbook published from `export docs`)
+also reads brand assets from the L2 YAML's `theme:` block. Two
+optional fields:
+
+```yaml
+theme:
+  # ... colors above ...
+  logo: "https://example.com/your-logo.svg"
+  favicon: "https://example.com/your-favicon.ico"
+```
+
+Both fields accept either:
+
+- **A URL** (`http://`, `https://`, or protocol-relative `//`) —
+  passed through verbatim to mkdocs `theme.logo` /
+  `theme.favicon`.
+- **An absolute file path** (must start with `/`) — copied into
+  the docs build at render time as
+  `<docs_dir>/img/_l2_logo<ext>` and `<docs_dir>/img/_l2_favicon<ext>`,
+  with the theme keys rewritten to the docs-relative path.
+
+Relative paths are rejected (their resolution would depend on
+the integrator's working directory at build time). When either
+field is omitted or `null`, the docs site falls back to whatever
+`mkdocs.yml` ships with — for the canonical site, that's the SNB
+mark.
+
 ## Related walkthroughs
 
 - [How do I configure the deploy for my AWS account?](how-do-i-configure-the-deploy.md) —
   the ``config.yaml`` deploy contract; theme declarations now live
   on the L2 YAML, not in this file.
+- [How do I publish docs against my L2?](how-do-i-publish-docs-against-my-l2.md) —
+  the end-to-end docs export + render flow.

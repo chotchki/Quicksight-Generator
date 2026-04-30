@@ -1,5 +1,16 @@
 # Release Notes
 
+## v6.2.4 — Reskin walkthrough documents the new logo + favicon fields
+
+The v6.2.3 commit shipped the `theme.logo` / `theme.favicon`
+mechanism but missed updating the
+[How do I reskin the dashboards for my brand?](walkthroughs/customization/how-do-i-reskin-the-dashboards.md)
+walkthrough. This patch adds the **Brand assets on the docs site**
+section there with the URL / absolute-path acceptance rules and a
+cross-link to the publishing-workflow walkthrough.
+
+No code changes.
+
 ## v6.2.3 — Optional logo + favicon on the L2 theme block
 
 ### What's new
