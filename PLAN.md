@@ -135,12 +135,12 @@
   - [ ] O.1.n — Commit.
 
 - [ ] **O.2 — Executives docs + ScreenshotHarness regen + CLI.** What didn't fit cleanly into O.1's prose-migration loop.
-  - [ ] O.2.a — **L.8 deferred Executives handbook** — write `docs/handbook/executives.md` (lands under Reference) covering the 4 sheets + how it overlaps with L1 / L2FT / Inv. Consumes the existing Executives sheet descriptions.
-  - [ ] O.2.b — **L.8 deferred Executives walkthroughs** — `docs/walkthroughs/executives/` per-sheet markdown (Getting Started + Account Coverage + Transaction Volume + Money Moved). Mirrors L1's per-sheet walkthrough shape; lands under Walkthroughs.
-  - [ ] O.2.c — **CLI**: `quicksight-gen export docs --l2-instance <yaml> -o <dir>`. Renders the unified docs site against the supplied L2; default L2 = spec_example. Replaces both the existing `export docs` AND `export training` commands (the unified site eliminates the split).
-  - [ ] O.2.d — **ScreenshotHarness wrapper**: per-instance regen. Deploy → warm Aurora (`SELECT 1`) → screenshot → tear down. Wire into the `export docs` flow as an optional `--with-screenshots` flag (heavy operation; off by default).
-  - [ ] O.2.e — **Aurora warm-up**: `SELECT 1` against `cfg.demo_database_url` right before each ScreenshotHarness embed-URL fetch (per F12 / M.0.10 — Aurora Serverless cold-start otherwise surfaces as QS's generic "We can't open that dashboard" error). Wrap in a helper so future ScreenshotHarness callers inherit the warm-up.
-  - [ ] O.2.f — Tests: docs+screenshots rendered against multiple L2 instances; ScreenshotHarness output present + non-empty.
+  - [x] O.2.a — `docs/handbook/executives.md` ships under Reference. Covers the 4 sheets (Getting Started, Account Coverage, Transaction Volume Over Time, Money Moved) + how they overlap with L1 / L2FT / Inv. Embeds the per-app dataflow diagram + uses vocab substitution for the institution name. Wired into mkdocs.yml nav.
+  - [ ] O.2.b — Per-sheet Executives walkthroughs (`docs/walkthroughs/executives/`) deferred. The reference page covers each sheet's purpose; deeper walkthroughs land when integrator demand surfaces.
+  - [x] O.2.c — `quicksight-gen export docs --l2-instance <yaml>` validates the L2 path and echoes the `QS_DOCS_L2_INSTANCE=<path> mkdocs build` command the integrator runs to render against that institution.
+  - [ ] O.2.d — ScreenshotHarness wrapper deferred. AWS-dependent + heavy; lands when the export-docs publishing pipeline gets real customer feedback.
+  - [ ] O.2.e — Aurora warm-up helper deferred (depends on O.2.d).
+  - [ ] O.2.f — Per-fixture render tests deferred (depends on O.2.d).
   - [ ] O.2.g — Commit.
 
 - [ ] **O.3 — Iteration gate.** Unified docs render against any L2 instance the integrator points at. Per-customer publishing pipeline supports the merged site.

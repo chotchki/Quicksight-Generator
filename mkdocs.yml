@@ -41,6 +41,7 @@ nav:
     - L1 Reconciliation Dashboard: handbook/l1.md
     - L2 Flow Tracing: handbook/l2_flow_tracing.md
     - Investigation: handbook/investigation.md
+    - Executives: handbook/executives.md
     - ETL — Data Integration: handbook/etl.md
     - Customization: handbook/customization.md
     - Schema v6 — Data Feed Contract: Schema_v6.md

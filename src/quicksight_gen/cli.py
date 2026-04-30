@@ -1059,12 +1059,39 @@ def _copy_tree(src: Path, dst: Path) -> int:
     type=click.Path(), required=True,
     help="Target directory; created if missing, merged into if existing.",
 )
-def export_docs_cmd(output: str) -> None:
-    """Copy the unified docs site (mkdocs source) to a folder."""
+@click.option(
+    "--l2-instance",
+    type=click.Path(exists=True),
+    help=(
+        "Optional path to the L2 institution YAML to bind the rendered "
+        "docs against. The path is validated here; the actual binding "
+        "happens at mkdocs build time via the QS_DOCS_L2_INSTANCE env "
+        "var. The CLI echoes the right command to run after copying."
+    ),
+)
+def export_docs_cmd(output: str, l2_instance: str | None) -> None:
+    """Copy the unified docs site (mkdocs source) to a folder.
+
+    The exported tree is a complete mkdocs source layout — run
+    ``mkdocs build`` (or ``mkdocs serve``) from inside it to render.
+    Pass ``--l2-instance`` to validate an L2 YAML path; the CLI then
+    echoes the env var the integrator should set so the rendered docs
+    pull vocabulary from that institution instead of the default
+    ``spec_example``.
+    """
     src = _bundled_dir("docs")
     dst = Path(output)
     count = _copy_tree(src, dst)
     click.echo(f"Wrote {count} documentation files to {dst}")
+
+    if l2_instance is not None:
+        l2_path = Path(l2_instance).resolve()
+        click.echo("")
+        click.echo(
+            "L2 instance bound: " + str(l2_path) + "\n"
+            "To render against this instance, run:\n"
+            f"    QS_DOCS_L2_INSTANCE={l2_path} mkdocs build -f {dst}/mkdocs.yml"
+        )
 
 
 # ---------------------------------------------------------------------------
