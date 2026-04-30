@@ -759,10 +759,18 @@ def demo_topology(
     type=click.Path(), default="out",
     help="Directory to write generated QuickSight JSON files.",
 )
-def demo_apply(app: str | None, all_apps: bool, config: str, output_dir: str) -> None:
+@click.option(
+    "--l2-instance", "l2_instance_path",
+    type=click.Path(exists=True), default=None,
+    help="Path to L2 institution YAML. Default: bundled spec_example.",
+)
+def demo_apply(
+    app: str | None, all_apps: bool, config: str, output_dir: str,
+    l2_instance_path: str | None,
+) -> None:
     """Apply schema + seed data to the demo DB and generate QuickSight JSON."""
     app = _resolve_app(app, all_apps, allow_all=True)
-    _apply_demo(config, output_dir, app)
+    _apply_demo(config, output_dir, app, l2_instance_path=l2_instance_path)
 
 
 def _oracle_dsn(url: str) -> str:
@@ -874,13 +882,21 @@ def _split_oracle_script(sql: str) -> list[str]:
     return statements
 
 
-def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
+def _apply_demo(
+    config_path: str, output_dir: str, app: str,
+    *, l2_instance_path: str | None = None,
+) -> None:
     """Load schema + chosen seed(s) into demo DB, then regenerate JSON.
 
     ``app`` is one of ``investigation``, ``executives``, or ``all``.
     Schema is always applied in full — apps share the DB — so the only
     thing that varies is which seed SQL gets loaded and which analyses
     get generated.
+
+    ``l2_instance_path`` overrides the bundled default L2 (spec_example).
+    Pass ``tests/l2/sasquatch_pr.yaml`` (or any other validated L2 YAML)
+    to render that institution's per-prefix schema/seed/dashboards
+    against the same demo DB.
     """
     from dataclasses import replace as _replace
 
@@ -947,7 +963,11 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     # re-derives it with the prefix included (otherwise the per-app
     # builders bake the unprefixed ``qs-gen-demo-datasource`` ARN into
     # the dataset JSON, and deploy fails with "Invalid dataSourceArn").
-    inv_l2 = default_l2_instance()
+    if l2_instance_path is not None:
+        from quicksight_gen.common.l2 import load_instance
+        inv_l2 = load_instance(Path(l2_instance_path))
+    else:
+        inv_l2 = default_l2_instance()
     if cfg.l2_instance_prefix is None:
         cfg = cfg.with_l2_instance_prefix(str(inv_l2.instance))
 
@@ -1083,12 +1103,20 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     "--generate", "generate_first", is_flag=True,
     help="Regenerate JSON before deploying.",
 )
+@click.option(
+    "--l2-instance", "l2_instance_path",
+    type=click.Path(exists=True), default=None,
+    help="Path to L2 institution YAML (sets cfg.l2_instance_prefix on "
+    "deploy so the L2Instance tag lands on every resource — needed for "
+    "per-instance cleanup isolation). Omit to deploy without an L2 tag.",
+)
 def deploy_cmd(
     app: str | None, all_apps: bool, config: str, output_dir: str,
-    generate_first: bool,
+    generate_first: bool, l2_instance_path: str | None,
 ) -> None:
     """Deploy generated JSON to AWS QuickSight (delete-then-create)."""
     from quicksight_gen.common.deploy import deploy
+    from quicksight_gen.common.l2 import load_instance
 
     app_name = _resolve_app(app, all_apps, allow_all=True)
 
@@ -1103,6 +1131,9 @@ def deploy_cmd(
             _generate_l2_flow_tracing(config, output_dir)
 
     cfg = load_config(config)
+    if l2_instance_path is not None and cfg.l2_instance_prefix is None:
+        l2_instance = load_instance(Path(l2_instance_path))
+        cfg = cfg.with_l2_instance_prefix(str(l2_instance.instance))
     if app_name == "all":
         targets = list(APPS)
     else:

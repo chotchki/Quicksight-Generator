@@ -3,18 +3,27 @@
 Connects to whichever dialect's local DB the CI job spun up
 (``--dialect postgres`` or ``--dialect oracle``) and checks that the
 expected per-prefix tables exist + the matviews carry the row counts
-the spec_example seed produces (planted scenarios = 1 drift + 1
-overdraft + 1 limit-breach + the standing fanout).
+the seed produces.
+
+Two assertion modes:
+- **Exact** (default for ``spec_example``): the planted seed produces
+  a known number of rows in each matview. Mismatch → fail.
+- **Smoke** (``--smoke``): just assert ≥1 row in every named matview.
+  Use when a live count for the L2 instance hasn't been locked yet
+  (e.g. sasquatch_pr — different scenario shape, different counts).
 
 Exits 0 on success; exits 1 with a per-row diff on any mismatch.
 
 Run as::
 
+    # spec_example exact (P.7 CI default)
     python tests/integration/verify_demo_apply.py --dialect postgres \\
         --url "postgresql://postgres:pw@localhost:5432/postgres"
 
+    # sasquatch_pr smoke (no locked counts yet — assert non-empty)
     python tests/integration/verify_demo_apply.py --dialect oracle \\
-        --url "system/pw@localhost:1521/FREEPDB1"
+        --url "system/pw@localhost:1521/FREEPDB1" \\
+        --prefix sasquatch_pr --smoke
 
 Designed for the CI job, not as a unit test — needs a live DB and
 deliberately doesn't import ``pytest``. Living under ``tests/`` keeps
@@ -29,20 +38,33 @@ import sys
 from typing import Callable
 
 
-# Expected row counts from emitting the spec_example seed against the
-# canonical date. Deliberately lifted from the live verification we did
-# in P.5.b/P.5.c (both PG + Oracle returned identical counts). Future
-# scenario plant changes should re-lock these.
-EXPECTED_COUNTS = {
-    "spec_example_transactions": 16,
-    "spec_example_daily_balances": 2,
-    "spec_example_drift": 2,
-    "spec_example_overdraft": 1,
-    "spec_example_limit_breach": 1,
-    "spec_example_todays_exceptions": 3,
-    "spec_example_inv_pair_rolling_anomalies": 4,
-    "spec_example_inv_money_trail_edges": 6,
+# Per-prefix locked row counts. Lifted from the live verification we
+# did in P.5.b/P.5.c (PG + Oracle returned identical counts) and
+# re-locked when scenario plants change. Add a new entry when locking
+# a new L2 instance against the live DBs.
+_LOCKED_COUNTS: dict[str, dict[str, int]] = {
+    "spec_example": {
+        "transactions": 16,
+        "daily_balances": 2,
+        "drift": 2,
+        "overdraft": 1,
+        "limit_breach": 1,
+        "todays_exceptions": 3,
+        "inv_pair_rolling_anomalies": 4,
+        "inv_money_trail_edges": 6,
+    },
 }
+
+# Smoke mode: matview suffixes we expect to be non-empty for any
+# validated L2 instance. Doesn't include `transactions` /
+# `daily_balances` because some L2s may have legitimately empty seed
+# scenarios for either.
+_SMOKE_SUFFIXES = (
+    "transactions",
+    "daily_balances",
+    "todays_exceptions",
+    "inv_money_trail_edges",
+)
 
 
 def _connect_pg(url: str) -> tuple[object, Callable[[str], int]]:
@@ -75,6 +97,14 @@ def main() -> int:
         "--dialect", required=True, choices=["postgres", "oracle"],
     )
     parser.add_argument("--url", required=True)
+    parser.add_argument(
+        "--prefix", default="spec_example",
+        help="L2 instance prefix (default: spec_example)",
+    )
+    parser.add_argument(
+        "--smoke", action="store_true",
+        help="Skip exact counts; just assert ≥1 row in canonical matviews",
+    )
     args = parser.parse_args()
 
     if args.dialect == "postgres":
@@ -83,18 +113,41 @@ def main() -> int:
         conn, count = _connect_oracle(args.url)
 
     failures: list[str] = []
-    for table, expected in EXPECTED_COUNTS.items():
+
+    if args.smoke:
+        targets = [(f"{args.prefix}_{s}", None) for s in _SMOKE_SUFFIXES]
+    else:
+        if args.prefix not in _LOCKED_COUNTS:
+            print(
+                f"FATAL: no locked counts for prefix {args.prefix!r}. "
+                f"Pass --smoke to skip exact counts, or lock the counts "
+                f"in _LOCKED_COUNTS first.",
+                file=sys.stderr,
+            )
+            return 2
+        counts = _LOCKED_COUNTS[args.prefix]
+        targets = [(f"{args.prefix}_{s}", n) for s, n in counts.items()]
+
+    for table, expected in targets:
         try:
             actual = count(table)
         except Exception as e:
             failures.append(f"{table}: query failed: {e}")
             continue
-        marker = "ok" if actual == expected else "FAIL"
-        print(f"  [{marker}] {table:50s} {actual:4d} (expected {expected})")
-        if actual != expected:
-            failures.append(
-                f"{table}: got {actual} rows, expected {expected}"
-            )
+        if expected is None:
+            ok = actual >= 1
+            marker = "ok" if ok else "FAIL"
+            print(f"  [{marker}] {table:60s} {actual:4d} (expected ≥1)")
+            if not ok:
+                failures.append(f"{table}: got 0 rows, expected ≥1")
+        else:
+            ok = actual == expected
+            marker = "ok" if ok else "FAIL"
+            print(f"  [{marker}] {table:60s} {actual:4d} (expected {expected})")
+            if not ok:
+                failures.append(
+                    f"{table}: got {actual} rows, expected {expected}"
+                )
 
     conn.close()
     if failures:
@@ -102,7 +155,7 @@ def main() -> int:
         for f in failures:
             print(f"  - {f}", file=sys.stderr)
         return 1
-    print(f"\nAll {len(EXPECTED_COUNTS)} table counts match expected.")
+    print(f"\nAll {len(targets)} table counts match expected.")
     return 0
 
 
