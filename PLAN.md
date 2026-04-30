@@ -226,28 +226,26 @@ The existing SQL is already constrained to a portable subset (no JSONB, SQL/JSON
   - [ ] P.6.d — Smoke test: emit datasource JSON for both dialects; verify QS API accepts (mock + live).
   - [ ] P.6.e — Commit.
 
-- [ ] **P.7 — CI: Docker Postgres + Docker Oracle Free runners.** Add gated integration jobs alongside the existing fast unit pass.
-  - [ ] P.7.a — `.github/workflows/ci.yml`: add `integration-postgres` job using `postgres:17` Docker service + run a slim integration suite (demo apply, hash-lock check, matview refresh, L1 invariant row spot-check).
-  - [ ] P.7.b — Add `integration-oracle` job using `gvenzl/oracle-free:23-slim-faststart` Docker image (no licensing concern; runs on x86 + ARM) + run the same integration suite.
-  - [ ] P.7.c — Both jobs gated on `integration` label or `main` branch (keep PR turnaround fast); always-run on push-to-main.
-  - [ ] P.7.d — Update `release.yml` test gate to require integration jobs green before publishing.
-  - [ ] P.7.e — Commit.
+- [x] **P.7 — Containerized CI for both dialects.** GHA `integration` job after the `test` matrix runs `quicksight-gen demo apply --all` against `postgres:17` + `gvenzl/oracle-free:latest` service containers, then verifies per-prefix matview row counts. Runs on push to main + PR. (Validated 2026-04-30: green on first try, ~12 min wall clock.)
 
-- [ ] **P.8 — Docs.**
-  - [ ] P.8.a — `Schema_v6.md` adds dialect callouts where types differ (BOOLEAN, TEXT, TIMESTAMP, JSON, identity columns, MV refresh syntax).
-  - [ ] P.8.b — New `walkthroughs/customization/how-do-i-deploy-against-oracle.md`: `[demo-oracle]` extra install, `dialect: oracle` in `config.yaml`, `oracledb` connection-string format, the matview refresh quirk, splitting `config.yaml` into per-dialect copies.
-  - [ ] P.8.c — `walkthroughs/etl/` adds an Oracle bind/connect note.
-  - [ ] P.8.d — `for-your-role/etl-engineer.md` updated to flag dialect-aware loads.
-  - [ ] P.8.e — README + CLAUDE.md sweep — name Oracle as a first-class target alongside Postgres.
-  - [ ] P.8.f — Update memory `project_oracle_19c_compat.md`: rewrite as historical context (pre-Phase-P era); add note that Oracle is now first-class as of v7.0.0.
-  - [ ] P.8.g — Commit.
+- [x] **P.8 — Dialect-aware docs.** `Schema_v6.md` top callout + `Forbidden SQL patterns` table + `how-do-i-configure-the-deploy.md` (dialect field, both URL shapes, RDS Oracle TLS quirk, oracledb thin-mode), `how-do-i-map-my-database.md` (Postgres-or-Oracle framing), README install matrix incl. `[demo-oracle]`. (Landed 2026-04-30.)
 
-- [ ] **P.9 — Aurora + Oracle deploy verify.**
-  - [ ] P.9.a — Re-run the existing Aurora-Postgres deploy verify against current main. Confirm no regressions from the helper refactor.
-  - [ ] P.9.b — Run the full demo apply + e2e verify against the local Oracle 19c instance from the P.5 user gate. (If P.5 used the Docker `oracle-free:23` image for dev convenience, P.9.b is the moment to swap to a real 19c Standard Edition target so the ship-blocking verify hits the actual production target version.)
-  - [ ] P.9.c — Spot-check the deployed dashboards in QS UI under both dialects. Eyeball the L1 invariant sheets (drift, overdraft, limit breach), Investigation Money Trail (recursive CTE under both dialects), Executives Money Moved (date-window aggregation).
-  - [ ] P.9.d — Document any dialect-specific render quirks in the customization handbook.
-  - [ ] P.9.e — Commit.
+- [x] **P.9 — Cross-dialect deploy verify + e2e against the 4-cell matrix.** Phase-Q ergonomic lifts pulled forward so the matrix could run end-to-end:
+  - [x] P.9.0 — `scripts/p9_deploy_verify.sh` codifies manual P.5/P.6 verify across the 4 cells (postgres + oracle × spec_example + sasquatch_pr). Hits live Aurora + RDS Oracle.
+  - [x] P.9.0a — `--l2-instance` flag added to `demo apply` + `deploy` (Phase-Q lift, was task #488).
+  - [x] P.9.0b — Per-instance prune fix: `_all_dataset_filenames` now threads `l2_instance`; sibling enumeration uses the active L2 prefix instead of the bundled default. Without this, single-app generate against a non-default L2 pruned the sibling apps' files.
+  - [x] P.9.0c — First-deploy dataset-prep retry: `_create_analyses` now retries on `PREPARED_SOURCE_NOT_FOUND` for ~5 min, covering Oracle's slow first-time data source validation.
+  - [x] P.9.0d — `scripts/p9_e2e.sh` per-cell e2e wrapper + `QS_GEN_TEST_L2_INSTANCE` fixture override. Lets the existing browser e2e suite run against any deployed cell.
+  - [x] P.9.0e — `tests/integration/verify_demo_apply.py` parameterized on `--prefix` + `--smoke` mode (smoke = ≥1 row check, for L2s without locked counts).
+  - [x] P.9.0f — Result: 4 cells × deploy ALL CLEAR (4 dashboards each, 35 datasets each). E2E surfaced 5 real Oracle failures + 12 known-gap harness errors (see P.9c, P.9d).
+
+- [x] **P.9a — Standardize on TZ-naive TIMESTAMP across both dialects.** Single `timestamp_type(dialect) -> "TIMESTAMP"` returns plain TZ-naive on both engines. Drops the prior split (`timestamp_tz_type` + `pk_safe_timestamp_type`) and the `+TZ` offset on seed Oracle literals. Schema is now byte-identical between PG and Oracle for every timestamp column. Schema_v6 callout: "Timezone normalization is the integrator's contract." Re-locked 4 seed_hashes (spec_example + sasquatch_pr × pg + oracle).
+
+- [ ] **P.9b — SPEC + L2 validator: Rail uniqueness on (transfer_type, role).** Per-leg discriminator uniqueness enforced at load time. Direction intentionally NOT in the discriminator — surfaces two-rail-per-direction patterns for resolution. sasquatch_pr currently has 9 collisions (CustomerInbound/Outbound × ACH/Wire/Cash/Return families) needing a fixture refactor: differentiate transfer_type per direction (ach_inbound / ach_outbound), or merge into bidirectional rails. Re-lock seed_hash on sasquatch_pr after refactor.
+
+- [ ] **P.9c — Investigate Oracle KPI visual non-render in QuickSight.** Real Oracle bug: KPI visuals don't render against Oracle data sources in QuickSight, while the same JSON renders cleanly against PostgreSQL. Tables + bar/line charts unaffected. Hypotheses: slow Oracle SQL prep timing out KPI render budget; QS Oracle data source quirk on KPI visual emit shape; column-type interaction with KPI aggregation. Investigate with `boto3 describe_analysis` diff between Postgres + Oracle deployed analyses + open one of the deployed Oracle dashboards in browser to observe failure mode.
+
+- [ ] **P.9d — Make harness fixtures Oracle-aware.** `tests/e2e/test_harness_end_to_end.py::harness_db_conn` hardcodes `psycopg2`; errors at setup with `ProgrammingError` when `cfg.dialect=oracle`. 12 errors per Oracle e2e cell. Branch on `cfg.dialect` (psycopg2 / oracledb), audit harness teardown for Oracle's missing `IF EXISTS` on DROPs.
 
 - [ ] **P.10 — Iteration gate + v7.0.0 cut.**
   - [ ] P.10.a — Decide release cut: **v7.0.0** — additive (Postgres-only users see no behavior change) but touches every SQL surface; major bump flags the breadth.
