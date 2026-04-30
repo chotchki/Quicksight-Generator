@@ -114,7 +114,11 @@ def inv_l2_prefix() -> str:
     Investigation resource ID under N.3.f (Investigation became L2-fed,
     same default-institution YAML the L1 dashboard uses)."""
     from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from quicksight_gen.common.l2 import load_instance
 
+    override = os.environ.get("QS_GEN_TEST_L2_INSTANCE")
+    if override:
+        return str(load_instance(Path(override)).instance)
     return str(default_l2_instance().instance)
 
 
@@ -154,7 +158,11 @@ def exec_l2_prefix() -> str:
     Executives resource ID under N.4.b (Executives became L2-fed,
     same default-institution YAML the L1 dashboard uses)."""
     from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from quicksight_gen.common.l2 import load_instance
 
+    override = os.environ.get("QS_GEN_TEST_L2_INSTANCE")
+    if override:
+        return str(load_instance(Path(override)).instance)
     return str(default_l2_instance().instance)
 
 
@@ -195,7 +203,11 @@ def l1_l2_prefix() -> str:
     """The default L2 instance's prefix — the middle segment of every
     L1 resource ID per M.2d.3."""
     from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from quicksight_gen.common.l2 import load_instance
 
+    override = os.environ.get("QS_GEN_TEST_L2_INSTANCE")
+    if override:
+        return str(load_instance(Path(override)).instance)
     return str(default_l2_instance().instance)
 
 
