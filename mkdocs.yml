@@ -92,9 +92,10 @@ nav:
 plugins:
   - search
   - macros:
-      # Phase O.1.a — Jinja2 templating in markdown. The vocabulary +
-      # diagram macros land in O.1.b / O.1.c; this is the engine
-      # wiring only.
+      # Phase O.1.c — `{{ diagram(...) }}` macro lives in `main.py` at
+      # the repo root (mkdocs-macros default module location). Jinja
+      # includes (Phase O.1.b) read from the include_dir below.
+      module_name: main
       include_dir: src/quicksight_gen/docs/_macros
   - mkdocstrings:
       handlers:

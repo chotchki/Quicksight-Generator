@@ -1,0 +1,388 @@
+"""Diagram render pipeline for the unified mkdocs site.
+
+Three diagram families:
+
+1. **L2-driven topology** (``render_l2_topology``) — accounts + rails +
+   chains laid out from the loaded ``L2Instance``. Cuts: ``accounts``
+   (account-rail-account edges), ``chains`` (parent → child DAG over
+   rails / transfer templates), ``layered`` (both, layered).
+
+2. **Per-app dataflow** (``render_dataflow``) — which datasets feed
+   which sheets, walked off the typed ``App`` tree. One per app's
+   reference page.
+
+3. **Hand-authored conceptual** (``render_conceptual``) — reads a
+   ``.dot`` file from ``docs/_diagrams/conceptual/`` and renders it.
+   Used for the narrative concept pages where the diagram is a
+   teaching aid that doesn't derive from any L2 data (double-entry,
+   escrow-with-reversal, sweep-net-settle, etc.).
+
+All three return inline SVG (XML declaration stripped) so an
+mkdocs-macros call like ``{{ diagram("conceptual", name="double-entry") }}``
+embeds directly into the markdown via the ``md_in_html`` extension.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Literal
+
+import graphviz
+
+from quicksight_gen.common.l2.primitives import (
+    Account,
+    ChainEntry,
+    L2Instance,
+    Rail,
+    SingleLegRail,
+    TwoLegRail,
+)
+
+
+# -- Public API --------------------------------------------------------------
+
+
+TopologyKind = Literal["accounts", "chains", "layered"]
+
+
+def render_l2_topology(l2_instance: L2Instance, kind: TopologyKind) -> str:
+    """Render an L2 instance's structure as an inline SVG.
+
+    ``kind="accounts"`` shows every Account as a node and every Rail as
+    an edge between source-role-account and destination-role-account.
+    Single-leg rails draw a self-loop on the leg-role account so they
+    show up at all.
+
+    ``kind="chains"`` shows every Rail / TransferTemplate the chains
+    table references, with ``parent → child`` edges (XOR groups
+    rendered as a shared cluster). Required edges drawn solid; optional
+    edges dashed.
+
+    ``kind="layered"`` lays the accounts diagram on top of the chains
+    diagram in two ranks — the accounts row at the top, the chains row
+    below.
+    """
+    if kind == "accounts":
+        return _to_svg(_build_accounts_graph(l2_instance))
+    if kind == "chains":
+        return _to_svg(_build_chains_graph(l2_instance))
+    if kind == "layered":
+        return _to_svg(_build_layered_graph(l2_instance))
+    raise ValueError(f"unknown topology kind: {kind!r}")
+
+
+def render_dataflow(app_name: str) -> str:
+    """Render which datasets feed which sheets for ``app_name``.
+
+    Reads the typed ``App`` tree's emitted analysis structure — every
+    Visual carries its dataset reference, so the dataflow is a fan-in
+    graph: datasets on the left, sheets on the right, edges from a
+    dataset to every sheet it feeds.
+    """
+    from quicksight_gen.common.tree.structure import App
+
+    app = _build_app(app_name)
+    g = graphviz.Digraph(format="svg")
+    g.attr(rankdir="LR", nodesep="0.4", ranksep="1.2")
+    g.attr("node", fontsize="11")
+
+    datasets_seen: set[str] = set()
+    edges: set[tuple[str, str]] = set()
+    for sheet in app.analysis.sheets:
+        sheet_id = f"sheet::{sheet.name}"
+        g.node(
+            sheet_id,
+            sheet.name,
+            shape="box",
+            style="filled,rounded",
+            fillcolor="#e3f2fd",
+        )
+        for visual in sheet.visuals:
+            ds = getattr(visual, "dataset", None)
+            if ds is None:
+                continue
+            ds_id = f"ds::{ds.identifier}"
+            if ds_id not in datasets_seen:
+                g.node(
+                    ds_id,
+                    ds.identifier,
+                    shape="cylinder",
+                    style="filled",
+                    fillcolor="#fff3e0",
+                )
+                datasets_seen.add(ds_id)
+            edges.add((ds_id, sheet_id))
+
+    for ds_id, sheet_id in sorted(edges):
+        g.edge(ds_id, sheet_id, color="#666666")
+
+    return _to_svg(g)
+
+
+def render_conceptual(name: str) -> str:
+    """Render a hand-authored ``.dot`` file from the conceptual catalog.
+
+    Reads ``docs/_diagrams/conceptual/<name>.dot`` and pipes it through
+    Graphviz. ``KeyError`` if the named diagram doesn't exist — surfaces
+    in the mkdocs build with a clear "no such conceptual diagram" line.
+    """
+    dot_path = _CONCEPTUAL_DIR / f"{name}.dot"
+    if not dot_path.exists():
+        available = sorted(p.stem for p in _CONCEPTUAL_DIR.glob("*.dot"))
+        raise KeyError(
+            f"No conceptual diagram named {name!r}. "
+            f"Available: {', '.join(available) or '(none)'}."
+        )
+    source = dot_path.read_text(encoding="utf-8")
+    g = graphviz.Source(source, format="svg")
+    return _to_svg(g)
+
+
+# -- L2 graph builders -------------------------------------------------------
+
+
+def _build_accounts_graph(l2_instance: L2Instance) -> graphviz.Digraph:
+    g = graphviz.Digraph(format="svg")
+    g.attr(rankdir="LR", nodesep="0.5", ranksep="1.0")
+    g.attr("node", fontsize="11", style="filled")
+
+    role_to_account = _role_to_account(l2_instance)
+    for acc in l2_instance.accounts:
+        _add_account_node(g, acc)
+
+    for rail in l2_instance.rails:
+        _add_rail_edges(g, rail, role_to_account)
+    return g
+
+
+def _build_chains_graph(l2_instance: L2Instance) -> graphviz.Digraph:
+    g = graphviz.Digraph(format="svg")
+    g.attr(rankdir="LR", nodesep="0.4", ranksep="0.9")
+    g.attr("node", fontsize="11", shape="box", style="filled,rounded")
+
+    referenced_ids: set[str] = set()
+    for chain in l2_instance.chains:
+        referenced_ids.add(str(chain.parent))
+        referenced_ids.add(str(chain.child))
+
+    rails_by_name = {str(r.name): r for r in l2_instance.rails}
+    templates_by_name = {str(t.name): t for t in l2_instance.transfer_templates}
+
+    for ref_id in sorted(referenced_ids):
+        if ref_id in rails_by_name:
+            g.node(ref_id, ref_id, fillcolor="#e0f7fa")
+        elif ref_id in templates_by_name:
+            g.node(ref_id, f"{ref_id} (template)", fillcolor="#fff9c4")
+        else:
+            g.node(ref_id, ref_id, fillcolor="#f5f5f5")
+
+    for chain in l2_instance.chains:
+        _add_chain_edge(g, chain)
+    return g
+
+
+def _build_layered_graph(l2_instance: L2Instance) -> graphviz.Digraph:
+    g = graphviz.Digraph(format="svg")
+    g.attr(rankdir="TB", nodesep="0.4", ranksep="1.4")
+
+    with g.subgraph(name="cluster_accounts") as c:
+        c.attr(label="Accounts + Rails", style="rounded", color="#90caf9")
+        c.attr("node", fontsize="11", style="filled")
+        role_to_account = _role_to_account(l2_instance)
+        for acc in l2_instance.accounts:
+            _add_account_node(c, acc)
+        for rail in l2_instance.rails:
+            _add_rail_edges(c, rail, role_to_account)
+
+    with g.subgraph(name="cluster_chains") as c:
+        c.attr(label="Chains", style="rounded", color="#a5d6a7")
+        c.attr(
+            "node", fontsize="11", shape="box", style="filled,rounded"
+        )
+        rails_by_name = {str(r.name) for r in l2_instance.rails}
+        templates_by_name = {str(t.name) for t in l2_instance.transfer_templates}
+        seen: set[str] = set()
+        for chain in l2_instance.chains:
+            for ref in (chain.parent, chain.child):
+                ref_id = str(ref)
+                if ref_id in seen:
+                    continue
+                seen.add(ref_id)
+                if ref_id in rails_by_name:
+                    c.node(f"chain::{ref_id}", ref_id, fillcolor="#e0f7fa")
+                elif ref_id in templates_by_name:
+                    c.node(
+                        f"chain::{ref_id}",
+                        f"{ref_id} (template)",
+                        fillcolor="#fff9c4",
+                    )
+                else:
+                    c.node(f"chain::{ref_id}", ref_id, fillcolor="#f5f5f5")
+        for chain in l2_instance.chains:
+            style = "solid" if chain.required else "dashed"
+            label = chain.xor_group and f"xor: {chain.xor_group}" or ""
+            c.edge(
+                f"chain::{chain.parent}",
+                f"chain::{chain.child}",
+                label=label,
+                style=style,
+                color="#666666",
+            )
+    return g
+
+
+# -- Graph helpers -----------------------------------------------------------
+
+
+def _role_to_account(l2_instance: L2Instance) -> dict[str, Account]:
+    return {
+        str(acc.role): acc for acc in l2_instance.accounts if acc.role is not None
+    }
+
+
+def _add_account_node(g: graphviz.Digraph, acc: Account) -> None:
+    color = "#bbdefb" if acc.scope == "internal" else "#ffe0b2"
+    label = acc.name or acc.id
+    g.node(str(acc.id), str(label), fillcolor=color, shape="box")
+
+
+def _add_rail_edges(
+    g: graphviz.Digraph,
+    rail: Rail,
+    role_to_account: dict[str, Account],
+) -> None:
+    if isinstance(rail, TwoLegRail):
+        sources = _expand_role_expression(rail.source_role)
+        destinations = _expand_role_expression(rail.destination_role)
+        for src_role in sources:
+            src_acc = role_to_account.get(src_role)
+            for dst_role in destinations:
+                dst_acc = role_to_account.get(dst_role)
+                if src_acc is None or dst_acc is None:
+                    continue
+                g.edge(
+                    str(src_acc.id),
+                    str(dst_acc.id),
+                    label=f"{rail.name}\n({rail.transfer_type})",
+                    fontsize="9",
+                    color="#1976d2",
+                )
+    elif isinstance(rail, SingleLegRail):
+        for leg_role in _expand_role_expression(rail.leg_role):
+            acc = role_to_account.get(leg_role)
+            if acc is None:
+                continue
+            g.edge(
+                str(acc.id),
+                str(acc.id),
+                label=f"{rail.name}\n({rail.transfer_type})",
+                fontsize="9",
+                style="dashed",
+                color="#7b1fa2",
+            )
+
+
+def _expand_role_expression(expr: object) -> tuple[str, ...]:
+    """RoleExpression is either a single Identifier or a tuple of them."""
+    if isinstance(expr, tuple):
+        return tuple(str(e) for e in expr)
+    return (str(expr),)
+
+
+def _add_chain_edge(g: graphviz.Digraph, chain: ChainEntry) -> None:
+    style = "solid" if chain.required else "dashed"
+    parts: list[str] = []
+    if chain.required:
+        parts.append("required")
+    if chain.xor_group is not None:
+        parts.append(f"xor:{chain.xor_group}")
+    label = " · ".join(parts)
+    g.edge(
+        str(chain.parent),
+        str(chain.child),
+        label=label,
+        fontsize="9",
+        style=style,
+        color="#666666",
+    )
+
+
+# -- App tree builder dispatch -----------------------------------------------
+
+
+def _build_app(app_name: str):
+    """Build the named app's tree against a default L2 + minimal Config.
+
+    Used for ``render_dataflow`` — only needs the analysis structure
+    (sheets + visuals + dataset refs), not a real datasource.
+    """
+    from quicksight_gen.common.config import Config
+    from quicksight_gen.common.l2.loader import load_instance
+
+    spec_example = load_instance(_TESTS_L2_DIR / "spec_example.yaml")
+    cfg = Config(
+        aws_account_id="000000000000",
+        aws_region="us-east-2",
+        datasource_arn=(
+            "arn:aws:quicksight:us-east-2:000000000000:"
+            "datasource/qs-gen-demo-datasource"
+        ),
+        principal_arns=[
+            "arn:aws:quicksight:us-east-2:000000000000:user/default/dummy"
+        ],
+    )
+    return _APP_BUILDERS[app_name](cfg, l2_instance=spec_example)
+
+
+def _build_l1_app(cfg, *, l2_instance):
+    from quicksight_gen.apps.l1_dashboard.app import build_l1_dashboard_app
+    return build_l1_dashboard_app(cfg, l2_instance=l2_instance)
+
+
+def _build_l2ft_app(cfg, *, l2_instance):
+    from quicksight_gen.apps.l2_flow_tracing.app import build_l2_flow_tracing_app
+    return build_l2_flow_tracing_app(cfg, l2_instance=l2_instance)
+
+
+def _build_inv_app(cfg, *, l2_instance):
+    from quicksight_gen.apps.investigation.app import build_investigation_app
+    return build_investigation_app(cfg, l2_instance=l2_instance)
+
+
+def _build_exec_app(cfg, *, l2_instance):
+    from quicksight_gen.apps.executives.app import build_executives_app
+    return build_executives_app(cfg, l2_instance=l2_instance)
+
+
+_APP_BUILDERS = {
+    "l1_dashboard": _build_l1_app,
+    "l2_flow_tracing": _build_l2ft_app,
+    "investigation": _build_inv_app,
+    "executives": _build_exec_app,
+}
+
+
+# -- SVG plumbing ------------------------------------------------------------
+
+
+def _to_svg(g: graphviz.Digraph | graphviz.Source) -> str:
+    """Render to SVG bytes, decode, strip XML declaration + DOCTYPE."""
+    svg_bytes = g.pipe(format="svg")
+    svg = svg_bytes.decode("utf-8")
+    if svg.startswith("<?xml"):
+        _, _, svg = svg.partition("?>")
+        svg = svg.lstrip()
+    if svg.startswith("<!DOCTYPE"):
+        _, _, svg = svg.partition(">")
+        svg = svg.lstrip()
+    return svg
+
+
+# -- Paths -------------------------------------------------------------------
+
+
+_DOCS_DIR = Path(__file__).parent.parent.parent / "docs"
+_CONCEPTUAL_DIR = _DOCS_DIR / "_diagrams" / "conceptual"
+_TESTS_L2_DIR = (
+    Path(__file__).parent.parent.parent.parent.parent / "tests" / "l2"
+)

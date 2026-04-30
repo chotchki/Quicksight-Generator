@@ -1,0 +1,28 @@
+// Double-entry posting flow.
+//
+// Every money movement materializes as a paired debit + credit on
+// two accounts — the L1 invariant root that drift / overdraft /
+// limit-breach all eventually trace back to.
+digraph double_entry {
+    rankdir=LR;
+    node [fontsize=11, style=filled, shape=box];
+
+    event [label="Money-movement event\n(transfer, settlement, fee)",
+           fillcolor="#fff3e0", shape=oval];
+
+    debit_acct [label="Debit account\n(money leaves)", fillcolor="#ffcdd2"];
+    credit_acct [label="Credit account\n(money arrives)", fillcolor="#c8e6c9"];
+
+    debit_leg [label="Transaction leg\nsigned_amount < 0", fillcolor="#ef9a9a"];
+    credit_leg [label="Transaction leg\nsigned_amount > 0", fillcolor="#a5d6a7"];
+
+    invariant [label="Conservation invariant\nΣ(legs) = expected_net",
+               fillcolor="#bbdefb", shape=oval];
+
+    event -> debit_leg;
+    event -> credit_leg;
+    debit_leg -> debit_acct [label="posts to"];
+    credit_leg -> credit_acct [label="posts to"];
+    debit_leg -> invariant [style=dashed];
+    credit_leg -> invariant [style=dashed];
+}

@@ -28,6 +28,9 @@ coverage.xml
 # mkdocs
 site/
 
+# Phase O.1.c — diagram render cache (rebuilt on every mkdocs build)
+src/quicksight_gen/docs/_diagrams/_rendered/
+
 /config.yaml
 tests/e2e/screenshots/
 tests/e2e/failures/

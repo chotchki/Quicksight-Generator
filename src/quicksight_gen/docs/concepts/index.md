@@ -4,6 +4,8 @@ The reasoning behind the dashboards — banking primitives that the L1
 invariants, the L2 model, and the per-app sheets all assume the reader
 already understands.
 
+{{ diagram("conceptual", name="double-entry") }}
+
 The intended user is anyone touching the dashboards for the first time:
 operators, integrators, ETL engineers, executives. Read these pages
 before the per-app reference material if a term ("invariant", "rail",
