@@ -156,20 +156,39 @@ def generate_l2_flow_tracing_cmd(
 
 def _generate_investigation(
     config_path: str, output_dir: str, theme_preset: str | None,
+    *,
+    l2_instance_path: str | None = None,
 ) -> None:
+    from dataclasses import replace as _replace
+
     from quicksight_gen.apps.investigation.app import (
-        build_analysis,
-        build_investigation_dashboard,
+        build_investigation_app,
     )
     from quicksight_gen.apps.investigation.datasets import build_all_datasets
+    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from quicksight_gen.common.l2 import load_instance
 
     cfg = load_config(config_path)
     if theme_preset is not None:
         cfg.theme_preset = theme_preset
     out = Path(output_dir)
+
+    # N.3.h — Investigation reads the same institution YAML the L1
+    # dashboard does (per the N.2 audit). Load the L2 instance up
+    # front and pre-stamp ``cfg.l2_instance_prefix`` so both
+    # ``build_all_datasets`` and ``build_investigation_app`` see the
+    # prefix without needing to thread the instance through every
+    # builder.
+    if l2_instance_path is not None:
+        l2_instance = load_instance(Path(l2_instance_path))
+    else:
+        l2_instance = default_l2_instance()
+    if cfg.l2_instance_prefix is None:
+        cfg = _replace(cfg, l2_instance_prefix=str(l2_instance.instance))
+
     click.echo(
         f"Investigation: account={cfg.aws_account_id}, "
-        f"region={cfg.aws_region}"
+        f"region={cfg.aws_region}, l2_instance={l2_instance.instance}"
     )
 
     theme = build_theme(cfg)
@@ -183,11 +202,17 @@ def _generate_investigation(
     for ds in datasets:
         _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
 
-    analysis = build_analysis(cfg)
-    _write_json(out / "investigation-analysis.json", analysis.to_aws_json())
-
-    dashboard = build_investigation_dashboard(cfg)
-    _write_json(out / "investigation-dashboard.json", dashboard.to_aws_json())
+    # Build the app once + emit both Analysis + Dashboard so the L2
+    # instance is consistent across both (mirrors L1 + L2FT).
+    app = build_investigation_app(cfg, l2_instance=l2_instance)
+    _write_json(
+        out / "investigation-analysis.json",
+        app.emit_analysis().to_aws_json(),
+    )
+    _write_json(
+        out / "investigation-dashboard.json",
+        app.emit_dashboard().to_aws_json(),
+    )
 
     click.echo(f"\nGenerated {1 + len(datasets) + 2} files in {out}/")
 
@@ -359,6 +384,8 @@ def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
     pass will write — always included. The other app's filenames are
     included so a single-app generate doesn't prune its sibling's output.
     """
+    from dataclasses import replace as _replace
+
     from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
     from quicksight_gen.apps.executives.datasets import (
         build_all_datasets as _exec,
@@ -373,16 +400,29 @@ def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
         build_all_l2_flow_tracing_datasets as _l2ft,
     )
 
+    # N.3.h: Investigation now requires ``cfg.l2_instance_prefix`` to
+    # render its dataset SQL. When this helper is called from a sibling
+    # app's generate flow (e.g. Executives), the cfg may not have the
+    # prefix set. Pre-stamp from the default L2 instance to keep the
+    # enumeration working without churning the caller. Once N.4
+    # migrates Executives to L2-fed too, every app caller will already
+    # set the prefix and this can simplify.
+    default_l2 = default_l2_instance()
+    cfg_with_prefix = (
+        cfg if cfg.l2_instance_prefix is not None
+        else _replace(cfg, l2_instance_prefix=str(default_l2.instance))
+    )
+
     names: set[str] = {f"{ds.DataSetId}.json" for ds in keep_current}
-    names.update(f"{ds.DataSetId}.json" for ds in _inv(cfg))
-    names.update(f"{ds.DataSetId}.json" for ds in _exec(cfg))
+    names.update(f"{ds.DataSetId}.json" for ds in _inv(cfg_with_prefix))
+    names.update(f"{ds.DataSetId}.json" for ds in _exec(cfg_with_prefix))
     names.update(
         f"{ds.DataSetId}.json"
-        for ds in _l1(cfg, default_l2_instance())
+        for ds in _l1(cfg_with_prefix, default_l2)
     )
     names.update(
         f"{ds.DataSetId}.json"
-        for ds in _l2ft(cfg, default_l2_instance())
+        for ds in _l2ft(cfg_with_prefix, default_l2)
     )
     return names
 
@@ -716,6 +756,8 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     thing that varies is which seed SQL gets loaded and which analyses
     get generated.
     """
+    from dataclasses import replace as _replace
+
     from quicksight_gen.apps.executives.app import (
         build_analysis as build_exec_analysis,
         build_executives_dashboard,
@@ -733,6 +775,7 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     from quicksight_gen.apps.investigation.demo_data import (
         generate_demo_sql as generate_inv_sql,
     )
+    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
 
     cfg = load_config(config_path)
     if not cfg.demo_database_url:
@@ -780,11 +823,22 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     # N.1.g: PRESETS now contains only the ``default`` preset; per-app
     # branded palettes moved to inline ``theme:`` blocks on the L2
     # YAMLs. L1 + L2FT pick up the L2-sourced theme via
-    # ``resolve_l2_theme(l2_instance)``; Inv + Exec stay on the
-    # registry default until N.3 / N.4 migrates them to L2-fed.
+    # ``resolve_l2_theme(l2_instance)``; Exec stays on the registry
+    # default until N.4 migrates it to L2-fed.
     preset = "default"
     click.echo(f"\nGenerating QuickSight JSON with {preset} theme...")
     cfg.theme_preset = preset
+
+    # N.3.h: pre-stamp ``cfg.l2_instance_prefix`` from the default L2
+    # instance so Investigation's prefix-aware dataset builders can
+    # render their SQL. Same shape as ``_generate_investigation``.
+    # NOTE (N.3.i): seed SQL above still plants flat-table data; the
+    # prefix-aware seed lift lands in N.3.i. This keeps demo apply
+    # generating the QuickSight JSON correctly mid-flight.
+    inv_l2 = default_l2_instance()
+    if cfg.l2_instance_prefix is None:
+        cfg = _replace(cfg, l2_instance_prefix=str(inv_l2.instance))
+
     out = Path(output_dir)
 
     datasource = build_datasource(cfg)
@@ -800,11 +854,13 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
             _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
         _write_json(
             out / "investigation-analysis.json",
-            build_inv_analysis(cfg).to_aws_json(),
+            build_inv_analysis(cfg, l2_instance=inv_l2).to_aws_json(),
         )
         _write_json(
             out / "investigation-dashboard.json",
-            build_investigation_dashboard(cfg).to_aws_json(),
+            build_investigation_dashboard(
+                cfg, l2_instance=inv_l2,
+            ).to_aws_json(),
         )
         json_count += len(inv_datasets) + 2
 

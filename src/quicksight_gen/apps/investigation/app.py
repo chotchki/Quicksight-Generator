@@ -57,10 +57,19 @@ from quicksight_gen.apps.investigation.constants import (
 # ds["col"] ref in the visuals below. Without this, build_investigation_app()
 # would only work after some other module (CLI, test_investigation) had
 # loaded datasets first.
+from dataclasses import replace
+
 from quicksight_gen.apps.investigation import datasets as _register_contracts  # noqa: F401
+# N.3.f: Investigation reads the same default institution YAML as L1
+# (per the N.2 audit's "one institution YAML drives all apps" framing).
+# The default lives under apps/l1_dashboard/ for now because L1 was the
+# first app L2-fed; the path will be neutralized when the spec/scenario
+# YAML split lands (Phase O candidate).
+from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
 from quicksight_gen.common.dataset_contract import ColumnShape
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
+from quicksight_gen.common.l2 import L2Instance, ThemePreset
 from quicksight_gen.common.sheets.app_info import (
     APP_INFO_SHEET_DESCRIPTION,
     APP_INFO_SHEET_NAME,
@@ -71,7 +80,7 @@ from quicksight_gen.common.sheets.app_info import (
     build_matview_status_dataset,
     populate_app_info_sheet,
 )
-from quicksight_gen.common.theme import get_preset
+from quicksight_gen.common.theme import resolve_l2_theme
 from quicksight_gen.common.models import Analysis as ModelAnalysis
 from quicksight_gen.common.models import Dashboard as ModelDashboard
 from quicksight_gen.common.tree import (
@@ -186,15 +195,19 @@ _ACCOUNT_NETWORK_DESCRIPTION = (
 # Getting Started (L.2.1)
 # ---------------------------------------------------------------------------
 
-def _build_getting_started_sheet(cfg: Config, analysis: Analysis) -> Sheet:
+def _build_getting_started_sheet(
+    cfg: Config, analysis: Analysis, *, theme: ThemePreset,
+) -> Sheet:
     """Getting Started — landing page with welcome + roadmap text boxes.
 
     Two full-width text boxes stacked top-to-bottom. No visuals,
     no controls, no filters. The simplest sheet on Investigation —
     its job in L.2.1 is to land the app-level skeleton (App + Analysis +
     text-box layout slot support) so subsequent sheet ports snap in.
+
+    N.3.g: ``theme`` is the L2-resolved theme.
     """
-    accent = get_preset(cfg.theme_preset).accent
+    accent = theme.accent
 
     sheet = analysis.add_sheet(Sheet(
         sheet_id=SHEET_INV_GETTING_STARTED,
@@ -972,25 +985,49 @@ def _build_account_network_sheet(
 # App builder
 # ---------------------------------------------------------------------------
 
-def build_investigation_app(cfg: Config) -> App:
-    """Build the Investigation App tree.
+def build_investigation_app(
+    cfg: Config,
+    *,
+    l2_instance: L2Instance | None = None,
+) -> App:
+    """Build the Investigation App tree (N.3.f — L2-fed).
 
     Returns a fully-wired App ready for ``app.emit_analysis()`` /
     ``app.emit_dashboard()``. The CLI calls this via the
     ``build_analysis`` / ``build_investigation_dashboard`` shims below.
+
+    Per the N.2 audit, Investigation is fed by the same institution
+    YAML that drives L1 + L2FT. The L2 instance prefix is auto-derived
+    from ``l2_instance.instance`` here so callers don't have to
+    pre-stamp ``cfg.l2_instance_prefix``; if the caller HAS pre-set
+    it (e.g. an integrator running a custom build), that value is
+    preserved. Defaults to the persona-neutral ``spec_example``
+    instance — the same default L1 uses.
+
+    Investigation-specific tables read from ``<prefix>_inv_*``
+    matviews (N.3.b); base-table reads use ``<prefix>_transactions``.
     """
-    analysis_name = _analysis_name(cfg)
+    if l2_instance is None:
+        l2_instance = default_l2_instance()
+
+    if cfg.l2_instance_prefix is None:
+        cfg = replace(cfg, l2_instance_prefix=str(l2_instance.instance))
+
+    # N.3.g: theme from the L2 instance, not from cfg.theme_preset.
+    theme = resolve_l2_theme(l2_instance)
+
+    analysis_name = _analysis_name(theme)
     app = App(name="investigation", cfg=cfg)
     analysis = app.set_analysis(Analysis(
         analysis_id_suffix="investigation-analysis",
         name=analysis_name,
     ))
-    _build_getting_started_sheet(cfg, analysis)
+    _build_getting_started_sheet(cfg, analysis, theme=theme)
     _build_recipient_fanout_sheet(cfg, app, analysis)
     _build_volume_anomalies_sheet(cfg, app, analysis)
     _build_money_trail_sheet(cfg, app, analysis)
     _build_account_network_sheet(cfg, app, analysis)
-    _build_app_info_sheet(cfg, app, analysis)
+    _build_app_info_sheet(cfg, app, analysis, theme=theme)
     app.create_dashboard(
         dashboard_id_suffix="investigation-dashboard",
         name=analysis_name,
@@ -998,7 +1035,9 @@ def build_investigation_app(cfg: Config) -> App:
     return app
 
 
-def _build_app_info_sheet(cfg: Config, app: App, analysis: Analysis) -> None:
+def _build_app_info_sheet(
+    cfg: Config, app: App, analysis: Analysis, *, theme: ThemePreset,
+) -> None:
     """M.4.4.5 — App Info ("i") sheet, ALWAYS LAST. Diagnostic canary;
     see common/sheets/app_info.py.
 
@@ -1006,6 +1045,9 @@ def _build_app_info_sheet(cfg: Config, app: App, analysis: Analysis) -> None:
     the IDs. ``build_all_datasets()`` ALSO calls these (so the JSON
     write step ships them on deploy) — identity-idempotent contract
     registration on the second call, identical DataSetIds, no harm.
+
+    N.3.g: ``theme`` is the L2-resolved theme; populate_app_info_sheet
+    accepts it directly (no fallback through cfg.theme_preset).
     """
     from quicksight_gen.apps.investigation.datasets import INV_MATVIEW_NAMES
 
@@ -1033,15 +1075,19 @@ def _build_app_info_sheet(cfg: Config, app: App, analysis: Analysis) -> None:
     populate_app_info_sheet(
         cfg, sheet,
         liveness_ds=liveness_ds, matview_status_ds=matviews_ds,
+        theme=theme,
     )
 
 
-def _analysis_name(cfg: Config) -> str:
-    """Mirrors apps/investigation/analysis._analysis_name — preset
-    prefix when the preset declares one, else just "Investigation"."""
-    preset = get_preset(cfg.theme_preset)
-    if preset.analysis_name_prefix:
-        return f"{preset.analysis_name_prefix} — Investigation"
+def _analysis_name(theme: ThemePreset) -> str:
+    """Resolve the analysis name from the L2 theme's prefix (N.3.g).
+
+    Mirrors L1's pattern: when the institution YAML declares a theme
+    with ``analysis_name_prefix`` (e.g. "Demo"), the title becomes
+    ``"<prefix> — Investigation"``; otherwise just ``"Investigation"``.
+    """
+    if theme.analysis_name_prefix:
+        return f"{theme.analysis_name_prefix} — Investigation"
     return "Investigation"
 
 
@@ -1052,11 +1098,21 @@ def _analysis_name(cfg: Config) -> str:
 # JSON, just routed through the typed tree.
 # ---------------------------------------------------------------------------
 
-def build_analysis(cfg: Config) -> ModelAnalysis:
-    """Tree-backed replacement for the imperative ``build_analysis``."""
-    return build_investigation_app(cfg).emit_analysis()
+def build_analysis(
+    cfg: Config, *, l2_instance: L2Instance | None = None,
+) -> ModelAnalysis:
+    """Tree-backed replacement for the imperative ``build_analysis``.
+
+    Forwards ``l2_instance`` to ``build_investigation_app``; default
+    is the persona-neutral spec_example.
+    """
+    return build_investigation_app(cfg, l2_instance=l2_instance).emit_analysis()
 
 
-def build_investigation_dashboard(cfg: Config) -> ModelDashboard:
+def build_investigation_dashboard(
+    cfg: Config, *, l2_instance: L2Instance | None = None,
+) -> ModelDashboard:
     """Tree-backed replacement for the imperative builder."""
-    return build_investigation_app(cfg).emit_dashboard()
+    return build_investigation_app(
+        cfg, l2_instance=l2_instance,
+    ).emit_dashboard()

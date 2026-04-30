@@ -20,6 +20,8 @@ def cfg() -> Config:
         aws_account_id="111122223333",
         aws_region="us-east-2",
         datasource_arn="arn:aws:quicksight:us-east-2:111122223333:datasource/ds",
+        # N.3.f: Investigation builders require an L2 instance prefix.
+        l2_instance_prefix="spec_example",
     )
 
 

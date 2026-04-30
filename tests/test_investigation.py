@@ -80,12 +80,15 @@ from quicksight_gen.common.theme import PRESETS, get_preset
 _TEST_CFG = Config(
     aws_account_id="111122223333",
     aws_region="us-west-2",
-    # N.1.g: sasquatch-bank-investigation preset removed from registry;
-    # Investigation falls back to default until N.3 reshapes it L2-fed.
     theme_preset="default",
     datasource_arn=(
         "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
     ),
+    # N.3.f: Investigation is now L2-fed and requires
+    # ``l2_instance_prefix`` to render its dataset SQL. Tests use the
+    # spec_example default (matches what ``build_investigation_app``
+    # auto-derives from ``default_l2_instance().instance``).
+    l2_instance_prefix="spec_example",
 )
 
 
@@ -505,15 +508,20 @@ def test_volume_anomalies_contract_exposes_z_score_and_bucket():
 
 
 def test_volume_anomalies_dataset_reads_from_matview():
-    """Dataset is a thin SELECT over the matview — no inline windowing
-    or population-stat math at dataset time. The whole point of the
-    matview is to keep that work out of QuickSight Direct Query."""
+    """Dataset is a thin SELECT over the per-instance matview — no inline
+    windowing or population-stat math at dataset time. The whole point of
+    the matview is to keep that work out of QuickSight Direct Query.
+
+    N.3.d: matview name is per-instance prefixed.
+    """
     datasets = build_all_datasets(_TEST_CFG)
     anomalies = datasets[1]
     sql = next(iter(anomalies.PhysicalTableMap.values())).CustomSql.SqlQuery
-    assert "FROM inv_pair_rolling_anomalies" in sql
+    assert "FROM spec_example_inv_pair_rolling_anomalies" in sql
     # Don't reach back into transactions / daily_balances at dataset load.
-    assert "transactions" not in sql
+    # (The prefixed base table name is NOT in this dataset's SQL — it
+    # only references the matview which itself wraps the base table.)
+    assert "spec_example_transactions" not in sql
     assert "OVER" not in sql
     assert "STDDEV" not in sql.upper()
 
@@ -681,16 +689,19 @@ def test_money_trail_contract_exposes_chain_columns():
 
 
 def test_money_trail_dataset_reads_from_matview():
-    """Dataset is a thin SELECT over the matview — recursive walk + leg
-    join happens at refresh time, not dataset load. The whole point of
-    the matview is to keep the WITH RECURSIVE out of QuickSight Direct
-    Query."""
+    """Dataset is a thin SELECT over the per-instance matview — recursive
+    walk + leg join happens at refresh time, not dataset load. The whole
+    point of the matview is to keep the WITH RECURSIVE out of QuickSight
+    Direct Query.
+
+    N.3.d: matview name is per-instance prefixed.
+    """
     datasets = build_all_datasets(_TEST_CFG)
     money_trail = datasets[2]
     sql = next(iter(money_trail.PhysicalTableMap.values())).CustomSql.SqlQuery
-    assert "FROM inv_money_trail_edges" in sql
-    # Don't reach back into transactions at dataset load.
-    assert "transactions" not in sql
+    assert "FROM spec_example_inv_money_trail_edges" in sql
+    # Don't reach back into the prefixed base table at dataset load.
+    assert "spec_example_transactions" not in sql
     assert "RECURSIVE" not in sql.upper()
 
 
@@ -953,7 +964,8 @@ def test_account_network_dataset_reuses_money_trail_matview():
     adds the source_display / target_display walking labels."""
     ds = build_all_datasets(_TEST_CFG)[3]
     sql = next(iter(ds.PhysicalTableMap.values())).CustomSql.SqlQuery
-    assert "FROM inv_money_trail_edges" in sql
+    # N.3.d: matview name is per-instance prefixed.
+    assert "FROM spec_example_inv_money_trail_edges" in sql
     assert "AS source_display" in sql
     assert "AS target_display" in sql
 
