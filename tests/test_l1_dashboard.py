@@ -52,7 +52,6 @@ def test_default_l2_yaml_is_byte_identical_to_test_fixture():
 _CFG = Config(
     aws_account_id="111122223333",
     aws_region="us-west-2",
-    theme_preset="default",
     datasource_arn=(
         "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
     ),
@@ -717,9 +716,9 @@ def test_per_sheet_filter_dropdowns() -> None:
 
 def test_no_hardcoded_hex_in_l1_dashboard_code() -> None:
     """M.2b.13 invariant: every color reference in the L1 dashboard app
-    code resolves from `cfg.theme_preset` — never a hardcoded `#xxxxxx`
-    literal. A drift in this invariant means a future theme switch
-    silently fails to repaint that visual.
+    code resolves from the L2-instance theme — never a hardcoded
+    `#xxxxxx` literal. A drift in this invariant means a future theme
+    switch silently fails to repaint that visual.
 
     Scans both `app.py` and `datasets.py` for hex-color patterns
     (`#abc`, `#abcdef`, `#abcdef12`). Comments / docstrings allowed
@@ -741,8 +740,8 @@ def test_no_hardcoded_hex_in_l1_dashboard_code() -> None:
                 offenders.append(f"{py.name}:{n}: {line.strip()}")
     assert not offenders, (
         "L1 dashboard code MUST NOT contain hardcoded hex colors — "
-        "resolve from cfg.theme_preset.accent / .primary_fg / etc. "
-        f"instead. Found:\n  " + "\n  ".join(offenders)
+        "resolve from theme.accent / .primary_fg / etc. instead. "
+        f"Found:\n  " + "\n  ".join(offenders)
     )
 
 
@@ -760,10 +759,10 @@ def test_account_id_link_tints_on_every_table_with_account_id() -> None:
     sheet's parameter binding) are not required to carry the tint —
     there's nothing to drill from. The assertion walks each table's
     actual columns to decide whether the tint is required."""
-    from quicksight_gen.common.theme import get_preset
+    from quicksight_gen.common.theme import DEFAULT_PRESET
     from quicksight_gen.common.tree import CellAccentText, Table
 
-    accent = get_preset(_CFG.theme_preset).accent
+    accent = DEFAULT_PRESET.accent
     app = build_l1_dashboard_app(_CFG)
     assert app.analysis is not None
 
@@ -1331,7 +1330,6 @@ class TestCli:
         p.write_text(
             "aws_account_id: '111122223333'\n"
             "aws_region: us-west-2\n"
-            "theme_preset: default\n"
             "datasource_arn: arn:aws:quicksight:us-west-2:111122223333"
             ":datasource/ds\n"
         )

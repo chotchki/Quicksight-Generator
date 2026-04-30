@@ -74,13 +74,11 @@ from quicksight_gen.apps.investigation.demo_data import generate_demo_sql
 from quicksight_gen.cli import main
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.models import SheetVisualScopingConfiguration
-from quicksight_gen.common.theme import PRESETS, get_preset
 
 
 _TEST_CFG = Config(
     aws_account_id="111122223333",
     aws_region="us-west-2",
-    theme_preset="default",
     datasource_arn=(
         "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
     ),
@@ -1429,7 +1427,6 @@ def _write_min_config(tmp_path: Path) -> Path:
     cfg_path.write_text(
         "aws_account_id: '111122223333'\n"
         "aws_region: us-west-2\n"
-        "theme_preset: default\n"
         "datasource_arn: 'arn:aws:quicksight:us-west-2:111122223333:datasource/x'\n",
         encoding="utf-8",
     )

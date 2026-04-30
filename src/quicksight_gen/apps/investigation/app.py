@@ -1013,8 +1013,13 @@ def build_investigation_app(
     if cfg.l2_instance_prefix is None:
         cfg = replace(cfg, l2_instance_prefix=str(l2_instance.instance))
 
-    # N.3.g: theme from the L2 instance, not from cfg.theme_preset.
-    theme = resolve_l2_theme(l2_instance)
+    # N.3.g / N.4.k: theme from the L2 instance, coerced to the
+    # registry default for in-canvas accent colors when the instance
+    # declares no inline ``theme:`` block. The CLI uses the un-coerced
+    # ``resolve_l2_theme`` return to decide whether to deploy a
+    # custom Theme resource (silent-fallback to AWS CLASSIC).
+    from quicksight_gen.common.theme import DEFAULT_PRESET
+    theme = resolve_l2_theme(l2_instance) or DEFAULT_PRESET
 
     analysis_name = _analysis_name(theme)
     app = App(name="investigation", cfg=cfg)
@@ -1046,8 +1051,9 @@ def _build_app_info_sheet(
     write step ships them on deploy) — identity-idempotent contract
     registration on the second call, identical DataSetIds, no harm.
 
-    N.3.g: ``theme`` is the L2-resolved theme; populate_app_info_sheet
-    accepts it directly (no fallback through cfg.theme_preset).
+    N.3.g: ``theme`` is the L2-resolved theme (coerced to the registry
+    default for in-canvas accents when no L2 theme block is declared);
+    populate_app_info_sheet accepts it directly.
     """
     from quicksight_gen.apps.investigation.datasets import INV_MATVIEW_NAMES
 

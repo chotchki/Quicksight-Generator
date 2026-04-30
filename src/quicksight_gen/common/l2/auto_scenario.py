@@ -64,6 +64,7 @@ from .primitives import (
 )
 from .seed import (
     DriftPlant,
+    InvFanoutPlant,
     LimitBreachPlant,
     OverdraftPlant,
     RailFiringPlant,
@@ -166,6 +167,11 @@ def default_scenario_for(
         omitted.append(("SupersessionPlant",
                         "no single-leg Rail with leg_role matching "
                         "template role"))
+    inv_fanout_picks = _pick_inv_fanout_inputs(instance, template.role)
+    if inv_fanout_picks is None:
+        omitted.append(("InvFanoutPlant",
+                        "no leaf-internal recipient template OR fewer than "
+                        "2 distinct sender accounts available"))
 
     # External counter for drift + limit-breach plants. Falls back to
     # any external Account if the rail-aware lookup misses.
@@ -269,6 +275,23 @@ def default_scenario_for(
                 rail_name=super_rail.name,
                 original_amount=Decimal("250.00"),
                 corrected_amount=Decimal("275.00"),
+            ),
+        )
+
+    inv_fanout_plants: tuple[InvFanoutPlant, ...] = ()
+    if inv_fanout_picks is not None:
+        senders, fanout_rail = inv_fanout_picks
+        inv_fanout_plants = (
+            InvFanoutPlant(
+                # cust1 is the materialized leaf-internal customer; its
+                # template inherits parent_role from the picker — exactly
+                # the shape the Inv matview filter requires.
+                recipient_account_id=cust1.account_id,
+                sender_account_ids=tuple(s.id for s in senders),
+                days_ago=2,
+                transfer_type=fanout_rail.transfer_type,
+                rail_name=fanout_rail.name,
+                amount_per_transfer=Decimal("500.00"),
             ),
         )
 
@@ -400,6 +423,7 @@ def default_scenario_for(
         supersession_plants=supersession_plants if include_l1 else (),
         transfer_template_plants=transfer_template_plants if include_broad else (),
         rail_firing_plants=rail_firing_plants,
+        inv_fanout_plants=inv_fanout_plants if include_l1 else (),
         today=today_ref,
     )
     return AutoScenarioReport(scenario=scenario, omitted=tuple(omitted))
@@ -892,6 +916,35 @@ def _pick_first_with(
     if not matching:
         return None
     return sorted(matching, key=lambda r: str(r.name))[0]
+
+
+def _pick_inv_fanout_inputs(
+    instance: L2Instance, template_role: Identifier,
+) -> tuple[tuple[Account, ...], Rail] | None:
+    """Pick (senders, rail) for an Investigation fanout plant.
+
+    Strategy: senders are the first 3 (sorted by id) Accounts that AREN'T
+    the customer template's role — every fanout edge must have a distinct
+    src/dst, otherwise the matview's pair-rolling aggregation conflates
+    self-edges. The rail is the first 2-leg inbound rail (same one drift
+    uses) — its transfer_type tags the planted legs so a Volume Anomalies
+    sheet filtered by transfer_type still sees them.
+
+    Returns None when fewer than 2 sender candidates exist OR no inbound
+    2-leg rail is declared — the picker omits the plant rather than emit
+    a degenerate fanout.
+    """
+    fanout_rail = _pick_inbound_2leg_rail(instance, template_role)
+    if fanout_rail is None:
+        return None
+    candidates = sorted(
+        (a for a in instance.accounts if a.role != template_role),
+        key=lambda a: str(a.id),
+    )
+    if len(candidates) < 2:
+        return None
+    senders = tuple(candidates[:3])
+    return (senders, fanout_rail)
 
 
 def _pick_supersession_rail(

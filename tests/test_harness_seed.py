@@ -31,6 +31,7 @@ from _harness_seed import build_planted_manifest  # noqa: E402
 from quicksight_gen.common.l2.primitives import Identifier
 from quicksight_gen.common.l2.seed import (
     DriftPlant,
+    InvFanoutPlant,
     LimitBreachPlant,
     OverdraftPlant,
     RailFiringPlant,
@@ -71,6 +72,7 @@ def test_empty_scenario_yields_empty_lists() -> None:
         "supersession_plants",
         "transfer_template_plants",
         "rail_firing_plants",
+        "inv_fanout_plants",
     }
     assert set(manifest.keys()) == expected_kinds
     for kind, entries in manifest.items():
@@ -254,6 +256,35 @@ def test_rail_firing_plant_manifest_carries_template_and_chain_links() -> None:
     # Chain child: both populated.
     assert entries[1]["template_name"] == "Cycle"
     assert entries[1]["transfer_parent_id"] == "tr-rail-0001"
+
+
+def test_inv_fanout_plant_manifest_carries_recipient_and_senders() -> None:
+    """InvFanoutPlant manifest entries carry recipient_account_id +
+    sender_account_ids tuple — the columns assert_inv_planted_rows_visible
+    queries the prefixed Inv matviews with."""
+    p = InvFanoutPlant(
+        recipient_account_id=Identifier("cust-001"),
+        sender_account_ids=(
+            Identifier("ext-a"), Identifier("ext-b"), Identifier("ext-c"),
+        ),
+        days_ago=2,
+        transfer_type="ach",
+        rail_name=Identifier("ExternalRailInbound"),
+        amount_per_transfer=Decimal("500.00"),
+    )
+    entries = build_planted_manifest(ScenarioPlant(
+        template_instances=(),
+        inv_fanout_plants=(p,),
+        today=date(2030, 1, 1),
+    ))["inv_fanout_plants"]
+    assert entries == [{
+        "recipient_account_id": "cust-001",
+        "sender_account_ids": ("ext-a", "ext-b", "ext-c"),
+        "days_ago": 2,
+        "transfer_type": "ach",
+        "rail_name": "ExternalRailInbound",
+        "amount_per_transfer": Decimal("500.00"),
+    }]
 
 
 def test_manifest_keys_match_scenario_plant_attribute_names() -> None:

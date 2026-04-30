@@ -908,7 +908,7 @@ limit_schedules:
       ACH cap because check-payout merchants are by definition
       lower-tech / lower-volume operations; SNB caps aggressive
       check issuance to surface anomalies.
-seed_hash: 00a5f678f6786a2a4fc73e39b0ced8f542a7ef333d8d312e9361d4d8c3062380
+seed_hash: bb96df94d36de44116bf18ee89c12338509cee30cf8de319709283e11f7fc277
 
 # Inline brand theme (N.1). Mirrors the legacy ``sasquatch-bank``
 # preset in common/theme.py byte-for-byte so the PR demo render is

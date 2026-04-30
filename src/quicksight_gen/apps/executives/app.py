@@ -647,8 +647,13 @@ def build_executives_app(
     if cfg.l2_instance_prefix is None:
         cfg = replace(cfg, l2_instance_prefix=str(l2_instance.instance))
 
-    # N.4.c: theme from the L2 instance, not from cfg.theme_preset.
-    theme = resolve_l2_theme(l2_instance)
+    # N.4.c / N.4.k: theme from the L2 instance, coerced to the
+    # registry default for in-canvas accent colors when the instance
+    # declares no inline ``theme:`` block. The CLI uses the un-coerced
+    # ``resolve_l2_theme`` return to decide whether to deploy a
+    # custom Theme resource (silent-fallback to AWS CLASSIC).
+    from quicksight_gen.common.theme import DEFAULT_PRESET
+    theme = resolve_l2_theme(l2_instance) or DEFAULT_PRESET
 
     analysis_name = _analysis_name(theme)
     app = App(name="executives", cfg=cfg)

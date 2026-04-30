@@ -507,8 +507,12 @@ def test_seed_transfer_types_resolve_to_instance(
 # Seed-infrastructure keys not declared on any Rail's metadata_keys but
 # always emitted by the seed's helper rows. customer_id is added to every
 # row for cross-walk traceability; external_reference is added on the
-# drift background's external counter-leg.
-_INFRA_METADATA_KEYS = {"customer_id", "external_reference"}
+# drift background's external counter-leg; sender_id / recipient_id tag
+# the InvFanoutPlant legs so the Investigation matviews can cross-walk
+# the planted fanout edges back to their (sender, recipient) pair.
+_INFRA_METADATA_KEYS = {
+    "customer_id", "external_reference", "sender_id", "recipient_id",
+}
 
 
 def test_seed_metadata_keys_subset_of_rail_declarations(
@@ -588,11 +592,11 @@ _BROAD_MODE_HASHES: dict[tuple[str, str], str] = {
     ("spec_example", "broad"):
         "a5a2656614d1ac821533b206508440e16b5055b263ce733059f472b58506354e",
     ("spec_example", "l1_plus_broad"):
-        "bf335e34490924cc0d9251460018f3c4e3ae0ba0e8c7f40f4698278a49a75174",
+        "1062c218e22d5a63dade7f0bfb027c6c50fbbbb3dc743b40675c77d344bd4a94",
     ("sasquatch_pr", "broad"):
         "a2c53350ae2fdfccbe73224e8c801f348a7e31f57d16b6b44f2c350fdc7c18a6",
     ("sasquatch_pr", "l1_plus_broad"):
-        "8b61ea6c84cfd3e935bdd600fe3c2f310bd9d7ca114f5645a7fca09c9d91dbaa",
+        "fdebc0d3a68884b0c6136f60426ee6ac46d6c3c41cef34800f37663caf5f6dd6",
 }
 
 

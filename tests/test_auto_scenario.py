@@ -64,6 +64,7 @@ def test_auto_scenario_against_spec_example_covers_all_six_plant_kinds(
     assert len(sc.stuck_pending_plants) == 1
     assert len(sc.stuck_unbundled_plants) == 1
     assert len(sc.supersession_plants) == 1
+    assert len(sc.inv_fanout_plants) == 1
     # Only-omission: the lone TT plant whose first leg_rail isn't TwoLeg.
     omitted_kinds = [kind for kind, _ in report.omitted]
     assert all(
@@ -93,6 +94,7 @@ def test_auto_scenario_against_sasquatch_pr_covers_all_six_plant_kinds(
     assert len(sc.stuck_pending_plants) >= 1
     assert len(sc.stuck_unbundled_plants) >= 1
     assert len(sc.supersession_plants) >= 1
+    assert len(sc.inv_fanout_plants) >= 1
     assert len(sc.transfer_template_plants) >= 2  # 2 firings of one template
     # Sasquatch may or may not surface omissions depending on instance
     # shape — the key claim is that NO ALL-skip happens.
@@ -282,3 +284,44 @@ def test_auto_scenario_stuck_unbundled_age_exceeds_picked_rail_cap(
         f"exceed picked rail {unbundled.rail_name!r}'s max_unbundled_age "
         f"({cap_days} days)"
     )
+
+
+def test_auto_scenario_inv_fanout_recipient_is_leaf_internal(
+    spec_instance,
+) -> None:
+    """The InvFanoutPlant recipient MUST resolve to a leaf-internal
+    account: its template_role is the materialized customer template's
+    role, and the template carries scope=internal + non-NULL
+    parent_role. This is the shape the
+    ``<prefix>_inv_pair_rolling_anomalies`` matview filter requires
+    (account_scope='internal' AND account_parent_role IS NOT NULL).
+    Without this guarantee the fanout plant emits rows that get
+    filtered out at matview time and the harness Layer 1b' assertion
+    would fire on every run."""
+    report = default_scenario_for(spec_instance, today=CANONICAL_TODAY)
+    plant = report.scenario.inv_fanout_plants[0]
+    template_instance = next(
+        ti for ti in report.scenario.template_instances
+        if ti.account_id == plant.recipient_account_id
+    )
+    template = next(
+        t for t in spec_instance.account_templates
+        if t.role == template_instance.template_role
+    )
+    assert template.scope == "internal"
+    assert template.parent_role is not None
+
+
+def test_auto_scenario_inv_fanout_has_at_least_two_distinct_senders(
+    spec_instance,
+) -> None:
+    """A fanout with one sender is structurally a degenerate single
+    edge — the picker omits the plant rather than emit one. spec_example
+    has multiple external + internal accounts so the picker grabs ≥ 2;
+    confirm via the plant shape."""
+    report = default_scenario_for(spec_instance, today=CANONICAL_TODAY)
+    plant = report.scenario.inv_fanout_plants[0]
+    assert len(plant.sender_account_ids) >= 2
+    # No sender is the recipient (self-edges break the pair-rolling
+    # window's cardinality assumption).
+    assert plant.recipient_account_id not in plant.sender_account_ids

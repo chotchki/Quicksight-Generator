@@ -35,10 +35,8 @@ from quicksight_gen.common.models import (
 
 __all__ = [
     "DEFAULT_PRESET",
-    "PRESETS",
     "ThemePreset",
     "build_theme",
-    "get_preset",
     "resolve_l2_theme",
 ]
 
@@ -107,54 +105,42 @@ DEFAULT_PRESET = ThemePreset(
 )
 
 
-# ---------------------------------------------------------------------------
-# Preset registry
-# ---------------------------------------------------------------------------
-#
-# N.1.g — only ``default`` lives here. The legacy ``sasquatch-bank`` +
-# ``sasquatch-bank-investigation`` palettes moved to inline ``theme:``
-# blocks on the L2 YAMLs (e.g. ``tests/l2/sasquatch_pr.yaml``); apps
-# resolve through ``resolve_l2_theme(l2_instance)``. Inv + Exec
-# temporarily fall back to ``default`` until N.3 / N.4 makes them
-# L2-fed and they pick up their own L2 YAML's theme.
+def resolve_l2_theme(l2_instance: "L2Instance | None") -> ThemePreset | None:
+    """Pick the theme to render with for an L2-fed app (N.1 / N.4.k).
 
-PRESETS: dict[str, ThemePreset] = {
-    "default": DEFAULT_PRESET,
-}
-
-
-def get_preset(name: str) -> ThemePreset:
-    """Look up a theme preset by name.
-
-    Raises ``ValueError`` for unknown names.
-    """
-    if name not in PRESETS:
-        available = ", ".join(sorted(PRESETS))
-        raise ValueError(
-            f"Unknown theme preset '{name}'. Available: {available}"
-        )
-    return PRESETS[name]
-
-
-def resolve_l2_theme(l2_instance: "L2Instance | None") -> ThemePreset:
-    """Pick the theme to render with for an L2-fed app (N.1).
-
-    Returns the L2 instance's inline theme block when present (the new
-    N.1 path); otherwise falls back to the registry ``default`` preset.
-    Lets L2-fed apps drop ``cfg.theme_preset`` entirely.
+    Returns the L2 instance's inline theme block when present (the
+    N.1 path); ``None`` otherwise — the silent-fallback contract
+    (N.4.k). Callers that consume the return for accent colors (e.g.,
+    Getting Started rich text) should fall through to
+    ``DEFAULT_PRESET.accent`` so on-canvas colors stay sensible when
+    no L2 theme is declared. The dashboard-level fallback is AWS
+    QuickSight's CLASSIC theme (no Theme resource emitted by
+    ``build_theme`` when ``None``).
     """
     if l2_instance is not None and l2_instance.theme is not None:
         return l2_instance.theme
-    return get_preset("default")
+    return None
 
 
 # ---------------------------------------------------------------------------
 # Theme builder
 # ---------------------------------------------------------------------------
 
-def build_theme(cfg: Config) -> Theme:
-    """Build the complete QuickSight Theme resource using the configured preset."""
-    preset = get_preset(cfg.theme_preset)
+def build_theme(cfg: Config, theme: ThemePreset | None) -> Theme | None:
+    """Build the QuickSight Theme resource for ``theme`` (N.4.k).
+
+    Returns ``None`` when ``theme`` is ``None`` — the silent-fallback
+    contract: an L2 instance with no inline ``theme:`` block deploys
+    against AWS QuickSight's CLASSIC theme without emitting a custom
+    Theme resource. The CLI skips ``theme.json`` write + skips the
+    deploy step in that case.
+
+    When ``theme`` is set, builds a complete Theme honoring permissions
+    + tags from ``cfg``.
+    """
+    if theme is None:
+        return None
+    preset = theme
     theme_id = cfg.prefixed("theme")
 
     permissions = None

@@ -1,28 +1,21 @@
-"""Investigation matview assertions for the M.4.1 harness (N.3.l-bis).
+"""Investigation matview assertions for the M.4.1 harness (N.3.l-bis / N.4.h).
 
 Per-instance prefixed Investigation matview health checks. Mirrors
-the shape of ``_harness_l1_assertions.py`` but the contract is
-narrower: Investigation has no planted-scenario manifest in the
-harness fuzz instances (the Cascadia/Juniper-flavored Investigation
-demo scenarios live in ``apps/investigation/demo_data.py`` and
-weren't lifted to common/l2/seed.py — that's a deferred Phase O
-candidate). So this module checks **schema health** rather than
-**plant-row visibility**:
+the shape of ``_harness_l1_assertions.py``:
 
-- Both Investigation matviews exist for the L2 instance prefix
-  (``<prefix>_inv_pair_rolling_anomalies`` and
-  ``<prefix>_inv_money_trail_edges``).
-- Each matview can be queried (SELECT COUNT(*) succeeds — proves
-  the matview body parses + executes against the prefixed base
-  tables, catching v6 column-name regressions like the one
-  surfaced in N.3.b).
-- Returns the row count in the failure message for triage.
-
-When the seed-data lift lands in a future phase, this module gains
-a parallel ``assert_inv_plants_visible(...)`` that takes a planted
-manifest and verifies specific Cascadia/Juniper-flavored rows
-surface in the matviews. Until then, "matviews queryable" is the
-bar.
+- ``assert_inv_matviews_queryable`` — schema-health layer. Both
+  Investigation matviews (``<prefix>_inv_pair_rolling_anomalies``
+  and ``<prefix>_inv_money_trail_edges``) exist for the L2 instance
+  prefix and can be queried. Catches v6 column-name regressions
+  like the one surfaced in N.3.b — the SELECT fails immediately
+  with the matview name in the error path.
+- ``assert_inv_planted_rows_visible`` — plant-row visibility layer
+  (N.4.h). Walks the manifest's ``inv_fanout_plants`` and asserts
+  every (recipient, sender) edge surfaces in BOTH matviews. The
+  fanout plant is the only Inv plant kind so far — adding
+  InvAnomalyPlant / InvChainPlant (deferred N.4.h follow-up)
+  extends this function with parallel queries against the same
+  matviews.
 
 Why this is a separate module: same shape as the L1 split — pure
 DB-side assertions live alongside the L1 ones, browser/Playwright
@@ -102,3 +95,89 @@ def assert_inv_matviews_queryable(
         # inv_pair_rolling_anomalies). The assertion is "the SELECT
         # works", not "rows are present".
         del count
+
+
+def assert_inv_planted_rows_visible(
+    db_conn: Any,
+    prefix: str,
+    planted_manifest: dict[str, list[dict[str, Any]]],
+) -> None:
+    """For every Investigation plant kind in the manifest, query the
+    prefixed matview directly and assert the planted row surfaces.
+
+    **Plant-row visibility layer of the harness for Investigation (N.4.h).**
+    Mirrors ``assert_l1_matview_rows_present`` — fast-fail diagnostic
+    that runs in <1s per plant before the Playwright dashboard render
+    check. If this fails, the dashboard assertion would also fail, but
+    the matview-side error message points straight at the seed/matview
+    layer with the (recipient, sender) pair for triage.
+
+    Each ``InvFanoutPlant`` produces N (sender, recipient) edges. We
+    verify every edge surfaces in:
+
+    - ``<prefix>_inv_pair_rolling_anomalies`` — at least one pair-rolling
+      window row per (recipient, sender) pair. Day-grouping + rolling
+      window may merge edges from the same day into one row, so the
+      assertion is ``COUNT(*) >= 1`` per pair, not ``== N``.
+    - ``<prefix>_inv_money_trail_edges`` — exactly one depth-0 edge per
+      transfer. We assert ``COUNT(*) >= len(senders)`` since multiple
+      edges per pair (multiple transfers) collapse into multiple rows.
+
+    Args:
+        db_conn: psycopg2 connection to the demo Aurora cluster.
+        prefix: per-test L2 instance prefix (matches what
+            ``apply_db_seed`` used).
+        planted_manifest: ``build_planted_manifest`` output (from
+            ``_harness_seed.build_planted_manifest``) — keyed by plant
+            kind; the ``inv_fanout_plants`` entry drives this check.
+
+    Raises:
+        AssertionError: on the first planted (recipient, sender) pair
+            whose row doesn't surface in the expected matview, with
+            the matview name + pair + total row count for triage.
+    """
+    for plant in planted_manifest.get("inv_fanout_plants", []):
+        recipient = plant["recipient_account_id"]
+        senders = plant["sender_account_ids"]
+        # Inv pair-rolling: one or more pair-window rows per (recipient, sender).
+        anomalies_view = f"{prefix}_inv_pair_rolling_anomalies"
+        for sender in senders:
+            with db_conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT COUNT(*) FROM {anomalies_view} "
+                    "WHERE recipient_account_id = %s AND sender_account_id = %s",
+                    (recipient, sender),
+                )
+                row = cur.fetchone()
+                count = row[0] if row else 0
+                cur.execute(f"SELECT COUNT(*) FROM {anomalies_view}")
+                total_row = cur.fetchone()
+                total = total_row[0] if total_row else 0
+            assert count >= 1, (
+                f"Inv pair-rolling matview {anomalies_view!r} has no row "
+                f"for planted fanout edge ({sender!r} → {recipient!r}) "
+                f"— seed→matview-refresh pipeline regression. Total rows "
+                f"in the matview: {total}.\n"
+                f"plant: {plant!r}"
+            )
+        # Inv money-trail edges: each fanout transfer contributes one
+        # depth-0 edge. Total rows for the recipient ≥ len(senders).
+        edges_view = f"{prefix}_inv_money_trail_edges"
+        with db_conn.cursor() as cur:
+            cur.execute(
+                f"SELECT COUNT(*) FROM {edges_view} "
+                "WHERE target_account_id = %s",
+                (recipient,),
+            )
+            row = cur.fetchone()
+            count = row[0] if row else 0
+            cur.execute(f"SELECT COUNT(*) FROM {edges_view}")
+            total_row = cur.fetchone()
+            total = total_row[0] if total_row else 0
+        assert count >= len(senders), (
+            f"Inv money-trail matview {edges_view!r} has {count} rows "
+            f"for planted recipient {recipient!r}, expected at least "
+            f"{len(senders)} (one per fanout sender). Total rows in the "
+            f"matview: {total}.\n"
+            f"plant: {plant!r}"
+        )

@@ -38,7 +38,6 @@ _TEST_CFG = Config(
     datasource_arn=(
         "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
     ),
-    theme_preset="default",
     # N.4.b: Executives is now L2-fed and requires
     # ``l2_instance_prefix`` to render its dataset SQL. Tests use the
     # spec_example default (matches what ``build_executives_app``

@@ -49,6 +49,7 @@ app_info_sheet = analysis.add_sheet(Sheet(
 populate_app_info_sheet(
     cfg, app_info_sheet,
     liveness_ds=liveness_ds, matview_status_ds=matviews_ds,
+    theme=theme,
 )
 ```
 """
@@ -67,7 +68,6 @@ from quicksight_gen.common.dataset_contract import (
 )
 from quicksight_gen.common.models import DataSet
 from quicksight_gen.common.l2 import ThemePreset
-from quicksight_gen.common.theme import get_preset
 from quicksight_gen.common.tree.datasets import Dataset
 from quicksight_gen.common.tree.structure import Sheet
 from quicksight_gen.common.tree.text_boxes import TextBox
@@ -221,7 +221,7 @@ def populate_app_info_sheet(
     *,
     liveness_ds: Dataset,
     matview_status_ds: Dataset,
-    theme: ThemePreset | None = None,
+    theme: ThemePreset,
 ) -> None:
     """Populate the "i" sheet with three visuals (KPI + table + text box).
 
@@ -229,14 +229,8 @@ def populate_app_info_sheet(
     for adding ``sheet`` to the Analysis as the LAST sheet (this helper
     doesn't enforce position because ``analysis.add_sheet`` order is
     the position).
-
-    ``theme`` (N.1.e/f path): L2-fed apps (L1 + L2FT) pass the resolved
-    L2 theme so the App Info accent matches the rest of the dashboard.
-    Inv + Exec still call without the kwarg → fallback to
-    ``cfg.theme_preset`` resolution. **TODO (N.3 / N.4):** drop the
-    fallback once Inv + Exec migrate; ``theme`` becomes required.
     """
-    accent = (theme or get_preset(cfg.theme_preset)).accent
+    accent = theme.accent
     sha, ts = _deploy_stamp()
 
     # Row 1: liveness KPI (left half) + matview status table (right half).

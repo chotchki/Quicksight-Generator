@@ -98,9 +98,14 @@ def generate_apps(
         datasource = build_datasource(cfg)
         _write_json(out_dir / "datasource.json", datasource.to_aws_json())
 
-    # Theme — shared across both apps.
-    theme = build_theme(cfg)
-    _write_json(out_dir / "theme.json", theme.to_aws_json())
+    # Theme — shared across both apps. Resolves from the L2 instance
+    # (N.4.k silent-fallback contract); when the L2 has no theme block,
+    # build_theme returns None and we skip emitting theme.json so AWS
+    # CLASSIC takes over at deploy.
+    from quicksight_gen.common.theme import resolve_l2_theme
+    theme = build_theme(cfg, resolve_l2_theme(l2_instance))
+    if theme is not None:
+        _write_json(out_dir / "theme.json", theme.to_aws_json())
 
     # L1 dashboard.
     l1_datasets = build_all_l1_dashboard_datasets(cfg, l2_instance)

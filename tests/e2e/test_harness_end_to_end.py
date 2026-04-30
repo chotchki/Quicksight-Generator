@@ -103,6 +103,7 @@ from _harness_l2ft_assertions import (  # noqa: E402
 )
 from _harness_inv_assertions import (  # noqa: E402
     assert_inv_matviews_queryable,
+    assert_inv_planted_rows_visible,
 )
 from _harness_exec_assertions import (  # noqa: E402
     assert_exec_base_tables_queryable,
@@ -166,8 +167,8 @@ def harness_cfg(cfg: Config, harness_l2: L2Instance, harness_uid: str) -> Config
     existing e2e convention in ``conftest.py``) so the harness picks
     up the same ``principal_arns`` (otherwise the deployed dashboards
     wouldn't grant view permission to the embed user) +
-    ``theme_preset`` + ``aws_account_id`` / ``aws_region`` /
-    ``datasource_arn`` (or ``demo_database_url``-derived equivalent).
+    ``aws_account_id`` / ``aws_region`` / ``datasource_arn`` (or
+    ``demo_database_url``-derived equivalent).
 
     Override surface (per-test):
     - ``extra_tags``: M.4.1.a tag-injection point. ``TestUid`` enables
@@ -730,15 +731,17 @@ def test_harness_l1_planted_scenarios_visible(
     # primary regression net the harness provides.
     assert_l1_matview_rows_present(harness_db_conn, prefix, manifest)
 
-    # Layer 1b (N.3.l-bis): Investigation matview schema-health check.
-    # Investigation has no planted scenarios in the fuzz manifest yet
-    # (Sasquatch Cascadia/Juniper plants live in
-    # apps/investigation/demo_data.py and weren't lifted to
-    # common/l2/seed.py — deferred Phase O candidate). For now we
-    # assert the prefixed inv matviews exist and emit cleanly against
-    # the v6 base tables — which catches the v5/v6 column-name
-    # regression class surfaced in N.3.b.
+    # Layer 1b (N.3.l-bis): Investigation matview schema-health check —
+    # the prefixed Inv matviews exist and emit cleanly against the v6
+    # base tables. Catches the v5/v6 column-name regression class
+    # surfaced in N.3.b.
     assert_inv_matviews_queryable(harness_db_conn, prefix)
+
+    # Layer 1b' (N.4.h): Investigation plant-row visibility — every
+    # planted ``InvFanoutPlant`` (sender, recipient) edge surfaces in
+    # both Inv matviews. Catches seed→matview-refresh regressions for
+    # the Inv path the same way Layer 1 does for L1 invariants.
+    assert_inv_planted_rows_visible(harness_db_conn, prefix, manifest)
 
     # Layer 1c (N.4.g): Executives base-table schema-health check.
     # Executives reads only from <prefix>_transactions +

@@ -2036,10 +2036,13 @@ def build_l1_dashboard_app(
     if cfg.l2_instance_prefix is None:
         cfg = replace(cfg, l2_instance_prefix=str(l2_instance.instance))
 
-    # N.1.e — resolve theme once from the L2 instance; populate functions
-    # consume `theme` directly. Falls back to the registry default when
-    # the L2 YAML omits the theme block.
-    theme = resolve_l2_theme(l2_instance)
+    # N.1.e / N.4.k — resolve theme once from the L2 instance, coerced
+    # to the registry default for in-canvas accent colors when the
+    # instance declares no inline ``theme:`` block. The CLI uses the
+    # un-coerced ``resolve_l2_theme`` return to decide whether to
+    # deploy a custom Theme resource (silent-fallback to AWS CLASSIC).
+    from quicksight_gen.common.theme import DEFAULT_PRESET
+    theme = resolve_l2_theme(l2_instance) or DEFAULT_PRESET
 
     app = App(name="l1-dashboard", cfg=cfg)
     analysis = app.set_analysis(Analysis(

@@ -110,7 +110,7 @@ def apply_db_seed(
 # a list of dicts capturing the columns Playwright needs to find the
 # planted row in the deployed dashboard. Listed plant-kind names match
 # the attribute names on ScenarioPlant for one-to-one cross-reference.
-PlantManifestEntry = dict[str, str | int | Decimal | None]
+PlantManifestEntry = dict[str, str | int | Decimal | tuple[str, ...] | None]
 PlantedManifest = dict[str, list[PlantManifestEntry]]
 
 _AllPlantKinds = Literal[
@@ -218,5 +218,18 @@ def build_planted_manifest(scenario: ScenarioPlant) -> PlantedManifest:
                 ),
             }
             for p in scenario.rail_firing_plants
+        ],
+        "inv_fanout_plants": [
+            {
+                "recipient_account_id": str(p.recipient_account_id),
+                "sender_account_ids": tuple(
+                    str(sid) for sid in p.sender_account_ids
+                ),
+                "days_ago": p.days_ago,
+                "transfer_type": p.transfer_type,
+                "rail_name": str(p.rail_name),
+                "amount_per_transfer": p.amount_per_transfer,
+            }
+            for p in scenario.inv_fanout_plants
         ],
     }

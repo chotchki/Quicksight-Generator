@@ -1038,8 +1038,8 @@ WITH pair_legs AS (
       ON sender.transfer_id = recipient.transfer_id
      AND sender.amount_money < 0
     WHERE recipient.amount_money > 0
-      AND recipient.status = 'success'
-      AND sender.status = 'success'
+      AND recipient.status = 'Posted'
+      AND sender.status = 'Posted'
       AND recipient.account_scope = 'internal'
       AND recipient.account_parent_role IS NOT NULL
 ),
@@ -1203,9 +1203,9 @@ FROM chain c
 JOIN {p}_transactions tgt
   ON tgt.transfer_id = c.transfer_id
  AND tgt.amount_money > 0
- AND tgt.status = 'success'
+ AND tgt.status = 'Posted'
 JOIN {p}_transactions src
   ON src.transfer_id = c.transfer_id
  AND src.amount_money < 0
- AND src.status = 'success';
+ AND src.status = 'Posted';
 """

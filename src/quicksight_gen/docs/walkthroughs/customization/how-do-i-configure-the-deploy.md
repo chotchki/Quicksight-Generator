@@ -49,7 +49,9 @@ datasource_arn: "arn:aws:quicksight:us-east-1:111122223333:datasource/example-da
 
 resource_prefix: "qs-gen"
 
-theme_preset: "sasquatch-bank"
+# Theme is declared inline on the L2 institution YAML, not here
+# (N.4.j). When the L2 instance carries no ``theme:`` block, AWS
+# QuickSight CLASSIC takes over at deploy.
 
 principal_arns:
   - "arn:aws:quicksight:us-east-1:111122223333:user/default/example-user"
@@ -107,10 +109,6 @@ Each field, what it controls, and what breaks if you set it wrong:
   `ManagedBy` tag, not the prefix, so changing the prefix is
   safe — it doesn't orphan old resources, just shifts where
   new ones land.
-- **`theme_preset`** (default `default`) — selects which theme
-  preset from `common/theme.py` the build uses. See
-  [How do I reskin the dashboards for my brand?](how-do-i-reskin-the-dashboards.md)
-  for the preset registration pattern.
 - **`extra_tags`** — dict of extra AWS tags to apply to every
   resource alongside the always-on `ManagedBy:quicksight-gen`
   tag. Use for cost allocation (`CostCenter: treasury`),
@@ -151,7 +149,6 @@ The mapping (from `config.py:90-98`):
 | `datasource_arn`    | `QS_GEN_DATASOURCE_ARN`          |
 | `resource_prefix`   | `QS_GEN_RESOURCE_PREFIX`         |
 | `principal_arns`    | `QS_GEN_PRINCIPAL_ARNS` (CSV)    |
-| `theme_preset`      | `QS_GEN_THEME_PRESET`            |
 | `demo_database_url` | `QS_GEN_DEMO_DATABASE_URL`       |
 
 CI pattern: commit `examples/config.yaml` as the staging
@@ -235,8 +232,8 @@ Once your `config.yaml` is in place:
   the **next step**: actually invoking `deploy` with the
   config you've just written.
 - [How do I reskin the dashboards for my brand?](how-do-i-reskin-the-dashboards.md) —
-  the theme_preset field's semantics; how to register your
-  brand as a preset.
+  the inline ``theme:`` block on the L2 institution YAML; how to
+  declare your brand colors per institution.
 - [How do I map my production database to the two base tables?](how-do-i-map-my-database.md) —
   the upstream prerequisite. Deploy assumes your data is
   already landing in the two base tables (or the warehouse

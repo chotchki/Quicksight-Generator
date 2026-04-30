@@ -121,12 +121,12 @@ limit_schedules:
   - parent_role: CustomerLedger
     transfer_type: wire
     cap: 5000.00
-seed_hash: ad1417b4ccbcf0122859fd696daa7f3b2243d148767bf10d345711ca08d1d9a3
+seed_hash: ec2391ffe85c18da093f3fe63a0752d829de6bcacd9f28d3c8f4f0451e8751a0
 
 # Inline brand theme (N.1). Mirrors the legacy ``default`` preset
 # in common/theme.py byte-for-byte so spec_example renders identically
-# pre/post-N.1. Apps consume from instance.theme; cfg.theme_preset is
-# no longer consulted on the L1/L2FT path.
+# pre/post-N.1. Apps consume from instance.theme; the cfg-level theme
+# field was dropped in N.4.j.
 theme:
   theme_name: "QuickSight Gen Theme"
   version_description: "Auto-generated dashboard theme"

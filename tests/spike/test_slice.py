@@ -37,7 +37,6 @@ def _spike_cfg() -> Config:
         datasource_arn=(
             "arn:aws:quicksight:us-west-2:111122223333:datasource/spk-ds"
         ),
-        theme_preset="default",
         resource_prefix="spk",
     )
 

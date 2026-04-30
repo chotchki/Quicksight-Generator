@@ -1,8 +1,9 @@
 """Tests for the theme preset system.
 
-Per N.1.g, the registry holds only the ``default`` preset; per-instance
-brand palettes live inline on the L2 YAML's ``theme:`` block. The
-sasquatch-bank / sasquatch-bank-investigation entries dropped here.
+Per N.4.l, the lookup-by-name registry was dropped — `DEFAULT_PRESET`
+is the single fallback preset (used when an L2 instance omits its
+inline ``theme:`` block). All other brand palettes live inline on
+each L2 YAML's ``theme:`` block.
 """
 
 import json
@@ -12,38 +13,9 @@ import pytest
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.theme import (
     DEFAULT_PRESET,
-    PRESETS,
     ThemePreset,
     build_theme,
-    get_preset,
 )
-
-
-# ---------------------------------------------------------------------------
-# Preset registry
-# ---------------------------------------------------------------------------
-
-class TestPresetRegistry:
-    def test_default_preset_exists(self):
-        assert "default" in PRESETS
-
-    def test_registry_has_only_default_post_n1g(self):
-        # The persona-flavored presets used to live here; per N.1 they
-        # moved to inline ``theme:`` blocks on L2 YAMLs. The registry
-        # is now a single-entry fallback for L2 instances that omit
-        # the theme block.
-        assert set(PRESETS) == {"default"}
-
-    def test_get_preset_returns_correct_type(self):
-        assert isinstance(get_preset("default"), ThemePreset)
-
-    def test_unknown_preset_raises(self):
-        with pytest.raises(ValueError, match="Unknown theme preset 'nope'"):
-            get_preset("nope")
-
-    def test_error_lists_available_presets(self):
-        with pytest.raises(ValueError, match="default"):
-            get_preset("bad")
 
 
 # ---------------------------------------------------------------------------
@@ -69,8 +41,20 @@ class TestDefaultPreset:
             aws_region="us-west-2",
             datasource_arn="arn:aws:quicksight:us-west-2:111122223333:datasource/ds",
         )
-        theme = build_theme(cfg)
+        theme = build_theme(cfg, DEFAULT_PRESET)
+        assert theme is not None
         data = theme.to_aws_json()
         # Round-trip through JSON to catch serialization issues
         json.loads(json.dumps(data))
         assert data["Name"] == "QuickSight Gen Theme"
+
+    def test_silent_fallback_returns_none_when_no_theme(self):
+        """N.4.k silent-fallback: ``build_theme(cfg, None)`` returns
+        None so the CLI skips theme.json emission and AWS QuickSight
+        CLASSIC takes over at deploy."""
+        cfg = Config(
+            aws_account_id="111122223333",
+            aws_region="us-west-2",
+            datasource_arn="arn:aws:quicksight:us-west-2:111122223333:datasource/ds",
+        )
+        assert build_theme(cfg, None) is None

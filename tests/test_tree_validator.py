@@ -33,7 +33,6 @@ from tests.e2e.tree_validator import TreeValidator, ValidationFailure
 _TEST_CFG = Config(
     aws_account_id="111122223333",
     aws_region="us-west-2",
-    theme_preset="default",
     datasource_arn=(
         "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
     ),

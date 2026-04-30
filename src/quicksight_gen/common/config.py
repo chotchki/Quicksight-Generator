@@ -25,7 +25,6 @@ class Config:
     resource_prefix: str = "qs-gen"
     principal_arns: list[str] = field(default_factory=list)
     extra_tags: dict[str, str] = field(default_factory=dict)
-    theme_preset: str = "default"
     demo_database_url: str | None = None
     # Per M.2d.3: when set, the L2 instance prefix becomes the middle
     # segment of every resource ID generated via ``cfg.prefixed(name)``,
@@ -118,7 +117,6 @@ def load_config(path: str | Path | None = None) -> Config:
         "aws_region": "QS_GEN_AWS_REGION",
         "datasource_arn": "QS_GEN_DATASOURCE_ARN",
         "resource_prefix": "QS_GEN_RESOURCE_PREFIX",
-        "theme_preset": "QS_GEN_THEME_PRESET",
         "demo_database_url": "QS_GEN_DEMO_DATABASE_URL",
     }
     for cfg_key, env_key in env_map.items():
@@ -172,6 +170,5 @@ def load_config(path: str | Path | None = None) -> Config:
         resource_prefix=values.get("resource_prefix", "qs-gen"),
         principal_arns=principal_arns,
         extra_tags=extra_tags,
-        theme_preset=values.get("theme_preset", "default"),
         demo_database_url=values.get("demo_database_url"),
     )

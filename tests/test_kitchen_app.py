@@ -22,7 +22,6 @@ from tests.e2e._kitchen_app import build_kitchen_app
 _CFG = Config(
     aws_account_id="111122223333",
     aws_region="us-west-2",
-    theme_preset="default",
     datasource_arn=(
         "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
     ),
@@ -304,7 +303,6 @@ class TestValidationHooksAudit:
     _CFG = _Cfg(
         aws_account_id="111122223333",
         aws_region="us-west-2",
-        theme_preset="default",
         datasource_arn=(
             "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
         ),

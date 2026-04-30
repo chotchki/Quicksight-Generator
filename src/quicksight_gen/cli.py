@@ -62,28 +62,23 @@ def main() -> None:
     type=click.Path(), default="out",
     help="Directory to write generated JSON files.",
 )
-@click.option(
-    "--theme-preset", "-t", type=str, default=None,
-    help="Theme preset name (overrides config).",
-)
 @click.option("--all", "all_apps", is_flag=True, help="Generate every app.")
 @click.pass_context
 def generate(
     ctx: click.Context, config: str, output_dir: str,
-    theme_preset: str | None, all_apps: bool,
+    all_apps: bool,
 ) -> None:
     """Generate QuickSight JSON definitions."""
     ctx.ensure_object(dict)
     ctx.obj["config"] = config
     ctx.obj["output_dir"] = output_dir
-    ctx.obj["theme_preset"] = theme_preset
     if ctx.invoked_subcommand is not None:
         return
     if all_apps:
-        _generate_investigation(config, output_dir, theme_preset)
-        _generate_executives(config, output_dir, theme_preset)
-        _generate_l1_dashboard(config, output_dir, theme_preset)
-        _generate_l2_flow_tracing(config, output_dir, theme_preset)
+        _generate_investigation(config, output_dir)
+        _generate_executives(config, output_dir)
+        _generate_l1_dashboard(config, output_dir)
+        _generate_l2_flow_tracing(config, output_dir)
     else:
         click.echo(ctx.get_help())
         raise click.UsageError(
@@ -97,18 +92,14 @@ def generate(
 @click.pass_context
 def generate_executives_cmd(ctx: click.Context) -> None:
     """Generate Executives JSON."""
-    _generate_executives(
-        ctx.obj["config"], ctx.obj["output_dir"], ctx.obj["theme_preset"],
-    )
+    _generate_executives(ctx.obj["config"], ctx.obj["output_dir"])
 
 
 @generate.command("investigation")
 @click.pass_context
 def generate_investigation_cmd(ctx: click.Context) -> None:
     """Generate Investigation JSON."""
-    _generate_investigation(
-        ctx.obj["config"], ctx.obj["output_dir"], ctx.obj["theme_preset"],
-    )
+    _generate_investigation(ctx.obj["config"], ctx.obj["output_dir"])
 
 
 @generate.command("l1-dashboard")
@@ -127,7 +118,7 @@ def generate_l1_dashboard_cmd(
 ) -> None:
     """Generate L1 Reconciliation Dashboard JSON (M.2a — L2-fed)."""
     _generate_l1_dashboard(
-        ctx.obj["config"], ctx.obj["output_dir"], ctx.obj["theme_preset"],
+        ctx.obj["config"], ctx.obj["output_dir"],
         l2_instance_path=l2_instance_path,
     )
 
@@ -149,13 +140,13 @@ def generate_l2_flow_tracing_cmd(
 ) -> None:
     """Generate L2 Flow Tracing dashboard JSON (M.3 — L2-fed)."""
     _generate_l2_flow_tracing(
-        ctx.obj["config"], ctx.obj["output_dir"], ctx.obj["theme_preset"],
+        ctx.obj["config"], ctx.obj["output_dir"],
         l2_instance_path=l2_instance_path,
     )
 
 
 def _generate_investigation(
-    config_path: str, output_dir: str, theme_preset: str | None,
+    config_path: str, output_dir: str,
     *,
     l2_instance_path: str | None = None,
 ) -> None:
@@ -167,10 +158,9 @@ def _generate_investigation(
     from quicksight_gen.apps.investigation.datasets import build_all_datasets
     from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
     from quicksight_gen.common.l2 import load_instance
+    from quicksight_gen.common.theme import resolve_l2_theme
 
     cfg = load_config(config_path)
-    if theme_preset is not None:
-        cfg.theme_preset = theme_preset
     out = Path(output_dir)
 
     # N.3.h — Investigation reads the same institution YAML the L1
@@ -191,8 +181,9 @@ def _generate_investigation(
         f"region={cfg.aws_region}, l2_instance={l2_instance.instance}"
     )
 
-    theme = build_theme(cfg)
-    _write_json(out / "theme.json", theme.to_aws_json())
+    theme = build_theme(cfg, resolve_l2_theme(l2_instance))
+    if theme is not None:
+        _write_json(out / "theme.json", theme.to_aws_json())
 
     datasets = build_all_datasets(cfg)
     _prune_stale_files(
@@ -218,7 +209,7 @@ def _generate_investigation(
 
 
 def _generate_executives(
-    config_path: str, output_dir: str, theme_preset: str | None,
+    config_path: str, output_dir: str,
     *,
     l2_instance_path: str | None = None,
 ) -> None:
@@ -230,10 +221,9 @@ def _generate_executives(
     from quicksight_gen.apps.executives.datasets import build_all_datasets
     from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
     from quicksight_gen.common.l2 import load_instance
+    from quicksight_gen.common.theme import resolve_l2_theme
 
     cfg = load_config(config_path)
-    if theme_preset is not None:
-        cfg.theme_preset = theme_preset
     out = Path(output_dir)
 
     # N.4.d — Executives reads the same institution YAML the L1
@@ -254,8 +244,9 @@ def _generate_executives(
         f"region={cfg.aws_region}, l2_instance={l2_instance.instance}"
     )
 
-    theme = build_theme(cfg)
-    _write_json(out / "theme.json", theme.to_aws_json())
+    theme = build_theme(cfg, resolve_l2_theme(l2_instance))
+    if theme is not None:
+        _write_json(out / "theme.json", theme.to_aws_json())
 
     datasets = build_all_datasets(cfg)
     _prune_stale_files(
@@ -281,7 +272,7 @@ def _generate_executives(
 
 
 def _generate_l1_dashboard(
-    config_path: str, output_dir: str, theme_preset: str | None,
+    config_path: str, output_dir: str,
     *,
     l2_instance_path: str | None = None,
 ) -> None:
@@ -293,10 +284,9 @@ def _generate_l1_dashboard(
     )
     from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
     from quicksight_gen.common.l2 import load_instance
+    from quicksight_gen.common.theme import resolve_l2_theme
 
     cfg = load_config(config_path)
-    if theme_preset is not None:
-        cfg.theme_preset = theme_preset
     out = Path(output_dir)
 
     if l2_instance_path is not None:
@@ -309,8 +299,9 @@ def _generate_l1_dashboard(
         f"region={cfg.aws_region}, l2_instance={l2_instance.instance}"
     )
 
-    theme = build_theme(cfg)
-    _write_json(out / "theme.json", theme.to_aws_json())
+    theme = build_theme(cfg, resolve_l2_theme(l2_instance))
+    if theme is not None:
+        _write_json(out / "theme.json", theme.to_aws_json())
 
     datasets = build_all_l1_dashboard_datasets(cfg, l2_instance)
     _prune_stale_files(
@@ -338,7 +329,7 @@ def _generate_l1_dashboard(
 
 
 def _generate_l2_flow_tracing(
-    config_path: str, output_dir: str, theme_preset: str | None,
+    config_path: str, output_dir: str,
     *,
     l2_instance_path: str | None = None,
 ) -> None:
@@ -358,10 +349,9 @@ def _generate_l2_flow_tracing(
     )
     from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
     from quicksight_gen.common.l2 import load_instance
+    from quicksight_gen.common.theme import resolve_l2_theme
 
     cfg = load_config(config_path)
-    if theme_preset is not None:
-        cfg.theme_preset = theme_preset
     out = Path(output_dir)
 
     if l2_instance_path is not None:
@@ -374,8 +364,9 @@ def _generate_l2_flow_tracing(
         f"region={cfg.aws_region}, l2_instance={l2_instance.instance}"
     )
 
-    theme = build_theme(cfg)
-    _write_json(out / "theme.json", theme.to_aws_json())
+    theme = build_theme(cfg, resolve_l2_theme(l2_instance))
+    if theme is not None:
+        _write_json(out / "theme.json", theme.to_aws_json())
 
     datasets = build_all_l2_flow_tracing_datasets(cfg, l2_instance)
     _prune_stale_files(
@@ -865,14 +856,13 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     finally:
         conn.close()
 
-    # N.1.g: PRESETS now contains only the ``default`` preset; per-app
-    # branded palettes moved to inline ``theme:`` blocks on the L2
-    # YAMLs. L1 + L2FT pick up the L2-sourced theme via
-    # ``resolve_l2_theme(l2_instance)``; Exec stays on the registry
-    # default until N.4 migrates it to L2-fed.
-    preset = "default"
-    click.echo(f"\nGenerating QuickSight JSON with {preset} theme...")
-    cfg.theme_preset = preset
+    # N.4.j: theme is fully L2-driven. ``demo apply`` uses the
+    # default L2 instance for both Investigation + Executives, so the
+    # theme comes from that instance via ``resolve_l2_theme``. When
+    # the instance has no ``theme:`` block (the silent-fallback
+    # contract), ``build_theme`` returns None and we skip writing
+    # ``theme.json`` — AWS QuickSight CLASSIC takes over at deploy.
+    from quicksight_gen.common.theme import resolve_l2_theme
 
     # N.3.h: pre-stamp ``cfg.l2_instance_prefix`` from the default L2
     # instance so Investigation's prefix-aware dataset builders can
@@ -884,15 +874,18 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     if cfg.l2_instance_prefix is None:
         cfg = _replace(cfg, l2_instance_prefix=str(inv_l2.instance))
 
+    click.echo("\nGenerating QuickSight JSON...")
+
     out = Path(output_dir)
 
     datasource = build_datasource(cfg)
     _write_json(out / "datasource.json", datasource.to_aws_json())
 
-    theme = build_theme(cfg)
-    _write_json(out / "theme.json", theme.to_aws_json())
+    theme = build_theme(cfg, resolve_l2_theme(inv_l2))
+    if theme is not None:
+        _write_json(out / "theme.json", theme.to_aws_json())
 
-    json_count = 2  # datasource + theme
+    json_count = 1 + (1 if theme is not None else 0)  # datasource (+ theme)
     if app in ("investigation", "all"):
         inv_datasets = build_inv_datasets(cfg)
         for ds in inv_datasets:
@@ -953,13 +946,9 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     "--generate", "generate_first", is_flag=True,
     help="Regenerate JSON before deploying.",
 )
-@click.option(
-    "--theme-preset", "-t", type=str, default=None,
-    help="Theme preset (used when --generate is set).",
-)
 def deploy_cmd(
     app: str | None, all_apps: bool, config: str, output_dir: str,
-    generate_first: bool, theme_preset: str | None,
+    generate_first: bool,
 ) -> None:
     """Deploy generated JSON to AWS QuickSight (delete-then-create)."""
     from quicksight_gen.common.deploy import deploy
@@ -968,13 +957,13 @@ def deploy_cmd(
 
     if generate_first:
         if app_name in ("investigation", "all"):
-            _generate_investigation(config, output_dir, theme_preset)
+            _generate_investigation(config, output_dir)
         if app_name in ("executives", "all"):
-            _generate_executives(config, output_dir, theme_preset)
+            _generate_executives(config, output_dir)
         if app_name in ("l1-dashboard", "all"):
-            _generate_l1_dashboard(config, output_dir, theme_preset)
+            _generate_l1_dashboard(config, output_dir)
         if app_name in ("l2-flow-tracing", "all"):
-            _generate_l2_flow_tracing(config, output_dir, theme_preset)
+            _generate_l2_flow_tracing(config, output_dir)
 
     cfg = load_config(config)
     if app_name == "all":

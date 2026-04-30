@@ -49,7 +49,6 @@ from quicksight_gen.common.l2 import L2Instance, load_instance
 _CFG = Config(
     aws_account_id="111122223333",
     aws_region="us-west-2",
-    theme_preset="default",
     datasource_arn=(
         "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
     ),
@@ -285,7 +284,6 @@ def test_cli_generate_l2_flow_tracing_l2_instance_flag(tmp_path: Path) -> None:
     cfg_path.write_text(
         "aws_account_id: '111122223333'\n"
         "aws_region: us-west-2\n"
-        "theme_preset: default\n"
         "datasource_arn: 'arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds'\n"
     )
     out_dir = tmp_path / "out"
@@ -323,7 +321,6 @@ def test_cli_generate_l2_flow_tracing_writes_files(tmp_path: Path) -> None:
     cfg_path.write_text(
         "aws_account_id: '111122223333'\n"
         "aws_region: us-west-2\n"
-        "theme_preset: default\n"
         "datasource_arn: 'arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds'\n"
     )
     out_dir = tmp_path / "out"

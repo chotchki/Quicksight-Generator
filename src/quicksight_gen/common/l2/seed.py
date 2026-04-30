@@ -293,6 +293,42 @@ class RailFiringPlant:
 
 
 @dataclass(frozen=True, slots=True)
+class InvFanoutPlant:
+    """A planted "fanout" — N senders all credit ONE leaf-internal
+    recipient on the same day (N.4.h, fuzzer Investigation coverage).
+
+    Drives the Investigation matview surface (N.3.b):
+    - ``<prefix>_inv_pair_rolling_anomalies`` — N (sender, recipient,
+      day) pair-rolling rows; the recipient survives the matview's
+      ``account_scope='internal' AND account_parent_role IS NOT NULL``
+      filter so the rolling-window aggregation has data to operate on.
+    - ``<prefix>_inv_money_trail_edges`` — N depth-0 (root) edges from
+      sender → recipient via the recursive-CTE walk over
+      ``transfer_parent_id``.
+
+    Each "transfer" is a 2-leg multi-leg event (debit on sender +
+    credit on recipient summing to zero) so the matview's
+    ``signed_amount`` JOIN finds matched legs. ``rail_name`` is one
+    declared rail; ``transfer_type`` mirrors the rail's
+    ``transfer_type``.
+
+    Recipient MUST resolve to a leaf-internal account (a
+    ``TemplateInstance`` materialized from an ``AccountTemplate`` with
+    a non-NULL ``parent_role``) — the matview's recipient-side filter
+    requires it. Senders MAY be external counterparties or singleton
+    internals; the emitter denormalizes their account fields onto the
+    sender legs without further validation.
+    """
+
+    recipient_account_id: Identifier
+    sender_account_ids: tuple[Identifier, ...]
+    days_ago: int
+    transfer_type: str
+    rail_name: Identifier
+    amount_per_transfer: Decimal
+
+
+@dataclass(frozen=True, slots=True)
 class ScenarioPlant:
     """The full set of planted scenarios + materialized template instances.
 
@@ -309,6 +345,7 @@ class ScenarioPlant:
     supersession_plants: tuple[SupersessionPlant, ...] = ()
     transfer_template_plants: tuple[TransferTemplatePlant, ...] = ()
     rail_firing_plants: tuple[RailFiringPlant, ...] = ()
+    inv_fanout_plants: tuple[InvFanoutPlant, ...] = ()
     today: date = field(
         default_factory=lambda: datetime.now(tz=timezone.utc).date(),
     )
@@ -381,6 +418,13 @@ def emit_seed(instance: L2Instance, scenarios: ScenarioPlant) -> str:
     for p in sorted(scenarios.rail_firing_plants, key=_rail_firing_key):
         txn_rows.extend(
             _emit_rail_firing_rows(
+                p, instance, scenarios, template_by_role, txn_counter,
+            )
+        )
+
+    for p in sorted(scenarios.inv_fanout_plants, key=_inv_fanout_key):
+        txn_rows.extend(
+            _emit_inv_fanout_rows(
                 p, instance, scenarios, template_by_role, txn_counter,
             )
         )
@@ -500,6 +544,10 @@ def _tt_key(p: TransferTemplatePlant) -> tuple[str, int, int]:
 
 def _rail_firing_key(p: RailFiringPlant) -> tuple[str, int, int]:
     return (str(p.rail_name), p.days_ago, p.firing_seq)
+
+
+def _inv_fanout_key(p: InvFanoutPlant) -> tuple[str, int, str]:
+    return (str(p.recipient_account_id), p.days_ago, p.transfer_type)
 
 
 def _parent_singletons(instance: L2Instance) -> dict[Identifier, Account]:
@@ -1311,6 +1359,95 @@ def _emit_rail_firing_rows(
             template_name=p.template_name,
         ),
     ]
+
+
+def _emit_inv_fanout_rows(
+    p: InvFanoutPlant,
+    instance: L2Instance,
+    scenarios: ScenarioPlant,
+    template_by_role: dict[Identifier, AccountTemplate],
+    counter: _Counter,
+) -> list[str]:
+    """Plant N two-leg transfers: every sender debits, the same recipient
+    credits, all on ``days_ago`` (N.4.h Investigation coverage).
+
+    Each transfer is one ``transfer_id`` with two legs (debit on sender +
+    credit on recipient summing to zero), so the
+    ``<prefix>_inv_money_trail_edges`` recursive CTE matches both legs
+    via ``transfer_id`` and emits ONE depth-0 edge per transfer. The
+    recipient's leaf-internal status (template_role w/ parent_role set)
+    satisfies the ``<prefix>_inv_pair_rolling_anomalies`` filter
+    (``account_scope='internal' AND account_parent_role IS NOT NULL``)
+    so the rolling-window aggregation has data to operate on.
+
+    Posting times are stratified across the day (10am, 11am, …) per
+    sender to keep transfer_ids visually distinct in the dashboard
+    detail tables. Rail / transfer_type are not validated against L2
+    declarations beyond what ``_resolve_rail`` enforces (we let the
+    plant declare any rail name; the Inv matviews don't read rail).
+    """
+    recipient = _resolve_any_account(
+        p.recipient_account_id, instance, scenarios, template_by_role,
+    )
+    plant_day = scenarios.today - timedelta(days=p.days_ago)
+    rows: list[str] = []
+    # Sort senders for deterministic ordering even if plant carries them
+    # in a different order across calls.
+    for idx, sender_id in enumerate(sorted(p.sender_account_ids, key=str)):
+        sender = _resolve_any_account(
+            sender_id, instance, scenarios, template_by_role,
+        )
+        n = counter.next()
+        # Posting time stratified by sender index, wrapping at 24h so a
+        # >24-sender plant doesn't blow past midnight (would shift the
+        # plant into the next business day).
+        hour = 10 + (idx % 12)
+        posting_ts = f"{plant_day.isoformat()}T{hour:02d}:00:00+00:00"
+        transfer_id = f"tr-inv-fanout-{n:04d}"
+        txn_id = f"tx-inv-fanout-{n:04d}"
+        rows.extend([
+            # Sender debit leg
+            _txn_row(
+                id_=f"{txn_id}-src",
+                account_id=sender.account_id,
+                account_name=sender.account_name,
+                account_role=sender.account_role,
+                account_scope=sender.account_scope,
+                account_parent_role=sender.account_parent_role,
+                money=-p.amount_per_transfer,
+                direction="Debit",
+                posting=posting_ts,
+                transfer_id=transfer_id,
+                transfer_type=p.transfer_type,
+                rail_name=p.rail_name,
+                origin="ExternalInitiated",
+                metadata={
+                    "sender_id": str(sender.account_id),
+                    "recipient_id": str(recipient.account_id),
+                },
+            ),
+            # Recipient credit leg
+            _txn_row(
+                id_=txn_id,
+                account_id=recipient.account_id,
+                account_name=recipient.account_name,
+                account_role=recipient.account_role,
+                account_scope=recipient.account_scope,
+                account_parent_role=recipient.account_parent_role,
+                money=p.amount_per_transfer,
+                direction="Credit",
+                posting=posting_ts,
+                transfer_id=transfer_id,
+                transfer_type=p.transfer_type,
+                rail_name=p.rail_name,
+                origin="ExternalInitiated",
+                metadata={
+                    "sender_id": str(sender.account_id),
+                    "recipient_id": str(recipient.account_id),
+                },
+            ),
+        ])
+    return rows
 
 
 def _txn_row(
