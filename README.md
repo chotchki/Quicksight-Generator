@@ -316,8 +316,7 @@ src/quicksight_gen/
         executives/     # app.py (4 sheets), datasets.py (2 datasets, per-transfer pre-aggregated). Greenfield on tree primitives — no constants.py.
     schema.py           # `generate_schema_sql()` — reads the canonical DDL
     schema.sql          # Canonical PostgreSQL DDL (interface contract for ETL); shared `transactions` + `daily_balances` base layer + AR dimension tables + AR + Investigation matviews
-    docs/               # mkdocs site source — handbook/, walkthroughs/, Schema_v6.md, Training_Story.md (extract via `quicksight-gen export docs`)
-    training/           # Whitelabel handbook kit — handbook/, mapping.yaml.example (extract via `quicksight-gen export training`)
+    docs/               # Unified mkdocs site source — concepts/, reference (handbook/), walkthroughs/, for-your-role/, scenarios/, Schema_v6.md, Training_Story.md, _diagrams/, _macros/ (extract via `quicksight-gen export docs`). Renders against any L2 instance via mkdocs-macros + HandbookVocabulary.
 tests/
     test_models.py, test_generate.py, test_recon.py, test_account_recon.py,
     test_investigation.py, test_executives.py, test_tree.py, test_tree_validator.py,

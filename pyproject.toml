@@ -92,9 +92,6 @@ quicksight_gen = [
     "docs/**/*.yml",
     # Phase O.1.c — hand-authored Graphviz diagrams.
     "docs/**/*.dot",
-    "training/**/*.md",
-    "training/**/*.py",
-    "training/**/*.example",
 ]
 
 [tool.setuptools.dynamic]

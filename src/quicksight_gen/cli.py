@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import re
 import shutil
-from dataclasses import dataclass, field
 from pathlib import Path
 
 import click
@@ -1026,12 +1025,12 @@ def cleanup_cmd(config: str, output_dir: str, dry_run: bool, yes: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Export (bundled docs + training kit)
+# Export (bundled docs)
 # ---------------------------------------------------------------------------
 
 @main.group()
 def export() -> None:
-    """Extract bundled documentation and training material."""
+    """Extract bundled documentation."""
 
 
 def _bundled_dir(name: str) -> Path:
@@ -1054,125 +1053,6 @@ def _copy_tree(src: Path, dst: Path) -> int:
     return sum(1 for p in dst.rglob("*") if p.is_file())
 
 
-# -- Whitelabel substitution (used by `export training --mapping`) ----------
-#
-# Phase L will likely replace this with template-rendered docs (persona-typed
-# Jinja or similar) so canonical strings stop being load-bearing. Until then,
-# this is a small string-substitution pipeline scoped to one command.
-
-_WHITELABEL_LEAF_RE = re.compile(r'^\s*(?:"([^"]+)"|([^:\s][^:]*?))\s*:\s*(.*?)\s*$')
-
-_WHITELABEL_LEFTOVER_PATTERNS = [
-    r"Sasquatch", r"\bSNB\b", r"Bigfoot", r"Big Meadow",
-    r"Cascade Timber", r"Pinecrest", r"Harvest Moon",
-]
-
-
-@dataclass
-class _WhitelabelResult:
-    files_processed: int = 0
-    total_substitutions: int = 0
-    leftovers: list[tuple[str, str]] = field(default_factory=list)
-    per_file: list[tuple[str, int]] = field(default_factory=list)
-
-
-def _parse_mapping(path: Path) -> dict[str, str]:
-    """Parse the YAML-subset mapping file used by `export training`.
-
-    Supported syntax: ``key: value`` or ``"key with spaces": "value"`` per
-    line; ``#`` comments; nested group headers ignored; empty values skipped.
-    """
-    subs: dict[str, str] = {}
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        raw = raw_line.rstrip("\n")
-        stripped = raw.lstrip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        idx = raw.find(" #")
-        if idx >= 0:
-            raw = raw[:idx]
-        m = _WHITELABEL_LEAF_RE.match(raw)
-        if not m:
-            continue
-        key = m.group(1) or m.group(2)
-        val = m.group(3).strip()
-        if not val:
-            continue
-        if (val.startswith('"') and val.endswith('"')) or \
-           (val.startswith("'") and val.endswith("'")):
-            val = val[1:-1]
-        if not val:
-            continue
-        subs[key] = val
-    return subs
-
-
-def _apply_whitelabel(
-    source: Path,
-    output: Path,
-    mapping: dict[str, str] | None = None,
-    *,
-    dry_run: bool = False,
-) -> _WhitelabelResult:
-    """Copy ``source`` to ``output`` applying string substitutions.
-
-    Longest keys substitute first so prefixes (e.g. ``SNB`` inside
-    ``Sasquatch National Bank``) don't get rewritten in the wrong order.
-    Returns counts plus a list of files where canonical SNB-pattern strings
-    survived the rewrite (suggests a missing mapping entry).
-    """
-    if not source.is_dir():
-        raise FileNotFoundError(f"Source directory not found: {source}")
-
-    subs = mapping or {}
-    ordered_keys = sorted(subs.keys(), key=len, reverse=True)
-    result = _WhitelabelResult()
-
-    if not dry_run:
-        if output.exists():
-            shutil.rmtree(output)
-        output.mkdir(parents=True, exist_ok=True)
-
-    for src_file in sorted(source.rglob("*")):
-        if not src_file.is_file():
-            continue
-        rel = src_file.relative_to(source)
-        try:
-            content = src_file.read_text(encoding="utf-8")
-            is_text = True
-        except UnicodeDecodeError:
-            content = ""
-            is_text = False
-
-        file_subs = 0
-        if is_text:
-            for key in ordered_keys:
-                hits = content.count(key)
-                if hits:
-                    content = content.replace(key, subs[key])
-                    file_subs += hits
-
-        result.files_processed += 1
-        result.total_substitutions += file_subs
-        result.per_file.append((str(rel), file_subs))
-
-        if not dry_run:
-            dst = output / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            if is_text:
-                dst.write_text(content, encoding="utf-8")
-            else:
-                shutil.copy2(src_file, dst)
-
-        if is_text:
-            for pat in _WHITELABEL_LEFTOVER_PATTERNS:
-                if re.search(pat, content):
-                    result.leftovers.append((str(rel), pat))
-                    break
-
-    return result
-
-
 @export.command("docs")
 @click.option(
     "--output", "-o",
@@ -1180,66 +1060,11 @@ def _apply_whitelabel(
     help="Target directory; created if missing, merged into if existing.",
 )
 def export_docs_cmd(output: str) -> None:
-    """Copy the operator + engineering handbooks (mkdocs source) to a folder."""
+    """Copy the unified docs site (mkdocs source) to a folder."""
     src = _bundled_dir("docs")
     dst = Path(output)
     count = _copy_tree(src, dst)
     click.echo(f"Wrote {count} documentation files to {dst}")
-
-
-@export.command("training")
-@click.option(
-    "--output", "-o",
-    type=click.Path(), required=True,
-    help="Target directory; created if missing, replaced if existing.",
-)
-@click.option(
-    "--mapping",
-    type=click.Path(exists=True),
-    help="Optional whitelabel mapping file (YAML subset). "
-         "When set, applies branding substitutions to every shipped file.",
-)
-@click.option("--dry-run", "-n", is_flag=True, help="Report what would happen; write nothing.")
-def export_training_cmd(output: str, mapping: str | None, dry_run: bool) -> None:
-    """Copy the training handbook to a folder, optionally whitelabeled.
-
-    Without --mapping, ships the canonical Sasquatch-named copy. With
-    --mapping pointing at a populated mapping.yaml (see the bundled
-    mapping.yaml.example for the template), every occurrence of the
-    canonical strings is rewritten to your organization's names.
-    """
-    src = _bundled_dir("training") / "handbook"
-    dst = Path(output)
-
-    subs: dict[str, str] = {}
-    if mapping:
-        subs = _parse_mapping(Path(mapping))
-        if not subs:
-            click.echo(
-                f"WARNING: No non-empty substitutions in {mapping}; "
-                "output will match source verbatim.",
-                err=True,
-            )
-
-    result = _apply_whitelabel(src, dst, subs, dry_run=dry_run)
-
-    verb = "Would write" if dry_run else "Wrote"
-    click.echo(
-        f"{verb} {result.files_processed} files, "
-        f"{result.total_substitutions} substitutions, to {dst}"
-    )
-
-    if result.leftovers:
-        click.echo(
-            "\nWARNING: Possible untranslated canonical strings remain:",
-            err=True,
-        )
-        for rel, pat in result.leftovers:
-            click.echo(f"  {rel}  matches /{pat}/", err=True)
-        click.echo(
-            "Update the mapping and re-run, or accept if intentional.",
-            err=True,
-        )
 
 
 # ---------------------------------------------------------------------------

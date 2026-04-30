@@ -124,7 +124,8 @@ src/quicksight_gen/
     models.py            # Dataclasses mapping to QuickSight API JSON (to_aws_json + _strip_nones)
     ids.py               # Typed ID newtypes (SheetId / VisualId / FilterGroupId / ParameterName / etc.)
     theme.py             # `DEFAULT_PRESET` fallback + `build_theme(cfg, theme: ThemePreset | None) -> Theme | None` (None → silent-fallback to AWS CLASSIC at deploy)
-    persona.py           # DemoPersona dataclass + derive_mapping_yaml_text — single source of truth for whitelabel-substitutable Sasquatch strings
+    persona.py           # DemoPersona dataclass — Sasquatch flavor strings the demo seed plants; HandbookVocabulary in common/handbook/ layers on top for docs templating
+    handbook/            # Phase O.1 — vocabulary.py + diagrams.py for the unified mkdocs render pipeline (mkdocs-macros wires `{{ vocab }}` + `{{ diagram(...) }}`)
     deploy.py            # boto3 delete-then-create deploy with async waiters
     cleanup.py           # Tag-based cleanup of stale resources (ManagedBy:quicksight-gen)
     dataset_contract.py  # ColumnSpec, DatasetContract, build_dataset() — shared dataset constructor
@@ -175,8 +176,7 @@ src/quicksight_gen/
       datasets.py          # 14 custom-SQL datasets — wraps the 5 L1 invariant matviews + 2 aging-watch matviews (M.2b.8/9) + 2 supersession audit views (M.2b.12) + 2 drift-timeline pre-aggregations + Daily Statement summary/transactions + raw transactions + Today's Exceptions UNION matview
   schema.py              # `generate_schema_sql()` — reads the canonical DDL from the package data file
   schema.sql             # Legacy v5 PostgreSQL DDL — shared `transactions` + `daily_balances` base layer + AR dimension tables + remaining AR matviews. Investigation matviews migrated to per-instance prefixed views in `common/l2/schema.py` (N.3.b/n); the global `inv_*` names live here only as `DROP IF EXISTS` for upgrade safety.
-  docs/                  # mkdocs site source (handbook/, walkthroughs/, Schema_v6.md, Training_Story.md); extract via `quicksight-gen export docs`
-  training/              # Whitelabel handbook kit (handbook/, mapping.yaml.example, QUICKSTART.md); extract via `quicksight-gen export training`
+  docs/                  # Unified mkdocs site source — concepts/, handbook/ (Reference), walkthroughs/, for-your-role/, scenarios/, Schema_v6.md, Training_Story.md, _diagrams/, _macros/. Extract via `quicksight-gen export docs`. Renders against any L2 instance via mkdocs-macros + HandbookVocabulary (Phase O.1).
 tests/
   test_models.py         # Models, tags, config, dataset builders
   test_generate.py       # Full pipeline, cross-refs, explanations (PR)
@@ -189,8 +189,10 @@ tests/
   test_kitchen_app.py    # Kitchen-sink app exercising every L.1 primitive
   test_screenshot_harness.py # common/browser/screenshot.py walker unit tests
   test_drill.py          # Cross-app URL deep-link builder tests
-  test_persona.py        # DemoPersona round-trip + mapping.yaml derivation parity
-  test_export.py         # `export docs` / `export training` CLI tests
+  test_persona.py        # DemoPersona non-empty guards (parity test dropped with training/ in O.1.l)
+  test_export.py         # `export docs` CLI tests
+  test_handbook_vocabulary.py  # Phase O.1.b — vocabulary_for(l2_instance) + neutral fallback + zero-leakage contract
+  test_handbook_diagrams.py    # Phase O.1.c — render_l2_topology / render_dataflow / render_conceptual smoke tests
   test_theme_presets.py  # `DEFAULT_PRESET` spot-checks + `build_theme` serialization + N.4.k silent-fallback contract
   test_dataset_contract.py # DatasetContract basics + per-builder column-match assertions
   test_demo_data.py      # Demo determinism (SHA256 hash lock), row counts, FK integrity, scenario coverage, cross-app integrity, shared base layer projection
@@ -286,7 +288,7 @@ Sheets walk the L2 model: each Rail's runtime postings, each Chain's parent → 
 - **Three-layer model — L1 / L2 / L3.** The tree's existence is the test case for layer separation:
   - **L1 — `common/tree/`, `common/models.py`, `common/ids.py`, `common/dataset_contract.py`.** Persona-blind primitives. Every type knows about *dashboards* (sheets, visuals, filters, drills, dataset contracts) and nothing about Sasquatch / banks / accounts / transfers. If you grep `common/tree/` for "sasquatch" you should find zero hits — and that grep is the L1 invariant.
   - **L2 — `apps/<app>/app.py`, `apps/<app>/constants.py`.** Per-app tree assembly. Wires L1 primitives into one app's dashboard shape: which sheets, which visuals on each, which filters/drills/parameters. Talks the *domain* vocabulary ("Account Coverage", "transfer_type", "open vs active", "expected_net_zero") — domain language a CPA would recognize, but **not** persona names ("Sasquatch", "Bigfoot Brews", "FRB Master").
-  - **L3 — `apps/<app>/datasets.py` SQL strings, `apps/<app>/demo_data.py`, `common/persona.py`, theme presets in `common/theme.py`.** Persona / customer flavor. SQL strings reference real column names; `demo_data.py` plants Sasquatch-flavored row values; theme presets carry brand colors; `persona.py` centralizes the Sasquatch strings so a publishing team can substitute them via `training/mapping.yaml.example`.
+  - **L3 — `apps/<app>/datasets.py` SQL strings, `apps/<app>/demo_data.py`, `common/persona.py`, theme presets in `common/theme.py`.** Persona / customer flavor. SQL strings reference real column names; `demo_data.py` plants Sasquatch-flavored row values; theme presets carry brand colors; `persona.py` centralizes the Sasquatch strings the demo seed plants. Docs templating reads the same strings via `common/handbook/vocabulary.py` (Phase O.1.b) — no separate substitution kit anymore; the legacy `training/` directory + `mapping.yaml.example` were dropped in O.1.l.
 - **Tree IS the source of truth.** Tests walk the tree to derive expected sets — they do not maintain parallel hand-listed expectations. Examples already in the codebase:
   - Unit test: `test_executives.py::test_account_coverage_active_kpi_filter_pinned` walks `exec_app.analysis.filter_groups` to find the visual-pinned filter and asserts its scope, instead of asserting a hardcoded `(visual_id_a, visual_id_b)` tuple.
   - API e2e: `test_exec_dashboard_structure.py::TestParameters::test_all_parameters_declared` derives `expected = {str(p.name) for p in exec_app.analysis.parameters}` instead of hardcoding the parameter set.
