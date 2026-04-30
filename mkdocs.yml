@@ -85,6 +85,11 @@ nav:
       - How do I publish docs against my L2?: walkthroughs/customization/how-do-i-publish-docs-against-my-l2.md
   - For Your Role:
     - Overview: for-your-role/index.md
+    - For the operator: for-your-role/operator.md
+    - For the integrator: for-your-role/integrator.md
+    - For the ETL engineer: for-your-role/etl-engineer.md
+    - For the executive: for-your-role/executive.md
+    - For the compliance analyst: for-your-role/compliance-analyst.md
   - Scenarios:
     - Overview: scenarios/index.md
     - Cast of Characters — Demo Account Structure: Training_Story.md

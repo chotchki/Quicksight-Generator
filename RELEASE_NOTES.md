@@ -1,5 +1,41 @@
 # Release Notes
 
+## v6.2.2 — For Your Role: 5 deep role-orientation pages + release-notes extractor fix
+
+### What's new
+
+- **For Your Role section is no longer a placeholder.** Five
+  full-depth role-orientation pages ship under
+  `for-your-role/`, each following the audit's narrative shape:
+  *what you do today → what this tool does differently → what
+  we are not asking you to learn → how to start → concepts you'll
+  want grounded → what good looks like.*
+  - [For the operator](for-your-role/operator.md) — L1
+    Reconciliation Dashboard daily routine.
+  - [For the integrator](for-your-role/integrator.md) — L2 Flow
+    Tracing for declaration / runtime reconciliation.
+  - [For the ETL engineer](for-your-role/etl-engineer.md) — the
+    two-table feed contract + matview refresh sequence.
+  - [For the executive](for-your-role/executive.md) — the
+    Account Coverage / Transaction Volume / Money Moved
+    scorecard.
+  - [For the compliance analyst](for-your-role/compliance-analyst.md) —
+    the four question-shaped Investigation sheets.
+  Every page substitutes the institution name + acronym via the
+  Phase O.1.b `HandbookVocabulary`; spec_example renders with
+  "Your Institution" placeholders, sasquatch_pr renders with SNB
+  flavor.
+
+### CI / release pipeline
+
+- **Release-notes extractor fixed.** The `awk` in
+  `.github/workflows/release.yml` previously matched only bare
+  `## v6.2.0` headers; v6.x release bodies all shipped as
+  placeholder "Release vX.Y.Z" because every actual header
+  carries a descriptive ` — title` suffix. Switched to a
+  field-2 match (`$2 == tag`) so descriptive headers extract
+  cleanly going forward.
+
 ## v6.2.1 — CI: install Graphviz on workflow runners
 
 The v6.2.0 release pipeline failed at the tests gate because the

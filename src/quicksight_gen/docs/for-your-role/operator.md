@@ -1,0 +1,123 @@
+# For the operator
+
+*Audience — reconciliation operator at **{{ vocab.institution.name }}**.
+Primary user of the L1 Reconciliation Dashboard.*
+
+## What you do today
+
+You run an aggregated text report (or a spreadsheet, or a stack of
+emails) every morning and cross-check the numbers against the
+previous business day's bank statement. When something doesn't tie,
+the answers you actually need — *which* account drifted, *which*
+transfer didn't settle, *which* posting is missing its counterpart —
+aren't on the report you're holding.
+
+So you escalate to whoever owns the data pipeline. They run a
+query, send back a CSV, sometimes within the hour, sometimes by
+end-of-day. By the time you hear back, the issue has often aged
+another day. If the answer leads to another question ("OK but where
+did *that* entry come from?"), it's another round-trip.
+
+## What this tool does differently
+
+The L1 Reconciliation Dashboard is the same underlying data, laid
+out so you can answer those follow-up questions yourself. Every
+KPI on the **Today's Exceptions** sheet is a single class of
+violation. Every row in the detail tables is the specific break.
+Every clickable cell drills to the underlying transactions.
+
+**The first time you finish a trace in under two minutes — the
+kind of trace you used to wait a day for — that's the proof that
+this tool has the answers your current process hides.**
+
+## What we are *not* asking you to learn
+
+- **Not SQL.** You won't write queries. The L1 invariant matviews
+  do the querying; you're reading the results.
+- **Not a new accounting framework.** The dashboard uses the
+  industry-standard vocabulary you already know — debits, credits,
+  balances, transfers, drift, aging.
+- **Not the whole tool.** You'll use the L1 Reconciliation Dashboard
+  and the small number of sheets inside it. The L2 Flow Tracing,
+  Investigation, and Executives dashboards belong to other roles;
+  skim them, don't study them.
+
+## How to start
+
+1. Read the [L1 Reconciliation Dashboard handbook](../handbook/l1.md).
+   It covers the 11 sheets in display order, the analyst journey,
+   and the L2-instance contract that drives every prose block on
+   each sheet.
+2. Walk through the
+   [Today's Exceptions walkthrough](../walkthroughs/l1/todays-exceptions.md).
+   It's the morning landing page — start there every day.
+3. Walk through
+   [Drift](../walkthroughs/l1/drift.md) and
+   [Drift Timelines](../walkthroughs/l1/drift-timelines.md). Drift
+   is the most common L1 violation; understanding it cold makes
+   every other check easier.
+4. Walk through the
+   [Daily Statement](../walkthroughs/l1/daily-statement.md) +
+   [Transactions](../walkthroughs/l1/transactions.md) walkthroughs.
+   These are the canonical drill destinations for any row — every
+   trace ends at a Daily Statement page or a raw posting ledger.
+5. Bookmark the
+   [L1 Invariants reference](../L1_Invariants.md). Every check on
+   Today's Exceptions ties back to one of these SHOULD-constraints;
+   when you see an unfamiliar `check_type`, look it up here.
+
+## The drill chain you'll use every day
+
+*Today's Exceptions → per-invariant narrowing → Daily Statement →
+Transactions.*
+
+- **Left-click an `account_id`** on any Today's Exceptions row →
+  narrows the per-invariant sheets (Drift / Overdraft / Limit
+  Breach) to that account.
+- **Right-click → "View Daily Statement"** → opens the
+  per-account-day walk: opening balance, debits, credits, closing
+  stored, drift KPI, every-leg detail table.
+- From any per-invariant detail row, **right-click → "View Daily
+  Statement"** for the same drill-forward.
+- From any Daily Statement leg, **right-click → "View Transactions"**
+  for the raw posting ledger filtered to that transfer's legs.
+
+Every sheet is also filterable independently — date range pickers
+(Date From / Date To, default 7 days), per-sheet category
+dropdowns (Account, Account Role, Transfer Type, Rail, Status,
+Origin), and parameter pickers on Daily Statement (Account +
+Business Day).
+
+## The concepts you'll want grounded
+
+Each is a ~5 minute read. Come back to them as the walkthroughs
+reference them; don't front-load all of them.
+
+- [Double-entry posting](../concepts/double-entry.md) — the
+  conservation invariant every L1 check ultimately rests on.
+- [Eventual consistency](../concepts/eventual-consistency.md) —
+  why "in-flight" and "stuck" are different bands of the same
+  spectrum, and how the aging-watch sheets surface it.
+- [Escrow with reversal](../concepts/escrow-with-reversal.md) —
+  the suspense-account lifecycle behind most stuck-pending
+  exceptions.
+- [Sweep / net / settle](../concepts/sweep-net-settle.md) — why
+  daily aggregating accounts (sweep / clearing / suspense) should
+  end at zero EOD, and what an Expected EOD Balance violation
+  means.
+
+## What "good" looks like
+
+After a few weeks of daily use:
+
+- You're opening fewer pipeline tickets for traces.
+- You're finding exceptions before lunch instead of the next
+  morning.
+- When you do escalate, you hand over a specific
+  `transfer_id` / `account_id` + business day, not a vague
+  "something's off in the GL".
+- You're comfortable saying "the dashboard answered this" without
+  needing the data team to confirm.
+
+That's the acceptance bar. The tool works when {{ vocab.institution.acronym }}
+trusts it to carry the morning routine.

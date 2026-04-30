@@ -378,10 +378,15 @@ jobs:
 
       - name: Extract release notes for ${{ github.ref_name }}
         run: |
+          # Match `## <tag>` whether the line is bare (`## v6.2.1`) or
+          # carries a descriptive suffix (`## v6.2.1 — short title`).
+          # The earlier exact-equality check (`$0 == "## " tag`) only
+          # caught the bare form, so v6.x releases shipped placeholder
+          # bodies. Field-2 match handles both shapes.
           awk -v tag="${GITHUB_REF_NAME}" '
             /^## v/ {
               if (capture) exit
-              if ($0 == "## " tag) { capture = 1; next }
+              if ($1 == "##" && $2 == tag) { capture = 1; next }
             }
             /^---[[:space:]]*$/ { if (capture) exit }
             capture { print }
