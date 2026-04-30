@@ -24,17 +24,19 @@
   - [x] N.1.i — Kitchen-sink fixture exercises a theme block + coverage assertion in `test_kitchen_sink_covers_every_primitive_kind`.
   - [x] N.1.j — Verify + commit. Pyright clean, 1179 unit tests pass, Aurora deploy verification stays as a follow-up validation against a live L2 render.
 
-- [ ] **N.2 — Inv + Exec audit + reshape decision.** Read each app's surface fresh; decide per-app: **keep / reshape onto L2 / delete**. Reshape is the default expectation, but pick it deliberately.
-  - What does Investigation answer that L1+L2FT don't? (Recipient Fanout, Volume Anomalies, Money Trail, Account Network — all key on `transactions` semantics.)
-  - What does Executives summarize that the L1 KPI rollup doesn't? (Account Coverage, Transaction Volume, Money Moved.)
-  - Capture in `docs/audits/n_2_inv_exec_audit.md`.
-  - Output: per-app decision + sketch of L2 primitives consumed (or new primitives needed).
+- [x] **N.2 — Inv + Exec audit + reshape decision.** Both apps RESHAPE onto L2; both decisions in `docs/audits/n_2_inv_exec_audit.md`. **Architectural reframe**: one L2 YAML per institution drives ALL FOUR apps (L1 / L2FT / Inv / Exec). Not per-app YAMLs. The YAML is the **institution spec** — accounts, rails, theme, eventually seed scenarios. SPEC.md and the `L2Instance` docstring need a rename pass to drop "L2 instance" → "institution YAML" in prose (typed identifier `L2Instance` stays). Investigation's two matviews migrate from `schema.sql` to `common/l2/schema.py` for per-instance prefixing.
 
-- [ ] **N.3 — Investigation reshape.** Port Investigation onto L1/L2 primitives if N.2 chose reshape. The 4 sheets all key on `transactions` semantics; map to the L2 model's per-instance prefixed schema. Investigation's matview SQL becomes per-prefix the way the L1 invariant views are.
-  - Cleanup: drop the `populate_app_info_sheet(theme=None)` fallback path in `common/sheets/app_info.py` (left in place by N.1.e/f as a TODO) once Investigation no longer reads `cfg.theme_preset`. Make the `theme` kwarg required.
+- [ ] **N.3 — Investigation reshape.** Port Investigation onto L1/L2 primitives. The 4 content sheets keep their shapes; reshape is plumbing only.
+  - Migrate `inv_pair_rolling_anomalies` + `inv_money_trail_edges` matviews from `schema.sql` → `common/l2/schema.py::_emit_inv_views()` so they emit as `<prefix>_inv_pair_rolling_anomalies` etc. (mirrors the L1 invariant view pattern).
+  - Datasets switch from global matview names to prefixed names; `build_investigation_app(cfg, *, l2_instance=None)` signature mirrors L1.
+  - Theme via `resolve_l2_theme(l2_instance)`; drop `cfg.theme_preset` consumption.
+  - Cleanup: drop the `populate_app_info_sheet(theme=None)` fallback path in `common/sheets/app_info.py` once Investigation no longer reads `cfg.theme_preset`. Make the `theme` kwarg required.
+  - Demo seed: defer the Cascadia/Juniper plant lift to `common/l2/seed.py` — non-blocking; track as part of the spec/scenario YAML split (Phase O candidate).
 
-- [ ] **N.4 — Executives reshape.** Port Executives onto L1/L2 primitives if N.2 chose reshape. The 3 operational sheets summarize over the same base; should compose from L2 instance metadata.
-  - Cleanup: same as N.3 — once Executives is the last legacy caller of `cfg.theme_preset`, the `app_info` fallback is unreachable. Drop it; remove `cfg.theme_preset` and the CLI's `--theme-preset` flag entirely as part of N.5.
+- [ ] **N.4 — Executives reshape.** Port Executives onto L1/L2 primitives. The 3 operational sheets keep their shapes; reshape is plumbing only.
+  - Datasets become `<prefix>-exec-*-dataset`, reading from prefixed `<prefix>_transactions` / `<prefix>_daily_balances`. No matview migration needed (Executives has none).
+  - Theme via `resolve_l2_theme(l2_instance)`.
+  - Cleanup: once Executives is the last legacy caller of `cfg.theme_preset`, the `app_info` fallback is unreachable. Drop it; remove `cfg.theme_preset` and the CLI's `--theme-preset` flag entirely as part of N.5.
 
 - [ ] **N.5 — End-of-phase iteration gate.** Cut **v6.1.0** — L2 YAML is the only configuration surface for app shape + theme. All four apps L2-fed, no per-app theme presets, no hand-rolled persona globals.
 
