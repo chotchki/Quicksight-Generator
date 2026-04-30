@@ -26,6 +26,7 @@ from quicksight_gen.common.sql import (
     epoch_seconds_between,
     interval_days,
     json_check,
+    matview_options,
     refresh_matview,
     serial_type,
     text_type,
@@ -142,6 +143,10 @@ class TestPostgresDdlIdempotency:
 
 
 class TestPostgresMatviews:
+    def test_matview_options(self):
+        # Postgres takes no options on CREATE MATERIALIZED VIEW.
+        assert matview_options(PG) == ""
+
     def test_create_matview(self):
         # ``create_matview`` is the only matview helper that does NOT
         # carry its own terminator — its caller wraps the whole
@@ -262,6 +267,16 @@ class TestOracleDdlIdempotency:
 
 
 class TestOracleMatviews:
+    def test_matview_options_includes_build_immediate(self):
+        # Oracle matviews need explicit BUILD IMMEDIATE so the matview
+        # is populated at create time (not deferred).
+        opts = matview_options(ORA)
+        assert "BUILD IMMEDIATE" in opts
+        assert "REFRESH COMPLETE ON DEMAND" in opts
+        # Has a leading space so it splices cleanly into "CREATE
+        # MATERIALIZED VIEW <name>{matview_options} AS body".
+        assert opts.startswith(" ")
+
     def test_create_matview_emits_build_immediate(self):
         sql = create_matview("p_drift", "SELECT 1", ORA)
         assert "BUILD IMMEDIATE" in sql
@@ -301,26 +316,29 @@ class TestDialectEnum:
 # -- Default-arg behavior ---------------------------------------------------
 
 
-class TestDefaultDialect:
-    """Every helper defaults to Postgres so existing callers don't
-    have to thread a dialect argument until P.4 propagates it.
+class TestDialectIsRequired:
+    """P.3.e dropped the ``dialect: Dialect = Dialect.POSTGRES`` defaults
+    from every helper — every call site must pass dialect explicitly.
+    These tests pin that behavior so the defaults can't sneak back in
+    without anyone noticing.
     """
 
     @pytest.mark.parametrize(
-        "fn,args,expected",
+        "fn,args",
         [
-            (serial_type, (), "BIGSERIAL"),
-            (boolean_type, (), "BOOLEAN"),
-            (text_type, (), "TEXT"),
-            (timestamp_tz_type, (), "TIMESTAMPTZ"),
-            (varchar_type, (50,), "VARCHAR(50)"),
-            (decimal_type, (10, 2), "DECIMAL(10,2)"),
-            (typed_null, ("numeric",), "NULL::numeric"),
-            (interval_days, (1,), "INTERVAL '1 day'"),
-            (with_recursive, (), "WITH RECURSIVE"),
-            (refresh_matview, ("foo",), "REFRESH MATERIALIZED VIEW foo;"),
-            (analyze_table, ("foo",), "ANALYZE foo;"),
+            (serial_type, ()),
+            (boolean_type, ()),
+            (text_type, ()),
+            (timestamp_tz_type, ()),
+            (varchar_type, (50,)),
+            (decimal_type, (10, 2)),
+            (typed_null, ("numeric",)),
+            (interval_days, (1,)),
+            (with_recursive, ()),
+            (refresh_matview, ("foo",)),
+            (analyze_table, ("foo",)),
         ],
     )
-    def test_postgres_default(self, fn, args, expected):
-        assert fn(*args) == expected
+    def test_omitting_dialect_is_a_typeerror(self, fn, args):
+        with pytest.raises(TypeError, match="missing.*positional"):
+            fn(*args)

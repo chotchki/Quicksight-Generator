@@ -1,12 +1,15 @@
-"""SQL dialect helpers — Phase P.2.
+"""SQL dialect helpers — Phase P.2 catalog + P.3 Oracle fill +
+P.3.e cleanup.
 
 Public surface:
 
 - ``Dialect`` enum (``POSTGRES``, ``ORACLE``).
-- Per-construct helpers that emit dialect-appropriate SQL fragments.
+- Per-construct helpers that emit dialect-appropriate SQL strings.
+  Every helper takes a ``Dialect`` explicitly — no defaults.
 
-Phase P.2 ships every helper with a Postgres branch only; the Oracle
-branch raises ``NotImplementedError`` until Phase P.3 fills it in.
+See ``dialect.py``'s module docstring for the "statement vs fragment"
+output convention (statement helpers self-terminate; fragment helpers
+return expression-level SQL).
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from .dialect import (
     epoch_seconds_between,
     interval_days,
     json_check,
+    matview_options,
     refresh_matview,
     serial_type,
     text_type,
@@ -53,6 +57,7 @@ __all__ = [
     "epoch_seconds_between",
     "interval_days",
     "json_check",
+    "matview_options",
     "refresh_matview",
     "serial_type",
     "text_type",

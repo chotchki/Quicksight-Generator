@@ -1,13 +1,45 @@
-"""Dialect-specific SQL helpers — Phase P.2 catalog + P.3 Oracle fill.
+"""Dialect-specific SQL helpers — Phase P.2 catalog + P.3 Oracle fill +
+P.3.e cleanup.
 
-Each helper accepts a ``Dialect`` enum value and returns a dialect-
-appropriate SQL fragment. Phase P.2 shipped every helper with a
-Postgres branch only; Phase P.3 filled in the Oracle branches.
+Every helper takes an explicit ``Dialect`` (no defaults — see "P.3.e
+cleanup" below) and returns a dialect-appropriate SQL string. The
+helpers split into two output shapes:
 
-Usage convention: import the enum + the helpers you need, pass
-``Dialect.POSTGRES`` (the default) or ``Dialect.ORACLE`` at the call
-site. Default parameter values keep existing call sites compatible
-while the dialect plumbing propagates inward.
+**Statement helpers** — return a fully terminated, self-contained
+statement. Postgres branch ends in ``;``; Oracle branch wraps in
+a PL/SQL block ending in ``END;``. Callers concatenate without
+appending a separate ``;``.
+
+  - ``drop_table_if_exists``
+  - ``drop_matview_if_exists``
+  - ``drop_index_if_exists``
+  - ``drop_view_if_exists``
+  - ``refresh_matview``
+  - ``analyze_table``
+
+**Fragment helpers** — return an expression-level SQL string with no
+trailing ``;``. Substituted into larger SQL templates by the caller,
+which decides where the statement boundary lives.
+
+  - Type names (``serial_type``, ``timestamp_tz_type``, ``text_type``,
+    ``varchar_type``, ``decimal_type``, ``boolean_type``, ``decimal_type``)
+  - Casts (``cast``, ``typed_null``, ``to_date``, ``date_trunc_day``)
+  - Date arithmetic (``epoch_seconds_between``, ``interval_days``,
+    ``date_minus_days``)
+  - Constraints (``json_check``)
+  - Other clauses (``with_recursive``, ``create_matview``,
+    ``matview_options``)
+
+Phase notes:
+- P.2 shipped every helper with a Postgres branch only.
+- P.3 filled in the Oracle branches (19c Standard Edition target).
+- P.3.e dropped the ``dialect: Dialect = Dialect.POSTGRES`` defaults
+  so call sites must be explicit. Every in-tree caller already passed
+  a dialect by then; defaults were a rollout convenience that's no
+  longer load-bearing.
+- ``_matview_options`` moved into this module from ``common.l2.schema``
+  in P.3.e — it's a pure dialect helper and belongs alongside
+  ``create_matview`` / ``refresh_matview``.
 """
 
 from __future__ import annotations
@@ -30,7 +62,7 @@ class Dialect(str, Enum):
 # -- Type names (DDL) --------------------------------------------------------
 
 
-def serial_type(dialect: Dialect = Dialect.POSTGRES) -> str:
+def serial_type(dialect: Dialect) -> str:
     """Auto-incrementing 64-bit append-only key.
 
     Postgres ``BIGSERIAL`` / Oracle ``NUMBER GENERATED ALWAYS AS IDENTITY``.
@@ -40,7 +72,7 @@ def serial_type(dialect: Dialect = Dialect.POSTGRES) -> str:
     return "NUMBER GENERATED ALWAYS AS IDENTITY"
 
 
-def boolean_type(dialect: Dialect = Dialect.POSTGRES) -> str:
+def boolean_type(dialect: Dialect) -> str:
     """Boolean column type.
 
     Postgres has a native ``BOOLEAN``; Oracle 19c does not, so the
@@ -53,7 +85,7 @@ def boolean_type(dialect: Dialect = Dialect.POSTGRES) -> str:
     return "NUMBER(1)"
 
 
-def text_type(dialect: Dialect = Dialect.POSTGRES) -> str:
+def text_type(dialect: Dialect) -> str:
     """Unbounded character data.
 
     Postgres ``TEXT`` / Oracle ``CLOB``.
@@ -63,7 +95,7 @@ def text_type(dialect: Dialect = Dialect.POSTGRES) -> str:
     return "CLOB"
 
 
-def timestamp_tz_type(dialect: Dialect = Dialect.POSTGRES) -> str:
+def timestamp_tz_type(dialect: Dialect) -> str:
     """Timestamp with time zone.
 
     Postgres ``TIMESTAMPTZ`` / Oracle ``TIMESTAMP WITH TIME ZONE``.
@@ -73,7 +105,7 @@ def timestamp_tz_type(dialect: Dialect = Dialect.POSTGRES) -> str:
     return "TIMESTAMP WITH TIME ZONE"
 
 
-def varchar_type(n: int, dialect: Dialect = Dialect.POSTGRES) -> str:
+def varchar_type(n: int, dialect: Dialect) -> str:
     """Bounded variable-length character.
 
     Postgres ``VARCHAR(n)`` / Oracle ``VARCHAR2(n)``.
@@ -83,9 +115,7 @@ def varchar_type(n: int, dialect: Dialect = Dialect.POSTGRES) -> str:
     return f"VARCHAR2({n})"
 
 
-def decimal_type(
-    precision: int, scale: int, dialect: Dialect = Dialect.POSTGRES
-) -> str:
+def decimal_type(precision: int, scale: int, dialect: Dialect) -> str:
     """Fixed-precision decimal.
 
     Postgres ``DECIMAL(p,s)`` / Oracle ``NUMBER(p,s)``.
@@ -98,20 +128,20 @@ def decimal_type(
 # -- Casts -------------------------------------------------------------------
 
 
-def cast(expr: str, type_name: str, dialect: Dialect = Dialect.POSTGRES) -> str:
+def cast(expr: str, type_name: str, dialect: Dialect) -> str:
     """Cast ``expr`` to ``type_name``.
 
     Postgres ``expr::type`` / Oracle ``CAST(expr AS type)``. Note the
-    caller is responsible for translating ``type_name`` itself for the
-    target dialect (e.g., ``numeric`` → ``NUMBER`` for Oracle); this
-    helper handles only the cast syntax.
+    caller is responsible for passing a logical Postgres-style type
+    name (``numeric``, ``bigint``, ``text``, ``TIMESTAMP``); the
+    Oracle branch translates via ``_oracle_type_alias``.
     """
     if dialect is Dialect.POSTGRES:
         return f"{expr}::{type_name}"
     return f"CAST({expr} AS {_oracle_type_alias(type_name)})"
 
 
-def typed_null(type_name: str, dialect: Dialect = Dialect.POSTGRES) -> str:
+def typed_null(type_name: str, dialect: Dialect) -> str:
     """Typed NULL literal.
 
     Postgres ``NULL::type`` / Oracle ``CAST(NULL AS type)``. Postgres
@@ -123,9 +153,7 @@ def typed_null(type_name: str, dialect: Dialect = Dialect.POSTGRES) -> str:
     return f"CAST(NULL AS {_oracle_type_alias(type_name)})"
 
 
-def to_date(
-    timestamp_expr: str, dialect: Dialect = Dialect.POSTGRES
-) -> str:
+def to_date(timestamp_expr: str, dialect: Dialect) -> str:
     """Truncate a timestamp expression to its date component.
 
     Postgres ``expr::date`` / Oracle ``TRUNC(expr)``. Oracle's
@@ -165,7 +193,7 @@ def _oracle_type_alias(type_name: str) -> str:
 # -- JSON --------------------------------------------------------------------
 
 
-def json_check(col: str, dialect: Dialect = Dialect.POSTGRES) -> str:
+def json_check(col: str, dialect: Dialect) -> str:
     """``CHECK (col IS NULL OR col IS JSON)`` in either dialect.
 
     The constraint syntax is identical in Postgres 16+ and Oracle
@@ -173,18 +201,19 @@ def json_check(col: str, dialect: Dialect = Dialect.POSTGRES) -> str:
     the OR-NULL guard pattern stays consistent across emit sites
     and so future Oracle-side variants (e.g. ``IS JSON STRICT``)
     can land in one place.
+
+    ``dialect`` is currently ignored (output is identical) but the
+    parameter is kept so the signature matches every other helper —
+    one less special case for callers to remember.
     """
+    del dialect  # see docstring; reserved for future Oracle variants
     return f"CHECK ({col} IS NULL OR {col} IS JSON)"
 
 
 # -- Date / time arithmetic --------------------------------------------------
 
 
-def epoch_seconds_between(
-    later: str,
-    earlier: str,
-    dialect: Dialect = Dialect.POSTGRES,
-) -> str:
+def epoch_seconds_between(later: str, earlier: str, dialect: Dialect) -> str:
     """Difference between two timestamps in whole + fractional seconds.
 
     Postgres ``EXTRACT(EPOCH FROM (later - earlier))``. Oracle has
@@ -203,7 +232,7 @@ def epoch_seconds_between(
     )
 
 
-def interval_days(n: int, dialect: Dialect = Dialect.POSTGRES) -> str:
+def interval_days(n: int, dialect: Dialect) -> str:
     """A SQL interval literal of ``n`` days.
 
     Postgres ``INTERVAL '<n> day'`` / Oracle ``INTERVAL '<n>' DAY``.
@@ -213,9 +242,7 @@ def interval_days(n: int, dialect: Dialect = Dialect.POSTGRES) -> str:
     return f"INTERVAL '{n}' DAY"
 
 
-def date_minus_days(
-    date_expr: str, n: int, dialect: Dialect = Dialect.POSTGRES
-) -> str:
+def date_minus_days(date_expr: str, n: int, dialect: Dialect) -> str:
     """Subtract ``n`` days from a date expression.
 
     Postgres uses ``date - INTERVAL '<n> day'``; Oracle's DATE
@@ -226,9 +253,7 @@ def date_minus_days(
     return f"({date_expr} - {n})"
 
 
-def date_trunc_day(
-    timestamp_expr: str, dialect: Dialect = Dialect.POSTGRES
-) -> str:
+def date_trunc_day(timestamp_expr: str, dialect: Dialect) -> str:
     """Truncate a timestamp expression to its day boundary, preserving
     a timestamp-shaped result type so downstream JOINs against
     TIMESTAMPTZ columns don't fall through implicit conversion.
@@ -253,9 +278,7 @@ def date_trunc_day(
 # -- DDL idempotency ---------------------------------------------------------
 
 
-def drop_table_if_exists(
-    name: str, dialect: Dialect = Dialect.POSTGRES
-) -> str:
+def drop_table_if_exists(name: str, dialect: Dialect) -> str:
     """Idempotent DROP TABLE — emits CASCADE so dependent FKs / views
     drop transitively.
 
@@ -274,9 +297,7 @@ def drop_table_if_exists(
     )
 
 
-def drop_matview_if_exists(
-    name: str, dialect: Dialect = Dialect.POSTGRES
-) -> str:
+def drop_matview_if_exists(name: str, dialect: Dialect) -> str:
     """Idempotent DROP MATERIALIZED VIEW.
 
     Postgres ``DROP MATERIALIZED VIEW IF EXISTS …;`` / Oracle PL/SQL
@@ -290,9 +311,7 @@ def drop_matview_if_exists(
     )
 
 
-def drop_index_if_exists(
-    name: str, dialect: Dialect = Dialect.POSTGRES
-) -> str:
+def drop_index_if_exists(name: str, dialect: Dialect) -> str:
     """Idempotent DROP INDEX.
 
     Postgres ``DROP INDEX IF EXISTS …;`` / Oracle PL/SQL block
@@ -306,9 +325,7 @@ def drop_index_if_exists(
     )
 
 
-def drop_view_if_exists(
-    name: str, dialect: Dialect = Dialect.POSTGRES
-) -> str:
+def drop_view_if_exists(name: str, dialect: Dialect) -> str:
     """Idempotent DROP VIEW.
 
     Postgres ``DROP VIEW IF EXISTS …;`` / Oracle PL/SQL block
@@ -343,9 +360,7 @@ def _oracle_drop_if_exists(
 # -- Materialized views ------------------------------------------------------
 
 
-def create_matview(
-    name: str, body_sql: str, dialect: Dialect = Dialect.POSTGRES
-) -> str:
+def create_matview(name: str, body_sql: str, dialect: Dialect) -> str:
     """``CREATE MATERIALIZED VIEW`` with the right options per dialect.
 
     Postgres: bare ``CREATE MATERIALIZED VIEW name AS body`` (build-
@@ -354,6 +369,12 @@ def create_matview(
     Postgres expectation; without those options Oracle defaults to
     ``REFRESH FORCE ON DEMAND`` (incremental fast-refresh attempt
     first), which has more setup requirements.
+
+    Note this helper does NOT add a trailing ``;`` — it's a one-shot
+    convenience for callers that want the whole CREATE in one string,
+    but most callers in this codebase splice the ``BUILD IMMEDIATE …``
+    suffix into a template via ``matview_options(dialect)`` instead
+    so the SELECT body stays inline + readable.
     """
     if dialect is Dialect.POSTGRES:
         return f"CREATE MATERIALIZED VIEW {name} AS {body_sql}"
@@ -363,9 +384,23 @@ def create_matview(
     )
 
 
-def refresh_matview(
-    name: str, dialect: Dialect = Dialect.POSTGRES
-) -> str:
+def matview_options(dialect: Dialect) -> str:
+    """Per-dialect suffix between ``CREATE MATERIALIZED VIEW <name>`` and
+    ``AS <body>``. Postgres takes none; Oracle needs ``BUILD IMMEDIATE
+    REFRESH COMPLETE ON DEMAND`` to match Postgres's build-on-create +
+    manual-REFRESH semantics (without it Oracle defaults to
+    ``REFRESH FORCE ON DEMAND``, which has more setup requirements).
+
+    Used by ``common.l2.schema`` to splice the suffix into per-matview
+    template strings (so the SELECT body stays inline + readable).
+    Returns the empty string on Postgres so the substitution is a no-op.
+    """
+    if dialect is Dialect.POSTGRES:
+        return ""
+    return " BUILD IMMEDIATE REFRESH COMPLETE ON DEMAND"
+
+
+def refresh_matview(name: str, dialect: Dialect) -> str:
     """``REFRESH MATERIALIZED VIEW`` per dialect.
 
     Postgres: ``REFRESH MATERIALIZED VIEW name;``. Oracle: a PL/SQL
@@ -379,9 +414,7 @@ def refresh_matview(
     return f"BEGIN DBMS_MVIEW.REFRESH('{name}', method => 'C'); END;"
 
 
-def analyze_table(
-    name: str, dialect: Dialect = Dialect.POSTGRES
-) -> str:
+def analyze_table(name: str, dialect: Dialect) -> str:
     """Refresh planner statistics on a table or matview.
 
     Postgres: ``ANALYZE name;``. Oracle: ``BEGIN
@@ -396,7 +429,7 @@ def analyze_table(
 # -- Recursive CTE -----------------------------------------------------------
 
 
-def with_recursive(dialect: Dialect = Dialect.POSTGRES) -> str:
+def with_recursive(dialect: Dialect) -> str:
     """Recursive-CTE preamble keyword.
 
     Postgres requires the explicit ``WITH RECURSIVE`` keyword. Oracle

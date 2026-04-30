@@ -52,6 +52,7 @@ from quicksight_gen.common.sql import (
     drop_table_if_exists,
     epoch_seconds_between,
     interval_days,
+    matview_options,
     refresh_matview,
     serial_type,
     text_type,
@@ -211,7 +212,7 @@ def _emit_l1_invariant_views(
         limit_cases=limit_cases,
         pending_age_cases=pending_age_cases,
         unbundled_age_cases=unbundled_age_cases,
-        matview_options=_matview_options(dialect),
+        matview_options=matview_options(dialect),
         date_trunc_tx_posting=date_trunc_day("tx.posting", dialect),
         epoch_age_seconds=epoch_seconds_between(
             "CURRENT_TIMESTAMP", "ct.posting", dialect,
@@ -328,7 +329,7 @@ def _emit_inv_views(
     p = instance.instance
     return _INV_MATVIEWS_TEMPLATE.format(
         p=p,
-        matview_options=_matview_options(dialect),
+        matview_options=matview_options(dialect),
         recipient_posting_to_date=to_date("recipient.posting", dialect),
         interval_one_day=interval_days(1, dialect),
         cast_avg_numeric=cast("AVG(window_sum)", "NUMERIC", dialect),
@@ -388,18 +389,6 @@ _BASE_INDEX_DROPS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _matview_options(dialect: Dialect) -> str:
-    """Per-dialect suffix between ``CREATE MATERIALIZED VIEW <name>`` and
-    ``AS <body>``. Postgres takes none; Oracle needs ``BUILD IMMEDIATE
-    REFRESH COMPLETE ON DEMAND`` to match Postgres's build-on-create +
-    manual-REFRESH semantics (without it Oracle defaults to
-    ``REFRESH FORCE ON DEMAND``, which has more setup requirements).
-    """
-    if dialect is Dialect.POSTGRES:
-        return ""
-    return " BUILD IMMEDIATE REFRESH COMPLETE ON DEMAND"
-
-
 def _emit_base_schema(p: str, dialect: Dialect) -> str:
     """Render ``_SCHEMA_TEMPLATE`` with all dialect placeholders filled.
 
@@ -424,7 +413,7 @@ def _emit_base_schema(p: str, dialect: Dialect) -> str:
         "dec202": decimal_type(20, 2, dialect),
         # Matview options suffix (Oracle BUILD IMMEDIATE REFRESH COMPLETE
         # ON DEMAND; empty on Postgres).
-        "matview_options": _matview_options(dialect),
+        "matview_options": matview_options(dialect),
         # Partial-index WHERE clause — PG only.
         "bundler_partial_where": (
             "\n    WHERE bundle_id IS NULL"
