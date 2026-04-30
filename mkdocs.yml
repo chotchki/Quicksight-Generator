@@ -30,6 +30,7 @@ nav:
   - Home: index.md
   - Concepts:
     - Overview: concepts/index.md
+    - Double-entry posting: concepts/double-entry.md
   - Reference:
     - Overview: reference/index.md
     - L1 Reconciliation Dashboard: handbook/l1.md
