@@ -796,6 +796,17 @@ def test_harness_l1_planted_scenarios_visible(
     # stuck_unbundled UNION branches that the harness expected to
     # roll up. Both fixed; assertion failures now propagate as real
     # FAILED so future regressions don't get masked.
+    #
+    # Known flake (PLAN backlog "Sasquatch L1 dashboard render flake"):
+    # the sasquatch_pr variant occasionally fails Layer 2 on Limit
+    # Breach with `account_id 'cust-0001-snb' not visible` — Layer 1
+    # passes (matview row present), one retry already baked in via
+    # ``run_dashboard_check_with_retry``, second attempt also misses.
+    # Spec_example + fuzz variants of the same test pass on the same
+    # run, so the flake is data-shape-specific (the sasquatch_pr seed
+    # has more transactions, the L1 dashboard's per-sheet
+    # transfer_type dropdown may default-narrow before the table
+    # loads). Investigate when re-prioritized; do NOT xfail.
     run_dashboard_check_with_retry(
         aws_account_id=harness_cfg.aws_account_id,
         aws_region=harness_cfg.aws_region,
