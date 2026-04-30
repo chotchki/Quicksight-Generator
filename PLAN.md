@@ -93,23 +93,46 @@
 
 **Goal.** Handbook + training pages render against the L2 instance's vocabulary instead of today's hand-written Sasquatch-flavored copy. Replaces `mapping.yaml` substitution.
 
-- [ ] **O.1 — Docs render pipeline.**
-  - Handbook prose templated against L2 persona vocabulary. mkdocs render step that takes `(L2 instance, neutral templates) → rendered handbook`.
-  - Reminder of the personas we documented in the SPEC, should keep a friendly helpful voice and tone.
-  - The deferred L.5 "always-emitted persona leaks" cleanup happens here naturally (see `PLAN_ARCHIVE.md` for the audit findings).
-  - Per F12 (`PLAN_ARCHIVE.md` M.0.10): any sub-step that invokes `ScreenshotHarness` MUST run a DB warm-up `SELECT 1` against `cfg.demo_database_url` right before fetching the embed URL — Aurora Serverless cold-start otherwise surfaces as QS's generic "We can't open that dashboard" error.
-  - **Major idea**: add a sheet at the end of each dashboard and load the documentation into the dashboard itself (sibling to the existing `Info` canary sheet).
-    - ANSWER: I reviewed the audit of what quicksight does and it seems way too limiting.
-  - **L2 topology diagram render** (deferred from M.3.10d). The L2 instance is a graph; render as SVG via Graphviz `dot` (hierarchical) or `neato`/`sfdp` (force-directed) and embed in the handbook. Three plausible cuts: account-rail-account topology, chain DAG, layered combination. The `build_chains_dataset` in `apps/l2_flow_tracing/datasets.py` (CHAINS_CONTRACT) is the pre-shaped input for the chain DAG cut.
-  - MUST include detailed transactions/daily_balance examples and recommendations, ideally using .yaml based examples
+**Sequencing rationale.** Audit + decisions land in O.0 (template engine, vocabulary schema, file-layout convention) so O.1/O.2 can execute mechanically against a settled contract. O.1 is docs (mkdocs site under `docs/`); O.2 is the whitelabel training kit (`training/handbook/` + ScreenshotHarness regen). O.3 closes the loop with a fresh-L2-yaml smoke + per-customer publishing workflow.
 
-- [ ] **O.2 — Training render pipeline.**
-  - Training site rendered from L2 + ScreenshotHarness regenerated per L2 instance.
-  - Reminder of the personas we documented in the SPEC, should keep a friendly helpful voice and tone.
-  - Includes the deferred L.8 Executives handbook + walkthroughs (see `PLAN_ARCHIVE.md` Backlog).
-  - Same `SELECT 1` warm-up requirement as O.1.
+**Help-sheet idea dropped.** The "render docs into a sheet on the dashboard itself" idea was investigated (`docs/audits/o_help_sheet_design.md`) and shelved — QS sheet rendering is too limiting for the doc shapes we need. Docs stay as mkdocs HTML / markdown.
+
+- [ ] **O.0 — Audit + ground-truth decisions.** Lock the template engine + vocabulary schema before touching prose.
+  - [ ] O.0.a — **Audit**: enumerate every persona-flavored string across `docs/handbook/`, `docs/walkthroughs/`, `training/handbook/`, plus residual Sasquatch / Bigfoot / SNB references in code (folds in the deferred L.5 audit). Output: `docs/audits/o_0_persona_leak_audit.md` listing source path → string → suggested vocabulary key.
+  - [ ] O.0.b — **Decide template engine**. Prefer `mkdocs-macros-plugin` + Jinja2 — already in the mkdocs ecosystem, doesn't fork the build, lets templates live alongside markdown. Document the trade-offs vs. custom render in the audit doc.
+  - [ ] O.0.c — **Define `HandbookVocabulary` dataclass** + `vocabulary_for(l2_instance) -> HandbookVocabulary`. Typed contract: institution name, account-taxonomy strings (subledger / control / external), persona names, sample customer/account names, anchor scenario references (Cascadia/Juniper-style). Some fields come from `l2_instance.description`; the persona-shaped fields likely need a new optional `personas:` block on the L2 YAML — decide whether to extend `L2Instance` (typed primitive) or sidecar (separate `<instance>_personas.yaml`).
+  - [ ] O.0.d — **Decide file-layout convention**: in-place templating (overwrite `docs/`) vs. split `docs_template/` + render to `_rendered/`. Probably split, so source diffs stay clean. Document in the audit.
+  - [ ] O.0.e — Commit O.0 audit + decisions doc. Phase 1 unblocked.
+
+- [ ] **O.1 — Docs render pipeline.** Handbook prose templated against L2 vocabulary; mkdocs render takes `(L2 instance, neutral templates) → rendered handbook`. Friendly + helpful voice retained per SPEC personas.
+  - [ ] O.1.a — Add chosen template-engine dep (likely `mkdocs-macros-plugin`). Wire into `mkdocs.yml`.
+  - [ ] O.1.b — Implement `HandbookVocabulary` + `vocabulary_for(l2_instance)`. Unit tests: spec_example, sasquatch_pr, plus a synthetic minimal-L2 fixture exercise the full field set.
+  - [ ] O.1.c — **Pilot migration**: convert ONE handbook page (`docs/handbook/l1.md` is the canonical candidate) from hardcoded Sasquatch → templated. Render against spec_example AND sasquatch_pr; eyeball both outputs for friendly-voice retention + zero leakage.
+  - [ ] O.1.d — Migrate the rest of `docs/handbook/` (`l2_flow_tracing.md`, `investigation.md`, `etl.md`, `customization.md`).
+  - [ ] O.1.e — Migrate `docs/walkthroughs/` per-sheet markdown (l1/, investigation/, etl/, customization/).
+  - [ ] O.1.f — **L2 topology diagram render** (carry-over from M.3.10d). Graphviz dependency; SVG output embedded in handbook; three cuts to ship: account-rail-account topology, chain DAG, layered combination. `apps/l2_flow_tracing/datasets.py::CHAINS_CONTRACT` is the pre-shaped input for the chain DAG cut.
+  - [ ] O.1.g — **Schema_v6 examples lift**: detailed `transactions` / `daily_balances` row examples + recommendations, sourced from YAML fixtures (so they stay in sync with the seed primitives). Append to `docs/Schema_v6.md`.
+  - [ ] O.1.h — **CLI**: `quicksight-gen export docs --l2-instance <yaml> -o <dir>`. Renders the templated docs against the supplied L2; default L2 = spec_example. Extends or replaces the existing `export docs` command.
+  - [ ] O.1.i — **L.5 persona-leak cleanup**: grep for residual Sasquatch / Bigfoot / SNB outside `apps/<app>/demo_data.py` + `tests/l2/` fixtures. Each remaining hit is a real bleed; either fix at source or template through O.0.c's vocabulary.
+  - [ ] O.1.j — **Drop `training/mapping.yaml.example`** + the SNB-string substitution machinery (superseded by templating). The auto-derive parity test in `test_persona.py` either retargets to the new `vocabulary_for` shape or is deleted.
+  - [ ] O.1.k — Tests: render docs against spec_example, sasquatch_pr, and a fresh "acme_treasury" minimal fixture. Assert NO Sasquatch / Bigfoot leakage in spec_example's rendered output. `mkdocs build --strict` green.
+  - [ ] O.1.l — Commit.
+
+- [ ] **O.2 — Training render pipeline.** Training kit rendered from L2 + ScreenshotHarness regenerated per L2 instance.
+  - [ ] O.2.a — Migrate `training/handbook/` (`for-accounting/`, `for-customer-service/`, `for-developers/`, `for-product-owner/`, `concepts/`, `scenarios/`) onto the O.0.c vocabulary.
+  - [ ] O.2.b — **L.8 deferred Executives handbook** — write `docs/handbook/executives.md` covering the 4 sheets + how it overlaps with L1 / L2FT / Inv (consumes the existing Executives sheet descriptions).
+  - [ ] O.2.c — **L.8 deferred Executives walkthroughs** — `docs/walkthroughs/executives/` per-sheet markdown (Getting Started + Account Coverage + Transaction Volume + Money Moved). Mirrors L1's per-sheet walkthrough shape.
+  - [ ] O.2.d — **CLI**: `quicksight-gen export training --l2-instance <yaml> -o <dir>`. Renders training handbook + invokes ScreenshotHarness against the deployed dashboards for the supplied L2.
+  - [ ] O.2.e — **Aurora warm-up**: `SELECT 1` against `cfg.demo_database_url` right before each ScreenshotHarness embed-URL fetch (per F12 / M.0.10 — Aurora Serverless cold-start otherwise surfaces as QS's generic "We can't open that dashboard" error). Wrap in a helper so future ScreenshotHarness callers inherit the warm-up.
+  - [ ] O.2.f — Tests: training rendered against multiple L2 instances; ScreenshotHarness output present + non-empty.
+  - [ ] O.2.g — Commit.
 
 - [ ] **O.3 — Iteration gate.** Docs + training render against any L2 instance the integrator points at. Handbook publishing pipeline supports per-customer renders.
+  - [ ] O.3.a — **Per-customer smoke**: write a fresh `tests/l2/acme_treasury.yaml` (no Sasquatch flavor, simplest possible institution shape). Run `export docs` + `export training` against it; eyeball outputs for leakage + voice consistency.
+  - [ ] O.3.b — **Publishing workflow doc**: `docs/walkthroughs/customization/how-do-i-publish-per-customer.md` walks the integrator through the end-to-end (write your L2 YAML → `export docs` → `export training` → publish to your wiki / website).
+  - [ ] O.3.c — README + CLAUDE.md sweep: docs section reflects the templated workflow; drop references to the substitution-via-`mapping.yaml` approach.
+  - [ ] O.3.d — Decide release cut: **v6.2.0** (additive — docs+training pipeline lands cleanly on top of N's L2-fed apps, no breaking changes to the runtime surface) vs **v7.0.0** (if O surfaces a bigger reframe). Default expectation: v6.2.0.
+  - [ ] O.3.e — Bump `__version__`; write RELEASE_NOTES; commit + tag + push.
 
 ---
 
