@@ -1,12 +1,12 @@
-<div class="snb-hero">
-  <img class="snb-hero__wordmark" src="../../img/snb-wordmark.svg" alt="Sasquatch National Bank">
-  <h2>Data Integration Handbook</h2>
-  <p class="snb-hero__tagline">Upstream-to-two-tables mapping and validation for the Data Integration Team.</p>
-</div>
+# Data Integration Handbook
 
-This handbook backs the **feeds behind both dashboards** — the
+*Upstream-to-two-tables mapping and validation for the Data
+Integration Team. Currently rendered against
+**{{ vocab.institution.name }}** ({{ l2_instance_name }}).*
+
+This handbook backs the **feeds behind every dashboard** — the
 upstream ETL that populates `transactions` and `daily_balances` at
-Sasquatch National Bank. Each entry here is a task the Data
+{{ vocab.institution.name }}. Each entry here is a task the Data
 Integration Team actually does: map a source table, prove the feed
 is sound, tag a forced Fed posting, extend the metadata contract,
 or debug a load that made it to the tables but not to the
@@ -14,7 +14,7 @@ dashboards.
 
 ## The team's job
 
-The Data Integration Team owns the projection from SNB's
+The Data Integration Team owns the projection from {{ vocab.institution.acronym }}'s
 upstream systems (core banking, Fed statements, processor reports,
 sweep engines) into the two base tables the AR and PR dashboards
 read. Their attitude, in their own words:

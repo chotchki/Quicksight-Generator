@@ -1,13 +1,13 @@
-<div class="snb-hero">
-  <img class="snb-hero__wordmark" src="../../img/snb-wordmark.svg" alt="Sasquatch National Bank">
-  <h2>Customization Handbook</h2>
-  <p class="snb-hero__tagline">Reshape the dashboards onto your own backend without rewriting the visual layer.</p>
-</div>
+# Customization Handbook
+
+*Reshape the dashboards onto your own backend without rewriting the
+visual layer. Currently rendered against
+**{{ vocab.institution.name }}** ({{ l2_instance_name }}).*
 
 This handbook is for the **developer or product owner** dropping
-the Account Reconciliation and Payment Reconciliation dashboards
-onto their own data — not the Data Integration ETL engineer
-loading the two base tables (that's the
+the four shipped dashboards (L1 Reconciliation, L2 Flow Tracing,
+Investigation, Executives) onto their own data — not the Data
+Integration ETL engineer loading the two base tables (that's the
 [Data Integration Handbook](etl.md)).
 
 The product is built around a small, deliberate set of
@@ -193,7 +193,7 @@ sql = refresh_matviews_sql(instance)
 
 ### 4. Deploy the L1 dashboard against your instance
 
-The CLI defaults to the canonical Sasquatch fixture; swap to your
+The CLI defaults to the canonical sasquatch_pr fixture; swap to your
 own instance by editing the build call site or providing your own
 `l2_instance` kwarg via a small wrapper script. Then:
 

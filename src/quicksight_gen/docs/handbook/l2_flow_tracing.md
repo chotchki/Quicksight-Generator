@@ -1,8 +1,8 @@
-<div class="snb-hero">
-  <img class="snb-hero__wordmark" src="../../img/snb-wordmark.svg" alt="L2 Flow Tracing Dashboard">
-  <h2>L2 Flow Tracing Dashboard</h2>
-  <p class="snb-hero__tagline">Is my L2 declaration alive? Per-instance reconciliation between what the YAML declares and what the runtime data actually does.</p>
-</div>
+# L2 Flow Tracing Dashboard
+
+*Is my L2 declaration alive? Per-instance reconciliation between what
+the YAML declares and what the runtime data actually does. Currently
+rendered against **{{ vocab.institution.name }}** ({{ l2_instance_name }}).*
 
 The **L2 Flow Tracing Dashboard** answers a different question from the
 L1 Reconciliation Dashboard. L1 asks "are my postings internally
@@ -14,6 +14,14 @@ actual runtime activity. When it isn't, that's an L2 *hygiene*
 problem — the declaration drifted away from reality, or reality drifted
 away from the declaration — and it doesn't surface anywhere on the L1
 dashboard.
+
+## Dataflow — which datasets feed which sheets
+
+{{ diagram("dataflow", app="l2_flow_tracing") }}
+
+## L2 chain DAG for this institution
+
+{{ diagram("l2_topology", kind="chains") }}
 
 ## What the L2 Flow Tracing dashboard reconciles
 

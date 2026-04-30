@@ -1,19 +1,19 @@
-<div class="snb-hero">
-  <img class="snb-hero__wordmark" src="../../img/snb-wordmark.svg" alt="Sasquatch National Bank">
-  <h2>Investigation Handbook</h2>
-  <p class="snb-hero__tagline">AML triage and provenance walks for the Compliance / Investigation team.</p>
-</div>
+# Investigation Handbook
+
+*AML triage and provenance walks for the Compliance / Investigation
+team. Currently rendered against **{{ vocab.institution.name }}**
+({{ l2_instance_name }}).*
 
 This handbook backs the **Investigation** dashboard — the
-compliance / AML view of Sasquatch National Bank. Each entry here is
-framed around the investigative question an analyst opens with, and
-walks them from a typed question to row-level evidence on the same
-shared base ledger that PR and AR read.
+compliance / AML view of {{ vocab.institution.name }}. Each entry
+here is framed around the investigative question an analyst opens
+with, and walks them from a typed question to row-level evidence on
+the same shared base ledger that the L1 dashboard reads.
 
 ## The team
 
-Sasquatch National Bank's Investigation team sits between Treasury
-(GL Recon) and the regulator. Their day is reactive — a SAR draft, a
+{{ vocab.institution.name }}'s Investigation team sits between
+Treasury (GL Recon) and the regulator. Their day is reactive — a SAR draft, a
 counterparty referral, a model alert — and each case has the same
 shape: pose a question about a person, a pair, or a transfer; pull
 the rows that answer it; preserve the chain that ties evidence back
@@ -57,6 +57,10 @@ Fanout hit on an account becomes a Money Trail walk on its largest
 inbound transfer, then an Account Network sweep around the same
 anchor to understand the full counterparty graph. Each walkthrough
 flags those natural transitions at the bottom.
+
+## Dataflow — which datasets feed which sheets
+
+{{ diagram("dataflow", app="investigation") }}
 
 ## The four sheets
 
