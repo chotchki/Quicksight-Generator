@@ -47,6 +47,6 @@ diagnostic.
 - The shared base layer is L1-clean by construction: drift / overdraft
   / limit-breach all rest on the double-entry invariant being held.
 
-See also: [L1 Reconciliation Dashboard](../handbook/l1.md) for the
-visual surface, and the [Schema v6 contract](../Schema_v6.md) for the
+See also: [L1 Reconciliation Dashboard](../../handbook/l1.md) for the
+visual surface, and the [Schema v6 contract](../../Schema_v6.md) for the
 column definitions.

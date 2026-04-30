@@ -139,6 +139,111 @@ def define_env(env: Any) -> None:
             f"Expected one of: conceptual, l2_topology, dataflow."
         )
 
+    # -- L2 concept "isolated" diagrams (concepts/l2/*.md) ---------------
+    #
+    # Each L2 concept page calls one of these macros to render a focused
+    # example of that primitive. Auto-pick: try the active L2 first;
+    # fall back to bundled spec_example, then sasquatch_pr (covers
+    # primitives spec_example doesn't use, e.g. chains). When a fallback
+    # fires, the wrapper prepends a callout so the reader knows the
+    # example isn't from their institution.
+    _spec_example_l2 = load_instance(_TESTS_L2_DIR / "spec_example.yaml")
+    _sasquatch_pr_l2 = load_instance(_TESTS_L2_DIR / "sasquatch_pr.yaml")
+
+    def _l2_focus(render_fn, *, primitive: str, alt: str) -> str:
+        """Try active → spec_example → sasquatch_pr; wrap with fallback note."""
+        active_name = str(default_l2.instance)
+        for candidate, label in (
+            (default_l2, active_name),
+            (_spec_example_l2, "spec_example"),
+            (_sasquatch_pr_l2, "sasquatch_pr"),
+        ):
+            svg = render_fn(candidate)
+            if svg is None:
+                continue
+            wrapped = _wrap_svg(svg, alt=alt)
+            if label != active_name:
+                callout = (
+                    f'<div class="admonition note">'
+                    f'<p class="admonition-title">Fallback example</p>'
+                    f'<p>The active L2 instance (<code>{active_name}</code>) '
+                    f"declares no <code>{primitive}</code> entries; the "
+                    f"diagram below is pulled from <code>{label}</code> for "
+                    f"illustration.</p></div>"
+                )
+                return callout + wrapped
+            return wrapped
+        return (
+            f'<div class="admonition warning">'
+            f'<p class="admonition-title">No example available</p>'
+            f"<p>Neither the active L2 instance nor the shipped fallback "
+            f"fixtures declare any <code>{primitive}</code> entries.</p>"
+            f"</div>"
+        )
+
+    @env.macro
+    def l2_account_focus() -> str:
+        from quicksight_gen.common.handbook.diagrams import (
+            render_l2_account_focus,
+        )
+        return _l2_focus(
+            render_l2_account_focus,
+            primitive="accounts", alt="L2 concept: account",
+        )
+
+    @env.macro
+    def l2_account_template_focus() -> str:
+        from quicksight_gen.common.handbook.diagrams import (
+            render_l2_account_template_focus,
+        )
+        return _l2_focus(
+            render_l2_account_template_focus,
+            primitive="account_templates",
+            alt="L2 concept: account template",
+        )
+
+    @env.macro
+    def l2_rail_focus() -> str:
+        from quicksight_gen.common.handbook.diagrams import (
+            render_l2_rail_focus,
+        )
+        return _l2_focus(
+            render_l2_rail_focus,
+            primitive="rails", alt="L2 concept: rail",
+        )
+
+    @env.macro
+    def l2_transfer_template_focus() -> str:
+        from quicksight_gen.common.handbook.diagrams import (
+            render_l2_transfer_template_focus,
+        )
+        return _l2_focus(
+            render_l2_transfer_template_focus,
+            primitive="transfer_templates",
+            alt="L2 concept: transfer template",
+        )
+
+    @env.macro
+    def l2_chain_focus() -> str:
+        from quicksight_gen.common.handbook.diagrams import (
+            render_l2_chain_focus,
+        )
+        return _l2_focus(
+            render_l2_chain_focus,
+            primitive="chains", alt="L2 concept: chain",
+        )
+
+    @env.macro
+    def l2_limit_schedule_focus() -> str:
+        from quicksight_gen.common.handbook.diagrams import (
+            render_l2_limit_schedule_focus,
+        )
+        return _l2_focus(
+            render_l2_limit_schedule_focus,
+            primitive="limit_schedules",
+            alt="L2 concept: limit schedule",
+        )
+
 
 def _wrap_svg(svg: str, *, alt: str) -> str:
     """Wrap inline SVG in a figure block so md_in_html lays it out cleanly.

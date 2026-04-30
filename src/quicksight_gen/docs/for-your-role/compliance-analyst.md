@@ -107,14 +107,14 @@ Each sheet supports a different posture:
 
 ## The concepts you'll want grounded
 
-- [Open vs. closed loop](../concepts/open-vs-closed-loop.md) —
+- [Open vs. closed loop](../concepts/accounting/open-vs-closed-loop.md) —
   the system-boundary question shapes which transfers leave the
   institution's visibility entirely (and which become harder to
   trace beyond {{ vocab.institution.acronym }}'s books).
-- [Vouchering](../concepts/vouchering.md) — voucher → ACH
+- [Vouchering](../concepts/accounting/vouchering.md) — voucher → ACH
   materialization is a layering vector worth understanding when
   the Money Trail walks across one.
-- [Eventual consistency](../concepts/eventual-consistency.md) —
+- [Eventual consistency](../concepts/accounting/eventual-consistency.md) —
   why recent money trails may look incomplete; not all in-flight
   transfers have landed yet, and the picture stabilises after a
   settlement window.

@@ -93,15 +93,15 @@ Business Day).
 Each is a ~5 minute read. Come back to them as the walkthroughs
 reference them; don't front-load all of them.
 
-- [Double-entry posting](../concepts/double-entry.md) — the
+- [Double-entry posting](../concepts/accounting/double-entry.md) — the
   conservation invariant every L1 check ultimately rests on.
-- [Eventual consistency](../concepts/eventual-consistency.md) —
+- [Eventual consistency](../concepts/accounting/eventual-consistency.md) —
   why "in-flight" and "stuck" are different bands of the same
   spectrum, and how the aging-watch sheets surface it.
-- [Escrow with reversal](../concepts/escrow-with-reversal.md) —
+- [Escrow with reversal](../concepts/accounting/escrow-with-reversal.md) —
   the suspense-account lifecycle behind most stuck-pending
   exceptions.
-- [Sweep / net / settle](../concepts/sweep-net-settle.md) — why
+- [Sweep / net / settle](../concepts/accounting/sweep-net-settle.md) — why
   daily aggregating accounts (sweep / clearing / suspense) should
   end at zero EOD, and what an Expected EOD Balance violation
   means.

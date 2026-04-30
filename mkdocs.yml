@@ -35,12 +35,22 @@ nav:
   - Home: index.md
   - Concepts:
     - Overview: concepts/index.md
-    - Double-entry posting: concepts/double-entry.md
-    - Escrow with reversal: concepts/escrow-with-reversal.md
-    - Sweep / net / settle: concepts/sweep-net-settle.md
-    - Vouchering: concepts/vouchering.md
-    - Eventual consistency: concepts/eventual-consistency.md
-    - Open vs. closed loop: concepts/open-vs-closed-loop.md
+    - Accounting:
+      - Overview: concepts/accounting/index.md
+      - Double-entry posting: concepts/accounting/double-entry.md
+      - Escrow with reversal: concepts/accounting/escrow-with-reversal.md
+      - Sweep / net / settle: concepts/accounting/sweep-net-settle.md
+      - Vouchering: concepts/accounting/vouchering.md
+      - Eventual consistency: concepts/accounting/eventual-consistency.md
+      - Open vs. closed loop: concepts/accounting/open-vs-closed-loop.md
+    - L2 model:
+      - Overview: concepts/l2/index.md
+      - Account: concepts/l2/account.md
+      - Account template: concepts/l2/account-template.md
+      - Rail: concepts/l2/rail.md
+      - Transfer template: concepts/l2/transfer-template.md
+      - Chain: concepts/l2/chain.md
+      - Limit schedule: concepts/l2/limit-schedule.md
   - Reference:
     - Overview: reference/index.md
     - L1 Reconciliation Dashboard: handbook/l1.md

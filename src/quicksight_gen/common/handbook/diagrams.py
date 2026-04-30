@@ -81,6 +81,178 @@ def render_l2_topology(l2_instance: L2Instance, kind: TopologyKind) -> str:
     raise ValueError(f"unknown topology kind: {kind!r}")
 
 
+def render_l2_account_focus(l2_instance: L2Instance) -> str | None:
+    """Render the first singleton Account with its parent edge (if any).
+
+    Returns None if the instance has no singleton accounts. Caller (the
+    mkdocs-macros entry) handles the fallback to ``spec_example``.
+    """
+    if not l2_instance.accounts:
+        return None
+    acc = l2_instance.accounts[0]
+    g = graphviz.Digraph(format="svg")
+    g.attr(rankdir="BT", nodesep="0.4", ranksep="0.7")
+    g.attr("node", fontsize="11", style="filled")
+    _add_account_node(g, acc)
+    if acc.parent_role is not None:
+        parent = _role_to_account(l2_instance).get(str(acc.parent_role))
+        if parent is not None:
+            _add_account_node(g, parent)
+            g.edge(str(acc.id), str(parent.id), color="#666666")
+    return _to_svg(g)
+
+
+def render_l2_account_template_focus(l2_instance: L2Instance) -> str | None:
+    """Render the first AccountTemplate with its parent singleton."""
+    if not l2_instance.account_templates:
+        return None
+    template = l2_instance.account_templates[0]
+    g = graphviz.Digraph(format="svg")
+    g.attr(rankdir="BT", nodesep="0.4", ranksep="0.7")
+    g.attr("node", fontsize="11", style="filled")
+    _add_account_template_node(g, template)
+    if template.parent_role is not None:
+        parent = _role_to_account(l2_instance).get(str(template.parent_role))
+        if parent is not None:
+            _add_account_node(g, parent)
+            g.edge(_template_node_id(template), str(parent.id), color="#666666")
+    return _to_svg(g)
+
+
+def render_l2_rail_focus(l2_instance: L2Instance) -> str | None:
+    """Render the first Rail with its endpoint accounts.
+
+    For TwoLeg, source + destination side-by-side with the rail edge
+    between them. For SingleLeg, the leg-role account with a self-loop
+    edge.
+    """
+    if not l2_instance.rails:
+        return None
+    rail = l2_instance.rails[0]
+    g = graphviz.Digraph(format="svg")
+    g.attr(rankdir="LR", nodesep="0.5", ranksep="1.0")
+    g.attr("node", fontsize="11", style="filled")
+    role_to_account = _role_to_account(l2_instance)
+    if isinstance(rail, TwoLegRail):
+        sources = _expand_role_expression(rail.source_role)
+        destinations = _expand_role_expression(rail.destination_role)
+        for r in (*sources, *destinations):
+            acc = role_to_account.get(r)
+            if acc is not None:
+                _add_account_node(g, acc)
+    elif isinstance(rail, SingleLegRail):
+        for r in _expand_role_expression(rail.leg_role):
+            acc = role_to_account.get(r)
+            if acc is not None:
+                _add_account_node(g, acc)
+    _add_rail_edges(g, rail, role_to_account)
+    return _to_svg(g)
+
+
+def render_l2_transfer_template_focus(l2_instance: L2Instance) -> str | None:
+    """Render the first TransferTemplate as a chain of leg rails.
+
+    Each leg becomes a node labeled with its rail_name; edges connect
+    them in declaration order. The template name + ``expected_net``
+    sit in the graph label.
+    """
+    if not l2_instance.transfer_templates:
+        return None
+    template = l2_instance.transfer_templates[0]
+    g = graphviz.Digraph(format="svg")
+    g.attr(
+        rankdir="LR", nodesep="0.4", ranksep="0.9",
+        label=f"{template.name}  (expected_net={template.expected_net})",
+        labelloc="t", fontsize="12",
+    )
+    g.attr(
+        "node", fontsize="11", shape="box",
+        style="filled,rounded", fillcolor="#e0f7fa",
+    )
+    rails_by_name = {str(r.name): r for r in l2_instance.rails}
+    prev: str | None = None
+    for idx, leg in enumerate(template.leg_rails):
+        rail_name = str(leg)
+        node_id = f"leg_{idx}_{rail_name}"
+        rail = rails_by_name.get(rail_name)
+        if isinstance(rail, TwoLegRail):
+            kind = "TwoLeg"
+        elif isinstance(rail, SingleLegRail):
+            kind = "SingleLeg"
+        else:
+            kind = ""
+        label = f"{rail_name}\n({kind})" if kind else rail_name
+        g.node(node_id, label)
+        if prev is not None:
+            g.edge(prev, node_id, color="#666666")
+        prev = node_id
+    return _to_svg(g)
+
+
+def render_l2_chain_focus(l2_instance: L2Instance) -> str | None:
+    """Render the first ChainEntry with both endpoints labeled.
+
+    Endpoint nodes are coloured by kind (rail vs template vs unresolved).
+    Edge style + label match the same conventions as the full chains
+    diagram (solid=required, dashed=optional, xor group label).
+    """
+    if not l2_instance.chains:
+        return None
+    chain = l2_instance.chains[0]
+    g = graphviz.Digraph(format="svg")
+    g.attr(rankdir="LR", nodesep="0.4", ranksep="0.9")
+    g.attr("node", fontsize="11", shape="box", style="filled,rounded")
+
+    rails_by_name = {str(r.name) for r in l2_instance.rails}
+    templates_by_name = {str(t.name) for t in l2_instance.transfer_templates}
+
+    def _add_endpoint(ref: object) -> None:
+        ref_id = str(ref)
+        if ref_id in rails_by_name:
+            g.node(ref_id, ref_id, fillcolor="#e0f7fa")
+        elif ref_id in templates_by_name:
+            g.node(ref_id, f"{ref_id}\n(template)", fillcolor="#fff9c4")
+        else:
+            g.node(ref_id, ref_id, fillcolor="#f5f5f5")
+
+    _add_endpoint(chain.parent)
+    _add_endpoint(chain.child)
+    _add_chain_edge(g, chain)
+    return _to_svg(g)
+
+
+def render_l2_limit_schedule_focus(l2_instance: L2Instance) -> str | None:
+    """Render the first LimitSchedule as a (parent_role, transfer_type) → cap.
+
+    Visual: a parent-role node on the left with a labeled edge to a
+    "cap" node showing the daily flow ceiling. Conceptual rather than
+    topological since LimitSchedules are configuration, not topology.
+    """
+    if not l2_instance.limit_schedules:
+        return None
+    sched = l2_instance.limit_schedules[0]
+    g = graphviz.Digraph(format="svg")
+    g.attr(rankdir="LR", nodesep="0.4", ranksep="1.0")
+    g.attr("node", fontsize="11", style="filled")
+
+    role_node = f"role_{sched.parent_role}"
+    cap_node = f"cap_{sched.parent_role}_{sched.transfer_type}"
+    g.node(
+        role_node, f"role: {sched.parent_role}",
+        shape="box", fillcolor="#bbdefb",
+    )
+    g.node(
+        cap_node, f"daily cap\n{sched.cap}",
+        shape="cylinder", fillcolor="#ffe0b2",
+    )
+    g.edge(
+        role_node, cap_node,
+        label=f"transfer_type:\n{sched.transfer_type}",
+        fontsize="9", color="#666666",
+    )
+    return _to_svg(g)
+
+
 def render_dataflow(app_name: str) -> str:
     """Render which datasets feed which sheets for ``app_name``.
 

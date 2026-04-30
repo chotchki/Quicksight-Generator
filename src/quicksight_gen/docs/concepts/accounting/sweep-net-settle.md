@@ -51,5 +51,5 @@ posted legs disagrees with the stored balance), and an aggregating
 rail's **PostedRequirements** catches the missing counterparty
 confirmation.
 
-See [L1 Reconciliation Dashboard](../handbook/l1.md) for the visual
+See [L1 Reconciliation Dashboard](../../handbook/l1.md) for the visual
 surface.

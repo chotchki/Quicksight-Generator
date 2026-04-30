@@ -117,18 +117,18 @@ write.
 
 ## The concepts you'll want grounded
 
-- [Double-entry posting](../concepts/double-entry.md) — the
+- [Double-entry posting](../concepts/accounting/double-entry.md) — the
   conservation invariant your loads must preserve. Any leg you
   drop, double-load, or sign-flip surfaces as drift.
-- [Sweep / net / settle](../concepts/sweep-net-settle.md) — the
+- [Sweep / net / settle](../concepts/accounting/sweep-net-settle.md) — the
   daily cycle behind aggregating rails. Impacts how you batch
   your loads (you can't "load Monday's sweep on Wednesday"
   without confusing the matviews).
-- [Open vs. closed loop](../concepts/open-vs-closed-loop.md) —
+- [Open vs. closed loop](../concepts/accounting/open-vs-closed-loop.md) —
   the system-boundary question. Closed-loop legs you load both
   sides; open-loop you load the internal side and wait for the
   external counterparty's confirmation.
-- [Eventual consistency](../concepts/eventual-consistency.md) —
+- [Eventual consistency](../concepts/accounting/eventual-consistency.md) —
   why a stuck-pending row on a fresh load is not necessarily a
   bug; aging-bucket bands tell you when it becomes one.
 
