@@ -87,7 +87,7 @@ rails:
   # because the per-leg overrides cover both legs (validator's O1 rule).
   # PostedRequirements + max_pending_age also exercise the new fields.
   - name: ExternalRailInbound
-    transfer_type: ach
+    transfer_type: ach_inbound
     source_role: ExternalCounterparty
     destination_role: ClearingSuspense
     expected_net: 0
@@ -152,7 +152,7 @@ rails:
 
   # Standalone payout — XOR group target
   - name: MerchantPayoutACH
-    transfer_type: ach
+    transfer_type: ach_outbound
     source_role: MerchantLedger
     destination_role: ExternalCounterparty
     expected_net: 0
@@ -266,7 +266,7 @@ limit_schedules:
       independently against this cap; not aggregated across siblings.
 
   - parent_role: NorthPool
-    transfer_type: ach
+    transfer_type: ach_outbound
     cap: 25000.00
 
   - parent_role: ControlAccount

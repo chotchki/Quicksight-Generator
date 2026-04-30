@@ -382,7 +382,46 @@ def _build_rails(rng: Random, state: _BuildState) -> list[dict[str, Any]]:
             rail["description"] = d
 
         rails.append(rail)
+
+    # P.9b — Rail discriminator uniqueness (transfer_type, role) is now
+    # a load-time invariant (validate.py::_check_unique_rail_discriminators).
+    # The fuzzer picks transfer_type uniformly from a small bank, so
+    # collisions on (transfer_type, role) happen often when two rails
+    # touch the same role. Walk the generated rails; for any colliding
+    # rail, suffix its transfer_type with the rail index so the
+    # discriminator becomes unique without disturbing the role layout.
+    _resolve_rail_discriminator_collisions(rails, state)
     return rails
+
+
+def _resolve_rail_discriminator_collisions(
+    rails: list[dict[str, Any]], state: _BuildState,
+) -> None:
+    """Make every (transfer_type, role) pair unique by suffixing
+    transfer_type with the rail index when needed. Mutates ``rails`` in
+    place + keeps ``state.rail_transfer_types`` aligned."""
+    seen: dict[tuple[str, str], int] = {}
+    for idx, rail in enumerate(rails):
+        roles = _rail_role_set(rail)
+        original = rail["transfer_type"]
+        # Rename if any role on this rail collides with a discriminator
+        # already claimed by an earlier rail.
+        if any((original, r) in seen for r in roles):
+            new = f"{original}_r{idx:02d}"
+            rail["transfer_type"] = new
+            state.rail_transfer_types[idx] = new
+            for r in roles:
+                seen[(new, r)] = idx
+        else:
+            for r in roles:
+                seen[(original, r)] = idx
+
+
+def _rail_role_set(rail: dict[str, Any]) -> tuple[str, ...]:
+    """The (source_role, destination_role) or (leg_role,) of a rail."""
+    if "leg_role" in rail:
+        return (str(rail["leg_role"]),)
+    return (str(rail["source_role"]), str(rail["destination_role"]))
 
 
 def _populate_two_leg_rail(

@@ -125,16 +125,26 @@ def test_limit_schedule_counts_pinned() -> None:
 
 
 def test_encompasses_ar_transfer_types() -> None:
-    """All AR transfer types must remain declared in PR's rail set
+    """All AR transfer-type families must remain declared in PR's rail set
     (so the L1 invariant matchers + LimitSchedule R10 still cover them).
+
+    P.9b — Per-direction families replace the original undifferentiated
+    transfer_types (ach → ach_inbound + ach_outbound, etc.) to satisfy
+    Rail uniqueness on (transfer_type, role). The semantic coverage is
+    preserved: every AR family is still represented by ≥1 declared rail
+    transfer_type that prefixes it.
     """
     inst = _instance()
     declared = {r.transfer_type for r in inst.rails}
-    ar_required = {"ach", "wire", "cash", "internal", "fee", "settlement", "return"}
-    missing = ar_required - declared
-    assert not missing, (
-        f"sasquatch_pr must encompass sasquatch_ar's transfer types; "
-        f"missing: {sorted(missing)!r}"
+    ar_families = ["ach", "wire", "cash", "internal", "fee", "settlement", "return"]
+    missing_families = [
+        fam for fam in ar_families
+        if not any(t == fam or t.startswith(f"{fam}_") for t in declared)
+    ]
+    assert not missing_families, (
+        f"sasquatch_pr must encompass sasquatch_ar's transfer-type families "
+        f"(family names or family-prefixed types); "
+        f"missing: {sorted(missing_families)!r}; declared: {sorted(declared)!r}"
     )
 
 
@@ -220,18 +230,23 @@ def test_encompasses_ar_aggregating_with_max_unbundled_age() -> None:
 
 def test_encompasses_ar_limit_schedule_coverage() -> None:
     """AR's three DDAControl × {ach, wire, cash} caps must remain (the L1
-    Limit Breach invariant against customer-DDA outbound flow)."""
+    Limit Breach invariant against customer-DDA outbound flow).
+
+    P.9b — Caps now reference the directional outbound transfer_types
+    (e.g. ach_outbound) since the rails were split per-direction to
+    satisfy Rail uniqueness on (transfer_type, role).
+    """
     inst = _instance()
     pairs = {(str(ls.parent_role), ls.transfer_type) for ls in inst.limit_schedules}
     ar_required = {
-        ("DDAControl", "ach"),
-        ("DDAControl", "wire"),
-        ("DDAControl", "cash"),
+        ("DDAControl", "ach_outbound"),
+        ("DDAControl", "wire_outbound"),
+        ("DDAControl", "cash_withdrawal"),
     }
     missing = ar_required - pairs
     assert not missing, (
-        f"sasquatch_pr must keep AR's DDAControl LimitSchedules; "
-        f"missing pairs: {sorted(missing)!r}"
+        f"sasquatch_pr must keep AR's DDAControl outbound-cap LimitSchedules; "
+        f"missing pairs: {sorted(missing)!r}; declared: {sorted(pairs)!r}"
     )
 
 

@@ -288,7 +288,7 @@ rails:
   # ----- Customer DDA <-> External --- ACH ----------------------------
 
   - name: CustomerInboundACH
-    transfer_type: ach
+    transfer_type: ach_inbound
     source_role: ExternalCounterparty
     destination_role: CustomerDDA
     expected_net: 0
@@ -306,7 +306,7 @@ rails:
       Fed-statement view.
 
   - name: CustomerOutboundACH
-    transfer_type: ach
+    transfer_type: ach_outbound
     source_role: CustomerDDA
     destination_role: ExternalCounterparty
     expected_net: 0
@@ -324,7 +324,7 @@ rails:
   # ----- Customer DDA <-> External --- Wire ---------------------------
 
   - name: CustomerInboundWire
-    transfer_type: wire
+    transfer_type: wire_inbound
     source_role: ExternalCounterparty
     destination_role: CustomerDDA
     expected_net: 0
@@ -340,7 +340,7 @@ rails:
       mandatory for wire reconciliation and audit.
 
   - name: CustomerOutboundWire
-    transfer_type: wire
+    transfer_type: wire_outbound
     source_role: CustomerDDA
     destination_role: ExternalCounterparty
     expected_net: 0
@@ -357,7 +357,7 @@ rails:
   # ----- Customer DDA <-> External --- Cash ---------------------------
 
   - name: CustomerCashDeposit
-    transfer_type: cash
+    transfer_type: cash_deposit
     source_role: ExternalCounterparty
     destination_role: CustomerDDA
     expected_net: 0
@@ -376,7 +376,7 @@ rails:
       audit context.
 
   - name: CustomerCashWithdrawal
-    transfer_type: cash
+    transfer_type: cash_withdrawal
     source_role: CustomerDDA
     destination_role: ExternalCounterparty
     expected_net: 0
@@ -397,7 +397,7 @@ rails:
   # whatever the other two legs require for closure.
 
   - name: InternalTransferDebit
-    transfer_type: internal
+    transfer_type: internal_debit
     leg_role: CustomerDDA
     leg_direction: Debit
     origin: InternalInitiated
@@ -412,7 +412,7 @@ rails:
       from the template's `transfer_key`).
 
   - name: InternalTransferCredit
-    transfer_type: internal
+    transfer_type: internal_credit
     leg_role: CustomerDDA
     leg_direction: Credit
     origin: InternalInitiated
@@ -486,7 +486,7 @@ rails:
   # ----- Concentration → Fed sweep ------------------------------------
 
   - name: ConcentrationToFRBSweep
-    transfer_type: wire
+    transfer_type: wire_concentration
     source_role: ConcentrationMaster
     destination_role: ExternalCounterparty
     expected_net: 0
@@ -553,7 +553,7 @@ rails:
   # original `CustomerInboundACH`. Modeled as a Chain XOR group below.
 
   - name: CustomerInboundACHReturnNSF
-    transfer_type: return
+    transfer_type: return_nsf
     source_role: CustomerDDA
     destination_role: ExternalCounterparty
     expected_net: 0
@@ -570,7 +570,7 @@ rails:
       same-day or next-business-day after the original posting.
 
   - name: CustomerInboundACHReturnStopPay
-    transfer_type: return
+    transfer_type: return_stoppay
     source_role: CustomerDDA
     destination_role: ExternalCounterparty
     expected_net: 0
@@ -856,7 +856,7 @@ limit_schedules:
   # ----- Customer DDA caps (treasury) ---------------------------------
 
   - parent_role: DDAControl
-    transfer_type: ach
+    transfer_type: ach_outbound
     cap: 12000.00
     description: |
       $12,000 daily ACH outbound cap per customer DDA. Mirrors the
@@ -864,7 +864,7 @@ limit_schedules:
       sheet's Limit Breach check.
 
   - parent_role: DDAControl
-    transfer_type: wire
+    transfer_type: wire_outbound
     cap: 15000.00
     description: |
       $15,000 daily wire outbound cap per customer DDA. Higher than
@@ -872,7 +872,7 @@ limit_schedules:
       and higher-friction (Fedwire fees, real-time settlement).
 
   - parent_role: DDAControl
-    transfer_type: cash
+    transfer_type: cash_withdrawal
     cap: 10000.00
     description: |
       $10,000 daily cash withdrawal cap per customer DDA. Aligns with
@@ -909,8 +909,8 @@ limit_schedules:
       lower-tech / lower-volume operations; SNB caps aggressive
       check issuance to surface anomalies.
 seed_hash:
-  postgres: 74cfb1d5ca8f275253a92643094985f98841dd7a024efb26199dad39db168b53
-  oracle: e092b74738184a1134a0ba7257da876feb7f755889a54eeebe9c11a8330c995f
+  postgres: 90c81906bcedb49fc22c40c22176fc1bdd9e2af243608947005b80d35fc10659
+  oracle: 9e3073367038fec9a8f5f6553f25850a68a30b413f1e9c5bef81fe3fd0f5691b
 
 # Inline brand theme (N.1). Mirrors the legacy ``sasquatch-bank``
 # preset in common/theme.py byte-for-byte so the PR demo render is

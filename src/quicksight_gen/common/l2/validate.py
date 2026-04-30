@@ -22,6 +22,10 @@ Rules enforced (numbered for cross-reference with the test file):
   U4. TransferTemplate.name values are unique within ``transfer_templates``.
   U5. LimitSchedule (parent_role, transfer_type) combinations are unique
       (M.1a — duplicate combinations are a configuration error).
+  U6. Rail per-leg ``(transfer_type, role)`` discriminators are unique
+      across rails (P.9b — the Rail-to-Transaction binding is implicit
+      via this tuple; two rails contributing the same discriminator make
+      the binding ambiguous). Direction is intentionally NOT in the key.
 
   R1. Every Role referenced by a Rail (source_role / destination_role /
       leg_role) resolves to some Account.role OR AccountTemplate.role.
@@ -180,6 +184,7 @@ def validate(instance: L2Instance) -> None:
     _check_unique_account_ids(instance)
     _check_unique_account_template_roles(instance)
     _check_unique_rail_names(instance)
+    _check_unique_rail_discriminators(instance)
     _check_unique_transfer_template_names(instance)
     _check_unique_limit_schedule_combinations(instance)
 
@@ -254,6 +259,78 @@ def _check_unique_transfer_template_names(inst: L2Instance) -> None:
         (t.name for t in inst.transfer_templates),
         label="TransferTemplate.name",
     )
+
+
+def _check_unique_rail_discriminators(inst: L2Instance) -> None:
+    """P.9b — Rail uniqueness on the per-leg ``(transfer_type, role)``
+    discriminator.
+
+    The Rail-to-Transaction binding is implicit: a posted Transaction's
+    ``(transfer_type, account_role)`` tuple identifies which Rail
+    produced it. Two rails sharing the same discriminator for any leg
+    are silently ambiguous — a candidate Transaction matches both with
+    no defined tiebreak.
+
+    Per-leg discriminator:
+    - ``TwoLegRail``: contributes two — ``(transfer_type, source_role)``
+      and ``(transfer_type, destination_role)``.
+    - ``SingleLegRail``: contributes one — ``(transfer_type, leg_role)``.
+
+    Role expressions that are tuples (rail can fan out to multiple
+    accounts of the same role) contribute one discriminator per role.
+
+    Direction is intentionally NOT in the discriminator: forcing
+    uniqueness on ``(transfer_type, role)`` alone surfaces two-rail-
+    per-direction patterns (e.g. CustomerInboundACH + CustomerOutboundACH
+    sharing ``ach`` + ``CustomerDDA`` with swapped source/destination),
+    which the SPEC says should be modeled as either one bidirectional
+    rail or two distinct transfer_types.
+    """
+    seen: dict[tuple[str, str], str] = {}
+    for rail in inst.rails:
+        rail_name = str(rail.name)
+        transfer_type = str(rail.transfer_type)
+        match rail:
+            case TwoLegRail(source_role=src, destination_role=dst):
+                roles: tuple[str, ...] = (
+                    *_expand_role_expr(src),
+                    *_expand_role_expr(dst),
+                )
+            case SingleLegRail(leg_role=leg):
+                roles = _expand_role_expr(leg)
+        # Dedupe within-rail repetitions: a rail with the same role on
+        # both legs (or a union with duplicates) is fine — both legs of
+        # one Transfer share a transfer_id, no cross-rail ambiguity.
+        for role in set(roles):
+            key = (transfer_type, role)
+            if key in seen and seen[key] != rail_name:
+                raise L2ValidationError(
+                    f"Rail uniqueness violation: rail {rail_name!r} and "
+                    f"rail {seen[key]!r} both contribute discriminator "
+                    f"(transfer_type={transfer_type!r}, role={role!r}). "
+                    f"A posted Transaction matching this discriminator "
+                    f"would be ambiguous between the two rails.\n"
+                    f"Resolve by either (a) using distinct transfer_type "
+                    f"values per direction (e.g. ach_inbound / ach_outbound), "
+                    f"(b) merging into a single bidirectional rail, or "
+                    f"(c) chaining the two via a TransferTemplate."
+                )
+            seen[key] = rail_name
+
+
+def _expand_role_expr(expr: object) -> tuple[str, ...]:
+    """Normalize a RoleExpression into a tuple of role-name strings.
+
+    RoleExpression is either an Identifier (single role) or a tuple
+    of Identifiers (union of roles, e.g. a rail that fans out to
+    multiple destination accounts of the same role family).
+    """
+    if isinstance(expr, tuple):
+        return tuple(
+            str(e)  # type: ignore[reportUnknownArgumentType]
+            for e in expr  # type: ignore[reportUnknownVariableType]
+        )
+    return (str(expr),)
 
 
 def _check_unique_limit_schedule_combinations(inst: L2Instance) -> None:
