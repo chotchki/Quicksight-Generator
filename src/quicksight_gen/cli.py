@@ -187,7 +187,9 @@ def _generate_investigation(
     datasets = build_all_datasets(cfg)
     _prune_stale_files(
         out / "datasets",
-        keep=_all_dataset_filenames(cfg, keep_current=datasets),
+        keep=_all_dataset_filenames(
+            cfg, keep_current=datasets, l2_instance=l2_instance,
+        ),
     )
     for ds in datasets:
         _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
@@ -250,7 +252,9 @@ def _generate_executives(
     datasets = build_all_datasets(cfg)
     _prune_stale_files(
         out / "datasets",
-        keep=_all_dataset_filenames(cfg, keep_current=datasets),
+        keep=_all_dataset_filenames(
+            cfg, keep_current=datasets, l2_instance=l2_instance,
+        ),
     )
     for ds in datasets:
         _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
@@ -305,7 +309,9 @@ def _generate_l1_dashboard(
     datasets = build_all_l1_dashboard_datasets(cfg, l2_instance)
     _prune_stale_files(
         out / "datasets",
-        keep=_all_dataset_filenames(cfg, keep_current=datasets),
+        keep=_all_dataset_filenames(
+            cfg, keep_current=datasets, l2_instance=l2_instance,
+        ),
     )
     for ds in datasets:
         _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
@@ -370,7 +376,9 @@ def _generate_l2_flow_tracing(
     datasets = build_all_l2_flow_tracing_datasets(cfg, l2_instance)
     _prune_stale_files(
         out / "datasets",
-        keep=_all_dataset_filenames(cfg, keep_current=datasets),
+        keep=_all_dataset_filenames(
+            cfg, keep_current=datasets, l2_instance=l2_instance,
+        ),
     )
     for ds in datasets:
         _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
@@ -393,15 +401,22 @@ def _generate_l2_flow_tracing(
     click.echo(f"\nGenerated {1 + len(datasets) + 2} files in {out}/")
 
 
-def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
-    """Expected dataset filenames for both apps combined.
+def _all_dataset_filenames(
+    cfg, *, keep_current: list, l2_instance=None,
+) -> set[str]:
+    """Expected dataset filenames for all four apps combined.
 
     ``keep_current`` is the list of DataSet models the current generate
-    pass will write — always included. The other app's filenames are
+    pass will write — always included. The other apps' filenames are
     included so a single-app generate doesn't prune its sibling's output.
-    """
-    from dataclasses import replace as _replace
 
+    ``l2_instance`` selects which L2 institution YAML drives the
+    sibling enumeration. When None, falls back to the bundled default
+    (``spec_example``). Pass the same L2 instance the caller is
+    generating against — otherwise sibling enumeration produces names
+    with the wrong prefix and the prune step deletes the sibling's
+    actual files (P.9 footgun).
+    """
     from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
     from quicksight_gen.apps.executives.datasets import (
         build_all_datasets as _exec,
@@ -416,17 +431,10 @@ def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
         build_all_l2_flow_tracing_datasets as _l2ft,
     )
 
-    # N.3.h: Investigation now requires ``cfg.l2_instance_prefix`` to
-    # render its dataset SQL. When this helper is called from a sibling
-    # app's generate flow (e.g. Executives), the cfg may not have the
-    # prefix set. Pre-stamp from the default L2 instance to keep the
-    # enumeration working without churning the caller. Once N.4
-    # migrates Executives to L2-fed too, every app caller will already
-    # set the prefix and this can simplify.
-    default_l2 = default_l2_instance()
+    active_l2 = l2_instance if l2_instance is not None else default_l2_instance()
     cfg_with_prefix = (
         cfg if cfg.l2_instance_prefix is not None
-        else cfg.with_l2_instance_prefix(str(default_l2.instance))
+        else cfg.with_l2_instance_prefix(str(active_l2.instance))
     )
 
     names: set[str] = {f"{ds.DataSetId}.json" for ds in keep_current}
@@ -434,11 +442,11 @@ def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
     names.update(f"{ds.DataSetId}.json" for ds in _exec(cfg_with_prefix))
     names.update(
         f"{ds.DataSetId}.json"
-        for ds in _l1(cfg_with_prefix, default_l2)
+        for ds in _l1(cfg_with_prefix, active_l2)
     )
     names.update(
         f"{ds.DataSetId}.json"
-        for ds in _l2ft(cfg_with_prefix, default_l2)
+        for ds in _l2ft(cfg_with_prefix, active_l2)
     )
     return names
 

@@ -253,7 +253,35 @@ def _create_analyses(client, apps: list[AppFiles]) -> list[str]:
             continue
         payload = _read_json(app.analysis_path)
         click.echo(f"==> Creating Analysis: {payload['AnalysisId']}")
-        client.create_analysis(**payload)
+        # Datasets created in the prior step return success synchronously,
+        # but their underlying SQL prep is async. First-time deploys of
+        # the L1 dashboard against a fresh data source (no cached prep
+        # validation, 16+ datasets, several with window functions /
+        # recursive CTEs) can take several minutes to clear
+        # PREPARED_SOURCE_NOT_FOUND. Established data sources (deployed
+        # before, cached prep) clear in under 30s. Retry up to ~5 min
+        # with a 10s pace — long enough for cold-start data source
+        # validation, short enough not to mask a real schema bug.
+        max_attempts = 30  # ~5 min total
+        for attempt in range(1, max_attempts + 1):
+            try:
+                client.create_analysis(**payload)
+                break
+            except ClientError as exc:
+                code = exc.response.get("Error", {}).get("Code", "")
+                msg = str(exc)
+                if (
+                    code == "ResourceNotFoundException"
+                    and "PREPARED_SOURCE_NOT_FOUND" in msg
+                    and attempt < max_attempts
+                ):
+                    click.echo(
+                        f"    waiting for dataset prep "
+                        f"(attempt {attempt}/{max_attempts}, sleeping 10s)…"
+                    )
+                    time.sleep(10)
+                    continue
+                raise
         created.append(payload["AnalysisId"])
     return created
 
