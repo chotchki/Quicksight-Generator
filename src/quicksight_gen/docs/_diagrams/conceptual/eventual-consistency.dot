@@ -1,0 +1,22 @@
+// Eventual consistency timeline.
+//
+// A multi-day clear: legs of one transfer post over T+0 .. T+N. Each
+// individual day looks "imbalanced" until the final leg lands.
+digraph eventual_consistency {
+    rankdir=LR;
+    node [fontsize=11, style=filled, shape=box];
+
+    t0 [label="Day T+0\norigination leg posts\n(book imbalanced)",
+        fillcolor="#fff3e0"];
+    t1 [label="Day T+1\nintermediate leg posts\n(still imbalanced)",
+        fillcolor="#fff3e0"];
+    t2 [label="Day T+2\nsettlement leg posts\n(net to zero)",
+        fillcolor="#c8e6c9"];
+
+    t0 -> t1 -> t2;
+
+    aging [label="Aging-watch\n(stuck transfers past\nrail's max age)",
+           fillcolor="#ffcdd2", shape=oval];
+    t0 -> aging [style=dashed, label="if stalls"];
+    t1 -> aging [style=dashed, label="if stalls"];
+}

@@ -1,0 +1,24 @@
+// Sweep / net / settle daily cycle.
+//
+// Intraday activity accumulates in a sweep account; at EOD the net
+// balance moves to the position account in one external settlement.
+digraph sweep {
+    rankdir=LR;
+    node [fontsize=11, style=filled, shape=box];
+
+    intraday [label="Intraday postings\n(many small debits + credits)",
+              fillcolor="#fff3e0"];
+    sweep [label="Sweep account\n(must net to zero EOD)",
+           fillcolor="#bbdefb", shape=cylinder];
+    position [label="Position account\n(authoritative balance)",
+              fillcolor="#c8e6c9"];
+    counterparty [label="External counterparty\n(Fed / processor)",
+                  fillcolor="#e1bee7"];
+
+    intraday -> sweep [label="lands here\nthroughout the day"];
+    sweep -> position [label="EOD net wire\n(one transfer)"];
+    position -> counterparty [label="external settlement\n+ confirmation",
+                              style=dashed];
+
+    {rank=same; sweep; position}
+}

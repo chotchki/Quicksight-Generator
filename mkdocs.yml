@@ -31,6 +31,11 @@ nav:
   - Concepts:
     - Overview: concepts/index.md
     - Double-entry posting: concepts/double-entry.md
+    - Escrow with reversal: concepts/escrow-with-reversal.md
+    - Sweep / net / settle: concepts/sweep-net-settle.md
+    - Vouchering: concepts/vouchering.md
+    - Eventual consistency: concepts/eventual-consistency.md
+    - Open vs. closed loop: concepts/open-vs-closed-loop.md
   - Reference:
     - Overview: reference/index.md
     - L1 Reconciliation Dashboard: handbook/l1.md

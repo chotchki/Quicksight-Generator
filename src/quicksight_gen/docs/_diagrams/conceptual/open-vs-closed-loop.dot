@@ -1,0 +1,31 @@
+// Open vs closed loop networks.
+//
+// Closed loop: both ends are inside the institution; the bank sees
+// every leg. Open loop: one end is external; the bank only sees the
+// internal-side leg until the counterparty confirms.
+digraph open_closed_loop {
+    rankdir=TB;
+    node [fontsize=11, style=filled];
+
+    subgraph cluster_closed {
+        label="Closed loop";
+        style=rounded;
+        color="#388e3c";
+        node [fillcolor="#c8e6c9", shape=box];
+        c_a [label="Internal account A"];
+        c_b [label="Internal account B"];
+        c_a -> c_b [label="full visibility\n(both legs internal)"];
+    }
+
+    subgraph cluster_open {
+        label="Open loop";
+        style=rounded;
+        color="#d32f2f";
+        node [fillcolor="#ffe0b2", shape=box];
+        o_a [label="Internal account A"];
+        o_b [label="External counterparty\n(Fed, processor, etc.)"];
+        o_a -> o_b [label="internal leg posts\nimmediately"];
+        o_b -> o_a [label="counterparty confirmation\n(later, async)",
+                    style=dashed];
+    }
+}

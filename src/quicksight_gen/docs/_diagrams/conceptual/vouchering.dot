@@ -1,0 +1,27 @@
+// Vouchering — voucher → settlement materialization.
+//
+// A voucher captures the intent to settle (sale, fee, accrual) and
+// materializes as one or more posting legs when the settlement runs.
+digraph vouchering {
+    rankdir=LR;
+    node [fontsize=11, style=filled];
+
+    intent [label="Intent\n(sale, fee, accrual)",
+            fillcolor="#e1bee7", shape=oval];
+    voucher [label="Voucher\n(captures the intent)",
+             fillcolor="#fff3e0", shape=note];
+    settlement_run [label="Settlement run\n(batch / cycle)",
+                    fillcolor="#bbdefb", shape=oval];
+
+    debit_leg [label="Debit posting", fillcolor="#ffcdd2"];
+    credit_leg [label="Credit posting", fillcolor="#c8e6c9"];
+
+    intent -> voucher;
+    voucher -> settlement_run;
+    settlement_run -> debit_leg [label="materializes"];
+    settlement_run -> credit_leg [label="materializes"];
+
+    invariant [label="Vouchers without\nmatching legs = exception",
+               fillcolor="#fff9c4", shape=oval];
+    voucher -> invariant [style=dashed];
+}

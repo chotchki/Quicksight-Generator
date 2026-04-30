@@ -1,0 +1,23 @@
+// Escrow with reversal cycle.
+//
+// Three-state lifecycle for an in-flight transfer that holds in a
+// suspense account until the recipient leg clears OR reverses.
+digraph escrow {
+    rankdir=LR;
+    node [fontsize=11, style=filled, shape=box];
+
+    originator [label="Originator account", fillcolor="#bbdefb"];
+    escrow [label="Escrow / suspense\n(must net to zero EOD)",
+            fillcolor="#fff3e0", shape=cylinder];
+    recipient [label="Recipient account", fillcolor="#c8e6c9"];
+
+    originator -> escrow [label="step 1\ndebit originator,\ncredit escrow"];
+    escrow -> recipient [label="step 2a\n(success)\ndebit escrow,\ncredit recipient",
+                         color="#388e3c"];
+    escrow -> originator [label="step 2b\n(reversal)\ndebit escrow,\ncredit originator",
+                          color="#d32f2f", style=dashed];
+
+    stuck [label="STUCK\n(step 1 posted,\nstep 2 missing)",
+           fillcolor="#ffcdd2", shape=oval];
+    escrow -> stuck [style=dotted, color="#b71c1c", arrowhead=none];
+}
