@@ -43,14 +43,17 @@ from __future__ import annotations
 from quicksight_gen.common.sql import (
     Dialect,
     analyze_table,
+    date_trunc_day,
     decimal_type,
     drop_index_if_exists,
     drop_matview_if_exists,
     drop_table_if_exists,
+    epoch_seconds_between,
     refresh_matview,
     serial_type,
     text_type,
     timestamp_tz_type,
+    to_date,
     typed_null,
     varchar_type,
 )
@@ -184,6 +187,19 @@ def _emit_l1_invariant_views(
     Each view drops + creates idempotently so repeated runs converge.
     Drop order is reverse of create order (no view depends on a later
     one).
+
+    Dialect-specific patterns substituted into the template:
+    - ``{matview_options}`` — Oracle's BUILD IMMEDIATE REFRESH COMPLETE
+      ON DEMAND suffix (empty on Postgres).
+    - ``{date_trunc_tx_posting}`` — DATE_TRUNC('day', tx.posting) on
+      Postgres / CAST(TRUNC(tx.posting) AS TIMESTAMP) on Oracle.
+    - ``{epoch_age_seconds}`` — EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP -
+      ct.posting)) on Postgres / sum-of-EXTRACTs on Oracle.
+    - ``{posting_to_date}`` — posting::date on Postgres / TRUNC(posting)
+      on Oracle.
+    - ``{null_text}`` — NULL::TEXT on Postgres / CAST(NULL AS CLOB) on
+      Oracle (the typed NULL preserves the UNION ALL column type
+      across mixed-NULL branches).
     """
     p = instance.instance
     limit_cases = _render_limit_breach_cases(instance, p=p, dialect=dialect)
@@ -194,6 +210,13 @@ def _emit_l1_invariant_views(
         limit_cases=limit_cases,
         pending_age_cases=pending_age_cases,
         unbundled_age_cases=unbundled_age_cases,
+        matview_options=_matview_options(dialect),
+        date_trunc_tx_posting=date_trunc_day("tx.posting", dialect),
+        epoch_age_seconds=epoch_seconds_between(
+            "CURRENT_TIMESTAMP", "ct.posting", dialect,
+        ),
+        posting_to_date=to_date("posting", dialect),
+        null_text=typed_null("text", dialect),
     )
 
 
@@ -672,7 +695,7 @@ _L1_INVARIANT_VIEWS_TEMPLATE = """\
 -- A "leaf" account is one with account_parent_role IS NOT NULL
 -- (i.e., it's a child of a parent role).
 -- ---------------------------------------------------------------------
-CREATE MATERIALIZED VIEW {p}_computed_subledger_balance AS
+CREATE MATERIALIZED VIEW {p}_computed_subledger_balance{matview_options} AS
 SELECT
     sb.account_id,
     sb.business_day_start,
@@ -699,7 +722,7 @@ CREATE INDEX idx_{p}_csb_account_day
 -- A "parent" account is one whose role appears as account_parent_role
 -- on at least one other account (resolved via subquery).
 -- ---------------------------------------------------------------------
-CREATE MATERIALIZED VIEW {p}_computed_ledger_balance AS
+CREATE MATERIALIZED VIEW {p}_computed_ledger_balance{matview_options} AS
 SELECT
     parent_db.account_id,
     parent_db.account_role,
@@ -722,11 +745,11 @@ LEFT JOIN (
 LEFT JOIN (
     SELECT
         tx.account_id,
-        DATE_TRUNC('day', tx.posting) AS business_day,
+        {date_trunc_tx_posting} AS business_day,
         SUM(tx.amount_money) AS direct_balance
     FROM {p}_current_transactions tx
     WHERE tx.status = 'Posted'
-    GROUP BY tx.account_id, DATE_TRUNC('day', tx.posting)
+    GROUP BY tx.account_id, {date_trunc_tx_posting}
 ) direct_totals
     ON direct_totals.account_id = parent_db.account_id
    AND direct_totals.business_day >= parent_db.business_day_start
@@ -748,7 +771,7 @@ CREATE INDEX idx_{p}_clb_account_day
 -- and ¬IsParent(Account), Drift(Account, BusinessDay) SHOULD equal 0.
 -- Rows in this view are the violations: stored ≠ computed.
 -- ---------------------------------------------------------------------
-CREATE MATERIALIZED VIEW {p}_drift AS
+CREATE MATERIALIZED VIEW {p}_drift{matview_options} AS
 SELECT
     sb.account_id,
     sb.account_name,
@@ -778,7 +801,7 @@ CREATE INDEX idx_{p}_drift_role ON {p}_drift (account_role);
 -- and IsParent(Account), LedgerDrift(Account, BusinessDay) SHOULD equal 0.
 -- Rows in this view are the violations.
 -- ---------------------------------------------------------------------
-CREATE MATERIALIZED VIEW {p}_ledger_drift AS
+CREATE MATERIALIZED VIEW {p}_ledger_drift{matview_options} AS
 SELECT
     sb.account_id,
     sb.account_name,
@@ -804,7 +827,7 @@ CREATE INDEX idx_{p}_ledger_drift_role
 -- Rows in this view are accounts × days where the stored balance is
 -- negative (overdraft).
 -- ---------------------------------------------------------------------
-CREATE MATERIALIZED VIEW {p}_overdraft AS
+CREATE MATERIALIZED VIEW {p}_overdraft{matview_options} AS
 SELECT
     sb.account_id,
     sb.account_name,
@@ -826,7 +849,7 @@ CREATE INDEX idx_{p}_overdraft_role ON {p}_overdraft (account_role);
 -- set, money SHOULD equal expected_eod_balance.
 -- Rows are violations.
 -- ---------------------------------------------------------------------
-CREATE MATERIALIZED VIEW {p}_expected_eod_balance_breach AS
+CREATE MATERIALIZED VIEW {p}_expected_eod_balance_breach{matview_options} AS
 SELECT
     sb.account_id,
     sb.account_name,
@@ -856,7 +879,7 @@ CREATE INDEX idx_{p}_eod_breach_account_day
 -- so no JOIN to daily_balances is needed (which also avoids the failure
 -- mode where a breach business_day has no enclosing daily_balance row).
 -- ---------------------------------------------------------------------
-CREATE MATERIALIZED VIEW {p}_limit_breach AS
+CREATE MATERIALIZED VIEW {p}_limit_breach{matview_options} AS
 SELECT *
 FROM (
     SELECT
@@ -864,7 +887,7 @@ FROM (
         tx.account_name,
         tx.account_role,
         tx.account_parent_role,
-        DATE_TRUNC('day', tx.posting) AS business_day,
+        {date_trunc_tx_posting} AS business_day,
         tx.transfer_type,
         SUM(ABS(tx.amount_money)) AS outbound_total,
         {limit_cases} AS cap
@@ -876,7 +899,7 @@ FROM (
     GROUP BY
         tx.account_id, tx.account_name, tx.account_role,
         tx.account_parent_role,
-        DATE_TRUNC('day', tx.posting),
+        {date_trunc_tx_posting},
         tx.transfer_type
 ) outbound_with_cap
 WHERE cap IS NOT NULL
@@ -903,7 +926,7 @@ CREATE INDEX idx_{p}_lb_type ON {p}_limit_breach (transfer_type);
 -- dashboard can sort by staleness without re-evaluating CURRENT_TIMESTAMP
 -- on every visual.
 -- ---------------------------------------------------------------------
-CREATE MATERIALIZED VIEW {p}_stuck_pending AS
+CREATE MATERIALIZED VIEW {p}_stuck_pending{matview_options} AS
 SELECT * FROM (
     SELECT
         ct.id AS transaction_id,
@@ -918,7 +941,7 @@ SELECT * FROM (
         ct.amount_direction,
         ct.posting,
         {pending_age_cases} AS max_pending_age_seconds,
-        EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - ct.posting)) AS age_seconds
+        {epoch_age_seconds} AS age_seconds
     FROM {p}_current_transactions ct
     WHERE ct.status = 'Pending'
 ) tx
@@ -949,7 +972,7 @@ CREATE INDEX idx_{p}_sp_transfer ON {p}_stuck_pending (transfer_id);
 -- "stuck unbundled," it's just "stuck pending." The two views are
 -- structurally similar but cover disjoint conditions.
 -- ---------------------------------------------------------------------
-CREATE MATERIALIZED VIEW {p}_stuck_unbundled AS
+CREATE MATERIALIZED VIEW {p}_stuck_unbundled{matview_options} AS
 SELECT * FROM (
     SELECT
         ct.id AS transaction_id,
@@ -964,7 +987,7 @@ SELECT * FROM (
         ct.amount_direction,
         ct.posting,
         {unbundled_age_cases} AS max_unbundled_age_seconds,
-        EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - ct.posting)) AS age_seconds
+        {epoch_age_seconds} AS age_seconds
     FROM {p}_current_transactions ct
     WHERE ct.bundle_id IS NULL
       AND ct.status = 'Posted'
@@ -986,7 +1009,7 @@ CREATE INDEX idx_{p}_su_transfer ON {p}_stuck_unbundled (transfer_id);
 -- One row per (account_id, business_day_start). Sheet-local filters
 -- narrow to a single (account, day) at render time.
 -- ---------------------------------------------------------------------
-CREATE MATERIALIZED VIEW {p}_daily_statement_summary AS
+CREATE MATERIALIZED VIEW {p}_daily_statement_summary{matview_options} AS
 WITH account_days AS (
     SELECT db.account_id, db.account_name, db.account_role,
            db.account_parent_role, db.account_scope,
@@ -1000,7 +1023,7 @@ WITH account_days AS (
 ),
 today_flows AS (
     SELECT tx.account_id,
-           DATE_TRUNC('day', tx.posting) AS business_day_start,
+           {date_trunc_tx_posting} AS business_day_start,
            SUM(CASE WHEN tx.amount_direction = 'Debit'
                     THEN tx.amount_money ELSE 0 END) AS total_debits,
            SUM(CASE WHEN tx.amount_direction = 'Credit'
@@ -1011,7 +1034,7 @@ today_flows AS (
            COUNT(*) AS leg_count
     FROM {p}_current_transactions tx
     WHERE tx.status <> 'Failed'
-    GROUP BY tx.account_id, DATE_TRUNC('day', tx.posting)
+    GROUP BY tx.account_id, {date_trunc_tx_posting}
 )
 SELECT ad.account_id, ad.account_name, ad.account_role,
        ad.account_parent_role, ad.account_scope,
@@ -1047,7 +1070,7 @@ CREATE INDEX idx_{p}_dss_account_day
 -- `magnitude` normalized per branch so sort-by-magnitude reads
 -- consistently regardless of check_type.
 -- ---------------------------------------------------------------------
-CREATE MATERIALIZED VIEW {p}_todays_exceptions AS
+CREATE MATERIALIZED VIEW {p}_todays_exceptions{matview_options} AS
 WITH latest_day AS (
     SELECT MAX(business_day_start) AS day
     FROM {p}_current_daily_balances
@@ -1058,7 +1081,7 @@ WITH latest_day AS (
 SELECT 'drift' AS check_type, account_id, account_name,
        account_role, account_parent_role,
        business_day_start AS business_day,
-       NULL::TEXT AS transfer_type,
+       {null_text} AS transfer_type,
        ABS(drift) AS magnitude
 FROM {p}_drift, latest_day
 WHERE business_day_start = latest_day.day
@@ -1090,12 +1113,12 @@ WHERE business_day_start = latest_day.day
 -- stuck", so no per-day filter applies — include them all in the rollup.
 UNION ALL
 SELECT 'stuck_pending', account_id, account_name, account_role,
-       account_parent_role, posting::date AS business_day,
+       account_parent_role, {posting_to_date} AS business_day,
        transfer_type, amount_money AS magnitude
 FROM {p}_stuck_pending
 UNION ALL
 SELECT 'stuck_unbundled', account_id, account_name, account_role,
-       account_parent_role, posting::date AS business_day,
+       account_parent_role, {posting_to_date} AS business_day,
        transfer_type, amount_money AS magnitude
 FROM {p}_stuck_unbundled;
 -- Today's Exceptions sheet has 3 dropdowns (check_type, account,

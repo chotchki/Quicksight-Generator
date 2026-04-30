@@ -17,6 +17,7 @@ from quicksight_gen.common.sql import (
     cast,
     create_matview,
     date_minus_days,
+    date_trunc_day,
     decimal_type,
     drop_index_if_exists,
     drop_matview_if_exists,
@@ -104,6 +105,14 @@ class TestPostgresDateTime:
     def test_date_minus_days(self):
         assert date_minus_days("pw.posted_day", 1, PG) == (
             "(pw.posted_day - INTERVAL '1 day')"
+        )
+
+    def test_date_trunc_day(self):
+        # PG keeps the original timestamp shape — DATE_TRUNC('day', X)
+        # returns the same type X has (TIMESTAMPTZ → TIMESTAMPTZ at
+        # 00:00:00).
+        assert date_trunc_day("tx.posting", PG) == (
+            "DATE_TRUNC('day', tx.posting)"
         )
 
 
@@ -218,6 +227,14 @@ class TestOracleDateTime:
     def test_date_minus_days(self):
         # Oracle DATE arithmetic interprets "date - n" as N days.
         assert date_minus_days("pw.posted_day", 1, ORA) == "(pw.posted_day - 1)"
+
+    def test_date_trunc_day(self):
+        # Oracle TRUNC(timestamp) returns DATE; CAST back to TIMESTAMP
+        # so JOIN comparisons against TIMESTAMPTZ columns don't fall
+        # through implicit conversion.
+        assert date_trunc_day("tx.posting", ORA) == (
+            "CAST(TRUNC(tx.posting) AS TIMESTAMP)"
+        )
 
 
 class TestOracleDdlIdempotency:

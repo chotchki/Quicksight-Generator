@@ -226,6 +226,30 @@ def date_minus_days(
     return f"({date_expr} - {n})"
 
 
+def date_trunc_day(
+    timestamp_expr: str, dialect: Dialect = Dialect.POSTGRES
+) -> str:
+    """Truncate a timestamp expression to its day boundary, preserving
+    a timestamp-shaped result type so downstream JOINs against
+    TIMESTAMPTZ columns don't fall through implicit conversion.
+
+    Postgres ``DATE_TRUNC('day', expr)`` returns the same type as the
+    input (TIMESTAMPTZ → TIMESTAMPTZ at 00:00:00). Oracle's ``TRUNC(X)``
+    on a TIMESTAMP returns a DATE, which loses subseconds + the
+    timestamp shape; wrapping in ``CAST(... AS TIMESTAMP)`` puts it
+    back in the timestamp domain so the L1 invariant matviews compare
+    equality the same way on both dialects.
+
+    Distinct from ``to_date`` (which returns DATE-shape on both): use
+    ``date_trunc_day`` when the result needs to behave as a timestamp
+    in joins / comparisons; use ``to_date`` when the result is the
+    final column the dashboard reads as a date.
+    """
+    if dialect is Dialect.POSTGRES:
+        return f"DATE_TRUNC('day', {timestamp_expr})"
+    return f"CAST(TRUNC({timestamp_expr}) AS TIMESTAMP)"
+
+
 # -- DDL idempotency ---------------------------------------------------------
 
 
