@@ -74,6 +74,34 @@ class TestL2Topology:
         svg = render_l2_topology(l2, "hierarchy")
         assert "× N" in svg, "hierarchy diagram should mark templates with × N"
 
+    def test_hierarchy_template_edges_reach_their_parent(self):
+        # Regression: the original ``tmpl::`` node-id prefix collided
+        # with Graphviz's ``node:port`` syntax in edge endpoints —
+        # graphviz-python quoted the identifier in the node definition
+        # but not in the edge, so every template edge collapsed onto a
+        # phantom ``tmpl`` node. Walk the rendered SVG and assert each
+        # template's parent_role chain produces a real edge whose tail
+        # is the template node, not ``tmpl``.
+        from quicksight_gen.common.handbook.diagrams import (
+            _build_hierarchy_graph,
+        )
+
+        l2 = load_instance(_SASQUATCH_PR)
+        dot = _build_hierarchy_graph(l2).source
+
+        # Sasquatch has CustomerDDA → DDAControl among others. The
+        # rendered DOT must contain that exact edge with the expected
+        # template node id, NOT a port-syntax artifact like
+        # ``tmpl:"":CustomerDDA``.
+        assert "tmpl__CustomerDDA -> " in dot, (
+            f"expected 'tmpl__CustomerDDA -> ...' edge in DOT; got:\n{dot}"
+        )
+        # And the broken form must NOT appear anywhere.
+        assert ":CustomerDDA" not in dot, (
+            f"DOT contains port-syntax artifact ':CustomerDDA' — node id "
+            f"prefix is interacting with Graphviz port parsing again.\n{dot}"
+        )
+
 
 # -- Per-app dataflow --------------------------------------------------------
 

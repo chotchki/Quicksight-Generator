@@ -311,10 +311,17 @@ def _template_node_id(template: AccountTemplate) -> str:
     """Stable graph node id for an AccountTemplate.
 
     Templates have no ``id`` field (they're a SHAPE, not an instance) so
-    we synthesize one from the role with a ``tmpl::`` prefix to avoid
+    we synthesize one from the role with a ``tmpl__`` prefix to avoid
     collisions with singleton account ids.
+
+    Underscore — NOT colon. The ``graphviz`` Python lib quotes node
+    IDs in node-definition statements but emits unquoted endpoints in
+    edge statements, where Graphviz dot syntax then parses ``a:b`` as
+    "node ``a``, port ``b``". A previous ``tmpl::`` prefix made every
+    template edge collapse onto a phantom ``tmpl`` node — see commit
+    history for the fix.
     """
-    return f"tmpl::{template.role}"
+    return f"tmpl__{template.role}"
 
 
 def _add_account_template_node(
