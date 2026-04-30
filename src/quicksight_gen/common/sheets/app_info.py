@@ -3,9 +3,10 @@
 Every L3 dashboard's last sheet is named "i" (App Info). It carries
 three things:
 
-1. **Liveness KPI** — `SELECT COUNT(*) FROM information_schema.tables
-   WHERE table_schema = 'public'`. Real query, hits Aurora, never QS-
-   cached (Direct Query). KPI shows a number → QS rendering pipeline
+1. **Liveness KPI** — counts user-visible tables (Postgres:
+   ``information_schema.tables`` filtered to ``public``; Oracle:
+   ``USER_TABLES``). Real query, hits the database, never QS-cached
+   (Direct Query). KPI shows a number → QS rendering pipeline
    works. KPI blank → QS itself is broken.
 2. **Per-matview row count table** — caller-supplied list of matview
    names UNION'd into one dataset. Freshly-loaded matviews showing 0
@@ -68,6 +69,7 @@ from quicksight_gen.common.dataset_contract import (
 )
 from quicksight_gen.common.models import DataSet
 from quicksight_gen.common.l2 import ThemePreset
+from quicksight_gen.common.sql import Dialect
 from quicksight_gen.common.tree.datasets import Dataset
 from quicksight_gen.common.tree.structure import Sheet
 from quicksight_gen.common.tree.text_boxes import TextBox
@@ -98,11 +100,27 @@ LIVENESS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("table_count", "INTEGER"),
 ])
 
-LIVENESS_SQL = (
-    "SELECT COUNT(*) AS table_count "
-    "FROM information_schema.tables "
-    "WHERE table_schema = 'public'"
-)
+
+def _liveness_sql(dialect: Dialect) -> str:
+    """Trivial liveness query — counts user-visible tables.
+
+    Postgres reads ``information_schema.tables`` filtered to the
+    ``public`` schema (where the L2 schema emit lands by default).
+    Oracle has no ``information_schema``; the equivalent is
+    ``USER_TABLES`` (the connecting user's tables in the user's
+    default schema, which is also where the L2 schema emit lands).
+
+    Either way the query is a one-row health check. The exact count
+    isn't load-bearing — only that the query returns *something*
+    proves the QS → datasource → DB round-trip works.
+    """
+    if dialect is Dialect.POSTGRES:
+        return (
+            "SELECT COUNT(*) AS table_count "
+            "FROM information_schema.tables "
+            "WHERE table_schema = 'public'"
+        )
+    return "SELECT COUNT(*) AS table_count FROM USER_TABLES"
 
 
 MATVIEW_STATUS_CONTRACT = DatasetContract(columns=[
@@ -117,25 +135,34 @@ def _matview_status_sql(view_names: list[str]) -> str:
     Empty ``view_names`` returns a single placeholder row so the
     dataset always has rows — keeps the table from rendering blank
     on apps with zero monitored matviews (Executives today).
+
+    No casts — the column types are pinned by ``MATVIEW_STATUS_CONTRACT``,
+    so the literal-type inference (text/integer on Postgres, char/number
+    on Oracle) is a no-op as far as QuickSight sees. Earlier ``::text`` /
+    ``::integer`` casts were Postgres-only syntax and silently broke the
+    Oracle dataset (P.9c).
     """
     if not view_names:
         return (
-            "SELECT '(no matviews registered)'::text AS view_name, "
-            "0::integer AS row_count"
+            "SELECT '(no matviews registered)' AS view_name, "
+            "0 AS row_count"
         )
     parts = [
-        f"SELECT '{name}'::text AS view_name, "
-        f"COUNT(*)::integer AS row_count FROM {name}"
+        f"SELECT '{name}' AS view_name, "
+        f"COUNT(*) AS row_count FROM {name}"
         for name in view_names
     ]
     return "\nUNION ALL\n".join(parts)
 
 
 def build_liveness_dataset(cfg: Config, *, app_segment: str) -> DataSet:
-    """Trivial liveness query against information_schema.
+    """Trivial liveness query against the database catalog.
 
-    SQL is universal -- same bytes for every app. Returns one row
-    with the count of public-schema tables.
+    Postgres queries ``information_schema.tables``; Oracle queries
+    ``USER_TABLES``. Returns one row with the user-visible-table count.
+    Per-dialect SQL resolved from ``cfg.dialect`` (P.9c — earlier
+    versions hardcoded the Postgres SQL on both dialects, which
+    silently broke the KPI on Oracle).
 
     ``app_segment``: short kebab-case tag identifying which app owns
     this Dataset (e.g., ``"l1"``, ``"exec"``, ``"inv"``, ``"l2ft"``).
@@ -152,7 +179,7 @@ def build_liveness_dataset(cfg: Config, *, app_segment: str) -> DataSet:
         cfg.prefixed(f"{app_segment}-app-info-liveness-dataset"),
         "App Info -- Liveness",  # ASCII-only — testing QS em-dash hypothesis
         "app-info-liveness",
-        LIVENESS_SQL,
+        _liveness_sql(cfg.dialect),
         LIVENESS_CONTRACT,
         visual_identifier=DS_APP_INFO_LIVENESS,
     )
