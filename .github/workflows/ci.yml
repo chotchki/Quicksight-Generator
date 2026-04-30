@@ -33,6 +33,100 @@ jobs:
       - name: Run tests with coverage (pytest sessionstart runs pyright strict)
         run: pytest --cov=quicksight_gen --cov-report=xml --cov-report=term
 
+  # P.7 — containerized integration job. Runs ``quicksight-gen demo
+  # apply`` against a live Postgres + a live Oracle Free service
+  # container, then verifies the per-prefix matview row counts match
+  # the locked expectations in tests/integration/verify_demo_apply.py.
+  #
+  # Service-container syntax (vs. ``docker run`` inside steps) lets GHA
+  # health-check the DBs before steps start, so the apply doesn't race
+  # against Oracle's ~60-90s first-boot init.
+  integration:
+    needs: test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: ci_pg_password
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      # ``gvenzl/oracle-free`` is the de-facto Oracle Free Edition image
+      # for CI (Oracle's own ``container-registry.oracle.com`` requires
+      # login). ``:latest`` is the full Oracle Free 23ai (~2GB image,
+      # ~60-90s first-boot init). ``FREEPDB1`` is the default service
+      # name; admin user is ``system`` with the password we set here.
+      oracle:
+        image: gvenzl/oracle-free:latest
+        env:
+          ORACLE_PASSWORD: ci_ora_password
+        ports:
+          - 1521:1521
+        options: >-
+          --health-cmd "healthcheck.sh"
+          --health-interval 30s
+          --health-timeout 30s
+          --health-retries 30
+          --health-start-period 90s
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Graphviz
+        run: sudo apt-get update && sudo apt-get install -y graphviz
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies (incl. demo + demo-oracle extras)
+        run: pip install -e ".[dev,demo,demo-oracle]"
+
+      - name: Apply demo against Postgres
+        run: |
+          cat > /tmp/ci-pg.yaml <<'EOF'
+          aws_account_id: "000000000000"
+          aws_region: "us-east-1"
+          datasource_arn: "arn:aws:quicksight:us-east-1:000000000000:datasource/ci"
+          resource_prefix: "qs-ci-pg"
+          dialect: "postgres"
+          demo_database_url: "postgresql://postgres:ci_pg_password@localhost:5432/postgres"
+          EOF
+          quicksight-gen demo apply --all -c /tmp/ci-pg.yaml -o /tmp/ci-pg-out
+
+      - name: Verify Postgres row counts
+        run: |
+          python tests/integration/verify_demo_apply.py \
+            --dialect postgres \
+            --url "postgresql://postgres:ci_pg_password@localhost:5432/postgres"
+
+      - name: Apply demo against Oracle Free
+        run: |
+          cat > /tmp/ci-oracle.yaml <<'EOF'
+          aws_account_id: "000000000000"
+          aws_region: "us-east-1"
+          datasource_arn: "arn:aws:quicksight:us-east-1:000000000000:datasource/ci"
+          resource_prefix: "qs-ci-oracle"
+          dialect: "oracle"
+          demo_database_url: "system/ci_ora_password@localhost:1521/FREEPDB1"
+          EOF
+          quicksight-gen demo apply --all -c /tmp/ci-oracle.yaml -o /tmp/ci-oracle-out
+
+      - name: Verify Oracle row counts
+        run: |
+          python tests/integration/verify_demo_apply.py \
+            --dialect oracle \
+            --url "system/ci_ora_password@localhost:1521/FREEPDB1"
+
   coverage-badge:
     needs: test
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
