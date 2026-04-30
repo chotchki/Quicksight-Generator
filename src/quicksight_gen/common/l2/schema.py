@@ -43,12 +43,15 @@ from __future__ import annotations
 from quicksight_gen.common.sql import (
     Dialect,
     analyze_table,
+    cast,
+    date_minus_days,
     date_trunc_day,
     decimal_type,
     drop_index_if_exists,
     drop_matview_if_exists,
     drop_table_if_exists,
     epoch_seconds_between,
+    interval_days,
     refresh_matview,
     serial_type,
     text_type,
@@ -56,6 +59,7 @@ from quicksight_gen.common.sql import (
     to_date,
     typed_null,
     varchar_type,
+    with_recursive,
 )
 
 from .primitives import L2Instance
@@ -117,7 +121,7 @@ def emit_schema(
     inv_drops = _emit_inv_matview_drops(p, dialect)
     base = _emit_base_schema(p, dialect)
     invariants = _emit_l1_invariant_views(instance, dialect=dialect)
-    inv_views = _emit_inv_views(instance)
+    inv_views = _emit_inv_views(instance, dialect=dialect)
     return (
         l1_drops + "\n" + inv_drops + "\n" + base + "\n\n"
         + invariants + "\n\n" + inv_views
@@ -286,7 +290,9 @@ def _render_pending_age_cases(
     return f"CASE\n        {branches_sql}\n        ELSE NULL\n    END"
 
 
-def _emit_inv_views(instance: L2Instance) -> str:
+def _emit_inv_views(
+    instance: L2Instance, *, dialect: Dialect = Dialect.POSTGRES,
+) -> str:
     """Render the N.3.b Investigation matview block for ``instance``.
 
     Two matviews — both per-instance prefixed:
@@ -294,7 +300,7 @@ def _emit_inv_views(instance: L2Instance) -> str:
     - ``<prefix>_inv_pair_rolling_anomalies`` — rolling 2-day SUM per
       (sender, recipient) pair + population z-score + 5-band bucket.
       Volume Anomalies sheet reads from this.
-    - ``<prefix>_inv_money_trail_edges`` — ``WITH RECURSIVE`` walk over
+    - ``<prefix>_inv_money_trail_edges`` — recursive-CTE walk over
       ``parent_transfer_id`` flattened to one row per multi-leg edge
       (with chain root + depth). Money Trail + Account Network sheets
       read from this.
@@ -303,15 +309,42 @@ def _emit_inv_views(instance: L2Instance) -> str:
     no ``daily_balances``. Independent of each other; can refresh in
     any order.
 
-    The matview bodies were lifted from ``schema.sql``'s K.4.4 / K.4.5
-    definitions (N.3.a captures the originals); the only changes are
-    the prefix substitutions on the matview names + the
-    ``transactions`` table refs. Refresh contract is unchanged: not
-    auto-refreshed, ``demo apply`` runs ``REFRESH MATERIALIZED VIEW``
+    Dialect-specific patterns substituted into the template:
+    - ``{matview_options}`` — Oracle BUILD IMMEDIATE REFRESH COMPLETE
+      ON DEMAND suffix (empty on Postgres).
+    - ``{recipient_posting_to_date}`` — ``recipient.posting::date`` on
+      Postgres / ``TRUNC(recipient.posting)`` on Oracle.
+    - ``{interval_one_day}`` — ``INTERVAL '1 day'`` on Postgres /
+      ``INTERVAL '1' DAY`` on Oracle (used inside RANGE BETWEEN).
+    - ``{cast_avg_numeric}`` / ``{cast_stddev_numeric}`` — ``::NUMERIC``
+      on Postgres / ``CAST(... AS NUMBER)`` on Oracle.
+    - ``{window_start_expr}`` / ``{window_end_expr}`` — date arithmetic
+      + cast to TIMESTAMP, dialect-specific interval form.
+    - ``{with_recursive_kw}`` — ``WITH RECURSIVE`` on Postgres / ``WITH``
+      on Oracle (Oracle 19c infers recursion from self-reference).
+
+    Refresh contract is unchanged across dialects: not auto-refreshed,
+    ``demo apply`` runs ``REFRESH MATERIALIZED VIEW`` (Postgres) or
+    ``DBMS_MVIEW.REFRESH`` (Oracle, via ``refresh_matview`` helper)
     after seed inserts.
     """
     p = instance.instance
-    return _INV_MATVIEWS_TEMPLATE.format(p=p)
+    return _INV_MATVIEWS_TEMPLATE.format(
+        p=p,
+        matview_options=_matview_options(dialect),
+        recipient_posting_to_date=to_date("recipient.posting", dialect),
+        interval_one_day=interval_days(1, dialect),
+        cast_avg_numeric=cast("AVG(window_sum)", "NUMERIC", dialect),
+        cast_stddev_numeric=cast(
+            "COALESCE(STDDEV_SAMP(window_sum), 0)", "NUMERIC", dialect,
+        ),
+        window_start_expr=cast(
+            date_minus_days("pw.posted_day", 1, dialect),
+            "TIMESTAMP", dialect,
+        ),
+        window_end_expr=cast("pw.posted_day", "TIMESTAMP", dialect),
+        with_recursive_kw=with_recursive(dialect),
+    )
 
 
 def _render_unbundled_age_cases(
@@ -1191,7 +1224,7 @@ _INV_MATVIEWS_TEMPLATE = """\
 -- Operators must run
 --     REFRESH MATERIALIZED VIEW {p}_inv_pair_rolling_anomalies;
 -- after each ETL load.
-CREATE MATERIALIZED VIEW {p}_inv_pair_rolling_anomalies AS
+CREATE MATERIALIZED VIEW {p}_inv_pair_rolling_anomalies{matview_options} AS
 WITH pair_legs AS (
     -- v6 column rename. signed_amount becomes amount_money (signed,
     -- where positive is Credit/inflow and negative is Debit/outflow).
@@ -1210,7 +1243,7 @@ WITH pair_legs AS (
         sender.account_id             AS sender_account_id,
         sender.account_name           AS sender_account_name,
         sender.account_role           AS sender_account_type,
-        recipient.posting::date       AS posted_day,
+        {recipient_posting_to_date}       AS posted_day,
         recipient.transfer_id,
         recipient.amount_money        AS amount
     FROM {p}_transactions recipient
@@ -1261,7 +1294,7 @@ pair_windows AS (
     WINDOW w AS (
         PARTITION BY recipient_account_id, sender_account_id
         ORDER BY posted_day
-        RANGE BETWEEN INTERVAL '1 day' PRECEDING AND CURRENT ROW
+        RANGE BETWEEN {interval_one_day} PRECEDING AND CURRENT ROW
     )
 ),
 population AS (
@@ -1269,8 +1302,8 @@ population AS (
     -- Sample stddev (STDDEV_SAMP) matches the analyst convention of
     -- "this window vs. the rest of the population".
     SELECT
-        AVG(window_sum)::NUMERIC                       AS pop_mean,
-        COALESCE(STDDEV_SAMP(window_sum), 0)::NUMERIC  AS pop_stddev
+        {cast_avg_numeric}                       AS pop_mean,
+        {cast_stddev_numeric}  AS pop_stddev
     FROM pair_windows
 )
 SELECT
@@ -1280,8 +1313,8 @@ SELECT
     pw.sender_account_id,
     pw.sender_account_name,
     pw.sender_account_type,
-    (pw.posted_day - INTERVAL '1 day')::TIMESTAMP   AS window_start,
-    pw.posted_day::TIMESTAMP                        AS window_end,
+    {window_start_expr}   AS window_start,
+    {window_end_expr}                        AS window_end,
     pw.window_sum,
     pw.transfer_count,
     pop.pop_mean,
@@ -1330,8 +1363,8 @@ CROSS JOIN population pop;
 -- Operators must run
 --     REFRESH MATERIALIZED VIEW {p}_inv_money_trail_edges;
 -- after each ETL load.
-CREATE MATERIALIZED VIEW {p}_inv_money_trail_edges AS
-WITH RECURSIVE
+CREATE MATERIALIZED VIEW {p}_inv_money_trail_edges{matview_options} AS
+{with_recursive_kw}
 distinct_transfers AS (
     -- One row per transfer_id with its parent. {p}_transactions has
     -- one row per leg, so we deduplicate before walking — the parent
