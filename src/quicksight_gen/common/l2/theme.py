@@ -50,3 +50,13 @@ class ThemePreset:
     dimension_fg: str
     measure: str
     measure_fg: str
+
+    # Optional brand assets for the docs site (mkdocs-material).
+    # Either field accepts a URL (``http://`` / ``https://`` / protocol-
+    # relative ``//``) or an absolute file path. Absolute paths get
+    # copied into the docs build at render time; URLs pass through.
+    # ``None`` falls back to whatever ``mkdocs.yml`` declares — for the
+    # canonical site that's the SNB mark, so spec_example renders with
+    # SNB branding unless the integrator overrides here.
+    logo: str | None = None
+    favicon: str | None = None

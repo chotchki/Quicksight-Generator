@@ -269,3 +269,89 @@ def test_theme_top_level_not_mapping_rejected(tmp_path: Path) -> None:
     p = _write(tmp_path, _BASE_INSTANCE_YAML + 'theme: "not-a-mapping"\n')
     with pytest.raises(L2LoaderError, match="theme"):
         load_instance(p)
+
+
+# -- Optional brand assets (logo + favicon) — Phase O ------------------------
+
+
+def test_theme_logo_and_favicon_default_to_none(tmp_path: Path) -> None:
+    """Without ``logo:`` / ``favicon:`` keys, both fields land as None."""
+    p = _write(tmp_path, _BASE_INSTANCE_YAML + _FULL_THEME_BLOCK)
+    inst = load_instance(p)
+    assert inst.theme is not None
+    assert inst.theme.logo is None
+    assert inst.theme.favicon is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://example.com/logo.svg",
+        "http://example.com/logo.png",
+        "//cdn.example.com/logo.svg",
+        "/absolute/path/to/logo.svg",
+        "/Users/me/branding/favicon.ico",
+    ],
+)
+def test_theme_logo_accepts_url_or_absolute_path(
+    tmp_path: Path, value: str,
+) -> None:
+    block = _FULL_THEME_BLOCK + f'  logo: "{value}"\n'
+    p = _write(tmp_path, _BASE_INSTANCE_YAML + block)
+    inst = load_instance(p)
+    assert inst.theme is not None
+    assert inst.theme.logo == value
+
+
+def test_theme_favicon_round_trips(tmp_path: Path) -> None:
+    block = (
+        _FULL_THEME_BLOCK
+        + '  favicon: "https://example.com/favicon.ico"\n'
+    )
+    p = _write(tmp_path, _BASE_INSTANCE_YAML + block)
+    inst = load_instance(p)
+    assert inst.theme is not None
+    assert inst.theme.favicon == "https://example.com/favicon.ico"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "img/snb-mark.svg",         # relative path
+        "./logo.svg",               # explicitly relative
+        "../branding/logo.svg",     # parent-relative
+        "logo.svg",                 # bare filename
+    ],
+)
+def test_theme_logo_relative_paths_rejected(
+    tmp_path: Path, value: str,
+) -> None:
+    """Relative paths are ambiguous (relative to what?); reject at load."""
+    block = _FULL_THEME_BLOCK + f'  logo: "{value}"\n'
+    p = _write(tmp_path, _BASE_INSTANCE_YAML + block)
+    with pytest.raises(L2LoaderError, match="must be a URL.*or an absolute"):
+        load_instance(p)
+
+
+def test_theme_logo_non_string_rejected(tmp_path: Path) -> None:
+    block = _FULL_THEME_BLOCK + "  logo: 42\n"
+    p = _write(tmp_path, _BASE_INSTANCE_YAML + block)
+    with pytest.raises(L2LoaderError, match="must be a string"):
+        load_instance(p)
+
+
+def test_theme_logo_empty_string_treated_as_none(tmp_path: Path) -> None:
+    """Whitespace-only / empty value → None (no override)."""
+    block = _FULL_THEME_BLOCK + '  logo: ""\n'
+    p = _write(tmp_path, _BASE_INSTANCE_YAML + block)
+    inst = load_instance(p)
+    assert inst.theme is not None
+    assert inst.theme.logo is None
+
+
+def test_theme_explicit_null_logo_is_none(tmp_path: Path) -> None:
+    block = _FULL_THEME_BLOCK + "  logo: null\n"
+    p = _write(tmp_path, _BASE_INSTANCE_YAML + block)
+    inst = load_instance(p)
+    assert inst.theme is not None
+    assert inst.theme.logo is None

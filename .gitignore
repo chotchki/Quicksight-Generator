@@ -31,6 +31,9 @@ site/
 # Phase O.1.c — diagram render cache (rebuilt on every mkdocs build)
 src/quicksight_gen/docs/_diagrams/_rendered/
 
+# Per-L2 brand assets copied in by main.py at mkdocs-build time
+src/quicksight_gen/docs/img/_l2_*
+
 /config.yaml
 tests/e2e/screenshots/
 tests/e2e/failures/

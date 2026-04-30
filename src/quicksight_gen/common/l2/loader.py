@@ -431,6 +431,12 @@ def _load_theme(raw: object, *, path: str) -> ThemePreset | None:
             value_raw, path=f"{path}.{field_name}",
         )
 
+    # Optional brand assets — URL or absolute file path string.
+    logo = _load_optional_brand_asset(raw_d.get("logo"), path=f"{path}.logo")
+    favicon = _load_optional_brand_asset(
+        raw_d.get("favicon"), path=f"{path}.favicon"
+    )
+
     return ThemePreset(
         theme_name=theme_name,
         version_description=version_description,
@@ -455,6 +461,40 @@ def _load_theme(raw: object, *, path: str) -> ThemePreset | None:
         dimension_fg=colors["dimension_fg"],
         measure=colors["measure"],
         measure_fg=colors["measure_fg"],
+        logo=logo,
+        favicon=favicon,
+    )
+
+
+def _load_optional_brand_asset(raw: object, *, path: str) -> str | None:
+    """Validate the YAML value for ``theme.logo`` / ``theme.favicon``.
+
+    Accepts either:
+    - A URL (``http://``, ``https://``, or protocol-relative ``//``)
+    - An absolute file path (must start with ``/``)
+
+    Relative paths are rejected because their resolution would depend
+    on the integrator's working directory at mkdocs-build time, which
+    is brittle. ``None`` / missing → no override; the docs site falls
+    back to whatever ``mkdocs.yml`` ships with.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise L2LoaderError(
+            f"{path}: must be a string (URL or absolute path), "
+            f"got {type(raw).__name__}"
+        )
+    value = raw.strip()
+    if not value:
+        return None
+    if value.startswith(("http://", "https://", "//")):
+        return value
+    if value.startswith("/"):
+        return value
+    raise L2LoaderError(
+        f"{path}: must be a URL (http:// / https:// / //) or an absolute "
+        f"file path (starts with /); got {value!r}"
     )
 
 

@@ -17,12 +17,48 @@ the integrator pass an arbitrary L2 path.
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 
 
 _PROJECT_ROOT = Path(__file__).parent
 _TESTS_L2_DIR = _PROJECT_ROOT / "tests" / "l2"
+
+
+def _apply_brand_asset_override(
+    *,
+    docs_dir: Path,
+    theme_conf: dict[str, Any],
+    kind: str,
+    value: str | None,
+) -> None:
+    """Mutate ``theme_conf[kind]`` from a vetted L2 ``theme.<kind>`` value.
+
+    URLs pass through unchanged. Absolute file paths get copied into
+    ``<docs_dir>/img/_l2_<kind><ext>`` and ``theme_conf[kind]`` is set
+    to the docs-relative path so mkdocs-material can serve it. The
+    underscore prefix on the filename keeps the copied asset out of
+    git (``.gitignore`` excludes ``img/_l2_*``).
+    """
+    if value is None:
+        return
+    if value.startswith(("http://", "https://", "//")):
+        theme_conf[kind] = value
+        return
+    src = Path(value)
+    if not src.is_absolute() or not src.exists():
+        # Loader already validated this; the file may have moved/deleted
+        # between yaml load and build. Surface clearly.
+        raise FileNotFoundError(
+            f"L2 theme.{kind} not found at {value!r}; either the path "
+            f"moved or the YAML carries a stale reference."
+        )
+    img_dir = docs_dir / "img"
+    img_dir.mkdir(parents=True, exist_ok=True)
+    dst = img_dir / f"_l2_{kind}{src.suffix}"
+    shutil.copy2(src, dst)
+    theme_conf[kind] = f"img/{dst.name}"
 
 
 def define_env(env: Any) -> None:
@@ -44,6 +80,27 @@ def define_env(env: Any) -> None:
     default_l2 = load_instance(default_l2_path)
     env.variables["vocab"] = vocabulary_for(default_l2)
     env.variables["l2_instance_name"] = str(default_l2.instance)
+
+    # If the L2 carries inline brand assets, override mkdocs theme.logo
+    # / theme.favicon. URLs pass through; absolute paths get copied into
+    # docs_dir/img/_l2_<kind><ext> and the theme key is rewritten to
+    # the docs-relative path. Without an L2 override the mkdocs.yml
+    # default (the SNB mark) is preserved.
+    if default_l2.theme is not None:
+        docs_dir = Path(env.conf["docs_dir"])
+        theme_conf = env.conf["theme"]
+        _apply_brand_asset_override(
+            docs_dir=docs_dir,
+            theme_conf=theme_conf,
+            kind="logo",
+            value=default_l2.theme.logo,
+        )
+        _apply_brand_asset_override(
+            docs_dir=docs_dir,
+            theme_conf=theme_conf,
+            kind="favicon",
+            value=default_l2.theme.favicon,
+        )
 
     @env.macro
     def diagram(family: str, **kwargs: Any) -> str:  # noqa: ARG001

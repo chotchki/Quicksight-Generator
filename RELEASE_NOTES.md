@@ -1,5 +1,40 @@
 # Release Notes
 
+## v6.2.3 — Optional logo + favicon on the L2 theme block
+
+### What's new
+
+- **L2 `theme:` block now accepts optional `logo` + `favicon`
+  fields.** Both override the mkdocs-material `theme.logo` /
+  `theme.favicon` at docs-build time, so each integrator's
+  rendered site shows their own branding instead of the SNB mark
+  the canonical `mkdocs.yml` ships with.
+- Both fields accept either a **URL** (`http://`, `https://`,
+  protocol-relative `//`) or an **absolute file path** (starts
+  with `/`). URLs pass through verbatim; absolute paths get
+  copied into `<docs_dir>/img/_l2_<kind><ext>` at build time
+  and the theme key is rewritten to the docs-relative path.
+  Relative paths are rejected at L2 load (their resolution would
+  depend on the integrator's CWD).
+- Without an L2 override (the default for `spec_example` and the
+  current `sasquatch_pr` fixture), the docs site falls back to
+  whatever `mkdocs.yml` declares — preserving today's behavior.
+
+### Internal cleanups
+
+- `ThemePreset` carries `logo: str | None = None` and
+  `favicon: str | None = None`; the L2 YAML loader's
+  `_load_optional_brand_asset` validates the value shape with
+  clear error messages on bad input.
+- `main.py`'s `define_env(env)` reads the resolved L2's
+  `theme.logo` / `theme.favicon` and mutates `env.conf['theme']`
+  via a small `_apply_brand_asset_override` helper.
+- `.gitignore` excludes `src/quicksight_gen/docs/img/_l2_*` so
+  copied per-L2 assets don't sneak into commits.
+- 8 new loader unit tests cover URL pass-through, absolute-path
+  acceptance, relative-path rejection, non-string rejection,
+  empty-string-as-None, and explicit-null handling.
+
 ## v6.2.2 — For Your Role: 5 deep role-orientation pages + release-notes extractor fix
 
 ### What's new
