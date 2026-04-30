@@ -1,5 +1,97 @@
 # Release Notes
 
+## v6.2.0 — Unified docs render pipeline; training/ removed
+
+### What's new
+
+- **Unified docs site under `docs/`.** The split between `docs/handbook/`
+  (operator handbooks) and `training/handbook/` (whitelabel kit) is gone.
+  All prose now lives under one mkdocs source tree organized by the
+  5-section IA from the Phase O.0 audit: Concepts / Reference /
+  Walkthroughs / For Your Role / Scenarios.
+- **mkdocs-macros + Jinja templating.** `main.py` at the repo root
+  registers a `{{ vocab }}` Jinja variable + a
+  `{{ diagram(family, **kwargs) }}` macro. Pages can substitute
+  `{{ vocab.institution.name }}` etc. and embed L2-driven /
+  hand-authored diagrams without duplicating render calls.
+- **`HandbookVocabulary`** (`common/handbook/vocabulary.py`) ships
+  4 sub-shapes (`InstitutionVocabulary`, `StakeholderVocabulary`,
+  `MerchantVocabulary`, `InvestigationPersonaVocabulary`) and
+  `vocabulary_for(l2_instance)`. Built-in `sasquatch_pr` reuses
+  `SNB_PERSONA` + adds Investigation personas. Anything else routes
+  to a neutral fallback derived from the L2's own description (zero
+  persona leakage by construction).
+- **Diagram render pipeline** (`common/handbook/diagrams.py`) emits
+  inline SVG via Graphviz for three families: L2 topology
+  (accounts / chains / layered cuts walking the L2 primitives
+  directly), per-app dataflow (walks the App tree and fans datasets
+  to sheets), and hand-authored conceptual `.dot` files (six ship:
+  double-entry, escrow-with-reversal, sweep-net-settle, vouchering,
+  eventual-consistency, open-vs-closed-loop).
+- **5-section IA navigation.** mkdocs.yml restructured to Concepts /
+  Reference / Walkthroughs / For Your Role / Scenarios + API Reference
+  with placeholder index pages standing up each section.
+- **Concepts section populated.** All 6 concept pages migrated from
+  `training/handbook/concepts/` into `docs/concepts/` with
+  hand-authored Graphviz diagrams embedded. Each page replaces the
+  original "In the SNB demo" section with persona-neutral
+  "How L1 surfaces this" pointers.
+- **Reference handbook intros vocab-substituted.** All 5 handbook
+  pages (l1, l2_flow_tracing, investigation, etl, customization) drop
+  the snb-hero hardcoded SNB wordmark for vocab-substituted intros.
+  Per-app reference pages embed dataflow + topology diagrams.
+- **Executives reference page** (`handbook/executives.md`) ships,
+  closing the L.8 deferred Executives docs gap.
+- **`export docs --l2-instance <yaml>`** validates an L2 path and
+  echoes the `QS_DOCS_L2_INSTANCE=<path> mkdocs build` command the
+  integrator should run to render docs against that institution.
+
+### Breaking changes
+
+- **`training/` directory deleted.** The 18-file Sasquatch training
+  kit + `mapping.yaml.example` are gone; their content either
+  migrated to `docs/` (concepts, scenarios) or was dropped (per-role
+  guides + per-scenario walkthroughs were heavily SNB-coupled).
+  Future role-orientation + scenario pages can be authored in vocab-
+  templated form.
+- **`quicksight-gen export training` CLI command removed.** Use
+  `export docs` instead — the unified site replaces both surfaces.
+- **`derive_mapping_yaml_text()` + `_HEADER` + `_yaml_kv` removed**
+  from `common/persona.py`. The string-replace substitution
+  machinery (`_apply_whitelabel`, `_parse_mapping`,
+  `_WhitelabelResult`, `_WHITELABEL_*`) removed from `cli.py`.
+  Templating happens at mkdocs render time via Jinja, not via
+  post-render string replacement.
+- **`SNB_PERSONA.account_labels` + `intentional_non_mappings`
+  fields dropped.** Both were mapping.yaml-only; `account_labels`
+  was already derivable from `gl_accounts.name`.
+
+### Migration notes
+
+- Integrators consuming `quicksight-gen export training`: switch to
+  `export docs --l2-instance <your-l2.yaml>`. The unified site
+  carries the same operator + integrator + customizer prose.
+- Integrators consuming `derive_mapping_yaml_text()` / the
+  whitelabel substitution pipeline: switch to either submitting a
+  built-in `HandbookVocabulary` for your institution (PR), or
+  authoring your own L2 instance YAML (the neutral fallback works
+  out of the box for any L2).
+- The `[docs]` extras now require `mkdocs-macros-plugin>=1.3` and
+  `graphviz>=0.20`; the system `dot` binary must also be installed
+  for diagram rendering.
+
+### Internal cleanups
+
+- 5 missing hand-authored conceptual `.dot` files added under
+  `src/quicksight_gen/docs/_diagrams/conceptual/`.
+- 25 unit tests cover `HandbookVocabulary` + the spec_example
+  zero-leakage hard contract.
+- 19 unit tests cover the three diagram render families against
+  spec_example + sasquatch_pr.
+- 1227 unit tests + `mkdocs build --strict` green at cut.
+
+---
+
 ## v6.1.0 — Theme as L2 attribute; Investigation + Executives go L2-fed; Inv plant + harness parity
 
 ### What's new

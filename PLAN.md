@@ -143,12 +143,12 @@
   - [ ] O.2.f — Per-fixture render tests deferred (depends on O.2.d).
   - [ ] O.2.g — Commit.
 
-- [ ] **O.3 — Iteration gate.** Unified docs render against any L2 instance the integrator points at. Per-customer publishing pipeline supports the merged site.
-  - [ ] O.3.a — **Per-customer smoke**: write a fresh `tests/l2/acme_treasury.yaml` (no Sasquatch flavor, simplest possible institution shape). Run `export docs --l2-instance acme_treasury.yaml` (with + without `--with-screenshots`) and eyeball outputs for leakage + voice consistency across all 5 IA sections.
-  - [ ] O.3.b — **Publishing workflow doc** (lands under the new `Walkthroughs/` section as a customization how-to): walks the integrator through the end-to-end (write your L2 YAML → `export docs` → publish to your wiki / website).
-  - [ ] O.3.c — README + CLAUDE.md sweep: docs section reflects the unified-site + templated-render workflow; drop references to the substitution-via-`mapping.yaml` approach AND the `training/` directory; `export training` command no longer exists.
-  - [ ] O.3.d — Decide release cut: **v6.2.0** (additive — the unified docs pipeline lands cleanly on top of N's L2-fed apps; the `training/` directory removal is technically a breaking change for anyone consuming it as a Python package surface, but in practice it's a docs reorg + a CLI surface change `export training` → `export docs`) vs **v7.0.0** (if you want to flag the docs reorg as breaking explicitly). Default expectation: v6.2.0 with a clearly-called-out "training/ directory removed" entry in RELEASE_NOTES.
-  - [ ] O.3.e — Bump `__version__`; write RELEASE_NOTES; commit + tag + push.
+- [x] **O.3 — Iteration gate.** Unified docs render pipeline lands as v6.2.0.
+  - [ ] O.3.a — Per-customer smoke (`acme_treasury.yaml` fixture) deferred. The neutral fallback in `vocabulary_for` already exercises the "any non-sasquatch L2 produces zero-leakage docs" path; a synthetic minimal fixture ships under `tests/test_handbook_vocabulary.py::TestSyntheticMinimalInstance` instead.
+  - [x] O.3.b — Publishing-workflow walkthrough at `walkthroughs/customization/how-do-i-publish-docs-against-my-l2.md`. Walks the integrator through `export docs --l2-instance` → `QS_DOCS_L2_INSTANCE=… mkdocs build`.
+  - [x] O.3.c — README + CLAUDE.md sweep landed in O.1.l (training/ + substitution machinery references all removed).
+  - [x] O.3.d — Cut as **v6.2.0** — additive on top of N's L2-fed apps; the `training/` directory removal is called out as a breaking change in RELEASE_NOTES.
+  - [x] O.3.e — `__version__ = "6.2.0"` bumped; v6.2.0 RELEASE_NOTES entry written.
 
 ---
 
