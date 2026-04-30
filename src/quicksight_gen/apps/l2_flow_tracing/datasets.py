@@ -56,6 +56,7 @@ from quicksight_gen.common.sheets.app_info import (
     build_liveness_dataset,
     build_matview_status_dataset,
 )
+from quicksight_gen.common.sql import Dialect, typed_null
 from quicksight_gen.common.tree import Dataset
 
 
@@ -534,9 +535,10 @@ def build_meta_values_dataset(
     prefix = l2_instance.instance
     keys = declared_metadata_keys(l2_instance)
     if not keys:
+        nt = typed_null("text", cfg.dialect)
         sql = (
-            "SELECT NULL::TEXT AS metadata_key, "
-            "NULL::TEXT AS metadata_value\n"
+            f"SELECT {nt} AS metadata_key, "
+            f"{nt} AS metadata_value\n"
             "WHERE FALSE"
         )
     else:
@@ -587,7 +589,7 @@ def build_chains_dataset(cfg: Config, l2_instance: L2Instance) -> DataSet:
     small (typically tens of entries), so the cost is bounded.
     """
     prefix = l2_instance.instance
-    declared = _declared_chains_cte(l2_instance)
+    declared = _declared_chains_cte(l2_instance, cfg.dialect)
     sql = (
         f"WITH declared AS (\n{declared}\n),\n"
         f"edge_runtime AS (\n"
@@ -686,7 +688,7 @@ def build_chain_instances_dataset(
     (typically tens of entries) so the cost stays predictable.
     """
     prefix = l2_instance.instance
-    declared = _declared_chains_cte(l2_instance)
+    declared = _declared_chains_cte(l2_instance, cfg.dialect)
     sql = (
         f"WITH declared AS (\n{declared}\n),\n"
         f"parent_chains AS (\n"
@@ -824,7 +826,7 @@ def build_exc_chain_orphans_dataset(
     the simpler aggregate doesn't capture.
     """
     prefix = l2_instance.instance
-    declared = _declared_chains_cte(l2_instance)
+    declared = _declared_chains_cte(l2_instance, cfg.dialect)
     sql = (
         f"WITH declared AS (\n{declared}\n),\n"
         f"edge_runtime AS (\n"
@@ -883,7 +885,7 @@ def build_exc_unmatched_transfer_type_dataset(
     that type — the table reveals what's leaking past the L2's rails.
     """
     prefix = l2_instance.instance
-    declared = _declared_transfer_types_cte(l2_instance)
+    declared = _declared_transfer_types_cte(l2_instance, cfg.dialect)
     sql = (
         f"WITH declared_types AS (\n{declared}\n)\n"
         f"SELECT\n"
@@ -915,7 +917,7 @@ def build_exc_dead_rails_dataset(
     decide whether to retire the declaration or fix the ETL.
     """
     prefix = l2_instance.instance
-    declared = _declared_rails_cte(l2_instance)
+    declared = _declared_rails_cte(l2_instance, cfg.dialect)
     sql = (
         f"WITH declared AS (\n{declared}\n),\n"
         f"runtime AS (\n"
@@ -953,7 +955,7 @@ def build_exc_dead_bundles_activity_dataset(
     pair the L2 declared but the runtime never realized.
     """
     prefix = l2_instance.instance
-    declared = _declared_bundles_activity_cte(l2_instance)
+    declared = _declared_bundles_activity_cte(l2_instance, cfg.dialect)
     sql = (
         f"WITH declared_bundles AS (\n{declared}\n)\n"
         f"SELECT\n"
@@ -992,8 +994,9 @@ def build_exc_dead_metadata_dataset(
     fragments = _dead_metadata_check_fragments(l2_instance, prefix)
     if not fragments:
         # No rails declare metadata_keys — empty result, valid SQL.
+        nt = typed_null("text", cfg.dialect)
         sql = (
-            "SELECT NULL::TEXT AS rail_name, NULL::TEXT AS metadata_key "
+            f"SELECT {nt} AS rail_name, {nt} AS metadata_key "
             "WHERE FALSE"
         )
     else:
@@ -1020,7 +1023,7 @@ def build_exc_dead_limit_schedules_dataset(
     the query bounded by the (small) limit-schedule count.
     """
     prefix = l2_instance.instance
-    declared = _declared_limit_schedules_cte(l2_instance)
+    declared = _declared_limit_schedules_cte(l2_instance, cfg.dialect)
     sql = (
         f"WITH declared_limits AS (\n{declared}\n)\n"
         f"SELECT\n"
@@ -1066,20 +1069,21 @@ def build_unified_l2_exceptions_dataset(
     CASTs + literal `check_type` labels.
     """
     prefix = l2_instance.instance
-    declared_chains = _declared_chains_cte(l2_instance)
-    declared_types = _declared_transfer_types_cte(l2_instance)
-    declared_rails = _declared_rails_cte(l2_instance)
-    declared_bundles = _declared_bundles_activity_cte(l2_instance)
-    declared_limits = _declared_limit_schedules_cte(l2_instance)
+    declared_chains = _declared_chains_cte(l2_instance, cfg.dialect)
+    declared_types = _declared_transfer_types_cte(l2_instance, cfg.dialect)
+    declared_rails = _declared_rails_cte(l2_instance, cfg.dialect)
+    declared_bundles = _declared_bundles_activity_cte(l2_instance, cfg.dialect)
+    declared_limits = _declared_limit_schedules_cte(l2_instance, cfg.dialect)
     dead_metadata_fragments = _dead_metadata_check_fragments(
         l2_instance, prefix,
     )
     if dead_metadata_fragments:
         dead_metadata_inner = "\n  UNION ALL\n".join(dead_metadata_fragments)
     else:
+        nt = typed_null("text", cfg.dialect)
         dead_metadata_inner = (
-            "  SELECT NULL::TEXT AS rail_name, "
-            "NULL::TEXT AS metadata_key WHERE FALSE"
+            f"  SELECT {nt} AS rail_name, "
+            f"{nt} AS metadata_key WHERE FALSE"
         )
     sql = (
         # Branch 1: Chain Orphans
@@ -1216,7 +1220,7 @@ def build_unified_l2_exceptions_dataset(
 # -- Internals ---------------------------------------------------------------
 
 
-def _declared_rails_cte(l2_instance: L2Instance) -> str:
+def _declared_rails_cte(l2_instance: L2Instance, dialect: Dialect) -> str:
     """Render the L2-declared rails as a UNION ALL of SELECT-literal rows.
 
     UNION ALL of single-row SELECTs is used instead of ``VALUES (...)``
@@ -1224,22 +1228,27 @@ def _declared_rails_cte(l2_instance: L2Instance) -> str:
     row, avoiding the "type of column N is text but row M is null"
     inference problem PostgreSQL's planner sometimes hits with VALUES
     when most rows have NULL for a column.
+
+    ``dialect`` selects the typed-NULL form for the empty-rails fallback
+    branch (``NULL::TEXT`` on Postgres, ``CAST(NULL AS CLOB)`` on
+    Oracle).
     """
     if not l2_instance.rails:
         # Should not happen for a valid L2 (there must be some rails);
         # the validator would catch it. Return a safe empty CTE that
         # produces zero rows so the LEFT JOIN works.
+        nt = typed_null("text", dialect)
         return (
             "  SELECT\n"
-            "    NULL::TEXT AS rail_name,\n"
-            "    NULL::TEXT AS transfer_type,\n"
-            "    NULL::TEXT AS leg_shape,\n"
-            "    NULL::TEXT AS source_role,\n"
-            "    NULL::TEXT AS destination_role,\n"
-            "    NULL::TEXT AS leg_role,\n"
-            "    NULL::TEXT AS max_pending_age,\n"
-            "    NULL::TEXT AS max_unbundled_age,\n"
-            "    NULL::TEXT AS posted_requirements\n"
+            f"    {nt} AS rail_name,\n"
+            f"    {nt} AS transfer_type,\n"
+            f"    {nt} AS leg_shape,\n"
+            f"    {nt} AS source_role,\n"
+            f"    {nt} AS destination_role,\n"
+            f"    {nt} AS leg_role,\n"
+            f"    {nt} AS max_pending_age,\n"
+            f"    {nt} AS max_unbundled_age,\n"
+            f"    {nt} AS posted_requirements\n"
             "  WHERE FALSE"
         )
     rows: list[str] = []
@@ -1273,7 +1282,7 @@ def _declared_rails_cte(l2_instance: L2Instance) -> str:
     return "\n  UNION ALL\n".join(rows)
 
 
-def _declared_chains_cte(l2_instance: L2Instance) -> str:
+def _declared_chains_cte(l2_instance: L2Instance, dialect: Dialect) -> str:
     """Render the L2-declared ChainEntry list as a UNION ALL of
     SELECT-literal rows.
 
@@ -1281,16 +1290,20 @@ def _declared_chains_cte(l2_instance: L2Instance) -> str:
     Sankey reads — currently identical to the parent / child name,
     but kept as separate columns so M.3.6+ can attach a "(Required)"
     or "(XOR: <group>)" suffix without breaking the join semantics.
+
+    ``dialect`` selects the typed-NULL form for the empty-chains
+    fallback branch.
     """
     if not l2_instance.chains:
+        nt = typed_null("text", dialect)
         return (
             "  SELECT\n"
-            "    NULL::TEXT AS parent_name,\n"
-            "    NULL::TEXT AS child_name,\n"
-            "    NULL::TEXT AS required,\n"
-            "    NULL::TEXT AS xor_group,\n"
-            "    NULL::TEXT AS source_node,\n"
-            "    NULL::TEXT AS target_node\n"
+            f"    {nt} AS parent_name,\n"
+            f"    {nt} AS child_name,\n"
+            f"    {nt} AS required,\n"
+            f"    {nt} AS xor_group,\n"
+            f"    {nt} AS source_node,\n"
+            f"    {nt} AS target_node\n"
             "  WHERE FALSE"
         )
     rows: list[str] = []
@@ -1374,7 +1387,9 @@ def _sql_nullable_str(value: str | None) -> str:
 # -- M.3.7 CTE helpers -------------------------------------------------------
 
 
-def _declared_transfer_types_cte(l2_instance: L2Instance) -> str:
+def _declared_transfer_types_cte(
+    l2_instance: L2Instance, dialect: Dialect,
+) -> str:
     """Distinct ``Rail.transfer_type`` values, one per SELECT row.
 
     Distinct because multiple Rails MAY share a transfer_type (the
@@ -1385,7 +1400,7 @@ def _declared_transfer_types_cte(l2_instance: L2Instance) -> str:
     types = sorted({str(r.transfer_type) for r in l2_instance.rails})
     if not types:
         return (
-            "  SELECT NULL::TEXT AS transfer_type WHERE FALSE"
+            f"  SELECT {typed_null('text', dialect)} AS transfer_type WHERE FALSE"
         )
     rows = [
         f"  SELECT {_sql_str(t)} AS transfer_type"
@@ -1394,7 +1409,9 @@ def _declared_transfer_types_cte(l2_instance: L2Instance) -> str:
     return "\n  UNION ALL\n".join(rows)
 
 
-def _declared_bundles_activity_cte(l2_instance: L2Instance) -> str:
+def _declared_bundles_activity_cte(
+    l2_instance: L2Instance, dialect: Dialect,
+) -> str:
     """All (aggregating_rail, bundle_target) pairs the L2 declares.
 
     bundle_target is whatever Identifier the rail's
@@ -1408,9 +1425,10 @@ def _declared_bundles_activity_cte(l2_instance: L2Instance) -> str:
         for target in r.bundles_activity:
             pairs.append((str(r.name), str(target)))
     if not pairs:
+        nt = typed_null("text", dialect)
         return (
-            "  SELECT NULL::TEXT AS aggregating_rail, "
-            "NULL::TEXT AS bundle_target WHERE FALSE"
+            f"  SELECT {nt} AS aggregating_rail, "
+            f"{nt} AS bundle_target WHERE FALSE"
         )
     rows = [
         f"  SELECT {_sql_str(agg)} AS aggregating_rail, "
@@ -1452,15 +1470,19 @@ def _dead_metadata_check_fragments(
     return fragments
 
 
-def _declared_limit_schedules_cte(l2_instance: L2Instance) -> str:
+def _declared_limit_schedules_cte(
+    l2_instance: L2Instance, dialect: Dialect,
+) -> str:
     """One SELECT row per LimitSchedule entry. The cap stays as a
     numeric literal; the parent_role + transfer_type are quoted
     string literals (they're Identifiers in the L2 model)."""
     if not l2_instance.limit_schedules:
+        nt = typed_null("text", dialect)
+        nn = typed_null("numeric", dialect)
         return (
-            "  SELECT NULL::TEXT AS parent_role, "
-            "NULL::TEXT AS transfer_type, "
-            "NULL::DECIMAL AS cap WHERE FALSE"
+            f"  SELECT {nt} AS parent_role, "
+            f"{nt} AS transfer_type, "
+            f"{nn} AS cap WHERE FALSE"
         )
     rows: list[str] = []
     for ls in l2_instance.limit_schedules:
@@ -1476,7 +1498,9 @@ def _declared_limit_schedules_cte(l2_instance: L2Instance) -> str:
 # -- Transfer Templates sheet (M.3.10f) ------------------------------------
 
 
-def _declared_templates_cte(l2_instance: L2Instance) -> str:
+def _declared_templates_cte(
+    l2_instance: L2Instance, dialect: Dialect,
+) -> str:
     """Render L2-declared TransferTemplate names + expected_net as a
     UNION ALL of SELECT-literal rows. The tt-instances builder joins
     against this CTE so only declared templates appear in the dataset
@@ -1486,8 +1510,8 @@ def _declared_templates_cte(l2_instance: L2Instance) -> str:
     """
     if not l2_instance.transfer_templates:
         return (
-            "  SELECT NULL::TEXT AS template_name, "
-            "NULL::DECIMAL AS expected_net WHERE FALSE"
+            f"  SELECT {typed_null('text', dialect)} AS template_name, "
+            f"{typed_null('numeric', dialect)} AS expected_net WHERE FALSE"
         )
     rows: list[str] = []
     for t in l2_instance.transfer_templates:
@@ -1527,8 +1551,8 @@ def build_tt_instances_dataset(
     Parameterized on pKey + pValues for the metadata cascade.
     """
     prefix = l2_instance.instance
-    declared_tt = _declared_templates_cte(l2_instance)
-    declared_ch = _declared_chains_cte(l2_instance)
+    declared_tt = _declared_templates_cte(l2_instance, cfg.dialect)
+    declared_ch = _declared_chains_cte(l2_instance, cfg.dialect)
     sql = (
         f"WITH templates AS (\n{declared_tt}\n),\n"
         f"declared AS (\n{declared_ch}\n),\n"
@@ -1691,8 +1715,8 @@ def build_tt_legs_dataset(
     Parameterized on pKey + pValues for the metadata cascade.
     """
     prefix = l2_instance.instance
-    declared_tt = _declared_templates_cte(l2_instance)
-    declared_ch = _declared_chains_cte(l2_instance)
+    declared_tt = _declared_templates_cte(l2_instance, cfg.dialect)
+    declared_ch = _declared_chains_cte(l2_instance, cfg.dialect)
     sql = (
         f"WITH templates AS (\n{declared_tt}\n),\n"
         f"declared AS (\n{declared_ch}\n),\n"
