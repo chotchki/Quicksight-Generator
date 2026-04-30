@@ -152,6 +152,109 @@
 
 ---
 
+# Phase P — Multi-database support (Postgres + Oracle 19c)
+
+**Headline feature**: every emitted SQL surface (DDL + dataset SQL) renders against either Postgres or Oracle 19c Standard Edition. The dialect is carried by `config.yaml` (`dialect: postgres|oracle`), propagates through demo apply + datasource emission + matview refresh, and round-trips through CI containers for both. Cuts as **v7.0.0** — additive (Postgres users see no behavior change) but touches every SQL surface, so the major bump flags the breadth.
+
+The existing SQL is already constrained to a portable subset (no JSONB, SQL/JSON path syntax) precisely because Oracle was anticipated; Phase P operationalizes that intent end-to-end.
+
+- [ ] **P.0 — Audit + decisions captured.** This conversation is the audit; the design calls landed:
+  - **Abstraction**: hand-written `common/sql/dialect.py` helpers (option (i)). Switch to per-dialect parallel SQL files only if helpers get unwieldy on a specific surface.
+  - **Materialized views everywhere**: keep MVs on Oracle (`REFRESH ON DEMAND`); plain views skipped — performance would suffer on the L1 invariant scans.
+  - **Oracle target**: 19c Standard Edition. BOOLEAN doesn't exist (NUMBER(1)); TEXT → CLOB / VARCHAR2; identity columns + sequences differ; `WITH RECURSIVE` → unmarked recursive `WITH`.
+  - **Dialect carrier**: `config.yaml` carries `dialect: postgres|oracle`; no CLI flag (the `datasource_arn` is dialect-coupled anyway).
+  - **CI**: Docker Postgres + Docker Oracle Free containers run **alongside** the existing fast unit pass — added as gated `integration-postgres` / `integration-oracle` jobs, not replacing the current no-DB unit run.
+  - **Naming**: Oracle is named freely in repo artifacts going forward. The "do not name the target RDBMS" memory becomes historical context (pre-Phase-P era).
+
+- [ ] **P.1 — V5 carry-over cleanup.** `schema.sql` ships dead DDL (`DROP TABLE IF EXISTS` for the v5 12-table family + the AR `ar_*` dim tables + dead `ar_*` view surface) carried for upgrade safety + Investigation FK integrity. Phase P starts here so the dialect port has the smaller, current-only schema to work against.
+  - [ ] P.1.a — Trace Investigation demo seed: which rows actually land in `ar_ledger_accounts` / `ar_subledger_accounts`. Document the FK dependency.
+  - [ ] P.1.b — Decide migration target: per-prefix dim tables under `<prefix>_inv_*_accounts`, OR drop the FK dependency entirely (if Investigation matviews don't need the dim rows for analytics, the FK is integrity-only and the dim tables can go).
+  - [ ] P.1.c — Migrate Investigation seed off `ar_*_accounts` per the P.1.b decision. Hash-relock the seed if bytes shift.
+  - [ ] P.1.d — Drop `ar_ledger_accounts` + `ar_subledger_accounts` DDL from `schema.sql`.
+  - [ ] P.1.e — Drop the dead `ar_*` view surface from `schema.sql` (per CLAUDE.md: "bulk of the `ar_*` view surface is dead code in v6").
+  - [ ] P.1.f — Drop the v5 `DROP TABLE IF EXISTS` carry-overs (`pr_*` / `transfer` / `posting` / `ar_*_daily_balances`). Anyone on v5 → v7 follows a documented migration path; auto-drop is no longer load-bearing.
+  - [ ] P.1.g — Full unit + e2e suite green. Commit.
+
+- [ ] **P.2 — Dialect helper layer (Postgres-only first).** `common/sql/dialect.py` ships `Dialect` enum + per-construct helpers. Refactors current Postgres SQL to use the helpers without changing emitted bytes — pure behavior-preserving change.
+  - [ ] P.2.a — Define `Dialect` enum (`POSTGRES`, `ORACLE`). Single source of truth.
+  - [ ] P.2.b — Catalog every Postgres-specific construct in current emitted SQL (DDL + dataset SQL). Write findings to `docs/audits/p_2_dialect_catalog.md`. Each entry becomes a helper.
+  - [ ] P.2.c — Implement helpers (Postgres branch only; Oracle branch raises `NotImplementedError`). Unit tests against the catalog.
+  - [ ] P.2.d — Refactor `common/l2/schema.py` to call helpers instead of inlining Postgres syntax. Snapshot test: emitted DDL bytes-identical to pre-refactor.
+  - [ ] P.2.e — Pyright strict + commit.
+
+- [ ] **P.3 — DDL emission for both dialects.** `common/l2/schema.py` + `schema.sql` emit Postgres OR Oracle DDL based on dialect.
+  - [ ] P.3.a — Implement Oracle branch on every helper from P.2 (BOOLEAN → NUMBER(1), TEXT → CLOB / VARCHAR2(4000), TIMESTAMP type, identity columns via sequences + triggers OR `GENERATED ... AS IDENTITY`, MV refresh syntax).
+  - [ ] P.3.b — Materialized view DDL: Oracle uses `CREATE MATERIALIZED VIEW … BUILD IMMEDIATE REFRESH ON DEMAND`; Postgres uses `CREATE MATERIALIZED VIEW`. Refresh: Oracle `BEGIN DBMS_MVIEW.REFRESH('<name>'); END;`; Postgres `REFRESH MATERIALIZED VIEW <name>`.
+  - [ ] P.3.c — Update `refresh_matviews_sql(l2_instance, dialect)` to take a dialect; emit the right call per matview.
+  - [ ] P.3.d — `schema.sql` either splits into `schema_postgres.sql` + `schema_oracle.sql` OR (if helpers reduce divergence enough) becomes a single template the emitter renders. Decide based on residual divergence after P.3.a.
+  - [ ] P.3.e — Snapshot tests: emit DDL for spec_example + sasquatch_pr against both dialects; lock the bytes.
+  - [ ] P.3.f — Commit.
+
+- [ ] **P.4 — Dataset SQL dialect-aware.** Every `apps/<app>/datasets.py` SQL string moves through dialect helpers. Biggest churn in Phase P.
+  - [ ] P.4.a — L1 dashboard datasets (~14): drift, ledger drift, drift timelines (×2 pre-aggs), overdraft, limit breach, pending aging, unbundled aging, supersession audit, today's exceptions UNION, daily statement summary, daily statement transactions, raw transactions.
+  - [ ] P.4.b — L2 Flow Tracing datasets (~5): rails, chains, transfer templates, hygiene exceptions UNION, etc.
+  - [ ] P.4.c — Investigation datasets (~5): recipient fanout, volume anomalies, money trail (`WITH RECURSIVE` → Oracle's unmarked recursive `WITH`!), account network, anetwork accounts dropdown.
+  - [ ] P.4.d — Executives datasets (~2): account coverage, transaction volume.
+  - [ ] P.4.e — App Info canary dataset.
+  - [ ] P.4.f — Snapshot test per dataset: emit SQL against both dialects; lock both byte sequences.
+  - [ ] P.4.g — Commit per app or single sweep depending on diff size.
+
+- [ ] **P.5 — Demo apply for both dialects.** `[demo-oracle]` extra adds `oracledb`; `demo apply` reads `cfg.dialect`, picks the right connector + bind syntax + commit semantics.
+
+  > **🚧 USER GATE — local Oracle DB needed before P.5 starts.** This is the first substep that hands-on validates the Oracle path against a real database. Before kicking off P.5, the user needs:
+  >
+  > - A local Oracle 19c Standard Edition instance reachable from the dev machine (Docker `gvenzl/oracle-free:23-slim-faststart` works for dev too — same image P.7 uses in CI; the 19c-vs-23 SQL surface is close enough that 23 catches most issues, with a final 19c verify happening at P.9.b).
+  > - The connection details captured in a sibling config: `run/config-oracle.yaml` with `dialect: oracle` + `demo_database_url: oracle+oracledb://...` + the host / port / service-name shape from P.6's loader. (Existing `run/config.yaml` stays as the Postgres copy.)
+  > - The Postgres demo DB stays up too — the test suite + e2e need to run against both dialects from P.5 onward.
+  >
+  > Same gate applies to P.9.b (live deploy verify against Oracle).
+
+  - [ ] P.5.a — Add `[demo-oracle]` extra to `pyproject.toml`. Use `oracledb` (the new wrapper, no Oracle Client install needed in thin mode).
+  - [ ] P.5.b — Abstract the connection + bind layer in `cli.py::_apply_demo` so the same orchestration works against either dialect (psycopg2 `%s` ↔ oracledb `:1`).
+  - [ ] P.5.c — Seed primitive emitter (`common/l2/seed.py`) emits dialect-appropriate INSERT syntax (column quoting, multi-row vs single-row, sequence/identity, commit cadence).
+  - [ ] P.5.d — Hash-lock the Oracle seed output separately from Postgres; both dialects round-trip deterministic seed bytes.
+  - [ ] P.5.e — `quicksight-gen demo apply --all -c <oracle-config.yaml>` end-to-end against a local Oracle Free container. Verify matview refresh + L1 invariant rows surface correctly.
+  - [ ] P.5.f — Commit.
+
+- [ ] **P.6 — QuickSight datasource for Oracle.** `common/datasource.py` becomes dialect-aware; `config.yaml` `dialect:` field drives which `DataSourceParameters` shape gets emitted on deploy.
+  - [ ] P.6.a — Read `dialect:` field from `config.yaml`; default `postgres` for back-compat. Validate against `Dialect` enum.
+  - [ ] P.6.b — `build_datasource(cfg)` branches on dialect: `RdsParameters` for Postgres (current shape), `OracleParameters` for Oracle (host / port / database SID or service-name).
+  - [ ] P.6.c — Tag the deployed datasource with `Dialect: postgres|oracle` for the cleanup sweep + multi-instance dashboard list legibility.
+  - [ ] P.6.d — Smoke test: emit datasource JSON for both dialects; verify QS API accepts (mock + live).
+  - [ ] P.6.e — Commit.
+
+- [ ] **P.7 — CI: Docker Postgres + Docker Oracle Free runners.** Add gated integration jobs alongside the existing fast unit pass.
+  - [ ] P.7.a — `.github/workflows/ci.yml`: add `integration-postgres` job using `postgres:17` Docker service + run a slim integration suite (demo apply, hash-lock check, matview refresh, L1 invariant row spot-check).
+  - [ ] P.7.b — Add `integration-oracle` job using `gvenzl/oracle-free:23-slim-faststart` Docker image (no licensing concern; runs on x86 + ARM) + run the same integration suite.
+  - [ ] P.7.c — Both jobs gated on `integration` label or `main` branch (keep PR turnaround fast); always-run on push-to-main.
+  - [ ] P.7.d — Update `release.yml` test gate to require integration jobs green before publishing.
+  - [ ] P.7.e — Commit.
+
+- [ ] **P.8 — Docs.**
+  - [ ] P.8.a — `Schema_v6.md` adds dialect callouts where types differ (BOOLEAN, TEXT, TIMESTAMP, JSON, identity columns, MV refresh syntax).
+  - [ ] P.8.b — New `walkthroughs/customization/how-do-i-deploy-against-oracle.md`: `[demo-oracle]` extra install, `dialect: oracle` in `config.yaml`, `oracledb` connection-string format, the matview refresh quirk, splitting `config.yaml` into per-dialect copies.
+  - [ ] P.8.c — `walkthroughs/etl/` adds an Oracle bind/connect note.
+  - [ ] P.8.d — `for-your-role/etl-engineer.md` updated to flag dialect-aware loads.
+  - [ ] P.8.e — README + CLAUDE.md sweep — name Oracle as a first-class target alongside Postgres.
+  - [ ] P.8.f — Update memory `project_oracle_19c_compat.md`: rewrite as historical context (pre-Phase-P era); add note that Oracle is now first-class as of v7.0.0.
+  - [ ] P.8.g — Commit.
+
+- [ ] **P.9 — Aurora + Oracle deploy verify.**
+  - [ ] P.9.a — Re-run the existing Aurora-Postgres deploy verify against current main. Confirm no regressions from the helper refactor.
+  - [ ] P.9.b — Run the full demo apply + e2e verify against the local Oracle 19c instance from the P.5 user gate. (If P.5 used the Docker `oracle-free:23` image for dev convenience, P.9.b is the moment to swap to a real 19c Standard Edition target so the ship-blocking verify hits the actual production target version.)
+  - [ ] P.9.c — Spot-check the deployed dashboards in QS UI under both dialects. Eyeball the L1 invariant sheets (drift, overdraft, limit breach), Investigation Money Trail (recursive CTE under both dialects), Executives Money Moved (date-window aggregation).
+  - [ ] P.9.d — Document any dialect-specific render quirks in the customization handbook.
+  - [ ] P.9.e — Commit.
+
+- [ ] **P.10 — Iteration gate + v7.0.0 cut.**
+  - [ ] P.10.a — Decide release cut: **v7.0.0** — additive (Postgres-only users see no behavior change) but touches every SQL surface; major bump flags the breadth.
+  - [ ] P.10.b — Bump `__version__` to `7.0.0`; write RELEASE_NOTES entry covering: dialect support, the v5 carry-over removal (technically a breaking change for anyone on schema.sql v5), the `dialect:` config field, the `[demo-oracle]` extra, the new walkthrough, the memory rewrite.
+  - [ ] P.10.c — Commit + tag + push.
+  - [ ] P.10.d — Confirm release pipeline runs green for both Postgres + Oracle integration jobs.
+  - [ ] P.10.e — Memory sweep: any other Postgres-only assumptions that need updating?
+
+---
+
 ## Backlog
 
 Single grab-bag for everything not yet in a phase. Promote to a numbered phase entry when work starts. Full historical detail in `PLAN_ARCHIVE.md`.
