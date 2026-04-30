@@ -28,14 +28,14 @@ _SASQUATCH_PR = _FIXTURES / "sasquatch_pr.yaml"
 
 
 class TestL2Topology:
-    @pytest.mark.parametrize("kind", ["accounts", "chains", "layered"])
+    @pytest.mark.parametrize("kind", ["accounts", "chains", "layered", "hierarchy"])
     def test_renders_against_spec_example(self, kind: str):
         l2 = load_instance(_SPEC_EXAMPLE)
         svg = render_l2_topology(l2, kind)  # type: ignore[arg-type]
         assert "<svg" in svg
         assert "</svg>" in svg
 
-    @pytest.mark.parametrize("kind", ["accounts", "chains", "layered"])
+    @pytest.mark.parametrize("kind", ["accounts", "chains", "layered", "hierarchy"])
     def test_renders_against_sasquatch_pr(self, kind: str):
         # Sasquatch is a richer fixture — exercises union role expressions
         # + XOR-grouped chain entries that spec_example doesn't have.
@@ -63,6 +63,16 @@ class TestL2Topology:
         l2 = load_instance(_SASQUATCH_PR)
         svg = render_l2_topology(l2, "chains")
         assert "<svg" in svg
+
+    def test_hierarchy_diagram_includes_template_marker(self):
+        # sasquatch_pr has account templates (CustomerDDA, MerchantDDA,
+        # ExternalCounterparty etc.). The hierarchy renderer suffixes
+        # template labels with ``× N`` to mark them as "many instances
+        # at runtime" — proves templates are surfaced separately from
+        # singletons.
+        l2 = load_instance(_SASQUATCH_PR)
+        svg = render_l2_topology(l2, "hierarchy")
+        assert "× N" in svg, "hierarchy diagram should mark templates with × N"
 
 
 # -- Per-app dataflow --------------------------------------------------------

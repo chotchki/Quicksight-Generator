@@ -31,6 +31,7 @@ import graphviz
 
 from quicksight_gen.common.l2.primitives import (
     Account,
+    AccountTemplate,
     ChainEntry,
     L2Instance,
     Rail,
@@ -42,7 +43,7 @@ from quicksight_gen.common.l2.primitives import (
 # -- Public API --------------------------------------------------------------
 
 
-TopologyKind = Literal["accounts", "chains", "layered"]
+TopologyKind = Literal["accounts", "chains", "layered", "hierarchy"]
 
 
 def render_l2_topology(l2_instance: L2Instance, kind: TopologyKind) -> str:
@@ -61,6 +62,13 @@ def render_l2_topology(l2_instance: L2Instance, kind: TopologyKind) -> str:
     ``kind="layered"`` lays the accounts diagram on top of the chains
     diagram in two ranks — the accounts row at the top, the chains row
     below.
+
+    ``kind="hierarchy"`` shows the parent → child rollup of singleton
+    accounts and account templates. Each node is an Account or
+    AccountTemplate; an edge points from a child to its parent
+    (resolved by ``child.parent_role == parent.role``). Singleton
+    accounts have solid borders; account templates carry dashed
+    borders since they're a SHAPE, not an instance.
     """
     if kind == "accounts":
         return _to_svg(_build_accounts_graph(l2_instance))
@@ -68,6 +76,8 @@ def render_l2_topology(l2_instance: L2Instance, kind: TopologyKind) -> str:
         return _to_svg(_build_chains_graph(l2_instance))
     if kind == "layered":
         return _to_svg(_build_layered_graph(l2_instance))
+    if kind == "hierarchy":
+        return _to_svg(_build_hierarchy_graph(l2_instance))
     raise ValueError(f"unknown topology kind: {kind!r}")
 
 
@@ -231,6 +241,57 @@ def _build_layered_graph(l2_instance: L2Instance) -> graphviz.Digraph:
     return g
 
 
+def _build_hierarchy_graph(l2_instance: L2Instance) -> graphviz.Digraph:
+    """Render the parent → child rollup of accounts and account templates.
+
+    Singleton ``Account`` nodes use the same scope-colored fill as the
+    other diagrams (blue=internal, orange=external). ``AccountTemplate``
+    nodes use a dashed border so a reader can distinguish "this is one
+    account" from "this is a SHAPE that exists in many instances at
+    runtime" at a glance.
+
+    Edges run from child to parent (singleton or template child →
+    singleton-account parent), resolved by
+    ``child.parent_role == parent.role``. The edge arrow points at the
+    parent so the rollup direction reads naturally with ``rankdir=BT``
+    (children at the top, control accounts at the bottom).
+
+    Roots (singletons with ``parent_role=None``) appear ungrouped at
+    the bottom rank.
+    """
+    g = graphviz.Digraph(format="svg")
+    g.attr(rankdir="BT", nodesep="0.4", ranksep="0.9")
+    g.attr("node", fontsize="11", style="filled")
+
+    role_to_account = _role_to_account(l2_instance)
+
+    for acc in l2_instance.accounts:
+        _add_account_node(g, acc)
+
+    for template in l2_instance.account_templates:
+        _add_account_template_node(g, template)
+
+    # Child → parent edges (children: singletons + templates with
+    # parent_role set; parents: singletons whose role matches).
+    for acc in l2_instance.accounts:
+        if acc.parent_role is None:
+            continue
+        parent = role_to_account.get(str(acc.parent_role))
+        if parent is None:
+            continue
+        g.edge(str(acc.id), str(parent.id), color="#666666")
+
+    for template in l2_instance.account_templates:
+        if template.parent_role is None:
+            continue
+        parent = role_to_account.get(str(template.parent_role))
+        if parent is None:
+            continue
+        g.edge(_template_node_id(template), str(parent.id), color="#666666")
+
+    return g
+
+
 # -- Graph helpers -----------------------------------------------------------
 
 
@@ -244,6 +305,36 @@ def _add_account_node(g: graphviz.Digraph, acc: Account) -> None:
     color = "#bbdefb" if acc.scope == "internal" else "#ffe0b2"
     label = acc.name or acc.id
     g.node(str(acc.id), str(label), fillcolor=color, shape="box")
+
+
+def _template_node_id(template: AccountTemplate) -> str:
+    """Stable graph node id for an AccountTemplate.
+
+    Templates have no ``id`` field (they're a SHAPE, not an instance) so
+    we synthesize one from the role with a ``tmpl::`` prefix to avoid
+    collisions with singleton account ids.
+    """
+    return f"tmpl::{template.role}"
+
+
+def _add_account_template_node(
+    g: graphviz.Digraph, template: AccountTemplate,
+) -> None:
+    """Render an AccountTemplate node with a dashed border.
+
+    Uses the same scope-coloured fill as singletons but a dashed
+    border to mark it as "this is a SHAPE, populated at runtime"
+    rather than a single physical account. Label includes ``role × N``
+    to nudge readers toward the multi-instance reading.
+    """
+    color = "#bbdefb" if template.scope == "internal" else "#ffe0b2"
+    g.node(
+        _template_node_id(template),
+        f"{template.role} × N",
+        fillcolor=color,
+        shape="box",
+        style="filled,dashed",
+    )
 
 
 def _add_rail_edges(

@@ -48,6 +48,19 @@ these MUST fire — pick the right child by metadata".
 
 ---
 
+## Topology — account hierarchy (rollup)
+
+How the singleton accounts and templates roll up. Each edge points
+from a child to its parent — the singleton ``Account`` whose ``role``
+matches the child's ``parent_role``. Solid-bordered nodes are 1-of-1
+singletons; dashed-bordered ``× N`` nodes are templates that
+materialize many instances at runtime (e.g. one ``CustomerDDA`` per
+customer, all rolling up to the ``DDAControl`` GL).
+
+{{ diagram("l2_topology", kind="hierarchy") }}
+
+---
+
 ## Singleton accounts
 
 These are the 1-of-1 accounts {{ vocab.institution.acronym }} holds —
