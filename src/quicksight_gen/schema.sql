@@ -1355,209 +1355,25 @@ SELECT
 FROM ar_internal_reversal_uncredited;
 
 
--- Investigation: pair-grain rolling-window anomaly matview (Phase K.4.4).
--- Volume Anomalies sheet flags (sender, recipient) pairs whose 2-day
--- rolling SUM crosses the σ-threshold parameter. Computing the rolling
--- window + population z-score on every dataset load was slow enough at
--- realistic transaction volumes to wedge QuickSight Direct Query, so
--- the work happens at refresh time instead.
+-- ============================================================================
+-- Investigation matviews (REMOVED in N.3.n — migrated to per-instance
+-- prefixed schema in common/l2/schema.py::_emit_inv_views).
+-- ============================================================================
 --
--- Window semantics: for each (sender, recipient) day with activity, the
--- row's window covers [posted_day - 1, posted_day] (today + yesterday).
--- The 2-day length is hardcoded for K.4.4 — a window-length slider is
--- a future enhancement that would require either multiple matviews or a
--- generate_series scan at dataset time.
+-- Pre-N.3 these were two flat-named global matviews
+-- (``inv_pair_rolling_anomalies`` + ``inv_money_trail_edges``) that
+-- read from the v5 flat ``transactions`` table. N.3 migrated them to
+-- per-instance prefixed views (``<prefix>_inv_pair_rolling_anomalies``
+-- + ``<prefix>_inv_money_trail_edges``) emitted by
+-- ``common/l2/schema.py::emit_schema()``. Investigation now reads
+-- exclusively from those prefixed views (N.3.d/e).
 --
--- Recipient filter mirrors the recipient-fanout dataset: only `dda` and
--- `merchant_dda` recipients qualify, so administrative sweeps into GL
--- control / concentration master accounts don't dominate the population
--- distribution and crowd out genuine signal.
---
--- IMPORTANT — refresh contract: this matview is NOT auto-refreshed.
--- Operators must run
---     REFRESH MATERIALIZED VIEW inv_pair_rolling_anomalies;
--- after each ETL load (the demo's `quicksight-gen demo apply` does
--- this automatically).
+-- The DROP statements below are upgrade-safety: any production database
+-- that ran a pre-N.3 schema apply will have the global matviews
+-- lingering after this schema apply runs (the L1-style table DROPs at
+-- the top of this file don't include them). Drop them explicitly so
+-- the next REFRESH MATERIALIZED VIEW pass against either name fails
+-- loudly with "matview does not exist", surfacing any stale Investigation
+-- workflow that was still pointing at the global names.
 DROP MATERIALIZED VIEW IF EXISTS inv_pair_rolling_anomalies;
-CREATE MATERIALIZED VIEW inv_pair_rolling_anomalies AS
-WITH pair_legs AS (
-    SELECT
-        recipient.account_id          AS recipient_account_id,
-        recipient.account_name        AS recipient_account_name,
-        recipient.account_type        AS recipient_account_type,
-        sender.account_id             AS sender_account_id,
-        sender.account_name           AS sender_account_name,
-        sender.account_type           AS sender_account_type,
-        recipient.posted_at::date     AS posted_day,
-        recipient.transfer_id,
-        recipient.signed_amount       AS amount
-    FROM transactions recipient
-    JOIN transactions sender
-      ON sender.transfer_id = recipient.transfer_id
-     AND sender.signed_amount < 0
-    WHERE recipient.signed_amount > 0
-      AND recipient.status = 'success'
-      AND sender.status = 'success'
-      AND recipient.account_type IN ('dda', 'merchant_dda')
-),
-pair_daily AS (
-    -- Collapse to one row per (pair, day) before windowing so the
-    -- rolling SUM ranges over distinct days rather than individual legs.
-    SELECT
-        recipient_account_id,
-        recipient_account_name,
-        recipient_account_type,
-        sender_account_id,
-        sender_account_name,
-        sender_account_type,
-        posted_day,
-        SUM(amount)                 AS day_sum,
-        COUNT(DISTINCT transfer_id) AS day_transfer_count
-    FROM pair_legs
-    GROUP BY
-        recipient_account_id, recipient_account_name, recipient_account_type,
-        sender_account_id, sender_account_name, sender_account_type,
-        posted_day
-),
-pair_windows AS (
-    -- Rolling 2-day SUM per pair, anchored on each active day. RANGE
-    -- INTERVAL handles sparse days correctly: a pair with activity on
-    -- day N but not N-1 gets a 1-day window — semantically a single
-    -- spike — rather than a phantom zero contribution.
-    SELECT
-        recipient_account_id,
-        recipient_account_name,
-        recipient_account_type,
-        sender_account_id,
-        sender_account_name,
-        sender_account_type,
-        posted_day,
-        SUM(day_sum) OVER w            AS window_sum,
-        SUM(day_transfer_count) OVER w AS transfer_count
-    FROM pair_daily
-    WINDOW w AS (
-        PARTITION BY recipient_account_id, sender_account_id
-        ORDER BY posted_day
-        RANGE BETWEEN INTERVAL '1 day' PRECEDING AND CURRENT ROW
-    )
-),
-population AS (
-    -- Single-row scalar: mean + sample stddev across every pair-window.
-    -- Sample stddev (STDDEV_SAMP) matches the analyst convention of
-    -- "this window vs. the rest of the population".
-    SELECT
-        AVG(window_sum)::NUMERIC                       AS pop_mean,
-        COALESCE(STDDEV_SAMP(window_sum), 0)::NUMERIC  AS pop_stddev
-    FROM pair_windows
-)
-SELECT
-    pw.recipient_account_id,
-    pw.recipient_account_name,
-    pw.recipient_account_type,
-    pw.sender_account_id,
-    pw.sender_account_name,
-    pw.sender_account_type,
-    (pw.posted_day - INTERVAL '1 day')::TIMESTAMP   AS window_start,
-    pw.posted_day::TIMESTAMP                        AS window_end,
-    pw.window_sum,
-    pw.transfer_count,
-    pop.pop_mean,
-    pop.pop_stddev,
-    CASE
-        WHEN pop.pop_stddev = 0 THEN 0
-        ELSE (pw.window_sum - pop.pop_mean) / pop.pop_stddev
-    END                                             AS z_score,
-    CASE
-        WHEN pop.pop_stddev = 0 THEN '0-1 sigma'
-        WHEN ABS((pw.window_sum - pop.pop_mean) / pop.pop_stddev) < 1 THEN '0-1 sigma'
-        WHEN ABS((pw.window_sum - pop.pop_mean) / pop.pop_stddev) < 2 THEN '1-2 sigma'
-        WHEN ABS((pw.window_sum - pop.pop_mean) / pop.pop_stddev) < 3 THEN '2-3 sigma'
-        WHEN ABS((pw.window_sum - pop.pop_mean) / pop.pop_stddev) < 4 THEN '3-4 sigma'
-        ELSE '4+ sigma'
-    END                                             AS z_bucket
-FROM pair_windows pw
-CROSS JOIN population pop;
-
-
--- Investigation: money-trail recursive-CTE matview (Phase K.4.5).
--- Money Trail sheet walks `parent_transfer_id` chains from a given root,
--- flattening each hop to a (source_account, target_account, hop_amount)
--- edge so a Sankey can render the chain. Computing the recursive walk +
--- leg pairing on every dataset query was a non-starter for QuickSight
--- Direct Query at chain depths > 2, so the work happens at refresh time
--- and the dataset is a thin SELECT * with parameter-bound filters.
---
--- Two-step structure:
---   1. WITH RECURSIVE walks `parent_transfer_id` from each root (transfer
---      with NULL parent) down through descendants, tagging every member
---      with its `root_transfer_id` and `depth`.
---   2. Each chain member is then joined back to `transactions` and split
---      into source-leg (signed_amount < 0) × target-leg (signed_amount > 0)
---      pairs sharing the transfer_id, producing one row per edge.
---
--- Multi-leg-only semantics: single-leg transfers (sale records, the
--- inflow-only `external_txn` arrival rows) have no source or no target
--- leg by themselves and are dropped from the trail. They still appear
--- as chain members (counted by depth) — they just don't contribute
--- visible edges. The chain ancestry is preserved because the recursive
--- walk operates on `transfer_id` / `parent_transfer_id` directly, not
--- on legs. To inspect a single-leg member, drill from the row into
--- AR Transactions filtered to that transfer_id.
---
--- IMPORTANT — refresh contract: this matview is NOT auto-refreshed.
--- Operators must run
---     REFRESH MATERIALIZED VIEW inv_money_trail_edges;
--- after each ETL load (the demo's `quicksight-gen demo apply` does
--- this automatically, alongside the ar_unified_exceptions and
--- inv_pair_rolling_anomalies refreshes).
 DROP MATERIALIZED VIEW IF EXISTS inv_money_trail_edges;
-CREATE MATERIALIZED VIEW inv_money_trail_edges AS
-WITH RECURSIVE
-distinct_transfers AS (
-    -- One row per transfer_id with its parent. transactions has one row
-    -- per leg, so we deduplicate before walking — the parent linkage is
-    -- transfer-level, not leg-level.
-    SELECT DISTINCT transfer_id, parent_transfer_id
-    FROM transactions
-),
-chain AS (
-    -- Roots: transfers with no parent. Each root labels itself.
-    SELECT
-        transfer_id,
-        transfer_id AS root_transfer_id,
-        0           AS depth
-    FROM distinct_transfers
-    WHERE parent_transfer_id IS NULL
-
-    UNION ALL
-
-    -- Descendants inherit the root and bump depth.
-    SELECT
-        d.transfer_id,
-        c.root_transfer_id,
-        c.depth + 1
-    FROM distinct_transfers d
-    JOIN chain c ON d.parent_transfer_id = c.transfer_id
-)
-SELECT
-    c.root_transfer_id,
-    c.transfer_id,
-    c.depth,
-    src.account_id           AS source_account_id,
-    src.account_name         AS source_account_name,
-    src.account_type         AS source_account_type,
-    tgt.account_id           AS target_account_id,
-    tgt.account_name         AS target_account_name,
-    tgt.account_type         AS target_account_type,
-    tgt.signed_amount        AS hop_amount,
-    tgt.posted_at            AS posted_at,
-    tgt.transfer_type        AS transfer_type
-FROM chain c
-JOIN transactions tgt
-  ON tgt.transfer_id = c.transfer_id
- AND tgt.signed_amount > 0
- AND tgt.status = 'success'
-JOIN transactions src
-  ON src.transfer_id = c.transfer_id
- AND src.signed_amount < 0
- AND src.status = 'success';

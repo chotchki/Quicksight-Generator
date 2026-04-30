@@ -810,8 +810,27 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
             cur.execute(seed_sql)
             click.echo("  Refreshing materialized views...")
             cur.execute("REFRESH MATERIALIZED VIEW ar_unified_exceptions;")
-            cur.execute("REFRESH MATERIALIZED VIEW inv_pair_rolling_anomalies;")
-            cur.execute("REFRESH MATERIALIZED VIEW inv_money_trail_edges;")
+            # N.3.n: Investigation matviews migrated to per-instance
+            # prefixed names (``<prefix>_inv_pair_rolling_anomalies`` /
+            # ``<prefix>_inv_money_trail_edges``) emitted by
+            # common/l2/schema.py. demo apply refreshes them at the
+            # default L2 instance prefix; integrators with their own
+            # institution YAML get the prefix from their cfg.
+            #
+            # N.3.i (deferred): the seed SQL above still plants v5-shape
+            # flat-table data via apps/investigation/demo_data.py, so
+            # the prefixed Inv matviews refresh against zero rows of
+            # planted Investigation data — they refresh fine but the
+            # dashboard sheets render empty until the seed lift to
+            # common/l2/seed.py lands.
+            cur.execute(
+                f"REFRESH MATERIALIZED VIEW "
+                f"{cfg.l2_instance_prefix}_inv_pair_rolling_anomalies;"
+            )
+            cur.execute(
+                f"REFRESH MATERIALIZED VIEW "
+                f"{cfg.l2_instance_prefix}_inv_money_trail_edges;"
+            )
         conn.commit()
         click.echo("  Database ready.")
     except Exception:
