@@ -1,6 +1,6 @@
 # QuickSight Analysis Generator
 
-Python tool that programmatically generates AWS QuickSight JSON definitions (theme, datasets, analyses, dashboards) and deploys them via boto3. Ships **four independent QuickSight apps** sharing one theme registry, account, datasource, and CLI surface:
+Python tool that programmatically generates AWS QuickSight JSON definitions (theme, datasets, analyses, dashboards) and deploys them via boto3. Ships **four independent QuickSight apps**, all L2-fed off one institution YAML (account, datasource, theme, and per-instance schema prefix), sharing the CLI surface:
 
 - **L1 Dashboard** — persona-blind L1 invariant violation surface (drift / overdraft / limit breach / stuck pending / stuck unbundled / supersession audit / today's exceptions / daily statement / transactions). Configured by an L2 instance — feed any institution's L2 YAML once, dashboard renders against it.
 - **L2 Flow Tracing** — Rails / Chains / Transfer Templates / L2 Hygiene Exceptions for the integrator validating their L2 instance against the SPEC.
@@ -27,9 +27,11 @@ pip install -e ".[demo]"
 # Generate all JSON (all three apps, one theme)
 quicksight-gen generate --all -c config.yaml -o out/
 
-# Generate a single app
-quicksight-gen generate payment-recon -c config.yaml -o out/
-quicksight-gen generate l1-dashboard -c config.yaml -o out/ --theme-preset sasquatch-bank
+# Generate a single app (theme comes from the L2 instance YAML's
+# inline `theme:` block; pass --l2-instance to point at a different
+# institution YAML)
+quicksight-gen generate l1-dashboard -c config.yaml -o out/
+quicksight-gen generate l1-dashboard -c config.yaml -o out/ --l2-instance run/sasquatch_pr.yaml
 
 # Deploy to AWS (delete-then-create; polls async resources to terminal state)
 quicksight-gen deploy --all -c config.yaml -o out/
@@ -55,7 +57,7 @@ pytest                              # unit + integration, fast, no AWS
 ./run_e2e.sh --skip-deploy browser  # browser e2e only
 ```
 
-`demo apply` is app-scoped: `demo apply l1-dashboard` / `demo apply l2-flow-tracing` / `demo apply investigation` all read theme from the L2 institution YAML's inline `theme:` block (per N.1 / N.3 — `cfg.theme_preset` falls back to the registry `default` for any app that hasn't been L2-fed yet, currently just Executives until N.4); `--all` generates every app. Schema is always loaded in full — feeds the prefixed base tables (`<prefix>_transactions`, `<prefix>_daily_balances`) emitted by the L2 instance. Investigation's pre-N.3 carry-over (it registered its own sub-ledgers in `ar_ledger_accounts` / `ar_subledger_accounts` for FK integrity) is being unwound — the demo seed lift to `common/l2/seed.py` is deferred Phase O work; until then, the existing v5-shape demo seed plants flat-table data that doesn't surface in the new prefixed Inv matviews. Aurora deploy verification of the L2-fed Investigation flow with planted data is N.3.p.
+`demo apply` is app-scoped: `demo apply l1-dashboard` / `demo apply l2-flow-tracing` / `demo apply investigation` / `demo apply executives` all read theme from the L2 institution YAML's inline `theme:` block (post-N.4 every shipped app is L2-fed); `--all` generates every app. When the L2 instance has no `theme:` block, the deploy skips emitting a custom Theme resource and AWS QuickSight CLASSIC takes over (N.4.k silent-fallback contract). Schema is always loaded in full — feeds the prefixed base tables (`<prefix>_transactions`, `<prefix>_daily_balances`) emitted by the L2 instance. Investigation's pre-N.3 carry-over (it registered its own sub-ledgers in `ar_ledger_accounts` / `ar_subledger_accounts` for FK integrity) is being unwound — the demo seed lift to `common/l2/seed.py` is deferred Phase O work; until then, the existing v5-shape demo seed plants flat-table data that doesn't surface in the new prefixed Inv matviews. Aurora deploy verification of the L2-fed Investigation + Executives flow with planted data is N.4.o.
 
 ## Generated Output
 
@@ -118,10 +120,10 @@ src/quicksight_gen/
   __main__.py            # Entry point (delegates to cli.main)
   cli.py                 # Click CLI: generate / deploy / cleanup / demo / export (all with --all or app arg)
   common/
-    config.py            # Config dataclass + YAML/env loader (principal_arns list, theme_preset)
+    config.py            # Config dataclass + YAML/env loader (principal_arns list, l2_instance_prefix); theme is L2-driven, no cfg.theme_preset post-N.4.j
     models.py            # Dataclasses mapping to QuickSight API JSON (to_aws_json + _strip_nones)
     ids.py               # Typed ID newtypes (SheetId / VisualId / FilterGroupId / ParameterName / etc.)
-    theme.py             # Theme presets (default / sasquatch-bank / sasquatch-bank-investigation); PRESETS registry
+    theme.py             # `DEFAULT_PRESET` fallback + `build_theme(cfg, theme: ThemePreset | None) -> Theme | None` (None → silent-fallback to AWS CLASSIC at deploy)
     persona.py           # DemoPersona dataclass + derive_mapping_yaml_text — single source of truth for whitelabel-substitutable Sasquatch strings
     deploy.py            # boto3 delete-then-create deploy with async waiters
     cleanup.py           # Tag-based cleanup of stale resources (ManagedBy:quicksight-gen)
@@ -189,7 +191,7 @@ tests/
   test_drill.py          # Cross-app URL deep-link builder tests
   test_persona.py        # DemoPersona round-trip + mapping.yaml derivation parity
   test_export.py         # `export docs` / `export training` CLI tests
-  test_theme_presets.py  # Preset registry, serialization, analysis name integration
+  test_theme_presets.py  # `DEFAULT_PRESET` spot-checks + `build_theme` serialization + N.4.k silent-fallback contract
   test_dataset_contract.py # DatasetContract basics + per-builder column-match assertions
   test_demo_data.py      # Demo determinism (SHA256 hash lock), row counts, FK integrity, scenario coverage, cross-app integrity, shared base layer projection
   test_demo_sql.py       # Schema/seed SQL structure, CLI command tests
@@ -274,7 +276,7 @@ Sheets walk the L2 model: each Rail's runtime postings, each Chain's parent → 
 - Config accepts a pre-existing DataSource ARN for production use; for demo, `datasource_arn` is auto-derived from `demo_database_url` and `datasource.json` is generated
 - All datasets use custom SQL in PostgreSQL syntax (no SPICE → Direct Query). Seed changes show up immediately after `demo apply` — no refresh step.
 - SQL is constrained to a portable subset: SQL/JSON path syntax (`JSON_VALUE`, `JSON_QUERY`, `JSON_EXISTS`); no JSONB, no `->>` / `->` / `@>` / `?` operators, no GIN indexes on JSON, no Postgres extensions, no array / range types. PostgreSQL 17+ required for `demo apply`.
-- Generated resource IDs use kebab-case with a configurable prefix (default `qs-gen-`). For L2-fed apps (currently L1 dashboard), the L2 instance prefix becomes the middle segment via `cfg.l2_instance_prefix`, producing IDs like `qs-gen-sasquatch_ar-l1-dashboard` (M.2d.3). The app's build function (`build_l1_dashboard_app`) auto-derives the field from `l2_instance.instance` when not pre-stamped, so 69 `cfg.prefixed(...)` call sites needed zero changes. New L2-fed apps follow the same pattern: idempotent derivation at the top of every public entry point that consumes both `cfg` and `l2_instance`.
+- Generated resource IDs use kebab-case with a configurable prefix (default `qs-gen-`). All four shipped apps (L1, L2FT, Investigation, Executives) are L2-fed post-N.4 — the L2 instance prefix becomes the middle segment via `cfg.l2_instance_prefix`, producing IDs like `qs-gen-sasquatch_ar-l1-dashboard` (M.2d.3). The app's build function (`build_l1_dashboard_app`) auto-derives the field from `l2_instance.instance` when not pre-stamped, so 69 `cfg.prefixed(...)` call sites needed zero changes. New L2-fed apps follow the same pattern: idempotent derivation at the top of every public entry point that consumes both `cfg` and `l2_instance`.
 - All resources tagged `ManagedBy: quicksight-gen` plus `L2Instance: <prefix>` when `cfg.l2_instance_prefix` is set; `extra_tags` in config are merged in.
 - `cleanup` uses those tags: legacy mode (no `l2_instance_prefix`) sweeps any `ManagedBy` resource not in the current `out/`; per-instance mode (`l2_instance_prefix` set) only sweeps resources whose `L2Instance` tag matches, so concurrent deploys against different L2 instances don't sweep each other.
 - Every sheet has a plain-language description; every visual has a subtitle — the end customer is not technical. Coverage is enforced in unit + API e2e tests.
@@ -294,9 +296,9 @@ Sheets walk the L2 model: each Rail's runtime postings, each Chain's parent → 
 ## Conventions
 
 - Type hints throughout
-- **Never hardcode hex colors in analysis code.** Resolve from `get_preset(cfg.theme_preset).<token>` at generate time (accent, primary_fg, link_tint, etc.).
+- **Never hardcode hex colors in analysis code.** Resolve from `theme.<token>` at generate time (accent, primary_fg, link_tint, etc.) where `theme` is the `ThemePreset` returned by `resolve_l2_theme(l2_instance) or DEFAULT_PRESET`.
 - One module per concern; e.g., the L1 dashboard splits dataset builders, app builders, and sheet populators across separate modules so each surface stays focused.
-- Theme presets live in the `PRESETS` dict in `common/theme.py`; set `analysis_name_prefix="Demo"` on demo presets
+- **Theme is an L2 instance attribute** (post-N.4.j). Each L2 institution YAML carries an inline `theme:` block validated by `ThemePreset` (in `common/l2/theme.py`). When omitted, `build_theme` returns None and AWS QuickSight CLASSIC takes over at deploy (silent-fallback contract, N.4.k). The single `DEFAULT_PRESET` in `common/theme.py` is the in-canvas-accent fallback for apps when their L2 instance declares no theme — no registry, no `--theme-preset` flag, no `cfg.theme_preset`. Set `analysis_name_prefix="Demo"` on demo themes to tag analyses.
 - Default theme: blues and greys, high contrast, titles ≥ 16px, body ≥ 12px
 - The end customer doesn't know exactly what they want — keep the code easy to mutate and iterate on
 - Rich text on Getting Started sheets uses `common/rich_text.py`; theme-accent colors resolve to hex at generate time

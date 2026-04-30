@@ -69,8 +69,8 @@
     - [x] N.4.k — `build_theme(cfg, theme: ThemePreset | None) -> Theme | None` returns `None` when `theme is None`. CLI + harness deploy skip `theme.json` write + theme deploy in that case — AWS CLASSIC takes over. `resolve_l2_theme` now returns `ThemePreset | None`. New unit test `TestDefaultPreset::test_silent_fallback_returns_none_when_no_theme` locks the contract.
     - [x] N.4.l — Dropped `PRESETS` dict + `get_preset()`; the 4 apps + 1 test file now reference `DEFAULT_PRESET` directly. Removed the 5 registry-validation tests in `test_theme_presets.py` (the function under test no longer exists). Updated `common/l2/theme.py` docstring.
   - **Phase 4 — Verify + close.**
-    - [ ] N.4.m — Full unit suite + pyright; commit. Expect ~70-100 LOC churn from N.4.j + hash-relock fallout from N.4.h.
-    - [ ] N.4.n — CLAUDE.md sweep. Executives section reflects L2-fed status. Architecture Decisions theme paragraph drops per-app-preset framing. Document the silent-fallback contract on `build_theme`.
+    - [x] N.4.m — Full unit suite green (1186 passed, 84 skipped); pyright clean on `common/tree/` strict scope. Single commit `d13b661` covers N.4.h–N.4.l (37 files, +698 / -408).
+    - [x] N.4.n — CLAUDE.md sweep: tagline ("four apps, all L2-fed"), demo apply paragraph (mentions Executives + the silent-fallback contract), single-app generate example (uses `--l2-instance` instead of dropped `--theme-preset`), structure tree comments (config.py / theme.py / test_theme_presets.py descriptions), Architecture Decisions theme bullet rewritten around the L2 attribute model, Conventions hex-color rule references `theme.<token>` instead of `get_preset(cfg.theme_preset).<token>`.
     - [ ] N.4.o — **Combined N.3 + N.4 Aurora deploy verify.** Closes N.3.p + Exec validation:
       - Deploy L1 + L2FT + Inv + Exec against `sasquatch_pr.yaml` (one institution YAML, four apps).
       - Verify each dashboard renders with the forest-green theme baked in.
