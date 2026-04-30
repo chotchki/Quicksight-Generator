@@ -142,6 +142,11 @@ def build_datasource(cfg: Config) -> DataSource:
                 Host=info.host, Port=info.port, Database=info.database,
             ),
         )
+        # RDS Oracle defaults to no TLS (option group needed to enable);
+        # QuickSight's SSL probe closes the connection in ~2ms otherwise.
+        # For Postgres, RDS forces SSL by default → DisableSsl=False
+        # works.
+        ssl = SslProperties(DisableSsl=True)
     else:
         info = _parse_pg_url(cfg.demo_database_url)
         ds_type = "POSTGRESQL"
@@ -150,6 +155,7 @@ def build_datasource(cfg: Config) -> DataSource:
                 Host=info.host, Port=info.port, Database=info.database,
             ),
         )
+        ssl = SslProperties(DisableSsl=False)
 
     ds_id = cfg.prefixed("demo-datasource")
 
@@ -171,7 +177,7 @@ def build_datasource(cfg: Config) -> DataSource:
                 Username=info.user, Password=info.password,
             ),
         ),
-        SslProperties=SslProperties(DisableSsl=False),
+        SslProperties=ssl,
         Permissions=permissions,
         Tags=cfg.tags(),
     )
