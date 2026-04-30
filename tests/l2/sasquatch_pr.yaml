@@ -909,3 +909,39 @@ limit_schedules:
       lower-tech / lower-volume operations; SNB caps aggressive
       check issuance to surface anomalies.
 seed_hash: 00a5f678f6786a2a4fc73e39b0ced8f542a7ef333d8d312e9361d4d8c3062380
+
+# Inline brand theme (N.1). Mirrors the legacy ``sasquatch-bank``
+# preset in common/theme.py byte-for-byte so the PR demo render is
+# pixel-identical pre/post-N.1.
+theme:
+  theme_name: "Sasquatch National Bank Theme"
+  version_description: "Sasquatch National Bank — forest green and gold palette"
+  analysis_name_prefix: "Demo"
+  data_colors:
+    - "#2D6A4F"
+    - "#C49A2A"
+    - "#5C4033"
+    - "#52796F"
+    - "#B85C38"
+    - "#74A892"
+    - "#6B4C8A"
+    - "#7A7A72"
+  empty_fill_color: "#D6D6CE"
+  gradient: ["#C5DDD3", "#1B4332"]
+  primary_bg: "#FFFFFF"
+  secondary_bg: "#FAF6F1"
+  primary_fg: "#3D3D3A"
+  secondary_fg: "#52796F"
+  accent: "#2D6A4F"
+  accent_fg: "#FFFFFF"
+  link_tint: "#E8F1EB"
+  danger: "#B71C1C"
+  danger_fg: "#FFFFFF"
+  warning: "#BF6D0A"
+  warning_fg: "#FFFFFF"
+  success: "#2D6A4F"
+  success_fg: "#FFFFFF"
+  dimension: "#52796F"
+  dimension_fg: "#FFFFFF"
+  measure: "#1B4332"
+  measure_fg: "#FFFFFF"

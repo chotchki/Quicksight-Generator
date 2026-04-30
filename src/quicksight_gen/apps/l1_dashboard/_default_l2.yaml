@@ -122,3 +122,40 @@ limit_schedules:
     transfer_type: wire
     cap: 5000.00
 seed_hash: ad1417b4ccbcf0122859fd696daa7f3b2243d148767bf10d345711ca08d1d9a3
+
+# Inline brand theme (N.1). Mirrors the legacy ``default`` preset
+# in common/theme.py byte-for-byte so spec_example renders identically
+# pre/post-N.1. Apps consume from instance.theme; cfg.theme_preset is
+# no longer consulted on the L1/L2FT path.
+theme:
+  theme_name: "QuickSight Gen Theme"
+  version_description: "Auto-generated dashboard theme"
+  analysis_name_prefix: null
+  data_colors:
+    - "#2E5090"
+    - "#E07B39"
+    - "#3A9E6F"
+    - "#4A7DC7"
+    - "#8E5EA2"
+    - "#E6B422"
+    - "#4BC0C0"
+    - "#8C8C8C"
+  empty_fill_color: "#D9D9D9"
+  gradient: ["#C5DAF7", "#2E5090"]
+  primary_bg: "#FFFFFF"
+  secondary_bg: "#F5F6FA"
+  primary_fg: "#2D2D2D"
+  secondary_fg: "#4A4A4A"
+  accent: "#2E5090"
+  accent_fg: "#FFFFFF"
+  link_tint: "#E8EFF9"
+  danger: "#C62828"
+  danger_fg: "#FFFFFF"
+  warning: "#E65100"
+  warning_fg: "#FFFFFF"
+  success: "#2E7D32"
+  success_fg: "#FFFFFF"
+  dimension: "#4A7DC7"
+  dimension_fg: "#FFFFFF"
+  measure: "#1B2A4A"
+  measure_fg: "#FFFFFF"
