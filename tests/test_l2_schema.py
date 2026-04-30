@@ -825,18 +825,19 @@ def _baseline_instance() -> L2Instance:
 
 
 def test_refresh_matviews_sql_emits_one_per_view() -> None:
-    """All 13 L1-pipeline matviews each get a REFRESH command + an
+    """All 15 L1+inv matviews each get a REFRESH command + an
     ANALYZE follow-up: 2 current_* + 2 computed_* + 7 L1 invariants
     (drift + ledger_drift + overdraft + expected_eod_balance_breach +
     limit_breach + stuck_pending + stuck_unbundled) + 2 dashboard-shape
-    (daily_statement_summary + todays_exceptions) = 13 matviews × 2
-    statements each = 26 total."""
+    (daily_statement_summary + todays_exceptions) + 2 Investigation
+    matviews (inv_pair_rolling_anomalies + inv_money_trail_edges,
+    added in N.3.b) = 15 matviews × 2 statements each = 30 total."""
     sql = refresh_matviews_sql(_baseline_instance())
     statements = [s.strip() for s in sql.split(";") if s.strip()]
     refreshes = [s for s in statements if s.startswith("REFRESH ")]
     analyzes = [s for s in statements if s.startswith("ANALYZE ")]
-    assert len(refreshes) == 13
-    assert len(analyzes) == 13
+    assert len(refreshes) == 15
+    assert len(analyzes) == 15
     # Every REFRESHed matview gets a matching ANALYZE.
     refresh_names = {s.removeprefix("REFRESH MATERIALIZED VIEW ") for s in refreshes}
     analyze_names = {s.removeprefix("ANALYZE ") for s in analyzes}
@@ -886,3 +887,135 @@ def test_refresh_matviews_sql_uses_instance_prefix() -> None:
     assert "alpha_" in sql_a and "beta_" not in sql_a
     assert "beta_current_transactions" in sql_b
     assert "beta_" in sql_b and "alpha_" not in sql_b
+
+
+# =====================================================================
+# N.3.c — Investigation matview emitter tests.
+# =====================================================================
+#
+# Both matviews are L2-instance-prefixed lifts of the K.4.4 + K.4.5
+# bodies from the legacy ``schema.sql``. The emitter substitutes the
+# matview names + every ``transactions`` reference with the prefixed
+# version. Tests below assert the substitutions are total (no flat
+# refs leak) and the body shape is preserved.
+
+_INV_VIEW_NAMES = (
+    "inv_pair_rolling_anomalies",
+    "inv_money_trail_edges",
+)
+
+
+@pytest.mark.parametrize("view", _INV_VIEW_NAMES)
+def test_inv_matview_emitted_per_instance(view: str) -> None:
+    """Both Investigation matviews appear in emit_schema output, prefixed
+    by the L2 instance name."""
+    sql = emit_schema(_instance("v6"))
+    assert f"CREATE MATERIALIZED VIEW v6_{view} AS" in sql
+    assert f"DROP MATERIALIZED VIEW IF EXISTS v6_{view}" in sql
+
+
+@pytest.mark.parametrize("view", _INV_VIEW_NAMES)
+def test_inv_matview_drops_before_creates(view: str) -> None:
+    """Drop precedes create — idempotency holds for the inv matview block."""
+    sql = emit_schema(_instance("v6"))
+    drop_idx = sql.index(f"DROP MATERIALIZED VIEW IF EXISTS v6_{view}")
+    create_idx = sql.index(f"CREATE MATERIALIZED VIEW v6_{view}")
+    assert drop_idx < create_idx
+
+
+@pytest.mark.parametrize("view", _INV_VIEW_NAMES)
+def test_inv_matview_drops_emit_before_base_table_create(view: str) -> None:
+    """Inv matview drops sit at the top of the script, before the base
+    CREATE TABLE — same dependency-ordering rule as L1 invariant views.
+    Otherwise re-running ``apply schema`` against an existing instance
+    would error because the matview depends on the base table.
+    """
+    sql = emit_schema(_instance("ord"))
+    first_create = sql.index("CREATE TABLE ord_transactions")
+    drop_idx = sql.index(f"DROP MATERIALIZED VIEW IF EXISTS ord_{view}")
+    assert drop_idx < first_create
+
+
+def test_inv_pair_rolling_anomalies_uses_prefixed_transactions() -> None:
+    """The pair-rolling matview body reads from the prefixed base table
+    everywhere — no flat ``transactions`` refs leak through the
+    substitution."""
+    sql = emit_schema(_instance("ipra"))
+    body_match = re.search(
+        r"CREATE MATERIALIZED VIEW ipra_inv_pair_rolling_anomalies AS(.*?);",
+        sql,
+        re.DOTALL,
+    )
+    assert body_match is not None
+    body = body_match.group(1)
+    # Positive: prefixed refs present (the recipient + sender CTEs).
+    assert "FROM ipra_transactions recipient" in body
+    assert "JOIN ipra_transactions sender" in body
+    # Negative: NO flat ``transactions`` ref survived.
+    assert "FROM transactions" not in body
+    assert "JOIN transactions" not in body
+
+
+def test_inv_money_trail_edges_uses_prefixed_transactions() -> None:
+    """The money-trail matview body — distinct_transfers CTE +
+    chain CTE + final SELECT — all prefix-substituted. Also verifies
+    the v6 column rename: parent linkage is ``transfer_parent_id``,
+    not v5's ``parent_transfer_id``."""
+    sql = emit_schema(_instance("imte"))
+    body_match = re.search(
+        r"CREATE MATERIALIZED VIEW imte_inv_money_trail_edges AS(.*?);",
+        sql,
+        re.DOTALL,
+    )
+    assert body_match is not None
+    body = body_match.group(1)
+    # Positive: prefixed refs present.
+    assert "FROM imte_transactions" in body  # distinct_transfers CTE
+    assert "JOIN imte_transactions tgt" in body
+    assert "JOIN imte_transactions src" in body
+    # v6 column name (legacy was parent_transfer_id).
+    assert "transfer_parent_id" in body
+    # Negative: no flat refs.
+    assert "FROM transactions" not in body
+    assert "JOIN transactions" not in body
+    # Negative: no SQL ref to the legacy v5 column. Strip ``--`` comment
+    # lines first — they're allowed to mention the v6 rename.
+    sql_lines = [
+        ln for ln in body.splitlines() if not ln.lstrip().startswith("--")
+    ]
+    sql_only = "\n".join(sql_lines)
+    assert "parent_transfer_id" not in sql_only
+
+
+def test_inv_matviews_independent_of_each_other() -> None:
+    """Neither inv matview references the other — safe to refresh in
+    any relative order. (L1 invariants have inter-view dependencies;
+    inv matviews don't.)"""
+    sql = emit_schema(_instance("ind"))
+    pair_match = re.search(
+        r"CREATE MATERIALIZED VIEW ind_inv_pair_rolling_anomalies AS(.*?);",
+        sql,
+        re.DOTALL,
+    )
+    trail_match = re.search(
+        r"CREATE MATERIALIZED VIEW ind_inv_money_trail_edges AS(.*?);",
+        sql,
+        re.DOTALL,
+    )
+    assert pair_match is not None
+    assert trail_match is not None
+    assert "ind_inv_money_trail_edges" not in pair_match.group(1)
+    assert "ind_inv_pair_rolling_anomalies" not in trail_match.group(1)
+
+
+def test_inv_matviews_isolated_per_instance() -> None:
+    """Two instances emit non-overlapping inv matview names — the
+    storage-isolation contract holds for inv views same as L1 views."""
+    sql_a = emit_schema(_instance("alpha"))
+    sql_b = emit_schema(_instance("beta"))
+    assert "alpha_inv_pair_rolling_anomalies" in sql_a
+    assert "alpha_inv_money_trail_edges" in sql_a
+    assert "beta_" not in sql_a
+    assert "beta_inv_pair_rolling_anomalies" in sql_b
+    assert "beta_inv_money_trail_edges" in sql_b
+    assert "alpha_" not in sql_b

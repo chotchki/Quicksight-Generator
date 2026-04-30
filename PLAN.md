@@ -27,11 +27,28 @@
 - [x] **N.2 — Inv + Exec audit + reshape decision.** Both apps RESHAPE onto L2; both decisions in `docs/audits/n_2_inv_exec_audit.md`. **Architectural reframe**: one L2 YAML per institution drives ALL FOUR apps (L1 / L2FT / Inv / Exec). Not per-app YAMLs. The YAML is the **institution spec** — accounts, rails, theme, eventually seed scenarios. SPEC.md and the `L2Instance` docstring need a rename pass to drop "L2 instance" → "institution YAML" in prose (typed identifier `L2Instance` stays). Investigation's two matviews migrate from `schema.sql` to `common/l2/schema.py` for per-instance prefixing.
 
 - [ ] **N.3 — Investigation reshape.** Port Investigation onto L1/L2 primitives. The 4 content sheets keep their shapes; reshape is plumbing only.
-  - Migrate `inv_pair_rolling_anomalies` + `inv_money_trail_edges` matviews from `schema.sql` → `common/l2/schema.py::_emit_inv_views()` so they emit as `<prefix>_inv_pair_rolling_anomalies` etc. (mirrors the L1 invariant view pattern).
-  - Datasets switch from global matview names to prefixed names; `build_investigation_app(cfg, *, l2_instance=None)` signature mirrors L1.
-  - Theme via `resolve_l2_theme(l2_instance)`; drop `cfg.theme_preset` consumption.
-  - Cleanup: drop the `populate_app_info_sheet(theme=None)` fallback path in `common/sheets/app_info.py` once Investigation no longer reads `cfg.theme_preset`. Make the `theme` kwarg required.
-  - Demo seed: defer the Cascadia/Juniper plant lift to `common/l2/seed.py` — non-blocking; track as part of the spec/scenario YAML split (Phase O candidate).
+  - **Phase 1 — Schema (additive).**
+    - [x] N.3.a — Read + document the 2 inv matview SQL bodies. Both touch only `transactions` (no `daily_balances`); 3-substitution shape per body.
+    - [x] N.3.b — `_emit_inv_views(instance)` added to `common/l2/schema.py`. Lifts the K.4.4/K.4.5 matview bodies; prefix-substitutes matview names + every `transactions` ref. Wired into `emit_schema()` and `refresh_matviews_sql()`.
+    - [x] N.3.c — 10 unit tests in `test_l2_schema.py` covering parametrized emit/drop-before-create/drop-before-base, prefix substitution totality, no flat-ref leakage, no v5-column leakage, inter-view independence, per-instance isolation. Real-Postgres parse deferred to N.3.j Aurora deploy.
+  - **Phase 2 — App rewiring.**
+    - [ ] N.3.d — Investigation dataset SQL strings → prefixed matview + base-table names.
+    - [ ] N.3.e — Investigation dataset IDs → prefixed via `cfg.prefixed()`.
+    - [ ] N.3.f — `build_investigation_app(cfg, *, l2_instance=None)`. Default to spec_example. Sets `cfg.l2_instance_prefix` if not pre-set. Mirror L1.
+    - [ ] N.3.g — Theme via `resolve_l2_theme(l2_instance)`; drop every `get_preset(cfg.theme_preset)` call. Pass `theme=theme` to `populate_app_info_sheet`.
+    - [ ] N.3.h — CLI's `_generate_investigation` accepts + passes `l2_instance` (mirror L1 plumbing).
+  - **Phase 3 — Demo seed (rolls in AR-dim-tables backlog cleanup).**
+    - [ ] N.3.i — `apps/investigation/demo_data.py` takes a `prefix` kwarg; all `_inserts("transactions", ...)` become `_inserts(f"{prefix}_transactions", ...)`. Drop the `ar_ledger_accounts` / `ar_subledger_accounts` plants AND drop the corresponding CREATE TABLE statements from `schema.sql` (the legacy AR dim carry-overs noted in the Backlog).
+    - [ ] N.3.j — `quicksight-gen demo apply investigation` flow: refresh `<prefix>_inv_*` matviews; pass `cfg.l2_instance_prefix` to `generate_demo_sql`.
+  - **Phase 4 — Tests.**
+    - [ ] N.3.k — Update `test_investigation.py` for prefixed dataset IDs + L2-fed signature. Walk failures one-at-a-time.
+    - [ ] N.3.l — Update `tests/e2e/test_inv_*.py` (deploy-gated; grep-verify first to scope).
+    - [ ] N.3.m — Full unit suite + pyright; commit.
+  - **Phase 5 — Drop legacy + docs.**
+    - [ ] N.3.n — Drop the global `inv_pair_rolling_anomalies` + `inv_money_trail_edges` from `schema.sql`. Add `DROP MATERIALIZED VIEW IF EXISTS` for upgrade safety. Done AFTER tests are green so the diff is the proof.
+    - [ ] N.3.o — CLAUDE.md Investigation paragraph reflects L2-fed status.
+    - [ ] N.3.p — Aurora deploy verification of the Sasquatch Investigation persona (defer to combined N.3+N.4 deploy at end of N.4).
+  - **Cleanup carried into N.4** — `populate_app_info_sheet(theme=None)` fallback stays until Executives also migrates.
 
 - [ ] **N.4 — Executives reshape.** Port Executives onto L1/L2 primitives. The 3 operational sheets keep their shapes; reshape is plumbing only.
   - Datasets become `<prefix>-exec-*-dataset`, reading from prefixed `<prefix>_transactions` / `<prefix>_daily_balances`. No matview migration needed (Executives has none).
