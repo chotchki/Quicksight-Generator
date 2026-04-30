@@ -25,15 +25,23 @@ Sheets land per L.6 sub-step:
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 # Importing datasets registers each Executives DatasetContract via its
 # module-level register_contract() side effect — required so the L.1.17
 # bare-string / unvalidated-Column emit-time validator can resolve
 # every ds["col"] ref in the visuals below.
 from quicksight_gen.apps.executives import datasets as _register_contracts  # noqa: F401
+# N.4.b: Executives reads the same default institution YAML as L1
+# (per the N.2 audit's "one institution YAML drives all apps" framing).
+# The default lives under apps/l1_dashboard/ for now; the path will be
+# neutralized when the spec/scenario YAML split lands (Phase O candidate).
+from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.tree._helpers import _AutoSentinel
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.ids import SheetId
+from quicksight_gen.common.l2 import L2Instance, ThemePreset
 from quicksight_gen.common.models import Analysis as ModelAnalysis
 from quicksight_gen.common.models import Dashboard as ModelDashboard
 from quicksight_gen.common.sheets.app_info import (
@@ -44,7 +52,7 @@ from quicksight_gen.common.sheets.app_info import (
     DS_APP_INFO_MATVIEWS,
     populate_app_info_sheet,
 )
-from quicksight_gen.common.theme import get_preset
+from quicksight_gen.common.theme import resolve_l2_theme
 from quicksight_gen.common.tree import (
     Analysis,
     App,
@@ -142,8 +150,14 @@ def _section_box_content(
     )
 
 
-def _populate_getting_started(cfg: Config, sheet: Sheet) -> None:
-    accent = get_preset(cfg.theme_preset).accent
+def _populate_getting_started(
+    cfg: Config, sheet: Sheet, *, theme: ThemePreset,
+) -> None:
+    """Getting Started — landing page for the Executives app.
+
+    N.4.c: ``theme`` is the L2-resolved theme.
+    """
+    accent = theme.accent
 
     sheet.layout.row(height=4).add_text_box(
         TextBox(
@@ -580,10 +594,15 @@ def _wire_account_coverage_filter_groups(
 # App entry points
 # ---------------------------------------------------------------------------
 
-def _analysis_name(cfg: Config) -> str:
-    preset = get_preset(cfg.theme_preset)
-    if preset.analysis_name_prefix:
-        return f"{preset.analysis_name_prefix} — Executives"
+def _analysis_name(theme: ThemePreset) -> str:
+    """Resolve the analysis name from the L2 theme's prefix (N.4.c).
+
+    Mirrors L1 / Investigation: when the institution YAML declares a
+    theme with ``analysis_name_prefix`` (e.g. "Demo"), the title
+    becomes ``"<prefix> — Executives"``; otherwise just ``"Executives"``.
+    """
+    if theme.analysis_name_prefix:
+        return f"{theme.analysis_name_prefix} — Executives"
     return "Executives"
 
 
@@ -605,12 +624,37 @@ _EXEC_SHEET_SPECS: tuple[tuple[str, str, str, str], ...] = (
 )
 
 
-def build_executives_app(cfg: Config) -> App:
-    """Construct the Executives App as a tree."""
+def build_executives_app(
+    cfg: Config,
+    *,
+    l2_instance: L2Instance | None = None,
+) -> App:
+    """Construct the Executives App as a tree (N.4.b — L2-fed).
+
+    Per the N.2 audit, Executives is fed by the same institution YAML
+    that drives L1 / L2FT / Investigation. The L2 instance prefix is
+    auto-derived from ``l2_instance.instance`` here so callers don't
+    have to pre-stamp ``cfg.l2_instance_prefix``; if the caller HAS
+    pre-set it, that value is preserved. Defaults to the
+    persona-neutral ``spec_example`` instance.
+
+    Executives reads from ``<prefix>_transactions`` +
+    ``<prefix>_daily_balances``. No app-specific matviews.
+    """
+    if l2_instance is None:
+        l2_instance = default_l2_instance()
+
+    if cfg.l2_instance_prefix is None:
+        cfg = replace(cfg, l2_instance_prefix=str(l2_instance.instance))
+
+    # N.4.c: theme from the L2 instance, not from cfg.theme_preset.
+    theme = resolve_l2_theme(l2_instance)
+
+    analysis_name = _analysis_name(theme)
     app = App(name="executives", cfg=cfg)
     analysis = app.set_analysis(Analysis(
         analysis_id_suffix="executives-analysis",
-        name=_analysis_name(cfg),
+        name=analysis_name,
     ))
 
     datasets = _datasets(cfg)
@@ -626,7 +670,9 @@ def build_executives_app(cfg: Config) -> App:
             description=description,
         ))
 
-    _populate_getting_started(cfg, sheets[SHEET_EXEC_GETTING_STARTED])
+    _populate_getting_started(
+        cfg, sheets[SHEET_EXEC_GETTING_STARTED], theme=theme,
+    )
     _populate_account_coverage(
         cfg, sheets[SHEET_EXEC_ACCOUNT_COVERAGE], datasets=datasets,
     )
@@ -658,11 +704,12 @@ def build_executives_app(cfg: Config) -> App:
         cfg, app_info_sheet,
         liveness_ds=datasets[DS_APP_INFO_LIVENESS],
         matview_status_ds=datasets[DS_APP_INFO_MATVIEWS],
+        theme=theme,
     )
 
     app.create_dashboard(
         dashboard_id_suffix="executives-dashboard",
-        name=_analysis_name(cfg),
+        name=analysis_name,
     )
     return app
 
@@ -672,11 +719,23 @@ def build_executives_app(cfg: Config) -> App:
 # Wired into the CLI in L.6.10.
 # ---------------------------------------------------------------------------
 
-def build_analysis(cfg: Config) -> ModelAnalysis:
-    """Build the complete Executives Analysis resource via the tree."""
-    return build_executives_app(cfg).emit_analysis()
+def build_analysis(
+    cfg: Config, *, l2_instance: L2Instance | None = None,
+) -> ModelAnalysis:
+    """Build the complete Executives Analysis resource via the tree.
+
+    Forwards ``l2_instance`` to ``build_executives_app``; default
+    is the persona-neutral spec_example.
+    """
+    return build_executives_app(
+        cfg, l2_instance=l2_instance,
+    ).emit_analysis()
 
 
-def build_executives_dashboard(cfg: Config) -> ModelDashboard:
+def build_executives_dashboard(
+    cfg: Config, *, l2_instance: L2Instance | None = None,
+) -> ModelDashboard:
     """Build the Executives Dashboard resource via the tree."""
-    return build_executives_app(cfg).emit_dashboard()
+    return build_executives_app(
+        cfg, l2_instance=l2_instance,
+    ).emit_dashboard()

@@ -219,19 +219,39 @@ def _generate_investigation(
 
 def _generate_executives(
     config_path: str, output_dir: str, theme_preset: str | None,
+    *,
+    l2_instance_path: str | None = None,
 ) -> None:
+    from dataclasses import replace as _replace
+
     from quicksight_gen.apps.executives.app import (
-        build_analysis,
-        build_executives_dashboard,
+        build_executives_app,
     )
     from quicksight_gen.apps.executives.datasets import build_all_datasets
+    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from quicksight_gen.common.l2 import load_instance
 
     cfg = load_config(config_path)
     if theme_preset is not None:
         cfg.theme_preset = theme_preset
     out = Path(output_dir)
+
+    # N.4.d — Executives reads the same institution YAML the L1
+    # dashboard does (per the N.2 audit). Load the L2 instance up
+    # front and pre-stamp ``cfg.l2_instance_prefix`` so both
+    # ``build_all_datasets`` and ``build_executives_app`` see the
+    # prefix without needing to thread the instance through every
+    # builder.
+    if l2_instance_path is not None:
+        l2_instance = load_instance(Path(l2_instance_path))
+    else:
+        l2_instance = default_l2_instance()
+    if cfg.l2_instance_prefix is None:
+        cfg = _replace(cfg, l2_instance_prefix=str(l2_instance.instance))
+
     click.echo(
-        f"Executives: account={cfg.aws_account_id}, region={cfg.aws_region}"
+        f"Executives: account={cfg.aws_account_id}, "
+        f"region={cfg.aws_region}, l2_instance={l2_instance.instance}"
     )
 
     theme = build_theme(cfg)
@@ -245,11 +265,17 @@ def _generate_executives(
     for ds in datasets:
         _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
 
-    analysis = build_analysis(cfg)
-    _write_json(out / "executives-analysis.json", analysis.to_aws_json())
-
-    dashboard = build_executives_dashboard(cfg)
-    _write_json(out / "executives-dashboard.json", dashboard.to_aws_json())
+    # Build the app once + emit both Analysis + Dashboard so the L2
+    # instance is consistent across both (mirrors L1 / L2FT / Inv).
+    app = build_executives_app(cfg, l2_instance=l2_instance)
+    _write_json(
+        out / "executives-analysis.json",
+        app.emit_analysis().to_aws_json(),
+    )
+    _write_json(
+        out / "executives-dashboard.json",
+        app.emit_dashboard().to_aws_json(),
+    )
 
     click.echo(f"\nGenerated {1 + len(datasets) + 2} files in {out}/")
 
@@ -884,18 +910,22 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
         json_count += len(inv_datasets) + 2
 
     if app in ("executives", "all"):
-        # Executives has no demo seed of its own — reads what PR/AR/Inv
-        # plant. Just emit the JSON.
+        # Executives has no demo seed of its own — reads what
+        # Investigation plants. N.4.d: now L2-fed; passes the same
+        # default L2 instance Investigation uses (one institution YAML
+        # drives all four apps per the N.2 audit).
         exec_datasets = build_exec_datasets(cfg)
         for ds in exec_datasets:
             _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
         _write_json(
             out / "executives-analysis.json",
-            build_exec_analysis(cfg).to_aws_json(),
+            build_exec_analysis(cfg, l2_instance=inv_l2).to_aws_json(),
         )
         _write_json(
             out / "executives-dashboard.json",
-            build_executives_dashboard(cfg).to_aws_json(),
+            build_executives_dashboard(
+                cfg, l2_instance=inv_l2,
+            ).to_aws_json(),
         )
         json_count += len(exec_datasets) + 2
 

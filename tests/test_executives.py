@@ -39,6 +39,11 @@ _TEST_CFG = Config(
         "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
     ),
     theme_preset="default",
+    # N.4.b: Executives is now L2-fed and requires
+    # ``l2_instance_prefix`` to render its dataset SQL. Tests use the
+    # spec_example default (matches what ``build_executives_app``
+    # auto-derives from ``default_l2_instance().instance``).
+    l2_instance_prefix="spec_example",
 )
 
 
@@ -172,8 +177,12 @@ def test_transaction_summary_sql_aggregates_per_transfer():
     assert "WITH per_transfer AS" in sql, (
         "exec_transaction_summary must aggregate per transfer_id first"
     )
-    assert "MAX(t.amount)" in sql, (
-        "MAX(amount) collapses multi-leg transfers; loss → double-count"
+    # N.4.a v6 column rename: amount → ABS(amount_money). The
+    # ABS-then-MAX preserves the same per-transfer-handle semantic
+    # (positive/negative legs share magnitude); MAX without ABS would
+    # pick the credit leg over the debit leg arbitrarily.
+    assert "MAX(ABS(t.amount_money))" in sql, (
+        "MAX(ABS(amount_money)) collapses multi-leg transfers; loss → double-count"
     )
 
 

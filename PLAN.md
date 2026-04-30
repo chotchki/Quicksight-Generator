@@ -91,6 +91,7 @@
   - The deferred L.5 "always-emitted persona leaks" cleanup happens here naturally (see `PLAN_ARCHIVE.md` for the audit findings).
   - Per F12 (`PLAN_ARCHIVE.md` M.0.10): any sub-step that invokes `ScreenshotHarness` MUST run a DB warm-up `SELECT 1` against `cfg.demo_database_url` right before fetching the embed URL — Aurora Serverless cold-start otherwise surfaces as QS's generic "We can't open that dashboard" error.
   - **Major idea**: add a sheet at the end of each dashboard and load the documentation into the dashboard itself (sibling to the existing `Info` canary sheet).
+    - ANSWER: I reviewed the audit of what quicksight does and it seems way too limiting.
   - **L2 topology diagram render** (deferred from M.3.10d). The L2 instance is a graph; render as SVG via Graphviz `dot` (hierarchical) or `neato`/`sfdp` (force-directed) and embed in the handbook. Three plausible cuts: account-rail-account topology, chain DAG, layered combination. The `build_chains_dataset` in `apps/l2_flow_tracing/datasets.py` (CHAINS_CONTRACT) is the pre-shaped input for the chain DAG cut.
 
 - [ ] **O.2 — Training render pipeline.**

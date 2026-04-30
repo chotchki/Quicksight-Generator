@@ -78,6 +78,22 @@ EXEC_ACCOUNT_SUMMARY_CONTRACT = DatasetContract(columns=[
 # Builders
 # ---------------------------------------------------------------------------
 
+def _require_prefix(cfg: Config) -> str:
+    """Return ``cfg.l2_instance_prefix`` or raise.
+
+    Executives under L2-fed (N.4) requires ``build_executives_app`` to
+    have set ``cfg.l2_instance_prefix`` before any dataset SQL is
+    rendered. Build entry points either pre-stamp the field on the cfg
+    or auto-derive it from ``l2_instance.instance``.
+    """
+    if cfg.l2_instance_prefix is None:
+        raise ValueError(
+            "Executives datasets require cfg.l2_instance_prefix to be "
+            "set; build_executives_app derives it from the L2 instance."
+        )
+    return cfg.l2_instance_prefix
+
+
 def build_transaction_summary_dataset(cfg: Config) -> DataSet:
     """Per-(date, transfer_type) aggregates: transfer count, gross + net dollars.
 
@@ -85,16 +101,22 @@ def build_transaction_summary_dataset(cfg: Config) -> DataSet:
     counted once, not once per leg. ``gross_amount`` is the per-transfer
     handle; ``net_amount`` is the per-transfer net flow (0 for balanced
     multi-leg, non-zero for single-leg or unbalanced transfers).
+
+    N.4.a: reads from ``<prefix>_transactions`` (per-instance prefixed
+    base table). v6 column rename: posted_at → posting; amount →
+    ``ABS(amount_money)`` (the per-leg signed Decimal — magnitude is
+    abs); signed_amount → amount_money (already signed in v6).
     """
-    sql = """\
+    p = _require_prefix(cfg)
+    sql = f"""\
 WITH per_transfer AS (
     SELECT
-        DATE(MIN(t.posted_at))   AS posted_date,
+        DATE(MIN(t.posting))     AS posted_date,
         t.transfer_id,
         t.transfer_type,
-        MAX(t.amount)            AS transfer_amount,
-        SUM(t.signed_amount)     AS transfer_net
-    FROM transactions t
+        MAX(ABS(t.amount_money)) AS transfer_amount,
+        SUM(t.amount_money)      AS transfer_net
+    FROM {p}_transactions t
     WHERE t.status = 'success'
     GROUP BY t.transfer_id, t.transfer_type
 )
@@ -125,14 +147,20 @@ def build_account_summary_dataset(cfg: Config) -> DataSet:
     ``last_activity_date = NULL``, ``activity_count = 0``. The
     Account Coverage sheet's "active accounts" KPI applies a visual-
     scoped filter on ``activity_count > 0`` to narrow the count.
+
+    N.4.a: reads from ``<prefix>_transactions`` + ``<prefix>_daily_balances``.
+    v6 column rename: posted_at → posting; account_type → account_role
+    (output column kept as ``account_type`` so dashboard-side consumers
+    don't need to follow the rename — only the SELECT does).
     """
-    sql = """\
+    p = _require_prefix(cfg)
+    sql = f"""\
 WITH activity AS (
     SELECT
         t.account_id,
-        MAX(DATE(t.posted_at))  AS last_activity_date,
+        MAX(DATE(t.posting))    AS last_activity_date,
         COUNT(*)                AS activity_count
-    FROM transactions t
+    FROM {p}_transactions t
     WHERE t.status = 'success'
     GROUP BY t.account_id
 ),
@@ -140,8 +168,8 @@ accounts AS (
     SELECT DISTINCT
         d.account_id,
         d.account_name,
-        d.account_type
-    FROM daily_balances d
+        d.account_role          AS account_type
+    FROM {p}_daily_balances d
 )
 SELECT
     a.account_id,
