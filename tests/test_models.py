@@ -620,6 +620,52 @@ class TestBuildDatasource:
             build_datasource(cfg)
 
 
+class TestBuildDatasourceOracle:
+    """P.6.b — Oracle dispatch: ``Type=ORACLE`` + OracleParameters
+    instead of PostgreSqlParameters. Two URL forms accepted (Easy
+    Connect ``user/pass@host:port/SERVICE`` + SQLAlchemy-style
+    ``oracle://user:pass@host:port/SERVICE``)."""
+
+    def _oracle_cfg(self, url: str) -> Config:
+        from quicksight_gen.common.sql import Dialect
+        return Config(
+            aws_account_id="111122223333",
+            aws_region="us-west-2",
+            demo_database_url=url,
+            dialect=Dialect.ORACLE,
+        )
+
+    def test_easy_connect_url_parses_into_oracle_parameters(self):
+        cfg = self._oracle_cfg("admin/secret@db.example.com:1521/ORCL")
+        ds = build_datasource(cfg)
+        assert ds.Type == "ORACLE"
+        out = ds.to_aws_json()
+        ora = out["DataSourceParameters"]["OracleParameters"]
+        assert ora["Host"] == "db.example.com"
+        assert ora["Port"] == 1521
+        assert ora["Database"] == "ORCL"
+        assert "PostgreSqlParameters" not in out["DataSourceParameters"]
+        creds = out["Credentials"]["CredentialPair"]
+        assert creds["Username"] == "admin"
+        assert creds["Password"] == "secret"
+
+    def test_sqlalchemy_style_oracle_url_parses(self):
+        cfg = self._oracle_cfg(
+            "oracle+oracledb://admin:secret@db.example.com:1521/?service_name=ORCL"
+        )
+        ds = build_datasource(cfg)
+        ora = ds.to_aws_json()["DataSourceParameters"]["OracleParameters"]
+        assert ora["Host"] == "db.example.com"
+        assert ora["Port"] == 1521
+        assert ora["Database"] == "ORCL"
+
+    def test_easy_connect_default_port(self):
+        cfg = self._oracle_cfg("admin/secret@db.example.com/ORCL")
+        ds = build_datasource(cfg)
+        ora = ds.to_aws_json()["DataSourceParameters"]["OracleParameters"]
+        assert ora["Port"] == 1521  # Oracle's default
+
+
 # ---------------------------------------------------------------------------
 # Config — datasource_arn derivation
 # ---------------------------------------------------------------------------

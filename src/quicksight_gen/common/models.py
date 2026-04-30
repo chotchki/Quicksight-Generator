@@ -237,8 +237,32 @@ class PostgreSqlParameters:
 
 
 @dataclass
+class OracleParameters:
+    """QuickSight OracleParameters shape (boto3 quicksight create-data-source).
+
+    Per the AWS QuickSight API:
+    - ``Host`` — RDS Oracle endpoint hostname.
+    - ``Port`` — listener port (defaults 1521).
+    - ``Database`` — SID or service name (e.g. ``ORCL``).
+    - ``UseServiceName`` — when True, ``Database`` is treated as a
+      service name; when False (AWS default), as a SID.
+
+    ``UseServiceName`` defaults True on this dataclass because RDS
+    Oracle endpoints (and Aurora Oracle) connect via service name —
+    the SID-style interpretation only matches older self-managed
+    Oracle installs. Override at construction if needed.
+    """
+
+    Host: str
+    Port: int
+    Database: str
+    UseServiceName: bool = True
+
+
+@dataclass
 class DataSourceParameters:
     PostgreSqlParameters: PostgreSqlParameters | None = None
+    OracleParameters: OracleParameters | None = None
 
 
 @dataclass
