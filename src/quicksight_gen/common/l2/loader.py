@@ -66,6 +66,7 @@ from .primitives import (
     TransferType,
     TwoLegRail,
 )
+from .theme import ThemePreset
 
 
 # -- Errors -------------------------------------------------------------------
@@ -273,6 +274,30 @@ def _load_leg_direction(raw: object, *, path: str) -> LegDirection:
 
 
 _SEED_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+_THEME_COLOR_FIELDS: tuple[str, ...] = (
+    # 17 single-color UI fields on ThemePreset.
+    "empty_fill_color",
+    "primary_bg",
+    "secondary_bg",
+    "primary_fg",
+    "secondary_fg",
+    "accent",
+    "accent_fg",
+    "link_tint",
+    "danger",
+    "danger_fg",
+    "warning",
+    "warning_fg",
+    "success",
+    "success_fg",
+    "dimension",
+    "dimension_fg",
+    "measure",
+    "measure_fg",
+)
 
 
 def _load_role_business_day_offsets(
@@ -315,6 +340,122 @@ def _load_role_business_day_offsets(
             )
         out[role_raw] = hours_raw
     return out or None
+
+
+def _load_hex_color(raw: object, *, path: str) -> str:
+    """Parse a single hex color string. Returns the original-case string."""
+    if not isinstance(raw, str):
+        raise L2LoaderError(
+            f"{path}: must be a hex color string, got {type(raw).__name__}"
+        )
+    if not _HEX_COLOR_RE.match(raw):
+        raise L2LoaderError(
+            f"{path}={raw!r}: must match #RRGGBB hex color format "
+            f"(e.g. '#1B2A4A')"
+        )
+    return raw
+
+
+def _load_theme(raw: object, *, path: str) -> ThemePreset | None:
+    """Optional inline theme block per N.1.
+
+    YAML shape mirrors the ``ThemePreset`` dataclass 1:1:
+
+        theme:
+          theme_name: "Sasquatch National Bank Theme"
+          version_description: "Forest green palette"
+          analysis_name_prefix: "Demo"      # null/omit for production
+          data_colors:                       # >=1 hex strings
+            - "#2D6A4F"
+            - "#C49A2A"
+          empty_fill_color: "#D6D6CE"
+          gradient: ["#C5DDD3", "#1B4332"]   # exactly 2: [light, dark]
+          primary_bg: "#FFFFFF"
+          # ...all 17 single-color UI fields...
+
+    None / missing returns None — the app falls back to the registry
+    ``default`` preset.
+    """
+    if raw is None:
+        return None
+    raw_d = _as_mapping(raw, path=path, what="theme")
+
+    theme_name_raw = _require(raw_d, "theme_name", path=path)
+    theme_name = _load_string(theme_name_raw, path=f"{path}.theme_name")
+
+    version_description_raw = _require(raw_d, "version_description", path=path)
+    version_description = _load_string(
+        version_description_raw, path=f"{path}.version_description",
+    )
+
+    analysis_name_prefix: str | None
+    if "analysis_name_prefix" in raw_d and raw_d["analysis_name_prefix"] is not None:
+        analysis_name_prefix = _load_string(
+            raw_d["analysis_name_prefix"],
+            path=f"{path}.analysis_name_prefix",
+        )
+    else:
+        analysis_name_prefix = None
+
+    data_colors_raw = _as_list(
+        _require(raw_d, "data_colors", path=path),
+        path=f"{path}.data_colors",
+    )
+    if not data_colors_raw:
+        raise L2LoaderError(
+            f"{path}.data_colors: must contain at least one color"
+        )
+    data_colors = [
+        _load_hex_color(c, path=f"{path}.data_colors[{i}]")
+        for i, c in enumerate(data_colors_raw)
+    ]
+
+    gradient_raw = _as_list(
+        _require(raw_d, "gradient", path=path),
+        path=f"{path}.gradient",
+    )
+    if len(gradient_raw) != 2:
+        raise L2LoaderError(
+            f"{path}.gradient: must be exactly 2 colors [light, dark], "
+            f"got {len(gradient_raw)}"
+        )
+    gradient = [
+        _load_hex_color(c, path=f"{path}.gradient[{i}]")
+        for i, c in enumerate(gradient_raw)
+    ]
+
+    colors: dict[str, str] = {}
+    for field_name in _THEME_COLOR_FIELDS:
+        value_raw = _require(raw_d, field_name, path=path)
+        colors[field_name] = _load_hex_color(
+            value_raw, path=f"{path}.{field_name}",
+        )
+
+    return ThemePreset(
+        theme_name=theme_name,
+        version_description=version_description,
+        analysis_name_prefix=analysis_name_prefix,
+        data_colors=data_colors,
+        gradient=gradient,
+        empty_fill_color=colors["empty_fill_color"],
+        primary_bg=colors["primary_bg"],
+        secondary_bg=colors["secondary_bg"],
+        primary_fg=colors["primary_fg"],
+        secondary_fg=colors["secondary_fg"],
+        accent=colors["accent"],
+        accent_fg=colors["accent_fg"],
+        link_tint=colors["link_tint"],
+        danger=colors["danger"],
+        danger_fg=colors["danger_fg"],
+        warning=colors["warning"],
+        warning_fg=colors["warning_fg"],
+        success=colors["success"],
+        success_fg=colors["success_fg"],
+        dimension=colors["dimension"],
+        dimension_fg=colors["dimension_fg"],
+        measure=colors["measure"],
+        measure_fg=colors["measure_fg"],
+    )
 
 
 def _load_seed_hash(raw: object, *, path: str) -> str | None:
@@ -854,6 +995,7 @@ def load_instance(path: Path | str, *, validate: bool = True) -> L2Instance:
             raw_d.get("role_business_day_offsets"),
             path="role_business_day_offsets",
         ),
+        theme=_load_theme(raw_d.get("theme"), path="theme"),
     )
     if validate:
         # Local import dodges loader↔validate import-cycle.

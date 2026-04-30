@@ -37,6 +37,8 @@ from datetime import timedelta
 from decimal import Decimal
 from typing import Literal, NewType, TypeAlias
 
+from .theme import ThemePreset
+
 
 # -- Value types --------------------------------------------------------------
 
@@ -403,3 +405,9 @@ class L2Instance:
     # matrix to exercise any future L1 view that depends on per-role
     # business-day boundaries differing.
     role_business_day_offsets: dict[str, int] | None = None
+    # Optional brand theme for this institution (N.1.b). When set, the
+    # apps consume colors from here instead of from the per-CLI
+    # ``--theme-preset`` flag — one theme per L2 instance, declared
+    # alongside the institution's primitives. ``None`` means "fall back
+    # to the registry default" (``common/theme.py::DEFAULT_PRESET``).
+    theme: ThemePreset | None = None
