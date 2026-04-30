@@ -956,3 +956,47 @@ def test_meta_value_dropdown_sources_from_meta_values_dataset() -> None:
     assert isinstance(val_ctrl.selectable_values, LinkedValues)
     assert val_ctrl.selectable_values.dataset.identifier == "l2ft-meta-values-ds"
     assert val_ctrl.selectable_values.column_name == "metadata_value"
+
+
+# -- P.4.b dialect-aware empty-fallback branches -----------------------------
+
+
+def test_unified_l2_exceptions_empty_metadata_branch_is_dialect_aware() -> None:
+    """P.4.b — when no Rail declares a metadata_key, the Dead Metadata
+    UNION branch (and every other empty-CTE fallback) emits a typed-
+    NULL row. PG emits ``NULL::text`` (lowercase from typed_null);
+    Oracle emits ``CAST(NULL AS CLOB)``. PG case is lowercase per the
+    helper's literal-passthrough — Postgres type names are case-
+    insensitive so the SQL is functionally identical to the legacy
+    uppercase ``NULL::TEXT``."""
+    from dataclasses import replace
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        build_unified_l2_exceptions_dataset,
+    )
+    from quicksight_gen.common.l2 import Identifier, L2Instance
+    from quicksight_gen.common.sql import Dialect
+
+    # Empty-rails instance — every CTE helper hits its fallback branch.
+    empty = L2Instance(
+        instance=Identifier("empty"),
+        accounts=(), account_templates=(),
+        rails=(), transfer_templates=(), chains=(),
+        limit_schedules=(),
+    )
+    cfg_pg = replace(_CFG, dialect=Dialect.POSTGRES)
+    cfg_or = replace(_CFG, dialect=Dialect.ORACLE)
+
+    sql_pg = next(iter(
+        build_unified_l2_exceptions_dataset(cfg_pg, empty)
+        .PhysicalTableMap.values()
+    )).CustomSql.SqlQuery
+    sql_or = next(iter(
+        build_unified_l2_exceptions_dataset(cfg_or, empty)
+        .PhysicalTableMap.values()
+    )).CustomSql.SqlQuery
+
+    assert "NULL::text" in sql_pg
+    # Oracle output must not carry any PG-style ``::`` cast.
+    assert "::text" not in sql_or
+    assert "::TEXT" not in sql_or
+    assert "CAST(NULL AS CLOB)" in sql_or

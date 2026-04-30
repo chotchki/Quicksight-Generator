@@ -601,6 +601,37 @@ def test_daily_statement_datasets_registered() -> None:
     assert f"FROM {instance.instance}_current_transactions" in txn_sql.SqlQuery
 
 
+def test_daily_statement_transactions_business_day_is_dialect_aware() -> None:
+    """P.4.a — the per-leg dataset's `business_day` column is built via
+    ``date_trunc_day(dialect)`` so the projection stays a TIMESTAMP-
+    shaped value across PG and Oracle. PG uses DATE_TRUNC; Oracle uses
+    CAST(TRUNC(...) AS TIMESTAMP)."""
+    from dataclasses import replace
+    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from quicksight_gen.apps.l1_dashboard.datasets import (
+        build_daily_statement_transactions_dataset,
+    )
+    from quicksight_gen.common.sql import Dialect
+
+    instance = default_l2_instance()
+    cfg_pg = replace(_CFG, dialect=Dialect.POSTGRES)
+    cfg_or = replace(_CFG, dialect=Dialect.ORACLE)
+
+    sql_pg = next(iter(
+        build_daily_statement_transactions_dataset(cfg_pg, instance)
+        .PhysicalTableMap.values()
+    )).CustomSql.SqlQuery
+    sql_or = next(iter(
+        build_daily_statement_transactions_dataset(cfg_or, instance)
+        .PhysicalTableMap.values()
+    )).CustomSql.SqlQuery
+
+    assert "DATE_TRUNC('day', tx.posting) AS business_day" in sql_pg
+    assert "CAST(TRUNC(tx.posting) AS TIMESTAMP) AS business_day" in sql_or
+    # Oracle SQL must not carry the PG form anywhere.
+    assert "DATE_TRUNC" not in sql_or
+
+
 # -- Description-driven prose (M.2a.7) ---------------------------------------
 
 
