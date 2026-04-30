@@ -45,6 +45,12 @@ Changelog = "https://github.com/chotchki/Quicksight-Generator/blob/main/RELEASE_
 demo = [
     "psycopg2-binary>=2.9",
 ]
+demo-oracle = [
+    # Phase P — oracledb thin client. No Oracle Instant Client install
+    # needed in thin mode; falls back to thick mode automatically when
+    # the client libraries are present (and faster).
+    "oracledb>=2.0",
+]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",

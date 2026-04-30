@@ -717,6 +717,84 @@ def demo_apply(app: str | None, all_apps: bool, config: str, output_dir: str) ->
     _apply_demo(config, output_dir, app)
 
 
+def _oracle_dsn(url: str) -> str:
+    """Translate a SQLAlchemy-style Oracle URL into an oracledb DSN.
+
+    Accepts either form:
+    - ``oracle+oracledb://user:pass@host:port/?service_name=XEPDB1``
+    - ``user/pass@host:port/XEPDB1`` (oracledb's native format)
+
+    Returns a string oracledb.connect() understands.
+    """
+    if url.startswith(("oracle://", "oracle+oracledb://")):
+        from urllib.parse import parse_qs, urlparse
+        parsed = urlparse(url)
+        user = parsed.username or ""
+        pw = parsed.password or ""
+        host = parsed.hostname or "localhost"
+        port = parsed.port or 1521
+        service = (
+            parse_qs(parsed.query).get("service_name", [None])[0]
+            or parsed.path.lstrip("/")
+            or "FREEPDB1"
+        )
+        return f"{user}/{pw}@{host}:{port}/{service}"
+    return url
+
+
+def _execute_script(cur, sql: str, *, dialect) -> None:
+    """Run a multi-statement SQL string against the cursor.
+
+    Postgres (psycopg2): the whole string in one execute call works.
+    Oracle (oracledb): cursor.execute requires single statements (not
+    PL/SQL blocks; not "; "-separated). Split + execute per-statement,
+    handling PL/SQL blocks (BEGIN…END;) as a unit.
+    """
+    from quicksight_gen.common.sql import Dialect
+    if dialect is Dialect.POSTGRES:
+        cur.execute(sql)
+        return
+    # Oracle: split on bare ";" outside PL/SQL blocks.
+    for stmt in _split_oracle_script(sql):
+        cur.execute(stmt)
+
+
+def _split_oracle_script(sql: str) -> list[str]:
+    """Split an Oracle-style script into individual statements.
+
+    Handles PL/SQL blocks (anything starting with ``BEGIN`` or
+    ``DECLARE`` and ending with ``END;``) as one unit; everything else
+    splits on bare ``;``. Strips trailing semicolons since
+    cursor.execute() doesn't want them.
+    """
+    statements: list[str] = []
+    buffer: list[str] = []
+    in_plsql = False
+    for raw_line in sql.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if not in_plsql and stripped.upper().startswith(("BEGIN ", "DECLARE")):
+            in_plsql = True
+        buffer.append(line)
+        if in_plsql:
+            # PL/SQL block ends at "END;" (terminator).
+            if stripped.upper().endswith("END;"):
+                statements.append("\n".join(buffer).rstrip().rstrip(";"))
+                buffer = []
+                in_plsql = False
+        else:
+            if stripped.endswith(";"):
+                stmt = "\n".join(buffer).rstrip().rstrip(";")
+                if stmt.strip():
+                    statements.append(stmt)
+                buffer = []
+    # Trailing buffer (no final semicolon)
+    tail = "\n".join(buffer).strip()
+    if tail:
+        statements.append(tail)
+    return statements
+
+
 def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     """Load schema + chosen seed(s) into demo DB, then regenerate JSON.
 
@@ -750,12 +828,29 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
             "Set it in your config YAML or via QS_GEN_DEMO_DATABASE_URL."
         )
 
-    try:
-        import psycopg2  # type: ignore[import-untyped]
-    except ImportError:
+    from quicksight_gen.common.sql import Dialect
+    if cfg.dialect is Dialect.POSTGRES:
+        try:
+            import psycopg2  # type: ignore[import-untyped]
+        except ImportError:
+            raise click.ClickException(
+                "psycopg2 is required for 'demo apply' against Postgres. "
+                "Install it with: pip install 'quicksight-gen[demo]'"
+            )
+        connect_fn = psycopg2.connect
+    elif cfg.dialect is Dialect.ORACLE:
+        try:
+            import oracledb  # type: ignore[import-untyped]
+        except ImportError:
+            raise click.ClickException(
+                "oracledb is required for 'demo apply' against Oracle. "
+                "Install it with: pip install 'quicksight-gen[demo-oracle]'"
+            )
+        connect_fn = lambda url: oracledb.connect(_oracle_dsn(url))
+    else:
         raise click.ClickException(
-            "psycopg2 is required for 'demo apply'. "
-            "Install it with: pip install 'quicksight-gen[demo]'"
+            f"Unknown dialect {cfg.dialect!r}. "
+            "Set 'dialect: postgres' or 'dialect: oracle' in your config."
         )
 
     from quicksight_gen.common.l2.schema import (
@@ -781,7 +876,7 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     # (``<prefix>_transactions`` / ``<prefix>_daily_balances``), Current*
     # views, L1 invariant matviews, AND the Inv matviews (N.3.n /
     # N.4.h). The legacy global ``schema.sql`` was retired in P.1.
-    l2_schema_sql = emit_l2_schema(inv_l2)
+    l2_schema_sql = emit_l2_schema(inv_l2, dialect=cfg.dialect)
 
     # Plant the L2-shape demo seed: every L1 SHOULD-violation kind
     # (drift / overdraft / limit-breach / stuck-pending /
@@ -795,13 +890,13 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     )
 
     click.echo(f"Connecting to {cfg.demo_database_url.split('@')[-1]}...")
-    conn = psycopg2.connect(cfg.demo_database_url)
+    conn = connect_fn(cfg.demo_database_url)
     try:
         with conn.cursor() as cur:
             click.echo("  Applying L2 instance schema...")
-            cur.execute(l2_schema_sql)
+            _execute_script(cur, l2_schema_sql, dialect=cfg.dialect)
             click.echo("  Inserting seed data...")
-            cur.execute(seed_sql)
+            _execute_script(cur, seed_sql, dialect=cfg.dialect)
             click.echo("  Refreshing materialized views...")
             # Refresh every per-instance L1 + Inv matview in dependency
             # order: leaves (current_*) → helpers (computed_*) → L1
@@ -811,12 +906,16 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
             # dashboards render empty even though emit_seed planted the
             # base-table rows — the matviews themselves stay empty.
             # ``refresh_matviews_sql`` returns one statement per line
-            # (REFRESHes first, then ANALYZEs); psycopg2 can't run a
-            # multi-statement string reliably, so split + execute.
-            for stmt in refresh_matviews_sql(inv_l2).strip().split("\n"):
+            # (REFRESHes first, then ANALYZEs); the per-statement loop
+            # works for both psycopg2 (which can't run multi-statement
+            # strings reliably) and oracledb (which requires single-
+            # statement execute calls outside of PL/SQL blocks).
+            for stmt in refresh_matviews_sql(
+                inv_l2, dialect=cfg.dialect,
+            ).strip().split("\n"):
                 stmt = stmt.strip()
                 if stmt:
-                    cur.execute(stmt)
+                    cur.execute(stmt.rstrip(";"))
         conn.commit()
         click.echo("  Database ready.")
     except Exception:

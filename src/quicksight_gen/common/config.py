@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING
 
 import yaml
 
+from quicksight_gen.common.sql import Dialect
+
 if TYPE_CHECKING:
     from quicksight_gen.common.models import Tag
 
@@ -36,6 +38,13 @@ class Config:
     # Also surfaces as an ``L2Instance`` resource tag for cleanup
     # scoping. Unset = legacy single-tenant flat-prefix behavior.
     l2_instance_prefix: str | None = None
+    # P.6.a — SQL dialect for emitted DDL + dataset SQL + demo apply.
+    # ``postgres`` (default, current behavior) or ``oracle`` (Phase P).
+    # The dialect is tied to the datasource: a Postgres datasource_arn
+    # cannot serve Oracle SQL and vice versa; in practice integrators
+    # carry separate config files (config-postgres.yaml +
+    # config-oracle.yaml) keyed off this field.
+    dialect: Dialect = Dialect.POSTGRES
 
     def __post_init__(self) -> None:
         # If demo_database_url is set but datasource_arn is not, derive it
@@ -146,6 +155,7 @@ def load_config(path: str | Path | None = None) -> Config:
         "datasource_arn": "QS_GEN_DATASOURCE_ARN",
         "resource_prefix": "QS_GEN_RESOURCE_PREFIX",
         "demo_database_url": "QS_GEN_DEMO_DATABASE_URL",
+        "dialect": "QS_GEN_DIALECT",
     }
     for cfg_key, env_key in env_map.items():
         env_val = os.environ.get(env_key)
@@ -191,6 +201,21 @@ def load_config(path: str | Path | None = None) -> Config:
         elif isinstance(raw, list):
             principal_arns.extend(str(item) for item in raw)
 
+    # Dialect parses to the enum; default Postgres for back-compat.
+    raw_dialect = values.get("dialect")
+    if raw_dialect is None:
+        dialect = Dialect.POSTGRES
+    elif isinstance(raw_dialect, Dialect):
+        dialect = raw_dialect
+    else:
+        try:
+            dialect = Dialect(str(raw_dialect).lower())
+        except ValueError as exc:
+            raise ValueError(
+                f"dialect must be one of {[d.value for d in Dialect]}; "
+                f"got {raw_dialect!r}."
+            ) from exc
+
     return Config(
         aws_account_id=values["aws_account_id"],
         aws_region=values["aws_region"],
@@ -199,4 +224,5 @@ def load_config(path: str | Path | None = None) -> Config:
         principal_arns=principal_arns,
         extra_tags=extra_tags,
         demo_database_url=values.get("demo_database_url"),
+        dialect=dialect,
     )
