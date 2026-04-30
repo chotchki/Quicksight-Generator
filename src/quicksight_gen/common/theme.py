@@ -1,11 +1,14 @@
-"""QuickSight theme definition with selectable presets.
+"""QuickSight theme — registry default + builder.
 
-The ``default`` preset is a neutral blue/grey professional palette used for
-production dashboards. Demo presets (e.g. ``sasquatch-bank``) brand the output
-for demo scenarios and prefix the analysis name with ``Demo —``.
+Per N.1.g, the registry holds ONLY the ``default`` preset (a neutral
+blue/grey professional palette). Per-instance brand palettes
+(formerly ``sasquatch-bank``, ``sasquatch-bank-investigation``) moved
+to inline ``theme:`` blocks on the L2 YAML — apps consume the L2
+theme via ``resolve_l2_theme(l2_instance)``.
 
-The ``ThemePreset`` dataclass itself lives in ``common/l2/theme.py`` per N.1
-— theme is now an L2 model concept; this module re-exports for back-compat.
+The ``ThemePreset`` dataclass itself lives in ``common/l2/theme.py``
+— theme is an L2 model concept; this module re-exports for back-compat
+and provides the ``build_theme(cfg)`` QuickSight Theme constructor.
 """
 
 from __future__ import annotations
@@ -33,8 +36,6 @@ from quicksight_gen.common.models import (
 __all__ = [
     "DEFAULT_PRESET",
     "PRESETS",
-    "SASQUATCH_BANK_INVESTIGATION_PRESET",
-    "SASQUATCH_BANK_PRESET",
     "ThemePreset",
     "build_theme",
     "get_preset",
@@ -107,133 +108,18 @@ DEFAULT_PRESET = ThemePreset(
 
 
 # ---------------------------------------------------------------------------
-# Sasquatch National Bank preset — forest greens, earth tones, gold
-# ---------------------------------------------------------------------------
-
-# Greens (dark → light)
-_DEEP_FOREST = "#1B4332"
-_FOREST_GREEN = "#2D6A4F"
-_SAGE = "#52796F"
-_MOSS = "#74A892"
-_PALE_SAGE = "#C5DDD3"
-
-# Earth / accent
-_BARK_BROWN = "#5C4033"
-_BANK_GOLD = "#C49A2A"
-_PARCHMENT = "#FAF6F1"
-
-# Warm greys
-_DARK_WARM_GREY = "#3D3D3A"
-_MEDIUM_WARM_GREY = "#7A7A72"
-
-SASQUATCH_BANK_PRESET = ThemePreset(
-    theme_name="Sasquatch National Bank Theme",
-    version_description="Sasquatch National Bank — forest green and gold palette",
-    analysis_name_prefix="Demo",
-    data_colors=[
-        _FOREST_GREEN,
-        _BANK_GOLD,
-        _BARK_BROWN,
-        _SAGE,
-        "#B85C38",           # rust
-        _MOSS,
-        "#6B4C8A",           # plum
-        _MEDIUM_WARM_GREY,
-    ],
-    empty_fill_color="#D6D6CE",
-    gradient=[_PALE_SAGE, _DEEP_FOREST],
-    primary_bg=_WHITE,
-    secondary_bg=_PARCHMENT,
-    primary_fg=_DARK_WARM_GREY,
-    secondary_fg=_SAGE,
-    accent=_FOREST_GREEN,
-    accent_fg=_WHITE,
-    link_tint="#E8F1EB",
-    danger="#B71C1C",
-    danger_fg=_WHITE,
-    warning="#BF6D0A",
-    warning_fg=_WHITE,
-    success=_FOREST_GREEN,
-    success_fg=_WHITE,
-    dimension=_SAGE,
-    dimension_fg=_WHITE,
-    measure=_DEEP_FOREST,
-    measure_fg=_WHITE,
-)
-
-
-# ---------------------------------------------------------------------------
-# Sasquatch National Bank — Investigation preset — slate blue, amber alert
-# ---------------------------------------------------------------------------
-#
-# Investigation (compliance / AML) gets a distinct palette from PR (forest
-# green) and AR (valley green) because the operational mode is different:
-# investigation is an alert/triage surface, so the palette leans cooler with
-# warm-amber accents reserved for flagged rows.
-
-# Slate blues (dark → light)
-_SLATE_DEEP = "#1F2A44"
-_SLATE_BLUE = "#36507A"
-_HARBOR = "#5B7AA6"
-_MIST = "#A6BBD9"
-_PALE_HARBOR = "#D9E2F0"
-
-# Alert tones
-_ALERT_AMBER = "#D97A1F"
-_DEEP_AMBER = "#A65A14"
-_SIGNAL_RED = "#A33038"
-
-# Neutrals
-_GRAPHITE = "#2A2E36"
-_SLATE_GREY = "#646A78"
-_PARCHMENT_COOL = "#F4F5F8"
-
-SASQUATCH_BANK_INVESTIGATION_PRESET = ThemePreset(
-    theme_name="Sasquatch National Bank — Investigation Theme",
-    version_description=(
-        "Sasquatch National Bank Investigation — slate blue with amber alert palette"
-    ),
-    analysis_name_prefix="Demo",
-    data_colors=[
-        _SLATE_BLUE,
-        _ALERT_AMBER,
-        _HARBOR,
-        _DEEP_AMBER,
-        "#5E8B7E",       # pond teal
-        _MIST,
-        "#6B4C8A",       # plum
-        _SLATE_GREY,
-    ],
-    empty_fill_color="#D6D9E0",
-    gradient=[_PALE_HARBOR, _SLATE_DEEP],
-    primary_bg=_WHITE,
-    secondary_bg=_PARCHMENT_COOL,
-    primary_fg=_GRAPHITE,
-    secondary_fg=_SLATE_GREY,
-    accent=_SLATE_BLUE,
-    accent_fg=_WHITE,
-    link_tint="#E5ECF5",
-    danger=_SIGNAL_RED,
-    danger_fg=_WHITE,
-    warning=_ALERT_AMBER,
-    warning_fg=_WHITE,
-    success="#3A7B53",
-    success_fg=_WHITE,
-    dimension=_HARBOR,
-    dimension_fg=_WHITE,
-    measure=_SLATE_DEEP,
-    measure_fg=_WHITE,
-)
-
-
-# ---------------------------------------------------------------------------
 # Preset registry
 # ---------------------------------------------------------------------------
+#
+# N.1.g — only ``default`` lives here. The legacy ``sasquatch-bank`` +
+# ``sasquatch-bank-investigation`` palettes moved to inline ``theme:``
+# blocks on the L2 YAMLs (e.g. ``tests/l2/sasquatch_pr.yaml``); apps
+# resolve through ``resolve_l2_theme(l2_instance)``. Inv + Exec
+# temporarily fall back to ``default`` until N.3 / N.4 makes them
+# L2-fed and they pick up their own L2 YAML's theme.
 
 PRESETS: dict[str, ThemePreset] = {
     "default": DEFAULT_PRESET,
-    "sasquatch-bank": SASQUATCH_BANK_PRESET,
-    "sasquatch-bank-investigation": SASQUATCH_BANK_INVESTIGATION_PRESET,
 }
 
 

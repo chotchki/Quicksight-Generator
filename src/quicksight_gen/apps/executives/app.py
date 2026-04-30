@@ -15,7 +15,7 @@ Sheets land per L.6 sub-step:
 - L.6.5 — Transaction Volume Over Time sheet.
 - L.6.6 — Money Moved sheet.
 - L.6.7 — Cross-app drills into AR Transactions.
-- L.6.8 — Theme: reuse `default` (non-demo) / `sasquatch-bank` (demo).
+- L.6.8 — Theme: reuse `default` preset. (Per N.1.g the `sasquatch-bank` preset moved to L2 YAML; Executives stays on `default` until N.4 makes it L2-fed.)
 - L.6.9 — Unit tests (mirror the per-app shape).
 - L.6.10 — CLI wiring (`generate executives`, `--all` includes it).
 - L.6.11 — Confirm Executives reads existing PR + AR + Investigation

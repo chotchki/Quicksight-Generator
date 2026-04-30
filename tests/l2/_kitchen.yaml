@@ -272,3 +272,41 @@ limit_schedules:
   - parent_role: ControlAccount
     transfer_type: adjustment
     cap: 1000.00
+
+# ---------------------------------------------------------------------
+# Inline brand theme (N.1.i). Distinct from the registry default so
+# the kitchen-sink loader test can detect that the inline path fires.
+# Persona-neutral palette (purples + grey) — kitchen sink stays L1-clean.
+# ---------------------------------------------------------------------
+theme:
+  theme_name: "Kitchen Sink Theme"
+  version_description: "Persona-neutral palette exercising the inline theme block"
+  analysis_name_prefix: null
+  data_colors:
+    - "#5E3B7A"
+    - "#A86BD2"
+    - "#3F7A8C"
+    - "#7A8C3F"
+    - "#C29A2A"
+    - "#8A4F3F"
+    - "#5C5C68"
+    - "#9C9CA8"
+  empty_fill_color: "#E0E0E6"
+  gradient: ["#E5DAF0", "#3D2654"]
+  primary_bg: "#FFFFFF"
+  secondary_bg: "#F4F1F8"
+  primary_fg: "#28232E"
+  secondary_fg: "#5C5C68"
+  accent: "#5E3B7A"
+  accent_fg: "#FFFFFF"
+  link_tint: "#EFE8F5"
+  danger: "#A33038"
+  danger_fg: "#FFFFFF"
+  warning: "#C2820A"
+  warning_fg: "#FFFFFF"
+  success: "#3A7B53"
+  success_fg: "#FFFFFF"
+  dimension: "#A86BD2"
+  dimension_fg: "#FFFFFF"
+  measure: "#3D2654"
+  measure_fg: "#FFFFFF"

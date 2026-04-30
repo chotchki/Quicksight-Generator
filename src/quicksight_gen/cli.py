@@ -777,9 +777,12 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     finally:
         conn.close()
 
-    preset = {
-        "investigation": "sasquatch-bank-investigation",
-    }.get(app, "sasquatch-bank")
+    # N.1.g: PRESETS now contains only the ``default`` preset; per-app
+    # branded palettes moved to inline ``theme:`` blocks on the L2
+    # YAMLs. L1 + L2FT pick up the L2-sourced theme via
+    # ``resolve_l2_theme(l2_instance)``; Inv + Exec stay on the
+    # registry default until N.3 / N.4 migrates them to L2-fed.
+    preset = "default"
     click.echo(f"\nGenerating QuickSight JSON with {preset} theme...")
     cfg.theme_preset = preset
     out = Path(output_dir)

@@ -1,4 +1,9 @@
-"""Tests for the theme preset system."""
+"""Tests for the theme preset system.
+
+Per N.1.g, the registry holds only the ``default`` preset; per-instance
+brand palettes live inline on the L2 YAML's ``theme:`` block. The
+sasquatch-bank / sasquatch-bank-investigation entries dropped here.
+"""
 
 import json
 
@@ -8,7 +13,6 @@ from quicksight_gen.common.config import Config
 from quicksight_gen.common.theme import (
     DEFAULT_PRESET,
     PRESETS,
-    SASQUATCH_BANK_PRESET,
     ThemePreset,
     build_theme,
     get_preset,
@@ -23,12 +27,15 @@ class TestPresetRegistry:
     def test_default_preset_exists(self):
         assert "default" in PRESETS
 
-    def test_sasquatch_bank_preset_exists(self):
-        assert "sasquatch-bank" in PRESETS
+    def test_registry_has_only_default_post_n1g(self):
+        # The persona-flavored presets used to live here; per N.1 they
+        # moved to inline ``theme:`` blocks on L2 YAMLs. The registry
+        # is now a single-entry fallback for L2 instances that omit
+        # the theme block.
+        assert set(PRESETS) == {"default"}
 
     def test_get_preset_returns_correct_type(self):
         assert isinstance(get_preset("default"), ThemePreset)
-        assert isinstance(get_preset("sasquatch-bank"), ThemePreset)
 
     def test_unknown_preset_raises(self):
         with pytest.raises(ValueError, match="Unknown theme preset 'nope'"):
@@ -67,41 +74,3 @@ class TestDefaultPreset:
         # Round-trip through JSON to catch serialization issues
         json.loads(json.dumps(data))
         assert data["Name"] == "QuickSight Gen Theme"
-
-
-# ---------------------------------------------------------------------------
-# Sasquatch National Bank preset spot-checks
-# ---------------------------------------------------------------------------
-
-class TestSasquatchBankPreset:
-    def test_name(self):
-        assert SASQUATCH_BANK_PRESET.theme_name == "Sasquatch National Bank Theme"
-
-    def test_analysis_prefix(self):
-        assert SASQUATCH_BANK_PRESET.analysis_name_prefix == "Demo"
-
-    def test_accent_is_forest_green(self):
-        assert SASQUATCH_BANK_PRESET.accent == "#2D6A4F"
-
-    def test_eight_data_colors(self):
-        assert len(SASQUATCH_BANK_PRESET.data_colors) == 8
-
-    def test_colors_differ_from_default(self):
-        assert SASQUATCH_BANK_PRESET.data_colors != DEFAULT_PRESET.data_colors
-        assert SASQUATCH_BANK_PRESET.accent != DEFAULT_PRESET.accent
-        assert SASQUATCH_BANK_PRESET.secondary_bg != DEFAULT_PRESET.secondary_bg
-
-    def test_serializes_to_valid_theme(self):
-        cfg = Config(
-            aws_account_id="111122223333",
-            aws_region="us-west-2",
-            datasource_arn="arn:aws:quicksight:us-west-2:111122223333:datasource/ds",
-            theme_preset="sasquatch-bank",
-        )
-        theme = build_theme(cfg)
-        data = theme.to_aws_json()
-        json.loads(json.dumps(data))
-        assert data["Name"] == "Sasquatch National Bank Theme"
-        assert "forest green" in data["VersionDescription"].lower()
-
-

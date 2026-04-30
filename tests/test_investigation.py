@@ -80,7 +80,9 @@ from quicksight_gen.common.theme import PRESETS, get_preset
 _TEST_CFG = Config(
     aws_account_id="111122223333",
     aws_region="us-west-2",
-    theme_preset="sasquatch-bank-investigation",
+    # N.1.g: sasquatch-bank-investigation preset removed from registry;
+    # Investigation falls back to default until N.3 reshapes it L2-fed.
+    theme_preset="default",
     datasource_arn=(
         "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
     ),
@@ -171,18 +173,6 @@ def _visual_kinds(sheet) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Theme preset
-# ---------------------------------------------------------------------------
-
-def test_investigation_theme_preset_registered():
-    assert "sasquatch-bank-investigation" in PRESETS
-    preset = get_preset("sasquatch-bank-investigation")
-    assert preset.analysis_name_prefix == "Demo"
-    # Distinct accent from sasquatch-bank (slate vs forest green)
-    assert preset.accent != get_preset("sasquatch-bank").accent
-
-
-# ---------------------------------------------------------------------------
 # Top-level shape
 # ---------------------------------------------------------------------------
 
@@ -202,9 +192,13 @@ def test_analysis_has_six_sheets_in_expected_order():
     ]
 
 
-def test_analysis_name_uses_demo_prefix():
+def test_analysis_name_no_demo_prefix_under_default_preset():
+    # N.1.g: Investigation no longer uses sasquatch-bank-investigation
+    # (which set analysis_name_prefix='Demo'); it falls back to the
+    # default preset until N.3 reshapes it. Default preset has
+    # analysis_name_prefix=None → no "Demo — " prefix.
     analysis = build_analysis(_TEST_CFG)
-    assert analysis.Name == "Demo — Investigation"
+    assert analysis.Name == "Investigation"
 
 
 def test_dashboard_mirrors_analysis_definition():
@@ -1423,7 +1417,7 @@ def _write_min_config(tmp_path: Path) -> Path:
     cfg_path.write_text(
         "aws_account_id: '111122223333'\n"
         "aws_region: us-west-2\n"
-        "theme_preset: sasquatch-bank-investigation\n"
+        "theme_preset: default\n"
         "datasource_arn: 'arn:aws:quicksight:us-west-2:111122223333:datasource/x'\n",
         encoding="utf-8",
     )

@@ -469,6 +469,13 @@ def test_kitchen_sink_covers_every_primitive_kind() -> None:
     assert any(c.xor_group is None for c in inst.chains), \
         "kitchen fixture missing a non-XOR chain entry"
 
+    # N.1.i — inline brand theme exercises the loader's _load_theme path.
+    assert inst.theme is not None, \
+        "kitchen fixture missing inline theme block"
+    assert inst.theme.theme_name == "Kitchen Sink Theme"
+    assert inst.theme.accent.startswith("#"), \
+        "kitchen theme.accent must be a hex color"
+
 
 def test_pipeline_full_merchant_acquirer_end_to_end(tmp_path: Path) -> None:
     """SPEC's end-to-end merchant-acquirer example through the full pipeline.
