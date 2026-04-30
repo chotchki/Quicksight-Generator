@@ -58,8 +58,8 @@ Executive scorecard — reads from these same two tables.
 
 ## What you'll see in the demo
 
-After `quicksight-gen demo apply --all`, your demo Postgres
-holds:
+After `quicksight-gen demo apply --all`, your demo database
+(Postgres or Oracle, dispatched off `dialect:`) holds:
 
 - **`<prefix>_transactions`** — every money-movement leg, one
   row per leg. Multiple legs of one financial event share a
@@ -167,13 +167,15 @@ you commit:
 
 Once you've decided this product fits your data:
 
-1. **Stand up the schema.** Call `emit_schema(l2_instance)` from
-   `common.l2.schema` to render the per-prefix DDL — base tables
+1. **Stand up the schema.** Call
+   `emit_schema(l2_instance, dialect=...)` from `common.l2.schema` to
+   render the per-prefix DDL — base tables
    (`<prefix>_transactions` / `<prefix>_daily_balances`), Current*
    views, computed-balance helpers, and L1 invariant matviews.
-   Apply it to a dev Postgres directly, or use
+   Apply it to a dev Postgres or Oracle instance directly, or use
    `quicksight-gen demo apply -c run/config.yaml -o run/out` to
-   land the schema + seed in one command.
+   land the schema + seed in one command (dispatches off the
+   `dialect:` field on `config.yaml`).
 2. **Hand the projection task to your data integration team.**
    The
    [Data Integration Handbook](../../handbook/etl.md) is

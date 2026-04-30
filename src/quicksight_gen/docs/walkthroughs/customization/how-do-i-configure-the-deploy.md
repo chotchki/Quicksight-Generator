@@ -56,12 +56,14 @@ resource_prefix: "qs-gen"
 principal_arns:
   - "arn:aws:quicksight:us-east-1:111122223333:user/default/example-user"
 
+# dialect: "postgres"  # or "oracle" — defaults to "postgres"
 # demo_database_url: "postgresql://user:password@host:5432/dbname"
+# demo_database_url: "user/password@host:1521/SERVICE"  # Oracle Easy Connect form
 ```
 
 Five required fields (account, region, datasource ARN, prefix,
-at least one principal) and one optional demo field. That's
-the entire deploy contract.
+at least one principal) and two optional demo fields (`dialect`,
+`demo_database_url`). That's the entire deploy contract.
 
 ## What it means
 
@@ -126,12 +128,47 @@ Each field, what it controls, and what breaks if you set it wrong:
 
 ### Demo-only
 
-- **`demo_database_url`** — Postgres connection string for
-  `demo apply` to write seed data. When set and
-  `datasource_arn` is omitted, the generator derives the ARN
-  automatically (`{aws_region}:{aws_account_id}:datasource/
-  {resource_prefix}-demo-datasource`). In production, leave
-  this unset and provide the explicit `datasource_arn`.
+- **`dialect`** (default `postgres`) — which database family the demo
+  feeds. Accepts `postgres` or `oracle`. Drives every dialect-aware
+  emit decision (DDL types, matview options, recursive-CTE alias
+  shape, JSON literal form, datasource Type field on the QuickSight
+  resource). Set it in the YAML, not via env var, since it has to
+  match the schema that's already on disk for tests.
+- **`demo_database_url`** — connection string for `demo apply` to
+  write seed data. Two URL shapes are accepted:
+  - **Postgres**: `postgresql://user:pass@host:5432/dbname`
+  - **Oracle (Easy Connect)**: `user/pass@host:1521/SERVICE` (no
+    scheme prefix; use the same form the `oracledb` thin driver
+    accepts). The SQLAlchemy form
+    `oracle+oracledb://user:pass@host:1521/?service_name=ORCL` also
+    works.
+
+  When set and `datasource_arn` is omitted, the generator derives the
+  ARN automatically
+  (`{aws_region}:{aws_account_id}:datasource/{resource_prefix}-{l2_instance_prefix}-demo-datasource`).
+  In production, leave this unset and provide the explicit
+  `datasource_arn`.
+
+> **Oracle on RDS — TLS quirk.** RDS Oracle disables TLS by default
+> (you have to attach an option group to turn it on). The generated
+> QuickSight datasource sets `SslProperties.DisableSsl=True` on the
+> Oracle path so the QS-side TLS probe doesn't drop the connection in
+> ~2ms. Postgres on RDS forces TLS, so we leave `DisableSsl=False`
+> there. If you turn TLS on for your RDS Oracle instance, edit
+> `common/datasource.py::build_datasource` to flip the Oracle SSL
+> default — there's no config knob yet.
+
+> **Oracle service name vs SID.** The QuickSight datasource emits
+> `OracleParameters.UseServiceName=True` (RDS Oracle expects service
+> names, not SIDs, against `FREEPDB1` / your custom service). If you
+> need SID semantics, edit `common/models.py::OracleParameters` to
+> set `UseServiceName=False`.
+
+> **`oracledb` thin mode.** The `[demo-oracle]` extra installs
+> `oracledb>=2.0` which runs in *thin* mode by default — no Oracle
+> Instant Client install needed. The `demo apply` CLI uses thin mode
+> directly; you don't need an `LD_LIBRARY_PATH`-style setup on the
+> integrator host.
 
 ## Drilling in
 
@@ -150,6 +187,7 @@ The mapping (from `config.py:90-98`):
 | `resource_prefix`   | `QS_GEN_RESOURCE_PREFIX`         |
 | `principal_arns`    | `QS_GEN_PRINCIPAL_ARNS` (CSV)    |
 | `demo_database_url` | `QS_GEN_DEMO_DATABASE_URL`       |
+| `dialect`           | (YAML only — see Demo-only)      |
 
 CI pattern: commit `examples/config.yaml` as the staging
 template, override `QS_GEN_AWS_ACCOUNT_ID` /
@@ -162,15 +200,16 @@ The two are mutually exclusive in practice:
 
 - **Production**: `datasource_arn` points at a QuickSight
   datasource you've already created (typically a Postgres,
-  Athena, or Redshift datasource via the QuickSight console
-  or Terraform). The deploy never touches the datasource;
-  it only references the ARN.
-- **Demo**: `demo_database_url` is a Postgres connection
-  string. `quicksight-gen demo apply` runs your schema +
-  seed against this URL, then writes a `datasource.json`
-  describing a QuickSight datasource pointing at the same
-  Postgres. The deploy creates that datasource as part of
-  the run.
+  Oracle, Athena, or Redshift datasource via the QuickSight
+  console or Terraform). The deploy never touches the
+  datasource; it only references the ARN.
+- **Demo**: `demo_database_url` is a connection string for the
+  dialect you set on `dialect:`. `quicksight-gen demo apply`
+  runs your schema + seed against this URL, then writes a
+  `datasource.json` describing a QuickSight datasource pointing
+  at the same database (Type=`POSTGRESQL` or `ORACLE`,
+  dispatched off `dialect`). The deploy creates that datasource
+  as part of the run.
 
 If you set both, the explicit `datasource_arn` wins. If you
 set neither, `Config.__post_init__` raises with a clear
