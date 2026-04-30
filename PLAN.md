@@ -42,7 +42,8 @@
     - [ ] N.3.j — `quicksight-gen demo apply investigation` flow: refresh `<prefix>_inv_*` matviews; pass `cfg.l2_instance_prefix` to `generate_demo_sql`.
   - **Phase 4 — Tests.**
     - [ ] N.3.k — Update `test_investigation.py` for prefixed dataset IDs + L2-fed signature. Walk failures one-at-a-time.
-    - [ ] N.3.l — Update `tests/e2e/test_inv_*.py` (deploy-gated; grep-verify first to scope).
+    - [ ] N.3.l — Update `tests/e2e/test_inv_*.py` (deploy-gated; grep-verify first to scope). Six files: deployed_resources, dashboard_structure, dashboard_renders, sheet_visuals, filters, drilldown.
+    - [ ] N.3.l-bis — `tests/e2e/_harness_inv_assertions.py` (new). Mirrors `_harness_l1_assertions.py` shape — assert the per-instance prefixed inv matviews exist + emit cleanly + return a row count. Brings Investigation up to the L1 / L2FT harness coverage tier so any future L2 instance gets Investigation matview health for free. Wire into `test_harness_end_to_end.py`.
     - [ ] N.3.m — Full unit suite + pyright; commit.
   - **Phase 5 — Drop legacy + docs.**
     - [ ] N.3.n — Drop the global `inv_pair_rolling_anomalies` + `inv_money_trail_edges` from `schema.sql`. Add `DROP MATERIALIZED VIEW IF EXISTS` for upgrade safety. Done AFTER tests are green so the diff is the proof.

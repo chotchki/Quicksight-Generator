@@ -1013,24 +1013,35 @@ _INV_MATVIEWS_TEMPLATE = """\
 -- after each ETL load.
 CREATE MATERIALIZED VIEW {p}_inv_pair_rolling_anomalies AS
 WITH pair_legs AS (
+    -- v6 column rename. signed_amount becomes amount_money (signed,
+    -- where positive is Credit/inflow and negative is Debit/outflow).
+    -- posted_at becomes posting. account_type becomes account_role
+    -- (L2 Role names from the institution YAML, not the v5 generic
+    -- 'dda'/'merchant_dda' enum). The recipient filter that used to
+    -- narrow to retail-customer DDAs is now
+    -- ``account_scope = 'internal' AND account_parent_role IS NOT NULL``
+    -- (leaf internal accounts under a declared parent Role,
+    -- structurally equivalent to the v5 intent of real customer
+    -- accounts vs control accounts).
     SELECT
         recipient.account_id          AS recipient_account_id,
         recipient.account_name        AS recipient_account_name,
-        recipient.account_type        AS recipient_account_type,
+        recipient.account_role        AS recipient_account_role,
         sender.account_id             AS sender_account_id,
         sender.account_name           AS sender_account_name,
-        sender.account_type           AS sender_account_type,
-        recipient.posted_at::date     AS posted_day,
+        sender.account_role           AS sender_account_role,
+        recipient.posting::date       AS posted_day,
         recipient.transfer_id,
-        recipient.signed_amount       AS amount
+        recipient.amount_money        AS amount
     FROM {p}_transactions recipient
     JOIN {p}_transactions sender
       ON sender.transfer_id = recipient.transfer_id
-     AND sender.signed_amount < 0
-    WHERE recipient.signed_amount > 0
+     AND sender.amount_money < 0
+    WHERE recipient.amount_money > 0
       AND recipient.status = 'success'
       AND sender.status = 'success'
-      AND recipient.account_type IN ('dda', 'merchant_dda')
+      AND recipient.account_scope = 'internal'
+      AND recipient.account_parent_role IS NOT NULL
 ),
 pair_daily AS (
     -- Collapse to one row per (pair, day) before windowing so the
@@ -1170,26 +1181,31 @@ chain AS (
     FROM distinct_transfers d
     JOIN chain c ON d.transfer_parent_id = c.transfer_id
 )
+-- v6 column rename. signed_amount becomes amount_money (signed),
+-- posted_at becomes posting, and account_type becomes account_role.
+-- Output column names kept the v5 names so dashboard-side consumers
+-- (datasets, visuals) don't need to follow this rename — only the
+-- internal SELECT does.
 SELECT
     c.root_transfer_id,
     c.transfer_id,
     c.depth,
     src.account_id           AS source_account_id,
     src.account_name         AS source_account_name,
-    src.account_type         AS source_account_type,
+    src.account_role         AS source_account_type,
     tgt.account_id           AS target_account_id,
     tgt.account_name         AS target_account_name,
-    tgt.account_type         AS target_account_type,
-    tgt.signed_amount        AS hop_amount,
-    tgt.posted_at            AS posted_at,
+    tgt.account_role         AS target_account_type,
+    tgt.amount_money         AS hop_amount,
+    tgt.posting              AS posted_at,
     tgt.transfer_type        AS transfer_type
 FROM chain c
 JOIN {p}_transactions tgt
   ON tgt.transfer_id = c.transfer_id
- AND tgt.signed_amount > 0
+ AND tgt.amount_money > 0
  AND tgt.status = 'success'
 JOIN {p}_transactions src
   ON src.transfer_id = c.transfer_id
- AND src.signed_amount < 0
+ AND src.amount_money < 0
  AND src.status = 'success';
 """
