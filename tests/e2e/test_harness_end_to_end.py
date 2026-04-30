@@ -100,6 +100,7 @@ from _harness_l1_assertions import (  # noqa: E402
 from _harness_l2ft_assertions import (  # noqa: E402
     assert_l2_exceptions_check_types_present,
     assert_l2ft_plants_visible,
+    widen_l2ft_date_range,
 )
 from _harness_inv_assertions import (  # noqa: E402
     assert_inv_matviews_queryable,
@@ -858,31 +859,31 @@ def test_harness_l2ft_planted_scenarios_visible(
     visual_timeout = int(os.environ.get("QS_E2E_VISUAL_TIMEOUT", "30000"))
 
     def _check_l2ft(page: Any) -> None:
-        # M.4.4.16 PUNTED to phase N — `assert_l2ft_plants_visible`
-        # fails on sasquatch_pr because the L2FT dashboard's own date
-        # filter excludes some planted rail firings. Same family as
-        # M.4.4.12's L1 widening fix; needs the L2FT-side equivalent
-        # (compute days_back from manifest's rail_firing_plants
-        # max(days_ago) + 7, then call the L2FT widen helper).
-        # Inline xfail keeps the L2FT KPI assertion (M.4.4.15) tight
-        # while the plants-visible widening waits for phase N.
-        try:
-            assert_l2ft_plants_visible(
-                page, manifest, timeout_ms=visual_timeout,
-            )
-        except AssertionError as exc:
-            import traceback
-            print(
-                f"[harness][L2FT][{harness_deployed['prefix']}] "
-                f"plants-visible xfail (M.4.4.16 deferred):\n"
-                f"{traceback.format_exc()}",
-                file=sys.stderr,
-            )
-            pytest.xfail(
-                f"L2FT plants-visible assertion needs date-filter "
-                f"widening (M.4.4.16 deferred to phase N). "
-                f"Underlying: {type(exc).__name__}: {exc}"
-            )
+        # M.4.4.16 — widen the L2FT per-sheet date filters before the
+        # plant visibility check, mirroring the L1 widening pattern
+        # M.4.4.12 established. ``apply_db_seed`` anchors plants to
+        # ``DEFAULT_HARNESS_TODAY`` (2030-01-01); the L2FT pickers
+        # default to a rolling window ending wall-clock today, so the
+        # plants sit several years outside every default window. Use
+        # the same ``max_days_ago + 7`` buffer the L1 path computes.
+        max_days_ago = max(
+            (
+                int(plant["days_ago"])
+                for plants in manifest.values()
+                for plant in plants
+                if isinstance(plant, dict) and "days_ago" in plant
+            ),
+            default=30,
+        )
+        widen_l2ft_date_range(
+            page,
+            today=harness_deployed["today"],
+            days_back=max_days_ago + 7,
+            timeout_ms=visual_timeout,
+        )
+        assert_l2ft_plants_visible(
+            page, manifest, timeout_ms=visual_timeout,
+        )
         assert_l2_exceptions_check_types_present(
             page, timeout_ms=visual_timeout,
         )

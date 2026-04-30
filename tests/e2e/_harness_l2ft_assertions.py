@@ -1,5 +1,6 @@
 """L2 Flow Tracing Playwright assertions for the M.4.1 harness (M.4.1.e).
 
+
 Mirrors the M.4.1.d L1 assertion module but for the L2 Flow Tracing
 dashboard's surfaces. Per the M.4.1.e PLAN entry:
 
@@ -31,6 +32,7 @@ see ``apps/l2_flow_tracing/datasets.py::build_unified_l2_exceptions_dataset``).
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from typing import Any
 
 
@@ -179,6 +181,83 @@ def assert_l2_exceptions_check_types_present(
 ) -> None:
     """Deprecated — see ``assert_l2_exceptions_kpi_renders``."""
     assert_l2_exceptions_kpi_renders(page, timeout_ms=timeout_ms)
+
+
+# L2FT sheets that carry per-sheet ``Date From`` / ``Date To`` pickers.
+# The L2FT app declares date params per-sheet (not analysis-level like
+# L1's M.2b.1), so widening on Rails alone doesn't propagate to Chains
+# or Transfer Templates — each must be widened individually.
+#
+# Sheet boundaries from ``apps/l2_flow_tracing/app.py``:
+# - ``_populate_rails_sheet`` (line ~428) — Date From/To bound to
+#   ``pL2ftDateStart`` / ``pL2ftDateEnd``.
+# - ``_populate_chains_sheet`` (line ~616) — bound to
+#   ``pL2ftChainsDateStart`` / ``pL2ftChainsDateEnd``.
+# - ``_populate_transfer_templates_sheet`` (line ~787) — bound to
+#   its own pair (``pL2ftTtDateStart`` / ``pL2ftTtDateEnd``).
+# All three pickers carry the user-facing ``Date From`` / ``Date To``
+# labels, so the same ``set_parameter_datetime_value`` call works on
+# each sheet — no need to thread parameter names.
+_L2FT_SHEETS_WITH_DATE_FILTER: tuple[str, ...] = (
+    "Rails",
+    "Chains",
+    "Transfer Templates",
+)
+
+
+def widen_l2ft_date_range(
+    page: Any,
+    *,
+    today: date,
+    days_back: int = 30,
+    timeout_ms: int = 30_000,
+) -> None:
+    """Widen the L2 Flow Tracing dashboard's per-sheet date filters
+    so plant visibility checks (``assert_l2ft_plants_visible``) see
+    every planted rail / template firing.
+
+    Mirrors ``_harness_l1_assertions.widen_l1_date_range`` but iterates
+    the 3 L2FT sheets that carry their own date-picker pair (Rails,
+    Chains, Transfer Templates) — L2FT's date params are scoped per
+    sheet, NOT analysis-level, so widening on Rails alone leaves
+    Transfer Templates' window at its default.
+
+    Why: ``apply_db_seed`` anchors plants to ``DEFAULT_HARNESS_TODAY``
+    (date(2030, 1, 1)) so the seed hash is deterministic. The L2FT
+    dashboard date pickers default to a rolling window ending at
+    wall-clock today — the plants therefore sit several years outside
+    every default window and the visibility check trivially fails.
+
+    Args:
+        page: loaded Playwright Page on the L2 Flow Tracing dashboard.
+        today: the same ``today`` ``apply_db_seed`` used (typically
+            ``DEFAULT_HARNESS_TODAY``).
+        days_back: width of the window. Default 30 covers all current
+            plant kinds; bump if rail_firing_plants ever land deeper.
+        timeout_ms: per-step picker wait timeout.
+
+    Closes M.4.4.16 (PLAN task #453) — the inline ``pytest.xfail`` in
+    ``test_harness_l2ft_planted_scenarios_visible`` can be removed once
+    this is wired in.
+    """
+    from quicksight_gen.common.browser.helpers import (
+        click_sheet_tab,
+        set_parameter_datetime_value,
+    )
+
+    start = today - timedelta(days=days_back)
+    end = today
+    start_str = start.strftime("%Y/%m/%d")
+    end_str = end.strftime("%Y/%m/%d")
+
+    for sheet_name in _L2FT_SHEETS_WITH_DATE_FILTER:
+        click_sheet_tab(page, sheet_name, timeout_ms=timeout_ms)
+        set_parameter_datetime_value(
+            page, "Date From", start_str, timeout_ms=timeout_ms,
+        )
+        set_parameter_datetime_value(
+            page, "Date To", end_str, timeout_ms=timeout_ms,
+        )
 
 
 # ---------------------------------------------------------------------------
