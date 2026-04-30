@@ -97,15 +97,12 @@ def emit_schema(
     returned string can be fed straight to ``psql`` or
     ``psycopg2.cursor.execute(sql)``.
 
-    ``dialect`` selects the SQL flavor. P.2 only ships
-    ``Dialect.POSTGRES``; the Oracle branch lands in P.3 (the big
-    template strings need either splitting or templating to support
-    both — call open in the audit doc).
+    ``dialect`` selects the SQL flavor. P.3.d unblocked Oracle by
+    threading dialect helpers through every template; both branches
+    are now first-class. New dialects would need a new ``Dialect``
+    enum value plus per-helper Oracle/Postgres-style branches in
+    ``common.sql.dialect``.
     """
-    if dialect is not Dialect.POSTGRES:
-        raise NotImplementedError(
-            "emit_schema: Oracle DDL emission lands in Phase P.3."
-        )
     p = instance.instance
     # L1 invariant view DROPs MUST run before base DROPs — the L1 views
     # depend on the Current* views (which depend on the base tables),
