@@ -807,7 +807,10 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
         )
 
     from quicksight_gen.schema import generate_schema_sql
-    from quicksight_gen.common.l2.schema import emit_schema as emit_l2_schema
+    from quicksight_gen.common.l2.schema import (
+        emit_schema as emit_l2_schema,
+        refresh_matviews_sql,
+    )
     from quicksight_gen.common.l2.seed import emit_seed as emit_l2_seed
     from quicksight_gen.common.l2.auto_scenario import default_scenario_for
     schema_sql = generate_schema_sql()
@@ -858,27 +861,20 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
             cur.execute(seed_sql)
             click.echo("  Refreshing materialized views...")
             cur.execute("REFRESH MATERIALIZED VIEW ar_unified_exceptions;")
-            # N.3.n: Investigation matviews migrated to per-instance
-            # prefixed names (``<prefix>_inv_pair_rolling_anomalies`` /
-            # ``<prefix>_inv_money_trail_edges``) emitted by
-            # common/l2/schema.py. demo apply refreshes them at the
-            # default L2 instance prefix; integrators with their own
-            # institution YAML get the prefix from their cfg.
-            #
-            # N.3.i (deferred): the seed SQL above still plants v5-shape
-            # flat-table data via apps/investigation/demo_data.py, so
-            # the prefixed Inv matviews refresh against zero rows of
-            # planted Investigation data — they refresh fine but the
-            # dashboard sheets render empty until the seed lift to
-            # common/l2/seed.py lands.
-            cur.execute(
-                f"REFRESH MATERIALIZED VIEW "
-                f"{cfg.l2_instance_prefix}_inv_pair_rolling_anomalies;"
-            )
-            cur.execute(
-                f"REFRESH MATERIALIZED VIEW "
-                f"{cfg.l2_instance_prefix}_inv_money_trail_edges;"
-            )
+            # Refresh every per-instance L1 + Inv matview in dependency
+            # order: leaves (current_*) → helpers (computed_*) → L1
+            # invariants (drift / overdraft / limit_breach / stuck_*) →
+            # dashboard-shape rollups (daily_statement_summary /
+            # todays_exceptions) → Inv matviews. Without this the
+            # dashboards render empty even though emit_seed planted the
+            # base-table rows — the matviews themselves stay empty.
+            # ``refresh_matviews_sql`` returns one statement per line
+            # (REFRESHes first, then ANALYZEs); psycopg2 can't run a
+            # multi-statement string reliably, so split + execute.
+            for stmt in refresh_matviews_sql(inv_l2).strip().split("\n"):
+                stmt = stmt.strip()
+                if stmt:
+                    cur.execute(stmt)
         conn.commit()
         click.echo("  Database ready.")
     except Exception:
