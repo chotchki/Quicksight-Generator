@@ -10,6 +10,8 @@ The ``ThemePreset`` dataclass itself lives in ``common/l2/theme.py`` per N.1
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.l2.theme import ThemePreset
 from quicksight_gen.common.models import (
@@ -36,7 +38,12 @@ __all__ = [
     "ThemePreset",
     "build_theme",
     "get_preset",
+    "resolve_l2_theme",
 ]
+
+
+if TYPE_CHECKING:
+    from quicksight_gen.common.l2 import L2Instance
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +248,18 @@ def get_preset(name: str) -> ThemePreset:
             f"Unknown theme preset '{name}'. Available: {available}"
         )
     return PRESETS[name]
+
+
+def resolve_l2_theme(l2_instance: "L2Instance | None") -> ThemePreset:
+    """Pick the theme to render with for an L2-fed app (N.1).
+
+    Returns the L2 instance's inline theme block when present (the new
+    N.1 path); otherwise falls back to the registry ``default`` preset.
+    Lets L2-fed apps drop ``cfg.theme_preset`` entirely.
+    """
+    if l2_instance is not None and l2_instance.theme is not None:
+        return l2_instance.theme
+    return get_preset("default")
 
 
 # ---------------------------------------------------------------------------

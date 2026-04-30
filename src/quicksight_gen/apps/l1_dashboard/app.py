@@ -67,7 +67,8 @@ from quicksight_gen.common.sheets.app_info import (
     DS_APP_INFO_MATVIEWS,
     populate_app_info_sheet,
 )
-from quicksight_gen.common.theme import get_preset
+from quicksight_gen.common.l2 import ThemePreset
+from quicksight_gen.common.theme import resolve_l2_theme
 from quicksight_gen.common.tree import (
     AUTO,
     Analysis,
@@ -409,6 +410,8 @@ def _populate_getting_started(
     cfg: Config,
     sheet: Sheet,
     l2_instance: L2Instance,
+    *,
+    theme: ThemePreset,
 ) -> None:
     """Render the Getting Started sheet using the L2 instance's prose.
 
@@ -418,7 +421,7 @@ def _populate_getting_started(
     derived from the L2 instance, NOT hardcoded persona strings.
     Switching L2 instance switches the prose.
     """
-    accent = get_preset(cfg.theme_preset).accent
+    accent = theme.accent
 
     welcome_body = (
         l2_instance.description
@@ -467,6 +470,7 @@ def _populate_drift_sheet(
     datasets: dict[str, Dataset],
     l2_instance: L2Instance,
     daily_statement_sheet: Sheet,
+    theme: ThemePreset,
 ) -> None:
     """Drift sheet — 2 KPIs + leaf-drift table + ledger-drift table.
 
@@ -478,7 +482,7 @@ def _populate_drift_sheet(
     + their roles + L2-supplied prose so analysts see the universe of
     accounts drift can surface against.
     """
-    accent = get_preset(cfg.theme_preset).accent
+    accent = theme.accent
     ds_drift = datasets[DS_DRIFT]
     ds_ledger_drift = datasets[DS_LEDGER_DRIFT]
 
@@ -693,6 +697,7 @@ def _populate_overdraft_sheet(
     *,
     datasets: dict[str, Dataset],
     daily_statement_sheet: Sheet,
+    theme: ThemePreset,
 ) -> None:
     """Overdraft sheet — KPI (count of violations) + violations table.
 
@@ -700,7 +705,7 @@ def _populate_overdraft_sheet(
     days where stored balance < 0. Right-click any row → Daily Statement
     for that account-day (M.2b.7).
     """
-    accent = get_preset(cfg.theme_preset).accent
+    accent = theme.accent
     ds_overdraft = datasets[DS_OVERDRAFT]
 
     sheet.layout.row(height=_KPI_ROW_SPAN).add_kpi(
@@ -756,6 +761,7 @@ def _populate_todays_exceptions_sheet(
     l2_instance: L2Instance,
     drift_sheet: Sheet,
     daily_statement_sheet: Sheet,
+    theme: ThemePreset,
 ) -> None:
     """Today's Exceptions sheet — KPI + check-type breakdown bar +
     sorted detail table.
@@ -771,7 +777,7 @@ def _populate_todays_exceptions_sheet(
     view's job is to be the morning landing page, so it gets the
     institution's "what we are" prose at the bottom for context.
     """
-    accent = get_preset(cfg.theme_preset).accent
+    accent = theme.accent
     ds = datasets[DS_TODAYS_EXCEPTIONS]
 
     # Row 1: total count KPI (full width — single headline number).
@@ -878,6 +884,7 @@ def _populate_limit_breach_sheet(
     datasets: dict[str, Dataset],
     l2_instance: L2Instance,
     daily_statement_sheet: Sheet,
+    theme: ThemePreset,
 ) -> None:
     """Limit Breach sheet — KPI + per-(account, day, type) breach table.
 
@@ -892,7 +899,7 @@ def _populate_limit_breach_sheet(
     analysts see "what's configured" before "what got breached" —
     description-driven, not hardcoded.
     """
-    accent = get_preset(cfg.theme_preset).accent
+    accent = theme.accent
     ds_lb = datasets[DS_LIMIT_BREACH]
 
     sheet.layout.row(height=8).add_text_box(
@@ -1011,6 +1018,7 @@ def _populate_pending_aging_sheet(
     *,
     datasets: dict[str, Dataset],
     transactions_sheet: Sheet,
+    theme: ThemePreset,
 ) -> None:
     """Pending Aging sheet — KPI + horizontal aging BarChart + detail.
 
@@ -1020,7 +1028,7 @@ def _populate_pending_aging_sheet(
     Right-click any detail-table row → Transactions narrowed to that
     transfer (M.2b.7 drill plumbing).
     """
-    accent = get_preset(cfg.theme_preset).accent
+    accent = theme.accent
     ds = datasets[DS_STUCK_PENDING]
 
     # Aging-bucket calc field (analysis-level so the BarChart category
@@ -1106,6 +1114,7 @@ def _populate_unbundled_aging_sheet(
     *,
     datasets: dict[str, Dataset],
     transactions_sheet: Sheet,
+    theme: ThemePreset,
 ) -> None:
     """Unbundled Aging sheet — KPI + horizontal aging BarChart + detail.
 
@@ -1114,7 +1123,7 @@ def _populate_unbundled_aging_sheet(
     bucket cadence (4 bands sized for the typical 1-2 day
     `max_unbundled_age` configuration).
     """
-    accent = get_preset(cfg.theme_preset).accent
+    accent = theme.accent
     ds = datasets[DS_STUCK_UNBUNDLED]
 
     aging_bucket = analysis.add_calc_field(CalcField(
@@ -1192,6 +1201,7 @@ def _populate_supersession_audit_sheet(
     sheet: Sheet,
     *,
     datasets: dict[str, Dataset],
+    theme: ThemePreset,
 ) -> None:
     """Supersession Audit sheet — KPI + 2 detail tables.
 
@@ -1206,7 +1216,7 @@ def _populate_supersession_audit_sheet(
     (the daily-balances superceding pattern is so rare in practice
     that adding a second filter would be noise).
     """
-    accent = get_preset(cfg.theme_preset).accent
+    accent = theme.accent
     ds_tx = datasets[DS_SUPERSESSION_TRANSACTIONS]
     ds_db = datasets[DS_SUPERSESSION_DAILY_BALANCES]
 
@@ -1291,6 +1301,7 @@ def _populate_transactions_sheet(
     sheet: Sheet,
     *,
     datasets: dict[str, Dataset],
+    theme: ThemePreset,
 ) -> None:
     """Transactions sheet — single detail table over the per-leg ledger.
 
@@ -1300,7 +1311,7 @@ def _populate_transactions_sheet(
     origin / transfer_type. M.2b.2 link tint on `account_id` +
     `transfer_id` cues the M.2b.7 drill plumbing.
     """
-    accent = get_preset(cfg.theme_preset).accent
+    accent = theme.accent
     ds_tx = datasets[DS_TRANSACTIONS]
 
     account_col = ds_tx["account_id"].dim()
@@ -1342,6 +1353,7 @@ def _populate_daily_statement_sheet(
     *,
     datasets: dict[str, Dataset],
     transactions_sheet: Sheet,
+    theme: ThemePreset,
 ) -> None:
     """Daily Statement — 5 KPIs across the day's walk + detail table.
 
@@ -1395,7 +1407,7 @@ def _populate_daily_statement_sheet(
     # picked account, after sheet filters narrow. Right-click any row →
     # Transactions narrowed to that transfer_id (every leg of the
     # multi-leg transfer the clicked row is part of).
-    accent = get_preset(cfg.theme_preset).accent
+    accent = theme.accent
     transfer_col = ds_txn["transfer_id"].dim()
     sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
         width=_FULL,
@@ -2024,6 +2036,11 @@ def build_l1_dashboard_app(
     if cfg.l2_instance_prefix is None:
         cfg = replace(cfg, l2_instance_prefix=str(l2_instance.instance))
 
+    # N.1.e — resolve theme once from the L2 instance; populate functions
+    # consume `theme` directly. Falls back to the registry default when
+    # the L2 YAML omits the theme block.
+    theme = resolve_l2_theme(l2_instance)
+
     app = App(name="l1-dashboard", cfg=cfg)
     analysis = app.set_analysis(Analysis(
         analysis_id_suffix="l1-dashboard-analysis",
@@ -2112,54 +2129,56 @@ def build_l1_dashboard_app(
     ))
 
     # Populators — each receives the sheets it drills into so the drill
-    # actions can reference target_sheet by typed ref.
-    _populate_getting_started(cfg, getting_started, l2_instance)
+    # actions can reference target_sheet by typed ref. ``theme`` is the
+    # N.1-resolved L2 brand theme (or the registry default fallback).
+    _populate_getting_started(cfg, getting_started, l2_instance, theme=theme)
     _populate_drift_sheet(
         cfg, drift_sheet, datasets=datasets, l2_instance=l2_instance,
-        daily_statement_sheet=daily_statement_sheet,
+        daily_statement_sheet=daily_statement_sheet, theme=theme,
     )
     _populate_drift_timelines_sheet(
         cfg, drift_timelines_sheet, datasets=datasets,
     )
     _populate_overdraft_sheet(
         cfg, overdraft_sheet, datasets=datasets,
-        daily_statement_sheet=daily_statement_sheet,
+        daily_statement_sheet=daily_statement_sheet, theme=theme,
     )
     _populate_limit_breach_sheet(
         cfg, limit_breach_sheet,
         datasets=datasets, l2_instance=l2_instance,
-        daily_statement_sheet=daily_statement_sheet,
+        daily_statement_sheet=daily_statement_sheet, theme=theme,
     )
     _populate_pending_aging_sheet(
         cfg, analysis, pending_aging_sheet,
         datasets=datasets,
-        transactions_sheet=transactions_sheet,
+        transactions_sheet=transactions_sheet, theme=theme,
     )
     _populate_unbundled_aging_sheet(
         cfg, analysis, unbundled_aging_sheet,
         datasets=datasets,
-        transactions_sheet=transactions_sheet,
+        transactions_sheet=transactions_sheet, theme=theme,
     )
     _populate_supersession_audit_sheet(
-        cfg, supersession_audit_sheet, datasets=datasets,
+        cfg, supersession_audit_sheet, datasets=datasets, theme=theme,
     )
     _populate_todays_exceptions_sheet(
         cfg, todays_exceptions_sheet,
         datasets=datasets, l2_instance=l2_instance,
         drift_sheet=drift_sheet,
-        daily_statement_sheet=daily_statement_sheet,
+        daily_statement_sheet=daily_statement_sheet, theme=theme,
     )
     _populate_daily_statement_sheet(
         cfg, daily_statement_sheet, datasets=datasets,
-        transactions_sheet=transactions_sheet,
+        transactions_sheet=transactions_sheet, theme=theme,
     )
     _populate_transactions_sheet(
-        cfg, transactions_sheet, datasets=datasets,
+        cfg, transactions_sheet, datasets=datasets, theme=theme,
     )
     populate_app_info_sheet(
         cfg, app_info_sheet,
         liveness_ds=datasets[DS_APP_INFO_LIVENESS],
         matview_status_ds=datasets[DS_APP_INFO_MATVIEWS],
+        theme=theme,
     )
 
     # M.2b.1 — Universal date-range filter wires the sheets together.

@@ -61,7 +61,8 @@ from quicksight_gen.common.sheets.app_info import (
     DS_APP_INFO_MATVIEWS,
     populate_app_info_sheet,
 )
-from quicksight_gen.common.theme import get_preset
+from quicksight_gen.common.l2 import ThemePreset
+from quicksight_gen.common.theme import resolve_l2_theme
 from quicksight_gen.common.tree import (
     Analysis,
     App,
@@ -205,6 +206,11 @@ def build_l2_flow_tracing_app(
     if cfg.l2_instance_prefix is None:
         cfg = replace(cfg, l2_instance_prefix=str(l2_instance.instance))
 
+    # N.1.f — resolve theme once from the L2 instance; populate functions
+    # consume `theme` directly. Falls back to the registry default when
+    # the L2 YAML omits the theme block.
+    theme = resolve_l2_theme(l2_instance)
+
     app = App(name="l2-flow-tracing", cfg=cfg)
     analysis = app.set_analysis(Analysis(
         analysis_id_suffix="l2-flow-tracing-analysis",
@@ -249,7 +255,9 @@ def build_l2_flow_tracing_app(
         description=_L2_EXCEPTIONS_DESCRIPTION,
     ))
 
-    _populate_getting_started(cfg, getting_started, l2_instance)
+    _populate_getting_started(
+        cfg, getting_started, l2_instance, theme=theme,
+    )
     _populate_rails_sheet(
         cfg, rails_sheet,
         analysis=analysis, datasets=datasets, l2_instance=l2_instance,
@@ -261,6 +269,7 @@ def build_l2_flow_tracing_app(
     _populate_transfer_templates_sheet(
         cfg, transfer_templates_sheet,
         analysis=analysis, datasets=datasets, l2_instance=l2_instance,
+        theme=theme,
     )
     # M.3.10m — declare the 2 drill parameters + sentinel-pattern
     # filter groups on the destination sheets (Rails / Chains) BEFORE
@@ -277,6 +286,7 @@ def build_l2_flow_tracing_app(
         datasets=datasets,
         rails_sheet=rails_sheet,
         chains_sheet=chains_sheet,
+        theme=theme,
     )
 
     # M.4.4.5 — App Info ("i") sheet, ALWAYS LAST. Diagnostic canary;
@@ -293,6 +303,7 @@ def build_l2_flow_tracing_app(
         cfg, app_info_sheet,
         liveness_ds=datasets[DS_APP_INFO_LIVENESS],
         matview_status_ds=datasets[DS_APP_INFO_MATVIEWS],
+        theme=theme,
     )
 
     app.create_dashboard(
@@ -358,6 +369,8 @@ def _populate_getting_started(
     cfg: Config,
     sheet: Sheet,
     l2_instance: L2Instance,
+    *,
+    theme: ThemePreset,
 ) -> None:
     """Render the Getting Started sheet using the L2 instance's prose.
 
@@ -365,7 +378,7 @@ def _populate_getting_started(
     (NOT a hardcoded persona string). Switching L2 instance switches
     the prose — same contract the L1 dashboard's Getting Started follows.
     """
-    accent = get_preset(cfg.theme_preset).accent
+    accent = theme.accent
 
     welcome_body = (
         l2_instance.description
@@ -775,6 +788,7 @@ def _populate_transfer_templates_sheet(
     analysis: Analysis,
     datasets: dict[str, Dataset],
     l2_instance: L2Instance,
+    theme: ThemePreset,
 ) -> None:
     """Transfer Templates sheet — multi-leg flow Sankey + per-instance
     detail Table (M.3.10f).
@@ -929,7 +943,7 @@ def _populate_transfer_templates_sheet(
     # NODE NAMES — orphan edges land on a "(orphan)" suffixed node.
     # This text box spells out the three edge kinds the analyst will
     # see in the Sankey below.
-    accent = get_preset(cfg.theme_preset).accent
+    accent = theme.accent
     sheet.layout.row(height=3).add_text_box(
         TextBox(
             text_box_id="l2ft-tt-sankey-legend",
@@ -1111,6 +1125,7 @@ def _populate_l2_exceptions_sheet(
     datasets: dict[str, Dataset],
     rails_sheet: Sheet,
     chains_sheet: Sheet,
+    theme: ThemePreset,
 ) -> None:
     """L2 Exceptions sheet — unified violation view (M.3.10l rewrite
     of M.3.7).
@@ -1129,7 +1144,7 @@ def _populate_l2_exceptions_sheet(
     rows of vertical scroll; the unified view fits in one screen and
     matches the L1 dashboard's familiar shape.
     """
-    accent = get_preset(cfg.theme_preset).accent
+    accent = theme.accent
 
     del accent  # unused after the M.3.10l rewrite — kept the lookup
                 # so a future legend / KPI tint can pick it up cheaply.
@@ -1214,10 +1229,11 @@ def _populate_placeholder(
     body: str,
     substep: str,
     text_box_id: str,
+    theme: ThemePreset,
 ) -> None:
     """Stub a placeholder sheet with the tab description + a 'lands at <substep>'
     note. Removed when the substep populator replaces this call."""
-    accent = get_preset(cfg.theme_preset).accent
+    accent = theme.accent
     sheet.layout.row(height=8).add_text_box(
         TextBox(
             text_box_id=text_box_id,
