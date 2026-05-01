@@ -525,8 +525,9 @@ Phase R inverts the seed shape: a **3-month healthy baseline** of hundreds-to-th
   - A: sounds good, the key is to use the seeded random generator throughout as a random source so the results are predictable
 - [ ] **R.1.e — Multi-leg transfer construction** (**children-first** ordering for aggregating rails). Each Transfer's legs net to zero (per the L1 invariant). Aggregating Rails: child legs post first throughout the day/period, then a higher-Entry parent row (`Supersedes = BundleAssignment`) retroactively bundles them — matches the real bookkeeping pattern where the bundler runs at EOD/EOM after the children have accumulated. Unbundled-aging plants are the few children that NEVER got bundled (in R.3). Non-aggregating chains stay parent → child via `parent_transfer_id` since those parents fire first and trigger the children synchronously.
   - A: on the chain firings, the children will come temporally first since the parents are bundling them to make a parent system whole
-- [ ] **R.1.f — Spec doc + review gate.** Half-page describing the generator's output shape (volume per rail, amount range per rail, time-of-day shape). User signs off before R.2 implementation begins so we don't burn a day building the wrong shape. Also: audit the L2 e2e tests as part of this gate — see R.5.d for the test-repoint substep.
+- [x] **R.1.f — Spec doc + review gate.** Half-page describing the generator's output shape (volume per rail, amount range per rail, time-of-day shape). User signs off before R.2 implementation begins so we don't burn a day building the wrong shape. Also: audit the L2 e2e tests as part of this gate — see R.5.d for the test-repoint substep.
   - A: sounds good, we should also plan to repoint the tests at this output since I don't think the L2 e2e tests actually test layer 2 now
+  - Sign-off 2026-04-30: "spec looks good, should be transformed into a reference doc at the end of this" — reference-doc lift tracked as R.7.e.
 
   #### R.1.f spec — Generator output shape
 
@@ -623,8 +624,11 @@ Phase R inverts the seed shape: a **3-month healthy baseline** of hundreds-to-th
   ##### 8. Out of spec / open
 
   - **Per-Rail YAML overrides** (`seed_amount`, `seed_volume_multiplier`) — out of scope; baseline heuristic is enough for the existing two L2 instances. Add when a third instance lands and needs a per-rail tweak.
+    - A: agreed
   - **Cross-currency** — all amounts USD. No FX rails declared today.
+    - A: agreed
   - **Memo / metadata-payload realism** — generator emits valid metadata structures (the L2's declared keys with random plausible values) but doesn't aim for narrative realism. The Investigation walkthroughs reference specific amounts + counterparties; those land via R.3 plants, not the baseline.
+    - A: agreed
 
   Sign-off bar: the user reads this spec, flags anything off, then R.2 starts.
 
@@ -653,6 +657,7 @@ Phase R inverts the seed shape: a **3-month healthy baseline** of hundreds-to-th
 
 - [ ] **R.5.a — Re-lock the SHA256 seed-hash test.** `test_seed_output_hash_is_locked` per app — paste the new hash once the generator is stable. Burns once on first land; protects against accidental drift afterward.
 - [ ] **R.5.b — Update e2e harness assertions.** `assert_l1_plants_visible` + `assert_l2ft_matview_rows_present` may need updates if plant counts changed. Per the M.4.4.13 lesson: plants must surface in matviews + render on dashboards.
+  - Note: the check will likely need to set filters in certain cases to narrow the plant on to the screen.
 - [ ] **R.5.c — Volume Anomalies smoke.** New: assert that with 90 days of baseline, the rolling-2-day-stddev z-score on a planted spike is **> 3σ** (decision per follow-up Q4 — lands in the dashboard's "high" anomaly bar coloring band so it screams at first glance, not just "interesting"). Plant amount sized so it lands at mu + 3*sigma in the underlying normal that the lognormal samples from. Without this, "richer baseline" could land but Volume Anomalies still shows nothing.
 - [ ] **R.5.d — L2 e2e test repoint.** Per R.1.f: today's L2FT harness asserts plants surface in the matview + the dashboard renders SOME content; it does NOT assert that every L2-declared primitive (Rail / Chain / TransferTemplate / LimitSchedule) actually has runtime evidence. With Phase R's exhaustive baseline that becomes asserttable: for every Rail in the L2 instance, assert N≥M legs in `<prefix>_current_transactions`; for every Chain, assert at least one parent + child firing pair; for every TransferTemplate with `expected_net=0`, assert that's actually true on its instances; etc. Likely turns into a new harness assertion file (`_harness_l2_coverage_assertions.py`) wired into `test_harness_end_to_end.py`. Audit + spec the assertion set as part of R.1.f's review gate so the tests get built alongside the generator.
 
@@ -670,6 +675,7 @@ Phase R inverts the seed shape: a **3-month healthy baseline** of hundreds-to-th
 - [ ] **R.7.b — Bump `__version__` + RELEASE_NOTES entry.** Cover the new "realistic baseline" demo + the per-Rail volume / amount profiles + the Investigation z-score signal.
 - [ ] **R.7.c — Commit + merge to main + tag + push; release pipeline green.**
 - [ ] **R.7.d — Resume Q.2.c (re-screenshot at 1280×900) against the v7.2.0 demo.**
+- [ ] **R.7.e — Lift R.1.f spec out of PLAN.md into a docs-site reference page.** Once the implementation has stabilized + the headline numbers in the spec match what the generator actually produces, lift the design doc out of PLAN.md and into the docs site as durable reference. Likely target: `docs/handbook/seed-generator.md` (under Reference / handbook so integrators customizing for their own L2 instance can find it) OR `docs/reference/seed-generator.md` (if Q.2's IA work has carved a top-level Reference shelf by then). PLAN.md's R.1.f keeps a one-line pointer to the lifted doc.
 
 ---
 
