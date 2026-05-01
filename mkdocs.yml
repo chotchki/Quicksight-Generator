@@ -33,6 +33,13 @@ nav:
   # explicit subdirectories (concepts/, reference/, etc.) once the
   # diagram pipeline (O.1.c) and templating (O.1.b) are in.
   - Home: index.md
+  - For Your Role:
+    - Overview: for-your-role/index.md
+    - For the operator: for-your-role/operator.md
+    - For the integrator: for-your-role/integrator.md
+    - For the ETL engineer: for-your-role/etl-engineer.md
+    - For the executive: for-your-role/executive.md
+    - For the compliance analyst: for-your-role/compliance-analyst.md
   - Concepts:
     - Overview: concepts/index.md
     - Accounting:
@@ -51,16 +58,13 @@ nav:
       - Transfer template: concepts/l2/transfer-template.md
       - Chain: concepts/l2/chain.md
       - Limit schedule: concepts/l2/limit-schedule.md
-  - Reference:
-    - Overview: reference/index.md
-    - L1 Reconciliation Dashboard: handbook/l1.md
-    - L2 Flow Tracing: handbook/l2_flow_tracing.md
-    - Investigation: handbook/investigation.md
-    - Executives: handbook/executives.md
-    - ETL — Data Integration: handbook/etl.md
-    - Customization: handbook/customization.md
-    - Schema v6 — Data Feed Contract: Schema_v6.md
-    - L1 Invariants: L1_Invariants.md
+  - Background:
+    - Institution tour: scenario/index.md
+    - Accounts: scenario/accounts.md
+    - Rails: scenario/rails.md
+    - Transfer templates: scenario/transfer-templates.md
+    - Chains: scenario/chains.md
+    - Limit schedules: scenario/limit-schedules.md
   - Walkthroughs:
     - Overview: walkthroughs/index.md
     - L1 Sheets:
@@ -98,20 +102,16 @@ nav:
       - How do I author a new app on the tree?: walkthroughs/customization/how-do-i-author-a-new-app-on-the-tree.md
       - How do I test my customization?: walkthroughs/customization/how-do-i-test-my-customization.md
       - How do I publish docs against my L2?: walkthroughs/customization/how-do-i-publish-docs-against-my-l2.md
-  - For Your Role:
-    - Overview: for-your-role/index.md
-    - For the operator: for-your-role/operator.md
-    - For the integrator: for-your-role/integrator.md
-    - For the ETL engineer: for-your-role/etl-engineer.md
-    - For the executive: for-your-role/executive.md
-    - For the compliance analyst: for-your-role/compliance-analyst.md
-  - Scenario:
-    - Institution tour: scenario/index.md
-    - Accounts: scenario/accounts.md
-    - Rails: scenario/rails.md
-    - Transfer templates: scenario/transfer-templates.md
-    - Chains: scenario/chains.md
-    - Limit schedules: scenario/limit-schedules.md
+  - Reference:
+    - Overview: reference/index.md
+    - L1 Reconciliation Dashboard: handbook/l1.md
+    - L2 Flow Tracing: handbook/l2_flow_tracing.md
+    - Investigation: handbook/investigation.md
+    - Executives: handbook/executives.md
+    - ETL — Data Integration: handbook/etl.md
+    - Customization: handbook/customization.md
+    - Schema v6 — Data Feed Contract: Schema_v6.md
+    - L1 Invariants: L1_Invariants.md
   - API Reference:
     - Overview: api/index.md
     - Tree — App / Analysis / Dashboard / Sheet: api/tree-structure.md

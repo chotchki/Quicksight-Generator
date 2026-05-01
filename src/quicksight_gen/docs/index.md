@@ -39,16 +39,22 @@ schema prefix), sharing the CLI surface:
 
 Pick the section that matches your role:
 
-- **[Concepts](concepts/index.md)** — banking primitives every
-  reader should know first (double-entry, escrow, sweep / settle,
-  vouchering, eventual consistency, open vs closed loop).
-- **[Reference](reference/index.md)** — per-app structural
-  reference: which sheet shows what, which dataset backs it.
-- **[Walkthroughs](walkthroughs/index.md)** — task recipes:
-  "I have X and want Y" or "I'm looking at this row, what do I do?"
 - **[For Your Role](for-your-role/index.md)** — role-oriented
   entry points; pick yours and the page funnels you in.
-- **[Scenarios](scenario/index.md)** — end-to-end stories
-  grounded in the demo data.
+- **[Concepts](concepts/index.md)** — banking primitives every
+  reader should know first:
+    - Double-entry posting
+    - Escrow with reversal
+    - Sweep / net / settle
+    - Vouchering
+    - Eventual consistency
+    - Open vs. closed loop
+- **[Background](scenario/index.md)** — end-to-end tour of the
+  institution's L2 model (accounts, rails, transfer templates,
+  chains, limit schedules) grounded in the demo data.
+- **[Walkthroughs](walkthroughs/index.md)** — task recipes:
+  "I have X and want Y" or "I'm looking at this row, what do I do?"
+- **[Reference](reference/index.md)** — per-app structural
+  reference: which sheet shows what, which dataset backs it.
 - **[API Reference](api/index.md)** — for building a custom app
   on the typed tree primitives.
