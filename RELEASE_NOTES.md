@@ -1,5 +1,17 @@
 # Release Notes
 
+## v7.0.1 — Release pipeline fix (v7.0.0 retag)
+
+The v7.0.0 release pipeline failed because the smoke-test job in
+`.github/workflows/release.yml` referenced `tests/test_demo_data.py`
+— a file removed in P.1.c-j when the v5 demo-data generators got
+retired alongside the v5 schema. Fix: swap the smoke-test target to
+`tests/test_persona.py` (the closest current-state analog —
+DemoPersona + flavor-string coverage).
+
+No code changes vs. v7.0.0 — just the workflow fix. v7.0.0 contents
+ship under v7.0.1.
+
 ## v7.0.0 — Multi-database support: Postgres + Oracle 19c
 
 ### What's new
