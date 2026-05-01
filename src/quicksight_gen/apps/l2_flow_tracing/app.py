@@ -984,7 +984,7 @@ def _populate_transfer_templates_sheet(
         ),
         source=ds_tt_legs["flow_source"].dim(),
         target=ds_tt_legs["flow_target"].dim(),
-        weight=ds_tt_legs["amount_abs"].sum(),
+        weight=ds_tt_legs["amount_abs"].sum(currency=True),
     )
 
     sheet.layout.row(height=12).add_table(

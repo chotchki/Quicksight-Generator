@@ -641,7 +641,7 @@ def _populate_drift_timelines_sheet(
             "Max Σ ABS(drift) on any single BusinessDay across leaf "
             "accounts in the visible date range. Healthy = $0."
         ),
-        values=[ds_drift_timeline["abs_drift"].max()],
+        values=[ds_drift_timeline["abs_drift"].max(currency=True)],
     )
     kpi_row.add_kpi(
         width=half,
@@ -650,7 +650,7 @@ def _populate_drift_timelines_sheet(
             "Max Σ ABS(drift) on any single BusinessDay across parent "
             "accounts in the visible date range. Healthy = $0."
         ),
-        values=[ds_ledger_drift_timeline["abs_drift"].max()],
+        values=[ds_ledger_drift_timeline["abs_drift"].max(currency=True)],
     )
 
     # Row 2: leaf drift line chart — one line per account_role.
@@ -665,7 +665,7 @@ def _populate_drift_timelines_sheet(
             "isolated event worth drilling into."
         ),
         category=[leaf_day_col],
-        values=[ds_drift_timeline["abs_drift"].sum()],
+        values=[ds_drift_timeline["abs_drift"].sum(currency=True)],
         colors=[ds_drift_timeline["account_role"].dim()],
         category_label="BusinessDay end",
         value_label="Σ |drift|",
@@ -683,7 +683,7 @@ def _populate_drift_timelines_sheet(
             "correctly that day."
         ),
         category=[parent_day_col],
-        values=[ds_ledger_drift_timeline["abs_drift"].sum()],
+        values=[ds_ledger_drift_timeline["abs_drift"].sum(currency=True)],
         colors=[ds_ledger_drift_timeline["account_role"].dim()],
         category_label="BusinessDay end",
         value_label="Σ |drift|",
@@ -1374,25 +1374,25 @@ def _populate_daily_statement_sheet(
         width=kpi_width,
         title="Opening Balance",
         subtitle="End-of-prior-day stored balance for the picked account.",
-        values=[ds_summary["opening_balance"].max()],
+        values=[ds_summary["opening_balance"].max(currency=True)],
     )
     kpi_row.add_kpi(
         width=kpi_width,
         title="Debits",
         subtitle="Sum of Debit-direction Money records posted today.",
-        values=[ds_summary["total_debits"].max()],
+        values=[ds_summary["total_debits"].max(currency=True)],
     )
     kpi_row.add_kpi(
         width=kpi_width,
         title="Credits",
         subtitle="Sum of Credit-direction Money records posted today.",
-        values=[ds_summary["total_credits"].max()],
+        values=[ds_summary["total_credits"].max(currency=True)],
     )
     kpi_row.add_kpi(
         width=kpi_width,
         title="Closing Stored",
         subtitle="The day's stored closing balance from the feed.",
-        values=[ds_summary["closing_balance_stored"].max()],
+        values=[ds_summary["closing_balance_stored"].max(currency=True)],
     )
     kpi_row.add_kpi(
         width=kpi_width,
@@ -1400,7 +1400,7 @@ def _populate_daily_statement_sheet(
         subtitle=(
             "Stored − recomputed. Non-zero ⇒ feed doesn't reconcile."
         ),
-        values=[ds_summary["drift"].max()],
+        values=[ds_summary["drift"].max(currency=True)],
     )
 
     # Row 2: detail table — every Money record posted that day for the

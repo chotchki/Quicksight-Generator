@@ -25,12 +25,18 @@ from quicksight_gen.common.models import (
     CategoricalDimensionField,
     CategoricalMeasureField,
     ColumnIdentifier,
+    CurrencyDisplayFormatConfiguration,
     DateDimensionField,
+    DecimalPlacesConfiguration,
     DimensionField,
     MeasureField,
+    NumberFormatConfiguration,
     NumericalAggregationFunction,
     NumericalDimensionField,
     NumericalMeasureField,
+    NumericFormatConfiguration,
+    SeparatorConfiguration,
+    ThousandSeparatorOptions,
 )
 from quicksight_gen.common.tree._helpers import (
     AUTO,
@@ -203,35 +209,52 @@ class Measure:
     column: ColumnRef
     kind: MeasureKind
     field_id: str | AutoResolved = field(default=AUTO, kw_only=True)
+    # Q.1.a — currency=True emits a USD CurrencyDisplayFormatConfiguration
+    # on the underlying NumericalMeasureField (2 decimal places, comma
+    # thousands separator, "$" prefix per QS's USD rendering). Only
+    # valid for numerical aggregations (sum/max/min/average) — count /
+    # distinct_count don't aggregate money. The emit-time assert below
+    # catches the misuse loud rather than silently dropping the format.
+    currency: bool = field(default=False, kw_only=True)
 
     @classmethod
     def sum(
         cls, dataset: Dataset, column: ColumnRef,
-        *, field_id: str | AutoResolved = AUTO,
+        *, field_id: str | AutoResolved = AUTO, currency: bool = False,
     ) -> Measure:
-        return cls(dataset=dataset, column=column, kind="sum", field_id=field_id)
+        return cls(
+            dataset=dataset, column=column, kind="sum",
+            field_id=field_id, currency=currency,
+        )
 
     @classmethod
     def max(
         cls, dataset: Dataset, column: ColumnRef,
-        *, field_id: str | AutoResolved = AUTO,
+        *, field_id: str | AutoResolved = AUTO, currency: bool = False,
     ) -> Measure:
-        return cls(dataset=dataset, column=column, kind="max", field_id=field_id)
+        return cls(
+            dataset=dataset, column=column, kind="max",
+            field_id=field_id, currency=currency,
+        )
 
     @classmethod
     def min(
         cls, dataset: Dataset, column: ColumnRef,
-        *, field_id: str | AutoResolved = AUTO,
+        *, field_id: str | AutoResolved = AUTO, currency: bool = False,
     ) -> Measure:
-        return cls(dataset=dataset, column=column, kind="min", field_id=field_id)
+        return cls(
+            dataset=dataset, column=column, kind="min",
+            field_id=field_id, currency=currency,
+        )
 
     @classmethod
     def average(
         cls, dataset: Dataset, column: ColumnRef,
-        *, field_id: str | AutoResolved = AUTO,
+        *, field_id: str | AutoResolved = AUTO, currency: bool = False,
     ) -> Measure:
         return cls(
-            dataset=dataset, column=column, kind="average", field_id=field_id,
+            dataset=dataset, column=column, kind="average",
+            field_id=field_id, currency=currency,
         )
 
     @classmethod
@@ -266,6 +289,12 @@ class Measure:
             ColumnName=resolve_column(self.column),
         )
         if self.kind in _CATEGORICAL_AGG:
+            assert not self.currency, (
+                f"Measure(currency=True) is only valid for numerical "
+                f"aggregations (sum/max/min/average), not "
+                f"{self.kind!r} — count/distinct_count return row "
+                f"counts, never money."
+            )
             return MeasureField(
                 CategoricalMeasureField=CategoricalMeasureField(
                     FieldId=self.field_id,
@@ -280,8 +309,29 @@ class Measure:
                 AggregationFunction=NumericalAggregationFunction(
                     SimpleNumericalAggregation=_NUMERICAL_AGG[self.kind],
                 ),
+                FormatConfiguration=_USD_FORMAT if self.currency else None,
             ),
         )
+
+
+# USD currency format — the only supported currency for now (Q.1.a).
+# Extracted as a module-level constant so identity equality holds across
+# every currency=True Measure (callers can compare-via-`is` if they need
+# to detect "this measure was format-tagged"). When a future phase adds
+# multi-currency support, swap this for a per-instance lookup.
+_USD_FORMAT = NumberFormatConfiguration(
+    FormatConfiguration=NumericFormatConfiguration(
+        CurrencyDisplayFormatConfiguration=CurrencyDisplayFormatConfiguration(
+            Symbol="USD",
+            DecimalPlacesConfiguration=DecimalPlacesConfiguration(DecimalPlaces=2),
+            SeparatorConfiguration=SeparatorConfiguration(
+                ThousandsSeparator=ThousandSeparatorOptions(
+                    Symbol="COMMA", Visibility="VISIBLE",
+                ),
+            ),
+        ),
+    ),
+)
 
 
 # Type alias used everywhere a sort/drill plumbing slot accepts either

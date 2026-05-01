@@ -143,21 +143,37 @@ class Column:
         from quicksight_gen.common.tree.fields import Dim
         return Dim.numerical(self.dataset, self, field_id=field_id)
 
-    def sum(self, *, field_id: str | AutoResolved = AUTO) -> Measure:
+    def sum(
+        self, *, field_id: str | AutoResolved = AUTO, currency: bool = False,
+    ) -> Measure:
         from quicksight_gen.common.tree.fields import Measure
-        return Measure.sum(self.dataset, self, field_id=field_id)
+        return Measure.sum(
+            self.dataset, self, field_id=field_id, currency=currency,
+        )
 
-    def max(self, *, field_id: str | AutoResolved = AUTO) -> Measure:
+    def max(
+        self, *, field_id: str | AutoResolved = AUTO, currency: bool = False,
+    ) -> Measure:
         from quicksight_gen.common.tree.fields import Measure
-        return Measure.max(self.dataset, self, field_id=field_id)
+        return Measure.max(
+            self.dataset, self, field_id=field_id, currency=currency,
+        )
 
-    def min(self, *, field_id: str | AutoResolved = AUTO) -> Measure:
+    def min(
+        self, *, field_id: str | AutoResolved = AUTO, currency: bool = False,
+    ) -> Measure:
         from quicksight_gen.common.tree.fields import Measure
-        return Measure.min(self.dataset, self, field_id=field_id)
+        return Measure.min(
+            self.dataset, self, field_id=field_id, currency=currency,
+        )
 
-    def average(self, *, field_id: str | AutoResolved = AUTO) -> Measure:
+    def average(
+        self, *, field_id: str | AutoResolved = AUTO, currency: bool = False,
+    ) -> Measure:
         from quicksight_gen.common.tree.fields import Measure
-        return Measure.average(self.dataset, self, field_id=field_id)
+        return Measure.average(
+            self.dataset, self, field_id=field_id, currency=currency,
+        )
 
     def count(self, *, field_id: str | AutoResolved = AUTO) -> Measure:
         from quicksight_gen.common.tree.fields import Measure

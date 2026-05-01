@@ -487,7 +487,9 @@ def _populate_money_moved(
             "the bank, near zero = balanced rails, negative = net "
             "outflow"
         ),
-        values=[ds_txn["net_amount"].sum(field_id="exec-money-net-sum")],
+        values=[ds_txn["net_amount"].sum(
+            field_id="exec-money-net-sum", currency=True,
+        )],
     )
     kpi_row.add_kpi(
         width=_HALF,
@@ -497,7 +499,9 @@ def _populate_money_moved(
             "Total handle — sum of per-transfer dollar magnitudes "
             "regardless of direction"
         ),
-        values=[ds_txn["gross_amount"].sum(field_id="exec-money-gross-sum")],
+        values=[ds_txn["gross_amount"].sum(
+            field_id="exec-money-gross-sum", currency=True,
+        )],
     )
 
     # Row 2: full-width vertical stacked bar — daily gross dollars,
@@ -514,7 +518,7 @@ def _populate_money_moved(
             ds_txn["posted_date"].date(field_id="exec-money-daily-date"),
         ],
         values=[ds_txn["gross_amount"].sum(
-            field_id="exec-money-daily-gross",
+            field_id="exec-money-daily-gross", currency=True,
         )],
         colors=[ds_txn["transfer_type"].dim(
             field_id="exec-money-daily-type",
@@ -540,7 +544,7 @@ def _populate_money_moved(
             ds_txn["transfer_type"].dim(field_id="exec-money-type-dim"),
         ],
         values=[ds_txn["gross_amount"].sum(
-            field_id="exec-money-type-gross",
+            field_id="exec-money-type-gross", currency=True,
         )],
         orientation="VERTICAL",
         bars_arrangement="CLUSTERED",

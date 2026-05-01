@@ -289,6 +289,48 @@ class TestMeasure:
         assert emitted.CategoricalMeasureField is not None
         assert emitted.CategoricalMeasureField.AggregationFunction == "DISTINCT_COUNT"
 
+    # Q.1.a — currency=True wires a USD CurrencyDisplayFormatConfiguration
+    # onto the underlying NumericalMeasureField. Default (no flag) emits no
+    # FormatConfiguration at all so existing measures stay byte-identical.
+    def test_currency_flag_emits_usd_format_configuration(self):
+        m = Measure.sum(dataset=_DS_FOO, field_id="f-1", column="amount", currency=True)
+        emitted = m.emit()
+        nmf = emitted.NumericalMeasureField
+        assert nmf is not None
+        fc = nmf.FormatConfiguration
+        assert fc is not None
+        currency_cfg = fc.FormatConfiguration.CurrencyDisplayFormatConfiguration
+        assert currency_cfg is not None
+        assert currency_cfg.Symbol == "USD"
+        assert currency_cfg.DecimalPlacesConfiguration.DecimalPlaces == 2
+        assert currency_cfg.SeparatorConfiguration.ThousandsSeparator.Symbol == "COMMA"
+
+    def test_currency_default_off_leaves_format_configuration_unset(self):
+        m = Measure.sum(dataset=_DS_FOO, field_id="f-1", column="amount")
+        emitted = m.emit()
+        assert emitted.NumericalMeasureField.FormatConfiguration is None
+
+    def test_currency_works_on_max_min_average(self):
+        for kind in ("max", "min", "average"):
+            m = getattr(Measure, kind)(
+                dataset=_DS_FOO, field_id=f"f-{kind}", column="amount", currency=True,
+            )
+            emitted = m.emit()
+            assert (
+                emitted.NumericalMeasureField.FormatConfiguration is not None
+            ), f"{kind} should support currency=True"
+
+    def test_currency_rejects_count_aggregations(self):
+        """count / distinct_count are categorical (return row counts,
+        never money) — currency=True is an author bug, fail loud."""
+        import pytest as _pytest
+        m = Measure(
+            dataset=_DS_FOO, column="account_id", kind="count",
+            field_id="f-1", currency=True,
+        )
+        with _pytest.raises(AssertionError, match="numerical aggregations"):
+            m.emit()
+
 
 # ---------------------------------------------------------------------------
 # L.1.3 — Typed Visual subtypes

@@ -308,7 +308,7 @@ Order the meta sweeps first so per-app fixes inherit them:
   - **Investigation Info** — investigate the matview-status SQL exception (may have been fixed by P.9f).
   - **Executives Transaction Volume + Money Moved** — add metadata grouping.
 
-- [ ] **Q.1.d — Live dashboard walkthrough with user.** Working session against the deployed dashboards (both PG + Oracle) to capture additional findings beyond the pre-staged punch-list. Likely surfaces another half-dozen tweaks; treat the resulting list as Q.1.d.1, Q.1.d.2, ... iterations.
+- [ ] **Q.1.d — Sign-off walkthrough (post-fix).** The pre-phase walkthrough already happened — Q.1.b/Q.1.c above are its captured output. This sub-step is the AFTER pass: re-deploy with Q.1.a-c applied, walk through with user, capture any late-discovered tweaks as Q.1.d.1, Q.1.d.2, ... iterations.
 
 - [ ] **Q.1.e — Re-deploy + harness green for both dialects.**
 
