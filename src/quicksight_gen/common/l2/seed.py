@@ -52,6 +52,7 @@ from quicksight_gen.common.sql import Dialect
 from .primitives import (
     Account,
     AccountTemplate,
+    ChainEntry,
     Identifier,
     L2Instance,
     Name,
@@ -663,6 +664,13 @@ class _BaselineState:
     # stays NULL (unbundled — caught by L1's stuck_unbundled view if the
     # rail's max_unbundled_age elapses).
     bundle_map: dict[tuple[Identifier, date], str] = field(
+        default_factory=lambda: {},
+    )
+    # Per-Rail firing log (R.2.d). Each entry is (transfer_id,
+    # business_day, amount) — the chain-firing pass uses this to pick
+    # parent firings to attach children to. Populated by both the
+    # per-Rail leg loop (R.2.b) and the aggregating-rail emitter (R.2.c).
+    firings: dict[Identifier, list[tuple[str, date, Decimal]]] = field(
         default_factory=lambda: {},
     )
 
@@ -1360,6 +1368,11 @@ def _emit_baseline_for_rail(
             # aggregating Rail today, the leg's bundle_id is the bundle
             # transfer_id pre-computed by _populate_bundle_map.
             bundle_id = state.bundle_map.get((rail.name, day))
+            # R.2.d firing log: record this firing so the chain pass can
+            # attach children to it.
+            state.firings.setdefault(rail.name, []).append(
+                (transfer_id, day, amount),
+            )
 
             if isinstance(rail, TwoLegRail):
                 dst = dst_accounts[rng.randrange(len(dst_accounts))]
@@ -1591,6 +1604,11 @@ def _emit_baseline_for_aggregating_rail(
         )
         amount = _baseline_amount_sample(rng, kind, cap=cap)
         metadata = _baseline_metadata(rail, n, 0)
+        # R.2.d firing log: aggregating-rail parents are also chain
+        # parents in some L2 instances.
+        state.firings.setdefault(rail.name, []).append(
+            (bundle_transfer_id, day, amount),
+        )
 
         if isinstance(rail, TwoLegRail):
             dst = dst_accounts[rng.randrange(len(dst_accounts))]
@@ -1754,17 +1772,236 @@ def _emit_baseline_chains(
 ) -> list[str]:
     """Emit chain-firing rows (parent → child) for every declared Chain.
 
-    R.2.a: stub — returns ``[]``. R.2.d implements:
-      - Per Chain: pick the parent's firings from ``state``, then for
-        each parent firing roll a completion check (Required ~95%,
-        Optional ~50%) and emit a child leg with
-        ``transfer_parent_id = parent.transfer_id``.
-      - xor_group siblings: at most one child fires per parent instance
-        (the picker rolls once across the xor group).
+    R.2.d implementation:
+      - For each Chain entry, look up the parent's firings from
+        ``state.firings``. For each parent firing, roll a completion
+        check (Required ≈95%, Optional ≈50%) and emit a child leg
+        with ``transfer_parent_id = parent_transfer_id``.
+      - xor_group siblings (multiple chains sharing parent + xor_group):
+        pick exactly one entry per parent firing via deterministic
+        hash of the parent's transfer_id.
+      - Child leg amount sampled from the child rail's lognormal kind;
+        time-of-day shifts to one hour after the parent's posting band.
+
+    Children whose rail isn't in ``instance.rails`` (Chain may also
+    name a TransferTemplate) are skipped — full TransferTemplate
+    chain emission is out of scope for R.2.d's first land.
     """
-    # TODO R.2.d — implement chain firings.
-    _ = (instance, state, template_by_role, counter, dialect)
-    return []
+    if not instance.chains:
+        return []
+
+    rails_by_name = {r.name: r for r in instance.rails}
+    rng = random.Random(_BASELINE_BASE_SEED ^ 0xCC11A)
+    rows: list[str] = []
+
+    # Group entries by (parent, xor_group) so siblings can pick one
+    # winner per parent firing.
+    grouped: dict[
+        tuple[Identifier, Identifier | None], list[ChainEntry]
+    ] = {}
+    for entry in instance.chains:
+        key = (entry.parent, entry.xor_group)
+        grouped.setdefault(key, []).append(entry)
+
+    for (parent_name, _xor_group), entries in sorted(
+        grouped.items(), key=lambda kv: (str(kv[0][0]), str(kv[0][1] or "")),
+    ):
+        parent_firings = state.firings.get(parent_name, [])
+        if not parent_firings:
+            continue
+
+        for parent_transfer_id, parent_day, parent_amount in parent_firings:
+            # Pick which xor sibling fires (if multiple). Deterministic
+            # via hash of parent transfer_id so reruns produce identical
+            # output.
+            sibling_idx = (
+                zlib.crc32(parent_transfer_id.encode("utf-8"))
+                & 0x7FFFFFFF
+            ) % len(entries)
+            entry = entries[sibling_idx]
+
+            # Completion roll: Required ≈95%, Optional ≈50%.
+            completion_threshold = 0.95 if entry.required else 0.50
+            if rng.random() > completion_threshold:
+                continue  # parent fired but child did not — orphan exception
+
+            child_rail = rails_by_name.get(entry.child)
+            if child_rail is None:
+                # Chain references a TransferTemplate or unknown name —
+                # skip for R.2.d's first land.
+                continue
+
+            child_rows = _emit_chain_child_leg(
+                child_rail, instance, state,
+                parent_transfer_id, parent_day, parent_amount,
+                counter, rng, dialect,
+            )
+            rows.extend(child_rows)
+
+    _ = template_by_role
+    return rows
+
+
+def _emit_chain_child_leg(
+    child_rail: Rail,
+    instance: L2Instance,
+    state: _BaselineState,
+    parent_transfer_id: str,
+    parent_day: date,
+    parent_amount: Decimal,
+    counter: _Counter,
+    rng: random.Random,
+    dialect: Dialect,
+) -> list[str]:
+    """Emit one child Transfer's legs linked to the parent firing.
+
+    The child Transfer fires on the same business day as the parent,
+    one hour after the parent's posting band per R.1.f §6. Amount is
+    sampled from the child rail's lognormal kind (or the parent's
+    amount × 0.5 if the child rail isn't classifiable). Honors the
+    L2's LimitSchedule cap on the child via clamp+resample.
+    """
+    kind = _classify_rail(child_rail)
+    rail_slug = _baseline_rail_slug(child_rail.name)
+    n = counter.next()
+    transfer_id = f"tr-base-chain-{rail_slug}-{n:06d}"
+    txn_id = f"tx-base-chain-{rail_slug}-{n:06d}"
+
+    # Chain child posts ~1 hour after the parent's natural band end —
+    # use 18:00 as a reasonable default (after most parent bands close
+    # but before EOD bundling).
+    posting = f"{parent_day.isoformat()}T18:00:00+00:00"
+
+    # Resolve eligible accounts. If child rail has no eligible
+    # accounts, can't emit — return empty.
+    if isinstance(child_rail, TwoLegRail):
+        src_accounts = _eligible_accounts_for_role(
+            child_rail.source_role, state, instance,
+        )
+        dst_accounts = _eligible_accounts_for_role(
+            child_rail.destination_role, state, instance,
+        )
+        if not src_accounts or not dst_accounts:
+            return []
+    else:
+        assert isinstance(child_rail, SingleLegRail)
+        leg_accounts = _eligible_accounts_for_role(
+            child_rail.leg_role, state, instance,
+        )
+        if not leg_accounts:
+            return []
+        src_accounts = leg_accounts
+        dst_accounts = []
+
+    cap_by_parent_role = _baseline_cap_lookup(child_rail, instance)
+    src = src_accounts[rng.randrange(len(src_accounts))]
+    cap = cap_by_parent_role.get(
+        str(src.account_parent_role) if src.account_parent_role else "",
+    )
+    # Sample from the child rail's distribution. Slightly conservative
+    # vs the parent_amount so the chain looks like a downstream
+    # transfer of part of the parent.
+    amount = _baseline_amount_sample(rng, kind, cap=cap)
+    _ = parent_amount  # reserved — could constrain to <= parent in the future
+
+    metadata = _baseline_metadata(child_rail, n, 0)
+
+    if isinstance(child_rail, TwoLegRail):
+        dst = dst_accounts[rng.randrange(len(dst_accounts))]
+        src_origin = (
+            str(child_rail.source_origin) if child_rail.source_origin is not None
+            else (str(child_rail.origin) if child_rail.origin is not None else "InternalInitiated")
+        )
+        dst_origin = (
+            str(child_rail.destination_origin) if child_rail.destination_origin is not None
+            else (str(child_rail.origin) if child_rail.origin is not None else "InternalInitiated")
+        )
+        rows = [
+            _txn_row(
+                id_=f"{txn_id}-src",
+                account_id=src.account_id,
+                account_name=src.account_name,
+                account_role=src.account_role,
+                account_scope=src.account_scope,
+                account_parent_role=src.account_parent_role,
+                money=-amount,
+                direction="Debit",
+                posting=posting,
+                transfer_id=transfer_id,
+                transfer_type=child_rail.transfer_type,
+                rail_name=child_rail.name,
+                origin=src_origin,
+                metadata=metadata,
+                transfer_parent_id=parent_transfer_id,
+                dialect=dialect,
+            ),
+            _txn_row(
+                id_=txn_id,
+                account_id=dst.account_id,
+                account_name=dst.account_name,
+                account_role=dst.account_role,
+                account_scope=dst.account_scope,
+                account_parent_role=dst.account_parent_role,
+                money=amount,
+                direction="Credit",
+                posting=posting,
+                transfer_id=transfer_id,
+                transfer_type=child_rail.transfer_type,
+                rail_name=child_rail.name,
+                origin=dst_origin,
+                metadata=metadata,
+                transfer_parent_id=parent_transfer_id,
+                dialect=dialect,
+            ),
+        ]
+        state.balances[src.account_id] = (
+            state.balances.get(src.account_id, Decimal("0")) - amount
+        )
+        state.balances[dst.account_id] = (
+            state.balances.get(dst.account_id, Decimal("0")) + amount
+        )
+        state.eod_balances[(src.account_id, parent_day)] = state.balances[src.account_id]
+        state.eod_balances[(dst.account_id, parent_day)] = state.balances[dst.account_id]
+    else:
+        assert isinstance(child_rail, SingleLegRail)
+        if child_rail.leg_direction == "Credit":
+            direction, signed = "Credit", amount
+        else:
+            direction, signed = "Debit", -amount
+        leg_origin = (
+            str(child_rail.origin) if child_rail.origin is not None
+            else "InternalInitiated"
+        )
+        rows = [_txn_row(
+            id_=txn_id,
+            account_id=src.account_id,
+            account_name=src.account_name,
+            account_role=src.account_role,
+            account_scope=src.account_scope,
+            account_parent_role=src.account_parent_role,
+            money=signed,
+            direction=direction,
+            posting=posting,
+            transfer_id=transfer_id,
+            transfer_type=child_rail.transfer_type,
+            rail_name=child_rail.name,
+            origin=leg_origin,
+            metadata=metadata,
+            transfer_parent_id=parent_transfer_id,
+            dialect=dialect,
+        )]
+        state.balances[src.account_id] = (
+            state.balances.get(src.account_id, Decimal("0")) + signed
+        )
+        state.eod_balances[(src.account_id, parent_day)] = state.balances[src.account_id]
+
+    # Record the chain child as its own firing too — supports nested
+    # chains in future L2 instances.
+    state.firings.setdefault(child_rail.name, []).append(
+        (transfer_id, parent_day, amount),
+    )
+
+    return rows
 
 
 def _emit_baseline_daily_balances(

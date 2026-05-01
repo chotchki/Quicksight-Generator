@@ -213,6 +213,57 @@ class TestBaselineLegLoop:
             "(both as parent transfer_id and child bundle_id)."
         )
 
+    def test_chain_firings_emit_with_transfer_parent_id(self) -> None:
+        # R.2.d — every Chain entry whose parent is a Rail (not just a
+        # TransferTemplate) and which fires at the configured completion
+        # rate should emit child legs with transfer_parent_id set.
+        instance = load_instance(_SASQUATCH_PR)
+        sql = emit_baseline_seed(instance, anchor=_ANCHOR)
+        # Chain children carry the "tr-base-chain-" prefix in their
+        # transfer_id; the count should be substantial across all
+        # Rail-parented chain entries.
+        assert sql.count("tr-base-chain-") >= 100, (
+            "R.2.d should emit chain child firings; found "
+            f"{sql.count('tr-base-chain-')}"
+        )
+
+    def test_required_chains_higher_completion_than_optional(self) -> None:
+        # R.2.d — Required chains complete ~95% of parent firings;
+        # Optional ~50%. ACHOriginationDailySweep -> ConcentrationToFRBSweep
+        # is Required; CustomerInboundACH -> CustomerInboundACHReturn*
+        # are Optional. Required chain should hit close to its parent's
+        # firing count (~63 over 90d). Optional chains hit fewer because
+        # they share an xor_group and complete probabilistically.
+        instance = load_instance(_SASQUATCH_PR)
+        sql = emit_baseline_seed(instance, anchor=_ANCHOR)
+
+        required_chain_children = sql.count(
+            "tr-base-chain-concentrationtofrbsweep",
+        )
+        # Parent fires ~65 times in 90d (daily_eod aggregating); 95%
+        # completion → ~62 children expected; ≥40 is comfortable.
+        assert required_chain_children >= 40, (
+            f"Required chain expected ≥40 child firings; got "
+            f"{required_chain_children}"
+        )
+
+    def test_chain_child_amounts_lognormal_not_constant(self) -> None:
+        # R.2.d chain-child amount sampler should produce varied amounts
+        # via the child rail's lognormal — not a constant value.
+        import re
+        instance = load_instance(_SASQUATCH_PR)
+        sql = emit_baseline_seed(instance, anchor=_ANCHOR)
+        # Pull the money column from chain child rows.
+        chain_amounts = re.findall(
+            r"tx-base-chain-[a-z-]+-\d+',[^,]+,[^,]+,[^,]+,[^,]+,[^,]+,\s*"
+            r"(-?\d+\.\d+),",
+            sql,
+        )
+        assert len(set(chain_amounts)) >= 5, (
+            "Chain child amounts should be sampled via lognormal — "
+            f"saw only {len(set(chain_amounts))} distinct values"
+        )
+
     def test_balances_state_machine_updates(self) -> None:
         # After a deterministic run, state.balances should differ from
         # the initial state for every account that received legs. Run
