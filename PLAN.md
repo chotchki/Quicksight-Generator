@@ -516,11 +516,17 @@ Phase R inverts the seed shape: a **3-month healthy baseline** of hundreds-to-th
 ### R.1 — Generator design
 
 - [ ] **R.1.a — Volume heuristic.** Function `target_leg_count(rail, l2_instance, window_days=90)` returning per-Rail target. Inputs: `posting_requirements` shape (single-leg vs multi-leg vs aggregating), `LimitSchedule` cap if any, `max_pending_age` / `max_unbundled_age` if any. Heuristic: aggregating rails fire daily/EOM (high volume); single-leg fee rails fire low; two-leg internal transfers somewhere in between. Reviewable per-Rail output table so the user can sanity-check.
+  - A: sounds good!
 - [ ] **R.1.b — Amount distribution.** Per-Rail amount profile (lognormal? bounded by LimitSchedule cap?). Money should look like money — avoid round numbers everywhere; wire amounts cluster at known values; ACH amounts spread; card sales under $200 typically.
+  - A: lognormal (so we get outliers for the investigation screen), the rest sounds good
 - [ ] **R.1.c — Time-of-day distribution.** Banking-hours bias for human-driven rails (card sales, wires); 24h spread for automated rails (sweeps, EOM accruals). Posting timestamps drive the daily-statement KPI shape.
+  - A: all sound good
 - [ ] **R.1.d — Account-balance state machine.** Maintain per-account balance state across the 90-day window so legs don't accidentally violate overdraft / limit-breach. Starting balances seed from a small per-account-type lookup; daily evolution = sum of signed_amount across that account's legs. Plant overlay (R.3) intentionally violates this — the baseline must NOT.
+  - A: sounds good, the key is to use the seeded random generator throughout as a random source so the results are predictable
 - [ ] **R.1.e — Multi-leg transfer construction.** Each Transfer's legs net to zero (per the L1 invariant). Aggregating Rails: bundled rows reference a parent transfer_id; unbundled-aging plants are the few rows WITHOUT a parent (in R.3). Chain firings: parent → child via `parent_transfer_id`.
+  - A: on the chain firings, the children will come temporally first since the parents are bundling them to make a parent system whole
 - [ ] **R.1.f — Spec doc + review gate.** Half-page describing the generator's output shape (volume per rail, amount range per rail, time-of-day shape). User signs off before R.2 implementation begins so we don't burn a day building the wrong shape.
+  - A: sounds good, we should also plan to repoint the tests at this output since I don't think the L2 e2e tests actually test layer 2 now
 
 ### R.2 — Implementation
 
