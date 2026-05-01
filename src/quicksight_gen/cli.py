@@ -1063,6 +1063,75 @@ def cleanup_cmd(config: str, output_dir: str, dry_run: bool, yes: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Probe (capture per-sheet datasource errors from a deployed dashboard)
+# ---------------------------------------------------------------------------
+
+@main.command("probe")
+@click.argument("app", type=APP_CHOICE, required=False)
+@click.option("--all", "all_apps", is_flag=True, help="Probe every app.")
+@click.option(
+    "--config", "-c",
+    type=click.Path(exists=True), default="config.yaml",
+    help="Path to configuration file (provides aws_account_id + aws_region).",
+)
+@click.option(
+    "--output-dir", "-o",
+    type=click.Path(), default="out",
+    help="Directory holding generated dashboard JSON (used to look up "
+    "DashboardId per app).",
+)
+@click.option(
+    "--dashboard-id", "dashboard_id_override", default=None,
+    help="Probe an explicit dashboard ID; skips app/output-dir lookup.",
+)
+def probe_cmd(
+    app: str | None, all_apps: bool, config: str, output_dir: str,
+    dashboard_id_override: str | None,
+) -> None:
+    """Walk a deployed dashboard and surface per-sheet datasource errors.
+
+    QuickSight only shows a generic "Your database generated a SQL
+    exception" banner in the visual; the actual driver message
+    (ORA-NNNNN, Postgres syntax, etc.) lives in the iframe's JS console.
+    This walks every sheet via Playwright + the embed URL and prints
+    the per-sheet driver errors, so the actual cause is reachable
+    without DevTools.
+    """
+    from quicksight_gen.common.probe import probe_dashboard, format_report
+
+    cfg = load_config(config)
+
+    if dashboard_id_override is not None:
+        dashboard_ids = [dashboard_id_override]
+    else:
+        app_name = _resolve_app(app, all_apps, allow_all=True)
+        targets = list(APPS) if app_name == "all" else [app_name]
+        dashboard_ids = [_dashboard_id_for_app(name, output_dir) for name in targets]
+
+    for did in dashboard_ids:
+        click.echo(f"Probing {did} (this opens a headless browser; ~30-90s/dashboard)...")
+        results = probe_dashboard(
+            aws_account_id=cfg.aws_account_id,
+            aws_region=cfg.aws_region,
+            dashboard_id=did,
+        )
+        click.echo(format_report(did, results))
+        click.echo("")
+
+
+def _dashboard_id_for_app(app_name: str, output_dir: str) -> str:
+    """Look up the deployed DashboardId from the generated dashboard JSON."""
+    path = Path(output_dir) / f"{app_name}-dashboard.json"
+    if not path.exists():
+        raise click.ClickException(
+            f"Cannot find {path}. Run `generate {app_name}` first, or pass "
+            "--dashboard-id directly."
+        )
+    payload = json.loads(path.read_text())
+    return payload["DashboardId"]
+
+
+# ---------------------------------------------------------------------------
 # Export (bundled docs)
 # ---------------------------------------------------------------------------
 
