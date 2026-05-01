@@ -1470,7 +1470,9 @@ def _wire_date_range_filter(
     limit_breach_sheet: Sheet,
     pending_aging_sheet: Sheet,
     unbundled_aging_sheet: Sheet,
+    supersession_audit_sheet: Sheet,
     todays_exceptions_sheet: Sheet,
+    transactions_sheet: Sheet,
 ) -> None:
     """Wire the universal date-range filter (params + groups + controls).
 
@@ -1548,13 +1550,27 @@ def _wire_date_range_filter(
     # Unbundled Aging — same shape, different dataset.
     _scope_one(DS_STUCK_UNBUNDLED, "posting", unbundled_aging_sheet,
                "fg-l1-date-stuck-unbundled")
+    # Q.1.b — Supersession Audit walks two base-table audits. The
+    # transactions side filters by `posting`; the daily-balances side
+    # by `business_day_start` (each row is per-day).
+    _scope_one(DS_SUPERSESSION_TRANSACTIONS, "posting",
+               supersession_audit_sheet,
+               "fg-l1-date-supersession-tx")
+    _scope_one(DS_SUPERSESSION_DAILY_BALANCES, "business_day_start",
+               supersession_audit_sheet,
+               "fg-l1-date-supersession-db")
+    # Q.1.b — Transactions sheet over the per-leg ledger; same `posting`
+    # column shape as Pending/Unbundled Aging.
+    _scope_one(DS_TRANSACTIONS, "posting", transactions_sheet,
+               "fg-l1-date-transactions")
 
-    # Per-sheet date pickers — bound to the shared params so all seven
-    # sheets' pickers sync.
+    # Per-sheet date pickers — bound to the shared params so every
+    # sheet's pickers sync.
     for sheet in (
         drift_sheet, drift_timelines_sheet, overdraft_sheet,
         limit_breach_sheet, pending_aging_sheet, unbundled_aging_sheet,
-        todays_exceptions_sheet,
+        supersession_audit_sheet, todays_exceptions_sheet,
+        transactions_sheet,
     ):
         sheet.add_parameter_datetime_picker(
             parameter=date_start, title="Date From",
@@ -2195,7 +2211,9 @@ def build_l1_dashboard_app(
         limit_breach_sheet=limit_breach_sheet,
         pending_aging_sheet=pending_aging_sheet,
         unbundled_aging_sheet=unbundled_aging_sheet,
+        supersession_audit_sheet=supersession_audit_sheet,
         todays_exceptions_sheet=todays_exceptions_sheet,
+        transactions_sheet=transactions_sheet,
     )
 
     # M.2b.3 + M.2b.5 + M.2b.10 + M.2b.11 + M.2b.12 — Per-sheet

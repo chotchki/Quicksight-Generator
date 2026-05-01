@@ -37,6 +37,7 @@ from quicksight_gen.apps.investigation.constants import (
     FG_INV_MONEY_TRAIL_AMOUNT,
     FG_INV_MONEY_TRAIL_HOPS,
     FG_INV_MONEY_TRAIL_ROOT,
+    FG_INV_MONEY_TRAIL_WINDOW,
     P_INV_ANETWORK_ANCHOR,
     P_INV_ANETWORK_MIN_AMOUNT,
     P_INV_ANOMALIES_SIGMA,
@@ -684,7 +685,24 @@ def _build_money_trail_sheet(
     ))
     amount_fg.scope_sheet(sheet)
 
-    # All three controls are parameter-driven — no FilterControl widgets.
+    # Q.1.b — Window date-range filter on `posted_at`. Same shape as
+    # Recipient Fanout / Volume Anomalies (filter-bound DATE_RANGE
+    # picker, scope_sheet narrow). Money Trail's matview can grow
+    # unbounded over time; this gives the analyst a knob to narrow
+    # the chain set without rebuilding.
+    window_fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_INV_MONEY_TRAIL_WINDOW,
+        filters=[TimeRangeFilter(
+            filter_id="filter-inv-money-trail-window",
+            dataset=ds_money_trail,
+            column=ds_money_trail["posted_at"],
+            null_option="NON_NULLS_ONLY",
+            time_granularity="DAY",
+        )],
+    ))
+    window_fg.scope_sheet(sheet)
+
+    # Controls — three parameter-driven plus the new date-range picker.
     sheet.add_parameter_dropdown(
         parameter=root_param,
         title="Chain root transfer",
@@ -708,6 +726,12 @@ def _build_money_trail_sheet(
         maximum_value=_AMOUNT_SLIDER_MAX,
         step_size=10,
         control_id="ctrl-inv-money-trail-amount",
+    )
+    sheet.add_filter_datetime_picker(
+        filter=window_fg.filters[0],
+        title="Date Range",
+        type="DATE_RANGE",
+        control_id="ctrl-inv-money-trail-window",
     )
 
     return sheet

@@ -51,6 +51,7 @@ from quicksight_gen.apps.investigation.constants import (
     FG_INV_MONEY_TRAIL_AMOUNT,
     FG_INV_MONEY_TRAIL_HOPS,
     FG_INV_MONEY_TRAIL_ROOT,
+    FG_INV_MONEY_TRAIL_WINDOW,
     P_INV_ANETWORK_ANCHOR,
     P_INV_ANETWORK_MIN_AMOUNT,
     P_INV_ANOMALIES_SIGMA,
@@ -315,6 +316,7 @@ def test_filter_groups_in_expected_order():
         FG_INV_MONEY_TRAIL_ROOT,
         FG_INV_MONEY_TRAIL_HOPS,
         FG_INV_MONEY_TRAIL_AMOUNT,
+        FG_INV_MONEY_TRAIL_WINDOW,  # Q.1.b
         FG_INV_ANETWORK_ANCHOR,
         FG_INV_ANETWORK_INBOUND,
         FG_INV_ANETWORK_OUTBOUND,
@@ -474,13 +476,13 @@ def test_fanout_sheet_serializes_to_aws_json():
     assert len(fanout["Visuals"]) == 4
     assert len(fanout["FilterControls"]) == 1
     assert len(fanout["ParameterControls"]) == 1
-    # Top-level: 11 filter groups (2 fanout + 2 anomalies + 3 money trail
-    # + 4 account network: anchor/inbound/outbound/amount), 5 calc fields
-    # (fanout distinct count + account-network is_anchor_edge +
-    # is_inbound_edge + is_outbound_edge + counterparty_display), 7
-    # parameters (fanout threshold + sigma + money-trail root/hops/amount
-    # + account-network anchor/min-amount).
-    assert len(j["Definition"]["FilterGroups"]) == 11
+    # Top-level: 12 filter groups (2 fanout + 2 anomalies + 4 money trail
+    # — root/hops/amount/window — + 4 account network: anchor/inbound/
+    # outbound/amount), 5 calc fields (fanout distinct count + account-
+    # network is_anchor_edge + is_inbound_edge + is_outbound_edge +
+    # counterparty_display), 7 parameters (fanout threshold + sigma +
+    # money-trail root/hops/amount + account-network anchor/min-amount).
+    assert len(j["Definition"]["FilterGroups"]) == 12
     assert len(j["Definition"]["CalculatedFields"]) == 5
     assert len(j["Definition"]["ParameterDeclarations"]) == 7
 
@@ -813,11 +815,16 @@ def test_money_trail_sliders_bind_to_their_parameters():
     assert amount_slider.StepSize == 10
 
 
-def test_money_trail_sheet_has_no_filter_controls():
-    """All three money-trail surfaces are parameter-bound, so the sheet
-    ships with ParameterControls only — no FilterControls widgets."""
+def test_money_trail_sheet_has_one_date_range_filter_control():
+    """Q.1.b — Money Trail ships one filter-bound DATE_RANGE picker
+    (`Date Range`) plus the three parameter-driven controls (chain
+    root dropdown, max-hops slider, min-amount slider). The date-range
+    picker is the only FilterControl on the sheet; before Q.1.b it had
+    none."""
     fc = _filter_controls(SHEET_INV_MONEY_TRAIL)
-    assert fc == []
+    assert len(fc) == 1
+    titles = [c.DateTimePicker.Title for c in fc if c.DateTimePicker is not None]
+    assert titles == ["Date Range"]
 
 
 # ---------------------------------------------------------------------------
@@ -937,8 +944,9 @@ def test_money_trail_sheet_serializes_to_aws_json():
         if s["SheetId"] == SHEET_INV_MONEY_TRAIL
     )
     assert len(sheet["Visuals"]) == 2
-    # 3 parameter controls (root dropdown + 2 sliders), no FilterControls.
-    assert sheet.get("FilterControls", []) == []
+    # 3 parameter controls (root dropdown + 2 sliders) + 1 filter
+    # control (Q.1.b — DATE_RANGE picker on `posted_at`).
+    assert len(sheet.get("FilterControls", [])) == 1
     assert len(sheet["ParameterControls"]) == 3
     # Sankey visual surfaces with its dataclass key. Visual_id is
     # auto-derived as a UUID v5 from the position slug (M.4.4.10c);

@@ -53,14 +53,17 @@ from quicksight_gen.common.sheets.app_info import (
     populate_app_info_sheet,
 )
 from quicksight_gen.common.theme import resolve_l2_theme
+from quicksight_gen.common.models import DateTimeDefaultValues
 from quicksight_gen.common.tree import (
     Analysis,
     App,
     CategoryFilter,
     Dataset,
+    DateTimeParam,
     FilterGroup,
     Sheet,
     TextBox,
+    TimeRangeFilter,
 )
 
 from quicksight_gen.apps.executives.datasets import (
@@ -273,6 +276,18 @@ def _datasets(cfg: Config) -> dict[str, Dataset]:
 # Filter group ID for the visual-scoped pinned filter narrowing the
 # "active accounts" KPI + bar to rows with activity_count > 0.
 _FG_EXEC_ACCT_ACTIVE_ONLY = "fg-exec-account-active-only"
+
+# Q.1.b — Universal date-range filter parameter names + filter group IDs.
+P_EXEC_DATE_START = "pExecDateStart"
+P_EXEC_DATE_END = "pExecDateEnd"
+_FG_EXEC_DATE_TXN = "fg-exec-date-transaction-summary"
+_FG_EXEC_DATE_ACCT = "fg-exec-date-account-summary"
+
+# Default = last 30 days. Exec sheets show daily-grain summaries
+# rather than per-leg detail, so 30 days reads as one trend page
+# instead of L1's 7-day operator window.
+_EXEC_DATE_END_DEFAULT_EXPR = "truncDate('DD', now())"
+_EXEC_DATE_START_DEFAULT_EXPR = "addDateTime(-30, 'DD', truncDate('DD', now()))"
 
 
 def _populate_account_coverage(
@@ -594,6 +609,103 @@ def _wire_account_coverage_filter_groups(
     sheet.scope(fg, active_visuals)
 
 
+def _wire_date_range_filter(
+    analysis: Analysis,
+    *,
+    datasets: dict[str, Dataset],
+    account_coverage_sheet: Sheet,
+    transaction_volume_sheet: Sheet,
+    money_moved_sheet: Sheet,
+) -> None:
+    """Q.1.b — Universal date-range filter across the 3 data-bearing
+    Exec sheets, mirroring L1's M.2b.1 pattern.
+
+    Adds 2 DateTimeParams (P_EXEC_DATE_START + P_EXEC_DATE_END) with
+    rolling 30-day defaults; one SINGLE_DATASET FilterGroup per dataset
+    scoped to the sheet that uses it; paired ParameterDateTimePicker
+    controls on every data-bearing sheet so the analyst sets the window
+    once and it propagates.
+
+    Account Coverage filters on ``last_activity_date`` (one row per
+    account, NULL when never-active). Transaction Volume + Money Moved
+    both read from ``exec_transaction_summary`` and filter on
+    ``posted_date`` (per-(day, transfer_type) summary).
+    """
+    ds_acct = datasets[DS_EXEC_ACCOUNT_SUMMARY]
+    ds_txn = datasets[DS_EXEC_TRANSACTION_SUMMARY]
+
+    date_start = analysis.add_parameter(DateTimeParam(
+        name=P_EXEC_DATE_START,
+        time_granularity="DAY",
+        default=DateTimeDefaultValues(
+            RollingDate={"Expression": _EXEC_DATE_START_DEFAULT_EXPR},
+        ),
+    ))
+    date_end = analysis.add_parameter(DateTimeParam(
+        name=P_EXEC_DATE_END,
+        time_granularity="DAY",
+        default=DateTimeDefaultValues(
+            RollingDate={"Expression": _EXEC_DATE_END_DEFAULT_EXPR},
+        ),
+    ))
+
+    min_bound: dict[str, str] = {"Parameter": P_EXEC_DATE_START}
+    max_bound: dict[str, str] = {"Parameter": P_EXEC_DATE_END}
+
+    # exec_account_summary — Account Coverage sheet only.
+    # NON_NULLS_ONLY would hide accounts that have never had activity
+    # (last_activity_date IS NULL). Those rows are part of "Total Open
+    # Accounts" by design, so use ALL_VALUES to keep them visible
+    # regardless of date window.
+    acct_fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=_FG_EXEC_DATE_ACCT,  # type: ignore[arg-type]
+        cross_dataset="SINGLE_DATASET",
+        filters=[TimeRangeFilter(
+            filter_id="filter-exec-date-account-summary",
+            dataset=ds_acct,
+            column=ds_acct["last_activity_date"],
+            null_option="ALL_VALUES",
+            time_granularity="DAY",
+            minimum=min_bound,
+            maximum=max_bound,
+        )],
+    ))
+    acct_fg.scope_sheet(account_coverage_sheet)
+
+    # exec_transaction_summary — Transaction Volume + Money Moved.
+    # Two FilterGroups (one per sheet) so each FG scopes narrowly;
+    # cross_dataset stays SINGLE_DATASET because the binding is to
+    # the same dataset on both sheets.
+    for sheet, fg_id in (
+        (transaction_volume_sheet, "fg-exec-date-txn-volume"),
+        (money_moved_sheet, "fg-exec-date-money-moved"),
+    ):
+        fg = analysis.add_filter_group(FilterGroup(
+            filter_group_id=fg_id,  # type: ignore[arg-type]
+            cross_dataset="SINGLE_DATASET",
+            filters=[TimeRangeFilter(
+                filter_id=f"filter-{fg_id}",
+                dataset=ds_txn,
+                column=ds_txn["posted_date"],
+                null_option="NON_NULLS_ONLY",
+                time_granularity="DAY",
+                minimum=min_bound,
+                maximum=max_bound,
+            )],
+        ))
+        fg.scope_sheet(sheet)
+
+    for sheet in (
+        account_coverage_sheet, transaction_volume_sheet, money_moved_sheet,
+    ):
+        sheet.add_parameter_datetime_picker(
+            parameter=date_start, title="Date From",
+        )
+        sheet.add_parameter_datetime_picker(
+            parameter=date_end, title="Date To",
+        )
+
+
 # ---------------------------------------------------------------------------
 # App entry points
 # ---------------------------------------------------------------------------
@@ -691,6 +803,17 @@ def build_executives_app(
         analysis,
         sheet=sheets[SHEET_EXEC_ACCOUNT_COVERAGE],
         datasets=datasets,
+    )
+
+    # Q.1.b — Universal date-range filter across all 3 data-bearing
+    # sheets (mirrors L1's M.2b.1 pattern: shared analysis-level
+    # DateTimeParams + per-dataset SINGLE_DATASET FilterGroups).
+    _wire_date_range_filter(
+        analysis,
+        datasets=datasets,
+        account_coverage_sheet=sheets[SHEET_EXEC_ACCOUNT_COVERAGE],
+        transaction_volume_sheet=sheets[SHEET_EXEC_TRANSACTION_VOLUME],
+        money_moved_sheet=sheets[SHEET_EXEC_MONEY_MOVED],
     )
 
     # M.4.4.5 — App Info ("i") sheet, ALWAYS LAST. Diagnostic canary;
