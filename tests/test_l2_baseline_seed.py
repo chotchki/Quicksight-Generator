@@ -108,13 +108,12 @@ class TestEmitBaselineSeedSkeleton:
         sql = emit_baseline_seed(instance, anchor=_ANCHOR, window_days=30)
         assert "30-day rolling window" in sql
 
-    def test_skeleton_emits_stub_markers(self) -> None:
-        # R.2.a: the bodies are stubbed. R.2.b/e fills replace these
-        # markers with real INSERT statements; the test will fail loudly
-        # at that point and we update it.
+    def test_remaining_stub_markers(self) -> None:
+        # R.2.b lands non-aggregating-rail legs; R.2.c/d/e still stubbed.
+        # When R.2.e wires daily_balances, drop the daily_balances assertion
+        # below.
         instance = load_instance(_SPEC_EXAMPLE)
         sql = emit_baseline_seed(instance, anchor=_ANCHOR)
-        assert "no baseline transactions yet — R.2.b in progress" in sql
         assert "no baseline daily_balances yet — R.2.e in progress" in sql
 
     def test_emit_is_deterministic_for_fixed_anchor(self) -> None:
@@ -122,3 +121,79 @@ class TestEmitBaselineSeedSkeleton:
         a = emit_baseline_seed(instance, anchor=_ANCHOR)
         b = emit_baseline_seed(instance, anchor=_ANCHOR)
         assert a == b
+
+
+class TestBaselineLegLoop:
+    """R.2.b — per-Rail leg loop coverage + volume + classification."""
+
+    def test_spec_example_emits_thousands_of_legs(self) -> None:
+        instance = load_instance(_SPEC_EXAMPLE)
+        sql = emit_baseline_seed(instance, anchor=_ANCHOR)
+        n = sql.count("INSERT INTO spec_example_transactions")
+        # spec_example has 4 non-aggregating rails over 65 business days.
+        # Per R.1.f §1 the heuristic targets 5k-10k legs total; we may
+        # land lower because spec_example doesn't have the broad rail
+        # set sasquatch_pr does, but should clear ~100.
+        assert n >= 100, (
+            f"R.2.b should emit ≥100 baseline legs for spec_example; got {n}"
+        )
+
+    def test_sasquatch_pr_lands_in_target_band(self) -> None:
+        instance = load_instance(_SASQUATCH_PR)
+        sql = emit_baseline_seed(instance, anchor=_ANCHOR)
+        n = sql.count("INSERT INTO sasquatch_pr_transactions")
+        # R.1.f §1: total expected ~50k-80k legs over 90 days for
+        # sasquatch_pr. R.2.b skips aggregating rails so a lower bound
+        # of 30k is reasonable; aggregating rails will lift this to
+        # the spec target in R.2.c.
+        assert 30_000 <= n <= 100_000, (
+            f"R.2.b should emit 30k-100k baseline legs for sasquatch_pr; "
+            f"got {n}"
+        )
+
+    def test_aggregating_rails_emit_zero_baseline_legs(self) -> None:
+        # R.2.b skips aggregating rails — R.2.c handles bundling.
+        instance = load_instance(_SASQUATCH_PR)
+        sql = emit_baseline_seed(instance, anchor=_ANCHOR)
+        for rail in instance.rails:
+            if not rail.aggregating:
+                continue
+            assert f"'{rail.name}'" not in sql, (
+                f"Aggregating rail {rail.name} should produce zero baseline "
+                "legs in R.2.b — R.2.c handles bundling. Found rows in SQL."
+            )
+
+    def test_non_aggregating_rails_all_emit_legs(self) -> None:
+        # Every non-aggregating rail with eligible accounts should emit
+        # at least some firings.
+        instance = load_instance(_SASQUATCH_PR)
+        sql = emit_baseline_seed(instance, anchor=_ANCHOR)
+        missing: list[str] = []
+        for rail in instance.rails:
+            if rail.aggregating:
+                continue
+            if f"'{rail.name}'" not in sql:
+                missing.append(str(rail.name))
+        assert not missing, (
+            f"Non-aggregating rails with no baseline legs (R.2.b should "
+            f"cover every rail with eligible accounts): {missing}"
+        )
+
+    def test_balances_state_machine_updates(self) -> None:
+        # After a deterministic run, state.balances should differ from
+        # the initial state for every account that received legs. Run
+        # the emit + replay the balance computation by re-running with
+        # the same anchor and verifying determinism above does the heavy
+        # lifting; here we just smoke-test that some accounts have
+        # non-zero EOD balances by counting distinct account_ids in SQL.
+        import re
+        instance = load_instance(_SPEC_EXAMPLE)
+        sql = emit_baseline_seed(instance, anchor=_ANCHOR)
+        # Account_id is the second value in each row.
+        account_ids = set(re.findall(
+            r"VALUES\n  \('[^']+', '([^']+)',", sql,
+        ))
+        assert len(account_ids) >= 5, (
+            f"Expected ≥5 distinct account_ids touched by R.2.b leg loop; "
+            f"got {len(account_ids)}: {account_ids}"
+        )

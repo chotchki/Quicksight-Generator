@@ -644,6 +644,10 @@ class _BaselineState:
     anchor: date
     window_days: int
     business_days: tuple[date, ...]
+    # Materialized template-instance accounts the per-Rail loop draws
+    # source/destination accounts from. Populated at generator init by
+    # ``_materialize_baseline_template_instances``.
+    template_instances: tuple[TemplateInstance, ...] = ()
     # account_id -> running signed cumulative balance (positive = money in).
     balances: dict[Identifier, Decimal] = field(
         default_factory=lambda: {},
@@ -691,10 +695,19 @@ def emit_baseline_seed(
     template_by_role = {t.role: t for t in instance.account_templates}
 
     business_days = _business_days_in_window(anchor, window_days)
+
+    # Materialize per-template baseline accounts (R.2.b §1). Customer-DDA
+    # templates get 20 instances; merchant + others get 5. The leg loop
+    # picks source/destination accounts from this set per Rail.
+    template_instances = _materialize_baseline_template_instances(
+        instance, template_by_role,
+    )
+
     state = _BaselineState(
         anchor=anchor,
         window_days=window_days,
         business_days=tuple(business_days),
+        template_instances=template_instances,
     )
 
     # Per R.1.f §5 — sample starting balances per account_role from the
@@ -820,6 +833,297 @@ def _business_days_in_window(
     return days
 
 
+from enum import StrEnum
+from typing import Literal
+
+
+class _RailKind(StrEnum):
+    """Classification for the per-Rail volume + amount lookup (R.1.f §1+§2).
+
+    The classifier inspects ``rail.transfer_type`` plus the rail's
+    aggregating / cadence flags + source/destination role expressions
+    to pick a kind. Heuristic — not exhaustive across novel L2
+    instances; sasquatch_pr + spec_example are the calibration set.
+    """
+
+    CUSTOMER_INBOUND = "customer_inbound"
+    CUSTOMER_OUTBOUND = "customer_outbound"
+    CUSTOMER_FEE = "customer_fee"
+    INTERNAL_TRANSFER = "internal_transfer"
+    AGGREGATING_DAILY = "aggregating_daily"
+    AGGREGATING_MONTHLY = "aggregating_monthly"
+    AGGREGATING_INTRADAY = "aggregating_intraday"
+    CONCENTRATION = "concentration"
+    CARD_SALE = "card_sale"
+    MERCHANT_PAYOUT = "merchant_payout"
+    EXTERNAL_CARD_SETTLEMENT = "external_card_settlement"
+    ACH_RETURN = "ach_return"
+    OTHER = "other"
+
+
+@dataclass(frozen=True, slots=True)
+class _RailKindParams:
+    """Per-kind volume + amount + time-of-day constants (R.1.f §1+§2+§3)."""
+
+    # Average firings per business day, scaled by ``scaling_kind`` count.
+    daily_target_per_unit: float
+    # What entity the volume scales by — customer-account count, merchant
+    # count, or 1 (system-wide rails like sweeps).
+    scaling_kind: Literal["customer", "merchant", "system"]
+    # Lognormal parameters for amount sampling; sample = exp(N(mu, sigma)).
+    amount_mu: float
+    amount_sigma: float
+    # Time-of-day band for posting. (start_hour, end_hour) ET. Generator
+    # samples uniformly inside the band per R.1.f §3.
+    time_band: tuple[int, int]
+
+
+_RAIL_KIND_PARAMS: dict[_RailKind, _RailKindParams] = {
+    _RailKind.CUSTOMER_INBOUND: _RailKindParams(
+        daily_target_per_unit=4.0, scaling_kind="customer",
+        amount_mu=6.5, amount_sigma=1.2, time_band=(9, 15),
+    ),
+    _RailKind.CUSTOMER_OUTBOUND: _RailKindParams(
+        daily_target_per_unit=2.0, scaling_kind="customer",
+        amount_mu=6.5, amount_sigma=1.2, time_band=(9, 17),
+    ),
+    _RailKind.CUSTOMER_FEE: _RailKindParams(
+        # 1 firing/customer/month → roughly 1/22 business-days.
+        daily_target_per_unit=1.0 / 22.0, scaling_kind="customer",
+        amount_mu=2.5, amount_sigma=0.4, time_band=(9, 17),
+    ),
+    _RailKind.INTERNAL_TRANSFER: _RailKindParams(
+        daily_target_per_unit=1.0, scaling_kind="system",
+        amount_mu=8.0, amount_sigma=1.5, time_band=(9, 17),
+    ),
+    _RailKind.AGGREGATING_DAILY: _RailKindParams(
+        daily_target_per_unit=1.0, scaling_kind="system",
+        amount_mu=11.0, amount_sigma=0.8, time_band=(17, 19),
+    ),
+    _RailKind.AGGREGATING_INTRADAY: _RailKindParams(
+        daily_target_per_unit=4.0, scaling_kind="system",
+        amount_mu=10.5, amount_sigma=0.8, time_band=(9, 17),
+    ),
+    _RailKind.AGGREGATING_MONTHLY: _RailKindParams(
+        # Fires only on last business day of month — handled in time logic.
+        daily_target_per_unit=1.0, scaling_kind="system",
+        amount_mu=9.5, amount_sigma=0.5, time_band=(17, 19),
+    ),
+    _RailKind.CONCENTRATION: _RailKindParams(
+        daily_target_per_unit=1.0, scaling_kind="system",
+        amount_mu=12.0, amount_sigma=0.7, time_band=(15, 17),
+    ),
+    _RailKind.CARD_SALE: _RailKindParams(
+        daily_target_per_unit=8.0, scaling_kind="merchant",
+        amount_mu=4.5, amount_sigma=0.9, time_band=(10, 22),
+    ),
+    _RailKind.MERCHANT_PAYOUT: _RailKindParams(
+        daily_target_per_unit=1.0, scaling_kind="merchant",
+        amount_mu=9.0, amount_sigma=1.1, time_band=(9, 15),
+    ),
+    _RailKind.EXTERNAL_CARD_SETTLEMENT: _RailKindParams(
+        daily_target_per_unit=1.0, scaling_kind="system",
+        amount_mu=11.5, amount_sigma=0.6, time_band=(15, 17),
+    ),
+    _RailKind.ACH_RETURN: _RailKindParams(
+        # ~5% of customer-inbound rate; the actual rate scales off
+        # CustomerInboundACH so this is a lower bound.
+        daily_target_per_unit=0.2, scaling_kind="customer",
+        amount_mu=6.5, amount_sigma=1.2, time_band=(9, 17),
+    ),
+    _RailKind.OTHER: _RailKindParams(
+        daily_target_per_unit=1.0, scaling_kind="system",
+        amount_mu=7.0, amount_sigma=1.0, time_band=(9, 17),
+    ),
+}
+
+
+def _classify_rail(rail: Rail) -> _RailKind:
+    """Map a Rail to a ``_RailKind`` for volume + amount lookup.
+
+    Inspection order: aggregating + cadence first (highest signal),
+    then transfer_type substring. Heuristic — falls back to OTHER if
+    no rule matches; OTHER's defaults are intentionally conservative
+    so an unclassified Rail still gets some baseline volume.
+    """
+    if rail.aggregating:
+        cadence = (rail.cadence or "").lower()
+        if "monthly" in cadence:
+            return _RailKind.AGGREGATING_MONTHLY
+        if "intraday" in cadence:
+            return _RailKind.AGGREGATING_INTRADAY
+        # daily-eod, daily-bod, weekly-* → all bucket to daily.
+        return _RailKind.AGGREGATING_DAILY
+
+    tt = str(rail.transfer_type).lower()
+    if tt == "wire_concentration":
+        return _RailKind.CONCENTRATION
+    if tt == "sale":
+        return _RailKind.CARD_SALE
+    if tt == "card_settlement":
+        return _RailKind.EXTERNAL_CARD_SETTLEMENT
+    if tt.startswith("payout_"):
+        return _RailKind.MERCHANT_PAYOUT
+    if tt.startswith("return_"):
+        return _RailKind.ACH_RETURN
+    if tt == "fee":
+        return _RailKind.CUSTOMER_FEE
+    if tt in {"ach_inbound", "wire_inbound", "cash_deposit"}:
+        return _RailKind.CUSTOMER_INBOUND
+    if tt in {"ach_outbound", "wire_outbound", "cash_withdrawal"}:
+        return _RailKind.CUSTOMER_OUTBOUND
+    if tt.startswith("internal") or "_internal" in tt or tt == "charge":
+        return _RailKind.INTERNAL_TRANSFER
+    return _RailKind.OTHER
+
+
+# Per R.1.f §5: per-account_role kind starting-balance distribution.
+# Tuple = (mu, sigma) for lognormal; None = $0 starting balance.
+_StartingBalanceParams = tuple[float, float] | None
+_STARTING_BALANCE_BY_ROLE_KIND: dict[str, _StartingBalanceParams] = {
+    "customer_dda": (8.5, 1.0),       # median ~$4,900
+    "merchant_dda": (10.0, 0.8),      # median ~$22,000
+    "internal_gl": (14.0, 0.5),       # median ~$1.2M
+    "concentration": (15.0, 0.4),     # median ~$3.3M
+    "internal_suspense": None,        # $0 (nets to zero EOD)
+    "external": None,                 # we don't track external balances
+    "other": None,
+}
+
+
+def _classify_role(role: Identifier | str) -> str:
+    """Map a role name to a starting-balance kind (R.1.f §5).
+
+    Heuristic substring match — covers sasquatch_pr + spec_example role
+    names. Falls back to "other" → $0 starting balance.
+    """
+    r = str(role).lower()
+    if "concentration" in r and "master" in r:
+        return "concentration"
+    if "merchant" in r:
+        return "merchant_dda"
+    if "customer" in r:
+        return "customer_dda"
+    if "suspense" in r or "recon" in r or r.startswith("zba"):
+        return "internal_suspense"
+    if (
+        "external" in r or "counter" in r or "card_network" in r
+        or "fed" in r or "frb" in r
+    ):
+        return "external"
+    if (
+        "gl" in r or "cash" in r or "settlement" in r or "due" in r
+        or "clearing" in r or "ach_orig" in r
+    ):
+        return "internal_gl"
+    return "other"
+
+
+def _baseline_target_leg_count(
+    rail: Rail, kind: _RailKind, customer_count: int, merchant_count: int,
+    business_day_count: int,
+) -> int:
+    """Compute the per-Rail target firing count over the window (R.1.f §1).
+
+    Returns an integer count of FIRINGS (each firing emits 1 or 2 legs
+    depending on rail shape; the per-firing count is independent of the
+    target). The actual per-day count is randomized via Poisson sampling
+    in the leg loop.
+    """
+    params = _RAIL_KIND_PARAMS[kind]
+    if params.scaling_kind == "customer":
+        scale = customer_count
+    elif params.scaling_kind == "merchant":
+        scale = merchant_count
+    else:
+        scale = 1
+
+    if kind is _RailKind.AGGREGATING_MONTHLY:
+        # Fires only on last business day of month → ~3 in 90 days.
+        return 3
+    return max(1, int(business_day_count * params.daily_target_per_unit * scale))
+
+
+def _baseline_amount_sample(
+    rng: random.Random, kind: _RailKind, cap: Decimal | None = None,
+) -> Decimal:
+    """Sample one amount per R.1.f §2's per-kind lognormal table.
+
+    ``cap``: optional ``LimitSchedule.cap`` ceiling. When set, a sample
+    that exceeds the cap is **clamped + resampled** rather than truncated
+    so the underlying distribution shape stays clean (truncation would
+    pile mass at the cap). Resample retries up to 5 times; falls back to
+    ``cap * 0.95`` so the loop always terminates.
+    """
+    params = _RAIL_KIND_PARAMS[kind]
+    for _ in range(5):
+        raw = rng.lognormvariate(params.amount_mu, params.amount_sigma)
+        amount = Decimal(f"{raw:.2f}")
+        if cap is None or amount <= cap:
+            return amount
+    # Fallback after 5 misses on the cap.
+    return Decimal(f"{float(cap) * 0.95:.2f}") if cap else Decimal("0.00")
+
+
+def _baseline_time_of_day(
+    rng: random.Random, kind: _RailKind, day: date,
+) -> str:
+    """Sample a posting time-of-day inside the kind's R.1.f §3 band.
+
+    Returns an ISO-8601 timestamp (UTC) for the given business day at a
+    sampled time inside the kind's ``time_band``. Time-of-day band is
+    a uniform draw inside the band; the seconds field uses minute-level
+    granularity which is enough for the dashboards' chronological sort.
+    """
+    params = _RAIL_KIND_PARAMS[kind]
+    start_hour, end_hour = params.time_band
+    # Uniform inside the band — minute-level granularity.
+    minutes_in_band = (end_hour - start_hour) * 60
+    offset = rng.randrange(minutes_in_band)
+    hour = start_hour + (offset // 60)
+    minute = offset % 60
+    return f"{day.isoformat()}T{hour:02d}:{minute:02d}:00+00:00"
+
+
+def _materialize_baseline_template_instances(
+    instance: L2Instance,
+    template_by_role: dict[Identifier, AccountTemplate],
+) -> tuple[TemplateInstance, ...]:
+    """Materialize per-template baseline instances for the leg loop.
+
+    Per-template counts:
+      - Customer-DDA-like template (role classified as ``customer_dda``):
+        20 instances. Big enough to drive realistic per-day volume.
+      - Merchant-DDA-like (``merchant_dda``): 5 instances.
+      - Anything else: 5 instances.
+
+    Honors each template's ``instance_id_template`` /
+    ``instance_name_template`` when set; falls back to the legacy
+    ``cust-001`` / ``Customer 1`` naming otherwise. The synthesized
+    set is sorted by ``account_id`` to keep emission order stable.
+    """
+    instances: list[TemplateInstance] = []
+    for role, tmpl in sorted(template_by_role.items(), key=lambda kv: str(kv[0])):
+        role_kind = _classify_role(role)
+        if role_kind == "customer_dda":
+            n_instances = 20
+        else:
+            n_instances = 5
+
+        id_tmpl = tmpl.instance_id_template or "cust-{n:03d}"
+        name_tmpl = tmpl.instance_name_template or "Customer {n}"
+
+        for n in range(1, n_instances + 1):
+            instances.append(TemplateInstance(
+                template_role=role,
+                account_id=Identifier(id_tmpl.format(role=str(role), n=n)),
+                name=Name(name_tmpl.format(role=str(role), n=n)),
+            ))
+    instances.sort(key=lambda ti: str(ti.account_id))
+    _ = instance  # silence unused — reserved for future role-based filtering
+    return tuple(instances)
+
+
 def _initialize_starting_balances(
     state: _BaselineState,
     instance: L2Instance,
@@ -828,17 +1132,82 @@ def _initialize_starting_balances(
 ) -> None:
     """Seed per-account starting balances from R.1.f §5's per-role table.
 
-    R.2.a: stub — leaves ``state.balances`` empty so the per-Rail leg
-    loop (R.2.b) starts every account at zero. R.2.b fills this in with
-    the per-account_role lognormal table once it needs the initial state
-    for overdraft / customer-balance realism.
-
-    Account list iteration is sorted by ``account_id`` so the assignment
-    order is stable across runs (the RNG draws happen in a deterministic
-    sequence per anchor date).
+    Walks every materialized template instance + every singleton account
+    and assigns a starting balance per its role's classification. Roles
+    that classify to ``None`` (external counterparties, internal-suspense)
+    get a $0 starting balance. Iteration order is sorted by account_id
+    so the RNG draws happen in a deterministic sequence per anchor.
     """
-    # TODO R.2.b — implement per-role starting-balance table.
-    _ = (state, instance, template_by_role, rng)
+    # Template-instance accounts.
+    for ti in sorted(state.template_instances, key=lambda i: str(i.account_id)):
+        role_kind = _classify_role(ti.template_role)
+        params = _STARTING_BALANCE_BY_ROLE_KIND.get(role_kind)
+        if params is None:
+            state.balances[ti.account_id] = Decimal("0.00")
+            continue
+        mu, sigma = params
+        raw = rng.lognormvariate(mu, sigma)
+        state.balances[ti.account_id] = Decimal(f"{raw:.2f}")
+
+    # Singleton accounts from instance.accounts.
+    for a in sorted(instance.accounts, key=lambda a: str(a.id)):
+        role_kind = _classify_role(a.role or a.id)
+        params = _STARTING_BALANCE_BY_ROLE_KIND.get(role_kind)
+        if params is None:
+            state.balances[a.id] = Decimal("0.00")
+            continue
+        mu, sigma = params
+        raw = rng.lognormvariate(mu, sigma)
+        state.balances[a.id] = Decimal(f"{raw:.2f}")
+    _ = template_by_role  # not needed — role classification is by name
+
+
+def _eligible_accounts_for_role(
+    role_expr: tuple[Identifier, ...],
+    state: _BaselineState,
+    instance: L2Instance,
+) -> list[_ResolvedAccount]:
+    """Return every account whose role is in ``role_expr``.
+
+    Walks both materialized template instances AND singleton accounts.
+    Sorted by ``account_id`` for deterministic picker output.
+    """
+    role_set = {str(r) for r in role_expr}
+    out: list[_ResolvedAccount] = []
+    for ti in state.template_instances:
+        if str(ti.template_role) in role_set:
+            out.append(_resolve_any_account(
+                ti.account_id, instance, _SCENARIO_FOR_RESOLVE(state),
+                _TEMPLATE_BY_ROLE_FOR_RESOLVE(instance),
+            ))
+    for a in instance.accounts:
+        role = str(a.role) if a.role is not None else str(a.id)
+        if role in role_set:
+            out.append(_ResolvedAccount(
+                account_id=a.id,
+                account_name=a.name or Name(str(a.id)),
+                account_role=a.role or Identifier(str(a.id)),
+                account_scope=a.scope,
+                account_parent_role=a.parent_role,
+            ))
+    out.sort(key=lambda r: str(r.account_id))
+    return out
+
+
+# Adapter helpers so the baseline emitter can reuse _resolve_any_account
+# (which was written for the existing emit_seed path that takes a
+# ScenarioPlant). Cheaper than duplicating the resolve logic.
+def _SCENARIO_FOR_RESOLVE(state: _BaselineState) -> "ScenarioPlant":
+    return ScenarioPlant(
+        template_instances=state.template_instances,
+        today=state.anchor,
+    )
+
+
+def _TEMPLATE_BY_ROLE_FOR_RESOLVE(
+    instance: L2Instance,
+) -> dict[Identifier, AccountTemplate]:
+    return {t.role: t for t in instance.account_templates}
 
 
 def _emit_baseline_for_rail(
@@ -850,21 +1219,270 @@ def _emit_baseline_for_rail(
     counter: _Counter,
     dialect: Dialect,
 ) -> list[str]:
-    """Emit the per-Rail leg rows for a single Rail across the window.
+    """Emit per-Rail leg rows for the rolling window.
 
-    R.2.a: stub — returns ``[]``. R.2.b implements the leg loop:
-      1. Compute target leg count via the R.1.f §1 heuristic.
-      2. For each business day, sample N firings (Poisson around daily
-         target).
-      3. For each firing, sample amount via R.1.f §2 (lognormal),
-         time-of-day via R.1.f §3, source/destination accounts.
-      4. Emit single-leg / two-leg rows per the Rail's discriminated
-         union (R.2.c handles aggregating bundling on top).
-      5. Update ``state.balances`` for each leg.
+    R.2.b implements the loop for **non-aggregating** rails (single-leg
+    + two-leg, ``aggregating=False``). Aggregating rails return ``[]``
+    here — R.2.c adds the children-first + EOD bundling parent on top.
+
+    Steps per R.1.f §1-3:
+      1. Classify the Rail; look up volume + amount + time params.
+      2. Compute target leg count over the window via the heuristic.
+      3. Distribute firings across business days (Poisson around daily
+         target). Monthly_eom rails fire only on the last business day
+         of each month — handled in R.2.c.
+      4. Per firing: pick source/destination accounts via role expr,
+         sample amount + time-of-day.
+      5. Emit one or two ``_txn_row`` calls per firing, update
+         ``state.balances`` for each leg.
+      6. At end of each business day, snapshot every touched account's
+         running balance into ``state.eod_balances`` so R.2.e can
+         materialize ``daily_balances`` rows.
     """
-    # TODO R.2.b — implement per-Rail leg loop.
-    _ = (rail, instance, state, template_by_role, rng, counter, dialect)
-    return []
+    if rail.aggregating:
+        # R.2.c handles aggregating rails (children-first + EOD bundling
+        # parent at 17:00-19:00). Skip here so the baseline doesn't
+        # plant unbundled-aging-violating legs accidentally.
+        return []
+
+    kind = _classify_rail(rail)
+    business_days = state.business_days
+    if not business_days:
+        return []
+
+    # Customer + merchant counts for volume scaling. Materialized template
+    # instances drive the count (the baseline uses 20 customers, 5
+    # merchants per the materializer).
+    customer_count = sum(
+        1 for ti in state.template_instances
+        if _classify_role(ti.template_role) == "customer_dda"
+    )
+    merchant_count = sum(
+        1 for ti in state.template_instances
+        if _classify_role(ti.template_role) == "merchant_dda"
+    )
+    customer_count = max(1, customer_count)
+    merchant_count = max(1, merchant_count)
+
+    target_total = _baseline_target_leg_count(
+        rail, kind, customer_count, merchant_count, len(business_days),
+    )
+    daily_target = target_total / len(business_days)
+
+    # Resolve eligible accounts for source + destination.
+    if isinstance(rail, TwoLegRail):
+        src_accounts = _eligible_accounts_for_role(
+            rail.source_role, state, instance,
+        )
+        dst_accounts = _eligible_accounts_for_role(
+            rail.destination_role, state, instance,
+        )
+        if not src_accounts or not dst_accounts:
+            return []
+    else:
+        # SingleLegRail
+        leg_accounts = _eligible_accounts_for_role(
+            rail.leg_role, state, instance,
+        )
+        if not leg_accounts:
+            return []
+        src_accounts = leg_accounts
+        dst_accounts = []
+
+    # Resolve LimitSchedule cap if any applies (used to clamp the
+    # amount sampler — R.1.f §2's clamp+resample contract).
+    cap_by_parent_role = _baseline_cap_lookup(rail, instance)
+
+    # Resolve Origin per L2 rule O1.
+    if isinstance(rail, TwoLegRail):
+        src_origin = (
+            str(rail.source_origin) if rail.source_origin is not None
+            else (str(rail.origin) if rail.origin is not None else "InternalInitiated")
+        )
+        dst_origin = (
+            str(rail.destination_origin) if rail.destination_origin is not None
+            else (str(rail.origin) if rail.origin is not None else "InternalInitiated")
+        )
+    else:
+        src_origin = (
+            str(rail.origin) if rail.origin is not None
+            else "InternalInitiated"
+        )
+        dst_origin = src_origin  # unused for single-leg
+
+    rows: list[str] = []
+    rail_slug = _baseline_rail_slug(rail.name)
+
+    for day in business_days:
+        # Poisson sample of firings on this day around the daily target.
+        # rng.poisson would be ideal but Python's random doesn't expose
+        # it; Knuth's algorithm or a rough Gaussian approximation works.
+        n_firings = _poisson_sample(rng, daily_target)
+        if n_firings <= 0:
+            continue
+
+        for firing_seq in range(n_firings):
+            n = counter.next()
+            transfer_id = f"tr-base-{rail_slug}-{n:06d}"
+            txn_id = f"tx-base-{rail_slug}-{n:06d}"
+            posting = _baseline_time_of_day(rng, kind, day)
+
+            src = src_accounts[rng.randrange(len(src_accounts))]
+            cap = cap_by_parent_role.get(str(src.account_parent_role) if src.account_parent_role else "")
+            amount = _baseline_amount_sample(rng, kind, cap=cap)
+
+            metadata = _baseline_metadata(rail, n, firing_seq)
+
+            if isinstance(rail, TwoLegRail):
+                dst = dst_accounts[rng.randrange(len(dst_accounts))]
+                rows.append(_txn_row(
+                    id_=f"{txn_id}-src",
+                    account_id=src.account_id,
+                    account_name=src.account_name,
+                    account_role=src.account_role,
+                    account_scope=src.account_scope,
+                    account_parent_role=src.account_parent_role,
+                    money=-amount,
+                    direction="Debit",
+                    posting=posting,
+                    transfer_id=transfer_id,
+                    transfer_type=rail.transfer_type,
+                    rail_name=rail.name,
+                    origin=src_origin,
+                    metadata=metadata,
+                    dialect=dialect,
+                ))
+                rows.append(_txn_row(
+                    id_=txn_id,
+                    account_id=dst.account_id,
+                    account_name=dst.account_name,
+                    account_role=dst.account_role,
+                    account_scope=dst.account_scope,
+                    account_parent_role=dst.account_parent_role,
+                    money=amount,
+                    direction="Credit",
+                    posting=posting,
+                    transfer_id=transfer_id,
+                    transfer_type=rail.transfer_type,
+                    rail_name=rail.name,
+                    origin=dst_origin,
+                    metadata=metadata,
+                    dialect=dialect,
+                ))
+                # Update balances + EOD snapshot.
+                state.balances[src.account_id] = (
+                    state.balances.get(src.account_id, Decimal("0")) - amount
+                )
+                state.balances[dst.account_id] = (
+                    state.balances.get(dst.account_id, Decimal("0")) + amount
+                )
+                state.eod_balances[(src.account_id, day)] = state.balances[src.account_id]
+                state.eod_balances[(dst.account_id, day)] = state.balances[dst.account_id]
+            else:
+                assert isinstance(rail, SingleLegRail)
+                if rail.leg_direction == "Credit":
+                    direction, signed = "Credit", amount
+                else:
+                    direction, signed = "Debit", -amount
+                rows.append(_txn_row(
+                    id_=txn_id,
+                    account_id=src.account_id,
+                    account_name=src.account_name,
+                    account_role=src.account_role,
+                    account_scope=src.account_scope,
+                    account_parent_role=src.account_parent_role,
+                    money=signed,
+                    direction=direction,
+                    posting=posting,
+                    transfer_id=transfer_id,
+                    transfer_type=rail.transfer_type,
+                    rail_name=rail.name,
+                    origin=src_origin,
+                    metadata=metadata,
+                    dialect=dialect,
+                ))
+                state.balances[src.account_id] = (
+                    state.balances.get(src.account_id, Decimal("0")) + signed
+                )
+                state.eod_balances[(src.account_id, day)] = state.balances[src.account_id]
+
+    _ = template_by_role  # accounts already resolved via state.template_instances
+    return rows
+
+
+def _baseline_rail_slug(rail_name: Identifier) -> str:
+    """Convert a Rail name to a short kebab-case ID slug.
+
+    Used in transfer_id / id_ prefixes so rows from different Rails are
+    visually distinguishable in the deployed dashboards.
+    """
+    return "".join(
+        c if c.isalnum() else "-"
+        for c in str(rail_name).lower()
+    ).strip("-")[:32] or "rail"
+
+
+def _baseline_cap_lookup(
+    rail: Rail, instance: L2Instance,
+) -> dict[str, Decimal]:
+    """Return ``{parent_role: cap}`` for every LimitSchedule matching this Rail.
+
+    Per R.1.f §2: the amount sampler clamps + resamples on cap-exceeding
+    draws. The map is keyed by ``parent_role`` so the per-firing picker
+    can look up the cap for the source-account's parent role.
+    """
+    out: dict[str, Decimal] = {}
+    for ls in instance.limit_schedules:
+        if str(ls.transfer_type) == str(rail.transfer_type):
+            out[str(ls.parent_role)] = ls.cap
+    return out
+
+
+def _baseline_metadata(
+    rail: Rail, n: int, firing_seq: int,
+) -> dict[str, str]:
+    """Build per-firing metadata satisfying the rail's declared keys.
+
+    Each declared metadata_key gets a synthetic per-firing value
+    (``<rail>-firing-NNNNNN``) so two firings of the same rail produce
+    distinct values. Rails declaring ``metadata_value_examples`` use
+    those values cycling through; the broader-mode plant (R.3) can
+    override per-firing.
+    """
+    out: dict[str, str] = {}
+    for key in rail.metadata_keys:
+        out[str(key)] = f"{rail.name}-firing-{n:06d}"
+    # Per-key example values when declared (M.4.2b mechanism).
+    for key, values in rail.metadata_value_examples:
+        if values:
+            out[str(key)] = values[firing_seq % len(values)]
+    return out
+
+
+def _poisson_sample(rng: random.Random, mean: float) -> int:
+    """Sample from Poisson(mean) using Knuth's algorithm.
+
+    Python's ``random`` doesn't expose Poisson; Knuth's iterative
+    algorithm is fine for the small means we use (≤ 50). For larger
+    means we'd switch to a normal approximation, but the per-day
+    targets in R.1.f §1 stay well below that.
+    """
+    if mean <= 0:
+        return 0
+    if mean > 50:
+        # Normal approximation for large means (sweep accumulators).
+        sample = rng.gauss(mean, mean ** 0.5)
+        return max(0, int(round(sample)))
+    import math
+
+    L = math.exp(-mean)
+    k = 0
+    p = 1.0
+    while True:
+        k += 1
+        p *= rng.random()
+        if p <= L:
+            return k - 1
 
 
 def _emit_baseline_chains(
