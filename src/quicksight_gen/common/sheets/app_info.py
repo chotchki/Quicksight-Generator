@@ -261,6 +261,7 @@ def populate_app_info_sheet(
     """
     accent = theme.accent
     sha, ts = _deploy_stamp()
+    dialect = cfg.dialect.value
 
     # Row 1: liveness KPI (left half) + matview status table (right half).
     top = sheet.layout.row(height=_TABLE_HEIGHT)
@@ -298,6 +299,7 @@ def populate_app_info_sheet(
                 rt.BR,
                 rt.body(f"git: {sha}"),
                 rt.body(f"generated: {ts}"),
+                rt.body(f"dialect: {dialect}"),
             ),
         ),
         width=_FULL,
