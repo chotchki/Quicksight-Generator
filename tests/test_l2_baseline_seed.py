@@ -108,13 +108,13 @@ class TestEmitBaselineSeedSkeleton:
         sql = emit_baseline_seed(instance, anchor=_ANCHOR, window_days=30)
         assert "30-day rolling window" in sql
 
-    def test_remaining_stub_markers(self) -> None:
-        # R.2.b lands non-aggregating-rail legs; R.2.c/d/e still stubbed.
-        # When R.2.e wires daily_balances, drop the daily_balances assertion
-        # below.
+    def test_no_remaining_stub_markers(self) -> None:
+        # R.2.a-e all complete — no "in progress" markers should remain.
         instance = load_instance(_SPEC_EXAMPLE)
         sql = emit_baseline_seed(instance, anchor=_ANCHOR)
-        assert "no baseline daily_balances yet — R.2.e in progress" in sql
+        assert "in progress" not in sql, (
+            "R.2.a-e all complete; no stub markers should remain in output"
+        )
 
     def test_emit_is_deterministic_for_fixed_anchor(self) -> None:
         instance = load_instance(_SASQUATCH_PR)
@@ -263,6 +263,28 @@ class TestBaselineLegLoop:
             "Chain child amounts should be sampled via lognormal — "
             f"saw only {len(set(chain_amounts))} distinct values"
         )
+
+    def test_daily_balances_emitted_per_account_per_active_day(self) -> None:
+        # R.2.e — every (account_id, business_day) the leg loop touched
+        # must produce exactly one daily_balances row. Sasquatch_pr's
+        # 25 template-instance accounts active across 65 business days
+        # yields ~1,500-3,000 daily balance rows after the picker's
+        # uneven account selection.
+        instance = load_instance(_SASQUATCH_PR)
+        sql = emit_baseline_seed(instance, anchor=_ANCHOR)
+        n = sql.count("INSERT INTO sasquatch_pr_daily_balances")
+        assert 1_000 <= n <= 5_000, (
+            f"R.2.e should emit 1k-5k daily_balances rows for sasquatch_pr; "
+            f"got {n}"
+        )
+
+    def test_daily_balances_sorted_for_determinism(self) -> None:
+        # R.2.e iteration is sorted by (account_id, day). Two runs at
+        # the same anchor must produce byte-identical output.
+        instance = load_instance(_SPEC_EXAMPLE)
+        a = emit_baseline_seed(instance, anchor=_ANCHOR)
+        b = emit_baseline_seed(instance, anchor=_ANCHOR)
+        assert a == b, "R.2.e daily_balances must be deterministic"
 
     def test_balances_state_machine_updates(self) -> None:
         # After a deterministic run, state.balances should differ from

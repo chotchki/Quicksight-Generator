@@ -2012,19 +2012,91 @@ def _emit_baseline_daily_balances(
 ) -> list[str]:
     """Materialize ``daily_balances`` rows from the leg state machine.
 
-    R.2.a: stub — returns ``[]``. R.2.e implements:
-      - For every (account_id, business_day) the leg loop touched (i.e.,
-        every key in ``state.eod_balances``), emit one
-        ``daily_balances`` row carrying the snapshotted closing balance.
-      - Roles in ``instance.role_business_day_offsets`` get their
-        business_day_start / business_day_end shifted accordingly (M.4.4.14).
-      - Drift invariant guarantee: the row's ``money`` MUST equal
-        ``SUM(signed_amount)`` over the account's history through the
-        snapshot moment, so the drift matview computes zero.
+    R.2.e implementation: walks every (account_id, business_day) pair
+    captured in ``state.eod_balances`` (populated by R.2.b/c/d as
+    each leg posts) and emits one ``daily_balances`` row carrying
+    the snapshot value.
+
+    Drift invariant guarantee: ``daily_balances.money`` matches
+    ``SUM(signed_amount)`` through the snapshot moment because the
+    state machine updated ``balances`` for each leg before snapshotting
+    into ``eod_balances``. The L1 drift matview computes
+    ``stored - computed`` and gets zero for every baseline (account, day).
+
+    Per-role business-day offsets (M.4.4.14): if
+    ``instance.role_business_day_offsets`` carries an entry for the
+    account's role, the snapshot timestamps shift by that hour offset.
+    Roles without an entry default to midnight-aligned (00:00 → 00:00
+    next day) — preserves byte-identical seed_hash for instances that
+    don't declare offsets.
     """
-    # TODO R.2.e — implement daily-balance materialization.
-    _ = (state, instance, template_by_role, dialect)
-    return []
+    if not state.eod_balances:
+        return []
+
+    account_meta = _build_account_meta_map(state, instance)
+    role_offsets = instance.role_business_day_offsets or {}
+
+    rows: list[str] = []
+    # Sort by (account_id, business_day) for deterministic SQL output.
+    for (account_id, day), money in sorted(
+        state.eod_balances.items(),
+        key=lambda kv: (str(kv[0][0]), kv[0][1]),
+    ):
+        meta = account_meta.get(account_id)
+        if meta is None:
+            # Account doesn't resolve in either template instances or
+            # singleton accounts — should never happen because the leg
+            # emitter's account picker only emits accounts it can
+            # resolve. Skip defensively.
+            continue
+        offset_hours = role_offsets.get(str(meta.account_role), 0)
+        rows.append(_balance_row(
+            account_id=meta.account_id,
+            account_name=meta.account_name,
+            account_role=meta.account_role,
+            account_scope=meta.account_scope,
+            account_parent_role=meta.account_parent_role,
+            day=day,
+            money=money,
+            dialect=dialect,
+            offset_hours=offset_hours,
+        ))
+
+    _ = template_by_role
+    return rows
+
+
+def _build_account_meta_map(
+    state: _BaselineState, instance: L2Instance,
+) -> dict[Identifier, _ResolvedAccount]:
+    """Build account_id -> _ResolvedAccount lookup for daily-balance emit.
+
+    Walks materialized template instances first, then singleton
+    accounts. The map is built once per ``emit_baseline_seed`` call and
+    reused for every (account_id, day) row.
+    """
+    template_by_role = {t.role: t for t in instance.account_templates}
+    out: dict[Identifier, _ResolvedAccount] = {}
+    for ti in state.template_instances:
+        tmpl = template_by_role.get(ti.template_role)
+        if tmpl is None:
+            continue
+        out[ti.account_id] = _ResolvedAccount(
+            account_id=ti.account_id,
+            account_name=ti.name,
+            account_role=ti.template_role,
+            account_scope=tmpl.scope,
+            account_parent_role=tmpl.parent_role,
+        )
+    for a in instance.accounts:
+        out[a.id] = _ResolvedAccount(
+            account_id=a.id,
+            account_name=a.name or Name(str(a.id)),
+            account_role=a.role or Identifier(str(a.id)),
+            account_scope=a.scope,
+            account_parent_role=a.parent_role,
+        )
+    return out
 
 
 # -- Internal helpers --------------------------------------------------------
