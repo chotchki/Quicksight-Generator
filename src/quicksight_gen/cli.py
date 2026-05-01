@@ -844,7 +844,11 @@ def _apply_demo(
         refresh_matviews_sql,
     )
     from quicksight_gen.common.l2.seed import emit_full_seed as emit_l2_seed
-    from quicksight_gen.common.l2.auto_scenario import default_scenario_for
+    from quicksight_gen.common.l2.auto_scenario import (
+        add_broken_rail_plants,
+        default_scenario_for,
+        densify_scenario,
+    )
 
     # Pre-stamp ``cfg.l2_instance_prefix`` from the default L2 instance
     # before opening the DB connection: the REFRESH MATERIALIZED VIEW
@@ -875,10 +879,21 @@ def _apply_demo(
     # P.1 retired the legacy ``apps/investigation/demo_data.py``
     # (which planted v5-shape flat-table data into the now-deleted
     # unprefixed ``transactions`` / ``daily_balances`` tables).
-    seed_sql = emit_l2_seed(
-        inv_l2, default_scenario_for(inv_l2).scenario,
-        dialect=cfg.dialect,
+    #
+    # R.3.b/c: layer plant density tuning on top of default_scenario_for.
+    # ``densify_scenario(factor=5)`` replicates per-kind plants across
+    # the window so each L1 invariant has multiple instances visible
+    # against the 60k-row Phase R baseline; ``add_broken_rail_plants``
+    # picks one Rail and plants 15 stuck_pending entries on it so the
+    # Today's Exceptions KPI has a magnitude that matters and the L2
+    # Exceptions sheet's bar chart shows the broken Rail spike
+    # immediately. emit_full_seed (R.3.a) prepends the 90-day baseline.
+    base_scenario = default_scenario_for(inv_l2).scenario
+    dense_scenario = densify_scenario(base_scenario, factor=5)
+    final_scenario = add_broken_rail_plants(
+        dense_scenario, inv_l2, broken_count=15,
     )
+    seed_sql = emit_l2_seed(inv_l2, final_scenario, dialect=cfg.dialect)
 
     click.echo(f"Connecting to {cfg.demo_database_url.split('@')[-1]}...")
     try:

@@ -329,6 +329,56 @@ class TestEmitFullSeed:
         b = emit_full_seed(instance, scenario, anchor=_ANCHOR)
         assert a == b
 
+    def test_densified_scenario_multiplies_plants(self) -> None:
+        # R.3.b — densify_scenario multiplies per-kind plant counts by
+        # the configured factor.
+        from quicksight_gen.common.l2.auto_scenario import (
+            densify_scenario,
+        )
+        instance = load_instance(_SASQUATCH_PR)
+        base = default_scenario_for(instance, today=_ANCHOR).scenario
+        dense = densify_scenario(base, factor=5)
+        assert len(dense.drift_plants) == 5 * len(base.drift_plants)
+        assert len(dense.overdraft_plants) == 5 * len(base.overdraft_plants)
+        assert (
+            len(dense.stuck_pending_plants)
+            == 5 * len(base.stuck_pending_plants)
+        )
+        # Inv fanout + transfer-template plants do NOT replicate.
+        assert dense.inv_fanout_plants == base.inv_fanout_plants
+        assert dense.transfer_template_plants == base.transfer_template_plants
+
+    def test_densify_factor_one_is_identity(self) -> None:
+        from quicksight_gen.common.l2.auto_scenario import densify_scenario
+        instance = load_instance(_SASQUATCH_PR)
+        base = default_scenario_for(instance, today=_ANCHOR).scenario
+        result = densify_scenario(base, factor=1)
+        assert result is base
+
+    def test_broken_rail_adds_stuck_pending_plants(self) -> None:
+        # R.3.c — add_broken_rail_plants stacks N plants on one
+        # specifically-picked rail.
+        from quicksight_gen.common.l2.auto_scenario import (
+            add_broken_rail_plants,
+        )
+        instance = load_instance(_SASQUATCH_PR)
+        base = default_scenario_for(instance, today=_ANCHOR).scenario
+        broken = add_broken_rail_plants(base, instance, broken_count=15)
+        added = (
+            len(broken.stuck_pending_plants)
+            - len(base.stuck_pending_plants)
+        )
+        assert added == 15
+
+    def test_broken_rail_count_zero_is_noop(self) -> None:
+        from quicksight_gen.common.l2.auto_scenario import (
+            add_broken_rail_plants,
+        )
+        instance = load_instance(_SASQUATCH_PR)
+        base = default_scenario_for(instance, today=_ANCHOR).scenario
+        result = add_broken_rail_plants(base, instance, broken_count=0)
+        assert result is base
+
     def test_baseline_and_plant_id_namespaces_dont_collide(self) -> None:
         # Plants use tr-drift-*/tr-overdraft-*/etc. ids; baseline uses
         # tr-base-*/tr-base-bundle-*/tr-base-chain-*. None should overlap.

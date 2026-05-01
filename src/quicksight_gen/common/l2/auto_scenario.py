@@ -429,6 +429,218 @@ def default_scenario_for(
     return AutoScenarioReport(scenario=scenario, omitted=tuple(omitted))
 
 
+# -- Phase R density tuning helpers ------------------------------------------
+
+
+def densify_scenario(
+    base: ScenarioPlant,
+    *,
+    factor: int = 5,
+    day_stride: int = 7,
+) -> ScenarioPlant:
+    """Replicate per-kind plants across the window for visibility (R.3.b).
+
+    The R.2 baseline puts ~60k legs per L2 instance into the window;
+    a single drift / overdraft / etc plant gets lost in the noise.
+    This helper takes a base ``ScenarioPlant`` (typically from
+    ``default_scenario_for``) and replicates each plant kind by
+    varying ``days_ago`` so each kind shows N rows on the dashboards
+    instead of 1.
+
+    For stuck-pending / stuck-unbundled, the days_ago stride keeps
+    every replica well past the rail's max_*_age cap so all replicas
+    surface. For drift / overdraft / breach / supersession, the
+    stride spreads them across the window for visual diversity.
+
+    ``inv_fanout_plants`` and ``transfer_template_plants`` are NOT
+    replicated — the fanout already plants N senders per recipient
+    (its own density), and TransferTemplate plants already produce 3
+    firings per template (the Complete / Orphan / Required-met cases).
+    """
+    if factor <= 1:
+        return base
+
+    def replicate_drift(p: DriftPlant) -> tuple[DriftPlant, ...]:
+        return tuple(
+            DriftPlant(
+                account_id=p.account_id,
+                days_ago=p.days_ago + i * day_stride,
+                delta_money=p.delta_money,
+                rail_name=p.rail_name,
+                counter_account_id=p.counter_account_id,
+            )
+            for i in range(factor)
+        )
+
+    def replicate_overdraft(p: OverdraftPlant) -> tuple[OverdraftPlant, ...]:
+        return tuple(
+            OverdraftPlant(
+                account_id=p.account_id,
+                days_ago=p.days_ago + i * day_stride,
+                money=p.money,
+            )
+            for i in range(factor)
+        )
+
+    def replicate_breach(p: LimitBreachPlant) -> tuple[LimitBreachPlant, ...]:
+        return tuple(
+            LimitBreachPlant(
+                account_id=p.account_id,
+                days_ago=p.days_ago + i * day_stride,
+                transfer_type=p.transfer_type,
+                rail_name=p.rail_name,
+                amount=p.amount,
+                counter_account_id=p.counter_account_id,
+            )
+            for i in range(factor)
+        )
+
+    def replicate_pending(
+        p: StuckPendingPlant,
+    ) -> tuple[StuckPendingPlant, ...]:
+        return tuple(
+            StuckPendingPlant(
+                account_id=p.account_id,
+                days_ago=p.days_ago + i * day_stride,
+                transfer_type=p.transfer_type,
+                rail_name=p.rail_name,
+                amount=p.amount,
+            )
+            for i in range(factor)
+        )
+
+    def replicate_unbundled(
+        p: StuckUnbundledPlant,
+    ) -> tuple[StuckUnbundledPlant, ...]:
+        return tuple(
+            StuckUnbundledPlant(
+                account_id=p.account_id,
+                days_ago=p.days_ago + i * day_stride,
+                transfer_type=p.transfer_type,
+                rail_name=p.rail_name,
+                amount=p.amount,
+            )
+            for i in range(factor)
+        )
+
+    def replicate_super(
+        p: SupersessionPlant,
+    ) -> tuple[SupersessionPlant, ...]:
+        return tuple(
+            SupersessionPlant(
+                account_id=p.account_id,
+                days_ago=p.days_ago + i * day_stride,
+                transfer_type=p.transfer_type,
+                rail_name=p.rail_name,
+                original_amount=p.original_amount,
+                corrected_amount=p.corrected_amount,
+            )
+            for i in range(factor)
+        )
+
+    return ScenarioPlant(
+        template_instances=base.template_instances,
+        drift_plants=tuple(
+            r for p in base.drift_plants for r in replicate_drift(p)
+        ),
+        overdraft_plants=tuple(
+            r for p in base.overdraft_plants for r in replicate_overdraft(p)
+        ),
+        limit_breach_plants=tuple(
+            r for p in base.limit_breach_plants for r in replicate_breach(p)
+        ),
+        stuck_pending_plants=tuple(
+            r for p in base.stuck_pending_plants for r in replicate_pending(p)
+        ),
+        stuck_unbundled_plants=tuple(
+            r for p in base.stuck_unbundled_plants
+            for r in replicate_unbundled(p)
+        ),
+        supersession_plants=tuple(
+            r for p in base.supersession_plants for r in replicate_super(p)
+        ),
+        transfer_template_plants=base.transfer_template_plants,
+        rail_firing_plants=base.rail_firing_plants,
+        inv_fanout_plants=base.inv_fanout_plants,
+        today=base.today,
+    )
+
+
+def add_broken_rail_plants(
+    base: ScenarioPlant,
+    instance: L2Instance,
+    *,
+    broken_count: int = 15,
+) -> ScenarioPlant:
+    """Layer a single broken-Rail spike on top of an existing scenario (R.3.c).
+
+    Picks one Rail with ``max_pending_age`` set + plants
+    ``broken_count`` stuck_pending entries on it across the window.
+    Today's Exceptions KPI then has a magnitude that matters; the
+    L2 Exceptions sheet's bar chart shows the broken Rail spike
+    immediately.
+
+    Picker rule: deterministic — sorted by rail name, the FIRST rail
+    with max_pending_age set. Different from
+    ``default_scenario_for``'s pending_rail picker by intent — the
+    broken rail is a separate concept; using the same picker would
+    just stack plants on the existing stuck_pending row.
+
+    No-op when no max_pending_age-eligible rail exists OR the picked
+    rail's role doesn't resolve to any materialized account.
+    """
+    if broken_count <= 0:
+        return base
+
+    pending_rails = sorted(
+        (r for r in instance.rails if r.max_pending_age is not None),
+        key=lambda r: str(r.name),
+    )
+    if not pending_rails:
+        return base
+    broken_rail = pending_rails[0]
+
+    # Pick a customer to plant on. Use the first template instance
+    # whose role matches the rail's leg/source role.
+    if not base.template_instances:
+        return base
+    target_account_id = base.template_instances[0].account_id
+
+    # Days_ago stride: stagger across the window past the rail's cap.
+    cap_days = max(
+        1,
+        int((broken_rail.max_pending_age or _zero_td()).total_seconds() // 86400) + 7,
+    )
+
+    extra_plants = tuple(
+        StuckPendingPlant(
+            account_id=base.template_instances[
+                i % len(base.template_instances)
+            ].account_id,
+            days_ago=cap_days + (i * 2),  # spread across the window
+            transfer_type=broken_rail.transfer_type,
+            rail_name=broken_rail.name,
+            amount=Decimal("450.00") + Decimal(str(i * 25)),
+        )
+        for i in range(broken_count)
+    )
+    _ = target_account_id  # shadowed by per-i picker below
+
+    return ScenarioPlant(
+        template_instances=base.template_instances,
+        drift_plants=base.drift_plants,
+        overdraft_plants=base.overdraft_plants,
+        limit_breach_plants=base.limit_breach_plants,
+        stuck_pending_plants=base.stuck_pending_plants + extra_plants,
+        stuck_unbundled_plants=base.stuck_unbundled_plants,
+        supersession_plants=base.supersession_plants,
+        transfer_template_plants=base.transfer_template_plants,
+        rail_firing_plants=base.rail_firing_plants,
+        inv_fanout_plants=base.inv_fanout_plants,
+        today=base.today,
+    )
+
+
 # -- Picker helpers ----------------------------------------------------------
 
 
