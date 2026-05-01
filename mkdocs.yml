@@ -7,8 +7,11 @@ docs_dir: src/quicksight_gen/docs
 
 theme:
   name: material
-  logo: img/snb-mark.svg
-  favicon: img/favicon.svg
+  # No default logo / favicon — when an L2 instance YAML carries a
+  # `theme.logo` / `theme.favicon` value, main.py's mkdocs-macros
+  # entry overrides these keys at build time. Without an L2 override
+  # the site renders text-only navigation (mkdocs-material default)
+  # rather than falling back to a persona-specific mark.
   palette:
     scheme: default
     primary: custom

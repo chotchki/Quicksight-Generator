@@ -5,6 +5,20 @@
  * (SASQUATCH_BANK_AR_PRESET). Keep these in sync if the preset moves.
  */
 
+/*
+ * No-logo fallback. When `theme.logo` is unset in mkdocs.yml AND the
+ * active L2 instance YAML doesn't override (`l2.theme.logo`),
+ * mkdocs-material substitutes its built-in `material/library` SVG
+ * icon. We don't want a generic library icon for a financial-reporting
+ * tool — hide the fallback SVG so the nav header / sidebar render
+ * text-only. An L2-supplied logo renders as an <img> tag and is
+ * unaffected by this rule.
+ */
+.md-header__button.md-logo svg,
+.md-nav__button.md-logo svg {
+  display: none;
+}
+
 :root {
   /* AR — valley green / harvest gold / earth */
   --snb-valley-deep: #2B4A2E;
