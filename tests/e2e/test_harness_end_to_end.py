@@ -751,7 +751,9 @@ def test_harness_l1_planted_scenarios_visible(
     # Layer 1: matview-row-presence. Fast, deterministic, points at
     # the seed/matview layer if it fails. NOT xfailed — this is the
     # primary regression net the harness provides.
-    assert_l1_matview_rows_present(harness_db_conn, prefix, manifest)
+    assert_l1_matview_rows_present(
+        harness_db_conn, prefix, manifest, dialect=harness_cfg.dialect,
+    )
 
     # Layer 1b (N.3.l-bis): Investigation matview schema-health check —
     # the prefixed Inv matviews exist and emit cleanly against the v6
@@ -763,7 +765,9 @@ def test_harness_l1_planted_scenarios_visible(
     # planted ``InvFanoutPlant`` (sender, recipient) edge surfaces in
     # both Inv matviews. Catches seed→matview-refresh regressions for
     # the Inv path the same way Layer 1 does for L1 invariants.
-    assert_inv_planted_rows_visible(harness_db_conn, prefix, manifest)
+    assert_inv_planted_rows_visible(
+        harness_db_conn, prefix, manifest, dialect=harness_cfg.dialect,
+    )
 
     # Layer 1c (N.4.g): Executives base-table schema-health check.
     # Executives reads only from <prefix>_transactions +

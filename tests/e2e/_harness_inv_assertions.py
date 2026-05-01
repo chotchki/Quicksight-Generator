@@ -27,6 +27,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from quicksight_gen.common.sql import Dialect
+
 
 # Investigation matview names without the L2 instance prefix.
 # These mirror the CREATE MATERIALIZED VIEW names emitted by
@@ -101,6 +103,8 @@ def assert_inv_planted_rows_visible(
     db_conn: Any,
     prefix: str,
     planted_manifest: dict[str, list[dict[str, Any]]],
+    *,
+    dialect: Dialect = Dialect.POSTGRES,
 ) -> None:
     """For every Investigation plant kind in the manifest, query the
     prefixed matview directly and assert the planted row surfaces.
@@ -143,9 +147,15 @@ def assert_inv_planted_rows_visible(
         anomalies_view = f"{prefix}_inv_pair_rolling_anomalies"
         for sender in senders:
             with db_conn.cursor() as cur:
+                # P.9f.a — placeholder syntax differs psycopg2 vs oracledb.
+                if dialect is Dialect.ORACLE:
+                    p1, p2 = ":1", ":2"
+                else:
+                    p1 = p2 = "%s"
                 cur.execute(
                     f"SELECT COUNT(*) FROM {anomalies_view} "
-                    "WHERE recipient_account_id = %s AND sender_account_id = %s",
+                    f"WHERE recipient_account_id = {p1} "
+                    f"AND sender_account_id = {p2}",
                     (recipient, sender),
                 )
                 row = cur.fetchone()
@@ -164,9 +174,11 @@ def assert_inv_planted_rows_visible(
         # depth-0 edge. Total rows for the recipient ≥ len(senders).
         edges_view = f"{prefix}_inv_money_trail_edges"
         with db_conn.cursor() as cur:
+            # P.9f.a — see anomalies_view block above.
+            placeholder = ":1" if dialect is Dialect.ORACLE else "%s"
             cur.execute(
                 f"SELECT COUNT(*) FROM {edges_view} "
-                "WHERE target_account_id = %s",
+                f"WHERE target_account_id = {placeholder}",
                 (recipient,),
             )
             row = cur.fetchone()

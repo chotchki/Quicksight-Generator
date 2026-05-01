@@ -36,6 +36,8 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Any
 
+from quicksight_gen.common.sql import Dialect
+
 
 # Plant kind → L1 dashboard sheet name. Drives the dispatch in
 # ``assert_l1_plants_visible``. Plant kinds NOT in this map (e.g.
@@ -91,6 +93,8 @@ def assert_l1_matview_rows_present(
     db_conn: Any,
     prefix: str,
     planted_manifest: dict[str, list[dict[str, Any]]],
+    *,
+    dialect: Dialect = Dialect.POSTGRES,
 ) -> None:
     """For every L1 plant kind in the manifest, query the prefixed
     invariant matview directly and assert the planted ``account_id``
@@ -133,8 +137,13 @@ def assert_l1_matview_rows_present(
                 f"can't verify against matview {full_view!r}"
             )
             with db_conn.cursor() as cur:
+                # P.9f.a — placeholder syntax differs between psycopg2
+                # (``%s``) and oracledb (``:1``). Branch on dialect; the
+                # bind value passed positionally is the same shape.
+                placeholder = ":1" if dialect is Dialect.ORACLE else "%s"
                 cur.execute(
-                    f"SELECT COUNT(*) FROM {full_view} WHERE account_id = %s",
+                    f"SELECT COUNT(*) FROM {full_view} "
+                    f"WHERE account_id = {placeholder}",
                     (account_id,),
                 )
                 row = cur.fetchone()
