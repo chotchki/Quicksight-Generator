@@ -317,6 +317,14 @@ The existing SQL is already constrained to a portable subset (no JSONB, SQL/JSON
 
 Single grab-bag for everything not yet in a phase. Promote to a numbered phase entry when work starts. Full historical detail in `PLAN_ARCHIVE.md`.
 
+## Documentation Review
+Meta problem: the screenshots are all way too tall (I know its to avoid scrolling but we should try to figure out how big a viewport we need)
+- For the operator
+  - what are we not asking you to learn
+    - reword to stress L1 and L2 are important
+- For the integrator
+  - 
+
 ### Punted from Phase M ship push
 
 - **CLI workflow polish.** Materialize the SPEC's "Workflow Ideas" — `generate config (demo|template)`, `apply schema`, `apply data`, `apply dashboards`, `generate training`. Acceptance: a fresh integrator can run end-to-end from one YAML.

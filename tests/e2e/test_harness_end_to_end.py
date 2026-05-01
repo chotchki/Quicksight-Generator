@@ -99,8 +99,7 @@ from _harness_l1_assertions import (  # noqa: E402
 )
 from _harness_l2ft_assertions import (  # noqa: E402
     assert_l2_exceptions_kpi_renders,
-    assert_l2ft_plants_visible,
-    widen_l2ft_date_range,
+    assert_l2ft_matview_rows_present,
 )
 from _harness_inv_assertions import (  # noqa: E402
     assert_inv_matviews_queryable,
@@ -850,23 +849,31 @@ def test_harness_l1_planted_scenarios_visible(
 
 def test_harness_l2ft_planted_scenarios_visible(
     harness_cfg: Config,
+    harness_db_conn,
     harness_deployed: dict[str, Any],
     harness_failure_dump: None,
 ) -> None:
-    """Open the deployed L2 Flow Tracing dashboard via Playwright and
-    verify each L2-side planted scenario surfaces (M.4.1.e).
+    """Verify L2-side planted scenarios surface in both the matview
+    layer (Layer 1) and the dashboard render (Layer 2).
 
-    Per-plant-kind assertions:
-    - rail_firing_plants → Rails sheet shows each rail_name
-      (chain-child plants skipped — they reuse the standalone's
-      rail_name and would double-count)
-    - transfer_template_plants → Transfer Templates sheet shows
-      each template_name
+    Layer 1 — ``assert_l2ft_matview_rows_present`` queries
+    ``<prefix>_current_transactions`` directly for each planted
+    rail_name + template_name. Fast deterministic regression net for
+    the seed → matview-refresh pipeline.
 
-    Plus an L2 Exceptions sanity check: at least one of the 6
-    declared check_type categories appears on the L2 Exceptions
-    sheet (proves the unified-exceptions dataset rendered against
-    the per-test prefix without SQL errors).
+    Layer 2 — ``assert_l2_exceptions_kpi_renders`` opens the deployed
+    L2 Flow Tracing dashboard and asserts the L2 Exceptions KPI
+    renders an integer (proves the unified-exceptions dataset SQL ran
+    cleanly against the per-test prefix).
+
+    P.9f.f — The Rails-sheet plant-visibility check used to be a
+    Layer-2 sheet-text scrape. It broke on sasquatch_pr where 57+
+    standalone rail firings on a single Rails sheet pushed all but
+    the alphabetically-earliest below QS table virtualization's
+    ~10-row DOM fold (CLAUDE.md "E2E Test Conventions"). Mirroring
+    L1's M.4.1.k pattern (matview check + KPI count), the matview
+    query is the regression net; the dashboard render is sanity-
+    checked via the KPI.
 
     Wrapped in ``run_dashboard_check_with_retry`` (M.4.1.g) for the
     same spinner-forever-flake reasons as the L1 smoke test above.
@@ -874,49 +881,23 @@ def test_harness_l2ft_planted_scenarios_visible(
     Skipped under default pytest (no QS_GEN_E2E).
     """
     manifest = harness_deployed["planted_manifest"]
+    prefix = harness_deployed["prefix"]
     dashboard_id = harness_deployed["dashboard_ids"]["l2-flow-tracing"]
     page_timeout = int(os.environ.get("QS_E2E_PAGE_TIMEOUT", "30000"))
     visual_timeout = int(os.environ.get("QS_E2E_VISUAL_TIMEOUT", "30000"))
 
+    # Layer 1: matview-row-presence. Fast, deterministic, points at
+    # the seed/matview layer if it fails. Replaces the dashboard
+    # text-scrape Layer 2 that broke on virtualization (P.9f.f).
+    assert_l2ft_matview_rows_present(
+        harness_db_conn, prefix, manifest, dialect=harness_cfg.dialect,
+    )
+
     def _check_l2ft(page: Any) -> None:
-        # M.4.4.16 — widen the L2FT per-sheet date filters before the
-        # plant visibility check, mirroring the L1 widening pattern
-        # M.4.4.12 established. ``apply_db_seed`` anchors plants to
-        # ``DEFAULT_HARNESS_TODAY`` (2030-01-01); the L2FT pickers
-        # default to a rolling window ending wall-clock today, so the
-        # plants sit several years outside every default window. Use
-        # the same ``max_days_ago + 7`` buffer the L1 path computes.
-        max_days_ago = max(
-            (
-                int(plant["days_ago"])
-                for plants in manifest.values()
-                for plant in plants
-                if isinstance(plant, dict) and "days_ago" in plant
-            ),
-            default=30,
-        )
-        widen_l2ft_date_range(
-            page,
-            today=harness_deployed["today"],
-            days_back=max_days_ago + 7,
-            timeout_ms=visual_timeout,
-        )
-        assert_l2ft_plants_visible(
-            page, manifest, timeout_ms=visual_timeout,
-        )
         assert_l2_exceptions_kpi_renders(
             page, timeout_ms=visual_timeout,
         )
 
-    # Layer 2 xfail wrapper REMOVED (M.4.4.15) — root cause was the
-    # `assert_l2_exceptions_check_types_present` assertion requiring
-    # ≥1 of 6 hardcoded check_type categories on the L2 Exceptions
-    # sheet, which is wrong for clean fixtures (spec_example) whose
-    # broad-mode scenario produces zero L2 violations and correctly
-    # renders "No data". Reframed to assert_l2_exceptions_kpi_renders
-    # which just verifies the KPI shows a non-negative integer
-    # (proves the dataset SQL ran without error). Assertion failures
-    # now propagate as real FAILED.
     run_dashboard_check_with_retry(
         aws_account_id=harness_cfg.aws_account_id,
         aws_region=harness_cfg.aws_region,

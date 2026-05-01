@@ -88,6 +88,13 @@ _TEST_CFG = Config(
     l2_instance_prefix="spec_example",
 )
 
+# Investigation's ``build_all_datasets`` requires an L2Instance for
+# the App Info matview names (P.9f.f — dropped silent fallback). Tests
+# pass the spec_example default so prefix derivation matches _TEST_CFG.
+from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance  # noqa: E402
+
+_TEST_L2 = default_l2_instance()
+
 
 # L.2.13 — Persona-defaults that the imperative ``filters.py`` carried as
 # named constants. Inlined as literals here so the assertions describe the
@@ -234,7 +241,7 @@ def test_investigation_datasets_in_expected_order():
     fourth, K.4.8k narrow accounts dataset fifth. M.4.4.5 appended the
     2 App Info datasets last. Order matters — analysis.py's
     DataSetIdentifierDeclarations zip relies on it."""
-    datasets = build_all_datasets(_TEST_CFG)
+    datasets = build_all_datasets(_TEST_CFG, _TEST_L2)
     assert len(datasets) == 7
     assert datasets[0].DataSetId == _TEST_CFG.prefixed("inv-recipient-fanout-dataset")
     assert datasets[1].DataSetId == _TEST_CFG.prefixed("inv-volume-anomalies-dataset")
@@ -282,7 +289,7 @@ def test_recipient_fanout_sql_filters_recipient_to_leaf_internal_accounts():
     — administrative sweeps land in singleton control accounts, those
     have ``parent_role IS NULL`` and get filtered out, so the fanout
     signal stays focused on real customer recipients."""
-    ds = build_all_datasets(_TEST_CFG)[0]
+    ds = build_all_datasets(_TEST_CFG, _TEST_L2)[0]
     sql = next(iter(ds.PhysicalTableMap.values())).CustomSql.SqlQuery
     assert "t.account_scope = 'internal'" in sql
     assert "t.account_parent_role IS NOT NULL" in sql
@@ -507,7 +514,7 @@ def test_volume_anomalies_dataset_reads_from_matview():
 
     N.3.d: matview name is per-instance prefixed.
     """
-    datasets = build_all_datasets(_TEST_CFG)
+    datasets = build_all_datasets(_TEST_CFG, _TEST_L2)
     anomalies = datasets[1]
     sql = next(iter(anomalies.PhysicalTableMap.values())).CustomSql.SqlQuery
     assert "FROM spec_example_inv_pair_rolling_anomalies" in sql
@@ -689,7 +696,7 @@ def test_money_trail_dataset_reads_from_matview():
 
     N.3.d: matview name is per-instance prefixed.
     """
-    datasets = build_all_datasets(_TEST_CFG)
+    datasets = build_all_datasets(_TEST_CFG, _TEST_L2)
     money_trail = datasets[2]
     sql = next(iter(money_trail.PhysicalTableMap.values())).CustomSql.SqlQuery
     assert "FROM spec_example_inv_money_trail_edges" in sql
@@ -955,7 +962,7 @@ def test_account_network_dataset_reuses_money_trail_matview():
     """K.4.8 wraps the same matview as K.4.5 — second dataset
     registration so account-centric filters live independently. SQL
     adds the source_display / target_display walking labels."""
-    ds = build_all_datasets(_TEST_CFG)[3]
+    ds = build_all_datasets(_TEST_CFG, _TEST_L2)[3]
     sql = next(iter(ds.PhysicalTableMap.values())).CustomSql.SqlQuery
     # N.3.d: matview name is per-instance prefixed.
     assert "FROM spec_example_inv_money_trail_edges" in sql

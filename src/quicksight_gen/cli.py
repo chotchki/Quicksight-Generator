@@ -438,7 +438,7 @@ def _all_dataset_filenames(
     )
 
     names: set[str] = {f"{ds.DataSetId}.json" for ds in keep_current}
-    names.update(f"{ds.DataSetId}.json" for ds in _inv(cfg_with_prefix))
+    names.update(f"{ds.DataSetId}.json" for ds in _inv(cfg_with_prefix, active_l2))
     names.update(f"{ds.DataSetId}.json" for ds in _exec(cfg_with_prefix))
     names.update(
         f"{ds.DataSetId}.json"
@@ -933,7 +933,7 @@ def _apply_demo(
 
     json_count = 1 + (1 if theme is not None else 0)  # datasource (+ theme)
     if app in ("investigation", "all"):
-        inv_datasets = build_inv_datasets(cfg)
+        inv_datasets = build_inv_datasets(cfg, inv_l2)
         for ds in inv_datasets:
             _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
         _write_json(

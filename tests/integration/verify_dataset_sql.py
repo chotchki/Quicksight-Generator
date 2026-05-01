@@ -261,12 +261,13 @@ def main() -> int:
         cfg = cfg.with_l2_instance_prefix(str(l2.instance))
 
     # Build every app's datasets. Each app's bundle is independent so
-    # we just chain them. Note the signature differences — Inv + Exec
-    # take only `cfg`; L1 + L2FT take `cfg, l2_instance`.
+    # we just chain them. L1 / L2FT / Inv all thread the L2 instance;
+    # Exec is the only one that takes only ``cfg`` (its App Info matview
+    # list is empty — Exec reads only base tables).
     all_datasets: list[DataSet] = (
         build_all_l1_dashboard_datasets(cfg, l2)
         + build_all_l2_flow_tracing_datasets(cfg, l2)
-        + build_inv_datasets(cfg)
+        + build_inv_datasets(cfg, l2)
         + build_exec_datasets(cfg)
     )
 

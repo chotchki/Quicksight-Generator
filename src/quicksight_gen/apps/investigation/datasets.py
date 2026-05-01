@@ -350,19 +350,14 @@ def build_account_network_accounts_dataset(cfg: Config) -> DataSet:
 
 
 def build_all_datasets(
-    cfg: Config, l2_instance: L2Instance | None = None,
+    cfg: Config, l2_instance: L2Instance,
 ) -> list[DataSet]:
     """Return every dataset Investigation's sheets reference.
 
     ``l2_instance`` is required for App Info matview names (which need
-    the L2 prefix). Defaults to the bundled spec_example to preserve
-    backwards compat with callers that haven't been updated to thread
-    the instance through (they get prefix-correct names against the
-    default L2; L1/L2FT-style call sites should pass their own).
+    the L2 prefix). Mirrors the L1 / L2FT / Exec ``build_all_datasets``
+    signatures — every L2-fed app threads the instance explicitly.
     """
-    if l2_instance is None:
-        from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
-        l2_instance = default_l2_instance()
     return [
         build_recipient_fanout_dataset(cfg),
         build_volume_anomalies_dataset(cfg),
