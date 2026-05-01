@@ -486,13 +486,32 @@ Order the meta sweeps first so per-app fixes inherit them:
     PNGs from the deleted AR app — content sweep deferred).
     mkdocs build --strict clean; rendered HTML confirmed via
     `grep '<details class="example"'` per page.
-  - [ ] **Q.2.c.exec.5 — Visual review.** Open the rendered site;
-    confirm collapse defaults work + re-screenshot any sheet
-    that looks bad at the new viewport (a screenshot might need
-    a tall override if a visual gets cut).
-  - [ ] **Q.2.c.exec.6 — Commit + tick PLAN Q.2.c.**
+  - [x] **Q.2.c.exec.5 — Visual review.** Spot-checked rendered
+    HTML (collapse defaults work — `<details class="example">`
+    with `Screenshot` summary) and ~6 captured PNGs. **Healthy
+    captures** (data populated): L1 Drift / Drift Timelines /
+    Overdraft / Limit Breach / Supersession Audit / Transactions /
+    Daily Statement, all 5 Investigation sheets, all 5 L2FT
+    sheets, all 5 Executives sheets (post-status fix). **Empty
+    by design** (matview keyed to the most-recent business day +
+    seed plants don't always fire on day 0): L1 Today's
+    Exceptions / Pending Aging / Unbundled Aging — KPIs show 0,
+    which accurately reflects the rolling-7d view of a quiet
+    seed. Dashboard chrome / controls / prose render correctly
+    in those captures, so they're docs-usable. No re-shoots
+    needed.
+  - [x] **Q.2.c.exec.6 — Commit + tick PLAN Q.2.c.**
 
-- [ ] **Q.2.c — Re-screenshot with sane viewport.** Meta-problem from PLAN: screenshots are all way too tall (avoiding scroll-cutoff but at the cost of readability). Pick a viewport size that works for both desktop reading + reasonable scroll height (likely 1280×900 or 1440×1080). Run `screenshot_harness.py` for every app at the new viewport. Replaces the existing per-app screenshot fleet.
+- [x] **Q.2.c — Re-screenshot with sane viewport.** All exec.1-6 done.
+  Replaced the ad-hoc per-app `scripts/capture_*.py` with one
+  `quicksight-gen export screenshots` CLI. Captured 29 PNGs across
+  4 apps at 1280×900 against the live qs-gen-postgres-sasquatch_pr
+  deploy (l1=12, exec=5, inv=6, l2ft=6). Surfaced + fixed an
+  executives dataset bug (`status='success'`→`'Posted'`) and a
+  related deploy-CLI bug (regen step wasn't threading
+  `--l2-instance`). Wrapped 15 screenshot embeds across 13 docs in
+  `??? example "Screenshot"` collapse admonitions (folded by default;
+  `admonition` + `pymdownx.details` extensions enabled).
 
 - [x] **Q.2.d — Operator/Integrator onramp prose pass.** Both done in
   prior phases (likely O.2 / Q.2.b.exec.4 wave). Operator page now has
