@@ -74,6 +74,37 @@ class TestL2Topology:
             "account_templates diagram should mark templates with × N"
         )
 
+    def test_diagrams_bundle_parallel_rails_per_direction(self):
+        # Parallel rails sharing the same (src, dst) direction should
+        # collapse into one labeled edge instead of N parallel lines.
+        # Direction stays split (a Customer→External rail and an
+        # External→Customer rail produce distinct edges).
+        #
+        # sasquatch_pr's ext-harvest-credit-exchange ↔ CustomerDDA pair
+        # has multiple rails in each direction (CustomerInbound{ACH,Wire}
+        # plus the cash-deposit family inbound; CustomerOutbound{ACH,Wire}
+        # plus cash-withdrawal + return rails outbound). Pre-bundle the
+        # template diagram emitted ~9 edges; post-bundle it emits ~5.
+        # Guard against regression by asserting the count drops once
+        # bundling is in place.
+        l2 = load_instance(_SASQUATCH_PR)
+        svg = render_l2_topology(l2, "account_templates")
+        # Graphviz writes "src->dst" inside <title> for each edge. Count
+        # how many distinct edge titles appear in the SVG.
+        import re
+        titles = re.findall(r"<title>([^<]+)</title>", svg)
+        edges = [t for t in titles if "&#45;&gt;" in t or "->" in t]
+        # 21 rails (sasquatch_pr) → without bundling we'd see closer to
+        # 15+ edges on the templates diagram alone. With bundling on
+        # template-touching rails we expect single-digit. Cap a regression
+        # bar generously: ≤8 keeps the win obvious without coupling to
+        # the exact rail topology.
+        assert len(edges) <= 8, (
+            f"Templates diagram emitted {len(edges)} edges; expected ≤8 "
+            f"after parallel-rail bundling. Edge titles:\n  "
+            + "\n  ".join(edges)
+        )
+
     def test_account_templates_diagram_renders_singleton_cross_edges(self):
         # Regression guard: an earlier filter required BOTH ends of a
         # rail to be templates, which dropped every template ↔ singleton

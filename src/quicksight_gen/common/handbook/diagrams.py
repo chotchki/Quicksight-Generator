@@ -344,8 +344,15 @@ def _build_accounts_graph(l2_instance: L2Instance) -> graphviz.Digraph:
     for acc in l2_instance.accounts:
         _add_account_node(g, acc)
 
+    # Bundle edges that share (src_node, dst_node, edge-kind) so multiple
+    # rails along the same direction render as one labeled edge instead
+    # of N parallel lines. Direction stays split because the key is
+    # ordered (src, dst). edge-kind separates two-leg flow from single-leg
+    # self-loops so they keep their distinct visual styling.
+    bundle = _RailEdgeBundle()
     for rail in l2_instance.rails:
-        _add_rail_edges(g, rail, role_to_account)
+        _collect_rail_edges_for_accounts(rail, role_to_account, bundle)
+    bundle.emit(g)
     return g
 
 
@@ -370,11 +377,13 @@ def _build_account_templates_graph(l2_instance: L2Instance) -> graphviz.Digraph:
         _add_account_template_node(g, template)
 
     rendered_singletons: set[str] = set()
+    bundle = _RailEdgeBundle()
     for rail in l2_instance.rails:
-        _add_template_rail_edges(
+        _collect_rail_edges_for_templates(
             g, rail, template_roles, role_to_template,
-            role_to_account, rendered_singletons,
+            role_to_account, rendered_singletons, bundle,
         )
+    bundle.emit(g)
     return g
 
 
@@ -414,8 +423,10 @@ def _build_layered_graph(l2_instance: L2Instance) -> graphviz.Digraph:
         role_to_account = _role_to_account(l2_instance)
         for acc in l2_instance.accounts:
             _add_account_node(c, acc)
+        bundle = _RailEdgeBundle()
         for rail in l2_instance.rails:
-            _add_rail_edges(c, rail, role_to_account)
+            _collect_rail_edges_for_accounts(rail, role_to_account, bundle)
+        bundle.emit(c)
 
     with g.subgraph(name="cluster_chains") as c:
         c.attr(label="Chains", style="rounded", color="#a5d6a7")
@@ -561,11 +572,88 @@ def _add_account_template_node(
     )
 
 
+class _RailEdgeBundle:
+    """Group rail edges by (src_node, dst_node, kind) so parallel lines
+    along the same direction collapse into one labeled edge.
+
+    Two kinds:
+    - ``"two_leg"`` — solid blue ``#1976d2`` for two-leg rail flow.
+    - ``"single_leg"`` — dashed purple ``#7b1fa2`` for single-leg
+      self-loops.
+
+    Direction stays split because the key tuple is ordered (src, dst):
+    a Customer→External rail and an External→Customer rail produce
+    distinct keys even when they target the same role pair, matching
+    the user's "split directions, bundle within a direction" rule.
+    """
+
+    def __init__(self) -> None:
+        # key: (src_node_id, dst_node_id, kind)
+        # value: list of rail labels (one line per rail)
+        self._edges: dict[tuple[str, str, str], list[str]] = {}
+
+    def add(self, src: str, dst: str, kind: str, label: str) -> None:
+        self._edges.setdefault((src, dst, kind), []).append(label)
+
+    def emit(self, g: graphviz.Digraph) -> None:
+        for (src, dst, kind), labels in self._edges.items():
+            color, style = (
+                ("#1976d2", "solid") if kind == "two_leg"
+                else ("#7b1fa2", "dashed")
+            )
+            label = "\n".join(labels)
+            kwargs = {"label": label, "fontsize": "9", "color": color}
+            if style != "solid":
+                kwargs["style"] = style
+            g.edge(src, dst, **kwargs)
+
+
+def _rail_label(rail: Rail) -> str:
+    """One-line label for a rail in a bundled edge."""
+    return f"{rail.name} ({rail.transfer_type})"
+
+
+def _collect_rail_edges_for_accounts(
+    rail: Rail,
+    role_to_account: dict[str, Account],
+    bundle: _RailEdgeBundle,
+) -> None:
+    """Singleton-accounts diagram: collect each rail's edges into the
+    bundle keyed by (src_account_id, dst_account_id, kind)."""
+    if isinstance(rail, TwoLegRail):
+        sources = _expand_role_expression(rail.source_role)
+        destinations = _expand_role_expression(rail.destination_role)
+        for src_role in sources:
+            src_acc = role_to_account.get(src_role)
+            for dst_role in destinations:
+                dst_acc = role_to_account.get(dst_role)
+                if src_acc is None or dst_acc is None:
+                    continue
+                bundle.add(
+                    str(src_acc.id), str(dst_acc.id),
+                    "two_leg", _rail_label(rail),
+                )
+    elif isinstance(rail, SingleLegRail):
+        for leg_role in _expand_role_expression(rail.leg_role):
+            acc = role_to_account.get(leg_role)
+            if acc is None:
+                continue
+            bundle.add(
+                str(acc.id), str(acc.id),
+                "single_leg", _rail_label(rail),
+            )
+
+
 def _add_rail_edges(
     g: graphviz.Digraph,
     rail: Rail,
     role_to_account: dict[str, Account],
 ) -> None:
+    """Legacy per-rail emit (still referenced by the layered/hierarchy
+    diagrams' ad-hoc rendering paths). Kept as a thin compat wrapper —
+    prefer ``_collect_rail_edges_for_accounts`` + ``_RailEdgeBundle``
+    for any new caller so direction-bundled edges happen automatically.
+    """
     if isinstance(rail, TwoLegRail):
         sources = _expand_role_expression(rail.source_role)
         destinations = _expand_role_expression(rail.destination_role)
@@ -597,6 +685,53 @@ def _add_rail_edges(
             )
 
 
+def _collect_rail_edges_for_templates(
+    g: graphviz.Digraph,
+    rail: Rail,
+    template_roles: set[str],
+    role_to_template: dict[str, AccountTemplate],
+    role_to_account: dict[str, Account],
+    rendered_singletons: set[str],
+    bundle: _RailEdgeBundle,
+) -> None:
+    """Template-focused diagram: collect each rail's edges into the
+    bundle so parallel rails along the same direction render as one
+    labeled edge.
+
+    Template-roled legs draw against the dashed template node;
+    singleton-roled legs draw against the singleton account node
+    (added on-demand to ``rendered_singletons`` so each appears once).
+    Rails that touch no template at all are skipped entirely.
+    """
+    if isinstance(rail, TwoLegRail):
+        sources = _expand_role_expression(rail.source_role)
+        destinations = _expand_role_expression(rail.destination_role)
+        if not _rail_touches_template(sources, destinations, template_roles):
+            return
+        for src_role in sources:
+            src_id = _template_or_singleton_node_id(
+                g, src_role, template_roles, role_to_template,
+                role_to_account, rendered_singletons,
+            )
+            if src_id is None:
+                continue
+            for dst_role in destinations:
+                dst_id = _template_or_singleton_node_id(
+                    g, dst_role, template_roles, role_to_template,
+                    role_to_account, rendered_singletons,
+                )
+                if dst_id is None:
+                    continue
+                bundle.add(src_id, dst_id, "two_leg", _rail_label(rail))
+    elif isinstance(rail, SingleLegRail):
+        for leg_role in _expand_role_expression(rail.leg_role):
+            if leg_role not in template_roles:
+                continue
+            template = role_to_template[leg_role]
+            node_id = _template_node_id(template)
+            bundle.add(node_id, node_id, "single_leg", _rail_label(rail))
+
+
 def _add_template_rail_edges(
     g: graphviz.Digraph,
     rail: Rail,
@@ -605,13 +740,10 @@ def _add_template_rail_edges(
     role_to_account: dict[str, Account],
     rendered_singletons: set[str],
 ) -> None:
-    """Render rail edges where at least one leg touches a template.
-
-    Template-roled legs render against the dashed template node;
-    singleton-roled legs render against the singleton account node
-    (added on-demand to ``rendered_singletons`` so it appears once).
-    Rails that touch no template at all are skipped entirely — that's
-    what keeps this view template-focused.
+    """Legacy per-rail emit. Kept as a thin wrapper for any external
+    caller — the in-tree builder uses ``_collect_rail_edges_for_templates``
+    + ``_RailEdgeBundle`` so parallel rails along the same direction
+    render as one bundled edge.
     """
     if isinstance(rail, TwoLegRail):
         sources = _expand_role_expression(rail.source_role)
