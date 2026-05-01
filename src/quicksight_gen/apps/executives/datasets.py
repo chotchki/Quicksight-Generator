@@ -19,9 +19,11 @@ one row (``MAX(amount)`` since both legs share the magnitude;
 ``SUM(signed_amount)`` for the net flow which is 0 for balanced
 multi-leg, non-zero for single-leg or unbalanced).
 
-**Status filter.** Both datasets filter to ``status = 'success'``.
-Failed legs are recorded but didn't actually move money — including
-them would inflate the executive trends with operational noise.
+**Status filter.** Both datasets filter to ``status = 'Posted'`` —
+the canonical settled-leg status across the v6 schema (matching the
+L1 invariant matviews + Investigation datasets). Pending / Failed
+legs are excluded; including them would inflate the executive trends
+with operational noise.
 """
 
 from __future__ import annotations
@@ -119,7 +121,7 @@ WITH per_transfer AS (
         MAX(ABS(t.amount_money)) AS transfer_amount,
         SUM(t.amount_money)      AS transfer_net
     FROM {p}_transactions t
-    WHERE t.status = 'success'
+    WHERE t.status = 'Posted'
     GROUP BY t.transfer_id, t.transfer_type
 )
 SELECT
@@ -164,7 +166,7 @@ WITH activity AS (
         MAX({last_activity_expr})    AS last_activity_date,
         COUNT(*)                AS activity_count
     FROM {p}_transactions t
-    WHERE t.status = 'success'
+    WHERE t.status = 'Posted'
     GROUP BY t.account_id
 ),
 accounts AS (

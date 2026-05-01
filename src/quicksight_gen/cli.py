@@ -1052,14 +1052,27 @@ def deploy_cmd(
     app_name = _resolve_app(app, all_apps, allow_all=True)
 
     if generate_first:
+        # Thread l2_instance_path into every regen so deploy --generate
+        # --l2-instance lands per-instance prefixed dataset/analysis IDs
+        # instead of falling back to spec_example. Without this, the
+        # regenerated JSON has the wrong prefix and the deploy targets
+        # the wrong dashboard ID family.
         if app_name in ("investigation", "all"):
-            _generate_investigation(config, output_dir)
+            _generate_investigation(
+                config, output_dir, l2_instance_path=l2_instance_path,
+            )
         if app_name in ("executives", "all"):
-            _generate_executives(config, output_dir)
+            _generate_executives(
+                config, output_dir, l2_instance_path=l2_instance_path,
+            )
         if app_name in ("l1-dashboard", "all"):
-            _generate_l1_dashboard(config, output_dir)
+            _generate_l1_dashboard(
+                config, output_dir, l2_instance_path=l2_instance_path,
+            )
         if app_name in ("l2-flow-tracing", "all"):
-            _generate_l2_flow_tracing(config, output_dir)
+            _generate_l2_flow_tracing(
+                config, output_dir, l2_instance_path=l2_instance_path,
+            )
 
     cfg = load_config(config)
     if l2_instance_path is not None and cfg.l2_instance_prefix is None:
