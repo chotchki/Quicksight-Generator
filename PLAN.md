@@ -418,11 +418,13 @@ Order the meta sweeps first so per-app fixes inherit them:
     pointer at Home for the curated picker plus a compact list of
     the 5 role pages. Section URL `/for-your-role/` stays stable;
     no inbound-link breakage.
-  - [ ] **Q.2.b.exec.4 — Role page audit for Shape C fit.** Read
-    each role page for "primary navigation surface" fitness.
-    Operator + Integrator already touched in Q.2.d. Sanity-check
-    Executive / ETL Engineer / Compliance Analyst — each should
-    work as a primary entry, not just a sidebar onramp.
+  - [x] **Q.2.b.exec.4 — Role page audit for Shape C fit.** All
+    three pages (Executive / ETL Engineer / Compliance Analyst)
+    already follow the canonical shape — pain → value → scope →
+    onboarding → concepts → cadence/posture → acceptance bar —
+    and each links outward to handbook + walkthroughs + concepts.
+    Each reads like a standalone primary entry, not a sidebar
+    onramp. No content changes needed.
   - [ ] **Q.2.b.exec.5 — Cross-link audit.** Each library shelf
     (Concepts overview, Walkthroughs overview, Reference
     overview, etc.) should link back UP to "For Your Role" so
