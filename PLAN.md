@@ -278,52 +278,78 @@ The existing SQL is already constrained to a portable subset (no JSONB, SQL/JSON
 
 ---
 
+## Phase Q — Dashboards + Docs polish + CLI ergonomics
+
+**Goal.** Ship a polished release where the dashboards reflect what an operator + executive actually need (the M-/N-/P- phases focused on getting them to *render*; Q focuses on getting them *right*), and the docs site reflects the post-polish dashboards cleanly. Plus the long-pending CLI/yaml ergonomics work as final polish.
+
+**Sequencing rationale.** Dashboard review FIRST so docs/screenshots/walkthroughs in Q.2 capture the post-fix state — re-screenshotting after Q.1 is one pass; doing docs first means a second pass after Q.1 lands. Q.3 (CLI) is independent and slots last so the release narrative keeps the dashboards-then-docs theme clean.
+
+### Q.1 — Dashboard review + targeted fixes
+
+Order the meta sweeps first so per-app fixes inherit them:
+
+- [ ] **Q.1.a — Currency + axis formatting (meta).** Sweep every visual across every shipped app:
+  - Amount/money columns format as USD currency (`$1,234.56`).
+  - Bar chart axis titles use plain English (not raw column names).
+  - Walk via the tree primitive; add a unit-test invariant where feasible.
+
+- [ ] **Q.1.b — Universal date-filter sweep.** Add the M.2b.1 universal-date-filter pattern to sheets that lack one:
+  - L1 Supersession Audit (will build over time)
+  - L1 Transactions
+  - L2 Exceptions
+  - Investigation Money Trail (also: drop the "All" option — vast data)
+  - Executives Account Coverage / Transaction Volume / Money Moved
+
+- [ ] **Q.1.c — Per-app punch-list items:**
+  - **L1 Supersession Audit** — add KPI to the right of the keys: count of supersessions with no reason (target value = 0).
+  - **L1 Today's Exceptions** — bar chart axes need plain-English labels.
+  - **L1 Daily Statement** — date picker defaults to yesterday; investigate the 4/25 Posted Money Records SQL error (may have been fixed by P.9f).
+  - **L2 Getting Started** — text box has missing spaces; suspect YAML word-wrap stripping.
+  - **Investigation Info** — investigate the matview-status SQL exception (may have been fixed by P.9f).
+  - **Executives Transaction Volume + Money Moved** — add metadata grouping.
+
+- [ ] **Q.1.d — Live dashboard walkthrough with user.** Working session against the deployed dashboards (both PG + Oracle) to capture additional findings beyond the pre-staged punch-list. Likely surfaces another half-dozen tweaks; treat the resulting list as Q.1.d.1, Q.1.d.2, ... iterations.
+
+- [ ] **Q.1.e — Re-deploy + harness green for both dialects.**
+
+### Q.2 — Documentation step-back (informed by Q.1's final state)
+
+**Smell underneath:** the IA was built around 4 separate apps (PR, AR, Investigation, Executives) and the L1+L2FT consolidation collapsed PR+AR into one operator dashboard without re-shaping the doc tree. Customization handbook + ETL guide still talk about apps as separate documentation surfaces, with orphan "GL Reconciliation Handbook" / "Payment Reconciliation Handbook" links scattered across `customization.md` / `etl.md` / `investigation.md`. Reference vs Walkthrough vs Concept boundaries blur.
+
+- [ ] **Q.2.a — Mechanical cleanup** (~30 min, no IA changes):
+  - Drop stale AR/PR refs in `handbook/customization.md` (lines 54-55, 234-237, plus the "Phase K (AR Exceptions redesign)" stale-phase marker at line 51).
+  - Drop stale AR/PR refs in `handbook/etl.md` (lines 19, 43, 64, 153-154 — including the dead `demo etl-example payment-recon` / `account-recon` commands).
+  - Drop orphan handbook links in `handbook/investigation.md` (lines 130, 133).
+  - Fix 3 "Schema v3" link-text mislabels that point to `Schema_v6.md` (`etl.md:49,165`, `customization.md:223`).
+
+- [ ] **Q.2.b — IA review (plan-mode first).** Read every nav entry end-to-end, write "what's where today" map, propose 2-3 IA shapes with tradeoffs (e.g., role-onramp-first vs reference-first; merge handbook + concepts vs keep split). User picks; then execute.
+
+- [ ] **Q.2.c — Re-screenshot with sane viewport.** Meta-problem from PLAN: screenshots are all way too tall (avoiding scroll-cutoff but at the cost of readability). Pick a viewport size that works for both desktop reading + reasonable scroll height (likely 1280×900 or 1440×1080). Run `screenshot_harness.py` for every app at the new viewport. Replaces the existing per-app screenshot fleet.
+
+- [ ] **Q.2.d — Operator/Integrator onramp prose pass.** Address PLAN notes:
+  - Operator "what are we not asking you to learn" reword to stress L1 + L2 are important.
+  - Integrator onramp re-prose (currently sparse).
+
+- [ ] **Q.2.e — `mkdocs build --strict` + ship the regenerated site.**
+
+### Q.3 — CLI / yaml ergonomics around schema (was task #488)
+
+The pre-Phase-Q backlog item — slotted last as polish.
+
+- [ ] **Q.3.a — Materialize SPEC's "Workflow Ideas":** `generate config (demo|template)`, `apply schema`, `apply data`, `apply dashboards`, `generate training`. Acceptance: a fresh integrator runs end-to-end from one YAML.
+- [ ] **Q.3.b — yaml field naming / config-vs-L2 boundary review.** Today's split between `run/config.yaml` (account, region, datasource, dialect, theme defaults) and the L2 institution YAML (rails, chains, accounts, theme override) has accumulated friction points; tighten the boundary based on what actually got threaded in M-/N-/O-/P-.
+
+### Q.4 — Iteration gate + release
+
+- [ ] **Q.4.a — Decide release cut** (likely v7.1.0 — additive polish + docs IA shift; not a breaking schema change, but the IA / nav re-org may want a major bump if any external links break).
+- [ ] **Q.4.b — Bump `__version__` + RELEASE_NOTES entry covering Q.1–Q.3 changes.**
+- [ ] **Q.4.c — Commit + tag + push; release pipeline green on both dialects.**
+
+---
+
 ## Backlog
 
-## Dashboard Review
-- Meta note, amounts should be formatted as USD currency everywhere
-- Meta note, graph bars should have human readable axies
-- L1
-  - Supersession audit
-    - Needs date filters since it will build over time
-    - We should add another KPI to the right of the keys with supersession of entries that have been supersession without a reason (target value should be zero)
-  - Today's exceptions
-    - bar chart has axes that don't read with plain english
-  - Daily Statement
-    - The date picker should default to yesterday (if possible)
-    - Posted Money Records
-      - shows a sql error on 2026/04/25 (may have been fixed)
-  - Transactions 
-    - Needs date filters
-- L2
-  - Getting Started
-    - The text box has odd missing spaces, I bet word wrapping is missing spaces from grabbing in the yaml
-  - L2 Exceptions
-    - If there is a way to add a date filter that would be wonderful
-- Investigation
-  - Money Trail
-    - Should not have an all, there will be a vast amount of data
-  - Info
-    - Got a sql exception on matview status (may have been fixed)
-- Executive
-  - Account Coverage
-    - Needs date filters
-  - Transaction Volume
-    - Needs date filters
-    - A way to group by metadata would be great
-  - Money Moved
-    - Needs date filters
-    - A way to group by metadata would be great
-
 Single grab-bag for everything not yet in a phase. Promote to a numbered phase entry when work starts. Full historical detail in `PLAN_ARCHIVE.md`.
-
-## Documentation Review
-Meta problem: the screenshots are all way too tall (I know its to avoid scrolling but we should try to figure out how big a viewport we need)
-- For the operator
-  - what are we not asking you to learn
-    - reword to stress L1 and L2 are important
-- For the integrator
-  - 
 
 ### Punted from Phase M ship push
 
