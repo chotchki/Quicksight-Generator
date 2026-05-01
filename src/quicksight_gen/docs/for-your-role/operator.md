@@ -37,10 +37,34 @@ this tool has the answers your current process hides.**
 - **Not a new accounting framework.** The dashboard uses the
   industry-standard vocabulary you already know — debits, credits,
   balances, transfers, drift, aging.
-- **Not the whole tool.** You'll use the L1 Reconciliation Dashboard
-  and the small number of sheets inside it. The L2 Flow Tracing,
-  Investigation, and Executives dashboards belong to other roles;
-  skim them, don't study them.
+- **Not the Investigation or Executives dashboards.** Those belong
+  to compliance / leadership and answer different questions. Skim
+  them, don't study them.
+
+## What we *are* asking you to learn
+
+Two dashboards, not one. The L1 Reconciliation Dashboard is your
+day-to-day surface — but L1 violations are downstream symptoms.
+When the symptom is a real one and you need to know *why*, the
+**L2 Flow Tracing dashboard** is the next stop.
+
+- **L1 answers "did the invariants hold?"** — drift, overdraft,
+  limit breach, stuck pending / unbundled, supersession, today's
+  exceptions. These are SHOULD-constraints on the runtime data.
+  L1 is where you spend 90% of your time.
+- **L2 Flow Tracing answers "is the institution's L2 declaration
+  alive?"** — every Rail, every Chain, every Transfer Template,
+  every Limit Schedule the L2 instance declares should produce
+  activity in the runtime data. The **L2 Exceptions** sheet
+  surfaces declarations that are dead, mismatched, or orphaned —
+  and these failures often manifest one layer down as the L1
+  exceptions you saw on Today's Exceptions.
+
+When an L1 trace ends with "but why is this happening *every*
+day?", flip to L2 Flow Tracing. A spike in *Dead Rails* or *Chain
+Orphans* under L2 Exceptions tells you the integrator's L2
+declaration has drifted from runtime — not a transient runtime
+hiccup, but a structural problem that needs an integrator handoff.
 
 ## How to start
 

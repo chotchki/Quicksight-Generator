@@ -52,21 +52,47 @@ process can't.**
 
 ## How to start
 
-1. Read the
+If you're new to the L2 model, ground the primitives first; the
+handbook + dashboards assume you know what a Rail / Chain /
+Transfer Template / Limit Schedule *is*. Five short reads:
+
+- [Account](../concepts/l2/account.md) and
+  [Account template](../concepts/l2/account-template.md) — the
+  who.
+- [Rail](../concepts/l2/rail.md) — the how (per-leg posting
+  contract per transfer type).
+- [Transfer template](../concepts/l2/transfer-template.md) — the
+  multi-leg shape (debit / credit / variable closure).
+- [Chain](../concepts/l2/chain.md) — the parent / child firing
+  relationship across transfers.
+- [Limit schedule](../concepts/l2/limit-schedule.md) — declared
+  caps per (parent_role, transfer_type).
+
+Then:
+
+1. **Authoring a fresh L2:** start from
+   [`tests/l2/spec_example.yaml`](https://github.com/chotchki/quicksight/blob/main/tests/l2/spec_example.yaml)
+   as the smallest persona-neutral skeleton + the
+   [Customization handbook](../handbook/customization.md) for the
+   editing patterns. The
+   [Background scenario](../scenario/index.md) tour shows
+   `sasquatch_pr.yaml` (the canonical larger fixture) projected
+   into a real institution shape; copy from it for your own model.
+2. Read the
    [L2 Flow Tracing handbook](../handbook/l2_flow_tracing.md). It
    walks the 5 sheets and spells out how each one projects YAML
    declarations against runtime data.
-2. Open the dashboard against your current L2 instance + freshest
+3. Open the dashboard against your current L2 instance + freshest
    data. Tour the **Rails** sheet first; spot any rail with zero
    firings — those are your dead declarations or your dead
    runtime entries, depending on which side you trust.
-3. Walk **Chains** + **Transfer Templates**. Required parents
+4. Walk **Chains** + **Transfer Templates**. Required parents
    without children; templates whose legs don't sum to
    `expected_net`. Each is a class of integration bug.
-4. End on **L2 Hygiene Exceptions** — the UNION view across 6
+5. End on **L2 Hygiene Exceptions** — the UNION view across 6
    hygiene checks. Treat any non-zero count here as a backlog
    item.
-5. Bookmark the
+6. Bookmark the
    [Customization handbook](../handbook/customization.md). It's
    the reference for editing the L2 + redeploying; you'll come
    back to it every time the model changes.
