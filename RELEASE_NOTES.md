@@ -1,5 +1,113 @@
 # Release Notes
 
+## v7.2.0 — Realistic 3-month baseline seed + L2-coverage runtime assertions
+
+Phase R replaces the previous "few-plants-per-L1-invariant" demo
+seed with a 3-month healthy baseline of 60k+ transactions per L2
+instance (sasquatch_pr) — the kind of working-system signal a
+buyer needs to feel that this isn't a toy. Planted exception
+scenarios (drift, overdraft, limit-breach, stuck-pending,
+stuck-unbundled, supersession, Cascadia/Juniper fanout) now sit
+ON TOP of that baseline as additive overlays rather than
+constituting the whole seed. Cuts cleanly off v7.1.x; no schema
+changes, no breaking CLI changes — `demo apply --all` does the
+right thing automatically. Both Postgres and Oracle dialects
+fully validated end-to-end.
+
+### What's new — `emit_full_seed` pipeline
+
+- **`emit_full_seed(instance, scenario, *, anchor=date.today())`** in
+  `common/l2/seed.py` — the new public entry point CLI `demo apply`
+  consumes. Composes:
+  - **Baseline**: per-Rail leg loop over a 90-day rolling window.
+    Volume + amount + time-of-day per rail kind from a 12-kind
+    classifier (`_RailKind`); per-rail RNG sub-streams via
+    `BASE_SEED ^ crc32(rail_name)` for isolation. Lognormal amount
+    sampling with `LimitSchedule.cap` clamp. Aggregating-rail
+    children-first + EOD/EOM bundling parent. Chain firings
+    (Required ≈95%, Optional ≈50% completion). Daily-balance
+    materialization by deferred-walk over the per-account leg log.
+    Headline volumes on sasquatch_pr: **63k rows / 47 MB SQL**.
+  - **Plant overlay** via `densify_scenario` (5× per-kind),
+    `add_broken_rail_plants` (15 stuck-pending on one rail for
+    visual hierarchy), `boost_inv_fanout_plants` (5× amount so
+    the Cascadia/Juniper cluster reads against the customer-ACH
+    baseline median).
+  - All scenarios plant on customer indices `cust-0001`…`cust-0010`;
+    baseline materializes `cust-0011`…`cust-0030+`. Pools disjoint —
+    no plant-vs-baseline `daily_balances(account_id, day)` PK
+    collisions.
+
+### What's new — Oracle bulk-insert performance
+
+- **`batch_oracle_inserts`** in `common/db.py` coalesces consecutive
+  `INSERT INTO same_table VALUES (...)` into Oracle `INSERT ALL`
+  blocks of up to 500 rows each. Cuts the 60k+ per-row round-trips
+  to ~120, dropping Oracle apply from 20+ min (killed mid-flight) to
+  ~12 min. Same-id flush handles Oracle's IDENTITY-in-INSERT-ALL
+  quirk (one IDENTITY value per statement, not per row): the batcher
+  tracks ids per batch and flushes before adding a duplicate so
+  composite `(id, entry)` PKs stay unique.
+- Postgres path unchanged (per-row INSERTs over psycopg2 land in
+  ~16 s for the same 60k+ rows; no batching needed).
+
+### What's new — runtime assertions
+
+- **`tests/test_l2_runtime_assertions.py`** queries the live demo DB
+  + asserts:
+  - **Volume Anomalies smoke** (R.5.c): `<prefix>_inv_pair_rolling_anomalies`
+    matview produces ≥5 windows clearing z>=3σ + planted recipient
+    appears in the matview.
+  - **L2 coverage** (R.5.d): every declared Rail has ≥M legs in
+    `<prefix>_current_transactions` (cadence-aware threshold);
+    every Chain has at least one parent + child firing pair; every
+    TransferTemplate's instances net to expected_net ≥80% of the
+    time; every LimitSchedule has matching legs.
+- Skip cleanly when no demo DB URL is configured. Run after
+  `demo apply` to verify the deployed dashboards have signal.
+
+### What's new — full-pipeline hash-lock
+
+- New `test_full_seed_hash_lock_*` tests pin the SHA256 of the FULL
+  `emit_full_seed` pipeline (baseline + densify + broken + boost) at
+  canonical anchor `date(2030, 1, 1)`. Catches drift in any of the
+  composed pipeline stages without needing a deploy.
+
+### Verified
+
+- **Headline matview counts on the deployed sasquatch_pr (PG)**:
+  drift=10 (planted only), overdraft=221, limit_breach=56,
+  stuck_pending=20 (5 default + 15 broken-rail),
+  stuck_unbundled=7, todays_exceptions=35, transactions=61,221,
+  daily_balances=2,260.
+- **Oracle parity**: same matview shape within RNG drift
+  (drift=10, overdraft=221, limit_breach=56, stuck_pending=20,
+  stuck_unbundled=7, todays_exceptions=35).
+- **Probe**: 4 deployed dashboards across both dialects all clean
+  (no datasource errors).
+- **Full e2e (`./run_e2e.sh --skip-deploy`)**: 76 passed, 1 known
+  pre-existing flake (`test_check_type_dropdown_exposes_options`,
+  matches backlog item #466).
+
+### Known follow-ups (backlog, not blocking)
+
+- **Overdraft tuning**: ~220 of the overdraft rows are real signal
+  on intermediate clearing accounts (`ach_orig_settlement`,
+  `merchant_payable_clearing`, etc.) where the random emission
+  order doesn't preserve causal cascade timing. Fix wants either
+  causal leg-loop ordering or per-cascade zero-net materialization.
+- **Limit_breach tuning**: ~56 rows from the per-firing amount
+  sampler clamping individually but not tracking per-(account,
+  transfer_type, day) cumulative outbound. Fix wants
+  cumulative-aware sampling.
+- **Volume Anomalies planted z-score**: the planted Cascadia/Juniper
+  fanout sits at z≈-0.4 because the population is dominated by big
+  merchant card sales. Path to >3σ wants either a separate
+  per-account-type matview or a much larger planted spike.
+- **R.7.e**: Lift the R.1.f generator-output spec out of PLAN.md
+  into `docs/handbook/seed-generator.md` once we trust the headline
+  numbers stable.
+
 ## v7.1.1 — Hotfix: `demo apply --all` now generates all four apps
 
 Fresh installs of v7.1.0 deployed only Investigation + Executives

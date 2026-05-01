@@ -675,9 +675,9 @@ Measured 2026-05-01 against the live PG demo apply:
 
 ### R.7 — Iteration gate + release
 
-- [ ] **R.7.a — Decide release cut.** Phase R is meaningful enough to merit its own release — likely v7.2.0 (additive seed expansion; no breaking schema or CLI changes; existing demos regenerate cleanly).
-- [ ] **R.7.b — Bump `__version__` + RELEASE_NOTES entry.** Cover the new "realistic baseline" demo + the per-Rail volume / amount profiles + the Investigation z-score signal.
-- [ ] **R.7.c — Commit + merge to main + tag + push; release pipeline green.**
+- [x] **R.7.a — Decide release cut.** v7.2.0 — additive seed expansion (no breaking schema or CLI changes; existing demos regenerate cleanly). Both PG + Oracle deploys verified.
+- [x] **R.7.b — Bump `__version__` + RELEASE_NOTES entry.** Bumped `src/quicksight_gen/__init__.py` 7.1.1 → 7.2.0. RELEASE_NOTES entry covers the emit_full_seed pipeline, Oracle INSERT ALL batching, runtime assertions, full-pipeline hash-lock, headline matview counts on both dialects, and the known-follow-ups backlog list.
+- [ ] **R.7.c — Commit + merge to main + tag + push; release pipeline green.** Commit landed on phase-r-realistic-seed branch; user merges + tags.
 - [ ] **R.7.d — Resume Q.2.c (re-screenshot at 1280×900) against the v7.2.0 demo.**
 - [ ] **R.7.e — Lift R.1.f spec out of PLAN.md into a docs-site reference page.** Once the implementation has stabilized + the headline numbers in the spec match what the generator actually produces, lift the design doc out of PLAN.md and into the docs site as durable reference. Likely target: `docs/handbook/seed-generator.md` (under Reference / handbook so integrators customizing for their own L2 instance can find it) OR `docs/reference/seed-generator.md` (if Q.2's IA work has carved a top-level Reference shelf by then). PLAN.md's R.1.f keeps a one-line pointer to the lifted doc.
 
