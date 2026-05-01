@@ -55,6 +55,7 @@ from quicksight_gen.common.sql import (
     matview_options,
     refresh_matview,
     serial_type,
+    json_text_type,
     text_type,
     timestamp_type,
     to_date,
@@ -431,6 +432,7 @@ def _emit_base_schema(p: str, dialect: Dialect) -> str:
         # the integrator's contract — see Schema_v6.md.
         "ts": timestamp_type(dialect),
         "text": text_type(dialect),
+        "json_text": json_text_type(dialect),
         "vc20": varchar_type(20, dialect),
         "vc50": varchar_type(50, dialect),
         "vc100": varchar_type(100, dialect),
@@ -518,8 +520,13 @@ _SCHEMA_TEMPLATE = """\
 --                 TechnicalCorrection (see SPEC's "Higher-Entry rows"
 --                 section for which category applies when).
 -- origin        — open enum, no CHECK; integrators may extend.
--- metadata      — TEXT + IS JSON (portability constraint: no JSONB,
---                 no GIN indexes; SQL/JSON path syntax for extraction).
+-- metadata      — bounded VARCHAR(4000) / VARCHAR2(4000) + IS JSON
+--                 (portability constraint: no JSONB, no GIN indexes;
+--                 SQL/JSON path syntax for extraction). Bounded so the
+--                 column behaves like a string on both dialects (Oracle
+--                 CLOB rejects MIN/MAX/GROUP BY/ORDER BY/IN with
+--                 ORA-00932); 4000 chars covers every JSON metadata
+--                 document the L2 schema emits.
 -- ---------------------------------------------------------------------
 CREATE TABLE {p}_transactions (
     entry                {serial}      NOT NULL,
@@ -544,7 +551,7 @@ CREATE TABLE {p}_transactions (
     bundle_id            {vc100},
     supersedes           {vc50},
     origin               {vc50}    NOT NULL,
-    metadata             {text},
+    metadata             {json_text},
     PRIMARY KEY (id, entry),
     -- Sign-direction agreement (L1 Amount INVARIANT):
     --   money ≥ 0 if direction = Credit; money ≤ 0 if direction = Debit.
@@ -589,7 +596,7 @@ CREATE TABLE {p}_daily_balances (
     business_day_start     {ts}    NOT NULL,
     business_day_end       {ts}    NOT NULL,
     money                  {dec202}  NOT NULL,
-    limits                 {text},
+    limits                 {json_text},
     supersedes             {vc50},
     PRIMARY KEY (account_id, business_day_start, entry),
     CHECK (business_day_end > business_day_start),

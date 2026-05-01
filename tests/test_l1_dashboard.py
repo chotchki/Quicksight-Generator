@@ -1137,8 +1137,8 @@ def test_supersession_datasets_registered_and_target_base_tables() -> None:
         "COUNT(*) OVER (PARTITION BY account_id, business_day_start)"
         in db_sql.SqlQuery
     )
-    assert "_entry_count > 1" in tx_sql.SqlQuery
-    assert "_entry_count > 1" in db_sql.SqlQuery
+    assert "entry_count > 1" in tx_sql.SqlQuery
+    assert "entry_count > 1" in db_sql.SqlQuery
 
 
 def test_supersession_audit_has_supersedes_filter() -> None:

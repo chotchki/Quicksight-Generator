@@ -39,6 +39,7 @@ from quicksight_gen.common.sheets.app_info import (
     build_liveness_dataset,
     build_matview_status_dataset,
 )
+from quicksight_gen.common.sql import to_date
 
 
 # M.4.4.5 — Executives reads base tables only; no app-specific
@@ -108,10 +109,11 @@ def build_transaction_summary_dataset(cfg: Config) -> DataSet:
     abs); signed_amount → amount_money (already signed in v6).
     """
     p = _require_prefix(cfg)
+    posted_date_expr = to_date("MIN(t.posting)", cfg.dialect)
     sql = f"""\
 WITH per_transfer AS (
     SELECT
-        DATE(MIN(t.posting))     AS posted_date,
+        {posted_date_expr}     AS posted_date,
         t.transfer_id,
         t.transfer_type,
         MAX(ABS(t.amount_money)) AS transfer_amount,
@@ -154,11 +156,12 @@ def build_account_summary_dataset(cfg: Config) -> DataSet:
     don't need to follow the rename — only the SELECT does).
     """
     p = _require_prefix(cfg)
+    last_activity_expr = to_date("t.posting", cfg.dialect)
     sql = f"""\
 WITH activity AS (
     SELECT
         t.account_id,
-        MAX(DATE(t.posting))    AS last_activity_date,
+        MAX({last_activity_expr})    AS last_activity_date,
         COUNT(*)                AS activity_count
     FROM {p}_transactions t
     WHERE t.status = 'success'
@@ -178,7 +181,7 @@ SELECT
     act.last_activity_date,
     COALESCE(act.activity_count, 0)  AS activity_count
 FROM accounts a
-LEFT JOIN activity act USING (account_id)"""
+LEFT JOIN activity act ON act.account_id = a.account_id"""
     return build_dataset(
         cfg,
         cfg.prefixed("exec-account-summary-dataset"),

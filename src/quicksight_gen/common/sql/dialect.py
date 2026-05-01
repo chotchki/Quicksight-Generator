@@ -95,6 +95,36 @@ def text_type(dialect: Dialect) -> str:
     return "CLOB"
 
 
+def json_text_type(dialect: Dialect) -> str:
+    """Bounded text type for columns holding JSON metadata documents.
+
+    Diverges from ``text_type`` (which returns Postgres ``TEXT`` /
+    Oracle ``CLOB``) by emitting a bounded ``VARCHAR(4000)`` /
+    ``VARCHAR2(4000)`` so the columns behave like ordinary strings on
+    both dialects. Why bound:
+
+    - Oracle ``CLOB`` can't be aggregated (``MIN`` / ``MAX`` /
+      ``GROUP BY`` reject CLOB with ORA-00932), can't appear in
+      ``DISTINCT`` / ``ORDER BY``, and fails ``IN`` comparisons
+      against ``VARCHAR2`` literals. Queries that pick a
+      representative ``metadata`` per transfer via ``MAX(metadata)``
+      need it bounded.
+    - Bounding Postgres to the same 4000-char limit keeps the two
+      dialects symmetric so a "data too long" failure surfaces on
+      either DB instead of leaking past PG and breaking only on
+      Oracle.
+
+    4000 chars covers every JSON metadata document the L2 schema emits
+    (typically 5–20 keys with short values). Banks with longer
+    documents either trim at the ETL boundary or enable Oracle's
+    ``MAX_STRING_SIZE=EXTENDED`` (lifts VARCHAR2 to 32767) and bump
+    this helper.
+    """
+    if dialect is Dialect.POSTGRES:
+        return "VARCHAR(4000)"
+    return "VARCHAR2(4000)"
+
+
 def timestamp_type(dialect: Dialect) -> str:  # noqa: ARG001
     """TZ-naive timestamp, identical on both dialects.
 
@@ -200,8 +230,22 @@ _ORACLE_TYPE_ALIASES = {
 
 
 def _oracle_type_alias(type_name: str) -> str:
-    """Return the Oracle equivalent of a Postgres-shape type name."""
-    return _ORACLE_TYPE_ALIASES.get(type_name.lower(), type_name)
+    """Return the Oracle equivalent of a Postgres-shape type name.
+
+    Direct hits in ``_ORACLE_TYPE_ALIASES`` win; otherwise the helper
+    rewrites ``varchar(N)`` → ``VARCHAR2(N)`` so callers can pass the
+    Postgres-shape parameterized type name and get the Oracle form.
+    Unhandled types pass through unchanged.
+    """
+    name_lower = type_name.lower()
+    if name_lower in _ORACLE_TYPE_ALIASES:
+        return _ORACLE_TYPE_ALIASES[name_lower]
+    # varchar(N) → VARCHAR2(N) for parameterized varchars
+    import re
+    m = re.match(r"^varchar\((\d+)\)$", name_lower)
+    if m:
+        return f"VARCHAR2({m.group(1)})"
+    return type_name
 
 
 # -- JSON --------------------------------------------------------------------
@@ -438,6 +482,27 @@ def analyze_table(name: str, dialect: Dialect) -> str:
     if dialect is Dialect.POSTGRES:
         return f"ANALYZE {name};"
     return f"BEGIN DBMS_STATS.GATHER_TABLE_STATS(USER, '{name}'); END;"
+
+
+# -- Constant SELECT (no real source table) ---------------------------------
+
+
+def dual_from(dialect: Dialect) -> str:
+    """Suffix that makes a constant SELECT valid on both dialects.
+
+    Postgres accepts ``SELECT 'x' AS col`` with no FROM. Oracle 19c
+    requires every SELECT to have a FROM clause; the canonical Oracle
+    pseudo-table for "one row, no real source" is ``dual``.
+
+    Returns ``""`` on Postgres and ``" FROM dual"`` on Oracle. Compose
+    inline at the end of the SELECT list:
+    ``f"SELECT {expr} AS col{dual_from(dialect)}"``. Combine with
+    ``WHERE 1=0`` (works on both dialects) for an empty-row sentinel
+    branch — ``WHERE FALSE`` is Postgres-only and breaks Oracle.
+    """
+    if dialect is Dialect.POSTGRES:
+        return ""
+    return " FROM dual"
 
 
 # -- Recursive CTE -----------------------------------------------------------

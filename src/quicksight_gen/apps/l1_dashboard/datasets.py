@@ -619,10 +619,10 @@ def build_supersession_transactions_dataset(
         f"   account_id, account_name,"
         f"   transfer_id, transfer_type, rail_name,"
         f"   amount_money, amount_direction, status, posting, bundle_id,"
-        f"   COUNT(*) OVER (PARTITION BY id) AS _entry_count"
+        f"   COUNT(*) OVER (PARTITION BY id) AS entry_count"
         f"   FROM {prefix}_transactions"
         f" ) sub"
-        f" WHERE _entry_count > 1"
+        f" WHERE entry_count > 1"
     )
     return build_dataset(
         cfg, cfg.prefixed("l1-supersession-transactions-dataset"),
@@ -653,10 +653,10 @@ def build_supersession_daily_balances_dataset(
         f"   account_id, account_name, account_role, supersedes,"
         f"   business_day_start, business_day_end, money,"
         f"   COUNT(*) OVER (PARTITION BY account_id, business_day_start)"
-        f"     AS _entry_count"
+        f"     AS entry_count"
         f"   FROM {prefix}_daily_balances"
         f" ) sub"
-        f" WHERE _entry_count > 1"
+        f" WHERE entry_count > 1"
     )
     return build_dataset(
         cfg, cfg.prefixed("l1-supersession-daily-balances-dataset"),

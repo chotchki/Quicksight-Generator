@@ -145,14 +145,17 @@ MONEY_TRAIL_CONTRACT = DatasetContract(columns=[
 # pure shape over base tables. N.3.d: matview name is per-instance
 # prefixed (was global ``inv_money_trail_edges`` pre-N.3).
 def _money_trail_base_sql(prefix: str) -> str:
+    # Oracle disallows ``SELECT *, expr FROM ...`` — the star must be
+    # qualified when other columns appear in the same SELECT list. The
+    # ``e.*`` qualified form parses on both Postgres and Oracle.
     return (
         f"SELECT\n"
-        f"    *,\n"
+        f"    e.*,\n"
         f"    source_account_name || ' (' || source_account_id || ')' "
         f"AS source_display,\n"
         f"    target_account_name || ' (' || target_account_id || ')' "
         f"AS target_display\n"
-        f"FROM {prefix}_inv_money_trail_edges\n"
+        f"FROM {prefix}_inv_money_trail_edges e\n"
     )
 
 
@@ -243,7 +246,7 @@ SELECT
     i.posted_at,
     i.amount
 FROM inflows i
-JOIN outflows o USING (transfer_id)"""
+JOIN outflows o ON o.transfer_id = i.transfer_id"""
     return build_dataset(
         cfg,
         cfg.prefixed("inv-recipient-fanout-dataset"),

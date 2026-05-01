@@ -138,9 +138,12 @@ def test_matview_status_sql_omits_postgres_only_casts():
     not ``x::integer``).
     """
     from quicksight_gen.common.sheets.app_info import _matview_status_sql
+    from quicksight_gen.common.sql import Dialect
 
-    sql_with_views = _matview_status_sql(["matview_a", "matview_b"])
-    sql_empty = _matview_status_sql([])
+    sql_with_views = _matview_status_sql(
+        ["matview_a", "matview_b"], Dialect.POSTGRES,
+    )
+    sql_empty = _matview_status_sql([], Dialect.POSTGRES)
 
     for sql in (sql_with_views, sql_empty):
         assert "::text" not in sql, (

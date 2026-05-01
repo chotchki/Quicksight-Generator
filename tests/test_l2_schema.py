@@ -162,8 +162,10 @@ def test_daily_balances_includes_expected_eod_and_limits() -> None:
     """L1 SPEC: ExpectedEODBalance + Limits map both denormalized onto the row."""
     sql = emit_schema(_instance("eb"))
     assert "expected_eod_balance   DECIMAL(20,2)" in sql
-    # Limits is the Map[TransferType, Money] serialized as JSON
-    assert "limits                 TEXT" in sql
+    # Limits is the Map[TransferType, Money] serialized as JSON, bounded
+    # so the column behaves like a string on both dialects (CLOB
+    # cannot be aggregated; bounded VARCHAR can).
+    assert "limits                 VARCHAR(4000)" in sql
 
 
 def test_daily_balances_money_is_signed() -> None:
@@ -204,12 +206,18 @@ def test_daily_balances_business_day_window_check() -> None:
 
 
 def test_metadata_uses_text_with_is_json_check() -> None:
-    """SPEC's portability constraint: TEXT + IS JSON, not JSONB."""
+    """SPEC's portability constraint: bounded VARCHAR + IS JSON, not JSONB.
+
+    Bounded so the column behaves like a string on both dialects —
+    Oracle CLOB can't be aggregated, ordered, or compared with VARCHAR
+    literals (ORA-00932). 4000 chars covers every JSON metadata
+    document the L2 schema emits in practice.
+    """
     sql = emit_schema(_instance("p"))
-    assert "metadata             TEXT" in sql
+    assert "metadata             VARCHAR(4000)" in sql
     assert "metadata IS NULL OR metadata IS JSON" in sql
     # Limits column same pattern
-    assert "limits                 TEXT" in sql
+    assert "limits                 VARCHAR(4000)" in sql
     assert "limits IS NULL OR limits IS JSON" in sql
     # No JSONB type used in any actual SQL statement (comments allowed).
     assert "JSONB" not in _strip_comments(sql).upper()

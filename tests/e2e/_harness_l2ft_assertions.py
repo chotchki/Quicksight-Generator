@@ -171,18 +171,6 @@ def assert_l2_exceptions_kpi_renders(
     )
 
 
-# Backwards-compat alias — the harness test still imports the old
-# name. Kept as a thin wrapper so the rename can land in one commit
-# without scattering test-file edits across this PR.
-def assert_l2_exceptions_check_types_present(
-    page: Any,
-    *,
-    timeout_ms: int = 30_000,
-) -> None:
-    """Deprecated — see ``assert_l2_exceptions_kpi_renders``."""
-    assert_l2_exceptions_kpi_renders(page, timeout_ms=timeout_ms)
-
-
 # L2FT sheets that carry per-sheet ``Date From`` / ``Date To`` pickers.
 # The L2FT app declares date params per-sheet (not analysis-level like
 # L1's M.2b.1), so widening on Rails alone doesn't propagate to Chains
@@ -236,9 +224,8 @@ def widen_l2ft_date_range(
             plant kinds; bump if rail_firing_plants ever land deeper.
         timeout_ms: per-step picker wait timeout.
 
-    Closes M.4.4.16 (PLAN task #453) — the inline ``pytest.xfail`` in
-    ``test_harness_l2ft_planted_scenarios_visible`` can be removed once
-    this is wired in.
+    Closes M.4.4.16 (PLAN task #453) — the L1 dynamic-widening pattern
+    M.4.4.12 established, applied to L2FT's per-sheet date pickers.
     """
     from quicksight_gen.common.browser.helpers import (
         click_sheet_tab,

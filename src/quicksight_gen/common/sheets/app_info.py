@@ -69,7 +69,7 @@ from quicksight_gen.common.dataset_contract import (
 )
 from quicksight_gen.common.models import DataSet
 from quicksight_gen.common.l2 import ThemePreset
-from quicksight_gen.common.sql import Dialect
+from quicksight_gen.common.sql import Dialect, dual_from
 from quicksight_gen.common.tree.datasets import Dataset
 from quicksight_gen.common.tree.structure import Sheet
 from quicksight_gen.common.tree.text_boxes import TextBox
@@ -129,12 +129,14 @@ MATVIEW_STATUS_CONTRACT = DatasetContract(columns=[
 ])
 
 
-def _matview_status_sql(view_names: list[str]) -> str:
+def _matview_status_sql(view_names: list[str], dialect: Dialect) -> str:
     """Build a UNION ALL query: one row per matview with its row count.
 
     Empty ``view_names`` returns a single placeholder row so the
     dataset always has rows — keeps the table from rendering blank
-    on apps with zero monitored matviews (Executives today).
+    on apps with zero monitored matviews (Executives today). The
+    placeholder needs ``FROM dual`` on Oracle (constant SELECT
+    requires a FROM clause); on Postgres it stays bare.
 
     No casts — the column types are pinned by ``MATVIEW_STATUS_CONTRACT``,
     so the literal-type inference (text/integer on Postgres, char/number
@@ -145,7 +147,7 @@ def _matview_status_sql(view_names: list[str]) -> str:
     if not view_names:
         return (
             "SELECT '(no matviews registered)' AS view_name, "
-            "0 AS row_count"
+            f"0 AS row_count{dual_from(dialect)}"
         )
     parts = [
         f"SELECT '{name}' AS view_name, "
@@ -202,7 +204,7 @@ def build_matview_status_dataset(
         cfg.prefixed(f"{app_segment}-app-info-matviews-dataset"),
         "App Info -- Matview Status",  # ASCII-only
         "app-info-matviews",
-        _matview_status_sql(view_names),
+        _matview_status_sql(view_names, cfg.dialect),
         MATVIEW_STATUS_CONTRACT,
         visual_identifier=DS_APP_INFO_MATVIEWS,
     )

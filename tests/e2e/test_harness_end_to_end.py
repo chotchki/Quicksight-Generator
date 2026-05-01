@@ -98,7 +98,7 @@ from _harness_l1_assertions import (  # noqa: E402
     widen_l1_date_range,
 )
 from _harness_l2ft_assertions import (  # noqa: E402
-    assert_l2_exceptions_check_types_present,
+    assert_l2_exceptions_kpi_renders,
     assert_l2ft_plants_visible,
     widen_l2ft_date_range,
 )
@@ -904,7 +904,7 @@ def test_harness_l2ft_planted_scenarios_visible(
         assert_l2ft_plants_visible(
             page, manifest, timeout_ms=visual_timeout,
         )
-        assert_l2_exceptions_check_types_present(
+        assert_l2_exceptions_kpi_renders(
             page, timeout_ms=visual_timeout,
         )
 
