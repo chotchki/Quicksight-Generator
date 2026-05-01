@@ -383,12 +383,20 @@ def _populate_getting_started(
     """
     accent = theme.accent
 
-    welcome_body = (
+    # Q.1.c — collapse YAML literal-block whitespace (literal `|` block
+    # scalars preserve hard newlines, which QuickSight's text-box
+    # renderer drops without inserting word breaks → adjacent words
+    # glom together). " ".join(text.split()) reflows the description
+    # as a single paragraph; if multi-paragraph descriptions land
+    # later, switch to a paragraph-aware reflow that preserves blank
+    # lines as <br/><br/>.
+    raw_body = (
         l2_instance.description
         if l2_instance.description
         else "(L2 instance description missing — fill the top-level "
              "`description` field in the L2 YAML.)"
     )
+    welcome_body = " ".join(raw_body.split())
 
     sheet.layout.row(height=8).add_text_box(
         TextBox(

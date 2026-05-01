@@ -85,6 +85,7 @@ from quicksight_gen.common.tree import (
     DrillResetSentinel,
     FilterGroup,
     LineChart,
+    Measure,
     Sheet,
     StringParam,
     TextBox,
@@ -792,6 +793,8 @@ def _populate_todays_exceptions_sheet(
     )
 
     # Row 2: bar chart broken out by check_type (count per check kind).
+    # Q.1.c — plain-English axis labels in place of the raw column
+    # names QuickSight defaults to ("check_type" / "Count of account_id").
     sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
         width=_FULL,
         title="Exceptions by Check Type",
@@ -803,6 +806,8 @@ def _populate_todays_exceptions_sheet(
         category=[ds["check_type"].dim()],
         values=[ds["account_id"].count()],
         orientation="HORIZONTAL",
+        category_label="Check Type",
+        value_label="Open Exceptions",
     )
 
     # Row 3: detail table — every row is one violation, sorted by
@@ -1198,19 +1203,24 @@ def _populate_unbundled_aging_sheet(
 
 def _populate_supersession_audit_sheet(
     cfg: Config,
+    analysis: Analysis,
     sheet: Sheet,
     *,
     datasets: dict[str, Dataset],
     theme: ThemePreset,
 ) -> None:
-    """Supersession Audit sheet — KPI + 2 detail tables.
+    """Supersession Audit sheet — 2 KPIs + 2 detail tables.
 
     Both detail tables read from BASE tables (not Current*), filtered
     to only logical keys with multiple `entry` versions. The audit
     trail is sorted top-down per logical row so the analyst can read
-    what changed across re-postings. KPI is the count of distinct
-    logical keys in the transactions audit (not row count — one
-    entity can have N entries; we want the entity count).
+    what changed across re-postings.
+
+    KPIs: (1) count of distinct logical keys in the transactions audit
+    (not row count — one entity can have N entries; we want the entity
+    count); (2) count of higher-Entry rows whose `supersedes` reason is
+    blank (target value = 0 — every supersession should declare its
+    cause per the L1 SPEC).
 
     `supersedes` filter dropdown applies to the transactions table
     (the daily-balances superceding pattern is so rare in practice
@@ -1220,11 +1230,25 @@ def _populate_supersession_audit_sheet(
     ds_tx = datasets[DS_SUPERSESSION_TRANSACTIONS]
     ds_db = datasets[DS_SUPERSESSION_DAILY_BALANCES]
 
-    # Row 1: KPI — count of distinct logical keys in the transactions
-    # supersession dataset. distinct_count on transaction_id since the
-    # dataset is already filtered to >1-entry keys.
-    sheet.layout.row(height=_KPI_ROW_SPAN).add_kpi(
-        width=_FULL,
+    # Q.1.c — analysis-level CalcField returning 1 for higher-Entry
+    # rows with no `supersedes` reason and 0 otherwise. SUM over the
+    # dataset = count of policy-violating supersessions; healthy
+    # value is 0. Defined per-dataset (not in the SQL) so the dataset
+    # stays the audit detail surface and the KPI logic stays at the
+    # analysis layer where the rest of the L1 calc fields live.
+    no_reason_calc = analysis.add_calc_field(CalcField(
+        name="l1_supersession_no_reason",
+        dataset=ds_tx,
+        expression=(
+            "ifelse({entry} > 1 AND isNull({supersedes}), 1, 0)"
+        ),
+    ))
+
+    # Row 1: two half-width KPIs — total supersessions on the left,
+    # the no-reason policy-violation count on the right.
+    kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
+    kpi_row.add_kpi(
+        width=_HALF,
         title="Logical Keys with Supersession",
         subtitle=(
             "Count of distinct transaction_id values whose append-only "
@@ -1233,6 +1257,17 @@ def _populate_supersession_audit_sheet(
             "trickle of TechnicalCorrection / BundleAssignment events."
         ),
         values=[ds_tx["transaction_id"].distinct_count()],
+    )
+    kpi_row.add_kpi(
+        width=_HALF,
+        title="Supersessions with No Reason",
+        subtitle=(
+            "Count of higher-Entry rows whose `supersedes` reason is "
+            "blank. Target value = 0 — every supersession SHOULD "
+            "declare its cause (Inflight / BundleAssignment / "
+            "TechnicalCorrection) per the L1 SPEC."
+        ),
+        values=[Measure.sum(dataset=ds_tx, column=no_reason_calc)],
     )
 
     # Row 2: transactions audit detail — every entry of every
@@ -1788,10 +1823,17 @@ def _wire_daily_statement_filters(
         time_granularity="DAY",
         # M.4.4.10ab — must have a default; QS UI errors with
         # "epochMilliseconds must be a number, you gave: null"
-        # when the picker initializes with no value. Default to today
-        # (truncDate to DAY granularity).
+        # when the picker initializes with no value.
+        #
+        # Q.1.c — default to YESTERDAY rather than today. Today's
+        # daily-balance row may not exist yet (the EOD job hasn't run
+        # for today's business day), so a today-default lands on a
+        # blank statement until late-day. Yesterday is the latest day
+        # guaranteed to have closed-out balance rows.
         default=DateTimeDefaultValues(
-            RollingDate={"Expression": "truncDate('DD', now())"},
+            RollingDate={
+                "Expression": "addDateTime(-1, 'DD', truncDate('DD', now()))",
+            },
         ),
     ))
 
@@ -2177,7 +2219,8 @@ def build_l1_dashboard_app(
         transactions_sheet=transactions_sheet, theme=theme,
     )
     _populate_supersession_audit_sheet(
-        cfg, supersession_audit_sheet, datasets=datasets, theme=theme,
+        cfg, analysis, supersession_audit_sheet,
+        datasets=datasets, theme=theme,
     )
     _populate_todays_exceptions_sheet(
         cfg, todays_exceptions_sheet,

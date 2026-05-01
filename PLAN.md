@@ -288,25 +288,33 @@ The existing SQL is already constrained to a portable subset (no JSONB, SQL/JSON
 
 Order the meta sweeps first so per-app fixes inherit them:
 
-- [ ] **Q.1.a — Currency + axis formatting (meta).** Sweep every visual across every shipped app:
-  - Amount/money columns format as USD currency (`$1,234.56`).
-  - Bar chart axis titles use plain English (not raw column names).
-  - Walk via the tree primitive; add a unit-test invariant where feasible.
+- [x] **Q.1.a — Currency + axis formatting (meta).** Sweep every visual across every shipped app:
+  - [x] Amount/money columns format as USD currency (`$1,234.56`). Q.1.a.1 + Q.1.a.2 (Measure side); Q.1.a.7 + Q.1.a.8 (Dim side + table-cell wire shape).
+  - [ ] Bar chart axis titles use plain English (not raw column names). DEFERRED to Q.1.a.3 — auto-derive from column names; partial coverage via Q.1.c manual labels on the most visible chart (L1 Today's Exceptions).
+  - [x] Walk via the tree primitive; add a unit-test invariant where feasible. Tests in `test_tree.py::TestMeasure` + `TestDim` for currency, plus `test_dataset_contract.py::TestOracleLowercaseAliasWrapper` for the Oracle wire-shape regression net.
 
-- [ ] **Q.1.b — Universal date-filter sweep.** Add the M.2b.1 universal-date-filter pattern to sheets that lack one:
-  - L1 Supersession Audit (will build over time)
-  - L1 Transactions
-  - L2 Exceptions
-  - Investigation Money Trail (also: drop the "All" option — vast data)
-  - Executives Account Coverage / Transaction Volume / Money Moved
+  Q.1.a.5 added prefix + bulleted deploy stamp to App Info.
+  Q.1.a.6 added `quicksight-gen probe` CLI + harness wiring so future
+  per-visual datasource errors fail loud instead of silent.
+  Q.1.a.8 fixed every Oracle visual (was failing ORA-00904 on QS's
+  quoted-lowercase column lookups vs Oracle's case-folded UPPERCASE
+  metadata) by wrapping every Oracle CustomSQL with a lowercase
+  re-aliasing outer SELECT.
+
+- [x] **Q.1.b — Universal date-filter sweep.** Add the M.2b.1 universal-date-filter pattern to sheets that lack one:
+  - [x] L1 Supersession Audit
+  - [x] L1 Transactions
+  - [ ] L2 Exceptions — DEFERRED: unified-exceptions matview is a current-state hygiene check, no native date column. Adding one needs a matview-shape decision (which date semantically applies for "Dead Rails" or "Unmatched Transfer Type"?).
+  - [x] Investigation Money Trail (DATE_RANGE picker on `posted_at`; "All" hidden via existing `hidden_select_all=True`)
+  - [x] Executives Account Coverage / Transaction Volume / Money Moved
 
 - [ ] **Q.1.c — Per-app punch-list items:**
-  - **L1 Supersession Audit** — add KPI to the right of the keys: count of supersessions with no reason (target value = 0).
-  - **L1 Today's Exceptions** — bar chart axes need plain-English labels.
-  - **L1 Daily Statement** — date picker defaults to yesterday; investigate the 4/25 Posted Money Records SQL error (may have been fixed by P.9f).
-  - **L2 Getting Started** — text box has missing spaces; suspect YAML word-wrap stripping.
-  - **Investigation Info** — investigate the matview-status SQL exception (may have been fixed by P.9f).
-  - **Executives Transaction Volume + Money Moved** — add metadata grouping.
+  - [x] **L1 Supersession Audit** — add KPI to the right of the keys: count of supersessions with no reason (target value = 0). _(Q.1.c — analysis-level CalcField + half-width KPI pair.)_
+  - [x] **L1 Today's Exceptions** — bar chart axes need plain-English labels. _(Q.1.c — `Check Type` / `Open Exceptions` via `category_label` / `value_label`.)_
+  - [x] **L1 Daily Statement** — date picker defaults to yesterday. (4/25 Posted Money Records SQL error already fixed by P.9f / Q.1.a.8 Oracle case-fold wrapper — probe shows clean.)
+  - [x] **L2 Getting Started** — text box has missing spaces; suspect YAML word-wrap stripping. _(Q.1.c — `" ".join(text.split())` reflow on the YAML literal-block description before rendering.)_
+  - [x] **Investigation Info** — matview-status SQL exception fixed by Q.1.a.8 Oracle case-fold wrapper (probe shows zero datasource errors across all sheets on both dialects).
+  - [ ] **Executives Transaction Volume + Money Moved** — add metadata grouping. DEFERRED: needs L2-instance-aware metadata key dropdowns (cascading Key + Value like L2FT Rails sheet) plus a dataset pivot to expose metadata as a dim. Bigger than a punch-list item; queue as Q.1.c.6 follow-up.
 
 - [ ] **Q.1.d — Sign-off walkthrough (post-fix).** The pre-phase walkthrough already happened — Q.1.b/Q.1.c above are its captured output. This sub-step is the AFTER pass: re-deploy with Q.1.a-c applied, walk through with user, capture any late-discovered tweaks as Q.1.d.1, Q.1.d.2, ... iterations.
 

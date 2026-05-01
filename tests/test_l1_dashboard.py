@@ -1080,9 +1080,10 @@ def test_supersession_audit_sheet_present_after_m2b12() -> None:
     assert sa.title == "Supersession Audit Trail"
 
 
-def test_supersession_audit_has_kpi_and_two_tables() -> None:
-    """Supersession Audit structure: 1 KPI (count of distinct logical
-    keys with supersession history) + 1 transactions audit table +
+def test_supersession_audit_has_kpis_and_two_tables() -> None:
+    """Supersession Audit structure (Q.1.c): 2 KPIs side-by-side
+    (count of distinct logical keys + count of higher-Entry rows
+    with no `supersedes` reason) + 1 transactions audit table +
     1 daily-balances audit table."""
     from quicksight_gen.common.tree import KPI, Table
 
@@ -1091,11 +1092,12 @@ def test_supersession_audit_has_kpi_and_two_tables() -> None:
     titles = [v.title for v in sa.visuals]
     assert titles == [
         "Logical Keys with Supersession",
+        "Supersessions with No Reason",
         "Transactions Audit",
         "Daily Balances Audit",
     ]
     kinds = [type(v).__name__ for v in sa.visuals]
-    assert kinds == ["KPI", "Table", "Table"]
+    assert kinds == ["KPI", "KPI", "Table", "Table"]
 
 
 def test_supersession_datasets_registered_and_target_base_tables() -> None:
