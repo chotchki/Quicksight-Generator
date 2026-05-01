@@ -370,6 +370,36 @@ class TestEmitFullSeed:
         )
         assert added == 15
 
+    def test_boost_inv_fanout_multiplies_amount(self) -> None:
+        # R.3.d — boost_inv_fanout_plants scales the per-transfer amount
+        # so the fanout cluster stands out against the baseline customer
+        # ACH median (~$665).
+        from decimal import Decimal
+        from quicksight_gen.common.l2.auto_scenario import (
+            boost_inv_fanout_plants,
+        )
+        instance = load_instance(_SASQUATCH_PR)
+        base = default_scenario_for(instance, today=_ANCHOR).scenario
+        if not base.inv_fanout_plants:
+            return  # No InvFanoutPlant in this instance — skip.
+        boosted = boost_inv_fanout_plants(base, amount_multiplier=5)
+        assert (
+            boosted.inv_fanout_plants[0].amount_per_transfer
+            == base.inv_fanout_plants[0].amount_per_transfer * 5
+        )
+        # Other plant kinds untouched.
+        assert boosted.drift_plants == base.drift_plants
+        assert boosted.stuck_pending_plants == base.stuck_pending_plants
+
+    def test_boost_inv_fanout_multiplier_one_is_noop(self) -> None:
+        from quicksight_gen.common.l2.auto_scenario import (
+            boost_inv_fanout_plants,
+        )
+        instance = load_instance(_SASQUATCH_PR)
+        base = default_scenario_for(instance, today=_ANCHOR).scenario
+        result = boost_inv_fanout_plants(base, amount_multiplier=1)
+        assert result is base
+
     def test_broken_rail_count_zero_is_noop(self) -> None:
         from quicksight_gen.common.l2.auto_scenario import (
             add_broken_rail_plants,

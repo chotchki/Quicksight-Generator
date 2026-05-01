@@ -846,6 +846,7 @@ def _apply_demo(
     from quicksight_gen.common.l2.seed import emit_full_seed as emit_l2_seed
     from quicksight_gen.common.l2.auto_scenario import (
         add_broken_rail_plants,
+        boost_inv_fanout_plants,
         default_scenario_for,
         densify_scenario,
     )
@@ -890,8 +891,13 @@ def _apply_demo(
     # immediately. emit_full_seed (R.3.a) prepends the 90-day baseline.
     base_scenario = default_scenario_for(inv_l2).scenario
     dense_scenario = densify_scenario(base_scenario, factor=5)
-    final_scenario = add_broken_rail_plants(
+    broken_scenario = add_broken_rail_plants(
         dense_scenario, inv_l2, broken_count=15,
+    )
+    # R.3.d: bump inv_fanout amount so the cluster stands out against
+    # the customer-ACH baseline median ($665). 5× → $2,500/transfer.
+    final_scenario = boost_inv_fanout_plants(
+        broken_scenario, amount_multiplier=5,
     )
     seed_sql = emit_l2_seed(inv_l2, final_scenario, dialect=cfg.dialect)
 

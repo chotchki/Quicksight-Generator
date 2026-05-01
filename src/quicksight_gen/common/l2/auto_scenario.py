@@ -566,6 +566,64 @@ def densify_scenario(
     )
 
 
+def boost_inv_fanout_plants(
+    base: ScenarioPlant,
+    *,
+    amount_multiplier: int = 5,
+    extra_recipient_count: int = 0,
+) -> ScenarioPlant:
+    """Tune Investigation fanout plants for visibility (R.3.d).
+
+    The Phase R baseline puts ~600 customer-ACH transfers per day into
+    the system at median ~$665 per transfer. The default
+    ``InvFanoutPlant.amount_per_transfer = $500`` from the auto-scenario
+    sits BELOW the baseline median — its cluster is structurally
+    visible (12 senders → 1 recipient) but per-transfer amounts don't
+    stand out.
+
+    This helper bumps each inv_fanout plant's amount by
+    ``amount_multiplier`` (5× default → $2,500 per transfer) so the
+    cluster's aggregate inflow (~$30,000 across 12 senders in one day)
+    stands out clearly on the Recipient Fanout sheet's Sankey + the
+    Volume Anomalies sheet's z-score band.
+
+    Optional ``extra_recipient_count``: synthesize N extra fanout
+    plants targeting different recipients (cycles through the existing
+    template instances) so multiple clusters appear on the dashboards.
+    Out of scope for the first land — defaults to 0.
+    """
+    if not base.inv_fanout_plants or amount_multiplier <= 1:
+        return base
+
+    boosted = tuple(
+        InvFanoutPlant(
+            recipient_account_id=p.recipient_account_id,
+            sender_account_ids=p.sender_account_ids,
+            days_ago=p.days_ago,
+            transfer_type=p.transfer_type,
+            rail_name=p.rail_name,
+            amount_per_transfer=p.amount_per_transfer * amount_multiplier,
+        )
+        for p in base.inv_fanout_plants
+    )
+
+    _ = extra_recipient_count  # reserved for future expansion
+
+    return ScenarioPlant(
+        template_instances=base.template_instances,
+        drift_plants=base.drift_plants,
+        overdraft_plants=base.overdraft_plants,
+        limit_breach_plants=base.limit_breach_plants,
+        stuck_pending_plants=base.stuck_pending_plants,
+        stuck_unbundled_plants=base.stuck_unbundled_plants,
+        supersession_plants=base.supersession_plants,
+        transfer_template_plants=base.transfer_template_plants,
+        rail_firing_plants=base.rail_firing_plants,
+        inv_fanout_plants=boosted,
+        today=base.today,
+    )
+
+
 def add_broken_rail_plants(
     base: ScenarioPlant,
     instance: L2Instance,
