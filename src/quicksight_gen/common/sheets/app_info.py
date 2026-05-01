@@ -261,6 +261,8 @@ def populate_app_info_sheet(
     """
     accent = theme.accent
     sha, ts = _deploy_stamp()
+    dialect = cfg.dialect.value
+    prefix = cfg.l2_instance_prefix or "(none)"
 
     # Row 1: liveness KPI (left half) + matview status table (right half).
     top = sheet.layout.row(height=_TABLE_HEIGHT)
@@ -295,9 +297,12 @@ def populate_app_info_sheet(
             text_box_id="app-info-deploy-stamp",
             content=rt.text_box(
                 rt.subheading("Deploy Stamp", color=accent),
-                rt.BR,
-                rt.body(f"git: {sha}"),
-                rt.body(f"generated: {ts}"),
+                rt.bullets([
+                    f"git: {sha}",
+                    f"generated: {ts}",
+                    f"dialect: {dialect}",
+                    f"prefix: {prefix}",
+                ]),
             ),
         ),
         width=_FULL,

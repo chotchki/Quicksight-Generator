@@ -58,6 +58,7 @@ class NumericalDimensionField:
     FieldId: str
     Column: ColumnIdentifier
     HierarchyId: str | None = None
+    FormatConfiguration: NumberFormatConfiguration | None = None
 
 
 @dataclass
@@ -74,10 +75,56 @@ class NumericalAggregationFunction:
 
 
 @dataclass
+class DecimalPlacesConfiguration:
+    """Wire shape for the per-field decimal-places setting."""
+    DecimalPlaces: int
+
+
+@dataclass
+class ThousandSeparatorOptions:
+    Symbol: str  # COMMA | DOT | SPACE
+    Visibility: str  # VISIBLE | HIDDEN
+
+
+@dataclass
+class SeparatorConfiguration:
+    DecimalSeparator: str | None = None  # COMMA | DOT | SPACE
+    ThousandsSeparator: ThousandSeparatorOptions | None = None
+
+
+@dataclass
+class CurrencyDisplayFormatConfiguration:
+    """Currency-format wire shape. ``Symbol`` is an ISO 4217 code
+    (``"USD"``); QuickSight renders the appropriate symbol prefix
+    (``$`` for USD, etc.) automatically."""
+    Symbol: str | None = None
+    DecimalPlacesConfiguration: DecimalPlacesConfiguration | None = None
+    SeparatorConfiguration: SeparatorConfiguration | None = None
+
+
+@dataclass
+class NumericFormatConfiguration:
+    """Discriminated union — exactly one of the three sub-format
+    configurations is set."""
+    NumberDisplayFormatConfiguration: dict[str, Any] | None = None
+    CurrencyDisplayFormatConfiguration: CurrencyDisplayFormatConfiguration | None = None
+    PercentageDisplayFormatConfiguration: dict[str, Any] | None = None
+
+
+@dataclass
+class NumberFormatConfiguration:
+    """Wrapper carrying the actual format inside its
+    ``FormatConfiguration`` slot — this two-level nesting matches the
+    AWS QuickSight wire schema."""
+    FormatConfiguration: NumericFormatConfiguration | None = None
+
+
+@dataclass
 class NumericalMeasureField:
     FieldId: str
     Column: ColumnIdentifier
     AggregationFunction: NumericalAggregationFunction | None = None
+    FormatConfiguration: NumberFormatConfiguration | None = None
 
 
 @dataclass

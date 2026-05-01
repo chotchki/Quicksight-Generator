@@ -46,17 +46,15 @@ new persona work or dashboard redesigns:
 
 ## What this handbook does *not* cover
 
-- **Per-visual customization.** The 32+ datasets and their
-  visuals will continue to evolve as the persona work in
-  Phase K (AR Exceptions redesign, persona dashboard split, new
-  Fraud and AML surfaces) lands. Document those once they
-  stabilize.
+- **Per-visual customization.** Each shipped app's visuals
+  evolve as the L1/L2 model + Investigation/Executives stories
+  iterate. Document specific visuals once they stabilize.
 - **Per-dataset SQL enumeration.** Each dataset's SQL is in
-  `apps/payment_recon/datasets.py` or `apps/account_recon/datasets.py`;
-  read it as the source of truth. The pattern for *replacing*
-  it is documented here once.
+  `apps/<app>/datasets.py` (e.g. `apps/l1_dashboard/datasets.py`,
+  `apps/investigation/datasets.py`); read it as the source of
+  truth. The pattern for *replacing* it is documented here once.
 - **Per-sheet layout.** Sheet structure is part of the active
-  product surface and may shift under persona-driven redesigns.
+  product surface and may shift under integrator-driven redesigns.
 
 ## Setup
 
@@ -220,7 +218,7 @@ returns + its SHOULD-constraint motivation), see
 
 ## Reference
 
-- [Schema v3 — Data Feed Contract](../Schema_v6.md) — the column
+- [Schema v6 — Data Feed Contract](../Schema_v6.md) — the column
   contract for the two base tables. Read this before mapping
   your source system.
 - [L1 Invariants](../L1_Invariants.md) — what each `<prefix>_*`
@@ -231,7 +229,3 @@ returns + its SHOULD-constraint motivation), see
 - [Data Integration Handbook](etl.md) — the ETL-engineer view of
   the same surface. Useful when your customization spans both
   product wiring and the upstream feed.
-- GL Reconciliation Handbook — the AR analyst's view of
-  what the dashboard looks like once your data is loaded.
-- Payment Reconciliation Handbook — the merchant
-  support team's view.

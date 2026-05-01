@@ -263,6 +263,41 @@ class TestDim:
         emitted = dim.emit()
         assert emitted.NumericalDimensionField is not None
 
+    # Q.1.a.7 — currency=True on a numerical Dim emits the same USD
+    # CurrencyDisplayFormatConfiguration that Measure.currency uses, so
+    # row-level money columns in tables format consistently with KPIs.
+    def test_numerical_currency_flag_emits_usd_format_configuration(self):
+        dim = Dim.numerical(
+            dataset=_DS_FOO, field_id="f-money", column="amount", currency=True,
+        )
+        emitted = dim.emit()
+        ndf = emitted.NumericalDimensionField
+        assert ndf is not None
+        assert ndf.FormatConfiguration is not None
+        cur = (
+            ndf.FormatConfiguration
+            .FormatConfiguration.CurrencyDisplayFormatConfiguration
+        )
+        assert cur is not None
+        assert cur.Symbol == "USD"
+
+    def test_numerical_currency_default_off(self):
+        dim = Dim.numerical(dataset=_DS_FOO, field_id="f-d", column="depth")
+        ndf = dim.emit().NumericalDimensionField
+        assert ndf is not None
+        assert ndf.FormatConfiguration is None
+
+    def test_currency_rejects_categorical_dim(self):
+        # Money never makes sense on a categorical or date axis — wiring
+        # currency=True on a non-numerical Dim is a typo, not an
+        # ergonomic shorthand. Fail loud at emit.
+        dim = Dim(
+            dataset=_DS_FOO, column="account_name", kind="categorical",
+            field_id="f-bad", currency=True,
+        )
+        with pytest.raises(AssertionError, match="kind='numerical'"):
+            dim.emit()
+
 
 class TestMeasure:
     def test_sum_emits_numerical_field(self):
@@ -288,6 +323,48 @@ class TestMeasure:
         emitted = m.emit()
         assert emitted.CategoricalMeasureField is not None
         assert emitted.CategoricalMeasureField.AggregationFunction == "DISTINCT_COUNT"
+
+    # Q.1.a — currency=True wires a USD CurrencyDisplayFormatConfiguration
+    # onto the underlying NumericalMeasureField. Default (no flag) emits no
+    # FormatConfiguration at all so existing measures stay byte-identical.
+    def test_currency_flag_emits_usd_format_configuration(self):
+        m = Measure.sum(dataset=_DS_FOO, field_id="f-1", column="amount", currency=True)
+        emitted = m.emit()
+        nmf = emitted.NumericalMeasureField
+        assert nmf is not None
+        fc = nmf.FormatConfiguration
+        assert fc is not None
+        currency_cfg = fc.FormatConfiguration.CurrencyDisplayFormatConfiguration
+        assert currency_cfg is not None
+        assert currency_cfg.Symbol == "USD"
+        assert currency_cfg.DecimalPlacesConfiguration.DecimalPlaces == 2
+        assert currency_cfg.SeparatorConfiguration.ThousandsSeparator.Symbol == "COMMA"
+
+    def test_currency_default_off_leaves_format_configuration_unset(self):
+        m = Measure.sum(dataset=_DS_FOO, field_id="f-1", column="amount")
+        emitted = m.emit()
+        assert emitted.NumericalMeasureField.FormatConfiguration is None
+
+    def test_currency_works_on_max_min_average(self):
+        for kind in ("max", "min", "average"):
+            m = getattr(Measure, kind)(
+                dataset=_DS_FOO, field_id=f"f-{kind}", column="amount", currency=True,
+            )
+            emitted = m.emit()
+            assert (
+                emitted.NumericalMeasureField.FormatConfiguration is not None
+            ), f"{kind} should support currency=True"
+
+    def test_currency_rejects_count_aggregations(self):
+        """count / distinct_count are categorical (return row counts,
+        never money) — currency=True is an author bug, fail loud."""
+        import pytest as _pytest
+        m = Measure(
+            dataset=_DS_FOO, column="account_id", kind="count",
+            field_id="f-1", currency=True,
+        )
+        with _pytest.raises(AssertionError, match="numerical aggregations"):
+            m.emit()
 
 
 # ---------------------------------------------------------------------------

@@ -288,29 +288,37 @@ The existing SQL is already constrained to a portable subset (no JSONB, SQL/JSON
 
 Order the meta sweeps first so per-app fixes inherit them:
 
-- [ ] **Q.1.a — Currency + axis formatting (meta).** Sweep every visual across every shipped app:
-  - Amount/money columns format as USD currency (`$1,234.56`).
-  - Bar chart axis titles use plain English (not raw column names).
-  - Walk via the tree primitive; add a unit-test invariant where feasible.
+- [x] **Q.1.a — Currency + axis formatting (meta).** Sweep every visual across every shipped app:
+  - [x] Amount/money columns format as USD currency (`$1,234.56`). Q.1.a.1 + Q.1.a.2 (Measure side); Q.1.a.7 + Q.1.a.8 (Dim side + table-cell wire shape).
+  - [ ] Bar chart axis titles use plain English (not raw column names). DEFERRED to Q.1.a.3 — auto-derive from column names; partial coverage via Q.1.c manual labels on the most visible chart (L1 Today's Exceptions).
+  - [x] Walk via the tree primitive; add a unit-test invariant where feasible. Tests in `test_tree.py::TestMeasure` + `TestDim` for currency, plus `test_dataset_contract.py::TestOracleLowercaseAliasWrapper` for the Oracle wire-shape regression net.
 
-- [ ] **Q.1.b — Universal date-filter sweep.** Add the M.2b.1 universal-date-filter pattern to sheets that lack one:
-  - L1 Supersession Audit (will build over time)
-  - L1 Transactions
-  - L2 Exceptions
-  - Investigation Money Trail (also: drop the "All" option — vast data)
-  - Executives Account Coverage / Transaction Volume / Money Moved
+  Q.1.a.5 added prefix + bulleted deploy stamp to App Info.
+  Q.1.a.6 added `quicksight-gen probe` CLI + harness wiring so future
+  per-visual datasource errors fail loud instead of silent.
+  Q.1.a.8 fixed every Oracle visual (was failing ORA-00904 on QS's
+  quoted-lowercase column lookups vs Oracle's case-folded UPPERCASE
+  metadata) by wrapping every Oracle CustomSQL with a lowercase
+  re-aliasing outer SELECT.
+
+- [x] **Q.1.b — Universal date-filter sweep.** Add the M.2b.1 universal-date-filter pattern to sheets that lack one:
+  - [x] L1 Supersession Audit
+  - [x] L1 Transactions
+  - [ ] L2 Exceptions — DEFERRED: unified-exceptions matview is a current-state hygiene check, no native date column. Adding one needs a matview-shape decision (which date semantically applies for "Dead Rails" or "Unmatched Transfer Type"?).
+  - [x] Investigation Money Trail (DATE_RANGE picker on `posted_at`; "All" hidden via existing `hidden_select_all=True`)
+  - [x] Executives Account Coverage / Transaction Volume / Money Moved
 
 - [ ] **Q.1.c — Per-app punch-list items:**
-  - **L1 Supersession Audit** — add KPI to the right of the keys: count of supersessions with no reason (target value = 0).
-  - **L1 Today's Exceptions** — bar chart axes need plain-English labels.
-  - **L1 Daily Statement** — date picker defaults to yesterday; investigate the 4/25 Posted Money Records SQL error (may have been fixed by P.9f).
-  - **L2 Getting Started** — text box has missing spaces; suspect YAML word-wrap stripping.
-  - **Investigation Info** — investigate the matview-status SQL exception (may have been fixed by P.9f).
-  - **Executives Transaction Volume + Money Moved** — add metadata grouping.
+  - [x] **L1 Supersession Audit** — add KPI to the right of the keys: count of supersessions with no reason (target value = 0). _(Q.1.c — analysis-level CalcField + half-width KPI pair.)_
+  - [x] **L1 Today's Exceptions** — bar chart axes need plain-English labels. _(Q.1.c — `Check Type` / `Open Exceptions` via `category_label` / `value_label`.)_
+  - [x] **L1 Daily Statement** — date picker defaults to yesterday. (4/25 Posted Money Records SQL error already fixed by P.9f / Q.1.a.8 Oracle case-fold wrapper — probe shows clean.)
+  - [x] **L2 Getting Started** — text box has missing spaces; suspect YAML word-wrap stripping. _(Q.1.c — `" ".join(text.split())` reflow on the YAML literal-block description before rendering.)_
+  - [x] **Investigation Info** — matview-status SQL exception fixed by Q.1.a.8 Oracle case-fold wrapper (probe shows zero datasource errors across all sheets on both dialects).
+  - [ ] **Executives Transaction Volume + Money Moved** — add metadata grouping. DEFERRED: needs L2-instance-aware metadata key dropdowns (cascading Key + Value like L2FT Rails sheet) plus a dataset pivot to expose metadata as a dim. Bigger than a punch-list item; queue as Q.1.c.6 follow-up.
 
-- [ ] **Q.1.d — Live dashboard walkthrough with user.** Working session against the deployed dashboards (both PG + Oracle) to capture additional findings beyond the pre-staged punch-list. Likely surfaces another half-dozen tweaks; treat the resulting list as Q.1.d.1, Q.1.d.2, ... iterations.
+- [x] **Q.1.d — Sign-off walkthrough (post-fix).** User confirmed Q.1's results clean across both dialects after walking the deployed dashboards.
 
-- [ ] **Q.1.e — Re-deploy + harness green for both dialects.**
+- [x] **Q.1.e — Re-deploy + harness green for both dialects.** PG 15/15 in 8:39; Oracle 15/15 in 8:10. Probe shows zero datasource errors across all 4 dashboards on both dialects.
 
 ### Q.2 — Documentation step-back (informed by Q.1's final state)
 
@@ -323,6 +331,150 @@ Order the meta sweeps first so per-app fixes inherit them:
   - Fix 3 "Schema v3" link-text mislabels that point to `Schema_v6.md` (`etl.md:49,165`, `customization.md:223`).
 
 - [ ] **Q.2.b — IA review (plan-mode first).** Read every nav entry end-to-end, write "what's where today" map, propose 2-3 IA shapes with tradeoffs (e.g., role-onramp-first vs reference-first; merge handbook + concepts vs keep split). User picks; then execute.
+
+  ### Q.2.b.audit — What's where today
+
+  7 top-level nav sections, ~60 pages. Page counts in parens.
+
+  - **Home** (1) — landing.
+  - **For Your Role** (5+1) — onramp pages: operator, integrator, ETL engineer, executive, compliance analyst.
+  - **Concepts** (12+2) — Accounting (6 patterns: double-entry / escrow / sweep / vouchering / consistency / loops) + L2 model (6 primitives: account / template / rail / transfer-template / chain / limit-schedule).
+  - **Background** (5+1) — institution tour: accounts / rails / transfer-templates / chains / limit-schedules. Persona/fixture-flavored (Sasquatch the bank).
+  - **Walkthroughs** (30+1) — three buckets: L1 Sheets (11 per-sheet pages), Investigation (4 question-shaped), ETL (6 how-do-I), Customization (9 how-do-I).
+  - **Reference** (8+1) — handbook/* (4 dashboards + ETL + Customization), Schema_v6, L1_Invariants.
+  - **API Reference** (7+1) — SDK / tree primitive surface (App / Visuals / Data / Filters / Drills / common foundations).
+
+  ### Q.2.b.smell — Boundary blur observations
+
+  1. **Reference + Walkthroughs duplicate doors.** `handbook/etl.md` lives in Reference but its child walkthroughs/etl/* live in Walkthroughs. Same for Customization. Readers hit the same topic twice from different sections, often without realizing.
+  2. **L1 Sheets pages are reference dressed as walkthrough.** Each per-sheet page describes *what's on the sheet* (KPIs, columns, drills) — that's reference content, not "how do I X". They sit under Walkthroughs because they shipped with the M.2b walkthrough lift, not because they answer questions.
+  3. **Background = fixture flavor with too much real estate.** "Institution tour" is one paragraph of "this is the bank" plus 5 list-of-things pages. Useful context but it's a top-level section claiming equal weight with Concepts / Reference. Most readers will never click it.
+  4. **For Your Role is meta-IA, not a section.** It cross-cuts every other section (operator wants L1 reference + concepts/accounting; integrator wants L2 reference + customization walkthroughs). Currently flat-listed as just-another-section; the role onramp shape is different from the rest.
+  5. **Concepts/Accounting vs Concepts/L2 — two distinct things lumped as one.** Accounting concepts (double-entry, escrow, sweep) are universal patterns; L2 model concepts are this codebase's primitives. Different audiences, different durability.
+
+  ### Q.2.b.shapes — Three IA proposals
+
+  **Shape A: Boundary cleanup, keep the current frame** (smallest change)
+
+  Hierarchy stays 6-7 sections; only cross-section moves happen.
+
+  - Move L1 Sheets per-sheet pages from Walkthroughs → Reference, nested under "L1 Reconciliation Dashboard" (so the reference tree becomes: dashboard overview → per-sheet drilldowns).
+  - Merge Background → Concepts as a new "Background" subsection (or drop Background and inline its content into the L2 model concepts, since each Background page mirrors a concept primitive).
+  - Walkthroughs stays question-shaped only (Investigation / ETL / Customization).
+  - Reference grows: per-app handbooks now have nested per-sheet drilldown pages.
+
+  Tradeoffs: Lowest churn (no rewrites, just nav re-shuffling). Doesn't address "two doors to ETL/Customization" — handbook/etl.md still in Reference, walkthroughs/etl/* still in Walkthroughs, just no longer surrounded by L1 Sheets noise.
+
+  **Shape B: Question vs Reference split** (front-of-house redesign)
+
+  Compresses 7 → 4 top sections around "what to do" vs "what it is".
+
+  - **For Your Role** — unchanged (onramp).
+  - **Quickstarts** — current Walkthroughs section (Inv questions / ETL / Customization), with the L1-sheet and Investigation handbook pages re-purposed as the lead-in / "where to start" for each cluster.
+  - **Reference** — handbooks (per-dashboard / per-sheet) + Schema_v6 + L1_Invariants + Background scenario + Concepts (Accounting + L2 model). Single shelf for "what is X".
+  - **API Reference** — unchanged.
+
+  Tradeoffs: Cleanest "what to do" vs "what is X" mental model. Reference becomes a fat section (~30 pages incl. Concepts + Background); needs a strong Reference index page to navigate. Loses the Concepts top-level — readers hunting for "double-entry posting" need to know it's under Reference.
+
+  **Shape C: Audience-first home page** (For-Your-Role becomes the front door)
+
+  Currently the For Your Role pages are dead-end onramps; this shape elevates them to be the primary navigation surface.
+
+  - **Home** — replaced by a curated "pick your role" landing that branches to the 5 role pages.
+  - Each **Role page** is a handcrafted onramp that links into Walkthroughs / Reference / Concepts in the order that role needs.
+  - Walkthroughs / Reference / Concepts / API Reference become "library shelves" the role pages curate from. They're still navigable directly.
+
+  Tradeoffs: Most reader-friendly for first-time visitors who know their role. Maintenance cost: 5 role pages × ~30 walkthroughs + 8 reference docs + 12 concepts = curating 200+ links by hand. Drift risk when a new walkthrough lands and no role page learns about it.
+
+  ### Recommendation
+
+  **Shape A** if you want to keep iterating on content without restructure churn — lowest cost, addresses the L1 Sheets misclassification, doesn't solve the ETL/Customization double-door issue.
+
+  **Shape B** if you want to address the "two doors" smell and accept that Reference becomes a single shelf — best long-term mental model but a one-time bigger commit.
+
+  **Shape C** if the next 6 months will see meaningful onboarding traffic (new integrators, evaluators) — pays for itself in onboarding clarity but only if the 5 role pages get the curation effort they deserve.
+
+  My pick if forced: **Shape A** for Q.2.b (low-cost cleanup), with Shape B/C deferred to a future phase if onboarding becomes a measured pain point.
+
+  ### Q.2.b.decision — User pick: Shape C (audience-first), with Shape B as the long-term destination
+
+  Rationale: about to introduce the tool to a lot of people; the
+  role-picker front door is the highest-leverage onboarding
+  surface. Shape C → Shape B is a transition to make once Shape
+  C reveals which library shelves get the most curation traffic.
+
+  ### Q.2.b.exec — Shape C execution checklist
+
+  Substeps planned out so the Shape C work doesn't drift into a
+  vague "rewrite docs" state. Each is small + commit-shaped.
+
+  - [x] **Q.2.b.exec.1 — Reshape Home as role picker.** Replace
+    `docs/index.md`'s "what apps ship + all sections overview"
+    structure with role-picker primary + library-shelves
+    secondary. Done; mkdocs --strict clean.
+  - [ ] **Q.2.b.exec.2 — Nav reorder (mkdocs.yml).** Move "For
+    Your Role" to first nav position (currently 2nd, after
+    Home). Add comments noting Shape C frame + Shape B
+    transition path. Confirm libraries (Concepts / Background /
+    Walkthroughs / Reference / API) stay accessible.
+  - [ ] **Q.2.b.exec.3 — `for-your-role/index.md` disposition.**
+    Currently mirrors Home shape; with Home doing role-pick the
+    section index is redundant. Decide: keep terse (re-direct to
+    role pages) or drop and use the section sidebar directly.
+  - [ ] **Q.2.b.exec.4 — Role page audit for Shape C fit.** Read
+    each role page for "primary navigation surface" fitness.
+    Operator + Integrator already touched in Q.2.d. Sanity-check
+    Executive / ETL Engineer / Compliance Analyst — each should
+    work as a primary entry, not just a sidebar onramp.
+  - [ ] **Q.2.b.exec.5 — Cross-link audit.** Each library shelf
+    (Concepts overview, Walkthroughs overview, Reference
+    overview, etc.) should link back UP to "For Your Role" so
+    readers who arrive shelf-first know the curated paths exist.
+    Skip for Shape C → Shape B will collapse Background + add
+    other shelf-level links.
+  - [ ] **Q.2.b.exec.6 — Concepts split disposition.** Concepts
+    has Accounting + L2 model lumped. Independent topics. Two
+    paths: keep sub-tabs (current state, no work) or split into
+    two top-level sections. Recommend keep-as-is for Shape C;
+    revisit at Shape B transition.
+  - [ ] **Q.2.b.exec.7 — Background section disposition.**
+    Background = institution tour (5 pages), persona-flavored.
+    Decide: keep top-level, rename to "Demo Institution Tour", or
+    absorb into Concepts/L2 model. Recommend keep + rename for
+    Shape C.
+  - [ ] **Q.2.b.exec.8 — `mkdocs build --strict` + click-through.**
+    Verify no dead links. Click each role page from the new Home,
+    and each library link from the role pages.
+  - [ ] **Q.2.b.exec.9 — Commit + tick PLAN Q.2.b.**
+
+  ### Q.2.c.exec — Screenshot pipeline at 1280×900 + collapsed-by-default
+
+  User picks: 1280×900 viewport. Screenshot sections collapsed
+  by default wherever possible.
+
+  - [ ] **Q.2.c.exec.1 — Screenshot CLI / extension.** Add a
+    `quicksight-gen export screenshots --app <APP> --viewport
+    1280x900 -o <DIR>` command that uses ScreenshotHarness
+    against deployed apps. Replaces ad-hoc scripts in `scripts/`
+    that were AR/PR-specific.
+  - [ ] **Q.2.c.exec.2 — Capture for all 4 deployed apps.** Run
+    against PG-deployed dashboards (canonical). Output ~40
+    screenshots (4 apps × ~10 sheets) at 1280×900. Land them in
+    `docs/walkthroughs/screenshots/` (or new path TBD by Shape C
+    layout).
+  - [ ] **Q.2.c.exec.3 — Collapse pattern.** Pick the mkdocs-
+    material syntax: either `<details><summary>` raw HTML, or
+    `??? note "Screenshot"` admonition (folds by default). Apply
+    to one walkthrough as the pilot to validate render.
+  - [ ] **Q.2.c.exec.4 — Sweep existing screenshot embeds.** Find
+    every `![…](…)` referencing a screenshot in handbook + walk-
+    through pages, wrap in the chosen collapse pattern. Likely
+    a sed-style replace.
+  - [ ] **Q.2.c.exec.5 — Visual review.** Open the rendered site;
+    confirm collapse defaults work + re-screenshot any sheet
+    that looks bad at the new viewport (a screenshot might need
+    a tall override if a visual gets cut).
+  - [ ] **Q.2.c.exec.6 — Commit + tick PLAN Q.2.c.**
 
 - [ ] **Q.2.c — Re-screenshot with sane viewport.** Meta-problem from PLAN: screenshots are all way too tall (avoiding scroll-cutoff but at the cost of readability). Pick a viewport size that works for both desktop reading + reasonable scroll height (likely 1280×900 or 1440×1080). Run `screenshot_harness.py` for every app at the new viewport. Replaces the existing per-app screenshot fleet.
 

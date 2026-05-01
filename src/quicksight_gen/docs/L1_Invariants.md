@@ -202,7 +202,7 @@ surfaces with `entry_count > 1`.
 
 ## See also
 
-- [Schema v3 — Data Feed Contract](Schema_v6.md) — the column
+- [Schema v6 — Data Feed Contract](Schema_v6.md) — the column
   contract for the two base tables.
 - [L1 Reconciliation Dashboard](handbook/l1.md) — the analyst's
   view of these invariants.

@@ -383,12 +383,20 @@ def _populate_getting_started(
     """
     accent = theme.accent
 
-    welcome_body = (
+    # Q.1.c — collapse YAML literal-block whitespace (literal `|` block
+    # scalars preserve hard newlines, which QuickSight's text-box
+    # renderer drops without inserting word breaks → adjacent words
+    # glom together). " ".join(text.split()) reflows the description
+    # as a single paragraph; if multi-paragraph descriptions land
+    # later, switch to a paragraph-aware reflow that preserves blank
+    # lines as <br/><br/>.
+    raw_body = (
         l2_instance.description
         if l2_instance.description
         else "(L2 instance description missing — fill the top-level "
              "`description` field in the L2 YAML.)"
     )
+    welcome_body = " ".join(raw_body.split())
 
     sheet.layout.row(height=8).add_text_box(
         TextBox(
@@ -604,7 +612,7 @@ def _populate_rails_sheet(
             ds_postings["rail_name"].dim(),
             ds_postings["transfer_id"].dim(),
             ds_postings["account_name"].dim(),
-            ds_postings["amount_money"].numerical(),
+            ds_postings["amount_money"].numerical(currency=True),
             ds_postings["amount_direction"].dim(),
             ds_postings["status"].dim(),
             ds_postings["bundle_status"].dim(),
@@ -778,7 +786,7 @@ def _populate_chains_sheet(
             ds_chain_instances["completion_status"].dim(),
             ds_chain_instances["required_fired"].numerical(),
             ds_chain_instances["required_total"].numerical(),
-            ds_chain_instances["parent_amount_money"].numerical(),
+            ds_chain_instances["parent_amount_money"].numerical(currency=True),
             ds_chain_instances["parent_status"].dim(),
         ],
     )
@@ -984,7 +992,7 @@ def _populate_transfer_templates_sheet(
         ),
         source=ds_tt_legs["flow_source"].dim(),
         target=ds_tt_legs["flow_target"].dim(),
-        weight=ds_tt_legs["amount_abs"].sum(),
+        weight=ds_tt_legs["amount_abs"].sum(currency=True),
     )
 
     sheet.layout.row(height=12).add_table(
@@ -1003,9 +1011,9 @@ def _populate_transfer_templates_sheet(
             ds_tt_instances["template_name"].dim(),
             ds_tt_instances["transfer_id"].dim(),
             ds_tt_instances["completion_status"].dim(),
-            ds_tt_instances["actual_net"].numerical(),
-            ds_tt_instances["expected_net"].numerical(),
-            ds_tt_instances["net_diff"].numerical(),
+            ds_tt_instances["actual_net"].numerical(currency=True),
+            ds_tt_instances["expected_net"].numerical(currency=True),
+            ds_tt_instances["net_diff"].numerical(currency=True),
             ds_tt_instances["leg_count"].numerical(),
         ],
     )
@@ -1186,7 +1194,7 @@ def _populate_l2_exceptions_sheet(
     # or chain parent (Unmatched Transfer Type, Dead Limit Schedules)
     # land an empty destination — clear "this drill doesn't apply"
     # signal.
-    magnitude_col = ds["magnitude"].numerical()
+    magnitude_col = ds["magnitude"].numerical(currency=True)
     entity_a_col = ds["entity_a"].dim()
     sheet.layout.row(height=14).add_table(
         width=36,

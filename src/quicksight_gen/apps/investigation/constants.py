@@ -60,6 +60,7 @@ FG_INV_ANOMALIES_WINDOW = FilterGroupId("fg-inv-anomalies-window")  # K.4.4
 FG_INV_MONEY_TRAIL_ROOT = FilterGroupId("fg-inv-money-trail-root")  # K.4.5
 FG_INV_MONEY_TRAIL_HOPS = FilterGroupId("fg-inv-money-trail-hops")  # K.4.5
 FG_INV_MONEY_TRAIL_AMOUNT = FilterGroupId("fg-inv-money-trail-amount")  # K.4.5
+FG_INV_MONEY_TRAIL_WINDOW = FilterGroupId("fg-inv-money-trail-window")  # Q.1.b
 FG_INV_ANETWORK_ANCHOR = FilterGroupId("fg-inv-anetwork-anchor")        # K.4.8 — table only
 FG_INV_ANETWORK_INBOUND = FilterGroupId("fg-inv-anetwork-inbound")      # K.4.8 — inbound Sankey only
 FG_INV_ANETWORK_OUTBOUND = FilterGroupId("fg-inv-anetwork-outbound")    # K.4.8 — outbound Sankey only

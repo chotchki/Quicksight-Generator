@@ -37,6 +37,7 @@ from quicksight_gen.apps.investigation.constants import (
     FG_INV_MONEY_TRAIL_AMOUNT,
     FG_INV_MONEY_TRAIL_HOPS,
     FG_INV_MONEY_TRAIL_ROOT,
+    FG_INV_MONEY_TRAIL_WINDOW,
     P_INV_ANETWORK_ANCHOR,
     P_INV_ANETWORK_MIN_AMOUNT,
     P_INV_ANOMALIES_SIGMA,
@@ -338,7 +339,7 @@ def _build_recipient_fanout_sheet(
         subtitle=(
             "Sum of inbound amounts across qualifying recipient legs."
         ),
-        values=[ds_fanout["amount"].sum()],
+        values=[ds_fanout["amount"].sum(currency=True)],
     )
 
     # Row 2: ranked table full-width.
@@ -358,7 +359,7 @@ def _build_recipient_fanout_sheet(
         values=[
             distinct_senders_value,
             ds_fanout["transfer_id"].distinct_count(),
-            ds_fanout["amount"].sum(),
+            ds_fanout["amount"].sum(currency=True),
         ],
         sort_by=(distinct_senders_value, "DESC"),
     )
@@ -495,7 +496,7 @@ def _build_volume_anomalies_sheet(
         ],
         values=[
             z_score_max,
-            ds_anomalies["window_sum"].max(),
+            ds_anomalies["window_sum"].max(currency=True),
             ds_anomalies["transfer_count"].max(),
         ],
         sort_by=(z_score_max, "DESC"),
@@ -618,7 +619,7 @@ def _build_money_trail_sheet(
         ),
         source=ds_money_trail["source_account_name"].dim(),
         target=ds_money_trail["target_account_name"].dim(),
-        weight=ds_money_trail["hop_amount"].sum(),
+        weight=ds_money_trail["hop_amount"].sum(currency=True),
         items_limit=_SANKEY_NODE_CAP,
     )
     depth_dim = ds_money_trail["depth"].numerical()
@@ -637,7 +638,7 @@ def _build_money_trail_sheet(
             ds_money_trail["target_account_name"].dim(),
             ds_money_trail["posted_at"].date(),
         ],
-        values=[ds_money_trail["hop_amount"].sum()],
+        values=[ds_money_trail["hop_amount"].sum(currency=True)],
         sort_by=(depth_dim, "ASC"),
     )
 
@@ -684,7 +685,24 @@ def _build_money_trail_sheet(
     ))
     amount_fg.scope_sheet(sheet)
 
-    # All three controls are parameter-driven — no FilterControl widgets.
+    # Q.1.b — Window date-range filter on `posted_at`. Same shape as
+    # Recipient Fanout / Volume Anomalies (filter-bound DATE_RANGE
+    # picker, scope_sheet narrow). Money Trail's matview can grow
+    # unbounded over time; this gives the analyst a knob to narrow
+    # the chain set without rebuilding.
+    window_fg = analysis.add_filter_group(FilterGroup(
+        filter_group_id=FG_INV_MONEY_TRAIL_WINDOW,
+        filters=[TimeRangeFilter(
+            filter_id="filter-inv-money-trail-window",
+            dataset=ds_money_trail,
+            column=ds_money_trail["posted_at"],
+            null_option="NON_NULLS_ONLY",
+            time_granularity="DAY",
+        )],
+    ))
+    window_fg.scope_sheet(sheet)
+
+    # Controls — three parameter-driven plus the new date-range picker.
     sheet.add_parameter_dropdown(
         parameter=root_param,
         title="Chain root transfer",
@@ -708,6 +726,12 @@ def _build_money_trail_sheet(
         maximum_value=_AMOUNT_SLIDER_MAX,
         step_size=10,
         control_id="ctrl-inv-money-trail-amount",
+    )
+    sheet.add_filter_datetime_picker(
+        filter=window_fg.filters[0],
+        title="Date Range",
+        type="DATE_RANGE",
+        control_id="ctrl-inv-money-trail-window",
     )
 
     return sheet
@@ -831,7 +855,7 @@ def _build_account_network_sheet(
         ),
         source=inbound_source_dim,
         target=ds_anet["target_display"].dim(),
-        weight=ds_anet["hop_amount"].sum(),
+        weight=ds_anet["hop_amount"].sum(currency=True),
         items_limit=_SANKEY_NODE_CAP,
         actions=[Drill(
             writes=[(anchor_param_drill, inbound_source_dim)],
@@ -852,7 +876,7 @@ def _build_account_network_sheet(
         ),
         source=ds_anet["source_display"].dim(),
         target=outbound_target_dim,
-        weight=ds_anet["hop_amount"].sum(),
+        weight=ds_anet["hop_amount"].sum(currency=True),
         items_limit=_SANKEY_NODE_CAP,
         actions=[Drill(
             writes=[(anchor_param_drill, outbound_target_dim)],
@@ -866,7 +890,7 @@ def _build_account_network_sheet(
     # counterparty_display is a CalcField — Dim(ds, calc_field_ref)
     # carries the calc-field identity through the resolver.
     counterparty_dim = Dim(ds_anet, counterparty_display)
-    table_amount = ds_anet["hop_amount"].sum()
+    table_amount = ds_anet["hop_amount"].sum(currency=True)
     table = sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
         width=_FULL,
         title="Account Network — Touching Edges",

@@ -16,8 +16,8 @@ dashboards.
 
 The Data Integration Team owns the projection from {{ vocab.institution.acronym }}'s
 upstream systems (core banking, Fed statements, processor reports,
-sweep engines) into the two base tables the AR and PR dashboards
-read. Their attitude, in their own words:
+sweep engines) into the two base tables every shipped dashboard
+reads. Their attitude, in their own words:
 
 > *What do I have a database server that can do fancy queries for
 > unless I use it?*
@@ -38,15 +38,15 @@ Two tables feed everything:
   columns + conditional extras + a `metadata` JSON column.
 - **`daily_balances`** — one row per `(account_id, balance_date)`.
   Stored EOD balance + a `metadata` JSON column for per-day
-  configuration (AR's `limits` payload lives here).
+  configuration (limit-schedule payloads live here).
 
-Both apps (Account Reconciliation and Payment Reconciliation) read
-from these two tables. `account_type` and `transfer_type`
-discriminate which app a row belongs to; the schema itself is
-shared. Full column contract, per-column failure modes, metadata
-catalog, and ETL examples:
+Every shipped dashboard (L1, L2 Flow Tracing, Investigation,
+Executives) reads from these two tables. `account_type` and
+`transfer_type` discriminate which slice each app cares about;
+the schema itself is shared. Full column contract, per-column
+failure modes, metadata catalog, and ETL examples:
 
-- [Schema v3 — Data Feed Contract](../Schema_v6.md) — the
+- [Schema v6 — Data Feed Contract](../Schema_v6.md) — the
   source-of-truth document. Read the *Getting Started for Data
   Teams* preamble first.
 
@@ -60,8 +60,7 @@ T+2, cards T+3. When NULL, downstream views fall back to
 column is safe.
 
 Why bother populating it? The `is_late` predicate that the
-Exceptions sheets project — and the *Late Payments* KPI on the PR
-Payment Reconciliation tab — fires off the same COALESCE
+L1 Exceptions sheets project fires off the same COALESCE
 expression. A populated `expected_complete_at` gives the analyst a
 per-rail-accurate deadline; an unpopulated one falls back to the
 conservative one-day default (which over-fires, surfacing things
@@ -80,20 +79,20 @@ See [Lateness as data](../Schema_v6.md#lateness-as-data) for the
 default formula, the `is_late` predicate SQL, and the
 multi-leg tie-breaker query.
 
-Three materialized views sit on top of these tables —
-`ar_unified_exceptions` (feeds the AR Today's Exceptions sheet),
-`inv_pair_rolling_anomalies` (feeds the Investigation Volume Anomalies
-sheet), and `inv_money_trail_edges` (feeds the Investigation Money
-Trail sheet — recursive walk over `parent_transfer_id`). None are
-auto-refreshed: every ETL load must run
-```sql
-REFRESH MATERIALIZED VIEW ar_unified_exceptions;
-REFRESH MATERIALIZED VIEW inv_pair_rolling_anomalies;
-REFRESH MATERIALIZED VIEW inv_money_trail_edges;
-```
-afterward, or the operator-facing aging / anomaly / chain columns will
-lag. See [Materialized views](../Schema_v6.md#the-layered-model) for
-the full refresh contract.
+Several materialized views sit on top of these tables — the L1
+invariant matviews (`<prefix>_drift`, `<prefix>_overdraft`,
+`<prefix>_limit_breach`, `<prefix>_stuck_pending`,
+`<prefix>_stuck_unbundled`, `<prefix>_todays_exceptions`) plus
+the Investigation cluster (`<prefix>_inv_pair_rolling_anomalies`
+feeds Volume Anomalies; `<prefix>_inv_money_trail_edges` feeds
+Money Trail and Account Network — recursive walk over
+`parent_transfer_id`). None are auto-refreshed: every ETL load
+must run `REFRESH MATERIALIZED VIEW` on each, or the operator-
+facing aging / anomaly / chain columns will lag. The dependency-
+ordered statements come from
+`common/l2/schema.refresh_matviews_sql(l2_instance)`. See
+[Materialized views](../Schema_v6.md#the-layered-model) for the
+full refresh contract.
 
 ## Foundational walkthroughs
 
@@ -121,7 +120,7 @@ the full refresh contract.
 <div class="snb-card-grid">
   <a class="snb-card" href="../walkthroughs/etl/how-do-i-tag-a-force-posted-transfer/">
     <h3>How do I tag a force-posted external transfer correctly?</h3>
-    <p>The `origin` column + `parent_transfer_id` chain mechanics for Fed-statement ingest. Why force-posted matters for AR exception classification.</p>
+    <p>The `origin` column + `parent_transfer_id` chain mechanics for Fed-statement ingest. Why force-posted matters for L1 exception classification.</p>
   </a>
   <a class="snb-card" href="../walkthroughs/etl/how-do-i-add-a-metadata-key/">
     <h3>How do I add a metadata key without breaking the dashboards?</h3>
@@ -146,12 +145,14 @@ the full refresh contract.
 the team can copy from when building a new ETL job:
 
 ```bash
-# All 11 patterns (6 PR + 5 AR) into one SQL file
+# All available patterns into one SQL file
 quicksight-gen demo etl-example --all -o etl-examples.sql
 
-# One app only
-quicksight-gen demo etl-example payment-recon -o pr-patterns.sql
-quicksight-gen demo etl-example account-recon -o ar-patterns.sql
+# One app only (currently: investigation, executives — both
+# read base tables only and ship without app-specific patterns
+# at this writing; the L1 + L2FT base-table examples cover
+# everything the apps need)
+quicksight-gen demo etl-example investigation -o inv-patterns.sql
 ```
 
 Every block carries a `-- WHY:` header that names the business
@@ -162,12 +163,12 @@ upstream feed's source fields.
 
 ## Reference
 
-- [Schema v3 — Data Feed Contract](../Schema_v6.md) — column specs,
+- [Schema v6 — Data Feed Contract](../Schema_v6.md) — column specs,
   metadata keys, ETL examples. The source of truth this handbook
   points at.
 - [Account Structure](../scenario/index.md) — the bank, customers,
   accounts, and money flows the populated data represents.
-- GL Reconciliation Handbook — the AR dashboard and the
-  analyst team your feeds serve.
-- Payment Reconciliation Handbook — the PR dashboard and
-  the merchant support team your feeds serve.
+- [L1 Reconciliation Dashboard](l1.md) — the operator-facing
+  dashboard your feeds serve.
+- [Investigation](investigation.md) — the AML/compliance dashboard
+  your feeds serve.

@@ -121,6 +121,7 @@ def run_dashboard_check_with_retry(
         wait_for_dashboard_loaded,
         webkit_page,
     )
+    from quicksight_gen.common.probe import assert_no_datasource_errors
 
     last_timeout: Exception | None = None
     for attempt in range(1, max_attempts + 1):
@@ -141,6 +142,20 @@ def run_dashboard_check_with_retry(
                     page.goto(embed_url, timeout=page_timeout_ms)
                     wait_for_dashboard_loaded(page, timeout_ms=page_timeout_ms)
                     operation(page)
+                    # After the operation succeeds, surface any
+                    # per-visual datasource errors that QuickSight
+                    # captured to its JS console while the page was
+                    # live. QS shows these only as a generic banner in
+                    # the visual; the actual driver message
+                    # (ORA-NNNNN, Postgres syntax, etc.) is hidden in
+                    # the embed iframe's console — without this scan,
+                    # a column-rename / column-case / dialect-port
+                    # regression would let the harness pass while
+                    # every visual quietly errored.
+                    assert_no_datasource_errors(
+                        console_messages,
+                        context=f"dashboard {dashboard_id}",
+                    )
                 except (PlaywrightTimeoutError, AssertionError):
                     # Capture the screenshot WHILE the page is still
                     # live (still inside the webkit_page context).

@@ -85,6 +85,7 @@ from quicksight_gen.common.tree import (
     DrillResetSentinel,
     FilterGroup,
     LineChart,
+    Measure,
     Sheet,
     StringParam,
     TextBox,
@@ -548,9 +549,9 @@ def _populate_drift_sheet(
             ds_drift["account_role"].dim(),
             ds_drift["account_parent_role"].dim(),
             leaf_day_col,
-            ds_drift["stored_balance"].numerical(),
-            ds_drift["computed_balance"].numerical(),
-            ds_drift["drift"].numerical(),
+            ds_drift["stored_balance"].numerical(currency=True),
+            ds_drift["computed_balance"].numerical(currency=True),
+            ds_drift["drift"].numerical(currency=True),
         ],
         actions=[
             _l1_drill(
@@ -588,9 +589,9 @@ def _populate_drift_sheet(
             ds_ledger_drift["account_name"].dim(),
             ds_ledger_drift["account_role"].dim(),
             parent_day_col,
-            ds_ledger_drift["stored_balance"].numerical(),
-            ds_ledger_drift["computed_balance"].numerical(),
-            ds_ledger_drift["drift"].numerical(),
+            ds_ledger_drift["stored_balance"].numerical(currency=True),
+            ds_ledger_drift["computed_balance"].numerical(currency=True),
+            ds_ledger_drift["drift"].numerical(currency=True),
         ],
         actions=[
             _l1_drill(
@@ -641,7 +642,7 @@ def _populate_drift_timelines_sheet(
             "Max Σ ABS(drift) on any single BusinessDay across leaf "
             "accounts in the visible date range. Healthy = $0."
         ),
-        values=[ds_drift_timeline["abs_drift"].max()],
+        values=[ds_drift_timeline["abs_drift"].max(currency=True)],
     )
     kpi_row.add_kpi(
         width=half,
@@ -650,7 +651,7 @@ def _populate_drift_timelines_sheet(
             "Max Σ ABS(drift) on any single BusinessDay across parent "
             "accounts in the visible date range. Healthy = $0."
         ),
-        values=[ds_ledger_drift_timeline["abs_drift"].max()],
+        values=[ds_ledger_drift_timeline["abs_drift"].max(currency=True)],
     )
 
     # Row 2: leaf drift line chart — one line per account_role.
@@ -665,7 +666,7 @@ def _populate_drift_timelines_sheet(
             "isolated event worth drilling into."
         ),
         category=[leaf_day_col],
-        values=[ds_drift_timeline["abs_drift"].sum()],
+        values=[ds_drift_timeline["abs_drift"].sum(currency=True)],
         colors=[ds_drift_timeline["account_role"].dim()],
         category_label="BusinessDay end",
         value_label="Σ |drift|",
@@ -683,7 +684,7 @@ def _populate_drift_timelines_sheet(
             "correctly that day."
         ),
         category=[parent_day_col],
-        values=[ds_ledger_drift_timeline["abs_drift"].sum()],
+        values=[ds_ledger_drift_timeline["abs_drift"].sum(currency=True)],
         colors=[ds_ledger_drift_timeline["account_role"].dim()],
         category_label="BusinessDay end",
         value_label="Σ |drift|",
@@ -734,7 +735,7 @@ def _populate_overdraft_sheet(
             ds_overdraft["account_role"].dim(),
             ds_overdraft["account_parent_role"].dim(),
             day_col,
-            ds_overdraft["stored_balance"].numerical(),
+            ds_overdraft["stored_balance"].numerical(currency=True),
         ],
         actions=[
             _l1_drill(
@@ -792,6 +793,8 @@ def _populate_todays_exceptions_sheet(
     )
 
     # Row 2: bar chart broken out by check_type (count per check kind).
+    # Q.1.c — plain-English axis labels in place of the raw column
+    # names QuickSight defaults to ("check_type" / "Count of account_id").
     sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
         width=_FULL,
         title="Exceptions by Check Type",
@@ -803,13 +806,15 @@ def _populate_todays_exceptions_sheet(
         category=[ds["check_type"].dim()],
         values=[ds["account_id"].count()],
         orientation="HORIZONTAL",
+        category_label="Check Type",
+        value_label="Open Exceptions",
     )
 
     # Row 3: detail table — every row is one violation, sorted by
     # magnitude DESC so the biggest variances surface first. Drills:
     # left-click → Drift (back-toward per-invariant source); right-click
     # menu → Daily Statement (forward into the per-account-day walk).
-    magnitude_col = ds["magnitude"].numerical()
+    magnitude_col = ds["magnitude"].numerical(currency=True)
     account_col = ds["account_id"].dim()
     business_day_col = ds["business_day"].date()
     sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
@@ -947,8 +952,8 @@ def _populate_limit_breach_sheet(
             ds_lb["account_parent_role"].dim(),
             day_col,
             ds_lb["transfer_type"].dim(),
-            ds_lb["outbound_total"].numerical(),
-            ds_lb["cap"].numerical(),
+            ds_lb["outbound_total"].numerical(currency=True),
+            ds_lb["cap"].numerical(currency=True),
         ],
         actions=[
             _l1_drill(
@@ -1086,7 +1091,7 @@ def _populate_pending_aging_sheet(
             transfer_col,
             ds["transfer_type"].dim(),
             ds["rail_name"].dim(),
-            ds["amount_money"].numerical(),
+            ds["amount_money"].numerical(currency=True),
             ds["amount_direction"].dim(),
             ds["posting"].date(),
             Dim(ds, aging_bucket),
@@ -1175,7 +1180,7 @@ def _populate_unbundled_aging_sheet(
             transfer_col,
             ds["transfer_type"].dim(),
             ds["rail_name"].dim(),
-            ds["amount_money"].numerical(),
+            ds["amount_money"].numerical(currency=True),
             ds["amount_direction"].dim(),
             ds["posting"].date(),
             Dim(ds, aging_bucket),
@@ -1198,19 +1203,24 @@ def _populate_unbundled_aging_sheet(
 
 def _populate_supersession_audit_sheet(
     cfg: Config,
+    analysis: Analysis,
     sheet: Sheet,
     *,
     datasets: dict[str, Dataset],
     theme: ThemePreset,
 ) -> None:
-    """Supersession Audit sheet — KPI + 2 detail tables.
+    """Supersession Audit sheet — 2 KPIs + 2 detail tables.
 
     Both detail tables read from BASE tables (not Current*), filtered
     to only logical keys with multiple `entry` versions. The audit
     trail is sorted top-down per logical row so the analyst can read
-    what changed across re-postings. KPI is the count of distinct
-    logical keys in the transactions audit (not row count — one
-    entity can have N entries; we want the entity count).
+    what changed across re-postings.
+
+    KPIs: (1) count of distinct logical keys in the transactions audit
+    (not row count — one entity can have N entries; we want the entity
+    count); (2) count of higher-Entry rows whose `supersedes` reason is
+    blank (target value = 0 — every supersession should declare its
+    cause per the L1 SPEC).
 
     `supersedes` filter dropdown applies to the transactions table
     (the daily-balances superceding pattern is so rare in practice
@@ -1220,11 +1230,25 @@ def _populate_supersession_audit_sheet(
     ds_tx = datasets[DS_SUPERSESSION_TRANSACTIONS]
     ds_db = datasets[DS_SUPERSESSION_DAILY_BALANCES]
 
-    # Row 1: KPI — count of distinct logical keys in the transactions
-    # supersession dataset. distinct_count on transaction_id since the
-    # dataset is already filtered to >1-entry keys.
-    sheet.layout.row(height=_KPI_ROW_SPAN).add_kpi(
-        width=_FULL,
+    # Q.1.c — analysis-level CalcField returning 1 for higher-Entry
+    # rows with no `supersedes` reason and 0 otherwise. SUM over the
+    # dataset = count of policy-violating supersessions; healthy
+    # value is 0. Defined per-dataset (not in the SQL) so the dataset
+    # stays the audit detail surface and the KPI logic stays at the
+    # analysis layer where the rest of the L1 calc fields live.
+    no_reason_calc = analysis.add_calc_field(CalcField(
+        name="l1_supersession_no_reason",
+        dataset=ds_tx,
+        expression=(
+            "ifelse({entry} > 1 AND isNull({supersedes}), 1, 0)"
+        ),
+    ))
+
+    # Row 1: two half-width KPIs — total supersessions on the left,
+    # the no-reason policy-violation count on the right.
+    kpi_row = sheet.layout.row(height=_KPI_ROW_SPAN)
+    kpi_row.add_kpi(
+        width=_HALF,
         title="Logical Keys with Supersession",
         subtitle=(
             "Count of distinct transaction_id values whose append-only "
@@ -1233,6 +1257,17 @@ def _populate_supersession_audit_sheet(
             "trickle of TechnicalCorrection / BundleAssignment events."
         ),
         values=[ds_tx["transaction_id"].distinct_count()],
+    )
+    kpi_row.add_kpi(
+        width=_HALF,
+        title="Supersessions with No Reason",
+        subtitle=(
+            "Count of higher-Entry rows whose `supersedes` reason is "
+            "blank. Target value = 0 — every supersession SHOULD "
+            "declare its cause (Inflight / BundleAssignment / "
+            "TechnicalCorrection) per the L1 SPEC."
+        ),
+        values=[Measure.sum(dataset=ds_tx, column=no_reason_calc)],
     )
 
     # Row 2: transactions audit detail — every entry of every
@@ -1257,7 +1292,7 @@ def _populate_supersession_audit_sheet(
             ds_tx["transfer_id"].dim(),
             ds_tx["transfer_type"].dim(),
             ds_tx["rail_name"].dim(),
-            ds_tx["amount_money"].numerical(),
+            ds_tx["amount_money"].numerical(currency=True),
             ds_tx["amount_direction"].dim(),
             ds_tx["status"].dim(),
             ds_tx["posting"].date(),
@@ -1288,7 +1323,7 @@ def _populate_supersession_audit_sheet(
             ds_db["supersedes"].dim(),
             ds_db["business_day_start"].date(),
             ds_db["business_day_end"].date(),
-            ds_db["money"].numerical(),
+            ds_db["money"].numerical(currency=True),
         ],
         conditional_formatting=[
             CellAccentText(on=db_account_col, color=accent),
@@ -1333,7 +1368,7 @@ def _populate_transactions_sheet(
             transfer_col,
             ds_tx["transfer_type"].dim(),
             ds_tx["rail_name"].dim(),
-            ds_tx["amount_money"].numerical(),
+            ds_tx["amount_money"].numerical(currency=True),
             ds_tx["amount_direction"].dim(),
             ds_tx["status"].dim(),
             ds_tx["origin"].dim(),
@@ -1374,25 +1409,25 @@ def _populate_daily_statement_sheet(
         width=kpi_width,
         title="Opening Balance",
         subtitle="End-of-prior-day stored balance for the picked account.",
-        values=[ds_summary["opening_balance"].max()],
+        values=[ds_summary["opening_balance"].max(currency=True)],
     )
     kpi_row.add_kpi(
         width=kpi_width,
         title="Debits",
         subtitle="Sum of Debit-direction Money records posted today.",
-        values=[ds_summary["total_debits"].max()],
+        values=[ds_summary["total_debits"].max(currency=True)],
     )
     kpi_row.add_kpi(
         width=kpi_width,
         title="Credits",
         subtitle="Sum of Credit-direction Money records posted today.",
-        values=[ds_summary["total_credits"].max()],
+        values=[ds_summary["total_credits"].max(currency=True)],
     )
     kpi_row.add_kpi(
         width=kpi_width,
         title="Closing Stored",
         subtitle="The day's stored closing balance from the feed.",
-        values=[ds_summary["closing_balance_stored"].max()],
+        values=[ds_summary["closing_balance_stored"].max(currency=True)],
     )
     kpi_row.add_kpi(
         width=kpi_width,
@@ -1400,7 +1435,7 @@ def _populate_daily_statement_sheet(
         subtitle=(
             "Stored − recomputed. Non-zero ⇒ feed doesn't reconcile."
         ),
-        values=[ds_summary["drift"].max()],
+        values=[ds_summary["drift"].max(currency=True)],
     )
 
     # Row 2: detail table — every Money record posted that day for the
@@ -1422,7 +1457,7 @@ def _populate_daily_statement_sheet(
             ds_txn["transaction_id"].dim(),
             transfer_col,
             ds_txn["transfer_type"].dim(),
-            ds_txn["amount_money"].numerical(),
+            ds_txn["amount_money"].numerical(currency=True),
             ds_txn["amount_direction"].dim(),
             ds_txn["status"].dim(),
             ds_txn["origin"].dim(),
@@ -1470,7 +1505,9 @@ def _wire_date_range_filter(
     limit_breach_sheet: Sheet,
     pending_aging_sheet: Sheet,
     unbundled_aging_sheet: Sheet,
+    supersession_audit_sheet: Sheet,
     todays_exceptions_sheet: Sheet,
+    transactions_sheet: Sheet,
 ) -> None:
     """Wire the universal date-range filter (params + groups + controls).
 
@@ -1548,13 +1585,27 @@ def _wire_date_range_filter(
     # Unbundled Aging — same shape, different dataset.
     _scope_one(DS_STUCK_UNBUNDLED, "posting", unbundled_aging_sheet,
                "fg-l1-date-stuck-unbundled")
+    # Q.1.b — Supersession Audit walks two base-table audits. The
+    # transactions side filters by `posting`; the daily-balances side
+    # by `business_day_start` (each row is per-day).
+    _scope_one(DS_SUPERSESSION_TRANSACTIONS, "posting",
+               supersession_audit_sheet,
+               "fg-l1-date-supersession-tx")
+    _scope_one(DS_SUPERSESSION_DAILY_BALANCES, "business_day_start",
+               supersession_audit_sheet,
+               "fg-l1-date-supersession-db")
+    # Q.1.b — Transactions sheet over the per-leg ledger; same `posting`
+    # column shape as Pending/Unbundled Aging.
+    _scope_one(DS_TRANSACTIONS, "posting", transactions_sheet,
+               "fg-l1-date-transactions")
 
-    # Per-sheet date pickers — bound to the shared params so all seven
-    # sheets' pickers sync.
+    # Per-sheet date pickers — bound to the shared params so every
+    # sheet's pickers sync.
     for sheet in (
         drift_sheet, drift_timelines_sheet, overdraft_sheet,
         limit_breach_sheet, pending_aging_sheet, unbundled_aging_sheet,
-        todays_exceptions_sheet,
+        supersession_audit_sheet, todays_exceptions_sheet,
+        transactions_sheet,
     ):
         sheet.add_parameter_datetime_picker(
             parameter=date_start, title="Date From",
@@ -1772,10 +1823,17 @@ def _wire_daily_statement_filters(
         time_granularity="DAY",
         # M.4.4.10ab — must have a default; QS UI errors with
         # "epochMilliseconds must be a number, you gave: null"
-        # when the picker initializes with no value. Default to today
-        # (truncDate to DAY granularity).
+        # when the picker initializes with no value.
+        #
+        # Q.1.c — default to YESTERDAY rather than today. Today's
+        # daily-balance row may not exist yet (the EOD job hasn't run
+        # for today's business day), so a today-default lands on a
+        # blank statement until late-day. Yesterday is the latest day
+        # guaranteed to have closed-out balance rows.
         default=DateTimeDefaultValues(
-            RollingDate={"Expression": "truncDate('DD', now())"},
+            RollingDate={
+                "Expression": "addDateTime(-1, 'DD', truncDate('DD', now()))",
+            },
         ),
     ))
 
@@ -2161,7 +2219,8 @@ def build_l1_dashboard_app(
         transactions_sheet=transactions_sheet, theme=theme,
     )
     _populate_supersession_audit_sheet(
-        cfg, supersession_audit_sheet, datasets=datasets, theme=theme,
+        cfg, analysis, supersession_audit_sheet,
+        datasets=datasets, theme=theme,
     )
     _populate_todays_exceptions_sheet(
         cfg, todays_exceptions_sheet,
@@ -2195,7 +2254,9 @@ def build_l1_dashboard_app(
         limit_breach_sheet=limit_breach_sheet,
         pending_aging_sheet=pending_aging_sheet,
         unbundled_aging_sheet=unbundled_aging_sheet,
+        supersession_audit_sheet=supersession_audit_sheet,
         todays_exceptions_sheet=todays_exceptions_sheet,
+        transactions_sheet=transactions_sheet,
     )
 
     # M.2b.3 + M.2b.5 + M.2b.10 + M.2b.11 + M.2b.12 — Per-sheet
