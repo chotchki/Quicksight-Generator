@@ -528,6 +528,106 @@ Phase R inverts the seed shape: a **3-month healthy baseline** of hundreds-to-th
 - [ ] **R.1.f — Spec doc + review gate.** Half-page describing the generator's output shape (volume per rail, amount range per rail, time-of-day shape). User signs off before R.2 implementation begins so we don't burn a day building the wrong shape. Also: audit the L2 e2e tests as part of this gate — see R.5.d for the test-repoint substep.
   - A: sounds good, we should also plan to repoint the tests at this output since I don't think the L2 e2e tests actually test layer 2 now
 
+  #### R.1.f spec — Generator output shape
+
+  **Window + anchor.** 90-day rolling window ending on `today` (the date the seed is generated). Re-running on a different day produces a different rolling window — same anchor convention as today's plants. Any "today" reference inside generated SQL uses the anchor passed at generation time, not `now()` at apply time, so the SHA256 hash-lock test stays deterministic for a fixed anchor.
+
+  ##### 1. Volume heuristic — `target_leg_count(rail, window_days=90) -> int`
+
+  Inputs: `rail.transfer_type`, `rail.posting_requirements` shape (single-leg vs two-leg vs aggregating), the rail's `aggregating` flag (`null` / `daily_eod` / `monthly_eom`), and the rail's `source_role` / `destination_role` (used to infer "is this customer-facing or internal-plumbing"). Output: count of FIRINGS (each firing produces 1 or 2 legs depending on rail shape).
+
+  | Rail kind | Heuristic | ~ firings / 90d |
+  |---|---|---|
+  | Customer-facing inbound (ach_inbound, wire_inbound, cash_deposit) | 4 firings/business day per customer-account, scaled by account count | 200-1500 |
+  | Customer-facing outbound (ach_outbound, wire_outbound, cash_withdrawal) | 2 firings/business day per customer-account | 100-700 |
+  | Customer fee accrual (monthly) | 1 firing/customer-account/month | 6-150 |
+  | Internal transfer (debit / credit / suspense) | 1 firing/business day per parent-account | 50-150 |
+  | Aggregating daily_eod (ZBA sweep, ACH origination sweep) | 1 firing/business day | ~63 |
+  | Aggregating monthly_eom (fee monthly settlement) | 1 firing/last-business-day-of-month | ~3 |
+  | Concentration sweep (wire_concentration) | 1 firing/business day | ~63 |
+  | Card sale (merchant-acquiring) | 8 firings/business day per merchant-account | 500-2500 |
+  | Merchant payout (payout_ach / wire / check) | 1 firing/business day per merchant-account | 60-200 |
+  | External card settlement | 1 firing/business day | ~63 |
+  | ACH return (NSF, stop-pay) | 0.05 of `CustomerInboundACH` firings (rare) | 10-75 |
+
+  The function returns an int; per-Rail variance is added by the lognormal sampler in §2 (i.e., the sampler decides "today this Rail fires N times" where N is Poisson around the daily target). Total expected over 90 days for sasquatch_pr: **~50k-80k legs**; for spec_example: **~5k-10k legs**.
+
+  ##### 2. Amount distribution — per-rail-role lognormal `(mu, sigma)` defaults
+
+  All amounts in USD. `sample = exp(Normal(mu, sigma))` then quantize to cents. Bounded above by `LimitSchedule.cap` when one applies (clamp+resample, not truncate, so the distribution shape stays clean).
+
+  | Rail role | mu | sigma | Median $ | 99th pct $ |
+  |---|---:|---:|---:|---:|
+  | Customer ACH (in/out) | 6.5 | 1.2 | $665 | $11,000 |
+  | Customer wire (in/out) | 9.0 | 1.0 | $8,100 | $84,000 |
+  | Customer cash (deposit/withdrawal) | 5.5 | 0.8 | $245 | $1,580 |
+  | Customer fee accrual | 2.5 | 0.4 | $12 | $31 |
+  | Internal transfer | 8.0 | 1.5 | $2,980 | $96,000 |
+  | Aggregating daily_eod (sweep) | 11.0 | 0.8 | $59,800 | $385,000 |
+  | Aggregating monthly_eom (fee batch) | 9.5 | 0.5 | $13,400 | $43,000 |
+  | Concentration sweep | 12.0 | 0.7 | $163,000 | $830,000 |
+  | Card sale | 4.5 | 0.9 | $90 | $720 |
+  | Merchant payout | 9.0 | 1.1 | $8,100 | $105,000 |
+  | External card settlement | 11.5 | 0.6 | $98,700 | $400,000 |
+  | ACH return | matches the original ACH leg's amount | — | — |
+
+  Per-Rail override hook: if a rail YAML carries an optional `seed_amount: {mu: ..., sigma: ...}` block in the future, the generator uses that instead of the role default. Out of scope for R.2 — not needed for spec_example or sasquatch_pr.
+
+  ##### 3. Time distribution
+
+  - **Day-of-week:** weekends (Sat/Sun) drop to **0 firings** for ALL rails. US bank holidays (~3 in any 90-day window) drop to **0 firings** for ALL rails. Holiday calendar = `holidays.US()` if the `holidays` package is available, else a small hard-coded list of fixed-date federal holidays + observed shifts (acceptable for the demo since exact list isn't load-bearing).
+  - **Day-of-month:** rails with `aggregating: monthly_eom` fire **only on the last business day of each month** (3 firings over 90 days). Rails with `aggregating: daily_eod` fire on every business day. Non-aggregating rails fire uniformly across business days.
+  - **Time-of-day:** rails with `source_origin: ExternalForcePosted` (Fed-driven) cluster 09:00-15:00 Eastern (banking hours). Rails with `aggregating: daily_eod` post their parent at 17:00-19:00 Eastern (after children). Card sales weighted to 10:00-22:00 Eastern. Internal transfers + sweeps spread across the business day. Default: uniform 09:00-17:00 Eastern.
+
+  ##### 4. RNG sub-stream layout — `seed_for_rail(rail_name) -> int`
+
+  ```python
+  BASE_SEED = 42  # same constant the existing test_demo_data.py uses, for legacy hash continuity
+  def seed_for_rail(rail_name: str) -> int:
+      return BASE_SEED ^ (zlib.crc32(rail_name.encode("utf-8")) & 0xFFFFFFFF)
+  ```
+
+  Each Rail gets one `random.Random(seed_for_rail(rail.name))` instance. The instance is threaded through every helper that touches that Rail — leg loop, amount sampler, time-of-day sampler, account picker, plant overlay (R.3) for that Rail. Account-balance state-machine helpers (cross-Rail) use a single `random.Random(BASE_SEED)` instance for any randomness they own (account picks, starting balances).
+
+  ##### 5. Balance-state-machine starting balances
+
+  Per `account_role` lookup, sampled per-account at generator init:
+
+  | account_role kind | Starting balance distribution |
+  |---|---|
+  | DDAControl (customer DDA control account) | lognormal(mu=8.5, sigma=1.0) — median $4,900, range $500-$80k |
+  | MerchantDDAControl | lognormal(mu=10.0, sigma=0.8) — median $22,000 |
+  | InternalSuspense / InternalRecon | $0 (these accounts net to zero EOD) |
+  | DDAControl-internal-GL (CashDueFRB, etc.) | lognormal(mu=14.0, sigma=0.5) — median $1.2M |
+  | ConcentrationMaster | lognormal(mu=15.0, sigma=0.4) — median $3.3M |
+  | ExternalCounterparty (FRB Master, processors) | $0 (we don't track external balances; they're the external-counter side of force-posted legs) |
+  | Anything else | $0 |
+
+  ##### 6. Multi-leg + chain ordering
+
+  - **Single-leg rail:** one row per firing with the leg posted at the sampled time-of-day.
+  - **Two-leg rail:** two rows per firing with shared `transfer_id`, `signed_amount` summing to zero, both posted at the same time-of-day (within ms).
+  - **Aggregating rail (children-first):** child legs accumulate throughout the day at sampled times-of-day. EOD (or EOM) parent posts at 17:00-19:00 Eastern as a higher-Entry row with `Supersedes = BundleAssignment` that retroactively assigns the day's children to its `transfer_id`. Unbundled-aging plants (R.3) are children that **never** get a parent assignment.
+  - **Non-aggregating chain (parent → child):** parent fires first; child fires synchronously (same business day, child time-of-day = parent time-of-day + small delay). Required-completion vs Optional-completion respects the Chain's declared `Required` flag (Required = ~95% completion rate, Optional = ~50%).
+
+  ##### 7. L2 coverage assertion set (R.5.d preview)
+
+  New harness file `_harness_l2_coverage_assertions.py`. Per-instance assertions:
+
+  - **Per Rail:** `assert N_legs(rail) >= max(target_leg_count(rail) * 0.5, 5)` — at least half the heuristic target landed (Poisson variance can shave the actual count) AND no rail produces fewer than 5 legs (proves the rail isn't dead).
+  - **Per Chain:** `assert N_completed_pairs(chain) >= 1` — every declared chain has at least one parent + child fire. For Required chains additionally: `assert completion_rate(chain) >= 0.80` (allowing some exception slack from R.3 plants).
+  - **Per TransferTemplate:** `assert sum(actual_net) == declared expected_net` for >= 80% of template instances (some R.3 plants intentionally violate to surface on the L2 Exceptions sheet).
+  - **Per LimitSchedule:** `assert max_daily_outbound(parent_role, transfer_type) <= cap` for the baseline (R.3 plants intentionally breach to populate the Limit Breach sheet).
+  - **Volume Anomalies signal:** `assert z_score(planted_spike, baseline) >= 3.0` per R.5.c.
+
+  ##### 8. Out of spec / open
+
+  - **Per-Rail YAML overrides** (`seed_amount`, `seed_volume_multiplier`) — out of scope; baseline heuristic is enough for the existing two L2 instances. Add when a third instance lands and needs a per-rail tweak.
+  - **Cross-currency** — all amounts USD. No FX rails declared today.
+  - **Memo / metadata-payload realism** — generator emits valid metadata structures (the L2's declared keys with random plausible values) but doesn't aim for narrative realism. The Investigation walkthroughs reference specific amounts + counterparties; those land via R.3 plants, not the baseline.
+
+  Sign-off bar: the user reads this spec, flags anything off, then R.2 starts.
+
 ### R.2 — Implementation
 
 - [ ] **R.2.a — Baseline generator skeleton in `common/l2/seed.py`.** New entry point `emit_baseline_seed(l2_instance, *, window_days=90, anchor=date.today())`. Returns SQL string (same shape as today's `emit_seed`).
