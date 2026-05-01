@@ -4,57 +4,56 @@
 reporting. Currently rendered against
 **{{ vocab.institution.name }}** ({{ l2_instance_name }}).*
 
-Ships **four independent QuickSight apps**, all L2-fed off one
-institution YAML (account, datasource, theme, and per-instance
-schema prefix), sharing the CLI surface:
+Ships **four independent QuickSight apps** — L1 Reconciliation,
+L2 Flow Tracing, Investigation, Executives — all L2-fed off one
+institution YAML. Different audiences open different dashboards;
+this site funnels each audience to the right one.
 
-- **L1 Reconciliation Dashboard** — persona-blind L1 invariant
-  violation surface, configured by an L2 instance. Sheets:
-    - Drift
-    - Overdraft
-    - Limit Breach
-    - Stuck Pending
-    - Stuck Unbundled
-    - Supersession Audit
-    - Today's Exceptions
-    - Daily Statement
-    - Transactions
-- **L2 Flow Tracing** — for the integrator validating their L2
-  instance against the SPEC. Sheets:
-    - Rails
-    - Chains
-    - Transfer Templates
-    - L2 Hygiene Exceptions
-- **Investigation** — Compliance / AML triage flow. Sheets:
-    - Recipient Fanout
-    - Volume Anomalies
-    - Money Trail
-    - Account Network
-- **Executives** — executive scorecard. Sheets:
-    - Account Coverage
-    - Transaction Volume
-    - Money Moved
+## Pick your role
 
-## Where to start
+The fastest way in. Each role page tells you which dashboard is
+yours, what to read first, what concepts to ground, and what *not*
+to spend time learning. Start here:
 
-Pick the section that matches your role:
+- **[For the operator](for-your-role/operator.md)** — daily
+  reconciliation. L1 is your primary surface; L2 Flow Tracing is
+  your second tab when an L1 trace ends with "but why is this
+  happening every day?".
+- **[For the integrator](for-your-role/integrator.md)** — owns
+  the institution's L2 YAML. L2 Flow Tracing proves your
+  declarations match runtime reality; L2 Hygiene Exceptions is
+  your backlog.
+- **[For the ETL engineer](for-your-role/etl-engineer.md)** —
+  owns the projection from upstream systems into the two shared
+  base tables. The L1 dashboard is your debug surface for silent
+  load bugs.
+- **[For the executive](for-your-role/executive.md)** — Money
+  Moved / Transaction Volume / Account Coverage at weekly +
+  monthly + quarterly cadences. Aggregate questions, no triage.
+- **[For the compliance analyst](for-your-role/compliance-analyst.md)**
+  — AML / SAR investigations. Question-shaped Investigation
+  dashboard: Recipient Fanout, Volume Anomalies, Money Trail,
+  Account Network.
 
-- **[For Your Role](for-your-role/index.md)** — role-oriented
-  entry points; pick yours and the page funnels you in.
-- **[Concepts](concepts/index.md)** — banking primitives every
-  reader should know first:
-    - Double-entry posting
-    - Escrow with reversal
-    - Sweep / net / settle
-    - Vouchering
-    - Eventual consistency
-    - Open vs. closed loop
-- **[Background](scenario/index.md)** — end-to-end tour of the
-  institution's L2 model (accounts, rails, transfer templates,
-  chains, limit schedules) grounded in the demo data.
-- **[Walkthroughs](walkthroughs/index.md)** — task recipes:
-  "I have X and want Y" or "I'm looking at this row, what do I do?"
+## If you don't fit a role
+
+The library shelves the role pages curate from. Jump in directly
+when you know what you're after.
+
+- **[Concepts](concepts/index.md)** — banking primitives + L2
+  model primitives. Every reader benefits from grounding in
+  double-entry, escrow / sweep / vouchering, and the L2 nouns
+  (Account / Rail / Chain / TransferTemplate / LimitSchedule).
+- **[Walkthroughs](walkthroughs/index.md)** — task recipes.
+  "How do I X?" / "Where does this row lead?" / "Which sheet
+  answers Y?". Bucketed by L1 sheets, Investigation, ETL, and
+  Customization.
 - **[Reference](reference/index.md)** — per-app structural
-  reference: which sheet shows what, which dataset backs it.
-- **[API Reference](api/index.md)** — for building a custom app
-  on the typed tree primitives.
+  handbooks (L1, L2 Flow Tracing, Investigation, Executives, ETL,
+  Customization), plus the [Schema v6](Schema_v6.md) data feed
+  contract and the [L1 Invariants](L1_Invariants.md) catalog.
+- **[Background](scenario/index.md)** — institution tour. The L2
+  model rendered for the demo institution: chart of accounts,
+  rails, transfer templates, chains, limit schedules.
+- **[API Reference](api/index.md)** — for building a custom
+  dashboard on the typed tree primitives.

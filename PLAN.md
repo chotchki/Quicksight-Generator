@@ -316,7 +316,7 @@ Order the meta sweeps first so per-app fixes inherit them:
   - [x] **Investigation Info** — matview-status SQL exception fixed by Q.1.a.8 Oracle case-fold wrapper (probe shows zero datasource errors across all sheets on both dialects).
   - [ ] **Executives Transaction Volume + Money Moved** — add metadata grouping. DEFERRED: needs L2-instance-aware metadata key dropdowns (cascading Key + Value like L2FT Rails sheet) plus a dataset pivot to expose metadata as a dim. Bigger than a punch-list item; queue as Q.1.c.6 follow-up.
 
-- [ ] **Q.1.d — Sign-off walkthrough (post-fix).** The pre-phase walkthrough already happened — Q.1.b/Q.1.c above are its captured output. This sub-step is the AFTER pass: re-deploy with Q.1.a-c applied, walk through with user, capture any late-discovered tweaks as Q.1.d.1, Q.1.d.2, ... iterations.
+- [x] **Q.1.d — Sign-off walkthrough (post-fix).** User confirmed Q.1's results clean across both dialects after walking the deployed dashboards.
 
 - [x] **Q.1.e — Re-deploy + harness green for both dialects.** PG 15/15 in 8:39; Oracle 15/15 in 8:10. Probe shows zero datasource errors across all 4 dashboards on both dialects.
 
@@ -395,6 +395,86 @@ Order the meta sweeps first so per-app fixes inherit them:
   **Shape C** if the next 6 months will see meaningful onboarding traffic (new integrators, evaluators) — pays for itself in onboarding clarity but only if the 5 role pages get the curation effort they deserve.
 
   My pick if forced: **Shape A** for Q.2.b (low-cost cleanup), with Shape B/C deferred to a future phase if onboarding becomes a measured pain point.
+
+  ### Q.2.b.decision — User pick: Shape C (audience-first), with Shape B as the long-term destination
+
+  Rationale: about to introduce the tool to a lot of people; the
+  role-picker front door is the highest-leverage onboarding
+  surface. Shape C → Shape B is a transition to make once Shape
+  C reveals which library shelves get the most curation traffic.
+
+  ### Q.2.b.exec — Shape C execution checklist
+
+  Substeps planned out so the Shape C work doesn't drift into a
+  vague "rewrite docs" state. Each is small + commit-shaped.
+
+  - [x] **Q.2.b.exec.1 — Reshape Home as role picker.** Replace
+    `docs/index.md`'s "what apps ship + all sections overview"
+    structure with role-picker primary + library-shelves
+    secondary. Done; mkdocs --strict clean.
+  - [ ] **Q.2.b.exec.2 — Nav reorder (mkdocs.yml).** Move "For
+    Your Role" to first nav position (currently 2nd, after
+    Home). Add comments noting Shape C frame + Shape B
+    transition path. Confirm libraries (Concepts / Background /
+    Walkthroughs / Reference / API) stay accessible.
+  - [ ] **Q.2.b.exec.3 — `for-your-role/index.md` disposition.**
+    Currently mirrors Home shape; with Home doing role-pick the
+    section index is redundant. Decide: keep terse (re-direct to
+    role pages) or drop and use the section sidebar directly.
+  - [ ] **Q.2.b.exec.4 — Role page audit for Shape C fit.** Read
+    each role page for "primary navigation surface" fitness.
+    Operator + Integrator already touched in Q.2.d. Sanity-check
+    Executive / ETL Engineer / Compliance Analyst — each should
+    work as a primary entry, not just a sidebar onramp.
+  - [ ] **Q.2.b.exec.5 — Cross-link audit.** Each library shelf
+    (Concepts overview, Walkthroughs overview, Reference
+    overview, etc.) should link back UP to "For Your Role" so
+    readers who arrive shelf-first know the curated paths exist.
+    Skip for Shape C → Shape B will collapse Background + add
+    other shelf-level links.
+  - [ ] **Q.2.b.exec.6 — Concepts split disposition.** Concepts
+    has Accounting + L2 model lumped. Independent topics. Two
+    paths: keep sub-tabs (current state, no work) or split into
+    two top-level sections. Recommend keep-as-is for Shape C;
+    revisit at Shape B transition.
+  - [ ] **Q.2.b.exec.7 — Background section disposition.**
+    Background = institution tour (5 pages), persona-flavored.
+    Decide: keep top-level, rename to "Demo Institution Tour", or
+    absorb into Concepts/L2 model. Recommend keep + rename for
+    Shape C.
+  - [ ] **Q.2.b.exec.8 — `mkdocs build --strict` + click-through.**
+    Verify no dead links. Click each role page from the new Home,
+    and each library link from the role pages.
+  - [ ] **Q.2.b.exec.9 — Commit + tick PLAN Q.2.b.**
+
+  ### Q.2.c.exec — Screenshot pipeline at 1280×900 + collapsed-by-default
+
+  User picks: 1280×900 viewport. Screenshot sections collapsed
+  by default wherever possible.
+
+  - [ ] **Q.2.c.exec.1 — Screenshot CLI / extension.** Add a
+    `quicksight-gen export screenshots --app <APP> --viewport
+    1280x900 -o <DIR>` command that uses ScreenshotHarness
+    against deployed apps. Replaces ad-hoc scripts in `scripts/`
+    that were AR/PR-specific.
+  - [ ] **Q.2.c.exec.2 — Capture for all 4 deployed apps.** Run
+    against PG-deployed dashboards (canonical). Output ~40
+    screenshots (4 apps × ~10 sheets) at 1280×900. Land them in
+    `docs/walkthroughs/screenshots/` (or new path TBD by Shape C
+    layout).
+  - [ ] **Q.2.c.exec.3 — Collapse pattern.** Pick the mkdocs-
+    material syntax: either `<details><summary>` raw HTML, or
+    `??? note "Screenshot"` admonition (folds by default). Apply
+    to one walkthrough as the pilot to validate render.
+  - [ ] **Q.2.c.exec.4 — Sweep existing screenshot embeds.** Find
+    every `![…](…)` referencing a screenshot in handbook + walk-
+    through pages, wrap in the chosen collapse pattern. Likely
+    a sed-style replace.
+  - [ ] **Q.2.c.exec.5 — Visual review.** Open the rendered site;
+    confirm collapse defaults work + re-screenshot any sheet
+    that looks bad at the new viewport (a screenshot might need
+    a tall override if a visual gets cut).
+  - [ ] **Q.2.c.exec.6 — Commit + tick PLAN Q.2.c.**
 
 - [ ] **Q.2.c — Re-screenshot with sane viewport.** Meta-problem from PLAN: screenshots are all way too tall (avoiding scroll-cutoff but at the cost of readability). Pick a viewport size that works for both desktop reading + reasonable scroll height (likely 1280×900 or 1440×1080). Run `screenshot_harness.py` for every app at the new viewport. Replaces the existing per-app screenshot fleet.
 
