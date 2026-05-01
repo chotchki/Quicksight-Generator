@@ -324,11 +324,8 @@ Order the meta sweeps first so per-app fixes inherit them:
 
 **Smell underneath:** the IA was built around 4 separate apps (PR, AR, Investigation, Executives) and the L1+L2FT consolidation collapsed PR+AR into one operator dashboard without re-shaping the doc tree. Customization handbook + ETL guide still talk about apps as separate documentation surfaces, with orphan "GL Reconciliation Handbook" / "Payment Reconciliation Handbook" links scattered across `customization.md` / `etl.md` / `investigation.md`. Reference vs Walkthrough vs Concept boundaries blur.
 
-- [ ] **Q.2.a — Mechanical cleanup** (~30 min, no IA changes):
-  - Drop stale AR/PR refs in `handbook/customization.md` (lines 54-55, 234-237, plus the "Phase K (AR Exceptions redesign)" stale-phase marker at line 51).
-  - Drop stale AR/PR refs in `handbook/etl.md` (lines 19, 43, 64, 153-154 — including the dead `demo etl-example payment-recon` / `account-recon` commands).
-  - Drop orphan handbook links in `handbook/investigation.md` (lines 130, 133).
-  - Fix 3 "Schema v3" link-text mislabels that point to `Schema_v6.md` (`etl.md:49,165`, `customization.md:223`).
+- [x] **Q.2.a — Mechanical cleanup** (~30 min, no IA changes):
+  - Most targeted refs already cleaned by M.4.9 / O.1.j-l sweeps. Surviving stale refs were two PR/AR comparison sentences in `handbook/investigation.md` (lines 22, 35) — fixed in commit `bba7d20`. Same commit trimmed CLAUDE.md ~48% (332→178 lines) of stale dataset listings, deleted-app refs, and phase archaeology.
 
 - [ ] **Q.2.b — IA review (plan-mode first).** Read every nav entry end-to-end, write "what's where today" map, propose 2-3 IA shapes with tradeoffs (e.g., role-onramp-first vs reference-first; merge handbook + concepts vs keep split). User picks; then execute.
 
@@ -412,11 +409,10 @@ Order the meta sweeps first so per-app fixes inherit them:
     `docs/index.md`'s "what apps ship + all sections overview"
     structure with role-picker primary + library-shelves
     secondary. Done; mkdocs --strict clean.
-  - [ ] **Q.2.b.exec.2 — Nav reorder (mkdocs.yml).** Move "For
-    Your Role" to first nav position (currently 2nd, after
-    Home). Add comments noting Shape C frame + Shape B
-    transition path. Confirm libraries (Concepts / Background /
-    Walkthroughs / Reference / API) stay accessible.
+  - [x] **Q.2.b.exec.2 — Nav reorder (mkdocs.yml).** For Your
+    Role moved to nav position 1; Home (role-picker landing)
+    now position 2. Shape C/B framing comments added at the nav
+    block top. Libraries unchanged. mkdocs build --strict clean.
   - [ ] **Q.2.b.exec.3 — `for-your-role/index.md` disposition.**
     Currently mirrors Home shape; with Home doing role-pick the
     section index is redundant. Decide: keep terse (re-direct to
