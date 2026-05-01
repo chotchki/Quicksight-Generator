@@ -332,6 +332,70 @@ Order the meta sweeps first so per-app fixes inherit them:
 
 - [ ] **Q.2.b — IA review (plan-mode first).** Read every nav entry end-to-end, write "what's where today" map, propose 2-3 IA shapes with tradeoffs (e.g., role-onramp-first vs reference-first; merge handbook + concepts vs keep split). User picks; then execute.
 
+  ### Q.2.b.audit — What's where today
+
+  7 top-level nav sections, ~60 pages. Page counts in parens.
+
+  - **Home** (1) — landing.
+  - **For Your Role** (5+1) — onramp pages: operator, integrator, ETL engineer, executive, compliance analyst.
+  - **Concepts** (12+2) — Accounting (6 patterns: double-entry / escrow / sweep / vouchering / consistency / loops) + L2 model (6 primitives: account / template / rail / transfer-template / chain / limit-schedule).
+  - **Background** (5+1) — institution tour: accounts / rails / transfer-templates / chains / limit-schedules. Persona/fixture-flavored (Sasquatch the bank).
+  - **Walkthroughs** (30+1) — three buckets: L1 Sheets (11 per-sheet pages), Investigation (4 question-shaped), ETL (6 how-do-I), Customization (9 how-do-I).
+  - **Reference** (8+1) — handbook/* (4 dashboards + ETL + Customization), Schema_v6, L1_Invariants.
+  - **API Reference** (7+1) — SDK / tree primitive surface (App / Visuals / Data / Filters / Drills / common foundations).
+
+  ### Q.2.b.smell — Boundary blur observations
+
+  1. **Reference + Walkthroughs duplicate doors.** `handbook/etl.md` lives in Reference but its child walkthroughs/etl/* live in Walkthroughs. Same for Customization. Readers hit the same topic twice from different sections, often without realizing.
+  2. **L1 Sheets pages are reference dressed as walkthrough.** Each per-sheet page describes *what's on the sheet* (KPIs, columns, drills) — that's reference content, not "how do I X". They sit under Walkthroughs because they shipped with the M.2b walkthrough lift, not because they answer questions.
+  3. **Background = fixture flavor with too much real estate.** "Institution tour" is one paragraph of "this is the bank" plus 5 list-of-things pages. Useful context but it's a top-level section claiming equal weight with Concepts / Reference. Most readers will never click it.
+  4. **For Your Role is meta-IA, not a section.** It cross-cuts every other section (operator wants L1 reference + concepts/accounting; integrator wants L2 reference + customization walkthroughs). Currently flat-listed as just-another-section; the role onramp shape is different from the rest.
+  5. **Concepts/Accounting vs Concepts/L2 — two distinct things lumped as one.** Accounting concepts (double-entry, escrow, sweep) are universal patterns; L2 model concepts are this codebase's primitives. Different audiences, different durability.
+
+  ### Q.2.b.shapes — Three IA proposals
+
+  **Shape A: Boundary cleanup, keep the current frame** (smallest change)
+
+  Hierarchy stays 6-7 sections; only cross-section moves happen.
+
+  - Move L1 Sheets per-sheet pages from Walkthroughs → Reference, nested under "L1 Reconciliation Dashboard" (so the reference tree becomes: dashboard overview → per-sheet drilldowns).
+  - Merge Background → Concepts as a new "Background" subsection (or drop Background and inline its content into the L2 model concepts, since each Background page mirrors a concept primitive).
+  - Walkthroughs stays question-shaped only (Investigation / ETL / Customization).
+  - Reference grows: per-app handbooks now have nested per-sheet drilldown pages.
+
+  Tradeoffs: Lowest churn (no rewrites, just nav re-shuffling). Doesn't address "two doors to ETL/Customization" — handbook/etl.md still in Reference, walkthroughs/etl/* still in Walkthroughs, just no longer surrounded by L1 Sheets noise.
+
+  **Shape B: Question vs Reference split** (front-of-house redesign)
+
+  Compresses 7 → 4 top sections around "what to do" vs "what it is".
+
+  - **For Your Role** — unchanged (onramp).
+  - **Quickstarts** — current Walkthroughs section (Inv questions / ETL / Customization), with the L1-sheet and Investigation handbook pages re-purposed as the lead-in / "where to start" for each cluster.
+  - **Reference** — handbooks (per-dashboard / per-sheet) + Schema_v6 + L1_Invariants + Background scenario + Concepts (Accounting + L2 model). Single shelf for "what is X".
+  - **API Reference** — unchanged.
+
+  Tradeoffs: Cleanest "what to do" vs "what is X" mental model. Reference becomes a fat section (~30 pages incl. Concepts + Background); needs a strong Reference index page to navigate. Loses the Concepts top-level — readers hunting for "double-entry posting" need to know it's under Reference.
+
+  **Shape C: Audience-first home page** (For-Your-Role becomes the front door)
+
+  Currently the For Your Role pages are dead-end onramps; this shape elevates them to be the primary navigation surface.
+
+  - **Home** — replaced by a curated "pick your role" landing that branches to the 5 role pages.
+  - Each **Role page** is a handcrafted onramp that links into Walkthroughs / Reference / Concepts in the order that role needs.
+  - Walkthroughs / Reference / Concepts / API Reference become "library shelves" the role pages curate from. They're still navigable directly.
+
+  Tradeoffs: Most reader-friendly for first-time visitors who know their role. Maintenance cost: 5 role pages × ~30 walkthroughs + 8 reference docs + 12 concepts = curating 200+ links by hand. Drift risk when a new walkthrough lands and no role page learns about it.
+
+  ### Recommendation
+
+  **Shape A** if you want to keep iterating on content without restructure churn — lowest cost, addresses the L1 Sheets misclassification, doesn't solve the ETL/Customization double-door issue.
+
+  **Shape B** if you want to address the "two doors" smell and accept that Reference becomes a single shelf — best long-term mental model but a one-time bigger commit.
+
+  **Shape C** if the next 6 months will see meaningful onboarding traffic (new integrators, evaluators) — pays for itself in onboarding clarity but only if the 5 role pages get the curation effort they deserve.
+
+  My pick if forced: **Shape A** for Q.2.b (low-cost cleanup), with Shape B/C deferred to a future phase if onboarding becomes a measured pain point.
+
 - [ ] **Q.2.c — Re-screenshot with sane viewport.** Meta-problem from PLAN: screenshots are all way too tall (avoiding scroll-cutoff but at the cost of readability). Pick a viewport size that works for both desktop reading + reasonable scroll height (likely 1280×900 or 1440×1080). Run `screenshot_harness.py` for every app at the new viewport. Replaces the existing per-app screenshot fleet.
 
 - [ ] **Q.2.d — Operator/Integrator onramp prose pass.** Address PLAN notes:
