@@ -70,19 +70,19 @@ flags those natural transitions at the bottom.
 <p class="snb-section-label">One question per sheet — pick by the shape of your question</p>
 
 <div class="snb-card-grid">
-  <a class="snb-card" href="../walkthroughs/investigation/who-is-getting-money-from-too-many-senders/">
+  <a class="snb-card" href="../../walkthroughs/investigation/who-is-getting-money-from-too-many-senders/">
     <h3>Who's Getting Money from Too Many Senders?</h3>
     <p>Rank recipients by their distinct sender count. Drag the threshold slider to control where "too many" starts. The fanout-cluster shape — many small inbounds → one account — is a classic structuring footprint.</p>
   </a>
-  <a class="snb-card" href="../walkthroughs/investigation/which-pair-just-spiked/">
+  <a class="snb-card" href="../../walkthroughs/investigation/which-pair-just-spiked/">
     <h3>Which Sender → Recipient Pair Just Spiked?</h3>
     <p>Rolling 2-day SUM per (sender, recipient) pair vs. the population mean / standard deviation, exposed as a per-row z-score. σ slider sets the cutoff; the distribution chart shows the full population so the cutoff lands in context.</p>
   </a>
-  <a class="snb-card" href="../walkthroughs/investigation/where-did-this-transfer-originate/">
+  <a class="snb-card" href="../../walkthroughs/investigation/where-did-this-transfer-originate/">
     <h3>Where Did This Transfer Actually Originate?</h3>
     <p>Pick a chain root from the dropdown — the Sankey renders that chain's source-to-target ribbons; the hop-by-hop table beside it lists every edge ordered by depth. Layering chains and split-deposit funnels surface here.</p>
   </a>
-  <a class="snb-card" href="../walkthroughs/investigation/what-does-this-accounts-money-network-look-like/">
+  <a class="snb-card" href="../../walkthroughs/investigation/what-does-this-accounts-money-network-look-like/">
     <h3>What Does This Account's Money Network Look Like?</h3>
     <p>Pick an anchor account — the LEFT Sankey shows counterparties sending money INTO the anchor; the RIGHT Sankey shows the anchor sending money OUT. Right-click any table row to walk the anchor to the counterparty and re-render around the new center.</p>
   </a>

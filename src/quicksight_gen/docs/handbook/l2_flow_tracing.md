@@ -29,22 +29,22 @@ Five interactive sheets, each one a different lens on the
 declaration-vs-runtime gap.
 
 <div class="snb-card-grid">
-  <a class="snb-card" href="#rails">
+  <div class="snb-card">
     <h3>Rails</h3>
     <p>Postings ledger filtered by date range, rail, status, bundle status, and a cascading metadata-key + value pair. The "are any rails dead?" surface — pick a rail, see if it fired.</p>
-  </a>
-  <a class="snb-card" href="#chains">
+  </div>
+  <div class="snb-card">
     <h3>Chains</h3>
     <p>One row per declared parent-firing transfer. <code>completion_status</code> reads <code>Complete</code> when every Required child fired against the parent's <code>transfer_id</code>, <code>Incomplete</code> if any Required child is missing, <code>No Required Children</code> when only optional / XOR children are declared.</p>
-  </a>
-  <a class="snb-card" href="#transfer-templates">
+  </div>
+  <div class="snb-card">
     <h3>Transfer Templates</h3>
     <p>Sankey of multi-leg flow per declared TransferTemplate: debit legs flow into the template node, credit legs flow out to destination accounts. Per-instance balance table beside the Sankey reads <code>Balanced</code> / <code>Imbalanced</code> against the template's <code>ExpectedNet</code>.</p>
-  </a>
-  <a class="snb-card" href="#l2-exceptions">
+  </div>
+  <div class="snb-card">
     <h3>L2 Exceptions</h3>
     <p>All six L2 hygiene checks unified into one row-per-violation view. KPI = total open violations; bar chart breaks down by <code>check_type</code>; the detail table sorts by magnitude (descending) and right-clicks drill back to the offending Rail or Chain row.</p>
-  </a>
+  </div>
 </div>
 
 A separate **Getting Started** sheet anchors the dashboard with the L2

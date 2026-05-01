@@ -61,15 +61,15 @@ new persona work or dashboard redesigns:
 <p class="snb-section-label">Get the dashboards landed against your data</p>
 
 <div class="snb-card-grid">
-  <a class="snb-card" href="../walkthroughs/customization/how-do-i-map-my-database/">
+  <a class="snb-card" href="../../walkthroughs/customization/how-do-i-map-my-database/">
     <h3>How do I map my production database to the two base tables?</h3>
     <p>Pattern-level mapping from your source system to <code>transactions</code> + <code>daily_balances</code>. The first walkthrough a new product owner reads.</p>
   </a>
-  <a class="snb-card" href="../walkthroughs/customization/how-do-i-configure-the-deploy/">
+  <a class="snb-card" href="../../walkthroughs/customization/how-do-i-configure-the-deploy/">
     <h3>How do I configure the deploy for my AWS account?</h3>
     <p><code>config.yaml</code> fields, environment-variable overrides, production datasource ARN vs. demo connection string, principals + tags + naming prefix.</p>
   </a>
-  <a class="snb-card" href="../walkthroughs/customization/how-do-i-run-my-first-deploy/">
+  <a class="snb-card" href="../../walkthroughs/customization/how-do-i-run-my-first-deploy/">
     <h3>How do I run my first deploy?</h3>
     <p>The <code>generate</code> + <code>deploy</code> + <code>cleanup</code> loop, idempotent delete-then-create, dry-run before live, <code>ManagedBy</code> tag scoping.</p>
   </a>
@@ -80,19 +80,19 @@ new persona work or dashboard redesigns:
 <p class="snb-section-label">Make the product fit your environment</p>
 
 <div class="snb-card-grid">
-  <a class="snb-card" href="../walkthroughs/customization/how-do-i-reskin-the-dashboards/">
+  <a class="snb-card" href="../../walkthroughs/customization/how-do-i-reskin-the-dashboards/">
     <h3>How do I reskin the dashboards for my brand?</h3>
     <p>Theme preset registry, color tokens (accent / primary_fg / link_tint), font sizes, the <code>analysis_name_prefix</code> for demo-vs-prod naming.</p>
   </a>
-  <a class="snb-card" href="../walkthroughs/customization/how-do-i-swap-dataset-sql/">
+  <a class="snb-card" href="../../walkthroughs/customization/how-do-i-swap-dataset-sql/">
     <h3>How do I swap the SQL behind a dataset without breaking the visuals?</h3>
     <p>The <code>DatasetContract</code> binding contract, the contract test that locks projection-vs-contract, when SQL swap is safe and when it forces a contract change.</p>
   </a>
-  <a class="snb-card" href="../walkthroughs/customization/how-do-i-add-a-metadata-key/">
+  <a class="snb-card" href="../../walkthroughs/customization/how-do-i-add-a-metadata-key/">
     <h3>How do I add an app-specific metadata key?</h3>
     <p>Reading metadata from dataset SQL, when to surface a key as a column vs. a filter, cross-link to the ETL-side walkthrough for the write path.</p>
   </a>
-  <a class="snb-card" href="../walkthroughs/customization/how-do-i-extend-canonical-values/">
+  <a class="snb-card" href="../../walkthroughs/customization/how-do-i-extend-canonical-values/">
     <h3>How do I extend the schema with a new transfer_type or account_type?</h3>
     <p>Adding to the canonical value lists, downstream impact on filter dropdowns, why no new tables are needed.</p>
   </a>
@@ -103,7 +103,7 @@ new persona work or dashboard redesigns:
 <p class="snb-section-label">Catch regressions before they ship</p>
 
 <div class="snb-card-grid">
-  <a class="snb-card" href="../walkthroughs/customization/how-do-i-test-my-customization/">
+  <a class="snb-card" href="../../walkthroughs/customization/how-do-i-test-my-customization/">
     <h3>How do I run the test suite against my customized dataset SQL?</h3>
     <p>pytest layout, the <code>DatasetContract</code> assertion pattern, when to add an e2e test vs. a unit test for your custom SQL.</p>
   </a>
