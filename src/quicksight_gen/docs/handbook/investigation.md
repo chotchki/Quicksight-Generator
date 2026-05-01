@@ -19,8 +19,10 @@ shape: pose a question about a person, a pair, or a transfer; pull
 the rows that answer it; preserve the chain that ties evidence back
 to the underlying postings.
 
-Unlike PR (a four-stage pipeline) and AR (fourteen exception checks
-read in a fixed morning rotation), Investigation is **question-shaped**.
+Unlike L1 Reconciliation (a continuous matview-driven exception
+surface read in a fixed morning rotation) and L2 Flow Tracing (the
+integrator's runtime evidence map for every declared Rail / Chain /
+TransferTemplate), Investigation is **question-shaped**.
 Four sheets, four questions, in no particular order:
 
 - *Recipient Fanout* — who is receiving money from too many distinct
@@ -32,8 +34,9 @@ Four sheets, four questions, in no particular order:
 - *Account Network* — what does this account's money network look
   like, on either side?
 
-The dashboard reads from the same `transactions` base table PR and AR
-read, plus two materialized views (`inv_pair_rolling_anomalies` and
+The dashboard reads from the same `<prefix>_transactions` base table
+that L1 Reconciliation and L2 Flow Tracing read, plus two
+materialized views (`inv_pair_rolling_anomalies` and
 `inv_money_trail_edges`) that pre-compute the rolling-window
 statistics and recursive chain walk respectively. See
 [Materialized views](../Schema_v6.md#the-layered-model) for the
