@@ -413,10 +413,11 @@ Order the meta sweeps first so per-app fixes inherit them:
     Role moved to nav position 1; Home (role-picker landing)
     now position 2. Shape C/B framing comments added at the nav
     block top. Libraries unchanged. mkdocs build --strict clean.
-  - [ ] **Q.2.b.exec.3 — `for-your-role/index.md` disposition.**
-    Currently mirrors Home shape; with Home doing role-pick the
-    section index is redundant. Decide: keep terse (re-direct to
-    role pages) or drop and use the section sidebar directly.
+  - [x] **Q.2.b.exec.3 — `for-your-role/index.md` disposition.**
+    User pick: Option A (keep terse). Page gutted to one-sentence
+    pointer at Home for the curated picker plus a compact list of
+    the 5 role pages. Section URL `/for-your-role/` stays stable;
+    no inbound-link breakage.
   - [ ] **Q.2.b.exec.4 — Role page audit for Shape C fit.** Read
     each role page for "primary navigation surface" fitness.
     Operator + Integrator already touched in Q.2.d. Sanity-check
