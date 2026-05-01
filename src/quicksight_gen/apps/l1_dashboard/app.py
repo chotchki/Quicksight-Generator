@@ -548,9 +548,9 @@ def _populate_drift_sheet(
             ds_drift["account_role"].dim(),
             ds_drift["account_parent_role"].dim(),
             leaf_day_col,
-            ds_drift["stored_balance"].numerical(),
-            ds_drift["computed_balance"].numerical(),
-            ds_drift["drift"].numerical(),
+            ds_drift["stored_balance"].numerical(currency=True),
+            ds_drift["computed_balance"].numerical(currency=True),
+            ds_drift["drift"].numerical(currency=True),
         ],
         actions=[
             _l1_drill(
@@ -588,9 +588,9 @@ def _populate_drift_sheet(
             ds_ledger_drift["account_name"].dim(),
             ds_ledger_drift["account_role"].dim(),
             parent_day_col,
-            ds_ledger_drift["stored_balance"].numerical(),
-            ds_ledger_drift["computed_balance"].numerical(),
-            ds_ledger_drift["drift"].numerical(),
+            ds_ledger_drift["stored_balance"].numerical(currency=True),
+            ds_ledger_drift["computed_balance"].numerical(currency=True),
+            ds_ledger_drift["drift"].numerical(currency=True),
         ],
         actions=[
             _l1_drill(
@@ -734,7 +734,7 @@ def _populate_overdraft_sheet(
             ds_overdraft["account_role"].dim(),
             ds_overdraft["account_parent_role"].dim(),
             day_col,
-            ds_overdraft["stored_balance"].numerical(),
+            ds_overdraft["stored_balance"].numerical(currency=True),
         ],
         actions=[
             _l1_drill(
@@ -809,7 +809,7 @@ def _populate_todays_exceptions_sheet(
     # magnitude DESC so the biggest variances surface first. Drills:
     # left-click → Drift (back-toward per-invariant source); right-click
     # menu → Daily Statement (forward into the per-account-day walk).
-    magnitude_col = ds["magnitude"].numerical()
+    magnitude_col = ds["magnitude"].numerical(currency=True)
     account_col = ds["account_id"].dim()
     business_day_col = ds["business_day"].date()
     sheet.layout.row(height=_TABLE_ROW_SPAN).add_table(
@@ -947,8 +947,8 @@ def _populate_limit_breach_sheet(
             ds_lb["account_parent_role"].dim(),
             day_col,
             ds_lb["transfer_type"].dim(),
-            ds_lb["outbound_total"].numerical(),
-            ds_lb["cap"].numerical(),
+            ds_lb["outbound_total"].numerical(currency=True),
+            ds_lb["cap"].numerical(currency=True),
         ],
         actions=[
             _l1_drill(
@@ -1086,7 +1086,7 @@ def _populate_pending_aging_sheet(
             transfer_col,
             ds["transfer_type"].dim(),
             ds["rail_name"].dim(),
-            ds["amount_money"].numerical(),
+            ds["amount_money"].numerical(currency=True),
             ds["amount_direction"].dim(),
             ds["posting"].date(),
             Dim(ds, aging_bucket),
@@ -1175,7 +1175,7 @@ def _populate_unbundled_aging_sheet(
             transfer_col,
             ds["transfer_type"].dim(),
             ds["rail_name"].dim(),
-            ds["amount_money"].numerical(),
+            ds["amount_money"].numerical(currency=True),
             ds["amount_direction"].dim(),
             ds["posting"].date(),
             Dim(ds, aging_bucket),
@@ -1257,7 +1257,7 @@ def _populate_supersession_audit_sheet(
             ds_tx["transfer_id"].dim(),
             ds_tx["transfer_type"].dim(),
             ds_tx["rail_name"].dim(),
-            ds_tx["amount_money"].numerical(),
+            ds_tx["amount_money"].numerical(currency=True),
             ds_tx["amount_direction"].dim(),
             ds_tx["status"].dim(),
             ds_tx["posting"].date(),
@@ -1288,7 +1288,7 @@ def _populate_supersession_audit_sheet(
             ds_db["supersedes"].dim(),
             ds_db["business_day_start"].date(),
             ds_db["business_day_end"].date(),
-            ds_db["money"].numerical(),
+            ds_db["money"].numerical(currency=True),
         ],
         conditional_formatting=[
             CellAccentText(on=db_account_col, color=accent),
@@ -1333,7 +1333,7 @@ def _populate_transactions_sheet(
             transfer_col,
             ds_tx["transfer_type"].dim(),
             ds_tx["rail_name"].dim(),
-            ds_tx["amount_money"].numerical(),
+            ds_tx["amount_money"].numerical(currency=True),
             ds_tx["amount_direction"].dim(),
             ds_tx["status"].dim(),
             ds_tx["origin"].dim(),
@@ -1422,7 +1422,7 @@ def _populate_daily_statement_sheet(
             ds_txn["transaction_id"].dim(),
             transfer_col,
             ds_txn["transfer_type"].dim(),
-            ds_txn["amount_money"].numerical(),
+            ds_txn["amount_money"].numerical(currency=True),
             ds_txn["amount_direction"].dim(),
             ds_txn["status"].dim(),
             ds_txn["origin"].dim(),

@@ -139,9 +139,13 @@ class Column:
             field_id=field_id,
         )
 
-    def numerical(self, *, field_id: str | AutoResolved = AUTO) -> Dim:
+    def numerical(
+        self, *, field_id: str | AutoResolved = AUTO, currency: bool = False,
+    ) -> Dim:
         from quicksight_gen.common.tree.fields import Dim
-        return Dim.numerical(self.dataset, self, field_id=field_id)
+        return Dim.numerical(
+            self.dataset, self, field_id=field_id, currency=currency,
+        )
 
     def sum(
         self, *, field_id: str | AutoResolved = AUTO, currency: bool = False,

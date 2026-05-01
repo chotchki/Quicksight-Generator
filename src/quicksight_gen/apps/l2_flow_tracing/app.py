@@ -604,7 +604,7 @@ def _populate_rails_sheet(
             ds_postings["rail_name"].dim(),
             ds_postings["transfer_id"].dim(),
             ds_postings["account_name"].dim(),
-            ds_postings["amount_money"].numerical(),
+            ds_postings["amount_money"].numerical(currency=True),
             ds_postings["amount_direction"].dim(),
             ds_postings["status"].dim(),
             ds_postings["bundle_status"].dim(),
@@ -778,7 +778,7 @@ def _populate_chains_sheet(
             ds_chain_instances["completion_status"].dim(),
             ds_chain_instances["required_fired"].numerical(),
             ds_chain_instances["required_total"].numerical(),
-            ds_chain_instances["parent_amount_money"].numerical(),
+            ds_chain_instances["parent_amount_money"].numerical(currency=True),
             ds_chain_instances["parent_status"].dim(),
         ],
     )
@@ -1003,9 +1003,9 @@ def _populate_transfer_templates_sheet(
             ds_tt_instances["template_name"].dim(),
             ds_tt_instances["transfer_id"].dim(),
             ds_tt_instances["completion_status"].dim(),
-            ds_tt_instances["actual_net"].numerical(),
-            ds_tt_instances["expected_net"].numerical(),
-            ds_tt_instances["net_diff"].numerical(),
+            ds_tt_instances["actual_net"].numerical(currency=True),
+            ds_tt_instances["expected_net"].numerical(currency=True),
+            ds_tt_instances["net_diff"].numerical(currency=True),
             ds_tt_instances["leg_count"].numerical(),
         ],
     )
@@ -1186,7 +1186,7 @@ def _populate_l2_exceptions_sheet(
     # or chain parent (Unmatched Transfer Type, Dead Limit Schedules)
     # land an empty destination — clear "this drill doesn't apply"
     # signal.
-    magnitude_col = ds["magnitude"].numerical()
+    magnitude_col = ds["magnitude"].numerical(currency=True)
     entity_a_col = ds["entity_a"].dim()
     sheet.layout.row(height=14).add_table(
         width=36,

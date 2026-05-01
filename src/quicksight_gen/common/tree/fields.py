@@ -91,6 +91,13 @@ class Dim:
     kind: DimKind = "categorical"
     date_granularity: TimeGranularity | None = field(default=None, kw_only=True)
     field_id: str | AutoResolved = field(default=AUTO, kw_only=True)
+    # Q.1.a.7 — currency=True emits a USD CurrencyDisplayFormatConfiguration
+    # on the underlying NumericalDimensionField (row-level money columns
+    # in tables typically use Dim.numerical, not Measure.sum, since they
+    # show the raw value rather than an aggregate). Only valid for
+    # ``kind="numerical"`` — money never makes sense as a categorical
+    # axis or a date axis. Asserted at emit time.
+    currency: bool = field(default=False, kw_only=True)
 
     @classmethod
     def date(
@@ -111,10 +118,11 @@ class Dim:
     @classmethod
     def numerical(
         cls, dataset: Dataset, column: ColumnRef,
-        *, field_id: str | AutoResolved = AUTO,
+        *, field_id: str | AutoResolved = AUTO, currency: bool = False,
     ) -> Dim:
         return cls(
-            dataset=dataset, column=column, kind="numerical", field_id=field_id,
+            dataset=dataset, column=column, kind="numerical",
+            field_id=field_id, currency=currency,
         )
 
     def calc_field(self) -> CalcField | None:
@@ -142,8 +150,13 @@ class Dim:
             return DimensionField(
                 NumericalDimensionField=NumericalDimensionField(
                     FieldId=self.field_id, Column=col,
+                    FormatConfiguration=_USD_FORMAT if self.currency else None,
                 ),
             )
+        assert not self.currency, (
+            f"Dim(currency=True) is only valid for kind='numerical', not "
+            f"{self.kind!r} — money values aren't categorical or date axes."
+        )
         return DimensionField(
             CategoricalDimensionField=CategoricalDimensionField(
                 FieldId=self.field_id, Column=col,

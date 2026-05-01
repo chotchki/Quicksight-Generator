@@ -58,6 +58,7 @@ class NumericalDimensionField:
     FieldId: str
     Column: ColumnIdentifier
     HierarchyId: str | None = None
+    FormatConfiguration: NumberFormatConfiguration | None = None
 
 
 @dataclass
