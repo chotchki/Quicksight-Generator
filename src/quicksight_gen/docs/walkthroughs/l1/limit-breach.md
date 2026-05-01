@@ -13,7 +13,8 @@ transfer_type)`.
 Each row is one violation. The `outbound_total` and `cap` columns sit
 side-by-side so the magnitude of the breach is readable in-line.
 
-![Limit Breach](../screenshots/l1/l1-sheet-limit-breach.png)
+??? example "Screenshot"
+    ![Limit Breach](../screenshots/l1/l1-sheet-limit-breach.png)
 
 ## When to use it
 

@@ -14,7 +14,8 @@ Sorted by `posting DESC` so the most recent activity sits at the
 top. The sheet's value is "show me every leg + filter to the slice
 I care about" — no KPIs above the table, just dropdowns.
 
-![Transactions](../screenshots/l1/l1-sheet-transactions.png)
+??? example "Screenshot"
+    ![Transactions](../screenshots/l1/l1-sheet-transactions.png)
 
 ## When to use it
 

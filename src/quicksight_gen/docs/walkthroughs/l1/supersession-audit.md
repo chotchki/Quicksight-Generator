@@ -19,7 +19,8 @@ Reads from the BASE tables (`<prefix>_transactions`,
 `<prefix>_daily_balances`), not the Current* matviews — by
 definition Current* hides the prior entries we want to audit here.
 
-![Supersession Audit](../screenshots/l1/l1-sheet-supersession-audit.png)
+??? example "Screenshot"
+    ![Supersession Audit](../screenshots/l1/l1-sheet-supersession-audit.png)
 
 ## When to use it
 

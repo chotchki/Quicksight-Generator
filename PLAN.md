@@ -475,10 +475,17 @@ Order the meta sweeps first so per-app fixes inherit them:
     extensions in mkdocs.yml. Pilot: drift.md walkthrough's screenshot
     embed wrapped — renders as `<details><summary>Screenshot</summary>`
     (collapsed by default, browser-native fold).
-  - [ ] **Q.2.c.exec.4 — Sweep existing screenshot embeds.** Find
-    every `![…](…)` referencing a screenshot in handbook + walk-
-    through pages, wrap in the chosen collapse pattern. Likely
-    a sed-style replace.
+  - [x] **Q.2.c.exec.4 — Sweep existing screenshot embeds.** 14
+    embeds across 12 files wrapped via Python regex sweep
+    (matches `^![alt](.../screenshots/...)$`, prepends
+    `??? example "Screenshot"` + indents the embed 4 spaces).
+    Pilot drift.md from exec.3 already wrapped, so total is 15
+    collapsed admonitions across 13 files: 11 L1 walkthroughs
+    (1 each) + handbook/l1.md (1) + the ETL daily-account-day
+    walkthrough (3, still pointing at stale `screenshots/ar/`
+    PNGs from the deleted AR app — content sweep deferred).
+    mkdocs build --strict clean; rendered HTML confirmed via
+    `grep '<details class="example"'` per page.
   - [ ] **Q.2.c.exec.5 — Visual review.** Open the rendered site;
     confirm collapse defaults work + re-screenshot any sheet
     that looks bad at the new viewport (a screenshot might need

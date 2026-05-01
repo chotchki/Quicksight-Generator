@@ -17,7 +17,8 @@ A role that spikes every Monday is a different problem than a role
 that spiked once after a deploy — the trend chart is what surfaces
 the difference.
 
-![Drift Timelines](../screenshots/l1/l1-sheet-drift-timelines.png)
+??? example "Screenshot"
+    ![Drift Timelines](../screenshots/l1/l1-sheet-drift-timelines.png)
 
 ## When to use it
 
