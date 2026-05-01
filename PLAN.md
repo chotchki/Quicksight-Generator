@@ -475,9 +475,14 @@ Order the meta sweeps first so per-app fixes inherit them:
 
 - [ ] **Q.2.c — Re-screenshot with sane viewport.** Meta-problem from PLAN: screenshots are all way too tall (avoiding scroll-cutoff but at the cost of readability). Pick a viewport size that works for both desktop reading + reasonable scroll height (likely 1280×900 or 1440×1080). Run `screenshot_harness.py` for every app at the new viewport. Replaces the existing per-app screenshot fleet.
 
-- [ ] **Q.2.d — Operator/Integrator onramp prose pass.** Address PLAN notes:
-  - Operator "what are we not asking you to learn" reword to stress L1 + L2 are important.
-  - Integrator onramp re-prose (currently sparse).
+- [x] **Q.2.d — Operator/Integrator onramp prose pass.** Both done in
+  prior phases (likely O.2 / Q.2.b.exec.4 wave). Operator page now has
+  a dedicated "What we *are* asking you to learn" section that
+  explicitly says "Two dashboards, not one. The L1 Reconciliation
+  Dashboard is your day-to-day surface — but L1 violations are
+  downstream symptoms..." which addresses the L1+L2 importance note.
+  Integrator page is fully fleshed out with the canonical Shape C
+  shape + an "When the L2 changes" workflow-loop section.
 
 - [ ] **Q.2.e — `mkdocs build --strict` + ship the regenerated site.**
 
