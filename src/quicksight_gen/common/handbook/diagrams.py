@@ -289,10 +289,12 @@ def render_l2_limit_schedule_focus(l2_instance: L2Instance) -> str | None:
 def render_dataflow(app_name: str) -> str:
     """Render which datasets feed which sheets for ``app_name``.
 
-    Reads the typed ``App`` tree's emitted analysis structure — every
-    Visual carries its dataset reference, so the dataflow is a fan-in
-    graph: datasets on the left, sheets on the right, edges from a
-    dataset to every sheet it feeds.
+    Reads the typed ``App`` tree — every Visual exposes ``datasets()``
+    which returns the set of Datasets its field-well leaves reference.
+    Resulting graph: dataset cylinders on the left, sheet boxes on the
+    right, an edge from a dataset to every sheet that has at least one
+    visual sourced from it. TextBox visuals (no field wells) are
+    skipped via ``hasattr(visual, "datasets")``.
     """
     from quicksight_gen.common.tree.structure import App
 
@@ -301,10 +303,14 @@ def render_dataflow(app_name: str) -> str:
     g.attr(rankdir="LR", nodesep="0.4", ranksep="1.2")
     g.attr("node", fontsize="11")
 
+    # Node IDs use single ``__`` (not ``::``) — graphviz's edge writer
+    # treats ``::`` inside a bare-word ID as a port-reference separator
+    # (``node:port``), which mangles `g.edge(...)` output and trips the
+    # downstream `dot` parser.
     datasets_seen: set[str] = set()
     edges: set[tuple[str, str]] = set()
     for sheet in app.analysis.sheets:
-        sheet_id = f"sheet::{sheet.name}"
+        sheet_id = f"sheet__{sheet.name}"
         g.node(
             sheet_id,
             sheet.name,
@@ -313,20 +319,23 @@ def render_dataflow(app_name: str) -> str:
             fillcolor="#e3f2fd",
         )
         for visual in sheet.visuals:
-            ds = getattr(visual, "dataset", None)
-            if ds is None:
+            # TextBox + future content-only visuals don't expose
+            # datasets(); skip them so the diagram only shows true
+            # data-bound wiring.
+            if not hasattr(visual, "datasets"):
                 continue
-            ds_id = f"ds::{ds.identifier}"
-            if ds_id not in datasets_seen:
-                g.node(
-                    ds_id,
-                    ds.identifier,
-                    shape="cylinder",
-                    style="filled",
-                    fillcolor="#fff3e0",
-                )
-                datasets_seen.add(ds_id)
-            edges.add((ds_id, sheet_id))
+            for ds in visual.datasets():
+                ds_id = f"ds__{ds.identifier}"
+                if ds_id not in datasets_seen:
+                    g.node(
+                        ds_id,
+                        ds.identifier,
+                        shape="cylinder",
+                        style="filled",
+                        fillcolor="#fff3e0",
+                    )
+                    datasets_seen.add(ds_id)
+                edges.add((ds_id, sheet_id))
 
     for ds_id, sheet_id in sorted(edges):
         g.edge(ds_id, sheet_id, color="#666666")
