@@ -458,11 +458,17 @@ Order the meta sweeps first so per-app fixes inherit them:
     Output goes to `DIR/<app-slug>/<sheet_id>.png`. F12 cluster
     warmup wired for both PG and Oracle URLs. Old per-app scripts
     in `scripts/` left in place; exec.4 sweep can retire them.
-  - [ ] **Q.2.c.exec.2 — Capture for all 4 deployed apps.** Run
-    against PG-deployed dashboards (canonical). Output ~40
-    screenshots (4 apps × ~10 sheets) at 1280×900. Land them in
-    `docs/walkthroughs/screenshots/` (or new path TBD by Shape C
-    layout).
+  - [x] **Q.2.c.exec.2 — Capture for all 4 deployed apps.** 29 PNGs
+    captured against the live qs-gen-postgres-sasquatch_pr deploy
+    at 1280x900: l1/ (12), exec/ (5), inv/ (6), l2ft/ (6). Two CLI
+    bug fixes surfaced and shipped in the same commit (52fbf45):
+    `wait_for_dashboard_loaded` was waiting for `networkidle` which
+    never fires (QS holds open WebSocket polling); CLI was using
+    outer cfg instead of `app_obj.cfg` for the dashboard ID prefix
+    (missing the L2 segment). **Known follow-up:** date-filtered
+    sheets render "no data" because the seed anchors at 2030-01-01
+    while "today" is 2026-05-01. exec.5 visual review will decide
+    whether to re-anchor seed or pass URL-param date overrides.
   - [ ] **Q.2.c.exec.3 — Collapse pattern.** Pick the mkdocs-
     material syntax: either `<details><summary>` raw HTML, or
     `??? note "Screenshot"` admonition (folds by default). Apply
