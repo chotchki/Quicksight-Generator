@@ -425,12 +425,10 @@ Order the meta sweeps first so per-app fixes inherit them:
     and each links outward to handbook + walkthroughs + concepts.
     Each reads like a standalone primary entry, not a sidebar
     onramp. No content changes needed.
-  - [ ] **Q.2.b.exec.5 — Cross-link audit.** Each library shelf
-    (Concepts overview, Walkthroughs overview, Reference
-    overview, etc.) should link back UP to "For Your Role" so
-    readers who arrive shelf-first know the curated paths exist.
-    Skip for Shape C → Shape B will collapse Background + add
-    other shelf-level links.
+  - [x] **Q.2.b.exec.5 — Cross-link audit.** Added one-line
+    "If you arrived here directly..." back-links at the top of
+    Concepts / Walkthroughs / Reference / API Reference overviews.
+    Background skipped per PLAN note (Shape B will absorb it).
   - [ ] **Q.2.b.exec.6 — Concepts split disposition.** Concepts
     has Accounting + L2 model lumped. Independent topics. Two
     paths: keep sub-tabs (current state, no work) or split into

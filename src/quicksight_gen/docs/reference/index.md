@@ -1,5 +1,8 @@
 # Reference
 
+*If you arrived here directly, the [role pages](../for-your-role/index.md)
+curate which handbooks each role uses day-to-day.*
+
 Per-app structural reference — what each sheet shows, which dataset
 backs it, which filters and drills are wired, and which L1 invariants
 each row represents.

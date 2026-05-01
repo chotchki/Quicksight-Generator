@@ -1,5 +1,9 @@
 # API Reference
 
+*Audience is the developer authoring a custom QuickSight app on the
+tree primitives — the [integrator role page](../for-your-role/integrator.md)
+is the upstream curated path.*
+
 Auto-generated reference for the Python API. The pages here cover the
 primitives an external author would import to build a QuickSight app
 against this codebase — the `common/` package surface plus the
