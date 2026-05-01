@@ -205,29 +205,37 @@ def harness_cfg(cfg: Config, harness_l2: L2Instance, harness_uid: str) -> Config
 
 @pytest.fixture
 def harness_db_conn(harness_cfg: Config):
-    """psycopg2 connection to the demo DB, with Aurora cold-start warmup.
+    """DB-API 2.0 connection to the demo DB, with cold-start warmup.
 
-    Connection is fixture-scoped (per-test) so each test gets its own
-    connection — concurrent tests don't share a connection that one
-    test's teardown might close out from under another. Yields the
-    connection; teardown drops every prefixed object the test created.
+    Branches on ``harness_cfg.dialect`` via ``common/db.connect_demo_db``
+    (P.9d): psycopg2 for Postgres, oracledb for Oracle. Connection is
+    fixture-scoped (per-test) so each test gets its own connection —
+    concurrent tests don't share a connection that one test's teardown
+    might close out from under another. Yields the connection; teardown
+    drops every prefixed object the test created.
 
     Aurora cold-start: the existing operational footgun (CLAUDE.md) is
     that Aurora Serverless V1's idle pause causes the first query to
-    fail. Issue ``SELECT 1`` immediately after connecting so the
-    cold-start hit lands on the warmup, not the first real
-    ``emit_schema`` apply.
+    fail. Issue ``SELECT 1 FROM dual`` (Oracle) / ``SELECT 1`` (Postgres)
+    immediately after connecting so the cold-start hit lands on the
+    warmup, not the first real ``emit_schema`` apply.
     """
-    psycopg2 = pytest.importorskip(
-        "psycopg2",
-        reason="harness needs psycopg2 (install via `pip install -e '.[demo]'`)",
-    )
     if harness_cfg.demo_database_url is None:
         pytest.skip("QS_GEN_DEMO_DATABASE_URL not set")
-    conn = psycopg2.connect(harness_cfg.demo_database_url)
+    from quicksight_gen.common.db import connect_demo_db
+    from quicksight_gen.common.sql import Dialect
+    try:
+        conn = connect_demo_db(harness_cfg)
+    except ImportError as exc:
+        pytest.skip(str(exc))
+    warmup_sql = (
+        "SELECT 1 FROM dual"
+        if harness_cfg.dialect is Dialect.ORACLE
+        else "SELECT 1"
+    )
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT 1")
+            cur.execute(warmup_sql)
             cur.fetchone()
         yield conn
     finally:
@@ -235,7 +243,10 @@ def harness_db_conn(harness_cfg: Config):
         # the prefixed objects (if any made it in) need to come out so
         # the next test doesn't see leftover state.
         try:
-            drop_prefixed_schema(conn, str(harness_cfg.l2_instance_prefix))
+            drop_prefixed_schema(
+                conn, str(harness_cfg.l2_instance_prefix),
+                dialect=harness_cfg.dialect,
+            )
         except Exception as exc:  # noqa: BLE001 — best-effort teardown
             print(
                 f"[harness] DB schema teardown failed for prefix "
@@ -246,7 +257,9 @@ def harness_db_conn(harness_cfg: Config):
 
 
 @pytest.fixture
-def harness_seeded(harness_db_conn: Any, harness_l2: L2Instance):
+def harness_seeded(
+    harness_db_conn: Any, harness_l2: L2Instance, harness_cfg: Config,
+):
     """Apply schema + seed + matview refresh; return the per-test
     handle the M.4.1.b–e harness body consumes (M.4.1.b).
 
@@ -283,7 +296,10 @@ def harness_seeded(harness_db_conn: Any, harness_l2: L2Instance):
         shape; M.4.1.f's failure dump consumes the same dict)
     """
     today = date.today()
-    scenario = apply_db_seed(harness_db_conn, harness_l2, today=today)
+    scenario = apply_db_seed(
+        harness_db_conn, harness_l2, today=today,
+        dialect=harness_cfg.dialect,
+    )
     return {
         "instance": harness_l2,
         "prefix": str(harness_l2.instance),

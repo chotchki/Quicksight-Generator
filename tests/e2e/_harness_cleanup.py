@@ -32,6 +32,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from quicksight_gen.common.sql import Dialect
+
 
 # QS resource types swept in dependency order: dashboards reference
 # analyses, analyses reference datasets, datasets reference datasources +
@@ -197,26 +199,37 @@ def _iter_themes(client: Any, account_id: str):
 # ---------------------------------------------------------------------------
 
 
-def drop_prefixed_schema(conn: Any, prefix: str) -> None:
+def drop_prefixed_schema(
+    conn: Any, prefix: str, *, dialect: Dialect = Dialect.POSTGRES,
+) -> None:
     """DROP every matview / view / table whose name starts with ``prefix_``.
 
-    Discovers objects via ``pg_matviews`` + ``pg_views`` + ``pg_tables``
-    introspection rather than a hand-maintained list — that way new
-    matviews added to ``schema.py`` get cleaned up automatically without
-    a parallel edit here.
+    Discovers objects via the dialect's catalog views (Postgres:
+    ``pg_matviews`` / ``pg_views`` / ``pg_tables``; Oracle:
+    ``USER_MVIEWS`` / ``USER_VIEWS`` / ``USER_TABLES``) rather than a
+    hand-maintained list — new matviews added to ``schema.py`` get
+    cleaned up automatically without a parallel edit here.
 
     Order matters: matviews first (L1 invariant matviews depend on the
-    ``current_*`` matviews), then plain views, then base tables. ``CASCADE``
-    on each DROP covers any dependent leftover (a matview that depends
-    on another matview drops both in one go).
+    ``current_*`` matviews), then plain views, then base tables.
+    ``CASCADE`` (Postgres) / ``CASCADE CONSTRAINTS PURGE`` (Oracle) on
+    each DROP covers any dependent leftover.
 
-    Only operates on objects in the current schema (typically ``public``).
-    Idempotent: if the prefix has nothing, the function is a no-op.
+    P.9d: dialect-aware so the e2e harness teardown works against
+    Oracle as well as Postgres. Postgres uses ``%s`` placeholders +
+    ``DROP ... IF EXISTS`` (built-in idempotency); Oracle uses ``:1``
+    bind syntax + a PL/SQL ``BEGIN EXCEPTION`` wrapper to swallow
+    ORA-942 / ORA-12003 (the missing-IF-EXISTS gap noted in PLAN P.9d).
     """
-    # The harness uses prefixes like `e2e_<instance>_<uid>`; pattern-match
-    # is `e2e_<instance>_<uid>_%` so we sweep the full L1+L2 surface.
     pattern = f"{prefix}_%"
 
+    if dialect is Dialect.POSTGRES:
+        _drop_prefixed_postgres(conn, pattern)
+    else:
+        _drop_prefixed_oracle(conn, pattern)
+
+
+def _drop_prefixed_postgres(conn: Any, pattern: str) -> None:
     with conn.cursor() as cur:
         # 1. Materialized views (most of the surface).
         cur.execute(
@@ -249,3 +262,62 @@ def drop_prefixed_schema(conn: Any, prefix: str) -> None:
         for name in tables:
             cur.execute(f"DROP TABLE IF EXISTS {name} CASCADE")
     conn.commit()
+
+
+def _drop_prefixed_oracle(conn: Any, pattern: str) -> None:
+    """Oracle equivalent of ``_drop_prefixed_postgres``.
+
+    Oracle has no ``DROP ... IF EXISTS``; per-object DROPs that race
+    with another teardown can ORA-942 (table) or ORA-12003 (matview).
+    Wrap each DROP in a PL/SQL block that swallows those codes so
+    parallel-test teardowns don't fight each other.
+    """
+    with conn.cursor() as cur:
+        # 1. Materialized views.
+        cur.execute(
+            "SELECT mview_name FROM USER_MVIEWS WHERE mview_name LIKE :1",
+            [pattern.upper()],
+        )
+        matviews = [row[0] for row in cur.fetchall()]
+        for name in matviews:
+            cur.execute(_oracle_safe_drop(
+                f"DROP MATERIALIZED VIEW {name}", ignore_codes=(-12003, -942),
+            ))
+
+        # 2. Plain views.
+        cur.execute(
+            "SELECT view_name FROM USER_VIEWS WHERE view_name LIKE :1",
+            [pattern.upper()],
+        )
+        views = [row[0] for row in cur.fetchall()]
+        for name in views:
+            cur.execute(_oracle_safe_drop(
+                f"DROP VIEW {name}", ignore_codes=(-942,),
+            ))
+
+        # 3. Base tables last.
+        cur.execute(
+            "SELECT table_name FROM USER_TABLES WHERE table_name LIKE :1",
+            [pattern.upper()],
+        )
+        tables = [row[0] for row in cur.fetchall()]
+        for name in tables:
+            cur.execute(_oracle_safe_drop(
+                f"DROP TABLE {name} CASCADE CONSTRAINTS PURGE",
+                ignore_codes=(-942,),
+            ))
+    conn.commit()
+
+
+def _oracle_safe_drop(
+    drop_stmt: str, *, ignore_codes: tuple[int, ...],
+) -> str:
+    """Wrap an Oracle DROP in a PL/SQL block that swallows the listed
+    "does not exist" SQLCODE values. Mirrors the helper in
+    ``common/sql/dialect.py``; lifted-by-copy here to keep the harness
+    cleanup independent of the schema-emit module."""
+    not_in = " AND ".join(f"SQLCODE != {c}" for c in ignore_codes)
+    return (
+        f"BEGIN EXECUTE IMMEDIATE '{drop_stmt}'; "
+        f"EXCEPTION WHEN OTHERS THEN IF {not_in} THEN RAISE; END IF; END;"
+    )

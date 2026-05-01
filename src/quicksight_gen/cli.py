@@ -781,113 +781,14 @@ def demo_apply(
     _apply_demo(config, output_dir, app, l2_instance_path=l2_instance_path)
 
 
-def _oracle_dsn(url: str) -> str:
-    """Translate a SQLAlchemy-style Oracle URL into an oracledb DSN.
-
-    Accepts either form:
-    - ``oracle+oracledb://user:pass@host:port/?service_name=XEPDB1``
-    - ``user/pass@host:port/XEPDB1`` (oracledb's native format)
-
-    Returns a string oracledb.connect() understands.
-    """
-    if url.startswith(("oracle://", "oracle+oracledb://")):
-        from urllib.parse import parse_qs, urlparse
-        parsed = urlparse(url)
-        user = parsed.username or ""
-        pw = parsed.password or ""
-        host = parsed.hostname or "localhost"
-        port = parsed.port or 1521
-        service = (
-            parse_qs(parsed.query).get("service_name", [None])[0]
-            or parsed.path.lstrip("/")
-            or "FREEPDB1"
-        )
-        return f"{user}/{pw}@{host}:{port}/{service}"
-    return url
-
-
-def _execute_script(cur, sql: str, *, dialect) -> None:
-    """Run a multi-statement SQL string against the cursor.
-
-    Postgres (psycopg2): the whole string in one execute call works.
-    Oracle (oracledb): cursor.execute requires single statements (not
-    PL/SQL blocks; not "; "-separated). Split + execute per-statement,
-    handling PL/SQL blocks (BEGIN…END;) as a unit.
-    """
-    from quicksight_gen.common.sql import Dialect
-    if dialect is Dialect.POSTGRES:
-        cur.execute(sql)
-        return
-    # Oracle: split on bare ";" outside PL/SQL blocks.
-    for i, stmt in enumerate(_split_oracle_script(sql)):
-        try:
-            cur.execute(stmt)
-        except Exception as e:
-            # Surface which statement (out of N) failed + show its first
-            # 200 chars so the failure is debuggable without re-emitting
-            # the full DDL script.
-            preview = stmt.strip()[:1500]
-            raise RuntimeError(
-                f"Oracle stmt #{i} failed ({type(e).__name__}: {e})\n"
-                f"  Preview: {preview}"
-            ) from e
-
-
-def _split_oracle_script(sql: str) -> list[str]:
-    """Split an Oracle-style script into individual statements.
-
-    Handles PL/SQL blocks (anything starting with ``BEGIN`` or
-    ``DECLARE`` and ending with ``END;``) as one unit; everything else
-    splits on bare ``;``.
-
-    Trailing-semicolon contract differs between the two:
-
-    - **PL/SQL blocks**: the ``;`` is part of the ``END;`` terminator
-      and Oracle's parser rejects the block without it
-      (PLS-00103 "encountered end-of-file"). Keep it.
-    - **Plain SQL statements**: ``oracledb.Cursor.execute`` rejects
-      a trailing ``;`` ("invalid character"). Strip it.
-    """
-    statements: list[str] = []
-    buffer: list[str] = []
-    in_plsql = False
-    for raw_line in sql.splitlines():
-        line = raw_line.rstrip()
-        # Strip the trailing ``-- comment`` before checking for the
-        # statement terminator; a ``;`` inside a SQL line-comment is
-        # commentary, not a statement boundary, and treating it as one
-        # falsely splits the next CREATE block off into a comment-only
-        # "statement" that Oracle rejects with ORA-00900.
-        code = line.split("--", 1)[0].rstrip()
-        stripped_code = code.strip()
-        if not in_plsql and stripped_code.upper().startswith(
-            ("BEGIN ", "DECLARE")
-        ):
-            in_plsql = True
-        buffer.append(line)
-        if in_plsql:
-            # PL/SQL block ends at "END;" (the ; is the PL/SQL
-            # statement terminator — keep it, the parser needs it).
-            if stripped_code.upper().endswith("END;"):
-                statements.append("\n".join(buffer).rstrip())
-                buffer = []
-                in_plsql = False
-        else:
-            if stripped_code.endswith(";"):
-                # Plain SQL: oracledb rejects the trailing ; — strip.
-                stmt = "\n".join(buffer).rstrip().rstrip(";")
-                # Skip comment-only buffers (`split("--")` left side is
-                # empty, so the buffer is all whitespace + comment text).
-                # We only need stripped-code non-empty here; the actual
-                # SQL body content doesn't matter for emit.
-                if stripped_code:
-                    statements.append(stmt)
-                buffer = []
-    # Trailing buffer (no final semicolon)
-    tail = "\n".join(buffer).strip()
-    if tail:
-        statements.append(tail)
-    return statements
+# P.9d: dialect-aware DB helpers lifted to common/db.py so the e2e
+# harness can share them. The CLI re-exports under the original private
+# names to keep ``demo apply`` working unchanged.
+from quicksight_gen.common.db import (
+    execute_script as _execute_script,  # noqa: F401
+    oracle_dsn as _oracle_dsn,  # noqa: F401
+    split_oracle_script as _split_oracle_script,  # noqa: F401
+)
 
 
 def _apply_demo(
@@ -931,30 +832,7 @@ def _apply_demo(
             "Set it in your config YAML or via QS_GEN_DEMO_DATABASE_URL."
         )
 
-    from quicksight_gen.common.sql import Dialect
-    if cfg.dialect is Dialect.POSTGRES:
-        try:
-            import psycopg2  # type: ignore[import-untyped]
-        except ImportError:
-            raise click.ClickException(
-                "psycopg2 is required for 'demo apply' against Postgres. "
-                "Install it with: pip install 'quicksight-gen[demo]'"
-            )
-        connect_fn = psycopg2.connect
-    elif cfg.dialect is Dialect.ORACLE:
-        try:
-            import oracledb  # type: ignore[import-untyped]
-        except ImportError:
-            raise click.ClickException(
-                "oracledb is required for 'demo apply' against Oracle. "
-                "Install it with: pip install 'quicksight-gen[demo-oracle]'"
-            )
-        connect_fn = lambda url: oracledb.connect(_oracle_dsn(url))
-    else:
-        raise click.ClickException(
-            f"Unknown dialect {cfg.dialect!r}. "
-            "Set 'dialect: postgres' or 'dialect: oracle' in your config."
-        )
+    from quicksight_gen.common.db import connect_demo_db
 
     from quicksight_gen.common.l2.schema import (
         emit_schema as emit_l2_schema,
@@ -998,7 +876,10 @@ def _apply_demo(
     )
 
     click.echo(f"Connecting to {cfg.demo_database_url.split('@')[-1]}...")
-    conn = connect_fn(cfg.demo_database_url)
+    try:
+        conn = connect_demo_db(cfg)
+    except ImportError as e:
+        raise click.ClickException(str(e)) from e
     try:
         with conn.cursor() as cur:
             click.echo("  Applying L2 instance schema...")
