@@ -1,5 +1,94 @@
 # Release Notes
 
+## v7.0.0 — Multi-database support: Postgres + Oracle 19c
+
+### What's new
+
+- **Oracle 19c is a first-class target alongside Postgres.** Every
+  emit surface (schema DDL, L1-invariant matviews, Investigation
+  matviews, dataset CustomSQL across all four shipped apps) is
+  dialect-aware via `common/sql/dialect.py`. Pick a dialect by
+  setting `dialect: postgres` (default) or `dialect: oracle` in
+  the run config; everything downstream branches automatically.
+- **`pip install quicksight-gen[demo]`** continues to install
+  psycopg2 for Postgres demo apply; **`pip install
+  quicksight-gen[demo-oracle]`** installs `oracledb` for Oracle.
+- **Dataset CustomSQL parse/execute smoke verifier**
+  (`tests/integration/verify_dataset_sql.py`) walks every emitted
+  dataset's SQL, substitutes QS parameter placeholders with
+  defaults, and runs the query against the live demo DB in a
+  `WHERE 1=0` envelope. ~30 second feedback loop per dialect for
+  catching dialect-specific SQL bugs that previously only surfaced
+  at browser-test time.
+- **Bounded VARCHAR for JSON metadata columns** (was unbounded
+  TEXT/CLOB). Both `transactions.metadata` and
+  `daily_balances.limits` are now `VARCHAR(4000)` on Postgres /
+  `VARCHAR2(4000)` on Oracle. Required for Oracle (CLOB can't be
+  aggregated, sorted, or compared with `IN ('literal')`); applied
+  symmetrically to Postgres so "data too long" surfaces on either
+  DB instead of leaking past PG.
+- **Containerized CI for both dialects** runs the full unit suite
+  + verify_dataset_sql against ephemeral Postgres + Oracle
+  databases in GitHub Actions.
+- **Harness L2FT plants-visibility check now Layer-1 matview
+  query** (`assert_l2ft_matview_rows_present`) instead of the
+  earlier dashboard text-scrape. The text-scrape failed
+  deterministically on sasquatch_pr because QS table virtualization
+  caps DOM rows at ~10 regardless of page size; with 57+ rail
+  firings on the Rails sheet, plants past the visible window were
+  invisible. The matview check is fast, deterministic, and points
+  at the seed→matview-refresh layer if it fails.
+
+### Breaking changes
+
+- **`schema.sql` (the unprefixed v5 global schema) is removed.**
+  Anyone still on v5 must migrate to per-prefix `emit_l2_schema()`
+  emit. Migration path documented separately. Affects: legacy
+  `transactions` / `daily_balances` global tables, the `ar_*`
+  dimension tables (`ar_ledger_accounts`,
+  `ar_subledger_accounts`, `ar_ledger_transfer_limits`), and
+  ~15 dead `ar_*` views.
+- **`demo schema` and `demo seed` CLI commands are removed.**
+  Per-instance `demo apply` is the only emit surface.
+- **L2 SPEC rule U6**: rails MUST be unique on
+  `(transfer_type, role)`. Validator catches violations at L2
+  load. The pre-shipped sasquatch_pr fixture was refactored to
+  rename 9 rails to directional names (`ach_inbound`,
+  `ach_outbound`, etc.) for compliance.
+- **Investigation `build_all_datasets()` now requires
+  `l2_instance` explicitly.** The silent fallback to
+  `default_l2_instance()` (which prefix-poisoned App Info matview
+  names with `spec_example_*`) is removed. Update callers to
+  pass the L2 instance through.
+
+### Internal cleanups
+
+- Per-dialect SQL helpers in `common/sql/dialect.py`: type names
+  (`serial_type`, `boolean_type`, `text_type`, `varchar_type`,
+  `decimal_type`, `json_text_type`, `timestamp_type`), casts
+  (`cast`, `typed_null`, `to_date`, `date_trunc_day`), date
+  arithmetic (`epoch_seconds_between`, `interval_days`,
+  `date_minus_days`), DDL idempotency
+  (`drop_table_if_exists`, `drop_matview_if_exists`,
+  `drop_index_if_exists`, `drop_view_if_exists`), matview
+  options (`create_matview`, `matview_options`,
+  `refresh_matview`), JSON checks (`json_check`), constant
+  SELECTs (`dual_from`), recursive CTE preamble
+  (`with_recursive`).
+- `metadata_filter_clause(l2_instance, col)` emits one branch
+  per declared metadata key with the JSON path as a literal.
+  Replaces the `'$.' || pKey` runtime concat that Oracle's
+  `JSON_VALUE` rejects (paths are parse-time literals).
+- `common/db.py` consolidates `connect_demo_db(cfg)` +
+  `execute_script(cur, sql, dialect)` so harness fixtures and
+  `demo apply` share one Oracle/Postgres connection path.
+- TZ-naive `TIMESTAMP` standardized across both dialects (was
+  PG `TIMESTAMPTZ` / Oracle `TIMESTAMP WITH TIME ZONE`).
+  Timezone normalization is the integrator's contract.
+- `_oracle_type_alias` rewrites `varchar(N)` → `VARCHAR2(N)`
+  so callers can pass Postgres-shape parameterized type names.
+- Docs site mkdocs build is `--strict` clean.
+
 ## v6.2.4 — Reskin walkthrough documents the new logo + favicon fields
 
 The v6.2.3 commit shipped the `theme.logo` / `theme.favicon`

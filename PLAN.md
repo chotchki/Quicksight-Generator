@@ -269,10 +269,10 @@ The existing SQL is already constrained to a portable subset (no JSONB, SQL/JSON
   - [ ] P.9f.d — Re-run 4-cell e2e matrix. Confirms (a)+(b)+(c) bring Oracle into PG parity. After this, P.10 ships clean.
   - [ ] P.9f.e — **Testing-layer gap fix: dataset CustomSQL parse/execute smoke per dialect.** Today's query-layer tests (`tests/integration/verify_demo_apply.py` + P.3.d.6 schema snapshot) catch matview row counts + DDL shape, but never parse/execute the dataset's `PhysicalTableMap.CustomSql.SqlQuery` against a real DB. That SQL is only exercised when QuickSight renders a visual — so Oracle SQL bugs (the JSON_VALUE concat, the ORA-00923) only surface at browser-test time, with a 30+ min feedback loop and no actionable error message. New test: walk every emitted dataset, substitute `<<$pName>>` placeholders with default values from the parameter declaration, wrap as `SELECT * FROM (<customsql>) WHERE ROWNUM <= 1` (Oracle) / `SELECT ... LIMIT 1` (Postgres), execute via `connect_demo_db(cfg)`, assert it parses + returns. Fast (per-dataset <1s); per-dialect; would have caught both P.9f.b and P.9f.c at unit-test time.
 
-- [ ] **P.10 — Iteration gate + v7.0.0 cut.**
-  - [ ] P.10.a — Decide release cut: **v7.0.0** — additive (Postgres-only users see no behavior change) but touches every SQL surface; major bump flags the breadth.
-  - [ ] P.10.b — Bump `__version__` to `7.0.0`; write RELEASE_NOTES entry covering: dialect support, the v5 carry-over removal (technically a breaking change for anyone on schema.sql v5), the `dialect:` config field, the `[demo-oracle]` extra, the new walkthrough, the memory rewrite.
-  - [ ] P.10.c — Commit + tag + push.
+- [x] **P.10 — Iteration gate + v7.0.0 cut.**
+  - [x] P.10.a — Decide release cut: **v7.0.0** — additive (Postgres-only users see no behavior change) but touches every SQL surface; major bump flags the breadth.
+  - [x] P.10.b — Bump `__version__` to `7.0.0`; write RELEASE_NOTES entry covering: dialect support, the v5 carry-over removal (technically a breaking change for anyone on schema.sql v5), the `dialect:` config field, the `[demo-oracle]` extra, the new walkthrough, the memory rewrite.
+  - [x] P.10.c — Commit + tag + push.
   - [ ] P.10.d — Confirm release pipeline runs green for both Postgres + Oracle integration jobs.
   - [ ] P.10.e — Memory sweep: any other Postgres-only assumptions that need updating?
 
