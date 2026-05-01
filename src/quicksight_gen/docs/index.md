@@ -52,8 +52,8 @@ when you know what you're after.
   handbooks (L1, L2 Flow Tracing, Investigation, Executives, ETL,
   Customization), plus the [Schema v6](Schema_v6.md) data feed
   contract and the [L1 Invariants](L1_Invariants.md) catalog.
-- **[Background](scenario/index.md)** — institution tour. The L2
-  model rendered for the demo institution: chart of accounts,
-  rails, transfer templates, chains, limit schedules.
+- **[Demo Institution Tour](scenario/index.md)** — the L2 model
+  rendered for the demo institution: chart of accounts, rails,
+  transfer templates, chains, limit schedules.
 - **[API Reference](api/index.md)** — for building a custom
   dashboard on the typed tree primitives.

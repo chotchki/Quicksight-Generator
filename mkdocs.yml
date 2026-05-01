@@ -66,8 +66,8 @@ nav:
       - Transfer template: concepts/l2/transfer-template.md
       - Chain: concepts/l2/chain.md
       - Limit schedule: concepts/l2/limit-schedule.md
-  - Background:
-    - Institution tour: scenario/index.md
+  - Demo Institution Tour:
+    - Overview: scenario/index.md
     - Accounts: scenario/accounts.md
     - Rails: scenario/rails.md
     - Transfer templates: scenario/transfer-templates.md

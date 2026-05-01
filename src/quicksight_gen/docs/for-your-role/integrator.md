@@ -75,7 +75,7 @@ Then:
    as the smallest persona-neutral skeleton + the
    [Customization handbook](../handbook/customization.md) for the
    editing patterns. The
-   [Background scenario](../scenario/index.md) tour shows
+   [Demo Institution Tour](../scenario/index.md) shows
    `sasquatch_pr.yaml` (the canonical larger fixture) projected
    into a real institution shape; copy from it for your own model.
 2. Read the

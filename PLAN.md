@@ -429,16 +429,13 @@ Order the meta sweeps first so per-app fixes inherit them:
     "If you arrived here directly..." back-links at the top of
     Concepts / Walkthroughs / Reference / API Reference overviews.
     Background skipped per PLAN note (Shape B will absorb it).
-  - [ ] **Q.2.b.exec.6 — Concepts split disposition.** Concepts
-    has Accounting + L2 model lumped. Independent topics. Two
-    paths: keep sub-tabs (current state, no work) or split into
-    two top-level sections. Recommend keep-as-is for Shape C;
-    revisit at Shape B transition.
-  - [ ] **Q.2.b.exec.7 — Background section disposition.**
-    Background = institution tour (5 pages), persona-flavored.
-    Decide: keep top-level, rename to "Demo Institution Tour", or
-    absorb into Concepts/L2 model. Recommend keep + rename for
-    Shape C.
+  - [x] **Q.2.b.exec.6 — Concepts split disposition.** Accept
+    PLAN recommendation: keep Concepts sub-tabs (Accounting + L2
+    model) as-is for Shape C. Revisit at Shape B transition.
+  - [x] **Q.2.b.exec.7 — Background section disposition.** Renamed
+    nav section from "Background" → "Demo Institution Tour" per
+    PLAN recommendation. Updated 2 prose refs (Home page + integrator
+    role page). Section content + paths unchanged.
   - [ ] **Q.2.b.exec.8 — `mkdocs build --strict` + click-through.**
     Verify no dead links. Click each role page from the new Home,
     and each library link from the role pages.
