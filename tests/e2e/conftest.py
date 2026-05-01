@@ -60,10 +60,27 @@ IDENTITY_REGION = os.environ.get("QS_E2E_IDENTITY_REGION", "us-east-1")
 
 @pytest.fixture(scope="session")
 def cfg():
-    """Load project config from config.yaml or env vars."""
+    """Load project config — checks the legacy single-file location, then
+    the per-dialect copies (Phase P), then env vars.
+
+    The candidate order favors the explicit single-file config before
+    falling back to the dialect-specific files. Override with the
+    ``QS_GEN_CONFIG`` env var when both per-dialect files exist and
+    you need to pin to one.
+    """
     from quicksight_gen.common.config import load_config
 
-    for candidate in (Path("config.yaml"), Path("run/config.yaml")):
+    explicit = os.environ.get("QS_GEN_CONFIG")
+    if explicit:
+        return load_config(explicit)
+
+    candidates = (
+        Path("config.yaml"),
+        Path("run/config.yaml"),
+        Path("run/config.postgres.yaml"),
+        Path("run/config.oracle.yaml"),
+    )
+    for candidate in candidates:
         if candidate.exists():
             return load_config(str(candidate))
     return load_config(None)
@@ -97,7 +114,11 @@ def inv_l2_prefix() -> str:
     Investigation resource ID under N.3.f (Investigation became L2-fed,
     same default-institution YAML the L1 dashboard uses)."""
     from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from quicksight_gen.common.l2 import load_instance
 
+    override = os.environ.get("QS_GEN_TEST_L2_INSTANCE")
+    if override:
+        return str(load_instance(Path(override)).instance)
     return str(default_l2_instance().instance)
 
 
@@ -137,7 +158,11 @@ def exec_l2_prefix() -> str:
     Executives resource ID under N.4.b (Executives became L2-fed,
     same default-institution YAML the L1 dashboard uses)."""
     from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from quicksight_gen.common.l2 import load_instance
 
+    override = os.environ.get("QS_GEN_TEST_L2_INSTANCE")
+    if override:
+        return str(load_instance(Path(override)).instance)
     return str(default_l2_instance().instance)
 
 
@@ -178,7 +203,11 @@ def l1_l2_prefix() -> str:
     """The default L2 instance's prefix — the middle segment of every
     L1 resource ID per M.2d.3."""
     from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from quicksight_gen.common.l2 import load_instance
 
+    override = os.environ.get("QS_GEN_TEST_L2_INSTANCE")
+    if override:
+        return str(load_instance(Path(override)).instance)
     return str(default_l2_instance().instance)
 
 

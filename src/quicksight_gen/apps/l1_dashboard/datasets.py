@@ -32,6 +32,7 @@ from quicksight_gen.common.sheets.app_info import (
     build_liveness_dataset,
     build_matview_status_dataset,
 )
+from quicksight_gen.common.sql import Dialect, date_trunc_day
 
 
 def l1_matview_names(l2_instance: L2Instance) -> list[str]:
@@ -194,7 +195,6 @@ DAILY_STATEMENT_TRANSACTIONS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("amount_direction", "STRING"),
     ColumnSpec("status", "STRING"),
     ColumnSpec("origin", "STRING"),
-    ColumnSpec("memo", "STRING"),
 ])
 
 
@@ -436,19 +436,26 @@ def build_daily_statement_summary_dataset(
     )
 
 
-def _daily_statement_transactions_sql(prefix: str) -> str:
+def _daily_statement_transactions_sql(prefix: str, dialect: Dialect) -> str:
     """Per-leg projection from `<prefix>_current_transactions` carrying
     everything the Daily Statement detail table renders. Sheet-level
     filters narrow to one (account_id, business_day) at render time.
+
+    ``business_day`` is a day-truncation of ``posting``; built via
+    ``date_trunc_day`` so the projection stays a TIMESTAMP-shaped value
+    on both Postgres (DATE_TRUNC) and Oracle (CAST(TRUNC(...) AS
+    TIMESTAMP)) — keeps QuickSight's date column-type inference stable
+    across dialects.
     """
+    business_day = date_trunc_day("tx.posting", dialect)
     return (
         f"SELECT tx.id AS transaction_id,"
         f"       tx.account_id, tx.account_name,"
-        f"       DATE_TRUNC('day', tx.posting) AS business_day,"
+        f"       {business_day} AS business_day,"
         f"       tx.posting,"
         f"       tx.transfer_id, tx.transfer_type,"
         f"       tx.amount_money, tx.amount_direction,"
-        f"       tx.status, tx.origin, tx.memo"
+        f"       tx.status, tx.origin"
         f" FROM {prefix}_current_transactions tx"
     )
 
@@ -457,7 +464,7 @@ def build_daily_statement_transactions_dataset(
     cfg: Config, l2_instance: L2Instance,
 ) -> DataSet:
     """Wrap the per-leg ledger feed for Daily Statement detail rows."""
-    sql = _daily_statement_transactions_sql(l2_instance.instance)
+    sql = _daily_statement_transactions_sql(l2_instance.instance, cfg.dialect)
     return build_dataset(
         cfg, cfg.prefixed("l1-daily-statement-transactions-dataset"),
         "L1 Daily Statement Transactions",
@@ -612,10 +619,10 @@ def build_supersession_transactions_dataset(
         f"   account_id, account_name,"
         f"   transfer_id, transfer_type, rail_name,"
         f"   amount_money, amount_direction, status, posting, bundle_id,"
-        f"   COUNT(*) OVER (PARTITION BY id) AS _entry_count"
+        f"   COUNT(*) OVER (PARTITION BY id) AS entry_count"
         f"   FROM {prefix}_transactions"
         f" ) sub"
-        f" WHERE _entry_count > 1"
+        f" WHERE entry_count > 1"
     )
     return build_dataset(
         cfg, cfg.prefixed("l1-supersession-transactions-dataset"),
@@ -646,10 +653,10 @@ def build_supersession_daily_balances_dataset(
         f"   account_id, account_name, account_role, supersedes,"
         f"   business_day_start, business_day_end, money,"
         f"   COUNT(*) OVER (PARTITION BY account_id, business_day_start)"
-        f"     AS _entry_count"
+        f"     AS entry_count"
         f"   FROM {prefix}_daily_balances"
         f" ) sub"
-        f" WHERE _entry_count > 1"
+        f" WHERE entry_count > 1"
     )
     return build_dataset(
         cfg, cfg.prefixed("l1-supersession-daily-balances-dataset"),

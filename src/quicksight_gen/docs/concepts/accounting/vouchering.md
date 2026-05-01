@@ -58,5 +58,5 @@ L1 invariants then catch:
 - **Limit Breach** — voucher-driven outflow on a
   `(parent_role, transfer_type)` cell exceeds its cap.
 
-See [L1 Reconciliation Dashboard](../handbook/l1.md) for the visual
+See [L1 Reconciliation Dashboard](../../handbook/l1.md) for the visual
 surface.

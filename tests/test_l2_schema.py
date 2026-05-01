@@ -136,7 +136,7 @@ def test_transactions_includes_transfer_parent_id() -> None:
 def test_transactions_includes_transfer_completion_and_origin() -> None:
     """L1 SPEC: Transfer.Completion + Transaction.Origin both denormalized."""
     sql = emit_schema(_instance("co"))
-    assert "transfer_completion  TIMESTAMPTZ" in sql
+    assert "transfer_completion  TIMESTAMP" in sql
     assert "origin               VARCHAR(50)    NOT NULL" in sql
     # Origin is open enum — no CHECK so integrators can extend.
     assert "origin IN" not in sql
@@ -162,8 +162,10 @@ def test_daily_balances_includes_expected_eod_and_limits() -> None:
     """L1 SPEC: ExpectedEODBalance + Limits map both denormalized onto the row."""
     sql = emit_schema(_instance("eb"))
     assert "expected_eod_balance   DECIMAL(20,2)" in sql
-    # Limits is the Map[TransferType, Money] serialized as JSON
-    assert "limits                 TEXT" in sql
+    # Limits is the Map[TransferType, Money] serialized as JSON, bounded
+    # so the column behaves like a string on both dialects (CLOB
+    # cannot be aggregated; bounded VARCHAR can).
+    assert "limits                 VARCHAR(4000)" in sql
 
 
 def test_daily_balances_money_is_signed() -> None:
@@ -204,12 +206,18 @@ def test_daily_balances_business_day_window_check() -> None:
 
 
 def test_metadata_uses_text_with_is_json_check() -> None:
-    """SPEC's portability constraint: TEXT + IS JSON, not JSONB."""
+    """SPEC's portability constraint: bounded VARCHAR + IS JSON, not JSONB.
+
+    Bounded so the column behaves like a string on both dialects —
+    Oracle CLOB can't be aggregated, ordered, or compared with VARCHAR
+    literals (ORA-00932). 4000 chars covers every JSON metadata
+    document the L2 schema emits in practice.
+    """
     sql = emit_schema(_instance("p"))
-    assert "metadata             TEXT" in sql
+    assert "metadata             VARCHAR(4000)" in sql
     assert "metadata IS NULL OR metadata IS JSON" in sql
     # Limits column same pattern
-    assert "limits                 TEXT" in sql
+    assert "limits                 VARCHAR(4000)" in sql
     assert "limits IS NULL OR limits IS JSON" in sql
     # No JSONB type used in any actual SQL statement (comments allowed).
     assert "JSONB" not in _strip_comments(sql).upper()
@@ -1019,3 +1027,95 @@ def test_inv_matviews_isolated_per_instance() -> None:
     assert "beta_inv_pair_rolling_anomalies" in sql_b
     assert "beta_inv_money_trail_edges" in sql_b
     assert "alpha_" not in sql_b
+
+
+# -- Dialect-aware drops (P.3.d.1) -------------------------------------------
+#
+# emit_schema still guards Postgres-only at the top while the schema +
+# matview templates port to dialect-aware in P.3.d.2-4. The drop-block
+# helpers (_emit_l1_invariant_drops / _emit_inv_matview_drops) are
+# already dialect-aware though — exercise both branches directly so
+# regressions in the Oracle branch surface before the guard comes off.
+
+
+def test_l1_invariant_drops_postgres_native_form() -> None:
+    """Postgres branch keeps the legacy ``DROP MATERIALIZED VIEW IF EXISTS``
+    one-liner per matview — that's the byte-shape every existing test +
+    every existing ETL depends on."""
+    from quicksight_gen.common.sql import Dialect
+    from quicksight_gen.common.l2.schema import (
+        _L1_INVARIANT_DROP_NAMES,
+        _emit_l1_invariant_drops,
+    )
+
+    out = _emit_l1_invariant_drops("pg", Dialect.POSTGRES)
+    for name in _L1_INVARIANT_DROP_NAMES:
+        assert f"DROP MATERIALIZED VIEW IF EXISTS pg_{name};" in out
+    assert "BEGIN EXECUTE IMMEDIATE" not in out  # no PL/SQL on PG
+
+
+def test_l1_invariant_drops_oracle_plsql_block() -> None:
+    """Oracle branch wraps each DROP in a PL/SQL block that swallows
+    ORA-12003 (matview not found) so the script stays idempotent."""
+    from quicksight_gen.common.sql import Dialect
+    from quicksight_gen.common.l2.schema import (
+        _L1_INVARIANT_DROP_NAMES,
+        _emit_l1_invariant_drops,
+    )
+
+    out = _emit_l1_invariant_drops("orcl", Dialect.ORACLE)
+    # Oracle has no IF EXISTS clause — assert against stripped-comment
+    # form (the PG-only header retains an "IF EXISTS" mention inside
+    # an explanatory --comment line).
+    assert "IF EXISTS" not in _strip_comments(out)
+    for name in _L1_INVARIANT_DROP_NAMES:
+        # The bare DROP statement is wrapped in EXECUTE IMMEDIATE — assert
+        # the wrapped form for each matview name.
+        assert f"DROP MATERIALIZED VIEW orcl_{name}" in out
+    # Every drop must use the PL/SQL exception-swallowing pattern.
+    block_count = out.count("BEGIN EXECUTE IMMEDIATE")
+    assert block_count == len(_L1_INVARIANT_DROP_NAMES)
+    assert "SQLCODE != -12003" in out  # ORA-12003 = matview not found
+    assert "SQLCODE != -942" in out    # ORA-00942 = table not found
+
+
+def test_l1_invariant_drops_preserve_drop_order() -> None:
+    """Drop order for the L1 invariant block is fixed: dashboard-shape
+    matviews first, helpers last. Reordering would re-introduce the
+    "dependent objects still exist" failure on re-runs."""
+    from quicksight_gen.common.sql import Dialect
+    from quicksight_gen.common.l2.schema import _emit_l1_invariant_drops
+
+    out = _emit_l1_invariant_drops("ord", Dialect.POSTGRES)
+    todays = out.index("ord_todays_exceptions")
+    drift = out.index("ord_drift")
+    computed = out.index("ord_computed_subledger_balance")
+    assert todays < drift < computed
+
+
+def test_inv_matview_drops_postgres_native_form() -> None:
+    """Investigation matview drops use the native PG form on PG."""
+    from quicksight_gen.common.sql import Dialect
+    from quicksight_gen.common.l2.schema import (
+        _INV_MATVIEW_DROP_NAMES,
+        _emit_inv_matview_drops,
+    )
+
+    out = _emit_inv_matview_drops("pg", Dialect.POSTGRES)
+    for name in _INV_MATVIEW_DROP_NAMES:
+        assert f"DROP MATERIALIZED VIEW IF EXISTS pg_{name};" in out
+
+
+def test_inv_matview_drops_oracle_plsql_block() -> None:
+    """Investigation matview drops use the PL/SQL form on Oracle."""
+    from quicksight_gen.common.sql import Dialect
+    from quicksight_gen.common.l2.schema import (
+        _INV_MATVIEW_DROP_NAMES,
+        _emit_inv_matview_drops,
+    )
+
+    out = _emit_inv_matview_drops("orcl", Dialect.ORACLE)
+    assert "IF EXISTS" not in _strip_comments(out)
+    for name in _INV_MATVIEW_DROP_NAMES:
+        assert f"DROP MATERIALIZED VIEW orcl_{name}" in out
+    assert out.count("BEGIN EXECUTE IMMEDIATE") == len(_INV_MATVIEW_DROP_NAMES)

@@ -1,25 +1,19 @@
 # Concepts
 
-The reasoning behind the dashboards — banking primitives that the L1
-invariants, the L2 model, and the per-app sheets all assume the reader
-already understands.
+The reasoning behind the dashboards. Two parts:
 
-The intended user is anyone touching the dashboards for the first time:
-operators, integrators, ETL engineers, executives. Read these pages
-before the per-app reference material if a term ("invariant", "rail",
-"chain", "supersession", "double-entry posting") is unfamiliar.
+- **[Accounting](accounting/index.md)** — banking primitives the L1 invariants
+  and the per-app sheets all assume the reader already understands
+  (double-entry posting, escrow / suspense, sweep-net-settle,
+  vouchering, eventual consistency, open vs. closed loop).
+- **[L2 model](l2/index.md)** — the modeling vocabulary an integrator
+  uses to declare an institution's shape: Account / AccountTemplate /
+  Rail / TransferTemplate / Chain / LimitSchedule. Each page explains
+  one primitive in isolation with a focused diagram pulled from the
+  loaded L2 instance.
 
-## Pages
-
-- [Double-entry posting](double-entry.md) — debit / credit pair as the
-  L1 invariant root.
-- [Escrow with reversal](escrow-with-reversal.md) — three-state
-  lifecycle for an in-flight transfer that holds in suspense.
-- [Sweep / net / settle](sweep-net-settle.md) — the daily cycle behind
-  concentration accounts.
-- [Vouchering](vouchering.md) — voucher → settlement materialization.
-- [Eventual consistency](eventual-consistency.md) — multi-day clear
-  timelines and the aging-watch shape that surfaces them.
-- [Open vs. closed loop](open-vs-closed-loop.md) — system-boundary
-  distinction that shapes which reconciliation problems are even
-  possible.
+The intended user is anyone touching the dashboards or the L2 YAML
+for the first time: operators, integrators, ETL engineers,
+executives. Read these before the per-app reference material if a
+term ("rail", "chain", "supersession", "double-entry posting") is
+unfamiliar.

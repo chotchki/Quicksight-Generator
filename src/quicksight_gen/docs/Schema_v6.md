@@ -12,15 +12,25 @@ prose — derives from them.
 > last single-tenant pre-supersession iteration; everything since
 > M.1a runs on v6.
 
-> **PostgreSQL 17+ required.** SQL stays portable across the dialect
-> family this app targets:
-> - JSON storage in `TEXT` columns with `IS JSON` constraints.
+> **PostgreSQL 17+ or Oracle 19c+.** SQL is dialect-aware (see
+> `common.sql.dialect`) but stays portable across the dialect family
+> this app targets:
+> - JSON storage in `TEXT` columns (PG) / `CLOB` (Oracle) with
+>   `IS JSON` constraints.
 > - JSON extraction via SQL/JSON path functions (`JSON_VALUE`,
->   `JSON_QUERY`, `JSON_EXISTS`).
+>   `JSON_QUERY`, `JSON_EXISTS`) — supported on both engines.
 > - B-tree indexes only on real columns.
 > - **No** `JSONB`, no `->>` / `->` / `@>` / `?` operators, no GIN
->   indexes on JSON, no Postgres extensions, no array / range types.
-> See **Forbidden SQL patterns** at the end.
+>   indexes on JSON, no Postgres extensions, no array / range types,
+>   no named `WINDOW w AS` clause (Oracle 19c lacks it).
+> - All timestamp columns are TZ-naive `TIMESTAMP` on both engines
+>   (P.9a). **Timezone normalization is the integrator's contract** —
+>   the schema does not store timezone metadata and does not convert
+>   across zones at query time. ETL teams reading from sources in
+>   multiple zones MUST normalize at the ETL boundary (typically to
+>   UTC or the institution's local business zone).
+> See **Forbidden SQL patterns** at the end. Pick the dialect via the
+> `dialect:` field on your config YAML (default `postgres`).
 
 ---
 
@@ -117,10 +127,10 @@ Every row identifies its parent transfer via `transfer_id`.
 | `amount_money` | `DECIMAL(20,2) NOT NULL` | Signed amount. **Positive = Credit (money in), Negative = Debit (money out).** Per L1 Amount invariant. |
 | `amount_direction` | `VARCHAR(20) NOT NULL` | `'Debit'` or `'Credit'`. Constrained agreement with `amount_money` sign — see CHECK below. |
 | `status` | `VARCHAR(20) NOT NULL` | `'Pending'`, `'Posted'`, `'Failed'`. Drives stuck_pending + non-zero-transfer math. |
-| `posting` | `TIMESTAMPTZ NOT NULL` | When the leg posted to the underlying ledger. |
+| `posting` | `TIMESTAMP NOT NULL` (TZ-naive) | When the leg posted to the underlying ledger. |
 | `transfer_id` | `VARCHAR(100) NOT NULL` | Groups legs of one financial event. Conservation invariant: `Σ amount_money` over non-Failed legs of one transfer = expected_net (typically 0 for two-leg, ExpectedNet for templates). |
 | `transfer_type` | `VARCHAR(50) NOT NULL` | The L2 TransferType (`'ach'`, `'wire'`, `'fee'`, `'internal'`, etc). |
-| `transfer_completion` | `TIMESTAMPTZ` | When the transfer finished its full lifecycle (last leg posted). NULL while in flight. |
+| `transfer_completion` | `TIMESTAMP` (TZ-naive) | When the transfer finished its full lifecycle (last leg posted). NULL while in flight. |
 | `transfer_parent_id` | `VARCHAR(100)` | Recursive parent — links a transfer to its parent (PR pattern: `external_txn → payment → settlement → sale`). |
 | `rail_name` | `VARCHAR(100) NOT NULL` | Which Rail produced this leg. Drives stuck_pending / stuck_unbundled per-rail caps. |
 | `template_name` | `VARCHAR(100)` | If posted via a TransferTemplate, the template name. NULL otherwise. |
@@ -189,8 +199,8 @@ end-of-day stored balance for each account each day.
 | `account_scope` | `VARCHAR(20) NOT NULL` | `'internal'` / `'external'`. |
 | `account_parent_role` | `VARCHAR(100)` | Parent role; NULL for parent / external. |
 | `expected_eod_balance` | `DECIMAL(20,2)` | If set, the L1 invariant `expected_eod_balance_breach` fires when `money <> expected_eod_balance` at EOD. NULL = no expected target declared. |
-| `business_day_start` | `TIMESTAMPTZ NOT NULL` | Beginning-of-day UTC midnight. The composite key `(account_id, business_day_start)` is the logical row id. |
-| `business_day_end` | `TIMESTAMPTZ NOT NULL` | End-of-day = `business_day_start + INTERVAL '1 day'`. |
+| `business_day_start` | `TIMESTAMP NOT NULL` (TZ-naive) | Beginning-of-day UTC midnight. The composite key `(account_id, business_day_start)` is the logical row id. |
+| `business_day_end` | `TIMESTAMP NOT NULL` (TZ-naive) | End-of-day = `business_day_start + INTERVAL '1 day'`. |
 | `money` | `DECIMAL(20,2) NOT NULL` | Stored EOD balance. Computed-vs-stored disagreement surfaces as drift. |
 | `limits` | `TEXT` | Per-row JSON; per-day limit overrides. See **Metadata** below. |
 | `supersedes` | `VARCHAR(50)` | Same vocabulary as transactions.supersedes. |
@@ -309,9 +319,12 @@ every dependent matview in dependency order:
 
 ```python
 from quicksight_gen.common.l2 import refresh_matviews_sql
-sql = refresh_matviews_sql(instance)
+from quicksight_gen.common.sql import Dialect
+
+sql = refresh_matviews_sql(instance, dialect=Dialect.POSTGRES)
 # 13 matviews × 2 statements (REFRESH + ANALYZE) = 26 statements
 
+# Postgres
 import psycopg2
 conn = psycopg2.connect(your_db_url)
 conn.autocommit = True
@@ -320,6 +333,14 @@ with conn.cursor() as cur:
         s = stmt.strip()
         if s:
             cur.execute(s)
+
+# Oracle (thin mode — no Instant Client install needed)
+# `quicksight-gen demo apply -c run/config.oracle.yaml` is the
+# canonical path; it handles PL/SQL terminators (DROP MATERIALIZED
+# VIEW IF EXISTS wraps in a BEGIN…EXCEPTION…END block on Oracle) and
+# per-statement execution. For a stand-alone refresh outside the demo
+# CLI, copy the splitter from `cli.py::_split_oracle_script` until
+# Phase Q ships a public helper.
 ```
 
 Order matters — leaves first (Current\*), helpers second (computed_*),
@@ -411,20 +432,32 @@ property of the leg. Pick one per app; don't mix.
 
 ## Forbidden SQL patterns
 
-The portability constraint (PG 17+ minimum, but the SQL must port to
-the more conservative dialect family this app targets) forbids:
+The portability constraint targets PostgreSQL 17+ AND Oracle 19c+ —
+every emitted statement must work on both. The library threads the
+dialect through every emitter (see `common.sql.dialect`), so DDL like
+`SERIAL` vs `NUMBER GENERATED BY DEFAULT AS IDENTITY` and matview
+options like `BUILD IMMEDIATE REFRESH COMPLETE ON DEMAND` (Oracle) are
+handled for you. What you write yourself (custom dataset SQL, ETL
+projections) must follow these rules:
 
-| Forbidden | Use instead |
-|---|---|
-| `JSONB` column type | `TEXT` with `IS JSON` constraint |
-| `->>` `->` operators | `JSON_VALUE(col, '$.key')` |
-| `@>` `?` containment / existence | `JSON_EXISTS(col, '$.key')` |
-| GIN indexes on JSON | B-tree on real columns; metadata is searched, not indexed |
-| Postgres extensions (e.g., `pg_trgm`, `uuid-ossp`) | None |
-| Array types (`TEXT[]`, `INT[]`) | Normalized child rows, or JSON arrays in metadata |
-| Range types (`tstzrange`, etc) | Two TIMESTAMPTZ columns |
-| Window functions inside CTE references that recurse | Plain recursive CTEs |
-| `RETURNING` for batch fanout | Re-SELECT after INSERT |
+| Forbidden | Use instead | Why |
+|---|---|---|
+| `JSONB` column type | `TEXT` with `IS JSON` constraint | Oracle has no `JSONB` |
+| `->>` `->` operators | `JSON_VALUE(col, '$.key')` | Postgres-only operators |
+| `@>` `?` containment / existence | `JSON_EXISTS(col, '$.key')` | Postgres-only operators |
+| GIN indexes on JSON | B-tree on real columns; metadata is searched, not indexed | Oracle has no GIN |
+| Postgres extensions (e.g., `pg_trgm`, `uuid-ossp`) | None | Oracle has no extension model |
+| Array types (`TEXT[]`, `INT[]`) | Normalized child rows, or JSON arrays in metadata | Oracle has no array types |
+| Range types (`tstzrange`, etc) | Two `TIMESTAMP` columns | Oracle has no range types |
+| Window functions inside CTE references that recurse | Plain recursive CTEs | Both dialects' planners |
+| `RETURNING` for batch fanout | Re-SELECT after INSERT | Oracle's `RETURNING` is single-row |
+| Multi-row `INSERT … VALUES (a),(b)` | Per-row `INSERT … VALUES (…)` statements | Oracle 19c rejects multi-row VALUES |
+| Named `WINDOW w AS (…)` clause | Inline the `OVER (…)` definition on each window function | Oracle 19c added named WINDOW in 21c only |
+| `TIMESTAMPTZ` / `TIMESTAMP WITH TIME ZONE` columns | Plain `TIMESTAMP` via `timestamp_type(dialect)`. TZ normalization happens at the ETL boundary (see top callout). | Single TZ-naive type unifies both engines; was previously a Postgres / Oracle PK divergence (ORA-02329). |
+| Bare-string Oracle timestamp literal `'2030-01-01 10:00:00'` | `TIMESTAMP 'YYYY-MM-DD HH:MI:SS'` typed literal (no TZ offset) | Oracle's plain `TIMESTAMP` literal must be wrapped in the typed `TIMESTAMP '…'` form. |
+| Recursive CTE without explicit column-alias list | `WITH chain (col1, col2, depth) AS (…)` | Oracle 19c requires the alias list (ORA-32039) |
+| `EXTRACT(EPOCH FROM …)` | `epoch_seconds_between(a, b, dialect)` | Oracle's `EXTRACT` doesn't accept `EPOCH` |
+| `IF EXISTS` on `DROP MATERIALIZED VIEW` | Use `drop_matview_if_exists(name, dialect)` (wraps Oracle in PL/SQL) | Oracle has no `IF EXISTS` clause on most DROPs |
 
 `emit_schema` enforces these at code-gen time — every emitted DDL is
 audit-clean. Custom dataset SQL written by integrators must follow

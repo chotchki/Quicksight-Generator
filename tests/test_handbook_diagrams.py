@@ -28,14 +28,20 @@ _SASQUATCH_PR = _FIXTURES / "sasquatch_pr.yaml"
 
 
 class TestL2Topology:
-    @pytest.mark.parametrize("kind", ["accounts", "chains", "layered"])
+    @pytest.mark.parametrize(
+        "kind",
+        ["accounts", "account_templates", "chains", "layered", "hierarchy"],
+    )
     def test_renders_against_spec_example(self, kind: str):
         l2 = load_instance(_SPEC_EXAMPLE)
         svg = render_l2_topology(l2, kind)  # type: ignore[arg-type]
         assert "<svg" in svg
         assert "</svg>" in svg
 
-    @pytest.mark.parametrize("kind", ["accounts", "chains", "layered"])
+    @pytest.mark.parametrize(
+        "kind",
+        ["accounts", "account_templates", "chains", "layered", "hierarchy"],
+    )
     def test_renders_against_sasquatch_pr(self, kind: str):
         # Sasquatch is a richer fixture — exercises union role expressions
         # + XOR-grouped chain entries that spec_example doesn't have.
@@ -57,12 +63,148 @@ class TestL2Topology:
         for expected in ("Clearing Suspense", "North Pool", "South Pool"):
             assert expected in svg, f"missing account label: {expected}"
 
+    def test_account_templates_diagram_includes_template_marker(self):
+        # spec_example declares CustomerSubledger as a template;
+        # sasquatch_pr declares CustomerDDA / MerchantDDA / etc. The
+        # template node label is rendered as ``role × N`` so the SVG
+        # must contain that marker once at minimum.
+        l2 = load_instance(_SASQUATCH_PR)
+        svg = render_l2_topology(l2, "account_templates")
+        assert "× N" in svg, (
+            "account_templates diagram should mark templates with × N"
+        )
+
+    def test_transfer_template_diagram_renders_against_sasquatch_pr(self):
+        # sasquatch_pr declares two TransferTemplates: InternalTransferCycle
+        # (3 legs incl. one Variable closure) and MerchantSettlementCycle
+        # (1 leg, TransferKey-grouped). Both should render without raising
+        # and the SVG should mention the template name + at least one of
+        # its leg rails.
+        l2 = load_instance(_SASQUATCH_PR)
+        for template in l2.transfer_templates:
+            svg = render_l2_topology(
+                l2, "transfer_template", name=str(template.name),
+            )
+            assert "<svg" in svg
+            assert str(template.name) in svg, (
+                f"transfer_template diagram missing the template name "
+                f"{template.name!r} in the rendered SVG"
+            )
+            for leg in template.leg_rails:
+                assert str(leg) in svg, (
+                    f"transfer_template diagram for {template.name!r} "
+                    f"missing leg-rail {leg!r}"
+                )
+
+    def test_transfer_template_diagram_requires_name(self):
+        # Defensive: the dispatch arm should reject the missing-name
+        # case with a clear error rather than silently rendering nothing.
+        l2 = load_instance(_SASQUATCH_PR)
+        import pytest
+        with pytest.raises(ValueError, match="requires a name"):
+            render_l2_topology(l2, "transfer_template")
+
+    def test_transfer_template_diagram_unknown_name_raises(self):
+        l2 = load_instance(_SASQUATCH_PR)
+        import pytest
+        with pytest.raises(ValueError, match="no TransferTemplate named"):
+            render_l2_topology(
+                l2, "transfer_template", name="DoesNotExist",
+            )
+
+    def test_diagrams_bundle_parallel_rails_per_direction(self):
+        # Parallel rails sharing the same (src, dst) direction should
+        # collapse into one labeled edge instead of N parallel lines.
+        # Direction stays split (a Customer→External rail and an
+        # External→Customer rail produce distinct edges).
+        #
+        # sasquatch_pr's ext-harvest-credit-exchange ↔ CustomerDDA pair
+        # has multiple rails in each direction (CustomerInbound{ACH,Wire}
+        # plus the cash-deposit family inbound; CustomerOutbound{ACH,Wire}
+        # plus cash-withdrawal + return rails outbound). Pre-bundle the
+        # template diagram emitted ~9 edges; post-bundle it emits ~5.
+        # Guard against regression by asserting the count drops once
+        # bundling is in place.
+        l2 = load_instance(_SASQUATCH_PR)
+        svg = render_l2_topology(l2, "account_templates")
+        # Graphviz writes "src->dst" inside <title> for each edge. Count
+        # how many distinct edge titles appear in the SVG.
+        import re
+        titles = re.findall(r"<title>([^<]+)</title>", svg)
+        edges = [t for t in titles if "&#45;&gt;" in t or "->" in t]
+        # 21 rails (sasquatch_pr) → without bundling we'd see closer to
+        # 15+ edges on the templates diagram alone. With bundling on
+        # template-touching rails we expect single-digit. Cap a regression
+        # bar generously: ≤8 keeps the win obvious without coupling to
+        # the exact rail topology.
+        assert len(edges) <= 8, (
+            f"Templates diagram emitted {len(edges)} edges; expected ≤8 "
+            f"after parallel-rail bundling. Edge titles:\n  "
+            + "\n  ".join(edges)
+        )
+
+    def test_account_templates_diagram_renders_singleton_cross_edges(self):
+        # Regression guard: an earlier filter required BOTH ends of a
+        # rail to be templates, which dropped every template ↔ singleton
+        # rail (the common case) and left only SingleLegRail self-loops
+        # on template nodes — a useless diagram.
+        #
+        # sasquatch_pr's ZBASweep rail (ZBASubAccount → ConcentrationMaster)
+        # is the canonical template ↔ singleton case; ConcentrationMaster
+        # is a singleton account whose label "Cash Concentration Master"
+        # MUST appear in the rendered SVG so the rail edge is visible.
+        l2 = load_instance(_SASQUATCH_PR)
+        svg = render_l2_topology(l2, "account_templates")
+        assert "Cash Concentration Master" in svg, (
+            "account_templates diagram dropped a template→singleton rail "
+            "(ZBASweep). The diagram should render singleton endpoints "
+            "for any template-touching rail, not only template→template."
+        )
+
     def test_chains_diagram_renders_when_chains_present(self):
         # sasquatch_pr declares chain entries; spec_example may or may
         # not. Either way the SVG should be well-formed.
         l2 = load_instance(_SASQUATCH_PR)
         svg = render_l2_topology(l2, "chains")
         assert "<svg" in svg
+
+    def test_hierarchy_diagram_includes_template_marker(self):
+        # sasquatch_pr has account templates (CustomerDDA, MerchantDDA,
+        # ExternalCounterparty etc.). The hierarchy renderer suffixes
+        # template labels with ``× N`` to mark them as "many instances
+        # at runtime" — proves templates are surfaced separately from
+        # singletons.
+        l2 = load_instance(_SASQUATCH_PR)
+        svg = render_l2_topology(l2, "hierarchy")
+        assert "× N" in svg, "hierarchy diagram should mark templates with × N"
+
+    def test_hierarchy_template_edges_reach_their_parent(self):
+        # Regression: the original ``tmpl::`` node-id prefix collided
+        # with Graphviz's ``node:port`` syntax in edge endpoints —
+        # graphviz-python quoted the identifier in the node definition
+        # but not in the edge, so every template edge collapsed onto a
+        # phantom ``tmpl`` node. Walk the rendered SVG and assert each
+        # template's parent_role chain produces a real edge whose tail
+        # is the template node, not ``tmpl``.
+        from quicksight_gen.common.handbook.diagrams import (
+            _build_hierarchy_graph,
+        )
+
+        l2 = load_instance(_SASQUATCH_PR)
+        dot = _build_hierarchy_graph(l2).source
+
+        # Sasquatch has CustomerDDA → DDAControl among others. The
+        # rendered DOT must contain that exact edge with the expected
+        # template node id, NOT a port-syntax artifact like
+        # ``tmpl:"":CustomerDDA``.
+        assert "tmpl__CustomerDDA -> " in dot, (
+            f"expected 'tmpl__CustomerDDA -> ...' edge in DOT; got:\n{dot}"
+        )
+        # And the broken form must NOT appear anywhere.
+        assert ":CustomerDDA" not in dot, (
+            f"DOT contains port-syntax artifact ':CustomerDDA' — node id "
+            f"prefix is interacting with Graphviz port parsing again.\n{dot}"
+        )
 
 
 # -- Per-app dataflow --------------------------------------------------------

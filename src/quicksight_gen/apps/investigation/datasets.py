@@ -42,10 +42,23 @@ from quicksight_gen.common.sheets.app_info import (
 
 # M.4.4.5 — matviews the Investigation app reads, surfaced on the
 # App Info ("i") sheet's matview-status table.
-INV_MATVIEW_NAMES = [
+_INV_MATVIEW_BARE_NAMES = [
     "inv_pair_rolling_anomalies",
     "inv_money_trail_edges",
 ]
+
+
+def inv_matview_names(l2_instance: L2Instance) -> list[str]:
+    """The L2-prefixed Inv matviews the dashboard reads.
+
+    Surfaced on the App Info ("i") sheet's matview status table so an
+    operator can see refresh state at a glance. Mirrors the
+    ``l1_matview_names`` / ``l2ft_matview_names`` helpers — the
+    ``<prefix>_inv_*`` form matches what ``common.l2.schema`` actually
+    creates per L2 instance.
+    """
+    p = str(l2_instance.instance)
+    return [f"{p}_{name}" for name in _INV_MATVIEW_BARE_NAMES]
 
 
 # ---------------------------------------------------------------------------
@@ -132,14 +145,17 @@ MONEY_TRAIL_CONTRACT = DatasetContract(columns=[
 # pure shape over base tables. N.3.d: matview name is per-instance
 # prefixed (was global ``inv_money_trail_edges`` pre-N.3).
 def _money_trail_base_sql(prefix: str) -> str:
+    # Oracle disallows ``SELECT *, expr FROM ...`` — the star must be
+    # qualified when other columns appear in the same SELECT list. The
+    # ``e.*`` qualified form parses on both Postgres and Oracle.
     return (
         f"SELECT\n"
-        f"    *,\n"
+        f"    e.*,\n"
         f"    source_account_name || ' (' || source_account_id || ')' "
         f"AS source_display,\n"
         f"    target_account_name || ' (' || target_account_id || ')' "
         f"AS target_display\n"
-        f"FROM {prefix}_inv_money_trail_edges\n"
+        f"FROM {prefix}_inv_money_trail_edges e\n"
     )
 
 
@@ -230,7 +246,7 @@ SELECT
     i.posted_at,
     i.amount
 FROM inflows i
-JOIN outflows o USING (transfer_id)"""
+JOIN outflows o ON o.transfer_id = i.transfer_id"""
     return build_dataset(
         cfg,
         cfg.prefixed("inv-recipient-fanout-dataset"),
@@ -333,7 +349,15 @@ def build_account_network_accounts_dataset(cfg: Config) -> DataSet:
     )
 
 
-def build_all_datasets(cfg: Config) -> list[DataSet]:
+def build_all_datasets(
+    cfg: Config, l2_instance: L2Instance,
+) -> list[DataSet]:
+    """Return every dataset Investigation's sheets reference.
+
+    ``l2_instance`` is required for App Info matview names (which need
+    the L2 prefix). Mirrors the L1 / L2FT / Exec ``build_all_datasets``
+    signatures — every L2-fed app threads the instance explicitly.
+    """
     return [
         build_recipient_fanout_dataset(cfg),
         build_volume_anomalies_dataset(cfg),
@@ -345,7 +369,8 @@ def build_all_datasets(cfg: Config) -> list[DataSet]:
         # delete-then-create another app's App Info dataset.
         build_liveness_dataset(cfg, app_segment="inv"),
         build_matview_status_dataset(
-            cfg, app_segment="inv", view_names=INV_MATVIEW_NAMES,
+            cfg, app_segment="inv",
+            view_names=inv_matview_names(l2_instance),
         ),
     ]
 

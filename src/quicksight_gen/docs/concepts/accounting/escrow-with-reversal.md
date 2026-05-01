@@ -48,5 +48,5 @@ Plus the universal **Drift** + **Expected EOD Balance** checks: any
 escrow / suspense account with `expected_eod_balance: 0` declared in
 the L2 instance will surface as a violation when EOD ≠ 0.
 
-See [L1 Reconciliation Dashboard](../handbook/l1.md) for the visual
+See [L1 Reconciliation Dashboard](../../handbook/l1.md) for the visual
 surface.

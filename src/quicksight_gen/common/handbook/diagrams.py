@@ -31,10 +31,12 @@ import graphviz
 
 from quicksight_gen.common.l2.primitives import (
     Account,
+    AccountTemplate,
     ChainEntry,
     L2Instance,
     Rail,
     SingleLegRail,
+    TransferTemplate,
     TwoLegRail,
 )
 
@@ -42,16 +44,32 @@ from quicksight_gen.common.l2.primitives import (
 # -- Public API --------------------------------------------------------------
 
 
-TopologyKind = Literal["accounts", "chains", "layered"]
+TopologyKind = Literal[
+    "accounts", "account_templates", "chains", "layered", "hierarchy",
+    "transfer_template",
+]
 
 
-def render_l2_topology(l2_instance: L2Instance, kind: TopologyKind) -> str:
+def render_l2_topology(
+    l2_instance: L2Instance,
+    kind: TopologyKind,
+    *,
+    name: str | None = None,
+) -> str:
     """Render an L2 instance's structure as an inline SVG.
 
     ``kind="accounts"`` shows every Account as a node and every Rail as
     an edge between source-role-account and destination-role-account.
     Single-leg rails draw a self-loop on the leg-role account so they
     show up at all.
+
+    ``kind="account_templates"`` mirrors the accounts diagram but with
+    ``AccountTemplate`` nodes (keyed by role) instead of singleton
+    Accounts. Rails whose ``source_role`` / ``destination_role`` /
+    ``leg_role`` reference a template's role get edges to those template
+    nodes; rails whose roles touch no template are excluded — this
+    diagram is the "what does the template-shape graph look like?" view,
+    not the full topology.
 
     ``kind="chains"`` shows every Rail / TransferTemplate the chains
     table references, with ``parent → child`` edges (XOR groups
@@ -61,14 +79,211 @@ def render_l2_topology(l2_instance: L2Instance, kind: TopologyKind) -> str:
     ``kind="layered"`` lays the accounts diagram on top of the chains
     diagram in two ranks — the accounts row at the top, the chains row
     below.
+
+    ``kind="hierarchy"`` shows the parent → child rollup of singleton
+    accounts and account templates. Each node is an Account or
+    AccountTemplate; an edge points from a child to its parent
+    (resolved by ``child.parent_role == parent.role``). Singleton
+    accounts have solid borders; account templates carry dashed
+    borders since they're a SHAPE, not an instance.
+
+    ``kind="transfer_template"`` requires a ``name`` kwarg naming one
+    of the instance's TransferTemplates. Renders that template as a
+    parent node with each leg-rail as a child node, edge-labeled with
+    the leg's direction (Debit / Credit / Variable / two-leg). The
+    template node carries its expected_net + transfer_key + completion
+    so a reader gets the closure shape at a glance.
     """
     if kind == "accounts":
         return _to_svg(_build_accounts_graph(l2_instance))
+    if kind == "account_templates":
+        return _to_svg(_build_account_templates_graph(l2_instance))
     if kind == "chains":
         return _to_svg(_build_chains_graph(l2_instance))
     if kind == "layered":
         return _to_svg(_build_layered_graph(l2_instance))
+    if kind == "hierarchy":
+        return _to_svg(_build_hierarchy_graph(l2_instance))
+    if kind == "transfer_template":
+        if name is None:
+            raise ValueError(
+                "kind='transfer_template' requires a name= kwarg "
+                "naming one of the instance's TransferTemplates."
+            )
+        return _to_svg(_build_transfer_template_graph(l2_instance, name))
     raise ValueError(f"unknown topology kind: {kind!r}")
+
+
+def render_l2_account_focus(l2_instance: L2Instance) -> str | None:
+    """Render the first singleton Account with its parent edge (if any).
+
+    Returns None if the instance has no singleton accounts. Caller (the
+    mkdocs-macros entry) handles the fallback to ``spec_example``.
+    """
+    if not l2_instance.accounts:
+        return None
+    acc = l2_instance.accounts[0]
+    g = graphviz.Digraph(format="svg")
+    g.attr(rankdir="BT", nodesep="0.4", ranksep="0.7")
+    g.attr("node", fontsize="11", style="filled")
+    _add_account_node(g, acc)
+    if acc.parent_role is not None:
+        parent = _role_to_account(l2_instance).get(str(acc.parent_role))
+        if parent is not None:
+            _add_account_node(g, parent)
+            g.edge(str(acc.id), str(parent.id), color="#666666")
+    return _to_svg(g)
+
+
+def render_l2_account_template_focus(l2_instance: L2Instance) -> str | None:
+    """Render the first AccountTemplate with its parent singleton."""
+    if not l2_instance.account_templates:
+        return None
+    template = l2_instance.account_templates[0]
+    g = graphviz.Digraph(format="svg")
+    g.attr(rankdir="BT", nodesep="0.4", ranksep="0.7")
+    g.attr("node", fontsize="11", style="filled")
+    _add_account_template_node(g, template)
+    if template.parent_role is not None:
+        parent = _role_to_account(l2_instance).get(str(template.parent_role))
+        if parent is not None:
+            _add_account_node(g, parent)
+            g.edge(_template_node_id(template), str(parent.id), color="#666666")
+    return _to_svg(g)
+
+
+def render_l2_rail_focus(l2_instance: L2Instance) -> str | None:
+    """Render the first Rail with its endpoint accounts.
+
+    For TwoLeg, source + destination side-by-side with the rail edge
+    between them. For SingleLeg, the leg-role account with a self-loop
+    edge.
+    """
+    if not l2_instance.rails:
+        return None
+    rail = l2_instance.rails[0]
+    g = graphviz.Digraph(format="svg")
+    g.attr(rankdir="LR", nodesep="0.5", ranksep="1.0")
+    g.attr("node", fontsize="11", style="filled")
+    role_to_account = _role_to_account(l2_instance)
+    if isinstance(rail, TwoLegRail):
+        sources = _expand_role_expression(rail.source_role)
+        destinations = _expand_role_expression(rail.destination_role)
+        for r in (*sources, *destinations):
+            acc = role_to_account.get(r)
+            if acc is not None:
+                _add_account_node(g, acc)
+    elif isinstance(rail, SingleLegRail):
+        for r in _expand_role_expression(rail.leg_role):
+            acc = role_to_account.get(r)
+            if acc is not None:
+                _add_account_node(g, acc)
+    _add_rail_edges(g, rail, role_to_account)
+    return _to_svg(g)
+
+
+def render_l2_transfer_template_focus(l2_instance: L2Instance) -> str | None:
+    """Render the first TransferTemplate as a chain of leg rails.
+
+    Each leg becomes a node labeled with its rail_name; edges connect
+    them in declaration order. The template name + ``expected_net``
+    sit in the graph label.
+    """
+    if not l2_instance.transfer_templates:
+        return None
+    template = l2_instance.transfer_templates[0]
+    g = graphviz.Digraph(format="svg")
+    g.attr(
+        rankdir="LR", nodesep="0.4", ranksep="0.9",
+        label=f"{template.name}  (expected_net={template.expected_net})",
+        labelloc="t", fontsize="12",
+    )
+    g.attr(
+        "node", fontsize="11", shape="box",
+        style="filled,rounded", fillcolor="#e0f7fa",
+    )
+    rails_by_name = {str(r.name): r for r in l2_instance.rails}
+    prev: str | None = None
+    for idx, leg in enumerate(template.leg_rails):
+        rail_name = str(leg)
+        node_id = f"leg_{idx}_{rail_name}"
+        rail = rails_by_name.get(rail_name)
+        if isinstance(rail, TwoLegRail):
+            kind = "TwoLeg"
+        elif isinstance(rail, SingleLegRail):
+            kind = "SingleLeg"
+        else:
+            kind = ""
+        label = f"{rail_name}\n({kind})" if kind else rail_name
+        g.node(node_id, label)
+        if prev is not None:
+            g.edge(prev, node_id, color="#666666")
+        prev = node_id
+    return _to_svg(g)
+
+
+def render_l2_chain_focus(l2_instance: L2Instance) -> str | None:
+    """Render the first ChainEntry with both endpoints labeled.
+
+    Endpoint nodes are coloured by kind (rail vs template vs unresolved).
+    Edge style + label match the same conventions as the full chains
+    diagram (solid=required, dashed=optional, xor group label).
+    """
+    if not l2_instance.chains:
+        return None
+    chain = l2_instance.chains[0]
+    g = graphviz.Digraph(format="svg")
+    g.attr(rankdir="LR", nodesep="0.4", ranksep="0.9")
+    g.attr("node", fontsize="11", shape="box", style="filled,rounded")
+
+    rails_by_name = {str(r.name) for r in l2_instance.rails}
+    templates_by_name = {str(t.name) for t in l2_instance.transfer_templates}
+
+    def _add_endpoint(ref: object) -> None:
+        ref_id = str(ref)
+        if ref_id in rails_by_name:
+            g.node(ref_id, ref_id, fillcolor="#e0f7fa")
+        elif ref_id in templates_by_name:
+            g.node(ref_id, f"{ref_id}\n(template)", fillcolor="#fff9c4")
+        else:
+            g.node(ref_id, ref_id, fillcolor="#f5f5f5")
+
+    _add_endpoint(chain.parent)
+    _add_endpoint(chain.child)
+    _add_chain_edge(g, chain)
+    return _to_svg(g)
+
+
+def render_l2_limit_schedule_focus(l2_instance: L2Instance) -> str | None:
+    """Render the first LimitSchedule as a (parent_role, transfer_type) → cap.
+
+    Visual: a parent-role node on the left with a labeled edge to a
+    "cap" node showing the daily flow ceiling. Conceptual rather than
+    topological since LimitSchedules are configuration, not topology.
+    """
+    if not l2_instance.limit_schedules:
+        return None
+    sched = l2_instance.limit_schedules[0]
+    g = graphviz.Digraph(format="svg")
+    g.attr(rankdir="LR", nodesep="0.4", ranksep="1.0")
+    g.attr("node", fontsize="11", style="filled")
+
+    role_node = f"role_{sched.parent_role}"
+    cap_node = f"cap_{sched.parent_role}_{sched.transfer_type}"
+    g.node(
+        role_node, f"role: {sched.parent_role}",
+        shape="box", fillcolor="#bbdefb",
+    )
+    g.node(
+        cap_node, f"daily cap\n{sched.cap}",
+        shape="cylinder", fillcolor="#ffe0b2",
+    )
+    g.edge(
+        role_node, cap_node,
+        label=f"transfer_type:\n{sched.transfer_type}",
+        fontsize="9", color="#666666",
+    )
+    return _to_svg(g)
 
 
 def render_dataflow(app_name: str) -> str:
@@ -150,9 +365,157 @@ def _build_accounts_graph(l2_instance: L2Instance) -> graphviz.Digraph:
     for acc in l2_instance.accounts:
         _add_account_node(g, acc)
 
+    # Bundle edges that share (src_node, dst_node, edge-kind) so multiple
+    # rails along the same direction render as one labeled edge instead
+    # of N parallel lines. Direction stays split because the key is
+    # ordered (src, dst). edge-kind separates two-leg flow from single-leg
+    # self-loops so they keep their distinct visual styling.
+    bundle = _RailEdgeBundle()
     for rail in l2_instance.rails:
-        _add_rail_edges(g, rail, role_to_account)
+        _collect_rail_edges_for_accounts(rail, role_to_account, bundle)
+    bundle.emit(g)
     return g
+
+
+def _build_account_templates_graph(l2_instance: L2Instance) -> graphviz.Digraph:
+    """Template-focused topology: every rail that touches at least one
+    AccountTemplate, with template nodes (dashed) on the template legs
+    and singleton nodes (solid) on any non-template legs.
+
+    Rails that touch no template at all drop out, so the diagram stays
+    a focused template-topology view rather than a full re-render of
+    the accounts graph. Singletons that only appear on dropped rails
+    don't get rendered either — keeps the canvas small.
+    """
+    g = graphviz.Digraph(format="svg")
+    g.attr(rankdir="LR", nodesep="0.5", ranksep="1.0")
+    g.attr("node", fontsize="11", style="filled")
+
+    template_roles = {str(t.role) for t in l2_instance.account_templates}
+    role_to_template = _role_to_template(l2_instance)
+    role_to_account = _role_to_account(l2_instance)
+    for template in l2_instance.account_templates:
+        _add_account_template_node(g, template)
+
+    rendered_singletons: set[str] = set()
+    bundle = _RailEdgeBundle()
+    for rail in l2_instance.rails:
+        _collect_rail_edges_for_templates(
+            g, rail, template_roles, role_to_template,
+            role_to_account, rendered_singletons, bundle,
+        )
+    bundle.emit(g)
+    return g
+
+
+def _build_transfer_template_graph(
+    l2_instance: L2Instance, name: str,
+) -> graphviz.Digraph:
+    """One-template diagram: the named TransferTemplate as a parent
+    node + each leg-rail as a child node.
+
+    The template node carries its closure-relevant attributes
+    (expected_net, transfer_key, completion) so a reader gets the
+    "what closes this bundle" answer at a glance. Leg-rail edges
+    are color-coded by direction:
+
+    - SingleLegRail Debit: blue
+    - SingleLegRail Credit: green
+    - SingleLegRail Variable: amber (the closure leg — flagged
+      because its amount + direction are determined at posting time)
+    - TwoLegRail: grey (the rail itself has both legs internally)
+
+    Aggregating leg rails are intentionally NOT styled differently —
+    they're forbidden from appearing here per validator R7 (template
+    leg_rails must be non-aggregating), so the case can't arise.
+    """
+    template = next(
+        (t for t in l2_instance.transfer_templates if str(t.name) == name),
+        None,
+    )
+    if template is None:
+        declared = [str(t.name) for t in l2_instance.transfer_templates]
+        raise ValueError(
+            f"no TransferTemplate named {name!r} on the L2 instance. "
+            f"Declared: {declared!r}"
+        )
+
+    g = graphviz.Digraph(format="svg")
+    g.attr(rankdir="LR", nodesep="0.4", ranksep="1.0")
+    g.attr("node", fontsize="11", style="filled")
+
+    # Template node — distinguished shape (double-bordered rounded box)
+    # so it reads as "this is the bundle, the rails below are its legs".
+    template_id = f"tt__{template.name}"
+    template_label_lines = [
+        f"<b>{template.name}</b>",
+        f"<i>{template.transfer_type}</i>",
+        f"expected_net = {template.expected_net}",
+        f"completion = {template.completion}",
+    ]
+    if template.transfer_key:
+        keys = ", ".join(str(k) for k in template.transfer_key)
+        template_label_lines.append(f"transfer_key = [{keys}]")
+    g.node(
+        template_id,
+        label=f"<{'<br/>'.join(template_label_lines)}>",
+        shape="box",
+        style="filled,rounded",
+        fillcolor="#fff3e0",
+        color="#e65100",
+        penwidth="2",
+    )
+
+    rails_by_name = {str(r.name): r for r in l2_instance.rails}
+    for leg_name in template.leg_rails:
+        rail = rails_by_name.get(str(leg_name))
+        if rail is None:
+            # R4 already guarantees existence at validate-time; defensive.
+            continue
+        leg_id = f"tt__{template.name}__leg__{rail.name}"
+        leg_label, edge_color, edge_label = _leg_rail_render(rail)
+        g.node(
+            leg_id,
+            label=leg_label,
+            shape="box",
+            style="filled",
+            fillcolor="#e3f2fd",
+        )
+        g.edge(
+            template_id, leg_id,
+            label=edge_label, fontsize="9", color=edge_color,
+        )
+    return g
+
+
+def _leg_rail_render(rail: Rail) -> tuple[str, str, str]:
+    """Return (node_label, edge_color, edge_label) for a leg rail.
+
+    Two-leg rails surface their source → destination pair on the node
+    label; single-leg rails surface the leg_role + direction.
+    """
+    if isinstance(rail, TwoLegRail):
+        srcs = " | ".join(_expand_role_expression(rail.source_role))
+        dsts = " | ".join(_expand_role_expression(rail.destination_role))
+        return (
+            f"<<b>{rail.name}</b><br/>{srcs} → {dsts}>",
+            "#666666",  # neutral grey — two-leg has its own internal direction
+            "two-leg",
+        )
+    # SingleLegRail
+    leg_roles = " | ".join(_expand_role_expression(rail.leg_role))
+    direction = rail.leg_direction
+    color_map = {
+        "Debit": "#1976d2",     # blue
+        "Credit": "#2e7d32",    # green
+        "Variable": "#f57c00",  # amber — closure leg
+    }
+    edge_color = color_map.get(direction, "#666666")
+    return (
+        f"<<b>{rail.name}</b><br/>leg_role: {leg_roles}>",
+        edge_color,
+        direction,
+    )
 
 
 def _build_chains_graph(l2_instance: L2Instance) -> graphviz.Digraph:
@@ -191,8 +554,10 @@ def _build_layered_graph(l2_instance: L2Instance) -> graphviz.Digraph:
         role_to_account = _role_to_account(l2_instance)
         for acc in l2_instance.accounts:
             _add_account_node(c, acc)
+        bundle = _RailEdgeBundle()
         for rail in l2_instance.rails:
-            _add_rail_edges(c, rail, role_to_account)
+            _collect_rail_edges_for_accounts(rail, role_to_account, bundle)
+        bundle.emit(c)
 
     with g.subgraph(name="cluster_chains") as c:
         c.attr(label="Chains", style="rounded", color="#a5d6a7")
@@ -231,6 +596,57 @@ def _build_layered_graph(l2_instance: L2Instance) -> graphviz.Digraph:
     return g
 
 
+def _build_hierarchy_graph(l2_instance: L2Instance) -> graphviz.Digraph:
+    """Render the parent → child rollup of accounts and account templates.
+
+    Singleton ``Account`` nodes use the same scope-colored fill as the
+    other diagrams (blue=internal, orange=external). ``AccountTemplate``
+    nodes use a dashed border so a reader can distinguish "this is one
+    account" from "this is a SHAPE that exists in many instances at
+    runtime" at a glance.
+
+    Edges run from child to parent (singleton or template child →
+    singleton-account parent), resolved by
+    ``child.parent_role == parent.role``. The edge arrow points at the
+    parent so the rollup direction reads naturally with ``rankdir=BT``
+    (children at the top, control accounts at the bottom).
+
+    Roots (singletons with ``parent_role=None``) appear ungrouped at
+    the bottom rank.
+    """
+    g = graphviz.Digraph(format="svg")
+    g.attr(rankdir="BT", nodesep="0.4", ranksep="0.9")
+    g.attr("node", fontsize="11", style="filled")
+
+    role_to_account = _role_to_account(l2_instance)
+
+    for acc in l2_instance.accounts:
+        _add_account_node(g, acc)
+
+    for template in l2_instance.account_templates:
+        _add_account_template_node(g, template)
+
+    # Child → parent edges (children: singletons + templates with
+    # parent_role set; parents: singletons whose role matches).
+    for acc in l2_instance.accounts:
+        if acc.parent_role is None:
+            continue
+        parent = role_to_account.get(str(acc.parent_role))
+        if parent is None:
+            continue
+        g.edge(str(acc.id), str(parent.id), color="#666666")
+
+    for template in l2_instance.account_templates:
+        if template.parent_role is None:
+            continue
+        parent = role_to_account.get(str(template.parent_role))
+        if parent is None:
+            continue
+        g.edge(_template_node_id(template), str(parent.id), color="#666666")
+
+    return g
+
+
 # -- Graph helpers -----------------------------------------------------------
 
 
@@ -240,10 +656,130 @@ def _role_to_account(l2_instance: L2Instance) -> dict[str, Account]:
     }
 
 
+def _role_to_template(l2_instance: L2Instance) -> dict[str, AccountTemplate]:
+    return {str(t.role): t for t in l2_instance.account_templates}
+
+
 def _add_account_node(g: graphviz.Digraph, acc: Account) -> None:
     color = "#bbdefb" if acc.scope == "internal" else "#ffe0b2"
     label = acc.name or acc.id
     g.node(str(acc.id), str(label), fillcolor=color, shape="box")
+
+
+def _template_node_id(template: AccountTemplate) -> str:
+    """Stable graph node id for an AccountTemplate.
+
+    Templates have no ``id`` field (they're a SHAPE, not an instance) so
+    we synthesize one from the role with a ``tmpl__`` prefix to avoid
+    collisions with singleton account ids.
+
+    Underscore — NOT colon. The ``graphviz`` Python lib quotes node
+    IDs in node-definition statements but emits unquoted endpoints in
+    edge statements, where Graphviz dot syntax then parses ``a:b`` as
+    "node ``a``, port ``b``". A previous ``tmpl::`` prefix made every
+    template edge collapse onto a phantom ``tmpl`` node — see commit
+    history for the fix.
+    """
+    return f"tmpl__{template.role}"
+
+
+def _add_account_template_node(
+    g: graphviz.Digraph, template: AccountTemplate,
+) -> None:
+    """Render an AccountTemplate node with a dashed border.
+
+    Uses the same scope-coloured fill as singletons but a dashed
+    border to mark it as "this is a SHAPE, populated at runtime"
+    rather than a single physical account. Label includes ``role × N``
+    to nudge readers toward the multi-instance reading.
+    """
+    color = "#bbdefb" if template.scope == "internal" else "#ffe0b2"
+    g.node(
+        _template_node_id(template),
+        f"{template.role} × N",
+        fillcolor=color,
+        shape="box",
+        style="filled,dashed",
+    )
+
+
+class _RailEdgeBundle:
+    """Group rail edges by (src_node, dst_node, kind) so parallel lines
+    along the same direction collapse into one labeled edge.
+
+    Two kinds:
+    - ``"two_leg"`` — solid blue ``#1976d2`` for two-leg rail flow.
+    - ``"single_leg"`` — dashed purple ``#7b1fa2`` for single-leg
+      self-loops.
+
+    Direction stays split because the key tuple is ordered (src, dst):
+    a Customer→External rail and an External→Customer rail produce
+    distinct keys even when they target the same role pair, matching
+    the user's "split directions, bundle within a direction" rule.
+    """
+
+    def __init__(self) -> None:
+        # key: (src_node_id, dst_node_id, kind)
+        # value: list of rail labels (one line per rail)
+        self._edges: dict[tuple[str, str, str], list[str]] = {}
+
+    def add(self, src: str, dst: str, kind: str, label: str) -> None:
+        self._edges.setdefault((src, dst, kind), []).append(label)
+
+    def emit(self, g: graphviz.Digraph) -> None:
+        for (src, dst, kind), labels in self._edges.items():
+            color, style = (
+                ("#1976d2", "solid") if kind == "two_leg"
+                else ("#7b1fa2", "dashed")
+            )
+            label = "\n".join(labels)
+            kwargs = {"label": label, "fontsize": "9", "color": color}
+            if style != "solid":
+                kwargs["style"] = style
+            g.edge(src, dst, **kwargs)
+
+
+def _rail_label(rail: Rail) -> str:
+    """One-line label for a rail in a bundled edge.
+
+    Just the rail name — no transfer_type. With direction-bundling
+    the same edge already groups rails sharing (src, dst), so the
+    transfer_type was visual noise (often duplicates within a bundle,
+    or close variants like ``ach_inbound`` vs ``wire_inbound`` that
+    don't add information beyond what the rail name conveys).
+    """
+    return str(rail.name)
+
+
+def _collect_rail_edges_for_accounts(
+    rail: Rail,
+    role_to_account: dict[str, Account],
+    bundle: _RailEdgeBundle,
+) -> None:
+    """Singleton-accounts diagram: collect each rail's edges into the
+    bundle keyed by (src_account_id, dst_account_id, kind)."""
+    if isinstance(rail, TwoLegRail):
+        sources = _expand_role_expression(rail.source_role)
+        destinations = _expand_role_expression(rail.destination_role)
+        for src_role in sources:
+            src_acc = role_to_account.get(src_role)
+            for dst_role in destinations:
+                dst_acc = role_to_account.get(dst_role)
+                if src_acc is None or dst_acc is None:
+                    continue
+                bundle.add(
+                    str(src_acc.id), str(dst_acc.id),
+                    "two_leg", _rail_label(rail),
+                )
+    elif isinstance(rail, SingleLegRail):
+        for leg_role in _expand_role_expression(rail.leg_role):
+            acc = role_to_account.get(leg_role)
+            if acc is None:
+                continue
+            bundle.add(
+                str(acc.id), str(acc.id),
+                "single_leg", _rail_label(rail),
+            )
 
 
 def _add_rail_edges(
@@ -251,6 +787,11 @@ def _add_rail_edges(
     rail: Rail,
     role_to_account: dict[str, Account],
 ) -> None:
+    """Legacy per-rail emit (still referenced by the layered/hierarchy
+    diagrams' ad-hoc rendering paths). Kept as a thin compat wrapper —
+    prefer ``_collect_rail_edges_for_accounts`` + ``_RailEdgeBundle``
+    for any new caller so direction-bundled edges happen automatically.
+    """
     if isinstance(rail, TwoLegRail):
         sources = _expand_role_expression(rail.source_role)
         destinations = _expand_role_expression(rail.destination_role)
@@ -280,6 +821,143 @@ def _add_rail_edges(
                 style="dashed",
                 color="#7b1fa2",
             )
+
+
+def _collect_rail_edges_for_templates(
+    g: graphviz.Digraph,
+    rail: Rail,
+    template_roles: set[str],
+    role_to_template: dict[str, AccountTemplate],
+    role_to_account: dict[str, Account],
+    rendered_singletons: set[str],
+    bundle: _RailEdgeBundle,
+) -> None:
+    """Template-focused diagram: collect each rail's edges into the
+    bundle so parallel rails along the same direction render as one
+    labeled edge.
+
+    Template-roled legs draw against the dashed template node;
+    singleton-roled legs draw against the singleton account node
+    (added on-demand to ``rendered_singletons`` so each appears once).
+    Rails that touch no template at all are skipped entirely.
+    """
+    if isinstance(rail, TwoLegRail):
+        sources = _expand_role_expression(rail.source_role)
+        destinations = _expand_role_expression(rail.destination_role)
+        if not _rail_touches_template(sources, destinations, template_roles):
+            return
+        for src_role in sources:
+            src_id = _template_or_singleton_node_id(
+                g, src_role, template_roles, role_to_template,
+                role_to_account, rendered_singletons,
+            )
+            if src_id is None:
+                continue
+            for dst_role in destinations:
+                dst_id = _template_or_singleton_node_id(
+                    g, dst_role, template_roles, role_to_template,
+                    role_to_account, rendered_singletons,
+                )
+                if dst_id is None:
+                    continue
+                bundle.add(src_id, dst_id, "two_leg", _rail_label(rail))
+    elif isinstance(rail, SingleLegRail):
+        for leg_role in _expand_role_expression(rail.leg_role):
+            if leg_role not in template_roles:
+                continue
+            template = role_to_template[leg_role]
+            node_id = _template_node_id(template)
+            bundle.add(node_id, node_id, "single_leg", _rail_label(rail))
+
+
+def _add_template_rail_edges(
+    g: graphviz.Digraph,
+    rail: Rail,
+    template_roles: set[str],
+    role_to_template: dict[str, AccountTemplate],
+    role_to_account: dict[str, Account],
+    rendered_singletons: set[str],
+) -> None:
+    """Legacy per-rail emit. Kept as a thin wrapper for any external
+    caller — the in-tree builder uses ``_collect_rail_edges_for_templates``
+    + ``_RailEdgeBundle`` so parallel rails along the same direction
+    render as one bundled edge.
+    """
+    if isinstance(rail, TwoLegRail):
+        sources = _expand_role_expression(rail.source_role)
+        destinations = _expand_role_expression(rail.destination_role)
+        if not _rail_touches_template(sources, destinations, template_roles):
+            return
+        for src_role in sources:
+            src_id = _template_or_singleton_node_id(
+                g, src_role, template_roles, role_to_template,
+                role_to_account, rendered_singletons,
+            )
+            if src_id is None:
+                continue
+            for dst_role in destinations:
+                dst_id = _template_or_singleton_node_id(
+                    g, dst_role, template_roles, role_to_template,
+                    role_to_account, rendered_singletons,
+                )
+                if dst_id is None:
+                    continue
+                g.edge(
+                    src_id,
+                    dst_id,
+                    label=f"{rail.name}\n({rail.transfer_type})",
+                    fontsize="9",
+                    color="#1976d2",
+                )
+    elif isinstance(rail, SingleLegRail):
+        for leg_role in _expand_role_expression(rail.leg_role):
+            if leg_role not in template_roles:
+                continue
+            template = role_to_template[leg_role]
+            node_id = _template_node_id(template)
+            g.edge(
+                node_id,
+                node_id,
+                label=f"{rail.name}\n({rail.transfer_type})",
+                fontsize="9",
+                style="dashed",
+                color="#7b1fa2",
+            )
+
+
+def _rail_touches_template(
+    sources: tuple[str, ...],
+    destinations: tuple[str, ...],
+    template_roles: set[str],
+) -> bool:
+    """True iff any leg's role resolves to a declared AccountTemplate."""
+    return any(r in template_roles for r in (*sources, *destinations))
+
+
+def _template_or_singleton_node_id(
+    g: graphviz.Digraph,
+    role: str,
+    template_roles: set[str],
+    role_to_template: dict[str, AccountTemplate],
+    role_to_account: dict[str, Account],
+    rendered_singletons: set[str],
+) -> str | None:
+    """Resolve a role to a graph node id, adding the singleton on first use.
+
+    Templates were already added by the builder; singletons get added
+    lazily here the first time a template-touching rail references one,
+    so unrelated singletons stay out of the diagram.
+    """
+    if role in template_roles:
+        return _template_node_id(role_to_template[role])
+    acc = role_to_account.get(role)
+    if acc is None:
+        return None
+    acc_id = str(acc.id)
+    if acc_id not in rendered_singletons:
+        _add_account_node(g, acc)
+        rendered_singletons.add(acc_id)
+    return acc_id
 
 
 def _expand_role_expression(expr: object) -> tuple[str, ...]:

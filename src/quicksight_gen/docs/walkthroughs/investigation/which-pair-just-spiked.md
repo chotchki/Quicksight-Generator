@@ -48,11 +48,11 @@ Three visuals:
 
 ## The math, briefly
 
-The matview `inv_pair_rolling_anomalies` computes, per (sender,
-recipient) pair, a 2-day rolling SUM (today + yesterday's transfer
-amounts). It then computes the **population mean** and **sample
-standard deviation** of that rolling SUM across every pair-window in
-the matview, and projects each row's z-score
+The matview `<prefix>_inv_pair_rolling_anomalies` computes, per
+(sender, recipient) pair, a 2-day rolling SUM (today + yesterday's
+transfer amounts). It then computes the **population mean** and
+**sample standard deviation** of that rolling SUM across every
+pair-window in the matview, and projects each row's z-score
 (`(value - population_mean) / population_stddev`) plus a 5-band
 bucket label.
 
@@ -68,8 +68,9 @@ require multiple matviews or a generate_series at dataset time —
 deferred to a later phase).
 
 The matview **does not auto-refresh**. After every ETL load, the
-operator runs `REFRESH MATERIALIZED VIEW inv_pair_rolling_anomalies;`
-— see [Materialized views](../../Schema_v6.md#the-layered-model).
+operator runs
+`REFRESH MATERIALIZED VIEW <prefix>_inv_pair_rolling_anomalies;`
+— see [Refresh contract](../../Schema_v6.md#refresh-contract).
 A skipped refresh means the z-scores reflect yesterday's population.
 
 ## What you'll see in the demo
@@ -80,8 +81,8 @@ contiguous days, then a single $25,000 wire on day −10. With the
 default 2σ threshold:
 
 - **KPI** — typically 1 (the spike day is the lone flagged pair-window
-  in the planted scenario; incidental flags from the broader
-  PR/AR seed may add 1–2 more).
+  in the planted scenario; incidental flags from the broader L2
+  instance seed may add 1–2 more).
 - **Distribution chart** — the leftmost bucket (`0-1 sigma`) holds
   almost the entire population; the spike sits alone in the
   rightmost bucket (`4+ sigma`).
@@ -90,8 +91,8 @@ default 2σ threshold:
   baseline ~$500.
 
 Drag σ down to 1 — the table fills with marginal flags, mostly
-incidental to the PR/AR seed. Drag σ up to 4 — the table empties
-back down to just the spike.
+incidental to the broader L2 instance seed. Drag σ up to 4 — the
+table empties back down to just the spike.
 
 ## What it means
 
@@ -128,9 +129,9 @@ you want to know:
 - **"Where did this specific transfer come from?"** → Money Trail
   sheet. Pick the chain root (typically the spike transfer itself if
   it's chain-rooted, or the parent_transfer_id chain it sits on).
-- **"Show me the underlying posting rows."** → Account Reconciliation,
-  Transactions sheet, filtered to the sender or recipient
-  `account_id`.
+- **"Show me the underlying posting rows."** → L1 Reconciliation
+  Dashboard, Transactions sheet, filtered to the sender or
+  recipient `account_id`.
 
 ## Next step
 
@@ -145,8 +146,8 @@ goes:
 3. Switch to Money Trail with the spike transfer's chain root —
    confirm whether the money moved on after landing (layering) or
    stayed put.
-4. Drop into AR Transactions for the row-level postings if the case
-   needs evidence at the leg level.
+4. Drop into the L1 Transactions sheet for the row-level postings
+   if the case needs evidence at the leg level.
 
 If the spike is the only data point — sender appeared once, money
 moved on the same day to a downstream account — it's a Money Trail

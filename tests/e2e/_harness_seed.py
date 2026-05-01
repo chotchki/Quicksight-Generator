@@ -28,6 +28,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any, Literal
 
+from quicksight_gen.common.db import execute_script
 from quicksight_gen.common.l2 import (
     L2Instance,
     emit_schema,
@@ -38,6 +39,7 @@ from quicksight_gen.common.l2.auto_scenario import (
     default_scenario_for,
 )
 from quicksight_gen.common.l2.seed import ScenarioPlant, emit_seed
+from quicksight_gen.common.sql import Dialect
 
 
 # Canonical reference date pinned across harness runs so the seed's
@@ -52,23 +54,16 @@ def apply_db_seed(
     *,
     mode: ScenarioMode = "l1_plus_broad",
     today: date | None = None,
+    dialect: Dialect = Dialect.POSTGRES,
 ) -> ScenarioPlant:
     """Apply schema + seed + matview refresh against ``conn``.
 
     Three DB-side steps in order, each committed independently so a
     mid-flow failure leaves the prefixed objects in a known state for
-    the harness teardown to drop cleanly.
-
-    1. ``emit_schema(instance)`` is one big multi-statement string
-       psycopg2 runs in a single ``cursor.execute`` call (the existing
-       ``scripts/m2_6_verify.py`` reference uses the same pattern;
-       PostgreSQL accepts the whole DDL block atomically).
-    2. ``emit_seed(instance, scenario)`` is a single multi-row INSERT
-       per table — also one ``cursor.execute`` call.
-    3. ``refresh_matviews_sql(instance)`` returns ``REFRESH MATERIALIZED
-       VIEW <name>;`` per line. Per the helper's docstring,
-       ``cursor.execute`` can't run multiple statements separated by
-       ``;`` reliably — split on ``;`` and run each individually.
+    the harness teardown to drop cleanly. Routes every multi-statement
+    script through ``common/db.execute_script`` so Oracle's per-statement
+    + PL/SQL-block execution works alongside Postgres's atomic-script
+    behavior (P.9d).
 
     Returns the ``ScenarioPlant`` so the caller can pass it to
     ``build_planted_manifest`` for the harness's per-test triage
@@ -77,25 +72,22 @@ def apply_db_seed(
     today_ref = today or DEFAULT_HARNESS_TODAY
 
     # 1. Schema.
-    schema_sql = emit_schema(instance)
+    schema_sql = emit_schema(instance, dialect=dialect)
     with conn.cursor() as cur:
-        cur.execute(schema_sql)
+        execute_script(cur, schema_sql, dialect=dialect)
     conn.commit()
 
     # 2. Seed (mode-aware via M.4.2).
     report = default_scenario_for(instance, today=today_ref, mode=mode)
-    seed_sql = emit_seed(instance, report.scenario)
+    seed_sql = emit_seed(instance, report.scenario, dialect=dialect)
     with conn.cursor() as cur:
-        cur.execute(seed_sql)
+        execute_script(cur, seed_sql, dialect=dialect)
     conn.commit()
 
-    # 3. Refresh matviews. Split on `;` per the refresh_matviews_sql
-    # docstring's contract (psycopg2 multi-statement caveat).
-    refresh_sql = refresh_matviews_sql(instance)
-    statements = [s.strip() for s in refresh_sql.split(";") if s.strip()]
+    # 3. Refresh matviews.
+    refresh_sql = refresh_matviews_sql(instance, dialect=dialect)
     with conn.cursor() as cur:
-        for stmt in statements:
-            cur.execute(stmt)
+        execute_script(cur, refresh_sql, dialect=dialect)
     conn.commit()
 
     return report.scenario

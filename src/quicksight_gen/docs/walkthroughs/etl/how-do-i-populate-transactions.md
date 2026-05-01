@@ -1,4 +1,4 @@
-# How do I populate `transactions` from my core banking system?
+# How do I populate `<prefix>_transactions` from my core banking system?
 
 *Engineering walkthrough — Data Integration Team. Foundational.*
 
@@ -7,13 +7,15 @@
 You've got an upstream core banking system with a `gl_postings`
 table (or its local equivalent — `general_ledger.entry`,
 `accounting.posting_detail`, etc.). It carries one row per posting
-leg already, which is the natural granularity of our `transactions`
-table. You need to write the ETL job that lands it in our
-two-table schema by the morning cut so the dashboards work.
+leg already, which is the natural granularity of our
+`<prefix>_transactions` table. You need to write the ETL job that
+lands it in our two-table schema by the morning cut so the four
+L2-fed dashboards (L1 Reconciliation, L2 Flow Tracing,
+Investigation, Executives) work.
 
 The good news: it's mostly a column-rename. The contract is small
 (11 mandatory columns + a handful of conditional ones — see
-[Schema_v6.md → Getting Started for Data Teams](../../Schema_v6.md#etl-contract-minimum-viable-feed)).
+[Schema_v6.md → ETL contract / minimum viable feed](../../Schema_v6.md#etl-contract-minimum-viable-feed)).
 The bad news: skip the wrong column and a downstream check goes
 silent. So this walkthrough covers the canonical projection plus
 the per-column failure modes.
@@ -21,8 +23,8 @@ the per-column failure modes.
 ## The question
 
 "For my core banking system's `gl_postings` table, what's the
-canonical projection that maps it to `transactions`? What columns
-must I populate, and what columns can wait until v2?"
+canonical projection that maps it to `<prefix>_transactions`? What
+columns must I populate, and what columns can wait until v2?"
 
 ## Where to look
 
@@ -30,37 +32,39 @@ Two reference points:
 
 - **`docs/Schema_v6.md`** — column-level contract and per-column
   failure modes ("If you skip this, what dashboard breaks?").
-- **`quicksight-gen demo etl-example --all -o etl-examples.sql`** —
-  emits 11 canonical INSERT-pattern blocks (6 PR + 5 AR) that you
-  can crib from. Each one carries a `-- WHY:` header and a
-  `-- Consumed by:` pointer to the dashboard view that reads it.
+- **`common/l2/schema.py::emit_schema(l2_instance)`** — the source
+  of truth for the prefixed DDL. Every base table, view, and
+  matview your dashboards read is emitted here, all under the L2
+  instance prefix. Call it from Python (or apply directly via
+  `quicksight-gen demo apply`) to see the rendered output for
+  your L2 instance.
 
-If you're new to the schema, generate `etl-examples.sql` first and
-read it top-to-bottom. The patterns are written as if they were
-the only documentation a customer would ever see — they're
-self-contained.
+The `<prefix>` in this walkthrough's SQL is your L2 instance name
+(e.g., `sasquatch_pr`); your ETL substitutes it once when wiring
+the projection.
 
 ## What you'll see in the demo
 
 Run:
 
-```bash
-quicksight-gen demo etl-example --all -o /tmp/etl-examples.sql
-head -50 /tmp/etl-examples.sql
+```python
+from quicksight_gen.common.l2.loader import load_instance
+from quicksight_gen.common.l2.schema import emit_schema
+
+l2 = load_instance("tests/l2/sasquatch_pr.yaml")
+print(emit_schema(l2)[:4000])
 ```
 
-The first block is **Pattern 1: PR sale** — the canonical
-projection from a POS sale into `transactions`. Strip the
-sentinel suffix (`-EXAMPLE-001`) and wire each column to your
-upstream feed's source field. The full block runs ~50 lines and
-covers every column the PR side cares about.
+The first `CREATE TABLE` block is `<prefix>_transactions` itself
+— the column list, types, and constraints your projection has to
+satisfy. The second is `<prefix>_daily_balances`. Read both
+end-to-end before writing the projection; they're the contract.
 
 For an end-to-end mapping from `core_banking.gl_postings` →
-`transactions`, see **Example 1** in `docs/Schema_v6.md` (the
-SQL block under "Populating customer DDA postings from core
-banking"). It's the same pattern shape as the demo `etl-examples`
-output but written as a real `INSERT INTO ... SELECT FROM` against
-a hypothetical core-banking source schema.
+`<prefix>_transactions`, see **Example 1** in `docs/Schema_v6.md`
+(the SQL block under "Populating customer DDA postings from core
+banking"). It's a real `INSERT INTO ... SELECT FROM` against a
+hypothetical core-banking source schema.
 
 ## What it means
 
@@ -68,21 +72,24 @@ For every row your ETL writes, you're committing to a contract:
 
 1. **The 11 mandatory columns** (per [Schema_v6.md → minimum
    viable feed](../../Schema_v6.md#etl-contract-minimum-viable-feed)) get
-   the row visible on the dashboard at all.
-2. **`parent_transfer_id`** populated only for chained transfers
-   (sale → settlement → payment → external_txn for PR; reversal
-   chains for AR). Skip it and pipeline-traversal walkthroughs
-   silently return nothing for the affected rows.
-3. **`origin = 'external_force_posted'`** on Fed / processor
-   force-posts. Skip it and AR's GL-vs-Fed-Master-Drift check
-   under-fires (rows look like normal operator postings).
+   the row visible on the dashboards at all.
+2. **`transfer_parent_id`** populated only for chained transfers
+   (e.g., `external_txn → payment → settlement → sale` or any
+   reversal chain your L2 declares). Skip it and pipeline-traversal
+   walkthroughs (Money Trail, Account Network) silently return
+   nothing for the affected rows.
+3. **`origin = 'ExternalForcePosted'`** on Fed / processor
+   force-posts. Skip it and the L1 drift split between
+   bank-initiated activity and force-posted activity collapses
+   (rows look like normal operator postings, drift checks
+   under-fire).
 4. **`metadata` JSON** — the universal extras container. Skip it
    on day 1 if your downstream consumer doesn't need it; populate
    it in priority order (`source` first, then per-`transfer_type`
    keys per the catalog). The catalog tables in Schema_v6 list the
    keys + what each one drives.
 
-Everything else (`memo`, `external_system`, `control_account_id`)
+Everything else (`memo`, `external_system`, `account_parent_role`)
 is conditional — populate when the downstream consumer demands it.
 
 ## Drilling in
@@ -91,27 +98,27 @@ The mapping pattern looks like this for a customer-DDA posting
 (from Schema_v6 Example 1, abbreviated):
 
 ```sql
-INSERT INTO transactions (
+INSERT INTO <prefix>_transactions (
     transaction_id, transfer_id, transfer_type, origin,
-    account_id, account_name, control_account_id, account_type,
-    is_internal, signed_amount, amount, status,
-    posted_at, balance_date, memo, metadata
+    account_id, account_name, account_parent_role, account_role,
+    account_scope, amount_money, amount, status,
+    posting, business_day_start, memo, metadata
 )
 SELECT
     p.posting_id,                                      -- your PK
     p.transfer_id,                                     -- your transfer grouping
     p.transfer_type,                                   -- map your enum to ours
-    'internal_initiated'                AS origin,     -- or external_force_posted for Fed
-    p.account_number                    AS account_id,
+    'InternalInitiated'                  AS origin,    -- or ExternalForcePosted for Fed
+    p.account_number                     AS account_id,
     a.account_name,
-    a.gl_control_account                AS control_account_id,
-    a.account_role                      AS account_type,
-    a.is_bank_owned                     AS is_internal,
-    p.signed_amount,
-    ABS(p.signed_amount)                AS amount,
-    CASE WHEN p.posting_status = 'P' THEN 'success' ELSE 'failed' END,
-    p.posting_timestamp                 AS posted_at,
-    p.posting_timestamp::date           AS balance_date,
+    a.parent_role                        AS account_parent_role,
+    a.account_role,
+    a.account_scope,                                   -- Internal / External
+    p.signed_amount                      AS amount_money,
+    ABS(p.signed_amount)                 AS amount,
+    CASE WHEN p.posting_status = 'P' THEN 'Posted' ELSE 'Failed' END,
+    p.posting_timestamp                  AS posting,
+    p.posting_timestamp::date            AS business_day_start,
     p.memo,
     JSON_OBJECT('source' VALUE 'core_banking')
 FROM core_banking.gl_postings p
@@ -121,26 +128,26 @@ WHERE p.posting_date >= CURRENT_DATE - INTERVAL '7 days';
 
 A few things to note about this projection:
 
-- **`balance_date`** is denormalized from `posted_at` deliberately
-  — fast date filters in the dashboard datasets need a column they
-  can range-scan without an expression cast. It's our redundancy
-  for our query speed; the cost is your ETL writes one extra
-  column.
+- **`business_day_start`** is denormalized from `posting`
+  deliberately — fast date filters in the dashboard datasets need a
+  column they can range-scan without an expression cast. It's
+  redundancy for query speed; the cost is your ETL writes one
+  extra column.
 - **`status`** maps from your status enum to ours. Anything that's
-  not `success` MUST be `failed` (no third state) — the drift
-  check and net-zero check both `WHERE status = 'success'` to
-  exclude rejected legs.
-- **`signed_amount`** is `+` for money flowing INTO the account
+  not `Posted` MUST be `Pending` or `Failed` (no fourth state) —
+  the drift check and net-zero check both `WHERE status = 'Posted'`
+  to exclude in-flight or rejected legs.
+- **`amount_money`** is `+` for money flowing INTO the account
   (a `debit` in bank's-bookkeeping terms), `−` for money flowing
-  OUT (a `credit`). `daily_balances.balance` for any account-day
-  equals `SUM(signed_amount)` up to that day, so getting this
-  sign right is what makes the drift check honest. If your
+  OUT (a `credit`). `<prefix>_daily_balances.money` for any
+  account-day equals `SUM(amount_money)` up to that day, so getting
+  this sign right is what makes the drift check honest. If your
   upstream uses the opposite sign convention, flip it here, not
   later in a view. Every check assumes our sign convention.
 - **`metadata`** carries `source` on every row from this projection
   (driven by the `JSON_OBJECT(... VALUE 'core_banking')` literal).
-  That single key is enough to satisfy the Fraud / AML provenance
-  filter on day 1.
+  That single key is enough to satisfy the Investigation
+  provenance walks on day 1.
 
 ## Next step
 
@@ -153,13 +160,13 @@ Once your projection is wired up:
    — it walks you through the net-zero, drift-recompute, and
    parent-chain integrity checks you should run before declaring
    the load complete.
-3. **Open the AR Exceptions sheet and the PR Exceptions sheet** —
-   if KPIs read 0 with no drilldown rows, your feed landed and
-   the contract holds. If KPIs spike unexpectedly, see
+3. **Open the L1 Reconciliation Dashboard's Today's Exceptions
+   sheet** — if the KPI reads 0 with no detail rows, your feed
+   landed and the contract holds. If KPIs spike unexpectedly, see
    [What do I do when the demo passes but my prod data fails?](what-do-i-do-when-demo-passes-but-prod-fails.md)
    for the symptom-organized debug recipes.
 4. **Iterate on metadata** — once the minimum feed is stable,
-   layer in `parent_transfer_id` and the per-`transfer_type`
+   layer in `transfer_parent_id` and the per-`transfer_type`
    metadata keys per the
    [Metadata JSON columns](../../Schema_v6.md#metadata-json-columns)
    contract.
@@ -167,25 +174,23 @@ Once your projection is wired up:
 If your upstream source isn't a `gl_postings` table — say it's a
 processor report, a Fed statement file, or a sweep-engine log —
 the same projection shape applies, but the inbound columns differ.
-Schema_v6.md Examples 4 and 5 cover PR sales and Fed-statement
-ingest specifically; the demo `etl-example` output covers the
-remaining patterns.
+Schema_v6.md's examples cover Fed-statement and processor-feed
+ingest; the same `INSERT INTO <prefix>_transactions` pattern
+applies regardless of source.
 
 ## Related walkthroughs
 
 - [How do I prove my ETL is working before going live?](how-do-i-prove-my-etl-is-working.md) —
   the **next step** after writing the projection. Validates the
-  invariants the dashboard depends on.
+  invariants the dashboards depend on.
 - [How do I tag a force-posted external transfer correctly?](how-do-i-tag-a-force-posted-transfer.md) —
   the canonical pattern for Fed-statement ingest, which is the one
-  case where `origin = 'external_force_posted'`.
+  case where `origin = 'ExternalForcePosted'`.
 - [How do I add a metadata key without breaking the dashboards?](how-do-i-add-a-metadata-key.md) —
   the extension contract for when your team needs a new metadata
   field.
-- [Schema_v6 → Getting Started for Data Teams](../../Schema_v6.md#etl-contract-minimum-viable-feed) —
-  the persona-oriented intro to the contract.
 - [Schema_v6 → ETL contract / minimum viable feed](../../Schema_v6.md#etl-contract-minimum-viable-feed) —
   the column-by-column day-1 minimum the projection must satisfy.
-- Where's my money for merchant? —
+- [Investigation: Where did this transfer originate?](../investigation/where-did-this-transfer-originate.md) —
   a **downstream consumer** walkthrough: what an analyst does with
-  the `transactions` rows your projection lands.
+  the `<prefix>_transactions` rows your projection lands.

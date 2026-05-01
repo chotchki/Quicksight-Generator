@@ -51,6 +51,6 @@ made operational:
 - **Bands 4-5 (8-30+ days)** are structural; stop working rows and
   ask why the automation hasn't cleared them.
 
-See [L1 Reconciliation Dashboard](../handbook/l1.md) for the
+See [L1 Reconciliation Dashboard](../../handbook/l1.md) for the
 operator workflow, and the per-rail `max_pending_age` /
 `max_unbundled_age` declarations in the L2 instance YAML.

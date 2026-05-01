@@ -99,6 +99,63 @@ def test_app_info_datasets_declared(builder):
     )
 
 
+def test_liveness_sql_resolves_per_dialect():
+    """P.9c: the Liveness KPI's SQL is dialect-aware.
+
+    Postgres branch queries ``information_schema.tables`` (Postgres
+    catalog convention); Oracle branch queries ``USER_TABLES``
+    (Oracle catalog convention). Earlier versions hardcoded the
+    Postgres SQL on both paths, which silently broke the KPI on
+    Oracle deployments — QuickSight rendered the visual as blank
+    because the underlying CustomSQL failed at parse time.
+    """
+    from quicksight_gen.common.sheets.app_info import build_liveness_dataset
+    from quicksight_gen.common.sql import Dialect
+    import dataclasses
+
+    pg_cfg = dataclasses.replace(_CFG, dialect=Dialect.POSTGRES)
+    oracle_cfg = dataclasses.replace(_CFG, dialect=Dialect.ORACLE)
+
+    pg = build_liveness_dataset(pg_cfg, app_segment="l1")
+    oracle = build_liveness_dataset(oracle_cfg, app_segment="l1")
+
+    pg_sql = pg.PhysicalTableMap["app-info-liveness"].CustomSql.SqlQuery  # type: ignore[union-attr]
+    oracle_sql = oracle.PhysicalTableMap["app-info-liveness"].CustomSql.SqlQuery  # type: ignore[union-attr]
+
+    assert "information_schema" in pg_sql
+    assert "table_schema" in pg_sql
+    assert "USER_TABLES" in oracle_sql
+    assert "information_schema" not in oracle_sql, (
+        "Oracle branch must not reference Postgres catalog views"
+    )
+
+
+def test_matview_status_sql_omits_postgres_only_casts():
+    """P.9c: the Matview Status SQL has no ``::text`` / ``::integer``
+    casts. The column types are pinned by ``MATVIEW_STATUS_CONTRACT``,
+    so the casts were no-ops on Postgres and silently broke the
+    dataset on Oracle (Oracle uses ``CAST(x AS NUMBER)`` syntax,
+    not ``x::integer``).
+    """
+    from quicksight_gen.common.sheets.app_info import _matview_status_sql
+    from quicksight_gen.common.sql import Dialect
+
+    sql_with_views = _matview_status_sql(
+        ["matview_a", "matview_b"], Dialect.POSTGRES,
+    )
+    sql_empty = _matview_status_sql([], Dialect.POSTGRES)
+
+    for sql in (sql_with_views, sql_empty):
+        assert "::text" not in sql, (
+            f"Postgres-only ``::text`` cast leaked into matview-status "
+            f"SQL: {sql!r}"
+        )
+        assert "::integer" not in sql, (
+            f"Postgres-only ``::integer`` cast leaked into matview-status "
+            f"SQL: {sql!r}"
+        )
+
+
 def test_no_two_apps_share_an_app_info_data_set_id():
     """Each shipped app's App Info datasets carry a per-app segment in
     their AWS DataSetId so deploying app A doesn't delete-then-create

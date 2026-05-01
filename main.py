@@ -80,6 +80,12 @@ def define_env(env: Any) -> None:
     default_l2 = load_instance(default_l2_path)
     env.variables["vocab"] = vocabulary_for(default_l2)
     env.variables["l2_instance_name"] = str(default_l2.instance)
+    # Expose the full ``L2Instance`` so generated pages
+    # (e.g. ``Training_Story.md``) can iterate accounts / rails /
+    # chains / templates / limit_schedules and render their
+    # descriptions. The Jinja template walks attributes directly:
+    # ``{% for a in l2.accounts %}{{ a.id }}: {{ a.description }}…``.
+    env.variables["l2"] = default_l2
 
     # If the L2 carries inline brand assets, override mkdocs theme.logo
     # / theme.favicon. URLs pass through; absolute paths get copied into
@@ -116,14 +122,18 @@ def define_env(env: Any) -> None:
             return _wrap_svg(svg, alt=f"conceptual diagram: {name}")
         if family == "l2_topology":
             kind = kwargs.get("kind", "accounts")
+            name = kwargs.get("name")
             l2_path = Path(
                 kwargs.get("l2_instance_path", str(default_l2_path))
             )
             l2 = (
                 default_l2 if l2_path == default_l2_path else load_instance(l2_path)
             )
-            svg = render_l2_topology(l2, kind)
-            return _wrap_svg(svg, alt=f"L2 topology: {kind}")
+            svg = render_l2_topology(l2, kind, name=name)
+            return _wrap_svg(
+                svg,
+                alt=f"L2 topology: {kind}" + (f" / {name}" if name else ""),
+            )
         if family == "dataflow":
             app = kwargs["app"]
             svg = render_dataflow(app)
@@ -133,11 +143,123 @@ def define_env(env: Any) -> None:
             f"Expected one of: conceptual, l2_topology, dataflow."
         )
 
+    # -- L2 concept "isolated" diagrams (concepts/l2/*.md) ---------------
+    #
+    # Each L2 concept page calls one of these macros to render a focused
+    # example of that primitive. Auto-pick: try the active L2 first;
+    # fall back to bundled spec_example, then sasquatch_pr (covers
+    # primitives spec_example doesn't use, e.g. chains). When a fallback
+    # fires, the wrapper prepends a callout so the reader knows the
+    # example isn't from their institution.
+    _spec_example_l2 = load_instance(_TESTS_L2_DIR / "spec_example.yaml")
+    _sasquatch_pr_l2 = load_instance(_TESTS_L2_DIR / "sasquatch_pr.yaml")
+
+    def _l2_focus(render_fn, *, primitive: str, alt: str) -> str:
+        """Try active → spec_example → sasquatch_pr; wrap with fallback note."""
+        active_name = str(default_l2.instance)
+        for candidate, label in (
+            (default_l2, active_name),
+            (_spec_example_l2, "spec_example"),
+            (_sasquatch_pr_l2, "sasquatch_pr"),
+        ):
+            svg = render_fn(candidate)
+            if svg is None:
+                continue
+            wrapped = _wrap_svg(svg, alt=alt)
+            if label != active_name:
+                callout = (
+                    f'<div class="admonition note">'
+                    f'<p class="admonition-title">Fallback example</p>'
+                    f'<p>The active L2 instance (<code>{active_name}</code>) '
+                    f"declares no <code>{primitive}</code> entries; the "
+                    f"diagram below is pulled from <code>{label}</code> for "
+                    f"illustration.</p></div>"
+                )
+                return callout + wrapped
+            return wrapped
+        return (
+            f'<div class="admonition warning">'
+            f'<p class="admonition-title">No example available</p>'
+            f"<p>Neither the active L2 instance nor the shipped fallback "
+            f"fixtures declare any <code>{primitive}</code> entries.</p>"
+            f"</div>"
+        )
+
+    @env.macro
+    def l2_account_focus() -> str:
+        from quicksight_gen.common.handbook.diagrams import (
+            render_l2_account_focus,
+        )
+        return _l2_focus(
+            render_l2_account_focus,
+            primitive="accounts", alt="L2 concept: account",
+        )
+
+    @env.macro
+    def l2_account_template_focus() -> str:
+        from quicksight_gen.common.handbook.diagrams import (
+            render_l2_account_template_focus,
+        )
+        return _l2_focus(
+            render_l2_account_template_focus,
+            primitive="account_templates",
+            alt="L2 concept: account template",
+        )
+
+    @env.macro
+    def l2_rail_focus() -> str:
+        from quicksight_gen.common.handbook.diagrams import (
+            render_l2_rail_focus,
+        )
+        return _l2_focus(
+            render_l2_rail_focus,
+            primitive="rails", alt="L2 concept: rail",
+        )
+
+    @env.macro
+    def l2_transfer_template_focus() -> str:
+        from quicksight_gen.common.handbook.diagrams import (
+            render_l2_transfer_template_focus,
+        )
+        return _l2_focus(
+            render_l2_transfer_template_focus,
+            primitive="transfer_templates",
+            alt="L2 concept: transfer template",
+        )
+
+    @env.macro
+    def l2_chain_focus() -> str:
+        from quicksight_gen.common.handbook.diagrams import (
+            render_l2_chain_focus,
+        )
+        return _l2_focus(
+            render_l2_chain_focus,
+            primitive="chains", alt="L2 concept: chain",
+        )
+
+    @env.macro
+    def l2_limit_schedule_focus() -> str:
+        from quicksight_gen.common.handbook.diagrams import (
+            render_l2_limit_schedule_focus,
+        )
+        return _l2_focus(
+            render_l2_limit_schedule_focus,
+            primitive="limit_schedules",
+            alt="L2 concept: limit schedule",
+        )
+
 
 def _wrap_svg(svg: str, *, alt: str) -> str:
-    """Wrap inline SVG in a figure block so md_in_html lays it out cleanly."""
+    """Wrap inline SVG in a figure block so md_in_html lays it out cleanly.
+
+    The ``data-zoomable`` + ``tabindex`` attributes opt the figure in to
+    the click-to-zoom lightbox wired up in
+    ``stylesheets/qs-lightbox.js`` — clicking (or pressing Enter / Space
+    while focused) opens the SVG in a fullscreen pan/zoom overlay.
+    """
     return (
-        f'<figure class="qs-diagram" role="img" aria-label="{alt}">\n'
+        f'<figure class="qs-diagram" role="img" aria-label="{alt}" '
+        f'data-zoomable="true" tabindex="0">\n'
         f"{svg}\n"
         f"</figure>"
     )

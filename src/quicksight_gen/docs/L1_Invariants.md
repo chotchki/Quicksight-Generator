@@ -7,7 +7,7 @@ prefixed PostgreSQL view; rows in any of these views ARE the
 constraint violations. Healthy = empty.
 
 This page is the authoritative reference for what each
-`<prefix>_*` view returns, the SHOULD-constraint motivation, and
+`{{ l2_instance_name }}_*` view returns, the SHOULD-constraint motivation, and
 what `scripts/m2_6_verify.py` asserts against the canonical
 demo seed.
 
@@ -15,29 +15,29 @@ demo seed.
 
 ```
 base tables
-  ├── <prefix>_transactions
-  └── <prefix>_daily_balances
+  ├── {{ l2_instance_name }}_transactions
+  └── {{ l2_instance_name }}_daily_balances
                   ↓
 Current* matviews (M.1.5 — max-Entry-per-logical-key projection)
-  ├── <prefix>_current_transactions
-  └── <prefix>_current_daily_balances
+  ├── {{ l2_instance_name }}_current_transactions
+  └── {{ l2_instance_name }}_current_daily_balances
                   ↓
 Helper matviews (computed-balance derivation)
-  ├── <prefix>_computed_subledger_balance
-  └── <prefix>_computed_ledger_balance
+  ├── {{ l2_instance_name }}_computed_subledger_balance
+  └── {{ l2_instance_name }}_computed_ledger_balance
                   ↓
 L1 invariant matviews (the SHOULD-constraint surfaces)
-  ├── <prefix>_drift
-  ├── <prefix>_ledger_drift
-  ├── <prefix>_overdraft
-  ├── <prefix>_expected_eod_balance_breach
-  ├── <prefix>_limit_breach
-  ├── <prefix>_stuck_pending          (M.2b.8)
-  └── <prefix>_stuck_unbundled        (M.2b.9)
+  ├── {{ l2_instance_name }}_drift
+  ├── {{ l2_instance_name }}_ledger_drift
+  ├── {{ l2_instance_name }}_overdraft
+  ├── {{ l2_instance_name }}_expected_eod_balance_breach
+  ├── {{ l2_instance_name }}_limit_breach
+  ├── {{ l2_instance_name }}_stuck_pending          (M.2b.8)
+  └── {{ l2_instance_name }}_stuck_unbundled        (M.2b.9)
                   ↓
 Dashboard-shape matviews (UI convenience)
-  ├── <prefix>_daily_statement_summary
-  └── <prefix>_todays_exceptions      (UNION over the 5 baseline L1s)
+  ├── {{ l2_instance_name }}_daily_statement_summary
+  └── {{ l2_instance_name }}_todays_exceptions      (UNION over the 5 baseline L1s)
 ```
 
 13 matviews total. Refresh contract: every batch insert into the
@@ -48,7 +48,7 @@ invariants third, dashboard-shape last.
 
 ## The seven L1 SHOULD-constraints
 
-### 1. `<prefix>_drift` — Sub-ledger drift
+### 1. `{{ l2_instance_name }}_drift` — Sub-ledger drift
 
 > For every CurrentStoredBalance where `Account.Scope = Internal`
 > and `¬IsParent(Account)`,
@@ -67,7 +67,7 @@ ledger.
 **`m2_6_verify.py` asserts:** `bigfoot-brews +$75` planted at
 `days_ago=5` surfaces with `drift=75.00`.
 
-### 2. `<prefix>_ledger_drift` — Parent-account roll-up drift
+### 2. `{{ l2_instance_name }}_ledger_drift` — Parent-account roll-up drift
 
 > For every CurrentStoredBalance where `Account.Scope = Internal`
 > and `IsParent(Account)`,
@@ -80,7 +80,7 @@ posting that didn't roll up correctly to its parent.
 **Columns:** same as `_drift` minus `account_parent_role`
 (parents ARE the parents).
 
-### 3. `<prefix>_overdraft` — Non-negative balance
+### 3. `{{ l2_instance_name }}_overdraft` — Non-negative balance
 
 > For every CurrentStoredBalance,
 > `money` SHOULD be ≥ 0.
@@ -97,7 +97,7 @@ we MUST NOT overdraft *them*).
 **`m2_6_verify.py` asserts:** `sasquatch-sips -$1500` planted at
 `days_ago=6` surfaces with `stored_balance=-1500.00`.
 
-### 4. `<prefix>_expected_eod_balance_breach` — Expected EOD
+### 4. `{{ l2_instance_name }}_expected_eod_balance_breach` — Expected EOD
 
 > For every CurrentStoredBalance where `expected_eod_balance` is
 > set, `money` SHOULD equal `expected_eod_balance`.
@@ -110,7 +110,7 @@ clean up to their expected zero / target by end-of-day.
 `business_day_start`, `business_day_end`, `stored_balance`,
 `expected_eod_balance`, `variance`.
 
-### 5. `<prefix>_limit_breach` — Outbound flow cap
+### 5. `{{ l2_instance_name }}_limit_breach` — Outbound flow cap
 
 > For every CurrentStoredBalance where `Limits` is set, for every
 > `(TransferType, limit)` in `Limits`, for every child Account whose
@@ -130,7 +130,7 @@ schema-emit time.
 planted at `days_ago=4` surfaces with `outbound_total > cap` for
 `transfer_type='wire'`.
 
-### 6. `<prefix>_stuck_pending` — Per-rail pending aging (M.2b.8)
+### 6. `{{ l2_instance_name }}_stuck_pending` — Per-rail pending aging (M.2b.8)
 
 > For every Rail with `max_pending_age` set, every Transaction
 > on that rail SHOULD transition `Pending → Posted` before
@@ -150,7 +150,7 @@ without an aging watch contribute no branch and are excluded.
 (172800s) surfaces with `age_seconds > max_pending_age_seconds`
 (86400s for the `CustomerInboundACH` rail's PT24H cap).
 
-### 7. `<prefix>_stuck_unbundled` — Per-rail unbundled aging (M.2b.9)
+### 7. `{{ l2_instance_name }}_stuck_unbundled` — Per-rail unbundled aging (M.2b.9)
 
 > For every Rail with `max_unbundled_age` set, every Posted leg
 > on that rail SHOULD be picked up by an AggregatingRail
@@ -169,7 +169,7 @@ days_ago=35` surfaces with `age_seconds > max_unbundled_age_seconds`
 
 ## Diagnostic surface — Supersession Audit
 
-`<prefix>_supersession_*` is **not** a SHOULD-constraint — it's a
+`{{ l2_instance_name }}_supersession_*` is **not** a SHOULD-constraint — it's a
 diagnostic view that surfaces logical keys with multiple `entry`
 versions (the audit trail for `TechnicalCorrection` /
 `BundleAssignment` / `Inflight` rewrites). Reads from BASE tables

@@ -370,6 +370,26 @@ A Variable-direction leg MUST be the LAST leg posted on its Transfer — all sib
 #### Union roles
 `(RoleA | RoleB)` — a Role field MAY express that the rail can target accounts of more than one role. Each firing still resolves to one concrete role per leg; the union is about which roles are admissible, not about firing multiple legs at once.
 
+#### Rail uniqueness *(per-leg `(TransferType, Role)` discriminator)*
+
+Every Rail contributes one or more `(TransferType, Role)` discriminators to the L2 instance, one per leg:
+
+- A two-leg Rail contributes two — `(TransferType, SourceRole)` and `(TransferType, DestinationRole)`.
+- A single-leg Rail contributes one — `(TransferType, LegRole)`.
+- Union role expressions contribute one discriminator per role in the union.
+
+These discriminators MUST be unique across rails. The Rail-to-Transaction binding is implicit: the `(transfer_type, account_role)` tuple of a posted Transaction identifies which Rail produced it. Two rails sharing a discriminator make a candidate Transaction match both with no defined tiebreak — the runtime can't tell which rail's invariants (ExpectedNet, PostedRequirements, MaxPendingAge, etc.) to apply.
+
+Direction is intentionally NOT in the discriminator. A Rail named `CustomerInboundACH` (source: ExternalCounterparty, destination: CustomerDDA, transfer_type: `ach`) and a Rail named `CustomerOutboundACH` (source: CustomerDDA, destination: ExternalCounterparty, transfer_type: `ach`) both contribute `(ach, ExternalCounterparty)` and `(ach, CustomerDDA)` — they collide.
+
+When the integrator's chart of accounts genuinely has direction-specific rails, resolve the collision by:
+
+- **(a) Distinct directional `TransferType`s** — e.g. `ach_inbound` + `ach_outbound`. Each rail's discriminators stay unique. Recommended when the two directions have different LimitSchedule caps, PostedRequirements, or aging tolerances.
+- **(b) Merge into one bidirectional rail** — collapse Inbound + Outbound into a single Rail; treat direction as a Metadata field. Recommended when the two directions are mirror images of each other.
+- **(c) Chain via TransferTemplate** — model the back-and-forth as a multi-leg shared Transfer. Appropriate when the two directions belong to one logical financial event.
+
+**Rationale**: forcing this resolution at load time prevents the silent ambiguity of two rails matching the same Transaction. Within a single rail, both legs sharing a Role (e.g., a pool-balancing rail with source = destination = same control account) is fine — the legs share a `transfer_id` so the binding remains unambiguous.
+
 ---
 
 ### Aggregating Rails *(Rail variant)*

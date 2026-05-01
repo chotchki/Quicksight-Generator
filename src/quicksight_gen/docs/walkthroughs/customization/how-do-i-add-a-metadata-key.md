@@ -4,12 +4,13 @@
 
 ## The story
 
-Your ETL team added a new attribute to `transactions.metadata`
-— say `originating_branch` on PR sales, or `risk_score` on AR
-external transfers. The key is landing in the JSON; you can see
-it in the database. Now you need to surface it on the dashboard:
-as a column in a table, a filter in a sheet control, a grouping
-dimension in a pivot, or a category axis on a bar chart.
+Your ETL team added a new attribute to
+`<prefix>_transactions.metadata` — say `originating_branch` on
+sales, or `risk_score` on external transfers. The key is landing
+in the JSON; you can see it in the database. Now you need to
+surface it on the dashboards: as a column in a table, a filter in
+a sheet control, a grouping dimension in a pivot, or a category
+axis on a bar chart.
 
 The dashboard side of the metadata-key contract is shorter than
 the ETL side and uses no schema migration: `JSON_VALUE(metadata,
@@ -28,8 +29,8 @@ in the first place) is in the
 ## The question
 
 "My team's ETL is now writing `originating_branch` into the
-`metadata` JSON on PR sales rows. How do I expose it on the
-Sales dashboard so end users can filter and group by branch?"
+`metadata` JSON on sale rows. How do I expose it on the
+dashboards so end users can filter and group by branch?"
 
 ## Where to look
 
@@ -39,11 +40,10 @@ Three reference points:
   the producer side. Read this first if you're not yet certain
   the key is being written. The dashboard read pattern below
   assumes the data is already there.
-- **`src/quicksight_gen/apps/payment_recon/datasets.py`** /
-  **`src/quicksight_gen/apps/account_recon/datasets.py`** — the
-  dataset SQL files. Every existing `JSON_VALUE` extraction is
-  a model for the one you're adding. Grep for
-  `JSON_VALUE(metadata` to see them.
+- **`src/quicksight_gen/apps/<app>/datasets.py`** — the dataset
+  SQL files. Every existing `JSON_VALUE` extraction is a model
+  for the one you're adding. Grep for `JSON_VALUE(metadata` to
+  see them.
 - **[Schema_v6.md → metadata text column contract](../../Schema_v6.md#metadata-json-columns)** —
   the cataloged keys, their per-`transfer_type` placement, and
   the forbidden-syntax list (`->>`, `->`, `@>`, `?` are all
@@ -51,31 +51,31 @@ Three reference points:
 
 ## What you'll see in the demo
 
-An existing dataset reads PR sales metadata. Open
-`apps/payment_recon/datasets.py` and grep for `JSON_VALUE(metadata`:
+An existing dataset reads sale-row metadata. Grep an L1 dataset
+SQL for `JSON_VALUE(metadata`:
 
 ```sql
 SELECT
     transaction_id,
     transfer_id,
-    posted_at,
-    amount,
+    posting,
+    amount_money,
     JSON_VALUE(metadata, '$.merchant_name')   AS merchant_name,
     JSON_VALUE(metadata, '$.card_brand')      AS card_brand,
     JSON_VALUE(metadata, '$.cashier')         AS cashier,
     JSON_VALUE(metadata, '$.payment_method')  AS payment_method
-FROM transactions
+FROM <prefix>_transactions
 WHERE transfer_type = 'sale'
 ```
 
-The matching `SALES_CONTRACT` declares each extracted column:
+The matching `DatasetContract` declares each extracted column:
 
 ```python
 SALES_CONTRACT = DatasetContract(columns=[
     ColumnSpec("transaction_id",   "STRING"),
     ColumnSpec("transfer_id",      "STRING"),
-    ColumnSpec("posted_at",        "DATETIME"),
-    ColumnSpec("amount",           "DECIMAL"),
+    ColumnSpec("posting",          "DATETIME"),
+    ColumnSpec("amount_money",     "DECIMAL"),
     ColumnSpec("merchant_name",    "STRING"),
     ColumnSpec("card_brand",       "STRING"),
     ColumnSpec("cashier",          "STRING"),
@@ -99,7 +99,7 @@ Add the extraction to the relevant `build_*_dataset()` function:
 SELECT
     -- existing columns ...
     JSON_VALUE(metadata, '$.originating_branch') AS originating_branch
-FROM transactions
+FROM <prefix>_transactions
 WHERE transfer_type = 'sale';
 ```
 
@@ -173,9 +173,9 @@ becomes friction:
 - Easier to typo (`'$.cardbrand'` silently returns NULL forever).
 
 The promotion path is a schema migration: add the column to
-`transactions` (or `daily_balances`), update the ETL projection
-to write the new column directly, and update dataset SQL to
-reference the column instead of `JSON_VALUE`. The
+`<prefix>_transactions` (or `<prefix>_daily_balances`), update
+the ETL projection to write the new column directly, and update
+dataset SQL to reference the column instead of `JSON_VALUE`. The
 `DatasetContract` doesn't change — same column name, same type,
 just a different upstream source. Don't pre-promote: keep keys
 in metadata until the friction is real.

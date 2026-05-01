@@ -40,10 +40,36 @@ the base layer. Add them then.
 
 from __future__ import annotations
 
+from quicksight_gen.common.sql import (
+    Dialect,
+    analyze_table,
+    cast,
+    date_minus_days,
+    date_trunc_day,
+    decimal_type,
+    drop_index_if_exists,
+    drop_matview_if_exists,
+    drop_table_if_exists,
+    epoch_seconds_between,
+    interval_days,
+    matview_options,
+    refresh_matview,
+    serial_type,
+    json_text_type,
+    text_type,
+    timestamp_type,
+    to_date,
+    typed_null,
+    varchar_type,
+    with_recursive,
+)
+
 from .primitives import L2Instance
 
 
-def emit_schema(instance: L2Instance) -> str:
+def emit_schema(
+    instance: L2Instance, *, dialect: Dialect = Dialect.POSTGRES,
+) -> str:
     """Emit the full DDL script for an L2 instance's prefixed L1 schema.
 
     Three layers, all per L2 instance prefix:
@@ -72,6 +98,12 @@ def emit_schema(instance: L2Instance) -> str:
     re-running the same ``apply schema`` clears stale state. The
     returned string can be fed straight to ``psql`` or
     ``psycopg2.cursor.execute(sql)``.
+
+    ``dialect`` selects the SQL flavor. P.3.d unblocked Oracle by
+    threading dialect helpers through every template; both branches
+    are now first-class. New dialects would need a new ``Dialect``
+    enum value plus per-helper Oracle/Postgres-style branches in
+    ``common.sql.dialect``.
     """
     p = instance.instance
     # L1 invariant view DROPs MUST run before base DROPs — the L1 views
@@ -84,18 +116,20 @@ def emit_schema(instance: L2Instance) -> str:
     # Investigation matview DROPs (N.3.b) sit alongside the L1 drops at
     # the top — they read from the base ``{p}_transactions`` table, so
     # the same dependency-ordering rule applies.
-    l1_drops = _L1_INVARIANT_VIEWS_DROPS_TEMPLATE.format(p=p)
-    inv_drops = _INV_MATVIEWS_DROPS_TEMPLATE.format(p=p)
-    base = _SCHEMA_TEMPLATE.format(p=p)
-    invariants = _emit_l1_invariant_views(instance)
-    inv_views = _emit_inv_views(instance)
+    l1_drops = _emit_l1_invariant_drops(p, dialect)
+    inv_drops = _emit_inv_matview_drops(p, dialect)
+    base = _emit_base_schema(p, dialect)
+    invariants = _emit_l1_invariant_views(instance, dialect=dialect)
+    inv_views = _emit_inv_views(instance, dialect=dialect)
     return (
         l1_drops + "\n" + inv_drops + "\n" + base + "\n\n"
         + invariants + "\n\n" + inv_views
     )
 
 
-def refresh_matviews_sql(instance: L2Instance) -> str:
+def refresh_matviews_sql(
+    instance: L2Instance, *, dialect: Dialect = Dialect.POSTGRES,
+) -> str:
     """Emit `REFRESH MATERIALIZED VIEW` commands in dependency order.
 
     M.1a.9 made every L1-pipeline view a MATERIALIZED VIEW (kills the
@@ -143,31 +177,61 @@ def refresh_matviews_sql(instance: L2Instance) -> str:
     # subsequent SELECTs use the indexes we ship on each matview
     # (without ANALYZE the planner doesn't know the post-REFRESH row
     # count + value distribution and may pick a sequential scan).
-    refreshes = "\n".join(f"REFRESH MATERIALIZED VIEW {n};" for n in names)
-    analyzes = "\n".join(f"ANALYZE {n};" for n in names)
+    refreshes = "\n".join(refresh_matview(n, dialect) for n in names)
+    analyzes = "\n".join(analyze_table(n, dialect) for n in names)
     return f"{refreshes}\n{analyzes}"
 
 
-def _emit_l1_invariant_views(instance: L2Instance) -> str:
+def _emit_l1_invariant_views(
+    instance: L2Instance, *, dialect: Dialect = Dialect.POSTGRES,
+) -> str:
     """Render the M.1a.7 L1-invariant view block for ``instance``.
 
     Each view drops + creates idempotently so repeated runs converge.
     Drop order is reverse of create order (no view depends on a later
     one).
+
+    Dialect-specific patterns substituted into the template:
+    - ``{matview_options}`` — Oracle's BUILD IMMEDIATE REFRESH COMPLETE
+      ON DEMAND suffix (empty on Postgres).
+    - ``{date_trunc_tx_posting}`` — DATE_TRUNC('day', tx.posting) on
+      Postgres / CAST(TRUNC(tx.posting) AS TIMESTAMP) on Oracle.
+    - ``{epoch_age_seconds}`` — EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP -
+      ct.posting)) on Postgres / sum-of-EXTRACTs on Oracle.
+    - ``{posting_to_date}`` — posting::date on Postgres / TRUNC(posting)
+      on Oracle.
+    - ``{null_text}`` — NULL::TEXT on Postgres / CAST(NULL AS CLOB) on
+      Oracle (the typed NULL preserves the UNION ALL column type
+      across mixed-NULL branches).
     """
     p = instance.instance
-    limit_cases = _render_limit_breach_cases(instance, p=p)
-    pending_age_cases = _render_pending_age_cases(instance)
-    unbundled_age_cases = _render_unbundled_age_cases(instance)
+    limit_cases = _render_limit_breach_cases(instance, p=p, dialect=dialect)
+    pending_age_cases = _render_pending_age_cases(instance, dialect=dialect)
+    unbundled_age_cases = _render_unbundled_age_cases(instance, dialect=dialect)
     return _L1_INVARIANT_VIEWS_TEMPLATE.format(
         p=p,
         limit_cases=limit_cases,
         pending_age_cases=pending_age_cases,
         unbundled_age_cases=unbundled_age_cases,
+        matview_options=matview_options(dialect),
+        date_trunc_tx_posting=date_trunc_day("tx.posting", dialect),
+        epoch_age_seconds=epoch_seconds_between(
+            "CURRENT_TIMESTAMP", "ct.posting", dialect,
+        ),
+        posting_to_date=to_date("posting", dialect),
+        # Typed NULL for the UNION ALL transfer_type column. Oracle
+        # rejects ``CAST(NULL AS CLOB)`` here (ORA-00932) because the
+        # subsequent UNION branches' transfer_type values are
+        # VARCHAR2(50) — Oracle won't UNION CLOB with VARCHAR2. Bind
+        # to a VARCHAR-shaped NULL so the UNION column type matches
+        # the actual data in every branch on both dialects.
+        null_text=cast("NULL", varchar_type(50, dialect), dialect),
     )
 
 
-def _render_limit_breach_cases(instance: L2Instance, *, p: str) -> str:
+def _render_limit_breach_cases(
+    instance: L2Instance, *, p: str, dialect: Dialect = Dialect.POSTGRES,
+) -> str:
     """Build the CASE-WHEN body that the limit_breach view uses to look
     up a (parent_role, transfer_type) cap from L2's LimitSchedules.
 
@@ -185,7 +249,7 @@ def _render_limit_breach_cases(instance: L2Instance, *, p: str) -> str:
     ``outbound_total > cap`` comparison with `numeric > text`.
     """
     if not instance.limit_schedules:
-        return "NULL::numeric"
+        return typed_null("numeric", dialect)
     branches: list[str] = []
     for ls in instance.limit_schedules:
         # Each LimitSchedule is keyed on (parent_role, transfer_type) per
@@ -199,7 +263,9 @@ def _render_limit_breach_cases(instance: L2Instance, *, p: str) -> str:
     return f"CASE\n        {branches_sql}\n        ELSE NULL\n    END"
 
 
-def _render_pending_age_cases(instance: L2Instance) -> str:
+def _render_pending_age_cases(
+    instance: L2Instance, *, dialect: Dialect = Dialect.POSTGRES,
+) -> str:
     """Build the CASE-WHEN body the stuck_pending view uses to look up
     a Rail's `max_pending_age` (in seconds).
 
@@ -224,12 +290,14 @@ def _render_pending_age_cases(instance: L2Instance) -> str:
     if not branches:
         # Typed NULL — bare NULL infers as text and breaks the outer
         # `tx.age_seconds > tx.max_pending_age_seconds` comparison.
-        return "NULL::bigint"
+        return typed_null("bigint", dialect)
     branches_sql = "\n        ".join(branches)
     return f"CASE\n        {branches_sql}\n        ELSE NULL\n    END"
 
 
-def _emit_inv_views(instance: L2Instance) -> str:
+def _emit_inv_views(
+    instance: L2Instance, *, dialect: Dialect = Dialect.POSTGRES,
+) -> str:
     """Render the N.3.b Investigation matview block for ``instance``.
 
     Two matviews — both per-instance prefixed:
@@ -237,7 +305,7 @@ def _emit_inv_views(instance: L2Instance) -> str:
     - ``<prefix>_inv_pair_rolling_anomalies`` — rolling 2-day SUM per
       (sender, recipient) pair + population z-score + 5-band bucket.
       Volume Anomalies sheet reads from this.
-    - ``<prefix>_inv_money_trail_edges`` — ``WITH RECURSIVE`` walk over
+    - ``<prefix>_inv_money_trail_edges`` — recursive-CTE walk over
       ``parent_transfer_id`` flattened to one row per multi-leg edge
       (with chain root + depth). Money Trail + Account Network sheets
       read from this.
@@ -246,18 +314,61 @@ def _emit_inv_views(instance: L2Instance) -> str:
     no ``daily_balances``. Independent of each other; can refresh in
     any order.
 
-    The matview bodies were lifted from ``schema.sql``'s K.4.4 / K.4.5
-    definitions (N.3.a captures the originals); the only changes are
-    the prefix substitutions on the matview names + the
-    ``transactions`` table refs. Refresh contract is unchanged: not
-    auto-refreshed, ``demo apply`` runs ``REFRESH MATERIALIZED VIEW``
+    Dialect-specific patterns substituted into the template:
+    - ``{matview_options}`` — Oracle BUILD IMMEDIATE REFRESH COMPLETE
+      ON DEMAND suffix (empty on Postgres).
+    - ``{recipient_posting_to_date}`` — ``recipient.posting::date`` on
+      Postgres / ``TRUNC(recipient.posting)`` on Oracle.
+    - ``{rolling_window}`` — full PARTITION BY / ORDER BY / RANGE
+      BETWEEN clause for the rolling 2-day pair window, inlined into
+      each ``OVER (...)`` because Oracle 19c doesn't support the named
+      ``WINDOW w AS`` clause (added in 21c). The dialect-specific
+      ``INTERVAL`` form ships inside the RANGE clause: PG ``INTERVAL
+      '1 day'`` / Oracle ``INTERVAL '1' DAY``.
+    - ``{cast_avg_numeric}`` / ``{cast_stddev_numeric}`` — ``::NUMERIC``
+      on Postgres / ``CAST(... AS NUMBER)`` on Oracle.
+    - ``{window_start_expr}`` / ``{window_end_expr}`` — date arithmetic
+      + cast to TIMESTAMP, dialect-specific interval form.
+    - ``{with_recursive_kw}`` — ``WITH RECURSIVE`` on Postgres / ``WITH``
+      on Oracle (Oracle 19c infers recursion from self-reference).
+
+    Refresh contract is unchanged across dialects: not auto-refreshed,
+    ``demo apply`` runs ``REFRESH MATERIALIZED VIEW`` (Postgres) or
+    ``DBMS_MVIEW.REFRESH`` (Oracle, via ``refresh_matview`` helper)
     after seed inserts.
     """
     p = instance.instance
-    return _INV_MATVIEWS_TEMPLATE.format(p=p)
+    # Inline the rolling-2-day window definition. Oracle 19c doesn't
+    # support the named ``WINDOW w AS (...)`` clause (added in 21c),
+    # so each ``OVER (...)`` substitutes the full definition. PG accepts
+    # the same inline form — slightly more verbose than the named-window
+    # PG-only optimization but the planner produces the same plan.
+    rolling_window = (
+        "PARTITION BY recipient_account_id, sender_account_id "
+        "ORDER BY posted_day "
+        f"RANGE BETWEEN {interval_days(1, dialect)} PRECEDING AND CURRENT ROW"
+    )
+    return _INV_MATVIEWS_TEMPLATE.format(
+        p=p,
+        matview_options=matview_options(dialect),
+        recipient_posting_to_date=to_date("recipient.posting", dialect),
+        rolling_window=rolling_window,
+        cast_avg_numeric=cast("AVG(window_sum)", "NUMERIC", dialect),
+        cast_stddev_numeric=cast(
+            "COALESCE(STDDEV_SAMP(window_sum), 0)", "NUMERIC", dialect,
+        ),
+        window_start_expr=cast(
+            date_minus_days("pw.posted_day", 1, dialect),
+            "TIMESTAMP", dialect,
+        ),
+        window_end_expr=cast("pw.posted_day", "TIMESTAMP", dialect),
+        with_recursive_kw=with_recursive(dialect),
+    )
 
 
-def _render_unbundled_age_cases(instance: L2Instance) -> str:
+def _render_unbundled_age_cases(
+    instance: L2Instance, *, dialect: Dialect = Dialect.POSTGRES,
+) -> str:
     """Build the CASE-WHEN body the stuck_unbundled view uses to look
     up a Rail's `max_unbundled_age` (in seconds).
 
@@ -279,9 +390,81 @@ def _render_unbundled_age_cases(instance: L2Instance) -> str:
         )
     if not branches:
         # Typed NULL — same reason as `_render_pending_age_cases`.
-        return "NULL::bigint"
+        return typed_null("bigint", dialect)
     branches_sql = "\n        ".join(branches)
     return f"CASE\n        {branches_sql}\n        ELSE NULL\n    END"
+
+
+# Base-schema indexes that need a DROP IF EXISTS in the preamble (the
+# CREATE statements live inline in _SCHEMA_TEMPLATE further below).
+# Order doesn't matter for indexes — they're independent objects.
+_BASE_INDEX_DROPS: tuple[tuple[str, str], ...] = (
+    # (placeholder_key, index_name_template)
+    ("drop_idx_account_posting", "idx_{p}_transactions_account_posting"),
+    ("drop_idx_transfer", "idx_{p}_transactions_transfer"),
+    ("drop_idx_type_status", "idx_{p}_transactions_type_status"),
+    ("drop_idx_business_day", "idx_{p}_transactions_business_day"),
+    ("drop_idx_parent", "idx_{p}_transactions_parent"),
+    ("drop_idx_bundler", "idx_{p}_transactions_bundler_eligibility"),
+    ("drop_idx_db_business_day", "idx_{p}_daily_balances_business_day"),
+)
+
+
+def _emit_base_schema(p: str, dialect: Dialect) -> str:
+    """Render ``_SCHEMA_TEMPLATE`` with all dialect placeholders filled.
+
+    Type-name placeholders ({serial}, {ts}, {text}, {vc20…vc255},
+    {dec202}) come from common/sql type helpers. DROP placeholders
+    come from drop_*_if_exists helpers (PG IF EXISTS / Oracle PL/SQL).
+    The bundler-eligibility partial-index ``WHERE bundle_id IS NULL``
+    is a Postgres-only optimization — Oracle gets a full index, which
+    works correctly but is larger; converting to a function-based
+    index for parity is a future optimization.
+    """
+    fmt: dict[str, str] = {
+        "p": p,
+        # Type names
+        "serial": serial_type(dialect),
+        # P.9a — single TZ-naive TIMESTAMP type across both dialects;
+        # the prior {ts} (TIMESTAMPTZ / TIMESTAMP WITH TIME ZONE)
+        # + {ts} (TIMESTAMPTZ on PG, TIMESTAMP on Oracle for PK
+        # eligibility) split was removed. Timezone normalization is
+        # the integrator's contract — see Schema_v6.md.
+        "ts": timestamp_type(dialect),
+        "text": text_type(dialect),
+        "json_text": json_text_type(dialect),
+        "vc20": varchar_type(20, dialect),
+        "vc50": varchar_type(50, dialect),
+        "vc100": varchar_type(100, dialect),
+        "vc255": varchar_type(255, dialect),
+        "dec202": decimal_type(20, 2, dialect),
+        # Matview options suffix (Oracle BUILD IMMEDIATE REFRESH COMPLETE
+        # ON DEMAND; empty on Postgres).
+        "matview_options": matview_options(dialect),
+        # Partial-index WHERE clause — PG only.
+        "bundler_partial_where": (
+            "\n    WHERE bundle_id IS NULL"
+            if dialect is Dialect.POSTGRES else ""
+        ),
+        # Current* matview drops.
+        "drop_curr_db": drop_matview_if_exists(
+            f"{p}_current_daily_balances", dialect,
+        ),
+        "drop_curr_tx": drop_matview_if_exists(
+            f"{p}_current_transactions", dialect,
+        ),
+        # Base table drops.
+        "drop_table_db": drop_table_if_exists(
+            f"{p}_daily_balances", dialect,
+        ),
+        "drop_table_tx": drop_table_if_exists(
+            f"{p}_transactions", dialect,
+        ),
+    }
+    # Index drops — name-template substitution for the prefix.
+    for key, name_template in _BASE_INDEX_DROPS:
+        fmt[key] = drop_index_if_exists(name_template.format(p=p), dialect)
+    return _SCHEMA_TEMPLATE.format(**fmt)
 
 
 _SCHEMA_TEMPLATE = """\
@@ -292,17 +475,17 @@ _SCHEMA_TEMPLATE = """\
 
 -- Drop views first (they depend on the base tables). M.1a.9 made
 -- these MATERIALIZED VIEWs.
-DROP MATERIALIZED VIEW IF EXISTS {p}_current_daily_balances;
-DROP MATERIALIZED VIEW IF EXISTS {p}_current_transactions;
-DROP INDEX IF EXISTS idx_{p}_transactions_account_posting;
-DROP INDEX IF EXISTS idx_{p}_transactions_transfer;
-DROP INDEX IF EXISTS idx_{p}_transactions_type_status;
-DROP INDEX IF EXISTS idx_{p}_transactions_business_day;
-DROP INDEX IF EXISTS idx_{p}_transactions_parent;
-DROP INDEX IF EXISTS idx_{p}_transactions_bundler_eligibility;
-DROP INDEX IF EXISTS idx_{p}_daily_balances_business_day;
-DROP TABLE IF EXISTS {p}_daily_balances CASCADE;
-DROP TABLE IF EXISTS {p}_transactions  CASCADE;
+{drop_curr_db}
+{drop_curr_tx}
+{drop_idx_account_posting}
+{drop_idx_transfer}
+{drop_idx_type_status}
+{drop_idx_business_day}
+{drop_idx_parent}
+{drop_idx_bundler}
+{drop_idx_db_business_day}
+{drop_table_db}
+{drop_table_tx}
 
 -- ---------------------------------------------------------------------
 -- L1 Transaction (denormalized with Transfer + Account fields per
@@ -337,33 +520,38 @@ DROP TABLE IF EXISTS {p}_transactions  CASCADE;
 --                 TechnicalCorrection (see SPEC's "Higher-Entry rows"
 --                 section for which category applies when).
 -- origin        — open enum, no CHECK; integrators may extend.
--- metadata      — TEXT + IS JSON (portability constraint: no JSONB,
---                 no GIN indexes; SQL/JSON path syntax for extraction).
+-- metadata      — bounded VARCHAR(4000) / VARCHAR2(4000) + IS JSON
+--                 (portability constraint: no JSONB, no GIN indexes;
+--                 SQL/JSON path syntax for extraction). Bounded so the
+--                 column behaves like a string on both dialects (Oracle
+--                 CLOB rejects MIN/MAX/GROUP BY/ORDER BY/IN with
+--                 ORA-00932); 4000 chars covers every JSON metadata
+--                 document the L2 schema emits.
 -- ---------------------------------------------------------------------
 CREATE TABLE {p}_transactions (
-    entry                BIGSERIAL      NOT NULL,
-    id                   VARCHAR(100)   NOT NULL,
-    account_id           VARCHAR(100)   NOT NULL,
-    account_name         VARCHAR(255),
-    account_role         VARCHAR(100),
-    account_scope        VARCHAR(20)    NOT NULL
+    entry                {serial}      NOT NULL,
+    id                   {vc100}   NOT NULL,
+    account_id           {vc100}   NOT NULL,
+    account_name         {vc255},
+    account_role         {vc100},
+    account_scope        {vc20}    NOT NULL
         CHECK (account_scope IN ('internal', 'external')),
-    account_parent_role  VARCHAR(100),
-    amount_money         DECIMAL(20,2)  NOT NULL,
-    amount_direction     VARCHAR(20)    NOT NULL
+    account_parent_role  {vc100},
+    amount_money         {dec202}  NOT NULL,
+    amount_direction     {vc20}    NOT NULL
         CHECK (amount_direction IN ('Debit', 'Credit')),
-    status               VARCHAR(50)    NOT NULL,
-    posting              TIMESTAMPTZ    NOT NULL,
-    transfer_id          VARCHAR(100)   NOT NULL,
-    transfer_type        VARCHAR(50)    NOT NULL,
-    transfer_completion  TIMESTAMPTZ,
-    transfer_parent_id   VARCHAR(100),
-    rail_name            VARCHAR(100)   NOT NULL,
-    template_name        VARCHAR(100),
-    bundle_id            VARCHAR(100),
-    supersedes           VARCHAR(50),
-    origin               VARCHAR(50)    NOT NULL,
-    metadata             TEXT,
+    status               {vc50}    NOT NULL,
+    posting              {ts}    NOT NULL,
+    transfer_id          {vc100}   NOT NULL,
+    transfer_type        {vc50}    NOT NULL,
+    transfer_completion  {ts},
+    transfer_parent_id   {vc100},
+    rail_name            {vc100}   NOT NULL,
+    template_name        {vc100},
+    bundle_id            {vc100},
+    supersedes           {vc50},
+    origin               {vc50}    NOT NULL,
+    metadata             {json_text},
     PRIMARY KEY (id, entry),
     -- Sign-direction agreement (L1 Amount INVARIANT):
     --   money ≥ 0 if direction = Credit; money ≤ 0 if direction = Debit.
@@ -397,19 +585,19 @@ CREATE TABLE {p}_transactions (
 --                 daily_balances row is by construction a correction.
 -- ---------------------------------------------------------------------
 CREATE TABLE {p}_daily_balances (
-    entry                  BIGSERIAL      NOT NULL,
-    account_id             VARCHAR(100)   NOT NULL,
-    account_name           VARCHAR(255),
-    account_role           VARCHAR(100),
-    account_scope          VARCHAR(20)    NOT NULL
+    entry                  {serial}      NOT NULL,
+    account_id             {vc100}   NOT NULL,
+    account_name           {vc255},
+    account_role           {vc100},
+    account_scope          {vc20}    NOT NULL
         CHECK (account_scope IN ('internal', 'external')),
-    account_parent_role    VARCHAR(100),
-    expected_eod_balance   DECIMAL(20,2),
-    business_day_start     TIMESTAMPTZ    NOT NULL,
-    business_day_end       TIMESTAMPTZ    NOT NULL,
-    money                  DECIMAL(20,2)  NOT NULL,
-    limits                 TEXT,
-    supersedes             VARCHAR(50),
+    account_parent_role    {vc100},
+    expected_eod_balance   {dec202},
+    business_day_start     {ts}    NOT NULL,
+    business_day_end       {ts}    NOT NULL,
+    money                  {dec202}  NOT NULL,
+    limits                 {json_text},
+    supersedes             {vc50},
     PRIMARY KEY (account_id, business_day_start, entry),
     CHECK (business_day_end > business_day_start),
     CHECK (limits IS NULL OR limits IS JSON)
@@ -425,8 +613,7 @@ CREATE INDEX idx_{p}_transactions_parent          ON {p}_transactions (transfer_
 -- by rail_name (matching their BundlesActivity selectors). Partial index
 -- on `bundle_id IS NULL` keeps the index small as bundled-row count grows.
 CREATE INDEX idx_{p}_transactions_bundler_eligibility
-    ON {p}_transactions (rail_name, status)
-    WHERE bundle_id IS NULL;
+    ON {p}_transactions (rail_name, status){bundler_partial_where};
 CREATE INDEX idx_{p}_daily_balances_business_day  ON {p}_daily_balances (business_day_start);
 
 -- ---------------------------------------------------------------------
@@ -450,7 +637,7 @@ CREATE INDEX idx_{p}_daily_balances_business_day  ON {p}_daily_balances (busines
 -- contract: integrators MUST `REFRESH MATERIALIZED VIEW` after every
 -- batch insert into the base tables. The library ships
 -- `refresh_matviews_sql(instance)` that emits the right REFRESH order.
-CREATE MATERIALIZED VIEW {p}_current_transactions AS
+CREATE MATERIALIZED VIEW {p}_current_transactions{matview_options} AS
 SELECT * FROM {p}_transactions tx
 WHERE tx.entry = (
     SELECT MAX(entry) FROM {p}_transactions WHERE id = tx.id
@@ -464,7 +651,7 @@ CREATE INDEX idx_{p}_curr_tx_transfer ON {p}_current_transactions (transfer_id);
 CREATE INDEX idx_{p}_curr_tx_id ON {p}_current_transactions (id);
 CREATE INDEX idx_{p}_curr_tx_status ON {p}_current_transactions (status);
 
-CREATE MATERIALIZED VIEW {p}_current_daily_balances AS
+CREATE MATERIALIZED VIEW {p}_current_daily_balances{matview_options} AS
 SELECT * FROM {p}_daily_balances sb
 WHERE sb.entry = (
     SELECT MAX(entry)
@@ -495,7 +682,27 @@ CREATE INDEX idx_{p}_curr_db_scope_day
 # supersession is transparent. Drop order is reverse of create order
 # (no view here depends on another in this block, but ordering is
 # conservative).
-_L1_INVARIANT_VIEWS_DROPS_TEMPLATE = """\
+# L1 invariant matview names in drop order: dashboard-shape matviews
+# (todays_exceptions, daily_statement_summary) drop FIRST because they
+# read from the L1 invariant matviews (which read from current_* +
+# computed_*). The two helper matviews (computed_ledger_balance,
+# computed_subledger_balance) drop last.
+_L1_INVARIANT_DROP_NAMES: tuple[str, ...] = (
+    "todays_exceptions",
+    "daily_statement_summary",
+    "stuck_unbundled",
+    "stuck_pending",
+    "limit_breach",
+    "expected_eod_balance_breach",
+    "overdraft",
+    "ledger_drift",
+    "drift",
+    "computed_ledger_balance",
+    "computed_subledger_balance",
+)
+
+
+_L1_INVARIANT_DROPS_HEADER = """\
 -- L1 invariant view drops (M.1a.7 + M.1a.9) — MUST run before base
 -- drops because the L1 views depend on the Current* matviews (which
 -- depend on the base tables). Re-emitted at the top of the script so
@@ -509,19 +716,22 @@ _L1_INVARIANT_VIEWS_DROPS_TEMPLATE = """\
 -- M.1a.9 deploy on a stale instance needs to manually
 -- `DROP VIEW IF EXISTS <name>;` for each before running the script
 -- (PostgreSQL refuses `DROP MATERIALIZED VIEW` on a regular VIEW).
--- Steady state (post-migration) the matview-only DROP suffices.
-DROP MATERIALIZED VIEW IF EXISTS {p}_todays_exceptions;
-DROP MATERIALIZED VIEW IF EXISTS {p}_daily_statement_summary;
-DROP MATERIALIZED VIEW IF EXISTS {p}_stuck_unbundled;
-DROP MATERIALIZED VIEW IF EXISTS {p}_stuck_pending;
-DROP MATERIALIZED VIEW IF EXISTS {p}_limit_breach;
-DROP MATERIALIZED VIEW IF EXISTS {p}_expected_eod_balance_breach;
-DROP MATERIALIZED VIEW IF EXISTS {p}_overdraft;
-DROP MATERIALIZED VIEW IF EXISTS {p}_ledger_drift;
-DROP MATERIALIZED VIEW IF EXISTS {p}_drift;
-DROP MATERIALIZED VIEW IF EXISTS {p}_computed_ledger_balance;
-DROP MATERIALIZED VIEW IF EXISTS {p}_computed_subledger_balance;
-"""
+-- Steady state (post-migration) the matview-only DROP suffices."""
+
+
+def _emit_l1_invariant_drops(p: str, dialect: Dialect) -> str:
+    """Emit the L1 invariant matview DROP block per dialect.
+
+    Postgres uses native ``DROP MATERIALIZED VIEW IF EXISTS``; Oracle
+    uses a PL/SQL block per drop that swallows ORA-12003 / ORA-00942.
+    Order is fixed by ``_L1_INVARIANT_DROP_NAMES`` (dashboard-shape
+    first, helpers last).
+    """
+    drops = "\n".join(
+        drop_matview_if_exists(f"{p}_{name}", dialect)
+        for name in _L1_INVARIANT_DROP_NAMES
+    )
+    return f"{_L1_INVARIANT_DROPS_HEADER}\n{drops}\n"
 
 
 _L1_INVARIANT_VIEWS_TEMPLATE = """\
@@ -536,7 +746,7 @@ _L1_INVARIANT_VIEWS_TEMPLATE = """\
 -- A "leaf" account is one with account_parent_role IS NOT NULL
 -- (i.e., it's a child of a parent role).
 -- ---------------------------------------------------------------------
-CREATE MATERIALIZED VIEW {p}_computed_subledger_balance AS
+CREATE MATERIALIZED VIEW {p}_computed_subledger_balance{matview_options} AS
 SELECT
     sb.account_id,
     sb.business_day_start,
@@ -563,7 +773,7 @@ CREATE INDEX idx_{p}_csb_account_day
 -- A "parent" account is one whose role appears as account_parent_role
 -- on at least one other account (resolved via subquery).
 -- ---------------------------------------------------------------------
-CREATE MATERIALIZED VIEW {p}_computed_ledger_balance AS
+CREATE MATERIALIZED VIEW {p}_computed_ledger_balance{matview_options} AS
 SELECT
     parent_db.account_id,
     parent_db.account_role,
@@ -586,11 +796,11 @@ LEFT JOIN (
 LEFT JOIN (
     SELECT
         tx.account_id,
-        DATE_TRUNC('day', tx.posting) AS business_day,
+        {date_trunc_tx_posting} AS business_day,
         SUM(tx.amount_money) AS direct_balance
     FROM {p}_current_transactions tx
     WHERE tx.status = 'Posted'
-    GROUP BY tx.account_id, DATE_TRUNC('day', tx.posting)
+    GROUP BY tx.account_id, {date_trunc_tx_posting}
 ) direct_totals
     ON direct_totals.account_id = parent_db.account_id
    AND direct_totals.business_day >= parent_db.business_day_start
@@ -612,7 +822,7 @@ CREATE INDEX idx_{p}_clb_account_day
 -- and ¬IsParent(Account), Drift(Account, BusinessDay) SHOULD equal 0.
 -- Rows in this view are the violations: stored ≠ computed.
 -- ---------------------------------------------------------------------
-CREATE MATERIALIZED VIEW {p}_drift AS
+CREATE MATERIALIZED VIEW {p}_drift{matview_options} AS
 SELECT
     sb.account_id,
     sb.account_name,
@@ -642,7 +852,7 @@ CREATE INDEX idx_{p}_drift_role ON {p}_drift (account_role);
 -- and IsParent(Account), LedgerDrift(Account, BusinessDay) SHOULD equal 0.
 -- Rows in this view are the violations.
 -- ---------------------------------------------------------------------
-CREATE MATERIALIZED VIEW {p}_ledger_drift AS
+CREATE MATERIALIZED VIEW {p}_ledger_drift{matview_options} AS
 SELECT
     sb.account_id,
     sb.account_name,
@@ -668,7 +878,7 @@ CREATE INDEX idx_{p}_ledger_drift_role
 -- Rows in this view are accounts × days where the stored balance is
 -- negative (overdraft).
 -- ---------------------------------------------------------------------
-CREATE MATERIALIZED VIEW {p}_overdraft AS
+CREATE MATERIALIZED VIEW {p}_overdraft{matview_options} AS
 SELECT
     sb.account_id,
     sb.account_name,
@@ -690,7 +900,7 @@ CREATE INDEX idx_{p}_overdraft_role ON {p}_overdraft (account_role);
 -- set, money SHOULD equal expected_eod_balance.
 -- Rows are violations.
 -- ---------------------------------------------------------------------
-CREATE MATERIALIZED VIEW {p}_expected_eod_balance_breach AS
+CREATE MATERIALIZED VIEW {p}_expected_eod_balance_breach{matview_options} AS
 SELECT
     sb.account_id,
     sb.account_name,
@@ -720,7 +930,7 @@ CREATE INDEX idx_{p}_eod_breach_account_day
 -- so no JOIN to daily_balances is needed (which also avoids the failure
 -- mode where a breach business_day has no enclosing daily_balance row).
 -- ---------------------------------------------------------------------
-CREATE MATERIALIZED VIEW {p}_limit_breach AS
+CREATE MATERIALIZED VIEW {p}_limit_breach{matview_options} AS
 SELECT *
 FROM (
     SELECT
@@ -728,7 +938,7 @@ FROM (
         tx.account_name,
         tx.account_role,
         tx.account_parent_role,
-        DATE_TRUNC('day', tx.posting) AS business_day,
+        {date_trunc_tx_posting} AS business_day,
         tx.transfer_type,
         SUM(ABS(tx.amount_money)) AS outbound_total,
         {limit_cases} AS cap
@@ -740,7 +950,7 @@ FROM (
     GROUP BY
         tx.account_id, tx.account_name, tx.account_role,
         tx.account_parent_role,
-        DATE_TRUNC('day', tx.posting),
+        {date_trunc_tx_posting},
         tx.transfer_type
 ) outbound_with_cap
 WHERE cap IS NOT NULL
@@ -767,7 +977,7 @@ CREATE INDEX idx_{p}_lb_type ON {p}_limit_breach (transfer_type);
 -- dashboard can sort by staleness without re-evaluating CURRENT_TIMESTAMP
 -- on every visual.
 -- ---------------------------------------------------------------------
-CREATE MATERIALIZED VIEW {p}_stuck_pending AS
+CREATE MATERIALIZED VIEW {p}_stuck_pending{matview_options} AS
 SELECT * FROM (
     SELECT
         ct.id AS transaction_id,
@@ -782,7 +992,7 @@ SELECT * FROM (
         ct.amount_direction,
         ct.posting,
         {pending_age_cases} AS max_pending_age_seconds,
-        EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - ct.posting)) AS age_seconds
+        {epoch_age_seconds} AS age_seconds
     FROM {p}_current_transactions ct
     WHERE ct.status = 'Pending'
 ) tx
@@ -813,7 +1023,7 @@ CREATE INDEX idx_{p}_sp_transfer ON {p}_stuck_pending (transfer_id);
 -- "stuck unbundled," it's just "stuck pending." The two views are
 -- structurally similar but cover disjoint conditions.
 -- ---------------------------------------------------------------------
-CREATE MATERIALIZED VIEW {p}_stuck_unbundled AS
+CREATE MATERIALIZED VIEW {p}_stuck_unbundled{matview_options} AS
 SELECT * FROM (
     SELECT
         ct.id AS transaction_id,
@@ -828,7 +1038,7 @@ SELECT * FROM (
         ct.amount_direction,
         ct.posting,
         {unbundled_age_cases} AS max_unbundled_age_seconds,
-        EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - ct.posting)) AS age_seconds
+        {epoch_age_seconds} AS age_seconds
     FROM {p}_current_transactions ct
     WHERE ct.bundle_id IS NULL
       AND ct.status = 'Posted'
@@ -850,7 +1060,7 @@ CREATE INDEX idx_{p}_su_transfer ON {p}_stuck_unbundled (transfer_id);
 -- One row per (account_id, business_day_start). Sheet-local filters
 -- narrow to a single (account, day) at render time.
 -- ---------------------------------------------------------------------
-CREATE MATERIALIZED VIEW {p}_daily_statement_summary AS
+CREATE MATERIALIZED VIEW {p}_daily_statement_summary{matview_options} AS
 WITH account_days AS (
     SELECT db.account_id, db.account_name, db.account_role,
            db.account_parent_role, db.account_scope,
@@ -864,7 +1074,7 @@ WITH account_days AS (
 ),
 today_flows AS (
     SELECT tx.account_id,
-           DATE_TRUNC('day', tx.posting) AS business_day_start,
+           {date_trunc_tx_posting} AS business_day_start,
            SUM(CASE WHEN tx.amount_direction = 'Debit'
                     THEN tx.amount_money ELSE 0 END) AS total_debits,
            SUM(CASE WHEN tx.amount_direction = 'Credit'
@@ -875,7 +1085,7 @@ today_flows AS (
            COUNT(*) AS leg_count
     FROM {p}_current_transactions tx
     WHERE tx.status <> 'Failed'
-    GROUP BY tx.account_id, DATE_TRUNC('day', tx.posting)
+    GROUP BY tx.account_id, {date_trunc_tx_posting}
 )
 SELECT ad.account_id, ad.account_name, ad.account_role,
        ad.account_parent_role, ad.account_scope,
@@ -911,7 +1121,7 @@ CREATE INDEX idx_{p}_dss_account_day
 -- `magnitude` normalized per branch so sort-by-magnitude reads
 -- consistently regardless of check_type.
 -- ---------------------------------------------------------------------
-CREATE MATERIALIZED VIEW {p}_todays_exceptions AS
+CREATE MATERIALIZED VIEW {p}_todays_exceptions{matview_options} AS
 WITH latest_day AS (
     SELECT MAX(business_day_start) AS day
     FROM {p}_current_daily_balances
@@ -922,7 +1132,7 @@ WITH latest_day AS (
 SELECT 'drift' AS check_type, account_id, account_name,
        account_role, account_parent_role,
        business_day_start AS business_day,
-       NULL::TEXT AS transfer_type,
+       {null_text} AS transfer_type,
        ABS(drift) AS magnitude
 FROM {p}_drift, latest_day
 WHERE business_day_start = latest_day.day
@@ -954,12 +1164,12 @@ WHERE business_day_start = latest_day.day
 -- stuck", so no per-day filter applies — include them all in the rollup.
 UNION ALL
 SELECT 'stuck_pending', account_id, account_name, account_role,
-       account_parent_role, posting::date AS business_day,
+       account_parent_role, {posting_to_date} AS business_day,
        transfer_type, amount_money AS magnitude
 FROM {p}_stuck_pending
 UNION ALL
 SELECT 'stuck_unbundled', account_id, account_name, account_role,
-       account_parent_role, posting::date AS business_day,
+       account_parent_role, {posting_to_date} AS business_day,
        transfer_type, amount_money AS magnitude
 FROM {p}_stuck_unbundled;
 -- Today's Exceptions sheet has 3 dropdowns (check_type, account,
@@ -971,13 +1181,34 @@ CREATE INDEX idx_{p}_te_type ON {p}_todays_exceptions (transfer_type);
 """
 
 
-_INV_MATVIEWS_DROPS_TEMPLATE = """\
+# Investigation matview names in drop order. Both read from the base
+# ``{p}_transactions`` only — order between the two doesn't matter, but
+# fixing it keeps emit output deterministic.
+_INV_MATVIEW_DROP_NAMES: tuple[str, ...] = (
+    "inv_money_trail_edges",
+    "inv_pair_rolling_anomalies",
+)
+
+
+_INV_MATVIEW_DROPS_HEADER = """\
 -- Investigation matview drops (N.3.b) — like the L1 invariant matview
 -- drops, these MUST run before the base ``{p}_transactions`` table is
--- dropped, so we emit them at the top of the script.
-DROP MATERIALIZED VIEW IF EXISTS {p}_inv_money_trail_edges;
-DROP MATERIALIZED VIEW IF EXISTS {p}_inv_pair_rolling_anomalies;
-"""
+-- dropped, so we emit them at the top of the script."""
+
+
+def _emit_inv_matview_drops(p: str, dialect: Dialect) -> str:
+    """Emit the Investigation matview DROP block per dialect.
+
+    Same shape as ``_emit_l1_invariant_drops`` — Postgres native /
+    Oracle PL/SQL block. Header carries the literal ``{p}_transactions``
+    placeholder so the comment stays meaningful regardless of the
+    instance prefix; no ``.format()`` substitution on the body.
+    """
+    drops = "\n".join(
+        drop_matview_if_exists(f"{p}_{name}", dialect)
+        for name in _INV_MATVIEW_DROP_NAMES
+    )
+    return f"{_INV_MATVIEW_DROPS_HEADER}\n{drops}\n"
 
 
 _INV_MATVIEWS_TEMPLATE = """\
@@ -1011,7 +1242,7 @@ _INV_MATVIEWS_TEMPLATE = """\
 -- Operators must run
 --     REFRESH MATERIALIZED VIEW {p}_inv_pair_rolling_anomalies;
 -- after each ETL load.
-CREATE MATERIALIZED VIEW {p}_inv_pair_rolling_anomalies AS
+CREATE MATERIALIZED VIEW {p}_inv_pair_rolling_anomalies{matview_options} AS
 WITH pair_legs AS (
     -- v6 column rename. signed_amount becomes amount_money (signed,
     -- where positive is Credit/inflow and negative is Debit/outflow).
@@ -1030,7 +1261,7 @@ WITH pair_legs AS (
         sender.account_id             AS sender_account_id,
         sender.account_name           AS sender_account_name,
         sender.account_role           AS sender_account_type,
-        recipient.posting::date       AS posted_day,
+        {recipient_posting_to_date}       AS posted_day,
         recipient.transfer_id,
         recipient.amount_money        AS amount
     FROM {p}_transactions recipient
@@ -1075,22 +1306,17 @@ pair_windows AS (
         sender_account_name,
         sender_account_type,
         posted_day,
-        SUM(day_sum) OVER w            AS window_sum,
-        SUM(day_transfer_count) OVER w AS transfer_count
+        SUM(day_sum) OVER ({rolling_window})            AS window_sum,
+        SUM(day_transfer_count) OVER ({rolling_window}) AS transfer_count
     FROM pair_daily
-    WINDOW w AS (
-        PARTITION BY recipient_account_id, sender_account_id
-        ORDER BY posted_day
-        RANGE BETWEEN INTERVAL '1 day' PRECEDING AND CURRENT ROW
-    )
 ),
 population AS (
     -- Single-row scalar: mean + sample stddev across every pair-window.
     -- Sample stddev (STDDEV_SAMP) matches the analyst convention of
     -- "this window vs. the rest of the population".
     SELECT
-        AVG(window_sum)::NUMERIC                       AS pop_mean,
-        COALESCE(STDDEV_SAMP(window_sum), 0)::NUMERIC  AS pop_stddev
+        {cast_avg_numeric}                       AS pop_mean,
+        {cast_stddev_numeric}  AS pop_stddev
     FROM pair_windows
 )
 SELECT
@@ -1100,8 +1326,8 @@ SELECT
     pw.sender_account_id,
     pw.sender_account_name,
     pw.sender_account_type,
-    (pw.posted_day - INTERVAL '1 day')::TIMESTAMP   AS window_start,
-    pw.posted_day::TIMESTAMP                        AS window_end,
+    {window_start_expr}   AS window_start,
+    {window_end_expr}                        AS window_end,
     pw.window_sum,
     pw.transfer_count,
     pop.pop_mean,
@@ -1150,8 +1376,8 @@ CROSS JOIN population pop;
 -- Operators must run
 --     REFRESH MATERIALIZED VIEW {p}_inv_money_trail_edges;
 -- after each ETL load.
-CREATE MATERIALIZED VIEW {p}_inv_money_trail_edges AS
-WITH RECURSIVE
+CREATE MATERIALIZED VIEW {p}_inv_money_trail_edges{matview_options} AS
+{with_recursive_kw}
 distinct_transfers AS (
     -- One row per transfer_id with its parent. {p}_transactions has
     -- one row per leg, so we deduplicate before walking — the parent
@@ -1162,7 +1388,10 @@ distinct_transfers AS (
     SELECT DISTINCT transfer_id, transfer_parent_id
     FROM {p}_transactions
 ),
-chain AS (
+-- Oracle 19c requires recursive CTEs to declare their column alias
+-- list inline (ORA-32039). Postgres accepts the same syntax — both
+-- dialects emit the explicit list.
+chain (transfer_id, root_transfer_id, depth) AS (
     -- Roots: transfers with no parent. Each root labels itself.
     SELECT
         transfer_id,

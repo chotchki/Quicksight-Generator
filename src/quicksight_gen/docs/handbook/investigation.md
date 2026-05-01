@@ -115,7 +115,7 @@ Juniper meeting in the middle.
 
 ## Reference
 
-- [Account Structure](../Training_Story.md) — the bank, customers,
+- [Account Structure](../scenario/index.md) — the bank, customers,
   accounts, and money flows behind every walkthrough on this page.
 - [Schema v3 — Data Feed Contract](../Schema_v6.md) — column specs,
   metadata keys, and ETL examples for the upstream feeds. The

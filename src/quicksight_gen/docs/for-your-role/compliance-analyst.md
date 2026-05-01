@@ -69,7 +69,7 @@ this tool puts the investigative loop in your hands.**
     - [Where did this transfer actually originate?](../walkthroughs/investigation/where-did-this-transfer-originate.md)
     - [What does this account's money network look like?](../walkthroughs/investigation/what-does-this-accounts-money-network-look-like.md)
 3. Practice on the demo scenarios. The
-   [Cast of Characters](../Training_Story.md) page lays out the
+   [Cast of Characters](../scenario/index.md) page lays out the
    demo's converging-anchor scenario (one recipient hub, several
    sender-side cluster shapes); each walkthrough above resolves
    one face of that scenario.
@@ -107,14 +107,14 @@ Each sheet supports a different posture:
 
 ## The concepts you'll want grounded
 
-- [Open vs. closed loop](../concepts/open-vs-closed-loop.md) —
+- [Open vs. closed loop](../concepts/accounting/open-vs-closed-loop.md) —
   the system-boundary question shapes which transfers leave the
   institution's visibility entirely (and which become harder to
   trace beyond {{ vocab.institution.acronym }}'s books).
-- [Vouchering](../concepts/vouchering.md) — voucher → ACH
+- [Vouchering](../concepts/accounting/vouchering.md) — voucher → ACH
   materialization is a layering vector worth understanding when
   the Money Trail walks across one.
-- [Eventual consistency](../concepts/eventual-consistency.md) —
+- [Eventual consistency](../concepts/accounting/eventual-consistency.md) —
   why recent money trails may look incomplete; not all in-flight
   transfers have landed yet, and the picture stabilises after a
   settlement window.

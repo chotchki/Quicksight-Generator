@@ -84,10 +84,10 @@ cadence.
 
 ## The concepts you'll want grounded
 
-- [Sweep / net / settle](../concepts/sweep-net-settle.md) — why
+- [Sweep / net / settle](../concepts/accounting/sweep-net-settle.md) — why
   the daily money-moved totals batch into one external wire (the
   number you see is the aggregate, not individual settlements).
-- [Eventual consistency](../concepts/eventual-consistency.md) —
+- [Eventual consistency](../concepts/accounting/eventual-consistency.md) —
   why money moved on day T might not show on day T's
   counterparty side, and why end-of-month numbers are more
   reliable than mid-month snapshots.

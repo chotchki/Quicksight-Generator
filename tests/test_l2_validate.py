@@ -589,6 +589,100 @@ def test_u5_same_role_different_transfer_type_allowed() -> None:
     validate(ok)
 
 
+def test_u6_duplicate_rail_discriminator_two_leg_rejected() -> None:
+    """U6 (P.9b): two TwoLegRails sharing a (transfer_type, role) tuple
+    on any leg are rejected — the Rail-to-Transaction binding would be
+    ambiguous between them.
+    """
+    inst = _baseline_instance()
+    # ExtInbound is (ach, source=ExternalCounterparty, dest=ControlAccount).
+    # Add a sibling rail with swapped roles — same transfer_type, both
+    # roles still present in some leg of each. Collision on both
+    # (ach, ExternalCounterparty) and (ach, ControlAccount).
+    sibling = TwoLegRail(
+        name=Identifier("ExtOutbound"),
+        transfer_type="ach",
+        origin="InternalInitiated",
+        metadata_keys=(Identifier("external_reference"),),
+        source_role=(Identifier("ControlAccount"),),
+        destination_role=(Identifier("ExternalCounterparty"),),
+        expected_net=Decimal("0"),
+    )
+    bad = _replace(inst, rails=(*inst.rails, sibling))
+    with pytest.raises(
+        L2ValidationError,
+        match=r"Rail uniqueness violation.*ExtOutbound.*ExtInbound.*ach",
+    ):
+        validate(bad)
+
+
+def test_u6_duplicate_rail_discriminator_single_leg_rejected() -> None:
+    """U6 (P.9b): a SingleLegRail sharing (transfer_type, role) with a
+    TwoLegRail's leg is rejected.
+    """
+    inst = _baseline_instance()
+    # ExtInbound has (ach, ControlAccount) on its destination leg.
+    # Add a single-leg rail on (ach, ControlAccount) — same key.
+    sibling = SingleLegRail(
+        name=Identifier("AchAdjustment"),
+        transfer_type="ach",
+        origin="InternalInitiated",
+        metadata_keys=(),
+        leg_role=(Identifier("ControlAccount"),),
+        leg_direction="Debit",
+    )
+    bad = _replace(inst, rails=(*inst.rails, sibling))
+    with pytest.raises(
+        L2ValidationError,
+        match=r"Rail uniqueness violation.*AchAdjustment.*ExtInbound",
+    ):
+        validate(bad)
+
+
+def test_u6_distinct_transfer_types_per_direction_allowed() -> None:
+    """U6 negative: the resolution path (a) — using directional
+    transfer_types (e.g. ach_inbound + ach_outbound) lifts the
+    collision. The two rails coexist cleanly.
+    """
+    inst = _baseline_instance()
+    # Replace ExtInbound's transfer_type with a directional name so the
+    # sibling Outbound rail can occupy the same role pair without
+    # colliding.
+    inbound = dataclasses.replace(inst.rails[0], transfer_type="ach_inbound")
+    outbound = TwoLegRail(
+        name=Identifier("ExtOutbound"),
+        transfer_type="ach_outbound",
+        origin="InternalInitiated",
+        metadata_keys=(Identifier("external_reference"),),
+        source_role=(Identifier("ControlAccount"),),
+        destination_role=(Identifier("ExternalCounterparty"),),
+        expected_net=Decimal("0"),
+    )
+    # Update the limit_schedule + bundler so R10/R11 still resolve.
+    new_ls = dataclasses.replace(inst.limit_schedules[0], transfer_type="ach_inbound")
+    new_agg = dataclasses.replace(
+        inst.rails[2], bundles_activity=(Identifier("ach_inbound"),),
+    )
+    ok = _replace(
+        inst,
+        rails=(inbound, inst.rails[1], new_agg, outbound),
+        limit_schedules=(new_ls,),
+    )
+    validate(ok)
+
+
+def test_u6_two_legs_same_role_within_one_rail_allowed() -> None:
+    """U6 negative: a single rail whose two legs land on the same role
+    (or whose union role expression repeats) does NOT trip U6 — both
+    legs share one transfer_id, no cross-rail ambiguity. This is the
+    behavior the fuzzer relies on (PoolBalancing has source=destination
+    =ControlAccount).
+    """
+    # _baseline_instance includes PoolBalancing with source=destination
+    # =ControlAccount; the baseline must validate cleanly.
+    validate(_baseline_instance())
+
+
 def test_r7_template_leg_rails_must_be_non_aggregating() -> None:
     """R7: TransferTemplate.leg_rails entries MUST NOT reference aggregating rails."""
     inst = _baseline_instance()
@@ -920,12 +1014,14 @@ def test_c3_variable_single_leg_not_in_any_template_rejected() -> None:
     # Add a Variable single-leg rail that's bundled by the existing
     # PoolBalancing aggregator (so S3 reconciliation passes), but NOT
     # in any TransferTemplate.leg_rails — should trip C3.
+    # Use leg_role=CustomerSubledger to avoid the P.9b discriminator
+    # collision with ExtInbound (transfer_type='ach', dest=ControlAccount).
     var_rail = SingleLegRail(
         name=Identifier("OrphanVariable"),
         transfer_type="ach",  # PoolBalancing bundles 'ach' (S3 path B OK)
         origin="InternalInitiated",
         metadata_keys=(),
-        leg_role=(Identifier("ControlAccount"),),
+        leg_role=(Identifier("CustomerSubledger"),),
         leg_direction="Variable",
     )
     bad = _replace(inst, rails=(*inst.rails, var_rail))

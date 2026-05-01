@@ -487,11 +487,11 @@ def test_chains_dataset_contract_columns_match_builder() -> None:
 
 def test_chains_dataset_handles_empty_chains_list() -> None:
     """spec_example.yaml has zero chains; the empty CTE path
-    (WHERE FALSE) keeps the SQL valid + visual harmless."""
+    (WHERE 1=0) keeps the SQL valid + visual harmless."""
     sql = _chains_dataset_sql_against(
         Path(__file__).parent / "l2" / "spec_example.yaml"
     )
-    assert "WHERE FALSE" in sql
+    assert "WHERE 1=0" in sql
     assert "WITH declared AS" in sql
 
 
@@ -840,8 +840,10 @@ def test_postings_dataset_targets_prefixed_current_transactions() -> None:
 
 
 def test_postings_dataset_uses_cascade_substitution() -> None:
-    """Cascade WHERE clause has the sentinel short-circuit + the
-    JSONPath concat with multi-valued IN (<<$pValues>>)."""
+    """Cascade WHERE clause has the sentinel short-circuit + per-key
+    branches with literal JSON paths (P.9f.b — Oracle JSON_VALUE
+    rejects runtime-concatenated paths so we emit one branch per
+    declared metadata key)."""
     from quicksight_gen.apps.l2_flow_tracing.datasets import (
         build_postings_dataset, META_KEY_ALL_SENTINEL,
     )
@@ -850,7 +852,11 @@ def test_postings_dataset_uses_cascade_substitution() -> None:
         build_postings_dataset(_CFG, inst).PhysicalTableMap.values()
     )[0].CustomSql.SqlQuery
     assert f"<<$pKey>> = '{META_KEY_ALL_SENTINEL}'" in sql
-    assert "JSON_VALUE(metadata, '$.' || <<$pKey>>) IN (<<$pValues>>)" in sql
+    # Spot-check one declared key picks the literal-path branch shape.
+    assert (
+        "<<$pKey>> = 'customer_id' AND "
+        "JSON_VALUE(metadata, '$.customer_id') IN (<<$pValues>>)"
+    ) in sql
 
 
 def test_postings_dataset_declares_pkey_and_pvalues_parameters() -> None:
@@ -956,3 +962,50 @@ def test_meta_value_dropdown_sources_from_meta_values_dataset() -> None:
     assert isinstance(val_ctrl.selectable_values, LinkedValues)
     assert val_ctrl.selectable_values.dataset.identifier == "l2ft-meta-values-ds"
     assert val_ctrl.selectable_values.column_name == "metadata_value"
+
+
+# -- P.4.b dialect-aware empty-fallback branches -----------------------------
+
+
+def test_unified_l2_exceptions_empty_metadata_branch_is_dialect_aware() -> None:
+    """P.4.b — when no Rail declares a metadata_key, the Dead Metadata
+    UNION branch (and every other empty-CTE fallback) emits a typed-
+    NULL row. PG emits ``NULL::text`` (lowercase from typed_null);
+    Oracle emits ``CAST(NULL AS CLOB)``. PG case is lowercase per the
+    helper's literal-passthrough — Postgres type names are case-
+    insensitive so the SQL is functionally identical to the legacy
+    uppercase ``NULL::TEXT``."""
+    from dataclasses import replace
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        build_unified_l2_exceptions_dataset,
+    )
+    from quicksight_gen.common.l2 import Identifier, L2Instance
+    from quicksight_gen.common.sql import Dialect
+
+    # Empty-rails instance — every CTE helper hits its fallback branch.
+    empty = L2Instance(
+        instance=Identifier("empty"),
+        accounts=(), account_templates=(),
+        rails=(), transfer_templates=(), chains=(),
+        limit_schedules=(),
+    )
+    cfg_pg = replace(_CFG, dialect=Dialect.POSTGRES)
+    cfg_or = replace(_CFG, dialect=Dialect.ORACLE)
+
+    sql_pg = next(iter(
+        build_unified_l2_exceptions_dataset(cfg_pg, empty)
+        .PhysicalTableMap.values()
+    )).CustomSql.SqlQuery
+    sql_or = next(iter(
+        build_unified_l2_exceptions_dataset(cfg_or, empty)
+        .PhysicalTableMap.values()
+    )).CustomSql.SqlQuery
+
+    # Empty-fallback NULLs use bounded VARCHAR(4000) so they UNION
+    # cleanly with the real branches' string columns on both dialects
+    # (Oracle CLOB can't be UNIONed with VARCHAR2 — switched in P.9f.b).
+    assert "NULL::varchar(4000)" in sql_pg
+    # Oracle output must not carry any PG-style ``::`` cast.
+    assert "::varchar(4000)" not in sql_or
+    assert "::VARCHAR(4000)" not in sql_or
+    assert "CAST(NULL AS VARCHAR2(4000))" in sql_or

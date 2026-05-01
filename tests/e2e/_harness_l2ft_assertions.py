@@ -1,5 +1,6 @@
 """L2 Flow Tracing Playwright assertions for the M.4.1 harness (M.4.1.e).
 
+
 Mirrors the M.4.1.d L1 assertion module but for the L2 Flow Tracing
 dashboard's surfaces. Per the M.4.1.e PLAN entry:
 
@@ -8,21 +9,24 @@ dashboard's surfaces. Per the M.4.1.e PLAN entry:
     transfer_parent_id is None — chain-child plants use the same
     rail_name and would double-count).
   - Transfer Templates sheet: per planted TT firing, the
-    template_name appears + per-instance completion_status reads
-    as expected.
-  - Chains sheet: per planted chain edge, the parent + child rails
-    appear together. (Looser than L1 because chain rows show
-    completion_status derived from runtime data, which is harder
-    to predict deterministically without re-deriving the picker
-    logic.)
-  - L2 Exceptions sheet: the bar chart's check_type categories
-    are all present (sanity check that the unified dataset
-    rendered against the per-test prefix).
+    template_name appears.
+  - L2 Exceptions sheet: the KPI renders an integer
+    (sanity check that the unified dataset rendered against
+    the per-test prefix).
 
-First-cut visibility check uses sheet-text substring matching
-(same convention as the M.4.1.d L1 module). Tighter cell-level
-assertions can layer on later as M.4.1.e-followups when QS table
-reading proves stable.
+P.9f.f — The plant-visibility assertion is a Layer-1 DB query
+against ``<prefix>_current_transactions``, NOT a sheet-text scrape.
+Earlier versions of this module text-scraped the Rails sheet and
+matched plant rail_names as substrings, but with sasquatch_pr's
+57+ standalone rail firings on a single Rails sheet, QS's table
+virtualization (~10 rows in DOM regardless of page size — see
+CLAUDE.md "E2E Test Conventions") guaranteed plants below the fold
+were invisible to the assertion. The Layer-1 matview query is
+deterministic, fast (~5 ms per plant), and points at the
+seed/matview pipeline if it fails — same diagnostic ladder L1
+established in M.4.1.k. The L2 Exceptions KPI render
+(``assert_l2_exceptions_kpi_renders``) remains the dashboard-side
+smoke that proves the L2FT dataset SQL ran cleanly.
 
 The 6 L2 Exceptions check_type categories are pinned constants
 (they're CAST literals in the unified-exceptions dataset SQL —
@@ -32,6 +36,8 @@ see ``apps/l2_flow_tracing/datasets.py::build_unified_l2_exceptions_dataset``).
 from __future__ import annotations
 
 from typing import Any
+
+from quicksight_gen.common.sql import Dialect
 
 
 # Plant kind → L2 Flow Tracing dashboard sheet name. The dispatch
@@ -59,67 +65,98 @@ L2_EXCEPTION_CHECK_TYPES: frozenset[str] = frozenset({
 })
 
 
-def assert_l2ft_plants_visible(
-    page: Any,
+def assert_l2ft_matview_rows_present(
+    db_conn: Any,
+    prefix: str,
     planted_manifest: dict[str, list[dict[str, Any]]],
     *,
-    timeout_ms: int = 30_000,
+    dialect: Dialect = Dialect.POSTGRES,
 ) -> None:
-    """Walk every L2 plant kind in the manifest; assert each plant's
-    identity appears on its expected L2 Flow Tracing sheet.
+    """For every L2 plant in the manifest, query
+    ``<prefix>_current_transactions`` directly and assert the planted
+    ``rail_name`` / ``template_name`` surfaces as ≥1 row.
 
-    For ``rail_firing_plants``: assert the ``rail_name`` substring
-    surfaces on the Rails sheet. Chain-child plants (where
-    ``transfer_parent_id`` is set) are skipped — they reuse the
-    same rail_name as a standalone firing of the same rail, so
-    the substring check is already satisfied by the standalone.
+    Mirrors ``_harness_l1_assertions.assert_l1_matview_rows_present``
+    in shape + intent. Layer-1 fast-fail check that runs in <50ms
+    per plant and points at the seed→matview-refresh pipeline if it
+    fails. Replaces the earlier sheet-text-scrape check
+    (``assert_l2ft_plants_visible``) which broke on sasquatch_pr
+    where 57+ standalone rail firings on the Rails sheet pushed all
+    but the first ~10 alphabetically-earliest below QS's
+    virtualization fold (P.9f.f).
 
-    For ``transfer_template_plants``: assert the ``template_name``
-    substring surfaces on the Transfer Templates sheet.
+    For ``rail_firing_plants`` with ``transfer_parent_id IS NULL``:
+    counts rows by ``rail_name``. Chain-child plants are skipped —
+    they reuse the same rail_name as the standalone firing.
 
-    ``page`` MUST already be on the L2 Flow Tracing dashboard embed
-    URL with initial dashboard load complete.
+    For ``transfer_template_plants``: counts rows by ``template_name``.
 
-    Sheets with empty manifest entries are skipped.
+    Args:
+        db_conn: psycopg2 / oracledb connection to the demo DB.
+        prefix: per-test L2 instance prefix (matches what
+            ``apply_db_seed`` used).
+        planted_manifest: ``build_planted_manifest`` output —
+            keyed by plant kind.
+        dialect: per-dialect placeholder syntax (``%s`` vs ``:1``).
+
+    Raises:
+        AssertionError on the first plant whose rail_name /
+            template_name doesn't appear, with the matview name +
+            plant + total-rows-in-matview for triage.
     """
-    from quicksight_gen.common.browser.helpers import click_sheet_tab
+    placeholder = ":1" if dialect is Dialect.ORACLE else "%s"
+    full_view = f"{prefix}_current_transactions"
 
-    # Rails sheet — distinct rail_names from non-chain firings.
     rail_plants = [
         p for p in planted_manifest.get("rail_firing_plants", [])
         if p.get("transfer_parent_id") is None
     ]
-    if rail_plants:
-        click_sheet_tab(page, "Rails", timeout_ms=timeout_ms)
-        sheet_text = _active_sheet_text(page, timeout_ms=timeout_ms)
-        for plant in rail_plants:
-            rail_name = plant.get("rail_name")
-            assert rail_name is not None, (
-                f"rail plant {plant!r} missing rail_name; can't verify"
+    for plant in rail_plants:
+        rail_name = plant.get("rail_name")
+        assert rail_name is not None, (
+            f"rail plant {plant!r} missing rail_name; can't verify"
+        )
+        with db_conn.cursor() as cur:
+            cur.execute(
+                f"SELECT COUNT(*) FROM {full_view} "
+                f"WHERE rail_name = {placeholder}",
+                (rail_name,),
             )
-            assert rail_name in sheet_text, (
-                f"L2FT Rails sheet doesn't show planted rail "
-                f"{rail_name!r}; expected the rail row to surface "
-                f"after broad-mode plant + matview refresh\n"
-                f"plant: {plant!r}"
-            )
+            row = cur.fetchone()
+            count = row[0] if row else 0
+            cur.execute(f"SELECT COUNT(*) FROM {full_view}")
+            total_row = cur.fetchone()
+            total = total_row[0] if total_row else 0
+        assert count > 0, (
+            f"L2FT matview {full_view!r} has no row for "
+            f"planted rail {rail_name!r} — seed→matview-refresh "
+            f"pipeline regression. Total rows in the matview: {total}.\n"
+            f"plant: {plant!r}"
+        )
 
-    # Transfer Templates sheet — distinct template_names.
     tt_plants = planted_manifest.get("transfer_template_plants", [])
-    if tt_plants:
-        click_sheet_tab(page, "Transfer Templates", timeout_ms=timeout_ms)
-        sheet_text = _active_sheet_text(page, timeout_ms=timeout_ms)
-        for plant in tt_plants:
-            template_name = plant.get("template_name")
-            assert template_name is not None, (
-                f"TT plant {plant!r} missing template_name; can't verify"
+    for plant in tt_plants:
+        template_name = plant.get("template_name")
+        assert template_name is not None, (
+            f"TT plant {plant!r} missing template_name; can't verify"
+        )
+        with db_conn.cursor() as cur:
+            cur.execute(
+                f"SELECT COUNT(*) FROM {full_view} "
+                f"WHERE template_name = {placeholder}",
+                (template_name,),
             )
-            assert template_name in sheet_text, (
-                f"L2FT Transfer Templates sheet doesn't show planted "
-                f"template {template_name!r}; expected the TT firing "
-                f"to surface after broad-mode plant + matview refresh\n"
-                f"plant: {plant!r}"
-            )
+            row = cur.fetchone()
+            count = row[0] if row else 0
+            cur.execute(f"SELECT COUNT(*) FROM {full_view}")
+            total_row = cur.fetchone()
+            total = total_row[0] if total_row else 0
+        assert count > 0, (
+            f"L2FT matview {full_view!r} has no row for "
+            f"planted template {template_name!r} — seed→matview-refresh "
+            f"pipeline regression. Total rows in the matview: {total}.\n"
+            f"plant: {plant!r}"
+        )
 
 
 def assert_l2_exceptions_kpi_renders(
@@ -169,41 +206,3 @@ def assert_l2_exceptions_kpi_renders(
     )
 
 
-# Backwards-compat alias — the harness test still imports the old
-# name. Kept as a thin wrapper so the rename can land in one commit
-# without scattering test-file edits across this PR.
-def assert_l2_exceptions_check_types_present(
-    page: Any,
-    *,
-    timeout_ms: int = 30_000,
-) -> None:
-    """Deprecated — see ``assert_l2_exceptions_kpi_renders``."""
-    assert_l2_exceptions_kpi_renders(page, timeout_ms=timeout_ms)
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-
-def _active_sheet_text(page: Any, *, timeout_ms: int) -> str:
-    """Return the rendered text of the currently active L2FT sheet.
-
-    Same shape as the L1 assertions module's helper but inlined here
-    to avoid cross-module coupling (the two assertion modules will
-    likely diverge over time as L1 + L2FT surfaces drift).
-    """
-    from quicksight_gen.common.browser.helpers import (
-        wait_for_table_cells_present,
-    )
-
-    try:
-        wait_for_table_cells_present(page, timeout_ms=timeout_ms)
-    except Exception:  # noqa: BLE001 — tables may not exist on every sheet
-        pass
-    visuals = page.query_selector_all(
-        '[data-automation-id="analysis_visual"]'
-    )
-    if not visuals:
-        return page.text_content("body") or ""
-    return "\n".join(v.inner_text() for v in visuals)

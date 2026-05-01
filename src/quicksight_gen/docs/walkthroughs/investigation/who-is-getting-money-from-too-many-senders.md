@@ -57,8 +57,8 @@ sits at the top of the table with **12 distinct senders** and a
 total inbound around $4,000–$8,000 (rounded by the demo's RNG).
 
 Drag the threshold slider down to 2 or 3 — additional accounts may
-appear if the broader PR/AR demo seed has any incidental inbound
-diversity (most PR merchant accounts will, since their normal sales
+appear if the broader L2 instance seed has any incidental inbound
+diversity (merchant DDAs typically will, since their normal sales
 flow involves many distinct customer cards). Drag it up to 10+ —
 Juniper stays alone, since the rest of the demo's inbound graphs are
 narrower.
@@ -101,7 +101,7 @@ depends on what you want to know:
   flagged recipient; the inbound Sankey shows the fanout senders, and
   the outbound Sankey shows where the money goes next.
 - **"Show me the actual posting rows behind one of these inbound
-  transfers."** → Account Reconciliation, Transactions sheet,
+  transfers."** → L1 Reconciliation Dashboard, Transactions sheet,
   filtered to the recipient `account_id`.
 
 ## Next step

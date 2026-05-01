@@ -177,21 +177,35 @@ def test_auto_scenario_emit_is_byte_deterministic(spec_instance) -> None:
     assert sql_a == sql_b
 
 
-def test_spec_example_seed_hash_matches_yaml(spec_instance) -> None:
-    """The locked seed_hash in spec_example.yaml is what the auto-scenario
-    actually produces against the canonical date. Drifting either side
-    (the YAML or the seed code) trips this guard."""
+@pytest.mark.parametrize("dialect_name", ["postgres", "oracle"])
+def test_spec_example_seed_hash_matches_yaml(spec_instance, dialect_name) -> None:
+    """The locked per-dialect seed_hash in spec_example.yaml is what the
+    auto-scenario actually produces against the canonical date.
+
+    P.5.b — seed_hash is now a per-dialect dict on L2Instance (PG and
+    Oracle emit different bytes: Oracle wraps timestamp literals,
+    emits per-row INSERTs). One test per dialect; both must match.
+    """
+    from quicksight_gen.common.sql import Dialect
+
+    dialect = Dialect(dialect_name)
     report = default_scenario_for(spec_instance, today=CANONICAL_TODAY)
-    sql = emit_seed(spec_instance, report.scenario)
+    sql = emit_seed(spec_instance, report.scenario, dialect=dialect)
     actual = hashlib.sha256(sql.encode("utf-8")).hexdigest()
     assert spec_instance.seed_hash is not None, (
         "spec_example.yaml is expected to have its seed_hash locked; "
         "run `.venv/bin/quicksight-gen demo seed-l2 tests/l2/spec_example.yaml "
         "--lock` to set it."
     )
-    assert actual == spec_instance.seed_hash, (
-        f"auto-seed for spec_example.yaml drifted:\n"
-        f"  YAML  : {spec_instance.seed_hash}\n"
+    expected = spec_instance.seed_hash.get(dialect_name)
+    assert expected is not None, (
+        f"spec_example.yaml seed_hash is missing the {dialect_name!r} key. "
+        f"Re-lock with `.venv/bin/quicksight-gen demo seed-l2 "
+        f"tests/l2/spec_example.yaml --lock` to populate both dialects."
+    )
+    assert actual == expected, (
+        f"auto-seed for spec_example.yaml ({dialect_name}) drifted:\n"
+        f"  YAML  : {expected}\n"
         f"  actual: {actual}\n"
         f"Re-lock with `.venv/bin/quicksight-gen demo seed-l2 "
         f"tests/l2/spec_example.yaml --lock` if intentional."

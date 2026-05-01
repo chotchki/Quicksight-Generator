@@ -1,18 +1,20 @@
 # How do I author a new app on the tree?
 
-*Customization walkthrough — Developer / Product Owner. Building a fourth (or fifth) dashboard.*
+*Customization walkthrough — Developer / Product Owner. Building a fifth (or sixth) dashboard.*
 
 ## The story
 
 You've read the [shared schema](../../Schema_v6.md), pointed your
-production data at `transactions` + `daily_balances`, and the three
-shipped apps (Payment Reconciliation, Account Reconciliation,
-Investigation) cover most of what your operations team needs. But
-you have one more reporting cadence — say a board-level summary, a
-fraud-team triage view, a marketing rollup — that doesn't fit any
-of the three existing apps' question shapes.
+production data at `<prefix>_transactions` +
+`<prefix>_daily_balances`, and the four shipped apps (L1
+Reconciliation Dashboard, L2 Flow Tracing, Investigation,
+Executives) cover most of what your operations team needs. But
+you have one more reporting cadence — say a board-level summary
+beyond the Executives view, a fraud-team triage view, a marketing
+rollup — that doesn't fit any of the four existing apps' question
+shapes.
 
-You want to build a fourth dashboard from scratch. You don't want
+You want to build a fifth dashboard from scratch. You don't want
 to fork an existing app, because most of the wiring you'd inherit
 is the wrong shape for your question. And you don't want to drop
 into raw QuickSight JSON, because that's how the constants-heavy
@@ -28,9 +30,10 @@ visual-ID bookkeeping.
 
 ## The question
 
-"What's the minimum I need to write to add a fourth standalone
-dashboard, given that the dataset interface (`transactions` +
-`daily_balances` + the AR dimension tables) is already in place?"
+"What's the minimum I need to write to add a fifth standalone
+dashboard, given that the dataset interface
+(`<prefix>_transactions` + `<prefix>_daily_balances` emitted by
+`common/l2/schema.py::emit_schema`) is already in place?"
 
 ## Where to look
 
@@ -78,10 +81,11 @@ Three things you do *not* need:
   `FilterGroup.with_numeric_range_filter(...)`) replace the per-app
   builder modules entirely. Wiring lives in `app.py` populator
   functions, one per sheet.
-- **No `demo_data.py`.** Because Executives reads only the shared base
-  tables, the existing PR / AR / Investigation seeds populate it for
-  free. If your app needs its own seed shape, add `demo_data.py` next
-  to `datasets.py`; otherwise skip it.
+- **No `demo_data.py`.** Because the four shipped apps all read the
+  same per-instance prefixed base tables, the L2 instance's seed (and
+  any per-app overlay seed) populates your new app for free. If your
+  app needs its own seed shape, add `demo_data.py` next to
+  `datasets.py`; otherwise skip it.
 
 The skeleton of `app.py` looks like:
 
@@ -166,11 +170,12 @@ def _populate_detail(sheet: Sheet, ds_foo) -> None:
     pass
 ```
 
-Datasets follow the existing PR/AR pattern — `DatasetContract` lists
-the column projection; the SQL must produce exactly those columns;
-`register_contract()` wires the contract into the typed-Column
-validation that catches column-name typos at the wiring site (loud
-`KeyError`) instead of at deploy (silent broken visual).
+Datasets follow the same pattern as the four shipped apps —
+`DatasetContract` lists the column projection; the SQL must produce
+exactly those columns; `register_contract()` wires the contract
+into the typed-Column validation that catches column-name typos at
+the wiring site (loud `KeyError`) instead of at deploy (silent
+broken visual).
 
 ## What it means
 

@@ -98,8 +98,8 @@ from _harness_l1_assertions import (  # noqa: E402
     widen_l1_date_range,
 )
 from _harness_l2ft_assertions import (  # noqa: E402
-    assert_l2_exceptions_check_types_present,
-    assert_l2ft_plants_visible,
+    assert_l2_exceptions_kpi_renders,
+    assert_l2ft_matview_rows_present,
 )
 from _harness_inv_assertions import (  # noqa: E402
     assert_inv_matviews_queryable,
@@ -204,29 +204,37 @@ def harness_cfg(cfg: Config, harness_l2: L2Instance, harness_uid: str) -> Config
 
 @pytest.fixture
 def harness_db_conn(harness_cfg: Config):
-    """psycopg2 connection to the demo DB, with Aurora cold-start warmup.
+    """DB-API 2.0 connection to the demo DB, with cold-start warmup.
 
-    Connection is fixture-scoped (per-test) so each test gets its own
-    connection — concurrent tests don't share a connection that one
-    test's teardown might close out from under another. Yields the
-    connection; teardown drops every prefixed object the test created.
+    Branches on ``harness_cfg.dialect`` via ``common/db.connect_demo_db``
+    (P.9d): psycopg2 for Postgres, oracledb for Oracle. Connection is
+    fixture-scoped (per-test) so each test gets its own connection —
+    concurrent tests don't share a connection that one test's teardown
+    might close out from under another. Yields the connection; teardown
+    drops every prefixed object the test created.
 
     Aurora cold-start: the existing operational footgun (CLAUDE.md) is
     that Aurora Serverless V1's idle pause causes the first query to
-    fail. Issue ``SELECT 1`` immediately after connecting so the
-    cold-start hit lands on the warmup, not the first real
-    ``emit_schema`` apply.
+    fail. Issue ``SELECT 1 FROM dual`` (Oracle) / ``SELECT 1`` (Postgres)
+    immediately after connecting so the cold-start hit lands on the
+    warmup, not the first real ``emit_schema`` apply.
     """
-    psycopg2 = pytest.importorskip(
-        "psycopg2",
-        reason="harness needs psycopg2 (install via `pip install -e '.[demo]'`)",
-    )
     if harness_cfg.demo_database_url is None:
         pytest.skip("QS_GEN_DEMO_DATABASE_URL not set")
-    conn = psycopg2.connect(harness_cfg.demo_database_url)
+    from quicksight_gen.common.db import connect_demo_db
+    from quicksight_gen.common.sql import Dialect
+    try:
+        conn = connect_demo_db(harness_cfg)
+    except ImportError as exc:
+        pytest.skip(str(exc))
+    warmup_sql = (
+        "SELECT 1 FROM dual"
+        if harness_cfg.dialect is Dialect.ORACLE
+        else "SELECT 1"
+    )
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT 1")
+            cur.execute(warmup_sql)
             cur.fetchone()
         yield conn
     finally:
@@ -234,7 +242,10 @@ def harness_db_conn(harness_cfg: Config):
         # the prefixed objects (if any made it in) need to come out so
         # the next test doesn't see leftover state.
         try:
-            drop_prefixed_schema(conn, str(harness_cfg.l2_instance_prefix))
+            drop_prefixed_schema(
+                conn, str(harness_cfg.l2_instance_prefix),
+                dialect=harness_cfg.dialect,
+            )
         except Exception as exc:  # noqa: BLE001 — best-effort teardown
             print(
                 f"[harness] DB schema teardown failed for prefix "
@@ -245,7 +256,9 @@ def harness_db_conn(harness_cfg: Config):
 
 
 @pytest.fixture
-def harness_seeded(harness_db_conn: Any, harness_l2: L2Instance):
+def harness_seeded(
+    harness_db_conn: Any, harness_l2: L2Instance, harness_cfg: Config,
+):
     """Apply schema + seed + matview refresh; return the per-test
     handle the M.4.1.b–e harness body consumes (M.4.1.b).
 
@@ -282,7 +295,10 @@ def harness_seeded(harness_db_conn: Any, harness_l2: L2Instance):
         shape; M.4.1.f's failure dump consumes the same dict)
     """
     today = date.today()
-    scenario = apply_db_seed(harness_db_conn, harness_l2, today=today)
+    scenario = apply_db_seed(
+        harness_db_conn, harness_l2, today=today,
+        dialect=harness_cfg.dialect,
+    )
     return {
         "instance": harness_l2,
         "prefix": str(harness_l2.instance),
@@ -632,6 +648,7 @@ def test_harness_seeded_fixture_lands_with_manifest(
 
 def test_harness_deployed_fixture_lands_with_embed_urls(
     harness_deployed: dict[str, Any],
+    cfg,
 ) -> None:
     """The full deploy chain (generate → deploy → extract IDs →
     build embed URLs) runs cleanly and returns one URL per app.
@@ -649,8 +666,11 @@ def test_harness_deployed_fixture_lands_with_embed_urls(
     assert set(dashboard_ids.keys()) == set(HARNESS_APPS)
 
     # Each dashboard ID carries the per-test L2 prefix (M.2d.3).
+    # Resource-prefix is read from cfg so per-dialect copies of
+    # config.yaml (Phase P) — e.g. ``qs-gen-postgres`` /
+    # ``qs-gen-oracle`` — work without hardcoding ``qs-gen``.
     prefix = harness_deployed["prefix"]
-    expected_id_prefix = f"qs-gen-{prefix}-"
+    expected_id_prefix = f"{cfg.resource_prefix}-{prefix}-"
     for app_name, dashboard_id in dashboard_ids.items():
         assert dashboard_id.startswith(expected_id_prefix), (
             f"{app_name} dashboard_id {dashboard_id!r} doesn't carry "
@@ -730,7 +750,9 @@ def test_harness_l1_planted_scenarios_visible(
     # Layer 1: matview-row-presence. Fast, deterministic, points at
     # the seed/matview layer if it fails. NOT xfailed — this is the
     # primary regression net the harness provides.
-    assert_l1_matview_rows_present(harness_db_conn, prefix, manifest)
+    assert_l1_matview_rows_present(
+        harness_db_conn, prefix, manifest, dialect=harness_cfg.dialect,
+    )
 
     # Layer 1b (N.3.l-bis): Investigation matview schema-health check —
     # the prefixed Inv matviews exist and emit cleanly against the v6
@@ -742,7 +764,9 @@ def test_harness_l1_planted_scenarios_visible(
     # planted ``InvFanoutPlant`` (sender, recipient) edge surfaces in
     # both Inv matviews. Catches seed→matview-refresh regressions for
     # the Inv path the same way Layer 1 does for L1 invariants.
-    assert_inv_planted_rows_visible(harness_db_conn, prefix, manifest)
+    assert_inv_planted_rows_visible(
+        harness_db_conn, prefix, manifest, dialect=harness_cfg.dialect,
+    )
 
     # Layer 1c (N.4.g): Executives base-table schema-health check.
     # Executives reads only from <prefix>_transactions +
@@ -825,23 +849,31 @@ def test_harness_l1_planted_scenarios_visible(
 
 def test_harness_l2ft_planted_scenarios_visible(
     harness_cfg: Config,
+    harness_db_conn,
     harness_deployed: dict[str, Any],
     harness_failure_dump: None,
 ) -> None:
-    """Open the deployed L2 Flow Tracing dashboard via Playwright and
-    verify each L2-side planted scenario surfaces (M.4.1.e).
+    """Verify L2-side planted scenarios surface in both the matview
+    layer (Layer 1) and the dashboard render (Layer 2).
 
-    Per-plant-kind assertions:
-    - rail_firing_plants → Rails sheet shows each rail_name
-      (chain-child plants skipped — they reuse the standalone's
-      rail_name and would double-count)
-    - transfer_template_plants → Transfer Templates sheet shows
-      each template_name
+    Layer 1 — ``assert_l2ft_matview_rows_present`` queries
+    ``<prefix>_current_transactions`` directly for each planted
+    rail_name + template_name. Fast deterministic regression net for
+    the seed → matview-refresh pipeline.
 
-    Plus an L2 Exceptions sanity check: at least one of the 6
-    declared check_type categories appears on the L2 Exceptions
-    sheet (proves the unified-exceptions dataset rendered against
-    the per-test prefix without SQL errors).
+    Layer 2 — ``assert_l2_exceptions_kpi_renders`` opens the deployed
+    L2 Flow Tracing dashboard and asserts the L2 Exceptions KPI
+    renders an integer (proves the unified-exceptions dataset SQL ran
+    cleanly against the per-test prefix).
+
+    P.9f.f — The Rails-sheet plant-visibility check used to be a
+    Layer-2 sheet-text scrape. It broke on sasquatch_pr where 57+
+    standalone rail firings on a single Rails sheet pushed all but
+    the alphabetically-earliest below QS table virtualization's
+    ~10-row DOM fold (CLAUDE.md "E2E Test Conventions"). Mirroring
+    L1's M.4.1.k pattern (matview check + KPI count), the matview
+    query is the regression net; the dashboard render is sanity-
+    checked via the KPI.
 
     Wrapped in ``run_dashboard_check_with_retry`` (M.4.1.g) for the
     same spinner-forever-flake reasons as the L1 smoke test above.
@@ -849,49 +881,23 @@ def test_harness_l2ft_planted_scenarios_visible(
     Skipped under default pytest (no QS_GEN_E2E).
     """
     manifest = harness_deployed["planted_manifest"]
+    prefix = harness_deployed["prefix"]
     dashboard_id = harness_deployed["dashboard_ids"]["l2-flow-tracing"]
     page_timeout = int(os.environ.get("QS_E2E_PAGE_TIMEOUT", "30000"))
     visual_timeout = int(os.environ.get("QS_E2E_VISUAL_TIMEOUT", "30000"))
 
+    # Layer 1: matview-row-presence. Fast, deterministic, points at
+    # the seed/matview layer if it fails. Replaces the dashboard
+    # text-scrape Layer 2 that broke on virtualization (P.9f.f).
+    assert_l2ft_matview_rows_present(
+        harness_db_conn, prefix, manifest, dialect=harness_cfg.dialect,
+    )
+
     def _check_l2ft(page: Any) -> None:
-        # M.4.4.16 PUNTED to phase N — `assert_l2ft_plants_visible`
-        # fails on sasquatch_pr because the L2FT dashboard's own date
-        # filter excludes some planted rail firings. Same family as
-        # M.4.4.12's L1 widening fix; needs the L2FT-side equivalent
-        # (compute days_back from manifest's rail_firing_plants
-        # max(days_ago) + 7, then call the L2FT widen helper).
-        # Inline xfail keeps the L2FT KPI assertion (M.4.4.15) tight
-        # while the plants-visible widening waits for phase N.
-        try:
-            assert_l2ft_plants_visible(
-                page, manifest, timeout_ms=visual_timeout,
-            )
-        except AssertionError as exc:
-            import traceback
-            print(
-                f"[harness][L2FT][{harness_deployed['prefix']}] "
-                f"plants-visible xfail (M.4.4.16 deferred):\n"
-                f"{traceback.format_exc()}",
-                file=sys.stderr,
-            )
-            pytest.xfail(
-                f"L2FT plants-visible assertion needs date-filter "
-                f"widening (M.4.4.16 deferred to phase N). "
-                f"Underlying: {type(exc).__name__}: {exc}"
-            )
-        assert_l2_exceptions_check_types_present(
+        assert_l2_exceptions_kpi_renders(
             page, timeout_ms=visual_timeout,
         )
 
-    # Layer 2 xfail wrapper REMOVED (M.4.4.15) — root cause was the
-    # `assert_l2_exceptions_check_types_present` assertion requiring
-    # ≥1 of 6 hardcoded check_type categories on the L2 Exceptions
-    # sheet, which is wrong for clean fixtures (spec_example) whose
-    # broad-mode scenario produces zero L2 violations and correctly
-    # renders "No data". Reframed to assert_l2_exceptions_kpi_renders
-    # which just verifies the KPI shows a non-negative integer
-    # (proves the dataset SQL ran without error). Assertion failures
-    # now propagate as real FAILED.
     run_dashboard_check_with_retry(
         aws_account_id=harness_cfg.aws_account_id,
         aws_region=harness_cfg.aws_region,

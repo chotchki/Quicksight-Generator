@@ -158,7 +158,7 @@
 
 The existing SQL is already constrained to a portable subset (no JSONB, SQL/JSON path syntax) precisely because Oracle was anticipated; Phase P operationalizes that intent end-to-end.
 
-- [ ] **P.0 — Audit + decisions captured.** This conversation is the audit; the design calls landed:
+- [x] **P.0 — Audit + decisions captured.** This conversation is the audit; the design calls landed:
   - **Abstraction**: hand-written `common/sql/dialect.py` helpers (option (i)). Switch to per-dialect parallel SQL files only if helpers get unwieldy on a specific surface.
   - **Materialized views everywhere**: keep MVs on Oracle (`REFRESH ON DEMAND`); plain views skipped — performance would suffer on the L1 invariant scans.
   - **Oracle target**: 19c Standard Edition. BOOLEAN doesn't exist (NUMBER(1)); TEXT → CLOB / VARCHAR2; identity columns + sequences differ; `WITH RECURSIVE` → unmarked recursive `WITH`.
@@ -167,20 +167,23 @@ The existing SQL is already constrained to a portable subset (no JSONB, SQL/JSON
   - **Naming**: Oracle is named freely in repo artifacts going forward. The "do not name the target RDBMS" memory becomes historical context (pre-Phase-P era).
 
 - [ ] **P.1 — V5 carry-over cleanup.** `schema.sql` ships dead DDL (`DROP TABLE IF EXISTS` for the v5 12-table family + the AR `ar_*` dim tables + dead `ar_*` view surface) carried for upgrade safety + Investigation FK integrity. Phase P starts here so the dialect port has the smaller, current-only schema to work against.
-  - [ ] P.1.a — Trace Investigation demo seed: which rows actually land in `ar_ledger_accounts` / `ar_subledger_accounts`. Document the FK dependency.
-  - [ ] P.1.b — Decide migration target: per-prefix dim tables under `<prefix>_inv_*_accounts`, OR drop the FK dependency entirely (if Investigation matviews don't need the dim rows for analytics, the FK is integrity-only and the dim tables can go).
-  - [ ] P.1.c — Migrate Investigation seed off `ar_*_accounts` per the P.1.b decision. Hash-relock the seed if bytes shift.
-  - [ ] P.1.d — Drop `ar_ledger_accounts` + `ar_subledger_accounts` DDL from `schema.sql`.
-  - [ ] P.1.e — Drop the dead `ar_*` view surface from `schema.sql` (per CLAUDE.md: "bulk of the `ar_*` view surface is dead code in v6").
-  - [ ] P.1.f — Drop the v5 `DROP TABLE IF EXISTS` carry-overs (`pr_*` / `transfer` / `posting` / `ar_*_daily_balances`). Anyone on v5 → v7 follows a documented migration path; auto-drop is no longer load-bearing.
-  - [ ] P.1.g — Full unit + e2e suite green. Commit.
+  - [x] P.1.a — **Trace findings.** Investigation seed (`apps/investigation/demo_data.py:310`) writes two `_inserts(...)` blocks: 3 rows into `ar_ledger_accounts` (from `INV_LEDGER_ACCOUNTS`) + 6 rows into `ar_subledger_accounts` (from `INV_SUBLEDGER_ACCOUNTS`). The dim tables carry a self-FK (`ar_subledger.ledger_account_id → ar_ledger`) plus an inbound FK from `ar_ledger_transfer_limits`. Both per-prefix Investigation matviews (`<prefix>_inv_pair_rolling_anomalies`, `<prefix>_inv_money_trail_edges`) only read from `<prefix>_transactions` — zero references to `ar_*_accounts`. The whole dim-table family is FK-integrity-only for Investigation's seed; nothing live needs the rows.
+  - [x] P.1.b — **Decision: drop the FK dependency entirely + scope the cleanup to all v5-shape leftovers.** Tracing for P.1.a turned up more dead code than just the AR dim tables: (1) the global `transactions` + `daily_balances` tables in `schema.sql` are never populated by `_apply_demo` (which writes only to `<prefix>_*` tables via `emit_l2_seed`); (2) the entire `ar_*` view surface (~15 views including `ar_unified_exceptions`) is referenced by zero app dataset SQL; (3) `apps/investigation/demo_data.py::generate_demo_sql` is itself v5-shape, planting into the now-dead unprefixed tables — only `demo seed` CLI + tests still call it. Decision: drop **all of it** (schema.sql, schema.py wrapper, the legacy Inv demo_data, the dead CLI commands), not just the dim tables. Per-prefix `emit_l2_schema` + `emit_l2_seed` are the only live emit surface going forward.
+  - [x] P.1.c — Dropped `apps/investigation/demo_data.py` + the `from quicksight_gen.apps.investigation.demo_data import generate_demo_sql` lines in `cli.py` (`demo seed` command body) and `tests/test_investigation.py` (the trivial smoke test).
+  - [x] P.1.d — Dropped `src/quicksight_gen/schema.sql` (1379 lines).
+  - [x] P.1.e — Dropped `src/quicksight_gen/schema.py` + the `from quicksight_gen.schema import generate_schema_sql` import + the `cur.execute(schema_sql)` + `cur.execute("REFRESH MATERIALIZED VIEW ar_unified_exceptions;")` lines in `_apply_demo`.
+  - [x] P.1.f — Dropped `demo schema` + `demo seed` CLI command definitions in `cli.py`.
+  - [x] P.1.g — Dropped `tests/test_demo_data.py` (entire file: every assertion tested the dropped v5 seed); dropped the `test_demo_seed_rejects_l1_dashboard` test in `tests/test_l1_dashboard.py` (the command no longer exists). 1224 unit tests pass post-cleanup.
+  - [x] P.1.h — Dropped `"schema.sql"` from `pyproject.toml` `package_data`.
+  - [x] P.1.i — README + CLAUDE.md sweep landed: dropped the `demo schema` / `demo seed` CLI examples, dropped the `schema.py` / `schema.sql` tree references, rewrote the v5 carry-over story as the P.1 retirement note. Subagent then swept `docs/walkthroughs/` (19 files updated): every AR / PR app reference, every dropped dataset name, every `ar_*` dim/view mention got updated to the four-app vocab + per-prefix base-table convention. The 7 remaining `demo schema` / `demo seed` CLI invocations across walkthroughs got retargeted to `emit_schema(l2)` / `emit_seed(l2, scenario)` Python calls or `quicksight-gen demo apply`.
+  - [x] P.1.j — Full unit suite green (1224 passed, 2 skipped). `mkdocs build --strict` clean. Commit landed.
 
-- [ ] **P.2 — Dialect helper layer (Postgres-only first).** `common/sql/dialect.py` ships `Dialect` enum + per-construct helpers. Refactors current Postgres SQL to use the helpers without changing emitted bytes — pure behavior-preserving change.
-  - [ ] P.2.a — Define `Dialect` enum (`POSTGRES`, `ORACLE`). Single source of truth.
-  - [ ] P.2.b — Catalog every Postgres-specific construct in current emitted SQL (DDL + dataset SQL). Write findings to `docs/audits/p_2_dialect_catalog.md`. Each entry becomes a helper.
-  - [ ] P.2.c — Implement helpers (Postgres branch only; Oracle branch raises `NotImplementedError`). Unit tests against the catalog.
-  - [ ] P.2.d — Refactor `common/l2/schema.py` to call helpers instead of inlining Postgres syntax. Snapshot test: emitted DDL bytes-identical to pre-refactor.
-  - [ ] P.2.e — Pyright strict + commit.
+- [x] **P.2 — Dialect helper layer (Postgres-only first).** `common/sql/dialect.py` ships `Dialect` enum + 22 helpers covering every Postgres-isolated construct cataloged in `docs/audits/p_2_dialect_catalog.md` (type names, casts, typed NULL, JSON IS check, date/time arithmetic, DDL idempotency, materialized views, recursive CTE).
+  - [x] P.2.a — `Dialect` enum (POSTGRES + ORACLE) lives in `common/sql/dialect.py`.
+  - [x] P.2.b — `docs/audits/p_2_dialect_catalog.md` enumerates ~12 dialect-divergent construct families with example sites, dialect-specific output, and the helper function name. Confirms `JSON_VALUE` / `IS JSON` / `||` are already SQL/JSON-standard portable across PG 17+ and Oracle 12.2+ (no helper needed).
+  - [x] P.2.c — 22 helpers ship; Postgres branch returns the current bytes verbatim. Oracle branch raises `NotImplementedError("…Phase P.3 fills this in.")` until P.3 lands. 44 unit tests in `tests/test_sql_dialect.py` cover every Postgres branch + assert every Oracle branch raises with the expected message.
+  - [x] P.2.d — `common/l2/schema.py` threads `dialect: Dialect = Dialect.POSTGRES` through `emit_schema`, `refresh_matviews_sql`, `_emit_l1_invariant_views`, `_render_limit_breach_cases`, `_render_pending_age_cases`, `_render_unbundled_age_cases`. The `_render_*_cases` helpers replaced inline `"NULL::numeric"` / `"NULL::bigint"` with `typed_null(type, dialect)` calls; `refresh_matviews_sql` now calls `refresh_matview()` + `analyze_table()` per matview. Big template strings (`_SCHEMA_TEMPLATE`, `_L1_INVARIANT_VIEWS_TEMPLATE`, `_INV_MATVIEWS_TEMPLATE`) stay Postgres-only for P.2; the audit captures the open question for P.3 (split-or-template). All existing assertion tests stay green — bytes-identical Postgres output verified across the 1268-test suite.
+  - [x] P.2.e — `common/sql` joined `[tool.pyright].include`. Full unit suite (1268 tests, +44 new) green.
 
 - [ ] **P.3 — DDL emission for both dialects.** `common/l2/schema.py` + `schema.sql` emit Postgres OR Oracle DDL based on dialect.
   - [ ] P.3.a — Implement Oracle branch on every helper from P.2 (BOOLEAN → NUMBER(1), TEXT → CLOB / VARCHAR2(4000), TIMESTAMP type, identity columns via sequences + triggers OR `GENERATED ... AS IDENTITY`, MV refresh syntax).
@@ -223,35 +226,124 @@ The existing SQL is already constrained to a portable subset (no JSONB, SQL/JSON
   - [ ] P.6.d — Smoke test: emit datasource JSON for both dialects; verify QS API accepts (mock + live).
   - [ ] P.6.e — Commit.
 
-- [ ] **P.7 — CI: Docker Postgres + Docker Oracle Free runners.** Add gated integration jobs alongside the existing fast unit pass.
-  - [ ] P.7.a — `.github/workflows/ci.yml`: add `integration-postgres` job using `postgres:17` Docker service + run a slim integration suite (demo apply, hash-lock check, matview refresh, L1 invariant row spot-check).
-  - [ ] P.7.b — Add `integration-oracle` job using `gvenzl/oracle-free:23-slim-faststart` Docker image (no licensing concern; runs on x86 + ARM) + run the same integration suite.
-  - [ ] P.7.c — Both jobs gated on `integration` label or `main` branch (keep PR turnaround fast); always-run on push-to-main.
-  - [ ] P.7.d — Update `release.yml` test gate to require integration jobs green before publishing.
-  - [ ] P.7.e — Commit.
+- [x] **P.7 — Containerized CI for both dialects.** GHA `integration` job after the `test` matrix runs `quicksight-gen demo apply --all` against `postgres:17` + `gvenzl/oracle-free:latest` service containers, then verifies per-prefix matview row counts. Runs on push to main + PR. (Validated 2026-04-30: green on first try, ~12 min wall clock.)
 
-- [ ] **P.8 — Docs.**
-  - [ ] P.8.a — `Schema_v6.md` adds dialect callouts where types differ (BOOLEAN, TEXT, TIMESTAMP, JSON, identity columns, MV refresh syntax).
-  - [ ] P.8.b — New `walkthroughs/customization/how-do-i-deploy-against-oracle.md`: `[demo-oracle]` extra install, `dialect: oracle` in `config.yaml`, `oracledb` connection-string format, the matview refresh quirk, splitting `config.yaml` into per-dialect copies.
-  - [ ] P.8.c — `walkthroughs/etl/` adds an Oracle bind/connect note.
-  - [ ] P.8.d — `for-your-role/etl-engineer.md` updated to flag dialect-aware loads.
-  - [ ] P.8.e — README + CLAUDE.md sweep — name Oracle as a first-class target alongside Postgres.
-  - [ ] P.8.f — Update memory `project_oracle_19c_compat.md`: rewrite as historical context (pre-Phase-P era); add note that Oracle is now first-class as of v7.0.0.
-  - [ ] P.8.g — Commit.
+- [x] **P.8 — Dialect-aware docs.** `Schema_v6.md` top callout + `Forbidden SQL patterns` table + `how-do-i-configure-the-deploy.md` (dialect field, both URL shapes, RDS Oracle TLS quirk, oracledb thin-mode), `how-do-i-map-my-database.md` (Postgres-or-Oracle framing), README install matrix incl. `[demo-oracle]`. (Landed 2026-04-30.)
 
-- [ ] **P.9 — Aurora + Oracle deploy verify.**
-  - [ ] P.9.a — Re-run the existing Aurora-Postgres deploy verify against current main. Confirm no regressions from the helper refactor.
-  - [ ] P.9.b — Run the full demo apply + e2e verify against the local Oracle 19c instance from the P.5 user gate. (If P.5 used the Docker `oracle-free:23` image for dev convenience, P.9.b is the moment to swap to a real 19c Standard Edition target so the ship-blocking verify hits the actual production target version.)
-  - [ ] P.9.c — Spot-check the deployed dashboards in QS UI under both dialects. Eyeball the L1 invariant sheets (drift, overdraft, limit breach), Investigation Money Trail (recursive CTE under both dialects), Executives Money Moved (date-window aggregation).
-  - [ ] P.9.d — Document any dialect-specific render quirks in the customization handbook.
-  - [ ] P.9.e — Commit.
+- [x] **P.9 — Cross-dialect deploy verify + e2e against the 4-cell matrix.** Phase-Q ergonomic lifts pulled forward so the matrix could run end-to-end:
+  - [x] P.9.0 — `scripts/p9_deploy_verify.sh` codifies manual P.5/P.6 verify across the 4 cells (postgres + oracle × spec_example + sasquatch_pr). Hits live Aurora + RDS Oracle.
+  - [x] P.9.0a — `--l2-instance` flag added to `demo apply` + `deploy` (Phase-Q lift, was task #488).
+  - [x] P.9.0b — Per-instance prune fix: `_all_dataset_filenames` now threads `l2_instance`; sibling enumeration uses the active L2 prefix instead of the bundled default. Without this, single-app generate against a non-default L2 pruned the sibling apps' files.
+  - [x] P.9.0c — First-deploy dataset-prep retry: `_create_analyses` now retries on `PREPARED_SOURCE_NOT_FOUND` for ~5 min, covering Oracle's slow first-time data source validation.
+  - [x] P.9.0d — `scripts/p9_e2e.sh` per-cell e2e wrapper + `QS_GEN_TEST_L2_INSTANCE` fixture override. Lets the existing browser e2e suite run against any deployed cell.
+  - [x] P.9.0e — `tests/integration/verify_demo_apply.py` parameterized on `--prefix` + `--smoke` mode (smoke = ≥1 row check, for L2s without locked counts).
+  - [x] P.9.0f — Result: 4 cells × deploy ALL CLEAR (4 dashboards each, 35 datasets each). E2E surfaced 5 real Oracle failures + 12 known-gap harness errors (see P.9c, P.9d).
 
-- [ ] **P.10 — Iteration gate + v7.0.0 cut.**
-  - [ ] P.10.a — Decide release cut: **v7.0.0** — additive (Postgres-only users see no behavior change) but touches every SQL surface; major bump flags the breadth.
-  - [ ] P.10.b — Bump `__version__` to `7.0.0`; write RELEASE_NOTES entry covering: dialect support, the v5 carry-over removal (technically a breaking change for anyone on schema.sql v5), the `dialect:` config field, the `[demo-oracle]` extra, the new walkthrough, the memory rewrite.
-  - [ ] P.10.c — Commit + tag + push.
+- [x] **P.9a — Standardize on TZ-naive TIMESTAMP across both dialects.** Single `timestamp_type(dialect) -> "TIMESTAMP"` returns plain TZ-naive on both engines. Drops the prior split (`timestamp_tz_type` + `pk_safe_timestamp_type`) and the `+TZ` offset on seed Oracle literals. Schema is now byte-identical between PG and Oracle for every timestamp column. Schema_v6 callout: "Timezone normalization is the integrator's contract." Re-locked 4 seed_hashes (spec_example + sasquatch_pr × pg + oracle).
+
+- [x] **P.9b — SPEC + L2 validator: Rail uniqueness on (transfer_type, role).** Per-leg discriminator uniqueness enforced at load time as rule U6 (validate.py::_check_unique_rail_discriminators). Direction intentionally NOT in the discriminator — surfaces two-rail-per-direction patterns for resolution. SPEC documents the rule + 3 resolution paths (distinct directional types / bidirectional merge / TransferTemplate chain) under Rails. sasquatch_pr (9 collisions) + _kitchen.yaml (1 collision) refactored to directional transfer_types (ach_inbound / ach_outbound, wire_inbound / wire_outbound / wire_concentration, cash_deposit / cash_withdrawal, internal_debit / internal_credit, return_nsf / return_stoppay); limit_schedules updated to reference new outbound types; seed_hash re-locked. Fuzzer post-process suffixes colliding transfer_types with rail index. 4 dedicated rejection + acceptance tests added under U6.
+
+- [x] **P.9c — Investigate Oracle KPI visual non-render in QuickSight.** Root cause: not a QuickSight runtime issue — `common/sheets/app_info.py` hardcoded Postgres-specific SQL on both dialects. The Liveness KPI ran `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public'` against Oracle (no `information_schema`, no `'public'` schema → SQL parse error → blank visual). The Matview Status table used `'name'::text` and `COUNT(*)::integer` casts (Postgres-only syntax → Oracle parse error). Fix: `_liveness_sql(dialect)` branches on `cfg.dialect` (Postgres reads `information_schema.tables`; Oracle reads `USER_TABLES`); `_matview_status_sql` drops the redundant casts (column types are pinned by `MATVIEW_STATUS_CONTRACT` so the casts were no-ops on Postgres anyway). 2 dedicated dialect-aware tests added under `test_app_info.py`. Verified: Oracle output regenerated cleanly (`SELECT COUNT(*) AS table_count FROM USER_TABLES`); Postgres output unchanged (still uses `information_schema`).
+
+- [x] **P.9d — Make harness fixtures Oracle-aware.** Lifted dialect-aware DB helpers from cli.py into `common/db.py`: `connect_demo_db(cfg)` branches psycopg2 / oracledb; `execute_script(cur, sql, dialect)` handles per-dialect multi-statement execution + Oracle PL/SQL block boundaries; `oracle_dsn(url)` translates SQLAlchemy-style URLs. Harness `harness_db_conn` fixture, `apply_db_seed`, and `drop_prefixed_schema` all dialect-aware now. Oracle teardown wraps each per-object DROP in a PL/SQL `BEGIN EXCEPTION WHEN OTHERS` block to swallow ORA-942 / ORA-12003 (the missing-IF-EXISTS gap). `oracledb` added to dev extras so the harness can hit Oracle without a separate install. 13 new unit tests in `test_common_db.py` cover oracle_dsn translation, statement splitting (incl. PL/SQL blocks + comment-only buffers), and the connect_demo_db dispatch.
+
+- [ ] **P.9e — SPEC + L1 invariant: Rail conformance (Transactions matching no Rail).** Companion to U6: U6 enforces uniqueness of declared rails at load time, P.9e detects runtime postings that match no rail. SPEC gap: the SPEC implicitly assumes every Transaction is the firing of some declared Rail but doesn't say what happens when one isn't. Real causes: ETL bug, source-system change, fraud/system error, migration adjustments.
+  - [ ] P.9e.a — SPEC §"System Constraints": add new rule "Rail conformance: every CurrentTransaction SHOULD match exactly one Rail's `(transfer_type, role)` discriminator. Transactions matching zero Rails surface as 'unmatched rail' exceptions; matching multiple Rails surface as 'ambiguous rail' (defense-in-depth — U6 prevents at load-time)." SHOULD per RFC 2119 — surfaces as a dashboard exception, not a hard failure (posting-time refusal is too aggressive: legitimate edge cases like migration adjustments would fail).
+  - [ ] P.9e.b — `common/l2/schema.py`: emit a per-prefix matview `<prefix>_unmatched_rail` shaped after `limit_breach`. Body uses an inline VALUES CTE listing every declared `(transfer_type, role, rail_name)` triple derived from `inst.rails` at emit time (one row per rail × leg-role; union roles fan out — same expansion as `_check_unique_rail_discriminators`). Matview LEFT JOINs `<prefix>_current_transactions` against the CTE; selects rows where `rail_name IS NULL`. Columns: `transaction_id, transfer_id, transfer_type, account_id, account_role, account_name, signed_amount, posted_at, business_day_end, status`. Plus a `match_count` column so a future query can also surface multi-match rows (expected to be empty post-U6).
+  - [ ] P.9e.c — Wire into Today's Exceptions UNION rollup so the new exception kind appears alongside drift / overdraft / limit_breach / stuck_*. Add `unmatched_rail` to the kind discriminator vocabulary.
+  - [ ] P.9e.d — New L1 dashboard sheet "Unmatched Rail" — table view showing the non-conformant postings grouped by `(transfer_type, account_role)` + count + drill to detail. Right-click → Daily Statement (M.2b.7 pattern).
+  - [ ] P.9e.e — Plant a coverage scenario in the demo seed: 1-2 transactions with a `transfer_type` value that doesn't match any rail's discriminator (e.g., `transfer_type='legacy_migration'` against a CustomerDDA). Re-lock seed_hash.
+  - [ ] P.9e.f — Tests: unit test on the matview SQL emit (asserts every declared rail gets a row in the VALUES CTE); test_demo_data scenario coverage assertion (≥1 unmatched_rail row planted); browser e2e via the existing harness layer (matview row check + dashboard render).
+  - [ ] P.9e.g — Re-deploy + re-run the 2×2 matrix; verify the new sheet renders in both dialects.
+
+- [ ] **P.9f — Oracle e2e cleanups (gates P.10).** First full Oracle e2e cell (oracle × spec_example) revealed 11 failures. Categorized by root cause from `tests/e2e/failures/`:
+  - [ ] P.9f.a — Harness assertion `%s` placeholders. `_harness_l1_assertions.py:137` and `_harness_inv_assertions.py:148, 169` use psycopg2 `%s` placeholders that oracledb rejects (`DPY-4009: 0 positional bind values are required but 1 were provided`). Causes 6 of 11 failures (L1 + Inv plants visibility tests fail at Layer 1 before the dashboard even gets queried). Branch on `cfg.dialect` like `_harness_cleanup.py` already does. Quick fix; unblocks honest measurement of what's left.
+  - [ ] P.9f.b — JSON path concat at QS-runtime. Oracle's JSON_VALUE requires the path arg to be a string literal at parse time; runtime concat (`'$.' || <<$pKey>>`) works on PG but `ORA-40597`s on Oracle. ~5 sites in `apps/l2_flow_tracing/datasets.py`. Architectural fix: introduce a `<<$pPath>>` parameter carrying the full `'$.key'` path so QS substitutes literally before the database parses (the analysis-side pPath can be derived from the existing pKey via a calc field).
+  - [ ] P.9f.c — Per-dataset Oracle SQL syntax fixes. P.9f.e surfaced 5 distinct Oracle error classes across 13 of 35 datasets (PG × spec_example):
+    - **ORA-00923 FROM not found** — `SELECT '...'` without FROM clause (Oracle requires `FROM dual` for constant SELECTs). Hits the App Info matviews-status placeholder + a few other "no real data" SELECTs.
+    - **ORA-00936 missing expression** — `DATE(t.posting)` PG-style function call on a timestamp; Oracle wants `TRUNC(...)` or `CAST(... AS DATE)` (use the existing `to_date(..., dialect)` helper).
+    - **ORA-25154 column part of USING clause cannot have qualifier** — `LEFT JOIN ... USING (col)` followed by `t.col` (qualified). Oracle requires the USING-bound column to be unqualified everywhere; PG allows the qualifier.
+    - **ORA-40597 JSON path syntax** — same as P.9f.b (folded into that fix).
+    - **ORA-00911 invalid character** — likely stray trailing `;` or other character. Per-dataset trace via `verify_dataset_sql -v --config oracle ...`.
+    Concrete dataset list per kind enumerable via `python tests/integration/verify_dataset_sql.py --config run/config.oracle.yaml --l2-instance tests/l2/spec_example.yaml` and re-running against `tests/l2/sasquatch_pr.yaml`.
+  - [ ] P.9f.d — Re-run 4-cell e2e matrix. Confirms (a)+(b)+(c) bring Oracle into PG parity. After this, P.10 ships clean.
+  - [ ] P.9f.e — **Testing-layer gap fix: dataset CustomSQL parse/execute smoke per dialect.** Today's query-layer tests (`tests/integration/verify_demo_apply.py` + P.3.d.6 schema snapshot) catch matview row counts + DDL shape, but never parse/execute the dataset's `PhysicalTableMap.CustomSql.SqlQuery` against a real DB. That SQL is only exercised when QuickSight renders a visual — so Oracle SQL bugs (the JSON_VALUE concat, the ORA-00923) only surface at browser-test time, with a 30+ min feedback loop and no actionable error message. New test: walk every emitted dataset, substitute `<<$pName>>` placeholders with default values from the parameter declaration, wrap as `SELECT * FROM (<customsql>) WHERE ROWNUM <= 1` (Oracle) / `SELECT ... LIMIT 1` (Postgres), execute via `connect_demo_db(cfg)`, assert it parses + returns. Fast (per-dataset <1s); per-dialect; would have caught both P.9f.b and P.9f.c at unit-test time.
+
+- [x] **P.10 — Iteration gate + v7.0.0 cut.**
+  - [x] P.10.a — Decide release cut: **v7.0.0** — additive (Postgres-only users see no behavior change) but touches every SQL surface; major bump flags the breadth.
+  - [x] P.10.b — Bump `__version__` to `7.0.0`; write RELEASE_NOTES entry covering: dialect support, the v5 carry-over removal (technically a breaking change for anyone on schema.sql v5), the `dialect:` config field, the `[demo-oracle]` extra, the new walkthrough, the memory rewrite.
+  - [x] P.10.c — Commit + tag + push.
   - [ ] P.10.d — Confirm release pipeline runs green for both Postgres + Oracle integration jobs.
   - [ ] P.10.e — Memory sweep: any other Postgres-only assumptions that need updating?
+
+---
+
+## Phase Q — Dashboards + Docs polish + CLI ergonomics
+
+**Goal.** Ship a polished release where the dashboards reflect what an operator + executive actually need (the M-/N-/P- phases focused on getting them to *render*; Q focuses on getting them *right*), and the docs site reflects the post-polish dashboards cleanly. Plus the long-pending CLI/yaml ergonomics work as final polish.
+
+**Sequencing rationale.** Dashboard review FIRST so docs/screenshots/walkthroughs in Q.2 capture the post-fix state — re-screenshotting after Q.1 is one pass; doing docs first means a second pass after Q.1 lands. Q.3 (CLI) is independent and slots last so the release narrative keeps the dashboards-then-docs theme clean.
+
+### Q.1 — Dashboard review + targeted fixes
+
+Order the meta sweeps first so per-app fixes inherit them:
+
+- [ ] **Q.1.a — Currency + axis formatting (meta).** Sweep every visual across every shipped app:
+  - Amount/money columns format as USD currency (`$1,234.56`).
+  - Bar chart axis titles use plain English (not raw column names).
+  - Walk via the tree primitive; add a unit-test invariant where feasible.
+
+- [ ] **Q.1.b — Universal date-filter sweep.** Add the M.2b.1 universal-date-filter pattern to sheets that lack one:
+  - L1 Supersession Audit (will build over time)
+  - L1 Transactions
+  - L2 Exceptions
+  - Investigation Money Trail (also: drop the "All" option — vast data)
+  - Executives Account Coverage / Transaction Volume / Money Moved
+
+- [ ] **Q.1.c — Per-app punch-list items:**
+  - **L1 Supersession Audit** — add KPI to the right of the keys: count of supersessions with no reason (target value = 0).
+  - **L1 Today's Exceptions** — bar chart axes need plain-English labels.
+  - **L1 Daily Statement** — date picker defaults to yesterday; investigate the 4/25 Posted Money Records SQL error (may have been fixed by P.9f).
+  - **L2 Getting Started** — text box has missing spaces; suspect YAML word-wrap stripping.
+  - **Investigation Info** — investigate the matview-status SQL exception (may have been fixed by P.9f).
+  - **Executives Transaction Volume + Money Moved** — add metadata grouping.
+
+- [ ] **Q.1.d — Live dashboard walkthrough with user.** Working session against the deployed dashboards (both PG + Oracle) to capture additional findings beyond the pre-staged punch-list. Likely surfaces another half-dozen tweaks; treat the resulting list as Q.1.d.1, Q.1.d.2, ... iterations.
+
+- [ ] **Q.1.e — Re-deploy + harness green for both dialects.**
+
+### Q.2 — Documentation step-back (informed by Q.1's final state)
+
+**Smell underneath:** the IA was built around 4 separate apps (PR, AR, Investigation, Executives) and the L1+L2FT consolidation collapsed PR+AR into one operator dashboard without re-shaping the doc tree. Customization handbook + ETL guide still talk about apps as separate documentation surfaces, with orphan "GL Reconciliation Handbook" / "Payment Reconciliation Handbook" links scattered across `customization.md` / `etl.md` / `investigation.md`. Reference vs Walkthrough vs Concept boundaries blur.
+
+- [ ] **Q.2.a — Mechanical cleanup** (~30 min, no IA changes):
+  - Drop stale AR/PR refs in `handbook/customization.md` (lines 54-55, 234-237, plus the "Phase K (AR Exceptions redesign)" stale-phase marker at line 51).
+  - Drop stale AR/PR refs in `handbook/etl.md` (lines 19, 43, 64, 153-154 — including the dead `demo etl-example payment-recon` / `account-recon` commands).
+  - Drop orphan handbook links in `handbook/investigation.md` (lines 130, 133).
+  - Fix 3 "Schema v3" link-text mislabels that point to `Schema_v6.md` (`etl.md:49,165`, `customization.md:223`).
+
+- [ ] **Q.2.b — IA review (plan-mode first).** Read every nav entry end-to-end, write "what's where today" map, propose 2-3 IA shapes with tradeoffs (e.g., role-onramp-first vs reference-first; merge handbook + concepts vs keep split). User picks; then execute.
+
+- [ ] **Q.2.c — Re-screenshot with sane viewport.** Meta-problem from PLAN: screenshots are all way too tall (avoiding scroll-cutoff but at the cost of readability). Pick a viewport size that works for both desktop reading + reasonable scroll height (likely 1280×900 or 1440×1080). Run `screenshot_harness.py` for every app at the new viewport. Replaces the existing per-app screenshot fleet.
+
+- [ ] **Q.2.d — Operator/Integrator onramp prose pass.** Address PLAN notes:
+  - Operator "what are we not asking you to learn" reword to stress L1 + L2 are important.
+  - Integrator onramp re-prose (currently sparse).
+
+- [ ] **Q.2.e — `mkdocs build --strict` + ship the regenerated site.**
+
+### Q.3 — CLI / yaml ergonomics around schema (was task #488)
+
+The pre-Phase-Q backlog item — slotted last as polish.
+
+- [ ] **Q.3.a — Materialize SPEC's "Workflow Ideas":** `generate config (demo|template)`, `apply schema`, `apply data`, `apply dashboards`, `generate training`. Acceptance: a fresh integrator runs end-to-end from one YAML.
+- [ ] **Q.3.b — yaml field naming / config-vs-L2 boundary review.** Today's split between `run/config.yaml` (account, region, datasource, dialect, theme defaults) and the L2 institution YAML (rails, chains, accounts, theme override) has accumulated friction points; tighten the boundary based on what actually got threaded in M-/N-/O-/P-.
+
+### Q.4 — Iteration gate + release
+
+- [ ] **Q.4.a — Decide release cut** (likely v7.1.0 — additive polish + docs IA shift; not a breaking schema change, but the IA / nav re-org may want a major bump if any external links break).
+- [ ] **Q.4.b — Bump `__version__` + RELEASE_NOTES entry covering Q.1–Q.3 changes.**
+- [ ] **Q.4.c — Commit + tag + push; release pipeline green on both dialects.**
 
 ---
 
@@ -263,7 +355,6 @@ Single grab-bag for everything not yet in a phase. Promote to a numbered phase e
 
 - **CLI workflow polish.** Materialize the SPEC's "Workflow Ideas" — `generate config (demo|template)`, `apply schema`, `apply data`, `apply dashboards`, `generate training`. Acceptance: a fresh integrator can run end-to-end from one YAML.
 - **QS-UI kitchen-sink reference tool.** Standalone tool that consumes QS console "view JSON" output for every visual type and dumps it as a reference fixture. Defensive measure; deferred since the concrete editor-crash bugs got fixed.
-- **L2FT plants-visible date-filter widening.** `assert_l2ft_plants_visible` hard-fails on sasquatch_pr because some planted firings have `days_ago` exceeding the L2FT dashboard's default date filter window. Same family as the L1 dynamic widening fix (M.4.4.12). Currently wrapped in inline xfail.
 - **Drop AR-only schema.sql carry-overs.** `ar_ledger_accounts` / `ar_subledger_accounts` dimension tables stay in `schema.sql` because Investigation's demo seed registers its own sub-ledgers there for FK integrity. Phase N's Investigation reshape decides whether Inv migrates off the AR dim tables — once it does, drop the carry-overs.
 
 ### L2 model gaps

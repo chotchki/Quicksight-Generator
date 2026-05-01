@@ -51,6 +51,6 @@ The L2 instance declares each account's `scope` (`internal` or
   open-loop transfers waiting on a counterparty confirmation
   that never came.
 
-See [L1 Reconciliation Dashboard](../handbook/l1.md) for the visual
+See [L1 Reconciliation Dashboard](../../handbook/l1.md) for the visual
 surface and the `scope` attribute on each Account in the L2 YAML
 for the boundary declaration.

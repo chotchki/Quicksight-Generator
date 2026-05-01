@@ -55,16 +55,21 @@ def test_seed_l2_writes_to_file(tmp_yaml: Path, tmp_path: Path) -> None:
 def test_seed_l2_lock_writes_hash_into_yaml(
     tmp_yaml: Path, tmp_path: Path,
 ) -> None:
-    """`--lock` writes the actual SHA256 into the YAML's seed_hash field."""
-    # Replace the existing seed_hash with a wrong-but-valid-shape hex
-    # value first to prove --lock rewrites (not appends). Mixing in
-    # alphabetic chars dodges YAML's "all-digit string parses as int"
-    # quirk that would trip the loader's `must be a string` check.
+    """`--lock` writes the actual PG SHA256 into the YAML's seed_hash dict.
+
+    P.5.b — seed_hash is a per-dialect dict in YAML; --lock rewrites
+    the postgres entry (the dialect that emit_seed defaults to).
+    """
+    # Replace the existing postgres seed_hash with a wrong-but-valid-
+    # shape hex value to prove --lock rewrites. Mixing alphabetic chars
+    # dodges YAML's "all-digit string parses as int" quirk.
     wrong = "deadbeef" * 8
     text = tmp_yaml.read_text()
-    text = text.replace(
-        "seed_hash: d980d31ca2ca7a4d692c836220ab5d0a7a0a771d4c789611fb5992cdb7251965",
-        f"seed_hash: {wrong}",
+    import re
+    text = re.sub(
+        r"  postgres:\s+[0-9a-f]{64}",
+        f"  postgres: {wrong}",
+        text, count=1,
     )
     tmp_yaml.write_text(text)
 
@@ -75,12 +80,10 @@ def test_seed_l2_lock_writes_hash_into_yaml(
     )
     assert result.exit_code == 0, result.output
 
-    # The YAML's seed_hash should now match what emit_seed produced.
+    # The YAML's postgres seed_hash should now match what emit_seed produced.
     new_text = tmp_yaml.read_text()
     assert "deadbeef" not in new_text  # the wrong-value placeholder is gone
-    # Pull the actual hash from the rewritten file.
-    import re
-    m = re.search(r"^seed_hash:\s+([0-9a-f]{64})\s*$", new_text, re.MULTILINE)
+    m = re.search(r"^\s+postgres:\s+([0-9a-f]{64})\s*$", new_text, re.MULTILINE)
     assert m is not None
     written_hash = m.group(1)
     # And it should match the SHA256 of the SQL the CLI wrote to disk.
@@ -123,7 +126,11 @@ def test_seed_l2_lock_appends_when_field_missing(tmp_path: Path) -> None:
 
     text = minimal.read_text()
     import re
-    assert re.search(r"^seed_hash:\s+[0-9a-f]{64}\s*$", text, re.MULTILINE)
+    # P.5.b — seed_hash is now a dict; --lock writes the postgres entry.
+    assert re.search(
+        r"^seed_hash:\s*\n\s+postgres:\s+[0-9a-f]{64}\s*$",
+        text, re.MULTILINE,
+    )
 
 
 def test_seed_l2_check_hash_passes_when_matching(tmp_yaml: Path) -> None:
@@ -137,19 +144,17 @@ def test_seed_l2_check_hash_passes_when_matching(tmp_yaml: Path) -> None:
 
 
 def test_seed_l2_check_hash_fails_on_drift(tmp_yaml: Path) -> None:
-    """`--check-hash` exits 1 when YAML's seed_hash doesn't match actual."""
-    # Read the current real hash by spec_example regex match — the value
-    # rotates whenever the auto-scenario emit changes (e.g., M.4.4.13's
-    # cap-aware stuck_pending plant), and hardcoding it here just means
-    # one more file to update on each rotation.
+    """`--check-hash` exits 1 when YAML's seed_hash doesn't match actual.
+
+    P.5.b — drift the postgres entry inside the seed_hash dict.
+    """
     text = tmp_yaml.read_text()
     import re
     text = re.sub(
-        r"^seed_hash: [0-9a-f]{64}$",
-        "seed_hash: " + ("a" * 64),
+        r"  postgres:\s+[0-9a-f]{64}",
+        "  postgres: " + ("a" * 64),
         text,
         count=1,
-        flags=re.MULTILINE,
     )
     tmp_yaml.write_text(text)
 

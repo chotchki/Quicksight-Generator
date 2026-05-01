@@ -76,7 +76,7 @@ process can't.**
 The integrator workflow loop:
 
 1. Edit `<your-l2>.yaml`.
-2. Validate: `quicksight-gen demo schema --l2-instance <yaml> --dry-run`.
+2. Validate: load the YAML via `load_instance(<yaml>)` (the loader runs the validator automatically) — any cross-entity errors surface with a logical path.
 3. Regenerate the dashboards: `quicksight-gen generate --all -c run/config.yaml -o run/out --l2-instance <yaml>`.
 4. Deploy: `quicksight-gen deploy --all -c run/config.yaml -o run/out`.
 5. Re-open L2 Flow Tracing — the new declarations should show up
@@ -90,14 +90,14 @@ against your edited L2.
 
 ## The concepts you'll want grounded
 
-- [Open vs. closed loop](../concepts/open-vs-closed-loop.md) —
+- [Open vs. closed loop](../concepts/accounting/open-vs-closed-loop.md) —
   the boundary distinction shapes which rails reconcile against
   external counterparties (and why those rails behave differently
   at L2 Flow Tracing).
-- [Vouchering](../concepts/vouchering.md) — the
+- [Vouchering](../concepts/accounting/vouchering.md) — the
   TransferTemplate-with-grouping pattern, which is the most
   common multi-leg shape in the L2 model.
-- [Eventual consistency](../concepts/eventual-consistency.md) —
+- [Eventual consistency](../concepts/accounting/eventual-consistency.md) —
   why declared rails take time to fire; "no firings yet" on a
   rail you only declared yesterday is normal, not a hygiene
   exception.

@@ -142,7 +142,7 @@ you want to know:
   Fanout sheet. Set the threshold low; if the anchor surfaces, the
   inbound side has a structuring shape worth documenting.
 - **"Show me the actual posting rows for one of these edges."** →
-  Account Reconciliation, Transactions sheet, filtered to the
+  L1 Reconciliation Dashboard, Transactions sheet, filtered to the
   edge's `transfer_id`.
 
 ## Next step
@@ -160,8 +160,8 @@ usually goes:
    row), repeat the geometry read, and decide whether to keep
    walking or pop back.
 5. When the picture is complete, switch to Money Trail (for chain
-   provenance) or AR Transactions (for posting evidence) to attach
-   row-level evidence to the case file.
+   provenance) or the L1 Transactions sheet (for posting evidence)
+   to attach row-level evidence to the case file.
 
 The walk-the-flow drill is the difference between Account Network
 and a static counterparty report: you're not generating one report

@@ -184,10 +184,12 @@ def _generate_investigation(
     if theme is not None:
         _write_json(out / "theme.json", theme.to_aws_json())
 
-    datasets = build_all_datasets(cfg)
+    datasets = build_all_datasets(cfg, l2_instance)
     _prune_stale_files(
         out / "datasets",
-        keep=_all_dataset_filenames(cfg, keep_current=datasets),
+        keep=_all_dataset_filenames(
+            cfg, keep_current=datasets, l2_instance=l2_instance,
+        ),
     )
     for ds in datasets:
         _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
@@ -250,7 +252,9 @@ def _generate_executives(
     datasets = build_all_datasets(cfg)
     _prune_stale_files(
         out / "datasets",
-        keep=_all_dataset_filenames(cfg, keep_current=datasets),
+        keep=_all_dataset_filenames(
+            cfg, keep_current=datasets, l2_instance=l2_instance,
+        ),
     )
     for ds in datasets:
         _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
@@ -305,7 +309,9 @@ def _generate_l1_dashboard(
     datasets = build_all_l1_dashboard_datasets(cfg, l2_instance)
     _prune_stale_files(
         out / "datasets",
-        keep=_all_dataset_filenames(cfg, keep_current=datasets),
+        keep=_all_dataset_filenames(
+            cfg, keep_current=datasets, l2_instance=l2_instance,
+        ),
     )
     for ds in datasets:
         _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
@@ -370,7 +376,9 @@ def _generate_l2_flow_tracing(
     datasets = build_all_l2_flow_tracing_datasets(cfg, l2_instance)
     _prune_stale_files(
         out / "datasets",
-        keep=_all_dataset_filenames(cfg, keep_current=datasets),
+        keep=_all_dataset_filenames(
+            cfg, keep_current=datasets, l2_instance=l2_instance,
+        ),
     )
     for ds in datasets:
         _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
@@ -393,15 +401,22 @@ def _generate_l2_flow_tracing(
     click.echo(f"\nGenerated {1 + len(datasets) + 2} files in {out}/")
 
 
-def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
-    """Expected dataset filenames for both apps combined.
+def _all_dataset_filenames(
+    cfg, *, keep_current: list, l2_instance=None,
+) -> set[str]:
+    """Expected dataset filenames for all four apps combined.
 
     ``keep_current`` is the list of DataSet models the current generate
-    pass will write — always included. The other app's filenames are
+    pass will write — always included. The other apps' filenames are
     included so a single-app generate doesn't prune its sibling's output.
-    """
-    from dataclasses import replace as _replace
 
+    ``l2_instance`` selects which L2 institution YAML drives the
+    sibling enumeration. When None, falls back to the bundled default
+    (``spec_example``). Pass the same L2 instance the caller is
+    generating against — otherwise sibling enumeration produces names
+    with the wrong prefix and the prune step deletes the sibling's
+    actual files (P.9 footgun).
+    """
     from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
     from quicksight_gen.apps.executives.datasets import (
         build_all_datasets as _exec,
@@ -416,29 +431,22 @@ def _all_dataset_filenames(cfg, *, keep_current: list) -> set[str]:
         build_all_l2_flow_tracing_datasets as _l2ft,
     )
 
-    # N.3.h: Investigation now requires ``cfg.l2_instance_prefix`` to
-    # render its dataset SQL. When this helper is called from a sibling
-    # app's generate flow (e.g. Executives), the cfg may not have the
-    # prefix set. Pre-stamp from the default L2 instance to keep the
-    # enumeration working without churning the caller. Once N.4
-    # migrates Executives to L2-fed too, every app caller will already
-    # set the prefix and this can simplify.
-    default_l2 = default_l2_instance()
+    active_l2 = l2_instance if l2_instance is not None else default_l2_instance()
     cfg_with_prefix = (
         cfg if cfg.l2_instance_prefix is not None
-        else cfg.with_l2_instance_prefix(str(default_l2.instance))
+        else cfg.with_l2_instance_prefix(str(active_l2.instance))
     )
 
     names: set[str] = {f"{ds.DataSetId}.json" for ds in keep_current}
-    names.update(f"{ds.DataSetId}.json" for ds in _inv(cfg_with_prefix))
+    names.update(f"{ds.DataSetId}.json" for ds in _inv(cfg_with_prefix, active_l2))
     names.update(f"{ds.DataSetId}.json" for ds in _exec(cfg_with_prefix))
     names.update(
         f"{ds.DataSetId}.json"
-        for ds in _l1(cfg_with_prefix, default_l2)
+        for ds in _l1(cfg_with_prefix, active_l2)
     )
     names.update(
         f"{ds.DataSetId}.json"
-        for ds in _l2ft(cfg_with_prefix, default_l2)
+        for ds in _l2ft(cfg_with_prefix, active_l2)
     )
     return names
 
@@ -467,53 +475,6 @@ DEMO_APP_CHOICE = click.Choice([
 @main.group()
 def demo() -> None:
     """Manage demo database schema and sample data."""
-
-
-@demo.command("schema")
-@click.argument("app", type=DEMO_APP_CHOICE, required=False)
-@click.option("--all", "all_apps", is_flag=True, help="Emit schema for all apps.")
-@click.option(
-    "--output", "-o",
-    type=click.Path(), default="demo/schema.sql",
-    help="Output path for the schema SQL file.",
-)
-def demo_schema(app: str | None, all_apps: bool, output: str) -> None:
-    """Emit the PostgreSQL DDL for the demo database."""
-    _resolve_app(app, all_apps, allow_all=True)
-    # Schema covers both apps — they share the `transactions` +
-    # `daily_balances` base tables and AR-only dimension tables.
-    from quicksight_gen.schema import generate_schema_sql
-
-    out = Path(output)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(generate_schema_sql())
-    click.echo(f"Wrote schema to {out}")
-
-
-@demo.command("seed")
-@click.argument("app", type=DEMO_APP_CHOICE, required=False)
-@click.option("--all", "all_apps", is_flag=True, help="Emit seeds for all apps.")
-@click.option(
-    "--output", "-o",
-    type=click.Path(), default="demo/seed.sql",
-    help="Output path for the seed data SQL file.",
-)
-def demo_seed(app: str | None, all_apps: bool, output: str) -> None:
-    """Emit INSERT statements with demo data."""
-    app = _resolve_app(app, all_apps, allow_all=True)
-    from quicksight_gen.apps.investigation.demo_data import (
-        generate_demo_sql as generate_inv_sql,
-    )
-
-    if app == "investigation":
-        sql = generate_inv_sql()
-    else:  # all
-        sql = generate_inv_sql()
-
-    out = Path(output)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(sql)
-    click.echo(f"Wrote seed data to {out}")
 
 
 @demo.command("etl-example")
@@ -636,6 +597,9 @@ def demo_seed_l2(
         click.echo(f"  [warn] omitted {kind}: {reason}", err=True)
 
     if check_hash:
+        # P.5.b — seed_hash is now per-dialect dict on L2Instance. The
+        # CLI's emit_seed call uses the default Postgres dialect; check
+        # against the ``postgres`` entry only.
         declared = instance.seed_hash
         if declared is None:
             click.echo(
@@ -644,20 +608,34 @@ def demo_seed_l2(
                 err=True,
             )
             raise SystemExit(1)
-        if declared != actual_hash:
+        expected = declared.get("postgres")
+        if expected is None:
             click.echo(
-                f"  [error] seed_hash mismatch:\n"
-                f"    YAML  : {declared}\n"
+                "  [error] --check-hash requested but YAML's `seed_hash:` "
+                "dict is missing the `postgres` key; run with --lock to "
+                "populate.",
+                err=True,
+            )
+            raise SystemExit(1)
+        if expected != actual_hash:
+            click.echo(
+                f"  [error] seed_hash mismatch (postgres):\n"
+                f"    YAML  : {expected}\n"
                 f"    actual: {actual_hash}\n"
                 f"  Re-run with --lock if the change was intentional.",
                 err=True,
             )
             raise SystemExit(1)
-        click.echo(f"  [ok] seed_hash matches ({actual_hash})", err=True)
+        click.echo(
+            f"  [ok] seed_hash matches (postgres={actual_hash})", err=True,
+        )
 
     if lock:
         _rewrite_seed_hash_in_yaml(p, actual_hash)
-        click.echo(f"  [lock] wrote seed_hash={actual_hash} into {p}", err=True)
+        click.echo(
+            f"  [lock] wrote seed_hash.postgres={actual_hash} into {p}",
+            err=True,
+        )
 
     if output is None:
         click.echo(sql)
@@ -669,30 +647,61 @@ def demo_seed_l2(
 
 
 def _rewrite_seed_hash_in_yaml(yaml_path: Path, new_hash: str) -> None:
-    """Idempotently set ``seed_hash: <new_hash>`` on a YAML file.
+    """Idempotently set ``seed_hash.postgres: <new_hash>`` on a YAML
+    file.
+
+    P.5.b — seed_hash is now a per-dialect dict in YAML. ``--lock`` only
+    writes the Postgres hash (the CLI's emit_seed defaults to PG); the
+    Oracle hash is locked separately (in tests/l2/*.yaml manually until
+    a future ``--dialect oracle`` flag lands).
 
     Preserves comments + ordering by treating the file as text — never
     parses + re-emits via PyYAML (that would lose every comment and
-    re-order keys). Either replaces an existing top-level
-    ``seed_hash:`` line, or appends one to the file.
+    re-order keys). Replaces the entire ``seed_hash:`` block (top-level
+    key + any indented children) with the new dict shape, or appends
+    one if the field is absent.
     """
     text = yaml_path.read_text()
     lines = text.splitlines(keepends=True)
-    new_line = f"seed_hash: {new_hash}\n"
-    seen = False
+    new_block = (
+        f"seed_hash:\n  postgres: {new_hash}\n"
+    )
+    seen_at = -1
     for i, line in enumerate(lines):
-        # Match top-level seed_hash (no leading whitespace) followed by
-        # a colon. A more permissive regex would catch indented uses
-        # too but we don't want to mutate nested fields named the same.
         if re.match(r"^seed_hash\s*:", line):
-            lines[i] = new_line
-            seen = True
+            seen_at = i
             break
-    if not seen:
+    if seen_at >= 0:
+        # Find the end of the block: either the next top-level key or
+        # the end of file. A "top-level key" is a line with no leading
+        # whitespace and a ``:`` separator.
+        end_at = len(lines)
+        existing_oracle: str | None = None
+        for j in range(seen_at + 1, len(lines)):
+            stripped = lines[j].lstrip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if not lines[j][:1].isspace():
+                end_at = j
+                break
+            # Capture the existing oracle hash so we don't lose it
+            # when --lock only refreshes the postgres value.
+            m = re.match(r"\s+oracle\s*:\s*(\w+)", lines[j])
+            if m:
+                existing_oracle = m.group(1)
+        # Reassemble preserving the oracle entry if it was present.
+        if existing_oracle is not None:
+            new_block = (
+                f"seed_hash:\n"
+                f"  postgres: {new_hash}\n"
+                f"  oracle: {existing_oracle}\n"
+            )
+        lines = lines[:seen_at] + [new_block] + lines[end_at:]
+    else:
         # Append, ensuring the file ends with a newline first.
         if lines and not lines[-1].endswith("\n"):
             lines[-1] = lines[-1] + "\n"
-        lines.append(new_line)
+        lines.append(new_block)
     yaml_path.write_text("".join(lines))
 
 
@@ -758,19 +767,45 @@ def demo_topology(
     type=click.Path(), default="out",
     help="Directory to write generated QuickSight JSON files.",
 )
-def demo_apply(app: str | None, all_apps: bool, config: str, output_dir: str) -> None:
+@click.option(
+    "--l2-instance", "l2_instance_path",
+    type=click.Path(exists=True), default=None,
+    help="Path to L2 institution YAML. Default: bundled spec_example.",
+)
+def demo_apply(
+    app: str | None, all_apps: bool, config: str, output_dir: str,
+    l2_instance_path: str | None,
+) -> None:
     """Apply schema + seed data to the demo DB and generate QuickSight JSON."""
     app = _resolve_app(app, all_apps, allow_all=True)
-    _apply_demo(config, output_dir, app)
+    _apply_demo(config, output_dir, app, l2_instance_path=l2_instance_path)
 
 
-def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
+# P.9d: dialect-aware DB helpers lifted to common/db.py so the e2e
+# harness can share them. The CLI re-exports under the original private
+# names to keep ``demo apply`` working unchanged.
+from quicksight_gen.common.db import (
+    execute_script as _execute_script,  # noqa: F401
+    oracle_dsn as _oracle_dsn,  # noqa: F401
+    split_oracle_script as _split_oracle_script,  # noqa: F401
+)
+
+
+def _apply_demo(
+    config_path: str, output_dir: str, app: str,
+    *, l2_instance_path: str | None = None,
+) -> None:
     """Load schema + chosen seed(s) into demo DB, then regenerate JSON.
 
     ``app`` is one of ``investigation``, ``executives``, or ``all``.
     Schema is always applied in full — apps share the DB — so the only
     thing that varies is which seed SQL gets loaded and which analyses
     get generated.
+
+    ``l2_instance_path`` overrides the bundled default L2 (spec_example).
+    Pass ``tests/l2/sasquatch_pr.yaml`` (or any other validated L2 YAML)
+    to render that institution's per-prefix schema/seed/dashboards
+    against the same demo DB.
     """
     from dataclasses import replace as _replace
 
@@ -797,22 +832,14 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
             "Set it in your config YAML or via QS_GEN_DEMO_DATABASE_URL."
         )
 
-    try:
-        import psycopg2  # type: ignore[import-untyped]
-    except ImportError:
-        raise click.ClickException(
-            "psycopg2 is required for 'demo apply'. "
-            "Install it with: pip install 'quicksight-gen[demo]'"
-        )
+    from quicksight_gen.common.db import connect_demo_db
 
-    from quicksight_gen.schema import generate_schema_sql
     from quicksight_gen.common.l2.schema import (
         emit_schema as emit_l2_schema,
         refresh_matviews_sql,
     )
     from quicksight_gen.common.l2.seed import emit_seed as emit_l2_seed
     from quicksight_gen.common.l2.auto_scenario import default_scenario_for
-    schema_sql = generate_schema_sql()
 
     # Pre-stamp ``cfg.l2_instance_prefix`` from the default L2 instance
     # before opening the DB connection: the REFRESH MATERIALIZED VIEW
@@ -822,44 +849,44 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     # re-derives it with the prefix included (otherwise the per-app
     # builders bake the unprefixed ``qs-gen-demo-datasource`` ARN into
     # the dataset JSON, and deploy fails with "Invalid dataSourceArn").
-    inv_l2 = default_l2_instance()
+    if l2_instance_path is not None:
+        from quicksight_gen.common.l2 import load_instance
+        inv_l2 = load_instance(Path(l2_instance_path))
+    else:
+        inv_l2 = default_l2_instance()
     if cfg.l2_instance_prefix is None:
         cfg = cfg.with_l2_instance_prefix(str(inv_l2.instance))
 
-    # The L2 instance carries its own per-prefix DDL — base tables
+    # The L2 instance carries its full per-prefix DDL — base tables
     # (``<prefix>_transactions`` / ``<prefix>_daily_balances``), Current*
     # views, L1 invariant matviews, AND the Inv matviews (N.3.n /
-    # N.4.h). Apply alongside the legacy ``schema.sql`` so all four
-    # apps (L1 / L2FT / Inv / Exec) have their backing tables on the
-    # demo database.
-    l2_schema_sql = emit_l2_schema(inv_l2)
+    # N.4.h). The legacy global ``schema.sql`` was retired in P.1.
+    l2_schema_sql = emit_l2_schema(inv_l2, dialect=cfg.dialect)
 
     # Plant the L2-shape demo seed: every L1 SHOULD-violation kind
     # (drift / overdraft / limit-breach / stuck-pending /
     # stuck-unbundled / supersession) plus the Investigation
-    # InvFanoutPlant — landed via the auto-derived scenario picker,
-    # NOT via the legacy ``apps/investigation/demo_data.py``
-    # (which planted v5-shape flat-table data into the now-dead
+    # InvFanoutPlant — landed via the auto-derived scenario picker.
+    # P.1 retired the legacy ``apps/investigation/demo_data.py``
+    # (which planted v5-shape flat-table data into the now-deleted
     # unprefixed ``transactions`` / ``daily_balances`` tables).
-    # The Cascadia/Juniper persona-flavored Investigation walkthrough
-    # is on hold until the persona-fixture lift to common/l2/seed.py
-    # lands as Phase O work.
     seed_sql = emit_l2_seed(
         inv_l2, default_scenario_for(inv_l2).scenario,
+        dialect=cfg.dialect,
     )
 
     click.echo(f"Connecting to {cfg.demo_database_url.split('@')[-1]}...")
-    conn = psycopg2.connect(cfg.demo_database_url)
+    try:
+        conn = connect_demo_db(cfg)
+    except ImportError as e:
+        raise click.ClickException(str(e)) from e
     try:
         with conn.cursor() as cur:
-            click.echo("  Applying schema...")
-            cur.execute(schema_sql)
             click.echo("  Applying L2 instance schema...")
-            cur.execute(l2_schema_sql)
+            _execute_script(cur, l2_schema_sql, dialect=cfg.dialect)
             click.echo("  Inserting seed data...")
-            cur.execute(seed_sql)
+            _execute_script(cur, seed_sql, dialect=cfg.dialect)
             click.echo("  Refreshing materialized views...")
-            cur.execute("REFRESH MATERIALIZED VIEW ar_unified_exceptions;")
             # Refresh every per-instance L1 + Inv matview in dependency
             # order: leaves (current_*) → helpers (computed_*) → L1
             # invariants (drift / overdraft / limit_breach / stuck_*) →
@@ -868,12 +895,12 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
             # dashboards render empty even though emit_seed planted the
             # base-table rows — the matviews themselves stay empty.
             # ``refresh_matviews_sql`` returns one statement per line
-            # (REFRESHes first, then ANALYZEs); psycopg2 can't run a
-            # multi-statement string reliably, so split + execute.
-            for stmt in refresh_matviews_sql(inv_l2).strip().split("\n"):
-                stmt = stmt.strip()
-                if stmt:
-                    cur.execute(stmt)
+            # (REFRESHes first, then ANALYZEs). Route through
+            # ``_execute_script`` so the per-dialect splitter handles
+            # the Oracle PL/SQL ``END;`` terminator correctly (Oracle
+            # rejects ``BEGIN ... END`` without the trailing ``;``).
+            refresh_sql = refresh_matviews_sql(inv_l2, dialect=cfg.dialect)
+            _execute_script(cur, refresh_sql, dialect=cfg.dialect)
         conn.commit()
         click.echo("  Database ready.")
     except Exception:
@@ -906,7 +933,7 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
 
     json_count = 1 + (1 if theme is not None else 0)  # datasource (+ theme)
     if app in ("investigation", "all"):
-        inv_datasets = build_inv_datasets(cfg)
+        inv_datasets = build_inv_datasets(cfg, inv_l2)
         for ds in inv_datasets:
             _write_json(out / "datasets" / f"{ds.DataSetId}.json", ds.to_aws_json())
         _write_json(
@@ -965,12 +992,20 @@ def _apply_demo(config_path: str, output_dir: str, app: str) -> None:
     "--generate", "generate_first", is_flag=True,
     help="Regenerate JSON before deploying.",
 )
+@click.option(
+    "--l2-instance", "l2_instance_path",
+    type=click.Path(exists=True), default=None,
+    help="Path to L2 institution YAML (sets cfg.l2_instance_prefix on "
+    "deploy so the L2Instance tag lands on every resource — needed for "
+    "per-instance cleanup isolation). Omit to deploy without an L2 tag.",
+)
 def deploy_cmd(
     app: str | None, all_apps: bool, config: str, output_dir: str,
-    generate_first: bool,
+    generate_first: bool, l2_instance_path: str | None,
 ) -> None:
     """Deploy generated JSON to AWS QuickSight (delete-then-create)."""
     from quicksight_gen.common.deploy import deploy
+    from quicksight_gen.common.l2 import load_instance
 
     app_name = _resolve_app(app, all_apps, allow_all=True)
 
@@ -985,6 +1020,9 @@ def deploy_cmd(
             _generate_l2_flow_tracing(config, output_dir)
 
     cfg = load_config(config)
+    if l2_instance_path is not None and cfg.l2_instance_prefix is None:
+        l2_instance = load_instance(Path(l2_instance_path))
+        cfg = cfg.with_l2_instance_prefix(str(l2_instance.instance))
     if app_name == "all":
         targets = list(APPS)
     else:

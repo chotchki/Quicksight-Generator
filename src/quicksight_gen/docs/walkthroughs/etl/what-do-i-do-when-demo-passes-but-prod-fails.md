@@ -4,13 +4,15 @@
 
 ## The story
 
-The demo dashboards work. You ran `demo apply`, opened both apps,
-saw the planted exception scenarios light up the way they should.
-You then wrote your own ETL against your own upstream feed,
-loaded a slice into the same `transactions` and `daily_balances`
-tables, and the dashboard looks *off* — KPIs at zero where they
-shouldn't be, KPIs spiking where they shouldn't, visuals
-rendering "N/A" where there should be values.
+The demo dashboards work. You ran `demo apply`, opened the four
+L2-fed dashboards (L1 Reconciliation, L2 Flow Tracing,
+Investigation, Executives), and saw the planted exception
+scenarios light up the way they should. You then wrote your own
+ETL against your own upstream feed, loaded a slice into the same
+`<prefix>_transactions` and `<prefix>_daily_balances` tables, and
+the dashboards look *off* — KPIs at zero where they shouldn't be,
+KPIs spiking where they shouldn't, visuals rendering "N/A" where
+there should be values.
 
 Almost every "demo works, prod doesn't" failure traces back to a
 small set of root causes. This walkthrough is organized by
@@ -19,7 +21,7 @@ to the matching diagnosis and check.
 
 ## The question
 
-"My data is loaded but the dashboard doesn't look right. Where do
+"My data is loaded but the dashboards don't look right. Where do
 I start?"
 
 ## Where to look
@@ -37,69 +39,64 @@ the earlier sections are more common and have cheaper checks.
 
 **Most likely**: the date filter on the sheet excludes everything
 your load covers. Sheets default to a recent window (typically
-the last 30 days) and your load may have used `posted_at` /
-`balance_date` values outside that window.
+the last 7 days for the L1 dashboard) and your load may have used
+`posting` / `business_day_start` values outside that window.
 
 **Check**:
 
 ```sql
-SELECT MIN(balance_date), MAX(balance_date), COUNT(*)
-FROM transactions
+SELECT MIN(business_day_start), MAX(business_day_start), COUNT(*)
+FROM <prefix>_transactions
 WHERE -- your scope filter, e.g.,
       account_id LIKE 'your-prefix-%';
 ```
 
 If the date range is older than the sheet's default window, either
 adjust the date filter on the sheet (top of the page) or backfill
-your load with `balance_date` values inside the dashboard's
+your load with `business_day_start` values inside the dashboard's
 window.
 
-### Symptom 2 — "A KPI shows 0 but I know exceptions exist in my data"
+### Symptom 2 — "An L1 KPI shows 0 but I know exceptions exist in my data"
 
 **Most likely**: a `transfer_type` value in your data isn't in the
-enum the schema accepts, so the row is rejected at insert time
-(the `transactions` CHECK constraint fires) — or, for the AR
-**Non-Zero Transfers** KPI specifically, the row is a single-leg
-PR type (`sale` or `external_txn`), which the view tags
-`expected_net_zero = 'not_expected'` and the KPI excludes by
+canonical L2 vocabulary, so dataset SQL filters reject it — or, for
+the L1 net-zero classification specifically, the row is a single-
+leg type (`sale` or `external_txn`), which the schema flags as
+`expected_net_zero = 'not_expected'` and the check excludes by
 intent.
 
-AR datasets *don't* filter PR data out (Phase I.4 removed the
-artificial `WHERE transfer_type IN (...)` and `account_id NOT
-LIKE 'pr-%'` exclusions). PR transfer types and `pr-*` accounts
-surface in AR datasets and views naturally. The only AR-side
-semantic exclusion that remains is the `expected_net_zero` flag
-on `ar_transfer_summary`.
-
-**Check 1 — values in your data vs the schema enum**:
+**Check 1 — values in your data vs the L2 vocabulary**:
 
 ```sql
 SELECT transfer_type, COUNT(*)
-FROM transactions
+FROM <prefix>_transactions
 WHERE -- your scope filter
 GROUP BY transfer_type
 ORDER BY COUNT(*) DESC;
 ```
 
-Compare against the `transfer_type` enum in
-[Schema_v6.md → transfer_type catalog](../../Schema_v6.md#table-1-prefix_transactions).
-Any value not in the enum would have been rejected at insert.
+Compare against the `transfer_type` values your L2 instance
+declares (open the L2 instance YAML's `transfer_templates:` and
+`rails:` blocks; the union of declared `transfer_type` values is
+your canonical set). Anything not in that set surfaces unfiltered
+in raw views like the L1 Transactions sheet, but type-scoped
+checks (drift split, limit breach, aging) won't fire on it.
 
-**Check 2 — Non-Zero Transfers KPI specifically**: query the
-view directly to see what's flagged `expected = TRUE`:
+**Check 2 — Drift / Net-Zero specifically**: query the L1 Drift
+view directly to see which (account, day) pairs are flagged:
 
 ```sql
-SELECT transfer_type, expected_net_zero, net_zero_status, COUNT(*)
-FROM ar_transfer_summary
+SELECT account_id, business_day_start, money, recomputed, drift
+FROM <prefix>_drift
 WHERE -- your scope filter
-GROUP BY transfer_type, expected_net_zero, net_zero_status
-ORDER BY COUNT(*) DESC;
+ORDER BY ABS(drift) DESC;
 ```
 
-The KPI counts only rows where `expected_net_zero = 'expected'
-AND net_zero_status = 'not_net_zero'`. If your transfers are
-single-leg, they're tagged `not_expected` and skipped — that's
-correct.
+The drift view subtracts `recomputed` (cumulative SUM of
+`amount_money`) from `money` (stored EOD value). A non-zero row
+here is a real drift; an empty result on data you know is broken
+usually means your `transfer_type` slipped through the canonical
+set and the matview filter dropped it.
 
 ### Symptom 3 — "A visual cell shows N/A or a column is blank"
 
@@ -113,7 +110,7 @@ populates an optional key.
 
 ```sql
 SELECT COUNT(*) AS rows_missing_key
-FROM transactions
+FROM <prefix>_transactions
 WHERE transfer_type = 'sale'
   AND -- your scope filter
   AND NOT JSON_EXISTS(metadata, '$.card_brand');
@@ -123,40 +120,40 @@ A non-zero count means the visual will render N/A for those rows.
 Either backfill the key (one-shot UPDATE, see the metadata-key
 walkthrough) or make the visual filter to rows that have it.
 
-### Symptom 4 — "Drift KPI fires unexpectedly"
+### Symptom 4 — "L1 Drift KPI fires unexpectedly"
 
-**Most likely**: your `daily_balances.balance` value disagrees
-with the cumulative SUM of `signed_amount` in `transactions`.
-Three sub-causes, in order of frequency:
+**Most likely**: your `<prefix>_daily_balances.money` value
+disagrees with the cumulative SUM of `amount_money` in
+`<prefix>_transactions`. Three sub-causes, in order of frequency:
 
 1. **Sign-flip on one leg** — your upstream uses opposite sign
    convention from ours and the projection caught most legs but
    missed one branch.
 2. **Missing posting** — the balance feed lands postings that
    never made it to the transactions feed (or vice versa).
-3. **`balance_date` mismatch** — the balance row's
-   `balance_date` doesn't line up with the `balance_date` your
-   transactions used. Common when one feed snapshots at midnight
-   UTC and the other at a local-time EOD.
+3. **`business_day_start` mismatch** — the balance row's
+   `business_day_start` doesn't line up with the
+   `business_day_start` your transactions used. Common when one
+   feed snapshots at midnight UTC and the other at a local-time
+   EOD.
 
-**Check**: Pattern 5 of `quicksight-gen demo etl-example
-account-recon` is the canonical drift recompute. Run it scoped
-to the offending account-day to see the magnitude:
+**Check**: the L1 drift view does this recompute internally; run
+it scoped to the offending account-day to see the magnitude:
 
 ```sql
--- Substitute your account_id and balance_date.
+-- Substitute your account_id and business_day_start.
 SELECT
-    db.balance                                       AS stored,
-    COALESCE(SUM(t.signed_amount), 0)                AS recomputed,
-    db.balance - COALESCE(SUM(t.signed_amount), 0)   AS drift
-FROM daily_balances db
-LEFT JOIN transactions t
-  ON t.account_id    = db.account_id
- AND t.balance_date <= db.balance_date
- AND t.status        = 'success'
-WHERE db.account_id   = 'your-account-id'
-  AND db.balance_date = DATE 'your-date'
-GROUP BY db.balance;
+    db.money                                         AS stored,
+    COALESCE(SUM(t.amount_money), 0)                 AS recomputed,
+    db.money - COALESCE(SUM(t.amount_money), 0)      AS drift
+FROM <prefix>_daily_balances db
+LEFT JOIN <prefix>_transactions t
+  ON t.account_id          = db.account_id
+ AND t.business_day_start <= db.business_day_start
+ AND t.status              = 'Posted'
+WHERE db.account_id          = 'your-account-id'
+  AND db.business_day_start  = DATE 'your-date'
+GROUP BY db.money;
 ```
 
 The sign of `drift` tells you which side is wrong:
@@ -165,36 +162,36 @@ positive = stored balance is higher than the postings explain
 negative = the opposite.
 
 For an interactive view of the same recompute scoped to one
-account-day, open the AR dashboard's **Daily Statement** sheet
-and pick the offending `(account_id, balance_date)`. The Drift
-KPI shows the same number this query returns, and the
-Transaction Detail table shows every leg the recompute summed —
-side-by-side with the stored opening and closing balances. See
+account-day, open the L1 Reconciliation Dashboard's **Daily
+Statement** sheet and pick the offending `(account_id,
+business_day_start)`. The Drift KPI shows the same number this
+query returns, and the Transaction Detail table shows every leg
+the recompute summed — side-by-side with the stored opening and
+closing balances. See
 [How do I validate a single account-day after a load?](how-do-i-validate-a-single-account-day.md)
 for the screen-level walkthrough.
 
-### Symptom 5 — "PR pipeline drilldown returns nothing for my merchant"
+### Symptom 5 — "Investigation Money Trail returns nothing for my chain root"
 
-**Most likely**: the `parent_transfer_id` chain has a gap. The
-Where's my money for merchant?
-walkthrough relies on traversing
-`external_txn → payment → settlement → sale` via
-`parent_transfer_id`. If any link is NULL where it shouldn't be,
+**Most likely**: the `transfer_parent_id` chain has a gap. The
+Money Trail sheet relies on the `WITH RECURSIVE` walk over
+`transfer_parent_id`. If any link is NULL where it shouldn't be,
 the trace stops short.
 
 **Check**: run Invariant 3 from the validation walkthrough scoped
-to your merchant:
+to your subset:
 
 ```sql
-SELECT t.transfer_id, t.transfer_type, t.parent_transfer_id
-FROM transactions t
-WHERE JSON_VALUE(t.metadata, '$.merchant_id') = 'your-merchant-id'
+SELECT t.transfer_id, t.transfer_type, t.transfer_parent_id
+FROM <prefix>_transactions t
+WHERE -- your scope filter, e.g., a merchant_id metadata key
+      JSON_VALUE(t.metadata, '$.merchant_id') = 'your-merchant-id'
   AND t.transfer_type IN ('payment', 'settlement', 'sale')
   AND (
-      t.parent_transfer_id IS NULL
+      t.transfer_parent_id IS NULL
       OR NOT EXISTS (
-          SELECT 1 FROM transactions p
-          WHERE p.transfer_id = t.parent_transfer_id
+          SELECT 1 FROM <prefix>_transactions p
+          WHERE p.transfer_id = t.transfer_parent_id
       )
   );
 ```
@@ -204,26 +201,27 @@ Rows here are gaps. NULL means the link was never written
 parent landed in a different load batch and got cut by your
 window filter.
 
-### Symptom 6 — "Two-leg transfer doesn't show net-zero in the AR Non-Zero Transfers table"
+### Symptom 6 — "A two-leg transfer doesn't net to zero in L1 Drift"
 
-**Most likely**: one of the legs has `status = 'success'` and the
-other has `status = 'failed'` (or some third value the schema
-doesn't recognize). The check filters `WHERE status = 'success'`
-before summing, so a single-leg "success" looks unbalanced.
+**Most likely**: one of the legs has `status = 'Posted'` and the
+other has `status = 'Failed'` (or some third value the schema
+doesn't recognize). The drift recompute filters
+`WHERE status = 'Posted'` before summing, so a single-leg "Posted"
+looks unbalanced.
 
 **Check**:
 
 ```sql
-SELECT transfer_id, status, COUNT(*), SUM(signed_amount)
-FROM transactions
-WHERE transfer_id IN ( -- the offending transfer_ids from the table
+SELECT transfer_id, status, COUNT(*), SUM(amount_money)
+FROM <prefix>_transactions
+WHERE transfer_id IN ( -- the offending transfer_ids
 )
 GROUP BY transfer_id, status;
 ```
 
 If a transfer has mixed statuses, the schema's expectation is that
-both legs share status. Pick the right one (usually `failed` for
-both if the transfer was rejected; `success` for both if it
+both legs share status. Pick the right one (usually `Failed` for
+both if the transfer was rejected; `Posted` for both if it
 posted) and republish.
 
 ## Drilling in
@@ -233,13 +231,14 @@ A few patterns that recur across symptoms:
 - **Window filters on the load are the #1 cause of "missing
   parent" / "missing balance" failures.** When in doubt, expand
   your load window to cover the longest expected chain age (5
-  business days for ACH, 30 days for unsettled PR sales).
+  business days for ACH, 30 days for unsettled sales).
 - **`status` enum drift is the #1 cause of unexpected
-  exceptions.** Anything that's not `success` MUST map to
-  `failed`. A third value (`pending`, `void`, `reversed`) lands
-  rows that downstream views can't classify.
-- **Clock skew between feeds is the #1 cause of drift KPI
-  surprises.** Standardize `posted_at` and `balance_date` on a
+  exceptions.** Anything that's not `Posted` MUST map to
+  `Pending` or `Failed`. A fourth value (`void`, `reversed`,
+  arbitrary text) lands rows that downstream views can't
+  classify.
+- **Clock skew between feeds is the #1 cause of L1 Drift KPI
+  surprises.** Standardize `posting` and `business_day_start` on a
   single timezone before writing — don't let two feeds disagree
   on what "today" means.
 
@@ -252,8 +251,8 @@ Once you've identified the root cause:
    the next load.
 2. **Re-run the three pre-flight invariants** from the
    [validation walkthrough](how-do-i-prove-my-etl-is-working.md).
-   They catch most of the symptoms above before the dashboard
-   sees them.
+   They catch most of the symptoms above before the dashboards
+   see them.
 3. **Add a regression query for your specific failure** to your
    ETL DAG. The pre-flight covers universal invariants; your
    feed has its own per-source invariants worth pinning.
@@ -264,7 +263,7 @@ Once you've identified the root cause:
 
 ## Related walkthroughs
 
-- [How do I populate `transactions` from my core banking system?](how-do-i-populate-transactions.md) —
+- [How do I populate `<prefix>_transactions` from my core banking system?](how-do-i-populate-transactions.md) —
   the foundational projection that most fixes go back to.
 - [How do I prove my ETL is working before going live?](how-do-i-prove-my-etl-is-working.md) —
   the universal pre-flight checks. Most symptoms here are
@@ -277,8 +276,8 @@ Once you've identified the root cause:
 - [Schema_v6 → minimum viable feed](../../Schema_v6.md#etl-contract-minimum-viable-feed) —
   the column-by-column failure modes are the source-of-truth for
   the symptoms above.
-- Where's my money for merchant? —
+- [Investigation: Where did this transfer originate?](../investigation/where-did-this-transfer-originate.md) —
   the analyst-side traversal that depends on Symptom 5's
-  `parent_transfer_id` chain being intact.
-- AR Exceptions: Ledger Drift —
+  `transfer_parent_id` chain being intact.
+- [L1 Reconciliation Dashboard: Drift](../l1/drift.md) —
   the analyst-side view of Symptom 4's drift KPI spike.
