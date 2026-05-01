@@ -9,17 +9,31 @@ institution YAML (account, datasource, theme, and per-instance
 schema prefix), sharing the CLI surface:
 
 - **L1 Reconciliation Dashboard** — persona-blind L1 invariant
-  violation surface (drift / overdraft / limit breach / stuck
-  pending / stuck unbundled / supersession audit / today's
-  exceptions / daily statement / transactions). Configured by an
-  L2 instance.
-- **L2 Flow Tracing** — Rails / Chains / Transfer Templates /
-  L2 Hygiene Exceptions for the integrator validating their L2
-  instance against the SPEC.
-- **Investigation** — Recipient Fanout / Volume Anomalies / Money
-  Trail / Account Network. Compliance / AML triage flow.
-- **Executives** — Account Coverage / Transaction Volume / Money
-  Moved. Executive scorecard.
+  violation surface, configured by an L2 instance. Sheets:
+    - Drift
+    - Overdraft
+    - Limit Breach
+    - Stuck Pending
+    - Stuck Unbundled
+    - Supersession Audit
+    - Today's Exceptions
+    - Daily Statement
+    - Transactions
+- **L2 Flow Tracing** — for the integrator validating their L2
+  instance against the SPEC. Sheets:
+    - Rails
+    - Chains
+    - Transfer Templates
+    - L2 Hygiene Exceptions
+- **Investigation** — Compliance / AML triage flow. Sheets:
+    - Recipient Fanout
+    - Volume Anomalies
+    - Money Trail
+    - Account Network
+- **Executives** — executive scorecard. Sheets:
+    - Account Coverage
+    - Transaction Volume
+    - Money Moved
 
 ## Where to start
 

@@ -10,9 +10,14 @@ produces the rows the dashboard expects.
 
 ## Pages
 
-- [L1 Reconciliation Dashboard](../handbook/l1.md) — L1 invariant
-  violations (drift / overdraft / limit breach / stuck pending /
-  stuck unbundled / supersession audit) surfaced from any L2 instance.
+- [L1 Reconciliation Dashboard](../handbook/l1.md) — surfaces L1
+  invariant violations from any L2 instance:
+    - Drift
+    - Overdraft
+    - Limit Breach
+    - Stuck Pending
+    - Stuck Unbundled
+    - Supersession Audit
 - [L2 Flow Tracing](../handbook/l2_flow_tracing.md) — Rails, Chains,
   Transfer Templates, and L2 hygiene exceptions for the integrator
   validating their L2 instance against the SPEC.

@@ -34,9 +34,14 @@ Statement / Transactions chain the operators use.
 
 When a load goes silently wrong, the L1 dashboard surfaces it as
 a specific row on a specific sheet. The check_type names the
-class of failure (drift / overdraft / limit breach / stuck pending
-/ stuck unbundled / supersession). That tells you which load step
-to audit.
+class of failure — and tells you which load step to audit:
+
+- Drift
+- Overdraft
+- Limit Breach
+- Stuck Pending
+- Stuck Unbundled
+- Supersession
 
 **The first time you ship a load fix and watch the corresponding
 row disappear from Today's Exceptions on tomorrow's run — that's
