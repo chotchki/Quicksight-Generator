@@ -42,10 +42,23 @@ from quicksight_gen.common.sheets.app_info import (
 
 # M.4.4.5 — matviews the Investigation app reads, surfaced on the
 # App Info ("i") sheet's matview-status table.
-INV_MATVIEW_NAMES = [
+_INV_MATVIEW_BARE_NAMES = [
     "inv_pair_rolling_anomalies",
     "inv_money_trail_edges",
 ]
+
+
+def inv_matview_names(l2_instance: L2Instance) -> list[str]:
+    """The L2-prefixed Inv matviews the dashboard reads.
+
+    Surfaced on the App Info ("i") sheet's matview status table so an
+    operator can see refresh state at a glance. Mirrors the
+    ``l1_matview_names`` / ``l2ft_matview_names`` helpers — the
+    ``<prefix>_inv_*`` form matches what ``common.l2.schema`` actually
+    creates per L2 instance.
+    """
+    p = str(l2_instance.instance)
+    return [f"{p}_{name}" for name in _INV_MATVIEW_BARE_NAMES]
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +346,20 @@ def build_account_network_accounts_dataset(cfg: Config) -> DataSet:
     )
 
 
-def build_all_datasets(cfg: Config) -> list[DataSet]:
+def build_all_datasets(
+    cfg: Config, l2_instance: L2Instance | None = None,
+) -> list[DataSet]:
+    """Return every dataset Investigation's sheets reference.
+
+    ``l2_instance`` is required for App Info matview names (which need
+    the L2 prefix). Defaults to the bundled spec_example to preserve
+    backwards compat with callers that haven't been updated to thread
+    the instance through (they get prefix-correct names against the
+    default L2; L1/L2FT-style call sites should pass their own).
+    """
+    if l2_instance is None:
+        from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
+        l2_instance = default_l2_instance()
     return [
         build_recipient_fanout_dataset(cfg),
         build_volume_anomalies_dataset(cfg),
@@ -345,7 +371,8 @@ def build_all_datasets(cfg: Config) -> list[DataSet]:
         # delete-then-create another app's App Info dataset.
         build_liveness_dataset(cfg, app_segment="inv"),
         build_matview_status_dataset(
-            cfg, app_segment="inv", view_names=INV_MATVIEW_NAMES,
+            cfg, app_segment="inv",
+            view_names=inv_matview_names(l2_instance),
         ),
     ]
 

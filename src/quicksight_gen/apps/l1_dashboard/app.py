@@ -1427,7 +1427,6 @@ def _populate_daily_statement_sheet(
             ds_txn["status"].dim(),
             ds_txn["origin"].dim(),
             ds_txn["posting"].date(),
-            ds_txn["memo"].dim(),
         ],
         actions=[
             _l1_drill(

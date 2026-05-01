@@ -274,6 +274,41 @@ The existing SQL is already constrained to a portable subset (no JSONB, SQL/JSON
 
 ## Backlog
 
+## Dashboard Review
+- Meta note, amounts should be formatted as USD currency everywhere
+- Meta note, graph bars should have human readable axies
+- L1
+  - Supersession audit
+    - Needs date filters since it will build over time
+    - We should add another KPI to the right of the keys with supersession of entries that have been supersession without a reason (target value should be zero)
+  - Today's exceptions
+    - bar chart has axes that don't read with plain english
+  - Daily Statement
+    - The date picker should default to yesterday (if possible)
+    - Posted Money Records
+      - shows a sql error on 2026/04/25 (may have been fixed)
+  - Transactions 
+    - Needs date filters
+- L2
+  - Getting Started
+    - The text box has odd missing spaces, I bet word wrapping is missing spaces from grabbing in the yaml
+  - L2 Exceptions
+    - If there is a way to add a date filter that would be wonderful
+- Investigation
+  - Money Trail
+    - Should not have an all, there will be a vast amount of data
+  - Info
+    - Got a sql exception on matview status (may have been fixed)
+- Executive
+  - Account Coverage
+    - Needs date filters
+  - Transaction Volume
+    - Needs date filters
+    - A way to group by metadata would be great
+  - Money Moved
+    - Needs date filters
+    - A way to group by metadata would be great
+
 Single grab-bag for everything not yet in a phase. Promote to a numbered phase entry when work starts. Full historical detail in `PLAN_ARCHIVE.md`.
 
 ### Punted from Phase M ship push

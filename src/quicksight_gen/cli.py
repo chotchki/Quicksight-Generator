@@ -184,7 +184,7 @@ def _generate_investigation(
     if theme is not None:
         _write_json(out / "theme.json", theme.to_aws_json())
 
-    datasets = build_all_datasets(cfg)
+    datasets = build_all_datasets(cfg, l2_instance)
     _prune_stale_files(
         out / "datasets",
         keep=_all_dataset_filenames(

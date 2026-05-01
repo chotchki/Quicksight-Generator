@@ -1032,7 +1032,7 @@ def build_investigation_app(
     _build_volume_anomalies_sheet(cfg, app, analysis)
     _build_money_trail_sheet(cfg, app, analysis)
     _build_account_network_sheet(cfg, app, analysis)
-    _build_app_info_sheet(cfg, app, analysis, theme=theme)
+    _build_app_info_sheet(cfg, app, analysis, l2_instance=l2_instance, theme=theme)
     app.create_dashboard(
         dashboard_id_suffix="investigation-dashboard",
         name=analysis_name,
@@ -1041,7 +1041,8 @@ def build_investigation_app(
 
 
 def _build_app_info_sheet(
-    cfg: Config, app: App, analysis: Analysis, *, theme: ThemePreset,
+    cfg: Config, app: App, analysis: Analysis,
+    *, l2_instance: L2Instance, theme: ThemePreset,
 ) -> None:
     """M.4.4.5 — App Info ("i") sheet, ALWAYS LAST. Diagnostic canary;
     see common/sheets/app_info.py.
@@ -1055,14 +1056,19 @@ def _build_app_info_sheet(
     default for in-canvas accents when no L2 theme block is declared);
     populate_app_info_sheet accepts it directly.
     """
-    from quicksight_gen.apps.investigation.datasets import INV_MATVIEW_NAMES
+    from quicksight_gen.apps.investigation.datasets import inv_matview_names
 
     # M.4.4.7 — per-app segment matches the inv-segmented call in
     # apps/investigation/datasets.py::build_all_datasets so the
     # contract-registry idempotence check sees the same DataSetIds.
+    # P.9f.e — view_names must carry the L2 prefix (``<prefix>_inv_*``)
+    # so the matview lookup matches the actual table names emitted by
+    # ``common.l2.schema``. Using the unprefixed bare names slipped past
+    # all unit + integration tests because nothing actually executed
+    # the dataset's CustomSQL until QS rendered the visual.
     liveness_aws = build_liveness_dataset(cfg, app_segment="inv")
     matviews_aws = build_matview_status_dataset(
-        cfg, app_segment="inv", view_names=INV_MATVIEW_NAMES,
+        cfg, app_segment="inv", view_names=inv_matview_names(l2_instance),
     )
     liveness_ds = app.add_dataset(Dataset(
         identifier=DS_APP_INFO_LIVENESS,

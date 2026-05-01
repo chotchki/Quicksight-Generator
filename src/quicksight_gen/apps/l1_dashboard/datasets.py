@@ -195,7 +195,6 @@ DAILY_STATEMENT_TRANSACTIONS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("amount_direction", "STRING"),
     ColumnSpec("status", "STRING"),
     ColumnSpec("origin", "STRING"),
-    ColumnSpec("memo", "STRING"),
 ])
 
 
@@ -456,7 +455,7 @@ def _daily_statement_transactions_sql(prefix: str, dialect: Dialect) -> str:
         f"       tx.posting,"
         f"       tx.transfer_id, tx.transfer_type,"
         f"       tx.amount_money, tx.amount_direction,"
-        f"       tx.status, tx.origin, tx.memo"
+        f"       tx.status, tx.origin"
         f" FROM {prefix}_current_transactions tx"
     )
 
