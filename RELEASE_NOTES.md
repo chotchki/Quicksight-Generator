@@ -1,5 +1,150 @@
 # Release Notes
 
+## v7.1.0 — Dashboard polish: currency, universal date filters, Oracle wrapper, probe CLI
+
+Q.1 dashboard polish phase shipped clean across both dialects (PG +
+Oracle harness 15/15 each, probe CLI shows zero datasource errors
+across all four apps). Cuts cleanly off v7.0.x; no schema changes,
+no breaking dashboard JSON changes — additive polish + one Oracle-
+specific bug fix that unblocked all Oracle visuals.
+
+### What's new — money formatting
+
+- **USD currency formatting on every money column.** Adds a typed
+  `currency=True` flag to the tree's `Measure` (KPI / chart values)
+  and `Dim.numerical` (table cells) primitives. Wires
+  `CurrencyDisplayFormatConfiguration` (`$1,234.56`, comma
+  thousands, 2 decimals) through both code paths. Emit-time assert
+  rejects `currency=True` on categorical/date dims so wiring typos
+  fail at the call site, not as silently dropped formatting.
+- **Applied across L1 + L2 Flow Tracing + Investigation +
+  Executives** to every dollar-shaped value: `stored_balance`,
+  `computed_balance`, `drift`, `outbound_total`, `cap`,
+  `amount_money`, `money`, `magnitude`, `parent_amount_money`,
+  `actual_net`, `expected_net`, `net_diff`, plus all KPI sums
+  (Net / Gross Money Moved, Liveness, etc.). Tables and KPIs now
+  render consistently as `$1,234.56`.
+
+### What's new — universal date-range filters
+
+The M.2b.1 universal-date-filter pattern (shared analysis-level
+DateTimeParams + per-dataset SINGLE_DATASET FilterGroups + paired
+DateTimePicker controls per sheet) extended to every shipped
+sheet that benefits from a date-range knob:
+
+- **L1 Supersession Audit + Transactions** — joined the existing
+  L1 universal date filter (rolling 7-day default).
+- **Investigation Money Trail** — filter-bound DATE_RANGE picker
+  on `posted_at` (matches Recipient Fanout / Volume Anomalies).
+- **Executives Account Coverage / Transaction Volume / Money
+  Moved** — new shared P_EXEC_DATE_START/END params with rolling
+  30-day default (wider than L1's 7-day; Exec sheets are
+  daily-grain summaries vs L1's per-leg detail).
+
+### What's new — Oracle case-fold wrapper
+
+Every Oracle dashboard was failing `ORA-00904: "col": invalid
+identifier` on every visual — Oracle case-folds unquoted
+identifiers to UPPERCASE while QuickSight quotes the lowercase
+column names from its declared `Columns` list when building
+visual queries. The class of bug was previously invisible (QS
+shows only a generic "SQL exception" banner; the actual driver
+message lives in the embed iframe's JS console).
+
+- **`build_dataset` wraps every Oracle CustomSQL** with an outer
+  SELECT that re-aliases each projected column from its UPPERCASE
+  Oracle-stored form to a lowercase double-quoted alias matching
+  what QS quotes. Postgres unchanged (folds unquoted identifiers
+  to lowercase by default).
+- **Alias `qs_inner` chosen** to start with a letter (Oracle
+  rejects `_qs` with ORA-00911 — identifiers can't start with
+  `_`).
+- **All eight dashboards now probe clean** on both dialects.
+
+### What's new — visibility for QS datasource errors
+
+- **`quicksight-gen probe [APP|--all|--dashboard-id ID]` CLI** —
+  walks every sheet of a deployed dashboard via Playwright + the
+  embed URL, captures Stream-error console payloads per sheet,
+  parses `errorCodeHierarchy` + `internalMessage`, prints a
+  per-sheet error report. Replaces "open browser, hit F12, hunt
+  through console" with one CLI invocation. Surfaces the kind
+  of bug (column-rename, dialect-port regression, missing matview
+  refresh) that QS otherwise hides behind its generic banner.
+- **E2E harness ratchet** — `tests/e2e/_harness_browser.py`'s
+  `run_dashboard_check_with_retry` now scans the per-attempt
+  console-message sink for the same Stream errors after every
+  successful operation. Catches the class where the operation's
+  positive assertions all pass but every visual silently errored.
+
+### What's new — per-app punch-list
+
+- **L1 Supersession Audit** — added a "Supersessions with No
+  Reason" KPI: count of higher-Entry rows whose `supersedes`
+  reason is blank (target value = 0 — every supersession SHOULD
+  declare its cause per the L1 SPEC). Backed by an analysis-level
+  CalcField summed at the KPI; no FilterGroup gymnastics.
+- **L1 Today's Exceptions** — bar chart axes now read in plain
+  English (`Check Type` / `Open Exceptions`) instead of raw
+  column names.
+- **L1 Daily Statement** — date picker defaults to YESTERDAY
+  rather than today (today's daily-balance row may not exist
+  yet; yesterday is guaranteed to have closed-out balance rows).
+- **L2 Flow Tracing Getting Started** — text-box reflow.
+  YAML literal-block `description: |` preserves hard newlines
+  that QuickSight's text-box renderer drops without word breaks,
+  glomming adjacent words together. `" ".join(text.split())`
+  collapses to a single paragraph.
+
+### What's new — App Info diagnostic surface
+
+- **App Info "Info" tab deploy stamp** now shows
+  `git` / `generated` / `dialect` / `prefix` as a bulleted list
+  (was a flat 3-line text block missing the prefix). Lets a
+  viewer instantly see which institution + dialect the dashboard
+  is rendered against.
+
+### What's new — docs cleanup
+
+- **Stale AR/PR refs dropped** from `handbook/customization.md`,
+  `handbook/etl.md`, `handbook/investigation.md` (those apps
+  were retired in M.4.3 / M.4.4 but the prose surface lagged).
+- **Three "Schema v3" link-text mislabels** fixed (the link
+  target was already `Schema_v6.md`; only the text was stale):
+  `customization.md:223`, `etl.md:49,165`, `L1_Invariants.md:205`.
+- **Operator role page** — L2 Flow Tracing promoted from
+  "skim, don't study" to a proper second-tab where operator
+  traces end ("but why is this happening every day?").
+- **Integrator role page** — L2 model concepts (Account / Rail /
+  Chain / TransferTemplate / LimitSchedule) elevated above the
+  "How to start" list, plus a fresh-L2-authoring pointer at
+  `spec_example.yaml` / `sasquatch_pr.yaml`.
+- **Home page** reshaped as the "pick your role" front door
+  (Q.2.b Shape C kickoff). Library shelves stay below as the
+  fallback path.
+
+### Breaking / behavior changes
+
+None. Schema unchanged; CLI surface unchanged (additive only —
+new `probe` subcommand). Existing dashboards regenerate +
+redeploy without manual migration.
+
+### Known issues / deferred
+
+- **Q.1.a.3 — Auto-derive plain-English BarChart axis labels.**
+  Manual labels applied to L1 Today's Exceptions; the auto-
+  derive lift is queued for the next polish cut.
+- **Q.1.c.6 — Executives Transaction Volume / Money Moved
+  metadata grouping.** Needs L2-instance-aware Key+Value
+  cascading dropdowns + a dataset pivot to expose metadata as
+  a dim. Bigger than a punch-list item; queued.
+- **Q.2.b/c/d/e — Doc IA shift to Shape C** (audience-first,
+  For-Your-Role becomes the front door). Q.2.a (mechanical
+  cleanup) + Q.2.b kickoff (Home reshape + audit + Shape C
+  decision) + Q.2.d (operator + integrator onramp prose)
+  shipped here. Q.2.b.exec.2-9 + Q.2.c (re-screenshot at
+  1280×900) + Q.2.e ship in the next cut.
+
 ## v7.0.0 — Multi-database support: Postgres + Oracle 19c
 
 ### What's new
