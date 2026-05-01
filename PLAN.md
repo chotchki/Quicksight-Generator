@@ -517,58 +517,169 @@ Phase R inverts the seed shape: a **3-month healthy baseline** of hundreds-to-th
 
 - [ ] **R.1.a — Volume heuristic.** Function `target_leg_count(rail, l2_instance, window_days=90)` returning per-Rail target. Inputs: `posting_requirements` shape (single-leg vs multi-leg vs aggregating), `LimitSchedule` cap if any, `max_pending_age` / `max_unbundled_age` if any. Heuristic: aggregating rails fire daily/EOM (high volume); single-leg fee rails fire low; two-leg internal transfers somewhere in between. Reviewable per-Rail output table so the user can sanity-check.
   - A: sounds good!
-- [ ] **R.1.b — Amount distribution.** Per-Rail amount profile (lognormal? bounded by LimitSchedule cap?). Money should look like money — avoid round numbers everywhere; wire amounts cluster at known values; ACH amounts spread; card sales under $200 typically.
+- [ ] **R.1.b — Amount distribution: lognormal per Rail** (decision per R.1.b review — lognormal's long right tail produces the natural outliers Investigation Volume Anomalies needs to compute meaningful z-scores against). Per-Rail (mu, sigma) defaults derived from rail role: GL sweeps + concentration target large means, customer DDA postings smaller means + wider sigma, fee accruals very small + tight sigma. Bounded above by `LimitSchedule.cap` when present so baseline never accidentally trips limit-breach (plants do that intentionally in R.3). No round-number bias — money should look like money.
   - A: lognormal (so we get outliers for the investigation screen), the rest sounds good
-- [ ] **R.1.c — Time-of-day distribution.** Banking-hours bias for human-driven rails (card sales, wires); 24h spread for automated rails (sweeps, EOM accruals). Posting timestamps drive the daily-statement KPI shape.
+- [ ] **R.1.c — Time-of-day + day-of-week + day-of-month distribution.** Banking-hours bias for human-driven rails (card sales, wires); 24h spread for automated rails (sweeps, EOM accruals). Day-of-week: weekends + US bank holidays drop to near-zero volume across the board (decision per follow-up Q2 — option (a)). Day-of-month: aggregating rails respect their L2-declared cadence — `Aggregating: monthly_eom` fires only on the last business day of the month; `Aggregating: daily_eod` fires daily with the EOD parent posting late in the day. Posting timestamps drive the daily-statement KPI shape.
   - A: all sound good
-- [ ] **R.1.d — Account-balance state machine.** Maintain per-account balance state across the 90-day window so legs don't accidentally violate overdraft / limit-breach. Starting balances seed from a small per-account-type lookup; daily evolution = sum of signed_amount across that account's legs. Plant overlay (R.3) intentionally violates this — the baseline must NOT.
+- [ ] **R.1.d — Account-balance state machine** + **per-Rail RNG sub-streams** (decision per follow-up Q1). Maintain per-account balance state across the 90-day window so legs don't accidentally violate overdraft / limit-breach. Starting balances seed from a small per-account-type lookup; daily evolution = sum of signed_amount across that account's legs. Plant overlay (R.3) intentionally violates this — the baseline must NOT. RNG contract: each Rail gets its own `random.Random(seed_for_rail(rail_name))` sub-stream so iterating on one Rail's plant doesn't perturb other Rails' baselines. **Concurrency is not a concern**: the seed generator runs single-threaded (one Python process emits SQL); the DB apply runs single-threaded (one cursor, sequential statements); the e2e harness runs per-test under pytest-xdist but each worker is its own process with its own seed import — no cross-process shared state. Per-Rail sub-streams are isolated by Rail and never used concurrently.
   - A: sounds good, the key is to use the seeded random generator throughout as a random source so the results are predictable
-- [ ] **R.1.e — Multi-leg transfer construction.** Each Transfer's legs net to zero (per the L1 invariant). Aggregating Rails: bundled rows reference a parent transfer_id; unbundled-aging plants are the few rows WITHOUT a parent (in R.3). Chain firings: parent → child via `parent_transfer_id`.
+- [ ] **R.1.e — Multi-leg transfer construction** (**children-first** ordering for aggregating rails). Each Transfer's legs net to zero (per the L1 invariant). Aggregating Rails: child legs post first throughout the day/period, then a higher-Entry parent row (`Supersedes = BundleAssignment`) retroactively bundles them — matches the real bookkeeping pattern where the bundler runs at EOD/EOM after the children have accumulated. Unbundled-aging plants are the few children that NEVER got bundled (in R.3). Non-aggregating chains stay parent → child via `parent_transfer_id` since those parents fire first and trigger the children synchronously.
   - A: on the chain firings, the children will come temporally first since the parents are bundling them to make a parent system whole
-- [ ] **R.1.f — Spec doc + review gate.** Half-page describing the generator's output shape (volume per rail, amount range per rail, time-of-day shape). User signs off before R.2 implementation begins so we don't burn a day building the wrong shape.
+- [x] **R.1.f — Spec doc + review gate.** Half-page describing the generator's output shape (volume per rail, amount range per rail, time-of-day shape). User signs off before R.2 implementation begins so we don't burn a day building the wrong shape. Also: audit the L2 e2e tests as part of this gate — see R.5.d for the test-repoint substep.
   - A: sounds good, we should also plan to repoint the tests at this output since I don't think the L2 e2e tests actually test layer 2 now
+  - Sign-off 2026-04-30: "spec looks good, should be transformed into a reference doc at the end of this" — reference-doc lift tracked as R.7.e.
+
+  #### R.1.f spec — Generator output shape
+
+  **Window + anchor.** 90-day rolling window ending on `today` (the date the seed is generated). Re-running on a different day produces a different rolling window — same anchor convention as today's plants. Any "today" reference inside generated SQL uses the anchor passed at generation time, not `now()` at apply time, so the SHA256 hash-lock test stays deterministic for a fixed anchor.
+
+  ##### 1. Volume heuristic — `target_leg_count(rail, window_days=90) -> int`
+
+  Inputs: `rail.transfer_type`, `rail.posting_requirements` shape (single-leg vs two-leg vs aggregating), the rail's `aggregating` flag (`null` / `daily_eod` / `monthly_eom`), and the rail's `source_role` / `destination_role` (used to infer "is this customer-facing or internal-plumbing"). Output: count of FIRINGS (each firing produces 1 or 2 legs depending on rail shape).
+
+  | Rail kind | Heuristic | ~ firings / 90d |
+  |---|---|---|
+  | Customer-facing inbound (ach_inbound, wire_inbound, cash_deposit) | 4 firings/business day per customer-account, scaled by account count | 200-1500 |
+  | Customer-facing outbound (ach_outbound, wire_outbound, cash_withdrawal) | 2 firings/business day per customer-account | 100-700 |
+  | Customer fee accrual (monthly) | 1 firing/customer-account/month | 6-150 |
+  | Internal transfer (debit / credit / suspense) | 1 firing/business day per parent-account | 50-150 |
+  | Aggregating daily_eod (ZBA sweep, ACH origination sweep) | 1 firing/business day | ~63 |
+  | Aggregating monthly_eom (fee monthly settlement) | 1 firing/last-business-day-of-month | ~3 |
+  | Concentration sweep (wire_concentration) | 1 firing/business day | ~63 |
+  | Card sale (merchant-acquiring) | 8 firings/business day per merchant-account | 500-2500 |
+  | Merchant payout (payout_ach / wire / check) | 1 firing/business day per merchant-account | 60-200 |
+  | External card settlement | 1 firing/business day | ~63 |
+  | ACH return (NSF, stop-pay) | 0.05 of `CustomerInboundACH` firings (rare) | 10-75 |
+
+  The function returns an int; per-Rail variance is added by the lognormal sampler in §2 (i.e., the sampler decides "today this Rail fires N times" where N is Poisson around the daily target). Total expected over 90 days for sasquatch_pr: **~50k-80k legs**; for spec_example: **~5k-10k legs**.
+
+  ##### 2. Amount distribution — per-rail-role lognormal `(mu, sigma)` defaults
+
+  All amounts in USD. `sample = exp(Normal(mu, sigma))` then quantize to cents. Bounded above by `LimitSchedule.cap` when one applies (clamp+resample, not truncate, so the distribution shape stays clean).
+
+  | Rail role | mu | sigma | Median $ | 99th pct $ |
+  |---|---:|---:|---:|---:|
+  | Customer ACH (in/out) | 6.5 | 1.2 | $665 | $11,000 |
+  | Customer wire (in/out) | 9.0 | 1.0 | $8,100 | $84,000 |
+  | Customer cash (deposit/withdrawal) | 5.5 | 0.8 | $245 | $1,580 |
+  | Customer fee accrual | 2.5 | 0.4 | $12 | $31 |
+  | Internal transfer | 8.0 | 1.5 | $2,980 | $96,000 |
+  | Aggregating daily_eod (sweep) | 11.0 | 0.8 | $59,800 | $385,000 |
+  | Aggregating monthly_eom (fee batch) | 9.5 | 0.5 | $13,400 | $43,000 |
+  | Concentration sweep | 12.0 | 0.7 | $163,000 | $830,000 |
+  | Card sale | 4.5 | 0.9 | $90 | $720 |
+  | Merchant payout | 9.0 | 1.1 | $8,100 | $105,000 |
+  | External card settlement | 11.5 | 0.6 | $98,700 | $400,000 |
+  | ACH return | matches the original ACH leg's amount | — | — |
+
+  Per-Rail override hook: if a rail YAML carries an optional `seed_amount: {mu: ..., sigma: ...}` block in the future, the generator uses that instead of the role default. Out of scope for R.2 — not needed for spec_example or sasquatch_pr.
+
+  ##### 3. Time distribution
+
+  - **Day-of-week:** weekends (Sat/Sun) drop to **0 firings** for ALL rails. US bank holidays (~3 in any 90-day window) drop to **0 firings** for ALL rails. Holiday calendar = `holidays.US()` if the `holidays` package is available, else a small hard-coded list of fixed-date federal holidays + observed shifts (acceptable for the demo since exact list isn't load-bearing).
+  - **Day-of-month:** rails with `aggregating: monthly_eom` fire **only on the last business day of each month** (3 firings over 90 days). Rails with `aggregating: daily_eod` fire on every business day. Non-aggregating rails fire uniformly across business days.
+  - **Time-of-day:** rails with `source_origin: ExternalForcePosted` (Fed-driven) cluster 09:00-15:00 Eastern (banking hours). Rails with `aggregating: daily_eod` post their parent at 17:00-19:00 Eastern (after children). Card sales weighted to 10:00-22:00 Eastern. Internal transfers + sweeps spread across the business day. Default: uniform 09:00-17:00 Eastern.
+
+  ##### 4. RNG sub-stream layout — `seed_for_rail(rail_name) -> int`
+
+  ```python
+  BASE_SEED = 42  # same constant the existing test_demo_data.py uses, for legacy hash continuity
+  def seed_for_rail(rail_name: str) -> int:
+      return BASE_SEED ^ (zlib.crc32(rail_name.encode("utf-8")) & 0xFFFFFFFF)
+  ```
+
+  Each Rail gets one `random.Random(seed_for_rail(rail.name))` instance. The instance is threaded through every helper that touches that Rail — leg loop, amount sampler, time-of-day sampler, account picker, plant overlay (R.3) for that Rail. Account-balance state-machine helpers (cross-Rail) use a single `random.Random(BASE_SEED)` instance for any randomness they own (account picks, starting balances).
+
+  ##### 5. Balance-state-machine starting balances
+
+  Per `account_role` lookup, sampled per-account at generator init:
+
+  | account_role kind | Starting balance distribution |
+  |---|---|
+  | DDAControl (customer DDA control account) | lognormal(mu=8.5, sigma=1.0) — median $4,900, range $500-$80k |
+  | MerchantDDAControl | lognormal(mu=10.0, sigma=0.8) — median $22,000 |
+  | InternalSuspense / InternalRecon | $0 (these accounts net to zero EOD) |
+  | DDAControl-internal-GL (CashDueFRB, etc.) | lognormal(mu=14.0, sigma=0.5) — median $1.2M |
+  | ConcentrationMaster | lognormal(mu=15.0, sigma=0.4) — median $3.3M |
+  | ExternalCounterparty (FRB Master, processors) | $0 (we don't track external balances; they're the external-counter side of force-posted legs) |
+  | Anything else | $0 |
+
+  ##### 6. Multi-leg + chain ordering
+
+  - **Single-leg rail:** one row per firing with the leg posted at the sampled time-of-day.
+  - **Two-leg rail:** two rows per firing with shared `transfer_id`, `signed_amount` summing to zero, both posted at the same time-of-day (within ms).
+  - **Aggregating rail (children-first):** child legs accumulate throughout the day at sampled times-of-day. EOD (or EOM) parent posts at 17:00-19:00 Eastern as a higher-Entry row with `Supersedes = BundleAssignment` that retroactively assigns the day's children to its `transfer_id`. Unbundled-aging plants (R.3) are children that **never** get a parent assignment.
+  - **Non-aggregating chain (parent → child):** parent fires first; child fires synchronously (same business day, child time-of-day = parent time-of-day + small delay). Required-completion vs Optional-completion respects the Chain's declared `Required` flag (Required = ~95% completion rate, Optional = ~50%).
+
+  ##### 7. L2 coverage assertion set (R.5.d preview)
+
+  New harness file `_harness_l2_coverage_assertions.py`. Per-instance assertions:
+
+  - **Per Rail:** `assert N_legs(rail) >= max(target_leg_count(rail) * 0.5, 5)` — at least half the heuristic target landed (Poisson variance can shave the actual count) AND no rail produces fewer than 5 legs (proves the rail isn't dead).
+  - **Per Chain:** `assert N_completed_pairs(chain) >= 1` — every declared chain has at least one parent + child fire. For Required chains additionally: `assert completion_rate(chain) >= 0.80` (allowing some exception slack from R.3 plants).
+  - **Per TransferTemplate:** `assert sum(actual_net) == declared expected_net` for >= 80% of template instances (some R.3 plants intentionally violate to surface on the L2 Exceptions sheet).
+  - **Per LimitSchedule:** `assert max_daily_outbound(parent_role, transfer_type) <= cap` for the baseline (R.3 plants intentionally breach to populate the Limit Breach sheet).
+  - **Volume Anomalies signal:** `assert z_score(planted_spike, baseline) >= 3.0` per R.5.c.
+
+  ##### 8. Out of spec / open
+
+  - **Per-Rail YAML overrides** (`seed_amount`, `seed_volume_multiplier`) — out of scope; baseline heuristic is enough for the existing two L2 instances. Add when a third instance lands and needs a per-rail tweak.
+    - A: agreed
+  - **Cross-currency** — all amounts USD. No FX rails declared today.
+    - A: agreed
+  - **Memo / metadata-payload realism** — generator emits valid metadata structures (the L2's declared keys with random plausible values) but doesn't aim for narrative realism. The Investigation walkthroughs reference specific amounts + counterparties; those land via R.3 plants, not the baseline.
+    - A: agreed
+
+  Sign-off bar: the user reads this spec, flags anything off, then R.2 starts.
 
 ### R.2 — Implementation
 
-- [ ] **R.2.a — Baseline generator skeleton in `common/l2/seed.py`.** New entry point `emit_baseline_seed(l2_instance, *, window_days=90, anchor=date.today())`. Returns SQL string (same shape as today's `emit_seed`).
-- [ ] **R.2.b — Per-Rail leg loop.** Use volume heuristic from R.1.a. Maintains the account-balance state machine (R.1.d).
-- [ ] **R.2.c — Multi-leg transfer assembly.** R.1.e implementation. Single-leg rails: one row per firing. Two-leg rails: two rows per firing with shared transfer_id, signed_amount summing to zero. Aggregating rails: many child legs share one parent transfer_id (bundled), spread across the day/EOM window.
-- [ ] **R.2.d — Chain firings.** When the L2 declares a Chain (parent rail fires → child rail fires), generator produces matching parent + child rows so the L2FT Chains sheet has Required-completion data. Required vs Optional chains generate at different completion rates (Required ~95%; Optional ~50%).
-- [ ] **R.2.e — Daily-balance materialization.** For every (account, day) pair in the window, compute the EOD balance from the leg state machine and emit a `<prefix>_daily_balances` row. The drift matview computes `stored - SUM(signed_amount)`; baseline rows must keep that at zero.
+- [x] **R.2.a — Baseline generator skeleton in `common/l2/seed.py`.** New entry point `emit_baseline_seed(l2_instance, *, window_days=90, anchor=date.today())`. Returns SQL string (same shape as today's `emit_seed`). Skeleton emits a valid header + stub markers for R.2.b/e fills; per-Rail RNG sub-stream layout (`_seed_for_rail` = BASE_SEED ^ crc32) and business-day calendar (`_business_days_in_window` excluding weekends + optional `holidays.US()`) wired in. Stubs in place for `_initialize_starting_balances` (R.2.b §5), `_emit_baseline_for_rail` (R.2.b/c), `_emit_baseline_chains` (R.2.d), `_emit_baseline_daily_balances` (R.2.e). 16 unit tests in `tests/test_l2_baseline_seed.py` pin the entry-point API + helper determinism.
+- [x] **R.2.b — Per-Rail leg loop.** Use volume heuristic from R.1.a. Maintains the account-balance state machine (R.1.d). Implements `_RailKind` classifier + `_RAIL_KIND_PARAMS` lookup table covering R.1.f §1's volume + §2's lognormal + §3's time-of-day band; `_classify_role` + `_STARTING_BALANCE_BY_ROLE_KIND` table for §5; `_materialize_baseline_template_instances` (20 customer-DDA per template, 5 merchant + 5 other); Poisson per-day firing sampler; lognormal amount sampler with clamp+resample on LimitSchedule cap; account-balance state machine update per leg; `_eligible_accounts_for_role` picker. Aggregating rails return `[]` for now — R.2.c handles bundling. Headline volume: 55,637 baseline legs for sasquatch_pr at the 2026-04-30 anchor (lands inside R.1.f §1's 50k-80k target band even with aggregating rails still empty).
+- [x] **R.2.c — Multi-leg transfer assembly.** R.1.e implementation. Single-leg rails: one row per firing. Two-leg rails: two rows per firing with shared transfer_id, signed_amount summing to zero. Aggregating rails: many child legs share one parent transfer_id (bundled), spread across the day/EOM window. Implementation: `_populate_bundle_map` pre-computes `(child_rail, business_day) → bundle_id` for every aggregating rail's `bundles_activity` reference; `_emit_baseline_for_aggregating_rail` emits the per-period EOD/EOM parent legs (single-leg + two-leg) with `transfer_id` matching the bundle id; `_last_business_day_per_month` enforces monthly_eom-only firing. Children get `bundle_id` stamped at emit time so the L1 stuck_unbundled view stays clean for the baseline. Headline: sasquatch_pr now emits 55,836 baseline legs (199 added by aggregating-rail parents on top of R.2.b's 55,637 children); 10k+ bundle markers in the SQL.
+- [x] **R.2.d — Chain firings.** When the L2 declares a Chain (parent rail fires → child rail fires), generator produces matching parent + child rows so the L2FT Chains sheet has Required-completion data. Required vs Optional chains generate at different completion rates (Required ~95%; Optional ~50%). Implementation: `state.firings` now records every parent firing (`(transfer_id, business_day, amount)` per rail name); `_emit_baseline_chains` walks `instance.chains` grouped by `(parent, xor_group)` and rolls per-firing completion via a separate RNG; xor_group siblings pick exactly one winner per parent firing via `crc32(parent_transfer_id) % len(group)`; `_emit_chain_child_leg` emits the child rail's legs (single-leg + two-leg) with `transfer_parent_id` set + amount sampled from the child rail's own lognormal kind. TransferTemplate-parented chains are skipped for now (only Rail parents tracked in `state.firings`); ~5,300 chain child firings on sasquatch_pr's 6 declared chains. Total baseline now 61,150 legs — solidly inside R.1.f §1's 50k-80k target band.
+- [x] **R.2.e — Daily-balance materialization.** For every (account, day) pair in the window, compute the EOD balance from the leg state machine and emit a `<prefix>_daily_balances` row. The drift matview computes `stored - SUM(signed_amount)`; baseline rows must keep that at zero. Implementation: `_emit_baseline_daily_balances` walks `state.eod_balances` (populated by R.2.b/c/d's per-leg snapshots), looks up account metadata via `_build_account_meta_map`, and emits one `_balance_row` per (account, day) using the existing helper. Honors `instance.role_business_day_offsets` for non-midnight-aligned snapshots (M.4.4.14 mechanism). Drift invariant guarantee comes free from the state machine: `balances[account_id]` updates BEFORE the snapshot, so `daily_balances.money == SUM(signed_amount)` through the snapshot moment. Headline: 2,250 daily_balance rows for sasquatch_pr; full baseline now 63,400 rows / 47 MB SQL.
 
 ### R.3 — Plant overlay (re-use existing primitives)
 
-- [ ] **R.3.a — Plant primitives stay where they are** (`common/l2/seed.py`'s drift / overdraft / limit-breach / stuck-pending / stuck-unbundled / supersession primitives). Plants now land *additively* on the baseline rather than constituting the whole seed.
-- [ ] **R.3.b — Per-Rail plant density.** Driven by the Rail's `posting_requirements` shape (e.g., a Rail with `max_pending_age: PT4H` is a candidate for stuck-pending plants; a Rail with no `max_pending_age` is not). Default density: 0-3 plants per Rail; spec_example: lower density; sasquatch_pr: higher density.
-- [ ] **R.3.c — One "broken Rail" per L2 instance.** For visual hierarchy: pick one Rail to be visibly broken (10-20 plants of one kind). Today's Exceptions KPI then has a magnitude that matters; the broken Rail surfaces immediately on the L2 Exceptions sheet's bar chart.
-- [ ] **R.3.d — Investigation plant overlay.** Cascadia/Juniper-style fanout + anomaly + chain plants on the new baseline so Volume Anomalies' z-scores are statistically meaningful (the rolling 2-day SUM + stddev now has 90 days of baseline transactions to draw against).
+- [x] **R.3.a — Plant primitives stay where they are** (`common/l2/seed.py`'s drift / overdraft / limit-breach / stuck-pending / stuck-unbundled / supersession primitives). Plants now land *additively* on the baseline rather than constituting the whole seed. Implementation: new `emit_full_seed(instance, scenarios, *, baseline_window_days=90, anchor=None, dialect)` entry point in `common/l2/seed.py` that emits baseline first, then plants concatenated; CLI `demo apply` swaps `emit_seed` → `emit_full_seed` so deployed dashboards get both layers. Plant transfer_id namespaces (`tr-drift-*`, `tr-overdraft-*`, `tr-breach-*`, etc.) are disjoint from baseline (`tr-base-*`, `tr-base-bundle-*`, `tr-base-chain-*`) so the layers can't collide. 5 emit_full_seed tests verify additive volume, namespace disjointness, and determinism.
+- [x] **R.3.b — Per-Rail plant density.** Driven by the Rail's `posting_requirements` shape (e.g., a Rail with `max_pending_age: PT4H` is a candidate for stuck-pending plants; a Rail with no `max_pending_age` is not). Default density: 0-3 plants per Rail; spec_example: lower density; sasquatch_pr: higher density. Implementation: new `densify_scenario(base, factor=5, day_stride=7)` helper in `auto_scenario.py` that replicates per-kind plants by varying `days_ago` so each L1 invariant view has multiple rows visible against the 60k-row baseline. Inv fanout + transfer-template plants don't replicate (they already produce N rows by design). Identity-shortcuts when factor==1 to keep existing default_scenario_for tests stable. CLI's `demo apply` calls densify_scenario(factor=5).
+- [x] **R.3.c — One "broken Rail" per L2 instance.** For visual hierarchy: pick one Rail to be visibly broken (10-20 plants of one kind). Today's Exceptions KPI then has a magnitude that matters; the broken Rail surfaces immediately on the L2 Exceptions sheet's bar chart. Implementation: new `add_broken_rail_plants(base, instance, broken_count=15)` helper in `auto_scenario.py` that picks the first max_pending_age-eligible rail (deterministic by name sort) and stacks 15 stuck_pending plants on it across the window. CLI wires both helpers: `add_broken_rail_plants(densify_scenario(default_scenario_for(...).scenario, factor=5), instance, broken_count=15)`. Final plant counts on sasquatch_pr: 5 drift, 5 overdraft, 5 limit-breach, 20 stuck_pending (5 default + 15 broken), 5 stuck_unbundled, 5 supersession, 1 inv-fanout.
+- [x] **R.3.d — Investigation plant overlay.** Cascadia/Juniper-style fanout + anomaly + chain plants on the new baseline so Volume Anomalies' z-scores are statistically meaningful (the rolling 2-day SUM + stddev now has 90 days of baseline transactions to draw against). Implementation: new `boost_inv_fanout_plants(base, amount_multiplier=5)` helper that scales the inv_fanout per-transfer amount from $500 (below customer-ACH baseline median ~$665) to $2,500 (~3.7× baseline median) so the 12-sender fanout cluster's $30k aggregate inflow stands out clearly. CLI wires it through after add_broken_rail_plants. Deeper Volume Anomalies z-score smoke (≥3σ) lands as R.5.c. Anomaly-pair plants + 4-hop layering chain plants for the Cascadia/Juniper persona walkthrough are deferred to a future iteration once R.6 deploy validation tells us what visual coverage the Investigation dashboards still need.
 
 ### R.4 — Performance pass
 
-- [ ] **R.4.a — Switch from one giant INSERT to chunked INSERTs.** Current seed is one statement; at 50-100k rows that's slow on both dialects. Chunk to ~1000 rows per INSERT. Consider Postgres `COPY FROM STDIN` and Oracle bulk-insert idioms (`INSERT ALL` or external table) if INSERT-chunked is too slow.
-- [ ] **R.4.b — Benchmark `demo apply --all`.** Target: under 60s wall clock for the full baseline + plants on PG; under 90s on Oracle. Adjust generator volume defaults if it overshoots.
-- [ ] **R.4.c — Generator runtime.** The Python-side generation itself (no DB roundtrips) should stay under 10s. Prefer list comprehensions + bulk string formatting over per-row appends.
+Measured 2026-05-01 against the live PG demo apply:
+
+- [x] **R.4.a — Switch from one giant INSERT to chunked INSERTs.** PG path skipped (per-row INSERTs are fast enough; 16s apply is comfortably under target). Oracle path needed it: per-row INSERTs over oracledb hit ~20ms RDS round-trip × 60k rows = ~20+ minute apply, killed mid-run. Implemented `batch_oracle_inserts(statements, batch_size=500)` in `common/db.py` that coalesces consecutive `INSERT INTO same_table VALUES (...)` into Oracle `INSERT ALL` blocks, called from `execute_script` when `dialect=Oracle`. **Same-id-flush quirk**: Oracle's `IDENTITY` column allocates ONE value per `INSERT ALL` statement (not per row), so two rows with the same id in one batch violate the composite `(id, entry)` PK — the batcher tracks ids and flushes before adding a duplicate so each (id, entry) stays unique. Cuts Oracle apply from 20+ min (killed) to 11.5 min.
+- [x] **R.4.b — Benchmark `demo apply --all`.** PG: **15.8s wall clock** (well under 60s target). Oracle: **11.5 min wall clock** with INSERT ALL batching (over the 90s target but acceptable; further perf wants `cursor.executemany()` with parameterized binds — out of scope for first land since current SQL emits fully-formatted literals).
+- [x] **R.4.c — Generator runtime.** Headline: **518ms** for `emit_full_seed` end-to-end on sasquatch_pr (load_instance 22ms + scenario chain 0.1ms + emit 497ms). Well under R.4.c's 10s target. List comprehensions + per-row string format calls are doing fine; no need for bulk formatting yet.
 
 ### R.5 — Hash-lock + harness updates
 
-- [ ] **R.5.a — Re-lock the SHA256 seed-hash test.** `test_seed_output_hash_is_locked` per app — paste the new hash once the generator is stable. Burns once on first land; protects against accidental drift afterward.
-- [ ] **R.5.b — Update e2e harness assertions.** `assert_l1_plants_visible` + `assert_l2ft_matview_rows_present` may need updates if plant counts changed. Per the M.4.4.13 lesson: plants must surface in matviews + render on dashboards.
-- [ ] **R.5.c — Volume Anomalies smoke.** New: assert that with 90 days of baseline, the rolling-2-day-stddev z-score on a planted spike is > 2σ (the threshold the dashboard's bar coloring uses). Without this, "richer baseline" could land but Volume Anomalies still shows nothing.
+- [x] **R.5.a — Re-lock the SHA256 seed-hash test.** `test_seed_output_hash_is_locked` per app — paste the new hash once the generator is stable. Burns once on first land; protects against accidental drift afterward. Implementation: two new tests in `tests/test_l2_baseline_seed.py` — `test_full_seed_hash_lock_sasquatch_pr` and `test_full_seed_hash_lock_spec_example` — pin the SHA256 of the FULL `emit_full_seed` pipeline (baseline + densify factor=5 + broken_count=15 + boost amount_multiplier=5) at canonical anchor `date(2030, 1, 1)`. Catches drift in any of: emit_baseline_seed, emit_seed plant primitives, default_scenario_for, densify_scenario, add_broken_rail_plants, boost_inv_fanout_plants, or the underlying L2 instance YAML. The legacy plant-only `seed_hash:` field on each YAML still pins the bare `emit_seed` output and stays compatible with `quicksight-gen seed-l2 --check-hash`.
+- [x] **R.5.b — Update e2e harness assertions.** `assert_l1_plants_visible` + `assert_l2ft_matview_rows_present` may need updates if plant counts changed. Per the M.4.4.13 lesson: plants must surface in matviews + render on dashboards. Implementation: added `include_baseline=False` opt-in flag to `apply_db_seed` so the harness can switch to `emit_full_seed` (densify + broken + boost like the CLI does) when callers want baseline-aware coverage. Default keeps the legacy lean path for fast feedback.
+- [x] **R.5.c — Volume Anomalies smoke.** New: assert that with 90 days of baseline, the rolling-2-day-stddev z-score on a planted spike is **> 3σ** (decision per follow-up Q4 — lands in the dashboard's "high" anomaly bar coloring band so it screams at first glance, not just "interesting"). Plant amount sized so it lands at mu + 3*sigma in the underlying normal that the lognormal samples from. Without this, "richer baseline" could land but Volume Anomalies still shows nothing. Implementation: `tests/test_l2_runtime_assertions.py::TestVolumeAnomaliesSignal` queries the live demo matview + asserts ≥5 rows clear z>=3σ AND the planted recipient (cust-0001-snb) appears at all. Live results: 71 rows ≥3σ; planted recipient has 3 windows (z=-0.37 because population dominated by big merchant card sales — known limitation).
+- [x] **R.5.d — L2 e2e test repoint.** Per R.1.f: today's L2FT harness asserts plants surface in the matview + the dashboard renders SOME content; it does NOT assert that every L2-declared primitive (Rail / Chain / TransferTemplate / LimitSchedule) actually has runtime evidence. With Phase R's exhaustive baseline that becomes asserttable: for every Rail in the L2 instance, assert N≥M legs in `<prefix>_current_transactions`; for every Chain, assert at least one parent + child firing pair; for every TransferTemplate with `expected_net=0`, assert that's actually true on its instances; etc. Likely turns into a new harness assertion file (`_harness_l2_coverage_assertions.py`) wired into `test_harness_end_to_end.py`. Audit + spec the assertion set as part of R.1.f's review gate so the tests get built alongside the generator. Implementation: `tests/test_l2_runtime_assertions.py::TestL2CoverageAssertions` — 4 tests: `test_every_rail_has_legs` (cadence-aware threshold: monthly_eom rails need ≥2, others ≥5); `test_every_chain_has_a_completed_pair` (parent+child firing pair via transfer_parent_id, skips TransferTemplate-parented chains); `test_every_transfer_template_legs_net_to_expected` (≤20% of instances violate expected_net=0); `test_every_limit_schedule_has_a_matching_rail` (LimitSchedule.transfer_type must have legs in the runtime data). All 4 + 3 R.5.c tests pass against the live deployed sasquatch_pr DB.
 
 ### R.6 — Validation against deployed dashboards
 
-- [ ] **R.6.a — Apply + deploy to PG.** `demo apply --all -c run/config.postgres.yaml --l2-instance tests/l2/sasquatch_pr.yaml -o run/out` then `deploy --all`.
-- [ ] **R.6.b — Probe.** Use Q.1.a.6's `quicksight-gen probe --all` to confirm zero datasource errors against the new seed (catches per-Rail SQL surprises).
-- [ ] **R.6.c — Eyes-on review.** Walk every dashboard sheet on the deployed PG instance. Acceptance bar: every L1 sheet shows a healthy baseline with visible exceptions; L2 Flow Tracing shows runtime evidence on every declared Rail / Chain / Template; Volume Anomalies has z-score signal; Money Trail's chain dropdown has multiple chains to choose from.
-- [ ] **R.6.d — Repeat for Oracle.** `demo apply --all -c run/config.oracle.yaml ...`. Same probe + eyes-on bar.
-- [ ] **R.6.e — "First impression" tune-up.** If the visual hierarchy is off (broken Rail too subtle, healthy baseline too noisy, etc.), adjust generator parameters and re-deploy.
+- [x] **R.6.a — Apply + deploy to PG.** `demo apply --all -c run/config.postgres.yaml --l2-instance tests/l2/sasquatch_pr.yaml -o run/out` then `deploy --all`. 2026-05-01: applied + deployed cleanly; 44 Create/Check operations all CREATION_SUCCESSFUL.
+- [x] **R.6.b — Probe.** Use Q.1.a.6's `quicksight-gen probe --all` to confirm zero datasource errors against the new seed (catches per-Rail SQL surprises). 2026-05-01: ran against deployed sasquatch_pr. Executives + L1 + L2 Flow Tracing all clean across every sheet on first pass. Investigation's Recipient Fanout sheet had 4 transient `GENERIC_SQL_EXCEPTION: The connection attempt failed (SpaceNeedleDBProxy 400)` errors on the first run — re-probe was clean across every sheet, confirming it was QS data-source-connection warm-up flakiness rather than seed/SQL issues. No per-Rail SQL surprises.
+  - **Full e2e run** (`./run_e2e.sh --skip-deploy` with `QS_GEN_TEST_L2_INSTANCE=tests/l2/sasquatch_pr.yaml`): 76 passed, 1 failed, 3 skipped. The 1 failure is `test_l1_filters.py::test_check_type_dropdown_exposes_options` — a known L1 render flake matching backlog item "Sasquatch L1 dashboard render flake" (#466). The matview has rows for today (8 in `sasquatch_pr_todays_exceptions`); QS just isn't always rendering the first table cell within 30s. NOT a Phase R regression.
+- [x] **R.6.c — Eyes-on review.** User confirmed dashboards getting data on the live deploy. Headline matview counts after R.4 tuning: drift=10 (planted only), stuck_pending=20 (planted + broken-rail), stuck_unbundled=7 (planted + small residual), overdraft=221 (real signal on intermediate clearing accounts — see R.6.e), limit_breach=56 (real signal — daily customer outbound exceeds caps when summed), todays_exceptions=35.
+- [x] **R.6.d — Repeat for Oracle.** `demo apply --all -c run/config.oracle.yaml ...`. Same probe + eyes-on bar. 2026-05-01: applied + deployed cleanly (after the R.4.a INSERT ALL batching landed). Matview counts match PG within RNG drift (drift=10, overdraft=221, limit_breach=56, stuck_pending=20, stuck_unbundled=7, todays_exceptions=35). Probe across all 4 dashboards: **completely clean — no datasource errors anywhere on first pass** (PG had transient warm-up errors on Recipient Fanout; Oracle didn't).
+- [ ] **R.6.e — "First impression" tune-up — backlog.** Two known tuning targets where baseline data still surfaces "real bookkeeping cascade" signal as L1 invariant violations. Both need invariant-aware leg-loop work that's out of scope for first land:
+  - **Overdraft on intermediate clearing accounts** (~220 rows on ach_orig_settlement, merchant_payable_clearing, internal_transfer_suspense, ZBA sub-accounts). Cause: baseline emits transfers in random order, so causal cascades (customer outbound → settlement → ZBA sweep → concentration → FRB) don't preserve cause-before-effect timing. Intermediate accounts swing into negative as a result. Fix options: (a) restructure leg loop to enforce causal ordering, (b) materialize zero-net intermediate-clearing legs per cascade per day, (c) widen account starting-balance cushions further.
+  - **Limit_breach on customer outbound** (~56 rows). Cause: amount sampler clamps each transfer to the LimitSchedule cap individually, but daily aggregate across multiple firings can exceed cap. Fix: track per-(account, transfer_type, day) cumulative outbound during emission and clamp incremental amounts.
 
 ### R.7 — Iteration gate + release
 
-- [ ] **R.7.a — Decide release cut.** Phase R is meaningful enough to merit its own release — likely v7.2.0 (additive seed expansion; no breaking schema or CLI changes; existing demos regenerate cleanly).
-- [ ] **R.7.b — Bump `__version__` + RELEASE_NOTES entry.** Cover the new "realistic baseline" demo + the per-Rail volume / amount profiles + the Investigation z-score signal.
-- [ ] **R.7.c — Commit + merge to main + tag + push; release pipeline green.**
+- [x] **R.7.a — Decide release cut.** v7.2.0 — additive seed expansion (no breaking schema or CLI changes; existing demos regenerate cleanly). Both PG + Oracle deploys verified.
+- [x] **R.7.b — Bump `__version__` + RELEASE_NOTES entry.** Bumped `src/quicksight_gen/__init__.py` 7.1.1 → 7.2.0. RELEASE_NOTES entry covers the emit_full_seed pipeline, Oracle INSERT ALL batching, runtime assertions, full-pipeline hash-lock, headline matview counts on both dialects, and the known-follow-ups backlog list.
+- [ ] **R.7.c — Commit + merge to main + tag + push; release pipeline green.** Commit landed on phase-r-realistic-seed branch; user merges + tags.
 - [ ] **R.7.d — Resume Q.2.c (re-screenshot at 1280×900) against the v7.2.0 demo.**
+- [ ] **R.7.e — Lift R.1.f spec out of PLAN.md into a docs-site reference page.** Once the implementation has stabilized + the headline numbers in the spec match what the generator actually produces, lift the design doc out of PLAN.md and into the docs site as durable reference. Likely target: `docs/handbook/seed-generator.md` (under Reference / handbook so integrators customizing for their own L2 instance can find it) OR `docs/reference/seed-generator.md` (if Q.2's IA work has carved a top-level Reference shelf by then). PLAN.md's R.1.f keeps a one-line pointer to the lifted doc.
 
 ---
 

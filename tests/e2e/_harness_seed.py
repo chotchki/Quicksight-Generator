@@ -36,9 +36,16 @@ from quicksight_gen.common.l2 import (
 )
 from quicksight_gen.common.l2.auto_scenario import (
     ScenarioMode,
+    add_broken_rail_plants,
+    boost_inv_fanout_plants,
     default_scenario_for,
+    densify_scenario,
 )
-from quicksight_gen.common.l2.seed import ScenarioPlant, emit_seed
+from quicksight_gen.common.l2.seed import (
+    ScenarioPlant,
+    emit_full_seed,
+    emit_seed,
+)
 from quicksight_gen.common.sql import Dialect
 
 
@@ -55,6 +62,7 @@ def apply_db_seed(
     mode: ScenarioMode = "l1_plus_broad",
     today: date | None = None,
     dialect: Dialect = Dialect.POSTGRES,
+    include_baseline: bool = False,
 ) -> ScenarioPlant:
     """Apply schema + seed + matview refresh against ``conn``.
 
@@ -68,6 +76,16 @@ def apply_db_seed(
     Returns the ``ScenarioPlant`` so the caller can pass it to
     ``build_planted_manifest`` for the harness's per-test triage
     manifest (M.4.1.f).
+
+    Args:
+      include_baseline (R.5.b): when True, the seed step uses
+        ``emit_full_seed`` + the densify+broken+boost pipeline that the
+        CLI's ``demo apply`` uses. Adds ~60k baseline rows on top of
+        the lean planted scenarios. Required for R.5.d coverage tests
+        that assert per-Rail / per-Chain runtime evidence (the lean
+        scenario only fires the rails it explicitly plants on). Default
+        False preserves the legacy harness behavior — fast feedback,
+        plants only.
     """
     today_ref = today or DEFAULT_HARNESS_TODAY
 
@@ -79,7 +97,22 @@ def apply_db_seed(
 
     # 2. Seed (mode-aware via M.4.2).
     report = default_scenario_for(instance, today=today_ref, mode=mode)
-    seed_sql = emit_seed(instance, report.scenario, dialect=dialect)
+    if include_baseline:
+        # Match what cli._apply_demo does so harness assertions see the
+        # full demo pipeline (densify → broken-rail → boost → baseline).
+        scenario = boost_inv_fanout_plants(
+            add_broken_rail_plants(
+                densify_scenario(report.scenario, factor=5),
+                instance, broken_count=15,
+            ),
+            amount_multiplier=5,
+        )
+        seed_sql = emit_full_seed(
+            instance, scenario, anchor=today_ref, dialect=dialect,
+        )
+    else:
+        scenario = report.scenario
+        seed_sql = emit_seed(instance, scenario, dialect=dialect)
     with conn.cursor() as cur:
         execute_script(cur, seed_sql, dialect=dialect)
     conn.commit()
@@ -90,7 +123,7 @@ def apply_db_seed(
         execute_script(cur, refresh_sql, dialect=dialect)
     conn.commit()
 
-    return report.scenario
+    return scenario
 
 
 # ---------------------------------------------------------------------------

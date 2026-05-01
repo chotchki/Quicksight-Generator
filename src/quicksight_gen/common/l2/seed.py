@@ -41,6 +41,8 @@ Public API:
 
 from __future__ import annotations
 
+import random
+import zlib
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -50,6 +52,7 @@ from quicksight_gen.common.sql import Dialect
 from .primitives import (
     Account,
     AccountTemplate,
+    ChainEntry,
     Identifier,
     L2Instance,
     Name,
@@ -573,6 +576,1820 @@ def emit_seed(
 
 {db_insert}
 """
+
+
+# -- Public emit_baseline_seed (Phase R) -------------------------------------
+#
+# Companion to ``emit_seed`` above. Where ``emit_seed`` plants a small set of
+# scenario-driven anomalies, ``emit_baseline_seed`` produces a 3-month
+# healthy baseline of hundreds-to-thousands of leg rows per Rail. Phase R's
+# dashboards then have realistic exception signal sitting in realistic noise.
+#
+# R.1.f spec is the design doc — see PLAN.md "R.1.f spec — Generator output
+# shape". Headline numbers (volume per Rail, lognormal amount distribution,
+# RNG sub-stream layout, account starting balances, multi-leg + chain
+# ordering) all come from there. The R.7.e backlog item lifts the spec out
+# of PLAN.md into a docs-site reference page once the implementation
+# stabilizes.
+#
+# Implementation lands in steps R.2.a (this skeleton) → R.2.e:
+#   - R.2.a (this commit): entry point + helper signatures + RNG layout +
+#     business-day calendar + classification table; emits a valid SQL
+#     header with empty INSERT bodies.
+#   - R.2.b: per-Rail leg loop; volume heuristic + lognormal amount sampler
+#     + time-of-day distribution + account-balance state machine.
+#   - R.2.c: multi-leg transfer assembly (single-leg, two-leg, aggregating
+#     children-first then EOD/EOM bundling parent).
+#   - R.2.d: chain firings (Required ~95% completion, Optional ~50%).
+#   - R.2.e: daily-balance materialization for every (account, business_day).
+#
+
+
+# Per R.1.f §4: same constant the existing test_demo_data.py uses, for
+# legacy hash continuity. Per-Rail RNG is BASE ^ crc32(rail_name); the XOR
+# guarantees each Rail's stream is independent of every other Rail's even
+# when one Rail is renamed.
+_BASELINE_BASE_SEED = 42
+
+
+def _seed_for_rail(rail_name: Identifier | str) -> int:
+    """Return the per-Rail RNG seed for the baseline emitter (R.1.f §4).
+
+    Threading one ``random.Random(_seed_for_rail(rail.name))`` instance
+    through every helper that touches a given Rail keeps the per-Rail
+    streams isolated — renaming or removing one Rail can't perturb another
+    Rail's emitted bytes. Cross-Rail randomness (account picks, starting
+    balances) uses a separate ``random.Random(_BASELINE_BASE_SEED)`` instance.
+    """
+    return _BASELINE_BASE_SEED ^ (
+        zlib.crc32(str(rail_name).encode("utf-8")) & 0xFFFFFFFF
+    )
+
+
+@dataclass(slots=True)
+class _BaselineState:
+    """Mutable state threaded through the baseline emission loop.
+
+    Carries the immutable window context (anchor + business-day calendar)
+    + the running account balance state machine the per-Rail leg loop
+    walks through. Per-(account, day) closing balances accumulate here so
+    R.2.e can materialize ``daily_balances`` without re-walking the legs.
+
+    The ``balances`` map seeds at generator init from R.1.f §5's per-role
+    starting-balance distribution. Each Rail leg the emitter posts updates
+    the relevant account's running balance; at end-of-day every account
+    that posted at least one leg snapshots its closing balance into
+    ``eod_balances``.
+    """
+
+    anchor: date
+    window_days: int
+    business_days: tuple[date, ...]
+    # Materialized template-instance accounts the per-Rail loop draws
+    # source/destination accounts from. Populated at generator init by
+    # ``_materialize_baseline_template_instances``.
+    template_instances: tuple[TemplateInstance, ...] = ()
+    # account_id -> running signed cumulative balance (positive = money in).
+    balances: dict[Identifier, Decimal] = field(
+        default_factory=lambda: {},
+    )
+    # (account_id, business_day) -> closing balance at the end of that day.
+    eod_balances: dict[tuple[Identifier, date], Decimal] = field(
+        default_factory=lambda: {},
+    )
+    # (child_rail_name, business_day) -> aggregating-rail bundle_id for
+    # any child leg posted on that day (R.2.c). Pre-computed before the
+    # per-Rail leg loop so the leg emitter can stamp bundle_id at emit
+    # time without a second pass. Keys absent from the map → bundle_id
+    # stays NULL (unbundled — caught by L1's stuck_unbundled view if the
+    # rail's max_unbundled_age elapses).
+    bundle_map: dict[tuple[Identifier, date], str] = field(
+        default_factory=lambda: {},
+    )
+    # Per-Rail firing log (R.2.d). Each entry is (transfer_id,
+    # business_day, amount) — the chain-firing pass uses this to pick
+    # parent firings to attach children to. Populated by both the
+    # per-Rail leg loop (R.2.b) and the aggregating-rail emitter (R.2.c).
+    firings: dict[Identifier, list[tuple[str, date, Decimal]]] = field(
+        default_factory=lambda: {},
+    )
+    # Per-account leg log (post-R.2.e fix). Each entry is
+    # (posting_iso, business_day, signed_amount). After all rails +
+    # chains have emitted, the daily-balance materializer walks this
+    # log sorted by posting and computes the correct cumulative EOD
+    # balance per (account, day). Per-leg `eod_balances` snapshots in
+    # the leg-emit sites would over-write each other when rails iterate
+    # in name order across all days (rail B's day-1 leg snapshots a
+    # state that already includes rail A's day-1-through-N
+    # contributions); the deferred-walk fix avoids that bug.
+    account_leg_log: dict[
+        Identifier, list[tuple[str, date, Decimal]]
+    ] = field(default_factory=lambda: {})
+    # Snapshot of `balances` taken right after _initialize_starting_balances
+    # populates them. The deferred daily-balance walk reads from here as
+    # the per-account starting point; the running `balances` dict has been
+    # mutated by the leg loop and no longer reflects the starting state.
+    initial_balances: dict[Identifier, Decimal] = field(
+        default_factory=lambda: {},
+    )
+
+
+def emit_baseline_seed(
+    instance: L2Instance,
+    *,
+    window_days: int = 90,
+    anchor: date | None = None,
+    dialect: Dialect = Dialect.POSTGRES,
+) -> str:
+    """Emit a 3-month healthy-baseline INSERT script for the L2 instance.
+
+    Output shape mirrors ``emit_seed``: one SQL string ready for
+    ``psycopg2.cursor.execute`` (Postgres) or ``cli._execute_script``
+    (Oracle). The script targets the same ``<prefix>_transactions`` +
+    ``<prefix>_daily_balances`` tables the schema emitter creates.
+
+    Args:
+      instance: the L2 model instance — every Rail / Chain / TransferTemplate
+        / LimitSchedule it declares becomes runtime evidence in the seed.
+      window_days: rolling window length (default 90 days). Generator emits
+        legs for every business day in ``[anchor - window_days, anchor]``.
+      anchor: the "today" date the rolling window ends on. Defaults to UTC
+        ``datetime.now().date()`` at call time. Pin a specific anchor in
+        tests to keep the SHA256 hash-lock deterministic across runs.
+      dialect: SQL dialect for timestamp literals + INSERT shape (PG vs
+        Oracle). Same flag the legacy ``emit_seed`` accepts.
+
+    Returns:
+      A SQL script string. R.2.a (this commit) returns a valid header +
+      empty INSERT bodies; R.2.b–e fill in the per-Rail legs, chains, and
+      daily-balance rows.
+    """
+    if anchor is None:
+        anchor = datetime.now(tz=timezone.utc).date()
+
+    prefix = instance.instance
+    template_by_role = {t.role: t for t in instance.account_templates}
+
+    business_days = _business_days_in_window(anchor, window_days)
+
+    # Materialize per-template baseline accounts (R.2.b §1). Customer-DDA
+    # templates get 20 instances; merchant + others get 5. The leg loop
+    # picks source/destination accounts from this set per Rail.
+    template_instances = _materialize_baseline_template_instances(
+        instance, template_by_role,
+    )
+
+    state = _BaselineState(
+        anchor=anchor,
+        window_days=window_days,
+        business_days=tuple(business_days),
+        template_instances=template_instances,
+    )
+
+    # Per R.1.f §5 — sample starting balances per account_role from the
+    # per-role lognormal table. Cross-Rail randomness (account picks +
+    # starting balances) uses a single shared RNG keyed off the base seed.
+    #
+    # IMPORTANT: state.balances gets non-zero starting amounts, but
+    # state.initial_balances is left EMPTY for the daily-balance walk.
+    # The L1 drift matview computes ``stored - SUM(signed_amount)`` and
+    # treats starting balance as zero — every account that doesn't have
+    # an "opening balance" transaction MUST start at zero in the
+    # daily_balances output to avoid false-positive drifts. The lognormal
+    # starting balances live on for any future feature that wants them
+    # (e.g., overdraft thresholds keyed off starting balance).
+    init_rng = random.Random(_BASELINE_BASE_SEED)
+    _initialize_starting_balances(state, instance, template_by_role, init_rng)
+
+    # Pre-compute the bundle map (R.2.c). For every aggregating Rail,
+    # walk its bundles_activity refs and assign a deterministic bundle_id
+    # for each (child_rail, business_day) tuple. The per-Rail leg loop
+    # then stamps bundle_id at emit time so child rows land bundled out
+    # of the gate (no need for a second supersession pass).
+    _populate_bundle_map(state, instance)
+
+    # Opening-balance pass: emit one funding transaction per template
+    # instance with a non-zero starting balance from R.1.f §5. Without
+    # this, customers start at zero in the cumulative-from-the-window-
+    # start daily-balance walk and the first few business days
+    # mechanically overdraft when outbounds happen before inbounds
+    # accumulate. Opening transactions land at the very start of the
+    # window so subsequent activity stays positive on average.
+    opening_counter = _Counter(start=1)
+    opening_rows = _emit_opening_balance_rows(
+        instance, state, template_by_role, opening_counter, dialect,
+    )
+
+    # Per-Rail emission loop. Sort by name so SHA256 hash-lock stays
+    # deterministic (Python's set/dict iteration order is insertion-ordered
+    # but L2Instance.rails is already a tuple; sort defensively).
+    # Non-aggregating rails go through _emit_baseline_for_rail (R.2.b);
+    # aggregating rails go through _emit_baseline_for_aggregating_rail
+    # (R.2.c) which knows about the children-first / EOD-bundling pattern.
+    txn_rows: list[str] = list(opening_rows)
+    txn_counter = _Counter(start=1)
+    for rail in sorted(instance.rails, key=lambda r: str(r.name)):
+        rail_rng = random.Random(_seed_for_rail(rail.name))
+        if rail.aggregating:
+            rail_rows = _emit_baseline_for_aggregating_rail(
+                rail, instance, state, template_by_role,
+                rail_rng, txn_counter, dialect,
+            )
+        else:
+            rail_rows = _emit_baseline_for_rail(
+                rail, instance, state, template_by_role,
+                rail_rng, txn_counter, dialect,
+            )
+        txn_rows.extend(rail_rows)
+
+    # Chain firings overlay (R.2.d). For every Chain the L2 declares,
+    # emit matching parent + child legs at the declared completion rate.
+    chain_rows = _emit_baseline_chains(
+        instance, state, template_by_role, txn_counter, dialect,
+    )
+    txn_rows.extend(chain_rows)
+
+    # Daily-balance materialization (R.2.e). For every (account,
+    # business_day) where the leg loop touched the account, snapshot the
+    # closing balance into ``daily_balances``. Drift matview sees
+    # ``stored - SUM(signed_amount) = 0`` for the baseline (only R.3 plants
+    # introduce drift on top).
+    db_rows = _emit_baseline_daily_balances(
+        state, instance, template_by_role, dialect,
+    )
+
+    txn_cols = (
+        "(id, account_id, account_name, account_role, account_scope, "
+        "account_parent_role, amount_money, amount_direction, status, "
+        "posting, transfer_id, transfer_type, transfer_completion, "
+        "transfer_parent_id, rail_name, template_name, bundle_id, "
+        "supersedes, origin, metadata)"
+    )
+    txn_insert = (
+        "\n".join(
+            f"INSERT INTO {prefix}_transactions {txn_cols} VALUES\n  {row};"
+            for row in txn_rows
+        )
+    ) if txn_rows else "-- (no baseline transactions yet — R.2.b in progress)"
+
+    db_cols = (
+        "(account_id, account_name, account_role, account_scope, "
+        "account_parent_role, expected_eod_balance, business_day_start, "
+        "business_day_end, money, limits, supersedes)"
+    )
+    db_insert = (
+        "\n".join(
+            f"INSERT INTO {prefix}_daily_balances {db_cols} VALUES\n  {row};"
+            for row in db_rows
+        )
+    ) if db_rows else "-- (no baseline daily_balances yet — R.2.e in progress)"
+
+    return f"""\
+-- =====================================================================
+-- L2 instance: {prefix} — Phase R healthy baseline seed
+-- Generated by quicksight_gen.common.l2.seed.emit_baseline_seed
+-- Anchor: {anchor.isoformat()}  ({window_days}-day rolling window)
+-- Business days in window: {len(business_days)}
+-- Rails declared: {len(instance.rails)}
+-- Chains declared: {len(instance.chains)}
+-- Transactions emitted: {len(txn_rows)}
+-- Daily balances emitted: {len(db_rows)}
+-- =====================================================================
+
+{txn_insert}
+
+{db_insert}
+"""
+
+
+# -- Public emit_full_seed (Phase R) -----------------------------------------
+#
+# Combines emit_baseline_seed + emit_seed: baseline first (a healthy 90-day
+# rolling window of leg activity), then planted scenarios overlaid on top.
+# CLI ``demo apply`` uses this so deployed dashboards see realistic
+# exception signal sitting in realistic baseline noise (R.3 — plants now
+# additive rather than constituting the whole seed).
+
+
+def emit_full_seed(
+    instance: L2Instance,
+    scenarios: ScenarioPlant,
+    *,
+    baseline_window_days: int = 90,
+    anchor: date | None = None,
+    dialect: Dialect = Dialect.POSTGRES,
+) -> str:
+    """Emit baseline + plants concatenated as a single SQL script.
+
+    R.3.a — wires R.2's ``emit_baseline_seed`` and the legacy
+    ``emit_seed`` together so the deployed demo gets a 3-month healthy
+    baseline with planted exception scenarios layered on top. Plants
+    use independent transfer_ids (``tr-drift-*``, ``tr-overdraft-*``,
+    etc.), so they never collide with baseline ``tr-base-*`` ids.
+
+    Args:
+      instance: the L2 model instance.
+      scenarios: planted scenarios (typically from
+        ``auto_scenario.default_scenario_for(instance).scenario``).
+      baseline_window_days: rolling window length for the baseline.
+      anchor: anchor date for the baseline window. Defaults to UTC
+        ``datetime.now().date()``. The plants' own anchor lives on
+        ``scenarios.today`` and may differ — both anchors should
+        normally be the same, set by the caller.
+      dialect: SQL dialect for both layers.
+
+    Returns:
+      A SQL script string: baseline INSERTs followed by plant INSERTs,
+      ready for ``psycopg2.cursor.execute`` (PG) or ``cli._execute_script``
+      (Oracle).
+    """
+    baseline_sql = emit_baseline_seed(
+        instance,
+        window_days=baseline_window_days,
+        anchor=anchor,
+        dialect=dialect,
+    )
+    plants_sql = emit_seed(instance, scenarios, dialect=dialect)
+    return f"{baseline_sql}\n\n{plants_sql}"
+
+
+# -- Baseline helpers (Phase R) ---------------------------------------------
+
+
+def _business_days_in_window(
+    anchor: date, window_days: int,
+) -> list[date]:
+    """Return every Mon-Fri date in ``[anchor - window_days, anchor]``.
+
+    Per R.1.f §3: weekends drop to 0 firings for ALL rails. US bank
+    holidays are dropped here too when the optional ``holidays`` package
+    is importable; without it the calendar drops only weekends and the
+    handful of holidays that fell inside the 90-day window land as
+    extra-quiet days (acceptable for the demo since exact list isn't
+    load-bearing). Returned list is sorted ascending.
+    """
+    # ``holidays`` package is optional — we only use the membership check
+    # (``date in us_holidays``), so any container with ``__contains__`` of
+    # ``date`` works. Annotated as ``Container[object]`` because the
+    # holidays package itself is untyped (no stubs); pyright would
+    # otherwise flag the import as Unknown.
+    from typing import Container
+
+    empty_holidays: set[object] = set()
+    us_holidays: Container[object] = empty_holidays
+    try:
+        import holidays as _holidays_pkg  # type: ignore[import-not-found,import-untyped]
+
+        us_holidays = _holidays_pkg.US(  # type: ignore[no-untyped-call,unused-ignore]
+            years=range(anchor.year - 1, anchor.year + 1),
+        )
+    except ImportError:
+        pass
+
+    start = anchor - timedelta(days=window_days)
+    days: list[date] = []
+    cursor = start
+    while cursor <= anchor:
+        # Mon=0 ... Sun=6; skip Sat (5) + Sun (6).
+        if cursor.weekday() < 5 and cursor not in us_holidays:
+            days.append(cursor)
+        cursor += timedelta(days=1)
+    return days
+
+
+from enum import StrEnum
+from typing import Literal
+
+
+class _RailKind(StrEnum):
+    """Classification for the per-Rail volume + amount lookup (R.1.f §1+§2).
+
+    The classifier inspects ``rail.transfer_type`` plus the rail's
+    aggregating / cadence flags + source/destination role expressions
+    to pick a kind. Heuristic — not exhaustive across novel L2
+    instances; sasquatch_pr + spec_example are the calibration set.
+    """
+
+    CUSTOMER_INBOUND = "customer_inbound"
+    CUSTOMER_OUTBOUND = "customer_outbound"
+    CUSTOMER_FEE = "customer_fee"
+    INTERNAL_TRANSFER = "internal_transfer"
+    AGGREGATING_DAILY = "aggregating_daily"
+    AGGREGATING_MONTHLY = "aggregating_monthly"
+    AGGREGATING_INTRADAY = "aggregating_intraday"
+    CONCENTRATION = "concentration"
+    CARD_SALE = "card_sale"
+    MERCHANT_PAYOUT = "merchant_payout"
+    EXTERNAL_CARD_SETTLEMENT = "external_card_settlement"
+    ACH_RETURN = "ach_return"
+    OTHER = "other"
+
+
+@dataclass(frozen=True, slots=True)
+class _RailKindParams:
+    """Per-kind volume + amount + time-of-day constants (R.1.f §1+§2+§3)."""
+
+    # Average firings per business day, scaled by ``scaling_kind`` count.
+    daily_target_per_unit: float
+    # What entity the volume scales by — customer-account count, merchant
+    # count, or 1 (system-wide rails like sweeps).
+    scaling_kind: Literal["customer", "merchant", "system"]
+    # Lognormal parameters for amount sampling; sample = exp(N(mu, sigma)).
+    amount_mu: float
+    amount_sigma: float
+    # Time-of-day band for posting. (start_hour, end_hour) ET. Generator
+    # samples uniformly inside the band per R.1.f §3.
+    time_band: tuple[int, int]
+
+
+_RAIL_KIND_PARAMS: dict[_RailKind, _RailKindParams] = {
+    _RailKind.CUSTOMER_INBOUND: _RailKindParams(
+        daily_target_per_unit=4.0, scaling_kind="customer",
+        amount_mu=6.5, amount_sigma=1.2, time_band=(9, 15),
+    ),
+    _RailKind.CUSTOMER_OUTBOUND: _RailKindParams(
+        daily_target_per_unit=2.0, scaling_kind="customer",
+        amount_mu=6.5, amount_sigma=1.2, time_band=(9, 17),
+    ),
+    _RailKind.CUSTOMER_FEE: _RailKindParams(
+        # 1 firing/customer/month → roughly 1/22 business-days.
+        daily_target_per_unit=1.0 / 22.0, scaling_kind="customer",
+        amount_mu=2.5, amount_sigma=0.4, time_band=(9, 17),
+    ),
+    _RailKind.INTERNAL_TRANSFER: _RailKindParams(
+        daily_target_per_unit=1.0, scaling_kind="system",
+        amount_mu=8.0, amount_sigma=1.5, time_band=(9, 17),
+    ),
+    _RailKind.AGGREGATING_DAILY: _RailKindParams(
+        daily_target_per_unit=1.0, scaling_kind="system",
+        amount_mu=11.0, amount_sigma=0.8, time_band=(17, 19),
+    ),
+    _RailKind.AGGREGATING_INTRADAY: _RailKindParams(
+        daily_target_per_unit=4.0, scaling_kind="system",
+        amount_mu=10.5, amount_sigma=0.8, time_band=(9, 17),
+    ),
+    _RailKind.AGGREGATING_MONTHLY: _RailKindParams(
+        # Fires only on last business day of month — handled in time logic.
+        daily_target_per_unit=1.0, scaling_kind="system",
+        amount_mu=9.5, amount_sigma=0.5, time_band=(17, 19),
+    ),
+    _RailKind.CONCENTRATION: _RailKindParams(
+        daily_target_per_unit=1.0, scaling_kind="system",
+        amount_mu=12.0, amount_sigma=0.7, time_band=(15, 17),
+    ),
+    _RailKind.CARD_SALE: _RailKindParams(
+        daily_target_per_unit=8.0, scaling_kind="merchant",
+        amount_mu=4.5, amount_sigma=0.9, time_band=(10, 22),
+    ),
+    _RailKind.MERCHANT_PAYOUT: _RailKindParams(
+        daily_target_per_unit=1.0, scaling_kind="merchant",
+        amount_mu=9.0, amount_sigma=1.1, time_band=(9, 15),
+    ),
+    _RailKind.EXTERNAL_CARD_SETTLEMENT: _RailKindParams(
+        daily_target_per_unit=1.0, scaling_kind="system",
+        amount_mu=11.5, amount_sigma=0.6, time_band=(15, 17),
+    ),
+    _RailKind.ACH_RETURN: _RailKindParams(
+        # ~5% of customer-inbound rate; the actual rate scales off
+        # CustomerInboundACH so this is a lower bound.
+        daily_target_per_unit=0.2, scaling_kind="customer",
+        amount_mu=6.5, amount_sigma=1.2, time_band=(9, 17),
+    ),
+    _RailKind.OTHER: _RailKindParams(
+        daily_target_per_unit=1.0, scaling_kind="system",
+        amount_mu=7.0, amount_sigma=1.0, time_band=(9, 17),
+    ),
+}
+
+
+def _classify_rail(rail: Rail) -> _RailKind:
+    """Map a Rail to a ``_RailKind`` for volume + amount lookup.
+
+    Inspection order: aggregating + cadence first (highest signal),
+    then transfer_type substring. Heuristic — falls back to OTHER if
+    no rule matches; OTHER's defaults are intentionally conservative
+    so an unclassified Rail still gets some baseline volume.
+    """
+    if rail.aggregating:
+        cadence = (rail.cadence or "").lower()
+        if "monthly" in cadence:
+            return _RailKind.AGGREGATING_MONTHLY
+        if "intraday" in cadence:
+            return _RailKind.AGGREGATING_INTRADAY
+        # daily-eod, daily-bod, weekly-* → all bucket to daily.
+        return _RailKind.AGGREGATING_DAILY
+
+    tt = str(rail.transfer_type).lower()
+    if tt == "wire_concentration":
+        return _RailKind.CONCENTRATION
+    if tt == "sale":
+        return _RailKind.CARD_SALE
+    if tt == "card_settlement":
+        return _RailKind.EXTERNAL_CARD_SETTLEMENT
+    if tt.startswith("payout_"):
+        return _RailKind.MERCHANT_PAYOUT
+    if tt.startswith("return_"):
+        return _RailKind.ACH_RETURN
+    if tt == "fee":
+        return _RailKind.CUSTOMER_FEE
+    if tt in {"ach_inbound", "wire_inbound", "cash_deposit"}:
+        return _RailKind.CUSTOMER_INBOUND
+    if tt in {"ach_outbound", "wire_outbound", "cash_withdrawal"}:
+        return _RailKind.CUSTOMER_OUTBOUND
+    if tt.startswith("internal") or "_internal" in tt or tt == "charge":
+        return _RailKind.INTERNAL_TRANSFER
+    return _RailKind.OTHER
+
+
+# Per R.1.f §5: per-account_role kind starting-balance distribution.
+# Tuple = (mu, sigma) for lognormal; None = $0 starting balance.
+_StartingBalanceParams = tuple[float, float] | None
+_STARTING_BALANCE_BY_ROLE_KIND: dict[str, _StartingBalanceParams] = {
+    # R.4 tuning: bumped customer_dda from (8.5, 1.0) → (11.0, 0.5) so
+    # customers fund at median ~$60k. With outbound activity at median
+    # ~$665/transfer × 2 firings/business day, $60k cushion keeps
+    # overdrafts rare (planted scenarios + occasional large outbounds
+    # on small accounts only). Lower starting balance produces ~300
+    # overdraft rows over 90 days — looks like a broken bank, not a
+    # bank with occasional exceptions.
+    "customer_dda": (11.0, 0.5),      # median ~$60,000
+    "merchant_dda": (12.5, 0.5),      # median ~$268,000
+    # Internal GL + concentration accounts must absorb daily sweep
+    # cascades — money flows in via customer outbounds + sweeps from
+    # sub-accounts, then out via concentration → FRB. Cumulative net
+    # can swing wide, so cushion needs to comfortably cover one
+    # window's worth of activity (~$30M+ at the sasquatch_pr scale).
+    "internal_gl": (17.5, 0.3),       # median ~$40M
+    "concentration": (17.5, 0.3),     # median ~$40M
+    # Suspense accounts net to zero EOD by design but absorb intra-day
+    # swings as transfers cascade through. Small cushion (~$1M) keeps
+    # baseline noise from showing every accounting moment as an
+    # overdraft; planted overdrafts on these accounts still surface.
+    "internal_suspense": (13.5, 0.5), # median ~$1M
+    "external": None,                 # we don't track external balances
+    "other": None,
+}
+
+
+def _classify_role(role: Identifier | str) -> str:
+    """Map a role name to a starting-balance kind (R.1.f §5).
+
+    Heuristic substring match — covers sasquatch_pr + spec_example role
+    names. Falls back to "other" → $0 starting balance.
+    """
+    r = str(role).lower()
+    if "concentration" in r and "master" in r:
+        return "concentration"
+    if "merchant" in r:
+        return "merchant_dda"
+    if "customer" in r:
+        return "customer_dda"
+    if "suspense" in r or "recon" in r or r.startswith("zba"):
+        return "internal_suspense"
+    if (
+        "external" in r or "counter" in r or "card_network" in r
+        or "fed" in r or "frb" in r
+    ):
+        return "external"
+    if (
+        "gl" in r or "cash" in r or "settlement" in r or "due" in r
+        or "clearing" in r or "ach_orig" in r
+    ):
+        return "internal_gl"
+    return "other"
+
+
+def _baseline_target_leg_count(
+    rail: Rail, kind: _RailKind, customer_count: int, merchant_count: int,
+    business_day_count: int,
+) -> int:
+    """Compute the per-Rail target firing count over the window (R.1.f §1).
+
+    Returns an integer count of FIRINGS (each firing emits 1 or 2 legs
+    depending on rail shape; the per-firing count is independent of the
+    target). The actual per-day count is randomized via Poisson sampling
+    in the leg loop.
+    """
+    params = _RAIL_KIND_PARAMS[kind]
+    if params.scaling_kind == "customer":
+        scale = customer_count
+    elif params.scaling_kind == "merchant":
+        scale = merchant_count
+    else:
+        scale = 1
+
+    if kind is _RailKind.AGGREGATING_MONTHLY:
+        # Fires only on last business day of month → ~3 in 90 days.
+        return 3
+    return max(1, int(business_day_count * params.daily_target_per_unit * scale))
+
+
+def _baseline_amount_sample(
+    rng: random.Random, kind: _RailKind, cap: Decimal | None = None,
+) -> Decimal:
+    """Sample one amount per R.1.f §2's per-kind lognormal table.
+
+    ``cap``: optional ``LimitSchedule.cap`` ceiling. When set, a sample
+    that exceeds the cap is **clamped + resampled** rather than truncated
+    so the underlying distribution shape stays clean (truncation would
+    pile mass at the cap). Resample retries up to 5 times; falls back to
+    ``cap * 0.95`` so the loop always terminates.
+    """
+    params = _RAIL_KIND_PARAMS[kind]
+    for _ in range(5):
+        raw = rng.lognormvariate(params.amount_mu, params.amount_sigma)
+        amount = Decimal(f"{raw:.2f}")
+        if cap is None or amount <= cap:
+            return amount
+    # Fallback after 5 misses on the cap.
+    return Decimal(f"{float(cap) * 0.95:.2f}") if cap else Decimal("0.00")
+
+
+def _baseline_time_of_day(
+    rng: random.Random, kind: _RailKind, day: date,
+) -> str:
+    """Sample a posting time-of-day inside the kind's R.1.f §3 band.
+
+    Returns an ISO-8601 timestamp (UTC) for the given business day at a
+    sampled time inside the kind's ``time_band``. Time-of-day band is
+    a uniform draw inside the band; the seconds field uses minute-level
+    granularity which is enough for the dashboards' chronological sort.
+    """
+    params = _RAIL_KIND_PARAMS[kind]
+    start_hour, end_hour = params.time_band
+    # Uniform inside the band — minute-level granularity.
+    minutes_in_band = (end_hour - start_hour) * 60
+    offset = rng.randrange(minutes_in_band)
+    hour = start_hour + (offset // 60)
+    minute = offset % 60
+    return f"{day.isoformat()}T{hour:02d}:{minute:02d}:00+00:00"
+
+
+def _materialize_baseline_template_instances(
+    instance: L2Instance,
+    template_by_role: dict[Identifier, AccountTemplate],
+) -> tuple[TemplateInstance, ...]:
+    """Materialize per-template baseline instances for the leg loop.
+
+    Per-template counts:
+      - Customer-DDA-like template (role classified as ``customer_dda``):
+        20 instances. Big enough to drive realistic per-day volume.
+      - Merchant-DDA-like (``merchant_dda``): 5 instances.
+      - Anything else: 5 instances.
+
+    Honors each template's ``instance_id_template`` /
+    ``instance_name_template`` when set; falls back to the legacy
+    ``cust-001`` / ``Customer 1`` naming otherwise. The synthesized
+    set is sorted by ``account_id`` to keep emission order stable.
+
+    Index offset: indices start at ``_BASELINE_INDEX_START`` (11), NOT
+    1, so baseline accounts never collide with plant accounts (which
+    use indices 1-N from ``default_scenario_for``'s ``_materialize_
+    instances``). Without this offset, plant rows and baseline rows
+    would compete for the same ``daily_balances(account_id, day)`` PK
+    — last write wins, the loser's row goes missing, and the L1 drift
+    matview flags the SUM-vs-stored mismatch as a false positive.
+    """
+    instances: list[TemplateInstance] = []
+    for role, tmpl in sorted(template_by_role.items(), key=lambda kv: str(kv[0])):
+        role_kind = _classify_role(role)
+        if role_kind == "customer_dda":
+            n_instances = 20
+        else:
+            n_instances = 5
+
+        id_tmpl = tmpl.instance_id_template or "cust-{n:03d}"
+        name_tmpl = tmpl.instance_name_template or "Customer {n}"
+
+        for offset in range(n_instances):
+            n = _BASELINE_INDEX_START + offset
+            instances.append(TemplateInstance(
+                template_role=role,
+                account_id=Identifier(id_tmpl.format(role=str(role), n=n)),
+                name=Name(name_tmpl.format(role=str(role), n=n)),
+            ))
+    instances.sort(key=lambda ti: str(ti.account_id))
+    _ = instance  # silence unused — reserved for future role-based filtering
+    return tuple(instances)
+
+
+# Plant indices use 1..N (typically 1, 2) per default_scenario_for's
+# _materialize_instances. Baseline instances start at 11 so the two
+# pools are disjoint — no daily_balances(account_id, day) PK collisions
+# between plant and baseline rows. See _materialize_baseline_template_
+# instances for context.
+_BASELINE_INDEX_START = 11
+
+
+def _initialize_starting_balances(
+    state: _BaselineState,
+    instance: L2Instance,
+    template_by_role: dict[Identifier, AccountTemplate],
+    rng: random.Random,
+) -> None:
+    """Seed per-account starting balances from R.1.f §5's per-role table.
+
+    Walks every materialized template instance + every singleton account
+    and assigns a starting balance per its role's classification. Roles
+    that classify to ``None`` (external counterparties, internal-suspense)
+    get a $0 starting balance. Iteration order is sorted by account_id
+    so the RNG draws happen in a deterministic sequence per anchor.
+    """
+    # Template-instance accounts.
+    for ti in sorted(state.template_instances, key=lambda i: str(i.account_id)):
+        role_kind = _classify_role(ti.template_role)
+        params = _STARTING_BALANCE_BY_ROLE_KIND.get(role_kind)
+        if params is None:
+            state.balances[ti.account_id] = Decimal("0.00")
+            continue
+        mu, sigma = params
+        raw = rng.lognormvariate(mu, sigma)
+        state.balances[ti.account_id] = Decimal(f"{raw:.2f}")
+
+    # Singleton accounts from instance.accounts.
+    for a in sorted(instance.accounts, key=lambda a: str(a.id)):
+        role_kind = _classify_role(a.role or a.id)
+        params = _STARTING_BALANCE_BY_ROLE_KIND.get(role_kind)
+        if params is None:
+            state.balances[a.id] = Decimal("0.00")
+            continue
+        mu, sigma = params
+        raw = rng.lognormvariate(mu, sigma)
+        state.balances[a.id] = Decimal(f"{raw:.2f}")
+    _ = template_by_role  # not needed — role classification is by name
+
+
+def _eligible_accounts_for_role(
+    role_expr: tuple[Identifier, ...],
+    state: _BaselineState,
+    instance: L2Instance,
+) -> list[_ResolvedAccount]:
+    """Return every account whose role is in ``role_expr``.
+
+    Walks both materialized template instances AND singleton accounts.
+    Sorted by ``account_id`` for deterministic picker output.
+    """
+    role_set = {str(r) for r in role_expr}
+    out: list[_ResolvedAccount] = []
+    for ti in state.template_instances:
+        if str(ti.template_role) in role_set:
+            out.append(_resolve_any_account(
+                ti.account_id, instance, _SCENARIO_FOR_RESOLVE(state),
+                _TEMPLATE_BY_ROLE_FOR_RESOLVE(instance),
+            ))
+    for a in instance.accounts:
+        role = str(a.role) if a.role is not None else str(a.id)
+        if role in role_set:
+            out.append(_ResolvedAccount(
+                account_id=a.id,
+                account_name=a.name or Name(str(a.id)),
+                account_role=a.role or Identifier(str(a.id)),
+                account_scope=a.scope,
+                account_parent_role=a.parent_role,
+            ))
+    out.sort(key=lambda r: str(r.account_id))
+    return out
+
+
+# Adapter helpers so the baseline emitter can reuse _resolve_any_account
+# (which was written for the existing emit_seed path that takes a
+# ScenarioPlant). Cheaper than duplicating the resolve logic.
+def _SCENARIO_FOR_RESOLVE(state: _BaselineState) -> "ScenarioPlant":
+    return ScenarioPlant(
+        template_instances=state.template_instances,
+        today=state.anchor,
+    )
+
+
+def _TEMPLATE_BY_ROLE_FOR_RESOLVE(
+    instance: L2Instance,
+) -> dict[Identifier, AccountTemplate]:
+    return {t.role: t for t in instance.account_templates}
+
+
+def _emit_baseline_for_rail(
+    rail: Rail,
+    instance: L2Instance,
+    state: _BaselineState,
+    template_by_role: dict[Identifier, AccountTemplate],
+    rng: random.Random,
+    counter: _Counter,
+    dialect: Dialect,
+) -> list[str]:
+    """Emit per-Rail leg rows for the rolling window.
+
+    R.2.b implements the loop for **non-aggregating** rails (single-leg
+    + two-leg, ``aggregating=False``). Aggregating rails return ``[]``
+    here — R.2.c adds the children-first + EOD bundling parent on top.
+
+    Steps per R.1.f §1-3:
+      1. Classify the Rail; look up volume + amount + time params.
+      2. Compute target leg count over the window via the heuristic.
+      3. Distribute firings across business days (Poisson around daily
+         target). Monthly_eom rails fire only on the last business day
+         of each month — handled in R.2.c.
+      4. Per firing: pick source/destination accounts via role expr,
+         sample amount + time-of-day.
+      5. Emit one or two ``_txn_row`` calls per firing, update
+         ``state.balances`` for each leg.
+      6. At end of each business day, snapshot every touched account's
+         running balance into ``state.eod_balances`` so R.2.e can
+         materialize ``daily_balances`` rows.
+    """
+    if rail.aggregating:
+        # Aggregating rails go through _emit_baseline_for_aggregating_rail
+        # (R.2.c) which handles the children-first + EOD bundling pattern.
+        return []
+
+    kind = _classify_rail(rail)
+    business_days = state.business_days
+    if not business_days:
+        return []
+
+    # Customer + merchant counts for volume scaling. Materialized template
+    # instances drive the count (the baseline uses 20 customers, 5
+    # merchants per the materializer).
+    customer_count = sum(
+        1 for ti in state.template_instances
+        if _classify_role(ti.template_role) == "customer_dda"
+    )
+    merchant_count = sum(
+        1 for ti in state.template_instances
+        if _classify_role(ti.template_role) == "merchant_dda"
+    )
+    customer_count = max(1, customer_count)
+    merchant_count = max(1, merchant_count)
+
+    target_total = _baseline_target_leg_count(
+        rail, kind, customer_count, merchant_count, len(business_days),
+    )
+    daily_target = target_total / len(business_days)
+
+    # Resolve eligible accounts for source + destination.
+    if isinstance(rail, TwoLegRail):
+        src_accounts = _eligible_accounts_for_role(
+            rail.source_role, state, instance,
+        )
+        dst_accounts = _eligible_accounts_for_role(
+            rail.destination_role, state, instance,
+        )
+        if not src_accounts or not dst_accounts:
+            return []
+    else:
+        # SingleLegRail
+        leg_accounts = _eligible_accounts_for_role(
+            rail.leg_role, state, instance,
+        )
+        if not leg_accounts:
+            return []
+        src_accounts = leg_accounts
+        dst_accounts = []
+
+    # Resolve LimitSchedule cap if any applies (used to clamp the
+    # amount sampler — R.1.f §2's clamp+resample contract).
+    cap_by_parent_role = _baseline_cap_lookup(rail, instance)
+
+    # Resolve Origin per L2 rule O1.
+    if isinstance(rail, TwoLegRail):
+        src_origin = (
+            str(rail.source_origin) if rail.source_origin is not None
+            else (str(rail.origin) if rail.origin is not None else "InternalInitiated")
+        )
+        dst_origin = (
+            str(rail.destination_origin) if rail.destination_origin is not None
+            else (str(rail.origin) if rail.origin is not None else "InternalInitiated")
+        )
+    else:
+        src_origin = (
+            str(rail.origin) if rail.origin is not None
+            else "InternalInitiated"
+        )
+        dst_origin = src_origin  # unused for single-leg
+
+    rows: list[str] = []
+    rail_slug = _baseline_rail_slug(rail.name)
+
+    for day in business_days:
+        # Poisson sample of firings on this day around the daily target.
+        # rng.poisson would be ideal but Python's random doesn't expose
+        # it; Knuth's algorithm or a rough Gaussian approximation works.
+        n_firings = _poisson_sample(rng, daily_target)
+        if n_firings <= 0:
+            continue
+
+        for firing_seq in range(n_firings):
+            n = counter.next()
+            transfer_id = f"tr-base-{rail_slug}-{n:06d}"
+            txn_id = f"tx-base-{rail_slug}-{n:06d}"
+            posting = _baseline_time_of_day(rng, kind, day)
+
+            src = src_accounts[rng.randrange(len(src_accounts))]
+            cap = cap_by_parent_role.get(str(src.account_parent_role) if src.account_parent_role else "")
+            amount = _baseline_amount_sample(rng, kind, cap=cap)
+
+            metadata = _baseline_metadata(rail, n, firing_seq)
+            # R.2.c bundle stamp: if this child rail is bundled by some
+            # aggregating Rail today, the leg's bundle_id is the bundle
+            # transfer_id pre-computed by _populate_bundle_map.
+            bundle_id = state.bundle_map.get((rail.name, day))
+            # R.2.d firing log: record this firing so the chain pass can
+            # attach children to it.
+            state.firings.setdefault(rail.name, []).append(
+                (transfer_id, day, amount),
+            )
+
+            if isinstance(rail, TwoLegRail):
+                dst = dst_accounts[rng.randrange(len(dst_accounts))]
+                rows.append(_txn_row(
+                    id_=f"{txn_id}-src",
+                    account_id=src.account_id,
+                    account_name=src.account_name,
+                    account_role=src.account_role,
+                    account_scope=src.account_scope,
+                    account_parent_role=src.account_parent_role,
+                    money=-amount,
+                    direction="Debit",
+                    posting=posting,
+                    transfer_id=transfer_id,
+                    transfer_type=rail.transfer_type,
+                    rail_name=rail.name,
+                    origin=src_origin,
+                    metadata=metadata,
+                    bundle_id=bundle_id,
+                    dialect=dialect,
+                ))
+                rows.append(_txn_row(
+                    id_=txn_id,
+                    account_id=dst.account_id,
+                    account_name=dst.account_name,
+                    account_role=dst.account_role,
+                    account_scope=dst.account_scope,
+                    account_parent_role=dst.account_parent_role,
+                    money=amount,
+                    direction="Credit",
+                    posting=posting,
+                    transfer_id=transfer_id,
+                    transfer_type=rail.transfer_type,
+                    rail_name=rail.name,
+                    origin=dst_origin,
+                    metadata=metadata,
+                    bundle_id=bundle_id,
+                    dialect=dialect,
+                ))
+                # Record legs in the deferred-walk log; daily-balance
+                # materializer recomputes cumulative balances at emit
+                # end (avoids the rail-iteration overwrite bug).
+                state.account_leg_log.setdefault(src.account_id, []).append(
+                    (posting, day, -amount),
+                )
+                state.account_leg_log.setdefault(dst.account_id, []).append(
+                    (posting, day, amount),
+                )
+            else:
+                assert isinstance(rail, SingleLegRail)
+                if rail.leg_direction == "Credit":
+                    direction, signed = "Credit", amount
+                else:
+                    direction, signed = "Debit", -amount
+                rows.append(_txn_row(
+                    id_=txn_id,
+                    account_id=src.account_id,
+                    account_name=src.account_name,
+                    account_role=src.account_role,
+                    account_scope=src.account_scope,
+                    account_parent_role=src.account_parent_role,
+                    money=signed,
+                    direction=direction,
+                    posting=posting,
+                    transfer_id=transfer_id,
+                    transfer_type=rail.transfer_type,
+                    rail_name=rail.name,
+                    origin=src_origin,
+                    metadata=metadata,
+                    bundle_id=bundle_id,
+                    dialect=dialect,
+                ))
+                state.account_leg_log.setdefault(src.account_id, []).append(
+                    (posting, day, signed),
+                )
+
+    _ = template_by_role  # accounts already resolved via state.template_instances
+    return rows
+
+
+def _emit_opening_balance_rows(
+    instance: L2Instance,
+    state: _BaselineState,
+    template_by_role: dict[Identifier, AccountTemplate],
+    counter: _Counter,
+    dialect: Dialect,
+) -> list[str]:
+    """Plant per-template-instance opening balance transactions.
+
+    For every materialized template instance with a non-zero starting
+    balance, emit one 2-leg "opening" Transfer at the very start of the
+    window: source = first declared external counterparty Account
+    (negative amount), destination = the customer (positive amount).
+    Records the credit leg in account_leg_log so the daily-balance
+    walk sees the customer balance start at the funded amount, not $0.
+
+    Without this, customers with high outbound volume mechanically
+    overdraft on the first business day they fire — overdraft matview
+    fills with false positives clustered at window-start.
+
+    Picks the first 2-leg inbound rail whose destination_role matches
+    the customer template's role to use for transfer_type/rail_name
+    metadata; skips if none exists. The opening uses an existing rail
+    so the L2FT Hygiene Exceptions sheet's "Unmatched Transfer Type"
+    check stays green.
+    """
+    if not state.business_days:
+        return []
+    opening_day = state.business_days[0]
+    opening_ts = (
+        f"{opening_day.isoformat()}T00:00:01+00:00"  # 1s past midnight
+    )
+
+    # Pick a default external counterparty: any external-scope account.
+    external_account: _ResolvedAccount | None = None
+    for a in sorted(instance.accounts, key=lambda a: str(a.id)):
+        if str(a.scope) == "external":
+            external_account = _ResolvedAccount(
+                account_id=a.id,
+                account_name=a.name or Name(str(a.id)),
+                account_role=a.role or Identifier(str(a.id)),
+                account_scope=a.scope,
+                account_parent_role=a.parent_role,
+            )
+            break
+    if external_account is None:
+        return []  # No external counterparty — can't fund openings
+
+    # Pick the first two-leg rail per destination role. Used purely
+    # for transfer_type/rail_name labeling on the opening row; doesn't
+    # change leg semantics. Aggregating rails included since some
+    # internal singletons (e.g., ConcentrationMaster) only have
+    # aggregating inbound rails — using one as a label is fine.
+    rail_for_role: dict[Identifier, TwoLegRail] = {}
+    for rail in sorted(instance.rails, key=lambda r: str(r.name)):
+        if not isinstance(rail, TwoLegRail):
+            continue
+        for dest in rail.destination_role:
+            if dest not in rail_for_role:
+                rail_for_role[dest] = rail
+
+    # Build account list: template instances + internal-scope singletons.
+    # Both pools need opening capital so the cumulative-from-zero balance
+    # walk doesn't show false-positive overdrafts on the bank's GL +
+    # concentration accounts.
+    fundable: list[_ResolvedAccount] = []
+    for ti in sorted(state.template_instances, key=lambda i: str(i.account_id)):
+        tmpl = template_by_role.get(ti.template_role)
+        if tmpl is None:
+            continue
+        fundable.append(_ResolvedAccount(
+            account_id=ti.account_id,
+            account_name=ti.name,
+            account_role=ti.template_role,
+            account_scope=tmpl.scope,
+            account_parent_role=tmpl.parent_role,
+        ))
+    for a in sorted(instance.accounts, key=lambda a: str(a.id)):
+        if str(a.scope) != "internal":
+            continue
+        fundable.append(_ResolvedAccount(
+            account_id=a.id,
+            account_name=a.name or Name(str(a.id)),
+            account_role=a.role or Identifier(str(a.id)),
+            account_scope=a.scope,
+            account_parent_role=a.parent_role,
+        ))
+
+    rows: list[str] = []
+    for acct in fundable:
+        starting = state.balances.get(acct.account_id, Decimal("0"))
+        if starting <= Decimal("0"):
+            continue
+        rail = rail_for_role.get(acct.account_role)
+        if rail is None:
+            continue
+        n = counter.next()
+        transfer_id = f"tr-base-opening-{n:04d}"
+        txn_id = f"tx-base-opening-{n:04d}"
+        src_origin = (
+            str(rail.source_origin) if rail.source_origin is not None
+            else (str(rail.origin) if rail.origin is not None else "ExternalForcePosted")
+        )
+        dst_origin = (
+            str(rail.destination_origin) if rail.destination_origin is not None
+            else (str(rail.origin) if rail.origin is not None else "ExternalForcePosted")
+        )
+        metadata = _baseline_metadata(rail, n, 0)
+        rows.append(_txn_row(
+            id_=f"{txn_id}-src",
+            account_id=external_account.account_id,
+            account_name=external_account.account_name,
+            account_role=external_account.account_role,
+            account_scope=external_account.account_scope,
+            account_parent_role=external_account.account_parent_role,
+            money=-starting,
+            direction="Debit",
+            posting=opening_ts,
+            transfer_id=transfer_id,
+            transfer_type=rail.transfer_type,
+            rail_name=rail.name,
+            origin=src_origin,
+            metadata=metadata,
+            dialect=dialect,
+        ))
+        rows.append(_txn_row(
+            id_=txn_id,
+            account_id=acct.account_id,
+            account_name=acct.account_name,
+            account_role=acct.account_role,
+            account_scope=acct.account_scope,
+            account_parent_role=acct.account_parent_role,
+            money=starting,
+            direction="Credit",
+            posting=opening_ts,
+            transfer_id=transfer_id,
+            transfer_type=rail.transfer_type,
+            rail_name=rail.name,
+            origin=dst_origin,
+            metadata=metadata,
+            dialect=dialect,
+        ))
+        # Record the credit leg so the daily-balance walk sees this
+        # account start at `starting` not $0. External-scope source
+        # account legs are not tracked (we don't compute balances for
+        # external counterparties).
+        state.account_leg_log.setdefault(acct.account_id, []).append(
+            (opening_ts, opening_day, starting),
+        )
+
+    return rows
+
+
+def _populate_bundle_map(
+    state: _BaselineState, instance: L2Instance,
+) -> None:
+    """Pre-compute bundle_id assignments for every (child_rail, day) pair.
+
+    R.2.c — for each aggregating Rail with declared ``bundles_activity``,
+    walk the firing schedule (every business day for daily_eod /
+    intraday rails; last-business-day-of-month for monthly_eom) and
+    assign a deterministic bundle_id. The per-Rail leg loop then
+    stamps that bundle_id onto child legs at emit time so the L1
+    stuck_unbundled view stays clean for the baseline.
+
+    Bundle_id format: ``tr-base-bundle-<agg_rail_slug>-<day_seq:04d>``.
+    Same shape as a normal transfer_id so the schema sees it as a
+    valid Transfer reference.
+    """
+    last_business_day_per_month = _last_business_day_per_month(state.business_days)
+
+    for rail in instance.rails:
+        if not rail.aggregating:
+            continue
+        if not rail.bundles_activity:
+            continue
+        agg_slug = _baseline_rail_slug(rail.name)
+        cadence = (rail.cadence or "").lower()
+
+        if "monthly" in cadence:
+            # Monthly_eom rails fire once at month-end and retroactively
+            # bundle EVERY child posted that month. Walk every business
+            # day in the window and assign each to the bundle_id keyed
+            # off the upcoming month-end firing.
+            firing_days = tuple(last_business_day_per_month)
+            for day_seq, eom_day in enumerate(firing_days):
+                bundle_id = f"tr-base-bundle-{agg_slug}-{day_seq:04d}"
+                # Every business day in (year, month) maps to this bundle.
+                for d in state.business_days:
+                    if d.year == eom_day.year and d.month == eom_day.month:
+                        for child_ref in rail.bundles_activity:
+                            state.bundle_map[
+                                (Identifier(str(child_ref)), d)
+                            ] = bundle_id
+        else:
+            # daily-eod, daily-bod, intraday-* — bundle each business
+            # day's children into that day's own bundle_id.
+            firing_days = state.business_days
+            for day_seq, day in enumerate(firing_days):
+                bundle_id = f"tr-base-bundle-{agg_slug}-{day_seq:04d}"
+                for child_ref in rail.bundles_activity:
+                    # bundles_activity may name a Rail OR TransferTemplate
+                    # OR TransferType. Match against rail names; the
+                    # other cases would need more sophisticated resolution
+                    # but don't appear in the calibration L2 instances yet.
+                    state.bundle_map[
+                        (Identifier(str(child_ref)), day)
+                    ] = bundle_id
+
+
+def _last_business_day_per_month(
+    business_days: tuple[date, ...],
+) -> list[date]:
+    """Return the last business day in each month covered by ``business_days``.
+
+    Walks the sorted list and notes the last entry seen for each
+    (year, month) pair. Used by aggregating monthly_eom rails which
+    fire only at month-end.
+    """
+    last_by_month: dict[tuple[int, int], date] = {}
+    for d in business_days:
+        last_by_month[(d.year, d.month)] = d
+    return sorted(last_by_month.values())
+
+
+def _emit_baseline_for_aggregating_rail(
+    rail: Rail,
+    instance: L2Instance,
+    state: _BaselineState,
+    template_by_role: dict[Identifier, AccountTemplate],
+    rng: random.Random,
+    counter: _Counter,
+    dialect: Dialect,
+) -> list[str]:
+    """Emit the EOD/EOM parent legs of an aggregating Rail (R.2.c).
+
+    Per R.1.f §6: aggregating rails post their parent at 17:00-19:00 ET
+    after children accumulate during the day; monthly_eom rails fire
+    only on the last business day of each month. The parent's
+    transfer_id matches the bundle_id pre-stamped on the day's
+    children (computed in ``_populate_bundle_map``), so the dashboard's
+    bundle-membership joins resolve cleanly.
+
+    Currently supports:
+      - SingleLegRail: emits one leg per firing.
+      - TwoLegRail: emits two legs summing to zero per firing.
+
+    Amount is sampled from the kind's lognormal table (same machinery
+    as the per-firing sampler in R.2.b). It does NOT exactly match the
+    sum of bundled children — the baseline approximation is acceptable
+    given the conservation invariant flags Transfers, not Bundles.
+    """
+    assert rail.aggregating, (
+        "_emit_baseline_for_aggregating_rail called with non-aggregating rail"
+    )
+
+    kind = _classify_rail(rail)
+    last_business_day_per_month = _last_business_day_per_month(state.business_days)
+    cadence = (rail.cadence or "").lower()
+    firing_days: tuple[date, ...]
+    if "monthly" in cadence:
+        firing_days = tuple(last_business_day_per_month)
+    else:
+        firing_days = state.business_days
+
+    if not firing_days:
+        return []
+
+    if isinstance(rail, TwoLegRail):
+        src_accounts = _eligible_accounts_for_role(
+            rail.source_role, state, instance,
+        )
+        dst_accounts = _eligible_accounts_for_role(
+            rail.destination_role, state, instance,
+        )
+        if not src_accounts or not dst_accounts:
+            return []
+        src_origin = (
+            str(rail.source_origin) if rail.source_origin is not None
+            else (str(rail.origin) if rail.origin is not None else "InternalInitiated")
+        )
+        dst_origin = (
+            str(rail.destination_origin) if rail.destination_origin is not None
+            else (str(rail.origin) if rail.origin is not None else "InternalInitiated")
+        )
+    else:
+        assert isinstance(rail, SingleLegRail)
+        leg_accounts = _eligible_accounts_for_role(
+            rail.leg_role, state, instance,
+        )
+        if not leg_accounts:
+            return []
+        src_accounts = leg_accounts
+        dst_accounts = []
+        src_origin = (
+            str(rail.origin) if rail.origin is not None
+            else "InternalInitiated"
+        )
+        dst_origin = src_origin
+
+    cap_by_parent_role = _baseline_cap_lookup(rail, instance)
+    rail_slug = _baseline_rail_slug(rail.name)
+    rows: list[str] = []
+
+    for day_seq, day in enumerate(firing_days):
+        # Parent transfer_id matches the bundle_id stamped on this day's
+        # children (see _populate_bundle_map).
+        bundle_transfer_id = f"tr-base-bundle-{rail_slug}-{day_seq:04d}"
+        n = counter.next()
+        # EOD time band per R.1.f §3 — the kind's time_band already
+        # reflects 17:00-19:00 for aggregating_daily / aggregating_monthly.
+        posting = _baseline_time_of_day(rng, kind, day)
+
+        src = src_accounts[rng.randrange(len(src_accounts))]
+        cap = cap_by_parent_role.get(
+            str(src.account_parent_role) if src.account_parent_role else ""
+        )
+        amount = _baseline_amount_sample(rng, kind, cap=cap)
+        metadata = _baseline_metadata(rail, n, 0)
+        # R.2.d firing log: aggregating-rail parents are also chain
+        # parents in some L2 instances.
+        state.firings.setdefault(rail.name, []).append(
+            (bundle_transfer_id, day, amount),
+        )
+
+        if isinstance(rail, TwoLegRail):
+            dst = dst_accounts[rng.randrange(len(dst_accounts))]
+            txn_id = f"tx-base-{rail_slug}-{n:06d}"
+            rows.append(_txn_row(
+                id_=f"{txn_id}-src",
+                account_id=src.account_id,
+                account_name=src.account_name,
+                account_role=src.account_role,
+                account_scope=src.account_scope,
+                account_parent_role=src.account_parent_role,
+                money=-amount,
+                direction="Debit",
+                posting=posting,
+                transfer_id=bundle_transfer_id,
+                transfer_type=rail.transfer_type,
+                rail_name=rail.name,
+                origin=src_origin,
+                metadata=metadata,
+                dialect=dialect,
+            ))
+            rows.append(_txn_row(
+                id_=txn_id,
+                account_id=dst.account_id,
+                account_name=dst.account_name,
+                account_role=dst.account_role,
+                account_scope=dst.account_scope,
+                account_parent_role=dst.account_parent_role,
+                money=amount,
+                direction="Credit",
+                posting=posting,
+                transfer_id=bundle_transfer_id,
+                transfer_type=rail.transfer_type,
+                rail_name=rail.name,
+                origin=dst_origin,
+                metadata=metadata,
+                dialect=dialect,
+            ))
+            state.account_leg_log.setdefault(src.account_id, []).append(
+                (posting, day, -amount),
+            )
+            state.account_leg_log.setdefault(dst.account_id, []).append(
+                (posting, day, amount),
+            )
+        else:
+            assert isinstance(rail, SingleLegRail)
+            if rail.leg_direction == "Credit":
+                direction, signed = "Credit", amount
+            else:
+                direction, signed = "Debit", -amount
+            txn_id = f"tx-base-{rail_slug}-{n:06d}"
+            rows.append(_txn_row(
+                id_=txn_id,
+                account_id=src.account_id,
+                account_name=src.account_name,
+                account_role=src.account_role,
+                account_scope=src.account_scope,
+                account_parent_role=src.account_parent_role,
+                money=signed,
+                direction=direction,
+                posting=posting,
+                transfer_id=bundle_transfer_id,
+                transfer_type=rail.transfer_type,
+                rail_name=rail.name,
+                origin=src_origin,
+                metadata=metadata,
+                dialect=dialect,
+            ))
+            state.account_leg_log.setdefault(src.account_id, []).append(
+                (posting, day, signed),
+            )
+
+    _ = template_by_role
+    return rows
+
+
+def _baseline_rail_slug(rail_name: Identifier) -> str:
+    """Convert a Rail name to a short kebab-case ID slug.
+
+    Used in transfer_id / id_ prefixes so rows from different Rails are
+    visually distinguishable in the deployed dashboards.
+    """
+    return "".join(
+        c if c.isalnum() else "-"
+        for c in str(rail_name).lower()
+    ).strip("-")[:32] or "rail"
+
+
+def _baseline_cap_lookup(
+    rail: Rail, instance: L2Instance,
+) -> dict[str, Decimal]:
+    """Return ``{parent_role: cap}`` for every LimitSchedule matching this Rail.
+
+    Per R.1.f §2: the amount sampler clamps + resamples on cap-exceeding
+    draws. The map is keyed by ``parent_role`` so the per-firing picker
+    can look up the cap for the source-account's parent role.
+    """
+    out: dict[str, Decimal] = {}
+    for ls in instance.limit_schedules:
+        if str(ls.transfer_type) == str(rail.transfer_type):
+            out[str(ls.parent_role)] = ls.cap
+    return out
+
+
+def _baseline_metadata(
+    rail: Rail, n: int, firing_seq: int,
+) -> dict[str, str]:
+    """Build per-firing metadata satisfying the rail's declared keys.
+
+    Each declared metadata_key gets a synthetic per-firing value
+    (``<rail>-firing-NNNNNN``) so two firings of the same rail produce
+    distinct values. Rails declaring ``metadata_value_examples`` use
+    those values cycling through; the broader-mode plant (R.3) can
+    override per-firing.
+    """
+    out: dict[str, str] = {}
+    for key in rail.metadata_keys:
+        out[str(key)] = f"{rail.name}-firing-{n:06d}"
+    # Per-key example values when declared (M.4.2b mechanism).
+    for key, values in rail.metadata_value_examples:
+        if values:
+            out[str(key)] = values[firing_seq % len(values)]
+    return out
+
+
+def _poisson_sample(rng: random.Random, mean: float) -> int:
+    """Sample from Poisson(mean) using Knuth's algorithm.
+
+    Python's ``random`` doesn't expose Poisson; Knuth's iterative
+    algorithm is fine for the small means we use (≤ 50). For larger
+    means we'd switch to a normal approximation, but the per-day
+    targets in R.1.f §1 stay well below that.
+    """
+    if mean <= 0:
+        return 0
+    if mean > 50:
+        # Normal approximation for large means (sweep accumulators).
+        sample = rng.gauss(mean, mean ** 0.5)
+        return max(0, int(round(sample)))
+    import math
+
+    L = math.exp(-mean)
+    k = 0
+    p = 1.0
+    while True:
+        k += 1
+        p *= rng.random()
+        if p <= L:
+            return k - 1
+
+
+def _emit_baseline_chains(
+    instance: L2Instance,
+    state: _BaselineState,
+    template_by_role: dict[Identifier, AccountTemplate],
+    counter: _Counter,
+    dialect: Dialect,
+) -> list[str]:
+    """Emit chain-firing rows (parent → child) for every declared Chain.
+
+    R.2.d implementation:
+      - For each Chain entry, look up the parent's firings from
+        ``state.firings``. For each parent firing, roll a completion
+        check (Required ≈95%, Optional ≈50%) and emit a child leg
+        with ``transfer_parent_id = parent_transfer_id``.
+      - xor_group siblings (multiple chains sharing parent + xor_group):
+        pick exactly one entry per parent firing via deterministic
+        hash of the parent's transfer_id.
+      - Child leg amount sampled from the child rail's lognormal kind;
+        time-of-day shifts to one hour after the parent's posting band.
+
+    Children whose rail isn't in ``instance.rails`` (Chain may also
+    name a TransferTemplate) are skipped — full TransferTemplate
+    chain emission is out of scope for R.2.d's first land.
+    """
+    if not instance.chains:
+        return []
+
+    rails_by_name = {r.name: r for r in instance.rails}
+    rng = random.Random(_BASELINE_BASE_SEED ^ 0xCC11A)
+    rows: list[str] = []
+
+    # Group entries by (parent, xor_group) so siblings can pick one
+    # winner per parent firing.
+    grouped: dict[
+        tuple[Identifier, Identifier | None], list[ChainEntry]
+    ] = {}
+    for entry in instance.chains:
+        key = (entry.parent, entry.xor_group)
+        grouped.setdefault(key, []).append(entry)
+
+    for (parent_name, _xor_group), entries in sorted(
+        grouped.items(), key=lambda kv: (str(kv[0][0]), str(kv[0][1] or "")),
+    ):
+        parent_firings = state.firings.get(parent_name, [])
+        if not parent_firings:
+            continue
+
+        for parent_transfer_id, parent_day, parent_amount in parent_firings:
+            # Pick which xor sibling fires (if multiple). Deterministic
+            # via hash of parent transfer_id so reruns produce identical
+            # output.
+            sibling_idx = (
+                zlib.crc32(parent_transfer_id.encode("utf-8"))
+                & 0x7FFFFFFF
+            ) % len(entries)
+            entry = entries[sibling_idx]
+
+            # Completion roll: Required ≈95%, Optional ≈50%.
+            completion_threshold = 0.95 if entry.required else 0.50
+            if rng.random() > completion_threshold:
+                continue  # parent fired but child did not — orphan exception
+
+            child_rail = rails_by_name.get(entry.child)
+            if child_rail is None:
+                # Chain references a TransferTemplate or unknown name —
+                # skip for R.2.d's first land.
+                continue
+
+            child_rows = _emit_chain_child_leg(
+                child_rail, instance, state,
+                parent_transfer_id, parent_day, parent_amount,
+                counter, rng, dialect,
+            )
+            rows.extend(child_rows)
+
+    _ = template_by_role
+    return rows
+
+
+def _emit_chain_child_leg(
+    child_rail: Rail,
+    instance: L2Instance,
+    state: _BaselineState,
+    parent_transfer_id: str,
+    parent_day: date,
+    parent_amount: Decimal,
+    counter: _Counter,
+    rng: random.Random,
+    dialect: Dialect,
+) -> list[str]:
+    """Emit one child Transfer's legs linked to the parent firing.
+
+    The child Transfer fires on the same business day as the parent,
+    one hour after the parent's posting band per R.1.f §6. Amount is
+    sampled from the child rail's lognormal kind (or the parent's
+    amount × 0.5 if the child rail isn't classifiable). Honors the
+    L2's LimitSchedule cap on the child via clamp+resample.
+    """
+    kind = _classify_rail(child_rail)
+    rail_slug = _baseline_rail_slug(child_rail.name)
+    n = counter.next()
+    transfer_id = f"tr-base-chain-{rail_slug}-{n:06d}"
+    txn_id = f"tx-base-chain-{rail_slug}-{n:06d}"
+
+    # Chain child posts ~1 hour after the parent's natural band end —
+    # use 18:00 as a reasonable default (after most parent bands close
+    # but before EOD bundling).
+    posting = f"{parent_day.isoformat()}T18:00:00+00:00"
+
+    # Resolve eligible accounts. If child rail has no eligible
+    # accounts, can't emit — return empty.
+    if isinstance(child_rail, TwoLegRail):
+        src_accounts = _eligible_accounts_for_role(
+            child_rail.source_role, state, instance,
+        )
+        dst_accounts = _eligible_accounts_for_role(
+            child_rail.destination_role, state, instance,
+        )
+        if not src_accounts or not dst_accounts:
+            return []
+    else:
+        assert isinstance(child_rail, SingleLegRail)
+        leg_accounts = _eligible_accounts_for_role(
+            child_rail.leg_role, state, instance,
+        )
+        if not leg_accounts:
+            return []
+        src_accounts = leg_accounts
+        dst_accounts = []
+
+    cap_by_parent_role = _baseline_cap_lookup(child_rail, instance)
+    src = src_accounts[rng.randrange(len(src_accounts))]
+    cap = cap_by_parent_role.get(
+        str(src.account_parent_role) if src.account_parent_role else "",
+    )
+    # Sample from the child rail's distribution. Slightly conservative
+    # vs the parent_amount so the chain looks like a downstream
+    # transfer of part of the parent.
+    amount = _baseline_amount_sample(rng, kind, cap=cap)
+    _ = parent_amount  # reserved — could constrain to <= parent in the future
+
+    metadata = _baseline_metadata(child_rail, n, 0)
+
+    if isinstance(child_rail, TwoLegRail):
+        dst = dst_accounts[rng.randrange(len(dst_accounts))]
+        src_origin = (
+            str(child_rail.source_origin) if child_rail.source_origin is not None
+            else (str(child_rail.origin) if child_rail.origin is not None else "InternalInitiated")
+        )
+        dst_origin = (
+            str(child_rail.destination_origin) if child_rail.destination_origin is not None
+            else (str(child_rail.origin) if child_rail.origin is not None else "InternalInitiated")
+        )
+        rows = [
+            _txn_row(
+                id_=f"{txn_id}-src",
+                account_id=src.account_id,
+                account_name=src.account_name,
+                account_role=src.account_role,
+                account_scope=src.account_scope,
+                account_parent_role=src.account_parent_role,
+                money=-amount,
+                direction="Debit",
+                posting=posting,
+                transfer_id=transfer_id,
+                transfer_type=child_rail.transfer_type,
+                rail_name=child_rail.name,
+                origin=src_origin,
+                metadata=metadata,
+                transfer_parent_id=parent_transfer_id,
+                dialect=dialect,
+            ),
+            _txn_row(
+                id_=txn_id,
+                account_id=dst.account_id,
+                account_name=dst.account_name,
+                account_role=dst.account_role,
+                account_scope=dst.account_scope,
+                account_parent_role=dst.account_parent_role,
+                money=amount,
+                direction="Credit",
+                posting=posting,
+                transfer_id=transfer_id,
+                transfer_type=child_rail.transfer_type,
+                rail_name=child_rail.name,
+                origin=dst_origin,
+                metadata=metadata,
+                transfer_parent_id=parent_transfer_id,
+                dialect=dialect,
+            ),
+        ]
+        state.account_leg_log.setdefault(src.account_id, []).append(
+            (posting, parent_day, -amount),
+        )
+        state.account_leg_log.setdefault(dst.account_id, []).append(
+            (posting, parent_day, amount),
+        )
+    else:
+        assert isinstance(child_rail, SingleLegRail)
+        if child_rail.leg_direction == "Credit":
+            direction, signed = "Credit", amount
+        else:
+            direction, signed = "Debit", -amount
+        leg_origin = (
+            str(child_rail.origin) if child_rail.origin is not None
+            else "InternalInitiated"
+        )
+        rows = [_txn_row(
+            id_=txn_id,
+            account_id=src.account_id,
+            account_name=src.account_name,
+            account_role=src.account_role,
+            account_scope=src.account_scope,
+            account_parent_role=src.account_parent_role,
+            money=signed,
+            direction=direction,
+            posting=posting,
+            transfer_id=transfer_id,
+            transfer_type=child_rail.transfer_type,
+            rail_name=child_rail.name,
+            origin=leg_origin,
+            metadata=metadata,
+            transfer_parent_id=parent_transfer_id,
+            dialect=dialect,
+        )]
+        state.account_leg_log.setdefault(src.account_id, []).append(
+            (posting, parent_day, signed),
+        )
+
+    # Record the chain child as its own firing too — supports nested
+    # chains in future L2 instances.
+    state.firings.setdefault(child_rail.name, []).append(
+        (transfer_id, parent_day, amount),
+    )
+
+    return rows
+
+
+def _emit_baseline_daily_balances(
+    state: _BaselineState,
+    instance: L2Instance,
+    template_by_role: dict[Identifier, AccountTemplate],
+    dialect: Dialect,
+) -> list[str]:
+    """Materialize ``daily_balances`` rows from the per-account leg log.
+
+    Deferred-walk implementation (post-R.2.e fix): per account, sort
+    the leg log by posting timestamp, walk legs in chronological order,
+    accumulate from ``initial_balances``, and write
+    ``eod_balances[(account, day)] = running_balance`` after each leg.
+    Last leg of each day wins, which captures the correct EOD snapshot
+    even when rails iterated in name-order across all days during emit.
+
+    Drift invariant guarantee: by walking the FULL leg history
+    chronologically, ``daily_balances.money == SUM(signed_amount)
+    through end of day`` for every (account, day) — the L1 drift matview
+    computes zero for every baseline row.
+
+    Per-role business-day offsets (M.4.4.14): roles in
+    ``instance.role_business_day_offsets`` get their business_day_start
+    / business_day_end shifted by the configured hour offset. Roles
+    without an entry default to midnight-aligned (00:00 → 00:00 next
+    day).
+    """
+    if not state.account_leg_log:
+        return []
+
+    account_meta = _build_account_meta_map(state, instance)
+    role_offsets = instance.role_business_day_offsets or {}
+
+    # Walk every account's leg log in chronological order to compute
+    # correct cumulative EOD balances. Per-leg accumulation; last leg
+    # of each day wins per dict semantics.
+    eod_balances: dict[tuple[Identifier, date], Decimal] = {}
+    for account_id in sorted(state.account_leg_log, key=str):
+        running = state.initial_balances.get(account_id, Decimal("0"))
+        for posting, day, signed in sorted(
+            state.account_leg_log[account_id], key=lambda l: l[0],
+        ):
+            running += signed
+            eod_balances[(account_id, day)] = running
+            _ = posting
+
+    rows: list[str] = []
+    for (account_id, day), money in sorted(
+        eod_balances.items(), key=lambda kv: (str(kv[0][0]), kv[0][1]),
+    ):
+        meta = account_meta.get(account_id)
+        if meta is None:
+            continue
+        offset_hours = role_offsets.get(str(meta.account_role), 0)
+        rows.append(_balance_row(
+            account_id=meta.account_id,
+            account_name=meta.account_name,
+            account_role=meta.account_role,
+            account_scope=meta.account_scope,
+            account_parent_role=meta.account_parent_role,
+            day=day,
+            money=money,
+            dialect=dialect,
+            offset_hours=offset_hours,
+        ))
+
+    _ = template_by_role
+    return rows
+
+
+def _build_account_meta_map(
+    state: _BaselineState, instance: L2Instance,
+) -> dict[Identifier, _ResolvedAccount]:
+    """Build account_id -> _ResolvedAccount lookup for daily-balance emit.
+
+    Walks materialized template instances first, then singleton
+    accounts. The map is built once per ``emit_baseline_seed`` call and
+    reused for every (account_id, day) row.
+    """
+    template_by_role = {t.role: t for t in instance.account_templates}
+    out: dict[Identifier, _ResolvedAccount] = {}
+    for ti in state.template_instances:
+        tmpl = template_by_role.get(ti.template_role)
+        if tmpl is None:
+            continue
+        out[ti.account_id] = _ResolvedAccount(
+            account_id=ti.account_id,
+            account_name=ti.name,
+            account_role=ti.template_role,
+            account_scope=tmpl.scope,
+            account_parent_role=tmpl.parent_role,
+        )
+    for a in instance.accounts:
+        out[a.id] = _ResolvedAccount(
+            account_id=a.id,
+            account_name=a.name or Name(str(a.id)),
+            account_role=a.role or Identifier(str(a.id)),
+            account_scope=a.scope,
+            account_parent_role=a.parent_role,
+        )
+    return out
 
 
 # -- Internal helpers --------------------------------------------------------

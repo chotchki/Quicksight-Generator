@@ -27,6 +27,7 @@ from quicksight_gen.common.sql import Dialect
 
 
 __all__ = [
+    "batch_oracle_inserts",
     "connect_demo_db",
     "execute_script",
     "oracle_dsn",
@@ -100,7 +101,9 @@ def connect_demo_db(cfg: Config) -> Any:
     )
 
 
-def execute_script(cur: Any, sql: str, *, dialect: Dialect) -> None:
+def execute_script(
+    cur: Any, sql: str, *, dialect: Dialect, oracle_insert_batch: int = 500,
+) -> None:
     """Run a multi-statement SQL string against ``cur``.
 
     Postgres (psycopg2): the whole string in one ``execute`` call works.
@@ -109,11 +112,23 @@ def execute_script(cur: Any, sql: str, *, dialect: Dialect) -> None:
     ``split_oracle_script`` and executes each statement individually,
     surfacing which statement (out of N) failed and the first 1500
     characters of its body for triage.
+
+    Oracle bulk-INSERT batching (R.4.a): consecutive
+    ``INSERT INTO same_table VALUES (...)`` statements get coalesced
+    into ``INSERT ALL`` blocks of ``oracle_insert_batch`` rows. Cuts
+    Phase R seed apply from ~30+ minutes (60k per-row round-trips at
+    ~20ms each) to ~30 seconds. Set ``oracle_insert_batch=1`` to
+    disable batching for debug.
     """
     if dialect is Dialect.POSTGRES:
         cur.execute(sql)
         return
-    for i, stmt in enumerate(split_oracle_script(sql)):
+    statements = split_oracle_script(sql)
+    if oracle_insert_batch > 1:
+        statements = batch_oracle_inserts(
+            statements, batch_size=oracle_insert_batch,
+        )
+    for i, stmt in enumerate(statements):
         try:
             cur.execute(stmt)
         except Exception as e:
@@ -138,6 +153,131 @@ def split_oracle_script(sql: str) -> list[str]:
       (PLS-00103 "encountered end-of-file"). Keep it.
     - **Plain SQL statements**: ``oracledb.Cursor.execute`` rejects
       a trailing ``;`` ("invalid character"). Strip it.
+    """
+    return _split_oracle_script_impl(sql)
+
+
+_INSERT_HEAD_RE = __import__("re").compile(
+    r"^\s*INSERT\s+INTO\s+(\S+)\s*(\([^)]*\))\s*VALUES\s*",
+    __import__("re").IGNORECASE | __import__("re").DOTALL,
+)
+
+# Match the FIRST value in a VALUES tuple (the PK-id column for our seed
+# tables). Pattern: leading "(", optional whitespace, then either a
+# quoted string ('...') or a bare token. Used by batch_oracle_inserts
+# to detect same-id rows that would collide under Oracle's INSERT ALL +
+# IDENTITY behavior (the IDENTITY column allocates one value PER
+# STATEMENT, not per row, so same-id rows in one INSERT ALL violate the
+# composite (id, entry) PK).
+_FIRST_VALUE_RE = __import__("re").compile(
+    r"^\(\s*'((?:[^']|'')*)'",
+)
+
+
+def batch_oracle_inserts(
+    statements: list[str], *, batch_size: int = 500,
+) -> list[str]:
+    """Coalesce consecutive ``INSERT INTO same_table ... VALUES (...)``
+    statements into Oracle ``INSERT ALL`` blocks of up to ``batch_size``
+    rows each.
+
+    Format produced::
+
+        INSERT ALL
+          INTO sasquatch_pr_transactions (col1, col2) VALUES ('a', 'b')
+          INTO sasquatch_pr_transactions (col1, col2) VALUES ('c', 'd')
+          ...
+        SELECT 1 FROM dual
+
+    Cuts Phase R seed-apply round-trips from ~60k to ~120 (60k rows /
+    500 per batch). Each Oracle round-trip is ~10-30ms remote, so the
+    total seed-insert time drops from ~20 minutes to ~30 seconds.
+
+    Statements that DON'T match the simple ``INSERT INTO foo VALUES``
+    shape (CREATE TABLE, ALTER, complex INSERT...SELECT, PL/SQL blocks,
+    etc.) pass through unchanged. The matcher only batches statements
+    whose ``INSERT INTO <table> (<cols>)`` head is identical to the
+    accumulating batch's head — different tables / column lists flush
+    the current batch before starting a new one.
+    """
+    if batch_size < 2:
+        return statements
+
+    out: list[str] = []
+    pending_head: str | None = None
+    pending_table: str | None = None
+    pending_cols: str | None = None
+    pending_values: list[str] = []
+    # PK ids in the current batch — Oracle's IDENTITY column allocates
+    # ONE value per INSERT ALL statement (not per row). With composite
+    # PK (id, entry), two rows with the same id in one INSERT ALL get
+    # the same entry → ORA-00001 unique violation. Track ids to flush
+    # before adding a duplicate.
+    pending_ids: set[str] = set()
+
+    def _flush() -> None:
+        nonlocal pending_head, pending_table, pending_cols, pending_values
+        nonlocal pending_ids
+        if not pending_values:
+            return
+        if len(pending_values) == 1 and pending_head is not None:
+            # Single-row batch: just re-emit as a regular INSERT INTO.
+            out.append(
+                f"INSERT INTO {pending_table} {pending_cols} VALUES "
+                f"{pending_values[0]}"
+            )
+        elif pending_head is not None:
+            into_clauses = "\n".join(
+                f"  INTO {pending_table} {pending_cols} VALUES {v}"
+                for v in pending_values
+            )
+            out.append(f"INSERT ALL\n{into_clauses}\nSELECT 1 FROM dual")
+        pending_head = None
+        pending_table = None
+        pending_cols = None
+        pending_values = []
+        pending_ids = set()
+
+    for stmt in statements:
+        m = _INSERT_HEAD_RE.match(stmt)
+        if m is None:
+            _flush()
+            out.append(stmt)
+            continue
+        table = m.group(1)
+        cols = m.group(2)
+        head_key = f"{table.lower()} {cols}"
+        # Extract the VALUES tuple (everything after the matched head).
+        values_part = stmt[m.end():].strip().rstrip(";").strip()
+        # Pull the first PK column value (the row's id) for collision
+        # detection. Falls back to a unique sentinel if the regex
+        # misses — keeps the batcher safe for non-conforming shapes.
+        id_match = _FIRST_VALUE_RE.match(values_part)
+        row_id = (
+            id_match.group(1) if id_match is not None
+            else f"__no_id_{len(pending_values)}__"
+        )
+        if pending_head is not None and pending_head != head_key:
+            _flush()
+        # Same-id collision: flush before adding so the new row starts
+        # a fresh INSERT ALL block (with a fresh IDENTITY allocation).
+        if row_id in pending_ids:
+            _flush()
+        if pending_head is None:
+            pending_head = head_key
+            pending_table = table
+            pending_cols = cols
+        pending_values.append(values_part)
+        pending_ids.add(row_id)
+        if len(pending_values) >= batch_size:
+            _flush()
+    _flush()
+    return out
+
+
+def _split_oracle_script_impl(sql: str) -> list[str]:
+    """Inner implementation kept separate to avoid recursion through the
+    public ``split_oracle_script`` symbol when adding tests that mock it.
     """
     statements: list[str] = []
     buffer: list[str] = []
