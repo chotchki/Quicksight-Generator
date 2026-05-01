@@ -409,6 +409,57 @@ class TestEmitFullSeed:
         result = add_broken_rail_plants(base, instance, broken_count=0)
         assert result is base
 
+    def test_full_seed_hash_lock_sasquatch_pr(self) -> None:
+        # R.5.a — pin SHA256 of the full demo-apply pipeline output
+        # (baseline + densify factor=5 + broken_count=15 +
+        # boost_amount_multiplier=5) against a canonical 2030-01-01
+        # anchor. Update the constant when changes are intentional.
+        import hashlib
+        from quicksight_gen.common.l2.auto_scenario import (
+            add_broken_rail_plants,
+            boost_inv_fanout_plants,
+            densify_scenario,
+        )
+        canonical_anchor = date(2030, 1, 1)
+        instance = load_instance(_SASQUATCH_PR)
+        base = default_scenario_for(instance, today=canonical_anchor).scenario
+        dense = densify_scenario(base, factor=5)
+        broken = add_broken_rail_plants(dense, instance, broken_count=15)
+        final = boost_inv_fanout_plants(broken, amount_multiplier=5)
+        sql = emit_full_seed(instance, final, anchor=canonical_anchor)
+        actual = hashlib.sha256(sql.encode("utf-8")).hexdigest()
+        expected = (
+            "44509c9243daa1355c56b8a945e0d91df50e0458217d6597340e5050a50f76ec"
+        )
+        assert actual == expected, (
+            f"emit_full_seed hash drifted for sasquatch_pr — re-lock by "
+            f"pasting the new value into this test:\n  actual={actual}"
+        )
+
+    def test_full_seed_hash_lock_spec_example(self) -> None:
+        # R.5.a — same as above for spec_example.
+        import hashlib
+        from quicksight_gen.common.l2.auto_scenario import (
+            add_broken_rail_plants,
+            boost_inv_fanout_plants,
+            densify_scenario,
+        )
+        canonical_anchor = date(2030, 1, 1)
+        instance = load_instance(_SPEC_EXAMPLE)
+        base = default_scenario_for(instance, today=canonical_anchor).scenario
+        dense = densify_scenario(base, factor=5)
+        broken = add_broken_rail_plants(dense, instance, broken_count=15)
+        final = boost_inv_fanout_plants(broken, amount_multiplier=5)
+        sql = emit_full_seed(instance, final, anchor=canonical_anchor)
+        actual = hashlib.sha256(sql.encode("utf-8")).hexdigest()
+        expected = (
+            "8aaa24bc0fb8feab122d45021a8e116389031f4d9bfe18c35c085dadd66b3a22"
+        )
+        assert actual == expected, (
+            f"emit_full_seed hash drifted for spec_example — re-lock by "
+            f"pasting the new value into this test:\n  actual={actual}"
+        )
+
     def test_baseline_and_plant_id_namespaces_dont_collide(self) -> None:
         # Plants use tr-drift-*/tr-overdraft-*/etc. ids; baseline uses
         # tr-base-*/tr-base-bundle-*/tr-base-chain-*. None should overlap.
