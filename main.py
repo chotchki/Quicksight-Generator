@@ -122,14 +122,18 @@ def define_env(env: Any) -> None:
             return _wrap_svg(svg, alt=f"conceptual diagram: {name}")
         if family == "l2_topology":
             kind = kwargs.get("kind", "accounts")
+            name = kwargs.get("name")
             l2_path = Path(
                 kwargs.get("l2_instance_path", str(default_l2_path))
             )
             l2 = (
                 default_l2 if l2_path == default_l2_path else load_instance(l2_path)
             )
-            svg = render_l2_topology(l2, kind)
-            return _wrap_svg(svg, alt=f"L2 topology: {kind}")
+            svg = render_l2_topology(l2, kind, name=name)
+            return _wrap_svg(
+                svg,
+                alt=f"L2 topology: {kind}" + (f" / {name}" if name else ""),
+            )
         if family == "dataflow":
             app = kwargs["app"]
             svg = render_dataflow(app)

@@ -36,6 +36,7 @@ from quicksight_gen.common.l2.primitives import (
     L2Instance,
     Rail,
     SingleLegRail,
+    TransferTemplate,
     TwoLegRail,
 )
 
@@ -45,10 +46,16 @@ from quicksight_gen.common.l2.primitives import (
 
 TopologyKind = Literal[
     "accounts", "account_templates", "chains", "layered", "hierarchy",
+    "transfer_template",
 ]
 
 
-def render_l2_topology(l2_instance: L2Instance, kind: TopologyKind) -> str:
+def render_l2_topology(
+    l2_instance: L2Instance,
+    kind: TopologyKind,
+    *,
+    name: str | None = None,
+) -> str:
     """Render an L2 instance's structure as an inline SVG.
 
     ``kind="accounts"`` shows every Account as a node and every Rail as
@@ -79,6 +86,13 @@ def render_l2_topology(l2_instance: L2Instance, kind: TopologyKind) -> str:
     (resolved by ``child.parent_role == parent.role``). Singleton
     accounts have solid borders; account templates carry dashed
     borders since they're a SHAPE, not an instance.
+
+    ``kind="transfer_template"`` requires a ``name`` kwarg naming one
+    of the instance's TransferTemplates. Renders that template as a
+    parent node with each leg-rail as a child node, edge-labeled with
+    the leg's direction (Debit / Credit / Variable / two-leg). The
+    template node carries its expected_net + transfer_key + completion
+    so a reader gets the closure shape at a glance.
     """
     if kind == "accounts":
         return _to_svg(_build_accounts_graph(l2_instance))
@@ -90,6 +104,13 @@ def render_l2_topology(l2_instance: L2Instance, kind: TopologyKind) -> str:
         return _to_svg(_build_layered_graph(l2_instance))
     if kind == "hierarchy":
         return _to_svg(_build_hierarchy_graph(l2_instance))
+    if kind == "transfer_template":
+        if name is None:
+            raise ValueError(
+                "kind='transfer_template' requires a name= kwarg "
+                "naming one of the instance's TransferTemplates."
+            )
+        return _to_svg(_build_transfer_template_graph(l2_instance, name))
     raise ValueError(f"unknown topology kind: {kind!r}")
 
 
@@ -385,6 +406,116 @@ def _build_account_templates_graph(l2_instance: L2Instance) -> graphviz.Digraph:
         )
     bundle.emit(g)
     return g
+
+
+def _build_transfer_template_graph(
+    l2_instance: L2Instance, name: str,
+) -> graphviz.Digraph:
+    """One-template diagram: the named TransferTemplate as a parent
+    node + each leg-rail as a child node.
+
+    The template node carries its closure-relevant attributes
+    (expected_net, transfer_key, completion) so a reader gets the
+    "what closes this bundle" answer at a glance. Leg-rail edges
+    are color-coded by direction:
+
+    - SingleLegRail Debit: blue
+    - SingleLegRail Credit: green
+    - SingleLegRail Variable: amber (the closure leg — flagged
+      because its amount + direction are determined at posting time)
+    - TwoLegRail: grey (the rail itself has both legs internally)
+
+    Aggregating leg rails are intentionally NOT styled differently —
+    they're forbidden from appearing here per validator R7 (template
+    leg_rails must be non-aggregating), so the case can't arise.
+    """
+    template = next(
+        (t for t in l2_instance.transfer_templates if str(t.name) == name),
+        None,
+    )
+    if template is None:
+        declared = [str(t.name) for t in l2_instance.transfer_templates]
+        raise ValueError(
+            f"no TransferTemplate named {name!r} on the L2 instance. "
+            f"Declared: {declared!r}"
+        )
+
+    g = graphviz.Digraph(format="svg")
+    g.attr(rankdir="LR", nodesep="0.4", ranksep="1.0")
+    g.attr("node", fontsize="11", style="filled")
+
+    # Template node — distinguished shape (double-bordered rounded box)
+    # so it reads as "this is the bundle, the rails below are its legs".
+    template_id = f"tt__{template.name}"
+    template_label_lines = [
+        f"<b>{template.name}</b>",
+        f"<i>{template.transfer_type}</i>",
+        f"expected_net = {template.expected_net}",
+        f"completion = {template.completion}",
+    ]
+    if template.transfer_key:
+        keys = ", ".join(str(k) for k in template.transfer_key)
+        template_label_lines.append(f"transfer_key = [{keys}]")
+    g.node(
+        template_id,
+        label=f"<{'<br/>'.join(template_label_lines)}>",
+        shape="box",
+        style="filled,rounded",
+        fillcolor="#fff3e0",
+        color="#e65100",
+        penwidth="2",
+    )
+
+    rails_by_name = {str(r.name): r for r in l2_instance.rails}
+    for leg_name in template.leg_rails:
+        rail = rails_by_name.get(str(leg_name))
+        if rail is None:
+            # R4 already guarantees existence at validate-time; defensive.
+            continue
+        leg_id = f"tt__{template.name}__leg__{rail.name}"
+        leg_label, edge_color, edge_label = _leg_rail_render(rail)
+        g.node(
+            leg_id,
+            label=leg_label,
+            shape="box",
+            style="filled",
+            fillcolor="#e3f2fd",
+        )
+        g.edge(
+            template_id, leg_id,
+            label=edge_label, fontsize="9", color=edge_color,
+        )
+    return g
+
+
+def _leg_rail_render(rail: Rail) -> tuple[str, str, str]:
+    """Return (node_label, edge_color, edge_label) for a leg rail.
+
+    Two-leg rails surface their source → destination pair on the node
+    label; single-leg rails surface the leg_role + direction.
+    """
+    if isinstance(rail, TwoLegRail):
+        srcs = " | ".join(_expand_role_expression(rail.source_role))
+        dsts = " | ".join(_expand_role_expression(rail.destination_role))
+        return (
+            f"<<b>{rail.name}</b><br/>{srcs} → {dsts}>",
+            "#666666",  # neutral grey — two-leg has its own internal direction
+            "two-leg",
+        )
+    # SingleLegRail
+    leg_roles = " | ".join(_expand_role_expression(rail.leg_role))
+    direction = rail.leg_direction
+    color_map = {
+        "Debit": "#1976d2",     # blue
+        "Credit": "#2e7d32",    # green
+        "Variable": "#f57c00",  # amber — closure leg
+    }
+    edge_color = color_map.get(direction, "#666666")
+    return (
+        f"<<b>{rail.name}</b><br/>leg_role: {leg_roles}>",
+        edge_color,
+        direction,
+    )
 
 
 def _build_chains_graph(l2_instance: L2Instance) -> graphviz.Digraph:

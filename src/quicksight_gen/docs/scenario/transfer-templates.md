@@ -20,6 +20,8 @@ Total: **{{ l2.transfer_templates|length }}** templates declared on
 - **Leg rails:** {{ tt.leg_rails|map(attribute="rail_name")|join(" → ") }}
 {%- endif %}
 
+{{ diagram("l2_topology", kind="transfer_template", name=tt.name|string) }}
+
 {% endfor %}
 {% else %}
 *This L2 instance declares no transfer templates — every Rail fires

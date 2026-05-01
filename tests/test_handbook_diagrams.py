@@ -74,6 +74,44 @@ class TestL2Topology:
             "account_templates diagram should mark templates with × N"
         )
 
+    def test_transfer_template_diagram_renders_against_sasquatch_pr(self):
+        # sasquatch_pr declares two TransferTemplates: InternalTransferCycle
+        # (3 legs incl. one Variable closure) and MerchantSettlementCycle
+        # (1 leg, TransferKey-grouped). Both should render without raising
+        # and the SVG should mention the template name + at least one of
+        # its leg rails.
+        l2 = load_instance(_SASQUATCH_PR)
+        for template in l2.transfer_templates:
+            svg = render_l2_topology(
+                l2, "transfer_template", name=str(template.name),
+            )
+            assert "<svg" in svg
+            assert str(template.name) in svg, (
+                f"transfer_template diagram missing the template name "
+                f"{template.name!r} in the rendered SVG"
+            )
+            for leg in template.leg_rails:
+                assert str(leg) in svg, (
+                    f"transfer_template diagram for {template.name!r} "
+                    f"missing leg-rail {leg!r}"
+                )
+
+    def test_transfer_template_diagram_requires_name(self):
+        # Defensive: the dispatch arm should reject the missing-name
+        # case with a clear error rather than silently rendering nothing.
+        l2 = load_instance(_SASQUATCH_PR)
+        import pytest
+        with pytest.raises(ValueError, match="requires a name"):
+            render_l2_topology(l2, "transfer_template")
+
+    def test_transfer_template_diagram_unknown_name_raises(self):
+        l2 = load_instance(_SASQUATCH_PR)
+        import pytest
+        with pytest.raises(ValueError, match="no TransferTemplate named"):
+            render_l2_topology(
+                l2, "transfer_template", name="DoesNotExist",
+            )
+
     def test_diagrams_bundle_parallel_rails_per_direction(self):
         # Parallel rails sharing the same (src, dst) direction should
         # collapse into one labeled edge instead of N parallel lines.
