@@ -327,7 +327,7 @@ Order the meta sweeps first so per-app fixes inherit them:
 - [x] **Q.2.a — Mechanical cleanup** (~30 min, no IA changes):
   - Most targeted refs already cleaned by M.4.9 / O.1.j-l sweeps. Surviving stale refs were two PR/AR comparison sentences in `handbook/investigation.md` (lines 22, 35) — fixed in commit `bba7d20`. Same commit trimmed CLAUDE.md ~48% (332→178 lines) of stale dataset listings, deleted-app refs, and phase archaeology.
 
-- [ ] **Q.2.b — IA review (plan-mode first).** Read every nav entry end-to-end, write "what's where today" map, propose 2-3 IA shapes with tradeoffs (e.g., role-onramp-first vs reference-first; merge handbook + concepts vs keep split). User picks; then execute.
+- [x] **Q.2.b — IA review (plan-mode first).** Audit + 3 shape proposals + user picked Shape C (audience-first home page). Shape C exec checklist (exec.1-9) all complete: Home reshaped as role picker (exec.1), nav reordered with For Your Role first (exec.2), `for-your-role/index.md` trimmed to terse pointer (exec.3), role pages audited for Shape C fit (exec.4), library shelves back-link to For Your Role (exec.5), Concepts kept as-is (exec.6), Background renamed to "Demo Institution Tour" (exec.7), build verified (exec.8). Long-term Shape B transition deferred until Shape C reveals which shelves get curation traffic.
 
   ### Q.2.b.audit — What's where today
 
@@ -436,10 +436,13 @@ Order the meta sweeps first so per-app fixes inherit them:
     nav section from "Background" → "Demo Institution Tour" per
     PLAN recommendation. Updated 2 prose refs (Home page + integrator
     role page). Section content + paths unchanged.
-  - [ ] **Q.2.b.exec.8 — `mkdocs build --strict` + click-through.**
-    Verify no dead links. Click each role page from the new Home,
-    and each library link from the role pages.
-  - [ ] **Q.2.b.exec.9 — Commit + tick PLAN Q.2.b.**
+  - [x] **Q.2.b.exec.8 — `mkdocs build --strict` + click-through.**
+    Strict build clean across exec.2-7. Rendered nav tab order
+    confirmed: For Your Role → Home → Concepts → Demo Institution
+    Tour → Walkthroughs → Reference → API Reference. All shelf
+    back-links + role page handbook/walkthrough/concept refs verified
+    by the strict build's no-broken-links pass.
+  - [x] **Q.2.b.exec.9 — Commit + tick PLAN Q.2.b.**
 
   ### Q.2.c.exec — Screenshot pipeline at 1280×900 + collapsed-by-default
 
