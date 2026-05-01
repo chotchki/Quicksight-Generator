@@ -469,10 +469,12 @@ Order the meta sweeps first so per-app fixes inherit them:
     sheets render "no data" because the seed anchors at 2030-01-01
     while "today" is 2026-05-01. exec.5 visual review will decide
     whether to re-anchor seed or pass URL-param date overrides.
-  - [ ] **Q.2.c.exec.3 — Collapse pattern.** Pick the mkdocs-
-    material syntax: either `<details><summary>` raw HTML, or
-    `??? note "Screenshot"` admonition (folds by default). Apply
-    to one walkthrough as the pilot to validate render.
+  - [x] **Q.2.c.exec.3 — Collapse pattern.** Picked
+    `??? example "Screenshot"` admonition (mkdocs-material native;
+    folds by default). Enabled `admonition` + `pymdownx.details`
+    extensions in mkdocs.yml. Pilot: drift.md walkthrough's screenshot
+    embed wrapped — renders as `<details><summary>Screenshot</summary>`
+    (collapsed by default, browser-native fold).
   - [ ] **Q.2.c.exec.4 — Sweep existing screenshot embeds.** Find
     every `![…](…)` referencing a screenshot in handbook + walk-
     through pages, wrap in the chosen collapse pattern. Likely

@@ -158,3 +158,9 @@ markdown_extensions:
       permalink: true
   - md_in_html
   - pymdownx.superfences
+  # Q.2.c.exec.3 — admonitions enable the ??? collapse pattern used to
+  # fold screenshot embeds by default. `pymdownx.details` is what makes
+  # the `???` (vs `!!!`) syntax fold-by-default; `admonition` provides
+  # the styling.
+  - admonition
+  - pymdownx.details

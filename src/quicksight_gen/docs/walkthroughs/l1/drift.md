@@ -15,7 +15,8 @@ Stored vs computed balance disagreements at end-of-day. Two scopes:
 Both tables only show rows where stored ≠ computed. Each row IS a
 SHOULD-constraint violation; healthy = empty.
 
-![Drift](../screenshots/l1/l1-sheet-drift.png)
+??? example "Screenshot"
+    ![Drift](../screenshots/l1/l1-sheet-drift.png)
 
 ## When to use it
 
