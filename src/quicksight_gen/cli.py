@@ -1248,21 +1248,28 @@ def export_docs_cmd(output: str, l2_instance: str | None) -> None:
 # ---------------------------------------------------------------------------
 
 
-# (module path, builder function) per app slug. Lazy-imported in
-# _build_app_for_screenshots so the CLI loads quickly when this command
+# Per CLI app slug: (module path, builder function, output-subdir slug).
+# The output-subdir slug is the short form (l1, l2ft, inv, exec) that
+# matches the existing `docs/walkthroughs/screenshots/<short>/` convention
+# already wired into handbook + walkthrough markdown refs. Lazy-imported
+# in _build_app_for_screenshots so the CLI loads quickly when this command
 # isn't invoked.
-_SCREENSHOT_APPS: dict[str, tuple[str, str]] = {
+_SCREENSHOT_APPS: dict[str, tuple[str, str, str]] = {
     "l1-dashboard": (
         "quicksight_gen.apps.l1_dashboard.app", "build_l1_dashboard_app",
+        "l1",
     ),
     "l2-flow-tracing": (
         "quicksight_gen.apps.l2_flow_tracing.app", "build_l2_flow_tracing_app",
+        "l2ft",
     ),
     "investigation": (
         "quicksight_gen.apps.investigation.app", "build_investigation_app",
+        "inv",
     ),
     "executives": (
         "quicksight_gen.apps.executives.app", "build_executives_app",
+        "exec",
     ),
 }
 
@@ -1290,7 +1297,7 @@ def _parse_viewport(text: str) -> tuple[int, int]:
 def _build_app_for_screenshots(app_slug: str, cfg, l2_instance):
     """Import + call the builder for ``app_slug``; resolve auto-IDs."""
     import importlib
-    mod_path, fn_name = _SCREENSHOT_APPS[app_slug]
+    mod_path, fn_name, _subdir = _SCREENSHOT_APPS[app_slug]
     mod = importlib.import_module(mod_path)
     builder = getattr(mod, fn_name)
     app = builder(cfg, l2_instance=l2_instance)
@@ -1458,10 +1465,13 @@ def export_screenshots_cmd(
         click.echo(f"== {slug} ==")
         app_obj = _build_app_for_screenshots(slug, cfg, l2_instance)
         # Dashboard ID convention: cfg.prefixed(<dashboard_id_suffix>).
-        # The dashboard tree carries the un-prefixed suffix; the cfg
-        # adds resource_prefix + (optional) l2_instance_prefix.
+        # MUST use app_obj.cfg, not the outer cfg — the builders auto-
+        # derive cfg.l2_instance_prefix from l2_instance.instance and
+        # store the updated cfg on the app, but the outer cfg we passed
+        # in is unchanged. Reading from app_obj.cfg picks up the prefix
+        # so the dashboard ID matches what was deployed.
         dashboard_suffix = app_obj.dashboard.dashboard_id_suffix
-        dashboard_id = cfg.prefixed(dashboard_suffix)
+        dashboard_id = app_obj.cfg.prefixed(dashboard_suffix)
         click.echo(
             f"-> embed URL for {dashboard_id}...", nl=False,
         )
@@ -1472,7 +1482,11 @@ def export_screenshots_cmd(
         )
         click.echo(" OK")
 
-        out_dir = output_root / slug
+        # Write to the short-slug subdir (l1/, l2ft/, inv/, exec/) so the
+        # existing handbook + walkthrough markdown refs ("../screenshots/l1/")
+        # find the captured PNGs without a docs sweep.
+        _, _, output_subdir = _SCREENSHOT_APPS[slug]
+        out_dir = output_root / output_subdir
         click.echo(f"-> capturing {len(app_obj.analysis.sheets)} sheets at "
                    f"{viewport[0]}x{viewport[1]} into {out_dir}/")
         results = capture_deployed_app(
