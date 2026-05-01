@@ -1574,20 +1574,36 @@ def _populate_bundle_map(
             continue
         agg_slug = _baseline_rail_slug(rail.name)
         cadence = (rail.cadence or "").lower()
-        if "monthly" in cadence:
-            firing_days = tuple(last_business_day_per_month)
-        else:
-            # daily-eod, daily-bod, intraday-* — bundle every business day.
-            firing_days = state.business_days
 
-        for day_seq, day in enumerate(firing_days):
-            bundle_id = f"tr-base-bundle-{agg_slug}-{day_seq:04d}"
-            for child_ref in rail.bundles_activity:
-                # bundles_activity may name a Rail OR a TransferTemplate
-                # OR a TransferType. Match against rail names; the other
-                # cases would need more sophisticated resolution but
-                # don't appear in the calibration L2 instances yet.
-                state.bundle_map[(Identifier(str(child_ref)), day)] = bundle_id
+        if "monthly" in cadence:
+            # Monthly_eom rails fire once at month-end and retroactively
+            # bundle EVERY child posted that month. Walk every business
+            # day in the window and assign each to the bundle_id keyed
+            # off the upcoming month-end firing.
+            firing_days = tuple(last_business_day_per_month)
+            for day_seq, eom_day in enumerate(firing_days):
+                bundle_id = f"tr-base-bundle-{agg_slug}-{day_seq:04d}"
+                # Every business day in (year, month) maps to this bundle.
+                for d in state.business_days:
+                    if d.year == eom_day.year and d.month == eom_day.month:
+                        for child_ref in rail.bundles_activity:
+                            state.bundle_map[
+                                (Identifier(str(child_ref)), d)
+                            ] = bundle_id
+        else:
+            # daily-eod, daily-bod, intraday-* — bundle each business
+            # day's children into that day's own bundle_id.
+            firing_days = state.business_days
+            for day_seq, day in enumerate(firing_days):
+                bundle_id = f"tr-base-bundle-{agg_slug}-{day_seq:04d}"
+                for child_ref in rail.bundles_activity:
+                    # bundles_activity may name a Rail OR TransferTemplate
+                    # OR TransferType. Match against rail names; the
+                    # other cases would need more sophisticated resolution
+                    # but don't appear in the calibration L2 instances yet.
+                    state.bundle_map[
+                        (Identifier(str(child_ref)), day)
+                    ] = bundle_id
 
 
 def _last_business_day_per_month(
