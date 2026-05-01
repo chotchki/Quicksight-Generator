@@ -1,5 +1,25 @@
 # Release Notes
 
+## v7.1.1 — Hotfix: `demo apply --all` now generates all four apps
+
+Fresh installs of v7.1.0 deployed only Investigation + Executives
+even with `demo apply --all` + `deploy --all`. Root cause: the
+`DEMO_APP_CHOICE` Click choice list still listed only
+`{investigation, executives}` (M.2.2 era when L1 + L2FT were
+prototyped through a separate L2 pipeline), and the
+`_apply_demo()` body had no codegen branches for L1 / L2FT. So
+`demo apply --all` silently skipped two of four apps; `deploy
+--all` then shipped what JSON existed in `out/`.
+
+Fix: extend `DEMO_APP_CHOICE` to list all four apps, and add the
+matching `_generate_l1_dashboard` / `_generate_l2_flow_tracing`
+calls to `_apply_demo()`. Verified end-to-end: `demo apply --all`
+now writes 4 analyses + 4 dashboards + 35 datasets +
+datasource.json + theme.json. No other behavior change; existing
+dev-loop deploys (`deploy --all --generate`) were not affected
+because the standalone `generate --all` already handled all four
+apps correctly — only `demo apply` was the gap.
+
 ## v7.1.0 — Dashboard polish: currency, universal date filters, Oracle wrapper, probe CLI
 
 Q.1 dashboard polish phase shipped clean across both dialects (PG +

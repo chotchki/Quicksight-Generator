@@ -462,13 +462,18 @@ APP_CHOICE = click.Choice([
 
 # Demo subcommands (schema / seed / etl-example / apply) target the v5
 # demo-data pipeline only. `l1-dashboard` and `l2-flow-tracing` are the
-# L2-fed apps — their data comes from the L2 prefixed schema + M.2.2's
-# L2 seed via the L2 pipeline (e.g. `m2_6_verify.sh`), NOT from the v5
-# demo_data.py generators here. Keeping them out of DEMO_APP_CHOICE
-# means `demo seed l1-dashboard` / `demo seed l2-flow-tracing` fails
-# with a Click validation error pointing the user at the right surface.
+# Q.2 hotfix — DEMO_APP_CHOICE now lists every shipped app. Pre-Q.2
+# this only contained {investigation, executives} because L1 + L2FT
+# were prototyped through a separate L2 pipeline (e.g.
+# `m2_6_verify.sh`). Once those graduated to first-class apps,
+# `demo apply --all` was supposed to generate ALL FOUR but the
+# generator branches in `_apply_demo` lagged — fresh installs only
+# saw investigation + executives in `out/`, then `deploy --all`
+# silently shipped 2 of 4. Adding the choices + the matching
+# `_generate_l1_dashboard` / `_generate_l2_flow_tracing` calls to
+# `_apply_demo` closes the gap.
 DEMO_APP_CHOICE = click.Choice([
-    "investigation", "executives",
+    "investigation", "executives", "l1-dashboard", "l2-flow-tracing",
 ])
 
 
@@ -968,7 +973,23 @@ def _apply_demo(
         )
         json_count += len(exec_datasets) + 2
 
-    click.echo(f"\nDone. {json_count} JSON files in {out}/")
+    # Q.2 hotfix — L1 + L2FT branches. Both apps are L2-fed off the
+    # same instance + read the per-prefix matviews already populated
+    # by the schema/seed/refresh sequence above. Pre-fix `demo apply
+    # --all` silently skipped these, so `deploy --all` shipped 2 of
+    # 4 dashboards on a fresh install.
+    if app in ("l1-dashboard", "all"):
+        _generate_l1_dashboard(
+            config_path, output_dir, l2_instance_path=l2_instance_path,
+        )
+
+    if app in ("l2-flow-tracing", "all"):
+        _generate_l2_flow_tracing(
+            config_path, output_dir, l2_instance_path=l2_instance_path,
+        )
+
+    click.echo(f"\nDone. {json_count} JSON files in {out}/ "
+               "(plus L1 + L2FT outputs above when --all was passed).")
 
 
 # ---------------------------------------------------------------------------
