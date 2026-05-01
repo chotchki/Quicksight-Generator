@@ -151,17 +151,22 @@ class TestBaselineLegLoop:
             f"got {n}"
         )
 
-    def test_aggregating_rails_emit_zero_baseline_legs(self) -> None:
-        # R.2.b skips aggregating rails — R.2.c handles bundling.
+    def test_aggregating_rails_emit_baseline_legs(self) -> None:
+        # R.2.c implements aggregating rails. Every aggregating rail with
+        # eligible accounts should emit at least one EOD/EOM parent leg
+        # over the window.
         instance = load_instance(_SASQUATCH_PR)
         sql = emit_baseline_seed(instance, anchor=_ANCHOR)
+        missing: list[str] = []
         for rail in instance.rails:
             if not rail.aggregating:
                 continue
-            assert f"'{rail.name}'" not in sql, (
-                f"Aggregating rail {rail.name} should produce zero baseline "
-                "legs in R.2.b — R.2.c handles bundling. Found rows in SQL."
-            )
+            if f"'{rail.name}'" not in sql:
+                missing.append(str(rail.name))
+        assert not missing, (
+            f"Aggregating rails with no baseline legs (R.2.c should emit "
+            f"per-period parent legs): {missing}"
+        )
 
     def test_non_aggregating_rails_all_emit_legs(self) -> None:
         # Every non-aggregating rail with eligible accounts should emit
@@ -177,6 +182,35 @@ class TestBaselineLegLoop:
         assert not missing, (
             f"Non-aggregating rails with no baseline legs (R.2.b should "
             f"cover every rail with eligible accounts): {missing}"
+        )
+
+    def test_monthly_eom_rails_fire_only_at_month_end(self) -> None:
+        # R.2.c — monthly_eom rails fire only on the last business day
+        # of each month. Over a 90-day window that's ~3 firings, much
+        # fewer than a daily_eod rail's ~65.
+        instance = load_instance(_SASQUATCH_PR)
+        sql = emit_baseline_seed(instance, anchor=_ANCHOR)
+        monthly_count = sql.count("'CustomerFeeMonthlySettlement'")
+        daily_count = sql.count("'ACHOriginationDailySweep'")
+        assert monthly_count <= 5, (
+            f"monthly_eom rail should fire ~3 times in 90d; got {monthly_count}"
+        )
+        assert daily_count >= 30, (
+            f"daily_eod rail should fire ~65 times in 90d; got {daily_count}"
+        )
+
+    def test_bundle_id_stamped_on_bundled_children(self) -> None:
+        # R.2.c — children of bundled activities get bundle_id stamped
+        # at emit time. The bundle_id format is
+        # ``tr-base-bundle-<agg_rail_slug>-<seq:04d>``.
+        instance = load_instance(_SASQUATCH_PR)
+        sql = emit_baseline_seed(instance, anchor=_ANCHOR)
+        # ACHOriginationDailySweep bundles CustomerOutboundACH; both
+        # the parent legs (transfer_id) and child legs (bundle_id) carry
+        # ``bundle-achoriginationdailysweep`` in their identifier.
+        assert "bundle-achoriginationdailysweep" in sql, (
+            "Aggregating rail bundle ids should appear in emitted SQL "
+            "(both as parent transfer_id and child bundle_id)."
         )
 
     def test_balances_state_machine_updates(self) -> None:

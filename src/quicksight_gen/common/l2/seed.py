@@ -656,6 +656,15 @@ class _BaselineState:
     eod_balances: dict[tuple[Identifier, date], Decimal] = field(
         default_factory=lambda: {},
     )
+    # (child_rail_name, business_day) -> aggregating-rail bundle_id for
+    # any child leg posted on that day (R.2.c). Pre-computed before the
+    # per-Rail leg loop so the leg emitter can stamp bundle_id at emit
+    # time without a second pass. Keys absent from the map → bundle_id
+    # stays NULL (unbundled — caught by L1's stuck_unbundled view if the
+    # rail's max_unbundled_age elapses).
+    bundle_map: dict[tuple[Identifier, date], str] = field(
+        default_factory=lambda: {},
+    )
 
 
 def emit_baseline_seed(
@@ -716,17 +725,33 @@ def emit_baseline_seed(
     init_rng = random.Random(_BASELINE_BASE_SEED)
     _initialize_starting_balances(state, instance, template_by_role, init_rng)
 
+    # Pre-compute the bundle map (R.2.c). For every aggregating Rail,
+    # walk its bundles_activity refs and assign a deterministic bundle_id
+    # for each (child_rail, business_day) tuple. The per-Rail leg loop
+    # then stamps bundle_id at emit time so child rows land bundled out
+    # of the gate (no need for a second supersession pass).
+    _populate_bundle_map(state, instance)
+
     # Per-Rail emission loop. Sort by name so SHA256 hash-lock stays
     # deterministic (Python's set/dict iteration order is insertion-ordered
     # but L2Instance.rails is already a tuple; sort defensively).
+    # Non-aggregating rails go through _emit_baseline_for_rail (R.2.b);
+    # aggregating rails go through _emit_baseline_for_aggregating_rail
+    # (R.2.c) which knows about the children-first / EOD-bundling pattern.
     txn_rows: list[str] = []
     txn_counter = _Counter(start=1)
     for rail in sorted(instance.rails, key=lambda r: str(r.name)):
         rail_rng = random.Random(_seed_for_rail(rail.name))
-        rail_rows = _emit_baseline_for_rail(
-            rail, instance, state, template_by_role,
-            rail_rng, txn_counter, dialect,
-        )
+        if rail.aggregating:
+            rail_rows = _emit_baseline_for_aggregating_rail(
+                rail, instance, state, template_by_role,
+                rail_rng, txn_counter, dialect,
+            )
+        else:
+            rail_rows = _emit_baseline_for_rail(
+                rail, instance, state, template_by_role,
+                rail_rng, txn_counter, dialect,
+            )
         txn_rows.extend(rail_rows)
 
     # Chain firings overlay (R.2.d). For every Chain the L2 declares,
@@ -1240,9 +1265,8 @@ def _emit_baseline_for_rail(
          materialize ``daily_balances`` rows.
     """
     if rail.aggregating:
-        # R.2.c handles aggregating rails (children-first + EOD bundling
-        # parent at 17:00-19:00). Skip here so the baseline doesn't
-        # plant unbundled-aging-violating legs accidentally.
+        # Aggregating rails go through _emit_baseline_for_aggregating_rail
+        # (R.2.c) which handles the children-first + EOD bundling pattern.
         return []
 
     kind = _classify_rail(rail)
@@ -1332,6 +1356,10 @@ def _emit_baseline_for_rail(
             amount = _baseline_amount_sample(rng, kind, cap=cap)
 
             metadata = _baseline_metadata(rail, n, firing_seq)
+            # R.2.c bundle stamp: if this child rail is bundled by some
+            # aggregating Rail today, the leg's bundle_id is the bundle
+            # transfer_id pre-computed by _populate_bundle_map.
+            bundle_id = state.bundle_map.get((rail.name, day))
 
             if isinstance(rail, TwoLegRail):
                 dst = dst_accounts[rng.randrange(len(dst_accounts))]
@@ -1350,6 +1378,7 @@ def _emit_baseline_for_rail(
                     rail_name=rail.name,
                     origin=src_origin,
                     metadata=metadata,
+                    bundle_id=bundle_id,
                     dialect=dialect,
                 ))
                 rows.append(_txn_row(
@@ -1367,6 +1396,7 @@ def _emit_baseline_for_rail(
                     rail_name=rail.name,
                     origin=dst_origin,
                     metadata=metadata,
+                    bundle_id=bundle_id,
                     dialect=dialect,
                 ))
                 # Update balances + EOD snapshot.
@@ -1399,6 +1429,7 @@ def _emit_baseline_for_rail(
                     rail_name=rail.name,
                     origin=src_origin,
                     metadata=metadata,
+                    bundle_id=bundle_id,
                     dialect=dialect,
                 ))
                 state.balances[src.account_id] = (
@@ -1407,6 +1438,235 @@ def _emit_baseline_for_rail(
                 state.eod_balances[(src.account_id, day)] = state.balances[src.account_id]
 
     _ = template_by_role  # accounts already resolved via state.template_instances
+    return rows
+
+
+def _populate_bundle_map(
+    state: _BaselineState, instance: L2Instance,
+) -> None:
+    """Pre-compute bundle_id assignments for every (child_rail, day) pair.
+
+    R.2.c — for each aggregating Rail with declared ``bundles_activity``,
+    walk the firing schedule (every business day for daily_eod /
+    intraday rails; last-business-day-of-month for monthly_eom) and
+    assign a deterministic bundle_id. The per-Rail leg loop then
+    stamps that bundle_id onto child legs at emit time so the L1
+    stuck_unbundled view stays clean for the baseline.
+
+    Bundle_id format: ``tr-base-bundle-<agg_rail_slug>-<day_seq:04d>``.
+    Same shape as a normal transfer_id so the schema sees it as a
+    valid Transfer reference.
+    """
+    last_business_day_per_month = _last_business_day_per_month(state.business_days)
+
+    for rail in instance.rails:
+        if not rail.aggregating:
+            continue
+        if not rail.bundles_activity:
+            continue
+        agg_slug = _baseline_rail_slug(rail.name)
+        cadence = (rail.cadence or "").lower()
+        if "monthly" in cadence:
+            firing_days = tuple(last_business_day_per_month)
+        else:
+            # daily-eod, daily-bod, intraday-* — bundle every business day.
+            firing_days = state.business_days
+
+        for day_seq, day in enumerate(firing_days):
+            bundle_id = f"tr-base-bundle-{agg_slug}-{day_seq:04d}"
+            for child_ref in rail.bundles_activity:
+                # bundles_activity may name a Rail OR a TransferTemplate
+                # OR a TransferType. Match against rail names; the other
+                # cases would need more sophisticated resolution but
+                # don't appear in the calibration L2 instances yet.
+                state.bundle_map[(Identifier(str(child_ref)), day)] = bundle_id
+
+
+def _last_business_day_per_month(
+    business_days: tuple[date, ...],
+) -> list[date]:
+    """Return the last business day in each month covered by ``business_days``.
+
+    Walks the sorted list and notes the last entry seen for each
+    (year, month) pair. Used by aggregating monthly_eom rails which
+    fire only at month-end.
+    """
+    last_by_month: dict[tuple[int, int], date] = {}
+    for d in business_days:
+        last_by_month[(d.year, d.month)] = d
+    return sorted(last_by_month.values())
+
+
+def _emit_baseline_for_aggregating_rail(
+    rail: Rail,
+    instance: L2Instance,
+    state: _BaselineState,
+    template_by_role: dict[Identifier, AccountTemplate],
+    rng: random.Random,
+    counter: _Counter,
+    dialect: Dialect,
+) -> list[str]:
+    """Emit the EOD/EOM parent legs of an aggregating Rail (R.2.c).
+
+    Per R.1.f §6: aggregating rails post their parent at 17:00-19:00 ET
+    after children accumulate during the day; monthly_eom rails fire
+    only on the last business day of each month. The parent's
+    transfer_id matches the bundle_id pre-stamped on the day's
+    children (computed in ``_populate_bundle_map``), so the dashboard's
+    bundle-membership joins resolve cleanly.
+
+    Currently supports:
+      - SingleLegRail: emits one leg per firing.
+      - TwoLegRail: emits two legs summing to zero per firing.
+
+    Amount is sampled from the kind's lognormal table (same machinery
+    as the per-firing sampler in R.2.b). It does NOT exactly match the
+    sum of bundled children — the baseline approximation is acceptable
+    given the conservation invariant flags Transfers, not Bundles.
+    """
+    assert rail.aggregating, (
+        "_emit_baseline_for_aggregating_rail called with non-aggregating rail"
+    )
+
+    kind = _classify_rail(rail)
+    last_business_day_per_month = _last_business_day_per_month(state.business_days)
+    cadence = (rail.cadence or "").lower()
+    firing_days: tuple[date, ...]
+    if "monthly" in cadence:
+        firing_days = tuple(last_business_day_per_month)
+    else:
+        firing_days = state.business_days
+
+    if not firing_days:
+        return []
+
+    if isinstance(rail, TwoLegRail):
+        src_accounts = _eligible_accounts_for_role(
+            rail.source_role, state, instance,
+        )
+        dst_accounts = _eligible_accounts_for_role(
+            rail.destination_role, state, instance,
+        )
+        if not src_accounts or not dst_accounts:
+            return []
+        src_origin = (
+            str(rail.source_origin) if rail.source_origin is not None
+            else (str(rail.origin) if rail.origin is not None else "InternalInitiated")
+        )
+        dst_origin = (
+            str(rail.destination_origin) if rail.destination_origin is not None
+            else (str(rail.origin) if rail.origin is not None else "InternalInitiated")
+        )
+    else:
+        assert isinstance(rail, SingleLegRail)
+        leg_accounts = _eligible_accounts_for_role(
+            rail.leg_role, state, instance,
+        )
+        if not leg_accounts:
+            return []
+        src_accounts = leg_accounts
+        dst_accounts = []
+        src_origin = (
+            str(rail.origin) if rail.origin is not None
+            else "InternalInitiated"
+        )
+        dst_origin = src_origin
+
+    cap_by_parent_role = _baseline_cap_lookup(rail, instance)
+    rail_slug = _baseline_rail_slug(rail.name)
+    rows: list[str] = []
+
+    for day_seq, day in enumerate(firing_days):
+        # Parent transfer_id matches the bundle_id stamped on this day's
+        # children (see _populate_bundle_map).
+        bundle_transfer_id = f"tr-base-bundle-{rail_slug}-{day_seq:04d}"
+        n = counter.next()
+        # EOD time band per R.1.f §3 — the kind's time_band already
+        # reflects 17:00-19:00 for aggregating_daily / aggregating_monthly.
+        posting = _baseline_time_of_day(rng, kind, day)
+
+        src = src_accounts[rng.randrange(len(src_accounts))]
+        cap = cap_by_parent_role.get(
+            str(src.account_parent_role) if src.account_parent_role else ""
+        )
+        amount = _baseline_amount_sample(rng, kind, cap=cap)
+        metadata = _baseline_metadata(rail, n, 0)
+
+        if isinstance(rail, TwoLegRail):
+            dst = dst_accounts[rng.randrange(len(dst_accounts))]
+            txn_id = f"tx-base-{rail_slug}-{n:06d}"
+            rows.append(_txn_row(
+                id_=f"{txn_id}-src",
+                account_id=src.account_id,
+                account_name=src.account_name,
+                account_role=src.account_role,
+                account_scope=src.account_scope,
+                account_parent_role=src.account_parent_role,
+                money=-amount,
+                direction="Debit",
+                posting=posting,
+                transfer_id=bundle_transfer_id,
+                transfer_type=rail.transfer_type,
+                rail_name=rail.name,
+                origin=src_origin,
+                metadata=metadata,
+                dialect=dialect,
+            ))
+            rows.append(_txn_row(
+                id_=txn_id,
+                account_id=dst.account_id,
+                account_name=dst.account_name,
+                account_role=dst.account_role,
+                account_scope=dst.account_scope,
+                account_parent_role=dst.account_parent_role,
+                money=amount,
+                direction="Credit",
+                posting=posting,
+                transfer_id=bundle_transfer_id,
+                transfer_type=rail.transfer_type,
+                rail_name=rail.name,
+                origin=dst_origin,
+                metadata=metadata,
+                dialect=dialect,
+            ))
+            state.balances[src.account_id] = (
+                state.balances.get(src.account_id, Decimal("0")) - amount
+            )
+            state.balances[dst.account_id] = (
+                state.balances.get(dst.account_id, Decimal("0")) + amount
+            )
+            state.eod_balances[(src.account_id, day)] = state.balances[src.account_id]
+            state.eod_balances[(dst.account_id, day)] = state.balances[dst.account_id]
+        else:
+            assert isinstance(rail, SingleLegRail)
+            if rail.leg_direction == "Credit":
+                direction, signed = "Credit", amount
+            else:
+                direction, signed = "Debit", -amount
+            txn_id = f"tx-base-{rail_slug}-{n:06d}"
+            rows.append(_txn_row(
+                id_=txn_id,
+                account_id=src.account_id,
+                account_name=src.account_name,
+                account_role=src.account_role,
+                account_scope=src.account_scope,
+                account_parent_role=src.account_parent_role,
+                money=signed,
+                direction=direction,
+                posting=posting,
+                transfer_id=bundle_transfer_id,
+                transfer_type=rail.transfer_type,
+                rail_name=rail.name,
+                origin=src_origin,
+                metadata=metadata,
+                dialect=dialect,
+            ))
+            state.balances[src.account_id] = (
+                state.balances.get(src.account_id, Decimal("0")) + signed
+            )
+            state.eod_balances[(src.account_id, day)] = state.balances[src.account_id]
+
+    _ = template_by_role
     return rows
 
 
