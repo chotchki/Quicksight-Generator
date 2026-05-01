@@ -117,20 +117,16 @@ Juniper meeting in the middle.
 
 - [Account Structure](../scenario/index.md) — the bank, customers,
   accounts, and money flows behind every walkthrough on this page.
-- [Schema v3 — Data Feed Contract](../Schema_v6.md) — column specs,
+- [Schema v6 — Data Feed Contract](../Schema_v6.md) — column specs,
   metadata keys, and ETL examples for the upstream feeds. The
   [Materialized views](../Schema_v6.md#the-layered-model) section
-  documents `inv_pair_rolling_anomalies` (Volume Anomalies) and
-  `inv_money_trail_edges` (Money Trail / Account Network) plus the
-  REFRESH cadence contract.
+  documents `<prefix>_inv_pair_rolling_anomalies` (Volume Anomalies)
+  and `<prefix>_inv_money_trail_edges` (Money Trail / Account
+  Network) plus the REFRESH cadence contract.
 - [Data Integration Handbook](etl.md) — the team that populates the
   data behind every walkthrough on this page. Read it when an anomaly
   z-score, fanout count, or chain-walk result disagrees with what you
   see in the source feed.
-- GL Reconciliation Handbook — Treasury's view of the same
+- [L1 Reconciliation Dashboard](l1.md) — Treasury's view of the same
   base tables. When a Money Trail edge needs row-level posting
-  evidence, AR's Transactions sheet is the next stop.
-- Payment Reconciliation Handbook — Merchant Support's view
-  of the same base tables. When a fanout or anomaly traces back to a
-  merchant settlement chain, PR's pipeline tabs are where the rest of
-  the story lives.
+  evidence, the L1 Transactions sheet is the next stop.
