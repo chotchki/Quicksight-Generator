@@ -167,18 +167,46 @@ class Dim:
         """Emit the raw ``UnaggregatedField`` dict shape used inside
         ``TableUnaggregatedFieldWells.Values``. The model layer types
         that field as ``list[dict[str, Any]]`` rather than a typed
-        union, so the tree emits it as a dict directly."""
+        union, so the tree emits it as a dict directly.
+
+        Q.1.a.7 — When ``currency=True`` is set on a numerical Dim, the
+        same USD ``FormatConfiguration`` that ``emit()`` wires onto a
+        NumericalDimensionField is also folded into the unaggregated
+        field shape so table cells render with "$" + thousands
+        separator + 2 decimals. Without this, currency=True only took
+        effect when the Dim was used as a chart axis or KPI value, not
+        when it was used as a table column (the by-far common case).
+        """
         assert not isinstance(self.field_id, _AutoSentinel), (
             "field_id wasn't resolved — App._resolve_auto_ids() must run "
             "before Dim.emit_unaggregated_field()."
         )
-        return {
+        out: dict[str, object] = {
             "FieldId": self.field_id,
             "Column": {
                 "DataSetIdentifier": self.dataset.identifier,
                 "ColumnName": resolve_column(self.column),
             },
         }
+        if self.currency:
+            assert self.kind == "numerical", (
+                f"Dim(currency=True) is only valid for kind='numerical', "
+                f"not {self.kind!r} — money values aren't categorical or "
+                f"date axes."
+            )
+            from dataclasses import asdict
+            from quicksight_gen.common.models import _strip_nones
+            # UnaggregatedField.FormatConfiguration is a discriminated
+            # union of String/Number/DateTime — pick the NumberFormatConfiguration
+            # branch and place the existing _USD_FORMAT shape under it.
+            # (NumericalMeasureField's FormatConfiguration drops the
+            # discriminator since the field type is already known to be
+            # numeric; the unaggregated field stays generic over the
+            # column type and so needs the extra level.)
+            out["FormatConfiguration"] = {
+                "NumberFormatConfiguration": _strip_nones(asdict(_USD_FORMAT)),
+            }
+        return out
 
 
 # Aggregation kinds split into "categorical" (COUNT, DISTINCT_COUNT —

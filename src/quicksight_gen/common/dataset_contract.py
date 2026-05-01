@@ -215,6 +215,39 @@ def dataset_permissions(cfg: Config) -> list[ResourcePermission] | None:
     ]
 
 
+def _oracle_lowercase_alias_wrapper(
+    sql: str, contract: DatasetContract, cfg: Config,
+) -> str:
+    """Wrap Oracle CustomSQL with a lowercase-aliased outer SELECT.
+
+    Oracle case-folds unquoted identifiers to UPPERCASE at parse time,
+    so a CustomSQL like ``SELECT * FROM <matview>`` (matview built with
+    unquoted DDL columns) returns ACCOUNT_ID, not account_id, in the
+    column metadata. QuickSight then quotes the lowercase column names
+    from its declared ``Columns`` list when building visual queries
+    (``SELECT "account_id" FROM (<custom_sql>)``), and Oracle responds
+    with ``ORA-00904: "account_id": invalid identifier`` because no
+    such case-preserved identifier exists.
+
+    Fix: re-alias every projected column from its UPPERCASE
+    Oracle-stored form to a lowercase double-quoted alias matching
+    what QS expects. The wrapper is keyed off the contract column
+    names — those ARE the QS-side column names — so the alias list
+    is generated from the same source of truth that QS reads.
+
+    No-op on Postgres (it folds unquoted identifiers to lowercase by
+    default; the existing SQL works without rewrapping).
+    """
+    from quicksight_gen.common.sql import Dialect
+
+    if cfg.dialect is not Dialect.ORACLE:
+        return sql
+    aliases = ", ".join(
+        f'qs_inner."{c.name.upper()}" AS "{c.name}"' for c in contract.columns
+    )
+    return f"SELECT {aliases} FROM (\n{sql}\n) qs_inner"
+
+
 def build_dataset(
     cfg: Config,
     dataset_id: str,
@@ -232,6 +265,7 @@ def build_dataset(
     syntax at QuickSight query time. Bridge to analysis params via
     ``MappedDataSetParameters`` on the analysis ParameterDeclaration.
     """
+    sql = _oracle_lowercase_alias_wrapper(sql, contract, cfg)
     columns = contract.to_input_columns()
     physical = {
         table_key: PhysicalTable(

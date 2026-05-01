@@ -78,3 +78,79 @@ class TestDatasetContract:
         assert len(cols) == 1
         assert cols[0].Name == "x"
         assert cols[0].Type == "INTEGER"
+
+
+# ---------------------------------------------------------------------------
+# Q.1.a.8 — Oracle case-fold wrapper
+# ---------------------------------------------------------------------------
+
+class TestOracleLowercaseAliasWrapper:
+    """Oracle case-folds unquoted identifiers to UPPERCASE; QuickSight
+    quotes lowercase column names from the Columns declaration when
+    building visual queries. Without a wrapper, every Oracle visual
+    fails with ``ORA-00904: "col": invalid identifier``. ``build_dataset``
+    transparently wraps the SQL with ``SELECT qs_inner."COL" AS "col" ...``
+    on Oracle so QS's quoted-lowercase lookup resolves.
+    """
+
+    def _oracle_cfg(self) -> Config:
+        from quicksight_gen.common.sql import Dialect
+        return Config(
+            aws_account_id="111122223333",
+            aws_region="us-east-2",
+            datasource_arn="arn:aws:quicksight:us-east-2:111122223333:datasource/ds",
+            l2_instance_prefix="spec_example",
+            dialect=Dialect.ORACLE,
+        )
+
+    def _pg_cfg(self) -> Config:
+        return Config(
+            aws_account_id="111122223333",
+            aws_region="us-east-2",
+            datasource_arn="arn:aws:quicksight:us-east-2:111122223333:datasource/ds",
+            l2_instance_prefix="spec_example",
+        )
+
+    def _build(self, cfg: Config, sql: str) -> str:
+        from quicksight_gen.common.dataset_contract import build_dataset
+        contract = DatasetContract(columns=[
+            ColumnSpec("account_id", "STRING"),
+            ColumnSpec("amount", "DECIMAL"),
+        ])
+        ds = build_dataset(
+            cfg, dataset_id="probe-ds", name="Probe",
+            table_key="probe", sql=sql,
+            contract=contract,
+            visual_identifier=f"probe-vi-{id(contract)}",  # unique per call
+        )
+        for physical in ds.PhysicalTableMap.values():
+            return physical.CustomSql.SqlQuery
+        raise AssertionError("no PhysicalTable")
+
+    def test_oracle_wraps_sql_with_lowercase_aliases(self):
+        wrapped = self._build(
+            self._oracle_cfg(),
+            "SELECT * FROM spec_example_drift",
+        )
+        assert 'qs_inner."ACCOUNT_ID" AS "account_id"' in wrapped
+        assert 'qs_inner."AMOUNT" AS "amount"' in wrapped
+        assert "FROM (\nSELECT * FROM spec_example_drift\n) qs_inner" in wrapped
+
+    def test_postgres_passes_sql_through_unchanged(self):
+        sql = "SELECT * FROM spec_example_drift"
+        emitted = self._build(self._pg_cfg(), sql)
+        assert emitted == sql
+
+    def test_oracle_wrapper_alias_avoids_leading_underscore(self):
+        # Oracle ORA-00911: identifiers must start with a letter, so
+        # an alias like ``_qs`` would fail at parse time. The chosen
+        # ``qs_inner`` alias starts with a letter and is unlikely to
+        # collide with user column names. This test pins that
+        # invariant so a future "rename to _outer" refactor can't
+        # silently break Oracle.
+        wrapped = self._build(
+            self._oracle_cfg(),
+            "SELECT 1 AS account_id, 2 AS amount FROM dual",
+        )
+        assert " _qs" not in wrapped
+        assert "qs_inner" in wrapped
