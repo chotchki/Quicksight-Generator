@@ -209,3 +209,65 @@ class ScreenshotHarness:
         # return None and let the caller fall back; a future
         # enhancement could thread the title through here.
         return None
+
+
+# ---------------------------------------------------------------------------
+# Standalone capture helper for the `quicksight-gen export screenshots` CLI
+# ---------------------------------------------------------------------------
+
+
+def capture_deployed_app(
+    app: App,
+    *,
+    embed_url: str,
+    output_dir: Path,
+    viewport: tuple[int, int] = (1280, 900),
+    initial_settle_ms: int = 10_000,
+    per_sheet_settle_ms: int = 8_000,
+    page_timeout_ms: int = 120_000,
+    headless: bool = True,
+) -> dict[Sheet, Path]:
+    """Walk a deployed App's tree and capture full-page PNGs per sheet.
+
+    Differs from ``ScreenshotHarness.capture_all_sheets()`` (which assumes
+    a Page is already open + the test fixture has set the viewport):
+    this helper owns the browser lifecycle and uses settle timeouts
+    instead of ``wait_for_visuals_present``. Matches the proven shape of
+    the pre-Q ad-hoc capture scripts. The forgiving settle timing tolerates
+    QS spinner-forever cases (Operational Footguns) by capturing whatever
+    painted in the window — a spinner-frame in the PNG is acceptable for
+    handbook docs since the next run usually clears it.
+
+    Returns ``dict[Sheet, Path]`` keyed by Sheet object ref. Filenames
+    are ``{sheet_id}.png`` so re-running overwrites the same on-disk
+    file.
+    """
+    from .helpers import (
+        click_sheet_tab,
+        wait_for_dashboard_loaded,
+        webkit_page,
+    )
+
+    if app.analysis is None:
+        raise ValueError(
+            f"App {app.name!r} has no Analysis — nothing to capture."
+        )
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    results: dict[Sheet, Path] = {}
+    with webkit_page(headless=headless, viewport=viewport) as page:
+        page.goto(embed_url, timeout=page_timeout_ms)
+        wait_for_dashboard_loaded(page, timeout_ms=page_timeout_ms)
+        page.wait_for_timeout(initial_settle_ms)
+        for sheet in app.analysis.sheets:
+            click_sheet_tab(page, sheet.name, page_timeout_ms)
+            page.wait_for_timeout(per_sheet_settle_ms)
+            sheet_id_safe = (
+                str(sheet.sheet_id).replace("/", "-").replace(":", "-")
+            )
+            path = output_dir / f"{sheet_id_safe}.png"
+            page.screenshot(path=str(path), full_page=True)
+            results[sheet] = path
+    return results

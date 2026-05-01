@@ -449,11 +449,15 @@ Order the meta sweeps first so per-app fixes inherit them:
   User picks: 1280×900 viewport. Screenshot sections collapsed
   by default wherever possible.
 
-  - [ ] **Q.2.c.exec.1 — Screenshot CLI / extension.** Add a
-    `quicksight-gen export screenshots --app <APP> --viewport
-    1280x900 -o <DIR>` command that uses ScreenshotHarness
-    against deployed apps. Replaces ad-hoc scripts in `scripts/`
-    that were AR/PR-specific.
+  - [x] **Q.2.c.exec.1 — Screenshot CLI / extension.** Added
+    `quicksight-gen export screenshots [--app | --all] -o DIR
+    --viewport 1280x900 [--config] [--l2-instance] [--skip-warmup]`.
+    Backed by `common/browser/screenshot.py::capture_deployed_app`
+    (own browser lifecycle + settle delays — separate from
+    ScreenshotHarness which assumes test fixtures own the Page).
+    Output goes to `DIR/<app-slug>/<sheet_id>.png`. F12 cluster
+    warmup wired for both PG and Oracle URLs. Old per-app scripts
+    in `scripts/` left in place; exec.4 sweep can retire them.
   - [ ] **Q.2.c.exec.2 — Capture for all 4 deployed apps.** Run
     against PG-deployed dashboards (canonical). Output ~40
     screenshots (4 apps × ~10 sheets) at 1280×900. Land them in

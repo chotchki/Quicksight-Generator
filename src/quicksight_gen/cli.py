@@ -1244,6 +1244,258 @@ def export_docs_cmd(output: str, l2_instance: str | None) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Export — screenshots (Q.2.c.exec.1)
+# ---------------------------------------------------------------------------
+
+
+# (module path, builder function) per app slug. Lazy-imported in
+# _build_app_for_screenshots so the CLI loads quickly when this command
+# isn't invoked.
+_SCREENSHOT_APPS: dict[str, tuple[str, str]] = {
+    "l1-dashboard": (
+        "quicksight_gen.apps.l1_dashboard.app", "build_l1_dashboard_app",
+    ),
+    "l2-flow-tracing": (
+        "quicksight_gen.apps.l2_flow_tracing.app", "build_l2_flow_tracing_app",
+    ),
+    "investigation": (
+        "quicksight_gen.apps.investigation.app", "build_investigation_app",
+    ),
+    "executives": (
+        "quicksight_gen.apps.executives.app", "build_executives_app",
+    ),
+}
+
+
+def _parse_viewport(text: str) -> tuple[int, int]:
+    """Parse a ``WxH`` string into ``(width, height)`` integers."""
+    parts = text.lower().split("x")
+    if len(parts) != 2:
+        raise click.BadParameter(
+            f"viewport must be WxH (e.g. 1280x900); got {text!r}"
+        )
+    try:
+        width, height = int(parts[0]), int(parts[1])
+    except ValueError:
+        raise click.BadParameter(
+            f"viewport WxH must be integers; got {text!r}"
+        )
+    if width <= 0 or height <= 0:
+        raise click.BadParameter(
+            f"viewport dimensions must be positive; got {text!r}"
+        )
+    return width, height
+
+
+def _build_app_for_screenshots(app_slug: str, cfg, l2_instance):
+    """Import + call the builder for ``app_slug``; resolve auto-IDs."""
+    import importlib
+    mod_path, fn_name = _SCREENSHOT_APPS[app_slug]
+    mod = importlib.import_module(mod_path)
+    builder = getattr(mod, fn_name)
+    app = builder(cfg, l2_instance=l2_instance)
+    # emit_analysis() resolves auto-IDs on the tree so sheet objects
+    # match what was deployed.
+    app.emit_analysis()
+    return app
+
+
+def _warm_db_for_screenshots(database_url: str) -> None:
+    """Per the F12 cold-start footgun: SELECT 1 to warm the cluster
+    before generating an embed URL. Without this, QuickSight shows
+    'We can't open that dashboard' on the first walk."""
+    scheme = (database_url.split("://", 1)[0] or "").lower()
+    if scheme.startswith("oracle"):
+        import oracledb  # type: ignore[import-untyped]
+        # oracledb URL parsing is non-trivial — fall back to a thin
+        # try/except. If it fails, the user can pass --skip-warmup.
+        try:
+            conn = oracledb.connect(database_url.split("://", 1)[1])
+        except Exception as exc:  # pragma: no cover — env-specific
+            raise click.ClickException(
+                f"Oracle warmup failed ({exc}); pass --skip-warmup to bypass."
+            )
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM dual")
+                cur.fetchall()
+        finally:
+            conn.close()
+        return
+    import psycopg2  # type: ignore[import-untyped]
+    conn = psycopg2.connect(database_url)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+            cur.fetchall()
+    finally:
+        conn.close()
+
+
+@export.command("screenshots")
+@click.option(
+    "--app",
+    type=click.Choice(sorted(_SCREENSHOT_APPS.keys())),
+    default=None,
+    help="Single app to capture. Mutually exclusive with --all.",
+)
+@click.option(
+    "--all", "all_apps", is_flag=True,
+    help="Capture all 4 apps. Output goes to <DIR>/<app-slug>/.",
+)
+@click.option(
+    "-o", "--output", type=click.Path(), required=True,
+    help="Target directory; per-app subdirs created under it.",
+)
+@click.option(
+    "-c", "--config", "config_path",
+    type=click.Path(exists=True), default=None,
+    help="Config YAML (default: env vars).",
+)
+@click.option(
+    "--l2-instance", "l2_instance_path",
+    type=click.Path(exists=True), default=None,
+    help=(
+        "L2 institution YAML override. Defaults to each app's built-in "
+        "default (spec_example for most). Pass when capturing a deploy "
+        "against a non-default L2 (e.g. tests/l2/sasquatch_pr.yaml)."
+    ),
+)
+@click.option(
+    "--viewport", "viewport_text", default="1280x900",
+    show_default=True,
+    help="Browser viewport WxH; user-pick per Q.2.c.",
+)
+@click.option(
+    "--skip-warmup", is_flag=True,
+    help="Skip the F12 SELECT 1 cluster warmup (use when DB is hot).",
+)
+@click.option(
+    "--headless/--no-headless", default=True, show_default=True,
+    help="Run browser headless (default) or visible (debug).",
+)
+@click.option(
+    "--initial-settle-ms", type=int, default=10_000, show_default=True,
+    help="Settle delay after dashboard chrome appears, before first capture.",
+)
+@click.option(
+    "--per-sheet-settle-ms", type=int, default=8_000, show_default=True,
+    help="Settle delay after each sheet-tab click, before capture.",
+)
+def export_screenshots_cmd(
+    app: str | None,
+    all_apps: bool,
+    output: str,
+    config_path: str | None,
+    l2_instance_path: str | None,
+    viewport_text: str,
+    skip_warmup: bool,
+    headless: bool,
+    initial_settle_ms: int,
+    per_sheet_settle_ms: int,
+) -> None:
+    """Capture per-sheet screenshots of deployed dashboards.
+
+    Walks the requested app's tree via WebKit and writes one full-page
+    PNG per sheet to ``<output>/<app-slug>/<sheet_id>.png``. Replaces
+    the ad-hoc per-app scripts under ``scripts/`` (capture_l1_screenshots
+    et al.) with one CLI surface.
+
+    Requires the dashboard already deployed. The handbook + walkthrough
+    pages embed these screenshots by relative path under
+    ``docs/walkthroughs/screenshots/<app>/``.
+
+    Default viewport is 1280x900 per the Q.2.c user pick — re-screenshots
+    the docs at a viewport that's readable on desktop without forcing the
+    long-scroll shape the prior ad-hoc tall captures produced.
+    """
+    if app is None and not all_apps:
+        raise click.UsageError("Specify --app <name> or --all.")
+    if app is not None and all_apps:
+        raise click.UsageError("Pass either --app or --all, not both.")
+
+    apps_to_capture = (
+        sorted(_SCREENSHOT_APPS.keys()) if all_apps else [app]
+    )
+
+    cfg = load_config(config_path)
+    if not cfg.aws_account_id or not cfg.aws_region:
+        raise click.ClickException(
+            "Config missing aws_account_id or aws_region — "
+            "screenshots need them to generate an embed URL."
+        )
+    if not skip_warmup and not cfg.demo_database_url:
+        raise click.ClickException(
+            "demo_database_url not set; pass --skip-warmup to bypass "
+            "the cluster warmup step."
+        )
+
+    viewport = _parse_viewport(viewport_text)
+
+    l2_instance = None
+    if l2_instance_path is not None:
+        from quicksight_gen.common.l2 import load_instance
+        l2_instance = load_instance(Path(l2_instance_path))
+
+    if not skip_warmup:
+        click.echo(
+            f"-> Warming DB ({cfg.demo_database_url.split('@')[-1]}, "
+            f"SELECT 1)...", nl=False,
+        )
+        _warm_db_for_screenshots(cfg.demo_database_url)
+        click.echo(" OK")
+
+    from quicksight_gen.common.browser.helpers import (
+        generate_dashboard_embed_url,
+    )
+    from quicksight_gen.common.browser.screenshot import capture_deployed_app
+
+    output_root = Path(output)
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    grand_total = 0
+    for slug in apps_to_capture:
+        click.echo(f"== {slug} ==")
+        app_obj = _build_app_for_screenshots(slug, cfg, l2_instance)
+        # Dashboard ID convention: cfg.prefixed(<dashboard_id_suffix>).
+        # The dashboard tree carries the un-prefixed suffix; the cfg
+        # adds resource_prefix + (optional) l2_instance_prefix.
+        dashboard_suffix = app_obj.dashboard.dashboard_id_suffix
+        dashboard_id = cfg.prefixed(dashboard_suffix)
+        click.echo(
+            f"-> embed URL for {dashboard_id}...", nl=False,
+        )
+        url = generate_dashboard_embed_url(
+            aws_account_id=cfg.aws_account_id,
+            aws_region=cfg.aws_region,
+            dashboard_id=dashboard_id,
+        )
+        click.echo(" OK")
+
+        out_dir = output_root / slug
+        click.echo(f"-> capturing {len(app_obj.analysis.sheets)} sheets at "
+                   f"{viewport[0]}x{viewport[1]} into {out_dir}/")
+        results = capture_deployed_app(
+            app_obj,
+            embed_url=url,
+            output_dir=out_dir,
+            viewport=viewport,
+            initial_settle_ms=initial_settle_ms,
+            per_sheet_settle_ms=per_sheet_settle_ms,
+            headless=headless,
+        )
+        for sheet, path in results.items():
+            click.echo(f"   {sheet.name:30s} -> {path.name}")
+        grand_total += len(results)
+
+    click.echo("")
+    click.echo(
+        f"Captured {grand_total} screenshots across "
+        f"{len(apps_to_capture)} app(s) at {output_root}/"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
