@@ -516,6 +516,11 @@ Single grab-bag for everything not yet in a phase. Promote to a numbered phase e
 - **Multiple dashboards from one L2 instance** (shared prefix + naming).
 - **PR dashboard → generic L2-validation dashboard** (re-skinning of L2FT for a different validation persona).
 - **Lift seed primitives into `common/l2/seed.py`** (was M.2d.5).
+- **Exhaustive per-rail seed coverage.** Today's `default_scenario_for(l2_instance)` plants ONE example of each L1 SHOULD-violation kind on a small subset of the L2's rails — enough to populate every dashboard sheet, not enough to demonstrate the L2 model's range. Targets:
+    - For every Rail in the L2 instance: at least one nominal firing + at least one of each violation kind that applies to its (transfer_type, role) shape (drift, overdraft, limit-breach when a LimitSchedule exists, stuck-pending when a `max_pending_age` exists, stuck-unbundled when a `max_unbundled_age` exists, supersession with all 3 reason categories).
+    - Variations: aging-bucket spread (1d / 3d / 7d / 30d / >30d so each band populates), magnitude spread (small / mid / large so the magnitude column has shape), `transfer_type` × `role` × `origin` cross-coverage so per-sheet category dropdowns have non-degenerate option lists.
+    - Drives much richer L2 Flow Tracing screens (every declared Rail / Chain / TransferTemplate / LimitSchedule has runtime evidence) and removes most of the "is this dashboard showing me the empty state because the L2 doesn't fire here, or because the seed didn't plant here?" ambiguity.
+    - Implementation note: probably a per-Rail enumeration in `auto_scenario.py` that emits N plants per rail rather than today's "one of each violation kind" approach. Watch the SHA256 hash-lock test — every plant change re-locks the seed hash.
 
 ### Tooling / test reliability
 
