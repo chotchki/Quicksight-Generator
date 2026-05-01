@@ -226,6 +226,7 @@ def capture_deployed_app(
     per_sheet_settle_ms: int = 8_000,
     page_timeout_ms: int = 120_000,
     headless: bool = True,
+    url_params: dict[str, str] | None = None,
 ) -> dict[Sheet, Path]:
     """Walk a deployed App's tree and capture full-page PNGs per sheet.
 
@@ -238,10 +239,23 @@ def capture_deployed_app(
     painted in the window — a spinner-frame in the PNG is acceptable for
     handbook docs since the next run usually clears it.
 
+    ``url_params``: optional ``{paramName: value}`` dict appended to the
+    embed URL as ``#p.<name>=<value>&p.<name>=<value>...`` so the captured
+    page renders with overridden parameter values. Used by the screenshots
+    CLI to inject ``--date-from / --date-to`` when the seed anchors at
+    a date the dashboard's default rolling-window controls don't span.
+    Per the QuickSight URL-param control-sync limitation (see project
+    memory ``project_qs_url_parameter_no_control_sync``), the on-screen
+    *control widget* may still show the default value; the *data* is
+    filtered by the URL value, which is what matters for screenshots.
+    Values are URL-encoded.
+
     Returns ``dict[Sheet, Path]`` keyed by Sheet object ref. Filenames
     are ``{sheet_id}.png`` so re-running overwrites the same on-disk
     file.
     """
+    from urllib.parse import quote
+
     from .helpers import (
         click_sheet_tab,
         wait_for_dashboard_loaded,
@@ -256,9 +270,18 @@ def capture_deployed_app(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    if url_params:
+        fragments = [
+            f"p.{name}={quote(str(value))}"
+            for name, value in url_params.items()
+        ]
+        full_url = f"{embed_url}#{'&'.join(fragments)}"
+    else:
+        full_url = embed_url
+
     results: dict[Sheet, Path] = {}
     with webkit_page(headless=headless, viewport=viewport) as page:
-        page.goto(embed_url, timeout=page_timeout_ms)
+        page.goto(full_url, timeout=page_timeout_ms)
         wait_for_dashboard_loaded(page, timeout_ms=page_timeout_ms)
         page.wait_for_timeout(initial_settle_ms)
         for sheet in app.analysis.sheets:

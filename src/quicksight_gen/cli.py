@@ -1274,6 +1274,32 @@ _SCREENSHOT_APPS: dict[str, tuple[str, str, str]] = {
 }
 
 
+# Per-app DateTimeParam names that the screenshots CLI sets when
+# --date-from / --date-to are passed. The seed anchors at date(2030,1,1)
+# but the dashboards default to "rolling 7 days back from today" — so
+# without these overrides the captured PNGs render "no data" on every
+# date-filtered sheet. The map covers each app's universal date range
+# AND any per-sheet date overrides (L2FT has 3 separate ranges; L1's
+# Daily Statement has a single-day picker that snaps to --date-to).
+_APP_DATE_PARAMS: dict[str, dict[str, list[str]]] = {
+    "l1-dashboard": {
+        "from": ["pL1DateStart"],
+        "to": ["pL1DateEnd", "pL1DsBalanceDate"],  # DS picker = single day
+    },
+    "l2-flow-tracing": {
+        "from": ["pL2ftDateStart", "pL2ftChainsDateStart", "pL2ftTtDateStart"],
+        "to": ["pL2ftDateEnd", "pL2ftChainsDateEnd", "pL2ftTtDateEnd"],
+    },
+    "investigation": {
+        "from": [], "to": [],  # No date params
+    },
+    "executives": {
+        "from": ["pExecDateStart"],
+        "to": ["pExecDateEnd"],
+    },
+}
+
+
 def _parse_viewport(text: str) -> tuple[int, int]:
     """Parse a ``WxH`` string into ``(width, height)`` integers."""
     parts = text.lower().split("x")
@@ -1389,6 +1415,21 @@ def _warm_db_for_screenshots(database_url: str) -> None:
     "--per-sheet-settle-ms", type=int, default=8_000, show_default=True,
     help="Settle delay after each sheet-tab click, before capture.",
 )
+@click.option(
+    "--date-from", "date_from", default=None,
+    help=(
+        "YYYY-MM-DD override for each app's `*DateStart` parameter(s). "
+        "Use to span the seed's anchor date when the dashboard's default "
+        "rolling-window control doesn't reach it."
+    ),
+)
+@click.option(
+    "--date-to", "date_to", default=None,
+    help=(
+        "YYYY-MM-DD override for each app's `*DateEnd` parameter(s) "
+        "(L1 also applies it to the Daily Statement single-day picker)."
+    ),
+)
 def export_screenshots_cmd(
     app: str | None,
     all_apps: bool,
@@ -1400,6 +1441,8 @@ def export_screenshots_cmd(
     headless: bool,
     initial_settle_ms: int,
     per_sheet_settle_ms: int,
+    date_from: str | None,
+    date_to: str | None,
 ) -> None:
     """Capture per-sheet screenshots of deployed dashboards.
 
@@ -1438,6 +1481,23 @@ def export_screenshots_cmd(
         )
 
     viewport = _parse_viewport(viewport_text)
+
+    # Validate date overrides up-front so a typo doesn't surface mid-walk.
+    from datetime import date as _date
+    if date_from is not None:
+        try:
+            _date.fromisoformat(date_from)
+        except ValueError as exc:
+            raise click.BadParameter(
+                f"--date-from must be YYYY-MM-DD; got {date_from!r} ({exc})"
+            )
+    if date_to is not None:
+        try:
+            _date.fromisoformat(date_to)
+        except ValueError as exc:
+            raise click.BadParameter(
+                f"--date-to must be YYYY-MM-DD; got {date_to!r} ({exc})"
+            )
 
     l2_instance = None
     if l2_instance_path is not None:
@@ -1487,6 +1547,22 @@ def export_screenshots_cmd(
         # find the captured PNGs without a docs sweep.
         _, _, output_subdir = _SCREENSHOT_APPS[slug]
         out_dir = output_root / output_subdir
+
+        # Per-app date param map: only set the params the app declares;
+        # an app with no date params (Investigation) gets an empty dict.
+        url_params: dict[str, str] = {}
+        if date_from is not None:
+            for pname in _APP_DATE_PARAMS[slug]["from"]:
+                url_params[pname] = date_from
+        if date_to is not None:
+            for pname in _APP_DATE_PARAMS[slug]["to"]:
+                url_params[pname] = date_to
+        if url_params:
+            click.echo(
+                f"-> URL date params: "
+                + ", ".join(f"{k}={v}" for k, v in url_params.items())
+            )
+
         click.echo(f"-> capturing {len(app_obj.analysis.sheets)} sheets at "
                    f"{viewport[0]}x{viewport[1]} into {out_dir}/")
         results = capture_deployed_app(
@@ -1497,6 +1573,7 @@ def export_screenshots_cmd(
             initial_settle_ms=initial_settle_ms,
             per_sheet_settle_ms=per_sheet_settle_ms,
             headless=headless,
+            url_params=url_params or None,
         )
         for sheet, path in results.items():
             click.echo(f"   {sheet.name:30s} -> {path.name}")
