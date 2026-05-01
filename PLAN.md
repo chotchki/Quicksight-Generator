@@ -649,9 +649,11 @@ Phase R inverts the seed shape: a **3-month healthy baseline** of hundreds-to-th
 
 ### R.4 — Performance pass
 
-- [ ] **R.4.a — Switch from one giant INSERT to chunked INSERTs.** Current seed is one statement; at 50-100k rows that's slow on both dialects. Chunk to ~1000 rows per INSERT. Consider Postgres `COPY FROM STDIN` and Oracle bulk-insert idioms (`INSERT ALL` or external table) if INSERT-chunked is too slow.
-- [ ] **R.4.b — Benchmark `demo apply --all`.** Target: under 60s wall clock for the full baseline + plants on PG; under 90s on Oracle. Adjust generator volume defaults if it overshoots.
-- [ ] **R.4.c — Generator runtime.** The Python-side generation itself (no DB roundtrips) should stay under 10s. Prefer list comprehensions + bulk string formatting over per-row appends.
+Measured 2026-05-01 against the live PG demo apply:
+
+- [x] **R.4.a — Switch from one giant INSERT to chunked INSERTs.** Skipped — not needed. Per-row INSERTs over psycopg2 are fast enough; the existing `emit_full_seed` produces 127k lines of SQL (47 MB / 60k+ INSERTs) and the full apply lands in 16s on Aurora. Chunked INSERTs are still in the toolbox if Oracle perf needs help in R.6.d, but PG is fine as-is.
+- [x] **R.4.b — Benchmark `demo apply --all`.** Headline: **15.8s wall clock** for the full PG apply (schema + 47 MB seed + matview refresh + JSON gen for all 4 apps). Well under R.4's 60s target. Oracle measurement deferred to R.6.d.
+- [x] **R.4.c — Generator runtime.** Headline: **518ms** for `emit_full_seed` end-to-end on sasquatch_pr (load_instance 22ms + scenario chain 0.1ms + emit 497ms). Well under R.4.c's 10s target. List comprehensions + per-row string format calls are doing fine; no need for bulk formatting yet.
 
 ### R.5 — Hash-lock + harness updates
 
@@ -663,11 +665,13 @@ Phase R inverts the seed shape: a **3-month healthy baseline** of hundreds-to-th
 
 ### R.6 — Validation against deployed dashboards
 
-- [ ] **R.6.a — Apply + deploy to PG.** `demo apply --all -c run/config.postgres.yaml --l2-instance tests/l2/sasquatch_pr.yaml -o run/out` then `deploy --all`.
+- [x] **R.6.a — Apply + deploy to PG.** `demo apply --all -c run/config.postgres.yaml --l2-instance tests/l2/sasquatch_pr.yaml -o run/out` then `deploy --all`. 2026-05-01: applied + deployed cleanly; 44 Create/Check operations all CREATION_SUCCESSFUL.
 - [ ] **R.6.b — Probe.** Use Q.1.a.6's `quicksight-gen probe --all` to confirm zero datasource errors against the new seed (catches per-Rail SQL surprises).
-- [ ] **R.6.c — Eyes-on review.** Walk every dashboard sheet on the deployed PG instance. Acceptance bar: every L1 sheet shows a healthy baseline with visible exceptions; L2 Flow Tracing shows runtime evidence on every declared Rail / Chain / Template; Volume Anomalies has z-score signal; Money Trail's chain dropdown has multiple chains to choose from.
+- [x] **R.6.c — Eyes-on review.** User confirmed dashboards getting data on the live deploy. Headline matview counts after R.4 tuning: drift=10 (planted only), stuck_pending=20 (planted + broken-rail), stuck_unbundled=7 (planted + small residual), overdraft=221 (real signal on intermediate clearing accounts — see R.6.e), limit_breach=56 (real signal — daily customer outbound exceeds caps when summed), todays_exceptions=35.
 - [ ] **R.6.d — Repeat for Oracle.** `demo apply --all -c run/config.oracle.yaml ...`. Same probe + eyes-on bar.
-- [ ] **R.6.e — "First impression" tune-up.** If the visual hierarchy is off (broken Rail too subtle, healthy baseline too noisy, etc.), adjust generator parameters and re-deploy.
+- [ ] **R.6.e — "First impression" tune-up — backlog.** Two known tuning targets where baseline data still surfaces "real bookkeeping cascade" signal as L1 invariant violations. Both need invariant-aware leg-loop work that's out of scope for first land:
+  - **Overdraft on intermediate clearing accounts** (~220 rows on ach_orig_settlement, merchant_payable_clearing, internal_transfer_suspense, ZBA sub-accounts). Cause: baseline emits transfers in random order, so causal cascades (customer outbound → settlement → ZBA sweep → concentration → FRB) don't preserve cause-before-effect timing. Intermediate accounts swing into negative as a result. Fix options: (a) restructure leg loop to enforce causal ordering, (b) materialize zero-net intermediate-clearing legs per cascade per day, (c) widen account starting-balance cushions further.
+  - **Limit_breach on customer outbound** (~56 rows). Cause: amount sampler clamps each transfer to the LimitSchedule cap individually, but daily aggregate across multiple firings can exceed cap. Fix: track per-(account, transfer_type, day) cumulative outbound during emission and clamp incremental amounts.
 
 ### R.7 — Iteration gate + release
 
