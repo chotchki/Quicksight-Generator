@@ -609,8 +609,15 @@ class _RailEdgeBundle:
 
 
 def _rail_label(rail: Rail) -> str:
-    """One-line label for a rail in a bundled edge."""
-    return f"{rail.name} ({rail.transfer_type})"
+    """One-line label for a rail in a bundled edge.
+
+    Just the rail name — no transfer_type. With direction-bundling
+    the same edge already groups rails sharing (src, dst), so the
+    transfer_type was visual noise (often duplicates within a bundle,
+    or close variants like ``ach_inbound`` vs ``wire_inbound`` that
+    don't add information beyond what the rail name conveys).
+    """
+    return str(rail.name)
 
 
 def _collect_rail_edges_for_accounts(
