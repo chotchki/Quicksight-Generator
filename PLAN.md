@@ -318,7 +318,7 @@ Order the meta sweeps first so per-app fixes inherit them:
 
 - [ ] **Q.1.d — Sign-off walkthrough (post-fix).** The pre-phase walkthrough already happened — Q.1.b/Q.1.c above are its captured output. This sub-step is the AFTER pass: re-deploy with Q.1.a-c applied, walk through with user, capture any late-discovered tweaks as Q.1.d.1, Q.1.d.2, ... iterations.
 
-- [ ] **Q.1.e — Re-deploy + harness green for both dialects.**
+- [x] **Q.1.e — Re-deploy + harness green for both dialects.** PG 15/15 in 8:39; Oracle 15/15 in 8:10. Probe shows zero datasource errors across all 4 dashboards on both dialects.
 
 ### Q.2 — Documentation step-back (informed by Q.1's final state)
 
