@@ -673,6 +673,25 @@ class _BaselineState:
     firings: dict[Identifier, list[tuple[str, date, Decimal]]] = field(
         default_factory=lambda: {},
     )
+    # Per-account leg log (post-R.2.e fix). Each entry is
+    # (posting_iso, business_day, signed_amount). After all rails +
+    # chains have emitted, the daily-balance materializer walks this
+    # log sorted by posting and computes the correct cumulative EOD
+    # balance per (account, day). Per-leg `eod_balances` snapshots in
+    # the leg-emit sites would over-write each other when rails iterate
+    # in name order across all days (rail B's day-1 leg snapshots a
+    # state that already includes rail A's day-1-through-N
+    # contributions); the deferred-walk fix avoids that bug.
+    account_leg_log: dict[
+        Identifier, list[tuple[str, date, Decimal]]
+    ] = field(default_factory=lambda: {})
+    # Snapshot of `balances` taken right after _initialize_starting_balances
+    # populates them. The deferred daily-balance walk reads from here as
+    # the per-account starting point; the running `balances` dict has been
+    # mutated by the leg loop and no longer reflects the starting state.
+    initial_balances: dict[Identifier, Decimal] = field(
+        default_factory=lambda: {},
+    )
 
 
 def emit_baseline_seed(
@@ -730,6 +749,15 @@ def emit_baseline_seed(
     # Per R.1.f §5 — sample starting balances per account_role from the
     # per-role lognormal table. Cross-Rail randomness (account picks +
     # starting balances) uses a single shared RNG keyed off the base seed.
+    #
+    # IMPORTANT: state.balances gets non-zero starting amounts, but
+    # state.initial_balances is left EMPTY for the daily-balance walk.
+    # The L1 drift matview computes ``stored - SUM(signed_amount)`` and
+    # treats starting balance as zero — every account that doesn't have
+    # an "opening balance" transaction MUST start at zero in the
+    # daily_balances output to avoid false-positive drifts. The lognormal
+    # starting balances live on for any future feature that wants them
+    # (e.g., overdraft thresholds keyed off starting balance).
     init_rng = random.Random(_BASELINE_BASE_SEED)
     _initialize_starting_balances(state, instance, template_by_role, init_rng)
 
@@ -1185,6 +1213,14 @@ def _materialize_baseline_template_instances(
     ``instance_name_template`` when set; falls back to the legacy
     ``cust-001`` / ``Customer 1`` naming otherwise. The synthesized
     set is sorted by ``account_id`` to keep emission order stable.
+
+    Index offset: indices start at ``_BASELINE_INDEX_START`` (11), NOT
+    1, so baseline accounts never collide with plant accounts (which
+    use indices 1-N from ``default_scenario_for``'s ``_materialize_
+    instances``). Without this offset, plant rows and baseline rows
+    would compete for the same ``daily_balances(account_id, day)`` PK
+    — last write wins, the loser's row goes missing, and the L1 drift
+    matview flags the SUM-vs-stored mismatch as a false positive.
     """
     instances: list[TemplateInstance] = []
     for role, tmpl in sorted(template_by_role.items(), key=lambda kv: str(kv[0])):
@@ -1197,7 +1233,8 @@ def _materialize_baseline_template_instances(
         id_tmpl = tmpl.instance_id_template or "cust-{n:03d}"
         name_tmpl = tmpl.instance_name_template or "Customer {n}"
 
-        for n in range(1, n_instances + 1):
+        for offset in range(n_instances):
+            n = _BASELINE_INDEX_START + offset
             instances.append(TemplateInstance(
                 template_role=role,
                 account_id=Identifier(id_tmpl.format(role=str(role), n=n)),
@@ -1206,6 +1243,14 @@ def _materialize_baseline_template_instances(
     instances.sort(key=lambda ti: str(ti.account_id))
     _ = instance  # silence unused — reserved for future role-based filtering
     return tuple(instances)
+
+
+# Plant indices use 1..N (typically 1, 2) per default_scenario_for's
+# _materialize_instances. Baseline instances start at 11 so the two
+# pools are disjoint — no daily_balances(account_id, day) PK collisions
+# between plant and baseline rows. See _materialize_baseline_template_
+# instances for context.
+_BASELINE_INDEX_START = 11
 
 
 def _initialize_starting_balances(
@@ -1463,15 +1508,15 @@ def _emit_baseline_for_rail(
                     bundle_id=bundle_id,
                     dialect=dialect,
                 ))
-                # Update balances + EOD snapshot.
-                state.balances[src.account_id] = (
-                    state.balances.get(src.account_id, Decimal("0")) - amount
+                # Record legs in the deferred-walk log; daily-balance
+                # materializer recomputes cumulative balances at emit
+                # end (avoids the rail-iteration overwrite bug).
+                state.account_leg_log.setdefault(src.account_id, []).append(
+                    (posting, day, -amount),
                 )
-                state.balances[dst.account_id] = (
-                    state.balances.get(dst.account_id, Decimal("0")) + amount
+                state.account_leg_log.setdefault(dst.account_id, []).append(
+                    (posting, day, amount),
                 )
-                state.eod_balances[(src.account_id, day)] = state.balances[src.account_id]
-                state.eod_balances[(dst.account_id, day)] = state.balances[dst.account_id]
             else:
                 assert isinstance(rail, SingleLegRail)
                 if rail.leg_direction == "Credit":
@@ -1496,10 +1541,9 @@ def _emit_baseline_for_rail(
                     bundle_id=bundle_id,
                     dialect=dialect,
                 ))
-                state.balances[src.account_id] = (
-                    state.balances.get(src.account_id, Decimal("0")) + signed
+                state.account_leg_log.setdefault(src.account_id, []).append(
+                    (posting, day, signed),
                 )
-                state.eod_balances[(src.account_id, day)] = state.balances[src.account_id]
 
     _ = template_by_role  # accounts already resolved via state.template_instances
     return rows
@@ -1698,14 +1742,12 @@ def _emit_baseline_for_aggregating_rail(
                 metadata=metadata,
                 dialect=dialect,
             ))
-            state.balances[src.account_id] = (
-                state.balances.get(src.account_id, Decimal("0")) - amount
+            state.account_leg_log.setdefault(src.account_id, []).append(
+                (posting, day, -amount),
             )
-            state.balances[dst.account_id] = (
-                state.balances.get(dst.account_id, Decimal("0")) + amount
+            state.account_leg_log.setdefault(dst.account_id, []).append(
+                (posting, day, amount),
             )
-            state.eod_balances[(src.account_id, day)] = state.balances[src.account_id]
-            state.eod_balances[(dst.account_id, day)] = state.balances[dst.account_id]
         else:
             assert isinstance(rail, SingleLegRail)
             if rail.leg_direction == "Credit":
@@ -1730,10 +1772,9 @@ def _emit_baseline_for_aggregating_rail(
                 metadata=metadata,
                 dialect=dialect,
             ))
-            state.balances[src.account_id] = (
-                state.balances.get(src.account_id, Decimal("0")) + signed
+            state.account_leg_log.setdefault(src.account_id, []).append(
+                (posting, day, signed),
             )
-            state.eod_balances[(src.account_id, day)] = state.balances[src.account_id]
 
     _ = template_by_role
     return rows
@@ -2005,14 +2046,12 @@ def _emit_chain_child_leg(
                 dialect=dialect,
             ),
         ]
-        state.balances[src.account_id] = (
-            state.balances.get(src.account_id, Decimal("0")) - amount
+        state.account_leg_log.setdefault(src.account_id, []).append(
+            (posting, parent_day, -amount),
         )
-        state.balances[dst.account_id] = (
-            state.balances.get(dst.account_id, Decimal("0")) + amount
+        state.account_leg_log.setdefault(dst.account_id, []).append(
+            (posting, parent_day, amount),
         )
-        state.eod_balances[(src.account_id, parent_day)] = state.balances[src.account_id]
-        state.eod_balances[(dst.account_id, parent_day)] = state.balances[dst.account_id]
     else:
         assert isinstance(child_rail, SingleLegRail)
         if child_rail.leg_direction == "Credit":
@@ -2041,10 +2080,9 @@ def _emit_chain_child_leg(
             transfer_parent_id=parent_transfer_id,
             dialect=dialect,
         )]
-        state.balances[src.account_id] = (
-            state.balances.get(src.account_id, Decimal("0")) + signed
+        state.account_leg_log.setdefault(src.account_id, []).append(
+            (posting, parent_day, signed),
         )
-        state.eod_balances[(src.account_id, parent_day)] = state.balances[src.account_id]
 
     # Record the chain child as its own firing too — supports nested
     # chains in future L2 instances.
@@ -2061,44 +2099,51 @@ def _emit_baseline_daily_balances(
     template_by_role: dict[Identifier, AccountTemplate],
     dialect: Dialect,
 ) -> list[str]:
-    """Materialize ``daily_balances`` rows from the leg state machine.
+    """Materialize ``daily_balances`` rows from the per-account leg log.
 
-    R.2.e implementation: walks every (account_id, business_day) pair
-    captured in ``state.eod_balances`` (populated by R.2.b/c/d as
-    each leg posts) and emits one ``daily_balances`` row carrying
-    the snapshot value.
+    Deferred-walk implementation (post-R.2.e fix): per account, sort
+    the leg log by posting timestamp, walk legs in chronological order,
+    accumulate from ``initial_balances``, and write
+    ``eod_balances[(account, day)] = running_balance`` after each leg.
+    Last leg of each day wins, which captures the correct EOD snapshot
+    even when rails iterated in name-order across all days during emit.
 
-    Drift invariant guarantee: ``daily_balances.money`` matches
-    ``SUM(signed_amount)`` through the snapshot moment because the
-    state machine updated ``balances`` for each leg before snapshotting
-    into ``eod_balances``. The L1 drift matview computes
-    ``stored - computed`` and gets zero for every baseline (account, day).
+    Drift invariant guarantee: by walking the FULL leg history
+    chronologically, ``daily_balances.money == SUM(signed_amount)
+    through end of day`` for every (account, day) — the L1 drift matview
+    computes zero for every baseline row.
 
-    Per-role business-day offsets (M.4.4.14): if
-    ``instance.role_business_day_offsets`` carries an entry for the
-    account's role, the snapshot timestamps shift by that hour offset.
-    Roles without an entry default to midnight-aligned (00:00 → 00:00
-    next day) — preserves byte-identical seed_hash for instances that
-    don't declare offsets.
+    Per-role business-day offsets (M.4.4.14): roles in
+    ``instance.role_business_day_offsets`` get their business_day_start
+    / business_day_end shifted by the configured hour offset. Roles
+    without an entry default to midnight-aligned (00:00 → 00:00 next
+    day).
     """
-    if not state.eod_balances:
+    if not state.account_leg_log:
         return []
 
     account_meta = _build_account_meta_map(state, instance)
     role_offsets = instance.role_business_day_offsets or {}
 
+    # Walk every account's leg log in chronological order to compute
+    # correct cumulative EOD balances. Per-leg accumulation; last leg
+    # of each day wins per dict semantics.
+    eod_balances: dict[tuple[Identifier, date], Decimal] = {}
+    for account_id in sorted(state.account_leg_log, key=str):
+        running = state.initial_balances.get(account_id, Decimal("0"))
+        for posting, day, signed in sorted(
+            state.account_leg_log[account_id], key=lambda l: l[0],
+        ):
+            running += signed
+            eod_balances[(account_id, day)] = running
+            _ = posting
+
     rows: list[str] = []
-    # Sort by (account_id, business_day) for deterministic SQL output.
     for (account_id, day), money in sorted(
-        state.eod_balances.items(),
-        key=lambda kv: (str(kv[0][0]), kv[0][1]),
+        eod_balances.items(), key=lambda kv: (str(kv[0][0]), kv[0][1]),
     ):
         meta = account_meta.get(account_id)
         if meta is None:
-            # Account doesn't resolve in either template instances or
-            # singleton accounts — should never happen because the leg
-            # emitter's account picker only emits accounts it can
-            # resolve. Skip defensively.
             continue
         offset_hours = role_offsets.get(str(meta.account_role), 0)
         rows.append(_balance_row(
