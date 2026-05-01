@@ -768,13 +768,25 @@ def emit_baseline_seed(
     # of the gate (no need for a second supersession pass).
     _populate_bundle_map(state, instance)
 
+    # Opening-balance pass: emit one funding transaction per template
+    # instance with a non-zero starting balance from R.1.f §5. Without
+    # this, customers start at zero in the cumulative-from-the-window-
+    # start daily-balance walk and the first few business days
+    # mechanically overdraft when outbounds happen before inbounds
+    # accumulate. Opening transactions land at the very start of the
+    # window so subsequent activity stays positive on average.
+    opening_counter = _Counter(start=1)
+    opening_rows = _emit_opening_balance_rows(
+        instance, state, template_by_role, opening_counter, dialect,
+    )
+
     # Per-Rail emission loop. Sort by name so SHA256 hash-lock stays
     # deterministic (Python's set/dict iteration order is insertion-ordered
     # but L2Instance.rails is already a tuple; sort defensively).
     # Non-aggregating rails go through _emit_baseline_for_rail (R.2.b);
     # aggregating rails go through _emit_baseline_for_aggregating_rail
     # (R.2.c) which knows about the children-first / EOD-bundling pattern.
-    txn_rows: list[str] = []
+    txn_rows: list[str] = list(opening_rows)
     txn_counter = _Counter(start=1)
     for rail in sorted(instance.rails, key=lambda r: str(r.name)):
         rail_rng = random.Random(_seed_for_rail(rail.name))
@@ -1093,11 +1105,27 @@ def _classify_rail(rail: Rail) -> _RailKind:
 # Tuple = (mu, sigma) for lognormal; None = $0 starting balance.
 _StartingBalanceParams = tuple[float, float] | None
 _STARTING_BALANCE_BY_ROLE_KIND: dict[str, _StartingBalanceParams] = {
-    "customer_dda": (8.5, 1.0),       # median ~$4,900
-    "merchant_dda": (10.0, 0.8),      # median ~$22,000
-    "internal_gl": (14.0, 0.5),       # median ~$1.2M
-    "concentration": (15.0, 0.4),     # median ~$3.3M
-    "internal_suspense": None,        # $0 (nets to zero EOD)
+    # R.4 tuning: bumped customer_dda from (8.5, 1.0) → (11.0, 0.5) so
+    # customers fund at median ~$60k. With outbound activity at median
+    # ~$665/transfer × 2 firings/business day, $60k cushion keeps
+    # overdrafts rare (planted scenarios + occasional large outbounds
+    # on small accounts only). Lower starting balance produces ~300
+    # overdraft rows over 90 days — looks like a broken bank, not a
+    # bank with occasional exceptions.
+    "customer_dda": (11.0, 0.5),      # median ~$60,000
+    "merchant_dda": (12.5, 0.5),      # median ~$268,000
+    # Internal GL + concentration accounts must absorb daily sweep
+    # cascades — money flows in via customer outbounds + sweeps from
+    # sub-accounts, then out via concentration → FRB. Cumulative net
+    # can swing wide, so cushion needs to comfortably cover one
+    # window's worth of activity (~$30M+ at the sasquatch_pr scale).
+    "internal_gl": (17.5, 0.3),       # median ~$40M
+    "concentration": (17.5, 0.3),     # median ~$40M
+    # Suspense accounts net to zero EOD by design but absorb intra-day
+    # swings as transfers cascade through. Small cushion (~$1M) keeps
+    # baseline noise from showing every accounting moment as an
+    # overdraft; planted overdrafts on these accounts still surface.
+    "internal_suspense": (13.5, 0.5), # median ~$1M
     "external": None,                 # we don't track external balances
     "other": None,
 }
@@ -1546,6 +1574,159 @@ def _emit_baseline_for_rail(
                 )
 
     _ = template_by_role  # accounts already resolved via state.template_instances
+    return rows
+
+
+def _emit_opening_balance_rows(
+    instance: L2Instance,
+    state: _BaselineState,
+    template_by_role: dict[Identifier, AccountTemplate],
+    counter: _Counter,
+    dialect: Dialect,
+) -> list[str]:
+    """Plant per-template-instance opening balance transactions.
+
+    For every materialized template instance with a non-zero starting
+    balance, emit one 2-leg "opening" Transfer at the very start of the
+    window: source = first declared external counterparty Account
+    (negative amount), destination = the customer (positive amount).
+    Records the credit leg in account_leg_log so the daily-balance
+    walk sees the customer balance start at the funded amount, not $0.
+
+    Without this, customers with high outbound volume mechanically
+    overdraft on the first business day they fire — overdraft matview
+    fills with false positives clustered at window-start.
+
+    Picks the first 2-leg inbound rail whose destination_role matches
+    the customer template's role to use for transfer_type/rail_name
+    metadata; skips if none exists. The opening uses an existing rail
+    so the L2FT Hygiene Exceptions sheet's "Unmatched Transfer Type"
+    check stays green.
+    """
+    if not state.business_days:
+        return []
+    opening_day = state.business_days[0]
+    opening_ts = (
+        f"{opening_day.isoformat()}T00:00:01+00:00"  # 1s past midnight
+    )
+
+    # Pick a default external counterparty: any external-scope account.
+    external_account: _ResolvedAccount | None = None
+    for a in sorted(instance.accounts, key=lambda a: str(a.id)):
+        if str(a.scope) == "external":
+            external_account = _ResolvedAccount(
+                account_id=a.id,
+                account_name=a.name or Name(str(a.id)),
+                account_role=a.role or Identifier(str(a.id)),
+                account_scope=a.scope,
+                account_parent_role=a.parent_role,
+            )
+            break
+    if external_account is None:
+        return []  # No external counterparty — can't fund openings
+
+    # Pick the first two-leg rail per destination role. Used purely
+    # for transfer_type/rail_name labeling on the opening row; doesn't
+    # change leg semantics. Aggregating rails included since some
+    # internal singletons (e.g., ConcentrationMaster) only have
+    # aggregating inbound rails — using one as a label is fine.
+    rail_for_role: dict[Identifier, TwoLegRail] = {}
+    for rail in sorted(instance.rails, key=lambda r: str(r.name)):
+        if not isinstance(rail, TwoLegRail):
+            continue
+        for dest in rail.destination_role:
+            if dest not in rail_for_role:
+                rail_for_role[dest] = rail
+
+    # Build account list: template instances + internal-scope singletons.
+    # Both pools need opening capital so the cumulative-from-zero balance
+    # walk doesn't show false-positive overdrafts on the bank's GL +
+    # concentration accounts.
+    fundable: list[_ResolvedAccount] = []
+    for ti in sorted(state.template_instances, key=lambda i: str(i.account_id)):
+        tmpl = template_by_role.get(ti.template_role)
+        if tmpl is None:
+            continue
+        fundable.append(_ResolvedAccount(
+            account_id=ti.account_id,
+            account_name=ti.name,
+            account_role=ti.template_role,
+            account_scope=tmpl.scope,
+            account_parent_role=tmpl.parent_role,
+        ))
+    for a in sorted(instance.accounts, key=lambda a: str(a.id)):
+        if str(a.scope) != "internal":
+            continue
+        fundable.append(_ResolvedAccount(
+            account_id=a.id,
+            account_name=a.name or Name(str(a.id)),
+            account_role=a.role or Identifier(str(a.id)),
+            account_scope=a.scope,
+            account_parent_role=a.parent_role,
+        ))
+
+    rows: list[str] = []
+    for acct in fundable:
+        starting = state.balances.get(acct.account_id, Decimal("0"))
+        if starting <= Decimal("0"):
+            continue
+        rail = rail_for_role.get(acct.account_role)
+        if rail is None:
+            continue
+        n = counter.next()
+        transfer_id = f"tr-base-opening-{n:04d}"
+        txn_id = f"tx-base-opening-{n:04d}"
+        src_origin = (
+            str(rail.source_origin) if rail.source_origin is not None
+            else (str(rail.origin) if rail.origin is not None else "ExternalForcePosted")
+        )
+        dst_origin = (
+            str(rail.destination_origin) if rail.destination_origin is not None
+            else (str(rail.origin) if rail.origin is not None else "ExternalForcePosted")
+        )
+        metadata = _baseline_metadata(rail, n, 0)
+        rows.append(_txn_row(
+            id_=f"{txn_id}-src",
+            account_id=external_account.account_id,
+            account_name=external_account.account_name,
+            account_role=external_account.account_role,
+            account_scope=external_account.account_scope,
+            account_parent_role=external_account.account_parent_role,
+            money=-starting,
+            direction="Debit",
+            posting=opening_ts,
+            transfer_id=transfer_id,
+            transfer_type=rail.transfer_type,
+            rail_name=rail.name,
+            origin=src_origin,
+            metadata=metadata,
+            dialect=dialect,
+        ))
+        rows.append(_txn_row(
+            id_=txn_id,
+            account_id=acct.account_id,
+            account_name=acct.account_name,
+            account_role=acct.account_role,
+            account_scope=acct.account_scope,
+            account_parent_role=acct.account_parent_role,
+            money=starting,
+            direction="Credit",
+            posting=opening_ts,
+            transfer_id=transfer_id,
+            transfer_type=rail.transfer_type,
+            rail_name=rail.name,
+            origin=dst_origin,
+            metadata=metadata,
+            dialect=dialect,
+        ))
+        # Record the credit leg so the daily-balance walk sees this
+        # account start at `starting` not $0. External-scope source
+        # account legs are not tracked (we don't compute balances for
+        # external counterparties).
+        state.account_leg_log.setdefault(acct.account_id, []).append(
+            (opening_ts, opening_day, starting),
+        )
+
     return rows
 
 
