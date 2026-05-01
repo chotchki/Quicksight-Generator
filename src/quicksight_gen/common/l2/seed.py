@@ -41,6 +41,8 @@ Public API:
 
 from __future__ import annotations
 
+import random
+import zlib
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -573,6 +575,341 @@ def emit_seed(
 
 {db_insert}
 """
+
+
+# -- Public emit_baseline_seed (Phase R) -------------------------------------
+#
+# Companion to ``emit_seed`` above. Where ``emit_seed`` plants a small set of
+# scenario-driven anomalies, ``emit_baseline_seed`` produces a 3-month
+# healthy baseline of hundreds-to-thousands of leg rows per Rail. Phase R's
+# dashboards then have realistic exception signal sitting in realistic noise.
+#
+# R.1.f spec is the design doc — see PLAN.md "R.1.f spec — Generator output
+# shape". Headline numbers (volume per Rail, lognormal amount distribution,
+# RNG sub-stream layout, account starting balances, multi-leg + chain
+# ordering) all come from there. The R.7.e backlog item lifts the spec out
+# of PLAN.md into a docs-site reference page once the implementation
+# stabilizes.
+#
+# Implementation lands in steps R.2.a (this skeleton) → R.2.e:
+#   - R.2.a (this commit): entry point + helper signatures + RNG layout +
+#     business-day calendar + classification table; emits a valid SQL
+#     header with empty INSERT bodies.
+#   - R.2.b: per-Rail leg loop; volume heuristic + lognormal amount sampler
+#     + time-of-day distribution + account-balance state machine.
+#   - R.2.c: multi-leg transfer assembly (single-leg, two-leg, aggregating
+#     children-first then EOD/EOM bundling parent).
+#   - R.2.d: chain firings (Required ~95% completion, Optional ~50%).
+#   - R.2.e: daily-balance materialization for every (account, business_day).
+#
+
+
+# Per R.1.f §4: same constant the existing test_demo_data.py uses, for
+# legacy hash continuity. Per-Rail RNG is BASE ^ crc32(rail_name); the XOR
+# guarantees each Rail's stream is independent of every other Rail's even
+# when one Rail is renamed.
+_BASELINE_BASE_SEED = 42
+
+
+def _seed_for_rail(rail_name: Identifier | str) -> int:
+    """Return the per-Rail RNG seed for the baseline emitter (R.1.f §4).
+
+    Threading one ``random.Random(_seed_for_rail(rail.name))`` instance
+    through every helper that touches a given Rail keeps the per-Rail
+    streams isolated — renaming or removing one Rail can't perturb another
+    Rail's emitted bytes. Cross-Rail randomness (account picks, starting
+    balances) uses a separate ``random.Random(_BASELINE_BASE_SEED)`` instance.
+    """
+    return _BASELINE_BASE_SEED ^ (
+        zlib.crc32(str(rail_name).encode("utf-8")) & 0xFFFFFFFF
+    )
+
+
+@dataclass(slots=True)
+class _BaselineState:
+    """Mutable state threaded through the baseline emission loop.
+
+    Carries the immutable window context (anchor + business-day calendar)
+    + the running account balance state machine the per-Rail leg loop
+    walks through. Per-(account, day) closing balances accumulate here so
+    R.2.e can materialize ``daily_balances`` without re-walking the legs.
+
+    The ``balances`` map seeds at generator init from R.1.f §5's per-role
+    starting-balance distribution. Each Rail leg the emitter posts updates
+    the relevant account's running balance; at end-of-day every account
+    that posted at least one leg snapshots its closing balance into
+    ``eod_balances``.
+    """
+
+    anchor: date
+    window_days: int
+    business_days: tuple[date, ...]
+    # account_id -> running signed cumulative balance (positive = money in).
+    balances: dict[Identifier, Decimal] = field(
+        default_factory=lambda: {},
+    )
+    # (account_id, business_day) -> closing balance at the end of that day.
+    eod_balances: dict[tuple[Identifier, date], Decimal] = field(
+        default_factory=lambda: {},
+    )
+
+
+def emit_baseline_seed(
+    instance: L2Instance,
+    *,
+    window_days: int = 90,
+    anchor: date | None = None,
+    dialect: Dialect = Dialect.POSTGRES,
+) -> str:
+    """Emit a 3-month healthy-baseline INSERT script for the L2 instance.
+
+    Output shape mirrors ``emit_seed``: one SQL string ready for
+    ``psycopg2.cursor.execute`` (Postgres) or ``cli._execute_script``
+    (Oracle). The script targets the same ``<prefix>_transactions`` +
+    ``<prefix>_daily_balances`` tables the schema emitter creates.
+
+    Args:
+      instance: the L2 model instance — every Rail / Chain / TransferTemplate
+        / LimitSchedule it declares becomes runtime evidence in the seed.
+      window_days: rolling window length (default 90 days). Generator emits
+        legs for every business day in ``[anchor - window_days, anchor]``.
+      anchor: the "today" date the rolling window ends on. Defaults to UTC
+        ``datetime.now().date()`` at call time. Pin a specific anchor in
+        tests to keep the SHA256 hash-lock deterministic across runs.
+      dialect: SQL dialect for timestamp literals + INSERT shape (PG vs
+        Oracle). Same flag the legacy ``emit_seed`` accepts.
+
+    Returns:
+      A SQL script string. R.2.a (this commit) returns a valid header +
+      empty INSERT bodies; R.2.b–e fill in the per-Rail legs, chains, and
+      daily-balance rows.
+    """
+    if anchor is None:
+        anchor = datetime.now(tz=timezone.utc).date()
+
+    prefix = instance.instance
+    template_by_role = {t.role: t for t in instance.account_templates}
+
+    business_days = _business_days_in_window(anchor, window_days)
+    state = _BaselineState(
+        anchor=anchor,
+        window_days=window_days,
+        business_days=tuple(business_days),
+    )
+
+    # Per R.1.f §5 — sample starting balances per account_role from the
+    # per-role lognormal table. Cross-Rail randomness (account picks +
+    # starting balances) uses a single shared RNG keyed off the base seed.
+    init_rng = random.Random(_BASELINE_BASE_SEED)
+    _initialize_starting_balances(state, instance, template_by_role, init_rng)
+
+    # Per-Rail emission loop. Sort by name so SHA256 hash-lock stays
+    # deterministic (Python's set/dict iteration order is insertion-ordered
+    # but L2Instance.rails is already a tuple; sort defensively).
+    txn_rows: list[str] = []
+    txn_counter = _Counter(start=1)
+    for rail in sorted(instance.rails, key=lambda r: str(r.name)):
+        rail_rng = random.Random(_seed_for_rail(rail.name))
+        rail_rows = _emit_baseline_for_rail(
+            rail, instance, state, template_by_role,
+            rail_rng, txn_counter, dialect,
+        )
+        txn_rows.extend(rail_rows)
+
+    # Chain firings overlay (R.2.d). For every Chain the L2 declares,
+    # emit matching parent + child legs at the declared completion rate.
+    chain_rows = _emit_baseline_chains(
+        instance, state, template_by_role, txn_counter, dialect,
+    )
+    txn_rows.extend(chain_rows)
+
+    # Daily-balance materialization (R.2.e). For every (account,
+    # business_day) where the leg loop touched the account, snapshot the
+    # closing balance into ``daily_balances``. Drift matview sees
+    # ``stored - SUM(signed_amount) = 0`` for the baseline (only R.3 plants
+    # introduce drift on top).
+    db_rows = _emit_baseline_daily_balances(
+        state, instance, template_by_role, dialect,
+    )
+
+    txn_cols = (
+        "(id, account_id, account_name, account_role, account_scope, "
+        "account_parent_role, amount_money, amount_direction, status, "
+        "posting, transfer_id, transfer_type, transfer_completion, "
+        "transfer_parent_id, rail_name, template_name, bundle_id, "
+        "supersedes, origin, metadata)"
+    )
+    txn_insert = (
+        "\n".join(
+            f"INSERT INTO {prefix}_transactions {txn_cols} VALUES\n  {row};"
+            for row in txn_rows
+        )
+    ) if txn_rows else "-- (no baseline transactions yet — R.2.b in progress)"
+
+    db_cols = (
+        "(account_id, account_name, account_role, account_scope, "
+        "account_parent_role, expected_eod_balance, business_day_start, "
+        "business_day_end, money, limits, supersedes)"
+    )
+    db_insert = (
+        "\n".join(
+            f"INSERT INTO {prefix}_daily_balances {db_cols} VALUES\n  {row};"
+            for row in db_rows
+        )
+    ) if db_rows else "-- (no baseline daily_balances yet — R.2.e in progress)"
+
+    return f"""\
+-- =====================================================================
+-- L2 instance: {prefix} — Phase R healthy baseline seed
+-- Generated by quicksight_gen.common.l2.seed.emit_baseline_seed
+-- Anchor: {anchor.isoformat()}  ({window_days}-day rolling window)
+-- Business days in window: {len(business_days)}
+-- Rails declared: {len(instance.rails)}
+-- Chains declared: {len(instance.chains)}
+-- Transactions emitted: {len(txn_rows)}
+-- Daily balances emitted: {len(db_rows)}
+-- =====================================================================
+
+{txn_insert}
+
+{db_insert}
+"""
+
+
+# -- Baseline helpers (Phase R) ---------------------------------------------
+
+
+def _business_days_in_window(
+    anchor: date, window_days: int,
+) -> list[date]:
+    """Return every Mon-Fri date in ``[anchor - window_days, anchor]``.
+
+    Per R.1.f §3: weekends drop to 0 firings for ALL rails. US bank
+    holidays are dropped here too when the optional ``holidays`` package
+    is importable; without it the calendar drops only weekends and the
+    handful of holidays that fell inside the 90-day window land as
+    extra-quiet days (acceptable for the demo since exact list isn't
+    load-bearing). Returned list is sorted ascending.
+    """
+    # ``holidays`` package is optional — we only use the membership check
+    # (``date in us_holidays``), so any container with ``__contains__`` of
+    # ``date`` works. Annotated as ``Container[object]`` because the
+    # holidays package itself is untyped (no stubs); pyright would
+    # otherwise flag the import as Unknown.
+    from typing import Container
+
+    empty_holidays: set[object] = set()
+    us_holidays: Container[object] = empty_holidays
+    try:
+        import holidays as _holidays_pkg  # type: ignore[import-not-found,import-untyped]
+
+        us_holidays = _holidays_pkg.US(  # type: ignore[no-untyped-call,unused-ignore]
+            years=range(anchor.year - 1, anchor.year + 1),
+        )
+    except ImportError:
+        pass
+
+    start = anchor - timedelta(days=window_days)
+    days: list[date] = []
+    cursor = start
+    while cursor <= anchor:
+        # Mon=0 ... Sun=6; skip Sat (5) + Sun (6).
+        if cursor.weekday() < 5 and cursor not in us_holidays:
+            days.append(cursor)
+        cursor += timedelta(days=1)
+    return days
+
+
+def _initialize_starting_balances(
+    state: _BaselineState,
+    instance: L2Instance,
+    template_by_role: dict[Identifier, AccountTemplate],
+    rng: random.Random,
+) -> None:
+    """Seed per-account starting balances from R.1.f §5's per-role table.
+
+    R.2.a: stub — leaves ``state.balances`` empty so the per-Rail leg
+    loop (R.2.b) starts every account at zero. R.2.b fills this in with
+    the per-account_role lognormal table once it needs the initial state
+    for overdraft / customer-balance realism.
+
+    Account list iteration is sorted by ``account_id`` so the assignment
+    order is stable across runs (the RNG draws happen in a deterministic
+    sequence per anchor date).
+    """
+    # TODO R.2.b — implement per-role starting-balance table.
+    _ = (state, instance, template_by_role, rng)
+
+
+def _emit_baseline_for_rail(
+    rail: Rail,
+    instance: L2Instance,
+    state: _BaselineState,
+    template_by_role: dict[Identifier, AccountTemplate],
+    rng: random.Random,
+    counter: _Counter,
+    dialect: Dialect,
+) -> list[str]:
+    """Emit the per-Rail leg rows for a single Rail across the window.
+
+    R.2.a: stub — returns ``[]``. R.2.b implements the leg loop:
+      1. Compute target leg count via the R.1.f §1 heuristic.
+      2. For each business day, sample N firings (Poisson around daily
+         target).
+      3. For each firing, sample amount via R.1.f §2 (lognormal),
+         time-of-day via R.1.f §3, source/destination accounts.
+      4. Emit single-leg / two-leg rows per the Rail's discriminated
+         union (R.2.c handles aggregating bundling on top).
+      5. Update ``state.balances`` for each leg.
+    """
+    # TODO R.2.b — implement per-Rail leg loop.
+    _ = (rail, instance, state, template_by_role, rng, counter, dialect)
+    return []
+
+
+def _emit_baseline_chains(
+    instance: L2Instance,
+    state: _BaselineState,
+    template_by_role: dict[Identifier, AccountTemplate],
+    counter: _Counter,
+    dialect: Dialect,
+) -> list[str]:
+    """Emit chain-firing rows (parent → child) for every declared Chain.
+
+    R.2.a: stub — returns ``[]``. R.2.d implements:
+      - Per Chain: pick the parent's firings from ``state``, then for
+        each parent firing roll a completion check (Required ~95%,
+        Optional ~50%) and emit a child leg with
+        ``transfer_parent_id = parent.transfer_id``.
+      - xor_group siblings: at most one child fires per parent instance
+        (the picker rolls once across the xor group).
+    """
+    # TODO R.2.d — implement chain firings.
+    _ = (instance, state, template_by_role, counter, dialect)
+    return []
+
+
+def _emit_baseline_daily_balances(
+    state: _BaselineState,
+    instance: L2Instance,
+    template_by_role: dict[Identifier, AccountTemplate],
+    dialect: Dialect,
+) -> list[str]:
+    """Materialize ``daily_balances`` rows from the leg state machine.
+
+    R.2.a: stub — returns ``[]``. R.2.e implements:
+      - For every (account_id, business_day) the leg loop touched (i.e.,
+        every key in ``state.eod_balances``), emit one
+        ``daily_balances`` row carrying the snapshotted closing balance.
+      - Roles in ``instance.role_business_day_offsets`` get their
+        business_day_start / business_day_end shifted accordingly (M.4.4.14).
+      - Drift invariant guarantee: the row's ``money`` MUST equal
+        ``SUM(signed_amount)`` over the account's history through the
+        snapshot moment, so the drift matview computes zero.
+    """
+    # TODO R.2.e — implement daily-balance materialization.
+    _ = (state, instance, template_by_role, dialect)
+    return []
 
 
 # -- Internal helpers --------------------------------------------------------
