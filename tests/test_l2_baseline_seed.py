@@ -12,12 +12,14 @@ from pathlib import Path
 
 import pytest
 
+from quicksight_gen.common.l2.auto_scenario import default_scenario_for
 from quicksight_gen.common.l2.loader import load_instance
 from quicksight_gen.common.l2.seed import (
     _BASELINE_BASE_SEED,
     _business_days_in_window,
     _seed_for_rail,
     emit_baseline_seed,
+    emit_full_seed,
 )
 
 
@@ -287,6 +289,63 @@ class TestBaselineLegLoop:
         assert a == b, "R.2.e daily_balances must be deterministic"
 
     def test_balances_state_machine_updates(self) -> None:
+        pass
+
+class TestEmitFullSeed:
+    """R.3.a — emit_full_seed concatenates baseline + plants."""
+
+    def test_full_seed_includes_baseline_markers(self) -> None:
+        instance = load_instance(_SASQUATCH_PR)
+        scenario = default_scenario_for(instance, today=_ANCHOR).scenario
+        sql = emit_full_seed(instance, scenario, anchor=_ANCHOR)
+        # Baseline header + per-rail tx prefix.
+        assert "Phase R healthy baseline seed" in sql
+        assert "tr-base-" in sql
+
+    def test_full_seed_includes_plant_markers(self) -> None:
+        instance = load_instance(_SASQUATCH_PR)
+        scenario = default_scenario_for(instance, today=_ANCHOR).scenario
+        sql = emit_full_seed(instance, scenario, anchor=_ANCHOR)
+        # Plant SQL header from emit_seed.
+        assert "demo seed" in sql
+
+    def test_full_seed_volume_baseline_plus_plants(self) -> None:
+        # Full seed has more rows than baseline alone.
+        instance = load_instance(_SASQUATCH_PR)
+        scenario = default_scenario_for(instance, today=_ANCHOR).scenario
+        baseline_only = emit_baseline_seed(instance, anchor=_ANCHOR)
+        full = emit_full_seed(instance, scenario, anchor=_ANCHOR)
+        baseline_n = baseline_only.count("INSERT INTO sasquatch_pr_transactions")
+        full_n = full.count("INSERT INTO sasquatch_pr_transactions")
+        assert full_n > baseline_n, (
+            f"emit_full_seed should add plant rows on top of baseline: "
+            f"baseline={baseline_n}, full={full_n}"
+        )
+
+    def test_full_seed_deterministic(self) -> None:
+        instance = load_instance(_SASQUATCH_PR)
+        scenario = default_scenario_for(instance, today=_ANCHOR).scenario
+        a = emit_full_seed(instance, scenario, anchor=_ANCHOR)
+        b = emit_full_seed(instance, scenario, anchor=_ANCHOR)
+        assert a == b
+
+    def test_baseline_and_plant_id_namespaces_dont_collide(self) -> None:
+        # Plants use tr-drift-*/tr-overdraft-*/etc. ids; baseline uses
+        # tr-base-*/tr-base-bundle-*/tr-base-chain-*. None should overlap.
+        import re
+        instance = load_instance(_SASQUATCH_PR)
+        scenario = default_scenario_for(instance, today=_ANCHOR).scenario
+        sql = emit_full_seed(instance, scenario, anchor=_ANCHOR)
+        baseline_ids = set(re.findall(r"'(tr-base[a-z0-9-]*)',", sql))
+        plant_ids = set(re.findall(
+            r"'(tr-(?:drift|overdraft|breach|stuck|tt|inv|rail|"
+            r"supersession)[a-z0-9-]*)',",
+            sql,
+        ))
+        assert not baseline_ids & plant_ids, (
+            f"baseline + plant transfer_id namespaces overlap: "
+            f"{baseline_ids & plant_ids}"
+        )
         # After a deterministic run, state.balances should differ from
         # the initial state for every account that received legs. Run
         # the emit + replay the balance computation by re-running with

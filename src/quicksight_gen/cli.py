@@ -843,7 +843,7 @@ def _apply_demo(
         emit_schema as emit_l2_schema,
         refresh_matviews_sql,
     )
-    from quicksight_gen.common.l2.seed import emit_seed as emit_l2_seed
+    from quicksight_gen.common.l2.seed import emit_full_seed as emit_l2_seed
     from quicksight_gen.common.l2.auto_scenario import default_scenario_for
 
     # Pre-stamp ``cfg.l2_instance_prefix`` from the default L2 instance

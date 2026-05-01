@@ -822,6 +822,57 @@ def emit_baseline_seed(
 """
 
 
+# -- Public emit_full_seed (Phase R) -----------------------------------------
+#
+# Combines emit_baseline_seed + emit_seed: baseline first (a healthy 90-day
+# rolling window of leg activity), then planted scenarios overlaid on top.
+# CLI ``demo apply`` uses this so deployed dashboards see realistic
+# exception signal sitting in realistic baseline noise (R.3 — plants now
+# additive rather than constituting the whole seed).
+
+
+def emit_full_seed(
+    instance: L2Instance,
+    scenarios: ScenarioPlant,
+    *,
+    baseline_window_days: int = 90,
+    anchor: date | None = None,
+    dialect: Dialect = Dialect.POSTGRES,
+) -> str:
+    """Emit baseline + plants concatenated as a single SQL script.
+
+    R.3.a — wires R.2's ``emit_baseline_seed`` and the legacy
+    ``emit_seed`` together so the deployed demo gets a 3-month healthy
+    baseline with planted exception scenarios layered on top. Plants
+    use independent transfer_ids (``tr-drift-*``, ``tr-overdraft-*``,
+    etc.), so they never collide with baseline ``tr-base-*`` ids.
+
+    Args:
+      instance: the L2 model instance.
+      scenarios: planted scenarios (typically from
+        ``auto_scenario.default_scenario_for(instance).scenario``).
+      baseline_window_days: rolling window length for the baseline.
+      anchor: anchor date for the baseline window. Defaults to UTC
+        ``datetime.now().date()``. The plants' own anchor lives on
+        ``scenarios.today`` and may differ — both anchors should
+        normally be the same, set by the caller.
+      dialect: SQL dialect for both layers.
+
+    Returns:
+      A SQL script string: baseline INSERTs followed by plant INSERTs,
+      ready for ``psycopg2.cursor.execute`` (PG) or ``cli._execute_script``
+      (Oracle).
+    """
+    baseline_sql = emit_baseline_seed(
+        instance,
+        window_days=baseline_window_days,
+        anchor=anchor,
+        dialect=dialect,
+    )
+    plants_sql = emit_seed(instance, scenarios, dialect=dialect)
+    return f"{baseline_sql}\n\n{plants_sql}"
+
+
 # -- Baseline helpers (Phase R) ---------------------------------------------
 
 
