@@ -64,8 +64,10 @@ ledger.
 `account_parent_role`, `business_day_start`, `business_day_end`,
 `stored_balance`, `computed_balance`, `drift`.
 
+{% if vocab.fixture_name == "sasquatch_pr" %}
 **`m2_6_verify.py` asserts:** `bigfoot-brews +$75` planted at
 `days_ago=5` surfaces with `drift=75.00`.
+{% endif %}
 
 ### 2. `{{ l2_instance_name }}_ledger_drift` — Parent-account roll-up drift
 
@@ -94,8 +96,10 @@ we MUST NOT overdraft *them*).
 `account_parent_role`, `business_day_start`, `business_day_end`,
 `stored_balance`.
 
+{% if vocab.fixture_name == "sasquatch_pr" %}
 **`m2_6_verify.py` asserts:** `sasquatch-sips -$1500` planted at
 `days_ago=6` surfaces with `stored_balance=-1500.00`.
+{% endif %}
 
 ### 4. `{{ l2_instance_name }}_expected_eod_balance_breach` — Expected EOD
 
@@ -126,9 +130,11 @@ schema-emit time.
 `account_parent_role`, `business_day`, `transfer_type`,
 `outbound_total`, `cap`.
 
+{% if vocab.fixture_name == "sasquatch_pr" %}
 **`m2_6_verify.py` asserts:** `big-meadow-dairy $22k wire`
 planted at `days_ago=4` surfaces with `outbound_total > cap` for
 `transfer_type='wire'`.
+{% endif %}
 
 ### 6. `{{ l2_instance_name }}_stuck_pending` — Per-rail pending aging (M.2b.8)
 
@@ -146,9 +152,11 @@ without an aging watch contribute no branch and are excluded.
 `transfer_type`, `rail_name`, `amount_money`, `amount_direction`,
 `posting`, `max_pending_age_seconds`, `age_seconds`.
 
+{% if vocab.fixture_name == "sasquatch_pr" %}
 **`m2_6_verify.py` asserts:** `bigfoot-brews ACH at days_ago=2`
 (172800s) surfaces with `age_seconds > max_pending_age_seconds`
 (86400s for the `CustomerInboundACH` rail's PT24H cap).
+{% endif %}
 
 ### 7. `{{ l2_instance_name }}_stuck_unbundled` — Per-rail unbundled aging (M.2b.9)
 
@@ -163,9 +171,11 @@ rails appearing in some AggregatingRail's `bundles_activity`.
 **Columns:** same shape as `_stuck_pending` with
 `max_unbundled_age_seconds` instead of `max_pending_age_seconds`.
 
+{% if vocab.fixture_name == "sasquatch_pr" %}
 **`m2_6_verify.py` asserts:** `sasquatch-sips fee accrual at
 days_ago=35` surfaces with `age_seconds > max_unbundled_age_seconds`
 (2,678,400s for the `CustomerFeeAccrual` rail's P31D cap).
+{% endif %}
 
 ## Diagnostic surface — Supersession Audit
 
@@ -176,9 +186,11 @@ versions (the audit trail for `TechnicalCorrection` /
 (not Current*) since Current* hides superseded entries by
 construction. See M.2b.12 dashboard for the visualization.
 
+{% if vocab.fixture_name == "sasquatch_pr" %}
 `m2_6_verify.py` asserts a planted TechnicalCorrection on
 `bigfoot-brews` (2 entries on the same logical id at `days_ago=3`)
 surfaces with `entry_count > 1`.
+{% endif %}
 
 ## Refresh + extend contracts
 

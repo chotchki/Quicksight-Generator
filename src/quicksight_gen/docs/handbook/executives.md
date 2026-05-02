@@ -67,6 +67,6 @@ quicksight-gen generate executives -c run/config.yaml -o run/out
 quicksight-gen deploy --generate -c run/config.yaml -o run/out executives
 ```
 
-Defaults to the canonical `sasquatch_pr` L2 fixture. To target a
+Defaults to the bundled `{{ l2_instance_name }}` L2 fixture. To target a
 different L2 instance, see the
 [customization handbook](customization.md).

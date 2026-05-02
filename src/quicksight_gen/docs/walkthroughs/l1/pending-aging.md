@@ -11,7 +11,8 @@ keyed on `rail_name`. Rails without an aging watch (no
 `max_pending_age` set) are excluded by construction — they emit a
 NULL cap which the outer WHERE filters out.
 
-![Pending Aging](../screenshots/l1/l1-sheet-pending-aging.png)
+??? example "Screenshot"
+    ![Pending Aging](../screenshots/l1/l1-sheet-pending-aging.png)
 
 ## When to use it
 

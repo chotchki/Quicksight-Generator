@@ -42,9 +42,13 @@ data filters but the on-screen widget label stays "All".)
 
 ## Demo persona
 
-`DemoPersona` is the single source of truth for whitelabel-substitutable
-Sasquatch flavor strings. The companion `derive_mapping_yaml_text()`
-builds `training/mapping.yaml.example` from the dataclass so the YAML
-template can't drift from the in-code persona.
+`DemoPersona` is the typed skeleton for the per-institution flavor
+strings the handbook templates substitute (institution name +
+acronym, upstream stakeholders, GL account labels, merchant names,
+free-form flavor literals). Per-institution content lives in the L2
+YAML's `persona:` block and is loaded into `L2Instance.persona` by
+`common/l2/loader.py`. Empty-default fields are the "no flavor"
+shape — handbook templates render neutral prose derived from L2
+primitives in that case.
 
 ::: quicksight_gen.common.persona

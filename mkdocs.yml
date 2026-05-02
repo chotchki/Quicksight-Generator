@@ -7,8 +7,11 @@ docs_dir: src/quicksight_gen/docs
 
 theme:
   name: material
-  logo: img/snb-mark.svg
-  favicon: img/favicon.svg
+  # No default logo / favicon — when an L2 instance YAML carries a
+  # `theme.logo` / `theme.favicon` value, main.py's mkdocs-macros
+  # entry overrides these keys at build time. Without an L2 override
+  # the site renders text-only navigation (mkdocs-material default)
+  # rather than falling back to a persona-specific mark.
   palette:
     scheme: default
     primary: custom
@@ -20,7 +23,7 @@ theme:
     - content.code.copy
 
 extra_css:
-  - stylesheets/sasquatch.css
+  - stylesheets/site.css
 
 extra_javascript:
   # Click-to-zoom lightbox for inline-SVG diagrams emitted by
@@ -28,11 +31,18 @@ extra_javascript:
   - stylesheets/qs-lightbox.js
 
 nav:
-  # Phase O.1.a — 5-section IA per docs/audits/o_0_content_audit.md §6.
-  # Pages live in their existing paths; O.1.d-i moves them under
-  # explicit subdirectories (concepts/, reference/, etc.) once the
-  # diagram pipeline (O.1.c) and templating (O.1.b) are in.
-  - Home: index.md
+  # Shape C — audience-first IA (Q.2.b.decision). "For Your Role" is
+  # the first nav tab so the role picker is the most prominent surface.
+  # Home (index.md) is also a role picker — it stays as the implicit
+  # root landing for users who arrive at the site URL directly.
+  # Q.2.b.exec.3 will reconcile docs/index.md vs for-your-role/index.md
+  # (currently both render the role picker shape).
+  #
+  # Library shelves (Concepts / Background / Walkthroughs / Reference /
+  # API Reference) follow as named sections; role pages curate paths
+  # into them. Long-term destination is Shape B (collapse 7 → 4 with
+  # Concepts + Background absorbed into Reference) once Shape C reveals
+  # which shelves get curation traffic.
   - For Your Role:
     - Overview: for-your-role/index.md
     - For the operator: for-your-role/operator.md
@@ -40,6 +50,7 @@ nav:
     - For the ETL engineer: for-your-role/etl-engineer.md
     - For the executive: for-your-role/executive.md
     - For the compliance analyst: for-your-role/compliance-analyst.md
+  - Home: index.md
   - Concepts:
     - Overview: concepts/index.md
     - Accounting:
@@ -58,8 +69,8 @@ nav:
       - Transfer template: concepts/l2/transfer-template.md
       - Chain: concepts/l2/chain.md
       - Limit schedule: concepts/l2/limit-schedule.md
-  - Background:
-    - Institution tour: scenario/index.md
+  - Demo Institution Tour:
+    - Overview: scenario/index.md
     - Accounts: scenario/accounts.md
     - Rails: scenario/rails.md
     - Transfer templates: scenario/transfer-templates.md
@@ -150,3 +161,9 @@ markdown_extensions:
       permalink: true
   - md_in_html
   - pymdownx.superfences
+  # Q.2.c.exec.3 — admonitions enable the ??? collapse pattern used to
+  # fold screenshot embeds by default. `pymdownx.details` is what makes
+  # the `???` (vs `!!!`) syntax fold-by-default; `admonition` provides
+  # the styling.
+  - admonition
+  - pymdownx.details

@@ -17,7 +17,8 @@ The `magnitude` column is normalized per branch to a positive number
 limit_breach) so a sort-by-magnitude reads consistently across
 check kinds.
 
-![Today's Exceptions](../screenshots/l1/l1-sheet-todays-exceptions.png)
+??? example "Screenshot"
+    ![Today's Exceptions](../screenshots/l1/l1-sheet-todays-exceptions.png)
 
 ## When to use it
 

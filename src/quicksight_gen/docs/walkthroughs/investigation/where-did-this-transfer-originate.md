@@ -7,11 +7,11 @@
 A receiving bank calls Compliance about a $19,000 inbound to one of
 their customers. Their customer says the funds came from "an
 investor", but the wire memo just reads "internal transfer". On the
-SNB side, the actual originating leg sits four hops back from the
-final destination — a wire from Cascadia Trust Bank that was layered
-through Juniper Ridge LLC and two shell DDAs before it landed at the
-counterparty bank. The investigator needs to walk the chain end-to-
-end and produce the source-of-funds evidence.
+bank's side, the actual originating leg sits several hops back from
+the final destination — a wire from an external counterparty that
+was layered through an internal LLC and two shell DDAs before it
+landed at the counterparty bank. The investigator needs to walk the
+chain end-to-end and produce the source-of-funds evidence.
 
 ## The question
 
@@ -80,36 +80,38 @@ see [Refresh contract](../../Schema_v6.md#refresh-contract).
 QuickSight Direct Query can't run a recursive CTE inside a custom-
 SQL dataset, so materialization isn't optional here.
 
-## What you'll see in the demo
+{% if vocab.demo.has_investigation_plants and vocab.demo.investigation.layering_chain | length >= 3 and vocab.demo.investigation.anomaly_pair_sender %}
+??? example "Worked example: {{ vocab.fixture_name }}"
+    The bundled `{{ vocab.fixture_name }}` fixture plants a 4-hop
+    layering chain rooted on a
+    {{ vocab.demo.investigation.anomaly_pair_sender.name }} →
+    {{ vocab.demo.investigation.anchor.name }} wire:
 
-The demo plants a 4-hop layering chain rooted on a Cascadia → Juniper
-wire:
+    | Depth | Source | Target | Amount |
+    |------:|--------|--------|-------:|
+    | 0 | {{ vocab.demo.investigation.anomaly_pair_sender.name }} | {{ vocab.demo.investigation.anchor.name }} | $18,750.00 |
+    | 1 | {{ vocab.demo.investigation.anchor.name }} | {{ vocab.demo.investigation.layering_chain[0].name }} | $18,500.00 |
+    | 2 | {{ vocab.demo.investigation.layering_chain[0].name }} | {{ vocab.demo.investigation.layering_chain[1].name }} | $18,250.00 |
+    | 3 | {{ vocab.demo.investigation.layering_chain[1].name }} | {{ vocab.demo.investigation.layering_chain[2].name }} | $18,000.00 |
 
-| Depth | Source | Target | Amount |
-|------:|--------|--------|-------:|
-| 0 | Cascadia Trust Bank — Operations | Juniper Ridge LLC | $18,750.00 |
-| 1 | Juniper Ridge LLC | Shell Company A | $18,500.00 |
-| 2 | Shell Company A | Shell Company B | $18,250.00 |
-| 3 | Shell Company B | Shell Company C | $18,000.00 |
+    Pick **`inv-trail-root-001`** (or whatever display string the
+    dropdown resolves it to — the format is `name (id)`) as the
+    chain root. The Sankey draws ribbons left-to-right with steadily
+    shrinking width as $250 of "fees" or "residue" peels off at each
+    hop. The hop-by-hop table beside it lists every edge in depth
+    order.
 
-Pick **`inv-trail-root-001`** (or whatever display string the
-dropdown resolves it to — the format is `name (id)`) as the chain
-root. The Sankey draws four ribbons left-to-right with steadily
-shrinking width as $250 of "fees" or "residue" peels off at each
-hop. The hop-by-hop table beside it lists all four edges in depth
-order.
+    Drag the **min hop amount** slider above $18,500 — the deeper
+    hops disappear from the table; raise it past $19,000 and the
+    table empties entirely (the seed's largest hop is $18,750).
 
-Drag the **min hop amount** slider above $18,500 — the deeper hops
-disappear from the table; raise it past $19,000 and the table empties
-entirely (the seed's largest hop is $18,750). This is how the K.4.9
-e2e test confirms the slider actually filters.
-
-The L2 instance also declares chains rooted on
-`external_txn → payment → settlement → sale` — pick one of those
-from the dropdown to see a payment-pipeline-shaped chain. The
-single-leg `sale` and `external_txn` rows will appear in the table
-but won't draw Sankey ribbons (matview projects multi-leg edges
-only).
+    The L2 instance also declares chains rooted on
+    `external_txn → payment → settlement → sale` — pick one of those
+    from the dropdown to see a payment-pipeline-shaped chain. The
+    single-leg `sale` and `external_txn` rows will appear in the
+    table but won't draw Sankey ribbons (matview projects multi-leg
+    edges only).
+{% endif %}
 
 ## What it means
 
@@ -168,10 +170,10 @@ chain" usually goes:
    check whether the chain is the end of the story or just a
    way-point.
 
-If the chain has a Cascadia-shaped root + many small downstream
-splits, that's a Recipient Fanout case as well — Cascadia is the
-single sender and the downstream shells become the fanout target.
-The four sheets are designed to be cross-referenced.
+If the chain has a single-source root + many small downstream
+splits, that's a Recipient Fanout case as well — the source is the
+single sender and the downstream destinations become the fanout
+target. The four sheets are designed to be cross-referenced.
 
 ## Related walkthroughs
 

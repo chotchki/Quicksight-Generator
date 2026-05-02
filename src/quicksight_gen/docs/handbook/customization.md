@@ -61,15 +61,15 @@ new persona work or dashboard redesigns:
 <p class="snb-section-label">Get the dashboards landed against your data</p>
 
 <div class="snb-card-grid">
-  <a class="snb-card" href="../walkthroughs/customization/how-do-i-map-my-database/">
+  <a class="snb-card" href="../../walkthroughs/customization/how-do-i-map-my-database/">
     <h3>How do I map my production database to the two base tables?</h3>
     <p>Pattern-level mapping from your source system to <code>transactions</code> + <code>daily_balances</code>. The first walkthrough a new product owner reads.</p>
   </a>
-  <a class="snb-card" href="../walkthroughs/customization/how-do-i-configure-the-deploy/">
+  <a class="snb-card" href="../../walkthroughs/customization/how-do-i-configure-the-deploy/">
     <h3>How do I configure the deploy for my AWS account?</h3>
     <p><code>config.yaml</code> fields, environment-variable overrides, production datasource ARN vs. demo connection string, principals + tags + naming prefix.</p>
   </a>
-  <a class="snb-card" href="../walkthroughs/customization/how-do-i-run-my-first-deploy/">
+  <a class="snb-card" href="../../walkthroughs/customization/how-do-i-run-my-first-deploy/">
     <h3>How do I run my first deploy?</h3>
     <p>The <code>generate</code> + <code>deploy</code> + <code>cleanup</code> loop, idempotent delete-then-create, dry-run before live, <code>ManagedBy</code> tag scoping.</p>
   </a>
@@ -80,21 +80,25 @@ new persona work or dashboard redesigns:
 <p class="snb-section-label">Make the product fit your environment</p>
 
 <div class="snb-card-grid">
-  <a class="snb-card" href="../walkthroughs/customization/how-do-i-reskin-the-dashboards/">
+  <a class="snb-card" href="../../walkthroughs/customization/how-do-i-reskin-the-dashboards/">
     <h3>How do I reskin the dashboards for my brand?</h3>
     <p>Theme preset registry, color tokens (accent / primary_fg / link_tint), font sizes, the <code>analysis_name_prefix</code> for demo-vs-prod naming.</p>
   </a>
-  <a class="snb-card" href="../walkthroughs/customization/how-do-i-swap-dataset-sql/">
+  <a class="snb-card" href="../../walkthroughs/customization/how-do-i-swap-dataset-sql/">
     <h3>How do I swap the SQL behind a dataset without breaking the visuals?</h3>
     <p>The <code>DatasetContract</code> binding contract, the contract test that locks projection-vs-contract, when SQL swap is safe and when it forces a contract change.</p>
   </a>
-  <a class="snb-card" href="../walkthroughs/customization/how-do-i-add-a-metadata-key/">
+  <a class="snb-card" href="../../walkthroughs/customization/how-do-i-add-a-metadata-key/">
     <h3>How do I add an app-specific metadata key?</h3>
     <p>Reading metadata from dataset SQL, when to surface a key as a column vs. a filter, cross-link to the ETL-side walkthrough for the write path.</p>
   </a>
-  <a class="snb-card" href="../walkthroughs/customization/how-do-i-extend-canonical-values/">
+  <a class="snb-card" href="../../walkthroughs/customization/how-do-i-extend-canonical-values/">
     <h3>How do I extend the schema with a new transfer_type or account_type?</h3>
     <p>Adding to the canonical value lists, downstream impact on filter dropdowns, why no new tables are needed.</p>
+  </a>
+  <a class="snb-card" href="../../walkthroughs/customization/how-do-i-brand-my-handbook-prose/">
+    <h3>How do I brand my handbook prose?</h3>
+    <p>The optional <code>persona:</code> YAML block — institution name + acronym, stakeholders, GL account labels, merchants, flavor literals. Substitutes via <code>vocab</code> Jinja references at mkdocs render. Skip the block to keep neutral fallback prose.</p>
   </a>
 </div>
 
@@ -103,7 +107,7 @@ new persona work or dashboard redesigns:
 <p class="snb-section-label">Catch regressions before they ship</p>
 
 <div class="snb-card-grid">
-  <a class="snb-card" href="../walkthroughs/customization/how-do-i-test-my-customization/">
+  <a class="snb-card" href="../../walkthroughs/customization/how-do-i-test-my-customization/">
     <h3>How do I run the test suite against my customized dataset SQL?</h3>
     <p>pytest layout, the <code>DatasetContract</code> assertion pattern, when to add an e2e test vs. a unit test for your custom SQL.</p>
   </a>
@@ -141,7 +145,7 @@ renders against it generically.
 
 ### 1. Write your L2 instance YAML
 
-Mirror `tests/l2/sasquatch_ar.yaml` for shape. The L2 declares:
+Mirror `tests/l2/{{ l2_instance_name }}.yaml` for shape. The L2 declares:
 
 - **Accounts** + roles, scopes (internal/external), parents
 - **Account templates** (role classes that materialize at runtime)
@@ -191,7 +195,7 @@ sql = refresh_matviews_sql(instance)
 
 ### 4. Deploy the L1 dashboard against your instance
 
-The CLI defaults to the canonical sasquatch_pr fixture; swap to your
+The CLI defaults to the bundled `{{ l2_instance_name }}` fixture; swap to your
 own instance by editing the build call site or providing your own
 `l2_instance` kwarg via a small wrapper script. Then:
 
@@ -205,8 +209,8 @@ quicksight-gen deploy --generate -c run/config.yaml -o run/out l1-dashboard
 `scripts/m2_6_verify.py` is the end-to-end smoke that applies the
 schema, plants the canonical seed scenarios, refreshes matviews,
 and asserts each L1 invariant view returns the planted scenarios.
-For your own instance, write a sibling `myorg_seed.py` (mirror of
-`tests/l2/sasquatch_ar_seed.py`) declaring your scenarios via the
+For your own instance, write a sibling `myorg_seed.py` declaring
+your scenarios via the
 generic plant primitives (`DriftPlant`, `OverdraftPlant`,
 `LimitBreachPlant`, `StuckPendingPlant`, `StuckUnbundledPlant`,
 `SupersessionPlant`). Run the verify against your DB to PASS-gate

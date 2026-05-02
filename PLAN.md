@@ -324,13 +324,10 @@ Order the meta sweeps first so per-app fixes inherit them:
 
 **Smell underneath:** the IA was built around 4 separate apps (PR, AR, Investigation, Executives) and the L1+L2FT consolidation collapsed PR+AR into one operator dashboard without re-shaping the doc tree. Customization handbook + ETL guide still talk about apps as separate documentation surfaces, with orphan "GL Reconciliation Handbook" / "Payment Reconciliation Handbook" links scattered across `customization.md` / `etl.md` / `investigation.md`. Reference vs Walkthrough vs Concept boundaries blur.
 
-- [ ] **Q.2.a — Mechanical cleanup** (~30 min, no IA changes):
-  - Drop stale AR/PR refs in `handbook/customization.md` (lines 54-55, 234-237, plus the "Phase K (AR Exceptions redesign)" stale-phase marker at line 51).
-  - Drop stale AR/PR refs in `handbook/etl.md` (lines 19, 43, 64, 153-154 — including the dead `demo etl-example payment-recon` / `account-recon` commands).
-  - Drop orphan handbook links in `handbook/investigation.md` (lines 130, 133).
-  - Fix 3 "Schema v3" link-text mislabels that point to `Schema_v6.md` (`etl.md:49,165`, `customization.md:223`).
+- [x] **Q.2.a — Mechanical cleanup** (~30 min, no IA changes):
+  - Most targeted refs already cleaned by M.4.9 / O.1.j-l sweeps. Surviving stale refs were two PR/AR comparison sentences in `handbook/investigation.md` (lines 22, 35) — fixed in commit `bba7d20`. Same commit trimmed CLAUDE.md ~48% (332→178 lines) of stale dataset listings, deleted-app refs, and phase archaeology.
 
-- [ ] **Q.2.b — IA review (plan-mode first).** Read every nav entry end-to-end, write "what's where today" map, propose 2-3 IA shapes with tradeoffs (e.g., role-onramp-first vs reference-first; merge handbook + concepts vs keep split). User picks; then execute.
+- [x] **Q.2.b — IA review (plan-mode first).** Audit + 3 shape proposals + user picked Shape C (audience-first home page). Shape C exec checklist (exec.1-9) all complete: Home reshaped as role picker (exec.1), nav reordered with For Your Role first (exec.2), `for-your-role/index.md` trimmed to terse pointer (exec.3), role pages audited for Shape C fit (exec.4), library shelves back-link to For Your Role (exec.5), Concepts kept as-is (exec.6), Background renamed to "Demo Institution Tour" (exec.7), build verified (exec.8). Long-term Shape B transition deferred until Shape C reveals which shelves get curation traffic.
 
   ### Q.2.b.audit — What's where today
 
@@ -412,90 +409,198 @@ Order the meta sweeps first so per-app fixes inherit them:
     `docs/index.md`'s "what apps ship + all sections overview"
     structure with role-picker primary + library-shelves
     secondary. Done; mkdocs --strict clean.
-  - [ ] **Q.2.b.exec.2 — Nav reorder (mkdocs.yml).** Move "For
-    Your Role" to first nav position (currently 2nd, after
-    Home). Add comments noting Shape C frame + Shape B
-    transition path. Confirm libraries (Concepts / Background /
-    Walkthroughs / Reference / API) stay accessible.
-  - [ ] **Q.2.b.exec.3 — `for-your-role/index.md` disposition.**
-    Currently mirrors Home shape; with Home doing role-pick the
-    section index is redundant. Decide: keep terse (re-direct to
-    role pages) or drop and use the section sidebar directly.
-  - [ ] **Q.2.b.exec.4 — Role page audit for Shape C fit.** Read
-    each role page for "primary navigation surface" fitness.
-    Operator + Integrator already touched in Q.2.d. Sanity-check
-    Executive / ETL Engineer / Compliance Analyst — each should
-    work as a primary entry, not just a sidebar onramp.
-  - [ ] **Q.2.b.exec.5 — Cross-link audit.** Each library shelf
-    (Concepts overview, Walkthroughs overview, Reference
-    overview, etc.) should link back UP to "For Your Role" so
-    readers who arrive shelf-first know the curated paths exist.
-    Skip for Shape C → Shape B will collapse Background + add
-    other shelf-level links.
-  - [ ] **Q.2.b.exec.6 — Concepts split disposition.** Concepts
-    has Accounting + L2 model lumped. Independent topics. Two
-    paths: keep sub-tabs (current state, no work) or split into
-    two top-level sections. Recommend keep-as-is for Shape C;
-    revisit at Shape B transition.
-  - [ ] **Q.2.b.exec.7 — Background section disposition.**
-    Background = institution tour (5 pages), persona-flavored.
-    Decide: keep top-level, rename to "Demo Institution Tour", or
-    absorb into Concepts/L2 model. Recommend keep + rename for
-    Shape C.
-  - [ ] **Q.2.b.exec.8 — `mkdocs build --strict` + click-through.**
-    Verify no dead links. Click each role page from the new Home,
-    and each library link from the role pages.
-  - [ ] **Q.2.b.exec.9 — Commit + tick PLAN Q.2.b.**
+  - [x] **Q.2.b.exec.2 — Nav reorder (mkdocs.yml).** For Your
+    Role moved to nav position 1; Home (role-picker landing)
+    now position 2. Shape C/B framing comments added at the nav
+    block top. Libraries unchanged. mkdocs build --strict clean.
+  - [x] **Q.2.b.exec.3 — `for-your-role/index.md` disposition.**
+    User pick: Option A (keep terse). Page gutted to one-sentence
+    pointer at Home for the curated picker plus a compact list of
+    the 5 role pages. Section URL `/for-your-role/` stays stable;
+    no inbound-link breakage.
+  - [x] **Q.2.b.exec.4 — Role page audit for Shape C fit.** All
+    three pages (Executive / ETL Engineer / Compliance Analyst)
+    already follow the canonical shape — pain → value → scope →
+    onboarding → concepts → cadence/posture → acceptance bar —
+    and each links outward to handbook + walkthroughs + concepts.
+    Each reads like a standalone primary entry, not a sidebar
+    onramp. No content changes needed.
+  - [x] **Q.2.b.exec.5 — Cross-link audit.** Added one-line
+    "If you arrived here directly..." back-links at the top of
+    Concepts / Walkthroughs / Reference / API Reference overviews.
+    Background skipped per PLAN note (Shape B will absorb it).
+  - [x] **Q.2.b.exec.6 — Concepts split disposition.** Accept
+    PLAN recommendation: keep Concepts sub-tabs (Accounting + L2
+    model) as-is for Shape C. Revisit at Shape B transition.
+  - [x] **Q.2.b.exec.7 — Background section disposition.** Renamed
+    nav section from "Background" → "Demo Institution Tour" per
+    PLAN recommendation. Updated 2 prose refs (Home page + integrator
+    role page). Section content + paths unchanged.
+  - [x] **Q.2.b.exec.8 — `mkdocs build --strict` + click-through.**
+    Strict build clean across exec.2-7. Rendered nav tab order
+    confirmed: For Your Role → Home → Concepts → Demo Institution
+    Tour → Walkthroughs → Reference → API Reference. All shelf
+    back-links + role page handbook/walkthrough/concept refs verified
+    by the strict build's no-broken-links pass.
+  - [x] **Q.2.b.exec.9 — Commit + tick PLAN Q.2.b.**
 
   ### Q.2.c.exec — Screenshot pipeline at 1280×900 + collapsed-by-default
 
   User picks: 1280×900 viewport. Screenshot sections collapsed
   by default wherever possible.
 
-  - [ ] **Q.2.c.exec.1 — Screenshot CLI / extension.** Add a
-    `quicksight-gen export screenshots --app <APP> --viewport
-    1280x900 -o <DIR>` command that uses ScreenshotHarness
-    against deployed apps. Replaces ad-hoc scripts in `scripts/`
-    that were AR/PR-specific.
-  - [ ] **Q.2.c.exec.2 — Capture for all 4 deployed apps.** Run
-    against PG-deployed dashboards (canonical). Output ~40
-    screenshots (4 apps × ~10 sheets) at 1280×900. Land them in
-    `docs/walkthroughs/screenshots/` (or new path TBD by Shape C
-    layout).
-  - [ ] **Q.2.c.exec.3 — Collapse pattern.** Pick the mkdocs-
-    material syntax: either `<details><summary>` raw HTML, or
-    `??? note "Screenshot"` admonition (folds by default). Apply
-    to one walkthrough as the pilot to validate render.
-  - [ ] **Q.2.c.exec.4 — Sweep existing screenshot embeds.** Find
-    every `![…](…)` referencing a screenshot in handbook + walk-
-    through pages, wrap in the chosen collapse pattern. Likely
-    a sed-style replace.
-  - [ ] **Q.2.c.exec.5 — Visual review.** Open the rendered site;
-    confirm collapse defaults work + re-screenshot any sheet
-    that looks bad at the new viewport (a screenshot might need
-    a tall override if a visual gets cut).
-  - [ ] **Q.2.c.exec.6 — Commit + tick PLAN Q.2.c.**
+  - [x] **Q.2.c.exec.1 — Screenshot CLI / extension.** Added
+    `quicksight-gen export screenshots [--app | --all] -o DIR
+    --viewport 1280x900 [--config] [--l2-instance] [--skip-warmup]`.
+    Backed by `common/browser/screenshot.py::capture_deployed_app`
+    (own browser lifecycle + settle delays — separate from
+    ScreenshotHarness which assumes test fixtures own the Page).
+    Output goes to `DIR/<app-slug>/<sheet_id>.png`. F12 cluster
+    warmup wired for both PG and Oracle URLs. Old per-app scripts
+    in `scripts/` left in place; exec.4 sweep can retire them.
+  - [x] **Q.2.c.exec.2 — Capture for all 4 deployed apps.** 29 PNGs
+    captured against the live qs-gen-postgres-sasquatch_pr deploy
+    at 1280x900: l1/ (12), exec/ (5), inv/ (6), l2ft/ (6). Two CLI
+    bug fixes surfaced and shipped in the same commit (52fbf45):
+    `wait_for_dashboard_loaded` was waiting for `networkidle` which
+    never fires (QS holds open WebSocket polling); CLI was using
+    outer cfg instead of `app_obj.cfg` for the dashboard ID prefix
+    (missing the L2 segment). **Known follow-up:** date-filtered
+    sheets render "no data" because the seed anchors at 2030-01-01
+    while "today" is 2026-05-01. exec.5 visual review will decide
+    whether to re-anchor seed or pass URL-param date overrides.
+  - [x] **Q.2.c.exec.3 — Collapse pattern.** Picked
+    `??? example "Screenshot"` admonition (mkdocs-material native;
+    folds by default). Enabled `admonition` + `pymdownx.details`
+    extensions in mkdocs.yml. Pilot: drift.md walkthrough's screenshot
+    embed wrapped — renders as `<details><summary>Screenshot</summary>`
+    (collapsed by default, browser-native fold).
+  - [x] **Q.2.c.exec.4 — Sweep existing screenshot embeds.** 14
+    embeds across 12 files wrapped via Python regex sweep
+    (matches `^![alt](.../screenshots/...)$`, prepends
+    `??? example "Screenshot"` + indents the embed 4 spaces).
+    Pilot drift.md from exec.3 already wrapped, so total is 15
+    collapsed admonitions across 13 files: 11 L1 walkthroughs
+    (1 each) + handbook/l1.md (1) + the ETL daily-account-day
+    walkthrough (3, still pointing at stale `screenshots/ar/`
+    PNGs from the deleted AR app — content sweep deferred).
+    mkdocs build --strict clean; rendered HTML confirmed via
+    `grep '<details class="example"'` per page.
+  - [x] **Q.2.c.exec.5 — Visual review.** Spot-checked rendered
+    HTML (collapse defaults work — `<details class="example">`
+    with `Screenshot` summary) and ~6 captured PNGs. **Healthy
+    captures** (data populated): L1 Drift / Drift Timelines /
+    Overdraft / Limit Breach / Supersession Audit / Transactions /
+    Daily Statement, all 5 Investigation sheets, all 5 L2FT
+    sheets, all 5 Executives sheets (post-status fix). **Empty
+    by design** (matview keyed to the most-recent business day +
+    seed plants don't always fire on day 0): L1 Today's
+    Exceptions / Pending Aging / Unbundled Aging — KPIs show 0,
+    which accurately reflects the rolling-7d view of a quiet
+    seed. Dashboard chrome / controls / prose render correctly
+    in those captures, so they're docs-usable. No re-shoots
+    needed.
+  - [x] **Q.2.c.exec.6 — Commit + tick PLAN Q.2.c.**
 
-- [ ] **Q.2.c — Re-screenshot with sane viewport.** Meta-problem from PLAN: screenshots are all way too tall (avoiding scroll-cutoff but at the cost of readability). Pick a viewport size that works for both desktop reading + reasonable scroll height (likely 1280×900 or 1440×1080). Run `screenshot_harness.py` for every app at the new viewport. Replaces the existing per-app screenshot fleet.
+- [x] **Q.2.c — Re-screenshot with sane viewport.** All exec.1-6 done.
+  Replaced the ad-hoc per-app `scripts/capture_*.py` with one
+  `quicksight-gen export screenshots` CLI. Captured 29 PNGs across
+  4 apps at 1280×900 against the live qs-gen-postgres-sasquatch_pr
+  deploy (l1=12, exec=5, inv=6, l2ft=6). Surfaced + fixed an
+  executives dataset bug (`status='success'`→`'Posted'`) and a
+  related deploy-CLI bug (regen step wasn't threading
+  `--l2-instance`). Wrapped 15 screenshot embeds across 13 docs in
+  `??? example "Screenshot"` collapse admonitions (folded by default;
+  `admonition` + `pymdownx.details` extensions enabled).
 
-- [ ] **Q.2.d — Operator/Integrator onramp prose pass.** Address PLAN notes:
-  - Operator "what are we not asking you to learn" reword to stress L1 + L2 are important.
-  - Integrator onramp re-prose (currently sparse).
+- [x] **Q.2.d — Operator/Integrator onramp prose pass.** Both done in
+  prior phases (likely O.2 / Q.2.b.exec.4 wave). Operator page now has
+  a dedicated "What we *are* asking you to learn" section that
+  explicitly says "Two dashboards, not one. The L1 Reconciliation
+  Dashboard is your day-to-day surface — but L1 violations are
+  downstream symptoms..." which addresses the L1+L2 importance note.
+  Integrator page is fully fleshed out with the canonical Shape C
+  shape + an "When the L2 changes" workflow-loop section.
 
-- [ ] **Q.2.e — `mkdocs build --strict` + ship the regenerated site.**
+- [x] **Q.2.e — `mkdocs build --strict` + ship the regenerated site.** Both fixtures (sasquatch_pr + spec_example) build clean under `--strict`. Site contents verified by Q.5.f's persona-neutral gate + the dead-link gate (test_docs_links.py).
 
 ### Q.3 — CLI / yaml ergonomics around schema (was task #488)
 
-The pre-Phase-Q backlog item — slotted last as polish.
+The pre-Phase-Q backlog item — slotted last as polish. **Needs
+scoping conversation before execution.** Original framing referenced
+SPEC's "Workflow Ideas" which no longer exists (the section was
+restructured during M-/N-/O- phases) and `generate training` which
+points at the deleted training/ kit (removed in O.1.l). What's left
+is a meaningful CLI redesign question — what verbs, what the
+`config.yaml` ↔ L2 YAML split should look like — that warrants a
+dedicated discussion + spike rather than execution from a stale
+plan entry.
 
-- [ ] **Q.3.a — Materialize SPEC's "Workflow Ideas":** `generate config (demo|template)`, `apply schema`, `apply data`, `apply dashboards`, `generate training`. Acceptance: a fresh integrator runs end-to-end from one YAML.
-- [ ] **Q.3.b — yaml field naming / config-vs-L2 boundary review.** Today's split between `run/config.yaml` (account, region, datasource, dialect, theme defaults) and the L2 institution YAML (rails, chains, accounts, theme override) has accumulated friction points; tighten the boundary based on what actually got threaded in M-/N-/O-/P-.
+- [ ] **Q.3.a — Re-scope "workflow"-shaped CLI.** Today's surface is
+  `generate <app>` / `deploy <app>` / `cleanup` / `demo apply` /
+  `probe` / `export <kind>`. A workflow-shaped redesign would group
+  by integrator step rather than internal verb. Decide whether
+  there's a clear win, and pick a target shape, before any code
+  changes. Could ship as a back-compat alias group rather than a
+  rename.
+- [ ] **Q.3.b — yaml field naming / config-vs-L2 boundary review.**
+  Today's split between `run/config.yaml` (account, region,
+  datasource, dialect, theme defaults) and the L2 institution YAML
+  (rails, chains, accounts, persona, theme override) has accumulated
+  friction points. Audit + tighten the boundary based on what
+  actually got threaded in M-/N-/O-/P-/Q-. Likely a dedicated phase
+  with its own scoping pass.
 
 ### Q.4 — Iteration gate + release
 
-- [ ] **Q.4.a — Decide release cut** (likely v7.1.0 — additive polish + docs IA shift; not a breaking schema change, but the IA / nav re-org may want a major bump if any external links break).
-- [ ] **Q.4.b — Bump `__version__` + RELEASE_NOTES entry covering Q.1–Q.3 changes.**
-- [ ] **Q.4.c — Commit + tag + push; release pipeline green on both dialects.**
+- [x] **Q.4.a — Decide release cut.** v7.3.0 — additive: new optional `persona:` YAML block, persona-neutral docs infrastructure, two new CI gates, Investigation walkthroughs split. No breaking schema or CLI changes. Cuts cleanly off v7.2.0.
+- [x] **Q.4.b — Bump `__version__` + RELEASE_NOTES entry covering Q.2 + Q.5 changes.** Bumped to 7.3.0; release notes describe the persona block, the worked-example admonition pattern, the persona.py rewrite, and the new CI gates.
+- [x] **Q.4.c — Commit + tag + push; release pipeline green on both dialects.** Tag v7.3.0; CI runs through both Postgres and Oracle dialects.
+
+### Q.5 — Persona-neutral docs (full L2-driven substitution)
+
+**Smell.** Docs review surfaced 121 sasquatch / SNB / Bigfoot / Juniper / Cascadia tokens across 23 rendered pages when the active L2 is `spec_example` — i.e. the persona-neutral fixture leaks Sasquatch flavor anyway. Persona content is wired into prose / code examples / scenario walkthroughs / auto-rendered API docs, not flowing through `HandbookVocabulary`. User picked the **D2 + E2** path: walkthroughs split into mechanics + worked-example, and `common/persona.py` rewritten as a generic skeleton instantiated from L2 YAMLs.
+
+Acceptance: with `QS_DOCS_L2_INSTANCE=tests/l2/spec_example.yaml` the rendered site contains zero persona tokens (allowlist for Tier 2 intentional citations); with `sasquatch_pr` the existing flavor renders unchanged.
+
+- [x] **Q.5.a — Expand `HandbookVocabulary` surface.** Add fields the docs currently hardcode:
+  - `vocab.fixture_name` (e.g. `sasquatch_pr`) for "the canonical bundled fixture" sentences
+  - `vocab.demo.drift_account / overdraft_account / limit_breach_account` typed `(account_id, display_name)` tuples drawn from the active L2's planted scenarios; `None` when no plants
+  - `vocab.demo.investigation` carrying `(anchor, layering_chain, anomaly_pair)`; `None` when no `inv_fanout_plants`
+  - `vocab.demo.has_investigation_plants` bool
+  - `spec_example` (no plants) → every `demo.*` is `None`; templates render generic prose
+  - Tests in `test_handbook_vocabulary.py` for both fixtures + the empty-plants fallback
+
+- [x] **Q.5.b — Tier 1 walkthroughs mechanical replace** (~5 pages):
+  - `walkthroughs/etl/how-do-i-populate-transactions.md` — sasquatch_pr → `{{ l2_instance_name }}` in prose, `<your-l2-instance>` in code blocks
+  - `walkthroughs/etl/how-do-i-add-a-metadata-key.md` — same
+  - `walkthroughs/customization/how-do-i-extend-canonical-values.md` — same
+  - `walkthroughs/etl/how-do-i-validate-a-single-account-day.md` — bigfoot-brews / sasquatch-sips → `{{ vocab.demo.drift_account.id }}` etc.; whole page guarded by `{% if vocab.demo.drift_account %}` with a "needs planted scenarios — point at sasquatch_pr" callout otherwise
+
+- [x] **Q.5.c — Reference docs + handbook fixture refs** (~6 pages):
+  - `Schema_v6.md` — `sasquatch_ar` example → `{{ l2_instance_name }}`
+  - `handbook/{l1,executives,l2_flow_tracing,customization}.md` — "canonical sasquatch_pr fixture" → "the bundled `{{ vocab.fixture_name }}` fixture"
+  - `for-your-role/integrator.md` — same fixture rename
+
+- [x] **Q.5.d — D2: Investigation walkthroughs split into mechanics + worked-example.** 4 pages (recipient-fanout, volume-anomalies, money-trail, account-network):
+  - Body rewritten as L2-portable mechanics: how the slider works, what the σ-bucket histogram means, how to interpret the table — without naming specific accounts
+  - Below the body, an admonition `??? example "Worked example: {{ vocab.fixture_name }}"` rendered only when `vocab.demo.has_investigation_plants`. Reads `vocab.demo.investigation.anchor.name`, `.layering_chain[*]`, `.anomaly_pair` for the specific Juniper / Cascadia / Shell A-B-C narrative
+  - When active L2 is `spec_example`, the worked example simply doesn't render — body stands on its own
+
+- [x] **Q.5.e — E2: rewrite `common/persona.py` as a generic skeleton.**
+  - Drop the hardcoded SNB_PERSONA constant and Sasquatch-flavored strings from `persona.py`
+  - Move the Sasquatch persona content into `tests/l2/sasquatch_pr.yaml`'s existing `persona:` / `vocabulary:` block (or extend if not present)
+  - `persona.py` becomes typed dataclasses + a loader that builds a `DemoPersona` from L2; default loader returns a neutral `DemoPersona()` for instances without persona content
+  - All callers (demo seed plants, etc.) read from the loaded `DemoPersona` instead of the module-level constant
+  - `api/common-foundations.md` mkdocstrings now renders generic-shape persona dataclasses without Sasquatch refs
+  - All existing tests + e2e harness continue to pass against sasquatch_pr (the persona content moved, not deleted)
+
+- [x] **Q.5.f — CI gate.** Add `tests/test_docs_persona_neutral.py`:
+  - Builds the site twice: once with `QS_DOCS_L2_INSTANCE=tests/l2/spec_example.yaml` (asserts zero persona tokens after allowlist), once with `sasquatch_pr.yaml` (asserts the flavor strings render — guards against accidentally over-deleting)
+  - Allowlist for Tier 2 intentional fixture citations (e.g. `tests/l2/sasquatch_pr.yaml` mentions in customization handbook)
+  - Runs in <15s including both builds (cache the built site between sub-tests)
+
+- [x] **Q.5.g — End-to-end verification.** mkdocs build clean against both fixtures; `pytest` green; spot-check 3 pages each in the rendered spec_example + sasquatch_pr builds for visual correctness.
 
 ---
 

@@ -198,7 +198,7 @@ def test_account_summary_sql_left_joins_activity():
     assert "LEFT JOIN activity" in sql
 
 
-def test_both_content_datasets_filter_to_status_success():
+def test_both_content_datasets_filter_to_status_posted():
     """Failed legs were recorded but didn't move money — including them
     pollutes executive trends with operational noise. Scoped to the 2
     content datasets — the M.4.4.5 App Info datasets read schema/
@@ -206,8 +206,8 @@ def test_both_content_datasets_filter_to_status_success():
     content = build_all_datasets(_TEST_CFG)[:2]
     for ds in content:
         sql = next(iter(ds.PhysicalTableMap.values())).CustomSql.SqlQuery
-        assert "status = 'success'" in sql, (
-            f"{ds.DataSetId} must filter status='success'"
+        assert "status = 'Posted'" in sql, (
+            f"{ds.DataSetId} must filter status='Posted'"
         )
 
 

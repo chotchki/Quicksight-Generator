@@ -57,14 +57,14 @@ Three reference points:
 
 ## What you'll see in the demo
 
-The demo's `transfer_type` set is whatever the Sasquatch L2
+The demo's `transfer_type` set is whatever the active L2
 instance declares. Inspect via Python:
 
 ```python
 from quicksight_gen.common.l2.loader import load_instance
 from quicksight_gen.common.l2.schema import emit_schema
 
-l2 = load_instance("tests/l2/sasquatch_pr.yaml")
+l2 = load_instance("tests/l2/{{ l2_instance_name }}.yaml")
 ddl = emit_schema(l2)
 print([line for line in ddl.splitlines() if "transfer_type" in line][:10])
 ```

@@ -55,83 +55,90 @@ You can land on the Daily Statement sheet two ways:
 
 ## What you'll see in the demo
 
-Three worked examples are pinned by the L1 dashboard's e2e test
-suite against the deployed demo seed. Open the dashboard, switch
-to the Daily Statement tab, and try each one in turn.
+Open the dashboard, switch to the Daily Statement tab, and try the
+three pinned scenarios below. Each is a different shape the sheet
+surfaces — clean, drift, overdraft — and together they cover the
+full "is this account-day OK?" decision tree.
 
-### Example 1 — A clean reconciling day
+### Scenario 1 — A clean reconciling day
 
-| Parameter      | Value                              |
-| -------------- | ---------------------------------- |
-| Account        | `gl-1010-cash-due-frb`             |
-| Balance Date   | yesterday                          |
-
-You should see:
+Pick any GL control account in your L2 (e.g., a `gl-1010-cash-*`
+ledger entry); set Balance Date to yesterday. You should see:
 
 - **Opening Balance**, **Total Debits**, **Total Credits**, and
   **Closing Balance (Stored)** all populated with non-zero
-  values from the daily ACH origination sweep activity.
+  values from the day's posting activity.
 - **Drift = $0.00** — stored closing equals opening plus net
   flow.
 - **Transaction Detail** table — at least one leg, every leg
   has a `counter_account_name` filled in (no NULLs).
 
-![Daily Statement clean reconciling day for gl-1010-cash-due-frb showing Opening 40,090 / Debits 2,405 / Closing 42,495 / Drift 0 with a single ACH sweep leg](../screenshots/ar/daily-statement-01-clean.png)
-
 This is what every account-day in your slice should look like
 when the projection is clean.
 
-### Example 2 — A drift day
+{% if vocab.demo.drift_account %}
+### Scenario 2 — A drift day
 
-| Parameter      | Value                              |
-| -------------- | ---------------------------------- |
-| Account        | `cust-900-0001-bigfoot-brews`      |
-| Balance Date   | 5 days ago                         |
+| Parameter      | Value                                            |
+| -------------- | ------------------------------------------------ |
+| Account        | `{{ vocab.demo.drift_account.id }}`              |
+| Balance Date   | the planted `days_ago` from the seed report      |
 
 You should see:
 
-- **Drift = +$200.00** — stored closing balance is $200 higher
-  than the legs in the table account for. The KPI flips from
-  green to accent-colored, signaling a non-zero drift.
+- **Drift ≠ $0.00** — stored closing balance disagrees with what
+  the legs in the table account for. The KPI flips from green to
+  accent-colored, signaling a non-zero drift.
 - **Transaction Detail** table renders normally — every leg has
   the right counter-account, status, and signed amount. The
   drift isn't *in* a leg; it's the absence of a leg that should
   have been there (or the presence of a balance row that
   shouldn't have been bumped).
 
-![Daily Statement drift day for cust-900-0001-bigfoot-brews showing a single ACH credit and a non-zero Drift KPI of 200](../screenshots/ar/daily-statement-02-drift.png)
-
-This is the planted `_SUBLEDGER_DRIFT_PLANT` scenario — the
-demo seeds a $200 unexplained delta into the bigfoot-brews
+This is the planted drift scenario — the demo seeds an
+unexplained delta into the {{ vocab.demo.drift_account.name }}
 balance row to give the L1 Drift sheet something to surface. In
 a real ETL, the same shape would mean either a posting was
 dropped on its way to `<prefix>_transactions` or an EOD `money`
 value was written that doesn't match the postings feed.
+{% endif %}
 
-### Example 3 — An overdraft day
+{% if vocab.demo.overdraft_account %}
+### Scenario 3 — An overdraft day
 
-| Parameter      | Value                              |
-| -------------- | ---------------------------------- |
-| Account        | `cust-900-0002-sasquatch-sips`     |
-| Balance Date   | 6 days ago                         |
+| Parameter      | Value                                                |
+| -------------- | ---------------------------------------------------- |
+| Account        | `{{ vocab.demo.overdraft_account.id }}`              |
+| Balance Date   | the planted `days_ago` from the seed report          |
 
 You should see:
 
 - **Closing Balance (Stored)** is *negative* — the account
   ended the day overdrawn.
-- **Drift = $0.00** — the overdraft is real. A $45,000 outbound
+- **Drift = $0.00** — the overdraft is real. A large outbound
   leg drove the balance below zero, the leg is in the table,
   and the stored balance reflects it correctly.
 - **Transaction Detail** table includes the offending outbound
-  leg (memo: "Emergency outbound — covered next day").
+  leg.
 
-![Daily Statement overdraft day for cust-900-0002-sasquatch-sips showing a -83,260.03 closing balance, Drift 0, and the 45,000 emergency outbound leg in the detail table](../screenshots/ar/daily-statement-03-overdraft.png)
+This is the planted overdraft scenario for
+{{ vocab.demo.overdraft_account.name }}. The distinction
+between Scenarios 2 and 3 is the load-bearing one: **drift is a
+bookkeeping break; overdraft is a real balance condition.** The
+Daily Statement separates them cleanly because the same row
+carries both signals.
+{% endif %}
 
-This is the planted `_OVERDRAFT_PLANT` scenario. The
-distinction between Example 2 and Example 3 is the load-bearing
-one: **drift is a bookkeeping break; overdraft is a real
-balance condition.** The Daily Statement separates them
-cleanly because the same row carries both signals.
+{% if not vocab.demo.drift_account %}
+!!! note "Worked examples need planted scenarios"
+    The drift / overdraft worked examples render against the
+    active L2's planted scenarios. The current L2
+    (`{{ l2_instance_name }}`) has no plants of those kinds in its
+    `default_scenario_for(l2)` output, so this walkthrough renders
+    only the clean-day scenario above. To see the full sequence,
+    re-render against an L2 with planted scenarios — e.g.
+    `QS_DOCS_L2_INSTANCE=tests/l2/sasquatch_pr.yaml mkdocs serve`.
+{% endif %}
 
 ## What it means
 
@@ -190,9 +197,10 @@ collapse away:
   its own transfer instead of legs of one transfer.
 - **Overdraft on a sub-ledger ≠ drift.** The L1 Overdraft check
   fires on `closing < 0`; the L1 Drift check fires on `stored ≠
-  recomputed`. Sasquatch Sips on day-6 has the first without
-  the second. Treat them as orthogonal checks even though they
-  share a row on the Daily Statement.
+  recomputed`. The planted overdraft account
+  ({{ vocab.demo.overdraft_account.name if vocab.demo.overdraft_account else "see Scenario 3 above" }})
+  has the first without the second. Treat them as orthogonal
+  checks even though they share a row on the Daily Statement.
 
 ## Next step
 

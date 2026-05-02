@@ -759,6 +759,288 @@ def demo_topology(
     click.echo(f"Wrote topology SVG to {rendered}")
 
 
+# ---------------------------------------------------------------------------
+# Q.3.a — piecewise emit / apply primitives (schema | seed | refresh)
+#
+# `demo apply` does the full bundle: emit schema + seed + refresh,
+# connect to the demo DB, run them in order. The piecewise commands
+# below let an integrator either:
+#   - emit one piece's SQL to a file/stdout for review or for piping
+#     into a different DB tool (no DB connection required), OR
+#   - apply one piece against the demo DB without re-running the
+#     others (e.g., re-seed without re-emitting schema).
+#
+# All six new commands take ``--l2-instance PATH`` (defaults to
+# ``spec_example``); the apply commands also take ``--config PATH``
+# (the demo DB connection).
+# ---------------------------------------------------------------------------
+
+
+def _resolve_l2_for_demo(
+    config_path: str, l2_instance_path: str | None,
+):  # type: ignore[no-untyped-def]
+    """Load config + L2 instance and stamp the per-instance prefix on cfg.
+
+    Mirrors the prelude of ``_apply_demo``: load YAML, resolve to either
+    the bundled spec_example or the integrator's own L2, stamp
+    ``cfg.l2_instance_prefix`` so downstream SQL (REFRESH MATERIALIZED
+    VIEW, dataset IDs) lands on the right per-prefix objects.
+    """
+    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
+
+    cfg = load_config(config_path)
+    if l2_instance_path is not None:
+        from quicksight_gen.common.l2 import load_instance
+        instance = load_instance(Path(l2_instance_path))
+    else:
+        instance = default_l2_instance()
+    if cfg.l2_instance_prefix is None:
+        cfg = cfg.with_l2_instance_prefix(str(instance.instance))
+    return cfg, instance
+
+
+def _build_full_seed_sql(cfg, instance) -> str:  # type: ignore[no-untyped-def]
+    """Compose the same seed pipeline ``_apply_demo`` runs.
+
+    Densify per-kind plants (×5) → add 15 broken-rail stuck_pending
+    plants on one rail → boost inv_fanout amounts (×5). Returns the
+    concatenated SQL of the 90-day baseline + plant overlays.
+    """
+    from quicksight_gen.common.l2.auto_scenario import (
+        add_broken_rail_plants,
+        boost_inv_fanout_plants,
+        default_scenario_for,
+        densify_scenario,
+    )
+    from quicksight_gen.common.l2.seed import emit_full_seed
+
+    base = default_scenario_for(instance).scenario
+    dense = densify_scenario(base, factor=5)
+    broken = add_broken_rail_plants(dense, instance, broken_count=15)
+    final = boost_inv_fanout_plants(broken, amount_multiplier=5)
+    return emit_full_seed(instance, final, dialect=cfg.dialect)
+
+
+def _emit_to_target(sql: str, output: str | None, *, label: str) -> None:
+    """Write SQL to ``output`` or stdout; echo a one-line summary on stderr."""
+    if output is None:
+        click.echo(sql, nl=False)
+    else:
+        Path(output).write_text(sql, encoding="utf-8")
+        line_count = sql.count("\n")
+        size_kb = len(sql.encode("utf-8")) // 1024
+        click.echo(
+            f"Wrote {label} to {output} ({line_count} lines, {size_kb} KB)",
+            err=True,
+        )
+
+
+def _connect_and_apply(
+    cfg, sql: str, *, label: str,  # type: ignore[no-untyped-def]
+) -> None:
+    """Open the demo DB connection, run ``sql``, commit; rollback on error."""
+    if not cfg.demo_database_url:
+        raise click.ClickException(
+            "demo_database_url is required. "
+            "Set it in your config YAML or via QS_GEN_DEMO_DATABASE_URL."
+        )
+    from quicksight_gen.common.db import connect_demo_db
+
+    click.echo(f"Connecting to {cfg.demo_database_url.split('@')[-1]}...")
+    try:
+        conn = connect_demo_db(cfg)
+    except ImportError as e:
+        raise click.ClickException(str(e)) from e
+    try:
+        with conn.cursor() as cur:
+            click.echo(f"  Applying {label}...")
+            _execute_script(cur, sql, dialect=cfg.dialect)
+        conn.commit()
+        click.echo(f"  {label.capitalize()} applied.")
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# -- emit-* commands --------------------------------------------------------
+
+
+@demo.command("emit-schema")
+@click.option(
+    "--l2-instance", "l2_instance_path",
+    type=click.Path(exists=True), default=None,
+    help="Path to L2 instance YAML. Default: bundled spec_example.",
+)
+@click.option(
+    "--config", "-c",
+    type=click.Path(exists=True), default="config.yaml",
+    help="Path to configuration file (used for the dialect setting only).",
+)
+@click.option(
+    "--output", "-o",
+    type=click.Path(), default=None,
+    help="Output path for the SQL (default: stdout).",
+)
+def demo_emit_schema(
+    l2_instance_path: str | None, config: str, output: str | None,
+) -> None:
+    """Emit the per-prefix schema DDL for an L2 instance.
+
+    Pipe to your DB tool: ``quicksight-gen demo emit-schema | psql ...``
+    or write to a file for review before applying.
+    """
+    from quicksight_gen.common.l2.schema import emit_schema
+
+    cfg, instance = _resolve_l2_for_demo(config, l2_instance_path)
+    sql = emit_schema(instance, dialect=cfg.dialect)
+    _emit_to_target(sql, output, label="schema DDL")
+
+
+@demo.command("emit-seed")
+@click.option(
+    "--l2-instance", "l2_instance_path",
+    type=click.Path(exists=True), default=None,
+    help="Path to L2 instance YAML. Default: bundled spec_example.",
+)
+@click.option(
+    "--config", "-c",
+    type=click.Path(exists=True), default="config.yaml",
+    help="Path to configuration file (used for the dialect setting only).",
+)
+@click.option(
+    "--output", "-o",
+    type=click.Path(), default=None,
+    help="Output path for the SQL (default: stdout).",
+)
+def demo_emit_seed(
+    l2_instance_path: str | None, config: str, output: str | None,
+) -> None:
+    """Emit the full demo seed SQL (90-day baseline + plant overlays).
+
+    Same composition ``demo apply`` runs: baseline → densify ×5 → add
+    15 broken-rail plants → boost inv_fanout amounts ×5 → emit_full_seed.
+    For the narrower contract-test seed (one plant per L1 invariant
+    kind, hashed against a canonical date), use ``demo seed-l2``.
+    """
+    cfg, instance = _resolve_l2_for_demo(config, l2_instance_path)
+    sql = _build_full_seed_sql(cfg, instance)
+    _emit_to_target(sql, output, label="seed SQL")
+
+
+@demo.command("emit-refresh")
+@click.option(
+    "--l2-instance", "l2_instance_path",
+    type=click.Path(exists=True), default=None,
+    help="Path to L2 instance YAML. Default: bundled spec_example.",
+)
+@click.option(
+    "--config", "-c",
+    type=click.Path(exists=True), default="config.yaml",
+    help="Path to configuration file (used for the dialect setting only).",
+)
+@click.option(
+    "--output", "-o",
+    type=click.Path(), default=None,
+    help="Output path for the SQL (default: stdout).",
+)
+def demo_emit_refresh(
+    l2_instance_path: str | None, config: str, output: str | None,
+) -> None:
+    """Emit the REFRESH MATERIALIZED VIEW SQL for an L2 instance's matviews.
+
+    Run this after every batch insert into ``<prefix>_transactions``
+    or ``<prefix>_daily_balances`` — the L1 invariant matviews +
+    Investigation matviews don't auto-refresh.
+    """
+    from quicksight_gen.common.l2.schema import refresh_matviews_sql
+
+    cfg, instance = _resolve_l2_for_demo(config, l2_instance_path)
+    sql = refresh_matviews_sql(instance, dialect=cfg.dialect)
+    _emit_to_target(sql, output, label="refresh SQL")
+
+
+# -- apply-* commands -------------------------------------------------------
+
+
+@demo.command("apply-schema")
+@click.option(
+    "--l2-instance", "l2_instance_path",
+    type=click.Path(exists=True), default=None,
+    help="Path to L2 instance YAML. Default: bundled spec_example.",
+)
+@click.option(
+    "--config", "-c",
+    type=click.Path(exists=True), default="config.yaml",
+    help="Path to configuration file (DB connection + dialect).",
+)
+def demo_apply_schema(
+    l2_instance_path: str | None, config: str,
+) -> None:
+    """Connect to the demo DB and apply just the schema DDL."""
+    from quicksight_gen.common.l2.schema import emit_schema
+
+    cfg, instance = _resolve_l2_for_demo(config, l2_instance_path)
+    sql = emit_schema(instance, dialect=cfg.dialect)
+    _connect_and_apply(cfg, sql, label="schema DDL")
+
+
+@demo.command("apply-seed")
+@click.option(
+    "--l2-instance", "l2_instance_path",
+    type=click.Path(exists=True), default=None,
+    help="Path to L2 instance YAML. Default: bundled spec_example.",
+)
+@click.option(
+    "--config", "-c",
+    type=click.Path(exists=True), default="config.yaml",
+    help="Path to configuration file (DB connection + dialect).",
+)
+def demo_apply_seed(
+    l2_instance_path: str | None, config: str,
+) -> None:
+    """Connect to the demo DB and apply just the seed SQL.
+
+    Assumes the schema was already applied (``demo apply-schema`` or
+    a prior ``demo apply``). After this you'll likely want
+    ``demo apply-refresh`` so the matviews see the new rows.
+    """
+    cfg, instance = _resolve_l2_for_demo(config, l2_instance_path)
+    sql = _build_full_seed_sql(cfg, instance)
+    _connect_and_apply(cfg, sql, label="seed data")
+
+
+@demo.command("apply-refresh")
+@click.option(
+    "--l2-instance", "l2_instance_path",
+    type=click.Path(exists=True), default=None,
+    help="Path to L2 instance YAML. Default: bundled spec_example.",
+)
+@click.option(
+    "--config", "-c",
+    type=click.Path(exists=True), default="config.yaml",
+    help="Path to configuration file (DB connection + dialect).",
+)
+def demo_apply_refresh(
+    l2_instance_path: str | None, config: str,
+) -> None:
+    """Connect to the demo DB and refresh the per-prefix matviews.
+
+    Use after any ETL load that mutates ``<prefix>_transactions`` or
+    ``<prefix>_daily_balances`` — the L1 invariant matviews +
+    Investigation matviews don't auto-refresh.
+    """
+    from quicksight_gen.common.l2.schema import refresh_matviews_sql
+
+    cfg, instance = _resolve_l2_for_demo(config, l2_instance_path)
+    sql = refresh_matviews_sql(instance, dialect=cfg.dialect)
+    _connect_and_apply(cfg, sql, label="matview refresh")
+
+
+# ---------------------------------------------------------------------------
+
+
 @demo.command("apply")
 @click.argument("app", type=DEMO_APP_CHOICE, required=False)
 @click.option("--all", "all_apps", is_flag=True, help="Apply for all apps.")
@@ -812,8 +1094,6 @@ def _apply_demo(
     to render that institution's per-prefix schema/seed/dashboards
     against the same demo DB.
     """
-    from dataclasses import replace as _replace
-
     from quicksight_gen.apps.executives.app import (
         build_analysis as build_exec_analysis,
         build_executives_dashboard,
@@ -828,9 +1108,14 @@ def _apply_demo(
     from quicksight_gen.apps.investigation.datasets import (
         build_all_datasets as build_inv_datasets,
     )
-    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
 
-    cfg = load_config(config_path)
+    # Q.3.a refactor: the "load YAML + stamp prefix on cfg" prelude
+    # and the "densify + broken + boost + emit_full_seed" composition
+    # now live in `_resolve_l2_for_demo` / `_build_full_seed_sql`.
+    # ``_apply_demo`` bundles them together so the schema + seed +
+    # refresh land in one DB transaction (piecewise commands open a
+    # separate connection per piece).
+    cfg, inv_l2 = _resolve_l2_for_demo(config_path, l2_instance_path)
     if not cfg.demo_database_url:
         raise click.ClickException(
             "demo_database_url is required for 'demo apply'. "
@@ -843,63 +1128,13 @@ def _apply_demo(
         emit_schema as emit_l2_schema,
         refresh_matviews_sql,
     )
-    from quicksight_gen.common.l2.seed import emit_full_seed as emit_l2_seed
-    from quicksight_gen.common.l2.auto_scenario import (
-        add_broken_rail_plants,
-        boost_inv_fanout_plants,
-        default_scenario_for,
-        densify_scenario,
-    )
-
-    # Pre-stamp ``cfg.l2_instance_prefix`` from the default L2 instance
-    # before opening the DB connection: the REFRESH MATERIALIZED VIEW
-    # calls below reference ``<prefix>_inv_*`` and would land on
-    # ``None_inv_pair_rolling_anomalies`` if the prefix isn't set yet.
-    # Clear ``datasource_arn`` at the same time so ``Config.__post_init__``
-    # re-derives it with the prefix included (otherwise the per-app
-    # builders bake the unprefixed ``qs-gen-demo-datasource`` ARN into
-    # the dataset JSON, and deploy fails with "Invalid dataSourceArn").
-    if l2_instance_path is not None:
-        from quicksight_gen.common.l2 import load_instance
-        inv_l2 = load_instance(Path(l2_instance_path))
-    else:
-        inv_l2 = default_l2_instance()
-    if cfg.l2_instance_prefix is None:
-        cfg = cfg.with_l2_instance_prefix(str(inv_l2.instance))
 
     # The L2 instance carries its full per-prefix DDL — base tables
     # (``<prefix>_transactions`` / ``<prefix>_daily_balances``), Current*
     # views, L1 invariant matviews, AND the Inv matviews (N.3.n /
     # N.4.h). The legacy global ``schema.sql`` was retired in P.1.
     l2_schema_sql = emit_l2_schema(inv_l2, dialect=cfg.dialect)
-
-    # Plant the L2-shape demo seed: every L1 SHOULD-violation kind
-    # (drift / overdraft / limit-breach / stuck-pending /
-    # stuck-unbundled / supersession) plus the Investigation
-    # InvFanoutPlant — landed via the auto-derived scenario picker.
-    # P.1 retired the legacy ``apps/investigation/demo_data.py``
-    # (which planted v5-shape flat-table data into the now-deleted
-    # unprefixed ``transactions`` / ``daily_balances`` tables).
-    #
-    # R.3.b/c: layer plant density tuning on top of default_scenario_for.
-    # ``densify_scenario(factor=5)`` replicates per-kind plants across
-    # the window so each L1 invariant has multiple instances visible
-    # against the 60k-row Phase R baseline; ``add_broken_rail_plants``
-    # picks one Rail and plants 15 stuck_pending entries on it so the
-    # Today's Exceptions KPI has a magnitude that matters and the L2
-    # Exceptions sheet's bar chart shows the broken Rail spike
-    # immediately. emit_full_seed (R.3.a) prepends the 90-day baseline.
-    base_scenario = default_scenario_for(inv_l2).scenario
-    dense_scenario = densify_scenario(base_scenario, factor=5)
-    broken_scenario = add_broken_rail_plants(
-        dense_scenario, inv_l2, broken_count=15,
-    )
-    # R.3.d: bump inv_fanout amount so the cluster stands out against
-    # the customer-ACH baseline median ($665). 5× → $2,500/transfer.
-    final_scenario = boost_inv_fanout_plants(
-        broken_scenario, amount_multiplier=5,
-    )
-    seed_sql = emit_l2_seed(inv_l2, final_scenario, dialect=cfg.dialect)
+    seed_sql = _build_full_seed_sql(cfg, inv_l2)
 
     click.echo(f"Connecting to {cfg.demo_database_url.split('@')[-1]}...")
     try:
@@ -1052,14 +1287,27 @@ def deploy_cmd(
     app_name = _resolve_app(app, all_apps, allow_all=True)
 
     if generate_first:
+        # Thread l2_instance_path into every regen so deploy --generate
+        # --l2-instance lands per-instance prefixed dataset/analysis IDs
+        # instead of falling back to spec_example. Without this, the
+        # regenerated JSON has the wrong prefix and the deploy targets
+        # the wrong dashboard ID family.
         if app_name in ("investigation", "all"):
-            _generate_investigation(config, output_dir)
+            _generate_investigation(
+                config, output_dir, l2_instance_path=l2_instance_path,
+            )
         if app_name in ("executives", "all"):
-            _generate_executives(config, output_dir)
+            _generate_executives(
+                config, output_dir, l2_instance_path=l2_instance_path,
+            )
         if app_name in ("l1-dashboard", "all"):
-            _generate_l1_dashboard(config, output_dir)
+            _generate_l1_dashboard(
+                config, output_dir, l2_instance_path=l2_instance_path,
+            )
         if app_name in ("l2-flow-tracing", "all"):
-            _generate_l2_flow_tracing(config, output_dir)
+            _generate_l2_flow_tracing(
+                config, output_dir, l2_instance_path=l2_instance_path,
+            )
 
     cfg = load_config(config)
     if l2_instance_path is not None and cfg.l2_instance_prefix is None:
@@ -1241,6 +1489,349 @@ def export_docs_cmd(output: str, l2_instance: str | None) -> None:
             "To render against this instance, run:\n"
             f"    QS_DOCS_L2_INSTANCE={l2_path} mkdocs build -f {dst}/mkdocs.yml"
         )
+
+
+# ---------------------------------------------------------------------------
+# Export — screenshots (Q.2.c.exec.1)
+# ---------------------------------------------------------------------------
+
+
+# Per CLI app slug: (module path, builder function, output-subdir slug).
+# The output-subdir slug is the short form (l1, l2ft, inv, exec) that
+# matches the existing `docs/walkthroughs/screenshots/<short>/` convention
+# already wired into handbook + walkthrough markdown refs. Lazy-imported
+# in _build_app_for_screenshots so the CLI loads quickly when this command
+# isn't invoked.
+_SCREENSHOT_APPS: dict[str, tuple[str, str, str]] = {
+    "l1-dashboard": (
+        "quicksight_gen.apps.l1_dashboard.app", "build_l1_dashboard_app",
+        "l1",
+    ),
+    "l2-flow-tracing": (
+        "quicksight_gen.apps.l2_flow_tracing.app", "build_l2_flow_tracing_app",
+        "l2ft",
+    ),
+    "investigation": (
+        "quicksight_gen.apps.investigation.app", "build_investigation_app",
+        "inv",
+    ),
+    "executives": (
+        "quicksight_gen.apps.executives.app", "build_executives_app",
+        "exec",
+    ),
+}
+
+
+# Per-app DateTimeParam names that the screenshots CLI sets when
+# --date-from / --date-to are passed. The seed anchors at date(2030,1,1)
+# but the dashboards default to "rolling 7 days back from today" — so
+# without these overrides the captured PNGs render "no data" on every
+# date-filtered sheet. The map covers each app's universal date range
+# AND any per-sheet date overrides (L2FT has 3 separate ranges; L1's
+# Daily Statement has a single-day picker that snaps to --date-to).
+_APP_DATE_PARAMS: dict[str, dict[str, list[str]]] = {
+    "l1-dashboard": {
+        "from": ["pL1DateStart"],
+        "to": ["pL1DateEnd", "pL1DsBalanceDate"],  # DS picker = single day
+    },
+    "l2-flow-tracing": {
+        "from": ["pL2ftDateStart", "pL2ftChainsDateStart", "pL2ftTtDateStart"],
+        "to": ["pL2ftDateEnd", "pL2ftChainsDateEnd", "pL2ftTtDateEnd"],
+    },
+    "investigation": {
+        "from": [], "to": [],  # No date params
+    },
+    "executives": {
+        "from": ["pExecDateStart"],
+        "to": ["pExecDateEnd"],
+    },
+}
+
+
+def _parse_viewport(text: str) -> tuple[int, int]:
+    """Parse a ``WxH`` string into ``(width, height)`` integers."""
+    parts = text.lower().split("x")
+    if len(parts) != 2:
+        raise click.BadParameter(
+            f"viewport must be WxH (e.g. 1280x900); got {text!r}"
+        )
+    try:
+        width, height = int(parts[0]), int(parts[1])
+    except ValueError:
+        raise click.BadParameter(
+            f"viewport WxH must be integers; got {text!r}"
+        )
+    if width <= 0 or height <= 0:
+        raise click.BadParameter(
+            f"viewport dimensions must be positive; got {text!r}"
+        )
+    return width, height
+
+
+def _build_app_for_screenshots(app_slug: str, cfg, l2_instance):
+    """Import + call the builder for ``app_slug``; resolve auto-IDs."""
+    import importlib
+    mod_path, fn_name, _subdir = _SCREENSHOT_APPS[app_slug]
+    mod = importlib.import_module(mod_path)
+    builder = getattr(mod, fn_name)
+    app = builder(cfg, l2_instance=l2_instance)
+    # emit_analysis() resolves auto-IDs on the tree so sheet objects
+    # match what was deployed.
+    app.emit_analysis()
+    return app
+
+
+def _warm_db_for_screenshots(database_url: str) -> None:
+    """Per the F12 cold-start footgun: SELECT 1 to warm the cluster
+    before generating an embed URL. Without this, QuickSight shows
+    'We can't open that dashboard' on the first walk."""
+    scheme = (database_url.split("://", 1)[0] or "").lower()
+    if scheme.startswith("oracle"):
+        import oracledb  # type: ignore[import-untyped]
+        # oracledb URL parsing is non-trivial — fall back to a thin
+        # try/except. If it fails, the user can pass --skip-warmup.
+        try:
+            conn = oracledb.connect(database_url.split("://", 1)[1])
+        except Exception as exc:  # pragma: no cover — env-specific
+            raise click.ClickException(
+                f"Oracle warmup failed ({exc}); pass --skip-warmup to bypass."
+            )
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM dual")
+                cur.fetchall()
+        finally:
+            conn.close()
+        return
+    import psycopg2  # type: ignore[import-untyped]
+    conn = psycopg2.connect(database_url)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+            cur.fetchall()
+    finally:
+        conn.close()
+
+
+@export.command("screenshots")
+@click.option(
+    "--app",
+    type=click.Choice(sorted(_SCREENSHOT_APPS.keys())),
+    default=None,
+    help="Single app to capture. Mutually exclusive with --all.",
+)
+@click.option(
+    "--all", "all_apps", is_flag=True,
+    help="Capture all 4 apps. Output goes to <DIR>/<app-slug>/.",
+)
+@click.option(
+    "-o", "--output", type=click.Path(), required=True,
+    help="Target directory; per-app subdirs created under it.",
+)
+@click.option(
+    "-c", "--config", "config_path",
+    type=click.Path(exists=True), default=None,
+    help="Config YAML (default: env vars).",
+)
+@click.option(
+    "--l2-instance", "l2_instance_path",
+    type=click.Path(exists=True), default=None,
+    help=(
+        "L2 institution YAML override. Defaults to each app's built-in "
+        "default (spec_example for most). Pass when capturing a deploy "
+        "against a non-default L2 (e.g. tests/l2/sasquatch_pr.yaml)."
+    ),
+)
+@click.option(
+    "--viewport", "viewport_text", default="1280x900",
+    show_default=True,
+    help="Browser viewport WxH; user-pick per Q.2.c.",
+)
+@click.option(
+    "--skip-warmup", is_flag=True,
+    help="Skip the F12 SELECT 1 cluster warmup (use when DB is hot).",
+)
+@click.option(
+    "--headless/--no-headless", default=True, show_default=True,
+    help="Run browser headless (default) or visible (debug).",
+)
+@click.option(
+    "--initial-settle-ms", type=int, default=10_000, show_default=True,
+    help="Settle delay after dashboard chrome appears, before first capture.",
+)
+@click.option(
+    "--per-sheet-settle-ms", type=int, default=8_000, show_default=True,
+    help="Settle delay after each sheet-tab click, before capture.",
+)
+@click.option(
+    "--date-from", "date_from", default=None,
+    help=(
+        "YYYY-MM-DD override for each app's `*DateStart` parameter(s). "
+        "Use to span the seed's anchor date when the dashboard's default "
+        "rolling-window control doesn't reach it."
+    ),
+)
+@click.option(
+    "--date-to", "date_to", default=None,
+    help=(
+        "YYYY-MM-DD override for each app's `*DateEnd` parameter(s) "
+        "(L1 also applies it to the Daily Statement single-day picker)."
+    ),
+)
+def export_screenshots_cmd(
+    app: str | None,
+    all_apps: bool,
+    output: str,
+    config_path: str | None,
+    l2_instance_path: str | None,
+    viewport_text: str,
+    skip_warmup: bool,
+    headless: bool,
+    initial_settle_ms: int,
+    per_sheet_settle_ms: int,
+    date_from: str | None,
+    date_to: str | None,
+) -> None:
+    """Capture per-sheet screenshots of deployed dashboards.
+
+    Walks the requested app's tree via WebKit and writes one full-page
+    PNG per sheet to ``<output>/<app-slug>/<sheet_id>.png``. Replaces
+    the ad-hoc per-app scripts under ``scripts/`` (capture_l1_screenshots
+    et al.) with one CLI surface.
+
+    Requires the dashboard already deployed. The handbook + walkthrough
+    pages embed these screenshots by relative path under
+    ``docs/walkthroughs/screenshots/<app>/``.
+
+    Default viewport is 1280x900 per the Q.2.c user pick — re-screenshots
+    the docs at a viewport that's readable on desktop without forcing the
+    long-scroll shape the prior ad-hoc tall captures produced.
+    """
+    if app is None and not all_apps:
+        raise click.UsageError("Specify --app <name> or --all.")
+    if app is not None and all_apps:
+        raise click.UsageError("Pass either --app or --all, not both.")
+
+    apps_to_capture = (
+        sorted(_SCREENSHOT_APPS.keys()) if all_apps else [app]
+    )
+
+    cfg = load_config(config_path)
+    if not cfg.aws_account_id or not cfg.aws_region:
+        raise click.ClickException(
+            "Config missing aws_account_id or aws_region — "
+            "screenshots need them to generate an embed URL."
+        )
+    if not skip_warmup and not cfg.demo_database_url:
+        raise click.ClickException(
+            "demo_database_url not set; pass --skip-warmup to bypass "
+            "the cluster warmup step."
+        )
+
+    viewport = _parse_viewport(viewport_text)
+
+    # Validate date overrides up-front so a typo doesn't surface mid-walk.
+    from datetime import date as _date
+    if date_from is not None:
+        try:
+            _date.fromisoformat(date_from)
+        except ValueError as exc:
+            raise click.BadParameter(
+                f"--date-from must be YYYY-MM-DD; got {date_from!r} ({exc})"
+            )
+    if date_to is not None:
+        try:
+            _date.fromisoformat(date_to)
+        except ValueError as exc:
+            raise click.BadParameter(
+                f"--date-to must be YYYY-MM-DD; got {date_to!r} ({exc})"
+            )
+
+    l2_instance = None
+    if l2_instance_path is not None:
+        from quicksight_gen.common.l2 import load_instance
+        l2_instance = load_instance(Path(l2_instance_path))
+
+    if not skip_warmup:
+        click.echo(
+            f"-> Warming DB ({cfg.demo_database_url.split('@')[-1]}, "
+            f"SELECT 1)...", nl=False,
+        )
+        _warm_db_for_screenshots(cfg.demo_database_url)
+        click.echo(" OK")
+
+    from quicksight_gen.common.browser.helpers import (
+        generate_dashboard_embed_url,
+    )
+    from quicksight_gen.common.browser.screenshot import capture_deployed_app
+
+    output_root = Path(output)
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    grand_total = 0
+    for slug in apps_to_capture:
+        click.echo(f"== {slug} ==")
+        app_obj = _build_app_for_screenshots(slug, cfg, l2_instance)
+        # Dashboard ID convention: cfg.prefixed(<dashboard_id_suffix>).
+        # MUST use app_obj.cfg, not the outer cfg — the builders auto-
+        # derive cfg.l2_instance_prefix from l2_instance.instance and
+        # store the updated cfg on the app, but the outer cfg we passed
+        # in is unchanged. Reading from app_obj.cfg picks up the prefix
+        # so the dashboard ID matches what was deployed.
+        dashboard_suffix = app_obj.dashboard.dashboard_id_suffix
+        dashboard_id = app_obj.cfg.prefixed(dashboard_suffix)
+        click.echo(
+            f"-> embed URL for {dashboard_id}...", nl=False,
+        )
+        url = generate_dashboard_embed_url(
+            aws_account_id=cfg.aws_account_id,
+            aws_region=cfg.aws_region,
+            dashboard_id=dashboard_id,
+        )
+        click.echo(" OK")
+
+        # Write to the short-slug subdir (l1/, l2ft/, inv/, exec/) so the
+        # existing handbook + walkthrough markdown refs ("../screenshots/l1/")
+        # find the captured PNGs without a docs sweep.
+        _, _, output_subdir = _SCREENSHOT_APPS[slug]
+        out_dir = output_root / output_subdir
+
+        # Per-app date param map: only set the params the app declares;
+        # an app with no date params (Investigation) gets an empty dict.
+        url_params: dict[str, str] = {}
+        if date_from is not None:
+            for pname in _APP_DATE_PARAMS[slug]["from"]:
+                url_params[pname] = date_from
+        if date_to is not None:
+            for pname in _APP_DATE_PARAMS[slug]["to"]:
+                url_params[pname] = date_to
+        if url_params:
+            click.echo(
+                f"-> URL date params: "
+                + ", ".join(f"{k}={v}" for k, v in url_params.items())
+            )
+
+        click.echo(f"-> capturing {len(app_obj.analysis.sheets)} sheets at "
+                   f"{viewport[0]}x{viewport[1]} into {out_dir}/")
+        results = capture_deployed_app(
+            app_obj,
+            embed_url=url,
+            output_dir=out_dir,
+            viewport=viewport,
+            initial_settle_ms=initial_settle_ms,
+            per_sheet_settle_ms=per_sheet_settle_ms,
+            headless=headless,
+            url_params=url_params or None,
+        )
+        for sheet, path in results.items():
+            click.echo(f"   {sheet.name:30s} -> {path.name}")
+        grand_total += len(results)
+
+    click.echo("")
+    click.echo(
+        f"Captured {grand_total} screenshots across "
+        f"{len(apps_to_capture)} app(s) at {output_root}/"
+    )
 
 
 # ---------------------------------------------------------------------------

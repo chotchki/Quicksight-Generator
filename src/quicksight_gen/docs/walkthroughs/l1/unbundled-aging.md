@@ -14,7 +14,8 @@ Per validator R8, `max_unbundled_age` is only meaningful on rails
 that appear in some AggregatingRail's `bundles_activity`. Rails
 without the field are excluded by NULL cap.
 
-![Unbundled Aging](../screenshots/l1/l1-sheet-unbundled-aging.png)
+??? example "Screenshot"
+    ![Unbundled Aging](../screenshots/l1/l1-sheet-unbundled-aging.png)
 
 ## When to use it
 

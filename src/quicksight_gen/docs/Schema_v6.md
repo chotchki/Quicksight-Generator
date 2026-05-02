@@ -76,19 +76,19 @@ prefix-namespaced DDL.
 
 Every CREATE in the emitted DDL is prefixed by `instance.instance`
 (an `Identifier` from the L2 YAML). For an instance named
-`sasquatch_ar`:
+`{{ l2_instance_name }}`:
 
 | Layer | Object name |
 |---|---|
-| Base table | `sasquatch_ar_transactions`, `sasquatch_ar_daily_balances` |
-| Current* | `sasquatch_ar_current_transactions`, `sasquatch_ar_current_daily_balances` |
-| Helper | `sasquatch_ar_computed_subledger_balance`, `sasquatch_ar_computed_ledger_balance` |
-| L1 invariant | `sasquatch_ar_drift`, `sasquatch_ar_overdraft`, … |
-| Dashboard | `sasquatch_ar_daily_statement_summary`, `sasquatch_ar_todays_exceptions` |
-| Index | `idx_sasquatch_ar_<...>` |
+| Base table | `{{ l2_instance_name }}_transactions`, `{{ l2_instance_name }}_daily_balances` |
+| Current* | `{{ l2_instance_name }}_current_transactions`, `{{ l2_instance_name }}_current_daily_balances` |
+| Helper | `{{ l2_instance_name }}_computed_subledger_balance`, `{{ l2_instance_name }}_computed_ledger_balance` |
+| L1 invariant | `{{ l2_instance_name }}_drift`, `{{ l2_instance_name }}_overdraft`, … |
+| Dashboard | `{{ l2_instance_name }}_daily_statement_summary`, `{{ l2_instance_name }}_todays_exceptions` |
+| Index | `idx_{{ l2_instance_name }}_<...>` |
 
 Two L2 instances coexist in one database without conflict — `myorg_*`
-+ `sasquatch_ar_*` live side-by-side. The dashboard queries are also
++ `{{ l2_instance_name }}_*` live side-by-side. The dashboard queries are also
 prefix-parameterized; switching the deployed dashboard's L2 instance
 swaps every dataset's `FROM <prefix>_*` clause.
 

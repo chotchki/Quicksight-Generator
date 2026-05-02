@@ -15,7 +15,8 @@ The landing page. Two TextBox blocks:
   analyst the *shape* of the institution they're looking at before
   they tab over to specific exception sheets.
 
-![Getting Started](../screenshots/l1/l1-sheet-getting-started.png)
+??? example "Screenshot"
+    ![Getting Started](../screenshots/l1/l1-sheet-getting-started.png)
 
 ## When to use it
 

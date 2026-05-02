@@ -1,5 +1,8 @@
 # Walkthroughs
 
+*If you arrived here directly, the [role pages](../for-your-role/index.md)
+curate which walkthroughs each role needs in which order.*
+
 Step-by-step task recipes — "I have X and want Y" or "I'm looking at
 this row, what do I do?" Each page is self-contained and assumes the
 reader already knows the relevant concept (see

@@ -73,26 +73,29 @@ operator runs
 — see [Refresh contract](../../Schema_v6.md#refresh-contract).
 A skipped refresh means the z-scores reflect yesterday's population.
 
-## What you'll see in the demo
+{% if vocab.demo.has_investigation_plants and vocab.demo.investigation.anomaly_pair_sender %}
+??? example "Worked example: {{ vocab.fixture_name }}"
+    The bundled `{{ vocab.fixture_name }}` fixture plants an anomaly pair:
+    **{{ vocab.demo.investigation.anomaly_pair_sender.name }}** wires
+    {{ vocab.demo.investigation.anchor.name }} routine amounts
+    ($300–$700) for eight contiguous days, then a single $25,000 wire
+    on day −10. With the default 2σ threshold:
 
-The demo plants an anomaly pair: **Cascadia Trust Bank — Operations**
-wires Juniper Ridge LLC routine amounts ($300–$700) for eight
-contiguous days, then a single $25,000 wire on day −10. With the
-default 2σ threshold:
+    - **KPI** — typically 1 (the spike day is the lone flagged
+      pair-window in the planted scenario; incidental flags from the
+      broader baseline seed may add 1–2 more).
+    - **Distribution chart** — the leftmost bucket (`0-1 sigma`)
+      holds almost the entire population; the spike sits alone in
+      the rightmost bucket (`4+ sigma`).
+    - **Table** — {{ vocab.demo.investigation.anomaly_pair_sender.name }}
+      → {{ vocab.demo.investigation.anchor.name }} for the spike-day
+      window at the top, with a z-score well above 4 and a 2-day
+      SUM of $25,000+ vs. the baseline ~$500.
 
-- **KPI** — typically 1 (the spike day is the lone flagged pair-window
-  in the planted scenario; incidental flags from the broader L2
-  instance seed may add 1–2 more).
-- **Distribution chart** — the leftmost bucket (`0-1 sigma`) holds
-  almost the entire population; the spike sits alone in the
-  rightmost bucket (`4+ sigma`).
-- **Table** — Cascadia → Juniper for the spike-day window at the top,
-  with a z-score well above 4 and a 2-day SUM of $25,000+ vs. the
-  baseline ~$500.
-
-Drag σ down to 1 — the table fills with marginal flags, mostly
-incidental to the broader L2 instance seed. Drag σ up to 4 — the
-table empties back down to just the spike.
+    Drag σ down to 1 — the table fills with marginal flags, mostly
+    incidental to the broader baseline. Drag σ up to 4 — the table
+    empties back down to just the spike.
+{% endif %}
 
 ## What it means
 

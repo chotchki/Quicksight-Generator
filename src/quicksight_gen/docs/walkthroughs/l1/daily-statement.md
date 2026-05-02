@@ -15,7 +15,8 @@ signed_amount of today's posted legs)`. On a healthy feed it's
 exactly zero. Non-zero drift on this sheet is the single visual cue
 that the underlying ledger doesn't reconcile for that account-day.
 
-![Daily Statement](../screenshots/l1/l1-sheet-daily-statement.png)
+??? example "Screenshot"
+    ![Daily Statement](../screenshots/l1/l1-sheet-daily-statement.png)
 
 ## When to use it
 

@@ -95,7 +95,7 @@ SELECT
     days_outstanding,
     aging_bucket
 FROM treasury.subledger_overdraft_v          -- your warehouse view
-WHERE bank_unit = 'snb'                      -- your scope filter
+WHERE bank_unit = 'your-unit-id'             -- your scope filter
 """
     return build_dataset(
         cfg, cfg.prefixed("l1-overdraft-dataset"),

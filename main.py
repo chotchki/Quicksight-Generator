@@ -90,8 +90,9 @@ def define_env(env: Any) -> None:
     # If the L2 carries inline brand assets, override mkdocs theme.logo
     # / theme.favicon. URLs pass through; absolute paths get copied into
     # docs_dir/img/_l2_<kind><ext> and the theme key is rewritten to
-    # the docs-relative path. Without an L2 override the mkdocs.yml
-    # default (the SNB mark) is preserved.
+    # the docs-relative path. Without an L2 override no logo/favicon is
+    # set — mkdocs.yml carries no defaults so the site renders text-only
+    # nav rather than falling back to a persona-specific mark.
     if default_l2.theme is not None:
         docs_dir = Path(env.conf["docs_dir"])
         theme_conf = env.conf["theme"]

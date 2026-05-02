@@ -99,15 +99,15 @@ full refresh contract.
 <p class="snb-section-label">Start here — populate and validate the feed</p>
 
 <div class="snb-card-grid">
-  <a class="snb-card" href="../walkthroughs/etl/how-do-i-populate-transactions/">
+  <a class="snb-card" href="../../walkthroughs/etl/how-do-i-populate-transactions/">
     <h3>How do I populate <code>transactions</code> from my core banking system?</h3>
     <p>Canonical projection from a hypothetical `gl_postings` source table into the two-table target. The first walkthrough a new team member reads.</p>
   </a>
-  <a class="snb-card" href="../walkthroughs/etl/how-do-i-prove-my-etl-is-working/">
+  <a class="snb-card" href="../../walkthroughs/etl/how-do-i-prove-my-etl-is-working/">
     <h3>How do I prove my ETL is working before going live?</h3>
     <p>Three pre-flight invariants (net-to-zero, balance recompute, orphan chains) with copy-paste SQL. Run these before the dashboard sees the data.</p>
   </a>
-  <a class="snb-card" href="../walkthroughs/etl/how-do-i-validate-a-single-account-day/">
+  <a class="snb-card" href="../../walkthroughs/etl/how-do-i-validate-a-single-account-day/">
     <h3>How do I validate a single account-day after a load?</h3>
     <p>Open the Daily Statement sheet on a specific `(account_id, balance_date)` to confirm opening, debits, credits, closing, and zero drift — the per-row companion to the universal pre-flight invariants.</p>
   </a>
@@ -118,11 +118,11 @@ full refresh contract.
 <p class="snb-section-label">When the feed shape changes — new source, new key</p>
 
 <div class="snb-card-grid">
-  <a class="snb-card" href="../walkthroughs/etl/how-do-i-tag-a-force-posted-transfer/">
+  <a class="snb-card" href="../../walkthroughs/etl/how-do-i-tag-a-force-posted-transfer/">
     <h3>How do I tag a force-posted external transfer correctly?</h3>
     <p>The `origin` column + `parent_transfer_id` chain mechanics for Fed-statement ingest. Why force-posted matters for L1 exception classification.</p>
   </a>
-  <a class="snb-card" href="../walkthroughs/etl/how-do-i-add-a-metadata-key/">
+  <a class="snb-card" href="../../walkthroughs/etl/how-do-i-add-a-metadata-key/">
     <h3>How do I add a metadata key without breaking the dashboards?</h3>
     <p>Extension contract: portable scalar types, `JSON_OBJECT` writes / `JSON_VALUE` reads, Schema_v6 catalog update. Walks an `originating_branch` addition end-to-end.</p>
   </a>
@@ -133,7 +133,7 @@ full refresh contract.
 <p class="snb-section-label">When the feed looks right but the dashboard doesn't</p>
 
 <div class="snb-card-grid">
-  <a class="snb-card" href="../walkthroughs/etl/what-do-i-do-when-demo-passes-but-prod-fails/">
+  <a class="snb-card" href="../../walkthroughs/etl/what-do-i-do-when-demo-passes-but-prod-fails/">
     <h3>What do I do when the demo passes but my prod data fails?</h3>
     <p>Six symptom-organized debug recipes (date filter, transfer_type filter, missing metadata key, drift KPI spike, broken parent chain, status enum drift).</p>
   </a>

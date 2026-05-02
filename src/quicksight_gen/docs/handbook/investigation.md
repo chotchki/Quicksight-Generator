@@ -19,8 +19,10 @@ shape: pose a question about a person, a pair, or a transfer; pull
 the rows that answer it; preserve the chain that ties evidence back
 to the underlying postings.
 
-Unlike PR (a four-stage pipeline) and AR (fourteen exception checks
-read in a fixed morning rotation), Investigation is **question-shaped**.
+Unlike L1 Reconciliation (a continuous matview-driven exception
+surface read in a fixed morning rotation) and L2 Flow Tracing (the
+integrator's runtime evidence map for every declared Rail / Chain /
+TransferTemplate), Investigation is **question-shaped**.
 Four sheets, four questions, in no particular order:
 
 - *Recipient Fanout* — who is receiving money from too many distinct
@@ -32,8 +34,9 @@ Four sheets, four questions, in no particular order:
 - *Account Network* — what does this account's money network look
   like, on either side?
 
-The dashboard reads from the same `transactions` base table PR and AR
-read, plus two materialized views (`inv_pair_rolling_anomalies` and
+The dashboard reads from the same `<prefix>_transactions` base table
+that L1 Reconciliation and L2 Flow Tracing read, plus two
+materialized views (`inv_pair_rolling_anomalies` and
 `inv_money_trail_edges`) that pre-compute the rolling-window
 statistics and recursive chain walk respectively. See
 [Materialized views](../Schema_v6.md#the-layered-model) for the
@@ -67,19 +70,19 @@ flags those natural transitions at the bottom.
 <p class="snb-section-label">One question per sheet — pick by the shape of your question</p>
 
 <div class="snb-card-grid">
-  <a class="snb-card" href="../walkthroughs/investigation/who-is-getting-money-from-too-many-senders/">
+  <a class="snb-card" href="../../walkthroughs/investigation/who-is-getting-money-from-too-many-senders/">
     <h3>Who's Getting Money from Too Many Senders?</h3>
     <p>Rank recipients by their distinct sender count. Drag the threshold slider to control where "too many" starts. The fanout-cluster shape — many small inbounds → one account — is a classic structuring footprint.</p>
   </a>
-  <a class="snb-card" href="../walkthroughs/investigation/which-pair-just-spiked/">
+  <a class="snb-card" href="../../walkthroughs/investigation/which-pair-just-spiked/">
     <h3>Which Sender → Recipient Pair Just Spiked?</h3>
     <p>Rolling 2-day SUM per (sender, recipient) pair vs. the population mean / standard deviation, exposed as a per-row z-score. σ slider sets the cutoff; the distribution chart shows the full population so the cutoff lands in context.</p>
   </a>
-  <a class="snb-card" href="../walkthroughs/investigation/where-did-this-transfer-originate/">
+  <a class="snb-card" href="../../walkthroughs/investigation/where-did-this-transfer-originate/">
     <h3>Where Did This Transfer Actually Originate?</h3>
     <p>Pick a chain root from the dropdown — the Sankey renders that chain's source-to-target ribbons; the hop-by-hop table beside it lists every edge ordered by depth. Layering chains and split-deposit funnels surface here.</p>
   </a>
-  <a class="snb-card" href="../walkthroughs/investigation/what-does-this-accounts-money-network-look-like/">
+  <a class="snb-card" href="../../walkthroughs/investigation/what-does-this-accounts-money-network-look-like/">
     <h3>What Does This Account's Money Network Look Like?</h3>
     <p>Pick an anchor account — the LEFT Sankey shows counterparties sending money INTO the anchor; the RIGHT Sankey shows the anchor sending money OUT. Right-click any table row to walk the anchor to the counterparty and re-render around the new center.</p>
   </a>
@@ -87,31 +90,52 @@ flags those natural transitions at the bottom.
 
 ## What you'll see in the demo
 
-The demo plants three converging scenarios on a single anchor
-account, **Juniper Ridge LLC** (`cust-900-0007-juniper-ridge-llc`),
-so every sheet has a non-empty answer to its question — and the
-sheets connect:
+{% if vocab.demo.has_investigation_plants %}
+The bundled `{{ vocab.fixture_name }}` fixture plants three
+converging scenarios on a single anchor account,
+**{{ vocab.demo.investigation.anchor.name }}**
+(`{{ vocab.demo.investigation.anchor.id }}`), so every sheet has a
+non-empty answer to its question — and the sheets connect:
 
-- **Fanout cluster** — twelve individual depositors each ACH 2 small
-  amounts to Juniper. Recipient Fanout flags Juniper at the default
-  5-sender threshold; the table ranks her at the top with 12 distinct
-  senders.
-- **Anomaly pair** — Cascadia Trust Bank — Operations wires Juniper
-  routine amounts ($300–$700) for eight days, then a single $25,000
-  wire on day −10. Volume Anomalies flags that pair-window past the
-  default 2σ threshold; the σ Distribution chart shows the spike
-  sitting alone in the right-tail bucket.
-- **Money trail** — the same Cascadia → Juniper wire that drives the
-  anomaly continues as a 4-hop layering chain: Cascadia → Juniper →
-  Shell A → Shell B → Shell C. Money Trail's chain-root dropdown
-  surfaces the Cascadia leg; picking it renders all four hops as a
-  Sankey with a slight residue per hop (layering rarely round-trips
-  clean numbers).
+- **Fanout cluster** —
+  {{ vocab.demo.investigation.fanout_sender_count }} individual
+  depositors each ACH 2 small amounts to
+  {{ vocab.demo.investigation.anchor.name }}. Recipient Fanout flags
+  the anchor at the default 5-sender threshold; the table ranks it at
+  the top with {{ vocab.demo.investigation.fanout_sender_count }}
+  distinct senders.
+{% if vocab.demo.investigation.anomaly_pair_sender %}
+- **Anomaly pair** —
+  {{ vocab.demo.investigation.anomaly_pair_sender.name }} wires
+  {{ vocab.demo.investigation.anchor.name }} routine amounts
+  ($300–$700) for eight days, then a single $25,000 wire on day −10.
+  Volume Anomalies flags that pair-window past the default 2σ
+  threshold; the σ Distribution chart shows the spike sitting alone
+  in the right-tail bucket.
+{% endif %}
+{% if vocab.demo.investigation.layering_chain %}
+- **Money trail** — the same upstream wire that drives the anomaly
+  continues as a multi-hop layering chain:
+  {% if vocab.demo.investigation.anomaly_pair_sender %}{{ vocab.demo.investigation.anomaly_pair_sender.name }} → {% endif %}{{ vocab.demo.investigation.anchor.name }}{% for hop in vocab.demo.investigation.layering_chain %} → {{ hop.name }}{% endfor %}.
+  Money Trail's chain-root dropdown surfaces the upstream leg;
+  picking it renders all hops as a Sankey with a slight residue per
+  hop (layering rarely round-trips clean numbers).
+{% endif %}
 
 Account Network's anchor dropdown lands on the first account
-alphabetically; setting it to Juniper shows the full picture — twelve
-inbound depositors on the left, three outbound shells on the right,
-Juniper meeting in the middle.
+alphabetically; setting it to
+{{ vocab.demo.investigation.anchor.name }} shows the full picture —
+the inbound depositors on the left, the outbound destinations on the
+right, the anchor meeting in the middle.
+{% else %}
+This L2 instance has no planted Investigation scenarios, so each
+sheet renders against whatever shape the underlying transactions
+take. To see the dashboard's intended worked example — a fanout
+cluster + anomaly pair + multi-hop layering chain converging on one
+anchor — point the docs build at the bundled `sasquatch_pr` fixture
+(`QS_DOCS_L2_INSTANCE=tests/l2/sasquatch_pr.yaml mkdocs serve`) and
+re-render this page.
+{% endif %}
 
 ## Reference
 

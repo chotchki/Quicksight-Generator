@@ -240,3 +240,95 @@ class TestVocabularyForDispatch:
         assert vocab.stakeholders == ()
         assert vocab.merchants == ()
         assert vocab.investigation_personas == ()
+
+
+# -- Q.5.a — fixture_name + demo scenario derivation --------------------------
+
+
+class TestFixtureName:
+    def test_bundled_fixtures_carry_their_name(self):
+        for name in ("sasquatch_pr", "spec_example"):
+            vocab = vocabulary_for(_load(name))
+            assert vocab.fixture_name == name
+
+    def test_integrator_fixture_is_unnamed(self):
+        # An L2 the project doesn't bundle reads as fixture_name=None,
+        # so handbook prose like "the bundled X fixture" can fall back
+        # to a generic phrasing via {% if vocab.fixture_name %}.
+        vocab = vocabulary_for(_minimal_instance(instance="acme_bank"))
+        assert vocab.fixture_name is None
+
+
+class TestDemoScenarioVocabulary:
+    def test_bundled_fixtures_have_plant_derived_demo_accounts(self):
+        for name in ("sasquatch_pr", "spec_example"):
+            vocab = vocabulary_for(_load(name))
+            # default_scenario_for plants every L1 invariant kind for
+            # both bundled fixtures, so the demo namespace is fully
+            # populated. An L2 with no plants would have None here.
+            assert vocab.demo.drift_account is not None
+            assert vocab.demo.overdraft_account is not None
+            assert vocab.demo.limit_breach_account is not None
+
+    def test_account_ids_are_plant_anchored(self):
+        # Plants for spec_example use generic ids (cust-NNN); plants for
+        # sasquatch_pr use the -snb suffix. This guards against the
+        # vocab silently sourcing from the wrong fixture.
+        spec = vocabulary_for(_load("spec_example"))
+        snb = vocabulary_for(_load("sasquatch_pr"))
+        assert "snb" not in spec.demo.drift_account.id
+        assert "snb" in snb.demo.drift_account.id
+
+    def test_investigation_scenario_present_when_inv_fanout_plants(self):
+        vocab = vocabulary_for(_load("sasquatch_pr"))
+        assert vocab.demo.has_investigation_plants is True
+        inv = vocab.demo.investigation
+        assert inv is not None
+        assert inv.fanout_sender_count > 0
+
+    def test_sasquatch_pr_layering_chain_uses_persona_names(self):
+        # Built-in vocab supplies investigation_personas with shell_entity
+        # role, so the layering_chain on sasquatch_pr surfaces the
+        # curated "Shell Company A/B/C" labels (not raw account_ids).
+        vocab = vocabulary_for(_load("sasquatch_pr"))
+        chain = vocab.demo.investigation.layering_chain
+        assert len(chain) == 3
+        assert all("Shell Company" in acc.name for acc in chain)
+
+    def test_neutral_fallback_layering_chain_is_empty(self):
+        # spec_example has no built-in investigation_personas with
+        # shell_entity role, so the layering chain stays empty — the
+        # walkthrough's worked-example admonition uses {% if chain %}
+        # to skip the chain section in that case.
+        vocab = vocabulary_for(_load("spec_example"))
+        assert vocab.demo.investigation is not None
+        assert vocab.demo.investigation.layering_chain == ()
+        assert vocab.demo.investigation.anomaly_pair_sender is None
+
+    def test_l2_without_plants_has_empty_demo(self):
+        # An L2 with no scenario.plants at all (synthetic minimal
+        # instance) renders demo.* = None across the board — walkthrough
+        # templates' {% if vocab.demo.X %} guards skip the worked
+        # example sections cleanly.
+        # Use the existing minimal-instance helper which has no rails /
+        # accounts, so default_scenario_for returns no plants.
+        from quicksight_gen.common.l2.auto_scenario import default_scenario_for
+        l2 = _minimal_instance(instance="empty_demo")
+        plant = default_scenario_for(l2).scenario
+        assume_no_plants = (
+            not plant.drift_plants
+            and not plant.overdraft_plants
+            and not plant.limit_breach_plants
+            and not plant.inv_fanout_plants
+        )
+        if not assume_no_plants:
+            pytest.skip(
+                "Minimal-instance fixture grew plants — test no longer "
+                "exercises the empty-demo branch; pick a different L2.",
+            )
+        vocab = vocabulary_for(l2)
+        assert vocab.demo.drift_account is None
+        assert vocab.demo.overdraft_account is None
+        assert vocab.demo.limit_breach_account is None
+        assert vocab.demo.investigation is None
+        assert vocab.demo.has_investigation_plants is False

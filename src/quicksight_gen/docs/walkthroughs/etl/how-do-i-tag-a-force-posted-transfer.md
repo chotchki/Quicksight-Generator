@@ -131,14 +131,14 @@ VALUES (..., 'fed-xfer-EXAMPLE-001', NULL, 'ExternalForcePosted', ...);
 -- Day 2: internal catch-up posts. transfer_parent_id points at the Fed row.
 INSERT INTO <prefix>_transactions
     (..., transfer_id, transfer_parent_id, origin, ...)
-VALUES (..., 'snb-xfer-EXAMPLE-042', 'fed-xfer-EXAMPLE-001',
+VALUES (..., 'int-xfer-EXAMPLE-042', 'fed-xfer-EXAMPLE-001',
             'InternalInitiated', ...);
 ```
 
 Skip the parent link on the catch-up and the chain integrity check
 in the validation walkthrough flags an orphan; the L1 drift check
 on day 2 won't subtract correctly because it can't tell that
-`snb-xfer-EXAMPLE-042` is "the catch-up for" the Fed row.
+`int-xfer-EXAMPLE-042` is "the catch-up for" the Fed row.
 
 ## Next step
 

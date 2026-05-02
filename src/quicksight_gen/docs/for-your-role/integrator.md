@@ -75,9 +75,9 @@ Then:
    as the smallest persona-neutral skeleton + the
    [Customization handbook](../handbook/customization.md) for the
    editing patterns. The
-   [Background scenario](../scenario/index.md) tour shows
-   `sasquatch_pr.yaml` (the canonical larger fixture) projected
-   into a real institution shape; copy from it for your own model.
+   [Demo Institution Tour](../scenario/index.md) shows the
+   bundled `{{ l2_instance_name }}` fixture projected into a real
+   institution shape; copy from it for your own model.
 2. Read the
    [L2 Flow Tracing handbook](../handbook/l2_flow_tracing.md). It
    walks the 5 sheets and spells out how each one projects YAML
@@ -112,7 +112,10 @@ The integrator workflow loop:
 The
 [publishing-workflow walkthrough](../walkthroughs/customization/how-do-i-publish-docs-against-my-l2.md)
 covers the docs-side of the same loop — re-rendering the handbook
-against your edited L2.
+against your edited L2. To get your institution's name +
+stakeholders + GL labels into the handbook prose, add an optional
+`persona:` block to your L2 (see
+[How do I brand my handbook prose?](../walkthroughs/customization/how-do-i-brand-my-handbook-prose.md)).
 
 ## The concepts you'll want grounded
 

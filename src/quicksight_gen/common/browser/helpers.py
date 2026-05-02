@@ -108,13 +108,14 @@ def webkit_page(headless: bool = True, viewport: tuple[int, int] = (1600, 1000))
 def wait_for_dashboard_loaded(page, timeout_ms: int) -> None:
     """Wait for the QuickSight dashboard chrome (sheet tabs) to appear.
 
-    networkidle alone fires before visuals render; wait for the sheet
-    tab strip as a stronger signal that the dashboard skeleton is up.
+    Polls for ``[role="tab"]`` directly. Don't wait for ``networkidle``
+    first — QS holds open WebSocket / long-polling connections that
+    keep the network busy indefinitely, so networkidle never fires
+    and a 120s timeout burns waiting for an event that won't happen.
+    The sheet-tab strip attaching to the DOM is the authoritative
+    "chrome is up" signal; in practice it appears within ~1s of the
+    embed URL load completing.
     """
-    # networkidle alone fires before tabs appear; we then poll for the
-    # sheet tab list, which is the strongest signal the dashboard chrome
-    # is hydrated. Use the same timeout budget for each phase.
-    page.wait_for_load_state("networkidle", timeout=timeout_ms)
     page.wait_for_selector('[role="tab"]', timeout=timeout_ms, state="attached")
 
 

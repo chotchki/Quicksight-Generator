@@ -1,5 +1,8 @@
 # Concepts
 
+*If you arrived here directly, the [role pages](../for-your-role/index.md)
+curate which concepts each role needs to ground first.*
+
 The reasoning behind the dashboards. Two parts:
 
 - **[Accounting](accounting/index.md)** — banking primitives the L1 invariants

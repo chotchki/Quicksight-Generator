@@ -105,9 +105,15 @@ jobs:
 
       - name: Verify Postgres row counts
         run: |
+          # --smoke: assert ≥1 row in every named matview without exact
+          # counts. Exact counts depend on `date.today()` (the seed
+          # anchor defaults to UTC today), so they drift across CI
+          # runs. Re-lock to exact counts once `demo apply --anchor`
+          # lands as a follow-up.
           python tests/integration/verify_demo_apply.py \
             --dialect postgres \
-            --url "postgresql://postgres:ci_pg_password@localhost:5432/postgres"
+            --url "postgresql://postgres:ci_pg_password@localhost:5432/postgres" \
+            --prefix spec_example --smoke
 
       - name: Apply demo against Oracle Free
         run: |
@@ -123,9 +129,11 @@ jobs:
 
       - name: Verify Oracle row counts
         run: |
+          # --smoke: same rationale as the Postgres verify above.
           python tests/integration/verify_demo_apply.py \
             --dialect oracle \
-            --url "system/ci_ora_password@localhost:1521/FREEPDB1"
+            --url "system/ci_ora_password@localhost:1521/FREEPDB1" \
+            --prefix spec_example --smoke
 
   coverage-badge:
     needs: test

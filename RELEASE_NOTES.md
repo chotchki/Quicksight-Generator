@@ -1,5 +1,260 @@
 # Release Notes
 
+## v7.4.0 — Persona-neutral docs + piecewise demo CLI
+
+This release rolls together the Phase Q.5 persona-neutral docs work
+(originally pre-tagged as v7.3.0 in code but never released) and a
+set of additive `demo` CLI primitives that let integrators emit or
+apply schema / seed / matview-refresh independently. Cuts cleanly
+off v7.2.0; no breaking schema or CLI changes — old verbs continue
+to work unchanged. The next release (planned v8.0.0) will be a
+clean-break CLI redesign per `Q3_CLI_REDESIGN.md`.
+
+### What's new since v7.2.0
+
+#### Phase Q.5 — Persona-neutral docs (full L2-driven substitution)
+
+With `QS_DOCS_L2_INSTANCE=tests/l2/spec_example.yaml` the rendered
+mkdocs site contains zero unintentional persona tokens; with
+`sasquatch_pr` the curated Sasquatch / Juniper / Cascadia / Shell
+narrative renders exactly as before; with an integrator's own L2
+YAML (no `persona:` block), neutral prose derived from L2 primitives
+fills in.
+
+##### Optional `persona:` block on L2 YAML
+
+```yaml
+persona:
+  institution: ["Sasquatch National Bank", "SNB"]
+  stakeholders: ["Federal Reserve Bank", "Fed", "..."]
+  gl_accounts:
+    - {code: "gl-1010", name: "Cash & Due From FRB", note: "..."}
+  merchants: ["Big Meadow Dairy", "Bigfoot Brews", "..."]
+  flavor: ["Margaret Hollowcreek", "Pacific Northwest", "..."]
+```
+
+Loaded into `L2Instance.persona: DemoPersona | None` by
+`common/l2/loader.py::_load_persona`. Handbook templates read it
+via `vocab.institution.name` / `vocab.gl_accounts` / etc. Empty /
+missing block → neutral prose derived from L2-primitive defaults.
+See the new `walkthroughs/customization/how-do-i-brand-my-handbook-prose.md`
+for the integrator-facing field-by-field map.
+
+##### Investigation walkthroughs split
+
+The 4 Investigation walkthrough pages (recipient-fanout,
+volume-anomalies, money-trail, account-network) now have body prose
+written as L2-portable mechanics. Below the body, a collapsed
+`??? example "Worked example: <fixture>"` admonition (mkdocs-material
+`pymdownx.details`) renders the curated narrative — but only when
+`vocab.demo.has_investigation_plants` is true. Against `spec_example`
+the admonitions don't render and the body stands on its own.
+
+##### `common/persona.py` rewrite
+
+- Dropped `SNB_PERSONA` module constant. `persona.py` is now a
+  generic typed skeleton — `DemoPersona` dataclass with empty-tuple
+  defaults and a single `GLAccount` helper.
+- Sasquatch persona content moved into `tests/l2/sasquatch_pr.yaml`'s
+  new `persona:` block.
+- `api/common-foundations.md` API ref describes the generic shape.
+
+##### CI gates
+
+- **`tests/test_docs_persona_neutral.py`** — builds the rendered
+  site against both bundled fixtures. spec_example must have zero
+  persona tokens outside a small per-page allowlist; sasquatch_pr
+  must render the curated flavor (anti-regression on over-deletion).
+  Asymmetric "tighten only" bound — new leaks fail; reductions
+  must lower the bound.
+- **`tests/test_docs_links.py`** — sweeps every internal href / src
+  in the built site for both file existence and fragment anchor
+  presence (mkdocs `--strict` only catches missing files).
+
+##### Other docs improvements
+
+- **Shape C IA** landed under For Your Role / Concepts / Handbook /
+  Walkthroughs / API. For Your Role moved to nav position 1.
+- **`quicksight-gen export screenshots`** CLI: captures all 4
+  deployed dashboards at 1280×900 with optional URL date overrides.
+  29 PNGs captured; 15 wrapped in collapsed `??? example "Screenshot"`
+  admonitions.
+- **Dataflow diagrams** on each handbook overview now correctly
+  render dataset → sheet edges (was emitting an empty graph).
+- **mkdocs-material library SVG fallback hidden** when no L2 logo
+  is set (prevents persona-specific mark from leaking when the
+  active L2 declares no `theme.logo`).
+- Executives dataset bug: `WHERE t.status = 'success'` (lowercase,
+  doesn't exist in the data) → `'Posted'`.
+- 28 dead links swept across handbook + walkthrough pages.
+
+#### Phase Q.3.a — Piecewise demo CLI primitives
+
+Six new `demo` subcommands give the integrator emit-vs-apply
+control over each piece of the schema/seed/refresh pipeline:
+
+| Command | What it does |
+|---|---|
+| `demo emit-schema [-o FILE]` | Schema DDL → stdout/file. No DB connection. |
+| `demo emit-seed [-o FILE]` | Full seed SQL (90-day baseline + plants) → stdout/file. |
+| `demo emit-refresh [-o FILE]` | REFRESH MATERIALIZED VIEW SQL → stdout/file. |
+| `demo apply-schema` | Connect + apply just the schema. |
+| `demo apply-seed` | Connect + apply just the seed. |
+| `demo apply-refresh` | Connect + run just the matview refresh. |
+
+`demo apply` keeps working unchanged — refactored internally to
+compose the same `_resolve_l2_for_demo` + `_build_full_seed_sql`
+helpers so the bundled command stays in lockstep with the
+piecewise emit-seed.
+
+Each new command accepts `--l2-instance PATH` (defaults to
+`spec_example`), `-c CONFIG`, and `-o FILE`.
+
+Useful for:
+- Piping schema DDL into a different DB tool: `quicksight-gen demo emit-schema | psql ...`
+- Inspecting the seed before applying: `demo emit-seed -o seed.sql; less seed.sql`
+- Iterating on seed plants without re-running the schema:
+  `demo apply-seed && demo apply-refresh`
+
+#### `Q3_CLI_REDESIGN.md` design doc
+
+Drafts a broader CLI restructure — four artifacts (schema | data |
+json | docs) × four operations (apply | clean | test, plus
+artifact-specific extras). The user has reviewed and answered the 7
+open questions. Execution lands in v8.0.0 as a clean-break.
+
+### Migration
+
+No action required for v7.4.0. Existing scripts using `generate` /
+`deploy` / `cleanup` / `demo apply` continue to work. The new
+`demo emit-*` / `demo apply-*` commands are additive.
+
+If you've embedded the docs against your own L2 fixture, the
+worked-example admonitions only render when your fixture plants
+Investigation scenarios. To get the bundled Juniper / Cascadia
+narrative, point docs at `tests/l2/sasquatch_pr.yaml`
+(`QS_DOCS_L2_INSTANCE=...`).
+
+**v8.0.0 will be a breaking CLI change** per `Q3_CLI_REDESIGN.md`.
+Old verbs (`generate`, `deploy`, `cleanup`, `demo apply`,
+`demo emit-*`, `demo apply-*`, `export *`, `probe`) drop in favor
+of `<artifact> <verb>` shape (`schema apply`, `data clean`, etc.).
+No deprecation cycle.
+
+## v7.3.0 — superseded
+
+This version was bumped in code (commit `a5170b6`) but never
+tagged. Subsequently rolled into v7.4.0 above when the persona-block
+walkthrough + Q.3.a piecewise commands landed in the same release
+window.
+
+## v7.2.0 — Realistic 3-month baseline seed + L2-coverage runtime assertions
+
+Phase Q.5 finishes the multi-tenant docs story: with
+`QS_DOCS_L2_INSTANCE=tests/l2/spec_example.yaml` the rendered
+mkdocs site contains zero unintentional persona tokens; with
+`sasquatch_pr` the curated Sasquatch / Juniper / Cascadia / Shell
+narrative renders exactly as before; with an integrator's own L2
+YAML (no `persona:` block), neutral prose derived from L2 primitives
+fills in. No schema changes, no breaking CLI changes — only docs
+infrastructure + a new optional YAML block.
+
+### What's new — `persona:` block on L2 YAML
+
+- **Optional `persona:` top-level block** in any L2 instance YAML:
+  ```yaml
+  persona:
+    institution: ["Sasquatch National Bank", "SNB"]
+    stakeholders: ["Federal Reserve Bank", "Fed", "..."]
+    gl_accounts:
+      - {code: "gl-1010", name: "Cash & Due From FRB", note: "..."}
+    merchants: ["Big Meadow Dairy", "Bigfoot Brews", "..."]
+    flavor: ["Margaret Hollowcreek", "Pacific Northwest", "..."]
+  ```
+  Loaded into `L2Instance.persona: DemoPersona | None` by
+  `common/l2/loader.py::_load_persona`. Handbook templates read it
+  via `vocab.institution.name` / `vocab.gl_accounts` / etc.
+- **Empty / missing block → neutral prose.** Integrator L2s without
+  the block load with `persona = None`; handbook prose falls
+  through to L2-primitive-derived defaults (institution name from
+  `description`, GL accounts from the account roster, etc.).
+
+### Investigation walkthroughs split into mechanics + worked example
+
+- The 4 Investigation walkthrough pages (recipient-fanout,
+  volume-anomalies, money-trail, account-network) now have body
+  prose written as L2-portable mechanics — how the slider works,
+  what the σ-bucket histogram means, how to interpret each visual
+  — without naming specific accounts.
+- Below the body, a collapsed `??? example "Worked example: <fixture>"`
+  admonition (mkdocs-material `pymdownx.details`) renders the
+  curated Juniper / Cascadia / Shell A-B-C narrative — but only
+  when `vocab.demo.has_investigation_plants` is true. Against
+  `spec_example` the admonitions don't render and the body stands
+  on its own.
+- `handbook/investigation.md` "What you'll see in the demo" got
+  the same guard with a "point at sasquatch_pr to see the worked
+  example" fallback when the active L2 has no plants.
+
+### `common/persona.py` rewrite
+
+- **Dropped `SNB_PERSONA` module constant.** `persona.py` is now a
+  generic typed skeleton — `DemoPersona` dataclass with empty-tuple
+  defaults and a single `GLAccount` helper.
+- **Sasquatch persona content moved into
+  `tests/l2/sasquatch_pr.yaml`'s new `persona:` block.** Loader →
+  `L2Instance.persona` → `vocabulary.py::_sasquatch_pr_vocabulary`.
+  No code change is needed in `vocabulary.py` to add a per-L2
+  curated narrative — the shape is purely data.
+- `api/common-foundations.md` API ref now describes the generic
+  shape without persona-specific examples.
+
+### CI gates added
+
+- **`tests/test_docs_persona_neutral.py`** — builds the rendered
+  site against both bundled fixtures. spec_example must have zero
+  persona tokens outside a small per-page allowlist for
+  intentional Tier-2 citations (handbook hubs explaining the
+  bundled demo). sasquatch_pr must render the curated flavor
+  (anti-regression on over-deletion). Asymmetric "tighten only"
+  bound — new leaks fail; reductions must lower the bound.
+- **`tests/test_docs_links.py`** — sweeps every internal href / src
+  in the built site, validating both file existence + fragment
+  anchor presence. mkdocs `--strict` only catches missing files;
+  this test catches missing `#section` anchors that strict mode
+  silently allows.
+
+### Other docs improvements
+
+- **Shape C IA** landed under For Your Role / Concepts / Handbook /
+  Walkthroughs / API. For Your Role moved to nav position 1.
+- **`quicksight-gen export screenshots`** CLI: captures all 4
+  deployed dashboards at 1280×900 with optional URL date overrides.
+  29 PNGs captured in the v7.3 docs build; 15 wrapped in collapsed
+  `??? example "Screenshot"` admonitions.
+- **Dataflow diagrams** on each handbook overview now correctly
+  render dataset → sheet edges (was emitting an empty graph).
+- **Mkdocs material library SVG fallback hidden** when no L2 logo
+  is set (prevents persona-specific mark from leaking when the
+  active L2 declares no `theme.logo`).
+- Executives dataset bug: `WHERE t.status = 'success'` (lowercase,
+  doesn't exist in the data) → `'Posted'`. Surfaced during
+  Q.2.c.exec.2.6 visual review.
+- 28 dead links swept across handbook + walkthrough pages.
+
+### Migration
+
+No action required. Existing L2 YAMLs without a `persona:` block
+load and render exactly as before. Add a `persona:` block only if
+you want curated handbook prose for your institution; otherwise
+the docs render generic prose derived from your L2 primitives.
+
+If you've embedded the docs against your own L2 fixture, the
+worked-example admonitions will only render when your fixture
+plants Investigation scenarios (`inv_fanout_plants`). To get the
+sample Juniper / Cascadia narrative, point docs at
+`tests/l2/sasquatch_pr.yaml` (`QS_DOCS_L2_INSTANCE=...`).
+
 ## v7.2.0 — Realistic 3-month baseline seed + L2-coverage runtime assertions
 
 Phase R replaces the previous "few-plants-per-L1-invariant" demo

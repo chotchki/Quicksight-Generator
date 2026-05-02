@@ -13,7 +13,8 @@ External counterparty accounts are excluded by the underlying view
 intentional: banks may legitimately overdraft *us*; we MUST NOT
 overdraft *them*.
 
-![Overdraft](../screenshots/l1/l1-sheet-overdraft.png)
+??? example "Screenshot"
+    ![Overdraft](../screenshots/l1/l1-sheet-overdraft.png)
 
 ## When to use it
 

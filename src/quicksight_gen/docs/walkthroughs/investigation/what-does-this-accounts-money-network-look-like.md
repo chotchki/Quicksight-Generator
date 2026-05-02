@@ -81,37 +81,60 @@ data filters correctly, but the on-screen widget text may stay
 stale. The sheet description says "trust the chart, not the
 control text" so analysts know what to expect.
 
-## What you'll see in the demo
+{% if vocab.demo.has_investigation_plants and vocab.demo.investigation.layering_chain and vocab.demo.investigation.anomaly_pair_sender %}
+??? example "Worked example: {{ vocab.fixture_name }}"
+    The bundled `{{ vocab.fixture_name }}` fixture's planted scenarios
+    converge on **{{ vocab.demo.investigation.anchor.name }}**
+    (`{{ vocab.demo.investigation.anchor.id }}`). Set the anchor to
+    {{ vocab.demo.investigation.anchor.name }}:
 
-The demo's planted scenarios converge on **Juniper Ridge LLC**
-(`cust-900-0007-juniper-ridge-llc`). Set the anchor to Juniper:
+    - **Inbound Sankey (left)** —
+      {{ vocab.demo.investigation.fanout_sender_count }} individual
+      depositors (the fanout cluster) sending small ACH amounts, plus
+      {{ vocab.demo.investigation.anomaly_pair_sender.name }} sending
+      the routine wire baseline + the spike.
+      {{ vocab.demo.investigation.anomaly_pair_sender.name }}'s ribbon
+      is the thickest because of the $25,000 spike; the depositor
+      ribbons are thin and visually similar.
+    - **Outbound Sankey (right)** —
+      {{ vocab.demo.investigation.layering_chain[0].name }} (the
+      layering chain's first hop). One ribbon, full width — the
+      chain's first outbound hop is
+      {{ vocab.demo.investigation.anchor.name }}'s only outbound
+      activity in the seed.
+    - **Touching-edges table (below)** — every edge involving
+      {{ vocab.demo.investigation.anchor.name }}, ordered by amount
+      descending. The
+      {{ vocab.demo.investigation.anomaly_pair_sender.name }} spike
+      sits at the top; the
+      {{ vocab.demo.investigation.layering_chain[0].name }} outbound
+      is high; the depositor inbounds occupy the long tail.
 
-- **Inbound Sankey (left)** — 12 individual depositors (the K.4.3
-  fanout cluster) sending small ACH amounts, plus Cascadia Trust
-  Bank — Operations sending the routine wire baseline + the K.4.4
-  spike. Cascadia's ribbon is the thickest because of the $25,000
-  spike; the depositor ribbons are thin and visually similar.
-- **Outbound Sankey (right)** — Shell Company A (the K.4.5 chain
-  hop). One ribbon, full width — the layering chain's first
-  outbound hop is Juniper's only outbound activity in the demo.
-- **Touching-edges table (below)** — every edge involving Juniper,
-  ordered by amount descending. The Cascadia spike sits at the top;
-  the Shell A outbound is high; the depositor inbounds occupy the
-  long tail.
+    Right-click the
+    {{ vocab.demo.investigation.anomaly_pair_sender.name }} inbound
+    row → "Walk to other account on this edge". The anchor walks to
+    {{ vocab.demo.investigation.anomaly_pair_sender.name }}; the
+    inbound Sankey now shows whatever upstream sources that account
+    has (in the seed: nothing — it's an external counterparty so its
+    inbound side isn't modeled), and the outbound Sankey shows
+    {{ vocab.demo.investigation.anomaly_pair_sender.name }} →
+    {{ vocab.demo.investigation.anchor.name }}. Walk back via the
+    dropdown; right-click the
+    {{ vocab.demo.investigation.layering_chain[0].name }} row → walk
+    to {{ vocab.demo.investigation.layering_chain[0].name }}. Now
+    {{ vocab.demo.investigation.layering_chain[0].name }} is the
+    anchor; the inbound Sankey shows
+    {{ vocab.demo.investigation.anchor.name }} →
+    {{ vocab.demo.investigation.layering_chain[0].name }}; the
+    outbound shows
+    {{ vocab.demo.investigation.layering_chain[0].name }} →
+    {% if vocab.demo.investigation.layering_chain | length > 1 %}{{ vocab.demo.investigation.layering_chain[1].name }}{% else %}the next hop{% endif %}
+    (the next layering hop).
 
-Right-click the Cascadia inbound row → "Walk to other account on
-this edge". The anchor walks to Cascadia; the inbound Sankey now
-shows whatever upstream sources Cascadia has (in the demo: nothing
-— Cascadia is an external counterparty so its inbound side isn't
-modeled), and the outbound Sankey shows Cascadia → Juniper. Walk
-back to Juniper via the dropdown; right-click the Shell A row →
-walk to Shell A. Now Shell A is the anchor; the inbound Sankey
-shows Juniper → Shell A; the outbound shows Shell A → Shell B
-(the next layering hop).
-
-That's the **walk-the-flow** interaction — every walk re-anchors
-the entire view, so multi-hop investigations don't require leaving
-the sheet.
+    That's the **walk-the-flow** interaction — every walk re-anchors
+    the entire view, so multi-hop investigations don't require
+    leaving the sheet.
+{% endif %}
 
 ## What it means
 
