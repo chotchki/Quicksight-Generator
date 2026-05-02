@@ -37,6 +37,8 @@ from datetime import timedelta
 from decimal import Decimal
 from typing import Literal, NewType, TypeAlias
 
+from quicksight_gen.common.persona import DemoPersona
+
 from .theme import ThemePreset
 
 
@@ -418,3 +420,10 @@ class L2Instance:
     # alongside the institution's primitives. ``None`` means "fall back
     # to the registry default" (``common/theme.py::DEFAULT_PRESET``).
     theme: ThemePreset | None = None
+    # Optional ``persona:`` block (Q.5.e) — per-institution flavor
+    # strings for handbook templating: institution name + acronym,
+    # upstream stakeholders, GL account labels, merchant names, free-form
+    # flavor literals. ``None`` means "no flavor declared"; handbook
+    # templates render neutral prose derived from L2 primitive fields
+    # instead.
+    persona: DemoPersona | None = None

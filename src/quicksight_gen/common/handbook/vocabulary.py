@@ -31,7 +31,7 @@ import re
 from dataclasses import dataclass, field
 
 from quicksight_gen.common.l2.primitives import L2Instance
-from quicksight_gen.common.persona import GLAccount, SNB_PERSONA
+from quicksight_gen.common.persona import DemoPersona, GLAccount
 
 
 # -- Sub-shapes -------------------------------------------------------------
@@ -313,13 +313,14 @@ def _build_demo_scenario(
 def _sasquatch_pr_vocabulary(l2_instance: L2Instance) -> HandbookVocabulary:
     """The Sasquatch National Bank handbook flavor.
 
-    Reuses ``SNB_PERSONA`` for the strings that already live there
+    Reads ``l2_instance.persona`` for the strings the YAML now carries
     (institution name, GL accounts, merchant names, flavor terms) and
-    layers Investigation personas on top — the latter aren't in
-    ``SNB_PERSONA`` because the persona module pre-dates the
-    Investigation app's compliance demo (Juniper Ridge / Cascadia /
-    shell-DDA chain).
+    layers Investigation personas on top — the latter aren't in the
+    YAML's ``persona:`` block because they're handbook-render-only
+    metadata (display names + scenario roles for the compliance demo
+    walkthroughs), not anything the L2 model itself uses.
     """
+    persona = l2_instance.persona or DemoPersona()
     description = (
         l2_instance.description.strip()
         if l2_instance.description
@@ -359,12 +360,12 @@ def _sasquatch_pr_vocabulary(l2_instance: L2Instance) -> HandbookVocabulary:
     )
     return HandbookVocabulary(
         institution=InstitutionVocabulary(
-            name=SNB_PERSONA.institution[0],
-            acronym=SNB_PERSONA.institution[1],
+            name=persona.institution[0],
+            acronym=persona.institution[1],
             description=description,
-            region=SNB_PERSONA.flavor[1] if len(SNB_PERSONA.flavor) > 1 else None,
+            region=persona.flavor[1] if len(persona.flavor) > 1 else None,
             legacy_entity=(
-                SNB_PERSONA.flavor[2] if len(SNB_PERSONA.flavor) > 2 else None
+                persona.flavor[2] if len(persona.flavor) > 2 else None
             ),
         ),
         stakeholders=(
@@ -379,7 +380,7 @@ def _sasquatch_pr_vocabulary(l2_instance: L2Instance) -> HandbookVocabulary:
                 role="card-network acquirer and merchant settlement counterparty",
             ),
         ),
-        gl_accounts=SNB_PERSONA.gl_accounts,
+        gl_accounts=persona.gl_accounts,
         merchants=(
             MerchantVocabulary(
                 name="Big Meadow Dairy",
@@ -407,7 +408,7 @@ def _sasquatch_pr_vocabulary(l2_instance: L2Instance) -> HandbookVocabulary:
                 sector="food retail",
             ),
         ),
-        flavor=SNB_PERSONA.flavor,
+        flavor=persona.flavor,
         investigation_personas=investigation_personas,
         fixture_name=_is_bundled_fixture(l2_instance),
         demo=_build_demo_scenario(

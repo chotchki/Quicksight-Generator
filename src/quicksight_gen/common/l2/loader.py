@@ -67,6 +67,7 @@ from .primitives import (
     TwoLegRail,
 )
 from .theme import ThemePreset
+from quicksight_gen.common.persona import DemoPersona, GLAccount
 
 
 # -- Errors -------------------------------------------------------------------
@@ -495,6 +496,80 @@ def _load_optional_brand_asset(raw: object, *, path: str) -> str | None:
     raise L2LoaderError(
         f"{path}: must be a URL (http:// / https:// / //) or an absolute "
         f"file path (starts with /); got {value!r}"
+    )
+
+
+def _load_persona(raw: object, *, path: str) -> DemoPersona | None:
+    """Optional ``persona:`` block — institution flavor strings for handbook.
+
+    YAML shape mirrors the ``DemoPersona`` dataclass:
+
+    .. code-block:: yaml
+
+        persona:
+          institution: ["Sasquatch National Bank", "SNB"]
+          stakeholders: ["Federal Reserve Bank", "Fed", "..."]
+          gl_accounts:
+            - {code: "gl-1010", name: "Cash & Due From FRB", note: "..."}
+          merchants: ["Big Meadow Dairy", "Bigfoot Brews", "..."]
+          flavor: ["Margaret Hollowcreek", "Pacific Northwest", "..."]
+
+    Each top-level key is optional and defaults to an empty tuple.
+    Returns ``None`` when the entire ``persona:`` block is absent —
+    handbook templates render neutral prose in that case.
+    """
+    if raw is None:
+        return None
+    raw_d = _as_mapping(raw, path=path, what="persona")
+
+    def _str_tuple(key: str) -> tuple[str, ...]:
+        sub = raw_d.get(key)
+        if sub is None:
+            return ()
+        items = _as_list(sub, path=f"{path}.{key}")
+        out: list[str] = []
+        for i, item in enumerate(items):
+            if not isinstance(item, str):
+                raise L2LoaderError(
+                    f"{path}.{key}[{i}]: must be a string, "
+                    f"got {type(item).__name__}"
+                )
+            out.append(item)
+        return tuple(out)
+
+    institution = _str_tuple("institution")
+    stakeholders = _str_tuple("stakeholders")
+    merchants = _str_tuple("merchants")
+    flavor = _str_tuple("flavor")
+
+    gl_accounts_raw = raw_d.get("gl_accounts")
+    gl_accounts: tuple[GLAccount, ...]
+    if gl_accounts_raw is None:
+        gl_accounts = ()
+    else:
+        items = _as_list(gl_accounts_raw, path=f"{path}.gl_accounts")
+        out_gl: list[GLAccount] = []
+        for i, item in enumerate(items):
+            sub_path = f"{path}.gl_accounts[{i}]"
+            sub_d = _as_mapping(item, path=sub_path, what="gl_account")
+            code_raw = _require(sub_d, "code", path=sub_path)
+            name_raw = _require(sub_d, "name", path=sub_path)
+            note_raw = sub_d.get("note", "")
+            code = _load_string(code_raw, path=f"{sub_path}.code")
+            name = _load_string(name_raw, path=f"{sub_path}.name")
+            note = (
+                _load_string(note_raw, path=f"{sub_path}.note")
+                if note_raw != "" else ""
+            )
+            out_gl.append(GLAccount(code=code, name=name, note=note))
+        gl_accounts = tuple(out_gl)
+
+    return DemoPersona(
+        institution=institution,
+        stakeholders=stakeholders,
+        gl_accounts=gl_accounts,
+        merchants=merchants,
+        flavor=flavor,
     )
 
 
@@ -1062,6 +1137,7 @@ def load_instance(path: Path | str, *, validate: bool = True) -> L2Instance:
             path="role_business_day_offsets",
         ),
         theme=_load_theme(raw_d.get("theme"), path="theme"),
+        persona=_load_persona(raw_d.get("persona"), path="persona"),
     )
     if validate:
         # Local import dodges loader↔validate import-cycle.
