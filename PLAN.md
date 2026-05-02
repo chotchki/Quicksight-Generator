@@ -59,6 +59,19 @@ _Phase S + T sub-task detail removed during the post-T cleanup. RELEASE_NOTES v8
 - [ ] **U.5 — Sign-off block.** Last-page footer / dedicated sign-off page: auditor name field, date field, signature line. Visual only — actual cryptographic signature applied externally after review. **Review gate.**
 - [ ] **U.6 — Provenance footer.** Every page footer: report-version sentinel, page X of Y, generation timestamp, source-data fingerprint (short hash). Cover page additionally carries the long-form fingerprint with the per-matview SHA256 list. **Review gate.**
 - [ ] **U.7 — Provenance hash + verify subcommand.**
+  - Question: should this be hashed over the materialized views or a hash of the base rows through a given pair of entry ids? The views will change, the underlying data should be immutable.
+    - Hash external inputs - all of these should be included on a single pdf page on how to validate this output
+      - transaction entry #
+      - balance entry #
+      - l2 yaml
+      - git commit hash of the quicksight-gen version
+    - Hash over
+      - transaction entry #
+      - balance entry #
+      - transaction rows from 0 to the entry # (inclusive)
+      - balance entry rows from 0 to the entry # (inclusive)
+      - l2 yaml 
+      - git commit hash of the quicksight-gen version
   - Compute fingerprint as `sha256(L2_instance_fingerprint || sorted_matview_row_hashes || period_anchor)`. Reproducible for a given DB snapshot + L2.
   - Add `audit verify report.pdf -c config.yaml` — extracts embedded fingerprint from the PDF, queries the same matviews, recomputes, compares. Exit 0 on match, 1 on drift.
   - Document on the site (`docs/handbook/audit.md`): what the fingerprint covers, how to recompute manually, exact SQL the verify command runs.
@@ -76,8 +89,24 @@ _Phase S + T sub-task detail removed during the post-T cleanup. RELEASE_NOTES v8
 
 ---
 # Proposed Phase V
+- Convert to using uv from pip
 - Today's split between `run/config.yaml` (account, region, datasource, dialect, theme defaults) and the L2 institution YAML (rails, chains, accounts, persona, theme override) has accumulated friction points. Audit + tighten the boundary based on what actually got threaded in M-/N-/O-/P-/Q-. Defers to a dedicated phase with its own scoping pass after Q.3.a settles.
+  - Comments: I think there is a natural split between insitution and environment.
+    - config.yaml has 
+      - aws account
+      - aws region
+      - tag prefix
+      - quicksight datasource (optional but if left out, json generates it)
+      - database dialect, 
+      - database connection (optional but required for demo data automatic population and audit pdf)
+    - institution has
+      - rails
+      - chains
+      - accounts
+      - persona
+      - theme override (defaults live in the code)
 - **Vendor `@hpcc-js/wasm-graphviz` for offline-friendly docs** (was T.7). `qs-graphviz-wasm.js` currently CDN-loads from jsDelivr. Bring in if jsDelivr reliability becomes a real-user complaint OR an integrator deploys the docs site somewhere airgapped. ~30 min: download the ESM bundle into `docs/_static/`, swap the import path.
+  - The goal being that someone could output the documentation to a flat file directory and run without a web server. web server would still be a command line option
 - **Per-command --help smoke tests** for the new artifact groups. `schema apply` / `data apply` / `data refresh` / `data clean` / `json clean` / `docs apply` / `docs serve` aren't directly exercised by unit tests today — the integration job covers the `--execute` paths against real DB, and emit-only paths flow through pre-existing dataset-shape tests. Add a `tests/{schema,data,json,docs}/test_cli_smoke.py` that asserts `--help` exits 0 + the emit path against `spec_example` produces a non-empty SQL stream.
 - **Re-run 4-cell e2e matrix (P.9f.d)** — was deferred when the per-cell triage list was still settling. Worth a green pass against v8.0.0 once any first-impression tune-ups in R.6.e land.
 ---
