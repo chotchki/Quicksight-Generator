@@ -1,0 +1,1004 @@
+"""Tests for the L2 Flow Tracing app — phase M.3.4 skeleton.
+
+The L2 Flow Tracing app is the second L2-fed app (after L1 dashboard).
+Its job is to make every L2 primitive observable on a runtime
+dashboard so analysts (and integrators) can spot 'L2 hygiene'
+problems — declared rails with zero activity, declared chains with
+broken parent-child firing, declared LimitSchedules that no flow
+ever exercises.
+
+M.3.4 ships the skeleton: 4 sheets (Getting Started + Rails +
+Chains + L2 Exceptions), description-driven prose on Getting
+Started, placeholder TextBox content on the other three sheets.
+M.3.5+ populates each tab with its real visuals + datasets.
+
+Tests here cover:
+
+- Build pipeline shape (cfg + l2_instance plumb through).
+- Analysis + Dashboard emit cleanly with the M.2d.3 prefix pattern.
+- Default L2 instance auto-loads the persona-neutral spec_example
+  fixture (M.3.2 repoint — production library code carries no
+  Sasquatch flavor).
+- 4 sheets in display order match the M.3.4 spec.
+- Getting Started welcome uses ``l2_instance.description`` as the
+  body (description-driven prose contract).
+- M.3.4 CLI smoke: ``quicksight-gen generate l2-flow-tracing``
+  writes the expected files.
+- ``--all`` includes l2-flow-tracing in the bundle.
+- Per-instance prefix isolation: changing the L2 instance changes
+  the analysis ID + dashboard ID middle segment.
+"""
+
+from __future__ import annotations
+
+import inspect
+from pathlib import Path
+
+import pytest
+from click.testing import CliRunner
+
+from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
+from quicksight_gen.apps.l2_flow_tracing.app import (
+    build_l2_flow_tracing_app,
+)
+from quicksight_gen.cli import main
+from quicksight_gen.cli._helpers import APPS
+from quicksight_gen.common.config import Config
+from quicksight_gen.common.l2 import L2Instance, load_instance
+
+
+_CFG = Config(
+    aws_account_id="111122223333",
+    aws_region="us-west-2",
+    datasource_arn=(
+        "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
+    ),
+)
+
+
+SASQUATCH_PR_YAML = (
+    Path(__file__).parent.parent / "l2" / "sasquatch_pr.yaml"
+)
+
+
+def _sheet_by_name(app, name: str):
+    """Look up a Sheet by display name. Position-agnostic so sheet
+    insertion order can be reshuffled without re-keying these tests."""
+    assert app.analysis is not None
+    for s in app.analysis.sheets:
+        if s.name == name:
+            return s
+    raise AssertionError(
+        f"sheet {name!r} missing — found {[s.name for s in app.analysis.sheets]}"
+    )
+
+
+# -- Build pipeline ----------------------------------------------------------
+
+
+def test_build_with_default_loads_spec_example() -> None:
+    """No kwarg → auto-load the persona-neutral spec_example L2 fixture
+    (M.3.2 repointed default; production library code carries no
+    implicit Sasquatch flavor)."""
+    app = build_l2_flow_tracing_app(_CFG)
+    assert app is not None
+    assert app.name == "l2-flow-tracing"
+
+
+def test_build_with_explicit_l2_instance_uses_caller_value() -> None:
+    """Caller-supplied instance overrides the default."""
+    explicit = default_l2_instance()
+    app = build_l2_flow_tracing_app(_CFG, l2_instance=explicit)
+    assert app is not None
+
+
+def test_build_signature_l2_instance_is_kwarg_only() -> None:
+    """Same convention as build_l1_dashboard_app: positional callers
+    keep working without passing l2_instance; tests + alternative-persona
+    deployments override via the kwarg."""
+    sig = inspect.signature(build_l2_flow_tracing_app)
+    p = sig.parameters.get("l2_instance")
+    assert p is not None
+    assert p.kind == inspect.Parameter.KEYWORD_ONLY
+    assert p.default is None
+    annot_str = str(p.annotation)
+    assert "L2Instance" in annot_str
+
+
+# -- Analysis + Dashboard registration ---------------------------------------
+
+
+def test_analysis_registered_with_l2_aware_name() -> None:
+    """The Analysis title surfaces the L2 prefix so multi-instance
+    deployments are distinguishable in the QuickSight UI."""
+    app = build_l2_flow_tracing_app(_CFG)
+    assert app.analysis is not None
+    assert "spec_example" in app.analysis.name
+    assert "L2 Flow Tracing" in app.analysis.name
+
+
+def test_dashboard_registered() -> None:
+    app = build_l2_flow_tracing_app(_CFG)
+    assert app.dashboard is not None
+
+
+def test_emit_analysis_and_dashboard_succeed() -> None:
+    """Tree validation passes — no orphan refs / shape errors."""
+    app = build_l2_flow_tracing_app(_CFG)
+    analysis = app.emit_analysis()
+    dashboard = app.emit_dashboard()
+    assert analysis is not None
+    assert dashboard is not None
+
+
+def test_analysis_id_uses_l2_instance_prefix() -> None:
+    """M.2d.3 prefix pattern: ``<resource_prefix>-<l2_prefix>-l2-flow-tracing-analysis``.
+    Default L2 instance is spec_example."""
+    app = build_l2_flow_tracing_app(_CFG)
+    analysis = app.emit_analysis()
+    assert analysis.AnalysisId == (
+        "qs-gen-spec_example-l2-flow-tracing-analysis"
+    )
+
+
+def test_dashboard_id_uses_l2_instance_prefix() -> None:
+    app = build_l2_flow_tracing_app(_CFG)
+    dashboard = app.emit_dashboard()
+    assert dashboard.DashboardId == (
+        "qs-gen-spec_example-l2-flow-tracing"
+    )
+
+
+def test_per_instance_prefix_isolates_resource_ids() -> None:
+    """Two L2 instances → two non-colliding analysis IDs. Prevents
+    multi-instance deploy collisions in the same QS account."""
+    spec_inst = default_l2_instance()
+    sasquatch_pr_inst = load_instance(SASQUATCH_PR_YAML)
+
+    spec_app = build_l2_flow_tracing_app(_CFG, l2_instance=spec_inst)
+    sasq_app = build_l2_flow_tracing_app(_CFG, l2_instance=sasquatch_pr_inst)
+
+    spec_analysis_id = spec_app.emit_analysis().AnalysisId
+    sasq_analysis_id = sasq_app.emit_analysis().AnalysisId
+    assert spec_analysis_id != sasq_analysis_id
+    assert "spec_example" in spec_analysis_id
+    assert "sasquatch_pr" in sasq_analysis_id
+
+
+# -- Sheet structure (M.3.4 — 4 sheets) --------------------------------------
+
+
+def test_six_sheets_in_display_order() -> None:
+    """M.3.10f: Getting Started + Rails + Chains + Transfer Templates +
+    L2 Exceptions. Position-stable — the order matches the L2-primitive
+    type progression (the per-Rail explorer, the cross-Rail chain,
+    the multi-Rail bundled Transfer, then hygiene exceptions). M.4.4.5
+    appended the App Info ("i") canary as the last sheet."""
+    app = build_l2_flow_tracing_app(_CFG)
+    assert app.analysis is not None
+    assert [s.name for s in app.analysis.sheets] == [
+        "Getting Started", "Rails", "Chains",
+        "Transfer Templates", "L2 Exceptions", "Info",
+    ]
+
+
+def test_every_sheet_has_a_description() -> None:
+    """Subtitle text drives the per-sheet prose — every sheet must
+    have one (description-driven-prose contract from M.2a.7)."""
+    app = build_l2_flow_tracing_app(_CFG)
+    for s in app.analysis.sheets:
+        assert s.description, f"sheet {s.name!r} missing description"
+
+
+def test_dataset_count_matches_populated_sheets() -> None:
+    """M.3.10l stabilized at 6 fixed datasets per L2 instance:
+    postings + meta-values (Rails), chain-instances (Chains),
+    tt-instances + tt-legs (Transfer Templates), unified-exceptions
+    (L2 Exceptions). M.3.10l replaced the 6 separate L2 exception
+    datasets with one UNION-ALL dataset (mirrors L1's Today's
+    Exceptions pattern: KPI + bar chart + unified detail table)."""
+    app = build_l2_flow_tracing_app(_CFG)
+    # M.4.4.5 added 2 App Info datasets to every shipped app.
+    assert len(app.datasets) == 8
+    assert {d.identifier for d in app.datasets} == {
+        "l2ft-postings-ds",
+        "l2ft-meta-values-ds",
+        "l2ft-chain-instances-ds",
+        "l2ft-tt-instances-ds",
+        "l2ft-tt-legs-ds",
+        "l2ft-unified-exceptions-ds",
+        "app-info-liveness-ds",
+        "app-info-matviews-ds",
+    }
+
+
+# -- Getting Started — description-driven prose (M.2a.2 contract) ------------
+
+
+def test_getting_started_welcome_uses_l2_instance_description() -> None:
+    """The welcome body comes from ``l2_instance.description``, NOT a
+    hardcoded persona string. Switching L2 instance switches the
+    prose — same contract the L1 dashboard's Getting Started follows."""
+    app = build_l2_flow_tracing_app(_CFG)
+    gs = _sheet_by_name(app, "Getting Started")
+    welcome_xml = gs.text_boxes[0].content
+    # Default L2 instance is spec_example — its description is what shows.
+    assert "Generic SPEC-shaped instance" in welcome_xml
+
+
+def test_getting_started_welcome_falls_back_when_l2_description_missing() -> None:
+    """If the L2 instance has no top-level description, surface a
+    hint to fill it rather than rendering blank — quicker debug."""
+    from dataclasses import replace
+    explicit = default_l2_instance()
+    minimal = replace(explicit, description=None)
+    app = build_l2_flow_tracing_app(_CFG, l2_instance=minimal)
+    gs = _sheet_by_name(app, "Getting Started")
+    assert "L2 instance description missing" in gs.text_boxes[0].content
+
+
+def test_getting_started_title_is_constant_ui_vocabulary() -> None:
+    """The title 'L2 Flow Tracing' is constant UI vocabulary (NOT
+    pulled from L2). Per the M.2a.4 design note: titles stay
+    hardcoded, subtitles + bodies pull from L2 descriptions."""
+    app = build_l2_flow_tracing_app(_CFG)
+    gs = _sheet_by_name(app, "Getting Started")
+    assert "L2 Flow Tracing" in gs.text_boxes[0].content
+
+
+# -- Placeholder sheets — substep pointers (removed when populated) ----------
+
+
+def test_no_remaining_placeholder_sheets() -> None:
+    """M.3.7 lands the last populator (L2 Exceptions). No sheet
+    should retain the M.3.4 'skeleton' placeholder marker — every
+    sheet has its real visuals + prose now."""
+    app = build_l2_flow_tracing_app(_CFG)
+    for s in app.analysis.sheets:
+        body_blob = "".join(tb.content for tb in s.text_boxes)
+        assert "Skeleton at M.3.4" not in body_blob, (
+            f"sheet {s.name!r} still carries the M.3.4 placeholder marker"
+        )
+
+
+# -- CLI plumbing ------------------------------------------------------------
+
+
+def test_l2_flow_tracing_in_apps_tuple() -> None:
+    """The shared APPS tuple drives ``json apply``'s bundled emit and
+    every cleanup/probe walk. Missing here means the L2 flow tracing
+    JSON would silently disappear from the output set."""
+    assert "l2-flow-tracing" in APPS
+
+
+def test_cli_json_apply_l2_instance_flag(tmp_path: Path) -> None:
+    """M.3.9 CLI surface (Q.3.a renamed): ``--l2 PATH`` overrides the
+    default spec_example fixture. Generated dataset filenames carry the
+    overridden prefix."""
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(
+        "aws_account_id: '111122223333'\n"
+        "aws_region: us-west-2\n"
+        "datasource_arn: 'arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds'\n"
+    )
+    out_dir = tmp_path / "out"
+
+    runner = CliRunner()
+    result = runner.invoke(
+        main, [
+            "json", "apply",
+            "-c", str(cfg_path),
+            "-o", str(out_dir),
+            "--l2", str(SASQUATCH_PR_YAML),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    # Dataset filenames carry the sasquatch_pr prefix, not spec_example.
+    sasq_chain_inst = (
+        out_dir / "datasets"
+        / "qs-gen-sasquatch_pr-l2ft-chain-instances-dataset.json"
+    )
+    assert sasq_chain_inst.exists()
+    spec_chain_inst = (
+        out_dir / "datasets"
+        / "qs-gen-spec_example-l2ft-chain-instances-dataset.json"
+    )
+    assert not spec_chain_inst.exists()
+
+
+def test_cli_json_apply_l2_flow_tracing_writes_files(tmp_path: Path) -> None:
+    """CLI smoke: ``quicksight-gen json apply`` writes theme + analysis
+    + dashboard + every dataset under datasets/ for L2 flow tracing.
+    M.3.10c — postings + meta-values replace the M.3.5 rails dataset
+    + the M.3.8 per-key dropdown fan-out."""
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(
+        "aws_account_id: '111122223333'\n"
+        "aws_region: us-west-2\n"
+        "datasource_arn: 'arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds'\n"
+    )
+    out_dir = tmp_path / "out"
+
+    runner = CliRunner()
+    result = runner.invoke(
+        main, [
+            "json", "apply",
+            "-c", str(cfg_path),
+            "-o", str(out_dir),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert (out_dir / "theme.json").exists()
+    assert (out_dir / "l2-flow-tracing-analysis.json").exists()
+    assert (out_dir / "l2-flow-tracing-dashboard.json").exists()
+    # M.3.10c — postings + meta-values dataset JSONs land under datasets/
+    assert (
+        out_dir / "datasets" / "qs-gen-spec_example-l2ft-postings-dataset.json"
+    ).exists()
+    assert (
+        out_dir / "datasets"
+        / "qs-gen-spec_example-l2ft-meta-values-dataset.json"
+    ).exists()
+
+
+# -- Rails sheet (M.3.10c — postings explorer + cascade) --------------------
+
+
+def test_rails_sheet_has_a_table_visual() -> None:
+    """The Rails sheet hosts the transactions Table (postings dataset)."""
+    from quicksight_gen.common.tree import Table
+    app = build_l2_flow_tracing_app(_CFG)
+    rails = _sheet_by_name(app, "Rails")
+    table_visuals = [v for v in rails.visuals if isinstance(v, Table)]
+    assert len(table_visuals) == 1
+
+
+def test_rails_table_sources_from_postings_dataset() -> None:
+    """The transactions Table reads from the postings dataset (not the
+    M.3.5 declared-rails aggregate that moved to a future Docs tab)."""
+    from quicksight_gen.common.tree import Table
+    app = build_l2_flow_tracing_app(_CFG)
+    rails = _sheet_by_name(app, "Rails")
+    table = next(v for v in rails.visuals if isinstance(v, Table))
+    table_dataset_ids = {c.column.dataset.identifier for c in table.columns}
+    assert table_dataset_ids == {"l2ft-postings-ds"}
+
+
+def test_rails_sheet_has_six_filter_controls() -> None:
+    """M.3.10c wires the filter bar with six controls: 2 date pickers
+    + rail / status / bundle CategoryFilters + cascade key + value."""
+    app = build_l2_flow_tracing_app(_CFG)
+    rails = _sheet_by_name(app, "Rails")
+    # 4 parameter controls (date×2 + meta-key + meta-value)
+    assert len(rails.parameter_controls) == 4
+    # 3 filter controls (rail + status + bundle)
+    assert len(rails.filter_controls) == 3
+
+
+def test_rails_sheet_parameter_controls_titled_for_analyst() -> None:
+    """The analyst-facing titles match the filter-bar UX spec —
+    catches accidental retitling."""
+    app = build_l2_flow_tracing_app(_CFG)
+    rails = _sheet_by_name(app, "Rails")
+    titles = {ctrl.title for ctrl in rails.parameter_controls}
+    assert {"Date From", "Date To", "Metadata Key", "Metadata Value"} <= titles
+    filter_titles = {ctrl.title for ctrl in rails.filter_controls}
+    assert {"Rail", "Status", "Bundle"} <= filter_titles
+
+
+# -- Chains sheet (M.3.6) ----------------------------------------------------
+
+
+def _chains_dataset_sql_against(yaml_path: Path) -> str:
+    """Pull the SQL string out of the Chains dataset against a chosen
+    L2 instance. Used by tests that want to assert non-empty CTEs
+    (sasquatch_pr.yaml has 6 chains; spec_example has 0)."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        build_chains_dataset,
+    )
+    inst = load_instance(yaml_path)
+    aws_ds = build_chains_dataset(_CFG, inst)
+    table = list(aws_ds.PhysicalTableMap.values())[0]
+    return table.CustomSql.SqlQuery
+
+
+def test_chains_dataset_targets_prefixed_current_transactions() -> None:
+    """Chains runtime joins reference the prefixed current_transactions
+    matview — `<prefix>_current_transactions`."""
+    sql = _chains_dataset_sql_against(SASQUATCH_PR_YAML)
+    assert "FROM sasquatch_pr_current_transactions" in sql
+
+
+def test_chains_dataset_inlines_l2_chain_entries() -> None:
+    """The declared edges CTE inlines every ChainEntry as a SQL
+    string-literal SELECT row joined by N-1 UNION ALLs.
+    sasquatch_pr.yaml has 6 chains; spec_example has 0 (the empty
+    path is exercised in another test)."""
+    inst = load_instance(SASQUATCH_PR_YAML)
+    sql = _chains_dataset_sql_against(SASQUATCH_PR_YAML)
+    assert "WITH declared AS" in sql
+    for c in inst.chains:
+        assert f"'{c.parent}'" in sql
+        assert f"'{c.child}'" in sql
+    assert sql.count("UNION ALL") == max(0, len(inst.chains) - 1)
+
+
+def test_chains_dataset_emits_required_optional_labels() -> None:
+    """The 'required' column in the dataset is emitted as the
+    display-friendly 'Required' / 'Optional' labels (not boolean
+    literals) so the visual reads cleanly."""
+    sql = _chains_dataset_sql_against(SASQUATCH_PR_YAML)
+    inst = load_instance(SASQUATCH_PR_YAML)
+    has_required = any(c.required for c in inst.chains)
+    has_optional = any(not c.required for c in inst.chains)
+    if has_required:
+        assert "'Required'" in sql
+    if has_optional:
+        assert "'Optional'" in sql
+
+
+def test_chains_dataset_xor_group_emits_null_for_no_group() -> None:
+    """ChainEntries without an xor_group serialize as NULL in the
+    CTE, not as an empty string. Visuals can then treat NULL as
+    'no XOR group' explicitly."""
+    inst = load_instance(SASQUATCH_PR_YAML)
+    has_no_group = any(c.xor_group is None for c in inst.chains)
+    assert has_no_group, "test fixture lost its no-xor-group rows"
+    sql = _chains_dataset_sql_against(SASQUATCH_PR_YAML)
+    # At least one CTE row must have NULL in the xor_group slot.
+    assert " NULL AS xor_group" in sql
+
+
+def test_chains_dataset_orphan_rate_clamps_at_zero() -> None:
+    """Orphan count uses GREATEST(...,  0) so child-fires-more-than-
+    parent doesn't go negative — non-intuitive in a Sankey legend."""
+    sql = _chains_dataset_sql_against(SASQUATCH_PR_YAML)
+    assert "GREATEST(e.parent_firing_count - e.child_firing_count, 0)" in sql
+
+
+def test_chains_dataset_orphan_rate_avoids_divide_by_zero() -> None:
+    """Dead parent (zero firings) → orphan_rate of 0 instead of NaN
+    or a divide-by-zero error. CASE guards the division."""
+    sql = _chains_dataset_sql_against(SASQUATCH_PR_YAML)
+    assert "WHEN e.parent_firing_count > 0" in sql
+    assert "ELSE 0" in sql
+
+
+def test_chains_dataset_contract_columns_match_builder() -> None:
+    """Contract columns and SQL projection match — visual ds["col"]
+    references resolve cleanly."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        CHAINS_CONTRACT, build_chains_dataset,
+    )
+    aws_ds = build_chains_dataset(_CFG, default_l2_instance())
+    cols = {
+        c.Name for c in list(aws_ds.PhysicalTableMap.values())[0].CustomSql.Columns
+    }
+    expected = {c.name for c in CHAINS_CONTRACT.columns}
+    assert cols == expected
+
+
+def test_chains_dataset_handles_empty_chains_list() -> None:
+    """spec_example.yaml has zero chains; the empty CTE path
+    (WHERE 1=0) keeps the SQL valid + visual harmless."""
+    sql = _chains_dataset_sql_against(
+        Path(__file__).parent.parent / "l2" / "spec_example.yaml"
+    )
+    assert "WHERE 1=0" in sql
+    assert "WITH declared AS" in sql
+
+
+def test_chains_dataset_id_uses_l2_instance_prefix() -> None:
+    """Per M.2d.3 — dataset ID middle segment is the L2 instance
+    prefix so multi-instance deploys don't collide."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        build_chains_dataset,
+    )
+    from dataclasses import replace
+    cfg = replace(_CFG, l2_instance_prefix="sasquatch_pr")
+    ds = build_chains_dataset(cfg, load_instance(SASQUATCH_PR_YAML))
+    assert ds.DataSetId == "qs-gen-sasquatch_pr-l2ft-chains-dataset"
+
+
+# -- Chains sheet — M.3.10d per-instance explorer ---------------------------
+
+
+def test_chains_sheet_is_a_single_table() -> None:
+    """M.3.10d: Chains sheet is the per-parent-firing explorer — one
+    Table backed by chain-instances. The pre-M.3.10d Sankey + edge
+    detail moved to the M.7 docs render of declared topology.
+    A brief M.3.10e Sankey-on-edges experiment (chain-edges dataset)
+    was reverted: chains is a runtime causality concept, not a
+    multi-leg flow graph — Sankey doesn't read naturally for it.
+    Multi-leg Sankey visualization belongs on TransferTemplates."""
+    from quicksight_gen.common.tree import Table
+    app = build_l2_flow_tracing_app(_CFG)
+    chains = _sheet_by_name(app, "Chains")
+    table_visuals = [v for v in chains.visuals if isinstance(v, Table)]
+    assert len(table_visuals) == 1
+    # Table reads from chain-instances, not the aggregate chains dataset.
+    table = table_visuals[0]
+    assert table.columns[0].column.dataset.identifier == "l2ft-chain-instances-ds"
+
+
+def test_chains_table_carries_completion_status_column() -> None:
+    """The completion_status column is the answer the explorer is
+    built around — without it the Completion filter has nothing to
+    visibly affect."""
+    from quicksight_gen.common.tree import Table
+    app = build_l2_flow_tracing_app(_CFG)
+    chains = _sheet_by_name(app, "Chains")
+    table = next(v for v in chains.visuals if isinstance(v, Table))
+    cols = {c.column.name for c in table.columns}
+    assert "completion_status" in cols
+    assert "parent_chain_name" in cols
+    assert "parent_transfer_id" in cols
+
+
+def test_chains_sheet_has_six_filter_controls() -> None:
+    """Filter bar shape matches Rails: 2 datetime pickers, 2 filter
+    dropdowns (Chain + Completion), 2 parameter dropdowns (Metadata
+    Key + Metadata Value)."""
+    app = build_l2_flow_tracing_app(_CFG)
+    chains = _sheet_by_name(app, "Chains")
+    titles = (
+        [c.title for c in chains.parameter_controls]
+        + [c.title for c in chains.filter_controls]
+    )
+    assert set(titles) == {
+        "Date From", "Date To", "Chain", "Completion",
+        "Metadata Key", "Metadata Value",
+    }
+
+
+def test_chains_metadata_params_are_chain_scoped() -> None:
+    """Chains uses its own pL2ftChainsMeta{Key,Value} params — separate
+    from Rails' pL2ftMeta{Key,Value} so per-sheet selection doesn't
+    bleed across tabs."""
+    app = build_l2_flow_tracing_app(_CFG)
+    param_names = {str(p.name) for p in app.analysis.parameters}
+    assert "pL2ftChainsMetaKey" in param_names
+    assert "pL2ftChainsMetaValue" in param_names
+    # And the date params are independent too — chains has its own.
+    assert "pL2ftChainsDateStart" in param_names
+    assert "pL2ftChainsDateEnd" in param_names
+
+
+def test_chains_metadata_value_dropdown_cascades_off_chain_meta_key() -> None:
+    """The Metadata Value control cascades off Chains' own Metadata
+    Key control (NOT Rails'), so picking a Key on Chains narrows the
+    Value dropdown only on Chains."""
+    from quicksight_gen.common.tree import LinkedValues
+    app = build_l2_flow_tracing_app(_CFG)
+    chains = _sheet_by_name(app, "Chains")
+    value_ctrl = next(
+        c for c in chains.parameter_controls if c.title == "Metadata Value"
+    )
+    key_ctrl = next(
+        c for c in chains.parameter_controls if c.title == "Metadata Key"
+    )
+    assert value_ctrl.cascade_source is key_ctrl
+    assert isinstance(value_ctrl.selectable_values, LinkedValues)
+    assert value_ctrl.selectable_values.dataset.identifier == "l2ft-meta-values-ds"
+
+
+# -- L2 Exceptions sheet (M.3.7) ---------------------------------------------
+
+
+_EXC_DATASETS = (
+    ("l2ft-exc-chain-orphans-ds", "build_exc_chain_orphans_dataset"),
+    ("l2ft-exc-unmatched-transfer-type-ds",
+     "build_exc_unmatched_transfer_type_dataset"),
+    ("l2ft-exc-dead-rails-ds", "build_exc_dead_rails_dataset"),
+    ("l2ft-exc-dead-bundles-activity-ds",
+     "build_exc_dead_bundles_activity_dataset"),
+    ("l2ft-exc-dead-metadata-ds", "build_exc_dead_metadata_dataset"),
+    ("l2ft-exc-dead-limit-schedules-ds",
+     "build_exc_dead_limit_schedules_dataset"),
+)
+
+
+def _exc_dataset_sql(builder_name: str, yaml_path: Path) -> str:
+    import quicksight_gen.apps.l2_flow_tracing.datasets as ds_mod
+    inst = load_instance(yaml_path)
+    builder = getattr(ds_mod, builder_name)
+    aws_ds = builder(_CFG, inst)
+    table = list(aws_ds.PhysicalTableMap.values())[0]
+    return table.CustomSql.SqlQuery
+
+
+@pytest.mark.parametrize("ds_id,builder_name", _EXC_DATASETS)
+def test_exc_dataset_targets_prefixed_current_transactions(
+    ds_id: str, builder_name: str,
+) -> None:
+    """Every L2 Exceptions dataset queries `<prefix>_current_transactions`
+    so the supersession-aware ('latest entry per id') view drives the
+    runtime side. The CTE may also reference the prefix; the broader
+    check is that the target table name appears at least once."""
+    sql = _exc_dataset_sql(builder_name, SASQUATCH_PR_YAML)
+    assert "sasquatch_pr_current_transactions" in sql, (
+        f"{builder_name} doesn't reference the prefixed transactions matview"
+    )
+
+
+@pytest.mark.parametrize("ds_id,builder_name", _EXC_DATASETS)
+def test_exc_dataset_id_uses_l2_instance_prefix(
+    ds_id: str, builder_name: str,
+) -> None:
+    """Per M.2d.3 — every exception dataset's ID middle segment is
+    the L2 instance prefix so multi-instance deploys don't collide."""
+    import quicksight_gen.apps.l2_flow_tracing.datasets as ds_mod
+    from dataclasses import replace
+    cfg = replace(_CFG, l2_instance_prefix="sasquatch_pr")
+    builder = getattr(ds_mod, builder_name)
+    aws_ds = builder(cfg, load_instance(SASQUATCH_PR_YAML))
+    assert aws_ds.DataSetId.startswith("qs-gen-sasquatch_pr-l2ft-exc-"), (
+        f"{builder_name} dataset ID lacks prefix: {aws_ds.DataSetId}"
+    )
+
+
+def test_exc_chain_orphans_filters_required_only() -> None:
+    """L2.1 surfaces ONLY required orphans. Optional chain entries
+    with unmatched children are by-design (XOR groups, optional
+    follow-ons) — they don't constitute violations."""
+    sql = _exc_dataset_sql(
+        "build_exc_chain_orphans_dataset", SASQUATCH_PR_YAML,
+    )
+    assert "WHERE e.required = 'Required'" in sql
+
+
+def test_exc_unmatched_transfer_type_excludes_declared_types() -> None:
+    """L2.2 LEFT JOINs on declared types and filters to the unmatched
+    side (NULL after join). All declared transfer_types appear as
+    SELECT-literal rows in the declared_types CTE."""
+    sql = _exc_dataset_sql(
+        "build_exc_unmatched_transfer_type_dataset", SASQUATCH_PR_YAML,
+    )
+    inst = load_instance(SASQUATCH_PR_YAML)
+    declared_types = {str(r.transfer_type) for r in inst.rails}
+    for t in declared_types:
+        assert f"'{t}'" in sql
+    assert "LEFT JOIN declared_types" in sql
+    assert "WHERE d.transfer_type IS NULL" in sql
+
+
+def test_exc_dead_rails_filters_zero_postings_only() -> None:
+    """L2.3 filters to ``COALESCE(r.total_postings, 0) = 0``. A LEFT
+    JOIN preserves Rails with no matching runtime activity at all."""
+    sql = _exc_dataset_sql(
+        "build_exc_dead_rails_dataset", SASQUATCH_PR_YAML,
+    )
+    assert "COALESCE(r.total_postings, 0) = 0" in sql
+
+
+def test_exc_dead_bundles_activity_checks_both_attributions() -> None:
+    """L2.4: bundles_activity refs MAY name a rail OR a transfer_type
+    — the SQL's NOT EXISTS checks BOTH attributions to avoid false
+    positives."""
+    sql = _exc_dataset_sql(
+        "build_exc_dead_bundles_activity_dataset", SASQUATCH_PR_YAML,
+    )
+    assert "t.rail_name = db.bundle_target" in sql
+    assert "t.transfer_type = db.bundle_target" in sql
+
+
+def test_exc_dead_metadata_uses_static_json_paths() -> None:
+    """L2.5 emits one NOT EXISTS fragment per (rail, metadata_key)
+    with a static `$.<key>` JSONPath — keeps the SQL portable per
+    the project's no-JSONB constraint (PG's JSON_VALUE prefers
+    constant paths)."""
+    sql = _exc_dataset_sql(
+        "build_exc_dead_metadata_dataset", SASQUATCH_PR_YAML,
+    )
+    inst = load_instance(SASQUATCH_PR_YAML)
+    declared_keys = {
+        (str(r.name), str(k))
+        for r in inst.rails for k in r.metadata_keys
+    }
+    if declared_keys:
+        # At least one fragment per declared (rail, key) — checks
+        # the literal '$.key' substring shows up.
+        for _, key in declared_keys:
+            assert f"'$.{key}'" in sql
+        assert sql.count("JSON_VALUE(t.metadata,") == len(declared_keys)
+
+
+def test_exc_dead_limit_schedules_filters_outbound_debit() -> None:
+    """L2.6 only counts a LimitSchedule cell as 'used' if there's
+    outbound DEBIT flow against the parent_role + transfer_type. A
+    cap on inbound flow doesn't make sense; matching credit-only
+    flow would give a false 'alive' signal."""
+    sql = _exc_dataset_sql(
+        "build_exc_dead_limit_schedules_dataset", SASQUATCH_PR_YAML,
+    )
+    assert "AND t.amount_direction = 'Debit'" in sql
+
+
+@pytest.mark.parametrize("ds_id,builder_name", _EXC_DATASETS)
+def test_exc_dataset_contract_columns_match_builder(
+    ds_id: str, builder_name: str,
+) -> None:
+    """Every exception dataset's contract columns match its SQL
+    projection — visual ds["col"] references resolve cleanly."""
+    import quicksight_gen.apps.l2_flow_tracing.datasets as ds_mod
+    contract_name_map = {
+        "l2ft-exc-chain-orphans-ds": "EXC_CHAIN_ORPHANS_CONTRACT",
+        "l2ft-exc-unmatched-transfer-type-ds":
+            "EXC_UNMATCHED_TRANSFER_TYPE_CONTRACT",
+        "l2ft-exc-dead-rails-ds": "EXC_DEAD_RAILS_CONTRACT",
+        "l2ft-exc-dead-bundles-activity-ds":
+            "EXC_DEAD_BUNDLES_ACTIVITY_CONTRACT",
+        "l2ft-exc-dead-metadata-ds": "EXC_DEAD_METADATA_CONTRACT",
+        "l2ft-exc-dead-limit-schedules-ds":
+            "EXC_DEAD_LIMIT_SCHEDULES_CONTRACT",
+    }
+    contract = getattr(ds_mod, contract_name_map[ds_id])
+    builder = getattr(ds_mod, builder_name)
+    aws_ds = builder(_CFG, load_instance(SASQUATCH_PR_YAML))
+    cols = {
+        c.Name for c in list(aws_ds.PhysicalTableMap.values())[0].CustomSql.Columns
+    }
+    expected = {c.name for c in contract.columns}
+    assert cols == expected
+
+
+def test_exceptions_sheet_unified_shape() -> None:
+    """M.3.10l: L2 Exceptions sheet is a single KPI + bar chart +
+    detail table backed by one unified-exceptions dataset (mirrors
+    L1's Today's Exceptions). The pre-M.3.10l 6-sections × (2 KPI +
+    1 Table) layout (12 KPIs + 6 Tables ~= 144 rows of vertical
+    scroll) collapses to one screen-sized view."""
+    from collections import Counter
+    app = build_l2_flow_tracing_app(_CFG)
+    exc = _sheet_by_name(app, "L2 Exceptions")
+    counts = Counter(type(v).__name__ for v in exc.visuals)
+    assert counts == Counter(["KPI", "BarChart", "Table"]), (
+        f"unexpected visual mix: {counts}"
+    )
+
+
+def test_exceptions_sheet_visuals_read_unified_dataset() -> None:
+    """Every visual on the L2 Exceptions sheet reads from the unified
+    dataset — catches accidental wiring back to a sub-dataset that
+    isn't in the deployed dataset list anymore."""
+    from quicksight_gen.common.tree import BarChart, KPI, Table
+    app = build_l2_flow_tracing_app(_CFG)
+    exc = _sheet_by_name(app, "L2 Exceptions")
+    expected_ds = "l2ft-unified-exceptions-ds"
+    for v in exc.visuals:
+        if isinstance(v, KPI):
+            assert v.values[0].column.dataset.identifier == expected_ds
+        elif isinstance(v, BarChart):
+            assert v.category[0].column.dataset.identifier == expected_ds
+        elif isinstance(v, Table):
+            assert v.columns[0].column.dataset.identifier == expected_ds
+
+
+def test_unified_exceptions_dataset_unions_all_six_check_types() -> None:
+    """The unified dataset's SQL UNIONs all 6 check_type literals so
+    every L2 hygiene check feeds the same KPI / bar / table. Catches
+    accidental drops of a check branch from the UNION."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        build_unified_l2_exceptions_dataset,
+    )
+    inst = load_instance(SASQUATCH_PR_YAML)
+    aws_ds = build_unified_l2_exceptions_dataset(_CFG, inst)
+    sql = list(aws_ds.PhysicalTableMap.values())[0].CustomSql.SqlQuery
+    for check_type in (
+        "Chain Orphans",
+        "Unmatched Transfer Type",
+        "Dead Rails",
+        "Dead Bundles Activity",
+        "Dead Metadata Declarations",
+        "Dead Limit Schedules",
+    ):
+        assert f"'{check_type}'" in sql, (
+            f"check_type {check_type!r} missing from unified SQL"
+        )
+
+
+# -- Metadata-cascade source-of-truth (kept from M.3.8) ----------------------
+
+
+def test_declared_metadata_keys_walks_union_across_rails() -> None:
+    """`declared_metadata_keys` returns the sorted union of every
+    Rail's `metadata_keys`. Drives the cascade Key dropdown's
+    StaticValues — single source of truth so a key declared on a
+    rail surfaces in the cascade dropdown."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        declared_metadata_keys,
+    )
+    inst = load_instance(SASQUATCH_PR_YAML)
+    keys = declared_metadata_keys(inst)
+    expected = sorted({
+        str(k) for r in inst.rails for k in r.metadata_keys
+    })
+    assert keys == expected
+    # Sorted (deterministic across runs).
+    assert keys == sorted(keys)
+
+
+# -- Postings + meta-values cascade datasets (M.3.10c) ----------------------
+
+
+def test_postings_dataset_targets_prefixed_current_transactions() -> None:
+    """Postings reads from `<prefix>_current_transactions`."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        build_postings_dataset,
+    )
+    inst = load_instance(SASQUATCH_PR_YAML)
+    aws_ds = build_postings_dataset(_CFG, inst)
+    sql = list(aws_ds.PhysicalTableMap.values())[0].CustomSql.SqlQuery
+    assert "FROM sasquatch_pr_current_transactions" in sql
+
+
+def test_postings_dataset_uses_cascade_substitution() -> None:
+    """Cascade WHERE clause has the sentinel short-circuit + per-key
+    branches with literal JSON paths (P.9f.b — Oracle JSON_VALUE
+    rejects runtime-concatenated paths so we emit one branch per
+    declared metadata key)."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        build_postings_dataset, META_KEY_ALL_SENTINEL,
+    )
+    inst = load_instance(SASQUATCH_PR_YAML)
+    sql = list(
+        build_postings_dataset(_CFG, inst).PhysicalTableMap.values()
+    )[0].CustomSql.SqlQuery
+    assert f"<<$pKey>> = '{META_KEY_ALL_SENTINEL}'" in sql
+    # Spot-check one declared key picks the literal-path branch shape.
+    assert (
+        "<<$pKey>> = 'customer_id' AND "
+        "JSON_VALUE(metadata, '$.customer_id') IN (<<$pValues>>)"
+    ) in sql
+
+
+def test_postings_dataset_declares_pkey_and_pvalues_parameters() -> None:
+    """Both dataset parameters declared with the right ValueType +
+    sentinel defaults — wire-shape lock per the M.3.10 spike."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        build_postings_dataset, META_KEY_ALL_SENTINEL,
+        META_VALUE_PLACEHOLDER_SENTINEL,
+    )
+    inst = load_instance(SASQUATCH_PR_YAML)
+    aws_ds = build_postings_dataset(_CFG, inst)
+    params = aws_ds.DatasetParameters
+    assert params is not None and len(params) == 2
+    by_name = {p.StringDatasetParameter.Name: p.StringDatasetParameter for p in params}
+    assert "pKey" in by_name and "pValues" in by_name
+    assert by_name["pKey"].ValueType == "SINGLE_VALUED"
+    assert by_name["pValues"].ValueType == "MULTI_VALUED"
+    assert by_name["pKey"].DefaultValues.StaticValues == [META_KEY_ALL_SENTINEL]
+    assert by_name["pValues"].DefaultValues.StaticValues == [
+        META_VALUE_PLACEHOLDER_SENTINEL,
+    ]
+
+
+def test_meta_values_dataset_is_long_form_with_metadata_key_column() -> None:
+    """Meta-values dataset projects (metadata_key, metadata_value) for every
+    declared key via UNION ALL — QS's CascadingControlConfiguration filters
+    by metadata_key column-match (NOT by dataset-parameter substitution,
+    which doesn't trigger a re-query at the QS widget level)."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        build_meta_values_dataset,
+    )
+    inst = load_instance(SASQUATCH_PR_YAML)
+    aws_ds = build_meta_values_dataset(_CFG, inst)
+    sql = list(aws_ds.PhysicalTableMap.values())[0].CustomSql.SqlQuery
+    # Long-form: UNION ALL one branch per declared key.
+    assert "UNION ALL" in sql
+    assert "AS metadata_key" in sql
+    assert "AS metadata_value" in sql
+    # No dataset parameters — cascade is column-match driven.
+    assert aws_ds.DatasetParameters is None or aws_ds.DatasetParameters == []
+
+
+def test_meta_key_param_maps_to_postings_only() -> None:
+    """The Key analysis-param's MappedDataSetParameters bridge only the
+    postings dataset (so its `<<$pKey>>` substitution narrows the
+    transactions table). The meta-values dataset doesn't take a `pKey`
+    parameter — QS's CascadingControlConfiguration filters its rows by
+    metadata_key column-match instead."""
+    app = build_l2_flow_tracing_app(_CFG)
+    p_key = next(
+        p for p in app.analysis.parameters
+        if str(p.name) == "pL2ftMetaKey"
+    )
+    assert p_key.mapped_dataset_params is not None
+    mapped_pairs = {
+        (ds.identifier, name) for ds, name in p_key.mapped_dataset_params
+    }
+    assert mapped_pairs == {
+        ("l2ft-postings-ds", "pKey"),
+    }
+
+
+def test_meta_value_param_maps_to_postings_only() -> None:
+    """The Value analysis-param maps to `pValues` on the postings
+    dataset only — meta-values doesn't need the value back since it
+    drives the dropdown's selectable_values, not its own filter."""
+    app = build_l2_flow_tracing_app(_CFG)
+    p_val = next(
+        p for p in app.analysis.parameters
+        if str(p.name) == "pL2ftMetaValue"
+    )
+    assert p_val.multi_valued is True
+    assert p_val.mapped_dataset_params is not None
+    assert len(p_val.mapped_dataset_params) == 1
+    ds, name = p_val.mapped_dataset_params[0]
+    assert ds.identifier == "l2ft-postings-ds"
+    assert name == "pValues"
+
+
+def test_meta_key_dropdown_includes_sentinel_plus_declared_keys() -> None:
+    """Key dropdown shows the `__ALL__` sentinel first (default state
+    = no metadata filter) followed by every declared key."""
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        META_KEY_ALL_SENTINEL, declared_metadata_keys,
+    )
+    from quicksight_gen.common.tree import StaticValues
+    app = build_l2_flow_tracing_app(_CFG)
+    rails = _sheet_by_name(app, "Rails")
+    key_ctrl = next(c for c in rails.parameter_controls if c.title == "Metadata Key")
+    assert isinstance(key_ctrl.selectable_values, StaticValues)
+    expected = [META_KEY_ALL_SENTINEL] + declared_metadata_keys(default_l2_instance())
+    assert key_ctrl.selectable_values.values == expected
+
+
+def test_meta_value_dropdown_sources_from_meta_values_dataset() -> None:
+    """Value dropdown's LinkedValues points at the meta-values dataset's
+    metadata_value column. Catches a wiring bug where the dropdown
+    loses its options."""
+    from quicksight_gen.common.tree import LinkedValues
+    app = build_l2_flow_tracing_app(_CFG)
+    rails = _sheet_by_name(app, "Rails")
+    val_ctrl = next(c for c in rails.parameter_controls if c.title == "Metadata Value")
+    assert isinstance(val_ctrl.selectable_values, LinkedValues)
+    assert val_ctrl.selectable_values.dataset.identifier == "l2ft-meta-values-ds"
+    assert val_ctrl.selectable_values.column_name == "metadata_value"
+
+
+# -- P.4.b dialect-aware empty-fallback branches -----------------------------
+
+
+def test_unified_l2_exceptions_empty_metadata_branch_is_dialect_aware() -> None:
+    """P.4.b — when no Rail declares a metadata_key, the Dead Metadata
+    UNION branch (and every other empty-CTE fallback) emits a typed-
+    NULL row. PG emits ``NULL::text`` (lowercase from typed_null);
+    Oracle emits ``CAST(NULL AS CLOB)``. PG case is lowercase per the
+    helper's literal-passthrough — Postgres type names are case-
+    insensitive so the SQL is functionally identical to the legacy
+    uppercase ``NULL::TEXT``."""
+    from dataclasses import replace
+    from quicksight_gen.apps.l2_flow_tracing.datasets import (
+        build_unified_l2_exceptions_dataset,
+    )
+    from quicksight_gen.common.l2 import Identifier, L2Instance
+    from quicksight_gen.common.sql import Dialect
+
+    # Empty-rails instance — every CTE helper hits its fallback branch.
+    empty = L2Instance(
+        instance=Identifier("empty"),
+        accounts=(), account_templates=(),
+        rails=(), transfer_templates=(), chains=(),
+        limit_schedules=(),
+    )
+    cfg_pg = replace(_CFG, dialect=Dialect.POSTGRES)
+    cfg_or = replace(_CFG, dialect=Dialect.ORACLE)
+
+    sql_pg = next(iter(
+        build_unified_l2_exceptions_dataset(cfg_pg, empty)
+        .PhysicalTableMap.values()
+    )).CustomSql.SqlQuery
+    sql_or = next(iter(
+        build_unified_l2_exceptions_dataset(cfg_or, empty)
+        .PhysicalTableMap.values()
+    )).CustomSql.SqlQuery
+
+    # Empty-fallback NULLs use bounded VARCHAR(4000) so they UNION
+    # cleanly with the real branches' string columns on both dialects
+    # (Oracle CLOB can't be UNIONed with VARCHAR2 — switched in P.9f.b).
+    assert "NULL::varchar(4000)" in sql_pg
+    # Oracle output must not carry any PG-style ``::`` cast.
+    assert "::varchar(4000)" not in sql_or
+    assert "::VARCHAR(4000)" not in sql_or
+    assert "CAST(NULL AS VARCHAR2(4000))" in sql_or

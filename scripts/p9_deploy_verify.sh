@@ -4,15 +4,22 @@
 # Aurora + RDS Oracle.
 #
 # Codifies the manual P.5.b/P.5.c/P.6.b/P.6.c verification, extended
-# in P.9 to loop over both shipped L2 example YAMLs:
-#   1. quicksight-gen demo apply --all --l2-instance <yaml>
-#      (writes JSON + applies schema + seed + matview refresh against
-#       the live DB for that L2 instance's prefix)
-#   2. tests/integration/verify_demo_apply.py
+# in P.9 to loop over both shipped L2 example YAMLs. Q.3.a (v8.0.0)
+# explicitly chains the four artifact groups in place of the legacy
+# `demo apply --all` bundle:
+#   1. quicksight-gen schema apply --execute --l2 <yaml>
+#      (creates per-prefix tables + matviews on the live DB)
+#   2. quicksight-gen data apply --execute --l2 <yaml>
+#      (inserts the 90-day baseline + plant overlays)
+#   3. quicksight-gen data refresh --execute --l2 <yaml>
+#      (refreshes the L1 invariant + Investigation matviews)
+#   4. quicksight-gen json apply --l2 <yaml> -o <out>
+#      (writes JSON for all 4 apps to <out>/)
+#   5. tests/integration/verify_demo_apply.py
 #      (asserts the per-prefix matview row counts: exact for
 #       spec_example, smoke ≥1 for sasquatch_pr until counts get
 #       locked)
-#   3. quicksight-gen deploy --all --l2-instance <yaml>
+#   6. quicksight-gen json apply --execute --l2 <yaml> -o <out>
 #      (pushes the JSON to AWS, polls each async resource to terminal
 #       state — non-zero exit on any CREATION_FAILED)
 #
@@ -77,17 +84,17 @@ verify_cell() {
   echo "  $dialect × $l2_prefix — out=$out"
   echo "============================================================"
 
-  echo "--> demo apply --all --l2-instance $l2_path  (Inv + Exec JSON + DB)"
-  .venv/bin/quicksight-gen demo apply --all -c "$config" -o "$out" \
-    --l2-instance "$l2_path"
+  echo "--> schema apply --execute  (DB)"
+  .venv/bin/quicksight-gen schema apply -c "$config" --l2 "$l2_path" --execute
 
-  echo "--> generate l1-dashboard --l2-instance $l2_path"
-  .venv/bin/quicksight-gen generate -c "$config" -o "$out" l1-dashboard \
-    --l2-instance "$l2_path"
+  echo "--> data apply --execute  (DB)"
+  .venv/bin/quicksight-gen data apply -c "$config" --l2 "$l2_path" --execute
 
-  echo "--> generate l2-flow-tracing --l2-instance $l2_path"
-  .venv/bin/quicksight-gen generate -c "$config" -o "$out" l2-flow-tracing \
-    --l2-instance "$l2_path"
+  echo "--> data refresh --execute  (matviews)"
+  .venv/bin/quicksight-gen data refresh -c "$config" --l2 "$l2_path" --execute
+
+  echo "--> json apply  (write JSON for all 4 apps)"
+  .venv/bin/quicksight-gen json apply -c "$config" -o "$out" --l2 "$l2_path"
 
   echo "--> verify row counts (--prefix $l2_prefix $smoke_flag)"
   url=$(.venv/bin/python -c "
@@ -99,13 +106,13 @@ with open('$config') as f: print(yaml.safe_load(f)['demo_database_url'])
     --prefix "$l2_prefix" $smoke_flag
 
   if [ "$SKIP_DEPLOY" -eq 1 ]; then
-    echo "--> deploy --all (SKIPPED via --skip-deploy)"
+    echo "--> json apply --execute (SKIPPED via --skip-deploy)"
     return 0
   fi
 
-  echo "--> deploy --all --l2-instance $l2_path"
-  .venv/bin/quicksight-gen deploy --all -c "$config" -o "$out" \
-    --l2-instance "$l2_path"
+  echo "--> json apply --execute  (push to AWS)"
+  .venv/bin/quicksight-gen json apply -c "$config" -o "$out" \
+    --l2 "$l2_path" --execute
 }
 
 for dialect in "${DIALECTS[@]}"; do

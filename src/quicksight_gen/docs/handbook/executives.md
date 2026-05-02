@@ -60,11 +60,11 @@ ladder when a sheet renders blank.
 ## Generation + deployment
 
 ```bash
-# Generate the dashboard JSON for an L2 instance
-quicksight-gen generate executives -c run/config.yaml -o run/out
+# Generate JSON for all four bundled apps to run/out/
+quicksight-gen json apply -c run/config.yaml -o run/out
 
-# Deploy + auto-regenerate
-quicksight-gen deploy --generate -c run/config.yaml -o run/out executives
+# Same emit, then deploy to AWS (delete-then-create)
+quicksight-gen json apply -c run/config.yaml -o run/out --execute
 ```
 
 Defaults to the bundled `{{ l2_instance_name }}` L2 fixture. To target a

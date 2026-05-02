@@ -34,10 +34,12 @@ cleanly?"
 
 Three reference points:
 
-- **`quicksight-gen --help`** — the CLI surface. Four commands:
-  `generate`, `deploy`, `cleanup`, `demo`. Each accepts an app
-  argument (one of `l1-dashboard` / `l2-flow-tracing` /
-  `investigation` / `executives`) or `--all`.
+- **`quicksight-gen --help`** — the CLI surface. Four artifact
+  groups: `schema`, `data`, `json`, `docs`. Each has at minimum
+  `apply` / `clean` / `test`; everything destructive defaults to
+  emit (print SQL, write JSON to `out/`) and only runs against the
+  DB or AWS when you pass `--execute`. `json apply` always emits
+  all four apps' JSON — there's no per-app filter.
 - **`src/quicksight_gen/common/deploy.py`** — the deploy
   implementation. Read `deploy()` to see the delete-then-create
   order.
@@ -50,13 +52,13 @@ Three reference points:
 The minimum end-to-end run for all four apps:
 
 ```bash
-quicksight-gen deploy --all --generate -c config.yaml -o out/
+quicksight-gen json apply -c config.yaml -o out/ --execute
 ```
 
-`--generate` regenerates JSON before deploying — the standard
-iteration loop. Without `--generate`, the deploy reads whatever
-JSON is already in `out/` (useful when iterating on the deploy
-step itself without re-running generate).
+`json apply` regenerates JSON before deploying when `--execute` is
+set — the standard iteration loop. Drop `--execute` to write JSON
+to `out/` only without touching AWS (useful for inspecting the
+generated output).
 
 The output stream looks like:
 
@@ -143,58 +145,43 @@ why.
 
 A few patterns to know once the basic deploy works:
 
-### Dry-run before live with `cleanup --dry-run`
+### Dry-run before live with `json clean`
 
 Before your first real deploy on an existing account, run:
 
 ```bash
-quicksight-gen cleanup --dry-run -c config.yaml
+quicksight-gen json clean -c config.yaml
 ```
 
 This enumerates every QuickSight resource tagged
 `ManagedBy:quicksight-gen` in the account and prints what
-*would* be deleted on a `cleanup --yes`. The deploy itself
+*would* be deleted on a `json clean --execute`. The deploy itself
 also deletes-then-creates the resources it manages, but
-`cleanup` finds *orphans* — resources from a previous deploy
+`json clean` finds *orphans* — resources from a previous deploy
 that the current generate output no longer produces (a
 dataset you removed, an analysis you renamed). Run it before
 the real deploy to spot any unexpected state.
 
 If the dry-run lists things you don't recognize, *do not*
-proceed with `cleanup --yes` until you've investigated. The
+proceed with `json clean --execute` until you've investigated. The
 `ManagedBy:quicksight-gen` tag scope is intentional — the
 tool will never touch resources without that tag — but a
 co-worker running a different prefix could have left
 unrelated state.
 
-### Iteration loop: `deploy --generate`
+### Iteration loop: `json apply --execute`
 
 Once your first deploy works, the standard iteration loop is:
 
 ```bash
 # Edit some Python (a visual, a SQL query, a theme color)
-quicksight-gen deploy --all --generate -c config.yaml -o out/
+quicksight-gen json apply -c config.yaml -o out/ --execute
 # Refresh the QuickSight dashboard in your browser
 ```
 
-`--generate` rolls `quicksight-gen generate --all` and
-`quicksight-gen deploy --all` into one command. About 3-5
-minutes per cycle for all four apps. Single-app iteration:
-`deploy l1-dashboard --generate` cuts the cycle to ~2 minutes.
-
-### Single-app deploy
-
-Deploy one app at a time when you're iterating fast on it:
-
-```bash
-quicksight-gen deploy l1-dashboard --generate -c config.yaml
-```
-
-The other apps' analyses + dashboards remain untouched. Datasets
-and theme are shared — the deploy still re-creates them, so a
-single-app deploy doesn't isolate dataset changes between apps
-(the apps share a base layer; dataset changes affect every app
-that reads them).
+`json apply --execute` rewrites JSON to `out/` and deploys it in
+one command. About 3-5 minutes per cycle — the new CLI always
+emits and deploys all four apps as a bundle.
 
 ### Cleanup after dropping a dataset
 
@@ -205,13 +192,13 @@ datasets it knows about — the orphan dataset in QuickSight
 survives. Run:
 
 ```bash
-quicksight-gen cleanup -c config.yaml
+quicksight-gen json clean -c config.yaml
 ```
 
 This enumerates `ManagedBy:quicksight-gen` resources, compares
-against current `out/` contents, and deletes anything that's
-no longer in the build. Always `--dry-run` first to see what
-will go.
+against current `out/` contents, and prints anything that's
+no longer in the build. The default is dry-run; pass `--execute`
+to actually delete.
 
 ### What happens if a deploy fails mid-cycle
 
@@ -219,7 +206,7 @@ QuickSight is mostly atomic at the per-resource level — a
 failed `create_analysis` doesn't leave partial state on that
 analysis ID. But across resources, a failure mid-cycle can
 leave some datasets created and others not yet attempted. The
-re-run is the recovery: `deploy --all --generate` again. The
+re-run is the recovery: `json apply --execute` again. The
 delete-then-create model means the second run cleanly tears
 down whatever the first run partially built and starts over.
 No manual cleanup typically required.

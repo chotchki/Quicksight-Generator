@@ -228,8 +228,8 @@ Once the new column is reading and rendering:
    Green = projection and contract agree on the column shape.
    Red = something drifted; usually a typo in the column alias
    (`originating_branch` vs `originating_brnach`).
-2. **Deploy and verify the visual.** `quicksight-gen deploy
-   --generate -c config.yaml -o out/`. Open the dashboard,
+2. **Deploy and verify the visual.** `quicksight-gen json apply
+   -c config.yaml -o out/ --execute`. Open the dashboard,
    confirm the new column / filter / dimension renders with
    non-blank values.
 3. **Decide whether to document.** If the key is bank-specific

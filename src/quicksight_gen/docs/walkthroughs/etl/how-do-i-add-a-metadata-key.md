@@ -152,9 +152,10 @@ catalog table in `Schema_v6.md`:
 ```
 
 **Step 4 — wire the visual.** Direct query (not SPICE) means new
-columns show up immediately after `quicksight-gen deploy`. No
-refresh step. Open the relevant sheet, drag `originating_branch`
-into the Pivot grouping or Table column list.
+columns show up immediately after `quicksight-gen json apply
+--execute`. No refresh step. Open the relevant sheet, drag
+`originating_branch` into the Pivot grouping or Table column
+list.
 
 ## Next step
 
@@ -172,8 +173,8 @@ Once the key is producing, consuming, and rendering:
    `amount_money` are the danger; UPDATEs on `metadata` are
    safe).
 3. **Deploy to the QuickSight environment**:
-   `quicksight-gen deploy --all --generate -c run/config.yaml -o
-   run/out/`. The new column appears on next dashboard open — no
+   `quicksight-gen json apply -c run/config.yaml -o run/out/
+   --execute`. The new column appears on next dashboard open — no
    SPICE refresh needed.
 
 ## Related walkthroughs

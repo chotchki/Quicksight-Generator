@@ -82,7 +82,10 @@ fi
 
 if [ "$SKIP_DEPLOY" = false ]; then
     echo "==> Regenerating and deploying ($CONFIG -> $OUT_DIR)"
-    .venv/bin/quicksight-gen deploy --all --generate -c "$CONFIG" -o "$OUT_DIR"
+    # Q.3.a (v8.0.0): `json apply --execute` is the deploy verb.
+    # The default emit (without --execute) writes the JSON to OUT_DIR;
+    # with --execute it then deploys the same JSON to AWS.
+    .venv/bin/quicksight-gen json apply -c "$CONFIG" -o "$OUT_DIR" --execute
 fi
 
 echo "==> Running e2e tests"

@@ -101,7 +101,12 @@ jobs:
           dialect: "postgres"
           demo_database_url: "postgresql://postgres:ci_pg_password@localhost:5432/postgres"
           EOF
-          quicksight-gen demo apply --all -c /tmp/ci-pg.yaml -o /tmp/ci-pg-out
+          # Q.3.a (v8.0.0): chain the four artifact groups explicitly
+          # in place of the legacy bundled `demo apply --all`.
+          quicksight-gen schema apply -c /tmp/ci-pg.yaml --execute
+          quicksight-gen data apply -c /tmp/ci-pg.yaml --execute
+          quicksight-gen data refresh -c /tmp/ci-pg.yaml --execute
+          quicksight-gen json apply -c /tmp/ci-pg.yaml -o /tmp/ci-pg-out
 
       - name: Verify Postgres row counts
         run: |
@@ -125,7 +130,12 @@ jobs:
           dialect: "oracle"
           demo_database_url: "system/ci_ora_password@localhost:1521/FREEPDB1"
           EOF
-          quicksight-gen demo apply --all -c /tmp/ci-oracle.yaml -o /tmp/ci-oracle-out
+          # Q.3.a (v8.0.0): chain the four artifact groups explicitly
+          # in place of the legacy bundled `demo apply --all`.
+          quicksight-gen schema apply -c /tmp/ci-oracle.yaml --execute
+          quicksight-gen data apply -c /tmp/ci-oracle.yaml --execute
+          quicksight-gen data refresh -c /tmp/ci-oracle.yaml --execute
+          quicksight-gen json apply -c /tmp/ci-oracle.yaml -o /tmp/ci-oracle-out
 
       - name: Verify Oracle row counts
         run: |

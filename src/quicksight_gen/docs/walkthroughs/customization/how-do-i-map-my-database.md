@@ -48,8 +48,8 @@ Two reference points before you write a line of mapping code:
   source of truth for the prefixed DDL. Call it from Python to
   see the full rendered output for your L2 instance, including
   base tables, Current* views, computed-balance helpers, and L1
-  invariant views (or apply directly via `quicksight-gen demo
-  apply -c run/config.yaml`).
+  invariant views (or apply directly via `quicksight-gen
+  schema apply -c run/config.yaml --execute`).
 
 The contract is deliberately small. If you find yourself
 proposing a third base table, push back: every persona we've
@@ -58,8 +58,10 @@ Executive scorecard — reads from these same two tables.
 
 ## What you'll see in the demo
 
-After `quicksight-gen demo apply --all`, your demo database
-(Postgres or Oracle, dispatched off `dialect:`) holds:
+After the demo flow (`quicksight-gen schema apply --execute &&
+quicksight-gen data apply --execute && quicksight-gen data
+refresh --execute`), your demo database (Postgres or Oracle,
+dispatched off `dialect:`) holds:
 
 - **`<prefix>_transactions`** — every money-movement leg, one
   row per leg. Multiple legs of one financial event share a
@@ -172,9 +174,11 @@ Once you've decided this product fits your data:
    render the per-prefix DDL — base tables
    (`<prefix>_transactions` / `<prefix>_daily_balances`), Current*
    views, computed-balance helpers, and L1 invariant matviews.
-   Apply it to a dev Postgres or Oracle instance directly, or use
-   `quicksight-gen demo apply -c run/config.yaml -o run/out` to
-   land the schema + seed in one command (dispatches off the
+   Apply it to a dev Postgres or Oracle instance directly, or chain
+   `quicksight-gen schema apply -c run/config.yaml --execute &&
+   quicksight-gen data apply -c run/config.yaml --execute &&
+   quicksight-gen data refresh -c run/config.yaml --execute` to
+   land the schema + seed + matviews (dispatches off the
    `dialect:` field on `config.yaml`).
 2. **Hand the projection task to your data integration team.**
    The

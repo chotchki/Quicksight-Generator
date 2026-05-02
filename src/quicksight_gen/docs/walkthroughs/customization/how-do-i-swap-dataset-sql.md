@@ -112,8 +112,8 @@ Run the contract test:
 ```
 
 Green = your projection emits the contract columns in the right
-order. Deploy with `quicksight-gen deploy l1-dashboard --generate
--c config.yaml -o out/`. The Overdraft KPI, table, and aging bar
+order. Deploy with `quicksight-gen json apply -c config.yaml -o
+out/ --execute`. The Overdraft KPI, table, and aging bar
 chart all keep working — they don't know your SQL changed.
 
 ## What it means

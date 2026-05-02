@@ -134,7 +134,8 @@ Each field, what it controls, and what breaks if you set it wrong:
   shape, JSON literal form, datasource Type field on the QuickSight
   resource). Set it in the YAML, not via env var, since it has to
   match the schema that's already on disk for tests.
-- **`demo_database_url`** — connection string for `demo apply` to
+- **`demo_database_url`** — connection string for the demo flow
+  (`schema apply` / `data apply` / `data refresh`) to
   write seed data. Two URL shapes are accepted:
   - **Postgres**: `postgresql://user:pass@host:5432/dbname`
   - **Oracle (Easy Connect)**: `user/pass@host:1521/SERVICE` (no
@@ -166,7 +167,7 @@ Each field, what it controls, and what breaks if you set it wrong:
 
 > **`oracledb` thin mode.** The `[demo-oracle]` extra installs
 > `oracledb>=2.0` which runs in *thin* mode by default — no Oracle
-> Instant Client install needed. The `demo apply` CLI uses thin mode
+> Instant Client install needed. The `data apply` CLI uses thin mode
 > directly; you don't need an `LD_LIBRARY_PATH`-style setup on the
 > integrator host.
 
@@ -204,10 +205,12 @@ The two are mutually exclusive in practice:
   console or Terraform). The deploy never touches the
   datasource; it only references the ARN.
 - **Demo**: `demo_database_url` is a connection string for the
-  dialect you set on `dialect:`. `quicksight-gen demo apply`
-  runs your schema + seed against this URL, then writes a
-  `datasource.json` describing a QuickSight datasource pointing
-  at the same database (Type=`POSTGRESQL` or `ORACLE`,
+  dialect you set on `dialect:`. The demo flow
+  (`quicksight-gen schema apply --execute && quicksight-gen
+  data apply --execute && quicksight-gen data refresh
+  --execute`) runs your schema + seed against this URL, then
+  writes a `datasource.json` describing a QuickSight datasource
+  pointing at the same database (Type=`POSTGRESQL` or `ORACLE`,
   dispatched off `dialect`). The deploy creates that datasource
   as part of the run.
 
@@ -251,25 +254,25 @@ caller authenticates.
 Once your `config.yaml` is in place:
 
 1. **Generate to validate the config.** `quicksight-gen
-   generate --all -c config.yaml -o out/` writes the JSON
+   json apply -c config.yaml -o out/` writes the JSON
    without touching AWS. Inspect `out/` — confirm the
    prefix, theme, and analysis name look right.
-2. **Run a dry-run cleanup.** `quicksight-gen cleanup
-   --dry-run -c config.yaml` lists what *would* be deleted
+2. **Run a dry-run cleanup.** `quicksight-gen json clean
+   -c config.yaml` lists what *would* be deleted
    under the `ManagedBy:quicksight-gen` tag. On a fresh
    account this is empty; if you see unexpected resources,
    investigate before running a real deploy.
 3. **Walk
    [How do I run my first deploy?](how-do-i-run-my-first-deploy.md)** —
-   the actual `deploy` invocation, what to watch for during
-   the delete-then-create cycle, and how to confirm the
-   dashboard renders.
+   the actual `json apply --execute` invocation, what to watch
+   for during the delete-then-create cycle, and how to confirm
+   the dashboard renders.
 
 ## Related walkthroughs
 
 - [How do I run my first deploy?](how-do-i-run-my-first-deploy.md) —
-  the **next step**: actually invoking `deploy` with the
-  config you've just written.
+  the **next step**: actually invoking `json apply --execute`
+  with the config you've just written.
 - [How do I reskin the dashboards for my brand?](how-do-i-reskin-the-dashboards.md) —
   the inline ``theme:`` block on the L2 institution YAML; how to
   declare your brand colors per institution.

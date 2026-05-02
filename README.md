@@ -12,7 +12,7 @@ Python tool that programmatically generates AWS QuickSight JSON definitions (the
 - **Investigation** — compliance / AML triage: recipient fanout, volume anomalies, money-trail provenance, and account-network graphs over the shared base ledger.
 - **Executives** — board-cadence statistics: account coverage (open vs active), transaction volume over time, money moved (gross + net) over time. Reads only the shared base tables — no Executives-specific schema.
 
-All five apps share one theme registry, one AWS account, one datasource, and the same CLI surface (`quicksight-gen generate|deploy|demo|cleanup`). Change the Python (or ask Claude), re-run `deploy --generate`, get a new dashboard.
+All five apps share one theme registry, one AWS account, one datasource, and the same CLI surface, organized as four artifact groups: `quicksight-gen schema|data|json|docs`. Each artifact has `apply`/`clean`/`test` (plus a few extras); destructive operations default to emit and require `--execute` to actually run. Change the Python (or ask Claude), re-run `json apply --execute`, get a new dashboard.
 
 ## Demo Docs
 
@@ -24,7 +24,7 @@ The demo ships with four task-shaped handbooks, one per persona team at Sasquatc
 - **[Investigation Handbook](https://chotchki.github.io/Quicksight-Generator/handbook/investigation/)** — how the Compliance / Investigation team triages AML cases. 4 walkthroughs, one per sheet's question — the app is question-shaped rather than pipeline-staged or rotation-driven.
 - **[Data Integration Handbook](https://chotchki.github.io/Quicksight-Generator/handbook/etl/)** — how the Data Integration Team maps an upstream system into `transactions` + `daily_balances`, validates the load, and extends the metadata contract. 5 foundational / extension / debug walkthroughs.
 
-Source lives in `src/quicksight_gen/docs/` (shipped with the wheel — extract with `quicksight-gen export docs -o ./somewhere/`); rebuild locally with `mkdocs serve`.
+Source lives in `src/quicksight_gen/docs/` (shipped with the wheel — extract with `quicksight-gen docs export -o ./somewhere/`); rebuild locally with `mkdocs serve`.
 
 ## Why this exists
 
@@ -184,28 +184,21 @@ All values can also be set via `QS_GEN_`-prefixed environment variables (e.g. `Q
 ### Generate and deploy
 
 ```bash
-# Generate all four apps' JSON
-quicksight-gen generate --all -c config.yaml -o out/
+# Generate JSON for all four bundled apps to out/
+quicksight-gen json apply -c config.yaml -o out/
 
-# Deploy everything (delete-then-create, idempotent)
-quicksight-gen deploy --all -c config.yaml -o out/
+# Same emit, then deploy to AWS (delete-then-create, idempotent)
+quicksight-gen json apply -c config.yaml -o out/ --execute
 
-# Or combine: regenerate + deploy in one shot (typical iteration loop)
-quicksight-gen deploy --all --generate -c config.yaml -o out/
-
-# Deploy a single app
-quicksight-gen generate payment-recon  -c config.yaml -o out/
-quicksight-gen generate account-recon  -c config.yaml -o out/
-quicksight-gen generate investigation  -c config.yaml -o out/
-quicksight-gen generate executives     -c config.yaml -o out/
-quicksight-gen deploy   payment-recon  -c config.yaml -o out/
+# Override the L2 instance (defaults to bundled spec_example)
+quicksight-gen json apply -c config.yaml -o out/ --l2 run/sasquatch_pr.yaml --execute
 ```
 
-`deploy` polls async resources (analyses, dashboards) until they reach a terminal state. Resources with the `ManagedBy: quicksight-gen` tag that aren't in the current output aren't touched — clean those up explicitly:
+`json apply --execute` polls async resources (analyses, dashboards) until they reach a terminal state. Resources with the `ManagedBy: quicksight-gen` tag that aren't in the current output aren't touched — clean those up explicitly:
 
 ```bash
-quicksight-gen cleanup --dry-run       # list stale tagged resources
-quicksight-gen cleanup --yes           # delete them without prompting
+quicksight-gen json clean              # dry-run: list stale tagged resources
+quicksight-gen json clean --execute    # delete them
 ```
 
 ### What you get
@@ -268,17 +261,20 @@ A deterministic demo generator seeds all four apps end-to-end so you can see the
 # Apply schema + seed to your demo database, then generate QuickSight JSON.
 # Requires: demo_database_url + dialect in config.yaml and the matching
 # extra installed (`[demo]` for Postgres, `[demo,demo-oracle]` for Oracle).
-# Per-prefix DDL + seed are emitted at apply time from the L2 instance
-# YAML — no separate `demo schema` / `demo seed` files (those CLI
-# commands were retired in P.1 along with the v5 schema.sql).
-quicksight-gen demo apply --all -c config.yaml -o out/
+# Per-prefix DDL + seed are emitted at apply time from the L2 instance YAML.
+# Q.3.a (v8.0.0): chain the four artifact groups explicitly — each runs
+# its own piece, all default to emit unless --execute is passed.
+quicksight-gen schema apply -c config.yaml --execute   # tables + matviews
+quicksight-gen data apply   -c config.yaml --execute   # 90-day baseline + plants
+quicksight-gen data refresh -c config.yaml --execute   # populate matviews
+quicksight-gen json apply   -c config.yaml -o out/ --execute  # JSON + AWS deploy
 ```
 
-`demo apply` creates the per-prefix base tables + matviews, inserts the L2-shape seed data (every L1 SHOULD-violation kind plus the Investigation fanout plant), refreshes every dependent matview in dependency order, writes a `datasource.json` derived from the database URL (Type=`POSTGRESQL` or `ORACLE`, dispatched off `dialect`), and generates all QuickSight JSON. Every app feeds two per-prefix base tables — `<prefix>_transactions` (every money-movement leg) and `<prefix>_daily_balances` (per-account end-of-day snapshots) — emitted by `common/l2/schema.py::emit_schema(l2_instance)`. The `account_type` and `transfer_type` columns discriminate which app a row belongs to. See [`Schema_v6.md`](src/quicksight_gen/docs/Schema_v6.md) for the full feed contract, canonical type values, metadata key catalog, and ETL examples.
+`schema apply --execute` creates the per-prefix base tables + matviews via `common/l2/schema.py::emit_schema(l2_instance)`. `data apply --execute` inserts the L2-shape seed data (every L1 SHOULD-violation kind plus the Investigation fanout plant). `data refresh --execute` refreshes every dependent matview in dependency order. `json apply --execute` writes a `datasource.json` derived from the database URL (Type=`POSTGRESQL` or `ORACLE`, dispatched off `dialect`), generates all QuickSight JSON to `out/`, and deploys to AWS. Every app feeds two per-prefix base tables — `<prefix>_transactions` (every money-movement leg) and `<prefix>_daily_balances` (per-account end-of-day snapshots). The `account_type` and `transfer_type` columns discriminate which app a row belongs to. See [`Schema_v6.md`](src/quicksight_gen/docs/Schema_v6.md) for the full feed contract, canonical type values, metadata key catalog, and ETL examples.
 
-**PostgreSQL 17+ or Oracle 19c+ required** for `demo apply`. Both engines support the SQL/JSON path syntax (`JSON_VALUE`, `JSON_QUERY`, `JSON_EXISTS`) the schema uses for `metadata` JSON columns. The portable subset forbids the Postgres-only `->>` / `->` / `@>` / `?` operators and JSONB; on Oracle, also no named `WINDOW` clause and no `TIMESTAMP WITH TIME ZONE` in PK columns. See `Schema_v6.md` → Forbidden SQL patterns for the full constraint matrix.
+**PostgreSQL 17+ or Oracle 19c+ required** for `schema apply --execute`. Both engines support the SQL/JSON path syntax (`JSON_VALUE`, `JSON_QUERY`, `JSON_EXISTS`) the schema uses for `metadata` JSON columns. The portable subset forbids the Postgres-only `->>` / `->` / `@>` / `?` operators and JSONB; on Oracle, also no named `WINDOW` clause and no `TIMESTAMP WITH TIME ZONE` in PK columns. See `Schema_v6.md` → Forbidden SQL patterns for the full constraint matrix.
 
-Datasets are all Direct Query (no SPICE), so seed changes show up immediately after a fresh `demo apply` — no refresh step needed.
+Datasets are all Direct Query (no SPICE), so seed changes show up immediately after a fresh `data apply --execute` + `data refresh --execute` — no QuickSight-side refresh needed.
 
 ### Demo scenarios
 
@@ -323,7 +319,7 @@ src/quicksight_gen/
         account_recon/  # app.py (5 sheets), datasets.py (13 datasets), demo_data.py, constants.py
         investigation/  # app.py (5 sheets), datasets.py (5 datasets — 2 backed by matviews), constants.py
         executives/     # app.py (4 sheets), datasets.py (2 datasets, per-transfer pre-aggregated). Greenfield on tree primitives — no constants.py.
-    docs/               # Unified mkdocs site source — concepts/, reference (handbook/), walkthroughs/, for-your-role/, scenarios/, Schema_v6.md, Training_Story.md, _diagrams/, _macros/ (extract via `quicksight-gen export docs`). Renders against any L2 instance via mkdocs-macros + HandbookVocabulary.
+    docs/               # Unified mkdocs site source — concepts/, reference (handbook/), walkthroughs/, for-your-role/, scenarios/, Schema_v6.md, Training_Story.md, _diagrams/, _macros/ (extract via `quicksight-gen docs export`). Renders against any L2 instance via mkdocs-macros + HandbookVocabulary.
 tests/
     test_models.py, test_generate.py, test_investigation.py, test_executives.py,
     test_tree.py, test_tree_validator.py, test_kitchen_app.py, test_persona.py,

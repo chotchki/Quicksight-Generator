@@ -1,0 +1,336 @@
+"""Unit tests for the Executives app.
+
+Greenfield app built directly on the Phase L tree primitives — no
+imperative builders to compare against, so tests walk the tree's
+emitted JSON for structural checks and walk the tree refs directly
+for invariant checks (dataset / filter / visual presence).
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from click.testing import CliRunner
+
+from quicksight_gen.apps.executives.app import (
+    SHEET_EXEC_ACCOUNT_COVERAGE,
+    SHEET_EXEC_GETTING_STARTED,
+    SHEET_EXEC_MONEY_MOVED,
+    SHEET_EXEC_TRANSACTION_VOLUME,
+    build_executives_app,
+    build_executives_dashboard,
+)
+from quicksight_gen.apps.executives.datasets import (
+    DS_EXEC_ACCOUNT_SUMMARY,
+    DS_EXEC_TRANSACTION_SUMMARY,
+    EXEC_ACCOUNT_SUMMARY_CONTRACT,
+    EXEC_TRANSACTION_SUMMARY_CONTRACT,
+    build_all_datasets,
+)
+from quicksight_gen.cli import main
+from quicksight_gen.common.config import Config
+
+
+_TEST_CFG = Config(
+    aws_account_id="111122223333",
+    aws_region="us-west-2",
+    datasource_arn=(
+        "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
+    ),
+    # N.4.b: Executives is now L2-fed and requires
+    # ``l2_instance_prefix`` to render its dataset SQL. Tests use the
+    # spec_example default (matches what ``build_executives_app``
+    # auto-derives from ``default_l2_instance().instance``).
+    l2_instance_prefix="spec_example",
+)
+
+
+@pytest.fixture(scope="module")
+def exec_app():
+    """Tree-built Executives App (post-emit, auto-IDs resolved)."""
+    app = build_executives_app(_TEST_CFG)
+    app.emit_analysis()
+    return app
+
+
+@pytest.fixture(scope="module")
+def exec_analysis(exec_app):
+    return exec_app.emit_analysis()
+
+
+# ---------------------------------------------------------------------------
+# Top-level shape
+# ---------------------------------------------------------------------------
+
+def test_analysis_has_five_sheets_in_expected_order(exec_analysis):
+    """4 content sheets + the M.4.4.5 App Info ("i") sheet last."""
+    from quicksight_gen.apps.executives.app import SHEET_EXEC_APP_INFO
+
+    sheet_ids = [s.SheetId for s in exec_analysis.Definition.Sheets]
+    assert sheet_ids == [
+        SHEET_EXEC_GETTING_STARTED,
+        SHEET_EXEC_ACCOUNT_COVERAGE,
+        SHEET_EXEC_TRANSACTION_VOLUME,
+        SHEET_EXEC_MONEY_MOVED,
+        SHEET_EXEC_APP_INFO,
+    ]
+
+
+def test_analysis_name_is_executives(exec_analysis):
+    # N.4 normalization: every L2-fed app's analysis name follows the
+    # ``Name (instance)`` shape so multi-instance deployments are
+    # visually distinguishable in the QS dashboard list.
+    assert exec_analysis.Name == "Executives (spec_example)"
+
+
+def test_analysis_serializes_to_aws_json(exec_analysis):
+    """to_aws_json() must succeed end-to-end — no None-strip crashes."""
+    j = exec_analysis.to_aws_json()
+    assert j["AnalysisId"] == _TEST_CFG.prefixed("executives-analysis")
+    assert len(j["Definition"]["Sheets"]) == 5
+
+
+def test_dashboard_mirrors_analysis(exec_app):
+    dashboard = exec_app.emit_dashboard()
+    assert dashboard.DashboardId == _TEST_CFG.prefixed(
+        "executives-dashboard",
+    )
+    assert (
+        len(dashboard.Definition.Sheets)
+        == len(exec_app.analysis.sheets)
+    )
+
+
+def test_every_sheet_has_a_description(exec_analysis):
+    for sheet in exec_analysis.Definition.Sheets:
+        assert sheet.Description, (
+            f"{sheet.SheetId} is missing a description"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Datasets
+# ---------------------------------------------------------------------------
+
+def test_datasets_in_expected_order():
+    """2 content datasets + 2 M.4.4.5 App Info datasets, in order."""
+    datasets = build_all_datasets(_TEST_CFG)
+    assert len(datasets) == 4
+    assert datasets[0].DataSetId == _TEST_CFG.prefixed(
+        "exec-transaction-summary-dataset",
+    )
+    assert datasets[1].DataSetId == _TEST_CFG.prefixed(
+        "exec-account-summary-dataset",
+    )
+    assert datasets[2].DataSetId == _TEST_CFG.prefixed(
+        "exec-app-info-liveness-dataset",
+    )
+    assert datasets[3].DataSetId == _TEST_CFG.prefixed(
+        "exec-app-info-matviews-dataset",
+    )
+
+
+def test_datasets_declared_in_analysis(exec_analysis):
+    """2 content datasets + the 2 M.4.4.5 App Info datasets."""
+    from quicksight_gen.common.sheets.app_info import (
+        DS_APP_INFO_LIVENESS, DS_APP_INFO_MATVIEWS,
+    )
+
+    decls = exec_analysis.Definition.DataSetIdentifierDeclarations
+    assert [d.Identifier for d in decls] == [
+        DS_EXEC_TRANSACTION_SUMMARY,
+        DS_EXEC_ACCOUNT_SUMMARY,
+        DS_APP_INFO_LIVENESS,
+        DS_APP_INFO_MATVIEWS,
+    ]
+
+
+def test_transaction_summary_contract_columns():
+    names = EXEC_TRANSACTION_SUMMARY_CONTRACT.column_names
+    assert {
+        "posted_date",
+        "transfer_type",
+        "transfer_count",
+        "gross_amount",
+        "net_amount",
+    } == set(names)
+
+
+def test_account_summary_contract_columns():
+    names = EXEC_ACCOUNT_SUMMARY_CONTRACT.column_names
+    assert {
+        "account_id",
+        "account_name",
+        "account_type",
+        "last_activity_date",
+        "activity_count",
+    } == set(names)
+
+
+def test_transaction_summary_sql_aggregates_per_transfer():
+    """Per-transfer pre-aggregation is the load-bearing piece — without
+    it, multi-leg transfers double-count `gross_amount` (e.g. a $100
+    transfer's two $100 legs sum to $200). Guard that the WITH per_transfer
+    CTE stays in the SQL."""
+    datasets = build_all_datasets(_TEST_CFG)
+    txn_ds = datasets[0]
+    sql = next(iter(txn_ds.PhysicalTableMap.values())).CustomSql.SqlQuery
+    assert "WITH per_transfer AS" in sql, (
+        "exec_transaction_summary must aggregate per transfer_id first"
+    )
+    # N.4.a v6 column rename: amount → ABS(amount_money). The
+    # ABS-then-MAX preserves the same per-transfer-handle semantic
+    # (positive/negative legs share magnitude); MAX without ABS would
+    # pick the credit leg over the debit leg arbitrarily.
+    assert "MAX(ABS(t.amount_money))" in sql, (
+        "MAX(ABS(amount_money)) collapses multi-leg transfers; loss → double-count"
+    )
+
+
+def test_account_summary_sql_left_joins_activity():
+    """LEFT JOIN keeps zero-activity accounts visible (last_activity_date
+    NULL, activity_count 0) — the active-only filter narrows the KPI
+    while the open-side counts every row."""
+    datasets = build_all_datasets(_TEST_CFG)
+    acct_ds = datasets[1]
+    sql = next(iter(acct_ds.PhysicalTableMap.values())).CustomSql.SqlQuery
+    assert "LEFT JOIN activity" in sql
+
+
+def test_both_content_datasets_filter_to_status_posted():
+    """Failed legs were recorded but didn't move money — including them
+    pollutes executive trends with operational noise. Scoped to the 2
+    content datasets — the M.4.4.5 App Info datasets read schema/
+    matview metadata and don't carry a status column."""
+    content = build_all_datasets(_TEST_CFG)[:2]
+    for ds in content:
+        sql = next(iter(ds.PhysicalTableMap.values())).CustomSql.SqlQuery
+        assert "status = 'Posted'" in sql, (
+            f"{ds.DataSetId} must filter status='Posted'"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Account Coverage sheet
+# ---------------------------------------------------------------------------
+
+def _visual_ids(sheet) -> list[str]:
+    out: list[str] = []
+    for v in sheet.Visuals or []:
+        for body in vars(v).values():
+            if body is not None and hasattr(body, "VisualId"):
+                out.append(body.VisualId)
+    return out
+
+
+def test_account_coverage_has_kpis_bars_and_table(exec_analysis):
+    sheet = next(
+        s for s in exec_analysis.Definition.Sheets
+        if s.SheetId == SHEET_EXEC_ACCOUNT_COVERAGE
+    )
+    expected = {
+        "exec-account-kpi-open",
+        "exec-account-kpi-active",
+        "exec-account-bar-open-by-type",
+        "exec-account-bar-active-by-type",
+        "exec-account-detail-table",
+    }
+    assert set(_visual_ids(sheet)) == expected
+
+
+def test_account_coverage_active_kpi_filter_pinned(exec_analysis):
+    """The visual-pinned NumericRangeFilter narrows the active KPI + bar
+    to rows with activity_count >= 1 without affecting the open-side
+    visuals on the same sheet."""
+    fg = next(
+        g for g in exec_analysis.Definition.FilterGroups
+        if g.FilterGroupId == "fg-exec-account-active-only"
+    )
+    scope = fg.ScopeConfiguration.SelectedSheets.SheetVisualScopingConfigurations[0]
+    assert scope.SheetId == SHEET_EXEC_ACCOUNT_COVERAGE
+    visual_ids = set(scope.VisualIds or [])
+    assert visual_ids == {
+        "exec-account-kpi-active",
+        "exec-account-bar-active-by-type",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Transaction Volume + Money Moved sheets
+# ---------------------------------------------------------------------------
+
+def test_transaction_volume_visuals(exec_analysis):
+    sheet = next(
+        s for s in exec_analysis.Definition.Sheets
+        if s.SheetId == SHEET_EXEC_TRANSACTION_VOLUME
+    )
+    expected = {
+        "exec-txn-kpi-total",
+        "exec-txn-kpi-avg-daily",
+        "exec-txn-bar-daily-stacked",
+        "exec-txn-bar-by-type",
+    }
+    assert set(_visual_ids(sheet)) == expected
+
+
+def test_money_moved_visuals(exec_analysis):
+    sheet = next(
+        s for s in exec_analysis.Definition.Sheets
+        if s.SheetId == SHEET_EXEC_MONEY_MOVED
+    )
+    expected = {
+        "exec-money-kpi-net",
+        "exec-money-kpi-gross",
+        "exec-money-bar-daily-stacked",
+        "exec-money-bar-by-type",
+    }
+    assert set(_visual_ids(sheet)) == expected
+
+
+# ---------------------------------------------------------------------------
+# CLI smoke
+# ---------------------------------------------------------------------------
+
+class TestCli:
+    def _base_config(self, tmp_path: Path) -> Path:
+        p = tmp_path / "config.yaml"
+        p.write_text(
+            "aws_account_id: '111122223333'\n"
+            "aws_region: us-west-2\n"
+            "datasource_arn: arn:aws:quicksight:us-west-2:111122223333"
+            ":datasource/ds\n"
+        )
+        return p
+
+    def test_json_apply_writes_executives(self, tmp_path: Path):
+        """Q.3.a: ``json apply`` always emits all four apps; verify
+        the executives JSON files land in the output dir."""
+        config = self._base_config(tmp_path)
+        out = tmp_path / "out"
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["json", "apply", "-c", str(config), "-o", str(out)],
+        )
+        assert result.exit_code == 0, result.output
+        assert (out / "executives-analysis.json").exists()
+        assert (out / "executives-dashboard.json").exists()
+
+    def test_json_apply_writes_all_apps(self, tmp_path: Path):
+        """Q.3.a: ``json apply`` is the single bundled-emit verb;
+        every app's analysis + dashboard JSON must show up."""
+        config = self._base_config(tmp_path)
+        out = tmp_path / "out"
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["json", "apply", "-c", str(config), "-o", str(out)],
+        )
+        assert result.exit_code == 0, result.output
+        for stem in (
+            "investigation",
+            "executives",
+            "l1-dashboard",
+        ):
+            assert (out / f"{stem}-analysis.json").exists()
+            assert (out / f"{stem}-dashboard.json").exists()

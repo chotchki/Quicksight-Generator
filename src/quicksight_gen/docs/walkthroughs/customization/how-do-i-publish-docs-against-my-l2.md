@@ -8,7 +8,7 @@ diagrams, intro prose) without touching any markdown.
 
 ```bash
 # 1. Extract the docs source to a working directory.
-quicksight-gen export docs -o /tmp/my-docs --l2-instance run/my-l2.yaml
+quicksight-gen docs export -o /tmp/my-docs --l2 run/my-l2.yaml
 
 # 2. The CLI echoes the right env-var-prefixed mkdocs command.
 QS_DOCS_L2_INSTANCE=/Users/me/run/my-l2.yaml \

@@ -1,5 +1,156 @@
 # Release Notes
 
+## v8.0.0 — CLI redesign: four artifact groups, emit/--execute pattern
+
+Clean-break CLI redesign per `Q3_CLI_REDESIGN.md`. The single
+`main` group now hangs four artifact groups instead of the v7.x
+top-level verbs:
+
+| Old verb (v7.x) | New shape (v8.0.0) |
+| --- | --- |
+| `quicksight-gen generate --all -c X -o Y` | `quicksight-gen json apply -c X -o Y` |
+| `quicksight-gen generate <app> ...` | `quicksight-gen json apply ...` (no per-app filter; always emits all 4) |
+| `quicksight-gen deploy --all --generate ...` | `quicksight-gen json apply ... --execute` |
+| `quicksight-gen cleanup --dry-run` | `quicksight-gen json clean` (default IS dry-run) |
+| `quicksight-gen cleanup --yes` | `quicksight-gen json clean --execute` |
+| `quicksight-gen demo apply --all -c X -o Y` | `schema apply --execute && data apply --execute && data refresh --execute && json apply --execute` |
+| `quicksight-gen demo emit-{schema,seed,refresh}` | `schema apply` / `data apply` / `data refresh` (no `--execute`) |
+| `quicksight-gen demo apply-{schema,seed,refresh}` | `schema apply --execute` / `data apply --execute` / `data refresh --execute` |
+| `quicksight-gen demo seed-l2 <yaml> [--lock\|--check-hash]` | `quicksight-gen data hash <yaml> [--lock\|--check]` |
+| `quicksight-gen demo etl-example` | `quicksight-gen data etl-example` |
+| `quicksight-gen demo topology` | dropped (call `render_topology()` directly in Python) |
+| `quicksight-gen export docs -o DIR --l2-instance Y` | `quicksight-gen docs export -o DIR --l2 Y` |
+| `quicksight-gen export screenshots ...` | `quicksight-gen docs screenshot ...` |
+| `quicksight-gen probe ...` | `quicksight-gen json probe ...` |
+
+### What's new
+
+#### Four artifact groups
+
+Top-level CLI is organized around the four artifacts the tool
+produces — `schema | data | json | docs`. Each artifact has at
+minimum `apply` / `clean` / `test`; some carry additional verbs:
+
+```
+schema  apply | clean | test
+data    apply | refresh | clean | hash | etl-example | test
+json    apply | clean | test | probe
+docs    apply | serve | clean | test | export | screenshot
+```
+
+#### emit-vs-execute pattern
+
+Every destructive operation defaults to *emit* — print SQL to
+stdout, write JSON to `out/`, build the static site to `site/`.
+Pass `--execute` to actually run the destructive thing (connect
+to the demo DB, deploy to AWS QuickSight). The `docs` group has
+no `--execute` because building a static site is the operation.
+
+```bash
+# Emit DDL to stdout (review first)
+quicksight-gen schema apply -c run/config.yaml
+
+# Same DDL, run against the demo DB
+quicksight-gen schema apply -c run/config.yaml --execute
+
+# Same shape for data + json
+quicksight-gen data apply -c run/config.yaml --execute
+quicksight-gen json apply -c run/config.yaml -o out/        # JSON only
+quicksight-gen json apply -c run/config.yaml -o out/ --execute  # + AWS deploy
+```
+
+The safe default (just emit) means an integrator can never
+accidentally drop a table or redeploy a dashboard.
+
+#### Bundled JSON emit (no per-app filter)
+
+`json apply` always emits all four bundled apps — investigation,
+executives, l1-dashboard, l2-flow-tracing. Per-app development
+ergonomics from M / N / O are gone (they didn't earn their
+keep). One verb, four apps, every time.
+
+#### `data hash` for canonical seed_hash workflow
+
+The `--lock` / `--check-hash` workflow that used to live on
+`demo seed-l2` is now `quicksight-gen data hash <yaml>` with
+`--lock` and `--check` flags. The canonical-date plant-only seed
+(`emit_seed`, anchored at 2030-01-01) drives the hash so it stays
+stable across days. Distinct from `data apply`, which composes
+the live full-seed pipeline (90-day baseline + plant overlays
+rolled against today's date).
+
+#### `cli_legacy.py` deleted
+
+`src/quicksight_gen/cli_legacy.py` (1854 lines) is gone. All
+shared helpers lifted into `cli/_helpers.py` and
+`cli/_app_builders.py`. No aliases — the v7.x verbs do not exist
+on v8.0.0. Update your scripts.
+
+### Migration notes
+
+If you were running `quicksight-gen demo apply --all`, that's
+now four separate commands — chain them with `&&`:
+
+```bash
+quicksight-gen schema apply -c run/config.yaml --execute && \
+quicksight-gen data apply   -c run/config.yaml --execute && \
+quicksight-gen data refresh -c run/config.yaml --execute && \
+quicksight-gen json apply   -c run/config.yaml -o out/ --execute
+```
+
+Drop the per-app argument from any `generate` / `deploy` /
+`probe` invocation. `json apply` always handles all four.
+
+If you were calling `quicksight-gen demo seed-l2 X --lock`, that
+moves to `quicksight-gen data hash X --lock`. The `--check-hash`
+flag is now just `--check`.
+
+### Internal restructure
+
+- `cli/__init__.py` — defines a fresh `main` group hanging only
+  schema / data / json / docs.
+- `cli/schema.py`, `cli/data.py`, `cli/json.py`, `cli/docs.py` —
+  one Click group per artifact.
+- `cli/_helpers.py` — shared options
+  (`l2_instance_option` / `config_option` / `output_option` /
+  `execute_option`) and shared functions
+  (`resolve_l2_for_demo` / `build_full_seed_sql` /
+  `emit_to_target` / `connect_and_apply` / `write_json` /
+  `prune_stale_files` / `load_config` / `APPS`).
+- `cli/_app_builders.py` — per-app JSON-emit helpers
+  (`_generate_<app>` × 4, `_all_dataset_filenames`,
+  `_dashboard_id_for_app`, `_resolve_l2`).
+- New public emitters in `common/l2/`:
+  `emit_schema_drop_sql(instance, dialect)` and
+  `emit_truncate_sql(instance, dialect)`.
+
+### Test reorg
+
+`tests/` reorganized to mirror the artifact groups —
+`tests/{schema,data,json,docs,unit}/`. The test files moved
+in-place via `git mv` so blame survives. CLI test invocations
+updated everywhere; the `data hash` workflow lives in
+`tests/data/test_cli_seed_l2.py` (kept the filename for the diff
+hint, since it tracks the same behavior).
+
+### CI / scripts
+
+- `.github/workflows/ci.yml` — chains the four artifact groups
+  explicitly in both Postgres and Oracle integration jobs.
+- `scripts/p9_deploy_verify.sh` — same chain per cell.
+- `run_e2e.sh` — `json apply --execute` replaces
+  `deploy --all --generate`.
+- `scripts/bake_sample_output.py` — `json apply` replaces
+  `generate --all`.
+
+### Doc sweep
+
+CLAUDE.md, README.md, every handbook page (l1, executives,
+customization, l2_flow_tracing, integrator, Schema_v6), and
+every walkthrough page that named an old verb (~17 docs files
+total) updated to use the new four-artifact shape. mkdocs
+build --strict passes.
+
 ## v7.4.0 — Persona-neutral docs + piecewise demo CLI
 
 This release rolls together the Phase Q.5 persona-neutral docs work
