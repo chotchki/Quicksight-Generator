@@ -55,40 +55,61 @@ The minimum end-to-end run for all four apps:
 quicksight-gen json apply -c config.yaml -o out/ --execute
 ```
 
-`json apply` regenerates JSON before deploying when `--execute` is
-set — the standard iteration loop. Drop `--execute` to write JSON
-to `out/` only without touching AWS (useful for inspecting the
-generated output).
+`json apply` always writes the JSON tree (theme + per-app
+analyses, dashboards, and datasets) into `out/`. The
+`--execute` flag adds the AWS deploy step on top — it never
+gates the local JSON emit. Drop `--execute` to write JSON to
+`out/` only without touching AWS (useful for inspecting the
+generated output, or for piping into a different deploy
+pipeline).
 
-The output stream looks like:
+The output stream has two phases. First, the per-app emit:
 
 ```
-==> qs-gen-<prefix>-l1-dashboard-analysis ... (regenerated)
-==> qs-gen-<prefix>-l2-flow-tracing-analysis ... (regenerated)
-==> qs-gen-<prefix>-investigation-analysis ... (regenerated)
-==> qs-gen-<prefix>-executives-analysis ... (regenerated)
+Generating JSON for all four apps into out/...
+Investigation: account=111122223333, region=us-east-2, l2_instance=spec_example
+  wrote out/theme.json
+  wrote out/datasets/qs-gen-spec_example-inv-recipient-fanout-dataset.json
+  ... (~7 datasets)
+  wrote out/investigation-analysis.json
+  wrote out/investigation-dashboard.json
+
+Generated 10 files in out/
+Executives: account=111122223333, region=us-east-2, l2_instance=spec_example
+  ... (~5 datasets + analysis + dashboard)
+L1 Dashboard: account=111122223333, region=us-east-2, l2_instance=spec_example
+  ... (~16 datasets + analysis + dashboard)
+L2 Flow Tracing: account=111122223333, region=us-east-2, l2_instance=spec_example
+  ... (~5 datasets + analysis + dashboard)
+```
+
+Then, with `--execute`, the deploy:
+
+```
+Deploying to AWS QuickSight...
 Deploying QuickSight resources from out
   Account: 111122223333
   Region:  us-east-2
 
+==> Dashboard: qs-gen-spec_example-l1-dashboard
+    Deleting existing dashboard...
+... (per dashboard, then analyses, then datasets, then theme,
+     then datasource — all delete first)
+
 --- Recreating all resources ---
 
-==> Creating DataSource: qs-gen-demo-datasource
-==> Creating Theme: qs-gen-theme
-==> Creating Dataset: qs-gen-<prefix>-l1-todays-exceptions-dataset
-... (32+ datasets total)
-==> Creating Analysis: qs-gen-<prefix>-l1-dashboard-analysis
-==> Creating Analysis: qs-gen-<prefix>-l2-flow-tracing-analysis
-==> Creating Analysis: qs-gen-<prefix>-investigation-analysis
-==> Creating Analysis: qs-gen-<prefix>-executives-analysis
-==> Creating Dashboard: qs-gen-<prefix>-l1-dashboard
-==> Creating Dashboard: qs-gen-<prefix>-l2-flow-tracing-dashboard
-==> Creating Dashboard: qs-gen-<prefix>-investigation-dashboard
-==> Creating Dashboard: qs-gen-<prefix>-executives-dashboard
+==> Datasource: ...
+==> Theme: qs-gen-spec_example-theme
+==> Dataset: qs-gen-spec_example-l1-todays-exceptions-dataset
+... (~27 datasets total across all four apps)
+==> Analysis: qs-gen-spec_example-l1-dashboard-analysis
+... (one per app)
+==> Dashboard: qs-gen-spec_example-l1-dashboard
+... (one per app)
 
 --- Waiting for async resources ---
 
-==> Checking Analysis: qs-gen-<prefix>-l1-dashboard-analysis
+==> Checking Analysis: qs-gen-spec_example-l1-dashboard-analysis
     Status: CREATION_SUCCESSFUL
 ... (one per analysis + dashboard)
 
@@ -96,7 +117,7 @@ Done. All resources deployed to 111122223333 in us-east-2.
 ```
 
 Total wall time on a fresh account: 3-5 minutes. Most of it is
-the analysis + dashboard polls (the 32+ datasets are synchronous
+the analysis + dashboard polls (the ~27 datasets are synchronous
 and complete in seconds).
 
 ## What it means

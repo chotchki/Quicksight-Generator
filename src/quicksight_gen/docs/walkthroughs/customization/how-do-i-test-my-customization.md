@@ -303,8 +303,8 @@ Once you have a test plan in place:
   the contract test (Layer 1) is what enforces the
   swap-without-breaking-visuals guarantee.
 - [How do I run my first deploy?](how-do-i-run-my-first-deploy.md) —
-  the deploy is part of the e2e (Layer 4) loop. The
-  `--generate` flag in the iteration loop also re-runs the
+  the deploy is part of the e2e (Layer 4) loop. Re-running
+  `json apply --execute` between iterations also re-runs the
   contract test implicitly via the build.
 - [How do I extend canonical values?](how-do-i-extend-canonical-values.md) —
   paired with this walkthrough's `TestScenarioCoverage`

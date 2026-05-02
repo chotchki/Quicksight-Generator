@@ -51,9 +51,13 @@ Five reference points:
   API surface. Each typed Visual subtype, Filter wrapper, and Drill
   action's signature is the canonical place to look up parameter
   shape.
-- **`src/quicksight_gen/cli.py`** — the `_generate_executives()`
-  function + the `generate executives` subcommand wiring. Two ~15
-  line additions plus an entry in the `APPS` tuple.
+- **`src/quicksight_gen/cli/_app_builders.py`** — the
+  `_generate_executives()` helper. Add a sibling
+  `_generate_<myapp>()` here. **`src/quicksight_gen/cli/json.py`**
+  — the `json_apply` command body that calls each
+  `_generate_<app>()` in turn; add a line for yours.
+  **`src/quicksight_gen/cli/_helpers.py`** — the `APPS` tuple
+  shared across the artifact groups; append your app slug.
 - **`tests/test_executives.py`** — 18-test starter pack that walks the
   tree to assert structural invariants (sheet count, visual presence,
   filter scoping, CLI smoke). Mirror this shape in your app's tests.
@@ -231,9 +235,11 @@ The L.1 primitives expose more than this walkthrough surfaces:
    tree, assert what's emitted).
 3. Build a minimal `app.py` with one sheet and one visual; `pytest
    tests/test_<myapp>.py -v` to confirm it builds.
-4. Wire it into `cli.py` (`APPS` tuple, `_generate_<myapp>()`,
-   `@generate.command("<myapp>")` subcommand, `_apply_demo`,
-   `_all_dataset_filenames`, `deploy_cmd --generate`).
+4. Wire it into the CLI: append your app slug to the `APPS` tuple
+   in `cli/_helpers.py`, add `_generate_<myapp>()` to
+   `cli/_app_builders.py` (mirror `_generate_executives`), and add
+   one call to it in `cli/json.py`'s `json_apply` body. `json
+   apply` then emits + deploys your app alongside the others.
 5. Add e2e tests mirroring `tests/e2e/test_exec_*.py` once a
    deployment exists.
 
@@ -242,7 +248,7 @@ The L.1 primitives expose more than this walkthrough surfaces:
 - [How do I swap the SQL behind a dataset?](how-do-i-swap-dataset-sql.md)
   — same `DatasetContract` mechanism your app's datasets use.
 - [How do I configure the deploy for my AWS account?](how-do-i-configure-the-deploy.md)
-  — your new app will be auto-included in `--all` deploys once it's in
-  the `APPS` tuple.
+  — once your app slug is in the `APPS` tuple, `json apply --execute`
+  emits + deploys it alongside the existing four every time.
 - [How do I reskin the dashboards for my brand?](how-do-i-reskin-the-dashboards.md)
   — theme presets in `common/theme.py` apply to your app the same way.

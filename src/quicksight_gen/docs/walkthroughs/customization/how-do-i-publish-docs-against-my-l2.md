@@ -26,16 +26,16 @@ your wiki, GitHub Pages, S3, or any static host.
 
 Three substitution surfaces:
 
-- **Vocab strings** (`{{ vocab.institution.name }}`,
-  `{{ vocab.institution.acronym }}`, etc.) substitute throughout the
-  prose. The built-in `sasquatch_pr` vocabulary carries Sasquatch
-  flavor; any other instance falls back to a neutral
-  "Your Institution" voice derived from the L2 description's first
-  proper-noun-shaped run.
-- **L2-driven diagrams** (`{{ diagram("l2_topology", kind="accounts") }}`,
-  `{{ diagram("dataflow", app="l1_dashboard") }}`) regenerate from
-  your L2's structural data — accounts + rails + chains laid out
-  visually for your specific institution.
+- **Vocab strings** ({% raw %}`{{ vocab.institution.name }}`,
+  `{{ vocab.institution.acronym }}`{% endraw %}, etc.) substitute
+  throughout the prose. The built-in `sasquatch_pr` vocabulary
+  carries Sasquatch flavor; any other instance falls back to a
+  neutral "Your Institution" voice derived from the L2 description's
+  first proper-noun-shaped run.
+- **L2-driven diagrams** ({% raw %}`{{ diagram("l2_topology", kind="accounts") }}`,
+  `{{ diagram("dataflow", app="l1_dashboard") }}`{% endraw %})
+  regenerate from your L2's structural data — accounts + rails +
+  chains laid out visually for your specific institution.
 - **The page set** stays the same; the CONTENT of each page reflects
   your L2.
 
