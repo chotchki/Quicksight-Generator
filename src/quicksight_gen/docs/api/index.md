@@ -22,14 +22,14 @@ documented here lives entirely in L1:
 - **L1 — `common/tree/` + `common/models.py` + `common/ids.py` +
   `common/dataset_contract.py`.** Persona-blind primitives. Knows
   about *dashboards* (sheets / visuals / filters / drills), nothing
-  about Sasquatch / banks / accounts.
+  about banks / accounts / specific institutions.
 - **L2 — `apps/<app>/app.py` + `apps/<app>/constants.py`.** Per-app
   tree assembly, in domain vocabulary.
 - **L3 — SQL strings + `apps/<app>/demo_data.py` + `common/persona.py`
   + theme presets.** Persona / customer flavor.
 
 When extending the API itself (rare), the L1 invariant is: zero hits
-when you grep `common/tree/` for "sasquatch" / persona names.
+when you grep `common/tree/` for any persona / institution name.
 
 ## Pages
 
