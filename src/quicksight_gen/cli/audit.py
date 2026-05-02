@@ -1015,6 +1015,173 @@ def _query_supersession(
         conn.close()
 
 
+# -- Daily Statement walks (U.4) ----------------------------------------------
+
+
+@dataclass(frozen=True)
+class DailyStatementTransaction:
+    """One Posted-Money record on a Daily Statement walk page.
+
+    Mirrors the column shape of the L1 dashboard's Daily Statement
+    detail table (``DAILY_STATEMENT_TRANSACTIONS_CONTRACT``) so the
+    audit and dashboard agree row-for-row on the day's activity.
+    """
+    transaction_id: str
+    transfer_id: str
+    transfer_type: str
+    amount_money: Decimal
+    amount_direction: str
+    status: str
+    posting: datetime
+
+
+@dataclass(frozen=True)
+class DailyStatementWalk:
+    """One per-(account, business_day) Daily Statement page.
+
+    KPIs are read from ``<prefix>_daily_statement_summary`` (the same
+    matview the dashboard's Daily Statement sheet reads). The
+    ``drift`` here is the **per-day** drift (closing stored − closing
+    recomputed-from-day's-flow); the cumulative drift surfaced in
+    U.3.a is computed differently (stored − sum of all transactions
+    ever) and the two can differ when daily_balances are sparse.
+    """
+    account_id: str
+    account_name: str
+    account_role: str
+    business_day_start: date
+    business_day_end: date
+    opening_balance: Decimal
+    total_debits: Decimal
+    total_credits: Decimal
+    closing_balance_stored: Decimal
+    closing_balance_recomputed: Decimal
+    drift: Decimal
+    transactions: list[DailyStatementTransaction]
+
+
+def _query_daily_statement_walks(
+    cfg, instance, period: tuple[date, date],  # type: ignore[no-untyped-def]
+) -> list[DailyStatementWalk] | None:
+    """Pull a Daily Statement walk for every drifted (account, day) pair.
+
+    Each walk = drift matview row + matching ``daily_statement_summary``
+    KPIs + the day's transactions from ``current_transactions``.
+
+    Sort: most-recent business_day_end first, then biggest cumulative
+    drift first, then account_id — same order as U.3.a's drift table.
+    """
+    if cfg.demo_database_url is None:
+        return None
+
+    from quicksight_gen.common.db import connect_demo_db
+
+    prefix = instance.instance
+    start, end = period
+    start_lit = f"DATE '{start.isoformat()}'"
+    end_excl_lit = f"DATE '{(end + timedelta(days=1)).isoformat()}'"
+
+    conn = connect_demo_db(cfg)
+    try:
+        cur = conn.cursor()
+        # 1) Drift matview: which (account, day) pairs to walk.
+        cur.execute(
+            f"SELECT account_id, business_day_start, business_day_end, drift"
+            f"  FROM {prefix}_drift"
+            f" WHERE business_day_start >= {start_lit}"
+            f"   AND business_day_start < {end_excl_lit}"
+            f" ORDER BY business_day_end DESC,"
+            f"          ABS(drift) DESC, account_id"
+        )
+        drift_pairs = [
+            (str(r[0]), r[1], r[2])
+            for r in cur.fetchall()
+        ]
+        if not drift_pairs:
+            return []
+
+        walks: list[DailyStatementWalk] = []
+        for account_id, day_start, _day_end in drift_pairs:
+            day_start_date = (
+                day_start.date() if hasattr(day_start, "date") else day_start
+            )
+            day_start_lit = f"DATE '{day_start_date.isoformat()}'"
+            # Next-day date computed in Python (avoids dialect-specific
+            # INTERVAL syntax: PG = ``+ INTERVAL '1 day'``,
+            # Oracle = ``+ INTERVAL '1' DAY``).
+            day_end_excl_lit = (
+                f"DATE '{(day_start_date + timedelta(days=1)).isoformat()}'"
+            )
+
+            # 2) Daily statement summary: 5 KPIs precomputed.
+            cur.execute(
+                f"SELECT account_name, account_role,"
+                f"       business_day_start, business_day_end,"
+                f"       opening_balance, total_debits, total_credits,"
+                f"       closing_balance_stored, closing_balance_recomputed,"
+                f"       drift"
+                f"  FROM {prefix}_daily_statement_summary"
+                f" WHERE account_id = '{account_id}'"
+                f"   AND business_day_start = {day_start_lit}"
+            )
+            summary = cur.fetchone()
+            if summary is None:
+                # Drift exists but no summary row — feed/matview drift.
+                # Surface the drift row alone with placeholder KPIs.
+                continue
+            (
+                account_name, account_role,
+                bd_start, bd_end,
+                opening, debits, credits,
+                closing_stored, closing_recomp, day_drift,
+            ) = summary
+
+            # 3) Day's transactions from current_transactions matview.
+            cur.execute(
+                f"SELECT id, transfer_id, transfer_type,"
+                f"       amount_money, amount_direction, status, posting"
+                f"  FROM {prefix}_current_transactions"
+                f" WHERE account_id = '{account_id}'"
+                f"   AND posting >= {day_start_lit}"
+                f"   AND posting < {day_end_excl_lit}"
+                f" ORDER BY posting"
+            )
+            transactions = [
+                DailyStatementTransaction(
+                    transaction_id=str(r[0]),
+                    transfer_id=str(r[1] or ""),
+                    transfer_type=str(r[2] or ""),
+                    amount_money=Decimal(r[3] or 0),
+                    amount_direction=str(r[4] or ""),
+                    status=str(r[5] or ""),
+                    posting=r[6],
+                )
+                for r in cur.fetchall()
+            ]
+
+            walks.append(DailyStatementWalk(
+                account_id=account_id,
+                account_name=str(account_name or ""),
+                account_role=str(account_role or ""),
+                business_day_start=(
+                    bd_start.date() if hasattr(bd_start, "date") else bd_start
+                ),
+                business_day_end=(
+                    bd_end.date() if hasattr(bd_end, "date") else bd_end
+                ),
+                opening_balance=Decimal(opening or 0),
+                total_debits=Decimal(debits or 0),
+                total_credits=Decimal(credits or 0),
+                closing_balance_stored=Decimal(closing_stored or 0),
+                closing_balance_recomputed=Decimal(closing_recomp or 0),
+                drift=Decimal(day_drift or 0),
+                transactions=transactions,
+            ))
+        return walks
+    finally:
+        conn.close()
+
+
 @audit.command("apply")
 @l2_instance_option()
 @config_option(required_for_dialect_only=True)
@@ -1065,6 +1232,9 @@ def audit_apply(
     stuck_pending_rows = _query_stuck_pending_violations(_cfg, instance)
     stuck_unbundled_rows = _query_stuck_unbundled_violations(_cfg, instance)
     supersession_data = _query_supersession(_cfg, instance, (start, end))
+    daily_statement_walks = _query_daily_statement_walks(
+        _cfg, instance, (start, end),
+    )
     singleton_ids = _singleton_account_ids(instance)
     # Resolve once + thread through so the audit PDF picks up the L2's
     # branded palette (or DEFAULT_PRESET when no theme override). Per
@@ -1085,6 +1255,7 @@ def audit_apply(
             stuck_pending_rows=stuck_pending_rows,
             stuck_unbundled_rows=stuck_unbundled_rows,
             supersession_data=supersession_data,
+            daily_statement_walks=daily_statement_walks,
             singleton_ids=singleton_ids,
             theme=theme,
         )
@@ -1105,6 +1276,7 @@ def audit_apply(
         stuck_pending_rows=stuck_pending_rows,
         stuck_unbundled_rows=stuck_unbundled_rows,
         supersession_data=supersession_data,
+        daily_statement_walks=daily_statement_walks,
         singleton_ids=singleton_ids,
     )
     if output is None:
@@ -1196,15 +1368,16 @@ def _render_audit_markdown(
     stuck_pending_rows: list[StuckPendingViolation] | None,
     stuck_unbundled_rows: list[StuckUnbundledViolation] | None,
     supersession_data: SupersessionAuditData | None,
+    daily_statement_walks: list[DailyStatementWalk] | None,
     singleton_ids: set[str],
 ) -> str:
     """Markdown rendering of the audit report.
 
-    Mirrors the PDF page sequence — cover, executive summary, then
-    per-invariant violation tables (U.3.a Drift, U.3.b Overdraft,
-    U.3.c Limit breach, U.3.d Stuck pending, U.3.e Stuck unbundled,
-    U.3.f Supersession audit) — so an integrator can review the
-    report's content before committing to a real PDF write.
+    Mirrors the PDF page sequence — cover, executive summary,
+    per-invariant violation tables (U.3.a Drift through U.3.f
+    Supersession audit), then U.4 per-account Daily Statement walks
+    — so an integrator can review the report's content before
+    committing to a real PDF write.
     """
     start, end = period
     fingerprint = _l2_fingerprint_placeholder()
@@ -1238,11 +1411,10 @@ def _render_audit_markdown(
             stuck_unbundled_rows, singleton_ids,
         )
         + _render_supersession_markdown(supersession_data, period)
+        + _render_daily_statement_walks_markdown(daily_statement_walks)
     )
     trailer = (
-        "\n"
-        "_Per-account-day Daily Statement walk and sign-off block "
-        "land in Phase U.4+._\n"
+        "\n_Sign-off block lands in Phase U.5._\n"
     )
     return cover + body + trailer
 
@@ -1738,6 +1910,80 @@ def _render_supersession_markdown(
     return out
 
 
+def _render_daily_statement_walks_markdown(
+    walks: list[DailyStatementWalk] | None,
+) -> str:
+    """Per-account Daily Statement walks in Markdown form.
+
+    One sub-section per (account, business_day) pair from U.3.a's
+    drift table. KPIs sourced from ``<prefix>_daily_statement_summary``
+    matview (same matview the L1 dashboard's Daily Statement sheet
+    reads, so the numbers agree row-for-row).
+    """
+    header = (
+        "\n"
+        "---\n"
+        "\n"
+        "## Per-account Daily Statement walk\n"
+        "\n"
+        "_Per-(account, day) statement for every account that drifted "
+        "in the report window. KPIs sourced from "
+        "`<prefix>_daily_statement_summary` matview; transactions "
+        "from `<prefix>_current_transactions`._\n"
+        "\n"
+        "_Note: the **drift** KPI here is the per-day drift "
+        "(`closing_stored − closing_recomputed`) and may differ from "
+        "U.3.a's cumulative drift (which is "
+        "`stored − sum(all transactions ever)`). The two diverge when "
+        "the daily_balances feed is sparse._\n"
+    )
+    if walks is None:
+        return header + (
+            "\n_Database not configured — table not populated. "
+            "Set `demo_database_url` in your config to query._\n"
+        )
+    if not walks:
+        return header + (
+            "\n_No drift in the report window — no walks needed._\n"
+        )
+
+    out = header
+    for w in walks:
+        out += (
+            "\n"
+            f"### {w.account_id} — {w.business_day_end.isoformat()}\n"
+            "\n"
+            f"**{w.account_name}** ({w.account_role})\n"
+            "\n"
+            "| Opening | Debits | Credits | Closing stored | Drift |\n"
+            "|---:|---:|---:|---:|---:|\n"
+            f"| ${w.opening_balance:,.2f} | "
+            f"${w.total_debits:,.2f} | "
+            f"${w.total_credits:,.2f} | "
+            f"${w.closing_balance_stored:,.2f} | "
+            f"${w.drift:,.2f} |\n"
+        )
+        if w.transactions:
+            out += (
+                "\n"
+                "| Posted | Transaction ID | Transfer type "
+                "| Direction | Amount | Status |\n"
+                "|---|---|---|---|---:|---|\n"
+            )
+            for t in w.transactions:
+                out += (
+                    f"| {t.posting.strftime('%H:%M')} "
+                    f"| `{t.transaction_id}` "
+                    f"| {t.transfer_type} "
+                    f"| {t.amount_direction} "
+                    f"| ${t.amount_money:,.2f} "
+                    f"| {t.status} |\n"
+                )
+        else:
+            out += "\n_No Posted Money records on this day._\n"
+    return out
+
+
 def _bookmarked_h1(text: str, styles):  # type: ignore[no-untyped-def]
     """Heading1 paragraph tagged for PDF outline + TOC at level 0.
 
@@ -1802,6 +2048,7 @@ def _write_audit_pdf(
     stuck_pending_rows: list[StuckPendingViolation] | None,
     stuck_unbundled_rows: list[StuckUnbundledViolation] | None,
     supersession_data: SupersessionAuditData | None,
+    daily_statement_walks: list[DailyStatementWalk] | None,
     singleton_ids: set[str],
     theme,  # type: ignore[no-untyped-def] # ThemePreset
 ) -> None:
@@ -1809,9 +2056,10 @@ def _write_audit_pdf(
 
     Page sequence: cover → table of contents → executive summary →
     per-invariant tables (Drift, Overdraft, Limit breach, Stuck
-    pending, Stuck unbundled, Supersession audit). Each per-invariant
-    page paginates via LongTable; every page carries a footer with
-    the provenance fingerprint placeholder (real hash lands in U.7).
+    pending, Stuck unbundled, Supersession audit) → per-account Daily
+    Statement walks. Each per-invariant page paginates via LongTable;
+    every page carries a footer with the provenance fingerprint
+    placeholder (real hash lands in U.7).
 
     Uses ``_AuditDocTemplate.multiBuild`` (two-pass) so the
     ``TableOfContents`` flowable can pick up correct page numbers,
@@ -1944,6 +2192,9 @@ def _write_audit_pdf(
     ))
     story.extend(_supersession_story(
         supersession_data, styles, period, theme,
+    ))
+    story.extend(_daily_statement_walks_story(
+        daily_statement_walks, styles, theme,
     ))
     # multiBuild = two-pass render so TableOfContents picks up the
     # final page numbers (pass 1 collects via the afterFlowable hook,
@@ -2999,6 +3250,174 @@ def _supersession_story(
                 styles["BodyText"],
             ),
         ])
+    return elements
+
+
+def _daily_statement_walks_story(
+    walks: list[DailyStatementWalk] | None,
+    styles,  # type: ignore[no-untyped-def]
+    theme,  # type: ignore[no-untyped-def] # ThemePreset
+) -> list:  # type: ignore[type-arg]
+    """Platypus elements for the U.4 per-account Daily Statement walk pages.
+
+    Section header at level-0 outline; one sub-section per walk at
+    level-1 outline (so the auditor can jump to a specific account-day
+    from the sidebar / TOC). Each walk renders a 5-KPI summary table
+    + a transactions detail table mirroring the dashboard's Daily
+    Statement sheet.
+    """
+    from reportlab.lib import colors
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.platypus import (
+        LongTable,
+        PageBreak,
+        Paragraph,
+        Spacer,
+        Table,
+        TableStyle,
+    )
+
+    elements: list = [
+        PageBreak(),
+        _bookmarked_h1("Per-account Daily Statement walk", styles),
+        Paragraph(
+            "Source: <b>&lt;prefix&gt;_daily_statement_summary</b> "
+            "(KPIs) + <b>&lt;prefix&gt;_current_transactions</b> "
+            "(detail rows). One walk per (account, day) pair from "
+            "U.3.a's drift table.",
+            styles["BodyText"],
+        ),
+        Paragraph(
+            "<i>The <b>Drift</b> KPI here is the per-day drift "
+            "(closing stored &minus; closing recomputed-from-day's-flow). "
+            "U.3.a's table shows cumulative drift "
+            "(stored &minus; sum of all transactions ever); the two can "
+            "diverge when daily_balances are sparse.</i>",
+            styles["BodyText"],
+        ),
+        Spacer(1, 0.15 * inch),
+    ]
+
+    if walks is None:
+        elements.append(
+            Paragraph(
+                "<i>Database not configured &mdash; walks not "
+                "populated. Set <b>demo_database_url</b> in your "
+                "config to query.</i>",
+                styles["BodyText"],
+            ),
+        )
+        return elements
+    if not walks:
+        elements.append(
+            Paragraph(
+                "<i>No drift in the report window &mdash; no walks "
+                "needed.</i>",
+                styles["BodyText"],
+            ),
+        )
+        return elements
+
+    cell_style = ParagraphStyle(
+        "DailyStatementCell",
+        parent=styles["BodyText"],
+        fontSize=8,
+        leading=10,
+        spaceBefore=0,
+        spaceAfter=0,
+    )
+    base_table_style = TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(theme.primary_fg)),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor(theme.accent_fg)),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 9),
+        ("FONTSIZE", (0, 1), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor(theme.link_tint)),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [
+            colors.white, colors.HexColor(theme.secondary_bg),
+        ]),
+    ])
+
+    for w in walks:
+        # Sub-section heading + bookmark (one per walk so auditor can
+        # jump to a specific account-day from the sidebar / TOC).
+        elements.append(PageBreak())
+        elements.append(_bookmarked_h3(
+            f"{w.account_id} — {w.business_day_end.isoformat()}", styles,
+        ))
+        elements.append(Paragraph(
+            f"<b>{w.account_name}</b> ({w.account_role})",
+            styles["BodyText"],
+        ))
+        elements.append(Spacer(1, 0.1 * inch))
+
+        # 5-KPI summary table (one row, currency-formatted).
+        kpi_data: list[list] = [
+            ["Opening", "Debits", "Credits", "Closing stored", "Drift"],
+            [
+                f"${w.opening_balance:,.2f}",
+                f"${w.total_debits:,.2f}",
+                f"${w.total_credits:,.2f}",
+                f"${w.closing_balance_stored:,.2f}",
+                f"${w.drift:,.2f}",
+            ],
+        ]
+        kpi_style = TableStyle(
+            base_table_style.getCommands() + [
+                ("ALIGN", (0, 1), (-1, -1), "RIGHT"),
+                ("ALIGN", (0, 0), (-1, 0), "RIGHT"),
+            ],
+        )
+        elements.append(Table(
+            kpi_data,
+            colWidths=[1.4 * inch] * 5,
+            style=kpi_style,
+        ))
+        elements.append(Spacer(1, 0.2 * inch))
+
+        # Day's transactions detail. Heading NOT bookmarked — adding
+        # a "Posted Money records" entry per walk would clutter the
+        # sidebar with 50 identical-titled entries; the per-walk
+        # account-day bookmark already covers nav.
+        if w.transactions:
+            elements.append(Paragraph(
+                "Posted Money records", styles["Heading3"],
+            ))
+            txn_data: list[list] = [
+                ["Posted", "Transaction ID", "Transfer type",
+                 "Direction", "Amount", "Status"],
+            ]
+            for t in w.transactions:
+                txn_data.append([
+                    t.posting.strftime("%H:%M"),
+                    Paragraph(t.transaction_id, cell_style),
+                    Paragraph(t.transfer_type, cell_style),
+                    t.amount_direction,
+                    f"${t.amount_money:,.2f}",
+                    t.status,
+                ])
+            txn_style = TableStyle(
+                base_table_style.getCommands() + [
+                    ("ALIGN", (4, 1), (4, -1), "RIGHT"),
+                ],
+            )
+            elements.append(LongTable(
+                txn_data,
+                colWidths=[0.7 * inch, 1.5 * inch, 1.4 * inch,
+                           0.85 * inch, 1.0 * inch, 0.8 * inch],
+                style=txn_style, repeatRows=1,
+            ))
+        else:
+            elements.append(Paragraph(
+                "<i>No Posted Money records on this day.</i>",
+                styles["BodyText"],
+            ))
     return elements
 
 
