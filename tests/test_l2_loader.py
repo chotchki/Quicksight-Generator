@@ -1,18 +1,15 @@
-"""Loader tests for ``common.l2.load_instance`` (M.1.2).
+"""Loader tests for ``common.l2.load_instance``.
 
 Coverage split:
-- Happy path against the spike's ``slice.yaml`` (round-trip every primitive
-  the spike fixture exercises — currently 1 Account + 1 TwoLegRail).
 - Inline kitchen-sink YAML covering every primitive shape — including
   AccountTemplate, both rail shapes, aggregating rails, TransferTemplate,
   ChainEntry with XOR group, LimitSchedule.
 - Per-helper rejection tests: F4 Money coercion, F5 InstancePrefix regex
   + length cap, Rail discrimination, missing-required-field paths.
 
-Per the M.1 testing principle (every load-time validator gets a rejection
-test): each rejection lands here as it surfaces. Cross-entity validation
-(singleton-ParentRole, ≤1 Variable leg, vocabulary literals) is M.1.3
-territory and gets its own ``test_l2_validate.py``.
+Every load-time validator gets a rejection test in this file. Cross-entity
+validation (singleton-ParentRole, ≤1 Variable leg, vocabulary literals)
+lives in ``test_l2_validate.py``.
 """
 
 from __future__ import annotations
@@ -32,32 +29,7 @@ from quicksight_gen.common.l2 import (
 )
 
 
-SLICE_YAML = Path(__file__).parent / "spike" / "slice.yaml"
-
-
 # -- Happy paths --------------------------------------------------------------
-
-
-def test_loads_spike_slice_yaml() -> None:
-    """The spike's slice.yaml round-trips cleanly into typed primitives."""
-    inst = load_instance(SLICE_YAML)
-    assert inst.instance == "spk"
-    assert {a.id for a in inst.accounts} == {"int-001", "ext-001"}
-    int_acc = next(a for a in inst.accounts if a.id == "int-001")
-    assert int_acc.name == "Internal Operations Account"
-    assert int_acc.role == "InternalDDA"
-    assert int_acc.scope == "internal"
-
-    assert len(inst.rails) == 1
-    rail = inst.rails[0]
-    assert isinstance(rail, TwoLegRail)
-    assert rail.name == "ExtInbound"
-    # RoleExpression normalized to a 1-tuple.
-    assert rail.source_role == ("ExternalCounterparty",)
-    assert rail.destination_role == ("InternalDDA",)
-    assert rail.expected_net == Decimal("0")
-    assert rail.aggregating is False
-    assert rail.metadata_keys == ("external_reference",)
 
 
 def test_loads_kitchen_sink_yaml_inline(tmp_path: Path) -> None:

@@ -465,7 +465,7 @@ APP_CHOICE = click.Choice([
 # Q.2 hotfix — DEMO_APP_CHOICE now lists every shipped app. Pre-Q.2
 # this only contained {investigation, executives} because L1 + L2FT
 # were prototyped through a separate L2 pipeline (e.g.
-# `m2_6_verify.sh`). Once those graduated to first-class apps,
+# the M.2 verify scripts). Once those graduated to first-class apps,
 # `demo apply --all` was supposed to generate ALL FOUR but the
 # generator branches in `_apply_demo` lagged — fresh installs only
 # saw investigation + executives in `out/`, then `deploy --all`
@@ -1695,9 +1695,9 @@ def export_screenshots_cmd(
     """Capture per-sheet screenshots of deployed dashboards.
 
     Walks the requested app's tree via WebKit and writes one full-page
-    PNG per sheet to ``<output>/<app-slug>/<sheet_id>.png``. Replaces
-    the ad-hoc per-app scripts under ``scripts/`` (capture_l1_screenshots
-    et al.) with one CLI surface.
+    PNG per sheet to ``<output>/<app-slug>/<sheet_id>.png``. Single CLI
+    surface for every app (replaces the per-app capture scripts that
+    used to live under ``scripts/``).
 
     Requires the dashboard already deployed. The handbook + walkthrough
     pages embed these screenshots by relative path under
