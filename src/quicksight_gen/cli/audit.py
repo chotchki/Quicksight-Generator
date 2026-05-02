@@ -48,6 +48,7 @@ from quicksight_gen.cli._helpers import (
     l2_instance_option,
     resolve_l2_for_demo,
 )
+from quicksight_gen.common.theme import DEFAULT_PRESET, resolve_l2_theme
 
 
 @click.group()
@@ -1065,6 +1066,10 @@ def audit_apply(
     stuck_unbundled_rows = _query_stuck_unbundled_violations(_cfg, instance)
     supersession_data = _query_supersession(_cfg, instance, (start, end))
     singleton_ids = _singleton_account_ids(instance)
+    # Resolve once + thread through so the audit PDF picks up the L2's
+    # branded palette (or DEFAULT_PRESET when no theme override). Per
+    # CLAUDE.md: never hardcode hex colors in render code.
+    theme = resolve_l2_theme(instance) or DEFAULT_PRESET
 
     if execute:
         out_path = Path(output) if output is not None else Path("report.pdf")
@@ -1081,6 +1086,7 @@ def audit_apply(
             stuck_unbundled_rows=stuck_unbundled_rows,
             supersession_data=supersession_data,
             singleton_ids=singleton_ids,
+            theme=theme,
         )
         click.echo(
             f"Wrote audit report to {out_path} "
@@ -1746,6 +1752,7 @@ def _write_audit_pdf(
     stuck_unbundled_rows: list[StuckUnbundledViolation] | None,
     supersession_data: SupersessionAuditData | None,
     singleton_ids: set[str],
+    theme,  # type: ignore[no-untyped-def] # ThemePreset
 ) -> None:
     """Render the audit report as a PDF.
 
@@ -1785,6 +1792,7 @@ def _write_audit_pdf(
         leading=24,
         spaceBefore=0,
         spaceAfter=12,
+        textColor=HexColor(theme.primary_fg),
     )
     period_band_style = ParagraphStyle(
         "PeriodBand",
@@ -1793,9 +1801,9 @@ def _write_audit_pdf(
         leading=18,
         spaceBefore=6,
         spaceAfter=6,
-        textColor=HexColor("#1a1a1a"),
-        backColor=HexColor("#eef3f7"),
-        borderColor=HexColor("#c7d6e3"),
+        textColor=HexColor(theme.primary_fg),
+        backColor=HexColor(theme.link_tint),
+        borderColor=HexColor(theme.accent),
         borderWidth=0.5,
         borderPadding=10,
     )
@@ -1829,28 +1837,34 @@ def _write_audit_pdf(
             styles["BodyText"],
         ),
     ]
-    story.extend(_executive_summary_story(exec_summary, styles, period))
-    story.extend(_drift_story(drift_rows, styles, period))
+    story.extend(_executive_summary_story(
+        exec_summary, styles, period, theme,
+    ))
+    story.extend(_drift_story(drift_rows, styles, period, theme))
     story.extend(_overdraft_story(
-        overdraft_rows, styles, period, singleton_ids,
+        overdraft_rows, styles, period, singleton_ids, theme,
     ))
     story.extend(_limit_breach_story(
-        limit_breach_rows, styles, period, singleton_ids,
+        limit_breach_rows, styles, period, singleton_ids, theme,
     ))
     story.extend(_stuck_pending_story(
-        stuck_pending_rows, styles, singleton_ids,
+        stuck_pending_rows, styles, singleton_ids, theme,
     ))
     story.extend(_stuck_unbundled_story(
-        stuck_unbundled_rows, styles, singleton_ids,
+        stuck_unbundled_rows, styles, singleton_ids, theme,
     ))
-    story.extend(_supersession_story(supersession_data, styles, period))
-    doc.build(story, onFirstPage=_draw_footer, onLaterPages=_draw_footer)
+    story.extend(_supersession_story(
+        supersession_data, styles, period, theme,
+    ))
+    footer = _make_footer_drawer(theme)
+    doc.build(story, onFirstPage=footer, onLaterPages=footer)
 
 
 def _executive_summary_story(
     summary: ExecSummary | None,
     styles,  # type: ignore[no-untyped-def]
     period: tuple[date, date],
+    theme,  # type: ignore[no-untyped-def] # ThemePreset
 ) -> list:  # type: ignore[type-arg]
     """Platypus elements for the U.2 executive summary page.
 
@@ -1917,11 +1931,11 @@ def _executive_summary_story(
         ]
 
     table_style = TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a1a1a")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(theme.primary_fg)),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor(theme.accent_fg)),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, -1), 10),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#c7d6e3")),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor(theme.link_tint)),
         ("ALIGN", (1, 1), (1, -1), "RIGHT"),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
@@ -1955,6 +1969,7 @@ def _drift_story(
     rows: list[DriftViolation] | None,
     styles,  # type: ignore[no-untyped-def]
     period: tuple[date, date],
+    theme,  # type: ignore[no-untyped-def] # ThemePreset
 ) -> list:  # type: ignore[type-arg]
     """Platypus elements for the U.3.a Drift violations page.
 
@@ -2042,12 +2057,12 @@ def _drift_story(
         ])
 
     table_style = TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a1a1a")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(theme.primary_fg)),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor(theme.accent_fg)),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, 0), 9),
         ("FONTSIZE", (0, 1), (-1, -1), 8),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#c7d6e3")),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor(theme.link_tint)),
         # Right-align numeric columns (Day, Stored, Computed, Drift).
         ("ALIGN", (3, 1), (-1, -1), "RIGHT"),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
@@ -2056,7 +2071,7 @@ def _drift_story(
         ("LEFTPADDING", (0, 0), (-1, -1), 4),
         ("RIGHTPADDING", (0, 0), (-1, -1), 4),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [
-            colors.white, colors.HexColor("#f5f8fb"),
+            colors.white, colors.HexColor(theme.secondary_bg),
         ]),
     ])
     col_widths = [
@@ -2081,6 +2096,7 @@ def _overdraft_story(
     styles,  # type: ignore[no-untyped-def]
     period: tuple[date, date],
     singleton_ids: set[str],
+    theme,  # type: ignore[no-untyped-def] # ThemePreset
 ) -> list:  # type: ignore[type-arg]
     """Platypus elements for the U.3.b Overdraft violations page.
 
@@ -2157,19 +2173,19 @@ def _overdraft_story(
         spaceAfter=0,
     )
     base_table_style = TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a1a1a")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(theme.primary_fg)),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor(theme.accent_fg)),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, 0), 9),
         ("FONTSIZE", (0, 1), (-1, -1), 8),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#c7d6e3")),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor(theme.link_tint)),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
         ("LEFTPADDING", (0, 0), (-1, -1), 4),
         ("RIGHTPADDING", (0, 0), (-1, -1), 4),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [
-            colors.white, colors.HexColor("#f5f8fb"),
+            colors.white, colors.HexColor(theme.secondary_bg),
         ]),
     ])
 
@@ -2240,6 +2256,7 @@ def _limit_breach_story(
     styles,  # type: ignore[no-untyped-def]
     period: tuple[date, date],
     singleton_ids: set[str],
+    theme,  # type: ignore[no-untyped-def] # ThemePreset
 ) -> list:  # type: ignore[type-arg]
     """Platypus elements for the U.3.c Limit breach violations page.
 
@@ -2312,19 +2329,19 @@ def _limit_breach_story(
         spaceAfter=0,
     )
     base_table_style = TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a1a1a")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(theme.primary_fg)),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor(theme.accent_fg)),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, 0), 9),
         ("FONTSIZE", (0, 1), (-1, -1), 8),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#c7d6e3")),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor(theme.link_tint)),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
         ("LEFTPADDING", (0, 0), (-1, -1), 4),
         ("RIGHTPADDING", (0, 0), (-1, -1), 4),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [
-            colors.white, colors.HexColor("#f5f8fb"),
+            colors.white, colors.HexColor(theme.secondary_bg),
         ]),
     ])
 
@@ -2403,6 +2420,7 @@ def _stuck_pending_story(
     rows: list[StuckPendingViolation] | None,
     styles,  # type: ignore[no-untyped-def]
     singleton_ids: set[str],
+    theme,  # type: ignore[no-untyped-def] # ThemePreset
 ) -> list:  # type: ignore[type-arg]
     """Platypus elements for the U.3.d Stuck pending transactions page.
 
@@ -2472,19 +2490,19 @@ def _stuck_pending_story(
         spaceAfter=0,
     )
     base_table_style = TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a1a1a")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(theme.primary_fg)),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor(theme.accent_fg)),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, 0), 9),
         ("FONTSIZE", (0, 1), (-1, -1), 8),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#c7d6e3")),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor(theme.link_tint)),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
         ("LEFTPADDING", (0, 0), (-1, -1), 4),
         ("RIGHTPADDING", (0, 0), (-1, -1), 4),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [
-            colors.white, colors.HexColor("#f5f8fb"),
+            colors.white, colors.HexColor(theme.secondary_bg),
         ]),
     ])
 
@@ -2562,6 +2580,7 @@ def _stuck_unbundled_story(
     rows: list[StuckUnbundledViolation] | None,
     styles,  # type: ignore[no-untyped-def]
     singleton_ids: set[str],
+    theme,  # type: ignore[no-untyped-def] # ThemePreset
 ) -> list:  # type: ignore[type-arg]
     """Platypus elements for the U.3.e Stuck unbundled transactions page.
 
@@ -2629,19 +2648,19 @@ def _stuck_unbundled_story(
         spaceAfter=0,
     )
     base_table_style = TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a1a1a")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(theme.primary_fg)),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor(theme.accent_fg)),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, 0), 9),
         ("FONTSIZE", (0, 1), (-1, -1), 8),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#c7d6e3")),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor(theme.link_tint)),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
         ("LEFTPADDING", (0, 0), (-1, -1), 4),
         ("RIGHTPADDING", (0, 0), (-1, -1), 4),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [
-            colors.white, colors.HexColor("#f5f8fb"),
+            colors.white, colors.HexColor(theme.secondary_bg),
         ]),
     ])
 
@@ -2719,6 +2738,7 @@ def _supersession_story(
     data: SupersessionAuditData | None,
     styles,  # type: ignore[no-untyped-def]
     period: tuple[date, date],
+    theme,  # type: ignore[no-untyped-def] # ThemePreset
 ) -> list:  # type: ignore[type-arg]
     """Platypus elements for the U.3.f Supersession audit page.
 
@@ -2786,19 +2806,19 @@ def _supersession_story(
         spaceAfter=0,
     )
     base_table_style = TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a1a1a")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(theme.primary_fg)),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor(theme.accent_fg)),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, 0), 9),
         ("FONTSIZE", (0, 1), (-1, -1), 8),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#c7d6e3")),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor(theme.link_tint)),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
         ("LEFTPADDING", (0, 0), (-1, -1), 4),
         ("RIGHTPADDING", (0, 0), (-1, -1), 4),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [
-            colors.white, colors.HexColor("#f5f8fb"),
+            colors.white, colors.HexColor(theme.secondary_bg),
         ]),
     ])
 
@@ -2906,30 +2926,35 @@ def _supersession_story(
     return elements
 
 
-def _draw_footer(canvas, doc) -> None:  # type: ignore[no-untyped-def]
-    """Page footer drawn on every page.
+def _make_footer_drawer(theme):  # type: ignore[no-untyped-def]
+    """Build a per-page footer drawer that carries the resolved theme.
 
-    Per Phase U.6 the footer carries the report-version sentinel,
-    page number, and the source-data fingerprint. U.1 wires the slot
-    with a placeholder fingerprint so the layout is correct when U.7
-    swaps the real hash in.
+    reportlab calls ``onFirstPage``/``onLaterPages`` with only
+    ``(canvas, doc)`` — no place to thread the theme. This factory
+    closes over the theme so the footer text picks up
+    ``theme.secondary_fg`` for grayscale and stays in line with the
+    rest of the audit PDF's palette.
     """
+    from reportlab.lib import colors
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.units import inch
 
-    canvas.saveState()
-    width, _ = letter
-    canvas.setFont("Helvetica", 8)
-    canvas.setFillGray(0.4)
-    left = 0.75 * inch
-    right = width - 0.75 * inch
-    baseline = 0.5 * inch
-    canvas.drawString(
-        left, baseline,
-        f"QuickSight Generator audit report  ·  Page {doc.page}",
-    )
-    canvas.drawRightString(
-        right, baseline,
-        f"Provenance: {_l2_fingerprint_placeholder()}",
-    )
-    canvas.restoreState()
+    def _draw_footer(canvas, doc) -> None:  # type: ignore[no-untyped-def]
+        canvas.saveState()
+        width, _ = letter
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(colors.HexColor(theme.secondary_fg))
+        left = 0.75 * inch
+        right = width - 0.75 * inch
+        baseline = 0.5 * inch
+        canvas.drawString(
+            left, baseline,
+            f"QuickSight Generator audit report  ·  Page {doc.page}",
+        )
+        canvas.drawRightString(
+            right, baseline,
+            f"Provenance: {_l2_fingerprint_placeholder()}",
+        )
+        canvas.restoreState()
+
+    return _draw_footer
