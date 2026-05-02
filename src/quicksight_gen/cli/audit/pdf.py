@@ -264,6 +264,11 @@ def _write_audit_pdf(
     story.extend(_daily_statement_walks_story(
         daily_statement_walks, styles, theme,
     ))
+    # Mutable registry: each _SigFieldPlaceholder appends its
+    # (name, page_idx, rect) here at draw time; pyHanko reads the
+    # list post-multiBuild to drop empty signature widgets at the
+    # exact spots the layout reserved.
+    signature_field_registry: list = []
     story.extend(_signoff_story(
         styles, theme,
         institution=institution,
@@ -272,6 +277,7 @@ def _write_audit_pdf(
         version=version,
         l2_label=l2_label,
         provenance=provenance,
+        signature_field_registry=signature_field_registry,
     ))
     story.extend(_appendix_story(
         styles, theme,
@@ -317,6 +323,14 @@ def _write_audit_pdf(
             l2_attachment_name: _read_l2_yaml_bytes(l2_instance_path),
             "verify-provenance.py": recipe_text.encode("utf-8"),
         },
+    )
+    # Two empty reviewer signature widgets at the layout-reserved
+    # coordinates below the notes box. Runs before the system
+    # signing step (which happens in audit_apply); the system sig's
+    # byte range covers these definitions, so subsequent reviewers
+    # sign INTO existing fields instead of appending new ones.
+    _add_empty_signature_fields(
+        path, fields=signature_field_registry,
     )
 
 
@@ -1536,6 +1550,7 @@ def _signoff_story(
     version: str,
     l2_label: str,
     provenance: ProvenanceFingerprint | None,
+    signature_field_registry: list,  # mutable; populated at draw time
 ) -> list:
     """Final-page sign-off block with system + auditor attestation (U.5).
 
@@ -1635,12 +1650,30 @@ def _signoff_story(
     notes_field = _make_fillable_notes_field(
         name="QSGNotesField",
         width=6.5 * inch,
-        height=1.6 * inch,
+        height=1.4 * inch,
         border_color=HexColor(theme.secondary_fg),
         tooltip=(
             "Notes / Exceptions — fill any review comments here "
             "before adding your digital signature."
         ),
+    )
+    # Two empty reviewer signature fields stacked below the notes
+    # box. The placeholders just record their absolute page coords
+    # into the registry; pyHanko's append_signature_field drops the
+    # actual sig-field widgets at those coords post-multiBuild
+    # (before signing), so a reviewer opening the PDF in any
+    # signing-capable reader sees clickable Sign-Here boxes.
+    sig_field_1 = _make_signature_field_placeholder(
+        name="QSGReviewerSignature1",
+        width=6.5 * inch,
+        height=0.55 * inch,
+        registry=signature_field_registry,
+    )
+    sig_field_2 = _make_signature_field_placeholder(
+        name="QSGReviewerSignature2",
+        width=6.5 * inch,
+        height=0.55 * inch,
+        registry=signature_field_registry,
     )
 
     return [
@@ -1659,7 +1692,7 @@ def _signoff_story(
         ),
         Spacer(1, 0.1 * inch),
         system_table,
-        Spacer(1, 0.4 * inch),
+        Spacer(1, 0.3 * inch),
         Paragraph(
             "<b>Reviewer Attestation</b>",
             styles["Heading3"],
@@ -1667,21 +1700,25 @@ def _signoff_story(
         Paragraph(
             "<i>I have reviewed the contents of this report and "
             "attest to the findings above as of the report period. "
-            "Sign by adding a digital signature in the PDF reader "
-            "of your choice (Adobe Acrobat, pyHanko, etc.). The "
-            "system attestation above stands on its own when no "
-            "human reviewer countersigns; subsequent reviewers may "
-            "stack additional signatures without invalidating the "
-            "system seal.</i>",
+            "Click a signature box below to sign in any PDF reader "
+            "that supports digital signatures (Adobe Acrobat, "
+            "pyHanko, etc.). The system attestation above stands on "
+            "its own when no human reviewer countersigns; subsequent "
+            "reviewers may stack additional signatures without "
+            "invalidating the system seal.</i>",
             styles["BodyText"],
         ),
-        Spacer(1, 0.25 * inch),
+        Spacer(1, 0.2 * inch),
         Paragraph(
             "<b>Notes / Exceptions</b>",
             styles["BodyText"],
         ),
         Spacer(1, 0.05 * inch),
         notes_field,
+        Spacer(1, 0.2 * inch),
+        sig_field_1,
+        Spacer(1, 0.1 * inch),
+        sig_field_2,
     ]
 
 
@@ -1748,6 +1785,50 @@ def _make_fillable_notes_field(  # type: ignore[no-untyped-def]
     return _FillableNotesField()
 
 
+def _make_signature_field_placeholder(  # type: ignore[no-untyped-def]
+    *,
+    name: str,
+    width: float,
+    height: float,
+    registry: list,
+):
+    """Reserve layout space for an empty reviewer signature field.
+
+    Reportlab can lay out the *space* for a signature widget but
+    can't emit the widget itself — sig fields aren't part of
+    ``canvas.acroForm``'s repertoire. So we use a two-step pattern:
+    (1) this Flowable reserves the box and records its absolute
+    page coordinates into a registry list; (2) post-multiBuild
+    pyHanko's ``append_signature_field`` drops the actual
+    ``empty_field_appearance=True`` widget at the recorded coords.
+
+    Same ``drawOn``-not-``draw`` pattern as the notes field: the
+    coords pyHanko needs are absolute page coords, and the frame
+    engine passes those directly to ``drawOn`` before the default
+    canvas-translate dance happens.
+    """
+    from reportlab.platypus import Flowable
+
+    class _SigFieldPlaceholder(Flowable):
+        def __init__(self):
+            super().__init__()
+            self.width = width
+            self.height = height
+
+        def wrap(self, availWidth, availHeight):
+            return (self.width, self.height)
+
+        def drawOn(self, canvas, x, y, _sW=0):
+            # canvas.getPageNumber() is 1-indexed; pyHanko's
+            # SigFieldSpec.on_page is 0-indexed — translate here.
+            page_idx = canvas.getPageNumber() - 1
+            registry.append(
+                (name, page_idx, (x, y, x + self.width, y + self.height))
+            )
+
+    return _SigFieldPlaceholder()
+
+
 def _read_l2_yaml_bytes(l2_instance_path: str | None) -> bytes:
     """Same lookup ``l2_yaml_sha256`` uses, returning the bytes.
 
@@ -1763,6 +1844,59 @@ def _read_l2_yaml_bytes(l2_instance_path: str | None) -> bytes:
         with as_file(pkg / "_default_l2.yaml") as path:
             return Path(path).read_bytes()
     return Path(l2_instance_path).read_bytes()
+
+
+def _add_empty_signature_fields(
+    pdf_path: Path,
+    *,
+    fields: list,  # list[tuple[str, int, tuple[float, float, float, float]]]
+) -> None:
+    """Append empty reviewer signature widgets via pyHanko (U.7.c).
+
+    Each ``fields`` entry is ``(field_name, page_idx, (x1, y1, x2,
+    y2))`` — page_idx is 0-indexed; rect is in PDF user-space coords
+    (y=0 at page bottom). Widgets are added with
+    ``empty_field_appearance=True`` so PDF readers show a visible
+    Sign-Here placeholder before any reviewer fills them.
+
+    Run AFTER ``_attach_files_to_pdf`` and BEFORE the system signing
+    step in audit_apply, so the system signature's byte range covers
+    the empty reviewer field definitions; subsequent reviewers
+    sign-into the existing fields rather than appending new ones.
+    """
+    if not fields:
+        return
+    import io
+
+    from pyhanko.pdf_utils.incremental_writer import (
+        IncrementalPdfFileWriter,
+    )
+    from pyhanko.sign.fields import (
+        SigFieldSpec,
+        append_signature_field,
+    )
+
+    # multiBuild runs the layout pass twice (TOC settling), so each
+    # _SigFieldPlaceholder.drawOn fires twice and registers the
+    # same name twice. Dedupe by name keeping the LAST entry, which
+    # is the final pass's resolved coordinates.
+    deduped: dict = {}
+    for entry in fields:
+        deduped[entry[0]] = entry
+
+    with pdf_path.open("rb") as inf:
+        w = IncrementalPdfFileWriter(inf)
+        for name, page_idx, box in deduped.values():
+            spec = SigFieldSpec(
+                sig_field_name=name,
+                on_page=page_idx,
+                box=tuple(int(round(v)) for v in box),
+                empty_field_appearance=True,
+            )
+            append_signature_field(w, spec)
+        out = io.BytesIO()
+        w.write(out)
+    pdf_path.write_bytes(out.getvalue())
 
 
 def _attach_files_to_pdf(
@@ -1885,7 +2019,6 @@ def _appendix_story(
     from reportlab.platypus import (
         PageBreak,
         Paragraph,
-        Preformatted,
         Spacer,
         Table,
         TableStyle,
@@ -2027,27 +2160,6 @@ def _appendix_story(
         ]),
     )
 
-    # --- Manual recompute recipe (Preformatted code block) ---
-    # Same text gets attached as ``verify-provenance.py`` so a
-    # verifier can download the script byte-exact and run it
-    # locally instead of retyping from the rendered page.
-    recipe_text = _build_verify_recipe_script(
-        tx_hwm=tx_hwm, bal_hwm=bal_hwm, code_id=code_id,
-    )
-    recipe = Preformatted(
-        recipe_text,
-        ParagraphStyle(
-            "AppendixRecipe",
-            parent=styles["Code"],
-            fontSize=7,
-            leading=9,
-            leftIndent=0,
-            rightIndent=0,
-            backColor=HexColor(theme.link_tint),
-            borderPadding=6,
-        ),
-    )
-
     return [
         PageBreak(),
         bookmarked_h1("Provenance Appendix", styles),
@@ -2104,18 +2216,15 @@ def _appendix_story(
         Paragraph(
             "<i>For verifiers who don't want to install "
             "quicksight-gen. Per-source values embedded in this "
-            "report are below; the Python recipe under the table "
-            "shows how to recompute and verify the composite. The "
-            "same recipe is attached as "
+            "report are below; the recompute recipe is attached "
+            "to this PDF as "
             "<font face='Courier'>verify-provenance.py</font> "
-            "(see Attachments) so it can be downloaded byte-exact "
-            "instead of retyped from the page.</i>",
+            "(see Attachments) — open it from the PDF reader's "
+            "attachments panel.</i>",
             styles["BodyText"],
         ),
         Spacer(1, 0.1 * inch),
         sources_table,
-        Spacer(1, 0.15 * inch),
-        recipe,
         Spacer(1, 0.25 * inch),
 
         Paragraph("<b>Attachments</b>", styles["Heading3"]),

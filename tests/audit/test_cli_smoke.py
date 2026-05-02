@@ -238,6 +238,70 @@ def test_audit_apply_pdf_embeds_l2_yaml_attachment(
     )
 
 
+def test_audit_apply_pdf_has_two_empty_reviewer_signature_fields(
+    min_config: Path, tmp_path: Path,
+):
+    """Two empty reviewer signature fields land below the notes box.
+
+    pyHanko adds them post-multiBuild via append_signature_field at
+    the coords the layout reserved. They show as clickable Sign-Here
+    placeholders in any signing-capable PDF reader; reviewers sign
+    INTO the existing fields rather than appending new ones, so the
+    system signature's byte range covers their definitions.
+    """
+    out = tmp_path / "report.pdf"
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "audit", "apply",
+            "-c", str(min_config),
+            "--l2", str(_SPEC_EXAMPLE),
+            "-o", str(out),
+            "--execute",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    from pypdf import PdfReader
+    reader = PdfReader(str(out))
+    sig_field_names: list[str] = []
+    notes_field_rect = None
+    sig_field_rects: dict[str, list[float]] = {}
+    for page in reader.pages:
+        for annot_ref in page.get("/Annots") or []:
+            obj = annot_ref.get_object() if hasattr(
+                annot_ref, "get_object"
+            ) else annot_ref
+            if obj.get("/FT") == "/Sig":
+                name = obj.get("/T")
+                sig_field_names.append(name)
+                sig_field_rects[name] = list(obj.get("/Rect"))
+            elif obj.get("/T") == "QSGNotesField":
+                notes_field_rect = list(obj.get("/Rect"))
+    assert "QSGReviewerSignature1" in sig_field_names, (
+        f"expected reviewer sig field 1, got {sig_field_names}"
+    )
+    assert "QSGReviewerSignature2" in sig_field_names, (
+        f"expected reviewer sig field 2, got {sig_field_names}"
+    )
+    assert notes_field_rect is not None, (
+        "QSGNotesField annotation missing — sig field placement "
+        "test depends on locating it"
+    )
+    # Both reviewer fields land BELOW the notes box (lower y than
+    # the notes box bottom edge). Encodes the layout intent: the
+    # signature placeholders are a continuation of the sign-off
+    # block, not floating elsewhere.
+    notes_bottom_y = notes_field_rect[1]
+    for name in ("QSGReviewerSignature1", "QSGReviewerSignature2"):
+        sig_top_y = sig_field_rects[name][3]
+        assert sig_top_y < notes_bottom_y, (
+            f"{name} top edge {sig_top_y} should be below "
+            f"notes box bottom {notes_bottom_y}"
+        )
+
+
 def test_audit_apply_pdf_embeds_verify_script_attachment(
     min_config: Path, tmp_path: Path,
 ):
