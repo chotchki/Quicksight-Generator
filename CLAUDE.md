@@ -1,11 +1,12 @@
 # QuickSight Analysis Generator
 
-Python tool that programmatically generates AWS QuickSight JSON definitions (theme, datasets, analyses, dashboards) and deploys them via boto3. Ships **four independent QuickSight apps**, all L2-fed off one institution YAML (account, datasource, theme, per-instance schema prefix), sharing the CLI surface:
+Python tool that programmatically generates AWS QuickSight JSON definitions (theme, datasets, analyses, dashboards) and deploys them via boto3. Ships **four independent QuickSight apps** plus a **regulator-ready PDF reconciliation report**, all L2-fed off one institution YAML (account, datasource, theme, per-instance schema prefix), sharing the CLI surface:
 
 - **L1 Dashboard** — persona-blind L1 invariant violation surface (drift / overdraft / limit breach / stuck pending / stuck unbundled / supersession audit / today's exceptions / daily statement / transactions). Configured by an L2 instance — feed any institution's L2 YAML once, dashboard renders against it.
 - **L2 Flow Tracing** — Rails / Chains / Transfer Templates / L2 Hygiene Exceptions for the integrator validating their L2 instance against the SPEC.
 - **Investigation** — 5 sheets: Getting Started, Recipient Fanout, Volume Anomalies, Money Trail, Account Network. Compliance / AML triage flow.
 - **Executives** — 4 sheets: Getting Started, Account Coverage, Transaction Volume, Money Moved. Executive scorecard.
+- **Audit Reconciliation Report** — printable PDF generated from the same per-instance L1 invariant matviews. Cover + exec summary + per-invariant violation tables + per-account-day Daily Statement walks + sign-off block + cryptographic provenance fingerprint binding the PDF to its source data. Optionally auto-signs via pyHanko when `config.yaml` carries a `signing:` block.
 
 The customer doesn't know exactly what they want yet. Everything is generated from code and deployed idempotently (delete-then-create) so a change is one command to roll out.
 
@@ -20,11 +21,12 @@ The customer doesn't know exactly what they want yet. Everything is generated fr
 
 ## Commands
 
-The CLI is organized around the four artifacts the tool produces:
-**schema** | **data** | **json** | **docs**. Each artifact has at
-minimum `apply`/`clean`/`test`; everything destructive defaults to
-emit (print SQL, write JSON to `out/`) and only runs against the DB
-or AWS when you pass `--execute`.
+The CLI is organized around the five artifacts the tool produces:
+**schema** | **data** | **json** | **docs** | **audit**. Each
+artifact has at minimum `apply`/`clean`/`test`; the `audit` group
+also carries `verify`. Everything destructive defaults to emit
+(print SQL, write JSON to `out/`, render Markdown to stdout) and
+only runs against the DB / AWS / disk when you pass `--execute`.
 
 ```bash
 # Install (add [demo] for `data apply --execute`, which needs psycopg2 / oracledb)
@@ -47,6 +49,10 @@ quicksight-gen schema apply -c config.yaml --execute
 quicksight-gen data apply -c config.yaml --execute
 quicksight-gen data refresh -c config.yaml --execute
 
+# Audit PDF: query L1 invariant matviews + emit regulator-ready PDF
+quicksight-gen audit apply -c config.yaml --execute -o report.pdf
+quicksight-gen audit verify report.pdf -c config.yaml   # recompute + compare provenance
+
 # Tests
 pytest                              # unit + integration, fast, no AWS
 ./run_e2e.sh                        # regenerate + deploy 4 apps + e2e (pytest-xdist -n 4)
@@ -61,9 +67,10 @@ The `data apply --execute` path reads theme from the L2 institution YAML's inlin
 
 ```
 src/quicksight_gen/
-  cli/                  # Click CLI shell — schema | data | json | docs groups
+  cli/                  # Click CLI shell — schema | data | json | docs | audit groups
     __init__.py         # main + group registration
     schema.py / data.py / json.py / docs.py
+    audit/              # apply | clean | test | verify (PDF reconciliation report)
     _helpers.py         # shared resolve_l2_for_demo / emit_to_target / connect_and_apply
     _app_builders.py    # per-app JSON-emit helpers (lifted from legacy CLI)
   __main__.py           # delegates to cli.main
@@ -81,6 +88,8 @@ src/quicksight_gen/
     rich_text.py        # XML composition for SheetTextBox.Content
     dataset_contract.py # ColumnSpec + DatasetContract + build_dataset()
     probe.py            # Playwright walker for deployed-dashboard error surfacing
+    provenance.py       # Audit fingerprint primitives (Phase U.7)
+    pdf/                # audit_chrome.py (bookmarks/footer) + signing.py (pyHanko CMS)
     tree/               # Phase L typed tree primitives — see "Tree pattern"
     browser/            # Playwright helpers (helpers.py + ScreenshotHarness)
     handbook/           # mkdocs-macros vocabulary + diagrams (Phase O.1)

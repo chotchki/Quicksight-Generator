@@ -126,6 +126,7 @@ nav:
     - Executives: handbook/executives.md
     - ETL — Data Integration: handbook/etl.md
     - Customization: handbook/customization.md
+    - Audit Reconciliation Report: handbook/audit.md
     - Schema v6 — Data Feed Contract: Schema_v6.md
     - L1 Invariants: L1_Invariants.md
   - API Reference:

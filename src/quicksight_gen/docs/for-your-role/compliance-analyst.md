@@ -105,6 +105,69 @@ Each sheet supports a different posture:
   show "here's what this account's relationships actually look
   like."
 
+## The audit report — your regulator handoff
+
+When you need to hand evidence off to an external auditor or
+regulator, the **audit reconciliation report** is the artifact
+you ship. It's a regulator-ready PDF generated directly from the
+same per-instance L1 invariant matviews the L1 Reconciliation
+Dashboard reads — exception tables, per-account-day Daily
+Statement walks, sign-off block, cryptographic provenance
+fingerprint binding the report to its source data.
+
+Use it when:
+
+- An auditor needs a printable artifact outside your QuickSight
+  account.
+- A SAR file needs an attached reconciliation snapshot for the
+  reporting period.
+- A regulator asks "show me what your books looked like on
+  these dates and prove the numbers".
+
+Generate one for the past 7 days:
+
+```bash
+quicksight-gen audit apply -c config.yaml \
+    --l2 path/to/instance.yaml \
+    --execute -o report.pdf
+```
+
+Override the period for a custom window:
+
+```bash
+quicksight-gen audit apply -c config.yaml \
+    --l2 path/to/instance.yaml \
+    --from 2026-04-01 --to 2026-04-30 \
+    --execute -o april-report.pdf
+```
+
+Verify a report's provenance against current source data:
+
+```bash
+quicksight-gen audit verify report.pdf -c config.yaml \
+    --l2 path/to/instance.yaml
+```
+
+The PDF auto-signs cryptographically when `config.yaml` carries
+a `signing:` block. The reviewer attestation page also embeds two
+empty signature widgets — your PDF reader can fill those in to
+add your countersignature.
+
+!!! note "For integrators — automate the daily report"
+    The audit report is intended to be **automatically generated
+    daily** by the same scheduled job that runs the matview
+    refresh after each ETL load. Wire `quicksight-gen audit apply
+    --execute` immediately after `quicksight-gen data refresh
+    --execute` in your cron / Airflow / Prefect pipeline, write
+    the PDF to a dated path, and the compliance team always has
+    yesterday's reconciliation snapshot ready to hand off without
+    a manual generate step.
+
+For the full reference — what each section contains, the
+provenance recompute recipe, certificate creation instructions,
+how reviewer countersignatures work — see the
+[Audit Reconciliation Report handbook](../handbook/audit.md).
+
 ## The concepts you'll want grounded
 
 - [Open vs. closed loop](../concepts/accounting/open-vs-closed-loop.md) —
