@@ -1308,6 +1308,11 @@ def audit_apply(
     daily_statement_walks = _query_daily_statement_walks(
         _cfg, instance, (start, end), internal_singleton_ids,
     )
+    provenance = _compute_provenance(
+        _cfg, instance,
+        l2_instance_path=l2_instance_path,
+        version=_qsg_version,
+    )
     # Resolve once + thread through so the audit PDF picks up the L2's
     # branded palette (or DEFAULT_PRESET when no theme override). Per
     # CLAUDE.md: never hardcode hex colors in render code.
@@ -1332,6 +1337,7 @@ def audit_apply(
             theme=theme,
             version=_qsg_version,
             l2_label=l2_label,
+            provenance=provenance,
         )
         click.echo(
             f"Wrote audit report to {out_path} "
@@ -1354,6 +1360,7 @@ def audit_apply(
         singleton_ids=singleton_ids,
         version=_qsg_version,
         l2_label=l2_label,
+        provenance=provenance,
     )
     if output is None:
         click.echo(markdown, nl=False)
@@ -1421,15 +1428,267 @@ def audit_test(pytest_args: str) -> None:
 
 
 def _l2_fingerprint_placeholder() -> str:
-    """Provenance-fingerprint placeholder.
+    """Long-form fingerprint placeholder for the no-DB code path.
 
-    U.7 replaces this with ``sha256(L2_instance_fingerprint ||
-    sorted_matview_row_hashes || period_anchor)`` and adds an
-    ``audit verify`` subcommand. The placeholder text is distinctive
-    enough that grep'ing the rendered report for it catches a "we
-    shipped without wiring U.7" regression before the auditor does.
+    Used on the cover-page provenance block + sign-off page when the
+    audit ran without ``demo_database_url`` configured (skeleton
+    mode — no DB queries, no real fingerprint to compute). When the
+    DB is wired the renderers receive a ``ProvenanceFingerprint``
+    and substitute its real ``composite_sha`` instead.
     """
     return "<pending — see Phase U.7>"
+
+
+# -- Provenance fingerprint (U.7) ---------------------------------------------
+
+# Canonical column order = alphabetical-by-lowercased-name, discovered
+# at hash time from ``cur.description``. Hardcoding the column list
+# would be a footgun: a new column added to the base table would be
+# silently excluded from the fingerprint, producing a hash that
+# claimed "this binds the report to its source data" while missing
+# whatever the new column carries. Discovery + alphabetical sort
+# keeps determinism without the maintenance burden.
+
+
+@dataclass(frozen=True)
+class ProvenanceFingerprint:
+    """The four base inputs that fully determine an audit report.
+
+    Locked per U.7: hash the **base tables** (transactions +
+    daily_balances) bounded by their high-water-mark ``entry`` ids,
+    plus the L2 instance YAML and the quicksight-gen code identity.
+    Matviews are deliberately excluded — they're derived data; a
+    fingerprint over them would conflate "the source data changed"
+    with "we recomputed the matview SQL differently", and the
+    auditor needs to bind the report to the AUTHORITATIVE source.
+
+    ``composite_sha`` is the SHA256 of the per-source values
+    concatenated in a fixed order; ``short`` is the first 8 hex
+    chars (footer). The dict-form serializes to JSON for embedding
+    in PDF metadata so ``audit verify`` can recompute and compare.
+    """
+    transactions_hwm: int
+    transactions_sha: str
+    balances_hwm: int
+    balances_sha: str
+    l2_yaml_sha: str
+    code_identity: str
+
+    @property
+    def composite_sha(self) -> str:
+        import hashlib
+        h = hashlib.sha256()
+        h.update(f"tx_hwm={self.transactions_hwm}\n".encode())
+        h.update(f"tx_sha={self.transactions_sha}\n".encode())
+        h.update(f"bal_hwm={self.balances_hwm}\n".encode())
+        h.update(f"bal_sha={self.balances_sha}\n".encode())
+        h.update(f"l2_sha={self.l2_yaml_sha}\n".encode())
+        h.update(f"code={self.code_identity}\n".encode())
+        return h.hexdigest()
+
+    @property
+    def short(self) -> str:
+        return self.composite_sha[:8]
+
+    def to_dict(self) -> dict:
+        return {
+            "schema": "qsg-audit-provenance-v1",
+            "composite_sha": self.composite_sha,
+            "transactions_hwm": self.transactions_hwm,
+            "transactions_sha": self.transactions_sha,
+            "balances_hwm": self.balances_hwm,
+            "balances_sha": self.balances_sha,
+            "l2_yaml_sha": self.l2_yaml_sha,
+            "code_identity": self.code_identity,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "ProvenanceFingerprint":
+        if d.get("schema") != "qsg-audit-provenance-v1":
+            raise ValueError(
+                f"Unrecognized provenance schema: {d.get('schema')!r}"
+            )
+        return cls(
+            transactions_hwm=int(d["transactions_hwm"]),
+            transactions_sha=str(d["transactions_sha"]),
+            balances_hwm=int(d["balances_hwm"]),
+            balances_sha=str(d["balances_sha"]),
+            l2_yaml_sha=str(d["l2_yaml_sha"]),
+            code_identity=str(d["code_identity"]),
+        )
+
+
+def _canonical_value(v) -> bytes:  # type: ignore[no-untyped-def]
+    """Stable bytes repr for one cell value when hashing rows.
+
+    Cross-dialect goal: PG and Oracle return the same logical row
+    as the same bytes here. ``Decimal`` via ``str()`` keeps trailing
+    zeros + sign; ``date``/``datetime`` via ``isoformat()`` is
+    timezone-naive (matches our schema convention); ``bool`` is
+    coerced to ``"1"``/``"0"`` since Oracle returns ints for
+    booleans where PG returns Python bools; ``None`` is empty
+    string (distinct from the field separator).
+    """
+    if v is None:
+        return b""
+    if isinstance(v, bool):
+        return b"1" if v else b"0"
+    if isinstance(v, (int, float, Decimal)):
+        return str(v).encode("utf-8")
+    if isinstance(v, (date, datetime)):
+        return v.isoformat().encode("utf-8")
+    if isinstance(v, bytes):
+        return v
+    return str(v).encode("utf-8")
+
+
+def _hash_table_rows(
+    cur,  # type: ignore[no-untyped-def]
+    *,
+    table: str,
+    hwm: int,
+) -> str:
+    """SHA256 over canonical row bytes for ``WHERE entry <= hwm``.
+
+    Column set is **discovered at runtime** from ``cur.description``
+    (DB-API 2.0 standard, works for both psycopg2 and oracledb)
+    and sorted alphabetically by lowercased name. This avoids the
+    footgun where a hardcoded column list would silently exclude
+    new columns added to the base table from the fingerprint —
+    producing a hash that claims "this binds to all source data"
+    while missing whatever the new column carries.
+
+    Lowercasing before sorting makes the order portable across
+    Postgres (returns lowercase identifiers) and Oracle (returns
+    UPPERCASE for unquoted identifiers).
+
+    Streams results so memory stays flat regardless of row count.
+    Field separator: ``\\x1f`` (unit separator). Row separator:
+    ``\\x1e`` (record separator). Both are control codes that
+    can't appear in our schema's data types, so we don't need to
+    escape them.
+    """
+    import hashlib
+
+    cur.execute(
+        f"SELECT * FROM {table}"
+        f" WHERE entry <= {hwm}"
+        f" ORDER BY entry"
+    )
+    # Sort column indices alphabetically by lowercased name so the
+    # row layout for hashing is dialect-independent + maintenance-free.
+    sorted_indices = [
+        idx for idx, _ in sorted(
+            enumerate(cur.description),
+            key=lambda i_d: i_d[1][0].lower(),
+        )
+    ]
+    h = hashlib.sha256()
+    for row in cur:
+        h.update(b"\x1f".join(
+            _canonical_value(row[i]) for i in sorted_indices
+        ))
+        h.update(b"\x1e")
+    return h.hexdigest()
+
+
+def _l2_yaml_sha256(l2_instance_path: str | None) -> str:
+    """SHA256 of the L2 YAML file bytes (verbatim, no normalization).
+
+    When the user passed ``--l2 path``, hash that file. When they
+    didn't (audit ran against the bundled default), reach into the
+    L1 dashboard package's ``_default_l2.yaml`` resource so the
+    fingerprint is still deterministic for the no-flag case.
+    """
+    import hashlib
+
+    if l2_instance_path is None:
+        from importlib.resources import as_file, files
+        pkg = files("quicksight_gen.apps.l1_dashboard")
+        with as_file(pkg / "_default_l2.yaml") as path:
+            data = Path(path).read_bytes()
+    else:
+        data = Path(l2_instance_path).read_bytes()
+    return hashlib.sha256(data).hexdigest()
+
+
+def _quicksight_gen_code_identity(version: str) -> str:
+    """Code identity string baked into the fingerprint.
+
+    Prefer ``v{version}+g{git_short}`` when running from a git
+    checkout (carries both the released version AND the precise
+    commit, matching the user's plan note for U.7). Fall back to
+    just ``v{version}`` when ``git`` isn't available (pip-installed
+    package, no .git dir nearby) so the fingerprint stays
+    deterministic for distributed installs.
+    """
+    import shutil
+
+    if shutil.which("git") is None:
+        return f"v{version}"
+    try:
+        # Run from this file's directory so ``git`` finds the
+        # right repo even when the user invoked the CLI from
+        # somewhere else in the filesystem.
+        result = subprocess.run(
+            ["git", "rev-parse", "--short=12", "HEAD"],
+            cwd=Path(__file__).parent,
+            capture_output=True, text=True, timeout=5,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return f"v{version}"
+    if result.returncode != 0:
+        return f"v{version}"
+    sha = result.stdout.strip()
+    return f"v{version}+g{sha}" if sha else f"v{version}"
+
+
+def _compute_provenance(
+    cfg, instance,  # type: ignore[no-untyped-def]
+    *,
+    l2_instance_path: str | None,
+    version: str,
+) -> ProvenanceFingerprint | None:
+    """Compute the report's full provenance fingerprint.
+
+    Returns ``None`` when ``demo_database_url`` is not configured —
+    the audit then renders with the long-form ``<pending>``
+    placeholder (skeleton mode). Reads ``MAX(entry)`` for both base
+    tables, hashes the rows up to those high-water marks, hashes
+    the L2 YAML file bytes, captures the code identity, and bundles
+    everything into a ``ProvenanceFingerprint`` whose ``composite_sha``
+    binds the audit report to its inputs.
+    """
+    if cfg.demo_database_url is None:
+        return None
+
+    from quicksight_gen.common.db import connect_demo_db
+
+    prefix = instance.instance
+    conn = connect_demo_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute(f"SELECT COALESCE(MAX(entry), 0) FROM {prefix}_transactions")
+        tx_hwm = int(cur.fetchone()[0] or 0)
+        cur.execute(f"SELECT COALESCE(MAX(entry), 0) FROM {prefix}_daily_balances")
+        bal_hwm = int(cur.fetchone()[0] or 0)
+        tx_sha = _hash_table_rows(
+            cur, table=f"{prefix}_transactions", hwm=tx_hwm,
+        )
+        bal_sha = _hash_table_rows(
+            cur, table=f"{prefix}_daily_balances", hwm=bal_hwm,
+        )
+    finally:
+        conn.close()
+
+    return ProvenanceFingerprint(
+        transactions_hwm=tx_hwm,
+        transactions_sha=tx_sha,
+        balances_hwm=bal_hwm,
+        balances_sha=bal_sha,
+        l2_yaml_sha=_l2_yaml_sha256(l2_instance_path),
+        code_identity=_quicksight_gen_code_identity(version),
+    )
 
 
 def _render_audit_markdown(
@@ -1448,6 +1707,7 @@ def _render_audit_markdown(
     singleton_ids: set[str],
     version: str,
     l2_label: str,
+    provenance: ProvenanceFingerprint | None,
 ) -> str:
     """Markdown rendering of the audit report.
 
@@ -1458,7 +1718,11 @@ def _render_audit_markdown(
     committing to a real PDF write.
     """
     start, end = period
-    fingerprint = _l2_fingerprint_placeholder()
+    fingerprint = (
+        provenance.composite_sha
+        if provenance is not None
+        else _l2_fingerprint_placeholder()
+    )
     cover = (
         "# QuickSight Generator Audit Report\n"
         "\n"
@@ -1496,6 +1760,7 @@ def _render_audit_markdown(
             generated_at=generated_at,
             version=version,
             l2_label=l2_label,
+            provenance=provenance,
         )
     )
     return cover + body
@@ -2072,6 +2337,7 @@ def _render_signoff_markdown(
     generated_at: datetime,
     version: str,
     l2_label: str,
+    provenance: ProvenanceFingerprint | None,
 ) -> str:
     """Sign-off page in Markdown form (U.5).
 
@@ -2084,7 +2350,11 @@ def _render_signoff_markdown(
     lands in U.7.
     """
     start, end = period
-    fingerprint = _l2_fingerprint_placeholder()
+    fingerprint = (
+        provenance.composite_sha
+        if provenance is not None
+        else _l2_fingerprint_placeholder()
+    )
     blank = "_" * 45
     return (
         "\n"
@@ -2217,6 +2487,7 @@ def _write_audit_pdf(
     theme,  # type: ignore[no-untyped-def] # ThemePreset
     version: str,
     l2_label: str,
+    provenance: ProvenanceFingerprint | None,
 ) -> None:
     """Render the audit report as a PDF.
 
@@ -2252,6 +2523,16 @@ def _write_audit_pdf(
     # _allSatisfied stamps the just-stabilized page count here; pass 2's
     # footer drawer reads it back as "Page X of N".
     total_pages_holder: list[int] = [0]
+    # Provenance fingerprint embedded in PDF metadata (Subject) as a
+    # JSON blob so ``audit verify`` can extract it from the PDF
+    # without re-running the audit. When provenance is None
+    # (skeleton mode, no DB), Subject stays empty.
+    import json as _json
+    subject_meta = (
+        _json.dumps(provenance.to_dict(), separators=(",", ":"))
+        if provenance is not None
+        else ""
+    )
     doc = _AuditDocTemplate(
         str(path),
         pagesize=letter,
@@ -2260,6 +2541,8 @@ def _write_audit_pdf(
         topMargin=0.75 * inch,
         bottomMargin=0.85 * inch,  # extra room for the page footer
         title=f"QuickSight Generator Audit Report — {institution}",
+        subject=subject_meta,
+        author=f"quicksight-gen v{version}",
         total_pages_holder=total_pages_holder,
     )
     footer_drawer = _make_footer_drawer(
@@ -2267,6 +2550,7 @@ def _write_audit_pdf(
         version=version,
         generated_at=generated_at,
         total_pages_holder=total_pages_holder,
+        provenance=provenance,
     )
     main_frame = Frame(
         doc.leftMargin, doc.bottomMargin,
@@ -2348,6 +2632,7 @@ def _write_audit_pdf(
     story.extend(_provenance_block_story(
         styles, theme,
         version=version, l2_label=l2_label,
+        provenance=provenance,
     ))
     story.extend([
         # Table of contents (own page, no bookmark — auditor scrolls
@@ -2386,6 +2671,7 @@ def _write_audit_pdf(
         generated_at=generated_at,
         version=version,
         l2_label=l2_label,
+        provenance=provenance,
     ))
     # multiBuild = two-pass render so TableOfContents picks up the
     # final page numbers (pass 1 collects via the afterFlowable hook,
@@ -3611,6 +3897,7 @@ def _signoff_story(
     generated_at: datetime,
     version: str,
     l2_label: str,
+    provenance: ProvenanceFingerprint | None,
 ) -> list:
     """Final-page sign-off block with system + auditor attestation (U.5).
 
@@ -3666,8 +3953,12 @@ def _signoff_story(
         [Paragraph("Provenance fingerprint", label_style),
          Paragraph(
              "<font face='Courier'>"
-             + _l2_fingerprint_placeholder()
-                 .replace("<", "&lt;").replace(">", "&gt;")
+             + (
+                 provenance.composite_sha
+                 if provenance is not None
+                 else _l2_fingerprint_placeholder()
+                     .replace("<", "&lt;").replace(">", "&gt;")
+             )
              + "</font>",
              cell_style,
          )],
@@ -3797,6 +4088,7 @@ def _make_footer_drawer(
     version: str,
     generated_at: datetime,
     total_pages_holder: list,
+    provenance: ProvenanceFingerprint | None,
 ):  # type: ignore[no-untyped-def]
     """Build a per-page footer drawer with U.6 chrome.
 
@@ -3818,6 +4110,10 @@ def _make_footer_drawer(
     page 1. The two-pass closure here keeps reportlab's normal
     page-template chrome flow untouched, so bookmarks resolve
     correctly through the standard machinery.
+
+    Per U.7: when provenance is computed, the footer renders the
+    real short fingerprint (first 8 hex of composite SHA256); when
+    not, the ``pending`` placeholder.
     """
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import letter
@@ -3825,7 +4121,11 @@ def _make_footer_drawer(
 
     secondary_fg = colors.HexColor(theme.secondary_fg)
     timestamp = generated_at.strftime("%Y-%m-%d %H:%M")
-    short_fp = _short_fingerprint_placeholder()
+    short_fp = (
+        provenance.short
+        if provenance is not None
+        else _short_fingerprint_placeholder()
+    )
 
     def _draw_footer(canvas, doc) -> None:  # type: ignore[no-untyped-def]
         canvas.saveState()
@@ -3857,6 +4157,7 @@ def _provenance_block_story(
     *,
     version: str,
     l2_label: str,
+    provenance: ProvenanceFingerprint | None,
 ) -> list:
     """Cover-page long-form source-data provenance block (U.6).
 
@@ -3900,7 +4201,7 @@ def _provenance_block_story(
         fontName="Courier",
     )
 
-    long_fp = _l2_fingerprint_placeholder().replace(
+    placeholder = _l2_fingerprint_placeholder().replace(
         "<", "&lt;",
     ).replace(">", "&gt;")
 
@@ -3911,16 +4212,29 @@ def _provenance_block_story(
             Paragraph(hash_text, code_style),
         ]
 
+    if provenance is not None:
+        tx_hwm = str(provenance.transactions_hwm)
+        tx_sha = provenance.transactions_sha
+        bal_hwm = str(provenance.balances_hwm)
+        bal_sha = provenance.balances_sha
+        l2_sha = provenance.l2_yaml_sha
+        code_id = provenance.code_identity
+        code_sha = provenance.composite_sha
+    else:
+        tx_hwm = tx_sha = bal_hwm = bal_sha = l2_sha = placeholder
+        code_id = f"v{version}"
+        code_sha = placeholder
+
     rows = [
         [
             Paragraph("Source", header_style),
             Paragraph("Last entry / version", header_style),
             Paragraph("SHA256", header_style),
         ],
-        _row("Transactions table", long_fp, long_fp),
-        _row("Daily balances table", long_fp, long_fp),
-        _row("L2 instance YAML", l2_label, long_fp),
-        _row("quicksight-gen code", f"v{version}", long_fp),
+        _row("Transactions table", tx_hwm, tx_sha),
+        _row("Daily balances table", bal_hwm, bal_sha),
+        _row("L2 instance YAML", l2_label, l2_sha),
+        _row("quicksight-gen code", code_id, code_sha),
     ]
     table = Table(
         rows,
