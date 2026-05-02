@@ -1424,6 +1424,137 @@ def audit_test(pytest_args: str) -> None:
     click.echo("audit test: OK")
 
 
+@audit.command("verify")
+@click.argument("pdf_path", type=click.Path(exists=True, dir_okay=False))
+@l2_instance_option()
+@config_option(required_for_dialect_only=True)
+def audit_verify(
+    pdf_path: str,
+    l2_instance_path: str | None,
+    config: str,
+) -> None:
+    """Verify an audit PDF's embedded provenance fingerprint (U.7).
+
+    Extracts the ``ProvenanceFingerprint`` JSON embedded in the
+    PDF's ``/Subject`` metadata, recomputes each input from current
+    sources (DB rows up to the embedded high-water-mark, L2 yaml
+    bytes on disk, current quicksight-gen code identity), and
+    reports per-source matches/diffs.
+
+    Recomputes against the EMBEDDED hwm (not current ``MAX(entry)``)
+    so the verification reproduces the report's snapshot point —
+    new rows added since report-generation time don't trigger a
+    false diff. A diff fires only when bytes that the fingerprint
+    actually covers have changed: a row at or below the embedded
+    hwm was modified, the L2 yaml was edited, or the code identity
+    changed.
+
+    Exits 0 on full match, 1 with a per-source diff on mismatch.
+    """
+    from pypdf import PdfReader
+    import json as _json
+
+    from quicksight_gen import __version__ as _qsg_version
+
+    reader = PdfReader(pdf_path)
+    subject = reader.metadata.get("/Subject", "") if reader.metadata else ""
+    if not subject:
+        raise click.ClickException(
+            f"{pdf_path} has no embedded provenance — was it "
+            f"generated with --execute against a configured DB?"
+        )
+    try:
+        embedded_dict = _json.loads(subject)
+        embedded = ProvenanceFingerprint.from_dict(embedded_dict)
+    except (ValueError, KeyError) as e:
+        raise click.ClickException(
+            f"Embedded provenance in {pdf_path} is unreadable: {e}"
+        )
+
+    cfg, instance = resolve_l2_for_demo(config, l2_instance_path)
+    if cfg.demo_database_url is None:
+        raise click.ClickException(
+            "audit verify needs --config with demo_database_url set "
+            "to recompute table hashes against the live DB."
+        )
+
+    from quicksight_gen.common.db import connect_demo_db
+
+    prefix = instance.instance
+    conn = connect_demo_db(cfg)
+    try:
+        cur = conn.cursor()
+        # Sanity: embedded hwm must not exceed current MAX(entry) —
+        # if it does, the table was truncated/replaced and the rows
+        # the report bound to are gone.
+        cur.execute(
+            f"SELECT COALESCE(MAX(entry), 0) FROM {prefix}_transactions"
+        )
+        tx_max = int(cur.fetchone()[0] or 0)
+        cur.execute(
+            f"SELECT COALESCE(MAX(entry), 0) FROM {prefix}_daily_balances"
+        )
+        bal_max = int(cur.fetchone()[0] or 0)
+        if tx_max < embedded.transactions_hwm:
+            raise click.ClickException(
+                f"transactions table MAX(entry)={tx_max} is below "
+                f"embedded high-water-mark {embedded.transactions_hwm}; "
+                f"rows the report bound to are gone."
+            )
+        if bal_max < embedded.balances_hwm:
+            raise click.ClickException(
+                f"daily_balances MAX(entry)={bal_max} is below "
+                f"embedded high-water-mark {embedded.balances_hwm}; "
+                f"rows the report bound to are gone."
+            )
+        tx_sha_now = _hash_table_rows(
+            cur, table=f"{prefix}_transactions",
+            hwm=embedded.transactions_hwm,
+        )
+        bal_sha_now = _hash_table_rows(
+            cur, table=f"{prefix}_daily_balances",
+            hwm=embedded.balances_hwm,
+        )
+    finally:
+        conn.close()
+
+    l2_sha_now = _l2_yaml_sha256(l2_instance_path)
+    code_now = _quicksight_gen_code_identity(_qsg_version)
+
+    diffs: list[tuple[str, str, str]] = []
+
+    def _check(label: str, embedded_val: str, current_val: str) -> None:
+        if embedded_val != current_val:
+            diffs.append((label, embedded_val, current_val))
+
+    _check("transactions_sha", embedded.transactions_sha, tx_sha_now)
+    _check("balances_sha", embedded.balances_sha, bal_sha_now)
+    _check("l2_yaml_sha", embedded.l2_yaml_sha, l2_sha_now)
+    _check("code_identity", embedded.code_identity, code_now)
+
+    short_was = embedded.composite_sha[:8]
+    if not diffs:
+        click.echo(f"OK: {pdf_path} verifies against current sources")
+        click.echo(f"     composite = {embedded.composite_sha}")
+        click.echo(
+            f"     bound to  tx_hwm={embedded.transactions_hwm} "
+            f"bal_hwm={embedded.balances_hwm}"
+        )
+        return
+    click.echo(
+        f"DIFF: {pdf_path} does not match current sources "
+        f"(was {short_was}…)",
+        err=True,
+    )
+    for label, was, now in diffs:
+        click.echo(f"  {label}:", err=True)
+        click.echo(f"    embedded: {was}", err=True)
+        click.echo(f"    current:  {now}", err=True)
+    raise click.ClickException(
+        f"{len(diffs)} input(s) diverged — see per-source diff above"
+    )
+
+
 # -- Renderers (cover page — U.2+ appends body sections) ----------------------
 
 

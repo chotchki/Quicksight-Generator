@@ -54,6 +54,85 @@ def test_audit_help_lists_subcommands():
     assert "apply" in result.output
     assert "clean" in result.output
     assert "test" in result.output
+    assert "verify" in result.output
+
+
+def test_audit_verify_errors_on_pdf_without_provenance(
+    min_config: Path, tmp_path: Path,
+):
+    """``audit verify`` against a PDF generated without a DB has no
+    embedded provenance — must error out cleanly, not crash."""
+    out = tmp_path / "report.pdf"
+    runner = CliRunner()
+    # Generate without DB → no embedded provenance.
+    apply_result = runner.invoke(
+        main,
+        [
+            "audit", "apply",
+            "-c", str(min_config),
+            "--l2", str(_SPEC_EXAMPLE),
+            "-o", str(out),
+            "--execute",
+        ],
+    )
+    assert apply_result.exit_code == 0, apply_result.output
+
+    verify_result = runner.invoke(
+        main,
+        [
+            "audit", "verify", str(out),
+            "-c", str(min_config),
+            "--l2", str(_SPEC_EXAMPLE),
+        ],
+    )
+    assert verify_result.exit_code != 0
+    assert "no embedded provenance" in verify_result.output
+
+
+def test_audit_verify_errors_on_missing_pdf(
+    min_config: Path, tmp_path: Path,
+):
+    """``audit verify`` requires the PDF to exist."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "audit", "verify", str(tmp_path / "nope.pdf"),
+            "-c", str(min_config),
+        ],
+    )
+    assert result.exit_code != 0
+
+
+def test_provenance_fingerprint_round_trips_through_dict():
+    """to_dict / from_dict round trip preserves every field +
+    composite_sha so the embedded JSON in a PDF can be rehydrated
+    by ``audit verify`` without information loss.
+    """
+    from quicksight_gen.cli.audit import ProvenanceFingerprint
+    fp = ProvenanceFingerprint(
+        transactions_hwm=42,
+        transactions_sha="a" * 64,
+        balances_hwm=7,
+        balances_sha="b" * 64,
+        l2_yaml_sha="c" * 64,
+        code_identity="v8.1.0+gabc1234567890",
+    )
+    payload = fp.to_dict()
+    rehydrated = ProvenanceFingerprint.from_dict(payload)
+    assert rehydrated == fp
+    assert rehydrated.composite_sha == fp.composite_sha
+    assert rehydrated.short == fp.composite_sha[:8]
+
+
+def test_provenance_fingerprint_rejects_unknown_schema():
+    """from_dict guards against rehydrating a future schema version
+    that the running code doesn't understand — better to fail loud
+    than silently misverify.
+    """
+    from quicksight_gen.cli.audit import ProvenanceFingerprint
+    with pytest.raises(ValueError, match="Unrecognized provenance schema"):
+        ProvenanceFingerprint.from_dict({"schema": "qsg-audit-provenance-v999"})
 
 
 def test_audit_apply_emits_markdown_to_stdout(min_config: Path):
