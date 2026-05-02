@@ -335,6 +335,7 @@ class OverdraftViolation:
     account_id: str
     account_name: str
     account_role: str
+    account_parent_role: str  # empty string when account has no parent
     business_day: date
     stored_balance: Decimal
 
@@ -365,7 +366,8 @@ def _query_overdraft_violations(
         cur = conn.cursor()
         cur.execute(
             f"SELECT account_id, account_name, account_role,"
-            f"       business_day_end, stored_balance"
+            f"       account_parent_role, business_day_end,"
+            f"       stored_balance"
             f"  FROM {prefix}_overdraft"
             f" WHERE business_day_start >= {start_lit}"
             f"   AND business_day_start < {end_excl_lit}"
@@ -377,10 +379,11 @@ def _query_overdraft_violations(
                 account_id=str(r[0]),
                 account_name=str(r[1] or ""),
                 account_role=str(r[2] or ""),
+                account_parent_role=str(r[3] or ""),
                 business_day=(
-                    r[3].date() if hasattr(r[3], "date") else r[3]
+                    r[4].date() if hasattr(r[4], "date") else r[4]
                 ),
-                stored_balance=Decimal(r[4] or 0),
+                stored_balance=Decimal(r[5] or 0),
             )
             for r in cur.fetchall()
         ]
@@ -389,52 +392,65 @@ def _query_overdraft_violations(
 
 
 @dataclass(frozen=True)
-class OverdraftSummaryRow:
-    """Per-account aggregate for shared (N-N) accounts in the period.
+class OverdraftChildGroupSummary:
+    """Per parent-role roll-up of overdrawn child (template) accounts.
 
-    A GL clearing or concentration account that goes overdrawn every
-    day of the period would emit one matview row per day; collapsing
-    those into a single per-account summary keeps the audit page
-    skimmable for the auditor.
+    Children share a parent role in the L2 hierarchy. Routine
+    customer-account overdrafts roll up into one row per parent role
+    showing distinct-children-negative + summed peak-negative — keeps
+    the audit page skimmable while preserving total dollar exposure.
+    A specific child's per-day detail is recoverable from the
+    underlying matview if the auditor wants to drill in.
     """
-    account_id: str
-    account_name: str
-    account_role: str
-    days_overdrawn: int
-    peak_negative_balance: Decimal  # most-negative balance in the period
+    parent_role: str
+    distinct_children_negative: int
+    total_peak_negative: Decimal
 
 
 def _split_overdraft_by_account_class(
     rows: list[OverdraftViolation],
     singleton_ids: set[str],
-) -> tuple[list[OverdraftViolation], list[OverdraftSummaryRow]]:
-    """Bucket per-row drift into (1-1 detail, N-N per-account summary).
+) -> tuple[list[OverdraftViolation], list[OverdraftChildGroupSummary]]:
+    """Bucket rows into (parent per-row detail, child rolled up by parent role).
 
-    Membership in ``singleton_ids`` (the L2 ``Account`` IDs)
-    discriminates: in-set rows roll up into one summary per account
-    sorted by peak severity; out-of-set rows pass through as detail.
+    Parents (L2 ``Account`` singletons): every occurrence emits a
+    detail row — a parent itself going negative is a systemic issue
+    each instance of which is independently worth surfacing.
+
+    Children (template-materialized): grouped by ``account_parent_role``
+    so each parent role gets one summary row carrying how many
+    distinct children went negative in the period and the sum of
+    each child's peak negative balance.
     """
-    detail: list[OverdraftViolation] = []
-    by_singleton: dict[str, list[OverdraftViolation]] = {}
+    parent_rows: list[OverdraftViolation] = []
+    by_parent: dict[str, dict[str, list[OverdraftViolation]]] = {}
     for r in rows:
         if r.account_id in singleton_ids:
-            by_singleton.setdefault(r.account_id, []).append(r)
+            parent_rows.append(r)
         else:
-            detail.append(r)
-    summary = sorted(
+            key = r.account_parent_role or "(no parent)"
+            by_parent.setdefault(key, {}).setdefault(
+                r.account_id, [],
+            ).append(r)
+    child_summaries = sorted(
         (
-            OverdraftSummaryRow(
-                account_id=group[0].account_id,
-                account_name=group[0].account_name,
-                account_role=group[0].account_role,
-                days_overdrawn=len({r.business_day for r in group}),
-                peak_negative_balance=min(r.stored_balance for r in group),
+            OverdraftChildGroupSummary(
+                parent_role=parent_role,
+                distinct_children_negative=len(children),
+                total_peak_negative=sum(
+                    (
+                        min(r.stored_balance for r in child_rows)
+                        for child_rows in children.values()
+                    ),
+                    start=Decimal(0),
+                ),
             )
-            for group in by_singleton.values()
+            for parent_role, children in by_parent.items()
         ),
-        key=lambda s: (s.peak_negative_balance, s.account_id),
+        # Most-negative total first (worst exposure on top).
+        key=lambda s: (s.total_peak_negative, s.parent_role),
     )
-    return detail, summary
+    return parent_rows, child_summaries
 
 
 @audit.command("apply")
@@ -750,9 +766,12 @@ def _render_overdraft_markdown(
 ) -> str:
     """Overdraft violations section in Markdown form.
 
-    Splits rows into customer accounts (per-row detail) and shared
-    L2-singleton accounts (per-account aggregate summary). Same
-    None / [] / non-empty convention as the Drift section.
+    Splits rows into parent accounts (L2 ``Account`` singletons —
+    per-row detail because a parent itself going negative is a
+    systemic event) and child accounts (template-materialized —
+    rolled up by parent role with distinct-children-negative +
+    total-peak-negative). Same None / [] / non-empty convention as
+    the Drift section.
     """
     header = (
         "\n"
@@ -762,9 +781,11 @@ def _render_overdraft_markdown(
         "\n"
         "_Account-days where the stored end-of-day balance went "
         "negative. Sourced from `<prefix>_overdraft` matview. "
-        "Customer accounts shown per-row; shared L2-singleton "
-        "accounts (GL clearing, concentration, ZBA) collapsed into "
-        "a per-account summary to keep the report skimmable._\n"
+        "Parent accounts (L2 singletons — GL clearing, concentration, "
+        "ZBA master) are shown per-row because a parent itself going "
+        "negative is a systemic event. Child accounts (templated, "
+        "e.g. customer DDAs, ZBA sub-accounts) roll up by parent "
+        "role with distinct-children-negative + summed-peak-negative._\n"
     )
     if rows is None:
         return header + (
@@ -776,38 +797,38 @@ def _render_overdraft_markdown(
             "\n_No overdrafts detected for the period._\n"
         )
 
-    detail, summary = _split_overdraft_by_account_class(rows, singleton_ids)
+    parent_rows, child_groups = _split_overdraft_by_account_class(
+        rows, singleton_ids,
+    )
     out = header
-    if detail:
+    if parent_rows:
         out += (
             "\n"
-            "### Customer accounts (per-row detail)\n"
+            "### Parent accounts (per-row detail)\n"
             "\n"
             "| Account ID | Account name | Role | Day | Stored balance |\n"
             "|---|---|---|---|---:|\n"
         )
-        for r in detail:
+        for r in parent_rows:
             out += (
                 f"| `{r.account_id}` | {r.account_name} | "
                 f"{r.account_role} | {r.business_day.isoformat()} | "
                 f"${r.stored_balance:,.2f} |\n"
             )
     else:
-        out += "\n_No customer-account overdrafts in the period._\n"
-    if summary:
+        out += "\n_No parent-account overdrafts in the period._\n"
+    if child_groups:
         out += (
             "\n"
-            "### Shared accounts (per-account summary)\n"
+            "### Child accounts grouped by parent role\n"
             "\n"
-            "| Account ID | Account name | Role | Days overdrawn "
-            "| Peak negative balance |\n"
-            "|---|---|---|---:|---:|\n"
+            "| Parent role | Children negative | Total peak negative |\n"
+            "|---|---:|---:|\n"
         )
-        for s in summary:
+        for s in child_groups:
             out += (
-                f"| `{s.account_id}` | {s.account_name} | "
-                f"{s.account_role} | {s.days_overdrawn} | "
-                f"${s.peak_negative_balance:,.2f} |\n"
+                f"| {s.parent_role} | {s.distinct_children_negative} "
+                f"| ${s.total_peak_negative:,.2f} |\n"
             )
     return out
 
@@ -1140,12 +1161,13 @@ def _overdraft_story(
 ) -> list:  # type: ignore[type-arg]
     """Platypus elements for the U.3.b Overdraft violations page.
 
-    Renders TWO sub-tables when both classes have rows:
-      - Customer accounts (template-materialized): per-row detail.
-      - Shared accounts (L2 ``Account`` singletons): per-account
-        aggregate (days_overdrawn + peak_negative_balance) so the
-        report stays skimmable when GL clearing accounts cascade
-        into negative every day of the period.
+    Renders up to TWO sub-tables:
+      - Parent accounts (L2 ``Account`` singletons): per-row detail
+        — each occurrence of a parent itself going negative is a
+        systemic event worth surfacing individually.
+      - Child accounts (template-materialized): grouped by parent
+        role; one row per parent role with distinct-children-negative
+        + summed-peak-negative.
     Empty sub-tables are omitted; the section header still renders.
     """
     from reportlab.lib import colors
@@ -1171,9 +1193,11 @@ def _overdraft_story(
         ),
         Paragraph(
             "<i>Account-days where the stored end-of-day balance "
-            "went negative. Customer accounts shown per-row; shared "
-            "L2-singleton accounts (GL clearing, concentration, "
-            "ZBA) collapsed into a per-account summary.</i>",
+            "went negative. Parent accounts (L2 singletons &mdash; "
+            "GL clearing, concentration, ZBA master) shown per-row "
+            "because a parent itself going negative is systemic. "
+            "Child accounts (templated, e.g. customer DDAs, ZBA "
+            "sub-accounts) roll up by parent role.</i>",
             styles["BodyText"],
         ),
         Spacer(1, 0.15 * inch),
@@ -1198,7 +1222,9 @@ def _overdraft_story(
         )
         return elements
 
-    detail, summary = _split_overdraft_by_account_class(rows, singleton_ids)
+    parent_rows, child_groups = _split_overdraft_by_account_class(
+        rows, singleton_ids,
+    )
     cell_style = ParagraphStyle(
         "OverdraftCell",
         parent=styles["BodyText"],
@@ -1224,10 +1250,10 @@ def _overdraft_story(
         ]),
     ])
 
-    if detail:
+    if parent_rows:
         elements.extend([
             Paragraph(
-                "Customer accounts (per-row detail)",
+                "Parent accounts (per-row detail)",
                 styles["Heading3"],
             ),
             Spacer(1, 0.05 * inch),
@@ -1235,7 +1261,7 @@ def _overdraft_story(
         detail_data: list[list] = [
             ["Account ID", "Account name", "Role", "Day", "Stored balance"],
         ]
-        for r in detail:
+        for r in parent_rows:
             detail_data.append([
                 Paragraph(r.account_id, cell_style),
                 Paragraph(r.account_name, cell_style),
@@ -1256,36 +1282,32 @@ def _overdraft_story(
         ))
         elements.append(Spacer(1, 0.25 * inch))
 
-    if summary:
+    if child_groups:
         elements.extend([
             Paragraph(
-                "Shared accounts (per-account summary)",
+                "Child accounts grouped by parent role",
                 styles["Heading3"],
             ),
             Spacer(1, 0.05 * inch),
         ])
-        summary_data: list[list] = [
-            ["Account ID", "Account name", "Role",
-             "Days overdrawn", "Peak negative balance"],
+        group_data: list[list] = [
+            ["Parent role", "Children negative", "Total peak negative"],
         ]
-        for s in summary:
-            summary_data.append([
-                Paragraph(s.account_id, cell_style),
-                Paragraph(s.account_name, cell_style),
-                Paragraph(s.account_role, cell_style),
-                f"{s.days_overdrawn}",
-                f"${s.peak_negative_balance:,.2f}",
+        for s in child_groups:
+            group_data.append([
+                Paragraph(s.parent_role, cell_style),
+                f"{s.distinct_children_negative}",
+                f"${s.total_peak_negative:,.2f}",
             ])
-        summary_style = TableStyle(
+        group_style = TableStyle(
             base_table_style.getCommands() + [
-                ("ALIGN", (3, 1), (-1, -1), "RIGHT"),
+                ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
             ],
         )
         elements.append(LongTable(
-            summary_data,
-            colWidths=[1.6 * inch, 1.5 * inch, 1.5 * inch,
-                       0.9 * inch, 1.4 * inch],
-            style=summary_style, repeatRows=1,
+            group_data,
+            colWidths=[3.0 * inch, 1.6 * inch, 2.3 * inch],
+            style=group_style, repeatRows=1,
         ))
     return elements
 
