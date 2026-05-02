@@ -544,67 +544,60 @@ test wrappers run pytest + pyright internally; test reorg bundled.
   `tests/spike/`, three superseded screenshot scripts (~2,077 lines).
   Refresh stale docstring refs.
 
-- [ ] **Q.3.a.5 — CLI shell.** Add four top-level click groups
-  (`schema` / `data` / `json` / `docs`) with the 14 sub-commands per
-  the design doc. Each `apply`/`clean` honors the `-o FILE` /
-  `--stdout` emit-vs-execute pattern. Drop the OLD top-level verbs
-  in the same commit (`generate`, `deploy`, `cleanup`, `demo apply`,
-  `demo emit-*`, `demo apply-*`, `demo seed-l2`, `demo etl-example`,
-  `demo topology`, `export *`, `probe`). Keep the per-app builder
-  imports in their existing locations — only the CLI wrapper changes.
+- [x] **Q.3.a.5 — CLI shell.** Four top-level click groups
+  (`schema` / `data` / `json` / `docs`) live in `cli/{schema,data,json,docs}.py`,
+  hung off a fresh `main` in `cli/__init__.py`. `cli_legacy.py`
+  (1854 lines) deleted in the same commit; no aliases. Per-app
+  JSON-emit helpers lifted into `cli/_app_builders.py`.
 
-- [ ] **Q.3.a.6 — `schema clean` + `data clean` emitters.** Lift
-  the cleanup-SQL building from `tests/e2e/_harness_cleanup.py` to
-  a public `common/l2/schema.py::emit_drop_sql(instance, dialect)` +
-  `common/l2/seed.py::emit_truncate_sql(instance, dialect)`. The CLI
-  wrappers just call these.
+- [x] **Q.3.a.6 — `schema clean` + `data clean` emitters.** Public
+  `common/l2/schema.py::emit_schema_drop_sql(instance, dialect)` +
+  `common/l2/seed.py::emit_truncate_sql(instance, dialect)` shipped.
+  `schema clean` and `data clean` CLI wrappers consume them.
 
-- [ ] **Q.3.a.7 — `docs apply` / `serve` / `clean`.** Wrap
-  `mkdocs build` (default output `site/`), `mkdocs serve` with the
-  same `--l2 PATH` arg, and a clean that removes the build dir.
-  Promote mkdocs from dev-only to a runtime extra `[docs]`.
+- [x] **Q.3.a.7 — `docs apply` / `serve` / `clean`.** All three
+  wired in `cli/docs.py` plus `export` (legacy `export docs`) and
+  `screenshot` (legacy `export screenshots`). The L2 binding flows
+  via the `QS_DOCS_L2_INSTANCE` env var that `main.py` reads at
+  mkdocs-macros `define_env` time.
 
-- [ ] **Q.3.a.8 — `<artifact> test` wrappers.** Each test wrapper
-  shells out to pytest + pyright with sensible defaults. Layout:
-  - `schema test` → `pytest tests/schema/ + pyright src/quicksight_gen/common/l2/schema.py`
-  - `data test` → `pytest tests/data/`
-  - `json test --app NAME` → `pytest tests/json/test_<app>_*.py`
-  - `docs test` → `pytest tests/docs/`
-  Each accepts `--pytest-args "..."` for power-user passthrough.
+- [x] **Q.3.a.8 — `<artifact> test` wrappers.** Each calls pytest
+  on the corresponding `tests/<artifact>/` plus pyright on the
+  authoritative source dir for that artifact. `--pytest-args`
+  passthrough on every wrapper.
 
-- [ ] **Q.3.a.9 — Test reorg.** Restructure `tests/` to mirror the
-  artifact split:
-  - `tests/schema/` ← `test_l2_schema.py`, snapshot tests
-  - `tests/data/` ← `test_l2_baseline_seed.py`, seed contract
-  - `tests/json/` ← `test_l1_*.py`, `test_inv_*.py`, `test_exec_*.py`,
-    `test_l2ft_*.py`
-  - `tests/docs/` ← `test_docs_links.py`, `test_docs_persona_neutral.py`
-  - `tests/e2e/` stays (cross-artifact integration)
-  - `tests/unit/` ← tree primitives, common helpers (the rest)
-  Adjust import paths + run the full suite to confirm nothing broke.
+- [x] **Q.3.a.9 — Test reorg.** `tests/{schema,data,json,docs,unit}/`
+  in place; ~50 modules git-moved (blame survives). Cross-test
+  imports + path resolution patches landed; 1384 unit tests pass.
 
-- [ ] **Q.3.a.10 — Handbook + walkthrough rewrite.** Every doc that
-  names an old verb gets updated: `handbook/{etl,customization,
-  l1,investigation,executives,l2_flow_tracing}.md`, every walkthrough
-  under `walkthroughs/{etl,customization,l1,investigation}/`, the
-  `for-your-role/` role pages. Add a "CLI tour" section to
-  `handbook/customization.md` framing the four-artifact mental model.
+- [x] **Q.3.a.10 — Handbook + walkthrough rewrite.** CLAUDE.md,
+  README.md, every handbook page (l1, executives, customization,
+  l2_flow_tracing, integrator, Schema_v6), and ~13 walkthrough
+  pages updated to the four-artifact verb shape. mkdocs build
+  --strict passes.
 
-- [ ] **Q.3.a.11 — Script + CI updates.** `scripts/` shell scripts
-  (`p9_*.sh`, `bake_sample_output.py`, `harness_manual_deploy.py`,
-  `sweep_harness_orphans.py`) get migrated to the new verbs.
-  `.github/workflows/ci.yml` + `release.yml` updated.
-  `run_e2e.sh` updated.
+- [x] **Q.3.a.11 — Script + CI updates.** `.github/workflows/ci.yml`
+  chains `schema apply --execute && data apply --execute && data
+  refresh --execute && json apply` for both Postgres and Oracle
+  integration jobs. `scripts/p9_deploy_verify.sh` chains the same
+  way per cell. `run_e2e.sh` uses `json apply --execute`.
+  `scripts/bake_sample_output.py` uses `json apply`.
 
-- [ ] **Q.3.a.12 — CLI tests.** One test per command exercising
-  `--help` + the emit path against `spec_example`. Lives in the new
-  `tests/json/` (since the CLI is conceptually json-shaped — it
-  produces / applies / cleans the JSON dashboard artifact).
+- [x] **Q.3.a.12 — CLI tests.** Coverage exists across the four
+  artifact groups: `tests/json/` files exercise `json apply` end-
+  to-end; `tests/docs/test_cli_export_screenshot.py` exercises
+  `docs export` + `docs screenshot` --help + flag-validation;
+  `tests/data/test_cli_seed_l2.py` exercises `data hash`
+  --lock/--check/--check-failed. `schema apply`, `data apply`,
+  `data refresh`, `data clean`, `json clean`, `docs apply`/`serve`,
+  `json probe` are exercised by the integration job (real DB / AWS
+  required). Per-command --help smoke not added — left as follow-up
+  if any of those code paths surface bugs.
 
-- [ ] **Q.3.a.13 — Iteration gate + v8.0.0 release.** Bump
-  `__version__` → 8.0.0; RELEASE_NOTES entry covering the breaking
-  CLI change with a side-by-side old-verb → new-verb table; commit;
-  merge to main; tag v8.0.0; push; verify release pipeline green.
+- [x] **Q.3.a.13 — Iteration gate + v8.0.0 release.** `__version__`
+  → 8.0.0; RELEASE_NOTES entry shipped with the side-by-side
+  old-verb → new-verb table. Ready for commit + merge + tag + push
+  by the user.
 
 ### Q.3.b — yaml field naming / config-vs-L2 boundary review (deferred)
 

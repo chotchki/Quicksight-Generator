@@ -156,10 +156,8 @@ brand colors don't matter yet.
 ### Step 2 — Regenerate and deploy
 
 ```bash
-quicksight-gen generate l1-dashboard \
-    --l2-instance acme_treasury.yaml \
-    -c config.yaml -o out/
-quicksight-gen deploy --all -c config.yaml -o out/
+quicksight-gen json apply --l2 acme_treasury.yaml -c config.yaml -o out/
+quicksight-gen json apply -c config.yaml -o out/ --execute
 ```
 
 The deploy delete-then-creates the theme + analyses + dashboards
@@ -218,7 +216,7 @@ brand:
 
 ## Brand assets on the docs site
 
-The docs site (the mkdocs handbook published from `export docs`)
+The docs site (the mkdocs handbook published from `docs export`)
 also reads brand assets from the L2 YAML's `theme:` block. Two
 optional fields:
 

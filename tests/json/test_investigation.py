@@ -1443,13 +1443,16 @@ def _write_min_config(tmp_path: Path) -> Path:
     return cfg_path
 
 
-def test_generate_investigation_subcommand_writes_files(tmp_path: Path):
+def test_json_apply_writes_investigation_files(tmp_path: Path):
+    """Q.3.a: ``json apply`` is the bundled emit verb; investigation
+    JSON files (analysis, dashboard, theme, recipient-fanout dataset)
+    land in the output dir."""
     cfg_path = _write_min_config(tmp_path)
     out_dir = tmp_path / "out"
     runner = CliRunner()
     result = runner.invoke(
         main,
-        ["generate", "-c", str(cfg_path), "-o", str(out_dir), "investigation"],
+        ["json", "apply", "-c", str(cfg_path), "-o", str(out_dir)],
     )
     assert result.exit_code == 0, result.output
     assert (out_dir / "theme.json").is_file()
@@ -1462,12 +1465,14 @@ def test_generate_investigation_subcommand_writes_files(tmp_path: Path):
     assert fanout_ds.is_file()
 
 
-def test_generate_all_writes_investigation_app_jsons(tmp_path: Path):
+def test_json_apply_writes_investigation_app_jsons(tmp_path: Path):
+    """Q.3.a: same `json apply` verb covers every app — re-asserts
+    investigation lands in the bundled emit alongside the others."""
     cfg_path = _write_min_config(tmp_path)
     out_dir = tmp_path / "out-all"
     runner = CliRunner()
     result = runner.invoke(
-        main, ["generate", "-c", str(cfg_path), "-o", str(out_dir), "--all"],
+        main, ["json", "apply", "-c", str(cfg_path), "-o", str(out_dir)],
     )
     assert result.exit_code == 0, result.output
     assert (out_dir / "investigation-analysis.json").is_file()

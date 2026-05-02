@@ -49,7 +49,10 @@ Three reference points:
 Run the three pre-flight checks against the seeded demo database:
 
 ```bash
-quicksight-gen demo apply --all -c run/config.yaml -o run/out/
+quicksight-gen schema apply -c run/config.yaml --execute && \
+    quicksight-gen data apply -c run/config.yaml --execute && \
+    quicksight-gen data refresh -c run/config.yaml --execute && \
+    quicksight-gen json apply -c run/config.yaml -o run/out/ --execute
 psql "$DEMO_DATABASE_URL" -f /tmp/preflight.sql
 ```
 

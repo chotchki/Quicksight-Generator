@@ -148,19 +148,19 @@ the declaration itself is healthy.
 ## Generation + deployment
 
 ```bash
-# Generate the dashboard JSON for an L2 instance
-quicksight-gen generate l2-flow-tracing -c run/config.yaml -o run/out
+# Generate JSON for all four bundled apps to run/out/
+quicksight-gen json apply -c run/config.yaml -o run/out
 
 # Target a specific L2 YAML (substitute your own path)
-quicksight-gen generate l2-flow-tracing \
-  --l2-instance tests/l2/<your-l2-instance>.yaml \
+quicksight-gen json apply \
+  --l2 tests/l2/<your-l2-instance>.yaml \
   -c run/config.yaml -o run/out
 
-# Deploy + auto-regenerate
-quicksight-gen deploy --generate -c run/config.yaml -o run/out l2-flow-tracing
+# Same emit, then deploy to AWS (delete-then-create)
+quicksight-gen json apply -c run/config.yaml -o run/out --execute
 ```
 
 The L2 instance defaults to the canonical `spec_example` fixture.
-Use `--l2-instance PATH` to target any other YAML; per-instance
-prefix isolation means multiple L2 instances can deploy into the
-same QuickSight account without colliding.
+Use `--l2 PATH` to target any other YAML; per-instance prefix
+isolation means multiple L2 instances can deploy into the same
+QuickSight account without colliding.

@@ -1,11 +1,17 @@
-"""CLI smoke tests for ``quicksight-gen demo seed-l2`` (M.2d.6).
+"""CLI smoke tests for ``quicksight-gen data hash`` (Q.3.a renamed).
+
+The Q.3.a redesign moved the canonical-date plant-only emit + hash-
+lock workflow off ``demo seed-l2`` and onto ``data hash``. The seed
+SQL itself is now produced by ``data apply`` (which composes the
+full-seed pipeline with today's baseline + plant overlays); ``data
+hash`` is exclusively about the ``seed_hash`` integrity check.
 
 Three flows:
-- Default: emit SQL to stdout (or `-o file`).
+- Default: emit canonical-date plant SQL to stdout (or `-o file`).
 - ``--lock``: rewrite the YAML's ``seed_hash:`` field with the actual
   auto-seed SHA256.
-- ``--check-hash``: exit 0 when YAML's ``seed_hash`` matches, exit 1
-  on mismatch.
+- ``--check``: exit 0 when YAML's ``seed_hash`` matches, exit 1 on
+  mismatch.
 """
 
 from __future__ import annotations
@@ -32,19 +38,19 @@ def tmp_yaml(tmp_path: Path) -> Path:
     return dst
 
 
-def test_seed_l2_emits_sql_to_stdout(tmp_yaml: Path) -> None:
+def test_data_hash_emits_sql_to_stdout(tmp_yaml: Path) -> None:
     runner = CliRunner()
-    result = runner.invoke(main, ["demo", "seed-l2", str(tmp_yaml)])
+    result = runner.invoke(main, ["data", "hash", str(tmp_yaml)])
     assert result.exit_code == 0, result.output
     assert "INSERT INTO spec_example_transactions" in result.output
     assert "INSERT INTO spec_example_daily_balances" in result.output
 
 
-def test_seed_l2_writes_to_file(tmp_yaml: Path, tmp_path: Path) -> None:
+def test_data_hash_writes_to_file(tmp_yaml: Path, tmp_path: Path) -> None:
     out = tmp_path / "seed.sql"
     runner = CliRunner()
     result = runner.invoke(
-        main, ["demo", "seed-l2", str(tmp_yaml), "-o", str(out)],
+        main, ["data", "hash", str(tmp_yaml), "-o", str(out)],
     )
     assert result.exit_code == 0, result.output
     assert out.is_file()
@@ -52,7 +58,7 @@ def test_seed_l2_writes_to_file(tmp_yaml: Path, tmp_path: Path) -> None:
     assert "INSERT INTO spec_example_transactions" in sql
 
 
-def test_seed_l2_lock_writes_hash_into_yaml(
+def test_data_hash_lock_writes_hash_into_yaml(
     tmp_yaml: Path, tmp_path: Path,
 ) -> None:
     """`--lock` writes the actual PG SHA256 into the YAML's seed_hash dict.
@@ -76,7 +82,7 @@ def test_seed_l2_lock_writes_hash_into_yaml(
     out = tmp_path / "out.sql"
     runner = CliRunner()
     result = runner.invoke(
-        main, ["demo", "seed-l2", str(tmp_yaml), "--lock", "-o", str(out)],
+        main, ["data", "hash", str(tmp_yaml), "--lock", "-o", str(out)],
     )
     assert result.exit_code == 0, result.output
 
@@ -92,7 +98,7 @@ def test_seed_l2_lock_writes_hash_into_yaml(
     assert written_hash == expected
 
 
-def test_seed_l2_lock_appends_when_field_missing(tmp_path: Path) -> None:
+def test_data_hash_lock_appends_when_field_missing(tmp_path: Path) -> None:
     """`--lock` on a YAML without seed_hash appends the field."""
     minimal = tmp_path / "no_hash.yaml"
     minimal.write_text(
@@ -121,7 +127,7 @@ def test_seed_l2_lock_appends_when_field_missing(tmp_path: Path) -> None:
     assert "seed_hash" not in minimal.read_text()
 
     runner = CliRunner()
-    result = runner.invoke(main, ["demo", "seed-l2", str(minimal), "--lock"])
+    result = runner.invoke(main, ["data", "hash", str(minimal), "--lock"])
     assert result.exit_code == 0, result.output
 
     text = minimal.read_text()
@@ -133,18 +139,18 @@ def test_seed_l2_lock_appends_when_field_missing(tmp_path: Path) -> None:
     )
 
 
-def test_seed_l2_check_hash_passes_when_matching(tmp_yaml: Path) -> None:
-    """`--check-hash` exits 0 when YAML's seed_hash matches actual."""
+def test_data_hash_check_passes_when_matching(tmp_yaml: Path) -> None:
+    """`--check` exits 0 when YAML's seed_hash matches actual."""
     runner = CliRunner()
     result = runner.invoke(
-        main, ["demo", "seed-l2", str(tmp_yaml), "--check-hash"],
+        main, ["data", "hash", str(tmp_yaml), "--check"],
     )
     assert result.exit_code == 0, result.output
     assert "[ok] seed_hash matches" in result.output
 
 
-def test_seed_l2_check_hash_fails_on_drift(tmp_yaml: Path) -> None:
-    """`--check-hash` exits 1 when YAML's seed_hash doesn't match actual.
+def test_data_hash_check_fails_on_drift(tmp_yaml: Path) -> None:
+    """`--check` exits 1 when YAML's seed_hash doesn't match actual.
 
     P.5.b — drift the postgres entry inside the seed_hash dict.
     """
@@ -160,14 +166,14 @@ def test_seed_l2_check_hash_fails_on_drift(tmp_yaml: Path) -> None:
 
     runner = CliRunner()
     result = runner.invoke(
-        main, ["demo", "seed-l2", str(tmp_yaml), "--check-hash"],
+        main, ["data", "hash", str(tmp_yaml), "--check"],
     )
     assert result.exit_code == 1
     assert "seed_hash mismatch" in result.output
 
 
-def test_seed_l2_check_hash_fails_when_field_absent(tmp_path: Path) -> None:
-    """`--check-hash` on a YAML lacking seed_hash explains how to lock it."""
+def test_data_hash_check_fails_when_field_absent(tmp_path: Path) -> None:
+    """`--check` on a YAML lacking seed_hash explains how to lock it."""
     minimal = tmp_path / "no_hash.yaml"
     minimal.write_text(
         "instance: no_hash_yet\n"
@@ -178,13 +184,13 @@ def test_seed_l2_check_hash_fails_when_field_absent(tmp_path: Path) -> None:
     )
     runner = CliRunner()
     result = runner.invoke(
-        main, ["demo", "seed-l2", str(minimal), "--check-hash"],
+        main, ["data", "hash", str(minimal), "--check"],
     )
     assert result.exit_code == 1
     assert "no `seed_hash:` field" in result.output
 
 
-def test_seed_l2_logs_omitted_plant_kinds(tmp_path: Path) -> None:
+def test_data_hash_logs_omitted_plant_kinds(tmp_path: Path) -> None:
     """When the L2 lacks structures for some plants, the CLI logs them
     as warnings but still emits SQL."""
     minimal = tmp_path / "minimal.yaml"
@@ -211,7 +217,7 @@ def test_seed_l2_logs_omitted_plant_kinds(tmp_path: Path) -> None:
         "    destination_origin: InternalInitiated\n"
     )
     runner = CliRunner()
-    result = runner.invoke(main, ["demo", "seed-l2", str(minimal)])
+    result = runner.invoke(main, ["data", "hash", str(minimal)])
     assert result.exit_code == 0, result.output
     # Warnings go to stderr, which Click's CliRunner captures separately;
     # by default both streams concatenate into result.output.

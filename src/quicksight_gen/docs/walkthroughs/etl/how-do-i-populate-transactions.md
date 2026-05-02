@@ -36,8 +36,8 @@ Two reference points:
   of truth for the prefixed DDL. Every base table, view, and
   matview your dashboards read is emitted here, all under the L2
   instance prefix. Call it from Python (or apply directly via
-  `quicksight-gen demo apply`) to see the rendered output for
-  your L2 instance.
+  `quicksight-gen schema apply --execute`) to see the rendered
+  output for your L2 instance.
 
 The `<prefix>` in this walkthrough's SQL is your L2 instance name
 (e.g., `{{ l2_instance_name }}`); your ETL substitutes it once when wiring

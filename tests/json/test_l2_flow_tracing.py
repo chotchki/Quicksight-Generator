@@ -41,7 +41,8 @@ from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
 from quicksight_gen.apps.l2_flow_tracing.app import (
     build_l2_flow_tracing_app,
 )
-from quicksight_gen.cli import APP_CHOICE, APPS, main
+from quicksight_gen.cli import main
+from quicksight_gen.cli._helpers import APPS
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.l2 import L2Instance, load_instance
 
@@ -264,21 +265,15 @@ def test_no_remaining_placeholder_sheets() -> None:
 
 
 def test_l2_flow_tracing_in_apps_tuple() -> None:
-    """CLI's APPS tuple drives `--all` + the deploy block. Missing here
-    means `generate --all` would skip l2-flow-tracing silently."""
+    """The shared APPS tuple drives ``json apply``'s bundled emit and
+    every cleanup/probe walk. Missing here means the L2 flow tracing
+    JSON would silently disappear from the output set."""
     assert "l2-flow-tracing" in APPS
 
 
-def test_l2_flow_tracing_in_app_choice() -> None:
-    """Click's APP_CHOICE drives positional argument validation for
-    deploy + cleanup. Missing here means `deploy l2-flow-tracing`
-    fails with 'invalid choice'."""
-    assert "l2-flow-tracing" in APP_CHOICE.choices
-
-
-def test_cli_generate_l2_flow_tracing_l2_instance_flag(tmp_path: Path) -> None:
-    """M.3.9 CLI surface: `--l2-instance PATH` overrides the default
-    spec_example fixture. Generated dataset filenames carry the
+def test_cli_json_apply_l2_instance_flag(tmp_path: Path) -> None:
+    """M.3.9 CLI surface (Q.3.a renamed): ``--l2 PATH`` overrides the
+    default spec_example fixture. Generated dataset filenames carry the
     overridden prefix."""
     cfg_path = tmp_path / "config.yaml"
     cfg_path.write_text(
@@ -291,11 +286,10 @@ def test_cli_generate_l2_flow_tracing_l2_instance_flag(tmp_path: Path) -> None:
     runner = CliRunner()
     result = runner.invoke(
         main, [
-            "generate",
+            "json", "apply",
             "-c", str(cfg_path),
             "-o", str(out_dir),
-            "l2-flow-tracing",
-            "--l2-instance", str(SASQUATCH_PR_YAML),
+            "--l2", str(SASQUATCH_PR_YAML),
         ],
     )
     assert result.exit_code == 0, result.output
@@ -312,9 +306,9 @@ def test_cli_generate_l2_flow_tracing_l2_instance_flag(tmp_path: Path) -> None:
     assert not spec_chain_inst.exists()
 
 
-def test_cli_generate_l2_flow_tracing_writes_files(tmp_path: Path) -> None:
-    """CLI smoke: `quicksight-gen generate l2-flow-tracing` writes
-    theme + analysis + dashboard + every dataset under datasets/.
+def test_cli_json_apply_l2_flow_tracing_writes_files(tmp_path: Path) -> None:
+    """CLI smoke: ``quicksight-gen json apply`` writes theme + analysis
+    + dashboard + every dataset under datasets/ for L2 flow tracing.
     M.3.10c — postings + meta-values replace the M.3.5 rails dataset
     + the M.3.8 per-key dropdown fan-out."""
     cfg_path = tmp_path / "config.yaml"
@@ -328,10 +322,9 @@ def test_cli_generate_l2_flow_tracing_writes_files(tmp_path: Path) -> None:
     runner = CliRunner()
     result = runner.invoke(
         main, [
-            "generate",
+            "json", "apply",
             "-c", str(cfg_path),
             "-o", str(out_dir),
-            "l2-flow-tracing",
         ],
     )
     assert result.exit_code == 0, result.output

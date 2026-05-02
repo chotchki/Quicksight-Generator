@@ -141,19 +141,16 @@ full refresh contract.
 
 ## The exemplary helper
 
-`quicksight-gen demo etl-example` emits canonical INSERT patterns
+`quicksight-gen data etl-example` emits canonical INSERT patterns
 the team can copy from when building a new ETL job:
 
 ```bash
-# All available patterns into one SQL file
-quicksight-gen demo etl-example --all -o etl-examples.sql
-
-# One app only (currently: investigation, executives — both
-# read base tables only and ship without app-specific patterns
-# at this writing; the L1 + L2FT base-table examples cover
-# everything the apps need)
-quicksight-gen demo etl-example investigation -o inv-patterns.sql
+quicksight-gen data etl-example -o etl-examples.sql
 ```
+
+The current pattern set covers every base-table shape Investigation
+walks; the L1 + L2 Flow Tracing apps read the same base tables and
+need no app-specific patterns at this writing.
 
 Every block carries a `-- WHY:` header that names the business
 invariant the pattern protects, and a `-- Consumed by:` header that

@@ -200,8 +200,8 @@ own instance by editing the build call site or providing your own
 `l2_instance` kwarg via a small wrapper script. Then:
 
 ```bash
-quicksight-gen generate l1-dashboard -c run/config.yaml -o run/out
-quicksight-gen deploy --generate -c run/config.yaml -o run/out l1-dashboard
+quicksight-gen json apply -c run/config.yaml -o run/out
+quicksight-gen json apply -c run/config.yaml -o run/out --execute
 ```
 
 ### 5. Verify with `m2_6_verify.py`

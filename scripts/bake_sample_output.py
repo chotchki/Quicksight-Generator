@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bake a sample `out/` bundle for the GitHub Release page.
 
-Runs `quicksight-gen generate --all` against `examples/config.yaml` and zips
+Runs `quicksight-gen json apply` against `examples/config.yaml` and zips
 the resulting JSON tree to `dist/out-sample.zip`. Evaluators can download the
 zip from a GitHub Release and inspect every generated theme / analysis /
 dashboard / dataset definition without installing the tool.
@@ -48,14 +48,14 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="qs-bake-") as tmpdir:
         out_dir = Path(tmpdir) / "out"
         cmd = [
-            sys.executable, "-m", "quicksight_gen", "generate", "--all",
+            sys.executable, "-m", "quicksight_gen", "json", "apply",
             "-c", str(args.config),
             "-o", str(out_dir),
         ]
         print(f"running: {' '.join(cmd)}", flush=True)
         result = subprocess.run(cmd, check=False)
         if result.returncode != 0:
-            print(f"error: generate failed (exit {result.returncode})", file=sys.stderr)
+            print(f"error: json apply failed (exit {result.returncode})", file=sys.stderr)
             return result.returncode
 
         files = sorted(out_dir.rglob("*.json"))

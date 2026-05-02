@@ -4,7 +4,7 @@
 
 ## The story
 
-The demo dashboards work. You ran `demo apply`, opened the four
+The demo dashboards work. You ran the demo flow (`schema apply --execute`, `data apply --execute`, `data refresh --execute`, `json apply --execute`), opened the four
 L2-fed dashboards (L1 Reconciliation, L2 Flow Tracing,
 Investigation, Executives), and saw the planted exception
 scenarios light up the way they should. You then wrote your own

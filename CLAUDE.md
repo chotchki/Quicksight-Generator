@@ -20,25 +20,32 @@ The customer doesn't know exactly what they want yet. Everything is generated fr
 
 ## Commands
 
+The CLI is organized around the four artifacts the tool produces:
+**schema** | **data** | **json** | **docs**. Each artifact has at
+minimum `apply`/`clean`/`test`; everything destructive defaults to
+emit (print SQL, write JSON to `out/`) and only runs against the DB
+or AWS when you pass `--execute`.
+
 ```bash
-# Install (add [demo] for `demo apply`, which needs psycopg2 / oracledb)
+# Install (add [demo] for `data apply --execute`, which needs psycopg2 / oracledb)
 pip install -e ".[dev]"
 pip install -e ".[demo]"
 
-# Generate all JSON
-quicksight-gen generate --all -c config.yaml -o out/
-quicksight-gen generate l1-dashboard -c config.yaml -o out/ --l2-instance run/sasquatch_pr.yaml
+# Generate all JSON for the four bundled apps
+quicksight-gen json apply -c config.yaml -o out/
+quicksight-gen json apply -c config.yaml -o out/ --l2 run/sasquatch_pr.yaml
 
-# Deploy (delete-then-create; polls async resources to terminal state)
-quicksight-gen deploy --all -c config.yaml -o out/
-quicksight-gen deploy --all --generate -c config.yaml -o out/
+# Deploy (writes JSON to out/, then delete-then-create against AWS)
+quicksight-gen json apply -c config.yaml -o out/ --execute
 
 # Cleanup: delete ManagedBy:quicksight-gen resources not in current out/
-quicksight-gen cleanup --dry-run
-quicksight-gen cleanup --yes
+quicksight-gen json clean                 # dry-run (default)
+quicksight-gen json clean --execute       # actually delete
 
-# Demo: emit per-prefix DDL + seed from L2 instance YAML, apply to DB
-quicksight-gen demo apply --all -c config.yaml -o out/
+# Demo flow: schema -> seed -> matview refresh against the demo DB
+quicksight-gen schema apply -c config.yaml --execute
+quicksight-gen data apply -c config.yaml --execute
+quicksight-gen data refresh -c config.yaml --execute
 
 # Tests
 pytest                              # unit + integration, fast, no AWS
@@ -48,13 +55,17 @@ pytest                              # unit + integration, fast, no AWS
 ./run_e2e.sh --skip-deploy browser  # browser e2e only
 ```
 
-`demo apply` reads theme from the L2 institution YAML's inline `theme:` block; when omitted, deploy skips emitting a Theme resource and AWS QuickSight CLASSIC takes over (silent-fallback contract). Schema is emitted per-L2-instance via `common/l2/schema.py::emit_schema(l2_instance)` — base tables (`<prefix>_transactions`, `<prefix>_daily_balances`), Current* views, L1 invariant matviews, Investigation matviews. Seed via `emit_full_seed(l2_instance, scenario)` — composes `emit_baseline_seed` (90-day per-Rail leg generator) + `emit_seed` (planted L1/Investigation scenarios).
+The `data apply --execute` path reads theme from the L2 institution YAML's inline `theme:` block; when omitted, deploy skips emitting a Theme resource and AWS QuickSight CLASSIC takes over (silent-fallback contract). Schema is emitted per-L2-instance via `common/l2/schema.py::emit_schema(l2_instance)` — base tables (`<prefix>_transactions`, `<prefix>_daily_balances`), Current* views, L1 invariant matviews, Investigation matviews. Seed via `emit_full_seed(l2_instance, scenario)` — composes `emit_baseline_seed` (90-day per-Rail leg generator) + `emit_seed` (planted L1/Investigation scenarios).
 
 ## Project Structure
 
 ```
 src/quicksight_gen/
-  cli.py                # Click CLI: generate / deploy / cleanup / demo / export / probe
+  cli/                  # Click CLI shell — schema | data | json | docs groups
+    __init__.py         # main + group registration
+    schema.py / data.py / json.py / docs.py
+    _helpers.py         # shared resolve_l2_for_demo / emit_to_target / connect_and_apply
+    _app_builders.py    # per-app JSON-emit helpers (lifted from legacy CLI)
   __main__.py           # delegates to cli.main
   common/
     config.py           # Config dataclass + YAML/env loader
@@ -84,7 +95,7 @@ src/quicksight_gen/
     executives/         # 4 sheets — coverage/volume/money moved
   docs/                 # mkdocs source — concepts/, handbook/, walkthroughs/,
                         # for-your-role/, scenario/, Schema_v6.md, _diagrams/, _macros/.
-                        # Extract via `quicksight-gen export docs`.
+                        # Extract via `quicksight-gen docs export`.
 tests/
   test_*.py             # Unit + integration (~50 modules)
   e2e/                  # Two layers: API (boto3) + browser (Playwright); QS_GEN_E2E=1

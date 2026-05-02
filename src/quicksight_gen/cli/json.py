@@ -65,7 +65,7 @@ def json_apply(
     Pass ``--execute`` to also deploy to AWS QuickSight (delete-then-
     create on every resource ID — idempotent re-runs).
     """
-    from quicksight_gen.cli_legacy import (
+    from quicksight_gen.cli._app_builders import (
         _generate_executives,
         _generate_investigation,
         _generate_l1_dashboard,
@@ -187,8 +187,8 @@ def json_probe(config: str, output_dir: str) -> None:
 
     No ``--execute`` here — probe is read-only by definition.
     """
+    from quicksight_gen.cli._app_builders import _dashboard_id_for_app
     from quicksight_gen.cli._helpers import load_config
-    from quicksight_gen.cli_legacy import _dashboard_id_for_app
     from quicksight_gen.common.probe import probe_dashboard, format_report
 
     cfg = load_config(config)

@@ -121,7 +121,7 @@ L1 invariant views need to know about.
    windows, declare or extend the relevant `Rail`; if it
    participates in a parent → child chain, declare or extend the
    relevant `Chain`.
-2. **Re-emit the schema.** `quicksight-gen demo apply -c run/config.yaml`
+2. **Re-emit the schema.** `quicksight-gen schema apply -c run/config.yaml --execute && quicksight-gen data apply -c run/config.yaml --execute && quicksight-gen data refresh -c run/config.yaml --execute`
    regenerates the prefixed L1 invariant views (limit-breach
    caps, pending/unbundled aging caps) with your new type
    inlined.
@@ -241,10 +241,12 @@ Once your new canonical value is wired:
    one-line assertion: ≥N rows of the new type. Without
    demo coverage, the dashboard "works" but the new value's
    visual treatment never gets exercised in the e2e tests.
-3. **Re-deploy.** `quicksight-gen demo apply --all -c
-   config.yaml -o out/` to rewrite seed data,
-   `quicksight-gen deploy --all --generate -c config.yaml -o
-   out/` to push the schema and dashboard changes. The new
+3. **Re-deploy.** Chain `quicksight-gen schema apply -c
+   config.yaml --execute && quicksight-gen data apply -c
+   config.yaml --execute && quicksight-gen data refresh -c
+   config.yaml --execute` to rewrite seed data, then
+   `quicksight-gen json apply -c config.yaml -o out/ --execute`
+   to push the schema and dashboard changes. The new
    value appears in the Transfer Type filter dropdown on the
    first dashboard refresh.
 

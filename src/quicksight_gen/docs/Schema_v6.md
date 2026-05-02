@@ -335,12 +335,14 @@ with conn.cursor() as cur:
             cur.execute(s)
 
 # Oracle (thin mode — no Instant Client install needed)
-# `quicksight-gen demo apply -c run/config.oracle.yaml` is the
-# canonical path; it handles PL/SQL terminators (DROP MATERIALIZED
-# VIEW IF EXISTS wraps in a BEGIN…EXCEPTION…END block on Oracle) and
-# per-statement execution. For a stand-alone refresh outside the demo
-# CLI, copy the splitter from `cli.py::_split_oracle_script` until
-# Phase Q ships a public helper.
+# `quicksight-gen schema apply -c run/config.oracle.yaml --execute` +
+# `quicksight-gen data apply -c run/config.oracle.yaml --execute` +
+# `quicksight-gen data refresh -c run/config.oracle.yaml --execute`
+# is the canonical chain; both per-prefix DDL emission and the apply
+# step handle PL/SQL terminators (DROP MATERIALIZED VIEW IF EXISTS
+# wraps in a BEGIN…EXCEPTION…END block on Oracle). For a stand-alone
+# refresh outside the CLI, copy the splitter from
+# `common/db.py::execute_script` until a public helper lands.
 ```
 
 Order matters — leaves first (Current\*), helpers second (computed_*),

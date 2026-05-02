@@ -303,24 +303,28 @@ class TestCli:
         )
         return p
 
-    def test_generate_executives_subcommand(self, tmp_path: Path):
+    def test_json_apply_writes_executives(self, tmp_path: Path):
+        """Q.3.a: ``json apply`` always emits all four apps; verify
+        the executives JSON files land in the output dir."""
         config = self._base_config(tmp_path)
         out = tmp_path / "out"
         runner = CliRunner()
         result = runner.invoke(
             main,
-            ["generate", "-c", str(config), "-o", str(out), "executives"],
+            ["json", "apply", "-c", str(config), "-o", str(out)],
         )
         assert result.exit_code == 0, result.output
         assert (out / "executives-analysis.json").exists()
         assert (out / "executives-dashboard.json").exists()
 
-    def test_generate_all_includes_executives(self, tmp_path: Path):
+    def test_json_apply_writes_all_apps(self, tmp_path: Path):
+        """Q.3.a: ``json apply`` is the single bundled-emit verb;
+        every app's analysis + dashboard JSON must show up."""
         config = self._base_config(tmp_path)
         out = tmp_path / "out"
         runner = CliRunner()
         result = runner.invoke(
-            main, ["generate", "-c", str(config), "-o", str(out), "--all"],
+            main, ["json", "apply", "-c", str(config), "-o", str(out)],
         )
         assert result.exit_code == 0, result.output
         for stem in (

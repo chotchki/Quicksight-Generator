@@ -1368,13 +1368,15 @@ class TestCli:
         )
         return p
 
-    def test_generate_l1_dashboard_subcommand(self, tmp_path: Path):
+    def test_json_apply_writes_l1_dashboard(self, tmp_path: Path):
+        """Q.3.a: ``json apply`` is the bundled emit verb; the L1
+        dashboard JSON files are part of the output set."""
         config = self._base_config(tmp_path)
         out = tmp_path / "out"
         runner = CliRunner()
         result = runner.invoke(
             main,
-            ["generate", "-c", str(config), "-o", str(out), "l1-dashboard"],
+            ["json", "apply", "-c", str(config), "-o", str(out)],
         )
         assert result.exit_code == 0, result.output
         assert (out / "l1-dashboard-analysis.json").exists()
