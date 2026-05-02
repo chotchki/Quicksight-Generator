@@ -81,48 +81,55 @@ instead of executing.
 ### CLI surface
 
 ```
-quicksight-gen schema apply  --l2 PATH [-c CONFIG] [-o FILE | --stdout]
-quicksight-gen schema clean  --l2 PATH [-c CONFIG] [-o FILE | --stdout]
-quicksight-gen schema test   --l2 PATH [--dialect postgres|oracle]
+quicksight-gen schema apply  --l2 PATH [-c CONFIG] [-o FILE] [--execute]
+quicksight-gen schema clean  --l2 PATH [-c CONFIG] [-o FILE] [--execute]
+quicksight-gen schema test   [--pytest-args "..."]
 
-quicksight-gen data apply    --l2 PATH [-c CONFIG] [-o FILE | --stdout]
-quicksight-gen data refresh  --l2 PATH [-c CONFIG] [-o FILE | --stdout]
-quicksight-gen data clean    --l2 PATH [-c CONFIG] [-o FILE | --stdout]
-quicksight-gen data test     --l2 PATH [--check-hash]
+quicksight-gen data apply    --l2 PATH [-c CONFIG] [-o FILE] [--execute]
+quicksight-gen data refresh  --l2 PATH [-c CONFIG] [-o FILE] [--execute]
+quicksight-gen data clean    --l2 PATH [-c CONFIG] [-o FILE] [--execute]
+quicksight-gen data test     [--pytest-args "..."]
 
-quicksight-gen json apply    --app NAME --l2 PATH [-c CONFIG] [-o DIR]
-quicksight-gen json clean    [--app NAME] [-c CONFIG] [--dry-run]
-quicksight-gen json test     --app NAME --l2 PATH
-quicksight-gen json probe    --app NAME [-c CONFIG]    # browser sanity check
+quicksight-gen json apply    --app NAME --l2 PATH [-c CONFIG] [-o DIR] [--execute]
+quicksight-gen json clean    [--app NAME] [-c CONFIG] [--execute]
+quicksight-gen json test     [--app NAME] [--pytest-args "..."]
+quicksight-gen json probe    --app NAME [-c CONFIG]
 
-quicksight-gen docs apply    [--l2 PATH] [-o DIR]      # build site → DIR
+quicksight-gen docs apply    [--l2 PATH] [-o DIR]      # always emits a built site
 quicksight-gen docs serve    [--l2 PATH] [--port N]    # mkdocs serve, live reload
-quicksight-gen docs clean    [-o DIR]                  # purge built site
-quicksight-gen docs test     [--filter X]              # link gate + persona gate
+quicksight-gen docs clean    [-o DIR]                  # rm -rf the built site
+quicksight-gen docs test     [--pytest-args "..."]
 quicksight-gen docs export   [-o DIR]                  # extract source for hand-build
 quicksight-gen docs screenshot --app NAME [-c CONFIG] -o DIR
 ```
 
-The integrator's mental model becomes: *pick the artifact, pick the
-verb, optionally redirect output*.
+The integrator's mental model: *pick the artifact, pick the verb,
+optionally redirect output. Run with `--execute` when you actually
+want the side effect.*
 
 ### Operation semantics
 
-| Operation | Default behavior | With `-o FILE` |
+| Operation | Default behavior | With `--execute` |
 |---|---|---|
-| `apply` | Connect + execute (DB, AWS, mkdocs site) | Write the script/JSON it would have executed |
-| `refresh` (data only) | REFRESH MATERIALIZED VIEW for every per-prefix matview | Emit the REFRESH SQL |
-| `clean` | Connect + drop / truncate / delete | Write the cleanup script |
-| `test` | Run the artifact's contract test suite | n/a (test always runs) |
+| `apply` (schema/data/json) | Emit the script/JSON to stdout (or `-o FILE`) | Connect + execute against DB / AWS |
+| `refresh` (data only) | Emit the REFRESH SQL | Run REFRESH MATERIALIZED VIEW |
+| `clean` (schema/data/json) | Emit the cleanup script | Connect + drop / truncate / delete |
+| `test` | Run the artifact's contract test suite | n/a |
 | `serve` (docs only) | Live-reload mkdocs server | n/a |
 | `probe` (json only) | Playwright sanity walk on deployed dashboard | n/a |
-| `export` (docs only) | Copy mkdocs source to DIR for downstream build | n/a (always emits) |
+| `apply` (docs only) | Build the site to `site/` (or `-o DIR`) | n/a — building a site isn't a side effect |
+| `export` (docs only) | Copy mkdocs source to DIR | n/a |
 | `screenshot` (docs only) | Capture deployed dashboards to PNG | n/a |
 
-The `-o FILE` pattern is the answer to *"emit or do it for the user"*:
-default does it, `-o` redirects to a file. `--stdout` is the
-no-file-needed equivalent. (Q: do we need both? Probably yes — `-o
--` is awkward; explicit `--stdout` is clearer.)
+**The default for any apply/clean is emit-only.** Pass `--execute`
+when you actually want the side effect to land in the DB / AWS.
+This makes the safe path the default and forces an explicit opt-in
+for anything destructive — nothing accidentally drops a table or
+redeploys a dashboard.
+
+(Note: `docs apply` doesn't need `--execute` because building a
+static site to a directory isn't a destructive side effect — the
+"emit" and the "do it" are the same operation.)
 
 ### Artifact-specific notes
 
@@ -265,6 +272,12 @@ Before I execute:
 2. **`--stdout` vs only `-o FILE`.** Need both? (Recommendation:
    yes; `-o -` is unobvious.)
   - I'm good with that
+  - **Update post-Q.3.a.5 partial:** dropped `--stdout` because the
+    new default is *always* emit (apply/clean default to printing
+    the script, not running it). Stdout becomes the no-flag default;
+    pass `-o FILE` to write to a file; pass `--execute` to actually
+    run it. Result: emit-vs-execute is one explicit flag instead of
+    two implicit modes.
 3. **`docs apply` defaults to `site/` or always requires `-o`?**
    (Recommendation: default to `site/` so integrators don't need
    to think about it; emit a one-liner naming the dir.)

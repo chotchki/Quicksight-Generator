@@ -111,21 +111,19 @@ def build_full_seed_sql(cfg, instance) -> str:  # type: ignore[no-untyped-def]
 
 
 def emit_to_target(
-    sql: str, output: str | None, *, stdout: bool, label: str,
+    sql: str, output: str | None, *, label: str,
 ) -> None:
-    """Write SQL to ``output`` or stdout; echo a one-line summary on stderr.
+    """Write SQL to ``output`` if given, else stdout.
 
-    The ``stdout`` flag is the explicit ``--stdout`` from the CLI; when
-    True, write to stdout regardless of ``output``. When False and
-    ``output is None``, raise — caller must pick one of the two.
+    Default-emit shape: passing nothing prints the script to stdout
+    so the integrator can pipe it (``| psql ...``) or read it. Pass
+    ``-o FILE`` to write to a file instead. The destructive
+    "actually run this against the DB" path is gated separately by
+    ``--execute`` — see the apply/clean commands.
     """
-    if stdout:
+    if output is None:
         click.echo(sql, nl=False)
         return
-    if output is None:
-        raise click.UsageError(
-            "Specify either --stdout (write to stdout) or -o FILE."
-        )
     Path(output).write_text(sql, encoding="utf-8")
     line_count = sql.count("\n")
     size_kb = len(sql.encode("utf-8")) // 1024
@@ -194,29 +192,43 @@ def config_option(*, required_for_dialect_only: bool = False):  # type: ignore[n
     )
 
 
-def output_options(*, default_dir: str | None = None):  # type: ignore[no-untyped-def]
-    """``-o FILE`` + ``--stdout`` — emit-vs-apply redirect.
+def output_option(*, default: str | None = None):  # type: ignore[no-untyped-def]
+    """``-o FILE`` — output redirect.
 
-    When ``default_dir`` is set (e.g. ``"out"`` for json apply), ``-o``
-    defaults to that dir and the apply lands files there as a side
-    effect; ``--stdout`` is then meaningless and not exposed.
+    For schema/data: omit ``-o`` to emit to stdout. Pass ``-o FILE`` to
+    write to a file instead. ``--execute`` (separate decorator) is
+    what actually runs the script against the DB.
+
+    For json/docs: pass ``default="out"`` (or ``"site"``) so the
+    emit always goes to a directory; the directory IS the artifact.
     """
-    def decorator(fn):  # type: ignore[no-untyped-def]
-        if default_dir is None:
-            fn = click.option(
-                "--stdout", is_flag=True, default=False,
-                help="Write the script to stdout instead of executing.",
-            )(fn)
-            fn = click.option(
-                "-o", "--output", "output",
-                type=click.Path(), default=None,
-                help="Write the script to FILE instead of executing.",
-            )(fn)
-        else:
-            fn = click.option(
-                "-o", "--output", "output",
-                type=click.Path(), default=default_dir,
-                help=f"Output directory (default: {default_dir}/).",
-            )(fn)
-        return fn
-    return decorator
+    if default is None:
+        return click.option(
+            "-o", "--output", "output",
+            type=click.Path(), default=None,
+            help="Write the script to FILE instead of stdout.",
+        )
+    return click.option(
+        "-o", "--output", "output",
+        type=click.Path(), default=default,
+        help=f"Output directory (default: {default}/).",
+    )
+
+
+def execute_option():  # type: ignore[no-untyped-def]
+    """``--execute`` — actually do the destructive thing.
+
+    Without this flag, apply/clean commands emit the script they would
+    have run. With it, they connect to the demo DB / AWS and execute.
+    Forces the integrator to opt in to side effects, which means the
+    safe default (just emit) can never accidentally drop a table or
+    redeploy a dashboard.
+    """
+    return click.option(
+        "--execute", "execute", is_flag=True, default=False,
+        help=(
+            "Actually run the script (connect to the DB / AWS and "
+            "execute). Without this flag, the script is emitted to "
+            "stdout (or to -o FILE) without any side effects."
+        ),
+    )

@@ -2,14 +2,14 @@
 
 Three operations:
 
-  apply  — emit-or-execute the schema DDL.
-  clean  — emit-or-execute the matching DROP statements.
+  apply  — emit the schema DDL (default), or ``--execute`` against the demo DB.
+  clean  — emit the matching DROP statements (default), or ``--execute``.
   test   — pytest + pyright the schema-emitting library code.
 
-Default ``apply`` / ``clean`` connect to the demo DB and execute.
-Pass ``-o FILE`` or ``--stdout`` to redirect to the SQL script
-without touching the DB (the integrator can pipe to their own
-DB tool).
+The default for apply/clean is **emit only** — print to stdout (or
+``-o FILE``) without touching the DB. Pass ``--execute`` to actually
+run the script. This makes the safe path the default; nothing
+accidentally drops a table.
 """
 
 from __future__ import annotations
@@ -23,8 +23,9 @@ from quicksight_gen.cli._helpers import (
     config_option,
     connect_and_apply,
     emit_to_target,
+    execute_option,
     l2_instance_option,
-    output_options,
+    output_option,
     resolve_l2_for_demo,
 )
 
@@ -36,62 +37,62 @@ def schema() -> None:
 
 @schema.command("apply")
 @l2_instance_option()
-@config_option()
-@output_options()
+@config_option(required_for_dialect_only=True)
+@output_option()
+@execute_option()
 def schema_apply(
     l2_instance_path: str | None, config: str,
-    output: str | None, stdout: bool,
+    output: str | None, execute: bool,
 ) -> None:
-    """Apply the schema DDL to the demo DB (or emit it with -o / --stdout).
+    """Emit the schema DDL (or ``--execute`` to apply against the demo DB).
 
-    Default: connect to the DB named in the config and run every
-    CREATE statement for the L2 instance's per-prefix tables, views,
-    and materialized views.
+    Default behavior: print every CREATE statement for the L2 instance's
+    per-prefix tables, views, and materialized views to stdout (or to
+    ``-o FILE``). Pipe it to your DB tool: ``quicksight-gen schema
+    apply | psql ...``.
 
-    With ``-o FILE`` or ``--stdout``: write the SQL only — no DB
-    connection. Pipe to ``psql`` / ``sqlplus`` / etc. for hand
-    insertion.
+    Pass ``--execute`` to connect to the demo DB named in the config
+    and actually run every CREATE.
     """
     from quicksight_gen.common.l2.schema import emit_schema
 
     cfg, instance = resolve_l2_for_demo(config, l2_instance_path)
     sql = emit_schema(instance, dialect=cfg.dialect)
 
-    if output is not None or stdout:
-        emit_to_target(sql, output, stdout=stdout, label="schema DDL")
-        return
-
-    connect_and_apply(cfg, sql, label="schema DDL")
+    if execute:
+        connect_and_apply(cfg, sql, label="schema DDL")
+    else:
+        emit_to_target(sql, output, label="schema DDL")
 
 
 @schema.command("clean")
 @l2_instance_option()
-@config_option()
-@output_options()
+@config_option(required_for_dialect_only=True)
+@output_option()
+@execute_option()
 def schema_clean(
     l2_instance_path: str | None, config: str,
-    output: str | None, stdout: bool,
+    output: str | None, execute: bool,
 ) -> None:
-    """Drop every per-prefix schema object for the L2 instance.
+    """Emit DROP statements (or ``--execute`` to drop against the demo DB).
 
-    Default: connect to the DB and DROP every matview / view / table
-    the L2 emits, in dependency order.
+    Default: print every DROP for the L2 instance's per-prefix matviews
+    / views / tables (in dependency order) to stdout (or ``-o FILE``).
 
-    With ``-o FILE`` or ``--stdout``: write the DROP script only.
+    Pass ``--execute`` to connect and actually drop them.
 
-    Schema-only cleanup. To also wipe seeded rows, run ``data clean``
-    first.
+    Schema-only cleanup. To wipe seeded rows without dropping the
+    schema, run ``data clean`` instead.
     """
     from quicksight_gen.common.l2.schema import emit_schema_drop_sql
 
     cfg, instance = resolve_l2_for_demo(config, l2_instance_path)
     sql = emit_schema_drop_sql(instance, dialect=cfg.dialect)
 
-    if output is not None or stdout:
-        emit_to_target(sql, output, stdout=stdout, label="schema DROP")
-        return
-
-    connect_and_apply(cfg, sql, label="schema DROP")
+    if execute:
+        connect_and_apply(cfg, sql, label="schema DROP")
+    else:
+        emit_to_target(sql, output, label="schema DROP")
 
 
 @schema.command("test")
