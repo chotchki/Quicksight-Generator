@@ -522,20 +522,40 @@ Order the meta sweeps first so per-app fixes inherit them:
   Integrator page is fully fleshed out with the canonical Shape C
   shape + an "When the L2 changes" workflow-loop section.
 
-- [ ] **Q.2.e — `mkdocs build --strict` + ship the regenerated site.**
+- [x] **Q.2.e — `mkdocs build --strict` + ship the regenerated site.** Both fixtures (sasquatch_pr + spec_example) build clean under `--strict`. Site contents verified by Q.5.f's persona-neutral gate + the dead-link gate (test_docs_links.py).
 
 ### Q.3 — CLI / yaml ergonomics around schema (was task #488)
 
-The pre-Phase-Q backlog item — slotted last as polish.
+The pre-Phase-Q backlog item — slotted last as polish. **Needs
+scoping conversation before execution.** Original framing referenced
+SPEC's "Workflow Ideas" which no longer exists (the section was
+restructured during M-/N-/O- phases) and `generate training` which
+points at the deleted training/ kit (removed in O.1.l). What's left
+is a meaningful CLI redesign question — what verbs, what the
+`config.yaml` ↔ L2 YAML split should look like — that warrants a
+dedicated discussion + spike rather than execution from a stale
+plan entry.
 
-- [ ] **Q.3.a — Materialize SPEC's "Workflow Ideas":** `generate config (demo|template)`, `apply schema`, `apply data`, `apply dashboards`, `generate training`. Acceptance: a fresh integrator runs end-to-end from one YAML.
-- [ ] **Q.3.b — yaml field naming / config-vs-L2 boundary review.** Today's split between `run/config.yaml` (account, region, datasource, dialect, theme defaults) and the L2 institution YAML (rails, chains, accounts, theme override) has accumulated friction points; tighten the boundary based on what actually got threaded in M-/N-/O-/P-.
+- [ ] **Q.3.a — Re-scope "workflow"-shaped CLI.** Today's surface is
+  `generate <app>` / `deploy <app>` / `cleanup` / `demo apply` /
+  `probe` / `export <kind>`. A workflow-shaped redesign would group
+  by integrator step rather than internal verb. Decide whether
+  there's a clear win, and pick a target shape, before any code
+  changes. Could ship as a back-compat alias group rather than a
+  rename.
+- [ ] **Q.3.b — yaml field naming / config-vs-L2 boundary review.**
+  Today's split between `run/config.yaml` (account, region,
+  datasource, dialect, theme defaults) and the L2 institution YAML
+  (rails, chains, accounts, persona, theme override) has accumulated
+  friction points. Audit + tighten the boundary based on what
+  actually got threaded in M-/N-/O-/P-/Q-. Likely a dedicated phase
+  with its own scoping pass.
 
 ### Q.4 — Iteration gate + release
 
-- [ ] **Q.4.a — Decide release cut** (likely v7.1.0 — additive polish + docs IA shift; not a breaking schema change, but the IA / nav re-org may want a major bump if any external links break).
-- [ ] **Q.4.b — Bump `__version__` + RELEASE_NOTES entry covering Q.1–Q.3 changes.**
-- [ ] **Q.4.c — Commit + tag + push; release pipeline green on both dialects.**
+- [x] **Q.4.a — Decide release cut.** v7.3.0 — additive: new optional `persona:` YAML block, persona-neutral docs infrastructure, two new CI gates, Investigation walkthroughs split. No breaking schema or CLI changes. Cuts cleanly off v7.2.0.
+- [x] **Q.4.b — Bump `__version__` + RELEASE_NOTES entry covering Q.2 + Q.5 changes.** Bumped to 7.3.0; release notes describe the persona block, the worked-example admonition pattern, the persona.py rewrite, and the new CI gates.
+- [x] **Q.4.c — Commit + tag + push; release pipeline green on both dialects.** Tag v7.3.0; CI runs through both Postgres and Oracle dialects.
 
 ### Q.5 — Persona-neutral docs (full L2-driven substitution)
 
