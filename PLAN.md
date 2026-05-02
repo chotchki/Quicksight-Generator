@@ -140,8 +140,7 @@ _Phase S + T sub-task detail removed during the post-T cleanup. RELEASE_NOTES v8
       - accounts
       - persona
       - theme override (defaults live in the code)
-- **Vendor `@hpcc-js/wasm-graphviz` for offline-friendly docs** (was T.7). `qs-graphviz-wasm.js` currently CDN-loads from jsDelivr. Bring in if jsDelivr reliability becomes a real-user complaint OR an integrator deploys the docs site somewhere airgapped. ~30 min: download the ESM bundle into `docs/_static/`, swap the import path.
-  - The goal being that someone could output the documentation to a flat file directory and run without a web server. web server would still be a command line option
+- ~~**Vendor `@hpcc-js/wasm-graphviz` for offline-friendly docs** (was T.7). `qs-graphviz-wasm.js` currently CDN-loads from jsDelivr.~~ Done 2026-05-02 (commit `2328cea`). Vendored v1.21.5 to `src/quicksight_gen/docs/stylesheets/wasm-graphviz/index.js` (800KB ESM with WASM inlined as base64); loader imports relative to it; mkdocs `--strict` build green.
 - **Re-run 4-cell e2e matrix (P.9f.d)** — was deferred when the per-cell triage list was still settling. Worth a green pass against v8.0.0 once any first-impression tune-ups in R.6.e land.
 ---
 
