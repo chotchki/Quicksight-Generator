@@ -93,6 +93,8 @@ def test_audit_apply_emits_markdown_to_stdout(min_config: Path):
     assert "## Stuck pending transactions" in result.output
     # U.3.e Stuck unbundled transactions section.
     assert "## Stuck unbundled transactions" in result.output
+    # U.3.f Supersession audit section.
+    assert "## Supersession audit" in result.output
 
 
 def test_audit_apply_emits_markdown_to_file(min_config: Path, tmp_path: Path):
@@ -195,6 +197,8 @@ def test_audit_apply_execute_writes_pdf(min_config: Path, tmp_path: Path):
     assert "Stuck pending transactions" in text
     # U.3.e Stuck unbundled transactions page.
     assert "Stuck unbundled transactions" in text
+    # U.3.f Supersession audit page.
+    assert "Supersession audit" in text
 
 
 def test_audit_clean_default_is_dry_run(tmp_path: Path):

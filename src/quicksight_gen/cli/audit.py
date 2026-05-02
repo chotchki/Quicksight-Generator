@@ -228,21 +228,22 @@ def _query_executive_summary(
             display_label = f"{label}*" if date_col is None else label
             exception_counts.append((display_label, int(count or 0)))
 
-        # Supersession: count distinct logical transactions whose any
-        # entry posts in the period AND have >1 entries (i.e. were
-        # superseded). Mirrors the L1 dashboard's
-        # build_supersession_transactions_dataset window-function read.
-        cur.execute(
-            f"SELECT COUNT(*) FROM ("
-            f"   SELECT id FROM {prefix}_transactions"
-            f"   WHERE posting >= {start_lit}"
-            f"     AND posting < {end_excl_lit}"
-            f"   GROUP BY id"
-            f"   HAVING COUNT(*) > 1"
-            f" ) superseded"
-        )
-        (superseded_count,) = cur.fetchone()
-        exception_counts.append(("Supersession", int(superseded_count or 0)))
+        # Supersession: count correcting entries (supersedes IS NOT NULL)
+        # across BOTH base tables — current-state, no period filter.
+        # The originals they supersede are not counted (they're not
+        # the events; the corrections are). U.3.f breaks this down by
+        # (base_table, supersedes_category) with both total + in-period
+        # counts. Asterisk lines up with the stuck_* current-state
+        # footnote.
+        total_supersession = 0
+        for table_name in ("transactions", "daily_balances"):
+            cur.execute(
+                f"SELECT COUNT(*) FROM {prefix}_{table_name}"
+                f" WHERE supersedes IS NOT NULL"
+            )
+            (count,) = cur.fetchone()
+            total_supersession += int(count or 0)
+        exception_counts.append(("Supersession*", total_supersession))
 
         return ExecSummary(
             transactions_count=int(leg_count or 0),
@@ -867,6 +868,152 @@ def _split_stuck_unbundled_by_account_class(
     return parent_rows, child_summaries
 
 
+# -- Supersession audit (U.3.f) -----------------------------------------------
+
+
+@dataclass(frozen=True)
+class SupersessionAggregate:
+    """Per (base_table, category) total count, all-time.
+
+    Counts of correcting entries (rows with supersedes = category) —
+    the originals they correct are not double-counted. ``total_count``
+    is across all of history; ``new_in_period_count`` is the subset
+    whose date column falls in the report window.
+    """
+    base_table: str
+    supersedes_category: str
+    total_count: int
+    new_in_period_count: int
+
+
+@dataclass(frozen=True)
+class SupersessionTransactionDetail:
+    """One in-window correcting entry from ``<prefix>_transactions``."""
+    transaction_id: str
+    supersedes_category: str
+    account_id: str
+    account_name: str
+    posting: datetime
+    amount_money: Decimal
+
+
+@dataclass(frozen=True)
+class SupersessionDailyBalanceDetail:
+    """One in-window correcting entry from ``<prefix>_daily_balances``."""
+    account_id: str
+    account_name: str
+    business_day: date
+    supersedes_category: str
+    money: Decimal
+
+
+@dataclass(frozen=True)
+class SupersessionAuditData:
+    """All-table supersession audit data: aggregates + in-window details."""
+    aggregates: list[SupersessionAggregate]
+    transaction_details: list[SupersessionTransactionDetail]
+    daily_balance_details: list[SupersessionDailyBalanceDetail]
+
+
+def _query_supersession(
+    cfg, instance, period: tuple[date, date],  # type: ignore[no-untyped-def]
+) -> SupersessionAuditData | None:
+    """Aggregate supersession counts + in-window detail rows.
+
+    Per the user's design (U.3.f): aggregate counts are over the
+    ENTIRE dataset (no date filter — supersession history accumulates
+    indefinitely); detail rows are limited to the report window so the
+    audit page stays bounded in size while still surfacing every
+    correcting entry the auditor needs to investigate this period.
+    """
+    if cfg.demo_database_url is None:
+        return None
+
+    from quicksight_gen.common.db import connect_demo_db
+
+    prefix = instance.instance
+    start, end = period
+    start_lit = f"DATE '{start.isoformat()}'"
+    end_excl_lit = f"DATE '{(end + timedelta(days=1)).isoformat()}'"
+
+    conn = connect_demo_db(cfg)
+    try:
+        cur = conn.cursor()
+        aggregates: list[SupersessionAggregate] = []
+        for table_name, date_col in (
+            ("transactions", "posting"),
+            ("daily_balances", "business_day_start"),
+        ):
+            cur.execute(
+                f"SELECT supersedes, COUNT(*) AS total,"
+                f" SUM(CASE WHEN {date_col} >= {start_lit}"
+                f"          AND {date_col} < {end_excl_lit}"
+                f"          THEN 1 ELSE 0 END) AS new_in_period"
+                f" FROM {prefix}_{table_name}"
+                f" WHERE supersedes IS NOT NULL"
+                f" GROUP BY supersedes"
+                f" ORDER BY supersedes"
+            )
+            for cat, total, new_in in cur.fetchall():
+                aggregates.append(SupersessionAggregate(
+                    base_table=table_name,
+                    supersedes_category=str(cat),
+                    total_count=int(total or 0),
+                    new_in_period_count=int(new_in or 0),
+                ))
+
+        cur.execute(
+            f"SELECT id, supersedes, account_id, account_name,"
+            f"       posting, amount_money"
+            f"  FROM {prefix}_transactions"
+            f" WHERE supersedes IS NOT NULL"
+            f"   AND posting >= {start_lit}"
+            f"   AND posting < {end_excl_lit}"
+            f" ORDER BY posting DESC, id"
+        )
+        transaction_details = [
+            SupersessionTransactionDetail(
+                transaction_id=str(r[0]),
+                supersedes_category=str(r[1]),
+                account_id=str(r[2]),
+                account_name=str(r[3] or ""),
+                posting=r[4],
+                amount_money=Decimal(r[5] or 0),
+            )
+            for r in cur.fetchall()
+        ]
+
+        cur.execute(
+            f"SELECT account_id, account_name, business_day_start,"
+            f"       supersedes, money"
+            f"  FROM {prefix}_daily_balances"
+            f" WHERE supersedes IS NOT NULL"
+            f"   AND business_day_start >= {start_lit}"
+            f"   AND business_day_start < {end_excl_lit}"
+            f" ORDER BY business_day_start DESC, account_id"
+        )
+        daily_balance_details = [
+            SupersessionDailyBalanceDetail(
+                account_id=str(r[0]),
+                account_name=str(r[1] or ""),
+                business_day=(
+                    r[2].date() if hasattr(r[2], "date") else r[2]
+                ),
+                supersedes_category=str(r[3]),
+                money=Decimal(r[4] or 0),
+            )
+            for r in cur.fetchall()
+        ]
+
+        return SupersessionAuditData(
+            aggregates=aggregates,
+            transaction_details=transaction_details,
+            daily_balance_details=daily_balance_details,
+        )
+    finally:
+        conn.close()
+
+
 @audit.command("apply")
 @l2_instance_option()
 @config_option(required_for_dialect_only=True)
@@ -916,6 +1063,7 @@ def audit_apply(
     )
     stuck_pending_rows = _query_stuck_pending_violations(_cfg, instance)
     stuck_unbundled_rows = _query_stuck_unbundled_violations(_cfg, instance)
+    supersession_data = _query_supersession(_cfg, instance, (start, end))
     singleton_ids = _singleton_account_ids(instance)
 
     if execute:
@@ -931,6 +1079,7 @@ def audit_apply(
             limit_breach_rows=limit_breach_rows,
             stuck_pending_rows=stuck_pending_rows,
             stuck_unbundled_rows=stuck_unbundled_rows,
+            supersession_data=supersession_data,
             singleton_ids=singleton_ids,
         )
         click.echo(
@@ -949,6 +1098,7 @@ def audit_apply(
         limit_breach_rows=limit_breach_rows,
         stuck_pending_rows=stuck_pending_rows,
         stuck_unbundled_rows=stuck_unbundled_rows,
+        supersession_data=supersession_data,
         singleton_ids=singleton_ids,
     )
     if output is None:
@@ -1039,15 +1189,16 @@ def _render_audit_markdown(
     limit_breach_rows: list[LimitBreachViolation] | None,
     stuck_pending_rows: list[StuckPendingViolation] | None,
     stuck_unbundled_rows: list[StuckUnbundledViolation] | None,
+    supersession_data: SupersessionAuditData | None,
     singleton_ids: set[str],
 ) -> str:
     """Markdown rendering of the audit report.
 
     Mirrors the PDF page sequence — cover, executive summary, then
     per-invariant violation tables (U.3.a Drift, U.3.b Overdraft,
-    U.3.c Limit breach, U.3.d Stuck pending, U.3.e Stuck unbundled;
-    U.3.f lands later) — so an integrator can review the report's
-    content before committing to a real PDF write.
+    U.3.c Limit breach, U.3.d Stuck pending, U.3.e Stuck unbundled,
+    U.3.f Supersession audit) — so an integrator can review the
+    report's content before committing to a real PDF write.
     """
     start, end = period
     fingerprint = _l2_fingerprint_placeholder()
@@ -1080,11 +1231,12 @@ def _render_audit_markdown(
         + _render_stuck_unbundled_markdown(
             stuck_unbundled_rows, singleton_ids,
         )
+        + _render_supersession_markdown(supersession_data, period)
     )
     trailer = (
         "\n"
-        "_Supersession audit table, the per-account-day Daily Statement "
-        "walk, and the sign-off block land in Phase U.3.f+._\n"
+        "_Per-account-day Daily Statement walk and sign-off block "
+        "land in Phase U.4+._\n"
     )
     return cover + body + trailer
 
@@ -1488,6 +1640,98 @@ def _render_stuck_unbundled_markdown(
     return out
 
 
+def _render_supersession_markdown(
+    data: SupersessionAuditData | None,
+    period: tuple[date, date],
+) -> str:
+    """Supersession audit section in Markdown form.
+
+    Two-table layout per the user's design:
+      - Aggregate table (entire dataset, current-state): per (base
+        table, supersedes category) total count + new-in-period count.
+      - Detail tables (in-window only, one per base table): per-row
+        correcting entries whose date falls in the report period.
+    Detail tables stay bounded; aggregate carries the historical
+    accumulation.
+    """
+    start, end = period
+    header = (
+        "\n"
+        "---\n"
+        "\n"
+        "## Supersession audit\n"
+        "\n"
+        "_Correcting entries (rows with `supersedes IS NOT NULL`) "
+        "across both base tables. The aggregate table counts the "
+        "**entire dataset**, current-state; the detail tables are "
+        f"limited to {start.isoformat()} – {end.isoformat()} (inclusive) "
+        "so the audit page stays bounded as supersession history "
+        "accumulates._\n"
+    )
+    if data is None:
+        return header + (
+            "\n_Database not configured — table not populated. "
+            "Set `demo_database_url` in your config to query._\n"
+        )
+    if not data.aggregates:
+        return header + (
+            "\n_No supersessions recorded — entries have not been "
+            "corrected._\n"
+        )
+
+    out = header + (
+        "\n"
+        "### Aggregate (entire dataset)\n"
+        "\n"
+        "| Base table | Reason category | Total | New in period |\n"
+        "|---|---|---:|---:|\n"
+    )
+    for r in data.aggregates:
+        out += (
+            f"| {r.base_table} | {r.supersedes_category} "
+            f"| {r.total_count:,} | {r.new_in_period_count:,} |\n"
+        )
+
+    if data.transaction_details:
+        out += (
+            "\n"
+            "### Transactions — correcting entries in period\n"
+            "\n"
+            "| Transaction ID | Reason | Account ID | Account name "
+            "| Posted | Amount |\n"
+            "|---|---|---|---|---|---:|\n"
+        )
+        for d in data.transaction_details:
+            out += (
+                f"| `{d.transaction_id}` | {d.supersedes_category} "
+                f"| `{d.account_id}` | {d.account_name} "
+                f"| {d.posting.strftime('%Y-%m-%d %H:%M')} "
+                f"| ${d.amount_money:,.2f} |\n"
+            )
+    if data.daily_balance_details:
+        out += (
+            "\n"
+            "### Daily balances — correcting entries in period\n"
+            "\n"
+            "| Account ID | Account name | Day | Reason | Balance |\n"
+            "|---|---|---|---|---:|\n"
+        )
+        for d in data.daily_balance_details:
+            out += (
+                f"| `{d.account_id}` | {d.account_name} "
+                f"| {d.business_day.isoformat()} "
+                f"| {d.supersedes_category} "
+                f"| ${d.money:,.2f} |\n"
+            )
+    if not data.transaction_details and not data.daily_balance_details:
+        out += (
+            "\n_No new correcting entries posted in the report "
+            "window — aggregate counts above are all from prior "
+            "periods._\n"
+        )
+    return out
+
+
 def _write_audit_pdf(
     path: Path,
     *,
@@ -1500,15 +1744,16 @@ def _write_audit_pdf(
     limit_breach_rows: list[LimitBreachViolation] | None,
     stuck_pending_rows: list[StuckPendingViolation] | None,
     stuck_unbundled_rows: list[StuckUnbundledViolation] | None,
+    supersession_data: SupersessionAuditData | None,
     singleton_ids: set[str],
 ) -> None:
     """Render the audit report as a PDF.
 
     Page sequence: cover → executive summary → per-invariant tables
-    (Drift, Overdraft, Limit breach, Stuck pending, Stuck unbundled
-    so far; U.3.f adds Supersession). Each per-invariant page
-    paginates via LongTable. Every page carries a footer with the
-    provenance fingerprint placeholder (real hash lands in U.7).
+    (Drift, Overdraft, Limit breach, Stuck pending, Stuck unbundled,
+    Supersession audit). Each per-invariant page paginates via
+    LongTable. Every page carries a footer with the provenance
+    fingerprint placeholder (real hash lands in U.7).
     """
     # Imported lazily so the audit CLI loads even when the [audit]
     # extra isn't installed — only --execute paths need reportlab.
@@ -1598,6 +1843,7 @@ def _write_audit_pdf(
     story.extend(_stuck_unbundled_story(
         stuck_unbundled_rows, styles, singleton_ids,
     ))
+    story.extend(_supersession_story(supersession_data, styles, period))
     doc.build(story, onFirstPage=_draw_footer, onLaterPages=_draw_footer)
 
 
@@ -2466,6 +2712,197 @@ def _stuck_unbundled_story(
                        1.2 * inch, 1.3 * inch],
             style=group_style, repeatRows=1,
         ))
+    return elements
+
+
+def _supersession_story(
+    data: SupersessionAuditData | None,
+    styles,  # type: ignore[no-untyped-def]
+    period: tuple[date, date],
+) -> list:  # type: ignore[type-arg]
+    """Platypus elements for the U.3.f Supersession audit page.
+
+    Aggregate table covers entire dataset; detail tables limited to
+    the report window (one per base table, omitted if empty).
+    """
+    from reportlab.lib import colors
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.platypus import (
+        LongTable,
+        PageBreak,
+        Paragraph,
+        Spacer,
+        TableStyle,
+    )
+
+    start, end = period
+    elements: list = [
+        PageBreak(),
+        Paragraph("Supersession audit", styles["Heading1"]),
+        Paragraph(
+            "Source: <b>&lt;prefix&gt;_transactions</b> + "
+            "<b>&lt;prefix&gt;_daily_balances</b> "
+            "(rows where supersedes IS NOT NULL).",
+            styles["BodyText"],
+        ),
+        Paragraph(
+            "<i>Aggregate counts cover the <b>entire dataset</b> "
+            "(current-state); detail tables are limited to "
+            f"{start.isoformat()} &ndash; {end.isoformat()} "
+            "(inclusive) so the page stays bounded as supersession "
+            "history accumulates over time.</i>",
+            styles["BodyText"],
+        ),
+        Spacer(1, 0.15 * inch),
+    ]
+
+    if data is None:
+        elements.append(
+            Paragraph(
+                "<i>Database not configured &mdash; table not "
+                "populated. Set <b>demo_database_url</b> in your "
+                "config to query.</i>",
+                styles["BodyText"],
+            ),
+        )
+        return elements
+    if not data.aggregates:
+        elements.append(
+            Paragraph(
+                "<i>No supersessions recorded &mdash; entries have "
+                "not been corrected.</i>",
+                styles["BodyText"],
+            ),
+        )
+        return elements
+
+    cell_style = ParagraphStyle(
+        "SupersessionCell",
+        parent=styles["BodyText"],
+        fontSize=8,
+        leading=10,
+        spaceBefore=0,
+        spaceAfter=0,
+    )
+    base_table_style = TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a1a1a")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 9),
+        ("FONTSIZE", (0, 1), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#c7d6e3")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [
+            colors.white, colors.HexColor("#f5f8fb"),
+        ]),
+    ])
+
+    elements.extend([
+        Paragraph("Aggregate (entire dataset)", styles["Heading3"]),
+        Spacer(1, 0.05 * inch),
+    ])
+    aggregate_data: list[list] = [
+        ["Base table", "Reason category", "Total", "New in period"],
+    ]
+    for r in data.aggregates:
+        aggregate_data.append([
+            Paragraph(r.base_table, cell_style),
+            Paragraph(r.supersedes_category, cell_style),
+            f"{r.total_count:,}",
+            f"{r.new_in_period_count:,}",
+        ])
+    aggregate_style = TableStyle(
+        base_table_style.getCommands() + [
+            ("ALIGN", (2, 1), (-1, -1), "RIGHT"),
+        ],
+    )
+    elements.append(LongTable(
+        aggregate_data,
+        colWidths=[1.6 * inch, 2.4 * inch, 1.4 * inch, 1.5 * inch],
+        style=aggregate_style, repeatRows=1,
+    ))
+
+    if data.transaction_details:
+        elements.extend([
+            Spacer(1, 0.25 * inch),
+            Paragraph(
+                "Transactions — correcting entries in period",
+                styles["Heading3"],
+            ),
+            Spacer(1, 0.05 * inch),
+        ])
+        txn_data: list[list] = [
+            ["Transaction ID", "Reason", "Account ID", "Account name",
+             "Posted", "Amount"],
+        ]
+        for d in data.transaction_details:
+            txn_data.append([
+                Paragraph(d.transaction_id, cell_style),
+                Paragraph(d.supersedes_category, cell_style),
+                Paragraph(d.account_id, cell_style),
+                Paragraph(d.account_name, cell_style),
+                d.posting.strftime("%Y-%m-%d %H:%M"),
+                f"${d.amount_money:,.2f}",
+            ])
+        txn_style = TableStyle(
+            base_table_style.getCommands() + [
+                ("ALIGN", (4, 1), (-1, -1), "RIGHT"),
+            ],
+        )
+        elements.append(LongTable(
+            txn_data,
+            colWidths=[1.3 * inch, 1.1 * inch, 1.0 * inch,
+                       1.2 * inch, 1.2 * inch, 1.0 * inch],
+            style=txn_style, repeatRows=1,
+        ))
+
+    if data.daily_balance_details:
+        elements.extend([
+            Spacer(1, 0.25 * inch),
+            Paragraph(
+                "Daily balances — correcting entries in period",
+                styles["Heading3"],
+            ),
+            Spacer(1, 0.05 * inch),
+        ])
+        bal_data: list[list] = [
+            ["Account ID", "Account name", "Day", "Reason", "Balance"],
+        ]
+        for d in data.daily_balance_details:
+            bal_data.append([
+                Paragraph(d.account_id, cell_style),
+                Paragraph(d.account_name, cell_style),
+                d.business_day.isoformat(),
+                Paragraph(d.supersedes_category, cell_style),
+                f"${d.money:,.2f}",
+            ])
+        bal_style = TableStyle(
+            base_table_style.getCommands() + [
+                ("ALIGN", (2, 1), (-1, -1), "RIGHT"),
+            ],
+        )
+        elements.append(LongTable(
+            bal_data,
+            colWidths=[1.5 * inch, 1.5 * inch, 1.0 * inch,
+                       1.5 * inch, 1.3 * inch],
+            style=bal_style, repeatRows=1,
+        ))
+
+    if not data.transaction_details and not data.daily_balance_details:
+        elements.extend([
+            Spacer(1, 0.2 * inch),
+            Paragraph(
+                "<i>No new correcting entries posted in the report "
+                "window &mdash; aggregate counts above are all from "
+                "prior periods.</i>",
+                styles["BodyText"],
+            ),
+        ])
     return elements
 
 

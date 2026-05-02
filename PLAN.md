@@ -54,7 +54,7 @@ _Phase S + T sub-task detail removed during the post-T cleanup. RELEASE_NOTES v8
   - [x] U.3.c — Limit breach
   - [x] U.3.d — Stuck pending
   - [x] U.3.e — Stuck unbundled
-  - [ ] U.3.f — Supersession audit
+  - [x] U.3.f — Supersession audit
   - [ ] U.3.g — **Vocab + theme templating sweep across all audit PDF sections** (cover, exec summary, U.3.a–f). Currently the audit PDF hardcodes both prose ("Customer accounts", "GL clearing", "ZBA master") and colors (`#1a1a1a` header, `#eef3f7` period band, `#c7d6e3` border, `#f5f8fb` alt-row). Sweep to: (a) thread `HandbookVocabulary` for any persona-substitutable terms, adding new vocab keys where needed; (b) resolve all hex colors from `resolve_l2_theme(l2_instance) or DEFAULT_PRESET` per the CLAUDE.md "never hardcode hex" rule; (c) verify the persona-leak CI gate (Q.5.f) covers the audit PDF text payload too. Land **before U.4** so the Daily Statement walk inherits the pattern from the start instead of needing its own retrofit.
 - [ ] **U.4 — Per-account-day Daily Statement walk** (highest-value page). For every account that appears in U.3.a's drift table during the period, render a Daily Statement page: 5 KPIs (Opening / Debits / Credits / Closing / Drift) + every Money record posted that day. Mirrors the dashboard's Daily Statement sheet shape. Most important page; expect the most layout iteration here. **Review gate.**
   - for parent accounts, they should always render, even if drift is zero
