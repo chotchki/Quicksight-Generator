@@ -2729,12 +2729,20 @@ def _write_audit_pdf(
         ),
     ]
     start, end = period
+    # Cover-page Title: bookmark at level 0 so the auditor can jump
+    # back to the cover from anywhere via the sidebar nav, and so it
+    # appears at the top of the rendered TOC. We attach
+    # _bookmark_level directly rather than wrapping in
+    # _bookmarked_h1 because we want to preserve the Title style.
+    cover_title = Paragraph(
+        "QuickSight Generator Audit Report",
+        styles["Title"],
+    )
+    cover_title._bookmark_level = 0  # type: ignore[attr-defined]
+    toc_heading = Paragraph("Table of contents", styles["Heading1"])
+    toc_heading._bookmark_level = 0  # type: ignore[attr-defined]
     story = [
-        # Cover (no bookmark — cover doesn't appear in its own TOC).
-        Paragraph(
-            "QuickSight Generator Audit Report",
-            styles["Title"],
-        ),
+        cover_title,
         Spacer(1, 0.2 * inch),
         Paragraph(institution, institution_style),
         Spacer(1, 0.1 * inch),
@@ -2766,10 +2774,11 @@ def _write_audit_pdf(
         provenance=provenance,
     ))
     story.extend([
-        # Table of contents (own page, no bookmark — auditor scrolls
-        # one page back from the first body section to find it).
+        # Table of contents (own page, bookmarked at level 0 above so
+        # the auditor can jump to it from the sidebar nav and so it
+        # shows up in its own rendered list).
         PageBreak(),
-        Paragraph("Table of contents", styles["Heading1"]),
+        toc_heading,
         Spacer(1, 0.15 * inch),
         toc,
     ])
