@@ -83,6 +83,8 @@ def test_audit_apply_emits_markdown_to_stdout(min_config: Path):
     assert "Supersession" in result.output
     # No DB configured → placeholder notice rendered.
     assert "Database not configured" in result.output
+    # U.3.a Drift violations section.
+    assert "## Drift violations" in result.output
 
 
 def test_audit_apply_emits_markdown_to_file(min_config: Path, tmp_path: Path):
@@ -175,6 +177,8 @@ def test_audit_apply_execute_writes_pdf(min_config: Path, tmp_path: Path):
     assert "Supersession" in text
     # No DB → placeholder notice on the exec summary page.
     assert "Database not configured" in text
+    # U.3.a Drift violations page.
+    assert "Drift violations" in text
 
 
 def test_audit_clean_default_is_dry_run(tmp_path: Path):

@@ -49,7 +49,7 @@ _Phase S + T sub-task detail removed during the post-T cleanup. RELEASE_NOTES v8
 - [x] **U.1 — Cover page.** Institution name (from L2 YAML persona block), period (default yesterday + last 7 days; `--from / --to` overrides), generation timestamp, L2 instance fingerprint hash placeholder (real hash lands in U.7). Layout: title, subtitle, period band, footer with provenance placeholder. **Review gate.**
 - [x] **U.2 — Executive summary page.** Totals across the period: transaction count, dollar volume (gross / net), exception counts by check (drift / overdraft / limit_breach / stuck_pending / stuck_unbundled / supersession). Single page, table layout. SQL queries reuse the same matview shapes the dashboards do. **Review gate.**
 - [ ] **U.3 — Per-invariant violation tables.** One page (or grouped) per L1 invariant, sourced from `<prefix>_*` matviews. Columns: account, account role, day, magnitude (dollar amount or count), reason. **Review gate after each invariant lands** so layout iterates per-table.
-  - [ ] U.3.a — Drift
+  - [x] U.3.a — Drift
   - [ ] U.3.b — Overdraft
   - [ ] U.3.c — Limit breach
   - [ ] U.3.d — Stuck pending

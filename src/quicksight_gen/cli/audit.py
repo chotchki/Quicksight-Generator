@@ -230,6 +230,83 @@ def _query_executive_summary(
         conn.close()
 
 
+# -- Drift violations (U.3.a) -------------------------------------------------
+
+
+@dataclass(frozen=True)
+class DriftViolation:
+    """One row of the ``<prefix>_drift`` matview, audit-shaped.
+
+    ``business_day`` carries ``business_day_end`` from the matview —
+    the day the discrepancy was observed at end-of-day. Mirrors the
+    L1 dashboard's "Leaf Account Drift" table for column choice.
+    """
+    account_id: str
+    account_name: str
+    account_role: str
+    account_parent_role: str
+    business_day: date
+    stored_balance: Decimal
+    computed_balance: Decimal
+    drift: Decimal
+
+
+def _query_drift_violations(
+    cfg, instance, period: tuple[date, date],  # type: ignore[no-untyped-def]
+) -> list[DriftViolation] | None:
+    """Pull drift rows whose business day falls in the period.
+
+    Returns None when no DB is configured (renders the placeholder
+    section). An empty list means the DB is healthy and zero drifts
+    fired in the period — that's a good-news render, not a missing
+    section.
+
+    Sort: most-recent day first, then biggest absolute drift, then
+    account_id for stable order. Auditor wants to see the freshest
+    + biggest discrepancies on top.
+    """
+    if cfg.demo_database_url is None:
+        return None
+
+    from quicksight_gen.common.db import connect_demo_db
+
+    prefix = instance.instance
+    start, end = period
+    start_lit = f"DATE '{start.isoformat()}'"
+    end_excl_lit = f"DATE '{(end + timedelta(days=1)).isoformat()}'"
+
+    conn = connect_demo_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT account_id, account_name, account_role,"
+            f"       account_parent_role, business_day_end,"
+            f"       stored_balance, computed_balance, drift"
+            f"  FROM {prefix}_drift"
+            f" WHERE business_day_start >= {start_lit}"
+            f"   AND business_day_start < {end_excl_lit}"
+            f" ORDER BY business_day_end DESC, ABS(drift) DESC, account_id"
+        )
+        rows = cur.fetchall()
+        return [
+            DriftViolation(
+                account_id=str(r[0]),
+                account_name=str(r[1] or ""),
+                account_role=str(r[2] or ""),
+                account_parent_role=str(r[3] or ""),
+                business_day=(
+                    r[4].date() if hasattr(r[4], "date") else r[4]
+                ),
+                stored_balance=Decimal(r[5] or 0),
+                computed_balance=Decimal(r[6] or 0),
+                drift=Decimal(r[7] or 0),
+            )
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
 @audit.command("apply")
 @l2_instance_option()
 @config_option(required_for_dialect_only=True)
@@ -272,6 +349,7 @@ def audit_apply(
     institution = _institution_name(instance)
     generated_at = datetime.now()
     exec_summary = _query_executive_summary(_cfg, instance, (start, end))
+    drift_rows = _query_drift_violations(_cfg, instance, (start, end))
 
     if execute:
         out_path = Path(output) if output is not None else Path("report.pdf")
@@ -281,6 +359,7 @@ def audit_apply(
             period=(start, end),
             generated_at=generated_at,
             exec_summary=exec_summary,
+            drift_rows=drift_rows,
         )
         click.echo(
             f"Wrote audit report to {out_path} "
@@ -293,6 +372,7 @@ def audit_apply(
         period=(start, end),
         generated_at=generated_at,
         exec_summary=exec_summary,
+        drift_rows=drift_rows,
     )
     if output is None:
         click.echo(markdown, nl=False)
@@ -377,13 +457,14 @@ def _render_audit_markdown(
     period: tuple[date, date],
     generated_at: datetime,
     exec_summary: ExecSummary | None,
+    drift_rows: list[DriftViolation] | None,
 ) -> str:
     """Markdown rendering of the audit report.
 
-    Mirrors the PDF page sequence — cover, then executive summary —
-    so an integrator can review the report's content before
-    committing to a real PDF write. U.3+ appends per-invariant
-    tables, the Daily Statement walk, and the sign-off block.
+    Mirrors the PDF page sequence — cover, executive summary, then
+    per-invariant violation tables (U.3.a Drift first; U.3.b–f land
+    later) — so an integrator can review the report's content before
+    committing to a real PDF write.
     """
     start, end = period
     fingerprint = _l2_fingerprint_placeholder()
@@ -407,11 +488,16 @@ def _render_audit_markdown(
         "\n"
         f"_Provenance fingerprint:_ `{fingerprint}`\n"
     )
-    body = _render_executive_summary_markdown(exec_summary)
+    body = (
+        _render_executive_summary_markdown(exec_summary)
+        + _render_drift_markdown(drift_rows)
+    )
     trailer = (
         "\n"
-        "_Per-invariant violation tables, the per-account-day Daily "
-        "Statement walk, and the sign-off block land in Phase U.3+._\n"
+        "_Remaining per-invariant violation tables (overdraft, limit "
+        "breach, stuck pending, stuck unbundled, supersession), the "
+        "per-account-day Daily Statement walk, and the sign-off block "
+        "land in Phase U.3.b+._\n"
     )
     return cover + body + trailer
 
@@ -475,6 +561,50 @@ def _render_executive_summary_markdown(
     )
 
 
+def _render_drift_markdown(
+    rows: list[DriftViolation] | None,
+) -> str:
+    """Drift violations section in Markdown form.
+
+    Mirrors the PDF page. None = DB not configured (placeholder
+    notice only); empty list = DB healthy with zero violations
+    in the period (good-news render); non-empty = full table.
+    """
+    header = (
+        "\n"
+        "---\n"
+        "\n"
+        "## Drift violations\n"
+        "\n"
+        "_Per-account-day discrepancies between stored end-of-day "
+        "balance and the balance computed from posted transactions. "
+        "Sourced from `<prefix>_drift` matview._\n"
+    )
+    if rows is None:
+        return header + (
+            "\n_Database not configured — table not populated. "
+            "Set `demo_database_url` in your config to query._\n"
+        )
+    if not rows:
+        return header + (
+            "\n_No drift detected for the period — books reconcile._\n"
+        )
+    body = (
+        "\n"
+        "| Account ID | Account name | Role | Day | Stored | Computed | Drift |\n"
+        "|---|---|---|---|---:|---:|---:|\n"
+    )
+    for r in rows:
+        body += (
+            f"| `{r.account_id}` | {r.account_name} | {r.account_role} | "
+            f"{r.business_day.isoformat()} | "
+            f"${r.stored_balance:,.2f} | "
+            f"${r.computed_balance:,.2f} | "
+            f"${r.drift:,.2f} |\n"
+        )
+    return header + body
+
+
 def _write_audit_pdf(
     path: Path,
     *,
@@ -482,14 +612,16 @@ def _write_audit_pdf(
     period: tuple[date, date],
     generated_at: datetime,
     exec_summary: ExecSummary | None,
+    drift_rows: list[DriftViolation] | None,
 ) -> None:
     """Render the audit report as a PDF.
 
-    Page 1 is the cover (title, institution, period band, generation
-    timestamp, scope prose). Page 2 is the U.2 executive summary
-    (Volume + Exception-counts tables). Every page carries a footer
-    with the provenance fingerprint placeholder (real hash lands in
-    U.7). U.3+ extends the platypus story with per-invariant tables.
+    Page 1 is the cover; page 2 the U.2 executive summary; page 3+
+    the U.3.a Drift violations table (paginates via LongTable).
+    Every page carries a footer with the provenance fingerprint
+    placeholder (real hash lands in U.7). U.3.b+ extends the
+    platypus story with overdraft, limit_breach, stuck_pending,
+    stuck_unbundled, and supersession tables.
     """
     # Imported lazily so the audit CLI loads even when the [audit]
     # extra isn't installed — only --execute paths need reportlab.
@@ -566,6 +698,7 @@ def _write_audit_pdf(
         ),
     ]
     story.extend(_executive_summary_story(exec_summary, styles, period))
+    story.extend(_drift_story(drift_rows, styles, period))
     doc.build(story, onFirstPage=_draw_footer, onLaterPages=_draw_footer)
 
 
@@ -660,6 +793,131 @@ def _executive_summary_story(
         Spacer(1, 0.05 * inch),
         Table(exception_data, colWidths=col_widths, style=table_style),
     ])
+    return elements
+
+
+def _drift_story(
+    rows: list[DriftViolation] | None,
+    styles,  # type: ignore[no-untyped-def]
+    period: tuple[date, date],
+) -> list:  # type: ignore[type-arg]
+    """Platypus elements for the U.3.a Drift violations page.
+
+    LongTable auto-paginates with the header row repeated. None = no
+    DB → placeholder notice. Empty list = DB healthy with zero
+    drifts in period → good-news render. Non-empty = full table.
+    """
+    from reportlab.lib import colors
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.platypus import (
+        LongTable,
+        PageBreak,
+        Paragraph,
+        Spacer,
+        TableStyle,
+    )
+
+    start, end = period
+    elements: list = [
+        PageBreak(),
+        Paragraph("Drift violations", styles["Heading1"]),
+        Paragraph(
+            f"Reporting period: {start.isoformat()} &ndash; "
+            f"{end.isoformat()} (inclusive). "
+            "Source: <b>&lt;prefix&gt;_drift</b> matview.",
+            styles["BodyText"],
+        ),
+        Paragraph(
+            "<i>Per-account-day discrepancies between stored "
+            "end-of-day balance and the balance computed from "
+            "posted transactions.</i>",
+            styles["BodyText"],
+        ),
+        Spacer(1, 0.15 * inch),
+    ]
+
+    if rows is None:
+        elements.append(
+            Paragraph(
+                "<i>Database not configured &mdash; table not "
+                "populated. Set <b>demo_database_url</b> in your "
+                "config to query.</i>",
+                styles["BodyText"],
+            ),
+        )
+        return elements
+    if not rows:
+        elements.append(
+            Paragraph(
+                "<i>No drift detected for the period &mdash; "
+                "books reconcile.</i>",
+                styles["BodyText"],
+            ),
+        )
+        return elements
+
+    cell_style = ParagraphStyle(
+        "DriftCell",
+        parent=styles["BodyText"],
+        fontSize=8,
+        leading=10,
+        spaceBefore=0,
+        spaceAfter=0,
+    )
+    header = [
+        "Account ID",
+        "Account name",
+        "Role",
+        "Day",
+        "Stored",
+        "Computed",
+        "Drift",
+    ]
+    data: list[list] = [header]
+    for r in rows:
+        data.append([
+            Paragraph(r.account_id, cell_style),
+            Paragraph(r.account_name, cell_style),
+            Paragraph(r.account_role, cell_style),
+            r.business_day.isoformat(),
+            f"${r.stored_balance:,.2f}",
+            f"${r.computed_balance:,.2f}",
+            f"${r.drift:,.2f}",
+        ])
+
+    table_style = TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a1a1a")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 9),
+        ("FONTSIZE", (0, 1), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#c7d6e3")),
+        # Right-align numeric columns (Day, Stored, Computed, Drift).
+        ("ALIGN", (3, 1), (-1, -1), "RIGHT"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [
+            colors.white, colors.HexColor("#f5f8fb"),
+        ]),
+    ])
+    col_widths = [
+        1.15 * inch,  # Account ID
+        1.15 * inch,  # Account name
+        1.05 * inch,  # Role  (fits "CustomerDDA" / "ConcentrationMaster")
+        0.8 * inch,   # Day
+        0.95 * inch,  # Stored
+        0.95 * inch,  # Computed
+        0.9 * inch,   # Drift
+    ]
+    elements.append(
+        LongTable(
+            data, colWidths=col_widths, style=table_style, repeatRows=1,
+        ),
+    )
     return elements
 
 
