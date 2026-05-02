@@ -759,6 +759,288 @@ def demo_topology(
     click.echo(f"Wrote topology SVG to {rendered}")
 
 
+# ---------------------------------------------------------------------------
+# Q.3.a — piecewise emit / apply primitives (schema | seed | refresh)
+#
+# `demo apply` does the full bundle: emit schema + seed + refresh,
+# connect to the demo DB, run them in order. The piecewise commands
+# below let an integrator either:
+#   - emit one piece's SQL to a file/stdout for review or for piping
+#     into a different DB tool (no DB connection required), OR
+#   - apply one piece against the demo DB without re-running the
+#     others (e.g., re-seed without re-emitting schema).
+#
+# All six new commands take ``--l2-instance PATH`` (defaults to
+# ``spec_example``); the apply commands also take ``--config PATH``
+# (the demo DB connection).
+# ---------------------------------------------------------------------------
+
+
+def _resolve_l2_for_demo(
+    config_path: str, l2_instance_path: str | None,
+):  # type: ignore[no-untyped-def]
+    """Load config + L2 instance and stamp the per-instance prefix on cfg.
+
+    Mirrors the prelude of ``_apply_demo``: load YAML, resolve to either
+    the bundled spec_example or the integrator's own L2, stamp
+    ``cfg.l2_instance_prefix`` so downstream SQL (REFRESH MATERIALIZED
+    VIEW, dataset IDs) lands on the right per-prefix objects.
+    """
+    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
+
+    cfg = load_config(config_path)
+    if l2_instance_path is not None:
+        from quicksight_gen.common.l2 import load_instance
+        instance = load_instance(Path(l2_instance_path))
+    else:
+        instance = default_l2_instance()
+    if cfg.l2_instance_prefix is None:
+        cfg = cfg.with_l2_instance_prefix(str(instance.instance))
+    return cfg, instance
+
+
+def _build_full_seed_sql(cfg, instance) -> str:  # type: ignore[no-untyped-def]
+    """Compose the same seed pipeline ``_apply_demo`` runs.
+
+    Densify per-kind plants (×5) → add 15 broken-rail stuck_pending
+    plants on one rail → boost inv_fanout amounts (×5). Returns the
+    concatenated SQL of the 90-day baseline + plant overlays.
+    """
+    from quicksight_gen.common.l2.auto_scenario import (
+        add_broken_rail_plants,
+        boost_inv_fanout_plants,
+        default_scenario_for,
+        densify_scenario,
+    )
+    from quicksight_gen.common.l2.seed import emit_full_seed
+
+    base = default_scenario_for(instance).scenario
+    dense = densify_scenario(base, factor=5)
+    broken = add_broken_rail_plants(dense, instance, broken_count=15)
+    final = boost_inv_fanout_plants(broken, amount_multiplier=5)
+    return emit_full_seed(instance, final, dialect=cfg.dialect)
+
+
+def _emit_to_target(sql: str, output: str | None, *, label: str) -> None:
+    """Write SQL to ``output`` or stdout; echo a one-line summary on stderr."""
+    if output is None:
+        click.echo(sql, nl=False)
+    else:
+        Path(output).write_text(sql, encoding="utf-8")
+        line_count = sql.count("\n")
+        size_kb = len(sql.encode("utf-8")) // 1024
+        click.echo(
+            f"Wrote {label} to {output} ({line_count} lines, {size_kb} KB)",
+            err=True,
+        )
+
+
+def _connect_and_apply(
+    cfg, sql: str, *, label: str,  # type: ignore[no-untyped-def]
+) -> None:
+    """Open the demo DB connection, run ``sql``, commit; rollback on error."""
+    if not cfg.demo_database_url:
+        raise click.ClickException(
+            "demo_database_url is required. "
+            "Set it in your config YAML or via QS_GEN_DEMO_DATABASE_URL."
+        )
+    from quicksight_gen.common.db import connect_demo_db
+
+    click.echo(f"Connecting to {cfg.demo_database_url.split('@')[-1]}...")
+    try:
+        conn = connect_demo_db(cfg)
+    except ImportError as e:
+        raise click.ClickException(str(e)) from e
+    try:
+        with conn.cursor() as cur:
+            click.echo(f"  Applying {label}...")
+            _execute_script(cur, sql, dialect=cfg.dialect)
+        conn.commit()
+        click.echo(f"  {label.capitalize()} applied.")
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# -- emit-* commands --------------------------------------------------------
+
+
+@demo.command("emit-schema")
+@click.option(
+    "--l2-instance", "l2_instance_path",
+    type=click.Path(exists=True), default=None,
+    help="Path to L2 instance YAML. Default: bundled spec_example.",
+)
+@click.option(
+    "--config", "-c",
+    type=click.Path(exists=True), default="config.yaml",
+    help="Path to configuration file (used for the dialect setting only).",
+)
+@click.option(
+    "--output", "-o",
+    type=click.Path(), default=None,
+    help="Output path for the SQL (default: stdout).",
+)
+def demo_emit_schema(
+    l2_instance_path: str | None, config: str, output: str | None,
+) -> None:
+    """Emit the per-prefix schema DDL for an L2 instance.
+
+    Pipe to your DB tool: ``quicksight-gen demo emit-schema | psql ...``
+    or write to a file for review before applying.
+    """
+    from quicksight_gen.common.l2.schema import emit_schema
+
+    cfg, instance = _resolve_l2_for_demo(config, l2_instance_path)
+    sql = emit_schema(instance, dialect=cfg.dialect)
+    _emit_to_target(sql, output, label="schema DDL")
+
+
+@demo.command("emit-seed")
+@click.option(
+    "--l2-instance", "l2_instance_path",
+    type=click.Path(exists=True), default=None,
+    help="Path to L2 instance YAML. Default: bundled spec_example.",
+)
+@click.option(
+    "--config", "-c",
+    type=click.Path(exists=True), default="config.yaml",
+    help="Path to configuration file (used for the dialect setting only).",
+)
+@click.option(
+    "--output", "-o",
+    type=click.Path(), default=None,
+    help="Output path for the SQL (default: stdout).",
+)
+def demo_emit_seed(
+    l2_instance_path: str | None, config: str, output: str | None,
+) -> None:
+    """Emit the full demo seed SQL (90-day baseline + plant overlays).
+
+    Same composition ``demo apply`` runs: baseline → densify ×5 → add
+    15 broken-rail plants → boost inv_fanout amounts ×5 → emit_full_seed.
+    For the narrower contract-test seed (one plant per L1 invariant
+    kind, hashed against a canonical date), use ``demo seed-l2``.
+    """
+    cfg, instance = _resolve_l2_for_demo(config, l2_instance_path)
+    sql = _build_full_seed_sql(cfg, instance)
+    _emit_to_target(sql, output, label="seed SQL")
+
+
+@demo.command("emit-refresh")
+@click.option(
+    "--l2-instance", "l2_instance_path",
+    type=click.Path(exists=True), default=None,
+    help="Path to L2 instance YAML. Default: bundled spec_example.",
+)
+@click.option(
+    "--config", "-c",
+    type=click.Path(exists=True), default="config.yaml",
+    help="Path to configuration file (used for the dialect setting only).",
+)
+@click.option(
+    "--output", "-o",
+    type=click.Path(), default=None,
+    help="Output path for the SQL (default: stdout).",
+)
+def demo_emit_refresh(
+    l2_instance_path: str | None, config: str, output: str | None,
+) -> None:
+    """Emit the REFRESH MATERIALIZED VIEW SQL for an L2 instance's matviews.
+
+    Run this after every batch insert into ``<prefix>_transactions``
+    or ``<prefix>_daily_balances`` — the L1 invariant matviews +
+    Investigation matviews don't auto-refresh.
+    """
+    from quicksight_gen.common.l2.schema import refresh_matviews_sql
+
+    cfg, instance = _resolve_l2_for_demo(config, l2_instance_path)
+    sql = refresh_matviews_sql(instance, dialect=cfg.dialect)
+    _emit_to_target(sql, output, label="refresh SQL")
+
+
+# -- apply-* commands -------------------------------------------------------
+
+
+@demo.command("apply-schema")
+@click.option(
+    "--l2-instance", "l2_instance_path",
+    type=click.Path(exists=True), default=None,
+    help="Path to L2 instance YAML. Default: bundled spec_example.",
+)
+@click.option(
+    "--config", "-c",
+    type=click.Path(exists=True), default="config.yaml",
+    help="Path to configuration file (DB connection + dialect).",
+)
+def demo_apply_schema(
+    l2_instance_path: str | None, config: str,
+) -> None:
+    """Connect to the demo DB and apply just the schema DDL."""
+    from quicksight_gen.common.l2.schema import emit_schema
+
+    cfg, instance = _resolve_l2_for_demo(config, l2_instance_path)
+    sql = emit_schema(instance, dialect=cfg.dialect)
+    _connect_and_apply(cfg, sql, label="schema DDL")
+
+
+@demo.command("apply-seed")
+@click.option(
+    "--l2-instance", "l2_instance_path",
+    type=click.Path(exists=True), default=None,
+    help="Path to L2 instance YAML. Default: bundled spec_example.",
+)
+@click.option(
+    "--config", "-c",
+    type=click.Path(exists=True), default="config.yaml",
+    help="Path to configuration file (DB connection + dialect).",
+)
+def demo_apply_seed(
+    l2_instance_path: str | None, config: str,
+) -> None:
+    """Connect to the demo DB and apply just the seed SQL.
+
+    Assumes the schema was already applied (``demo apply-schema`` or
+    a prior ``demo apply``). After this you'll likely want
+    ``demo apply-refresh`` so the matviews see the new rows.
+    """
+    cfg, instance = _resolve_l2_for_demo(config, l2_instance_path)
+    sql = _build_full_seed_sql(cfg, instance)
+    _connect_and_apply(cfg, sql, label="seed data")
+
+
+@demo.command("apply-refresh")
+@click.option(
+    "--l2-instance", "l2_instance_path",
+    type=click.Path(exists=True), default=None,
+    help="Path to L2 instance YAML. Default: bundled spec_example.",
+)
+@click.option(
+    "--config", "-c",
+    type=click.Path(exists=True), default="config.yaml",
+    help="Path to configuration file (DB connection + dialect).",
+)
+def demo_apply_refresh(
+    l2_instance_path: str | None, config: str,
+) -> None:
+    """Connect to the demo DB and refresh the per-prefix matviews.
+
+    Use after any ETL load that mutates ``<prefix>_transactions`` or
+    ``<prefix>_daily_balances`` — the L1 invariant matviews +
+    Investigation matviews don't auto-refresh.
+    """
+    from quicksight_gen.common.l2.schema import refresh_matviews_sql
+
+    cfg, instance = _resolve_l2_for_demo(config, l2_instance_path)
+    sql = refresh_matviews_sql(instance, dialect=cfg.dialect)
+    _connect_and_apply(cfg, sql, label="matview refresh")
+
+
+# ---------------------------------------------------------------------------
+
+
 @demo.command("apply")
 @click.argument("app", type=DEMO_APP_CHOICE, required=False)
 @click.option("--all", "all_apps", is_flag=True, help="Apply for all apps.")
@@ -812,8 +1094,6 @@ def _apply_demo(
     to render that institution's per-prefix schema/seed/dashboards
     against the same demo DB.
     """
-    from dataclasses import replace as _replace
-
     from quicksight_gen.apps.executives.app import (
         build_analysis as build_exec_analysis,
         build_executives_dashboard,
@@ -828,9 +1108,14 @@ def _apply_demo(
     from quicksight_gen.apps.investigation.datasets import (
         build_all_datasets as build_inv_datasets,
     )
-    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
 
-    cfg = load_config(config_path)
+    # Q.3.a refactor: the "load YAML + stamp prefix on cfg" prelude
+    # and the "densify + broken + boost + emit_full_seed" composition
+    # now live in `_resolve_l2_for_demo` / `_build_full_seed_sql`.
+    # ``_apply_demo`` bundles them together so the schema + seed +
+    # refresh land in one DB transaction (piecewise commands open a
+    # separate connection per piece).
+    cfg, inv_l2 = _resolve_l2_for_demo(config_path, l2_instance_path)
     if not cfg.demo_database_url:
         raise click.ClickException(
             "demo_database_url is required for 'demo apply'. "
@@ -843,63 +1128,13 @@ def _apply_demo(
         emit_schema as emit_l2_schema,
         refresh_matviews_sql,
     )
-    from quicksight_gen.common.l2.seed import emit_full_seed as emit_l2_seed
-    from quicksight_gen.common.l2.auto_scenario import (
-        add_broken_rail_plants,
-        boost_inv_fanout_plants,
-        default_scenario_for,
-        densify_scenario,
-    )
-
-    # Pre-stamp ``cfg.l2_instance_prefix`` from the default L2 instance
-    # before opening the DB connection: the REFRESH MATERIALIZED VIEW
-    # calls below reference ``<prefix>_inv_*`` and would land on
-    # ``None_inv_pair_rolling_anomalies`` if the prefix isn't set yet.
-    # Clear ``datasource_arn`` at the same time so ``Config.__post_init__``
-    # re-derives it with the prefix included (otherwise the per-app
-    # builders bake the unprefixed ``qs-gen-demo-datasource`` ARN into
-    # the dataset JSON, and deploy fails with "Invalid dataSourceArn").
-    if l2_instance_path is not None:
-        from quicksight_gen.common.l2 import load_instance
-        inv_l2 = load_instance(Path(l2_instance_path))
-    else:
-        inv_l2 = default_l2_instance()
-    if cfg.l2_instance_prefix is None:
-        cfg = cfg.with_l2_instance_prefix(str(inv_l2.instance))
 
     # The L2 instance carries its full per-prefix DDL — base tables
     # (``<prefix>_transactions`` / ``<prefix>_daily_balances``), Current*
     # views, L1 invariant matviews, AND the Inv matviews (N.3.n /
     # N.4.h). The legacy global ``schema.sql`` was retired in P.1.
     l2_schema_sql = emit_l2_schema(inv_l2, dialect=cfg.dialect)
-
-    # Plant the L2-shape demo seed: every L1 SHOULD-violation kind
-    # (drift / overdraft / limit-breach / stuck-pending /
-    # stuck-unbundled / supersession) plus the Investigation
-    # InvFanoutPlant — landed via the auto-derived scenario picker.
-    # P.1 retired the legacy ``apps/investigation/demo_data.py``
-    # (which planted v5-shape flat-table data into the now-deleted
-    # unprefixed ``transactions`` / ``daily_balances`` tables).
-    #
-    # R.3.b/c: layer plant density tuning on top of default_scenario_for.
-    # ``densify_scenario(factor=5)`` replicates per-kind plants across
-    # the window so each L1 invariant has multiple instances visible
-    # against the 60k-row Phase R baseline; ``add_broken_rail_plants``
-    # picks one Rail and plants 15 stuck_pending entries on it so the
-    # Today's Exceptions KPI has a magnitude that matters and the L2
-    # Exceptions sheet's bar chart shows the broken Rail spike
-    # immediately. emit_full_seed (R.3.a) prepends the 90-day baseline.
-    base_scenario = default_scenario_for(inv_l2).scenario
-    dense_scenario = densify_scenario(base_scenario, factor=5)
-    broken_scenario = add_broken_rail_plants(
-        dense_scenario, inv_l2, broken_count=15,
-    )
-    # R.3.d: bump inv_fanout amount so the cluster stands out against
-    # the customer-ACH baseline median ($665). 5× → $2,500/transfer.
-    final_scenario = boost_inv_fanout_plants(
-        broken_scenario, amount_multiplier=5,
-    )
-    seed_sql = emit_l2_seed(inv_l2, final_scenario, dialect=cfg.dialect)
+    seed_sql = _build_full_seed_sql(cfg, inv_l2)
 
     click.echo(f"Connecting to {cfg.demo_database_url.split('@')[-1]}...")
     try:
