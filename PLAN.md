@@ -45,7 +45,7 @@ _Phase S + T sub-task detail removed during the post-T cleanup. RELEASE_NOTES v8
 
 ### Execution plan (review gate between each)
 
-- [ ] **U.0 — Skeleton + harness.** Add `cli/audit.py` with the `audit apply | clean | test` shell. `audit apply` (no `--execute`) emits a one-line "v1 stub" Markdown source to stdout. `audit apply --execute -o report.pdf` writes a one-page reportlab PDF that says "Phase U skeleton — institution: {name}, period: {from}–{to}". Wire into `cli/__init__.py` alongside the other four groups. Add `reportlab` to `[audit]` extra in `pyproject.toml`. **Review gate:** confirm CLI shape feels right before adding pages.
+- [x] **U.0 — Skeleton + harness.** Add `cli/audit.py` with the `audit apply | clean | test` shell. `audit apply` (no `--execute`) emits a one-line "v1 stub" Markdown source to stdout. `audit apply --execute -o report.pdf` writes a one-page reportlab PDF that says "Phase U skeleton — institution: {name}, period: {from}–{to}". Wire into `cli/__init__.py` alongside the other four groups. Add `reportlab` to `[audit]` extra in `pyproject.toml`. **Review gate:** confirm CLI shape feels right before adding pages.
 - [ ] **U.1 — Cover page.** Institution name (from L2 YAML persona block), period (default yesterday + last 7 days; `--from / --to` overrides), generation timestamp, L2 instance fingerprint hash placeholder (real hash lands in U.7). Layout: title, subtitle, period band, footer with provenance placeholder. **Review gate.**
 - [ ] **U.2 — Executive summary page.** Totals across the period: transaction count, dollar volume (gross / net), exception counts by check (drift / overdraft / limit_breach / stuck_pending / stuck_unbundled / supersession). Single page, table layout. SQL queries reuse the same matview shapes the dashboards do. **Review gate.**
 - [ ] **U.3 — Per-invariant violation tables.** One page (or grouped) per L1 invariant, sourced from `<prefix>_*` matviews. Columns: account, account role, day, magnitude (dollar amount or count), reason. **Review gate after each invariant lands** so layout iterates per-table.
@@ -75,11 +75,11 @@ _Phase S + T sub-task detail removed during the post-T cleanup. RELEASE_NOTES v8
 - [ ] **U.11 — Cut release.** v8.2.0 — additive (new artifact group + new optional `reportlab` dep). RELEASE_NOTES entry. Tag, push, verify pipeline.
 
 ---
-
-## Q.3.b — yaml field naming / config-vs-L2 boundary review (deferred)
-
-Today's split between `run/config.yaml` (account, region, datasource, dialect, theme defaults) and the L2 institution YAML (rails, chains, accounts, persona, theme override) has accumulated friction points. Audit + tighten the boundary based on what actually got threaded in M-/N-/O-/P-/Q-. Defers to a dedicated phase with its own scoping pass after Q.3.a settles.
-
+# Proposed Phase V
+- Today's split between `run/config.yaml` (account, region, datasource, dialect, theme defaults) and the L2 institution YAML (rails, chains, accounts, persona, theme override) has accumulated friction points. Audit + tighten the boundary based on what actually got threaded in M-/N-/O-/P-/Q-. Defers to a dedicated phase with its own scoping pass after Q.3.a settles.
+- **Vendor `@hpcc-js/wasm-graphviz` for offline-friendly docs** (was T.7). `qs-graphviz-wasm.js` currently CDN-loads from jsDelivr. Bring in if jsDelivr reliability becomes a real-user complaint OR an integrator deploys the docs site somewhere airgapped. ~30 min: download the ESM bundle into `docs/_static/`, swap the import path.
+- **Per-command --help smoke tests** for the new artifact groups. `schema apply` / `data apply` / `data refresh` / `data clean` / `json clean` / `docs apply` / `docs serve` aren't directly exercised by unit tests today — the integration job covers the `--execute` paths against real DB, and emit-only paths flow through pre-existing dataset-shape tests. Add a `tests/{schema,data,json,docs}/test_cli_smoke.py` that asserts `--help` exits 0 + the emit path against `spec_example` produces a non-empty SQL stream.
+- **Re-run 4-cell e2e matrix (P.9f.d)** — was deferred when the per-cell triage list was still settling. Worth a green pass against v8.0.0 once any first-impression tune-ups in R.6.e land.
 ---
 
 ## Phase R — Realistic demo seed (open follow-ups)
@@ -109,14 +109,13 @@ Single grab-bag for everything not yet in a phase. Promote to a numbered phase e
 
 ### Tooling / test reliability
 
-- **Vendor `@hpcc-js/wasm-graphviz` for offline-friendly docs** (was T.7). `qs-graphviz-wasm.js` currently CDN-loads from jsDelivr. Bring in if jsDelivr reliability becomes a real-user complaint OR an integrator deploys the docs site somewhere airgapped. ~30 min: download the ESM bundle into `docs/_static/`, swap the import path.
 - **Single-app deploy must not orphan shared datasource.** (Mostly moot under v8.0.0 since `json apply` emits all four; keep as defensive note.)
 - **Apply layered (query+render) pattern to all browser e2e tests** (was M.4.1.k).
 - **Sasquatch L1 dashboard render flake.** `test_harness_l1_planted_scenarios_visible[sasquatch_pr]` Layer 2 occasionally misses `cust-0001-snb` on the Limit Breach sheet — Layer 1 (matview row presence) passes, the row IS in the matview, but the deployed Limit Breach table doesn't render the cell within the visual timeout. One retry already baked in via `run_dashboard_check_with_retry`; second attempt also misses. Spec_example + fuzz variants of the same test pass on the same run, so the flake is data-shape-specific (sasquatch_pr's seed has more transactions; the L1 dashboard's per-sheet transfer_type dropdown may default-narrow before the table loads). Investigation work: add a screenshot comparison of the Limit Breach sheet between sasquatch_pr (failing) and spec_example (passing) at the moment of the assertion, OR widen the harness's per-sheet wait to assert "table rendered" before sheet_text capture, OR re-deploy sasquatch_pr seed with a tighter days_ago=1 limit_breach plant to rule out timing. Do NOT xfail (the M.4.4.12 lesson — silent xfails masked real bugs).
 - **L1 dashboard date filter doesn't surface matview rows** (root cause TBD — non-blocking workaround in place).
-- **Re-run 4-cell e2e matrix (P.9f.d)** — was deferred when the per-cell triage list was still settling. Worth a green pass against v8.0.0 once any first-impression tune-ups in R.6.e land.
+
 - **QS-UI kitchen-sink reference tool** (was M.4.4.9). Standalone tool that consumes QS console "view JSON" output for every visual type and dumps it as a reference fixture. Defensive measure; deferred since the concrete editor-crash bugs got fixed.
-- **Per-command --help smoke tests** for the new artifact groups. `schema apply` / `data apply` / `data refresh` / `data clean` / `json clean` / `docs apply` / `docs serve` aren't directly exercised by unit tests today — the integration job covers the `--execute` paths against real DB, and emit-only paths flow through pre-existing dataset-shape tests. Add a `tests/{schema,data,json,docs}/test_cli_smoke.py` that asserts `--help` exits 0 + the emit path against `spec_example` produces a non-empty SQL stream.
+
 
 ### Dashboard polish — Q.1.c follow-ups
 
