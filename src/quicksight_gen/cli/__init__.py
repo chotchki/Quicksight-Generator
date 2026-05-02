@@ -40,8 +40,10 @@ from quicksight_gen.cli_legacy import (  # noqa: F401 — re-exported
 # verb without removing the old one, so we can ship one artifact
 # group at a time and verify before atomically dropping the old verbs.
 from quicksight_gen.cli.schema import schema as _schema_group
+from quicksight_gen.cli.data import data as _data_group
 
 main.add_command(_schema_group, name="schema")
+main.add_command(_data_group, name="data")
 
 
 __all__ = ["main"]
