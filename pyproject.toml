@@ -59,6 +59,11 @@ audit = [
     # generated PDF + assert sentinel sections are present.
     "reportlab>=4.0",
     "pypdf>=4.0",
+    # U.7.b — auto-sign the rendered PDF via pyHanko when
+    # config.yaml carries a `signing:` block (PEM RSA key + cert).
+    # Optional at runtime: only loaded when signing kicks in;
+    # absent config.yaml signing block = unsigned PDF (back-compat).
+    "pyhanko>=0.30",
 ]
 dev = [
     "pytest>=7.0",

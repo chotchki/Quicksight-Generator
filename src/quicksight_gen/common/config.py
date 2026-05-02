@@ -19,6 +19,33 @@ if TYPE_CHECKING:
     from quicksight_gen.common.models import Tag
 
 
+@dataclass(frozen=True)
+class SigningConfig:
+    """Operator-side digital-signing material for audit PDF auto-sign (U.7.b).
+
+    When the audit `apply --execute` writes a PDF and the loaded
+    config carries a ``signing:`` block, ``cli/audit`` runs it
+    through pyHanko to apply a CMS signature over the entire PDF
+    bytes. The system-attestation block on the sign-off page becomes
+    the cryptographically-bound artifact.
+
+    The signature is **incremental** so subsequent signers (auditor,
+    second reviewer, regulator) can add their own signatures on top
+    via Adobe / pyHanko / any compliant tool — the document is
+    deliberately silent on how many signatures are required.
+
+    PEM RSA key + PEM cert; ``passphrase_env`` names the env var
+    holding the key passphrase if the key is encrypted (operator
+    infrastructure stays out of the YAML). ``signer_name`` is the
+    free-form display name shown in the signature widget; defaults
+    to the cert's CN when None.
+    """
+    key_path: str
+    cert_path: str
+    passphrase_env: str | None = None
+    signer_name: str | None = None
+
+
 @dataclass
 class Config:
     aws_account_id: str
@@ -45,6 +72,11 @@ class Config:
     # carry separate config files (config-postgres.yaml +
     # config-oracle.yaml) keyed off this field.
     dialect: Dialect = Dialect.POSTGRES
+    # U.7.b — Optional digital signing material for the audit PDF.
+    # When set, ``audit apply --execute`` runs the rendered PDF
+    # through pyHanko to apply a CMS signature. Absent = ship the
+    # PDF unsigned (current behavior).
+    signing: SigningConfig | None = None
 
     def __post_init__(self) -> None:
         # If demo_database_url is set but datasource_arn is not, derive it
@@ -216,6 +248,31 @@ def load_config(path: str | Path | None = None) -> Config:
                 f"got {raw_dialect!r}."
             ) from exc
 
+    # U.7.b — optional signing block.
+    raw_signing = values.get("signing")
+    signing: SigningConfig | None = None
+    if isinstance(raw_signing, dict):
+        try:
+            signing = SigningConfig(
+                key_path=str(raw_signing["key_path"]),
+                cert_path=str(raw_signing["cert_path"]),
+                passphrase_env=(
+                    str(raw_signing["passphrase_env"])
+                    if raw_signing.get("passphrase_env") is not None
+                    else None
+                ),
+                signer_name=(
+                    str(raw_signing["signer_name"])
+                    if raw_signing.get("signer_name") is not None
+                    else None
+                ),
+            )
+        except KeyError as exc:
+            raise ValueError(
+                f"signing block is missing required field: {exc}. "
+                f"Need both 'key_path' and 'cert_path'."
+            ) from exc
+
     return Config(
         aws_account_id=values["aws_account_id"],
         aws_region=values["aws_region"],
@@ -225,4 +282,5 @@ def load_config(path: str | Path | None = None) -> Config:
         extra_tags=extra_tags,
         demo_database_url=values.get("demo_database_url"),
         dialect=dialect,
+        signing=signing,
     )

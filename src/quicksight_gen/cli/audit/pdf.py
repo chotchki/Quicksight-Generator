@@ -1528,7 +1528,6 @@ def _signoff_story(
         parent=cell_style,
         fontName="Helvetica-Bold",
     )
-    signature_line_color = HexColor(theme.primary_fg)
     panel_bg = HexColor(theme.link_tint)
 
     system_data = [
@@ -1577,38 +1576,14 @@ def _signoff_story(
         ]),
     )
 
-    # Auditor form — labels left, blank rule on the right via an
-    # underline-padded empty cell. reportlab can't easily draw a real
-    # baseline-only rule per cell, so use a bottom border on the
-    # right column to read as a printable signature line.
-    auditor_fields = [
-        "Auditor name",
-        "Title",
-        "Organization",
-        "Date reviewed",
-        "Signature",
-    ]
-    auditor_data = [
-        [Paragraph(f, label_style), Paragraph("", cell_style)]
-        for f in auditor_fields
-    ]
-    auditor_style_cmds = [
-        ("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 4),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-        ("TOPPADDING", (0, 0), (-1, -1), 12),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-    ]
-    # Bottom rule on the right (signature) column for every row.
-    for r in range(len(auditor_fields)):
-        auditor_style_cmds.append(
-            ("LINEBELOW", (1, r), (1, r), 0.5, signature_line_color),
-        )
-    auditor_table = Table(
-        auditor_data,
-        colWidths=[1.6 * inch, 4.9 * inch],
-        style=TableStyle(auditor_style_cmds),
-    )
+    # Auditor block: no labelled name/title/date rows — when the PDF
+    # carries digital signatures (system + any reviewers), each
+    # signature dictionary already binds the signer name + signing
+    # time. Duplicating those as printable form fields would invite
+    # contradictions ("the digital sig says Jane on Tuesday, the
+    # form line says John on Wednesday"). The notes / exceptions
+    # box stays as the human surface for free-form review comments
+    # before the next signer countersigns.
 
     # Notes / exceptions box — single tall cell with a bordered frame.
     notes_table = Table(
@@ -1644,19 +1619,20 @@ def _signoff_story(
         system_table,
         Spacer(1, 0.4 * inch),
         Paragraph(
-            "<b>Auditor Attestation</b>",
+            "<b>Reviewer Attestation</b>",
             styles["Heading3"],
         ),
         Paragraph(
             "<i>I have reviewed the contents of this report and "
             "attest to the findings above as of the report period. "
-            "May be left blank if the report was generated unattended "
-            "(e.g. an automated pipeline) &mdash; the system block "
-            "above stands on its own.</i>",
+            "Sign by adding a digital signature in the PDF reader "
+            "of your choice (Adobe Acrobat, pyHanko, etc.). The "
+            "system attestation above stands on its own when no "
+            "human reviewer countersigns; subsequent reviewers may "
+            "stack additional signatures without invalidating the "
+            "system seal.</i>",
             styles["BodyText"],
         ),
-        Spacer(1, 0.1 * inch),
-        auditor_table,
         Spacer(1, 0.25 * inch),
         Paragraph(
             "<b>Notes / Exceptions</b>",

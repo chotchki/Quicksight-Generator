@@ -1355,6 +1355,15 @@ def audit_apply(
             l2_label=l2_label,
             provenance=provenance,
         )
+        # U.7.b — auto-sign the PDF if config.yaml carries signing material.
+        if _cfg.signing is not None:
+            from quicksight_gen.common.pdf.signing import sign_pdf_in_place
+            sign_pdf_in_place(out_path, _cfg.signing)
+            click.echo(
+                f"Applied digital signature "
+                f"({_cfg.signing.signer_name or 'cert CN'}) to {out_path}.",
+                err=True,
+            )
         click.echo(
             f"Wrote audit report to {out_path} "
             f"(institution={institution}, period={start}–{end})."
