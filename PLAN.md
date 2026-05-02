@@ -524,32 +524,96 @@ Order the meta sweeps first so per-app fixes inherit them:
 
 - [x] **Q.2.e — `mkdocs build --strict` + ship the regenerated site.** Both fixtures (sasquatch_pr + spec_example) build clean under `--strict`. Site contents verified by Q.5.f's persona-neutral gate + the dead-link gate (test_docs_links.py).
 
-### Q.3 — CLI / yaml ergonomics around schema (was task #488)
+### Q.3 — CLI redesign (clean break to v8.0.0)
 
-The pre-Phase-Q backlog item — slotted last as polish. **Needs
-scoping conversation before execution.** Original framing referenced
-SPEC's "Workflow Ideas" which no longer exists (the section was
-restructured during M-/N-/O- phases) and `generate training` which
-points at the deleted training/ kit (removed in O.1.l). What's left
-is a meaningful CLI redesign question — what verbs, what the
-`config.yaml` ↔ L2 YAML split should look like — that warrants a
-dedicated discussion + spike rather than execution from a stale
-plan entry.
+Design doc + agreed answers in `Q3_CLI_REDESIGN.md`. The shape:
+**four artifacts** (`schema | data | json | docs`) × **operations**
+(`apply | clean | test`, plus per-artifact extras like `data refresh` /
+`docs serve` / `json probe`). Default behavior is *do it*; passing
+`-o FILE` or `--stdout` redirects to the script that would have
+been executed. **Clean break** — no aliases, no deprecation cycle.
+Lands as v8.0.0.
 
-- [ ] **Q.3.a — Re-scope "workflow"-shaped CLI.** Today's surface is
-  `generate <app>` / `deploy <app>` / `cleanup` / `demo apply` /
-  `probe` / `export <kind>`. A workflow-shaped redesign would group
-  by integrator step rather than internal verb. Decide whether
-  there's a clear win, and pick a target shape, before any code
-  changes. Could ship as a back-compat alias group rather than a
-  rename.
-- [ ] **Q.3.b — yaml field naming / config-vs-L2 boundary review.**
-  Today's split between `run/config.yaml` (account, region,
-  datasource, dialect, theme defaults) and the L2 institution YAML
-  (rails, chains, accounts, persona, theme override) has accumulated
-  friction points. Audit + tighten the boundary based on what
-  actually got threaded in M-/N-/O-/P-/Q-. Likely a dedicated phase
-  with its own scoping pass.
+User answers locked in (see Q3_CLI_REDESIGN.md "Open questions"):
+verb is `apply` everywhere; both `--stdout` and `-o FILE` supported;
+`docs apply` defaults to `site/`; `json clean` includes a "nuke
+everything tagged ManagedBy" option as the user-friendly default;
+test wrappers run pytest + pyright internally; test reorg bundled.
+
+- [x] **Q.3.cleanup — pre-redesign sweep.** Drop `l2_spike/`,
+  `tests/spike/`, three superseded screenshot scripts (~2,077 lines).
+  Refresh stale docstring refs.
+
+- [ ] **Q.3.a.5 — CLI shell.** Add four top-level click groups
+  (`schema` / `data` / `json` / `docs`) with the 14 sub-commands per
+  the design doc. Each `apply`/`clean` honors the `-o FILE` /
+  `--stdout` emit-vs-execute pattern. Drop the OLD top-level verbs
+  in the same commit (`generate`, `deploy`, `cleanup`, `demo apply`,
+  `demo emit-*`, `demo apply-*`, `demo seed-l2`, `demo etl-example`,
+  `demo topology`, `export *`, `probe`). Keep the per-app builder
+  imports in their existing locations — only the CLI wrapper changes.
+
+- [ ] **Q.3.a.6 — `schema clean` + `data clean` emitters.** Lift
+  the cleanup-SQL building from `tests/e2e/_harness_cleanup.py` to
+  a public `common/l2/schema.py::emit_drop_sql(instance, dialect)` +
+  `common/l2/seed.py::emit_truncate_sql(instance, dialect)`. The CLI
+  wrappers just call these.
+
+- [ ] **Q.3.a.7 — `docs apply` / `serve` / `clean`.** Wrap
+  `mkdocs build` (default output `site/`), `mkdocs serve` with the
+  same `--l2 PATH` arg, and a clean that removes the build dir.
+  Promote mkdocs from dev-only to a runtime extra `[docs]`.
+
+- [ ] **Q.3.a.8 — `<artifact> test` wrappers.** Each test wrapper
+  shells out to pytest + pyright with sensible defaults. Layout:
+  - `schema test` → `pytest tests/schema/ + pyright src/quicksight_gen/common/l2/schema.py`
+  - `data test` → `pytest tests/data/`
+  - `json test --app NAME` → `pytest tests/json/test_<app>_*.py`
+  - `docs test` → `pytest tests/docs/`
+  Each accepts `--pytest-args "..."` for power-user passthrough.
+
+- [ ] **Q.3.a.9 — Test reorg.** Restructure `tests/` to mirror the
+  artifact split:
+  - `tests/schema/` ← `test_l2_schema.py`, snapshot tests
+  - `tests/data/` ← `test_l2_baseline_seed.py`, seed contract
+  - `tests/json/` ← `test_l1_*.py`, `test_inv_*.py`, `test_exec_*.py`,
+    `test_l2ft_*.py`
+  - `tests/docs/` ← `test_docs_links.py`, `test_docs_persona_neutral.py`
+  - `tests/e2e/` stays (cross-artifact integration)
+  - `tests/unit/` ← tree primitives, common helpers (the rest)
+  Adjust import paths + run the full suite to confirm nothing broke.
+
+- [ ] **Q.3.a.10 — Handbook + walkthrough rewrite.** Every doc that
+  names an old verb gets updated: `handbook/{etl,customization,
+  l1,investigation,executives,l2_flow_tracing}.md`, every walkthrough
+  under `walkthroughs/{etl,customization,l1,investigation}/`, the
+  `for-your-role/` role pages. Add a "CLI tour" section to
+  `handbook/customization.md` framing the four-artifact mental model.
+
+- [ ] **Q.3.a.11 — Script + CI updates.** `scripts/` shell scripts
+  (`p9_*.sh`, `bake_sample_output.py`, `harness_manual_deploy.py`,
+  `sweep_harness_orphans.py`) get migrated to the new verbs.
+  `.github/workflows/ci.yml` + `release.yml` updated.
+  `run_e2e.sh` updated.
+
+- [ ] **Q.3.a.12 — CLI tests.** One test per command exercising
+  `--help` + the emit path against `spec_example`. Lives in the new
+  `tests/json/` (since the CLI is conceptually json-shaped — it
+  produces / applies / cleans the JSON dashboard artifact).
+
+- [ ] **Q.3.a.13 — Iteration gate + v8.0.0 release.** Bump
+  `__version__` → 8.0.0; RELEASE_NOTES entry covering the breaking
+  CLI change with a side-by-side old-verb → new-verb table; commit;
+  merge to main; tag v8.0.0; push; verify release pipeline green.
+
+### Q.3.b — yaml field naming / config-vs-L2 boundary review (deferred)
+
+Today's split between `run/config.yaml` (account, region, datasource,
+dialect, theme defaults) and the L2 institution YAML (rails, chains,
+accounts, persona, theme override) has accumulated friction points.
+Audit + tighten the boundary based on what actually got threaded in
+M-/N-/O-/P-/Q-. Defers to a dedicated phase with its own scoping pass
+after Q.3.a settles.
 
 ### Q.4 — Iteration gate + release
 
