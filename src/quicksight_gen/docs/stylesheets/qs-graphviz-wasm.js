@@ -8,8 +8,9 @@
 //
 // At page load this shim:
 //   1. Finds every <script type="text/x-graphviz"> block.
-//   2. Loads @hpcc-js/wasm-graphviz from jsDelivr (cached after first
-//      hit by the browser).
+//   2. Loads @hpcc-js/wasm-graphviz from the vendored bundle at
+//      ./wasm-graphviz/index.js (no CDN fetch; works offline /
+//      from a flat file directory).
 //   3. Runs `g.dot(source)` against each block's textContent.
 //   4. Replaces the <script> with the rendered <svg> *inside the same
 //      figure*, so qs-lightbox.js's click-to-zoom (which targets
@@ -28,11 +29,14 @@
 
   let Graphviz;
   try {
-    // @hpcc-js/wasm-graphviz exports `Graphviz` as a named export with
-    // a `.load()` static that returns a promise resolving to a
-    // renderer instance.
+    // @hpcc-js/wasm-graphviz v1.21.5 vendored at
+    // ./wasm-graphviz/index.js (the upstream `dist/index.js` from
+    // the npm tarball, with the WASM binary inlined as base64 —
+    // single file, no separate .wasm download). Exports `Graphviz`
+    // as a named export with a `.load()` static returning a
+    // promise that resolves to a renderer instance.
     Graphviz = (await import(
-      "https://cdn.jsdelivr.net/npm/@hpcc-js/wasm-graphviz@1/+esm"
+      "./wasm-graphviz/index.js"
     )).Graphviz;
   } catch (err) {
     console.error("qs-graphviz-wasm: module load failed", err);
