@@ -1738,6 +1738,57 @@ def _render_supersession_markdown(
     return out
 
 
+def _bookmarked_h1(text: str, styles):  # type: ignore[no-untyped-def]
+    """Heading1 paragraph tagged for PDF outline + TOC at level 0.
+
+    Used by every per-section heading the auditor should be able to
+    jump to from the bookmark sidebar or the TOC page. Cover-page
+    title (Title style) and Table-of-contents heading itself are
+    intentionally NOT tagged.
+    """
+    from reportlab.platypus import Paragraph
+    p = Paragraph(text, styles["Heading1"])
+    p._bookmark_level = 0  # type: ignore[attr-defined]
+    return p
+
+
+def _bookmarked_h3(text: str, styles):  # type: ignore[no-untyped-def]
+    """Heading3 paragraph tagged for PDF outline + TOC at level 1."""
+    from reportlab.platypus import Paragraph
+    p = Paragraph(text, styles["Heading3"])
+    p._bookmark_level = 1  # type: ignore[attr-defined]
+    return p
+
+
+class _AuditDocTemplate:
+    """BaseDocTemplate subclass with bookmark + TOC support.
+
+    Defined as a thin proxy via ``__init_subclass__``-style indirection
+    so reportlab is only imported when ``--execute`` actually runs (so
+    the audit CLI loads cleanly without the [audit] extra installed).
+
+    Builds the PDF outline (left-sidebar nav) + feeds the
+    ``TableOfContents`` flowable's notification stream from any flowable
+    tagged with a ``_bookmark_level`` attribute.
+    """
+
+    def __new__(cls, *args, **kwargs):  # type: ignore[no-untyped-def]
+        from reportlab.platypus import BaseDocTemplate
+
+        class _Inner(BaseDocTemplate):
+            def afterFlowable(self, flowable) -> None:  # type: ignore[no-untyped-def]
+                level = getattr(flowable, "_bookmark_level", None)
+                if level is None:
+                    return
+                text = flowable.getPlainText()
+                key = f"audit-bm-{id(flowable)}"
+                self.canv.bookmarkPage(key)
+                self.canv.addOutlineEntry(text, key, level=level)
+                self.notify("TOCEntry", (level, text, self.page, key))
+
+        return _Inner(*args, **kwargs)
+
+
 def _write_audit_pdf(
     path: Path,
     *,
@@ -1756,11 +1807,16 @@ def _write_audit_pdf(
 ) -> None:
     """Render the audit report as a PDF.
 
-    Page sequence: cover → executive summary → per-invariant tables
-    (Drift, Overdraft, Limit breach, Stuck pending, Stuck unbundled,
-    Supersession audit). Each per-invariant page paginates via
-    LongTable. Every page carries a footer with the provenance
-    fingerprint placeholder (real hash lands in U.7).
+    Page sequence: cover → table of contents → executive summary →
+    per-invariant tables (Drift, Overdraft, Limit breach, Stuck
+    pending, Stuck unbundled, Supersession audit). Each per-invariant
+    page paginates via LongTable; every page carries a footer with
+    the provenance fingerprint placeholder (real hash lands in U.7).
+
+    Uses ``_AuditDocTemplate.multiBuild`` (two-pass) so the
+    ``TableOfContents`` flowable can pick up correct page numbers,
+    and section headings emit both PDF outline entries (left-sidebar
+    nav) and TOC entries via the ``afterFlowable`` hook.
     """
     # Imported lazily so the audit CLI loads even when the [audit]
     # extra isn't installed — only --execute paths need reportlab.
@@ -1769,13 +1825,16 @@ def _write_audit_pdf(
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import inch
     from reportlab.platypus import (
+        Frame,
+        PageBreak,
+        PageTemplate,
         Paragraph,
-        SimpleDocTemplate,
         Spacer,
     )
+    from reportlab.platypus.tableofcontents import TableOfContents
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    doc = SimpleDocTemplate(
+    doc = _AuditDocTemplate(
         str(path),
         pagesize=letter,
         leftMargin=0.75 * inch,
@@ -1784,6 +1843,14 @@ def _write_audit_pdf(
         bottomMargin=0.85 * inch,  # extra room for the page footer
         title=f"QuickSight Generator audit report — {institution}",
     )
+    footer_drawer = _make_footer_drawer(theme)
+    main_frame = Frame(
+        doc.leftMargin, doc.bottomMargin,
+        doc.width, doc.height, id="normal",
+    )
+    doc.addPageTemplates([
+        PageTemplate(id="main", frames=[main_frame], onPage=footer_drawer),
+    ])
     styles = getSampleStyleSheet()
     institution_style = ParagraphStyle(
         "InstitutionName",
@@ -1807,8 +1874,24 @@ def _write_audit_pdf(
         borderWidth=0.5,
         borderPadding=10,
     )
+    toc = TableOfContents()
+    toc.levelStyles = [
+        ParagraphStyle(
+            "TOCHeading1", parent=styles["BodyText"],
+            fontSize=12, leading=16, fontName="Helvetica-Bold",
+            leftIndent=0, spaceAfter=4,
+            textColor=HexColor(theme.primary_fg),
+        ),
+        ParagraphStyle(
+            "TOCHeading2", parent=styles["BodyText"],
+            fontSize=10, leading=14,
+            leftIndent=18, spaceAfter=2,
+            textColor=HexColor(theme.secondary_fg),
+        ),
+    ]
     start, end = period
     story = [
+        # Cover (no bookmark — cover doesn't appear in its own TOC).
         Paragraph(
             "QuickSight Generator audit report",
             styles["Title"],
@@ -1836,6 +1919,12 @@ def _write_audit_pdf(
             "reproducibility.",
             styles["BodyText"],
         ),
+        # Table of contents (own page, no bookmark — auditor scrolls
+        # one page back from the first body section to find it).
+        PageBreak(),
+        Paragraph("Table of contents", styles["Heading1"]),
+        Spacer(1, 0.15 * inch),
+        toc,
     ]
     story.extend(_executive_summary_story(
         exec_summary, styles, period, theme,
@@ -1856,8 +1945,10 @@ def _write_audit_pdf(
     story.extend(_supersession_story(
         supersession_data, styles, period, theme,
     ))
-    footer = _make_footer_drawer(theme)
-    doc.build(story, onFirstPage=footer, onLaterPages=footer)
+    # multiBuild = two-pass render so TableOfContents picks up the
+    # final page numbers (pass 1 collects via the afterFlowable hook,
+    # pass 2 renders the resolved TOC).
+    doc.multiBuild(story)
 
 
 def _executive_summary_story(
@@ -1886,7 +1977,7 @@ def _executive_summary_story(
     start, end = period
     elements: list = [
         PageBreak(),
-        Paragraph("Executive summary", styles["Heading1"]),
+        _bookmarked_h1("Executive summary", styles),
         Paragraph(
             f"Reporting period: {start.isoformat()} &ndash; "
             f"{end.isoformat()} (inclusive)",
@@ -1947,11 +2038,11 @@ def _executive_summary_story(
 
     elements.extend([
         Spacer(1, 0.15 * inch),
-        Paragraph("Volume", styles["Heading3"]),
+        _bookmarked_h3("Volume", styles),
         Spacer(1, 0.05 * inch),
         Table(volume_data, colWidths=col_widths, style=table_style),
         Spacer(1, 0.3 * inch),
-        Paragraph("Exception counts", styles["Heading3"]),
+        _bookmarked_h3("Exception counts", styles),
         Spacer(1, 0.05 * inch),
         Table(exception_data, colWidths=col_widths, style=table_style),
         Spacer(1, 0.1 * inch),
@@ -1991,7 +2082,7 @@ def _drift_story(
     start, end = period
     elements: list = [
         PageBreak(),
-        Paragraph("Drift violations", styles["Heading1"]),
+        _bookmarked_h1("Drift violations", styles),
         Paragraph(
             f"Reporting period: {start.isoformat()} &ndash; "
             f"{end.isoformat()} (inclusive). "
@@ -2123,7 +2214,7 @@ def _overdraft_story(
     start, end = period
     elements: list = [
         PageBreak(),
-        Paragraph("Overdraft violations", styles["Heading1"]),
+        _bookmarked_h1("Overdraft violations", styles),
         Paragraph(
             f"Reporting period: {start.isoformat()} &ndash; "
             f"{end.isoformat()} (inclusive). "
@@ -2191,10 +2282,7 @@ def _overdraft_story(
 
     if parent_rows:
         elements.extend([
-            Paragraph(
-                "Parent accounts (per-row detail)",
-                styles["Heading3"],
-            ),
+            _bookmarked_h3("Parent accounts (per-row detail)", styles),
             Spacer(1, 0.05 * inch),
         ])
         detail_data: list[list] = [
@@ -2223,9 +2311,8 @@ def _overdraft_story(
 
     if child_groups:
         elements.extend([
-            Paragraph(
-                "Child accounts grouped by parent role",
-                styles["Heading3"],
+            _bookmarked_h3(
+                "Child accounts grouped by parent role", styles,
             ),
             Spacer(1, 0.05 * inch),
         ])
@@ -2281,7 +2368,7 @@ def _limit_breach_story(
     start, end = period
     elements: list = [
         PageBreak(),
-        Paragraph("Limit breach violations", styles["Heading1"]),
+        _bookmarked_h1("Limit breach violations", styles),
         Paragraph(
             f"Reporting period: {start.isoformat()} &ndash; "
             f"{end.isoformat()} (inclusive). "
@@ -2347,10 +2434,7 @@ def _limit_breach_story(
 
     if parent_rows:
         elements.extend([
-            Paragraph(
-                "Parent accounts (per-row detail)",
-                styles["Heading3"],
-            ),
+            _bookmarked_h3("Parent accounts (per-row detail)", styles),
             Spacer(1, 0.05 * inch),
         ])
         detail_data: list[list] = [
@@ -2385,9 +2469,9 @@ def _limit_breach_story(
 
     if child_groups:
         elements.extend([
-            Paragraph(
+            _bookmarked_h3(
                 "Child accounts grouped by parent role + transfer type",
-                styles["Heading3"],
+                styles,
             ),
             Spacer(1, 0.05 * inch),
         ])
@@ -2443,7 +2527,7 @@ def _stuck_pending_story(
 
     elements: list = [
         PageBreak(),
-        Paragraph("Stuck pending transactions", styles["Heading1"]),
+        _bookmarked_h1("Stuck pending transactions", styles),
         Paragraph(
             "Source: <b>&lt;prefix&gt;_stuck_pending</b> matview.",
             styles["BodyText"],
@@ -2508,10 +2592,7 @@ def _stuck_pending_story(
 
     if parent_rows:
         elements.extend([
-            Paragraph(
-                "Parent accounts (per-row detail)",
-                styles["Heading3"],
-            ),
+            _bookmarked_h3("Parent accounts (per-row detail)", styles),
             Spacer(1, 0.05 * inch),
         ])
         detail_data: list[list] = [
@@ -2544,9 +2625,9 @@ def _stuck_pending_story(
 
     if child_groups:
         elements.extend([
-            Paragraph(
+            _bookmarked_h3(
                 "Child accounts grouped by parent role + transfer type",
-                styles["Heading3"],
+                styles,
             ),
             Spacer(1, 0.05 * inch),
         ])
@@ -2600,7 +2681,7 @@ def _stuck_unbundled_story(
 
     elements: list = [
         PageBreak(),
-        Paragraph("Stuck unbundled transactions", styles["Heading1"]),
+        _bookmarked_h1("Stuck unbundled transactions", styles),
         Paragraph(
             "Source: <b>&lt;prefix&gt;_stuck_unbundled</b> matview.",
             styles["BodyText"],
@@ -2666,10 +2747,7 @@ def _stuck_unbundled_story(
 
     if parent_rows:
         elements.extend([
-            Paragraph(
-                "Parent accounts (per-row detail)",
-                styles["Heading3"],
-            ),
+            _bookmarked_h3("Parent accounts (per-row detail)", styles),
             Spacer(1, 0.05 * inch),
         ])
         detail_data: list[list] = [
@@ -2702,9 +2780,9 @@ def _stuck_unbundled_story(
 
     if child_groups:
         elements.extend([
-            Paragraph(
+            _bookmarked_h3(
                 "Child accounts grouped by parent role + transfer type",
-                styles["Heading3"],
+                styles,
             ),
             Spacer(1, 0.05 * inch),
         ])
@@ -2759,7 +2837,7 @@ def _supersession_story(
     start, end = period
     elements: list = [
         PageBreak(),
-        Paragraph("Supersession audit", styles["Heading1"]),
+        _bookmarked_h1("Supersession audit", styles),
         Paragraph(
             "Source: <b>&lt;prefix&gt;_transactions</b> + "
             "<b>&lt;prefix&gt;_daily_balances</b> "
@@ -2823,7 +2901,7 @@ def _supersession_story(
     ])
 
     elements.extend([
-        Paragraph("Aggregate (entire dataset)", styles["Heading3"]),
+        _bookmarked_h3("Aggregate (entire dataset)", styles),
         Spacer(1, 0.05 * inch),
     ])
     aggregate_data: list[list] = [
@@ -2850,9 +2928,8 @@ def _supersession_story(
     if data.transaction_details:
         elements.extend([
             Spacer(1, 0.25 * inch),
-            Paragraph(
-                "Transactions — correcting entries in period",
-                styles["Heading3"],
+            _bookmarked_h3(
+                "Transactions — correcting entries in period", styles,
             ),
             Spacer(1, 0.05 * inch),
         ])
@@ -2884,9 +2961,8 @@ def _supersession_story(
     if data.daily_balance_details:
         elements.extend([
             Spacer(1, 0.25 * inch),
-            Paragraph(
-                "Daily balances — correcting entries in period",
-                styles["Heading3"],
+            _bookmarked_h3(
+                "Daily balances — correcting entries in period", styles,
             ),
             Spacer(1, 0.05 * inch),
         ])
