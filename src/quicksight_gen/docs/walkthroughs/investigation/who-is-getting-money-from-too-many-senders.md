@@ -48,20 +48,26 @@ recipient pool is filtered to customer DDAs and merchant DDAs only
 — administrative sweeps and clearing transfers don't dominate the
 ranking.
 
-## What you'll see in the demo
+{% if vocab.demo.has_investigation_plants %}
+??? example "Worked example: {{ vocab.fixture_name }}"
+    The bundled `{{ vocab.fixture_name }}` fixture plants a fanout cluster:
+    {{ vocab.demo.investigation.fanout_sender_count }} individual depositors,
+    each sending two small ACH transfers ($50–$500) to
+    **{{ vocab.demo.investigation.anchor.name }}**
+    (`{{ vocab.demo.investigation.anchor.id }}`) over the trailing four
+    weeks. With the default threshold (5),
+    {{ vocab.demo.investigation.anchor.name }} sits at the top of the
+    table with **{{ vocab.demo.investigation.fanout_sender_count }}
+    distinct senders** and a total inbound around $4,000–$8,000
+    (rounded by the seed's RNG).
 
-The demo plants a fanout cluster: twelve individual depositors, each
-sending two small ACH transfers ($50–$500) to **Juniper Ridge LLC**
-over the trailing four weeks. With the default threshold (5), Juniper
-sits at the top of the table with **12 distinct senders** and a
-total inbound around $4,000–$8,000 (rounded by the demo's RNG).
-
-Drag the threshold slider down to 2 or 3 — additional accounts may
-appear if the broader L2 instance seed has any incidental inbound
-diversity (merchant DDAs typically will, since their normal sales
-flow involves many distinct customer cards). Drag it up to 10+ —
-Juniper stays alone, since the rest of the demo's inbound graphs are
-narrower.
+    Drag the threshold slider down to 2 or 3 — additional accounts may
+    appear if the broader L2 instance seed has any incidental inbound
+    diversity (merchant DDAs typically will, since their normal sales
+    flow involves many distinct customer cards). Drag it up to 10+ —
+    {{ vocab.demo.investigation.anchor.name }} stays alone, since the
+    rest of the seed's inbound graphs are narrower.
+{% endif %}
 
 ## What it means
 
@@ -108,23 +114,48 @@ depends on what you want to know:
 
 Pick the recipient that doesn't have an obvious benign explanation,
 then walk it through Account Network + Money Trail to build the case.
-A common workflow:
+The default shape of a Compliance investigation:
 
-1. Recipient Fanout flags Juniper at 12 senders.
-2. Open Account Network, set anchor to Juniper. The inbound Sankey
-   shows the 12 individual depositors plus the Cascadia anomaly
-   sender. The outbound Sankey shows three shell DDAs (Shell A, B, C)
-   — the layering destinations.
-3. Right-click the Cascadia inbound row in the touching-edges table
-   below — the anchor walks to Cascadia, and the chart re-renders
-   around the new center.
-4. Open Money Trail to walk the chain: pick the Cascadia → Juniper
-   transfer as the chain root, and watch the layering hops surface
-   as a 4-hop Sankey.
+1. Recipient Fanout flags a candidate at the top of the ranked table.
+2. Open Account Network, set anchor to that recipient. The inbound
+   Sankey shows the fanout senders; the outbound Sankey shows where
+   the money goes next.
+3. Right-click any inbound row in the touching-edges table to walk
+   the anchor to that counterparty and re-render the network around
+   the new center.
+4. Open Money Trail to walk the chain end-to-end: pick the upstream
+   transfer as the chain root, and watch the layering hops (if any)
+   surface as a multi-hop Sankey.
 
-That sequence — fanout detection, network sweep, trail walk — is the
-default shape of a Compliance investigation, and the four sheets are
-ordered to support it without having to leave the dashboard.
+The four sheets are ordered to support that sequence — fanout
+detection, network sweep, trail walk — without having to leave the
+dashboard.
+
+{% if vocab.demo.has_investigation_plants and vocab.demo.investigation.layering_chain and vocab.demo.investigation.anomaly_pair_sender %}
+??? example "Worked example: {{ vocab.fixture_name }}"
+    Walking the bundled fixture's planted scenario end-to-end:
+
+    1. Recipient Fanout flags
+       {{ vocab.demo.investigation.anchor.name }} at
+       {{ vocab.demo.investigation.fanout_sender_count }} senders.
+    2. Open Account Network, set anchor to
+       {{ vocab.demo.investigation.anchor.name }}. The inbound
+       Sankey shows the
+       {{ vocab.demo.investigation.fanout_sender_count }} individual
+       depositors plus the
+       {{ vocab.demo.investigation.anomaly_pair_sender.name }}
+       anomaly sender. The outbound Sankey shows
+       {% for hop in vocab.demo.investigation.layering_chain %}{{ hop.name }}{% if not loop.last %}, {% endif %}{% endfor %}
+       — the layering destinations.
+    3. Right-click the
+       {{ vocab.demo.investigation.anomaly_pair_sender.name }}
+       inbound row — the anchor walks to that counterparty and the
+       chart re-renders.
+    4. Open Money Trail and pick the
+       {{ vocab.demo.investigation.anomaly_pair_sender.name }} →
+       {{ vocab.demo.investigation.anchor.name }} transfer as the
+       chain root; the layering hops surface as a multi-hop Sankey.
+{% endif %}
 
 ## Related walkthroughs
 

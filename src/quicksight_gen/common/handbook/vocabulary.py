@@ -257,11 +257,28 @@ def _build_demo_scenario(
 
     investigation: InvestigationScenarioVocabulary | None = None
     if plant.inv_fanout_plants:
+        # Curated personas (when present) override the raw plant
+        # data — the bundled fixture's seed plants a smaller raw
+        # fanout than the demo CLI eventually deploys, but the
+        # hand-curated narrative (Juniper at 12 senders + Cascadia
+        # spike + Shell A-B-C layering chain) is what the
+        # walkthroughs are written around. For integrator L2s with
+        # no curated personas, fall back to the first plant.
+        curated_anchor = next(
+            (
+                _to_demo_account(p.account_id)
+                for p in investigation_personas
+                if p.role == "convergence_anchor"
+            ),
+            None,
+        )
         first = plant.inv_fanout_plants[0]
-        # Pick a layering chain when the persona vocabulary supplies
-        # one with role="shell_entity"; integrator-supplied L2s without
-        # that flavor get an empty chain (the worked-example section
-        # guards on `if vocab.demo.investigation.layering_chain`).
+        if curated_anchor is not None:
+            anchor = curated_anchor
+            fanout_sender_count = 12
+        else:
+            anchor = _to_demo_account(str(first.recipient_account_id))
+            fanout_sender_count = len(first.sender_account_ids)
         chain = tuple(
             _to_demo_account(p.account_id)
             for p in investigation_personas
@@ -276,8 +293,8 @@ def _build_demo_scenario(
             None,
         )
         investigation = InvestigationScenarioVocabulary(
-            anchor=_to_demo_account(str(first.recipient_account_id)),
-            fanout_sender_count=len(first.sender_account_ids),
+            anchor=anchor,
+            fanout_sender_count=fanout_sender_count,
             layering_chain=chain,
             anomaly_pair_sender=anomaly_sender,
         )

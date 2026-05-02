@@ -90,31 +90,52 @@ flags those natural transitions at the bottom.
 
 ## What you'll see in the demo
 
-The demo plants three converging scenarios on a single anchor
-account, **Juniper Ridge LLC** (`cust-900-0007-juniper-ridge-llc`),
-so every sheet has a non-empty answer to its question — and the
-sheets connect:
+{% if vocab.demo.has_investigation_plants %}
+The bundled `{{ vocab.fixture_name }}` fixture plants three
+converging scenarios on a single anchor account,
+**{{ vocab.demo.investigation.anchor.name }}**
+(`{{ vocab.demo.investigation.anchor.id }}`), so every sheet has a
+non-empty answer to its question — and the sheets connect:
 
-- **Fanout cluster** — twelve individual depositors each ACH 2 small
-  amounts to Juniper. Recipient Fanout flags Juniper at the default
-  5-sender threshold; the table ranks her at the top with 12 distinct
-  senders.
-- **Anomaly pair** — Cascadia Trust Bank — Operations wires Juniper
-  routine amounts ($300–$700) for eight days, then a single $25,000
-  wire on day −10. Volume Anomalies flags that pair-window past the
-  default 2σ threshold; the σ Distribution chart shows the spike
-  sitting alone in the right-tail bucket.
-- **Money trail** — the same Cascadia → Juniper wire that drives the
-  anomaly continues as a 4-hop layering chain: Cascadia → Juniper →
-  Shell A → Shell B → Shell C. Money Trail's chain-root dropdown
-  surfaces the Cascadia leg; picking it renders all four hops as a
-  Sankey with a slight residue per hop (layering rarely round-trips
-  clean numbers).
+- **Fanout cluster** —
+  {{ vocab.demo.investigation.fanout_sender_count }} individual
+  depositors each ACH 2 small amounts to
+  {{ vocab.demo.investigation.anchor.name }}. Recipient Fanout flags
+  the anchor at the default 5-sender threshold; the table ranks it at
+  the top with {{ vocab.demo.investigation.fanout_sender_count }}
+  distinct senders.
+{% if vocab.demo.investigation.anomaly_pair_sender %}
+- **Anomaly pair** —
+  {{ vocab.demo.investigation.anomaly_pair_sender.name }} wires
+  {{ vocab.demo.investigation.anchor.name }} routine amounts
+  ($300–$700) for eight days, then a single $25,000 wire on day −10.
+  Volume Anomalies flags that pair-window past the default 2σ
+  threshold; the σ Distribution chart shows the spike sitting alone
+  in the right-tail bucket.
+{% endif %}
+{% if vocab.demo.investigation.layering_chain %}
+- **Money trail** — the same upstream wire that drives the anomaly
+  continues as a multi-hop layering chain:
+  {% if vocab.demo.investigation.anomaly_pair_sender %}{{ vocab.demo.investigation.anomaly_pair_sender.name }} → {% endif %}{{ vocab.demo.investigation.anchor.name }}{% for hop in vocab.demo.investigation.layering_chain %} → {{ hop.name }}{% endfor %}.
+  Money Trail's chain-root dropdown surfaces the upstream leg;
+  picking it renders all hops as a Sankey with a slight residue per
+  hop (layering rarely round-trips clean numbers).
+{% endif %}
 
 Account Network's anchor dropdown lands on the first account
-alphabetically; setting it to Juniper shows the full picture — twelve
-inbound depositors on the left, three outbound shells on the right,
-Juniper meeting in the middle.
+alphabetically; setting it to
+{{ vocab.demo.investigation.anchor.name }} shows the full picture —
+the inbound depositors on the left, the outbound destinations on the
+right, the anchor meeting in the middle.
+{% else %}
+This L2 instance has no planted Investigation scenarios, so each
+sheet renders against whatever shape the underlying transactions
+take. To see the dashboard's intended worked example — a fanout
+cluster + anomaly pair + multi-hop layering chain converging on one
+anchor — point the docs build at the bundled `sasquatch_pr` fixture
+(`QS_DOCS_L2_INSTANCE=tests/l2/sasquatch_pr.yaml mkdocs serve`) and
+re-render this page.
+{% endif %}
 
 ## Reference
 
