@@ -72,7 +72,7 @@ src/quicksight_gen/
     models.py           # Dataclasses → AWS QuickSight API JSON (to_aws_json + _strip_nones)
     ids.py              # Typed ID newtypes (SheetId / VisualId / ParameterName / etc.)
     theme.py            # DEFAULT_PRESET fallback + build_theme(cfg, theme | None) → Theme | None
-    persona.py          # DemoPersona — Sasquatch flavor strings the demo seed plants
+    persona.py          # DemoPersona dataclass — generic skeleton; populated from L2 YAML's persona: block
     deploy.py / cleanup.py / datasource.py
     db.py               # execute_script(cur, sql, dialect=...); Oracle INSERT-ALL batcher
     drill.py            # CustomActionURLOperation cross-app deep-link builder
@@ -144,7 +144,7 @@ Walk-the-flow drills (Account Network): right-click any touching-edges table row
 - **Three-layer model — L1 / L2 / L3.** The tree's existence is the test case for layer separation:
   - **L1 — `common/tree/`, `common/models.py`, `common/ids.py`, `common/dataset_contract.py`.** Persona-blind primitives. Every type knows about *dashboards* (sheets, visuals, filters, drills, dataset contracts) and nothing about Sasquatch / banks / accounts / transfers. `grep common/tree/ -r sasquatch` should return zero hits — that grep is the L1 invariant.
   - **L2 — `apps/<app>/app.py`, `apps/<app>/constants.py`.** Per-app tree assembly. Talks the *domain* vocabulary ("Account Coverage", "transfer_type", "expected_net_zero") — domain language a CPA would recognize, but **not** persona names ("Sasquatch", "Bigfoot Brews", "FRB Master").
-  - **L3 — `apps/<app>/datasets.py` SQL strings, `common/persona.py`, theme presets, L2 instance YAMLs.** Persona / customer flavor. SQL strings reference real column names; `persona.py` centralizes Sasquatch strings the demo seed plants; docs templating reads the same strings via `common/handbook/vocabulary.py`.
+  - **L3 — `apps/<app>/datasets.py` SQL strings, L2 instance YAMLs (incl. optional `persona:` block).** Persona / customer flavor. SQL strings reference real column names; `common/persona.py` is the generic `DemoPersona` skeleton populated by the L2 YAML's `persona:` block; docs templating reads the same strings via `common/handbook/vocabulary.py`.
 - **Tree IS the source of truth.** Tests walk the tree to derive expected sets — they do not maintain parallel hand-listed expectations. Identity assertions key off **stable analyst-facing identifiers** (visual *titles*, sheet *names*, dataset *identifiers*, parameter *names*) — never off auto-derived internal IDs (`v-table-s4-2`), which are positional and regenerate on tree restructure.
 
 ## Conventions
