@@ -2163,10 +2163,16 @@ class _AuditDocTemplate:
 
     Builds the PDF outline (left-sidebar nav) + feeds the
     ``TableOfContents`` flowable's notification stream from any flowable
-    tagged with a ``_bookmark_level`` attribute.
+    tagged with a ``_bookmark_level`` attribute. Also records the
+    final page count after each ``multiBuild`` pass into the
+    caller-provided ``total_pages_holder`` so the footer drawer can
+    render "Page X of Y" without resorting to a NumberedCanvas (which
+    breaks bookmark→page refs — see ``_make_footer_drawer``).
     """
 
-    def __new__(cls, *args, **kwargs):  # type: ignore[no-untyped-def]
+    def __new__(  # type: ignore[no-untyped-def]
+        cls, *args, total_pages_holder: list | None = None, **kwargs,
+    ):
         from reportlab.platypus import BaseDocTemplate
 
         class _Inner(BaseDocTemplate):
@@ -2179,6 +2185,16 @@ class _AuditDocTemplate:
                 self.canv.bookmarkPage(key)
                 self.canv.addOutlineEntry(text, key, level=level)
                 self.notify("TOCEntry", (level, text, self.page, key))
+
+            def _allSatisfied(self):  # type: ignore[no-untyped-def]
+                # multiBuild calls this after each pass to decide
+                # whether to run another. We piggyback to publish the
+                # just-stabilized page count into the holder so the
+                # footer drawer's "Page X of Y" picks it up on the
+                # next pass.
+                if total_pages_holder is not None:
+                    total_pages_holder[0] = self.page
+                return super()._allSatisfied()
 
         return _Inner(*args, **kwargs)
 
@@ -2232,6 +2248,10 @@ def _write_audit_pdf(
     from reportlab.platypus.tableofcontents import TableOfContents
 
     path.parent.mkdir(parents=True, exist_ok=True)
+    # Mutable holder bridges multiBuild's two-pass rendering: pass 1's
+    # _allSatisfied stamps the just-stabilized page count here; pass 2's
+    # footer drawer reads it back as "Page X of N".
+    total_pages_holder: list[int] = [0]
     doc = _AuditDocTemplate(
         str(path),
         pagesize=letter,
@@ -2240,17 +2260,21 @@ def _write_audit_pdf(
         topMargin=0.75 * inch,
         bottomMargin=0.85 * inch,  # extra room for the page footer
         title=f"QuickSight Generator Audit Report — {institution}",
+        total_pages_holder=total_pages_holder,
+    )
+    footer_drawer = _make_footer_drawer(
+        theme,
+        version=version,
+        generated_at=generated_at,
+        total_pages_holder=total_pages_holder,
     )
     main_frame = Frame(
         doc.leftMargin, doc.bottomMargin,
         doc.width, doc.height, id="normal",
     )
     doc.addPageTemplates([
-        PageTemplate(id="main", frames=[main_frame]),
+        PageTemplate(id="main", frames=[main_frame], onPage=footer_drawer),
     ])
-    numbered_canvas_cls = _make_numbered_canvas(
-        theme, version=version, generated_at=generated_at,
-    )
     styles = getSampleStyleSheet()
     institution_style = ParagraphStyle(
         "InstitutionName",
@@ -2365,11 +2389,11 @@ def _write_audit_pdf(
     ))
     # multiBuild = two-pass render so TableOfContents picks up the
     # final page numbers (pass 1 collects via the afterFlowable hook,
-    # pass 2 renders the resolved TOC). canvasmaker swaps in the
-    # NumberedCanvas so the per-page footer can stamp "Page N of M"
-    # alongside the report-version sentinel + generation timestamp +
-    # short provenance fingerprint (U.6).
-    doc.multiBuild(story, canvasmaker=numbered_canvas_cls)
+    # pass 2 renders the resolved TOC). The doc template's
+    # _allSatisfied override stamps the final page count into
+    # total_pages_holder between passes so pass 2's footer drawer
+    # can render "Page X of N" (U.6).
+    doc.multiBuild(story)
 
 
 def _executive_summary_story(
@@ -3767,74 +3791,64 @@ def _short_fingerprint_placeholder() -> str:
     return "pending"
 
 
-def _make_numbered_canvas(
+def _make_footer_drawer(
     theme,  # type: ignore[no-untyped-def] # ThemePreset
     *,
     version: str,
     generated_at: datetime,
+    total_pages_holder: list,
 ):  # type: ignore[no-untyped-def]
-    """Build a Canvas subclass that renders the U.6 page chrome.
+    """Build a per-page footer drawer with U.6 chrome.
 
-    reportlab's standard ``onPage`` callback runs *during* layout, so
-    it can't know the total page count (the page template only sees
-    ``doc.page`` for the current page; even ``multiBuild`` doesn't
-    expose the final total to the per-page hook). The standard fix
-    is the "numbered canvas" pattern: defer ``showPage`` so the
-    buffered page state piles up in ``_saved_pages``, then in
-    ``save`` iterate the buffer with the now-known total to draw a
-    "Page N of M" footer. We close over the resolved theme + version
-    + timestamp so the footer also picks up the report-version
-    sentinel and generation timestamp per U.6's footer contract.
+    "Page X of Y" needs the FINAL page count, which only stabilizes
+    at the end of a ``multiBuild`` pass. We piggyback on the fact
+    that ``multiBuild`` runs the build at least twice (once for
+    ``TableOfContents`` to collect entries, once to render the
+    resolved TOC): pass 1's footer renders "Page X of ?" while
+    ``total_pages_holder[0] == 0``; the inner ``_AuditDocTemplate``
+    overrides ``_allSatisfied`` to record ``self.page`` (now stable)
+    into the holder; pass 2's footer reads it back as "Page X of N".
 
-    Pass to ``BaseDocTemplate.multiBuild(..., canvasmaker=...)``.
+    Tried the standard NumberedCanvas pattern (defer ``showPage``,
+    replay buffered state in ``save``) — it broke every PDF
+    bookmark, because ``dict(self.__dict__)`` snapshots include
+    ``_destinations`` / page-ref state, and restoring an earlier
+    snapshot at save time overwrote the accumulated bookmark→page
+    refs with the LAST state's, collapsing every outline entry to
+    page 1. The two-pass closure here keeps reportlab's normal
+    page-template chrome flow untouched, so bookmarks resolve
+    correctly through the standard machinery.
     """
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.units import inch
-    from reportlab.pdfgen import canvas
 
     secondary_fg = colors.HexColor(theme.secondary_fg)
     timestamp = generated_at.strftime("%Y-%m-%d %H:%M")
     short_fp = _short_fingerprint_placeholder()
 
-    class _NumberedCanvas(canvas.Canvas):
-        def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-            super().__init__(*args, **kwargs)
-            self._saved_pages: list[dict] = []
+    def _draw_footer(canvas, doc) -> None:  # type: ignore[no-untyped-def]
+        canvas.saveState()
+        width, _ = letter
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(secondary_fg)
+        left = 0.75 * inch
+        right = width - 0.75 * inch
+        baseline = 0.5 * inch
+        canvas.drawString(
+            left, baseline,
+            f"quicksight-gen v{version}  ·  Generated {timestamp}",
+        )
+        total = total_pages_holder[0]
+        of_total = f" of {total}" if total else ""
+        canvas.drawRightString(
+            right, baseline,
+            f"Page {doc.page}{of_total}  ·  "
+            f"Provenance: {short_fp}",
+        )
+        canvas.restoreState()
 
-        def showPage(self) -> None:
-            self._saved_pages.append(dict(self.__dict__))
-            self._startPage()
-
-        def save(self) -> None:
-            num_pages = len(self._saved_pages)
-            for state in self._saved_pages:
-                self.__dict__.update(state)
-                self._draw_audit_chrome(num_pages)
-                super().showPage()
-            super().save()
-
-        def _draw_audit_chrome(self, num_pages: int) -> None:
-            self.saveState()
-            width, _ = letter
-            self.setFont("Helvetica", 8)
-            self.setFillColor(secondary_fg)
-            left = 0.75 * inch
-            right = width - 0.75 * inch
-            baseline = 0.5 * inch
-            self.drawString(
-                left, baseline,
-                f"quicksight-gen v{version}  ·  "
-                f"Generated {timestamp}",
-            )
-            self.drawRightString(
-                right, baseline,
-                f"Page {self._pageNumber} of {num_pages}  ·  "
-                f"Provenance: {short_fp}",
-            )
-            self.restoreState()
-
-    return _NumberedCanvas
+    return _draw_footer
 
 
 def _provenance_block_story(

@@ -226,6 +226,108 @@ def test_audit_apply_execute_writes_pdf(min_config: Path, tmp_path: Path):
     assert "Notes / exceptions" in text
 
 
+def test_audit_pdf_bookmarks_resolve_to_real_pages(
+    min_config: Path, tmp_path: Path,
+):
+    """Bookmarks must land on the right page (regression net).
+
+    Catches two failure modes seen in development:
+    1. NumberedCanvas snapshot/restore pattern collapses every
+       bookmark target to page 1 because ``dict(self.__dict__)``
+       captured page-ref state and restoring overwrote the
+       accumulated bookmark→page refs. Easy to miss because the
+       PDF still renders fine and the TOC text looks normal — only
+       the sidebar nav is broken.
+    2. multiBuild stopping too early so TOC/bookmarks disagree
+       (off-by-one on a section heading after a TOC overflow shift).
+
+    Asserts:
+    - Bookmarks span ≥3 distinct pages (would catch the all-page-1
+      collapse outright).
+    - Bookmarks are monotonically non-decreasing in PDF order
+      (parents come before children top-of-doc to bottom).
+    - No two top-level (H1) bookmarks point to the same page (every
+      section header is its own ``PageBreak``-separated page; if two
+      collapse it means a section emitted nothing or PageBreak
+      handling broke).
+    - The TOC page text contains every H1 title (sanity that the
+      TOC flowable rendered the entries it collected).
+    """
+    out = tmp_path / "report.pdf"
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "audit", "apply",
+            "-c", str(min_config),
+            "--l2", str(_SPEC_EXAMPLE),
+            "-o", str(out),
+            "--execute",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    from pypdf import PdfReader
+    reader = PdfReader(str(out))
+
+    # Walk the outline: collect (depth, title, 1-indexed page).
+    entries: list[tuple[int, str, int]] = []
+
+    def walk(items, depth=0):  # type: ignore[no-untyped-def]
+        for item in items:
+            if isinstance(item, list):
+                walk(item, depth + 1)
+            else:
+                page_idx = reader.get_destination_page_number(item)
+                entries.append((depth, item.title, page_idx + 1))
+
+    walk(reader.outline)
+    assert entries, "PDF outline is empty — bookmarks didn't emit"
+
+    pages = [page for _, _, page in entries]
+    distinct_pages = set(pages)
+    assert len(distinct_pages) >= 3, (
+        f"Bookmarks collapsed onto {len(distinct_pages)} distinct "
+        f"pages ({sorted(distinct_pages)}) — likely the canvas "
+        f"snapshot/restore bug that overwrites destinations dict. "
+        f"Outline: {entries[:5]}"
+    )
+
+    # Monotonicity in PDF order.
+    for prev, curr in zip(entries, entries[1:]):
+        assert prev[2] <= curr[2], (
+            f"Bookmarks out of order: {prev} comes before {curr} but "
+            f"its page is later. multiBuild may not have converged."
+        )
+
+    # No two H1s on same page.
+    h1_entries = [e for e in entries if e[0] == 0]
+    h1_pages: dict[int, str] = {}
+    for _, title, page in h1_entries:
+        if page in h1_pages:
+            raise AssertionError(
+                f"Two top-level sections collapsed to page {page}: "
+                f"'{h1_pages[page]}' and '{title}'. Either a section "
+                f"emitted no content or a PageBreak got dropped."
+            )
+        h1_pages[page] = title
+
+    # TOC contains every H1 title.
+    toc_text = ""
+    for page in reader.pages[:5]:
+        text = page.extract_text(extraction_mode="layout") or ""
+        if "Table of contents" in text or toc_text:
+            toc_text += text + "\n"
+    missing_toc = [
+        title for _, title, _ in h1_entries if title not in toc_text
+    ]
+    assert not missing_toc, (
+        f"TOC text is missing H1 entries: {missing_toc}. "
+        f"TOC flowable may have rendered before all entries were "
+        f"collected (multiBuild convergence)."
+    )
+
+
 def test_audit_clean_default_is_dry_run(tmp_path: Path):
     target = tmp_path / "report.pdf"
     target.write_bytes(b"%PDF-stub")
