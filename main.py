@@ -109,19 +109,18 @@ def define_env(env: Any) -> None:
             value=default_l2.theme.favicon,
         )
 
-    # Phase S spike — set QS_USE_WASM=1 to render diagrams via the
-    # graphviz WASM build (@hpcc-js/wasm-graphviz, browser-side)
-    # instead of the system `dot` binary at mkdocs-build time. The
-    # Python builders in diagrams.py construct the DOT source
-    # exactly as before; we just emit `.source` instead of calling
-    # `.pipe(format='svg')` and let the browser do the rendering.
-    # Currently implemented only for l2_topology kind=accounts;
-    # other kinds fall back to the graphviz/dot path during the
-    # spike, then port one-by-one once the WASM path is validated.
-    use_wasm = os.environ.get("QS_USE_WASM") == "1"
-
     @env.macro
     def diagram(family: str, **kwargs: Any) -> str:  # noqa: ARG001
+        """Emit a diagram block for in-browser graphviz WASM rendering.
+
+        Phase T (v8.1.0): every render_* helper now returns the DOT
+        source string instead of pre-rendered SVG. We wrap it in a
+        ``<script type="text/x-graphviz">`` inside a ``<figure>`` so:
+        (1) ``stylesheets/qs-graphviz-wasm.js`` finds the script and
+        renders it client-side via ``@hpcc-js/wasm-graphviz``, and
+        (2) the existing ``qs-lightbox.js`` click-to-zoom keeps
+        working against the figure wrapper unchanged.
+        """
         from quicksight_gen.common.handbook.diagrams import (
             render_conceptual,
             render_dataflow,
@@ -130,8 +129,8 @@ def define_env(env: Any) -> None:
 
         if family == "conceptual":
             name = kwargs["name"]
-            svg = render_conceptual(name)
-            return _wrap_svg(svg, alt=f"conceptual diagram: {name}")
+            dot = render_conceptual(name)
+            return _wrap_dot(dot, alt=f"conceptual diagram: {name}")
         if family == "l2_topology":
             kind = kwargs.get("kind", "accounts")
             name = kwargs.get("name")
@@ -141,31 +140,15 @@ def define_env(env: Any) -> None:
             l2 = (
                 default_l2 if l2_path == default_l2_path else load_instance(l2_path)
             )
-            # Phase S spike: route accounts diagram through Mermaid+ELK
-            # when the env var is set; everything else stays on graphviz
-            # so the page renders end-to-end during the spike.
-            if use_wasm and kind == "accounts":
-                from quicksight_gen.common.handbook.diagrams_wasm import (
-                    render_l2_topology_dot,
-                )
-                source = render_l2_topology_dot(l2, kind)
-                # <script type="text/..."> keeps the DOT source
-                # verbatim: browsers don't HTML-process script content,
-                # so any `<` / `>` / quoting inside the DOT reaches the
-                # WASM renderer exactly as graphviz expects.
-                return (
-                    f'<script type="text/x-graphviz" '
-                    f'class="qs-graphviz-wasm">\n{source}\n</script>'
-                )
-            svg = render_l2_topology(l2, kind, name=name)
-            return _wrap_svg(
-                svg,
+            dot = render_l2_topology(l2, kind, name=name)
+            return _wrap_dot(
+                dot,
                 alt=f"L2 topology: {kind}" + (f" / {name}" if name else ""),
             )
         if family == "dataflow":
             app = kwargs["app"]
-            svg = render_dataflow(app)
-            return _wrap_svg(svg, alt=f"dataflow: {app}")
+            dot = render_dataflow(app)
+            return _wrap_dot(dot, alt=f"dataflow: {app}")
         raise ValueError(
             f"unknown diagram family {family!r}. "
             f"Expected one of: conceptual, l2_topology, dataflow."
@@ -190,10 +173,10 @@ def define_env(env: Any) -> None:
             (_spec_example_l2, "spec_example"),
             (_sasquatch_pr_l2, "sasquatch_pr"),
         ):
-            svg = render_fn(candidate)
-            if svg is None:
+            dot = render_fn(candidate)
+            if dot is None:
                 continue
-            wrapped = _wrap_svg(svg, alt=alt)
+            wrapped = _wrap_dot(dot, alt=alt)
             if label != active_name:
                 callout = (
                     f'<div class="admonition note">'
@@ -277,17 +260,26 @@ def define_env(env: Any) -> None:
         )
 
 
-def _wrap_svg(svg: str, *, alt: str) -> str:
-    """Wrap inline SVG in a figure block so md_in_html lays it out cleanly.
+def _wrap_dot(dot: str, *, alt: str) -> str:
+    """Wrap a graphviz DOT source string in a figure with a render block.
 
-    The ``data-zoomable`` + ``tabindex`` attributes opt the figure in to
-    the click-to-zoom lightbox wired up in
-    ``stylesheets/qs-lightbox.js`` — clicking (or pressing Enter / Space
-    while focused) opens the SVG in a fullscreen pan/zoom overlay.
+    ``stylesheets/qs-graphviz-wasm.js`` finds every
+    ``<script type="text/x-graphviz">`` on the page at load time, runs
+    the DOT through ``@hpcc-js/wasm-graphviz``, and inserts the rendered
+    SVG into the parent figure. The figure stays as the lightbox /
+    accessibility hook (``data-zoomable`` + ``tabindex`` opt it in to
+    ``stylesheets/qs-lightbox.js``), so click-to-zoom works against the
+    rendered SVG once it lands in the DOM.
+
+    Browser HTML-parser caveat: the DOT source goes inside a
+    ``<script type=...>`` (not a ``<pre>``) so any ``<`` / ``>`` /
+    ``<br/>`` characters inside reach the WASM renderer verbatim. A
+    ``<pre>`` would let the browser interpret them as HTML and mangle
+    the source.
     """
     return (
         f'<figure class="qs-diagram" role="img" aria-label="{alt}" '
         f'data-zoomable="true" tabindex="0">\n'
-        f"{svg}\n"
+        f'<script type="text/x-graphviz">\n{dot}\n</script>\n'
         f"</figure>"
     )

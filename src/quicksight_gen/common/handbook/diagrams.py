@@ -12,14 +12,16 @@ Three diagram families:
    reference page.
 
 3. **Hand-authored conceptual** (``render_conceptual``) — reads a
-   ``.dot`` file from ``docs/_diagrams/conceptual/`` and renders it.
-   Used for the narrative concept pages where the diagram is a
-   teaching aid that doesn't derive from any L2 data (double-entry,
-   escrow-with-reversal, sweep-net-settle, etc.).
+   ``.dot`` file from ``docs/_diagrams/conceptual/``. Used for the
+   narrative concept pages where the diagram is a teaching aid that
+   doesn't derive from any L2 data (double-entry, escrow-with-reversal,
+   sweep-net-settle, etc.).
 
-All three return inline SVG (XML declaration stripped) so an
-mkdocs-macros call like ``{{ diagram("conceptual", name="double-entry") }}``
-embeds directly into the markdown via the ``md_in_html`` extension.
+All three return the **DOT source string**; the mkdocs-macros
+``diagram(...)`` macro wraps it in ``<script type="text/x-graphviz">``
+inside a ``<figure>`` and ``stylesheets/qs-graphviz-wasm.js`` renders
+it client-side via ``@hpcc-js/wasm-graphviz``. No system ``dot``
+binary is invoked at build time (Phase T migration).
 """
 
 from __future__ import annotations
@@ -50,7 +52,7 @@ TopologyKind = Literal[
 ]
 
 
-def render_l2_topology(
+def render_l2_topology(  # noqa: D401
     l2_instance: L2Instance,
     kind: TopologyKind,
     *,
@@ -95,22 +97,22 @@ def render_l2_topology(
     so a reader gets the closure shape at a glance.
     """
     if kind == "accounts":
-        return _to_svg(_build_accounts_graph(l2_instance))
+        return _build_accounts_graph(l2_instance).source
     if kind == "account_templates":
-        return _to_svg(_build_account_templates_graph(l2_instance))
+        return _build_account_templates_graph(l2_instance).source
     if kind == "chains":
-        return _to_svg(_build_chains_graph(l2_instance))
+        return _build_chains_graph(l2_instance).source
     if kind == "layered":
-        return _to_svg(_build_layered_graph(l2_instance))
+        return _build_layered_graph(l2_instance).source
     if kind == "hierarchy":
-        return _to_svg(_build_hierarchy_graph(l2_instance))
+        return _build_hierarchy_graph(l2_instance).source
     if kind == "transfer_template":
         if name is None:
             raise ValueError(
                 "kind='transfer_template' requires a name= kwarg "
                 "naming one of the instance's TransferTemplates."
             )
-        return _to_svg(_build_transfer_template_graph(l2_instance, name))
+        return _build_transfer_template_graph(l2_instance, name).source
     raise ValueError(f"unknown topology kind: {kind!r}")
 
 
@@ -132,7 +134,7 @@ def render_l2_account_focus(l2_instance: L2Instance) -> str | None:
         if parent is not None:
             _add_account_node(g, parent)
             g.edge(str(acc.id), str(parent.id), color="#666666")
-    return _to_svg(g)
+    return g.source
 
 
 def render_l2_account_template_focus(l2_instance: L2Instance) -> str | None:
@@ -149,7 +151,7 @@ def render_l2_account_template_focus(l2_instance: L2Instance) -> str | None:
         if parent is not None:
             _add_account_node(g, parent)
             g.edge(_template_node_id(template), str(parent.id), color="#666666")
-    return _to_svg(g)
+    return g.source
 
 
 def render_l2_rail_focus(l2_instance: L2Instance) -> str | None:
@@ -179,7 +181,7 @@ def render_l2_rail_focus(l2_instance: L2Instance) -> str | None:
             if acc is not None:
                 _add_account_node(g, acc)
     _add_rail_edges(g, rail, role_to_account)
-    return _to_svg(g)
+    return g.source
 
 
 def render_l2_transfer_template_focus(l2_instance: L2Instance) -> str | None:
@@ -219,7 +221,7 @@ def render_l2_transfer_template_focus(l2_instance: L2Instance) -> str | None:
         if prev is not None:
             g.edge(prev, node_id, color="#666666")
         prev = node_id
-    return _to_svg(g)
+    return g.source
 
 
 def render_l2_chain_focus(l2_instance: L2Instance) -> str | None:
@@ -251,7 +253,7 @@ def render_l2_chain_focus(l2_instance: L2Instance) -> str | None:
     _add_endpoint(chain.parent)
     _add_endpoint(chain.child)
     _add_chain_edge(g, chain)
-    return _to_svg(g)
+    return g.source
 
 
 def render_l2_limit_schedule_focus(l2_instance: L2Instance) -> str | None:
@@ -283,7 +285,7 @@ def render_l2_limit_schedule_focus(l2_instance: L2Instance) -> str | None:
         label=f"transfer_type:\n{sched.transfer_type}",
         fontsize="9", color="#666666",
     )
-    return _to_svg(g)
+    return g.source
 
 
 def render_dataflow(app_name: str) -> str:
@@ -340,7 +342,7 @@ def render_dataflow(app_name: str) -> str:
     for ds_id, sheet_id in sorted(edges):
         g.edge(ds_id, sheet_id, color="#666666")
 
-    return _to_svg(g)
+    return g.source
 
 
 def render_conceptual(name: str) -> str:
@@ -357,9 +359,7 @@ def render_conceptual(name: str) -> str:
             f"No conceptual diagram named {name!r}. "
             f"Available: {', '.join(available) or '(none)'}."
         )
-    source = dot_path.read_text(encoding="utf-8")
-    g = graphviz.Source(source, format="svg")
-    return _to_svg(g)
+    return dot_path.read_text(encoding="utf-8")
 
 
 # -- L2 graph builders -------------------------------------------------------
@@ -1047,22 +1047,6 @@ _APP_BUILDERS = {
     "investigation": _build_inv_app,
     "executives": _build_exec_app,
 }
-
-
-# -- SVG plumbing ------------------------------------------------------------
-
-
-def _to_svg(g: graphviz.Digraph | graphviz.Source) -> str:
-    """Render to SVG bytes, decode, strip XML declaration + DOCTYPE."""
-    svg_bytes = g.pipe(format="svg")
-    svg = svg_bytes.decode("utf-8")
-    if svg.startswith("<?xml"):
-        _, _, svg = svg.partition("?>")
-        svg = svg.lstrip()
-    if svg.startswith("<!DOCTYPE"):
-        _, _, svg = svg.partition(">")
-        svg = svg.lstrip()
-    return svg
 
 
 # -- Paths -------------------------------------------------------------------

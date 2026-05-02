@@ -103,10 +103,38 @@ S.1.d.1 + S.1.d.2 done; the gate verdict is "WASM lib healthy, no maintained plu
 - [ ] **S.3.a — Write an ADR** (likely `docs/_adr/0001-diagram-renderer.md`) capturing the comparison matrix, eyeball verdict, install-footprint deltas, and the chosen path. Even if "stay with graphviz", the ADR documents *why* so the question doesn't get re-opened ad-hoc.
 - [ ] **S.3.b — Open Phase T with an effort estimate** if the ADR picks a migration path. Phase T builds the chosen renderer + migrates each diagram surface in order of risk (programmatic first, hand-authored DOT last).
 
-### S.4 — Open follow-ups (only if the ADR picks status quo)
+### S.4 — Open follow-ups (status quo not picked; see Phase T)
 
-- [ ] **S.4.a — Document the install requirement up front.** Add a "Prerequisites" callout to README / handbook noting that `docs apply` needs the system `dot` binary; integrators who only want the JSON pipeline (`json apply`) don't.
-- [ ] **S.4.b — Optional: pre-build the diagrams once + cache.** If the build-time cost of running `dot` per page is significant, cache rendered SVGs in a build-cache directory keyed on input hash so repeat builds skip the re-render.
+Phase T executes the migration. S.4 only fires if Phase T blows up
+in execution + we have to revert.
+
+---
+
+## Phase T — Migrate every diagram surface to graphviz WASM
+
+**Goal.** Drop the system `dot` binary install from every CI / release / pages runner without changing how diagrams look or how they're authored. The Phase S spike proved the WASM lib + plugin glue work; Phase T is mechanical execution.
+
+**Acceptance.** `apt-get install graphviz` deleted from every workflow. `docs apply` produces a site whose diagrams render byte-identical to v8.0.x. The Python `graphviz` lib stays as a runtime dep (it's still doing pure-Python DOT construction), but no system binary is needed.
+
+- [ ] **T.1 — Port the remaining diagram surfaces.** Spike covered only `kind="accounts"`. Replace `_to_svg(g)` with `g.source` everywhere in `common/handbook/diagrams.py`:
+  - `render_l2_topology` for `account_templates` / `chains` / `hierarchy` / `layered` / `transfer_template`.
+  - `render_l2_account_focus` / `render_l2_account_template_focus` / `render_l2_rail_focus` / `render_l2_transfer_template_focus` / `render_l2_chain_focus` / `render_l2_limit_schedule_focus` (per-primitive concept-page macros).
+  - `render_dataflow` (per-app dataset → sheet wiring).
+  - `render_conceptual` (the 6 hand-authored `.dot` files in `_diagrams/conceptual/` — return the file text directly; no `graphviz.Source` wrap).
+
+- [ ] **T.2 — Make WASM the default; drop the env-var toggle.** `_wrap_svg(svg, alt)` → `_wrap_dot(dot, alt)` emits `<figure class="qs-diagram"><script type="text/x-graphviz">DOT</script></figure>`. Drop `QS_USE_WASM` env check + `diagrams_wasm.py` (its job is folded into the main pipeline).
+
+- [ ] **T.3 — JS shim renders into the figure (lightbox compat).** Update `qs-graphviz-wasm.js` to insert the rendered SVG into the parent `<figure>` so the existing `qs-lightbox.js` click-to-zoom keeps working without changes.
+
+- [ ] **T.4 — Drop system `dot` from CI / release / pages workflows.** Five `apt-get install graphviz` lines in `.github/workflows/{ci,release,pages}.yml` go away.
+
+- [ ] **T.5 — Update README + install docs.** README "Prerequisites" mentions `dot` for diagrams — drop. The Python `graphviz` lib stays via `[docs]` extra.
+
+- [ ] **T.6 — Verify.** `docs apply` builds clean against both `spec_example` and `sasquatch_pr`. Eyeball every diagram surface (scenario tour, concept pages, handbook overviews) — should look identical to v8.0.x.
+
+- [ ] **T.7 — Vendor the WASM lib.** Currently `qs-graphviz-wasm.js` CDN-loads from jsDelivr — fine for the spike, less great for offline/airgapped deploys. Vendor `@hpcc-js/wasm-graphviz` 1.21.5 into `docs/_static/` so the site is self-contained. Defer if jsDelivr's reliability is acceptable for the demo audience.
+
+- [ ] **T.8 — Cut v8.1.0.** Additive: removes a system requirement, doesn't add Python deps. RELEASE_NOTES entry covers the WASM swap + the dropped `apt install` line.
 
 ---
 
