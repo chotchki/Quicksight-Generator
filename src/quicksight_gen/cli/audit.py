@@ -2741,7 +2741,13 @@ def _write_audit_pdf(
     cover_title._bookmark_level = 0  # type: ignore[attr-defined]
     toc_heading = Paragraph("Table of contents", styles["Heading1"])
     toc_heading._bookmark_level = 0  # type: ignore[attr-defined]
-    story = [
+    # Optional: institutional logo above the title when theme.logo
+    # is a loadable absolute file path.
+    logo_flowable = _cover_logo_flowable(theme)
+    story: list = []
+    if logo_flowable is not None:
+        story.extend([logo_flowable, Spacer(1, 0.25 * inch)])
+    story.extend([
         cover_title,
         Spacer(1, 0.2 * inch),
         Paragraph(institution, institution_style),
@@ -2767,7 +2773,7 @@ def _write_audit_pdf(
             "reproducibility.",
             styles["BodyText"],
         ),
-    ]
+    ])
     story.extend(_provenance_block_story(
         styles, theme,
         version=version, l2_label=l2_label,
@@ -4289,6 +4295,61 @@ def _make_footer_drawer(
         canvas.restoreState()
 
     return _draw_footer
+
+
+def _cover_logo_flowable(theme):  # type: ignore[no-untyped-def]
+    """Cover-page logo Image flowable (or None if no logo / can't load).
+
+    Reads ``theme.logo`` (string accepting either a URL or absolute
+    file path). For audit-PDF generation we deliberately do NOT
+    fetch URLs — making the audit network-dependent at gen time is
+    a fragility we don't want for a regulator-facing deliverable
+    (and a URL fetch failure mid-generation would either break the
+    audit outright or silently swap in a stale cached version
+    depending on caching). URLs and unloadable paths log a warning
+    and skip the logo; the cover renders without it rather than
+    failing the audit.
+
+    Sized to fit within a 4"x1" bounding box, scaled proportionally
+    so the natural aspect ratio is preserved. Centered horizontally
+    by reportlab's default ``hAlign``.
+    """
+    from reportlab.lib.units import inch
+    from reportlab.platypus import Image
+
+    logo = getattr(theme, "logo", None)
+    if not logo:
+        return None
+    if logo.startswith(("http://", "https://", "//")):
+        click.echo(
+            f"audit: skipping URL logo {logo!r} on cover page — URL "
+            f"fetching disabled for audit reproducibility. Use an "
+            f"absolute file path in theme.logo to render.",
+            err=True,
+        )
+        return None
+    path = Path(logo)
+    if not path.is_absolute() or not path.is_file():
+        click.echo(
+            f"audit: theme.logo {logo!r} not found at absolute file "
+            f"path — cover page will render without it.",
+            err=True,
+        )
+        return None
+    try:
+        return Image(
+            str(path),
+            width=4.0 * inch,
+            height=1.0 * inch,
+            kind="proportional",
+        )
+    except Exception as e:  # reportlab raises various
+        click.echo(
+            f"audit: failed to load theme.logo {logo!r}: {e}; "
+            f"cover page will render without it.",
+            err=True,
+        )
+        return None
 
 
 def _provenance_block_story(
