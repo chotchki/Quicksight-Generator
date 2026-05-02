@@ -38,6 +38,7 @@ from quicksight_gen.cli.audit import (
     DriftViolation,
     ExecSummary,
     LimitBreachViolation,
+    MatviewEvidence,
     OverdraftViolation,
     StuckPendingViolation,
     StuckUnbundledViolation,
@@ -70,6 +71,8 @@ def _write_audit_pdf(
     version: str,
     l2_label: str,
     provenance: ProvenanceFingerprint | None,
+    matview_evidence: list | None,  # list[MatviewEvidence] | None
+    l2_instance_path: str | None,
 ) -> None:
     """Render the audit report as a PDF.
 
@@ -270,6 +273,14 @@ def _write_audit_pdf(
         l2_label=l2_label,
         provenance=provenance,
     ))
+    story.extend(_appendix_story(
+        styles, theme,
+        version=version,
+        l2_label=l2_label,
+        l2_instance_path=l2_instance_path,
+        provenance=provenance,
+        matview_evidence=matview_evidence,
+    ))
     # multiBuild = two-pass render so TableOfContents picks up the
     # final page numbers (pass 1 collects via the afterFlowable hook,
     # pass 2 renders the resolved TOC). The doc template's
@@ -277,6 +288,20 @@ def _write_audit_pdf(
     # total_pages_holder between passes so pass 2's footer drawer
     # can render "Page X of N" (U.6).
     doc.multiBuild(story)
+
+    # U.7.c — embed the L2 YAML as a PDF file attachment (post-
+    # multiBuild, pre-signing). Verifiers download byte-exact from
+    # the PDF reader's attachments panel + SHA256 themselves to
+    # confirm l2_yaml_sha against the embedded provenance.
+    if l2_instance_path is None:
+        attachment_name = "l2-default.yaml"
+    else:
+        attachment_name = Path(l2_instance_path).name
+    _attach_l2_yaml_to_pdf(
+        path,
+        attachment_name=attachment_name,
+        yaml_bytes=_read_l2_yaml_bytes(l2_instance_path),
+    )
 
 
 def _executive_summary_story(
@@ -1585,20 +1610,21 @@ def _signoff_story(
     # box stays as the human surface for free-form review comments
     # before the next signer countersigns.
 
-    # Notes / exceptions box — single tall cell with a bordered frame.
-    notes_table = Table(
-        [[Paragraph("", cell_style)]],
-        colWidths=[6.5 * inch],
-        rowHeights=[1.6 * inch],
-        style=TableStyle([
-            ("BOX", (0, 0), (-1, -1), 0.5,
-             HexColor(theme.secondary_fg)),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 8),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-            ("TOPPADDING", (0, 0), (-1, -1), 8),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-        ]),
+    # Notes / exceptions box — fillable AcroForm text field so a
+    # reviewer can type comments in any PDF reader (Adobe, Preview,
+    # pyHanko's signing UI) before adding their digital signature.
+    # When the system signature is applied first, pyHanko leaves
+    # form fields unlocked — subsequent signers can still fill the
+    # notes before sealing with their own signature.
+    notes_field = _make_fillable_notes_field(
+        name="QSGNotesField",
+        width=6.5 * inch,
+        height=1.6 * inch,
+        border_color=HexColor(theme.secondary_fg),
+        tooltip=(
+            "Notes / Exceptions — fill any review comments here "
+            "before adding your digital signature."
+        ),
     )
 
     return [
@@ -1639,10 +1665,430 @@ def _signoff_story(
             styles["BodyText"],
         ),
         Spacer(1, 0.05 * inch),
-        notes_table,
+        notes_field,
     ]
 
 
+
+
+def _make_fillable_notes_field(  # type: ignore[no-untyped-def]
+    *,
+    name: str,
+    width: float,
+    height: float,
+    border_color,
+    tooltip: str,
+):
+    """Build a platypus Flowable that emits an AcroForm text field (U.7.c).
+
+    Stays fillable in the generated PDF so a reviewer can type
+    review comments into the notes box in any PDF reader (Adobe,
+    Preview, Foxit) before applying their digital signature.
+    pyHanko's incremental sign leaves form fields unlocked by
+    default, so the system signature applied first does NOT prevent
+    the next signer from filling this field — the next signer
+    decides whether to lock fields when they sign.
+
+    Implements the platypus Flowable protocol via subclassing
+    ``Flowable`` (so reportlab's frame layout knows how to wrap +
+    place us). ``draw()`` is called by the frame after translating
+    the canvas to the local origin, but ``acroForm.textfield``
+    records ABSOLUTE page coordinates, so we read the canvas's
+    current transform via ``self.canv.absolutePosition`` /
+    ``self._frame`` to recover them.
+    """
+    from reportlab.platypus import Flowable
+
+    class _FillableNotesField(Flowable):
+        def __init__(self):
+            super().__init__()
+            self.width = width
+            self.height = height
+
+        def wrap(self, availWidth, availHeight):
+            return (self.width, self.height)
+
+        def draw(self):
+            # During draw, self.canv is translated so (0, 0) is the
+            # bottom-left of this flowable. acroForm.textfield records
+            # absolute coords, so do the field at (0, 0) on the
+            # translated canvas — reportlab translates back internally.
+            self.canv.acroForm.textfield(
+                name=name,
+                x=0,
+                y=0,
+                width=self.width,
+                height=self.height,
+                value="",
+                fieldFlags="multiline",
+                tooltip=tooltip,
+                borderColor=border_color,
+                forceBorder=True,
+            )
+
+    return _FillableNotesField()
+
+
+def _read_l2_yaml_bytes(l2_instance_path: str | None) -> bytes:
+    """Same lookup ``l2_yaml_sha256`` uses, returning the bytes.
+
+    For the appendix we attach the verbatim YAML to the PDF so a
+    verifier can download it bit-exact from the PDF reader's
+    attachments panel and SHA256 it themselves. Reading via the
+    same code path that feeds the fingerprint guarantees
+    byte-equality with what got hashed.
+    """
+    if l2_instance_path is None:
+        from importlib.resources import as_file, files
+        pkg = files("quicksight_gen.apps.l1_dashboard")
+        with as_file(pkg / "_default_l2.yaml") as path:
+            return Path(path).read_bytes()
+    return Path(l2_instance_path).read_bytes()
+
+
+def _attach_l2_yaml_to_pdf(
+    pdf_path: Path,
+    *,
+    attachment_name: str,
+    yaml_bytes: bytes,
+) -> None:
+    """Embed the L2 YAML as a PDF file attachment via pypdf (U.7.c).
+
+    Run AFTER ``doc.multiBuild`` writes the PDF and BEFORE pyHanko
+    signing (so the attachment lands inside the byte range the
+    signature covers). The verifier sees the attachment in their
+    PDF reader's attachments panel and can download it byte-exact
+    to recompute ``l2_yaml_sha256(file)`` independently.
+    """
+    from pypdf import PdfReader, PdfWriter
+
+    reader = PdfReader(str(pdf_path))
+    writer = PdfWriter(clone_from=reader)
+    writer.add_attachment(attachment_name, yaml_bytes)
+    with pdf_path.open("wb") as f:
+        writer.write(f)
+
+
+def _appendix_story(
+    styles,  # type: ignore[no-untyped-def]
+    theme,  # type: ignore[no-untyped-def] # ThemePreset
+    *,
+    version: str,
+    l2_label: str,
+    l2_instance_path: str | None,
+    provenance: ProvenanceFingerprint | None,
+    matview_evidence: list | None,  # list[MatviewEvidence] | None
+) -> list:
+    """Provenance Appendix page (U.7.c).
+
+    Targets the regulator who wants to audit the auditor: enough
+    info to independently re-derive the report's fingerprint
+    without quicksight-gen installed. Three sections:
+
+    1. **Matview Evidence** — per-matview SHA256 + row count.
+       Distinct from the authoritative composite fingerprint
+       (which covers base tables); a divergence here is a
+       *technical* signal (matview needs refresh) rather than a
+       data-binding problem.
+    2. **Reproduce With quicksight-gen** — the one-shot
+       ``audit verify`` command.
+    3. **Reproduce Manually** — the per-source recompute formulas
+       + a ~50-line Python recipe a third-party verifier can paste
+       into a script. SHA256 each input, concatenate the labeled
+       lines, hash again — that's the composite.
+
+    Bookmarked at outline level 0 alongside the per-invariant
+    sections so it shows up in the sidebar nav + TOC. When the
+    audit ran without a DB (skeleton mode), shows the matview
+    table with placeholder dashes; the recipe still renders since
+    it's static text.
+    """
+    from reportlab.lib.colors import HexColor
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.platypus import (
+        PageBreak,
+        Paragraph,
+        Preformatted,
+        Spacer,
+        Table,
+        TableStyle,
+    )
+
+    cell_style = ParagraphStyle(
+        "AppendixCell",
+        parent=styles["BodyText"],
+        fontSize=9,
+        leading=12,
+    )
+    code_style = ParagraphStyle(
+        "AppendixCode",
+        parent=cell_style,
+        fontName="Courier",
+        fontSize=8,
+    )
+    header_style = ParagraphStyle(
+        "AppendixHeader",
+        parent=cell_style,
+        fontName="Helvetica-Bold",
+        textColor=HexColor(theme.primary_fg),
+    )
+
+    # --- (1) Matview evidence table ---
+    if matview_evidence:
+        rows = [
+            [
+                Paragraph("Matview", header_style),
+                Paragraph("Rows", header_style),
+                Paragraph("SHA256", header_style),
+            ],
+        ]
+        for ev in matview_evidence:
+            rows.append([
+                Paragraph(ev.matview, cell_style),
+                Paragraph(f"{ev.row_count:,}", code_style),
+                Paragraph(ev.sha256, code_style),
+            ])
+    else:
+        rows = [
+            [
+                Paragraph("Matview", header_style),
+                Paragraph("Rows", header_style),
+                Paragraph("SHA256", header_style),
+            ],
+            [
+                Paragraph(
+                    "<i>Database not configured at audit time — "
+                    "matview evidence not available.</i>",
+                    cell_style,
+                ),
+                Paragraph("—", cell_style),
+                Paragraph("—", cell_style),
+            ],
+        ]
+    matview_table = Table(
+        rows,
+        colWidths=[2.0 * inch, 0.8 * inch, 3.7 * inch],
+        style=TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("BACKGROUND", (0, 0), (-1, 0),
+             HexColor(theme.link_tint)),
+            ("BOX", (0, 0), (-1, -1), 0.5,
+             HexColor(theme.secondary_fg)),
+            ("INNERGRID", (0, 0), (-1, -1), 0.25,
+             HexColor(theme.secondary_fg)),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]),
+    )
+
+    # --- (3) Per-source breakdown for the manual-verify recipe ---
+    placeholder = "<pending>"
+    if provenance is not None:
+        tx_hwm = str(provenance.transactions_hwm)
+        tx_sha = provenance.transactions_sha
+        bal_hwm = str(provenance.balances_hwm)
+        bal_sha = provenance.balances_sha
+        l2_sha = provenance.l2_yaml_sha
+        code_id = provenance.code_identity
+        composite = provenance.composite_sha
+    else:
+        tx_hwm = bal_hwm = tx_sha = bal_sha = l2_sha = placeholder
+        code_id = f"v{version}"
+        composite = placeholder
+
+    sources_rows = [
+        [
+            Paragraph("Source", header_style),
+            Paragraph("Identifier", header_style),
+            Paragraph("SHA256", header_style),
+        ],
+        [
+            Paragraph("Transactions table", cell_style),
+            Paragraph(f"entry &le; {tx_hwm}", code_style),
+            Paragraph(tx_sha, code_style),
+        ],
+        [
+            Paragraph("Daily balances table", cell_style),
+            Paragraph(f"entry &le; {bal_hwm}", code_style),
+            Paragraph(bal_sha, code_style),
+        ],
+        [
+            Paragraph("L2 instance YAML", cell_style),
+            Paragraph(l2_label, code_style),
+            Paragraph(l2_sha, code_style),
+        ],
+        [
+            Paragraph("quicksight-gen code", cell_style),
+            Paragraph(code_id, code_style),
+            Paragraph("(identity, no SHA)", cell_style),
+        ],
+        [
+            Paragraph(
+                "<b>Composite fingerprint</b>", cell_style,
+            ),
+            Paragraph("SHA256 of labeled lines", code_style),
+            Paragraph(f"<b>{composite}</b>", code_style),
+        ],
+    ]
+    sources_table = Table(
+        sources_rows,
+        colWidths=[1.7 * inch, 2.2 * inch, 2.6 * inch],
+        style=TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("BACKGROUND", (0, 0), (-1, 0),
+             HexColor(theme.link_tint)),
+            ("BOX", (0, 0), (-1, -1), 0.5,
+             HexColor(theme.secondary_fg)),
+            ("INNERGRID", (0, 0), (-1, -1), 0.25,
+             HexColor(theme.secondary_fg)),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]),
+    )
+
+    # --- Manual recompute recipe (Preformatted code block) ---
+    recipe = Preformatted(
+        "import hashlib\n"
+        "\n"
+        "def canonical(v):\n"
+        "    if v is None: return b''\n"
+        "    if isinstance(v, bool): return b'1' if v else b'0'\n"
+        "    if hasattr(v, 'isoformat'): "
+        "return v.isoformat().encode()\n"
+        "    return str(v).encode()\n"
+        "\n"
+        "def hash_table(cur, table, hwm):\n"
+        "    cur.execute(f'SELECT * FROM {table} '\n"
+        "                f'WHERE entry <= {hwm} ORDER BY entry')\n"
+        "    cols = sorted(\n"
+        "        enumerate(cur.description),\n"
+        "        key=lambda i_d: i_d[1][0].lower())\n"
+        "    h = hashlib.sha256()\n"
+        "    for row in cur:\n"
+        "        h.update(b'\\x1f'.join(\n"
+        "            canonical(row[i]) for i, _ in cols))\n"
+        "        h.update(b'\\x1e')\n"
+        "    return h.hexdigest()\n"
+        "\n"
+        "tx_sha  = hash_table(cur, '<prefix>_transactions', "
+        f"{tx_hwm})\n"
+        "bal_sha = hash_table(cur, '<prefix>_daily_balances', "
+        f"{bal_hwm})\n"
+        "l2_sha  = hashlib.sha256(\n"
+        "    open(L2_YAML_PATH, 'rb').read()).hexdigest()\n"
+        "\n"
+        "h = hashlib.sha256()\n"
+        f"h.update(b'tx_hwm={tx_hwm}\\n')\n"
+        "h.update(f'tx_sha={tx_sha}\\n'.encode())\n"
+        f"h.update(b'bal_hwm={bal_hwm}\\n')\n"
+        "h.update(f'bal_sha={bal_sha}\\n'.encode())\n"
+        "h.update(f'l2_sha={l2_sha}\\n'.encode())\n"
+        f"h.update(b'code={code_id}\\n')\n"
+        "print(h.hexdigest())  # composite_sha\n",
+        ParagraphStyle(
+            "AppendixRecipe",
+            parent=styles["Code"],
+            fontSize=7,
+            leading=9,
+            leftIndent=0,
+            rightIndent=0,
+            backColor=HexColor(theme.link_tint),
+            borderPadding=6,
+        ),
+    )
+
+    return [
+        PageBreak(),
+        bookmarked_h1("Provenance Appendix", styles),
+        Paragraph(
+            "<i>Everything an independent verifier needs to "
+            "reproduce this report's bindings without "
+            "quicksight-gen installed. The composite fingerprint "
+            "in the cover, sign-off, and footer is the "
+            "authoritative artifact; this appendix shows how it "
+            "was computed.</i>",
+            styles["BodyText"],
+        ),
+        Spacer(1, 0.2 * inch),
+
+        Paragraph("<b>Matview Evidence</b>", styles["Heading3"]),
+        Paragraph(
+            "<i>Per-matview SHA256 + row count, computed via the "
+            "same alphabetical-column-discovery + canonical-bytes "
+            "recipe as the base-table fingerprint. NOT part of the "
+            "authoritative composite — matviews are derived data. "
+            "A divergence between these and a recompute is a "
+            "technical signal (the matview needs refresh, schema "
+            "drift) rather than a data-binding problem.</i>",
+            styles["BodyText"],
+        ),
+        Spacer(1, 0.1 * inch),
+        matview_table,
+        Spacer(1, 0.3 * inch),
+
+        Paragraph(
+            "<b>Reproduce With quicksight-gen</b>",
+            styles["Heading3"],
+        ),
+        Paragraph(
+            "<font face='Courier'>"
+            "quicksight-gen audit verify report.pdf "
+            "-c config.yaml --l2 &lt;path-to-L2.yaml&gt;"
+            "</font>",
+            cell_style,
+        ),
+        Paragraph(
+            "<i>Extracts the embedded provenance JSON from the "
+            "PDF's /Subject metadata, recomputes each input at "
+            "the embedded high-water-marks, and compares. Exit 0 "
+            "on match, 1 on per-source diff.</i>",
+            styles["BodyText"],
+        ),
+        Spacer(1, 0.3 * inch),
+
+        Paragraph(
+            "<b>Reproduce Manually</b>",
+            styles["Heading3"],
+        ),
+        Paragraph(
+            "<i>For verifiers who don't want to install "
+            "quicksight-gen. Per-source values embedded in this "
+            "report are below; the Python recipe under the table "
+            "shows how to recompute and verify the composite.</i>",
+            styles["BodyText"],
+        ),
+        Spacer(1, 0.1 * inch),
+        sources_table,
+        Spacer(1, 0.15 * inch),
+        recipe,
+        Spacer(1, 0.25 * inch),
+
+        Paragraph(
+            "<b>L2 Instance YAML Attachment</b>",
+            styles["Heading3"],
+        ),
+        Paragraph(
+            "<i>The L2 instance YAML this report was generated "
+            "against is embedded as a PDF file attachment "
+            "(filename "
+            f"<font face='Courier'>{l2_label}</font>). Open this "
+            "PDF in any reader (Adobe Acrobat, Preview, Foxit, "
+            "etc.), find the attachments panel, and download the "
+            "file byte-for-byte. Run "
+            "<font face='Courier'>"
+            "sha256sum &lt;attachment&gt;"
+            "</font> to confirm it matches the "
+            "<font face='Courier'>l2_yaml_sha</font> shown in the "
+            "table above; that proves the L2 spec the auditor saw "
+            "is the L2 spec the report was generated against.</i>",
+            styles["BodyText"],
+        ),
+    ]
 
 
 def _cover_logo_flowable(theme):  # type: ignore[no-untyped-def]

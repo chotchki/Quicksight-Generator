@@ -196,6 +196,110 @@ def test_audit_apply_signing_block_missing_field_errors(tmp_path: Path):
         load_config(cfg)
 
 
+def test_audit_apply_pdf_embeds_l2_yaml_attachment(
+    min_config: Path, tmp_path: Path,
+):
+    """The PDF carries the L2 YAML as a byte-exact file attachment.
+
+    The attachment lets a verifier download the L2 spec the report
+    was generated against, hash it, and confirm it matches the
+    embedded ``l2_yaml_sha`` (when fingerprinting is enabled). The
+    attachment fires regardless of whether a DB is configured —
+    skeleton-mode PDFs still ship with the L2 yaml so reviewers
+    can audit the spec.
+    """
+    out = tmp_path / "report.pdf"
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "audit", "apply",
+            "-c", str(min_config),
+            "--l2", str(_SPEC_EXAMPLE),
+            "-o", str(out),
+            "--execute",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    import hashlib
+    from pypdf import PdfReader
+    reader = PdfReader(str(out))
+    attachments = reader.attachments
+    assert "spec_example.yaml" in attachments, (
+        f"expected spec_example.yaml attachment, got "
+        f"{list(attachments.keys())}"
+    )
+    attached_bytes = attachments["spec_example.yaml"][0]
+    on_disk = _SPEC_EXAMPLE.read_bytes()
+    assert hashlib.sha256(attached_bytes).hexdigest() == \
+        hashlib.sha256(on_disk).hexdigest(), (
+        "attachment bytes don't match the source L2 yaml on disk"
+    )
+
+
+def test_audit_apply_pdf_appendix_bookmarked_at_level_0(
+    min_config: Path, tmp_path: Path,
+):
+    """Provenance Appendix gets its own level-0 outline entry so
+    a regulator can jump to it from the PDF reader's sidebar nav.
+    """
+    out = tmp_path / "report.pdf"
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "audit", "apply",
+            "-c", str(min_config),
+            "--l2", str(_SPEC_EXAMPLE),
+            "-o", str(out),
+            "--execute",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    from pypdf import PdfReader
+    reader = PdfReader(str(out))
+    titles_at_root = []
+    for item in reader.outline:
+        if not isinstance(item, list):
+            titles_at_root.append(item.title)
+    assert "Provenance Appendix" in titles_at_root, (
+        f"expected level-0 'Provenance Appendix' bookmark, got "
+        f"{titles_at_root}"
+    )
+
+
+def test_audit_apply_pdf_notes_field_is_fillable_acroform(
+    min_config: Path, tmp_path: Path,
+):
+    """The Notes / Exceptions box is a real AcroForm text field
+    (not just a styled cell) so reviewers can type comments in any
+    PDF reader before adding their digital signature.
+    """
+    out = tmp_path / "report.pdf"
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "audit", "apply",
+            "-c", str(min_config),
+            "--l2", str(_SPEC_EXAMPLE),
+            "-o", str(out),
+            "--execute",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    from pypdf import PdfReader
+    reader = PdfReader(str(out))
+    fields = reader.get_form_text_fields() or {}
+    assert "QSGNotesField" in fields, (
+        f"expected QSGNotesField AcroForm text field, got "
+        f"{sorted(fields.keys())}"
+    )
+
+
 def test_audit_apply_execute_signs_pdf(
     signed_config: Path, tmp_path: Path,
 ):

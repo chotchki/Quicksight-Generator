@@ -55,6 +55,8 @@ def _render_audit_markdown(
     version: str,
     l2_label: str,
     provenance: ProvenanceFingerprint | None,
+    matview_evidence: list | None,  # list[MatviewEvidence] | None
+    l2_instance_path: str | None,
 ) -> str:
     """Markdown rendering of the audit report.
 
@@ -108,6 +110,12 @@ def _render_audit_markdown(
             version=version,
             l2_label=l2_label,
             provenance=provenance,
+        )
+        + _render_appendix_markdown(
+            version=version,
+            l2_label=l2_label,
+            provenance=provenance,
+            matview_evidence=matview_evidence,
         )
     )
     return cover + body
@@ -743,3 +751,129 @@ def _render_signoff_markdown(
     )
 
 
+
+
+
+def _render_appendix_markdown(
+    *,
+    version: str,
+    l2_label: str,
+    provenance,
+    matview_evidence,
+) -> str:
+    """Provenance Appendix in Markdown (U.7.c).
+
+    Mirrors the PDF appendix: matview SHA256 sidecar table +
+    verify-command instructions + per-source recompute formulas
+    + a copyable Python recipe.
+    """
+    placeholder = "<pending>"
+    if provenance is not None:
+        tx_hwm = str(provenance.transactions_hwm)
+        tx_sha = provenance.transactions_sha
+        bal_hwm = str(provenance.balances_hwm)
+        bal_sha = provenance.balances_sha
+        l2_sha = provenance.l2_yaml_sha
+        code_id = provenance.code_identity
+        composite = provenance.composite_sha
+    else:
+        tx_hwm = bal_hwm = tx_sha = bal_sha = l2_sha = placeholder
+        code_id = f"v{version}"
+        composite = placeholder
+
+    # Matview evidence table
+    if matview_evidence:
+        mv_rows = "".join(
+            f"| `{ev.matview}` | {ev.row_count:,} | `{ev.sha256}` |\n"
+            for ev in matview_evidence
+        )
+    else:
+        mv_rows = (
+            "| _Database not configured at audit time_ | — | — |\n"
+        )
+
+    return (
+        "\n"
+        "---\n"
+        "\n"
+        "## Provenance Appendix\n"
+        "\n"
+        "_Everything an independent verifier needs to reproduce this "
+        "report's bindings without quicksight-gen installed._\n"
+        "\n"
+        "### Matview Evidence\n"
+        "\n"
+        "_Per-matview SHA256 + row count. NOT part of the authoritative "
+        "composite — matviews are derived data; a divergence between "
+        "these and a recompute is a technical signal (matview needs "
+        "refresh, schema drift), not a data-binding problem._\n"
+        "\n"
+        "| Matview | Rows | SHA256 |\n"
+        "| --- | ---: | --- |\n"
+        f"{mv_rows}"
+        "\n"
+        "### Reproduce With quicksight-gen\n"
+        "\n"
+        "```\n"
+        "quicksight-gen audit verify report.pdf -c config.yaml "
+        "--l2 <path-to-L2.yaml>\n"
+        "```\n"
+        "\n"
+        "Extracts the embedded provenance JSON from the PDF's "
+        "`/Subject` metadata, recomputes each input at the "
+        "embedded high-water-marks, and compares. Exit 0 on match, "
+        "1 on per-source diff.\n"
+        "\n"
+        "### Reproduce Manually\n"
+        "\n"
+        "Per-source values embedded in this report:\n"
+        "\n"
+        "| Source | Identifier | SHA256 |\n"
+        "| --- | --- | --- |\n"
+        f"| Transactions table | `entry <= {tx_hwm}` | `{tx_sha}` |\n"
+        f"| Daily balances table | `entry <= {bal_hwm}` | `{bal_sha}` |\n"
+        f"| L2 instance YAML | `{l2_label}` | `{l2_sha}` |\n"
+        f"| quicksight-gen code | `{code_id}` | _(identity, no SHA)_ |\n"
+        f"| **Composite fingerprint** | SHA256 of labeled lines | "
+        f"**`{composite}`** |\n"
+        "\n"
+        "Recipe (no quicksight-gen install needed):\n"
+        "\n"
+        "```python\n"
+        "import hashlib\n"
+        "\n"
+        "def canonical(v):\n"
+        "    if v is None: return b''\n"
+        "    if isinstance(v, bool): return b'1' if v else b'0'\n"
+        "    if hasattr(v, 'isoformat'): "
+        "return v.isoformat().encode()\n"
+        "    return str(v).encode()\n"
+        "\n"
+        "def hash_table(cur, table, hwm):\n"
+        "    cur.execute(f'SELECT * FROM {table} '\n"
+        "                f'WHERE entry <= {hwm} ORDER BY entry')\n"
+        "    cols = sorted(\n"
+        "        enumerate(cur.description),\n"
+        "        key=lambda i_d: i_d[1][0].lower())\n"
+        "    h = hashlib.sha256()\n"
+        "    for row in cur:\n"
+        "        h.update(b'\\x1f'.join(\n"
+        "            canonical(row[i]) for i, _ in cols))\n"
+        "        h.update(b'\\x1e')\n"
+        "    return h.hexdigest()\n"
+        "\n"
+        f"tx_sha  = hash_table(cur, '<prefix>_transactions', {tx_hwm})\n"
+        f"bal_sha = hash_table(cur, '<prefix>_daily_balances', {bal_hwm})\n"
+        "l2_sha  = hashlib.sha256(\n"
+        "    open(L2_YAML_PATH, 'rb').read()).hexdigest()\n"
+        "\n"
+        "h = hashlib.sha256()\n"
+        f"h.update(b'tx_hwm={tx_hwm}\\n')\n"
+        "h.update(f'tx_sha={tx_sha}\\n'.encode())\n"
+        f"h.update(b'bal_hwm={bal_hwm}\\n')\n"
+        "h.update(f'bal_sha={bal_sha}\\n'.encode())\n"
+        "h.update(f'l2_sha={l2_sha}\\n'.encode())\n"
+        f"h.update(b'code={code_id}\\n')\n"
+        "print(h.hexdigest())  # composite_sha\n"
+        "```\n"
+    )
