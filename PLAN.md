@@ -132,9 +132,9 @@ in execution + we have to revert.
 
 - [ ] **T.6 — Verify.** `docs apply` builds clean against both `spec_example` and `sasquatch_pr`. Eyeball every diagram surface (scenario tour, concept pages, handbook overviews) — should look identical to v8.0.x.
 
-- [ ] **T.7 — Vendor the WASM lib.** Currently `qs-graphviz-wasm.js` CDN-loads from jsDelivr — fine for the spike, less great for offline/airgapped deploys. Vendor `@hpcc-js/wasm-graphviz` 1.21.5 into `docs/_static/` so the site is self-contained. Defer if jsDelivr's reliability is acceptable for the demo audience.
+- [x] **T.8 — Cut v8.1.0.** Additive: removes a system requirement, doesn't add Python deps. RELEASE_NOTES entry covers the WASM swap + the dropped `apt install` line. Tag pushed 2026-05-02.
 
-- [ ] **T.8 — Cut v8.1.0.** Additive: removes a system requirement, doesn't add Python deps. RELEASE_NOTES entry covers the WASM swap + the dropped `apt install` line.
+T.7 (vendor the WASM lib) deferred to Backlog — bring in if jsDelivr CDN reliability becomes a complaint from real users. Phase T otherwise complete.
 
 ---
 
@@ -171,6 +171,7 @@ Single grab-bag for everything not yet in a phase. Promote to a numbered phase e
 
 ### Tooling / test reliability
 
+- **Vendor `@hpcc-js/wasm-graphviz` for offline-friendly docs** (was T.7). `qs-graphviz-wasm.js` currently CDN-loads from jsDelivr. Bring in if jsDelivr reliability becomes a real-user complaint OR an integrator deploys the docs site somewhere airgapped. ~30 min: download the ESM bundle into `docs/_static/`, swap the import path.
 - **Single-app deploy must not orphan shared datasource.** (Mostly moot under v8.0.0 since `json apply` emits all four; keep as defensive note.)
 - **Apply layered (query+render) pattern to all browser e2e tests** (was M.4.1.k).
 - **Sasquatch L1 dashboard render flake.** `test_harness_l1_planted_scenarios_visible[sasquatch_pr]` Layer 2 occasionally misses `cust-0001-snb` on the Limit Breach sheet — Layer 1 (matview row presence) passes, the row IS in the matview, but the deployed Limit Breach table doesn't render the cell within the visual timeout. One retry already baked in via `run_dashboard_check_with_retry`; second attempt also misses. Spec_example + fuzz variants of the same test pass on the same run, so the flake is data-shape-specific (sasquatch_pr's seed has more transactions; the L1 dashboard's per-sheet transfer_type dropdown may default-narrow before the table loads). Investigation work: add a screenshot comparison of the Limit Breach sheet between sasquatch_pr (failing) and spec_example (passing) at the moment of the assertion, OR widen the harness's per-sheet wait to assert "table rendered" before sheet_text capture, OR re-deploy sasquatch_pr seed with a tighter days_ago=1 limit_breach plant to rule out timing. Do NOT xfail (the M.4.4.12 lesson — silent xfails masked real bugs).
