@@ -15,17 +15,58 @@
 - **Phase Q.5** — Persona-neutral docs full L2-driven substitution; Investigation walkthroughs split into mechanics + worked-example admonitions.
 - **Phase Q.3.a** (v8.0.0) — CLI redesign: four artifact groups (`schema | data | json | docs`); each `apply`/`clean` defaults to emit, `--execute` opts in to side effects; `cli_legacy.py` deleted; bundled JSON emit (no per-app filter).
 - **Phase R** (v7.2.0) — 90-day per-Rail healthy baseline + embedded plant overlays (densify×5, broken×15, inv-fanout×5); Volume Anomalies signal real on the seed; lognormal amount distribution.
+- **Phase S** — Research: drop the system `dot` binary. Spiked Mermaid+ELK (failed eyeball — self-loops floated, layout fidelity poor) and graphviz WASM via `@hpcc-js/wasm-graphviz` (passed — byte-identical to graphviz/dot). Verdict written into RELEASE_NOTES + git log; Phase T executed the migration.
+- **Phase T** (v8.1.0) — Every diagram now renders client-side via `@hpcc-js/wasm-graphviz`. `render_*` helpers return DOT strings; `<script type="text/x-graphviz">` blocks inside `<figure>` wrappers; ~50-line JS shim does the WASM render. 5 `apt-get install graphviz` lines deleted across CI / Release / Pages workflows.
+
+_Phase S + T sub-task detail removed during the post-T cleanup. RELEASE_NOTES v8.1.0 carries the migration narrative; the spike outcome is documented in the v8.1.0 release notes (Mermaid+ELK failed eyeball, graphviz WASM passed)._
+
+## Phase U — `quicksight-gen audit` PDF reconciliation report (planning)
+
+**Goal.** Add a fifth artifact group: `audit`. Run `quicksight-gen audit apply -c config.yaml --execute -o report.pdf` and get a regulator-ready PDF reconciliation report generated **directly from the database** (queries the per-prefix matviews + base tables; doesn't depend on QuickSight rendering at all). Supersedes the backlog "Audit-readiness columns on Daily Statement … start with PDF-print guidance in training material" entry — we have enough infra now to skip that workaround and go direct.
+
+**Why now.** Phase R landed the realistic baseline; Phase Q polished the dashboard surface; Phase T just proved we can do client-side rendering without a system binary. The L1 invariant matviews + the typed dataset contracts + the persona-neutral handbook templating give us all the inputs needed: the same SQL the dashboards run, executed once at report-generation time, formatted into a printable artifact.
+
+**Why this matters more than a dashboard PDF export.** AWS QuickSight pixel-perfect costs real money per dashboard per export, and renders the *dashboard's* shape — not what an auditor needs. The auditor needs: cover summary (institution + period + L2 fingerprint), per-invariant violation list with row counts + dollar magnitudes, per-account-day reconciliation walk for any account that drifted, supersession audit trail, sign-off block. That's a different shape than the dashboards; building it as its own artifact (sourced from the same matviews) means the regulator's view + the operator's view stay in sync without QS being in the loop.
+
+**Open scoping questions for the planning gate** (these need answers before any code lands):
+
+1. **Report shape.** What's in v1?
+   - Cover page (institution name + period + generation timestamp + L2 instance fingerprint hash)?
+   - Executive summary (totals: transactions, dollar volume, exception counts by check)?
+   - Per-L1-invariant violation tables (drift, overdraft, limit-breach, stuck-pending, stuck-unbundled, supersession audit)?
+   - Per-account-day Daily Statement walk for every drifted account?
+   - Sign-off block (auditor name + date + signature line)?
+   - Best to start with a smaller scope and iterate — proposal: cover + executive summary + per-invariant tables in v1; per-account-day walk + sign-off in v2.
+
+2. **Period scope.** Single business day? Date range? "Yesterday + last 7 days"? Anchored on cfg or YAML, or `--from / --to` CLI flags?
+
+3. **PDF generation tech.** Three credible candidates:
+   - **`reportlab`** — pure Python (PyPI wheels), mature, programmatic PDF API. No system deps. Less elegant for complex layouts.
+   - **`weasyprint`** — HTML→PDF via CSS. Prettier output, easier iteration. Pulls in pango/cairo system libs (would re-introduce the system-binary friction we just dropped in Phase T).
+   - **Playwright Chromium print-to-PDF** — already a dev dep for e2e tests. Best fidelity. Adds ~500MB browser to runtime install if we need it outside dev.
+   - Lean toward `reportlab` if persona-neutral CI must stay system-binary-free; toward Playwright if we want to reuse the docs site's HTML/CSS as the report template (with a `report:` mkdocs nav section that's also printable). Decide at the planning gate.
+
+4. **CLI shape.** Fits the four-artifact pattern as a 5th group:
+   ```
+   audit apply | clean | test
+   ```
+   - `audit apply -c config.yaml --execute -o report.pdf` queries the live DB + writes the PDF.
+   - `audit apply` (no `--execute`) emits the rendered HTML / Markdown source for the integrator to inspect / pipe into their own PDF tool.
+   - Same `--l2 PATH` flag as the other artifact groups for per-instance generation.
+
+5. **Provenance / signing.** Does the report carry a hash of the underlying matview snapshot + a generation timestamp + L2 instance fingerprint so a regulator can verify it wasn't post-hoc-edited? Worth doing — cheap to add, valuable to anyone who has to defend the report later.
+
+6. **Persona surface.** Institution name + accent color + logo come from the L2 YAML (already wired via the persona block). Cover-page prose follows the `vocab` substitution pattern. Anything else need adding to the persona block, or does today's L2 surface cover it?
+
+7. **Test layer.** Golden-file PDF tests are flaky (timestamps, font hinting). Better: test the generated SQL strings + the template-input dict (the data passed to the renderer) — same pattern as the dataset-contract tests. PDF-render itself stays an integration check.
+
+8. **Scope guardrail.** Phase U is "build the v1 audit artifact." Investigation/Executives audit views (bigger reports for compliance / board cadences) are explicit follow-ups, not v1 scope.
+
+**Acceptance.** A v1 PDF that an auditor would actually accept (covers the L1 invariants, generated reproducibly, carries a verifiable provenance stamp). Then iterate from feedback.
 
 ---
 
-## Phase S — Drop the system `dot` binary (research)
-
-**Goal.** Replace the graphviz/`dot` runtime dependency with a pure-Python (or browser-rendered) pipeline that produces the same diagrams. Today every consumer of `quicksight-gen docs apply` (and every CI / Pages / Release runner) needs `apt install graphviz` or `brew install graphviz` first, plus the Python `graphviz>=0.20` wrapper that shells out to `dot`. That's a meaningful install-friction wall for new integrators and a per-job setup cost on every pipeline.
-
-**Why research, not implementation.** Five plausible substitution paths exist (pure-Python layout, browser-rendered Mermaid, in-browser graphviz-WASM, hand-rolled SVG emitters, status-quo defense). Picking blind risks a half-built migration that loses layout quality or trades one external dep for a different one. Phase S converges on the path before we commit to building it.
-
-**Acceptance.** Either a written ADR with a chosen path + rough effort estimate (and a Phase T entry to execute), or a documented decision to keep graphviz with the install-friction tradeoff accepted.
-
+<!-- DROPPED — S.0 surface catalog (kept commented-out for one cycle in case the spike narrative needs a re-read)
 ### S.0 — Surface catalog
 
 Catalog the diagrams we render today so candidate evaluation is grounded in real shapes, not abstract "could it work":
@@ -187,7 +228,6 @@ Single grab-bag for everything not yet in a phase. Promote to a numbered phase e
 
 ### Audit / data evaluation / app info
 
-- **Audit-readiness columns** on Daily Statement (per-row leg-match percentage, etc.) for regulator reporting. Don't use QS pixel-perfect (cost); start with PDF-print guidance in training material.
 - **Postgres dataset evaluator** — given a connection, evaluate whether all exception cases are present; report stats on the CLI.
 - **App Info sheet enhancements** — version of `quicksight-gen` used to generate (so version mismatches are detectable); most-recent `<prefix>_transactions` / `<prefix>_daily_balances` row date (so ETL can be troubleshooted); most-recent matview refresh timestamp.
 
