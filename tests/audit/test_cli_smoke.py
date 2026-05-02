@@ -187,6 +187,15 @@ def test_audit_apply_execute_writes_pdf(min_config: Path, tmp_path: Path):
     assert "Reporting period" in text  # period band rendered
     assert "Provenance" in text  # page footer rendered
     assert "U.7" in text  # fingerprint placeholder cites where it lands
+    # U.6 cover-page source-data provenance block.
+    assert "Source-data provenance" in text
+    assert "Transactions table" in text
+    assert "Daily balances table" in text
+    assert "L2 instance YAML" in text
+    assert "quicksight-gen code" in text
+    # U.6 per-page footer chrome (NumberedCanvas).
+    assert "Page 1 of " in text
+    assert "Provenance: pending" in text
     # U.2 executive summary content.
     assert "Executive summary" in text
     assert "Volume" in text

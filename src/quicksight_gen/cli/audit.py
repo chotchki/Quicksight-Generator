@@ -2241,14 +2241,16 @@ def _write_audit_pdf(
         bottomMargin=0.85 * inch,  # extra room for the page footer
         title=f"QuickSight Generator Audit Report — {institution}",
     )
-    footer_drawer = _make_footer_drawer(theme)
     main_frame = Frame(
         doc.leftMargin, doc.bottomMargin,
         doc.width, doc.height, id="normal",
     )
     doc.addPageTemplates([
-        PageTemplate(id="main", frames=[main_frame], onPage=footer_drawer),
+        PageTemplate(id="main", frames=[main_frame]),
     ])
+    numbered_canvas_cls = _make_numbered_canvas(
+        theme, version=version, generated_at=generated_at,
+    )
     styles = getSampleStyleSheet()
     institution_style = ParagraphStyle(
         "InstitutionName",
@@ -2312,18 +2314,25 @@ def _write_audit_pdf(
             "This report covers the L1 reconciliation invariants &mdash; "
             "drift, overdraft, limit breach, stuck pending, stuck "
             "unbundled, supersession audit &mdash; for the period above. "
-            "Sourced directly from the operator's database matviews; see "
-            "the provenance fingerprint at the bottom of every page for "
+            "Sourced directly from the operator's database matviews; the "
+            "per-source breakdown below + the page-footer fingerprint "
+            "bind this report's contents to its inputs for "
             "reproducibility.",
             styles["BodyText"],
         ),
+    ]
+    story.extend(_provenance_block_story(
+        styles, theme,
+        version=version, l2_label=l2_label,
+    ))
+    story.extend([
         # Table of contents (own page, no bookmark — auditor scrolls
         # one page back from the first body section to find it).
         PageBreak(),
         Paragraph("Table of contents", styles["Heading1"]),
         Spacer(1, 0.15 * inch),
         toc,
-    ]
+    ])
     story.extend(_executive_summary_story(
         exec_summary, styles, period, theme,
     ))
@@ -2356,8 +2365,11 @@ def _write_audit_pdf(
     ))
     # multiBuild = two-pass render so TableOfContents picks up the
     # final page numbers (pass 1 collects via the afterFlowable hook,
-    # pass 2 renders the resolved TOC).
-    doc.multiBuild(story)
+    # pass 2 renders the resolved TOC). canvasmaker swaps in the
+    # NumberedCanvas so the per-page footer can stamp "Page N of M"
+    # alongside the report-version sentinel + generation timestamp +
+    # short provenance fingerprint (U.6).
+    doc.multiBuild(story, canvasmaker=numbered_canvas_cls)
 
 
 def _executive_summary_story(
@@ -3743,35 +3755,190 @@ def _signoff_story(
     ]
 
 
-def _make_footer_drawer(theme):  # type: ignore[no-untyped-def]
-    """Build a per-page footer drawer that carries the resolved theme.
+def _short_fingerprint_placeholder() -> str:
+    """Short-form fingerprint for the per-page footer (U.6).
 
-    reportlab calls ``onFirstPage``/``onLaterPages`` with only
-    ``(canvas, doc)`` — no place to thread the theme. This factory
-    closes over the theme so the footer text picks up
-    ``theme.secondary_fg`` for grayscale and stays in line with the
-    rest of the audit PDF's palette.
+    A compact stand-in for U.7's first-8-hex-chars truncation of the
+    full provenance hash. Distinct from the long-form placeholder
+    used on the cover-page provenance block + sign-off page so that
+    a sweep for one doesn't accidentally rewrite the other when U.7
+    lands.
+    """
+    return "pending"
+
+
+def _make_numbered_canvas(
+    theme,  # type: ignore[no-untyped-def] # ThemePreset
+    *,
+    version: str,
+    generated_at: datetime,
+):  # type: ignore[no-untyped-def]
+    """Build a Canvas subclass that renders the U.6 page chrome.
+
+    reportlab's standard ``onPage`` callback runs *during* layout, so
+    it can't know the total page count (the page template only sees
+    ``doc.page`` for the current page; even ``multiBuild`` doesn't
+    expose the final total to the per-page hook). The standard fix
+    is the "numbered canvas" pattern: defer ``showPage`` so the
+    buffered page state piles up in ``_saved_pages``, then in
+    ``save`` iterate the buffer with the now-known total to draw a
+    "Page N of M" footer. We close over the resolved theme + version
+    + timestamp so the footer also picks up the report-version
+    sentinel and generation timestamp per U.6's footer contract.
+
+    Pass to ``BaseDocTemplate.multiBuild(..., canvasmaker=...)``.
     """
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.units import inch
+    from reportlab.pdfgen import canvas
 
-    def _draw_footer(canvas, doc) -> None:  # type: ignore[no-untyped-def]
-        canvas.saveState()
-        width, _ = letter
-        canvas.setFont("Helvetica", 8)
-        canvas.setFillColor(colors.HexColor(theme.secondary_fg))
-        left = 0.75 * inch
-        right = width - 0.75 * inch
-        baseline = 0.5 * inch
-        canvas.drawString(
-            left, baseline,
-            f"QuickSight Generator Audit Report  ·  Page {doc.page}",
-        )
-        canvas.drawRightString(
-            right, baseline,
-            f"Provenance: {_l2_fingerprint_placeholder()}",
-        )
-        canvas.restoreState()
+    secondary_fg = colors.HexColor(theme.secondary_fg)
+    timestamp = generated_at.strftime("%Y-%m-%d %H:%M")
+    short_fp = _short_fingerprint_placeholder()
 
-    return _draw_footer
+    class _NumberedCanvas(canvas.Canvas):
+        def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            super().__init__(*args, **kwargs)
+            self._saved_pages: list[dict] = []
+
+        def showPage(self) -> None:
+            self._saved_pages.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self) -> None:
+            num_pages = len(self._saved_pages)
+            for state in self._saved_pages:
+                self.__dict__.update(state)
+                self._draw_audit_chrome(num_pages)
+                super().showPage()
+            super().save()
+
+        def _draw_audit_chrome(self, num_pages: int) -> None:
+            self.saveState()
+            width, _ = letter
+            self.setFont("Helvetica", 8)
+            self.setFillColor(secondary_fg)
+            left = 0.75 * inch
+            right = width - 0.75 * inch
+            baseline = 0.5 * inch
+            self.drawString(
+                left, baseline,
+                f"quicksight-gen v{version}  ·  "
+                f"Generated {timestamp}",
+            )
+            self.drawRightString(
+                right, baseline,
+                f"Page {self._pageNumber} of {num_pages}  ·  "
+                f"Provenance: {short_fp}",
+            )
+            self.restoreState()
+
+    return _NumberedCanvas
+
+
+def _provenance_block_story(
+    styles,  # type: ignore[no-untyped-def]
+    theme,  # type: ignore[no-untyped-def] # ThemePreset
+    *,
+    version: str,
+    l2_label: str,
+) -> list:
+    """Cover-page long-form source-data provenance block (U.6).
+
+    Lists the source artifacts that, together, fully determine this
+    report's content: the operator's two base tables (transactions +
+    daily_balances), the L2 instance YAML, and the quicksight-gen
+    code version. U.7 fills in the per-source SHA256 + high-water
+    entry-id columns; until then they show the long-form
+    ``<pending>`` placeholder so a grep for it catches a "we shipped
+    without wiring U.7" regression before the auditor does.
+
+    Distinct from the per-page footer (which carries a SHORT hash);
+    this is the per-source breakdown that the footer's hash
+    summarizes.
+    """
+    from reportlab.lib.colors import HexColor
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.platypus import (
+        Paragraph,
+        Spacer,
+        Table,
+        TableStyle,
+    )
+
+    cell_style = ParagraphStyle(
+        "ProvenanceCell",
+        parent=styles["BodyText"],
+        fontSize=9,
+        leading=12,
+    )
+    header_style = ParagraphStyle(
+        "ProvenanceHeader",
+        parent=cell_style,
+        fontName="Helvetica-Bold",
+        textColor=HexColor(theme.primary_fg),
+    )
+    code_style = ParagraphStyle(
+        "ProvenanceCode",
+        parent=cell_style,
+        fontName="Courier",
+    )
+
+    long_fp = _l2_fingerprint_placeholder().replace(
+        "<", "&lt;",
+    ).replace(">", "&gt;")
+
+    def _row(source: str, hwm: str, hash_text: str) -> list:
+        return [
+            Paragraph(source, cell_style),
+            Paragraph(hwm, code_style),
+            Paragraph(hash_text, code_style),
+        ]
+
+    rows = [
+        [
+            Paragraph("Source", header_style),
+            Paragraph("Last entry / version", header_style),
+            Paragraph("SHA256", header_style),
+        ],
+        _row("Transactions table", long_fp, long_fp),
+        _row("Daily balances table", long_fp, long_fp),
+        _row("L2 instance YAML", l2_label, long_fp),
+        _row("quicksight-gen code", f"v{version}", long_fp),
+    ]
+    table = Table(
+        rows,
+        colWidths=[2.0 * inch, 2.2 * inch, 2.8 * inch],
+        style=TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("BACKGROUND", (0, 0), (-1, 0),
+             HexColor(theme.link_tint)),
+            ("BOX", (0, 0), (-1, -1), 0.5,
+             HexColor(theme.secondary_fg)),
+            ("INNERGRID", (0, 0), (-1, -1), 0.25,
+             HexColor(theme.secondary_fg)),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ]),
+    )
+    return [
+        Spacer(1, 0.3 * inch),
+        Paragraph(
+            "<b>Source-data provenance</b>", styles["Heading3"],
+        ),
+        Paragraph(
+            "<i>Reproducibility binding. The contents of this report "
+            "derive entirely from the four sources below. The full "
+            "fingerprint (the SHA256 of these inputs concatenated) "
+            "is summarized in every page footer; the cryptographic "
+            "seal over the system attestation block on the sign-off "
+            "page covers the same inputs.</i>",
+            styles["BodyText"],
+        ),
+        Spacer(1, 0.1 * inch),
+        table,
+    ]
