@@ -1,18 +1,20 @@
-"""Phase U.0 smoke — `quicksight-gen audit` CLI shape + skeleton render.
+"""CLI smoke for ``quicksight-gen audit`` — shape + cover-page render.
 
 Verifies:
 - ``audit --help`` lists the expected subcommands.
 - ``audit apply`` (no --execute) emits Markdown carrying the L2
-  institution name + the resolved period + a generation timestamp.
+  institution heading + the resolved period + a generation timestamp
+  + a provenance-fingerprint placeholder.
 - ``audit apply --execute -o FILE`` writes a non-trivial PDF whose
-  text payload still mentions the institution + period (proves
-  reportlab is wired up + the L2 binding threads through).
+  text payload mentions the institution + reporting period + footer
+  provenance (proves reportlab is wired up + the L2 binding +
+  cover-page layout threaded through).
 - ``audit clean`` is a no-op without ``--execute`` and unlinks
   with it.
 
 Real coverage of the underlying SQL + per-section template-input
 dicts lands in U.8 (``test_sql.py`` + ``test_template_input.py``).
-This file is the U.0 acceptance net.
+This file is the U.0 + U.1 acceptance net.
 """
 
 from __future__ import annotations
@@ -65,11 +67,13 @@ def test_audit_apply_emits_markdown_to_stdout(min_config: Path):
         ],
     )
     assert result.exit_code == 0, result.output
-    # Markdown shape sanity.
+    # Cover-page markdown shape sanity.
     assert "# QuickSight Generator audit report" in result.output
-    assert "**Institution:**" in result.output
-    assert "**Period:**" in result.output
+    assert "## spec_example" in result.output  # institution as H2
+    assert "**Reporting period:**" in result.output
     assert "**Generated:**" in result.output
+    assert "Provenance fingerprint:" in result.output
+    assert "U.7" in result.output  # placeholder cites where real hash lands
 
 
 def test_audit_apply_emits_markdown_to_file(min_config: Path, tmp_path: Path):
@@ -148,7 +152,10 @@ def test_audit_apply_execute_writes_pdf(min_config: Path, tmp_path: Path):
     assert len(reader.pages) >= 1
     text = "\n".join(page.extract_text() or "" for page in reader.pages)
     assert "audit report" in text.lower()
-    assert "Phase U.0" in text or "skeleton" in text.lower()
+    assert "spec_example" in text  # institution heading rendered
+    assert "Reporting period" in text  # period band rendered
+    assert "Provenance" in text  # page footer rendered
+    assert "U.7" in text  # fingerprint placeholder cites where it lands
 
 
 def test_audit_clean_default_is_dry_run(tmp_path: Path):
