@@ -51,7 +51,7 @@ _Phase S + T sub-task detail removed during the post-T cleanup. RELEASE_NOTES v8
 - [ ] **U.3 — Per-invariant violation tables.** One page (or grouped) per L1 invariant, sourced from `<prefix>_*` matviews. Columns: account, account role, day, magnitude (dollar amount or count), reason. **Review gate after each invariant lands** so layout iterates per-table.
   - [x] U.3.a — Drift
   - [x] U.3.b — Overdraft
-  - [ ] U.3.c — Limit breach
+  - [x] U.3.c — Limit breach
   - [ ] U.3.d — Stuck pending
   - [ ] U.3.e — Stuck unbundled
   - [ ] U.3.f — Supersession audit

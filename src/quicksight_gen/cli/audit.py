@@ -453,6 +453,146 @@ def _split_overdraft_by_account_class(
     return parent_rows, child_summaries
 
 
+# -- Limit breach violations (U.3.c) ------------------------------------------
+
+
+@dataclass(frozen=True)
+class LimitBreachViolation:
+    """One row of the ``<prefix>_limit_breach`` matview, audit-shaped.
+
+    Each row is one (account, day, transfer_type) cell where the
+    cumulative outbound debit total exceeded the L2-configured cap.
+    Magnitude = ``outbound_total - cap`` (always positive).
+    """
+    account_id: str
+    account_name: str
+    account_role: str
+    account_parent_role: str
+    business_day: date
+    transfer_type: str
+    outbound_total: Decimal
+    cap: Decimal
+
+    @property
+    def overshoot(self) -> Decimal:
+        return self.outbound_total - self.cap
+
+
+def _query_limit_breach_violations(
+    cfg, instance, period: tuple[date, date],  # type: ignore[no-untyped-def]
+) -> list[LimitBreachViolation] | None:
+    """Pull limit_breach rows whose business day falls in the period.
+
+    Sort: most-recent day first, then biggest overshoot, then
+    account_id — auditor sees the freshest + biggest cap-busts first.
+    """
+    if cfg.demo_database_url is None:
+        return None
+
+    from quicksight_gen.common.db import connect_demo_db
+
+    prefix = instance.instance
+    start, end = period
+    start_lit = f"DATE '{start.isoformat()}'"
+    end_excl_lit = f"DATE '{(end + timedelta(days=1)).isoformat()}'"
+
+    conn = connect_demo_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT account_id, account_name, account_role,"
+            f"       account_parent_role, business_day,"
+            f"       transfer_type, outbound_total, cap"
+            f"  FROM {prefix}_limit_breach"
+            f" WHERE business_day >= {start_lit}"
+            f"   AND business_day < {end_excl_lit}"
+            f" ORDER BY business_day DESC,"
+            f"          (outbound_total - cap) DESC, account_id"
+        )
+        return [
+            LimitBreachViolation(
+                account_id=str(r[0]),
+                account_name=str(r[1] or ""),
+                account_role=str(r[2] or ""),
+                account_parent_role=str(r[3] or ""),
+                business_day=(
+                    r[4].date() if hasattr(r[4], "date") else r[4]
+                ),
+                transfer_type=str(r[5] or ""),
+                outbound_total=Decimal(r[6] or 0),
+                cap=Decimal(r[7] or 0),
+            )
+            for r in cur.fetchall()
+        ]
+    finally:
+        conn.close()
+
+
+@dataclass(frozen=True)
+class LimitBreachChildGroupSummary:
+    """Per (parent_role, transfer_type) roll-up of breaching children.
+
+    LimitSchedule caps are keyed on (parent_role, transfer_type) per
+    SPEC, so the natural child summary keys both too. Auditor sees:
+    "5 customers breached the ACH outbound cap under DDAControl this
+    period, total overshoot $X".
+    """
+    parent_role: str
+    transfer_type: str
+    distinct_children_breaching: int
+    total_overshoot: Decimal
+
+
+def _split_limit_breach_by_account_class(
+    rows: list[LimitBreachViolation],
+    singleton_ids: set[str],
+) -> tuple[
+    list[LimitBreachViolation],
+    list[LimitBreachChildGroupSummary],
+]:
+    """Bucket rows into (parent per-row, child grouped by parent+type).
+
+    Children grouped by (parent_role, transfer_type) since that's
+    the cap dimension; total_overshoot sums each child's worst-day
+    overshoot in the period.
+    """
+    parent_rows: list[LimitBreachViolation] = []
+    by_group: dict[
+        tuple[str, str], dict[str, list[LimitBreachViolation]],
+    ] = {}
+    for r in rows:
+        if r.account_id in singleton_ids:
+            parent_rows.append(r)
+        else:
+            key = (
+                r.account_parent_role or "(no parent)",
+                r.transfer_type,
+            )
+            by_group.setdefault(key, {}).setdefault(
+                r.account_id, [],
+            ).append(r)
+    child_summaries = sorted(
+        (
+            LimitBreachChildGroupSummary(
+                parent_role=key[0],
+                transfer_type=key[1],
+                distinct_children_breaching=len(children),
+                total_overshoot=sum(
+                    (
+                        max(rr.overshoot for rr in child_rows)
+                        for child_rows in children.values()
+                    ),
+                    start=Decimal(0),
+                ),
+            )
+            for key, children in by_group.items()
+        ),
+        # Biggest overshoot first.
+        key=lambda s: (-s.total_overshoot, s.parent_role, s.transfer_type),
+    )
+    return parent_rows, child_summaries
+
+
 @audit.command("apply")
 @l2_instance_option()
 @config_option(required_for_dialect_only=True)
@@ -497,6 +637,9 @@ def audit_apply(
     exec_summary = _query_executive_summary(_cfg, instance, (start, end))
     drift_rows = _query_drift_violations(_cfg, instance, (start, end))
     overdraft_rows = _query_overdraft_violations(_cfg, instance, (start, end))
+    limit_breach_rows = _query_limit_breach_violations(
+        _cfg, instance, (start, end),
+    )
     singleton_ids = _singleton_account_ids(instance)
 
     if execute:
@@ -509,6 +652,7 @@ def audit_apply(
             exec_summary=exec_summary,
             drift_rows=drift_rows,
             overdraft_rows=overdraft_rows,
+            limit_breach_rows=limit_breach_rows,
             singleton_ids=singleton_ids,
         )
         click.echo(
@@ -524,6 +668,7 @@ def audit_apply(
         exec_summary=exec_summary,
         drift_rows=drift_rows,
         overdraft_rows=overdraft_rows,
+        limit_breach_rows=limit_breach_rows,
         singleton_ids=singleton_ids,
     )
     if output is None:
@@ -611,14 +756,15 @@ def _render_audit_markdown(
     exec_summary: ExecSummary | None,
     drift_rows: list[DriftViolation] | None,
     overdraft_rows: list[OverdraftViolation] | None,
+    limit_breach_rows: list[LimitBreachViolation] | None,
     singleton_ids: set[str],
 ) -> str:
     """Markdown rendering of the audit report.
 
     Mirrors the PDF page sequence — cover, executive summary, then
-    per-invariant violation tables (U.3.a Drift, U.3.b Overdraft;
-    U.3.c–f land later) — so an integrator can review the report's
-    content before committing to a real PDF write.
+    per-invariant violation tables (U.3.a Drift, U.3.b Overdraft,
+    U.3.c Limit breach; U.3.d–f land later) — so an integrator can
+    review the report's content before committing to a real PDF write.
     """
     start, end = period
     fingerprint = _l2_fingerprint_placeholder()
@@ -646,13 +792,13 @@ def _render_audit_markdown(
         _render_executive_summary_markdown(exec_summary)
         + _render_drift_markdown(drift_rows)
         + _render_overdraft_markdown(overdraft_rows, singleton_ids)
+        + _render_limit_breach_markdown(limit_breach_rows, singleton_ids)
     )
     trailer = (
         "\n"
-        "_Remaining per-invariant violation tables (limit breach, "
-        "stuck pending, stuck unbundled, supersession), the "
-        "per-account-day Daily Statement walk, and the sign-off block "
-        "land in Phase U.3.c+._\n"
+        "_Remaining per-invariant violation tables (stuck pending, "
+        "stuck unbundled, supersession), the per-account-day Daily "
+        "Statement walk, and the sign-off block land in Phase U.3.d+._\n"
     )
     return cover + body + trailer
 
@@ -833,6 +979,76 @@ def _render_overdraft_markdown(
     return out
 
 
+def _render_limit_breach_markdown(
+    rows: list[LimitBreachViolation] | None,
+    singleton_ids: set[str],
+) -> str:
+    """Limit breach violations section in Markdown form.
+
+    Same parent-vs-child split as Overdraft. Children grouped by
+    (parent_role, transfer_type) since the LimitSchedule cap is
+    keyed on that pair.
+    """
+    header = (
+        "\n"
+        "---\n"
+        "\n"
+        "## Limit breach violations\n"
+        "\n"
+        "_Account-day-transfer_type cells where cumulative outbound "
+        "exceeded the L2-configured cap. Sourced from "
+        "`<prefix>_limit_breach` matview. Parent accounts shown "
+        "per-row; child accounts grouped by (parent role, transfer "
+        "type) — the LimitSchedule key shape._\n"
+    )
+    if rows is None:
+        return header + (
+            "\n_Database not configured — table not populated. "
+            "Set `demo_database_url` in your config to query._\n"
+        )
+    if not rows:
+        return header + (
+            "\n_No limit breaches detected for the period._\n"
+        )
+
+    parent_rows, child_groups = _split_limit_breach_by_account_class(
+        rows, singleton_ids,
+    )
+    out = header
+    if parent_rows:
+        out += (
+            "\n"
+            "### Parent accounts (per-row detail)\n"
+            "\n"
+            "| Account ID | Account name | Role | Day | Transfer type "
+            "| Outbound | Cap | Overshoot |\n"
+            "|---|---|---|---|---|---:|---:|---:|\n"
+        )
+        for r in parent_rows:
+            out += (
+                f"| `{r.account_id}` | {r.account_name} | "
+                f"{r.account_role} | {r.business_day.isoformat()} | "
+                f"{r.transfer_type} | ${r.outbound_total:,.2f} "
+                f"| ${r.cap:,.2f} | ${r.overshoot:,.2f} |\n"
+            )
+    if child_groups:
+        out += (
+            "\n"
+            "### Child accounts grouped by parent role + transfer type\n"
+            "\n"
+            "| Parent role | Transfer type | Children breaching "
+            "| Total overshoot |\n"
+            "|---|---|---:|---:|\n"
+        )
+        for s in child_groups:
+            out += (
+                f"| {s.parent_role} | {s.transfer_type} "
+                f"| {s.distinct_children_breaching} "
+                f"| ${s.total_overshoot:,.2f} |\n"
+            )
+    return out
+
+
 def _write_audit_pdf(
     path: Path,
     *,
@@ -842,15 +1058,16 @@ def _write_audit_pdf(
     exec_summary: ExecSummary | None,
     drift_rows: list[DriftViolation] | None,
     overdraft_rows: list[OverdraftViolation] | None,
+    limit_breach_rows: list[LimitBreachViolation] | None,
     singleton_ids: set[str],
 ) -> None:
     """Render the audit report as a PDF.
 
     Page sequence: cover → executive summary → per-invariant tables
-    (Drift, Overdraft so far; U.3.c+ adds the rest). Each per-
-    invariant page paginates via LongTable. Every page carries a
-    footer with the provenance fingerprint placeholder (real hash
-    lands in U.7).
+    (Drift, Overdraft, Limit breach so far; U.3.d+ adds the rest).
+    Each per-invariant page paginates via LongTable. Every page
+    carries a footer with the provenance fingerprint placeholder
+    (real hash lands in U.7).
     """
     # Imported lazily so the audit CLI loads even when the [audit]
     # extra isn't installed — only --execute paths need reportlab.
@@ -930,6 +1147,9 @@ def _write_audit_pdf(
     story.extend(_drift_story(drift_rows, styles, period))
     story.extend(_overdraft_story(
         overdraft_rows, styles, period, singleton_ids,
+    ))
+    story.extend(_limit_breach_story(
+        limit_breach_rows, styles, period, singleton_ids,
     ))
     doc.build(story, onFirstPage=_draw_footer, onLaterPages=_draw_footer)
 
@@ -1307,6 +1527,170 @@ def _overdraft_story(
         elements.append(LongTable(
             group_data,
             colWidths=[3.0 * inch, 1.6 * inch, 2.3 * inch],
+            style=group_style, repeatRows=1,
+        ))
+    return elements
+
+
+def _limit_breach_story(
+    rows: list[LimitBreachViolation] | None,
+    styles,  # type: ignore[no-untyped-def]
+    period: tuple[date, date],
+    singleton_ids: set[str],
+) -> list:  # type: ignore[type-arg]
+    """Platypus elements for the U.3.c Limit breach violations page.
+
+    Same parent-vs-child split as Overdraft. Children grouped by
+    (parent_role, transfer_type) since the LimitSchedule cap is
+    keyed on that pair. Parent table carries 8 columns (account,
+    role, day, transfer_type, outbound, cap, overshoot); child
+    summary 4 columns (parent_role, transfer_type, count, total
+    overshoot).
+    """
+    from reportlab.lib import colors
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.platypus import (
+        LongTable,
+        PageBreak,
+        Paragraph,
+        Spacer,
+        TableStyle,
+    )
+
+    start, end = period
+    elements: list = [
+        PageBreak(),
+        Paragraph("Limit breach violations", styles["Heading1"]),
+        Paragraph(
+            f"Reporting period: {start.isoformat()} &ndash; "
+            f"{end.isoformat()} (inclusive). "
+            "Source: <b>&lt;prefix&gt;_limit_breach</b> matview.",
+            styles["BodyText"],
+        ),
+        Paragraph(
+            "<i>Account-day-transfer_type cells where cumulative "
+            "outbound exceeded the L2-configured cap. Parent accounts "
+            "shown per-row; child accounts grouped by (parent role, "
+            "transfer type) &mdash; the LimitSchedule key shape.</i>",
+            styles["BodyText"],
+        ),
+        Spacer(1, 0.15 * inch),
+    ]
+
+    if rows is None:
+        elements.append(
+            Paragraph(
+                "<i>Database not configured &mdash; table not "
+                "populated. Set <b>demo_database_url</b> in your "
+                "config to query.</i>",
+                styles["BodyText"],
+            ),
+        )
+        return elements
+    if not rows:
+        elements.append(
+            Paragraph(
+                "<i>No limit breaches detected for the period.</i>",
+                styles["BodyText"],
+            ),
+        )
+        return elements
+
+    parent_rows, child_groups = _split_limit_breach_by_account_class(
+        rows, singleton_ids,
+    )
+    cell_style = ParagraphStyle(
+        "LimitBreachCell",
+        parent=styles["BodyText"],
+        fontSize=8,
+        leading=10,
+        spaceBefore=0,
+        spaceAfter=0,
+    )
+    base_table_style = TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a1a1a")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 9),
+        ("FONTSIZE", (0, 1), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#c7d6e3")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [
+            colors.white, colors.HexColor("#f5f8fb"),
+        ]),
+    ])
+
+    if parent_rows:
+        elements.extend([
+            Paragraph(
+                "Parent accounts (per-row detail)",
+                styles["Heading3"],
+            ),
+            Spacer(1, 0.05 * inch),
+        ])
+        detail_data: list[list] = [
+            ["Account ID", "Account name", "Role", "Day",
+             "Transfer type", "Outbound", "Cap", "Overshoot"],
+        ]
+        for r in parent_rows:
+            detail_data.append([
+                Paragraph(r.account_id, cell_style),
+                Paragraph(r.account_name, cell_style),
+                Paragraph(r.account_role, cell_style),
+                r.business_day.isoformat(),
+                Paragraph(r.transfer_type, cell_style),
+                f"${r.outbound_total:,.2f}",
+                f"${r.cap:,.2f}",
+                f"${r.overshoot:,.2f}",
+            ])
+        detail_style = TableStyle(
+            base_table_style.getCommands() + [
+                # Right-align Day + Transfer type + 3 numerics.
+                ("ALIGN", (5, 1), (-1, -1), "RIGHT"),
+            ],
+        )
+        elements.append(LongTable(
+            detail_data,
+            colWidths=[1.05 * inch, 1.05 * inch, 0.85 * inch,
+                       0.75 * inch, 0.95 * inch, 0.85 * inch,
+                       0.7 * inch, 0.8 * inch],
+            style=detail_style, repeatRows=1,
+        ))
+        elements.append(Spacer(1, 0.25 * inch))
+
+    if child_groups:
+        elements.extend([
+            Paragraph(
+                "Child accounts grouped by parent role + transfer type",
+                styles["Heading3"],
+            ),
+            Spacer(1, 0.05 * inch),
+        ])
+        group_data: list[list] = [
+            ["Parent role", "Transfer type",
+             "Children breaching", "Total overshoot"],
+        ]
+        for s in child_groups:
+            group_data.append([
+                Paragraph(s.parent_role, cell_style),
+                Paragraph(s.transfer_type, cell_style),
+                f"{s.distinct_children_breaching}",
+                f"${s.total_overshoot:,.2f}",
+            ])
+        group_style = TableStyle(
+            base_table_style.getCommands() + [
+                ("ALIGN", (2, 1), (-1, -1), "RIGHT"),
+            ],
+        )
+        elements.append(LongTable(
+            group_data,
+            colWidths=[2.0 * inch, 2.0 * inch,
+                       1.4 * inch, 1.5 * inch],
             style=group_style, repeatRows=1,
         ))
     return elements

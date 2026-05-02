@@ -85,6 +85,10 @@ def test_audit_apply_emits_markdown_to_stdout(min_config: Path):
     assert "Database not configured" in result.output
     # U.3.a Drift violations section.
     assert "## Drift violations" in result.output
+    # U.3.b Overdraft violations section.
+    assert "## Overdraft violations" in result.output
+    # U.3.c Limit breach violations section.
+    assert "## Limit breach violations" in result.output
 
 
 def test_audit_apply_emits_markdown_to_file(min_config: Path, tmp_path: Path):
@@ -179,6 +183,10 @@ def test_audit_apply_execute_writes_pdf(min_config: Path, tmp_path: Path):
     assert "Database not configured" in text
     # U.3.a Drift violations page.
     assert "Drift violations" in text
+    # U.3.b Overdraft violations page.
+    assert "Overdraft violations" in text
+    # U.3.c Limit breach violations page.
+    assert "Limit breach violations" in text
 
 
 def test_audit_clean_default_is_dry_run(tmp_path: Path):
