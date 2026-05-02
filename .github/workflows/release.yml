@@ -139,11 +139,12 @@ jobs:
           # subject under test, not its pyright cleanliness.
           QS_GEN_SKIP_PYRIGHT: "1"
         run: |
+          # Q.3.a.9 reorg moved these into tests/{unit,json}/ for v8.0.0.
           /tmp/qs-smoke/bin/pytest \
-            tests/test_models.py \
-            tests/test_persona.py \
-            tests/test_theme_presets.py \
-            tests/test_dataset_contract.py
+            tests/unit/test_models.py \
+            tests/unit/test_persona.py \
+            tests/unit/test_theme_presets.py \
+            tests/json/test_dataset_contract.py
 
   # ---------------------------------------------------------------------------
   # Bake the sample out/ bundle from the installed wheel

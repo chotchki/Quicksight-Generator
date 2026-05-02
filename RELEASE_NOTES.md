@@ -1,5 +1,19 @@
 # Release Notes
 
+## v8.0.1 — Release pipeline fix (no functional change)
+
+The v8.0.0 Release workflow stopped at its "Smoke test wheel" step
+with `ERROR: file or directory not found: tests/test_models.py`.
+Q.3.a.9 had reorged those tests into
+`tests/{schema,data,json,docs,unit}/`, but the workflow's pinned
+test paths weren't updated. Because the publish-* jobs never ran
+(pipeline halted at smoke), v8.0.0 never reached PyPI; v8.0.1
+ships the same v8.0.0 codebase plus the workflow path fix.
+
+If you were waiting on v8.0.0, install v8.0.1 — same change, same
+upgrade story. The v8.0.0 git tag is preserved as a marker but
+points at the broken Release run.
+
 ## v8.0.0 — CLI redesign: four artifact groups, emit/--execute pattern
 
 Clean-break CLI redesign per `Q3_CLI_REDESIGN.md`. The single
