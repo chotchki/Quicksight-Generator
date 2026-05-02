@@ -199,6 +199,8 @@ Rejected because it forces the integrator to remember TWO verbs per
 artifact for the same conceptual action; the `-o FILE` flag pattern
 is shorter and discoverable from `<verb> --help`.
 
+**Answer**: agree on apply
+
 ### Migration / rollout
 
 This is a breaking change to the CLI surface. Plan:
@@ -216,6 +218,8 @@ This is a breaking change to the CLI surface. Plan:
 
 The aliases let scripts continue to work for one release cycle while
 the integrator migrates.
+
+**Answer**: no one is using this yet, break without aliases. Apathetic to the version number.
 
 ### Testing as a first-class concern
 
@@ -257,24 +261,31 @@ Before I execute:
 1. **Verb choice.** Stick with **apply** as the canonical do-it verb
    even when it reads slightly off for docs? (Recommendation: yes,
    for consistency.)
+  - yes, consistency is better
 2. **`--stdout` vs only `-o FILE`.** Need both? (Recommendation:
    yes; `-o -` is unobvious.)
+  - I'm good with that
 3. **`docs apply` defaults to `site/` or always requires `-o`?**
    (Recommendation: default to `site/` so integrators don't need
    to think about it; emit a one-liner naming the dir.)
+ - I'm good with that
 4. **`json clean` scope.** Today's `cleanup` deletes everything
    tagged `ManagedBy:quicksight-gen` not in the current `out/`. Keep
    that semantics? Add `--app` filter? (Recommendation: keep
    default semantics, add `--app` filter.)
+ - I need it to have an option to nuke everything with the tag. I think that's the more user friendly approach.
 5. **Test wrappers run pytest internally?** Or just print the
    pytest command to run? (Recommendation: run pytest internally
    with sensible defaults; expose `--pytest-args` for power users.)
+ - Yes call into pytest and the typing checks
 6. **Migration speed.** Aliases for one minor cycle (v7.4.0 →
    v8.0.0) or longer?
+ - Clean break, we're going to work it through.
 7. **Test reorg.** Bundle with v7.4.0 or defer to Q.3.c? (Risk: if
    we defer, the test suite stays at the old shape while the CLI
    advertises a new one — confusing for integrators reading the
    docs.)
+ - Clean break, reorg. We will need to do a full test run.
 
 ## Estimated work
 
