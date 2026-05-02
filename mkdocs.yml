@@ -29,6 +29,11 @@ extra_javascript:
   # Click-to-zoom lightbox for inline-SVG diagrams emitted by
   # main.py::_wrap_svg. Pure vanilla JS, no third-party dep.
   - stylesheets/qs-lightbox.js
+  # Phase S spike — graphviz WASM bootstrap. Finds every
+  # <script type="text/x-graphviz"> block (emitted when QS_USE_WASM=1
+  # at build time), loads @hpcc-js/wasm-graphviz from jsDelivr +esm,
+  # renders. Inert when no such blocks are on the page.
+  - stylesheets/qs-graphviz-wasm.js
 
 nav:
   # Shape C — audience-first IA (Q.2.b.decision). "For Your Role" is

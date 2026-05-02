@@ -109,6 +109,17 @@ def define_env(env: Any) -> None:
             value=default_l2.theme.favicon,
         )
 
+    # Phase S spike — set QS_USE_WASM=1 to render diagrams via the
+    # graphviz WASM build (@hpcc-js/wasm-graphviz, browser-side)
+    # instead of the system `dot` binary at mkdocs-build time. The
+    # Python builders in diagrams.py construct the DOT source
+    # exactly as before; we just emit `.source` instead of calling
+    # `.pipe(format='svg')` and let the browser do the rendering.
+    # Currently implemented only for l2_topology kind=accounts;
+    # other kinds fall back to the graphviz/dot path during the
+    # spike, then port one-by-one once the WASM path is validated.
+    use_wasm = os.environ.get("QS_USE_WASM") == "1"
+
     @env.macro
     def diagram(family: str, **kwargs: Any) -> str:  # noqa: ARG001
         from quicksight_gen.common.handbook.diagrams import (
@@ -130,6 +141,22 @@ def define_env(env: Any) -> None:
             l2 = (
                 default_l2 if l2_path == default_l2_path else load_instance(l2_path)
             )
+            # Phase S spike: route accounts diagram through Mermaid+ELK
+            # when the env var is set; everything else stays on graphviz
+            # so the page renders end-to-end during the spike.
+            if use_wasm and kind == "accounts":
+                from quicksight_gen.common.handbook.diagrams_wasm import (
+                    render_l2_topology_dot,
+                )
+                source = render_l2_topology_dot(l2, kind)
+                # <script type="text/..."> keeps the DOT source
+                # verbatim: browsers don't HTML-process script content,
+                # so any `<` / `>` / quoting inside the DOT reaches the
+                # WASM renderer exactly as graphviz expects.
+                return (
+                    f'<script type="text/x-graphviz" '
+                    f'class="qs-graphviz-wasm">\n{source}\n</script>'
+                )
             svg = render_l2_topology(l2, kind, name=name)
             return _wrap_svg(
                 svg,

@@ -68,6 +68,15 @@ User pick after first-pass review: **D (graphviz WASM)** is the leading path bec
 - [~] S.1.b — NetworkX + custom SVG emitter (pruned). Reinventing graph layout is a multi-week sink for a problem already solved by `dot`/Mermaid/viz.js.
 - [~] S.1.e — Status quo (pruned as the active path). Kept as the ADR's defensible-fallback option only — if both D and C fail the spike, document the install requirement and stop.
 
+### S.spike — Outcome (2026-05-02)
+
+Spiked both finalists against the `kind="accounts"` diagram on `/scenario/` (sasquatch_pr L2). Eyeball verdict:
+
+- **C (Mermaid + ELK) — FAILED.** Loaded Mermaid 11 + `@mermaid-js/layout-elk` from jsDelivr `+esm`. Diagram rendered, but self-loops drew as floating disconnected lines (ELK self-loop rendering is much weaker than dot), bundled multi-rail labels needed a `<script type="text/x-…">` workaround to survive the HTML parser, and the overall topology fidelity was poor for our shapes. User verdict after first render: "the topology is very wrong and the lines aren't connecting"; after the label fix: "still not much better." Not credible.
+- **D (graphviz WASM) — PASSED.** Loaded `@hpcc-js/wasm-graphviz` 1.21.5 from jsDelivr `+esm`, `Graphviz.load().then(g => g.dot(source))`. Identical layout to current graphviz/dot — it IS graphviz running in the browser. Self-loops render as actual loops. Multi-rail labels keep their line breaks. User verdict: "It looks great."
+
+**Decision:** path D wins. The spike proved the WASM path end-to-end; Phase T executes the full migration. ADR can be light — the comparison + verdict above IS the ADR.
+
 ### S.2 — Spike D (with self-authored plugin glue)
 
 S.1.d.1 + S.1.d.2 done; the gate verdict is "WASM lib healthy, no maintained plugin so we own ~35 lines of glue." Spike D first; only fall back to C if the spike surfaces a layout-correctness or bundle-size dealbreaker.
