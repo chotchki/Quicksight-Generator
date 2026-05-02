@@ -37,11 +37,11 @@ from quicksight_gen.common.l2 import L2Instance
 # dashboard's "default L2" silently diverges from the test fixture.
 def test_default_l2_yaml_is_byte_identical_to_test_fixture():
     pkg_yaml = (
-        Path(__file__).parent.parent
+        Path(__file__).parent.parent.parent
         / "src" / "quicksight_gen" / "apps" / "l1_dashboard"
         / "_default_l2.yaml"
     )
-    test_yaml = Path(__file__).parent / "l2" / "spec_example.yaml"
+    test_yaml = Path(__file__).parent.parent / "l2" / "spec_example.yaml"
     assert pkg_yaml.read_bytes() == test_yaml.read_bytes(), (
         f"Bundled L1 default L2 has drifted from test fixture. "
         f"Re-sync with:\n"
@@ -760,7 +760,7 @@ def test_no_hardcoded_hex_in_l1_dashboard_code() -> None:
     from pathlib import Path
 
     pkg_dir = (
-        Path(__file__).parent.parent
+        Path(__file__).parent.parent.parent
         / "src" / "quicksight_gen" / "apps" / "l1_dashboard"
     )
     hex_re = re.compile(r"['\"]#[0-9A-Fa-f]{3,8}['\"]")

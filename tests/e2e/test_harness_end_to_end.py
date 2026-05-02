@@ -111,7 +111,7 @@ from _harness_exec_assertions import (  # noqa: E402
 
 # L2_INSTANCES matrix: re-use the exact list `test_l2_seed_contract.py`
 # uses so adding a new YAML there parameterizes the harness too.
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent / "data"))
 from test_l2_seed_contract import L2_INSTANCES  # noqa: E402
 
 from quicksight_gen.common.config import Config

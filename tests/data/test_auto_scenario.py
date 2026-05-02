@@ -29,8 +29,8 @@ from quicksight_gen.common.l2.auto_scenario import (
 from quicksight_gen.common.l2.seed import emit_seed
 
 
-SPEC_YAML = Path(__file__).parent / "l2" / "spec_example.yaml"
-SASQUATCH_YAML = Path(__file__).parent / "l2" / "sasquatch_pr.yaml"
+SPEC_YAML = Path(__file__).parent.parent / "l2" / "spec_example.yaml"
+SASQUATCH_YAML = Path(__file__).parent.parent / "l2" / "sasquatch_pr.yaml"
 CANONICAL_TODAY = date(2030, 1, 1)
 
 

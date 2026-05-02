@@ -23,7 +23,7 @@ from pathlib import Path
 
 # Add tests/e2e to import path so the test can pull in the helper
 # module directly without adding it to the package install.
-sys.path.insert(0, str(Path(__file__).parent / "e2e"))
+sys.path.insert(0, str(Path(__file__).parent))
 from _harness_l1_assertions import (  # noqa: E402
     L1_MATVIEW_FOR_PLANT_KIND,
     L1_SHEET_FOR_PLANT_KIND,

@@ -18,7 +18,7 @@ from quicksight_gen.common.l2.loader import load_instance
 from quicksight_gen.common.persona import DemoPersona
 
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _SASQUATCH_PR = _REPO_ROOT / "tests" / "l2" / "sasquatch_pr.yaml"
 _SPEC_EXAMPLE = _REPO_ROOT / "tests" / "l2" / "spec_example.yaml"
 

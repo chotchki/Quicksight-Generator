@@ -47,7 +47,7 @@ from quicksight_gen.common.l2.loader import load_instance
 from quicksight_gen.common.l2.primitives import TwoLegRail
 
 
-_SASQUATCH_PR_YAML = Path(__file__).parent / "l2" / "sasquatch_pr.yaml"
+_SASQUATCH_PR_YAML = Path(__file__).parent.parent / "l2" / "sasquatch_pr.yaml"
 
 
 def _demo_database_url() -> str | None:

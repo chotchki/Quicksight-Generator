@@ -56,7 +56,7 @@ from quicksight_gen.common.l2.seed import emit_seed
 from tests.l2.fuzz import random_l2_yaml
 
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 L2_DIR = REPO_ROOT / "tests" / "l2"
 SCHEMA_DOC = REPO_ROOT / "src" / "quicksight_gen" / "docs" / "Schema_v6.md"
 CANONICAL_TODAY = date(2030, 1, 1)

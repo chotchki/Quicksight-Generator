@@ -41,7 +41,7 @@ from quicksight_gen.common.l2.topology import (
 from quicksight_gen.common.l2 import topology as topology_mod
 
 
-FIXTURES = Path(__file__).parent / "l2"
+FIXTURES = Path(__file__).parent.parent / "l2"
 
 
 def _has_dot_binary() -> bool:

@@ -1,0 +1,107 @@
+instance: fuzz_seed_6031
+accounts:
+- id: int-acct-000
+  name: Internal Account 00
+  role: InternalRole_00
+  scope: internal
+  expected_eod_balance: 0
+- id: int-acct-001
+  name: Internal Account 01
+  role: InternalRole_01
+  scope: internal
+  expected_eod_balance: 0
+- id: ext-acct-000
+  name: External Counterparty 00
+  role: ExternalRole_00
+  scope: external
+  description: "Synthetic primitive \u2014 not a real-world counterparty. (external account 0)"
+account_templates:
+- role: TemplateRole_00
+  scope: internal
+  parent_role: InternalRole_00
+- role: TemplateRole_01
+  scope: internal
+  parent_role: InternalRole_00
+- role: TemplateRole_02
+  scope: internal
+  parent_role: InternalRole_00
+rails:
+- name: Rail_00
+  transfer_type: wire
+  source_role: TemplateRole_00
+  destination_role: InternalRole_00
+  origin: ExternalAggregated
+  destination_origin: ExternalAggregated
+  description: "Synthetic primitive \u2014 not a real-world counterparty. (rail 0)"
+  expected_net: 0
+- name: Rail_01
+  transfer_type: sweep
+  metadata_keys:
+  - customer_segment
+  - external_reference
+  - settlement_period
+  source_role: TemplateRole_02
+  destination_role: InternalRole_01
+  origin: ExternalForcePosted
+  expected_net: 0
+- name: Rail_02
+  transfer_type: internal
+  metadata_keys:
+  - batch_id
+  - business_day
+  - customer_segment
+  source_role: TemplateRole_00
+  destination_role: TemplateRole_00
+  origin: ExternalForcePosted
+  expected_net: 0
+- name: Rail_03
+  transfer_type: pool_balancing
+  source_role: InternalRole_01
+  destination_role: InternalRole_00
+  expected_net: 0
+  origin: ExternalForcePosted
+  aggregating: true
+  cadence: weekly-mon
+  bundles_activity:
+  - Rail_00
+  - Rail_04
+  - Rail_05
+  description: Auto-derived from the per-seed plan; safe to ignore in handbook prose. (rail 3)
+- name: Rail_04
+  transfer_type: pool_balancing_r04
+  metadata_keys:
+  - memo_code
+  leg_role: InternalRole_00
+  leg_direction: Debit
+  origin: ExternalAggregated
+  max_unbundled_age: P7D
+- name: Rail_05
+  transfer_type: wire
+  metadata_keys:
+  - channel
+  leg_role: InternalRole_01
+  leg_direction: Credit
+  origin: ExternalAggregated
+  max_unbundled_age: PT4H
+limit_schedules:
+- parent_role: InternalRole_00
+  transfer_type: internal
+  cap: 1000
+- parent_role: InternalRole_01
+  transfer_type: sweep
+  cap: 100000
+  description: "Synthetic primitive \u2014 not a real-world counterparty. (limit schedule)"
+- parent_role: InternalRole_00
+  transfer_type: pool_balancing
+  cap: 5000
+- parent_role: InternalRole_01
+  transfer_type: pool_balancing
+  cap: 5000
+  description: "Synthetic primitive \u2014 not a real-world counterparty. (limit schedule)"
+role_business_day_offsets:
+  ExternalRole_00: 23
+  InternalRole_00: 5
+  InternalRole_01: 23
+  TemplateRole_00: 14
+  TemplateRole_01: 9
+  TemplateRole_02: 9

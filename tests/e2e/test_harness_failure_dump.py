@@ -38,7 +38,7 @@ from unittest.mock import MagicMock
 
 # Add tests/e2e to import path so the test can pull in the helper
 # module directly without adding it to the package install.
-sys.path.insert(0, str(Path(__file__).parent / "e2e"))
+sys.path.insert(0, str(Path(__file__).parent))
 from _harness_failure_dump import (  # noqa: E402
     _TRIAGE_DB_OBJECTS,
     _decimal_safe,

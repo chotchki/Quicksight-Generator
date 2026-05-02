@@ -390,7 +390,7 @@ def test_pipeline_limit_schedule(tmp_path: Path) -> None:
 # -- Kitchen-sink fixture (M.1.8) --------------------------------------------
 
 
-KITCHEN_YAML = Path(__file__).parent / "l2" / "_kitchen.yaml"
+KITCHEN_YAML = Path(__file__).parent.parent / "l2" / "_kitchen.yaml"
 
 
 def test_kitchen_sink_loads_validates_emits() -> None:

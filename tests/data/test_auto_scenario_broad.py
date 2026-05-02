@@ -45,7 +45,7 @@ from quicksight_gen.common.l2.seed import emit_seed
 
 
 CANONICAL_TODAY = date(2030, 1, 1)
-L2_DIR = Path(__file__).parent / "l2"
+L2_DIR = Path(__file__).parent.parent / "l2"
 
 L2_FIXTURES = [
     pytest.param(L2_DIR / "spec_example.yaml", id="spec_example"),

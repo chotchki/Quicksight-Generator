@@ -47,7 +47,7 @@ from quicksight_gen.common.l2.seed import (
 )
 
 
-SPEC_YAML = Path(__file__).parent / "l2" / "spec_example.yaml"
+SPEC_YAML = Path(__file__).parent.parent / "l2" / "spec_example.yaml"
 REFERENCE_DATE = date(2026, 4, 25)
 
 

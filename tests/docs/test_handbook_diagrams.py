@@ -19,7 +19,7 @@ from quicksight_gen.common.handbook.diagrams import (
 from quicksight_gen.common.l2.loader import load_instance
 
 
-_FIXTURES = Path(__file__).parent / "l2"
+_FIXTURES = Path(__file__).parent.parent / "l2"
 _SPEC_EXAMPLE = _FIXTURES / "spec_example.yaml"
 _SASQUATCH_PR = _FIXTURES / "sasquatch_pr.yaml"
 

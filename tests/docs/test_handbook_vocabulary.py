@@ -25,7 +25,7 @@ from quicksight_gen.common.l2.loader import load_instance
 from quicksight_gen.common.l2.primitives import Identifier, L2Instance
 
 
-_FIXTURES = Path(__file__).parent / "l2"
+_FIXTURES = Path(__file__).parent.parent / "l2"
 
 
 # -- Helpers -----------------------------------------------------------------

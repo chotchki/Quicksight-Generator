@@ -56,7 +56,7 @@ _CFG = Config(
 
 
 SASQUATCH_PR_YAML = (
-    Path(__file__).parent / "l2" / "sasquatch_pr.yaml"
+    Path(__file__).parent.parent / "l2" / "sasquatch_pr.yaml"
 )
 
 
@@ -489,7 +489,7 @@ def test_chains_dataset_handles_empty_chains_list() -> None:
     """spec_example.yaml has zero chains; the empty CTE path
     (WHERE 1=0) keeps the SQL valid + visual harmless."""
     sql = _chains_dataset_sql_against(
-        Path(__file__).parent / "l2" / "spec_example.yaml"
+        Path(__file__).parent.parent / "l2" / "spec_example.yaml"
     )
     assert "WHERE 1=0" in sql
     assert "WITH declared AS" in sql

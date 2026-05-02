@@ -20,7 +20,7 @@ from click.testing import CliRunner
 from quicksight_gen.cli import main
 
 
-SPEC_YAML = Path(__file__).parent / "l2" / "spec_example.yaml"
+SPEC_YAML = Path(__file__).parent.parent / "l2" / "spec_example.yaml"
 
 
 @pytest.fixture

@@ -31,7 +31,7 @@ import pytest
 
 # Add tests/e2e to import path so the test can pull in the helper
 # module directly without adding it to the package install.
-sys.path.insert(0, str(Path(__file__).parent / "e2e"))
+sys.path.insert(0, str(Path(__file__).parent))
 
 
 # Skip the entire module if Playwright isn't installed — the helper

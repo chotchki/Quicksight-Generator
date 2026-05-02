@@ -23,8 +23,8 @@ from quicksight_gen.common.l2.seed import (
 )
 
 
-_SPEC_EXAMPLE = Path(__file__).parent / "l2" / "spec_example.yaml"
-_SASQUATCH_PR = Path(__file__).parent / "l2" / "sasquatch_pr.yaml"
+_SPEC_EXAMPLE = Path(__file__).parent.parent / "l2" / "spec_example.yaml"
+_SASQUATCH_PR = Path(__file__).parent.parent / "l2" / "sasquatch_pr.yaml"
 _ANCHOR = date(2026, 4, 30)
 
 

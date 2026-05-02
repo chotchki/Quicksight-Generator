@@ -48,7 +48,7 @@ from quicksight_gen.common.tree import KPI, Sankey, Table
 # Reuse the matrix definition from the seed-contract test so every
 # substep that adds an L2 instance to ``L2_INSTANCES`` automatically
 # extends the M.3.9 verification surface here.
-from tests.test_l2_seed_contract import L2_INSTANCES
+from tests.data.test_l2_seed_contract import L2_INSTANCES
 
 
 _CFG = Config(
@@ -228,10 +228,10 @@ def test_instances_produce_different_dataset_id_namespaces() -> None:
     from quicksight_gen.common.l2 import load_instance
 
     spec = load_instance(
-        Path(__file__).parent / "l2" / "spec_example.yaml"
+        Path(__file__).parent.parent / "l2" / "spec_example.yaml"
     )
     sasq = load_instance(
-        Path(__file__).parent / "l2" / "sasquatch_pr.yaml"
+        Path(__file__).parent.parent / "l2" / "sasquatch_pr.yaml"
     )
     spec_app = build_l2_flow_tracing_app(_CFG, l2_instance=spec)
     sasq_app = build_l2_flow_tracing_app(_CFG, l2_instance=sasq)

@@ -40,7 +40,7 @@ from quicksight_gen.common.l2 import (
 )
 
 
-YAML_PATH = Path(__file__).parent / "l2" / "sasquatch_pr.yaml"
+YAML_PATH = Path(__file__).parent.parent / "l2" / "sasquatch_pr.yaml"
 
 
 @functools.cache
