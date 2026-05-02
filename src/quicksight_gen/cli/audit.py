@@ -48,6 +48,20 @@ from quicksight_gen.cli._helpers import (
     l2_instance_option,
     resolve_l2_for_demo,
 )
+from quicksight_gen.common.pdf.audit_chrome import (
+    BookmarkedDocTemplate,
+    bookmarked_h1,
+    bookmarked_h3,
+    make_footer_drawer,
+)
+from quicksight_gen.common.provenance import (
+    ProvenanceFingerprint,
+    compute_provenance,
+    hash_table_rows,
+    l2_fingerprint_placeholder,
+    l2_yaml_sha256,
+    quicksight_gen_code_identity,
+)
 from quicksight_gen.common.theme import DEFAULT_PRESET, resolve_l2_theme
 
 
@@ -1308,7 +1322,7 @@ def audit_apply(
     daily_statement_walks = _query_daily_statement_walks(
         _cfg, instance, (start, end), internal_singleton_ids,
     )
-    provenance = _compute_provenance(
+    provenance = compute_provenance(
         _cfg, instance,
         l2_instance_path=l2_instance_path,
         version=_qsg_version,
@@ -1507,19 +1521,19 @@ def audit_verify(
                 f"embedded high-water-mark {embedded.balances_hwm}; "
                 f"rows the report bound to are gone."
             )
-        tx_sha_now = _hash_table_rows(
+        tx_sha_now = hash_table_rows(
             cur, table=f"{prefix}_transactions",
             hwm=embedded.transactions_hwm,
         )
-        bal_sha_now = _hash_table_rows(
+        bal_sha_now = hash_table_rows(
             cur, table=f"{prefix}_daily_balances",
             hwm=embedded.balances_hwm,
         )
     finally:
         conn.close()
 
-    l2_sha_now = _l2_yaml_sha256(l2_instance_path)
-    code_now = _quicksight_gen_code_identity(_qsg_version)
+    l2_sha_now = l2_yaml_sha256(l2_instance_path)
+    code_now = quicksight_gen_code_identity(_qsg_version)
 
     diffs: list[tuple[str, str, str]] = []
 
@@ -1558,270 +1572,6 @@ def audit_verify(
 # -- Renderers (cover page — U.2+ appends body sections) ----------------------
 
 
-def _l2_fingerprint_placeholder() -> str:
-    """Long-form fingerprint placeholder for the no-DB code path.
-
-    Used on the cover-page provenance block + sign-off page when the
-    audit ran without ``demo_database_url`` configured (skeleton
-    mode — no DB queries, no real fingerprint to compute). When the
-    DB is wired the renderers receive a ``ProvenanceFingerprint``
-    and substitute its real ``composite_sha`` instead.
-    """
-    return "<pending — see Phase U.7>"
-
-
-# -- Provenance fingerprint (U.7) ---------------------------------------------
-
-# Canonical column order = alphabetical-by-lowercased-name, discovered
-# at hash time from ``cur.description``. Hardcoding the column list
-# would be a footgun: a new column added to the base table would be
-# silently excluded from the fingerprint, producing a hash that
-# claimed "this binds the report to its source data" while missing
-# whatever the new column carries. Discovery + alphabetical sort
-# keeps determinism without the maintenance burden.
-
-
-@dataclass(frozen=True)
-class ProvenanceFingerprint:
-    """The four base inputs that fully determine an audit report.
-
-    Locked per U.7: hash the **base tables** (transactions +
-    daily_balances) bounded by their high-water-mark ``entry`` ids,
-    plus the L2 instance YAML and the quicksight-gen code identity.
-    Matviews are deliberately excluded — they're derived data; a
-    fingerprint over them would conflate "the source data changed"
-    with "we recomputed the matview SQL differently", and the
-    auditor needs to bind the report to the AUTHORITATIVE source.
-
-    ``composite_sha`` is the SHA256 of the per-source values
-    concatenated in a fixed order; ``short`` is the first 8 hex
-    chars (footer). The dict-form serializes to JSON for embedding
-    in PDF metadata so ``audit verify`` can recompute and compare.
-    """
-    transactions_hwm: int
-    transactions_sha: str
-    balances_hwm: int
-    balances_sha: str
-    l2_yaml_sha: str
-    code_identity: str
-
-    @property
-    def composite_sha(self) -> str:
-        import hashlib
-        h = hashlib.sha256()
-        h.update(f"tx_hwm={self.transactions_hwm}\n".encode())
-        h.update(f"tx_sha={self.transactions_sha}\n".encode())
-        h.update(f"bal_hwm={self.balances_hwm}\n".encode())
-        h.update(f"bal_sha={self.balances_sha}\n".encode())
-        h.update(f"l2_sha={self.l2_yaml_sha}\n".encode())
-        h.update(f"code={self.code_identity}\n".encode())
-        return h.hexdigest()
-
-    @property
-    def short(self) -> str:
-        return self.composite_sha[:8]
-
-    def to_dict(self) -> dict:
-        return {
-            "schema": "qsg-audit-provenance-v1",
-            "composite_sha": self.composite_sha,
-            "transactions_hwm": self.transactions_hwm,
-            "transactions_sha": self.transactions_sha,
-            "balances_hwm": self.balances_hwm,
-            "balances_sha": self.balances_sha,
-            "l2_yaml_sha": self.l2_yaml_sha,
-            "code_identity": self.code_identity,
-        }
-
-    @classmethod
-    def from_dict(cls, d: dict) -> "ProvenanceFingerprint":
-        if d.get("schema") != "qsg-audit-provenance-v1":
-            raise ValueError(
-                f"Unrecognized provenance schema: {d.get('schema')!r}"
-            )
-        return cls(
-            transactions_hwm=int(d["transactions_hwm"]),
-            transactions_sha=str(d["transactions_sha"]),
-            balances_hwm=int(d["balances_hwm"]),
-            balances_sha=str(d["balances_sha"]),
-            l2_yaml_sha=str(d["l2_yaml_sha"]),
-            code_identity=str(d["code_identity"]),
-        )
-
-
-def _canonical_value(v) -> bytes:  # type: ignore[no-untyped-def]
-    """Stable bytes repr for one cell value when hashing rows.
-
-    Cross-dialect goal: PG and Oracle return the same logical row
-    as the same bytes here. ``Decimal`` via ``str()`` keeps trailing
-    zeros + sign; ``date``/``datetime`` via ``isoformat()`` is
-    timezone-naive (matches our schema convention); ``bool`` is
-    coerced to ``"1"``/``"0"`` since Oracle returns ints for
-    booleans where PG returns Python bools; ``None`` is empty
-    string (distinct from the field separator).
-    """
-    if v is None:
-        return b""
-    if isinstance(v, bool):
-        return b"1" if v else b"0"
-    if isinstance(v, (int, float, Decimal)):
-        return str(v).encode("utf-8")
-    if isinstance(v, (date, datetime)):
-        return v.isoformat().encode("utf-8")
-    if isinstance(v, bytes):
-        return v
-    return str(v).encode("utf-8")
-
-
-def _hash_table_rows(
-    cur,  # type: ignore[no-untyped-def]
-    *,
-    table: str,
-    hwm: int,
-) -> str:
-    """SHA256 over canonical row bytes for ``WHERE entry <= hwm``.
-
-    Column set is **discovered at runtime** from ``cur.description``
-    (DB-API 2.0 standard, works for both psycopg2 and oracledb)
-    and sorted alphabetically by lowercased name. This avoids the
-    footgun where a hardcoded column list would silently exclude
-    new columns added to the base table from the fingerprint —
-    producing a hash that claims "this binds to all source data"
-    while missing whatever the new column carries.
-
-    Lowercasing before sorting makes the order portable across
-    Postgres (returns lowercase identifiers) and Oracle (returns
-    UPPERCASE for unquoted identifiers).
-
-    Streams results so memory stays flat regardless of row count.
-    Field separator: ``\\x1f`` (unit separator). Row separator:
-    ``\\x1e`` (record separator). Both are control codes that
-    can't appear in our schema's data types, so we don't need to
-    escape them.
-    """
-    import hashlib
-
-    cur.execute(
-        f"SELECT * FROM {table}"
-        f" WHERE entry <= {hwm}"
-        f" ORDER BY entry"
-    )
-    # Sort column indices alphabetically by lowercased name so the
-    # row layout for hashing is dialect-independent + maintenance-free.
-    sorted_indices = [
-        idx for idx, _ in sorted(
-            enumerate(cur.description),
-            key=lambda i_d: i_d[1][0].lower(),
-        )
-    ]
-    h = hashlib.sha256()
-    for row in cur:
-        h.update(b"\x1f".join(
-            _canonical_value(row[i]) for i in sorted_indices
-        ))
-        h.update(b"\x1e")
-    return h.hexdigest()
-
-
-def _l2_yaml_sha256(l2_instance_path: str | None) -> str:
-    """SHA256 of the L2 YAML file bytes (verbatim, no normalization).
-
-    When the user passed ``--l2 path``, hash that file. When they
-    didn't (audit ran against the bundled default), reach into the
-    L1 dashboard package's ``_default_l2.yaml`` resource so the
-    fingerprint is still deterministic for the no-flag case.
-    """
-    import hashlib
-
-    if l2_instance_path is None:
-        from importlib.resources import as_file, files
-        pkg = files("quicksight_gen.apps.l1_dashboard")
-        with as_file(pkg / "_default_l2.yaml") as path:
-            data = Path(path).read_bytes()
-    else:
-        data = Path(l2_instance_path).read_bytes()
-    return hashlib.sha256(data).hexdigest()
-
-
-def _quicksight_gen_code_identity(version: str) -> str:
-    """Code identity string baked into the fingerprint.
-
-    Prefer ``v{version}+g{git_short}`` when running from a git
-    checkout (carries both the released version AND the precise
-    commit, matching the user's plan note for U.7). Fall back to
-    just ``v{version}`` when ``git`` isn't available (pip-installed
-    package, no .git dir nearby) so the fingerprint stays
-    deterministic for distributed installs.
-    """
-    import shutil
-
-    if shutil.which("git") is None:
-        return f"v{version}"
-    try:
-        # Run from this file's directory so ``git`` finds the
-        # right repo even when the user invoked the CLI from
-        # somewhere else in the filesystem.
-        result = subprocess.run(
-            ["git", "rev-parse", "--short=12", "HEAD"],
-            cwd=Path(__file__).parent,
-            capture_output=True, text=True, timeout=5,
-        )
-    except (subprocess.SubprocessError, OSError):
-        return f"v{version}"
-    if result.returncode != 0:
-        return f"v{version}"
-    sha = result.stdout.strip()
-    return f"v{version}+g{sha}" if sha else f"v{version}"
-
-
-def _compute_provenance(
-    cfg, instance,  # type: ignore[no-untyped-def]
-    *,
-    l2_instance_path: str | None,
-    version: str,
-) -> ProvenanceFingerprint | None:
-    """Compute the report's full provenance fingerprint.
-
-    Returns ``None`` when ``demo_database_url`` is not configured —
-    the audit then renders with the long-form ``<pending>``
-    placeholder (skeleton mode). Reads ``MAX(entry)`` for both base
-    tables, hashes the rows up to those high-water marks, hashes
-    the L2 YAML file bytes, captures the code identity, and bundles
-    everything into a ``ProvenanceFingerprint`` whose ``composite_sha``
-    binds the audit report to its inputs.
-    """
-    if cfg.demo_database_url is None:
-        return None
-
-    from quicksight_gen.common.db import connect_demo_db
-
-    prefix = instance.instance
-    conn = connect_demo_db(cfg)
-    try:
-        cur = conn.cursor()
-        cur.execute(f"SELECT COALESCE(MAX(entry), 0) FROM {prefix}_transactions")
-        tx_hwm = int(cur.fetchone()[0] or 0)
-        cur.execute(f"SELECT COALESCE(MAX(entry), 0) FROM {prefix}_daily_balances")
-        bal_hwm = int(cur.fetchone()[0] or 0)
-        tx_sha = _hash_table_rows(
-            cur, table=f"{prefix}_transactions", hwm=tx_hwm,
-        )
-        bal_sha = _hash_table_rows(
-            cur, table=f"{prefix}_daily_balances", hwm=bal_hwm,
-        )
-    finally:
-        conn.close()
-
-    return ProvenanceFingerprint(
-        transactions_hwm=tx_hwm,
-        transactions_sha=tx_sha,
-        balances_hwm=bal_hwm,
-        balances_sha=bal_sha,
-        l2_yaml_sha=_l2_yaml_sha256(l2_instance_path),
-        code_identity=_quicksight_gen_code_identity(version),
-    )
-
-
 def _render_audit_markdown(
     *,
     institution: str,
@@ -1852,7 +1602,7 @@ def _render_audit_markdown(
     fingerprint = (
         provenance.composite_sha
         if provenance is not None
-        else _l2_fingerprint_placeholder()
+        else l2_fingerprint_placeholder()
     )
     cover = (
         "# QuickSight Generator Audit Report\n"
@@ -1940,7 +1690,7 @@ def _render_executive_summary_markdown(
         "\n"
         "---\n"
         "\n"
-        "## Executive summary\n"
+        "## Executive Summary\n"
         f"{notice}"
         "\n"
         "### Volume\n"
@@ -1949,7 +1699,7 @@ def _render_executive_summary_markdown(
         "|---|---:|\n"
         f"{volume_rows}"
         "\n"
-        "### Exception counts\n"
+        "### Exception Counts\n"
         "\n"
         "| Invariant | Count |\n"
         "|---|---:|\n"
@@ -1974,7 +1724,7 @@ def _render_drift_markdown(
         "\n"
         "---\n"
         "\n"
-        "## Drift violations\n"
+        "## Drift Violations\n"
         "\n"
         "_Per-account-day discrepancies between stored end-of-day "
         "balance and the balance computed from posted transactions._\n"
@@ -2021,7 +1771,7 @@ def _render_overdraft_markdown(
         "\n"
         "---\n"
         "\n"
-        "## Overdraft violations\n"
+        "## Overdraft Violations\n"
         "\n"
         "_Account-days where the stored end-of-day balance went "
         "negative. Parent accounts (L2 singletons — GL clearing, "
@@ -2048,7 +1798,7 @@ def _render_overdraft_markdown(
     if parent_rows:
         out += (
             "\n"
-            "### Parent accounts (per-row detail)\n"
+            "### Parent Accounts (Per-Row Detail)\n"
             "\n"
             "| Account ID | Account name | Role | Day | Stored balance |\n"
             "|---|---|---|---|---:|\n"
@@ -2064,7 +1814,7 @@ def _render_overdraft_markdown(
     if child_groups:
         out += (
             "\n"
-            "### Child accounts grouped by parent role\n"
+            "### Child Accounts Grouped by Parent Role\n"
             "\n"
             "| Parent role | Children negative | Total peak negative |\n"
             "|---|---:|---:|\n"
@@ -2091,7 +1841,7 @@ def _render_limit_breach_markdown(
         "\n"
         "---\n"
         "\n"
-        "## Limit breach violations\n"
+        "## Limit Breach Violations\n"
         "\n"
         "_Account-day-transfer_type cells where cumulative outbound "
         "exceeded the L2-configured cap. Parent accounts shown "
@@ -2115,7 +1865,7 @@ def _render_limit_breach_markdown(
     if parent_rows:
         out += (
             "\n"
-            "### Parent accounts (per-row detail)\n"
+            "### Parent Accounts (Per-Row Detail)\n"
             "\n"
             "| Account ID | Account name | Role | Day | Transfer type "
             "| Outbound | Cap | Overshoot |\n"
@@ -2131,7 +1881,7 @@ def _render_limit_breach_markdown(
     if child_groups:
         out += (
             "\n"
-            "### Child accounts grouped by parent role + transfer type\n"
+            "### Child Accounts Grouped by Parent Role + Transfer Type\n"
             "\n"
             "| Parent role | Transfer type | Children breaching "
             "| Total overshoot |\n"
@@ -2161,7 +1911,7 @@ def _render_stuck_pending_markdown(
         "\n"
         "---\n"
         "\n"
-        "## Stuck pending transactions\n"
+        "## Stuck Pending Transactions\n"
         "\n"
         "_Transactions currently in Pending status whose age exceeds "
         "the L2-configured `max_pending_age_seconds` cap. "
@@ -2186,7 +1936,7 @@ def _render_stuck_pending_markdown(
     if parent_rows:
         out += (
             "\n"
-            "### Parent accounts (per-row detail)\n"
+            "### Parent Accounts (Per-Row Detail)\n"
             "\n"
             "| Account ID | Account name | Transfer type | Posted "
             "| Amount | Age | Cap |\n"
@@ -2204,7 +1954,7 @@ def _render_stuck_pending_markdown(
     if child_groups:
         out += (
             "\n"
-            "### Child accounts grouped by parent role + transfer type\n"
+            "### Child Accounts Grouped by Parent Role + Transfer Type\n"
             "\n"
             "| Parent role | Transfer type | Children affected "
             "| Stuck transactions | Total amount |\n"
@@ -2234,7 +1984,7 @@ def _render_stuck_unbundled_markdown(
         "\n"
         "---\n"
         "\n"
-        "## Stuck unbundled transactions\n"
+        "## Stuck Unbundled Transactions\n"
         "\n"
         "_Posted transactions awaiting bundle assignment whose age "
         "exceeds the L2-configured `max_unbundled_age_seconds` cap. "
@@ -2258,7 +2008,7 @@ def _render_stuck_unbundled_markdown(
     if parent_rows:
         out += (
             "\n"
-            "### Parent accounts (per-row detail)\n"
+            "### Parent Accounts (Per-Row Detail)\n"
             "\n"
             "| Account ID | Account name | Transfer type | Posted "
             "| Amount | Age | Cap |\n"
@@ -2276,7 +2026,7 @@ def _render_stuck_unbundled_markdown(
     if child_groups:
         out += (
             "\n"
-            "### Child accounts grouped by parent role + transfer type\n"
+            "### Child Accounts Grouped by Parent Role + Transfer Type\n"
             "\n"
             "| Parent role | Transfer type | Children affected "
             "| Stuck transactions | Total amount |\n"
@@ -2311,7 +2061,7 @@ def _render_supersession_markdown(
         "\n"
         "---\n"
         "\n"
-        "## Supersession audit\n"
+        "## Supersession Audit\n"
         "\n"
         "_Correcting entries (rows with `supersedes IS NOT NULL`) "
         "across both base tables. The aggregate table counts the "
@@ -2333,7 +2083,7 @@ def _render_supersession_markdown(
 
     out = header + (
         "\n"
-        "### Aggregate (entire dataset)\n"
+        "### Aggregate (Entire Dataset)\n"
         "\n"
         "| Base table | Reason category | Total | New in period |\n"
         "|---|---|---:|---:|\n"
@@ -2347,7 +2097,7 @@ def _render_supersession_markdown(
     if data.transaction_details:
         out += (
             "\n"
-            "### Transactions — correcting entries in period\n"
+            "### Transactions — Correcting Entries in Period\n"
             "\n"
             "| Transaction ID | Reason | Account ID | Account name "
             "| Posted | Amount |\n"
@@ -2363,7 +2113,7 @@ def _render_supersession_markdown(
     if data.daily_balance_details:
         out += (
             "\n"
-            "### Daily balances — correcting entries in period\n"
+            "### Daily Balances — Correcting Entries in Period\n"
             "\n"
             "| Account ID | Account name | Day | Reason | Balance |\n"
             "|---|---|---|---|---:|\n"
@@ -2398,7 +2148,7 @@ def _render_daily_statement_walks_markdown(
         "\n"
         "---\n"
         "\n"
-        "## Per-account Daily Statement walk\n"
+        "## Per-Account Daily Statement Walk\n"
         "\n"
         "_Per-(account, day) statement for every account that drifted "
         "in the report window, plus every internal parent-account day "
@@ -2484,16 +2234,16 @@ def _render_signoff_markdown(
     fingerprint = (
         provenance.composite_sha
         if provenance is not None
-        else _l2_fingerprint_placeholder()
+        else l2_fingerprint_placeholder()
     )
     blank = "_" * 45
     return (
         "\n"
         "---\n"
         "\n"
-        "## Sign-off\n"
+        "## Sign-Off\n"
         "\n"
-        "### System attestation\n"
+        "### System Attestation\n"
         "\n"
         "| Field | Value |\n"
         "| --- | --- |\n"
@@ -2512,7 +2262,7 @@ def _render_signoff_markdown(
         "left blank if the report was generated unattended (e.g. an "
         "automated pipeline)._\n"
         "\n"
-        "### Auditor attestation\n"
+        "### Auditor Attestation\n"
         "\n"
         "I have reviewed the contents of this report and attest to "
         "the findings above as of the report period.\n"
@@ -2525,79 +2275,12 @@ def _render_signoff_markdown(
         f"| Date reviewed | {blank} |\n"
         f"| Signature | {blank} |\n"
         "\n"
-        "**Notes / exceptions:**\n"
+        "**Notes / Exceptions:**\n"
         "\n"
         "```\n"
         + ("_" * 70 + "\n") * 6 +
         "```\n"
     )
-
-
-def _bookmarked_h1(text: str, styles):  # type: ignore[no-untyped-def]
-    """Heading1 paragraph tagged for PDF outline + TOC at level 0.
-
-    Used by every per-section heading the auditor should be able to
-    jump to from the bookmark sidebar or the TOC page. Cover-page
-    title (Title style) and Table-of-contents heading itself are
-    intentionally NOT tagged.
-    """
-    from reportlab.platypus import Paragraph
-    p = Paragraph(text, styles["Heading1"])
-    p._bookmark_level = 0  # type: ignore[attr-defined]
-    return p
-
-
-def _bookmarked_h3(text: str, styles):  # type: ignore[no-untyped-def]
-    """Heading3 paragraph tagged for PDF outline + TOC at level 1."""
-    from reportlab.platypus import Paragraph
-    p = Paragraph(text, styles["Heading3"])
-    p._bookmark_level = 1  # type: ignore[attr-defined]
-    return p
-
-
-class _AuditDocTemplate:
-    """BaseDocTemplate subclass with bookmark + TOC support.
-
-    Defined as a thin proxy via ``__init_subclass__``-style indirection
-    so reportlab is only imported when ``--execute`` actually runs (so
-    the audit CLI loads cleanly without the [audit] extra installed).
-
-    Builds the PDF outline (left-sidebar nav) + feeds the
-    ``TableOfContents`` flowable's notification stream from any flowable
-    tagged with a ``_bookmark_level`` attribute. Also records the
-    final page count after each ``multiBuild`` pass into the
-    caller-provided ``total_pages_holder`` so the footer drawer can
-    render "Page X of Y" without resorting to a NumberedCanvas (which
-    breaks bookmark→page refs — see ``_make_footer_drawer``).
-    """
-
-    def __new__(  # type: ignore[no-untyped-def]
-        cls, *args, total_pages_holder: list | None = None, **kwargs,
-    ):
-        from reportlab.platypus import BaseDocTemplate
-
-        class _Inner(BaseDocTemplate):
-            def afterFlowable(self, flowable) -> None:  # type: ignore[no-untyped-def]
-                level = getattr(flowable, "_bookmark_level", None)
-                if level is None:
-                    return
-                text = flowable.getPlainText()
-                key = f"audit-bm-{id(flowable)}"
-                self.canv.bookmarkPage(key)
-                self.canv.addOutlineEntry(text, key, level=level)
-                self.notify("TOCEntry", (level, text, self.page, key))
-
-            def _allSatisfied(self):  # type: ignore[no-untyped-def]
-                # multiBuild calls this after each pass to decide
-                # whether to run another. We piggyback to publish the
-                # just-stabilized page count into the holder so the
-                # footer drawer's "Page X of Y" picks it up on the
-                # next pass.
-                if total_pages_holder is not None:
-                    total_pages_holder[0] = self.page
-                return super()._allSatisfied()
-
-        return _Inner(*args, **kwargs)
 
 
 def _write_audit_pdf(
@@ -2629,7 +2312,7 @@ def _write_audit_pdf(
     every page carries a footer with the provenance fingerprint
     placeholder (real hash lands in U.7).
 
-    Uses ``_AuditDocTemplate.multiBuild`` (two-pass) so the
+    Uses ``BookmarkedDocTemplate.multiBuild`` (two-pass) so the
     ``TableOfContents`` flowable can pick up correct page numbers,
     and section headings emit both PDF outline entries (left-sidebar
     nav) and TOC entries via the ``afterFlowable`` hook.
@@ -2664,7 +2347,7 @@ def _write_audit_pdf(
         if provenance is not None
         else ""
     )
-    doc = _AuditDocTemplate(
+    doc = BookmarkedDocTemplate(
         str(path),
         pagesize=letter,
         leftMargin=0.75 * inch,
@@ -2676,7 +2359,7 @@ def _write_audit_pdf(
         author=f"quicksight-gen v{version}",
         total_pages_holder=total_pages_holder,
     )
-    footer_drawer = _make_footer_drawer(
+    footer_drawer = make_footer_drawer(
         theme,
         version=version,
         generated_at=generated_at,
@@ -2733,13 +2416,13 @@ def _write_audit_pdf(
     # back to the cover from anywhere via the sidebar nav, and so it
     # appears at the top of the rendered TOC. We attach
     # _bookmark_level directly rather than wrapping in
-    # _bookmarked_h1 because we want to preserve the Title style.
+    # bookmarked_h1 because we want to preserve the Title style.
     cover_title = Paragraph(
         "QuickSight Generator Audit Report",
         styles["Title"],
     )
     cover_title._bookmark_level = 0  # type: ignore[attr-defined]
-    toc_heading = Paragraph("Table of contents", styles["Heading1"])
+    toc_heading = Paragraph("Table of Contents", styles["Heading1"])
     toc_heading._bookmark_level = 0  # type: ignore[attr-defined]
     # Optional: institutional logo above the title when theme.logo
     # is a loadable absolute file path.
@@ -2854,7 +2537,7 @@ def _executive_summary_story(
     start, end = period
     elements: list = [
         PageBreak(),
-        _bookmarked_h1("Executive summary", styles),
+        bookmarked_h1("Executive Summary", styles),
         Paragraph(
             f"Reporting period: {start.isoformat()} &ndash; "
             f"{end.isoformat()} (inclusive)",
@@ -2915,11 +2598,11 @@ def _executive_summary_story(
 
     elements.extend([
         Spacer(1, 0.15 * inch),
-        _bookmarked_h3("Volume", styles),
+        bookmarked_h3("Volume", styles),
         Spacer(1, 0.05 * inch),
         Table(volume_data, colWidths=col_widths, style=table_style),
         Spacer(1, 0.3 * inch),
-        _bookmarked_h3("Exception counts", styles),
+        bookmarked_h3("Exception Counts", styles),
         Spacer(1, 0.05 * inch),
         Table(exception_data, colWidths=col_widths, style=table_style),
         Spacer(1, 0.1 * inch),
@@ -2959,7 +2642,7 @@ def _drift_story(
     start, end = period
     elements: list = [
         PageBreak(),
-        _bookmarked_h1("Drift violations", styles),
+        bookmarked_h1("Drift Violations", styles),
         Paragraph(
             f"Reporting period: {start.isoformat()} &ndash; "
             f"{end.isoformat()} (inclusive).",
@@ -3090,7 +2773,7 @@ def _overdraft_story(
     start, end = period
     elements: list = [
         PageBreak(),
-        _bookmarked_h1("Overdraft violations", styles),
+        bookmarked_h1("Overdraft Violations", styles),
         Paragraph(
             f"Reporting period: {start.isoformat()} &ndash; "
             f"{end.isoformat()} (inclusive).",
@@ -3157,7 +2840,7 @@ def _overdraft_story(
 
     if parent_rows:
         elements.extend([
-            _bookmarked_h3("Parent accounts (per-row detail)", styles),
+            bookmarked_h3("Parent Accounts (Per-Row Detail)", styles),
             Spacer(1, 0.05 * inch),
         ])
         detail_data: list[list] = [
@@ -3186,8 +2869,8 @@ def _overdraft_story(
 
     if child_groups:
         elements.extend([
-            _bookmarked_h3(
-                "Child accounts grouped by parent role", styles,
+            bookmarked_h3(
+                "Child Accounts Grouped by Parent Role", styles,
             ),
             Spacer(1, 0.05 * inch),
         ])
@@ -3243,7 +2926,7 @@ def _limit_breach_story(
     start, end = period
     elements: list = [
         PageBreak(),
-        _bookmarked_h1("Limit breach violations", styles),
+        bookmarked_h1("Limit Breach Violations", styles),
         Paragraph(
             f"Reporting period: {start.isoformat()} &ndash; "
             f"{end.isoformat()} (inclusive).",
@@ -3308,7 +2991,7 @@ def _limit_breach_story(
 
     if parent_rows:
         elements.extend([
-            _bookmarked_h3("Parent accounts (per-row detail)", styles),
+            bookmarked_h3("Parent Accounts (Per-Row Detail)", styles),
             Spacer(1, 0.05 * inch),
         ])
         detail_data: list[list] = [
@@ -3343,8 +3026,8 @@ def _limit_breach_story(
 
     if child_groups:
         elements.extend([
-            _bookmarked_h3(
-                "Child accounts grouped by parent role + transfer type",
+            bookmarked_h3(
+                "Child Accounts Grouped by Parent Role + Transfer Type",
                 styles,
             ),
             Spacer(1, 0.05 * inch),
@@ -3401,7 +3084,7 @@ def _stuck_pending_story(
 
     elements: list = [
         PageBreak(),
-        _bookmarked_h1("Stuck pending transactions", styles),
+        bookmarked_h1("Stuck Pending Transactions", styles),
         Paragraph(
             "<i>Transactions currently in Pending status whose age "
             "exceeds the L2-configured aging cap. <b>Current-state</b> "
@@ -3462,7 +3145,7 @@ def _stuck_pending_story(
 
     if parent_rows:
         elements.extend([
-            _bookmarked_h3("Parent accounts (per-row detail)", styles),
+            bookmarked_h3("Parent Accounts (Per-Row Detail)", styles),
             Spacer(1, 0.05 * inch),
         ])
         detail_data: list[list] = [
@@ -3495,8 +3178,8 @@ def _stuck_pending_story(
 
     if child_groups:
         elements.extend([
-            _bookmarked_h3(
-                "Child accounts grouped by parent role + transfer type",
+            bookmarked_h3(
+                "Child Accounts Grouped by Parent Role + Transfer Type",
                 styles,
             ),
             Spacer(1, 0.05 * inch),
@@ -3551,7 +3234,7 @@ def _stuck_unbundled_story(
 
     elements: list = [
         PageBreak(),
-        _bookmarked_h1("Stuck unbundled transactions", styles),
+        bookmarked_h1("Stuck Unbundled Transactions", styles),
         Paragraph(
             "<i>Posted transactions awaiting bundle assignment whose "
             "age exceeds the L2-configured bundling cap. "
@@ -3613,7 +3296,7 @@ def _stuck_unbundled_story(
 
     if parent_rows:
         elements.extend([
-            _bookmarked_h3("Parent accounts (per-row detail)", styles),
+            bookmarked_h3("Parent Accounts (Per-Row Detail)", styles),
             Spacer(1, 0.05 * inch),
         ])
         detail_data: list[list] = [
@@ -3646,8 +3329,8 @@ def _stuck_unbundled_story(
 
     if child_groups:
         elements.extend([
-            _bookmarked_h3(
-                "Child accounts grouped by parent role + transfer type",
+            bookmarked_h3(
+                "Child Accounts Grouped by Parent Role + Transfer Type",
                 styles,
             ),
             Spacer(1, 0.05 * inch),
@@ -3703,7 +3386,7 @@ def _supersession_story(
     start, end = period
     elements: list = [
         PageBreak(),
-        _bookmarked_h1("Supersession audit", styles),
+        bookmarked_h1("Supersession Audit", styles),
         Paragraph(
             "<i>Aggregate counts cover the <b>entire dataset</b> "
             "(current-state); detail tables are limited to "
@@ -3761,7 +3444,7 @@ def _supersession_story(
     ])
 
     elements.extend([
-        _bookmarked_h3("Aggregate (entire dataset)", styles),
+        bookmarked_h3("Aggregate (Entire Dataset)", styles),
         Spacer(1, 0.05 * inch),
     ])
     aggregate_data: list[list] = [
@@ -3788,8 +3471,8 @@ def _supersession_story(
     if data.transaction_details:
         elements.extend([
             Spacer(1, 0.25 * inch),
-            _bookmarked_h3(
-                "Transactions — correcting entries in period", styles,
+            bookmarked_h3(
+                "Transactions — Correcting Entries in Period", styles,
             ),
             Spacer(1, 0.05 * inch),
         ])
@@ -3821,8 +3504,8 @@ def _supersession_story(
     if data.daily_balance_details:
         elements.extend([
             Spacer(1, 0.25 * inch),
-            _bookmarked_h3(
-                "Daily balances — correcting entries in period", styles,
+            bookmarked_h3(
+                "Daily Balances — Correcting Entries in Period", styles,
             ),
             Spacer(1, 0.05 * inch),
         ])
@@ -3889,7 +3572,7 @@ def _daily_statement_walks_story(
 
     elements: list = [
         PageBreak(),
-        _bookmarked_h1("Per-account Daily Statement walk", styles),
+        bookmarked_h1("Per-Account Daily Statement Walk", styles),
         Paragraph(
             "One walk per (account, day) pair from U.3.a's drift table, "
             "plus every internal parent-account day in the report window. "
@@ -3961,7 +3644,7 @@ def _daily_statement_walks_story(
         # Sub-section heading + bookmark (one per walk so auditor can
         # jump to a specific account-day from the sidebar / TOC).
         elements.append(PageBreak())
-        elements.append(_bookmarked_h3(
+        elements.append(bookmarked_h3(
             f"{w.account_id} — {w.business_day_end.isoformat()}", styles,
         ))
         elements.append(Paragraph(
@@ -4102,7 +3785,7 @@ def _signoff_story(
              + (
                  provenance.composite_sha
                  if provenance is not None
-                 else _l2_fingerprint_placeholder()
+                 else l2_fingerprint_placeholder()
                      .replace("<", "&lt;").replace(">", "&gt;")
              )
              + "</font>",
@@ -4177,9 +3860,9 @@ def _signoff_story(
 
     return [
         PageBreak(),
-        _bookmarked_h1("Sign-off", styles),
+        bookmarked_h1("Sign-Off", styles),
         Paragraph(
-            "<b>System attestation</b>",
+            "<b>System Attestation</b>",
             styles["Heading3"],
         ),
         Paragraph(
@@ -4193,7 +3876,7 @@ def _signoff_story(
         system_table,
         Spacer(1, 0.4 * inch),
         Paragraph(
-            "<b>Auditor attestation</b>",
+            "<b>Auditor Attestation</b>",
             styles["Heading3"],
         ),
         Paragraph(
@@ -4208,7 +3891,7 @@ def _signoff_story(
         auditor_table,
         Spacer(1, 0.25 * inch),
         Paragraph(
-            "<b>Notes / exceptions</b>",
+            "<b>Notes / Exceptions</b>",
             styles["BodyText"],
         ),
         Spacer(1, 0.05 * inch),
@@ -4216,85 +3899,6 @@ def _signoff_story(
     ]
 
 
-def _short_fingerprint_placeholder() -> str:
-    """Short-form fingerprint for the per-page footer (U.6).
-
-    A compact stand-in for U.7's first-8-hex-chars truncation of the
-    full provenance hash. Distinct from the long-form placeholder
-    used on the cover-page provenance block + sign-off page so that
-    a sweep for one doesn't accidentally rewrite the other when U.7
-    lands.
-    """
-    return "pending"
-
-
-def _make_footer_drawer(
-    theme,  # type: ignore[no-untyped-def] # ThemePreset
-    *,
-    version: str,
-    generated_at: datetime,
-    total_pages_holder: list,
-    provenance: ProvenanceFingerprint | None,
-):  # type: ignore[no-untyped-def]
-    """Build a per-page footer drawer with U.6 chrome.
-
-    "Page X of Y" needs the FINAL page count, which only stabilizes
-    at the end of a ``multiBuild`` pass. We piggyback on the fact
-    that ``multiBuild`` runs the build at least twice (once for
-    ``TableOfContents`` to collect entries, once to render the
-    resolved TOC): pass 1's footer renders "Page X of ?" while
-    ``total_pages_holder[0] == 0``; the inner ``_AuditDocTemplate``
-    overrides ``_allSatisfied`` to record ``self.page`` (now stable)
-    into the holder; pass 2's footer reads it back as "Page X of N".
-
-    Tried the standard NumberedCanvas pattern (defer ``showPage``,
-    replay buffered state in ``save``) — it broke every PDF
-    bookmark, because ``dict(self.__dict__)`` snapshots include
-    ``_destinations`` / page-ref state, and restoring an earlier
-    snapshot at save time overwrote the accumulated bookmark→page
-    refs with the LAST state's, collapsing every outline entry to
-    page 1. The two-pass closure here keeps reportlab's normal
-    page-template chrome flow untouched, so bookmarks resolve
-    correctly through the standard machinery.
-
-    Per U.7: when provenance is computed, the footer renders the
-    real short fingerprint (first 8 hex of composite SHA256); when
-    not, the ``pending`` placeholder.
-    """
-    from reportlab.lib import colors
-    from reportlab.lib.pagesizes import letter
-    from reportlab.lib.units import inch
-
-    secondary_fg = colors.HexColor(theme.secondary_fg)
-    timestamp = generated_at.strftime("%Y-%m-%d %H:%M")
-    short_fp = (
-        provenance.short
-        if provenance is not None
-        else _short_fingerprint_placeholder()
-    )
-
-    def _draw_footer(canvas, doc) -> None:  # type: ignore[no-untyped-def]
-        canvas.saveState()
-        width, _ = letter
-        canvas.setFont("Helvetica", 8)
-        canvas.setFillColor(secondary_fg)
-        left = 0.75 * inch
-        right = width - 0.75 * inch
-        baseline = 0.5 * inch
-        canvas.drawString(
-            left, baseline,
-            f"quicksight-gen v{version}  ·  Generated {timestamp}",
-        )
-        total = total_pages_holder[0]
-        of_total = f" of {total}" if total else ""
-        canvas.drawRightString(
-            right, baseline,
-            f"Page {doc.page}{of_total}  ·  "
-            f"Provenance: {short_fp}",
-        )
-        canvas.restoreState()
-
-    return _draw_footer
 
 
 def _cover_logo_flowable(theme):  # type: ignore[no-untyped-def]
@@ -4402,7 +4006,7 @@ def _provenance_block_story(
         fontName="Courier",
     )
 
-    placeholder = _l2_fingerprint_placeholder().replace(
+    placeholder = l2_fingerprint_placeholder().replace(
         "<", "&lt;",
     ).replace(">", "&gt;")
 
@@ -4457,7 +4061,7 @@ def _provenance_block_story(
     return [
         Spacer(1, 0.3 * inch),
         Paragraph(
-            "<b>Source-data provenance</b>", styles["Heading3"],
+            "<b>Source-Data Provenance</b>", styles["Heading3"],
         ),
         Paragraph(
             "<i>Reproducibility binding. The contents of this report "
