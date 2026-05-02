@@ -68,7 +68,7 @@ def test_audit_apply_emits_markdown_to_stdout(min_config: Path):
     )
     assert result.exit_code == 0, result.output
     # Cover-page markdown shape sanity.
-    assert "# QuickSight Generator audit report" in result.output
+    assert "# QuickSight Generator Audit Report" in result.output
     assert "## spec_example" in result.output  # institution as H2
     assert "**Reporting period:**" in result.output
     assert "**Generated:**" in result.output
@@ -121,7 +121,7 @@ def test_audit_apply_emits_markdown_to_file(min_config: Path, tmp_path: Path):
     assert result.exit_code == 0, result.output
     assert out.is_file()
     content = out.read_text()
-    assert "# QuickSight Generator audit report" in content
+    assert "# QuickSight Generator Audit Report" in content
 
 
 def test_audit_apply_period_overrides(min_config: Path):

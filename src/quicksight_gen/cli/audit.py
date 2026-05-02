@@ -124,6 +124,23 @@ def _singleton_account_ids(instance) -> set[str]:  # type: ignore[no-untyped-def
     return {str(a.id) for a in instance.accounts}
 
 
+def _internal_singleton_account_ids(
+    instance,  # type: ignore[no-untyped-def]
+) -> set[str]:
+    """IDs of internal-scope L2 ``Account`` singletons only.
+
+    Used by U.4's parent-always-render rule: external counterparty
+    singletons (``scope="external"``) are out of the operator's
+    books and not in scope for reconciliation walks, so they get
+    excluded. Internal-scope singletons (GL clearing, concentration,
+    ZBA master) DO get a per-day walk page even when drift is zero.
+    """
+    return {
+        str(a.id) for a in instance.accounts
+        if a.scope == "internal"
+    }
+
+
 # -- Executive summary (U.2) --------------------------------------------------
 
 
@@ -1061,15 +1078,28 @@ class DailyStatementWalk:
 
 
 def _query_daily_statement_walks(
-    cfg, instance, period: tuple[date, date],  # type: ignore[no-untyped-def]
+    cfg, instance,  # type: ignore[no-untyped-def]
+    period: tuple[date, date],
+    singleton_ids: set[str],
 ) -> list[DailyStatementWalk] | None:
     """Pull a Daily Statement walk for every drifted (account, day) pair.
 
-    Each walk = drift matview row + matching ``daily_statement_summary``
-    KPIs + the day's transactions from ``current_transactions``.
+    Walks are emitted for the union of:
+      1. Every (account, day) row in ``<prefix>_drift`` for the period
+         (any account that actually drifted), and
+      2. Every (parent_account, day) row in
+         ``<prefix>_daily_statement_summary`` for the period — parent
+         accounts (L2 ``Account`` singletons: GL clearing,
+         concentration, ZBA master) always render even when drift is
+         zero, because their day-by-day balance walk is itself
+         auditor-relevant; a clean walk is evidence of correctness.
 
-    Sort: most-recent business_day_end first, then biggest cumulative
-    drift first, then account_id — same order as U.3.a's drift table.
+    Each walk = ``daily_statement_summary`` KPIs (5 numbers) + the
+    day's transactions from ``current_transactions``.
+
+    Sort: most-recent business_day_end first, then biggest |drift|
+    first (so drifted rows sort ahead of clean parents within a day),
+    then account_id.
     """
     if cfg.demo_database_url is None:
         return None
@@ -1084,24 +1114,58 @@ def _query_daily_statement_walks(
     conn = connect_demo_db(cfg)
     try:
         cur = conn.cursor()
-        # 1) Drift matview: which (account, day) pairs to walk.
+        # 1) Drift matview: every (account, day) that actually drifted.
         cur.execute(
             f"SELECT account_id, business_day_start, business_day_end, drift"
             f"  FROM {prefix}_drift"
             f" WHERE business_day_start >= {start_lit}"
             f"   AND business_day_start < {end_excl_lit}"
-            f" ORDER BY business_day_end DESC,"
-            f"          ABS(drift) DESC, account_id"
         )
-        drift_pairs = [
-            (str(r[0]), r[1], r[2])
-            for r in cur.fetchall()
-        ]
-        if not drift_pairs:
+        drift_rows = cur.fetchall()
+        # 2) Parent (singleton) accounts: every (parent, day) in the
+        # period from daily_statement_summary, even with zero drift.
+        parent_rows: list = []
+        if singleton_ids:
+            cur.execute(
+                f"SELECT account_id, business_day_start, business_day_end,"
+                f"       drift"
+                f"  FROM {prefix}_daily_statement_summary"
+                f" WHERE business_day_start >= {start_lit}"
+                f"   AND business_day_start < {end_excl_lit}"
+            )
+            parent_rows = [
+                r for r in cur.fetchall()
+                if str(r[0]) in singleton_ids
+            ]
+        # Dedupe on (account_id, business_day_start). When the same
+        # (account, day) shows up in both queries, prefer the drift
+        # row's drift value (already non-zero by definition).
+        pair_map: dict[tuple[str, object], tuple[object, object, Decimal]] = {}
+        for r in parent_rows:
+            key = (str(r[0]), r[1])
+            pair_map[key] = (r[1], r[2], Decimal(r[3] or 0))
+        for r in drift_rows:
+            key = (str(r[0]), r[1])
+            pair_map[key] = (r[1], r[2], Decimal(r[3] or 0))
+        if not pair_map:
             return []
+        def _to_date(v) -> date:  # type: ignore[no-untyped-def]
+            return v.date() if hasattr(v, "date") else v
+
+        # Sort: business_day_end DESC, |drift| DESC, account_id ASC.
+        sorted_pairs = sorted(
+            pair_map.items(),
+            key=lambda kv: (
+                -_to_date(kv[1][1]).toordinal(),
+                -abs(kv[1][2]),
+                kv[0][0],
+            ),
+        )
 
         walks: list[DailyStatementWalk] = []
-        for account_id, day_start, _day_end in drift_pairs:
+        for (account_id, day_start), (_d_start, _day_end, _drift) in (
+            sorted_pairs
+        ):
             day_start_date = (
                 day_start.date() if hasattr(day_start, "date") else day_start
             )
@@ -1239,10 +1303,11 @@ def audit_apply(
     stuck_pending_rows = _query_stuck_pending_violations(_cfg, instance)
     stuck_unbundled_rows = _query_stuck_unbundled_violations(_cfg, instance)
     supersession_data = _query_supersession(_cfg, instance, (start, end))
-    daily_statement_walks = _query_daily_statement_walks(
-        _cfg, instance, (start, end),
-    )
     singleton_ids = _singleton_account_ids(instance)
+    internal_singleton_ids = _internal_singleton_account_ids(instance)
+    daily_statement_walks = _query_daily_statement_walks(
+        _cfg, instance, (start, end), internal_singleton_ids,
+    )
     # Resolve once + thread through so the audit PDF picks up the L2's
     # branded palette (or DEFAULT_PRESET when no theme override). Per
     # CLAUDE.md: never hardcode hex colors in render code.
@@ -1395,7 +1460,7 @@ def _render_audit_markdown(
     start, end = period
     fingerprint = _l2_fingerprint_placeholder()
     cover = (
-        "# QuickSight Generator audit report\n"
+        "# QuickSight Generator Audit Report\n"
         "\n"
         f"## {institution}\n"
         "\n"
@@ -1940,7 +2005,12 @@ def _render_daily_statement_walks_markdown(
         "## Per-account Daily Statement walk\n"
         "\n"
         "_Per-(account, day) statement for every account that drifted "
-        "in the report window._\n"
+        "in the report window, plus every internal parent-account day "
+        "in the window — internal parents (L2 singletons: GL "
+        "clearing, concentration, ZBA master) render even when drift "
+        "is zero because their day-by-day walk is itself "
+        "auditor-relevant. External counterparty singletons are out "
+        "of scope for reconciliation and do not get walks._\n"
         "\n"
         "_Note: the **drift** KPI here is the per-day drift "
         "(`closing_stored − closing_recomputed`) and may differ from "
@@ -2169,7 +2239,7 @@ def _write_audit_pdf(
         rightMargin=0.75 * inch,
         topMargin=0.75 * inch,
         bottomMargin=0.85 * inch,  # extra room for the page footer
-        title=f"QuickSight Generator audit report — {institution}",
+        title=f"QuickSight Generator Audit Report — {institution}",
     )
     footer_drawer = _make_footer_drawer(theme)
     main_frame = Frame(
@@ -2221,7 +2291,7 @@ def _write_audit_pdf(
     story = [
         # Cover (no bookmark — cover doesn't appear in its own TOC).
         Paragraph(
-            "QuickSight Generator audit report",
+            "QuickSight Generator Audit Report",
             styles["Title"],
         ),
         Spacer(1, 0.2 * inch),
@@ -3353,7 +3423,14 @@ def _daily_statement_walks_story(
         PageBreak(),
         _bookmarked_h1("Per-account Daily Statement walk", styles),
         Paragraph(
-            "One walk per (account, day) pair from U.3.a's drift table.",
+            "One walk per (account, day) pair from U.3.a's drift table, "
+            "plus every internal parent-account day in the report window. "
+            "Internal parents (L2 singletons &mdash; GL clearing, "
+            "concentration, ZBA master) render even when drift is zero "
+            "because their day-by-day walk is itself auditor-relevant; a "
+            "clean walk is evidence of correctness. External counterparty "
+            "singletons are out of scope for reconciliation and do not "
+            "get walks.",
             styles["BodyText"],
         ),
         Paragraph(
@@ -3689,7 +3766,7 @@ def _make_footer_drawer(theme):  # type: ignore[no-untyped-def]
         baseline = 0.5 * inch
         canvas.drawString(
             left, baseline,
-            f"QuickSight Generator audit report  ·  Page {doc.page}",
+            f"QuickSight Generator Audit Report  ·  Page {doc.page}",
         )
         canvas.drawRightString(
             right, baseline,
