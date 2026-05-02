@@ -110,6 +110,19 @@ def _institution_name(instance) -> str:  # type: ignore[no-untyped-def]
     return str(instance.instance)
 
 
+def _singleton_account_ids(instance) -> set[str]:  # type: ignore[no-untyped-def]
+    """IDs of L2 ``Account`` singletons (the N-N "shared" accounts).
+
+    Used by the U.3 per-invariant tables to split rows: account_ids
+    in this set get rendered as per-account aggregate summaries (a
+    GL clearing or concentration account that violates daily would
+    otherwise balloon the report); account_ids NOT in this set
+    are template-materialized (1-1, customer-owned) and get per-row
+    detail.
+    """
+    return {str(a.id) for a in instance.accounts}
+
+
 # -- Executive summary (U.2) --------------------------------------------------
 
 
@@ -307,6 +320,123 @@ def _query_drift_violations(
         conn.close()
 
 
+# -- Overdraft violations (U.3.b) ---------------------------------------------
+
+
+@dataclass(frozen=True)
+class OverdraftViolation:
+    """One row of the ``<prefix>_overdraft`` matview, audit-shaped.
+
+    The matview only stores rows where stored_balance < 0, so the
+    violation IS the negative balance — no computed/drift columns
+    needed (the OVERDRAFT_CONTRACT comment in datasets.py says the
+    same).
+    """
+    account_id: str
+    account_name: str
+    account_role: str
+    business_day: date
+    stored_balance: Decimal
+
+
+def _query_overdraft_violations(
+    cfg, instance, period: tuple[date, date],  # type: ignore[no-untyped-def]
+) -> list[OverdraftViolation] | None:
+    """Pull overdraft rows whose business day falls in the period.
+
+    Returns None when no DB is configured. Empty list = DB healthy
+    with zero overdrafts (good-news render).
+
+    Sort: most-recent day first, then biggest absolute balance
+    (i.e. deepest underwater), then account_id.
+    """
+    if cfg.demo_database_url is None:
+        return None
+
+    from quicksight_gen.common.db import connect_demo_db
+
+    prefix = instance.instance
+    start, end = period
+    start_lit = f"DATE '{start.isoformat()}'"
+    end_excl_lit = f"DATE '{(end + timedelta(days=1)).isoformat()}'"
+
+    conn = connect_demo_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT account_id, account_name, account_role,"
+            f"       business_day_end, stored_balance"
+            f"  FROM {prefix}_overdraft"
+            f" WHERE business_day_start >= {start_lit}"
+            f"   AND business_day_start < {end_excl_lit}"
+            f" ORDER BY business_day_end DESC,"
+            f"          ABS(stored_balance) DESC, account_id"
+        )
+        return [
+            OverdraftViolation(
+                account_id=str(r[0]),
+                account_name=str(r[1] or ""),
+                account_role=str(r[2] or ""),
+                business_day=(
+                    r[3].date() if hasattr(r[3], "date") else r[3]
+                ),
+                stored_balance=Decimal(r[4] or 0),
+            )
+            for r in cur.fetchall()
+        ]
+    finally:
+        conn.close()
+
+
+@dataclass(frozen=True)
+class OverdraftSummaryRow:
+    """Per-account aggregate for shared (N-N) accounts in the period.
+
+    A GL clearing or concentration account that goes overdrawn every
+    day of the period would emit one matview row per day; collapsing
+    those into a single per-account summary keeps the audit page
+    skimmable for the auditor.
+    """
+    account_id: str
+    account_name: str
+    account_role: str
+    days_overdrawn: int
+    peak_negative_balance: Decimal  # most-negative balance in the period
+
+
+def _split_overdraft_by_account_class(
+    rows: list[OverdraftViolation],
+    singleton_ids: set[str],
+) -> tuple[list[OverdraftViolation], list[OverdraftSummaryRow]]:
+    """Bucket per-row drift into (1-1 detail, N-N per-account summary).
+
+    Membership in ``singleton_ids`` (the L2 ``Account`` IDs)
+    discriminates: in-set rows roll up into one summary per account
+    sorted by peak severity; out-of-set rows pass through as detail.
+    """
+    detail: list[OverdraftViolation] = []
+    by_singleton: dict[str, list[OverdraftViolation]] = {}
+    for r in rows:
+        if r.account_id in singleton_ids:
+            by_singleton.setdefault(r.account_id, []).append(r)
+        else:
+            detail.append(r)
+    summary = sorted(
+        (
+            OverdraftSummaryRow(
+                account_id=group[0].account_id,
+                account_name=group[0].account_name,
+                account_role=group[0].account_role,
+                days_overdrawn=len({r.business_day for r in group}),
+                peak_negative_balance=min(r.stored_balance for r in group),
+            )
+            for group in by_singleton.values()
+        ),
+        key=lambda s: (s.peak_negative_balance, s.account_id),
+    )
+    return detail, summary
+
+
 @audit.command("apply")
 @l2_instance_option()
 @config_option(required_for_dialect_only=True)
@@ -350,6 +480,8 @@ def audit_apply(
     generated_at = datetime.now()
     exec_summary = _query_executive_summary(_cfg, instance, (start, end))
     drift_rows = _query_drift_violations(_cfg, instance, (start, end))
+    overdraft_rows = _query_overdraft_violations(_cfg, instance, (start, end))
+    singleton_ids = _singleton_account_ids(instance)
 
     if execute:
         out_path = Path(output) if output is not None else Path("report.pdf")
@@ -360,6 +492,8 @@ def audit_apply(
             generated_at=generated_at,
             exec_summary=exec_summary,
             drift_rows=drift_rows,
+            overdraft_rows=overdraft_rows,
+            singleton_ids=singleton_ids,
         )
         click.echo(
             f"Wrote audit report to {out_path} "
@@ -373,6 +507,8 @@ def audit_apply(
         generated_at=generated_at,
         exec_summary=exec_summary,
         drift_rows=drift_rows,
+        overdraft_rows=overdraft_rows,
+        singleton_ids=singleton_ids,
     )
     if output is None:
         click.echo(markdown, nl=False)
@@ -458,13 +594,15 @@ def _render_audit_markdown(
     generated_at: datetime,
     exec_summary: ExecSummary | None,
     drift_rows: list[DriftViolation] | None,
+    overdraft_rows: list[OverdraftViolation] | None,
+    singleton_ids: set[str],
 ) -> str:
     """Markdown rendering of the audit report.
 
     Mirrors the PDF page sequence — cover, executive summary, then
-    per-invariant violation tables (U.3.a Drift first; U.3.b–f land
-    later) — so an integrator can review the report's content before
-    committing to a real PDF write.
+    per-invariant violation tables (U.3.a Drift, U.3.b Overdraft;
+    U.3.c–f land later) — so an integrator can review the report's
+    content before committing to a real PDF write.
     """
     start, end = period
     fingerprint = _l2_fingerprint_placeholder()
@@ -491,13 +629,14 @@ def _render_audit_markdown(
     body = (
         _render_executive_summary_markdown(exec_summary)
         + _render_drift_markdown(drift_rows)
+        + _render_overdraft_markdown(overdraft_rows, singleton_ids)
     )
     trailer = (
         "\n"
-        "_Remaining per-invariant violation tables (overdraft, limit "
-        "breach, stuck pending, stuck unbundled, supersession), the "
+        "_Remaining per-invariant violation tables (limit breach, "
+        "stuck pending, stuck unbundled, supersession), the "
         "per-account-day Daily Statement walk, and the sign-off block "
-        "land in Phase U.3.b+._\n"
+        "land in Phase U.3.c+._\n"
     )
     return cover + body + trailer
 
@@ -605,6 +744,74 @@ def _render_drift_markdown(
     return header + body
 
 
+def _render_overdraft_markdown(
+    rows: list[OverdraftViolation] | None,
+    singleton_ids: set[str],
+) -> str:
+    """Overdraft violations section in Markdown form.
+
+    Splits rows into customer accounts (per-row detail) and shared
+    L2-singleton accounts (per-account aggregate summary). Same
+    None / [] / non-empty convention as the Drift section.
+    """
+    header = (
+        "\n"
+        "---\n"
+        "\n"
+        "## Overdraft violations\n"
+        "\n"
+        "_Account-days where the stored end-of-day balance went "
+        "negative. Sourced from `<prefix>_overdraft` matview. "
+        "Customer accounts shown per-row; shared L2-singleton "
+        "accounts (GL clearing, concentration, ZBA) collapsed into "
+        "a per-account summary to keep the report skimmable._\n"
+    )
+    if rows is None:
+        return header + (
+            "\n_Database not configured — table not populated. "
+            "Set `demo_database_url` in your config to query._\n"
+        )
+    if not rows:
+        return header + (
+            "\n_No overdrafts detected for the period._\n"
+        )
+
+    detail, summary = _split_overdraft_by_account_class(rows, singleton_ids)
+    out = header
+    if detail:
+        out += (
+            "\n"
+            "### Customer accounts (per-row detail)\n"
+            "\n"
+            "| Account ID | Account name | Role | Day | Stored balance |\n"
+            "|---|---|---|---|---:|\n"
+        )
+        for r in detail:
+            out += (
+                f"| `{r.account_id}` | {r.account_name} | "
+                f"{r.account_role} | {r.business_day.isoformat()} | "
+                f"${r.stored_balance:,.2f} |\n"
+            )
+    else:
+        out += "\n_No customer-account overdrafts in the period._\n"
+    if summary:
+        out += (
+            "\n"
+            "### Shared accounts (per-account summary)\n"
+            "\n"
+            "| Account ID | Account name | Role | Days overdrawn "
+            "| Peak negative balance |\n"
+            "|---|---|---|---:|---:|\n"
+        )
+        for s in summary:
+            out += (
+                f"| `{s.account_id}` | {s.account_name} | "
+                f"{s.account_role} | {s.days_overdrawn} | "
+                f"${s.peak_negative_balance:,.2f} |\n"
+            )
+    return out
+
+
 def _write_audit_pdf(
     path: Path,
     *,
@@ -613,15 +820,16 @@ def _write_audit_pdf(
     generated_at: datetime,
     exec_summary: ExecSummary | None,
     drift_rows: list[DriftViolation] | None,
+    overdraft_rows: list[OverdraftViolation] | None,
+    singleton_ids: set[str],
 ) -> None:
     """Render the audit report as a PDF.
 
-    Page 1 is the cover; page 2 the U.2 executive summary; page 3+
-    the U.3.a Drift violations table (paginates via LongTable).
-    Every page carries a footer with the provenance fingerprint
-    placeholder (real hash lands in U.7). U.3.b+ extends the
-    platypus story with overdraft, limit_breach, stuck_pending,
-    stuck_unbundled, and supersession tables.
+    Page sequence: cover → executive summary → per-invariant tables
+    (Drift, Overdraft so far; U.3.c+ adds the rest). Each per-
+    invariant page paginates via LongTable. Every page carries a
+    footer with the provenance fingerprint placeholder (real hash
+    lands in U.7).
     """
     # Imported lazily so the audit CLI loads even when the [audit]
     # extra isn't installed — only --execute paths need reportlab.
@@ -699,6 +907,9 @@ def _write_audit_pdf(
     ]
     story.extend(_executive_summary_story(exec_summary, styles, period))
     story.extend(_drift_story(drift_rows, styles, period))
+    story.extend(_overdraft_story(
+        overdraft_rows, styles, period, singleton_ids,
+    ))
     doc.build(story, onFirstPage=_draw_footer, onLaterPages=_draw_footer)
 
 
@@ -918,6 +1129,164 @@ def _drift_story(
             data, colWidths=col_widths, style=table_style, repeatRows=1,
         ),
     )
+    return elements
+
+
+def _overdraft_story(
+    rows: list[OverdraftViolation] | None,
+    styles,  # type: ignore[no-untyped-def]
+    period: tuple[date, date],
+    singleton_ids: set[str],
+) -> list:  # type: ignore[type-arg]
+    """Platypus elements for the U.3.b Overdraft violations page.
+
+    Renders TWO sub-tables when both classes have rows:
+      - Customer accounts (template-materialized): per-row detail.
+      - Shared accounts (L2 ``Account`` singletons): per-account
+        aggregate (days_overdrawn + peak_negative_balance) so the
+        report stays skimmable when GL clearing accounts cascade
+        into negative every day of the period.
+    Empty sub-tables are omitted; the section header still renders.
+    """
+    from reportlab.lib import colors
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.platypus import (
+        LongTable,
+        PageBreak,
+        Paragraph,
+        Spacer,
+        TableStyle,
+    )
+
+    start, end = period
+    elements: list = [
+        PageBreak(),
+        Paragraph("Overdraft violations", styles["Heading1"]),
+        Paragraph(
+            f"Reporting period: {start.isoformat()} &ndash; "
+            f"{end.isoformat()} (inclusive). "
+            "Source: <b>&lt;prefix&gt;_overdraft</b> matview.",
+            styles["BodyText"],
+        ),
+        Paragraph(
+            "<i>Account-days where the stored end-of-day balance "
+            "went negative. Customer accounts shown per-row; shared "
+            "L2-singleton accounts (GL clearing, concentration, "
+            "ZBA) collapsed into a per-account summary.</i>",
+            styles["BodyText"],
+        ),
+        Spacer(1, 0.15 * inch),
+    ]
+
+    if rows is None:
+        elements.append(
+            Paragraph(
+                "<i>Database not configured &mdash; table not "
+                "populated. Set <b>demo_database_url</b> in your "
+                "config to query.</i>",
+                styles["BodyText"],
+            ),
+        )
+        return elements
+    if not rows:
+        elements.append(
+            Paragraph(
+                "<i>No overdrafts detected for the period.</i>",
+                styles["BodyText"],
+            ),
+        )
+        return elements
+
+    detail, summary = _split_overdraft_by_account_class(rows, singleton_ids)
+    cell_style = ParagraphStyle(
+        "OverdraftCell",
+        parent=styles["BodyText"],
+        fontSize=8,
+        leading=10,
+        spaceBefore=0,
+        spaceAfter=0,
+    )
+    base_table_style = TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a1a1a")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 9),
+        ("FONTSIZE", (0, 1), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#c7d6e3")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [
+            colors.white, colors.HexColor("#f5f8fb"),
+        ]),
+    ])
+
+    if detail:
+        elements.extend([
+            Paragraph(
+                "Customer accounts (per-row detail)",
+                styles["Heading3"],
+            ),
+            Spacer(1, 0.05 * inch),
+        ])
+        detail_data: list[list] = [
+            ["Account ID", "Account name", "Role", "Day", "Stored balance"],
+        ]
+        for r in detail:
+            detail_data.append([
+                Paragraph(r.account_id, cell_style),
+                Paragraph(r.account_name, cell_style),
+                Paragraph(r.account_role, cell_style),
+                r.business_day.isoformat(),
+                f"${r.stored_balance:,.2f}",
+            ])
+        detail_style = TableStyle(
+            base_table_style.getCommands() + [
+                ("ALIGN", (3, 1), (-1, -1), "RIGHT"),
+            ],
+        )
+        elements.append(LongTable(
+            detail_data,
+            colWidths=[1.6 * inch, 1.5 * inch, 1.5 * inch,
+                       0.8 * inch, 1.5 * inch],
+            style=detail_style, repeatRows=1,
+        ))
+        elements.append(Spacer(1, 0.25 * inch))
+
+    if summary:
+        elements.extend([
+            Paragraph(
+                "Shared accounts (per-account summary)",
+                styles["Heading3"],
+            ),
+            Spacer(1, 0.05 * inch),
+        ])
+        summary_data: list[list] = [
+            ["Account ID", "Account name", "Role",
+             "Days overdrawn", "Peak negative balance"],
+        ]
+        for s in summary:
+            summary_data.append([
+                Paragraph(s.account_id, cell_style),
+                Paragraph(s.account_name, cell_style),
+                Paragraph(s.account_role, cell_style),
+                f"{s.days_overdrawn}",
+                f"${s.peak_negative_balance:,.2f}",
+            ])
+        summary_style = TableStyle(
+            base_table_style.getCommands() + [
+                ("ALIGN", (3, 1), (-1, -1), "RIGHT"),
+            ],
+        )
+        elements.append(LongTable(
+            summary_data,
+            colWidths=[1.6 * inch, 1.5 * inch, 1.5 * inch,
+                       0.9 * inch, 1.4 * inch],
+            style=summary_style, repeatRows=1,
+        ))
     return elements
 
 

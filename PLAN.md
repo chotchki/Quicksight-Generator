@@ -50,13 +50,14 @@ _Phase S + T sub-task detail removed during the post-T cleanup. RELEASE_NOTES v8
 - [x] **U.2 — Executive summary page.** Totals across the period: transaction count, dollar volume (gross / net), exception counts by check (drift / overdraft / limit_breach / stuck_pending / stuck_unbundled / supersession). Single page, table layout. SQL queries reuse the same matview shapes the dashboards do. **Review gate.**
 - [ ] **U.3 — Per-invariant violation tables.** One page (or grouped) per L1 invariant, sourced from `<prefix>_*` matviews. Columns: account, account role, day, magnitude (dollar amount or count), reason. **Review gate after each invariant lands** so layout iterates per-table.
   - [x] U.3.a — Drift
-  - [ ] U.3.b — Overdraft
+  - [x] U.3.b — Overdraft
   - [ ] U.3.c — Limit breach
   - [ ] U.3.d — Stuck pending
   - [ ] U.3.e — Stuck unbundled
   - [ ] U.3.f — Supersession audit
 - [ ] **U.4 — Per-account-day Daily Statement walk** (highest-value page). For every account that appears in U.3.a's drift table during the period, render a Daily Statement page: 5 KPIs (Opening / Debits / Credits / Closing / Drift) + every Money record posted that day. Mirrors the dashboard's Daily Statement sheet shape. Most important page; expect the most layout iteration here. **Review gate.**
 - [ ] **U.5 — Sign-off block.** Last-page footer / dedicated sign-off page: auditor name field, date field, signature line. Visual only — actual cryptographic signature applied externally after review. **Review gate.**
+ - Note: it would be very valuable to have the option of a system generated signing and another signature box for the auditor. that way if someone generates the pdfs automatically, someone can still sign off without invalidating the rest
 - [ ] **U.6 — Provenance footer.** Every page footer: report-version sentinel, page X of Y, generation timestamp, source-data fingerprint (short hash). Cover page additionally carries the long-form fingerprint with the per-matview SHA256 list. **Review gate.**
 - [ ] **U.7 — Provenance hash + verify subcommand.**
   - Question: should this be hashed over the materialized views or a hash of the base rows through a given pair of entry ids? The views will change, the underlying data should be immutable.
