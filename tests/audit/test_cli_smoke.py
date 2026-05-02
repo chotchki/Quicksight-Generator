@@ -74,6 +74,15 @@ def test_audit_apply_emits_markdown_to_stdout(min_config: Path):
     assert "**Generated:**" in result.output
     assert "Provenance fingerprint:" in result.output
     assert "U.7" in result.output  # placeholder cites where real hash lands
+    # Executive summary section sanity (U.2).
+    assert "## Executive summary" in result.output
+    assert "### Volume" in result.output
+    assert "### Exception counts" in result.output
+    assert "Transactions (legs)" in result.output
+    assert "Drift" in result.output
+    assert "Supersession" in result.output
+    # No DB configured → placeholder notice rendered.
+    assert "Database not configured" in result.output
 
 
 def test_audit_apply_emits_markdown_to_file(min_config: Path, tmp_path: Path):
@@ -149,13 +158,23 @@ def test_audit_apply_execute_writes_pdf(min_config: Path, tmp_path: Path):
     # actually rendered onto the page.
     from pypdf import PdfReader
     reader = PdfReader(str(out))
-    assert len(reader.pages) >= 1
+    # U.1 cover + U.2 executive summary = at least 2 pages.
+    assert len(reader.pages) >= 2
     text = "\n".join(page.extract_text() or "" for page in reader.pages)
     assert "audit report" in text.lower()
     assert "spec_example" in text  # institution heading rendered
     assert "Reporting period" in text  # period band rendered
     assert "Provenance" in text  # page footer rendered
     assert "U.7" in text  # fingerprint placeholder cites where it lands
+    # U.2 executive summary content.
+    assert "Executive summary" in text
+    assert "Volume" in text
+    assert "Exception counts" in text
+    assert "Transactions (legs)" in text
+    assert "Drift" in text
+    assert "Supersession" in text
+    # No DB → placeholder notice on the exec summary page.
+    assert "Database not configured" in text
 
 
 def test_audit_clean_default_is_dry_run(tmp_path: Path):
