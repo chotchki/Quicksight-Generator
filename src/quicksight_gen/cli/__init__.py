@@ -41,9 +41,13 @@ from quicksight_gen.cli_legacy import (  # noqa: F401 — re-exported
 # group at a time and verify before atomically dropping the old verbs.
 from quicksight_gen.cli.schema import schema as _schema_group
 from quicksight_gen.cli.data import data as _data_group
+from quicksight_gen.cli.json import json_ as _json_group
+from quicksight_gen.cli.docs import docs as _docs_group
 
 main.add_command(_schema_group, name="schema")
 main.add_command(_data_group, name="data")
+main.add_command(_json_group, name="json")
+main.add_command(_docs_group, name="docs")
 
 
 __all__ = ["main"]

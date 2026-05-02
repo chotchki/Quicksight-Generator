@@ -90,10 +90,10 @@ quicksight-gen data refresh  --l2 PATH [-c CONFIG] [-o FILE] [--execute]
 quicksight-gen data clean    --l2 PATH [-c CONFIG] [-o FILE] [--execute]
 quicksight-gen data test     [--pytest-args "..."]
 
-quicksight-gen json apply    --app NAME --l2 PATH [-c CONFIG] [-o DIR] [--execute]
-quicksight-gen json clean    [--app NAME] [-c CONFIG] [--execute]
-quicksight-gen json test     [--app NAME] [--pytest-args "..."]
-quicksight-gen json probe    --app NAME [-c CONFIG]
+quicksight-gen json apply    --l2 PATH [-c CONFIG] [-o DIR] [--execute]
+quicksight-gen json clean    [-c CONFIG] [--execute]
+quicksight-gen json test     [--pytest-args "..."]
+quicksight-gen json probe    [-c CONFIG]
 
 quicksight-gen docs apply    [--l2 PATH] [-o DIR]      # always emits a built site
 quicksight-gen docs serve    [--l2 PATH] [--port N]    # mkdocs serve, live reload
@@ -155,18 +155,24 @@ static site to a directory isn't a destructive side effect — the
 
 #### `json`
 
-- **apply**: today's `deploy --generate`. Always regenerates first,
-  then deploys. The historical "deploy without re-generating"
-  behavior is rare in practice and the few scripts using it can
-  composed `apply -o DIR` (emit only) + `apply --reuse DIR` (deploy
-  from existing DIR).
-- **clean**: today's `cleanup`. Maybe rename to be honest:
-  `quicksight-gen json clean` reads naturally.
-- **test**: runs the per-app contract test suite (`test_l1_*.py`,
-  `test_inv_*.py`, etc.). Default = unit + structural; `--browser`
+- **apply**: emits JSON for all four apps to ``out/`` (or ``-o DIR``).
+  With ``--execute``: also deploys to AWS QuickSight. No ``--app``
+  filter — always operates on the full set of four bundled apps
+  (investigation / executives / l1-dashboard / l2-flow-tracing).
+  Per-app development was useful during M / N / O when each app was
+  iterating independently; today they ship as a bundle and finer
+  grain just adds ceremony.
+- **clean**: today's `cleanup`. Connects to AWS and deletes every
+  resource tagged ``ManagedBy:quicksight-gen`` for the active L2
+  instance. With ``--execute``: actually deletes; without, dry-runs
+  + lists what would be deleted (matches the historical ``cleanup
+  --dry-run`` default).
+- **test**: runs the per-app contract test suite for all four
+  apps. Pytest covers ``test_l1_*.py``, ``test_inv_*.py``,
+  ``test_exec_*.py``, ``test_l2ft_*.py`` together; ``--browser``
   flag adds the Playwright e2e tests.
-- **probe**: today's `probe`. Stays; it's a runtime sanity check
-  against a deployed dashboard, complementary to `test`.
+- **probe**: today's `probe`. Stays; runtime sanity check against
+  every deployed dashboard, complementary to `test`.
 
 #### `docs`
 
