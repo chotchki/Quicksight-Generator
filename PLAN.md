@@ -20,162 +20,59 @@
 
 _Phase S + T sub-task detail removed during the post-T cleanup. RELEASE_NOTES v8.1.0 carries the migration narrative; the spike outcome is documented in the v8.1.0 release notes (Mermaid+ELK failed eyeball, graphviz WASM passed)._
 
-## Phase U — `quicksight-gen audit` PDF reconciliation report (planning)
+## Phase U — `quicksight-gen audit` PDF reconciliation report
 
-**Goal.** Add a fifth artifact group: `audit`. Run `quicksight-gen audit apply -c config.yaml --execute -o report.pdf` and get a regulator-ready PDF reconciliation report generated **directly from the database** (queries the per-prefix matviews + base tables; doesn't depend on QuickSight rendering at all). Supersedes the backlog "Audit-readiness columns on Daily Statement … start with PDF-print guidance in training material" entry — we have enough infra now to skip that workaround and go direct.
+**Goal.** Add a fifth artifact group `audit` to the CLI. `quicksight-gen audit apply -c config.yaml --execute -o report.pdf` queries the per-prefix matviews + base tables directly, formats the result via `reportlab`, emits a regulator-ready PDF. Bypasses QuickSight pixel-perfect entirely (cost + wrong shape for the auditor).
 
-**Why now.** Phase R landed the realistic baseline; Phase Q polished the dashboard surface; Phase T just proved we can do client-side rendering without a system binary. The L1 invariant matviews + the typed dataset contracts + the persona-neutral handbook templating give us all the inputs needed: the same SQL the dashboards run, executed once at report-generation time, formatted into a printable artifact.
+**Why now.** Phase R landed the realistic baseline; Phase Q polished the dashboard surface; Phase T just proved we can stay system-binary-free. The L1 invariant matviews + typed dataset contracts + persona-neutral templating give us all the inputs needed; the same SQL the dashboards run, executed once at report-generation time, formatted into a printable artifact.
 
-**Why this matters more than a dashboard PDF export.** AWS QuickSight pixel-perfect costs real money per dashboard per export, and renders the *dashboard's* shape — not what an auditor needs. The auditor needs: cover summary (institution + period + L2 fingerprint), per-invariant violation list with row counts + dollar magnitudes, per-account-day reconciliation walk for any account that drifted, supersession audit trail, sign-off block. That's a different shape than the dashboards; building it as its own artifact (sourced from the same matviews) means the regulator's view + the operator's view stay in sync without QS being in the loop.
+**Why this matters more than a QS pixel-perfect export.** Auditors need: cover summary, per-invariant violation tables with row counts + dollar magnitudes, per-account-day reconciliation walk for every drifted account, supersession audit trail, sign-off block. Different shape than the dashboards; building it as its own artifact (sourced from the same matviews) means the regulator's view + the operator's view stay in sync without QS in the loop.
 
-**Open scoping questions for the planning gate** (these need answers before any code lands):
+### Decisions (2026-05-02 planning gate)
 
-1. **Report shape.** What's in v1?
-   - Cover page (institution name + period + generation timestamp + L2 instance fingerprint hash)?
-   - Executive summary (totals: transactions, dollar volume, exception counts by check)?
-   - Per-L1-invariant violation tables (drift, overdraft, limit-breach, stuck-pending, stuck-unbundled, supersession audit)?
-   - Per-account-day Daily Statement walk for every drifted account?
-   - Sign-off block (auditor name + date + signature line)?
-   - Best to start with a smaller scope and iterate — proposal: cover + executive summary + per-invariant tables in v1; per-account-day walk + sign-off in v2.
+| Question | Decision |
+|---|---|
+| Report shape | Cover + executive summary + per-invariant tables + per-account-day Daily Statement walk + sign-off block. **Build page by page** with a review gate between each. |
+| Period | Default `yesterday + last 7 days`. `--from / --to` CLI flags override. |
+| PDF tech | **`reportlab`** — pure Python wheels, no system deps (preserves the Phase T win). Programmatic API; layout iterates. |
+| CLI shape | `audit apply \| clean \| test`. `apply` defaults to emit Markdown source for inspection; `--execute` writes the PDF. Same `--l2 PATH` flag as the other groups. |
+| Provenance | Hash of matview-snapshot SHA256s + generation timestamp + L2 fingerprint embedded in cover page footer. Documented on the site. Optional `audit verify report.pdf -c config.yaml` sub-command for recomputation. |
+| Persona | Today's L2 surface (institution name + accent + logo via persona block) is enough — functional > marketing. |
+| Test layer | Test the **SQL strings + template-input dicts** (dataset-contract pattern). End-to-end smoke: render PDF, extract text via `pypdf`, assert expected section headings + sentinel values from a known seed. |
+| Sign-off | Visual signature line in the PDF. Cryptographic signature applied **after** human review (Adobe Sign / DocuSign / `pyHanko`) — out of scope for the generator. |
 
-2. **Period scope.** Single business day? Date range? "Yesterday + last 7 days"? Anchored on cfg or YAML, or `--from / --to` CLI flags?
+**Acceptance.** A v1 PDF an auditor would actually accept: covers the L1 invariants, generated reproducibly, carries a verifiable provenance stamp. Iterate page-by-page within Phase U; add sub-tasks as feedback comes in.
 
-3. **PDF generation tech.** Three credible candidates:
-   - **`reportlab`** — pure Python (PyPI wheels), mature, programmatic PDF API. No system deps. Less elegant for complex layouts.
-   - **`weasyprint`** — HTML→PDF via CSS. Prettier output, easier iteration. Pulls in pango/cairo system libs (would re-introduce the system-binary friction we just dropped in Phase T).
-   - **Playwright Chromium print-to-PDF** — already a dev dep for e2e tests. Best fidelity. Adds ~500MB browser to runtime install if we need it outside dev.
-   - Lean toward `reportlab` if persona-neutral CI must stay system-binary-free; toward Playwright if we want to reuse the docs site's HTML/CSS as the report template (with a `report:` mkdocs nav section that's also printable). Decide at the planning gate.
+### Execution plan (review gate between each)
 
-4. **CLI shape.** Fits the four-artifact pattern as a 5th group:
-   ```
-   audit apply | clean | test
-   ```
-   - `audit apply -c config.yaml --execute -o report.pdf` queries the live DB + writes the PDF.
-   - `audit apply` (no `--execute`) emits the rendered HTML / Markdown source for the integrator to inspect / pipe into their own PDF tool.
-   - Same `--l2 PATH` flag as the other artifact groups for per-instance generation.
-
-5. **Provenance / signing.** Does the report carry a hash of the underlying matview snapshot + a generation timestamp + L2 instance fingerprint so a regulator can verify it wasn't post-hoc-edited? Worth doing — cheap to add, valuable to anyone who has to defend the report later.
-
-6. **Persona surface.** Institution name + accent color + logo come from the L2 YAML (already wired via the persona block). Cover-page prose follows the `vocab` substitution pattern. Anything else need adding to the persona block, or does today's L2 surface cover it?
-
-7. **Test layer.** Golden-file PDF tests are flaky (timestamps, font hinting). Better: test the generated SQL strings + the template-input dict (the data passed to the renderer) — same pattern as the dataset-contract tests. PDF-render itself stays an integration check.
-
-8. **Scope guardrail.** Phase U is "build the v1 audit artifact." Investigation/Executives audit views (bigger reports for compliance / board cadences) are explicit follow-ups, not v1 scope.
-
-**Acceptance.** A v1 PDF that an auditor would actually accept (covers the L1 invariants, generated reproducibly, carries a verifiable provenance stamp). Then iterate from feedback.
-
----
-
-<!-- DROPPED — S.0 surface catalog (kept commented-out for one cycle in case the spike narrative needs a re-read)
-### S.0 — Surface catalog
-
-Catalog the diagrams we render today so candidate evaluation is grounded in real shapes, not abstract "could it work":
-
-- [ ] **S.0.a — Hand-authored `.dot` files** in `src/quicksight_gen/docs/_diagrams/conceptual/` (6 files: double-entry, escrow-with-reversal, eventual-consistency, open-vs-closed-loop, sweep-net-settle, vouchering). Hand-tuned DOT with rank constraints + cluster subgraphs. The hardest to replace because they exploit graphviz's hierarchical layout language.
-- [ ] **S.0.b — Programmatic graphs in `common/handbook/diagrams.py`** — `render_conceptual()`, `render_dataflow()`, `render_l2_topology()` plus per-primitive `_build_accounts_graph` / `_build_account_templates_graph` / etc. (~20+ `graphviz.Digraph()` call sites). Pure data-driven: each takes an L2 instance + slice and emits.
-- [ ] **S.0.c — `common/l2/topology.py::render_topology()`** — full L2 instance topology renderer (accounts + templates + rails + chains + transfer templates + limit schedules in one DAG). Largest single graph; relies heavily on `dot` ranking for readable layouts.
-
-For each surface: count nodes / edges / clusters; list which graphviz attributes are load-bearing (rank, rankdir, splines, cluster colors, node shapes); which are decorative.
-
-### S.1 — Candidate evaluation (leading: D, fallback: C)
-
-User pick after first-pass review: **D (graphviz WASM)** is the leading path because it preserves DOT semantics + zero migration of existing diagrams. **C (Mermaid)** stays as the documented fallback if D's WASM lib + plugin chain isn't credibly maintained. The other three options are documented for ADR completeness but get no spike effort.
-
-**Maintenance is a hard gate on D.** The graphviz WASM space has a tail of abandoned forks — classic viz.js (mdaines) stagnated for years; multiple "graphviz in the browser" experiments stopped tracking upstream graphviz releases. The acceptance bar for D is a **WASM build that's actively tracking upstream graphviz** and a **mkdocs plugin (or pymdown-extension) that wraps it cleanly**. If both halves of that chain aren't healthy, fall back to C.
-
-- [ ] **S.1.d (LEADING) — Browser-rendered: graphviz WASM.** Keep DOT semantics + identical graphviz layout. The Python side emits DOT strings; the browser renders them via WASM.
-  - **Maintenance gate (S.1.d.1) — DONE 2026-05-02. PASS for the WASM lib.** Two healthy candidates:
-    - `@hpcc-js/wasm-graphviz` (HPCC Systems) — **1.21.5 released 2026-05-01**, 10 commits in the last week, weekly release-please cadence, embeds upstream graphviz 14.1.3. Single ~800kB ESM bundle with WASM inlined. Used by Observable. **Recommended.**
-    - `@viz-js/viz` (mdaines v3 rewrite) — **3.26.0 released 2026-04-14**, monthly cadence, also embeds graphviz 14.1.3. Split ~1.26MB across `.js` + `.wasm`. Healthy fallback.
-    - Stale: classic `viz.js` 2.x (deprecated by author); `d3-graphviz` 5.6.0 last release 2024-08-18 (~20 months stale, broken against current `@hpcc-js/wasm` per issue #335). Drop d3-graphviz from consideration.
-  - **Plugin gate (S.1.d.2) — DONE 2026-05-02. NO maintained plugin uses WASM.** All four PyPI candidates subprocess `dot`:
-    - `mkdocs-graphviz` (rod2ik) — last release 2023-01-26, subprocess.
-    - `markdown-inline-graphviz-extension` — 2025-07-25, subprocess.
-    - `graphviz-superfence` — 2024-12-15, subprocess via `pymdownx.superfences`.
-    - `mkdocs-kroki-plugin` — calls a Kroki HTTP server; out of scope.
-    - **Verdict:** the gate is on us. The plugin we'd own is small — a `pymdownx.superfences` custom_fence (~30 lines Python) that wraps DOT in `<pre class="graphviz">` + a 5-line `extra_javascript` shim that loops over `.graphviz` nodes on `DOMContentLoaded` and calls `Graphviz.load().then(g => g.dot(text))`. mkdocs-material's first-party Mermaid integration follows the same pattern.
-  - **Net assessment:** D is viable but requires owning ~35 lines of plugin glue. Trade-off vs C: keep graphviz layout (vs Mermaid's dagre), pay for that with a small in-house plugin.
-  - **Migration shape under D (revised):**
-    1. Rewrite `common/handbook/diagrams.py` so each `_build_X_graph` returns a DOT string (not pre-rendered SVG). The graphviz Python lib + system `dot` binary can leave the runtime entirely.
-    2. mkdocs-macros `diagram(...)` macro emits ` ```graphviz fenced blocks (or `<pre class="graphviz">` directly) instead of inline SVG.
-    3. Author the custom_fences entry + JS shim. Vendor the WASM lib (don't CDN — we want offline-friendly docs).
-  - **Cost vs status quo:** site ships ~800kB more JS (loaded once, cached); first-paint of diagram-heavy pages adds the WASM init time (a few hundred ms). No system-package install in CI. No graphviz Python dep.
-- [ ] **S.1.c (FALLBACK) — Browser-rendered: Mermaid via `mkdocs-mermaid2-plugin`.** Two distinct authoring stories:
-  - **Hand-authored conceptual diagrams** (S.0.a's 6 `.dot` files) → rewrite as Mermaid fenced blocks dropped directly into the `.md` page. No build-time renderer involved; no Python emitter needed for these.
-  - **Data-driven L2 topology + dataflow diagrams** (S.0.b / S.0.c) → keep the Python data-walker, but emit a Mermaid string via `mkdocs-macros` (a `{% raw %}{{ diagram(...) }}{% endraw %}` call returns the Mermaid source instead of a rendered SVG, and the page wraps it in a Mermaid fenced block).
-  - Layout-quality risk: Mermaid's `flowchart` engine (dagre) makes different tradeoffs than `dot`. The L2 topology with chains + cluster subgraphs is the stress test. The spike (S.2.c) only fires if D's maintenance gate fails.
-  - Loses standalone-SVG export: output is browser-rendered `<div>`.
-- [~] S.1.a — NetworkX + matplotlib SVG (pruned). Matplotlib's layout for hierarchical DAGs is too weak vs `dot`; ~15MB dependency footprint isn't free either.
-- [~] S.1.b — NetworkX + custom SVG emitter (pruned). Reinventing graph layout is a multi-week sink for a problem already solved by `dot`/Mermaid/viz.js.
-- [~] S.1.e — Status quo (pruned as the active path). Kept as the ADR's defensible-fallback option only — if both D and C fail the spike, document the install requirement and stop.
-
-### S.spike — Outcome (2026-05-02)
-
-Spiked both finalists against the `kind="accounts"` diagram on `/scenario/` (sasquatch_pr L2). Eyeball verdict:
-
-- **C (Mermaid + ELK) — FAILED.** Loaded Mermaid 11 + `@mermaid-js/layout-elk` from jsDelivr `+esm`. Diagram rendered, but self-loops drew as floating disconnected lines (ELK self-loop rendering is much weaker than dot), bundled multi-rail labels needed a `<script type="text/x-…">` workaround to survive the HTML parser, and the overall topology fidelity was poor for our shapes. User verdict after first render: "the topology is very wrong and the lines aren't connecting"; after the label fix: "still not much better." Not credible.
-- **D (graphviz WASM) — PASSED.** Loaded `@hpcc-js/wasm-graphviz` 1.21.5 from jsDelivr `+esm`, `Graphviz.load().then(g => g.dot(source))`. Identical layout to current graphviz/dot — it IS graphviz running in the browser. Self-loops render as actual loops. Multi-rail labels keep their line breaks. User verdict: "It looks great."
-
-**Decision:** path D wins. The spike proved the WASM path end-to-end; Phase T executes the full migration. ADR can be light — the comparison + verdict above IS the ADR.
-
-### S.2 — Spike D (with self-authored plugin glue)
-
-S.1.d.1 + S.1.d.2 done; the gate verdict is "WASM lib healthy, no maintained plugin so we own ~35 lines of glue." Spike D first; only fall back to C if the spike surfaces a layout-correctness or bundle-size dealbreaker.
-
-- [ ] **S.2.a — Target diagram set.**
-  - One **hand-authored conceptual** (pick the densest of S.0.a's 6 `.dot` files — likely `vouchering.dot` or `sweep-net-settle.dot` since they exercise rank constraints + cluster subgraphs).
-  - One **data-driven L2 primitive view** (e.g., `_build_accounts_graph` from S.0.b — accounts hierarchy with parent_role edges).
-  - The **full L2 topology** from S.0.c (`render_topology(sasquatch_pr_instance)`) — the largest single diagram. Acceptance: byte-identical to today's graphviz layout (it IS graphviz). Any visual diff is a plugin or WASM bug, not a layout regression.
-- [ ] **S.2.b — Author the mkdocs glue.**
-  - Vendor `@hpcc-js/wasm-graphviz` 1.21.5 ESM bundle into `src/quicksight_gen/docs/_static/` (offline-friendly; don't CDN).
-  - Add a `pymdownx.superfences` custom_fence entry to `mkdocs.yml` that maps `name: graphviz` → `<pre class="graphviz">` containing the raw DOT text.
-  - Add `extra_javascript` shim (~5 lines) that imports `Graphviz.load()` once on `DOMContentLoaded` and replaces every `.graphviz` `<pre>` with the `<svg>` it returns.
-- [ ] **S.2.c — Drop graphviz from the runtime.**
-  - Rewrite `common/handbook/diagrams.py` so each `_build_X_graph` builds a `graphviz.Digraph` only as a string-construction convenience (not for rendering), then returns its `.source` as the DOT string. Or skip the lib entirely and string-build DOT directly — it's simple syntax.
-  - Update the `diagram(...)` mkdocs-macros entry to emit ` ```graphviz fenced blocks instead of inline SVG.
-  - Drop `graphviz>=0.20` from `pyproject.toml` `[docs]` extra (and main deps if not load-bearing elsewhere). Drop `apt-get install graphviz` from `.github/workflows/ci.yml` (3x), `.github/workflows/release.yml`, `.github/workflows/pages.yml`.
-- [ ] **S.2.d — Build + eyeball.**
-  - `quicksight-gen docs apply` produces a site that renders the three target diagrams via WASM. Side-by-side screenshot vs the v8.0.x graphviz output. Layout match should be exact.
-  - Measure: total bytes added to the site (WASM + JS shim), first-paint latency on the L2 topology page.
-- [ ] **S.2.e — Fall-through to C (Mermaid) only if D fails.** If D's eyeball test reveals a dealbreaker (layout corruption, unacceptable bundle bloat, plugin glue more involved than the ~35 lines projected), document the failure mode + spike C: convert one hand-authored + one data-driven diagram to Mermaid via mkdocs-material's first-party `pymdownx.superfences` + Mermaid.js integration. Score Mermaid's dagre layout on the L2 topology specifically.
-
-### S.3 — Decision + ADR
-
-- [ ] **S.3.a — Write an ADR** (likely `docs/_adr/0001-diagram-renderer.md`) capturing the comparison matrix, eyeball verdict, install-footprint deltas, and the chosen path. Even if "stay with graphviz", the ADR documents *why* so the question doesn't get re-opened ad-hoc.
-- [ ] **S.3.b — Open Phase T with an effort estimate** if the ADR picks a migration path. Phase T builds the chosen renderer + migrates each diagram surface in order of risk (programmatic first, hand-authored DOT last).
-
-### S.4 — Open follow-ups (status quo not picked; see Phase T)
-
-Phase T executes the migration. S.4 only fires if Phase T blows up
-in execution + we have to revert.
-
----
-
-## Phase T — Migrate every diagram surface to graphviz WASM
-
-**Goal.** Drop the system `dot` binary install from every CI / release / pages runner without changing how diagrams look or how they're authored. The Phase S spike proved the WASM lib + plugin glue work; Phase T is mechanical execution.
-
-**Acceptance.** `apt-get install graphviz` deleted from every workflow. `docs apply` produces a site whose diagrams render byte-identical to v8.0.x. The Python `graphviz` lib stays as a runtime dep (it's still doing pure-Python DOT construction), but no system binary is needed.
-
-- [ ] **T.1 — Port the remaining diagram surfaces.** Spike covered only `kind="accounts"`. Replace `_to_svg(g)` with `g.source` everywhere in `common/handbook/diagrams.py`:
-  - `render_l2_topology` for `account_templates` / `chains` / `hierarchy` / `layered` / `transfer_template`.
-  - `render_l2_account_focus` / `render_l2_account_template_focus` / `render_l2_rail_focus` / `render_l2_transfer_template_focus` / `render_l2_chain_focus` / `render_l2_limit_schedule_focus` (per-primitive concept-page macros).
-  - `render_dataflow` (per-app dataset → sheet wiring).
-  - `render_conceptual` (the 6 hand-authored `.dot` files in `_diagrams/conceptual/` — return the file text directly; no `graphviz.Source` wrap).
-
-- [ ] **T.2 — Make WASM the default; drop the env-var toggle.** `_wrap_svg(svg, alt)` → `_wrap_dot(dot, alt)` emits `<figure class="qs-diagram"><script type="text/x-graphviz">DOT</script></figure>`. Drop `QS_USE_WASM` env check + `diagrams_wasm.py` (its job is folded into the main pipeline).
-
-- [ ] **T.3 — JS shim renders into the figure (lightbox compat).** Update `qs-graphviz-wasm.js` to insert the rendered SVG into the parent `<figure>` so the existing `qs-lightbox.js` click-to-zoom keeps working without changes.
-
-- [ ] **T.4 — Drop system `dot` from CI / release / pages workflows.** Five `apt-get install graphviz` lines in `.github/workflows/{ci,release,pages}.yml` go away.
-
-- [ ] **T.5 — Update README + install docs.** README "Prerequisites" mentions `dot` for diagrams — drop. The Python `graphviz` lib stays via `[docs]` extra.
-
-- [ ] **T.6 — Verify.** `docs apply` builds clean against both `spec_example` and `sasquatch_pr`. Eyeball every diagram surface (scenario tour, concept pages, handbook overviews) — should look identical to v8.0.x.
-
-- [x] **T.8 — Cut v8.1.0.** Additive: removes a system requirement, doesn't add Python deps. RELEASE_NOTES entry covers the WASM swap + the dropped `apt install` line. Tag pushed 2026-05-02.
-
-T.7 (vendor the WASM lib) deferred to Backlog — bring in if jsDelivr CDN reliability becomes a complaint from real users. Phase T otherwise complete.
+- [ ] **U.0 — Skeleton + harness.** Add `cli/audit.py` with the `audit apply | clean | test` shell. `audit apply` (no `--execute`) emits a one-line "v1 stub" Markdown source to stdout. `audit apply --execute -o report.pdf` writes a one-page reportlab PDF that says "Phase U skeleton — institution: {name}, period: {from}–{to}". Wire into `cli/__init__.py` alongside the other four groups. Add `reportlab` to `[audit]` extra in `pyproject.toml`. **Review gate:** confirm CLI shape feels right before adding pages.
+- [ ] **U.1 — Cover page.** Institution name (from L2 YAML persona block), period (default yesterday + last 7 days; `--from / --to` overrides), generation timestamp, L2 instance fingerprint hash placeholder (real hash lands in U.7). Layout: title, subtitle, period band, footer with provenance placeholder. **Review gate.**
+- [ ] **U.2 — Executive summary page.** Totals across the period: transaction count, dollar volume (gross / net), exception counts by check (drift / overdraft / limit_breach / stuck_pending / stuck_unbundled / supersession). Single page, table layout. SQL queries reuse the same matview shapes the dashboards do. **Review gate.**
+- [ ] **U.3 — Per-invariant violation tables.** One page (or grouped) per L1 invariant, sourced from `<prefix>_*` matviews. Columns: account, account role, day, magnitude (dollar amount or count), reason. **Review gate after each invariant lands** so layout iterates per-table.
+  - [ ] U.3.a — Drift
+  - [ ] U.3.b — Overdraft
+  - [ ] U.3.c — Limit breach
+  - [ ] U.3.d — Stuck pending
+  - [ ] U.3.e — Stuck unbundled
+  - [ ] U.3.f — Supersession audit
+- [ ] **U.4 — Per-account-day Daily Statement walk** (highest-value page). For every account that appears in U.3.a's drift table during the period, render a Daily Statement page: 5 KPIs (Opening / Debits / Credits / Closing / Drift) + every Money record posted that day. Mirrors the dashboard's Daily Statement sheet shape. Most important page; expect the most layout iteration here. **Review gate.**
+- [ ] **U.5 — Sign-off block.** Last-page footer / dedicated sign-off page: auditor name field, date field, signature line. Visual only — actual cryptographic signature applied externally after review. **Review gate.**
+- [ ] **U.6 — Provenance footer.** Every page footer: report-version sentinel, page X of Y, generation timestamp, source-data fingerprint (short hash). Cover page additionally carries the long-form fingerprint with the per-matview SHA256 list. **Review gate.**
+- [ ] **U.7 — Provenance hash + verify subcommand.**
+  - Compute fingerprint as `sha256(L2_instance_fingerprint || sorted_matview_row_hashes || period_anchor)`. Reproducible for a given DB snapshot + L2.
+  - Add `audit verify report.pdf -c config.yaml` — extracts embedded fingerprint from the PDF, queries the same matviews, recomputes, compares. Exit 0 on match, 1 on drift.
+  - Document on the site (`docs/handbook/audit.md`): what the fingerprint covers, how to recompute manually, exact SQL the verify command runs.
+- [ ] **U.8 — Test layer.**
+  - `tests/audit/test_sql.py` — locked SQL strings for each invariant query (dataset-contract pattern).
+  - `tests/audit/test_template_input.py` — assert the dict passed to reportlab carries expected sections + sentinel values from a known fixture seed.
+  - `tests/audit/test_smoke.py` — end-to-end against `spec_example`: render PDF, extract text via `pypdf`, assert expected section headings + planted-scenario values appear. (User asked for an end-to-end sanity check; this is the cheapest credible one.)
+  - `audit test` CLI subcommand wires pytest + pyright per the four-artifact convention.
+- [ ] **U.9 — CLI surface tests.** `--help` smoke + emit-only path against `spec_example`. Mirror the pattern queued for the other groups in the Backlog.
+- [ ] **U.10 — Documentation.**
+  - `docs/handbook/audit.md` — reference page covering: what the report contains, how to generate it, how to verify the fingerprint, how to apply a cryptographic signature externally.
+  - Update `docs/for-your-role/compliance-analyst.md` with the audit-report onramp.
+  - README + CLAUDE.md mention the new artifact group.
+- [ ] **U.11 — Cut release.** v8.2.0 — additive (new artifact group + new optional `reportlab` dep). RELEASE_NOTES entry. Tag, push, verify pipeline.
 
 ---
 
