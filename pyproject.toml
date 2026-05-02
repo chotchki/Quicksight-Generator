@@ -51,6 +51,15 @@ demo-oracle = [
     # the client libraries are present (and faster).
     "oracledb>=2.0",
 ]
+audit = [
+    # Phase U — `quicksight-gen audit apply --execute` writes a PDF
+    # reconciliation report. reportlab is pure Python (PyPI wheels,
+    # no system deps — preserves the Phase T win). pypdf is used by
+    # the U.8 end-to-end smoke test to extract text from the
+    # generated PDF + assert sentinel sections are present.
+    "reportlab>=4.0",
+    "pypdf>=4.0",
+]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
@@ -60,6 +69,10 @@ dev = [
     # P.9d — oracledb thin client so the e2e harness can connect to
     # an Oracle dialect config without a separate `[demo-oracle]` install.
     "oracledb>=2.0",
+    # Phase U — audit PDF generation; pulled into [dev] so tests/audit/
+    # runs without a separate install step.
+    "reportlab>=4.0",
+    "pypdf>=4.0",
     "build>=1.0",
     "twine>=5.0",
     "pyright>=1.1.380",
