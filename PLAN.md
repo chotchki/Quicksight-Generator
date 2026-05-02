@@ -42,13 +42,23 @@ User pick after first-pass review: **D (graphviz WASM)** is the leading path bec
 
 **Maintenance is a hard gate on D.** The graphviz WASM space has a tail of abandoned forks — classic viz.js (mdaines) stagnated for years; multiple "graphviz in the browser" experiments stopped tracking upstream graphviz releases. The acceptance bar for D is a **WASM build that's actively tracking upstream graphviz** and a **mkdocs plugin (or pymdown-extension) that wraps it cleanly**. If both halves of that chain aren't healthy, fall back to C.
 
-- [ ] **S.1.d (LEADING) — Browser-rendered: graphviz WASM.** Keep every existing DOT file + every `graphviz.Digraph()` call site untouched. The Python side emits DOT strings; the browser renders them via WASM. Pros: zero migration cost; identical layout to what we ship today (it IS graphviz). Cons: ships a WASM blob (~1-3MB) with the docs site; client-side render adds a few hundred ms per page load on diagram-heavy pages.
-  - **Maintenance gate (S.1.d.1):** identify the actively-maintained WASM build. Likely candidates as of writing — verify each against recent commit activity + upstream graphviz version coverage:
-    - `@hpcc-js/wasm-graphviz` (HPCC Systems) — generally considered the modern successor to viz.js; tracks upstream graphviz releases; used by Observable + d3-graphviz.
-    - `d3-graphviz` — D3 wrapper around `@hpcc-js/wasm-graphviz` adding transitions/animations. Useful if we want hover/zoom on the L2 topology diagram.
-    - `viz.js` (mdaines) — historical. Check current status before considering.
-  - **Plugin gate (S.1.d.2):** identify the mkdocs / pymdown-extension that wraps the chosen WASM lib. Plugin candidates need their own activity check. If no maintained plugin exists, drop to a custom `pymdownx.superfences` custom validator that emits the right `<div>` shape — small enough that we can own it.
-  - **Bundle audit:** the WASM blob ships with every page that includes a graphviz block. Audit total bytes added to the site (~1-3MB expected) + first-paint latency on a diagram-heavy page.
+- [ ] **S.1.d (LEADING) — Browser-rendered: graphviz WASM.** Keep DOT semantics + identical graphviz layout. The Python side emits DOT strings; the browser renders them via WASM.
+  - **Maintenance gate (S.1.d.1) — DONE 2026-05-02. PASS for the WASM lib.** Two healthy candidates:
+    - `@hpcc-js/wasm-graphviz` (HPCC Systems) — **1.21.5 released 2026-05-01**, 10 commits in the last week, weekly release-please cadence, embeds upstream graphviz 14.1.3. Single ~800kB ESM bundle with WASM inlined. Used by Observable. **Recommended.**
+    - `@viz-js/viz` (mdaines v3 rewrite) — **3.26.0 released 2026-04-14**, monthly cadence, also embeds graphviz 14.1.3. Split ~1.26MB across `.js` + `.wasm`. Healthy fallback.
+    - Stale: classic `viz.js` 2.x (deprecated by author); `d3-graphviz` 5.6.0 last release 2024-08-18 (~20 months stale, broken against current `@hpcc-js/wasm` per issue #335). Drop d3-graphviz from consideration.
+  - **Plugin gate (S.1.d.2) — DONE 2026-05-02. NO maintained plugin uses WASM.** All four PyPI candidates subprocess `dot`:
+    - `mkdocs-graphviz` (rod2ik) — last release 2023-01-26, subprocess.
+    - `markdown-inline-graphviz-extension` — 2025-07-25, subprocess.
+    - `graphviz-superfence` — 2024-12-15, subprocess via `pymdownx.superfences`.
+    - `mkdocs-kroki-plugin` — calls a Kroki HTTP server; out of scope.
+    - **Verdict:** the gate is on us. The plugin we'd own is small — a `pymdownx.superfences` custom_fence (~30 lines Python) that wraps DOT in `<pre class="graphviz">` + a 5-line `extra_javascript` shim that loops over `.graphviz` nodes on `DOMContentLoaded` and calls `Graphviz.load().then(g => g.dot(text))`. mkdocs-material's first-party Mermaid integration follows the same pattern.
+  - **Net assessment:** D is viable but requires owning ~35 lines of plugin glue. Trade-off vs C: keep graphviz layout (vs Mermaid's dagre), pay for that with a small in-house plugin.
+  - **Migration shape under D (revised):**
+    1. Rewrite `common/handbook/diagrams.py` so each `_build_X_graph` returns a DOT string (not pre-rendered SVG). The graphviz Python lib + system `dot` binary can leave the runtime entirely.
+    2. mkdocs-macros `diagram(...)` macro emits ` ```graphviz fenced blocks (or `<pre class="graphviz">` directly) instead of inline SVG.
+    3. Author the custom_fences entry + JS shim. Vendor the WASM lib (don't CDN — we want offline-friendly docs).
+  - **Cost vs status quo:** site ships ~800kB more JS (loaded once, cached); first-paint of diagram-heavy pages adds the WASM init time (a few hundred ms). No system-package install in CI. No graphviz Python dep.
 - [ ] **S.1.c (FALLBACK) — Browser-rendered: Mermaid via `mkdocs-mermaid2-plugin`.** Two distinct authoring stories:
   - **Hand-authored conceptual diagrams** (S.0.a's 6 `.dot` files) → rewrite as Mermaid fenced blocks dropped directly into the `.md` page. No build-time renderer involved; no Python emitter needed for these.
   - **Data-driven L2 topology + dataflow diagrams** (S.0.b / S.0.c) → keep the Python data-walker, but emit a Mermaid string via `mkdocs-macros` (a `{% raw %}{{ diagram(...) }}{% endraw %}` call returns the Mermaid source instead of a rendered SVG, and the page wraps it in a Mermaid fenced block).
@@ -58,38 +68,73 @@ User pick after first-pass review: **D (graphviz WASM)** is the leading path bec
 - [~] S.1.b — NetworkX + custom SVG emitter (pruned). Reinventing graph layout is a multi-week sink for a problem already solved by `dot`/Mermaid/viz.js.
 - [~] S.1.e — Status quo (pruned as the active path). Kept as the ADR's defensible-fallback option only — if both D and C fail the spike, document the install requirement and stop.
 
-### S.2 — Spike D first; fall through to C only if D fails the maintenance gate
+### S.spike — Outcome (2026-05-02)
 
-Try D first because if it works, no migration. Only spike C if D's maintenance chain isn't credible.
+Spiked both finalists against the `kind="accounts"` diagram on `/scenario/` (sasquatch_pr L2). Eyeball verdict:
+
+- **C (Mermaid + ELK) — FAILED.** Loaded Mermaid 11 + `@mermaid-js/layout-elk` from jsDelivr `+esm`. Diagram rendered, but self-loops drew as floating disconnected lines (ELK self-loop rendering is much weaker than dot), bundled multi-rail labels needed a `<script type="text/x-…">` workaround to survive the HTML parser, and the overall topology fidelity was poor for our shapes. User verdict after first render: "the topology is very wrong and the lines aren't connecting"; after the label fix: "still not much better." Not credible.
+- **D (graphviz WASM) — PASSED.** Loaded `@hpcc-js/wasm-graphviz` 1.21.5 from jsDelivr `+esm`, `Graphviz.load().then(g => g.dot(source))`. Identical layout to current graphviz/dot — it IS graphviz running in the browser. Self-loops render as actual loops. Multi-rail labels keep their line breaks. User verdict: "It looks great."
+
+**Decision:** path D wins. The spike proved the WASM path end-to-end; Phase T executes the full migration. ADR can be light — the comparison + verdict above IS the ADR.
+
+### S.2 — Spike D (with self-authored plugin glue)
+
+S.1.d.1 + S.1.d.2 done; the gate verdict is "WASM lib healthy, no maintained plugin so we own ~35 lines of glue." Spike D first; only fall back to C if the spike surfaces a layout-correctness or bundle-size dealbreaker.
 
 - [ ] **S.2.a — Target diagram set.**
   - One **hand-authored conceptual** (pick the densest of S.0.a's 6 `.dot` files — likely `vouchering.dot` or `sweep-net-settle.dot` since they exercise rank constraints + cluster subgraphs).
   - One **data-driven L2 primitive view** (e.g., `_build_accounts_graph` from S.0.b — accounts hierarchy with parent_role edges).
-  - The **full L2 topology** from S.0.c (`render_topology(sasquatch_pr_instance)`) — the largest and most layout-stressing single diagram. If this one looks bad on a candidate, the candidate fails.
-- [ ] **S.2.b — D maintenance gate.** Before writing any spike code:
-  - Inspect the chosen WASM lib's recent commit cadence + upstream-graphviz version it tracks. Bar: at least one release in the last 12 months and tracking graphviz 8+ (the current major as of writing — verify at spike time).
-  - Inspect the chosen mkdocs plugin's recent commit cadence + how it loads the WASM (CDN vs vendored asset). Bar: at least one release in the last 18 months OR a small enough surface that we can fork + maintain.
-  - **Pass:** continue to S.2.c (D spike). **Fail:** skip to S.2.d (C spike).
-- [ ] **S.2.c — Spike D (graphviz WASM).**
-  - Drop graphviz Python lib + system `dot` binary entirely from the dev environment.
-  - Wire the chosen plugin into `mkdocs.yml`; build the docs site; eyeball the three target diagrams render via WASM in the browser.
-  - Measure: WASM bundle size, first-paint latency on the L2 topology page (the diagram-heaviest page in the site).
-  - Side-by-side screenshot vs current graphviz output. Layout should be byte-identical (it IS graphviz) — any visual diff is a plugin / WASM bug.
-- [ ] **S.2.d — Spike C (Mermaid) — only if D failed the gate.**
-  - Hand-authored: convert the chosen `.dot` to a Mermaid `flowchart` block by hand.
-  - Data-driven: write a small Python emitter that walks the L2 instance and produces Mermaid `flowchart` syntax via mkdocs-macros.
-  - Install + test the `mkdocs-mermaid2-plugin`; build; eyeball the three rendered diagrams. Side-by-side screenshot vs graphviz.
-  - Score the L2 topology specifically — if Mermaid's dagre layout produces a hairball on the chains-heavy graph, document the gap and let the ADR weigh it.
+  - The **full L2 topology** from S.0.c (`render_topology(sasquatch_pr_instance)`) — the largest single diagram. Acceptance: byte-identical to today's graphviz layout (it IS graphviz). Any visual diff is a plugin or WASM bug, not a layout regression.
+- [ ] **S.2.b — Author the mkdocs glue.**
+  - Vendor `@hpcc-js/wasm-graphviz` 1.21.5 ESM bundle into `src/quicksight_gen/docs/_static/` (offline-friendly; don't CDN).
+  - Add a `pymdownx.superfences` custom_fence entry to `mkdocs.yml` that maps `name: graphviz` → `<pre class="graphviz">` containing the raw DOT text.
+  - Add `extra_javascript` shim (~5 lines) that imports `Graphviz.load()` once on `DOMContentLoaded` and replaces every `.graphviz` `<pre>` with the `<svg>` it returns.
+- [ ] **S.2.c — Drop graphviz from the runtime.**
+  - Rewrite `common/handbook/diagrams.py` so each `_build_X_graph` builds a `graphviz.Digraph` only as a string-construction convenience (not for rendering), then returns its `.source` as the DOT string. Or skip the lib entirely and string-build DOT directly — it's simple syntax.
+  - Update the `diagram(...)` mkdocs-macros entry to emit ` ```graphviz fenced blocks instead of inline SVG.
+  - Drop `graphviz>=0.20` from `pyproject.toml` `[docs]` extra (and main deps if not load-bearing elsewhere). Drop `apt-get install graphviz` from `.github/workflows/ci.yml` (3x), `.github/workflows/release.yml`, `.github/workflows/pages.yml`.
+- [ ] **S.2.d — Build + eyeball.**
+  - `quicksight-gen docs apply` produces a site that renders the three target diagrams via WASM. Side-by-side screenshot vs the v8.0.x graphviz output. Layout match should be exact.
+  - Measure: total bytes added to the site (WASM + JS shim), first-paint latency on the L2 topology page.
+- [ ] **S.2.e — Fall-through to C (Mermaid) only if D fails.** If D's eyeball test reveals a dealbreaker (layout corruption, unacceptable bundle bloat, plugin glue more involved than the ~35 lines projected), document the failure mode + spike C: convert one hand-authored + one data-driven diagram to Mermaid via mkdocs-material's first-party `pymdownx.superfences` + Mermaid.js integration. Score Mermaid's dagre layout on the L2 topology specifically.
 
 ### S.3 — Decision + ADR
 
 - [ ] **S.3.a — Write an ADR** (likely `docs/_adr/0001-diagram-renderer.md`) capturing the comparison matrix, eyeball verdict, install-footprint deltas, and the chosen path. Even if "stay with graphviz", the ADR documents *why* so the question doesn't get re-opened ad-hoc.
 - [ ] **S.3.b — Open Phase T with an effort estimate** if the ADR picks a migration path. Phase T builds the chosen renderer + migrates each diagram surface in order of risk (programmatic first, hand-authored DOT last).
 
-### S.4 — Open follow-ups (only if the ADR picks status quo)
+### S.4 — Open follow-ups (status quo not picked; see Phase T)
 
-- [ ] **S.4.a — Document the install requirement up front.** Add a "Prerequisites" callout to README / handbook noting that `docs apply` needs the system `dot` binary; integrators who only want the JSON pipeline (`json apply`) don't.
-- [ ] **S.4.b — Optional: pre-build the diagrams once + cache.** If the build-time cost of running `dot` per page is significant, cache rendered SVGs in a build-cache directory keyed on input hash so repeat builds skip the re-render.
+Phase T executes the migration. S.4 only fires if Phase T blows up
+in execution + we have to revert.
+
+---
+
+## Phase T — Migrate every diagram surface to graphviz WASM
+
+**Goal.** Drop the system `dot` binary install from every CI / release / pages runner without changing how diagrams look or how they're authored. The Phase S spike proved the WASM lib + plugin glue work; Phase T is mechanical execution.
+
+**Acceptance.** `apt-get install graphviz` deleted from every workflow. `docs apply` produces a site whose diagrams render byte-identical to v8.0.x. The Python `graphviz` lib stays as a runtime dep (it's still doing pure-Python DOT construction), but no system binary is needed.
+
+- [ ] **T.1 — Port the remaining diagram surfaces.** Spike covered only `kind="accounts"`. Replace `_to_svg(g)` with `g.source` everywhere in `common/handbook/diagrams.py`:
+  - `render_l2_topology` for `account_templates` / `chains` / `hierarchy` / `layered` / `transfer_template`.
+  - `render_l2_account_focus` / `render_l2_account_template_focus` / `render_l2_rail_focus` / `render_l2_transfer_template_focus` / `render_l2_chain_focus` / `render_l2_limit_schedule_focus` (per-primitive concept-page macros).
+  - `render_dataflow` (per-app dataset → sheet wiring).
+  - `render_conceptual` (the 6 hand-authored `.dot` files in `_diagrams/conceptual/` — return the file text directly; no `graphviz.Source` wrap).
+
+- [ ] **T.2 — Make WASM the default; drop the env-var toggle.** `_wrap_svg(svg, alt)` → `_wrap_dot(dot, alt)` emits `<figure class="qs-diagram"><script type="text/x-graphviz">DOT</script></figure>`. Drop `QS_USE_WASM` env check + `diagrams_wasm.py` (its job is folded into the main pipeline).
+
+- [ ] **T.3 — JS shim renders into the figure (lightbox compat).** Update `qs-graphviz-wasm.js` to insert the rendered SVG into the parent `<figure>` so the existing `qs-lightbox.js` click-to-zoom keeps working without changes.
+
+- [ ] **T.4 — Drop system `dot` from CI / release / pages workflows.** Five `apt-get install graphviz` lines in `.github/workflows/{ci,release,pages}.yml` go away.
+
+- [ ] **T.5 — Update README + install docs.** README "Prerequisites" mentions `dot` for diagrams — drop. The Python `graphviz` lib stays via `[docs]` extra.
+
+- [ ] **T.6 — Verify.** `docs apply` builds clean against both `spec_example` and `sasquatch_pr`. Eyeball every diagram surface (scenario tour, concept pages, handbook overviews) — should look identical to v8.0.x.
+
+- [ ] **T.7 — Vendor the WASM lib.** Currently `qs-graphviz-wasm.js` CDN-loads from jsDelivr — fine for the spike, less great for offline/airgapped deploys. Vendor `@hpcc-js/wasm-graphviz` 1.21.5 into `docs/_static/` so the site is self-contained. Defer if jsDelivr's reliability is acceptable for the demo audience.
+
+- [ ] **T.8 — Cut v8.1.0.** Additive: removes a system requirement, doesn't add Python deps. RELEASE_NOTES entry covers the WASM swap + the dropped `apt install` line.
 
 ---
 

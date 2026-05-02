@@ -1,5 +1,71 @@
 # Release Notes
 
+## v8.1.0 — Drop the system `dot` binary; render diagrams in the browser via WASM
+
+Phase T migration. Every diagram on the docs site (L2 topology /
+dataflow / hand-authored conceptual `.dot` files) now renders
+client-side via `@hpcc-js/wasm-graphviz`. The build-time
+`graphviz`/`dot` system binary requirement is gone — `apt-get
+install graphviz` deleted from every CI / Release / Pages
+runner.
+
+### What changed
+
+- **`common/handbook/diagrams.py`**: every `render_*` helper now
+  returns a graphviz **DOT source string** (via `Digraph().source`)
+  instead of pre-rendered SVG. Reuses the existing
+  `_build_*_graph` builders untouched — only the output shape
+  changed. `_to_svg` (the `.pipe(format='svg')` shellout helper)
+  is gone.
+- **`main.py`**: the `diagram(...)` mkdocs-macro emits
+  `<figure class="qs-diagram"><script type="text/x-graphviz">DOT</script></figure>`
+  for every diagram. The figure wrapper keeps the existing
+  `qs-lightbox.js` click-to-zoom working unchanged.
+- **`stylesheets/qs-graphviz-wasm.js`**: ~50-line client-side
+  bootstrap. Finds every `<script type="text/x-graphviz">` block
+  on page load, dynamically imports `@hpcc-js/wasm-graphviz` 1.x
+  from jsDelivr (`+esm`), runs `g.dot(source)` against each, and
+  replaces the script tag with the rendered SVG.
+- **`.github/workflows/{ci,release,pages}.yml`**: 5 instances of
+  `apt-get install -y graphviz` removed.
+- **`pyproject.toml`**: `graphviz>=0.20` Python lib stays as a
+  `[docs]` dep — it's still constructing DOT source strings — but
+  the comment explicitly notes the system binary is no longer
+  required.
+- **`tests/docs/test_handbook_diagrams.py`**: assertions updated
+  to validate the DOT shape (`digraph {...}` syntax, expected
+  node labels, expected edge counts) instead of SVG content.
+
+### Why this exists
+
+Pre-Phase-T, every CI / Release / Pages job needed
+`graphviz`/`dot` installed (a system package, not a Python wheel)
+to build the docs site. New integrators hit the same wall on
+their laptops. Phase S spiked two browser-rendered alternatives —
+Mermaid + ELK and graphviz WASM — and concluded that
+`@hpcc-js/wasm-graphviz` produces byte-identical layouts to the
+build-time `dot` (it IS graphviz, just compiled to WASM and run
+client-side). Mermaid + ELK lost on layout fidelity; the spike
+findings live in `PLAN.md` § Phase S.
+
+### Compatibility
+
+No CLI / Python API changes. The `quicksight-gen docs apply`
+verb still emits a static site; the only difference is the site
+no longer requires `dot` at build time. Diagrams render on
+first page-load via the WASM bundle (~800kB, cached by the
+browser after first hit).
+
+### Limitations + follow-ups
+
+- Diagrams now require JavaScript to render; static-export
+  consumers (PDF / printed docs) won't get them. Open follow-up
+  if this becomes a real ask.
+- `qs-graphviz-wasm.js` CDN-loads from jsDelivr. Vendoring the
+  WASM lib into `docs/_static/` for offline-friendly deploys is
+  queued as PLAN.md T.7 — defer if jsDelivr's reliability is
+  acceptable for the demo audience.
+
 ## v8.0.1 — Release pipeline fix (no functional change)
 
 The v8.0.0 Release workflow stopped at its "Smoke test wheel" step
