@@ -75,9 +75,9 @@ Then:
    as the smallest persona-neutral skeleton + the
    [Customization handbook](../handbook/customization.md) for the
    editing patterns. The
-   [Demo Institution Tour](../scenario/index.md) shows
-   `sasquatch_pr.yaml` (the canonical larger fixture) projected
-   into a real institution shape; copy from it for your own model.
+   [Demo Institution Tour](../scenario/index.md) shows the
+   bundled `{{ l2_instance_name }}` fixture projected into a real
+   institution shape; copy from it for your own model.
 2. Read the
    [L2 Flow Tracing handbook](../handbook/l2_flow_tracing.md). It
    walks the 5 sheets and spells out how each one projects YAML

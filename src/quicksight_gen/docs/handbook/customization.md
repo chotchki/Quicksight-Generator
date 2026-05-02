@@ -141,7 +141,7 @@ renders against it generically.
 
 ### 1. Write your L2 instance YAML
 
-Mirror `tests/l2/sasquatch_ar.yaml` for shape. The L2 declares:
+Mirror `tests/l2/{{ l2_instance_name }}.yaml` for shape. The L2 declares:
 
 - **Accounts** + roles, scopes (internal/external), parents
 - **Account templates** (role classes that materialize at runtime)
@@ -191,7 +191,7 @@ sql = refresh_matviews_sql(instance)
 
 ### 4. Deploy the L1 dashboard against your instance
 
-The CLI defaults to the canonical sasquatch_pr fixture; swap to your
+The CLI defaults to the bundled `{{ l2_instance_name }}` fixture; swap to your
 own instance by editing the build call site or providing your own
 `l2_instance` kwarg via a small wrapper script. Then:
 
@@ -205,8 +205,8 @@ quicksight-gen deploy --generate -c run/config.yaml -o run/out l1-dashboard
 `scripts/m2_6_verify.py` is the end-to-end smoke that applies the
 schema, plants the canonical seed scenarios, refreshes matviews,
 and asserts each L1 invariant view returns the planted scenarios.
-For your own instance, write a sibling `myorg_seed.py` (mirror of
-`tests/l2/sasquatch_ar_seed.py`) declaring your scenarios via the
+For your own instance, write a sibling `myorg_seed.py` declaring
+your scenarios via the
 generic plant primitives (`DriftPlant`, `OverdraftPlant`,
 `LimitBreachPlant`, `StuckPendingPlant`, `StuckUnbundledPlant`,
 `SupersessionPlant`). Run the verify against your DB to PASS-gate

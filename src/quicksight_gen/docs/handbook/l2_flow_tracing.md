@@ -151,9 +151,9 @@ the declaration itself is healthy.
 # Generate the dashboard JSON for an L2 instance
 quicksight-gen generate l2-flow-tracing -c run/config.yaml -o run/out
 
-# Target a specific L2 YAML
+# Target a specific L2 YAML (substitute your own path)
 quicksight-gen generate l2-flow-tracing \
-  --l2-instance tests/l2/sasquatch_pr.yaml \
+  --l2-instance tests/l2/<your-l2-instance>.yaml \
   -c run/config.yaml -o run/out
 
 # Deploy + auto-regenerate
