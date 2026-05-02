@@ -746,6 +746,127 @@ def _format_age(seconds: Decimal | int) -> str:
     return f"{days:.1f}d"
 
 
+# -- Stuck unbundled violations (U.3.e) ---------------------------------------
+
+
+@dataclass(frozen=True)
+class StuckUnbundledViolation:
+    """One row of the ``<prefix>_stuck_unbundled`` matview, audit-shaped.
+
+    Same shape as StuckPendingViolation but the cap is
+    ``max_unbundled_age_seconds`` (Posted-but-not-yet-bundled aging
+    rather than Pending aging). Each row is one transaction past
+    its bundling cap.
+    """
+    account_id: str
+    account_name: str
+    account_role: str
+    account_parent_role: str
+    transaction_id: str
+    transfer_type: str
+    posting: datetime
+    amount_money: Decimal
+    age_seconds: Decimal
+    max_unbundled_age_seconds: int
+
+
+def _query_stuck_unbundled_violations(
+    cfg, instance,  # type: ignore[no-untyped-def]
+) -> list[StuckUnbundledViolation] | None:
+    """Pull all rows from the ``<prefix>_stuck_unbundled`` matview.
+
+    Same current-state semantics as stuck_pending — no date filter,
+    show every Posted transaction past its bundling cap regardless
+    of when posted.
+    """
+    if cfg.demo_database_url is None:
+        return None
+
+    from quicksight_gen.common.db import connect_demo_db
+
+    prefix = instance.instance
+    conn = connect_demo_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT account_id, account_name, account_role,"
+            f"       account_parent_role, transaction_id,"
+            f"       transfer_type, posting, amount_money,"
+            f"       age_seconds, max_unbundled_age_seconds"
+            f"  FROM {prefix}_stuck_unbundled"
+            f" ORDER BY age_seconds DESC, account_id"
+        )
+        return [
+            StuckUnbundledViolation(
+                account_id=str(r[0]),
+                account_name=str(r[1] or ""),
+                account_role=str(r[2] or ""),
+                account_parent_role=str(r[3] or ""),
+                transaction_id=str(r[4]),
+                transfer_type=str(r[5] or ""),
+                posting=r[6],
+                amount_money=Decimal(r[7] or 0),
+                age_seconds=Decimal(r[8] or 0),
+                max_unbundled_age_seconds=int(r[9] or 0),
+            )
+            for r in cur.fetchall()
+        ]
+    finally:
+        conn.close()
+
+
+@dataclass(frozen=True)
+class StuckUnbundledChildGroupSummary:
+    """Per (parent_role, transfer_type) roll-up of unbundled child txns."""
+    parent_role: str
+    transfer_type: str
+    distinct_children_affected: int
+    stuck_transaction_count: int
+    total_stuck_amount: Decimal
+
+
+def _split_stuck_unbundled_by_account_class(
+    rows: list[StuckUnbundledViolation],
+    singleton_ids: set[str],
+) -> tuple[
+    list[StuckUnbundledViolation],
+    list[StuckUnbundledChildGroupSummary],
+]:
+    """Bucket rows into (parent per-row, child grouped by parent+type)."""
+    parent_rows: list[StuckUnbundledViolation] = []
+    by_group: dict[
+        tuple[str, str], list[StuckUnbundledViolation],
+    ] = {}
+    for r in rows:
+        if r.account_id in singleton_ids:
+            parent_rows.append(r)
+        else:
+            key = (
+                r.account_parent_role or "(no parent)",
+                r.transfer_type,
+            )
+            by_group.setdefault(key, []).append(r)
+    child_summaries = sorted(
+        (
+            StuckUnbundledChildGroupSummary(
+                parent_role=key[0],
+                transfer_type=key[1],
+                distinct_children_affected=len({r.account_id for r in group}),
+                stuck_transaction_count=len(group),
+                total_stuck_amount=sum(
+                    (abs(r.amount_money) for r in group),
+                    start=Decimal(0),
+                ),
+            )
+            for key, group in by_group.items()
+        ),
+        key=lambda s: (
+            -s.total_stuck_amount, s.parent_role, s.transfer_type,
+        ),
+    )
+    return parent_rows, child_summaries
+
+
 @audit.command("apply")
 @l2_instance_option()
 @config_option(required_for_dialect_only=True)
@@ -794,6 +915,7 @@ def audit_apply(
         _cfg, instance, (start, end),
     )
     stuck_pending_rows = _query_stuck_pending_violations(_cfg, instance)
+    stuck_unbundled_rows = _query_stuck_unbundled_violations(_cfg, instance)
     singleton_ids = _singleton_account_ids(instance)
 
     if execute:
@@ -808,6 +930,7 @@ def audit_apply(
             overdraft_rows=overdraft_rows,
             limit_breach_rows=limit_breach_rows,
             stuck_pending_rows=stuck_pending_rows,
+            stuck_unbundled_rows=stuck_unbundled_rows,
             singleton_ids=singleton_ids,
         )
         click.echo(
@@ -825,6 +948,7 @@ def audit_apply(
         overdraft_rows=overdraft_rows,
         limit_breach_rows=limit_breach_rows,
         stuck_pending_rows=stuck_pending_rows,
+        stuck_unbundled_rows=stuck_unbundled_rows,
         singleton_ids=singleton_ids,
     )
     if output is None:
@@ -914,15 +1038,16 @@ def _render_audit_markdown(
     overdraft_rows: list[OverdraftViolation] | None,
     limit_breach_rows: list[LimitBreachViolation] | None,
     stuck_pending_rows: list[StuckPendingViolation] | None,
+    stuck_unbundled_rows: list[StuckUnbundledViolation] | None,
     singleton_ids: set[str],
 ) -> str:
     """Markdown rendering of the audit report.
 
     Mirrors the PDF page sequence — cover, executive summary, then
     per-invariant violation tables (U.3.a Drift, U.3.b Overdraft,
-    U.3.c Limit breach, U.3.d Stuck pending; U.3.e–f land later) —
-    so an integrator can review the report's content before
-    committing to a real PDF write.
+    U.3.c Limit breach, U.3.d Stuck pending, U.3.e Stuck unbundled;
+    U.3.f lands later) — so an integrator can review the report's
+    content before committing to a real PDF write.
     """
     start, end = period
     fingerprint = _l2_fingerprint_placeholder()
@@ -952,12 +1077,14 @@ def _render_audit_markdown(
         + _render_overdraft_markdown(overdraft_rows, singleton_ids)
         + _render_limit_breach_markdown(limit_breach_rows, singleton_ids)
         + _render_stuck_pending_markdown(stuck_pending_rows, singleton_ids)
+        + _render_stuck_unbundled_markdown(
+            stuck_unbundled_rows, singleton_ids,
+        )
     )
     trailer = (
         "\n"
-        "_Remaining per-invariant violation tables (stuck unbundled, "
-        "supersession), the per-account-day Daily Statement walk, and "
-        "the sign-off block land in Phase U.3.e+._\n"
+        "_Supersession audit table, the per-account-day Daily Statement "
+        "walk, and the sign-off block land in Phase U.3.f+._\n"
     )
     return cover + body + trailer
 
@@ -1288,6 +1415,79 @@ def _render_stuck_pending_markdown(
     return out
 
 
+def _render_stuck_unbundled_markdown(
+    rows: list[StuckUnbundledViolation] | None,
+    singleton_ids: set[str],
+) -> str:
+    """Stuck unbundled violations section in Markdown form.
+
+    Same shape as Stuck pending but the cap is
+    ``max_unbundled_age_seconds`` (Posted-but-not-yet-bundled aging).
+    Current-state, no date filter.
+    """
+    header = (
+        "\n"
+        "---\n"
+        "\n"
+        "## Stuck unbundled transactions\n"
+        "\n"
+        "_Posted transactions awaiting bundle assignment whose age "
+        "exceeds the L2-configured `max_unbundled_age_seconds` cap. "
+        "Sourced from `<prefix>_stuck_unbundled` matview. "
+        "**Current-state** — shown regardless of posting date "
+        "(mirrors the L1 dashboard convention)._\n"
+    )
+    if rows is None:
+        return header + (
+            "\n_Database not configured — table not populated. "
+            "Set `demo_database_url` in your config to query._\n"
+        )
+    if not rows:
+        return header + (
+            "\n_No stuck unbundled transactions — bundling caught up._\n"
+        )
+
+    parent_rows, child_groups = _split_stuck_unbundled_by_account_class(
+        rows, singleton_ids,
+    )
+    out = header
+    if parent_rows:
+        out += (
+            "\n"
+            "### Parent accounts (per-row detail)\n"
+            "\n"
+            "| Account ID | Account name | Transfer type | Posted "
+            "| Amount | Age | Cap |\n"
+            "|---|---|---|---|---:|---:|---:|\n"
+        )
+        for r in parent_rows:
+            out += (
+                f"| `{r.account_id}` | {r.account_name} | "
+                f"{r.transfer_type} | "
+                f"{r.posting.strftime('%Y-%m-%d %H:%M')} | "
+                f"${r.amount_money:,.2f} | "
+                f"{_format_age(r.age_seconds)} | "
+                f"{_format_age(r.max_unbundled_age_seconds)} |\n"
+            )
+    if child_groups:
+        out += (
+            "\n"
+            "### Child accounts grouped by parent role + transfer type\n"
+            "\n"
+            "| Parent role | Transfer type | Children affected "
+            "| Stuck transactions | Total amount |\n"
+            "|---|---|---:|---:|---:|\n"
+        )
+        for s in child_groups:
+            out += (
+                f"| {s.parent_role} | {s.transfer_type} "
+                f"| {s.distinct_children_affected} "
+                f"| {s.stuck_transaction_count} "
+                f"| ${s.total_stuck_amount:,.2f} |\n"
+            )
+    return out
+
+
 def _write_audit_pdf(
     path: Path,
     *,
@@ -1299,15 +1499,16 @@ def _write_audit_pdf(
     overdraft_rows: list[OverdraftViolation] | None,
     limit_breach_rows: list[LimitBreachViolation] | None,
     stuck_pending_rows: list[StuckPendingViolation] | None,
+    stuck_unbundled_rows: list[StuckUnbundledViolation] | None,
     singleton_ids: set[str],
 ) -> None:
     """Render the audit report as a PDF.
 
     Page sequence: cover → executive summary → per-invariant tables
-    (Drift, Overdraft, Limit breach, Stuck pending so far; U.3.e+
-    adds the rest). Each per-invariant page paginates via LongTable.
-    Every page carries a footer with the provenance fingerprint
-    placeholder (real hash lands in U.7).
+    (Drift, Overdraft, Limit breach, Stuck pending, Stuck unbundled
+    so far; U.3.f adds Supersession). Each per-invariant page
+    paginates via LongTable. Every page carries a footer with the
+    provenance fingerprint placeholder (real hash lands in U.7).
     """
     # Imported lazily so the audit CLI loads even when the [audit]
     # extra isn't installed — only --execute paths need reportlab.
@@ -1393,6 +1594,9 @@ def _write_audit_pdf(
     ))
     story.extend(_stuck_pending_story(
         stuck_pending_rows, styles, singleton_ids,
+    ))
+    story.extend(_stuck_unbundled_story(
+        stuck_unbundled_rows, styles, singleton_ids,
     ))
     doc.build(story, onFirstPage=_draw_footer, onLaterPages=_draw_footer)
 
@@ -2059,6 +2263,163 @@ def _stuck_pending_story(
                 f"${r.amount_money:,.2f}",
                 _format_age(r.age_seconds),
                 _format_age(r.max_pending_age_seconds),
+            ])
+        detail_style = TableStyle(
+            base_table_style.getCommands() + [
+                ("ALIGN", (3, 1), (-1, -1), "RIGHT"),
+            ],
+        )
+        elements.append(LongTable(
+            detail_data,
+            colWidths=[1.15 * inch, 1.15 * inch, 1.1 * inch,
+                       1.05 * inch, 0.95 * inch,
+                       0.7 * inch, 0.7 * inch],
+            style=detail_style, repeatRows=1,
+        ))
+        elements.append(Spacer(1, 0.25 * inch))
+
+    if child_groups:
+        elements.extend([
+            Paragraph(
+                "Child accounts grouped by parent role + transfer type",
+                styles["Heading3"],
+            ),
+            Spacer(1, 0.05 * inch),
+        ])
+        group_data: list[list] = [
+            ["Parent role", "Transfer type", "Children affected",
+             "Stuck transactions", "Total amount"],
+        ]
+        for s in child_groups:
+            group_data.append([
+                Paragraph(s.parent_role, cell_style),
+                Paragraph(s.transfer_type, cell_style),
+                f"{s.distinct_children_affected}",
+                f"{s.stuck_transaction_count}",
+                f"${s.total_stuck_amount:,.2f}",
+            ])
+        group_style = TableStyle(
+            base_table_style.getCommands() + [
+                ("ALIGN", (2, 1), (-1, -1), "RIGHT"),
+            ],
+        )
+        elements.append(LongTable(
+            group_data,
+            colWidths=[1.6 * inch, 1.6 * inch, 1.2 * inch,
+                       1.2 * inch, 1.3 * inch],
+            style=group_style, repeatRows=1,
+        ))
+    return elements
+
+
+def _stuck_unbundled_story(
+    rows: list[StuckUnbundledViolation] | None,
+    styles,  # type: ignore[no-untyped-def]
+    singleton_ids: set[str],
+) -> list:  # type: ignore[type-arg]
+    """Platypus elements for the U.3.e Stuck unbundled transactions page.
+
+    Same shape as Stuck pending; cap is ``max_unbundled_age_seconds``.
+    Current-state, no date filter.
+    """
+    from reportlab.lib import colors
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.platypus import (
+        LongTable,
+        PageBreak,
+        Paragraph,
+        Spacer,
+        TableStyle,
+    )
+
+    elements: list = [
+        PageBreak(),
+        Paragraph("Stuck unbundled transactions", styles["Heading1"]),
+        Paragraph(
+            "Source: <b>&lt;prefix&gt;_stuck_unbundled</b> matview.",
+            styles["BodyText"],
+        ),
+        Paragraph(
+            "<i>Posted transactions awaiting bundle assignment whose "
+            "age exceeds the L2-configured bundling cap. "
+            "<b>Current-state</b> &mdash; shown regardless of posting "
+            "date; the report period band on the cover does not scope "
+            "this section.</i>",
+            styles["BodyText"],
+        ),
+        Spacer(1, 0.15 * inch),
+    ]
+
+    if rows is None:
+        elements.append(
+            Paragraph(
+                "<i>Database not configured &mdash; table not "
+                "populated. Set <b>demo_database_url</b> in your "
+                "config to query.</i>",
+                styles["BodyText"],
+            ),
+        )
+        return elements
+    if not rows:
+        elements.append(
+            Paragraph(
+                "<i>No stuck unbundled transactions &mdash; bundling "
+                "caught up.</i>",
+                styles["BodyText"],
+            ),
+        )
+        return elements
+
+    parent_rows, child_groups = _split_stuck_unbundled_by_account_class(
+        rows, singleton_ids,
+    )
+    cell_style = ParagraphStyle(
+        "StuckUnbundledCell",
+        parent=styles["BodyText"],
+        fontSize=8,
+        leading=10,
+        spaceBefore=0,
+        spaceAfter=0,
+    )
+    base_table_style = TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a1a1a")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 9),
+        ("FONTSIZE", (0, 1), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#c7d6e3")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [
+            colors.white, colors.HexColor("#f5f8fb"),
+        ]),
+    ])
+
+    if parent_rows:
+        elements.extend([
+            Paragraph(
+                "Parent accounts (per-row detail)",
+                styles["Heading3"],
+            ),
+            Spacer(1, 0.05 * inch),
+        ])
+        detail_data: list[list] = [
+            ["Account ID", "Account name", "Transfer type",
+             "Posted", "Amount", "Age", "Cap"],
+        ]
+        for r in parent_rows:
+            detail_data.append([
+                Paragraph(r.account_id, cell_style),
+                Paragraph(r.account_name, cell_style),
+                Paragraph(r.transfer_type, cell_style),
+                r.posting.strftime("%Y-%m-%d %H:%M"),
+                f"${r.amount_money:,.2f}",
+                _format_age(r.age_seconds),
+                _format_age(r.max_unbundled_age_seconds),
             ])
         detail_style = TableStyle(
             base_table_style.getCommands() + [

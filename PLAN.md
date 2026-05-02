@@ -53,7 +53,7 @@ _Phase S + T sub-task detail removed during the post-T cleanup. RELEASE_NOTES v8
   - [x] U.3.b — Overdraft
   - [x] U.3.c — Limit breach
   - [x] U.3.d — Stuck pending
-  - [ ] U.3.e — Stuck unbundled
+  - [x] U.3.e — Stuck unbundled
   - [ ] U.3.f — Supersession audit
   - [ ] U.3.g — **Vocab + theme templating sweep across all audit PDF sections** (cover, exec summary, U.3.a–f). Currently the audit PDF hardcodes both prose ("Customer accounts", "GL clearing", "ZBA master") and colors (`#1a1a1a` header, `#eef3f7` period band, `#c7d6e3` border, `#f5f8fb` alt-row). Sweep to: (a) thread `HandbookVocabulary` for any persona-substitutable terms, adding new vocab keys where needed; (b) resolve all hex colors from `resolve_l2_theme(l2_instance) or DEFAULT_PRESET` per the CLAUDE.md "never hardcode hex" rule; (c) verify the persona-leak CI gate (Q.5.f) covers the audit PDF text payload too. Land **before U.4** so the Daily Statement walk inherits the pattern from the start instead of needing its own retrofit.
 - [ ] **U.4 — Per-account-day Daily Statement walk** (highest-value page). For every account that appears in U.3.a's drift table during the period, render a Daily Statement page: 5 KPIs (Opening / Debits / Credits / Closing / Drift) + every Money record posted that day. Mirrors the dashboard's Daily Statement sheet shape. Most important page; expect the most layout iteration here. **Review gate.**
@@ -83,6 +83,7 @@ _Phase S + T sub-task detail removed during the post-T cleanup. RELEASE_NOTES v8
   - `tests/audit/test_template_input.py` — assert the dict passed to reportlab carries expected sections + sentinel values from a known fixture seed.
   - `tests/audit/test_smoke.py` — end-to-end against `spec_example`: render PDF, extract text via `pypdf`, assert expected section headings + planted-scenario values appear. (User asked for an end-to-end sanity check; this is the cheapest credible one.)
   - `audit test` CLI subcommand wires pytest + pyright per the four-artifact convention.
+  - Note: this should be testable in CI.
 - [ ] **U.8.b — Audit/dashboard agreement e2e (release gate).** The credibility contract: every number in the audit PDF MUST agree with what the deployed L1 dashboard shows for the same period + L2 + DB snapshot. Auditor seeing one number while the operator sees another destroys trust in the entire generator. Test plan: seed demo DB to a known state (existing harness fixture); generate audit PDF via `audit apply --execute -o`; extract numbers from PDF cells via `pypdf` (exec-summary table values + per-invariant table row counts + Daily Statement aggregates); for each one, walk the corresponding L1 dashboard sheet via Playwright (existing `tests/e2e/_harness_*` pattern), apply the same period date filter, count rows / read KPI value; assert audit number == dashboard number. Both Postgres + Oracle. **Gates the v8.2.0 release** — failure means rebuild before tag.
 - [ ] **U.9 — CLI surface tests.** `--help` smoke + emit-only path against `spec_example`. Mirror the pattern queued for the other groups in the Backlog.
 - [ ] **U.10 — Documentation.**
