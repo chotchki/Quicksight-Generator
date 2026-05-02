@@ -1499,8 +1499,7 @@ def _render_drift_markdown(
         "## Drift violations\n"
         "\n"
         "_Per-account-day discrepancies between stored end-of-day "
-        "balance and the balance computed from posted transactions. "
-        "Sourced from `<prefix>_drift` matview._\n"
+        "balance and the balance computed from posted transactions._\n"
     )
     if rows is None:
         return header + (
@@ -1547,12 +1546,12 @@ def _render_overdraft_markdown(
         "## Overdraft violations\n"
         "\n"
         "_Account-days where the stored end-of-day balance went "
-        "negative. Sourced from `<prefix>_overdraft` matview. "
-        "Parent accounts (L2 singletons — GL clearing, concentration, "
-        "ZBA master) are shown per-row because a parent itself going "
-        "negative is a systemic event. Child accounts (templated, "
-        "e.g. customer DDAs, ZBA sub-accounts) roll up by parent "
-        "role with distinct-children-negative + summed-peak-negative._\n"
+        "negative. Parent accounts (L2 singletons — GL clearing, "
+        "concentration, ZBA master) are shown per-row because a "
+        "parent itself going negative is a systemic event. Child "
+        "accounts (templated, e.g. customer DDAs, ZBA sub-accounts) "
+        "roll up by parent role with distinct-children-negative + "
+        "summed-peak-negative._\n"
     )
     if rows is None:
         return header + (
@@ -1617,8 +1616,7 @@ def _render_limit_breach_markdown(
         "## Limit breach violations\n"
         "\n"
         "_Account-day-transfer_type cells where cumulative outbound "
-        "exceeded the L2-configured cap. Sourced from "
-        "`<prefix>_limit_breach` matview. Parent accounts shown "
+        "exceeded the L2-configured cap. Parent accounts shown "
         "per-row; child accounts grouped by (parent role, transfer "
         "type) — the LimitSchedule key shape._\n"
     )
@@ -1688,11 +1686,10 @@ def _render_stuck_pending_markdown(
         "## Stuck pending transactions\n"
         "\n"
         "_Transactions currently in Pending status whose age exceeds "
-        "the L2-configured `max_pending_age_seconds` cap. Sourced "
-        "from `<prefix>_stuck_pending` matview. **Current-state** — "
-        "shown regardless of posting date (mirrors the L1 dashboard "
-        "convention; the period band on the cover does not scope "
-        "this section)._\n"
+        "the L2-configured `max_pending_age_seconds` cap. "
+        "**Current-state** — shown regardless of posting date "
+        "(mirrors the L1 dashboard convention; the period band on "
+        "the cover does not scope this section)._\n"
     )
     if rows is None:
         return header + (
@@ -1763,7 +1760,6 @@ def _render_stuck_unbundled_markdown(
         "\n"
         "_Posted transactions awaiting bundle assignment whose age "
         "exceeds the L2-configured `max_unbundled_age_seconds` cap. "
-        "Sourced from `<prefix>_stuck_unbundled` matview. "
         "**Current-state** — shown regardless of posting date "
         "(mirrors the L1 dashboard convention)._\n"
     )
@@ -1927,9 +1923,7 @@ def _render_daily_statement_walks_markdown(
         "## Per-account Daily Statement walk\n"
         "\n"
         "_Per-(account, day) statement for every account that drifted "
-        "in the report window. KPIs sourced from "
-        "`<prefix>_daily_statement_summary` matview; transactions "
-        "from `<prefix>_current_transactions`._\n"
+        "in the report window._\n"
         "\n"
         "_Note: the **drift** KPI here is the per-day drift "
         "(`closing_stored − closing_recomputed`) and may differ from "
@@ -2336,8 +2330,7 @@ def _drift_story(
         _bookmarked_h1("Drift violations", styles),
         Paragraph(
             f"Reporting period: {start.isoformat()} &ndash; "
-            f"{end.isoformat()} (inclusive). "
-            "Source: <b>&lt;prefix&gt;_drift</b> matview.",
+            f"{end.isoformat()} (inclusive).",
             styles["BodyText"],
         ),
         Paragraph(
@@ -2468,8 +2461,7 @@ def _overdraft_story(
         _bookmarked_h1("Overdraft violations", styles),
         Paragraph(
             f"Reporting period: {start.isoformat()} &ndash; "
-            f"{end.isoformat()} (inclusive). "
-            "Source: <b>&lt;prefix&gt;_overdraft</b> matview.",
+            f"{end.isoformat()} (inclusive).",
             styles["BodyText"],
         ),
         Paragraph(
@@ -2622,8 +2614,7 @@ def _limit_breach_story(
         _bookmarked_h1("Limit breach violations", styles),
         Paragraph(
             f"Reporting period: {start.isoformat()} &ndash; "
-            f"{end.isoformat()} (inclusive). "
-            "Source: <b>&lt;prefix&gt;_limit_breach</b> matview.",
+            f"{end.isoformat()} (inclusive).",
             styles["BodyText"],
         ),
         Paragraph(
@@ -2780,10 +2771,6 @@ def _stuck_pending_story(
         PageBreak(),
         _bookmarked_h1("Stuck pending transactions", styles),
         Paragraph(
-            "Source: <b>&lt;prefix&gt;_stuck_pending</b> matview.",
-            styles["BodyText"],
-        ),
-        Paragraph(
             "<i>Transactions currently in Pending status whose age "
             "exceeds the L2-configured aging cap. <b>Current-state</b> "
             "&mdash; shown regardless of posting date; the report "
@@ -2933,10 +2920,6 @@ def _stuck_unbundled_story(
     elements: list = [
         PageBreak(),
         _bookmarked_h1("Stuck unbundled transactions", styles),
-        Paragraph(
-            "Source: <b>&lt;prefix&gt;_stuck_unbundled</b> matview.",
-            styles["BodyText"],
-        ),
         Paragraph(
             "<i>Posted transactions awaiting bundle assignment whose "
             "age exceeds the L2-configured bundling cap. "
@@ -3089,12 +3072,6 @@ def _supersession_story(
     elements: list = [
         PageBreak(),
         _bookmarked_h1("Supersession audit", styles),
-        Paragraph(
-            "Source: <b>&lt;prefix&gt;_transactions</b> + "
-            "<b>&lt;prefix&gt;_daily_balances</b> "
-            "(rows where supersedes IS NOT NULL).",
-            styles["BodyText"],
-        ),
         Paragraph(
             "<i>Aggregate counts cover the <b>entire dataset</b> "
             "(current-state); detail tables are limited to "
@@ -3282,10 +3259,7 @@ def _daily_statement_walks_story(
         PageBreak(),
         _bookmarked_h1("Per-account Daily Statement walk", styles),
         Paragraph(
-            "Source: <b>&lt;prefix&gt;_daily_statement_summary</b> "
-            "(KPIs) + <b>&lt;prefix&gt;_current_transactions</b> "
-            "(detail rows). One walk per (account, day) pair from "
-            "U.3.a's drift table.",
+            "One walk per (account, day) pair from U.3.a's drift table.",
             styles["BodyText"],
         ),
         Paragraph(
