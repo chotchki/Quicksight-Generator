@@ -289,18 +289,34 @@ def _write_audit_pdf(
     # can render "Page X of N" (U.6).
     doc.multiBuild(story)
 
-    # U.7.c — embed the L2 YAML as a PDF file attachment (post-
-    # multiBuild, pre-signing). Verifiers download byte-exact from
-    # the PDF reader's attachments panel + SHA256 themselves to
-    # confirm l2_yaml_sha against the embedded provenance.
+    # U.7.c — embed the L2 YAML + verify-provenance.py recipe as PDF
+    # file attachments (post-multiBuild, pre-signing). Verifiers
+    # download byte-exact from the PDF reader's attachments panel:
+    # the YAML to confirm l2_yaml_sha against the embedded
+    # provenance, the script to recompute the composite hash
+    # without retyping it from the rendered appendix page.
     if l2_instance_path is None:
-        attachment_name = "l2-default.yaml"
+        l2_attachment_name = "l2-default.yaml"
     else:
-        attachment_name = Path(l2_instance_path).name
-    _attach_l2_yaml_to_pdf(
+        l2_attachment_name = Path(l2_instance_path).name
+    if provenance is not None:
+        recipe_text = _build_verify_recipe_script(
+            tx_hwm=str(provenance.transactions_hwm),
+            bal_hwm=str(provenance.balances_hwm),
+            code_id=provenance.code_identity,
+        )
+    else:
+        recipe_text = _build_verify_recipe_script(
+            tx_hwm="<pending>",
+            bal_hwm="<pending>",
+            code_id=f"v{version}",
+        )
+    _attach_files_to_pdf(
         path,
-        attachment_name=attachment_name,
-        yaml_bytes=_read_l2_yaml_bytes(l2_instance_path),
+        attachments={
+            l2_attachment_name: _read_l2_yaml_bytes(l2_instance_path),
+            "verify-provenance.py": recipe_text.encode("utf-8"),
+        },
     )
 
 
@@ -1689,13 +1705,18 @@ def _make_fillable_notes_field(  # type: ignore[no-untyped-def]
     the next signer from filling this field — the next signer
     decides whether to lock fields when they sign.
 
-    Implements the platypus Flowable protocol via subclassing
-    ``Flowable`` (so reportlab's frame layout knows how to wrap +
-    place us). ``draw()`` is called by the frame after translating
-    the canvas to the local origin, but ``acroForm.textfield``
-    records ABSOLUTE page coordinates, so we read the canvas's
-    current transform via ``self.canv.absolutePosition`` /
-    ``self._frame`` to recover them.
+    Subclasses ``Flowable`` so reportlab's frame engine handles
+    layout (``wrap`` returns the field size; ``drawOn`` is the hook
+    the frame calls with absolute ``(x, y)`` page coordinates).
+    Overriding ``drawOn`` (NOT ``draw``) is required because
+    ``canvas.acroForm.textfield`` ignores the canvas's translate
+    transform — it records absolute page coordinates directly.
+    The default Flowable.drawOn would translate the canvas to
+    ``(x, y)`` and then call ``draw`` with origin at ``(0, 0)``,
+    which lands the form widget at page-origin (bottom-left
+    corner) instead of where the frame placed us. Bypassing the
+    translate and feeding ``acroForm.textfield`` the real absolute
+    ``(x, y)`` puts the widget where the layout reserved space.
     """
     from reportlab.platypus import Flowable
 
@@ -1708,15 +1729,13 @@ def _make_fillable_notes_field(  # type: ignore[no-untyped-def]
         def wrap(self, availWidth, availHeight):
             return (self.width, self.height)
 
-        def draw(self):
-            # During draw, self.canv is translated so (0, 0) is the
-            # bottom-left of this flowable. acroForm.textfield records
-            # absolute coords, so do the field at (0, 0) on the
-            # translated canvas — reportlab translates back internally.
-            self.canv.acroForm.textfield(
+        def drawOn(self, canvas, x, y, _sW=0):
+            # No canvas.saveState/translate dance — acroForm uses
+            # absolute page coords, so feed (x, y) directly.
+            canvas.acroForm.textfield(
                 name=name,
-                x=0,
-                y=0,
+                x=x,
+                y=y,
                 width=self.width,
                 height=self.height,
                 value="",
@@ -1746,27 +1765,84 @@ def _read_l2_yaml_bytes(l2_instance_path: str | None) -> bytes:
     return Path(l2_instance_path).read_bytes()
 
 
-def _attach_l2_yaml_to_pdf(
+def _attach_files_to_pdf(
     pdf_path: Path,
     *,
-    attachment_name: str,
-    yaml_bytes: bytes,
+    attachments: dict[str, bytes],
 ) -> None:
-    """Embed the L2 YAML as a PDF file attachment via pypdf (U.7.c).
+    """Embed file attachments into the PDF via pypdf (U.7.c).
 
     Run AFTER ``doc.multiBuild`` writes the PDF and BEFORE pyHanko
-    signing (so the attachment lands inside the byte range the
-    signature covers). The verifier sees the attachment in their
-    PDF reader's attachments panel and can download it byte-exact
-    to recompute ``l2_yaml_sha256(file)`` independently.
+    signing (so attachments land inside the byte range the signature
+    covers). Verifiers see attachments in their PDF reader's
+    attachments panel and can download them byte-exact to recompute
+    ``l2_yaml_sha256(file)`` (for the L2 yaml) or run the recipe
+    locally (for ``verify-provenance.py``).
     """
     from pypdf import PdfReader, PdfWriter
 
     reader = PdfReader(str(pdf_path))
     writer = PdfWriter(clone_from=reader)
-    writer.add_attachment(attachment_name, yaml_bytes)
+    for name, data in attachments.items():
+        writer.add_attachment(name, data)
     with pdf_path.open("wb") as f:
         writer.write(f)
+
+
+def _build_verify_recipe_script(
+    *,
+    tx_hwm: str,
+    bal_hwm: str,
+    code_id: str,
+) -> str:
+    """Manual-recompute Python recipe with this report's per-source values.
+
+    Single source of truth for both the appendix's Preformatted
+    code block AND the ``verify-provenance.py`` PDF attachment, so
+    the script a reader sees on the page is byte-identical to the
+    one they can download. ``tx_hwm`` / ``bal_hwm`` / ``code_id``
+    come from the embedded ``ProvenanceFingerprint``; the table
+    prefix is left as ``<prefix>`` because it lives in the L2 yaml
+    (also attached) — the verifier substitutes per the spec they
+    audited against.
+    """
+    return (
+        "import hashlib\n"
+        "\n"
+        "def canonical(v):\n"
+        "    if v is None: return b''\n"
+        "    if isinstance(v, bool): return b'1' if v else b'0'\n"
+        "    if hasattr(v, 'isoformat'): "
+        "return v.isoformat().encode()\n"
+        "    return str(v).encode()\n"
+        "\n"
+        "def hash_table(cur, table, hwm):\n"
+        "    cur.execute(f'SELECT * FROM {table} '\n"
+        "                f'WHERE entry <= {hwm} ORDER BY entry')\n"
+        "    cols = sorted(\n"
+        "        enumerate(cur.description),\n"
+        "        key=lambda i_d: i_d[1][0].lower())\n"
+        "    h = hashlib.sha256()\n"
+        "    for row in cur:\n"
+        "        h.update(b'\\x1f'.join(\n"
+        "            canonical(row[i]) for i, _ in cols))\n"
+        "        h.update(b'\\x1e')\n"
+        "    return h.hexdigest()\n"
+        "\n"
+        f"tx_sha  = hash_table(cur, '<prefix>_transactions', {tx_hwm})\n"
+        f"bal_sha = hash_table(cur, '<prefix>_daily_balances', {bal_hwm})\n"
+        "l2_sha  = hashlib.sha256(\n"
+        "    open(L2_YAML_PATH, 'rb').read()).hexdigest()\n"
+        "\n"
+        "h = hashlib.sha256()\n"
+        f"h.update(b'tx_hwm={tx_hwm}\\n')\n"
+        "h.update(f'tx_sha={tx_sha}\\n'.encode())\n"
+        f"h.update(b'bal_hwm={bal_hwm}\\n')\n"
+        "h.update(f'bal_sha={bal_sha}\\n'.encode())\n"
+        "h.update(f'l2_sha={l2_sha}\\n'.encode())\n"
+        f"h.update(b'code={code_id}\\n')\n"
+        "print(h.hexdigest())  # composite_sha\n"
+    )
 
 
 def _appendix_story(
@@ -1952,44 +2028,14 @@ def _appendix_story(
     )
 
     # --- Manual recompute recipe (Preformatted code block) ---
+    # Same text gets attached as ``verify-provenance.py`` so a
+    # verifier can download the script byte-exact and run it
+    # locally instead of retyping from the rendered page.
+    recipe_text = _build_verify_recipe_script(
+        tx_hwm=tx_hwm, bal_hwm=bal_hwm, code_id=code_id,
+    )
     recipe = Preformatted(
-        "import hashlib\n"
-        "\n"
-        "def canonical(v):\n"
-        "    if v is None: return b''\n"
-        "    if isinstance(v, bool): return b'1' if v else b'0'\n"
-        "    if hasattr(v, 'isoformat'): "
-        "return v.isoformat().encode()\n"
-        "    return str(v).encode()\n"
-        "\n"
-        "def hash_table(cur, table, hwm):\n"
-        "    cur.execute(f'SELECT * FROM {table} '\n"
-        "                f'WHERE entry <= {hwm} ORDER BY entry')\n"
-        "    cols = sorted(\n"
-        "        enumerate(cur.description),\n"
-        "        key=lambda i_d: i_d[1][0].lower())\n"
-        "    h = hashlib.sha256()\n"
-        "    for row in cur:\n"
-        "        h.update(b'\\x1f'.join(\n"
-        "            canonical(row[i]) for i, _ in cols))\n"
-        "        h.update(b'\\x1e')\n"
-        "    return h.hexdigest()\n"
-        "\n"
-        "tx_sha  = hash_table(cur, '<prefix>_transactions', "
-        f"{tx_hwm})\n"
-        "bal_sha = hash_table(cur, '<prefix>_daily_balances', "
-        f"{bal_hwm})\n"
-        "l2_sha  = hashlib.sha256(\n"
-        "    open(L2_YAML_PATH, 'rb').read()).hexdigest()\n"
-        "\n"
-        "h = hashlib.sha256()\n"
-        f"h.update(b'tx_hwm={tx_hwm}\\n')\n"
-        "h.update(f'tx_sha={tx_sha}\\n'.encode())\n"
-        f"h.update(b'bal_hwm={bal_hwm}\\n')\n"
-        "h.update(f'bal_sha={bal_sha}\\n'.encode())\n"
-        "h.update(f'l2_sha={l2_sha}\\n'.encode())\n"
-        f"h.update(b'code={code_id}\\n')\n"
-        "print(h.hexdigest())  # composite_sha\n",
+        recipe_text,
         ParagraphStyle(
             "AppendixRecipe",
             parent=styles["Code"],
@@ -2059,7 +2105,11 @@ def _appendix_story(
             "<i>For verifiers who don't want to install "
             "quicksight-gen. Per-source values embedded in this "
             "report are below; the Python recipe under the table "
-            "shows how to recompute and verify the composite.</i>",
+            "shows how to recompute and verify the composite. The "
+            "same recipe is attached as "
+            "<font face='Courier'>verify-provenance.py</font> "
+            "(see Attachments) so it can be downloaded byte-exact "
+            "instead of retyped from the page.</i>",
             styles["BodyText"],
         ),
         Spacer(1, 0.1 * inch),
@@ -2068,24 +2118,37 @@ def _appendix_story(
         recipe,
         Spacer(1, 0.25 * inch),
 
+        Paragraph("<b>Attachments</b>", styles["Heading3"]),
         Paragraph(
-            "<b>L2 Instance YAML Attachment</b>",
-            styles["Heading3"],
+            "<i>This PDF carries two file attachments. Open it in "
+            "any reader (Adobe Acrobat, Preview, Foxit, etc.), "
+            "find the attachments panel, and download each file "
+            "byte-for-byte.</i>",
+            styles["BodyText"],
         ),
+        Spacer(1, 0.05 * inch),
         Paragraph(
-            "<i>The L2 instance YAML this report was generated "
-            "against is embedded as a PDF file attachment "
-            "(filename "
-            f"<font face='Courier'>{l2_label}</font>). Open this "
-            "PDF in any reader (Adobe Acrobat, Preview, Foxit, "
-            "etc.), find the attachments panel, and download the "
-            "file byte-for-byte. Run "
+            "<b><font face='Courier'>"
+            f"{l2_label}"
+            "</font></b> &mdash; the L2 instance YAML this report "
+            "was generated against. Run "
             "<font face='Courier'>"
             "sha256sum &lt;attachment&gt;"
             "</font> to confirm it matches the "
-            "<font face='Courier'>l2_yaml_sha</font> shown in the "
-            "table above; that proves the L2 spec the auditor saw "
-            "is the L2 spec the report was generated against.</i>",
+            "<font face='Courier'>l2_yaml_sha</font> in the "
+            "sources table; that proves the L2 spec the auditor "
+            "saw is the L2 spec the report was generated against.",
+            styles["BodyText"],
+        ),
+        Spacer(1, 0.05 * inch),
+        Paragraph(
+            "<b><font face='Courier'>verify-provenance.py</font>"
+            "</b> &mdash; the manual-recompute Python recipe shown "
+            "above, with this report's per-source high-water marks "
+            "and code identity already substituted in. Drop it into "
+            "a script that opens a database cursor against the "
+            "operator's tables, run it, and the printed hash should "
+            "match the composite fingerprint above.",
             styles["BodyText"],
         ),
     ]

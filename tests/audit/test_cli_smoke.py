@@ -238,6 +238,51 @@ def test_audit_apply_pdf_embeds_l2_yaml_attachment(
     )
 
 
+def test_audit_apply_pdf_embeds_verify_script_attachment(
+    min_config: Path, tmp_path: Path,
+):
+    """The PDF carries the manual-recompute recipe as a downloadable
+    ``verify-provenance.py`` attachment.
+
+    Pairs with the L2 yaml attachment: a verifier opens the PDF's
+    attachments panel, downloads both files byte-exact, and runs the
+    script against the operator's database to recompute the composite
+    fingerprint independently. The script body is the same text the
+    appendix renders inline, so what the reader sees on the page is
+    what they download.
+    """
+    out = tmp_path / "report.pdf"
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "audit", "apply",
+            "-c", str(min_config),
+            "--l2", str(_SPEC_EXAMPLE),
+            "-o", str(out),
+            "--execute",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    from pypdf import PdfReader
+    reader = PdfReader(str(out))
+    attachments = reader.attachments
+    assert "verify-provenance.py" in attachments, (
+        f"expected verify-provenance.py attachment, got "
+        f"{list(attachments.keys())}"
+    )
+    script_bytes = attachments["verify-provenance.py"][0]
+    script_text = script_bytes.decode("utf-8")
+    # Must be the recipe we render in the appendix, not arbitrary
+    # bytes — these markers are stable load-bearing fragments of
+    # _build_verify_recipe_script.
+    assert "import hashlib" in script_text
+    assert "def hash_table(cur, table, hwm):" in script_text
+    assert "<prefix>_transactions" in script_text
+    assert "print(h.hexdigest())" in script_text
+
+
 def test_audit_apply_pdf_appendix_bookmarked_at_level_0(
     min_config: Path, tmp_path: Path,
 ):
