@@ -58,7 +58,7 @@ from quicksight_gen.common.l2.loader import load_instance
 from quicksight_gen.common.l2.seed import emit_seed
 from quicksight_gen.common.l2.auto_scenario import default_scenario_for
 
-l2 = load_instance("tests/l2/sasquatch_pr.yaml")
+l2 = load_instance("tests/l2/{{ l2_instance_name }}.yaml")
 sql = emit_seed(l2, default_scenario_for(l2).scenario)
 print(next(line for line in sql.splitlines() if "card_brand" in line))
 ```

@@ -23,7 +23,7 @@ theme:
     - content.code.copy
 
 extra_css:
-  - stylesheets/sasquatch.css
+  - stylesheets/site.css
 
 extra_javascript:
   # Click-to-zoom lightbox for inline-SVG diagrams emitted by

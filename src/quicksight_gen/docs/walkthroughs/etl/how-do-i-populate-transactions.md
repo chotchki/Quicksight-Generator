@@ -40,18 +40,18 @@ Two reference points:
   your L2 instance.
 
 The `<prefix>` in this walkthrough's SQL is your L2 instance name
-(e.g., `sasquatch_pr`); your ETL substitutes it once when wiring
+(e.g., `{{ l2_instance_name }}`); your ETL substitutes it once when wiring
 the projection.
 
 ## What you'll see in the demo
 
-Run:
+Run (substitute your own L2 path for the bundled fixture below):
 
 ```python
 from quicksight_gen.common.l2.loader import load_instance
 from quicksight_gen.common.l2.schema import emit_schema
 
-l2 = load_instance("tests/l2/sasquatch_pr.yaml")
+l2 = load_instance("tests/l2/{{ l2_instance_name }}.yaml")
 print(emit_schema(l2)[:4000])
 ```
 
