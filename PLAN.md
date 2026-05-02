@@ -543,7 +543,7 @@ The pre-Phase-Q backlog item — slotted last as polish.
 
 Acceptance: with `QS_DOCS_L2_INSTANCE=tests/l2/spec_example.yaml` the rendered site contains zero persona tokens (allowlist for Tier 2 intentional citations); with `sasquatch_pr` the existing flavor renders unchanged.
 
-- [ ] **Q.5.a — Expand `HandbookVocabulary` surface.** Add fields the docs currently hardcode:
+- [x] **Q.5.a — Expand `HandbookVocabulary` surface.** Add fields the docs currently hardcode:
   - `vocab.fixture_name` (e.g. `sasquatch_pr`) for "the canonical bundled fixture" sentences
   - `vocab.demo.drift_account / overdraft_account / limit_breach_account` typed `(account_id, display_name)` tuples drawn from the active L2's planted scenarios; `None` when no plants
   - `vocab.demo.investigation` carrying `(anchor, layering_chain, anomaly_pair)`; `None` when no `inv_fanout_plants`
@@ -551,23 +551,23 @@ Acceptance: with `QS_DOCS_L2_INSTANCE=tests/l2/spec_example.yaml` the rendered s
   - `spec_example` (no plants) → every `demo.*` is `None`; templates render generic prose
   - Tests in `test_handbook_vocabulary.py` for both fixtures + the empty-plants fallback
 
-- [ ] **Q.5.b — Tier 1 walkthroughs mechanical replace** (~5 pages):
+- [x] **Q.5.b — Tier 1 walkthroughs mechanical replace** (~5 pages):
   - `walkthroughs/etl/how-do-i-populate-transactions.md` — sasquatch_pr → `{{ l2_instance_name }}` in prose, `<your-l2-instance>` in code blocks
   - `walkthroughs/etl/how-do-i-add-a-metadata-key.md` — same
   - `walkthroughs/customization/how-do-i-extend-canonical-values.md` — same
   - `walkthroughs/etl/how-do-i-validate-a-single-account-day.md` — bigfoot-brews / sasquatch-sips → `{{ vocab.demo.drift_account.id }}` etc.; whole page guarded by `{% if vocab.demo.drift_account %}` with a "needs planted scenarios — point at sasquatch_pr" callout otherwise
 
-- [ ] **Q.5.c — Reference docs + handbook fixture refs** (~6 pages):
+- [x] **Q.5.c — Reference docs + handbook fixture refs** (~6 pages):
   - `Schema_v6.md` — `sasquatch_ar` example → `{{ l2_instance_name }}`
   - `handbook/{l1,executives,l2_flow_tracing,customization}.md` — "canonical sasquatch_pr fixture" → "the bundled `{{ vocab.fixture_name }}` fixture"
   - `for-your-role/integrator.md` — same fixture rename
 
-- [ ] **Q.5.d — D2: Investigation walkthroughs split into mechanics + worked-example.** 4 pages (recipient-fanout, volume-anomalies, money-trail, account-network):
+- [x] **Q.5.d — D2: Investigation walkthroughs split into mechanics + worked-example.** 4 pages (recipient-fanout, volume-anomalies, money-trail, account-network):
   - Body rewritten as L2-portable mechanics: how the slider works, what the σ-bucket histogram means, how to interpret the table — without naming specific accounts
   - Below the body, an admonition `??? example "Worked example: {{ vocab.fixture_name }}"` rendered only when `vocab.demo.has_investigation_plants`. Reads `vocab.demo.investigation.anchor.name`, `.layering_chain[*]`, `.anomaly_pair` for the specific Juniper / Cascadia / Shell A-B-C narrative
   - When active L2 is `spec_example`, the worked example simply doesn't render — body stands on its own
 
-- [ ] **Q.5.e — E2: rewrite `common/persona.py` as a generic skeleton.**
+- [x] **Q.5.e — E2: rewrite `common/persona.py` as a generic skeleton.**
   - Drop the hardcoded SNB_PERSONA constant and Sasquatch-flavored strings from `persona.py`
   - Move the Sasquatch persona content into `tests/l2/sasquatch_pr.yaml`'s existing `persona:` / `vocabulary:` block (or extend if not present)
   - `persona.py` becomes typed dataclasses + a loader that builds a `DemoPersona` from L2; default loader returns a neutral `DemoPersona()` for instances without persona content
@@ -575,12 +575,12 @@ Acceptance: with `QS_DOCS_L2_INSTANCE=tests/l2/spec_example.yaml` the rendered s
   - `api/common-foundations.md` mkdocstrings now renders generic-shape persona dataclasses without Sasquatch refs
   - All existing tests + e2e harness continue to pass against sasquatch_pr (the persona content moved, not deleted)
 
-- [ ] **Q.5.f — CI gate.** Add `tests/test_docs_persona_neutral.py`:
+- [x] **Q.5.f — CI gate.** Add `tests/test_docs_persona_neutral.py`:
   - Builds the site twice: once with `QS_DOCS_L2_INSTANCE=tests/l2/spec_example.yaml` (asserts zero persona tokens after allowlist), once with `sasquatch_pr.yaml` (asserts the flavor strings render — guards against accidentally over-deleting)
   - Allowlist for Tier 2 intentional fixture citations (e.g. `tests/l2/sasquatch_pr.yaml` mentions in customization handbook)
   - Runs in <15s including both builds (cache the built site between sub-tests)
 
-- [ ] **Q.5.g — End-to-end verification.** mkdocs build clean against both fixtures; `pytest` green; spot-check 3 pages each in the rendered spec_example + sasquatch_pr builds for visual correctness.
+- [x] **Q.5.g — End-to-end verification.** mkdocs build clean against both fixtures; `pytest` green; spot-check 3 pages each in the rendered spec_example + sasquatch_pr builds for visual correctness.
 
 ---
 
