@@ -69,6 +69,10 @@ ALLOWED_LEAK_COUNTS: dict[str, int] = {
     "index.html": 5,
     "walkthroughs/customization/how-do-i-publish-docs-against-my-l2/"
     "index.html": 5,
+    # The persona-block walkthrough explicitly cites sasquatch_pr as
+    # the worked example for the optional persona: YAML block.
+    "walkthroughs/customization/how-do-i-brand-my-handbook-prose/"
+    "index.html": 15,
     # Macro-emitted "Fallback example" admonition naming sasquatch_pr
     # when spec_example carries no Chains entries.
     "concepts/l2/chain/index.html": 1,

@@ -112,7 +112,10 @@ The integrator workflow loop:
 The
 [publishing-workflow walkthrough](../walkthroughs/customization/how-do-i-publish-docs-against-my-l2.md)
 covers the docs-side of the same loop — re-rendering the handbook
-against your edited L2.
+against your edited L2. To get your institution's name +
+stakeholders + GL labels into the handbook prose, add an optional
+`persona:` block to your L2 (see
+[How do I brand my handbook prose?](../walkthroughs/customization/how-do-i-brand-my-handbook-prose.md)).
 
 ## The concepts you'll want grounded
 

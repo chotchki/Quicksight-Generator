@@ -96,6 +96,10 @@ new persona work or dashboard redesigns:
     <h3>How do I extend the schema with a new transfer_type or account_type?</h3>
     <p>Adding to the canonical value lists, downstream impact on filter dropdowns, why no new tables are needed.</p>
   </a>
+  <a class="snb-card" href="../../walkthroughs/customization/how-do-i-brand-my-handbook-prose/">
+    <h3>How do I brand my handbook prose?</h3>
+    <p>The optional <code>persona:</code> YAML block — institution name + acronym, stakeholders, GL account labels, merchants, flavor literals. Substitutes via <code>vocab</code> Jinja references at mkdocs render. Skip the block to keep neutral fallback prose.</p>
+  </a>
 </div>
 
 ## Testing your customization

@@ -53,15 +53,22 @@ Three substitution surfaces:
   illustrative; those are tagged for future cleanup or replacement
   with vocab pulls.
 
-## Custom built-in vocabularies
+## Adding your institution's flavor
 
-If your institution wants richer flavor than the neutral fallback —
-named scenarios, regional voice, custom Investigation personas —
-either:
+If your institution wants richer flavor than the neutral fallback,
+the primary path is the optional **`persona:` block** on your L2
+YAML — institution name + acronym, upstream stakeholders, GL
+account labels, merchant names, free-form flavor literals. The
+handbook templates substitute via `vocab` Jinja references at render time.
 
-1. Submit a PR adding your vocabulary as a built-in (the same way
-   `sasquatch_pr` ships one), OR
-2. Wait for the future `personas:` YAML block (audit §5 sketch)
-   that will let your L2 carry the data inline.
+See [How do I brand my handbook prose?](how-do-i-brand-my-handbook-prose.md)
+for the full block shape, the field-by-field map to handbook
+surfaces, and the neutral fall-through behavior when fields are
+omitted.
 
-The neutral fallback keeps your handbook readable until then.
+The Investigation walkthroughs' worked-example admonitions (the
+`??? example "Worked example: <fixture>"` blocks naming specific
+accounts) are still wired by *role* in
+`common/handbook/vocabulary.py::_sasquatch_pr_vocabulary` rather
+than from the YAML — those need a small Python addition for now.
+A future extension will likely lift them into the persona block.
