@@ -1,32 +1,57 @@
 # Release Notes
 
-## v8.5.4 — Markdown links inside bullet items now render
+## v8.5.4 — Bullet markdown links + daily-balance carry-forward
 
-``rt.bullets()`` ran each item through ``_xml_escape`` directly,
-so an inline ``[text](url)`` markdown link inside a bullet
-survived as literal text in the rendered text box. L1 dashboard
-bullets fed from L2 description strings (which carry markdown
-links by SPEC convention) showed the raw markup instead of
-clickable anchors.
+Two small testing-feedback fixes.
 
 ### Operator-facing
 
-- **Bulleted lists now render inline links.**
-  ``- see [the docs](https://x.com)`` becomes a bullet with a
-  clickable "the docs" anchor, matching the behavior of
-  paragraph prose (v8.4.0's ``rt.markdown()`` helper).
-- **Soft line breaks inside bullet items.** A lone ``\\n`` in a
-  bullet item now becomes ``<br/>`` (intra-bullet break), useful
-  for L2 descriptions that wrap mid-item.
-- Plain-text bullets render identically to before — ``markdown()``
-  is a strict superset of the old ``_xml_escape`` path.
+- **Markdown links inside bullets now render.**
+  ``rt.bullets()`` previously XML-escaped each item directly, so
+  an inline ``[text](url)`` link inside a bullet survived as
+  literal text. L1 Drift's "Getting Started" block (which feeds
+  L2 description strings, markdown-shaped by SPEC convention)
+  showed the raw markup instead of clickable anchors. Bullets
+  now apply ``markdown()`` per item — same helper that fixed
+  paragraph prose in v8.4.0. Soft line breaks inside bullets
+  also work (``\\n`` → ``<br/>``).
+- **Daily Statement picker default no longer lands on a blank
+  day.** Baseline ``daily_balances`` rows previously emitted only
+  for Mon-Fri (the days the rail loop posts on). The Daily
+  Statement picker defaults to *yesterday*; when yesterday is a
+  Saturday / Sunday / US holiday, the unfilled view left the
+  picker on a date with no balance row and the table rendered
+  empty. ``_emit_baseline_daily_balances`` now carries each
+  account's last business-day EOD forward through every calendar
+  day in the window — Friday's EOD survives Sat + Sun + Mon
+  morning, etc., so weekend / holiday picker defaults always
+  land on a real row.
 
 ### Engineering surface
 
-- ``rt.bullets()`` now applies ``markdown()`` per item.
-- ``tests/unit/test_rich_text.py`` adds 3 regression tests:
-  inline-markdown-link inside bullet, soft-break inside bullet,
-  plain-text bullets unchanged.
+- ``common/rich_text.py`` — ``bullets()`` applies ``markdown()``
+  per item. ``tests/unit/test_rich_text.py`` adds 3 regression
+  tests (inline link inside bullet, soft break inside bullet,
+  plain-text bullets unchanged).
+- ``common/l2/seed.py`` — ``_emit_baseline_daily_balances``
+  fills forward into the full calendar-day window (not just
+  ``state.business_days``). Drift invariant unchanged: weekend
+  rows carry the prior business day's EOD, which equals
+  ``SUM(signed_amount)`` through that day (no legs post on
+  weekends, so the cumulative sum is the same).
+- ``tests/data/test_l2_baseline_seed.py`` — re-locked
+  ``test_full_seed_hash_lock_*`` SHA256 anchors for both
+  ``sasquatch_pr`` and ``spec_example`` after the daily_balances
+  shape change. v8.5.4 hash anchors are documented inline.
+
+### Known follow-ups (not in v8.5.4)
+
+- **Weekend transactions.** The rail loop still skips Sat / Sun
+  for transaction generation (only daily_balances now span the
+  full calendar). A "weekend has no transactions" Sunday view on
+  Monday morning is still surprising relative to real banking.
+  Tracked separately — bigger change since it touches the rail-
+  firing density model end to end.
 
 ## v8.5.3 — CI hotfix: playwright in [dev] for pyright stub resolution
 

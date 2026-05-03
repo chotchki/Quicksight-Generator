@@ -2938,10 +2938,24 @@ def _emit_baseline_daily_balances(
     Last leg of each day wins, which captures the correct EOD snapshot
     even when rails iterated in name-order across all days during emit.
 
+    Carry-forward to non-business days (v8.5.4): legs only post on
+    business days, so the per-leg accumulation produces balance
+    snapshots only for Mon-Fri (excluding US holidays). The Daily
+    Statement picker defaults to *yesterday* (real time) — when
+    yesterday is a Saturday/Sunday/holiday, an unfilled view leaves
+    the picker on a date with no balance row and the table renders
+    empty. After the per-leg pass, fill forward each account's
+    last-known balance through every calendar day in the window so
+    weekend / holiday picker defaults always land on a real row
+    (the Friday EOD balance carries through Sat + Sun, etc.).
+
     Drift invariant guarantee: by walking the FULL leg history
     chronologically, ``daily_balances.money == SUM(signed_amount)
     through end of day`` for every (account, day) — the L1 drift matview
-    computes zero for every baseline row.
+    computes zero for every baseline row. Carry-forward weekend rows
+    preserve the same invariant: their ``money`` is the prior business
+    day's EOD, which equals ``SUM(signed_amount)`` through that prior
+    day (no legs post Sat/Sun, so the cumulative sum is unchanged).
 
     Per-role business-day offsets (M.4.4.14): roles in
     ``instance.role_business_day_offsets`` get their business_day_start
@@ -2968,9 +2982,32 @@ def _emit_baseline_daily_balances(
             eod_balances[(account_id, day)] = running
             _ = posting
 
+    # Calendar days in the window — every date, not just Mon-Fri. Used
+    # for the carry-forward fill below.
+    calendar_days: list[date] = []
+    cursor = state.anchor - timedelta(days=state.window_days)
+    while cursor <= state.anchor:
+        calendar_days.append(cursor)
+        cursor += timedelta(days=1)
+
+    # Per account, fill forward the last-known balance into every
+    # calendar day in the window. An account's first business-day
+    # balance lands on its activity day; days before it get the
+    # account's initial balance; days between business-day legs
+    # carry the most recent EOD; days after the final leg through
+    # the anchor carry that final EOD.
+    accounts_with_activity: set[Identifier] = {a for a, _ in eod_balances}
+    filled_eod: dict[tuple[Identifier, date], Decimal] = {}
+    for account_id in sorted(accounts_with_activity, key=str):
+        running = state.initial_balances.get(account_id, Decimal("0"))
+        for day in calendar_days:
+            if (account_id, day) in eod_balances:
+                running = eod_balances[(account_id, day)]
+            filled_eod[(account_id, day)] = running
+
     rows: list[str] = []
     for (account_id, day), money in sorted(
-        eod_balances.items(), key=lambda kv: (str(kv[0][0]), kv[0][1]),
+        filled_eod.items(), key=lambda kv: (str(kv[0][0]), kv[0][1]),
     ):
         meta = account_meta.get(account_id)
         if meta is None:
