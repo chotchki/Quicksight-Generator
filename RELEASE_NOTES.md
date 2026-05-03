@@ -1,5 +1,70 @@
 # Release Notes
 
+## v8.5.0 — Plain-English column headers on table visuals
+
+Closes the v8.4.0 "Known follow-ups" carryover. Pre-v8.5.0 every
+Table visual in QuickSight rendered the raw snake_case column name
+as the column header (``account_id``, ``business_day_start``,
+``transfer_id``, ``signed_amount``) — readable to engineers, jarring
+to CPAs and operators staring at the dashboard all day.
+
+### Operator-facing
+
+- **Table column headers are now title-cased by default.**
+  ``account_id`` → ``Account ID``, ``business_day_start`` →
+  ``Business Day Start``, ``signed_amount`` → ``Signed Amount``.
+  The smart-title pass preserves common initialisms verbatim
+  (``id``, ``eod``, ``url``, ``sql``, ``json``, ``uuid``, ``ip``,
+  ``api``, ``aws``, ``qs``, ``etl``, ``csv``, ``tsv``, ``uri``,
+  ``tz``, ``utc``) so the header reads ``EOD Balance`` not
+  ``Eod Balance``.
+- **Per-column override.** Authors can set
+  ``ColumnSpec(name="balance", display_name="Balance ($)")`` for
+  any column where title-cased snake_case isn't the right form.
+  Override applies anywhere ``Column.human_name`` is read (today:
+  Table headers; future: BarChart/KPI axis labels can wire the
+  same surface).
+- **Applies to every Table visual across all 4 apps.** L1
+  Dashboard, L2 Flow Tracing, Investigation, Executives — class
+  test walks every app's emitted JSON and asserts no CustomLabel
+  survives in raw snake_case form.
+
+### Engineering surface
+
+- **``ColumnSpec.human_name`` property + ``_smart_title`` helper.**
+  In ``common/dataset_contract.py``. ``human_name`` returns
+  ``display_name`` when set, otherwise ``_smart_title(name)``.
+  ``_smart_title`` does ``str.title()`` then re-uppercases any
+  word in ``_INITIALISMS``.
+- **``Column.human_name`` property on the typed Column ref.** In
+  ``common/tree/datasets.py``. Looks up the dataset's contract
+  via ``get_contract`` and returns the ColumnSpec's ``human_name``;
+  falls back to ``_smart_title(name)`` when no contract is
+  registered (test fixtures, kitchen-sink).
+- **``TableFieldOption`` + ``TableFieldOptions`` models.** In
+  ``common/models.py``. Wires
+  ``TableConfiguration.FieldOptions.SelectedFieldOptions[].CustomLabel``
+  through to AWS — QuickSight's documented per-column header
+  override surface.
+- **``Table.emit()`` builds FieldOptions from every leaf.** In
+  ``common/tree/visuals.py``. New ``_field_label`` helper resolves
+  Column refs (via ``Column.human_name``), CalcFields (via
+  ``_smart_title(name)``), and bare strings (via
+  ``_smart_title``). New ``_all_leaves`` collects field-well
+  leaves across both aggregated + unaggregated table shapes.
+- **Class-level regression coverage.**
+  - ``tests/unit/test_column_human_name.py`` — 14 unit tests on
+    ``_smart_title`` (including all 16 initialisms, mixed-case
+    edge cases) and ``ColumnSpec.human_name``
+    (override-vs-derived).
+  - ``tests/json/test_table_column_headers.py`` — 12 class tests
+    (4 apps × 3 invariants):
+    1. Every Table visual emits ``ChartConfiguration.FieldOptions``.
+    2. No surviving ``CustomLabel`` matches the raw snake_case
+       pattern (``^[a-z]+(_[a-z0-9]+)+$``).
+    3. ``SelectedFieldOptions`` count exactly matches field-well
+       leaf count (no drift between FieldWells and FieldOptions).
+
 ## v8.4.0 — Independent system test bug sweep + cleanup isolation
 
 Four user-reported bugs from a from-scratch independent system test
@@ -63,12 +128,8 @@ regression coverage.
 
 ### Known follow-ups (not in v8.4.0)
 
-- **Plain-English column headers on table visuals** — deferred to
-  next release. Investigated but needs an L2-instance-aware label
-  surface on ``ColumnSpec`` (likely default = title-case the
-  snake_case column name; opt-out per-column when a different
-  human-readable form is preferred). Bigger sweep across all
-  datasets — separate session.
+- **Plain-English column headers on table visuals** — landed in
+  v8.5.0.
 
 ## v8.3.4 — Tree validator: every parameter-bound filter must be settable
 

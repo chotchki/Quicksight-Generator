@@ -675,10 +675,31 @@ class TableOptions:
 
 
 @dataclass
+class TableFieldOption:
+    """Per-column header override for a Table visual (v8.5.0).
+
+    ``FieldId`` references one of the Table's field-well leaves
+    (Dim or Measure). ``CustomLabel`` overrides the header text
+    QuickSight would otherwise auto-derive from the column name.
+    ``Visibility`` defaults to ``"VISIBLE"``.
+    """
+    FieldId: str
+    CustomLabel: str | None = None
+    Visibility: str = "VISIBLE"  # VISIBLE | HIDDEN
+
+
+@dataclass
+class TableFieldOptions:
+    """Container for per-column table header overrides (v8.5.0)."""
+    SelectedFieldOptions: list[TableFieldOption] | None = None
+
+
+@dataclass
 class TableConfiguration:
     FieldWells: TableFieldWells | None = None
     SortConfiguration: dict[str, Any] | None = None
     TableOptions: TableOptions | None = None
+    FieldOptions: TableFieldOptions | None = None
 
 
 @dataclass
