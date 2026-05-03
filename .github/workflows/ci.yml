@@ -25,7 +25,12 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        # `[audit]` brings in reportlab + pypdf + pyhanko; the audit
+        # CLI verb (and tests/audit/) require them — pyhanko in
+        # particular is needed even for unsigned PDFs because the
+        # empty reviewer signature widgets land via pyhanko on every
+        # render, regardless of whether `signing:` is configured.
+        run: pip install -e ".[dev,audit]"
 
       - name: Run tests with coverage (pytest sessionstart runs pyright strict)
         run: pytest --cov=quicksight_gen --cov-report=xml --cov-report=term
