@@ -46,7 +46,7 @@ phases that have stabilized enough to land here.
 
 - [ ] **V.6 — R.7.d Re-screenshot at 1280×900.** Re-run `quicksight-gen docs screenshot --all -o src/quicksight_gen/docs/_screenshots/` against the deployed `spec_example` dashboards (Postgres + Oracle live as of v8.2.1). Current screenshots predate Phase R's realistic baseline + Phase U's audit work.
 
-- [ ] **V.7 — R.7.e Lift R.1.f spec into a docs-site reference page.** Now that the implementation has stabilized and the headline numbers in the spec match what the generator actually produces, lift the design doc out of `PLAN_ARCHIVE.md` into the docs site as durable reference. Likely target: `docs/handbook/seed-generator.md`.
+- [x] **V.7 — R.7.e Lift R.1.f spec into a docs-site reference page.** Lifted to `src/quicksight_gen/docs/handbook/seed-generator.md` and wired into the `Reference:` nav alongside `ETL — Data Integration`. Page reflects current code (R.4 starting-balance tuning, ach_return rate at 0.2, intraday rail kind added) rather than the stale 2025 spec values; spec narrative for the per-Rail kind / amount distribution / time-of-day / RNG / chain completion / overlay multipliers all match `common/l2/seed.py` + `common/l2/auto_scenario.py` as of v8.2.2.
 
 - [ ] **V.8 — Reference nav regroup.** Today's `Reference:` mkdocs nav is 8 flat items mixing three concerns: app handbooks (L1 / L2FT / Investigation / Executives / Audit), data contract (Schema v6 / L1 Invariants), and operations (ETL / Customization). Group them via nested `navigation.sections` (mkdocs-material supports it natively, already enabled in `mkdocs.yml`) to give 3 levels of cross-page nav within the existing theme:
   ```
