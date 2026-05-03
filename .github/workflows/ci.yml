@@ -395,13 +395,16 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Install genbadge
-        # W.8b — pre-W.8b this job re-ran the full pytest suite just
-        # to produce coverage.xml. Now it downloads the combined XML
-        # from the ``coverage`` job's artifact, so this install only
-        # needs the badge tool. ``uv pip install`` works with no
-        # project venv via ``--system`` (we don't need uv sync).
-        run: uv pip install --system 'genbadge[coverage]'
+      - name: Install genbadge in an isolated venv
+        # W.8b's ``uv pip install --system`` fails on the runner
+        # because the system Python is PEP 668 externally-managed
+        # (``error: The interpreter at /usr is externally managed``).
+        # Spin up a lightweight venv just for genbadge — same pattern
+        # the docs-portable-install job uses.
+        run: |
+          uv venv /tmp/badge-venv
+          uv pip install --python /tmp/badge-venv/bin/python \
+              'genbadge[coverage]'
 
       - name: Download combined coverage XML
         uses: actions/download-artifact@v6
@@ -414,7 +417,7 @@ jobs:
           name: coverage-md-${{ github.run_id }}
 
       - name: Generate badge SVG
-        run: genbadge coverage -i coverage.xml -o coverage-badge.svg
+        run: /tmp/badge-venv/bin/genbadge coverage -i coverage.xml -o coverage-badge.svg
 
       - name: Push badge + report to badges branch
         # Stash both files in /tmp before the orphan-branch reset
