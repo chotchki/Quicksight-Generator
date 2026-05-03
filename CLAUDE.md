@@ -181,7 +181,7 @@ Walk-the-flow drills (Account Network): right-click any touching-edges table row
 - Below-the-fold tables virtualize their cells — call `scroll_visual_into_view(page, title, timeout_ms)` before asserting on cell content or clicking a row.
 - QS tables also virtualize vertically (~10 DOM rows at a time, regardless of page size). `count_table_rows` returns DOM-visible count, saturating at ~10. For filter-narrowing assertions where before/after may exceed the viewport, use `count_table_total_rows` + `wait_for_table_total_rows_to_change` (slower; bumps page size to 10000 and scroll-accumulates the true total).
 - Failure screenshots saved to `tests/e2e/screenshots/<app>/` (gitignored).
-- Tunables via env vars: `QS_E2E_PAGE_TIMEOUT`, `QS_E2E_VISUAL_TIMEOUT`, `QS_E2E_USER_ARN`, `QS_E2E_IDENTITY_REGION`. Set `QS_GEN_TEST_L2_INSTANCE` to point fixtures at a non-default L2 YAML.
+- `QS_E2E_USER_ARN` is **required** (not a tunable) — `get_user_arn()` raises `RuntimeError` if unset. Export the ARN of the QuickSight user the embed URL should sign for: locally, your default-namespace IAM user; in CI, the `ci-bot` user. Tunables (with defaults): `QS_E2E_PAGE_TIMEOUT`, `QS_E2E_VISUAL_TIMEOUT`, `QS_E2E_IDENTITY_REGION`. Set `QS_GEN_TEST_L2_INSTANCE` to point fixtures at a non-default L2 YAML.
 - The `_harness_*` modules (under `tests/e2e/`) compose seed → deploy → planted-row assertions → cleanup as one fixture; every harness test (`test_harness_end_to_end.py`) runs that flow against a live DB + QuickSight account.
 
 ## Demo Data Conventions

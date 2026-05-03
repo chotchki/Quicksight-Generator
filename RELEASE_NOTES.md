@@ -1,5 +1,41 @@
 # Release Notes
 
+## v8.5.1 — Phase W: fail-loud user ARN + workflow-level cleanup job
+
+CI hardening — no user-facing app behavior changes.
+
+### Engineering surface
+
+- **W.4: ``get_user_arn()`` now raises on unset env var.** The
+  function previously fell back silently to a hardcoded
+  account-specific ARN string when ``QS_E2E_USER_ARN`` was unset.
+  That masked CI misconfiguration (Phase W's ``ci-bot`` user has
+  a different ARN than the local-dev default — the fallback
+  produced an embed URL the bot couldn't view) and burned a
+  project AWS account ID into source. Now: env var unset =
+  ``RuntimeError`` at the call site, with a message pointing at
+  ``.github/E2E_SETUP.md``.
+- **W.7: ``cleanup-pg`` workflow-level cleanup job.** Added as
+  the final job in ``e2e.yml``. ``needs: [e2e-pg-api-l1]`` +
+  ``if: always()`` so it always runs after the e2e job — including
+  when the e2e job is cancelled or its runner dies (GHA hard
+  timeout, OOM, manual cancel). Belt-and-suspenders to the
+  per-job ``Cleanup (always)`` step, which only catches step /
+  test failures (the runner has to be alive to fire it). Shares
+  the ``e2e-pg`` concurrency group so cleanup never interleaves
+  with another run's deploy.
+- **CLAUDE.md** updated to note ``QS_E2E_USER_ARN`` is now
+  required (not a tunable).
+- **PLAN.md** ticked W.0.a–W.0.d, W.1, W.2, W.3, W.4, W.7 — all
+  shipped. Remaining: W.5 (4 apps × API matrix + Oracle leg),
+  W.6 (browser tier), W.8 (release-pipeline gate), W.9 (Phase W
+  release cut).
+- **Class-level regression** in ``tests/unit/test_browser_helpers.py``:
+  4 tests on ``get_user_arn()`` (env var set / unset / empty /
+  error message points at runbook) + 1 test that the helpers
+  module source contains no hardcoded AWS account ID inside an
+  ARN literal.
+
 ## v8.5.0 — Plain-English column headers on table visuals
 
 Closes the v8.4.0 "Known follow-ups" carryover. Pre-v8.5.0 every

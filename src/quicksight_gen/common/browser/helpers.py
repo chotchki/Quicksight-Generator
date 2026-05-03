@@ -32,16 +32,27 @@ SCREENSHOT_DIR = Path(
 
 
 def get_user_arn() -> str:
-    """Return the QuickSight user ARN to embed for.
+    """Return the QuickSight user ARN to embed dashboards for.
 
-    Set QS_E2E_USER_ARN to override. Defaults to the root-linked IAM
-    default-namespace user already validated for this account.
+    Reads ``QS_E2E_USER_ARN``. Raises ``RuntimeError`` when unset —
+    the previous silent fallback to a hardcoded account-specific
+    ARN string masked CI misconfiguration (Phase W's ``ci-bot`` user
+    has a different ARN than the local-dev default; the fallback
+    produced an embed URL the bot couldn't view) and burned a
+    project AWS account ID into the source. Fail-loud is the
+    contract.
     """
     arn = os.environ.get("QS_E2E_USER_ARN")
-    if arn:
-        return arn
-    # Default for this project — see PLAN.md Resolved Questions #1
-    return "arn:aws:quicksight:us-east-1:470656905821:user/default/470656905821"
+    if not arn:
+        raise RuntimeError(
+            "QS_E2E_USER_ARN is not set. Embedding requires a "
+            "QuickSight user ARN to sign the URL for. Export the "
+            "ARN of the user whose session you want the embed to "
+            "render under (locally: your default-namespace IAM "
+            "user; CI: the ci-bot user). See "
+            "`.github/E2E_SETUP.md` for the CI setup."
+        )
+    return arn
 
 
 def generate_dashboard_embed_url(
