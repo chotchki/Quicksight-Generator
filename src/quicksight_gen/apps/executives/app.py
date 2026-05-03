@@ -147,7 +147,7 @@ def _section_box_content(
         rt.heading(title, color=accent),
         rt.BR,
         rt.BR,
-        rt.body(body),
+        rt.markdown(body),
         rt.BR,
         rt.bullets(bullet_items),
     )
@@ -173,7 +173,7 @@ def _populate_getting_started(
                 ),
                 rt.BR,
                 rt.BR,
-                rt.body(
+                rt.markdown(
                     "Board-cadence view of the bank's transaction "
                     "throughput, money movement, and account coverage. "
                     "Scan for trends; click any row or bar to drill into "
@@ -192,7 +192,7 @@ def _populate_getting_started(
                 rt.heading("Clickable cells", color=accent),
                 rt.BR,
                 rt.BR,
-                rt.body(
+                rt.markdown(
                     "Cells rendered in the theme accent color are "
                     "interactive:"
                 ),

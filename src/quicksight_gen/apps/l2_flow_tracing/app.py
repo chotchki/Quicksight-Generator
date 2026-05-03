@@ -408,11 +408,11 @@ def _populate_getting_started(
                     color=accent,
                 ),
                 rt.BR, rt.BR,
-                rt.body(_GETTING_STARTED_DESCRIPTION),
+                rt.markdown(_GETTING_STARTED_DESCRIPTION),
                 rt.BR, rt.BR,
                 rt.subheading("L2 Instance", color=accent),
                 rt.BR,
-                rt.body(welcome_body),
+                rt.markdown(welcome_body),
             ),
         ),
         width=36,
@@ -1253,9 +1253,9 @@ def _populate_placeholder(
             content=rt.text_box(
                 rt.inline(title, font_size="24px", color=accent),
                 rt.BR, rt.BR,
-                rt.body(body),
+                rt.markdown(body),
                 rt.BR, rt.BR,
-                rt.body(
+                rt.markdown(
                     f"(Skeleton at M.3.4 — visuals + datasets land at {substep}.)"
                 ),
             ),

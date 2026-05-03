@@ -1,0 +1,126 @@
+"""Class-level test: no text-box content carries unconverted markdown.
+
+Closes the v8.4.0 footgun where ``rt.body(welcome_body)`` would XML-
+escape multi-paragraph prose verbatim — ``\\n\\n`` paragraph breaks
+survived as whitespace (QS only honors ``<br/>``), and inline
+``[text](url)`` markdown links never became QuickSight ``<a>``
+elements (they showed as literal bracket-paren syntax in the
+rendered text box).
+
+Walks the emitted analysis JSON for every shipped app, finds every
+SheetTextBox.Content string, asserts:
+
+1. No literal ``\\n\\n`` substring survives — paragraph breaks must
+   be ``<br/><br/>``.
+2. No ``[text](url)`` substring survives — markdown links must be
+   converted to ``<a href="url">text</a>``.
+
+Either failure means a ``rt.body(some_string)`` call site needs to
+become ``rt.markdown(some_string)`` (or the input string needs to
+not contain those constructs at all).
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Any, Iterator
+
+import pytest
+
+from tests._test_helpers import make_test_config
+
+
+_CFG = make_test_config()
+
+
+# Same regex shape as ``common/rich_text.py::_MARKDOWN_LINK`` — must
+# stay in sync. If the helper's regex changes, this one moves with it.
+_UNCONVERTED_MARKDOWN_LINK = re.compile(r"\[([^\]]+?)\]\(([^)]+?)\)")
+
+
+def _all_text_box_contents(emitted: Any) -> Iterator[tuple[str, str]]:
+    """Walk the emitted analysis dict, yield ``(sheet_id, content)`` for
+    every SheetTextBox.
+
+    Uses the AWS API JSON shape (post-``to_aws_json`` /
+    ``_strip_nones``): ``Definition.Sheets[].TextBoxes[].Content``.
+    """
+    definition = emitted.get("Definition", {})
+    for sheet in definition.get("Sheets", []):
+        sheet_id = sheet.get("SheetId", "<unknown>")
+        for tb in sheet.get("TextBoxes") or []:
+            yield sheet_id, tb.get("Content", "")
+
+
+def _build_all_apps():
+    """Build all 4 shipped apps + emit each analysis to the AWS shape.
+
+    Yields ``(app_name, emitted_analysis_dict)`` tuples. Lazy import
+    of each app's builder so a build failure in one app doesn't mask
+    failures in others (each shows up as its own pytest collection
+    error rather than a module-level ImportError).
+    """
+    from quicksight_gen.apps.l1_dashboard.app import build_l1_dashboard_app
+    from quicksight_gen.apps.l2_flow_tracing.app import (
+        build_l2_flow_tracing_app,
+    )
+    from quicksight_gen.apps.investigation.app import build_investigation_app
+    from quicksight_gen.apps.executives.app import build_executives_app
+
+    builders = [
+        ("l1_dashboard", build_l1_dashboard_app),
+        ("l2_flow_tracing", build_l2_flow_tracing_app),
+        ("investigation", build_investigation_app),
+        ("executives", build_executives_app),
+    ]
+    for name, build in builders:
+        app = build(_CFG)
+        emitted = app.emit_analysis().to_aws_json()
+        yield name, emitted
+
+
+@pytest.mark.parametrize("app_name,emitted", list(_build_all_apps()))
+def test_no_unconverted_paragraph_break_in_text_box_content(
+    app_name: str, emitted: Any,
+) -> None:
+    """Class regression: no ``\\n\\n`` (or longer run) survives in
+    any rendered text box. Markdown convention paragraph breaks must
+    become ``<br/><br/>`` via ``rt.markdown()``."""
+    bad: list[str] = []
+    for sheet_id, content in _all_text_box_contents(emitted):
+        if "\n\n" in content:
+            preview = content[: content.index("\n\n")][-40:]
+            bad.append(
+                f"  sheet={sheet_id!r}: content carries literal \\n\\n "
+                f"after: ...{preview!r}"
+            )
+    assert not bad, (
+        f"App {app_name!r} has text-box content with unconverted "
+        f"paragraph breaks. Replace the ``rt.body(string)`` call site "
+        f"with ``rt.markdown(string)`` (or strip the \\n\\n if not "
+        f"actually a paragraph break):\n" + "\n".join(bad)
+    )
+
+
+@pytest.mark.parametrize("app_name,emitted", list(_build_all_apps()))
+def test_no_unconverted_markdown_link_in_text_box_content(
+    app_name: str, emitted: Any,
+) -> None:
+    """Class regression: no ``[text](url)`` survives in any rendered
+    text box. Markdown links must become QuickSight ``<a>`` elements
+    via ``rt.markdown()`` (or ``rt.link()`` for one-off explicit
+    construction)."""
+    bad: list[str] = []
+    for sheet_id, content in _all_text_box_contents(emitted):
+        match = _UNCONVERTED_MARKDOWN_LINK.search(content)
+        if match:
+            bad.append(
+                f"  sheet={sheet_id!r}: content carries literal "
+                f"{match.group(0)!r} (markdown link not converted)"
+            )
+    assert not bad, (
+        f"App {app_name!r} has text-box content with unconverted "
+        f"markdown links. Replace the ``rt.body(string)`` call site "
+        f"with ``rt.markdown(string)`` so QS renders the link as "
+        f"clickable:\n" + "\n".join(bad)
+    )
