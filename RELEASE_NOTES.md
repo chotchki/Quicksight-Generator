@@ -1,5 +1,92 @@
 # Release Notes
 
+## v8.6.0 — Phase W: e2e CI infrastructure + docs ship in the wheel
+
+The headline operator-facing fix: ``quicksight-gen docs apply`` now
+works from a PyPI install. Pre-v8.6.0 the CLI assumed the docs build
+inputs (``mkdocs.yml``, ``main.py``, the L2 fixtures) lived at the
+repo root and would fail with ``Inherited config file 'mkdocs.yml'
+does not exist`` (or worse, silently break) when run from a wheel —
+even though the ``[docs]`` extra installed cleanly. Behind that fix
+sits the rest of Phase W: a real CI graph for the e2e tier, a
+release-pipeline gate that holds prod publish on a live AWS run, and
+two perf-debug surfaces (top-queries dump + unified coverage report).
+
+### Operator-facing
+
+- **``docs apply`` works from PyPI.** ``mkdocs.yml`` and ``main.py``
+  now ship inside the package at ``src/quicksight_gen/``, with the
+  bundled L2 fixtures at ``src/quicksight_gen/_l2_fixtures/``.
+  ``--portable`` builds also work end-to-end from a fresh install.
+- **Release pipeline auto-gates prod PyPI on live AWS.** A new
+  ``e2e-against-testpypi`` job in ``release.yml`` installs the
+  TestPyPI wheel into a fresh venv, deploys it against the operator
+  Aurora, runs the API e2e for L1 + Investigation + Executives, and
+  blocks ``publish-pypi`` on the result. Manual approval on the
+  ``pypi`` environment still honored as the operator's fast-path.
+- **Nightly browser-tier sweep.** ``e2e-pg-browser`` runs the
+  Playwright tests on a 6am UTC cron + ``workflow_dispatch`` only
+  (NOT on every push — saves ~30 min per push). Failure screenshots
+  upload as a 14-day-retention artifact.
+- **Oracle e2e leg in CI.** ``e2e-oracle-api`` mirrors the PG API
+  job against the operator's external Oracle. Distinct ``e2e-oracle``
+  concurrency group runs in parallel with PG.
+- **Per-job perf snapshot.** Every e2e job runs
+  ``scripts/dump_top_queries.py`` after pytest and uploads a markdown
+  table of the top-50 most expensive queries (by ``total_exec_time``
+  on PG / ``elapsed_time`` on Oracle) as a CI artifact. Surfaces
+  missing-index regressions and matview-refresh hot spots without
+  having to open a DB console.
+- **Unified coverage report.** Each test matrix entry uploads its
+  ``.coverage`` data; a new ``coverage`` aggregator job combines
+  them, posts a markdown table to the GHA Step Summary, and
+  republishes both an HTML artifact and the markdown report to the
+  ``badges`` branch. The README's coverage badge now wrap-links to
+  the markdown report on the badges branch instead of the workflow
+  runs page — one click goes straight to per-file coverage numbers.
+- **Quirks log lead with the URL-param footgun.** A new
+  prologue at the top of ``docs/reference/quicksight-quirks.md``
+  names the URL-parameter / sheet-control mismatch defect class up
+  front and lists what we ship to minimize damage. Detailed
+  per-quirk entries unchanged.
+
+### Code-facing
+
+- ``mkdocs.yml`` → ``src/quicksight_gen/mkdocs.yml`` (one level up
+  from ``docs/`` since mkdocs rejects ``docs_dir: .``); ``main.py`` →
+  ``src/quicksight_gen/main.py``. ``cli/docs.py`` finds them via
+  ``Path(__file__).parent.parent`` so the same code path serves
+  dev checkouts and installed wheels.
+- ``src/quicksight_gen/_l2_fixtures/{spec_example,sasquatch_pr}.yaml``
+  ship via ``package_data`` and are guarded by
+  ``tests/unit/test_l2_fixtures_sync.py`` against drift from the
+  ``tests/l2/`` source-of-truth.
+- ``scripts/dump_top_queries.py`` — dialect-aware (``pg_stat_statements``
+  / ``v$sqlstats``), filters to queries matching the L2 test prefix,
+  auto-installs the PG extension on first run, tolerates
+  missing-extension / no-permission cases by writing a "skipped"
+  marker (never breaks CI).
+- ``[tool.coverage.run]`` config in ``pyproject.toml`` scopes coverage
+  to the package + omits tests / ``__main__``. CI matrix sets
+  ``COVERAGE_FILE=.coverage.py<version>`` per entry so files combine
+  cleanly via ``coverage combine``.
+- New ``ci.yml::docs-portable-install`` job builds the wheel,
+  installs in a fresh non-editable venv, runs ``docs apply
+  --portable``, and asserts the rendered HTML lands. Catches the
+  regression class on every PR / push to main, not just at release
+  time.
+- ``cleanup-pg`` extended to also sweep the browser tier's
+  ``-pg-browser`` resource_prefix; new ``cleanup-oracle`` mirrors
+  ``cleanup-pg`` for the Oracle leg.
+
+### Tests
+
+- ``tests/unit/test_l2_fixtures_sync.py`` — fail-loud on bundled L2
+  fixture drift.
+- ``tests/docs/test_docs_*`` — repo-root path bug fixed (was
+  ``parents[1]`` resolving to ``tests/``, silently skipping these
+  tests in CI), now points at the bundled ``mkdocs.yml``.
+
 ## v8.5.8 — bullets() defensively strips ``<br/>`` from list items
 
 L2 institution YAML descriptions authored as ``description: |`` block

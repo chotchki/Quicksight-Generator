@@ -247,10 +247,14 @@ L1-API job, then scale.
   noted ~80% is the comfortable band, gating tends to invite
   test churn.
 
-- [ ] **W.9 — Cut release.** Bump version, RELEASE_NOTES entry
-  covering the Phase W rollout, document the new CI artifacts in
-  CLAUDE.md's "E2E Test Conventions" section + the docs site
-  (Reference > Operations probably).
+- [x] **W.9 — Cut release.** Done as v8.6.0. ``__version__`` →
+  8.6.0; RELEASE_NOTES entry covers the Phase W rollout (docs
+  ship in wheel + e2e CI infrastructure: e2e-oracle-api leg,
+  e2e-pg-browser nightly, e2e-against-testpypi release-pipeline
+  gate, top-queries perf dump, unified coverage report,
+  docs-portable-install regression guard, quirks log
+  prologue). CLAUDE.md "E2E Test Conventions" updated with the
+  new CI artifacts.
 
 ---
 
