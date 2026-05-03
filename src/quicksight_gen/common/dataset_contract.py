@@ -112,12 +112,62 @@ class ColumnShape(Enum):
 
 @dataclass
 class ColumnSpec:
+    """Declared column on a dataset's contract.
+
+    ``display_name`` (v8.5.0): plain-English header label QuickSight
+    table visuals use as the column header. When omitted, defaults to
+    a title-cased rewrite of the snake_case ``name`` — e.g.
+    ``account_id`` → "Account ID" (with smart-uppercasing of common
+    initialisms via ``_smart_title``). Override when the auto-derived
+    form is awkward — e.g. ``amount_money`` defaults to "Amount
+    Money", but Investigation tables read better with the explicit
+    override "Amount" since the surrounding context already implies
+    money.
+    """
     name: str
     type: str  # STRING | DECIMAL | INTEGER | DATETIME | BIT
     shape: ColumnShape | None = None  # only set for drill-eligible columns
+    display_name: str | None = None
+
+    @property
+    def human_name(self) -> str:
+        """Plain-English header label for this column.
+
+        ``display_name`` if set, else snake_case → "Title Case" with
+        common initialisms preserved (id → ID, eod → EOD, etc.).
+        """
+        if self.display_name is not None:
+            return self.display_name
+        return _smart_title(self.name)
 
     def to_input_column(self) -> InputColumn:
         return InputColumn(Name=self.name, Type=self.type)
+
+
+# Initialisms that should stay uppercase in the auto-derived label.
+# These are the snake_case word forms (lowercase, no separators) we'll
+# uppercase after the title() call. Picked from the column names in
+# the shipped 4 apps' contracts; extend here as new ones surface.
+_INITIALISMS: frozenset[str] = frozenset({
+    "id", "eod", "url", "sql", "json", "uuid", "ip", "api",
+    "aws", "qs", "etl", "csv", "tsv", "uri", "tz", "utc",
+})
+
+
+def _smart_title(snake: str) -> str:
+    """Convert ``snake_case_with_id`` → ``"Snake Case With ID"``.
+
+    Standard ``str.title()`` on the result of ``replace("_", " ")``
+    would produce "Snake Case With Id" — common initialisms get
+    awkward. This helper post-processes the title-cased words and
+    re-uppercases any token whose lowercased form is in
+    ``_INITIALISMS``.
+    """
+    titled = snake.replace("_", " ").title()
+    return " ".join(
+        word.upper() if word.lower() in _INITIALISMS else word
+        for word in titled.split(" ")
+    )
 
 
 @dataclass

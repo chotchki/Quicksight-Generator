@@ -36,6 +36,8 @@ from quicksight_gen.common.models import (
     TableAggregatedFieldWells,
     TableUnaggregatedFieldWells,
     TableConfiguration,
+    TableFieldOption,
+    TableFieldOptions,
     TableFieldWells,
     TableVisual,
     Visual,
@@ -54,6 +56,30 @@ from quicksight_gen.common.tree.formatting import CellFormat
 from quicksight_gen.common.tree.calc_fields import CalcField
 from quicksight_gen.common.tree.datasets import Dataset
 from quicksight_gen.common.tree.fields import Dim, FieldRef, Measure, resolve_field_id
+
+
+def _field_label(leaf: Dim | Measure) -> str:
+    """Plain-English header label for a Dim / Measure leaf (v8.5.0).
+
+    Looks up the underlying ``Column``'s human_name from the
+    contract registry. Falls back to a title-cased ``CalcField`` name
+    when the leaf references a calc field instead of a real column.
+    """
+    from quicksight_gen.common.dataset_contract import _smart_title
+    from quicksight_gen.common.tree.calc_fields import CalcField as _CF
+    from quicksight_gen.common.tree.datasets import Column
+
+    col = leaf.column
+    if isinstance(col, Column):
+        return col.human_name
+    if isinstance(col, _CF):
+        # CalcField.name is auto-resolved at emit time, so by the
+        # time _field_label runs it's a real string. Belt-check via
+        # ``str()`` so pyright doesn't complain about the
+        # auto-sentinel union.
+        return _smart_title(str(col.name))
+    # Bare-string fallback (allow_bare_strings escape hatch).
+    return _smart_title(str(col))
 
 
 @runtime_checkable
@@ -288,6 +314,22 @@ class Table:
                     Values=[m.emit() for m in self.values] if self.values else None,
                 ),
             )
+        # v8.5.0 — every column gets a CustomLabel header derived from
+        # the column's contract spec (display_name override or
+        # title-cased snake_case fallback). Without this QuickSight
+        # renders the raw snake_case column name as the table header,
+        # which reads poorly to non-technical analysts. ``_field_label``
+        # handles both Column refs (look up contract) and CalcField
+        # refs (use the calc-field name as-is).
+        field_options = TableFieldOptions(
+            SelectedFieldOptions=[
+                TableFieldOption(
+                    FieldId=resolve_field_id(leaf),
+                    CustomLabel=_field_label(leaf),
+                )
+                for leaf in self._all_leaves()
+            ],
+        )
         return Visual(
             TableVisual=TableVisual(
                 VisualId=self.visual_id,
@@ -296,6 +338,7 @@ class Table:
                 ChartConfiguration=TableConfiguration(
                     FieldWells=field_wells,
                     SortConfiguration=sort_config,
+                    FieldOptions=field_options,
                 ),
                 Actions=[a.emit() for a in self.actions] if self.actions else None,
                 ConditionalFormatting=(
@@ -306,6 +349,20 @@ class Table:
                 ),
             ),
         )
+
+    def _all_leaves(self) -> list[Dim | Measure]:
+        """All Dim/Measure leaves on this Table in field-well order.
+
+        Order matters for QuickSight: the SelectedFieldOptions list
+        determines the column order in the rendered table when the
+        underlying field-well order is the default. Match the same
+        order we emit field wells in (``columns`` for unaggregated,
+        ``group_by`` then ``values`` for aggregated)."""
+        if self.columns:
+            return list(self.columns)
+        leaves: list[Dim | Measure] = list(self.group_by)
+        leaves.extend(self.values)
+        return leaves
 
 
 @dataclass(eq=False)

@@ -179,14 +179,9 @@ L1-API job, then scale.
   brings the typical residue window down from "next janitor
   run" to "this workflow's last few seconds".
 
-- [ ] **W.8 — Iteration gate.** After 2-3 weeks of W.3-W.7
-  running, audit: false-positive rate, cost (QS sessions ×
-  $0.30), wall-clock per merge, any cleanup leakage (W.7's
-  always-cleanup should make this near-zero — verify). Decide
-  whether to: (a) lock browser tier into per-merge,
-  (b) keep nightly-only, (c) tighten flaky tests, (d) move
-  Aurora ingress to GitHub Actions CIDR allowlist (lower DDoS
-  surface; high churn — see agent report).
+- [ ] **W.8 — Iteration gate.** 
+  - Last feature I'd like, when a release tag is pushed, after it validates on TEST pypi, the e2e runs and if successful approves for the prod gate (if it fails, it cancels)
+  - I still want the ability to approve the release by hand (e2e is probably still running) but this handles when I'm not personally testing non stop
 
 - [ ] **W.9 — Cut release.** Bump version, RELEASE_NOTES entry
   covering the Phase W rollout, document the new CI artifacts in

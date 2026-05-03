@@ -186,3 +186,26 @@ class Column:
     def distinct_count(self, *, field_id: str | AutoResolved = AUTO) -> Measure:
         from quicksight_gen.common.tree.fields import Measure
         return Measure.distinct_count(self.dataset, self, field_id=field_id)
+
+    @property
+    def human_name(self) -> str:
+        """Plain-English header label for this column (v8.5.0).
+
+        Looks up the column on the dataset's registered contract and
+        returns the contract's ``human_name`` (override or auto-derived
+        title-case). Returns the title-cased column name as a fallback
+        if the dataset has no contract — keeps the test fixtures (which
+        construct Datasets directly without going through
+        ``build_dataset``) usable without forcing a registry round-trip.
+        """
+        from quicksight_gen.common.dataset_contract import (
+            _smart_title, get_contract,
+        )
+        try:
+            contract = get_contract(self.dataset.identifier)
+        except KeyError:
+            return _smart_title(self.name)
+        try:
+            return contract.column(self.name).human_name
+        except KeyError:
+            return _smart_title(self.name)
