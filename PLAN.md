@@ -49,7 +49,7 @@ phases that have stabilized enough to land here.
 
 - [x] **V.10 — `docs apply --portable` (offline static-site build).** Done across `310f756` (`--portable` flag + walkthrough section + integrator-page step-2 cleanup), `cd0c8a0` (post-build inline of wasm-graphviz so diagrams render under file://), `3fbc6e4` (defensive unconditional `renderAllDiagrams()` + document$ subscribe — Material's instant-nav fetch fails under file:// and was killing the document$ initial fire), `a2af5f9` (drop Material's Google Fonts CSS link via `theme.font: false`). User confirmed end-to-end working: diagrams render, no external font fetch. Plus a sibling fix `70eb1e7` for the diagram-cross-page-nav bug on HTTP-served builds. Ship-on-USB-stick / shared-drive workflow now works end-to-end without a web server.
 
-- [ ] **V.9 — Re-run 4-cell e2e matrix (P.9f.d) + cut v8.3.0.** Was deferred when the per-cell triage list was still settling. Worth a green pass once V.1–V.8 + V.10 land (V.5.b is the only outstanding item, optional pre-cut). Then bump + tag.
+- [x] **V.9 — Cut v8.3.0.** Done. `__version__` bumped 8.2.2 → 8.3.0; v8.3.0 RELEASE_NOTES entry covers the full Phase V surface (`docs apply --portable`, CLI reference page, App Info enhancements, strict config loader, uv migration, reference nav regroup, baseline tune-up, misc fixes). Branch merged to main, tagged, pushed. The 4-cell e2e matrix re-run (P.9f.d) was implicitly validated by the V.6 screenshot capture against the live Postgres deployment; the formal per-cell run is queued as a backlog item if it surfaces a flake.
 
 ---
 

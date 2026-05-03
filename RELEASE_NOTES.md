@@ -1,5 +1,82 @@
 # Release Notes
 
+## v8.3.0 — Phase V (config / institution split + uv migration + small follow-ups)
+
+A grab-bag phase of post-Phase-U cleanup. Nothing user-visible on the
+deployed dashboards; everything else moved.
+
+### Operator-facing
+
+- **`docs apply --portable`** — new flag. Builds a static site that
+  opens via `file://` (no web server needed). Drops Material's Google
+  Fonts CSS link, post-processes the rendered `qs-graphviz-wasm.js`
+  to inline the WASM diagram bundle so diagrams render without the
+  ES-module imports browsers block under `file://`. Ship-on-USB-stick
+  / shared-drive workflow now works end-to-end.
+- **CLI reference** — auto-generated man-page-style page at
+  `Reference > Operations > CLI reference` via `mkdocs-click`.
+  Reads the live Click command tree at docs build time, so it tracks
+  every flag change automatically.
+- **App Info sheet** — now bakes the `quicksight-gen` version into
+  the deploy stamp + adds a `latest_date` column to the matview
+  status table. Compare a base-table row's date against a matview
+  row's date to spot stale matviews at a glance. New ETL handbook
+  troubleshooting section explains the diagnostic.
+- **`json apply` auto-emits `out/datasource.json`** when
+  `demo_database_url` is set — closes the orphan-datasource gap that
+  hit single-app deploys.
+
+### Engineering surface
+
+- **Strict `config.yaml` loader.** Rejects unknown keys, L2-only keys
+  (theme / persona / rails / chains / accounts / templates / limit
+  schedules / instance / description / seed_hash), and hand-set
+  `l2_instance_prefix`. Each rejection points at where the field
+  actually belongs. Test boilerplate collapsed: 17 hand-built
+  `Config(...)` literals → `make_test_config(**overrides)` factory.
+- **uv migration.** `uv.lock` committed (98 packages); CI / Release /
+  Pages workflows use `astral-sh/setup-uv@v6` + `uv sync --frozen`.
+  `pip install` end-user paths in `release.yml`'s
+  TestPyPI / PyPI verify-install jobs intentionally kept on pip
+  (they prove the published wheel installs cleanly via pip).
+- **Reference nav regroup.** Flat 11-item Reference split into 3
+  nested sections — App handbooks / Data contract / Operations.
+  Content-area max-width bumped from 1220px → 1440px so wide
+  topology diagrams breathe.
+
+### Demo data
+
+- **Baseline tune-up.** Two classes of spurious L1 invariant
+  violations the realistic baseline still surfaced are gone:
+  - **Limit_breach** on customer outbound (sasquatch_pr 51 → 0):
+    per-`(account, transfer_type, day)` cumulative-outbound tracking
+    in `_BaselineState`; firings clamped to remaining cap, skipped
+    when remaining < $50.
+  - **Overdraft** on intermediate clearing accounts: new
+    `_emit_baseline_cascade_credits` walks already-emitted firings
+    and materializes the missing credit legs that
+    `TransferTemplate`-only cascades skipped (per-merchant per-day
+    `CardSaleDailySettlement`-shaped credits on
+    `MerchantPayableClearing`, paired credits for
+    `InternalTransferSuspenseClose`, etc.). ZBA sub-accounts now
+    funded via opening balance + matching daily inbound from the
+    funds pool. Counter-legs net to zero.
+
+### Misc fixes
+
+- Graphviz diagrams missing on cross-page nav (Material's instant-nav
+  swaps DOM but doesn't re-execute extra_javascript) — script now
+  always runs once on init AND subscribes to `document$`.
+- `docs/walkthroughs/screenshots/` re-captured at 1280×900 against
+  the live `spec_example` Postgres deployment; reflects Phase R's
+  realistic baseline + Phase U's audit work.
+- Explicit plain-English `category_label` / `value_label` on the 4
+  remaining BarChart sites that were defaulting to raw column names.
+- `botocore[crt]` added to `[dev]` + `[e2e]` extras for AWS SSO
+  login support (was failing in `docs screenshot` / e2e auth paths).
+
+---
+
 ## v8.2.2 — CI coverage-badge job also needs `[audit]` extra
 
 Follow-up to v8.2.1. v8.2.1 fixed the test job + release.yml install
