@@ -53,6 +53,131 @@ phases that have stabilized enough to land here.
 
 ---
 
+## Phase W — Browser e2e in GitHub Actions
+
+Move the deploy-gated browser e2e suite (`tests/e2e/`, gated by
+`QS_GEN_E2E=1`) onto GHA so a green CI run proves the dashboards
+actually render against a fresh deploy, not just that the JSON
+emits clean.
+
+**Locked decisions** (from the planning round):
+- Trigger model: `workflow_dispatch` + `push:main` only — no PR
+  triggers. Solo-dev repo, direct-to-main; no fork-PR-secret-leak
+  surface to design around.
+- DB: connect to the user's existing Aurora PG + Oracle RDS via
+  GitHub Secrets (`QS_GEN_PG_URL`, `QS_GEN_ORACLE_URL`). Open
+  Aurora + Oracle security-group ingress to `0.0.0.0/0`; the URL
+  password IS the access control. Long-term cost optimization
+  deferred.
+- AWS: OIDC role assumption via `aws-actions/configure-aws-credentials@v4`
+  — no AWS access keys stored in secrets. Trust policy scoped to
+  this repo + main branch.
+- Browser: dedicated `ci-bot` QS reader user (separate from any
+  human user), ARN as `QS_E2E_USER_ARN` secret. Embed sessions
+  attributable in QS audit log; user can be deactivated without
+  touching real users.
+
+Phased rollout per the agent's smallest-wedge recommendation:
+prove credential plumbing on a no-op auth job, then a single
+L1-API job, then scale.
+
+- [ ] **W.0.a — Trigger pattern.** New workflow file
+  `.github/workflows/e2e.yml` with `on: { workflow_dispatch: {},
+  push: { branches: [main] } }`. No `pull_request` trigger.
+  Document the rationale inline in a header comment so a future
+  contributor doesn't add PR triggers thinking they're missing.
+
+- [ ] **W.0.b — DB URL secrets + ingress.** Set
+  `QS_GEN_PG_URL` + `QS_GEN_ORACLE_URL` via `gh secret set`. Widen
+  the Aurora cluster + Oracle RDS security groups to allow inbound
+  from `0.0.0.0/0` on their respective ports (5432 / 1521). Verify
+  in the AWS console; record the SG IDs in PLAN as a one-liner so
+  later rollback is easy.
+
+- [ ] **W.0.c — OIDC IdP + IAM role.** Configure GitHub as an
+  OIDC identity provider in the AWS account (one-time, IAM
+  console; thumbprints auto-managed). Create role `qs-gen-ci`
+  with: trust policy restricted to
+  `repo:chotchki/Quicksight-Generator:ref:refs/heads/main`; QS
+  policy covering `Create/Describe/Update/Delete/List` on Theme,
+  DataSource, DataSet, Analysis, Dashboard, Folder, plus
+  `GenerateEmbedUrlForRegisteredUser`, `DescribeUser`,
+  `Tag/UntagResource`. Record the role ARN in this plan entry.
+
+- [ ] **W.0.d — `ci-bot` QS user.** Register a dedicated
+  QuickSight reader user
+  (`arn:aws:quicksight:us-east-1:ACCT:user/default/ci-bot`). Set
+  `QS_E2E_USER_ARN` secret to its ARN. Confirm the user's QS
+  permissions cover viewing the dashboards the e2e tests render.
+
+- [ ] **W.1 — Auth smoke job.** First job in `e2e.yml`: assume
+  the OIDC role, run `aws sts get-caller-identity`, exit. Proves
+  the OIDC + IAM trust path works end-to-end before any
+  QS/DB/Playwright machinery touches it. ~30s.
+
+- [ ] **W.2 — Per-run resource isolation.** Inject
+  `resource_prefix: qs-ci-${{ github.run_id }}-pg` (and `-oracle`
+  for the Oracle leg) into the workflow-generated config.yaml.
+  Pair every e2e job with a mandatory `if: always()` cleanup step
+  calling `quicksight-gen json clean --execute -c /tmp/ci.yaml`
+  AND `schema clean --execute` against the user's Aurora/Oracle.
+  Stand up a janitor job (scheduled cron, daily) that sweeps
+  `ManagedBy:quicksight-gen` resources whose `L2Instance` tag
+  matches a `qs-ci-*` prefix older than 24h — catches cancelled
+  runs that didn't reach the cleanup step.
+
+- [ ] **W.3 — Smallest wedge: L1 API e2e against PG.** New job
+  `e2e-pg-api-l1` in `e2e.yml`. Steps: assume OIDC role →
+  Postgres URL from `secrets.QS_GEN_PG_URL` → schema/data/refresh
+  apply → json apply --execute → `pytest
+  tests/e2e/test_l1_deployed_resources.py
+  tests/e2e/test_l1_dashboard_structure.py -m api` →
+  `if: always()` cleanup. Target: ~12 min. If this stays green
+  for a week of `push:main` runs, scale per W.5.
+
+- [ ] **W.4 — Hardcoded user ARN cleanup.**
+  `src/quicksight_gen/common/browser/helpers.py:44` carries a
+  hardcoded `arn:aws:quicksight:...:<account>:user/default/...`.
+  Replace with `os.environ["QS_E2E_USER_ARN"]` (already a
+  documented env var per CLAUDE.md's E2E Test Conventions).
+  Required before W.6 — `ci-bot` ARN won't match the hardcoded
+  value, embed URL generation will fail.
+
+- [ ] **W.5 — Scale to 4 apps × API.** If W.3 holds, add
+  `e2e-pg-api-{l2ft,inv,exec}` jobs (or a matrix) running each
+  app's `test_*_deployed_resources.py` +
+  `test_*_dashboard_structure.py`. Still PG-only at this stage.
+  Then add `e2e-oracle-api` mirror running the same against the
+  Oracle DB. Target wall-clock: ~25 min for the 4×PG fan-out, ~20
+  min for the Oracle leg (Oracle Free first-boot delay is gone —
+  it's external Oracle now).
+
+- [ ] **W.6 — Browser tier (gated).** New job `e2e-pg-browser`
+  on a `workflow_dispatch` + nightly cron only — NOT on
+  `push:main` (CPU-saturating, slow, would dominate every push).
+  Runs `tests/e2e/test_*_dashboard_renders.py` +
+  `test_*_sheet_visuals.py` + `test_*_filters.py` +
+  `test_*_drilldown.py` with `pytest-xdist -n 2` (2-vCPU GHA
+  runner can't sustain `-n 4` for browser without flake). Bump
+  `QS_E2E_PAGE_TIMEOUT=60000`. Same cleanup discipline.
+  Per-failure: upload `tests/e2e/screenshots/` as a workflow
+  artifact for inspection.
+
+- [ ] **W.7 — Iteration gate.** After 2-3 weeks of W.3-W.6
+  running, audit: false-positive rate, cost (QS sessions ×
+  $0.30), wall-clock per merge, any cleanup leakage. Decide
+  whether to: (a) lock browser tier into per-merge,
+  (b) keep nightly-only, (c) tighten flaky tests, (d) move
+  Aurora ingress to GitHub Actions CIDR allowlist (lower DDoS
+  surface; high churn — see agent report).
+
+- [ ] **W.8 — Cut release.** Bump version, RELEASE_NOTES entry
+  covering the Phase W rollout, document the new CI artifacts in
+  CLAUDE.md's "E2E Test Conventions" section + the docs site
+  (Reference > Operations probably).
+
+---
+
 ## Backlog
 
 Single grab-bag for everything not yet in a phase. Promote to a numbered phase entry when work starts.
