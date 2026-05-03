@@ -1,0 +1,51 @@
+# Browser e2e in GitHub Actions (Phase W).
+#
+# Trigger model — `workflow_dispatch` + `push:main` only.
+# DELIBERATELY no `pull_request` trigger. Rationale:
+#
+#   1. This is a solo-dev repo; the user pushes directly to main, no
+#      PRs from forks to defend against.
+#   2. Even if PRs become a thing later, this workflow exposes
+#      `secrets.QS_GEN_PG_URL`, `secrets.QS_GEN_ORACLE_URL`,
+#      `secrets.QS_E2E_USER_ARN`, AND assumes the `qs-gen-ci` IAM role
+#      via OIDC. Letting it run on `pull_request` from a fork would
+#      let attackers exfiltrate every one of those by editing the
+#      workflow YAML in their PR. The right pattern there is
+#      `pull_request_target` + maintainer label gate, which adds
+#      complexity for zero current value.
+#   3. If you reach for a `pull_request` trigger here, stop and revisit
+#      Phase W's "Locked decisions" block in PLAN.md first.
+#
+# Setup runbook for the secrets + OIDC role + ci-bot QS user this
+# workflow depends on lives in `.github/E2E_SETUP.md`.
+
+name: E2E
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+# OIDC requires `id-token: write` on the workflow (or job) so the
+# runner can mint the JWT that AWS exchanges for temporary creds.
+# `contents: read` keeps the rest of the workflow least-privileged.
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # W.1 — auth smoke. First job in the workflow: assume the OIDC role,
+  # confirm AWS sees us, exit. Proves the trust policy + role + GHA
+  # OIDC config all line up before any downstream job touches QS / DB
+  # / Playwright. ~30s.
+  auth-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Confirm role assumption
+        run: aws sts get-caller-identity
