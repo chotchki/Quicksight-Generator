@@ -27,10 +27,17 @@ stick / zip-attachment build that opens directly in a browser:
 quicksight-gen docs apply --portable --l2 run/my-l2.yaml -o portable-site
 ```
 
-`--portable` flips `use_directory_urls: false`, so every page emits
-as `<slug>/index.html` and links resolve via `file://`. The CLI
-echoes the absolute path to the entry-point `index.html` you can
-hand to a stakeholder. Zip the directory and ship — recipients
+`--portable` does two things:
+
+- Flips `use_directory_urls: false` so every page emits as
+  `<slug>/index.html` and links resolve via `file://`.
+- Post-processes the rendered `stylesheets/qs-graphviz-wasm.js` to
+  inline the WASM diagram bundle directly into the script (browsers
+  block ES module imports under `file://` for security; inlining
+  bypasses that). Diagrams render without a web server.
+
+The CLI echoes the absolute path to the entry-point `index.html` you
+can hand to a stakeholder. Zip the directory and ship — recipients
 double-click and read.
 
 ## Advanced: hand-build with your own mkdocs config

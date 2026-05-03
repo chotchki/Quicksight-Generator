@@ -33,6 +33,98 @@ from quicksight_gen.cli._helpers import l2_instance_option, load_config
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
+def _bake_portable_wasm(output_dir: Path) -> None:
+    """Inline the wasm-graphviz module so diagrams render via file://.
+
+    Modern browsers (Chrome / Firefox / Safari) refuse ES module
+    imports from ``file://`` URLs for security. The default
+    ``qs-graphviz-wasm.js`` does ``await import("./wasm-graphviz/index.js")``
+    which works fine over HTTP but rejects with a CORS-shaped error
+    when the page is opened by double-click — diagrams stay as empty
+    ``<template>`` placeholders.
+
+    For ``--portable`` builds we post-process the rendered ``site/``:
+    read the vendored wasm bundle, strip its ES ``export``, wrap the
+    bundle + renderer logic in one IIFE so ``Graphviz`` is available
+    in lexical scope (no module fetch), and overwrite
+    ``stylesheets/qs-graphviz-wasm.js``. The ``wasm-graphviz/`` dir
+    is then unused and removed to keep the portable bundle lean.
+
+    Source tree stays untouched — only the rendered ``output_dir/``
+    gets the inline form. HTTP-served builds (default ``docs apply``,
+    Pages workflow) keep the dynamic-import path.
+    """
+    import re
+
+    style_dir = output_dir / "stylesheets"
+    wasm_path = style_dir / "wasm-graphviz" / "index.js"
+    qs_path = style_dir / "qs-graphviz-wasm.js"
+
+    if not wasm_path.exists():
+        raise click.ClickException(
+            f"--portable post-process: expected {wasm_path} to exist after "
+            f"mkdocs build. Did the docs build skip the stylesheets/ tree?"
+        )
+    if not qs_path.exists():
+        raise click.ClickException(
+            f"--portable post-process: expected {qs_path} to exist after "
+            f"mkdocs build."
+        )
+
+    wasm_text = wasm_path.read_text(encoding="utf-8")
+    # The vendored bundle ends with `...;export{Ft as Graphviz};` and a
+    # sourceMappingURL pragma. Capture the local name (Ft today; the
+    # variable is renamed across upstream releases) so we can rebind it
+    # to ``Graphviz`` after the IIFE wrap.
+    export_re = re.compile(r"export\s*\{\s*(\w+)\s+as\s+Graphviz\s*\}\s*;?")
+    m = export_re.search(wasm_text)
+    if m is None:
+        raise click.ClickException(
+            f"--portable post-process: couldn't find "
+            f"`export {{<name> as Graphviz}}` at end of {wasm_path}. "
+            f"The vendored upstream may have changed shape — re-vendor "
+            f"or update the regex in cli/docs.py::_bake_portable_wasm."
+        )
+    local_name = m.group(1)
+    wasm_body = wasm_text[: m.start()].rstrip()
+    wasm_body = re.sub(
+        r"//#\s*sourceMappingURL=.*$", "", wasm_body, flags=re.MULTILINE,
+    ).rstrip()
+
+    # The renderer's `getRenderer()` does
+    #   const mod = await import("./wasm-graphviz/index.js");
+    #   return await mod.Graphviz.load();
+    # Swap to a direct reference now that Graphviz is lexically in scope.
+    qs_text = qs_path.read_text(encoding="utf-8")
+    import_re = re.compile(
+        r'const\s+mod\s*=\s*await\s+import\s*\(\s*"\.\/wasm-graphviz\/index\.js"\s*\)\s*;\s*'
+        r'return\s+await\s+mod\.Graphviz\.load\s*\(\s*\)\s*;',
+        re.DOTALL,
+    )
+    if not import_re.search(qs_text):
+        raise click.ClickException(
+            f"--portable post-process: couldn't find the dynamic-import "
+            f"call in {qs_path}. Was qs-graphviz-wasm.js refactored?"
+        )
+    qs_text = import_re.sub("return await Graphviz.load();", qs_text)
+
+    portable_text = (
+        "/* docs apply --portable: wasm-graphviz inlined so diagrams\n"
+        " * render under file:// (modern browsers block ES module\n"
+        " * imports from file:// for security). HTTP-served builds keep\n"
+        " * the dynamic-import path; this transform only runs on the\n"
+        " * rendered site/. */\n"
+        "(() => {\n"
+        + wasm_body
+        + "\n"
+        + f"const Graphviz = {local_name};\n"
+        + qs_text
+        + "\n})();\n"
+    )
+    qs_path.write_text(portable_text, encoding="utf-8")
+    shutil.rmtree(style_dir / "wasm-graphviz")
+
+
 # Per CLI app slug: (module path, builder function, output-subdir slug).
 # The output-subdir slug is the short form (l1, l2ft, inv, exec) that
 # matches the existing `docs/walkthroughs/screenshots/<short>/` convention
@@ -245,9 +337,11 @@ def docs_apply(
     if exit_code != 0:
         raise click.ClickException(f"mkdocs build failed (exit {exit_code}).")
     if portable:
-        index = Path(output).resolve() / "index.html"
+        out_path = Path(output).resolve()
+        _bake_portable_wasm(out_path)
+        index = out_path / "index.html"
         click.echo(
-            f"Portable site at {Path(output).resolve()}/. "
+            f"Portable site at {out_path}/. "
             f"Open {index} directly in a browser (no web server needed)."
         )
 
