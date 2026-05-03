@@ -66,8 +66,9 @@ IAM console → Roles → Create role → Web identity:
 Then on the next screen, REPLACE the auto-generated trust policy
 with the one below — the auto-generated version uses `StringEquals`
 on `sub` which is too strict (it locks to one specific ref form);
-the `StringLike` form below allows both branch pushes AND
-workflow_dispatch from main:
+the `StringLike` form below allows main-branch pushes,
+workflow_dispatch from main, AND release-tag pushes (`refs/tags/v*`)
+that the release pipeline's e2e-against-testpypi job needs:
 
 ```json
 {
@@ -84,7 +85,10 @@ workflow_dispatch from main:
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
         },
         "StringLike": {
-          "token.actions.githubusercontent.com:sub": "repo:chotchki/Quicksight-Generator:ref:refs/heads/main"
+          "token.actions.githubusercontent.com:sub": [
+            "repo:chotchki/Quicksight-Generator:ref:refs/heads/main",
+            "repo:chotchki/Quicksight-Generator:ref:refs/tags/v*"
+          ]
         }
       }
     }
@@ -93,8 +97,9 @@ workflow_dispatch from main:
 ```
 
 Replace `ACCOUNT_ID` with your AWS account number. Do NOT add a
-`*` wildcard to the `sub` claim — that would let any branch in the
-repo assume the role, defeating the trigger-model lockdown.
+`*` wildcard to the `sub` claim or open the tag form to non-`v*`
+prefixes — that would let any branch in the repo assume the role,
+defeating the trigger-model lockdown.
 
 ### Step 3: Attach the permissions policy
 

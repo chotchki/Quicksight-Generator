@@ -1,5 +1,64 @@
 # Release Notes
 
+## v8.6.5 — L2FT metadata cascade write-back + release-pipeline OIDC + tag sanitization
+
+Three fixes landed together — one user-visible (cascade dropdown
+write-back), two CI/release-pipeline (OIDC trust policy + tag
+sanitization in ``resource_prefix``).
+
+### L2FT Metadata Value dropdown — drop the ``cascade_source`` wiring
+
+The L2FT Rails / Chains / Transfer Templates sheets each have a
+two-stage metadata picker: a ``Metadata Key`` dropdown that picks
+which JSON path to filter on, then a ``Metadata Value`` dropdown
+that picks one or more values for that key. Pre-v8.6.5 the
+Value dropdown carried both ``LinkedValues`` (for the option
+list) AND ``cascade_source`` (so the option list narrowed when
+the Key changed) — but the combination of ``cascade_source`` +
+``LinkedValues`` + ``MULTI_SELECT`` killed parameter write-back:
+selecting a value in the dropdown didn't update ``pMetaValue``,
+so the downstream Transactions table went empty (all rows
+filtered out by an unset parameter).
+
+Dropped ``cascade_source`` + ``cascade_match_column`` from all
+three sites. The Value dropdown still narrows in practice
+because the ``LinkedValues`` query is dataset-parameterized on
+``pMetaKey`` — picking a Key still filters the option list, just
+via the dataset query rather than the cascade wiring.
+
+Promoted to entry 2.1 of the QuickSight quirks log under the
+URL-parameter / control-sync footgun.
+
+### Release pipeline — OIDC trust policy + ``resource_prefix`` sanitization
+
+Two failures hit the v8.6.4 release pipeline that this release
+fixes:
+
+1. **OIDC AssumeRoleWithWebIdentity rejected from tag context.**
+   The ``Github_e2e_testing`` IAM role's trust policy had a
+   ``StringLike`` of exactly
+   ``repo:chotchki/Quicksight-Generator:ref:refs/heads/main``,
+   which doesn't match the ``refs/tags/v*`` form GitHub Actions
+   sends from a tag-triggered workflow. Widened the
+   ``StringLike`` to a list accepting both branch and tag refs
+   (tag form scoped to ``refs/tags/v*`` to match the release
+   trigger pattern). Trust-policy update + ``E2E_SETUP.md``
+   doc + ``PLAN.md`` W.0.c parenthetical land in this release.
+
+2. **Dashboard ID rejected dots in ``resource_prefix``.** The
+   ``e2e-against-testpypi`` job in ``release.yml`` injected
+   ``resource_prefix: "qs-release-${{ github.ref_name }}"`` —
+   so the v8.6.4 tag produced ``qs-release-v8.6.4-...`` which
+   AWS QuickSight rejected with ``Member must satisfy regular
+   expression pattern: [\w\-]+`` (dots aren't in ``\w``).
+   Inline bash parameter substitution
+   (``SAFE_TAG="${GITHUB_REF_NAME//./-}"``) collapses dots to
+   hyphens before injecting, so v8.6.5 → ``qs-release-v8-6-5-…``.
+   Underscores in ``\w`` are fine (``spec_example`` was a red
+   herring in the v8.6.4 error message).
+
+Both fixes get exercised by this release's tag push.
+
 ## v8.6.4 — JSON functional indexes + coverage-badge PEP-668 fix
 
 Two unrelated fixes shipped together — a perf win on the L2FT
