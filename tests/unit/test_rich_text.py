@@ -127,11 +127,21 @@ class TestMarkdown:
 
 
 class TestTextBox:
-    def test_wraps_parts_in_root(self) -> None:
-        assert rt.text_box("a", "b") == "<text-box>ab</text-box>"
+    def test_wraps_parts_in_root_with_interior_padding(self) -> None:
+        # v8.6.3 — auto-pads with leading + trailing ``<br/><br/>`` so
+        # rendered text doesn't sit flush against the box edges.
+        # SheetTextBox itself has no padding fields in the AWS API.
+        assert rt.text_box("a", "b") == (
+            "<text-box><br/><br/>ab<br/><br/></text-box>"
+        )
 
-    def test_empty(self) -> None:
-        assert rt.text_box() == "<text-box></text-box>"
+    def test_empty_still_pads(self) -> None:
+        # Empty content still pads — the box renders as visible
+        # whitespace rather than collapsing to zero-height (which is
+        # less useful as a layout placeholder).
+        assert rt.text_box() == (
+            "<text-box><br/><br/><br/><br/></text-box>"
+        )
 
 
 class TestBullets:

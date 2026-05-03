@@ -1,5 +1,18 @@
 # Release Notes
 
+## v8.6.3 — Interior padding on rich text boxes
+
+``rt.text_box(*parts)`` now auto-pads the interior with leading +
+trailing ``<br/><br/>`` so rendered text doesn't sit flush against
+the box's top / bottom edges. ``SheetTextBox`` has no padding
+fields in the AWS API — interior breathing room only comes via the
+rich-text grammar inside ``Content``. Two ``<br/>`` per side
+matches what hand-authored QS UI text boxes emit when an editor
+hits Enter twice for spacing.
+
+Touches every text box in every shipped app — small visual nudge,
+no behavioral change.
+
 ## v8.6.2 — Oracle top-queries dump: read LOB before format
 
 The W.8a top-queries dump crashed the v8.6.0 release-pipeline e2e
