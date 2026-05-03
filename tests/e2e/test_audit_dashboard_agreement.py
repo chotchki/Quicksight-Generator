@@ -192,51 +192,40 @@ def embed_url(region, account_id, l1_dashboard_id, qs_client) -> str:
     )
 
 
-# U.8.b.4 fanout. Drift + limit_breach pass live; the other four
-# xfail on the FIRST live run for two distinct reasons (both worth
-# fixing as a follow-up, but neither is U.8.b's wiring problem):
-#
-#   - **overdraft / stuck_pending / stuck_unbundled** — Playwright
-#     times out waiting for ``sn-table-cell-0-0`` on the dashboard
-#     side. PDF and matview show non-zero rows for each, so the
-#     producer pipeline is fine; the dashboard's detail table just
-#     never mounts cells inside the visual_timeout window. Likely
-#     a cold-cache / first-render lag on a schema we just dropped
-#     and recreated; the existing ``warm_aurora`` autouse fixture
-#     warms BASE table queries but not the per-instance prefixed
-#     matviews this test creates fresh.
-#   - **supersession** — ``count_table_total_rows`` returns -2,
-#     i.e. the visual exists on the page but its ``.grid-container``
-#     never mounts. Same root cause class: the supersession
-#     "Logical Keys with Supersession" table is empty on first
-#     render even though the matview has rows.
-#
-# Both are worth chasing (likely a wait-longer or re-query primitive
-# the existing browser helpers already have in the M.4.4.12 hardening),
-# but the U.8.b.4 fanout is about the parametric SHAPE working —
-# which it does for drift + limit_breach. The xfails carry a strict
-# reason string so a future fix flips them to passing automatically.
+# Three-way agreement currently passes for the time-series invariants
+# (drift / overdraft / limit_breach). The current-state invariants
+# (stuck_pending / stuck_unbundled / supersession) xfail with a
+# distinct shape: dashboard table renders "No data found for visual"
+# even though the underlying matview has rows. Pattern matches the
+# M.4.4.13 / #433 backlog "L1 dashboard date filter doesn't surface
+# matview rows" — likely QS dataset-metadata caching from when the
+# dataset was created against empty tables (the deploy preceded the
+# test's reseed), or a CalcField-resolves-to-NULL path that drops
+# the row in QS even though the matview returns it. NOT an Aurora
+# warmup issue: matview SELECT against the live DB returns the row.
+# The follow-up needs either (a) re-deploying the dashboard datasets
+# after the test seeds OR (b) tracing why QS-side filtering drops
+# the row. Tracked as part of the broader "Apply layered (query+
+# render) pattern to all browser e2e tests" backlog item.
 _ALL_INVARIANTS: tuple[tuple[str, str | None], ...] = (
     ("drift", None),
-    ("overdraft", "U.8.b.4: dashboard 'Overdraft Violations' "
-                  "table cells don't mount inside visual_timeout "
-                  "(matview has rows; PDF count is non-zero); "
-                  "likely first-render cold-cache lag. Fix: add a "
-                  "warmup query for the prefixed overdraft matview."),
+    ("overdraft", None),
     ("limit_breach", None),
-    ("stuck_pending", "U.8.b.4: same first-render cold-cache class "
-                      "as overdraft — PDF and matview show rows but "
-                      "Pending Aging > Stuck Pending Detail never "
-                      "mounts cells in time."),
-    ("stuck_unbundled", "U.8.b.4: same first-render cold-cache class "
-                        "as overdraft — Unbundled Aging > Stuck "
-                        "Unbundled Detail never mounts cells in "
-                        "time."),
-    ("supersession", "U.8.b.4: count_table_total_rows returns -2 "
-                     "(visual exists, .grid-container missing). "
-                     "Supersession Audit > Logical Keys with "
-                     "Supersession table renders empty on first "
-                     "page load even though the matview has rows."),
+    ("stuck_pending", "U.8.b.4: dashboard 'Stuck Pending Detail' "
+                      "renders 'No data found for visual' even though "
+                      "spec_example_stuck_pending matview has the "
+                      "planted row. Same shape as M.4.4.13 / "
+                      "backlog #433."),
+    ("stuck_unbundled", "U.8.b.4: dashboard 'Stuck Unbundled Detail' "
+                        "renders 'No data found for visual' even "
+                        "though spec_example_stuck_unbundled matview "
+                        "has the planted row. Same shape as M.4.4.13 "
+                        "/ backlog #433."),
+    ("supersession", "U.8.b.4: dashboard 'Logical Keys with "
+                     "Supersession' renders 'No data found for "
+                     "visual' even though spec_example_transactions "
+                     "has the planted correcting row. Same shape "
+                     "as M.4.4.13 / backlog #433."),
 )
 
 
@@ -285,7 +274,13 @@ def test_invariant_three_way_agreement(
     )
     pdf_count = count_invariant_table_rows(pdf_path, invariant)
 
-    with webkit_page(headless=True) as page:
+    # 1600×4000 — tall viewport so stacked KPI + chart + table layouts
+    # (Pending Aging / Unbundled Aging / Supersession Audit) keep the
+    # detail table inside the initial render area. QS lazy-renders
+    # below-the-fold visuals; without the tall viewport,
+    # count_table_total_rows times out waiting for cells that never
+    # mount. Same pattern as the M.4.1.k harness.
+    with webkit_page(headless=True, viewport=(1600, 4000)) as page:
         page.goto(embed_url, timeout=page_timeout)
         wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
         dashboard_count = count_l1_invariant_rows(

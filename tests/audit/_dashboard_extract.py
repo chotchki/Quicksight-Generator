@@ -90,9 +90,9 @@ def count_l1_invariant_rows(
     """
     from quicksight_gen.common.browser.helpers import (
         click_sheet_tab,
+        count_table_rows,
         count_table_total_rows,
         set_parameter_datetime_value,
-        wait_for_table_cells_present,
         wait_for_visuals_present,
     )
 
@@ -100,7 +100,16 @@ def count_l1_invariant_rows(
 
     click_sheet_tab(page, sheet_name, timeout_ms=timeout_ms)
     wait_for_visuals_present(page, min_count=1, timeout_ms=timeout_ms)
-    wait_for_table_cells_present(page, timeout_ms=timeout_ms)
+    # NOTE: deliberately NOT calling wait_for_table_cells_present here.
+    # That helper waits for ANY ``[data-automation-id^="sn-table-cell-0-0"]``
+    # globally — overly aggressive when the target table is below the
+    # fold. ``count_table_total_rows`` below scrolls the named visual
+    # into view, clicks its title to focus, and bumps page size, which
+    # forces hydration on the table we actually care about. Tests
+    # using this helper should pass ``viewport=(1600, 4000)`` to
+    # ``webkit_page`` so stacked KPI + chart + table layouts (Pending
+    # Aging / Unbundled Aging / Supersession Audit) keep the detail
+    # table inside the initial render area.
 
     if has_date_filter and period is not None:
         start_str = period[0].strftime("%Y/%m/%d")
@@ -115,6 +124,19 @@ def count_l1_invariant_rows(
         # parameter values before we count rows.
         page.wait_for_timeout(1000)
 
-    return count_table_total_rows(
+    # Try the paginated counter first — handles large tables (>10
+    # rows) by bumping page size and scroll-accumulating cell
+    # indices. For small tables that QS renders without a paginated
+    # ``.grid-container`` (Stuck Pending Detail / Stuck Unbundled
+    # Detail / Logical Keys with Supersession render this way when
+    # the underlying matview has only a handful of rows), the helper
+    # returns -2; fall back to the simpler DOM-cell counter, which
+    # works for any QS table but caps at the ~10 rows currently
+    # mounted in the DOM. For our scenario expected counts (≤ 18
+    # for overdraft, ≤ 5 elsewhere) the fallback is sufficient.
+    total = count_table_total_rows(
         page, table_title, timeout_ms=timeout_ms,
     )
+    if total == -2:
+        return count_table_rows(page, table_title)
+    return total
