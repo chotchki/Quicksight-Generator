@@ -35,6 +35,9 @@ produces the rows the dashboard expects.
 - [Customization](../handbook/customization.md) — for the developer
   dropping the dashboards onto their own backend, brand, and AWS
   account.
+- [Domain Model (SPEC)](../SPEC.md) — the canonical L1 / L2 / L3
+  layer model: primitives, derivatives, system constraints, and the
+  L2 institutional vocabulary every shipped app reads.
 - [Schema v6 — Data Feed Contract](../Schema_v6.md) — column specs +
   metadata key catalog + ETL examples for the two base tables.
 - [L1 Invariants](../L1_Invariants.md) — the formal SHOULD-violation
