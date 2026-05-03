@@ -164,12 +164,126 @@ class TestBullets:
         assert "[the docs]" not in out
         assert "](https://x.com)" not in out
 
-    def test_bullets_render_paragraph_break_inside_item(self) -> None:
-        # A ``\n`` inside a bullet item becomes a soft ``<br/>``
-        # (intra-bullet line break). Useful for L2 descriptions that
-        # carry mid-item wrapping.
-        out = rt.bullets(["line one\nline two"])
-        assert "line one<br/>line two" in out
+    def test_bullets_strip_br_from_item_and_warn(self) -> None:
+        # v8.5.8 — bullets() is defensive: any ``<br/>`` produced by
+        # markdown() (e.g. from a ``\n`` inside a YAML block scalar)
+        # gets stripped and the caller gets a UserWarning showing the
+        # original item. QS rejects ``<br/>`` as a child of ``<li>``
+        # with ``Element 'li' cannot have 'br' elements as children``.
+        import warnings as _w
+
+        with _w.catch_warnings(record=True) as caught:
+            _w.simplefilter("always")
+            out = rt.bullets(["line one\nline two"])
+        assert "<br/>" not in out
+        assert "line one" in out and "line two" in out
+        # The warning surfaces the input (via repr) so authors can fix
+        # the source. ``repr('a\nb')`` is the escaped form ``'a\\nb'``.
+        assert len(caught) == 1
+        assert issubclass(caught[0].category, UserWarning)
+        msg = str(caught[0].message)
+        assert "line one" in msg and "line two" in msg
+        assert "<br/>" in msg  # the warning explains what was stripped
+
+    def test_bullets_strip_br_from_paragraph_break_and_warn(self) -> None:
+        # ``\n\n`` produces ``<br/><br/>`` via markdown(); both get
+        # stripped, one warning per item.
+        import warnings as _w
+
+        with _w.catch_warnings(record=True) as caught:
+            _w.simplefilter("always")
+            out = rt.bullets(["para one\n\npara two"])
+        assert "<br/>" not in out
+        assert "para one" in out and "para two" in out
+        assert len(caught) == 1
+
+    def test_bullets_no_warning_when_no_br_emitted(self) -> None:
+        # Plain bullets — no newlines, no warning, exact pre-v8.5.8
+        # output shape preserved.
+        import warnings as _w
+
+        with _w.catch_warnings(record=True) as caught:
+            _w.simplefilter("always")
+            out = rt.bullets(["alpha", "beta"])
+        assert caught == []
+        assert (
+            out
+            == '<ul><li class="ql-indent-0">alpha</li>'
+            '<li class="ql-indent-0">beta</li></ul>'
+        )
+
+    def test_bullets_link_inside_item_with_newlines(self) -> None:
+        # Combining the two v8.5.x fixes: a bullet item containing
+        # both an inline ``[text](url)`` link AND embedded newlines
+        # renders the link AND strips the resulting ``<br/>``.
+        import warnings as _w
+
+        with _w.catch_warnings():
+            _w.simplefilter("ignore")
+            out = rt.bullets(["see [docs](https://x.com)\nfor details"])
+        assert (
+            '<a href="https://x.com" target="_self">docs</a>'
+            in out
+        )
+        assert "<br/>" not in out
+
+    def test_bullets_one_warning_per_offending_item(self) -> None:
+        # If multiple items contain newlines, each one gets its own
+        # warning so the author can fix every offender in one pass.
+        import warnings as _w
+
+        with _w.catch_warnings(record=True) as caught:
+            _w.simplefilter("always")
+            rt.bullets(["a\nb", "clean", "c\nd"])
+        assert len(caught) == 2
+
+
+class TestMarkdownInline:
+    """v8.5.8 — strict-no-``<br/>`` variant for use inside ``<li>``
+    (and other contexts where the QS XML parser rejects line
+    breaks)."""
+
+    def test_collapses_single_newline_to_space(self) -> None:
+        assert rt.markdown_inline("a\nb") == "a b"
+
+    def test_collapses_multiple_newlines_to_single_space(self) -> None:
+        assert rt.markdown_inline("a\n\n\nb") == "a b"
+
+    def test_strips_leading_trailing_whitespace(self) -> None:
+        assert rt.markdown_inline("\n\nbody\n\n") == "body"
+
+    def test_xml_escapes(self) -> None:
+        assert rt.markdown_inline("a < b & c") == "a &lt; b &amp; c"
+
+    def test_inline_link_becomes_anchor(self) -> None:
+        out = rt.markdown_inline("see [docs](https://x.com) here")
+        assert (
+            out
+            == 'see <a href="https://x.com" target="_self">docs</a> here'
+        )
+
+    def test_link_with_newlines_around_it(self) -> None:
+        out = rt.markdown_inline("intro\n[click](https://x.com)\noutro")
+        assert (
+            out
+            == 'intro <a href="https://x.com" target="_self">click</a> outro'
+        )
+
+    def test_never_emits_br(self) -> None:
+        # The whole raison d'etre — the ``<br/>`` ban must be total.
+        for inp in [
+            "a\nb",
+            "a\n\nb",
+            "a\n\n\n\nb",
+            "[link](https://x.com)\nthen text",
+            "\n\nleading\n\nbody\n\ntrailing\n\n",
+        ]:
+            assert "<br/>" not in rt.markdown_inline(inp), inp
+
+    def test_pure_spaces_preserved(self) -> None:
+        # Authored intra-line spacing survives — only newline-bearing
+        # whitespace runs collapse.
+        assert rt.markdown_inline("a   b") == "a   b"
 
     def test_plain_bullets_unchanged(self) -> None:
         # Regression guard: items with no markdown shape behave

@@ -23,16 +23,34 @@ Authoring helpers:
   single ``\\n`` becomes ``<br/>``, ``[text](url)`` becomes a clickable
   ``<a href="...">``. Use whenever the source string is L2-YAML-supplied
   description prose (which is markdown-shaped by convention).
+* ``markdown_inline(text)`` — same XML-escape + ``[text](url)`` link
+  handling, but ALL newlines collapse to a single space (no ``<br/>``).
+  Use inside contexts where ``<br/>`` is not a valid child — most
+  notably ``<li>``: QS's XML parser rejects ``<br/>`` as a child of
+  ``<li>`` with ``Element 'li' cannot have 'br' elements as children``.
+
+``bullets()`` is defensive: it routes items through ``markdown()``
+then strips any ``<br/>`` from each item with a ``UserWarning``
+showing the original input. Authors can choose ``markdown_inline``
+explicitly when they need a guaranteed-no-``<br/>`` rendering of a
+single string outside a bullet context.
 """
 
 from __future__ import annotations
 
 import re
+import warnings
 from typing import Iterable
 from xml.sax.saxutils import escape as _xml_escape
 
 
 BR = "<br/>"
+
+
+# Match every ``<br>``-shape (self-closing, slash-self-closing, with or
+# without whitespace inside the tag) so the bullets() defensive strip
+# catches them regardless of which authoring path produced them.
+_BR_TAG = re.compile(r"<br\s*/?\s*>", re.IGNORECASE)
 
 
 # Inline markdown link: ``[text](url)``. Captures the link text + the
@@ -75,19 +93,36 @@ def subheading(text: str, color: str | None = None) -> str:
 def bullets(items: Iterable[str]) -> str:
     """Bulleted list at indent level 0.
 
-    Each item is processed through :func:`markdown`, so inline
-    ``[text](url)`` links render as clickable anchors and lone
-    ``\\n`` becomes ``<br/>`` (intra-bullet soft break). v8.5.4
-    closes the footgun where bullet items sourced from L2 YAML
-    descriptions (markdown-shaped by SPEC convention) leaked
-    literal ``[...](...)`` markup into the rendered text box.
-    Plain-text bullets behave identically to before — ``markdown()``
-    is a strict superset of the old ``_xml_escape`` path.
+    Each item is processed through :func:`markdown` (so inline
+    ``[text](url)`` links render as clickable anchors) and then
+    defensively stripped of any ``<br/>`` tags — QS's XML parser
+    rejects ``<br/>`` as a child of ``<li>`` with
+    ``Element 'li' cannot have 'br' elements as children``. L2 YAML
+    ``description: |`` block scalars carry embedded ``\\n`` for
+    human-readable wrapping; those would otherwise reflow to
+    ``<br/>`` via :func:`markdown` and break ``CreateAnalysis`` (the
+    v8.5.4 → v8.5.8 regression on the L1 Drift sheet).
+
+    Any stripped ``<br/>`` raises a ``UserWarning`` showing the
+    original item so authors can clean the source string when the
+    line break was actually intended (e.g. break the item into two).
     """
-    lis = "".join(
-        f'<li class="ql-indent-0">{markdown(item)}</li>' for item in items
-    )
-    return f"<ul>{lis}</ul>"
+    lis_parts: list[str] = []
+    for item in items:
+        rendered = markdown(item)
+        if _BR_TAG.search(rendered):
+            stripped = _BR_TAG.sub(" ", rendered)
+            warnings.warn(
+                f"bullets(): stripped <br/> from list item — QS "
+                f"rejects <br/> as a child of <li>. Original item: "
+                f"{item!r}. Consider splitting into two bullets or "
+                f"removing the embedded line break in the source.",
+                UserWarning,
+                stacklevel=2,
+            )
+            rendered = stripped
+        lis_parts.append(f'<li class="ql-indent-0">{rendered}</li>')
+    return f"<ul>{''.join(lis_parts)}</ul>"
 
 
 def bullets_raw(items: Iterable[str]) -> str:
@@ -129,6 +164,50 @@ def markdown(text: str) -> str:
         cursor = match.end()
     parts.append(_escape_with_breaks(text[cursor:]))
     return "".join(parts)
+
+
+def markdown_inline(text: str) -> str:
+    """Single-line markdown with link handling but no ``<br/>``.
+
+    Same transformations as :func:`markdown` for inline links and
+    XML-escaping, but ANY whitespace run that contains a newline
+    collapses to a single space. ``<br/>`` is never emitted. Use
+    inside ``<li>`` (the QS XML parser rejects ``<br/>`` as an
+    ``<li>`` child) or any other context where line breaks must
+    not appear.
+
+    Trailing / leading whitespace is stripped — useful when the
+    input came from a YAML ``|`` block scalar (which always ends in
+    ``\\n``). Strip happens after link substitution so a link sitting
+    at the end of the input stays attached to the next part rather
+    than getting whitespace-eaten.
+    """
+    parts: list[str] = []
+    cursor = 0
+    for match in _MARKDOWN_LINK.finditer(text):
+        before = text[cursor:match.start()]
+        parts.append(_escape_collapse_newlines(before))
+        parts.append(link(match.group(1), match.group(2)))
+        cursor = match.end()
+    parts.append(_escape_collapse_newlines(text[cursor:]))
+    return "".join(parts).strip()
+
+
+def _escape_collapse_newlines(text: str) -> str:
+    """XML-escape ``text`` and collapse newline-bearing whitespace runs.
+
+    Any whitespace run that contains at least one ``\\n`` collapses
+    to a single space — that handles the YAML block-scalar case where
+    line wrapping creates ``\\n`` between words AND the case of
+    ``\\n\\n`` paragraph breaks (both reflow to a single space here,
+    since ``<li>`` doesn't take ``<br/>``). Pure-space runs that
+    don't contain a newline are left alone, so authored intra-line
+    spacing survives.
+    """
+    escaped = _xml_escape(text)
+    # \s* on either side captures leading/trailing space adjacent to
+    # the newline run; the whole match collapses to a single space.
+    return re.sub(r"[ \t]*\n+[ \t]*", " ", escaped)
 
 
 def _escape_with_breaks(text: str) -> str:

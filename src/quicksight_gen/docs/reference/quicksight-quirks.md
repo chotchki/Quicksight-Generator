@@ -322,6 +322,37 @@ analyst picks).
 
 ---
 
+### 4.4 `SheetTextBox.Content` rejects `<br>` as a child of `<li>`
+
+**Observed.** The text-box XML grammar accepts `<br/>` for line
+breaks AND `<ul><li>...</li></ul>` for bullet lists. Putting one
+inside the other — `<li>foo<br/>bar</li>` — is rejected by the
+parser at `CreateAnalysis` time with
+`Element 'li' cannot have 'br' elements as children`. The error
+message names the offending text-box by `TextBoxId` and the
+sheet by `SheetId`, but no other rich-text element class is
+called out (e.g. `<li>` is fine inside `<ul>` and `<a>` is fine
+inside `<li>`). Surfaces silently up to deploy: the JSON
+serialises cleanly and the dataset describes cleanly.
+
+**Workaround.** `common/rich_text.py::bullets()` post-processes
+each item to strip `<br>`, `<br/>`, and `<br />` (case-insensitive)
+and emits a `UserWarning` per offender. Triggered by L2 YAML
+descriptions authored as `description: |` block scalars: the
+embedded `\n` from human-readable line wrapping reflowed to
+`<br/>` via `markdown()` and crashed the L1 Drift sheet's
+`l1-drift-accounts` text box — see `common/rich_text.py` and
+`tests/json/test_text_box_safety.py::test_no_br_inside_li_in_text_box_content`
+(v8.5.8).
+
+**Suggested fix.** Either accept `<br/>` inside `<li>` (the most
+permissive web-HTML behavior matches most authors' expectations),
+or surface the rejection at JSON-validation time (before the
+`CreateAnalysis` round-trip) so callers learn about it without
+deploying.
+
+---
+
 ## 5. Backend / refresh quirks
 
 ### 5.1 Embed URL must be signed by the dashboard's region (not

@@ -124,3 +124,51 @@ def test_no_unconverted_markdown_link_in_text_box_content(
         f"with ``rt.markdown(string)`` so QS renders the link as "
         f"clickable:\n" + "\n".join(bad)
     )
+
+
+# ``<li ...>...</li>`` block, captured non-greedily so adjacent items
+# don't merge into one match. ``re.DOTALL`` so any line breaks inside
+# the item (the failure mode we're hunting) are visible to the
+# ``<br/>`` substring check.
+_LI_BLOCK = re.compile(r"<li\b[^>]*>(.*?)</li>", re.DOTALL)
+
+
+@pytest.mark.parametrize("app_name,emitted", list(_build_all_apps()))
+def test_no_br_inside_li_in_text_box_content(
+    app_name: str, emitted: Any,
+) -> None:
+    """Class regression: no ``<br/>`` may appear inside an ``<li>``.
+
+    QuickSight's text-box XML parser rejects this with
+    ``Element 'li' cannot have 'br' elements as children`` at
+    ``CreateAnalysis`` time — silent up to that point (the JSON
+    validates locally, the dataset validates locally). The bug
+    surfaced in v8.5.4 once ``rt.bullets()`` started routing items
+    through ``rt.markdown()``: L2 YAML ``description: |`` block
+    scalars carry embedded ``\\n`` from human-readable wrapping,
+    those reflowed to ``<br/>``, and ``CreateAnalysis`` died on the
+    L1 Drift sheet's ``l1-drift-accounts`` text box.
+
+    Fix: ``rt.bullets()`` calls ``rt.markdown_inline()`` per item
+    (collapses newlines to spaces, no ``<br/>`` emitted). This test
+    is the regression guard.
+    """
+    bad: list[str] = []
+    for sheet_id, content in _all_text_box_contents(emitted):
+        for li_match in _LI_BLOCK.finditer(content):
+            inner = li_match.group(1)
+            if "<br/>" in inner or "<br />" in inner or "<br>" in inner:
+                # Snip surrounding context for the error message so
+                # the failure message points at the offending item.
+                bad.append(
+                    f"  sheet={sheet_id!r}: <li> contains <br/>: "
+                    f"{li_match.group(0)[:200]!r}"
+                )
+    assert not bad, (
+        f"App {app_name!r} has text-box content with ``<br/>`` inside "
+        f"``<li>`` — QuickSight's CreateAnalysis will reject this with "
+        f"``Element 'li' cannot have 'br' elements as children``. "
+        f"``rt.bullets()`` must use ``rt.markdown_inline()`` per item "
+        f"(not ``rt.markdown()``). See ``common/rich_text.py`` and "
+        f"``docs/reference/quicksight-quirks.md``:\n" + "\n".join(bad)
+    )
