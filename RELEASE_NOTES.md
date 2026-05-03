@@ -1,5 +1,48 @@
 # Release Notes
 
+## v8.3.4 — Tree validator: every parameter-bound filter must be settable
+
+Defensive follow-up to v8.3.3. No bug fix — just a regression guard
+that closes the structural slice of the v8.3.3 footgun class.
+
+### What it catches
+
+A filter that binds a parameter (`CategoryFilter.with_parameter`,
+`TimeEqualityFilter`, `NumericRangeFilter` with `minimum_parameter` /
+`maximum_parameter`) where the analyst has no way to set that
+parameter is a load-bearing bug — the `WHERE` clause matches nothing
+at runtime, every visual on the sheet renders blank, no error
+message anywhere. v8.3.3 closed the construction-time slice (forgot
+`selectable_values=` on a dropdown); this closes the structural
+slice (forgot the dropdown entirely).
+
+New `App._validate_filter_param_settability` runs at
+`emit_analysis()` / `emit_dashboard()` time, walks every
+parameter-bound filter, and asserts each bound parameter has EITHER:
+
+- A `ParameterControl` somewhere on the analysis (Dropdown, Slider,
+  DateTimePicker, etc.), OR
+- A non-empty `default` on the parameter declaration
+
+Drill-target params (set programmatically by `Drill` writes, no UI)
+satisfy the second clause via their default sentinel — they pass
+unchanged.
+
+`TimeRangeFilter`'s dict-form `{"Parameter": name}` bindings aren't
+walked (the binding is a string `ParameterName`, not a typed
+`ParameterDeclLike`, so the cross-reference would have to look up by
+name). All shipped uses bind to `DateTimeParam`s with `RollingDate`
+defaults, so the gap is theoretical for now.
+
+### Test
+
+`TestValidateFilterParamSettability` in `tests/unit/test_tree.py`
+covers the four cases:
+- no control + no default → raises (the bug)
+- with control → passes
+- with default only → passes (drill-target shape)
+- `emit_dashboard()` validates the same way as `emit_analysis()`
+
 ## v8.3.3 — Hotfix: L1 Daily Statement account dropdown empty
 
 Bug fix on top of v8.3.2.

@@ -1254,6 +1254,77 @@ class TestAppDatasetDependencies:
             app.emit_dashboard()
 
 
+class TestValidateFilterParamSettability:
+    """Catches the v8.3.3 Daily Statement bug class at App.emit time:
+    CategoryFilter / TimeEqualityFilter / NumericRangeFilter that bind
+    a parameter the analyst can't set (no control + no default)."""
+
+    def _scaffold(self, *, with_default: bool, with_control: bool):
+        from quicksight_gen.common.tree import (
+            FilterGroup, LinkedValues, StaticValues,
+        )
+        app = App(name="test", cfg=_TEST_CFG, allow_bare_strings=True)
+        app.add_dataset(_DS_FOO)
+        analysis = app.set_analysis(Analysis(
+            analysis_id_suffix="t", name="T",
+        ))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId("s"), name="S", title="S", description="",
+        ))
+        sheet.layout.row(height=6).add_kpi(
+            width=12, visual_id=VisualId("v"), title="V",
+            values=[Measure.sum(_DS_FOO, "amount", field_id="f-val")],
+        )
+        param = analysis.add_parameter(StringParam(
+            name=ParameterName("pAccount"),
+            default=["acct-1"] if with_default else [],
+        ))
+        if with_control:
+            sheet.add_parameter_dropdown(
+                parameter=param, title="Account",
+                selectable_values=StaticValues(values=["acct-1", "acct-2"]),
+            )
+        analysis.add_filter_group(FilterGroup(
+            filter_group_id=FilterGroupId("fg-cat"),
+            cross_dataset="SINGLE_DATASET",
+            filters=[CategoryFilter.with_parameter(
+                filter_id="filter-cat",
+                dataset=_DS_FOO,
+                column=_DS_FOO["account"],
+                parameter=param,
+            )],
+        )).scope_sheet(sheet)
+        return app
+
+    def test_param_with_no_control_and_no_default_raises(self):
+        """The v8.3.3 footgun: analyst sees an empty dropdown (or no
+        widget at all), parameter stays unset, every visual on the
+        sheet renders blank."""
+        app = self._scaffold(with_default=False, with_control=False)
+        with pytest.raises(ValueError, match="unsettable"):
+            app.emit_analysis()
+
+    def test_param_with_control_passes(self):
+        """A dropdown — even just a static-values one — gives the
+        analyst a way to pick. Settable, no error."""
+        app = self._scaffold(with_default=False, with_control=True)
+        app.emit_analysis()  # doesn't raise
+
+    def test_param_with_default_only_passes(self):
+        """Drill-target params (set programmatically by Drill writes,
+        no UI control) lean on a default sentinel — that's a valid
+        settable shape."""
+        app = self._scaffold(with_default=True, with_control=False)
+        app.emit_analysis()  # doesn't raise
+
+    def test_dashboard_emit_validates_too(self):
+        """The validator runs on emit_dashboard the same way."""
+        app = self._scaffold(with_default=False, with_control=False)
+        app.create_dashboard(dashboard_id_suffix="d", name="D")
+        with pytest.raises(ValueError, match="unsettable"):
+            app.emit_dashboard()
+
+
 # ---------------------------------------------------------------------------
 # L.1.8 — CalcField tree nodes
 # ---------------------------------------------------------------------------

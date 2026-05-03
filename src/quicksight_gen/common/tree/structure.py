@@ -1459,6 +1459,114 @@ class App:
                 f"analysis.add_parameter() first."
             )
 
+    def _validate_filter_param_settability(self) -> None:
+        """Raise if any filter binds a parameter the analyst can't set.
+
+        A parameter-bound filter (CategoryFilter.with_parameter,
+        TimeEqualityFilter, NumericRangeFilter with
+        minimum_parameter/maximum_parameter) where the bound parameter
+        has NO settable control AND NO non-empty default produces a
+        WHERE clause that matches nothing at runtime. The visual
+        renders with the dataset narrowed to zero rows — every KPI
+        blank, every table empty, no error message anywhere.
+
+        Settable means EITHER:
+
+        - At least one ParameterControl on the analysis targets the
+          parameter (any kind: Dropdown, Slider, DateTimePicker, etc.)
+        - The parameter declaration carries a non-empty default
+          (StringParam.default non-empty list, IntegerParam.default
+          non-empty list, DateTimeParam.default always present)
+
+        Caught the v8.3.3 Daily Statement bug class at the App.emit
+        level (the ParameterDropdown type tightening catches the
+        construction-time slice; this validator catches the
+        structural slice — "no dropdown wired at all"). Pairs with
+        the v8.3.3 type-system change as belt + suspenders.
+
+        TimeRangeFilter's ``minimum``/``maximum`` dict-form
+        ``{"Parameter": name}`` bindings are not walked here — those
+        carry a string ParameterName, not a typed ParameterDeclLike,
+        so the cross-reference would have to lookup-by-name. The
+        existing shipped uses all bind to DateTimeParams with
+        RollingDate defaults, so the gap is theoretical for now.
+        """
+        if self.analysis is None:
+            return
+
+        # Set of parameter NAMES that have at least one control on the analysis.
+        controlled_param_names: set[str] = set()
+        for sheet in self.analysis.sheets:
+            for ctrl in sheet.parameter_controls:
+                p = getattr(ctrl, "parameter", None)
+                if p is not None:
+                    controlled_param_names.add(str(p.name))
+
+        # Set of parameter NAMES that carry a non-empty default.
+        # StringParam / IntegerParam: default is a list — non-empty means
+        # the user picked at least one value at parameter declaration.
+        # DateTimeParam: default is always a non-None DateTimeDefaultValues
+        # (M.4.4.10d type-required), so always counts as defaulted.
+        defaulted_param_names: set[str] = set()
+        for p in self.analysis.parameters:
+            d: object = getattr(p, "default", None)
+            if d is None:
+                continue
+            if isinstance(d, list) and not d:
+                continue
+            defaulted_param_names.add(str(p.name))
+
+        # Walk every parameter-bound filter; collect any whose
+        # parameter is neither controlled nor defaulted.
+        bad: list[str] = []
+
+        def _check(
+            param: ParameterDeclLike | None, where: str,
+        ) -> None:
+            if param is None:
+                return
+            name = str(param.name)
+            if name in controlled_param_names or name in defaulted_param_names:
+                return
+            bad.append(
+                f"{where} → parameter {name!r} has no control on the "
+                f"analysis AND no non-empty default — analyst can't set "
+                f"it, so the filter matches nothing at runtime"
+            )
+
+        from quicksight_gen.common.tree.filters import _ParameterBinding
+
+        for fg in self.analysis.filter_groups:
+            for f in fg.filters:
+                # CategoryFilter discriminates via .binding; only the
+                # parameter-bound variant carries a ParameterDeclLike.
+                binding = getattr(f, "binding", None)
+                if isinstance(binding, _ParameterBinding):
+                    _check(binding.parameter, f"filter {f.filter_id!r}")
+                # TimeEqualityFilter + NumericRangeFilter expose
+                # parameter / minimum_parameter / maximum_parameter directly.
+                _check(
+                    getattr(f, "parameter", None),
+                    f"filter {f.filter_id!r} parameter",
+                )
+                _check(
+                    getattr(f, "minimum_parameter", None),
+                    f"filter {f.filter_id!r} minimum_parameter",
+                )
+                _check(
+                    getattr(f, "maximum_parameter", None),
+                    f"filter {f.filter_id!r} maximum_parameter",
+                )
+
+        if bad:
+            raise ValueError(
+                f"App {self.name!r} has parameter-bound filters whose "
+                f"parameter is unsettable (no control + no default). "
+                f"Either add a parameter control on a sheet, give the "
+                f"parameter a non-empty default, or use a non-parameter "
+                f"filter form (with_values / with_literal): {bad}"
+            )
+
     def _validate_drill_destinations(self) -> None:
         """Raise if any Drill action targets a Sheet that isn't on
         this App's Analysis. Catches "drill into a sheet that doesn't
@@ -1644,6 +1752,7 @@ class App:
         self._validate_dataset_references()
         self._validate_calc_field_references()
         self._validate_parameter_references()
+        self._validate_filter_param_settability()
         self._validate_drill_destinations()
         self._validate_no_bare_string_columns()
         return ModelAnalysis(
@@ -1667,6 +1776,7 @@ class App:
         self._validate_dataset_references()
         self._validate_calc_field_references()
         self._validate_parameter_references()
+        self._validate_filter_param_settability()
         self._validate_drill_destinations()
         self._validate_no_bare_string_columns()
         return ModelDashboard(
