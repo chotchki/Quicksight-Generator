@@ -309,13 +309,25 @@ def docs_apply(
     config_args: list[str] = []
     portable_yml: Path | None = None
     if portable:
-        # Synthesize a tiny INHERIT-based config that flips one key.
+        # Synthesize a tiny INHERIT-based config that overrides keys
+        # that don't make sense for an offline / file:// build.
         # Living inside _REPO_ROOT lets the inherited config's
         # relative paths (docs_dir, extra_css, …) resolve unchanged.
+        #
+        # `use_directory_urls: false` — emit `<slug>/index.html`
+        #     so links resolve via file:// without a web server.
+        # `theme.font: false` — Material defaults to fetching Roboto
+        #     from fonts.googleapis.com on every page load. Offline
+        #     readers get an ugly Times New Roman fallback while the
+        #     fetch hangs; disabling drops the link tag entirely so
+        #     Material renders in the OS system font (San Francisco
+        #     / Segoe UI / Cantarell).
         portable_yml = _REPO_ROOT / "mkdocs.portable.yml"
         portable_yml.write_text(
             "INHERIT: mkdocs.yml\n"
-            "use_directory_urls: false\n",
+            "use_directory_urls: false\n"
+            "theme:\n"
+            "  font: false\n",
             encoding="utf-8",
         )
         config_args = ["-f", str(portable_yml)]
