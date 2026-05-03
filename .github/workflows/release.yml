@@ -34,14 +34,19 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install dependencies
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies (V.2 — uv sync from uv.lock)
         # `[audit]` brings in reportlab + pypdf + pyhanko; tests/audit/
         # invokes `audit apply --execute` which needs pyhanko on every
         # render (empty reviewer signature widgets).
-        run: pip install -e ".[dev,audit]"
+        run: uv sync --frozen --extra dev --extra audit
 
       - name: Run tests with coverage (pytest sessionstart runs pyright strict)
-        run: pytest --cov=quicksight_gen --cov-report=xml --cov-report=term
+        run: .venv/bin/pytest --cov=quicksight_gen --cov-report=xml --cov-report=term
 
   # ---------------------------------------------------------------------------
   # Build sdist + wheel
@@ -62,13 +67,18 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install build
-        run: pip install build twine
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies (V.2 — uv sync; build + twine are in [dev])
+        run: uv sync --frozen --extra dev
 
       - name: Verify tag matches package version
         run: |
           TAG="${GITHUB_REF_NAME#v}"
-          PKG_VERSION=$(python -c "import tomllib, pathlib; \
+          PKG_VERSION=$(.venv/bin/python -c "import tomllib, pathlib; \
             data = tomllib.loads(pathlib.Path('pyproject.toml').read_text()); \
             attr = data['tool']['setuptools']['dynamic']['version']['attr']; \
             mod, var = attr.rsplit('.', 1); \
@@ -81,10 +91,10 @@ jobs:
           fi
 
       - name: Build sdist + wheel
-        run: python -m build
+        run: .venv/bin/python -m build
 
       - name: Verify long description renders on PyPI
-        run: twine check dist/*
+        run: .venv/bin/twine check dist/*
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v4

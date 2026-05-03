@@ -24,16 +24,22 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install dependencies
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies (V.2 — uv sync from uv.lock)
         # `[audit]` brings in reportlab + pypdf + pyhanko; the audit
         # CLI verb (and tests/audit/) require them — pyhanko in
         # particular is needed even for unsigned PDFs because the
         # empty reviewer signature widgets land via pyhanko on every
         # render, regardless of whether `signing:` is configured.
-        run: pip install -e ".[dev,audit]"
+        # `--frozen` fails the build if the lock is out of date.
+        run: uv sync --frozen --extra dev --extra audit
 
       - name: Run tests with coverage (pytest sessionstart runs pyright strict)
-        run: pytest --cov=quicksight_gen --cov-report=xml --cov-report=term
+        run: .venv/bin/pytest --cov=quicksight_gen --cov-report=xml --cov-report=term
 
   # P.7 — containerized integration job. Runs ``quicksight-gen demo
   # apply`` against a live Postgres + a live Oracle Free service
@@ -87,8 +93,13 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install dependencies (incl. demo + demo-oracle extras)
-        run: pip install -e ".[dev,demo,demo-oracle]"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies (V.2 — uv sync from uv.lock)
+        run: uv sync --frozen --extra dev --extra demo --extra demo-oracle
 
       - name: Apply demo against Postgres
         run: |
@@ -102,10 +113,10 @@ jobs:
           EOF
           # Q.3.a (v8.0.0): chain the four artifact groups explicitly
           # in place of the legacy bundled `demo apply --all`.
-          quicksight-gen schema apply -c /tmp/ci-pg.yaml --execute
-          quicksight-gen data apply -c /tmp/ci-pg.yaml --execute
-          quicksight-gen data refresh -c /tmp/ci-pg.yaml --execute
-          quicksight-gen json apply -c /tmp/ci-pg.yaml -o /tmp/ci-pg-out
+          .venv/bin/quicksight-gen schema apply -c /tmp/ci-pg.yaml --execute
+          .venv/bin/quicksight-gen data apply -c /tmp/ci-pg.yaml --execute
+          .venv/bin/quicksight-gen data refresh -c /tmp/ci-pg.yaml --execute
+          .venv/bin/quicksight-gen json apply -c /tmp/ci-pg.yaml -o /tmp/ci-pg-out
 
       - name: Verify Postgres row counts
         run: |
@@ -114,7 +125,7 @@ jobs:
           # anchor defaults to UTC today), so they drift across CI
           # runs. Re-lock to exact counts once `demo apply --anchor`
           # lands as a follow-up.
-          python tests/integration/verify_demo_apply.py \
+          .venv/bin/python tests/integration/verify_demo_apply.py \
             --dialect postgres \
             --url "postgresql://postgres:ci_pg_password@localhost:5432/postgres" \
             --prefix spec_example --smoke
@@ -131,15 +142,15 @@ jobs:
           EOF
           # Q.3.a (v8.0.0): chain the four artifact groups explicitly
           # in place of the legacy bundled `demo apply --all`.
-          quicksight-gen schema apply -c /tmp/ci-oracle.yaml --execute
-          quicksight-gen data apply -c /tmp/ci-oracle.yaml --execute
-          quicksight-gen data refresh -c /tmp/ci-oracle.yaml --execute
-          quicksight-gen json apply -c /tmp/ci-oracle.yaml -o /tmp/ci-oracle-out
+          .venv/bin/quicksight-gen schema apply -c /tmp/ci-oracle.yaml --execute
+          .venv/bin/quicksight-gen data apply -c /tmp/ci-oracle.yaml --execute
+          .venv/bin/quicksight-gen data refresh -c /tmp/ci-oracle.yaml --execute
+          .venv/bin/quicksight-gen json apply -c /tmp/ci-oracle.yaml -o /tmp/ci-oracle-out
 
       - name: Verify Oracle row counts
         run: |
           # --smoke: same rationale as the Postgres verify above.
-          python tests/integration/verify_demo_apply.py \
+          .venv/bin/python tests/integration/verify_demo_apply.py \
             --dialect oracle \
             --url "system/ci_ora_password@localhost:1521/FREEPDB1" \
             --prefix spec_example --smoke
@@ -159,18 +170,25 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install dependencies
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies (V.2 — uv sync from uv.lock)
         # `[audit]` brings in pyhanko — needed even for unsigned PDFs
         # (empty reviewer signature widgets land via pyhanko on every
-        # render). Coverage-badge job runs the same audit tests as the
-        # main test job; same dep set required.
-        run: pip install -e ".[dev,audit]" genbadge[coverage]
+        # render). genbadge[coverage] is a CI-only badge tool — kept
+        # out of pyproject extras / lock so local dev installs stay lean.
+        run: |
+          uv sync --frozen --extra dev --extra audit
+          uv pip install 'genbadge[coverage]'
 
       - name: Generate coverage XML
-        run: pytest --cov=quicksight_gen --cov-report=xml
+        run: .venv/bin/pytest --cov=quicksight_gen --cov-report=xml
 
       - name: Generate badge SVG
-        run: genbadge coverage -i coverage.xml -o coverage-badge.svg
+        run: .venv/bin/genbadge coverage -i coverage.xml -o coverage-badge.svg
 
       - name: Push badge to badges branch
         run: |

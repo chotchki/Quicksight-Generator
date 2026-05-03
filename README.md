@@ -116,10 +116,31 @@ pip install "quicksight-gen[demo,demo-oracle]"
 
 ### Setup from source
 
+The repo uses [uv](https://docs.astral.sh/uv/) for env / lock management
+(deterministic resolution from `uv.lock`). One command sets up `.venv/`
+with every extra:
+
+```bash
+uv sync --all-extras
+```
+
+Then invoke tools directly via the venv (no `source activate` needed):
+
+```bash
+.venv/bin/pytest
+.venv/bin/quicksight-gen --help
+```
+
+For a leaner install, swap `--all-extras` for the specific extras you
+need: `--extra dev` (tests + pyright + boto3), `--extra audit` (PDF
+report deps), `--extra docs` (mkdocs + macros), `--extra demo` /
+`--extra demo-oracle` (DB drivers).
+
+If you'd rather stick with pip, the standard PEP-621 path still works:
+
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
+.venv/bin/pip install -e ".[dev]"
 ```
 
 ### Configure

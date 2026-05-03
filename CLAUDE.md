@@ -13,7 +13,7 @@ The customer doesn't know exactly what they want yet. Everything is generated fr
 ## Quick Reference
 
 - **Language**: Python 3.12+ (3.13 in use). 3.12 minimum is for PEP 695 generic syntax used in `common/tree/`.
-- **Package manager**: pip / setuptools, venv at `.venv/`
+- **Package manager**: uv (lock at `uv.lock`); setuptools build backend; venv at `.venv/`. Run `uv sync --all-extras` after pulling to refresh deps; tests/CLI invoke via `.venv/bin/...` directly (no `source activate`).
 - **Entry point**: `python -m quicksight_gen` or `quicksight-gen` (installed script)
 - **CLI framework**: Click
 - **Output**: JSON files in `out/` (theme, per-app analysis/dashboard, datasets, optional datasource)
@@ -29,9 +29,10 @@ also carries `verify`. Everything destructive defaults to emit
 only runs against the DB / AWS / disk when you pass `--execute`.
 
 ```bash
-# Install (add [demo] for `data apply --execute`, which needs psycopg2 / oracledb)
-pip install -e ".[dev]"
-pip install -e ".[demo]"
+# Install (uv handles env + lock; add extras as needed)
+uv sync --all-extras                       # everything (recommended for dev)
+uv sync --extra dev --extra audit          # just unit tests + audit PDF
+uv sync --extra dev --extra demo --extra demo-oracle  # for `data apply --execute`
 
 # Generate all JSON for the four bundled apps
 quicksight-gen json apply -c config.yaml -o out/
