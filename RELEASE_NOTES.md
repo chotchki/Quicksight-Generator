@@ -1,5 +1,39 @@
 # Release Notes
 
+## v8.5.6 — Transactions sheet transfer_type dropdown perf index
+
+The L1 Transactions sheet's ``transfer_type`` filter dropdown
+spun on open. Same root cause as the v8.4.0 Drift dropdown
+fix: QuickSight's date-narrowed
+``SELECT DISTINCT transfer_type WHERE posting BETWEEN ...``
+query had no useful index on the matview, so it full-scanned
+every time.
+
+### Operator-facing
+
+- **L1 Transactions ``transfer_type`` dropdown opens fast.** New
+  date-leading composite index
+  ``idx_<prefix>_curr_tx_posting_transfer_type`` on
+  ``<prefix>_current_transactions (posting, transfer_type)`` lets
+  the dropdown's distinct-value query index-scan the date range
+  and return distinct transfer_types directly.
+
+### Engineering surface
+
+- ``common/l2/schema.py`` adds the new index in the
+  ``<prefix>_current_transactions`` matview's CREATE INDEX block.
+- ``tests/data/test_l2_pipeline.py`` —
+  ``test_current_transactions_matview_carries_v856_perf_index``
+  snapshot regression. Re-asserts the existing four indexes too
+  so a future refactor can't silently narrow the index footprint.
+
+### Known follow-ups (not in v8.5.6)
+
+- Other Transactions-sheet filter dropdowns (account / transfer /
+  status / origin) either have an index already or land in a small
+  enough cardinality bucket. Revisit if the next round of testing
+  flags more.
+
 ## v8.5.5 — Plain-English axis labels on BarChart visuals
 
 Closes Q.1.a.3 — the deferred sibling of v8.5.0's Table column

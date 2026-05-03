@@ -708,6 +708,17 @@ CREATE INDEX idx_{p}_curr_tx_account_posting
 CREATE INDEX idx_{p}_curr_tx_transfer ON {p}_current_transactions (transfer_id);
 CREATE INDEX idx_{p}_curr_tx_id ON {p}_current_transactions (id);
 CREATE INDEX idx_{p}_curr_tx_status ON {p}_current_transactions (status);
+-- v8.5.6: date-leading composite for the Transactions sheet's
+-- ``transfer_type`` filter dropdown. The dropdown's
+-- ``SELECT DISTINCT transfer_type WHERE posting BETWEEN start AND end``
+-- query had no useful index — full scan of the matview, visible as a
+-- spinning dropdown. Mirrors the v8.4.0 Drift dropdown fix
+-- (``idx_<prefix>_drift_day_account_role``). Other per-sheet dropdowns
+-- (account / transfer / status / origin) either already have an index
+-- or land in a small enough cardinality bucket; revisit if the next
+-- round of testing flags more.
+CREATE INDEX idx_{p}_curr_tx_posting_transfer_type
+    ON {p}_current_transactions (posting, transfer_type);
 
 CREATE MATERIALIZED VIEW {p}_current_daily_balances{matview_options} AS
 SELECT * FROM {p}_daily_balances sb
