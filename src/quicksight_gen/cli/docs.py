@@ -182,8 +182,21 @@ def docs() -> None:
     "--strict/--no-strict", default=True,
     help="Pass --strict to mkdocs (default on; treats warnings as errors).",
 )
+@click.option(
+    "--portable", is_flag=True,
+    help=(
+        "Build with use_directory_urls: false so the rendered site "
+        "opens via file:// without a web server (every page emits "
+        "as <slug>/index.html with relative links). The default "
+        "build uses pretty URLs (/scenario/) which require an HTTP "
+        "server to map the slug to its index.html."
+    ),
+)
 def docs_apply(
-    l2_instance_path: str | None, output: str, strict: bool,
+    l2_instance_path: str | None,
+    output: str,
+    strict: bool,
+    portable: bool,
 ) -> None:
     """Build the docs site to ``site/`` (or ``-o DIR``).
 
@@ -191,23 +204,52 @@ def docs_apply(
     falling back to the bundled spec_example) drives every
     ``{{ vocab.* }}`` substitution in the rendered prose.
 
+    With ``--portable``, emits a static-site that opens via ``file://``
+    — handy for shipping the rendered handbook on a USB stick, in a
+    zip attachment, or to a wiki that doesn't run a web server.
+
     No ``--execute``: building a static site IS the operation.
     """
     env = os.environ.copy()
     if l2_instance_path is not None:
         env["QS_DOCS_L2_INSTANCE"] = str(Path(l2_instance_path).resolve())
 
+    config_args: list[str] = []
+    portable_yml: Path | None = None
+    if portable:
+        # Synthesize a tiny INHERIT-based config that flips one key.
+        # Living inside _REPO_ROOT lets the inherited config's
+        # relative paths (docs_dir, extra_css, …) resolve unchanged.
+        portable_yml = _REPO_ROOT / "mkdocs.portable.yml"
+        portable_yml.write_text(
+            "INHERIT: mkdocs.yml\n"
+            "use_directory_urls: false\n",
+            encoding="utf-8",
+        )
+        config_args = ["-f", str(portable_yml)]
+
     cmd = [
         sys.executable, "-m", "mkdocs", "build",
+        *config_args,
         "-d", str(Path(output).resolve()),
     ]
     if strict:
         cmd.append("--strict")
 
     click.echo(f"$ {' '.join(cmd)}")
-    exit_code = subprocess.call(cmd, cwd=_REPO_ROOT, env=env)
+    try:
+        exit_code = subprocess.call(cmd, cwd=_REPO_ROOT, env=env)
+    finally:
+        if portable_yml is not None and portable_yml.exists():
+            portable_yml.unlink()
     if exit_code != 0:
         raise click.ClickException(f"mkdocs build failed (exit {exit_code}).")
+    if portable:
+        index = Path(output).resolve() / "index.html"
+        click.echo(
+            f"Portable site at {Path(output).resolve()}/. "
+            f"Open {index} directly in a browser (no web server needed)."
+        )
 
 
 @docs.command("serve")

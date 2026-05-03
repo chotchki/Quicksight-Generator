@@ -429,7 +429,7 @@ class TestEmitFullSeed:
         sql = emit_full_seed(instance, final, anchor=canonical_anchor)
         actual = hashlib.sha256(sql.encode("utf-8")).hexdigest()
         expected = (
-            "acea1bf18d5c804233be351ca62f1f188e89d4819b3e089f573bc8919fa56740"
+            "70d7e0de5b057a1059ec375c440c596844b5c112383401be058e20d520f10427"
         )
         assert actual == expected, (
             f"emit_full_seed hash drifted for sasquatch_pr — re-lock by "
@@ -453,7 +453,7 @@ class TestEmitFullSeed:
         sql = emit_full_seed(instance, final, anchor=canonical_anchor)
         actual = hashlib.sha256(sql.encode("utf-8")).hexdigest()
         expected = (
-            "a7de59dd375c53f2184050b6a3e5c3c6ec8033ec754cea95477d274f113ba90e"
+            "8324a7da8fe724cc7b424397276b76e7c2a2fd510a07918b0cc7a1bf4f4b42b6"
         )
         assert actual == expected, (
             f"emit_full_seed hash drifted for spec_example — re-lock by "

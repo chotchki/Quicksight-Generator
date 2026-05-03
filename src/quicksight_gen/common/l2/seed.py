@@ -825,6 +825,20 @@ def emit_baseline_seed(
     )
     txn_rows.extend(chain_rows)
 
+    # V.5.b — Cascade credits for intermediate clearing accounts. After
+    # rails + chains have populated state.firings, walk the cascade
+    # patterns (aggregating-rail bundled-child cascades, TT single-leg
+    # variable cascades, MerchantPayout cascade, ZBA sub-account
+    # funding) and emit paired credit legs so the cumulative-from-
+    # window-start balance walk doesn't mechanically drive these
+    # accounts negative once their starting cushion is exhausted.
+    # Updates state.account_leg_log so the daily-balance materializer
+    # picks up the cascade credits.
+    cascade_rows = _emit_baseline_cascade_credits(
+        instance, state, txn_counter, dialect,
+    )
+    txn_rows.extend(cascade_rows)
+
     # Daily-balance materialization (R.2.e). For every (account,
     # business_day) where the leg loop touched the account, snapshot the
     # closing balance into ``daily_balances``. Drift matview sees
@@ -2414,6 +2428,499 @@ def _emit_chain_child_leg(
     )
 
     return rows
+
+
+# -- V.5.b — Cascade credits for intermediate clearing accounts --------------
+#
+# Several internal "clearing" / "suspense" / "sub-account" roles in
+# real-world cascades only see one side of a downstream debit during
+# baseline emission — the matching credit-side leg lives in a
+# TransferTemplate cycle that the baseline emitter doesn't materialize,
+# or in a per-(merchant, day) settlement leg that's structurally
+# implicit. The leg-loop emits the debit; the cumulative-from-window-
+# start daily-balance walk then drives those accounts negative once
+# their starting balance cushion is exhausted, surfacing as L1
+# overdraft false positives.
+#
+# Patterns (per V.5 design):
+#   - Aggregating-rail bundled child cascades: e.g. ACHOriginationDailySweep's
+#     `bundles_activity: [CustomerOutboundACH]`. The aggregating rail's
+#     EOD parent debits ACHOrigSettlement → CashDueFRB. But there's no
+#     upstream credit landing on ACHOrigSettlement — `CustomerOutboundACH`
+#     goes CustomerDDA → ExternalCounterparty in baseline, never crediting
+#     the settlement GL.
+#   - TransferTemplate leg cascades: MerchantPayoutACH/Wire/Check debit
+#     `MerchantPayableClearing`; the matching credit shape is what the
+#     user calls a `CardSaleDailySettlement` (per-merchant-per-day).
+#     Same idea for InternalTransferSuspenseClose debiting
+#     `InternalTransferSuspense` — the matching credit lives in the
+#     `InternalTransferCycle` template that baseline doesn't materialize.
+#   - ZBA sub-account funding: ZBASweep debits the sub-account; nothing
+#     credits it. Per user's V.5 design Q2, model a daily inbound from
+#     the funds-pool that matches the daily ZBASweep volume.
+#
+# Helper structure: one pass after rails + chains have populated
+# state.firings. For each cascade pattern, walk the matching firings
+# in (rail_name, transfer_id) sort order and emit a paired credit leg
+# ~30 minutes BEFORE the original debit (so the cumulative-sum walk
+# shows clearing GL going positive then back to zero on the same day).
+# Counter-leg posts to a chosen external counterparty so the cascade
+# leg pair nets to zero.
+#
+# Determinism: dedicated RNG seed `_BASELINE_BASE_SEED ^ 0xCA5CAD`. The
+# helper only reads from state.firings + state.account_leg_log; it
+# emits new rows + appends to account_leg_log so the deferred daily-
+# balance walk picks them up.
+
+
+def _emit_baseline_cascade_credits(
+    instance: L2Instance,
+    state: _BaselineState,
+    counter: _Counter,
+    dialect: Dialect,
+) -> list[str]:
+    """V.5.b — emit paired credit legs for cascade-debit patterns.
+
+    Walks ``state.firings`` for each known cascade trigger and emits a
+    matching credit leg into the cascade target account. Counter-leg
+    debits a chosen external counterparty so the pair nets to zero.
+
+    Triggers (per V.5 design):
+
+    1. **Aggregating-rail bundled-child cascades** — for every
+       aggregating Rail with ``bundles_activity``, walk firings of each
+       bundled rail and emit a credit on the aggregating rail's
+       ``source_role``. The aggregating EOD parent then has its debit
+       balanced by the cascade credits.
+
+    2. **TransferTemplate leg cascades** — for every TransferTemplate
+       whose ``leg_rails`` includes a single-leg Variable / Debit-only
+       rail (e.g. ``InternalTransferSuspenseClose``), walk that rail's
+       firings and emit a paired credit on the same account so the
+       template-cycle "missing credit half" doesn't drive the suspense
+       GL negative.
+
+    3. **MerchantPayout cascade** — for every Rail whose name starts
+       with ``MerchantPayout`` (the ``MerchantSettlementCycle`` chain's
+       PayoutVehicle XOR group), emit a paired credit on the rail's
+       ``source_role`` (``MerchantPayableClearing``) per firing. Models
+       the per-merchant per-day ``CardSaleDailySettlement`` shape.
+
+    4. **ZBA sub-account funding** — for every firing of a Rail whose
+       ``source_role`` is a template-instance role with
+       ``parent_role: ConcentrationMaster`` (i.e., ZBASubAccount via
+       ZBASweep), emit a paired credit on the sub-account so the
+       cumulative balance never goes negative.
+
+    No-op for L2 instances that don't declare any of these patterns
+    (e.g., spec_example, which has no aggregating rails with bundles_
+    activity, no TransferTemplate variable-direction legs, no
+    MerchantPayout rails, and no ConcentrationMaster-parented
+    template instances). Helper returns ``[]`` cleanly.
+    """
+    rng = random.Random(_BASELINE_BASE_SEED ^ 0xCA5CAD)
+    rows: list[str] = []
+
+    # Pick a default external counterparty for the counter-leg side.
+    # Mirror the strategy in _emit_opening_balance_rows: first
+    # external-scope account in sorted order.
+    external_account: _ResolvedAccount | None = None
+    for a in sorted(instance.accounts, key=lambda a: str(a.id)):
+        if str(a.scope) == "external":
+            external_account = _ResolvedAccount(
+                account_id=a.id,
+                account_name=a.name or Name(str(a.id)),
+                account_role=a.role or Identifier(str(a.id)),
+                account_scope=a.scope,
+                account_parent_role=a.parent_role,
+            )
+            break
+    if external_account is None:
+        return []
+
+    rails_by_name: dict[Identifier, Rail] = {r.name: r for r in instance.rails}
+
+    # ---- Pattern 1: aggregating-rail bundled-child cascades ----
+    # For each aggregating Rail (TwoLegRail) with bundles_activity, walk
+    # the bundled rail's firings already in state.firings. Each firing
+    # gets a paired credit on the aggregating rail's source_role.
+    agg_cascade_targets: list[
+        tuple[Identifier, _ResolvedAccount, str, Identifier]
+    ] = []
+    for agg_rail in sorted(instance.rails, key=lambda r: str(r.name)):
+        if not agg_rail.aggregating:
+            continue
+        if not isinstance(agg_rail, TwoLegRail):
+            continue
+        if not agg_rail.bundles_activity:
+            continue
+        # Resolve the source-role's account (singleton in instance.accounts).
+        target = _resolve_internal_singleton_for_role(
+            agg_rail.source_role, instance,
+        )
+        if target is None:
+            continue
+        for child_ref in agg_rail.bundles_activity:
+            child_rail_name = Identifier(str(child_ref))
+            if child_rail_name not in rails_by_name:
+                continue
+            agg_cascade_targets.append((
+                child_rail_name,
+                target,
+                str(agg_rail.transfer_type),
+                agg_rail.name,
+            ))
+
+    for child_rail_name, target, transfer_type, label_rail in (
+        agg_cascade_targets
+    ):
+        firings = sorted(
+            state.firings.get(child_rail_name, []),
+            key=lambda f: (f[1], f[0]),  # (day, transfer_id)
+        )
+        for parent_transfer_id, day, amount in firings:
+            rows.extend(_emit_cascade_pair(
+                state=state,
+                target=target,
+                external=external_account,
+                amount=amount,
+                day=day,
+                source_transfer_id=parent_transfer_id,
+                cascade_label=label_rail,
+                transfer_type=transfer_type,
+                counter=counter,
+                rng=rng,
+                dialect=dialect,
+            ))
+
+    # ---- Pattern 2: TransferTemplate single-leg variable cascades ----
+    # For every TransferTemplate, walk its leg_rails and find any
+    # SingleLegRail whose leg_direction defaults to Debit (Variable /
+    # Debit). Emit a paired credit on each such firing's account.
+    tt_variable_rails: list[Identifier] = []
+    for tt in sorted(instance.transfer_templates, key=lambda t: str(t.name)):
+        for leg_rail_name in tt.leg_rails:
+            r = rails_by_name.get(Identifier(str(leg_rail_name)))
+            if r is None:
+                continue
+            if not isinstance(r, SingleLegRail):
+                continue
+            # Variable-direction defaults to Debit per the seed loop's
+            # leg-direction handling; static-Debit also qualifies.
+            if r.leg_direction not in ("Debit", "Variable"):
+                continue
+            tt_variable_rails.append(r.name)
+
+    for rail_name in tt_variable_rails:
+        rail = rails_by_name.get(rail_name)
+        if rail is None or not isinstance(rail, SingleLegRail):
+            continue
+        target = _resolve_internal_singleton_for_role(
+            rail.leg_role, instance,
+        )
+        if target is None:
+            continue
+        firings = sorted(
+            state.firings.get(rail_name, []),
+            key=lambda f: (f[1], f[0]),
+        )
+        for parent_transfer_id, day, amount in firings:
+            rows.extend(_emit_cascade_pair(
+                state=state,
+                target=target,
+                external=external_account,
+                amount=amount,
+                day=day,
+                source_transfer_id=parent_transfer_id,
+                cascade_label=rail.name,
+                transfer_type=str(rail.transfer_type),
+                counter=counter,
+                rng=rng,
+                dialect=dialect,
+            ))
+
+    # ---- Pattern 3: MerchantPayout cascade ----
+    # For rails whose name starts with "MerchantPayout", emit a paired
+    # credit on the rail's source_role (MerchantPayableClearing) per
+    # firing. Models the CardSaleDailySettlement per-merchant per-day
+    # credit shape called out in the V.5 design.
+    for rail in sorted(instance.rails, key=lambda r: str(r.name)):
+        if not str(rail.name).startswith("MerchantPayout"):
+            continue
+        if not isinstance(rail, TwoLegRail):
+            continue
+        target = _resolve_internal_singleton_for_role(
+            rail.source_role, instance,
+        )
+        if target is None:
+            continue
+        firings = sorted(
+            state.firings.get(rail.name, []),
+            key=lambda f: (f[1], f[0]),
+        )
+        for parent_transfer_id, day, amount in firings:
+            rows.extend(_emit_cascade_pair(
+                state=state,
+                target=target,
+                external=external_account,
+                amount=amount,
+                day=day,
+                source_transfer_id=parent_transfer_id,
+                cascade_label=Identifier("CardSaleDailySettlement"),
+                transfer_type="card_settlement",
+                counter=counter,
+                rng=rng,
+                dialect=dialect,
+            ))
+
+    # ---- Pattern 4: ZBA sub-account funding ----
+    # For every firing of a Rail whose source_role resolves to template
+    # instances under a ConcentrationMaster parent (ZBASubAccount via
+    # ZBASweep), emit a paired credit on the SAME sub-account that the
+    # firing debited so the cumulative balance walks back to zero.
+    template_parent_roles: dict[Identifier, Identifier | None] = {
+        t.role: t.parent_role for t in instance.account_templates
+    }
+    template_role_meta: dict[Identifier, AccountTemplate] = {
+        t.role: t for t in instance.account_templates
+    }
+    zba_funding_rails: list[Identifier] = []
+    for rail in sorted(instance.rails, key=lambda r: str(r.name)):
+        if not isinstance(rail, TwoLegRail):
+            continue
+        # Pull every role in the source_role expression; if any resolves
+        # to a template with parent_role == ConcentrationMaster, this
+        # rail debits a ZBA-style sub-account.
+        triggers_zba = False
+        for role in rail.source_role:
+            parent = template_parent_roles.get(role)
+            if parent is not None and str(parent) == "ConcentrationMaster":
+                triggers_zba = True
+                break
+        if triggers_zba:
+            zba_funding_rails.append(rail.name)
+
+    # For each ZBA-funding rail's firing, look up the actual account_id
+    # the leg loop posted against (via state.account_leg_log) — the
+    # firing log only carries (transfer_id, day, amount), not the
+    # source account_id. Walk account_leg_log entries on the same
+    # (day, transfer_id) for accounts under the ConcentrationMaster
+    # parent and emit one paired credit per such (account_id, day,
+    # transfer_id) tuple.
+    if zba_funding_rails:
+        # Build (account_id, day, transfer_id) -> amount lookup from
+        # the leg log for the rails we care about.
+        zba_template_role_set: set[str] = set()
+        for role, parent in template_parent_roles.items():
+            if parent is not None and str(parent) == "ConcentrationMaster":
+                zba_template_role_set.add(str(role))
+        # Find every template instance under a ZBA-style parent role.
+        zba_account_ids: set[Identifier] = set()
+        for ti in state.template_instances:
+            if str(ti.template_role) in zba_template_role_set:
+                zba_account_ids.add(ti.account_id)
+
+        for rail_name in zba_funding_rails:
+            rail = rails_by_name.get(rail_name)
+            if rail is None or not isinstance(rail, TwoLegRail):
+                continue
+            firings = sorted(
+                state.firings.get(rail_name, []),
+                key=lambda f: (f[1], f[0]),
+            )
+            for parent_transfer_id, day, amount in firings:
+                # Find which ZBA account this firing debited. The leg
+                # log has every leg by account_id; match by (day,
+                # signed=-amount). Since each rail firing produces one
+                # debit on exactly one source account, the first match
+                # wins. Sort accounts so the match is deterministic.
+                target: _ResolvedAccount | None = None
+                for acct_id in sorted(zba_account_ids, key=str):
+                    legs = state.account_leg_log.get(acct_id, [])
+                    for _posting, leg_day, signed in legs:
+                        if leg_day == day and signed == -amount:
+                            template_role = _template_role_for_account_id(
+                                acct_id, state,
+                            )
+                            if template_role is None:
+                                continue
+                            tmpl = template_role_meta.get(template_role)
+                            if tmpl is None:
+                                continue
+                            ti_name = _template_instance_name_for(
+                                acct_id, state,
+                            )
+                            target = _ResolvedAccount(
+                                account_id=acct_id,
+                                account_name=ti_name,
+                                account_role=template_role,
+                                account_scope=tmpl.scope,
+                                account_parent_role=tmpl.parent_role,
+                            )
+                            break
+                    if target is not None:
+                        break
+                if target is None:
+                    continue
+                rows.extend(_emit_cascade_pair(
+                    state=state,
+                    target=target,
+                    external=external_account,
+                    amount=amount,
+                    day=day,
+                    source_transfer_id=parent_transfer_id,
+                    cascade_label=Identifier("ZBAFundingInbound"),
+                    transfer_type=str(rail.transfer_type),
+                    counter=counter,
+                    rng=rng,
+                    dialect=dialect,
+                ))
+
+    return rows
+
+
+def _emit_cascade_pair(
+    *,
+    state: _BaselineState,
+    target: _ResolvedAccount,
+    external: _ResolvedAccount,
+    amount: Decimal,
+    day: date,
+    source_transfer_id: str,
+    cascade_label: Identifier,
+    transfer_type: str,
+    counter: _Counter,
+    rng: random.Random,
+    dialect: Dialect,
+) -> list[str]:
+    """Emit one cascade credit + counter-debit pair (helper for V.5.b).
+
+    The credit lands on ``target`` (the internal clearing GL / suspense
+    / sub-account that's about to be debited). The counter-leg debits
+    ``external`` so the pair nets to zero.
+
+    Posting timestamp is ~30 minutes BEFORE the source firing so the
+    cumulative-sum walk on ``target`` shows the GL going positive,
+    then back to baseline after the source debit posts. ``source_
+    transfer_id`` carries the parent firing's transfer_id; we don't
+    use it for the cascade row's transfer_id (cascade gets its own
+    ``tr-base-cascade-...`` namespace) but it's threaded through for
+    future debugging if needed.
+
+    Both legs share the same ``tr-base-cascade-{n}`` transfer_id so
+    L1's conservation invariant sees a balanced 2-leg Transfer.
+    Updates ``state.account_leg_log`` for the target so the deferred
+    daily-balance walk includes the credit. No update needed for the
+    external counterparty (we don't track external balances).
+    """
+    n = counter.next()
+    transfer_id = f"tr-base-cascade-{n:06d}"
+    txn_id = f"tx-base-cascade-{n:06d}"
+    # Place ~30 minutes before EOD activity. Use a deterministic offset
+    # via rng so multiple cascade pairs on the same day don't collide.
+    # Bands of 30s within an 8:00-9:00 UTC window keep them ahead of
+    # the rail-loop's 9-22 UTC postings.
+    minute = rng.randrange(30)
+    second = rng.randrange(60)
+    posting = f"{day.isoformat()}T08:{minute:02d}:{second:02d}+00:00"
+
+    metadata: dict[str, str] = {
+        "cascade_label": str(cascade_label),
+        "source_transfer_id": source_transfer_id,
+    }
+
+    rows: list[str] = [
+        # Counter-leg: debit external counterparty.
+        _txn_row(
+            id_=f"{txn_id}-src",
+            account_id=external.account_id,
+            account_name=external.account_name,
+            account_role=external.account_role,
+            account_scope=external.account_scope,
+            account_parent_role=external.account_parent_role,
+            money=-amount,
+            direction="Debit",
+            posting=posting,
+            transfer_id=transfer_id,
+            transfer_type=transfer_type,
+            rail_name=cascade_label,
+            origin="ExternalForcePosted",
+            metadata=metadata,
+            dialect=dialect,
+        ),
+        # Credit-leg: lands on the cascade target (internal clearing GL).
+        _txn_row(
+            id_=txn_id,
+            account_id=target.account_id,
+            account_name=target.account_name,
+            account_role=target.account_role,
+            account_scope=target.account_scope,
+            account_parent_role=target.account_parent_role,
+            money=amount,
+            direction="Credit",
+            posting=posting,
+            transfer_id=transfer_id,
+            transfer_type=transfer_type,
+            rail_name=cascade_label,
+            origin="InternalInitiated",
+            metadata=metadata,
+            dialect=dialect,
+        ),
+    ]
+    state.account_leg_log.setdefault(target.account_id, []).append(
+        (posting, day, amount),
+    )
+    return rows
+
+
+def _resolve_internal_singleton_for_role(
+    role_expr: tuple[Identifier, ...],
+    instance: L2Instance,
+) -> _ResolvedAccount | None:
+    """Look up the first internal-scope singleton account whose role
+    matches any role in ``role_expr``. Returns None if no singleton
+    matches (e.g., the role is only present as template instances).
+    """
+    role_set = {str(r) for r in role_expr}
+    for a in sorted(instance.accounts, key=lambda a: str(a.id)):
+        if str(a.scope) != "internal":
+            continue
+        role = str(a.role) if a.role is not None else str(a.id)
+        if role in role_set:
+            return _ResolvedAccount(
+                account_id=a.id,
+                account_name=a.name or Name(str(a.id)),
+                account_role=a.role or Identifier(str(a.id)),
+                account_scope=a.scope,
+                account_parent_role=a.parent_role,
+            )
+    return None
+
+
+def _template_role_for_account_id(
+    account_id: Identifier, state: _BaselineState,
+) -> Identifier | None:
+    """Return the template role of a materialized template instance, or
+    ``None`` if ``account_id`` isn't a template instance.
+    """
+    for ti in state.template_instances:
+        if ti.account_id == account_id:
+            return ti.template_role
+    return None
+
+
+def _template_instance_name_for(
+    account_id: Identifier, state: _BaselineState,
+) -> Name:
+    """Return the materialized template instance's display name. Falls
+    back to the account_id-as-Name if the instance isn't found (caller
+    contract: only used after _template_role_for_account_id returned
+    non-None, so this should always hit).
+    """
+    for ti in state.template_instances:
+        if ti.account_id == account_id:
+            return ti.name
+    return Name(str(account_id))
 
 
 def _emit_baseline_daily_balances(

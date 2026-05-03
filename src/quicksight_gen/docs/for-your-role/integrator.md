@@ -103,10 +103,9 @@ Then:
 The integrator workflow loop:
 
 1. Edit `<your-l2>.yaml`.
-2. Validate: load the YAML via `load_instance(<yaml>)` (the loader runs the validator automatically) — any cross-entity errors surface with a logical path.
-3. Regenerate the dashboard JSON: `quicksight-gen json apply -c run/config.yaml -o run/out --l2 <yaml>`.
-4. Deploy to AWS: `quicksight-gen json apply -c run/config.yaml -o run/out --l2 <yaml> --execute`.
-5. Re-open L2 Flow Tracing — the new declarations should show up
+2. Regenerate the dashboard JSON: `quicksight-gen json apply -c run/config.yaml -o run/out --l2 <yaml>`. The loader runs the validator as it reads the YAML — any cross-entity errors surface here with a logical path before any JSON gets written.
+3. Deploy to AWS: `quicksight-gen json apply -c run/config.yaml -o run/out --l2 <yaml> --execute`.
+4. Re-open L2 Flow Tracing — the new declarations should show up
    with their firing counts (which may be zero on day one if
    nothing has fired yet).
 

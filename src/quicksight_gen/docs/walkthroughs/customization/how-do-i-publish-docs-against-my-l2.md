@@ -4,23 +4,45 @@ The unified docs site renders against any L2 institution YAML. Pick
 yours; the same source produces a different rendered handbook (vocab,
 diagrams, intro prose) without touching any markdown.
 
-## End-to-end
+## Render against your L2
 
 ```bash
-# 1. Extract the docs source to a working directory.
-quicksight-gen docs export -o /tmp/my-docs --l2 run/my-l2.yaml
+# Build the site to ./site/ — bound to your L2.
+quicksight-gen docs apply --l2 run/my-l2.yaml -o site
 
-# 2. The CLI echoes the right env-var-prefixed mkdocs command.
-QS_DOCS_L2_INSTANCE=/Users/me/run/my-l2.yaml \
-    mkdocs build -f /tmp/my-docs/mkdocs.yml
-
-# 3. Serve locally to eyeball:
-QS_DOCS_L2_INSTANCE=/Users/me/run/my-l2.yaml \
-    mkdocs serve -f /tmp/my-docs/mkdocs.yml
+# Or live-reload preview at http://localhost:8000:
+quicksight-gen docs serve --l2 run/my-l2.yaml
 ```
 
 The rendered `site/` directory is a static site you can publish to
-your wiki, GitHub Pages, S3, or any static host.
+GitHub Pages, S3, or any static host that runs HTTP.
+
+## Ship a portable site (open via `file://`)
+
+By default the site uses pretty URLs (`/scenario/`) which need an
+HTTP server to map the slug to its `index.html`. For a wiki / USB
+stick / zip-attachment build that opens directly in a browser:
+
+```bash
+quicksight-gen docs apply --portable --l2 run/my-l2.yaml -o portable-site
+```
+
+`--portable` flips `use_directory_urls: false`, so every page emits
+as `<slug>/index.html` and links resolve via `file://`. The CLI
+echoes the absolute path to the entry-point `index.html` you can
+hand to a stakeholder. Zip the directory and ship — recipients
+double-click and read.
+
+## Advanced: hand-build with your own mkdocs config
+
+If you want to integrate with an existing mkdocs build pipeline (a
+custom theme, an extra plugin set, your own CI), extract the source:
+
+```bash
+quicksight-gen docs export -o /tmp/my-docs --l2 run/my-l2.yaml
+QS_DOCS_L2_INSTANCE=/Users/me/run/my-l2.yaml \
+    mkdocs build -f /tmp/my-docs/mkdocs.yml
+```
 
 ## What changes per L2 instance
 
