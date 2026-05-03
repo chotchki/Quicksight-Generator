@@ -85,6 +85,7 @@ from quicksight_gen.common.tree import (
     DrillResetSentinel,
     FilterGroup,
     LineChart,
+    LinkedValues,
     Measure,
     Sheet,
     StringParam,
@@ -1891,10 +1892,21 @@ def _wire_daily_statement_filters(
     txn_date_fg.scope_sheet(daily_statement_sheet)
 
     # Sheet controls — single-select dropdown + datetime picker bound
-    # to the params.
+    # to the params. The dropdown's options are auto-populated from the
+    # summary dataset's `account_id` column (LinkedValues), so the
+    # analyst sees the institution's actual accounts. Without this,
+    # QuickSight has no source for the dropdown and only shows the
+    # empty-state "All" placeholder — which on a SINGLE_SELECT
+    # parameter-bound CategoryFilter narrows to nothing, so every
+    # KPI / table on the sheet renders empty until the analyst can
+    # pick a value (which they can't, because the dropdown is empty).
+    # `hidden_select_all=True` because SINGLE_SELECT semantically
+    # requires picking exactly one — "All" doesn't apply.
     daily_statement_sheet.add_parameter_dropdown(
         parameter=ds_account, title="Account",
         type="SINGLE_SELECT",
+        selectable_values=LinkedValues.from_column(summary_ds["account_id"]),
+        hidden_select_all=True,
     )
     daily_statement_sheet.add_parameter_datetime_picker(
         parameter=ds_balance_date, title="Business Day",
