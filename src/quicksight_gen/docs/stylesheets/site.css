@@ -265,3 +265,19 @@ body.qs-lightbox-open {
 [data-md-color-scheme="slate"] .qs-lightbox__btn:hover {
   background: #3a4340;
 }
+
+/*
+ * Content area width (Material's documented override).
+ *
+ * Material's default `.md-grid` caps the content area at 1220px,
+ * which leaves a lot of unused horizontal space on the wide L2
+ * topology diagrams and the seed-generator reference page. Bump
+ * to 1440px so those diagrams breathe without going edge-to-edge
+ * at ultra-wide viewports.
+ *
+ * Per https://squidfunk.github.io/mkdocs-material/setup/setting-up-navigation/#content-area-width
+ * — swap to `max-width: initial` if we ever want the full screen.
+ */
+.md-grid {
+  max-width: 1440px;
+}
