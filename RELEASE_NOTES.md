@@ -1,5 +1,83 @@
 # Release Notes
 
+## v8.2.0 — Audit Reconciliation Report (regulator-ready PDF)
+
+Phase U adds a **fifth artifact group** to the CLI: `audit`. The
+`quicksight-gen audit apply -c config.yaml --execute -o report.pdf`
+verb queries the per-prefix L1 invariant matviews + base tables
+directly, formats the result via `reportlab`, and emits a regulator-
+ready PDF with a verifiable provenance fingerprint binding it to
+its source data. Bypasses QuickSight pixel-perfect entirely (cost
++ wrong shape for the auditor).
+
+### What ships
+
+- **`quicksight-gen audit apply`** — Cover page (institution +
+  period band) → executive summary (transaction / transfer counts,
+  dollar volume gross+net, exception counts) → per-invariant
+  violation tables (drift / overdraft / limit_breach / stuck_pending
+  / stuck_unbundled / supersession audit) → per-account-day Daily
+  Statement walk → sign-off block with reviewer signature widgets
+  + fillable Notes field → provenance appendix with the four-input
+  fingerprint canonical bytes + matview SHA256 evidence sidecar +
+  embedded L2 YAML attachment + manual-recompute Python script
+  attachment. Optional `signing:` config block auto-signs via
+  pyHanko (PEM RSA key + cert).
+- **`quicksight-gen audit verify report.pdf -c config.yaml`** —
+  Recomputes the provenance fingerprint from the live DB + L2 YAML
+  + code identity and compares against the embedded fingerprint;
+  exits non-zero on mismatch. Regulator workflow: integrator runs
+  `verify` against the operator's snapshot to confirm the report
+  hasn't been tampered.
+- **`quicksight-gen audit test`** — Mirrors the four other
+  artifact-group test verbs; runs `pytest tests/audit/` (73 cases)
+  + pyright on `cli/audit/`.
+- **L1 dashboard fix.** Dropped the date-scope FilterGroups from
+  the L1 dashboard's stuck_pending / stuck_unbundled / supersession
+  sheets. Their underlying matviews are current-state (no date
+  filter on the audit-PDF side either); a "stuck" item is stuck
+  until cleared, regardless of the analyst's period of interest.
+  Pre-fix the dashboard's `[today-7, today]` default scope dropped
+  planted rows whose `posting` was outside the window — making the
+  dashboard disagree with the audit PDF that surfaces every
+  current-state row.
+
+### Release gate (U.8.b)
+
+The credibility-contract release gate: every number on the audit
+PDF agrees with what the deployed L1 dashboard shows AND what the
+scenario primitives planted, for the same period + L2 + DB
+snapshot. Three-way assert per invariant (`expected == PDF ==
+dashboard`). Verified live across both dialects:
+
+- **Postgres `spec_example`**: 6/6 PASS
+- **Oracle `spec_example`**: 6/6 PASS
+- Total: 12/12 across the dialect × invariant matrix
+
+### Compatibility
+
+Additive — new CLI group, no breaking changes to the existing four
+artifact groups (`schema | data | json | docs`). The `audit` group
+needs `reportlab` (added to a new `[audit]` extra in
+`pyproject.toml`); core install is unaffected. Provenance signing
+is optional — omit the `signing:` config block and the PDF emits
+unsigned with empty signature widgets for downstream tooling
+(Adobe Sign / DocuSign / pyHanko CLI).
+
+### Limitations + follow-ups
+
+- Dialect-aware audit SQL: the audit's inline SQL uses ANSI
+  `DATE 'YYYY-MM-DD'` literals which work on both Postgres + Oracle
+  today; if a future invariant requires dialect branching, the
+  `tests/audit/test_sql.py` snapshot becomes per-dialect.
+- Exec-summary aggregate metrics (transaction count / transfer count
+  / dollar volume) deferred from the U.8.b three-way assert — not
+  cleanly derivable from plant tuples (baseline + plants summed),
+  so the "derive from scenario" rule doesn't apply. PDF↔dashboard
+  agreement on these can land later as a straight A==B check.
+
+---
+
 ## v8.1.0 — Drop the system `dot` binary; render diagrams in the browser via WASM
 
 Phase T migration. Every diagram on the docs site (L2 topology /
