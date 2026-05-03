@@ -20,7 +20,7 @@ from quicksight_gen.apps.l1_dashboard.app import build_l1_dashboard_app
 from quicksight_gen.apps.l2_flow_tracing.app import (
     build_l2_flow_tracing_app,
 )
-from quicksight_gen.common.config import Config
+from tests._test_helpers import make_test_config
 from quicksight_gen.common.sheets.app_info import (
     APP_INFO_SHEET_NAME,
     DS_APP_INFO_LIVENESS,
@@ -28,11 +28,7 @@ from quicksight_gen.common.sheets.app_info import (
 )
 
 
-_CFG = Config(
-    aws_account_id="111122223333",
-    aws_region="us-east-2",
-    datasource_arn="arn:aws:quicksight:us-east-2:111122223333:datasource/ds",
-)
+_CFG = make_test_config(aws_region="us-east-2")
 
 
 SHIPPED_APP_BUILDERS = [

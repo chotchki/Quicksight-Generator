@@ -29,21 +29,14 @@ from quicksight_gen.apps.executives.datasets import (
     build_all_datasets,
 )
 from quicksight_gen.cli import main
-from quicksight_gen.common.config import Config
+from tests._test_helpers import make_test_config
 
 
-_TEST_CFG = Config(
-    aws_account_id="111122223333",
-    aws_region="us-west-2",
-    datasource_arn=(
-        "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
-    ),
-    # N.4.b: Executives is now L2-fed and requires
-    # ``l2_instance_prefix`` to render its dataset SQL. Tests use the
-    # spec_example default (matches what ``build_executives_app``
-    # auto-derives from ``default_l2_instance().instance``).
-    l2_instance_prefix="spec_example",
-)
+# N.4.b: Executives is now L2-fed and requires ``l2_instance_prefix``
+# to render its dataset SQL. Tests pin spec_example (matches what
+# ``build_executives_app`` auto-derives from
+# ``default_l2_instance().instance``).
+_TEST_CFG = make_test_config(l2_instance_prefix="spec_example")
 
 
 @pytest.fixture(scope="module")

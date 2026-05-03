@@ -22,7 +22,7 @@ unit tests just verify byte-shape, not Aurora-side substitution.
 
 from __future__ import annotations
 
-from quicksight_gen.common.config import Config
+from tests._test_helpers import make_test_config
 from quicksight_gen.common.dataset_contract import (
     ColumnSpec,
     DatasetContract,
@@ -45,13 +45,7 @@ from quicksight_gen.common.models import (
 from quicksight_gen.common.tree import Dataset, IntegerParam, StringParam
 
 
-_CFG = Config(
-    aws_account_id="111122223333",
-    aws_region="us-west-2",
-    datasource_arn=(
-        "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
-    ),
-)
+_CFG = make_test_config()
 
 
 # -- Model emit ---------------------------------------------------------------

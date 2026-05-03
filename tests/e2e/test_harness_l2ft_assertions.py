@@ -93,20 +93,13 @@ def test_check_types_match_unified_exceptions_dataset_labels() -> None:
     import re
     from datetime import date  # noqa: F401 — needed by the build call below
 
-    from quicksight_gen.common.config import Config
     from quicksight_gen.common.l2 import load_instance
     from quicksight_gen.apps.l2_flow_tracing.datasets import (
         build_unified_l2_exceptions_dataset,
     )
+    from tests._test_helpers import make_test_config
 
-    cfg = Config(
-        aws_account_id="111122223333",
-        aws_region="us-west-2",
-        datasource_arn=(
-            "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
-        ),
-        l2_instance_prefix="check_type_test",
-    )
+    cfg = make_test_config(l2_instance_prefix="check_type_test")
     instance = load_instance(
         Path(__file__).parent / "l2" / "spec_example.yaml",
     )

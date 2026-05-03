@@ -43,17 +43,11 @@ from quicksight_gen.apps.l2_flow_tracing.app import (
 )
 from quicksight_gen.cli import main
 from quicksight_gen.cli._helpers import APPS
-from quicksight_gen.common.config import Config
 from quicksight_gen.common.l2 import L2Instance, load_instance
+from tests._test_helpers import make_test_config
 
 
-_CFG = Config(
-    aws_account_id="111122223333",
-    aws_region="us-west-2",
-    datasource_arn=(
-        "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
-    ),
-)
+_CFG = make_test_config()
 
 
 SASQUATCH_PR_YAML = (

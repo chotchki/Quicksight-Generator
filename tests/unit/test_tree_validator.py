@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from quicksight_gen.common.config import Config
+from tests._test_helpers import make_test_config
 from quicksight_gen.common.ids import SheetId, VisualId
 from quicksight_gen.common.tree import (
     KPI,
@@ -30,13 +30,7 @@ from quicksight_gen.common.tree import (
 from tests.e2e.tree_validator import TreeValidator, ValidationFailure
 
 
-_TEST_CFG = Config(
-    aws_account_id="111122223333",
-    aws_region="us-west-2",
-    datasource_arn=(
-        "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
-    ),
-)
+_TEST_CFG = make_test_config()
 
 
 _DS = Dataset(identifier="ds", arn="arn:test:ds")

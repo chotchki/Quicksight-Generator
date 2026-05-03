@@ -10,12 +10,12 @@ import json
 
 import pytest
 
-from quicksight_gen.common.config import Config
 from quicksight_gen.common.theme import (
     DEFAULT_PRESET,
     ThemePreset,
     build_theme,
 )
+from tests._test_helpers import make_test_config
 
 
 # ---------------------------------------------------------------------------
@@ -36,11 +36,7 @@ class TestDefaultPreset:
         assert len(DEFAULT_PRESET.data_colors) == 8
 
     def test_serializes_to_valid_theme(self):
-        cfg = Config(
-            aws_account_id="111122223333",
-            aws_region="us-west-2",
-            datasource_arn="arn:aws:quicksight:us-west-2:111122223333:datasource/ds",
-        )
+        cfg = make_test_config()
         theme = build_theme(cfg, DEFAULT_PRESET)
         assert theme is not None
         data = theme.to_aws_json()
@@ -52,9 +48,5 @@ class TestDefaultPreset:
         """N.4.k silent-fallback: ``build_theme(cfg, None)`` returns
         None so the CLI skips theme.json emission and AWS QuickSight
         CLASSIC takes over at deploy."""
-        cfg = Config(
-            aws_account_id="111122223333",
-            aws_region="us-west-2",
-            datasource_arn="arn:aws:quicksight:us-west-2:111122223333:datasource/ds",
-        )
+        cfg = make_test_config()
         assert build_theme(cfg, None) is None

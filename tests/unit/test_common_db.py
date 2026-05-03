@@ -12,11 +12,11 @@ the import-error branches in ``connect_demo_db`` are covered here with
 
 from __future__ import annotations
 
-import dataclasses
 
 import pytest
 
 from quicksight_gen.common.config import Config
+from tests._test_helpers import make_test_config
 from quicksight_gen.common.db import (
     connect_demo_db,
     oracle_dsn,
@@ -115,14 +115,9 @@ class TestSplitOracleScript:
 
 
 def _cfg(*, dialect: Dialect, url: str | None) -> Config:
-    base = Config(
-        aws_account_id="111122223333",
-        aws_region="us-east-2",
-        datasource_arn=(
-            "arn:aws:quicksight:us-east-2:111122223333:datasource/ds"
-        ),
+    return make_test_config(
+        aws_region="us-east-2", dialect=dialect, demo_database_url=url,
     )
-    return dataclasses.replace(base, dialect=dialect, demo_database_url=url)
 
 
 class TestConnectDemoDb:

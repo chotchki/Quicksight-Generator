@@ -37,6 +37,7 @@ from _harness_deploy import (  # noqa: E402
 
 from quicksight_gen.common.config import Config
 from quicksight_gen.common.l2 import load_instance
+from tests._test_helpers import make_test_config
 
 
 L2_DIR = Path(__file__).parent / "l2"
@@ -50,12 +51,7 @@ def _harness_cfg() -> Config:
     functions consume them as ARN-shaping inputs, not for actual
     AWS calls).
     """
-    return Config(
-        aws_account_id="111122223333",
-        aws_region="us-west-2",
-        datasource_arn=(
-            "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
-        ),
+    return make_test_config(
         extra_tags={"TestUid": "abc123", "Harness": "e2e"},
         l2_instance_prefix="e2e_spec_example_abc123",
     )

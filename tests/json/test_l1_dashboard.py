@@ -27,7 +27,7 @@ from click.testing import CliRunner
 from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
 from quicksight_gen.apps.l1_dashboard.app import build_l1_dashboard_app
 from quicksight_gen.cli import main
-from quicksight_gen.common.config import Config
+from tests._test_helpers import make_test_config
 from quicksight_gen.common.l2 import L2Instance
 
 
@@ -49,13 +49,7 @@ def test_default_l2_yaml_is_byte_identical_to_test_fixture():
     )
 
 
-_CFG = Config(
-    aws_account_id="111122223333",
-    aws_region="us-west-2",
-    datasource_arn=(
-        "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
-    ),
-)
+_CFG = make_test_config()
 
 
 def _sheet_by_name(app, name: str):

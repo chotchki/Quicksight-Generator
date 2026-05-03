@@ -41,23 +41,17 @@ from quicksight_gen.apps.l2_flow_tracing.app import (
 from quicksight_gen.apps.l2_flow_tracing.datasets import (
     declared_metadata_keys,
 )
-from quicksight_gen.common.config import Config
 from quicksight_gen.common.l2 import L2Instance, load_instance
 from quicksight_gen.common.tree import KPI, Sankey, Table
 
 # Reuse the matrix definition from the seed-contract test so every
 # substep that adds an L2 instance to ``L2_INSTANCES`` automatically
 # extends the M.3.9 verification surface here.
+from tests._test_helpers import make_test_config
 from tests.data.test_l2_seed_contract import L2_INSTANCES
 
 
-_CFG = Config(
-    aws_account_id="111122223333",
-    aws_region="us-west-2",
-    datasource_arn=(
-        "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
-    ),
-)
+_CFG = make_test_config()
 
 
 @pytest.fixture(params=L2_INSTANCES)

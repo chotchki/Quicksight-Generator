@@ -1,7 +1,14 @@
 # QuickSight Generator Configuration
 #
-# Copy this file to config.yaml and fill in your values.
-# All values can also be set via environment variables with a QS_GEN_ prefix.
+# config.yaml is environment-only — AWS account, region, dialect, DB
+# connection, signing material. Institution shape (theme, persona,
+# rails, chains, accounts, transfer_templates, account_templates,
+# limit_schedules) lives in the L2 institution YAML you pass via
+# `--l2 <path>`. The loader rejects L2-only keys here so a misedit
+# fails loud instead of silently no-op'ing.
+#
+# Copy this file to config.yaml and fill in your values. All values
+# can also be set via environment variables with a QS_GEN_ prefix.
 
 aws_account_id: "123456789012"
 aws_region: "us-east-1"
@@ -13,9 +20,11 @@ datasource_arn: "arn:aws:quicksight:us-east-1:123456789012:datasource/your-datas
 # Prefix for all generated resource IDs (optional, default: qs-gen)
 resource_prefix: "qs-gen"
 
-# Theme preset (optional, default: "default")
-# Available presets: default, sasquatch-bank
-# theme_preset: "sasquatch-bank"
+# Theme: declared on the L2 institution YAML's inline `theme:` block,
+# NOT here. Each institution carries its own brand palette so swapping
+# the L2 swaps the look. Omit `theme:` on the L2 to fall back to the
+# generator's default preset (deploy may also fall through to AWS
+# QuickSight CLASSIC).
 
 # IAM principal ARNs to grant permissions on generated resources (optional).
 # Accepts a single string or a list; one ResourcePermission is emitted per ARN.
@@ -23,6 +32,22 @@ resource_prefix: "qs-gen"
 #   - "arn:aws:quicksight:us-east-1:123456789012:user/default/admin"
 #   - "arn:aws:iam::123456789012:user/analyst"
 
-# PostgreSQL connection URL for the demo apply command (optional)
-# Required only when running: quicksight-gen demo apply
+# SQL dialect for the deployed datasource (default: postgres). Must
+# match the datasource type — a Postgres datasource_arn cannot serve
+# Oracle-rendered SQL and vice versa. Operators typically carry two
+# config files (config-postgres.yaml + config-oracle.yaml).
+# dialect: "postgres"
+
+# PostgreSQL or Oracle connection URL for the demo apply command (optional).
+# Required for: `data apply --execute`, `audit apply --execute`.
+# When set, datasource_arn auto-derives from account/region/prefix.
 # demo_database_url: "postgresql://user:pass@localhost:5432/quicksight_demo"
+
+# U.7.b — Audit PDF auto-sign material (optional). PEM RSA key + cert.
+# When present, `audit apply --execute` runs the rendered PDF through
+# pyHanko to apply a CMS signature. Absent = ship the PDF unsigned.
+# signing:
+#   key_path: "ops/signing-key.pem"
+#   cert_path: "ops/signing-cert.pem"
+#   passphrase_env: "SIGNING_KEY_PASSPHRASE"  # optional, for encrypted keys
+#   signer_name: "Audit Signing Authority"    # optional

@@ -10,17 +10,16 @@ from __future__ import annotations
 import pytest
 
 from quicksight_gen.common.config import Config
+from tests._test_helpers import make_test_config
 from quicksight_gen.common.dataset_contract import ColumnSpec, DatasetContract
 from quicksight_gen.apps.investigation import datasets as inv_datasets
 
 
 @pytest.fixture()
 def cfg() -> Config:
-    return Config(
-        aws_account_id="111122223333",
+    # N.3.f: Investigation builders require an L2 instance prefix.
+    return make_test_config(
         aws_region="us-east-2",
-        datasource_arn="arn:aws:quicksight:us-east-2:111122223333:datasource/ds",
-        # N.3.f: Investigation builders require an L2 instance prefix.
         l2_instance_prefix="spec_example",
     )
 
@@ -95,19 +94,15 @@ class TestOracleLowercaseAliasWrapper:
 
     def _oracle_cfg(self) -> Config:
         from quicksight_gen.common.sql import Dialect
-        return Config(
-            aws_account_id="111122223333",
+        return make_test_config(
             aws_region="us-east-2",
-            datasource_arn="arn:aws:quicksight:us-east-2:111122223333:datasource/ds",
             l2_instance_prefix="spec_example",
             dialect=Dialect.ORACLE,
         )
 
     def _pg_cfg(self) -> Config:
-        return Config(
-            aws_account_id="111122223333",
+        return make_test_config(
             aws_region="us-east-2",
-            datasource_arn="arn:aws:quicksight:us-east-2:111122223333:datasource/ds",
             l2_instance_prefix="spec_example",
         )
 

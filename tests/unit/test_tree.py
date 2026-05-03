@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from quicksight_gen.common.config import Config
+from tests._test_helpers import make_test_config
 from quicksight_gen.common.ids import (
     FilterGroupId,
     ParameterName,
@@ -57,13 +57,7 @@ _DS_ANOMALIES = Dataset(
 )
 
 
-_TEST_CFG = Config(
-    aws_account_id="111122223333",
-    aws_region="us-west-2",
-    datasource_arn=(
-        "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
-    ),
-)
+_TEST_CFG = make_test_config()
 
 
 # ---------------------------------------------------------------------------

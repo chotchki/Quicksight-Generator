@@ -53,6 +53,7 @@ from quicksight_gen.common.models import (
     VisualTitleLabelOptions,
 )
 from quicksight_gen.common.config import Config
+from tests._test_helpers import make_test_config
 from quicksight_gen.common.datasource import build_datasource
 
 
@@ -384,21 +385,14 @@ class TestTagSerialization:
 
 class TestConfigTags:
     def test_default_common_tag(self):
-        cfg = Config(
-            aws_account_id="123",
-            aws_region="us-east-1",
-            datasource_arn="arn:aws:quicksight:us-east-1:123:datasource/x",
-        )
+        cfg = make_test_config()
         tags = cfg.tags()
         assert len(tags) == 1
         assert tags[0].Key == "ManagedBy"
         assert tags[0].Value == "quicksight-gen"
 
     def test_extra_tags_merged(self):
-        cfg = Config(
-            aws_account_id="123",
-            aws_region="us-east-1",
-            datasource_arn="arn:aws:quicksight:us-east-1:123:datasource/x",
+        cfg = make_test_config(
             extra_tags={"Environment": "prod", "Team": "finance"},
         )
         tags = cfg.tags()
@@ -409,24 +403,14 @@ class TestConfigTags:
         assert "Team" in keys
 
     def test_common_tag_always_first(self):
-        cfg = Config(
-            aws_account_id="123",
-            aws_region="us-east-1",
-            datasource_arn="arn:aws:quicksight:us-east-1:123:datasource/x",
-            extra_tags={"Foo": "bar"},
-        )
+        cfg = make_test_config(extra_tags={"Foo": "bar"})
         tags = cfg.tags()
         assert tags[0].Key == "ManagedBy"
 
     def test_l2_instance_tag_added_when_prefix_set(self):
         """M.2d.3 — when l2_instance_prefix is set, an L2Instance tag
         is added so cleanup can scope per-instance."""
-        cfg = Config(
-            aws_account_id="123",
-            aws_region="us-east-1",
-            datasource_arn="arn:aws:quicksight:us-east-1:123:datasource/x",
-            l2_instance_prefix="sasquatch_ar",
-        )
+        cfg = make_test_config(l2_instance_prefix="sasquatch_ar")
         tags = cfg.tags()
         assert {t.Key: t.Value for t in tags} == {
             "ManagedBy": "quicksight-gen",
@@ -435,11 +419,7 @@ class TestConfigTags:
 
     def test_l2_instance_tag_omitted_when_prefix_unset(self):
         """M.2d.3 — legacy single-tenant deploys don't carry the tag."""
-        cfg = Config(
-            aws_account_id="123",
-            aws_region="us-east-1",
-            datasource_arn="arn:aws:quicksight:us-east-1:123:datasource/x",
-        )
+        cfg = make_test_config()
         tag_keys = [t.Key for t in cfg.tags()]
         assert "L2Instance" not in tag_keys
 
@@ -448,32 +428,17 @@ class TestConfigPrefixed:
     """M.2d.3 — cfg.prefixed() incorporates l2_instance_prefix when set."""
 
     def test_prefixed_without_l2_prefix_legacy_shape(self):
-        cfg = Config(
-            aws_account_id="123",
-            aws_region="us-east-1",
-            datasource_arn="arn:x",
-        )
+        cfg = make_test_config()
         assert cfg.prefixed("l1-dashboard") == "qs-gen-l1-dashboard"
 
     def test_prefixed_with_l2_prefix_inserts_middle_segment(self):
-        cfg = Config(
-            aws_account_id="123",
-            aws_region="us-east-1",
-            datasource_arn="arn:x",
-            l2_instance_prefix="sasquatch_ar",
-        )
+        cfg = make_test_config(l2_instance_prefix="sasquatch_ar")
         assert cfg.prefixed("l1-dashboard") == "qs-gen-sasquatch_ar-l1-dashboard"
 
     def test_prefixed_lets_two_l2_instances_coexist(self):
         """M.2d.3's headline use case: same dashboard kind, different L2."""
-        cfg_a = Config(
-            aws_account_id="123", aws_region="us-east-1",
-            datasource_arn="arn:x", l2_instance_prefix="sasquatch_ar",
-        )
-        cfg_b = Config(
-            aws_account_id="123", aws_region="us-east-1",
-            datasource_arn="arn:x", l2_instance_prefix="wonkawash",
-        )
+        cfg_a = make_test_config(l2_instance_prefix="sasquatch_ar")
+        cfg_b = make_test_config(l2_instance_prefix="wonkawash")
         assert cfg_a.prefixed("l1-dashboard") != cfg_b.prefixed("l1-dashboard")
 
 
@@ -481,10 +446,7 @@ class TestConfigPrefixed:
 # Dataset builder tests
 # ---------------------------------------------------------------------------
 
-_TEST_CFG = Config(
-    aws_account_id="111122223333",
-    aws_region="us-west-2",
-    datasource_arn="arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds",
+_TEST_CFG = make_test_config(
     principal_arns=["arn:aws:quicksight:us-west-2:111122223333:user/default/admin"],
 )
 
@@ -562,9 +524,7 @@ class TestDataSourceSerialization:
 # DataSource builder tests
 # ---------------------------------------------------------------------------
 
-_DEMO_CFG = Config(
-    aws_account_id="111122223333",
-    aws_region="us-west-2",
+_DEMO_CFG = make_test_config(
     demo_database_url="postgresql://demouser:demopass@db.example.com:5432/quicksight_demo",
     principal_arns=["arn:aws:quicksight:us-west-2:111122223333:user/default/admin"],
 )
@@ -597,9 +557,7 @@ class TestBuildDatasource:
         assert len(ds.Permissions) == 1
 
     def test_no_permissions_without_principal(self):
-        cfg = Config(
-            aws_account_id="111122223333",
-            aws_region="us-west-2",
+        cfg = make_test_config(
             demo_database_url="postgresql://u:p@h:5432/db",
         )
         ds = build_datasource(cfg)
@@ -610,11 +568,7 @@ class TestBuildDatasource:
         assert ds.DataSourceId == "qs-gen-demo-datasource"
 
     def test_raises_without_demo_url(self):
-        cfg = Config(
-            aws_account_id="123",
-            aws_region="us-east-1",
-            datasource_arn="arn:aws:quicksight:us-east-1:123:datasource/x",
-        )
+        cfg = make_test_config()
         import pytest
         with pytest.raises(ValueError, match="demo_database_url"):
             build_datasource(cfg)
@@ -628,9 +582,7 @@ class TestBuildDatasourceOracle:
 
     def _oracle_cfg(self, url: str) -> Config:
         from quicksight_gen.common.sql import Dialect
-        return Config(
-            aws_account_id="111122223333",
-            aws_region="us-west-2",
+        return make_test_config(
             demo_database_url=url,
             dialect=Dialect.ORACLE,
         )

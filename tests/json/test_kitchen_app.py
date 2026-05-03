@@ -15,17 +15,11 @@ from __future__ import annotations
 
 import pytest
 
-from quicksight_gen.common.config import Config
+from tests._test_helpers import make_test_config
 from tests.e2e._kitchen_app import build_kitchen_app
 
 
-_CFG = Config(
-    aws_account_id="111122223333",
-    aws_region="us-west-2",
-    datasource_arn=(
-        "arn:aws:quicksight:us-west-2:111122223333:datasource/test-ds"
-    ),
-)
+_CFG = make_test_config()
 
 
 @pytest.fixture

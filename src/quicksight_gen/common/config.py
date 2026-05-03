@@ -159,6 +159,60 @@ class Config:
         return f"{self.resource_prefix}-{name}"
 
 
+# V.1.b — Strict config-key allowlist. config.yaml is environment-only:
+# AWS account / region / dialect / DB connection / signing material.
+# Institution-only fields (theme, persona, accounts, rails, chains,
+# transfer_templates, account_templates, limit_schedules, instance,
+# description, seed_hash) live in the L2 institution YAML — putting
+# them in config.yaml is a sign the user has the wrong file open.
+# ``l2_instance_prefix`` is derived from the L2 instance at runtime
+# (cli/_helpers.py::resolve_l2_for_demo) and must not be hand-set here.
+_CONFIG_ALLOWED_KEYS: frozenset[str] = frozenset({
+    "aws_account_id", "aws_region", "datasource_arn", "resource_prefix",
+    "principal_arns", "principal_arn", "extra_tags", "demo_database_url",
+    "dialect", "signing",
+})
+
+_CONFIG_L2_ONLY_KEYS: frozenset[str] = frozenset({
+    "instance", "description", "accounts", "account_templates",
+    "rails", "transfer_templates", "chains", "limit_schedules",
+    "persona", "seed_hash", "theme",
+})
+
+
+def _reject_unknown_config_keys(raw: dict, path: Path) -> None:
+    """Raise if config.yaml contains keys outside the env-only allowlist.
+
+    V.1.b: catches the two common mis-edits — dropping an L2 institution
+    block (theme, persona, rails, …) into config.yaml, and hand-setting
+    ``l2_instance_prefix`` instead of letting the CLI derive it from the
+    L2 instance.
+    """
+    leaked_l2 = sorted(set(raw) & _CONFIG_L2_ONLY_KEYS)
+    if leaked_l2:
+        raise ValueError(
+            f"{path}: keys {leaked_l2} belong in the L2 institution YAML "
+            f"(passed via --l2), not config.yaml. config.yaml holds "
+            f"environment-only values (account / region / dialect / DB "
+            f"connection / signing); institution shape (theme / persona / "
+            f"rails / accounts / chains / transfer_templates / account_"
+            f"templates / limit_schedules / instance / description / "
+            f"seed_hash) lives in the L2 YAML."
+        )
+    if "l2_instance_prefix" in raw:
+        raise ValueError(
+            f"{path}: 'l2_instance_prefix' must not be set in config.yaml "
+            f"— it is derived from the L2 institution YAML's 'instance:' "
+            f"field at CLI time. Drop the key and pass --l2 <institution>."
+        )
+    unknown = sorted(set(raw) - _CONFIG_ALLOWED_KEYS)
+    if unknown:
+        raise ValueError(
+            f"{path}: unknown config keys {unknown}. "
+            f"Allowed: {sorted(_CONFIG_ALLOWED_KEYS)}."
+        )
+
+
 def load_config(path: str | Path | None = None) -> Config:
     """Load configuration from a YAML file, falling back to env vars.
 
@@ -168,6 +222,9 @@ def load_config(path: str | Path | None = None) -> Config:
     Environment variables use uppercase with QS_GEN_ prefix:
         QS_GEN_AWS_ACCOUNT_ID, QS_GEN_AWS_REGION, QS_GEN_DATASOURCE_ARN,
         QS_GEN_RESOURCE_PREFIX, QS_GEN_PRINCIPAL_ARNS (comma-separated)
+
+    V.1.b: rejects unknown YAML keys and L2-only keys (theme, persona,
+    rails, etc.) with a pointer to the L2 institution YAML.
     """
     values: dict = {}
 
@@ -178,6 +235,7 @@ def load_config(path: str | Path | None = None) -> Config:
             with p.open() as f:
                 raw = yaml.safe_load(f)
             if isinstance(raw, dict):
+                _reject_unknown_config_keys(raw, p)
                 values.update(raw)
 
     # Env vars override YAML
