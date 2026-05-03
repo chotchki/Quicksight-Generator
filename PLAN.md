@@ -162,13 +162,16 @@ L1-API job, then scale.
   API e2e tests, so 3 apps is the actual API-tested set.)
   ``cleanup-pg`` updated to ``needs: [e2e-pg-api]``.
 
-- [ ] **W.5b — Oracle leg (mirror).** Add an ``e2e-oracle-api``
-  job running the same 6 test files against the user's external
-  Oracle. Needs ``QS_GEN_ORACLE_URL`` secret (already set per
-  W.0.b) and a ``cleanup-oracle`` companion (W.7 Oracle parity).
-  Target wall-clock: ~20 min (external Oracle is past the
-  first-boot delay window). Deferred so W.5a + W.6 land first
-  and the YAML changes are reviewable in one shape.
+- [x] **W.5b — Oracle leg (mirror).** Done. ``e2e-oracle-api`` job
+  in ``.github/workflows/e2e.yml`` mirrors ``e2e-pg-api`` against
+  the operator's external Oracle, using the ``QS_GEN_ORACLE_URL``
+  secret + ``dialect: "oracle"`` + ``--extra demo-oracle``
+  (oracledb thin client; no Instant Client install). Distinct
+  ``e2e-oracle`` concurrency group so it doesn't serialize against
+  PG runs (separate DBs, no shared schema). Resource prefix
+  ``-oracle`` keeps QS resources distinct from the PG run.
+  Companion ``cleanup-oracle`` (W.7 Oracle parity) sweeps QS +
+  schema using the same config pattern.
 
 - [x] **W.6 — Browser tier (gated).** Done. ``e2e-pg-browser`` job
   in ``.github/workflows/e2e.yml`` runs on
@@ -217,7 +220,10 @@ L1-API job, then scale.
 - [ ] **W.8a - Database load review**
   - it would be very useful for performance debugging that after the browser tests are done, queries are done on the oracle and postgres databases to dump the most expensive queries done on them to enable bad query analysis (for example missing indexes, etc)
 - [ ] **W.8b - Unified code/test coverage report**
-  - would it be useful to load all the various test+coverage data into a coverage service? I used to use codecov but undersure who is still good
+  - would it be useful to load all the various test+coverage data into a unified report?
+  - found a good example here: https://hynek.me/articles/ditch-codecov-python/
+  - supposedly markdown report output is now supported too
+  - we do NOT need 100% coverage, our over 80% has been good
 
 - [ ] **W.9 — Cut release.** Bump version, RELEASE_NOTES entry
   covering the Phase W rollout, document the new CI artifacts in
