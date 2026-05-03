@@ -151,25 +151,38 @@ L1-API job, then scale.
   from source. Class regression in
   `tests/unit/test_browser_helpers.py`.
 
-- [ ] **W.5 — Scale to 4 apps × API.** If W.3 holds, add
-  `e2e-pg-api-{l2ft,inv,exec}` jobs (or a matrix) running each
-  app's `test_*_deployed_resources.py` +
-  `test_*_dashboard_structure.py`. Still PG-only at this stage.
-  Then add `e2e-oracle-api` mirror running the same against the
-  Oracle DB. Target wall-clock: ~25 min for the 4×PG fan-out, ~20
-  min for the Oracle leg (Oracle Free first-boot delay is gone —
-  it's external Oracle now).
+- [x] **W.5a — Scale PG API to all 3 API-tested apps.** Done:
+  the existing ``e2e-pg-api-l1`` job renamed to ``e2e-pg-api`` and
+  its test step extended to cover ``test_inv_deployed_resources.py``
+  / ``test_inv_dashboard_structure.py`` /
+  ``test_exec_deployed_resources.py`` /
+  ``test_exec_dashboard_structure.py`` alongside the L1 tests, all
+  in one ``pytest -n auto`` invocation against a single shared
+  deploy. (The original W.5 wording said "4 apps" — L2FT has no
+  API e2e tests, so 3 apps is the actual API-tested set.)
+  ``cleanup-pg`` updated to ``needs: [e2e-pg-api]``.
 
-- [ ] **W.6 — Browser tier (gated).** New job `e2e-pg-browser`
-  on a `workflow_dispatch` + nightly cron only — NOT on
-  `push:main` (CPU-saturating, slow, would dominate every push).
-  Runs `tests/e2e/test_*_dashboard_renders.py` +
-  `test_*_sheet_visuals.py` + `test_*_filters.py` +
-  `test_*_drilldown.py` with `pytest-xdist -n 2` (2-vCPU GHA
-  runner can't sustain `-n 4` for browser without flake). Bump
-  `QS_E2E_PAGE_TIMEOUT=60000`. Same cleanup discipline.
-  Per-failure: upload `tests/e2e/screenshots/` as a workflow
-  artifact for inspection.
+- [ ] **W.5b — Oracle leg (mirror).** Add an ``e2e-oracle-api``
+  job running the same 6 test files against the user's external
+  Oracle. Needs ``QS_GEN_ORACLE_URL`` secret (already set per
+  W.0.b) and a ``cleanup-oracle`` companion (W.7 Oracle parity).
+  Target wall-clock: ~20 min (external Oracle is past the
+  first-boot delay window). Deferred so W.5a + W.6 land first
+  and the YAML changes are reviewable in one shape.
+
+- [x] **W.6 — Browser tier (gated).** Done. ``e2e-pg-browser`` job
+  in ``.github/workflows/e2e.yml`` runs on
+  ``workflow_dispatch`` + nightly cron (``0 6 * * *``) only —
+  NOT on ``push:main``. Tests: L1 + Inv (renders + sheet visuals
+  + filters + drilldown) + Exec (renders + sheet visuals) +
+  ``test_l1_cross_sheet_drill_date_widening`` from v8.5.7. Runs
+  with ``-n 2`` and ``QS_E2E_PAGE_TIMEOUT=60000``. Distinct
+  resource_prefix ``-pg-browser`` so it never aliases the
+  push-time API job's QS resources. Failure screenshots upload
+  as artifact ``e2e-pg-browser-screenshots-${run_id}`` (14-day
+  retention). ``cleanup-pg`` ``needs: [e2e-pg-api,
+  e2e-pg-browser]`` and regenerates both configs to sweep both
+  prefixes.
 
 - [x] **W.7 — Workflow-level always-cleanup job.** Final job in
   `e2e.yml` named `cleanup`, configured with `needs: [<all
@@ -187,12 +200,24 @@ L1-API job, then scale.
   another run's deploy. Currently scoped to the PG leg; expand
   to ``cleanup-oracle`` when W.5 lands the Oracle matrix entry.
 
-- [ ] **W.8 — Iteration gate.** 
-  - Last feature I'd like, when a release tag is pushed, after it validates on TEST pypi, the e2e runs and if successful approves for the prod gate (if it fails, it cancels)
-  - I still want the ability to approve the release by hand (e2e is probably still running) but this handles when I'm not personally testing non stop
+- [x] **W.8 — Iteration gate.** Done. ``e2e-against-testpypi``
+  job in ``.github/workflows/release.yml`` runs after
+  ``verify-testpypi-install`` against the just-published
+  TestPyPI wheel: assumes OIDC, generates per-tag config with
+  ``resource_prefix: qs-release-${tag}``, runs schema/data/json
+  apply, then API e2e tests for L1 + Inv + Exec
+  (deployed_resources + dashboard_structure) with ``-n auto``,
+  in-job ``if: always()`` cleanup. ``publish-pypi`` now ``needs:
+  [verify-testpypi-install, e2e-against-testpypi]`` so a failing
+  e2e blocks the prod publish. Manual approval on the ``pypi``
+  environment still honored as the operator's fast-path. Shares
+  the ``e2e-pg`` concurrency group so release e2e never
+  interleaves with standalone push e2e on the same Aurora schema.
 
 - [ ] **W.8a - Database load review**
   - it would be very useful for performance debugging that after the browser tests are done, queries are done on the oracle and postgres databases to dump the most expensive queries done on them to enable bad query analysis (for example missing indexes, etc)
+- [ ] **W.8b - Unified code/test coverage report**
+  - would it be useful to load all the various test+coverage data into a coverage service? I used to use codecov but undersure who is still good
 
 - [ ] **W.9 — Cut release.** Bump version, RELEASE_NOTES entry
   covering the Phase W rollout, document the new CI artifacts in

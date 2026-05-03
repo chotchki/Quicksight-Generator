@@ -38,6 +38,13 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+  # W.6 — nightly browser-tier sweep. Cron is 6am UTC daily so the
+  # browser run completes before the typical workday starts (US
+  # Eastern). The ``e2e-pg-browser`` job is gated on
+  # ``github.event_name`` so it only fires on workflow_dispatch +
+  # schedule — push:main keeps the API-only fast feedback loop.
+  schedule:
+    - cron: '0 6 * * *'
 
 # OIDC requires `id-token: write` on the workflow (or job) so the
 # runner can mint the JWT that AWS exchanges for temporary creds.
@@ -77,7 +84,16 @@ jobs:
   # spec_example while CI is running. Follow-up: extend cleanup to
   # filter by ResourcePrefix tag for true per-run isolation (queue
   # before W.5 scaling fans out concurrent jobs).
-  e2e-pg-api-l1:
+  # W.5 — scaled API job. Single deploy + run every API test the four
+  # bundled apps ship (L1 + Investigation + Executives — L2FT has no
+  # API e2e tests). One ``schema apply`` + ``data apply`` + ``json
+  # apply`` produces every dashboard the tests need; pytest then runs
+  # all the ``test_<app>_deployed_resources.py`` +
+  # ``test_<app>_dashboard_structure.py`` files in one invocation
+  # with ``pytest-xdist -n auto`` so the per-app modules execute in
+  # parallel within the single job (avoids 3× deploy cost vs.
+  # matrix-of-jobs).
+  e2e-pg-api:
     needs: auth-smoke
     runs-on: ubuntu-latest
     # Serialize PG e2e jobs across runs. ``schema apply --execute``
@@ -144,7 +160,14 @@ jobs:
       - name: Deploy QS resources (theme + datasource + datasets + analyses + dashboards)
         run: .venv/bin/quicksight-gen json apply -c /tmp/ci-pg.yaml -o /tmp/ci-pg-out --execute
 
-      - name: Run L1 API e2e
+      - name: Run API e2e (L1 + Investigation + Executives)
+        # ``-n auto`` lets xdist spread the 3 apps' test files across
+        # the runner's vCPU count (typically 2 on the standard
+        # ubuntu-latest tier). ``-m api`` filters out browser-marked
+        # tests that may be co-located in the same files. Failure of
+        # any one app's tests fails the job, but other apps still run
+        # under xdist's per-worker isolation so the failure manifest
+        # captures every problem in one go.
         env:
           QS_GEN_E2E: "1"
           QS_GEN_CONFIG: /tmp/ci-pg.yaml
@@ -153,7 +176,11 @@ jobs:
           .venv/bin/pytest \
             tests/e2e/test_l1_deployed_resources.py \
             tests/e2e/test_l1_dashboard_structure.py \
-            -m api -v
+            tests/e2e/test_inv_deployed_resources.py \
+            tests/e2e/test_inv_dashboard_structure.py \
+            tests/e2e/test_exec_deployed_resources.py \
+            tests/e2e/test_exec_dashboard_structure.py \
+            -m api -v -n auto
 
       # ``if: always()`` runs even if any prior step (or the test
       # itself) failed. The ``|| true`` on each clean call prevents a
@@ -176,8 +203,128 @@ jobs:
           .venv/bin/quicksight-gen json clean -c /tmp/ci-pg.yaml -o /tmp/empty-out --execute || true
           .venv/bin/quicksight-gen schema clean -c /tmp/ci-pg.yaml --execute || true
 
+  # W.6 — browser-tier sweep. Runs the deeper Playwright e2e (sheet
+  # visuals, filters, drilldown) against a deployed QS dashboard.
+  #
+  # Trigger gating: ``workflow_dispatch`` (manual on-demand) +
+  # ``schedule`` (nightly cron) only. NOT push:main — these tests
+  # are CPU-saturating, run for ~30+ min, and would dominate every
+  # push. Browser tier is "we want to know overnight if something
+  # regressed", not "every commit needs this signal".
+  #
+  # Concurrency: shares the ``e2e-pg`` group with ``e2e-pg-api`` so
+  # the browser job and the API job never deploy concurrently into
+  # the same Aurora schema. ``cleanup-pg`` waits on both.
+  #
+  # Resource prefix: distinct ``-browser`` suffix so the browser
+  # deploy and the API deploy never alias each other's QS resources
+  # (relevant when a dispatch run triggers BOTH jobs in the same
+  # workflow run — they need separate resource_prefix tags so cleanup
+  # doesn't sweep the wrong one).
+  e2e-pg-browser:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    needs: auth-smoke
+    runs-on: ubuntu-latest
+    concurrency:
+      group: e2e-pg
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies (incl. Playwright)
+        # ``[e2e]`` extra brings in playwright + pytest-xdist; the
+        # other extras match e2e-pg-api so the deploy steps work.
+        run: uv sync --frozen --extra deploy --extra demo --extra audit --extra e2e
+
+      - name: Install Playwright WebKit browser
+        # Only WebKit — that's what ``common/browser/helpers.py``
+        # uses (``webkit_page`` context manager). Skipping Chromium
+        # + Firefox saves ~200MB of download.
+        run: .venv/bin/playwright install webkit
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Generate per-run config.yaml
+        run: |
+          cat > /tmp/ci-pg-browser.yaml <<EOF
+          aws_account_id: "470656905821"
+          aws_region: "us-east-1"
+          resource_prefix: "qs-ci-${{ github.run_id }}-pg-browser"
+          dialect: "postgres"
+          demo_database_url: "${{ secrets.QS_GEN_PG_URL }}"
+          principal_arns:
+            - "${{ secrets.QS_E2E_USER_ARN }}"
+          EOF
+
+      - name: Apply schema (DDL)
+        run: .venv/bin/quicksight-gen schema apply -c /tmp/ci-pg-browser.yaml --execute
+
+      - name: Apply seed data
+        run: .venv/bin/quicksight-gen data apply -c /tmp/ci-pg-browser.yaml --execute
+
+      - name: Refresh matviews
+        run: .venv/bin/quicksight-gen data refresh -c /tmp/ci-pg-browser.yaml --execute
+
+      - name: Deploy QS resources
+        run: .venv/bin/quicksight-gen json apply -c /tmp/ci-pg-browser.yaml -o /tmp/ci-pg-browser-out --execute
+
+      - name: Run browser e2e (renders + sheet visuals + filters + drilldown)
+        # ``-n 2`` because the standard 2-vCPU GHA runner can't sustain
+        # ``-n 4`` for browser tests without flake (verified empirically
+        # — Playwright timeouts climb under contention). Bumped page
+        # timeout to 60s so the slower browser-tier waits don't trip
+        # on cold-start visual loads.
+        env:
+          QS_GEN_E2E: "1"
+          QS_GEN_CONFIG: /tmp/ci-pg-browser.yaml
+          QS_E2E_USER_ARN: ${{ secrets.QS_E2E_USER_ARN }}
+          QS_E2E_PAGE_TIMEOUT: "60000"
+        run: |
+          .venv/bin/pytest \
+            tests/e2e/test_l1_dashboard_renders.py \
+            tests/e2e/test_l1_sheet_visuals.py \
+            tests/e2e/test_l1_filters.py \
+            tests/e2e/test_inv_dashboard_renders.py \
+            tests/e2e/test_inv_sheet_visuals.py \
+            tests/e2e/test_inv_filters.py \
+            tests/e2e/test_inv_drilldown.py \
+            tests/e2e/test_exec_dashboard_renders.py \
+            tests/e2e/test_exec_sheet_visuals.py \
+            tests/e2e/test_l1_cross_sheet_drill_date_widening.py \
+            -m browser -v -n 2
+
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-pg-browser-screenshots-${{ github.run_id }}
+          path: tests/e2e/screenshots/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Cleanup (always)
+        if: always()
+        run: |
+          mkdir -p /tmp/empty-out
+          .venv/bin/quicksight-gen json clean -c /tmp/ci-pg-browser.yaml -o /tmp/empty-out --execute || true
+          .venv/bin/quicksight-gen schema clean -c /tmp/ci-pg-browser.yaml --execute || true
+
   # W.7 — workflow-level always-cleanup. Belt-and-suspenders over the
-  # per-job ``Cleanup (always)`` step on ``e2e-pg-api-l1``. The per-job
+  # per-job ``Cleanup (always)`` step on ``e2e-pg-api``. The per-job
   # step catches step / test failures (the common path); this job
   # catches the runner-died cases the per-job step can't:
   #
@@ -187,12 +334,12 @@ jobs:
   #   - Manual workflow cancel that interrupts the runner before its
   #     step transitions complete.
   #
-  # Job-level ``if: always()`` (with ``needs: [e2e-pg-api-l1]``) means
+  # Job-level ``if: always()`` (with ``needs: [e2e-pg-api]``) means
   # this job ALWAYS runs after the e2e job, regardless of whether the
   # e2e job succeeded, failed, or was cancelled — but only after, so it
   # never races a still-deploying job.
   #
-  # Concurrency MUST share the ``e2e-pg`` group with ``e2e-pg-api-l1``
+  # Concurrency MUST share the ``e2e-pg`` group with ``e2e-pg-api``
   # so cleanup never interleaves with another run's deploy. Schema
   # objects on the user's Aurora are scoped by the L2 instance prefix
   # (default: ``spec_example``) which is shared across runs — the
@@ -203,7 +350,11 @@ jobs:
   # ``schema clean`` both no-op when the targets don't exist, so the
   # second sweep just confirms the first was complete.
   cleanup-pg:
-    needs: [e2e-pg-api-l1]
+    needs: [e2e-pg-api, e2e-pg-browser]
+    # ``if: always()`` runs even when ``e2e-pg-browser`` is skipped
+    # (push:main triggers don't fire it). Skipped jobs satisfy
+    # ``needs:`` as success per GHA semantics, so this job runs in
+    # all trigger modes.
     if: always()
     runs-on: ubuntu-latest
     concurrency:
@@ -234,10 +385,13 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: us-east-1
 
-      - name: Regenerate per-run config.yaml
-        # Same shape as the e2e job's config — must carry the matching
-        # ``resource_prefix`` so ``json clean`` filters to this run's
-        # QS resources (post-v8.4.0 ResourcePrefix-tag isolation).
+      - name: Regenerate per-run config.yamls
+        # Same shape as the e2e jobs' configs — each carries the
+        # matching ``resource_prefix`` so ``json clean`` filters to
+        # this run's QS resources (post-v8.4.0 ResourcePrefix-tag
+        # isolation). One config per source job (api + browser) —
+        # ``json clean`` only sweeps resources tagged with the exact
+        # ResourcePrefix the config carries.
         run: |
           cat > /tmp/ci-pg.yaml <<EOF
           aws_account_id: "470656905821"
@@ -248,11 +402,24 @@ jobs:
           principal_arns:
             - "${{ secrets.QS_E2E_USER_ARN }}"
           EOF
+          cat > /tmp/ci-pg-browser.yaml <<EOF
+          aws_account_id: "470656905821"
+          aws_region: "us-east-1"
+          resource_prefix: "qs-ci-${{ github.run_id }}-pg-browser"
+          dialect: "postgres"
+          demo_database_url: "${{ secrets.QS_GEN_PG_URL }}"
+          principal_arns:
+            - "${{ secrets.QS_E2E_USER_ARN }}"
+          EOF
 
       - name: Sweep QS resources + drop schema objects
         # ``|| true`` so a clean failure doesn't mask the real e2e
         # failure (which already surfaced in the prior job's status).
+        # Schema clean uses the ``-pg`` config since both deploys
+        # write into the same Aurora schema (l2_instance_prefix is
+        # shared across runs); only the QS-side tagging differs.
         run: |
           mkdir -p /tmp/empty-out
           .venv/bin/quicksight-gen json clean -c /tmp/ci-pg.yaml -o /tmp/empty-out --execute || true
+          .venv/bin/quicksight-gen json clean -c /tmp/ci-pg-browser.yaml -o /tmp/empty-out --execute || true
           .venv/bin/quicksight-gen schema clean -c /tmp/ci-pg.yaml --execute || true
