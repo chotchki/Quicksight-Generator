@@ -97,6 +97,13 @@ dev = [
     "build>=1.0",
     "twine>=5.0",
     "pyright>=1.1.380",
+    # v8.5.2 — pulled into [dev] so pyright (in the pytest sessionstart
+    # gate) can resolve Playwright's PEP 561 inline stubs when type-
+    # checking ``common/browser/helpers.py``. The Python package alone
+    # is enough for stub resolution; ``playwright install`` (which
+    # downloads browser binaries) is still only needed for the e2e
+    # browser tests.
+    "playwright>=1.40",
 ]
 docs = [
     "mkdocs>=1.6",
