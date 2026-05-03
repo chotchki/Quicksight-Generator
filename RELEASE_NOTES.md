@@ -1,5 +1,48 @@
 # Release Notes
 
+## v8.6.1 — BarChart / LineChart axis labels need ApplyTo binding
+
+v8.5.5 wired ``BarChart.emit()`` to auto-derive plain-English axis
+labels via ``_field_label`` and put them in
+``CategoryLabelOptions.AxisLabelOptions[0].CustomLabel``. The class
+test went green (the JSON shape matched), but the labels still
+rendered as raw snake_case (``account_id``, ``signed_amount``) on
+deployed dashboards — the fix kept "not landing".
+
+Root cause: AWS QuickSight requires an ``ApplyTo`` ref (FieldId +
+ColumnIdentifier) inside ``AxisLabelOptions`` to bind ``CustomLabel``
+to a specific field-well leaf. Without ``ApplyTo`` the label is
+parsed cleanly but silently ignored — the same FieldId-binding
+pattern table column headers use (``TableFieldOption.FieldId``)
+applies to chart axes too.
+
+### Operator-facing
+
+- **BarChart axis labels actually render now.** Every populated axis
+  carries the auto-derived plain-English label, bound to its leaf via
+  ``ApplyTo``.
+- **LineChart picks up the same auto-derive cascade.** Pre-v8.6.1 it
+  only took explicit ``category_label="..."``/``value_label="..."``;
+  now it falls back to ``_field_label(first_leaf)`` like BarChart.
+  Same ``ApplyTo`` binding so the labels actually render.
+
+### Code-facing
+
+- ``common/models.py`` — new ``AxisLabelReferenceOptions`` dataclass;
+  ``AxisLabelOptions`` gains an optional ``ApplyTo`` field.
+- ``common/tree/visuals.py::_axis_label_apply_to(leaf)`` — helper
+  that constructs the ApplyTo from a Dim/Measure leaf (FieldId via
+  ``resolve_field_id``, Column via ``leaf.dataset.identifier`` +
+  the column name from a ``Column`` ref / ``CalcField`` name /
+  bare-string fallback).
+- ``BarChart.emit()`` + ``LineChart.emit()`` populate ``ApplyTo`` on
+  every axis label they emit. LineChart also picks up the auto-derive
+  cascade for parity.
+- ``tests/json/test_bar_chart_axis_labels.py`` gains
+  ``test_every_bar_chart_axis_label_carries_apply_to`` — class-level
+  regression that walks every emitted BarChart and asserts no
+  CustomLabel-without-ApplyTo escapes the build.
+
 ## v8.6.0 — Phase W: e2e CI infrastructure + docs ship in the wheel
 
 The headline operator-facing fix: ``quicksight-gen docs apply`` now

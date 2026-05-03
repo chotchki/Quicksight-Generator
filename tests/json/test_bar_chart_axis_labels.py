@@ -159,3 +159,38 @@ def test_no_bar_chart_axis_label_renders_as_snake_case(
         f"``value_label`` / ``color_label`` override:\n"
         + "\n".join(bad)
     )
+
+
+@pytest.mark.parametrize("app_name,emitted", list(_build_all_apps()))
+def test_every_bar_chart_axis_label_carries_apply_to(
+    app_name: str, emitted: Any,
+) -> None:
+    """Class regression (v8.6.1): every ``CustomLabel`` must carry an
+    ``ApplyTo`` ref binding it to the field-well leaf.
+
+    Without ``ApplyTo`` (FieldId + ColumnIdentifier), QuickSight
+    silently ignores the override and the chart renders the raw
+    column name on the axis. Pre-v8.6.1 the emit set ``CustomLabel``
+    only — the v8.5.5 "labels keep not landing" symptom. Table
+    column headers always land because they bind via
+    ``TableFieldOption.FieldId``; chart axes need the equivalent
+    binding via ``AxisLabelOptions.ApplyTo``.
+    """
+    bad: list[str] = []
+    for sheet_id, visual_id, bv in _all_bar_chart_visuals(emitted):
+        chart = bv.get("ChartConfiguration") or {}
+        for opt_key in _AXIS_TO_LABEL_OPT.values():
+            opts = chart.get(opt_key) or {}
+            for entry in opts.get("AxisLabelOptions") or []:
+                if entry.get("CustomLabel") and not entry.get("ApplyTo"):
+                    bad.append(
+                        f"  sheet={sheet_id!r} visual={visual_id!r} "
+                        f"opt={opt_key} label="
+                        f"{entry.get('CustomLabel')!r} missing ApplyTo"
+                    )
+    assert not bad, (
+        f"App {app_name!r} has BarChart axis labels with CustomLabel "
+        f"but no ApplyTo ref. QuickSight silently ignores the label "
+        f"without ApplyTo — the axis will render the raw column "
+        f"name:\n" + "\n".join(bad)
+    )

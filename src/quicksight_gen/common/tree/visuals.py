@@ -13,12 +13,14 @@ from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
 from quicksight_gen.common.ids import VisualId
 from quicksight_gen.common.models import (
     AxisLabelOptions,
+    AxisLabelReferenceOptions,
     BarChartAggregatedFieldWells,
     BarChartConfiguration,
     BarChartFieldWells,
     BarChartSortConfiguration,
     BarChartVisual,
     ChartAxisLabelOptions,
+    ColumnIdentifier,
     KPIConfiguration,
     KPIFieldWells,
     KPIOptions,
@@ -80,6 +82,37 @@ def _field_label(leaf: Dim | Measure) -> str:
         return _smart_title(str(col.name))
     # Bare-string fallback (allow_bare_strings escape hatch).
     return _smart_title(str(col))
+
+
+def _axis_label_apply_to(leaf: Dim | Measure) -> AxisLabelReferenceOptions:
+    """Build the ``ApplyTo`` ref binding a chart axis label to a leaf.
+
+    AWS QuickSight requires this binding (FieldId + dataset
+    column) for ``AxisLabelOptions.CustomLabel`` to render on the
+    axis. Without it, the override is silently ignored — the chart
+    parses cleanly but the axis still shows the raw column name. The
+    pre-v8.6.1 emit only set ``CustomLabel``, which was the v8.5.5
+    "axis labels keep not landing" symptom.
+
+    See `quicksight-quirks.md` 4.5 (axis label needs ApplyTo).
+    """
+    from quicksight_gen.common.tree.calc_fields import CalcField as _CF
+    from quicksight_gen.common.tree.datasets import Column
+
+    col = leaf.column
+    if isinstance(col, Column):
+        column_name = col.name
+    elif isinstance(col, _CF):
+        column_name = str(col.name)
+    else:
+        column_name = str(col)
+    return AxisLabelReferenceOptions(
+        FieldId=resolve_field_id(leaf),
+        Column=ColumnIdentifier(
+            DataSetIdentifier=leaf.dataset.identifier,
+            ColumnName=column_name,
+        ),
+    )
 
 
 @runtime_checkable
@@ -474,21 +507,30 @@ class BarChart:
                     BarsArrangement=self.bars_arrangement,
                     CategoryLabelOptions=(
                         ChartAxisLabelOptions(AxisLabelOptions=[
-                            AxisLabelOptions(CustomLabel=category_label),
+                            AxisLabelOptions(
+                                CustomLabel=category_label,
+                                ApplyTo=_axis_label_apply_to(self.category[0]),
+                            ),
                         ])
-                        if category_label is not None else None
+                        if category_label is not None and self.category else None
                     ),
                     ValueLabelOptions=(
                         ChartAxisLabelOptions(AxisLabelOptions=[
-                            AxisLabelOptions(CustomLabel=value_label),
+                            AxisLabelOptions(
+                                CustomLabel=value_label,
+                                ApplyTo=_axis_label_apply_to(self.values[0]),
+                            ),
                         ])
-                        if value_label is not None else None
+                        if value_label is not None and self.values else None
                     ),
                     ColorLabelOptions=(
                         ChartAxisLabelOptions(AxisLabelOptions=[
-                            AxisLabelOptions(CustomLabel=color_label),
+                            AxisLabelOptions(
+                                CustomLabel=color_label,
+                                ApplyTo=_axis_label_apply_to(self.colors[0]),
+                            ),
                         ])
-                        if color_label is not None else None
+                        if color_label is not None and self.colors else None
                     ),
                     SortConfiguration=sort_config,
                 ),
@@ -569,6 +611,14 @@ class LineChart:
                     }},
                 ],
             )
+        # v8.6.1 — match BarChart's auto-derive cascade. Author-supplied
+        # labels still win.
+        category_label = self.category_label
+        if category_label is None and self.category:
+            category_label = _field_label(self.category[0])
+        value_label = self.value_label
+        if value_label is None and self.values:
+            value_label = _field_label(self.values[0])
         return Visual(
             LineChartVisual=LineChartVisual(
                 VisualId=self.visual_id,
@@ -586,13 +636,19 @@ class LineChart:
                     SortConfiguration=sort_config,
                     XAxisLabelOptions=(
                         ChartAxisLabelOptions(AxisLabelOptions=[
-                            AxisLabelOptions(CustomLabel=self.category_label),
+                            AxisLabelOptions(
+                                CustomLabel=category_label,
+                                ApplyTo=_axis_label_apply_to(self.category[0]),
+                            ),
                         ])
-                        if self.category_label is not None else None
+                        if category_label is not None and self.category else None
                     ),
                     PrimaryYAxisLabelOptions=(
                         ChartAxisLabelOptions(AxisLabelOptions=[
-                            AxisLabelOptions(CustomLabel=self.value_label),
+                            AxisLabelOptions(
+                                CustomLabel=value_label,
+                                ApplyTo=_axis_label_apply_to(self.values[0]),
+                            ),
                         ])
                         if self.value_label is not None else None
                     ),
