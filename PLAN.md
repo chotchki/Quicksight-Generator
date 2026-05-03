@@ -217,8 +217,19 @@ L1-API job, then scale.
   the ``e2e-pg`` concurrency group so release e2e never
   interleaves with standalone push e2e on the same Aurora schema.
 
-- [ ] **W.8a - Database load review**
-  - it would be very useful for performance debugging that after the browser tests are done, queries are done on the oracle and postgres databases to dump the most expensive queries done on them to enable bad query analysis (for example missing indexes, etc)
+- [x] **W.8a — Database load review.** Done.
+  ``scripts/dump_top_queries.py`` queries ``pg_stat_statements`` (PG)
+  / ``v$sqlstats`` (Oracle), filters to queries matching the L2 test
+  prefix (``--like spec_example``), and writes a markdown table of
+  the top-N rows by cumulative execution time. Auto-runs
+  ``CREATE EXTENSION IF NOT EXISTS pg_stat_statements`` on PG so
+  the operator's Aurora self-bootstraps on first CI run; tolerates
+  missing-extension / no-permission cases by writing a
+  "skipped" marker (never fails CI).
+  Wired into all 3 e2e jobs (``e2e-pg-api``, ``e2e-pg-browser``,
+  ``e2e-oracle-api``) as an ``if: always()`` step before cleanup,
+  uploaded as a per-job ``e2e-{job}-top-queries-${run_id}``
+  artifact (14-day retention).
 - [ ] **W.8b - Unified code/test coverage report**
   - would it be useful to load all the various test+coverage data into a unified report?
   - found a good example here: https://hynek.me/articles/ditch-codecov-python/

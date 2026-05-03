@@ -182,6 +182,29 @@ jobs:
             tests/e2e/test_exec_dashboard_structure.py \
             -m api -v -n auto
 
+      # W.8a — perf snapshot. Dump pg_stat_statements top-N queries
+      # touching our test schema BEFORE cleanup drops the schema —
+      # the script tolerates the missing extension / permission case
+      # by writing a "skipped" marker, so this step never fails the
+      # job.
+      - name: Dump top expensive queries
+        if: always()
+        run: |
+          .venv/bin/python scripts/dump_top_queries.py \
+            -c /tmp/ci-pg.yaml \
+            -o /tmp/top-queries-pg-api.md \
+            --top 50 \
+            --title "Top expensive PG queries — e2e-pg-api"
+
+      - name: Upload top-queries artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-pg-api-top-queries-${{ github.run_id }}
+          path: /tmp/top-queries-pg-api.md
+          if-no-files-found: ignore
+          retention-days: 14
+
       # ``if: always()`` runs even if any prior step (or the test
       # itself) failed. The ``|| true`` on each clean call prevents a
       # cleanup failure (e.g. a partially-deployed resource that
@@ -316,6 +339,26 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      # W.8a — perf snapshot. Browser tier exercises every visual,
+      # so this dump is the highest-value of the three.
+      - name: Dump top expensive queries
+        if: always()
+        run: |
+          .venv/bin/python scripts/dump_top_queries.py \
+            -c /tmp/ci-pg-browser.yaml \
+            -o /tmp/top-queries-pg-browser.md \
+            --top 50 \
+            --title "Top expensive PG queries — e2e-pg-browser"
+
+      - name: Upload top-queries artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-pg-browser-top-queries-${{ github.run_id }}
+          path: /tmp/top-queries-pg-browser.md
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Cleanup (always)
         if: always()
         run: |
@@ -410,6 +453,26 @@ jobs:
             tests/e2e/test_exec_deployed_resources.py \
             tests/e2e/test_exec_dashboard_structure.py \
             -m api -v -n auto
+
+      # W.8a — perf snapshot via v$sqlstats. The script tolerates
+      # the no-permission case by writing a "skipped" marker.
+      - name: Dump top expensive queries
+        if: always()
+        run: |
+          .venv/bin/python scripts/dump_top_queries.py \
+            -c /tmp/ci-oracle.yaml \
+            -o /tmp/top-queries-oracle-api.md \
+            --top 50 \
+            --title "Top expensive Oracle queries — e2e-oracle-api"
+
+      - name: Upload top-queries artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-oracle-api-top-queries-${{ github.run_id }}
+          path: /tmp/top-queries-oracle-api.md
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Cleanup (always)
         if: always()
