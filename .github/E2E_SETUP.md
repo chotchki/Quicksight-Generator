@@ -102,7 +102,18 @@ Create a new inline policy on the role with this JSON. Scope is
 exactly what `quicksight-gen json apply --execute` + `json clean
 --execute` + `audit apply --execute` + `audit verify` need, plus
 the embed-URL generation for browser tests. Anything beyond this
-is a leak:
+is a leak.
+
+**The two `Pass*` actions are easy to miss.** AWS QuickSight
+requires `quicksight:PassDataSource` when you call `CreateDataSet`
+that references an existing datasource (the Pass action authorizes
+"hand this resource to the new dataset"). Same shape for
+`PassDataSet` when `CreateAnalysis` references existing datasets.
+Without these the deploy fails at `CreateDataSet` time with a
+confusingly-worded `AccessDeniedException` ("not authorized to
+perform: quicksight:PassDataSet on resource: …datasource/…" — the
+action name in the error is misleading; the missing permission is
+typically `PassDataSource` for the resource type shown).
 
 ```json
 {
@@ -122,6 +133,7 @@ is a leak:
         "quicksight:UpdateDataSource",
         "quicksight:DeleteDataSource",
         "quicksight:ListDataSources",
+        "quicksight:PassDataSource",
         "quicksight:CreateDataSet",
         "quicksight:DescribeDataSet",
         "quicksight:UpdateDataSet",
