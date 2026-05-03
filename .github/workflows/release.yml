@@ -284,12 +284,128 @@ jobs:
           "
 
   # ---------------------------------------------------------------------------
-  # Publish to PyPI (gated on TestPyPI install verify + manual environment
-  # approval)
+  # W.8 — auto-gate prod PyPI on a live AWS QuickSight e2e run against the
+  # just-published TestPyPI wheel. publish-pypi needs this job, so a
+  # failing e2e blocks the prod publish. The pypi environment's manual
+  # approver (if configured) is still honored — set as the operator's
+  # human fast-path when they want to ship before e2e finishes.
+  #
+  # Resource prefix: ``qs-release-${tag}`` keeps the deployed AWS
+  # resources traceable to the release that produced them (vs. the
+  # ``qs-ci-${run_id}-pg`` prefix the standalone e2e workflow uses).
+  # Cleanup is in-job (`if: always()`) — the standalone e2e workflow's
+  # cleanup-pg can't help here because release.yml runs in its own
+  # workflow scope.
+  # ---------------------------------------------------------------------------
+  e2e-against-testpypi:
+    name: E2E vs TestPyPI wheel
+    needs: verify-testpypi-install
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    # Share the e2e-pg concurrency group so a release-driven e2e
+    # never interleaves with a standalone push:main e2e on the same
+    # Aurora schema. Releases queue behind any in-flight e2e and
+    # vice versa.
+    concurrency:
+      group: e2e-pg
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install from TestPyPI (with retries for CDN propagation)
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          python -m venv /tmp/qs-release-e2e
+          /tmp/qs-release-e2e/bin/pip install --upgrade pip
+          for attempt in 1 2 3 4 5 6; do
+            echo "Attempt ${attempt}: pip install quicksight-gen==${TAG} from TestPyPI"
+            if /tmp/qs-release-e2e/bin/pip install \
+                --index-url https://test.pypi.org/simple/ \
+                --extra-index-url https://pypi.org/simple/ \
+                "quicksight-gen[deploy,demo,audit,e2e]==${TAG}"; then
+              echo "Install succeeded on attempt ${attempt}"
+              exit 0
+            fi
+            echo "Install failed; sleeping 30s before retry..."
+            sleep 30
+          done
+          echo "::error::pip install quicksight-gen==${TAG} from TestPyPI failed after 6 attempts (3 min total)"
+          exit 1
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Generate per-run config.yaml
+        # ``resource_prefix`` carries the release tag for traceability;
+        # the ``ResourcePrefix`` AWS tag on every deployed resource
+        # makes ``json clean`` scope-safe (post-v8.4.0).
+        run: |
+          cat > /tmp/release-e2e.yaml <<EOF
+          aws_account_id: "470656905821"
+          aws_region: "us-east-1"
+          resource_prefix: "qs-release-${{ github.ref_name }}"
+          dialect: "postgres"
+          demo_database_url: "${{ secrets.QS_GEN_PG_URL }}"
+          principal_arns:
+            - "${{ secrets.QS_E2E_USER_ARN }}"
+          EOF
+
+      - name: Apply schema (DDL)
+        run: /tmp/qs-release-e2e/bin/quicksight-gen schema apply -c /tmp/release-e2e.yaml --execute
+
+      - name: Apply seed data
+        run: /tmp/qs-release-e2e/bin/quicksight-gen data apply -c /tmp/release-e2e.yaml --execute
+
+      - name: Refresh matviews
+        run: /tmp/qs-release-e2e/bin/quicksight-gen data refresh -c /tmp/release-e2e.yaml --execute
+
+      - name: Deploy QS resources
+        run: /tmp/qs-release-e2e/bin/quicksight-gen json apply -c /tmp/release-e2e.yaml -o /tmp/release-e2e-out --execute
+
+      - name: Run API e2e against TestPyPI wheel
+        # Same 3 apps as the standalone e2e-pg-api job. Browser-tier
+        # tests are skipped here — they're slower and the standalone
+        # nightly workflow covers them; the release gate trades full
+        # browser coverage for fast feedback so prod publish doesn't
+        # wait an extra ~30 min.
+        env:
+          QS_GEN_E2E: "1"
+          QS_GEN_CONFIG: /tmp/release-e2e.yaml
+          QS_E2E_USER_ARN: ${{ secrets.QS_E2E_USER_ARN }}
+        run: |
+          /tmp/qs-release-e2e/bin/pytest \
+            tests/e2e/test_l1_deployed_resources.py \
+            tests/e2e/test_l1_dashboard_structure.py \
+            tests/e2e/test_inv_deployed_resources.py \
+            tests/e2e/test_inv_dashboard_structure.py \
+            tests/e2e/test_exec_deployed_resources.py \
+            tests/e2e/test_exec_dashboard_structure.py \
+            -m api -v -n auto
+
+      - name: Cleanup (always)
+        if: always()
+        run: |
+          mkdir -p /tmp/empty-out
+          /tmp/qs-release-e2e/bin/quicksight-gen json clean -c /tmp/release-e2e.yaml -o /tmp/empty-out --execute || true
+          /tmp/qs-release-e2e/bin/quicksight-gen schema clean -c /tmp/release-e2e.yaml --execute || true
+
+  # ---------------------------------------------------------------------------
+  # Publish to PyPI (gated on TestPyPI install verify + e2e gate +
+  # manual environment approval if configured)
   # ---------------------------------------------------------------------------
   publish-pypi:
     name: Publish to PyPI
-    needs: verify-testpypi-install
+    needs: [verify-testpypi-install, e2e-against-testpypi]
     runs-on: ubuntu-latest
     environment:
       name: pypi
