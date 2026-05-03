@@ -71,8 +71,9 @@ Transfer Template / Limit Schedule *is*. Five short reads:
 Then:
 
 1. **Authoring a fresh L2:** start from
-   [`tests/l2/spec_example.yaml`](https://github.com/chotchki/quicksight/blob/main/tests/l2/spec_example.yaml)
-   as the smallest persona-neutral skeleton + the
+   [`spec_example.yaml`](../reference/fixtures/spec_example.yaml)
+   (the persona-neutral skeleton — same file the test suite uses)
+   plus the
    [Customization handbook](../handbook/customization.md) for the
    editing patterns. The
    [Demo Institution Tour](../scenario/index.md) shows the

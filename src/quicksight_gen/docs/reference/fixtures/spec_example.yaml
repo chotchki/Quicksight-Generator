@@ -1,0 +1,163 @@
+# Hand-assembled from the SPEC's "Worked example shapes" section
+# (SPEC.md §618+). Used by tests/test_seed_persona_clean.py to verify
+# that common.l2.seed produces SQL with ZERO persona-leak strings —
+# i.e., that the seed primitives lifted in M.2d.5 are L1-clean and
+# don't smuggle in Sasquatch / Bigfoot / SNB / FRB literals.
+#
+# Every singleton + role here uses a generic, persona-neutral name. If
+# the seed accidentally hardcodes a Sasquatch identifier, the
+# persona-clean test catches it.
+
+instance: spec_example
+description: |
+  Generic SPEC-shaped instance for cleanliness testing of the lifted
+  common.l2.seed primitives.
+
+accounts:
+  - id: clearing-suspense
+    name: Clearing Suspense
+    role: ClearingSuspense
+    scope: internal
+    expected_eod_balance: 0
+
+  - id: north-pool
+    name: North Pool
+    role: NorthPool
+    scope: internal
+    expected_eod_balance: 0
+
+  - id: south-pool
+    name: South Pool
+    role: SouthPool
+    scope: internal
+    expected_eod_balance: 0
+
+  - id: customer-ledger
+    name: Customer Ledger
+    role: CustomerLedger
+    scope: internal
+
+  - id: external-counterparty-one
+    name: External Counterparty One
+    role: ExternalCounterparty
+    scope: external
+
+  - id: cust-001
+    name: Customer Number One
+    role: CustomerSubledger
+    scope: internal
+    parent_role: CustomerLedger
+
+  - id: cust-002
+    name: Customer Number Two
+    role: CustomerSubledger
+    scope: internal
+    parent_role: CustomerLedger
+
+account_templates:
+  - role: CustomerSubledger
+    scope: internal
+    parent_role: CustomerLedger
+
+rails:
+  # Two-leg with per-leg origin — used by drift plant background postings
+  # AND stuck_pending plant (carries max_pending_age).
+  - name: ExternalRailInbound
+    transfer_type: ach
+    source_role: ExternalCounterparty
+    destination_role: CustomerSubledger
+    expected_net: 0
+    source_origin: ExternalForcePosted
+    destination_origin: InternalInitiated
+    metadata_keys: [external_reference]
+    posted_requirements: [external_reference]
+    max_pending_age: PT24H
+
+  # Two-leg standalone outbound — used by limit-breach plant.
+  - name: ExternalRailOutbound
+    transfer_type: wire
+    source_role: CustomerSubledger
+    destination_role: ExternalCounterparty
+    expected_net: 0
+    source_origin: InternalInitiated
+    destination_origin: ExternalForcePosted
+    metadata_keys: [external_reference]
+
+  # Single-leg debit — used by stuck_unbundled plant (max_unbundled_age
+  # only meaningful on rails appearing in some bundles_activity, satisfied
+  # by PoolBalancing below).
+  - name: SubledgerCharge
+    transfer_type: charge
+    leg_role: CustomerSubledger
+    leg_direction: Debit
+    origin: InternalInitiated
+    metadata_keys: [merchant_id, customer_id, settlement_period]
+    max_unbundled_age: PT4H
+
+  # Aggregating two-leg that bundles SubledgerCharge → satisfies R8 + R11.
+  - name: PoolBalancing
+    transfer_type: pool_balancing
+    source_role: NorthPool
+    destination_role: SouthPool
+    expected_net: 0
+    origin: InternalInitiated
+    metadata_keys: [business_day]
+    aggregating: true
+    cadence: intraday-2h
+    bundles_activity:
+      - SubledgerCharge
+
+transfer_templates:
+  - name: MerchantSettlementCycle
+    transfer_type: settlement_cycle
+    expected_net: 0
+    transfer_key: [merchant_id, settlement_period]
+    completion: business_day_end+1d
+    leg_rails:
+      - SubledgerCharge
+
+limit_schedules:
+  # Cap matches ExternalRailOutbound.transfer_type='wire' (R10 satisfied).
+  - parent_role: CustomerLedger
+    transfer_type: wire
+    cap: 5000.00
+seed_hash:
+  postgres: be926275bc5cdc1f428b981ab435dad1220f80b911e2c4f820c9dab4608e7084
+  oracle: 11311b059ff8f80e51e15d42cdad623a27225a8bd199ec74af288efd623f41dd
+
+# Inline brand theme (N.1). Mirrors the legacy ``default`` preset
+# in common/theme.py byte-for-byte so spec_example renders identically
+# pre/post-N.1. Apps consume from instance.theme; the cfg-level theme
+# field was dropped in N.4.j.
+theme:
+  theme_name: "QuickSight Gen Theme"
+  version_description: "Auto-generated dashboard theme"
+  analysis_name_prefix: null
+  data_colors:
+    - "#2E5090"
+    - "#E07B39"
+    - "#3A9E6F"
+    - "#4A7DC7"
+    - "#8E5EA2"
+    - "#E6B422"
+    - "#4BC0C0"
+    - "#8C8C8C"
+  empty_fill_color: "#D9D9D9"
+  gradient: ["#C5DAF7", "#2E5090"]
+  primary_bg: "#FFFFFF"
+  secondary_bg: "#F5F6FA"
+  primary_fg: "#2D2D2D"
+  secondary_fg: "#4A4A4A"
+  accent: "#2E5090"
+  accent_fg: "#FFFFFF"
+  link_tint: "#E8EFF9"
+  danger: "#C62828"
+  danger_fg: "#FFFFFF"
+  warning: "#E65100"
+  warning_fg: "#FFFFFF"
+  success: "#2E7D32"
+  success_fg: "#FFFFFF"
+  dimension: "#4A7DC7"
+  dimension_fg: "#FFFFFF"
+  measure: "#1B2A4A"
+  measure_fg: "#FFFFFF"

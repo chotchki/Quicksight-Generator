@@ -3,27 +3,30 @@
 // The mkdocs-macros `diagram(...)` entry emits every diagram as:
 //
 //   <figure class="qs-diagram" data-zoomable="true" tabindex="0">
-//     <script type="text/x-graphviz">…DOT source…</script>
+//     <template class="qs-graphviz-source">…DOT source…</template>
 //   </figure>
 //
 // At page load this shim:
-//   1. Finds every <script type="text/x-graphviz"> block.
+//   1. Finds every <template class="qs-graphviz-source"> block.
 //   2. Loads @hpcc-js/wasm-graphviz from the vendored bundle at
 //      ./wasm-graphviz/index.js (no CDN fetch; works offline /
 //      from a flat file directory).
-//   3. Runs `g.dot(source)` against each block's textContent.
-//   4. Replaces the <script> with the rendered <svg> *inside the same
+//   3. Runs `g.dot(source)` against each block's content.textContent.
+//   4. Replaces the <template> with the rendered <svg> *inside the same
 //      figure*, so qs-lightbox.js's click-to-zoom (which targets
 //      `<figure class="qs-diagram">`) keeps working unchanged.
 //
-// Why <script type="text/..."> rather than <pre>: browsers don't
-// HTML-process script content, so any `<` / `>` / `<br/>` inside the
-// DOT source reaches the renderer verbatim instead of being mangled
-// by the page's HTML parser.
+// Why <template> rather than <script type="text/x-graphviz">: Material's
+// `navigation.instant` re-evaluates every <script> tag on cross-page
+// navigation regardless of the type attribute, treating `digraph { ... }`
+// as JavaScript and throwing "Unexpected token '{'". <template> content
+// is inert by the HTML5 spec — never parsed as live DOM, never executed.
+// Same `<` / `>` parsing safety as the script tag (browser doesn't
+// HTML-process template contents either).
 
 (async () => {
   const blocks = document.querySelectorAll(
-    'script[type="text/x-graphviz"]'
+    'template.qs-graphviz-source'
   );
   if (blocks.length === 0) return;
 
@@ -53,7 +56,9 @@
 
   for (let i = 0; i < blocks.length; i++) {
     const block = blocks[i];
-    const source = block.textContent.trim();
+    // <template> exposes its inert content via .content (a
+    // DocumentFragment); plain text inside lands as a text node.
+    const source = block.content.textContent.trim();
     try {
       const svg = renderer.dot(source);
       // Insert the rendered SVG into the figure (or into the parent

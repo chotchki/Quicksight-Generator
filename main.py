@@ -141,6 +141,20 @@ def define_env(env: Any) -> None:
                 default_l2 if l2_path == default_l2_path else load_instance(l2_path)
             )
             dot = render_l2_topology(l2, kind, name=name)
+            # Empty-instance fallback: when the L2 instance has no
+            # primitives in this kind (e.g. spec_example declares no
+            # chains), the renderer emits a `digraph { ... }` with only
+            # graph/node default attrs and no node/edge declarations.
+            # Browsers render that as a blank box; emit a callout
+            # instead so the page tells the reader why the diagram is
+            # absent.
+            if _is_empty_dot(dot):
+                instance_name = str(l2.instance)
+                hint = _empty_topology_hint(kind)
+                return (
+                    f'!!! info "No {kind} declared in '
+                    f'`{instance_name}.yaml`"\n\n    {hint}'
+                )
             return _wrap_dot(
                 dot,
                 alt=f"L2 topology: {kind}" + (f" / {name}" if name else ""),
@@ -260,26 +274,97 @@ def define_env(env: Any) -> None:
         )
 
 
+_EMPTY_TOPOLOGY_HINTS = {
+    "chains": (
+        "This institution declares no chains in its L2 YAML — there "
+        "are no parent → child firing rules to display. Add a "
+        "`chains:` block to your L2 instance to populate this DAG."
+    ),
+    "accounts": (
+        "This institution declares no accounts in its L2 YAML. Add "
+        "an `accounts:` block to populate the topology graph."
+    ),
+    "account_templates": (
+        "This institution declares no account templates in its L2 "
+        "YAML. Add an `account_templates:` block to populate the "
+        "template-shape topology graph."
+    ),
+    "layered": (
+        "This institution declares no chains in its L2 YAML, so the "
+        "layered (accounts × chains) view collapses to the accounts "
+        "view alone — see the topology diagram above."
+    ),
+    "hierarchy": (
+        "This institution declares no parent → child rollups in its "
+        "L2 YAML. Add `parent_role` to an account or template to "
+        "populate the hierarchy graph."
+    ),
+}
+
+
+def _empty_topology_hint(kind: str) -> str:
+    """Plain-English explanation for an empty topology of this kind."""
+    return _EMPTY_TOPOLOGY_HINTS.get(
+        kind,
+        f"This institution's L2 YAML declares no {kind!r} entities, "
+        f"so the diagram has nothing to render.",
+    )
+
+
+def _is_empty_dot(dot: str) -> bool:
+    """True when a graphviz DOT source has no node or edge declarations.
+
+    Detects the post-render output of an L2 topology graph that the
+    instance had no primitives for. Heuristic: a non-empty graph
+    contains at least one of:
+      - an edge (``->`` / ``--``)
+      - a quoted-name node declaration (``"foo" [...]`` or ``"foo";``)
+      - a bareword node declaration (``foo [...]``) where the bareword
+        isn't an attribute keyword (graph / node / edge / digraph)
+    Cheap; avoids parsing DOT.
+    """
+    import re
+
+    body_match = re.search(r"\{(.+)\}", dot, re.DOTALL)
+    if body_match is None:
+        return True
+    body = body_match.group(1)
+    if "->" in body or "--" in body:
+        return False
+    # Quoted node names: `"foo" ...`.
+    if re.search(r'"[^"]+"\s*(\[|;|$)', body, re.MULTILINE):
+        return False
+    # Bareword node decls (`foo [...]`) excluding attr keywords.
+    for m in re.finditer(r"^\s*([A-Za-z_][\w]*)\s*(\[|;)", body, re.MULTILINE):
+        if m.group(1) not in {"graph", "node", "edge", "digraph", "subgraph"}:
+            return False
+    return True
+
+
 def _wrap_dot(dot: str, *, alt: str) -> str:
     """Wrap a graphviz DOT source string in a figure with a render block.
 
     ``stylesheets/qs-graphviz-wasm.js`` finds every
-    ``<script type="text/x-graphviz">`` on the page at load time, runs
-    the DOT through ``@hpcc-js/wasm-graphviz``, and inserts the rendered
-    SVG into the parent figure. The figure stays as the lightbox /
-    accessibility hook (``data-zoomable`` + ``tabindex`` opt it in to
-    ``stylesheets/qs-lightbox.js``), so click-to-zoom works against the
-    rendered SVG once it lands in the DOM.
+    ``<template class="qs-graphviz-source">`` on the page at load time,
+    runs the DOT through ``@hpcc-js/wasm-graphviz``, and inserts the
+    rendered SVG into the parent figure. The figure stays as the
+    lightbox / accessibility hook (``data-zoomable`` + ``tabindex`` opt
+    it in to ``stylesheets/qs-lightbox.js``), so click-to-zoom works
+    against the rendered SVG once it lands in the DOM.
 
-    Browser HTML-parser caveat: the DOT source goes inside a
-    ``<script type=...>`` (not a ``<pre>``) so any ``<`` / ``>`` /
-    ``<br/>`` characters inside reach the WASM renderer verbatim. A
-    ``<pre>`` would let the browser interpret them as HTML and mangle
-    the source.
+    Why ``<template>`` and not ``<script type="text/x-graphviz">``:
+    Material's ``navigation.instant`` re-evaluates every ``<script>``
+    tag on cross-page navigation regardless of the ``type`` attribute,
+    treating ``digraph { ... }`` as JavaScript and throwing
+    "Unexpected token '{'". ``<template>`` content is inert by the
+    HTML5 spec — never parsed as live DOM, never executed by Material's
+    instant-nav, but ``content.textContent`` returns the source verbatim
+    for the WASM renderer. Same `<` / `>` parsing safety as the script
+    tag (browser doesn't HTML-process template contents either).
     """
     return (
         f'<figure class="qs-diagram" role="img" aria-label="{alt}" '
         f'data-zoomable="true" tabindex="0">\n'
-        f'<script type="text/x-graphviz">\n{dot}\n</script>\n'
+        f'<template class="qs-graphviz-source">\n{dot}\n</template>\n'
         f"</figure>"
     )
