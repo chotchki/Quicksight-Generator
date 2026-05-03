@@ -161,8 +161,30 @@ def seeded_audit(cfg, cfg_path, tmp_path_factory):
 
 
 @pytest.fixture
-def embed_url(region, account_id, l1_dashboard_id) -> str:
-    """Function-scoped — embed URLs are single-use, fresh per test."""
+def embed_url(region, account_id, l1_dashboard_id, qs_client) -> str:
+    """Function-scoped — embed URLs are single-use, fresh per test.
+
+    Pre-flight: confirm the dashboard actually exists before
+    generating the embed URL. ``generate_dashboard_embed_url``
+    happily returns a URL pointing at a non-existent dashboard,
+    which then loads as an empty QS error page that times out the
+    "wait for sheet tabs" gate with a confusing 30s timeout. A
+    proactive ``describe_dashboard`` check turns that into an
+    immediate skip with the actual deploy command to fix it.
+    """
+    try:
+        qs_client.describe_dashboard(
+            AwsAccountId=account_id,
+            DashboardId=l1_dashboard_id,
+        )
+    except qs_client.exceptions.ResourceNotFoundException:
+        pytest.skip(
+            f"L1 dashboard {l1_dashboard_id!r} not deployed in "
+            f"account {account_id} region {region}. Deploy it "
+            f"first: `quicksight-gen json apply -c <cfg> "
+            f"--execute` against the default L2 instance "
+            f"(spec_example), then re-run this test."
+        )
     return generate_dashboard_embed_url(
         aws_account_id=account_id,
         aws_region=region,
