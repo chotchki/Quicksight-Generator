@@ -97,16 +97,19 @@ async function renderAllDiagrams() {
   }
 }
 
-// Material 9+ exposes `document$` as a global RxJS Observable that
-// fires on every page navigation (initial load + instant-nav
-// arrivals). Subscribing here is the conventional integration point
-// for per-page custom JS. Falls back to a one-shot run if `document$`
-// isn't available (e.g. user disabled `navigation.instant` or this
-// JS got loaded outside Material).
+// Always do a one-shot render on script load — covers (a) plain
+// page loads with no Material instant-nav (e.g. portable file://
+// builds where Material's instant-nav itself throws and never
+// initializes `document$`), (b) Material setups where document$
+// hasn't been wired yet at script-execute time. Idempotent:
+// renderAllDiagrams() bails immediately if no template blocks remain.
+//
+// Then ALSO subscribe to Material's `document$` RxJS Observable
+// when available — that's the per-page-navigation hook for HTTP
+// builds with `navigation.instant`.
+renderAllDiagrams();
 if (typeof document$ !== "undefined") {
   document$.subscribe(() => {
     renderAllDiagrams();
   });
-} else {
-  renderAllDiagrams();
 }
