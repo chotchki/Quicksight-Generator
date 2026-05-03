@@ -496,7 +496,7 @@ def docs_export(output: str, l2_instance_path: str | None) -> None:
 @click.option(
     "--viewport", "viewport_text", default="1280x900",
     show_default=True,
-    help="Browser viewport WxH; user-pick per Q.2.c.",
+    help="Browser viewport WxH (default 1280x900).",
 )
 @click.option(
     "--skip-warmup", is_flag=True,

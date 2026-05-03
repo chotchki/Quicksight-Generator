@@ -1363,10 +1363,6 @@ def audit_apply(
     Pass ``--execute`` to render the report as a PDF via reportlab.
     Default destination is ``report.pdf`` in the current working
     directory; override with ``-o FILE``.
-
-    Phase U.1 ships the cover page; body sections (executive summary,
-    per-invariant tables, Daily Statement walk, sign-off block) land
-    in U.2+ as the page-by-page review gates close.
     """
     from quicksight_gen import __version__ as _qsg_version
 
@@ -1506,10 +1502,11 @@ def audit_clean(output: str, execute: bool) -> None:
 def audit_test(pytest_args: str) -> None:
     """Run the audit test suite (pytest + pyright on the audit module).
 
-    Targets ``tests/audit/`` for pytest (U.8.a/c — scenario expectations,
+    Targets ``tests/audit/`` for pytest — scenario expectations,
     PDF/dashboard extractors, PDF-matches-scenario, persona-clean,
-    smoke). Defers the U.8.b browser matrix to ``QS_GEN_E2E=1`` and
-    ``tests/e2e/test_audit_dashboard_agreement.py`` — not run here.
+    and smoke. Defers the browser matrix
+    (``tests/e2e/test_audit_dashboard_agreement.py``) to
+    ``QS_GEN_E2E=1`` — not run here.
 
     Pyright covers the audit package (``cli/audit/``).
     """
@@ -1542,7 +1539,7 @@ def audit_verify(
     l2_instance_path: str | None,
     config: str,
 ) -> None:
-    """Verify an audit PDF's embedded provenance fingerprint (U.7).
+    """Verify an audit PDF's embedded provenance fingerprint.
 
     Extracts the ``ProvenanceFingerprint`` JSON embedded in the
     PDF's ``/Subject`` metadata, recomputes each input from current
