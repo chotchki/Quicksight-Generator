@@ -1,5 +1,33 @@
 # Release Notes
 
+## v8.5.4 — Markdown links inside bullet items now render
+
+``rt.bullets()`` ran each item through ``_xml_escape`` directly,
+so an inline ``[text](url)`` markdown link inside a bullet
+survived as literal text in the rendered text box. L1 dashboard
+bullets fed from L2 description strings (which carry markdown
+links by SPEC convention) showed the raw markup instead of
+clickable anchors.
+
+### Operator-facing
+
+- **Bulleted lists now render inline links.**
+  ``- see [the docs](https://x.com)`` becomes a bullet with a
+  clickable "the docs" anchor, matching the behavior of
+  paragraph prose (v8.4.0's ``rt.markdown()`` helper).
+- **Soft line breaks inside bullet items.** A lone ``\\n`` in a
+  bullet item now becomes ``<br/>`` (intra-bullet break), useful
+  for L2 descriptions that wrap mid-item.
+- Plain-text bullets render identically to before — ``markdown()``
+  is a strict superset of the old ``_xml_escape`` path.
+
+### Engineering surface
+
+- ``rt.bullets()`` now applies ``markdown()`` per item.
+- ``tests/unit/test_rich_text.py`` adds 3 regression tests:
+  inline-markdown-link inside bullet, soft-break inside bullet,
+  plain-text bullets unchanged.
+
 ## v8.5.3 — CI hotfix: playwright in [dev] for pyright stub resolution
 
 v8.5.2 added ``common/browser/helpers.py`` to the pyright include

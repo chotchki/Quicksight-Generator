@@ -73,9 +73,19 @@ def subheading(text: str, color: str | None = None) -> str:
 
 
 def bullets(items: Iterable[str]) -> str:
-    """Bulleted list at indent level 0. Each item is plain text, XML-escaped."""
+    """Bulleted list at indent level 0.
+
+    Each item is processed through :func:`markdown`, so inline
+    ``[text](url)`` links render as clickable anchors and lone
+    ``\\n`` becomes ``<br/>`` (intra-bullet soft break). v8.5.4
+    closes the footgun where bullet items sourced from L2 YAML
+    descriptions (markdown-shaped by SPEC convention) leaked
+    literal ``[...](...)`` markup into the rendered text box.
+    Plain-text bullets behave identically to before — ``markdown()``
+    is a strict superset of the old ``_xml_escape`` path.
+    """
     lis = "".join(
-        f'<li class="ql-indent-0">{_xml_escape(item)}</li>' for item in items
+        f'<li class="ql-indent-0">{markdown(item)}</li>' for item in items
     )
     return f"<ul>{lis}</ul>"
 
