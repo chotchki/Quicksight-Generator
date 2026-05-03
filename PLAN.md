@@ -151,14 +151,24 @@ L1-API job, then scale.
   from source. Class regression in
   `tests/unit/test_browser_helpers.py`.
 
-- [ ] **W.5 — Scale to 4 apps × API.** If W.3 holds, add
-  `e2e-pg-api-{l2ft,inv,exec}` jobs (or a matrix) running each
-  app's `test_*_deployed_resources.py` +
-  `test_*_dashboard_structure.py`. Still PG-only at this stage.
-  Then add `e2e-oracle-api` mirror running the same against the
-  Oracle DB. Target wall-clock: ~25 min for the 4×PG fan-out, ~20
-  min for the Oracle leg (Oracle Free first-boot delay is gone —
-  it's external Oracle now).
+- [x] **W.5a — Scale PG API to all 3 API-tested apps.** Done:
+  the existing ``e2e-pg-api-l1`` job renamed to ``e2e-pg-api`` and
+  its test step extended to cover ``test_inv_deployed_resources.py``
+  / ``test_inv_dashboard_structure.py`` /
+  ``test_exec_deployed_resources.py`` /
+  ``test_exec_dashboard_structure.py`` alongside the L1 tests, all
+  in one ``pytest -n auto`` invocation against a single shared
+  deploy. (The original W.5 wording said "4 apps" — L2FT has no
+  API e2e tests, so 3 apps is the actual API-tested set.)
+  ``cleanup-pg`` updated to ``needs: [e2e-pg-api]``.
+
+- [ ] **W.5b — Oracle leg (mirror).** Add an ``e2e-oracle-api``
+  job running the same 6 test files against the user's external
+  Oracle. Needs ``QS_GEN_ORACLE_URL`` secret (already set per
+  W.0.b) and a ``cleanup-oracle`` companion (W.7 Oracle parity).
+  Target wall-clock: ~20 min (external Oracle is past the
+  first-boot delay window). Deferred so W.5a + W.6 land first
+  and the YAML changes are reviewable in one shape.
 
 - [ ] **W.6 — Browser tier (gated).** New job `e2e-pg-browser`
   on a `workflow_dispatch` + nightly cron only — NOT on

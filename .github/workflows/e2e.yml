@@ -77,7 +77,16 @@ jobs:
   # spec_example while CI is running. Follow-up: extend cleanup to
   # filter by ResourcePrefix tag for true per-run isolation (queue
   # before W.5 scaling fans out concurrent jobs).
-  e2e-pg-api-l1:
+  # W.5 — scaled API job. Single deploy + run every API test the four
+  # bundled apps ship (L1 + Investigation + Executives — L2FT has no
+  # API e2e tests). One ``schema apply`` + ``data apply`` + ``json
+  # apply`` produces every dashboard the tests need; pytest then runs
+  # all the ``test_<app>_deployed_resources.py`` +
+  # ``test_<app>_dashboard_structure.py`` files in one invocation
+  # with ``pytest-xdist -n auto`` so the per-app modules execute in
+  # parallel within the single job (avoids 3× deploy cost vs.
+  # matrix-of-jobs).
+  e2e-pg-api:
     needs: auth-smoke
     runs-on: ubuntu-latest
     # Serialize PG e2e jobs across runs. ``schema apply --execute``
@@ -144,7 +153,14 @@ jobs:
       - name: Deploy QS resources (theme + datasource + datasets + analyses + dashboards)
         run: .venv/bin/quicksight-gen json apply -c /tmp/ci-pg.yaml -o /tmp/ci-pg-out --execute
 
-      - name: Run L1 API e2e
+      - name: Run API e2e (L1 + Investigation + Executives)
+        # ``-n auto`` lets xdist spread the 3 apps' test files across
+        # the runner's vCPU count (typically 2 on the standard
+        # ubuntu-latest tier). ``-m api`` filters out browser-marked
+        # tests that may be co-located in the same files. Failure of
+        # any one app's tests fails the job, but other apps still run
+        # under xdist's per-worker isolation so the failure manifest
+        # captures every problem in one go.
         env:
           QS_GEN_E2E: "1"
           QS_GEN_CONFIG: /tmp/ci-pg.yaml
@@ -153,7 +169,11 @@ jobs:
           .venv/bin/pytest \
             tests/e2e/test_l1_deployed_resources.py \
             tests/e2e/test_l1_dashboard_structure.py \
-            -m api -v
+            tests/e2e/test_inv_deployed_resources.py \
+            tests/e2e/test_inv_dashboard_structure.py \
+            tests/e2e/test_exec_deployed_resources.py \
+            tests/e2e/test_exec_dashboard_structure.py \
+            -m api -v -n auto
 
       # ``if: always()`` runs even if any prior step (or the test
       # itself) failed. The ``|| true`` on each clean call prevents a
@@ -177,7 +197,7 @@ jobs:
           .venv/bin/quicksight-gen schema clean -c /tmp/ci-pg.yaml --execute || true
 
   # W.7 — workflow-level always-cleanup. Belt-and-suspenders over the
-  # per-job ``Cleanup (always)`` step on ``e2e-pg-api-l1``. The per-job
+  # per-job ``Cleanup (always)`` step on ``e2e-pg-api``. The per-job
   # step catches step / test failures (the common path); this job
   # catches the runner-died cases the per-job step can't:
   #
@@ -187,12 +207,12 @@ jobs:
   #   - Manual workflow cancel that interrupts the runner before its
   #     step transitions complete.
   #
-  # Job-level ``if: always()`` (with ``needs: [e2e-pg-api-l1]``) means
+  # Job-level ``if: always()`` (with ``needs: [e2e-pg-api]``) means
   # this job ALWAYS runs after the e2e job, regardless of whether the
   # e2e job succeeded, failed, or was cancelled — but only after, so it
   # never races a still-deploying job.
   #
-  # Concurrency MUST share the ``e2e-pg`` group with ``e2e-pg-api-l1``
+  # Concurrency MUST share the ``e2e-pg`` group with ``e2e-pg-api``
   # so cleanup never interleaves with another run's deploy. Schema
   # objects on the user's Aurora are scoped by the L2 instance prefix
   # (default: ``spec_example``) which is shared across runs — the
@@ -203,7 +223,7 @@ jobs:
   # ``schema clean`` both no-op when the targets don't exist, so the
   # second sweep just confirms the first was complete.
   cleanup-pg:
-    needs: [e2e-pg-api-l1]
+    needs: [e2e-pg-api]
     if: always()
     runs-on: ubuntu-latest
     concurrency:
