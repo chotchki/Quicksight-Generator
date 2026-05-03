@@ -1,5 +1,38 @@
 # Release Notes
 
+## v8.6.6 — Skip Oracle 19c JSON_VALUE functional indexes
+
+The v8.6.4 metadata-cascade functional indexes ship the same shape
+on both dialects (Postgres double-paren expression form / Oracle
+single-paren). The shape is fine for Postgres + Oracle 21c+, but
+Oracle 19c rejects the indexed expression at INSERT time:
+
+```
+ORA-40845: failed to create object (qjsn:engine)
+```
+
+Its JSON Search Context Engine needs either a JSON Search Index
+or a ``JSON_VALUE(... RETURNING VARCHAR2(N))`` clause to evaluate
+the indexed expression deterministically — and even with the
+RETURNING clause the bare functional index appears unsupported
+in 19c. Operators on Oracle 19c hit this on the first ``data
+apply`` after fresh schema apply (the index gets created during
+schema apply but isn't exercised until a row gets inserted with a
+non-null ``metadata`` JSON; INSERT then fires the indexed
+expression and crashes the load).
+
+Fix: ``_emit_metadata_index_creates`` + ``_emit_metadata_index_drops``
+in ``common/l2/schema.py`` now early-return for any non-Postgres
+dialect. Postgres keeps the perf optimization; Oracle falls back
+to a sequential scan on ``metadata``. The L2FT cascade still
+works — just slower on Oracle. Postgres-CI matrix stays green.
+
+The CI Oracle e2e has been a more recent Oracle than 19c, which is
+why the regression slipped through. Future iteration could re-add
+Oracle metadata indexes via the JSON Search Index path
+(``CREATE SEARCH INDEX``) — deferred until there's a measured
+need.
+
 ## v8.6.5 — L2FT metadata cascade write-back + release-pipeline OIDC + tag sanitization
 
 Three fixes landed together — one user-visible (cascade dropdown

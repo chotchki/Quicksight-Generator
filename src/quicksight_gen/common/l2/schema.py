@@ -504,8 +504,16 @@ def _emit_metadata_index_creates(
     (``WHERE JSON_VALUE(metadata, '$.<key>') IN (<<$pValues>>)``).
 
     Dialect note: Postgres requires double parens for expression
-    indexes (``ON tbl ((expr))``); Oracle accepts a single set
-    (``ON tbl (expr)``). Both are emitted here per dialect.
+    indexes (``ON tbl ((expr))``) and accepts the bare functional
+    index without further machinery. Oracle 19c rejects the same
+    shape at INSERT time with ``ORA-40845: failed to create object
+    (qjsn:engine)`` — its JSON Search Context Engine needs either
+    a JSON Search Index or an explicit ``RETURNING VARCHAR2(N)``
+    clause to evaluate the indexed expression deterministically
+    (and even with the RETURNING clause the bare functional index
+    appears unsupported in 19c). For now, Oracle skips the metadata
+    indexes entirely; queries fall back to a sequential scan on
+    ``metadata``. The L2FT cascade still works, just slower.
 
     Returns an empty string when the L2 declares no metadata keys
     (most spec-example-shaped instances) so the placeholder collapses
@@ -513,6 +521,9 @@ def _emit_metadata_index_creates(
     """
     keys = _declared_metadata_keys(instance)
     if not keys:
+        return ""
+    if dialect is not Dialect.POSTGRES:
+        # Oracle 19c — skip; see docstring rationale.
         return ""
     lines: list[str] = [
         "-- Functional indexes on JSON_VALUE(metadata, '$.<key>') —",
@@ -522,16 +533,10 @@ def _emit_metadata_index_creates(
     for k in keys:
         idx = _metadata_index_name(p, k)
         path = f"$.{k}"
-        if dialect is Dialect.POSTGRES:
-            lines.append(
-                f"CREATE INDEX {idx} ON {p}_transactions "
-                f"((JSON_VALUE(metadata, '{path}')));"
-            )
-        else:
-            lines.append(
-                f"CREATE INDEX {idx} ON {p}_transactions "
-                f"(JSON_VALUE(metadata, '{path}'));"
-            )
+        lines.append(
+            f"CREATE INDEX {idx} ON {p}_transactions "
+            f"((JSON_VALUE(metadata, '{path}')));"
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -542,10 +547,14 @@ def _emit_metadata_index_drops(
 
     Co-located so the create + drop name list stays in sync — adding
     a metadata key to an L2 rail YAML auto-extends both, no static
-    drop tuple to maintain.
+    drop tuple to maintain. Oracle skips both halves (see
+    ``_emit_metadata_index_creates`` rationale).
     """
     keys = _declared_metadata_keys(instance)
     if not keys:
+        return ""
+    if dialect is not Dialect.POSTGRES:
+        # Oracle 19c — index never created, nothing to drop.
         return ""
     lines = [
         drop_index_if_exists(_metadata_index_name(p, k), dialect)
