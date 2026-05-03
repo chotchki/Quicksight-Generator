@@ -461,6 +461,55 @@ def test_drift_matview_carries_v840_perf_indexes() -> None:
     ) in sql
 
 
+def test_current_transactions_matview_carries_v856_perf_index() -> None:
+    """v8.5.6 — date-leading composite index on ``_current_transactions``
+    closes the L1 Transactions ``transfer_type`` filter dropdown spin.
+
+    Pre-v8.5.6 the existing matview indexes were leading on
+    ``account_id`` / ``transfer_id`` / ``id`` / ``status`` — none
+    covered ``WHERE posting BETWEEN x AND y`` followed by
+    ``SELECT DISTINCT transfer_type``. QuickSight had to full-scan
+    the matview every time the Transactions sheet's transfer_type
+    dropdown opened with a date-narrowed window in effect.
+
+    The new ``idx_<prefix>_curr_tx_posting_transfer_type`` is a
+    date-leading composite covering ``(posting, transfer_type)`` so
+    QS can index-only-scan the date range and return the distinct
+    transfer_types directly. Mirrors the v8.4.0 Drift dropdown fix.
+
+    Snapshot regression test: if a future schema refactor drops the
+    index, this test fails loudly with the matview name. Existing
+    indexes are also re-asserted so a refactor doesn't accidentally
+    narrow the index footprint."""
+    inst = load_instance(KITCHEN_YAML)
+    sql = emit_schema(inst)
+    p = "kitchen"
+
+    # Pre-v8.5.6 indexes still present.
+    assert (
+        f"CREATE INDEX idx_{p}_curr_tx_account_posting\n"
+        f"    ON {p}_current_transactions (account_id, posting);"
+    ) in sql
+    assert (
+        f"CREATE INDEX idx_{p}_curr_tx_transfer "
+        f"ON {p}_current_transactions (transfer_id);"
+    ) in sql
+    assert (
+        f"CREATE INDEX idx_{p}_curr_tx_id "
+        f"ON {p}_current_transactions (id);"
+    ) in sql
+    assert (
+        f"CREATE INDEX idx_{p}_curr_tx_status "
+        f"ON {p}_current_transactions (status);"
+    ) in sql
+    # v8.5.6 — new date-leading composite for the transfer_type
+    # dropdown.
+    assert (
+        f"CREATE INDEX idx_{p}_curr_tx_posting_transfer_type\n"
+        f"    ON {p}_current_transactions (posting, transfer_type);"
+    ) in sql
+
+
 def test_kitchen_sink_covers_every_primitive_kind() -> None:
     """Coverage gate: every primitive type + every important variant present.
 
