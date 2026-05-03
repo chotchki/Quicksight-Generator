@@ -429,7 +429,12 @@ class TestEmitFullSeed:
         sql = emit_full_seed(instance, final, anchor=canonical_anchor)
         actual = hashlib.sha256(sql.encode("utf-8")).hexdigest()
         expected = (
-            "70d7e0de5b057a1059ec375c440c596844b5c112383401be058e20d520f10427"
+            # v8.5.4 — re-locked after the daily_balances fill-forward
+            # change in _emit_baseline_daily_balances (carry-forward
+            # last business-day EOD into weekend / holiday calendar
+            # days so the picker default of "yesterday" always lands
+            # on a real row).
+            "10021fb7ce614a3b0b0a3239135bbcdfbbb88cfd7eb8bdc92001f82df81e41a5"
         )
         assert actual == expected, (
             f"emit_full_seed hash drifted for sasquatch_pr — re-lock by "
@@ -453,7 +458,9 @@ class TestEmitFullSeed:
         sql = emit_full_seed(instance, final, anchor=canonical_anchor)
         actual = hashlib.sha256(sql.encode("utf-8")).hexdigest()
         expected = (
-            "8324a7da8fe724cc7b424397276b76e7c2a2fd510a07918b0cc7a1bf4f4b42b6"
+            # v8.5.4 — re-locked after the daily_balances fill-forward
+            # change (see sasquatch_pr test above).
+            "abbf677363665f668019b4e28de5916daadedc6eed5147db90763e656d35cd0f"
         )
         assert actual == expected, (
             f"emit_full_seed hash drifted for spec_example — re-lock by "

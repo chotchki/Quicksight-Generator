@@ -148,3 +148,36 @@ class TestBullets:
         # bullets) — must NOT escape the items.
         out = rt.bullets_raw(['<inline color="#fff">styled</inline>'])
         assert '<inline color="#fff">styled</inline>' in out
+
+    def test_bullets_render_inline_markdown_links(self) -> None:
+        # v8.5.4 — inline ``[text](url)`` inside a bullet item must
+        # become a clickable anchor. L1 dashboard's Drift sheet feeds
+        # ``rt.bullets`` markdown-shaped L2 description strings; the
+        # pre-fix path leaked literal ``[...](...)`` into the rendered
+        # text box.
+        out = rt.bullets(["see [the docs](https://x.com) for details"])
+        assert (
+            'see <a href="https://x.com" target="_self">the docs</a>'
+            in out
+        )
+        # Sanity: the literal markdown syntax must NOT survive.
+        assert "[the docs]" not in out
+        assert "](https://x.com)" not in out
+
+    def test_bullets_render_paragraph_break_inside_item(self) -> None:
+        # A ``\n`` inside a bullet item becomes a soft ``<br/>``
+        # (intra-bullet line break). Useful for L2 descriptions that
+        # carry mid-item wrapping.
+        out = rt.bullets(["line one\nline two"])
+        assert "line one<br/>line two" in out
+
+    def test_plain_bullets_unchanged(self) -> None:
+        # Regression guard: items with no markdown shape behave
+        # identically to the pre-v8.5.4 path.
+        out = rt.bullets(["alpha", "beta", "gamma"])
+        assert (
+            out
+            == '<ul><li class="ql-indent-0">alpha</li>'
+            '<li class="ql-indent-0">beta</li>'
+            '<li class="ql-indent-0">gamma</li></ul>'
+        )
