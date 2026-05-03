@@ -323,6 +323,101 @@ jobs:
           .venv/bin/quicksight-gen json clean -c /tmp/ci-pg-browser.yaml -o /tmp/empty-out --execute || true
           .venv/bin/quicksight-gen schema clean -c /tmp/ci-pg-browser.yaml --execute || true
 
+  # W.5b — Oracle API leg. Mirror of ``e2e-pg-api`` against the
+  # operator's external Oracle (RDS Oracle SE2 in us-east-1), pointed at
+  # by the ``QS_GEN_ORACLE_URL`` secret set in W.0.b. Same 6 API test
+  # files, ``-n auto``.
+  #
+  # Concurrency: distinct ``e2e-oracle`` group so it doesn't serialize
+  # against PG runs — they're separate DBs and don't share schema, so
+  # there's no contention to coordinate. Within Oracle runs the same
+  # cancel-in-progress: false discipline applies (one Oracle deploy at
+  # a time on the shared external DB).
+  #
+  # Driver: ``--extra demo-oracle`` instead of ``--extra demo`` —
+  # pulls ``oracledb`` (thin client, no Instant Client install) instead
+  # of ``psycopg2``. Same other extras as the PG job.
+  #
+  # Resource prefix: ``-oracle`` suffix so the QS resources are
+  # distinct from the PG run's (no aliasing risk on the QS side, since
+  # both target the same AWS account).
+  e2e-oracle-api:
+    needs: auth-smoke
+    runs-on: ubuntu-latest
+    concurrency:
+      group: e2e-oracle
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        # ``demo-oracle`` brings in ``oracledb>=2.0`` (thin mode, no
+        # Instant Client install needed). Skip ``--extra demo`` —
+        # ``psycopg2`` would just sit unused on this leg.
+        run: uv sync --frozen --extra deploy --extra demo-oracle --extra audit --extra e2e
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Generate per-run config.yaml
+        run: |
+          cat > /tmp/ci-oracle.yaml <<EOF
+          aws_account_id: "470656905821"
+          aws_region: "us-east-1"
+          resource_prefix: "qs-ci-${{ github.run_id }}-oracle"
+          dialect: "oracle"
+          demo_database_url: "${{ secrets.QS_GEN_ORACLE_URL }}"
+          principal_arns:
+            - "${{ secrets.QS_E2E_USER_ARN }}"
+          EOF
+
+      - name: Apply schema (DDL)
+        run: .venv/bin/quicksight-gen schema apply -c /tmp/ci-oracle.yaml --execute
+
+      - name: Apply seed data
+        run: .venv/bin/quicksight-gen data apply -c /tmp/ci-oracle.yaml --execute
+
+      - name: Refresh matviews
+        run: .venv/bin/quicksight-gen data refresh -c /tmp/ci-oracle.yaml --execute
+
+      - name: Deploy QS resources (theme + datasource + datasets + analyses + dashboards)
+        run: .venv/bin/quicksight-gen json apply -c /tmp/ci-oracle.yaml -o /tmp/ci-oracle-out --execute
+
+      - name: Run API e2e (L1 + Investigation + Executives)
+        env:
+          QS_GEN_E2E: "1"
+          QS_GEN_CONFIG: /tmp/ci-oracle.yaml
+          QS_E2E_USER_ARN: ${{ secrets.QS_E2E_USER_ARN }}
+        run: |
+          .venv/bin/pytest \
+            tests/e2e/test_l1_deployed_resources.py \
+            tests/e2e/test_l1_dashboard_structure.py \
+            tests/e2e/test_inv_deployed_resources.py \
+            tests/e2e/test_inv_dashboard_structure.py \
+            tests/e2e/test_exec_deployed_resources.py \
+            tests/e2e/test_exec_dashboard_structure.py \
+            -m api -v -n auto
+
+      - name: Cleanup (always)
+        if: always()
+        run: |
+          mkdir -p /tmp/empty-out
+          .venv/bin/quicksight-gen json clean -c /tmp/ci-oracle.yaml -o /tmp/empty-out --execute || true
+          .venv/bin/quicksight-gen schema clean -c /tmp/ci-oracle.yaml --execute || true
+
   # W.7 — workflow-level always-cleanup. Belt-and-suspenders over the
   # per-job ``Cleanup (always)`` step on ``e2e-pg-api``. The per-job
   # step catches step / test failures (the common path); this job
@@ -423,3 +518,62 @@ jobs:
           .venv/bin/quicksight-gen json clean -c /tmp/ci-pg.yaml -o /tmp/empty-out --execute || true
           .venv/bin/quicksight-gen json clean -c /tmp/ci-pg-browser.yaml -o /tmp/empty-out --execute || true
           .venv/bin/quicksight-gen schema clean -c /tmp/ci-pg.yaml --execute || true
+
+  # W.5b — Oracle parity for the W.7 belt-and-suspenders cleanup.
+  # Same pattern as ``cleanup-pg`` but pointed at the Oracle leg's
+  # config + concurrency group. Catches the same runner-died cases
+  # (GHA hard timeout / OOM / cancel) the per-job ``Cleanup (always)``
+  # on ``e2e-oracle-api`` can't.
+  #
+  # No browser sibling on the Oracle side yet — when one lands,
+  # mirror ``cleanup-pg``'s multi-config sweep.
+  cleanup-oracle:
+    needs: [e2e-oracle-api]
+    if: always()
+    runs-on: ubuntu-latest
+    concurrency:
+      group: e2e-oracle
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        # ``deploy`` for boto3 (json clean), ``demo-oracle`` for
+        # ``oracledb`` (schema clean drops Oracle tables). Skip
+        # ``audit`` / ``e2e`` — cleanup doesn't need the seed pipeline
+        # or pytest.
+        run: uv sync --frozen --extra deploy --extra demo-oracle
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Regenerate per-run config.yaml
+        run: |
+          cat > /tmp/ci-oracle.yaml <<EOF
+          aws_account_id: "470656905821"
+          aws_region: "us-east-1"
+          resource_prefix: "qs-ci-${{ github.run_id }}-oracle"
+          dialect: "oracle"
+          demo_database_url: "${{ secrets.QS_GEN_ORACLE_URL }}"
+          principal_arns:
+            - "${{ secrets.QS_E2E_USER_ARN }}"
+          EOF
+
+      - name: Sweep QS resources + drop schema objects
+        run: |
+          mkdir -p /tmp/empty-out
+          .venv/bin/quicksight-gen json clean -c /tmp/ci-oracle.yaml -o /tmp/empty-out --execute || true
+          .venv/bin/quicksight-gen schema clean -c /tmp/ci-oracle.yaml --execute || true
