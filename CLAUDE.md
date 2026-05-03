@@ -184,6 +184,17 @@ Walk-the-flow drills (Account Network): right-click any touching-edges table row
 - `QS_E2E_USER_ARN` is **required** (not a tunable) — `get_user_arn()` raises `RuntimeError` if unset. Export the ARN of the QuickSight user the embed URL should sign for: locally, your default-namespace IAM user; in CI, the `ci-bot` user. Tunables (with defaults): `QS_E2E_PAGE_TIMEOUT`, `QS_E2E_VISUAL_TIMEOUT`, `QS_E2E_IDENTITY_REGION`. Set `QS_GEN_TEST_L2_INSTANCE` to point fixtures at a non-default L2 YAML.
 - The `_harness_*` modules (under `tests/e2e/`) compose seed → deploy → planted-row assertions → cleanup as one fixture; every harness test (`test_harness_end_to_end.py`) runs that flow against a live DB + QuickSight account.
 
+### CI artifacts (Phase W)
+
+- **`.github/workflows/e2e.yml`** runs three e2e jobs against the user's external DBs (auth-smoke gate first):
+  - `e2e-pg-api` — push:main + workflow_dispatch. L1 + Inv + Exec API tests with `pytest-xdist -n auto`. Per-job + workflow-level (`cleanup-pg`) cleanup.
+  - `e2e-pg-browser` — workflow_dispatch + nightly cron (`0 6 * * *`) only (NOT push:main — too slow). L1 + Inv + Exec browser tests with `-n 2`, `QS_E2E_PAGE_TIMEOUT=60000`. Failure screenshots uploaded as artifact.
+  - `e2e-oracle-api` — same as `e2e-pg-api` but against the operator's external Oracle (`QS_GEN_ORACLE_URL` secret, `--extra demo-oracle`). Distinct `e2e-oracle` concurrency group runs in parallel with PG.
+- **Per-job perf dump** — every e2e job runs `scripts/dump_top_queries.py` after pytest and uploads top-50 expensive queries as a markdown artifact. `pg_stat_statements` (PG) / `v$sqlstats` (Oracle); auto-installs the PG extension on first run.
+- **`.github/workflows/release.yml::e2e-against-testpypi`** holds prod publish on a live AWS run against the just-published TestPyPI wheel. `publish-pypi` `needs:` includes this job.
+- **`.github/workflows/ci.yml::coverage`** combines per-matrix `.coverage` data files via `coverage combine` and posts a markdown report to the GHA Step Summary + republishes to the `badges` branch (README badge wrap-links to it).
+- **`.github/workflows/ci.yml::docs-portable-install`** builds the wheel, installs in a fresh non-editable venv, runs `quicksight-gen docs apply --portable`, and asserts the rendered HTML lands. Regression guard for the bundled-docs path.
+
 ## Demo Data Conventions
 
 - Every visual should have non-empty data in the demo. For each new visual that relies on a scenario (drift, overdraft, limit-breach, stuck-pending, etc.), add a `TestScenarioCoverage` assertion guaranteeing ≥N rows of that shape — counts alone don't catch "zero scenario rows slipped through".
