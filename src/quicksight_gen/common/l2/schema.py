@@ -903,6 +903,15 @@ WHERE sb.account_scope = 'internal'
 CREATE INDEX idx_{p}_drift_account_day
     ON {p}_drift (account_id, business_day_start);
 CREATE INDEX idx_{p}_drift_role ON {p}_drift (account_role);
+-- v8.4.0: date-leading composite covers QS's date-narrowed dropdown
+-- + table queries. The Drift sheet's account / account_role
+-- dropdowns spin on large matviews because the existing
+-- account-leading indexes don't optimize ``WHERE business_day_start
+-- BETWEEN x AND y`` plans well — the planner has to scan the full
+-- account-leading index even when the date window is narrow. This
+-- composite makes the planner's date-range scan trivial.
+CREATE INDEX idx_{p}_drift_day_account_role
+    ON {p}_drift (business_day_start, account_id, account_role);
 
 -- ---------------------------------------------------------------------
 -- L1 invariant: Ledger drift.
@@ -929,6 +938,10 @@ CREATE INDEX idx_{p}_ledger_drift_account_day
     ON {p}_ledger_drift (account_id, business_day_start);
 CREATE INDEX idx_{p}_ledger_drift_role
     ON {p}_ledger_drift (account_role);
+-- v8.4.0: parity with _drift's date-leading composite (same
+-- spinning-dropdown class).
+CREATE INDEX idx_{p}_ledger_drift_day_account_role
+    ON {p}_ledger_drift (business_day_start, account_id, account_role);
 
 -- ---------------------------------------------------------------------
 -- L1 invariant: Non-negative stored balance.
