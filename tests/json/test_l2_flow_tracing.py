@@ -558,22 +558,46 @@ def test_chains_metadata_params_are_chain_scoped() -> None:
     assert "pL2ftChainsDateEnd" in param_names
 
 
-def test_chains_metadata_value_dropdown_cascades_off_chain_meta_key() -> None:
-    """The Metadata Value control cascades off Chains' own Metadata
-    Key control (NOT Rails'), so picking a Key on Chains narrows the
-    Value dropdown only on Chains."""
+def test_metadata_value_dropdown_has_no_cascade_source() -> None:
+    """v8.6.5 regression guard — the Metadata Value dropdown MUST
+    NOT carry a ``cascade_source``. The combo with ``LinkedValues``
+    + ``MULTI_SELECT`` killed parameter write-back: the menu showed
+    checkmarks for the analyst's picks but the parameter never
+    updated, so the postings WHERE stayed at the placeholder
+    sentinel and the Transactions table rendered empty.
+
+    Asserted on every L2FT sheet that exposes the metadata cascade
+    so a future re-add can't silently regress the dashboard. The
+    dropdown still reads from the meta-values dataset for its
+    selectable values; it just shows every (key, value) declared in
+    the L2 (no per-Key narrowing). Tradeoff is documented in
+    ``quicksight-quirks.md`` 2.5.
+    """
     from quicksight_gen.common.tree import LinkedValues
     app = build_l2_flow_tracing_app(_CFG)
-    chains = _sheet_by_name(app, "Chains")
-    value_ctrl = next(
-        c for c in chains.parameter_controls if c.title == "Metadata Value"
+    found_at_least_one = False
+    for sheet_name in ("Rails", "Chains", "Transfer Templates"):
+        sheet = _sheet_by_name(app, sheet_name)
+        try:
+            value_ctrl = next(
+                c for c in sheet.parameter_controls
+                if c.title == "Metadata Value"
+            )
+        except StopIteration:
+            continue
+        found_at_least_one = True
+        assert value_ctrl.cascade_source is None, (
+            f"{sheet_name} sheet: Metadata Value dropdown carries a "
+            f"cascade_source. The cascade kills parameter write-back "
+            f"on MULTI_SELECT (v8.6.5 fix). See "
+            f"docs/reference/quicksight-quirks.md 2.5."
+        )
+        assert isinstance(value_ctrl.selectable_values, LinkedValues)
+        assert value_ctrl.selectable_values.dataset.identifier == "l2ft-meta-values-ds"
+    assert found_at_least_one, (
+        "No Metadata Value dropdown found on Rails / Chains / "
+        "Transfer Templates — the test can't have regressed silently."
     )
-    key_ctrl = next(
-        c for c in chains.parameter_controls if c.title == "Metadata Key"
-    )
-    assert value_ctrl.cascade_source is key_ctrl
-    assert isinstance(value_ctrl.selectable_values, LinkedValues)
-    assert value_ctrl.selectable_values.dataset.identifier == "l2ft-meta-values-ds"
 
 
 # -- L2 Exceptions sheet (M.3.7) ---------------------------------------------

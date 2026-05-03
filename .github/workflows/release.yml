@@ -348,12 +348,15 @@ jobs:
       - name: Generate per-run config.yaml
         # ``resource_prefix`` carries the release tag for traceability;
         # the ``ResourcePrefix`` AWS tag on every deployed resource
-        # makes ``json clean`` scope-safe (post-v8.4.0).
+        # makes ``json clean`` scope-safe (post-v8.4.0). AWS QS
+        # dashboard IDs match ``[\w\-]+`` (no dots), so collapse the
+        # tag's ``v8.6.4`` → ``v8-6-4`` before injecting.
         run: |
+          SAFE_TAG="${GITHUB_REF_NAME//./-}"
           cat > /tmp/release-e2e.yaml <<EOF
           aws_account_id: "470656905821"
           aws_region: "us-east-1"
-          resource_prefix: "qs-release-${{ github.ref_name }}"
+          resource_prefix: "qs-release-${SAFE_TAG}"
           dialect: "postgres"
           demo_database_url: "${{ secrets.QS_GEN_PG_URL }}"
           principal_arns:

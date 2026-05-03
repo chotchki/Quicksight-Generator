@@ -584,15 +584,16 @@ def _populate_rails_sheet(
             dataset=ds_meta_values,
             column_name="metadata_value",
         ),
-        # Cascade: when Key changes, QS filters meta-values rows to
-        # WHERE metadata_key = <Key's selected value>, then DISTINCT
-        # metadata_value populates this dropdown. This is QS's
-        # native column-match cascade — NOT the parameter-bridged
-        # re-query approach (which we tried first; QS doesn't
-        # actually refresh dropdown options on dataset-parameter
-        # change at runtime — M.3.10c finding).
-        cascade_source=key_dropdown,
-        cascade_match_column=ds_meta_values["metadata_key"],
+        # v8.6.5 — cascade_source / cascade_match_column DROPPED. The
+        # combo with LinkedValues + MULTI_SELECT killed parameter
+        # write-back: the menu showed checkmarks for the analyst's
+        # picks, but the parameter never updated, so the postings
+        # WHERE stayed at the placeholder sentinel and the
+        # Transactions table rendered empty. Without the cascade, the
+        # dropdown shows every (key, value) declared in the L2 — the
+        # analyst sees more options than strictly relevant for their
+        # picked Key, but the parameter actually fires and the table
+        # filters correctly. See quicksight-quirks.md 2.5.
     )
 
     # Transactions table — the postings dataset's SQL handles the
@@ -765,8 +766,7 @@ def _populate_chains_sheet(
             dataset=ds_meta_values,
             column_name="metadata_value",
         ),
-        cascade_source=key_dropdown,
-        cascade_match_column=ds_meta_values["metadata_key"],
+        # v8.6.5 — cascade dropped, see Rails sheet for rationale.
     )
 
     sheet.layout.row(height=21).add_table(
@@ -944,8 +944,7 @@ def _populate_transfer_templates_sheet(
             dataset=ds_meta_values,
             column_name="metadata_value",
         ),
-        cascade_source=key_dropdown,
-        cascade_match_column=ds_meta_values["metadata_key"],
+        # v8.6.5 — cascade dropped, see Rails sheet for rationale.
     )
 
     # Edge legend. QuickSight Sankey doesn't support data-driven

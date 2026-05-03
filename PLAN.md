@@ -104,7 +104,10 @@ L1-API job, then scale.
   `GenerateEmbedUrlForRegisteredUser`, `DescribeUser`,
   `Tag/UntagResource`. Record the role ARN in this plan entry.
   (Live as `Github_e2e_testing`; `quicksight:PassDataSource`
-  added in v8.4.0 — see `.github/E2E_SETUP.md`.)
+  added in v8.4.0; trust policy widened to also accept
+  `refs/tags/v*` so the release-pipeline `e2e-against-testpypi`
+  job can OIDC-assume from the tag context — see
+  `.github/E2E_SETUP.md`.)
 
 - [x] **W.0.d — `ci-bot` QS user.** Register a dedicated
   QuickSight reader user
