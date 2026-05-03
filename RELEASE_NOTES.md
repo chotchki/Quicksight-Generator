@@ -1,5 +1,46 @@
 # Release Notes
 
+## v8.5.8 — bullets() defensively strips ``<br/>`` from list items
+
+L2 institution YAML descriptions authored as ``description: |`` block
+scalars carry embedded ``\n`` from human-readable line wrapping. Under
+the v8.5.4 path, ``rt.bullets()`` routed each item through
+``rt.markdown()``, which converted those ``\n`` to ``<br/>`` — and
+QuickSight's text-box XML parser rejects ``<br/>`` as a child of
+``<li>`` with ``Element 'li' cannot have 'br' elements as children``,
+crashing ``CreateAnalysis`` on the L1 Drift sheet's
+``l1-drift-accounts`` text box (and wherever else a YAML-described
+account / template / limit schedule landed in a bullet list).
+
+### Operator-facing
+
+- **Dashboards using YAML-described L2 instances deploy again.** The
+  L1 Drift / Limit Breach / Getting Started bullet sections now reflow
+  embedded line breaks to spaces so QS accepts the text box.
+- **Build-time warning surfaces affected items.** Each stripped
+  ``<br/>`` raises a ``UserWarning`` showing the original item, so
+  authors can spot block-scalar descriptions and decide whether to
+  reword them (e.g. switch ``|`` to ``>`` or shorten the prose).
+
+### Code-facing
+
+- ``common/rich_text.py::bullets()`` now post-processes each item to
+  strip ``<br>`` / ``<br/>`` / ``<br />`` (case-insensitive) and emits
+  a ``UserWarning`` per offender via ``warnings.warn`` (stacklevel=2,
+  so the warning points at the caller's ``rt.bullets(...)`` line, not
+  at ``rich_text.py`` itself).
+- New ``common/rich_text.py::markdown_inline()`` primitive: same
+  XML-escape + inline-link handling as ``markdown()`` but collapses
+  every newline-bearing whitespace run to a single space and strips
+  leading / trailing whitespace. Use this when you need a guaranteed-
+  no-``<br/>`` rendering of a single string outside a bullet context.
+- ``tests/json/test_text_box_safety.py`` gains
+  ``test_no_br_inside_li_in_text_box_content`` — class-level
+  regression that walks every text box in every shipped app's emitted
+  analysis JSON and asserts no ``<br>`` survives inside a ``<li>``.
+- ``docs/reference/quicksight-quirks.md`` gains an entry for the
+  ``<br>``-inside-``<li>`` parser restriction.
+
 ## v8.5.7 — Cross-sheet drills widen the destination date filter
 
 Drills from a current-state sheet (Pending Aging / Unbundled Aging /
