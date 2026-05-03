@@ -295,12 +295,18 @@ def default_scenario_for(
             ),
         )
 
-    # M.3.10g — TransferTemplate firings. For every L2-declared
-    # template whose first leg_rail is a TwoLegRail with
-    # expected_net=0 AND we can resolve accounts for both source +
-    # destination roles, plant 2 firings (so two distinct shared
-    # Transfers appear per template, exercising the transfer_key
-    # Metadata-grouping).
+    # M.3.10g + extension — TransferTemplate firings. For every
+    # L2-declared template with ``expected_net=0`` AND a resolvable
+    # first leg_rail, plant 3 firings (so three distinct shared
+    # Transfers appear per template, exercising both the transfer_key
+    # Metadata-grouping and the chain-completion variants).
+    #
+    # First leg_rail can be either ``TwoLegRail`` (debit + credit
+    # balance to expected_net=0 in one firing) or ``SingleLegRail``
+    # (one leg per firing; SQL completion_status surfaces these as
+    # 'Imbalanced' when the leg's amount alone doesn't sum to the
+    # template's expected_net — accurate L1 representation of a bare
+    # single-leg cycle without its sibling/closing legs).
     tt_plants_list: list[TransferTemplatePlant] = []
     for tt in sorted(
         instance.transfer_templates, key=lambda t: str(t.name)
@@ -312,13 +318,6 @@ def default_scenario_for(
             ))
             continue
         first_rail = _resolve_rail_by_name(tt.leg_rails[0], instance)
-        if not isinstance(first_rail, TwoLegRail):
-            omitted.append((
-                f"TransferTemplatePlant[{tt.name}]",
-                f"first leg_rail {tt.leg_rails[0]!r} is not a TwoLegRail "
-                f"(M.3.10g first cut handles only the simple two-leg case)",
-            ))
-            continue
         if tt.expected_net != Decimal("0"):
             omitted.append((
                 f"TransferTemplatePlant[{tt.name}]",
@@ -326,26 +325,44 @@ def default_scenario_for(
                 f"non-zero net plants deferred",
             ))
             continue
-        src_id = _pick_account_id_for_role_expr(
-            first_rail.source_role, instance, template, cust1,
-        )
-        if src_id is None:
-            omitted.append((
-                f"TransferTemplatePlant[{tt.name}]",
-                f"no Account or template-instance matching source_role "
-                f"{first_rail.source_role!r}",
-            ))
-            continue
-        dst_id = _pick_account_id_for_role_expr(
-            first_rail.destination_role, instance, template, cust1,
-        )
-        if dst_id is None:
-            omitted.append((
-                f"TransferTemplatePlant[{tt.name}]",
-                f"no Account or template-instance matching destination_role "
-                f"{first_rail.destination_role!r}",
-            ))
-            continue
+        if isinstance(first_rail, TwoLegRail):
+            src_id = _pick_account_id_for_role_expr(
+                first_rail.source_role, instance, template, cust1,
+            )
+            if src_id is None:
+                omitted.append((
+                    f"TransferTemplatePlant[{tt.name}]",
+                    f"no Account or template-instance matching source_role "
+                    f"{first_rail.source_role!r}",
+                ))
+                continue
+            dst_id = _pick_account_id_for_role_expr(
+                first_rail.destination_role, instance, template, cust1,
+            )
+            if dst_id is None:
+                omitted.append((
+                    f"TransferTemplatePlant[{tt.name}]",
+                    f"no Account or template-instance matching destination_role "
+                    f"{first_rail.destination_role!r}",
+                ))
+                continue
+        else:
+            # SingleLegRail — only the leg_role resolves; the emit reuses
+            # ``source_account_id`` as the leg account and ignores
+            # ``destination_account_id``.
+            assert isinstance(first_rail, SingleLegRail)
+            leg_id = _pick_account_id_for_role_expr(
+                first_rail.leg_role, instance, template, cust1,
+            )
+            if leg_id is None:
+                omitted.append((
+                    f"TransferTemplatePlant[{tt.name}]",
+                    f"no Account or template-instance matching leg_role "
+                    f"{first_rail.leg_role!r}",
+                ))
+                continue
+            src_id = leg_id
+            dst_id = leg_id
         # Pre-resolve chain children for the firings of each template
         # (M.3.10h, expanded M.3.10j). Scan declared chains for entries
         # whose parent matches this template name; for each, resolve
