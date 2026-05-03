@@ -41,7 +41,7 @@ phases that have stabilized enough to land here.
   - **V.5.a — Limit_breach on customer outbound** (`c5285ea`). Per-(account, transfer_type, day) cumulative-outbound tracking on `_BaselineState`; before each firing in `_emit_baseline_for_rail` and `_emit_chain_child_leg`, look up `remaining_cap`, skip if `< $50`, otherwise sample with `cap=remaining_cap`. Drops baseline limit_breach noise on sasquatch_pr from 51 rows → 0; spec_example unaffected. Hash re-locked.
   - **V.5.b — Overdraft on intermediate clearing accounts** (`310f756`, bundled into a docs-titled commit). New `_emit_baseline_cascade_credits` helper handles all 4 trigger types: aggregating-rail bundled-child cascades (emit credit on the aggregating rail's source_role), TransferTemplate leg cascades (e.g. InternalTransferSuspenseClose paired credits), MerchantPayout cascade (per-merchant per-day CardSaleDailySettlement-shaped credits on MerchantPayableClearing), and ZBA sub-account funding (ConcentrationMaster-parented template instances). Counter-leg debits a chosen external counterparty so each cascade pair nets to zero. No-op for L2 instances that don't declare the patterns (e.g. spec_example).
 
-- [ ] **V.6 — R.7.d Re-screenshot at 1280×900.** Re-run `quicksight-gen docs screenshot --all -o src/quicksight_gen/docs/walkthroughs/screenshots/ -c run/config.postgres.yaml --l2 tests/l2/spec_example.yaml` against the deployed `spec_example` dashboards (Postgres + Oracle live as of v8.2.1). The CLI already defaults `--viewport 1280x900`. Current PNGs predate Phase R's realistic baseline + Phase U's audit work. Note: the existing `screenshots/ar/` and `screenshots/pr/` subdirs are stale (M.4.3 + M.4.4 deleted those apps) — drop them as part of this task. Sandboxed agents can't run the CLI; user must invoke locally.
+- [x] **V.6 — R.7.d Re-screenshot at 1280×900.** Done. 29 PNGs across `walkthroughs/screenshots/{l1,l2ft,inv,exec}/` re-captured against the deployed `spec_example` Postgres dashboards. Bundled into commit `13cb30c` (committed under the PLAN-backlog-cleanup subject when `git add -A` swept them in mid-edit; content is correct). New captures reflect Phase R's realistic baseline + Phase U's audit work; legacy `ar/` + `pr/` subdirs still on disk for cleanup.
 
 - [x] **V.7 — R.7.e Lift R.1.f spec into a docs-site reference page.** Lifted to `src/quicksight_gen/docs/handbook/seed-generator.md` and wired into the `Reference:` nav alongside `ETL — Data Integration`. Page reflects current code (R.4 starting-balance tuning, ach_return rate at 0.2, intraday rail kind added) rather than the stale 2025 spec values; spec narrative for the per-Rail kind / amount distribution / time-of-day / RNG / chain completion / overlay multipliers all match `common/l2/seed.py` + `common/l2/auto_scenario.py` as of v8.2.2.
 
@@ -59,17 +59,13 @@ Single grab-bag for everything not yet in a phase. Promote to a numbered phase e
 
 ### L2 model gaps
 
-- **Validator: every Transfer MUST match a Rail.**
-- **Validator: LimitSchedule uniqueness on (parent_role, transfer_type).**
 - **Multiple dashboards from one L2 instance** (shared prefix + naming).
 - **PR dashboard → generic L2-validation dashboard** (re-skinning of L2FT for a different validation persona).
-- **Lift seed primitives into `common/l2/seed.py`** (was M.2d.5).
 
 ### Tooling / test reliability
 
 - **Apply layered (query+render) pattern to all browser e2e tests** (was M.4.1.k). U.8.b.4 applied this pattern to the audit-dashboard agreement suite; broader sweep across the harness + per-app browser tests is still open.
 - **Sasquatch L1 dashboard render flake.** `test_harness_l1_planted_scenarios_visible[sasquatch_pr]` Layer 2 occasionally misses `cust-0001-snb` on the Limit Breach sheet — Layer 1 (matview row presence) passes, the row IS in the matview, but the deployed Limit Breach table doesn't render the cell within the visual timeout. One retry already baked in via `run_dashboard_check_with_retry`; second attempt also misses. Spec_example + fuzz variants of the same test pass on the same run, so the flake is data-shape-specific (sasquatch_pr's seed has more transactions; the L1 dashboard's per-sheet transfer_type dropdown may default-narrow before the table loads). Investigation work: add a screenshot comparison of the Limit Breach sheet between sasquatch_pr (failing) and spec_example (passing) at the moment of the assertion, OR widen the harness's per-sheet wait to assert "table rendered" before sheet_text capture, OR re-deploy sasquatch_pr seed with a tighter days_ago=1 limit_breach plant to rule out timing. Do NOT xfail (the M.4.4.12 lesson — silent xfails masked real bugs).
-- **QS-UI kitchen-sink reference tool** (was M.4.4.9). Standalone tool that consumes QS console "view JSON" output for every visual type and dumps it as a reference fixture. Defensive measure; deferred since the concrete editor-crash bugs got fixed.
 
 ### Dashboard polish — Q.1.c follow-ups
 
