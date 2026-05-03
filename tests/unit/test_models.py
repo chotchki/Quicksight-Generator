@@ -384,21 +384,26 @@ class TestTagSerialization:
 
 
 class TestConfigTags:
-    def test_default_common_tag(self):
+    def test_default_emits_managed_and_resource_prefix_tags(self):
+        """v8.4.0 — every deploy stamps both ManagedBy + ResourcePrefix
+        so cleanup can scope per-deploy (not just per-account)."""
         cfg = make_test_config()
-        tags = cfg.tags()
-        assert len(tags) == 1
-        assert tags[0].Key == "ManagedBy"
-        assert tags[0].Value == "quicksight-gen"
+        tags_by_key = {t.Key: t.Value for t in cfg.tags()}
+        assert tags_by_key == {
+            "ManagedBy": "quicksight-gen",
+            "ResourcePrefix": "qs-gen",
+        }
 
     def test_extra_tags_merged(self):
         cfg = make_test_config(
             extra_tags={"Environment": "prod", "Team": "finance"},
         )
         tags = cfg.tags()
-        assert len(tags) == 3
+        # ManagedBy + ResourcePrefix (always emitted) + Environment + Team
+        assert len(tags) == 4
         keys = [t.Key for t in tags]
         assert "ManagedBy" in keys
+        assert "ResourcePrefix" in keys
         assert "Environment" in keys
         assert "Team" in keys
 
@@ -407,21 +412,33 @@ class TestConfigTags:
         tags = cfg.tags()
         assert tags[0].Key == "ManagedBy"
 
+    def test_resource_prefix_tag_carries_cfg_value(self):
+        """v8.4.0 — ResourcePrefix tag value mirrors cfg.resource_prefix
+        so cleanup's per-deploy filter has something to match against."""
+        cfg = make_test_config(resource_prefix="qs-ci-12345-pg")
+        tags_by_key = {t.Key: t.Value for t in cfg.tags()}
+        assert tags_by_key["ResourcePrefix"] == "qs-ci-12345-pg"
+
     def test_l2_instance_tag_added_when_prefix_set(self):
         """M.2d.3 — when l2_instance_prefix is set, an L2Instance tag
-        is added so cleanup can scope per-instance."""
+        is added so cleanup can scope per-instance. Stacks with the
+        v8.4.0 ResourcePrefix tag (both are emitted)."""
         cfg = make_test_config(l2_instance_prefix="sasquatch_ar")
         tags = cfg.tags()
         assert {t.Key: t.Value for t in tags} == {
             "ManagedBy": "quicksight-gen",
+            "ResourcePrefix": "qs-gen",
             "L2Instance": "sasquatch_ar",
         }
 
     def test_l2_instance_tag_omitted_when_prefix_unset(self):
-        """M.2d.3 — legacy single-tenant deploys don't carry the tag."""
+        """M.2d.3 — legacy single-tenant deploys don't carry the L2Instance
+        tag. (ResourcePrefix is always present, however — added in v8.4.0.)"""
         cfg = make_test_config()
         tag_keys = [t.Key for t in cfg.tags()]
         assert "L2Instance" not in tag_keys
+        # But ResourcePrefix IS present.
+        assert "ResourcePrefix" in tag_keys
 
 
 class TestConfigPrefixed:

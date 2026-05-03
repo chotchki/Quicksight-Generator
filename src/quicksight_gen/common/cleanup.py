@@ -22,6 +22,7 @@ from quicksight_gen.common.config import Config
 MANAGED_TAG_KEY = "ManagedBy"
 MANAGED_TAG_VALUE = "quicksight-gen"
 L2_INSTANCE_TAG_KEY = "L2Instance"
+RESOURCE_PREFIX_TAG_KEY = "ResourcePrefix"
 
 
 def _read_managed_tags(client, resource_arn: str) -> dict[str, str] | None:
@@ -127,16 +128,33 @@ def _collect_stale(
     expected: dict[str, set[str]],
     *,
     l2_instance_prefix: str | None = None,
+    resource_prefix: str | None = None,
 ) -> dict[str, list[tuple[str, str]]]:
     """Return stale (id, arn) tuples grouped by resource type.
 
-    When ``l2_instance_prefix`` is set (M.2d.3), only resources whose
-    ``L2Instance`` tag matches are eligible for deletion. Untagged
-    managed resources (legacy single-tenant deploys, or resources
-    deployed before M.2d.3 landed) are skipped — they're owned by a
-    different scope. When ``l2_instance_prefix`` is None, falls back
-    to the legacy "any ManagedBy resource" sweep for backward compat
-    with single-tenant out-dirs.
+    Two layers of scoping, both fail-CLOSED (untagged resources stay
+    safe — they were deployed by a previous version of the library
+    and the operator hasn't opted into the new scope):
+
+    - **``ResourcePrefix``** (v8.4.0): the strongest isolation. When
+      ``resource_prefix`` is passed, only resources whose
+      ``ResourcePrefix`` tag matches the cfg's resource_prefix are
+      eligible for deletion. This is what makes parallel CI runs +
+      coexisting local deploys safe — each deploy stamps its own
+      ``ResourcePrefix`` (e.g. ``qs-ci-<run_id>-pg`` for CI,
+      ``qs-gen-postgres`` for a local deploy) and cleanup only ever
+      sweeps its own scope. Resources tagged with a different
+      ``ResourcePrefix`` value AND resources with no
+      ``ResourcePrefix`` tag at all (pre-v8.4.0 deploys) are skipped.
+
+    - **``L2Instance``** (M.2d.3): per-institution scope. Applied
+      AFTER the ``ResourcePrefix`` filter when both are set.
+
+    When ``resource_prefix`` is None (callers that haven't been
+    updated, or the legacy un-prefixed sweep), the function falls
+    back to the pre-v8.4.0 behavior: any ``ManagedBy=quicksight-gen``
+    resource is eligible (subject to the ``L2Instance`` filter if
+    set). New callers should always pass ``resource_prefix``.
     """
     stale: dict[str, list[tuple[str, str]]] = {
         "dashboard": [],
@@ -160,6 +178,14 @@ def _collect_stale(
             if tags is None:
                 # Not ours.
                 continue
+            if resource_prefix is not None:
+                # Strongest scope: per-deploy ResourcePrefix match.
+                # Fail-CLOSED on missing tag — pre-v8.4.0 deploys
+                # without the tag are NOT eligible for sweep by a
+                # prefix-aware caller. The operator can still
+                # legacy-clean them by running with no prefix scope.
+                if tags.get(RESOURCE_PREFIX_TAG_KEY) != resource_prefix:
+                    continue
             if l2_instance_prefix is not None:
                 # Per-instance scope: only sweep matching-tag resources.
                 if tags.get(L2_INSTANCE_TAG_KEY) != l2_instance_prefix:
@@ -223,11 +249,11 @@ def run_cleanup(
     client = boto3.client("quicksight", region_name=cfg.aws_region)
     account_id = cfg.aws_account_id
 
-    scope_label = (
-        f" scoped to L2Instance={cfg.l2_instance_prefix!r}"
-        if cfg.l2_instance_prefix
-        else ""
-    )
+    scope_parts: list[str] = []
+    scope_parts.append(f"ResourcePrefix={cfg.resource_prefix!r}")
+    if cfg.l2_instance_prefix:
+        scope_parts.append(f"L2Instance={cfg.l2_instance_prefix!r}")
+    scope_label = f" scoped to {', '.join(scope_parts)}"
     click.echo(
         f"Scanning QuickSight resources in {account_id} "
         f"({cfg.aws_region}){scope_label}..."
@@ -236,6 +262,7 @@ def run_cleanup(
     stale = _collect_stale(
         client, account_id, expected,
         l2_instance_prefix=cfg.l2_instance_prefix,
+        resource_prefix=cfg.resource_prefix,
     )
 
     total = sum(len(items) for items in stale.values())
