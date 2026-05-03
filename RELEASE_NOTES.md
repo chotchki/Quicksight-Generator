@@ -1,5 +1,60 @@
 # Release Notes
 
+## v8.3.3 — Hotfix: L1 Daily Statement account dropdown empty
+
+Bug fix on top of v8.3.2.
+
+### Bug
+
+On the L1 dashboard's Daily Statement sheet, the **Account** dropdown
+was empty (just the QuickSight "All" placeholder). Analysts couldn't
+pick an account, so the underlying `CategoryFilter.with_parameter`
+matched nothing and every KPI / table on the sheet rendered blank.
+
+The `add_parameter_dropdown(...)` call was missing
+`selectable_values=` — without it QuickSight has no source to
+populate the dropdown's option list. Investigation's two SINGLE_SELECT
+dropdowns (Money Trail's "Chain root transfer", Account Network's
+"Anchor account") set this correctly via
+`LinkedValues.from_column(...)` — Daily Statement was a one-spot
+miss in the original M.2b.4 wiring.
+
+### Fix
+
+Wire the dropdown to the daily-statement-summary matview's
+`account_id` column:
+
+```python
+selectable_values=LinkedValues.from_column(summary_ds["account_id"]),
+hidden_select_all=True,
+```
+
+Surfaced now because the user ran a from-scratch independent system
+test against an isolated L2 + AWS account — exactly the read-only
+black-box flow that exposes "no live deploy ever picked an account
+on this sheet" footguns. None of the e2e tests against the bundled
+spec_example would have caught this either, since the sheet renders
+fine with the dropdown empty (the assertion is on visual presence,
+not on the dropdown being usable).
+
+### Prevent the class
+
+Per the project's "encode invariants in the type system, not in
+validation tests" rule: tightened `ParameterDropdown.selectable_values`
+from `SelectableValues | None = None` to `SelectableValues` (no
+default). Same for `Sheet.add_parameter_dropdown(...)`. A future
+dropdown wired without a source list now fails at construction
+time with `TypeError: missing 1 required argument 'selectable_values'`
+— the bug is unrepresentable.
+
+`FilterDropdown.selectable_values` stays optional — filter dropdowns
+auto-populate from the filter's bound column, so omitting the
+override is the common, correct case.
+
+Audited every other `add_parameter_dropdown` call site in the
+shipped apps before tightening — all 8 already pass
+`selectable_values`. No call-site changes required.
+
 ## v8.3.2 — Hotfix: Investigation App Info latest_date column
 
 Bug fix on top of v8.3.1.
