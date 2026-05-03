@@ -21,10 +21,15 @@
 
 name: E2E
 
+# DISABLED auto-fire on push:main after the first run nuked the
+# user's existing local deploy of spec_example. Root cause: the
+# cleanup step uses `json clean` which filters by L2Instance tag
+# only — concurrent OR adjacent deploys of the same L2 get swept.
+# Until ResourcePrefix-tag-based cleanup filtering ships (see
+# PLAN W.2 follow-up), only manual triggering is allowed so the
+# user can confirm no local deploy is at risk before each run.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
 
 # OIDC requires `id-token: write` on the workflow (or job) so the
 # runner can mint the JWT that AWS exchanges for temporary creds.
