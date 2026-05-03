@@ -140,6 +140,14 @@ where = ["src"]
 [tool.setuptools.package-data]
 quicksight_gen = [
     "apps/l1_dashboard/_default_l2.yaml",
+    # Bundled mkdocs config so ``docs apply`` works from an installed
+    # wheel. Lives one level up from ``docs/`` (mkdocs rejects
+    # ``docs_dir: .``).
+    "mkdocs.yml",
+    # Bundled L2 fixtures so ``docs apply`` from an installed wheel
+    # can render without the operator's tests/l2/ checkout. Synced to
+    # ``tests/l2/`` by ``tests/unit/test_l2_fixtures_sync.py``.
+    "_l2_fixtures/*.yaml",
     "docs/**/*.md",
     "docs/**/*.svg",
     "docs/**/*.png",

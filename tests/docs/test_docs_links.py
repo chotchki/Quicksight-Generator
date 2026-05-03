@@ -27,9 +27,15 @@ from urllib.parse import unquote, urlsplit
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 SITE = REPO_ROOT / "site"
-MKDOCS_YML = REPO_ROOT / "mkdocs.yml"
+# Bundled inside the package post-restructure (was at repo root). Note:
+# ``parents[1]`` was a pre-existing bug — resolved to ``tests/``, so
+# ``MKDOCS_YML.exists()`` always returned False and the test
+# silently skipped. Correct path now.
+MKDOCS_YML = (
+    REPO_ROOT / "src" / "quicksight_gen" / "docs" / "mkdocs.yml"
+)
 
 HREF_RE = re.compile(r'(?:href|src)="([^"]+)"')
 ID_RE = re.compile(r'id="([^"]+)"')
@@ -37,7 +43,11 @@ ID_RE = re.compile(r'id="([^"]+)"')
 
 def _build_site() -> None:
     """Rebuild ``site/`` so the test sees the current docs state."""
-    cmd = [sys.executable, "-m", "mkdocs", "build", "--strict"]
+    cmd = [
+        sys.executable, "-m", "mkdocs", "build", "--strict",
+        "-f", str(MKDOCS_YML),
+        "-d", str(SITE),
+    ]
     proc = subprocess.run(
         cmd, cwd=REPO_ROOT, capture_output=True, text=True,
     )

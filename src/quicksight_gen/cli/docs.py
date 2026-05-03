@@ -30,7 +30,20 @@ import click
 from quicksight_gen.cli._helpers import l2_instance_option, load_config
 
 
+# ``_REPO_ROOT`` was the cwd for ``mkdocs build`` pre-restructure when
+# ``mkdocs.yml`` lived at the repo root. Now the config ships inside
+# the package and mkdocs is invoked with ``-f <bundled mkdocs.yml>``,
+# which resolves all docs paths relative to the config file regardless
+# of cwd. Kept around because ``docs test`` still cwds here to run
+# pytest against ``tests/docs/`` — which only exists in dev mode.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
+
+# Bundled mkdocs.yml — same package-relative path in dev
+# (``<repo>/src/quicksight_gen/mkdocs.yml``) and installed mode
+# (``<site-packages>/quicksight_gen/mkdocs.yml``). One level up from
+# the actual ``docs/`` content so ``docs_dir: docs`` is a sibling
+# (mkdocs rejects ``docs_dir: .``).
+_BUNDLED_MKDOCS_YML = Path(__file__).resolve().parent.parent / "mkdocs.yml"
 
 
 def _bake_portable_wasm(output_dir: Path) -> None:
@@ -306,13 +319,20 @@ def docs_apply(
     if l2_instance_path is not None:
         env["QS_DOCS_L2_INSTANCE"] = str(Path(l2_instance_path).resolve())
 
-    config_args: list[str] = []
+    # Always pass ``-f <bundled mkdocs.yml>``. mkdocs resolves all
+    # docs paths relative to the config file's location, so cwd
+    # doesn't matter — this works the same in dev and from an
+    # installed wheel.
+    config_to_use = _BUNDLED_MKDOCS_YML
     portable_yml: Path | None = None
     if portable:
         # Synthesize a tiny INHERIT-based config that overrides keys
         # that don't make sense for an offline / file:// build.
-        # Living inside _REPO_ROOT lets the inherited config's
-        # relative paths (docs_dir, extra_css, …) resolve unchanged.
+        # Written next to the bundled mkdocs.yml so the relative
+        # ``INHERIT: mkdocs.yml`` resolves correctly in both dev and
+        # installed mode (was broken pre-restructure when this lived
+        # at ``_REPO_ROOT`` — installed wheel doesn't have a writable
+        # repo root, just ``<site-packages>/lib/pythonX/``).
         #
         # `use_directory_urls: false` — emit `<slug>/index.html`
         #     so links resolve via file:// without a web server.
@@ -322,7 +342,7 @@ def docs_apply(
         #     fetch hangs; disabling drops the link tag entirely so
         #     Material renders in the OS system font (San Francisco
         #     / Segoe UI / Cantarell).
-        portable_yml = _REPO_ROOT / "mkdocs.portable.yml"
+        portable_yml = _BUNDLED_MKDOCS_YML.parent / "mkdocs.portable.yml"
         portable_yml.write_text(
             "INHERIT: mkdocs.yml\n"
             "use_directory_urls: false\n"
@@ -330,19 +350,27 @@ def docs_apply(
             "  font: false\n",
             encoding="utf-8",
         )
-        config_args = ["-f", str(portable_yml)]
+        config_to_use = portable_yml
 
     cmd = [
         sys.executable, "-m", "mkdocs", "build",
-        *config_args,
+        "-f", str(config_to_use),
         "-d", str(Path(output).resolve()),
     ]
     if strict:
         cmd.append("--strict")
 
+    # cwd is the mkdocs.yml's directory so mkdocs-macros's
+    # ``include_dir: docs/_macros`` resolves correctly. mkdocs-macros
+    # joins ``include_dir`` against cwd, NOT against the config file's
+    # directory — confirmed empirically (path-not-found error before
+    # this change). The output dir is absolute (resolved above) so cwd
+    # doesn't affect where the rendered site lands.
     click.echo(f"$ {' '.join(cmd)}")
     try:
-        exit_code = subprocess.call(cmd, cwd=_REPO_ROOT, env=env)
+        exit_code = subprocess.call(
+            cmd, env=env, cwd=_BUNDLED_MKDOCS_YML.parent,
+        )
     finally:
         if portable_yml is not None and portable_yml.exists():
             portable_yml.unlink()
@@ -377,10 +405,11 @@ def docs_serve(l2_instance_path: str | None, port: int) -> None:
 
     cmd = [
         sys.executable, "-m", "mkdocs", "serve",
+        "-f", str(_BUNDLED_MKDOCS_YML),
         "-a", f"127.0.0.1:{port}",
     ]
     click.echo(f"$ {' '.join(cmd)}")
-    subprocess.call(cmd, cwd=_REPO_ROOT, env=env)
+    subprocess.call(cmd, env=env)
 
 
 @docs.command("clean")

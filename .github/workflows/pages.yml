@@ -34,7 +34,11 @@ jobs:
         run: uv sync --frozen --extra docs
 
       - name: Build site
-        run: .venv/bin/mkdocs build --strict
+        # Goes through ``quicksight-gen docs apply`` instead of bare
+        # ``mkdocs build`` so this Pages build exercises the same
+        # code path an installed-wheel operator would. Catches the
+        # bundled-mkdocs.yml resolution that broke pre-restructure.
+        run: .venv/bin/quicksight-gen docs apply -o site
 
       - name: Upload pages artifact
         uses: actions/upload-pages-artifact@v5

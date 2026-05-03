@@ -1,0 +1,991 @@
+# Sasquatch National Bank — full-service institution.
+#
+# The canonical Sasquatch L2 instance going forward (M.3.1). Single
+# fixture covers BOTH the treasury / Cash Management Suite (CMS)
+# surface that sasquatch_ar.yaml exercised AND the merchant-acquiring
+# surface that exercises PR-only L2 primitives (TransferKey grouping,
+# XOR payout chains, external aggregating rails). Replaces
+# sasquatch_ar.yaml in the M.2d.8 contract matrix; the AR fixture
+# deletes in M.3.2.
+#
+# Primitive coverage (encompasses sasquatch_ar):
+#   * Transfer types: ach, wire, cash, internal, fee, settlement,
+#     return (AR-side) PLUS sale, payout_ach, payout_wire, payout_check,
+#     card_settlement (PR-side).
+#   * Two-leg rails with rail-level + per-leg origin overrides.
+#   * Single-leg rails with Debit / Credit / Variable directions.
+#   * Aggregating two-leg (daily-eod) + single-leg (monthly-eom +
+#     daily-eod) rails.
+#   * Rails carrying max_pending_age (PT4H, PT24H, PT48H, P7D).
+#   * Rails carrying max_unbundled_age (PT48H, P31D).
+#   * TransferTemplate with Variable closure (3-leg internal cycle).
+#   * TransferTemplate with TransferKey grouping (merchant settlement
+#     cycle — multiple sale rail firings join one shared Transfer per
+#     (merchant_id, settlement_period)).
+#   * Chain XOR groups (inbound ACH return reasons + merchant payout
+#     vehicles).
+#   * Required:true chain (daily ACH → FRB sweep).
+#   * Multiple LimitSchedules across roles × transfer_types.
+#   * Union leg_role on a rail (CustomerFeeAccrual lands on either DDA
+#     or InternalSuspenseRecon).
+#
+# Description fields fill prose for the M.7 handbook render pipeline.
+# Keep them concise, plain-English, focused on WHAT this entity is and
+# WHY it exists in SNB's chart of accounts. Markdown OK.
+
+instance: sasquatch_pr
+
+description: |
+  Sasquatch National Bank's combined treasury + merchant-acquiring
+  view. SNB runs a Cash Management Suite (CMS) for commercial customer
+  DDAs and ZBA cash concentration, AND a merchant-acquiring service
+  that processes card-network sales for retail merchants and pays them
+  out via ACH / wire / check. The L2 instance below covers both
+  surfaces in one model — the L1 dashboard renders treasury invariants
+  (drift, overdraft, limit breach), the L2 flow-tracing dashboard
+  surfaces merchant-acquiring pipeline structure (XOR payout vehicles,
+  TransferKey-grouped settlement cycles, external card-network
+  aggregation).
+
+# ---------------------------------------------------------------------
+# Handbook persona block (Q.5.e) — institution flavor strings the
+# handbook templates substitute via {{ vocab.* }}. Optional; integrator
+# L2s without this block render with neutral prose derived from the
+# account roster. The five fields mirror DemoPersona on the Python
+# side.
+# ---------------------------------------------------------------------
+persona:
+  institution:
+    - "Sasquatch National Bank"
+    - "SNB"
+  stakeholders:
+    - "Federal Reserve Bank"
+    - "Fed"
+    - "Payment Gateway Processor"
+  gl_accounts:
+    - code: "gl-1010"
+      name: "Cash & Due From FRB"
+      note: "Cash & Due From FRB → (e.g., Open Loop Funds Pool)"
+    - code: "gl-1810"
+      name: "ACH Origination Settlement"
+      note: "ACH Origination Settlement → (e.g., Sweep Account for ACH)"
+    - code: "gl-1815"
+      name: "Card Acquiring Settlement"
+      note: "Card Acquiring Settlement"
+    - code: "gl-1830"
+      name: "Internal Transfer Suspense"
+      note: "Internal Transfer Suspense → (e.g., Open Loop Escrow)"
+    - code: "gl-1850"
+      name: "Cash Concentration Master"
+      note: "Cash Concentration Master (no real analogue)"
+  merchants:
+    - "Big Meadow Dairy"
+    - "Bigfoot Brews"
+    - "Cascade Timber Mill"
+    - "Pinecrest Vineyards LLC"
+    - "Harvest Moon Bakery"
+  flavor:
+    - "Margaret Hollowcreek"
+    - "Pacific Northwest"
+    - "Farmers Exchange Bank"
+
+# ---------------------------------------------------------------------
+# Singleton accounts — SNB's chart of accounts.
+#
+# Ten internal GL control accounts (the actual general-ledger entries
+# SNB carries on its books) and six external counterparties (entities
+# SNB transacts with but doesn't hold accounts for).
+# ---------------------------------------------------------------------
+accounts:
+  # ----- Internal GL control accounts ---------------------------------
+
+  - id: gl-1010-cash-due-frb
+    name: Cash & Due From Federal Reserve
+    role: CashDueFRB
+    scope: internal
+    description: |
+      SNB's master settlement balance with the Federal Reserve. Every
+      net-settled flow (ACH origination, wire settlement, daily cash
+      concentration sweep, card-acquiring net settlement) ultimately
+      credits or debits this account. Drift here means SNB's view of
+      its FRB balance and the Fed statement disagree — a regulatory
+      exposure.
+
+  - id: gl-1810-ach-orig-settlement
+    name: ACH Origination Settlement
+    role: ACHOrigSettlement
+    scope: internal
+    description: |
+      Holding account for the daily ACH origination batch before it
+      sweeps to the Fed. Activity nets to zero each cycle; a non-zero
+      EOD balance means a batch leg failed to settle as scheduled.
+    expected_eod_balance: 0
+
+  - id: gl-1815-card-acquiring-settlement
+    name: Card Acquiring Settlement
+    role: CardAcquiringSettlement
+    scope: internal
+    description: |
+      Pass-through GL for daily card-processor settlements. Card
+      authorizations debit here when the processor force-posts; the
+      offsetting credit lands on the customer's DDA when SNB matches
+      the auth to a card transaction.
+
+  - id: gl-1820-wire-settlement-suspense
+    name: Wire Settlement Suspense
+    role: WireSettlementSuspense
+    scope: internal
+    description: |
+      Holding account for inbound wires awaiting Fedwire confirmation
+      and outbound wires awaiting beneficiary bank acknowledgment.
+      A wire is fully reconciled when both legs have posted; rows
+      stuck here past the same-day cutoff are reconciliation work.
+
+  - id: gl-1830-internal-transfer-suspense
+    name: Internal Transfer Suspense
+    role: InternalTransferSuspense
+    scope: internal
+    description: |
+      Two-step suspense for on-us transfers. The source DDA debits
+      here, then the destination DDA credits from here, allowing the
+      two halves to be authorized independently. A non-zero balance
+      means a credit-half is stuck — the source-DDA owner's money is
+      in flight.
+    expected_eod_balance: 0
+
+  - id: gl-1840-merchant-payable-clearing
+    name: Merchant Payable Clearing
+    role: MerchantPayableClearing
+    scope: internal
+    description: |
+      Holding GL for merchant-acquiring settlement. Card sales (every
+      MerchantCardSale firing) credit here as the card network
+      delivers the funds; merchant payouts (one of MerchantPayoutACH /
+      Wire / Check, per the XOR chain) debit here when SNB releases
+      the held balance to the merchant. Per-merchant balance equals
+      sales-not-yet-paid-out.
+
+  - id: gl-1850-cash-concentration-master
+    name: Cash Concentration Master
+    role: ConcentrationMaster
+    scope: internal
+    description: |
+      Concentration target for SNB's ZBA (zero-balance account)
+      operating sub-accounts. Every operating sub-account sweeps its
+      EOD balance to this master; the master then makes a single
+      aggregate transfer to the Fed. Reduces wire and ACH count
+      vs. settling per sub-account.
+
+  - id: gl-1899-internal-suspense-recon
+    name: Internal Suspense / Reconciliation
+    role: InternalSuspenseRecon
+    scope: internal
+    description: |
+      General-purpose suspense GL for entries that don't fit a more
+      specific suspense account. Manual reconciliation entries
+      (research adjustments, stale-suspense reclassifications) flow
+      through here. Should be empty or near-empty on any given day.
+    expected_eod_balance: 0
+
+  - id: gl-2010-dda-control
+    name: Customer Deposits — DDA Control
+    role: DDAControl
+    scope: internal
+    description: |
+      Aggregate GL for all customer demand-deposit accounts. The
+      customer DDA template (`CustomerDDA` role) rolls up to this
+      control account. SNB's regulatory deposits balance is the sum
+      of the children minus float in the suspense GLs.
+
+  - id: gl-2020-merchant-dda-control
+    name: Merchant Deposits — DDA Control
+    role: MerchantDDAControl
+    scope: internal
+    description: |
+      Aggregate GL for all merchant demand-deposit accounts. Mirrors
+      the customer DDA control but tracks the merchant-acquiring book
+      (merchants who hold an SNB DDA receive ACH payouts directly to
+      it; merchants banking elsewhere get wire / check payouts to
+      external counterparties). Per-merchant LimitSchedules cap
+      outbound payout flow per type.
+
+  # ----- External counterparties --------------------------------------
+  #
+  # All six share role `ExternalCounterparty` except the card network
+  # which has its own role so card-acquiring rails can target it
+  # explicitly. SNB doesn't reconcile any external on its own books;
+  # the roles exist so rails have valid source / destination references.
+
+  - id: ext-frb-snb-master
+    name: Federal Reserve Bank — SNB Master
+    role: ExternalCounterparty
+    scope: external
+    description: |
+      The Federal Reserve's authoritative record of SNB's settlement
+      balance. SNB reconciles its `CashDueFRB` GL daily against the
+      Fed statement; any disagreement is the canonical "regulatory
+      drift" exception.
+
+  - id: ext-payment-gateway-processor
+    name: Payment Gateway Processor
+    role: ExternalCounterparty
+    scope: external
+    description: |
+      Third-party card-network acquirer that force-posts daily card
+      settlements to SNB's `CardAcquiringSettlement` GL. SNB
+      reconciles processor reports against the GL to catch missed
+      authorizations.
+
+  - id: ext-card-network-acquirer
+    name: Card Network Acquirer
+    role: ExternalCardNetwork
+    scope: external
+    description: |
+      The card network (Visa / MasterCard / etc.) that originates
+      MerchantCardSale postings on SNB's books. Force-posts every
+      sale leg via the daily settlement file; the daily aggregating
+      ExternalCardSettlement rail bundles them and reports back the
+      net.
+
+  - id: ext-coffee-shop-supply-co
+    name: Coffee Shop Supply Co
+    role: ExternalCounterparty
+    scope: external
+    description: |
+      Commercial supplier counterparty for the coffee-retail customer
+      cohort. Outbound ACH and wire payments to this party originate
+      from the coffee-retailer DDAs.
+
+  - id: ext-valley-grain-coop
+    name: Valley Grain Co-op
+    role: ExternalCounterparty
+    scope: external
+    description: |
+      Agricultural commercial counterparty. Inbound and outbound flows
+      with farming-cooperative customers (Big Meadow Dairy, Cascade
+      Timber Mill) settle through this entity.
+
+  - id: ext-harvest-credit-exchange
+    name: Harvest Credit Exchange
+    role: ExternalCounterparty
+    scope: external
+    description: |
+      Agricultural credit clearing counterparty. Inbound credit
+      advances and outbound loan repayments for the farm-customer
+      cohort flow through this party.
+
+# ---------------------------------------------------------------------
+# Account templates — runtime-instantiated child accounts.
+#
+# Each customer DDA, merchant DDA, and ZBA operating sub-account is a
+# runtime instance of one of these templates; the parent role resolves
+# to a singleton above (R3 — singleton-parent-only).
+# ---------------------------------------------------------------------
+account_templates:
+  - role: CustomerDDA
+    scope: internal
+    parent_role: DDAControl
+    instance_id_template: "cust-{n:04d}-snb"
+    instance_name_template: "SNB Customer #{n:04d}"
+    description: |
+      Per-customer demand-deposit account. One runtime instance per
+      retail or commercial customer; the account number and name are
+      supplied by SNB's onboarding ETL. Balance and transaction
+      activity are reconciled per-customer; the DDA Control GL is the
+      aggregate roll-up.
+
+  - role: MerchantDDA
+    scope: internal
+    parent_role: MerchantDDAControl
+    instance_id_template: "merch-{n:03d}-snb"
+    instance_name_template: "SNB Merchant DDA #{n:03d}"
+    description: |
+      Per-merchant demand-deposit account. Merchants who bank at SNB
+      receive their card-sales payouts directly via the
+      MerchantPayoutACH rail (one of the XOR payout vehicles).
+      Merchants banking elsewhere get MerchantPayoutWire / Check to
+      an external counterparty instead.
+
+  - role: ZBASubAccount
+    scope: internal
+    parent_role: ConcentrationMaster
+    instance_id_template: "zba-{n:03d}-snb"
+    instance_name_template: "SNB ZBA Sub-Account #{n:03d}"
+    description: |
+      Operating sub-account under the cash-concentration master. Each
+      ZBA location (a customer's main location, a separate operating
+      site, etc.) has its own sub-account; nightly sweeps zero them
+      and consolidate the balance at the master.
+    expected_eod_balance: 0
+
+# ---------------------------------------------------------------------
+# Rails — the canonical leg patterns SNB executes.
+#
+# Per-leg Origin distinguishes who drove the posting: external party
+# (`ExternalForcePosted` — they're authoritative, SNB records the
+# response) vs SNB itself (`InternalInitiated` — SNB initiated, the
+# external party will eventually confirm).
+# ---------------------------------------------------------------------
+rails:
+  # ----- Customer DDA <-> External --- ACH ----------------------------
+
+  - name: CustomerInboundACH
+    transfer_type: ach_inbound
+    source_role: ExternalCounterparty
+    destination_role: CustomerDDA
+    expected_net: 0
+    source_origin: ExternalForcePosted
+    destination_origin: InternalInitiated
+    metadata_keys: [external_reference, originator_id, customer_id]
+    posted_requirements: [external_reference, customer_id]
+    max_pending_age: PT24H
+    description: |
+      Inbound ACH credit originated by an external party (employer
+      payroll, vendor payment, peer transfer). External party drives
+      the rail (force-posts via the ACH network); SNB records the
+      offsetting credit on the receiving customer's DDA. Bank trace
+      number (`external_reference`) is required to reconcile the
+      Fed-statement view.
+
+  - name: CustomerOutboundACH
+    transfer_type: ach_outbound
+    source_role: CustomerDDA
+    destination_role: ExternalCounterparty
+    expected_net: 0
+    origin: InternalInitiated
+    metadata_keys: [external_reference, customer_id, beneficiary_id]
+    posted_requirements: [customer_id]
+    max_pending_age: PT24H
+    description: |
+      Outbound ACH debit initiated by SNB on behalf of a customer
+      (bill pay, vendor payment, recurring transfer). Both legs are
+      internally initiated until the Fed force-posts the matching
+      settlement to `CashDueFRB`. ETL must capture `customer_id`
+      before posting.
+
+  # ----- Customer DDA <-> External --- Wire ---------------------------
+
+  - name: CustomerInboundWire
+    transfer_type: wire_inbound
+    source_role: ExternalCounterparty
+    destination_role: CustomerDDA
+    expected_net: 0
+    source_origin: ExternalForcePosted
+    destination_origin: InternalInitiated
+    metadata_keys: [fedwire_imad, originator_id, customer_id]
+    posted_requirements: [fedwire_imad, customer_id]
+    max_pending_age: PT4H
+    description: |
+      Inbound wire credit. Fedwire is real-time so the same-day
+      reconciliation window is tight (`PT4H`). The `fedwire_imad`
+      is the Federal Reserve's input message accountability data —
+      mandatory for wire reconciliation and audit.
+
+  - name: CustomerOutboundWire
+    transfer_type: wire_outbound
+    source_role: CustomerDDA
+    destination_role: ExternalCounterparty
+    expected_net: 0
+    origin: InternalInitiated
+    metadata_keys: [fedwire_omad, customer_id, beneficiary_id]
+    posted_requirements: [fedwire_omad, customer_id]
+    max_pending_age: PT4H
+    description: |
+      Outbound wire initiated by SNB. The `fedwire_omad` is captured
+      after Fedwire acknowledges the outbound message; until then
+      the leg is Pending. The wire-suspense GL holds the balance
+      mid-flight.
+
+  # ----- Customer DDA <-> External --- Cash ---------------------------
+
+  - name: CustomerCashDeposit
+    transfer_type: cash_deposit
+    source_role: ExternalCounterparty
+    destination_role: CustomerDDA
+    expected_net: 0
+    source_origin: ExternalForcePosted
+    destination_origin: InternalInitiated
+    metadata_keys: [branch_id, teller_id, customer_id]
+    metadata_value_examples:
+      branch_id: ["br-bigfoot-001", "br-sasquatch-002", "br-yeti-003"]
+      teller_id: ["t-jane-001", "t-bob-002", "t-mary-003"]
+    posted_requirements: [customer_id]
+    description: |
+      Physical cash deposit at an SNB branch. The "external" source
+      is the depositor walking in with cash — SNB models this as
+      external because the cash isn't on SNB's books until it lands
+      on the customer DDA. Branch + teller IDs are operational
+      audit context.
+
+  - name: CustomerCashWithdrawal
+    transfer_type: cash_withdrawal
+    source_role: CustomerDDA
+    destination_role: ExternalCounterparty
+    expected_net: 0
+    origin: InternalInitiated
+    metadata_keys: [branch_id, teller_id, customer_id]
+    posted_requirements: [customer_id]
+    description: |
+      Physical cash withdrawal at an SNB branch. Customer DDA debits;
+      cash leaves SNB's vault. Same operational audit context as the
+      deposit rail.
+
+  # ----- On-us internal — three-leg suspense-mediated cycle ----------
+  #
+  # Modeled as a TransferTemplate (`InternalTransferCycle` below) so the
+  # source-debit, suspense-hold, and destination-credit legs share one
+  # logical Transfer. The Variable leg on `InternalTransferSuspense`
+  # closes the cycle to net zero — its amount + direction derive from
+  # whatever the other two legs require for closure.
+
+  - name: InternalTransferDebit
+    transfer_type: internal_debit
+    leg_role: CustomerDDA
+    leg_direction: Debit
+    origin: InternalInitiated
+    metadata_keys: [internal_transfer_id, source_customer_id, destination_customer_id, transfer_purpose]
+    metadata_value_examples:
+      transfer_purpose: ["rent", "payroll", "vendor_payment"]
+    description: |
+      Debit leg of an on-us transfer cycle. Posts against the source
+      customer's DDA. Joins the shared `InternalTransferCycle` Transfer
+      via the `internal_transfer_id` TransferKey (declared first in
+      `metadata_keys` because it's auto-derived as a PostedRequirement
+      from the template's `transfer_key`).
+
+  - name: InternalTransferCredit
+    transfer_type: internal_credit
+    leg_role: CustomerDDA
+    leg_direction: Credit
+    origin: InternalInitiated
+    metadata_keys: [internal_transfer_id, source_customer_id, destination_customer_id, transfer_purpose]
+    description: |
+      Credit leg of an on-us transfer cycle. Posts against the
+      destination customer's DDA. Joins the shared `InternalTransferCycle`
+      Transfer via the `internal_transfer_id` TransferKey; the matching
+      debit and suspense-close legs share its ID.
+
+  - name: InternalTransferSuspenseClose
+    transfer_type: internal
+    leg_role: InternalTransferSuspense
+    leg_direction: Variable
+    origin: InternalInitiated
+    metadata_keys: [internal_transfer_id]
+    description: |
+      Closing leg of an on-us transfer cycle on the suspense GL.
+      `Variable` direction — both amount and direction are computed at
+      posting time so that the bundle's net equals the template's
+      ExpectedNet of 0. MUST be the last leg posted on its Transfer
+      (sibling legs MUST be Posted first); a same-day `business_day_end+1d`
+      Completion gives operators a window to repair before Conservation
+      flags a stuck cycle.
+
+  # ----- Customer-fee accrual (bundled by monthly aggregating rail) ---
+  #
+  # Single-leg rail with a UNION leg_role: SNB normally accrues the fee
+  # against the customer's DDA, but if the DDA is frozen (legal hold,
+  # closure-in-progress) the fee accrues against `InternalSuspenseRecon`
+  # for later research. Both leg-role alternatives are valid landing
+  # spots; the integrator's ETL picks one per posting based on the
+  # account state.
+
+  - name: CustomerFeeAccrual
+    transfer_type: fee
+    leg_role: [CustomerDDA, InternalSuspenseRecon]
+    leg_direction: Debit
+    origin: InternalInitiated
+    metadata_keys: [customer_id, fee_type, accrual_period]
+    metadata_value_examples:
+      fee_type: ["monthly_maintenance", "overdraft", "stop_pay"]
+      accrual_period: ["2026-04", "2026-05", "2026-06"]
+    posted_requirements: [customer_id, fee_type]
+    max_unbundled_age: P31D
+    description: |
+      Daily fee accrual posting (monthly maintenance, overdraft,
+      stop-pay, etc.). Bundled by the monthly settlement aggregating
+      rail; un-bundled rows older than 31 days surface as exceptions
+      (the bundler missed them — investigate ETL or the settlement
+      job). The union leg_role lets the rail land on either a customer
+      DDA or the recon suspense GL for held accounts.
+
+  # ----- ZBA sweep (operational pool consolidation) -------------------
+
+  - name: ZBASweep
+    transfer_type: internal
+    source_role: ZBASubAccount
+    destination_role: ConcentrationMaster
+    expected_net: 0
+    origin: InternalInitiated
+    metadata_keys: [sweep_date, location_id]
+    description: |
+      Nightly zero-balance-account sweep. Each operating ZBA
+      sub-account transfers its EOD balance to the cash-concentration
+      master, leaving the sub-account at zero. One `ZBASweep` firing
+      per (sub-account, business-day) — a missing sweep means a
+      sub-account didn't zero out and either the customer's reporting
+      or SNB's funding is wrong.
+
+  # ----- Concentration → Fed sweep ------------------------------------
+
+  - name: ConcentrationToFRBSweep
+    transfer_type: wire_concentration
+    source_role: ConcentrationMaster
+    destination_role: ExternalCounterparty
+    expected_net: 0
+    source_origin: InternalInitiated
+    destination_origin: ExternalForcePosted
+    metadata_keys: [sweep_date, fedwire_omad]
+    posted_requirements: [fedwire_omad]
+    max_pending_age: PT4H
+    description: |
+      Daily aggregate transfer from the cash-concentration master to
+      the Federal Reserve. Consolidates the day's ZBA-swept balances
+      into a single Fedwire — drastically reducing the per-sub-account
+      Fed traffic. Fedwire ack provides the OMAD that closes the leg.
+
+  # ----- Aggregating rails (treasury) ---------------------------------
+  #
+  # Two distinct shapes exercise the SPEC's BundlesActivity + Cadence
+  # surface in ways the M.1.8 kitchen sink doesn't:
+  # (a) two-leg, daily-eod, internal-only — bundles outbound ACH
+  #     activity into one consolidated sweep against `CashDueFRB`.
+  # (b) single-leg, monthly-eom, lands in External — bundles a month's
+  #     worth of fee accruals into one settlement to the processor.
+  # The single-leg aggregating shape is exempt from S3 reconciliation
+  # per SPEC ("single-leg sweep that lands in an external counterparty").
+
+  - name: ACHOriginationDailySweep
+    transfer_type: settlement
+    source_role: ACHOrigSettlement
+    destination_role: CashDueFRB
+    expected_net: 0
+    origin: InternalInitiated
+    metadata_keys: [sweep_date, settlement_batch_id]
+    aggregating: true
+    cadence: daily-eod
+    bundles_activity: [CustomerOutboundACH]
+    description: |
+      End-of-business-day sweep that consolidates the day's outbound
+      ACH activity from the origination GL to the Fed-due GL. Reduces
+      per-customer Fed traffic to one consolidated entry. The
+      `BundleSelector` `[CustomerOutboundACH]` matches every Posted +
+      unbundled leg of that rail.
+
+  - name: CustomerFeeMonthlySettlement
+    transfer_type: settlement
+    leg_role: ExternalCounterparty
+    leg_direction: Debit
+    origin: InternalInitiated
+    metadata_keys: [settlement_period, contracted_processor_id]
+    aggregating: true
+    cadence: monthly-eom
+    bundles_activity: [CustomerFeeAccrual]
+    description: |
+      Month-end single-leg sweep settling the month's accrued fees out
+      to the contracted billing processor. Single-leg per SPEC's
+      "permitted" example — by design the drift it surfaces exits the
+      system into the External counterparty (the processor's books are
+      where the receivable lands). Cadence `monthly-eom` mirrors the
+      contracted processor billing cycle.
+
+  # ----- Inbound ACH return paths (XOR group) ------------------------
+  #
+  # When NACHA returns an inbound ACH, SNB posts a reversal. The return
+  # reason determines which rail fires — at most one of these per
+  # original `CustomerInboundACH`. Modeled as a Chain XOR group below.
+
+  - name: CustomerInboundACHReturnNSF
+    transfer_type: return_nsf
+    source_role: CustomerDDA
+    destination_role: ExternalCounterparty
+    expected_net: 0
+    origin: InternalInitiated
+    metadata_keys: [original_external_reference, return_reason_code, customer_id]
+    metadata_value_examples:
+      return_reason_code: ["R01"]
+    posted_requirements: [original_external_reference, return_reason_code]
+    description: |
+      ACH return path for NACHA reason code R01 (insufficient funds).
+      Reverses the inbound ACH credit by debiting the customer DDA
+      and re-crediting the originator's external counterparty. Fires
+      only when SNB couldn't honor the inbound credit — typically
+      same-day or next-business-day after the original posting.
+
+  - name: CustomerInboundACHReturnStopPay
+    transfer_type: return_stoppay
+    source_role: CustomerDDA
+    destination_role: ExternalCounterparty
+    expected_net: 0
+    origin: InternalInitiated
+    metadata_keys: [original_external_reference, return_reason_code, customer_id]
+    metadata_value_examples:
+      return_reason_code: ["R08"]
+    posted_requirements: [original_external_reference, return_reason_code]
+    description: |
+      ACH return path for NACHA reason code R08 (stop payment by
+      receiver). Same posting shape as the NSF return; the difference
+      is provenance — the customer affirmatively stopped the payment
+      vs SNB returning for inability to settle.
+
+  # ----- Merchant acquiring — sales + payouts -------------------------
+  #
+  # The merchant-acquiring pipeline:
+  #   1. Multiple MerchantCardSale rail firings post per (merchant,
+  #      settlement_period). Each carries a `transfer_key` of
+  #      [merchant_id, settlement_period] and joins the shared
+  #      MerchantSettlementCycle Transfer (TransferKey grouping).
+  #   2. The settlement cycle completes (Completion: business_day_end);
+  #      its closure triggers the chain.
+  #   3. Per the chain XOR group `PayoutVehicle`, exactly one of
+  #      MerchantPayoutACH / MerchantPayoutWire / MerchantPayoutCheck
+  #      fires per cycle, debiting MerchantPayableClearing and crediting
+  #      either the merchant's SNB DDA (ACH) or an external
+  #      counterparty (wire / check).
+  #   4. Independently, the daily ExternalCardSettlement aggregating
+  #      rail bundles the day's MerchantCardSale activity for reporting
+  #      back to the card network.
+
+  - name: MerchantCardSale
+    transfer_type: sale
+    source_role: ExternalCardNetwork
+    destination_role: MerchantPayableClearing
+    source_origin: ExternalForcePosted
+    destination_origin: InternalInitiated
+    metadata_keys: [merchant_id, settlement_period, card_network_ref, card_brand]
+    metadata_value_examples:
+      # Note: merchant_id + settlement_period are the
+      # MerchantSettlementCycle TransferKey — auto-derived per
+      # firing seq, NOT pulled from these examples. Only non-TT
+      # keys (card_brand here) get example-driven values.
+      card_brand: ["Visa", "Mastercard", "Amex"]
+    posted_requirements: [merchant_id, settlement_period, card_network_ref]
+    max_pending_age: PT24H
+    max_unbundled_age: PT48H
+    description: |
+      One merchant card-sale posting. Card network force-posts the
+      external (debit) leg via daily settlement file; SNB records the
+      matching credit on the MerchantPayableClearing GL. The
+      `transfer_key` of (merchant_id, settlement_period) joins this
+      firing into the shared `MerchantSettlementCycle` Transfer — many
+      sales for one (merchant, period) share one Transfer.id. Note: NO
+      `expected_net` on this rail because it's a leg of the
+      `MerchantSettlementCycle` template (S2: template legs MUST NOT
+      carry expected_net).
+
+  - name: MerchantPayoutACH
+    transfer_type: payout_ach
+    source_role: MerchantPayableClearing
+    destination_role: MerchantDDA
+    expected_net: 0
+    origin: InternalInitiated
+    metadata_keys: [merchant_id, settlement_period, payout_batch_id]
+    posted_requirements: [merchant_id, settlement_period]
+    max_pending_age: PT24H
+    description: |
+      ACH payout vehicle for merchants who hold an SNB DDA. Debits the
+      MerchantPayableClearing GL and credits the merchant's DDA
+      directly (internal flow — no Fed leg). One of the three XOR
+      payout vehicles; per chain semantics, exactly one fires per
+      settled cycle. Lower friction than wire — SNB's preferred path
+      for SNB-banking merchants.
+
+  - name: MerchantPayoutWire
+    transfer_type: payout_wire
+    source_role: MerchantPayableClearing
+    destination_role: ExternalCounterparty
+    expected_net: 0
+    source_origin: InternalInitiated
+    destination_origin: ExternalForcePosted
+    metadata_keys: [merchant_id, settlement_period, fedwire_omad, beneficiary_bank]
+    posted_requirements: [merchant_id, settlement_period, fedwire_omad]
+    max_pending_age: PT4H
+    description: |
+      Wire payout vehicle for merchants banking elsewhere. Debits the
+      MerchantPayableClearing GL and credits the merchant's external
+      counterparty bank via Fedwire. Per-leg origin: SNB initiates the
+      outbound leg (InternalInitiated); Fed force-posts the
+      external-counterparty leg when Fedwire confirms.
+
+  - name: MerchantPayoutCheck
+    transfer_type: payout_check
+    source_role: MerchantPayableClearing
+    destination_role: ExternalCounterparty
+    expected_net: 0
+    source_origin: InternalInitiated
+    destination_origin: ExternalForcePosted
+    metadata_keys: [merchant_id, settlement_period, check_number, payee_address]
+    posted_requirements: [merchant_id, settlement_period, check_number]
+    max_pending_age: P7D
+    description: |
+      Paper-check payout vehicle (legacy merchants who don't yet
+      accept ACH or wire). SNB cuts the check; the external leg
+      doesn't post until the merchant deposits and the check clears
+      back through the banking system. `max_pending_age` of 7 days
+      reflects the tolerance for check-clearing latency before
+      surfacing as stuck.
+
+  # ----- External card-network aggregation (PR-side) ------------------
+
+  - name: ExternalCardSettlement
+    transfer_type: card_settlement
+    leg_role: ExternalCardNetwork
+    leg_direction: Credit
+    origin: ExternalForcePosted
+    metadata_keys: [settlement_period, card_brand]
+    metadata_value_examples:
+      # ExternalCardSettlement is aggregating, NOT a leg of any
+      # template — both keys are non-TT, both get example values.
+      settlement_period: ["2026-04", "2026-05", "2026-06"]
+      card_brand: ["Visa", "Mastercard", "Amex"]
+    aggregating: true
+    cadence: daily-eod
+    bundles_activity: [MerchantCardSale]
+    description: |
+      Daily aggregating rail that bundles the day's MerchantCardSale
+      activity for reporting back to the card network. Single-leg
+      per the SPEC's "single-leg sweep that lands in External"
+      pattern — bundles all sales in the day's window and reports the
+      net to the card network's reconciliation file. Force-posted
+      origin: the card network's settlement file is the authoritative
+      record.
+
+# ---------------------------------------------------------------------
+# Transfer templates — multi-leg shared Transfers.
+#
+# `InternalTransferCycle` exercises:
+#   * Multi-leg shared Transfer with TransferKey grouping.
+#   * Variable-direction closing leg (the suspense-close leg sets its
+#     amount + direction to bring the cycle to net zero).
+#   * The `business_day_end+Nd` Completion vocabulary form.
+#
+# `MerchantSettlementCycle` exercises:
+#   * TransferKey grouping with multi-firing aggregation: many
+#     MerchantCardSale rail firings for one (merchant_id,
+#     settlement_period) join one shared Transfer. No Variable leg
+#     needed — every sale firing already nets to zero (external debit
+#     + clearing credit).
+#   * Acts as the chain parent for the PayoutVehicle XOR group.
+# ---------------------------------------------------------------------
+transfer_templates:
+  - name: InternalTransferCycle
+    transfer_type: internal_transfer_cycle
+    expected_net: 0
+    transfer_key: [internal_transfer_id]
+    completion: business_day_end+1d
+    leg_rails:
+      - InternalTransferDebit
+      - InternalTransferCredit
+      - InternalTransferSuspenseClose
+    description: |
+      Three-leg suspense-mediated on-us transfer cycle. The source DDA
+      debits, the destination DDA credits, and the suspense GL holds
+      the difference until the cycle closes net-zero by the next
+      business day end. The suspense-close leg's `Variable` direction
+      lets it absorb either side of the cycle's imbalance — the cycle
+      always closes to zero regardless of which DDA's posting lands
+      first or last.
+
+  - name: MerchantSettlementCycle
+    transfer_type: merchant_settlement_cycle
+    expected_net: 0
+    transfer_key: [merchant_id, settlement_period]
+    completion: business_day_end
+    leg_rails:
+      - MerchantCardSale
+    description: |
+      TransferKey-grouped merchant settlement. All `MerchantCardSale`
+      firings carrying the same `(merchant_id, settlement_period)`
+      pair join one shared Transfer. Net is zero (each sale firing's
+      external-debit + clearing-credit nets to zero, and the sum
+      across firings preserves that). Completion at `business_day_end`
+      triggers the chain: per the `PayoutVehicle` XOR group, exactly
+      one of `MerchantPayoutACH` / `Wire` / `Check` fires to drain
+      the merchant's accumulated clearing balance.
+
+# ---------------------------------------------------------------------
+# Chains — parent → child relationships between Rails / TransferTemplates.
+#
+# Three distinct shapes exercise the SPEC's chain surface:
+#   * Required:true — every parent firing SHOULD have a corresponding
+#     child firing (orphan check fires on missing children).
+#   * XOR group with all Required:false — "at most one" semantics
+#     (if both fire, exception; if neither, no exception per SPEC).
+#   * Multi-child XOR group — the merchant-payout vehicle group has
+#     three alternatives (ACH, wire, check); exactly one per cycle.
+# ---------------------------------------------------------------------
+chains:
+  # ----- Required (treasury) ------------------------------------------
+
+  - parent: ACHOriginationDailySweep
+    child: ConcentrationToFRBSweep
+    required: true
+    description: |
+      Required: every daily ACH origination sweep should be followed
+      by a Concentration→FRB sweep that rolls the consolidated balance
+      out to the Fed. A missing child means SNB swept ACH activity
+      internally but never settled it externally — surfaces as an
+      orphan exception.
+
+  # ----- XOR group: ACH return reasons (treasury) ---------------------
+
+  - parent: CustomerInboundACH
+    child: CustomerInboundACHReturnNSF
+    required: false
+    xor_group: ACHReturnReason
+    description: |
+      Optional NSF return path (NACHA reason R01). At most one
+      member of the `ACHReturnReason` XOR group fires per inbound
+      ACH — most inbound ACHs aren't returned at all. If both NSF
+      and StopPay returns fire on the same original, that's an
+      exception (the validator's C2 rule wouldn't catch it — runtime
+      check at posting time).
+
+  - parent: CustomerInboundACH
+    child: CustomerInboundACHReturnStopPay
+    required: false
+    xor_group: ACHReturnReason
+    description: |
+      Optional stop-pay return path (NACHA reason R08). Same XOR
+      group as the NSF return — at most one return reason per original
+      inbound ACH.
+
+  # ----- XOR group: merchant payout vehicles (PR-side) ---------------
+
+  - parent: MerchantSettlementCycle
+    child: MerchantPayoutACH
+    required: false
+    xor_group: PayoutVehicle
+    description: |
+      ACH payout option in the `PayoutVehicle` XOR group. Fires when
+      the merchant holds an SNB DDA (lowest-friction path; preferred
+      default). Exactly one of the three `PayoutVehicle` members
+      fires per settled MerchantSettlementCycle.
+
+  - parent: MerchantSettlementCycle
+    child: MerchantPayoutWire
+    required: false
+    xor_group: PayoutVehicle
+    description: |
+      Wire payout option in the `PayoutVehicle` XOR group. Fires
+      when the merchant banks elsewhere AND has opted into wire
+      delivery (faster but Fedwire fees apply). Real-time settlement
+      via Fedwire.
+
+  - parent: MerchantSettlementCycle
+    child: MerchantPayoutCheck
+    required: false
+    xor_group: PayoutVehicle
+    description: |
+      Paper-check payout option in the `PayoutVehicle` XOR group.
+      Legacy path for merchants who haven't yet enrolled in ACH or
+      wire delivery. Slowest path (paper check + clearing latency);
+      `MerchantPayoutCheck`'s `max_pending_age: P7D` reflects this.
+
+# ---------------------------------------------------------------------
+# Limit schedules — daily outbound caps per (parent role, transfer type).
+#
+# Two policy domains:
+#   * Customer DDA outbound caps (treasury) — per-customer daily caps
+#     mirroring sasquatch_ar's policy.
+#   * Merchant DDA outbound caps (PR-side) — per-merchant daily payout
+#     caps, sized higher than customer caps because merchants
+#     legitimately move larger settlement amounts.
+# Each customer / merchant instance is evaluated against the cap
+# individually, NOT aggregated across siblings — per L1 Limit
+# Breach invariant.
+# ---------------------------------------------------------------------
+limit_schedules:
+  # ----- Customer DDA caps (treasury) ---------------------------------
+
+  - parent_role: DDAControl
+    transfer_type: ach_outbound
+    cap: 12000.00
+    description: |
+      $12,000 daily ACH outbound cap per customer DDA. Mirrors the
+      legacy AR policy. Breaches surface on the Today's Exceptions
+      sheet's Limit Breach check.
+
+  - parent_role: DDAControl
+    transfer_type: wire_outbound
+    cap: 15000.00
+    description: |
+      $15,000 daily wire outbound cap per customer DDA. Higher than
+      the ACH cap because wires are typically larger but lower-volume
+      and higher-friction (Fedwire fees, real-time settlement).
+
+  - parent_role: DDAControl
+    transfer_type: cash_withdrawal
+    cap: 10000.00
+    description: |
+      $10,000 daily cash withdrawal cap per customer DDA. Aligns with
+      the federal currency-transaction-reporting threshold so SNB
+      surfaces the breach for compliance review even when it's
+      otherwise within policy.
+
+  # ----- Merchant DDA caps (PR-side) ----------------------------------
+
+  - parent_role: MerchantDDAControl
+    transfer_type: payout_ach
+    cap: 50000.00
+    description: |
+      $50,000 daily ACH payout cap per merchant DDA. Sized to
+      accommodate normal small-merchant settlement volumes (a coffee
+      shop's daily card sales rarely exceed this). Larger merchants
+      negotiate elevated caps via SNB onboarding.
+
+  - parent_role: MerchantDDAControl
+    transfer_type: payout_wire
+    cap: 100000.00
+    description: |
+      $100,000 daily wire payout cap per merchant DDA. Sized higher
+      than the ACH payout cap — merchants choosing wire delivery are
+      typically higher-volume operations where the per-transaction
+      Fedwire cost is justified.
+
+  - parent_role: MerchantDDAControl
+    transfer_type: payout_check
+    cap: 25000.00
+    description: |
+      $25,000 daily check payout cap per merchant DDA. Lower than the
+      ACH cap because check-payout merchants are by definition
+      lower-tech / lower-volume operations; SNB caps aggressive
+      check issuance to surface anomalies.
+seed_hash:
+  postgres: 90c81906bcedb49fc22c40c22176fc1bdd9e2af243608947005b80d35fc10659
+  oracle: 9e3073367038fec9a8f5f6553f25850a68a30b413f1e9c5bef81fe3fd0f5691b
+
+# Inline brand theme (N.1). Mirrors the legacy ``sasquatch-bank``
+# preset in common/theme.py byte-for-byte so the PR demo render is
+# pixel-identical pre/post-N.1.
+theme:
+  theme_name: "Sasquatch National Bank Theme"
+  version_description: "Sasquatch National Bank — forest green and gold palette"
+  analysis_name_prefix: "Demo"
+  data_colors:
+    - "#2D6A4F"
+    - "#C49A2A"
+    - "#5C4033"
+    - "#52796F"
+    - "#B85C38"
+    - "#74A892"
+    - "#6B4C8A"
+    - "#7A7A72"
+  empty_fill_color: "#D6D6CE"
+  gradient: ["#C5DDD3", "#1B4332"]
+  primary_bg: "#FFFFFF"
+  secondary_bg: "#FAF6F1"
+  primary_fg: "#3D3D3A"
+  secondary_fg: "#52796F"
+  accent: "#2D6A4F"
+  accent_fg: "#FFFFFF"
+  link_tint: "#E8F1EB"
+  danger: "#B71C1C"
+  danger_fg: "#FFFFFF"
+  warning: "#BF6D0A"
+  warning_fg: "#FFFFFF"
+  success: "#2D6A4F"
+  success_fg: "#FFFFFF"
+  dimension: "#52796F"
+  dimension_fg: "#FFFFFF"
+  measure: "#1B4332"
+  measure_fg: "#FFFFFF"
