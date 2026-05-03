@@ -231,5 +231,17 @@ def _escape_with_breaks(text: str) -> str:
 
 
 def text_box(*parts: str) -> str:
-    """Wrap parts in a ``<text-box>`` root. Parts are concatenated verbatim."""
-    return f"<text-box>{''.join(parts)}</text-box>"
+    """Wrap parts in a ``<text-box>`` root.
+
+    Auto-pads the interior with leading + trailing ``<br/>`` so the
+    rendered text doesn't sit flush against the box's top / bottom
+    edges. ``SheetTextBox`` itself has no padding/margin fields in
+    the AWS API — interior breathing room only comes via the
+    rich-text grammar inside ``Content``. Two ``<br/>`` per side
+    matches what hand-authored QS UI text boxes emit when an editor
+    hits Enter twice for spacing (a common pattern).
+
+    Pass already-``<br/>``-padded ``parts`` if you want even more
+    space; the auto-pad is additive.
+    """
+    return f"<text-box>{BR}{BR}{''.join(parts)}{BR}{BR}</text-box>"

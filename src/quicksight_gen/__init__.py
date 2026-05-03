@@ -1,3 +1,3 @@
 """Programmatic AWS QuickSight analysis generator."""
 
-__version__ = "8.6.2"
+__version__ = "8.6.3"
