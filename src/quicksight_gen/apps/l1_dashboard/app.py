@@ -442,7 +442,7 @@ def _populate_getting_started(
                     color=accent,
                 ),
                 rt.BR, rt.BR,
-                rt.body(welcome_body),
+                rt.markdown(welcome_body),
             ),
         ),
         width=_FULL,
@@ -454,7 +454,7 @@ def _populate_getting_started(
             content=rt.text_box(
                 rt.subheading("L2 Coverage", color=accent),
                 rt.BR,
-                rt.body(
+                rt.markdown(
                     "What this dashboard reconciles, derived from the "
                     "configured L2 instance:"
                 ),
@@ -494,7 +494,7 @@ def _populate_drift_sheet(
             content=rt.text_box(
                 rt.subheading("Internal Accounts in Scope", color=accent),
                 rt.BR,
-                rt.body(
+                rt.markdown(
                     "Accounts where drift is checked — drift surfaces "
                     "where stored balance disagrees with the cumulative "
                     "net of posted Money records (leaf) or the sum of "
@@ -876,7 +876,7 @@ def _populate_todays_exceptions_sheet(
             content=rt.text_box(
                 rt.subheading("Institution Context", color=accent),
                 rt.BR,
-                rt.body(footer_body),
+                rt.markdown(footer_body),
             ),
         ),
         width=_FULL,
@@ -914,7 +914,7 @@ def _populate_limit_breach_sheet(
             content=rt.text_box(
                 rt.subheading("Configured Caps", color=accent),
                 rt.BR,
-                rt.body(
+                rt.markdown(
                     "Outbound debit caps from the L2 instance's "
                     "LimitSchedules — these are the thresholds the "
                     "view below compares against:"

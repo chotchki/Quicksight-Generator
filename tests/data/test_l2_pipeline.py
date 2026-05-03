@@ -408,6 +408,59 @@ def test_kitchen_sink_loads_validates_emits() -> None:
     assert "CREATE MATERIALIZED VIEW kitchen_current_transactions AS" in sql
 
 
+def test_drift_matview_carries_v840_perf_indexes() -> None:
+    """v8.4.0 — date-leading composite index on _drift + _ledger_drift
+    closes the L1 Drift account/role dropdown spin.
+
+    Pre-v8.4.0 the existing indexes were leading on ``account_id``
+    (one composite + one role-only). QuickSight's date-narrowed
+    queries off the universal date filter could only use them by
+    full-index-scanning ``account_id`` first, then filtering. On a
+    large matview this became visible as a spinning dropdown.
+
+    The new ``idx_<prefix>_drift_day_account_role`` is a date-leading
+    composite covering ``(business_day_start, account_id,
+    account_role)`` so date-range scans become trivial. Same on
+    ``_ledger_drift`` for parity with the same query class.
+
+    Snapshot regression test: if a future schema refactor drops the
+    index, this test fails loudly with the matview name. Existing
+    indexes (``account_day``, ``role``) are also asserted so a
+    refactor doesn't accidentally narrow the index footprint."""
+    inst = load_instance(KITCHEN_YAML)
+    sql = emit_schema(inst)
+    p = "kitchen"
+
+    # Drift matview indexes — pre-v8.4.0 indexes still present.
+    assert (
+        f"CREATE INDEX idx_{p}_drift_account_day\n"
+        f"    ON {p}_drift (account_id, business_day_start);"
+    ) in sql
+    assert (
+        f"CREATE INDEX idx_{p}_drift_role ON {p}_drift (account_role);"
+    ) in sql
+    # v8.4.0 — new date-leading composite.
+    assert (
+        f"CREATE INDEX idx_{p}_drift_day_account_role\n"
+        f"    ON {p}_drift (business_day_start, account_id, account_role);"
+    ) in sql
+
+    # Ledger drift matview — same pre-v8.4.0 + new index parity.
+    assert (
+        f"CREATE INDEX idx_{p}_ledger_drift_account_day\n"
+        f"    ON {p}_ledger_drift (account_id, business_day_start);"
+    ) in sql
+    assert (
+        f"CREATE INDEX idx_{p}_ledger_drift_role\n"
+        f"    ON {p}_ledger_drift (account_role);"
+    ) in sql
+    # v8.4.0 — new date-leading composite, parity with _drift.
+    assert (
+        f"CREATE INDEX idx_{p}_ledger_drift_day_account_role\n"
+        f"    ON {p}_ledger_drift (business_day_start, account_id, account_role);"
+    ) in sql
+
+
 def test_kitchen_sink_covers_every_primitive_kind() -> None:
     """Coverage gate: every primitive type + every important variant present.
 

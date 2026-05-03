@@ -123,12 +123,23 @@ class Config:
     def tags(self) -> "list[Tag]":
         """Return common + extra tags as the AWS Tag list format.
 
-        When ``l2_instance_prefix`` is set, an ``L2Instance`` tag is
-        attached so cleanup can scope per-instance (M.2d.3).
+        Three tags are always emitted:
+
+        - ``ManagedBy=quicksight-gen`` — gates cleanup eligibility.
+        - ``ResourcePrefix=<resource_prefix>`` — per-deploy scope. v8.4.0
+          isolation: lets cleanup sweep only the deployer's own
+          resources (e.g. ``qs-ci-<run_id>-pg``), so concurrent CI
+          runs + local deploys don't trample each other.
+        - ``L2Instance=<l2_instance_prefix>`` — only when the prefix is
+          set (M.2d.3). Per-institution scope, narrower than
+          ``ResourcePrefix``.
         """
         from quicksight_gen.common.models import Tag
 
-        all_tags = [Tag(Key="ManagedBy", Value="quicksight-gen")]
+        all_tags = [
+            Tag(Key="ManagedBy", Value="quicksight-gen"),
+            Tag(Key="ResourcePrefix", Value=self.resource_prefix),
+        ]
         if self.l2_instance_prefix is not None:
             all_tags.append(Tag(Key="L2Instance", Value=self.l2_instance_prefix))
         for key, value in self.extra_tags.items():

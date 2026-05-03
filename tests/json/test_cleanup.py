@@ -209,3 +209,127 @@ def test_collect_stale_scoped_skips_resources_in_expected_set():
     )
     stale_dash_ids = {rid for rid, _ in stale["dashboard"]}
     assert stale_dash_ids == {"instance-a-dash-stale"}
+
+
+# -- _collect_stale: per-deploy ResourcePrefix scope (v8.4.0) ----------------
+#
+# v8.4.0 hotfix for the W.3 cleanup-collision class. Three cases this
+# test class locks down:
+#
+# 1. ResourcePrefix-scoped cleanup ONLY sweeps resources whose
+#    ResourcePrefix tag matches. (Previously L2Instance-scoped only;
+#    a CI run sharing the spec_example L2 with a local deploy would
+#    sweep both.)
+# 2. Resources with NO ResourcePrefix tag (pre-v8.4.0 deploys) are
+#    fail-CLOSED — skipped, NOT swept. Forces operators to opt into
+#    the new scope by re-deploying so resources gain the tag.
+# 3. ResourcePrefix + L2Instance compose: BOTH must match for a
+#    resource to be eligible.
+
+
+def test_collect_stale_resource_prefix_only_sweeps_matching():
+    """v8.4.0 — with resource_prefix='qs-ci-12345-pg', only sweep
+    resources whose ResourcePrefix tag matches that exact value.
+    Other-prefix resources (concurrent CI run, local deploy) skipped."""
+    client = _StubClient(
+        summaries_by_kind={
+            "dashboard": [
+                ("ci-run-12345-dash", "arn:ci-12345"),
+                ("ci-run-67890-dash", "arn:ci-67890"),
+                ("local-deploy-dash", "arn:local"),
+                ("legacy-untagged-dash", "arn:legacy"),
+            ],
+        },
+        tags_by_arn={
+            "arn:ci-12345": [
+                _mk_tag("ManagedBy", "quicksight-gen"),
+                _mk_tag("ResourcePrefix", "qs-ci-12345-pg"),
+            ],
+            "arn:ci-67890": [
+                _mk_tag("ManagedBy", "quicksight-gen"),
+                _mk_tag("ResourcePrefix", "qs-ci-67890-pg"),
+            ],
+            "arn:local": [
+                _mk_tag("ManagedBy", "quicksight-gen"),
+                _mk_tag("ResourcePrefix", "qs-gen-postgres"),
+            ],
+            # Pre-v8.4.0 deploy: no ResourcePrefix tag at all.
+            "arn:legacy": [_mk_tag("ManagedBy", "quicksight-gen")],
+        },
+    )
+    stale = _collect_stale(
+        client, "111", _empty_expected(),
+        resource_prefix="qs-ci-12345-pg",
+    )
+    stale_dash_ids = {rid for rid, _ in stale["dashboard"]}
+    # Only the matching prefix is swept; other-prefix + legacy-untagged
+    # are skipped (different scope / pre-tag opt-in respectively).
+    assert stale_dash_ids == {"ci-run-12345-dash"}
+
+
+def test_collect_stale_resource_prefix_fails_closed_on_missing_tag():
+    """v8.4.0 — resources without a ResourcePrefix tag are NEVER
+    swept by a prefix-scoped cleanup. Operators must re-deploy
+    (which adds the tag) before prefix-scoped cleanup can touch them.
+    Belt-and-suspenders against the W.3 incident: even if a CI run's
+    cleanup misfires somehow, pre-tag local deploys are immune."""
+    client = _StubClient(
+        summaries_by_kind={
+            "dashboard": [("untagged", "arn:untagged")],
+        },
+        tags_by_arn={
+            # Only ManagedBy — no ResourcePrefix tag.
+            "arn:untagged": [_mk_tag("ManagedBy", "quicksight-gen")],
+        },
+    )
+    stale = _collect_stale(
+        client, "111", _empty_expected(),
+        resource_prefix="qs-ci-12345-pg",
+    )
+    stale_dash_ids = {rid for rid, _ in stale["dashboard"]}
+    assert stale_dash_ids == set(), (
+        "Pre-v8.4.0 untagged resources must NOT be swept by a "
+        "prefix-scoped cleanup. The operator's local deploy of "
+        "spec_example shouldn't be wiped by a CI run's cleanup just "
+        "because the operator hasn't redeployed since v8.4.0."
+    )
+
+
+def test_collect_stale_resource_prefix_and_l2_instance_compose():
+    """v8.4.0 — when both resource_prefix AND l2_instance_prefix are
+    set, BOTH tags must match for a resource to be eligible. This is
+    the production CI shape (per-run prefix + per-L2-instance scope)."""
+    client = _StubClient(
+        summaries_by_kind={
+            "dashboard": [
+                ("right-prefix-right-l2", "arn:right-right"),
+                ("right-prefix-wrong-l2", "arn:right-wrong"),
+                ("wrong-prefix-right-l2", "arn:wrong-right"),
+            ],
+        },
+        tags_by_arn={
+            "arn:right-right": [
+                _mk_tag("ManagedBy", "quicksight-gen"),
+                _mk_tag("ResourcePrefix", "qs-ci-12345-pg"),
+                _mk_tag("L2Instance", "spec_example"),
+            ],
+            "arn:right-wrong": [
+                _mk_tag("ManagedBy", "quicksight-gen"),
+                _mk_tag("ResourcePrefix", "qs-ci-12345-pg"),
+                _mk_tag("L2Instance", "sasquatch_pr"),
+            ],
+            "arn:wrong-right": [
+                _mk_tag("ManagedBy", "quicksight-gen"),
+                _mk_tag("ResourcePrefix", "qs-ci-67890-pg"),
+                _mk_tag("L2Instance", "spec_example"),
+            ],
+        },
+    )
+    stale = _collect_stale(
+        client, "111", _empty_expected(),
+        resource_prefix="qs-ci-12345-pg",
+        l2_instance_prefix="spec_example",
+    )
+    stale_dash_ids = {rid for rid, _ in stale["dashboard"]}
+    # Only the resource matching BOTH gets swept.
+    assert stale_dash_ids == {"right-prefix-right-l2"}

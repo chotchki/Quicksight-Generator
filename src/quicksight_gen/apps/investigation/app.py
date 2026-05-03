@@ -231,7 +231,7 @@ def _build_getting_started_sheet(
                 ),
                 rt.BR,
                 rt.BR,
-                rt.body(
+                rt.markdown(
                     "Compliance / AML triage surface for the Sasquatch "
                     "National Bank shared base ledger. Three question-shaped "
                     "sheets — recipient fanout, volume anomalies, and money "
