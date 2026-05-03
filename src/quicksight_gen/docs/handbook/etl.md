@@ -158,6 +158,81 @@ names the dashboard view that reads the resulting rows. Strip the
 `-EXAMPLE` sentinel suffix and wire the column projections to your
 upstream feed's source fields.
 
+## Troubleshooting
+
+### Symptom: dashboards show data older than expected
+
+A sheet is rendering, but the most recent rows look stale —
+yesterday's postings are missing, the Drift KPI hasn't budged
+since the last load, the Daily Statement walks stop a day or two
+behind the date you just ETL'd. Your first instinct is to suspect
+an ETL bug or a query bug. Before you go there, check whether the
+matviews are simply behind.
+
+### First diagnostic step: open the App Info sheet
+
+Every shipped dashboard's last tab is **Info** (the App Info
+canary). Open it. The right-hand visual is the **Matview Status**
+table — one row per base table and per matview the dashboard
+reads, with three columns:
+
+- **`view_name`** — the table or matview name.
+- **`row_count`** — total rows in that table / matview.
+- **`latest_date`** — `MAX(<date_col>)` for that row, i.e. the
+  most recent business day the table / matview knows about.
+
+Compare the `latest_date` values:
+
+- The two base tables — `<prefix>_transactions` and
+  `<prefix>_daily_balances` — reflect how fresh the source data
+  is. Their `latest_date` is the high-water mark your ETL has
+  loaded.
+- Every matview row below them should carry the **same**
+  `latest_date` (or within one ETL cycle of it).
+- If a matview's `latest_date` is significantly older than the
+  base tables, that matview is stale relative to the loaded data.
+  The dashboard sheets reading that matview will look like the
+  load never happened.
+
+### Root cause
+
+PostgreSQL and Oracle materialized views do **not** auto-refresh.
+They only update when explicitly told to via
+`REFRESH MATERIALIZED VIEW`. An ETL load that writes new rows to
+`<prefix>_transactions` and `<prefix>_daily_balances` but doesn't
+follow up with the refresh statements leaves every matview pointed
+at the *previous* load — the dashboards visualize a stale snapshot
+and look unchanged.
+
+### Fix
+
+Run the refresh, then reload the dashboard:
+
+- **Demo flow:** `quicksight-gen data refresh --execute`.
+- **Production ETL:** include the output of
+  `refresh_matviews_sql(l2_instance)` after every
+  `transactions` / `daily_balances` write. The helper emits the
+  dependency-ordered statements for the L2 instance you pass it;
+  call it from your load orchestrator.
+
+A browser reload is enough — every dataset is Direct Query, no
+SPICE invalidation step.
+
+### Related: the Liveness KPI is also blank
+
+While you're on the **Info** sheet, glance at the **Liveness** KPI
+on the left. It runs a real query against the database catalog. If
+it shows a number, QuickSight's rendering pipeline is healthy and
+any blank visual elsewhere on the dashboard is a data or SQL issue
+(stale matviews, an empty filter, an unexpected `WHERE` narrowing).
+If the Liveness KPI is **also** blank, QuickSight itself has
+hung — every visual on every sheet stuck on the spinner with no
+error banner. That's a separate failure mode; the fix is to wait
+it out, open in a fresh incognito window, or force a full
+delete-then-create of the QuickSight resource graph (theme,
+datasource, datasets, analysis, dashboard) plus a clean re-seed
+and matview refresh.
+
 ## Reference
 
 - [Schema v6 — Data Feed Contract](../Schema_v6.md) — column specs,
