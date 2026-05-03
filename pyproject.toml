@@ -90,6 +90,9 @@ docs = [
     "mkdocs>=1.6",
     "mkdocs-material>=9.5",
     "mkdocstrings[python]>=0.26",
+    # Auto-generated CLI reference page from the Click command tree
+    # (consumed by docs/reference/cli.md via the ``::: mkdocs-click`` directive).
+    "mkdocs-click>=0.8",
     # Phase O.1.a — Jinja2 templating in markdown (vocabulary substitution)
     # + ``{{ diagram(...) }}`` macro hook for the O.1.c render pipeline.
     "mkdocs-macros-plugin>=1.3",

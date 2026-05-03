@@ -138,6 +138,7 @@ nav:
     - Operations:
       - ETL — Data Integration: handbook/etl.md
       - Customization: handbook/customization.md
+      - CLI reference: reference/cli.md
   - API Reference:
     - Overview: api/index.md
     - Tree — App / Analysis / Dashboard / Sheet: api/tree-structure.md
@@ -182,3 +183,6 @@ markdown_extensions:
   # the styling.
   - admonition
   - pymdownx.details
+  # Auto-generated CLI reference (docs/reference/cli.md). Reads the
+  # Click command tree at build time.
+  - mkdocs-click
