@@ -1,5 +1,31 @@
 # Release Notes
 
+## v8.3.2 — Hotfix: Investigation App Info latest_date column
+
+Bug fix on top of v8.3.1.
+
+### Bug
+
+The Investigation app's App Info ("i") sheet matview-status table
+emitted SQL of the form `SELECT MAX(posted_day) AS latest_date
+FROM <prefix>_inv_pair_rolling_anomalies`, but the matview's outer
+SELECT projects `window_end`, not `posted_day` (`posted_day` lives
+only in an inner CTE). Net effect on a deployed dashboard: the
+Investigation App Info sheet's "latest_date" column would error out
+or render blank for the `inv_pair_rolling_anomalies` row.
+
+Bug shipped in v8.3.0 (introduced when V.3.b/c added the
+`latest_date` column to the App Info matview status table).
+Surfaced now because the new dataset CustomSQL smoke added in
+v8.3.1's CI was the first thing that actually executed the
+generated SQL against a live DB.
+
+### Fix
+
+`_INV_MATVIEW_BARE_SPECS` in `apps/investigation/datasets.py` now
+pairs `inv_pair_rolling_anomalies` with `window_end` — semantically
+the "freshest day this rolling-window matview is current through".
+
 ## v8.3.1 — Install reference, CI integration breadth, audit-verify regression guard
 
 Patch release on top of v8.3.0. All additive — no breaking changes,

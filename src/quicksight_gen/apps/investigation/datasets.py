@@ -43,11 +43,15 @@ from quicksight_gen.common.sheets.app_info import (
 # M.4.4.5 — matviews the Investigation app reads, surfaced on the
 # App Info ("i") sheet's matview-status table. V.3 — paired with the
 # date column the App Info ``latest_date`` KPI takes its MAX from.
-# `inv_pair_rolling_anomalies` carries `posted_day`; `inv_money_trail_edges`
-# is a recursive-CTE walk over edge metadata with no natural date
-# dimension (each row is a hop, not a posting), so it gets None.
+# `inv_pair_rolling_anomalies` carries `window_end` in its outer
+# projection (the most recent day the rolling 2-day window covers —
+# semantically the "freshest day this matview is current through").
+# Note: `posted_day` lives in an inner CTE but is not projected.
+# `inv_money_trail_edges` is a recursive-CTE walk over edge metadata
+# with no natural date dimension (each row is a hop, not a posting),
+# so it gets None.
 _INV_MATVIEW_BARE_SPECS: list[tuple[str, str | None]] = [
-    ("inv_pair_rolling_anomalies", "posted_day"),
+    ("inv_pair_rolling_anomalies", "window_end"),
     ("inv_money_trail_edges", None),
 ]
 
