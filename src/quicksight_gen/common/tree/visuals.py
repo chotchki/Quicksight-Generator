@@ -441,6 +441,22 @@ class BarChart:
                     }},
                 ],
             )
+        # v8.5.5 — auto-derive plain-English axis labels from the
+        # first leaf of each well when the author didn't pass an
+        # explicit override. ``_field_label`` runs the same
+        # human_name / smart_title cascade Table headers use
+        # (v8.5.0). Author-supplied labels still win — e.g., a chart
+        # that needs "$ Limit Cap (per day)" instead of the
+        # auto-derived "Cap" overrides via ``value_label="..."``.
+        category_label = self.category_label
+        if category_label is None and self.category:
+            category_label = _field_label(self.category[0])
+        value_label = self.value_label
+        if value_label is None and self.values:
+            value_label = _field_label(self.values[0])
+        color_label = self.color_label
+        if color_label is None and self.colors:
+            color_label = _field_label(self.colors[0])
         return Visual(
             BarChartVisual=BarChartVisual(
                 VisualId=self.visual_id,
@@ -458,21 +474,21 @@ class BarChart:
                     BarsArrangement=self.bars_arrangement,
                     CategoryLabelOptions=(
                         ChartAxisLabelOptions(AxisLabelOptions=[
-                            AxisLabelOptions(CustomLabel=self.category_label),
+                            AxisLabelOptions(CustomLabel=category_label),
                         ])
-                        if self.category_label is not None else None
+                        if category_label is not None else None
                     ),
                     ValueLabelOptions=(
                         ChartAxisLabelOptions(AxisLabelOptions=[
-                            AxisLabelOptions(CustomLabel=self.value_label),
+                            AxisLabelOptions(CustomLabel=value_label),
                         ])
-                        if self.value_label is not None else None
+                        if value_label is not None else None
                     ),
                     ColorLabelOptions=(
                         ChartAxisLabelOptions(AxisLabelOptions=[
-                            AxisLabelOptions(CustomLabel=self.color_label),
+                            AxisLabelOptions(CustomLabel=color_label),
                         ])
-                        if self.color_label is not None else None
+                        if color_label is not None else None
                     ),
                     SortConfiguration=sort_config,
                 ),

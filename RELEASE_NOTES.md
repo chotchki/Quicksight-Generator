@@ -1,5 +1,40 @@
 # Release Notes
 
+## v8.5.5 — Plain-English axis labels on BarChart visuals
+
+Closes Q.1.a.3 — the deferred sibling of v8.5.0's Table column
+header fix. Pre-v8.5.5 ``BarChart`` accepted optional
+``category_label`` / ``value_label`` / ``color_label`` overrides
+but defaulted them to ``None`` — sites that didn't pass an
+explicit override emitted no axis-label options at all, and
+QuickSight rendered the raw snake_case column name as the axis
+title (``account_id``, ``signed_amount``).
+
+### Operator-facing
+
+- **BarChart axes now derive plain-English titles automatically.**
+  When the author doesn't pass ``category_label`` / ``value_label`` /
+  ``color_label``, ``BarChart.emit()`` falls back to the first
+  leaf's ``human_name`` via the same ``_field_label`` helper Table
+  column headers use (v8.5.0). ``account_id`` → ``Account ID``,
+  ``signed_amount`` → ``Signed Amount``, etc.
+- **Author overrides still win.** A chart that needs a custom
+  axis title (e.g. ``"$ Limit Cap (per day)"`` on the limit-breach
+  view) keeps passing the override explicitly; auto-derivation is
+  the default, not a forced replacement.
+
+### Engineering surface
+
+- ``common/tree/visuals.py::BarChart.emit`` falls back to
+  ``_field_label`` (shared with Table) when label args are None
+  and the corresponding field-well is non-empty.
+- Class-level regression in ``tests/json/test_bar_chart_axis_labels.py``:
+  8 tests (4 apps × 2 invariants):
+  1. Every populated BarChart axis emits a label-options entry
+     so QS has an explicit axis title.
+  2. No emitted ``CustomLabel`` survives in raw snake_case form
+     (``^[a-z]+(_[a-z0-9]+)+$``).
+
 ## v8.5.4 — Bullet markdown links + daily-balance carry-forward
 
 Two small testing-feedback fixes.
