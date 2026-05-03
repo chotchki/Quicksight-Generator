@@ -39,7 +39,30 @@ jobs:
         run: uv sync --frozen --extra dev --extra audit
 
       - name: Run tests with coverage (pytest sessionstart runs pyright strict)
-        run: .venv/bin/pytest --cov=quicksight_gen --cov-report=xml --cov-report=term
+        # W.8b — drop ``--cov-report=xml --cov-report=term`` from this
+        # job: the coverage aggregator job below downloads each
+        # matrix's data file and produces the combined report.
+        # Per-matrix terminal report would be misleading anyway —
+        # 3.12 and 3.13 may exercise different branches.
+        #
+        # ``COVERAGE_FILE`` rename per matrix entry → ``coverage
+        # combine`` in the aggregator job globs ``.coverage.*`` and
+        # merges them. pytest-cov doesn't reliably honor
+        # ``parallel = true`` from pyproject (writes a single
+        # ``.coverage`` regardless), so we name uniquely at the
+        # process boundary instead.
+        env:
+          COVERAGE_FILE: .coverage.py${{ matrix.python-version }}
+        run: .venv/bin/pytest --cov=quicksight_gen
+
+      - name: Upload coverage data
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-data-${{ matrix.python-version }}
+          path: .coverage.py${{ matrix.python-version }}
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
 
   # P.7 — containerized integration job. Runs ``quicksight-gen demo
   # apply`` against a live Postgres + a live Oracle Free service
@@ -202,12 +225,23 @@ jobs:
           .venv/bin/quicksight-gen audit verify \
             /tmp/ci-oracle-report.pdf -c /tmp/ci-oracle.yaml
 
-  coverage-badge:
+  # W.8b — combine the matrix entries' coverage data, render a
+  # markdown summary into the GitHub Actions Step Summary (so the
+  # number is one click from the run page, not buried in logs), and
+  # publish the combined XML + HTML as artifacts. Pattern follows
+  # Hynek Schlawack's "Ditch Codecov" article — server-side coverage
+  # service replaced by a workflow job and a downloadable HTML
+  # report.
+  #
+  # Threshold: not gated. The user noted ~80% is the comfortable
+  # band — gating on a number tends to invite useless test churn,
+  # so the workflow surfaces the percentage and leaves the call to
+  # the operator. Add ``--fail-under=N`` to the report step below if
+  # you want the gate later.
+  coverage:
+    name: Combine + report coverage
     needs: test
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
 
     steps:
       - uses: actions/checkout@v6
@@ -222,30 +256,135 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Install dependencies (V.2 — uv sync from uv.lock)
-        # `[audit]` brings in pyhanko — needed even for unsigned PDFs
-        # (empty reviewer signature widgets land via pyhanko on every
-        # render). genbadge[coverage] is a CI-only badge tool — kept
-        # out of pyproject extras / lock so local dev installs stay lean.
-        run: |
-          uv sync --frozen --extra dev --extra audit
-          uv pip install 'genbadge[coverage]'
+      - name: Install dependencies (just coverage tooling)
+        # ``coverage`` is a transitive dep of pytest-cov which is in
+        # ``[dev]``. ``--no-install-project`` would skip the heavy
+        # extras, but uv sync needs the project for the venv shape;
+        # ``[dev]`` alone is light enough.
+        run: uv sync --frozen --extra dev
 
-      - name: Generate coverage XML
-        run: .venv/bin/pytest --cov=quicksight_gen --cov-report=xml
+      - name: Download all coverage data artifacts
+        uses: actions/download-artifact@v6
+        with:
+          pattern: coverage-data-*
+          merge-multiple: true
+
+      - name: Combine coverage data files
+        # Each matrix entry uploaded ``.coverage.<host>.<pid>.<rand>``
+        # files (``parallel = true`` in pyproject). ``coverage
+        # combine`` merges them into a single ``.coverage`` data
+        # file the report / xml / html steps consume.
+        run: .venv/bin/coverage combine
+
+      - name: Render markdown report (Step Summary + artifact)
+        # ``--format=markdown`` emits a GitHub-Flavored-Markdown
+        # table (coverage.py 7.x feature). Same content goes to
+        # both:
+        #   1. ``$GITHUB_STEP_SUMMARY`` — surfaces above the per-job
+        #      logs on the run page.
+        #   2. ``coverage-report.md`` — uploaded as an artifact and
+        #      republished by the ``coverage-badge`` job to the
+        #      ``badges`` branch so the README's coverage badge can
+        #      wrap-link to a human-readable report (``raw.git`` URL
+        #      stays static across runs since the file lives on the
+        #      ``badges`` branch).
+        run: |
+          {
+            echo "# Coverage report"
+            echo ""
+            echo "_Generated by W.8b coverage workflow on commit ${GITHUB_SHA:0:7}._"
+            echo ""
+            .venv/bin/coverage report --format=markdown
+          } > coverage-report.md
+          cat coverage-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Render terminal report (for the job log)
+        run: .venv/bin/coverage report
+
+      - name: Generate HTML report
+        run: .venv/bin/coverage html -d htmlcov
+
+      - name: Generate XML report
+        run: .venv/bin/coverage xml -o coverage.xml
+
+      - name: Upload HTML report
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-html-${{ github.run_id }}
+          path: htmlcov/
+          retention-days: 14
+
+      - name: Upload combined XML report
+        # Consumed by the ``coverage-badge`` job below — keeps the
+        # badge in sync with the unified report instead of re-running
+        # the suite a third time just for the badge.
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-xml-${{ github.run_id }}
+          path: coverage.xml
+          retention-days: 14
+
+      - name: Upload markdown report
+        # Consumed by ``coverage-badge`` so it can republish to the
+        # ``badges`` branch; the README's coverage badge then
+        # wrap-links to it.
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-md-${{ github.run_id }}
+          path: coverage-report.md
+          retention-days: 14
+
+  coverage-badge:
+    needs: coverage
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install genbadge
+        # W.8b — pre-W.8b this job re-ran the full pytest suite just
+        # to produce coverage.xml. Now it downloads the combined XML
+        # from the ``coverage`` job's artifact, so this install only
+        # needs the badge tool. ``uv pip install`` works with no
+        # project venv via ``--system`` (we don't need uv sync).
+        run: uv pip install --system 'genbadge[coverage]'
+
+      - name: Download combined coverage XML
+        uses: actions/download-artifact@v6
+        with:
+          name: coverage-xml-${{ github.run_id }}
+
+      - name: Download combined coverage markdown
+        uses: actions/download-artifact@v6
+        with:
+          name: coverage-md-${{ github.run_id }}
 
       - name: Generate badge SVG
-        run: .venv/bin/genbadge coverage -i coverage.xml -o coverage-badge.svg
+        run: genbadge coverage -i coverage.xml -o coverage-badge.svg
 
-      - name: Push badge to badges branch
+      - name: Push badge + report to badges branch
+        # Stash both files in /tmp before the orphan-branch reset
+        # blows them away. README's coverage badge wrap-links to
+        # ``coverage-report.md`` on this branch — raw.git URL stays
+        # static across runs, so the link doesn't rot.
         run: |
           cp coverage-badge.svg /tmp/coverage-badge.svg
+          cp coverage-report.md /tmp/coverage-report.md
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git fetch origin badges || true
           git checkout --orphan badges-tmp
           git rm -rf .
           cp /tmp/coverage-badge.svg coverage-badge.svg
-          git add coverage-badge.svg
-          git commit -m "Update coverage badge"
+          cp /tmp/coverage-report.md coverage-report.md
+          git add coverage-badge.svg coverage-report.md
+          git commit -m "Update coverage badge + report"
           git push origin badges-tmp:badges --force
