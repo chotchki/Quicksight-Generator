@@ -97,6 +97,7 @@ from quicksight_gen.common.tree.actions import (
     DrillParam,
     DrillResetSentinel,
     DrillSourceField,
+    DrillStaticDateTime,
     SameSheetFilter,
 )
 from quicksight_gen.common.tree.calc_fields import CalcField, ColumnRef
@@ -206,7 +207,7 @@ __all__ = [
     "StaticValues", "LinkedValues", "SelectableValues",
     # Drill actions (L.1.10)
     "Action", "Drill", "DrillParam", "DrillSourceField", "DrillResetSentinel",
-    "SameSheetFilter",
+    "DrillStaticDateTime", "SameSheetFilter",
     # Conditional formatting (L.3.7-followup)
     "CellAccentText", "CellAccentMenu", "CellFormat",
     # Structure

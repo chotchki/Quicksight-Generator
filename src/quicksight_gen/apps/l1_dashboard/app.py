@@ -83,6 +83,7 @@ from quicksight_gen.common.tree import (
     Drill,
     DrillParam,
     DrillResetSentinel,
+    DrillStaticDateTime,
     FilterGroup,
     LineChart,
     LinkedValues,
@@ -158,6 +159,46 @@ _DP_DS_ACCOUNT = DrillParam(P_L1_DS_ACCOUNT, ColumnShape.ACCOUNT_ID)
 _DP_DS_BALANCE_DATE = DrillParam(
     P_L1_DS_BALANCE_DATE, ColumnShape.DATETIME_DAY,
 )
+# v8.5.7 — universal date-range params, exposed as drill targets so a
+# cross-sheet drill from an unscoped current-state sheet (Pending Aging,
+# Unbundled Aging, Supersession Audit) into a date-scoped sheet
+# (Transactions) can widen the window to "all time" so the drill
+# target row is in scope. See ``_WIDE_DATE_WRITES`` below.
+_DP_DATE_START = DrillParam(P_L1_DATE_START, ColumnShape.DATETIME_DAY)
+_DP_DATE_END = DrillParam(P_L1_DATE_END, ColumnShape.DATETIME_DAY)
+
+# Far-past + far-future ISO-8601 literals the drill writes use when
+# widening the universal date range. The destination sheet's picker
+# will visibly snap to these values (a known QuickSight UX wart with
+# in-app drill writes) — analysts re-narrow if they want a tighter
+# slice. Mirrors the L2 Flow Tracing app's ``1900-01-01`` static
+# default convention; we picked 1990 instead because it predates any
+# realistic banking dataset while still being "modern" enough not to
+# look like an off-by-error. End at 2099 keeps the picker from
+# showing dates an analyst would mistake for a typo.
+_WIDE_DATE_START_VALUE = "1990-01-01T00:00:00.000Z"
+_WIDE_DATE_END_VALUE = "2099-12-31T00:00:00.000Z"
+
+
+def _wide_date_writes() -> list[tuple[DrillParam, DrillStaticDateTime]]:
+    """Pair of writes that widen the universal date range to "all time".
+
+    Caller appends these to ``writes=`` on cross-sheet drills whose
+    destination sheet is universally-date-scoped AND whose source
+    sheet is not — i.e. drills FROM Pending Aging / Unbundled Aging /
+    Supersession Audit (current-state views, unscoped) INTO
+    Transactions (universally scoped). Without these writes the drill
+    target row falls outside the destination's default 7-day window
+    and the table renders empty.
+
+    Same-scope drills (e.g. Today's Exceptions → Drift, both already
+    in the universal date filter) do NOT need these writes — the
+    user's existing window is preserved across the drill.
+    """
+    return [
+        (_DP_DATE_START, DrillStaticDateTime(_WIDE_DATE_START_VALUE)),
+        (_DP_DATE_END, DrillStaticDateTime(_WIDE_DATE_END_VALUE)),
+    ]
 
 
 _GETTING_STARTED_NAME = "Getting Started"
@@ -1105,7 +1146,14 @@ def _populate_pending_aging_sheet(
             _l1_drill(
                 target_sheet=transactions_sheet,
                 name="View Transactions for this transfer",
-                writes=[(_DP_TX_TRANSFER, transfer_col)],
+                # v8.5.7 — widen the destination's universal date
+                # filter on drill so a stuck-pending row older than
+                # the picker's default 7-day window still surfaces in
+                # Transactions. See ``_wide_date_writes`` for why.
+                writes=[
+                    (_DP_TX_TRANSFER, transfer_col),
+                    *_wide_date_writes(),
+                ],
                 trigger="DATA_POINT_MENU",
             ),
         ],
@@ -1196,7 +1244,12 @@ def _populate_unbundled_aging_sheet(
             _l1_drill(
                 target_sheet=transactions_sheet,
                 name="View Transactions for this transfer",
-                writes=[(_DP_TX_TRANSFER, transfer_col)],
+                # v8.5.7 — widen the destination's universal date
+                # filter on drill (mirror of Pending Aging).
+                writes=[
+                    (_DP_TX_TRANSFER, transfer_col),
+                    *_wide_date_writes(),
+                ],
                 trigger="DATA_POINT_MENU",
             ),
         ],
@@ -1472,7 +1525,12 @@ def _populate_daily_statement_sheet(
             _l1_drill(
                 target_sheet=transactions_sheet,
                 name="View Transactions for this transfer",
-                writes=[(_DP_TX_TRANSFER, transfer_col)],
+                # v8.5.7 — widen the destination's universal date
+                # filter on drill (mirror of Pending Aging).
+                writes=[
+                    (_DP_TX_TRANSFER, transfer_col),
+                    *_wide_date_writes(),
+                ],
                 trigger="DATA_POINT_MENU",
             ),
         ],

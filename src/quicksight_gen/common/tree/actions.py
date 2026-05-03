@@ -28,6 +28,7 @@ from typing import ClassVar, Literal
 from quicksight_gen.common.drill import (
     DrillResetSentinel,
     DrillSourceField,
+    DrillStaticDateTime,
     cross_sheet_drill as _emit_cross_sheet_drill,
 )
 from quicksight_gen.common.drill import DrillParam as _DrillParam
@@ -61,6 +62,7 @@ __all__ = [
     "DrillParam",
     "DrillSourceField",
     "DrillResetSentinel",
+    "DrillStaticDateTime",
     "SameSheetFilter",
 ]
 
@@ -72,13 +74,18 @@ __all__ = [
 # - DrillSourceField — explicit field_id + shape pair, kept as the
 #   escape hatch when callers need to override the auto-resolved shape.
 # - DrillResetSentinel — clears the parameter to PASS.
-DrillWriteSource = Union[Dim, Measure, DrillSourceField, DrillResetSentinel]
+# - DrillStaticDateTime — writes a fixed ISO-8601 datetime literal
+#   (e.g. wide-window date-range writes on cross-sheet drills into
+#   universally-date-filtered destination sheets).
+DrillWriteSource = Union[
+    Dim, Measure, DrillSourceField, DrillResetSentinel, DrillStaticDateTime,
+]
 DrillWrite = tuple[DrillParam, DrillWriteSource]
 
 
 def _resolve_drill_source(
     source: DrillWriteSource,
-) -> Union[DrillSourceField, DrillResetSentinel]:
+) -> Union[DrillSourceField, DrillResetSentinel, DrillStaticDateTime]:
     """Convert a tree-side drill write source into the K.2 type.
 
     Dim / Measure refs are translated:
@@ -86,9 +93,10 @@ def _resolve_drill_source(
     - shape pulled from the dataset contract for real columns; from
       ``CalcField.shape`` for calc-field columns
 
-    DrillSourceField / DrillResetSentinel pass through unchanged.
+    DrillSourceField / DrillResetSentinel / DrillStaticDateTime pass
+    through unchanged — they're already terminal write values.
     """
-    if isinstance(source, (DrillSourceField, DrillResetSentinel)):
+    if isinstance(source, (DrillSourceField, DrillResetSentinel, DrillStaticDateTime)):
         return source
     # Dim / Measure path — resolve field_id + shape.
     leaf = source
