@@ -104,7 +104,18 @@ def _fetch_oracle(conn: Any, like_pattern: str, top: int) -> list[tuple[Any, ...
     cur = conn.cursor()
     try:
         cur.execute(_ORACLE_TOP_QUERIES_SQL, (f"%{like_pattern}%", top))
-        return list(cur.fetchall())
+        rows = cur.fetchall()
+        # ``v$sqlstats.sql_fulltext`` is a CLOB; Oracle's SUBSTR on a
+        # CLOB returns CLOB (not VARCHAR2), so oracledb hands us
+        # ``oracledb.LOB`` objects on the last column. Those don't
+        # have ``.replace()`` — the formatter would crash with
+        # ``AttributeError: 'LOB' object has no attribute 'replace'``
+        # if passed through. Read the LOB here so the formatter stays
+        # dialect-agnostic.
+        return [
+            (*r[:-1], r[-1].read() if hasattr(r[-1], "read") else r[-1])
+            for r in rows
+        ]
     finally:
         cur.close()
 
@@ -229,14 +240,30 @@ def main() -> int:
         except Exception:
             pass
 
-    args.output.write_text(
-        _format_markdown(
-            title=args.title,
-            dialect=dialect,
-            like_pattern=args.like,
-            rows=rows,
+    try:
+        args.output.write_text(
+            _format_markdown(
+                title=args.title,
+                dialect=dialect,
+                like_pattern=args.like,
+                rows=rows,
+            )
         )
-    )
+    except Exception as e:
+        # Defense in depth — formatter shouldn't break CI either. Hit
+        # in CI when oracledb returned ``v$sqlstats.sql_fulltext`` as
+        # a CLOB and the formatter tried ``.replace()`` on it (the
+        # ``_fetch_oracle`` reader handles that now, but the wrap
+        # stays as an extra safety net for future row-shape surprises).
+        args.output.write_text(
+            _format_skipped(
+                title=args.title,
+                dialect=dialect,
+                reason=f"format failed: {type(e).__name__}: {e}",
+            )
+        )
+        print(f"[dump_top_queries] format failed: {e!r}", file=sys.stderr)
+        return 0
     print(
         f"[dump_top_queries] wrote {len(rows)} rows to {args.output}",
         file=sys.stderr,

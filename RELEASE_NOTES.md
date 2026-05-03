@@ -1,5 +1,24 @@
 # Release Notes
 
+## v8.6.2 — Oracle top-queries dump: read LOB before format
+
+The W.8a top-queries dump crashed the v8.6.0 release-pipeline e2e
+job on the Oracle leg with ``AttributeError: 'LOB' object has no
+attribute 'replace'``. Oracle's ``v$sqlstats.sql_fulltext`` is a
+CLOB; ``SUBSTR`` on a CLOB returns a CLOB (not VARCHAR2), so
+oracledb hands back ``oracledb.LOB`` objects on the query-text
+column. The markdown formatter then tried ``.replace()`` on it and
+died.
+
+### Fix
+
+- ``scripts/dump_top_queries.py::_fetch_oracle`` now reads any
+  trailing-column LOB to a string before returning rows — formatter
+  stays dialect-agnostic.
+- Defensive top-level wrapper in ``main()`` catches any uncaught
+  formatter exception and writes a "skipped" marker (perf
+  observability shouldn't break CI for any reason).
+
 ## v8.6.1 — BarChart / LineChart axis labels need ApplyTo binding
 
 v8.5.5 wired ``BarChart.emit()`` to auto-derive plain-English axis
