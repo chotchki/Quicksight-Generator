@@ -42,6 +42,18 @@ Issues = "https://github.com/chotchki/Quicksight-Generator/issues"
 Changelog = "https://github.com/chotchki/Quicksight-Generator/blob/main/RELEASE_NOTES.md"
 
 [project.optional-dependencies]
+deploy = [
+    # `quicksight-gen json apply --execute` (push JSON to AWS) +
+    # `json clean --execute` (sweep ManagedBy:quicksight-gen resources)
+    # both go through boto3. botocore[crt] pulls awscrt — required for
+    # the SSO / login credential provider, which trips
+    # MissingDependencyException at boto3 client init when operators
+    # use AWS SSO / `aws sso login`. Bare install (without this extra)
+    # is fine for emit-only — `json apply` writes JSON to disk without
+    # touching AWS — boto3 is lazily imported in the `--execute` branch.
+    "boto3>=1.34",
+    "botocore[crt]>=1.34",
+]
 demo = [
     "psycopg2-binary>=2.9",
 ]

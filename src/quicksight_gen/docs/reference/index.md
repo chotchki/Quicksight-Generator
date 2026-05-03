@@ -27,6 +27,9 @@ produces the rows the dashboard expects.
 - [Investigation](../handbook/investigation.md) — recipient fanout,
   volume anomalies, money-trail provenance, and account-network graphs
   for the compliance / AML triage team.
+- [Install](install.md) — which PyPI extras to pick for your use
+  case (emit-only / deploy / demo DB / audit PDF / docs build / full
+  dev environment).
 - [ETL — Data Integration](../handbook/etl.md) — for the engineer
   populating the two base tables from upstream systems.
 - [Customization](../handbook/customization.md) — for the developer

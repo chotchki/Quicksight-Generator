@@ -1,5 +1,52 @@
 # Release Notes
 
+## v8.3.1 — Install reference, CI integration breadth, audit-verify regression guard
+
+Patch release on top of v8.3.0. All additive — no breaking changes,
+no behavior changes on the deployed dashboards.
+
+### Operator-facing
+
+- **New install reference page** at `Reference > Operations > Install`.
+  Per-extra unlock matrix (what `[deploy]` / `[demo]` / `[demo-oracle]`
+  / `[audit]` / `[docs]` / `[dev]` / `[e2e]` each turn on), four
+  common shapes with copy-pasteable commands, and the "quote the
+  brackets in zsh" footgun called out. Triggered by a real consumer
+  who installed bare `quicksight-gen` and didn't know which extras to
+  add for signed PDFs.
+- **New `[deploy]` extra** — `boto3` + `botocore[crt]`. Closes the
+  gap where bare install + `json apply --execute` would `ImportError`
+  on `boto3` unless you already had the heavyweight `[dev]` extra.
+  `botocore[crt]` is needed for AWS SSO (`aws sso login`) auth.
+
+### Engineering surface
+
+- **CI integration job widened.** Each push now runs against the
+  live PG + Oracle Free service containers:
+    - `audit apply --execute -o /tmp/report.pdf` — full reportlab
+      PDF generation against every L1 invariant matview
+    - `audit verify /tmp/report.pdf` — provenance roundtrip
+      (recomputes embedded SHA256s, asserts match)
+    - `verify_dataset_sql.py` — every emitted dataset's CustomSQL
+      parses + executes against the live DB (`WHERE 1=0` smoke).
+      Catches dialect-specific SQL bugs (JSON path concat, ORA-25154
+      USING qualifier, ORA-00911 underscore identifier) in seconds
+      instead of at browser-test time.
+- **Audit verify hwm-pinning regression guard.** New DB-gated test
+  in `tests/audit/test_pdf_matches_scenario.py` that:
+  (1) renders an audit PDF, (2) inserts a row into the base table
+  above the embedded high-water-mark, (3) asserts `audit verify`
+  still passes, (4) cleans up the inserted row. Locks the property
+  that makes audit PDFs re-verifiable indefinitely against an
+  append-only base table.
+- **CLI doc scrub.** Dropped four stale phase tags from user-visible
+  Click `help=` strings + command docstrings (the bits `mkdocs-click`
+  renders into `Reference > Operations > CLI reference`):
+  `--viewport` help, `audit apply` "Phase U.1 ships…" paragraph
+  (Phase U is fully shipped), `audit test` U.8.a/c + U.8.b refs,
+  `audit verify` trailing `(U.7)`. Internal helper docstrings
+  preserved as in-code anchors.
+
 ## v8.3.0 — Phase V (config / institution split + uv migration + small follow-ups)
 
 A grab-bag phase of post-Phase-U cleanup. Nothing user-visible on the

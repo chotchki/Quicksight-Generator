@@ -99,7 +99,10 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies (V.2 — uv sync from uv.lock)
-        run: uv sync --frozen --extra dev --extra demo --extra demo-oracle
+        # `--extra audit` adds pyhanko on top of reportlab + pypdf
+        # (already in [dev]) so `audit apply --execute` can land its
+        # empty reviewer-signature widgets without ImportError.
+        run: uv sync --frozen --extra dev --extra demo --extra demo-oracle --extra audit
 
       - name: Apply demo against Postgres
         run: |
@@ -130,6 +133,29 @@ jobs:
             --url "postgresql://postgres:ci_pg_password@localhost:5432/postgres" \
             --prefix spec_example --smoke
 
+      - name: Smoke every dataset's CustomSQL against Postgres
+        # Walks every emitted dataset across all 4 apps, substitutes
+        # QS `<<$param>>` placeholders with declared defaults, wraps
+        # in `WHERE 1=0`, and executes against the live DB. Catches
+        # the SQL bugs that previously only surfaced at browser-test
+        # time (JSON path concat, USING qualifier, missing FROM dual).
+        run: |
+          .venv/bin/python tests/integration/verify_dataset_sql.py \
+            --config /tmp/ci-pg.yaml \
+            --l2-instance tests/l2/spec_example.yaml
+
+      - name: Render + verify the audit PDF against Postgres
+        # `audit apply --execute` queries every L1 invariant matview
+        # and renders a regulator-ready PDF via reportlab. `audit
+        # verify` recomputes the embedded ProvenanceFingerprint from
+        # current sources and asserts every per-source SHA256
+        # matches what the PDF baked in.
+        run: |
+          .venv/bin/quicksight-gen audit apply \
+            -c /tmp/ci-pg.yaml --execute -o /tmp/ci-pg-report.pdf
+          .venv/bin/quicksight-gen audit verify \
+            /tmp/ci-pg-report.pdf -c /tmp/ci-pg.yaml
+
       - name: Apply demo against Oracle Free
         run: |
           cat > /tmp/ci-oracle.yaml <<'EOF'
@@ -154,6 +180,27 @@ jobs:
             --dialect oracle \
             --url "system/ci_ora_password@localhost:1521/FREEPDB1" \
             --prefix spec_example --smoke
+
+      - name: Smoke every dataset's CustomSQL against Oracle
+        # Same rationale as the Postgres dataset smoke above. The
+        # Oracle leg matters more — most dialect divergences (JSON
+        # path concat, ORA-00923 SELECT-without-FROM, ORA-00911
+        # underscore identifier, ORA-25154 USING qualifier) only
+        # break here, not against PG.
+        run: |
+          .venv/bin/python tests/integration/verify_dataset_sql.py \
+            --config /tmp/ci-oracle.yaml \
+            --l2-instance tests/l2/spec_example.yaml
+
+      - name: Render + verify the audit PDF against Oracle
+        # Same rationale as the Postgres audit PDF step above. Catches
+        # Oracle-only PDF render breakage (e.g. SQL/JSON path syntax
+        # divergence in the matview queries that audit reads).
+        run: |
+          .venv/bin/quicksight-gen audit apply \
+            -c /tmp/ci-oracle.yaml --execute -o /tmp/ci-oracle-report.pdf
+          .venv/bin/quicksight-gen audit verify \
+            /tmp/ci-oracle-report.pdf -c /tmp/ci-oracle.yaml
 
   coverage-badge:
     needs: test

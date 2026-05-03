@@ -136,6 +136,7 @@ nav:
       - L1 Invariants: L1_Invariants.md
       - Seed generator: handbook/seed-generator.md
     - Operations:
+      - Install: reference/install.md
       - ETL — Data Integration: handbook/etl.md
       - Customization: handbook/customization.md
       - CLI reference: reference/cli.md

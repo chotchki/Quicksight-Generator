@@ -241,3 +241,83 @@ def test_pdf_includes_planted_rows(seeded_pdf, invariant):
         f"scenario planted {expected_count} — producer pipeline "
         f"is missing planted rows in the rendered output"
     )
+
+
+def test_audit_verify_pins_to_embedded_hwm_against_newer_rows(
+    seeded_pdf, db_cfg, db_cfg_path,
+):
+    """Re-verifiability under append: rows added to the base tables
+    AFTER a PDF is rendered must NOT cause ``audit verify`` to flag
+    a diff.
+
+    The whole reason ``audit verify`` reads the high-water-mark from
+    the PDF's embedded ``ProvenanceFingerprint`` (rather than
+    recomputing ``MAX(entry)`` against the live DB) is so a
+    regulator can come back to a 6-month-old report and still get a
+    clean verify against a base table that's grown since. Without
+    this property, the report rots the moment the next ETL load
+    hits — useless as a permanent audit artifact.
+
+    Regression guard: if a future refactor swapped
+    ``embedded.transactions_hwm`` for a fresh ``SELECT MAX(entry)``,
+    every other test in this file still passes (they all run against
+    a freshly-seeded DB where the live max == the embedded hwm).
+    This test is the only one that distinguishes the two
+    implementations.
+    """
+    pdf_path, _ = seeded_pdf
+    instance = load_instance(_SPEC_EXAMPLE)
+    prefix = instance.instance
+    sentinel_id = "verify-test-pinning-row"
+    dialect = (
+        Dialect.ORACLE
+        if (db_cfg.dialect or "").lower() == "oracle"
+        else Dialect.POSTGRES
+    )
+    limit_clause = (
+        "WHERE ROWNUM = 1" if dialect == Dialect.ORACLE else "LIMIT 1"
+    )
+
+    conn = connect_demo_db(db_cfg)
+    try:
+        cur = conn.cursor()
+        # Clone an existing row's NOT-NULL columns with a fresh ``id``
+        # so ``entry`` auto-assigns above the PDF's embedded hwm. The
+        # composite PK (id, entry) keeps this from colliding with the
+        # source row.
+        cur.execute(
+            f"INSERT INTO {prefix}_transactions ("
+            f"  id, account_id, account_scope, amount_money,"
+            f"  amount_direction, status, posting, transfer_id,"
+            f"  transfer_type, rail_name, origin"
+            f") "
+            f"SELECT "
+            f"  '{sentinel_id}', account_id, account_scope, amount_money,"
+            f"  amount_direction, status, posting, transfer_id,"
+            f"  transfer_type, rail_name, origin "
+            f"FROM {prefix}_transactions {limit_clause}"
+        )
+        conn.commit()
+        try:
+            runner = CliRunner()
+            result = runner.invoke(
+                main,
+                [
+                    "audit", "verify", str(pdf_path),
+                    "-c", str(db_cfg_path),
+                    "--l2", str(_SPEC_EXAMPLE),
+                ],
+            )
+            assert result.exit_code == 0, (
+                "audit verify must pass after newer rows are inserted "
+                "above the embedded hwm — the hwm-pinning property "
+                f"regressed:\n{result.output}"
+            )
+        finally:
+            cur.execute(
+                f"DELETE FROM {prefix}_transactions "
+                f"WHERE id = '{sentinel_id}'"
+            )
+            conn.commit()
+    finally:
+        conn.close()

@@ -1515,6 +1515,10 @@ demo = [
 demo-oracle = [
     { name = "oracledb" },
 ]
+deploy = [
+    { name = "boto3" },
+    { name = "botocore", extra = ["crt"] },
+]
 dev = [
     { name = "boto3" },
     { name = "boto3-stubs", extra = ["quicksight"] },
@@ -1547,9 +1551,11 @@ e2e = [
 
 [package.metadata]
 requires-dist = [
+    { name = "boto3", marker = "extra == 'deploy'", specifier = ">=1.34" },
     { name = "boto3", marker = "extra == 'dev'", specifier = ">=1.34" },
     { name = "boto3", marker = "extra == 'e2e'", specifier = ">=1.34" },
     { name = "boto3-stubs", extras = ["quicksight"], marker = "extra == 'dev'", specifier = ">=1.34" },
+    { name = "botocore", extras = ["crt"], marker = "extra == 'deploy'", specifier = ">=1.34" },
     { name = "botocore", extras = ["crt"], marker = "extra == 'dev'", specifier = ">=1.34" },
     { name = "botocore", extras = ["crt"], marker = "extra == 'e2e'", specifier = ">=1.34" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.0" },
@@ -1579,7 +1585,7 @@ requires-dist = [
     { name = "reportlab", marker = "extra == 'dev'", specifier = ">=4.0" },
     { name = "twine", marker = "extra == 'dev'", specifier = ">=5.0" },
 ]
-provides-extras = ["demo", "demo-oracle", "audit", "dev", "docs", "e2e"]
+provides-extras = ["deploy", "demo", "demo-oracle", "audit", "dev", "docs", "e2e"]
 
 [[package]]
 name = "readme-renderer"
