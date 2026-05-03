@@ -1,42 +1,64 @@
-"""Demo-seed primitives for any L2 instance (M.2d.5).
+"""Demo-seed primitives for any L2 instance.
 
-Lifted from ``tests/l2/sasquatch_ar_seed.py`` so the typed plant
-dataclasses + ``emit_seed`` machinery are reusable across instances:
+Two seed layers compose to produce a full demo's richness:
 
-- The Sasquatch AR fixture uses these primitives in
-  ``tests/l2/sasquatch_ar_seed.py::default_ar_scenario``.
-- M.3 will mirror with ``tests/l2/sasquatch_pr_seed.py::default_pr_scenario``,
-  reusing every ``_emit_*_rows`` / ``_txn_row`` / ``_balance_row`` helper
-  here (no per-app duplicate emit machinery).
-- Integrators authoring their own L2 instance import these primitives
-  directly to declare their demo scenarios in code (per M.6's CLI
-  workflow).
+1. **Baseline (Phase R, ``emit_baseline_seed``).** Walks every
+   declared Rail / Chain / TransferTemplate / AggregatingRail in
+   the L2 instance and emits a healthy 90-day rolling window of
+   "things that are working as intended" — multi-leg transfers,
+   bundled child legs, chain firings, opening-balance funding,
+   per-account daily-balance materialization with weekend / holiday
+   carry-forward (v8.5.4). Materializes ``AccountTemplate``
+   instances at runtime so the integrator only has to declare the
+   template once in YAML. This layer IS what reproduces "a full
+   demo's richness" — the older "plants only" claim no longer
+   applies.
 
-What ``emit_seed(instance, scenarios)`` produces:
-- A single deterministic SQL string ready for
-  ``psycopg2.cursor.execute`` or ``psql``.
-- Inserts go to ``<instance.instance>_transactions`` +
-  ``<instance.instance>_daily_balances`` (the schema M.1a.7's
-  ``emit_schema`` produced).
-- Plant order is sorted by stable keys (account_id, days_ago,
-  transfer_type) so the M.2.7 hash-lock can pin the output bytes.
+2. **Plants (``emit_seed``).** Layered on top of the baseline. Each
+   ``ScenarioPlant`` member is a typed dataclass that emits the
+   minimum rows needed to surface a specific L1 invariant violation
+   (drift / overdraft / limit-breach / stuck-pending / stuck-unbundled
+   / supersession / template-cycle / transfer-template) or an
+   Investigation-side anomaly (recipient fanout). Plant order is
+   sorted by stable keys so ``data hash`` can pin the SHA256.
 
-What this module deliberately does NOT do:
-- Reproduce a full demo's richness (background traffic, baseline-clean
-  customers, multi-leg TransferTemplate cycles, AggregatingRail
-  bundling). Plant the minimum that exercises every L1 invariant view;
-  richer seed work belongs in app-level demo generators.
-- Materialize ``AccountTemplate`` instances at runtime — the integrator
-  declares concrete ``TemplateInstance`` rows on the ``ScenarioPlant``.
-  At runtime, an ETL is responsible for materialization.
+3. **Composed (``emit_full_seed``).** Concatenates baseline + plants.
+   This is the entry point ``data apply`` calls when an integrator
+   loads their L2 YAML and seeds the demo DB — full baseline +
+   planted exception scenarios in one SQL script.
+
+Loading a scenario via L2 YAML always goes through ``emit_full_seed``
+(via ``cli/_helpers.py::build_full_seed_sql``), so the integrator
+gets the full richness on every ``data apply``. The auto-derived
+plant scenario comes from ``auto_scenario.default_scenario_for``
+walking the L2 instance — there's no separate "scenario YAML";
+plants fall out of the L2 shape via heuristics.
 
 Public API:
-- Plant dataclasses: ``TemplateInstance``, ``DriftPlant``,
+
+- **Plant dataclasses**: ``TemplateInstance``, ``DriftPlant``,
   ``OverdraftPlant``, ``LimitBreachPlant``, ``StuckPendingPlant``,
-  ``StuckUnbundledPlant``, ``SupersessionPlant``.
-- Container: ``ScenarioPlant`` (holds template_instances + every
-  plant tuple + a reference ``today`` date).
-- Entry point: ``emit_seed(instance, scenarios) -> str``.
+  ``StuckUnbundledPlant``, ``SupersessionPlant``,
+  ``TransferTemplatePlant``, ``InvFanoutPlant``,
+  ``RailFiringPlant``.
+- **Container**: ``ScenarioPlant`` (holds ``template_instances`` +
+  every plant tuple + a reference ``today`` date).
+- **Entry points**:
+  - ``emit_seed(instance, scenarios)`` — plants only; deterministic
+    output for hash-locking.
+  - ``emit_baseline_seed(instance)`` — 90-day healthy baseline only.
+  - ``emit_full_seed(instance, scenarios)`` — baseline + plants;
+    what ``data apply`` calls.
+
+What this module still deliberately does NOT do:
+
+- Decide *what* plants to add. That's
+  ``auto_scenario.default_scenario_for(instance)`` — heuristics that
+  walk the L2 shape and pick plant inputs (which Rail to drift,
+  which LimitSchedule to breach, etc.).
+- Wire dialect-specific schema DDL. That's
+  ``schema.emit_schema(instance)``. The seed assumes the schema
+  shape ``emit_schema`` produces.
 """
 
 from __future__ import annotations
