@@ -121,16 +121,23 @@ nav:
       - How do I publish docs against my L2?: walkthroughs/customization/how-do-i-publish-docs-against-my-l2.md
   - Reference:
     - Overview: reference/index.md
-    - L1 Reconciliation Dashboard: handbook/l1.md
-    - L2 Flow Tracing: handbook/l2_flow_tracing.md
-    - Investigation: handbook/investigation.md
-    - Executives: handbook/executives.md
-    - ETL — Data Integration: handbook/etl.md
-    - Seed generator: handbook/seed-generator.md
-    - Customization: handbook/customization.md
-    - Audit Reconciliation Report: handbook/audit.md
-    - Schema v6 — Data Feed Contract: Schema_v6.md
-    - L1 Invariants: L1_Invariants.md
+    # V.8 — 3-level nesting splits the previously-flat 11-item Reference
+    # into three concerns matching the mental model: which dashboard
+    # (App handbooks), what shape your data feed must take (Data
+    # contract), what to do with the tool (Operations).
+    - App handbooks:
+      - L1 Reconciliation Dashboard: handbook/l1.md
+      - L2 Flow Tracing: handbook/l2_flow_tracing.md
+      - Investigation: handbook/investigation.md
+      - Executives: handbook/executives.md
+      - Audit Reconciliation Report: handbook/audit.md
+    - Data contract:
+      - Schema v6 — Data Feed Contract: Schema_v6.md
+      - L1 Invariants: L1_Invariants.md
+      - Seed generator: handbook/seed-generator.md
+    - Operations:
+      - ETL — Data Integration: handbook/etl.md
+      - Customization: handbook/customization.md
   - API Reference:
     - Overview: api/index.md
     - Tree — App / Analysis / Dashboard / Sheet: api/tree-structure.md
