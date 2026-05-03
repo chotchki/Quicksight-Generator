@@ -91,9 +91,15 @@ def resolve_l2_for_demo(
 def build_full_seed_sql(cfg, instance) -> str:  # type: ignore[no-untyped-def]
     """Compose the demo seed pipeline.
 
-    Densify per-kind plants (×5) → add 15 broken-rail stuck_pending
-    plants on one rail → boost inv_fanout amounts (×5). Returns the
-    concatenated SQL of the 90-day baseline + plant overlays.
+    Picks the ``l1_plus_broad`` scenario mode so the demo gets BOTH
+    L1 SHOULD-violation plants (drift / overdraft / etc.) AND broad
+    L2-shape plants (per-rail RailFiringPlant + per-template
+    TransferTemplatePlant) — the L2 Flow Tracing dashboard's Rails /
+    Chains / Transfer Templates sheets need the broad layer to render
+    non-empty in the demo. Then densifies per-kind plants (×5), adds
+    15 broken-rail stuck_pending plants on one rail, boosts inv_fanout
+    amounts (×5). Returns the concatenated SQL of the 90-day baseline
+    + plant overlays.
     """
     from quicksight_gen.common.l2.auto_scenario import (
         add_broken_rail_plants,
@@ -103,7 +109,7 @@ def build_full_seed_sql(cfg, instance) -> str:  # type: ignore[no-untyped-def]
     )
     from quicksight_gen.common.l2.seed import emit_full_seed
 
-    base = default_scenario_for(instance).scenario
+    base = default_scenario_for(instance, mode="l1_plus_broad").scenario
     dense = densify_scenario(base, factor=5)
     broken = add_broken_rail_plants(dense, instance, broken_count=15)
     final = boost_inv_fanout_plants(broken, amount_multiplier=5)

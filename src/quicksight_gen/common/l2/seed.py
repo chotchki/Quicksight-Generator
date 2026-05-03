@@ -279,16 +279,25 @@ class TransferTemplatePlant:
     synthetic values keyed off ``firing_seq`` so two firings of the
     same template don't collapse to one shared Transfer.
 
-    M.3.10g first cut: only handles templates whose ``leg_rails`` first
-    entry is a ``TwoLegRail`` with ``expected_net = 0`` — emits 2 legs
-    per firing (debit on source-side account + credit on destination-
-    side account, summing to zero). Multi-rail / SingleLegRail-chain
-    templates (e.g. internal-transfer suspense cycles) are deferred.
+    M.3.10g first cut handled only ``TwoLegRail`` first leg_rails
+    (debit + credit summing to ``expected_net = 0`` in one firing).
+    Extended to also handle ``SingleLegRail`` first leg_rails — emits
+    one leg per firing in the rail's ``leg_direction`` (``Variable``
+    treated as ``Debit`` for plant purposes; closing-leg semantics
+    aren't material to surfacing data on the L2FT TT explorer).
+    Single-leg firings surface as 'Imbalanced' against
+    ``expected_net = 0`` (one bare leg can't sum to zero) — accurate
+    L1 representation of a single-leg cycle without its sibling
+    legs. Multi-leg-per-firing SingleLegRail cycles (e.g. on a
+    shared transfer_id by transfer_key) are still deferred.
 
     ``source_account_id`` and ``destination_account_id`` may each be
     either a ``TemplateInstance.account_id`` (a materialized customer)
     OR an L2 ``Account.id`` (a singleton or external counterparty).
-    The emit helper resolves each at seed time — so a
+    For SingleLegRail templates only ``source_account_id`` is used
+    (the leg account); the picker sets ``destination_account_id`` to
+    the same value for shape consistency, and the emit helper
+    ignores it. The emit helper resolves each at seed time — so a
     customer-DDA→external rail and an external→clearing rail both
     fit this single plant shape.
 
@@ -3678,47 +3687,34 @@ def _emit_transfer_template_rows(
 ) -> list[str]:
     """Plant ONE shared Transfer firing of the L2-declared TransferTemplate.
 
-    Two legs (debit on source-side account, credit on destination-side
-    account) both carrying:
+    Branches on the first ``leg_rails`` entry's rail kind:
+
+    - ``TwoLegRail`` — emits 2 legs (debit on source account + credit
+      on destination account). Net = -amount + amount = 0 (matches
+      ``expected_net = 0``).
+    - ``SingleLegRail`` — emits 1 leg with direction per
+      ``rail.leg_direction`` (``Variable`` treated as ``Debit`` for
+      seed purposes; closing-leg semantics aren't material to the
+      L2 hygiene checks the plant targets). Net = ±amount (the SQL's
+      completion_status surfaces this as 'Imbalanced' against
+      ``expected_net = 0`` — accurate L1 representation of a bare
+      single-leg cycle without its sibling legs).
+
+    Both shapes set:
 
     - ``transfer_id`` shared (= ``tr-tt-<n>``)
     - ``template_name`` = ``p.template_name``
     - ``transfer_type`` = the template's declared ``transfer_type``
-    - ``rail_name`` = first ``leg_rails`` entry (a TwoLegRail; the
-      picker enforced this)
+    - ``rail_name`` = first ``leg_rails`` entry
     - ``transfer_key`` metadata values populated with synthetic
       per-firing values so the SPEC's "same transfer_key joins one
       shared Transfer" rule remains true.
 
-    Net = -amount + amount = 0, matching the templates we currently
-    handle (``expected_net = 0``). Templates with non-zero
-    ``expected_net`` are not yet supported; the picker excludes them.
+    Templates with non-zero ``expected_net`` are not yet supported;
+    the picker excludes them.
     """
     template = _resolve_transfer_template(p.template_name, instance)
     rail = _resolve_rail(template.leg_rails[0], instance)
-    if not isinstance(rail, TwoLegRail):
-        raise ValueError(
-            f"_emit_transfer_template_rows: rail {rail.name!r} is not a "
-            f"TwoLegRail. The picker should have excluded the template."
-        )
-
-    src = _resolve_any_account(
-        p.source_account_id, instance, scenarios, template_by_role,
-    )
-    dst = _resolve_any_account(
-        p.destination_account_id, instance, scenarios, template_by_role,
-    )
-
-    # Origin resolution per L2 rule O1: per-leg overrides take precedence
-    # over the rail-level shared origin.
-    src_origin = (
-        str(rail.source_origin) if rail.source_origin is not None
-        else (str(rail.origin) if rail.origin is not None else "InternalInitiated")
-    )
-    dst_origin = (
-        str(rail.destination_origin) if rail.destination_origin is not None
-        else (str(rail.origin) if rail.origin is not None else "InternalInitiated")
-    )
 
     # transfer_key metadata: populate every declared transfer_key field
     # with a synthetic per-firing value so two firings of the same
@@ -3734,48 +3730,107 @@ def _emit_transfer_template_rows(
     transfer_id = f"tr-tt-{n:04d}"
     posting_ts = f"{plant_day.isoformat()}T11:00:00+00:00"
 
-    rows = [
-        # Source-side leg (debit, money out).
-        _txn_row(
-            id_=f"{txn_id}-src",
-            account_id=src.account_id,
-            account_name=src.account_name,
-            account_role=src.account_role,
-            account_scope=src.account_scope,
-            account_parent_role=src.account_parent_role,
-            money=-p.amount,
-            direction="Debit",
-            posting=posting_ts,
-            transfer_id=transfer_id,
-            transfer_type=template.transfer_type,
-            rail_name=rail.name,
-            origin=src_origin,
-            metadata=metadata,
-            template_name=p.template_name,
-        
-            dialect=dialect,
-        ),
-        # Destination-side leg (credit, money in).
-        _txn_row(
-            id_=txn_id,
-            account_id=dst.account_id,
-            account_name=dst.account_name,
-            account_role=dst.account_role,
-            account_scope=dst.account_scope,
-            account_parent_role=dst.account_parent_role,
-            money=p.amount,
-            direction="Credit",
-            posting=posting_ts,
-            transfer_id=transfer_id,
-            transfer_type=template.transfer_type,
-            rail_name=rail.name,
-            origin=dst_origin,
-            metadata=metadata,
-            template_name=p.template_name,
-        
-            dialect=dialect,
-        ),
-    ]
+    if isinstance(rail, TwoLegRail):
+        src = _resolve_any_account(
+            p.source_account_id, instance, scenarios, template_by_role,
+        )
+        dst = _resolve_any_account(
+            p.destination_account_id, instance, scenarios, template_by_role,
+        )
+
+        # Origin resolution per L2 rule O1: per-leg overrides take precedence
+        # over the rail-level shared origin.
+        src_origin = (
+            str(rail.source_origin) if rail.source_origin is not None
+            else (str(rail.origin) if rail.origin is not None else "InternalInitiated")
+        )
+        dst_origin = (
+            str(rail.destination_origin) if rail.destination_origin is not None
+            else (str(rail.origin) if rail.origin is not None else "InternalInitiated")
+        )
+
+        rows = [
+            # Source-side leg (debit, money out).
+            _txn_row(
+                id_=f"{txn_id}-src",
+                account_id=src.account_id,
+                account_name=src.account_name,
+                account_role=src.account_role,
+                account_scope=src.account_scope,
+                account_parent_role=src.account_parent_role,
+                money=-p.amount,
+                direction="Debit",
+                posting=posting_ts,
+                transfer_id=transfer_id,
+                transfer_type=template.transfer_type,
+                rail_name=rail.name,
+                origin=src_origin,
+                metadata=metadata,
+                template_name=p.template_name,
+
+                dialect=dialect,
+            ),
+            # Destination-side leg (credit, money in).
+            _txn_row(
+                id_=txn_id,
+                account_id=dst.account_id,
+                account_name=dst.account_name,
+                account_role=dst.account_role,
+                account_scope=dst.account_scope,
+                account_parent_role=dst.account_parent_role,
+                money=p.amount,
+                direction="Credit",
+                posting=posting_ts,
+                transfer_id=transfer_id,
+                transfer_type=template.transfer_type,
+                rail_name=rail.name,
+                origin=dst_origin,
+                metadata=metadata,
+                template_name=p.template_name,
+
+                dialect=dialect,
+            ),
+        ]
+    else:
+        # SingleLegRail — emit one leg using source_account_id as the
+        # leg account (destination_account_id ignored; picker sets it
+        # to the same value for shape consistency).
+        assert isinstance(rail, SingleLegRail)
+        leg = _resolve_any_account(
+            p.source_account_id, instance, scenarios, template_by_role,
+        )
+        if rail.leg_direction == "Credit":
+            direction, money = "Credit", p.amount
+        else:
+            # Debit OR Variable — treat as Debit; the closing-leg
+            # semantics aren't material for the plant's purpose
+            # (surfacing data on the TT explorer).
+            direction, money = "Debit", -p.amount
+        leg_origin = (
+            str(rail.origin) if rail.origin is not None
+            else "InternalInitiated"
+        )
+        rows = [
+            _txn_row(
+                id_=txn_id,
+                account_id=leg.account_id,
+                account_name=leg.account_name,
+                account_role=leg.account_role,
+                account_scope=leg.account_scope,
+                account_parent_role=leg.account_parent_role,
+                money=money,
+                direction=direction,
+                posting=posting_ts,
+                transfer_id=transfer_id,
+                transfer_type=template.transfer_type,
+                rail_name=rail.name,
+                origin=leg_origin,
+                metadata=metadata,
+                template_name=p.template_name,
+
+                dialect=dialect,
+            ),
+        ]
 
     # Chain children (M.3.10h). For each pre-resolved (child_rail,
     # account) pair, plant ONE child leg whose transfer_parent_id

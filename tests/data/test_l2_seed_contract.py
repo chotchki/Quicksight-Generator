@@ -608,13 +608,13 @@ def test_seed_columns_match_schema_v6_documented_set(
 # INSERT format is verified end-to-end against live Oracle).
 _BROAD_MODE_HASHES: dict[tuple[str, str], str] = {
     ("spec_example", "broad"):
-        "7d35de910933b3e6916531f1b30d962d93e3f227fc4ea6db3cf573330919b2f2",
+        "227288a18517d90cddb8426e9582156b5ebc488dc159c02da9ae974c30ece9a6",
     ("spec_example", "l1_plus_broad"):
-        "7c7203bb7b7ff16f513cd63b28e72e8628ea67a26d5d65dafe0cf5f6793595eb",
+        "6ac3ec04806d37150cb1b9e903da210bd48aeea4737bba55f20baf4291a76c23",
     ("sasquatch_pr", "broad"):
-        "9a3aa0e3a24f7b8586893b4ad6944cd6c2c81b49f491bbea747670701beabf7b",
+        "aa7ca741fab54645561433ac57595bc24e591c420c15e2120218c199e14d888a",
     ("sasquatch_pr", "l1_plus_broad"):
-        "24befae237204cac59b7deeb311ff25532a4de397cd70cd73603c4656fe3bd1d",
+        "58d379d41ea325a3929708b7617fa7f51dfa044ed9ab5db554b8b51333706b99",
 }
 
 

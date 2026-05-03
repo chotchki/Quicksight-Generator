@@ -1,5 +1,57 @@
 # Release Notes
 
+## v8.6.7 — L2FT Transfer Templates sheet shows data
+
+The L2FT Transfer Templates sheet rendered empty in the demo
+because **no row** in the seeded data carried a non-NULL
+``template_name``. Two gaps:
+
+1. The ``M.3.10g`` ``TransferTemplatePlant`` picker only handled
+   templates whose first ``leg_rails`` entry was a ``TwoLegRail``;
+   single-leg first leg_rails (the only shape both shipped L2
+   instances declare — ``MerchantSettlementCycle`` /
+   ``InternalTransferCycle``) got skipped with an ``Omitted``
+   reason. Net: 0 ``TransferTemplatePlant`` rows on either
+   ``spec_example`` or ``sasquatch_pr``.
+2. Even when plants exist, the demo CLI helper
+   (``cli/_helpers.py::build_full_seed_sql``) called
+   ``default_scenario_for(instance)`` with the default
+   ``l1_invariants`` mode — and ``M.4.2a`` re-categorized
+   ``transfer_template_plants`` as broad-mode-only. So even after
+   fix (1), TT plants never made it into the SQL the demo applies.
+
+Fix:
+
+- ``auto_scenario.py`` — picker branches on the first ``leg_rails``
+  entry's rail kind. ``TwoLegRail`` keeps the existing
+  source/destination_role resolution; ``SingleLegRail`` resolves
+  ``leg_role`` and reuses the same account_id for both
+  ``source_account_id`` and ``destination_account_id`` on the
+  plant (the emit ignores the destination for single-leg).
+- ``seed.py::_emit_transfer_template_rows`` — branches on the
+  rail kind. TwoLegRail keeps the 2-leg debit+credit shape.
+  SingleLegRail emits ONE leg with direction per
+  ``rail.leg_direction`` (``Variable`` treated as ``Debit`` for
+  plant purposes; closing-leg semantics aren't material to
+  surfacing data on the explorer). chain_children attach via
+  ``transfer_parent_id`` regardless of parent rail shape.
+- ``cli/_helpers.py::build_full_seed_sql`` switches to
+  ``mode="l1_plus_broad"`` so the demo gets BOTH the L1
+  SHOULD-violation plants AND the broad-layer TT + RailFiringPlant
+  rows. The L2FT Rails sheet now also surfaces broad-mode
+  rail firings on top of the baseline.
+
+Single-leg TT firings surface on the L2FT Template Instances
+table as ``Imbalanced`` against ``expected_net = 0`` (one bare
+leg can't sum to zero) — accurate L1 representation. Multi-leg
+shared-transfer cycles (sibling legs joining via the same
+``transfer_id`` by ``transfer_key``) are still deferred.
+
+Hash impact: L1-invariants-mode YAML ``seed_hash`` is unchanged
+(picker change is gated by broad-mode include). Broad-mode and
+``l1_plus_broad``-mode sidecar hashes (``_BROAD_MODE_HASHES`` in
+``tests/data/test_l2_seed_contract.py``) re-baked.
+
 ## v8.6.6 — Skip Oracle 19c JSON_VALUE functional indexes
 
 The v8.6.4 metadata-cascade functional indexes ship the same shape
