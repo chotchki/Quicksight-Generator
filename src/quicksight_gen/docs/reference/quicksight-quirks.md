@@ -18,6 +18,52 @@ This page exists for two reasons:
 
 ---
 
+## ⚠️ Read this first — the worst footgun
+
+**URL-parameter writes don't sync sheet controls. Filters apply to
+the data; the control widget keeps showing the OLD value. The text
+and the chart disagree, and there is no QS-side fix.**
+
+Every cross-sheet drill, every embedded deep link, every
+``CustomActionURLOperation`` and every ``SetParametersOperation``
+that writes a parameter from outside its native picker hits this.
+The data filters correctly, the picker / dropdown / date-range
+control reads "All" or its baked default, and the analyst sees a
+chart that doesn't match the labeled control state. Same defect
+fires inside QS's own Navigation Action — it isn't something the
+embedding SDK or the JSON shape can route around.
+
+**What we've done to minimize the damage**
+
+- Cross-app drills (the K.4.7 family) were dropped from
+  Investigation → other apps because the destination's controls
+  could never be made to read right. We kept *intra-app* drills
+  where the data signal is the contract and the control mismatch
+  is a smaller papercut.
+- Sheets that receive a URL-parameter write carry a description
+  paragraph telling analysts "trust the chart, not the control
+  text". The L1 Pending Aging → Transactions drill (v8.5.7) and
+  every cross-sheet drill since carry that callout.
+- Drill-write date params snap the destination's date picker
+  visibly to the new value (entry 2.2 below) — that's not a fix
+  for the control-sync defect, it's the price we pay to keep the
+  data + control in agreement on date params specifically. The
+  picker visibly jerking is the lesser evil vs. silently filtering
+  to "no data".
+- The L1 cross-sheet drill always writes a wide ``[1990, 2099]``
+  date range so the destination's universal filter can never narrow
+  the target row out of view (v8.5.7). This combines with 2.3's
+  "static literals only" restriction — there's no way to write
+  "rolling 7 days" via a drill, so we write the widest possible
+  window every time and accept that the picker visibly snaps to it.
+
+**If you're considering a new cross-sheet or embed-driven parameter
+write, assume the destination control will lie. Plan the UX around
+that.** The detailed entries on this defect class are **2.1**, **2.2**,
+and **2.3** below.
+
+---
+
 ## 1. Silent rendering failures
 
 ### 1.1 Spinner-forever — entire dashboard stuck, no error surfaced
