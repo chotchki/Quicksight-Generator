@@ -132,6 +132,7 @@ nav:
       - Executives: handbook/executives.md
       - Audit Reconciliation Report: handbook/audit.md
     - Data contract:
+      - Domain Model (SPEC): SPEC.md
       - Schema v6 — Data Feed Contract: Schema_v6.md
       - L1 Invariants: L1_Invariants.md
       - Seed generator: handbook/seed-generator.md
