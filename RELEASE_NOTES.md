@@ -50,6 +50,17 @@ universal filter remained narrow and the table rendered empty.
   ``add_broken_rail_plants`` guarantees stuck rows older than 7
   days exist regardless of when the test runs.
 
+### Documentation
+
+- **New ``docs/reference/quicksight-quirks.md``** — canonical log
+  of every QuickSight bug / undocumented behavior / silent-failure
+  mode we've hit while building the four shipped dashboards.
+  Categorized by class (silent rendering, drill quirks, control UX,
+  data type, backend) with observed behavior + workaround +
+  suggested QS-side fix per entry. Intended audience: defect
+  reports filed with the QuickSight team. Linked from the docs
+  site under Reference → Operations.
+
 ## v8.5.6 — Transactions sheet transfer_type dropdown perf index
 
 The L1 Transactions sheet's ``transfer_type`` filter dropdown
