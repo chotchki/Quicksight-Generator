@@ -81,20 +81,20 @@ Phased rollout per the agent's smallest-wedge recommendation:
 prove credential plumbing on a no-op auth job, then a single
 L1-API job, then scale.
 
-- [ ] **W.0.a — Trigger pattern.** New workflow file
+- [x] **W.0.a — Trigger pattern.** New workflow file
   `.github/workflows/e2e.yml` with `on: { workflow_dispatch: {},
   push: { branches: [main] } }`. No `pull_request` trigger.
   Document the rationale inline in a header comment so a future
   contributor doesn't add PR triggers thinking they're missing.
 
-- [ ] **W.0.b — DB URL secrets + ingress.** Set
+- [x] **W.0.b — DB URL secrets + ingress.** Set
   `QS_GEN_PG_URL` + `QS_GEN_ORACLE_URL` via `gh secret set`. Widen
   the Aurora cluster + Oracle RDS security groups to allow inbound
   from `0.0.0.0/0` on their respective ports (5432 / 1521). Verify
   in the AWS console; record the SG IDs in PLAN as a one-liner so
   later rollback is easy.
 
-- [ ] **W.0.c — OIDC IdP + IAM role.** Configure GitHub as an
+- [x] **W.0.c — OIDC IdP + IAM role.** Configure GitHub as an
   OIDC identity provider in the AWS account (one-time, IAM
   console; thumbprints auto-managed). Create role `qs-gen-ci`
   with: trust policy restricted to
@@ -103,30 +103,34 @@ L1-API job, then scale.
   DataSource, DataSet, Analysis, Dashboard, Folder, plus
   `GenerateEmbedUrlForRegisteredUser`, `DescribeUser`,
   `Tag/UntagResource`. Record the role ARN in this plan entry.
+  (Live as `Github_e2e_testing`; `quicksight:PassDataSource`
+  added in v8.4.0 — see `.github/E2E_SETUP.md`.)
 
-- [ ] **W.0.d — `ci-bot` QS user.** Register a dedicated
+- [x] **W.0.d — `ci-bot` QS user.** Register a dedicated
   QuickSight reader user
   (`arn:aws:quicksight:us-east-1:ACCT:user/default/ci-bot`). Set
   `QS_E2E_USER_ARN` secret to its ARN. Confirm the user's QS
   permissions cover viewing the dashboards the e2e tests render.
+  (Upgraded to AUTHOR — DataSource permissions require it.)
 
-- [ ] **W.1 — Auth smoke job.** First job in `e2e.yml`: assume
+- [x] **W.1 — Auth smoke job.** First job in `e2e.yml`: assume
   the OIDC role, run `aws sts get-caller-identity`, exit. Proves
   the OIDC + IAM trust path works end-to-end before any
   QS/DB/Playwright machinery touches it. ~30s.
 
-- [ ] **W.2 — Per-run resource isolation.** Inject
+- [x] **W.2 — Per-run resource isolation.** Inject
   `resource_prefix: qs-ci-${{ github.run_id }}-pg` (and `-oracle`
   for the Oracle leg) into the workflow-generated config.yaml.
   Pair every e2e job with a mandatory `if: always()` cleanup step
   calling `quicksight-gen json clean --execute -c /tmp/ci.yaml`
   AND `schema clean --execute` against the user's Aurora/Oracle.
-  Stand up a janitor job (scheduled cron, daily) that sweeps
-  `ManagedBy:quicksight-gen` resources whose `L2Instance` tag
-  matches a `qs-ci-*` prefix older than 24h — catches cancelled
-  runs that didn't reach the cleanup step.
+  v8.4.0 added the ResourcePrefix tag + fail-CLOSED filter on
+  `json clean` so per-run isolation is true (not just per-L2-
+  instance). The "daily janitor cron" in the original entry is
+  largely obsoleted by W.7 — consider it follow-up if W.7 itself
+  ever fails to fire.
 
-- [ ] **W.3 — Smallest wedge: L1 API e2e against PG.** New job
+- [x] **W.3 — Smallest wedge: L1 API e2e against PG.** New job
   `e2e-pg-api-l1` in `e2e.yml`. Steps: assume OIDC role →
   Postgres URL from `secrets.QS_GEN_PG_URL` → schema/data/refresh
   apply → json apply --execute → `pytest
@@ -135,13 +139,17 @@ L1-API job, then scale.
   `if: always()` cleanup. Target: ~12 min. If this stays green
   for a week of `push:main` runs, scale per W.5.
 
-- [ ] **W.4 — Hardcoded user ARN cleanup.**
+- [x] **W.4 — Hardcoded user ARN cleanup.**
   `src/quicksight_gen/common/browser/helpers.py:44` carries a
   hardcoded `arn:aws:quicksight:...:<account>:user/default/...`.
   Replace with `os.environ["QS_E2E_USER_ARN"]` (already a
   documented env var per CLAUDE.md's E2E Test Conventions).
   Required before W.6 — `ci-bot` ARN won't match the hardcoded
-  value, embed URL generation will fail.
+  value, embed URL generation will fail. Done in v8.5.1:
+  `get_user_arn()` raises `RuntimeError` when env var is unset
+  instead of silently falling back; account ID literal scrubbed
+  from source. Class regression in
+  `tests/unit/test_browser_helpers.py`.
 
 - [ ] **W.5 — Scale to 4 apps × API.** If W.3 holds, add
   `e2e-pg-api-{l2ft,inv,exec}` jobs (or a matrix) running each
@@ -163,7 +171,7 @@ L1-API job, then scale.
   Per-failure: upload `tests/e2e/screenshots/` as a workflow
   artifact for inspection.
 
-- [ ] **W.7 — Workflow-level always-cleanup job.** Final job in
+- [x] **W.7 — Workflow-level always-cleanup job.** Final job in
   `e2e.yml` named `cleanup`, configured with `needs: [<all
   prior e2e jobs>]` and `if: always()` (so it runs even if every
   prior job failed or was cancelled). Sweeps all
@@ -174,10 +182,10 @@ L1-API job, then scale.
   Oracle. Belt-and-suspenders to W.2's per-job `if: always()`
   cleanup — that catches the common path; this catches GHA hard
   timeouts, runner crashes, and any cleanup step that itself
-  failed. Even if THIS job fails, W.2's daily janitor still
-  closes the gap within 24h, but the workflow-level cleanup
-  brings the typical residue window down from "next janitor
-  run" to "this workflow's last few seconds".
+  failed. Done in v8.5.1: ``cleanup-pg`` job. Shares the
+  ``e2e-pg`` concurrency group so cleanup never interleaves with
+  another run's deploy. Currently scoped to the PG leg; expand
+  to ``cleanup-oracle`` when W.5 lands the Oracle matrix entry.
 
 - [ ] **W.8 — Iteration gate.** 
   - Last feature I'd like, when a release tag is pushed, after it validates on TEST pypi, the e2e runs and if successful approves for the prod gate (if it fails, it cancels)

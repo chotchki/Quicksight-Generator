@@ -161,10 +161,97 @@ jobs:
       # doesn't exist yet) from masking the real test failure.
       # ``-o /tmp/empty-out`` (a directory we never write to) makes
       # ``json clean`` sweep every ``ManagedBy:quicksight-gen``
-      # resource (scoped by L2Instance) since none are "in" the
-      # empty out dir.
+      # resource (scoped by ResourcePrefix=qs-ci-${run_id}-pg post
+      # v8.4.0) since none are "in" the empty out dir.
+      #
+      # This per-job cleanup catches the common path (test failed,
+      # step failed). It does NOT catch the runner being killed
+      # mid-job (GHA hard timeout, OOM, manual cancel). The W.7
+      # ``cleanup-pg`` job below is the belt-and-suspenders for
+      # those cases.
       - name: Cleanup (always)
         if: always()
+        run: |
+          mkdir -p /tmp/empty-out
+          .venv/bin/quicksight-gen json clean -c /tmp/ci-pg.yaml -o /tmp/empty-out --execute || true
+          .venv/bin/quicksight-gen schema clean -c /tmp/ci-pg.yaml --execute || true
+
+  # W.7 — workflow-level always-cleanup. Belt-and-suspenders over the
+  # per-job ``Cleanup (always)`` step on ``e2e-pg-api-l1``. The per-job
+  # step catches step / test failures (the common path); this job
+  # catches the runner-died cases the per-job step can't:
+  #
+  #   - GHA 6h hard timeout kills the runner mid-step.
+  #   - Runner OOM / crash. The runner is gone; no ``if: always()``
+  #     handler runs because there's nothing left to run it on.
+  #   - Manual workflow cancel that interrupts the runner before its
+  #     step transitions complete.
+  #
+  # Job-level ``if: always()`` (with ``needs: [e2e-pg-api-l1]``) means
+  # this job ALWAYS runs after the e2e job, regardless of whether the
+  # e2e job succeeded, failed, or was cancelled — but only after, so it
+  # never races a still-deploying job.
+  #
+  # Concurrency MUST share the ``e2e-pg`` group with ``e2e-pg-api-l1``
+  # so cleanup never interleaves with another run's deploy. Schema
+  # objects on the user's Aurora are scoped by the L2 instance prefix
+  # (default: ``spec_example``) which is shared across runs — the
+  # concurrency lock is the only thing keeping run A's cleanup from
+  # dropping tables run B is mid-INSERT into.
+  #
+  # Idempotent with the per-job cleanup: ``json clean`` and
+  # ``schema clean`` both no-op when the targets don't exist, so the
+  # second sweep just confirms the first was complete.
+  cleanup-pg:
+    needs: [e2e-pg-api-l1]
+    if: always()
+    runs-on: ubuntu-latest
+    concurrency:
+      group: e2e-pg
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        # ``deploy`` for boto3 (json clean), ``demo`` for psycopg2
+        # (schema clean drops PG tables). Skip ``audit`` / ``e2e`` —
+        # cleanup doesn't need the seed pipeline or pytest.
+        run: uv sync --frozen --extra deploy --extra demo
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Regenerate per-run config.yaml
+        # Same shape as the e2e job's config — must carry the matching
+        # ``resource_prefix`` so ``json clean`` filters to this run's
+        # QS resources (post-v8.4.0 ResourcePrefix-tag isolation).
+        run: |
+          cat > /tmp/ci-pg.yaml <<EOF
+          aws_account_id: "470656905821"
+          aws_region: "us-east-1"
+          resource_prefix: "qs-ci-${{ github.run_id }}-pg"
+          dialect: "postgres"
+          demo_database_url: "${{ secrets.QS_GEN_PG_URL }}"
+          principal_arns:
+            - "${{ secrets.QS_E2E_USER_ARN }}"
+          EOF
+
+      - name: Sweep QS resources + drop schema objects
+        # ``|| true`` so a clean failure doesn't mask the real e2e
+        # failure (which already surfaced in the prior job's status).
         run: |
           mkdir -p /tmp/empty-out
           .venv/bin/quicksight-gen json clean -c /tmp/ci-pg.yaml -o /tmp/empty-out --execute || true
