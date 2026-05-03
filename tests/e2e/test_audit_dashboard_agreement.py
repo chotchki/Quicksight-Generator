@@ -1,36 +1,40 @@
-"""U.8.b.3 — Drift-only three-way agreement (wiring lap).
+"""U.8.b — Three-way agreement test (release gate, both dialects).
 
-Single-invariant smoke for U.8.b's release-gate contract:
+Per-invariant contract for U.8.b's release gate:
     expected (from scenario) == PDF (extractor) == dashboard (Playwright)
 
-Locks the wiring before the U.8.b.4 fanout to the remaining
-invariants. Drift gets the wiring lap because the dashboard's
-"Leaf Account Drift" table is the closest 1:1 with the PDF's
-single drift table — overdraft / limit_breach / stuck_* split into
-parent + child sub-tables that need per-invariant translation
-between the dashboard's and PDF's row-grouping shapes (handled in
-U.8.b.4's fanout).
+Parametrized over both dialects (U.8.b.5): each invariant×dialect
+cell seeds the dialect-specific DB, renders the audit PDF against
+that DB, and walks the dashboard deployed under that dialect's
+resource prefix.
 
-Prerequisites (test skips if missing):
+Prerequisites (test skips per-dialect if missing):
   - ``QS_GEN_E2E=1`` (matches existing browser-test gate)
+  - ``run/config.<dialect>.yaml`` exists with ``demo_database_url``
+    set; missing config OR missing DB URL skips that dialect cell
+    cleanly (the other dialect still runs)
   - The L1 dashboard for the default L2 instance (``spec_example``)
-    is already deployed; ``run_e2e.sh`` or ``json apply --execute``
-    against ``spec_example`` is the canonical pre-step
-  - ``cfg.demo_database_url`` is configured (the test seeds the DB
-    with a known scenario before asserting)
+    is already deployed under the dialect's resource prefix:
+        Postgres: ``qs-gen-postgres-spec_example-l1-dashboard``
+        Oracle:   ``qs-gen-oracle-spec_example-l1-dashboard``
+    A missing dashboard skips the dialect's cells with the deploy
+    command needed to fix it. ``json apply --execute -c
+    run/config.<dialect>.yaml`` against ``spec_example`` is the
+    canonical pre-step; CI runs both cells in parallel via
+    separate ``-c run/config.{postgres,oracle}.yaml`` invocations.
 
 The scenario seed runs against the real ``demo_database_url`` —
-DESTRUCTIVE for the ``spec_example_*`` prefix. Other prefixes (the
-operator's actual data) are untouched because the schema apply only
-drops + recreates the prefixed objects.
+DESTRUCTIVE for the ``spec_example_*`` prefix on each dialect's
+DB. Other prefixes (the operator's actual data) are untouched
+because the schema apply only drops + recreates the prefixed
+objects.
 
 Anchors on ``date.today()`` (not the M.2a.8 hash-lock 2030 date):
 the stuck_pending / stuck_unbundled matviews compute age via
 ``CURRENT_TIMESTAMP - posting``, so plants pinned to a far-future
 date land in the SQL future and never satisfy the age threshold.
 Anchoring on real today keeps plants visible across all 6
-invariants — though this test only checks drift, the conftest
-fixture is shared with the U.8.b.4 fanout that does check stuck_*.
+invariants on both dialects.
 """
 
 from __future__ import annotations
@@ -73,44 +77,122 @@ _PERIOD: tuple[date, date] = (
 )
 
 
-def _resolve_cfg_path() -> Path | None:
-    """Find the cfg path the e2e fixtures already loaded.
+# U.8.b.5 — Per-dialect config files. The matrix runs one cell per
+# (invariant, dialect); each dialect's cell loads its own config so
+# the seed + audit PDF render hit the dialect-specific datasource and
+# the dashboard walk lands on the dialect-prefixed L1 dashboard.
+# Operator runs the matrix via separate ``-c run/config.{postgres,oracle}.yaml``
+# invocations (CI matrix); locally a single dialect run is fine —
+# missing-config-file dialects skip cleanly.
+_DIALECT_CONFIG_PATHS: dict[str, Path] = {
+    "postgres": Path("run/config.postgres.yaml"),
+    "oracle": Path("run/config.oracle.yaml"),
+}
 
-    Mirrors the conftest's candidate-list resolution so we can pass
-    `-c PATH` to ``audit apply`` against the same config the embed
-    URL was built from. Returns None if no candidate exists; the
-    test will skip cleanly.
+
+@pytest.fixture(scope="module", params=["postgres", "oracle"])
+def dialect_cfg(request):
+    """Per-dialect (cfg, cfg_path, dialect_enum) — module-scoped.
+
+    Skips cleanly when the dialect's config file is absent OR when
+    its ``demo_database_url`` is unset, so an operator with only one
+    dialect set up locally still gets the other dialect's cells to
+    pass through as ``skipped`` rather than fail. CI matrix runs both
+    dialects in parallel via separate ``-c run/config.{postgres,oracle}.yaml``
+    invocations; each invocation drives just one dialect and the
+    other is irrelevant for that cell.
+
+    The ``QS_GEN_CONFIG`` env override is intentionally ignored here —
+    a per-dialect matrix needs both files visible by their canonical
+    paths. Operators wanting to point at a non-canonical config should
+    edit ``_DIALECT_CONFIG_PATHS`` for that test run.
     """
-    import os
+    from quicksight_gen.common.config import load_config
 
-    explicit = os.environ.get("QS_GEN_CONFIG")
-    if explicit:
-        return Path(explicit)
-    for candidate in (
-        Path("config.yaml"),
-        Path("run/config.yaml"),
-        Path("run/config.postgres.yaml"),
-        Path("run/config.oracle.yaml"),
-    ):
-        if candidate.exists():
-            return candidate
-    return None
-
-
-@pytest.fixture(scope="module")
-def cfg_path():
-    p = _resolve_cfg_path()
-    if p is None:
+    dialect_name: str = request.param
+    cfg_path = _DIALECT_CONFIG_PATHS[dialect_name]
+    if not cfg_path.exists():
         pytest.skip(
-            "No config.yaml found on candidate paths; set "
-            "QS_GEN_CONFIG to point at the file used for the deploy."
+            f"{cfg_path} not present — {dialect_name} dialect cell "
+            f"skipped. The other dialect still runs; CI runs each "
+            f"dialect cell with its own ``-c run/config.{dialect_name}.yaml``."
         )
-    return p
+    loaded = load_config(str(cfg_path))
+    if loaded.demo_database_url is None:
+        pytest.skip(
+            f"{cfg_path} has no demo_database_url — {dialect_name} "
+            f"dialect cell skipped. The three-way agreement test "
+            f"needs a seedable DB to plant the scenario."
+        )
+    dialect_enum = (
+        Dialect.ORACLE if dialect_name == "oracle" else Dialect.POSTGRES
+    )
+    if loaded.dialect is not dialect_enum:
+        pytest.skip(
+            f"{cfg_path} declares dialect={loaded.dialect.value} but "
+            f"the matrix expects dialect={dialect_name}. Fix the YAML "
+            f"or rename the file so the matrix loads it under the "
+            f"right cell."
+        )
+    return (loaded, cfg_path, dialect_enum)
 
 
 @pytest.fixture(scope="module")
-def seeded_audit(cfg, cfg_path, tmp_path_factory):
-    """Seed DB with the spec_example scenario, render audit PDF.
+def per_dialect_cfg(dialect_cfg):
+    """The loaded ``Config`` for this dialect cell.
+
+    Distinct from the conftest session-scoped ``cfg`` fixture (which
+    loads whatever config file matches first); this one is matrix-
+    parametrized. The seeded_audit / embed_url / dashboard-id
+    derivations downstream consume THIS, not the conftest one.
+    """
+    return dialect_cfg[0]
+
+
+@pytest.fixture(scope="module")
+def per_dialect_account_id(per_dialect_cfg) -> str:
+    return per_dialect_cfg.aws_account_id
+
+
+@pytest.fixture(scope="module")
+def per_dialect_region(per_dialect_cfg) -> str:
+    return per_dialect_cfg.aws_region
+
+
+@pytest.fixture(scope="module")
+def per_dialect_qs_client(per_dialect_region):
+    """Boto3 QuickSight client for this dialect's dashboard region.
+
+    Module-scoped — one client per (region, dialect). Cheaper than
+    function-scoped + harmless to share across the parametrized
+    invariants in this module.
+    """
+    import boto3
+    return boto3.client("quicksight", region_name=per_dialect_region)
+
+
+@pytest.fixture(scope="module")
+def per_dialect_l1_dashboard_id(per_dialect_cfg) -> str:
+    """L1 dashboard ID under this dialect's resource prefix.
+
+    Derives the same way the L1 app's deploy does: ``<resource_prefix>-
+    <l2_prefix>-l1-dashboard``. l2_prefix is taken from the bundled
+    ``spec_example`` (the default L2 instance) since this test is
+    pinned to that instance.
+    """
+    instance = load_instance(_SPEC_EXAMPLE)
+    cfg_with_prefix = (
+        per_dialect_cfg
+        if per_dialect_cfg.l2_instance_prefix is not None
+        else per_dialect_cfg.with_l2_instance_prefix(str(instance.instance))
+    )
+    return cfg_with_prefix.prefixed("l1-dashboard")
+
+
+@pytest.fixture(scope="module")
+def seeded_audit(dialect_cfg, tmp_path_factory):
+    """Seed dialect-specific DB with the spec_example scenario, render
+    audit PDF against the same DB.
 
     Module-scoped — the seed + render is the expensive setup; both
     the dashboard walk and the PDF extraction reuse the same
@@ -118,18 +200,9 @@ def seeded_audit(cfg, cfg_path, tmp_path_factory):
     """
     from tests.e2e._harness_seed import apply_db_seed
 
-    if cfg.demo_database_url is None:
-        pytest.skip(
-            "demo_database_url not configured — three-way agreement "
-            "test requires a seedable DB."
-        )
+    cfg, cfg_path, dialect = dialect_cfg
 
     instance = load_instance(_SPEC_EXAMPLE)
-    dialect = (
-        Dialect.ORACLE
-        if (cfg.dialect or "").lower() == "oracle"
-        else Dialect.POSTGRES
-    )
     conn = connect_demo_db(cfg)
     try:
         scenario = apply_db_seed(
@@ -161,7 +234,12 @@ def seeded_audit(cfg, cfg_path, tmp_path_factory):
 
 
 @pytest.fixture
-def embed_url(region, account_id, l1_dashboard_id, qs_client) -> str:
+def embed_url(
+    per_dialect_region,
+    per_dialect_account_id,
+    per_dialect_l1_dashboard_id,
+    per_dialect_qs_client,
+) -> str:
     """Function-scoped — embed URLs are single-use, fresh per test.
 
     Pre-flight: confirm the dashboard actually exists before
@@ -173,22 +251,22 @@ def embed_url(region, account_id, l1_dashboard_id, qs_client) -> str:
     immediate skip with the actual deploy command to fix it.
     """
     try:
-        qs_client.describe_dashboard(
-            AwsAccountId=account_id,
-            DashboardId=l1_dashboard_id,
+        per_dialect_qs_client.describe_dashboard(
+            AwsAccountId=per_dialect_account_id,
+            DashboardId=per_dialect_l1_dashboard_id,
         )
-    except qs_client.exceptions.ResourceNotFoundException:
+    except per_dialect_qs_client.exceptions.ResourceNotFoundException:
         pytest.skip(
-            f"L1 dashboard {l1_dashboard_id!r} not deployed in "
-            f"account {account_id} region {region}. Deploy it "
-            f"first: `quicksight-gen json apply -c <cfg> "
-            f"--execute` against the default L2 instance "
-            f"(spec_example), then re-run this test."
+            f"L1 dashboard {per_dialect_l1_dashboard_id!r} not deployed "
+            f"in account {per_dialect_account_id} region "
+            f"{per_dialect_region}. Deploy it first: `quicksight-gen "
+            f"json apply -c <dialect-config> --execute --l2 "
+            f"tests/l2/spec_example.yaml`, then re-run this test."
         )
     return generate_dashboard_embed_url(
-        aws_account_id=account_id,
-        aws_region=region,
-        dashboard_id=l1_dashboard_id,
+        aws_account_id=per_dialect_account_id,
+        aws_region=per_dialect_region,
+        dashboard_id=per_dialect_l1_dashboard_id,
     )
 
 
