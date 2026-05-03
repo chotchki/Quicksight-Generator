@@ -1504,14 +1504,22 @@ def audit_clean(output: str, execute: bool) -> None:
     help="Extra args passed verbatim to pytest (e.g. '-k smoke').",
 )
 def audit_test(pytest_args: str) -> None:
-    """Run the audit test suite (pytest + pyright on cli/audit.py)."""
+    """Run the audit test suite (pytest + pyright on the audit module).
+
+    Targets ``tests/audit/`` for pytest (U.8.a/c — scenario expectations,
+    PDF/dashboard extractors, PDF-matches-scenario, persona-clean,
+    smoke). Defers the U.8.b browser matrix to ``QS_GEN_E2E=1`` and
+    ``tests/e2e/test_audit_dashboard_agreement.py`` — not run here.
+
+    Pyright covers the audit package (``cli/audit/``).
+    """
     pytest_argv = (
         [sys.executable, "-m", "pytest", "tests/audit/", "-q"]
         + (pytest_args.split() if pytest_args else [])
     )
     pyright_argv = [
         sys.executable, "-m", "pyright",
-        "src/quicksight_gen/cli/audit.py",
+        "src/quicksight_gen/cli/audit/",
     ]
     failed = []
     click.echo(f"$ {' '.join(pytest_argv)}")
