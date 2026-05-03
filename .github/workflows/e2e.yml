@@ -49,3 +49,110 @@ jobs:
 
       - name: Confirm role assumption
         run: aws sts get-caller-identity
+
+  # W.3 — smallest wedge: full deploy + L1 API e2e against the user's
+  # external Postgres. Depends on auth-smoke as a quick gate so we don't
+  # burn ~10 min on a deploy when the OIDC chain is broken.
+  #
+  # Per-run isolation via ``resource_prefix: qs-ci-${{ github.run_id }}-pg``.
+  # Each CI run carries its own prefix, so dashboards/datasets it deploys
+  # are uniquely named within the QS account. Caveat (W.2 known gap):
+  # ``json clean`` filters by ``L2Instance`` tag, NOT by ResourcePrefix —
+  # so if you have a local deploy of the same L2 instance (spec_example)
+  # open during a CI run, the workflow's cleanup step will sweep your
+  # local deploy too. Solo-dev reality: don't run a local deploy of
+  # spec_example while CI is running. Follow-up: extend cleanup to
+  # filter by ResourcePrefix tag for true per-run isolation (queue
+  # before W.5 scaling fans out concurrent jobs).
+  e2e-pg-api-l1:
+    needs: auth-smoke
+    runs-on: ubuntu-latest
+    # Serialize PG e2e jobs across runs. ``schema apply --execute``
+    # drops + recreates the L2 instance's tables; concurrent runs
+    # would race on the same ``spec_example_*`` table set against
+    # the user's external Aurora. ``cancel-in-progress: false`` lets
+    # the in-flight run finish (and clean up) before the next starts.
+    concurrency:
+      group: e2e-pg
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        # Extras: ``deploy`` for boto3+botocore[crt], ``demo`` for
+        # psycopg2, ``audit`` for the seed pipeline (data apply pulls
+        # in the audit-generated baseline plants), ``e2e`` for pytest +
+        # pytest-xdist + boto3-stubs. Skip ``[docs]``. Skip
+        # ``playwright install`` — API tests don't render anything.
+        run: uv sync --frozen --extra deploy --extra demo --extra audit --extra e2e
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Generate per-run config.yaml
+        # ``resource_prefix`` carries the unique GHA run ID so CI runs
+        # don't trample each other's QS resources. ``principal_arns``
+        # includes the ci-bot ARN so embed-URL generation in W.6 has a
+        # user with permission to view the dashboards (Path A — bot's
+        # access is per-deploy, not account-wide ADMIN).
+        run: |
+          cat > /tmp/ci-pg.yaml <<EOF
+          aws_account_id: "470656905821"
+          aws_region: "us-east-1"
+          resource_prefix: "qs-ci-${{ github.run_id }}-pg"
+          dialect: "postgres"
+          demo_database_url: "${{ secrets.QS_GEN_PG_URL }}"
+          principal_arns:
+            - "${{ secrets.QS_E2E_USER_ARN }}"
+          EOF
+
+      - name: Apply schema (DDL)
+        run: .venv/bin/quicksight-gen schema apply -c /tmp/ci-pg.yaml --execute
+
+      - name: Apply seed data
+        run: .venv/bin/quicksight-gen data apply -c /tmp/ci-pg.yaml --execute
+
+      - name: Refresh matviews
+        run: .venv/bin/quicksight-gen data refresh -c /tmp/ci-pg.yaml --execute
+
+      - name: Deploy QS resources (theme + datasource + datasets + analyses + dashboards)
+        run: .venv/bin/quicksight-gen json apply -c /tmp/ci-pg.yaml -o /tmp/ci-pg-out --execute
+
+      - name: Run L1 API e2e
+        env:
+          QS_GEN_E2E: "1"
+          QS_GEN_CONFIG: /tmp/ci-pg.yaml
+          QS_E2E_USER_ARN: ${{ secrets.QS_E2E_USER_ARN }}
+        run: |
+          .venv/bin/pytest \
+            tests/e2e/test_l1_deployed_resources.py \
+            tests/e2e/test_l1_dashboard_structure.py \
+            -m api -v
+
+      # ``if: always()`` runs even if any prior step (or the test
+      # itself) failed. The ``|| true`` on each clean call prevents a
+      # cleanup failure (e.g. a partially-deployed resource that
+      # doesn't exist yet) from masking the real test failure.
+      # ``-o /tmp/empty-out`` (a directory we never write to) makes
+      # ``json clean`` sweep every ``ManagedBy:quicksight-gen``
+      # resource (scoped by L2Instance) since none are "in" the
+      # empty out dir.
+      - name: Cleanup (always)
+        if: always()
+        run: |
+          mkdir -p /tmp/empty-out
+          .venv/bin/quicksight-gen json clean -c /tmp/ci-pg.yaml -o /tmp/empty-out --execute || true
+          .venv/bin/quicksight-gen schema clean -c /tmp/ci-pg.yaml --execute || true
