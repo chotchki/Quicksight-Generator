@@ -160,7 +160,11 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
-        run: pip install -e ".[dev]" genbadge[coverage]
+        # `[audit]` brings in pyhanko — needed even for unsigned PDFs
+        # (empty reviewer signature widgets land via pyhanko on every
+        # render). Coverage-badge job runs the same audit tests as the
+        # main test job; same dep set required.
+        run: pip install -e ".[dev,audit]" genbadge[coverage]
 
       - name: Generate coverage XML
         run: pytest --cov=quicksight_gen --cov-report=xml

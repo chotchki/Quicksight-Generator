@@ -21,30 +21,43 @@
 
 _Phase S + T + U sub-task detail removed during post-phase cleanup. RELEASE_NOTES v8.{1,2}.0 carry the per-phase narratives._
 
-## Phase V — Config / institution YAML split + uv migration
+## Phase V — Config / institution YAML split + uv migration + small follow-ups
 
-Two small items deferred during Phase U; folded into a focused Phase V.
+A grab-bag of post-v8.2.x cleanup folded into one phase. V.1 and V.2 are
+the headline items; the rest are small tune-ups deferred from earlier
+phases that have stabilized enough to land here.
 
-- [ ] **V.1 — Split `config.yaml` ↔ L2 institution YAML.** The boundary between environment (account / region / dialect / DB connection / signing key) and institution (rails / chains / accounts / persona / theme) has accumulated friction across M / N / O / P / Q phases. Tighten it:
-  - **`config.yaml`** holds environment-only values: aws account, aws region, tag prefix, `datasource_arn` (optional — auto-emitted when omitted), `dialect`, `demo_database_url` (optional but required for `data apply` / `audit apply --execute`), `signing:` block (optional but required for auto-signed audit PDFs).
+- [ ] **V.1.a — Auto-emit `out/datasource.json`.** Narrow first land: in `cli/json.py::json_apply`, when `cfg.demo_database_url` is set + `cfg.datasource_arn` is unset, call `build_datasource(cfg.with_l2_instance_prefix(...)).to_aws_json()` and write to `out/datasource.json` alongside the other JSON. Closes the orphan-`build_datasource()` gap U.8.b.3 hit twice this session when deploying `spec_example` (had to bridge manually). Closes the related backlog item _"Single-app deploy must not orphan shared datasource."_
+
+- [ ] **V.1.b — Split `config.yaml` ↔ L2 institution YAML (wider sweep).** The boundary between environment (account / region / dialect / DB connection / signing key) and institution (rails / chains / accounts / persona / theme) has accumulated friction across M / N / O / P / Q phases. Tighten it:
+  - **`config.yaml`** holds environment-only values: aws account, aws region, tag prefix, `datasource_arn` (optional — auto-emitted by V.1.a when omitted), `dialect`, `demo_database_url` (optional but required for `data apply` / `audit apply --execute`), `signing:` block (optional but required for auto-signed audit PDFs).
   - **L2 institution YAML** holds institution-only values: rails, chains, accounts, account_templates, transfer_templates, limit_schedules, persona, theme override.
-  - **Auto-emit `out/datasource.json`** when `cfg.demo_database_url` is set + `cfg.datasource_arn` is unset. Closes the orphan-`build_datasource()` gap U.8.b.3 hit when deploying `spec_example` (had to bridge manually). Closes the related backlog item _"Single-app deploy must not orphan shared datasource."_
+  - Touches loader + validators + every test that constructs cfg.
 
 - [ ] **V.2 — Convert pip → uv.** Adopt `uv` for env / lock management (faster installs, deterministic resolution, single-tool surface). Migration scope: `pyproject.toml` extras stay; add `uv.lock`; CI / Release / Pages workflows swap `pip install` for `uv sync`; `.venv/bin/` invocation pattern preserved (CLAUDE.md memory). Document the change in `docs/handbook/customization.md` (or whichever walkthrough covers env setup).
 
-### Backlog (folds in once V.1 + V.2 land)
+- [ ] **V.3 — App Info sheet enhancements.** Version of `quicksight-gen` used to generate (so version mismatches are detectable); most-recent `<prefix>_transactions` / `<prefix>_daily_balances` row date (so ETL can be troubleshooted); most-recent matview refresh timestamp.
 
-- [ ] **Re-run 4-cell e2e matrix (P.9f.d).** Was deferred when the per-cell triage list was still settling. Worth a green pass against v8.2.0 once Phase V settles.
+- [ ] **V.4 — Drop `tests/json/test_l2_flow_tracing_matrix.py`'s implicit dependency on `cli` module imports** if any survived the Q.3.a reorg.
 
-## Phase R — Realistic demo seed (open follow-ups)
-
-Phase R landed v7.2.0 (3-month healthy baseline + embedded plants). Three open follow-ups remain:
-
-- [ ] **R.6.e — "First impression" tune-up.** Two known tuning targets where baseline data still surfaces "real bookkeeping cascade" signal as L1 invariant violations. Both need invariant-aware leg-loop work that's out of scope for first land:
+- [ ] **V.5 — R.6.e "First impression" baseline tune-up.** Two known tuning targets where baseline data still surfaces "real bookkeeping cascade" signal as L1 invariant violations. Both need invariant-aware leg-loop work:
   - **Overdraft on intermediate clearing accounts** (~220 rows on ach_orig_settlement, merchant_payable_clearing, internal_transfer_suspense, ZBA sub-accounts). Cause: baseline emits transfers in random order, so causal cascades (customer outbound → settlement → ZBA sweep → concentration → FRB) don't preserve cause-before-effect timing. Intermediate accounts swing into negative as a result. Fix options: (a) restructure leg loop to enforce causal ordering, (b) materialize zero-net intermediate-clearing legs per cascade per day, (c) widen account starting-balance cushions further.
   - **Limit_breach on customer outbound** (~56 rows). Cause: amount sampler clamps each transfer to the LimitSchedule cap individually, but daily aggregate across multiple firings can exceed cap. Fix: track per-(account, transfer_type, day) cumulative outbound during emission and clamp incremental amounts.
-- [ ] **R.7.d — Re-screenshot at 1280×900 against the v7.2.0+ demo.** Re-run `quicksight-gen docs screenshot --all -o src/quicksight_gen/docs/_screenshots/` against the deployed sasquatch_pr dashboards once the dashboards are stable post-v8.0.0. Current screenshots predate Phase R's realistic baseline.
-- [ ] **R.7.e — Lift R.1.f spec out of PLAN_ARCHIVE.md into a docs-site reference page.** Once the implementation has stabilized + the headline numbers in the spec match what the generator actually produces, lift the design doc into the docs site as durable reference. Likely target: `docs/handbook/seed-generator.md`.
+
+- [ ] **V.6 — R.7.d Re-screenshot at 1280×900.** Re-run `quicksight-gen docs screenshot --all -o src/quicksight_gen/docs/_screenshots/` against the deployed `spec_example` dashboards (Postgres + Oracle live as of v8.2.1). Current screenshots predate Phase R's realistic baseline + Phase U's audit work.
+
+- [ ] **V.7 — R.7.e Lift R.1.f spec into a docs-site reference page.** Now that the implementation has stabilized and the headline numbers in the spec match what the generator actually produces, lift the design doc out of `PLAN_ARCHIVE.md` into the docs site as durable reference. Likely target: `docs/handbook/seed-generator.md`.
+
+- [ ] **V.8 — Reference nav regroup.** Today's `Reference:` mkdocs nav is 8 flat items mixing three concerns: app handbooks (L1 / L2FT / Investigation / Executives / Audit), data contract (Schema v6 / L1 Invariants), and operations (ETL / Customization). Group them via nested `navigation.sections` (mkdocs-material supports it natively, already enabled in `mkdocs.yml`) to give 3 levels of cross-page nav within the existing theme:
+  ```
+  - Reference:
+    - App handbooks: { L1 / L2FT / Investigation / Executives / Audit }
+    - Data contract: { Schema v6 / L1 Invariants }
+    - Operations: { ETL / Customization }
+  ```
+  Trade-off is one extra click to reach a leaf, but the URL structure now matches the mental model. Cross-link audit between operations + executive scorecard since auditor + executive read the same artifact differently. If the regroup still feels wrong after landing, escalate to a theme swap (Sphinx+Furo or custom Material override) — significantly bigger.
+
+- [ ] **V.9 — Re-run 4-cell e2e matrix (P.9f.d) + cut v8.3.0.** Was deferred when the per-cell triage list was still settling. Worth a green pass once V.1–V.8 land. Then bump + tag.
 
 ---
 
@@ -74,12 +87,12 @@ Single grab-bag for everything not yet in a phase. Promote to a numbered phase e
 ### Audit / data evaluation / app info
 
 - **Postgres dataset evaluator** — given a connection, evaluate whether all exception cases are present; report stats on the CLI.
-- **App Info sheet enhancements** — version of `quicksight-gen` used to generate (so version mismatches are detectable); most-recent `<prefix>_transactions` / `<prefix>_daily_balances` row date (so ETL can be troubleshooted); most-recent matview refresh timestamp.
+
 
 ### Tech debt
 
 - **Encode more invariants in the type system.** K.2 did this for drill-param shape compatibility; Phase L's tree primitives close another big chunk. What remains after L is the candidate list for the next round.
-- **Drop `tests/json/test_l2_flow_tracing_matrix.py`'s implicit dependency on `cli` module imports** if any survived the Q.3.a reorg.
+
 
 ### Known platform limitations — do not re-attempt without new evidence
 

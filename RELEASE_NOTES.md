@@ -1,5 +1,21 @@
 # Release Notes
 
+## v8.2.2 — CI coverage-badge job also needs `[audit]` extra
+
+Follow-up to v8.2.1. v8.2.1 fixed the test job + release.yml install
+lines to install `[dev,audit]`, but `ci.yml` had a SECOND install line
+on the `coverage-badge` job (line 158) that I missed — still pinned to
+`[dev]` only. Result: v8.2.1's CI run failed at `coverage-badge` with
+the same `ModuleNotFoundError: No module named 'pyhanko'` from re-
+running the audit tests for coverage XML.
+
+(v8.2.1's release pipeline succeeded — TestPyPI + PyPI publishes both
+went through. This bump only restores green CI on subsequent commits.)
+
+No code changes from v8.2.1; same Phase U audit feature shipping.
+
+---
+
 ## v8.2.1 — CI/release pipeline fix for v8.2.0 audit deps
 
 Pipeline-only re-cut of v8.2.0. The v8.2.0 tag is on github but never
