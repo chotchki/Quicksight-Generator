@@ -1,5 +1,24 @@
 # Release Notes
 
+## v8.5.3 — CI hotfix: playwright in [dev] for pyright stub resolution
+
+v8.5.2 added ``common/browser/helpers.py`` to the pyright include
+scope and annotated its API with ``Page`` types. Locally pyright
+was clean because the dev environment is ``uv sync --all-extras``
+(includes ``[e2e]``, which has Playwright). CI installs
+``--extra dev --extra audit`` only — Playwright wasn't there,
+pyright couldn't resolve the stubs, and the ``pytest sessionstart``
+gate failed with 269 cascaded "type is unknown" errors. v8.5.2
+never reached the build/publish steps as a result.
+
+### Engineering surface
+
+- **``[dev]`` extras += ``playwright>=1.40``.** Just the Python
+  package — ``playwright install`` (browser binaries) is still
+  e2e-only. Adds ~5MB to the dev install but lets pyright resolve
+  the inline PEP 561 stubs.
+- ``uv.lock`` refreshed.
+
 ## v8.5.2 — Pyright noise cleanup (type-stub plumbing + duplicate class)
 
 Internal hygiene — no user-visible behavior change. Brings the 318
