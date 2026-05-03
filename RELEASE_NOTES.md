@@ -1,5 +1,23 @@
 # Release Notes
 
+## v8.2.1 — CI/release pipeline fix for v8.2.0 audit deps
+
+Pipeline-only re-cut of v8.2.0. The v8.2.0 tag is on github but never
+published to PyPI — its release pipeline failed at the test stage with
+`ModuleNotFoundError: No module named 'pyhanko'`. Both `ci.yml` and
+`release.yml` installed `[dev]` only; `tests/audit/*` invoke
+`audit apply --execute` which lazy-imports pyhanko on every PDF render
+(empty reviewer signature widgets land via pyhanko regardless of
+whether `signing:` is configured). Switched both install lines to
+`pip install -e ".[dev,audit]"` so the audit module is exercised end-
+to-end with all its declared deps.
+
+No code changes from v8.2.0; the entire Phase U audit feature ships
+unchanged. Bumped to v8.2.1 (rather than force-moving the v8.2.0 tag)
+for tag-history honesty.
+
+---
+
 ## v8.2.0 — Audit Reconciliation Report (regulator-ready PDF)
 
 Phase U adds a **fifth artifact group** to the CLI: `audit`. The
