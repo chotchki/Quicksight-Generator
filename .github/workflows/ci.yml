@@ -334,6 +334,52 @@ jobs:
           path: coverage-report.md
           retention-days: 14
 
+  # Build a wheel from the current commit, install it in a fresh venv
+  # (NOT an editable / src-tree install), and run ``docs apply
+  # --portable`` end-to-end. Catches the class of regression where
+  # docs sourcing assumes a repo checkout — pre-restructure the
+  # bundled mkdocs.yml + main.py + L2 fixtures lived outside ``src/``
+  # and were only present in a dev tree, so installed users hit a
+  # ``mkdocs.yml not found`` failure when running ``docs apply``.
+  docs-portable-install:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Build wheel
+        run: |
+          uv pip install --system build
+          python -m build --wheel --outdir /tmp/wheelhouse
+
+      - name: Install wheel into a fresh venv (NOT editable)
+        # ``uv venv`` plus ``uv pip install`` against the built wheel
+        # mirrors what an end-user does after ``pip install
+        # quicksight-gen[docs]`` — no symlinks back to the repo
+        # ``src/`` tree, so any path code that walks parents to find
+        # repo-root files breaks here.
+        run: |
+          uv venv /tmp/portable-test-venv
+          uv pip install --python /tmp/portable-test-venv/bin/python \
+              "$(ls /tmp/wheelhouse/quicksight_gen-*.whl)[docs]"
+
+      - name: Build portable docs from installed wheel
+        run: |
+          /tmp/portable-test-venv/bin/quicksight-gen docs apply \
+              --portable -o /tmp/portable-site
+          test -f /tmp/portable-site/index.html
+          test -f /tmp/portable-site/handbook/l1.html
+
   coverage-badge:
     needs: coverage
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'

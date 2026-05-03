@@ -4,7 +4,16 @@ site_url: https://chotchki.github.io/Quicksight-Generator/
 # repo_url / repo_name intentionally omitted — the docs site is the
 # self-contained reference and should carry no clickable github links.
 # (site_url stays for sitemap canonical URLs; not rendered as a link.)
-docs_dir: src/quicksight_gen/docs
+# Bundled inside the package — same path in dev
+# (``<repo>/src/quicksight_gen/mkdocs.yml``) and installed mode
+# (``<site-packages>/quicksight_gen/mkdocs.yml``). docs_dir points
+# at the sibling ``docs/`` directory which holds the actual markdown
+# content. mkdocs rejects ``docs_dir: .`` because it doesn't allow
+# the docs dir to be the config file's own directory, so the config
+# lives one level up from ``docs/`` and the relative paths inside
+# (extra_css, extra_javascript, plugins.macros.include_dir) all stay
+# relative to docs_dir.
+docs_dir: docs
 
 theme:
   name: material
@@ -154,15 +163,29 @@ nav:
 plugins:
   - search
   - macros:
-      # Phase O.1.c — `{{ diagram(...) }}` macro lives in `main.py` at
-      # the repo root (mkdocs-macros default module location). Jinja
-      # includes (Phase O.1.b) read from the include_dir below.
+      # Phase O.1.c — `{{ diagram(...) }}` macro lives in
+      # `main.py` next to this config. mkdocs-macros's project_dir is
+      # the directory containing this file, so it finds
+      # ``<dir>/main.py`` via local file lookup. The same path resolves
+      # in dev (``<repo>/src/quicksight_gen/main.py``) and from an
+      # installed wheel (``<site-packages>/quicksight_gen/main.py``).
+      # mkdocs-macros doesn't reliably support dotted Python imports
+      # for module_name — it treats the value as a relative file
+      # lookup against project_dir.
       module_name: main
-      include_dir: src/quicksight_gen/docs/_macros
+      # mkdocs-macros resolves include_dir relative to project_dir
+      # (the dir containing mkdocs.yml) — NOT docs_dir. So this is
+      # ``docs/_macros`` not bare ``_macros``. Same in dev
+      # (``<repo>/src/quicksight_gen/docs/_macros/``) and installed
+      # (``<site-packages>/quicksight_gen/docs/_macros/``).
+      include_dir: docs/_macros
   - mkdocstrings:
       handlers:
         python:
-          paths: [src]
+          # No ``paths:`` — quicksight_gen is installed (uv sync /
+          # pip install) so mkdocstrings imports it through the
+          # active Python interpreter. Removes the dev-vs-installed
+          # path difference that ``paths: [src]`` would create.
           options:
             show_root_heading: true
             show_root_full_path: false

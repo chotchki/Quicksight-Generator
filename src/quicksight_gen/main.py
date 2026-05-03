@@ -1,7 +1,7 @@
 """mkdocs-macros entry point.
 
-mkdocs-macros looks for a top-level ``main.py`` with a
-``define_env(env)`` function. We register:
+mkdocs-macros loads the module named in ``mkdocs.yml`` plugins:
+``module_name: quicksight_gen.main``. We register:
 
 - A ``diagram(family, **kwargs)`` macro that dispatches to the render
   functions in ``quicksight_gen.common.handbook.diagrams``.
@@ -10,8 +10,14 @@ mkdocs-macros looks for a top-level ``main.py`` with a
   ``{{ vocab.institution.name }}`` etc.
 
 Both default to the L2 instance at ``QS_DOCS_L2_INSTANCE`` (env var) or
-``tests/l2/spec_example.yaml`` if unset. O.2.c (export-docs CLI) lets
-the integrator pass an arbitrary L2 path.
+the bundled ``_l2_fixtures/spec_example.yaml`` if unset. ``docs export``
+lets the integrator pass an arbitrary L2 path.
+
+Pre-restructure (v8.5.x and earlier) this module lived as a top-level
+``main.py`` and resolved fixtures relative to the repo root. The
+restructure ships it inside the package so ``docs apply`` works from
+an installed wheel — fixtures now ship in ``_l2_fixtures/`` next to
+the package's other resources.
 """
 
 from __future__ import annotations
@@ -22,8 +28,12 @@ from pathlib import Path
 from typing import Any
 
 
-_PROJECT_ROOT = Path(__file__).parent
-_TESTS_L2_DIR = _PROJECT_ROOT / "tests" / "l2"
+# Bundled L2 fixtures ship inside the package at
+# ``src/quicksight_gen/_l2_fixtures/`` (see pyproject ``package_data``).
+# Same path resolves in both dev (``Path(__file__).parent`` =
+# ``<repo>/src/quicksight_gen/``) and installed mode
+# (``<site-packages>/quicksight_gen/``).
+_BUNDLED_L2_DIR = Path(__file__).parent / "_l2_fixtures"
 
 
 def _apply_brand_asset_override(
@@ -74,7 +84,7 @@ def define_env(env: Any) -> None:
     default_l2_path = Path(
         os.environ.get(
             "QS_DOCS_L2_INSTANCE",
-            str(_TESTS_L2_DIR / "spec_example.yaml"),
+            str(_BUNDLED_L2_DIR / "spec_example.yaml"),
         )
     )
     default_l2 = load_instance(default_l2_path)
@@ -176,8 +186,8 @@ def define_env(env: Any) -> None:
     # primitives spec_example doesn't use, e.g. chains). When a fallback
     # fires, the wrapper prepends a callout so the reader knows the
     # example isn't from their institution.
-    _spec_example_l2 = load_instance(_TESTS_L2_DIR / "spec_example.yaml")
-    _sasquatch_pr_l2 = load_instance(_TESTS_L2_DIR / "sasquatch_pr.yaml")
+    _spec_example_l2 = load_instance(_BUNDLED_L2_DIR / "spec_example.yaml")
+    _sasquatch_pr_l2 = load_instance(_BUNDLED_L2_DIR / "sasquatch_pr.yaml")
 
     def _l2_focus(render_fn, *, primitive: str, alt: str) -> str:
         """Try active → spec_example → sasquatch_pr; wrap with fallback note."""

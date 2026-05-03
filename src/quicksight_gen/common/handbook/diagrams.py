@@ -1054,6 +1054,10 @@ _APP_BUILDERS = {
 
 _DOCS_DIR = Path(__file__).parent.parent.parent / "docs"
 _CONCEPTUAL_DIR = _DOCS_DIR / "_diagrams" / "conceptual"
+# Bundled L2 fixtures live inside the package at
+# ``src/quicksight_gen/_l2_fixtures/`` (see ``main.py`` for the matching
+# constant). Pre-restructure this walked up to ``<repo>/tests/l2/``,
+# which broke ``render_dataflow`` from an installed wheel.
 _TESTS_L2_DIR = (
-    Path(__file__).parent.parent.parent.parent.parent / "tests" / "l2"
+    Path(__file__).parent.parent.parent / "_l2_fixtures"
 )
