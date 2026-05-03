@@ -1063,6 +1063,8 @@ def _populate_pending_aging_sheet(
     sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
         width=_FULL,
         title="Stuck Pending by Age Bucket",
+        category_label="Age Bucket",
+        value_label="Transactions",
         subtitle=(
             "Distribution of stuck-Pending transactions across 5 age "
             "bands. Right-skewed (>3d, >7d) ⇒ slow drift; spike at "
@@ -1154,6 +1156,8 @@ def _populate_unbundled_aging_sheet(
     sheet.layout.row(height=_CHART_ROW_SPAN).add_bar_chart(
         width=_FULL,
         title="Stuck Unbundled by Age Bucket",
+        category_label="Age Bucket",
+        value_label="Transactions",
         subtitle=(
             "Distribution of stuck-Unbundled transactions across 4 age "
             "bands. Right-skewed (>2d, >7d) ⇒ the bundler hasn't fired "

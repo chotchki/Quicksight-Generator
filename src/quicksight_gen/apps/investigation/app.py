@@ -473,6 +473,8 @@ def _build_volume_anomalies_sheet(
         ),
         category=[dist_bucket_dim],
         values=[ds_anomalies["recipient_account_id"].count()],
+        category_label="Sigma Bucket",
+        value_label="Pair-Windows",
         orientation="VERTICAL",
         bars_arrangement="CLUSTERED",
         sort_by=(dist_bucket_dim, "ASC"),

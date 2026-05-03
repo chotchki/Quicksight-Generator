@@ -69,7 +69,7 @@ Single grab-bag for everything not yet in a phase. Promote to a numbered phase e
 
 ### Dashboard polish — Q.1.c follow-ups
 
-- **Q.1.a.3 — Auto-derive plain-English axis labels for BarChart** (replace raw column names like `transfer_type` with `Transfer Type`). Manual labels landed on the most visible chart (L1 Today's Exceptions) via Q.1.c; auto-derivation is the broader sweep.
+- ~~Q.1.a.3 — Auto-derive plain-English axis labels for BarChart~~ — done as a manual sweep instead. All 11 BarChart sites across the 4 apps now carry explicit `category_label` / `value_label` (4 sites needed labels added: Investigation Pair-Window σ, L1 Stuck Pending / Stuck Unbundled, L2FT L2 Violations; the other 7 already had them from Q.1.c). Auto-derivation deferred — explicit beats clever for a 4-app surface area.
 - **Executives Transaction Volume + Money Moved — metadata grouping** (was Q.1.c.6). Needs L2-instance-aware metadata key dropdowns (cascading Key + Value like L2FT Rails sheet) plus a dataset pivot to expose metadata as a dim. Bigger than a punch-list item; queue as its own sub-phase.
 
 ### Audit / data evaluation / app info

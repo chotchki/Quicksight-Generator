@@ -1183,6 +1183,8 @@ def _populate_l2_exceptions_sheet(
         ),
         category=[ds["check_type"].dim()],
         values=[ds["check_type"].count()],
+        category_label="Check Type",
+        value_label="Open Violations",
         orientation="HORIZONTAL",
     )
 
