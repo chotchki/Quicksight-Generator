@@ -1,5 +1,75 @@
 # Release Notes
 
+## v8.4.0 — Independent system test bug sweep + cleanup isolation
+
+Four user-reported bugs from a from-scratch independent system test
+(against an isolated L2 + AWS account), each with class-level
+regression coverage.
+
+### Operator-facing
+
+- **Text box paragraph breaks now render.** Multi-paragraph prose
+  (e.g. ``l2_instance.description`` from YAML) passed through
+  ``rt.body()`` previously XML-escaped ``\n\n`` paragraph breaks
+  verbatim — QS only honors ``<br/>`` for breaks, so all paragraphs
+  ran together as one wall of text. New ``rt.markdown()`` helper
+  converts ``\n\n`` → ``<br/><br/>``, ``\n`` → ``<br/>``, escapes
+  the rest. All 20+ ``rt.body(...)`` call sites across the 4 apps
+  switched to ``rt.markdown(...)`` (semantically identical for
+  plain text, correct for multi-paragraph + link-bearing strings).
+- **Markdown links in text boxes are now clickable.** Same
+  ``rt.markdown()`` helper converts inline ``[text](url)`` to
+  ``<a href="url" target="_self">text</a>`` so analysts can click
+  cross-references in any Getting Started / coverage block.
+- **L1 Drift account/role dropdown spin fixed.** New 3-column
+  date-leading composite index ``idx_<prefix>_drift_day_account_role``
+  on both ``_drift`` and ``_ledger_drift`` matviews lets QuickSight's
+  date-narrowed dropdown queries scan a small index range instead
+  of the full account-leading index.
+
+### Engineering surface
+
+- **Per-deploy ResourcePrefix tag + cleanup scoping.** Every
+  deployed resource now carries a ``ResourcePrefix=<resource_prefix>``
+  AWS tag alongside ``ManagedBy`` and ``L2Instance``.
+  ``json clean`` filters by ``ResourcePrefix`` automatically (any
+  caller passing a ``cfg`` does this). Critical fail-CLOSED behavior:
+  a resource with NO ``ResourcePrefix`` tag (i.e. deployed by a
+  pre-v8.4.0 version) is NEVER swept by a prefix-scoped cleanup.
+  This closes the W.3 incident class where a CI run wiped a local
+  deploy of the same L2 instance — both deployed under
+  ``L2Instance=spec_example`` but with different ``ResourcePrefix``
+  values, the new filter keeps them isolated.
+- **Class-level regression coverage** for every bug:
+  - ``tests/unit/test_rich_text.py`` — 27 unit tests on the new
+    ``markdown()`` helper.
+  - ``tests/json/test_text_box_safety.py`` — walks every shipped
+    app's analysis JSON, asserts no literal ``\n\n`` or unconverted
+    ``[text](url)`` survives in any text-box content.
+  - ``tests/json/test_cleanup.py`` — 3 new tests on the
+    ``ResourcePrefix`` filter (matching, fail-closed on missing
+    tag, composes with ``L2Instance``).
+  - ``tests/data/test_l2_pipeline.py`` — schema snapshot test
+    pinning the new index DDL on both Drift matviews.
+
+### Phase W (CI e2e)
+
+- **e2e workflow auto-fire re-enabled.** v8.3.x ran the e2e workflow
+  once and it nuked the user's local deploy via the L2-scoped
+  cleanup; trigger was disabled. With ``ResourcePrefix`` isolation
+  in place that's no longer possible (cleanup only sweeps the
+  workflow's own ``qs-ci-${run_id}-pg`` resources). Auto-fire on
+  ``push:main`` restored.
+
+### Known follow-ups (not in v8.4.0)
+
+- **Plain-English column headers on table visuals** — deferred to
+  next release. Investigated but needs an L2-instance-aware label
+  surface on ``ColumnSpec`` (likely default = title-case the
+  snake_case column name; opt-out per-column when a different
+  human-readable form is preferred). Bigger sweep across all
+  datasets — separate session.
+
 ## v8.3.4 — Tree validator: every parameter-bound filter must be settable
 
 Defensive follow-up to v8.3.3. No bug fix — just a regression guard

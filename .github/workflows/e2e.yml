@@ -21,15 +21,23 @@
 
 name: E2E
 
-# DISABLED auto-fire on push:main after the first run nuked the
-# user's existing local deploy of spec_example. Root cause: the
-# cleanup step uses `json clean` which filters by L2Instance tag
-# only — concurrent OR adjacent deploys of the same L2 get swept.
-# Until ResourcePrefix-tag-based cleanup filtering ships (see
-# PLAN W.2 follow-up), only manual triggering is allowed so the
-# user can confirm no local deploy is at risk before each run.
+# Auto-fire re-enabled v8.4.0: ResourcePrefix-tag isolation now
+# scopes cleanup to the workflow's own ``qs-ci-${run_id}-pg``
+# resources. A local deploy with a different ``resource_prefix``
+# (e.g. ``qs-gen-postgres``) is no longer swept — its resources
+# carry a different ``ResourcePrefix`` tag value AND the cleanup
+# filter is fail-closed on missing tag (pre-v8.4.0 deploys are
+# untouched until they're re-deployed under v8.4.0+).
+#
+# DELIBERATELY no `pull_request` trigger — see header comment
+# rationale on the v8.3.x version of this file (preserved in git
+# history). PR triggers from forks would expose
+# ``secrets.QS_GEN_PG_URL`` / ``QS_GEN_ORACLE_URL`` /
+# ``QS_E2E_USER_ARN`` / ``AWS_ROLE_ARN``.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
 
 # OIDC requires `id-token: write` on the workflow (or job) so the
 # runner can mint the JWT that AWS exchanges for temporary creds.
