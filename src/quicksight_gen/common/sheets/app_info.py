@@ -229,9 +229,14 @@ def _git_short_sha() -> str:
     return "unknown"
 
 
-def _deploy_stamp() -> tuple[str, str]:
-    """Return ``(git_short_sha, iso_timestamp)`` baked at generate time."""
+def _deploy_stamp() -> tuple[str, str, str]:
+    """Return ``(quicksight_gen_version, git_short_sha, iso_timestamp)``
+    baked at generate time. The version is the package's ``__version__``
+    string so a viewer can spot a stale dashboard against a newer CLI
+    (V.3.a — version-mismatch detection)."""
+    from quicksight_gen import __version__
     return (
+        __version__,
         _git_short_sha(),
         _dt.datetime.now(_dt.UTC).isoformat(timespec="seconds"),
     )
@@ -260,7 +265,7 @@ def populate_app_info_sheet(
     the position).
     """
     accent = theme.accent
-    sha, ts = _deploy_stamp()
+    version, sha, ts = _deploy_stamp()
     dialect = cfg.dialect.value
     prefix = cfg.l2_instance_prefix or "(none)"
 
@@ -298,6 +303,7 @@ def populate_app_info_sheet(
             content=rt.text_box(
                 rt.subheading("Deploy Stamp", color=accent),
                 rt.bullets([
+                    f"quicksight-gen: v{version}",
                     f"git: {sha}",
                     f"generated: {ts}",
                     f"dialect: {dialect}",
