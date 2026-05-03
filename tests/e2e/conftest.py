@@ -254,6 +254,37 @@ def l1_dataset_ids(resource_prefix, l1_l2_prefix) -> list[str]:
     return [f"{resource_prefix}-{l1_l2_prefix}-{s}" for s in suffixes]
 
 
+# -- L2 Flow Tracing dashboard fixtures --------------------------------------
+#
+# IDs derive from the resource_prefix + the L2 instance's prefix per the
+# M.2d.3 convention. L2FT's dashboard ID lacks the trailing ``-dashboard``
+# segment that L1 / Inv / Exec carry — the App's name is the suffix.
+
+
+@pytest.fixture(scope="session")
+def l2ft_l2_prefix() -> str:
+    """The default L2 instance's prefix — the middle segment of every
+    L2FT resource ID. Matches the same default the L2FT CLI uses
+    (``spec_example``)."""
+    from quicksight_gen.apps.l1_dashboard._l2 import default_l2_instance
+    from quicksight_gen.common.l2 import load_instance
+
+    override = os.environ.get("QS_GEN_TEST_L2_INSTANCE")
+    if override:
+        return str(load_instance(Path(override)).instance)
+    return str(default_l2_instance().instance)
+
+
+@pytest.fixture(scope="session")
+def l2ft_dashboard_id(resource_prefix, l2ft_l2_prefix) -> str:
+    return f"{resource_prefix}-{l2ft_l2_prefix}-l2-flow-tracing"
+
+
+@pytest.fixture(scope="session")
+def l2ft_analysis_id(resource_prefix, l2ft_l2_prefix) -> str:
+    return f"{resource_prefix}-{l2ft_l2_prefix}-l2-flow-tracing-analysis"
+
+
 # ---------------------------------------------------------------------------
 # Tree-built App fixtures (L.11)
 #

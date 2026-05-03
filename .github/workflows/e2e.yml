@@ -328,6 +328,7 @@ jobs:
             tests/e2e/test_exec_dashboard_renders.py \
             tests/e2e/test_exec_sheet_visuals.py \
             tests/e2e/test_l1_cross_sheet_drill_date_widening.py \
+            tests/e2e/test_l2ft_metadata_cascade.py \
             -m browser -v -n 2
 
       - name: Upload failure screenshots
