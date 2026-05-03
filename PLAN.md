@@ -27,7 +27,7 @@ A grab-bag of post-v8.2.x cleanup folded into one phase. V.1 and V.2 are
 the headline items; the rest are small tune-ups deferred from earlier
 phases that have stabilized enough to land here.
 
-- [ ] **V.1.a — Auto-emit `out/datasource.json`.** Narrow first land: in `cli/json.py::json_apply`, when `cfg.demo_database_url` is set + `cfg.datasource_arn` is unset, call `build_datasource(cfg.with_l2_instance_prefix(...)).to_aws_json()` and write to `out/datasource.json` alongside the other JSON. Closes the orphan-`build_datasource()` gap U.8.b.3 hit twice this session when deploying `spec_example` (had to bridge manually). Closes the related backlog item _"Single-app deploy must not orphan shared datasource."_
+- [x] **V.1.a — Auto-emit `out/datasource.json`.** Done. In `cli/json.py::json_apply`, after the four apps emit + before deploy, when `cfg.demo_database_url` is set the verb now calls `build_datasource(cfg)` and writes the JSON to `out/datasource.json`. (`cfg` is already L2-prefixed by `resolve_l2_for_demo`, so the auto-derived `datasource_arn` already includes the prefix — no extra step.) Customer-managed deploys (`demo_database_url` unset, explicit `datasource_arn`) skip the auto-emit and leave the customer's existing datasource alone. Closes the orphan-`build_datasource()` gap U.8.b.3 hit twice this session when deploying `spec_example`. Closes the related backlog item _"Single-app deploy must not orphan shared datasource."_
 
 - [ ] **V.1.b — Split `config.yaml` ↔ L2 institution YAML (wider sweep).** The boundary between environment (account / region / dialect / DB connection / signing key) and institution (rails / chains / accounts / persona / theme) has accumulated friction across M / N / O / P / Q phases. Tighten it:
   - **`config.yaml`** holds environment-only values: aws account, aws region, tag prefix, `datasource_arn` (optional — auto-emitted by V.1.a when omitted), `dialect`, `demo_database_url` (optional but required for `data apply` / `audit apply --execute`), `signing:` block (optional but required for auto-signed audit PDFs).
@@ -38,7 +38,7 @@ phases that have stabilized enough to land here.
 
 - [ ] **V.3 — App Info sheet enhancements.** Version of `quicksight-gen` used to generate (so version mismatches are detectable); most-recent `<prefix>_transactions` / `<prefix>_daily_balances` row date (so ETL can be troubleshooted); most-recent matview refresh timestamp.
 
-- [ ] **V.4 — Drop `tests/json/test_l2_flow_tracing_matrix.py`'s implicit dependency on `cli` module imports** if any survived the Q.3.a reorg.
+- [x] **V.4 — Drop `tests/json/test_l2_flow_tracing_matrix.py`'s implicit dependency on `cli` module imports.** No-op — file already had zero `cli` imports (the M.3.9 design from the start went straight at `apps/l2_flow_tracing/app.py::build_l2_flow_tracing_app` rather than through any CLI wrapper). Q.3.a left this one clean. (Five other `tests/json/*.py` files do still import from `quicksight_gen.cli`; out of V.4's narrow scope.)
 
 - [ ] **V.5 — R.6.e "First impression" baseline tune-up.** Two known tuning targets where baseline data still surfaces "real bookkeeping cascade" signal as L1 invariant violations. Both need invariant-aware leg-loop work:
   - **Overdraft on intermediate clearing accounts** (~220 rows on ach_orig_settlement, merchant_payable_clearing, internal_transfer_suspense, ZBA sub-accounts). Cause: baseline emits transfers in random order, so causal cascades (customer outbound → settlement → ZBA sweep → concentration → FRB) don't preserve cause-before-effect timing. Intermediate accounts swing into negative as a result. Fix options: (a) restructure leg loop to enforce causal ordering, (b) materialize zero-net intermediate-clearing legs per cascade per day, (c) widen account starting-balance cushions further.
@@ -56,6 +56,7 @@ phases that have stabilized enough to land here.
     - Operations: { ETL / Customization }
   ```
   Trade-off is one extra click to reach a leaf, but the URL structure now matches the mental model. Cross-link audit between operations + executive scorecard since auditor + executive read the same artifact differently. If the regroup still feels wrong after landing, escalate to a theme swap (Sphinx+Furo or custom Material override) — significantly bigger.
+    - Comment: I really like trying to get to a more responsive theme, there's enough content on these pages that the current theme is limiting us (sphinx+Furo looks very nice)
 
 - [ ] **V.9 — Re-run 4-cell e2e matrix (P.9f.d) + cut v8.3.0.** Was deferred when the per-cell triage list was still settling. Worth a green pass once V.1–V.8 land. Then bump + tag.
 

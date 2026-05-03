@@ -85,6 +85,25 @@ def json_apply(
         config, output, l2_instance_path=l2_instance_path,
     )
 
+    # V.1.a — Auto-emit out/datasource.json when we're provisioning the
+    # QuickSight datasource ourselves (cfg.demo_database_url is set =>
+    # we own the QS datasource resource; customer-managed datasources
+    # carry their own datasource_arn and we leave them alone). Closes
+    # the U.8.b.3 manual-bridge gap that hit during spec_example
+    # deploys: the apps' datasets reference a datasource ARN that the
+    # deploy step then can't find because nobody emitted the matching
+    # out/datasource.json. common/deploy.py reads this file when it
+    # exists and skips when it doesn't.
+    if cfg.demo_database_url is not None:
+        import json
+        from quicksight_gen.common.datasource import build_datasource
+        ds = build_datasource(cfg)
+        ds_path = out_path / "datasource.json"
+        ds_path.write_text(
+            json.dumps(ds.to_aws_json(), indent=2), encoding="utf-8",
+        )
+        click.echo(f"  wrote {ds_path}")
+
     if not execute:
         click.echo(
             f"\nDone — JSON written to {out_path}/. "
