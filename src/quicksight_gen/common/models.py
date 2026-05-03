@@ -502,9 +502,31 @@ class DataSet:
 # -- Axis labels (shared by bar, pie, etc.) --
 
 @dataclass
+class AxisLabelReferenceOptions:
+    """Bind an ``AxisLabelOptions.CustomLabel`` to a specific field-well
+    leaf. AWS QuickSight requires the ``ApplyTo`` reference for the
+    custom label to render on the axis — without it, ``CustomLabel`` is
+    silently ignored (chart axis renders the raw column name).
+
+    See `quicksight-quirks.md` entry on chart axis labels.
+    """
+    FieldId: str
+    Column: ColumnIdentifier
+
+
+@dataclass
 class AxisLabelOptions:
-    """Label override for a single axis field."""
+    """Label override for a single axis field.
+
+    ``ApplyTo`` is the binding to a specific ``FieldId`` + dataset
+    column. AWS QuickSight requires it for ``CustomLabel`` to render —
+    a label without ``ApplyTo`` is parsed cleanly but produces a chart
+    that still shows the raw column name on the axis (silent
+    no-op). v8.6.1 made the field required at the type level after
+    v8.5.5's auto-derive-but-no-render bug.
+    """
     CustomLabel: str | None = None
+    ApplyTo: AxisLabelReferenceOptions | None = None
 
 
 @dataclass

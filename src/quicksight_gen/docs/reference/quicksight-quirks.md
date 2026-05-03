@@ -399,6 +399,35 @@ deploying.
 
 ---
 
+### 4.5 Chart axis `CustomLabel` silently ignored without `ApplyTo`
+
+**Observed.** ``BarChartConfiguration.CategoryLabelOptions``,
+``ValueLabelOptions``, and ``ColorLabelOptions`` (and the LineChart
+equivalents ``XAxisLabelOptions`` / ``PrimaryYAxisLabelOptions``)
+each carry a ``ChartAxisLabelOptions`` block whose
+``AxisLabelOptions[].CustomLabel`` *should* override the axis title.
+Setting only ``CustomLabel`` produces a clean ``CreateAnalysis``
+round-trip — no error, the JSON describes back identical — but the
+deployed chart still renders the raw column name on the axis. The
+override is silently no-op.
+
+**Workaround.** ``AxisLabelOptions`` requires an ``ApplyTo`` ref
+binding the label to a specific field-well leaf
+(``{FieldId, Column: {DataSetIdentifier, ColumnName}}``). Same
+FieldId-binding pattern table column headers use
+(``TableFieldOption.FieldId``). v8.6.1 added the
+``_axis_label_apply_to(leaf)`` helper in ``common/tree/visuals.py``
+and wires it into both BarChart and LineChart emit; the class
+regression in ``tests/json/test_bar_chart_axis_labels.py`` asserts
+no ``CustomLabel`` escapes without ``ApplyTo``.
+
+**Suggested fix.** Either reject ``CustomLabel`` without
+``ApplyTo`` at ``CreateAnalysis`` time (loud failure beats silent
+no-op), or auto-bind to the first axis field when ``ApplyTo`` is
+absent.
+
+---
+
 ## 5. Backend / refresh quirks
 
 ### 5.1 Embed URL must be signed by the dashboard's region (not
