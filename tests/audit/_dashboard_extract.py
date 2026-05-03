@@ -64,8 +64,12 @@ _DASHBOARD_LAYOUT: dict[L1Invariant, tuple[str, str, bool]] = {
     "stuck_unbundled": (
         "Unbundled Aging", "Stuck Unbundled Detail", False,
     ),
+    # Supersession's "Transactions Audit" table is the per-row detail
+    # surface, matching the audit PDF's transaction-detail sub-table
+    # row-for-row. The sheet's "Logical Keys with Supersession" KPI is
+    # a count, not a table — pointing the row-counter at it returns 0.
     "supersession": (
-        "Supersession Audit", "Logical Keys with Supersession", False,
+        "Supersession Audit", "Transactions Audit", False,
     ),
 }
 

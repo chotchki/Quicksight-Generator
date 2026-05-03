@@ -1578,33 +1578,26 @@ def _wire_date_range_filter(
                "fg-l1-date-limit-breach")
     _scope_one(DS_TODAYS_EXCEPTIONS, "business_day",
                todays_exceptions_sheet, "fg-l1-date-todays-exceptions")
-    # Pending Aging exposes `posting` (the original transaction posting
-    # timestamp, no DATE_TRUNC) — use that for the date-range filter.
-    _scope_one(DS_STUCK_PENDING, "posting", pending_aging_sheet,
-               "fg-l1-date-stuck-pending")
-    # Unbundled Aging — same shape, different dataset.
-    _scope_one(DS_STUCK_UNBUNDLED, "posting", unbundled_aging_sheet,
-               "fg-l1-date-stuck-unbundled")
-    # Q.1.b — Supersession Audit walks two base-table audits. The
-    # transactions side filters by `posting`; the daily-balances side
-    # by `business_day_start` (each row is per-day).
-    _scope_one(DS_SUPERSESSION_TRANSACTIONS, "posting",
-               supersession_audit_sheet,
-               "fg-l1-date-supersession-tx")
-    _scope_one(DS_SUPERSESSION_DAILY_BALANCES, "business_day_start",
-               supersession_audit_sheet,
-               "fg-l1-date-supersession-db")
     # Q.1.b — Transactions sheet over the per-leg ledger; same `posting`
     # column shape as Pending/Unbundled Aging.
     _scope_one(DS_TRANSACTIONS, "posting", transactions_sheet,
                "fg-l1-date-transactions")
+    # NOTE: stuck_pending / stuck_unbundled / supersession sheets
+    # intentionally skip date scoping. Their matviews are current-state
+    # (no posting/business_day filter on the audit query side either) —
+    # a "stuck" item is stuck until cleared, regardless of the analyst's
+    # period of interest. Adding a date filter here makes the dashboard
+    # diverge from the audit PDF (PDF surfaces every current-state row;
+    # filtered dashboard could drop them) and breaks U.8.b's three-way
+    # agreement contract.
 
     # Per-sheet date pickers — bound to the shared params so every
-    # sheet's pickers sync.
+    # date-scoped sheet's pickers sync. The current-state sheets
+    # (pending_aging, unbundled_aging, supersession_audit) are
+    # intentionally absent — see _scope_one note above.
     for sheet in (
         drift_sheet, drift_timelines_sheet, overdraft_sheet,
-        limit_breach_sheet, pending_aging_sheet, unbundled_aging_sheet,
-        supersession_audit_sheet, todays_exceptions_sheet,
+        limit_breach_sheet, todays_exceptions_sheet,
         transactions_sheet,
     ):
         sheet.add_parameter_datetime_picker(

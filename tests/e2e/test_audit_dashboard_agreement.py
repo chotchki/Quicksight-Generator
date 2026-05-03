@@ -192,51 +192,30 @@ def embed_url(region, account_id, l1_dashboard_id, qs_client) -> str:
     )
 
 
-# Three-way agreement currently passes for the time-series invariants
-# (drift / overdraft / limit_breach). The current-state invariants
-# (stuck_pending / stuck_unbundled / supersession) xfail with a
-# distinct shape: dashboard table renders "No data found for visual"
-# even though the underlying matview has rows. Pattern matches the
-# M.4.4.13 / #433 backlog "L1 dashboard date filter doesn't surface
-# matview rows" — likely QS dataset-metadata caching from when the
-# dataset was created against empty tables (the deploy preceded the
-# test's reseed), or a CalcField-resolves-to-NULL path that drops
-# the row in QS even though the matview returns it. NOT an Aurora
-# warmup issue: matview SELECT against the live DB returns the row.
-# The follow-up needs either (a) re-deploying the dashboard datasets
-# after the test seeds OR (b) tracing why QS-side filtering drops
-# the row. Tracked as part of the broader "Apply layered (query+
-# render) pattern to all browser e2e tests" backlog item.
-_ALL_INVARIANTS: tuple[tuple[str, str | None], ...] = (
-    ("drift", None),
-    ("overdraft", None),
-    ("limit_breach", None),
-    ("stuck_pending", "U.8.b.4: dashboard 'Stuck Pending Detail' "
-                      "renders 'No data found for visual' even though "
-                      "spec_example_stuck_pending matview has the "
-                      "planted row. Same shape as M.4.4.13 / "
-                      "backlog #433."),
-    ("stuck_unbundled", "U.8.b.4: dashboard 'Stuck Unbundled Detail' "
-                        "renders 'No data found for visual' even "
-                        "though spec_example_stuck_unbundled matview "
-                        "has the planted row. Same shape as M.4.4.13 "
-                        "/ backlog #433."),
-    ("supersession", "U.8.b.4: dashboard 'Logical Keys with "
-                     "Supersession' renders 'No data found for "
-                     "visual' even though spec_example_transactions "
-                     "has the planted correcting row. Same shape "
-                     "as M.4.4.13 / backlog #433."),
+# All 6 L1 invariants. The current-state invariants
+# (stuck_pending / stuck_unbundled / supersession) used to xfail with
+# "No data found for visual" — root-caused to the L1 dashboard
+# applying its `[today-7, today]` default date scope to matviews that
+# have no date column on the audit-PDF side, dropping rows whose
+# `posting` was outside the window even though the matview held them.
+# Fixed by removing the date-scope FilterGroups from the current-state
+# sheets (stucks are stuck until cleared regardless of analyst's
+# period of interest); the audit PDF and dashboard now agree by
+# construction.
+_ALL_INVARIANTS: tuple[str, ...] = (
+    "drift",
+    "overdraft",
+    "limit_breach",
+    "stuck_pending",
+    "stuck_unbundled",
+    "supersession",
 )
 
 
-@pytest.mark.parametrize(
-    "invariant,xfail_reason",
-    _ALL_INVARIANTS,
-    ids=[i for i, _ in _ALL_INVARIANTS],
-)
+@pytest.mark.parametrize("invariant", _ALL_INVARIANTS)
 def test_invariant_three_way_agreement(
     seeded_audit, embed_url, page_timeout, visual_timeout,
-    invariant, xfail_reason,
+    invariant,
 ):
     """Per-invariant: PDF count and dashboard count both >= expected
     count, AND PDF count == dashboard count.
@@ -265,9 +244,6 @@ def test_invariant_three_way_agreement(
     the assert to row-identity matching (account_id + day) instead
     of count.
     """
-    if xfail_reason is not None:
-        pytest.xfail(xfail_reason)
-
     pdf_path, scenario = seeded_audit
     expected = getattr(
         expected_audit_counts(scenario, _PERIOD), f"{invariant}_count",
