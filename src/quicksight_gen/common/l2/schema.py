@@ -118,7 +118,7 @@ def emit_schema(
     # the same dependency-ordering rule applies.
     l1_drops = _emit_l1_invariant_drops(p, dialect)
     inv_drops = _emit_inv_matview_drops(p, dialect)
-    base = _emit_base_schema(p, dialect)
+    base = _emit_base_schema(p, dialect, instance)
     invariants = _emit_l1_invariant_views(instance, dialect=dialect)
     inv_views = _emit_inv_views(instance, dialect=dialect)
     return (
@@ -461,7 +461,102 @@ _BASE_INDEX_DROPS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _emit_base_schema(p: str, dialect: Dialect) -> str:
+def _declared_metadata_keys(instance: L2Instance) -> list[str]:
+    """Sorted, distinct ``metadata_keys`` declared across every Rail.
+
+    Mirrors ``apps.l2_flow_tracing.datasets.declared_metadata_keys``;
+    duplicated here to avoid an apps→common reverse import for the
+    schema-emit-time index enumeration. The list is the universe of
+    keys the L2FT metadata cascade can filter on, so the functional
+    index set must cover exactly these.
+    """
+    keys: set[str] = set()
+    for r in instance.rails:
+        for k in r.metadata_keys:
+            keys.add(str(k))
+    return sorted(keys)
+
+
+def _metadata_index_name(p: str, key: str) -> str:
+    """Index identifier for the per-key JSON_VALUE functional index.
+
+    Keys can carry characters Postgres / Oracle don't accept in
+    identifiers (``:``, ``-``, etc.); replace anything outside
+    ``[A-Za-z0-9_]`` with ``_`` so the resulting identifier is always
+    legal in both dialects. Oracle 19c+ supports 128-byte
+    identifiers and PG 63 — long-prefix instances stay safely inside
+    both limits even with a long key (e.g. ``sasquatch_pr`` (12) +
+    ``_tx_meta_`` (9) + ``customer_id`` (11) = 32 chars).
+    """
+    import re
+    sanitized = re.sub(r"[^A-Za-z0-9_]", "_", key)
+    return f"idx_{p}_tx_meta_{sanitized}"
+
+
+def _emit_metadata_index_creates(
+    p: str, instance: L2Instance, dialect: Dialect,
+) -> str:
+    """``CREATE INDEX`` lines for the L2FT metadata cascade.
+
+    One functional index per declared metadata key, on
+    ``JSON_VALUE(metadata, '$.<key>')``. Speeds up the
+    ``l2ft-postings-dataset`` filter
+    (``WHERE JSON_VALUE(metadata, '$.<key>') IN (<<$pValues>>)``).
+
+    Dialect note: Postgres requires double parens for expression
+    indexes (``ON tbl ((expr))``); Oracle accepts a single set
+    (``ON tbl (expr)``). Both are emitted here per dialect.
+
+    Returns an empty string when the L2 declares no metadata keys
+    (most spec-example-shaped instances) so the placeholder collapses
+    cleanly in the template.
+    """
+    keys = _declared_metadata_keys(instance)
+    if not keys:
+        return ""
+    lines: list[str] = [
+        "-- Functional indexes on JSON_VALUE(metadata, '$.<key>') —",
+        "-- one per L2-declared metadata key. Speeds up the L2FT",
+        "-- metadata cascade WHERE clause (postings dataset).",
+    ]
+    for k in keys:
+        idx = _metadata_index_name(p, k)
+        path = f"$.{k}"
+        if dialect is Dialect.POSTGRES:
+            lines.append(
+                f"CREATE INDEX {idx} ON {p}_transactions "
+                f"((JSON_VALUE(metadata, '{path}')));"
+            )
+        else:
+            lines.append(
+                f"CREATE INDEX {idx} ON {p}_transactions "
+                f"(JSON_VALUE(metadata, '{path}'));"
+            )
+    return "\n".join(lines) + "\n"
+
+
+def _emit_metadata_index_drops(
+    p: str, instance: L2Instance, dialect: Dialect,
+) -> str:
+    """``DROP INDEX IF EXISTS`` lines paired with the CREATE block.
+
+    Co-located so the create + drop name list stays in sync — adding
+    a metadata key to an L2 rail YAML auto-extends both, no static
+    drop tuple to maintain.
+    """
+    keys = _declared_metadata_keys(instance)
+    if not keys:
+        return ""
+    lines = [
+        drop_index_if_exists(_metadata_index_name(p, k), dialect)
+        for k in keys
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _emit_base_schema(
+    p: str, dialect: Dialect, instance: L2Instance,
+) -> str:
     """Render ``_SCHEMA_TEMPLATE`` with all dialect placeholders filled.
 
     Type-name placeholders ({serial}, {ts}, {text}, {vc20…vc255},
@@ -471,6 +566,10 @@ def _emit_base_schema(p: str, dialect: Dialect) -> str:
     is a Postgres-only optimization — Oracle gets a full index, which
     works correctly but is larger; converting to a function-based
     index for parity is a future optimization.
+
+    ``instance`` is threaded for the L2FT JSON-cascade functional
+    indexes — one per declared metadata key, scoped by the L2's
+    ``rail.metadata_keys`` declarations.
     """
     fmt: dict[str, str] = {
         "p": p,
@@ -515,6 +614,11 @@ def _emit_base_schema(p: str, dialect: Dialect) -> str:
     # Index drops — name-template substitution for the prefix.
     for key, name_template in _BASE_INDEX_DROPS:
         fmt[key] = drop_index_if_exists(name_template.format(p=p), dialect)
+    # Per-L2-key metadata functional indexes (drops + creates). When
+    # the L2 declares no metadata keys, both placeholders collapse
+    # to empty strings so the template stays well-formed.
+    fmt["drop_metadata_indexes"] = _emit_metadata_index_drops(p, instance, dialect)
+    fmt["metadata_indexes"] = _emit_metadata_index_creates(p, instance, dialect)
     return _SCHEMA_TEMPLATE.format(**fmt)
 
 
@@ -535,7 +639,7 @@ _SCHEMA_TEMPLATE = """\
 {drop_idx_parent}
 {drop_idx_bundler}
 {drop_idx_db_business_day}
-{drop_table_db}
+{drop_metadata_indexes}{drop_table_db}
 {drop_table_tx}
 
 -- ---------------------------------------------------------------------
@@ -673,6 +777,7 @@ CREATE INDEX idx_{p}_transactions_bundler_eligibility
 -- on prod-scale tables.
 CREATE INDEX idx_{p}_transactions_posting          ON {p}_transactions (posting);
 CREATE INDEX idx_{p}_daily_balances_business_day  ON {p}_daily_balances (business_day_start);
+{metadata_indexes}
 
 -- ---------------------------------------------------------------------
 -- Current* views (M.1.5) — materialize the L1 ``CurrentTransaction`` /

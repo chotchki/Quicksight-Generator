@@ -1,5 +1,48 @@
 # Release Notes
 
+## v8.6.4 — JSON functional indexes + coverage-badge PEP-668 fix
+
+Two unrelated fixes shipped together — a perf win on the L2FT
+metadata cascade, and unblocking the coverage badge job in CI.
+
+### JSON functional indexes for the L2FT metadata cascade
+
+The L2FT Postings dataset filters via
+``WHERE JSON_VALUE(metadata, '$.<key>') IN (<<$pValues>>)`` per the
+analyst's Key + Value picks. Pre-v8.6.4 there was no index on the
+JSON-extracted expression, so each cascade pick triggered a full
+``<prefix>_transactions`` scan.
+
+``emit_schema(instance, dialect)`` now emits one functional index
+per L2-declared metadata key:
+
+```sql
+CREATE INDEX idx_<prefix>_tx_meta_<key>
+  ON <prefix>_transactions ((JSON_VALUE(metadata, '$.<key>')));
+```
+
+(Postgres needs the double-paren expression form; Oracle uses
+single parens — both dialects emit the right shape.) Index name
+sanitization replaces non-``[A-Za-z0-9_]`` characters with ``_``;
+identifier length stays inside both PG (63) and Oracle (128) limits
+even with long L2 prefixes + key names. Co-located ``DROP INDEX IF
+EXISTS`` block at the top of the schema script keeps the apply-
+script idempotent across re-runs and L2-key churn.
+
+L2 instances declaring no metadata keys emit nothing for these
+placeholders — no behavioral change for spec-example-shaped
+deployments without a metadata cascade.
+
+### Coverage-badge job — drop ``--system``, use a venv
+
+W.8b's coverage-badge rewrite did
+``uv pip install --system 'genbadge[coverage]'``, which fails on
+the GHA ubuntu-latest runner because the system Python is PEP 668
+externally-managed (``error: The interpreter at /usr is externally
+managed``). Switched to a fresh ``uv venv`` + venv-scoped install
+(same pattern the docs-portable-install job uses). The badge job
+should finally land on the next push to main.
+
 ## v8.6.3 — Interior padding on rich text boxes
 
 ``rt.text_box(*parts)`` now auto-pads the interior with leading +
