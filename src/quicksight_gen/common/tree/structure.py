@@ -243,14 +243,23 @@ class Sheet:
         *,
         parameter: ParameterDeclLike,
         title: str,
+        selectable_values: SelectableValues,
         type: Literal["SINGLE_SELECT", "MULTI_SELECT"] = "SINGLE_SELECT",
-        selectable_values: SelectableValues | None = None,
         hidden_select_all: bool = False,
         cascade_source: ParameterDropdown | None = None,
         cascade_match_column: Column | None = None,
         control_id: str | AutoResolved = AUTO,
     ) -> ParameterDropdown:
-        """Construct + register a parameter dropdown control on this sheet."""
+        """Construct + register a parameter dropdown control on this sheet.
+
+        ``selectable_values`` is required: a parameter dropdown without
+        a source list (StaticValues / LinkedValues) shows only the
+        QuickSight empty-state "All" placeholder, so the user can't
+        actually pick a value — the bound parameter stays unset and
+        any CategoryFilter using it matches nothing. Caught the L1
+        Daily Statement account-dropdown footgun (v8.3.3 hotfix); the
+        type makes it unrepresentable going forward.
+        """
         ctrl = ParameterDropdown(
             parameter=parameter, title=title, type=type,
             selectable_values=selectable_values,

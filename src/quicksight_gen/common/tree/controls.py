@@ -194,8 +194,8 @@ class ParameterDropdown:
     """
     parameter: ParameterDeclLike
     title: str
+    selectable_values: SelectableValues
     type: Literal["SINGLE_SELECT", "MULTI_SELECT"] = "SINGLE_SELECT"
-    selectable_values: SelectableValues | None = None
     hidden_select_all: bool = False
     cascade_source: "ParameterDropdown | None" = None
     # Column-match for the cascade: when the source control's value
@@ -211,7 +211,6 @@ class ParameterDropdown:
         """Datasets this control references (via LinkedValues if any)."""
         if isinstance(self.selectable_values, LinkedValues):
             ds = self.selectable_values.dataset
-            assert ds is not None  # LinkedValues.__post_init__ guarantees
             return {ds}
         return set()
 
@@ -258,10 +257,7 @@ class ParameterDropdown:
                 Title=self.title,
                 SourceParameterName=self.parameter.name,
                 Type=self.type,
-                SelectableValues=(
-                    self.selectable_values.emit()
-                    if self.selectable_values is not None else None
-                ),
+                SelectableValues=self.selectable_values.emit(),
                 DisplayOptions=display_options,
                 CascadingControlConfiguration=cascading_config,
             ),

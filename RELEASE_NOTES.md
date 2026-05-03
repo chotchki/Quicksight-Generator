@@ -37,6 +37,24 @@ spec_example would have caught this either, since the sheet renders
 fine with the dropdown empty (the assertion is on visual presence,
 not on the dropdown being usable).
 
+### Prevent the class
+
+Per the project's "encode invariants in the type system, not in
+validation tests" rule: tightened `ParameterDropdown.selectable_values`
+from `SelectableValues | None = None` to `SelectableValues` (no
+default). Same for `Sheet.add_parameter_dropdown(...)`. A future
+dropdown wired without a source list now fails at construction
+time with `TypeError: missing 1 required argument 'selectable_values'`
+— the bug is unrepresentable.
+
+`FilterDropdown.selectable_values` stays optional — filter dropdowns
+auto-populate from the filter's bound column, so omitting the
+override is the common, correct case.
+
+Audited every other `add_parameter_dropdown` call site in the
+shipped apps before tightening — all 8 already pass
+`selectable_values`. No call-site changes required.
+
 ## v8.3.2 — Hotfix: Investigation App Info latest_date column
 
 Bug fix on top of v8.3.1.
