@@ -16,7 +16,22 @@ from __future__ import annotations
 import os
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import TYPE_CHECKING, Callable, Generator, TypeVar
+
+if TYPE_CHECKING:
+    # Playwright's sync API ships PEP 561 inline stubs — Page, Locator,
+    # ElementHandle are all fully typed. Imported under TYPE_CHECKING
+    # so loading this module doesn't require Playwright at runtime
+    # (the helpers that touch it lazy-import inside the function body).
+    from playwright.sync_api import Page
+
+    # boto3-stubs[quicksight] provides this — typed client surface for
+    # the QuickSight API. Used by ``generate_dashboard_embed_url`` to
+    # avoid the partial-Unknown that bare ``boto3.client("quicksight")``
+    # returns in pyright (the Literal-overload set is too large to resolve).
+    from mypy_boto3_quicksight import QuickSightClient
+
+T = TypeVar("T")
 
 
 # Failure-screenshot output directory used by the e2e test suite's
@@ -86,7 +101,14 @@ def generate_dashboard_embed_url(
     """
     import boto3
 
-    qs = boto3.client("quicksight", region_name=aws_region)
+    # boto3-stubs[quicksight] picks the right overload — the inferred
+    # client type is QuickSightClient — but ``boto3.client`` itself is
+    # an enormous Literal-overload set whose type pyright reports as
+    # "partially unknown". The ignore is for THAT specific complaint;
+    # the resolved RHS type is fully typed.
+    qs: QuickSightClient = boto3.client(  # pyright: ignore[reportUnknownMemberType]
+        "quicksight", region_name=aws_region,
+    )
     resp = qs.generate_embed_url_for_registered_user(
         AwsAccountId=aws_account_id,
         SessionLifetimeInMinutes=session_lifetime_minutes,
@@ -99,7 +121,9 @@ def generate_dashboard_embed_url(
 
 
 @contextmanager
-def webkit_page(headless: bool = True, viewport: tuple[int, int] = (1600, 1000)) -> Iterator:
+def webkit_page(
+    headless: bool = True, viewport: tuple[int, int] = (1600, 1000),
+) -> Generator[Page, None, None]:
     """Yield a Playwright WebKit page; tears down browser on exit."""
     from playwright.sync_api import sync_playwright
 
@@ -116,7 +140,7 @@ def webkit_page(headless: bool = True, viewport: tuple[int, int] = (1600, 1000))
             browser.close()
 
 
-def wait_for_dashboard_loaded(page, timeout_ms: int) -> None:
+def wait_for_dashboard_loaded(page: Page, timeout_ms: int) -> None:
     """Wait for the QuickSight dashboard chrome (sheet tabs) to appear.
 
     Polls for ``[role="tab"]`` directly. Don't wait for ``networkidle``
@@ -130,7 +154,7 @@ def wait_for_dashboard_loaded(page, timeout_ms: int) -> None:
     page.wait_for_selector('[role="tab"]', timeout=timeout_ms, state="attached")
 
 
-def wait_for_visuals_rendered(page, timeout_ms: int, min_visuals: int = 1) -> None:
+def wait_for_visuals_rendered(page: Page, timeout_ms: int, min_visuals: int = 1) -> None:
     """Wait for visual containers to finish their loading state.
 
     QuickSight visuals show a loading skeleton while data fetches. We
@@ -148,7 +172,7 @@ def wait_for_visuals_rendered(page, timeout_ms: int, min_visuals: int = 1) -> No
     )
 
 
-def get_sheet_tab_names(page) -> list[str]:
+def get_sheet_tab_names(page: Page) -> list[str]:
     """Return the visible sheet tab labels in order."""
     tabs = page.query_selector_all('[role="tab"]')
     return [t.inner_text().strip() for t in tabs if t.inner_text().strip()]
@@ -157,7 +181,7 @@ def get_sheet_tab_names(page) -> list[str]:
 VISUAL_SELECTOR = '[data-automation-id="analysis_visual"]'
 
 
-def click_sheet_tab(page, name: str, timeout_ms: int) -> None:
+def click_sheet_tab(page: Page, name: str, timeout_ms: int) -> None:
     """Activate a sheet tab by its visible name and wait for the switch.
 
     QuickSight tears down the prior sheet's visuals on switch. We
@@ -195,13 +219,13 @@ def click_sheet_tab(page, name: str, timeout_ms: int) -> None:
         )
 
 
-def selected_sheet_name(page) -> str:
+def selected_sheet_name(page: Page) -> str:
     """Return the label of the currently active sheet tab, or empty string."""
     el = page.query_selector('[data-automation-id="selectedTab_sheet_name"]')
     return el.inner_text().strip() if el else ""
 
 
-def wait_for_sheet_tab(page, name: str, timeout_ms: int) -> None:
+def wait_for_sheet_tab(page: Page, name: str, timeout_ms: int) -> None:
     """Block until the active sheet tab's label equals ``name``.
 
     Used after a drill-down click to confirm navigation landed on the
@@ -217,7 +241,7 @@ def wait_for_sheet_tab(page, name: str, timeout_ms: int) -> None:
     )
 
 
-def wait_for_table_cells_present(page, timeout_ms: int) -> None:
+def wait_for_table_cells_present(page: Page, timeout_ms: int) -> None:
     """Wait until at least one table cell (row 0, col 0) renders on the
     active sheet. Useful after tab switches before asserting on row content.
     """
@@ -228,7 +252,7 @@ def wait_for_table_cells_present(page, timeout_ms: int) -> None:
     )
 
 
-def first_table_cell_text(page, row: int, col: int) -> str:
+def first_table_cell_text(page: Page, row: int, col: int) -> str:
     """Return the text of cell ``(row, col)`` in the first detail table on
     the active sheet. Targets the global ``sn-table-cell-{row}-{col}``
     automation id — use ``click_first_row_of_visual`` when multiple tables
@@ -240,7 +264,7 @@ def first_table_cell_text(page, row: int, col: int) -> str:
 
 
 def click_first_row_of_visual(
-    page, visual_title: str, timeout_ms: int,
+    page: Page, visual_title: str, timeout_ms: int,
 ) -> None:
     """Click the first data cell (row 0, col 0) of the named visual.
 
@@ -276,7 +300,7 @@ def click_first_row_of_visual(
 
 
 def right_click_first_row_of_visual(
-    page, visual_title: str, timeout_ms: int,
+    page: Page, visual_title: str, timeout_ms: int,
 ) -> None:
     """Right-click the first data cell of the named visual.
 
@@ -314,7 +338,7 @@ def right_click_first_row_of_visual(
     )
 
 
-def click_context_menu_item(page, item_text: str, timeout_ms: int) -> None:
+def click_context_menu_item(page: Page, item_text: str, timeout_ms: int) -> None:
     """Click an entry in QuickSight's data-point context menu by visible text.
 
     QS's right-click menu mounts as a portal with each entry as a
@@ -331,13 +355,13 @@ def click_context_menu_item(page, item_text: str, timeout_ms: int) -> None:
     ).first.click(timeout=timeout_ms)
 
 
-def sheet_control_titles(page) -> list[str]:
+def sheet_control_titles(page: Page) -> list[str]:
     """Return the visible titles of filter controls on the active sheet."""
     els = page.query_selector_all('[data-automation-id="sheet_control_name"]')
     return [e.inner_text().strip() for e in els if e.inner_text().strip()]
 
 
-def wait_for_sheet_controls_present(page, timeout_ms: int) -> None:
+def wait_for_sheet_controls_present(page: Page, timeout_ms: int) -> None:
     """Wait until at least one filter control is attached on the active sheet."""
     page.wait_for_selector(
         '[data-automation-id="sheet_control_name"]',
@@ -346,7 +370,9 @@ def wait_for_sheet_controls_present(page, timeout_ms: int) -> None:
     )
 
 
-def _retry_on_playwright_timeout(call, *, timeout_ms: int):
+def _retry_on_playwright_timeout(
+    call: Callable[[], T], *, timeout_ms: int,
+) -> T:
     """Run ``call()``; if Playwright's wait timed out, retry once with the
     same budget. Aurora Serverless v2 cold-start can stall the first SELECT
     for ~30s — the conftest warm-up fixture covers session start, but ad-hoc
@@ -363,7 +389,7 @@ def _retry_on_playwright_timeout(call, *, timeout_ms: int):
 
 
 def wait_for_visual_titles_present(
-    page, expected_titles, timeout_ms: int,
+    page: Page, expected_titles: list[str], timeout_ms: int,
 ) -> None:
     """Block until every title in ``expected_titles`` is rendered as an
     ``analysis_visual_title_label``. Visual containers attach before their
@@ -387,7 +413,7 @@ def wait_for_visual_titles_present(
     )
 
 
-def wait_for_visuals_present(page, min_count: int, timeout_ms: int) -> int:
+def wait_for_visuals_present(page: Page, min_count: int, timeout_ms: int) -> int:
     """Wait until at least `min_count` visual containers are rendered.
 
     Returns the actual count observed.
@@ -400,14 +426,14 @@ def wait_for_visuals_present(page, min_count: int, timeout_ms: int) -> int:
     return len(page.query_selector_all(VISUAL_SELECTOR))
 
 
-def get_visual_titles(page) -> list[str]:
+def get_visual_titles(page: Page) -> list[str]:
     """Return the title text of every visual currently on the page."""
     titles = page.query_selector_all('[data-automation-id="analysis_visual_title_label"]')
     return [t.inner_text().strip() for t in titles if t.inner_text().strip()]
 
 
 def scroll_visual_into_view(
-    page, visual_title: str, timeout_ms: int, *, wait_for_cells: bool = True,
+    page: Page, visual_title: str, timeout_ms: int, *, wait_for_cells: bool = True,
 ) -> None:
     """Scroll the visual with the given title to the viewport center.
 
@@ -451,7 +477,7 @@ def scroll_visual_into_view(
     )
 
 
-def count_table_rows(page, visual_title: str) -> int:
+def count_table_rows(page: Page, visual_title: str) -> int:
     """Count distinct table rows in the visual whose title matches.
 
     Returns -1 if no visual with that title is on the page. Returns 0 if
@@ -478,7 +504,7 @@ def count_table_rows(page, visual_title: str) -> int:
     )
 
 
-def count_table_total_rows(page, visual_title: str, timeout_ms: int) -> int:
+def count_table_total_rows(page: Page, visual_title: str, timeout_ms: int) -> int:
     """Return the full (post-filter) row count of a QS table visual.
 
     QS tables virtualize — ``count_table_rows`` only sees the ~10 rows
@@ -610,7 +636,7 @@ def count_table_total_rows(page, visual_title: str, timeout_ms: int) -> int:
 
 
 def wait_for_table_total_rows_to_change(
-    page, visual_title: str, before: int, timeout_ms: int,
+    page: Page, visual_title: str, before: int, timeout_ms: int,
 ) -> int:
     """Poll a table's total row count (via ``count_table_total_rows``) until
     it differs from ``before``. Returns the new total.
@@ -632,7 +658,7 @@ def wait_for_table_total_rows_to_change(
     )
 
 
-def count_chart_categories(page, visual_title: str) -> int:
+def count_chart_categories(page: Page, visual_title: str) -> int:
     """Count distinct categorical entries (bars / slices) in a chart.
 
     QS renders charts to ``<canvas>``, so there are no DOM bars/slices to
@@ -673,7 +699,7 @@ def count_chart_categories(page, visual_title: str) -> int:
 
 
 def wait_for_chart_categories_to_change(
-    page, visual_title: str, before: int, timeout_ms: int,
+    page: Page, visual_title: str, before: int, timeout_ms: int,
 ) -> int:
     """Poll ``count_chart_categories`` until the value differs from ``before``.
     Returns the new count. Mirrors ``wait_for_table_rows_to_change``.
@@ -691,7 +717,7 @@ def wait_for_chart_categories_to_change(
     )
 
 
-def read_chart_categories(page, visual_title: str) -> list[str]:
+def read_chart_categories(page: Page, visual_title: str) -> list[str]:
     """Return the ordered category labels (bar names / slice names) of a
     chart visual, parsed from QS's screen-reader aria-label.
 
@@ -727,7 +753,7 @@ def read_chart_categories(page, visual_title: str) -> list[str]:
 
 
 def click_chart_bar(
-    page, visual_title: str, index: int, timeout_ms: int,
+    page: Page, visual_title: str, index: int, timeout_ms: int,
 ) -> None:
     """Select the bar at ``index`` in a bar-chart visual via keyboard nav.
 
@@ -775,7 +801,7 @@ def click_chart_bar(
 
 
 def read_visual_column_values(
-    page, visual_title: str, col_index: int,
+    page: Page, visual_title: str, col_index: int,
 ) -> list[str]:
     """Return the text of every visible cell in column ``col_index`` within
     the table visual whose title matches ``visual_title``.
@@ -812,7 +838,7 @@ def read_visual_column_values(
     ) or []
 
 
-def read_kpi_value(page, visual_title: str) -> str:
+def read_kpi_value(page: Page, visual_title: str) -> str:
     """Return the displayed big-number text of a KPI visual.
 
     QS renders the value inside ``.visual-x-center`` (the actual text node).
@@ -857,7 +883,7 @@ def parse_kpi_number(text: str) -> float:
 
 
 def wait_for_kpi_text_nonempty(
-    page, visual_title: str, timeout_ms: int,
+    page: Page, visual_title: str, timeout_ms: int,
 ) -> str:
     """Poll ``read_kpi_value`` until the KPI is readable, returning its
     text. Useful pre-filter when the KPI hydrates after the visual
@@ -879,7 +905,7 @@ def wait_for_kpi_text_nonempty(
 
 
 def wait_for_kpi_value_to_change(
-    page, visual_title: str, before: str, timeout_ms: int,
+    page: Page, visual_title: str, before: str, timeout_ms: int,
 ) -> str:
     """Poll ``read_kpi_value`` until the displayed text differs from ``before``.
     Returns the new value. Raw string comparison — caller parses if needed.
@@ -898,7 +924,7 @@ def wait_for_kpi_value_to_change(
 
 
 def wait_for_table_rows_to_change(
-    page, visual_title: str, before: int, timeout_ms: int,
+    page: Page, visual_title: str, before: int, timeout_ms: int,
 ) -> int:
     """Poll a table visual's row count until it differs from ``before``.
 
@@ -928,7 +954,7 @@ def wait_for_table_rows_to_change(
 
 
 def set_date_range(
-    page, start: str, end: str, timeout_ms: int,
+    page: Page, start: str, end: str, timeout_ms: int,
     picker_indices: tuple[int, int] = (0, 1),
 ) -> None:
     """Fill the two date-range pickers and commit each with Enter.
@@ -951,7 +977,7 @@ def set_date_range(
 
 
 def set_parameter_datetime_value(
-    page, control_title: str, value: str, timeout_ms: int,
+    page: Page, control_title: str, value: str, timeout_ms: int,
 ) -> None:
     """Fill a single ``ParameterDateTimePicker`` control by its title.
 
@@ -977,7 +1003,7 @@ def set_parameter_datetime_value(
 
 
 def set_slider_range(
-    page, control_title: str, low: int | None, high: int | None,
+    page: Page, control_title: str, low: int | None, high: int | None,
     timeout_ms: int,
 ) -> None:
     """Set a RANGE FilterSliderControl's min/max via its backing text inputs.
@@ -1019,7 +1045,7 @@ _SELECTED_OPTION_SELECTOR = (
 )
 
 
-def _open_control_dropdown(page, control_title: str, timeout_ms: int) -> None:
+def _open_control_dropdown(page: Page, control_title: str, timeout_ms: int) -> None:
     """Open the FilterControl popover for the named sheet control.
 
     QuickSight renders each control as
@@ -1056,7 +1082,7 @@ def _open_control_dropdown(page, control_title: str, timeout_ms: int) -> None:
 
 
 def set_dropdown_value(
-    page, control_title: str, value: str, timeout_ms: int,
+    page: Page, control_title: str, value: str, timeout_ms: int,
 ) -> None:
     """Pick a single value from a SINGLE_SELECT FilterControl by title.
 
@@ -1073,7 +1099,7 @@ def set_dropdown_value(
 
 
 def set_multi_select_values(
-    page, control_title: str, values: list[str], timeout_ms: int,
+    page: Page, control_title: str, values: list[str], timeout_ms: int,
 ) -> None:
     """Pick one or more values from a MULTI_SELECT FilterControl by title.
 
@@ -1105,7 +1131,7 @@ def set_multi_select_values(
 
 
 def read_dropdown_options(
-    page, control_title: str, timeout_ms: int,
+    page: Page, control_title: str, timeout_ms: int,
 ) -> list[str]:
     """Return the data-value option labels in a FilterControl dropdown.
 
@@ -1129,7 +1155,7 @@ def read_dropdown_options(
     ]
 
 
-def clear_dropdown(page, control_title: str, timeout_ms: int) -> None:
+def clear_dropdown(page: Page, control_title: str, timeout_ms: int) -> None:
     """Reset a FilterControl to its "all values" default.
 
     Opens the dropdown and clicks the "Select all" / "All" entry. Works
@@ -1168,7 +1194,7 @@ def clear_dropdown(page, control_title: str, timeout_ms: int) -> None:
     )
 
 
-def screenshot(page, name: str, subdir: str | None = None) -> Path:
+def screenshot(page: Page, name: str, subdir: str | None = None) -> Path:
     """Save a screenshot under tests/e2e/screenshots/[subdir/].
 
     Pass ``subdir`` to namespace outputs per-app (e.g. ``"payment_recon"`` or

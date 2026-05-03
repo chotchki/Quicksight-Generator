@@ -317,6 +317,11 @@ def build_dataset(
     """
     sql = _oracle_lowercase_alias_wrapper(sql, contract, cfg)
     columns = contract.to_input_columns()
+    # Config.__post_init__ guarantees datasource_arn is non-None
+    # post-construction (raises if neither it nor demo_database_url
+    # is provided). The dataclass default is None for ergonomics, but
+    # by the time build_dataset runs the value is a real ARN string.
+    assert cfg.datasource_arn is not None
     physical = {
         table_key: PhysicalTable(
             CustomSql=CustomSql(

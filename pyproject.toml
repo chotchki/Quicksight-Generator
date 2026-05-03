@@ -166,10 +166,21 @@ include = [
     "src/quicksight_gen/common/tree",
     "src/quicksight_gen/common/l2",
     "src/quicksight_gen/common/sql",
+    "src/quicksight_gen/common/browser",
+    "src/quicksight_gen/common/dataset_contract.py",
+    "src/quicksight_gen/common/models.py",
 ]
 pythonVersion = "3.13"
 typeCheckingMode = "strict"
 extraPaths = ["src"]
+# Pin the venv so pyright resolves third-party stubs (Playwright,
+# boto3-stubs, psycopg2). Without this, ad-hoc ``pyright <file>``
+# invocations on files in scope above can't resolve those packages
+# and surface ~300 false-positive "type is unknown" cascades. The
+# ``venvPath`` is the parent directory; ``venv`` is the directory
+# name inside it.
+venvPath = "."
+venv = ".venv"
 # Module-private leading-underscore helpers are intentionally shared
 # across tree submodules (e.g. `_calc_field_in` in calc_fields.py used
 # by filters.py / actions.py). Pyright flags this under `reportPrivateUsage`

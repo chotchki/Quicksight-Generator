@@ -8,7 +8,7 @@ that returns the exact dict shape expected by the corresponding AWS CLI command
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from enum import Enum
 from typing import Any, ClassVar, Literal
 
@@ -18,11 +18,24 @@ from typing import Any, ClassVar, Literal
 # ---------------------------------------------------------------------------
 
 def _strip_nones(obj: Any) -> Any:
-    """Recursively remove keys with None values from dicts."""
+    """Recursively remove keys with None values from dicts.
+
+    The shape is necessarily ``Any`` — this walks arbitrary
+    QuickSight-API JSON structures (asdict() output for any model).
+    Pyright would otherwise demand a recursive ``JsonValue`` alias
+    that doesn't buy us anything for an internal helper.
+    """
     if isinstance(obj, dict):
-        return {k: _strip_nones(v) for k, v in obj.items() if v is not None}
+        return {  # pyright: ignore[reportUnknownVariableType]
+            k: _strip_nones(v)  # pyright: ignore[reportUnknownArgumentType]
+            for k, v in obj.items()  # pyright: ignore[reportUnknownVariableType]
+            if v is not None
+        }
     if isinstance(obj, list):
-        return [_strip_nones(v) for v in obj]
+        return [
+            _strip_nones(v)  # pyright: ignore[reportUnknownArgumentType]
+            for v in obj  # pyright: ignore[reportUnknownVariableType]
+        ]
     if isinstance(obj, Enum):
         return obj.value
     return obj
@@ -34,6 +47,12 @@ def _strip_nones(obj: Any) -> Any:
 
 @dataclass
 class ColumnIdentifier:
+    """References a column on a specific dataset by identifier.
+
+    Reused across many AWS QuickSight shapes — every typed field-well
+    leaf (CategoricalDimensionField, DateDimensionField, etc.) and
+    cascading control source carries one.
+    """
     DataSetIdentifier: str
     ColumnName: str
 
@@ -1212,14 +1231,6 @@ class MappedDataSetParameter:
     """
     DataSetIdentifier: str
     DataSetParameterName: str
-
-
-@dataclass
-class ColumnIdentifier:
-    """References a column on a specific dataset by identifier.
-    Used by ``CascadingControlSource.ColumnToMatch``."""
-    DataSetIdentifier: str
-    ColumnName: str
 
 
 @dataclass
