@@ -692,6 +692,22 @@ class _BaselineState:
     initial_balances: dict[Identifier, Decimal] = field(
         default_factory=lambda: {},
     )
+    # V.5.a — per-(source-account, transfer_type, business_day) outbound
+    # accumulator used by the leg loop to enforce the L1 limit_breach
+    # invariant against LimitSchedule caps. The matview groups by
+    # (account_id, business_day, transfer_type) on Posted Debit legs and
+    # flags rows where SUM(ABS(amount_money)) > cap. The amount sampler's
+    # per-firing clamp is necessary but not sufficient — multiple firings
+    # against the same source on the same day must collectively stay under
+    # the daily cap. The leg loop reads `remaining_cap = cap - accumulated`
+    # before each firing, skips when `remaining_cap < $50` (avoids comically
+    # small firings), and falls through to `_baseline_amount_sample` with
+    # `cap=remaining_cap` otherwise. Aggregating rails are out of scope
+    # here — they post one parent per period, the cap-vs-aggregate
+    # invariant doesn't apply.
+    daily_outbound_by_account_type: dict[
+        tuple[Identifier, str, date], Decimal,
+    ] = field(default_factory=lambda: {})
 
 
 def emit_baseline_seed(
@@ -1534,7 +1550,29 @@ def _emit_baseline_for_rail(
 
             src = src_accounts[rng.randrange(len(src_accounts))]
             cap = cap_by_parent_role.get(str(src.account_parent_role) if src.account_parent_role else "")
-            amount = _baseline_amount_sample(rng, kind, cap=cap)
+            # V.5.a — per-(source-account, transfer_type, day) cap tracker.
+            # The amount sampler clamps each individual draw to `cap`; the
+            # matview however groups SUM(ABS(amount)) across same-day same-
+            # type legs from the same source. Only internal-scope sources
+            # with a non-null parent_role land in the matview, so the
+            # accumulator only needs to track those.
+            cap_key: tuple[Identifier, str, date] | None = None
+            cap_accumulated: Decimal = Decimal(0)
+            if (
+                cap is not None
+                and str(src.account_scope) == "internal"
+                and src.account_parent_role is not None
+            ):
+                cap_key = (src.account_id, str(rail.transfer_type), day)
+                cap_accumulated = state.daily_outbound_by_account_type.get(
+                    cap_key, Decimal(0),
+                )
+                remaining_cap = cap - cap_accumulated
+                if remaining_cap < Decimal("50"):
+                    continue  # daily cap exhausted; emitting <$50 is silly
+                amount = _baseline_amount_sample(rng, kind, cap=remaining_cap)
+            else:
+                amount = _baseline_amount_sample(rng, kind, cap=cap)
 
             metadata = _baseline_metadata(rail, n, firing_seq)
             # R.2.c bundle stamp: if this child rail is bundled by some
@@ -1594,6 +1632,10 @@ def _emit_baseline_for_rail(
                 state.account_leg_log.setdefault(dst.account_id, []).append(
                     (posting, day, amount),
                 )
+                if cap_key is not None:
+                    state.daily_outbound_by_account_type[cap_key] = (
+                        cap_accumulated + amount
+                    )
             else:
                 assert isinstance(rail, SingleLegRail)
                 if rail.leg_direction == "Credit":
@@ -1621,6 +1663,13 @@ def _emit_baseline_for_rail(
                 state.account_leg_log.setdefault(src.account_id, []).append(
                     (posting, day, signed),
                 )
+                # Track only Debit legs against the cap (matview filters on
+                # amount_direction='Debit'). Credit single-legs don't add
+                # to outbound aggregates.
+                if cap_key is not None and direction == "Debit":
+                    state.daily_outbound_by_account_type[cap_key] = (
+                        cap_accumulated + amount
+                    )
 
     _ = template_by_role  # accounts already resolved via state.template_instances
     return rows
@@ -2236,10 +2285,30 @@ def _emit_chain_child_leg(
     cap = cap_by_parent_role.get(
         str(src.account_parent_role) if src.account_parent_role else "",
     )
-    # Sample from the child rail's distribution. Slightly conservative
-    # vs the parent_amount so the chain looks like a downstream
-    # transfer of part of the parent.
-    amount = _baseline_amount_sample(rng, kind, cap=cap)
+    # V.5.a — same per-(source-account, transfer_type, day) cap tracker
+    # as the per-Rail loop. Chain children share the cap budget with the
+    # rest of the day's outbound on the same source so the matview's
+    # SUM-over-day comparison stays under cap.
+    cap_key: tuple[Identifier, str, date] | None = None
+    cap_accumulated: Decimal = Decimal(0)
+    if (
+        cap is not None
+        and str(src.account_scope) == "internal"
+        and src.account_parent_role is not None
+    ):
+        cap_key = (src.account_id, str(child_rail.transfer_type), parent_day)
+        cap_accumulated = state.daily_outbound_by_account_type.get(
+            cap_key, Decimal(0),
+        )
+        remaining_cap = cap - cap_accumulated
+        if remaining_cap < Decimal("50"):
+            return []  # daily cap exhausted; skip this child firing
+        amount = _baseline_amount_sample(rng, kind, cap=remaining_cap)
+    else:
+        # Sample from the child rail's distribution. Slightly conservative
+        # vs the parent_amount so the chain looks like a downstream
+        # transfer of part of the parent.
+        amount = _baseline_amount_sample(rng, kind, cap=cap)
     _ = parent_amount  # reserved — could constrain to <= parent in the future
 
     metadata = _baseline_metadata(child_rail, n, 0)
@@ -2298,6 +2367,10 @@ def _emit_chain_child_leg(
         state.account_leg_log.setdefault(dst.account_id, []).append(
             (posting, parent_day, amount),
         )
+        if cap_key is not None:
+            state.daily_outbound_by_account_type[cap_key] = (
+                cap_accumulated + amount
+            )
     else:
         assert isinstance(child_rail, SingleLegRail)
         if child_rail.leg_direction == "Credit":
@@ -2329,6 +2402,10 @@ def _emit_chain_child_leg(
         state.account_leg_log.setdefault(src.account_id, []).append(
             (posting, parent_day, signed),
         )
+        if cap_key is not None and direction == "Debit":
+            state.daily_outbound_by_account_type[cap_key] = (
+                cap_accumulated + amount
+            )
 
     # Record the chain child as its own firing too — supports nested
     # chains in future L2 instances.
