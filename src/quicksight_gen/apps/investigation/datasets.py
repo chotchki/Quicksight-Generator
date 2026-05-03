@@ -41,24 +41,33 @@ from quicksight_gen.common.sheets.app_info import (
 
 
 # M.4.4.5 — matviews the Investigation app reads, surfaced on the
-# App Info ("i") sheet's matview-status table.
-_INV_MATVIEW_BARE_NAMES = [
-    "inv_pair_rolling_anomalies",
-    "inv_money_trail_edges",
+# App Info ("i") sheet's matview-status table. V.3 — paired with the
+# date column the App Info ``latest_date`` KPI takes its MAX from.
+# `inv_pair_rolling_anomalies` carries `posted_day`; `inv_money_trail_edges`
+# is a recursive-CTE walk over edge metadata with no natural date
+# dimension (each row is a hop, not a posting), so it gets None.
+_INV_MATVIEW_BARE_SPECS: list[tuple[str, str | None]] = [
+    ("inv_pair_rolling_anomalies", "posted_day"),
+    ("inv_money_trail_edges", None),
 ]
 
 
-def inv_matview_names(l2_instance: L2Instance) -> list[str]:
-    """The L2-prefixed Inv matviews the dashboard reads.
+def inv_matview_specs(
+    l2_instance: L2Instance,
+) -> list[tuple[str, str | None]]:
+    """The L2-prefixed Inv matviews + base tables the dashboard reads,
+    paired with the date column for App Info's ``latest_date`` KPI.
 
-    Surfaced on the App Info ("i") sheet's matview status table so an
-    operator can see refresh state at a glance. Mirrors the
-    ``l1_matview_names`` / ``l2ft_matview_names`` helpers — the
-    ``<prefix>_inv_*`` form matches what ``common.l2.schema`` actually
-    creates per L2 instance.
+    Includes the base tables (transactions / daily_balances) so the
+    operator can spot stale matviews against fresh ETL loads at a
+    glance. Mirrors ``l1_matview_specs`` / ``l2ft_matview_specs``.
     """
     p = str(l2_instance.instance)
-    return [f"{p}_{name}" for name in _INV_MATVIEW_BARE_NAMES]
+    return [
+        (f"{p}_transactions", "posting"),
+        (f"{p}_daily_balances", "business_day_start"),
+        *((f"{p}_{name}", date_col) for name, date_col in _INV_MATVIEW_BARE_SPECS),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -370,7 +379,7 @@ def build_all_datasets(
         build_liveness_dataset(cfg, app_segment="inv"),
         build_matview_status_dataset(
             cfg, app_segment="inv",
-            view_names=inv_matview_names(l2_instance),
+            view_specs=inv_matview_specs(l2_instance),
         ),
     ]
 

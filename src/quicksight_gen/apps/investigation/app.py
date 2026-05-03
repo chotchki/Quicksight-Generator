@@ -1080,19 +1080,19 @@ def _build_app_info_sheet(
     default for in-canvas accents when no L2 theme block is declared);
     populate_app_info_sheet accepts it directly.
     """
-    from quicksight_gen.apps.investigation.datasets import inv_matview_names
+    from quicksight_gen.apps.investigation.datasets import inv_matview_specs
 
     # M.4.4.7 — per-app segment matches the inv-segmented call in
     # apps/investigation/datasets.py::build_all_datasets so the
     # contract-registry idempotence check sees the same DataSetIds.
-    # P.9f.e — view_names must carry the L2 prefix (``<prefix>_inv_*``)
+    # P.9f.e — view names must carry the L2 prefix (``<prefix>_inv_*``)
     # so the matview lookup matches the actual table names emitted by
     # ``common.l2.schema``. Using the unprefixed bare names slipped past
     # all unit + integration tests because nothing actually executed
     # the dataset's CustomSQL until QS rendered the visual.
     liveness_aws = build_liveness_dataset(cfg, app_segment="inv")
     matviews_aws = build_matview_status_dataset(
-        cfg, app_segment="inv", view_names=inv_matview_names(l2_instance),
+        cfg, app_segment="inv", view_specs=inv_matview_specs(l2_instance),
     )
     liveness_ds = app.add_dataset(Dataset(
         identifier=DS_APP_INFO_LIVENESS,

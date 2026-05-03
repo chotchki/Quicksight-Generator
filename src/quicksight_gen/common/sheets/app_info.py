@@ -33,7 +33,11 @@ from quicksight_gen.common.sheets.app_info import (
 liveness_aws = build_liveness_dataset(cfg, app_segment="l1")
 matviews_aws = build_matview_status_dataset(
     cfg, app_segment="l1",
-    view_names=[f"{l2_prefix}_drift", f"{l2_prefix}_overdraft", ...],
+    view_specs=[
+        (f"{l2_prefix}_drift", "business_day_end"),
+        (f"{l2_prefix}_overdraft", "business_day_end"),
+        ...,
+    ],
 )
 liveness_ds = Dataset(identifier=DS_APP_INFO_LIVENESS,
                      arn=cfg.dataset_arn(liveness_aws.DataSetId))
@@ -126,34 +130,56 @@ def _liveness_sql(dialect: Dialect) -> str:
 MATVIEW_STATUS_CONTRACT = DatasetContract(columns=[
     ColumnSpec("view_name", "STRING"),
     ColumnSpec("row_count", "INTEGER"),
+    # V.3 — `latest_date` is MAX(<date_col>) for the row's table/matview.
+    # Operators detect stale matviews by eye: if the base tables'
+    # latest_date moves forward but a matview's stays behind, the
+    # matview hasn't been refreshed since the last ETL load. NULL when
+    # the caller passed no date column (matviews without a natural
+    # date dimension, e.g. inv_money_trail_edges).
+    ColumnSpec("latest_date", "DATETIME"),
 ])
 
 
-def _matview_status_sql(view_names: list[str], dialect: Dialect) -> str:
-    """Build a UNION ALL query: one row per matview with its row count.
+# (table_or_view_name, date_column_or_None) — V.3 spec shape.
+ViewSpec = tuple[str, str | None]
 
-    Empty ``view_names`` returns a single placeholder row so the
+
+def _matview_status_sql(
+    view_specs: list[ViewSpec], dialect: Dialect,
+) -> str:
+    """Build a UNION ALL query: one row per (table | matview) with its
+    row count + most-recent date.
+
+    Each spec is ``(name, date_col)``. When ``date_col`` is set, the
+    row carries ``MAX(<date_col>) AS latest_date``; when None, the
+    row carries ``NULL AS latest_date`` (for matviews without a
+    natural date dimension).
+
+    Empty ``view_specs`` returns a single placeholder row so the
     dataset always has rows — keeps the table from rendering blank
     on apps with zero monitored matviews (Executives today). The
     placeholder needs ``FROM dual`` on Oracle (constant SELECT
     requires a FROM clause); on Postgres it stays bare.
 
-    No casts — the column types are pinned by ``MATVIEW_STATUS_CONTRACT``,
-    so the literal-type inference (text/integer on Postgres, char/number
-    on Oracle) is a no-op as far as QuickSight sees. Earlier ``::text`` /
-    ``::integer`` casts were Postgres-only syntax and silently broke the
-    Oracle dataset (P.9c).
+    No casts — the column types are pinned by
+    ``MATVIEW_STATUS_CONTRACT``, so the literal-type inference is a
+    no-op as far as QuickSight sees. Earlier ``::text`` / ``::integer``
+    casts were Postgres-only syntax and silently broke the Oracle
+    dataset (P.9c).
     """
-    if not view_names:
+    if not view_specs:
         return (
             "SELECT '(no matviews registered)' AS view_name, "
-            f"0 AS row_count{dual_from(dialect)}"
+            f"0 AS row_count, NULL AS latest_date{dual_from(dialect)}"
         )
-    parts = [
-        f"SELECT '{name}' AS view_name, "
-        f"COUNT(*) AS row_count FROM {name}"
-        for name in view_names
-    ]
+    parts = []
+    for name, date_col in view_specs:
+        date_expr = f"MAX({date_col})" if date_col else "NULL"
+        parts.append(
+            f"SELECT '{name}' AS view_name, "
+            f"COUNT(*) AS row_count, "
+            f"{date_expr} AS latest_date FROM {name}"
+        )
     return "\nUNION ALL\n".join(parts)
 
 
@@ -188,14 +214,21 @@ def build_liveness_dataset(cfg: Config, *, app_segment: str) -> DataSet:
 
 
 def build_matview_status_dataset(
-    cfg: Config, *, app_segment: str, view_names: list[str],
+    cfg: Config, *, app_segment: str, view_specs: list[ViewSpec],
 ) -> DataSet:
-    """Per-matview row count table.
+    """Per-matview row count + most-recent date table.
 
-    ``view_names`` is the list of fully-qualified matview names to
-    monitor (caller decides which ones matter for this app — typically
-    the L1 invariant matviews + any app-specific ones, e.g. the L2-
-    instance-prefixed names like ``sasquatch_ar_drift``).
+    ``view_specs`` is a list of ``(name, date_col)`` tuples — the
+    fully-qualified matview/table names to monitor + the column the
+    "most recent" timestamp comes from. Pass ``date_col=None`` for
+    tables without a natural date dimension; the latest_date column
+    will render NULL for that row.
+
+    Caller decides which (matview, date_col) pairs matter for this
+    app — typically the L1 invariant matviews + the base tables
+    (``<prefix>_transactions``, ``<prefix>_daily_balances``) so the
+    operator can spot stale matviews against fresh ETL loads at a
+    glance on the App Info sheet.
 
     ``app_segment``: see ``build_liveness_dataset``.
     """
@@ -204,7 +237,7 @@ def build_matview_status_dataset(
         cfg.prefixed(f"{app_segment}-app-info-matviews-dataset"),
         "App Info -- Matview Status",  # ASCII-only
         "app-info-matviews",
-        _matview_status_sql(view_names, cfg.dialect),
+        _matview_status_sql(view_specs, cfg.dialect),
         MATVIEW_STATUS_CONTRACT,
         visual_identifier=DS_APP_INFO_MATVIEWS,
     )
@@ -286,13 +319,17 @@ def populate_app_info_sheet(
         width=_HALF,
         title="Matview Status",
         subtitle=(
-            "Row counts for materialized views the dashboard reads. "
-            "Freshly-loaded matviews showing 0 means the ETL has not "
-            "refreshed them yet."
+            "Row counts + most-recent date per matview (and base "
+            "tables for comparison). Freshly-loaded matviews showing "
+            "0 mean the ETL has not refreshed them yet. If a base "
+            "table's `latest_date` moves past a matview's "
+            "`latest_date`, the matview is stale relative to fresh "
+            "ETL data — re-run `quicksight-gen data refresh --execute`."
         ),
         columns=[
             matview_status_ds["view_name"].dim(),
             matview_status_ds["row_count"].numerical(),
+            matview_status_ds["latest_date"].date(),
         ],
     )
 

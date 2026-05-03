@@ -45,9 +45,24 @@ from quicksight_gen.common.sql import to_date
 
 
 # M.4.4.5 — Executives reads base tables only; no app-specific
-# matviews. The App Info sheet still ships with the matview status
-# table, which renders a placeholder row when the list is empty.
-EXEC_MATVIEW_NAMES: list[str] = []
+# matviews. V.3 — but we still surface the base tables themselves on
+# the App Info sheet so the operator can see ETL freshness at a
+# glance. Sourced from cfg.l2_instance_prefix (always set when the
+# Executives app is built via resolve_l2_for_demo); empty list when
+# the prefix is None (legacy single-tenant mode that doesn't use
+# this app).
+def exec_matview_specs(cfg: Config) -> list[tuple[str, str | None]]:
+    """Tables Executives reads, paired with their date columns for
+    App Info's ``latest_date`` KPI. No app-specific matviews — just
+    the base tables (which is what the Executives sheets aggregate
+    over)."""
+    p = cfg.l2_instance_prefix
+    if not p:
+        return []
+    return [
+        (f"{p}_transactions", "posting"),
+        (f"{p}_daily_balances", "business_day_start"),
+    ]
 
 
 # Identifier strings used as the DataSetIdentifier in visuals + filters.
@@ -205,7 +220,7 @@ def build_all_datasets(cfg: Config) -> list[DataSet]:
         # delete-then-create another app's App Info dataset.
         build_liveness_dataset(cfg, app_segment="exec"),
         build_matview_status_dataset(
-            cfg, app_segment="exec", view_names=EXEC_MATVIEW_NAMES,
+            cfg, app_segment="exec", view_specs=exec_matview_specs(cfg),
         ),
     ]
 

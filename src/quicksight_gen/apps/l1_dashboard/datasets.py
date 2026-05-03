@@ -35,23 +35,34 @@ from quicksight_gen.common.sheets.app_info import (
 from quicksight_gen.common.sql import Dialect, date_trunc_day
 
 
-def l1_matview_names(l2_instance: L2Instance) -> list[str]:
-    """The L2-prefixed matviews the L1 dashboard reads.
+def l1_matview_specs(l2_instance: L2Instance) -> list[tuple[str, str | None]]:
+    """The L2-prefixed matviews + base tables the L1 dashboard reads,
+    paired with the date column the App Info ``latest_date`` KPI takes
+    its MAX from.
 
-    Surfaced on the App Info ("i") sheet's matview status table so an
-    operator can see ETL refresh state at a glance.
+    Includes both base tables (so the operator can spot ETL freshness
+    against the matviews' staleness) and every L1 invariant matview.
+    Date columns chosen to match what each table tracks "as-of":
+      - transactions / current_transactions / stuck_* → ``posting``
+      - daily_balances / current_daily_balances / daily_statement_summary
+        → ``business_day_start``
+      - drift / ledger_drift / overdraft → ``business_day_end``
+      - limit_breach / todays_exceptions → ``business_day``
     """
     p = str(l2_instance.instance)
     return [
-        f"{p}_current_transactions",
-        f"{p}_current_daily_balances",
-        f"{p}_drift",
-        f"{p}_ledger_drift",
-        f"{p}_overdraft",
-        f"{p}_limit_breach",
-        f"{p}_todays_exceptions",
-        f"{p}_stuck_pending",
-        f"{p}_stuck_unbundled",
+        (f"{p}_transactions", "posting"),
+        (f"{p}_daily_balances", "business_day_start"),
+        (f"{p}_current_transactions", "posting"),
+        (f"{p}_current_daily_balances", "business_day_start"),
+        (f"{p}_drift", "business_day_end"),
+        (f"{p}_ledger_drift", "business_day_end"),
+        (f"{p}_overdraft", "business_day_end"),
+        (f"{p}_limit_breach", "business_day"),
+        (f"{p}_todays_exceptions", "business_day"),
+        (f"{p}_stuck_pending", "posting"),
+        (f"{p}_stuck_unbundled", "posting"),
+        (f"{p}_daily_statement_summary", "business_day_start"),
     ]
 
 
@@ -701,6 +712,6 @@ def build_all_l1_dashboard_datasets(
         build_liveness_dataset(cfg, app_segment="l1"),
         build_matview_status_dataset(
             cfg, app_segment="l1",
-            view_names=l1_matview_names(l2_instance),
+            view_specs=l1_matview_specs(l2_instance),
         ),
     ]

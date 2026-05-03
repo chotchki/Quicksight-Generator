@@ -141,7 +141,8 @@ def test_matview_status_sql_omits_postgres_only_casts():
     from quicksight_gen.common.sql import Dialect
 
     sql_with_views = _matview_status_sql(
-        ["matview_a", "matview_b"], Dialect.POSTGRES,
+        [("matview_a", "business_day"), ("matview_b", None)],
+        Dialect.POSTGRES,
     )
     sql_empty = _matview_status_sql([], Dialect.POSTGRES)
 
@@ -176,7 +177,7 @@ def test_no_two_apps_share_an_app_info_data_set_id():
     for app_segment in ("l1", "exec", "inv", "l2ft"):
         liveness = build_liveness_dataset(_CFG, app_segment=app_segment)
         matviews = build_matview_status_dataset(
-            _CFG, app_segment=app_segment, view_names=[],
+            _CFG, app_segment=app_segment, view_specs=[],
         )
         aws_ids[app_segment] = {liveness.DataSetId, matviews.DataSetId}
 

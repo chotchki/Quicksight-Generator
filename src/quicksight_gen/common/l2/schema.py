@@ -665,6 +665,13 @@ CREATE INDEX idx_{p}_transactions_parent          ON {p}_transactions (transfer_
 -- on `bundle_id IS NULL` keeps the index small as bundled-row count grows.
 CREATE INDEX idx_{p}_transactions_bundler_eligibility
     ON {p}_transactions (rail_name, status){bundler_partial_where};
+-- V.3 — Standalone single-column posting index. The composite
+-- (account_id, posting) above is account-leading, so MAX(posting)
+-- against the whole table can't single-leaf scan it; the planner
+-- has to read the last entry per account_id. The standalone index
+-- gives the App Info "latest data" KPI a sub-millisecond MAX scan
+-- on prod-scale tables.
+CREATE INDEX idx_{p}_transactions_posting          ON {p}_transactions (posting);
 CREATE INDEX idx_{p}_daily_balances_business_day  ON {p}_daily_balances (business_day_start);
 
 -- ---------------------------------------------------------------------

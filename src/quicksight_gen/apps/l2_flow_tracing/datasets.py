@@ -64,15 +64,22 @@ from quicksight_gen.common.sql import (
 from quicksight_gen.common.tree import Dataset
 
 
-def l2ft_matview_names(l2_instance: L2Instance) -> list[str]:
-    """Matviews the L2 Flow Tracing dashboard reads.
+def l2ft_matview_specs(
+    l2_instance: L2Instance,
+) -> list[tuple[str, str | None]]:
+    """Matviews + base tables the L2 Flow Tracing dashboard reads,
+    paired with the date column for App Info's ``latest_date`` KPI.
 
-    Surfaced on the App Info ("i") sheet's matview status table.
+    Includes the base tables (transactions / daily_balances) so the
+    operator can spot stale matviews against fresh ETL loads at a
+    glance. Mirrors ``l1_matview_specs`` / ``inv_matview_specs``.
     """
     p = str(l2_instance.instance)
     return [
-        f"{p}_current_transactions",
-        f"{p}_current_daily_balances",
+        (f"{p}_transactions", "posting"),
+        (f"{p}_daily_balances", "business_day_start"),
+        (f"{p}_current_transactions", "posting"),
+        (f"{p}_current_daily_balances", "business_day_start"),
     ]
 
 
@@ -418,7 +425,7 @@ def build_all_l2_flow_tracing_datasets(
         build_liveness_dataset(cfg, app_segment="l2ft"),
         build_matview_status_dataset(
             cfg, app_segment="l2ft",
-            view_names=l2ft_matview_names(l2_instance),
+            view_specs=l2ft_matview_specs(l2_instance),
         ),
     ]
 
