@@ -230,11 +230,22 @@ L1-API job, then scale.
   ``e2e-oracle-api``) as an ``if: always()`` step before cleanup,
   uploaded as a per-job ``e2e-{job}-top-queries-${run_id}``
   artifact (14-day retention).
-- [ ] **W.8b - Unified code/test coverage report**
-  - would it be useful to load all the various test+coverage data into a unified report?
-  - found a good example here: https://hynek.me/articles/ditch-codecov-python/
-  - supposedly markdown report output is now supported too
-  - we do NOT need 100% coverage, our over 80% has been good
+- [x] **W.8b — Unified code/test coverage report.** Done. Hynek
+  pattern (no Codecov): each ``test`` matrix entry sets
+  ``COVERAGE_FILE=.coverage.py<version>`` and uploads the data
+  file as ``coverage-data-<version>``. New ``coverage`` job
+  downloads every ``coverage-data-*``, runs ``coverage combine``,
+  emits markdown via ``coverage report --format=markdown`` to
+  ``$GITHUB_STEP_SUMMARY`` AND to ``coverage-report.md``,
+  publishes HTML + XML + MD as artifacts. ``coverage-badge`` job
+  consumes the combined XML (no longer re-runs pytest just for
+  the badge) and republishes both the SVG and the markdown
+  report to the ``badges`` branch. README badge wrap-link
+  updated to point at the markdown report on the ``badges``
+  branch (was the workflow runs page) so a click goes straight
+  to a per-file coverage table. No ``--fail-under`` gate; user
+  noted ~80% is the comfortable band, gating tends to invite
+  test churn.
 
 - [ ] **W.9 — Cut release.** Bump version, RELEASE_NOTES entry
   covering the Phase W rollout, document the new CI artifacts in

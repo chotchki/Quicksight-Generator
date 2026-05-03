@@ -1,7 +1,7 @@
 # QuickSight Analysis Generator
 
 [![CI](https://github.com/chotchki/Quicksight-Generator/actions/workflows/ci.yml/badge.svg)](https://github.com/chotchki/Quicksight-Generator/actions/workflows/ci.yml)
-[![Coverage](https://raw.githubusercontent.com/chotchki/Quicksight-Generator/badges/coverage-badge.svg)](https://github.com/chotchki/Quicksight-Generator/actions/workflows/ci.yml)
+[![Coverage](https://raw.githubusercontent.com/chotchki/Quicksight-Generator/badges/coverage-badge.svg)](https://github.com/chotchki/Quicksight-Generator/blob/badges/coverage-report.md)
 [![PyPI](https://img.shields.io/pypi/v/quicksight-gen.svg)](https://pypi.org/project/quicksight-gen/)
 
 Python tool that programmatically generates AWS QuickSight JSON definitions (theme, datasets, analyses, dashboards) and deploys them via boto3. Ships **four bundled QuickSight apps**, all L2-fed off one institution YAML:
