@@ -163,15 +163,32 @@ L1-API job, then scale.
   Per-failure: upload `tests/e2e/screenshots/` as a workflow
   artifact for inspection.
 
-- [ ] **W.7 — Iteration gate.** After 2-3 weeks of W.3-W.6
+- [ ] **W.7 — Workflow-level always-cleanup job.** Final job in
+  `e2e.yml` named `cleanup`, configured with `needs: [<all
+  prior e2e jobs>]` and `if: always()` (so it runs even if every
+  prior job failed or was cancelled). Sweeps all
+  `ManagedBy:quicksight-gen` AWS QuickSight resources whose
+  `L2Instance` tag matches `qs-ci-${{ github.run_id }}-*` (both
+  `-pg` and `-oracle` legs), AND drops every `qs-ci-${{
+  github.run_id }}-*_*` schema object on the user's Aurora +
+  Oracle. Belt-and-suspenders to W.2's per-job `if: always()`
+  cleanup — that catches the common path; this catches GHA hard
+  timeouts, runner crashes, and any cleanup step that itself
+  failed. Even if THIS job fails, W.2's daily janitor still
+  closes the gap within 24h, but the workflow-level cleanup
+  brings the typical residue window down from "next janitor
+  run" to "this workflow's last few seconds".
+
+- [ ] **W.8 — Iteration gate.** After 2-3 weeks of W.3-W.7
   running, audit: false-positive rate, cost (QS sessions ×
-  $0.30), wall-clock per merge, any cleanup leakage. Decide
+  $0.30), wall-clock per merge, any cleanup leakage (W.7's
+  always-cleanup should make this near-zero — verify). Decide
   whether to: (a) lock browser tier into per-merge,
   (b) keep nightly-only, (c) tighten flaky tests, (d) move
   Aurora ingress to GitHub Actions CIDR allowlist (lower DDoS
   surface; high churn — see agent report).
 
-- [ ] **W.8 — Cut release.** Bump version, RELEASE_NOTES entry
+- [ ] **W.9 — Cut release.** Bump version, RELEASE_NOTES entry
   covering the Phase W rollout, document the new CI artifacts in
   CLAUDE.md's "E2E Test Conventions" section + the docs site
   (Reference > Operations probably).
