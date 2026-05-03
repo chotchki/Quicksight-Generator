@@ -1,5 +1,47 @@
 # Release Notes
 
+## v8.5.2 — Pyright noise cleanup (type-stub plumbing + duplicate class)
+
+Internal hygiene — no user-visible behavior change. Brings the 318
+pre-existing pyright errors that surfaced when running
+``pyright <specific_file>`` down to **0** across the whole include
+scope.
+
+### Engineering surface
+
+- **``pyproject.toml [tool.pyright] venvPath / venv``.** Plain
+  ``pyright`` invocation now resolves third-party stubs (Playwright
+  PEP 561 inline, boto3-stubs, mypy_boto3_quicksight, psycopg2). Prior:
+  pyright resolved these against an empty venv path and surfaced
+  ~300 false-positive "type is unknown" cascades from Playwright +
+  boto3 — entirely a tooling-config gap, not actual type bugs.
+- **``common/browser/helpers.py`` strongly typed at the surface.**
+  Every Playwright-touching helper now annotates its ``page`` /
+  ``locator`` parameters with ``Page`` (imported under
+  ``TYPE_CHECKING`` to keep playwright a lazy runtime dep). The
+  boto3 ``QuickSightClient`` is sourced from ``mypy_boto3_quicksight``
+  for ``generate_dashboard_embed_url``. ``_retry_on_playwright_timeout``
+  takes a typed ``Callable[[], T]`` and returns ``T``.
+  ``contextmanager``-decorated ``webkit_page`` switched from the
+  deprecated ``Iterator[Page]`` to ``Generator[Page, None, None]``.
+- **``common/models.py`` — duplicate ``ColumnIdentifier`` class
+  consolidated.** Two identical declarations existed (one at line 36,
+  one at line 1218). Pyright flagged the second as obscuring the
+  first; the second was an accidental re-introduction. Merged the
+  docstring onto the canonical declaration.
+- **``_strip_nones`` recursion typed.** Pyright can't represent the
+  recursive Any cascade; targeted ignores describe the why.
+- **``common/dataset_contract.py``** — ``build_dataset`` asserts
+  ``cfg.datasource_arn is not None`` to match the
+  ``Config.__post_init__`` invariant (the dataclass default is None
+  for ergonomics, but a constructed ``Config`` always carries a
+  resolved ARN).
+- **Pyright include scope expanded** to cover ``common/browser``,
+  ``common/dataset_contract.py``, ``common/models.py``. Future
+  regressions in those files surface at the
+  ``pytest sessionstart`` pyright gate (M.1.9c) instead of waiting
+  to be caught by ad-hoc invocation.
+
 ## v8.5.1 — Phase W: fail-loud user ARN + workflow-level cleanup job
 
 CI hardening — no user-facing app behavior changes.
