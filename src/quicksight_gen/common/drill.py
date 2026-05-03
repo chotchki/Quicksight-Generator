@@ -100,7 +100,38 @@ class DrillResetSentinel:
     value: str = DRILL_RESET_SENTINEL_VALUE
 
 
-DrillWriteValue = Union[DrillSourceField, DrillResetSentinel]
+@dataclass(frozen=True)
+class DrillStaticDateTime:
+    """Marker that a drill should write a fixed ISO-8601 datetime literal
+    to a ``DateTimeParam`` destination.
+
+    Use case: cross-sheet drills where the destination sheet has a
+    universal date-range filter the source sheet doesn't share — e.g.
+    L1's Pending Aging → Transactions. The aging sheet is a
+    current-state view (rows can be arbitrarily old); the Transactions
+    sheet's universal-filter window defaults to last 7 days. Without
+    a date write the drill-target leg falls outside the destination's
+    window and the table renders empty. Writing
+    ``DrillStaticDateTime("1990-01-01T00:00:00.000Z")`` to the
+    destination's date-start param widens the window so the drill-
+    target row is always visible.
+
+    QuickSight has no "now" or "rolling" expression you can write via
+    SetParametersOperation — the only options are SourceField (column
+    ref) or static CustomValues. Pick the static value carefully so
+    the picker-shown date isn't misleading; the L1 app uses
+    ``"1990-01-01T..."`` for start and ``"2099-12-31T..."`` for end,
+    framing the explicit "all time" intent.
+
+    Format: ISO-8601 with millisecond precision and the trailing
+    ``Z``, matching what the L2FT app already uses for its static
+    StaticValues defaults.
+    """
+
+    value: str
+
+
+DrillWriteValue = Union[DrillSourceField, DrillResetSentinel, DrillStaticDateTime]
 DrillWrite = tuple[DrillParam, DrillWriteValue]
 
 
@@ -188,11 +219,27 @@ def set_drill_parameters(
                     },
                 },
             })
+        elif isinstance(value, DrillStaticDateTime):
+            # DateTime params take ``DateTimeValues`` rather than
+            # StringValues. Shape compatibility is implicit — only
+            # DATETIME_DAY-shaped params accept this write; we
+            # don't enforce at this layer because the param shape
+            # alone doesn't reject the write (the AWS API does).
+            configs.append({
+                "DestinationParameterName": param.name,
+                "Value": {
+                    "CustomValuesConfiguration": {
+                        "CustomValues": {
+                            "DateTimeValues": [value.value],
+                        },
+                    },
+                },
+            })
         else:  # defensive — Union exhaustiveness
             raise TypeError(
                 f"Unsupported drill write value {value!r} for parameter "
-                f"{param.name!r}. Expected DrillSourceField or "
-                f"DrillResetSentinel."
+                f"{param.name!r}. Expected DrillSourceField, "
+                f"DrillResetSentinel, or DrillStaticDateTime."
             )
     return CustomActionSetParametersOperation(
         ParameterValueConfigurations=configs,

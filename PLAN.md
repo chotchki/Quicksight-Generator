@@ -191,6 +191,9 @@ L1-API job, then scale.
   - Last feature I'd like, when a release tag is pushed, after it validates on TEST pypi, the e2e runs and if successful approves for the prod gate (if it fails, it cancels)
   - I still want the ability to approve the release by hand (e2e is probably still running) but this handles when I'm not personally testing non stop
 
+- [ ] **W.8a - Database load review**
+  - it would be very useful for performance debugging that after the browser tests are done, queries are done on the oracle and postgres databases to dump the most expensive queries done on them to enable bad query analysis (for example missing indexes, etc)
+
 - [ ] **W.9 — Cut release.** Bump version, RELEASE_NOTES entry
   covering the Phase W rollout, document the new CI artifacts in
   CLAUDE.md's "E2E Test Conventions" section + the docs site

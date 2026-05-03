@@ -1,5 +1,55 @@
 # Release Notes
 
+## v8.5.7 — Cross-sheet drills widen the destination date filter
+
+Drills from a current-state sheet (Pending Aging / Unbundled Aging /
+Supersession Audit — none in the universal date filter scope) into
+the Transactions sheet (which IS scoped to a default 7-day window)
+silently lost the target transfer's legs whenever the source row's
+``posting`` was older than 7 days. The drill wrote ``pL1TxTransfer``
+but did NOT write the date range params, so the destination's
+universal filter remained narrow and the table rendered empty.
+
+### Operator-facing
+
+- **Right-click → View Transactions actually shows the transfer**
+  even when it's older than the picker's default 7-day window. The
+  drill now also writes ``pL1DateStart=1990-01-01`` and
+  ``pL1DateEnd=2099-12-31`` (effectively "all time") so the target
+  row is always in scope. Side effect: the Transactions sheet's date
+  picker visibly snaps to those values after the drill — a known
+  QuickSight in-app-drill UX wart with no clean fix; analysts
+  re-narrow the picker if they want a tighter window.
+
+### Engineering surface
+
+- **New primitive ``DrillStaticDateTime``** in ``common/drill.py``.
+  Pairs with a ``DateTimeParam`` destination and emits
+  ``CustomValuesConfiguration.CustomValues.DateTimeValues=[value]``
+  in the SetParametersOperation. Wired through
+  ``common/tree/actions.py``'s ``DrillWriteSource`` union and
+  re-exported from ``common/tree/__init__.py``.
+- **``_wide_date_writes()`` helper** in ``apps/l1_dashboard/app.py``
+  returns the ``[(P_L1_DATE_START, ...), (P_L1_DATE_END, ...)]``
+  pair callers append to ``writes=`` on cross-sheet drills into
+  universally-date-scoped destinations. Three sites updated
+  (Pending Aging / Unbundled Aging / Supersession Audit detail
+  tables).
+- **Class-level regression** in
+  ``tests/json/test_cross_sheet_drill_date_widening.py``: walks the
+  emitted L1 dashboard JSON, asserts every drill into the
+  Transactions sheet writes both date params with the wide static
+  values, and pins the count of such drills (3) so a new drill
+  added without the wide writes flags as an unexpected count
+  bump that demands review.
+- **Browser-tier e2e regression** in
+  ``tests/e2e/test_l1_cross_sheet_drill_date_widening.py``: opens
+  the deployed L1 dashboard, navigates to Pending Aging, right-
+  clicks a stuck row → "View Transactions for this transfer", and
+  asserts the destination Posting Ledger has ≥1 row. The harness's
+  ``add_broken_rail_plants`` guarantees stuck rows older than 7
+  days exist regardless of when the test runs.
+
 ## v8.5.6 — Transactions sheet transfer_type dropdown perf index
 
 The L1 Transactions sheet's ``transfer_type`` filter dropdown
