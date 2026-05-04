@@ -272,8 +272,14 @@ jobs:
       - name: Install Playwright WebKit browser
         # Only WebKit — that's what ``common/browser/helpers.py``
         # uses (``webkit_page`` context manager). Skipping Chromium
-        # + Firefox saves ~200MB of download.
-        run: .venv/bin/playwright install webkit
+        # + Firefox saves ~200MB of download. ``--with-deps`` runs
+        # ``apt-get install`` for the WebKit system libs (libsoup3,
+        # libwebkitgtk-6.0, etc.) — without it, Ubuntu 24.04
+        # runners launch Playwright but fail every page open with
+        # ``Host system is missing dependencies to run browsers``,
+        # cascading every browser e2e test to FAIL (seen in the
+        # 2026-05-04 nightly).
+        run: .venv/bin/playwright install --with-deps webkit
 
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
