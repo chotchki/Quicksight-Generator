@@ -155,6 +155,12 @@ class GridSlot:
     row_index: int | None = None
 
     def emit(self) -> GridLayoutElement:
+        # v8.6.9 — Card layout padding (12px) on TEXT_BOX elements so
+        # rendered prose doesn't sit flush against the card edges.
+        # Visuals get QS's bare default (no padding) — they self-render
+        # their own internal padding via ChartConfiguration title /
+        # subtitle / data-area styling.
+        padding = "12px" if self.element.element_type == "TEXT_BOX" else None
         return GridLayoutElement(
             ElementId=self.element.element_id,
             ElementType=self.element.element_type,
@@ -162,6 +168,7 @@ class GridSlot:
             RowSpan=self.row_span,
             ColumnIndex=self.col_index,
             RowIndex=self.row_index,
+            Padding=padding,
         )
 
 

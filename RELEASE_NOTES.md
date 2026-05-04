@@ -1,5 +1,37 @@
 # Release Notes
 
+## v8.6.9 — Card layout padding on every text box
+
+Rich text boxes rendered with content flush against the card's
+left + right edges — visually cramped, especially when the box
+shared a row with a visual. Pre-v8.6.9 the only padding the
+generator added was the v8.6.3 vertical interior padding (top +
+bottom ``<br/><br/>`` inside ``<text-box>``), which doesn't reach
+the horizontal edges.
+
+The QS UI exposes this as **Card layout padding** on every
+visual / text-box card. The matching API field is
+``GridLayoutElement.Padding`` — a CSS-shaped string (``"12px"``)
+that the renderer applies as interior padding on all four sides
+of the card, OUTSIDE the rich-text content. Confirmed by
+round-tripping a manually-edited analysis through
+``describe-analysis-definition``.
+
+Two changes:
+
+- ``common/models.py::GridLayoutElement`` gains a
+  ``Padding: str | None = None`` field that round-trips to
+  ``GridLayoutElement.Padding`` in the AWS API.
+- ``common/tree/structure.py::GridSlot.emit`` defaults
+  ``Padding="12px"`` for every ``TEXT_BOX`` element.
+
+Visuals (``KPI`` / ``Table`` / ``BarChart`` / ``Sankey`` /
+``LineChart``) still emit with no card padding — they self-render
+their own internal padding via ``ChartConfiguration`` title /
+subtitle / data-area styling, so adding card padding on top
+double-pads the title row and clips the data area on narrow
+visuals.
+
 ## v8.6.8 — current_transactions indexes for L2FT Transfer Templates dropdowns
 
 The L2FT Transfer Templates sheet's **Template** + **Completion**
