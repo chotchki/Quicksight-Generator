@@ -124,7 +124,15 @@ def generate_dashboard_embed_url(
 def webkit_page(
     headless: bool = True, viewport: tuple[int, int] = (1600, 1000),
 ) -> Generator[Page, None, None]:
-    """Yield a Playwright WebKit page; tears down browser on exit."""
+    """Yield a Playwright WebKit page; tears down browser on exit.
+
+    On exception inside the ``with`` body, captures a full-page
+    screenshot to ``tests/e2e/screenshots/_failures/<test_id>.png``
+    before browser teardown so the GHA artifact carries the failure
+    state — not just the explicit happy-path screenshots tests take
+    via the ``screenshot()`` helper. Best-effort: capture errors are
+    swallowed so the original assertion bubbles up unchanged.
+    """
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
@@ -135,9 +143,52 @@ def webkit_page(
         page = context.new_page()
         try:
             yield page
+        except BaseException:
+            _capture_failure_screenshot(page)
+            raise
         finally:
             context.close()
             browser.close()
+
+
+def _test_id_from_pytest_env(raw: str | None = None) -> str:
+    """Derive a filename-safe test ID from ``PYTEST_CURRENT_TEST``.
+
+    pytest sets the env var to a string like
+    ``"tests/e2e/test_foo.py::test_bar (call)"`` (or with a class
+    segment + parametrization brackets). Strip the trailing
+    ``(setup|call|teardown)`` phase suffix and convert ``/`` + ``::``
+    to underscores so the result is a valid filename. ``"unknown"``
+    when the env var is unset — covers running outside pytest or
+    after pytest cleared the var on test exit.
+    """
+    if raw is None:
+        raw = os.environ.get("PYTEST_CURRENT_TEST", "")
+    if not raw:
+        return "unknown"
+    return (
+        raw.split(" (")[0]
+        .replace("/", "_")
+        .replace("::", "__")
+        .replace(".py", "")
+    )
+
+
+def _capture_failure_screenshot(page: Page) -> None:
+    """Best-effort failure screenshot. Writes to
+    ``<SCREENSHOT_DIR>/_failures/<test_id>.png``. All errors swallowed
+    — a screenshot-capture exception must never mask the original
+    test failure (closed page, missing env var, full disk, etc.).
+    """
+    try:
+        out_dir = SCREENSHOT_DIR / "_failures"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        page.screenshot(
+            path=str(out_dir / f"{_test_id_from_pytest_env()}.png"),
+            full_page=True,
+        )
+    except Exception:
+        pass
 
 
 def wait_for_dashboard_loaded(page: Page, timeout_ms: int) -> None:

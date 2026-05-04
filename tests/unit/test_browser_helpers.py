@@ -15,7 +15,10 @@ import re
 
 import pytest
 
-from quicksight_gen.common.browser.helpers import get_user_arn
+from quicksight_gen.common.browser.helpers import (
+    _test_id_from_pytest_env,
+    get_user_arn,
+)
 
 
 class TestGetUserArn:
@@ -50,6 +53,54 @@ class TestGetUserArn:
         with pytest.raises(RuntimeError) as exc_info:
             get_user_arn()
         assert ".github/E2E_SETUP.md" in str(exc_info.value)
+
+
+class TestTestIdFromPytestEnv:
+    """X.1.a — auto-failure-screenshot hook derives a filename-safe
+    test ID from ``PYTEST_CURRENT_TEST`` so each failing test gets a
+    distinct screenshot in ``_failures/<test_id>.png``."""
+
+    def test_strips_phase_suffix(self):
+        assert _test_id_from_pytest_env(
+            "tests/e2e/test_foo.py::test_bar (call)"
+        ) == "tests_e2e_test_foo__test_bar"
+
+    def test_handles_setup_and_teardown_phases(self):
+        # Failures during fixture setup / teardown also produce sensible
+        # filenames — same test_id regardless of phase, so the latest
+        # snapshot wins (acceptable; setup/teardown failures are rare
+        # and call-phase is the common case anyway).
+        assert _test_id_from_pytest_env(
+            "tests/e2e/test_foo.py::test_bar (setup)"
+        ) == "tests_e2e_test_foo__test_bar"
+
+    def test_handles_parametrized_test(self):
+        # Parametrization brackets ``[case_x]`` stay in the filename —
+        # they're filename-safe on Linux/macOS and disambiguate
+        # different parameter sets that fail in the same run.
+        assert _test_id_from_pytest_env(
+            "tests/e2e/test_foo.py::test_bar[case_x] (call)"
+        ) == "tests_e2e_test_foo__test_bar[case_x]"
+
+    def test_handles_class_based_test(self):
+        assert _test_id_from_pytest_env(
+            "tests/e2e/test_foo.py::TestFoo::test_bar (call)"
+        ) == "tests_e2e_test_foo__TestFoo__test_bar"
+
+    def test_returns_unknown_when_env_var_unset(self, monkeypatch):
+        monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+        assert _test_id_from_pytest_env() == "unknown"
+
+    def test_returns_unknown_when_env_var_empty(self, monkeypatch):
+        monkeypatch.setenv("PYTEST_CURRENT_TEST", "")
+        assert _test_id_from_pytest_env() == "unknown"
+
+    def test_reads_env_var_when_no_arg_supplied(self, monkeypatch):
+        monkeypatch.setenv(
+            "PYTEST_CURRENT_TEST",
+            "tests/foo.py::bar (call)",
+        )
+        assert _test_id_from_pytest_env() == "tests_foo__bar"
 
 
 class TestNoHardcodedArnInSource:
