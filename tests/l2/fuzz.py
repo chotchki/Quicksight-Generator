@@ -766,8 +766,10 @@ def _build_chains(rng: Random, state: _BuildState) -> list[dict[str, Any]]:
         })
 
     # XOR group.
+    xor_parents: set[str] = set()
     if n_xor and len(valid_children) >= 2:
         parent = rng.choice(valid_endpoints)
+        xor_parents.add(parent)
         n_children = rng.randint(2, min(3, len(valid_children)))
         children = rng.sample(valid_children, n_children)
         xor_name = "FuzzXorGroup"
@@ -778,6 +780,22 @@ def _build_chains(rng: Random, state: _BuildState) -> list[dict[str, Any]]:
                 "required": False,
                 "xor_group": xor_name,
             })
+
+    # X.1.j — every chain parent MUST have at least one required child OR
+    # at least one xor_group child. The plain-entry block flips
+    # ``required`` on a 50/50 coin per row, so a parent with one or two
+    # all-tails entries (and no XOR group attached) violates C5. Pin the
+    # first plain entry per parent to ``required=True`` unless the parent
+    # already has an XOR group covering it.
+    seen_required_parents: set[str] = set(xor_parents)
+    for entry in chains:
+        parent_name = entry["parent"]
+        if entry.get("xor_group") is not None:
+            continue
+        if parent_name in seen_required_parents:
+            continue
+        entry["required"] = True
+        seen_required_parents.add(parent_name)
     return chains
 
 

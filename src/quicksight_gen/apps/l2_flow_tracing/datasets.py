@@ -471,7 +471,7 @@ _BUNDLE_STATUS_VALUES: tuple[str, ...] = ("Bundled", "Unbundled")
 # in build_chain_instances_dataset / build_tt_instances_dataset so QS
 # dropdown options match the projected column values exactly.
 _CHAIN_COMPLETION_STATUS_VALUES: tuple[str, ...] = (
-    "Completed", "Incomplete", "No Required Children",
+    "Completed", "Incomplete",
 )
 _TT_COMPLETION_STATUS_VALUES: tuple[str, ...] = (
     "Complete", "Imbalanced", "Orphaned",
@@ -780,9 +780,10 @@ def build_chain_instances_dataset(
         group has exactly one member fired.
       * ``'Incomplete'`` — at least one Required child missing OR
         any XOR group has 0 fired (orphan) OR > 1 fired (violation).
-      * ``'No Required Children'`` — the parent has no Required
-        children AND no XOR groups (e.g. a fire-and-forget chain
-        whose downstream is purely advisory).
+
+      The pre-X.1.j third branch ``'No Required Children'`` is gone —
+      validator rule C5 rejects all-optional / no-XOR chains at L2
+      load, so the SQL never produces that case.
 
     - ``parent_metadata`` is read in the WHERE only — kept off the
       contract so users don't see raw JSON. ``pKey`` / ``pValues``
@@ -880,8 +881,6 @@ def build_chain_instances_dataset(
         f"  required_total,\n"
         f"  required_fired,\n"
         f"  CASE\n"
-        f"    WHEN required_total = 0 AND xor_group_count = 0 "
-        f"THEN 'No Required Children'\n"
         f"    WHEN required_fired >= required_total "
         f"AND xor_violations = 0 THEN 'Completed'\n"
         f"    ELSE 'Incomplete'\n"

@@ -1,5 +1,27 @@
 # Release Notes
 
+## v8.6.16 — L2 validator C5: chain parent MUST have a Required child or XOR group (Phase X.1.j)
+
+New validator rule rejects L2 instances where any chain parent
+declares only optional children with no XOR group attached. The
+chain mechanism encodes "if X fires, Y must follow" — an
+all-optional declaration makes Y's firing unobservable as a
+constraint, so the rule catches a meaningless chain at L2 load
+rather than silently advertising a dead-end filter value on the
+L2FT Chains dashboard.
+
+Surfaced by the X.1.g per-dropdown browser e2e tests: the
+Chains `Completion` dropdown advertised `'No Required Children'`
+but no chain firing in any L2 instance hit that branch. With C5
+in place that branch is unreachable, so the enum + the matching
+SQL CASE branch are dropped — the dropdown now advertises only
+`Completed` / `Incomplete`, both populated.
+
+Fuzzer (`tests/l2/fuzz.py::_build_chains`) updated to pin the
+first plain entry per parent to `required = True` so generated
+instances satisfy C5; previously the 50/50 coin flip on
+``required`` left some single-child fuzz parents all-optional.
+
 ## v8.6.15 — L2FT CategoryFilter dropdowns → ParameterDropdown(StaticValues) (Phase X.1.g)
 
 All 7 multi-select dropdowns on the L2 Flow Tracing dashboard

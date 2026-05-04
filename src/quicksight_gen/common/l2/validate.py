@@ -80,6 +80,14 @@ Rules enforced (numbered for cross-reference with the test file):
       single-member XOR group is degenerate: "exactly one of one
       option happens" trivially holds, so the declaration is a typo
       or leftover from a deletion).
+  C5. Every Chain parent MUST have at least one ``required=True`` child
+      OR at least one ``xor_group``-tagged child (X.1.j — an
+      all-optional chain encodes no enforceable obligation; the chain
+      mechanism's whole point is "if X fires, Y must follow", and an
+      all-optional declaration makes Y's firing unobservable as a
+      constraint. Surfaces as a "No Required Children" branch in the
+      L2FT Chains dashboard's completion_status — caught at load so the
+      dashboard never has to advertise a meaningless filter value).
 
   S1. A two-leg Rail that is NOT a TransferTemplate leg MUST have
       ``expected_net`` set.
@@ -116,6 +124,7 @@ from collections import Counter
 from collections.abc import Iterable
 
 from .primitives import (
+    ChainEntry,
     Identifier,
     L2Instance,
     Rail,
@@ -215,6 +224,7 @@ def validate(instance: L2Instance) -> None:
     _check_chain_xor_group_consistency(instance)
     _check_variable_single_leg_in_some_template(instance, rails_by_name)
     _check_xor_group_min_members(instance)
+    _check_chain_parent_has_required_or_xor(instance)
 
     _check_two_leg_expected_net_consistency(instance)
     _check_single_leg_reconciliation(instance)
@@ -783,6 +793,36 @@ def _check_xor_group_min_members(inst: L2Instance) -> None:
                 f"groups MUST have at least 2 members (a single-member "
                 f"group is degenerate — 'exactly one of one option' "
                 f"trivially holds)"
+            )
+
+
+def _check_chain_parent_has_required_or_xor(inst: L2Instance) -> None:
+    """C5: every chain parent MUST have at least one Required child OR
+    at least one xor_group-tagged child.
+
+    The chain mechanism encodes "if X fires, Y must follow" — an
+    all-optional chain (no required children, no XOR groups) makes Y's
+    firing unobservable as a constraint, so the declaration adds
+    nothing the dashboard can surface as a violation. In practice this
+    is a typo or a leftover from an editing pass that flipped every
+    child to ``required = False`` without re-reading the implied
+    contract. Caught at load so the L2FT Chains dashboard never has to
+    advertise a meaningless 'No Required Children' filter value.
+    """
+    children_by_parent: dict[str, list[ChainEntry]] = {}
+    for c in inst.chains:
+        children_by_parent.setdefault(str(c.parent), []).append(c)
+    for parent, children in children_by_parent.items():
+        any_required = any(c.required for c in children)
+        any_xor = any(c.xor_group is not None for c in children)
+        if not any_required and not any_xor:
+            raise L2ValidationError(
+                f"Chain parent {parent!r}: declares {len(children)} "
+                f"children, none required and none in an xor_group. The "
+                f"chain encodes no enforceable obligation — flag at "
+                f"least one child ``required = True`` or group two or "
+                f"more children with an ``xor_group`` to make the "
+                f"chain mean something."
             )
 
 
