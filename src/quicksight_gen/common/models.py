@@ -1185,6 +1185,11 @@ class GridLayoutElement:
     RowSpan: int
     ColumnIndex: int | None = None
     RowIndex: int | None = None
+    # v8.6.9 — QS UI calls this "Card layout padding"; CSS-shaped string
+    # like ``"12px"``. Applies to any grid element type (VISUAL / TEXT_BOX
+    # / etc.) and gives the rendered card interior breathing room. None
+    # falls back to QS's bare default (no padding).
+    Padding: str | None = None
 
 
 @dataclass
