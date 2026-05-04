@@ -126,7 +126,7 @@ def webkit_page(
 ) -> Generator[Page, None, None]:
     """Yield a Playwright WebKit page; tears down browser on exit.
 
-    On exception inside the ``with`` body, captures three diagnostics
+    On exception inside the ``with`` body, captures four diagnostics
     under ``tests/e2e/screenshots/_failures/<test_id>.*`` before
     browser teardown:
 
@@ -137,16 +137,14 @@ def webkit_page(
     - ``_qs_errors.txt`` — text content of any QS error overlays
       visible on the page (the "Failed to load visual" / SQL error
       tooltips that classic-QS shows for failed dataset queries)
+    - ``_network.txt`` — HTTP status + URL for every non-2xx
+      response the page made. The X.1.b investigation revealed
+      multiple ``404 Not Found`` responses paired with the
+      ``Sample values not found`` JS errors — the URL pattern
+      should disambiguate which QS-side resource is missing.
 
     All capture is best-effort — exceptions inside the dump path are
     swallowed so the original assertion bubbles up unchanged.
-
-    The console + error capture closes the diagnostic gap that the
-    bare-screenshot version of X.1.a left open: when QS renders a
-    visual empty (no rows), the screenshot alone can't distinguish
-    "QS query returned 0 rows" from "QS query failed silently" from
-    "browser-side JS exception during render." The console + QS
-    error overlays usually carry the discriminator.
     """
     from playwright.sync_api import sync_playwright
 
@@ -157,13 +155,16 @@ def webkit_page(
         )
         page = context.new_page()
         console_messages: list[str] = []
+        network_responses: list[str] = []
         _attach_console_capture(page, console_messages)
+        _attach_network_capture(page, network_responses)
         try:
             yield page
         except BaseException:
             _capture_failure_screenshot(page)
             _capture_failure_console(console_messages)
             _capture_failure_qs_errors(page)
+            _capture_failure_network(network_responses)
             raise
         finally:
             context.close()
@@ -199,6 +200,31 @@ def _attach_console_capture(page: Page, sink: list[str]) -> None:
 
     page.on("console", _on_console)
     page.on("pageerror", _on_pageerror)
+
+
+def _attach_network_capture(page: Page, sink: list[str]) -> None:
+    """Register ``page.on("response")`` so every non-2xx HTTP
+    response during the page lifecycle accumulates into ``sink``.
+    Format: ``<status> <method> <url>`` per response.
+
+    Filters to non-2xx because QS dashboards make hundreds of
+    requests; capturing only the failures keeps the dump readable.
+    Listener is wrapped in broad ``except`` so a misbehaving handler
+    can't abort the page lifecycle.
+    """
+    def _on_response(response: object) -> None:
+        try:
+            status = getattr(response, "status", 0)
+            if 200 <= status < 300:
+                return
+            request = getattr(response, "request", None)
+            method = getattr(request, "method", "?") if request else "?"
+            url = getattr(response, "url", "")
+            sink.append(f"{status} {method} {url}")
+        except Exception:
+            pass
+
+    page.on("response", _on_response)
 
 
 def _test_id_from_pytest_env(raw: str | None = None) -> str:
@@ -252,6 +278,21 @@ def _capture_failure_console(messages: list[str]) -> None:
         out_dir.mkdir(parents=True, exist_ok=True)
         path = out_dir / f"{_test_id_from_pytest_env()}_console.txt"
         path.write_text("\n".join(messages), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _capture_failure_network(responses: list[str]) -> None:
+    """Dump the captured non-2xx HTTP responses to
+    ``<SCREENSHOT_DIR>/_failures/<test_id>_network.txt``. Empty file
+    when every request succeeded (so the artifact bundle reliably
+    contains the file and the absence of content is itself a signal).
+    """
+    try:
+        out_dir = SCREENSHOT_DIR / "_failures"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / f"{_test_id_from_pytest_env()}_network.txt"
+        path.write_text("\n".join(responses), encoding="utf-8")
     except Exception:
         pass
 
