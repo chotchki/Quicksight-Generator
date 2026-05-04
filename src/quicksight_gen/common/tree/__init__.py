@@ -112,6 +112,7 @@ from quicksight_gen.common.tree.controls import (
     ParameterDateTimePicker,
     ParameterDropdown,
     ParameterSlider,
+    ParameterTextField,
     SelectableValues,
     StaticValues,
 )
@@ -203,6 +204,7 @@ __all__ = [
     # Controls (L.1.9)
     "ParameterControlLike", "FilterControlLike",
     "ParameterDropdown", "ParameterSlider", "ParameterDateTimePicker",
+    "ParameterTextField",
     "FilterDropdown", "FilterSlider", "FilterDateTimePicker", "FilterCrossSheet",
     "StaticValues", "LinkedValues", "SelectableValues",
     # Drill actions (L.1.10)

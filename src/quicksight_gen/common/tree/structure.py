@@ -51,6 +51,7 @@ from quicksight_gen.common.tree.controls import (
     ParameterControlLike,
     ParameterDateTimePicker,
     ParameterDropdown,
+    ParameterTextField,
     ParameterSlider,
     SelectableValues,
 )
@@ -306,6 +307,27 @@ class Sheet:
     ) -> ParameterDateTimePicker:
         """Construct + register a parameter datetime picker control."""
         ctrl = ParameterDateTimePicker(
+            parameter=parameter, title=title, control_id=control_id,
+        )
+        self.parameter_controls.append(ctrl)
+        return ctrl
+
+    def add_parameter_text_field(
+        self,
+        *,
+        parameter: ParameterDeclLike,
+        title: str,
+        control_id: str | AutoResolved = AUTO,
+    ) -> ParameterTextField:
+        """Construct + register a free-text parameter input control.
+
+        Use when the parameter's option universe is unbounded / unknown
+        at deploy time, or when LinkedValues / StaticValues paths fail
+        (X.1.b L2FT cascade Value dropdown hit ``Sample values not
+        found`` from QS's lazy sample-values fetch on cold per-CI-run
+        dashboards). Text input has no equivalent fetch path.
+        """
+        ctrl = ParameterTextField(
             parameter=parameter, title=title, control_id=control_id,
         )
         self.parameter_controls.append(ctrl)

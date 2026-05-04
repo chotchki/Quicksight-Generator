@@ -75,7 +75,6 @@ from quicksight_gen.common.tree import (
     DrillParam,
     DrillResetSentinel,
     FilterGroup,
-    LinkedValues,
     Sheet,
     StaticValues,
     StringParam,
@@ -480,7 +479,6 @@ def _populate_rails_sheet(
     here.
     """
     ds_postings = datasets[DS_POSTINGS]
-    ds_meta_values = datasets[DS_META_VALUES]
 
     # 1+2. Date range — params + TimeRangeFilter scoped to this sheet.
     date_start = analysis.add_parameter(DateTimeParam(
@@ -576,24 +574,15 @@ def _populate_rails_sheet(
             values=[META_KEY_ALL_SENTINEL] + declared_keys,
         ),
     )
-    sheet.add_parameter_dropdown(
+    # X.1.b — Free-text input (was LinkedValues dropdown). The
+    # LinkedValues path triggered QS's lazy "sample values" fetch on
+    # cold per-CI-run dashboards, throwing
+    # ``[pageerror] Sample values not found`` and stranding the
+    # Transactions table empty. Text input has no equivalent fetch —
+    # the analyst types the literal value to filter on.
+    sheet.add_parameter_text_field(
         parameter=p_meta_value,
         title="Metadata Value",
-        type="MULTI_SELECT",
-        selectable_values=LinkedValues(
-            dataset=ds_meta_values,
-            column_name="metadata_value",
-        ),
-        # v8.6.5 — cascade_source / cascade_match_column DROPPED. The
-        # combo with LinkedValues + MULTI_SELECT killed parameter
-        # write-back: the menu showed checkmarks for the analyst's
-        # picks, but the parameter never updated, so the postings
-        # WHERE stayed at the placeholder sentinel and the
-        # Transactions table rendered empty. Without the cascade, the
-        # dropdown shows every (key, value) declared in the L2 — the
-        # analyst sees more options than strictly relevant for their
-        # picked Key, but the parameter actually fires and the table
-        # filters correctly. See quicksight-quirks.md 2.5.
     )
 
     # Transactions table — the postings dataset's SQL handles the
@@ -662,7 +651,6 @@ def _populate_chains_sheet(
     if/when an L2 Templates explorer surface is added.
     """
     ds_chain_instances = datasets[DS_CHAIN_INSTANCES]
-    ds_meta_values = datasets[DS_META_VALUES]
 
     # 1+2. Date range — params + TimeRangeFilter scoped to this sheet.
     # Separate from Rails' date params so the analyst's chains-window
@@ -758,15 +746,10 @@ def _populate_chains_sheet(
             values=[META_KEY_ALL_SENTINEL] + declared_keys,
         ),
     )
-    sheet.add_parameter_dropdown(
+    # X.1.b — Free-text input (see Rails sheet for rationale).
+    sheet.add_parameter_text_field(
         parameter=p_meta_value,
         title="Metadata Value",
-        type="MULTI_SELECT",
-        selectable_values=LinkedValues(
-            dataset=ds_meta_values,
-            column_name="metadata_value",
-        ),
-        # v8.6.5 — cascade dropped, see Rails sheet for rationale.
     )
 
     sheet.layout.row(height=21).add_table(
@@ -838,7 +821,6 @@ def _populate_transfer_templates_sheet(
     """
     ds_tt_instances = datasets[DS_TT_INSTANCES]
     ds_tt_legs = datasets[DS_TT_LEGS]
-    ds_meta_values = datasets[DS_META_VALUES]
 
     # 1+2. Date range. ALL_DATASETS so tt-legs narrows in lockstep.
     date_start = analysis.add_parameter(DateTimeParam(
@@ -936,15 +918,10 @@ def _populate_transfer_templates_sheet(
             values=[META_KEY_ALL_SENTINEL] + declared_keys,
         ),
     )
-    sheet.add_parameter_dropdown(
+    # X.1.b — Free-text input (see Rails sheet for rationale).
+    sheet.add_parameter_text_field(
         parameter=p_meta_value,
         title="Metadata Value",
-        type="MULTI_SELECT",
-        selectable_values=LinkedValues(
-            dataset=ds_meta_values,
-            column_name="metadata_value",
-        ),
-        # v8.6.5 — cascade dropped, see Rails sheet for rationale.
     )
 
     # Edge legend. QuickSight Sankey doesn't support data-driven

@@ -320,6 +320,39 @@ class ParameterDateTimePicker:
         )
 
 
+@dataclass(eq=False)
+class ParameterTextField:
+    """Free-text input control bound to a string parameter.
+
+    Right shape when the parameter's option universe is unbounded /
+    unknown at deploy time, or when the LinkedValues / StaticValues
+    paths are unavailable. The analyst types a value; QS writes it to
+    the bound parameter verbatim. No sample-values fetch — sidesteps
+    the X.1.b ``Sample values not found`` failure mode entirely.
+    """
+    parameter: ParameterDeclLike
+    title: str
+    control_id: str | AutoResolved = AUTO
+
+    _AUTO_KIND: ClassVar[str] = "text"
+
+    def datasets(self) -> set[Dataset]:
+        return set()
+
+    def emit(self) -> ParameterControl:
+        from quicksight_gen.common.models import ParameterTextFieldControl
+        assert not isinstance(self.control_id, _AutoSentinel), (
+            "control_id wasn't resolved — App._resolve_auto_ids() must run."
+        )
+        return ParameterControl(
+            TextField=ParameterTextFieldControl(
+                ParameterControlId=self.control_id,
+                Title=self.title,
+                SourceParameterName=self.parameter.name,
+            ),
+        )
+
+
 # ---------------------------------------------------------------------------
 # Filter controls
 # ---------------------------------------------------------------------------

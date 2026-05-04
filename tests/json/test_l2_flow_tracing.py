@@ -558,22 +558,27 @@ def test_chains_metadata_params_are_chain_scoped() -> None:
     assert "pL2ftChainsDateEnd" in param_names
 
 
-def test_metadata_value_dropdown_has_no_cascade_source() -> None:
-    """v8.6.5 regression guard — the Metadata Value dropdown MUST
-    NOT carry a ``cascade_source``. The combo with ``LinkedValues``
-    + ``MULTI_SELECT`` killed parameter write-back: the menu showed
-    checkmarks for the analyst's picks but the parameter never
-    updated, so the postings WHERE stayed at the placeholder
-    sentinel and the Transactions table rendered empty.
+def test_metadata_value_control_is_text_field() -> None:
+    """X.1.b regression guard — the Metadata Value control MUST be a
+    ``ParameterTextField``, NOT a ``ParameterDropdown``.
 
-    Asserted on every L2FT sheet that exposes the metadata cascade
-    so a future re-add can't silently regress the dashboard. The
-    dropdown still reads from the meta-values dataset for its
-    selectable values; it just shows every (key, value) declared in
-    the L2 (no per-Key narrowing). Tradeoff is documented in
-    ``quicksight-quirks.md`` 2.5.
+    Pre-X.1.b the Value dropdown carried a ``LinkedValues`` source on
+    the meta-values dataset. QS's lazy "sample values" fetch on cold
+    per-CI-run dashboards threw ``[pageerror] Sample values not
+    found`` in the JS console, which stranded the Transactions table
+    empty despite the matview being populated (~530 rows). Free-text
+    input has no sample-values fetch path — sidesteps the failure
+    entirely. Tradeoff: analyst types the literal value to filter on
+    (no enumeration of valid options) — acceptable since the
+    LinkedValues cascade was already dropped in v8.6.5 (the
+    Value dropdown showed every declared value regardless of picked
+    Key anyway).
+
+    Asserted on every L2FT sheet that exposed the metadata cascade
+    so a future regression to ParameterDropdown can't silently
+    re-introduce the cold-deploy failure mode.
     """
-    from quicksight_gen.common.tree import LinkedValues
+    from quicksight_gen.common.tree import ParameterTextField
     app = build_l2_flow_tracing_app(_CFG)
     found_at_least_one = False
     for sheet_name in ("Rails", "Chains", "Transfer Templates"):
@@ -586,16 +591,15 @@ def test_metadata_value_dropdown_has_no_cascade_source() -> None:
         except StopIteration:
             continue
         found_at_least_one = True
-        assert value_ctrl.cascade_source is None, (
-            f"{sheet_name} sheet: Metadata Value dropdown carries a "
-            f"cascade_source. The cascade kills parameter write-back "
-            f"on MULTI_SELECT (v8.6.5 fix). See "
-            f"docs/reference/quicksight-quirks.md 2.5."
+        assert isinstance(value_ctrl, ParameterTextField), (
+            f"{sheet_name} sheet: Metadata Value control is "
+            f"{type(value_ctrl).__name__}, expected ParameterTextField. "
+            f"Reverting to ParameterDropdown re-introduces the X.1.b "
+            f"'Sample values not found' failure on cold per-CI-run "
+            f"deploys."
         )
-        assert isinstance(value_ctrl.selectable_values, LinkedValues)
-        assert value_ctrl.selectable_values.dataset.identifier == "l2ft-meta-values-ds"
     assert found_at_least_one, (
-        "No Metadata Value dropdown found on Rails / Chains / "
+        "No Metadata Value control found on Rails / Chains / "
         "Transfer Templates — the test can't have regressed silently."
     )
 
@@ -962,17 +966,18 @@ def test_meta_key_dropdown_includes_sentinel_plus_declared_keys() -> None:
     assert key_ctrl.selectable_values.values == expected
 
 
-def test_meta_value_dropdown_sources_from_meta_values_dataset() -> None:
-    """Value dropdown's LinkedValues points at the meta-values dataset's
-    metadata_value column. Catches a wiring bug where the dropdown
-    loses its options."""
-    from quicksight_gen.common.tree import LinkedValues
+def test_meta_value_control_is_bound_to_pl2ftmetavalue_param() -> None:
+    """X.1.b — Value control's bound parameter is ``pL2ftMetaValue``,
+    which maps to the postings dataset's ``pValues``. The text-field
+    shape (post-X.1.b) writes the typed value directly to the
+    parameter; pre-X.1.b a LinkedValues dropdown sourced its options
+    from the meta-values dataset. Either way the bound parameter is
+    the same — this test catches a wiring bug where the control gets
+    bound to the wrong parameter."""
     app = build_l2_flow_tracing_app(_CFG)
     rails = _sheet_by_name(app, "Rails")
     val_ctrl = next(c for c in rails.parameter_controls if c.title == "Metadata Value")
-    assert isinstance(val_ctrl.selectable_values, LinkedValues)
-    assert val_ctrl.selectable_values.dataset.identifier == "l2ft-meta-values-ds"
-    assert val_ctrl.selectable_values.column_name == "metadata_value"
+    assert val_ctrl.parameter.name == "pL2ftMetaValue"
 
 
 # -- P.4.b dialect-aware empty-fallback branches -----------------------------

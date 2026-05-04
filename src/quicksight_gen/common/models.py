@@ -1130,11 +1130,29 @@ class ParameterSliderControl:
 
 
 @dataclass
+class ParameterTextFieldControl:
+    """Free-text input bound to a string parameter. The analyst types a
+    value; QS sets the bound parameter to that value (no enumeration).
+
+    Right shape for parameters whose option universe is unbounded /
+    unknown at deploy time, or where the LinkedValues / StaticValues
+    sample-fetch path is misbehaving (the X.1.b L2FT cascade Value
+    dropdown ran into ``Sample values not found`` from QS's lazy
+    sample-values fetch on cold per-CI-run dashboards; text input has
+    no equivalent fetch path).
+    """
+    ParameterControlId: str
+    Title: str
+    SourceParameterName: str
+
+
+@dataclass
 class ParameterControl:
     """Union type — set exactly one."""
     Dropdown: ParameterDropDownControl | None = None
     DateTimePicker: ParameterDateTimePickerControl | None = None
     Slider: ParameterSliderControl | None = None
+    TextField: ParameterTextFieldControl | None = None
 
 
 # ---------------------------------------------------------------------------
