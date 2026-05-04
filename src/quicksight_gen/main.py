@@ -71,6 +71,55 @@ def _apply_brand_asset_override(
     theme_conf[kind] = f"img/{dst.name}"
 
 
+def _apply_l2_theme_css(
+    *,
+    docs_dir: Path,
+    extra_css: list[Any],
+    theme: Any,
+) -> None:
+    """Write a CSS shim under ``docs_dir`` that overrides Material's brand
+    color custom properties with the L2 theme's accent palette.
+
+    Material's color customization (per the upstream docs) reads from
+    ``--md-primary-fg-color`` (header / nav background),
+    ``--md-primary-bg-color`` (text on primary bg), and
+    ``--md-accent-fg-color`` (links + highlights). Mapping:
+
+    - ``theme.accent`` → primary fg + accent fg (one brand color
+      everywhere). Matches the dashboard convention where ``accent``
+      is the single tinting color in-canvas.
+    - ``theme.accent_fg`` → primary bg (text shown on top of the
+      primary fg color).
+
+    Writes ``docs_dir/stylesheets/_l2_theme.css`` (the underscore
+    keeps it out of git via the same ``.gitignore`` ``_l2_*`` rule the
+    logo/favicon copies use), and registers the docs-relative path on
+    ``extra_css``. Idempotent — re-runs of ``docs apply`` overwrite
+    the file in place.
+    """
+    accent = theme.accent
+    accent_fg = theme.accent_fg
+    css = (
+        "/* Auto-generated from the active L2 instance's theme block */\n"
+        ":root {\n"
+        f"  --md-primary-fg-color: {accent};\n"
+        f"  --md-primary-fg-color--light: {accent};\n"
+        f"  --md-primary-fg-color--dark: {accent};\n"
+        f"  --md-primary-bg-color: {accent_fg};\n"
+        f"  --md-primary-bg-color--light: {accent_fg};\n"
+        f"  --md-accent-fg-color: {accent};\n"
+        f"  --md-accent-fg-color--transparent: {accent}1a;\n"
+        "}\n"
+    )
+    css_dir = docs_dir / "stylesheets"
+    css_dir.mkdir(parents=True, exist_ok=True)
+    css_path = css_dir / "_l2_theme.css"
+    css_path.write_text(css)
+    rel = "stylesheets/_l2_theme.css"
+    if rel not in extra_css:
+        extra_css.append(rel)
+
+
 def define_env(env: Any) -> None:
     """mkdocs-macros entry point.
 
@@ -117,6 +166,17 @@ def define_env(env: Any) -> None:
             theme_conf=theme_conf,
             kind="favicon",
             value=default_l2.theme.favicon,
+        )
+        # v8.6.10 — write a CSS shim that overrides Material's brand
+        # color custom properties with the L2 theme's accent palette.
+        # mkdocs registers this via ``extra_css`` so it loads on every
+        # page. Keeps the L2 theme's accent / accent_fg / link_tint as
+        # the single source of truth across both QS dashboards AND the
+        # docs site.
+        _apply_l2_theme_css(
+            docs_dir=docs_dir,
+            extra_css=env.conf.setdefault("extra_css", []),
+            theme=default_l2.theme,
         )
 
     @env.macro

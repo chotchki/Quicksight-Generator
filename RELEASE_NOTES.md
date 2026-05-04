@@ -1,5 +1,69 @@
 # Release Notes
 
+## v8.6.10 — L2 theme actually lands on the docs site
+
+Two pre-existing gaps in the portable docs build that quietly
+left the integrator's L2 theme block half-applied:
+
+### 1. Theme color tokens didn't reach the docs site at all
+
+``main.py::define_env`` only consumed ``theme.logo`` and
+``theme.favicon`` from the L2 instance — every color field
+(``data_colors``, ``primary_fg``, ``accent``, ``accent_fg``,
+``link_tint``, etc.) was loaded into ``L2Instance.theme`` but
+ignored by the mkdocs build. Result: the QS dashboards rendered
+in the integrator's brand colors, the docs site rendered in
+Material's default blue, and the integrator had to manually
+override Material's CSS to match.
+
+Fix: when ``L2Instance.theme`` is set, ``main.py`` writes a
+generated stylesheet to ``docs/stylesheets/_l2_theme.css`` and
+registers it via ``extra_css``. The CSS overrides Material's brand
+custom properties with the L2 theme's ``accent`` (header /
+nav / link color) + ``accent_fg`` (text-on-primary):
+
+```css
+:root {
+  --md-primary-fg-color: <theme.accent>;
+  --md-primary-fg-color--light: <theme.accent>;
+  --md-primary-fg-color--dark: <theme.accent>;
+  --md-primary-bg-color: <theme.accent_fg>;
+  --md-accent-fg-color: <theme.accent>;
+  --md-accent-fg-color--transparent: <theme.accent>1a;
+}
+```
+
+Same ``_l2_*`` underscore-prefix convention the logo/favicon
+copies use, so ``.gitignore`` keeps the generated CSS untracked.
+
+### 2. ``theme.logo`` / ``theme.favicon`` rejected relative paths
+
+The loader required absolute paths (or ``http(s)://``) — relative
+paths like ``logo.svg`` or ``./img/mark.svg`` raised
+``L2LoaderError``. The user's natural authoring shape — drop the
+brand asset next to the L2 YAML and reference it by relative
+path — wasn't supported.
+
+Fix: ``_load_optional_brand_asset`` accepts relative paths and
+resolves them against the L2 YAML file's directory at load time.
+The dataclass still carries an absolute path, so downstream code
+(``_apply_brand_asset_override`` in ``main.py``) is unchanged.
+
+### Tests
+
+- ``tests/unit/test_l2_loader_theme.py`` — flipped
+  ``test_theme_logo_relative_paths_rejected`` →
+  ``test_theme_logo_relative_paths_resolve_against_yaml_dir``;
+  same parameterized cases (bare filename / ``./`` / ``../``)
+  now assert the resolved absolute path matches what the YAML's
+  parent directory + the relative segments produce.
+- ``tests/unit/test_main_macros.py`` — new file. Asserts the
+  generated CSS carries the L2 theme's accent + accent_fg colors,
+  registers via ``extra_css``, is idempotent across re-applies,
+  uses the ``_l2_`` prefix, and reflects whatever palette the
+  caller passes in (synthesizes a bright-pink theme to prove
+  it's not a coincidence).
+
 ## v8.6.9 — Card layout padding on every text box
 
 Rich text boxes rendered with content flush against the card's

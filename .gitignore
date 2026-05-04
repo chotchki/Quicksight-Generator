@@ -33,6 +33,7 @@ src/quicksight_gen/docs/_diagrams/_rendered/
 
 # Per-L2 brand assets copied in by main.py at mkdocs-build time
 src/quicksight_gen/docs/img/_l2_*
+src/quicksight_gen/docs/stylesheets/_l2_*
 
 /config.yaml
 tests/e2e/screenshots/

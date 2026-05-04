@@ -357,7 +357,9 @@ def _load_hex_color(raw: object, *, path: str) -> str:
     return raw
 
 
-def _load_theme(raw: object, *, path: str) -> ThemePreset | None:
+def _load_theme(
+    raw: object, *, path: str, base_dir: Path | None = None,
+) -> ThemePreset | None:
     """Optional inline theme block per N.1.
 
     YAML shape mirrors the ``ThemePreset`` dataclass 1:1:
@@ -432,10 +434,13 @@ def _load_theme(raw: object, *, path: str) -> ThemePreset | None:
             value_raw, path=f"{path}.{field_name}",
         )
 
-    # Optional brand assets — URL or absolute file path string.
-    logo = _load_optional_brand_asset(raw_d.get("logo"), path=f"{path}.logo")
+    # Optional brand assets — URL, absolute file path, or path relative
+    # to the L2 YAML's directory (resolved at load time).
+    logo = _load_optional_brand_asset(
+        raw_d.get("logo"), path=f"{path}.logo", base_dir=base_dir,
+    )
     favicon = _load_optional_brand_asset(
-        raw_d.get("favicon"), path=f"{path}.favicon"
+        raw_d.get("favicon"), path=f"{path}.favicon", base_dir=base_dir,
     )
 
     return ThemePreset(
@@ -467,23 +472,28 @@ def _load_theme(raw: object, *, path: str) -> ThemePreset | None:
     )
 
 
-def _load_optional_brand_asset(raw: object, *, path: str) -> str | None:
+def _load_optional_brand_asset(
+    raw: object, *, path: str, base_dir: Path | None = None,
+) -> str | None:
     """Validate the YAML value for ``theme.logo`` / ``theme.favicon``.
 
     Accepts either:
     - A URL (``http://``, ``https://``, or protocol-relative ``//``)
     - An absolute file path (must start with ``/``)
+    - A path relative to the L2 YAML file's directory (``logo.png``,
+      ``./img/mark.svg``, ``../branding/favicon.ico``) — resolved to
+      an absolute path against ``base_dir``. Falls through as a bare
+      string when ``base_dir`` is ``None`` (defensive, only happens
+      if a caller bypasses ``load_instance``).
 
-    Relative paths are rejected because their resolution would depend
-    on the integrator's working directory at mkdocs-build time, which
-    is brittle. ``None`` / missing → no override; the docs site falls
-    back to whatever ``mkdocs.yml`` ships with.
+    ``None`` / missing → no override; the docs site falls back to
+    whatever ``mkdocs.yml`` ships with.
     """
     if raw is None:
         return None
     if not isinstance(raw, str):
         raise L2LoaderError(
-            f"{path}: must be a string (URL or absolute path), "
+            f"{path}: must be a string (URL or file path), "
             f"got {type(raw).__name__}"
         )
     value = raw.strip()
@@ -493,10 +503,14 @@ def _load_optional_brand_asset(raw: object, *, path: str) -> str | None:
         return value
     if value.startswith("/"):
         return value
-    raise L2LoaderError(
-        f"{path}: must be a URL (http:// / https:// / //) or an absolute "
-        f"file path (starts with /); got {value!r}"
-    )
+    # Relative path — resolve against the L2 YAML's parent directory.
+    if base_dir is None:
+        raise L2LoaderError(
+            f"{path}: relative path {value!r} cannot be resolved — "
+            f"caller did not provide base_dir. Pass an absolute path "
+            f"or load via ``load_instance(yaml_path)``."
+        )
+    return str((base_dir / value).resolve())
 
 
 def _load_persona(raw: object, *, path: str) -> DemoPersona | None:
@@ -1136,7 +1150,9 @@ def load_instance(path: Path | str, *, validate: bool = True) -> L2Instance:
             raw_d.get("role_business_day_offsets"),
             path="role_business_day_offsets",
         ),
-        theme=_load_theme(raw_d.get("theme"), path="theme"),
+        theme=_load_theme(
+            raw_d.get("theme"), path="theme", base_dir=yaml_path.parent,
+        ),
         persona=_load_persona(raw_d.get("persona"), path="persona"),
     )
     if validate:

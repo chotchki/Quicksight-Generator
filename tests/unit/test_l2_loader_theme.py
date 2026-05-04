@@ -315,22 +315,31 @@ def test_theme_favicon_round_trips(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "value",
+    "value, relative_segments",
     [
-        "img/snb-mark.svg",         # relative path
-        "./logo.svg",               # explicitly relative
-        "../branding/logo.svg",     # parent-relative
-        "logo.svg",                 # bare filename
+        ("img/snb-mark.svg",        ("img", "snb-mark.svg")),
+        ("./logo.svg",              ("logo.svg",)),
+        ("../branding/logo.svg",    ("..", "branding", "logo.svg")),
+        ("logo.svg",                ("logo.svg",)),
     ],
 )
-def test_theme_logo_relative_paths_rejected(
-    tmp_path: Path, value: str,
+def test_theme_logo_relative_paths_resolve_against_yaml_dir(
+    tmp_path: Path, value: str, relative_segments: tuple[str, ...],
 ) -> None:
-    """Relative paths are ambiguous (relative to what?); reject at load."""
+    """v8.6.10 — relative paths resolve against the YAML's directory.
+
+    Pre-v8.6.10 they were rejected outright (the resolution base was
+    ambiguous). The loader now knows the YAML path so it can resolve
+    against the file's parent at load time, storing an absolute path
+    on the dataclass (the same shape the docs build's
+    ``_apply_brand_asset_override`` already handled).
+    """
     block = _FULL_THEME_BLOCK + f'  logo: "{value}"\n'
     p = _write(tmp_path, _BASE_INSTANCE_YAML + block)
-    with pytest.raises(L2LoaderError, match="must be a URL.*or an absolute"):
-        load_instance(p)
+    inst = load_instance(p)
+    assert inst.theme is not None
+    expected = (tmp_path.joinpath(*relative_segments)).resolve()
+    assert inst.theme.logo == str(expected)
 
 
 def test_theme_logo_non_string_rejected(tmp_path: Path) -> None:
