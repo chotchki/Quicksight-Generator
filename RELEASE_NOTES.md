@@ -1,5 +1,51 @@
 # Release Notes
 
+## v8.6.14 — Auto-failure-screenshot hook in browser e2e (Phase X.1.a)
+
+Browser tests now capture a full-page screenshot when an exception
+escapes the ``with webkit_page(...)`` block, written to
+``tests/e2e/screenshots/_failures/<test_id>.png`` before the
+browser tears down. The existing
+``e2e-pg-browser-screenshots-${run_id}`` GHA artifact upload picks
+up the new ``_failures/`` subdirectory automatically — no workflow
+change needed.
+
+Pre-v8.6.14, only the happy path produced screenshots (via the
+test's own ``screenshot()`` call). When a test failed before
+reaching that call, the GHA artifact carried no visual evidence —
+diagnosing failures meant guessing from log lines about the page
+state at the assertion moment. The L2FT cascade test failure
+investigation in v8.6.13's wake (skipped under PLAN X.1 pending
+this hook) was the proximate motivator: without a screenshot of
+the Rails sheet at the ``count_table_total_rows == 0`` assertion,
+we couldn't tell whether QS rendered the visual empty, was still
+loading, or rendered something the test couldn't find.
+
+The capture is best-effort: any exception inside the screenshot
+path is swallowed so the original test failure (the assertion that
+triggered the capture) bubbles up unchanged. Closed page, missing
+``PYTEST_CURRENT_TEST`` env var, full disk — none of those should
+mask the failure being investigated.
+
+Test ID derives from ``PYTEST_CURRENT_TEST`` and handles
+parametrized tests, class-scoped tests, and missing/empty env
+vars (returning ``"unknown"``).
+
+### Tests
+
+- ``tests/unit/test_browser_helpers.py`` — 6 new cases covering
+  the ``_test_id_from_pytest_env`` parser: phase-suffix stripping
+  (call / setup / teardown), parametrized brackets preserved,
+  class-scoped path segments, missing env var fallback, empty env
+  var fallback, and the "no arg" path that reads from os.environ.
+
+### Phase X foundation
+
+Lays the foundation for the next two X.1 sub-tasks: re-enabling
++ diagnosing the L2FT cascade test (X.1.b) and the Sasquatch L1
+dashboard render flake investigation (X.1.c) — both depend on
+having actual visual evidence at the assertion moment.
+
 ## v8.6.13 — `json clean --all` for full-deploy teardown
 
 ``json clean`` defaults to a carve-out sweep: anything currently
