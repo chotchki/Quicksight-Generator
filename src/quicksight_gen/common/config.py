@@ -77,6 +77,16 @@ class Config:
     # through pyHanko to apply a CMS signature. Absent = ship the
     # PDF unsigned (current behavior).
     signing: SigningConfig | None = None
+    # v8.6.11 — When True (default), every Create* boto3 call passes
+    # ``Tags=[ManagedBy, ResourcePrefix, L2Instance, *extra_tags]`` so
+    # ``json clean`` can fail-CLOSED scope deletion to ourselves. Set
+    # False ONLY when the IAM principal lacks ``quicksight:TagResource``
+    # / ``UntagResource`` permissions (e.g. an enterprise environment
+    # where another system applies governance tags). With tagging off
+    # ``json clean`` falls back to ID-prefix matching against
+    # ``resource_prefix`` — significantly weaker isolation. See the
+    # docs reference for the loss-of-safety details before opting in.
+    tagging_enabled: bool = True
 
     def __post_init__(self) -> None:
         # If demo_database_url is set but datasource_arn is not, derive it
@@ -120,10 +130,10 @@ class Config:
         return replace(self, l2_instance_prefix=prefix)
 
     # Derived helpers
-    def tags(self) -> "list[Tag]":
+    def tags(self) -> "list[Tag] | None":
         """Return common + extra tags as the AWS Tag list format.
 
-        Three tags are always emitted:
+        Three tags are always emitted (when ``tagging_enabled``):
 
         - ``ManagedBy=quicksight-gen`` — gates cleanup eligibility.
         - ``ResourcePrefix=<resource_prefix>`` — per-deploy scope. v8.4.0
@@ -133,7 +143,16 @@ class Config:
         - ``L2Instance=<l2_instance_prefix>`` — only when the prefix is
           set (M.2d.3). Per-institution scope, narrower than
           ``ResourcePrefix``.
+
+        Returns ``None`` when ``tagging_enabled=False`` so the caller's
+        ``Tags=cfg.tags()`` field assignment goes to the dataclass's
+        ``Tags: list[Tag] | None`` field as ``None`` and ``_strip_nones``
+        drops it from the emitted JSON entirely. Net effect: the
+        ``Create*`` boto3 call carries no ``Tags`` kwarg, so the IAM
+        principal doesn't need ``quicksight:TagResource`` permission.
         """
+        if not self.tagging_enabled:
+            return None
         from quicksight_gen.common.models import Tag
 
         all_tags = [
@@ -181,7 +200,7 @@ class Config:
 _CONFIG_ALLOWED_KEYS: frozenset[str] = frozenset({
     "aws_account_id", "aws_region", "datasource_arn", "resource_prefix",
     "principal_arns", "principal_arn", "extra_tags", "demo_database_url",
-    "dialect", "signing",
+    "dialect", "signing", "tagging_enabled",
 })
 
 _CONFIG_L2_ONLY_KEYS: frozenset[str] = frozenset({
@@ -342,6 +361,12 @@ def load_config(path: str | Path | None = None) -> Config:
                 f"Need both 'key_path' and 'cert_path'."
             ) from exc
 
+    raw_tagging = values.get("tagging_enabled", True)
+    if not isinstance(raw_tagging, bool):
+        raise ValueError(
+            f"tagging_enabled must be a bool; got {raw_tagging!r}."
+        )
+
     return Config(
         aws_account_id=values["aws_account_id"],
         aws_region=values["aws_region"],
@@ -352,4 +377,5 @@ def load_config(path: str | Path | None = None) -> Config:
         demo_database_url=values.get("demo_database_url"),
         dialect=dialect,
         signing=signing,
+        tagging_enabled=raw_tagging,
     )

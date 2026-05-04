@@ -49,10 +49,65 @@ def test_full_valid_config_loads(tmp_path: Path) -> None:
             "key_path": "k.pem",
             "cert_path": "c.pem",
         },
+        "tagging_enabled": False,
     })
     cfg = load_config(p)
     assert cfg.signing is not None
     assert cfg.dialect.value == "postgres"
+    assert cfg.tagging_enabled is False
+
+
+def test_tagging_enabled_defaults_to_true(tmp_path: Path) -> None:
+    """The override is opt-in. Omitting it leaves cleanup's
+    fail-CLOSED tag-based isolation intact."""
+    p = _write_yaml(tmp_path, {
+        "aws_account_id": "111122223333",
+        "aws_region": "us-east-1",
+        "datasource_arn": "arn:aws:quicksight:us-east-1:111122223333:datasource/x",
+    })
+    cfg = load_config(p)
+    assert cfg.tagging_enabled is True
+
+
+def test_tagging_enabled_false_omits_tags_kwarg(tmp_path: Path) -> None:
+    """``cfg.tags()`` returns ``None`` when tagging is disabled —
+    ``_strip_nones`` then drops the ``Tags`` field from the AWS JSON
+    so the boto3 ``Create*`` call carries no ``Tags`` kwarg, keeping
+    the IAM principal off ``quicksight:TagResource``."""
+    p = _write_yaml(tmp_path, {
+        "aws_account_id": "111122223333",
+        "aws_region": "us-east-1",
+        "datasource_arn": "arn:aws:quicksight:us-east-1:111122223333:datasource/x",
+        "tagging_enabled": False,
+    })
+    cfg = load_config(p)
+    assert cfg.tags() is None
+
+
+def test_tagging_enabled_true_populates_tags_kwarg(tmp_path: Path) -> None:
+    p = _write_yaml(tmp_path, {
+        "aws_account_id": "111122223333",
+        "aws_region": "us-east-1",
+        "datasource_arn": "arn:aws:quicksight:us-east-1:111122223333:datasource/x",
+        "resource_prefix": "qs-customprefix",
+        "extra_tags": {"Owner": "team"},
+    })
+    cfg = load_config(p)
+    tags = cfg.tags()
+    assert tags is not None
+    keys = {tag.Key for tag in tags}
+    assert {"ManagedBy", "ResourcePrefix", "Owner"} <= keys
+
+
+def test_tagging_enabled_non_bool_rejected(tmp_path: Path) -> None:
+    p = _write_yaml(tmp_path, {
+        "aws_account_id": "111122223333",
+        "aws_region": "us-east-1",
+        "datasource_arn": "arn:aws:quicksight:us-east-1:111122223333:datasource/x",
+        "tagging_enabled": "false",  # YAML string, not bool
+    })
+    with pytest.raises(ValueError, match="tagging_enabled must be a bool"):
+        load_config(p)
 
 
 @pytest.mark.parametrize("leaked_key", [

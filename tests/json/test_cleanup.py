@@ -333,3 +333,73 @@ def test_collect_stale_resource_prefix_and_l2_instance_compose():
     stale_dash_ids = {rid for rid, _ in stale["dashboard"]}
     # Only the resource matching BOTH gets swept.
     assert stale_dash_ids == {"right-prefix-right-l2"}
+
+
+# -- _collect_stale: tagging_enabled=False (v8.6.11) ------------------------
+
+
+def test_collect_stale_no_tagging_matches_by_id_prefix():
+    """With ``tagging_enabled=False`` the tag check is bypassed and
+    sweep eligibility is just ID-prefix membership. Resources that
+    don't share the prefix stay safe; resources that do — regardless
+    of ``ManagedBy`` tag presence — get swept."""
+    client = _StubClient(
+        summaries_by_kind={
+            "dashboard": [
+                ("qs-ci-12345-pg-l1-dashboard",        "arn:ours-1"),
+                ("qs-ci-12345-pg-investigation",       "arn:ours-2"),
+                ("qs-ci-99999-pg-l1-dashboard",        "arn:other-prefix"),
+                ("manually-built-dashboard",           "arn:rando"),
+            ],
+        },
+        # No tag map needed — when tagging is disabled the cleanup
+        # path doesn't ``list_tags_for_resource`` at all. Pass empty
+        # to prove the assertion: matching is purely ID-prefix.
+        tags_by_arn={},
+    )
+    stale = _collect_stale(
+        client, "111", _empty_expected(),
+        resource_prefix="qs-ci-12345-pg",
+        tagging_enabled=False,
+    )
+    stale_dash_ids = {rid for rid, _ in stale["dashboard"]}
+    assert stale_dash_ids == {
+        "qs-ci-12345-pg-l1-dashboard",
+        "qs-ci-12345-pg-investigation",
+    }
+
+
+def test_collect_stale_no_tagging_skips_id_in_expected():
+    """Even with tagging off, IDs in the current ``out/`` set stay safe —
+    they're the live deploy, not stale."""
+    client = _StubClient(
+        summaries_by_kind={
+            "dashboard": [
+                ("qs-ci-12345-pg-live",    "arn:live"),
+                ("qs-ci-12345-pg-stale",   "arn:stale"),
+            ],
+        },
+        tags_by_arn={},
+    )
+    expected = _empty_expected()
+    expected["dashboard"].add("qs-ci-12345-pg-live")
+    stale = _collect_stale(
+        client, "111", expected,
+        resource_prefix="qs-ci-12345-pg",
+        tagging_enabled=False,
+    )
+    stale_dash_ids = {rid for rid, _ in stale["dashboard"]}
+    assert stale_dash_ids == {"qs-ci-12345-pg-stale"}
+
+
+def test_collect_stale_no_tagging_requires_resource_prefix():
+    """Without either tags OR an ID-prefix scope there's no way to
+    distinguish our resources from anyone else's. Refuse to run rather
+    than risk sweeping unrelated dashboards."""
+    import pytest as _pytest
+    client = _StubClient(summaries_by_kind={}, tags_by_arn={})
+    with _pytest.raises(ValueError, match="requires resource_prefix"):
+        _collect_stale(
+            client, "111", _empty_expected(),
+            tagging_enabled=False,
+        )
