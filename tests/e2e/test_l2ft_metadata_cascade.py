@@ -68,8 +68,12 @@ def test_metadata_value_pick_does_not_empty_transactions_table(
         page.goto(embed_url, timeout=page_timeout)
         wait_for_dashboard_loaded(page, timeout_ms=page_timeout)
         click_sheet_tab(page, "Rails", timeout_ms=page_timeout)
+        # Rails has exactly one analysis_visual (the Transactions table) —
+        # the dropdowns and date pickers are sheet filter controls, not
+        # visual containers. Asserting min_count >= 1 is the correct
+        # "Rails sheet has rendered its visual" gate.
         wait_for_visuals_present(
-            page, min_count=2, timeout_ms=page_timeout,
+            page, min_count=1, timeout_ms=page_timeout,
         )
         wait_for_table_cells_present(page, timeout_ms=page_timeout)
 
