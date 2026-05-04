@@ -126,12 +126,27 @@ def webkit_page(
 ) -> Generator[Page, None, None]:
     """Yield a Playwright WebKit page; tears down browser on exit.
 
-    On exception inside the ``with`` body, captures a full-page
-    screenshot to ``tests/e2e/screenshots/_failures/<test_id>.png``
-    before browser teardown so the GHA artifact carries the failure
-    state — not just the explicit happy-path screenshots tests take
-    via the ``screenshot()`` helper. Best-effort: capture errors are
+    On exception inside the ``with`` body, captures three diagnostics
+    under ``tests/e2e/screenshots/_failures/<test_id>.*`` before
+    browser teardown:
+
+    - ``.png`` — full-page screenshot of the failure state
+    - ``_console.txt`` — every JS console message + uncaught
+      ``pageerror`` accumulated since page creation (M.4.4.11 pattern,
+      lifted from ``_harness_browser._attach_console_capture``)
+    - ``_qs_errors.txt`` — text content of any QS error overlays
+      visible on the page (the "Failed to load visual" / SQL error
+      tooltips that classic-QS shows for failed dataset queries)
+
+    All capture is best-effort — exceptions inside the dump path are
     swallowed so the original assertion bubbles up unchanged.
+
+    The console + error capture closes the diagnostic gap that the
+    bare-screenshot version of X.1.a left open: when QS renders a
+    visual empty (no rows), the screenshot alone can't distinguish
+    "QS query returned 0 rows" from "QS query failed silently" from
+    "browser-side JS exception during render." The console + QS
+    error overlays usually carry the discriminator.
     """
     from playwright.sync_api import sync_playwright
 
@@ -141,14 +156,49 @@ def webkit_page(
             viewport={"width": viewport[0], "height": viewport[1]},
         )
         page = context.new_page()
+        console_messages: list[str] = []
+        _attach_console_capture(page, console_messages)
         try:
             yield page
         except BaseException:
             _capture_failure_screenshot(page)
+            _capture_failure_console(console_messages)
+            _capture_failure_qs_errors(page)
             raise
         finally:
             context.close()
             browser.close()
+
+
+def _attach_console_capture(page: Page, sink: list[str]) -> None:
+    """Register ``page.on("console")`` + ``page.on("pageerror")`` so
+    every JS console message + uncaught error during the page
+    lifecycle accumulates into ``sink``. M.4.4.11 pattern; previously
+    only wired in the harness, now lifted into ``webkit_page`` so
+    every browser test gets it for free.
+
+    Format mirrors what a human sees in the browser devtools:
+    ``[<type>] <text>`` for console events, ``[pageerror] <text>``
+    for uncaught exceptions. Each handler is wrapped in a broad
+    ``except`` because a misbehaving listener that raises would
+    otherwise abort the page lifecycle.
+    """
+    def _on_console(msg: object) -> None:
+        try:
+            msg_type = getattr(msg, "type", "log")
+            text = getattr(msg, "text", "")
+            sink.append(f"[{msg_type}] {text}")
+        except Exception:
+            pass
+
+    def _on_pageerror(exc: object) -> None:
+        try:
+            sink.append(f"[pageerror] {exc}")
+        except Exception:
+            pass
+
+    page.on("console", _on_console)
+    page.on("pageerror", _on_pageerror)
 
 
 def _test_id_from_pytest_env(raw: str | None = None) -> str:
@@ -187,6 +237,64 @@ def _capture_failure_screenshot(page: Page) -> None:
             path=str(out_dir / f"{_test_id_from_pytest_env()}.png"),
             full_page=True,
         )
+    except Exception:
+        pass
+
+
+def _capture_failure_console(messages: list[str]) -> None:
+    """Dump accumulated JS console + pageerror messages to
+    ``<SCREENSHOT_DIR>/_failures/<test_id>_console.txt``. Empty file
+    when nothing was logged (so the artifact bundle reliably contains
+    the file and the absence of content is itself a signal).
+    """
+    try:
+        out_dir = SCREENSHOT_DIR / "_failures"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / f"{_test_id_from_pytest_env()}_console.txt"
+        path.write_text("\n".join(messages), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _capture_failure_qs_errors(page: Page) -> None:
+    """Dump the text of any QuickSight error overlays visible on the
+    page to ``<SCREENSHOT_DIR>/_failures/<test_id>_qs_errors.txt``.
+    Targets the well-known QS error markers — the "Failed to load
+    visual" tooltip, the visual-error icon's accessible label, and
+    error banners. Empty file when nothing matched.
+    """
+    try:
+        out_dir = SCREENSHOT_DIR / "_failures"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / f"{_test_id_from_pytest_env()}_qs_errors.txt"
+        # JS-side scan: collect text from any DOM nodes whose
+        # automation-id, role, or class hint at an error / failure
+        # surface. Broad on purpose — the cost of an extra string is
+        # nothing; missing the SQL-error tooltip during diagnosis
+        # forces another CI cycle.
+        errors = page.evaluate(
+            """() => {
+                const out = [];
+                const selectors = [
+                    '[data-automation-id*="error"]',
+                    '[data-automation-id*="Error"]',
+                    '[data-automation-id*="failure"]',
+                    '[data-automation-id*="visual_unavailable"]',
+                    '[role="alert"]',
+                    '[class*="error-message"]',
+                    '[class*="ErrorMessage"]',
+                    '[class*="visualError"]',
+                ];
+                for (const sel of selectors) {
+                    document.querySelectorAll(sel).forEach(el => {
+                        const text = (el.innerText || el.textContent || '').trim();
+                        if (text) out.push(`[${sel}] ${text}`);
+                    });
+                }
+                return out;
+            }"""
+        )
+        path.write_text("\n".join(errors or []), encoding="utf-8")
     except Exception:
         pass
 
