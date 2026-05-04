@@ -122,13 +122,8 @@ limit_schedules:
     transfer_type: wire
     cap: 5000.00
 seed_hash:
-  postgres: be926275bc5cdc1f428b981ab435dad1220f80b911e2c4f820c9dab4608e7084
+  postgres: bfecc9bb05cffb1863576ae0670fde2adda2b58bbe9df985884b5fe8eed38d51
   oracle: 11311b059ff8f80e51e15d42cdad623a27225a8bd199ec74af288efd623f41dd
-
-# Inline brand theme (N.1). Mirrors the legacy ``default`` preset
-# in common/theme.py byte-for-byte so spec_example renders identically
-# pre/post-N.1. Apps consume from instance.theme; the cfg-level theme
-# field was dropped in N.4.j.
 theme:
   theme_name: "QuickSight Gen Theme"
   version_description: "Auto-generated dashboard theme"

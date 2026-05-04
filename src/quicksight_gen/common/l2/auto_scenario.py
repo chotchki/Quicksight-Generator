@@ -64,6 +64,7 @@ from .primitives import (
 )
 from .seed import (
     DriftPlant,
+    FailedTransactionPlant,
     InvFanoutPlant,
     LimitBreachPlant,
     OverdraftPlant,
@@ -245,6 +246,27 @@ def default_scenario_for(
                 amount=Decimal("450.00"),
             ),
         )
+
+    # X.1.i — plant a Failed leg so the L2FT Status='Other' dropdown
+    # has matching seed data (the open-set status enum collapses every
+    # status outside {Pending, Posted} to Other in the L2FT Rails
+    # dataset SQL). Re-use the pending_rail pick — any non-aggregating
+    # rail works since Failed legs have no counter-leg.
+    failed_transaction_plants: tuple[FailedTransactionPlant, ...] = ()
+    if pending_rail is not None:
+        failed_transaction_plants = (
+            FailedTransactionPlant(
+                account_id=cust1.account_id,
+                days_ago=2,
+                transfer_type=pending_rail.transfer_type,
+                rail_name=pending_rail.name,
+                amount=Decimal("75.00"),
+            ),
+        )
+    else:
+        omitted.append(("FailedTransactionPlant",
+                        "no Rail declares max_pending_age (re-uses the "
+                        "pending_rail pick)"))
 
     stuck_unbundled_plants: tuple[StuckUnbundledPlant, ...] = ()
     if unbundled_rail is not None:
@@ -436,6 +458,7 @@ def default_scenario_for(
         overdraft_plants=overdraft_plants if include_l1 else (),
         limit_breach_plants=limit_breach_plants if include_l1 else (),
         stuck_pending_plants=stuck_pending_plants if include_l1 else (),
+        failed_transaction_plants=failed_transaction_plants if include_l1 else (),
         stuck_unbundled_plants=stuck_unbundled_plants if include_l1 else (),
         supersession_plants=supersession_plants if include_l1 else (),
         transfer_template_plants=transfer_template_plants if include_broad else (),
@@ -569,6 +592,11 @@ def densify_scenario(
         stuck_pending_plants=tuple(
             r for p in base.stuck_pending_plants for r in replicate_pending(p)
         ),
+        # X.1.i — failed_transaction_plants pass through un-replicated
+        # (one Failed leg per scenario is enough for the dropdown to
+        # have data; multiplying noise legs across the window doesn't
+        # add visibility on the same operator surface).
+        failed_transaction_plants=base.failed_transaction_plants,
         stuck_unbundled_plants=tuple(
             r for p in base.stuck_unbundled_plants
             for r in replicate_unbundled(p)
@@ -632,6 +660,7 @@ def boost_inv_fanout_plants(
         overdraft_plants=base.overdraft_plants,
         limit_breach_plants=base.limit_breach_plants,
         stuck_pending_plants=base.stuck_pending_plants,
+        failed_transaction_plants=base.failed_transaction_plants,
         stuck_unbundled_plants=base.stuck_unbundled_plants,
         supersession_plants=base.supersession_plants,
         transfer_template_plants=base.transfer_template_plants,
@@ -707,6 +736,7 @@ def add_broken_rail_plants(
         overdraft_plants=base.overdraft_plants,
         limit_breach_plants=base.limit_breach_plants,
         stuck_pending_plants=base.stuck_pending_plants + extra_plants,
+        failed_transaction_plants=base.failed_transaction_plants,
         stuck_unbundled_plants=base.stuck_unbundled_plants,
         supersession_plants=base.supersession_plants,
         transfer_template_plants=base.transfer_template_plants,

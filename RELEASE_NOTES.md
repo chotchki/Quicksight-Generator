@@ -1,5 +1,36 @@
 # Release Notes
 
+## v8.6.17 — Status enum open-set + planted Failed transactions (Phase X.1.i)
+
+The L2FT Rails Status dropdown's enum gained an ``Other`` sentinel
+covering every status outside ``Pending`` / ``Posted``. The L1
+schema's ``status`` column is open-set (any string is a valid
+terminal state), but only ``Pending`` / ``Posted`` carry
+first-class meaning in this tool — they drive Aging, Conservation,
+and Completion checks. Every other raw status (Failed, Cancelled,
+Rejected, ...) projects to ``Other`` in the L2FT Rails dataset
+SQL via ``CASE WHEN status IN ('Pending','Posted') THEN status
+ELSE 'Other' END`` so the static dropdown enum matches what the
+column actually produces.
+
+New ``FailedTransactionPlant`` dataclass + per-scenario emitter
+plant one ``status='Failed'`` leg so the dropdown's ``Other``
+option has matching seed rows. Re-uses the existing
+``pending_rail`` pick (any non-aggregating rail with a
+``max_pending_age`` cap works since Failed legs have no
+counter-leg).
+
+Bug caught + fixed during local verify: ``densify_scenario`` /
+``boost_inv_fanout_plants`` / ``add_broken_rail_plants`` were
+dropping the new field on ScenarioPlant reconstruction (the
+default-empty-tuple meant the loss was silent until the dropdown
+test surfaced it). Patched all 3 to pass the field through
+explicitly.
+
+Re-hash-locked the canonical seed SHA256 for both bundled L2
+instances (sasquatch_pr + spec_example) and re-synced the
+bundled ``_l2_fixtures/`` + ``_default_l2.yaml`` to match.
+
 ## v8.6.16 — L2 validator C5: chain parent MUST have a Required child or XOR group (Phase X.1.j)
 
 New validator rule rejects L2 instances where any chain parent

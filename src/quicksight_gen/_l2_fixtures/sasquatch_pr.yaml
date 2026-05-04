@@ -951,12 +951,8 @@ limit_schedules:
       lower-tech / lower-volume operations; SNB caps aggressive
       check issuance to surface anomalies.
 seed_hash:
-  postgres: 90c81906bcedb49fc22c40c22176fc1bdd9e2af243608947005b80d35fc10659
+  postgres: 9bacab3a711bc498316fde381bc7a77a9d286ffd975322808ef9fb8a284fa866
   oracle: 9e3073367038fec9a8f5f6553f25850a68a30b413f1e9c5bef81fe3fd0f5691b
-
-# Inline brand theme (N.1). Mirrors the legacy ``sasquatch-bank``
-# preset in common/theme.py byte-for-byte so the PR demo render is
-# pixel-identical pre/post-N.1.
 theme:
   theme_name: "Sasquatch National Bank Theme"
   version_description: "Sasquatch National Bank — forest green and gold palette"

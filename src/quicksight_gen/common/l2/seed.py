@@ -229,6 +229,32 @@ class StuckPendingPlant:
 
 
 @dataclass(frozen=True, slots=True)
+class FailedTransactionPlant:
+    """A planted leg with ``status='Failed'`` (X.1.i).
+
+    The L1 schema's ``status`` column is open-set — any string is a
+    valid terminal state. The tool reasons explicitly about
+    ``Pending`` / ``Posted`` (drives Aging, Conservation,
+    Completion); every other status (Failed, Cancelled, Rejected, ...)
+    is collapsed to ``Other`` in the L2FT Rails dataset's CASE
+    projection so the static dropdown enum matches what the column
+    produces.
+
+    Plant a Failed leg per scenario so the dropdown's ``Other``
+    option has matching seed rows — the X.1.g per-dropdown e2e test
+    asserts every advertised value narrows the table to a non-empty
+    subset, and a status enum without a corresponding plant tripped
+    the test on first deploy.
+    """
+
+    account_id: Identifier
+    days_ago: int
+    transfer_type: str
+    rail_name: Identifier
+    amount: Decimal
+
+
+@dataclass(frozen=True, slots=True)
 class StuckUnbundledPlant:
     """A planted Posted leg with `bundle_id IS NULL` whose age exceeds
     the rail's `max_unbundled_age`.
@@ -424,6 +450,7 @@ class ScenarioPlant:
     overdraft_plants: tuple[OverdraftPlant, ...] = ()
     limit_breach_plants: tuple[LimitBreachPlant, ...] = ()
     stuck_pending_plants: tuple[StuckPendingPlant, ...] = ()
+    failed_transaction_plants: tuple[FailedTransactionPlant, ...] = ()
     stuck_unbundled_plants: tuple[StuckUnbundledPlant, ...] = ()
     supersession_plants: tuple[SupersessionPlant, ...] = ()
     transfer_template_plants: tuple[TransferTemplatePlant, ...] = ()
@@ -487,6 +514,13 @@ def emit_seed(
     for p in sorted(scenarios.stuck_pending_plants, key=_stuck_pending_key):
         txn_rows.extend(
             _emit_stuck_pending_rows(
+                p, scenarios, template_by_role, txn_counter, dialect,
+            )
+        )
+
+    for p in sorted(scenarios.failed_transaction_plants, key=_failed_transaction_key):
+        txn_rows.extend(
+            _emit_failed_transaction_rows(
                 p, scenarios, template_by_role, txn_counter, dialect,
             )
         )
@@ -3124,6 +3158,10 @@ def _stuck_pending_key(p: StuckPendingPlant) -> tuple[str, int, str]:
     return (str(p.account_id), p.days_ago, p.transfer_type)
 
 
+def _failed_transaction_key(p: FailedTransactionPlant) -> tuple[str, int, str]:
+    return (str(p.account_id), p.days_ago, p.transfer_type)
+
+
 def _stuck_unbundled_key(p: StuckUnbundledPlant) -> tuple[str, int, str]:
     return (str(p.account_id), p.days_ago, p.transfer_type)
 
@@ -3492,7 +3530,52 @@ def _emit_stuck_pending_rows(
             origin="InternalInitiated",
             metadata={"customer_id": str(ti.account_id)},
             status="Pending",
-        
+
+            dialect=dialect,
+        ),
+    ]
+
+
+def _emit_failed_transaction_rows(
+    p: FailedTransactionPlant,
+    scenarios: ScenarioPlant,
+    template_by_role: dict[Identifier, AccountTemplate],
+    counter: _Counter,
+    dialect: Dialect,
+) -> list[str]:
+    """Plant ONE Failed leg (X.1.i — drives the L2FT Status='Other'
+    dropdown coverage).
+
+    Single-leg, no counter-leg: a Failed transaction never settled, so
+    the rail's other side wasn't created. The leg posts at a normal
+    debit shape with ``status='Failed'`` so the L2FT postings dataset's
+    ``CASE WHEN status IN ('Pending','Posted') THEN status ELSE 'Other'
+    END`` collapses it to ``Other`` for the dropdown.
+    """
+    ti = _resolve_template(p.account_id, scenarios)
+    template = template_by_role[ti.template_role]
+    parent_role = template.parent_role
+    plant_day = scenarios.today - timedelta(days=p.days_ago)
+    posting_ts = f"{plant_day.isoformat()}T11:30:00+00:00"
+    n = counter.next()
+    return [
+        _txn_row(
+            id_=f"tx-failed-{n:04d}",
+            account_id=ti.account_id,
+            account_name=ti.name,
+            account_role=ti.template_role,
+            account_scope=template.scope,
+            account_parent_role=parent_role,
+            money=-p.amount,  # Debit attempt
+            direction="Debit",
+            posting=posting_ts,
+            transfer_id=f"tr-failed-{n:04d}",
+            transfer_type=p.transfer_type,
+            rail_name=p.rail_name,
+            origin="InternalInitiated",
+            metadata={"customer_id": str(ti.account_id)},
+            status="Failed",
+
             dialect=dialect,
         ),
     ]

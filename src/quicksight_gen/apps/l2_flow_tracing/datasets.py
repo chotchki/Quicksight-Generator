@@ -465,7 +465,14 @@ def declared_rail_names(l2_instance: L2Instance) -> list[str]:
 #   — exactly two values, ever.
 # StaticValues sourcing eliminates the QS auto-distinct fetch path
 # (the X.1.b ``tenK-sample-values-V2`` 404 source).
-_TRANSACTION_STATUS_VALUES: tuple[str, ...] = ("Pending", "Posted", "Failed")
+# X.1.i — `status` is open-set in the L1 schema (any string), but only
+# `Pending` / `Posted` carry first-class meaning in this tool (drives
+# Aging, Conservation, Completion checks). Every other raw status
+# (Failed, Cancelled, Rejected, ...) projects to `Other` via a CASE in
+# the L2FT postings dataset SQL so this static enum matches what the
+# column actually produces and the dropdown e2e (which asserts every
+# advertised value has rows) doesn't choke on a stale enum.
+_TRANSACTION_STATUS_VALUES: tuple[str, ...] = ("Pending", "Posted", "Other")
 _BUNDLE_STATUS_VALUES: tuple[str, ...] = ("Bundled", "Unbundled")
 # X.1.g — chain + TT completion_status enums. Mirror the CASE branches
 # in build_chain_instances_dataset / build_tt_instances_dataset so QS
@@ -576,7 +583,17 @@ def build_postings_dataset(
         f"SELECT\n"
         f"  id, transfer_id, transfer_parent_id, rail_name, transfer_type,\n"
         f"  account_id, account_name, account_role, account_scope,\n"
-        f"  posting, amount_money, amount_direction, status, bundle_id,\n"
+        f"  posting, amount_money, amount_direction,\n"
+        # X.1.i — collapse open-set `status` into the bounded set the
+        # tool reasons about. Pending / Posted carry first-class meaning
+        # (drives Aging, Conservation, Completion checks); every other
+        # raw status (Failed, Cancelled, Rejected, ...) projects to
+        # 'Other' so the static dropdown enum matches what the column
+        # produces and the analyst can still narrow to the unhealthy
+        # tail without enumerating every possible terminal state.
+        f"  CASE WHEN status IN ('Pending', 'Posted') THEN status "
+        f"ELSE 'Other' END AS status,\n"
+        f"  bundle_id,\n"
         f"  CASE WHEN bundle_id IS NULL THEN 'Unbundled' ELSE 'Bundled' END "
         f"AS bundle_status,\n"
         f"  origin\n"
