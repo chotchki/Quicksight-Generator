@@ -283,6 +283,151 @@ def define_env(env: Any) -> None:
             alt="L2 concept: limit schedule",
         )
 
+    @env.macro
+    def scenario_summary(mode: str = "l1_plus_broad") -> dict[str, Any]:
+        """Render the active L2's auto-scenario plant counts + samples.
+
+        Pulls ``default_scenario_for(l2, mode=...)`` against the active
+        L2 instance, anchored at the canonical today (2030-01-01) so
+        every docs build produces identical output. Returns a dict
+        shape consumed by ``handbook/seed-generator.md``'s "Live
+        scenario" section — the markdown iterates ``plants`` for the
+        per-kind table and ``omitted`` for the diagnostic list.
+
+        ``mode`` mirrors ``ScenarioMode``: ``"l1_invariants"`` (only
+        SHOULD-violation plants), ``"broad"`` (only TT + RailFiring +
+        InvFanout shape plants), or ``"l1_plus_broad"`` (both — what
+        the demo CLI uses).
+        """
+        from datetime import date
+        from typing import cast
+        from quicksight_gen.common.l2.auto_scenario import (
+            ScenarioMode,
+            default_scenario_for,
+        )
+
+        rep = default_scenario_for(
+            default_l2,
+            today=date(2030, 1, 1),
+            mode=cast(ScenarioMode, mode),
+        )
+        s = rep.scenario
+
+        def _drift(p: Any) -> str:
+            return (
+                f"account_id={p.account_id} delta_money={p.delta_money} "
+                f"rail={p.rail_name} days_ago={p.days_ago}"
+            )
+
+        def _overdraft(p: Any) -> str:
+            return (
+                f"account_id={p.account_id} money={p.money} "
+                f"days_ago={p.days_ago}"
+            )
+
+        def _breach(p: Any) -> str:
+            return (
+                f"account_id={p.account_id} amount={p.amount} "
+                f"transfer_type={p.transfer_type} rail={p.rail_name} "
+                f"days_ago={p.days_ago}"
+            )
+
+        def _stuck_pending(p: Any) -> str:
+            return (
+                f"account_id={p.account_id} amount={p.amount} "
+                f"transfer_type={p.transfer_type} rail={p.rail_name} "
+                f"days_ago={p.days_ago}"
+            )
+
+        def _stuck_unbundled(p: Any) -> str:
+            return (
+                f"account_id={p.account_id} amount={p.amount} "
+                f"transfer_type={p.transfer_type} rail={p.rail_name} "
+                f"days_ago={p.days_ago}"
+            )
+
+        def _supersession(p: Any) -> str:
+            return (
+                f"account_id={p.account_id} "
+                f"original={p.original_amount} corrected={p.corrected_amount} "
+                f"transfer_type={p.transfer_type} rail={p.rail_name} "
+                f"days_ago={p.days_ago}"
+            )
+
+        def _inv_fanout(p: Any) -> str:
+            return (
+                f"recipient={p.recipient_account_id} "
+                f"senders={len(p.sender_account_ids)} "
+                f"amount_per_transfer={p.amount_per_transfer} "
+                f"rail={p.rail_name} days_ago={p.days_ago}"
+            )
+
+        def _tt(p: Any) -> str:
+            return (
+                f"template={p.template_name} firing_seq={p.firing_seq} "
+                f"src={p.source_account_id} amount={p.amount} "
+                f"chain_children={len(p.chain_children)} "
+                f"days_ago={p.days_ago}"
+            )
+
+        def _rail_firing(p: Any) -> str:
+            return (
+                f"rail={p.rail_name} firing_seq={p.firing_seq} "
+                f"amount={p.amount} days_ago={p.days_ago}"
+            )
+
+        # (attr, display_name, summarize_fn, what — surfaces on which sheet)
+        plant_specs: list[tuple[str, str, Any, str]] = [
+            ("drift_plants", "DriftPlant", _drift,
+             "L1 Drift sheet — `daily_balances.balance` ≠ "
+             "`SUM(transactions.signed_amount)` for this account."),
+            ("overdraft_plants", "OverdraftPlant", _overdraft,
+             "L1 Overdraft sheet — `daily_balances.balance < 0` on a "
+             "non-`gl_control` account."),
+            ("limit_breach_plants", "LimitBreachPlant", _breach,
+             "L1 Limit Breach sheet — outbound aggregate exceeded the "
+             "declared `LimitSchedule.cap`."),
+            ("stuck_pending_plants", "StuckPendingPlant", _stuck_pending,
+             "L1 Pending Aging sheet — Posted leg older than the rail's "
+             "`max_pending_age` Duration."),
+            ("stuck_unbundled_plants", "StuckUnbundledPlant", _stuck_unbundled,
+             "L1 Unbundled Aging sheet — Posted leg older than the "
+             "rail's `max_unbundled_age` and not yet bundled."),
+            ("supersession_plants", "SupersessionPlant", _supersession,
+             "L1 Supersession Audit sheet — non-zero entry on a "
+             "transaction or daily-balance row."),
+            ("inv_fanout_plants", "InvFanoutPlant", _inv_fanout,
+             "Investigation Recipient Fanout sheet — N senders → 1 "
+             "recipient cluster on the same `(rail, day)`."),
+            ("transfer_template_plants", "TransferTemplatePlant", _tt,
+             "L2 Flow Tracing — Transfer Templates sheet. Multi-firing "
+             "shared transfers per declared template "
+             "(M.3.10g + v8.6.7 SingleLegRail extension)."),
+            ("rail_firing_plants", "RailFiringPlant", _rail_firing,
+             "L2 Flow Tracing — Rails / Chains sheets (broad-mode only). "
+             "Per-rail Posted firing on top of the baseline."),
+        ]
+
+        plants_out: list[dict[str, Any]] = []
+        for attr, name, fn, what in plant_specs:
+            rows = getattr(s, attr, ())
+            plants_out.append({
+                "kind": name,
+                "count": len(rows),
+                "what": what,
+                "samples": [fn(r) for r in rows[:2]],
+            })
+
+        return {
+            "mode": mode,
+            "instance": str(default_l2.instance),
+            "today": s.today.isoformat(),
+            "plants": plants_out,
+            "omitted": [
+                {"plant": o[0], "reason": o[1]} for o in rep.omitted
+            ],
+        }
+
 
 _EMPTY_TOPOLOGY_HINTS = {
     "chains": (
