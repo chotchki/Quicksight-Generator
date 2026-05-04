@@ -43,9 +43,12 @@ from quicksight_gen.apps.l2_flow_tracing.datasets import (
     META_KEY_ALL_SENTINEL,
     META_VALUE_PLACEHOLDER_SENTINEL,
     build_all_l2_flow_tracing_datasets,
+    bundle_status_values,
     declared_chain_parents,
     declared_metadata_keys,
+    declared_rail_names,
     declared_template_names,
+    transaction_status_values,
 )
 from quicksight_gen.common import rich_text as rt
 from quicksight_gen.common.config import Config
@@ -511,7 +514,18 @@ def _populate_rails_sheet(
     # 3-5. Three "default-all multi-select" CategoryFilter dropdowns
     # (rail / status / bundle status). Empty values + FILTER_ALL_VALUES
     # is the AR/L1 idiom for "no filter applied until analyst picks".
-    def _cat_dropdown(*, fg_id: str, col: str, title: str) -> None:
+    # X.1.b — Statically encode every dropdown's selectable values so
+    # QS doesn't fall back to its lazy ``tenK-sample-values-V2`` fetch.
+    # That endpoint 404s on cold per-CI-run dashboards (the Rail /
+    # Status / Bundle dropdowns triggered 3 of the 4 ``Sample values
+    # not found`` errors that stranded the Transactions table empty).
+    # Side benefit: the per-distinct-value index that v8.5.6 added on
+    # ``current_transactions(posting, transfer_type)`` is no longer
+    # carrying any dropdown queries — index sweep is queued under
+    # the broader L2FT static-encoding sweep.
+    def _cat_dropdown(
+        *, fg_id: str, col: str, title: str, values: list[str],
+    ) -> None:
         cat = CategoryFilter.with_values(
             filter_id=f"filter-{fg_id}",
             dataset=ds_postings,
@@ -525,12 +539,22 @@ def _populate_rails_sheet(
             filters=[cat],
         ))
         fg.scope_sheet(sheet)
-        sheet.add_filter_dropdown(filter=cat, title=title)
+        sheet.add_filter_dropdown(
+            filter=cat, title=title,
+            selectable_values=StaticValues(values=values),
+        )
 
-    _cat_dropdown(fg_id="fg-l2ft-rails-rail", col="rail_name", title="Rail")
-    _cat_dropdown(fg_id="fg-l2ft-rails-status", col="status", title="Status")
+    _cat_dropdown(
+        fg_id="fg-l2ft-rails-rail", col="rail_name", title="Rail",
+        values=declared_rail_names(l2_instance),
+    )
+    _cat_dropdown(
+        fg_id="fg-l2ft-rails-status", col="status", title="Status",
+        values=transaction_status_values(),
+    )
     _cat_dropdown(
         fg_id="fg-l2ft-rails-bundle", col="bundle_status", title="Bundle",
+        values=bundle_status_values(),
     )
 
     # 6. Metadata cascade — the M.3.10c novelty.

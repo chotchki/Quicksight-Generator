@@ -56,9 +56,11 @@ Out of active development iterations — manage cloud spend deliberately. Two-ti
   - Answer: Scale to zero is 100% doable, I'd just recommend start /stopping oracle. I'll reconfigure the scaling once we're here. For the start/stop I'll just need to know the additional permission grants.
   - **Concurrency redesign — fold in observed races (May 2026).** The current `e2e.yml` has two structural defects worth fixing as part of the X.2 redesign rather than separately: (1) **within-run race** — `e2e-pg-api` and `e2e-pg-browser` run in parallel within a single workflow run and both `schema apply` against the same `spec_example_*` tables, racing on DROP/CREATE. Caused the X.1.b L2FT cascade test to see an empty matview at assertion time. Fix: make `e2e-pg-browser` `needs: e2e-pg-api` (sequential within a run) OR give each job its own L2 instance prefix so the schemas don't collide. (2) **cross-run cancellation** — concurrency group `e2e-pg` with `cancel-in-progress: false` interacts badly with rapid push+dispatch sequences (observed 1-second cancellation when a push:main run's cleanup overlapped a queued workflow_dispatch). Fix: move concurrency to the workflow level (one run at a time, period) + simplify the per-job concurrency groups. Both are CI-shape changes that fit X.2's scope.
 
-### X.3 — README + verbiage update (post-X.2)
+### X.3 - Ask for configuring the row counts and date range for the data seeding
 
-- [ ] **X.3 — README + handbook positioning sweep.** We're not currently selling what this tool actually accomplishes. Detailed scope deferred until X.2 lands — the CI shape changes (release-gated true-e2e, fast feedback elsewhere) will likely shift how we describe the project's "shape." Sweep should also cover the docs handbook home pages, not just README — those carry customer-facing claims about what the tool does too.
+### X.4 — README + verbiage update (post-X.2)
+
+- [ ] **X.4 — README + handbook positioning sweep.** We're not currently selling what this tool actually accomplishes. Detailed scope deferred until X.2 lands — the CI shape changes (release-gated true-e2e, fast feedback elsewhere) will likely shift how we describe the project's "shape." Sweep should also cover the docs handbook home pages, not just README — those carry customer-facing claims about what the tool does too.
 
 ---
 

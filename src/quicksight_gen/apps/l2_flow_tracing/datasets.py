@@ -443,6 +443,46 @@ def declared_metadata_keys(l2_instance: L2Instance) -> list[str]:
     return sorted(keys)
 
 
+def declared_rail_names(l2_instance: L2Instance) -> list[str]:
+    """Sorted list of declared Rail names. Drives the Rail dropdown's
+    selectable values on the L2FT Rails sheet (X.1.b).
+
+    Pre-X.1.b the Rail dropdown carried no selectable_values and
+    relied on QS's auto-distinct fetch (``tenK-sample-values-V2``
+    endpoint), which 404s on cold per-CI-run dashboards. Static
+    enumeration from the L2 sidesteps the lazy fetch entirely —
+    rail names are bounded + known at deploy time.
+    """
+    return sorted(str(r.name) for r in l2_instance.rails)
+
+
+# X.1.b — bounded enums for the L2FT Rails sheet's Status + Bundle
+# dropdowns. Hardcoded because:
+# - ``status`` values are part of the L1 schema's ``CHECK``-style
+#   constraint (only ``Pending`` / ``Posted`` / ``Failed`` are valid).
+# - ``bundle_status`` is a calc field defined as
+#   ``CASE WHEN bundle_id IS NULL THEN 'Unbundled' ELSE 'Bundled' END``
+#   — exactly two values, ever.
+# StaticValues sourcing eliminates the QS auto-distinct fetch path
+# (the X.1.b ``tenK-sample-values-V2`` 404 source).
+_TRANSACTION_STATUS_VALUES: tuple[str, ...] = ("Pending", "Posted", "Failed")
+_BUNDLE_STATUS_VALUES: tuple[str, ...] = ("Bundled", "Unbundled")
+
+
+def transaction_status_values() -> list[str]:
+    """Bounded enum of transaction ``status`` values. Static dropdown
+    source — see ``_TRANSACTION_STATUS_VALUES`` for rationale.
+    """
+    return list(_TRANSACTION_STATUS_VALUES)
+
+
+def bundle_status_values() -> list[str]:
+    """Bounded enum of ``bundle_status`` calc-field values. Static
+    dropdown source — see ``_BUNDLE_STATUS_VALUES`` for rationale.
+    """
+    return list(_BUNDLE_STATUS_VALUES)
+
+
 def metadata_filter_clause(
     l2_instance: L2Instance, metadata_col: str,
 ) -> str:
