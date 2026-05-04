@@ -1,5 +1,39 @@
 # Release Notes
 
+## v8.6.12 — Coverage uplift (no behavior change)
+
+Total coverage 81.2% → 82.4%. Four targeted test files for
+modules that were under-covered or hosting recently-shipped
+behavior:
+
+- ``tests/unit/test_aging.py`` — ``common/aging.py`` from 0% → 100%
+  (5 tests covering the shared aging-bucket bar visual factory:
+  horizontal orientation, ``aging_bucket`` column wiring, COUNT
+  aggregation, fixed ``Age`` / ``Count`` axis labels, FieldId
+  prefix-from-visual-id contract).
+- ``tests/unit/test_clickability.py`` — ``common/clickability.py``
+  from 0% → 100% (6 tests covering the two visual languages —
+  plain accent text vs accent + tint background — that cue
+  left-click vs right-click drill-source cells; asserts the
+  always-true expression form per the project memory).
+- ``tests/json/test_cleanup.py`` — ``common/cleanup.py`` from
+  42.5% → 82.8% (8 new tests). ``_delete_stale`` per-kind dispatch
+  + failure-counting; ``run_cleanup`` short-circuit, dry-run,
+  skip_confirm, confirm-no-aborts, and the v8.6.11
+  ``tagging_enabled=False`` ID-prefix banner.
+- ``tests/json/test_cli_json.py`` — ``cli/json.py`` from 49.4% →
+  ~95% (15 new tests). ``json apply`` w/ + w/o ``--execute``,
+  the V.1.a ``demo_database_url`` auto-emit-datasource gate,
+  deploy failure → ClickException, ``json clean`` dry-run +
+  execute + failure propagation, ``json probe`` per-app iteration,
+  ``json test`` pytest+pyright dispatch, and a parameterized
+  ``--help`` smoke for every sub-command.
+
+No production code changes. The new modules / files only add
+``tests/unit/test_aging.py``, ``tests/unit/test_clickability.py``,
+and ``tests/json/test_cli_json.py``; the existing
+``tests/json/test_cleanup.py`` is extended.
+
 ## v8.6.11 — `tagging_enabled` config override
 
 Some IAM environments forbid ``quicksight:TagResource`` /
