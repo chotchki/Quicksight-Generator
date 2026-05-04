@@ -234,6 +234,86 @@ has emitted, not per-leg) avoids a subtle cross-Rail bug where Rail B's
 day-1 leg snapshot would have over-written Rail A's day-1 cumulative
 balance because rails iterate in name order across all days.
 
+## Plant catalog
+
+`default_scenario_for(instance)` walks the L2 declarations and tries
+to materialize **one plant per kind** that the instance can support.
+The picker is conservative: if any plant kind has no matching L2
+primitive (no `LimitSchedule`, no `chains`, etc.) it gets skipped
+with an `omitted` reason rather than raising. Each plant kind targets
+a specific dashboard sheet, exists as a frozen dataclass in
+`common/l2/seed.py`, and resolves into one or more transactions when
+`emit_seed(instance, scenario)` runs.
+
+| Plant | Surfaces on | Picker condition (when fires) |
+| --- | --- | --- |
+| `DriftPlant` | L1 Drift | At least one materialized customer DDA + a rail that lands on it. |
+| `OverdraftPlant` | L1 Overdraft | A two-leg rail whose source role resolves to a non-`gl_control` account. |
+| `LimitBreachPlant` | L1 Limit Breach | The L2 declares ≥1 `LimitSchedule` with a matching outbound rail. |
+| `StuckPendingPlant` | L1 Pending Aging | A rail with `max_pending_age` declared. |
+| `StuckUnbundledPlant` | L1 Unbundled Aging | A rail with `max_unbundled_age` declared AND that's named in some `bundles_activity`. |
+| `SupersessionPlant` | L1 Supersession Audit | Always (writes a higher-`entry` row on existing `(account, day)`). |
+| `InvFanoutPlant` | Investigation Recipient Fanout | At least one ACH-shaped rail and ≥12 customer DDAs to source senders from. |
+| `TransferTemplatePlant` | L2 Flow Tracing — Transfer Templates | Per declared `transfer_templates` entry whose first `leg_rails` resolves and `expected_net == 0` (M.3.10g + v8.6.7 SingleLegRail extension). |
+| `RailFiringPlant` | L2 Flow Tracing — Rails / Chains | **Broad mode only.** Per declared rail whose role(s) resolve to a materialized account. |
+
+When the picker can't materialize a plant, it appends an entry to
+`AutoScenarioReport.omitted` — a tuple of `(plant_label, reason)`.
+Surfacing an unexpected omitted reason is the fastest way to debug
+"why is dashboard sheet X empty?" — see the live scenario section
+below.
+
+## Scenario modes
+
+`default_scenario_for(instance, mode=...)` picks WHICH plant kinds
+land in the returned `ScenarioPlant`. Three modes (M.4.2 +
+v8.6.7 demo bump):
+
+| Mode | L1 SHOULD plants (drift / overdraft / breach / stuck_* / supersession / inv_fanout) | Broad-shape plants (`TransferTemplatePlant`, `RailFiringPlant`) | Used by |
+| --- | --- | --- | --- |
+| `l1_invariants` (default) | ✓ | ✗ | M.4.1 harness Layer 1 (matview-row presence checks) |
+| `broad` | ✗ | ✓ | M.4.1 harness — pure shape verification |
+| `l1_plus_broad` | ✓ | ✓ | The CLI `data apply` demo path (`cli/_helpers.py::build_full_seed_sql`) — gives the demo BOTH planted SHOULD violations AND non-empty L2FT sheets. |
+
+The CLI's choice (v8.6.7+) of `l1_plus_broad` is what makes the
+demo's L2FT Transfer Templates / Rails / Chains sheets render
+non-empty. Pre-v8.6.7 the demo ran in `l1_invariants` mode, so even
+when `TransferTemplatePlant` rows existed in code, they got filtered
+out before reaching `emit_full_seed`.
+
+## Live scenario for the active L2
+
+The block below is rendered at docs build time against the L2
+instance you build with (`{{ l2_instance_name }}.yaml`), anchored
+at canonical today (`2030-01-01`) for reproducibility:
+
+{% set _ssum = scenario_summary("l1_plus_broad") %}
+> **Mode:** `{{ _ssum.mode }}` · **Anchor:** `{{ _ssum.today }}` ·
+> **Instance:** `{{ _ssum.instance }}`
+
+{% for p in _ssum.plants %}
+**{{ p.kind }}** — `{{ p.count }}` planted. {{ p.what }}
+{% if p.samples %}
+{% for s in p.samples %}
+  - `{{ s }}`
+{% endfor %}
+{% endif %}
+
+{% endfor %}
+{% if _ssum.omitted %}
+
+### Omitted plants
+
+The picker skipped these for the active L2 — typically because the
+L2 doesn't declare a matching primitive, or because the picker
+doesn't yet handle a particular shape. Check this list first when a
+dashboard sheet renders empty:
+
+{% for o in _ssum.omitted %}
+- **{{ o.plant }}** — {{ o.reason }}
+{% endfor %}
+{% endif %}
+
 ## Plant overlays
 
 The baseline produces a **healthy** ledger — every L1 invariant clean,
