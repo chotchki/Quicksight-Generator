@@ -267,9 +267,25 @@ def _delete_stale(
 
 
 def run_cleanup(
-    cfg: Config, out_dir: Path, *, dry_run: bool = False, skip_confirm: bool = False,
+    cfg: Config,
+    out_dir: Path,
+    *,
+    dry_run: bool = False,
+    skip_confirm: bool = False,
+    purge_all: bool = False,
 ) -> int:
-    """Entrypoint for the `cleanup` CLI command."""
+    """Entrypoint for the `cleanup` CLI command.
+
+    By default, ``out_dir`` is the carve-out: anything currently emitted
+    there stays, everything else matching the cfg's tag/prefix scope is
+    stale.
+
+    With ``purge_all=True`` (v8.6.13 ``--all`` flag), ``out_dir`` is
+    ignored entirely — every resource matching the scope is treated as
+    stale, including the live deploy. Use to nuke everything we own
+    from a QS account (e.g. tearing down a CI run, decommissioning an
+    L2 instance).
+    """
     client = boto3.client("quicksight", region_name=cfg.aws_region)
     account_id = cfg.aws_account_id
 
@@ -283,11 +299,23 @@ def run_cleanup(
             " (tagging disabled — matching by ID prefix only; weaker"
             " isolation, see docs reference)"
         )
+    if purge_all:
+        scope_label += (
+            " — PURGE-ALL mode: ignoring out/, every matching resource"
+            " is eligible for deletion (including the live deploy)"
+        )
     click.echo(
         f"Scanning QuickSight resources in {account_id} "
         f"({cfg.aws_region}){scope_label}..."
     )
-    expected = _expected_ids_from_out(out_dir, cfg)
+    expected = (
+        # Empty carve-out = every matching resource is stale.
+        {kind: set() for kind in (
+            "dashboard", "analysis", "dataset", "theme", "datasource",
+        )}
+        if purge_all
+        else _expected_ids_from_out(out_dir, cfg)
+    )
     stale = _collect_stale(
         client, account_id, expected,
         l2_instance_prefix=cfg.l2_instance_prefix,

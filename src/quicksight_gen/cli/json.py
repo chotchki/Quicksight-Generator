@@ -127,11 +127,21 @@ def json_apply(
     help=(
         "Directory holding current emit output. Resources NOT in this "
         "directory get deleted (so re-running emit + clean is safe). "
-        "Default: out/"
+        "Default: out/. Ignored when ``--all`` is passed."
+    ),
+)
+@click.option(
+    "--all", "purge_all", is_flag=True, default=False,
+    help=(
+        "Purge mode: ignore ``out/`` entirely and sweep EVERY resource "
+        "matching the cfg's prefix scope, including the live deploy. "
+        "Use to fully decommission a deploy. Pair with ``--execute``."
     ),
 )
 @execute_option()
-def json_clean(config: str, output_dir: str, execute: bool) -> None:
+def json_clean(
+    config: str, output_dir: str, purge_all: bool, execute: bool,
+) -> None:
     """Sweep AWS QuickSight resources tagged ManagedBy:quicksight-gen.
 
     Default: dry-run. Lists every resource tagged ``ManagedBy:
@@ -141,6 +151,12 @@ def json_clean(config: str, output_dir: str, execute: bool) -> None:
     Pass ``--execute`` to actually delete. The ``out/`` directory
     drives "what's safe" — anything currently emitted there is kept;
     everything else carrying the tag goes.
+
+    Pass ``--all`` to skip the ``out/`` carve-out entirely — every
+    resource matching the cfg's prefix scope (including the live
+    deploy) becomes eligible for deletion. Use to fully tear down
+    a deploy. The flag is independent of ``--execute``: pair them
+    to actually nuke; just ``--all`` previews what would go.
     """
     from quicksight_gen.cli._helpers import load_config
     from quicksight_gen.common.cleanup import run_cleanup
@@ -149,7 +165,8 @@ def json_clean(config: str, output_dir: str, execute: bool) -> None:
     # ``--execute`` semantics: opt in to actually delete (skip
     # confirmation prompt; the flag itself is the confirmation).
     exit_code = run_cleanup(
-        cfg, Path(output_dir), dry_run=not execute, skip_confirm=True,
+        cfg, Path(output_dir),
+        dry_run=not execute, skip_confirm=True, purge_all=purge_all,
     )
     if exit_code != 0:
         raise click.ClickException(f"Cleanup failed (exit code {exit_code}).")

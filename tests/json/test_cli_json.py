@@ -198,12 +198,8 @@ def test_clean_without_execute_calls_run_cleanup_in_dry_run(
     cfg = _make_yaml_config(tmp_path)
     cleanup_calls: list[dict] = []
 
-    def _spy(cfg_arg, out_dir, *, dry_run: bool, skip_confirm: bool) -> int:
-        cleanup_calls.append({
-            "out_dir": out_dir,
-            "dry_run": dry_run,
-            "skip_confirm": skip_confirm,
-        })
+    def _spy(cfg_arg, out_dir, **kwargs) -> int:
+        cleanup_calls.append({"out_dir": out_dir, **kwargs})
         return 0
 
     import quicksight_gen.common.cleanup as cu
@@ -232,6 +228,48 @@ def test_clean_with_execute_runs_cleanup_for_real(tmp_path, monkeypatch):
     ])
     assert rc.exit_code == 0
     assert cleanup_calls[0]["dry_run"] is False
+    # ``purge_all`` defaults False — preserves the carve-out semantics
+    # for everyday cleanup.
+    assert cleanup_calls[0]["purge_all"] is False
+
+
+def test_clean_all_flag_threads_purge_all_through(tmp_path, monkeypatch):
+    """v8.6.13 — ``--all`` opts into purge mode (ignore out/, sweep
+    every matching resource including the live deploy)."""
+    cfg = _make_yaml_config(tmp_path)
+    cleanup_calls: list[dict] = []
+    import quicksight_gen.common.cleanup as cu
+    monkeypatch.setattr(
+        cu, "run_cleanup",
+        lambda *_a, **kwargs: cleanup_calls.append(kwargs) or 0,
+    )
+
+    rc = CliRunner().invoke(json_, [
+        "clean", "-c", str(cfg), "-o", str(tmp_path / "out"),
+        "--all", "--execute",
+    ])
+    assert rc.exit_code == 0
+    assert cleanup_calls[0]["purge_all"] is True
+    assert cleanup_calls[0]["dry_run"] is False
+
+
+def test_clean_all_without_execute_is_dry_run(tmp_path, monkeypatch):
+    """``--all`` alone (no ``--execute``) previews what purge would
+    sweep without deleting — independent flags."""
+    cfg = _make_yaml_config(tmp_path)
+    cleanup_calls: list[dict] = []
+    import quicksight_gen.common.cleanup as cu
+    monkeypatch.setattr(
+        cu, "run_cleanup",
+        lambda *_a, **kwargs: cleanup_calls.append(kwargs) or 0,
+    )
+
+    rc = CliRunner().invoke(json_, [
+        "clean", "-c", str(cfg), "-o", str(tmp_path / "out"), "--all",
+    ])
+    assert rc.exit_code == 0
+    assert cleanup_calls[0]["purge_all"] is True
+    assert cleanup_calls[0]["dry_run"] is True
 
 
 def test_clean_propagates_cleanup_failures(tmp_path, monkeypatch):
