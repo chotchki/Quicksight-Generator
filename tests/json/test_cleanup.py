@@ -403,3 +403,221 @@ def test_collect_stale_no_tagging_requires_resource_prefix():
             client, "111", _empty_expected(),
             tagging_enabled=False,
         )
+
+
+# -- _delete_stale -----------------------------------------------------------
+#
+# v8.6.12 — coverage uplift. Asserts the per-kind delete loop dispatches
+# to the right boto3 method per resource type and aggregates failures.
+
+
+class _DeleteStubClient:
+    """Captures every ``delete_*`` invocation + can be told to raise on
+    a designated ID for failure-counting tests."""
+
+    def __init__(self, fail_on_id: str | None = None) -> None:
+        self.calls: list[tuple[str, str]] = []
+        self._fail_on_id = fail_on_id
+
+    def _maybe_fail(self, op: str, rid: str) -> None:
+        self.calls.append((op, rid))
+        if rid == self._fail_on_id:
+            from botocore.exceptions import ClientError
+            raise ClientError(
+                {"Error": {"Code": "Boom", "Message": "fail"}}, op,
+            )
+
+    def delete_dashboard(self, *, AwsAccountId: str, DashboardId: str) -> None:
+        self._maybe_fail("delete_dashboard", DashboardId)
+
+    def delete_analysis(
+        self, *, AwsAccountId: str, AnalysisId: str,
+        ForceDeleteWithoutRecovery: bool = False,
+    ) -> None:
+        # Asserts the recovery-skip flag is set; without it QS holds
+        # the analysis in soft-deleted state for 30 days and the next
+        # apply collides on the same ID.
+        assert ForceDeleteWithoutRecovery is True
+        self._maybe_fail("delete_analysis", AnalysisId)
+
+    def delete_data_set(self, *, AwsAccountId: str, DataSetId: str) -> None:
+        self._maybe_fail("delete_data_set", DataSetId)
+
+    def delete_theme(self, *, AwsAccountId: str, ThemeId: str) -> None:
+        self._maybe_fail("delete_theme", ThemeId)
+
+    def delete_data_source(
+        self, *, AwsAccountId: str, DataSourceId: str,
+    ) -> None:
+        self._maybe_fail("delete_data_source", DataSourceId)
+
+
+def test_delete_stale_dispatches_per_kind():
+    from quicksight_gen.common.cleanup import _delete_stale
+    client = _DeleteStubClient()
+    failures = _delete_stale(client, "111", {
+        "dashboard": [("d-1", "arn:d:1")],
+        "analysis": [("a-1", "arn:a:1")],
+        "dataset": [("ds-1", "arn:ds:1")],
+        "theme": [("t-1", "arn:t:1")],
+        "datasource": [("dsrc-1", "arn:dsrc:1")],
+    })
+    assert failures == 0
+    # Order matters — dashboard before analysis (analysis depends on
+    # dashboard via embedded references), datasets before themes,
+    # datasource last (datasets reference it).
+    ops = [op for op, _ in client.calls]
+    assert ops == [
+        "delete_dashboard", "delete_analysis", "delete_data_set",
+        "delete_theme", "delete_data_source",
+    ]
+
+
+def test_delete_stale_counts_failures_and_continues():
+    from quicksight_gen.common.cleanup import _delete_stale
+    client = _DeleteStubClient(fail_on_id="ds-failing")
+    failures = _delete_stale(client, "111", {
+        "dashboard": [("d-1", "arn:d:1")],
+        "analysis": [],
+        "dataset": [
+            ("ds-failing", "arn:ds:fail"),
+            ("ds-after", "arn:ds:after"),
+        ],
+        "theme": [],
+        "datasource": [],
+    })
+    # The failing delete is counted; the loop continues to the
+    # next dataset rather than aborting on the first error.
+    assert failures == 1
+    rids_attempted = [rid for _, rid in client.calls]
+    assert rids_attempted == ["d-1", "ds-failing", "ds-after"]
+
+
+# -- run_cleanup --------------------------------------------------------------
+
+
+def _patched_boto3_client(monkeypatch, stub) -> None:
+    """Make ``boto3.client('quicksight', ...)`` return our stub instead
+    of trying to talk to AWS."""
+    import boto3
+    monkeypatch.setattr(boto3, "client", lambda *_a, **_k: stub)
+
+
+def _make_cfg(tagging_enabled: bool = True):
+    from quicksight_gen.common.config import Config
+    return Config(
+        aws_account_id="111",
+        aws_region="us-east-1",
+        datasource_arn="arn:aws:quicksight:us-east-1:111:datasource/x",
+        resource_prefix="qs-test",
+        tagging_enabled=tagging_enabled,
+    )
+
+
+def test_run_cleanup_short_circuits_when_no_stale(tmp_path, monkeypatch):
+    """Empty inventory + empty expected → nothing to do, exit 0
+    without dispatching any delete calls."""
+    from quicksight_gen.common.cleanup import run_cleanup
+    stub = _DeleteStubClient()
+    # Patch the listing surface too — give it the tagged stub shape.
+    listing = _StubClient(summaries_by_kind={}, tags_by_arn={})
+    # Compose: when run_cleanup grabs boto3.client it gets a thing with
+    # both surfaces. Easier: monkey-patch the cleanup module's helpers.
+    import quicksight_gen.common.cleanup as cu
+    monkeypatch.setattr(
+        cu, "_collect_stale",
+        lambda *_a, **_k: {kind: [] for kind in (
+            "dashboard", "analysis", "dataset", "theme", "datasource",
+        )},
+    )
+    _patched_boto3_client(monkeypatch, stub)
+
+    rc = run_cleanup(_make_cfg(), tmp_path)
+    assert rc == 0
+    assert stub.calls == []
+
+
+def test_run_cleanup_dry_run_skips_delete(tmp_path, monkeypatch):
+    """``dry_run=True`` prints the plan but never invokes boto3 delete."""
+    from quicksight_gen.common.cleanup import run_cleanup
+    stub = _DeleteStubClient()
+    import quicksight_gen.common.cleanup as cu
+    monkeypatch.setattr(
+        cu, "_collect_stale",
+        lambda *_a, **_k: {
+            "dashboard": [("d-1", "arn:1")],
+            "analysis": [], "dataset": [], "theme": [], "datasource": [],
+        },
+    )
+    _patched_boto3_client(monkeypatch, stub)
+
+    rc = run_cleanup(_make_cfg(), tmp_path, dry_run=True)
+    assert rc == 0
+    assert stub.calls == []
+
+
+def test_run_cleanup_skip_confirm_executes_delete(tmp_path, monkeypatch):
+    """``skip_confirm=True`` bypasses the click prompt and runs the
+    delete loop directly. Mirrors the path the standalone CI cleanup
+    job hits when there's no terminal."""
+    from quicksight_gen.common.cleanup import run_cleanup
+    stub = _DeleteStubClient()
+    import quicksight_gen.common.cleanup as cu
+    monkeypatch.setattr(
+        cu, "_collect_stale",
+        lambda *_a, **_k: {
+            "dashboard": [("d-1", "arn:1")],
+            "analysis": [], "dataset": [], "theme": [], "datasource": [],
+        },
+    )
+    _patched_boto3_client(monkeypatch, stub)
+
+    rc = run_cleanup(_make_cfg(), tmp_path, skip_confirm=True)
+    assert rc == 0
+    assert ("delete_dashboard", "d-1") in stub.calls
+
+
+def test_run_cleanup_confirm_no_aborts(tmp_path, monkeypatch):
+    """Operator typed ``n`` at the prompt — no delete fires."""
+    from quicksight_gen.common.cleanup import run_cleanup
+    stub = _DeleteStubClient()
+    import quicksight_gen.common.cleanup as cu
+    monkeypatch.setattr(
+        cu, "_collect_stale",
+        lambda *_a, **_k: {
+            "dashboard": [("d-1", "arn:1")],
+            "analysis": [], "dataset": [], "theme": [], "datasource": [],
+        },
+    )
+    _patched_boto3_client(monkeypatch, stub)
+    # Simulate the user answering "no" to the prompt.
+    monkeypatch.setattr(
+        "click.confirm", lambda *_a, **_k: False,
+    )
+
+    rc = run_cleanup(_make_cfg(), tmp_path)
+    assert rc == 0
+    assert stub.calls == []
+
+
+def test_run_cleanup_no_tagging_announces_id_prefix_mode(
+    tmp_path, monkeypatch, capsys,
+):
+    """The startup banner must call out the weakened isolation when
+    tagging is disabled — operators relying on the warning to spot
+    misconfiguration depend on the message landing in stdout."""
+    from quicksight_gen.common.cleanup import run_cleanup
+    stub = _DeleteStubClient()
+    import quicksight_gen.common.cleanup as cu
+    monkeypatch.setattr(
+        cu, "_collect_stale",
+        lambda *_a, **_k: {kind: [] for kind in (
+            "dashboard", "analysis", "dataset", "theme", "datasource",
+        )},
+    )
+    _patched_boto3_client(monkeypatch, stub)
+
+    run_cleanup(_make_cfg(tagging_enabled=False), tmp_path)
+    out = capsys.readouterr().out
+    assert "tagging disabled" in out
+    assert "ID prefix only" in out
