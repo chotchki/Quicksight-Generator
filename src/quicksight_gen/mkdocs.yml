@@ -150,6 +150,7 @@ nav:
       - ETL — Data Integration: handbook/etl.md
       - Customization: handbook/customization.md
       - CLI reference: reference/cli.md
+      - Disabling AWS resource tagging: reference/disable-tagging.md
       - QuickSight quirks log: reference/quicksight-quirks.md
   - API Reference:
     - Overview: api/index.md

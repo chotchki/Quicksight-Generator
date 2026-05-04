@@ -129,6 +129,7 @@ def _collect_stale(
     *,
     l2_instance_prefix: str | None = None,
     resource_prefix: str | None = None,
+    tagging_enabled: bool = True,
 ) -> dict[str, list[tuple[str, str]]]:
     """Return stale (id, arn) tuples grouped by resource type.
 
@@ -155,7 +156,21 @@ def _collect_stale(
     back to the pre-v8.4.0 behavior: any ``ManagedBy=quicksight-gen``
     resource is eligible (subject to the ``L2Instance`` filter if
     set). New callers should always pass ``resource_prefix``.
+
+    When ``tagging_enabled=False`` (v8.6.11), the tag check is
+    bypassed entirely. ``resource_prefix`` becomes mandatory and
+    cleanup matches by ID-prefix (``rid.startswith(resource_prefix)``)
+    instead — significantly weaker isolation, but the only option
+    when the IAM principal can't ``Tag*Resource``. See the docs
+    reference for the loss-of-safety implications.
     """
+    if not tagging_enabled and resource_prefix is None:
+        raise ValueError(
+            "tagging_enabled=False requires resource_prefix — without "
+            "either tags or an ID-prefix scope, cleanup has no way to "
+            "tell our resources from anyone else's."
+        )
+
     stale: dict[str, list[tuple[str, str]]] = {
         "dashboard": [],
         "analysis": [],
@@ -173,6 +188,15 @@ def _collect_stale(
     for kind, it in iterators.items():
         for rid, arn in it(client, account_id):
             if rid in expected[kind]:
+                continue
+            if not tagging_enabled:
+                # ID-prefix fallback (v8.6.11). resource_prefix asserted
+                # non-None above. Match anything starting with the
+                # prefix; trust the operator's prefix uniqueness.
+                assert resource_prefix is not None
+                if not rid.startswith(f"{resource_prefix}-"):
+                    continue
+                stale[kind].append((rid, arn))
                 continue
             tags = _read_managed_tags(client, arn)
             if tags is None:
@@ -254,6 +278,11 @@ def run_cleanup(
     if cfg.l2_instance_prefix:
         scope_parts.append(f"L2Instance={cfg.l2_instance_prefix!r}")
     scope_label = f" scoped to {', '.join(scope_parts)}"
+    if not cfg.tagging_enabled:
+        scope_label += (
+            " (tagging disabled — matching by ID prefix only; weaker"
+            " isolation, see docs reference)"
+        )
     click.echo(
         f"Scanning QuickSight resources in {account_id} "
         f"({cfg.aws_region}){scope_label}..."
@@ -263,6 +292,7 @@ def run_cleanup(
         client, account_id, expected,
         l2_instance_prefix=cfg.l2_instance_prefix,
         resource_prefix=cfg.resource_prefix,
+        tagging_enabled=cfg.tagging_enabled,
     )
 
     total = sum(len(items) for items in stale.values())

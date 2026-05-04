@@ -1,5 +1,50 @@
 # Release Notes
 
+## v8.6.11 — `tagging_enabled` config override
+
+Some IAM environments forbid ``quicksight:TagResource`` /
+``UntagResource`` (governance-tag-only-by-other-system). Pre-v8.6.11
+the deploy pipeline always passed ``Tags=[…]`` on every ``Create*``
+call, so a no-tag IAM principal couldn't deploy at all.
+
+New config knob ``tagging_enabled: bool = True`` (defaults to the
+existing tagged behavior). Setting ``tagging_enabled: false``:
+
+- ``Config.tags()`` returns ``None`` instead of the tag list. The
+  dataclass field assignment ``Tags=cfg.tags()`` resolves to
+  ``None`` and ``_strip_nones`` drops the field from the AWS JSON
+  entirely. Net effect: no ``Tags`` kwarg on the ``Create*`` boto3
+  calls; the IAM principal doesn't need ``Tag*Resource``.
+- ``json clean`` falls back to ID-prefix matching against
+  ``cfg.resource_prefix`` (since the tag check is bypassed).
+  ``resource_prefix`` becomes mandatory in this mode — without
+  either tags or a prefix scope the cleaner refuses to run.
+
+### Why this is unwise (per-page warning)
+
+Tag-based isolation is the only protection against ID-collision
+sweeps. With tagging off, a hand-built dashboard whose ID happens
+to start with ``<resource_prefix>-`` would be eligible for deletion.
+Concurrent deploys with the same prefix can't be told apart.
+Reference page ``docs/reference/disable-tagging.md`` lays out the
+full risk surface, mitigations (highly-unique prefix, mandatory
+``--dry-run`` first), and migration story for re-enabling tagging
+later (the tag check is fail-CLOSED so previously-untagged
+resources stay invisible to the post-flip cleaner).
+
+### Tests
+
+- ``tests/unit/test_config_loader.py`` — 4 new cases:
+  ``tagging_enabled`` defaults to True, allowlists into
+  ``_CONFIG_ALLOWED_KEYS``, returns ``None`` from ``cfg.tags()``
+  when False, populates the full tag list when True, rejects
+  non-bool values.
+- ``tests/json/test_cleanup.py`` — 3 new cases:
+  ``_collect_stale`` matches by ID prefix when tagging is off,
+  still respects the ``expected`` set (live deploys stay safe),
+  and refuses to run without ``resource_prefix`` (no scope at
+  all = no sweep).
+
 ## v8.6.10 — L2 theme actually lands on the docs site
 
 Two pre-existing gaps in the portable docs build that quietly
