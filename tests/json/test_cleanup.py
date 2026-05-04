@@ -621,3 +621,58 @@ def test_run_cleanup_no_tagging_announces_id_prefix_mode(
     out = capsys.readouterr().out
     assert "tagging disabled" in out
     assert "ID prefix only" in out
+
+
+def test_run_cleanup_purge_all_ignores_out_dir(tmp_path, monkeypatch):
+    """v8.6.13 — purge mode must NOT consult ``out_dir``. Even when
+    the directory holds JSON files for the live deploy, every
+    matching resource gets queued for sweep."""
+    from quicksight_gen.common.cleanup import run_cleanup
+    stub = _DeleteStubClient()
+    expected_seen: list[dict] = []
+
+    import quicksight_gen.common.cleanup as cu
+
+    def _capture(_client, _account, expected, **_kwargs):
+        expected_seen.append(expected)
+        # Pretend we found nothing so the test exits cleanly.
+        return {kind: [] for kind in (
+            "dashboard", "analysis", "dataset", "theme", "datasource",
+        )}
+
+    # Drop a fake live-deploy file into out_dir — without purge mode,
+    # this would carve the dashboard out of the sweep set.
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    (out_dir / "live-dashboard.json").write_text(
+        '{"DashboardId": "live-deploy-x"}'
+    )
+    monkeypatch.setattr(cu, "_collect_stale", _capture)
+    _patched_boto3_client(monkeypatch, stub)
+
+    run_cleanup(_make_cfg(), out_dir, purge_all=True)
+    # Empty expected = nothing carved out, even though out_dir has a
+    # live-deploy entry.
+    assert expected_seen[0]["dashboard"] == set()
+
+
+def test_run_cleanup_purge_all_announces_purge_mode(
+    tmp_path, monkeypatch, capsys,
+):
+    """The startup banner must call out PURGE-ALL mode so the operator
+    can spot it in shell history and CI logs — distinguishes from
+    everyday ``clean`` output."""
+    from quicksight_gen.common.cleanup import run_cleanup
+    stub = _DeleteStubClient()
+    import quicksight_gen.common.cleanup as cu
+    monkeypatch.setattr(
+        cu, "_collect_stale",
+        lambda *_a, **_k: {kind: [] for kind in (
+            "dashboard", "analysis", "dataset", "theme", "datasource",
+        )},
+    )
+    _patched_boto3_client(monkeypatch, stub)
+
+    run_cleanup(_make_cfg(), tmp_path, purge_all=True)
+    out = capsys.readouterr().out
+    assert "PURGE-ALL" in out

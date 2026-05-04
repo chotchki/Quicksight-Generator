@@ -1,5 +1,45 @@
 # Release Notes
 
+## v8.6.13 — `json clean --all` for full-deploy teardown
+
+``json clean`` defaults to a carve-out sweep: anything currently
+emitted to ``out/`` is preserved; everything else matching the
+cfg's prefix scope (tag-based or, post-v8.6.11, ID-prefix-based)
+is stale. That's the right shape for everyday cleanup of orphaned
+resources. It's the wrong shape for full-deploy teardown — the
+operator has to manually clear ``out/`` first, or point ``-o`` at
+an empty directory.
+
+New ``--all`` flag opts into purge mode: ``out/`` is ignored
+entirely, every matching resource is eligible for deletion
+including the live deploy. Pair with ``--execute`` to actually
+delete, or pass alone to preview the full sweep:
+
+```bash
+# Preview what a full teardown would delete:
+quicksight-gen json clean -c config.yaml --all
+
+# Actually nuke everything we deployed:
+quicksight-gen json clean -c config.yaml --all --execute
+```
+
+Flags are independent — ``--all`` says "ignore the carve-out",
+``--execute`` says "actually delete". Both default off.
+
+The startup banner calls out PURGE-ALL mode so it's visible in
+shell history and CI logs, distinguishing it from everyday clean
+output.
+
+### Tests
+
+- ``tests/json/test_cli_json.py`` — 2 new cases: ``--all``
+  threads ``purge_all=True`` to ``run_cleanup``; ``--all``
+  alone (no ``--execute``) is a dry-run preview.
+- ``tests/json/test_cleanup.py`` — 2 new cases: ``run_cleanup``
+  with ``purge_all=True`` ignores the ``out_dir`` carve-out
+  even when live-deploy JSONs are present; the startup banner
+  announces PURGE-ALL mode.
+
 ## v8.6.12 — Coverage uplift (no behavior change)
 
 Total coverage 81.2% → 82.4%. Four targeted test files for
