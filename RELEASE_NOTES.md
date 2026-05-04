@@ -1,5 +1,30 @@
 # Release Notes
 
+## v8.6.8 — current_transactions indexes for L2FT Transfer Templates dropdowns
+
+The L2FT Transfer Templates sheet's **Template** + **Completion**
+dropdowns each run ``DISTINCT`` against the tt-instances dataset.
+That dataset's CTE JOINs ``current_transactions`` ON
+``ct.template_name = t.template_name`` and runs ``EXISTS``
+subqueries keyed on ``transfer_parent_id`` for chain-child
+detection. Pre-v8.6.8, neither ``template_name`` nor
+``transfer_parent_id`` had an index on the
+``<prefix>_current_transactions`` matview, so every dropdown
+distinct-enum scanned the full matview multiple times — visible
+as a long-spinning dropdown.
+
+Two new indexes on the ``<prefix>_current_transactions`` matview:
+
+```sql
+CREATE INDEX idx_<p>_curr_tx_template_name
+    ON <p>_current_transactions (template_name);
+CREATE INDEX idx_<p>_curr_tx_parent
+    ON <p>_current_transactions (transfer_parent_id);
+```
+
+Mirrors the v8.5.6 transfer_type-dropdown fix one layer further
+into the L2FT explorer. Postgres + Oracle both get them.
+
 ## v8.6.7 — L2FT Transfer Templates sheet shows data
 
 The L2FT Transfer Templates sheet rendered empty in the demo

@@ -833,6 +833,17 @@ CREATE INDEX idx_{p}_curr_tx_status ON {p}_current_transactions (status);
 -- round of testing flags more.
 CREATE INDEX idx_{p}_curr_tx_posting_transfer_type
     ON {p}_current_transactions (posting, transfer_type);
+-- v8.6.8: tt-instances dataset SQL JOINs ``current_transactions`` ON
+-- ``ct.template_name = t.template_name`` and runs EXISTS subqueries
+-- keyed on ``transfer_parent_id`` for chain-child detection. Without
+-- these, the L2FT Transfer Templates sheet's Template + Completion
+-- dropdowns (which run DISTINCT against the tt-instances CTE) burn
+-- through full matview scans per pick. Mirrors the v8.5.6 transfer_type
+-- dropdown fix one layer further into the L2FT explorer.
+CREATE INDEX idx_{p}_curr_tx_template_name
+    ON {p}_current_transactions (template_name);
+CREATE INDEX idx_{p}_curr_tx_parent
+    ON {p}_current_transactions (transfer_parent_id);
 
 CREATE MATERIALIZED VIEW {p}_current_daily_balances{matview_options} AS
 SELECT * FROM {p}_daily_balances sb
