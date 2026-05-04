@@ -4,7 +4,7 @@
 [![Coverage](https://raw.githubusercontent.com/chotchki/Quicksight-Generator/badges/coverage-badge.svg)](https://github.com/chotchki/Quicksight-Generator/blob/badges/coverage-report.md)
 [![PyPI](https://img.shields.io/pypi/v/quicksight-gen.svg)](https://pypi.org/project/quicksight-gen/)
 
-Python tool that programmatically generates AWS QuickSight JSON definitions (theme, datasets, analyses, dashboards) and deploys them via boto3. Ships **four bundled QuickSight apps**, all L2-fed off one institution YAML:
+Python tool that programmatically generates AWS QuickSight JSON definitions (theme, datasets, analyses, dashboards) and deploys them via boto3. Ships **four bundled QuickSight apps** plus a **regulator-ready PDF audit report**, all L2-fed off one institution YAML:
 
 - **L1 Dashboard** — persona-blind L1 invariant violation surface (drift / overdraft / limit breach / stuck pending / stuck unbundled / supersession audit / today's exceptions / daily statement / transactions). 11 sheets. Configured by an L2 instance YAML; the same dashboard renders against any institution that declares its accounts / rails / templates / chains / limit schedules in L2 form.
 - **L2 Flow Tracing** — Rails / Chains / Transfer Templates / L2 Hygiene Exceptions for the integrator validating their L2 instance against the SPEC.

@@ -184,7 +184,7 @@ Walk-the-flow drills (Account Network): right-click any touching-edges table row
 - `QS_E2E_USER_ARN` is **required** (not a tunable) — `get_user_arn()` raises `RuntimeError` if unset. Export the ARN of the QuickSight user the embed URL should sign for: locally, your default-namespace IAM user; in CI, the `ci-bot` user. Tunables (with defaults): `QS_E2E_PAGE_TIMEOUT`, `QS_E2E_VISUAL_TIMEOUT`, `QS_E2E_IDENTITY_REGION`. Set `QS_GEN_TEST_L2_INSTANCE` to point fixtures at a non-default L2 YAML.
 - The `_harness_*` modules (under `tests/e2e/`) compose seed → deploy → planted-row assertions → cleanup as one fixture; every harness test (`test_harness_end_to_end.py`) runs that flow against a live DB + QuickSight account.
 
-### CI artifacts (Phase W)
+### CI artifacts
 
 - **`.github/workflows/e2e.yml`** runs three e2e jobs against the user's external DBs (auth-smoke gate first):
   - `e2e-pg-api` — push:main + workflow_dispatch. L1 + Inv + Exec API tests with `pytest-xdist -n auto`. Per-job + workflow-level (`cleanup-pg`) cleanup.
