@@ -138,12 +138,59 @@ def connect_demo_db(cfg: Config) -> Any:
         # declarations in future schema versions enforce. The schema
         # we emit today has no FKs, so this is forward-looking.
         conn.execute("PRAGMA foreign_keys = ON;")
+        # Register the SQL/2008 STDDEV_SAMP aggregate that SQLite
+        # doesn't ship natively but the inv_pair_rolling_anomalies
+        # matview needs. Implementation is single-pass + numerically
+        # stable (Welford's online algorithm).
+        _register_sqlite_aggregates(conn)
         return conn
     raise ValueError(
         f"Unknown dialect {cfg.dialect!r}. "
         "Set 'dialect: postgres', 'dialect: oracle', or 'dialect: sqlite' "
         "in your config."
     )
+
+
+class _StddevSampAggregate:
+    """Welford's online algorithm for sample standard deviation —
+    registered as the SQLite aggregate ``STDDEV_SAMP`` since SQLite
+    doesn't ship the SQL/2008 standard aggregate natively.
+
+    Numerically stable single-pass: tracks running mean + sum of
+    squared deviations, computes ``SQRT(M2 / (n - 1))`` at finalize.
+    Returns NULL when n < 2 (matching the SQL standard semantic where
+    sample stddev of a single value is undefined, not 0).
+    """
+
+    def __init__(self) -> None:
+        self.n = 0
+        self.mean = 0.0
+        self.M2 = 0.0
+
+    def step(self, value: Any) -> None:
+        if value is None:
+            return
+        x = float(value)
+        self.n += 1
+        delta = x - self.mean
+        self.mean += delta / self.n
+        delta2 = x - self.mean
+        self.M2 += delta * delta2
+
+    def finalize(self) -> float | None:
+        if self.n < 2:
+            return None
+        return (self.M2 / (self.n - 1)) ** 0.5
+
+
+def _register_sqlite_aggregates(conn: Any) -> None:
+    """Register the SQL aggregates SQLite doesn't ship that the schema
+    SQL needs.
+
+    Today: ``STDDEV_SAMP``. Future additions land here so the SQLite
+    connection looks SQL-standard from the schema's point of view.
+    """
+    conn.create_aggregate("STDDEV_SAMP", 1, _StddevSampAggregate)
 
 
 def execute_script(

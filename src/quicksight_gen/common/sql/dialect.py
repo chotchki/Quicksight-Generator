@@ -397,14 +397,47 @@ def interval_days(n: int, dialect: Dialect) -> str:
     returns the plain string ``'<n> days'`` for SQLite so callers
     that compose it with ``date(expr, '<interval>')`` work; sites
     that try to subtract a bare interval (e.g. ``RANGE BETWEEN
-    INTERVAL ... PRECEDING``) need to be reshaped per-dialect at the
-    composing site.
+    INTERVAL ... PRECEDING``) should use ``range_interval_days``
+    instead, which adapts to SQLite's numeric-only RANGE frames via
+    a Julian-day projection.
     """
     if dialect is Dialect.POSTGRES:
         return f"INTERVAL '{n} day'"
     if dialect is Dialect.SQLITE:
         return f"'{n} days'"
     return f"INTERVAL '{n}' DAY"
+
+
+def range_interval_days(n: int, dialect: Dialect) -> str:
+    """Day-interval expression for use inside a window-function
+    ``RANGE BETWEEN <expr> PRECEDING`` clause.
+
+    PG / Oracle take ordinary INTERVAL literals — same form
+    ``interval_days`` returns. SQLite's ``RANGE BETWEEN`` only
+    accepts numeric expressions (the ORDER BY column must be numeric
+    too), so the call site needs to project ``posted_day`` through
+    ``julianday()`` and use a bare integer here. Returns ``str(n)``
+    for SQLite so a ``RANGE BETWEEN N PRECEDING`` frame, paired with
+    ``ORDER BY julianday(posted_day)``, gives the same per-day
+    semantics PG / Oracle deliver via INTERVAL.
+    """
+    if dialect is Dialect.SQLITE:
+        return str(n)
+    return interval_days(n, dialect)
+
+
+def order_by_day_expr(day_col: str, dialect: Dialect) -> str:
+    """Per-dialect ``ORDER BY`` projection for date-keyed window
+    functions paired with ``range_interval_days``.
+
+    PG / Oracle: bare column name (intervals work directly against
+    DATE / TIMESTAMP). SQLite: wrap in ``julianday(<col>)`` so the
+    RANGE frame's numeric arithmetic lands on the same scale as
+    ``range_interval_days(N, SQLITE) = str(N)``.
+    """
+    if dialect is Dialect.SQLITE:
+        return f"julianday({day_col})"
+    return day_col
 
 
 def date_minus_days(date_expr: str, n: int, dialect: Dialect) -> str:
