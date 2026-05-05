@@ -77,11 +77,40 @@ Wedge: land auto-failure-screenshot first so all subsequent browser-test investi
 
 - [ ] **X.1.e — Pre-warm Rails sheet (perf hardening — reassess after X.1.b).** Originally proposed as a fix for the L2FT cascade test failure, but X.1.b's investigation will reveal whether the actual root cause was perf-related. If X.1.b resolves the failure without needing pre-warm, this item drops from scope. If perf was a contributing factor: visit Rails once during dashboard warm-up, navigate away, then re-enter for the actual assertion (cache is hot the second time).
 
-### X.2 — Annoyed at quicksight limitations diversion
-- Soooo as a crazy thought, just as we used the strong type system to support multiple database server dialects, what if we did the same with the quicksight frontend? use the structure to generate a python backend that talks to the database server and a web frontend that renders the tables.
-- Ideally the end user uses the same IAM authentication that is required to see quicksight (or just IAM in general)
-- We don't need the fancy customization and could make all the navigation work easily (and without lying).
-- Also by having it be a dialect, we can compare using the same e2e test suite.
+### X.2 — Self-hosted dashboard renderer (QuickSight as one dialect, not THE frontend)
+
+**Reframe.** Same way `Dialect.POSTGRES`/`ORACLE` are SQL dialects projected from one schema model, the dashboard tree (`common/tree/`) becomes a **dashboard model** with three renderers: QuickSight JSON (today), audit PDF (today, proves the pattern works), and a self-hosted HTML renderer (this phase). The tree's job description sharpens — it IS the dashboard, not a description of QS dashboards. The QS dialect becomes one of three, not the canonical one.
+
+**Stack — Python backend + HTMX + Tailwind + CDN-loaded chart libraries.**
+- No bundler, no TS, no npm — same instinct as pip→uv. Containment of language spread is intentional.
+- Charting: HTMX extension pattern. Server renders `<div data-chart="sankey" data-rows='[...]'></div>`; an `hx-on::after-swap` handler re-hydrates chart divs in any swapped fragment via ECharts / vega-lite pulled from a CDN once. ~50 lines of bootstrap JS total. The "external chart lib" tax is unavoidable for Sankey/line/bar — Tailwind handles layout, not visualization.
+- Auth: IAM via ALB or Lambda authorizer in front of the Python backend. Same auth surface the customer's QS embed already uses.
+- Per-user data scoping: inject user identity into the SQL WHERE in code (more flexible than QS RowLevelSecurity datasets — per-org/per-role/per-account is just Python).
+
+**Why this is genuinely worth building, not just a "annoyed" diversion:**
+- **RESTful filtering as the killer USP.** Every (sheet, filter-set) is a URL. Bookmarkable, shareable, browser-back works. Compare to QS embed URLs (signed, single-use, don't carry filter state — see project memory `Embed URL must be generated against the dashboard region`). For audit/compliance contexts, "click this URL to see what I saw on May 5 at 3pm" is a regulator-grade affordance QS can't deliver. Pairs naturally with the existing audit PDF — both become reproducible-view artifacts.
+- **Server-side cache keys are trivial.** `(sheet, filter-set)` → SQL result. URL == cache key. This is the SPICE-equivalent for the Python backend.
+- **Bypasses the QS quirks log entirely.** URL parameter sync issue, dropdown click-target weirdness, spinner-forever footgun, render flakes — all of it stops being our problem. The quirks log stops growing for the HTMX dialect.
+- **No QS per-user license fees** for dashboards on the HTMX dialect. Real cost story for customers.
+- **Same e2e harness gates both dialects.** Layer 1 (matview check) is renderer-agnostic; Layer 2 swaps the driver. Bug-parity falls out of the harness shape already in place. _This is why X.1.c (Sasquatch L1 render flake) and X.1.d (apply layered pattern to all browser e2e) MUST land before X.2 starts — they harden the test suite that becomes the dialect-comparison gate._
+
+**Hard parts that are not impossible:**
+- **Sheet count + visual richness.** L1 dashboard alone is 11 sheets × 5–15 visuals each. MVP scope is ~6–12 weeks for L1 alone; L2 Flow Tracing / Investigation / Executives each add additional render time.
+- **Interactive filtering at scale.** 11 sheets × ~10 visuals × N filters = hundreds of HTMX round-trips per session. Fine for the demo; needs the cache layer above before scaling to per-customer production traffic.
+- **Embedding context.** Currently QS dashboards embed in customer apps via signed URLs. The HTMX dialect needs its own iframe-safe story (X-Frame-Options, signed-URL handoff, etc.).
+- **Maintenance.** Two implementations of the same surface = two places bugs hide. The "same e2e suite" mitigates but doesn't eliminate.
+
+**Sub-spike before committing to the phase** — ~2 days of scoped work that tells us the thesis holds (or doesn't):
+
+- [ ] **X.2.spike.1 — Money Trail as static HTML.** Pick the Investigation app's Money Trail sheet (one Sankey + one table). Build `emit_html(sheet)` that server-renders the existing tree object as HTML. No filters yet, no IAM, no embedding, no HTMX. Just proves "tree → HTML" is a clean projection. Outcome: either the L1 primitives need a cleanup pass first, or they're frontend-agnostic enough to fan to a second dialect.
+- [ ] **X.2.spike.2 — Add ONE filter via HTMX swap.** Date range dropdown that re-renders the visuals when changed. Validates the interactive pattern + the chart-hydration hook on swapped fragments. Outcome: HTMX-vs-SPA budget assessment.
+- [ ] **X.2.spike.3 — Run the harness's Layer 2 against it.** The dialect-comparison thesis. If the layered harness catches a render bug in HTMX the same way it catches one in QS, the architecture is sound.
+
+**Then (and only then)** decide whether X.2 expands into a structured phase OR drops back to a parking-lot idea. The sub-spike conclusion gates the rest of the entry's sub-tasks.
+
+**Other notes:**
+- **Bake the docs site into the same Python backend** — mkdocs already builds static HTML; serve it from the same FastAPI/Starlette/Flask app. One deploy, one auth surface, one cache. Removes the "docs live on Pages, dashboards live in QS, audit PDF lives wherever" three-surface story.
+- **The customer doesn't know exactly what they want yet.** The HTMX dialect's iteration speed (no QS deploy round-trip, no `analyses describe` 10s wait) becomes a UX exploration tool. Generate a sketch, iterate on filter shapes, decide what's useful, then commit to wiring it through QS.
 
 ### X.3 — Cloud CI cost optimization
 
