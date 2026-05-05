@@ -755,3 +755,53 @@ class Sankey:
                 Actions=[a.emit() for a in self.actions] if self.actions else None,
             ),
         )
+
+
+@dataclass(eq=False)
+class ForceGraph:
+    """Force-directed network visual — HTMX-dialect only (X.2 spike
+    capability test for X.4).
+
+    QuickSight's standard visual library doesn't include a force
+    layout (only hierarchical ``SankeyDiagramVisual``), so this
+    primitive exists to prove the L1 tree primitives can host a
+    visual kind that no QS dialect emit knows how to render. The
+    HTMX renderer's bootstrap dispatches to ``renderForceGraph``
+    via d3-force; ``emit()`` raises because the QS pipeline
+    intentionally has no path for this kind.
+
+    Phase.1 design call: either keep this HTMX-only or wire a
+    custom-visual emitter for QS. The capability test is the
+    artifact; the layering decision is downstream.
+
+    No field-well slots — the visual's data shape (nodes + links)
+    flows through the data fetcher directly, not through QS field
+    wells. ``visual_id`` is optional (L.1.8.5 auto-ID).
+    """
+    title: str
+    subtitle: str | None = None
+    actions: list[Action] = field(default_factory=list[Action])
+    visual_id: VisualId | AutoResolved = AUTO
+
+    _AUTO_KIND: ClassVar[str] = "force-graph"
+
+    @property
+    def element_id(self) -> str:
+        return _visual_element_id(self)
+
+    @property
+    def element_type(self) -> GridLayoutElementType:
+        return "VISUAL"
+
+    def datasets(self) -> set[Dataset]:
+        return set()
+
+    def calc_fields(self) -> set[CalcField]:
+        return set()
+
+    def emit(self) -> Visual:
+        raise NotImplementedError(
+            "ForceGraph is an HTMX-dialect-only visual (X.2 spike "
+            "capability test). QS has no force-layout visual; this "
+            "is intentionally not wired to the QS emit path."
+        )

@@ -35,7 +35,7 @@ import uvicorn
 from quicksight_gen.common.html.server import make_app
 from quicksight_gen.common.ids import SheetId, VisualId
 from quicksight_gen.common.tree.structure import Analysis, App, Sheet
-from quicksight_gen.common.tree.visuals import Sankey
+from quicksight_gen.common.tree.visuals import ForceGraph, Sankey
 from tests._test_helpers import make_test_config
 
 
@@ -63,7 +63,48 @@ def _build_smoke_app() -> tuple[App, Sheet]:
         ),
         visual_id=VisualId("smoke-sankey"),
     ))
+    sheet.visuals.append(ForceGraph(
+        title="Rails & Accounts — Force Layout",
+        subtitle=(
+            "X.4 capability test: d3-force renders an account "
+            "topology like the existing graphviz pipeline does for "
+            "docs. Click a node to anchor; drag-to-position is a "
+            "phase.1 follow-on."
+        ),
+        visual_id=VisualId("smoke-force"),
+    ))
     return app, sheet
+
+
+def _stub_rails_accounts() -> dict[str, Any]:
+    """Stub topology shaped like ``common/l2/topology.py`` projects:
+    accounts as nodes (typed by ``account_type``), rails as
+    undirected edges between them. Persona-blind labels.
+
+    Phase.1 would feed this from ``build_topology_graph(l2_instance)``
+    transformed into d3 force shape.
+    """
+    return {
+        "nodes": [
+            {"id": "ext_acquirer",      "label": "External Acquirer",      "group": "external_counter"},
+            {"id": "customer_dda_a",    "label": "Customer DDA A",         "group": "dda"},
+            {"id": "customer_dda_b",    "label": "Customer DDA B",         "group": "dda"},
+            {"id": "merchant_dda",      "label": "Merchant DDA",           "group": "merchant_dda"},
+            {"id": "gl_control",        "label": "GL Control",             "group": "gl_control"},
+            {"id": "concentration",     "label": "Concentration Master",   "group": "concentration_master"},
+            {"id": "funds_pool",        "label": "Funds Pool",             "group": "funds_pool"},
+        ],
+        "links": [
+            {"source": "ext_acquirer",   "target": "customer_dda_a"},
+            {"source": "ext_acquirer",   "target": "customer_dda_b"},
+            {"source": "customer_dda_a", "target": "merchant_dda"},
+            {"source": "customer_dda_b", "target": "merchant_dda"},
+            {"source": "merchant_dda",   "target": "gl_control"},
+            {"source": "gl_control",     "target": "concentration"},
+            {"source": "concentration",  "target": "funds_pool"},
+            {"source": "customer_dda_a", "target": "gl_control"},
+        ],
+    }
 
 
 def _stub_money_trail_fetcher(
@@ -86,6 +127,10 @@ def _stub_money_trail_fetcher(
     expected params (decouples "did the swap fire?" from "did the
     Sankey shape change?").
     """
+    # Branch by visual: the ForceGraph wants a node/link topology,
+    # the Sankey wants the date+anchor-keyed flow shape.
+    if visual_id == "smoke-force":
+        return _stub_rails_accounts()
     seed = sum(ord(c) for c in (params.get("date_from", "") + params.get("date_to", "")))
     anchor = params.get("anchor", "")
     anchor_factor = (sum(ord(c) for c in anchor) % 5 + 1) if anchor else 1
