@@ -1,5 +1,20 @@
 # Release Notes
 
+## v8.7.2 — X.1 phase closed (planning milestone)
+
+No code change vs v8.7.1 — this is a planning-milestone tag marking
+the close of phase X.1 (e2e fixes + layered-test foundation).
+
+X.1.d ticked: the originally-planned sweep across active browser
+tests was assessed as low value (those tests assert structural
+claims, not specific row presence; the active row-presence tests
+are skip-deferred). The shipped `tests/e2e/_layer1_query.py`
+helpers are the deliverable; new row-presence tests use them.
+
+Next phase: **X.2 — self-hosted dashboard renderer (HTMX dialect)**.
+Sub-spike begins with the Investigation Money Trail sheet rendered
+as static HTML from the existing tree.
+
 ## v8.7.1 — X.1.c "flake" fix + X.1.d.1 layered helpers
 
 ### X.1.c — Sasquatch L1 dashboard "flake" was table virtualization
