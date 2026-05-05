@@ -66,10 +66,30 @@ _D3_SANKEY_SRC = (
 # phase's swap-on-edit pattern reuses this exact dispatch.
 _BOOTSTRAP_JS = """\
 (function() {
+  // Build the merged values dict for an anchor click — current form
+  // inputs PLUS the anchor selection. d3 owns the SVG so it owns the
+  // click; htmx.ajax() is HTMX's documented programmatic-trigger API
+  // and produces a request indistinguishable from an attribute-bound
+  // hx-post (same swap target, same headers, same hydrate path on
+  // the response).
+  function fireAnchorRequest(visualId, anchorName) {
+    var form = document.querySelector('#filter-form');
+    var values = {anchor: anchorName};
+    if (form) {
+      new FormData(form).forEach(function(v, k) { values[k] = v; });
+    }
+    htmx.ajax('POST', '/visual/' + visualId + '/data', {
+      target: '#visual-data-' + visualId,
+      swap: 'innerHTML',
+      values: values,
+    });
+  }
+
   function hydrateSection(section) {
     var dataScript = section.querySelector('script.chart-data');
     if (!dataScript) return;
     var kind = section.getAttribute('data-visual-kind');
+    var visualId = section.getAttribute('data-visual-id');
     var data;
     try { data = JSON.parse(dataScript.textContent); }
     catch (e) { console.error('bad chart data', e); return; }
@@ -78,7 +98,7 @@ _BOOTSTRAP_JS = """\
     target.querySelectorAll('svg').forEach(function(s) { s.remove(); });
     switch (kind) {
       case 'Sankey':
-        renderSankey(target, data);
+        renderSankey(target, data, visualId);
         break;
       default:
         console.warn('no hydrator for kind', kind);
@@ -102,7 +122,7 @@ _BOOTSTRAP_JS = """\
     }
   }
 
-  function renderSankey(target, data) {
+  function renderSankey(target, data, visualId) {
     var width = target.clientWidth || 800;
     var height = 400;
     var svg = d3.select(target).append('svg')
@@ -120,7 +140,11 @@ _BOOTSTRAP_JS = """\
       .attr('y', function(d) { return d.y0; })
       .attr('height', function(d) { return d.y1 - d.y0; })
       .attr('width', function(d) { return d.x1 - d.x0; })
-      .attr('fill', '#4682b4');
+      .attr('fill', '#4682b4')
+      .style('cursor', 'pointer')
+      .on('click', function(event, d) {
+        if (visualId) fireAnchorRequest(visualId, d.name);
+      });
     svg.append('g').attr('fill', 'none')
       .selectAll('path').data(graph.links).enter().append('path')
       .attr('d', d3.sankeyLinkHorizontal())

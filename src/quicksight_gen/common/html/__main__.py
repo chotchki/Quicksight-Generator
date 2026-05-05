@@ -69,39 +69,48 @@ def _build_smoke_app() -> tuple[App, Sheet]:
 def _stub_money_trail_fetcher(
     visual_id: str, params: dict[str, str],
 ) -> dict[str, Any]:
-    """Deterministic stub responsive to date params.
+    """Deterministic stub responsive to date + anchor params.
 
-    The link weights use *different* multipliers per ribbon (primes
-    7/11/13/17), so any character change in either date visibly
-    shifts the ratios. d3-sankey scales widths relative to each
-    other and to the canvas — if all ribbons share the same base
-    multiplier, the proportions stay locked and the Sankey looks
-    identical even when the raw values change. Varying ratios per
-    seed unlocks visible change.
+    Two interaction surfaces feed the stub:
 
-    The seed value is also echoed into the first node label so a
+    - **date_from / date_to** (form filter) — seed the link
+      multipliers (primes 7/11/13/17) so date changes visibly
+      shift the ratios.
+    - **anchor** (clicked node name) — applies a per-link factor
+      keyed off the anchor's character sum. Clicking a different
+      node pivots the Sankey ratios in a fresh direction so the
+      click-to-trace experiment is visible.
+
+    Both seed and anchor are echoed into the first node label so a
     glance at any swap confirms the round-trip ran with the
     expected params (decouples "did the swap fire?" from "did the
     Sankey shape change?").
     """
     seed = sum(ord(c) for c in (params.get("date_from", "") + params.get("date_to", "")))
+    anchor = params.get("anchor", "")
+    anchor_factor = (sum(ord(c) for c in anchor) % 5 + 1) if anchor else 1
+    label = f"seed={seed}, anchor={anchor or 'none'}"
     # L1-layer: keep persona-blind. Real Money Trail Sankey labels
     # come from <prefix>_inv_money_trail_edges (source/target_display)
     # which the L2 instance's persona block populates; the spike just
     # proves the swap pattern, not the labels.
     return {
         "nodes": [
-            {"name": f"External Acquirer (seed={seed})"},
+            {"name": f"External Acquirer ({label})"},
             {"name": "Customer DDA"},
             {"name": "GL Control"},
             {"name": "Concentration"},
             {"name": "Funds Pool"},
         ],
         "links": [
-            {"source": 0, "target": 1, "value": max(10, (seed * 7) % 100 + 10)},
-            {"source": 1, "target": 2, "value": max(10, (seed * 11) % 100 + 10)},
-            {"source": 2, "target": 3, "value": max(10, (seed * 13) % 100 + 10)},
-            {"source": 3, "target": 4, "value": max(10, (seed * 17) % 100 + 10)},
+            {"source": 0, "target": 1,
+             "value": max(10, (seed * 7 * anchor_factor) % 100 + 10)},
+            {"source": 1, "target": 2,
+             "value": max(10, (seed * 11 * anchor_factor) % 100 + 10)},
+            {"source": 2, "target": 3,
+             "value": max(10, (seed * 13 * anchor_factor) % 100 + 10)},
+            {"source": 3, "target": 4,
+             "value": max(10, (seed * 17 * anchor_factor) % 100 + 10)},
         ],
     }
 
