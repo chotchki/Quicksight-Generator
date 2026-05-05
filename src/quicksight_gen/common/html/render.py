@@ -78,6 +78,12 @@ _BOOTSTRAP_JS = """\
     if (form) {
       new FormData(form).forEach(function(v, k) { values[k] = v; });
     }
+    // Fire a custom event so the dev-log forwarder (if enabled) can
+    // capture the user-intent moment BEFORE htmx.ajax fires its own
+    // events. No-op when dev-log is off.
+    document.body.dispatchEvent(new CustomEvent('sankey:click', {
+      detail: {visualId: visualId, anchor: anchorName},
+    }));
     htmx.ajax('POST', '/visual/' + visualId + '/data', {
       target: '#visual-data-' + visualId,
       swap: 'innerHTML',
@@ -178,6 +184,7 @@ _PAGE_SHELL = """\
 <head>
   <meta charset="utf-8">
   <title>{title}</title>
+{dev_log_meta}
   <script src="{htmx_src}"></script>
   <script src="{d3_src}"></script>
   <script src="{d3_sankey_src}"></script>
@@ -185,8 +192,78 @@ _PAGE_SHELL = """\
 <body>
 {body}
   <script>{bootstrap_js}</script>
+  <script>{dev_log_js}</script>
 </body>
 </html>
+"""
+
+
+# Dev-log forwarder — wraps the HTMX event bus + custom 'sankey:click'
+# events and POSTs each to /log. Server echoes the events inline with
+# uvicorn's log stream so the developer sees what the browser is doing
+# in real time. Gated by a meta tag so production deploys (no meta =
+# no listeners attached, zero overhead).
+#
+# Anti-loop note: the /log POST goes via plain ``fetch``, NOT htmx, so
+# logging events don't generate more events. Errors swallowed so a
+# down /log endpoint can't break the page.
+_DEV_LOG_JS = """\
+(function() {
+  if (!document.querySelector('meta[name="dev-log"]')) return;
+
+  function send(eventName, payload) {
+    fetch('/log', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(Object.assign({event: eventName}, payload || {})),
+      keepalive: true,
+    }).catch(function() {});
+  }
+
+  function describe(el) {
+    if (!el || !el.tagName) return null;
+    var s = el.tagName.toLowerCase();
+    if (el.id) s += '#' + el.id;
+    if (el.getAttribute && el.getAttribute('data-visual-id')) {
+      s += '[data-visual-id=' + el.getAttribute('data-visual-id') + ']';
+    }
+    return s;
+  }
+
+  // HTMX event bus — the trigger / request / swap lifecycle.
+  var htmxEvents = [
+    'htmx:beforeRequest', 'htmx:afterRequest',
+    'htmx:beforeSwap', 'htmx:afterSwap',
+    'htmx:responseError', 'htmx:sendError', 'htmx:targetError',
+  ];
+  htmxEvents.forEach(function(name) {
+    document.body.addEventListener(name, function(evt) {
+      var detail = evt.detail || {};
+      var rc = detail.requestConfig || {};
+      var xhr = detail.xhr || {};
+      send(name, {
+        target: describe(evt.target),
+        verb: rc.verb || null,
+        path: rc.path || null,
+        status: xhr.status || null,
+      });
+    });
+  });
+
+  // Custom event the bootstrap fires on d3 node clicks — see
+  // fireAnchorRequest in the main bootstrap. Captures the
+  // user-intent moment BEFORE htmx.ajax fires so the log shows
+  // "click → request → swap" in order.
+  document.body.addEventListener('sankey:click', function(evt) {
+    var detail = evt.detail || {};
+    send('sankey:click', {
+      visualId: detail.visualId || null,
+      anchor: detail.anchor || null,
+    });
+  });
+
+  send('dev-log:ready', {ua: navigator.userAgent});
+})();
 """
 
 
@@ -222,7 +299,7 @@ def _render_filter_form(visual_ids: list[str]) -> str:
     return "\n".join(parts)
 
 
-def emit_html(app: App, sheet: Sheet) -> str:
+def emit_html(app: App, sheet: Sheet, *, dev_log: bool = False) -> str:
     """Render a tree ``Sheet`` as a standalone HTML page.
 
     spike.2 scope: page shell pulls HTMX + d3 + d3-sankey, emits a
@@ -274,6 +351,10 @@ def emit_html(app: App, sheet: Sheet) -> str:
         d3_src=_D3_SRC,
         d3_sankey_src=_D3_SANKEY_SRC,
         bootstrap_js=_BOOTSTRAP_JS,
+        dev_log_js=_DEV_LOG_JS,
+        dev_log_meta=(
+            '  <meta name="dev-log" content="1">' if dev_log else ""
+        ),
     )
 
 

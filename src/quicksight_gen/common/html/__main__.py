@@ -121,6 +121,10 @@ def main() -> int:
         tree_app=tree_app,
         sheet=sheet,
         data_fetcher=_stub_money_trail_fetcher,
+        # Dev-log on for the smoke server: every HTMX event +
+        # d3 click prints to stderr so the developer sees what
+        # the browser is doing inline with the server log.
+        dev_log=True,
     )
     print("Spike 2 smoke server: http://127.0.0.1:8765/")
     uvicorn.run(asgi_app, host="127.0.0.1", port=8765, log_level="info")

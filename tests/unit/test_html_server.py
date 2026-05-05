@@ -156,6 +156,38 @@ def test_visual_id_routing_passes_correct_id_to_fetcher() -> None:
     assert captured_ids == ["v-sankey", "some-other-id"]
 
 
+def test_dev_log_off_by_default() -> None:
+    """Without ``dev_log=True``, the page carries no ``meta name="dev-log"``
+    and the ``/log`` route 404s — production deploys stay silent and
+    zero-overhead."""
+    tree_app, sheet = _build_app()
+    asgi = make_app(
+        tree_app=tree_app, sheet=sheet,
+        data_fetcher=lambda _v, _p: {},
+    )
+    client = TestClient(asgi)
+    page = client.get("/").text
+    assert 'meta name="dev-log"' not in page
+    assert client.post("/log", json={"event": "x"}).status_code == 404
+
+
+def test_dev_log_on_enables_meta_and_log_endpoint() -> None:
+    """``dev_log=True`` injects the meta tag (which the forwarder JS
+    checks for) AND registers ``POST /log``. Server returns 204 on
+    valid events."""
+    tree_app, sheet = _build_app()
+    asgi = make_app(
+        tree_app=tree_app, sheet=sheet,
+        data_fetcher=lambda _v, _p: {},
+        dev_log=True,
+    )
+    client = TestClient(asgi)
+    page = client.get("/").text
+    assert 'meta name="dev-log"' in page
+    resp = client.post("/log", json={"event": "htmx:beforeRequest"})
+    assert resp.status_code == 204
+
+
 def test_response_payload_round_trips_through_json() -> None:
     """Whatever the fetcher returns must JSON-encode losslessly into
     the swap fragment (the bootstrap parses it back via

@@ -33,12 +33,14 @@ auth / cache are X.2.phase.1+ concerns.
 
 from __future__ import annotations
 
+import json
+import sys
 from collections.abc import Callable
 from typing import Any
 
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import HTMLResponse
+from starlette.responses import HTMLResponse, Response
 from starlette.routing import Route
 
 from quicksight_gen.common.html.render import (
@@ -61,6 +63,7 @@ def make_app(
     tree_app: App,
     sheet: Sheet,
     data_fetcher: DataFetcher,
+    dev_log: bool = False,
 ) -> Starlette:
     """Build a Starlette ASGI app that serves a single tree Sheet.
 
@@ -76,13 +79,19 @@ def make_app(
             and a flat dict of form-submitted filter params (e.g.
             ``{"date_from": "2026-01-01", "date_to": "2026-05-05"}``).
             Returns d3-shaped chart data.
+        dev_log: when True, the page emits a ``<meta name="dev-log">``
+            tag that activates the client-side event forwarder + a
+            ``POST /log`` route is registered that prints each
+            forwarded event to stderr. Off by default — keeps
+            production deploys silent and zero-overhead. The
+            developer tool / smoke server enables it.
 
     Returns:
         A ``starlette.Starlette`` ASGI application.
     """
 
     async def index(_request: Request) -> HTMLResponse:
-        return HTMLResponse(emit_html(tree_app, sheet))
+        return HTMLResponse(emit_html(tree_app, sheet, dev_log=dev_log))
 
     async def visual_data(request: Request) -> HTMLResponse:
         visual_id = request.path_params["visual_id"]
@@ -93,14 +102,25 @@ def make_app(
         data = data_fetcher(visual_id, params)
         return HTMLResponse(emit_visual_data_fragment(visual_id, data))
 
-    return Starlette(
-        debug=False,
-        routes=[
-            Route("/", index, methods=["GET"]),
-            Route(
-                "/visual/{visual_id}/data",
-                visual_data,
-                methods=["POST"],
-            ),
-        ],
-    )
+    async def log_event(request: Request) -> Response:
+        try:
+            payload = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            payload = {"event": "dev-log:bad-json"}
+        # Print to stderr so it interleaves cleanly with uvicorn's
+        # access log on stdout. The ``DEV-LOG`` prefix makes
+        # forwarded events grep-friendly.
+        print(f"DEV-LOG {json.dumps(payload)}", file=sys.stderr, flush=True)
+        return Response(status_code=204)
+
+    routes: list[Route] = [
+        Route("/", index, methods=["GET"]),
+        Route(
+            "/visual/{visual_id}/data",
+            visual_data,
+            methods=["POST"],
+        ),
+    ]
+    if dev_log:
+        routes.append(Route("/log", log_event, methods=["POST"]))
+    return Starlette(debug=False, routes=routes)
