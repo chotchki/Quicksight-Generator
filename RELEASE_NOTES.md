@@ -1,5 +1,37 @@
 # Release Notes
 
+## v8.6.19 — Doc → CLI cross-reference checker (Phase X.1.h.B v0)
+
+New unit test at ``tests/unit/test_docs_cli_invocations.py`` walks
+every ``.md`` file under ``src/quicksight_gen/docs/``, extracts
+``quicksight-gen <command> <flags>`` invocations out of fenced
+bash blocks, and asserts the subcommand chain + every cited flag
+exists in the shipped Click tree. The checker catches the "doc
+cites a removed CLI verb / renamed flag" hallucination class
+before docs ship.
+
+Handles real-world bash patterns:
+
+- multi-line invocations with trailing-backslash continuations
+- env-var prefixes (``QS_GEN_E2E=1 quicksight-gen ...``)
+- positional args after the subcommand
+  (``audit verify report.pdf -c config.yaml``)
+- the ``--foo=value`` flag form
+- rejects false positives like ``pip install quicksight-gen``
+
+Discovers docs automatically via ``rglob`` — new docs need no
+per-doc wiring. 12 docs cite ``quicksight-gen``; all 12 pass
+against the v8.6.18 CLI surface.
+
+Track B follow-ups split into the backlog:
+
+- X.1.h.B.2 — Python doctest infra (``pytest-markdown-docs``
+  + per-block fixtures for placeholder paths)
+- X.1.h.B.3 — SQL block execution (needs a DB target decision)
+- X.1.h.B.4 — Schema column cross-reference (catches drift like
+  the ``transaction_id`` references in the populate-transactions
+  walkthrough that should be ``id`` per the v6 schema)
+
 ## v8.6.18 — Real ETL example patterns (Phase X.1.h.A)
 
 The ``quicksight-gen data etl-example`` CLI emits 10 canonical
