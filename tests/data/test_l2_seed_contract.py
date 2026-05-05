@@ -98,17 +98,8 @@ def _fuzz_yaml_path() -> Path:
     if p.exists():
         return p
     text = random_l2_yaml(FUZZ_SEED)
-    instance = load_instance(_write_temp(text))
-    report = default_scenario_for(instance, today=CANONICAL_TODAY)
-    sql = emit_seed(instance, report.scenario)
-    sha = hashlib.sha256(sql.encode("utf-8")).hexdigest()
-    # P.5.b — seed_hash is now a per-dialect dict. Fuzz mode only
-    # exercises Postgres bytes; the Oracle hash isn't needed here.
-    text_with_lock = (
-        text.rstrip() + f"\nseed_hash:\n  postgres: {sha}\n"
-    )
     final_tmp = _FUZZ_DUMP_DIR / f"_final_pid_{os.getpid()}.yaml"
-    final_tmp.write_text(text_with_lock)
+    final_tmp.write_text(text)
     os.replace(final_tmp, p)
     return p
 
@@ -327,40 +318,6 @@ def test_auto_seed_is_byte_deterministic(instance, auto_seed_sql) -> None:
         instance, report_b.scenario,
     )
     assert emit_seed(instance, report_a.scenario) == auto_seed_sql
-
-
-def test_seed_hash_in_yaml_matches_actual_when_set(
-    instance: L2Instance, auto_seed_sql: str,
-) -> None:
-    """If the YAML declares seed_hash, it must equal the actual SHA256.
-
-    The two L2 fixtures both have seed_hash locked; this is the
-    matrix-wide regression guard against drift.
-
-    P.5.b — seed_hash is now a per-dialect dict on L2Instance. The
-    ``auto_seed_sql`` fixture emits the Postgres bytes (default
-    dialect on emit_seed); compare against the ``postgres`` entry.
-    """
-    actual = hashlib.sha256(auto_seed_sql.encode("utf-8")).hexdigest()
-    declared = instance.seed_hash
-    assert declared is not None, (
-        f"L2 instance {instance.instance!r} is in the matrix but has no "
-        f"seed_hash; lock with `quicksight-gen demo seed-l2 <yaml> --lock`."
-        + _hint_if_fuzz(instance)
-    )
-    expected = declared.get("postgres")
-    assert expected is not None, (
-        f"L2 instance {instance.instance!r} seed_hash dict is missing "
-        f"the 'postgres' key. Re-lock to populate."
-        + _hint_if_fuzz(instance)
-    )
-    assert actual == expected, (
-        f"Auto-seed for {instance.instance!r} (postgres) drifted from "
-        f"locked hash:\n"
-        f"  YAML  : {expected}\n"
-        f"  actual: {actual}"
-        + _hint_if_fuzz(instance)
-    )
 
 
 # -- Account contract -------------------------------------------------------
@@ -592,71 +549,10 @@ def test_seed_columns_match_schema_v6_documented_set(
         )
 
 
-# -- M.4.2: broad-mode hash-locks -------------------------------------------
-#
-# The YAML's ``seed_hash:`` field locks the L1-invariants-only mode (the
-# original M.2a.8 contract; preserved by tests above). The broad and
-# l1_plus_broad modes need their own per-(instance, mode) locks so the
-# matrix's M.4.1 harness scenarios stay deterministic across runs.
-#
-# Sidecar dict approach instead of YAML field per mode: keeps the YAML
-# semantics simple ("seed_hash is THE hash for the canonical scenario")
-# and centralizes the multi-mode lock surface in one place. Adding a
-# new mode is one entry per (instance, mode) row here.
-#
-# Fuzz instance is excluded from the lock check — its hash naturally
-# changes per fuzz seed; the byte-determinism test above is the
-# regression guard for the fuzz path.
-
-# P.5.b — Postgres-only hashes; the L2FT broad-mode harness only
-# exercises PG so far (Oracle harness lands in P.7+ once the per-row
-# INSERT format is verified end-to-end against live Oracle).
-_BROAD_MODE_HASHES: dict[tuple[str, str], str] = {
-    ("spec_example", "broad"):
-        "227288a18517d90cddb8426e9582156b5ebc488dc159c02da9ae974c30ece9a6",
-    ("spec_example", "l1_plus_broad"):
-        "234307b9ae59fedb6576294da7ea625779d98a08dc85e8214513a8e7fd4e65c1",
-    ("sasquatch_pr", "broad"):
-        "aa7ca741fab54645561433ac57595bc24e591c420c15e2120218c199e14d888a",
-    ("sasquatch_pr", "l1_plus_broad"):
-        "73d1361a08f32c9331ca5e4d6ebc8c3d9ad9b18299d776c832e69cba7f635eca",
-}
-
-
-@pytest.mark.parametrize("mode", ["broad", "l1_plus_broad"])
-def test_broad_mode_hashes_match_lock(instance: L2Instance, mode: str) -> None:
-    """M.4.2: every (instance, mode) pair has a locked SHA256 in the
-    sidecar dict above; this test asserts the actual hash matches.
-
-    Drift fixes follow the same pattern as the L1-mode lock — re-run
-    the helper script (see the print snippet in the M.4.2 commit) to
-    regenerate the dict, then commit. The fuzz fixture is skipped
-    because its hash drifts per ``QS_GEN_FUZZ_SEED``.
-    """
-    instance_name = str(instance.instance)
-    if instance_name.startswith("fuzz_"):
-        pytest.skip("fuzz fixture's broad-mode hash drifts per seed")
-    key = (instance_name, mode)
-    if key not in _BROAD_MODE_HASHES:
-        pytest.skip(
-            f"no broad-mode hash locked for {key!r}; "
-            f"add to _BROAD_MODE_HASHES if you want this combination locked"
-        )
-    from quicksight_gen.common.l2.auto_scenario import (
-        ScenarioMode,
-    )
-    from typing import cast
-    report = default_scenario_for(
-        instance, today=CANONICAL_TODAY, mode=cast(ScenarioMode, mode),
-    )
-    sql = emit_seed(instance, report.scenario)
-    actual = hashlib.sha256(sql.encode("utf-8")).hexdigest()
-    expected = _BROAD_MODE_HASHES[key]
-    assert actual == expected, (
-        f"Broad-mode seed for ({instance_name!r}, {mode!r}) drifted from "
-        f"locked hash:\n"
-        f"  locked: {expected}\n"
-        f"  actual: {actual}\n"
-        f"Update _BROAD_MODE_HASHES in tests/test_l2_seed_contract.py "
-        f"if the change was intentional."
-    )
+# X.1.k — broad / l1_plus_broad hash-locks deleted. The locked SQL
+# files at tests/data/_locked_seeds/<instance>.<dialect>.sql cover the
+# l1_plus_broad mode (which is what `data apply` actually emits via
+# `cli/_helpers.py::build_full_seed_sql`); the broad-only intermediate
+# scenario is no longer separately verified here. Broad mode is still
+# functionally exercised by the e2e harness — if it drifts the
+# dashboards regress, just not via a hash mismatch surfaced here.

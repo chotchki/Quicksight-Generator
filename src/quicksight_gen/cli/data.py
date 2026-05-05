@@ -5,9 +5,9 @@ Five operations:
   apply    — emit the seed SQL (default), or ``--execute`` against the demo DB.
   refresh  — emit the REFRESH MATERIALIZED VIEW SQL, or ``--execute``.
   clean    — emit TRUNCATE statements, or ``--execute`` to wipe the rows.
-  hash     — re-lock or verify the YAML's ``seed_hash:`` against the
-             auto-seed (canonical-date, plant-only).
-  test     — pytest the seed pipeline (hash-lock check).
+  lock     — write or verify the canonical-anchor seed SQL at
+             ``tests/data/_locked_seeds/<instance>.<dialect>.sql``.
+  test     — pytest the seed pipeline (locked-SQL byte check).
 
 Same emit-vs-execute pattern as the schema group — default is
 print the script, ``--execute`` actually runs it.
@@ -15,8 +15,7 @@ print the script, ``--execute`` actually runs it.
 
 from __future__ import annotations
 
-import hashlib
-import re
+import difflib
 import subprocess
 import sys
 from datetime import date
@@ -33,6 +32,20 @@ from quicksight_gen.cli._helpers import (
     l2_instance_option,
     output_option,
     resolve_l2_for_demo,
+)
+
+
+# X.1.k — fixed canonical anchor for locked-SQL determinism. The plants'
+# `today` and the baseline window's anchor both feed off this so the
+# emit is byte-stable regardless of when `data lock` runs.
+_CANONICAL_LOCK_ANCHOR = date(2030, 1, 1)
+
+# X.1.k — locked SQL files live under tests/data/ (one per
+# (instance, dialect)). Discovered + asserted by
+# ``tests/data/test_locked_seeds.py``.
+_LOCKED_SEEDS_DIR = (
+    Path(__file__).resolve().parents[3]
+    / "tests" / "data" / "_locked_seeds"
 )
 
 
@@ -133,172 +146,87 @@ def data_clean(
         emit_to_target(sql, output, label="data TRUNCATE")
 
 
-@data.command("hash")
-@click.argument(
-    "yaml_path",
-    type=click.Path(exists=True, dir_okay=False),
-)
+@data.command("lock")
+@l2_instance_option()
+@config_option(required_for_dialect_only=True)
 @click.option(
-    "--output", "-o",
-    type=click.Path(), default=None,
-    help="Output path for the canonical-date plant SQL (default: stdout).",
-)
-@click.option(
-    "--lock", is_flag=True,
+    "--check", "check_only", is_flag=True,
     help=(
-        "Write the canonical-seed SHA256 back into the YAML's "
-        "``seed_hash.postgres`` field (creating the field if absent). "
-        "Use this after a reviewed change to the L2 spec drifts the "
-        "canonical seed output."
+        "Exit non-zero if the locked SQL file doesn't match a fresh "
+        "emit. Use in CI to guard against unreviewed seed drift."
     ),
 )
-@click.option(
-    "--check", "check_hash", is_flag=True,
-    help=(
-        "Exit 1 if the YAML's ``seed_hash.postgres`` doesn't match the "
-        "actual SHA256 of the auto-generated canonical-date seed. Use "
-        "in CI to guard against unreviewed L2 spec drift."
-    ),
-)
-def data_hash(
-    yaml_path: str,
-    output: str | None,
-    lock: bool,
-    check_hash: bool,
+def data_lock(
+    l2_instance_path: str | None, config: str, check_only: bool,
 ) -> None:
-    """Lock or verify the YAML's ``seed_hash`` against the canonical seed.
+    """Write or verify the canonical-anchor seed SQL.
 
-    Walks the L2 instance and plants one of every L1 exception kind
-    (drift, overdraft, limit-breach, stuck-pending, stuck-unbundled,
-    supersession) using deterministic heuristics. Plants that can't be
-    derived from the YAML (e.g., no LimitSchedule declared) are
-    omitted with a one-line warning.
+    The locked file lives at
+    ``tests/data/_locked_seeds/<instance>.<dialect>.sql`` and IS the
+    record of what `data apply` would emit at canonical anchor
+    (2030-01-01) for this (L2 instance, dialect) pair. The CLI keys
+    off ``-c config.yaml`` (dialect derived from ``demo_database_url``);
+    ``--l2`` picks the L2 to lock.
 
-    Hash semantics: hashed against a fixed canonical reference date
-    (2030-01-01) so the SHA256 is stable across days. ``--lock``
-    writes the current hash into the YAML; ``--check`` verifies the
-    YAML's declared hash matches.
+    Default: refresh the locked file (overwrites the on-disk content
+    with a fresh emit). Pass ``--check`` to verify-only — exit non-zero
+    on drift, with a unified diff to stderr showing the first ~50 lines
+    that changed.
 
-    The hash covers the plant-only output (``emit_seed``); the
-    full-seed pipeline behind ``data apply`` rolls today's date
-    into the baseline, which is intentional but unhashable.
+    Run once per (postgres config, oracle config) to cover both
+    dialects. Run after any seed-shape-changing commit (new plant kind,
+    plant emitter change, baseline generator tweak) to refresh both
+    locks before pushing.
     """
-    from quicksight_gen.common.l2 import load_instance
-    from quicksight_gen.common.l2.auto_scenario import default_scenario_for
-    from quicksight_gen.common.l2.seed import emit_seed
+    cfg, instance = resolve_l2_for_demo(config, l2_instance_path)
+    fresh = build_full_seed_sql(cfg, instance, anchor=_CANONICAL_LOCK_ANCHOR)
 
-    p = Path(yaml_path)
-    instance = load_instance(p)
+    locked_path = (
+        _LOCKED_SEEDS_DIR / f"{instance.instance}.{cfg.dialect.value}.sql"
+    )
 
-    # Hash against the canonical reference date so the SHA256 lives
-    # independently of the day the CLI runs.
-    canonical_today = date(2030, 1, 1)
-    report = default_scenario_for(instance, today=canonical_today)
-    sql = emit_seed(instance, report.scenario)
-    actual_hash = hashlib.sha256(sql.encode("utf-8")).hexdigest()
-
-    for kind, reason in report.omitted:
-        click.echo(f"  [warn] omitted {kind}: {reason}", err=True)
-
-    if check_hash:
-        # P.5.b — seed_hash is per-dialect dict on L2Instance. The CLI's
-        # emit_seed call uses the default Postgres dialect; check
-        # against the ``postgres`` entry only.
-        declared = instance.seed_hash
-        if declared is None:
+    if check_only:
+        if not locked_path.exists():
             click.echo(
-                "  [error] --check requested but YAML has no "
-                "`seed_hash:` field; run with --lock first.",
+                f"  [error] --check requested but lock file is missing: "
+                f"{locked_path}\n  Run `data lock` (without --check) to "
+                f"create it.",
                 err=True,
             )
             raise SystemExit(1)
-        expected = declared.get("postgres")
-        if expected is None:
+        on_disk = locked_path.read_text()
+        if fresh == on_disk:
             click.echo(
-                "  [error] --check requested but YAML's `seed_hash:` "
-                "dict is missing the `postgres` key; run with --lock to "
-                "populate.",
-                err=True,
+                f"  [ok] {locked_path.name} matches fresh emit", err=True,
             )
-            raise SystemExit(1)
-        if expected != actual_hash:
-            click.echo(
-                f"  [error] seed_hash mismatch (postgres):\n"
-                f"    YAML  : {expected}\n"
-                f"    actual: {actual_hash}\n"
-                f"  Re-run with --lock if the change was intentional.",
-                err=True,
-            )
-            raise SystemExit(1)
+            return
+        diff = list(difflib.unified_diff(
+            on_disk.splitlines(keepends=True),
+            fresh.splitlines(keepends=True),
+            fromfile=f"locked/{locked_path.name}",
+            tofile=f"fresh/{locked_path.name}",
+            n=2,
+        ))
         click.echo(
-            f"  [ok] seed_hash matches (postgres={actual_hash})", err=True,
-        )
-
-    if lock:
-        _rewrite_seed_hash_in_yaml(p, actual_hash)
-        click.echo(
-            f"  [lock] wrote seed_hash.postgres={actual_hash} into {p}",
+            f"  [error] seed drifted from {locked_path.name}:\n"
+            f"  Showing first 50 diff lines (run without --check to "
+            f"refresh):\n",
             err=True,
         )
-
-    if output is None:
-        click.echo(sql)
-    else:
-        out = Path(output)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(sql)
-        click.echo(f"Wrote canonical-date plant SQL to {out}", err=True)
-
-
-def _rewrite_seed_hash_in_yaml(yaml_path: Path, new_hash: str) -> None:
-    """Idempotently set ``seed_hash.postgres: <new_hash>`` on a YAML file.
-
-    P.5.b — seed_hash is a per-dialect dict in YAML. ``--lock`` only
-    writes the Postgres hash (the CLI's emit_seed defaults to PG); the
-    Oracle hash is locked separately (in tests/l2/*.yaml manually until
-    a future ``--dialect oracle`` flag lands).
-
-    Preserves comments + ordering by treating the file as text — never
-    parses + re-emits via PyYAML (that would lose every comment and
-    re-order keys). Replaces the entire ``seed_hash:`` block (top-level
-    key + any indented children) with the new dict shape, or appends
-    one if the field is absent.
-    """
-    text = yaml_path.read_text()
-    lines = text.splitlines(keepends=True)
-    new_block = (
-        f"seed_hash:\n  postgres: {new_hash}\n"
-    )
-    seen_at = -1
-    for i, line in enumerate(lines):
-        if re.match(r"^seed_hash\s*:", line):
-            seen_at = i
-            break
-    if seen_at >= 0:
-        end_at = len(lines)
-        existing_oracle: str | None = None
-        for j in range(seen_at + 1, len(lines)):
-            stripped = lines[j].lstrip()
-            if not stripped or stripped.startswith("#"):
-                continue
-            if not lines[j][:1].isspace():
-                end_at = j
-                break
-            m = re.match(r"\s+oracle\s*:\s*(\w+)", lines[j])
-            if m:
-                existing_oracle = m.group(1)
-        if existing_oracle is not None:
-            new_block = (
-                f"seed_hash:\n"
-                f"  postgres: {new_hash}\n"
-                f"  oracle: {existing_oracle}\n"
+        for line in diff[:50]:
+            click.echo(line.rstrip("\n"), err=True)
+        if len(diff) > 50:
+            click.echo(
+                f"  ... ({len(diff) - 50} more diff lines truncated)",
+                err=True,
             )
-        lines = lines[:seen_at] + [new_block] + lines[end_at:]
-    else:
-        if lines and not lines[-1].endswith("\n"):
-            lines[-1] = lines[-1] + "\n"
-        lines.append(new_block)
-    yaml_path.write_text("".join(lines))
+        raise SystemExit(1)
+
+    locked_path.parent.mkdir(parents=True, exist_ok=True)
+    locked_path.write_text(fresh)
+    click.echo(
+        f"  [lock] wrote {locked_path} ({len(fresh):,} bytes)", err=True,
+    )
 
 
 @data.command("etl-example")

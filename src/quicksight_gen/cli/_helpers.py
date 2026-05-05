@@ -88,7 +88,7 @@ def resolve_l2_for_demo(
     return cfg, instance
 
 
-def build_full_seed_sql(cfg, instance) -> str:  # type: ignore[no-untyped-def]
+def build_full_seed_sql(cfg, instance, *, anchor=None) -> str:  # type: ignore[no-untyped-def]
     """Compose the demo seed pipeline.
 
     Picks the ``l1_plus_broad`` scenario mode so the demo gets BOTH
@@ -100,6 +100,13 @@ def build_full_seed_sql(cfg, instance) -> str:  # type: ignore[no-untyped-def]
     15 broken-rail stuck_pending plants on one rail, boosts inv_fanout
     amounts (×5). Returns the concatenated SQL of the 90-day baseline
     + plant overlays.
+
+    ``anchor`` pins the calendar date used by both ``default_scenario_for``
+    (plants' ``today``) and ``emit_full_seed`` (baseline window end).
+    Default ``None`` defers to the underlying functions, which in turn
+    pick today from the wall clock. ``data lock`` passes a canonical
+    ``date(2030, 1, 1)`` so the locked SQL is deterministic across
+    machines and run dates.
     """
     from quicksight_gen.common.l2.auto_scenario import (
         add_broken_rail_plants,
@@ -109,11 +116,15 @@ def build_full_seed_sql(cfg, instance) -> str:  # type: ignore[no-untyped-def]
     )
     from quicksight_gen.common.l2.seed import emit_full_seed
 
-    base = default_scenario_for(instance, mode="l1_plus_broad").scenario
+    base = default_scenario_for(
+        instance, mode="l1_plus_broad", today=anchor,
+    ).scenario
     dense = densify_scenario(base, factor=5)
     broken = add_broken_rail_plants(dense, instance, broken_count=15)
     final = boost_inv_fanout_plants(broken, amount_multiplier=5)
-    return emit_full_seed(instance, final, dialect=cfg.dialect)
+    return emit_full_seed(
+        instance, final, dialect=cfg.dialect, anchor=anchor,
+    )
 
 
 def emit_to_target(

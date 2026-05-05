@@ -113,7 +113,7 @@ def test_tagging_enabled_non_bool_rejected(tmp_path: Path) -> None:
 @pytest.mark.parametrize("leaked_key", [
     "theme", "persona", "rails", "accounts", "chains",
     "transfer_templates", "account_templates", "limit_schedules",
-    "instance", "description", "seed_hash",
+    "instance", "description",
 ])
 def test_l2_only_key_in_config_yaml_rejects(
     tmp_path: Path, leaked_key: str,

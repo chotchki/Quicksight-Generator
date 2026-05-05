@@ -1054,7 +1054,16 @@ def emit_full_seed(
         dialect=dialect,
     )
     plants_sql = emit_seed(instance, scenarios, dialect=dialect)
-    return f"{baseline_sql}\n\n{plants_sql}"
+    body = f"{baseline_sql}\n\n{plants_sql}"
+    # X.1.k — stamp a SHA256 header on every emit so any saved-to-disk
+    # SQL output identifies itself. The hash is deterministic against
+    # the body bytes (everything below this line). The locked-SQL
+    # checker (`data lock --check`) compares the entire file (including
+    # this header) byte-for-byte, so the in-file hash and the file's
+    # real hash always travel together.
+    import hashlib
+    body_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    return f"-- SHA256: {body_hash}\n{body}"
 
 
 # -- Baseline helpers (Phase R) ---------------------------------------------

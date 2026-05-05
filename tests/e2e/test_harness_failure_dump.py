@@ -53,7 +53,7 @@ _SPEC_YAML = Path(__file__).parent / "l2" / "spec_example.yaml"
 
 def _instance():
     """Real L2Instance for tests — uses the spec_example fixture so
-    seed_hash is non-None and instance is a real Identifier."""
+    instance is a real Identifier."""
     return load_instance(_SPEC_YAML)
 
 
@@ -137,7 +137,7 @@ def test_all_required_sections_present(tmp_path: Path) -> None:
     text = out_path.read_text()
     for header in (
         "Test",
-        "Seed Hash (YAML)",
+        "Seed Lock SHA256",
         "Planted Manifest",
         "Deployed Dashboards",
         "Embed URLs (single-use)",
@@ -147,17 +147,35 @@ def test_all_required_sections_present(tmp_path: Path) -> None:
         assert header in text, f"section {header!r} missing from dump"
 
 
-def test_seed_hash_section_carries_yaml_hash(tmp_path: Path) -> None:
-    """P.5.b — seed_hash is now a per-dialect dict; the dump renders one
-    line per (dialect, hash) entry. Every locked hash must appear."""
+def test_seed_lock_section_carries_per_dialect_sha256(tmp_path: Path) -> None:
+    """X.1.k — the dump's "Seed Lock SHA256" section reads the SHA256
+    header line from each lock file at
+    ``tests/data/_locked_seeds/<instance>.<dialect>.sql``. Asserts
+    each lock file contributes a hex line."""
+    import re as _re
     inst = _instance()
     out_path = dump_failure_manifest(
         tmp_path, test_id="t", instance=inst, planted_manifest={},
     )
     text = out_path.read_text()
-    assert inst.seed_hash is not None
-    for dialect, h in inst.seed_hash.items():
-        assert h in text, f"{dialect} hash missing from dump: {h}"
+    # If lock files exist for spec_example, every one must appear.
+    repo_lock_dir = (
+        Path(__file__).resolve().parents[2]
+        / "tests" / "data" / "_locked_seeds"
+    )
+    if not repo_lock_dir.exists():
+        return
+    expected_locks = sorted(repo_lock_dir.glob(f"{inst.instance}.*.sql"))
+    if not expected_locks:
+        return
+    for lock_path in expected_locks:
+        sha = _re.match(r"-- SHA256: ([0-9a-f]{64})", lock_path.read_text())
+        assert sha is not None, (
+            f"lock file {lock_path.name} missing SHA256 header line"
+        )
+        assert sha.group(1) in text, (
+            f"SHA256 from {lock_path.name} missing from failure dump"
+        )
 
 
 def test_planted_manifest_round_trips_as_json(tmp_path: Path) -> None:

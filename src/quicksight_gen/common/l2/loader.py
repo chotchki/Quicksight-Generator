@@ -274,7 +274,6 @@ def _load_leg_direction(raw: object, *, path: str) -> LegDirection:
     return raw  # type: ignore[return-value]
 
 
-_SEED_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
@@ -584,53 +583,6 @@ def _load_persona(raw: object, *, path: str) -> DemoPersona | None:
         gl_accounts=gl_accounts,
         merchants=merchants,
         flavor=flavor,
-    )
-
-
-def _load_seed_hash(raw: object, *, path: str) -> dict[str, str] | None:
-    """Optional SHA256 hex string(s) for the auto-seed hash-lock (M.2d.6).
-
-    Two accepted YAML forms (P.5.b — Oracle dialect support):
-
-    1. **Legacy single-string** — ``seed_hash: <hex>`` — interpreted
-       as the Postgres dialect hash. Lifts to ``{'postgres': <hex>}``
-       so existing YAML keeps working without edit.
-    2. **Per-dialect dict** — ``seed_hash: { postgres: <hex>, oracle:
-       <hex> }`` — the dialect-aware form. Allowed keys are dialect
-       enum values (``postgres`` / ``oracle``); unknown keys reject.
-
-    Stored as ``dict[str, str]`` on L2Instance.seed_hash for the CLI
-    to compare against the actual hash per dialect.
-    """
-    if raw is None:
-        return None
-    if isinstance(raw, str):
-        if not _SEED_HASH_RE.match(raw):
-            raise L2LoaderError(
-                f"{path}={raw!r}: seed_hash must be a 64-char lowercase "
-                f"hex SHA256 (no '0x' prefix; no uppercase)"
-            )
-        return {"postgres": raw}
-    if isinstance(raw, dict):
-        raw_dict: dict[object, object] = raw  # type: ignore[assignment]
-        valid_keys = {"postgres", "oracle"}
-        out: dict[str, str] = {}
-        for k, v in raw_dict.items():
-            if not isinstance(k, str) or k not in valid_keys:
-                raise L2LoaderError(
-                    f"{path}.{k!r}: unknown dialect key (allowed: "
-                    f"{sorted(valid_keys)})"
-                )
-            if not isinstance(v, str) or not _SEED_HASH_RE.match(v):
-                raise L2LoaderError(
-                    f"{path}.{k}={v!r}: seed_hash must be a 64-char "
-                    f"lowercase hex SHA256"
-                )
-            out[k] = v
-        return out
-    raise L2LoaderError(
-        f"{path}: seed_hash must be a hex string or a dict keyed on "
-        f"dialect name, got {type(raw).__name__}"
     )
 
 
@@ -1145,7 +1097,6 @@ def load_instance(path: Path | str, *, validate: bool = True) -> L2Instance:
         description=_load_description(
             raw_d.get("description"), path="description",
         ),
-        seed_hash=_load_seed_hash(raw_d.get("seed_hash"), path="seed_hash"),
         role_business_day_offsets=_load_role_business_day_offsets(
             raw_d.get("role_business_day_offsets"),
             path="role_business_day_offsets",

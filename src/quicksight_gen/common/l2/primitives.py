@@ -389,30 +389,16 @@ class L2Instance:
     # Top-level institution-level prose. Read by handbook templates as
     # the "what is this institution" introductory paragraph.
     description: str | None = None
-    # Optional SHA256 hash-lock for the auto-generated seed SQL produced
-    # by ``quicksight-gen demo seed-l2`` (M.2d.6). Lets integrators
-    # version-control the determinism of their demo seed alongside the
-    # L2 spec itself; the CLI verifies the actual seed hash matches
-    # this declared value (or rewrites it via ``--lock`` after a
-    # reviewed change). Not load-bearing for any L1 invariant — pure
-    # metadata tied to the seed pipeline.
-    #
-    # P.5.b — switched from ``str`` to ``dict[str, str]`` keyed on
-    # dialect name (``postgres`` / ``oracle``). The seed bytes differ
-    # per dialect (Oracle wraps timestamps in ``TIMESTAMP '...'`` typed
-    # literals, emits one INSERT per row instead of multi-row VALUES).
-    # The YAML loader accepts either the legacy single-string form
-    # (interpreted as the Postgres hash) or the new dict form.
-    seed_hash: dict[str, str] | None = None
     # Optional per-role business-day offset in hours (M.4.4.14). When
     # set, an account whose role appears in this map gets its emitted
     # ``daily_balances.business_day_start`` shifted by the offset
     # (e.g., 17 → "5pm"). ``business_day_end`` shifts the same amount
     # so the 24-hour window contract holds. Roles not in the map
     # default to midnight-aligned (00:00 → 00:00 next day) — preserves
-    # production fixtures' bytes-identical seed_hash. Used by the fuzz
-    # matrix to exercise any future L1 view that depends on per-role
-    # business-day boundaries differing.
+    # the deterministic baseline shape that the locked SQL files
+    # under ``tests/data/_locked_seeds/`` pin (X.1.k). Used by the
+    # fuzz matrix to exercise any future L1 view that depends on
+    # per-role business-day boundaries differing.
     role_business_day_offsets: dict[str, int] | None = None
     # Optional brand theme for this institution (N.1.b). When set, the
     # apps consume colors from here instead of from the per-CLI

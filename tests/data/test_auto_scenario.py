@@ -164,7 +164,8 @@ def test_auto_scenario_with_no_template_omits_everything(tmp_path: Path) -> None
     assert report.omitted == (("ALL", "no AccountTemplate declared in instance"),)
 
 
-# -- Determinism (the basis for YAML seed_hash) ----------------------------
+# -- Determinism (the basis for the locked-SQL files at
+#    tests/data/_locked_seeds/) ----------------------------------------
 
 
 def test_auto_scenario_emit_is_byte_deterministic(spec_instance) -> None:
@@ -175,41 +176,6 @@ def test_auto_scenario_emit_is_byte_deterministic(spec_instance) -> None:
     sql_a = emit_seed(spec_instance, report_a.scenario)
     sql_b = emit_seed(spec_instance, report_b.scenario)
     assert sql_a == sql_b
-
-
-@pytest.mark.parametrize("dialect_name", ["postgres", "oracle"])
-def test_spec_example_seed_hash_matches_yaml(spec_instance, dialect_name) -> None:
-    """The locked per-dialect seed_hash in spec_example.yaml is what the
-    auto-scenario actually produces against the canonical date.
-
-    P.5.b — seed_hash is now a per-dialect dict on L2Instance (PG and
-    Oracle emit different bytes: Oracle wraps timestamp literals,
-    emits per-row INSERTs). One test per dialect; both must match.
-    """
-    from quicksight_gen.common.sql import Dialect
-
-    dialect = Dialect(dialect_name)
-    report = default_scenario_for(spec_instance, today=CANONICAL_TODAY)
-    sql = emit_seed(spec_instance, report.scenario, dialect=dialect)
-    actual = hashlib.sha256(sql.encode("utf-8")).hexdigest()
-    assert spec_instance.seed_hash is not None, (
-        "spec_example.yaml is expected to have its seed_hash locked; "
-        "run `.venv/bin/quicksight-gen demo seed-l2 tests/l2/spec_example.yaml "
-        "--lock` to set it."
-    )
-    expected = spec_instance.seed_hash.get(dialect_name)
-    assert expected is not None, (
-        f"spec_example.yaml seed_hash is missing the {dialect_name!r} key. "
-        f"Re-lock with `.venv/bin/quicksight-gen demo seed-l2 "
-        f"tests/l2/spec_example.yaml --lock` to populate both dialects."
-    )
-    assert actual == expected, (
-        f"auto-seed for spec_example.yaml ({dialect_name}) drifted:\n"
-        f"  YAML  : {expected}\n"
-        f"  actual: {actual}\n"
-        f"Re-lock with `.venv/bin/quicksight-gen demo seed-l2 "
-        f"tests/l2/spec_example.yaml --lock` if intentional."
-    )
 
 
 # -- Persona-cleanliness (the M.2d.5 guard, applied to auto-scenario) ------

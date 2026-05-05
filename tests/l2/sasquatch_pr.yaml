@@ -950,9 +950,6 @@ limit_schedules:
       ACH cap because check-payout merchants are by definition
       lower-tech / lower-volume operations; SNB caps aggressive
       check issuance to surface anomalies.
-seed_hash:
-  postgres: 9bacab3a711bc498316fde381bc7a77a9d286ffd975322808ef9fb8a284fa866
-  oracle: 7e74b5021c8e6429ed8fc215c6ebf1c338fbc52b9cb021b653712b508b19a746
 theme:
   theme_name: "Sasquatch National Bank Theme"
   version_description: "Sasquatch National Bank — forest green and gold palette"

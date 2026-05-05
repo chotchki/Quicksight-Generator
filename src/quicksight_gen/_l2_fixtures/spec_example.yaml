@@ -121,9 +121,6 @@ limit_schedules:
   - parent_role: CustomerLedger
     transfer_type: wire
     cap: 5000.00
-seed_hash:
-  postgres: bfecc9bb05cffb1863576ae0670fde2adda2b58bbe9df985884b5fe8eed38d51
-  oracle: a91dfcb72e14d2ee7f44accbd73d4628479b33a3fa8f696236551cfaf849ad29
 theme:
   theme_name: "QuickSight Gen Theme"
   version_description: "Auto-generated dashboard theme"

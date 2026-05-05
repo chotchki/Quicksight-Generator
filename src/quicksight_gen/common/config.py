@@ -193,8 +193,8 @@ class Config:
 # AWS account / region / dialect / DB connection / signing material.
 # Institution-only fields (theme, persona, accounts, rails, chains,
 # transfer_templates, account_templates, limit_schedules, instance,
-# description, seed_hash) live in the L2 institution YAML — putting
-# them in config.yaml is a sign the user has the wrong file open.
+# description) live in the L2 institution YAML — putting them in
+# config.yaml is a sign the user has the wrong file open.
 # ``l2_instance_prefix`` is derived from the L2 instance at runtime
 # (cli/_helpers.py::resolve_l2_for_demo) and must not be hand-set here.
 _CONFIG_ALLOWED_KEYS: frozenset[str] = frozenset({
@@ -206,7 +206,7 @@ _CONFIG_ALLOWED_KEYS: frozenset[str] = frozenset({
 _CONFIG_L2_ONLY_KEYS: frozenset[str] = frozenset({
     "instance", "description", "accounts", "account_templates",
     "rails", "transfer_templates", "chains", "limit_schedules",
-    "persona", "seed_hash", "theme",
+    "persona", "theme",
 })
 
 
@@ -226,8 +226,8 @@ def _reject_unknown_config_keys(raw: dict, path: Path) -> None:
             f"environment-only values (account / region / dialect / DB "
             f"connection / signing); institution shape (theme / persona / "
             f"rails / accounts / chains / transfer_templates / account_"
-            f"templates / limit_schedules / instance / description / "
-            f"seed_hash) lives in the L2 YAML."
+            f"templates / limit_schedules / instance / description) "
+            f"lives in the L2 YAML."
         )
     if "l2_instance_prefix" in raw:
         raise ValueError(

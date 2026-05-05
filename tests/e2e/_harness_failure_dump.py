@@ -107,17 +107,30 @@ def dump_failure_manifest(
         f"timestamp_utc  : {datetime.now(timezone.utc).isoformat()}",
     ]))
 
-    # 2. Seed hash from the YAML. P.5.b — seed_hash is now a per-dialect
-    # dict; render each entry on its own line so failure dumps surface
-    # both PG + Oracle hashes.
-    if instance.seed_hash:
+    # 2. Seed lock files (X.1.k). The dump used to read a per-dialect
+    # ``seed_hash`` dict from the YAML; that field's gone now — the
+    # lock surface is one file per (instance, dialect) under
+    # ``tests/data/_locked_seeds/``. Surface the SHA256 header line
+    # from each lock file we can find for this instance.
+    from pathlib import Path as _Path
+    lock_dir = (
+        _Path(__file__).resolve().parents[2]
+        / "tests" / "data" / "_locked_seeds"
+    )
+    seed_hash_lines: list[str] = []
+    if lock_dir.exists():
+        for lock_path in sorted(
+            lock_dir.glob(f"{instance.instance}.*.sql")
+        ):
+            dialect_name = lock_path.stem.rsplit(".", 1)[1]
+            first_line = lock_path.read_text().splitlines()[:1]
+            header = first_line[0] if first_line else "<empty>"
+            seed_hash_lines.append(f"{dialect_name:9s}: {header}")
+    if not seed_hash_lines:
         seed_hash_lines = [
-            f"{dialect:9s}: {h}"
-            for dialect, h in sorted(instance.seed_hash.items())
+            f"<no lock files for instance={instance.instance!r}>"
         ]
-    else:
-        seed_hash_lines = ["<not locked>"]
-    sections.append(_section("Seed Hash (YAML)", seed_hash_lines))
+    sections.append(_section("Seed Lock SHA256", seed_hash_lines))
 
     # 3. Planted manifest — JSON-pretty.
     sections.append(_section(
