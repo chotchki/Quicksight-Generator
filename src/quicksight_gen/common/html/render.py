@@ -25,7 +25,8 @@ from __future__ import annotations
 import html
 from typing import Any
 
-from quicksight_gen.common.tree.structure import Sheet
+from quicksight_gen.common.tree._helpers import _AutoSentinel
+from quicksight_gen.common.tree.structure import App, Sheet
 
 
 _PAGE_SHELL = """\
@@ -42,23 +43,43 @@ _PAGE_SHELL = """\
 """
 
 
-def emit_html(sheet: Sheet) -> str:
+def emit_html(app: App, sheet: Sheet) -> str:
     """Render a tree ``Sheet`` as a standalone HTML page.
 
     Spike.1 scope: sheet title + description + one ``<section>`` per
     visual with its title, subtitle, and a placeholder div for data.
     No interactivity, no charts, no filter controls (yet).
 
+    Takes both the App and the Sheet so internal-id resolution
+    (``app.resolve_auto_ids()``) can run. The Sheet alone has no
+    parent ref — without the App we'd emit ``data-visual-id=
+    "_AutoSentinel.AUTO"`` for any visual constructed with the
+    standard ``visual_id=AUTO`` default. spike.2 keys hx-post URLs
+    off ``data-visual-id``, so unresolved IDs would silently break
+    the swap dispatch.
+
+    The renderer still never touches disk — the App + Sheet are
+    in-memory tree objects. X.4's stateful editor stays unblocked.
+
     Args:
-        sheet: tree ``Sheet`` node. Caller passes the in-memory tree
-            object directly — the renderer never touches disk. This
-            is the X.4 future-proofing constraint (per-session in-
-            memory tree must work).
+        app: tree ``App`` node owning the analysis the sheet lives
+            in. ``app.resolve_auto_ids()`` is called before render
+            (idempotent).
+        sheet: tree ``Sheet`` node. Must be one of
+            ``app.analysis.sheets``; raises ``ValueError`` if not.
 
     Returns:
         A complete, well-formed HTML document as a string. Title +
         body content are HTML-escaped at the leaf level.
     """
+    if app.analysis is None or sheet not in app.analysis.sheets:
+        raise ValueError(
+            f"Sheet {sheet.name!r} is not part of App {app.name!r}'s "
+            f"analysis — emit_html needs the owning App to resolve "
+            f"internal IDs (visual_id, control_id, etc.)."
+        )
+    app.resolve_auto_ids()
+
     body_parts: list[str] = [f"  <h1>{html.escape(sheet.title)}</h1>"]
     if sheet.description:
         body_parts.append(f"  <p>{html.escape(sheet.description)}</p>")
@@ -85,7 +106,13 @@ def _render_visual(visual: Any) -> str:
     title = getattr(visual, "title", "(untitled)")
     subtitle = getattr(visual, "subtitle", None)
     kind = type(visual).__name__
-    visual_id = str(getattr(visual, "visual_id", ""))
+    raw_visual_id = getattr(visual, "visual_id", "")
+    assert not isinstance(raw_visual_id, _AutoSentinel), (
+        f"visual_id wasn't resolved on {kind} {title!r} — "
+        f"emit_html should have called app.resolve_auto_ids() before "
+        f"this point."
+    )
+    visual_id = str(raw_visual_id)
 
     parts: list[str] = []
     parts.append(

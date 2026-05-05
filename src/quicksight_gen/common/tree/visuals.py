@@ -129,7 +129,7 @@ class VisualLike(Protocol):
     sheet's grid layout (``sheet.layout.row(...).add_<kind>(...)``).
 
     ``visual_id`` is ``VisualId | AutoResolved`` — typed subtypes default
-    to ``AUTO`` and ``App._resolve_auto_ids`` replaces it with the
+    to ``AUTO`` and ``App.resolve_auto_ids`` replaces it with the
     derived id before emit. The walker / emit assert via ``isinstance``
     narrowing.
     """
@@ -148,7 +148,7 @@ def _visual_element_id(node: VisualLike) -> str:
     QuickSight uses for the visual itself); asserts auto-IDs are
     resolved before access."""
     assert not isinstance(node.visual_id, _AutoSentinel), (
-        "visual_id wasn't resolved — App._resolve_auto_ids() must run "
+        "visual_id wasn't resolved — App.resolve_auto_ids() must run "
         "before LayoutNode.element_id access."
     )
     return node.visual_id
@@ -189,7 +189,7 @@ class KPI:
 
     def emit(self) -> Visual:
         assert not isinstance(self.visual_id, _AutoSentinel), (
-            "visual_id wasn't resolved — App._resolve_auto_ids() must run "
+            "visual_id wasn't resolved — App.resolve_auto_ids() must run "
             "before Visual.emit(). This shouldn't happen via App.emit_*()."
         )
         # KPI doesn't carry Actions per the QuickSight model — KPIs aren't
