@@ -320,7 +320,7 @@ def data_etl_example(output: str) -> None:
     See docs/handbook/etl.md for the walkthroughs that reference this
     output.
     """
-    from quicksight_gen.apps.investigation.etl_examples import (
+    from quicksight_gen.common.etl_examples import (
         generate_etl_examples_sql,
     )
 

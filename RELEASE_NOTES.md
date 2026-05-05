@@ -1,5 +1,42 @@
 # Release Notes
 
+## v8.6.18 — Real ETL example patterns (Phase X.1.h.A)
+
+The ``quicksight-gen data etl-example`` CLI emits 10 canonical
+INSERT-pattern blocks against the v6 schema instead of the
+single-line placeholder it shipped with. Patterns cover:
+
+- single-leg Posted transfer (the simplest case)
+- two-leg paired transfer (debit + credit, sums to zero)
+- force-posted external (``origin='ExternalForcePosted'``)
+- Pending → Posted lifecycle (Lifecycle supersession)
+- TechnicalCorrection rewrite (back-office amount fix)
+- bundled transfer (card-network settlement shape)
+- chained transfer (``transfer_parent_id``, drives Money Trail)
+- daily balance row (one per account-day)
+- daily balance with ``limits`` JSON (LimitSchedule projection)
+- metadata extension (the open-set extras container)
+
+Each block carries the documented ``-- WHY:`` (business invariant
+the pattern protects) and ``-- Consumed by:`` (dashboard view that
+reads the resulting rows) headers per the handbook contract.
+Output is deterministic — no random IDs, no clock-dependent
+timestamps — so the helper is safe to wire into CI / docs
+publishing pipelines without churn.
+
+The placeholder lived under ``apps/investigation/etl_examples.py``
+and pointed at deleted-since-M.4 ``payment_recon`` /
+``account_recon`` files, which made the etl.md handbook's
+"every base-table shape" claim a lie. The new
+``common/etl_examples.py`` location matches the patterns'
+actual scope (the base tables, not investigation-specific
+rows). 11 unit tests guard the structural contract.
+
+Track B (doctest infrastructure that catches the *next* handbook
+hallucination automatically) split into X.1.h.B and deferred —
+the etl-example bug is fixed; the broader doc/code drift surface
+needs more thought on which blocks are realistically testable.
+
 ## v8.6.17 — Status enum open-set + planted Failed transactions (Phase X.1.i)
 
 The L2FT Rails Status dropdown's enum gained an ``Other`` sentinel
