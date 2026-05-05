@@ -3,18 +3,19 @@
 Used by the CLI (``demo apply``) and the e2e harness fixtures. Both
 need to:
 
-  - Open a DB-API 2.0 connection against either Postgres (psycopg2)
-    or Oracle (oracledb), keyed off ``cfg.dialect``.
+  - Open a DB-API 2.0 connection against Postgres (psycopg2), Oracle
+    (oracledb), or SQLite (stdlib ``sqlite3``), keyed off ``cfg.dialect``.
   - Run multi-statement DDL/DML scripts. psycopg2 accepts the whole
     script in one ``cursor.execute`` call; oracledb requires per-
     statement execution and treats PL/SQL blocks (``BEGIN…END;``) as
-    one unit.
+    one unit; sqlite3 accepts whole scripts via ``executescript``.
 
-Both surfaces existed inline in ``cli.py`` before P.9d. Lifting them
-here lets ``tests/e2e/test_harness_end_to_end.py`` consume the same
-helpers instead of hardcoding psycopg2 (which raised
+Both PG + Oracle surfaces existed inline in ``cli.py`` before P.9d.
+Lifting them here lets ``tests/e2e/test_harness_end_to_end.py`` consume
+the same helpers instead of hardcoding psycopg2 (which raised
 ``ProgrammingError`` at setup when the harness ran against an Oracle
-config — see PLAN.md P.9d).
+config — see PLAN.md P.9d). X.3 added the SQLite arm using the stdlib
+``sqlite3`` module — no extra dependency required.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ __all__ = [
     "execute_script",
     "oracle_dsn",
     "split_oracle_script",
+    "sqlite_path",
 ]
 
 
@@ -59,16 +61,47 @@ def oracle_dsn(url: str) -> str:
     return url
 
 
+def sqlite_path(url: str) -> str:
+    """Translate a ``sqlite:///path/to/db.sqlite`` URL to a path string.
+
+    Accepts the SQLAlchemy-style ``sqlite:///`` triple-slash form (the
+    fourth slash starts the absolute path component) and the
+    ``sqlite://:memory:`` in-memory form. Also accepts a bare path
+    string for ergonomics — if the value isn't a recognized URL
+    scheme, it's returned unchanged so the caller can pass the raw
+    sqlite file path directly.
+
+    Examples:
+      - ``sqlite:///tmp/demo.sqlite`` → ``/tmp/demo.sqlite``
+      - ``sqlite:///./relative.sqlite`` → ``./relative.sqlite``
+      - ``sqlite://:memory:`` → ``:memory:``
+      - ``/tmp/demo.sqlite`` → ``/tmp/demo.sqlite``
+    """
+    if url == "sqlite://:memory:" or url.endswith(":memory:"):
+        return ":memory:"
+    if url.startswith("sqlite:///"):
+        # Triple-slash: the fourth ``/`` introduces the absolute path
+        # (so ``sqlite:////tmp/demo.sqlite`` keeps the leading slash).
+        return url[len("sqlite:///"):]
+    if url.startswith("sqlite://"):
+        # Edge case: ``sqlite://path`` (two slashes) — strip the
+        # scheme + double slash; relative paths stay relative.
+        return url[len("sqlite://"):]
+    return url
+
+
 def connect_demo_db(cfg: Config) -> Any:
     """Open a DB-API 2.0 connection to ``cfg.demo_database_url``.
 
     Branches on ``cfg.dialect``:
       - Postgres: psycopg2 (from the ``[demo]`` extra).
       - Oracle: oracledb thin client (from the ``[demo-oracle]`` extra).
+      - SQLite: stdlib ``sqlite3`` (no extra required).
 
     Raises:
-      ImportError: if the matching driver isn't installed. The error
-        message names the extras-install command.
+      ImportError: if the matching driver isn't installed (PG / Oracle
+        only — SQLite ships with stdlib). The error message names the
+        extras-install command.
       ValueError: if ``cfg.demo_database_url`` is unset or
         ``cfg.dialect`` isn't recognized.
     """
@@ -95,9 +128,21 @@ def connect_demo_db(cfg: Config) -> Any:
                 "Install it with: pip install 'quicksight-gen[demo-oracle]'"
             ) from e
         return oracledb.connect(oracle_dsn(cfg.demo_database_url))
+    if cfg.dialect is Dialect.SQLITE:
+        # stdlib — no try/except for ImportError. SQLite uses Python's
+        # builtin ``sqlite3`` module so the local-iteration loop has
+        # zero install friction beyond ``pip install quicksight-gen``.
+        import sqlite3
+        conn = sqlite3.connect(sqlite_path(cfg.demo_database_url))
+        # Foreign keys are off by default; turn them on so any FK
+        # declarations in future schema versions enforce. The schema
+        # we emit today has no FKs, so this is forward-looking.
+        conn.execute("PRAGMA foreign_keys = ON;")
+        return conn
     raise ValueError(
         f"Unknown dialect {cfg.dialect!r}. "
-        "Set 'dialect: postgres' or 'dialect: oracle' in your config."
+        "Set 'dialect: postgres', 'dialect: oracle', or 'dialect: sqlite' "
+        "in your config."
     )
 
 
@@ -112,6 +157,11 @@ def execute_script(
     ``split_oracle_script`` and executes each statement individually,
     surfacing which statement (out of N) failed and the first 1500
     characters of its body for triage.
+    SQLite (sqlite3): the connection's ``executescript`` method handles
+    multi-statement scripts natively — but the ``cur`` parameter is the
+    cursor, not the connection. Iterate per-statement (split on ``;``
+    boundaries with the same comment-aware splitter the Oracle path
+    uses) for symmetry with Oracle's per-statement error surfacing.
 
     Oracle bulk-INSERT batching (R.4.a): consecutive
     ``INSERT INTO same_table VALUES (...)`` statements get coalesced
@@ -122,6 +172,13 @@ def execute_script(
     """
     if dialect is Dialect.POSTGRES:
         cur.execute(sql)
+        return
+    if dialect is Dialect.SQLITE:
+        # The script is one logical unit. SQLite's connection-level
+        # ``executescript`` handles multi-statement scripts directly.
+        # We get the connection from the cursor — both stdlib's
+        # sqlite3.Cursor and DB-API 2.0 cursors expose ``.connection``.
+        cur.connection.executescript(sql)
         return
     statements = split_oracle_script(sql)
     if oracle_insert_batch > 1:
