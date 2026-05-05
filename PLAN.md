@@ -2,6 +2,29 @@
 
 **Where we are.** Phase W shipped (v8.6.0); the v8.3.x → v8.6.x cumulative bug sweep settled at v8.6.13. We're out of the heat of phase-driven development — new work runs as targeted minor features + bug sweeps in the **Sustainment & minor features** queue below. Historical detail for every phase prior to v8.0.0 lives in `PLAN_ARCHIVE.md` and `RELEASE_NOTES.md`. This file tracks **forward-looking** work only.
 
+## Greater Plan
+X.2 - add the non quicksight renderer
+  - Solves testing limitations
+X.3 - add sqlite as a database dialect
+  - Does not support materialized views but shouldn’t matter due to the local nature of the db
+X.4 - yaml editor - How do you handle the yaml? Aka the shape of the institution?
+- [ ] **Prereq: structure validator errors.** Today `L2ValidationError` carries a prose string — fine for CI. For the editor, errors get rendered inline next to the offending node, so the exception payload becomes API: `{rule_id, offending_entity_ref, human_message, suggested_fix?}`. Same validator code, same invariants — only the error shape changes. Land this before the graph editor itself so the editor can consume errors without parsing prose.
+- [ ] Its a graph, therefore a graph editor would work.
+- [ ] Start editor mode, from scratch yaml or load existing. The validation is the source of constraints.
+- [ ] Have a live rendering of the yaml file at the top.
+- [ ] Add an account or account template, see it appear. Make it a parent of another see the link.
+- [ ] Add toggles to show and hide the connections. Accounts, rails, chains, etc
+- [ ] Allow for live editing of the descriptions and see the markdown (see my site for preview)
+- [ ] In parallel, trigger a rebuild of the tool. You make a yaml edit, it goes. Sqlite may need to be a third database dialect, 100% local at that point, see the whole thing locally, and then decide how far to go into the cloud.
+X.5 - etl helper
+- [ ] Here is the target schema, what is your data source?
+- [ ] What columns map? Can i help you transform to make the mapping easier?
+- [ ] Want me to run and test or give you a sql merge to run it yourself? What dialect?
+- [ ] Crucially, what yaml constructs have data?  What are you still missing?
+X.6 - Stop the documentation lying.
+- [ ] Make the core domain model the source of the documentation site just as the yaml for the shape today. No duplication, use it to build the doc from the models.
+
+
 ---
 
 ## Phase history (one-line per shipped phase)
@@ -102,8 +125,8 @@ Wedge: land auto-failure-screenshot first so all subsequent browser-test investi
 
 **Sub-spike before committing to the phase** — ~2 days of scoped work that tells us the thesis holds (or doesn't). NO auth in any spike step — read-only + local HTTP + DB creds from `config.yaml` is enough to validate the architecture:
 
-- [ ] **X.2.spike.1 — Money Trail as static HTML.** Pick the Investigation app's Money Trail sheet (one Sankey + one table). Build `emit_html(sheet)` that server-renders the existing tree object as HTML. No filters yet, no auth, no embedding, no HTMX. Just proves "tree → HTML" is a clean projection. Outcome: either the L1 primitives need a cleanup pass first, or they're frontend-agnostic enough to fan to a second dialect.
-- [ ] **X.2.spike.2 — Add ONE filter via HTMX swap.** Date range dropdown that re-renders the visuals when changed. Validates the interactive pattern + the chart-hydration hook on swapped fragments. Outcome: HTMX-vs-SPA budget assessment.
+- [ ] **X.2.spike.1 — Money Trail as static HTML.** Pick the Investigation app's Money Trail sheet (one Sankey + one table). Build `emit_html(sheet)` that server-renders the existing tree object as HTML. No filters yet, no auth, no embedding, no HTMX. Just proves "tree → HTML" is a clean projection. **Design constraint:** rendering functions take `tree: App` (or `Sheet`/`Visual`) as a parameter — never load from disk inside. This keeps the door open for X.4's stateful editor future (where the tree lives in a per-session in-memory object) without coupling the spike to it. Outcome: either the L1 primitives need a cleanup pass first, or they're frontend-agnostic enough to fan to a second dialect.
+- [ ] **X.2.spike.2 — Add ONE filter via HTMX swap.** Date range dropdown that re-renders the visuals when changed. Validates the interactive pattern + the chart-hydration hook on swapped fragments. **Architectural note:** this `hx-post` swap-on-mutation pattern is structurally identical to X.4's swap-on-edit pattern, just with a smaller mutation surface (filter values vs YAML body). What spike.2 proves about HTMX's swap latency at the visual level transfers directly to X.4's editor latency. Stay stateless on purpose for the spike — sessions are an X.4 concern. Outcome: HTMX-vs-SPA budget assessment.
 - [ ] **X.2.spike.3 — Run the harness's Layer 2 against it.** The dialect-comparison thesis. If the layered harness catches a render bug in HTMX the same way it catches one in QS, the architecture is sound.
 - [ ] **X.2.spike.4 — Decision gate.** If 1–3 work cleanly, X.2 becomes a structured phase. If not, the architecture-improvement value still lands (whatever needed cleanup in L1 surfaced) and X.2 closes as a parking-lot idea.
 
