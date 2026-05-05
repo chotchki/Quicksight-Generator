@@ -246,7 +246,15 @@ jobs:
   # doesn't sweep the wrong one).
   e2e-pg-browser:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
-    needs: auth-smoke
+    # X.1.c — depend on e2e-pg-api so the two PG jobs serialize within
+    # a single workflow run instead of racing for the shared
+    # ``e2e-pg`` concurrency group. When pg-api is queued behind a
+    # prior run's cleanup-pg AND pg-browser tries to start in parallel,
+    # GHA detects the deadlock (this run's pg-browser would wait on
+    # this run's pg-api which is queued on a sibling) and cancels
+    # pg-browser. Sequencing pg-api before pg-browser dodges that;
+    # cleanup-pg already waits on both via ``needs:``.
+    needs: [auth-smoke, e2e-pg-api]
     runs-on: ubuntu-latest
     concurrency:
       group: e2e-pg
