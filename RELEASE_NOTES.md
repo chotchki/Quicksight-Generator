@@ -1,5 +1,37 @@
 # Release Notes
 
+## v8.6.21 — Per-generator cross-reference consistency test (X.1.f follow-up)
+
+New unit test at
+``tests/json/test_emit_cross_reference_consistency.py`` runs each
+of the 4 per-app generators (Investigation / Executives /
+L1 Dashboard / L2 Flow Tracing) in its own tmpdir against
+sasquatch_pr.yaml and asserts the bundle each one emits is
+internally consistent:
+
+1. Every dashboard / analysis JSON's ``ThemeArn`` resolves to the
+   id ``theme.json`` actually declares — the X.1.f regression
+   guard at unit-test time instead of at deploy time.
+2. Every ``DataSetArn`` referenced in a dashboard / analysis
+   corresponds to a sibling ``datasets/<id>.json`` — catches the
+   "per-app builder forgot to register a dataset" class. Pre-test
+   that bug class would deploy cleanly but every visual bound to
+   the missing dataset would render the spinner forever with no
+   error banner.
+
+Per-generator parametrization (8 tests = 4 generators × 2
+invariants) matches the X.1.f fault surface: the bug lived
+inside specific generators (L1 + L2FT didn't stamp the L2 prefix
+before ``build_theme``; Investigation + Executives did). A single
+shared-emit fixture would have masked the bug because each
+generator overwrites ``theme.json`` at the same output path.
+
+Bite verified: temporarily reverted the X.1.f stamp +
+``build_theme`` guard → tests failed cleanly on
+``test_theme_arn_matches_emitted_theme_id[l1_dashboard]`` and
+``[l2_flow_tracing]`` with messages naming the offending
+ThemeArn id vs. theme.json id. Restored fix → 8 / 8 pass.
+
 ## v8.6.20 — Fix dangling theme binding (Phase X.1.f)
 
 The ``GetThemeForDashboard`` 404 captured in the X.1.b diagnostic
