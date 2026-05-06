@@ -51,6 +51,11 @@ _EXPECTED_SANKEY_LINKS = 4
 # the per-test URL routes used to intercept it.
 _DATA_URL_GLOB = "**/visuals/**/data*"
 
+# X.2.b.2: ``/`` redirects to ``/dashboards``; the dashboard page
+# itself lives at ``/dashboards/{dashboard_id}``. The harness
+# defaults dashboard_id to ``"harness"`` so the URL is fixed.
+_DASHBOARD_PATH = "/dashboards/harness"
+
 
 @pytest.fixture
 def server_url() -> Iterator[str]:
@@ -60,7 +65,7 @@ def server_url() -> Iterator[str]:
         tree_app=tree_app, sheet=sheet,
         data_fetcher=stub_money_trail_fetcher,
     ) as url:
-        yield url
+        yield url + _DASHBOARD_PATH
 
 
 def test_layer2_initial_load_renders_sankey(server_url: str) -> None:

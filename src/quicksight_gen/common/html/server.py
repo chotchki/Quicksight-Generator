@@ -2,25 +2,27 @@
 
 X.2.b shape — all-GET REST surface (no POSTs except dev-log):
 
-- ``GET  /`` — full sheet HTML via ``emit_html``.
+- ``GET  /`` — 302 redirect to ``/dashboards``. The dashboards
+  list IS the canonical entry; ``/`` is convenience.
+- ``GET  /dashboards`` — landing page listing every dashboard the
+  server is wired to serve. One link per dashboard, bookmarkable
+  per entry.
+- ``GET  /dashboards/{dashboard_id}`` — dashboard chrome + the
+  served Sheet inline. 404 if the dashboard_id doesn't match
+  what was wired.
 - ``GET  /dashboards/{dashboard_id}/sheets/{sheet_id}/visuals/{visual_id}/data``
-  — chart data fragment for HTMX swap. The fragment carries a
-  ``<script type="application/json" class="chart-data">`` payload;
-  the page-shell bootstrap script hydrates d3 from it after every
-  swap. Filter values arrive as query string (``?date_from=...``).
-  GET-not-POST means every (visual, filter-set) tuple is a
-  bookmarkable URL — paste it back, see the same chart.
+  — chart data fragment for HTMX swap. Filter values arrive as
+  query string. GET-not-POST means every (visual, filter-set)
+  tuple is a bookmarkable URL.
 - ``POST /log`` (dev-only, gated by ``dev_log=True``) — the only
   POST route. Receives forwarded HTMX + d3 click events from the
   browser for live debugging.
 
 The path mirrors the X.2.b REST shape: dashboards / sheets /
-visuals nested for future routing (X.2.b.2 lands the index +
-listing routes; X.2.b.3 wires multiple dashboards). Today
-``dashboard_id`` is a single fixed string passed at server
-construction; the validation enforces the path matches what was
-wired so a stale-URL request gets a clean 404 instead of a
-silently-mismatched response.
+visuals nested. Today the server holds one ``dashboard_id`` /
+``sheet`` pair (single-app wiring); X.2.b.3 swaps in the multi-
+dashboard mapping that fans the listing route + per-dashboard
+routes across all 4 apps from one L2 instance.
 
 Pluggable data fetcher
 ----------------------
@@ -33,7 +35,8 @@ can run without a database:
 
     app = make_app(
         tree_app=app, sheet=money_trail,
-        dashboard_id="smoke", data_fetcher=stub_fetcher,
+        dashboard_id="smoke", dashboard_title="Smoke Dashboard",
+        data_fetcher=stub_fetcher,
     )
 
 Production deploys wire the same callable to a DB-backed factory
@@ -58,11 +61,12 @@ from pathlib import Path
 
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, Response
+from starlette.responses import HTMLResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from quicksight_gen.common.html.render import (
+    emit_dashboards_list,
     emit_html,
     emit_visual_data_fragment,
 )
@@ -82,6 +86,7 @@ def make_app(
     sheet: Sheet,
     dashboard_id: str,
     data_fetcher: DataFetcher,
+    dashboard_title: str | None = None,
     dev_log: bool = False,
 ) -> Starlette:
     """Build a Starlette ASGI app that serves a single tree Sheet.
@@ -90,19 +95,25 @@ def make_app(
         tree_app: tree ``App`` node owning the analysis the sheet
             lives in. Internal IDs are resolved on the first
             ``emit_html`` call (idempotent thereafter).
-        sheet: tree ``Sheet`` to serve at ``/``. Must belong to
+        sheet: tree ``Sheet`` to serve at
+            ``/dashboards/{dashboard_id}``. Must belong to
             ``tree_app.analysis.sheets`` — emit_html raises
             otherwise.
-        dashboard_id: URL slug for this dashboard. Used in the
-            ``/dashboards/{dashboard_id}/...`` data path. The route
-            handler validates the inbound path matches this string;
-            mismatched ids 404. X.2.b.3 will replace the single
-            dashboard_id with a mapping when multi-app wiring lands.
+        dashboard_id: URL slug for this dashboard. Used in every
+            data path under ``/dashboards/{dashboard_id}/...``.
+            Route handlers validate the inbound path matches this
+            string; mismatched ids 404. X.2.b.3 will replace the
+            single dashboard_id with a mapping when multi-app
+            wiring lands.
         data_fetcher: callable invoked on every GET to the visual
             data path. Receives the visual_id and a flat dict of
             query-string params (e.g. ``{"date_from":
             "2026-01-01", "date_to": "2026-05-05"}``). Returns
             d3-shaped chart data.
+        dashboard_title: human-readable name shown on the
+            ``/dashboards`` listing page. Defaults to
+            ``tree_app.name`` so single-dashboard servers don't
+            need to repeat themselves.
         dev_log: when True, the page emits a ``<meta
             name="dev-log">`` tag that activates the client-side
             event forwarder + a ``POST /log`` route is registered
@@ -114,8 +125,21 @@ def make_app(
         A ``starlette.Starlette`` ASGI application.
     """
     sheet_id = str(sheet.sheet_id)
+    title = dashboard_title or tree_app.name
 
-    async def index(_request: Request) -> HTMLResponse:
+    async def index(_request: Request) -> RedirectResponse:
+        # ``/`` is a convenience redirect; ``/dashboards`` is the
+        # canonical list page. Status 302 (temporary) since which
+        # dashboard a future multi-tenant home would land on
+        # could shift per-user.
+        return RedirectResponse("/dashboards", status_code=302)
+
+    async def dashboards_list(_request: Request) -> HTMLResponse:
+        return HTMLResponse(emit_dashboards_list([(dashboard_id, title)]))
+
+    async def dashboard_view(request: Request) -> Response:
+        if request.path_params["dashboard_id"] != dashboard_id:
+            return Response(status_code=404)
         return HTMLResponse(emit_html(
             tree_app, sheet,
             dashboard_id=dashboard_id, dev_log=dev_log,
@@ -157,6 +181,11 @@ def make_app(
 
     routes: list[Route | Mount] = [
         Route("/", index, methods=["GET"]),
+        Route("/dashboards", dashboards_list, methods=["GET"]),
+        Route(
+            "/dashboards/{dashboard_id}",
+            dashboard_view, methods=["GET"],
+        ),
         Route(
             "/dashboards/{dashboard_id}/sheets/{sheet_id}"
             "/visuals/{visual_id}/data",

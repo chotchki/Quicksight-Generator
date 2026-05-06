@@ -169,6 +169,55 @@ def _visual_fetch_url(
     )
 
 
+def emit_dashboards_list(dashboards: list[tuple[str, str]]) -> str:
+    """Render the ``/dashboards`` landing page.
+
+    ``dashboards`` is a list of ``(dashboard_id, title)`` tuples in
+    display order. Each entry renders as a link to
+    ``/dashboards/{dashboard_id}`` so the URL surface stays the
+    bookmarkable layer (no JS required to navigate the list).
+
+    X.2.b.2 ships a single-entry listing per process; X.2.b.3 fans
+    it out to all 4 apps wired from the served L2 instance.
+    """
+    title_class = "text-3xl font-bold mt-8 mx-8 mb-2"
+    desc_class = "mx-8 mb-6 text-slate-600"
+    list_class = (
+        "mx-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
+    )
+    item_class = (
+        "block p-4 bg-white rounded-lg shadow-sm border "
+        "border-slate-200 hover:border-blue-500 hover:shadow-md "
+        "transition-shadow text-slate-800"
+    )
+    body_parts: list[str] = [
+        f'  <h1 class="{title_class}">Dashboards</h1>',
+        f'  <p class="{desc_class}">'
+        f'Pick a dashboard to view its sheets.'
+        f'</p>',
+        f'  <nav class="{list_class}">',
+    ]
+    for dash_id, dash_title in dashboards:
+        esc_id = html.escape(dash_id)
+        esc_title = html.escape(dash_title)
+        body_parts.append(
+            f'    <a href="/dashboards/{esc_id}" class="{item_class}">'
+            f'<span class="text-lg font-semibold">{esc_title}</span>'
+            f'</a>'
+        )
+    body_parts.append('  </nav>')
+    return _PAGE_SHELL.format(
+        title="Dashboards",
+        body="\n".join(body_parts),
+        htmx_src=_HTMX_SRC,
+        d3_src=_D3_SRC,
+        d3_sankey_src=_D3_SANKEY_SRC,
+        bootstrap_js=_BOOTSTRAP_JS,
+        dev_log_js=_DEV_LOG_JS,
+        dev_log_meta="",
+    )
+
+
 def emit_html(
     app: App, sheet: Sheet, *,
     dashboard_id: str,
