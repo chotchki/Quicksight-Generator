@@ -7,12 +7,13 @@ explicit cursor close (sqlite3 cursors don't support context-
 manager protocol), no other dialect-specific gotchas in the
 SELECT path.
 
-Lives under ``tests/e2e/`` (the conftest gates these on
-``QS_GEN_E2E=1`` like every other e2e file), but the tests are
-LOCAL — sqlite3 ships with Python, no Docker / no AWS / no
-service container needed. CI's existing ``test`` job already
-picks them up via pytest discovery; the e2e gate just keeps them
-out of the default pre-commit run.
+Lives under ``tests/unit/`` — sqlite3 ships with Python, so no
+Docker / no AWS / no service container needed. (Originally landed
+under ``tests/e2e/`` but the e2e conftest's ``QS_GEN_E2E=1`` gate
+silently skipped it in CI — moved here so the existing CI ``test``
+job actually picks it up via pytest discovery.) Imports the helpers
+from ``tests/e2e/_layer1_query.py`` because the helpers themselves
+are still used by live e2e harnesses that need them.
 
 X.3.g matrix cells exercised: Layer 1 × SQLite (the cell that
 PLAN.md X.2's table marks TODO; this file ticks it).

@@ -30,10 +30,12 @@ connection. Assertions cover the SQL-execution claim (the rows come
 back correctly shaped) — the PDF rendering layer is dialect-agnostic
 and already covered by the PG / Oracle audit tests in ``tests/audit/``.
 
-Lives under ``tests/e2e/`` so it's grouped with the other matrix-cell
-files; the conftest's ``QS_GEN_E2E`` gate keeps it out of the default
-local run, matching the X.3.g.1 Layer 1 SQLite file's location. Run
-locally with ``QS_GEN_E2E=1 pytest tests/e2e/test_audit_pdf_sqlite.py``.
+Lives under ``tests/audit/`` alongside the other audit tests so the
+existing CI ``test`` job picks it up via pytest discovery. (Originally
+landed under ``tests/e2e/`` but that directory's conftest gates on
+``QS_GEN_E2E=1``, which silently skipped the SQLite cells in CI —
+moved here, and the X.3.g.1 Layer 1 SQLite file moved to
+``tests/unit/`` for the same reason.)
 """
 
 from __future__ import annotations
