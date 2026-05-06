@@ -1,5 +1,84 @@
 # Release Notes
 
+## v8.8.0a1 — App 2 (HTMX dashboard renderer) preview
+
+First public preview of **App 2**: a self-hosted HTMX + d3 +
+Tailwind dashboard renderer that shares the tree, dataset
+contract, and L2 instance with the QuickSight (App 1) and Audit
+PDF dialects. Read-only, no auth, served via Starlette ASGI.
+
+Why an alpha: Executives is the only one of the four trees wired
+through the generic ``make_tree_db_fetcher`` so far; mkdocs
+embed and the cross-tool 4-way agreement gate (X.2.j) are still
+pending; there is no auth surface. Install with ``pip install
+--pre quicksight-gen`` (regular ``pip install`` skips alphas).
+
+### What ships today
+
+- **Renderer + ASGI server** (``common/html/`` + ``cli/serve.py``).
+  ``quicksight-gen serve app2 apply -c run/config.yaml`` runs
+  uvicorn against the configured L2 instance. URL contract is
+  all-GET, plural nouns, nested resource paths
+  (``/dashboards/{id}/sheets/{sheet_id}/visuals/{visual_id}/data``).
+- **Visual primitives** wired through d3: KPI, Table (sortable +
+  paginated), BarChart (with axis labels), LineChart (with
+  axes + legend), Sankey, ForceGraph.
+- **Filter primitives** (``X.2.d``): ParameterDropdown,
+  CategoryFilter, NumericRange, date range. Auto-refresh on
+  filter change — no Refresh button.
+- **Sheet structure + cross-sheet nav** (``X.2.e``).
+- **Generic per-tree fetcher** (``X.2.g.0`` + ``X.2.g.1``):
+  ``make_tree_db_fetcher`` walks any tree ``App`` and produces
+  an async ``DataFetcher`` that resolves visual_id → dataset
+  SQL → executes via the cross-dialect ``AsyncConnectionPool``
+  → shapes per visual kind. Dialect-portable (PG / Oracle /
+  SQLite), with visual-level aggregation wrapping so KPIs
+  return a single value, not one row per dataset row.
+- **Async DB stack** (``X.2.n``): psycopg3, oracledb async pool,
+  aiosqlite. The App 2 server's request loop awaits the SQL
+  roundtrip directly — no threadpool serialization. Pool size
+  knob via ``cfg.app2_db_pool_size`` (default 10) +
+  ``QS_GEN_APP2_DB_POOL_SIZE`` env var.
+- **Theme parity** (``X.2.l``): the same L2 ``theme:`` block
+  drives App 2's CSS-var-injected page shell.
+- **Themed error pages** (``X.2.m``): 404 + 500 served via the
+  same chrome as the dashboard, no Starlette default body.
+
+### Type-strictness sweep (X.2.o)
+
+- Pyright strict scope expanded to the full async DB stack
+  (``db.py``, ``config.py``, ``_sql_executor.py``,
+  ``_tree_fetcher.py``, ``server.py``); 0 errors / 0 warnings.
+- New ``DashboardId`` ``NewType`` joins the existing
+  ``SheetId`` / ``VisualId`` / ``FilterGroupId`` /
+  ``ParameterName`` (``common/ids.py``); the ``DataFetcher``
+  contract takes ``VisualId`` so kind-swap bugs surface at the
+  call site, not as silent zero-row dashboards.
+- Custom AST lint (``tests/unit/test_typing_smells.py``) catches
+  bare-``str`` ID parameters and explicit ``Any`` annotations
+  pyright doesn't natively flag (``reportExplicitAny`` is a
+  basedpyright-only rule). Per-line + per-file suppression
+  comments require a one-line WHY.
+
+### Pending before v8.8.0 stable
+
+- Wire Investigation, L1 Dashboard, L2 Flow Tracing trees
+  through ``make_tree_db_fetcher`` (Executives is the only
+  one wired today).
+- Embed mkdocs into App 2 (``X.2.i``).
+- 4-way cross-tool agreement gate
+  (``expected == PDF == QS == HTMX``, ``X.2.j``).
+- Decide whether App 2 graduates to ``9.0.0`` (default
+  renderer) or stays additive at ``8.8.0`` (opt-in).
+
+### Release pipeline
+
+- ``release.yml`` accepts PEP 440 pre-release tag suffixes
+  (``a1`` / ``b1`` / ``rc1``). The github-release step computes
+  ``prerelease=true`` and ``make_latest=false`` from the suffix
+  so an alpha doesn't displace the current stable as "Latest".
+- TestPyPI → live e2e → prod PyPI publish chain unchanged.
+
 ## v8.7.3 — Hotfix: synthesized ARNs honor AWS partition
 
 Three sites in ``Config`` (``__post_init__`` deriving
