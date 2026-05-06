@@ -191,7 +191,7 @@ class ScreenshotHarness:
         this is belt-and-suspenders against future ID conventions."""
         return identifier.replace("/", "_").replace(":", "_")
 
-    def _find_visual_element(self, visual_id: str):
+    def _find_visual_element(self, visual_id: str):  # typing-smell: ignore[bare-str-id]: receives the unresolved VisualId|AutoResolved walk — narrowing belongs in a follow-up screenshot harness pass
         """Locate the DOM element for a specific visual.
 
         QuickSight's visual containers are tagged ``data-automation-id=

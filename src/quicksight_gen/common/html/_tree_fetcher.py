@@ -78,7 +78,7 @@ _FIELDS_WITH_DATASET_REFS: tuple[str, ...] = (
 )
 
 
-def _find_visual_dataset_identifier(visual: Any) -> str | None:
+def _find_visual_dataset_identifier(visual: Any) -> str | None:  # typing-smell: ignore[explicit-any]: walks dynamic visual subtypes via getattr; static union of every Visual subtype would be fragile across tree changes
     """Walk a visual's known fields, return the first dataset
     identifier we find on a Dim or Measure.
 
@@ -87,7 +87,7 @@ def _find_visual_dataset_identifier(visual: Any) -> str | None:
     as "fetcher returns empty payload".
     """
     for field_name in _FIELDS_WITH_DATASET_REFS:
-        field_val: Any = getattr(visual, field_name, None)
+        field_val: Any = getattr(visual, field_name, None)  # typing-smell: ignore[explicit-any]: getattr returns Any; explicit annotation collapses to a known shape so the iteration below stays typeable
         if field_val is None:
             continue
         # Most visual fields are lists of Dim/Measure; a few
@@ -97,14 +97,14 @@ def _find_visual_dataset_identifier(visual: Any) -> str | None:
         # it back to ``list[Any]`` so pyright stops complaining about
         # the per-item walk below.
         if isinstance(field_val, list):
-            candidates: list[Any] = field_val  # pyright: ignore[reportUnknownVariableType]
+            candidates: list[Any] = field_val  # pyright: ignore[reportUnknownVariableType]  # typing-smell: ignore[explicit-any]: list elements are Dim/Measure unions narrowed by the per-item walk below
         else:
             candidates = [field_val]
         for item in candidates:
-            ds: Any = getattr(item, "dataset", None)
+            ds: Any = getattr(item, "dataset", None)  # typing-smell: ignore[explicit-any]: dynamic getattr against Dim/Measure refs
             if ds is None:
                 continue
-            identifier: Any = getattr(ds, "identifier", None)
+            identifier: Any = getattr(ds, "identifier", None)  # typing-smell: ignore[explicit-any]: same dynamic-getattr pattern; coerced to str on return
             if identifier:
                 return str(identifier)
     return None
@@ -180,7 +180,7 @@ def make_tree_db_fetcher(
                 sql = wrap_for_visual(base_sql, visual)
             visual_index[vid] = (kind, sql)
 
-    async def fetcher(visual_id: VisualId, params: Mapping[str, str]) -> Any:
+    async def fetcher(visual_id: VisualId, params: Mapping[str, str]) -> Any:  # typing-smell: ignore[explicit-any]: per-visual-kind shape (KPI float, Sankey {nodes,links}, etc.) — JSON-serialized downstream, so a real union here would be every renderer's shape
         if visual_id not in visual_index:
             # Unknown visual_id — typically a stale URL from a
             # cached page. Return empty so the d3 renderers paint

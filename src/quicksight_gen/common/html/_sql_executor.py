@@ -80,7 +80,7 @@ def rewrite_placeholders_for_dialect(sql: str, dialect: Dialect) -> str:
 def collect_bind_params(
     sql: str,
     url_params: Mapping[str, str],
-) -> dict[str, Any]:
+) -> dict[str, Any]:  # typing-smell: ignore[explicit-any]: bind dict accepted by every driver coerces values per-driver — caller passes whatever the SQL placeholder needs
     """Build the bind-param dict for the SQL string.
 
     Walks ``sql`` for ``:name`` placeholders, looks up each name in
@@ -97,12 +97,12 @@ def collect_bind_params(
 
 
 def execute_visual_sql(
-    connection_factory: Callable[[], Any],
+    connection_factory: Callable[[], Any],  # typing-smell: ignore[explicit-any]: sync DB-API 2.0 connection has no shared Protocol across psycopg/oracledb/sqlite3
     sql: str,
     url_params: Mapping[str, str],
     *,
     dialect: Dialect,
-) -> tuple[list[tuple[Any, ...]], list[str]]:
+) -> tuple[list[tuple[Any, ...]], list[str]]:  # typing-smell: ignore[explicit-any]: row tuples are heterogeneous; per-call shape lives in the dataset SQL contract
     """Execute a Visual's dataset SQL via a sync DB-API 2.0 driver.
 
     DEPRECATED — kept for backward compatibility with sync test
@@ -135,8 +135,8 @@ def execute_visual_sql(
         cur = conn.cursor()
         try:
             cur.execute(rewritten, binds)
-            rows: list[Any] = list(cur.fetchall())
-            description: Sequence[Sequence[Any]] = cur.description or []
+            rows: list[Any] = list(cur.fetchall())  # typing-smell: ignore[explicit-any]: heterogeneous row tuples
+            description: Sequence[Sequence[Any]] = cur.description or []  # typing-smell: ignore[explicit-any]: DB-API 2.0 description tuples mix types per column slot
             columns = [str(c[0]) for c in description]
         finally:
             cur.close()
@@ -151,7 +151,7 @@ async def execute_visual_sql_async(
     url_params: Mapping[str, str],
     *,
     dialect: Dialect,
-) -> tuple[list[tuple[Any, ...]], list[str]]:
+) -> tuple[list[tuple[Any, ...]], list[str]]:  # typing-smell: ignore[explicit-any]: row tuples are heterogeneous; per-call shape lives in the dataset SQL contract
     """Async sibling of ``execute_visual_sql`` — the hot path for the
     App2 ``visual_data`` route.
 

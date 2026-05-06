@@ -96,7 +96,7 @@ def sqlite_path(url: str) -> str:
     return url
 
 
-def connect_demo_db(cfg: Config) -> Any:
+def connect_demo_db(cfg: Config) -> Any:  # typing-smell: ignore[explicit-any]: DB-API 2.0 sync connection has no shared Protocol across psycopg/oracledb/sqlite3
     """Open a DB-API 2.0 connection to ``cfg.demo_database_url``.
 
     Branches on ``cfg.dialect``:
@@ -175,7 +175,7 @@ class _StddevSampAggregate:
         self.mean = 0.0
         self.m2 = 0.0
 
-    def step(self, value: Any) -> None:
+    def step(self, value: Any) -> None:  # typing-smell: ignore[explicit-any]: SQLite aggregate step receives whatever the SQL column resolves to (NULL/INT/REAL/TEXT)
         if value is None:
             return
         x = float(value)
@@ -191,7 +191,7 @@ class _StddevSampAggregate:
         return (self.m2 / (self.n - 1)) ** 0.5  # SQRT(m2 / (n-1))
 
 
-def _register_sqlite_aggregates(conn: Any) -> None:
+def _register_sqlite_aggregates(conn: Any) -> None:  # typing-smell: ignore[explicit-any]: aiosqlite/sqlite3 connection has no Protocol covering create_aggregate
     """Register the SQL aggregates SQLite doesn't ship that the schema
     SQL needs.
 
@@ -202,7 +202,7 @@ def _register_sqlite_aggregates(conn: Any) -> None:
 
 
 def execute_script(
-    cur: Any, sql: str, *, dialect: Dialect, oracle_insert_batch: int = 500,
+    cur: Any, sql: str, *, dialect: Dialect, oracle_insert_batch: int = 500,  # typing-smell: ignore[explicit-any]: sync DB-API 2.0 cursor — psycopg2 / oracledb / sqlite3 share no Protocol
 ) -> None:
     """Run a multi-statement SQL string against ``cur``.
 
@@ -472,8 +472,8 @@ class AsyncCursor(Protocol):
     """
 
     @property
-    def description(self) -> Sequence[Sequence[Any]] | None: ...
-    async def fetchall(self) -> list[Any]: ...
+    def description(self) -> Sequence[Sequence[Any]] | None: ...  # typing-smell: ignore[explicit-any]: DB-API 2.0 description tuples carry mixed types per column
+    async def fetchall(self) -> list[Any]: ...  # typing-smell: ignore[explicit-any]: rows are heterogeneous by definition; per-call shape lives in the SQL contract
 
 
 class AsyncConnection(Protocol):
@@ -486,7 +486,7 @@ class AsyncConnection(Protocol):
     """
 
     async def execute(
-        self, query: str, params: Any = ..., /,
+        self, query: str, params: Any = ..., /,  # typing-smell: ignore[explicit-any]: bind params dict — driver coerces per-driver; no shared Protocol covers both psycopg's dict + oracledb's dict + aiosqlite's tuple/dict
     ) -> AsyncCursor: ...
 
 
@@ -521,10 +521,10 @@ class _AsyncPgPool:
     errors at server-startup time rather than at first request.
     """
 
-    def __init__(self, pool: Any) -> None:
+    def __init__(self, pool: Any) -> None:  # typing-smell: ignore[explicit-any]: psycopg_pool.AsyncConnectionPool has no installed stubs at strict
         self._pool = pool
 
-    def acquire(self) -> AbstractAsyncContextManager[Any]:
+    def acquire(self) -> AbstractAsyncContextManager[Any]:  # typing-smell: ignore[explicit-any]: psycopg's connection() returns AsyncConnection; widened to Any to match the cross-dialect AsyncConnectionPool Protocol return
         return self._pool.connection()
 
     async def close(self) -> None:
@@ -539,10 +539,10 @@ class _AsyncOraclePool:
     so the rest of the code doesn't import oracledb directly).
     """
 
-    def __init__(self, pool: Any) -> None:
+    def __init__(self, pool: Any) -> None:  # typing-smell: ignore[explicit-any]: oracledb async pool surface isn't typed in the public stubs at strict
         self._pool = pool
 
-    def acquire(self) -> AbstractAsyncContextManager[Any]:
+    def acquire(self) -> AbstractAsyncContextManager[Any]:  # typing-smell: ignore[explicit-any]: oracledb pool.acquire() returns AsyncConnection; widened to Any to match Protocol return shape
         return self._pool.acquire()
 
     async def close(self) -> None:

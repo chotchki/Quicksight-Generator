@@ -74,7 +74,7 @@ def generate_dashboard_embed_url(
     *,
     aws_account_id: str,
     aws_region: str,
-    dashboard_id: str,
+    dashboard_id: str,  # typing-smell: ignore[bare-str-id]: QS API resource id, not the App2 routing slug DashboardId NewType
     user_arn: str | None = None,
     session_lifetime_minutes: int = 60,
 ) -> str:
