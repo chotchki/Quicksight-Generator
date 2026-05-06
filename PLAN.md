@@ -147,9 +147,9 @@ Architecture decisions captured in `docs/x_2_design_thoughts.md` (App 1 vs App 2
 
 |                 | Postgres | Oracle | SQLite (X.3) |
 |-----------------|----------|--------|--------------|
-| **Layer 1** (matview check, renderer-agnostic — `_layer1_query.py`) | ✓ today | ✓ today | X.3.g |
+| **Layer 1** (matview check, renderer-agnostic — `_layer1_query.py`) | ✓ today | ✓ today | ✓ X.3.g.1 |
 | **L2 QS JSON dialect** | ✓ today (`e2e-pg-api/browser`) | ✓ today (`e2e-oracle-api`) | N/A — QS doesn't read SQLite |
-| **L2 Audit PDF dialect** | ✓ today (`tests/audit/`) | ✓ today | X.3.g |
+| **L2 Audit PDF dialect** | ✓ today (`tests/audit/`) | ✓ today | deferred — 15 DATE 'YYYY-MM-DD' literal sites need portability sweep |
 | **L2 HTMX dialect (this phase)** | X.2.h | X.2.h | X.3.g |
 | **Cross-tool agreement** (U.8.b becomes 4-way: `expected == PDF == QS == HTMX`) | X.2.j | X.2.j | X.3.g |
 
@@ -269,7 +269,7 @@ Test: change one accent value in the L2 YAML, all four surfaces shift in lockste
 - [ ] **X.3.d — Seed pipeline against SQLite.** `data apply --execute -c config.sqlite.yaml` works. Hash-locked seed SQL needs a third locked file (`tests/data/_locked_seeds/spec_example.sqlite.sql`) for the contract.
 - [ ] **X.3.e — App 2 reads from SQLite.** The X.2.f data fetcher dispatches by dialect; SQLite arm uses `sqlite3` rows. Smoke runner gets `--sqlite` shorthand for the integrator's local-iteration flow.
 - [ ] **X.3.f — Documentation.** Handbook addition: "the integrator's local loop" — install, point at SQLite, edit YAML, see it. Probably one walkthrough page.
-- [ ] **X.3.g — CI cells (the SQLite column of the X.2 matrix).** Three new jobs (or three matrix-axis entries on existing workflows):
+- [ ] **X.3.g — CI cells (the SQLite column of the X.2 matrix).** **Status: X.3.g.1 (Layer 1) done and shipped — 8 tests in `tests/e2e/test_layer1_query_sqlite.py` exercise `query_matview_rows` / `matview_row_count` / `assert_matview_has_row` / `assert_account_in_matview` against an in-memory `sqlite3` connection; the existing CI `test` job picks them up via pytest discovery, so no new GHA workflow needed for that cell. Audit PDF cell still pending (15 `DATE 'YYYY-MM-DD'` literal sites in `cli/audit/__init__.py` need a portability sweep before SQLite can run it).** Three new jobs (or three matrix-axis entries on existing workflows):
   - `e2e-sqlite-layer1` — Layer 1 matview-check unit suite parametrized over the SQLite dialect. Mirrors what `_layer1_query.py` already does for PG / Oracle.
   - `e2e-sqlite-audit` — Audit PDF generation against SQLite seed; same `tests/audit/` shape as PG / Oracle audit tests.
   - `e2e-htmx-sqlite` — HTMX dialect Layer 2 against SQLite (the third DB cell of the X.2.h matrix; lights up when both X.2.h and X.3 land).
