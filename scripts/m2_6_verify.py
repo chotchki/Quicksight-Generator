@@ -41,17 +41,17 @@ sys.path.insert(0, str(_REPO_ROOT))
 
 
 def _connect(database_url: str, *, timeout_s: int = 60):
-    """Open a psycopg2 connection with a generous cold-start timeout."""
+    """Open a psycopg connection with a generous cold-start timeout."""
     try:
-        import psycopg2  # type: ignore[import-untyped]
+        import psycopg
     except ImportError:
         print(
-            "FATAL: psycopg2 not installed. "
+            "FATAL: psycopg not installed. "
             "Install with `.venv/bin/pip install 'quicksight-gen[demo]'`.",
             file=sys.stderr,
         )
         sys.exit(2)
-    return psycopg2.connect(database_url, connect_timeout=timeout_s)
+    return psycopg.connect(database_url, connect_timeout=timeout_s)
 
 
 def _warm_aurora(conn) -> None:

@@ -27,7 +27,7 @@ from pathlib import Path
 _REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO / "tests" / "e2e"))
 
-import psycopg2
+import psycopg
 from quicksight_gen.common.config import load_config
 from quicksight_gen.common.l2 import load_instance
 from quicksight_gen.common.l2.primitives import Identifier
@@ -75,7 +75,7 @@ def main() -> int:
         )
         print(f"Swept QS resources: {counts}")
         if cfg.demo_database_url:
-            conn = psycopg2.connect(cfg.demo_database_url)
+            conn = psycopg.connect(cfg.demo_database_url)
             try:
                 drop_prefixed_schema(conn, prefix)
                 print(f"Dropped DB prefix: {prefix}")
@@ -97,7 +97,7 @@ def main() -> int:
         return 1
 
     print("==> Seeding DB (schema + seed + matview refresh)...")
-    conn = psycopg2.connect(cfg.demo_database_url)
+    conn = psycopg.connect(cfg.demo_database_url)
     try:
         apply_db_seed(conn, inst, today=date.today())
     finally:

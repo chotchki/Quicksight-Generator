@@ -261,8 +261,8 @@ def _warm_db_for_screenshots(database_url: str) -> None:
         finally:
             conn.close()
         return
-    import psycopg2  # type: ignore[import-untyped]
-    conn = psycopg2.connect(database_url)
+    import psycopg
+    conn = psycopg.connect(database_url)
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT 1")

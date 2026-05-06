@@ -94,7 +94,7 @@ def connect_demo_db(cfg: Config) -> Any:
     """Open a DB-API 2.0 connection to ``cfg.demo_database_url``.
 
     Branches on ``cfg.dialect``:
-      - Postgres: psycopg2 (from the ``[demo]`` extra).
+      - Postgres: psycopg (v3, from the ``[demo]`` extra).
       - Oracle: oracledb thin client (from the ``[demo-oracle]`` extra).
       - SQLite: stdlib ``sqlite3`` (no extra required).
 
@@ -112,13 +112,13 @@ def connect_demo_db(cfg: Config) -> Any:
         )
     if cfg.dialect is Dialect.POSTGRES:
         try:
-            import psycopg2  # type: ignore[import-untyped]
+            import psycopg
         except ImportError as e:
             raise ImportError(
-                "psycopg2 is required for Postgres connections. "
+                "psycopg is required for Postgres connections. "
                 "Install it with: pip install 'quicksight-gen[demo]'"
             ) from e
-        return psycopg2.connect(cfg.demo_database_url)
+        return psycopg.connect(cfg.demo_database_url)
     if cfg.dialect is Dialect.ORACLE:
         try:
             import oracledb  # type: ignore[import-untyped]

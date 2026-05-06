@@ -127,23 +127,23 @@ class TestConnectDemoDb:
         with pytest.raises(ValueError, match="demo_database_url is unset"):
             connect_demo_db(_cfg(dialect=Dialect.POSTGRES, url=None))
 
-    def test_postgres_branch_invokes_psycopg2(self, monkeypatch) -> None:
-        # Stub psycopg2 so we don't need an actual DB. Verifies the
-        # POSTGRES branch routes to ``psycopg2.connect`` with the
+    def test_postgres_branch_invokes_psycopg(self, monkeypatch) -> None:
+        # Stub psycopg so we don't need an actual DB. Verifies the
+        # POSTGRES branch routes to ``psycopg.connect`` with the
         # raw URL (no DSN translation).
         import sys
         import types
 
         called: dict[str, str] = {}
 
-        stub = types.ModuleType("psycopg2")
+        stub = types.ModuleType("psycopg")
 
         def fake_connect(url: str) -> str:
             called["url"] = url
             return "fake_pg_conn"
 
         stub.connect = fake_connect  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "psycopg2", stub)
+        monkeypatch.setitem(sys.modules, "psycopg", stub)
 
         cfg = _cfg(
             dialect=Dialect.POSTGRES,

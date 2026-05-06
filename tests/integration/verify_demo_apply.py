@@ -68,8 +68,8 @@ _SMOKE_SUFFIXES = (
 
 
 def _connect_pg(url: str) -> tuple[object, Callable[[str], int]]:
-    import psycopg2  # type: ignore[import-untyped]
-    conn = psycopg2.connect(url)
+    import psycopg
+    conn = psycopg.connect(url)
 
     def count(table: str) -> int:
         cur = conn.cursor()

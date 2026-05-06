@@ -82,11 +82,11 @@ def demo_db_conn() -> Any:
             "live runtime assertions."
         )
     try:
-        import psycopg2
+        import psycopg
     except ImportError:
-        pytest.skip("psycopg2 not installed — `pip install -e .[demo]`")
+        pytest.skip("psycopg not installed — `pip install -e .[demo]`")
     try:
-        conn = psycopg2.connect(url)
+        conn = psycopg.connect(url)
     except Exception as e:
         pytest.skip(f"Demo DB unreachable at {url[:40]}...: {e}")
     yield conn

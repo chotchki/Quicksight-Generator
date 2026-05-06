@@ -386,11 +386,11 @@ def warm_aurora(cfg):
     if not cfg.demo_database_url:
         return
     try:
-        import psycopg2
+        import psycopg
     except ImportError:
         return
     try:
-        conn = psycopg2.connect(cfg.demo_database_url, connect_timeout=60)
+        conn = psycopg.connect(cfg.demo_database_url, connect_timeout=60)
     except Exception:
         return
     try:
