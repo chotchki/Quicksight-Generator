@@ -191,7 +191,7 @@ def test_date_filter_does_not_error_when_applied(
         wait_for_kpi_value(page, timeout_ms=15000)
         page.fill('input[name="date_from"]', "2030-01-01")
         page.fill('input[name="date_to"]', "2030-12-31")
-        page.click('button#refresh-all')
+        # X.2.g.1.e — auto-refresh on filter change (300ms debounce).
         page.wait_for_timeout(1500)
         # Second render with a real date — proves the bind value
         # threads through CAST(... AS DATE) without errors.

@@ -183,14 +183,11 @@ def test_filter_change_refetches_visuals(exec_server: str) -> None:
         _calls_log.clear()
         # Set a date and click Refresh on the first visual.
         page.fill('input[name="date_from"]', "2030-02-01")
-        page.click('button#refresh-all')
-        # Wait for the new swap to land (the kpi-value re-renders).
-        page.wait_for_function(
-            "() => document.querySelector('.kpi-value') !== null",
-            timeout=5000,
-        )
-        # Give HTMX a moment to settle.
-        page.wait_for_timeout(200)
+        # X.2.g.1.e — auto-refresh: filling the input triggers a
+        # 'change' event that the form's debounced listener catches
+        # and broadcasts as 'refresh'. No button click needed.
+        # Wait past the 300ms debounce + swap settle.
+        page.wait_for_timeout(800)
         browser.close()
     # The fetcher should have been called with date_from set.
     assert any(

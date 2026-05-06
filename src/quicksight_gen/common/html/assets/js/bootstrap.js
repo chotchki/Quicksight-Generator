@@ -947,7 +947,32 @@
   document.addEventListener("DOMContentLoaded", () => {
     hydrate(document.body);
     wireCategoryFilters(document);
+    wireFilterAutoRefresh();
   });
+
+  // X.2.g.1.e — auto-refresh visuals on filter change. Listens for
+  // ``change`` events on the #filter-form and broadcasts a
+  // ``refresh`` custom event after a 300ms debounce. Each visual
+  // section's ``hx-trigger="load, refresh from:body"`` re-fires
+  // its hx-get with the new form state. Drops the need for a
+  // user-clicked Refresh button — filter changes are intent enough.
+  // Debounce avoids re-firing on every keystroke in date inputs;
+  // the standard ``change`` event already fires on blur for text
+  // inputs, but on every keystroke / pick for date pickers in some
+  // browsers.
+  function wireFilterAutoRefresh() {
+    var form = document.getElementById("filter-form");
+    if (!form) return;
+    var timer = null;
+    form.addEventListener("change", function () {
+      clearTimeout(timer);
+      timer = setTimeout(function () {
+        if (typeof htmx !== "undefined") {
+          htmx.trigger(document.body, "refresh");
+        }
+      }, 300);
+    });
+  }
 
   // X.2.d — CategoryFilter sync. Each .category-filter wrapper holds
   // a hidden input + a set of checkboxes. HTMX serializes only named
@@ -999,6 +1024,7 @@
       showErrorToast: showErrorToast,
       ensureToastContainer: ensureToastContainer,
       wireCategoryFilters: wireCategoryFilters,
+      wireFilterAutoRefresh: wireFilterAutoRefresh,
     };
   }
 })();

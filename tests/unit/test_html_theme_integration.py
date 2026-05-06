@@ -159,12 +159,27 @@ def test_no_hardcoded_palette_colors_in_render_output() -> None:
 
 def test_render_uses_semantic_tokens() -> None:
     """Positive proof — semantic tokens that should appear actually
-    appear. Catches the failure mode where the sweep dropped them."""
+    appear. Catches the failure mode where the sweep dropped them.
+
+    X.2.g.1.e: Refresh button removed (auto-refresh on filter change),
+    so ``bg-accent`` / ``text-accent-fg`` now only render on the
+    active sheet tab. Build with two sheets so the tab strip emits
+    and the assertion holds."""
     app, sheet = _build_app()
-    out = emit_html(app, sheet, dashboard_id="x")
-    # Page shell + buttons use these.
+    # Add a second sheet so the tab strip renders with bg-accent
+    # on the active tab.
+    app.analysis.add_sheet(Sheet(
+        sheet_id=SheetId("theme-sheet-2"),
+        name="Two", title="Two", description="x",
+    ))
+    out = emit_html(
+        app, sheet, dashboard_id="x",
+        all_sheets=tuple(app.analysis.sheets),
+    )
+    # Page shell uses these.
     assert "bg-surface-bg" in out
     assert "text-primary-fg" in out
+    # Active sheet tab uses these (X.2.e).
     assert "bg-accent" in out
     assert "text-accent-fg" in out
     assert "border-surface-border" in out

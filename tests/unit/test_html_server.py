@@ -126,12 +126,14 @@ def test_get_dashboard_returns_full_sheet_html() -> None:
     assert 'name="date_to"' in body
     assert f'id="visual-data-{_VISUAL_ID}"' in body
     assert "htmx:afterSwap" in body
-    # X.2.g.1.d — single Refresh button broadcasts a custom event;
-    # each visual section listens via hx-trigger="load, refresh from:body"
-    # and uses its own hx-get for the per-visual data URL.
+    # X.2.g.1.e — no Refresh button. wireFilterAutoRefresh in
+    # bootstrap.js broadcasts a 'refresh' custom event on form
+    # change (300ms debounced); each visual section listens via
+    # hx-trigger="load, refresh from:body" and re-fires its hx-get
+    # with the new form state.
     assert f'hx-get="{_VISUAL_DATA_PATH}"' in body
-    assert 'id="refresh-all"' in body
     assert "refresh from:body" in body
+    assert "wireFilterAutoRefresh" in body
     # Each section carries data-fetch-url so d3 click handlers
     # can fire htmx.ajax against the right URL without
     # constructing it themselves.

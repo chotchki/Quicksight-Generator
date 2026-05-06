@@ -283,28 +283,22 @@ def _render_filter_form(
     visual_fetch_urls: list[tuple[str, str]],
     filter_specs: Sequence[FilterSpec] = (),
 ) -> str:
-    """Render the filter form with a single Refresh button (X.2.g.1.d).
+    """Render the filter form (X.2.g.1.e: no buttons — auto-refresh).
 
-    Previously the form had one Refresh button per visual, which
-    cluttered the UI (5 buttons for a 5-visual sheet). With X.2.g.1.a
-    auto-load, the per-visual button isn't needed for initial paint —
-    only after a filter change. ONE button now broadcasts a
-    ``refresh`` custom event that every visual section listens for
-    via ``hx-trigger="load, refresh from:body"``.
+    Filter inputs only — no Refresh button. ``wireFilterAutoRefresh``
+    in bootstrap.js listens for ``change`` events on the form and
+    broadcasts a ``refresh`` custom event after a 300ms debounce.
+    Each visual section's ``hx-trigger="load, refresh from:body"``
+    re-fires its hx-get with the new form state.
 
-    The button click does ``htmx.trigger(document.body, 'refresh')``
-    via the ``onclick`` handler. HTMX picks it up and re-fires every
-    visual's hx-get with the current form state.
+    Why no button: X.2.g.1.a auto-loads visuals on page load; the
+    Refresh button was only needed after a filter change, which the
+    auto-refresh now handles. Filter changes are intent enough.
     """
-    del visual_fetch_urls  # X.2.g.1.d — broadcast pattern doesn't need per-URL list
+    del visual_fetch_urls  # broadcast pattern doesn't need per-URL list
     form_class = (
         "flex flex-wrap items-center gap-3 mx-8 mb-6 p-4 "
         "bg-surface rounded-lg shadow-sm border border-surface-border"
-    )
-    button_class = (
-        "px-3 py-1 bg-accent text-accent-fg text-sm font-medium "
-        "rounded hover:opacity-90 active:opacity-80 "
-        "transition-opacity cursor-pointer"
     )
     parts = [f'  <form id="filter-form" class="{form_class}">']
     parts.append(
@@ -322,11 +316,6 @@ def _render_filter_form(
             parts.append(_render_category_filter(spec))
         elif isinstance(spec, NumericRangeSpec):
             parts.append(_render_numeric_range(spec))
-    parts.append(
-        f'    <button type="button" id="refresh-all"'
-        f' onclick="htmx.trigger(document.body, \'refresh\')"'
-        f' class="{button_class}">Refresh</button>'
-    )
     parts.append('  </form>')
     return "\n".join(parts)
 
