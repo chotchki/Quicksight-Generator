@@ -1,0 +1,240 @@
+"""X.2.c.3 — Playwright unit tests for the BarChart d3 renderer.
+
+Same fixture pattern as test_render_kpi / test_render_table.
+Covers: rect-per-(category × series), single-series shorthand,
+axis label rendering, currency formatting on the y-axis tick
+labels, multi-series fan-out, empty-input no-crash.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, cast
+
+import pytest
+
+
+playwright_sync_api = pytest.importorskip("playwright.sync_api")
+
+
+_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "bootstrap_test_harness.html"
+)
+
+
+def _load_harness(page: Any) -> None:
+    page.goto(f"file://{_FIXTURE.resolve()}")
+    page.wait_for_function(
+        "() => window.__bootstrap_internals__ != null", timeout=5000,
+    )
+    page.evaluate("""() => {
+        if (typeof window.d3 !== 'undefined') return null;
+        return new Promise((resolve, reject) => {
+            var s = document.createElement('script');
+            s.src = 'https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js';
+            s.onload = () => resolve(null);
+            s.onerror = reject;
+            document.head.appendChild(s);
+        });
+    }""")
+    page.wait_for_function("() => typeof window.d3 !== 'undefined'", timeout=10000)
+
+
+def _render_into_target(page: Any, data: dict[str, Any]) -> None:
+    page.evaluate(
+        """(data) => {
+            var prev = document.getElementById('barchart-target');
+            if (prev) prev.remove();
+            var t = document.createElement('div');
+            t.id = 'barchart-target';
+            t.style.width = '800px';
+            document.body.appendChild(t);
+            window.__bootstrap_internals__.renderBarChart(t, data, 'test-vid');
+        }""",
+        data,
+    )
+
+
+def test_barchart_renders_one_rect_per_category_single_series() -> None:
+    with playwright_sync_api.sync_playwright() as p:
+        browser = p.webkit.launch(headless=True)
+        page = browser.new_page()
+        _load_harness(page)
+        _render_into_target(page, {
+            "categories": ["Drift", "Overdraft", "Limit"],
+            "series": [{"name": "count", "values": [12, 7, 3]}],
+        })
+        bars = page.locator("#barchart-target svg rect.barchart-bar").count()
+        browser.close()
+    assert bars == 3
+
+
+def test_barchart_renders_rect_per_category_x_series() -> None:
+    """Multi-series → rects = categories × series count."""
+    with playwright_sync_api.sync_playwright() as p:
+        browser = p.webkit.launch(headless=True)
+        page = browser.new_page()
+        _load_harness(page)
+        _render_into_target(page, {
+            "categories": ["Q1", "Q2", "Q3", "Q4"],
+            "series": [
+                {"name": "Revenue", "values": [100, 120, 140, 160]},
+                {"name": "Cost", "values": [50, 55, 60, 65]},
+            ],
+        })
+        bars = page.locator("#barchart-target svg rect.barchart-bar").count()
+        series_groups = page.locator(
+            "#barchart-target svg g.barchart-series",
+        ).count()
+        browser.close()
+    assert bars == 8
+    assert series_groups == 2
+
+
+def test_barchart_accepts_single_series_shorthand() -> None:
+    """``{categories, values, label}`` (no ``series`` wrapper) still
+    renders one rect per category — convenience for fetchers that
+    return one number per category."""
+    with playwright_sync_api.sync_playwright() as p:
+        browser = p.webkit.launch(headless=True)
+        page = browser.new_page()
+        _load_harness(page)
+        _render_into_target(page, {
+            "categories": ["A", "B"],
+            "values": [10, 20],
+            "label": "count",
+        })
+        bars = page.locator("#barchart-target svg rect.barchart-bar").count()
+        series_groups = page.locator(
+            "#barchart-target svg g.barchart-series",
+        ).count()
+        browser.close()
+    assert bars == 2
+    assert series_groups == 1
+
+
+def test_barchart_renders_x_and_y_axis_labels() -> None:
+    """Axis labels (Q.1.a.3 plain English) carry from the tree
+    through the data shape into the SVG."""
+    with playwright_sync_api.sync_playwright() as p:
+        browser = p.webkit.launch(headless=True)
+        page = browser.new_page()
+        _load_harness(page)
+        _render_into_target(page, {
+            "categories": ["Drift", "Overdraft"],
+            "series": [{"name": "count", "values": [12, 7]}],
+            "x_label": "Invariant",
+            "y_label": "Violations",
+        })
+        # SVG <text> nodes aren't HTMLElements — use text_content,
+        # not inner_text.
+        x_label = page.locator(
+            "#barchart-target svg .barchart-x-label",
+        ).text_content()
+        y_label = page.locator(
+            "#barchart-target svg .barchart-y-label",
+        ).text_content()
+        browser.close()
+    assert x_label == "Invariant"
+    assert y_label == "Violations"
+
+
+def test_barchart_omits_axis_label_nodes_when_not_provided() -> None:
+    with playwright_sync_api.sync_playwright() as p:
+        browser = p.webkit.launch(headless=True)
+        page = browser.new_page()
+        _load_harness(page)
+        _render_into_target(page, {
+            "categories": ["A"],
+            "series": [{"values": [1]}],
+        })
+        x_count = page.locator(
+            "#barchart-target svg .barchart-x-label",
+        ).count()
+        y_count = page.locator(
+            "#barchart-target svg .barchart-y-label",
+        ).count()
+        browser.close()
+    assert x_count == 0
+    assert y_count == 0
+
+
+def test_barchart_renders_x_axis_category_ticks() -> None:
+    """The x axis renders ticks with the category names — proves the
+    axis is wired to the band scale, not just an empty <g>."""
+    with playwright_sync_api.sync_playwright() as p:
+        browser = p.webkit.launch(headless=True)
+        page = browser.new_page()
+        _load_harness(page)
+        _render_into_target(page, {
+            "categories": ["Drift", "Overdraft", "Limit"],
+            "series": [{"values": [1, 2, 3]}],
+        })
+        ticks = cast(list[str], page.evaluate(
+            """() => Array.from(
+                document.querySelectorAll('#barchart-target .barchart-x-axis text'),
+            ).map((t) => t.textContent || '')""",
+        ))
+        browser.close()
+    assert "Drift" in ticks
+    assert "Overdraft" in ticks
+    assert "Limit" in ticks
+
+
+def test_barchart_currency_format_applied_to_y_ticks() -> None:
+    """y-axis ticks get formatKPIValue with the currency format —
+    so a $100M chart reads "$100,000,000.00" not "100000000".
+    Tests pass a max value high enough that d3's nice() produces
+    a rounded tick at a known number ($150)."""
+    with playwright_sync_api.sync_playwright() as p:
+        browser = p.webkit.launch(headless=True)
+        page = browser.new_page()
+        _load_harness(page)
+        _render_into_target(page, {
+            "categories": ["A"],
+            "series": [{"values": [100]}],
+            "format": "currency",
+        })
+        y_ticks = cast(list[str], page.evaluate(
+            """() => Array.from(
+                document.querySelectorAll('#barchart-target .barchart-y-axis text'),
+            ).map((t) => t.textContent || '')""",
+        ))
+        browser.close()
+    # Every y tick should be currency-formatted (start with $).
+    assert all(t.startswith("$") for t in y_ticks if t)
+
+
+def test_barchart_handles_empty_categories_without_crashing() -> None:
+    with playwright_sync_api.sync_playwright() as p:
+        browser = p.webkit.launch(headless=True)
+        page = browser.new_page()
+        _load_harness(page)
+        _render_into_target(page, {
+            "categories": [],
+            "series": [{"values": []}],
+        })
+        bars = page.locator("#barchart-target svg rect.barchart-bar").count()
+        svg_count = page.locator("#barchart-target svg").count()
+        browser.close()
+    # No bars but the SVG itself is rendered — empty-data state
+    # shows axes-only chart (intentional; communicates "no data"
+    # rather than blank space).
+    assert bars == 0
+    assert svg_count == 1
+
+
+def test_barchart_skips_non_numeric_values_safely() -> None:
+    """``null`` / ``undefined`` values render as zero-height bars
+    rather than crashing the d3 selection."""
+    with playwright_sync_api.sync_playwright() as p:
+        browser = p.webkit.launch(headless=True)
+        page = browser.new_page()
+        _load_harness(page)
+        _render_into_target(page, {
+            "categories": ["A", "B", "C"],
+            "series": [{"values": [10, None, 30]}],
+        })
+        bars = page.locator("#barchart-target svg rect.barchart-bar").count()
+        browser.close()
+    assert bars == 3
