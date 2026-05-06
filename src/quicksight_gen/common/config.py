@@ -87,6 +87,21 @@ class Config:
     # ``resource_prefix`` — significantly weaker isolation. See the
     # docs reference for the loss-of-safety details before opting in.
     tagging_enabled: bool = True
+    # X.2.n.6 — Max concurrent DB connections in the App2 server's
+    # async pool (``common/db.py::make_connection_pool``). Default 10
+    # is sized for "one user opening a sheet with ~10 visuals" or
+    # "10 users with single-visual refreshes" — enough for typical
+    # demo + dev loads. Tune up for high-fan-in dashboards or
+    # multi-tenant production.
+    #
+    # Relationship math, with async drivers (X.2.n.3+):
+    #   max concurrent SQL ops == app2_db_pool_size
+    # The asyncio loop stays free between SQL awaits, so threadpool
+    # pressure is no longer a factor. Pool size IS the bottleneck —
+    # set it ≤ ``PG max_connections - reserved_connections`` (PG's
+    # default 100 minus 3 superuser slots = ~97 budget). Oracle's
+    # connection cost is higher; integrators rarely run pools >25.
+    app2_db_pool_size: int = 10
 
     def __post_init__(self) -> None:
         # If demo_database_url is set but datasource_arn is not, derive it
@@ -230,7 +245,7 @@ class Config:
 _CONFIG_ALLOWED_KEYS: frozenset[str] = frozenset({
     "aws_account_id", "aws_region", "datasource_arn", "resource_prefix",
     "principal_arns", "principal_arn", "extra_tags", "demo_database_url",
-    "dialect", "signing", "tagging_enabled",
+    "dialect", "signing", "tagging_enabled", "app2_db_pool_size",
 })
 
 _CONFIG_L2_ONLY_KEYS: frozenset[str] = frozenset({
@@ -306,6 +321,7 @@ def load_config(path: str | Path | None = None) -> Config:
         "resource_prefix": "QS_GEN_RESOURCE_PREFIX",
         "demo_database_url": "QS_GEN_DEMO_DATABASE_URL",
         "dialect": "QS_GEN_DIALECT",
+        "app2_db_pool_size": "QS_GEN_APP2_DB_POOL_SIZE",
     }
     for cfg_key, env_key in env_map.items():
         env_val = os.environ.get(env_key)
@@ -397,6 +413,19 @@ def load_config(path: str | Path | None = None) -> Config:
             f"tagging_enabled must be a bool; got {raw_tagging!r}."
         )
 
+    raw_pool_size = values.get("app2_db_pool_size", 10)
+    try:
+        pool_size = int(raw_pool_size)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"app2_db_pool_size must be a positive integer; "
+            f"got {raw_pool_size!r}."
+        ) from exc
+    if pool_size < 1:
+        raise ValueError(
+            f"app2_db_pool_size must be ≥ 1; got {pool_size}."
+        )
+
     return Config(
         aws_account_id=values["aws_account_id"],
         aws_region=values["aws_region"],
@@ -408,4 +437,5 @@ def load_config(path: str | Path | None = None) -> Config:
         dialect=dialect,
         signing=signing,
         tagging_enabled=raw_tagging,
+        app2_db_pool_size=pool_size,
     )

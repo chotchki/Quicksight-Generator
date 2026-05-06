@@ -180,7 +180,9 @@ def app2_apply(  # type: ignore[no-untyped-def]
         from quicksight_gen.common.db import (  # noqa: PLC0415
             make_connection_pool,
         )
-        pool = asyncio.run(make_connection_pool(cfg))
+        pool = asyncio.run(make_connection_pool(
+            cfg, max_size=cfg.app2_db_pool_size,
+        ))
         fetcher = make_tree_db_fetcher(tree_app, cfg, pool=pool)
         smoke_filter_specs = ()
         click.echo(

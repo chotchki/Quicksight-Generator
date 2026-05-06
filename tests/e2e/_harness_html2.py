@@ -222,7 +222,9 @@ def make_live_db_fetcher_for_app(
     from quicksight_gen.common.html._tree_fetcher import (  # noqa: PLC0415
         make_tree_db_fetcher,
     )
-    pool = asyncio.run(make_connection_pool(cfg))
+    pool = asyncio.run(make_connection_pool(
+        cfg, max_size=cfg.app2_db_pool_size,
+    ))
     return make_tree_db_fetcher(tree_app, cfg, pool=pool)
 
 
