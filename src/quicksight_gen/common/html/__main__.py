@@ -25,7 +25,7 @@ from quicksight_gen.common.html._smoke_app import (
     build_smoke_app,
     stub_money_trail_fetcher,
 )
-from quicksight_gen.common.html.server import make_app
+from quicksight_gen.common.html.server import ServedDashboard, make_app
 from tests._test_helpers import make_test_config
 
 
@@ -33,10 +33,14 @@ def main() -> int:
     cfg = make_test_config()
     tree_app, sheet = build_smoke_app(cfg)
     asgi_app = make_app(
-        tree_app=tree_app,
-        sheet=sheet,
-        dashboard_id="smoke",
-        data_fetcher=stub_money_trail_fetcher,
+        dashboards={
+            "smoke": ServedDashboard(
+                tree_app=tree_app,
+                sheet=sheet,
+                title="Smoke",
+                data_fetcher=stub_money_trail_fetcher,
+            ),
+        },
         # Dev-log on for direct smoke runner: every HTMX event +
         # d3 click prints to stderr so the developer sees what
         # the browser is doing inline with the server log.

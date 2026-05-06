@@ -8,8 +8,8 @@ X.2.b shape — all-GET REST surface (no POSTs except dev-log):
   server is wired to serve. One link per dashboard, bookmarkable
   per entry.
 - ``GET  /dashboards/{dashboard_id}`` — dashboard chrome + the
-  served Sheet inline. 404 if the dashboard_id doesn't match
-  what was wired.
+  served Sheet inline. 404 if the dashboard_id isn't in the
+  wired ``dashboards`` mapping.
 - ``GET  /dashboards/{dashboard_id}/sheets/{sheet_id}/visuals/{visual_id}/data``
   — chart data fragment for HTMX swap. Filter values arrive as
   query string. GET-not-POST means every (visual, filter-set)
@@ -18,26 +18,28 @@ X.2.b shape — all-GET REST surface (no POSTs except dev-log):
   POST route. Receives forwarded HTMX + d3 click events from the
   browser for live debugging.
 
-The path mirrors the X.2.b REST shape: dashboards / sheets /
-visuals nested. Today the server holds one ``dashboard_id`` /
-``sheet`` pair (single-app wiring); X.2.b.3 swaps in the multi-
-dashboard mapping that fans the listing route + per-dashboard
-routes across all 4 apps from one L2 instance.
+X.2.b.3: ``make_app`` takes a ``dashboards`` mapping so one server
+can host multiple apps. Each value is a ``ServedDashboard`` carrying
+its own tree, sheet, title, and data fetcher (different apps query
+different matviews via different fetchers). X.2.g wires the four
+QS apps (Executives / Investigation / L2 Flow Tracing / L1
+Dashboard) into this mapping from one L2 instance.
 
 Pluggable data fetcher
 ----------------------
 
-The server takes a ``DataFetcher`` callable so the spike + tests
-can run without a database:
+Each ``ServedDashboard`` owns a ``DataFetcher`` callable so the
+spike + tests can run without a database:
 
-    def stub_fetcher(visual_id: str, params: dict[str, str]) -> Any:
+    def stub(visual_id: str, params: dict[str, str]) -> Any:
         return {"nodes": [...], "links": [...]}
 
-    app = make_app(
-        tree_app=app, sheet=money_trail,
-        dashboard_id="smoke", dashboard_title="Smoke Dashboard",
-        data_fetcher=stub_fetcher,
-    )
+    app = make_app(dashboards={
+        "smoke": ServedDashboard(
+            tree_app=app, sheet=money_trail,
+            title="Smoke", data_fetcher=stub,
+        ),
+    })
 
 Production deploys wire the same callable to a DB-backed factory
 (see ``_db_fetcher.make_db_fetcher``).
@@ -54,7 +56,8 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from pathlib import Path
@@ -80,40 +83,43 @@ from quicksight_gen.common.tree.structure import App, Sheet
 DataFetcher = Callable[[str, dict[str, str]], Any]
 
 
+@dataclass(frozen=True)
+class ServedDashboard:
+    """One dashboard's wiring for the App2 server.
+
+    Each App2 server holds a mapping ``{dashboard_id: ServedDashboard}``
+    so one process can serve multiple apps from one L2 instance
+    (X.2.g wires Executives + Investigation + L2FT + L1 from one
+    L2). Per-dashboard fetcher means apps that query different
+    matviews don't have to share a routing layer.
+
+    Attributes:
+        tree_app: tree ``App`` node owning the analysis the sheet
+            lives in. Internal IDs are resolved on first emit
+            (idempotent).
+        sheet: tree ``Sheet`` rendered at ``/dashboards/{id}``. Must
+            belong to ``tree_app.analysis.sheets``.
+        title: human-readable name for the ``/dashboards`` listing.
+        data_fetcher: per-dashboard fetcher invoked on every GET to
+            the visual data path. Returns d3-shaped chart data.
+    """
+    tree_app: App
+    sheet: Sheet
+    title: str
+    data_fetcher: DataFetcher
+
+
 def make_app(
     *,
-    tree_app: App,
-    sheet: Sheet,
-    dashboard_id: str,
-    data_fetcher: DataFetcher,
-    dashboard_title: str | None = None,
+    dashboards: Mapping[str, ServedDashboard],
     dev_log: bool = False,
 ) -> Starlette:
-    """Build a Starlette ASGI app that serves a single tree Sheet.
+    """Build a Starlette ASGI app serving multiple dashboards.
 
     Args:
-        tree_app: tree ``App`` node owning the analysis the sheet
-            lives in. Internal IDs are resolved on the first
-            ``emit_html`` call (idempotent thereafter).
-        sheet: tree ``Sheet`` to serve at
-            ``/dashboards/{dashboard_id}``. Must belong to
-            ``tree_app.analysis.sheets`` — emit_html raises
-            otherwise.
-        dashboard_id: URL slug for this dashboard. Used in every
-            data path under ``/dashboards/{dashboard_id}/...``.
-            Route handlers validate the inbound path matches this
-            string; mismatched ids 404. X.2.b.3 will replace the
-            single dashboard_id with a mapping when multi-app
-            wiring lands.
-        data_fetcher: callable invoked on every GET to the visual
-            data path. Receives the visual_id and a flat dict of
-            query-string params (e.g. ``{"date_from":
-            "2026-01-01", "date_to": "2026-05-05"}``). Returns
-            d3-shaped chart data.
-        dashboard_title: human-readable name shown on the
-            ``/dashboards`` listing page. Defaults to
-            ``tree_app.name`` so single-dashboard servers don't
-            need to repeat themselves.
+        dashboards: ``{dashboard_id: ServedDashboard}`` mapping.
+            One entry per dashboard. The server validates inbound
+            path slugs against this mapping; unknown ids 404.
         dev_log: when True, the page emits a ``<meta
             name="dev-log">`` tag that activates the client-side
             event forwarder + a ``POST /log`` route is registered
@@ -124,8 +130,22 @@ def make_app(
     Returns:
         A ``starlette.Starlette`` ASGI application.
     """
-    sheet_id = str(sheet.sheet_id)
-    title = dashboard_title or tree_app.name
+    if not dashboards:
+        raise ValueError(
+            "make_app requires at least one dashboard in the "
+            "`dashboards` mapping."
+        )
+
+    # Snapshot the per-dashboard sheet ids so the visual_data
+    # handler can validate the URL slug without re-deriving it
+    # on every request.
+    sheet_ids: dict[str, str] = {
+        dash_id: str(d.sheet.sheet_id)
+        for dash_id, d in dashboards.items()
+    }
+    listing: list[tuple[str, str]] = [
+        (dash_id, d.title) for dash_id, d in dashboards.items()
+    ]
 
     async def index(_request: Request) -> RedirectResponse:
         # ``/`` is a convenience redirect; ``/dashboards`` is the
@@ -135,30 +155,33 @@ def make_app(
         return RedirectResponse("/dashboards", status_code=302)
 
     async def dashboards_list(_request: Request) -> HTMLResponse:
-        return HTMLResponse(emit_dashboards_list([(dashboard_id, title)]))
+        return HTMLResponse(emit_dashboards_list(listing))
 
     async def dashboard_view(request: Request) -> Response:
-        if request.path_params["dashboard_id"] != dashboard_id:
+        dash_id = request.path_params["dashboard_id"]
+        served = dashboards.get(dash_id)
+        if served is None:
             return Response(status_code=404)
         return HTMLResponse(emit_html(
-            tree_app, sheet,
-            dashboard_id=dashboard_id, dev_log=dev_log,
+            served.tree_app, served.sheet,
+            dashboard_id=dash_id, dev_log=dev_log,
         ))
 
     async def visual_data(request: Request) -> Response:
-        # 404 on stale URLs — the path's dashboard_id / sheet_id
-        # MUST match what this server is wired for. The visual_id
+        # 404 on stale URLs — both ids must resolve. The visual_id
         # gets validated implicitly (the fetcher raises for
         # unknown ids; that's the per-fetcher contract).
-        if request.path_params["dashboard_id"] != dashboard_id:
+        dash_id = request.path_params["dashboard_id"]
+        served = dashboards.get(dash_id)
+        if served is None:
             return Response(status_code=404)
-        if request.path_params["sheet_id"] != sheet_id:
+        if request.path_params["sheet_id"] != sheet_ids[dash_id]:
             return Response(status_code=404)
         visual_id = request.path_params["visual_id"]
         params: dict[str, str] = {}
         for key, value in request.query_params.items():
             params[str(key)] = str(value)
-        data = data_fetcher(visual_id, params)
+        data = served.data_fetcher(visual_id, params)
         return HTMLResponse(emit_visual_data_fragment(visual_id, data))
 
     async def log_event(request: Request) -> Response:

@@ -32,7 +32,7 @@ from typing import Any
 from starlette.testclient import TestClient
 
 from tests._test_helpers import make_test_config
-from quicksight_gen.common.html.server import make_app
+from quicksight_gen.common.html.server import ServedDashboard, make_app
 from quicksight_gen.common.ids import SheetId, VisualId
 from quicksight_gen.common.tree.structure import Analysis, App, Sheet
 from quicksight_gen.common.tree.visuals import Sankey
@@ -75,11 +75,14 @@ def _make_test_app(
 ) -> TestClient:
     tree_app, sheet = _build_app()
     asgi = make_app(
-        tree_app=tree_app,
-        sheet=sheet,
-        dashboard_id=_DASHBOARD_ID,
-        dashboard_title=_DASHBOARD_TITLE,
-        data_fetcher=fetcher or (lambda _v, _p: {}),
+        dashboards={
+            _DASHBOARD_ID: ServedDashboard(
+                tree_app=tree_app,
+                sheet=sheet,
+                title=_DASHBOARD_TITLE,
+                data_fetcher=fetcher or (lambda _v, _p: {}),
+            ),
+        },
         dev_log=dev_log,
     )
     return TestClient(asgi)
@@ -258,3 +261,90 @@ def test_response_payload_round_trips_through_json() -> None:
     end = body.index("</script>", start)
     parsed = json.loads(body[start:end])
     assert parsed == payload
+
+
+def test_multi_dashboard_listing_and_per_dashboard_routing() -> None:
+    """Two dashboards on one server: each gets its own listing
+    entry, its own ``/dashboards/{id}`` page, and its own fetcher
+    is invoked when its data path is hit. X.2.b.3 architecture
+    proof — the multi-dashboard wiring is structural, X.2.g uses
+    it to wire the four real apps."""
+    cfg = make_test_config()
+
+    def _build(name_suffix: str) -> tuple[App, Sheet]:
+        app = App(name=f"server-test-{name_suffix}", cfg=cfg)
+        analysis = app.set_analysis(Analysis(
+            analysis_id_suffix=f"server-test-{name_suffix}-analysis",
+            name=f"Server Test {name_suffix}",
+        ))
+        sheet = analysis.add_sheet(Sheet(
+            sheet_id=SheetId(f"sheet-{name_suffix}"),
+            name=name_suffix,
+            title=f"Sheet {name_suffix}",
+            description="x",
+        ))
+        sheet.visuals.append(Sankey(
+            title=f"Sankey {name_suffix}",
+            subtitle=None,
+            visual_id=VisualId(f"v-sankey-{name_suffix}"),
+        ))
+        return app, sheet
+
+    app_a, sheet_a = _build("a")
+    app_b, sheet_b = _build("b")
+
+    fetcher_calls: dict[str, list[str]] = {"a": [], "b": []}
+
+    def make_fetcher(label: str):  # type: ignore[no-untyped-def]
+        def fetch(visual_id: str, _params: dict[str, str]) -> Any:
+            fetcher_calls[label].append(visual_id)
+            return {"label": label}
+        return fetch
+
+    asgi = make_app(
+        dashboards={
+            "alpha": ServedDashboard(
+                tree_app=app_a, sheet=sheet_a,
+                title="Alpha App", data_fetcher=make_fetcher("a"),
+            ),
+            "beta": ServedDashboard(
+                tree_app=app_b, sheet=sheet_b,
+                title="Beta App", data_fetcher=make_fetcher("b"),
+            ),
+        },
+    )
+    client = TestClient(asgi)
+
+    # Listing carries both dashboards.
+    listing = client.get("/dashboards").text
+    assert "Alpha App" in listing
+    assert "Beta App" in listing
+    assert 'href="/dashboards/alpha"' in listing
+    assert 'href="/dashboards/beta"' in listing
+
+    # Each dashboard renders its own sheet.
+    assert "Sheet a" in client.get("/dashboards/alpha").text
+    assert "Sheet b" in client.get("/dashboards/beta").text
+
+    # Per-dashboard data fetcher routing — alpha's fetcher only
+    # sees alpha's visual, never beta's.
+    client.get(
+        "/dashboards/alpha/sheets/sheet-a/visuals/v-sankey-a/data",
+    )
+    client.get(
+        "/dashboards/beta/sheets/sheet-b/visuals/v-sankey-b/data",
+    )
+    assert fetcher_calls == {
+        "a": ["v-sankey-a"],
+        "b": ["v-sankey-b"],
+    }
+
+
+def test_make_app_rejects_empty_dashboards() -> None:
+    """A server with zero dashboards has nothing to serve — fail
+    fast at construction so misconfigured CLIs surface the bug
+    early instead of returning 404 on every route."""
+    import pytest
+
+    with pytest.raises(ValueError, match="at least one dashboard"):
+        make_app(dashboards={})
