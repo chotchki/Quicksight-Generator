@@ -36,7 +36,9 @@ from typing import Any
 
 import uvicorn
 
-from quicksight_gen.common.html.server import DataFetcher, make_app
+from quicksight_gen.common.html.server import (
+    DataFetcher, ServedDashboard, make_app,
+)
 from quicksight_gen.common.tree.structure import App, Sheet
 
 
@@ -46,6 +48,8 @@ def html2_server(
     tree_app: App,
     sheet: Sheet,
     data_fetcher: DataFetcher,
+    dashboard_id: str = "harness",
+    dashboard_title: str = "Harness",
     dev_log: bool = False,
     startup_timeout_s: float = 5.0,
 ) -> Iterator[str]:
@@ -55,9 +59,14 @@ def html2_server(
 
     Args:
         tree_app: Tree ``App`` owning the Sheet.
-        sheet: Sheet to serve at ``/``.
+        sheet: Sheet to serve at ``/dashboards/{dashboard_id}``.
         data_fetcher: Layer-1 source-of-truth callable invoked on
-            every POST to ``/visual/{id}/data``.
+            every GET to ``/dashboards/{d}/sheets/{s}/visuals/{v}/data``.
+        dashboard_id: URL slug embedded in every visual's data
+            URL. Defaults to ``"harness"`` so tests don't need to
+            care unless they're asserting on the path.
+        dashboard_title: human-readable name on the
+            ``/dashboards`` listing page.
         dev_log: when True, the server prints HTMX + d3 click
             events forwarded from the browser. Off by default;
             harness debug runs flip it on.
@@ -70,8 +79,13 @@ def html2_server(
     ``finally`` is bypassed (e.g., by ``os._exit`` in a debugger).
     """
     asgi = make_app(
-        tree_app=tree_app, sheet=sheet,
-        data_fetcher=data_fetcher, dev_log=dev_log,
+        dashboards={
+            dashboard_id: ServedDashboard(
+                tree_app=tree_app, sheet=sheet,
+                title=dashboard_title, data_fetcher=data_fetcher,
+            ),
+        },
+        dev_log=dev_log,
     )
     config = uvicorn.Config(
         asgi, host="127.0.0.1", port=0, log_level="error",
@@ -104,7 +118,7 @@ def trigger_initial_swap(page: Any) -> None:
     pattern but for the HTMX dialect — without this click, no
     SVG ever appears.
     """
-    page.click("button[hx-post]")
+    page.click("button[hx-get]")
 
 
 def visual_section(page: Any, kind: str) -> Any:

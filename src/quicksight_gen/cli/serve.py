@@ -105,7 +105,10 @@ def app2_apply(  # type: ignore[no-untyped-def]
         build_smoke_app,
         stub_money_trail_fetcher,
     )
-    from quicksight_gen.common.html.server import make_app  # noqa: PLC0415
+    from quicksight_gen.common.html.server import (  # noqa: PLC0415
+        ServedDashboard,
+        make_app,
+    )
 
     cfg, instance = resolve_l2_for_demo(config, l2_instance_path)
     tree_app, sheet = build_smoke_app(cfg)
@@ -119,9 +122,14 @@ def app2_apply(  # type: ignore[no-untyped-def]
             f"{cfg.l2_instance_prefix or instance.instance}_inv_money_trail_edges"
         )
     asgi_app = make_app(
-        tree_app=tree_app,
-        sheet=sheet,
-        data_fetcher=fetcher,
+        dashboards={
+            "smoke": ServedDashboard(
+                tree_app=tree_app,
+                sheet=sheet,
+                title="Smoke",
+                data_fetcher=fetcher,
+            ),
+        },
         dev_log=dev_log,
     )
     click.echo(f"App2 server: http://{host}:{port}/")
