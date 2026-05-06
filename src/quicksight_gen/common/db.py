@@ -20,6 +20,7 @@ config — see PLAN.md P.9d). X.3 added the SQLite arm using the stdlib
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any, Protocol
 from urllib.parse import parse_qs, urlparse
@@ -29,7 +30,9 @@ from quicksight_gen.common.sql import Dialect
 
 
 __all__ = [
+    "AsyncConnection",
     "AsyncConnectionPool",
+    "AsyncCursor",
     "batch_oracle_inserts",
     "connect_demo_db",
     "execute_script",
@@ -455,6 +458,36 @@ def _split_oracle_script_impl(sql: str) -> list[str]:
 # ``connection()`` vs oracledb's ``acquire()``) wrap cleanly behind it.
 
 
+class AsyncCursor(Protocol):
+    """Minimal async DB-API cursor surface used by ``execute_visual_sql_async``.
+
+    All three drivers (psycopg / oracledb / aiosqlite) implement at
+    least this much under their async modes. The protocol intentionally
+    omits ``close()`` — drivers split between sync- and async-close
+    semantics, and the executor's call site does the right duck-typed
+    thing with ``getattr + __await__`` rather than declaring a single
+    contract here.
+    """
+
+    @property
+    def description(self) -> Sequence[Sequence[Any]] | None: ...
+    async def fetchall(self) -> list[Any]: ...
+
+
+class AsyncConnection(Protocol):
+    """Minimal async DB-API connection surface used by the App2 executor.
+
+    The single async ``execute(query, params)`` method returns a
+    cursor with results pre-staged — psycopg / oracledb / aiosqlite
+    all support this one-shot shape, so the executor doesn't need
+    a separate ``cursor()`` step.
+    """
+
+    async def execute(
+        self, query: str, params: Any = ..., /,
+    ) -> AsyncCursor: ...
+
+
 class AsyncConnectionPool(Protocol):
     """Uniform async DB-connection pool across PG / Oracle / SQLite.
 
@@ -462,8 +495,8 @@ class AsyncConnectionPool(Protocol):
     (``psycopg_pool.AsyncConnectionPool.connection()``,
     ``oracledb`` async pool's ``acquire()``, no built-in pool for
     SQLite). This protocol normalizes them behind one ``acquire()``
-    method that returns an async context manager yielding a
-    DB-API-shaped connection, plus an ``async close()`` for
+    method that returns an async context manager yielding an
+    ``AsyncConnection``, plus an ``async close()`` for
     application-shutdown lifecycle.
 
     The connection yielded by ``acquire()`` returns to the pool on
@@ -472,7 +505,7 @@ class AsyncConnectionPool(Protocol):
     acquire blocks one pool slot until interpreter shutdown.
     """
 
-    def acquire(self) -> AbstractAsyncContextManager[Any]: ...
+    def acquire(self) -> AbstractAsyncContextManager[AsyncConnection]: ...
     async def close(self) -> None: ...
 
 
@@ -526,12 +559,15 @@ class _AsyncSqlitePool:
     def __init__(self, path: str) -> None:
         self._path = path
 
+    def acquire(self) -> AbstractAsyncContextManager[AsyncConnection]:
+        return self._acquire()
+
     @asynccontextmanager
-    async def acquire(self) -> Any:
-        import aiosqlite
+    async def _acquire(self) -> AsyncIterator[AsyncConnection]:
+        import aiosqlite  # noqa: PLC0415
 
         async with aiosqlite.connect(self._path) as conn:
-            yield conn
+            yield conn  # type: ignore[misc]  # aiosqlite Connection ⊂ AsyncConnection
 
     async def close(self) -> None:
         return None
@@ -601,13 +637,17 @@ async def make_connection_pool(
         )
         return _AsyncOraclePool(pool)
     if cfg.dialect is Dialect.SQLITE:
+        # Probe the import here so a missing aiosqlite surfaces at
+        # pool-construction time (server startup) instead of inside
+        # the first request handler.
         try:
-            import aiosqlite  # noqa: F401  # checked at acquire time too
+            import aiosqlite as _aiosqlite_probe  # noqa: PLC0415, F401
         except ImportError as e:
             raise ImportError(
                 "aiosqlite is required for the async SQLite pool. "
                 "Install it with: pip install 'quicksight-gen[serve]'"
             ) from e
+        del _aiosqlite_probe
         return _AsyncSqlitePool(sqlite_path(cfg.demo_database_url))
     raise ValueError(
         f"Unknown dialect {cfg.dialect!r}. "

@@ -47,7 +47,7 @@ that follows.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from quicksight_gen.common.sql.dialect import Dialect
@@ -79,7 +79,7 @@ def rewrite_placeholders_for_dialect(sql: str, dialect: Dialect) -> str:
 
 def collect_bind_params(
     sql: str,
-    url_params: dict[str, str],
+    url_params: Mapping[str, str],
 ) -> dict[str, Any]:
     """Build the bind-param dict for the SQL string.
 
@@ -99,7 +99,7 @@ def collect_bind_params(
 def execute_visual_sql(
     connection_factory: Callable[[], Any],
     sql: str,
-    url_params: dict[str, str],
+    url_params: Mapping[str, str],
     *,
     dialect: Dialect,
 ) -> tuple[list[tuple[Any, ...]], list[str]]:
@@ -148,7 +148,7 @@ def execute_visual_sql(
 async def execute_visual_sql_async(
     pool: AsyncConnectionPool,
     sql: str,
-    url_params: dict[str, str],
+    url_params: Mapping[str, str],
     *,
     dialect: Dialect,
 ) -> tuple[list[tuple[Any, ...]], list[str]]:

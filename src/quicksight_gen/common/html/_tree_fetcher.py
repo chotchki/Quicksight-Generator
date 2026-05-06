@@ -35,7 +35,7 @@ remain sync (pure CPU); only the SQL-execute roundtrip is awaited.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from quicksight_gen.common.config import Config
@@ -48,12 +48,14 @@ from quicksight_gen.common.tree.structure import App
 
 
 # Async fetcher shape — what production callers (the App2 server)
-# get from ``make_tree_db_fetcher``.
-DataFetcher = Callable[[str, dict[str, str]], Awaitable[Any]]
+# get from ``make_tree_db_fetcher``. ``Mapping[str, str]`` (not
+# ``dict``) so callers signal "I'm not going to mutate the URL params"
+# at the type level.
+DataFetcher = Callable[[str, Mapping[str, str]], Awaitable[Any]]
 # Legacy sync alias, used by stub fetchers in tests + the older
 # ``_db_fetcher.py`` code paths. The server route accepts both via
 # ``inspect.iscoroutinefunction`` dispatch (X.2.n.5).
-SyncDataFetcher = Callable[[str, dict[str, str]], Any]
+SyncDataFetcher = Callable[[str, Mapping[str, str]], Any]
 
 
 # Visual fields that may carry Dim/Measure references back to a
@@ -162,7 +164,7 @@ def make_tree_db_fetcher(
                 sql = wrap_for_visual(base_sql, visual)
             visual_index[vid] = (kind, sql)
 
-    async def fetcher(visual_id: str, params: dict[str, str]) -> Any:
+    async def fetcher(visual_id: str, params: Mapping[str, str]) -> Any:
         if visual_id not in visual_index:
             # Unknown visual_id — typically a stale URL from a
             # cached page. Return empty so the d3 renderers paint

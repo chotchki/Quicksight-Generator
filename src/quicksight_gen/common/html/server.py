@@ -73,12 +73,13 @@ edge / browser layers — the URL IS the cache key, by design.
 
 from __future__ import annotations
 
+import inspect
 import json
 import sys
 import traceback
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Union
 
 from pathlib import Path
 
@@ -105,7 +106,18 @@ from quicksight_gen.common.tree.structure import App, Sheet
 # d3 hydrator. The renderer just JSON-serializes whatever the
 # fetcher returns; the per-visual shape contract lives in the
 # bootstrap.js renderXxx functions.
-DataFetcher = Callable[[str, dict[str, str]], Any]
+#
+# Two shapes accepted (X.2.n.5):
+#   - async: production fetcher built by make_tree_db_fetcher.
+#     ``visual_data`` route awaits it directly.
+#   - sync: stub fetchers in tests + the legacy _db_fetcher path.
+#     ``visual_data`` wraps them in run_in_threadpool so they
+#     don't block the event loop.
+# ``inspect.iscoroutinefunction`` picks the dispatch at request time.
+DataFetcher = Union[
+    Callable[[str, Mapping[str, str]], Awaitable[Any]],
+    Callable[[str, Mapping[str, str]], Any],
+]
 
 
 @dataclass(frozen=True)
@@ -296,18 +308,24 @@ def make_app(
         if request.path_params["sheet_id"] not in all_sheets[dash_id]:
             raise HTTPException(status_code=404)
         visual_id = request.path_params["visual_id"]
+        # ``Mapping[str, str]`` interface — built mutable for the
+        # short construction window, then handed to the fetcher
+        # contract that promises read-only access.
         params: dict[str, str] = {}
         for key, value in request.query_params.items():
             params[str(key)] = str(value)
-        # Fetcher is sync (psycopg2 / oracledb are blocking DB-API
-        # drivers); off-load to the threadpool so concurrent visuals
-        # on the same sheet don't serialize behind one another. With
-        # 4–10 visuals on a typical sheet, in-process serial execution
-        # makes "change a filter, see all visuals refresh" feel
-        # multi-second per visual instead of total.
-        data = await run_in_threadpool(
-            served.data_fetcher, visual_id, params,
-        )
+        # X.2.n.5 — dispatch async fetchers directly so the asyncio
+        # loop stays free across the SQL roundtrip; only sync stub
+        # fetchers (tests + legacy _db_fetcher) get the threadpool
+        # offload. The threadpool fallback keeps the contract
+        # backward-compatible without forcing every test to become
+        # async.
+        if inspect.iscoroutinefunction(served.data_fetcher):
+            data = await served.data_fetcher(visual_id, params)
+        else:
+            data = await run_in_threadpool(
+                served.data_fetcher, visual_id, params,
+            )
         return HTMLResponse(
             emit_visual_data_fragment(visual_id, data),
             headers={"Cache-Control": visual_data_cache_header},
