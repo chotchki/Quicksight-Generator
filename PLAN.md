@@ -195,11 +195,12 @@ Test: change one accent value in the L2 YAML, all four surfaces shift in lockste
   - **LineChart** — d3 line + axes + legend.
   - Per-renderer Layer 2 unit test: stub fetcher, assert SVG / DOM shape matches Layer 1 promise (rect counts, path counts, etc.).
 
-- [ ] **X.2.d — Filter primitives wired.** Currently date range form. Add:
+- [x] **X.2.d — Filter primitives wired.** Currently date range form. Add:
   - **ParameterDropdown** — `<select>` driven by L2 / dataset values; change fires a swap with the new value in `?param_<name>=...`.
   - **CategoryFilter** — multi-select check group; change fires `?filter_<col>=v1,v2,v3`.
   - **NumericRange** — two inputs or slider; fires `?min_<col>=N&max_<col>=M`.
   - All values flow into URL query params per X.2.b. No form state.
+  - **Status:** `ParameterDropdownSpec` / `CategoryFilterSpec` / `NumericRangeSpec` frozen dataclasses in `common/html/render.py`, exported from `common/html/__init__.py`. `emit_html(..., filter_specs=[...])` threads them into the form. Server-side: existing `visual_data` route already passes all query params through to the data fetcher, so no server changes needed (X.2.f's real fetcher consumes the prefix-keyed dict). CategoryFilter's checkboxes are unnamed — a hidden `filter_<col>` input is what HTMX serializes; `wireCategoryFilters` (bootstrap.js) keeps it in sync as a comma-joined string. 23 tests: 16 in `tests/unit/test_html_filter_primitives.py` (render + TestClient round-trip) + 7 in `tests/js/test_filter_primitives.py` (CategoryFilter checkbox sync).
 
 - [ ] **X.2.e — Sheet structure + cross-sheet + cross-app navigation.** Sheet tabs across the top of `/dashboards/:id`. Click switches sheet via `hx-get` + `hx-push-url`. Cross-sheet drills (currently QS `CustomActionURLOperation`) become plain `<a href>`s in the rendered HTML — `/dashboards/:id/sheets/:other-sheet?param_account_id=...`. URL-as-state means the QS URL-param-doesn't-sync-controls quirk doesn't surface.
   - **Cross-app drills (QS-blocked, App 2 unblocks).** L1 → Investigation drills are dropped under QS (`project_qs_url_parameter_no_control_sync` memory: K.4.7 — URL fragment sets parameter but doesn't push values into bound controls). App 2's URL-as-state model makes this trivial — `<a href="/dashboards/investigation/sheets/money-trail?param_anchor=...">` works. Wire the previously-deferred K.4.7 cross-app drills back in for the App 2 dialect; QS dialect stays as-is. Drill destinations need to know the OTHER app's URL pattern — resolve at render time via a small `app_for(visual)` helper that maps tree references to dashboard ids.

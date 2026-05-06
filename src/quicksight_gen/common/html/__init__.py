@@ -29,6 +29,10 @@ push caching to edge / browser).
 """
 
 from quicksight_gen.common.html.render import (
+    CategoryFilterSpec,
+    FilterSpec,
+    NumericRangeSpec,
+    ParameterDropdownSpec,
     emit_dashboards_list,
     emit_error_page,
     emit_html,
@@ -36,6 +40,10 @@ from quicksight_gen.common.html.render import (
 )
 
 __all__ = [
+    "CategoryFilterSpec",
+    "FilterSpec",
+    "NumericRangeSpec",
+    "ParameterDropdownSpec",
     "emit_dashboards_list",
     "emit_error_page",
     "emit_html",

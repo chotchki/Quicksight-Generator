@@ -47,6 +47,8 @@ from __future__ import annotations
 
 import html
 import json
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +56,65 @@ from quicksight_gen.common.theme import DEFAULT_PRESET
 from quicksight_gen.common.l2.theme import ThemePreset
 from quicksight_gen.common.tree._helpers import _AutoSentinel
 from quicksight_gen.common.tree.structure import App, Sheet
+
+
+# X.2.d — filter primitives beyond the date-range form. All values
+# round-trip via the URL per X.2.b (URL == cache key, no client form
+# state); the Refresh button's ``hx-include="#filter-form"`` serializes
+# every input the form contains, so adding more inputs Just Works on
+# the wire.
+#
+# The three new shapes carry their own URL-key prefix so the server
+# can route them generically: ``param_<name>`` for parameter dropdowns,
+# ``filter_<column>`` for category multi-selects (comma-joined values),
+# ``min_<column>`` / ``max_<column>`` for numeric ranges. The data
+# fetcher (X.2.f) consumes the prefix-keyed dict.
+
+
+@dataclass(frozen=True)
+class ParameterDropdownSpec:
+    """Single-select dropdown for a named parameter.
+
+    Renders as a ``<select name="param_<name>">`` with a blank
+    leading option (the empty string round-trips as "no
+    selection"). URL key on submit: ``?param_<name>=<value>``.
+    """
+    name: str
+    label: str
+    options: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class CategoryFilterSpec:
+    """Multi-select check group for a column.
+
+    Renders as a checkbox group plus a hidden ``<input
+    name="filter_<column>">`` that ``wireCategoryFilters`` (in
+    bootstrap.js) keeps in sync with the joined-by-comma value.
+    HTMX serializes the hidden input — checkboxes themselves
+    aren't named so they never reach the wire. URL key on submit:
+    ``?filter_<column>=v1,v2,v3``.
+    """
+    column: str
+    label: str
+    options: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class NumericRangeSpec:
+    """Two number inputs for a numeric column.
+
+    Renders as two ``<input type="number">`` named
+    ``min_<column>`` + ``max_<column>``. Empty inputs serialize
+    as empty strings (the data fetcher treats either as
+    open-ended on that side). URL keys on submit:
+    ``?min_<column>=N&max_<column>=M``.
+    """
+    column: str
+    label: str
+
+
+FilterSpec = ParameterDropdownSpec | CategoryFilterSpec | NumericRangeSpec
 
 
 _HTMX_SRC = "https://unpkg.com/htmx.org@2.0.3/dist/htmx.min.js"
@@ -153,25 +214,87 @@ def _emit_theme_style(theme: ThemePreset | None) -> str:
 # ``hx-include="#filter-form"`` serializes form fields as the query
 # string for the GET; ``hx-push-url="true"`` keeps the browser URL
 # in sync with the date filter so back/forward + bookmark Just Work.
+_FORM_LABEL_CLASS = (
+    "flex items-center gap-2 text-sm font-medium text-primary-fg"
+)
+_FORM_INPUT_CLASS = (
+    "px-2 py-1 border border-surface-border rounded text-sm "
+    "focus:outline-none focus:ring-2 focus:ring-accent"
+)
+
+
+def _render_parameter_dropdown(spec: ParameterDropdownSpec) -> str:
+    """Single-select ``<select name="param_<name>">``."""
+    name = html.escape(spec.name)
+    parts = [
+        f'    <label class="{_FORM_LABEL_CLASS}">{html.escape(spec.label)} '
+        f'<select name="param_{name}" class="{_FORM_INPUT_CLASS}">'
+        f'<option value=""></option>'
+    ]
+    for opt in spec.options:
+        esc = html.escape(opt)
+        parts.append(f'<option value="{esc}">{esc}</option>')
+    parts.append('</select></label>')
+    return "".join(parts)
+
+
+def _render_category_filter(spec: CategoryFilterSpec) -> str:
+    """Multi-select check group + hidden joined-input the JS keeps
+    in sync. The ``data-filter-name`` attribute lets the JS find
+    the wrapper without coupling it to a specific column name."""
+    name = html.escape(f"filter_{spec.column}")
+    wrapper_class = (
+        "category-filter flex items-center gap-2 text-sm "
+        "text-primary-fg flex-wrap"
+    )
+    cb_label_class = "inline-flex items-center gap-1"
+    cb_class = "accent-accent"
+    parts = [
+        f'    <div class="{wrapper_class}" data-filter-name="{name}">'
+        f'<span class="font-medium">{html.escape(spec.label)}</span>'
+        f'<input type="hidden" name="{name}" value="">'
+    ]
+    for opt in spec.options:
+        esc = html.escape(opt)
+        parts.append(
+            f'<label class="{cb_label_class}">'
+            f'<input type="checkbox" value="{esc}" class="{cb_class}"> {esc}'
+            f'</label>'
+        )
+    parts.append('</div>')
+    return "".join(parts)
+
+
+def _render_numeric_range(spec: NumericRangeSpec) -> str:
+    """Two ``<input type="number">`` named min_<col> + max_<col>."""
+    col = html.escape(spec.column)
+    narrow_input = _FORM_INPUT_CLASS + " w-24"
+    return (
+        f'    <label class="{_FORM_LABEL_CLASS}">{html.escape(spec.label)} '
+        f'<input type="number" step="any" name="min_{col}" '
+        f'placeholder="min" class="{narrow_input}"> '
+        f'<input type="number" step="any" name="max_{col}" '
+        f'placeholder="max" class="{narrow_input}">'
+        f'</label>'
+    )
+
+
 def _render_filter_form(
     visual_fetch_urls: list[tuple[str, str]],
+    filter_specs: Sequence[FilterSpec] = (),
 ) -> str:
-    """Render the date-range form with one Refresh button per visual.
+    """Render the filter form with one Refresh button per visual.
 
-    ``visual_fetch_urls`` is a list of ``(visual_id, fetch_url)``
-    tuples. Each Refresh button targets ``#visual-data-{visual_id}``
-    and GETs the URL.
+    The form starts with the always-on date-range inputs, then
+    appends a control per ``filter_specs`` entry (X.2.d). Each
+    Refresh button targets ``#visual-data-{visual_id}`` and GETs
+    the URL with ``hx-include="#filter-form"`` — every named
+    input in the form (including the ones added via
+    ``filter_specs``) lands as a query param.
     """
     form_class = (
         "flex flex-wrap items-center gap-3 mx-8 mb-6 p-4 "
         "bg-surface rounded-lg shadow-sm border border-surface-border"
-    )
-    label_class = (
-        "flex items-center gap-2 text-sm font-medium text-primary-fg"
-    )
-    input_class = (
-        "px-2 py-1 border border-surface-border rounded text-sm "
-        "focus:outline-none focus:ring-2 focus:ring-accent"
     )
     button_class = (
         "px-3 py-1 bg-accent text-accent-fg text-sm font-medium "
@@ -180,13 +303,20 @@ def _render_filter_form(
     )
     parts = [f'  <form id="filter-form" class="{form_class}">']
     parts.append(
-        f'    <label class="{label_class}">From '
-        f'<input type="date" name="date_from" class="{input_class}"></label>'
+        f'    <label class="{_FORM_LABEL_CLASS}">From '
+        f'<input type="date" name="date_from" class="{_FORM_INPUT_CLASS}"></label>'
     )
     parts.append(
-        f'    <label class="{label_class}">To '
-        f'<input type="date" name="date_to" class="{input_class}"></label>'
+        f'    <label class="{_FORM_LABEL_CLASS}">To '
+        f'<input type="date" name="date_to" class="{_FORM_INPUT_CLASS}"></label>'
     )
+    for spec in filter_specs:
+        if isinstance(spec, ParameterDropdownSpec):
+            parts.append(_render_parameter_dropdown(spec))
+        elif isinstance(spec, CategoryFilterSpec):
+            parts.append(_render_category_filter(spec))
+        elif isinstance(spec, NumericRangeSpec):
+            parts.append(_render_numeric_range(spec))
     for vid, url in visual_fetch_urls:
         # One Refresh button per visual. Triggered on click (button's
         # default trigger). Date-input ``change`` was tried on the
@@ -362,13 +492,15 @@ def emit_html(
     dashboard_id: str,
     dev_log: bool = False,
     theme: ThemePreset | None = None,
+    filter_specs: Sequence[FilterSpec] = (),
 ) -> str:
     """Render a tree ``Sheet`` as a standalone HTML page.
 
-    Page shell pulls HTMX + d3 + d3-sankey, emits a date-range form
-    at the top of the body that GETs each visual's data endpoint on
-    Refresh, plus one ``<section>`` per visual carrying its title,
-    subtitle, and the swap-target div.
+    Page shell pulls HTMX + d3 + d3-sankey, emits a filter form
+    (date-range plus any ``filter_specs`` controls) at the top of
+    the body that GETs each visual's data endpoint on Refresh,
+    plus one ``<section>`` per visual carrying its title, subtitle,
+    and the swap-target div.
 
     Args:
         app: tree ``App`` node owning the analysis the sheet lives
@@ -416,7 +548,7 @@ def emit_html(
         )
         for v in sheet.visuals
     ]
-    body_parts.append(_render_filter_form(visual_fetch_urls))
+    body_parts.append(_render_filter_form(visual_fetch_urls, filter_specs))
     for visual in sheet.visuals:
         body_parts.append(_render_visual(visual, dashboard_id, sheet_id))
     return _PAGE_SHELL.format(

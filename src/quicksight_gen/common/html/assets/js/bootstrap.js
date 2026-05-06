@@ -946,7 +946,36 @@
   });
   document.addEventListener("DOMContentLoaded", () => {
     hydrate(document.body);
+    wireCategoryFilters(document);
   });
+
+  // X.2.d — CategoryFilter sync. Each .category-filter wrapper holds
+  // a hidden input + a set of checkboxes. HTMX serializes only named
+  // inputs, so the checkboxes (intentionally unnamed) only feed the
+  // hidden input via this listener. We use ``data-wired`` to make
+  // re-binding idempotent — safe to call after htmx:afterSwap if
+  // future phases re-render the filter form.
+  function wireCategoryFilters(root) {
+    var scope = root || document;
+    var wrappers = scope.querySelectorAll(".category-filter");
+    wrappers.forEach(function (div) {
+      if (div.dataset.wired === "1") return;
+      div.dataset.wired = "1";
+      var hidden = div.querySelector('input[type="hidden"]');
+      var checkboxes = div.querySelectorAll('input[type="checkbox"]');
+      if (!hidden) return;
+      function update() {
+        var checked = [];
+        checkboxes.forEach(function (cb) {
+          if (cb.checked) checked.push(cb.value);
+        });
+        hidden.value = checked.join(",");
+      }
+      checkboxes.forEach(function (cb) {
+        cb.addEventListener("change", update);
+      });
+    });
+  }
 
   // X.2.a.2 — test-mode export. When window.__test_mode__ is set
   // BEFORE this script runs (via Playwright's addInitScript), the
@@ -969,6 +998,7 @@
       nextSortDirection: nextSortDirection,
       showErrorToast: showErrorToast,
       ensureToastContainer: ensureToastContainer,
+      wireCategoryFilters: wireCategoryFilters,
     };
   }
 })();
