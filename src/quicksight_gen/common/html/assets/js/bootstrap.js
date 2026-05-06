@@ -12,8 +12,8 @@
 // to its enclosing [data-visual-kind] section and dispatch by kind.
 // The script tag with the JSON payload sits inside the swap target.
 //
-// Currently supports KPI + Table + Sankey + ForceGraph. New
-// visual kinds add one case arm to hydrateSection + one
+// Currently supports KPI + Table + BarChart + Sankey + ForceGraph.
+// New visual kinds add one case arm to hydrateSection + one
 // renderXxx function.
 //
 // The htmx:afterSwap event is the X.4 future-proofing hook — that
@@ -92,6 +92,9 @@
         break;
       case "Table":
         renderTable(target, data, visualId);
+        break;
+      case "BarChart":
+        renderBarChart(target, data, visualId);
         break;
       case "Sankey":
         renderSankey(target, data, visualId);
@@ -380,6 +383,131 @@
     }
   }
 
+  // BarChart — vertical bars with x/y axes + axis labels. Data shape:
+  //   { categories: ["Cat A", "Cat B", ...],
+  //     series: [{name?: "...", values: [n1, n2, ...]}, ...],
+  //     x_label?: "...",  // axis label, plain English (Q.1.a.3)
+  //     y_label?: "...",
+  //     format?: "number"|"currency" }
+  // Single-series shorthand also accepted: ``{categories, values}``.
+  // d3 native — no charting lib. Bars are click-targets for future
+  // drill (X.2.e); for now they're inert.
+  function renderBarChart(target, data, _visualId) {
+    var width = target.clientWidth || 800;
+    var height = 320;
+    var margin = { top: 16, right: 24, bottom: 56, left: 64 };
+    var innerW = width - margin.left - margin.right;
+    var innerH = height - margin.top - margin.bottom;
+
+    var categories = data.categories || [];
+    var series = data.series
+      ? data.series
+      : [{ name: data.label || "", values: data.values || [] }];
+    var format = data.format;
+
+    var svg = d3
+      .select(target)
+      .append("svg")
+      .attr("width", width)
+      .attr("height", height);
+    var g = svg
+      .append("g")
+      .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+    // Outer band per category, inner band per series so multi-series
+    // groups bars side-by-side. Single-series collapses to a regular
+    // bar chart by virtue of one inner slot.
+    var x0 = d3.scaleBand().domain(categories).range([0, innerW]).padding(0.15);
+    var x1 = d3
+      .scaleBand()
+      .domain(series.map((s, i) => s.name || String(i)))
+      .range([0, x0.bandwidth()])
+      .padding(0.05);
+    var allValues = [];
+    series.forEach((s) => {
+      (s.values || []).forEach((v) => {
+        if (typeof v === "number") allValues.push(v);
+      });
+    });
+    var maxVal = allValues.length > 0 ? d3.max(allValues) : 0;
+    var y = d3
+      .scaleLinear()
+      .domain([0, maxVal || 1])
+      .nice()
+      .range([innerH, 0]);
+
+    // Axes — formatted via the same formatKPIValue helper so
+    // currency / number formatting stays consistent across the
+    // dashboard.
+    var xAxis = d3.axisBottom(x0);
+    var yAxis = d3
+      .axisLeft(y)
+      .ticks(5)
+      .tickFormat((v) => formatKPIValue(v, format));
+    g.append("g")
+      .attr("class", "barchart-x-axis")
+      .attr("transform", "translate(0," + innerH + ")")
+      .call(xAxis)
+      .selectAll("text")
+      .attr("class", "text-xs fill-slate-700");
+    g.append("g")
+      .attr("class", "barchart-y-axis")
+      .call(yAxis)
+      .selectAll("text")
+      .attr("class", "text-xs fill-slate-700");
+
+    // Axis labels (plain English from the tree per Q.1.a.3 — they
+    // carry over via the tree's Measure.axis_label / Column.label).
+    if (data.x_label) {
+      svg
+        .append("text")
+        .attr("class", "barchart-x-label text-xs fill-slate-600")
+        .attr("text-anchor", "middle")
+        .attr("x", margin.left + innerW / 2)
+        .attr("y", height - 8)
+        .text(data.x_label);
+    }
+    if (data.y_label) {
+      svg
+        .append("text")
+        .attr("class", "barchart-y-label text-xs fill-slate-600")
+        .attr("text-anchor", "middle")
+        .attr(
+          "transform",
+          "translate(16," + (margin.top + innerH / 2) + ") rotate(-90)",
+        )
+        .text(data.y_label);
+    }
+
+    // Bars per (category × series) — one rect per data point.
+    var seriesGroups = g
+      .selectAll("g.barchart-series")
+      .data(series)
+      .enter()
+      .append("g")
+      .attr("class", "barchart-series")
+      .attr("data-series-name", (s, i) => s.name || String(i));
+    seriesGroups
+      .selectAll("rect")
+      .data((s, si) =>
+        (s.values || []).map((v, ci) => ({
+          value: v,
+          category: categories[ci],
+          seriesIdx: si,
+          seriesName: s.name || String(si),
+        })),
+      )
+      .enter()
+      .append("rect")
+      .attr("class", "barchart-bar fill-blue-500 hover:fill-blue-700")
+      .attr("x", (d) => (x0(d.category) || 0) + (x1(d.seriesName) || 0))
+      .attr("y", (d) => (typeof d.value === "number" ? y(d.value) : innerH))
+      .attr("width", x1.bandwidth())
+      .attr("height", (d) =>
+        typeof d.value === "number" ? innerH - y(d.value) : 0,
+      );
+  }
+
   // Sort cycle: clicking a column cycles asc → desc → off (back to
   // server default ordering). Encoded as ``col:asc`` / ``col:desc``
   // / empty in the sort_column query param.
@@ -593,6 +721,7 @@
       hydrateSection: hydrateSection,
       renderKPI: renderKPI,
       renderTable: renderTable,
+      renderBarChart: renderBarChart,
       renderSankey: renderSankey,
       renderForceGraph: renderForceGraph,
       formatKPIValue: formatKPIValue,
