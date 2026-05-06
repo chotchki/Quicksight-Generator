@@ -348,3 +348,85 @@ def test_make_app_rejects_empty_dashboards() -> None:
 
     with pytest.raises(ValueError, match="at least one dashboard"):
         make_app(dashboards={})
+
+
+def test_visual_data_response_has_cache_control_header() -> None:
+    """X.2.b.4 — URL == cache key. Visual data responses carry a
+    ``Cache-Control: public, max-age=N`` header so edge / browser
+    caches can keep them. Default max-age is 60s; production
+    dials it up via the ``visual_data_cache_max_age_s`` kwarg."""
+    client = _make_test_app()
+    resp = client.get(_VISUAL_DATA_PATH)
+    assert resp.status_code == 200
+    assert resp.headers["cache-control"] == "public, max-age=60"
+
+
+def test_visual_data_cache_max_age_is_configurable() -> None:
+    """Production deploys with slower ETL cycles (matviews refresh
+    every hour, say) want longer cache; pass the value in."""
+    cfg = make_test_config()
+    tree_app, sheet = _build_app()
+    asgi = make_app(
+        dashboards={
+            _DASHBOARD_ID: ServedDashboard(
+                tree_app=tree_app,
+                sheet=sheet,
+                title=_DASHBOARD_TITLE,
+                data_fetcher=lambda _v, _p: {},
+            ),
+        },
+        visual_data_cache_max_age_s=3600,
+    )
+    client = TestClient(asgi)
+    resp = client.get(_VISUAL_DATA_PATH)
+    assert resp.headers["cache-control"] == "public, max-age=3600"
+    del cfg
+
+
+def test_dev_log_disables_visual_data_cache() -> None:
+    """Dev iteration needs fresh data on every reload — the cache
+    would silently serve stale fragments and look like a bug.
+    ``dev_log=True`` flips the cache to ``no-store``."""
+    client = _make_test_app(dev_log=True)
+    resp = client.get(_VISUAL_DATA_PATH)
+    assert resp.headers["cache-control"] == "no-store"
+
+
+def test_query_params_change_routes_to_different_cache_keys() -> None:
+    """Different query strings produce different fetcher inputs.
+    The URL (path + query string) is the cache key, so distinct
+    query strings → distinct cached responses. This test asserts
+    the fetcher actually sees the different params, not that the
+    cache itself dedupes (HTTP caches do that work)."""
+    captured_params: list[dict[str, str]] = []
+
+    def capture(_vid: str, params: dict[str, str]) -> Any:
+        captured_params.append(dict(params))
+        return {}
+
+    client = _make_test_app(capture)
+    client.get(_VISUAL_DATA_PATH, params={"date_from": "2026-01-01"})
+    client.get(_VISUAL_DATA_PATH, params={"date_from": "2026-02-01"})
+    client.get(
+        _VISUAL_DATA_PATH,
+        params={"date_from": "2026-01-01", "anchor": "CustomerDDA"},
+    )
+    assert captured_params == [
+        {"date_from": "2026-01-01"},
+        {"date_from": "2026-02-01"},
+        {"date_from": "2026-01-01", "anchor": "CustomerDDA"},
+    ]
+
+
+def test_dashboard_view_does_not_cache() -> None:
+    """The dashboard chrome page is rendered fresh every request
+    (no Cache-Control header set explicitly). Caching the chrome
+    is a future X.2.l theme-injection concern — for now the
+    chrome rebuilds per request, which is cheap (~ms)."""
+    client = _make_test_app()
+    resp = client.get(_DASHBOARD_PATH)
+    # Starlette's HTMLResponse defaults to no Cache-Control. The
+    # absence of an explicit cache directive is the assertion —
+    # we don't want to be silently caching the chrome at the edge
+    # before the X.2.l theme story lands.
+    assert "cache-control" not in resp.headers

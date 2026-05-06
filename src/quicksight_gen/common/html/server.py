@@ -113,6 +113,7 @@ def make_app(
     *,
     dashboards: Mapping[str, ServedDashboard],
     dev_log: bool = False,
+    visual_data_cache_max_age_s: int = 60,
 ) -> Starlette:
     """Build a Starlette ASGI app serving multiple dashboards.
 
@@ -126,6 +127,17 @@ def make_app(
             that prints each forwarded event to stderr. Off by
             default — keeps production deploys silent and zero-
             overhead. The developer tool / smoke server enables it.
+            Also sets ``Cache-Control: no-store`` on visual data
+            responses so dev iteration sees fresh data on every
+            reload (no surprise stale fragments).
+        visual_data_cache_max_age_s: ``Cache-Control: public,
+            max-age=N`` on visual-data responses. URL == cache
+            key (X.2.b's GET-shape contract), so any (visual,
+            filter-set) tuple stays cacheable for ``N`` seconds
+            at the edge / browser. Conservative default of 60s
+            since matviews refresh on ETL cycles (minutes-to-
+            hours); production can dial up. Ignored when
+            ``dev_log=True`` (cache is bypassed for dev runs).
 
     Returns:
         A ``starlette.Starlette`` ASGI application.
@@ -134,6 +146,20 @@ def make_app(
         raise ValueError(
             "make_app requires at least one dashboard in the "
             "`dashboards` mapping."
+        )
+
+    # Cache header is the same string on every visual-data
+    # response — pre-compute it once instead of formatting per
+    # request.
+    if dev_log:
+        # Dev runs bypass the cache so the developer sees fresh
+        # data when reloading a swap. Cache-Control: no-store
+        # tells every layer (browser, edge, intermediate proxy)
+        # not to keep the response.
+        visual_data_cache_header = "no-store"
+    else:
+        visual_data_cache_header = (
+            f"public, max-age={visual_data_cache_max_age_s}"
         )
 
     # Snapshot the per-dashboard sheet ids so the visual_data
@@ -182,7 +208,10 @@ def make_app(
         for key, value in request.query_params.items():
             params[str(key)] = str(value)
         data = served.data_fetcher(visual_id, params)
-        return HTMLResponse(emit_visual_data_fragment(visual_id, data))
+        return HTMLResponse(
+            emit_visual_data_fragment(visual_id, data),
+            headers={"Cache-Control": visual_data_cache_header},
+        )
 
     async def log_event(request: Request) -> Response:
         try:
