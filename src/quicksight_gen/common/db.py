@@ -20,7 +20,8 @@ config — see PLAN.md P.9d). X.3 added the SQLite arm using the stdlib
 
 from __future__ import annotations
 
-from typing import Any
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from typing import Any, Protocol
 from urllib.parse import parse_qs, urlparse
 
 from quicksight_gen.common.config import Config
@@ -28,9 +29,11 @@ from quicksight_gen.common.sql import Dialect
 
 
 __all__ = [
+    "AsyncConnectionPool",
     "batch_oracle_inserts",
     "connect_demo_db",
     "execute_script",
+    "make_connection_pool",
     "oracle_dsn",
     "split_oracle_script",
     "sqlite_path",
@@ -422,3 +425,192 @@ def _split_oracle_script_impl(sql: str) -> list[str]:
     if tail:
         statements.append(tail)
     return statements
+
+
+# ---------------------------------------------------------------------------
+# X.2.n.2 — Async connection pool abstraction
+# ---------------------------------------------------------------------------
+#
+# The App2 server is asyncio-based (Starlette). Sync DB drivers block the
+# event loop, forcing every visual fetch through a threadpool offload that
+# silently serializes when the pool fills. Two costs compound:
+#
+#   1. Threadpool slots cap concurrency at ~40, AND every slot held while
+#      a SQL query runs blocks one worker. With N visuals on a sheet,
+#      one user's refresh can saturate the pool.
+#   2. Every visual fetch opens a fresh DB connection (TLS, auth,
+#      role assumption) — 50 ms of pure setup cost on every request,
+#      multiplied by visual count.
+#
+# This abstraction is the seam where both costs go away. ``acquire()``
+# checks out a pre-opened connection from a per-dialect native pool;
+# the connection returns to the pool on context exit instead of being
+# torn down. With async drivers (psycopg3 / oracledb async / aiosqlite)
+# the asyncio loop stays free between SQL await points, so concurrent
+# visuals truly run in parallel without burning threadpool slots.
+#
+# The protocol is intentionally minimal — ``acquire()`` returning an
+# async context manager and ``close()`` for shutdown — so per-dialect
+# native pools (whose surface APIs all differ slightly: psycopg_pool's
+# ``connection()`` vs oracledb's ``acquire()``) wrap cleanly behind it.
+
+
+class AsyncConnectionPool(Protocol):
+    """Uniform async DB-connection pool across PG / Oracle / SQLite.
+
+    Each dialect's native pool has a different surface
+    (``psycopg_pool.AsyncConnectionPool.connection()``,
+    ``oracledb`` async pool's ``acquire()``, no built-in pool for
+    SQLite). This protocol normalizes them behind one ``acquire()``
+    method that returns an async context manager yielding a
+    DB-API-shaped connection, plus an ``async close()`` for
+    application-shutdown lifecycle.
+
+    The connection yielded by ``acquire()`` returns to the pool on
+    context exit (or is closed for SQLite, which has no real pool).
+    Callers MUST use ``async with pool.acquire() as conn`` — a leaked
+    acquire blocks one pool slot until interpreter shutdown.
+    """
+
+    def acquire(self) -> AbstractAsyncContextManager[Any]: ...
+    async def close(self) -> None: ...
+
+
+class _AsyncPgPool:
+    """Thin wrapper around ``psycopg_pool.AsyncConnectionPool``.
+
+    psycopg_pool's per-checkout method is ``connection()`` (not
+    ``acquire()``); rename here for cross-dialect uniformity. The
+    pool itself is created with ``open=False`` so the caller can
+    ``await pool.open()`` explicitly and surface connection-failure
+    errors at server-startup time rather than at first request.
+    """
+
+    def __init__(self, pool: Any) -> None:
+        self._pool = pool
+
+    def acquire(self) -> AbstractAsyncContextManager[Any]:
+        return self._pool.connection()
+
+    async def close(self) -> None:
+        await self._pool.close()
+
+
+class _AsyncOraclePool:
+    """Thin wrapper around ``oracledb.create_pool_async()``.
+
+    oracledb's async pool already exposes ``acquire()`` returning an
+    async context manager — this wrapper exists for API parity (and
+    so the rest of the code doesn't import oracledb directly).
+    """
+
+    def __init__(self, pool: Any) -> None:
+        self._pool = pool
+
+    def acquire(self) -> AbstractAsyncContextManager[Any]:
+        return self._pool.acquire()
+
+    async def close(self) -> None:
+        await self._pool.close()
+
+
+class _AsyncSqlitePool:
+    """No-pool wrapper around ``aiosqlite.connect``.
+
+    SQLite is local file (or in-memory) access — pooling would just
+    hold open file handles to the same file. Each ``acquire()``
+    opens a fresh connection and closes it on context exit; the
+    ``max_size`` argument is accepted upstream but ignored here.
+    """
+
+    def __init__(self, path: str) -> None:
+        self._path = path
+
+    @asynccontextmanager
+    async def acquire(self) -> Any:
+        import aiosqlite
+
+        async with aiosqlite.connect(self._path) as conn:
+            yield conn
+
+    async def close(self) -> None:
+        return None
+
+
+async def make_connection_pool(
+    cfg: Config, *, max_size: int = 10,
+) -> AsyncConnectionPool:
+    """Open an ``AsyncConnectionPool`` against ``cfg.demo_database_url``.
+
+    Branches on ``cfg.dialect`` (mirrors ``connect_demo_db``):
+      - Postgres: ``psycopg_pool.AsyncConnectionPool`` with
+        ``min_size=1``, ``max_size=N``. Pre-opens so connection
+        failures surface here.
+      - Oracle: ``oracledb.create_pool_async`` with the same shape.
+      - SQLite: thin ``aiosqlite``-per-acquire wrapper (no real pool).
+
+    Args:
+      cfg: Loaded Config; ``cfg.demo_database_url`` and ``cfg.dialect``
+        drive both URL parsing and driver selection.
+      max_size: Pool size cap. Defaults to 10 — enough for a typical
+        sheet's visuals to fetch concurrently without queueing. Tune
+        upward for high-fan-in dashboards or multi-user demo loads.
+
+    Raises:
+      ImportError: matching async driver isn't installed
+        (``psycopg[binary,pool]`` for PG, ``oracledb`` for Oracle,
+        ``aiosqlite`` for SQLite). Each ImportError names the
+        extras-install command.
+      ValueError: ``cfg.demo_database_url`` unset or
+        ``cfg.dialect`` unrecognized.
+    """
+    if cfg.demo_database_url is None:
+        raise ValueError(
+            "cfg.demo_database_url is unset; set it in your config YAML "
+            "or via QS_GEN_DEMO_DATABASE_URL."
+        )
+    if cfg.dialect is Dialect.POSTGRES:
+        try:
+            from psycopg_pool import AsyncConnectionPool as _PgAsyncPool
+        except ImportError as e:
+            raise ImportError(
+                "psycopg_pool is required for the async Postgres pool. "
+                "Install it with: pip install 'quicksight-gen[demo]' "
+                "(the [pool] extra is bundled into psycopg[binary,pool])."
+            ) from e
+        # ``open=False`` so we await ``open()`` here — surfaces bad DSNs
+        # / unreachable hosts at server-startup time instead of inside
+        # the first request handler.
+        pool = _PgAsyncPool(
+            cfg.demo_database_url, min_size=1, max_size=max_size, open=False,
+        )
+        await pool.open()
+        return _AsyncPgPool(pool)
+    if cfg.dialect is Dialect.ORACLE:
+        try:
+            import oracledb  # type: ignore[import-untyped]
+        except ImportError as e:
+            raise ImportError(
+                "oracledb is required for Oracle connections. "
+                "Install it with: pip install 'quicksight-gen[demo-oracle]'"
+            ) from e
+        # oracledb's async pool factory is sync (it returns the pool
+        # object; connection acquisition is the async part).
+        pool = oracledb.create_pool_async(
+            dsn=oracle_dsn(cfg.demo_database_url), min=1, max=max_size,
+        )
+        return _AsyncOraclePool(pool)
+    if cfg.dialect is Dialect.SQLITE:
+        try:
+            import aiosqlite  # noqa: F401  # checked at acquire time too
+        except ImportError as e:
+            raise ImportError(
+                "aiosqlite is required for the async SQLite pool. "
+                "Install it with: pip install 'quicksight-gen[serve]'"
+            ) from e
+        return _AsyncSqlitePool(sqlite_path(cfg.demo_database_url))
+    raise ValueError(
+        f"Unknown dialect {cfg.dialect!r}. "
+        "Set 'dialect: postgres', 'dialect: oracle', or 'dialect: sqlite' "
+        "in your config."
+    )

@@ -18,8 +18,10 @@ import pytest
 from quicksight_gen.common.config import Config
 from tests._test_helpers import make_test_config
 from quicksight_gen.common.db import (
+    AsyncConnectionPool,
     connect_demo_db,
     execute_script,
+    make_connection_pool,
     oracle_dsn,
     split_oracle_script,
     sqlite_path,
@@ -265,3 +267,91 @@ class TestExecuteScriptSqlite:
             assert cur.fetchone()[0] == 3
         finally:
             conn.close()
+
+
+# ---------------------------------------------------------------------------
+# X.2.n.2 — AsyncConnectionPool (SQLite path; PG/Oracle covered via live e2e)
+# ---------------------------------------------------------------------------
+
+
+class TestMakeConnectionPool:
+    """Async connection pool — SQLite branch is the cheap test target.
+
+    PG and Oracle branches require live drivers + reachable DBs and are
+    covered by the e2e harness (X.2.n.7). SQLite uses aiosqlite +
+    in-memory ``:memory:``, so the round-trip happens in-process with
+    no setup.
+    """
+
+    def test_make_pool_sqlite_acquire_yields_aiosqlite_connection(self) -> None:
+        import asyncio
+
+        cfg = make_test_config(
+            aws_region="us-east-2",
+            dialect=Dialect.SQLITE,
+            demo_database_url=":memory:",
+        )
+
+        async def run() -> tuple[type, int]:
+            pool = await make_connection_pool(cfg, max_size=5)
+            try:
+                async with pool.acquire() as conn:
+                    cur = await conn.execute("SELECT 1 AS n")
+                    row = await cur.fetchone()
+                    return (type(row), int(row[0]))
+            finally:
+                await pool.close()
+
+        kind, value = asyncio.run(run())
+        assert value == 1
+        # aiosqlite returns a Row-like tuple; just confirm we got data
+        # back via the async path (not None).
+        assert kind is not type(None)
+
+    def test_make_pool_raises_when_url_unset(self) -> None:
+        import asyncio
+
+        cfg = make_test_config(
+            aws_region="us-east-2",
+            dialect=Dialect.SQLITE,
+            demo_database_url=None,
+        )
+        with pytest.raises(ValueError, match="demo_database_url is unset"):
+            asyncio.run(make_connection_pool(cfg))
+
+    def test_make_pool_raises_on_unknown_dialect(self) -> None:
+        import asyncio
+        from unittest.mock import MagicMock
+
+        # Construct a Config with a nonsense dialect — Config dataclass
+        # validates via Literal so we use MagicMock instead of fighting
+        # the type system.
+        cfg = MagicMock()
+        cfg.demo_database_url = ":memory:"
+        cfg.dialect = "snowflake"  # not in the Dialect enum
+        with pytest.raises(ValueError, match="Unknown dialect"):
+            asyncio.run(make_connection_pool(cfg))
+
+    def test_pool_protocol_is_runtime_satisfied_by_sqlite_impl(self) -> None:
+        # AsyncConnectionPool is a runtime-checkable Protocol (Protocol
+        # in typing module is structural — instances satisfy it if they
+        # have the right methods, regardless of inheritance). This test
+        # protects future refactors that might accidentally drop the
+        # ``acquire`` or ``close`` method from the SQLite impl.
+        import asyncio
+
+        cfg = make_test_config(
+            aws_region="us-east-2",
+            dialect=Dialect.SQLITE,
+            demo_database_url=":memory:",
+        )
+        pool = asyncio.run(make_connection_pool(cfg))
+        try:
+            assert hasattr(pool, "acquire")
+            assert hasattr(pool, "close")
+            # Don't assert isinstance(pool, AsyncConnectionPool) directly
+            # — Protocol isinstance checks need @runtime_checkable, and
+            # we don't need the runtime cost. The duck-type check above
+            # is enough to catch a missing method regression.
+        finally:
+            asyncio.run(pool.close())

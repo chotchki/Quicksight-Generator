@@ -58,9 +58,10 @@ demo = [
     # Phase X.2.n — psycopg3 (the `psycopg` package, not psycopg2).
     # Async-capable via psycopg.AsyncConnection while keeping the same
     # `:name` placeholder format we use across PG / Oracle / SQLite.
-    # Sync API is largely identical to psycopg2's, so the swap is
-    # mostly an import rename.
-    "psycopg[binary]>=3.1",
+    # The ``[pool]`` extra pulls in psycopg_pool for the X.2.n.2
+    # AsyncConnectionPool — the App2 server uses it to bound DB
+    # concurrency separately from the asyncio worker pool.
+    "psycopg[binary,pool]>=3.1",
 ]
 demo-oracle = [
     # Phase P — oracledb thin client. No Oracle Instant Client install
@@ -93,6 +94,11 @@ serve = [
     "uvicorn[standard]>=0.30",
     "python-multipart>=0.0.18",
     "httpx>=0.27",
+    # Phase X.2.n — async DB drivers. Stdlib sqlite3 is sync-only;
+    # aiosqlite is the async wrapper that lets the App2 server use a
+    # SQLite cfg without blocking the asyncio loop. Cheap dependency
+    # (~30 KB), pulls nothing extra.
+    "aiosqlite>=0.19",
 ]
 dev = [
     "pytest>=7.0",
@@ -103,7 +109,8 @@ dev = [
     # boto3 client init when developers use AWS SSO / `aws sso login`.
     "botocore[crt]>=1.34",
     "boto3-stubs[quicksight]>=1.34",
-    "psycopg[binary]>=3.1",
+    "psycopg[binary,pool]>=3.1",
+    "aiosqlite>=0.19",
     # P.9d — oracledb thin client so the e2e harness can connect to
     # an Oracle dialect config without a separate `[demo-oracle]` install.
     "oracledb>=2.0",
