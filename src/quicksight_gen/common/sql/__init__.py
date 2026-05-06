@@ -14,6 +14,7 @@ return expression-level SQL).
 
 from __future__ import annotations
 
+from .app2_filters import app2_date_filter
 from .dialect import (
     Dialect,
     analyze_table,
@@ -50,6 +51,7 @@ from .dialect import (
 __all__ = [
     "Dialect",
     "analyze_table",
+    "app2_date_filter",
     "boolean_type",
     "cast",
     "create_matview",

@@ -348,6 +348,7 @@ def build_dataset(
     contract: DatasetContract,
     visual_identifier: str,
     dataset_parameters: list[DatasetParameter] | None = None,
+    app2_sql: str | None = None,
 ) -> DataSet:
     """Build an AWS-shape DataSet.
 
@@ -355,12 +356,27 @@ def build_dataset(
     that get substituted into ``sql`` via the ``<<$paramName>>``
     syntax at QuickSight query time. Bridge to analysis params via
     ``MappedDataSetParameters`` on the analysis ParameterDeclaration.
+
+    ``app2_sql`` (X.2.g.1.b): optional App2-dialect SQL variant
+    registered for the HTMX dialect's tree fetcher (X.2.g.0). QS
+    uses the ``<<$paramName>>`` substitution mechanism for filter
+    values; App2's executor (``_sql_executor``) uses ``:name``-style
+    bind placeholders. They're incompatible at the SQL-string level,
+    so apps that need filter-bound SQL provide both: the QS variant
+    in ``sql`` (hits ``CustomSql.SqlQuery``); the App2 variant in
+    ``app2_sql`` (hits the registry that ``make_tree_db_fetcher``
+    consumes). When omitted, both dialects see the same ``sql``.
     """
     sql = _oracle_lowercase_alias_wrapper(sql, contract, cfg)
-    # X.2.g.0 — register the dialect-correct SQL so the App2 tree
-    # fetcher can resolve a Visual's dataset SQL by visual_identifier
-    # without each app exposing a parallel lookup.
-    register_sql(visual_identifier, sql)
+    # X.2.g.0 / X.2.g.1.b — register the dialect-correct SQL so the
+    # App2 tree fetcher can resolve a Visual's dataset SQL by
+    # visual_identifier. App2-specific variant wins when provided
+    # (same Oracle alias-wrapper transform applied for parity).
+    if app2_sql is not None:
+        app2_sql = _oracle_lowercase_alias_wrapper(app2_sql, contract, cfg)
+        register_sql(visual_identifier, app2_sql)
+    else:
+        register_sql(visual_identifier, sql)
     columns = contract.to_input_columns()
     # Config.__post_init__ guarantees datasource_arn is non-None
     # post-construction (raises if neither it nor demo_database_url

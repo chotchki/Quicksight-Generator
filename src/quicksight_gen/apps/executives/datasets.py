@@ -41,7 +41,7 @@ from quicksight_gen.common.sheets.app_info import (
     build_liveness_dataset,
     build_matview_status_dataset,
 )
-from quicksight_gen.common.sql import to_date
+from quicksight_gen.common.sql import app2_date_filter, to_date
 
 
 # M.4.4.5 — Executives reads base tables only; no app-specific
@@ -125,9 +125,14 @@ def build_transaction_summary_dataset(cfg: Config) -> DataSet:
     ``ABS(amount_money)`` (the per-leg signed Decimal — magnitude is
     abs); signed_amount → amount_money (already signed in v6).
     """
+    # X.2.g.1.b — single SQL template; ``{date_filter}`` slot
+    # interpolates per target runtime. QS gets ``""`` (its date
+    # filter comes from the analysis-level FilterGroup); App2 gets
+    # the bind-clause snippet from ``app2_date_filter`` so X.2.d's
+    # filter form actually narrows the query.
     p = _require_prefix(cfg)
     posted_date_expr = to_date("MIN(t.posting)", cfg.dialect)
-    sql = f"""\
+    sql_template = f"""\
 WITH per_transfer AS (
     SELECT
         {posted_date_expr}     AS posted_date,
@@ -137,6 +142,7 @@ WITH per_transfer AS (
         SUM(t.amount_money)      AS transfer_net
     FROM {p}_transactions t
     WHERE t.status = 'Posted'
+      {{date_filter}}
     GROUP BY t.transfer_id, t.transfer_type
 )
 SELECT
@@ -152,9 +158,12 @@ GROUP BY posted_date, transfer_type"""
         cfg.prefixed("exec-transaction-summary-dataset"),
         "Executives Transaction Summary",
         "exec-transaction-summary",
-        sql,
+        sql_template.format(date_filter=""),
         EXEC_TRANSACTION_SUMMARY_CONTRACT,
         visual_identifier=DS_EXEC_TRANSACTION_SUMMARY,
+        app2_sql=sql_template.format(
+            date_filter=app2_date_filter("t.posting"),
+        ),
     )
 
 
@@ -172,9 +181,13 @@ def build_account_summary_dataset(cfg: Config) -> DataSet:
     (output column kept as ``account_type`` so dashboard-side consumers
     don't need to follow the rename — only the SELECT does).
     """
+    # X.2.g.1.b — single SQL template; date filter interpolates
+    # into the ``activity`` CTE (limits which transactions count
+    # toward each account's activity rollup). Same template
+    # pattern as the transaction-summary dataset.
     p = _require_prefix(cfg)
     last_activity_expr = to_date("t.posting", cfg.dialect)
-    sql = f"""\
+    sql_template = f"""\
 WITH activity AS (
     SELECT
         t.account_id,
@@ -182,6 +195,7 @@ WITH activity AS (
         COUNT(*)                AS activity_count
     FROM {p}_transactions t
     WHERE t.status = 'Posted'
+      {{date_filter}}
     GROUP BY t.account_id
 ),
 accounts AS (
@@ -204,9 +218,12 @@ LEFT JOIN activity act ON act.account_id = a.account_id"""
         cfg.prefixed("exec-account-summary-dataset"),
         "Executives Account Summary",
         "exec-account-summary",
-        sql,
+        sql_template.format(date_filter=""),
         EXEC_ACCOUNT_SUMMARY_CONTRACT,
         visual_identifier=DS_EXEC_ACCOUNT_SUMMARY,
+        app2_sql=sql_template.format(
+            date_filter=app2_date_filter("t.posting"),
+        ),
     )
 
 
