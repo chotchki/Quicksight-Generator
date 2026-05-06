@@ -88,7 +88,7 @@ One renderer, three contexts. The visual primitive is in `common/tree/visuals.py
 - Edges of the graph should be merged only if their direction matches
 - Merged Edges should merge their text boxes
 - We should try to spread to fill the available space.
-- Parents
+- Parents should be higher than their children
 
 ## CLI surface additions
 - `data apply --end-date <ISO date>` — emit-time filter, drops records past the cutoff (does NOT change the seed generator; just truncates the timeline at write). Trivial in `emit_full_seed`. Enables timeline-truncation for "what did the data look like as of X" scenarios.
