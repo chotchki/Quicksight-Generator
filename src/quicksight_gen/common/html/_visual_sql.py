@@ -16,8 +16,11 @@ applies the visual's aggregation:
             values=[sum(amount)])       →  SELECT posted_date, SUM(amount)
                                            FROM (sql) GROUP BY posted_date
                                            ORDER BY posted_date
+  Sankey(source=src,
+         target=tgt,
+         weight=sum(amount))            →  SELECT src, tgt, SUM(amount)
+                                           FROM (sql) GROUP BY src, tgt
   Table(...)                            →  unwrapped (raw rows pass through)
-  Sankey(...)                           →  unwrapped (specialized projector)
   ForceGraph(...)                       →  N/A (non-SQL)
 
 For Visuals with multiple measures (KPI with two count metrics, etc.),
@@ -126,5 +129,29 @@ def wrap_for_visual(base_sql: str, visual: Any) -> str:
             wrapped += f" ORDER BY {group_clause}"
         return wrapped
 
-    # Table / Sankey / ForceGraph / unknown → raw rows pass through.
+    if kind == "Sankey":
+        # X.2.g.2.b — Sankey field-wells: scalar source + target Dims +
+        # one weight Measure. shape_sankey reads cols 0/1/2 as
+        # (source, target, value), so the wrap projects them in that
+        # order and rolls up by (source, target). Without this, the
+        # raw matview rows would land in shape_sankey with the wrong
+        # column order and the d3 ribbons would render against the
+        # wrong nodes (or fail to render at all).
+        source = getattr(visual, "source", None)
+        target = getattr(visual, "target", None)
+        weight = getattr(visual, "weight", None)
+        if source is None or target is None or weight is None:
+            return base_sql
+        src_col = _dim_sql(source)
+        tgt_col = _dim_sql(target)
+        wt_expr = _measure_sql(weight)
+        if not src_col or not tgt_col or not wt_expr:
+            return base_sql
+        return (
+            f"SELECT {src_col}, {tgt_col}, {wt_expr} "
+            f"FROM (\n{base_sql}\n) sub "
+            f"GROUP BY {src_col}, {tgt_col}"
+        )
+
+    # Table / ForceGraph / unknown → raw rows pass through.
     return base_sql

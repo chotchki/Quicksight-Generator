@@ -35,7 +35,7 @@ from quicksight_gen.common.ids import SheetId, VisualId
 from quicksight_gen.common.sql.dialect import Dialect
 from quicksight_gen.common.tree.datasets import Dataset
 from quicksight_gen.common.tree.structure import Analysis, App, Sheet
-from quicksight_gen.common.tree.visuals import KPI, BarChart, Table
+from quicksight_gen.common.tree.visuals import KPI, BarChart, Sankey, Table
 from tests._test_helpers import make_test_config
 
 
@@ -59,6 +59,11 @@ register_contract("kpi-ds", DatasetContract(columns=[
 register_contract("bar-ds", _X2G_TEST_CONTRACT)
 register_contract("x2g-loud-fail-ds", DatasetContract(columns=[
     ColumnSpec(name="a", type="INTEGER"),
+]))
+register_contract("x2g-sankey-ds", DatasetContract(columns=[
+    ColumnSpec(name="source", type="STRING"),
+    ColumnSpec(name="target", type="STRING"),
+    ColumnSpec(name="amount", type="INTEGER"),
 ]))
 
 
@@ -322,3 +327,142 @@ def test_make_tree_db_fetcher_indexes_visuals_across_sheets(
     # Both visuals are reachable via the single fetcher.
     assert asyncio.run(fetcher("v-a", {}))["values"][0]["value"] == 375
     assert asyncio.run(fetcher("v-b", {}))["values"][0]["value"] == 375
+
+
+# ---------------------------------------------------------------------------
+# X.2.g.2.b — Sankey wrap: SELECT source, target, SUM(weight) GROUP BY ...
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def aiosqlite_sankey_pool() -> Iterator[AsyncConnectionPool]:
+    """Tiny edges table for Sankey tests.
+
+    Multiple rows per (source, target) pair so the GROUP BY actually
+    has work to do — the wrap should sum them; otherwise the per-pair
+    aggregation step is a silent no-op.
+    """
+    import sqlite3
+    import tempfile
+    import os
+
+    fd, path = tempfile.mkstemp(suffix=".sqlite")
+    os.close(fd)
+
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE edges (source TEXT, target TEXT, amount INTEGER)",
+    )
+    conn.executemany(
+        "INSERT INTO edges VALUES (?, ?, ?)",
+        [
+            # (A → B) appears twice; should aggregate to 30.
+            ("A", "B", 10),
+            ("A", "B", 20),
+            # (B → C) once.
+            ("B", "C", 5),
+            # (A → C) once.
+            ("A", "C", 100),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    cfg = make_test_config(
+        dialect=Dialect.SQLITE,
+        demo_database_url=path,
+    )
+    pool = asyncio.run(make_connection_pool(cfg))
+    try:
+        yield pool
+    finally:
+        asyncio.run(pool.close())
+        os.unlink(path)
+
+
+def test_make_tree_db_fetcher_dispatches_sankey_with_aggregation(
+    aiosqlite_sankey_pool: AsyncConnectionPool,
+) -> None:
+    """X.2.g.2.b — Sankey wrap projects (source, target, SUM(weight))
+    + GROUP BY (source, target). Without the wrap the raw matview
+    rows land in shape_sankey with the wrong column order; with it
+    the d3-sankey ribbons render correctly.
+
+    Asserts the (A → B) pair aggregates 10+20=30 (proves GROUP BY
+    fired), the (B → C) and (A → C) pairs come through with their
+    single-row weights, and shape_sankey's first-seen node ordering
+    holds (A=0, B=1, C=2).
+    """
+    register_sql(
+        "x2g-sankey-ds", "SELECT source, target, amount FROM edges",
+    )
+    app = App(name="x2g-sankey", cfg=_TEST_CFG_SQLITE)
+    analysis = app.set_analysis(Analysis(
+        analysis_id_suffix="sankey", name="Sankey",
+    ))
+    ds = _ds("x2g-sankey-ds")
+    sheet = analysis.add_sheet(Sheet(
+        sheet_id=SheetId("sk"), name="Sk",
+        title="Sk", description="x",
+    ))
+    sheet.visuals.append(Sankey(
+        title="Flow", subtitle=None, visual_id=VisualId("v-sk"),
+        source=ds["source"].dim(),
+        target=ds["target"].dim(),
+        weight=ds["amount"].sum(),
+    ))
+    fetcher = make_tree_db_fetcher(
+        app, _TEST_CFG_SQLITE, pool=aiosqlite_sankey_pool,
+    )
+    out = asyncio.run(fetcher("v-sk", {}))
+    # Sankey shape: {nodes, links}.
+    assert "nodes" in out and "links" in out
+    names = [n["name"] for n in out["nodes"]]
+    # First-seen node ordering: A from row 0, B from row 0, C from row 2.
+    assert names == ["A", "B", "C"]
+    # Index links by (source_idx, target_idx) for assertion stability —
+    # link order is dict-insertion which depends on aggregation key
+    # iteration, but the per-pair values are deterministic.
+    by_pair = {
+        (link["source"], link["target"]): link["value"]
+        for link in out["links"]
+    }
+    assert by_pair[(0, 1)] == 30  # A → B aggregated 10 + 20
+    assert by_pair[(1, 2)] == 5   # B → C
+    assert by_pair[(0, 2)] == 100 # A → C
+
+
+def test_make_tree_db_fetcher_sankey_passthrough_without_fields(
+    aiosqlite_sankey_pool: AsyncConnectionPool,
+) -> None:
+    """X.2.g.2.b — Sankey with missing field-well declarations falls
+    through to passthrough. Defensive: a tree that constructs a
+    Sankey without source/target/weight (e.g. mid-build, or via
+    a future factory bug) should land empty rows in shape_sankey
+    rather than producing malformed SQL."""
+    register_sql(
+        "x2g-sankey-ds", "SELECT source, target, amount FROM edges",
+    )
+    app = App(name="x2g-sankey-empty", cfg=_TEST_CFG_SQLITE)
+    analysis = app.set_analysis(Analysis(
+        analysis_id_suffix="sankey-empty", name="Sankey Empty",
+    ))
+    sheet = analysis.add_sheet(Sheet(
+        sheet_id=SheetId("ske"), name="Ske",
+        title="Ske", description="x",
+    ))
+    # Sankey with a dataset reference (so it lands in the index) but
+    # no field wells. Reference the dataset via an action's source
+    # field is not available; use a Dim hand-set with no fields.
+    # The simpler path: empty Sankey has no dataset_identifier so it
+    # ends up in the visual_index with sql=None — same code path as
+    # text boxes — which returns empty payload. Verify that.
+    sheet.visuals.append(Sankey(
+        title="Empty", subtitle=None, visual_id=VisualId("v-ske"),
+    ))
+    fetcher = make_tree_db_fetcher(
+        app, _TEST_CFG_SQLITE, pool=aiosqlite_sankey_pool,
+    )
+    out = asyncio.run(fetcher("v-ske", {}))
+    # No fields → no dataset detected → empty payload.
+    assert out == {}
