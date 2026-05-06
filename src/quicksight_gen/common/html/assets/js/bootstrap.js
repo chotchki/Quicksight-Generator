@@ -12,8 +12,8 @@
 // to its enclosing [data-visual-kind] section and dispatch by kind.
 // The script tag with the JSON payload sits inside the swap target.
 //
-// Currently supports Sankey + ForceGraph. New visual kinds add one
-// case arm to hydrateSection + one renderXxx function.
+// Currently supports KPI + Sankey + ForceGraph. New visual kinds
+// add one case arm to hydrateSection + one renderXxx function.
 //
 // The htmx:afterSwap event is the X.4 future-proofing hook — that
 // phase's swap-on-edit pattern reuses this exact dispatch.
@@ -80,10 +80,15 @@
     }
     var target = section.querySelector(".visual-data");
     if (!target) return;
-    target.querySelectorAll("svg").forEach((s) => {
-      s.remove();
-    });
+    // Clear any prior render — chart-data script tag included. The
+    // script already gave us the data; the renderXxx below paints
+    // fresh into a clean target. Without this, repeat hydrates
+    // (initial-load + post-swap) would accumulate DOM children.
+    target.innerHTML = "";
     switch (kind) {
+      case "KPI":
+        renderKPI(target, data, visualId);
+        break;
       case "Sankey":
         renderSankey(target, data, visualId);
         break;
@@ -110,6 +115,66 @@
     if (root.querySelectorAll) {
       root.querySelectorAll("[data-visual-kind]").forEach(hydrateSection);
     }
+  }
+
+  // KPI — one big number per measure, with optional label + delta
+  // arrow underneath. Data shape:
+  //   { values: [{ value: 1234, label: "Open", format: "number"|"currency",
+  //                delta: -50? }, ...] }
+  // Single-value shorthand also accepted: { value: 1234, label: "Open" }
+  // Pure HTML (no SVG) — text is the right primitive for a number,
+  // and Tailwind's tabular-nums keeps digit columns aligned across
+  // KPIs in a row.
+  function renderKPI(target, data, _visualId) {
+    var values = data.values
+      ? data.values
+      : [{ value: data.value, label: data.label || "", format: data.format }];
+    var container = d3
+      .select(target)
+      .append("div")
+      .attr("class", "flex flex-wrap gap-6 p-4");
+    var cards = container
+      .selectAll("div.kpi-card")
+      .data(values)
+      .enter()
+      .append("div")
+      .attr("class", "kpi-card flex-1 min-w-[180px] text-center");
+    cards
+      .append("div")
+      .attr("class", "kpi-value text-4xl font-bold text-blue-600 tabular-nums")
+      .text((d) => formatKPIValue(d.value, d.format));
+    cards
+      .filter((d) => typeof d.delta === "number")
+      .append("div")
+      .attr(
+        "class",
+        (d) =>
+          "kpi-delta text-sm tabular-nums " +
+          (d.delta < 0 ? "text-red-600" : "text-green-600"),
+      )
+      .text(
+        (d) =>
+          (d.delta >= 0 ? "▲ +" : "▼ ") +
+          formatKPIValue(Math.abs(d.delta), d.format),
+      );
+    cards
+      .append("div")
+      .attr("class", "kpi-label text-sm text-slate-600 mt-2")
+      .text((d) => d.label || "");
+  }
+
+  function formatKPIValue(value, format) {
+    if (typeof value !== "number") return String(value == null ? "" : value);
+    if (format === "currency") {
+      return (
+        "$" +
+        value.toLocaleString("en-US", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })
+      );
+    }
+    return value.toLocaleString("en-US");
   }
 
   function renderSankey(target, data, visualId) {
@@ -273,8 +338,10 @@
       fireAnchorRequest: fireAnchorRequest,
       hydrate: hydrate,
       hydrateSection: hydrateSection,
+      renderKPI: renderKPI,
       renderSankey: renderSankey,
       renderForceGraph: renderForceGraph,
+      formatKPIValue: formatKPIValue,
     };
   }
 })();
