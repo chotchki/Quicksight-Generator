@@ -242,6 +242,47 @@ def get_contract(visual_identifier: str) -> DatasetContract:
         )
 
 
+# Module-level registry of visual_identifier → SQL string. X.2.g.0
+# uses this to resolve a Visual's dataset SQL at fetcher-build time
+# without each app having to expose a parallel lookup. Populated by
+# build_dataset() right after the Oracle alias-wrapper transform — so
+# the SQL stored here is the dialect-correct form (the same string
+# that lands inside ``CustomSql.SqlQuery`` on the AWS DataSet).
+_SQL_REGISTRY: dict[str, str] = {}
+
+
+def register_sql(visual_identifier: str, sql: str) -> None:
+    """Register a visual_identifier → dataset SQL mapping.
+
+    Idempotent for the same (visual_identifier, sql) pair; the second
+    call with the same identifier overwrites with the new SQL (matches
+    the typical "rebuild for a different dialect" workflow — same
+    identifier, dialect-specific SQL). Tests that need to assert
+    "build was idempotent" should snapshot the registry before /
+    after.
+    """
+    _SQL_REGISTRY[visual_identifier] = sql
+
+
+def get_sql(visual_identifier: str) -> str:
+    """Look up the SQL registered under ``visual_identifier``.
+
+    Raises ``KeyError`` if not registered — usually means the dataset
+    hasn't been built yet in the current process (call
+    ``build_all_datasets(cfg)`` from the relevant app before reaching
+    fetcher-construction code).
+    """
+    try:
+        return _SQL_REGISTRY[visual_identifier]
+    except KeyError:
+        raise KeyError(
+            f"No SQL registered for visual_identifier "
+            f"{visual_identifier!r}. Call build_dataset() (typically via "
+            f"the app's build_all_datasets(cfg)) before constructing the "
+            f"App2 tree fetcher."
+        )
+
+
 DATASET_ACTIONS = [
     "quicksight:DescribeDataSet",
     "quicksight:DescribeDataSetPermissions",
@@ -316,6 +357,10 @@ def build_dataset(
     ``MappedDataSetParameters`` on the analysis ParameterDeclaration.
     """
     sql = _oracle_lowercase_alias_wrapper(sql, contract, cfg)
+    # X.2.g.0 — register the dialect-correct SQL so the App2 tree
+    # fetcher can resolve a Visual's dataset SQL by visual_identifier
+    # without each app exposing a parallel lookup.
+    register_sql(visual_identifier, sql)
     columns = contract.to_input_columns()
     # Config.__post_init__ guarantees datasource_arn is non-None
     # post-construction (raises if neither it nor demo_database_url
