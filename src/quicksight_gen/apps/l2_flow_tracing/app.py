@@ -625,13 +625,19 @@ def _populate_rails_sheet(
             (ds_postings, "pKey"),
         ],
     ))
-    # Value: multi-select LinkedValues from the meta-values dataset.
-    # Bound to pL2ftMetaValue, mapped to `pValues` on the postings
-    # dataset.
+    # Value: single-string text-field input bound to pL2ftMetaValue,
+    # mapped to `pValues` on the postings dataset.
+    #
+    # Y.1.m: was multi_valued=True; the text-field control silently
+    # reverts non-empty commits to default on multi-valued params
+    # (whole cascade broke). Single-valued is the correct shape for
+    # text-field input. Trade-off: analyst can only filter to one
+    # metadata value at a time on this sheet — an acceptable cost since
+    # the multi-value path was 100% broken in production.
     p_meta_value = analysis.add_parameter(StringParam(
         name=ParameterName("pL2ftMetaValue"),
         default=[META_VALUE_PLACEHOLDER_SENTINEL],
-        multi_valued=True,
+        multi_valued=False,
         mapped_dataset_params=[
             (ds_postings, "pValues"),
         ],
@@ -788,10 +794,12 @@ def _populate_chains_sheet(
             (ds_chain_instances, "pKey"),
         ],
     ))
+    # Y.1.m: single-valued (was multi_valued=True, broke under text-field
+    # control — see Rails sheet for the diagnostic).
     p_meta_value = analysis.add_parameter(StringParam(
         name=ParameterName("pL2ftChainsMetaValue"),
         default=[META_VALUE_PLACEHOLDER_SENTINEL],
-        multi_valued=True,
+        multi_valued=False,
         mapped_dataset_params=[
             (ds_chain_instances, "pValues"),
         ],
@@ -945,10 +953,12 @@ def _populate_transfer_templates_sheet(
             (ds_tt_legs, "pKey"),
         ],
     ))
+    # Y.1.m: single-valued (was multi_valued=True, broke under text-field
+    # control — see Rails sheet for the diagnostic).
     p_meta_value = analysis.add_parameter(StringParam(
         name=ParameterName("pL2ftTtMetaValue"),
         default=[META_VALUE_PLACEHOLDER_SENTINEL],
-        multi_valued=True,
+        multi_valued=False,
         mapped_dataset_params=[
             (ds_tt_instances, "pValues"),
             (ds_tt_legs, "pValues"),

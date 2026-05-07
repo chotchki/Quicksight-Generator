@@ -426,6 +426,30 @@ The σ case is the spike's load-bearing example of the SELECTED_VISUALS pattern.
     4. **Mechanism verified at SQLite layer.** End-to-end test in `test_html_sql_executor.py` confirms `<<$pName>>` placeholder + URL `param_pName=N` produces the right rows via real aiosqlite execution. PG + Oracle verification deferred to Y.1.h/i.
     5. **Live perf numbers (Y.1.h/j) deferred to operator deploy.** Mechanism is proven; the verdict on whether QS Direct Query actually pushes the WHERE to Postgres in the wire goes pending the next Aurora roll.
 
+#### Y.1.m — Control-wiring investigation (pulled in from Y.1.k follow-up)
+
+**Premise:** During Y.1.k diagnosis we found the L2FT cascade likely-broken NOT because of SQL pushdown but because `pL2ftMetaValue` is declared `multi_valued=True` and bound to `add_parameter_text_field` (single-string control). Mid-investigation the user URL-stamped `?pL2ftMetaKey=KnownKey&pL2ftMetaValue=KnownValu` and **both controls populated** — see `apps/l2_flow_tracing/app.py:631-659`. That alone reverses two memories: it suggests text-field DOES write to multi-valued params (or at least URL-as-state populates the control regardless), AND the K.4.7 cross-app drill memory ("controls stay 'All'") may be stale or path-specific.
+
+If URL-stamp + real values narrows the L2FT table → both layers (control + SQL pushdown) work, the bug is somewhere else (commit timing? text-field vs Enter key?). If it doesn't narrow → SQL pushdown is broken under the cascade shape and we need to dig into MappedDataSetParameters + parameter type contracts.
+
+If the control wiring re-opens, the K.4.7 cross-app drill capability comes back into scope — **HUGE** because it was the surface area we lost. That would re-enable: AR → Inv anchor handoff, L1 violation → Inv pivot, Inv counterparty → AR account drill.
+
+- [ ] **Y.1.m.1 — URL-stamp test on PG L2FT Rails with REAL metadata values.** URLs already prepared:
+    - `?pL2ftMetaKey=customer_id&pL2ftMetaValue=cust-0001-snb` (49 rows in seed)
+    - `?pL2ftMetaKey=external_reference&pL2ftMetaValue=CustomerInboundACH-firing-011084` (2 rows)
+  Open in browser, scroll to Transactions table, count visible rows. Decision branch: narrows → Y.1.m.2; doesn't narrow → Y.1.m.5.
+- [ ] **Y.1.m.2 — Confirm via `pg_stat_statements` snapshot diff.** Same query template should appear with bumped `calls` count and (critically) different `rows` (~49 or ~2 instead of 5000-LIMIT-saturated). Proves the dataset query did re-fire with the user's bind values.
+- [ ] **Y.1.m.3 — Text-field commit semantics.** If URL works but typing in the field doesn't: try Enter, blur, paste-then-Enter. QS text-field controls have known commit-timing quirks; pin down which event fires the parameter update.
+- [ ] **Y.1.m.4 — Type-system enforcement.** Add tree-level `__post_init__` validation: `add_parameter_text_field(parameter=p)` rejects `p.multi_valued=True`. Construction-time error at the buggy line; no test needed. (CLAUDE.md "encode invariants in types" preference.)
+- [ ] **Y.1.m.5 — Alternative bug surface, if pushdown is broken.** Trace the chain: `MappedDataSetParameters` JSON shape → dataset CustomSQL substitution semantics → bind-shape Postgres sees. Likely culprit candidates: (a) `IN (<<$pValues>>)` substitution with `multi_valued=True` may produce literal `IN ('a,b,c')` instead of `IN ('a', 'b', 'c')`; (b) `pValues = ['__placeholder__']` default may shortcut the entire OR-cascade to its first branch; (c) parameter type mismatch causes QS to silently drop the bind.
+- [ ] **Y.1.m.6 — Cross-app drill re-evaluation (the K.4.7 flag).** If Y.1.m.1 confirms URL-stamp works for parameter controls, re-test the K.4.7 dropped drills with the deployed PG dashboard:
+    - From AR account row → Investigation Account Network with `?pInvANetworkAnchor=<account>` stamped.
+    - From L1 limit-breach row → Investigation Recipient Fanout with `?pInvFanoutRoot=<account>` stamped.
+    - From Inv counterparty hop → AR account detail.
+  If controls populate AND data narrows → K.4.7 was a pre-existing bug fix or path-specific defect, not a fundamental QS limit. Update memory `project_qs_url_parameter_no_control_sync.md`. Either re-enable the dropped drills (separate branch, Y.6 timeframe) OR file a follow-up to do so.
+- [ ] **Y.1.m.7 — L2FT cascade fix decision.** Based on Y.1.m.1-3 findings, pick one: (a) flip `pL2ftMetaValue` to `multi_valued=False` (single value at a time, simplest), (b) restore `LinkedValues` dropdown with a different X.1.b workaround for "Sample values not found" (pre-warm the meta-values matview before page load?), (c) something else. Implement on `phase-y-sql-pushdown` branch since we're already touching the surface; re-deploy + re-verify.
+- [ ] **Y.1.m.8 — Resolve Y.1.k blockers.** With cascade behavior pinned and fixed: close Y.1.k, unblock Y.2.c/d/e (L2FT sweep). Update task #660 with resolution.
+
 ### Y.2 — Sweep simple-filter datasets (one sub-task per dataset)
 
 Spike-proven pattern applied across every sheet that has SQL-pushdownable filters today. Each sub-task is one dataset: convert FilterGroup → dataset parameter, drop `app2_sql=` if any, re-lock hash tests, verify deploy.

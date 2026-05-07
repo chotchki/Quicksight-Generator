@@ -1797,6 +1797,7 @@ from quicksight_gen.common.tree import (
     ParameterDateTimePicker,
     ParameterDropdown,
     ParameterSlider,
+    ParameterTextField,
     StaticValues,
 )
 
@@ -1915,6 +1916,31 @@ class TestParameterDateTimePicker:
         emitted = ctrl.emit()
         assert emitted.DateTimePicker.SourceParameterName == "pDate"
         assert emitted.DateTimePicker.Title == "Date"
+
+
+class TestParameterTextField:
+    def test_emits_when_bound_to_single_valued_param(self):
+        p = StringParam(name=ParameterName("pSearch"), multi_valued=False)
+        ctrl = ParameterTextField(
+            parameter=p, title="Search", control_id="pc-test",
+        )
+        emitted = ctrl.emit()
+        assert emitted.TextField.SourceParameterName == "pSearch"
+        assert emitted.TextField.Title == "Search"
+
+    def test_rejects_multi_valued_string_param(self):
+        """Y.1.m: text-field bound to multi_valued=True is the broken
+        L2FT cascade combination — silently reverts the parameter to
+        default on non-empty commit. Construction must fail."""
+        p = StringParam(
+            name=ParameterName("pValues"),
+            default=["__placeholder__"],
+            multi_valued=True,
+        )
+        with pytest.raises(ValueError, match="multi-valued parameter"):
+            ParameterTextField(
+                parameter=p, title="Value", control_id="pc-test",
+            )
 
 
 class TestFilterDropdown:

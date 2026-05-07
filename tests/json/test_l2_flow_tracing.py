@@ -894,7 +894,10 @@ def test_postings_dataset_declares_pkey_and_pvalues_parameters() -> None:
     by_name = {p.StringDatasetParameter.Name: p.StringDatasetParameter for p in params}
     assert "pKey" in by_name and "pValues" in by_name
     assert by_name["pKey"].ValueType == "SINGLE_VALUED"
-    assert by_name["pValues"].ValueType == "MULTI_VALUED"
+    # Y.1.m: SINGLE_VALUED (was MULTI_VALUED until the cascade
+    # diagnosis revealed the text-field control couldn't commit
+    # non-empty values to multi-valued params).
+    assert by_name["pValues"].ValueType == "SINGLE_VALUED"
     assert by_name["pKey"].DefaultValues.StaticValues == [META_KEY_ALL_SENTINEL]
     assert by_name["pValues"].DefaultValues.StaticValues == [
         META_VALUE_PLACEHOLDER_SENTINEL,
@@ -949,7 +952,11 @@ def test_meta_value_param_maps_to_postings_only() -> None:
         p for p in app.analysis.parameters
         if str(p.name) == "pL2ftMetaValue"
     )
-    assert p_val.multi_valued is True
+    # Y.1.m: single-valued (was multi_valued=True until the cascade
+    # diagnosis revealed text-field controls can't commit non-empty
+    # values to multi-valued params — analyst now filters one value at
+    # a time on this sheet).
+    assert p_val.multi_valued is False
     assert p_val.mapped_dataset_params is not None
     assert len(p_val.mapped_dataset_params) == 1
     ds, name = p_val.mapped_dataset_params[0]

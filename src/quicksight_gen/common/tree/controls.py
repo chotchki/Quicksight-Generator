@@ -329,12 +329,35 @@ class ParameterTextField:
     paths are unavailable. The analyst types a value; QS writes it to
     the bound parameter verbatim. No sample-values fetch — sidesteps
     the X.1.b ``Sample values not found`` failure mode entirely.
+
+    Y.1.m: rejects ``parameter.multi_valued=True`` at construction.
+    QS text-field controls cannot commit non-empty values into a
+    multi-valued parameter — the commit silently reverts both this
+    parameter AND any sibling parameters back to their analysis-level
+    defaults. Empty-string commits work (special case); any other
+    string trips the state-reset bug. Reproduced live against L2FT
+    Rails on 2026-05-06 — the metadata cascade was 100% broken in
+    production for this reason. Construction-time error here prevents
+    the whole class of regression at the wiring site.
     """
     parameter: ParameterDeclLike
     title: str
     control_id: str | AutoResolved = AUTO
 
     _AUTO_KIND: ClassVar[str] = "text"
+
+    def __post_init__(self) -> None:
+        if getattr(self.parameter, "multi_valued", False):
+            raise ValueError(
+                f"ParameterTextField bound to multi-valued parameter "
+                f"{self.parameter.name!r}. QS text-field controls cannot "
+                f"commit non-empty values to multi-valued parameters; "
+                f"the commit silently reverts the parameter to its "
+                f"analysis-level default (broken cascade). Either set "
+                f"the parameter's multi_valued=False, or use a different "
+                f"control type (ParameterDropdown with LinkedValues / "
+                f"StaticValues)."
+            )
 
     def datasets(self) -> set[Dataset]:
         return set()

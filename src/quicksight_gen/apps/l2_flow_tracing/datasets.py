@@ -623,7 +623,11 @@ def build_postings_dataset(
             DatasetParameter(StringDatasetParameter=StringDatasetParameter(
                 Id=_DSP_ID_PVALUES,
                 Name="pValues",
-                ValueType="MULTI_VALUED",
+                # Y.1.m: SINGLE_VALUED to match the analysis-level
+                # parameter shape (text-field control). Was MULTI_VALUED
+                # but the text-field control couldn't commit non-empty
+                # values to multi-valued params — broke the cascade.
+                ValueType="SINGLE_VALUED",
                 DefaultValues=StringDatasetParameterDefaultValues(
                     StaticValues=[META_VALUE_PLACEHOLDER_SENTINEL],
                 ),
@@ -924,7 +928,11 @@ def build_chain_instances_dataset(
             DatasetParameter(StringDatasetParameter=StringDatasetParameter(
                 Id=_DSP_ID_PVALUES,
                 Name="pValues",
-                ValueType="MULTI_VALUED",
+                # Y.1.m: SINGLE_VALUED to match the analysis-level
+                # parameter shape (text-field control). Was MULTI_VALUED
+                # but the text-field control couldn't commit non-empty
+                # values to multi-valued params — broke the cascade.
+                ValueType="SINGLE_VALUED",
                 DefaultValues=StringDatasetParameterDefaultValues(
                     StaticValues=[META_VALUE_PLACEHOLDER_SENTINEL],
                 ),
@@ -1805,7 +1813,11 @@ def build_tt_instances_dataset(
             DatasetParameter(StringDatasetParameter=StringDatasetParameter(
                 Id=_DSP_ID_PVALUES,
                 Name="pValues",
-                ValueType="MULTI_VALUED",
+                # Y.1.m: SINGLE_VALUED to match the analysis-level
+                # parameter shape (text-field control). Was MULTI_VALUED
+                # but the text-field control couldn't commit non-empty
+                # values to multi-valued params — broke the cascade.
+                ValueType="SINGLE_VALUED",
                 DefaultValues=StringDatasetParameterDefaultValues(
                     StaticValues=[META_VALUE_PLACEHOLDER_SENTINEL],
                 ),
@@ -2025,7 +2037,11 @@ def build_tt_legs_dataset(
             DatasetParameter(StringDatasetParameter=StringDatasetParameter(
                 Id=_DSP_ID_PVALUES,
                 Name="pValues",
-                ValueType="MULTI_VALUED",
+                # Y.1.m: SINGLE_VALUED to match the analysis-level
+                # parameter shape (text-field control). Was MULTI_VALUED
+                # but the text-field control couldn't commit non-empty
+                # values to multi-valued params — broke the cascade.
+                ValueType="SINGLE_VALUED",
                 DefaultValues=StringDatasetParameterDefaultValues(
                     StaticValues=[META_VALUE_PLACEHOLDER_SENTINEL],
                 ),
