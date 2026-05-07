@@ -38,7 +38,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, cast
 
 EXIT_SUCCESS: Final = 0
 EXIT_FAILURE: Final = 1
@@ -769,14 +769,139 @@ def cmd_pyright(args: argparse.Namespace) -> int:
 
 
 def cmd_sweep(args: argparse.Namespace) -> int:
-    """Clean orphan resources tagged ManagedBy:quicksight-gen.
+    """Y.2.gate.c.9 — clean orphan QuickSight resources tagged
+    ``Harness:e2e``.
 
-    Destructive — requires --yes."""
-    if not args.yes and not os.environ.get("QS_GEN_RUNNER_YES"):
-        print("runner: 'sweep' is destructive — pass --yes (or set QS_GEN_RUNNER_YES=1)", file=sys.stderr)
+    Replaces ``scripts/sweep_harness_orphans.py`` (deletion of the
+    standalone script is `Y.2.gate.f.8`). Same default: dry-run
+    (collect + print). Pass ``--yes`` (or set ``QS_GEN_RUNNER_YES=1``,
+    matching the destructive-op convention from `b.14.3`) to actually
+    delete.
+
+    Tag set: ``Harness:e2e`` — production deploys don't carry that
+    tag (they wear ``ManagedBy:quicksight-gen`` + optional
+    ``L2Instance:<prefix>``), so this is safe against the production
+    resource graph.
+
+    Exit codes:
+      0 — clean (dry-run completed OR delete completed)
+      2 — needs operator (AWS creds expired / config not found)
+    """
+    from quicksight_gen.common.config import load_config
+
+    # Sweep only needs aws_account_id + aws_region — any cfg has those.
+    # Lookup mirrors tests/e2e/conftest.py::cfg with the per-dialect
+    # files added (Phase P split run/config.yaml → per-dialect).
+    config_path: Path | None = None
+    explicit = os.environ.get("QS_GEN_CONFIG")
+    if explicit:
+        candidate = Path(explicit)
+        if candidate.exists():
+            config_path = candidate
+    if config_path is None:
+        for candidate in (
+            REPO_ROOT / "run" / "config.yaml",
+            REPO_ROOT / "config.yaml",
+            REPO_ROOT / "run" / "config.postgres.yaml",
+            REPO_ROOT / "run" / "config.oracle.yaml",
+        ):
+            if candidate.exists():
+                config_path = candidate
+                break
+    if config_path is None:
+        print(
+            "runner: sweep — no config.yaml found in repo "
+            "(checked QS_GEN_CONFIG, run/config.yaml, config.yaml, "
+            "run/config.{postgres,oracle}.yaml); cannot resolve "
+            "AWS account/region.",
+            file=sys.stderr,
+        )
         return EXIT_NEEDS_OPERATOR
-    print("runner: sweep --yes — not implemented yet (Y.2.gate.c.9)")
-    return EXIT_NEEDS_OPERATOR
+
+    cfg = load_config(str(config_path))
+    try:
+        import boto3
+    except ImportError as exc:
+        print(f"runner: sweep — boto3 missing: {exc}", file=sys.stderr)
+        return EXIT_NEEDS_OPERATOR
+
+    # Imports of harness cleanup helpers are deferred to avoid pulling
+    # in tests/ at module import time. Y.2.gate.f.8 will lift the
+    # helpers into ``quicksight_gen/_dev/cleanup.py`` and drop the
+    # ``sys.path`` + ``importlib`` dance.
+    import importlib
+
+    sys.path.insert(0, str(REPO_ROOT / "tests" / "e2e"))
+    try:
+        _harness_cleanup = importlib.import_module("_harness_cleanup")
+    finally:
+        sys.path.pop(0)
+    _collect_resources_matching_tag: Any = (
+        _harness_cleanup._collect_resources_matching_tag
+    )
+    sweep_qs_resources_by_tag: Any = (
+        _harness_cleanup.sweep_qs_resources_by_tag
+    )
+
+    # boto3-stubs's huge per-service overload union confuses pyright
+    # — Unknown branches leak through on most-cases. Suppress narrowly.
+    client: Any = boto3.client(  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+        "quicksight", region_name=cfg.aws_region,
+    )
+
+    confirm = bool(args.yes) or bool(os.environ.get("QS_GEN_RUNNER_YES"))
+    tag_key, tag_value = "Harness", "e2e"
+
+    if not confirm:
+        # Dry-run: collect-only, no deletes. Same shape as
+        # scripts/sweep_harness_orphans.py without --confirm.
+        try:
+            raw_matched = _collect_resources_matching_tag(
+                client, cfg.aws_account_id,
+                tag_key=tag_key, tag_value=tag_value,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"runner: sweep — collect failed: {exc!r}",
+                file=sys.stderr,
+            )
+            return EXIT_NEEDS_OPERATOR
+        # Cast away the Unknown type that pyright assigns to the
+        # dynamic ``_harness_cleanup`` import. The function's declared
+        # return type is ``dict[str, list[tuple[str, str]]]``; the lift
+        # to ``quicksight_gen/_dev/cleanup.py`` (Y.2.gate.f.8) drops
+        # this cast.
+        matched = cast("dict[str, list[tuple[str, str]]]", raw_matched)
+        print(
+            f"runner: sweep DRY-RUN — would delete resources tagged "
+            f"{tag_key}={tag_value} in {cfg.aws_region}:"
+        )
+        total = 0
+        for kind, items in matched.items():
+            print(f"  {kind}: {len(items)}")
+            total += len(items)
+            for resource_id, _arn in items:
+                print(f"    - {resource_id}")
+        print(f"  total: {total}")
+        if total > 0:
+            print("runner: re-run with --yes to actually delete.")
+        return EXIT_SUCCESS
+
+    print(
+        f"runner: sweep --yes — deleting resources tagged "
+        f"{tag_key}={tag_value} in {cfg.aws_region}"
+    )
+    try:
+        raw_counts = sweep_qs_resources_by_tag(
+            client, cfg.aws_account_id,
+            tag_key=tag_key, tag_value=tag_value,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"runner: sweep — delete pass failed: {exc!r}", file=sys.stderr)
+        return EXIT_NEEDS_OPERATOR
+    counts = cast("dict[str, int]", raw_counts)
+    print(f"runner: sweep deleted: {counts} (total={sum(counts.values())})")
+    return EXIT_SUCCESS
 
 
 def _build_parser() -> argparse.ArgumentParser:

@@ -63,10 +63,12 @@ def test_destructive_down_refuses_without_yes() -> None:
     assert code == runner.EXIT_NEEDS_OPERATOR
 
 
-def test_destructive_sweep_refuses_without_yes() -> None:
-    """Same for `sweep`."""
-    code = runner.main(["sweep"])
-    assert code == runner.EXIT_NEEDS_OPERATOR
+# Y.2.gate.c.9 — ``sweep`` flipped from "refuse without --yes" to
+# "dry-run by default, --yes to delete" so the verb is operator-safe
+# at the entry point (matches the standalone script convention).
+# The dry-run path needs a working AWS / config setup so it's not
+# unit-testable as a no-op refusal — see the dedicated sweep tests
+# at the end of the file (test_cmd_sweep_*).
 
 
 def test_up_to_creates_run_dir() -> None:
@@ -1085,3 +1087,152 @@ def test_layer_command_no_fuzz_env_when_value_none() -> None:
     assert cmd_env is not None
     _, env_addl = cmd_env
     assert "QS_GEN_FUZZ_SEED" not in env_addl
+
+
+# Y.2.gate.c.9 — sweep subcommand.
+
+
+def test_argparse_accepts_sweep_verb_no_yes() -> None:
+    """`./run_tests.sh sweep` parses (default = dry-run)."""
+    parser = runner._build_parser()
+    parsed = parser.parse_args(["sweep"])
+    assert parsed.verb == "sweep"
+    assert parsed.yes is False
+
+
+def test_argparse_accepts_sweep_verb_with_yes() -> None:
+    """`./run_tests.sh sweep --yes` parses (destructive opt-in)."""
+    parser = runner._build_parser()
+    parsed = parser.parse_args(["sweep", "--yes"])
+    assert parsed.yes is True
+
+
+def _install_fake_harness_cleanup(
+    monkeypatch: Any, *, matched: dict[str, list[tuple[str, str]]],
+    deleted: dict[str, int] | None = None,
+) -> tuple[list[Any], list[Any]]:
+    """Inject a fake `_harness_cleanup` module so cmd_sweep's runtime
+    import doesn't need the real tests/e2e/_harness_cleanup. Returns
+    (collect_calls, sweep_calls) lists that capture invocations."""
+    import sys
+    import types
+
+    collect_calls: list[Any] = []
+    sweep_calls: list[Any] = []
+
+    def fake_collect(client: Any, account_id: str, *, tag_key: str, tag_value: str) -> dict[str, list[tuple[str, str]]]:
+        collect_calls.append((client, account_id, tag_key, tag_value))
+        return matched
+
+    def fake_sweep(client: Any, account_id: str, *, tag_key: str, tag_value: str) -> dict[str, int]:
+        sweep_calls.append((client, account_id, tag_key, tag_value))
+        return deleted or {k: len(v) for k, v in matched.items()}
+
+    fake_module = types.ModuleType("_harness_cleanup")
+    fake_module._collect_resources_matching_tag = fake_collect  # type: ignore[attr-defined]
+    fake_module.sweep_qs_resources_by_tag = fake_sweep  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "_harness_cleanup", fake_module)
+    return collect_calls, sweep_calls
+
+
+def _install_fake_aws(monkeypatch: Any) -> None:
+    """Stub load_config + boto3.client so cmd_sweep doesn't need
+    real config files or AWS creds for the unit-test path."""
+    import boto3
+    from quicksight_gen.common import config as config_mod
+
+    fake_cfg = type(
+        "CfgStub", (),
+        {"aws_region": "us-east-1", "aws_account_id": "111122223333"},
+    )()
+    monkeypatch.setattr(config_mod, "load_config", lambda _: fake_cfg)
+    monkeypatch.setattr(boto3, "client", lambda *a, **kw: object())
+    # Force the config-path probe to succeed by pointing it at any
+    # existing file (PLAN.md is fine — we only check existence, the
+    # file content is read by the stubbed load_config).
+    monkeypatch.setenv("QS_GEN_CONFIG", str(runner.REPO_ROOT / "PLAN.md"))
+
+
+def test_cmd_sweep_dry_run_collects_without_deleting(
+    monkeypatch: Any, capsys: Any,
+) -> None:
+    """No --yes → calls _collect, never calls sweep_qs_resources."""
+    _install_fake_aws(monkeypatch)
+    monkeypatch.delenv("QS_GEN_RUNNER_YES", raising=False)
+    collect_calls, sweep_calls = _install_fake_harness_cleanup(
+        monkeypatch,
+        matched={
+            "dashboard": [],
+            "analysis": [],
+            "dataset": [("orphan-1", "arn:orphan-1")],
+            "datasource": [],
+            "theme": [],
+        },
+    )
+
+    code = runner.main(["sweep"])
+    assert code == runner.EXIT_SUCCESS
+    assert len(collect_calls) == 1
+    assert len(sweep_calls) == 0
+    out = capsys.readouterr().out
+    assert "DRY-RUN" in out
+    assert "orphan-1" in out
+    assert "re-run with --yes" in out
+
+
+def test_cmd_sweep_with_yes_invokes_sweep(monkeypatch: Any, capsys: Any) -> None:
+    """--yes → sweep_qs_resources_by_tag is called; not _collect."""
+    _install_fake_aws(monkeypatch)
+    monkeypatch.delenv("QS_GEN_RUNNER_YES", raising=False)
+    collect_calls, sweep_calls = _install_fake_harness_cleanup(
+        monkeypatch,
+        matched={
+            "dashboard": [], "analysis": [],
+            "dataset": [("orphan-1", "arn:orphan-1")],
+            "datasource": [], "theme": [],
+        },
+    )
+
+    code = runner.main(["sweep", "--yes"])
+    assert code == runner.EXIT_SUCCESS
+    assert len(sweep_calls) == 1
+    out = capsys.readouterr().out
+    assert "deleting" in out.lower()
+    assert "deleted" in out.lower()
+
+
+def test_cmd_sweep_qs_gen_runner_yes_env_bypasses_yes_flag(
+    monkeypatch: Any,
+) -> None:
+    """`QS_GEN_RUNNER_YES=1` env matches `--yes` per the b.14.3
+    destructive-op convention."""
+    _install_fake_aws(monkeypatch)
+    monkeypatch.setenv("QS_GEN_RUNNER_YES", "1")
+    _, sweep_calls = _install_fake_harness_cleanup(
+        monkeypatch,
+        matched={
+            "dashboard": [], "analysis": [], "dataset": [],
+            "datasource": [], "theme": [],
+        },
+    )
+
+    code = runner.main(["sweep"])
+    assert code == runner.EXIT_SUCCESS
+    assert len(sweep_calls) == 1
+
+
+def test_cmd_sweep_no_config_file_returns_needs_operator(
+    monkeypatch: Any, tmp_path: Any, capsys: Any,
+) -> None:
+    """When no config.yaml is discoverable, exit needs-operator
+    instead of crashing on a missing file."""
+    monkeypatch.delenv("QS_GEN_CONFIG", raising=False)
+    # Point REPO_ROOT at an empty tmp dir so the candidate paths
+    # (run/config.yaml, config.yaml, run/config.{postgres,oracle}.yaml)
+    # all resolve to non-existent files.
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+
+    code = runner.main(["sweep"])
+    assert code == runner.EXIT_NEEDS_OPERATOR
+    err = capsys.readouterr().err
+    assert "no config.yaml" in err.lower()
